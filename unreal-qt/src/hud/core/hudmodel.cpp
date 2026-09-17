@@ -75,6 +75,7 @@ namespace HudCategory
 
 HudModel::HudModel(EmulatorContext* context)
     : _context(context)
+    , _emulatorId(context ? context->emulatorId : unreal::UUID{})
 {
     auto initialSnapshot = std::make_shared<HudSnapshot>();
     initialSnapshot->generation = 0;
@@ -728,6 +729,7 @@ void HudModel::subscribeObservers()
     add(NC_ROM_PAGE_CHANGED, [this](int id, Message* msg) { onRomPageChanged(id, msg); });
     add(NC_SCREEN_PAGE_CHANGED, [this](int id, Message* msg) { onScreenPageChanged(id, msg); });
     add(NC_AUDIO_ACTIVITY, [this](int id, Message* msg) { onAudioActivity(id, msg); });
+    add(NC_EMULATOR_INSTANCE_DESTROYED, [this](int id, Message* msg) { onInstanceDestroyed(id, msg); });
 }
 
 void HudModel::unsubscribeObservers()
@@ -745,14 +747,15 @@ void HudModel::unsubscribeObservers()
 
 bool HudModel::matchesInstance(const unreal::UUID& id) const
 {
-    // Accept all notifications if we have no context or no emulator ID
-    if (!_context || _context->emulatorId.isNil())
+    // Accept all notifications if we have no context or no emulator ID.
+    // Uses the cached id: _context may already be detached.
+    if (!_context || _emulatorId.isNil())
         return true;
     // Accept notifications with nil ID (broadcast to all instances)
     if (id.isNil())
         return true;
     // Otherwise require exact match
-    return id == _context->emulatorId;
+    return id == _emulatorId;
 }
 
 void HudModel::publishLocked()
@@ -840,6 +843,25 @@ void HudModel::onFeatureNotification(int, Message* message)
             enabled = _context->pFeatureManager->isEnabled(Features::kHud);
         }
         onFeatureChanged(enabled);
+    }
+}
+
+void HudModel::onInstanceDestroyed(int, Message* message)
+{
+    if (!message)
+        return;
+    auto* p = dynamic_cast<SimpleTextPayload*>(message->obj);
+    if (!p)
+        return;
+
+    // The payload carries the emulator id (the map key = UUID string form)
+    if (_context && p->_payloadText == _emulatorId.toString())
+    {
+        // Drop the raw context pointer before the instance is freed, then go
+        // fully passive: detach observers, clear collections, publish an
+        // empty snapshot. All other handlers null-check _context anyway.
+        _context = nullptr;
+        onFeatureChanged(false);
     }
 }
 

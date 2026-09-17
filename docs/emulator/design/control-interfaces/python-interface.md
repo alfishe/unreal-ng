@@ -69,6 +69,9 @@ python->start();
 python->executePython("print('Hello from embedded Python!')");
 ```
 
+### Machine Identity and Lifecycle
+The Python bindings do not expose model-selecting instance creation: `ue.Emulator()` always builds the default machine. For multi-instance lifecycle, model switching and strict model validation (`creatable` flags, 400-with-reason failures) use the WebAPI (`POST /api/v1/emulator/create`, `GET /api/v1/emulator/models`) or the CLI (`create`/`start <model>`). Machine identity of an existing instance is observable through state endpoints (e.g. TTD status reports `model_id`/`model_ram_pages`).
+
 ## API Reference
 
 ### Module Functions
@@ -243,6 +246,13 @@ Every changing method returns the resulting **state dict**:
 # plus 'warning': '...' when the change cannot reach the program
 # (mouse not fitted, or a wheel step with no wheel fitted)
 ```
+
+`mouse_status()` additionally carries `'routing': {'ports_decoded': bool, 'note': str}` —
+the same live answer as the WebAPI `GET /mouse/status` routing object: whether a mouse port
+read is decoded right now, and the reason when it is shadowed (mouse not fitted, TR-DOS ports
+accessible, a registered peripheral claims the port family, or model-specific gating —
+Scorpion DOS trigger / Shadow Monitor). The changing methods (`mouse_move` etc.) do not carry
+it, also matching the WebAPI.
 
 > [!NOTE]
 > `ports` values are integers, the same as in the WebAPI. The Python dict has no `available` key: `mouse_status()` raises
@@ -707,14 +717,18 @@ result = emu.ttd_find_last(addr=0x5800, access='write')
 #   'physpage': 5
 # }
 
-# Full filter set:
+# Full filter set (single address or address/PC range search):
 result = emu.ttd_find_last(
-    addr=0x5800,
-    access='write',            # 'write' | 'read' | 'execute' | 'out'
+    addr=0x5800,                # optional single address
+    addr_from=0x4000,           # optional address range start
+    addr_to=0x8000,             # optional address range end
+    access='write',            # 'write' | 'read' | 'execute' | 'io'
     value=0x07,                # optional exact value match
     pc_from=0x4000,            # optional PC range filter
     pc_to=0x8000,
-    before=14982               # optional: don't search past this absolute tstate
+    before_frame=4823,         # optional: don't search past this frame
+    before_tin=0,
+    phys_page=5
 )
 ```
 
@@ -768,6 +782,28 @@ emu.mem_find("AF 3C", start=0x8000, end=0xFFFF, alignment=2, max=32)
 # Screen state
 emu.screen_digest()                  # digest screen area (0x4000-0x5AFF), border folded in
 emu.screen_digest(0x4000, 0x5AFF, include_border=False)  # explicit range
+emu.screen_digest(mode="active")     # hash the surface the video mode displays now (ATM modes
+                                     # follow the 7FFD bit-plane pair); result carries
+                                     # 'active_surface': {'video_mode': str, 'pages': [..]}
+emu.ports_map()                      # static port map + live routing flags (P1-5 + P1-2 tags):
+                                     # {'model': str, 'entries': [{'port','mask','match','device','gate',
+                                     #                             'tags': ['memory','rom',...], 'latch'}],
+                                     #  'live': {'trdos_active','mouse_ports_decoded',
+                                     #           'mouse_routing_note','shadow_monitor_paged'}}
+                                     # tags: semantic categories (keyboard/memory/rom/screen/storage/
+                                     #   mouse/joystick/system + sound members sound_ay/sound_covox/...);
+                                     #   a row can carry several (Pentagon #FB = covox AND sounddrive).
+                                     # latch: live-value binding name ('p7FFD', 'p1FFD', 'pDFFD', ...) when
+                                     #   the row is a paging latch; None otherwise.
+emu.paging_state()                   # tagged paging latches + bank table (P1-2):
+                                     # {'model','paging_locked','trdos_active',
+                                     #  'latches': [{'port','latch','tags','device','gate','value',
+                                     #               'decoded': {'ram_bank':..,'shadow_screen':..,...}}],
+                                     #  'banks': [{'bank','address_range','type','page',
+                                     #             'name','role','signature','contended'}]}
+                                     # ROM bank rows carry the §5.2 identification: name = recognized
+                                     # content (SHA-256 catalog), role = the model's layout slot; a
+                                     # role/name mismatch is the one-glance wrong-ROM signal.
 emu.beam_position()                  # { "frame": N, "scanline": N, "tstate": N, "zone": "..." }
 emu.frame_cost()                     # per-frame halt/run cost accounting
 

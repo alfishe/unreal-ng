@@ -3258,6 +3258,13 @@ void MainWindow::handleEmulatorInstanceDestroyed(int id, Message* message)
                 qDebug() << "MainWindow::handleEmulatorInstanceDestroyed - Our emulator"
                          << QString::fromStdString(destroyedId) << "destroyed externally";
 
+                // Cut the paint path's raw Screen*/EmulatorContext* captures NOW:
+                // we are on the MessageCenter worker, still inside the pre-free
+                // drain window of EmulatorManager::RemoveEmulator, so this lands
+                // strictly before the context is deleted. The queued unbind below
+                // finishes the remaining UI teardown.
+                _screenWrapper->clearFrameSource();
+
                 // Use canonical release flow on main thread
                 // Note: releaseEmulator() will call RemoveEmulator but emulator may already be gone
                 // from manager - that's OK, the cleanup is still needed for our UI bindings

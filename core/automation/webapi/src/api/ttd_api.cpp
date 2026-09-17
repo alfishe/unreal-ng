@@ -207,6 +207,7 @@ void EmulatorAPI::getTTDStatus(const HttpRequestPtr& req,
     ret["page_store_used_bytes"]    = Json::UInt64(0);
     ret["baseline_frames_captured"] = Json::UInt64(0);
     ret["session_heap_bytes"]       = Json::UInt64(0);
+    ret["bookmark_count"]           = Json::UInt64(0);
     ret["ttd_available"]            = false;
 
     if (ttd::TimeTravelManager* mgr = context->pTimeTravelManager)
@@ -229,6 +230,7 @@ void EmulatorAPI::getTTDStatus(const HttpRequestPtr& req,
     ret["write_journal_bytes"]   = Json::UInt64(info.writeJournalBytes);
     ret["coverage_index_frames"] = Json::UInt64(info.coverageIndexFrames);
     ret["coverage_index_bytes"]  = Json::UInt64(info.coverageIndexBytes);
+    ret["bookmark_count"]       = Json::UInt64(info.bookmarkCount);
     ret["write_journal_enabled"]    = info.writeJournalEnabled;
         ret["ttd_available"]            = true;
     }
@@ -461,12 +463,16 @@ void EmulatorAPI::seekTTD(const HttpRequestPtr& req,
     // with reached=false.
     if (rejectIfRecording(mgr, callback)) return;
 
+    // TD-4: the target may be given either as coordinates ("frame" [+ optional
+    // "tinframe"]) or as a bookmark label ("bookmark"). Everything after the
+    // resolution is a plain seek — a bookmark is advisory and never a barrier.
     auto jsonBody = req->getJsonObject();
-    if (!jsonBody || !jsonBody->isMember("frame"))
+    const bool seekByBookmark = jsonBody && jsonBody->isMember("bookmark");
+    if (!seekByBookmark && (!jsonBody || !jsonBody->isMember("frame")))
     {
         Json::Value error;
         error["error"]   = "Bad Request";
-        error["message"] = "Missing required field: frame";
+        error["message"] = "Missing required field: frame (or bookmark)";
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k400BadRequest);
         addCorsHeaders(resp);
@@ -474,9 +480,33 @@ void EmulatorAPI::seekTTD(const HttpRequestPtr& req,
         return;
     }
 
+    std::string bookmarkLabel;
     ttd::TTDTimePoint target{};
-    target.frame    = (*jsonBody)["frame"].asUInt64();
-    target.tInFrame = jsonBody->isMember("tinframe") ? static_cast<uint32_t>((*jsonBody)["tinframe"].asUInt()) : 0;
+    if (seekByBookmark)
+    {
+        bookmarkLabel = (*jsonBody)["bookmark"].asString();
+        ttd::TTDBookmark bm;
+        if (bookmarkLabel.empty() || !mgr->FindBookmark(bookmarkLabel, bm))
+        {
+            Json::Value error;
+            error["error"]   = bookmarkLabel.empty() ? "Bad Request" : "Not Found";
+            error["message"] = bookmarkLabel.empty()
+                                   ? "Field bookmark must be a non-empty bookmark label"
+                                   : "Unknown bookmark label: " + bookmarkLabel;
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(bookmarkLabel.empty() ? HttpStatusCode::k400BadRequest
+                                                       : HttpStatusCode::k404NotFound);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        target = bm.time;
+    }
+    else
+    {
+        target.frame    = (*jsonBody)["frame"].asUInt64();
+        target.tInFrame = jsonBody->isMember("tinframe") ? static_cast<uint32_t>((*jsonBody)["tinframe"].asUInt()) : 0;
+    }
 
     // Pause the emulator while we mutate TTD state so the emulator thread
     // can't advance frame_counter past the restored checkpoint before the
@@ -526,6 +556,8 @@ void EmulatorAPI::seekTTD(const HttpRequestPtr& req,
     }
 
     ret["state"] = ttd::TTDSessionStateToString(mgr->GetState());
+    if (seekByBookmark)
+        ret["bookmark"] = bookmarkLabel;
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
@@ -696,6 +728,149 @@ void EmulatorAPI::getTTDMarkers(const HttpRequestPtr& req,
 }
 
 // -------------------------------------------------------------------------
+// TD-4 — agent bookmarks (advisory annotations, never replay barriers).
+// Stored beside the external-event journal and serialized in the .ttd
+// session; a bookmark never appears as a halt_reason.
+// -------------------------------------------------------------------------
+
+/// @brief GET /api/v1/emulator/{id}/ttd/bookmarks
+///
+/// Response: { "count": N, "bookmarks": [ { "frame", "tinframe", "label" } ] }
+/// Time-sorted. Unlike /ttd/markers these entries never halt a seek.
+void EmulatorAPI::getTTDBookmarks(const HttpRequestPtr& req,
+                                  std::function<void(const HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const
+{
+    auto* mgr = resolveTTD(id, callback);
+    if (!mgr) return;
+
+    const auto bookmarks = mgr->GetBookmarks();  // time-sorted snapshot copy
+
+    Json::Value ret;
+    ret["count"] = Json::UInt64(bookmarks.size());
+
+    Json::Value list(Json::arrayValue);
+    for (const auto& bm : bookmarks)
+    {
+        Json::Value entry;
+        entry["frame"]    = Json::UInt64(bm.time.frame);
+        entry["tinframe"] = Json::UInt(bm.time.tInFrame);
+        entry["label"]    = bm.label;
+        list.append(entry);
+    }
+    ret["bookmarks"] = list;
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/{id}/ttd/bookmarks
+///
+/// Body: { "label": "umt entry", "frame": F (optional), "tinframe": T (optional) }
+/// When frame is omitted the bookmark is placed at the current position.
+/// Labels are keys: non-empty, at most 63 characters, unique per session.
+///
+/// Status codes:
+///   - 201 Created on success
+///   - 400 for label contract violations (missing / empty / overlong)
+///   - 409 for a duplicate label or a position outside the recorded timeline
+void EmulatorAPI::postTTDBookmark(const HttpRequestPtr& req,
+                                  std::function<void(const HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const
+{
+    auto* mgr = resolveTTD(id, callback);
+    if (!mgr) return;
+
+    auto jsonBody = req->getJsonObject();
+    if (!jsonBody || !jsonBody->isMember("label") || !(*jsonBody)["label"].isString() ||
+        (*jsonBody)["label"].asString().empty())
+    {
+        Json::Value error;
+        error["error"]   = "Bad Request";
+        error["message"] = "Missing or empty required field: label "
+                           "(non-empty string, at most 63 characters)";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    const std::string label = (*jsonBody)["label"].asString();
+
+    // Default to the current position so "mark here" needs no coordinates.
+    ttd::TTDTimePoint time = mgr->CurrentPosition();
+    if (jsonBody->isMember("frame"))
+    {
+        time.frame    = (*jsonBody)["frame"].asUInt64();
+        time.tInFrame = jsonBody->isMember("tinframe")
+                            ? static_cast<uint32_t>((*jsonBody)["tinframe"].asUInt())
+                            : 0;
+    }
+
+    std::string err;
+    if (!mgr->AddBookmark(time, label, &err))
+    {
+        // Label contract violations are client errors; a duplicate label or
+        // a position outside the timeline conflicts with the session state.
+        const bool badLabel = err.find("empty") != std::string::npos ||
+                              err.find("longer") != std::string::npos;
+        Json::Value error;
+        error["error"]   = badLabel ? "Bad Request" : "Conflict";
+        error["message"] = err;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(badLabel ? HttpStatusCode::k400BadRequest
+                                     : HttpStatusCode::k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    Json::Value ret;
+    ret["added"]    = true;
+    ret["label"]    = label;
+    ret["frame"]    = Json::UInt64(time.frame);
+    ret["tinframe"] = Json::UInt(time.tInFrame);
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    resp->setStatusCode(HttpStatusCode::k201Created);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief DELETE /api/v1/emulator/{id}/ttd/bookmarks/{label}
+///
+/// Status codes: 200 on success, 404 when the label is unknown.
+void EmulatorAPI::deleteTTDBookmark(const HttpRequestPtr& req,
+                                    std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id, const std::string& label) const
+{
+    auto* mgr = resolveTTD(id, callback);
+    if (!mgr) return;
+
+    if (!mgr->RemoveBookmark(label))
+    {
+        Json::Value error;
+        error["error"]   = "Not Found";
+        error["message"] = "Unknown bookmark label: " + label;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    Json::Value ret;
+    ret["removed"] = true;
+    ret["label"]   = label;
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+// -------------------------------------------------------------------------
 // Phase 4 — Reverse search + dump + instruction step
 // -------------------------------------------------------------------------
 
@@ -839,10 +1014,17 @@ void EmulatorAPI::findLastTTD(const HttpRequestPtr& req,
     if (rejectIfRecording(mgr, callback)) return;
 
     auto json = req->getJsonObject();
-    if (!json || !json->isMember("addr"))
+    const bool hasAddr = json && json->isMember("addr");
+    const bool hasAddrFrom = json && json->isMember("addr_from");
+    const bool hasAddrTo = json && json->isMember("addr_to");
+    const bool hasPcFrom = json && json->isMember("pc_from");
+    const bool hasPcTo = json && json->isMember("pc_to");
+    const bool hasValue = json && json->isMember("value");
+
+    if (!json || (!hasAddr && !hasAddrFrom && !hasAddrTo && !hasPcFrom && !hasPcTo && !hasValue))
     {
         Json::Value err;
-        err["error"] = "Missing 'addr' in request body";
+        err["error"] = "Missing search criteria in request body (must supply 'addr', 'addr_from', 'addr_to', 'pc_from', 'pc_to', or 'value')";
         auto resp = HttpResponse::newHttpJsonResponse(err);
         resp->setStatusCode(k400BadRequest);
         addCorsHeaders(resp);
@@ -851,7 +1033,15 @@ void EmulatorAPI::findLastTTD(const HttpRequestPtr& req,
     }
 
     ttd::TTDSearchQuery q;
-    q.addrFrom = q.addrTo = static_cast<uint16_t>((*json)["addr"].asUInt());
+    if (hasAddr)
+    {
+        q.addrFrom = q.addrTo = static_cast<uint16_t>((*json)["addr"].asUInt());
+    }
+    else
+    {
+        if (hasAddrFrom) q.addrFrom = static_cast<uint16_t>((*json)["addr_from"].asUInt());
+        if (hasAddrTo) q.addrTo = static_cast<uint16_t>((*json)["addr_to"].asUInt());
+    }
 
     if (json->isMember("access"))
         q.access = ttd::TTDAccessTypeFromString((*json)["access"].asCString());

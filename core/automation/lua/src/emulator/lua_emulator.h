@@ -5,6 +5,7 @@
 #include <emulator/emulatormanager.h>
 #include "../bindings/lua_porttrace.h"
 #include <emulator/memory/memory.h>
+#include <emulator/memory/memorymap.h>  // TD-3 sparse map + hexdump
 #include <emulator/io/fdc/fdd.h>
 #include <emulator/io/fdc/diskimage.h>
 #include <emulator/io/tape/tape.h>
@@ -30,6 +31,8 @@
 #include <debugger/assembler/z80textassembler.h>
 #include <debugger/listing/listingparser.h>
 #include <emulator/platform.h>
+#include <emulator/ports/portdecoder.h>
+#include <emulator/config.h>
 #include <emulator/state/devicestate.h>
 #include <emulator/video/screendigest.h>
 #include <base/featuremanager.h>
@@ -451,6 +454,66 @@ public:
                 data[i + 1] = mem->DirectReadFromZ80Memory(static_cast<uint16_t>(addr + i));
             }
             return data;
+        });
+
+        // TD-3 Phase 1: sparse non-zero block overview (same core source as
+        // GET /memory/map and MCP inspect_state 'memory_map').
+        // memory_map() | memory_map("ram") | memory_map("address", 64, 48)
+        lua.set_function("memory_map", [this](sol::optional<std::string> viewName, sol::optional<int> minRunOpt,
+                                              sol::optional<int> maxBlocksOpt) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            if (!_emulator) return result;
+            Memory* mem = _emulator->GetMemory();
+            EmulatorContext* ctx = _emulator->GetContext();
+            if (!mem || !ctx) return result;
+
+            const MemoryMapView view = (viewName && (*viewName == "ram" || *viewName == "pages"))
+                                           ? MemoryMapView::RamPages
+                                           : MemoryMapView::AddressSpace;
+            const uint32_t minRun = (minRunOpt && *minRunOpt > 0) ? static_cast<uint32_t>(*minRunOpt) : kMemoryMapDefaultMinRun;
+            const uint32_t maxBlocks = (maxBlocksOpt && *maxBlocksOpt > 0) ? static_cast<uint32_t>(*maxBlocksOpt)
+                                                                           : kMemoryMapDefaultMaxBlocks;
+
+            const MemoryMapReport report = BuildMemoryMap(*mem, ctx->config, view, minRun, maxBlocks);
+            result["model"] = report.model;
+            result["view"] = report.ramView ? "ram" : "address";
+            result["total_size"] = report.totalSize;
+            result["non_zero_bytes"] = report.nonZeroBytes;
+            result["min_run"] = report.minRun;
+            result["truncated"] = report.truncated;
+
+            sol::table blocks = lua_view.create_table();
+            for (size_t i = 0; i < report.blocks.size(); i++) {
+                const MemoryMapBlock& block = report.blocks[i];
+                sol::table item = lua_view.create_table();
+                item["address"] = block.address;
+                item["size"] = block.size;
+                item["type"] = block.typeName;
+                item["bank"] = block.bank == 0xFF ? -1 : static_cast<int>(block.bank);
+                item["page"] = block.page;
+                item["rom"] = block.isRom;
+                item["status"] = block.IsZeroFill() ? "zeros" : "data";
+                item["non_zero"] = block.nonZero;
+                if (!block.IsZeroFill())
+                    item["hash"] = block.hash;  // FNV-1a 64 fingerprint (lua_Integer)
+                blocks[i + 1] = item;
+            }
+            result["blocks"] = blocks;
+            return result;
+        });
+
+        // TD-3 compact read format: classic 16B/line hexdump + ASCII sidebar
+        lua.set_function("mem_hexdump", [this](uint16_t addr, sol::optional<int> lenOpt) -> std::string {
+            if (!_emulator) return "";
+            Memory* mem = _emulator->GetMemory();
+            if (!mem) return "";
+            const size_t len = lenOpt ? static_cast<size_t>(*lenOpt) : 64;
+            if (len < 1 || len > 4096) return "";
+            std::vector<uint8_t> buffer(len);
+            for (size_t i = 0; i < len; i++)
+                buffer[i] = mem->DirectReadFromZ80Memory(static_cast<uint16_t>(addr + i));
+            return FormatHexDump(buffer.data(), buffer.size(), addr);
         });
 
         lua.set_function("mem_write_block", [this](uint16_t addr, sol::table data) {
@@ -1159,7 +1222,23 @@ public:
             if (!state.available)
                 return mouseError(s, "Mouse device not available");
             sol::variadic_results results;
-            results.push_back(sol::make_object(s, mouseStateTable(s, state)));
+            sol::table table = mouseStateTable(s, state);
+            // Routing mirrors GET /mouse/status: `present` alone cannot distinguish
+            // "not fitted" from "fitted but shadowed" (mouse design Q4 / gap D-1)
+            Emulator* emulator = effectiveEmulator();
+            EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
+            if (context && context->pPortDecoder)
+            {
+                bool decoded = false;
+                std::string note;
+                context->pPortDecoder->GetMouseRoutingState(decoded, note);
+                sol::state_view lua(s);
+                sol::table routing = lua.create_table();
+                routing["ports_decoded"] = decoded;
+                routing["note"] = note;
+                table["routing"] = routing;
+            }
+            results.push_back(sol::make_object(s, table));
             return results;
         });
 
@@ -1949,6 +2028,106 @@ public:
         });
 
         // -----------------------------------------------------------------
+        // TD-4 — agent bookmarks (advisory annotations, never barriers).
+        // Labels are keys: non-empty, at most 63 chars, unique per session.
+        // -----------------------------------------------------------------
+
+        lua.set_function("ttd_bookmark_add", [this](const std::string& label,
+                                                     sol::optional<uint64_t> frameOpt,
+                                                     sol::optional<uint32_t> tInFrameOpt) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            result["added"] = false;
+            if (!_emulator) { result["error"] = "no emulator"; return result; }
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) { result["error"] = "TTD not available"; return result; }
+
+            // Position omitted → current position (mark here).
+            ttd::TTDTimePoint time = ctx->pTimeTravelManager->CurrentPosition();
+            if (frameOpt)
+            {
+                time.frame    = *frameOpt;
+                time.tInFrame = tInFrameOpt.value_or(0);
+            }
+
+            std::string err;
+            if (!ctx->pTimeTravelManager->AddBookmark(time, label, &err))
+            {
+                result["error"] = err;
+                return result;
+            }
+            result["added"]    = true;
+            result["label"]    = label;
+            result["frame"]    = time.frame;
+            result["tinframe"] = time.tInFrame;
+            return result;
+        });
+
+        lua.set_function("ttd_bookmarks", [this]() -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            if (!_emulator) return result;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) return result;
+            int idx = 1;  // Lua tables are 1-based
+            for (const auto& bm : ctx->pTimeTravelManager->GetBookmarks())
+            {
+                sol::table entry = lua_view.create_table();
+                entry["frame"]    = bm.time.frame;
+                entry["tinframe"] = bm.time.tInFrame;
+                entry["label"]    = bm.label;
+                result[idx++]     = entry;
+            }
+            return result;
+        });
+
+        lua.set_function("ttd_bookmark_delete", [this](const std::string& label) -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager) return false;
+            return ctx->pTimeTravelManager->RemoveBookmark(label);
+        });
+
+        // A bookmark seek IS a seek — identical result shape to ttd_seek
+        // (plus the resolved label), so a real barrier between the restore
+        // checkpoint and the target still surfaces as halt_reason
+        // "external_event". A bookmark itself never halts anything.
+        lua.set_function("ttd_seek_bookmark", [this](const std::string& label) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            if (!_emulator) { result["reached"] = false; return result; }
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pTimeTravelManager)
+            {
+                result["reached"] = false;
+                result["error"]   = "TTD not available";
+                return result;
+            }
+            ttd::TimeTravelManager::TTDSeekResult r;
+            std::string err;
+            const bool reached = ctx->pTimeTravelManager->SeekToBookmark(label, &r, &err);
+            result["reached"] = reached;
+            if (!err.empty())
+                result["error"] = err;
+
+            sol::table arrivedAt = lua_view.create_table();
+            arrivedAt["frame"]    = r.arrivedAt.frame;
+            arrivedAt["tinframe"] = r.arrivedAt.tInFrame;
+            result["arrived_at"]  = arrivedAt;
+
+            const char* reasonStr = "target";
+            switch (r.haltReason)
+            {
+                case ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent: reasonStr = "external_event"; break;
+                case ttd::TimeTravelManager::TTDSeekHaltReason::OutOfRange:    reasonStr = "out_of_range"; break;
+                default: break;
+            }
+            result["halt_reason"] = reasonStr;
+            result["bookmark"]    = label;
+            return result;
+        });
+
+        // -----------------------------------------------------------------
         // Phase 4 — Reverse search + dump + instruction step
         // -----------------------------------------------------------------
 
@@ -1989,14 +2168,16 @@ public:
             return result;
         });
 
-        lua.set_function("ttd_find_last", [this](uint16_t addr,
+        lua.set_function("ttd_find_last", [this](sol::object firstArgOpt,
                                                    sol::optional<std::string> accessOpt,
                                                    sol::optional<uint8_t> valueOpt,
                                                    sol::optional<uint16_t> pcFromOpt,
                                                    sol::optional<uint16_t> pcToOpt,
                                                    sol::optional<uint64_t> beforeFrameOpt,
                                                    sol::optional<uint32_t> beforeTinOpt,
-                                                   sol::optional<uint8_t> physPageOpt) -> sol::table {
+                                                   sol::optional<uint8_t> physPageOpt,
+                                                   sol::optional<uint16_t> addrFromOpt,
+                                                   sol::optional<uint16_t> addrToOpt) -> sol::table {
             sol::state_view lua_view(*_lua);
             sol::table result = lua_view.create_table();
             if (!_emulator) { result["found"] = false; return result; }
@@ -2004,17 +2185,61 @@ public:
             if (!ctx || !ctx->pTimeTravelManager) { result["found"] = false; return result; }
 
             ttd::TTDSearchQuery q;
-            q.addrFrom = q.addrTo = addr;
-            q.access = ttd::TTDAccessTypeFromString(
-                accessOpt.value_or("write").c_str());
-            if (valueOpt) { q.hasValueFilter = true; q.value = *valueOpt; }
-            if (pcFromOpt) { q.hasPcFilter = true; q.pcFrom = *pcFromOpt; q.pcTo = pcToOpt.value_or(0xFFFF); }
-            // Bank-aware search: pins the query to one physical RAM page.
-            if (physPageOpt) { q.hasPhysPageFilter = true; q.physPage = *physPageOpt; }
-            const uint32_t frameT = ctx->config.frame;
-            if (beforeFrameOpt)
-                q.beforeGlobalT = static_cast<uint64_t>(*beforeFrameOpt) * frameT
-                                  + beforeTinOpt.value_or(0);
+            if (firstArgOpt.is<sol::table>())
+            {
+                sol::table tbl = firstArgOpt.as<sol::table>();
+                if (tbl["addr"].valid())
+                {
+                    uint16_t a = tbl["addr"].get<uint16_t>();
+                    q.addrFrom = q.addrTo = a;
+                }
+                else
+                {
+                    q.addrFrom = tbl["addr_from"].valid() ? tbl["addr_from"].get<uint16_t>() : (tbl["addrFrom"].valid() ? tbl["addrFrom"].get<uint16_t>() : 0);
+                    q.addrTo = tbl["addr_to"].valid() ? tbl["addr_to"].get<uint16_t>() : (tbl["addrTo"].valid() ? tbl["addrTo"].get<uint16_t>() : 0xFFFF);
+                }
+
+                std::string accStr = tbl["access"].valid() ? tbl["access"].get<std::string>() : "write";
+                q.access = ttd::TTDAccessTypeFromString(accStr.c_str());
+
+                if (tbl["value"].valid()) { q.hasValueFilter = true; q.value = tbl["value"].get<uint8_t>(); }
+                if (tbl["pc_from"].valid()) { q.hasPcFilter = true; q.pcFrom = tbl["pc_from"].get<uint16_t>(); q.pcTo = tbl["pc_to"].valid() ? tbl["pc_to"].get<uint16_t>() : 0xFFFF; }
+                else if (tbl["pcFrom"].valid()) { q.hasPcFilter = true; q.pcFrom = tbl["pcFrom"].get<uint16_t>(); q.pcTo = tbl["pcTo"].valid() ? tbl["pcTo"].get<uint16_t>() : 0xFFFF; }
+
+                if (tbl["phys_page"].valid()) { q.hasPhysPageFilter = true; q.physPage = tbl["phys_page"].get<uint8_t>(); }
+                else if (tbl["physPage"].valid()) { q.hasPhysPageFilter = true; q.physPage = tbl["physPage"].get<uint8_t>(); }
+
+                const uint32_t frameT = ctx->config.frame;
+                if (tbl["before_frame"].valid())
+                {
+                    uint64_t f = tbl["before_frame"].get<uint64_t>();
+                    uint32_t tin = tbl["before_tin"].valid() ? tbl["before_tin"].get<uint32_t>() : 0;
+                    q.beforeGlobalT = f * frameT + tin;
+                }
+                else if (tbl["before"].valid())
+                {
+                    q.beforeGlobalT = tbl["before"].get<uint64_t>();
+                }
+            }
+            else
+            {
+                if (firstArgOpt.is<uint16_t>())
+                {
+                    q.addrFrom = q.addrTo = firstArgOpt.as<uint16_t>();
+                }
+                else
+                {
+                    q.addrFrom = addrFromOpt.value_or(0);
+                    q.addrTo = addrToOpt.value_or(0xFFFF);
+                }
+                q.access = ttd::TTDAccessTypeFromString(accessOpt.value_or("write").c_str());
+                if (valueOpt) { q.hasValueFilter = true; q.value = *valueOpt; }
+                if (pcFromOpt) { q.hasPcFilter = true; q.pcFrom = *pcFromOpt; q.pcTo = pcToOpt.value_or(0xFFFF); }
+                if (physPageOpt) { q.hasPhysPageFilter = true; q.physPage = *physPageOpt; }
+                const uint32_t frameT = ctx->config.frame;
+                if (beforeFrameOpt)
+                    q.beforeGlobalT = static_cast<uint64_t>(*beforeFrameOpt) * frameT + beforeTinOpt.value_or(0);
+            }
 
             auto found = ctx->pTimeTravelManager->FindLastAccess(q);
             if (!found) { result["found"] = false; return result; }
@@ -2277,11 +2502,14 @@ public:
         });
 
         // Screen-area FNV-1a-64 digest — change detection without pixel transfer.
-        // screen_digest()            -> default banks (both screen pages on 128K)
-        // screen_digest(start, end)  -> explicit Z80 range
+        // screen_digest()                            -> default banks (both screen pages on 128K)
+        // screen_digest(start, end)                  -> explicit Z80 range
+        // screen_digest(nil, nil, nil, "active")     -> banks of the video mode actually
+        //                                               displayed (P1-3; explicit range wins)
         lua.set_function("screen_digest", [this](sol::optional<unsigned> startOpt,
                                                  sol::optional<unsigned> endOpt,
-                                                 sol::optional<bool> includeBorderOpt) -> sol::table {
+                                                 sol::optional<bool> includeBorderOpt,
+                                                 sol::optional<std::string> modeOpt) -> sol::table {
             sol::state_view lua_view(*_lua);
             sol::table result = lua_view.create_table();
             Emulator* emulator = effectiveEmulator();
@@ -2300,6 +2528,21 @@ public:
 
             const bool is128K = (config.mem_model == MM_SPECTRUM128 || config.mem_model == MM_PENTAGON ||
                                  config.mem_model == MM_PLUS3);
+
+            // mode: "active" hashes the RAM pages the CURRENT video mode actually
+            // displays (ATM hardware modes follow the 7FFD-selected bit-plane pair);
+            // "default" / omitted keeps the model-dependent pages 5/7
+            bool activeMode = false;
+            if (modeOpt.has_value())
+            {
+                if (*modeOpt == "active")
+                    activeMode = true;
+                else if (*modeOpt != "default")
+                {
+                    result["error"] = "mode must be 'default' or 'active'";
+                    return result;
+                }
+            }
 
             const uint64_t previousDigest = state.last_screen_digest;
             const uint64_t previousFrame = state.last_screen_digest_frame;
@@ -2326,9 +2569,30 @@ public:
             }
             else
             {
-                std::vector<uint16_t> banks{ScreenDigest::kScreen0RAMPage};
-                if (is128K)
-                    banks.push_back(ScreenDigest::kScreen1RAMPage);
+                std::vector<uint16_t> banks;
+                if (activeMode)
+                {
+                    // Surface actually displayed by the current video mode: ZX modes
+                    // keep pages 5/7, ATM hardware modes hash the 7FFD-selected
+                    // bit-plane pair - flipping FF77 between ZX and 16c surfaces now
+                    // flips the digest even with constant underlying pages
+                    const VideoModeEnum videoMode = context->pScreen->GetVideoMode();
+                    banks = Screen::GetActiveSurfaceRAMPages(videoMode, state.p7FFD, is128K);
+
+                    sol::table pages = lua_view.create_table();
+                    for (uint16_t page : banks)
+                        pages.add(page);
+                    sol::table activeSurface = lua_view.create_table();
+                    activeSurface["video_mode"] = Screen::GetVideoModeName(videoMode);
+                    activeSurface["pages"] = pages;
+                    result["active_surface"] = activeSurface;
+                }
+                else
+                {
+                    banks.push_back(ScreenDigest::kScreen0RAMPage);
+                    if (is128K)
+                        banks.push_back(ScreenDigest::kScreen1RAMPage);
+                }
 
                 sol::table perBank = lua_view.create_table();
                 for (uint16_t page : banks)
@@ -2360,6 +2624,193 @@ public:
             if (previousFrame != 0)
                 result["previous_digest_frame"] = static_cast<uint64_t>(previousFrame);
             return result;
+        });
+
+        // Static port-map introspection (P1-5): which devices answer which I/O
+        // ports on this model, under which gating conditions, plus the live
+        // routing flags. Mirrors GET /api/v1/emulator/{id}/ports
+        // (PortDecoder::getPortMapEntries / GetMouseRoutingState, single source).
+        lua.set_function("ports_map", [this](sol::this_state s) -> sol::variadic_results {
+            sol::variadic_results results;
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return mouseError(s, "no emulator");
+
+            EmulatorContext* context = emulator->GetContext();
+            if (!context || !context->pPortDecoder)
+                return mouseError(s, "context not initialized");
+
+            auto portHex = [](uint16_t value) {
+                char text[8];
+                std::snprintf(text, sizeof(text), "0x%04X", value);
+                return std::string(text);
+            };
+
+            sol::state_view lua(s);
+            sol::table result = lua.create_table();
+            result["model"] = Config::GetModelFullName(context->config.mem_model);
+
+            sol::table entries = lua.create_table();
+            for (const PortMapEntry& entry : context->pPortDecoder->getPortMapEntries())
+            {
+                sol::table item = lua.create_table();
+                item["port"] = portHex(entry.port);
+                item["mask"] = portHex(entry.mask);
+                item["match"] = portHex(entry.match);
+                item["device"] = entry.device;
+                if (entry.gate)  // absent key = ungated (WebAPI sends null)
+                    item["gate"] = entry.gate;
+
+                // Tagged registry fields (P1-2): names from the core single
+                // source - identical strings on WebAPI /ports, MCP and Python
+                sol::table tagNames = lua.create_table();
+                for (const std::string& tagName : PortTagSetToStrings(entry.tags))
+                    tagNames.add(tagName);
+                item["tags"] = tagNames;  // empty table = untagged row
+                const char* latchName = PagingLatchToString(entry.latch);
+                if (latchName)  // absent key = no live-value binding
+                    item["latch"] = latchName;
+
+                entries.add(item);
+            }
+            result["entries"] = entries;
+
+            bool mouseDecoded = false;
+            std::string mouseNote;
+            context->pPortDecoder->GetMouseRoutingState(mouseDecoded, mouseNote);
+
+            const CONFIG& config = context->config;
+            const EmulatorState& state = context->emulatorState;
+            sol::table live = lua.create_table();
+            live["trdos_active"] = (state.flags & (CF_TRDOS | CF_DOSPORTS)) != 0;
+            live["mouse_ports_decoded"] = mouseDecoded;
+            live["mouse_routing_note"] = mouseNote;
+            const bool scorpion = (config.mem_model == MM_SCORP || config.mem_model == MM_PROFSCORP);
+            if (scorpion)
+                live["shadow_monitor_paged"] = (state.p1FFD & 0x02) != 0;
+            // else: key absent = the #1FFD latch does not exist on this model
+            result["live"] = live;
+
+            results.push_back(sol::make_object(s, result));
+            return results;
+        });
+
+        // Tagged paging latches + bank table (P1-2 design).
+        // Mirrors GET /api/v1/emulator/{id}/state/paging.
+        lua.set_function("paging_state", [this](sol::this_state s) -> sol::variadic_results {
+            sol::variadic_results results;
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return mouseError(s, "no emulator");
+
+            EmulatorContext* context = emulator->GetContext();
+            if (!context || !context->pPortDecoder || !context->pMemory)
+                return mouseError(s, "context not initialized");
+
+            auto hexByte = [](uint32_t value) {
+                char text[8];
+                std::snprintf(text, sizeof(text), "0x%02X", value);
+                return std::string(text);
+            };
+            auto hexWord = [](uint16_t value) {
+                char text[8];
+                std::snprintf(text, sizeof(text), "0x%04X", value);
+                return std::string(text);
+            };
+
+            sol::state_view lua(s);
+            sol::table result = lua.create_table();
+            const CONFIG& config = context->config;
+            const EmulatorState& state = context->emulatorState;
+            Memory& memory = *context->pMemory;
+            PortDecoder* decoder = context->pPortDecoder;
+            ROM* rom = context->pCore ? context->pCore->GetROM() : nullptr;
+
+            result["model"] = Config::GetModelFullName(config.mem_model);
+            result["paging_locked"] = (state.p7FFD & PORT_7FFD_LOCK) != 0;
+            result["trdos_active"] = (state.flags & (CF_TRDOS | CF_DOSPORTS)) != 0;
+
+            // Latches array
+            sol::table latches = lua.create_table();
+            for (const PortMapEntry& entry : decoder->GetPagingLatches(Tags(PortTag::Memory)))
+            {
+                sol::table latch = lua.create_table();
+                latch["port"] = hexWord(entry.port);
+                latch["device"] = entry.device ? entry.device : "";
+                if (entry.gate) latch["gate"] = entry.gate;
+
+                // Tag names + latch binding from the core single source -
+                // identical strings on /state/paging, MCP, CLI and Python
+                sol::table tagNames = lua.create_table();
+                for (const std::string& tagName : PortTagSetToStrings(entry.tags))
+                    tagNames.add(tagName);
+                latch["tags"] = tagNames;
+                const char* latchName = PagingLatchToString(entry.latch);
+                if (latchName)
+                    latch["latch"] = latchName;
+
+                uint32_t value = PortDecoder::ReadPagingLatch(entry.latch, state);
+                latch["value"] = hexByte(value);
+
+                // Decoded bits: core §5.1 dictionary (DecodePagingLatch) with
+                // native ints/bools, matching /state/paging verbatim
+                sol::table decoded = lua.create_table();
+                for (const DecodedLatchField& field : DecodePagingLatch(entry.latch, value, config.mem_model, config.ramsize))
+                {
+                    decoded[field.key] = field.isBool ? sol::make_object(s, field.boolValue)
+                                                      : sol::make_object(s, field.intValue);
+                }
+                if (decoded.size() > 0)
+                    latch["decoded"] = decoded;
+                latches.add(latch);
+            }
+            result["latches"] = latches;
+
+            // Banks array
+            sol::table banks = lua.create_table();
+            for (int i = 0; i < 4; ++i)
+            {
+                sol::table bank = lua.create_table();
+                bank["bank"] = i;
+                const char* ranges[] = {"0x0000-0x3FFF", "0x4000-0x7FFF", "0x8000-0xBFFF", "0xC000-0xFFFF"};
+                bank["address_range"] = ranges[i];
+
+                if (i == 0 && memory.IsBank0ROM())
+                {
+                    bank["type"] = "ROM";
+                    uint8_t romPage = memory.GetROMPage();
+                    bank["page"] = static_cast<int>(romPage);
+                    if (rom)
+                    {
+                        uint8_t* pagePtr = memory.ROMPageHostAddress(romPage);
+                        if (pagePtr)
+                        {
+                            std::string sig = rom->CalculateSignature(pagePtr, 0x4000);
+                            // GetROMTitle carries the "Unknown ROM, <digest>"
+                            // fallback; role = core layout table (§5.2) - a
+                            // role/name mismatch is the wrong-ROM signal
+                            bank["name"] = rom->GetROMTitle(sig);
+                            bank["signature"] = sig;
+                        }
+                        bank["role"] = rom->GetROMPageRole(romPage);
+                    }
+                }
+                else
+                {
+                    bank["type"] = "RAM";
+                    switch (i) {
+                        case 0: bank["page"] = static_cast<int>(memory.GetRAMPageForBank0()); break;
+                        case 1: bank["page"] = static_cast<int>(memory.GetRAMPageForBank1()); bank["contended"] = true; break;
+                        case 2: bank["page"] = static_cast<int>(memory.GetRAMPageForBank2()); break;
+                        case 3: bank["page"] = static_cast<int>(memory.GetRAMPageForBank3()); break;
+                    }
+                }
+                banks.add(bank);
+            }
+            result["banks"] = banks;
+
+            results.push_back(sol::make_object(s, result));
+            return results;
         });
 
         // Raster beam position and zone at the current t-state

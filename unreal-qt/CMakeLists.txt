@@ -45,6 +45,59 @@ set (SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 # Include CMake helper functions file
 include(${ROOT_DIR}/cmake/func.cmake)
 
+# Build fingerprint (version / git branch / git commit / build type), generated
+# to ${CMAKE_BINARY_DIR}/generated/emulator/buildinfo.h. The root CMakeLists.txt
+# does the same thing for a root-level build; this standalone copy is needed
+# because CI (and any dev who runs `cmake -B build` from inside unreal-qt/)
+# never executes the root CMakeLists.txt, so its configure_file() never runs.
+if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    find_package(Git QUIET)
+
+    # unreal-qt's own project() call carries no VERSION; match the root
+    # CMakeLists.txt's project(unreal VERSION 1.0.0) for a standalone build.
+    set(UNREAL_BUILD_VERSION "1.0.0")
+
+    set(UNREAL_GIT_BRANCH "unknown")
+    set(UNREAL_GIT_COMMIT "unknown")
+
+    if (GIT_FOUND)
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} branch --show-current
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            RESULT_VARIABLE UNREAL_GIT_BRANCH_RESULT
+            OUTPUT_VARIABLE UNREAL_GIT_BRANCH
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            RESULT_VARIABLE UNREAL_GIT_COMMIT_RESULT
+            OUTPUT_VARIABLE UNREAL_GIT_COMMIT
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+        if (UNREAL_GIT_BRANCH STREQUAL "")
+            set(UNREAL_GIT_BRANCH "unknown")
+        endif()
+        if (UNREAL_GIT_COMMIT STREQUAL "")
+            set(UNREAL_GIT_COMMIT "unknown")
+        endif()
+    endif()
+
+    if (CMAKE_BUILD_TYPE)
+        set(UNREAL_BUILD_TYPE "${CMAKE_BUILD_TYPE}")
+    else()
+        set(UNREAL_BUILD_TYPE "MultiConfig")
+    endif()
+
+    configure_file(
+        ${ROOT_DIR}/core/src/emulator/buildinfo.h.in
+        ${CMAKE_BINARY_DIR}/generated/emulator/buildinfo.h
+        @ONLY
+    )
+endif ()
+
 # Add core library if not already defined by parent build
 if (NOT TARGET unrealng::core)
     add_subdirectory("${ROOT_DIR}/core/src" core)
@@ -310,6 +363,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty"
     "${CMAKE_CURRENT_BINARY_DIR}"  # For Qt-generated ui_*.h headers
+    "${CMAKE_BINARY_DIR}/generated"  # Configure-time generated headers (emulator/buildinfo.h)
     "${ROOT_DIR}/core/src"
     "${ROOT_DIR}/core"  # Added parent directory for proper automation includes
     "${ROOT_DIR}/core/automation"  # For automation headers

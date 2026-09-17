@@ -672,7 +672,7 @@ std::string PortDecoder_Pentagon128::Dump_FFFD_value(uint8_t value)
 
 /// endregion </Debug information>
 
-bool PortDecoder_Pentagon128::IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister)
+bool PortDecoder_Pentagon128::IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister) const
 {
     return Default_IsPort_KempstonMouse(port, outRegister);
 }

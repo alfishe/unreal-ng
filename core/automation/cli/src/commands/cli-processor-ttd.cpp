@@ -12,6 +12,8 @@
 ///   ttd resume [frame] [tin]   — resume recording from current or specified point
 ///   ttd position               — show current TTDTimePoint (frame + tInFrame)
 ///   ttd markers                — list external-event markers (replay barriers)
+///   ttd bookmark [add|del|list] — agent bookmarks (advisory, never barriers)
+///   ttd seek --bookmark <label> — seek to a bookmarked position
 ///
 /// All commands operate on the currently selected emulator instance. The TTD
 /// engine requires the emulator to be paused for seek/step/resume operations
@@ -20,6 +22,7 @@
 #include "cli-processor.h"
 
 #include <debugger/ttd/timetravelmanager.h>
+#include <debugger/ttd/ttdbookmarks.h>
 #include <debugger/ttd/ttdexternalevents.h>
 #include <debugger/ttd/ttdprobe.h>
 #include <emulator/emulator.h>
@@ -100,6 +103,10 @@ void CLIProcessor::HandleTTD(const ClientSession& session, const std::vector<std
     {
         HandleTTDMarkers(session, context);
     }
+    else if (subcommand == "bookmark" || subcommand == "bookmarks" || subcommand == "bm")
+    {
+        HandleTTDBookmark(session, context, args);
+    }
     else if (subcommand == "dump" || subcommand == "save")
     {
         HandleTTDDump(session, context, args);
@@ -156,6 +163,10 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "  ttd resume [frame] [tinframe]    Resume recording from current or specified point" << NEWLINE;
     ss << "  ttd position                     Show current TTDTimePoint (frame + tInFrame)" << NEWLINE;
     ss << "  ttd markers                      List external-event markers (replay barriers)" << NEWLINE;
+    ss << "  ttd bookmark [list]              List agent bookmarks (advisory, never barriers)" << NEWLINE;
+    ss << "  ttd bookmark add <l> [f] [t]     Add bookmark <label> at frame/tinframe (default: here)" << NEWLINE;
+    ss << "  ttd bookmark del <label>         Remove a bookmark by label" << NEWLINE;
+    ss << "  ttd seek --bookmark <label>      Seek to a bookmarked position" << NEWLINE;
     ss << NEWLINE;
     ss << "Phase 4 — Reverse Search + Automation:" << NEWLINE;
     ss << "  ttd dump <path>                  Serialize session to .ttd file" << NEWLINE;
@@ -221,6 +232,7 @@ void CLIProcessor::HandleTTDStatus(const ClientSession& session, EmulatorContext
         ss << "  Coverage index:         absent (reverse queries fall back to replay)"
            << NEWLINE;
     }
+    ss << "  Bookmarks:              " << info.bookmarkCount << " (advisory, never barriers)" << NEWLINE;
 
     session.SendResponse(ss.str());
 }
@@ -295,60 +307,204 @@ void CLIProcessor::HandleTTDSeek(const ClientSession& session, EmulatorContext* 
 {
     ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
 
-    if (args.size() < 2)
+    // TD-4: `ttd seek --bookmark <label>` (alias -b) resolves the label to
+    // its stored position; everything else is a coordinate seek.
+    std::string bookmarkLabel;
+    std::vector<std::string> positional;
+    for (size_t i = 1; i < args.size(); ++i)
     {
-        session.SendResponse(std::string("Error: Missing frame argument") + NEWLINE +
-                             "Usage: ttd seek <frame> [tinframe]" + NEWLINE);
-        return;
-    }
-
-    try
-    {
-        uint64_t frame = std::stoull(args[1]);
-        uint32_t tInFrame = 0;
-        if (args.size() > 2)
+        if ((args[i] == "--bookmark" || args[i] == "-b") && i + 1 < args.size())
         {
-            tInFrame = static_cast<uint32_t>(std::stoul(args[2]));
+            bookmarkLabel = args[++i];
         }
-
-        ttd::TTDTimePoint target{frame, tInFrame};
-
-        ttd::TimeTravelManager::TTDSeekResult result;
-        bool reached = mgr->SeekTo(target, &result);
-
-        std::stringstream ss;
-        if (reached)
+        else if (args[i] == "--bookmark" || args[i] == "-b")
         {
-            ss << "TTD: Seek reached target (frame=" << result.arrivedAt.frame
-               << ", tInFrame=" << result.arrivedAt.tInFrame << ")" << NEWLINE;
+            session.SendResponse(std::string("Error: --bookmark requires a label") + NEWLINE +
+                                 "Usage: ttd seek --bookmark <label>" + NEWLINE);
+            return;
         }
         else
         {
-            ss << "TTD: Seek halted at (frame=" << result.arrivedAt.frame
-               << ", tInFrame=" << result.arrivedAt.tInFrame << ")" << NEWLINE;
+            positional.push_back(args[i]);
+        }
+    }
 
-            switch (result.haltReason)
+    if (bookmarkLabel.empty() && positional.empty())
+    {
+        session.SendResponse(std::string("Error: Missing frame argument") + NEWLINE +
+                             "Usage: ttd seek <frame> [tinframe]" + NEWLINE +
+                             "       ttd seek --bookmark <label>" + NEWLINE);
+        return;
+    }
+
+    ttd::TimeTravelManager::TTDSeekResult result;
+    bool reached = false;
+
+    if (!bookmarkLabel.empty())
+    {
+        std::string err;
+        reached = mgr->SeekToBookmark(bookmarkLabel, &result, &err);
+        if (!err.empty())
+        {
+            session.SendResponse(std::string("Error: ") + err + NEWLINE);
+            return;
+        }
+    }
+    else
+    {
+        try
+        {
+            uint64_t frame = std::stoull(positional[0]);
+            uint32_t tInFrame = 0;
+            if (positional.size() > 1)
             {
-                case ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent:
-                    ss << "  Reason: External-event marker barrier" << NEWLINE;
-                    ss << "  Marker kind: " << ttd::TTDExternalEventKindToString(result.blockingMarker.kind) << NEWLINE;
-                    ss << "  Marker reason: " << result.blockingMarker.reason << NEWLINE;
-                    break;
-                case ttd::TimeTravelManager::TTDSeekHaltReason::OutOfRange:
-                    ss << "  Reason: Target out of range" << NEWLINE;
-                    break;
-                default:
-                    ss << "  Reason: Unknown" << NEWLINE;
-                    break;
+                tInFrame = static_cast<uint32_t>(std::stoul(positional[1]));
+            }
+
+            ttd::TTDTimePoint target{frame, tInFrame};
+            reached = mgr->SeekTo(target, &result);
+        }
+        catch (const std::exception& e)
+        {
+            session.SendResponse(std::string("Error: Invalid argument: ") + e.what() + NEWLINE);
+            return;
+        }
+    }
+
+    std::stringstream ss;
+    if (reached)
+    {
+        ss << "TTD: Seek reached target (frame=" << result.arrivedAt.frame
+           << ", tInFrame=" << result.arrivedAt.tInFrame << ")" << NEWLINE;
+    }
+    else
+    {
+        ss << "TTD: Seek halted at (frame=" << result.arrivedAt.frame
+           << ", tInFrame=" << result.arrivedAt.tInFrame << ")" << NEWLINE;
+
+        switch (result.haltReason)
+        {
+            case ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent:
+                ss << "  Reason: External-event marker barrier" << NEWLINE;
+                ss << "  Marker kind: " << ttd::TTDExternalEventKindToString(result.blockingMarker.kind) << NEWLINE;
+                ss << "  Marker reason: " << result.blockingMarker.reason << NEWLINE;
+                break;
+            case ttd::TimeTravelManager::TTDSeekHaltReason::OutOfRange:
+                ss << "  Reason: Target out of range" << NEWLINE;
+                break;
+            default:
+                ss << "  Reason: Unknown" << NEWLINE;
+                break;
+        }
+    }
+    if (!bookmarkLabel.empty())
+    {
+        ss << "  (bookmark '" << bookmarkLabel << "')" << NEWLINE;
+    }
+
+    session.SendResponse(ss.str());
+}
+
+// -------------------------------------------------------------------------
+// TD-4 — agent bookmarks (advisory annotations, never replay barriers).
+// Labels are keys: non-empty, at most 63 characters, unique per session.
+// -------------------------------------------------------------------------
+
+void CLIProcessor::HandleTTDBookmark(const ClientSession& session, EmulatorContext* context,
+                                      const std::vector<std::string>& args)
+{
+    ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
+
+    const std::string action = args.size() > 1 ? args[1] : "list";
+
+    if (action == "list" || action == "ls")
+    {
+        const auto bookmarks = mgr->GetBookmarks();
+
+        std::stringstream ss;
+        ss << "TTD Bookmarks (" << bookmarks.size() << " total, advisory — never replay barriers)" << NEWLINE;
+        ss << "==========================================================" << NEWLINE;
+
+        if (bookmarks.empty())
+        {
+            ss << "  (none)" << NEWLINE;
+        }
+        else
+        {
+            for (size_t i = 0; i < bookmarks.size(); ++i)
+            {
+                ss << "  [" << i << "] frame=" << bookmarks[i].time.frame
+                   << " tInFrame=" << bookmarks[i].time.tInFrame
+                   << " label=\"" << bookmarks[i].label << "\"" << NEWLINE;
             }
         }
 
         session.SendResponse(ss.str());
+        return;
     }
-    catch (const std::exception& e)
+
+    if (action == "add" || action == "mark")
     {
-        session.SendResponse(std::string("Error: Invalid argument: ") + e.what() + NEWLINE);
+        if (args.size() < 3)
+        {
+            session.SendResponse(std::string("Error: Missing label argument") + NEWLINE +
+                                 "Usage: ttd bookmark add <label> [frame] [tinframe]" + NEWLINE +
+                                 "       (frame omitted → bookmark the current position)" + NEWLINE);
+            return;
+        }
+        const std::string label = args[2];
+
+        // Optional position; omitted → current position (mark here).
+        ttd::TTDTimePoint time = mgr->CurrentPosition();
+        try
+        {
+            if (args.size() > 3)
+            {
+                time.frame = std::stoull(args[3]);
+                time.tInFrame = args.size() > 4 ? static_cast<uint32_t>(std::stoul(args[4])) : 0u;
+            }
+        }
+        catch (const std::exception& e)
+        {
+            session.SendResponse(std::string("Error: Invalid argument: ") + e.what() + NEWLINE);
+            return;
+        }
+
+        std::string err;
+        if (!mgr->AddBookmark(time, label, &err))
+        {
+            session.SendResponse(std::string("Error: ") + err + NEWLINE);
+            return;
+        }
+
+        std::stringstream ss;
+        ss << "TTD: Bookmark '" << label << "' added at (frame=" << time.frame
+           << ", tInFrame=" << time.tInFrame << ")" << NEWLINE;
+        session.SendResponse(ss.str());
+        return;
     }
+
+    if (action == "del" || action == "delete" || action == "remove" || action == "rm")
+    {
+        if (args.size() < 3)
+        {
+            session.SendResponse(std::string("Error: Missing label argument") + NEWLINE +
+                                 "Usage: ttd bookmark del <label>" + NEWLINE);
+            return;
+        }
+
+        if (!mgr->RemoveBookmark(args[2]))
+        {
+            session.SendResponse(std::string("Error: Unknown bookmark '") + args[2] + "'" + NEWLINE);
+            return;
+        }
+
+        session.SendResponse(std::string("TTD: Bookmark '") + args[2] + "' removed" + NEWLINE);
+        return;
+    }
+
+    session.SendResponse(std::string("Error: Unknown bookmark action '") + action + "'" + NEWLINE +
+                         "Usage: ttd bookmark [list|add|del]" + NEWLINE);
 }
 
 void CLIProcessor::HandleTTDStepBack(const ClientSession& session, EmulatorContext* context)
@@ -561,6 +717,11 @@ void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorConte
     // Parse --key value pairs from args[1..]
     ttd::TTDSearchQuery q;
     bool hasAddr = false;
+    bool hasAddrFrom = false;
+    bool hasAddrTo = false;
+    bool hasPcFrom = false;
+    bool hasPcTo = false;
+    bool hasValue = false;
 
     for (size_t i = 1; i < args.size(); ++i)
     {
@@ -570,6 +731,16 @@ void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorConte
             q.addrFrom = q.addrTo = static_cast<uint16_t>(std::stoul(args[++i], nullptr, 0));
             hasAddr = true;
         }
+        else if (tok == "--addr-from" && i + 1 < args.size())
+        {
+            q.addrFrom = static_cast<uint16_t>(std::stoul(args[++i], nullptr, 0));
+            hasAddrFrom = true;
+        }
+        else if (tok == "--addr-to" && i + 1 < args.size())
+        {
+            q.addrTo = static_cast<uint16_t>(std::stoul(args[++i], nullptr, 0));
+            hasAddrTo = true;
+        }
         else if (tok == "--access" && i + 1 < args.size())
         {
             q.access = ttd::TTDAccessTypeFromString(args[++i].c_str());
@@ -578,16 +749,19 @@ void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorConte
         {
             q.value = static_cast<uint8_t>(std::stoul(args[++i], nullptr, 0));
             q.hasValueFilter = true;
+            hasValue = true;
         }
         else if (tok == "--pc-from" && i + 1 < args.size())
         {
             q.pcFrom = static_cast<uint16_t>(std::stoul(args[++i], nullptr, 0));
             q.hasPcFilter = true;
+            hasPcFrom = true;
         }
         else if (tok == "--pc-to" && i + 1 < args.size())
         {
             q.pcTo = static_cast<uint16_t>(std::stoul(args[++i], nullptr, 0));
             if (!q.hasPcFilter) q.hasPcFilter = true;
+            hasPcTo = true;
         }
         else if (tok == "--phys-page" && i + 1 < args.size())
         {
@@ -616,11 +790,11 @@ void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorConte
         }
     }
 
-    if (!hasAddr)
+    if (!hasAddr && !hasAddrFrom && !hasAddrTo && !hasPcFrom && !hasPcTo && !hasValue)
     {
-        session.SendResponse(std::string("Error: --addr is required") + NEWLINE +
-                             "Usage: ttd find-last --addr <A> [--access write|read|execute|io] "
-                             "[--value V] [--pc-from X] [--pc-to Y] "
+        session.SendResponse(std::string("Error: Missing search criteria") + NEWLINE +
+                             "Usage: ttd find-last [--addr <A> | --addr-from <F> --addr-to <T>] "
+                             "[--access write|read|execute|io] [--value V] [--pc-from X] [--pc-to Y] "
                              "[--before-frame F] [--before-tin T]" + NEWLINE);
         return;
     }

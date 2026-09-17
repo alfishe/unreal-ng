@@ -78,6 +78,16 @@ echo "$LIST" | jq -c '{isError: .result.isError, emulators: (.result.structuredC
 echo "$LIST" | jq -e 'has("result")' >/dev/null || { echo "FAIL: emulator_manage list: $LIST"; exit 1; }
 echo "$LIST" | jq -c '.result.content[0].text' | sed 's/^/    /'
 
+echo "== 7b. tools/call emulator_manage server (build fingerprint + models_creatable, parity with WebAPI /status)"
+SERVER=$(curl -s -X POST "$MCP_URL" -H 'Content-Type: application/json' \
+    -d '{"jsonrpc":"2.0","id":40,"method":"tools/call","params":{"name":"emulator_manage","arguments":{"action":"server"}}}')
+echo "$SERVER" | jq -e '.result.isError != true
+    and (.result.structuredContent.server.git_branch | type == "string")
+    and (.result.structuredContent.models_creatable | type == "array")
+    and (.result.structuredContent.models_creatable | index("48K") != null)' >/dev/null \
+    || { echo "FAIL: emulator_manage server: $SERVER"; exit 1; }
+echo "$SERVER" | jq -c '.result.structuredContent.server' | sed 's/^/    /'
+
 echo "== 8. unknown method → -32601"
 UNKNOWN=$(curl -s -X POST "$MCP_URL" -H 'Content-Type: application/json' \
     -d '{"jsonrpc":"2.0","id":5,"method":"no/such/method"}')

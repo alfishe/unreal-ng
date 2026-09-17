@@ -18,6 +18,7 @@
 
 #define _CODE_UNDER_TEST 1
 
+#include "emulator/io/fdc/diskimage.h"
 #include "emulator/io/fdc/wd1793.h"
 
 #include <gtest/gtest.h>
@@ -347,4 +348,189 @@ TEST_F(WD1793_SleepTimeout_Test, Beta128ResetStopsSpinningMotorOnce)
                                  { return motorStoppedCount() > initialStoppedNotifications; }));
     EXPECT_EQ(motorStoppedCount() - initialStoppedNotifications, 1u)
         << "Duplicate NC_FDD_MOTOR_STOPPED posted for a single motor stop";
+}
+
+/// RESTORE must behave identically whether the controller is fresh, has been
+/// woken from sleep after a motor timeout, or sits in its awake-idle window with
+/// the motor off (where handleStep() skips the FSM entirely). The FSM charges
+/// _diffTime (time since the previous process()) against pending step delays,
+/// so a clock left stale across an idle period would make the first delay
+/// elapse instantly and the seek finish far too early. Measured in whole frames:
+/// 10 steps x 6 ms = 60 ms must take at least 60 ms and at most two frames more.
+TEST_F(WD1793_SleepTimeout_Test, RestoreTimingIdenticalAfterTimeoutSleepAndAwakeIdle)
+{
+    static constexpr int8_t START_TRACK = 10;
+    static constexpr uint8_t CMD_RESTORE_6MS = 0x00;  // RESTORE: no head load, no verify, 6 ms stepping rate
+    static constexpr size_t EXPECTED_TSTATES = START_TRACK * 6 * (Z80_FREQUENCY / 1000);
+    static constexpr size_t MAX_RUN_TSTATES = 20 * FRAME_TSTATES;
+
+    auto restoreAndMeasure = [this](const char* phase) -> size_t
+    {
+        _fdc->getDrive()->setTrack(START_TRACK);
+        _fdc->portDeviceOutMethod(WD1793::PORT_1F, CMD_RESTORE_6MS);
+        EXPECT_FALSE(_fdc->isSleeping()) << phase << ": command must wake the controller";
+        EXPECT_TRUE(_fdc->getDrive()->getMotor()) << phase << ": command must start the motor";
+
+        size_t elapsed = 0;
+        while (elapsed < MAX_RUN_TSTATES && (_fdc->getStatusRegister() & WD1793::WDS_BUSY))
+        {
+            elapsed += RunEmulation(FRAME_TSTATES);
+        }
+
+        EXPECT_FALSE(_fdc->getStatusRegister() & WD1793::WDS_BUSY) << phase << ": RESTORE did not complete";
+        EXPECT_EQ(static_cast<int>(_fdc->getDrive()->getTrack()), 0) << phase << ": head is not at track 0";
+        return elapsed;
+    };
+
+    // Phase 1: fresh controller
+    _z80->t = 1000;
+    _context->emulatorState.t_states = 0;
+    const size_t fresh = restoreAndMeasure("fresh");
+    EXPECT_GE(fresh, EXPECTED_TSTATES) << "fresh: RESTORE finished before its step delays could have elapsed";
+    EXPECT_LE(fresh, EXPECTED_TSTATES + 2 * FRAME_TSTATES) << "fresh: RESTORE took too long";
+
+    // Phase 2: 6 s without FDC access - motor times out at ~3 s, controller sleeps
+    RunEmulation(6 * Z80_FREQUENCY);
+    ASSERT_FALSE(_fdc->getDrive()->getMotor()) << "Precondition: motor must have timed out";
+    ASSERT_TRUE(_fdc->isSleeping()) << "Precondition: controller must be asleep";
+    const size_t afterSleep = restoreAndMeasure("woken from sleep");
+    EXPECT_EQ(afterSleep, fresh) << "RESTORE timing differs after sleep";
+
+    // Phase 3: awake-idle window - a status poll wakes the controller, then 1 s
+    // of idle with the motor off (handleStep skips the FSM here)
+    RunEmulation(6 * Z80_FREQUENCY);
+    ASSERT_TRUE(_fdc->isSleeping()) << "Precondition: controller must be asleep again";
+    _fdc->portDeviceInMethod(WD1793::PORT_1F);
+    ASSERT_FALSE(_fdc->isSleeping()) << "Precondition: status poll must wake the controller";
+    RunEmulation(1 * Z80_FREQUENCY);
+    ASSERT_FALSE(_fdc->isSleeping()) << "Precondition: still inside the 2 s idle window";
+    ASSERT_FALSE(_fdc->getDrive()->getMotor()) << "Precondition: motor must be off";
+    const size_t awakeIdle = restoreAndMeasure("awake-idle, motor off");
+    EXPECT_EQ(awakeIdle, fresh) << "RESTORE timing differs from the awake-idle window";
+}
+
+/// Motor timeout (~3 s) must stop the motor without raising INTRQ.
+/// Real WD1793 hardware has no motor control pin and never signals INTRQ on motor stop.
+/// Spurious INTRQ on motor stop sets bit 7 of Beta128 status port #FF, breaking guest polling loops.
+TEST_F(WD1793_SleepTimeout_Test, MotorTimeoutDoesNotRaiseIntrq)
+{
+    // Emulate command start: wake controller and start motor
+    _z80->t = 1000;
+    _context->emulatorState.t_states = 0;
+    _fdc->wakeUp();
+    _fdc->prolongFDDMotorRotation();
+    ASSERT_TRUE(_fdc->getDrive()->getMotor()) << "Precondition: motor must be spinning";
+
+    // Read status port #1F to clear any residual INTRQ
+    _fdc->portDeviceInMethod(WD1793::PORT_1F);
+    EXPECT_FALSE(_fdc->_intrq_out) << "INTRQ should be clear before timeout";
+    EXPECT_FALSE(_fdc->portDeviceInMethod(0x00FF) & WD1793::INTRQ)
+        << "Beta128 port #FF bit 7 (INTRQ) should be 0 before timeout";
+
+    // Run emulation past the motor timeout (15 revolutions = ~3 s, run 5 s)
+    RunEmulation(5 * Z80_FREQUENCY);
+
+    ASSERT_FALSE(_fdc->getDrive()->getMotor()) << "Motor must have timed out";
+    EXPECT_FALSE(_fdc->_intrq_out) << "Motor stop must NOT raise INTRQ";
+    EXPECT_FALSE(_fdc->portDeviceInMethod(0x00FF) & WD1793::INTRQ)
+        << "Beta128 port #FF bit 7 (INTRQ) must NOT be set by motor timeout";
+}
+
+/// Type 2 (Read/Write Sector) and Type 3 commands must start the motor when issued
+/// while the motor is stopped (e.g. after a motor timeout while sleeping or in awake-idle).
+/// If the motor is not started before checking isReady(), the FDC deadlocks: isReady()
+/// requires a spinning motor, aborts the command immediately, and the FDC remains idle forever.
+TEST_F(WD1793_SleepTimeout_Test, ReadSectorStartsMotorAfterTimeoutSleepAndAwakeIdle)
+{
+    static constexpr uint8_t CMD_READ_SECTOR = 0x80;
+    DiskImage diskImage(MAX_CYLINDERS, MAX_SIDES);
+    _fdc->getDrive()->insertDisk(&diskImage);
+
+    // Phase 1: Woken from sleep after motor timeout
+    _z80->t = 1000;
+    _context->emulatorState.t_states = 0;
+    _fdc->wakeUp();
+    _fdc->prolongFDDMotorRotation();
+    ASSERT_TRUE(_fdc->getDrive()->getMotor());
+
+    // Run 5 s without FDC access -> motor times out and controller sleeps
+    RunEmulation(5 * Z80_FREQUENCY);
+    ASSERT_FALSE(_fdc->getDrive()->getMotor()) << "Precondition: motor must have timed out";
+    ASSERT_TRUE(_fdc->isSleeping()) << "Precondition: controller must be asleep";
+
+    // Issue Read Sector command via port #1F
+    _fdc->portDeviceOutMethod(WD1793::PORT_1F, CMD_READ_SECTOR);
+
+    EXPECT_FALSE(_fdc->isSleeping()) << "Read Sector must wake controller";
+    EXPECT_TRUE(_fdc->getDrive()->getMotor()) << "Read Sector must start motor after timeout sleep";
+    EXPECT_TRUE(_fdc->getStatusRegister() & WD1793::WDS_BUSY)
+        << "Read Sector must be busy (not rejected by isReady deadlock)";
+    EXPECT_FALSE(_fdc->getStatusRegister() & WD1793::WDS_NOTRDY)
+        << "Read Sector must not set NOT READY when disk is inserted";
+
+    // Phase 2: In awake-idle window with motor off
+    // Let motor time out again (5 s)
+    RunEmulation(5 * Z80_FREQUENCY);
+    ASSERT_FALSE(_fdc->getDrive()->getMotor()) << "Precondition: motor timed out";
+    ASSERT_TRUE(_fdc->isSleeping()) << "Precondition: controller asleep";
+
+    // Wake up via status poll (awake-idle)
+    _fdc->portDeviceInMethod(WD1793::PORT_1F);
+    ASSERT_FALSE(_fdc->isSleeping()) << "Precondition: status poll wakes controller";
+    ASSERT_FALSE(_fdc->getDrive()->getMotor()) << "Precondition: motor still off in awake-idle";
+
+    // Issue Read Sector command while controller is awake but motor is off
+    _fdc->portDeviceOutMethod(WD1793::PORT_1F, CMD_READ_SECTOR);
+
+    EXPECT_TRUE(_fdc->getDrive()->getMotor()) << "Read Sector must start motor in awake-idle";
+    EXPECT_TRUE(_fdc->getStatusRegister() & WD1793::WDS_BUSY)
+        << "Read Sector must be busy in awake-idle";
+    EXPECT_FALSE(_fdc->getStatusRegister() & WD1793::WDS_NOTRDY);
+
+    _fdc->getDrive()->insertDisk(nullptr);
+}
+
+/// Type 3 command (Read Address / Read Track) must also start the motor when issued
+/// while the motor is stopped (after timeout sleep or in awake-idle).
+TEST_F(WD1793_SleepTimeout_Test, ReadAddressStartsMotorAfterTimeoutSleep)
+{
+    static constexpr uint8_t CMD_READ_ADDRESS = 0xC0;
+    DiskImage diskImage(MAX_CYLINDERS, MAX_SIDES);
+    _fdc->getDrive()->insertDisk(&diskImage);
+
+    // Let motor time out and controller sleep
+    RunEmulation(5 * Z80_FREQUENCY);
+    ASSERT_FALSE(_fdc->getDrive()->getMotor()) << "Precondition: motor must have timed out";
+    ASSERT_TRUE(_fdc->isSleeping()) << "Precondition: controller must be asleep";
+
+    // Issue Read Address command via port #1F
+    _fdc->portDeviceOutMethod(WD1793::PORT_1F, CMD_READ_ADDRESS);
+
+    EXPECT_FALSE(_fdc->isSleeping()) << "Read Address must wake controller";
+    EXPECT_TRUE(_fdc->getDrive()->getMotor()) << "Read Address must start motor after timeout sleep";
+    EXPECT_TRUE(_fdc->getStatusRegister() & WD1793::WDS_BUSY);
+    EXPECT_FALSE(_fdc->getStatusRegister() & WD1793::WDS_NOTRDY);
+
+    _fdc->getDrive()->insertDisk(nullptr);
+}
+
+/// When no disk is inserted, Type 2 command must fail with NOTRDY status,
+/// transition to end of command, clear BUSY, and raise INTRQ.
+TEST_F(WD1793_SleepTimeout_Test, ReadSectorWithoutDiskInsertedFailsGracefully)
+{
+    _fdc->getDrive()->insertDisk(nullptr);
+    _fdc->portDeviceOutMethod(WD1793::PORT_1F, 0x80);
+
+    // Command sets BUSY and NOTRDY initially; transition to S_END_COMMAND is queued
+    EXPECT_TRUE(_fdc->getStatusRegister() & WD1793::WDS_NOTRDY);
+    EXPECT_TRUE(_fdc->getStatusRegister() & WD1793::WDS_BUSY);
+
+    // On the very next CPU step, S_END_COMMAND executes: BUSY is cleared, INTRQ raised
+    _z80->t += 100;
+    _fdc->handleStep();
+
+    EXPECT_TRUE(_fdc->getStatusRegister() & WD1793::WDS_NOTRDY);
+    EXPECT_FALSE(_fdc->getStatusRegister() & WD1793::WDS_BUSY);
+    EXPECT_TRUE(_fdc->_intrq_out);
+    EXPECT_TRUE(_fdc->portDeviceInMethod(0x00FF) & WD1793::INTRQ);
 }

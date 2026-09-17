@@ -58,6 +58,9 @@ local cpu = emu:get_cpu()
 print(string.format("PC = 0x%04X", cpu:get_pc()))
 ```
 
+### Machine Identity and Lifecycle
+The Lua bindings operate on the existing emulator instance (`get_emulator()`); they do not expose model-selecting instance creation or model switching. For lifecycle operations with strict model validation (`creatable` flags, reason-carrying failures) use the WebAPI (`POST /api/v1/emulator/create`, `GET /api/v1/emulator/models`) or the CLI (`create`/`start <model>`). Machine identity of the current instance is observable through state endpoints (e.g. TTD status reports `model_id`/`model_ram_pages`).
+
 ### Running Scripts
 
 #### From Command Line
@@ -185,6 +188,13 @@ mouse_button_names()               --> {"left","right","middle"}
 (`{button, frames_left}`, or **absent** when no click is pending), `ttd_journal`, plus
 `warning` when the change cannot reach the program (mouse not fitted, or a wheel step with no
 wheel fitted).
+
+`mouse_status()` additionally carries `routing = {ports_decoded, note}` — the same live
+answer as the WebAPI `GET /mouse/status` routing object: whether a mouse port read is decoded
+right now, and the reason when it is shadowed (mouse not fitted, TR-DOS ports accessible, a
+registered peripheral claims the port family, or model-specific gating — Scorpion DOS
+trigger / Shadow Monitor). The changing functions (`mouse_move` etc.) do not carry it, also
+matching the WebAPI.
 
 > [!NOTE]
 > `ports` values are integers, the same as in Python and the WebAPI.
@@ -644,14 +654,17 @@ local r = emu.ttd_find_last(0x5800, 'write')
 -- r is nil if no match, otherwise:
 -- r.frame, r.tstate, r.pc, r.value, r.physpage
 
--- Full filter set via a table argument:
+-- Full filter set via a table argument (single address or address/PC range search):
 local r2 = emu.ttd_find_last{
-    addr    = 0x5800,
-    access  = 'write',         -- 'write' | 'read' | 'execute' | 'out'
-    value   = 0x07,            -- optional exact value match
-    pc_from = 0x4000,          -- optional PC range filter
-    pc_to   = 0x8000,
-    before  = 14982            -- optional: don't search past this absolute tstate
+    addr_from = 0x4000,        -- optional address range start
+    addr_to   = 0x8000,        -- optional address range end
+    access    = 'write',       -- 'write' | 'read' | 'execute' | 'io'
+    value     = 0x07,          -- optional exact value match
+    pc_from   = 0x4000,        -- optional PC range filter
+    pc_to     = 0x8000,
+    before_frame = 4823,       -- optional: don't search past this frame
+    before_tin = 0,
+    phys_page = 5
 }
 ```
 
@@ -706,6 +719,28 @@ emu.mem_find("AF 3C", 0x8000, 0xFFFF, 2, 32)  -- start, end, alignment, max matc
 -- Screen state
 emu.screen_digest()                  -- digest screen area (0x4000-0x5AFF), border folded in
 emu.screen_digest(0x4000, 0x5AFF, false)       -- explicit range, border folding off
+emu.screen_digest(nil, nil, nil, "active")      -- hash the surface the video mode displays now
+                                               -- (ATM modes follow the 7FFD bit-plane pair);
+                                               -- result carries active_surface = {video_mode, pages}
+emu.ports_map()                      -- static port map + live routing flags (P1-5 + P1-2 tags):
+                                     -- { model, entries = {{port, mask, match, device, gate?,
+                                     --                      tags = {"memory","rom",...}, latch?}},
+                                     --   live = {trdos_active, mouse_ports_decoded,
+                                     --           mouse_routing_note, shadow_monitor_paged?} }
+                                     -- tags: semantic categories (keyboard/memory/rom/screen/storage/
+                                     --   mouse/joystick/system + sound members sound_ay/sound_covox/...);
+                                     --   a row can carry several (Pentagon #FB = covox AND sounddrive).
+                                     -- latch: live-value binding name (p7FFD, p1FFD, pDFFD, ...) when the
+                                     --   row is a paging latch; key absent otherwise.
+emu.paging_state()                   -- tagged paging latches + bank table (P1-2):
+                                     -- { model, paging_locked, trdos_active,
+                                     --   latches = {{port, latch, tags, device?, gate?, value,
+                                     --               decoded = {ram_bank=.., shadow_screen=.., ...}}},
+                                     --   banks = {{bank, address_range, type, page,
+                                     --             name?, role?, signature?, contended?}} }
+                                     -- ROM bank rows carry the §5.2 identification: name = recognized
+                                     -- content (SHA-256 catalog), role = the model's layout slot; a
+                                     -- role/name mismatch is the one-glance wrong-ROM signal.
 emu.beam_position()                  -- { frame, scanline, tstate, zone, ... }
 emu.frame_cost()                     -- per-frame halt/run cost accounting
 

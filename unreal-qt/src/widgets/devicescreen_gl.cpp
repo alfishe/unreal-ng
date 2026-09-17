@@ -237,13 +237,15 @@ void DeviceScreenGL::init(uint16_t width, uint16_t height, void* buffer)
 
 void DeviceScreenGL::detach()
 {
-    if (_devicePixels)
     {
-        delete _devicePixels;
-        _devicePixels = nullptr;
+        std::lock_guard<std::mutex> lock(_frameSourceMutex);
+        if (_devicePixels)
+        {
+            delete _devicePixels;
+            _devicePixels = nullptr;
+        }
+        _frameSource = nullptr;
     }
-
-    _frameSource = nullptr;
     _latchedFrame = QImage();
     _emulator.reset();
 
@@ -251,6 +253,20 @@ void DeviceScreenGL::detach()
     _frameHistory.clear();
 
     update();
+}
+
+void DeviceScreenGL::clearFrameSource()
+{
+    // Runs on the MessageCenter worker inside the pre-free drain window:
+    // after this returns, a concurrent paint finds both sources empty and
+    // touches only owned memory. No Qt calls here (cross-thread safe).
+    std::lock_guard<std::mutex> lock(_frameSourceMutex);
+    _frameSource = nullptr;
+    if (_devicePixels)
+    {
+        delete _devicePixels;
+        _devicePixels = nullptr;
+    }
 }
 
 void DeviceScreenGL::refresh()
@@ -295,15 +311,22 @@ void DeviceScreenGL::clearDisplayViewport()
 
 QImage DeviceScreenGL::grabFramebuffer()
 {
+    // Selection runs under the frame-source mutex: clearFrameSource() may
+    // revoke both sources from the MessageCenter worker during instance
+    // teardown, so the legacy fallback deep-copies under the lock to keep
+    // every post-lock read on owned memory.
     QImage frame;
-    if (_frameSource && !_latchedFrame.isNull() &&
-        _frameSource(_latchedFrame.bits(), static_cast<size_t>(_latchedFrame.sizeInBytes())))
     {
-        frame = _latchedFrame;
-    }
-    else if (_devicePixels != nullptr)
-    {
-        frame = *_devicePixels;
+        std::lock_guard<std::mutex> lock(_frameSourceMutex);
+        if (_frameSource && !_latchedFrame.isNull() &&
+            _frameSource(_latchedFrame.bits(), static_cast<size_t>(_latchedFrame.sizeInBytes())))
+        {
+            frame = _latchedFrame;
+        }
+        else if (_devicePixels != nullptr)
+        {
+            frame = _devicePixels->copy();
+        }
     }
     if (frame.isNull())
         return QImage();
@@ -443,16 +466,23 @@ void DeviceScreenGL::updateTexture()
     if (!_textureNeedsUpdate)
         return;
 
+    // Selection under the frame-source mutex (see clearFrameSource): the
+    // legacy fallback deep-copies so post-lock texture upload only touches
+    // owned memory.
+    QImage legacyCopy;
     QImage* sourceImage = nullptr;
-
-    if (_frameSource && !_latchedFrame.isNull() &&
-        _frameSource(_latchedFrame.bits(), static_cast<size_t>(_latchedFrame.sizeInBytes())))
     {
-        sourceImage = &_latchedFrame;
-    }
-    else if (_devicePixels != nullptr)
-    {
-        sourceImage = _devicePixels;
+        std::lock_guard<std::mutex> lock(_frameSourceMutex);
+        if (_frameSource && !_latchedFrame.isNull() &&
+            _frameSource(_latchedFrame.bits(), static_cast<size_t>(_latchedFrame.sizeInBytes())))
+        {
+            sourceImage = &_latchedFrame;
+        }
+        else if (_devicePixels != nullptr)
+        {
+            legacyCopy = _devicePixels->copy();
+            sourceImage = &legacyCopy;
+        }
     }
 
     if (!sourceImage)

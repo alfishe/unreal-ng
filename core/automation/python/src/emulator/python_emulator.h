@@ -6,6 +6,7 @@
 #include <emulator/emulatormanager.h>
 #include <emulator/memory/memory.h>
 #include <emulator/memory/memoryaccesstracker.h>
+#include <emulator/memory/memorymap.h>  // TD-3 sparse map + hexdump
 #include <emulator/cpu/z80.h>
 #include <emulator/io/fdc/fdd.h>
 #include <emulator/io/fdc/diskimage.h>
@@ -35,6 +36,8 @@
 #include <debugger/assembler/z80textassembler.h>
 #include <debugger/listing/listingparser.h>
 #include <emulator/platform.h>
+#include <emulator/ports/portdecoder.h>
+#include <emulator/config.h>
 #include <emulator/video/screendigest.h>
 #ifdef ENABLE_RECORDING
 #include "recordingmanager.h"
@@ -393,6 +396,57 @@ namespace PythonBindings
                 }
                 return py::bytes(data);
             }, "Read block of bytes from memory", py::arg("addr"), py::arg("len"))
+            // TD-3 Phase 1: sparse non-zero block overview (same core source
+            // as GET /memory/map and MCP inspect_state 'memory_map')
+            .def("memory_map", [](Emulator& self, const std::string& viewName, int minRun, int maxBlocks) -> py::dict {
+                Memory* mem = self.GetMemory();
+                EmulatorContext* ctx = self.GetContext();
+                py::dict result;
+                if (!mem || !ctx) return result;
+
+                const MemoryMapView view = (viewName == "ram" || viewName == "pages")
+                                               ? MemoryMapView::RamPages
+                                               : MemoryMapView::AddressSpace;
+                const uint32_t minRunClamped = minRun > 0 ? static_cast<uint32_t>(minRun) : kMemoryMapDefaultMinRun;
+                const uint32_t maxBlocksClamped = maxBlocks > 0 ? static_cast<uint32_t>(maxBlocks) : kMemoryMapDefaultMaxBlocks;
+
+                const MemoryMapReport report = BuildMemoryMap(*mem, ctx->config, view, minRunClamped, maxBlocksClamped);
+                result["model"] = report.model;
+                result["view"] = report.ramView ? "ram" : "address";
+                result["total_size"] = report.totalSize;
+                result["non_zero_bytes"] = report.nonZeroBytes;
+                result["min_run"] = report.minRun;
+                result["truncated"] = report.truncated;
+
+                py::list blocks;
+                for (const MemoryMapBlock& block : report.blocks) {
+                    py::dict item;
+                    item["address"] = block.address;
+                    item["size"] = block.size;
+                    item["type"] = block.typeName;
+                    item["bank"] = block.bank == 0xFF ? -1 : static_cast<int>(block.bank);
+                    item["page"] = block.page;
+                    item["rom"] = block.isRom;
+                    item["status"] = block.IsZeroFill() ? "zeros" : "data";
+                    item["non_zero"] = block.nonZero;
+                    if (!block.IsZeroFill())
+                        item["hash"] = block.hash;  // FNV-1a 64 (format with f"{h:016x}")
+                    blocks.append(item);
+                }
+                result["blocks"] = blocks;
+                return result;
+            }, "Sparse non-zero memory block overview (view: 'address'|'ram')",
+               py::arg("view") = "address", py::arg("min_run") = 64, py::arg("max_blocks") = 48)
+            .def("mem_hexdump", [](Emulator& self, uint16_t addr, int len) -> std::string {
+                Memory* mem = self.GetMemory();
+                if (!mem) return "";
+                if (len < 1) len = 64;
+                if (len > 4096) len = 4096;
+                std::vector<uint8_t> buffer(static_cast<size_t>(len));
+                for (size_t i = 0; i < buffer.size(); i++)
+                    buffer[i] = mem->DirectReadFromZ80Memory(static_cast<uint16_t>(addr + i));
+                return FormatHexDump(buffer.data(), buffer.size(), addr);
+            }, "Classic 16B/line hexdump with ASCII sidebar", py::arg("addr"), py::arg("len") = 64)
             .def("mem_write_block", [](Emulator& self, uint16_t addr, py::bytes data) {
                 Memory* mem = self.GetMemory();
                 if (!mem) return;
@@ -2027,8 +2081,22 @@ namespace PythonBindings
                 MouseStateSnapshot state = mgr.GetState();
                 if (!state.available)
                     throw std::runtime_error("Mouse device not available");
-                return MouseStateDict(state);
-            }, "Get mouse counters, buttons, wheel and port values")
+                py::dict d = MouseStateDict(state);
+                // Routing mirrors GET /mouse/status: `present` alone cannot distinguish
+                // "not fitted" from "fitted but shadowed" (mouse design Q4 / gap D-1)
+                EmulatorContext* context = self.GetContext();
+                if (context && context->pPortDecoder)
+                {
+                    bool decoded = false;
+                    std::string note;
+                    context->pPortDecoder->GetMouseRoutingState(decoded, note);
+                    py::dict routing;
+                    routing["ports_decoded"] = decoded;
+                    routing["note"] = note;
+                    d["routing"] = routing;
+                }
+                return d;
+            }, "Get mouse counters, buttons, wheel, port values and port routing")
             .def("mouse_click_pending", [](Emulator& self) -> bool {
                 return MouseManagerOrThrow(self).IsClickPending();
             }, "True while a timed mouse click is still holding its button")
@@ -2195,6 +2263,99 @@ namespace PythonBindings
             }, "List external-event markers (replay barriers)")
 
             // -------------------------------------------------------------
+            // TD-4 — agent bookmarks (advisory annotations, never barriers).
+            // Labels are keys: non-empty, at most 63 chars, unique per session.
+            // -------------------------------------------------------------
+            .def("ttd_bookmark_add", [](Emulator& self, const std::string& label,
+                                         py::object frameObj, uint32_t tInFrame) -> py::dict {
+                py::dict result;
+                result["added"] = false;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pTimeTravelManager)
+                {
+                    result["error"] = "TTD not available";
+                    return result;
+                }
+
+                // Position omitted → current position (mark here).
+                ttd::TTDTimePoint time = ctx->pTimeTravelManager->CurrentPosition();
+                if (!frameObj.is_none())
+                {
+                    time.frame    = frameObj.cast<uint64_t>();
+                    time.tInFrame = tInFrame;
+                }
+
+                std::string err;
+                if (!ctx->pTimeTravelManager->AddBookmark(time, label, &err))
+                {
+                    result["error"] = err;
+                    return result;
+                }
+                result["added"]    = true;
+                result["label"]    = label;
+                result["frame"]    = py::cast(time.frame);
+                result["tinframe"] = py::cast(time.tInFrame);
+                return result;
+            }, "Add an agent bookmark (advisory, never a replay barrier); omit frame to mark the current position",
+               py::arg("label"), py::arg("frame") = py::none(), py::arg("tinframe") = 0)
+
+            .def("ttd_bookmarks", [](Emulator& self) -> py::list {
+                py::list bookmarks;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pTimeTravelManager) return bookmarks;
+                for (const auto& bm : ctx->pTimeTravelManager->GetBookmarks())
+                {
+                    py::dict entry;
+                    entry["frame"]    = py::cast(bm.time.frame);
+                    entry["tinframe"] = py::cast(bm.time.tInFrame);
+                    entry["label"]    = bm.label;
+                    bookmarks.append(entry);
+                }
+                return bookmarks;
+            }, "List agent bookmarks (time-sorted)")
+
+            .def("ttd_bookmark_delete", [](Emulator& self, const std::string& label) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pTimeTravelManager) return false;
+                return ctx->pTimeTravelManager->RemoveBookmark(label);
+            }, "Delete an agent bookmark by label", py::arg("label"))
+
+            // A bookmark seek IS a seek — identical result shape to ttd_seek
+            // (plus the resolved label); a bookmark never halts anything.
+            .def("ttd_seek_bookmark", [](Emulator& self, const std::string& label) -> py::dict {
+                py::dict result;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pTimeTravelManager)
+                {
+                    result["reached"] = false;
+                    result["error"]   = "TTD not available";
+                    return result;
+                }
+                ttd::TimeTravelManager::TTDSeekResult r;
+                std::string err;
+                const bool reached = ctx->pTimeTravelManager->SeekToBookmark(label, &r, &err);
+                result["reached"]  = reached;
+                if (!err.empty())
+                    result["error"] = err;
+
+                py::dict arrivedAt;
+                arrivedAt["frame"]    = py::cast(r.arrivedAt.frame);
+                arrivedAt["tinframe"] = py::cast(r.arrivedAt.tInFrame);
+                result["arrived_at"]  = arrivedAt;
+
+                const char* reasonStr = "target";
+                switch (r.haltReason)
+                {
+                    case ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent: reasonStr = "external_event"; break;
+                    case ttd::TimeTravelManager::TTDSeekHaltReason::OutOfRange:    reasonStr = "out_of_range"; break;
+                    default: break;
+                }
+                result["halt_reason"] = reasonStr;
+                result["bookmark"]    = label;
+                return result;
+            }, "Seek to an agent bookmark by label", py::arg("label"))
+
+            // -------------------------------------------------------------
             // Phase 4 — Reverse search + dump + instruction step
             // -------------------------------------------------------------
             .def("ttd_dump", [](Emulator& self, const std::string& path) -> bool {
@@ -2239,19 +2400,29 @@ namespace PythonBindings
                 return result;
             }, "Load a .ttd session for playback (seek to position the emulator)", py::arg("path"))
 
-            .def("ttd_find_last", [](Emulator& self, uint16_t addr,
+            .def("ttd_find_last", [](Emulator& self, py::object addrObj,
                                       const std::string& access,
                                       py::object valueObj,
                                       py::object pcFromObj,
                                       py::object pcToObj,
                                       py::object beforeFrameObj,
                                       uint32_t beforeTin,
-                                      py::object physPageObj) -> py::object {
+                                      py::object physPageObj,
+                                      py::object addrFromObj,
+                                      py::object addrToObj) -> py::object {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pTimeTravelManager) return py::none();
 
                 ttd::TTDSearchQuery q;
-                q.addrFrom = q.addrTo = addr;
+                if (!addrObj.is_none())
+                {
+                    q.addrFrom = q.addrTo = static_cast<uint16_t>(addrObj.cast<int>());
+                }
+                else
+                {
+                    if (!addrFromObj.is_none()) q.addrFrom = static_cast<uint16_t>(addrFromObj.cast<int>());
+                    if (!addrToObj.is_none()) q.addrTo = static_cast<uint16_t>(addrToObj.cast<int>());
+                }
                 q.access = ttd::TTDAccessTypeFromString(access.c_str());
 
                 if (!valueObj.is_none())
@@ -2296,15 +2467,17 @@ namespace PythonBindings
                 r["phys_page"] = py::cast(result->physPage);
                 r["access"]    = ttd::TTDAccessTypeToString(result->access);
                 return r;
-            }, "Reverse search: find last access at address",
-               py::arg("addr"),
+            }, "Reverse search: find last access at address or within address/PC range",
+               py::arg("addr") = py::none(),
                py::arg("access") = "write",
                py::arg("value") = py::none(),
                py::arg("pc_from") = py::none(),
                py::arg("pc_to") = py::none(),
                py::arg("before_frame") = py::none(),
                py::arg("before_tin") = 0,
-               py::arg("phys_page") = py::none())
+               py::arg("phys_page") = py::none(),
+               py::arg("addr_from") = py::none(),
+               py::arg("addr_to") = py::none())
 
             .def("ttd_step_instruction_back", [](Emulator& self) -> bool {
                 auto* ctx = self.GetContext();
@@ -2516,7 +2689,8 @@ namespace PythonBindings
            py::arg("max") = 64)
 
         .def("screen_digest",
-             [](Emulator& self, py::object startValue, py::object endValue, bool includeBorder) -> py::dict {
+             [](Emulator& self, py::object startValue, py::object endValue, bool includeBorder,
+                const std::string& mode) -> py::dict {
             py::dict d;
             EmulatorContext* context = self.GetContext();
             if (!context || !context->pMemory || !context->pScreen)
@@ -2531,6 +2705,15 @@ namespace PythonBindings
 
             const bool is128K = (config.mem_model == MM_SPECTRUM128 || config.mem_model == MM_PENTAGON ||
                                  config.mem_model == MM_PLUS3);
+
+            // mode: "active" hashes the RAM pages the CURRENT video mode actually
+            // displays (ATM hardware modes follow the 7FFD-selected bit-plane pair);
+            // "default" keeps the model-dependent pages 5/7 (P1-3)
+            bool activeMode = false;
+            if (mode == "active")
+                activeMode = true;
+            else if (mode != "default")
+                throw py::value_error("mode must be 'default' or 'active'");
 
             const uint64_t previousDigest = state.last_screen_digest;
             uint64_t combined = ScreenDigest::kInitialValue;
@@ -2555,9 +2738,30 @@ namespace PythonBindings
             }
             else
             {
-                std::vector<uint16_t> banks{ScreenDigest::kScreen0RAMPage};
-                if (is128K)
-                    banks.push_back(ScreenDigest::kScreen1RAMPage);
+                std::vector<uint16_t> banks;
+                if (activeMode)
+                {
+                    // Surface actually displayed by the current video mode: ZX modes
+                    // keep pages 5/7, ATM hardware modes hash the 7FFD-selected
+                    // bit-plane pair - flipping FF77 between ZX and 16c surfaces now
+                    // flips the digest even with constant underlying pages
+                    const VideoModeEnum videoMode = context->pScreen->GetVideoMode();
+                    banks = Screen::GetActiveSurfaceRAMPages(videoMode, state.p7FFD, is128K);
+
+                    py::dict activeSurface;
+                    activeSurface["video_mode"] = Screen::GetVideoModeName(videoMode);
+                    py::list pages;
+                    for (uint16_t page : banks)
+                        pages.append(page);
+                    activeSurface["pages"] = pages;
+                    d["active_surface"] = activeSurface;
+                }
+                else
+                {
+                    banks.push_back(ScreenDigest::kScreen0RAMPage);
+                    if (is128K)
+                        banks.push_back(ScreenDigest::kScreen1RAMPage);
+                }
 
                 py::dict perBank;
                 for (uint16_t page : banks)
@@ -2590,7 +2794,180 @@ namespace PythonBindings
                 d["previous_digest_frame"] = static_cast<uint64_t>(previousFrame);
             return d;
         }, "Screen-area FNV-1a-64 digest (change detection without pixel transfer)",
-           py::arg("start") = py::none(), py::arg("end") = py::none(), py::arg("include_border") = true)
+           py::arg("start") = py::none(), py::arg("end") = py::none(), py::arg("include_border") = true,
+           py::arg("mode") = "default")
+
+        .def("ports_map", [](Emulator& self) -> py::dict {
+            py::dict d;
+            EmulatorContext* context = self.GetContext();
+            if (!context || !context->pPortDecoder)
+            {
+                d["error"] = "context not initialized";
+                return d;
+            }
+
+            auto portHex = [](uint16_t value) {
+                char text[8];
+                std::snprintf(text, sizeof(text), "0x%04X", value);
+                return std::string(text);
+            };
+
+            d["model"] = Config::GetModelFullName(context->config.mem_model);
+
+            py::list entries;
+            for (const PortMapEntry& entry : context->pPortDecoder->getPortMapEntries())
+            {
+                py::dict item;
+                item["port"] = portHex(entry.port);
+                item["mask"] = portHex(entry.mask);
+                item["match"] = portHex(entry.match);
+                item["device"] = entry.device;
+                item["gate"] = entry.gate ? py::object(py::str(entry.gate)) : py::object(py::none());
+
+                // Tagged registry fields (P1-2): names from the core single
+                // source - identical strings on WebAPI /ports, MCP and Lua
+                py::list tagNames;
+                for (const std::string& tagName : PortTagSetToStrings(entry.tags))
+                    tagNames.append(tagName);
+                item["tags"] = tagNames;  // empty list = untagged row
+                const char* latchName = PagingLatchToString(entry.latch);
+                item["latch"] = latchName ? py::object(py::str(latchName)) : py::object(py::none());
+
+                entries.append(item);
+            }
+            d["entries"] = entries;
+
+            bool mouseDecoded = false;
+            std::string mouseNote;
+            context->pPortDecoder->GetMouseRoutingState(mouseDecoded, mouseNote);
+
+            const CONFIG& config = context->config;
+            const EmulatorState& state = context->emulatorState;
+            py::dict live;
+            live["trdos_active"] = (state.flags & (CF_TRDOS | CF_DOSPORTS)) != 0;
+            live["mouse_ports_decoded"] = mouseDecoded;
+            live["mouse_routing_note"] = mouseNote;
+            const bool scorpion = (config.mem_model == MM_SCORP || config.mem_model == MM_PROFSCORP);
+            if (scorpion)
+                live["shadow_monitor_paged"] = (state.p1FFD & 0x02) != 0;
+            else
+                live["shadow_monitor_paged"] = py::none();  // latch does not exist on this model
+            d["live"] = live;
+            return d;
+        }, "Static port map: which devices answer which I/O ports on this model, "
+           "under which gating conditions, plus the live routing flags")
+
+        .def("paging_state", [](Emulator& self) -> py::dict {
+            py::dict d;
+            EmulatorContext* context = self.GetContext();
+            if (!context || !context->pPortDecoder || !context->pMemory)
+            {
+                d["error"] = "context not initialized";
+                return d;
+            }
+
+            auto hexByte = [](uint32_t value) {
+                char text[8];
+                std::snprintf(text, sizeof(text), "0x%02X", value);
+                return std::string(text);
+            };
+            auto hexWord = [](uint16_t value) {
+                char text[8];
+                std::snprintf(text, sizeof(text), "0x%04X", value);
+                return std::string(text);
+            };
+
+            const CONFIG& config = context->config;
+            const EmulatorState& state = context->emulatorState;
+            Memory& memory = *context->pMemory;
+            PortDecoder* decoder = context->pPortDecoder;
+            ROM* rom = context->pCore ? context->pCore->GetROM() : nullptr;
+
+            d["model"] = Config::GetModelFullName(config.mem_model);
+            d["paging_locked"] = (state.p7FFD & PORT_7FFD_LOCK) != 0;
+            d["trdos_active"] = (state.flags & (CF_TRDOS | CF_DOSPORTS)) != 0;
+
+            // Latches array
+            py::list latches;
+            for (const PortMapEntry& entry : decoder->GetPagingLatches(Tags(PortTag::Memory)))
+            {
+                py::dict latch;
+                latch["port"] = hexWord(entry.port);
+                latch["device"] = entry.device ? entry.device : "";
+                latch["gate"] = entry.gate ? py::object(py::str(entry.gate)) : py::object(py::none());
+
+                // Tag names + latch binding from the core single source -
+                // identical strings on /state/paging, MCP, CLI and Lua
+                py::list tagNames;
+                for (const std::string& tagName : PortTagSetToStrings(entry.tags))
+                    tagNames.append(tagName);
+                latch["tags"] = tagNames;
+                const char* latchName = PagingLatchToString(entry.latch);
+                latch["latch"] = latchName ? py::object(py::str(latchName)) : py::object(py::none());
+
+                uint32_t value = PortDecoder::ReadPagingLatch(entry.latch, state);
+                latch["value"] = hexByte(value);
+
+                // Decoded bits: core §5.1 dictionary (DecodePagingLatch) with
+                // native ints/bools, matching /state/paging verbatim
+                py::dict decoded;
+                for (const DecodedLatchField& field : DecodePagingLatch(entry.latch, value, config.mem_model, config.ramsize))
+                {
+                    if (field.isBool)
+                        decoded[field.key.c_str()] = field.boolValue;
+                    else
+                        decoded[field.key.c_str()] = field.intValue;
+                }
+                if (decoded.size() > 0)
+                    latch["decoded"] = decoded;
+                latches.append(latch);
+            }
+            d["latches"] = latches;
+
+            // Banks array
+            py::list banks;
+            const char* ranges[] = {"0x0000-0x3FFF", "0x4000-0x7FFF", "0x8000-0xBFFF", "0xC000-0xFFFF"};
+            for (int i = 0; i < 4; ++i)
+            {
+                py::dict bank;
+                bank["bank"] = i;
+                bank["address_range"] = ranges[i];
+
+                if (i == 0 && memory.IsBank0ROM())
+                {
+                    bank["type"] = "ROM";
+                    uint8_t romPage = memory.GetROMPage();
+                    bank["page"] = static_cast<int>(romPage);
+                    if (rom)
+                    {
+                        uint8_t* pagePtr = memory.ROMPageHostAddress(romPage);
+                        if (pagePtr)
+                        {
+                            std::string sig = rom->CalculateSignature(pagePtr, 0x4000);
+                            // GetROMTitle carries the "Unknown ROM, <digest>"
+                            // fallback; role = core layout table (§5.2) - a
+                            // role/name mismatch is the wrong-ROM signal
+                            bank["name"] = rom->GetROMTitle(sig);
+                            bank["signature"] = sig;
+                        }
+                        bank["role"] = rom->GetROMPageRole(romPage);
+                    }
+                }
+                else
+                {
+                    bank["type"] = "RAM";
+                    switch (i) {
+                        case 0: bank["page"] = static_cast<int>(memory.GetRAMPageForBank0()); break;
+                        case 1: bank["page"] = static_cast<int>(memory.GetRAMPageForBank1()); bank["contended"] = true; break;
+                        case 2: bank["page"] = static_cast<int>(memory.GetRAMPageForBank2()); break;
+                        case 3: bank["page"] = static_cast<int>(memory.GetRAMPageForBank3()); break;
+                    }
+                }
+                banks.append(bank);
+            }
+            d["banks"] = banks;
+            return d;
+        }, "Tagged paging latches + bank table (P1-2 design)")
 
         .def("beam_position", [](Emulator& self) -> py::dict {
             py::dict d;

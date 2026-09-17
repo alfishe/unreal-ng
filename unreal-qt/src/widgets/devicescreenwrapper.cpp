@@ -96,6 +96,16 @@ void DeviceScreenWrapper::setFrameSource(std::function<bool(uint8_t*, size_t)> f
         _software->setFrameSource(fn);
 }
 
+void DeviceScreenWrapper::clearFrameSource()
+{
+    // Plain member forwards only (no Qt calls): safe from the MessageCenter
+    // worker. The backends take their own mutex around the cut.
+    if (_useGPU && _gpuWindow)
+        _gpuWindow->clearFrameSource();
+    else if (_software)
+        _software->clearFrameSource();
+}
+
 void DeviceScreenWrapper::setEmulator(std::shared_ptr<Emulator> emulator)
 {
     if (_useGPU && _gpuWindow)

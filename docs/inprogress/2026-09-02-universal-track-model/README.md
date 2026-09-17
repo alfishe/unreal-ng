@@ -1,7 +1,7 @@
 # Work Item: Universal Track Model (any WD1793 + FDD track layout)
 
 > **Date:** 2026-09-02
-> **Status:** Design complete; core model, controller integration, TRD/SCL migration and tests implemented (2026-09-02). UDI, FDI and DSK/EDSK loaders implemented (read + write) and wired into `Emulator::LoadDisk` / `Emulator::SaveDisk` (with UDI re-target, `NC_FDD_DISK_SAVE_RETARGETED`); Type II rotational latency and the FM controller path implemented (2026-09-04). TD0 (read + uncompressed write), MGT/IMG and Hobeta implemented as well; all disk formats are selected by extension in `Emulator::LoadDisk` / `SaveDisk` (Hobeta is a file injector, not a disk). HFE/SCP design-only.
+> **Status:** Core model, controller integration, TRD/SCL migration and tests implemented (2026-09-02). UDI, FDI and DSK/EDSK loaders implemented (read + write) and wired into `Emulator::LoadDisk` / `Emulator::SaveDisk` (with UDI re-target, `NC_FDD_DISK_SAVE_RETARGETED`); Type II rotational latency and the FM controller path implemented (2026-09-04). TD0 (read + uncompressed write), MGT/IMG and Hobeta implemented as well; all disk formats are selected by extension in `Emulator::LoadDisk` / `SaveDisk` (Hobeta is a file injector, not a disk). **HFE/SCP loaders + flux pipeline implemented (`a637bfa7`, 2026-09-05) but not yet wired into the load/save dispatch** (Phase B0 of [flux-bridge.md](flux-bridge.md)). Biggest open item: the KryoFlux/Greaseweazle flux bridge — [flux-bridge.md](flux-bridge.md).
 > **Priority:** High (unblocks FDI / UDI / DSK / TD0 loaders and copy-protection fidelity)
 > **Supersedes:** the "Non-Standard Track Layouts" part (F2) of
 > [2026-01-24-diskimage-modernization](../2026-01-24-diskimage-modernization/implementation-plan.md).
@@ -51,10 +51,11 @@ Additional findings from the code audit (not in the review):
 | [loader-td0.md](loader-td0.md) | Teledisk TD0 (normal + advanced compression) |
 | [loader-mgt.md](loader-mgt.md) | DISCiPLE/+D MGT and IMG raw images |
 | [loader-hobeta.md](loader-hobeta.md) | Hobeta `$` single-file container (inject into TR-DOS disk) |
-| [loader-hfe.md](loader-hfe.md) | HxC HFE bit-cell images (v1/v3) |
-| [loader-scp.md](loader-scp.md) | SuperCard Pro flux images |
-| [flux-decoder.md](flux-decoder.md) | Flux / bit-cell → byte stream + clock bitmap decoder (PLL, MFM/FM) and encoder for save |
+| [loader-hfe.md](loader-hfe.md) | HxC HFE bit cell images (v1/v3) — implemented in `a637bfa7` |
+| [loader-scp.md](loader-scp.md) | SuperCard Pro flux images — implemented in `a637bfa7` |
+| [flux-decoder.md](flux-decoder.md) | Flux / bit-cell → byte stream + clock bitmap decoder (PLL, MFM/FM) and encoder for save — implemented (`flux/` directory) |
 | [fm-support.md](fm-support.md) | FM (single density, DDEN=1) across model, controller, loaders and tests |
+| [flux-bridge.md](flux-bridge.md) | **Open:** KryoFlux/Greaseweazle direct integration (offline stream import + live device bridge) |
 
 ## 3. Decisions taken (and why)
 

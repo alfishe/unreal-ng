@@ -23,6 +23,7 @@
 #include "mcp-tool-utils.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cinttypes>
 #include <cstdio>
 #include <sstream>
@@ -93,17 +94,23 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["type"] = "object";
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* action : {"create", "list", "list_models", "status", "start", "stop", "pause", "resume", "reset", "destroy"})
+    for (const char* action : {"create", "list", "list_models", "server", "status", "start", "stop", "pause", "resume", "reset", "destroy"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
     schema["properties"]["action"]["description"] =
-        "Lifecycle operation. 'create' makes a new running instance; 'list' shows all instances; 'list_models' enumerates hardware models.";
+        "Lifecycle operation. 'create' makes a new running instance (fails with a reason on models this build "
+        "cannot create — no silent fallback); 'list' shows all instances with their machine identity; "
+        "'list_models' enumerates hardware models with creatable flags; 'server' reports the build fingerprint "
+        "and models_creatable; 'status' reports one instance's details.";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["target"]["description"] = "Emulator id, or 'auto' to reuse the single instance (auto-created when none exists)";
     schema["properties"]["model"]["type"] = "string";
-    schema["properties"]["model"]["description"] = "Hardware model for 'create' — e.g. 48K, 128k, PLUS2, PLUS3, PENTAGON, SCORPION, ATM1..3, PROFI (see list_models)";
+    schema["properties"]["model"]["description"] =
+        "Hardware model short name for 'create' — e.g. 48K, 128k, PLUS3, TSL, ATM3, ATM710, ATM450, PROFI, "
+        "SCORPION, PROFSCORP, GMX, KAY, QUORUM, LSY256, PHOENIX (see list_models; creatability is "
+        "build-dependent — check the 'creatable' flags before assuming a machine exists)";
     schema["properties"]["ram_size"]["type"] = "integer";
     schema["properties"]["ram_size"]["description"] = "Optional RAM size in KB for 'create' (e.g. 128, 256, 512)";
     schema["required"].append("action");
@@ -140,6 +147,15 @@ void RegisterEmulatorManage(ToolRegistry& registry)
             if (action == "list_models")
             {
                 ForwardCall("GET", "/api/v1/emulator/models", nullptr, caller, "Available hardware models", done);
+                return;
+            }
+
+            // Server-level status (parity with GET /api/v1/emulator/status):
+            // build fingerprint + models_creatable. Same information the CLI
+            // 'status' command prints and the WebAPI serves - one source.
+            if (action == "server")
+            {
+                ForwardCall("GET", "/api/v1/emulator/status", nullptr, caller, "Server build fingerprint and creatable models", done);
                 return;
             }
 
@@ -568,8 +584,8 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["aspects"]["type"] = "array";
     schema["properties"]["aspects"]["items"]["type"] = "string";
     Json::Value allowed(Json::arrayValue);
-    for (const char* aspect : {"machine", "registers", "memory", "disasm", "stack", "breakpoints", "memory_banks", "screen_ocr",
-                               "screen_image", "screen_digest", "timing", "rom", "audio_ay", "audio_fm", "fdc"})
+    for (const char* aspect : {"machine", "registers", "memory", "memory_map", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "screen_ocr",
+                               "screen_image", "screen_digest", "timing", "rom", "audio_ay", "audio_fm", "fdc", "mouse"})
     {
         allowed.append(aspect);
     }
@@ -579,9 +595,13 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["aspects"]["default"].append("disasm");
     schema["properties"]["aspects"]["default"].append("screen_ocr");
     schema["properties"]["aspects"]["description"] =
-        "What to inspect. Default: registers + disasm + screen_ocr. 'stack' reads 32 bytes at SP; 'memory' needs address. "
+        "What to inspect. Default: registers + disasm + screen_ocr. 'stack' reads 32 bytes at SP; 'memory' needs address (hexdump default). "
+        "'memory_map' = sparse non-zero block overview of the 64K address space or physical RAM banks (view=address|ram, TD-3). "
+        "'paging' = tagged paging latches + bank table (P1-2 design), 'ports' = static port map with semantic tags, "
+        "latch bindings and live routing flags, "
         "'audio_ay' = every AY/SSG chip fully decoded, 'audio_fm' = TurboSound FM board + both YM2203 FM halves (mode, timers, "
-        "channels, operators, envelopes, key-on), 'fdc' = Beta Disk WD1793 registers, status, FSM, drives.";
+        "channels, operators, envelopes, key-on), 'fdc' = Beta Disk WD1793 registers, status, FSM, drives, 'mouse' = "
+        "Kempston mouse state incl. port routing (fitted vs shadowed).";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["address"]["type"] = "integer";
@@ -592,6 +612,18 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["count"]["type"] = "integer";
     schema["properties"]["count"]["default"] = 8;
     schema["properties"]["count"]["description"] = "Instruction count for 'disasm'";
+    schema["properties"]["format"]["type"] = "string";
+    schema["properties"]["format"]["default"] = "hexdump";
+    schema["properties"]["format"]["description"] = "Read format for 'memory': 'hexdump' (default), 'full' (JSON byte array) or 'sparse' (fill-run segments)";
+    schema["properties"]["view"]["type"] = "string";
+    schema["properties"]["view"]["default"] = "address";
+    schema["properties"]["view"]["description"] = "'memory_map' view: 'address' (64K CPU space) or 'ram' (physical RAM pages)";
+    schema["properties"]["min_run"]["type"] = "integer";
+    schema["properties"]["min_run"]["default"] = 64;
+    schema["properties"]["min_run"]["description"] = "'memory_map' zero-run merge threshold (short zero runs fold into data blocks)";
+    schema["properties"]["max_blocks"]["type"] = "integer";
+    schema["properties"]["max_blocks"]["default"] = 48;
+    schema["properties"]["max_blocks"]["description"] = "'memory_map' block budget before zero-run granularity coarsens";
     schema["properties"]["include_image"]["type"] = "boolean";
     schema["properties"]["include_image"]["default"] = false;
     schema["properties"]["include_image"]["description"] = "Include base64 image data for 'screen_image' (large payload)";
@@ -599,8 +631,9 @@ void RegisterInspectState(ToolRegistry& registry)
     registry.Register(
         "inspect_state",
         "Inspect emulator state in one call: registers, memory ranges, disassembly, stack words, breakpoints, memory banks, "
-        "screen OCR text, screen image metadata, screen digest hash, raster timing, ROM signatures, AY/SSG chips (audio_ay), "
-        "TurboSound FM YM2203 halves (audio_fm), Beta Disk WD1793 (fdc). Combine aspects to reduce round-trips.",
+        "paging state (tagged latches + bank table), static port map with tags (ports), screen OCR text, screen image metadata, screen digest hash, raster timing, "
+        "ROM signatures, AY/SSG chips (audio_ay), TurboSound FM YM2203 halves (audio_fm), Beta Disk WD1793 (fdc), "
+        "Kempston mouse + port routing (mouse). Combine aspects to reduce round-trips.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn& progress) {
             // Collect aspects
@@ -619,14 +652,14 @@ void RegisterInspectState(ToolRegistry& registry)
 
             for (const std::string& aspect : aspects)
             {
-                if (aspect != "machine" && aspect != "registers" && aspect != "memory" && aspect != "disasm" && aspect != "stack" &&
-                    aspect != "breakpoints" && aspect != "memory_banks" && aspect != "screen_ocr" && aspect != "screen_image" &&
+                if (aspect != "machine" && aspect != "registers" && aspect != "memory" && aspect != "memory_map" && aspect != "disasm" && aspect != "stack" &&
+                    aspect != "breakpoints" && aspect != "memory_banks" && aspect != "paging" && aspect != "ports" && aspect != "screen_ocr" && aspect != "screen_image" &&
                     aspect != "screen_digest" && aspect != "timing" && aspect != "rom" && aspect != "audio_ay" &&
-                    aspect != "audio_fm" && aspect != "fdc")
+                    aspect != "audio_fm" && aspect != "fdc" && aspect != "mouse")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
-                                            "'. Valid: machine, registers, memory, disasm, stack, breakpoints, memory_banks, "
-                                            "screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, fdc"));
+                                            "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, "
+                                            "screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, fdc, mouse"));
                     return;
                 }
             }
@@ -640,10 +673,18 @@ void RegisterInspectState(ToolRegistry& registry)
             if (count < 1) count = 1;
             if (count > 256) count = 256;
             bool includeImage = args.isMember("include_image") && args["include_image"].asBool();
+            std::string format = args.isMember("format") ? args["format"].asString() : "hexdump";
+            if (format != "hexdump" && format != "full" && format != "sparse") format = "hexdump";
+            std::string view = args.isMember("view") ? args["view"].asString() : "address";
+            if (view != "address" && view != "ram") view = "address";
+            unsigned minRun = args.isMember("min_run") ? args["min_run"].asUInt() : 64u;
+            if (minRun < 1) minRun = 1;
+            unsigned maxBlocks = args.isMember("max_blocks") ? args["max_blocks"].asUInt() : 48u;
+            if (maxBlocks < 1) maxBlocks = 1;
 
             TargetResolver::ResolveFromArgs(
                 args, caller,
-                [aspects, address, hasAddress, size, count, includeImage, &caller, done, progress](
+                [aspects, address, hasAddress, size, count, includeImage, format, view, minRun, maxBlocks, &caller, done, progress](
                     bool ok, const std::string& idOrError) {
                     if (!ok)
                     {
@@ -677,8 +718,20 @@ void RegisterInspectState(ToolRegistry& registry)
                         }
                         else if (aspect == "memory")
                         {
-                            steps.push_back([&caller, id, aspect, address, size](Json::Value& acc, std::function<void(bool)> next) {
-                                std::string path = Endpoint(id, "/memory/" + std::to_string(address)) + "?len=" + std::to_string(size);
+                            steps.push_back([&caller, id, aspect, address, size, format](Json::Value& acc, std::function<void(bool)> next) {
+                                std::string path = Endpoint(id, "/memory/" + std::to_string(address)) + "?len=" + std::to_string(size) +
+                                                   "&format=" + format;
+                                caller.Call("GET", path, nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "memory_map")
+                        {
+                            steps.push_back([&caller, id, aspect, view, minRun, maxBlocks](Json::Value& acc, std::function<void(bool)> next) {
+                                std::string path = Endpoint(id, "/memory/map") + "?view=" + view + "&min_run=" + std::to_string(minRun) +
+                                                   "&max_blocks=" + std::to_string(maxBlocks);
                                 caller.Call("GET", path, nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
                                     next(true);
@@ -710,7 +763,9 @@ void RegisterInspectState(ToolRegistry& registry)
                                         return;
                                     }
                                     unsigned sp = registers["special"]["sp"].asUInt() & 0xFFFFu;
-                                    std::string path = Endpoint(id, "/memory/" + std::to_string(sp)) + "?len=32";
+                                    // format=full: the stack aspect machine-parses the byte
+                                    // array; the TD-3 hexdump default would drop data[]
+                                    std::string path = Endpoint(id, "/memory/" + std::to_string(sp)) + "?len=32&format=full";
                                     caller.Call("GET", path, nullptr, [sp, aspect, &acc, next](int memStatus, Json::Value memory) mutable {
                                         if (memStatus == 200 && memory["data"].isArray())
                                         {
@@ -812,6 +867,39 @@ void RegisterInspectState(ToolRegistry& registry)
                                 });
                             });
                         }
+                        else if (aspect == "mouse")
+                        {
+                            // /mouse/status: fitment + counters + the routing answer (fitted vs
+                            // shadowed by TR-DOS / registered peripherals - design Q4)
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, "/mouse/status"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "paging")
+                        {
+                            // /state/paging: tagged paging latches + bank table (P1-2 design)
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, "/state/paging"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "ports")
+                        {
+                            // /ports: static port map with semantic tags + latch bindings
+                            // and the live routing flags (P1-5 + tagged registry)
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, "/ports"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    next(true);
+                                });
+                            });
+                        }
                         else if (aspect == "audio_ay" || aspect == "audio_fm")
                         {
                             // Overview first, then every chip's full report (core DeviceState::AyChip / FmChip)
@@ -877,8 +965,41 @@ void RegisterInspectState(ToolRegistry& registry)
                             }
                             else if (aspect == "memory")
                             {
-                                out << "\n[memory] " << value["length"].asUInt() << " bytes at " << Hex16(value["address"].asUInt())
-                                    << ": " << value["hex"].asString().substr(0, 96);
+                                out << "\n[memory] " << value["length"].asUInt() << " bytes at " << Hex16(value["address"].asUInt()) << ": ";
+                                if (value.isMember("hexdump"))
+                                {
+                                    // First two hexdump lines (32 bytes) keep the summary compact
+                                    const std::string dump = value["hexdump"].asString();
+                                    size_t cut = dump.find('\n');
+                                    cut = cut == std::string::npos ? dump.size() : dump.find('\n', cut + 1);
+                                    out << dump.substr(0, cut == std::string::npos ? dump.size() : cut);
+                                }
+                                else if (value.isMember("segments"))
+                                {
+                                    out << value["segments"].size() << " sparse segment(s), "
+                                        << value["non_zero"].asUInt() << " non-zero bytes";
+                                }
+                                else
+                                {
+                                    out << value["hex"].asString().substr(0, 96);
+                                }
+                            }
+                            else if (aspect == "memory_map" && value.isMember("blocks"))
+                            {
+                                out << "\n[memory_map] " << value["model"].asString() << " " << value["view"].asString()
+                                    << " view: " << value["block_count"].asUInt() << " block(s), "
+                                    << value["non_zero_bytes"].asUInt() << "/" << value["total_size"].asUInt() << " non-zero bytes";
+                                const Json::Value& blocks = value["blocks"];
+                                for (Json::ArrayIndex i = 0; i < blocks.size() && i < 8; ++i)
+                                {
+                                    out << "\n  " << blocks[i]["address"].asString() << " " << blocks[i]["type"].asString() << " "
+                                        << blocks[i]["status"].asString() << ", size " << blocks[i]["size"].asUInt()
+                                        << ", non_zero " << blocks[i]["non_zero"].asUInt();
+                                    if (!blocks[i]["hash"].asString().empty())
+                                        out << ", hash " << blocks[i]["hash"].asString().substr(0, 8);
+                                }
+                                if (blocks.size() > 8)
+                                    out << "\n  ... " << (blocks.size() - 8) << " more block(s)";
                             }
                             else if (aspect == "stack" && value["words"].isArray())
                             {
@@ -933,6 +1054,68 @@ void RegisterInspectState(ToolRegistry& registry)
                                                 << (ch[c]["tone_enabled"].asBool() ? "T" : "") << (ch[c]["noise_enabled"].asBool() ? "N" : "")
                                                 << (ch[c]["envelope_enabled"].asBool() ? "E" : "") << "@" << int(ch[c]["frequency_hz"].asDouble()) << "Hz";
                                     }
+                                }
+                            }
+                            else if (aspect == "mouse")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[mouse] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[mouse] " << (value["present"].asBool() ? "fitted" : "not fitted")
+                                        << ", x " << value["x"].asInt() << " y " << value["y"].asInt()
+                                        << (value["wheel_enabled"].asBool() ? ", wheel" : "");
+                                    if (value.isMember("routing"))
+                                        out << ", ports " << (value["routing"]["ports_decoded"].asBool() ? "decoded" : "shadowed")
+                                            << " (" << value["routing"]["note"].asString() << ")";
+                                }
+                            }
+                            else if (aspect == "paging")
+                            {
+                                out << "\n[paging] model " << value["model"].asString()
+                                    << ", locked " << (value["paging_locked"].asBool() ? "yes" : "no")
+                                    << ", trdos " << (value["trdos_active"].asBool() ? "active" : "inactive");
+                                const Json::Value& latches = value["latches"];
+                                for (Json::ArrayIndex i = 0; i < latches.size(); ++i)
+                                {
+                                    out << "\n  " << latches[i]["latch"].asString() << "=" << latches[i]["value"].asString();
+                                    if (latches[i].isMember("decoded"))
+                                    {
+                                        const Json::Value& d = latches[i]["decoded"];
+                                        for (auto it = d.begin(); it != d.end(); ++it)
+                                            out << " " << it.name() << "=" << ((*it).isBool() ? ((*it).asBool() ? "1" : "0") : (*it).asString());
+                                    }
+                                }
+                                const Json::Value& banks = value["banks"];
+                                for (Json::ArrayIndex i = 0; i < banks.size(); ++i)
+                                    out << "\n  bank" << banks[i]["bank"].asInt() << " " << banks[i]["address_range"].asString()
+                                        << " " << banks[i]["type"].asString() << " p" << banks[i]["page"].asInt();
+                            }
+                            else if (aspect == "ports" && value["entries"].isArray())
+                            {
+                                out << "\n[ports] model " << value["model"].asString();
+                                const Json::Value& portEntries = value["entries"];
+                                for (Json::ArrayIndex i = 0; i < portEntries.size(); ++i)
+                                {
+                                    out << "\n  " << portEntries[i]["port"].asString() << " " << portEntries[i]["device"].asString();
+                                    const Json::Value& tagNames = portEntries[i]["tags"];
+                                    if (tagNames.isArray() && tagNames.size() > 0)
+                                    {
+                                        out << " [";
+                                        for (Json::ArrayIndex t = 0; t < tagNames.size(); ++t)
+                                            out << (t > 0 ? "," : "") << tagNames[t].asString();
+                                        out << "]";
+                                    }
+                                    if (!portEntries[i]["latch"].isNull())
+                                        out << " latch=" << portEntries[i]["latch"].asString();
+                                    if (!portEntries[i]["gate"].isNull())
+                                        out << " gate: " << portEntries[i]["gate"].asString();
+                                }
+                                if (value.isMember("live"))
+                                {
+                                    const Json::Value& live = value["live"];
+                                    out << "\n  live: trdos " << (live["trdos_active"].asBool() ? "active" : "inactive")
+                                        << ", mouse ports " << (live["mouse_ports_decoded"].asBool() ? "decoded" : "shadowed");
                                 }
                             }
                             else if (aspect == "audio_fm")
@@ -1318,6 +1501,164 @@ void RegisterMouseInput(ToolRegistry& registry)
 
 /// endregion </mouse_input>
 
+/// region <time_travel>
+
+namespace
+{
+
+/// Percent-encodes a path segment (RFC 3986 unreserved characters kept
+/// literal). Labels are free-form text ("umt entry"), so they must not be
+/// spliced raw into a URL path.
+std::string UrlEncodeSegment(const std::string& text)
+{
+    static const char* kHex = "0123456789ABCDEF";
+    std::string encoded;
+    encoded.reserve(text.size());
+    for (char c : text)
+    {
+        const unsigned char uc = static_cast<unsigned char>(c);
+        if (std::isalnum(uc) || c == '-' || c == '_' || c == '.' || c == '~')
+        {
+            encoded += c;
+        }
+        else
+        {
+            encoded += '%';
+            encoded += kHex[uc >> 4];
+            encoded += kHex[uc & 0xF];
+        }
+    }
+    return encoded;
+}
+
+void RegisterTimeTravel(ToolRegistry& registry)
+{
+    Json::Value schema;
+    schema["type"] = "object";
+    schema["properties"]["action"]["type"] = "string";
+    schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* action : {"status", "bookmark_add", "bookmark_list", "bookmark_delete", "seek_bookmark"})
+    {
+        schema["properties"]["action"]["enum"].append(action);
+    }
+    schema["properties"]["action"]["description"] =
+        "'status' reports the TTD session (state, frames, checkpoints); "
+        "'bookmark_add' marks a position with a label (omit frame to mark the current position); "
+        "'bookmark_list' lists bookmarks; 'bookmark_delete' removes one by label; "
+        "'seek_bookmark' returns to a marked position";
+    schema["properties"]["target"]["type"] = "string";
+    schema["properties"]["target"]["default"] = "auto";
+    schema["properties"]["target"]["description"] = "Emulator id, or 'auto' to reuse the single instance";
+    schema["properties"]["label"]["type"] = "string";
+    schema["properties"]["label"]["description"] =
+        "Bookmark label for bookmark_add / bookmark_delete / seek_bookmark. "
+        "Non-empty, at most 63 characters, unique per session (labels are keys)";
+    schema["properties"]["frame"]["type"] = "integer";
+    schema["properties"]["frame"]["description"] = "Optional frame for bookmark_add; omit to mark the current position";
+    schema["properties"]["tinframe"]["type"] = "integer";
+    schema["properties"]["tinframe"]["default"] = 0;
+    schema["properties"]["tinframe"]["description"] = "Optional T-states within the frame for bookmark_add";
+    schema["required"].append("action");
+
+    registry.Register(
+        "time_travel",
+        "Time-travel debugging (TTD): session status and agent bookmarks. Bookmarks are advisory annotations — "
+        "they never halt a seek (a halt_reason never mentions bookmarks), survive dump/load, and are dropped "
+        "with the session. TD-4 surface; the seed of the full TTD tool.",
+        std::move(schema),
+        [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
+            const std::string action = args["action"].asString();
+
+            // Label-carrying actions reject early — before target resolution —
+            // so a malformed request never even wakes the emulator.
+            if (action == "bookmark_add" || action == "bookmark_delete" || action == "seek_bookmark")
+            {
+                const std::string label = args["label"].asString();
+                if (label.empty())
+                {
+                    done(ToolResult::Error("Action '" + action + "' requires a non-empty 'label'"));
+                    return;
+                }
+            }
+
+            auto forward = [&caller, &args, action, done](const std::string& id) {
+                if (action == "status")
+                {
+                    ForwardCall("GET", Endpoint(id, "/ttd/status"), nullptr, caller, "TTD status of " + id, done);
+                }
+                else if (action == "bookmark_add")
+                {
+                    Json::Value body;
+                    body["label"] = args["label"].asString();
+                    if (args.isMember("frame"))
+                    {
+                        body["frame"] = args["frame"];
+                    }
+                    if (args.isMember("tinframe"))
+                    {
+                        body["tinframe"] = args["tinframe"];
+                    }
+                    ForwardCall("POST", Endpoint(id, "/ttd/bookmarks"), &body, caller,
+                                "Bookmark '" + args["label"].asString() + "' added on " + id, done);
+                }
+                else if (action == "bookmark_list")
+                {
+                    caller.Call("GET", Endpoint(id, "/ttd/bookmarks"), nullptr, [done](int status, Json::Value body) {
+                        if (status != 200)
+                        {
+                            done(ToolResult::Error("HTTP " + std::to_string(status) + ": " + DescribeErrorBody(body)));
+                            return;
+                        }
+                        const Json::Value& bookmarks = body["bookmarks"];
+                        std::ostringstream out;
+                        out << bookmarks.size() << " bookmark(s)";
+                        for (Json::ArrayIndex i = 0; i < bookmarks.size(); ++i)
+                        {
+                            out << "\n- '" << bookmarks[i]["label"].asString() << "' @ frame "
+                                << bookmarks[i]["frame"].asUInt64();
+                            if (bookmarks[i]["tinframe"].asUInt() != 0)
+                            {
+                                out << " t=" << bookmarks[i]["tinframe"].asUInt();
+                            }
+                        }
+                        out << "\n(advisory — never a replay barrier)";
+                        done(ToolResult::Ok(out.str(), std::move(body)));
+                    });
+                }
+                else if (action == "bookmark_delete")
+                {
+                    ForwardCall("DELETE", Endpoint(id, "/ttd/bookmarks/" + UrlEncodeSegment(args["label"].asString())),
+                                nullptr, caller, "Bookmark '" + args["label"].asString() + "' removed from " + id, done);
+                }
+                else if (action == "seek_bookmark")
+                {
+                    Json::Value body;
+                    body["bookmark"] = args["label"].asString();
+                    ForwardCall("POST", Endpoint(id, "/ttd/seek"), &body, caller,
+                                "Seek to bookmark '" + args["label"].asString() + "' on " + id, done);
+                }
+                else
+                {
+                    done(ToolResult::Error("Unknown action '" + action + "'"));
+                }
+                (void)args;
+            };
+
+            TargetResolver::ResolveFromArgs(args, caller, [forward, done](bool ok, const std::string& idOrError) {
+                if (!ok)
+                {
+                    done(ToolResult::Error(idOrError));
+                    return;
+                }
+                forward(idOrError);
+            });
+        });
+}
+
+} // namespace
+
+/// endregion </time_travel>
+
 /// region <Registry composition>
 
 std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
@@ -1331,6 +1672,9 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
     RegisterInspectState(*registry);
     RegisterTypeInput(*registry);
     RegisterMouseInput(*registry);
+
+    // TD-4 — time_travel (status + agent bookmarks; seed of the full TTD tool)
+    RegisterTimeTravel(*registry);
 
     // Phase 2 — smart tools
     RegisterManageSymbols(*registry);

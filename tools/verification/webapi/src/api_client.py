@@ -37,11 +37,24 @@ class UnrealApiClient:
         resp = self.session.get(self._url("/api/v1/emulator"))
         return self._handle_response(resp)
 
-    def create_emulator(self, model="ZX48"):
+    def create_emulator(self, model="48K"):
         """POST /api/v1/emulator/create"""
         data = {"model": model}
         resp = self.session.post(self._url("/api/v1/emulator/create"), json=data)
         return self._handle_response(resp, expected_status=201)
+
+    def create_emulator_raw(self, model):
+        """POST /api/v1/emulator/create without a status assertion.
+
+        Returns (status_code, parsed_json_or_None) so tests can assert on
+        strict-400 error bodies directly instead of catching exceptions.
+        """
+        data = {"model": model}
+        resp = self.session.post(self._url("/api/v1/emulator/create"), json=data)
+        try:
+            return resp.status_code, resp.json()
+        except ValueError:
+            return resp.status_code, None
 
     def get_status(self):
         """GET /api/v1/emulator/status"""
@@ -64,7 +77,7 @@ class UnrealApiClient:
         return self._handle_response(resp, expected_status=[200, 204])
 
     # --- Emulator Control ---
-    def create_and_start_emulator(self, symbolic_id=None, model="ZX48", ram_size=None):
+    def create_and_start_emulator(self, symbolic_id=None, model="48K", ram_size=None):
         """POST /api/v1/emulator/start"""
         data = {"model": model}
         if symbolic_id:
@@ -291,12 +304,20 @@ class UnrealApiClient:
         return self._handle_response(resp)
 
     def get_setting(self, emulator_id, name):
-        """GET /api/v1/emulator/{id}/settings/{name}"""
+        """GET /api/v1/emulator/{id}/settings/{name}
+
+        Returns {name, value, description, emulator_id}; the value keeps its
+        JSON type (booleans arrive as real booleans, not strings).
+        """
         resp = self.session.get(self._url(f"/api/v1/emulator/{emulator_id}/settings/{name}"))
         return self._handle_response(resp)
 
     def update_setting(self, emulator_id, name, value):
-        """PUT /api/v1/emulator/{id}/settings/{name}"""
+        """PUT /api/v1/emulator/{id}/settings/{name}
+
+        The value must be a JSON-native type (bool/int/float/str); passing a
+        stringified boolean like "true" is rejected by the server.
+        """
         data = {"value": value}
         resp = self.session.put(self._url(f"/api/v1/emulator/{emulator_id}/settings/{name}"), json=data)
         return self._handle_response(resp)

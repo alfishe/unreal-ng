@@ -1,4 +1,4 @@
-﻿/// @file ttd_automation_contract_test.cpp
+/// @file ttd_automation_contract_test.cpp
 /// @brief Phase 2+ Automation: TTD API contract test.
 ///
 /// Verifies that the TimeTravelManager surface — as consumed by all four
@@ -500,6 +500,84 @@ TEST_F(TTD_Automation_Contract_Test, FindLast_QueryShape_HasExpectedFields)
     EXPECT_STREQ(ttd::TTDAccessTypeToString(ttd::TTDAccessType::Read),    "read");
     EXPECT_STREQ(ttd::TTDAccessTypeToString(ttd::TTDAccessType::Execute), "execute");
     EXPECT_STREQ(ttd::TTDAccessTypeToString(ttd::TTDAccessType::Io),      "io");
+}
+
+TEST_F(TTD_Automation_Contract_Test, FindLast_AddressRange_And_PCRange_Query)
+{
+    ASSERT_TRUE(_ttd->StartRecording());
+
+    // Write into 0x4500 from PC 0x1234
+    _ttd->RecordMemoryWrite(0x4500, 0, 0xAA, 0x1234, 5);
+
+    RunFrames(1);
+    _ttd->StopRecording();
+
+    // 1. Range query: 0x4000..0x5000 (should match write at 0x4500)
+    ttd::TTDSearchQuery qRange;
+    qRange.addrFrom = 0x4000;
+    qRange.addrTo   = 0x5000;
+    qRange.access   = ttd::TTDAccessType::Write;
+    auto resRange = _ttd->FindLastAccess(qRange);
+    ASSERT_TRUE(resRange.has_value());
+    EXPECT_EQ(resRange->pc, 0x1234u);
+    EXPECT_EQ(resRange->value, 0xAAu);
+
+    // 2. PC-only range query: PC 0x1200..0x1300 across all memory (0..0xFFFF)
+    ttd::TTDSearchQuery qPc;
+    qPc.addrFrom = 0;
+    qPc.addrTo   = 0xFFFF;
+    qPc.access   = ttd::TTDAccessType::Write;
+    qPc.hasPcFilter = true;
+    qPc.pcFrom = 0x1200;
+    qPc.pcTo   = 0x1300;
+    auto resPc = _ttd->FindLastAccess(qPc);
+    ASSERT_TRUE(resPc.has_value());
+    EXPECT_EQ(resPc->pc, 0x1234u);
+    EXPECT_EQ(resPc->value, 0xAAu);
+}
+
+TEST_F(TTD_Automation_Contract_Test, FindLast_AllOptionalFilters_Contract)
+{
+    ASSERT_TRUE(_ttd->StartRecording());
+
+    // Record two distinct writes at 0x6000 with different values, PCs, and pages
+    _ttd->RecordMemoryWrite(0x6000, 0, 0x11, 0x1000, 2); // Write #1
+    RunFrames(2);
+    _ttd->RecordMemoryWrite(0x6000, 0, 0x22, 0x2000, 5); // Write #2
+    RunFrames(1);
+
+    _ttd->StopRecording();
+
+    // 1. Filter by value = 0x11 (should match Write #1 at PC 0x1000)
+    ttd::TTDSearchQuery qVal;
+    qVal.addrFrom = qVal.addrTo = 0x6000;
+    qVal.access = ttd::TTDAccessType::Write;
+    qVal.hasValueFilter = true;
+    qVal.value = 0x11;
+    auto resVal = _ttd->FindLastAccess(qVal);
+    ASSERT_TRUE(resVal.has_value());
+    EXPECT_EQ(resVal->pc, 0x1000u);
+    EXPECT_EQ(resVal->value, 0x11u);
+
+    // 2. Filter by physPage = 2 (should match Write #1 at page 2)
+    ttd::TTDSearchQuery qPage;
+    qPage.addrFrom = qPage.addrTo = 0x6000;
+    qPage.access = ttd::TTDAccessType::Write;
+    qPage.hasPhysPageFilter = true;
+    qPage.physPage = 2;
+    auto resPage = _ttd->FindLastAccess(qPage);
+    ASSERT_TRUE(resPage.has_value());
+    EXPECT_EQ(resPage->pc, 0x1000u);
+    EXPECT_EQ(resPage->physPage, 2u);
+
+    // 3. Filter by beforeGlobalT (should exclude Write #2 if before Write #2's timestamp)
+    ttd::TTDSearchQuery qTime;
+    qTime.addrFrom = qTime.addrTo = 0x6000;
+    qTime.access = ttd::TTDAccessType::Write;
+    qTime.beforeGlobalT = resVal->time.frame * _context->config.frame + resVal->time.tInFrame + 1;
+    auto resTime = _ttd->FindLastAccess(qTime);
+    ASSERT_TRUE(resTime.has_value());
+    EXPECT_EQ(resTime->pc, 0x1000u);
 }
 
 /// endregion

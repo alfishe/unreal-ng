@@ -123,6 +123,7 @@ All interfaces (where applicable) support these command categories:
    - `registers`, `memory`, `debugmode`, `memcounters`, `calltrace`, `disasm`, `disasm_page`
    - `find` (Z80 memory pattern search)
    - `digest`, `beam`, `frame_cost` (screen state & frame cost analysis)
+   - `ports` (static port map + live routing flags — which devices answer which I/O ports)
 
 4. **Breakpoints & Watchpoints** - Advanced debugging
    - `bp`, `wp`, `bport`, `bplist`, `bpclear`, `bpgroup`, `bpon`, `bpoff`
@@ -187,7 +188,7 @@ See [command-interface.md](./command-interface.md) for complete details.
 **Fully Implemented** (all four endpoint-parity interfaces: CLI, WebAPI, Lua, Python):
 - ✅ Core debugging: registers, memory (incl. physical pages + pattern search), disassembly, breakpoints/watchpoints
 - ✅ Stepping: step/stepin/steps/stepover/**stepout**/**skip_until**, run_frame(s)/run_tstates/scanline/pixel
-- ✅ Analysis: **coverage**, **AY register log**, **frame cost**, **screen digest**, **beam position**
+- ✅ Analysis: **coverage**, **AY register log**, **frame cost**, **screen digest** (incl. `--active`/`mode=active` following the displayed surface), **beam position**, **static port map** (`ports` / `GET /ports` / `ports_map()` with live routing flags)
 - ✅ Capture: **audio capture (WAV export)**, **video recording** (`ENABLE_RECORDING` builds)
 - ✅ Assembler & source listings: **assemble**, **listing load/source_at/step_line/run_to_line**
 - ✅ Labels & symbols: CRUD + **resolve** (sjasmplus `.sld`/`.lst`, `.sym`, `.map`)
