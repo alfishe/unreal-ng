@@ -55,11 +55,30 @@
 /// is set at 50% against a measured 4-8%, i.e. it fires only on a ~10x capture
 /// slowdown that the byte budget cannot see (a scan that got quadratic without
 /// storing more).
+///
+/// ## Why the ratio is min-of-N interleaved rounds
+///
+/// "A slow runner cancels out" proved too optimistic for the 10-way sharded
+/// test gate: contention does not slow both phases equally, it preempts ONE of
+/// them, and the whole preemption lands in the ratio's numerator. Observed as
+/// an intermittent Spectrum48 shard failure (test time 128 ms vs ~50 ms
+/// passing - the recorded phase roughly doubled while sequential and
+/// single-instance runs stayed green). Each phase is therefore measured
+/// `kShareRounds` times as interleaved OFF/ON pairs and the minimum per phase
+/// feeds the ratio: preemption only ever inflates a timing, so the per-phase
+/// minimum approaches the uncontended cost, while a genuine capture slowdown
+/// inflates every recorded round and the minimum still sees it. This also
+/// stops charging the cold start of the first recorded round to capture. The
+/// rounds put this test past the 50 ms guideline (~0.3 s per model) - a timing
+/// CI gate needs the samples, and booting the Dizzy Y snapshot is the workload
+/// being gated.
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <string>
+#include <vector>
 
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
@@ -77,6 +96,12 @@ namespace {
 /// so the extra 70 frames bought precision the old wall-clock average needed
 /// and this one does not.
 constexpr int kFrames = 30;
+
+/// OFF/ON measurement pairs feeding the capture-share ratio. See the file
+/// header: the per-phase minimum over interleaved rounds is what keeps the
+/// ratio stable when the sharded test gate runs ten emulator processes on one
+/// machine and the scheduler preempts individual phases.
+constexpr int kShareRounds = 4;
 
 /// ~55x the measured 75 B/frame. Losing compression alone lands at ~8000
 /// B/frame (measured), so the budget sits comfortably between normal operation
@@ -135,31 +160,57 @@ void TTD_Capture_Cost_Gate_Test::RunCaptureCostGate(const std::string& modelName
     const std::string snapshotPath = TestPathHelper::GetTestDataPath("loaders/sna/Dizzy Y.sna");
     ASSERT_TRUE(emu->LoadSnapshot(snapshotPath)) << "Dizzy Y snapshot not found at " << snapshotPath;
 
-    // Baseline: the same frames with recording OFF. Subtracting this is what
+    // Baseline vs recorded timing: interleaved OFF/ON pairs, minimum per phase
+    // (see the file header for why min-of-N). Subtracting the baseline is what
     // makes the timing figure below about capture rather than about how fast
-    // this machine emulates a Z80.
-    const auto base0 = std::chrono::steady_clock::now();
-    for (int i = 0; i < kFrames; ++i)
-        emu->RunFrame(/*skipBreakpoints=*/true);
-    const auto base1 = std::chrono::steady_clock::now();
-    const double baselineMs = std::chrono::duration<double, std::milli>(base1 - base0).count();
-
+    // this machine emulates a Z80. Every recorded round starts with a fresh
+    // StartRecording(), so page interning is charged to the recorded side -
+    // the same cost the single-shot measurement always charged to it.
+    std::vector<double> baselineRounds;
+    std::vector<double> recordedRounds;
+    baselineRounds.reserve(kShareRounds);
+    recordedRounds.reserve(kShareRounds);
+    
+    for (int round = 0; round < kShareRounds; ++round)
+    {
+        ctx->pTimeTravelManager->StopRecording(); // idempotent from Idle
+    
+        const auto base0 = std::chrono::steady_clock::now();
+        for (int i = 0; i < kFrames; ++i)
+            emu->RunFrame(/*skipBreakpoints=*/true);
+        const auto base1 = std::chrono::steady_clock::now();
+        baselineRounds.push_back(std::chrono::duration<double, std::milli>(base1 - base0).count());
+    
+        ASSERT_TRUE(ctx->pTimeTravelManager->StartRecording());
+    
+        const auto rec0 = std::chrono::steady_clock::now();
+        for (int i = 0; i < kFrames; ++i)
+            emu->RunFrame(/*skipBreakpoints=*/true);
+        const auto rec1 = std::chrono::steady_clock::now();
+        recordedRounds.push_back(std::chrono::duration<double, std::milli>(rec1 - rec0).count());
+    }
+    ctx->pTimeTravelManager->StopRecording();
+    
+    const double baselineMs = *std::min_element(baselineRounds.begin(), baselineRounds.end());
+    const double recordedMs = *std::min_element(recordedRounds.begin(), recordedRounds.end());
+    const double captureShare = recordedMs > 0.0 ? (recordedMs - baselineMs) / recordedMs : 0.0;
+    
+    // Volume gate: one continuous steady-state session - the byte accounting
+    // is exact, so it keeps the original single-session measurement (every
+    // restart of recording would recharge it with a fresh I-frame).
     ASSERT_TRUE(ctx->pTimeTravelManager->StartRecording());
     const size_t payloadBefore = ctx->pTimeTravelManager->GetPageStore().GetLivePayloadBytes();
-
-    const auto t0 = std::chrono::steady_clock::now();
+    
     for (int i = 0; i < kFrames; ++i)
         emu->RunFrame(/*skipBreakpoints=*/true);
-    const auto t1 = std::chrono::steady_clock::now();
-    const double recordedMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
-
+    
     const size_t payloadAfter = ctx->pTimeTravelManager->GetPageStore().GetLivePayloadBytes();
     const size_t payloadPerFrame = (payloadAfter - payloadBefore) / kFrames;
     const size_t checkpoints = ctx->pTimeTravelManager->GetCheckpointCount();
-    const double captureShare = recordedMs > 0.0 ? (recordedMs - baselineMs) / recordedMs : 0.0;
 
     RecordProperty("model", modelName);
     RecordProperty("frames", std::to_string(kFrames));
+    RecordProperty("share_rounds", std::to_string(kShareRounds));
     RecordProperty("payload_bytes_per_frame", std::to_string(payloadPerFrame));
     RecordProperty("payload_budget_bytes_per_frame", std::to_string(kMaxPayloadBytesPerFrame));
     RecordProperty("baseline_ms", std::to_string(baselineMs));
@@ -181,7 +232,8 @@ void TTD_Capture_Cost_Gate_Test::RunCaptureCostGate(const std::string& modelName
     EXPECT_LT(captureShare, kMaxCaptureShare)
         << "TTD capture time regression on " << modelName << ": capture is " << (captureShare * 100.0)
         << "% of frame time (" << recordedMs << " ms recorded vs " << baselineMs
-        << " ms baseline over " << kFrames << " frames), budget " << (kMaxCaptureShare * 100.0) << "%.";
+        << " ms baseline, min of " << kShareRounds << " interleaved rounds over " << kFrames
+        << " frames), budget " << (kMaxCaptureShare * 100.0) << "%.";
 
     EmulatorTestHelper::CleanupEmulator(emu);
 }

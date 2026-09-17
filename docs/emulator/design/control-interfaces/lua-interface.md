@@ -654,14 +654,17 @@ local r = emu.ttd_find_last(0x5800, 'write')
 -- r is nil if no match, otherwise:
 -- r.frame, r.tstate, r.pc, r.value, r.physpage
 
--- Full filter set via a table argument:
+-- Full filter set via a table argument (single address or address/PC range search):
 local r2 = emu.ttd_find_last{
-    addr    = 0x5800,
-    access  = 'write',         -- 'write' | 'read' | 'execute' | 'out'
-    value   = 0x07,            -- optional exact value match
-    pc_from = 0x4000,          -- optional PC range filter
-    pc_to   = 0x8000,
-    before  = 14982            -- optional: don't search past this absolute tstate
+    addr_from = 0x4000,        -- optional address range start
+    addr_to   = 0x8000,        -- optional address range end
+    access    = 'write',       -- 'write' | 'read' | 'execute' | 'io'
+    value     = 0x07,          -- optional exact value match
+    pc_from   = 0x4000,        -- optional PC range filter
+    pc_to     = 0x8000,
+    before_frame = 4823,       -- optional: don't search past this frame
+    before_tin = 0,
+    phys_page = 5
 }
 ```
 
@@ -680,6 +683,24 @@ emu.ttd_bookmark_remove('bm-3')
 for _, bm in ipairs(emu.ttd_bookmark_list()) do
     print(bm.frame, bm.label)
 end
+```
+
+**Coverage index queries:**
+
+```lua
+local probe = emu.ttd_coverage_probe{frame = 100, kind = 'executed', addr_from = 0x0038, addr_to = 0x0040}
+-- { frame = 100, kind = 'executed', touched = true, index_available = true }
+-- Frames outside the covered window: index_available = false, touched = false
+
+local scan = emu.ttd_coverage_scan{kind = 'executed', addr_from = 0x0038, addr_to = 0x0040, from_frame = 1, to_frame = 200}
+-- { frames = {18, 19, 20}, first_match = 18, last_match = 20, matching_frames = 3,
+--   scanned_frames = 183, truncated = false, covered_from = 18, covered_to = 197,
+--   index_available = true }
+
+local summary = emu.ttd_coverage_summary{from_frame = 1, to_frame = 500, bucket_size = 50}
+-- { from_frame = 1, to_frame = 500, covered_from = 18, covered_to = 497,
+--   bucket_size = 50, bucket_count = 10, index_available = true,
+--   buckets = { {frame_start = 1, frame_end = 50, executed_distinct = 412, ...} } }
 ```
 
 **Errors** (raised as Lua errors; pcall to catch):

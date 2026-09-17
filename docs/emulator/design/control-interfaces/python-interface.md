@@ -717,14 +717,18 @@ result = emu.ttd_find_last(addr=0x5800, access='write')
 #   'physpage': 5
 # }
 
-# Full filter set:
+# Full filter set (single address or address/PC range search):
 result = emu.ttd_find_last(
-    addr=0x5800,
-    access='write',            # 'write' | 'read' | 'execute' | 'out'
+    addr=0x5800,                # optional single address
+    addr_from=0x4000,           # optional address range start
+    addr_to=0x8000,             # optional address range end
+    access='write',            # 'write' | 'read' | 'execute' | 'io'
     value=0x07,                # optional exact value match
     pc_from=0x4000,            # optional PC range filter
     pc_to=0x8000,
-    before=14982               # optional: don't search past this absolute tstate
+    before_frame=4823,         # optional: don't search past this frame
+    before_tin=0,
+    phys_page=5
 )
 ```
 
@@ -742,6 +746,24 @@ emu.ttd_bookmark_add(at=14982, label='before crash')
 emu.ttd_bookmark_remove(id='bm-3')
 for bm in emu.ttd_bookmark_list():
     print(bm['frame'], bm['label'])
+```
+
+**Coverage index queries:**
+
+```python
+probe = emu.ttd_coverage_probe(frame=100, kind='executed', addr_from=0x0038, addr_to=0x0040)
+# {'frame': 100, 'kind': 'executed', 'touched': True, 'index_available': True}
+# Frames outside the covered window: index_available=False, touched=False
+
+scan = emu.ttd_coverage_scan(kind='executed', addr_from=0x0038, addr_to=0x0040, from_frame=1, to_frame=200)
+# {'frames': [18, 19, 20], 'first_match': 18, 'last_match': 20, 'matching_frames': 3,
+#  'scanned_frames': 183, 'truncated': False, 'covered_from': 18, 'covered_to': 197,
+#  'index_available': True}
+
+summary = emu.ttd_coverage_summary(from_frame=1, to_frame=500, kind=None, bucket_size=50)
+# {'from_frame': 1, 'to_frame': 500, 'covered_from': 18, 'covered_to': 497,
+#  'bucket_size': 50, 'bucket_count': 10, 'index_available': True,
+#  'buckets': [{'frame_start': 1, 'frame_end': 50, 'executed_distinct': 412, ...}]}
 ```
 
 **Errors** (raise Python exceptions):

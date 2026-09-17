@@ -275,6 +275,7 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getRegisters, "/api/v1/emulator/{id}/registers", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::setRegister, "/api/v1/emulator/{id}/registers/{name}", drogon::Put);
     ADD_METHOD_TO(EmulatorAPI::getMemoryInfo, "/api/v1/emulator/{id}/memory/info", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getMemoryMap, "/api/v1/emulator/{id}/memory/map", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getMemoryPage, "/api/v1/emulator/{id}/memory/{type}/{page}/{offset}", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::putMemoryPage, "/api/v1/emulator/{id}/memory/{type}/{page}/{offset}", drogon::Put);
     ADD_METHOD_TO(EmulatorAPI::getMemory, "/api/v1/emulator/{id}/memory/{addr}", drogon::Get);
@@ -396,6 +397,15 @@ public:
     ADD_METHOD_TO(EmulatorAPI::stepInstructionTTD, "/api/v1/emulator/{id}/ttd/step-instruction", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::reverseStepTTD, "/api/v1/emulator/{id}/ttd/reverse-step", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::reverseContinueTTD, "/api/v1/emulator/{id}/ttd/reverse-continue", drogon::Post);
+    // TD-4 — agent bookmarks: advisory annotations beside the timeline,
+    // explicitly NOT replay barriers (unlike external-event markers).
+    ADD_METHOD_TO(EmulatorAPI::getTTDBookmarks, "/api/v1/emulator/{id}/ttd/bookmarks", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postTTDBookmark, "/api/v1/emulator/{id}/ttd/bookmarks", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::deleteTTDBookmark, "/api/v1/emulator/{id}/ttd/bookmarks/{label}", drogon::Delete);
+    // TD-7 — coverage index queries
+    ADD_METHOD_TO(EmulatorAPI::getTTDCoverageProbe, "/api/v1/emulator/{id}/ttd/coverage/probe", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getTTDCoverageScan, "/api/v1/emulator/{id}/ttd/coverage/scan", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getTTDCoverageSummary, "/api/v1/emulator/{id}/ttd/coverage/summary", drogon::Get);
     // endregion TTD
 
     // region Labels/Symbols (implementation: api/debug_api.cpp)
@@ -918,6 +928,8 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                        const std::string& type, const std::string& page, const std::string& offset) const;
     void getMemoryInfo(const drogon::HttpRequestPtr& req,
                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getMemoryMap(const drogon::HttpRequestPtr& req,
+                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
 
     // Analysis
     void getMemCounters(const drogon::HttpRequestPtr& req,
@@ -1171,6 +1183,21 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void reverseContinueTTD(const drogon::HttpRequestPtr& req,
                               std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    // TD-4 — agent bookmarks (advisory annotations, never replay barriers).
+    void getTTDBookmarks(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void postTTDBookmark(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void deleteTTDBookmark(const drogon::HttpRequestPtr& req,
+                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
+                           const std::string& label) const;
+    // TD-7 — coverage index queries
+    void getTTDCoverageProbe(const drogon::HttpRequestPtr& req,
+                             std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getTTDCoverageScan(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getTTDCoverageSummary(const drogon::HttpRequestPtr& req,
+                               std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     // endregion TTD Methods
 
     // region Helper Methods (implementation: emulator_api.cpp)

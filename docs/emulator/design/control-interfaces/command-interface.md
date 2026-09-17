@@ -2391,7 +2391,7 @@ Commands to configure emulator instance behavior and performance characteristics
 
 Record a per-frame checkpoint timeline of the running emulator, then seek backwards to any captured point and replay forward with full determinism. The same surface is also exposed to GDB/LLDB clients via reverse-execution packets (`bc`/`bs`) once the GDB transport lands (see [gdb-protocol.md](./gdb-protocol.md)).
 
-**Reference design:** [time-travel-debugging-tdd.md](../../debugger/time-travel-debug/time-travel-debugging-tdd.md) §10.4 — that TDD is the canonical source for command names, argument shapes, and result envelopes. This section mirrors it; if the two disagree, the TDD wins.
+**Reference design:** [time-travel-debugging-tdd.md](../debugger/time-travel-debug/time-travel-debugging-tdd.md) §10.4 — that TDD is the canonical source for command names, argument shapes, and result envelopes. This section mirrors it; if the two disagree, the TDD wins.
 
 **Feature flag:** `timetravel` (alias `ttd`) registered in `FeatureManager`. Recording, seek, and replay require this flag ON, which auto-enables the master `debugmode` flag (TTD uses the debug memory write path for the dirty-page hook). Status queries are always available, regardless of the flag — they return `{recording: false}` when TTD is off.
 
@@ -2413,13 +2413,14 @@ Record a per-frame checkpoint timeline of the running emulator, then seek backwa
 | `ttd seek` | — | `--frame N` *or* `--tstate T` | Seek to an absolute target point. Emulator must be paused (run-control claim enforced). Result envelope: `{ok, reached_frame, reached_tstate, halt_reason}`. | 🔮 Phase 2 |
 | `ttd step-back` | `ttd sb` | `[--unit instruction\|frame] [--count N]` | Relative backward navigation. Default unit is one instruction. | 🔮 Phase 2 |
 | `ttd step-forward` | `ttd sf` | `[--unit instruction\|frame] [--count N]` | Relative forward navigation within recorded history (does not extend the timeline). | 🔮 Phase 2 |
-| `ttd find-last` | `ttd fl` | `--addr <A> --access <write\|read\|execute\|out> [--value V] [--pc-from <A>] [--pc-to <A>] [--phys-page <P>] [--before <T>]` | Reverse search: most recent access matching the query, scanning backward from current position. `--phys-page` pins the query to one physical RAM page — on a banked machine an address alone is ambiguous, since the same Z80 address names different bytes depending on what is paged in. Ignored for `out`, which has no page. Returns `{frame, tstate, pc, value, physpage}` or null if no match. | 🔮 Phase 4 |
+| `ttd find-last` | `ttd fl` | `[--addr <A>] [--addr-from <F>] [--addr-to <T>] [--access write\|read\|execute\|io] [--value V] [--pc-from <A>] [--pc-to <A>] [--phys-page <P>] [--before-frame <F>] [--before-tin <T>]` | Reverse search: most recent access matching the query, scanning backward from current position. Supports single address (`--addr`) or address range (`--addr-from`..`--addr-to`), PC range (`--pc-from`..`--pc-to`), value, and physical page filters. `--phys-page` pins the query to one physical RAM page. Returns `{frame, tstate, pc, value, physpage}` or null if no match. | ✅ Implemented |
 | `ttd bookmark` | `ttd bm` | `<add\|remove\|list> [--at <T>] [--label <text>]` | Manage named bookmarks in the timeline. Bookmarks act as replay barriers (no silent coalescing across them). | 🔮 Phase 3 (UI) |
 | `ttd resume-from-here` | — | — | Truncate future history at the current (detached) position and resume live recording from there. Confirmation required if truncation would drop > N frames. | 🔮 Phase 2 |
 | `ttd position` | — | — | Current `TTDTimePoint` (`frame` + `tInFrame`) and the session end. | ✅ Implemented |
 | `ttd markers` | `ttd barriers` | — | List external-event markers (tape control, disk writes) that act as replay barriers. | ✅ Implemented |
 | `ttd dump` | `ttd save` | `<path>` | Serialize the session to a `.ttd` file for offline analysis with `tools/verification/ttd-analyzer`. | ✅ Implemented |
 | `ttd load` | `ttd open` | `<path>` | Load a `.ttd` session for playback. Replaces whatever session is held; afterwards the session is Idle, so use `ttd seek` to position the emulator. | ✅ Implemented |
+| `ttd coverage` | `ttd cov` | `<probe\|scan\|summary> [options]` | Query TTD coverage index. `probe` checks frame containment; `scan` lists matching frames in interval; `summary` returns activity heatmap. | ✅ Implemented |
 
 **Sessions on disk (`ttd dump` / `ttd load`).**
 
@@ -4153,6 +4154,6 @@ core/automation/
 ## Contributing
 
 Interface implementations and command additions are welcome! Please see:
-- Architecture documentation: [ARCHITECTURE.md](../../ARCHITECTURE.md)
-- Contribution guidelines: [CONTRIBUTING.md](../../../../CONTRIBUTING.md)
-- Command implementation guide: [COMMAND_IMPLEMENTATION.md](./COMMAND_IMPLEMENTATION.md)
+- Architecture documentation: [architecture_overview.md](../../../inprogress/architecture_overview.md)
+- Coding guidelines: [coding-guidelines.md](../../../guidelines/coding-guidelines.md)
+- Command implementation notes: [Implementation Notes](#implementation-notes) (this document)

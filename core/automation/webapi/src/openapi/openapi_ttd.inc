@@ -2,7 +2,7 @@
     //
     // Phase 2 surface (10 endpoints) + Phase 4 reverse-search (3 endpoints)
     // + Phase 4 reverse-execution (2 endpoints) + session restore via load
-    // (1 endpoint) = 16 endpoints total,
+    // (1 endpoint) + TD-4 agent bookmarks (3 endpoints) = 19 endpoints total,
     // all exposed by core/automation/webapi/src/api/ttd_api.cpp.
     // The status endpoint also serves as a capability probe: it returns 200
     // with state="idle" and ttd_available=false when the TTD engine is not
@@ -125,10 +125,13 @@
     paths["/api/v1/emulator/{id}/ttd/seek"]["post"]["description"] =
         "Restores the checkpoint on or before the target time, then replays "
         "forward. The session transitions to state=\"detached\" on success. "
-        "Replay stops at the first external-event marker on or after the "
-        "target — the response carries halt_reason=\"external_event\" and "
-        "a blocking_marker payload describing the barrier. Use resume to "
-        "continue past a barrier by truncating history at the current "
+        "The target may be given as coordinates (frame [+ tinframe]) or as a "
+        "TD-4 bookmark label (bookmark) — a bookmark is advisory, so seeking "
+        "to one is a plain arrival with halt_reason=\"target\". Replay stops "
+        "at the first external-event marker on or after the target — the "
+        "response carries halt_reason=\"external_event\" and a blocking_marker "
+        "payload describing the barrier (a bookmark never is one). Use resume "
+        "to continue past a barrier by truncating history at the current "
         "position.";
     paths["/api/v1/emulator/{id}/ttd/seek"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/ttd/seek"]["post"]["parameters"][0]["in"] = "path";
@@ -144,9 +147,9 @@
     paths["/api/v1/emulator/{id}/ttd/seek"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
          ["$ref"] = "#/components/schemas/TTDSeekResponse";
     paths["/api/v1/emulator/{id}/ttd/seek"]["post"]["responses"]["400"]["description"] =
-        "Missing required field: frame";
+        "Missing required field: frame (or bookmark)";
     paths["/api/v1/emulator/{id}/ttd/seek"]["post"]["responses"]["404"]["description"] =
-        "Emulator instance not found";
+        "Emulator instance not found, or unknown bookmark label";
     paths["/api/v1/emulator/{id}/ttd/seek"]["post"]["responses"]["501"]["description"] =
         "TTD engine not available in this build";
 
@@ -275,6 +278,92 @@
         "TTD engine not available in this build";
 
     // =====================================================================
+    // GET /ttd/bookmarks — list agent bookmarks (TD-4)
+    // =====================================================================
+    paths["/api/v1/emulator/{id}/ttd/bookmarks"]["get"]["summary"] =
+        "List TTD agent bookmarks (TD-4 — advisory annotations)";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks"]["get"]["tags"].append("Time-Travel Debug");
+    paths["/api/v1/emulator/{id}/ttd/bookmarks"]["get"]["description"] =
+        "Returns every agent bookmark in this session, time-sorted. "
+        "Bookmarks are advisory annotations stored beside the timeline and "
+        "serialized in the .ttd session — unlike /ttd/markers they never "
+        "halt a seek and never appear as a halt_reason.";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/bookmarks"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks"]["get"]["responses"]["200"]["description"] =
+        "Bookmark list";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["$ref"] = "#/components/schemas/TTDBookmarksResponse";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks"]["get"]["responses"]["404"]["description"] =
+        "Emulator instance not found";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks"]["get"]["responses"]["501"]["description"] =
+        "TTD engine not available in this build";
+
+    // =====================================================================
+    // POST /ttd/bookmarks — add an agent bookmark (TD-4)
+    // =====================================================================
+    paths["/api/v1/emulator/{id}/ttd/bookmarks"]["post"]["summary"] =
+        "Add a TTD agent bookmark (TD-4 — advisory annotation)";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks"]["post"]["tags"].append("Time-Travel Debug");
+    paths["/api/v1/emulator/{id}/ttd/bookmarks"]["post"]["description"] =
+        "Adds a named bookmark at (frame, tinframe). When frame is omitted "
+        "the bookmark is placed at the current position — the one-call "
+        "\"mark here\". Labels are keys: non-empty, at most 63 characters, "
+        "unique per session. Bookmarks are advisory and explicitly NOT replay "
+        "barriers; they are serialized with the session (dump/load round-trips "
+        "preserve them).";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/bookmarks"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks"]["post"]["requestBody"]["description"] =
+        "Bookmark label and optional position (defaults to the current position)";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks"]["post"]["requestBody"]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/bookmarks"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["$ref"] = "#/components/schemas/TTDBookmarkAddRequest";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks"]["post"]["responses"]["201"]["description"] =
+        "Bookmark created";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks"]["post"]["responses"]["201"]["content"]["application/json"]["schema"]
+         ["$ref"] = "#/components/schemas/TTDBookmarkAddedResponse";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks"]["post"]["responses"]["400"]["description"] =
+        "Label contract violation (missing / empty / over 63 characters)";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks"]["post"]["responses"]["404"]["description"] =
+        "Emulator instance not found";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks"]["post"]["responses"]["409"]["description"] =
+        "Duplicate label, no recorded history, or position beyond the session end";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks"]["post"]["responses"]["501"]["description"] =
+        "TTD engine not available in this build";
+
+    // =====================================================================
+    // DELETE /ttd/bookmarks/{label} — remove an agent bookmark (TD-4)
+    // =====================================================================
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["delete"]["summary"] =
+        "Delete a TTD agent bookmark by label (TD-4)";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["delete"]["tags"].append("Time-Travel Debug");
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["delete"]["description"] =
+        "Removes the bookmark with the given label. The label becomes free "
+        "for reuse. URL-encode labels containing spaces or slashes "
+        "(e.g. \"umt%20entry\").";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["delete"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["delete"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["delete"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["delete"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["delete"]["parameters"][1]["name"] = "label";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["delete"]["parameters"][1]["in"] = "path";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["delete"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["delete"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["delete"]["responses"]["200"]["description"] =
+        "Bookmark removed";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["delete"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["$ref"] = "#/components/schemas/TTDBookmarkDeletedResponse";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["delete"]["responses"]["404"]["description"] =
+        "Emulator instance not found, or unknown bookmark label";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["delete"]["responses"]["501"]["description"] =
+        "TTD engine not available in this build";
+
+    // =====================================================================
     // POST /ttd/dump — serialize session to .ttd file (Phase 4)
     // =====================================================================
     paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["summary"] =
@@ -364,7 +453,7 @@
     paths["/api/v1/emulator/{id}/ttd/find-last"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
          ["$ref"] = "#/components/schemas/TTDFindLastResponse";
     paths["/api/v1/emulator/{id}/ttd/find-last"]["post"]["responses"]["400"]["description"] =
-        "Missing required field: addr";
+        "Missing search criteria in request body";
     paths["/api/v1/emulator/{id}/ttd/find-last"]["post"]["responses"]["404"]["description"] =
         "Emulator instance not found";
     paths["/api/v1/emulator/{id}/ttd/find-last"]["post"]["responses"]["501"]["description"] =
@@ -462,3 +551,51 @@
         "Emulator instance not found";
     paths["/api/v1/emulator/{id}/ttd/reverse-continue"]["post"]["responses"]["501"]["description"] =
         "TTD engine not available in this build";
+
+    // =====================================================================
+    // GET /ttd/coverage/probe — probe address range containment for a frame
+    // =====================================================================
+    paths["/api/v1/emulator/{id}/ttd/coverage/probe"]["get"]["summary"] =
+        "Probe coverage for a single frame (TD-7 §3.1.1)";
+    paths["/api/v1/emulator/{id}/ttd/coverage/probe"]["get"]["tags"].append("Time-Travel Debug");
+    paths["/api/v1/emulator/{id}/ttd/coverage/probe"]["get"]["description"] =
+        "Boolean point query checking if a specified frame touched an address range. Frames outside the "
+        "index covered range report index_available=false (touched=false). Returns 400 when 'frame' is "
+        "missing, 'kind' is not executed/written/read, addr_from exceeds addr_to, or values are malformed.";
+    paths["/api/v1/emulator/{id}/ttd/coverage/probe"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/ttd/coverage/probe"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/ttd/coverage/probe"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/coverage/probe"]["get"]["parameters"][1]["name"] = "frame";
+    paths["/api/v1/emulator/{id}/ttd/coverage/probe"]["get"]["parameters"][1]["in"] = "query";
+    paths["/api/v1/emulator/{id}/ttd/coverage/probe"]["get"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/coverage/probe"]["get"]["parameters"][1]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/ttd/coverage/probe"]["get"]["parameters"][1]["description"] =
+        "Frame number to probe (emulator-absolute frame index)";
+
+    // =====================================================================
+    // GET /ttd/coverage/scan — scan matching frames for address range
+    // =====================================================================
+    paths["/api/v1/emulator/{id}/ttd/coverage/scan"]["get"]["summary"] =
+        "Scan frames touching address range (TD-7 §3.1.2)";
+    paths["/api/v1/emulator/{id}/ttd/coverage/scan"]["get"]["tags"].append("Time-Travel Debug");
+    paths["/api/v1/emulator/{id}/ttd/coverage/scan"]["get"]["description"] =
+        "Multi-frame range scan returning frame numbers touching a given address range. The request window "
+        "is clamped to the index covered range, echoed as covered_from/covered_to. Returns 400 when "
+        "'kind' is not executed/written/read, addr_from exceeds addr_to, or values are malformed.";
+    paths["/api/v1/emulator/{id}/ttd/coverage/scan"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/ttd/coverage/scan"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/ttd/coverage/scan"]["get"]["parameters"][0]["required"] = true;
+
+    // =====================================================================
+    // GET /ttd/coverage/summary — activity heatmap across frame intervals
+    // =====================================================================
+    paths["/api/v1/emulator/{id}/ttd/coverage/summary"]["get"]["summary"] =
+        "Activity heatmap over frame intervals (TD-7 §3.1.3)";
+    paths["/api/v1/emulator/{id}/ttd/coverage/summary"]["get"]["tags"].append("Time-Travel Debug");
+    paths["/api/v1/emulator/{id}/ttd/coverage/summary"]["get"]["description"] =
+        "Aggregated activity heatmap reporting distinct address counts per frame bucket. When the index "
+        "is available the covered window is echoed as covered_from/covered_to. Returns 400 when 'kind' "
+        "is not executed/written/read or values are malformed.";
+    paths["/api/v1/emulator/{id}/ttd/coverage/summary"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/ttd/coverage/summary"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/ttd/coverage/summary"]["get"]["parameters"][0]["required"] = true;

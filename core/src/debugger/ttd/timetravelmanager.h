@@ -52,6 +52,7 @@
 #include "common/modulelogger.h"    // ModuleLogger
 #include "ttdcheckpoint.h"
 #include "ttdexternalevents.h"
+#include "ttdbookmarks.h"
 #include "ttdinputjournal.h"
 #include "ttdwritejournal.h"
 #include "ttdprobe.h"
@@ -175,6 +176,97 @@ struct TTDSessionInfo
     /// carries no index — correct but slower for reverse queries.
     size_t coverageIndexFrames = 0;
     size_t coverageIndexBytes = 0;
+
+    /// Advisory bookmarks currently held (TD-4). Zero is a session without
+    /// annotations — complete and correct.
+    size_t bookmarkCount = 0;
+};
+
+/// @brief String conversion for TTDCoverageKind.
+inline const char* TTDCoverageKindToString(TTDCoverageKind kind)
+{
+    switch (kind)
+    {
+        case TTDCoverageKind::Executed: return "executed";
+        case TTDCoverageKind::Written:  return "written";
+        case TTDCoverageKind::Read:     return "read";
+        default:                        return "unknown";
+    }
+}
+
+/// @brief Parse TTDCoverageKind from string ("executed"/"exec", "written"/"write", "read").
+inline bool TTDCoverageKindFromString(const std::string& str, TTDCoverageKind& outKind)
+{
+    if (str == "executed" || str == "exec" || str == "execute")
+    {
+        outKind = TTDCoverageKind::Executed;
+        return true;
+    }
+    if (str == "written" || str == "write")
+    {
+        outKind = TTDCoverageKind::Written;
+        return true;
+    }
+    if (str == "read")
+    {
+        outKind = TTDCoverageKind::Read;
+        return true;
+    }
+    return false;
+}
+
+/// @brief Result of a coverage probe query (TD-7 §3.1.1).
+struct TTDCoverageProbeResult
+{
+    uint64_t frame = 0;
+    TTDCoverageKind kind = TTDCoverageKind::Executed;
+    uint16_t addrFrom = 0;
+    uint16_t addrTo = 0xFFFF;
+    std::optional<uint8_t> physPage;
+    bool touched = false;
+    bool indexAvailable = false;
+};
+
+/// @brief Result of a coverage scan query (TD-7 §3.1.2).
+struct TTDCoverageScanResult
+{
+    TTDCoverageKind kind = TTDCoverageKind::Executed;
+    uint16_t addrFrom = 0;
+    uint16_t addrTo = 0xFFFF;
+    std::optional<uint8_t> physPage;
+    uint64_t scannedFrames = 0;
+    uint64_t matchingFrames = 0;
+    std::vector<uint64_t> frames;
+    uint64_t firstMatch = 0;
+    uint64_t lastMatch = 0;
+    uint64_t coveredFrom = 0;                ///< First frame the index covers; the query window is clamped to it
+    uint64_t coveredTo = 0;                  ///< Last frame the index covers
+    bool truncated = false;
+    bool indexAvailable = false;
+};
+
+/// @brief One bucket in a coverage summary query (TD-7 §3.1.3).
+struct TTDCoverageSummaryBucket
+{
+    uint64_t frameStart = 0;
+    uint64_t frameEnd = 0;
+    uint32_t executedDistinct = 0;
+    uint32_t writtenDistinct = 0;
+    uint32_t readDistinct = 0;
+    bool hasKeyframe = false;
+};
+
+/// @brief Result of a coverage summary query (TD-7 §3.1.3).
+struct TTDCoverageSummaryResult
+{
+    uint64_t fromFrame = 0;
+    uint64_t toFrame = 0;
+    uint64_t coveredFrom = 0;                ///< First frame any covered kind covers
+    uint64_t coveredTo = 0;                  ///< Last frame any covered kind covers
+    uint64_t bucketSize = 50;
+    size_t bucketCount = 0;
+    std::vector<TTDCoverageSummaryBucket> buckets;
+    bool indexAvailable = false;
 };
 
 class TimeTravelManager
@@ -631,6 +723,62 @@ public:
     }
 
     // -----------------------------------------------------------------------
+    // Agent bookmarks (TD-4; ttd-coverage-evaluation.md §TD-4)
+    // -----------------------------------------------------------------------
+    //
+    // Advisory named timeline annotations — the "note to self" that survives
+    // seeks: mark the unpack entry once, then return by label no matter how
+    // far find-last / reverse-continue / step-back wandered. Stored in
+    // TTDBookmarkJournal BESIDE the external-event journal, never inside it:
+    // a bookmark observes the timeline, it is not a replay barrier, and
+    // SeekTo never halts on one (halt_reason has no "bookmark" value).
+    //
+    // Lifecycle mirrors the other journals: cleared on StartRecording /
+    // InvalidateSession / DeserializeSession, clipped by
+    // ResumeRecordingFrom, persisted in the .ttd file as a flag-gated
+    // section (ttd::dump::kFlagsHasBookmarks).
+
+    /// @brief Add a bookmark at an explicit position.
+    ///
+    /// Manager-level validation on top of the journal's label rules: the
+    /// timeline must be non-empty and `time` must lie within the recorded
+    /// bounds (<= SessionEndPosition()) — a bookmark pointing past the end
+    /// can never be sought to and is refused at creation instead.
+    ///
+    /// Callable in any session state (a bookmark added while Recording
+    /// points at history that exists; adding while Detached/Idle annotates
+    /// the browsed timeline).
+    ///
+    /// @return false with *err filled on invalid label / duplicate label /
+    /// out-of-bounds position.
+    bool AddBookmark(const TTDTimePoint& time, const std::string& label,
+                     std::string* err = nullptr);
+
+    /// @brief All bookmarks, time-sorted (thread-safe snapshot copy).
+    std::vector<TTDBookmark> GetBookmarks() const;
+
+    /// @brief Resolve a label to its bookmark. False when unknown.
+    bool FindBookmark(const std::string& label, TTDBookmark& out) const;
+
+    /// @brief Remove a bookmark by label. False when the label is unknown.
+    bool RemoveBookmark(const std::string& label);
+
+    /// @brief Seek to a bookmark's position by label.
+    ///
+    /// Pure composition: FindBookmark + SeekTo. The returned result is
+    /// exactly what a direct SeekTo to the same timepoint would produce —
+    /// in particular a marker between the restore checkpoint and the target
+    /// still reports halt_reason "external_event", and a bookmark itself
+    /// never appears as a halt reason (advisory by construction).
+    ///
+    /// @param label     Bookmark to seek to.
+    /// @param outResult Seek outcome (may be nullptr).
+    /// @param err       Filled with "unknown bookmark ..." on a bad label.
+    /// @return          outResult->reached (false on unknown label).
+    bool SeekToBookmark(const std::string& label, TTDSeekResult* outResult,
+                        std::string* err = nullptr);
+
+    // -----------------------------------------------------------------------
     // Resume-from-past (Phase 2 Item 5; parent TDD §8.3)
     // -----------------------------------------------------------------------
     //
@@ -820,6 +968,32 @@ public:
     std::optional<TTDSearchResult> FindLastAccess(
         const TTDSearchQuery& query,
         TTDExternalEvent* outBlockingMarker = nullptr);
+
+    /// @brief Probe coverage for a specific frame and address range (TD-7 §3.1.1).
+    TTDCoverageProbeResult QueryCoverageProbe(
+        uint64_t frame,
+        TTDCoverageKind kind,
+        uint16_t addrFrom,
+        uint16_t addrTo,
+        std::optional<uint8_t> physPage = std::nullopt) const;
+
+    /// @brief Scan frames in [fromFrame, toFrame] touching range (TD-7 §3.1.2).
+    TTDCoverageScanResult QueryCoverageScan(
+        uint64_t fromFrame,
+        uint64_t toFrame,
+        TTDCoverageKind kind,
+        uint16_t addrFrom,
+        uint16_t addrTo,
+        std::optional<uint8_t> physPage = std::nullopt,
+        size_t limit = 200) const;
+
+    /// @brief Activity heatmap over [fromFrame, toFrame] (TD-7 §3.1.3).
+    TTDCoverageSummaryResult QueryCoverageSummary(
+        uint64_t fromFrame,
+        uint64_t toFrame,
+        std::optional<TTDCoverageKind> kind = std::nullopt,
+        uint64_t bucketSize = 0,
+        size_t limit = 100) const;
     
     /// @brief Step back one instruction (TDD §10.2 + §16 row 2).
     ///
@@ -1343,6 +1517,11 @@ private:
     /// that aren't input-journaled in v1 (Item 6). Same lifecycle as the
     /// input journal: dropped on Invalidate/Start, truncated by Resume.
     TTDExternalEventJournal _externalEvents;
+
+    /// Advisory bookmarks (TD-4) — named annotations BESIDE the barrier
+    /// journal above, never inside it. Same lifecycle: dropped on
+    /// Invalidate/Start, truncated by Resume, persisted in the .ttd file.
+    TTDBookmarkJournal _bookmarks;
 
     /// Write journal — fast-path accelerator for FindLastAccess (Phase 4;
     /// parent TDD §9.3). 64 MB ring of 12-byte TTDWriteRecords (~5.5M records,

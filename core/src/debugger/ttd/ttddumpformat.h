@@ -61,6 +61,15 @@ constexpr uint16_t kFlagsHasWriteJournal = 0x0002;
 /// seconds per ten minutes of history that rebuilding by replay would take.
 constexpr uint16_t kFlagsHasCoverageIndex = 0x0004;
 
+/// Bit 3 of header.flags — set when an advisory bookmarks section follows
+/// the coverage index (TD-4 agent bookmarks).
+///
+/// Bookmarks are named timeline annotations, not replay data: a file
+/// without them is a complete session that simply carries no annotations.
+/// They are advisory in both directions — SeekTo never stops on one, and
+/// their absence costs nothing but the convenience of label-based return.
+constexpr uint16_t kFlagsHasBookmarks = 0x0008;
+
 // ---------------------------------------------------------------------------
 // Page slot encodings (Encoding enum in TTDCodecPageStore)
 // ---------------------------------------------------------------------------

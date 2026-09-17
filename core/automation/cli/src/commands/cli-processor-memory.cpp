@@ -8,8 +8,10 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/emulatorcontext.h>
+#include <emulator/config.h>
 #include <emulator/memory/memory.h>
 #include <emulator/memory/memoryaccesstracker.h>
+#include <emulator/memory/memorymap.h>  // TD-3 sparse map
 #include <emulator/platform.h>
 
 #include <cctype>
@@ -86,6 +88,16 @@ void CLIProcessor::HandleMemory(const ClientSession& session, const std::vector<
     {
         HandleMemoryInfo(session, memory);
     }
+    else if (subcommand == "map")
+    {
+        EmulatorContext* ctx = emulator->GetContext();
+        if (!ctx)
+        {
+            session.SendResponse("Emulator context not available" + std::string(NEWLINE));
+            return;
+        }
+        HandleMemoryMap(session, memory, ctx->config, args);
+    }
     else
     {
         // Legacy mode: treat first arg as address for backwards compatibility
@@ -137,6 +149,7 @@ void CLIProcessor::ShowMemoryHelp(const ClientSession& session)
     oss << NEWLINE;
     oss << "Configuration:" << NEWLINE;
     oss << "  memory info                       - Show memory configuration" << NEWLINE;
+    oss << "  memory map [address|ram] [min_run] [max_blocks] - Sparse non-zero block map" << NEWLINE;
     oss << NEWLINE;
     oss << "Page Types: ram (0-255), rom (0-3), cache (0-15), misc (0-15)" << NEWLINE;
     oss << "Address formats: 0x8000, $8000, #8000, 32768" << NEWLINE;
@@ -973,6 +986,75 @@ void CLIProcessor::HandleMemoryInfo(const ClientSession& session, Memory* memory
         std::string bankName = memory->GetCurrentBankName(bank);
         oss << bankName << NEWLINE;
     }
+
+    session.SendResponse(oss.str());
+}
+
+// memory map [address|ram] [min_run] [max_blocks]
+// TD-3 Phase 1: sparse non-zero block overview rendered from the same core
+// source as GET /memory/map and MCP inspect_state 'memory_map'
+void CLIProcessor::HandleMemoryMap(const ClientSession& session, Memory* memory, const CONFIG& config,
+                                   const std::vector<std::string>& args)
+{
+    MemoryMapView view = MemoryMapView::AddressSpace;
+    uint32_t minRun = kMemoryMapDefaultMinRun;
+    uint32_t maxBlocks = kMemoryMapDefaultMaxBlocks;
+
+    size_t index = 1;
+    if (args.size() > index)
+    {
+        if (args[index] == "ram" || args[index] == "pages")
+        {
+            view = MemoryMapView::RamPages;
+            index++;
+        }
+        else if (args[index] == "address")
+        {
+            index++;
+        }
+    }
+
+    uint16_t parsed = 0;
+    if (args.size() > index && ParseAddress(args[index], parsed))
+    {
+        minRun = parsed;
+        index++;
+        if (args.size() > index && ParseAddress(args[index], parsed))
+            maxBlocks = parsed;
+    }
+    if (minRun < 1) minRun = 1;
+    if (maxBlocks < 1) maxBlocks = 1;
+
+    const MemoryMapReport report = BuildMemoryMap(*memory, config, view, minRun, maxBlocks);
+    const uint32_t percent = report.totalSize > 0 ? report.nonZeroBytes * 100 / report.totalSize : 0;
+
+    std::ostringstream oss;
+    oss << "Sparse Memory Map: " << report.model << ", " << (report.ramView ? "ram" : "address") << " view" << NEWLINE;
+    oss << "Total " << report.totalSize << " bytes, non-zero " << report.nonZeroBytes
+        << " (" << percent << "%), " << report.blocks.size() << " block(s)" << NEWLINE;
+    oss << NEWLINE;
+    oss << "ADDRESS  SIZE    TYPE         STATUS  NON-ZERO  HASH" << NEWLINE;
+
+    for (const MemoryMapBlock& block : report.blocks)
+    {
+        oss << "0x" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << block.address
+            << std::dec << std::setfill(' ')
+            << "  " << std::setw(5) << block.size
+            << "  " << std::left << std::setw(12) << block.typeName << std::right
+            << "  " << std::setw(6) << (block.IsZeroFill() ? "zeros" : "data")
+            << "  " << std::setw(8) << block.nonZero
+            << "  ";
+        if (block.IsZeroFill())
+            oss << "-";
+        else
+            oss << std::hex << std::setw(16) << std::setfill('0') << block.hash << std::dec << std::setfill(' ');
+        oss << NEWLINE;
+    }
+
+    if (report.truncated)
+        oss << NEWLINE << "TRUNCATED: block budget exhausted even at min_run " << report.minRun << NEWLINE;
+    else if (report.minRun != minRun)
+        oss << NEWLINE << "min_run raised to " << report.minRun << " to fit the block budget" << NEWLINE;
 
     session.SendResponse(oss.str());
 }

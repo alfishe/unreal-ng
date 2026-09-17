@@ -1,4 +1,4 @@
-﻿/// @file ttd_automation_contract_test.cpp
+/// @file ttd_automation_contract_test.cpp
 /// @brief Phase 2+ Automation: TTD API contract test.
 ///
 /// Verifies that the TimeTravelManager surface — as consumed by all four
@@ -502,6 +502,84 @@ TEST_F(TTD_Automation_Contract_Test, FindLast_QueryShape_HasExpectedFields)
     EXPECT_STREQ(ttd::TTDAccessTypeToString(ttd::TTDAccessType::Io),      "io");
 }
 
+TEST_F(TTD_Automation_Contract_Test, FindLast_AddressRange_And_PCRange_Query)
+{
+    ASSERT_TRUE(_ttd->StartRecording());
+
+    // Write into 0x4500 from PC 0x1234
+    _ttd->RecordMemoryWrite(0x4500, 0, 0xAA, 0x1234, 5);
+
+    RunFrames(1);
+    _ttd->StopRecording();
+
+    // 1. Range query: 0x4000..0x5000 (should match write at 0x4500)
+    ttd::TTDSearchQuery qRange;
+    qRange.addrFrom = 0x4000;
+    qRange.addrTo   = 0x5000;
+    qRange.access   = ttd::TTDAccessType::Write;
+    auto resRange = _ttd->FindLastAccess(qRange);
+    ASSERT_TRUE(resRange.has_value());
+    EXPECT_EQ(resRange->pc, 0x1234u);
+    EXPECT_EQ(resRange->value, 0xAAu);
+
+    // 2. PC-only range query: PC 0x1200..0x1300 across all memory (0..0xFFFF)
+    ttd::TTDSearchQuery qPc;
+    qPc.addrFrom = 0;
+    qPc.addrTo   = 0xFFFF;
+    qPc.access   = ttd::TTDAccessType::Write;
+    qPc.hasPcFilter = true;
+    qPc.pcFrom = 0x1200;
+    qPc.pcTo   = 0x1300;
+    auto resPc = _ttd->FindLastAccess(qPc);
+    ASSERT_TRUE(resPc.has_value());
+    EXPECT_EQ(resPc->pc, 0x1234u);
+    EXPECT_EQ(resPc->value, 0xAAu);
+}
+
+TEST_F(TTD_Automation_Contract_Test, FindLast_AllOptionalFilters_Contract)
+{
+    ASSERT_TRUE(_ttd->StartRecording());
+
+    // Record two distinct writes at 0x6000 with different values, PCs, and pages
+    _ttd->RecordMemoryWrite(0x6000, 0, 0x11, 0x1000, 2); // Write #1
+    RunFrames(2);
+    _ttd->RecordMemoryWrite(0x6000, 0, 0x22, 0x2000, 5); // Write #2
+    RunFrames(1);
+
+    _ttd->StopRecording();
+
+    // 1. Filter by value = 0x11 (should match Write #1 at PC 0x1000)
+    ttd::TTDSearchQuery qVal;
+    qVal.addrFrom = qVal.addrTo = 0x6000;
+    qVal.access = ttd::TTDAccessType::Write;
+    qVal.hasValueFilter = true;
+    qVal.value = 0x11;
+    auto resVal = _ttd->FindLastAccess(qVal);
+    ASSERT_TRUE(resVal.has_value());
+    EXPECT_EQ(resVal->pc, 0x1000u);
+    EXPECT_EQ(resVal->value, 0x11u);
+
+    // 2. Filter by physPage = 2 (should match Write #1 at page 2)
+    ttd::TTDSearchQuery qPage;
+    qPage.addrFrom = qPage.addrTo = 0x6000;
+    qPage.access = ttd::TTDAccessType::Write;
+    qPage.hasPhysPageFilter = true;
+    qPage.physPage = 2;
+    auto resPage = _ttd->FindLastAccess(qPage);
+    ASSERT_TRUE(resPage.has_value());
+    EXPECT_EQ(resPage->pc, 0x1000u);
+    EXPECT_EQ(resPage->physPage, 2u);
+
+    // 3. Filter by beforeGlobalT (should exclude Write #2 if before Write #2's timestamp)
+    ttd::TTDSearchQuery qTime;
+    qTime.addrFrom = qTime.addrTo = 0x6000;
+    qTime.access = ttd::TTDAccessType::Write;
+    qTime.beforeGlobalT = resVal->time.frame * _context->config.frame + resVal->time.tInFrame + 1;
+    auto resTime = _ttd->FindLastAccess(qTime);
+    ASSERT_TRUE(resTime.has_value());
+    EXPECT_EQ(resTime->pc, 0x1000u);
+}
+
 /// endregion
 
 /// region <Phase 4: StepInstruction contract — matches ttd step-instruction / POST /ttd/step-instruction>
@@ -612,6 +690,43 @@ TEST_F(TTD_Automation_Contract_Test, ReverseContinue_QueryShape_HasExpectedField
     auto noMatch = _ttd->ReverseContinue({0xFFFE});
     EXPECT_FALSE(noMatch.matched);
     EXPECT_EQ(noMatch.pc, 0xFFFF);
+}
+
+TEST_F(TTD_Automation_Contract_Test, CoverageQuery_Contract_ProbeScanSummary)
+{
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(5);
+    _ttd->StopRecording();
+
+    // Covered window contract: the scan echoes the clamped effective window (TD-7 defect B fix).
+    auto scan = _ttd->QueryCoverageScan(0, 5, ttd::TTDCoverageKind::Executed, 0x0000, 0x0010);
+    EXPECT_TRUE(scan.indexAvailable);
+    EXPECT_LE(scan.coveredFrom, scan.coveredTo);
+    EXPECT_GT(scan.scannedFrames, 0u);
+    EXPECT_GT(scan.matchingFrames, 0u);
+    EXPECT_FALSE(scan.frames.empty());
+    EXPECT_GE(scan.frames.front(), scan.coveredFrom);
+    EXPECT_LE(scan.frames.back(), scan.coveredTo);
+
+    // Probe contract: availability is per-frame — a frame outside the covered window
+    // reports index_available=false instead of a conservative false positive (TD-7 defect A fix).
+    auto probeOutside = _ttd->QueryCoverageProbe(scan.coveredTo + 10, ttd::TTDCoverageKind::Executed, 0x0000, 0x0010);
+    EXPECT_FALSE(probeOutside.indexAvailable);
+    EXPECT_FALSE(probeOutside.touched);
+
+    auto probe = _ttd->QueryCoverageProbe(scan.coveredFrom, ttd::TTDCoverageKind::Executed, 0x0000, 0x0010);
+    EXPECT_TRUE(probe.indexAvailable);
+    EXPECT_TRUE(probe.touched);
+    EXPECT_EQ(probe.frame, scan.coveredFrom);
+    EXPECT_EQ(probe.kind, ttd::TTDCoverageKind::Executed);
+
+    // Summary contract: the covered window is echoed (union across kinds).
+    auto summary = _ttd->QueryCoverageSummary(0, 5);
+    EXPECT_TRUE(summary.indexAvailable);
+    EXPECT_LE(summary.coveredFrom, summary.coveredTo);
+    EXPECT_GT(summary.bucketCount, 0u);
+    EXPECT_FALSE(summary.buckets.empty());
+    EXPECT_GT(summary.buckets[0].executedDistinct, 0u);
 }
 
 /// endregion

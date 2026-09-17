@@ -110,6 +110,7 @@ private:
     void HandleMemoryLoad(const ClientSession& session, Memory* memory, const std::vector<std::string>& args);
     void HandleMemoryFill(const ClientSession& session, Memory* memory, const std::vector<std::string>& args);
     void HandleMemoryInfo(const ClientSession& session, Memory* memory);
+    void HandleMemoryMap(const ClientSession& session, Memory* memory, const CONFIG& config, const std::vector<std::string>& args);
     void HandleFind(const ClientSession& session, const std::vector<std::string>& args);
     void DumpZ80Memory(const ClientSession& session, Memory* memory, uint16_t address, uint16_t length);
     void DumpPhysicalPage(const ClientSession& session, Memory* memory, int pageType, uint16_t page, uint16_t offset, uint16_t length);
@@ -339,6 +340,8 @@ private:
     void HandleTTDResume(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void HandleTTDPosition(const ClientSession& session, EmulatorContext* context);
     void HandleTTDMarkers(const ClientSession& session, EmulatorContext* context);
+    void HandleTTDBookmark(const ClientSession& session, EmulatorContext* context,
+                           const std::vector<std::string>& args);
     void HandleTTDDump(const ClientSession& session, EmulatorContext* context,
                        const std::vector<std::string>& args);
     void HandleTTDLoad(const ClientSession& session, EmulatorContext* context,
@@ -351,6 +354,8 @@ private:
                               const std::vector<std::string>& args);
     void HandleTTDReverseContinue(const ClientSession& session, EmulatorContext* context,
                                    const std::vector<std::string>& args);
+    void HandleTTDCoverage(const ClientSession& session, EmulatorContext* context,
+                           const std::vector<std::string>& args);
 
     // Command map
     std::unordered_map<std::string, CommandHandler> _commandHandlers;

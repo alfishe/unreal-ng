@@ -14,6 +14,7 @@
 #include <cstring>
 #include <iostream>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "ttdcheckpoint.h"
 #include "ttddirtytracker.h"
@@ -203,6 +204,7 @@ bool TimeTravelManager::StartRecording()
         _dirtyScratch.clear();
         _inputJournal.Clear();  // Phase 2 Item 3 — drop any prior input events
         _externalEvents.Clear();  // Phase 2 Item 6 — drop any prior markers
+        _bookmarks.Clear();  // TD-4 — prior bookmarks point into wiped history
         if (_writeJournal)
             _writeJournal->Clear();  // Phase 4 — drop any prior write records
     }
@@ -370,6 +372,7 @@ void TimeTravelManager::InvalidateSession(const char* reason)
     ReleaseModelPeripherals();  // serializers are session-scoped, like the timeline
     _inputJournal.Clear();  // Phase 2 Item 3 — input history invalidates with the timeline
     _externalEvents.Clear();  // Phase 2 Item 6 — markers invalidate with the timeline
+    _bookmarks.Clear();  // TD-4 — bookmarks invalidate with the timeline
     if (_writeJournal)
         _writeJournal->Clear();  // Phase 4 — write journal invalidates with the timeline
     _modelRamPages = 0;
@@ -471,6 +474,8 @@ TTDSessionInfo TimeTravelManager::GetSessionInfo() const
     info.coverageIndexBytes  = _coverageIndex.EncodedBytes(TTDCoverageKind::Executed) +
                                _coverageIndex.EncodedBytes(TTDCoverageKind::Written) +
                                _coverageIndex.EncodedBytes(TTDCoverageKind::Read);
+
+    info.bookmarkCount = _bookmarks.Size();
 
     // Phase 5 codec telemetry — useful for the UI / WebAPI status surface
     // to show compression effectiveness at a glance.
@@ -1551,6 +1556,85 @@ bool TimeTravelManager::SeekTo(const TTDTimePoint& target, TTDSeekResult* outRes
     return ok;
 }
 
+// ---------------------------------------------------------------------------
+// Agent bookmarks (TD-4)
+// ---------------------------------------------------------------------------
+
+bool TimeTravelManager::AddBookmark(const TTDTimePoint& time, const std::string& label,
+                                    std::string* err)
+{
+    // A bookmark into empty history dangles immediately — there is no
+    // checkpoint to return to. Refuse at creation instead of at seek time.
+    if (_timeline.empty())
+    {
+        if (err)
+            *err = "no recorded history to bookmark (start recording first)";
+        MLOGWARNING("TimeTravelManager::AddBookmark — rejected: timeline is empty");
+        return false;
+    }
+
+    // Same principle for a position past the session end: the bookmark can
+    // never be reached, so it must never be created.
+    const TTDTimePoint end = SessionEndPosition();
+    if (end < time)
+    {
+        if (err)
+            *err = "bookmark position (frame=" + std::to_string(time.frame) +
+                   ", tInFrame=" + std::to_string(time.tInFrame) +
+                   ") is beyond the session end (frame=" + std::to_string(end.frame) + ")";
+        MLOGWARNING("TimeTravelManager::AddBookmark — rejected: frame %llu beyond session end %llu",
+                    static_cast<unsigned long long>(time.frame),
+                    static_cast<unsigned long long>(end.frame));
+        return false;
+    }
+
+    TTDBookmark bookmark;
+    bookmark.time  = time;
+    bookmark.label = label;
+    return _bookmarks.Add(bookmark, err);
+}
+
+std::vector<TTDBookmark> TimeTravelManager::GetBookmarks() const
+{
+    return _bookmarks.Snapshot();
+}
+
+bool TimeTravelManager::FindBookmark(const std::string& label, TTDBookmark& out) const
+{
+    return _bookmarks.Find(label, out);
+}
+
+bool TimeTravelManager::RemoveBookmark(const std::string& label)
+{
+    return _bookmarks.Remove(label);
+}
+
+bool TimeTravelManager::SeekToBookmark(const std::string& label, TTDSeekResult* outResult,
+                                       std::string* err)
+{
+    TTDBookmark bookmark;
+    if (!_bookmarks.Find(label, bookmark))
+    {
+        if (outResult)
+        {
+            outResult->reached        = false;
+            outResult->arrivedAt      = TTDTimePoint{};
+            outResult->haltReason     = TTDSeekHaltReason::OutOfRange;
+            outResult->blockingMarker = TTDExternalEvent{};
+        }
+        if (err)
+            *err = "unknown bookmark '" + label + "'";
+        MLOGWARNING("TimeTravelManager::SeekToBookmark — unknown label '%s'", label.c_str());
+        return false;
+    }
+
+    // Nothing bookmark-specific from here on — a bookmark seek IS a seek.
+    // halt_reason semantics are exactly the plain SeekTo's, so a real barrier
+    // between the restore checkpoint and the target still surfaces as
+    // "external_event" and the bookmark itself can never be one.
+    return SeekTo(bookmark.time, outResult);
+}
+
 void TimeTravelManager::PublishSeekedFrame()
 {
     // Deliberately here and not in RestoreCheckpoint. Restores also happen deep
@@ -1987,6 +2071,7 @@ bool TimeTravelManager::ResumeRecordingFrom(const TTDTimePoint& from)
     // ------------------------------------------------------------------
     _inputJournal.DropAfter(from);
     _externalEvents.DropAfter(from);  // Phase 2 Item 6 — markers past `from` are dead future
+    _bookmarks.DropAfter(from);  // TD-4 — bookmarks past `from` are dead future
 
     // Phase 4 — write journal: convert `from` to a globalT and drop records
     // strictly past it. Records exactly at `from` are kept (they happened
@@ -2345,6 +2430,11 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
         _coverageIndex.SealedFrameCount(TTDCoverageKind::Executed) > 0;
     if (hasCoverage)
         flags |= ttd::dump::kFlagsHasCoverageIndex;
+
+    // Bookmarks are advisory annotations — written whenever any exist.
+    const bool hasBookmarks = !_bookmarks.IsEmpty();
+    if (hasBookmarks)
+        flags |= ttd::dump::kFlagsHasBookmarks;
     if (!WritePod(out, flags, err)) return false;
 
     if (!WritePod(out, modelId, err)) return false;
@@ -2560,6 +2650,36 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
         }
     }
 
+    // --- Advisory bookmarks (TD-4) ---
+    // Flag bit 3, written last. Layout: u32 count, then per bookmark
+    // u64 frame, u32 tInFrame, u8 label_len, label bytes. Field-by-field
+    // rather than whole-struct POD so no padding bytes ever enter the file;
+    // the journal's Add already guarantees non-empty, unique, length-capped
+    // labels, so the label_len prefix can never exceed
+    // kMaxBookmarkLabelLength.
+    if (hasBookmarks)
+    {
+        const std::vector<TTDBookmark> bookmarks = _bookmarks.Snapshot();
+        const uint32_t bookmarkCount = static_cast<uint32_t>(bookmarks.size());
+        if (!WritePod(out, bookmarkCount, err)) return false;
+        for (const TTDBookmark& b : bookmarks)
+        {
+            if (!WritePod(out, b.time.frame, err)) return false;
+            if (!WritePod(out, b.time.tInFrame, err)) return false;
+            const uint8_t labelLen = static_cast<uint8_t>(b.label.size());
+            if (!WritePod(out, labelLen, err)) return false;
+            if (labelLen != 0)
+            {
+                out.write(b.label.data(), labelLen);
+                if (!out)
+                {
+                    err = "stream write failed (bookmark label '" + b.label + "')";
+                    return false;
+                }
+            }
+        }
+    }
+
     return true;
 }
 
@@ -2721,6 +2841,7 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
     _pageStore.Reset();
     _inputJournal.Clear();
     _externalEvents.Clear();
+    _bookmarks.Clear();  // TD-4 — the file's own bookmarks load below (if any)
     _dirtyScratch.clear();
 
     // The loaded session restores model-specific state through these, so they
@@ -2969,6 +3090,82 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
             _coverageIndex.Clear();
             MLOGWARNING("TimeTravelManager::DeserializeSession — coverage index section "
                         "could not be read; reverse queries will fall back to replay");
+        }
+    }
+
+    // --- Bookmarks section (TD-4) ---
+    // Advisory data, same philosophy as the coverage index: a file whose
+    // bookmarks cannot be read still loads — the session is complete
+    // without annotations, it just loses label-based return. Bookmarks are
+    // also the LAST section, so a failed read leaves nothing unread behind
+    // it and the session load can proceed.
+    if (flags & ttd::dump::kFlagsHasBookmarks)
+    {
+        bool bookmarksOk = true;
+        uint32_t bookmarkCount = 0;
+        if (!ReadPod(in, bookmarkCount, err))
+        {
+            bookmarksOk = false;
+        }
+        else if (bookmarkCount > 4096)
+        {
+            // Sanity cap: bookmarks are human/agent-created, dozens at most.
+            // A bigger claim is corruption, not an attack on the reader.
+            err = "implausible bookmark count " + std::to_string(bookmarkCount);
+            bookmarksOk = false;
+        }
+
+        for (uint32_t i = 0; bookmarksOk && i < bookmarkCount; ++i)
+        {
+            uint64_t frame = 0;
+            uint32_t tInFrame = 0;
+            uint8_t  labelLen = 0;
+            if (!ReadPod(in, frame, err) ||
+                !ReadPod(in, tInFrame, err) ||
+                !ReadPod(in, labelLen, err))
+            {
+                bookmarksOk = false;
+                break;
+            }
+            if (labelLen == 0 || labelLen > kMaxBookmarkLabelLength)
+            {
+                err = "bookmark " + std::to_string(i) +
+                      ": implausible label length " + std::to_string(labelLen);
+                bookmarksOk = false;
+                break;
+            }
+
+            std::string label(static_cast<size_t>(labelLen), '\0');
+            in.read(&label[0], labelLen);
+            if (!in)
+            {
+                err = "stream read failed (bookmark " + std::to_string(i) + " label)";
+                bookmarksOk = false;
+                break;
+            }
+
+            TTDBookmark bookmark;
+            bookmark.time.frame    = frame;
+            bookmark.time.tInFrame = tInFrame;
+            bookmark.label         = std::move(label);
+            if (!_bookmarks.Add(bookmark))
+            {
+                // Add only rejects a duplicate label here (length was
+                // validated above) — a file carrying two bookmarks with the
+                // same label cannot come from a healthy writer.
+                err = "bookmark " + std::to_string(i) +
+                      ": duplicate label '" + bookmark.label + "'";
+                bookmarksOk = false;
+                break;
+            }
+        }
+
+        if (!bookmarksOk)
+        {
+            _bookmarks.Clear();
+            MLOGWARNING("TimeTravelManager::DeserializeSession — bookmarks section "
+                        "could not be read (%s); session loads without bookmarks",
+                        err.c_str());
         }
     }
 
@@ -4311,6 +4508,240 @@ const TTDFrameCache* TimeTravelManager::GetFrameCache(uint64_t frame)
     }
 
     return _frameCache.get();
+}
+
+TTDCoverageProbeResult TimeTravelManager::QueryCoverageProbe(
+    uint64_t frame,
+    TTDCoverageKind kind,
+    uint16_t addrFrom,
+    uint16_t addrTo,
+    std::optional<uint8_t> physPage) const
+{
+    TTDCoverageProbeResult result;
+    result.frame = frame;
+    result.kind = kind;
+    result.addrFrom = addrFrom;
+    result.addrTo = addrTo;
+    result.physPage = physPage;
+    result.touched = false;
+
+    // Per-frame availability. FrameMayContain is a conservative pruning primitive (it answers
+    // "true" whenever it cannot prove absence), so an exact probe must first confirm the frame
+    // is inside [firstCovered, lastCovered]. Frames outside the covered range report
+    // indexAvailable=false instead of a false-positive "touched".
+    result.indexAvailable = _coverageIndex.CoversFrame(kind, frame);
+    if (!result.indexAvailable)
+    {
+        return result;
+    }
+
+    uint16_t offsetLow = addrFrom & 0x3FFF;
+    uint16_t offsetHigh = addrTo & 0x3FFF;
+    if (addrTo < addrFrom || (addrTo - addrFrom) >= 0x3FFF || offsetLow > offsetHigh)
+    {
+        offsetLow = 0;
+        offsetHigh = 0x3FFF;
+    }
+
+    const bool hasPage = physPage.has_value();
+    const uint8_t page = hasPage ? *physPage : 0;
+
+    result.touched = _coverageIndex.FrameMayContain(kind, frame, offsetLow, offsetHigh, hasPage, page);
+    return result;
+}
+
+TTDCoverageScanResult TimeTravelManager::QueryCoverageScan(
+    uint64_t fromFrame,
+    uint64_t toFrame,
+    TTDCoverageKind kind,
+    uint16_t addrFrom,
+    uint16_t addrTo,
+    std::optional<uint8_t> physPage,
+    size_t limit) const
+{
+    TTDCoverageScanResult result;
+    result.kind = kind;
+    result.addrFrom = addrFrom;
+    result.addrTo = addrTo;
+    result.physPage = physPage;
+
+    result.indexAvailable = (_coverageIndex.SealedFrameCount(kind) > 0);
+    if (!result.indexAvailable)
+    {
+        return result;
+    }
+
+    limit = std::clamp(limit, size_t{1}, size_t{1000});
+
+    uint64_t firstCovered = 0, lastCovered = 0;
+    if (!_coverageIndex.CoveredRange(kind, firstCovered, lastCovered))
+    {
+        return result;
+    }
+    result.coveredFrom = firstCovered;
+    result.coveredTo = lastCovered;
+
+    uint64_t startFrame = std::max(fromFrame, firstCovered);
+    uint64_t endFrame = std::min(toFrame, lastCovered);
+    if (startFrame > endFrame)
+    {
+        return result;
+    }
+
+    uint16_t offsetLow = addrFrom & 0x3FFF;
+    uint16_t offsetHigh = addrTo & 0x3FFF;
+    if (addrTo < addrFrom || (addrTo - addrFrom) >= 0x3FFF || offsetLow > offsetHigh)
+    {
+        offsetLow = 0;
+        offsetHigh = 0x3FFF;
+    }
+
+    const bool hasPage = physPage.has_value();
+    const uint8_t page = hasPage ? *physPage : 0;
+
+    for (uint64_t f = startFrame; f <= endFrame; ++f)
+    {
+        result.scannedFrames++;
+        if (_coverageIndex.FrameMayContain(kind, f, offsetLow, offsetHigh, hasPage, page))
+        {
+            result.matchingFrames++;
+            if (result.frames.size() < limit)
+            {
+                if (result.frames.empty())
+                {
+                    result.firstMatch = f;
+                }
+                result.lastMatch = f;
+                result.frames.push_back(f);
+            }
+            else
+            {
+                result.truncated = true;
+            }
+        }
+    }
+
+    return result;
+}
+
+TTDCoverageSummaryResult TimeTravelManager::QueryCoverageSummary(
+    uint64_t fromFrame,
+    uint64_t toFrame,
+    std::optional<TTDCoverageKind> kind,
+    uint64_t bucketSize,
+    size_t limit) const
+{
+    TTDCoverageSummaryResult result;
+    result.fromFrame = fromFrame;
+    result.toFrame = toFrame;
+
+    result.indexAvailable = (_coverageIndex.SealedFrameCount(TTDCoverageKind::Executed) > 0 ||
+                             _coverageIndex.SealedFrameCount(TTDCoverageKind::Written) > 0 ||
+                             _coverageIndex.SealedFrameCount(TTDCoverageKind::Read) > 0);
+    if (!result.indexAvailable)
+    {
+        return result;
+    }
+
+    // Echo the covered window (union across all covered kinds) so callers can see
+    // how the requested range relates to what the index actually covers.
+    for (int k = 0; k < 3; ++k)
+    {
+        const TTDCoverageKind coveredKind = static_cast<TTDCoverageKind>(k);
+        uint64_t firstCovered = 0, lastCovered = 0;
+        if (_coverageIndex.CoveredRange(coveredKind, firstCovered, lastCovered))
+        {
+            result.coveredFrom = (result.coveredFrom == 0) ? firstCovered : std::min(result.coveredFrom, firstCovered);
+            result.coveredTo = std::max(result.coveredTo, lastCovered);
+        }
+    }
+
+    limit = std::clamp(limit, size_t{1}, size_t{500});
+    if (toFrame < fromFrame)
+    {
+        toFrame = fromFrame;
+    }
+
+    const uint64_t totalFrames = toFrame - fromFrame + 1;
+    if (bucketSize == 0)
+    {
+        bucketSize = (totalFrames + limit - 1) / limit;
+        if (bucketSize == 0) bucketSize = 1;
+    }
+
+    result.bucketSize = bucketSize;
+    const size_t bucketCount = static_cast<size_t>((totalFrames + bucketSize - 1) / bucketSize);
+    result.bucketCount = std::min(bucketCount, limit);
+
+    std::vector<TTDCoverageKey> keysScratch;
+    std::unordered_set<TTDCoverageKey> distinctExec;
+    std::unordered_set<TTDCoverageKey> distinctWrite;
+    std::unordered_set<TTDCoverageKey> distinctRead;
+
+    for (size_t b = 0; b < result.bucketCount; ++b)
+    {
+        TTDCoverageSummaryBucket bucket;
+        bucket.frameStart = fromFrame + b * bucketSize;
+        bucket.frameEnd = std::min(bucket.frameStart + bucketSize - 1, toFrame);
+
+        bucket.hasKeyframe = false;
+        auto it = std::lower_bound(_timeline.begin(), _timeline.end(), bucket.frameStart,
+            [](const TTDCheckpoint& cp, uint64_t frame) {
+                return cp.time.frame < frame;
+            });
+        while (it != _timeline.end() && it->time.frame <= bucket.frameEnd)
+        {
+            if (it->frameKind == TTDFrameKind::KeyFrame)
+            {
+                bucket.hasKeyframe = true;
+                break;
+            }
+            ++it;
+        }
+
+        if (!kind || *kind == TTDCoverageKind::Executed)
+        {
+            distinctExec.clear();
+            for (uint64_t f = bucket.frameStart; f <= bucket.frameEnd; ++f)
+            {
+                if (_coverageIndex.GetFrameKeys(TTDCoverageKind::Executed, f, keysScratch))
+                {
+                    distinctExec.insert(keysScratch.begin(), keysScratch.end());
+                }
+            }
+            bucket.executedDistinct = static_cast<uint32_t>(distinctExec.size());
+        }
+
+        if (!kind || *kind == TTDCoverageKind::Written)
+        {
+            distinctWrite.clear();
+            for (uint64_t f = bucket.frameStart; f <= bucket.frameEnd; ++f)
+            {
+                if (_coverageIndex.GetFrameKeys(TTDCoverageKind::Written, f, keysScratch))
+                {
+                    distinctWrite.insert(keysScratch.begin(), keysScratch.end());
+                }
+            }
+            bucket.writtenDistinct = static_cast<uint32_t>(distinctWrite.size());
+        }
+
+        if (!kind || *kind == TTDCoverageKind::Read)
+        {
+            distinctRead.clear();
+            for (uint64_t f = bucket.frameStart; f <= bucket.frameEnd; ++f)
+            {
+                if (_coverageIndex.GetFrameKeys(TTDCoverageKind::Read, f, keysScratch))
+                {
+                    distinctRead.insert(keysScratch.begin(), keysScratch.end());
+                }
+            }
+            bucket.readDistinct = static_cast<uint32_t>(distinctRead.size());
+        }
+
+        result.buckets.push_back(bucket);
+    }
+
+    return result;
 }
 
 } // namespace ttd
