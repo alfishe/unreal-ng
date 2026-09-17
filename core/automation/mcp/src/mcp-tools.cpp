@@ -1506,6 +1506,23 @@ void RegisterMouseInput(ToolRegistry& registry)
 namespace
 {
 
+/// Sparkline representation for coverage summary heatmap display.
+static std::string MakeSparkline(const std::vector<uint32_t>& values)
+{
+    static const char* kBars[] = {" ", " ", "▂", "▃", "▄", "▅", "▆", "▇", "█"};
+    if (values.empty()) return "";
+    uint32_t maxVal = *std::max_element(values.begin(), values.end());
+    if (maxVal == 0) maxVal = 1;
+    std::string spark;
+    for (uint32_t v : values)
+    {
+        size_t idx = static_cast<size_t>((static_cast<uint64_t>(v) * 8) / maxVal);
+        if (idx > 8) idx = 8;
+        spark += kBars[idx];
+    }
+    return spark;
+}
+
 /// Percent-encodes a path segment (RFC 3986 unreserved characters kept
 /// literal). Labels are free-form text ("umt entry"), so they must not be
 /// spliced raw into a URL path.
@@ -1537,24 +1554,41 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["type"] = "object";
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* action : {"status", "bookmark_add", "bookmark_list", "bookmark_delete", "seek_bookmark"})
+    for (const char* action : {"status", "bookmark_add", "bookmark_list", "bookmark_delete", "seek_bookmark",
+                               "coverage_probe", "coverage_scan", "coverage_summary"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
     schema["properties"]["action"]["description"] =
-        "'status' reports the TTD session (state, frames, checkpoints); "
-        "'bookmark_add' marks a position with a label (omit frame to mark the current position); "
-        "'bookmark_list' lists bookmarks; 'bookmark_delete' removes one by label; "
-        "'seek_bookmark' returns to a marked position";
+        "'status' reports the TTD session; "
+        "'bookmark_add'/'bookmark_list'/'bookmark_delete'/'seek_bookmark' manage advisory bookmarks; "
+        "'coverage_probe' checks if a frame touched an address range; "
+        "'coverage_scan' lists frames in a range touching an address range; "
+        "'coverage_summary' returns bucketed address activity heatmaps";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["target"]["description"] = "Emulator id, or 'auto' to reuse the single instance";
     schema["properties"]["label"]["type"] = "string";
     schema["properties"]["label"]["description"] =
-        "Bookmark label for bookmark_add / bookmark_delete / seek_bookmark. "
-        "Non-empty, at most 63 characters, unique per session (labels are keys)";
+        "Bookmark label for bookmark_add / bookmark_delete / seek_bookmark";
     schema["properties"]["frame"]["type"] = "integer";
-    schema["properties"]["frame"]["description"] = "Optional frame for bookmark_add; omit to mark the current position";
+    schema["properties"]["frame"]["description"] = "Frame number for bookmark_add or coverage_probe";
+    schema["properties"]["from_frame"]["type"] = "integer";
+    schema["properties"]["from_frame"]["description"] = "Starting frame for coverage_scan / coverage_summary";
+    schema["properties"]["to_frame"]["type"] = "integer";
+    schema["properties"]["to_frame"]["description"] = "Ending frame for coverage_scan / coverage_summary";
+    schema["properties"]["kind"]["type"] = "string";
+    schema["properties"]["kind"]["description"] = "Coverage kind: 'executed', 'written', or 'read'";
+    schema["properties"]["addr_from"]["type"] = "string";
+    schema["properties"]["addr_from"]["description"] = "Start Z80 address for coverage query (e.g. '0xBF00' or 48896)";
+    schema["properties"]["addr_to"]["type"] = "string";
+    schema["properties"]["addr_to"]["description"] = "End Z80 address for coverage query (e.g. '0xBFFF' or 49151)";
+    schema["properties"]["phys_page"]["type"] = "integer";
+    schema["properties"]["phys_page"]["description"] = "Optional physical page index (0..255) for coverage query";
+    schema["properties"]["limit"]["type"] = "integer";
+    schema["properties"]["limit"]["description"] = "Max results for coverage_scan (default 200) or max buckets for coverage_summary (default 100)";
+    schema["properties"]["bucket_size"]["type"] = "integer";
+    schema["properties"]["bucket_size"]["description"] = "Frames per bucket for coverage_summary (default: auto)";
     schema["properties"]["tinframe"]["type"] = "integer";
     schema["properties"]["tinframe"]["default"] = 0;
     schema["properties"]["tinframe"]["description"] = "Optional T-states within the frame for bookmark_add";
@@ -1562,15 +1596,11 @@ void RegisterTimeTravel(ToolRegistry& registry)
 
     registry.Register(
         "time_travel",
-        "Time-travel debugging (TTD): session status and agent bookmarks. Bookmarks are advisory annotations — "
-        "they never halt a seek (a halt_reason never mentions bookmarks), survive dump/load, and are dropped "
-        "with the session. TD-4 surface; the seed of the full TTD tool.",
+        "Time-travel debugging (TTD): session status, agent bookmarks, and TTD coverage index queries.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             const std::string action = args["action"].asString();
 
-            // Label-carrying actions reject early — before target resolution —
-            // so a malformed request never even wakes the emulator.
             if (action == "bookmark_add" || action == "bookmark_delete" || action == "seek_bookmark")
             {
                 const std::string label = args["label"].asString();
@@ -1636,6 +1666,97 @@ void RegisterTimeTravel(ToolRegistry& registry)
                     body["bookmark"] = args["label"].asString();
                     ForwardCall("POST", Endpoint(id, "/ttd/seek"), &body, caller,
                                 "Seek to bookmark '" + args["label"].asString() + "' on " + id, done);
+                }
+                else if (action == "coverage_probe")
+                {
+                    std::string query = "/ttd/coverage/probe?";
+                    if (args.isMember("frame")) query += "frame=" + std::to_string(args["frame"].asUInt64()) + "&";
+                    if (args.isMember("kind")) query += "kind=" + UrlEncodeSegment(args["kind"].asString()) + "&";
+                    if (args.isMember("addr_from")) query += "addr_from=" + UrlEncodeSegment(args["addr_from"].asString()) + "&";
+                    if (args.isMember("addr_to")) query += "addr_to=" + UrlEncodeSegment(args["addr_to"].asString()) + "&";
+                    if (args.isMember("phys_page")) query += "phys_page=" + std::to_string(args["phys_page"].asUInt()) + "&";
+                    if (query.back() == '&' || query.back() == '?') query.pop_back();
+
+                    caller.Call("GET", Endpoint(id, query), nullptr, [done](int status, Json::Value body) {
+                        if (status != 200) {
+                            done(ToolResult::Error("HTTP " + std::to_string(status) + ": " + DescribeErrorBody(body)));
+                            return;
+                        }
+                        bool available = body["index_available"].asBool();
+                        bool touched = body["touched"].asBool();
+                        std::string msg = available ? (touched ? "Touched: TRUE" : "Touched: FALSE")
+                                                    : "Index not available for this session";
+                        done(ToolResult::Ok(msg, std::move(body)));
+                    });
+                }
+                else if (action == "coverage_scan")
+                {
+                    std::string query = "/ttd/coverage/scan?";
+                    if (args.isMember("from_frame")) query += "from_frame=" + std::to_string(args["from_frame"].asUInt64()) + "&";
+                    if (args.isMember("to_frame")) query += "to_frame=" + std::to_string(args["to_frame"].asUInt64()) + "&";
+                    if (args.isMember("kind")) query += "kind=" + UrlEncodeSegment(args["kind"].asString()) + "&";
+                    if (args.isMember("addr_from")) query += "addr_from=" + UrlEncodeSegment(args["addr_from"].asString()) + "&";
+                    if (args.isMember("addr_to")) query += "addr_to=" + UrlEncodeSegment(args["addr_to"].asString()) + "&";
+                    if (args.isMember("phys_page")) query += "phys_page=" + std::to_string(args["phys_page"].asUInt()) + "&";
+                    if (args.isMember("limit")) query += "limit=" + std::to_string(args["limit"].asUInt()) + "&";
+                    if (query.back() == '&' || query.back() == '?') query.pop_back();
+
+                    caller.Call("GET", Endpoint(id, query), nullptr, [done](int status, Json::Value body) {
+                        if (status != 200) {
+                            done(ToolResult::Error("HTTP " + std::to_string(status) + ": " + DescribeErrorBody(body)));
+                            return;
+                        }
+                        if (!body["index_available"].asBool()) {
+                            done(ToolResult::Ok("Index not available for this session", std::move(body)));
+                            return;
+                        }
+                        std::ostringstream out;
+                        out << "Matched " << body["matching_frames"].asUInt64() << " / " << body["scanned_frames"].asUInt64()
+                            << " scanned frames (first=" << body["first_match"].asUInt64() << ", last=" << body["last_match"].asUInt64() << ")";
+                        if (body.isMember("covered_from")) {
+                            out << " [index covers " << body["covered_from"].asUInt64() << ".." << body["covered_to"].asUInt64() << "]";
+                        }
+                        if (body["truncated"].asBool()) out << " [TRUNCATED]";
+                        done(ToolResult::Ok(out.str(), std::move(body)));
+                    });
+                }
+                else if (action == "coverage_summary")
+                {
+                    std::string query = "/ttd/coverage/summary?";
+                    if (args.isMember("from_frame")) query += "from_frame=" + std::to_string(args["from_frame"].asUInt64()) + "&";
+                    if (args.isMember("to_frame")) query += "to_frame=" + std::to_string(args["to_frame"].asUInt64()) + "&";
+                    if (args.isMember("kind")) query += "kind=" + UrlEncodeSegment(args["kind"].asString()) + "&";
+                    if (args.isMember("bucket_size")) query += "bucket_size=" + std::to_string(args["bucket_size"].asUInt64()) + "&";
+                    if (args.isMember("limit")) query += "limit=" + std::to_string(args["limit"].asUInt()) + "&";
+                    if (query.back() == '&' || query.back() == '?') query.pop_back();
+
+                    caller.Call("GET", Endpoint(id, query), nullptr, [done](int status, Json::Value body) {
+                        if (status != 200) {
+                            done(ToolResult::Error("HTTP " + std::to_string(status) + ": " + DescribeErrorBody(body)));
+                            return;
+                        }
+                        if (!body["index_available"].asBool()) {
+                            done(ToolResult::Ok("Coverage index not available for this session", std::move(body)));
+                            return;
+                        }
+                        const Json::Value& buckets = body["buckets"];
+                        std::vector<uint32_t> execVals, writeVals, readVals;
+                        for (const auto& b : buckets) {
+                            execVals.push_back(b["executed_distinct"].asUInt());
+                            writeVals.push_back(b["written_distinct"].asUInt());
+                            readVals.push_back(b["read_distinct"].asUInt());
+                        }
+                        std::ostringstream out;
+                        out << "Coverage summary (" << body["from_frame"].asUInt64() << ".." << body["to_frame"].asUInt64();
+                        if (body.isMember("covered_from")) {
+                            out << ", index covers " << body["covered_from"].asUInt64() << ".." << body["covered_to"].asUInt64();
+                        }
+                        out << ", bucket_size=" << body["bucket_size"].asUInt64() << ", buckets=" << buckets.size() << "):\n";
+                        out << "  exec  " << MakeSparkline(execVals) << "\n";
+                        out << "  write " << MakeSparkline(writeVals) << "\n";
+                        out << "  read  " << MakeSparkline(readVals);
+                        done(ToolResult::Ok(out.str(), std::move(body)));
+                    });
                 }
                 else
                 {

@@ -2312,6 +2312,142 @@ public:
             return result;
         });
 
+        lua.set_function("ttd_coverage_probe", [this](sol::table argsTable) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator || !emulator->GetContext() || !emulator->GetContext()->pTimeTravelManager)
+            {
+                result["index_available"] = false;
+                result["touched"] = false;
+                return result;
+            }
+            uint64_t frame = 0;
+            if (argsTable["frame"].valid()) frame = argsTable.get<uint64_t>("frame");
+            std::string kindStr = "executed";
+            if (argsTable["kind"].valid()) kindStr = argsTable.get<std::string>("kind");
+            ttd::TTDCoverageKind kind = ttd::TTDCoverageKind::Executed;
+            ttd::TTDCoverageKindFromString(kindStr, kind);
+
+            uint16_t addrFrom = 0;
+            if (argsTable["addr_from"].valid()) addrFrom = static_cast<uint16_t>(argsTable.get<uint32_t>("addr_from"));
+            uint16_t addrTo = 0xFFFF;
+            if (argsTable["addr_to"].valid()) addrTo = static_cast<uint16_t>(argsTable.get<uint32_t>("addr_to"));
+
+            std::optional<uint8_t> physPage;
+            if (argsTable["phys_page"].valid()) physPage = static_cast<uint8_t>(argsTable.get<uint32_t>("phys_page"));
+
+            auto res = emulator->GetContext()->pTimeTravelManager->QueryCoverageProbe(frame, kind, addrFrom, addrTo, physPage);
+            result["frame"] = res.frame;
+            result["kind"] = ttd::TTDCoverageKindToString(res.kind);
+            result["touched"] = res.touched;
+            result["index_available"] = res.indexAvailable;
+            return result;
+        });
+
+        lua.set_function("ttd_coverage_scan", [this](sol::table argsTable) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator || !emulator->GetContext() || !emulator->GetContext()->pTimeTravelManager)
+            {
+                result["index_available"] = false;
+                result["scanned_frames"] = 0;
+                result["matching_frames"] = 0;
+                result["frames"] = lua_view.create_table();
+                return result;
+            }
+            auto* mgr = emulator->GetContext()->pTimeTravelManager;
+            uint64_t fromFrame = 0;
+            if (argsTable["from_frame"].valid()) fromFrame = argsTable.get<uint64_t>("from_frame");
+            uint64_t toFrame = mgr->GetSessionInfo().currentEndFrame;
+            if (argsTable["to_frame"].valid()) toFrame = argsTable.get<uint64_t>("to_frame");
+            std::string kindStr = "executed";
+            if (argsTable["kind"].valid()) kindStr = argsTable.get<std::string>("kind");
+            ttd::TTDCoverageKind kind = ttd::TTDCoverageKind::Executed;
+            ttd::TTDCoverageKindFromString(kindStr, kind);
+
+            uint16_t addrFrom = 0;
+            if (argsTable["addr_from"].valid()) addrFrom = static_cast<uint16_t>(argsTable.get<uint32_t>("addr_from"));
+            uint16_t addrTo = 0xFFFF;
+            if (argsTable["addr_to"].valid()) addrTo = static_cast<uint16_t>(argsTable.get<uint32_t>("addr_to"));
+            size_t limit = 200;
+            if (argsTable["limit"].valid()) limit = static_cast<size_t>(argsTable.get<uint32_t>("limit"));
+
+            std::optional<uint8_t> physPage;
+            if (argsTable["phys_page"].valid()) physPage = static_cast<uint8_t>(argsTable.get<uint32_t>("phys_page"));
+
+            auto res = mgr->QueryCoverageScan(fromFrame, toFrame, kind, addrFrom, addrTo, physPage, limit);
+            result["kind"] = ttd::TTDCoverageKindToString(res.kind);
+            result["scanned_frames"] = res.scannedFrames;
+            result["matching_frames"] = res.matchingFrames;
+            result["first_match"] = res.firstMatch;
+            result["last_match"] = res.lastMatch;
+            result["covered_from"] = res.coveredFrom;
+            result["covered_to"] = res.coveredTo;
+            result["truncated"] = res.truncated;
+            result["index_available"] = res.indexAvailable;
+
+            sol::table framesTbl = lua_view.create_table();
+            for (size_t i = 0; i < res.frames.size(); ++i)
+            {
+                framesTbl[i + 1] = res.frames[i];
+            }
+            result["frames"] = framesTbl;
+            return result;
+        });
+
+        lua.set_function("ttd_coverage_summary", [this](sol::table argsTable) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator || !emulator->GetContext() || !emulator->GetContext()->pTimeTravelManager)
+            {
+                result["index_available"] = false;
+                result["buckets"] = lua_view.create_table();
+                return result;
+            }
+            auto* mgr = emulator->GetContext()->pTimeTravelManager;
+            uint64_t fromFrame = 0;
+            if (argsTable["from_frame"].valid()) fromFrame = argsTable.get<uint64_t>("from_frame");
+            uint64_t toFrame = mgr->GetSessionInfo().currentEndFrame;
+            if (argsTable["to_frame"].valid()) toFrame = argsTable.get<uint64_t>("to_frame");
+            std::optional<ttd::TTDCoverageKind> optKind;
+            if (argsTable["kind"].valid())
+            {
+                ttd::TTDCoverageKind k;
+                if (ttd::TTDCoverageKindFromString(argsTable.get<std::string>("kind"), k)) optKind = k;
+            }
+            uint64_t bucketSize = 0;
+            if (argsTable["bucket_size"].valid()) bucketSize = argsTable.get<uint64_t>("bucket_size");
+            size_t limit = 100;
+            if (argsTable["limit"].valid()) limit = static_cast<size_t>(argsTable.get<uint32_t>("limit"));
+
+            auto res = mgr->QueryCoverageSummary(fromFrame, toFrame, optKind, bucketSize, limit);
+            result["from_frame"] = res.fromFrame;
+            result["to_frame"] = res.toFrame;
+            result["covered_from"] = res.coveredFrom;
+            result["covered_to"] = res.coveredTo;
+            result["bucket_size"] = res.bucketSize;
+            result["bucket_count"] = res.bucketCount;
+            result["index_available"] = res.indexAvailable;
+
+            sol::table bucketsTbl = lua_view.create_table();
+            for (size_t i = 0; i < res.buckets.size(); ++i)
+            {
+                sol::table bObj = lua_view.create_table();
+                bObj["frame_start"] = res.buckets[i].frameStart;
+                bObj["frame_end"] = res.buckets[i].frameEnd;
+                bObj["executed_distinct"] = res.buckets[i].executedDistinct;
+                bObj["written_distinct"] = res.buckets[i].writtenDistinct;
+                bObj["read_distinct"] = res.buckets[i].readDistinct;
+                bObj["has_keyframe"] = res.buckets[i].hasKeyframe;
+                bucketsTbl[i + 1] = bObj;
+            }
+            result["buckets"] = bucketsTbl;
+            return result;
+        });
+
         // ====================================================================
         // Phase-2 analysis capabilities — parity with WebAPI/MCP/CLI:
         // step out, skip until, memory find, screen digest, beam, frame cost,

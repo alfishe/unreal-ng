@@ -692,4 +692,41 @@ TEST_F(TTD_Automation_Contract_Test, ReverseContinue_QueryShape_HasExpectedField
     EXPECT_EQ(noMatch.pc, 0xFFFF);
 }
 
+TEST_F(TTD_Automation_Contract_Test, CoverageQuery_Contract_ProbeScanSummary)
+{
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(5);
+    _ttd->StopRecording();
+
+    // Covered window contract: the scan echoes the clamped effective window (TD-7 defect B fix).
+    auto scan = _ttd->QueryCoverageScan(0, 5, ttd::TTDCoverageKind::Executed, 0x0000, 0x0010);
+    EXPECT_TRUE(scan.indexAvailable);
+    EXPECT_LE(scan.coveredFrom, scan.coveredTo);
+    EXPECT_GT(scan.scannedFrames, 0u);
+    EXPECT_GT(scan.matchingFrames, 0u);
+    EXPECT_FALSE(scan.frames.empty());
+    EXPECT_GE(scan.frames.front(), scan.coveredFrom);
+    EXPECT_LE(scan.frames.back(), scan.coveredTo);
+
+    // Probe contract: availability is per-frame — a frame outside the covered window
+    // reports index_available=false instead of a conservative false positive (TD-7 defect A fix).
+    auto probeOutside = _ttd->QueryCoverageProbe(scan.coveredTo + 10, ttd::TTDCoverageKind::Executed, 0x0000, 0x0010);
+    EXPECT_FALSE(probeOutside.indexAvailable);
+    EXPECT_FALSE(probeOutside.touched);
+
+    auto probe = _ttd->QueryCoverageProbe(scan.coveredFrom, ttd::TTDCoverageKind::Executed, 0x0000, 0x0010);
+    EXPECT_TRUE(probe.indexAvailable);
+    EXPECT_TRUE(probe.touched);
+    EXPECT_EQ(probe.frame, scan.coveredFrom);
+    EXPECT_EQ(probe.kind, ttd::TTDCoverageKind::Executed);
+
+    // Summary contract: the covered window is echoed (union across kinds).
+    auto summary = _ttd->QueryCoverageSummary(0, 5);
+    EXPECT_TRUE(summary.indexAvailable);
+    EXPECT_LE(summary.coveredFrom, summary.coveredTo);
+    EXPECT_GT(summary.bucketCount, 0u);
+    EXPECT_FALSE(summary.buckets.empty());
+    EXPECT_GT(summary.buckets[0].executedDistinct, 0u);
+}
+
 /// endregion
