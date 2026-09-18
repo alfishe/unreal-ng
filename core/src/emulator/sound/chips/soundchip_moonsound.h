@@ -189,6 +189,12 @@ private:
     /// resolve like every other ROM image, warn and zero-fill on miss.
     void loadWaveRom();
 
+    /// Post NC_AUDIO_ACTIVITY for the FM and wave/PCM parts (HUD nudge).
+    /// Same contract as the beeper/TurboSoundFM emitters: post while a part
+    /// stays active (refreshes the HUD TTL) and once on the active->silent
+    /// transition.
+    void postAudioActivity(bool fmActive, bool pcmActive);
+
     EmulatorContext* _context;
     ModuleLogger* _logger = nullptr;
 
@@ -236,4 +242,10 @@ private:
 
     size_t _coreRate;
     bool _synthesisSuppressed = false;
+
+    // Activity tracking for the HUD nudge. Derived from the rendered split
+    // buffers (the audible truth - mutes and silent patches read as silence),
+    // not from register writes.
+    bool _wasFmActive = false;   // FM part activity at the last frame end
+    bool _wasPcmActive = false;  // Wave/PCM part activity at the last frame end
 };

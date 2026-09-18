@@ -47,6 +47,9 @@ std::vector<HudCategoryDescriptor> g_categories = {
     {HudNotificationCategory::AudioFM, QObject::tr("FM Synthesis Activity"),
      QObject::tr("Show when FM synthesis (YM2203 FM part) is active"),
      QObject::tr("Audio"), true},  // Default on
+    {HudNotificationCategory::AudioMoonSound, QObject::tr("MoonSound Activity"),
+     QObject::tr("Show when MoonSound (OPL4) synthesis is active - 'Moon FM' (FM only), 'Moon PCM' (wave only) or 'Moonsound' (both)"),
+     QObject::tr("Audio"), true},  // Default on - MoonSound is opt-in hardware
 
     // Recording
     {HudNotificationCategory::RecordingVideo, QObject::tr("Video Recording"),

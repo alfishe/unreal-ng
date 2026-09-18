@@ -1291,6 +1291,32 @@ void HudOverlay::drawIcon(QPainter& painter, const QString& iconName, const QRec
         wave2.lineTo(cx + w / 2, y2 - waveH / 2);
         painter.drawPath(wave2);
     }
+    else if (iconName == "moonsound")
+    {
+        // MoonSound icon: crescent moon with sound-wave arcs (OPL4 FM + PCM).
+        // The crescent is a boolean subtract (disc minus an upper-right bite
+        // disc of the same radius), so the shape stays clean where the bite
+        // crosses the rim - even-odd fill alone would leave a stray lens.
+        qreal cy = r.center().y();
+        qreal moonR = r.height() / 4.0;
+        QPointF moonC(r.left() + 1.0 + moonR, cy);
+
+        QPainterPath disc;
+        disc.addEllipse(moonC, moonR, moonR);
+        QPainterPath bite;
+        bite.addEllipse(QPointF(moonC.x() + moonR * 0.55, moonC.y() - moonR * 0.35), moonR, moonR);
+        painter.setBrush(color);
+        painter.drawPath(disc.subtracted(bite));
+
+        // Sound waves in the crescent's opening (the speaker icon's arc idiom)
+        painter.setBrush(Qt::NoBrush);
+        int arcH = static_cast<int>(moonR * 2);
+        int arcY = static_cast<int>(cy) - arcH / 2;
+        int x0 = static_cast<int>(moonC.x() + moonR);
+        int arcW = std::max(2, (r.right() - x0 - 1) / 2);
+        painter.drawArc(QRect(x0, arcY, arcW, arcH), -60 * 16, 120 * 16);
+        painter.drawArc(QRect(x0 + arcW + 1, arcY, arcW, arcH), -60 * 16, 120 * 16);
+    }
     else
     {
         // Generic document file shape

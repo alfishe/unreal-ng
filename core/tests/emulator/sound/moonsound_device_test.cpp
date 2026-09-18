@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -10,12 +11,15 @@
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/testtiminghelper.h"
 #include "common/sound/filters/masterlimiter.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/mainloop.h"
+#include "emulator/notifications.h"
+#include "emulator/platform.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/sound/chips/soundchip_moonsound.h"
 #include "emulator/sound/soundmanager.h"
@@ -500,6 +504,98 @@ TEST_F(MoonSoundDevice_Test, FrameEnd_KeyedPcmTone_RendersIntoPcmSourceOnly)
     EXPECT_LE(MaxAbsSample(moonsound->getPcmBuffer(), SAMPLES_PER_FRAME), 16500)
         << "headroom trim (5.3) must keep a full-scale tone under half scale";
     EXPECT_EQ(MaxAbsSample(moonsound->getFmBuffer(), SAMPLES_PER_FRAME), 0);
+}
+
+/// HUD nudge feed: per-part NC_AUDIO_ACTIVITY. A keyed FM voice posts
+/// AudioSource::MoonFM activity and never touches MoonPCM; a keyed PCM slot
+/// adds AudioSource::MoonPCM; key-off with a real release rate posts the
+/// single active->silent transition instead of steady-state spam. The HUD
+/// combines the two streams into its "Moon FM" / "Moon PCM" / "Moonsound"
+/// nudge, so this pins the device half of that contract through the real
+/// frame lifecycle (frames, not direct handleFrameEnd calls, because the
+/// SoundManager frame hook is what carries the posts).
+TEST_F(MoonSoundDevice_Test, FrameEnd_ActiveParts_PostPerPartAudioActivityForHud)
+{
+    SoundManager* soundManager = context->pSoundManager;
+    ASSERT_NE(soundManager, nullptr);
+    SoundChip_Moonsound* moonsound = soundManager->getMoonSound();
+    ASSERT_NE(moonsound, nullptr);
+    Z80* cpu = context->pCore->GetZ80();
+    ASSERT_NE(cpu, nullptr);
+    auto* mainLoop = reinterpret_cast<MainLoop_CUT*>(context->pMainLoop);
+    ASSERT_NE(mainLoop, nullptr);
+
+    std::atomic<int> fmActiveEvents{0};
+    std::atomic<int> fmSilentEvents{0};
+    std::atomic<int> pcmActiveEvents{0};
+    std::atomic<int> pcmSilentEvents{0};
+
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+    const uint64_t obsId = mc.AddObserver(NC_AUDIO_ACTIVITY, [&](int, Message* msg) {
+        if (!msg)
+            return;
+        auto* payload = dynamic_cast<AudioActivityPayload*>(msg->obj);
+        if (!payload || payload->emulatorId != context->emulatorId)
+            return;
+        if (payload->source == AudioSource::MoonFM)
+        {
+            (payload->active ? fmActiveEvents : fmSilentEvents).fetch_add(1);
+        }
+        else if (payload->source == AudioSource::MoonPCM)
+        {
+            (payload->active ? pcmActiveEvents : pcmSilentEvents).fetch_add(1);
+        }
+    });
+
+    // FM voice only: MoonFM activity arrives, the PCM part stays untouched
+    KeyOnFmChannelThroughPorts(cpu, 0);
+    mainLoop->RunFrame();
+    EXPECT_TRUE(WaitForCondition([&] { return fmActiveEvents.load() >= 1; }))
+        << "a keyed FM voice must post MoonFM activity";
+    EXPECT_EQ(pcmActiveEvents.load(), 0) << "FM-only playback must not post MoonPCM";
+    EXPECT_EQ(pcmSilentEvents.load(), 0) << "a never-active part must not post transitions";
+
+    // Both parts: the PCM slot keyed alongside the still-playing FM voice.
+    // The wave part renders only once the tone-header fetch (LD) lands, so
+    // poll across a few frames like the render tests do.
+    UploadSquareToneThroughPorts(cpu);
+    KeyOnPcmSlotThroughPorts(cpu, 0);
+    bool pcmActive = false;
+    for (int frame = 0; frame < 8 && !pcmActive; frame++)
+    {
+        mainLoop->RunFrame();
+        pcmActive = WaitForCondition([&] { return pcmActiveEvents.load() >= 1; },
+                                     std::chrono::milliseconds(20));
+    }
+    EXPECT_TRUE(pcmActive) << "a keyed PCM slot must post MoonPCM activity";
+
+    // Key both parts off. The key-on helpers program RR 0, and in the OPL
+    // family register rate 0 FREEZES the segment (ymfm/Nuked semantics), so
+    // reprogram RR 15 (fastest real release) first or the voices sustain
+    // forever after key-off: FM ch-0 SL/RR regs 0x80/0x83 (modulator and
+    // carrier), PCM slot-0 RR in wave reg 0xC8.
+    cpu->out(0xC4, 0x80);
+    cpu->out(0xC5, 0x0F);
+    cpu->out(0xC4, 0x83);
+    cpu->out(0xC5, 0x0F);
+    cpu->out(0x7E, 0xC8);
+    cpu->out(0x7F, 0x0F);
+    cpu->out(0xC4, 0xB0);
+    cpu->out(0xC5, 0x13);  // FM ch 0 key off (KON cleared, block/fnum kept)
+    cpu->out(0x7E, 0x68);
+    cpu->out(0x7F, 0x00);  // PCM slot 0 key off (KON cleared, pan centre)
+
+    bool bothSilent = false;
+    for (int frame = 0; frame < 15 && !bothSilent; frame++)
+    {
+        mainLoop->RunFrame();
+        bothSilent = WaitForCondition(
+            [&] { return fmSilentEvents.load() >= 1 && pcmSilentEvents.load() >= 1; },
+            std::chrono::milliseconds(20));
+    }
+    EXPECT_TRUE(bothSilent) << "key-off must post the active->silent transition for both parts";
+
+    mc.RemoveObserverById(NC_AUDIO_ACTIVITY, obsId);
 }
 
 /// Gain staging, both engines simultaneously (integration 5.2/5.3): a

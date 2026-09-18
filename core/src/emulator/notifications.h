@@ -539,7 +539,9 @@ enum class AudioSource : uint8_t
     AY = 2,         // Single AY-3-8910 / YM2149
     TurboSound = 3, // TurboSound (dual AY)
     TSFM = 4,       // TurboSound FM (dual YM2203: AY + FM) - legacy, kept for compatibility
-    FM = 5          // FM part of YM2203 (separate from AY/TS)
+    FM = 5,         // FM part of YM2203 (separate from AY/TS)
+    MoonFM = 6,     // MoonSound (OPL4/YMF278B) FM synthesis part
+    MoonPCM = 7     // MoonSound (OPL4/YMF278B) wave sample/PCM part
 };
 
 /// Payload for NC_AUDIO_ACTIVITY.

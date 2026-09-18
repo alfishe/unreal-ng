@@ -164,6 +164,11 @@ private:
     void onScreenPageChanged(int id, Message* message);
     void onAudioActivity(int id, Message* message);
 
+    /// Combine the MoonSound FM / wave-PCM activity streams into the single
+    /// "moon" nudge: "Moon FM" (FM only), "Moon PCM" (wave only) or
+    /// "Moonsound" (both parts).
+    void onMoonSoundActivity();
+
     bool matchesInstance(const unreal::UUID& id) const;
 
     void publishLocked();
@@ -209,6 +214,10 @@ private:
     enum class ExecState : uint8_t { Idle, Paused, Execute, Reset, Breakpoint };
     ExecState _execState{ExecState::Idle};
     std::chrono::steady_clock::time_point _execStateExpiry{};
+
+    // MoonSound part activity for the combined "moon" nudge
+    bool _moonFmActive = false;
+    bool _moonPcmActive = false;
 
     void setExecState(ExecState state, std::chrono::milliseconds ttl = std::chrono::milliseconds(0));
     bool canTransitionTo(ExecState newState) const;

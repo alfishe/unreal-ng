@@ -23,6 +23,7 @@ namespace HudCategory
     constexpr const char* AudioTurboSound = "audio-turbosound";
     constexpr const char* AudioTSFM = "audio-tsfm";
     constexpr const char* AudioFM = "audio-fm";
+    constexpr const char* AudioMoonSound = "audio-moonsound";
     constexpr const char* RecordingVideo = "recording-video";
     constexpr const char* RecordingAudio = "recording-audio";
     constexpr const char* EmulatorState = "emulator-state";
@@ -45,6 +46,8 @@ namespace HudCategory
             case AudioSource::TurboSound: return AudioAY;  // Use same category as single AY
             case AudioSource::TSFM:       return AudioTSFM;
             case AudioSource::FM:         return AudioFM;
+            case AudioSource::MoonFM:     return AudioMoonSound;  // Both MoonSound parts share one category
+            case AudioSource::MoonPCM:    return AudioMoonSound;
             default: return nullptr;
         }
     }
@@ -1380,6 +1383,19 @@ void HudModel::onAudioActivity(int, Message* message)
     if (!category || !isCategoryEnabled(category))
         return;
 
+    // MoonSound: one nudge covers both parts - "Moon FM" (FM only),
+    // "Moon PCM" (wave only) or "Moonsound" (both). The two event streams
+    // feed the same indicator key, so the parts never stack as two boxes.
+    if (p->source == AudioSource::MoonFM || p->source == AudioSource::MoonPCM)
+    {
+        if (p->source == AudioSource::MoonFM)
+            _moonFmActive = p->active;
+        else
+            _moonPcmActive = p->active;
+        onMoonSoundActivity();
+        return;
+    }
+
     const char* key;
     const char* label;
     const char* icon;
@@ -1415,6 +1431,32 @@ void HudModel::onAudioActivity(int, Message* message)
                        std::chrono::milliseconds(1000), true);
     }
     // When inactive: let the TTL handle fadeout (no immediate clear)
+}
+
+void HudModel::onMoonSoundActivity()
+{
+    const char* label;
+    if (_moonFmActive && _moonPcmActive)
+    {
+        label = "Moonsound";  // Both parts playing
+    }
+    else if (_moonFmActive)
+    {
+        label = "Moon FM";   // FM synthesis only
+    }
+    else if (_moonPcmActive)
+    {
+        label = "Moon PCM";  // Wave samples only
+    }
+    else
+    {
+        // Both parts silent: let the 1s TTL expire the nudge (audio convention)
+        return;
+    }
+
+    // Same contract as the other audio nudges: TopLeft, 1s cooldown
+    setIndicatorAt("moon", HudTilePosition::TopLeft, HudState::Active, label, "", "moonsound",
+                   std::chrono::milliseconds(1000), true);
 }
 
 // --- Execution State Machine ---
