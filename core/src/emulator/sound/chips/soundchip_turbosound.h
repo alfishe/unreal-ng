@@ -243,6 +243,10 @@ public:
         _chip1->decimatorRight().configure((double)rate);
     }
 
+    /// Track the Z80 frequency multiplier (turbo switches): the sample PLL
+    /// consumes already-multiplied t-states (Z80::t), so the increment must
+    /// shrink by the same factor. Frame boundary only - changing it mid-frame
+    /// would glitch the free-running PLL phase
     size_t getCoreRate() const override
     {
         return _coreRate;

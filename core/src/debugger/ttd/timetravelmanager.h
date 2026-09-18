@@ -182,6 +182,93 @@ struct TTDSessionInfo
     size_t bookmarkCount = 0;
 };
 
+/// @brief String conversion for TTDCoverageKind.
+inline const char* TTDCoverageKindToString(TTDCoverageKind kind)
+{
+    switch (kind)
+    {
+        case TTDCoverageKind::Executed: return "executed";
+        case TTDCoverageKind::Written:  return "written";
+        case TTDCoverageKind::Read:     return "read";
+        default:                        return "unknown";
+    }
+}
+
+/// @brief Parse TTDCoverageKind from string ("executed"/"exec", "written"/"write", "read").
+inline bool TTDCoverageKindFromString(const std::string& str, TTDCoverageKind& outKind)
+{
+    if (str == "executed" || str == "exec" || str == "execute")
+    {
+        outKind = TTDCoverageKind::Executed;
+        return true;
+    }
+    if (str == "written" || str == "write")
+    {
+        outKind = TTDCoverageKind::Written;
+        return true;
+    }
+    if (str == "read")
+    {
+        outKind = TTDCoverageKind::Read;
+        return true;
+    }
+    return false;
+}
+
+/// @brief Result of a coverage probe query (TD-7 §3.1.1).
+struct TTDCoverageProbeResult
+{
+    uint64_t frame = 0;
+    TTDCoverageKind kind = TTDCoverageKind::Executed;
+    uint16_t addrFrom = 0;
+    uint16_t addrTo = 0xFFFF;
+    std::optional<uint8_t> physPage;
+    bool touched = false;
+    bool indexAvailable = false;
+};
+
+/// @brief Result of a coverage scan query (TD-7 §3.1.2).
+struct TTDCoverageScanResult
+{
+    TTDCoverageKind kind = TTDCoverageKind::Executed;
+    uint16_t addrFrom = 0;
+    uint16_t addrTo = 0xFFFF;
+    std::optional<uint8_t> physPage;
+    uint64_t scannedFrames = 0;
+    uint64_t matchingFrames = 0;
+    std::vector<uint64_t> frames;
+    uint64_t firstMatch = 0;
+    uint64_t lastMatch = 0;
+    uint64_t coveredFrom = 0;                ///< First frame the index covers; the query window is clamped to it
+    uint64_t coveredTo = 0;                  ///< Last frame the index covers
+    bool truncated = false;
+    bool indexAvailable = false;
+};
+
+/// @brief One bucket in a coverage summary query (TD-7 §3.1.3).
+struct TTDCoverageSummaryBucket
+{
+    uint64_t frameStart = 0;
+    uint64_t frameEnd = 0;
+    uint32_t executedDistinct = 0;
+    uint32_t writtenDistinct = 0;
+    uint32_t readDistinct = 0;
+    bool hasKeyframe = false;
+};
+
+/// @brief Result of a coverage summary query (TD-7 §3.1.3).
+struct TTDCoverageSummaryResult
+{
+    uint64_t fromFrame = 0;
+    uint64_t toFrame = 0;
+    uint64_t coveredFrom = 0;                ///< First frame any covered kind covers
+    uint64_t coveredTo = 0;                  ///< Last frame any covered kind covers
+    uint64_t bucketSize = 50;
+    size_t bucketCount = 0;
+    std::vector<TTDCoverageSummaryBucket> buckets;
+    bool indexAvailable = false;
+};
+
 class TimeTravelManager
 {
 public:
@@ -881,6 +968,32 @@ public:
     std::optional<TTDSearchResult> FindLastAccess(
         const TTDSearchQuery& query,
         TTDExternalEvent* outBlockingMarker = nullptr);
+
+    /// @brief Probe coverage for a specific frame and address range (TD-7 §3.1.1).
+    TTDCoverageProbeResult QueryCoverageProbe(
+        uint64_t frame,
+        TTDCoverageKind kind,
+        uint16_t addrFrom,
+        uint16_t addrTo,
+        std::optional<uint8_t> physPage = std::nullopt) const;
+
+    /// @brief Scan frames in [fromFrame, toFrame] touching range (TD-7 §3.1.2).
+    TTDCoverageScanResult QueryCoverageScan(
+        uint64_t fromFrame,
+        uint64_t toFrame,
+        TTDCoverageKind kind,
+        uint16_t addrFrom,
+        uint16_t addrTo,
+        std::optional<uint8_t> physPage = std::nullopt,
+        size_t limit = 200) const;
+
+    /// @brief Activity heatmap over [fromFrame, toFrame] (TD-7 §3.1.3).
+    TTDCoverageSummaryResult QueryCoverageSummary(
+        uint64_t fromFrame,
+        uint64_t toFrame,
+        std::optional<TTDCoverageKind> kind = std::nullopt,
+        uint64_t bucketSize = 0,
+        size_t limit = 100) const;
     
     /// @brief Step back one instruction (TDD §10.2 + §16 row 2).
     ///

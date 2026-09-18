@@ -2391,7 +2391,7 @@ Commands to configure emulator instance behavior and performance characteristics
 
 Record a per-frame checkpoint timeline of the running emulator, then seek backwards to any captured point and replay forward with full determinism. The same surface is also exposed to GDB/LLDB clients via reverse-execution packets (`bc`/`bs`) once the GDB transport lands (see [gdb-protocol.md](./gdb-protocol.md)).
 
-**Reference design:** [time-travel-debugging-tdd.md](../../debugger/time-travel-debug/time-travel-debugging-tdd.md) §10.4 — that TDD is the canonical source for command names, argument shapes, and result envelopes. This section mirrors it; if the two disagree, the TDD wins.
+**Reference design:** [time-travel-debugging-tdd.md](../debugger/time-travel-debug/time-travel-debugging-tdd.md) §10.4 — that TDD is the canonical source for command names, argument shapes, and result envelopes. This section mirrors it; if the two disagree, the TDD wins.
 
 **Feature flag:** `timetravel` (alias `ttd`) registered in `FeatureManager`. Recording, seek, and replay require this flag ON, which auto-enables the master `debugmode` flag (TTD uses the debug memory write path for the dirty-page hook). Status queries are always available, regardless of the flag — they return `{recording: false}` when TTD is off.
 
@@ -2420,6 +2420,7 @@ Record a per-frame checkpoint timeline of the running emulator, then seek backwa
 | `ttd markers` | `ttd barriers` | — | List external-event markers (tape control, disk writes) that act as replay barriers. | ✅ Implemented |
 | `ttd dump` | `ttd save` | `<path>` | Serialize the session to a `.ttd` file for offline analysis with `tools/verification/ttd-analyzer`. | ✅ Implemented |
 | `ttd load` | `ttd open` | `<path>` | Load a `.ttd` session for playback. Replaces whatever session is held; afterwards the session is Idle, so use `ttd seek` to position the emulator. | ✅ Implemented |
+| `ttd coverage` | `ttd cov` | `<probe\|scan\|summary> [options]` | Query TTD coverage index. `probe` checks frame containment; `scan` lists matching frames in interval; `summary` returns activity heatmap. | ✅ Implemented |
 
 **Sessions on disk (`ttd dump` / `ttd load`).**
 
@@ -4153,6 +4154,6 @@ core/automation/
 ## Contributing
 
 Interface implementations and command additions are welcome! Please see:
-- Architecture documentation: [ARCHITECTURE.md](../../ARCHITECTURE.md)
-- Contribution guidelines: [CONTRIBUTING.md](../../../../CONTRIBUTING.md)
-- Command implementation guide: [COMMAND_IMPLEMENTATION.md](./COMMAND_IMPLEMENTATION.md)
+- Architecture documentation: [architecture_overview.md](../../../inprogress/architecture_overview.md)
+- Coding guidelines: [coding-guidelines.md](../../../guidelines/coding-guidelines.md)
+- Command implementation notes: [Implementation Notes](#implementation-notes) (this document)

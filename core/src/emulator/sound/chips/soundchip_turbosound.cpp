@@ -226,7 +226,7 @@ void SoundChip_TurboSound::handleStep()
         }
     }
 
-    _lastTStates = scaledCurrentTStates;
+    _lastTStates = currentTStates;
 }
 
 void SoundChip_TurboSound::handleFrameEnd()

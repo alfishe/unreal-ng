@@ -164,6 +164,12 @@ TTDChipsetState CaptureChipsetState(const EmulatorState& src)
                   "ulaplus_cram size mismatch");
     std::memcpy(dst.ulaplus_cram, src.ulaplus_cram, sizeof(dst.ulaplus_cram));
 
+    // CPU clock (model-neutral; see the struct comment)
+    dst.hw_turbo_shift = src.hw_turbo_shift;
+    dst.hw_turbo_shift_applied = src.hw_turbo_shift_applied;
+    dst.current_z80_frequency_multiplier = src.current_z80_frequency_multiplier;
+    dst.next_z80_frequency_multiplier = src.next_z80_frequency_multiplier;
+
     // Extended/model-specific ports handled via TTDPeripheralRegistry
 
     return dst;
@@ -195,6 +201,15 @@ void RestoreChipsetState(const TTDChipsetState& src, EmulatorState* dst)
     dst->ulaplus_mode = src.ulaplus_mode;
     dst->ulaplus_reg = src.ulaplus_reg;
     std::memcpy(dst->ulaplus_cram, src.ulaplus_cram, sizeof(dst->ulaplus_cram));
+
+    // CPU clock. A zero multiplier means "recorded before this was captured";
+    // fall back to 1x rather than stalling the CPU at zero speed.
+    dst->hw_turbo_shift = src.hw_turbo_shift;
+    dst->hw_turbo_shift_applied = src.hw_turbo_shift_applied;
+    dst->current_z80_frequency_multiplier =
+        src.current_z80_frequency_multiplier ? src.current_z80_frequency_multiplier : 1;
+    dst->next_z80_frequency_multiplier =
+        src.next_z80_frequency_multiplier ? src.next_z80_frequency_multiplier : 1;
 
     // Extended/model-specific ports handled via TTDPeripheralRegistry
 

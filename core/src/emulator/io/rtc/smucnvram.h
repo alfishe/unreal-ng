@@ -3,36 +3,12 @@
 
 #include <ctime>
 #include <chrono>
+#include "emulator/io/rtc/ds12885.h"
 
 /// RTC / NVRAM devices for clones and addon cards. Each hardware standard
 /// (the SMUC board's DS1685 CMOS + LC16 serial EEPROM below, the Dallas and
 /// Rus512 CMOS variants, future GLUK-type clocks for other machines) gets its
 /// own unit in this folder - they share nothing but the bus they sit behind
-
-enum CMOSTypeEnum
-{
-	None = 0,
-	Dallas = 1,
-	Rus512 = 2
-};
-
-enum CMOSMemoryEnum
-{
-	Second = 0,
-	Reserved_1 = 1,
-	Minute = 2,
-	Reserved_3 = 3,
-	Hour = 4,
-	Reserved_5 = 5,
-	DayOfWeek = 6,
-	Day = 7,
-	Month = 8,
-	Year = 9,
-	Unknown_10 = 10,
-	BitFlags = 11,
-	UF = 12,
-	Unknown_13 = 13
-};
 
 class SMUCNvram
 {

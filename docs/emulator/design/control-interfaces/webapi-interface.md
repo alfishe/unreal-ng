@@ -1308,6 +1308,9 @@ All TTD endpoints are scoped under `/api/v1/emulator/{id}/ttd/...`. Full command
 | `GET`  | `/ttd/bookmarks` | — | List bookmarks. | 🔮 Phase 3 |
 | `POST` | `/ttd/bookmarks` | `{"at": T, "label": "..."}` | Add a bookmark at a recorded time point. | 🔮 Phase 3 |
 | `DELETE` | `/ttd/bookmarks/{id}` | — | Remove a bookmark. | 🔮 Phase 3 |
+| `GET`  | `/ttd/coverage/probe` | `?frame=N&kind=executed\|written\|read&addr_from=A1&addr_to=A2&phys_page=P` | Exact per-frame query: did frame N touch the range? Returns `{touched, index_available, frame, kind, addr_from, addr_to, phys_page}`. Frames outside the covered window return `index_available: false, touched: false`. Returns 400 for missing `frame`, invalid `kind`, `addr_from > addr_to`, `phys_page > 255` or non-numeric values. | ✅ Implemented |
+| `GET`  | `/ttd/coverage/scan` | `?from_frame=F1&to_frame=F2&kind=executed\|written\|read&addr_from=A1&addr_to=A2&phys_page=P&limit=L` | Frames in `[F1, F2]` touching the range (window clamped to coverage). Returns `{frames[], first_match, last_match, matching_frames, scanned_frames, truncated, covered_from, covered_to, index_available}`. Same 400 validation as probe (plus `limit >= 1`). | ✅ Implemented |
+| `GET`  | `/ttd/coverage/summary` | `?from_frame=F1&to_frame=F2&kind=K&bucket_size=B&limit=L` | Activity heatmap: per-bucket distinct executed/written/read address counts. Returns `{bucket_size, bucket_count, buckets[] (frame_start/frame_end/executed_distinct/written_distinct/read_distinct/has_keyframe), covered_from, covered_to, index_available}`. `bucket_size=0` (default) = auto. | ✅ Implemented |
 
 **`GET /ttd/status` response shape:**
 
