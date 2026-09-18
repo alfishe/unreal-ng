@@ -129,11 +129,17 @@ void SoundChip_TurboSound::handleStep()
                     _chip1->decimatorRight().feedSample(_chip1->mixedRight());
                 }
 
-                // Get decimated output per chip
-                float c0L = _chip0->decimatorLeft().getOutput();
-                float c0R = _chip0->decimatorRight().getOutput();
-                float c1L = _chip1->decimatorLeft().getOutput();
-                float c1R = _chip1->decimatorRight().getOutput();
+                // Get decimated output per chip - batched: one tap pass for
+                // the four lockstep streams, bit-identical to per-stream calls
+                FilterDecimator* decimators[4] = {&_chip0->decimatorLeft(), &_chip0->decimatorRight(),
+                                                  &_chip1->decimatorLeft(), &_chip1->decimatorRight()};
+                double out[4];
+                FilterDecimator::getOutputBatch(decimators, out);
+
+                float c0L = static_cast<float>(out[0]);
+                float c0R = static_cast<float>(out[1]);
+                float c1L = static_cast<float>(out[2]);
+                float c1R = static_cast<float>(out[3]);
 
                 // Store per-chip buffers for registry-driven capture
                 _chip0Buffer[_ayBufferIndex]     = static_cast<int16_t>(c0L * INT16_MAX);

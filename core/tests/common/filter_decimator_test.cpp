@@ -2,6 +2,8 @@
 #include "pch.h"
 
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <vector>
 
 #include "common/sound/filters/filter_decimator.h"
@@ -148,4 +150,147 @@ TEST(FilterDecimator_Test, SlaveLockstep)
     EXPECT_FALSE(slave.hasOutput()) << "configure() must detach the slave";
     slave.feedSample(0.5);
     EXPECT_FALSE(slave.hasOutput()) << "a standalone filter needs its full phase, not the master's";
+}
+
+namespace
+{
+    /// Plain reference convolution in the decimator's own summation order
+    /// (newest sample first, coefficient order): the ground truth every
+    /// output path must reproduce bit for bit.
+    struct ReferenceConvolution
+    {
+        std::vector<double> history;
+
+        void feed(double sample) { history.push_back(sample); }
+
+        double output(const std::vector<double>& coeffs) const
+        {
+            double sum = 0.0;
+            for (size_t i = 0; i < coeffs.size(); i++)
+            {
+                const double sample = (i < history.size()) ? history[history.size() - 1 - i] : 0.0;
+                sum += sample * coeffs[i];
+            }
+            return sum;
+        }
+    };
+
+    /// Deterministic test signal per stream: noise-like, with long exact-zero
+    /// stretches (a muted FM part, a silent AY) and short zero gaps that must
+    /// NOT trigger the zero-history fast path.
+    double TestSignal(size_t stream, size_t tick)
+    {
+        const size_t cycle = tick % 3000;
+        if (cycle >= 2000)
+            return 0.0;  // 1000 zeros: longer than any tap count
+        if (cycle % 97 < 20)
+            return 0.0;  // 20 zeros: shorter than the taps, history not zero
+        uint64_t x = (tick + 1) * 6364136223846793005ULL + (stream + 1) * 1442695040888963407ULL;
+        x ^= x >> 29;
+        return static_cast<double>(static_cast<int64_t>(x % 200001) - 100000) / 100000.0;
+    }
+}
+
+TEST(FilterDecimator_Test, OutputIsBitIdenticalToReferenceConvolution)
+{
+    // The zero-history fast path and the modulo-free ring index must not
+    // change a single bit against the plain convolution - including the
+    // transitions into and out of the zero stretches
+    FilterDecimator decimator;
+    decimator.configure(192000.0);
+    ReferenceConvolution reference;
+
+    size_t outputs = 0;
+    size_t zeroOutputs = 0;
+    for (size_t tick = 0; tick < 300'000; tick++)
+    {
+        const double sample = TestSignal(0, tick);
+        decimator.feedSample(sample);
+        reference.feed(sample);
+
+        if (decimator.hasOutput())
+        {
+            const double expected = reference.output(decimator.coefficients());
+            const double actual = decimator.getOutput();
+            ASSERT_EQ(std::memcmp(&expected, &actual, sizeof(double)), 0)
+                << "tick " << tick << ": " << actual << " != " << expected;
+            outputs++;
+            if (expected == 0.0)
+                zeroOutputs++;
+        }
+    }
+
+    EXPECT_GT(outputs, 250'000u);
+    EXPECT_GT(zeroOutputs, 50'000u) << "the signal must exercise the zero-history fast path";
+    EXPECT_LT(zeroOutputs, outputs) << "the signal must exercise the convolution too";
+}
+
+TEST(FilterDecimator_Test, BatchOutputIsBitIdenticalToIndividual)
+{
+    // The render loops fetch the four SSG streams and the two FM slaves in one
+    // tap pass each. Per stream, that pass must reproduce getOutput() exactly,
+    // with every stream carrying a different signal and different zero runs
+    FilterDecimator individual[4];
+    FilterDecimator batched[4];
+    FilterDecimator* batch[4] = {&batched[0], &batched[1], &batched[2], &batched[3]};
+    for (size_t k = 0; k < 4; k++)
+    {
+        individual[k].configure(192000.0);
+        batched[k].configure(192000.0);
+    }
+
+    // FM-style pair: 2x input rate slaves of stream 0, fed twice per tick
+    FilterDecimator slaveIndividual[2];
+    FilterDecimator slaveBatched[2];
+    FilterDecimator* slaveBatch[2] = {&slaveBatched[0], &slaveBatched[1]};
+    for (size_t k = 0; k < 2; k++)
+    {
+        slaveIndividual[k].configure(192000.0, FilterDecimator::Quality::Reference, false, 437500.0);
+        slaveBatched[k].configure(192000.0, FilterDecimator::Quality::Reference, false, 437500.0);
+        slaveIndividual[k].attachMaster(&individual[0]);
+        slaveBatched[k].attachMaster(&batched[0]);
+    }
+
+    size_t outputs = 0;
+    for (size_t tick = 0; tick < 300'000; tick++)
+    {
+        for (size_t k = 0; k < 4; k++)
+        {
+            const double sample = TestSignal(k, tick);
+            individual[k].feedSample(sample);
+            batched[k].feedSample(sample);
+        }
+        for (size_t k = 0; k < 2; k++)
+        {
+            for (int half = 0; half < 2; half++)
+            {
+                const double sample = TestSignal(4 + k, 2 * tick + half);
+                slaveIndividual[k].feedSample(sample);
+                slaveBatched[k].feedSample(sample);
+            }
+        }
+
+        ASSERT_EQ(individual[0].hasOutput(), batched[0].hasOutput()) << "tick " << tick;
+        if (!individual[0].hasOutput())
+            continue;
+
+        double expected[4];
+        double expectedSlave[2];
+        for (size_t k = 0; k < 4; k++)
+            expected[k] = individual[k].getOutput();
+        for (size_t k = 0; k < 2; k++)
+            expectedSlave[k] = slaveIndividual[k].getOutput();
+
+        double actual[4];
+        double actualSlave[2];
+        FilterDecimator::getOutputBatch(batch, actual);
+        FilterDecimator::getOutputBatch(slaveBatch, actualSlave);
+
+        ASSERT_EQ(std::memcmp(expected, actual, sizeof(expected)), 0) << "SSG batch differs at tick " << tick;
+        ASSERT_EQ(std::memcmp(expectedSlave, actualSlave, sizeof(expectedSlave)), 0)
+            << "FM batch differs at tick " << tick;
+        outputs++;
+    }
+
+    EXPECT_GT(outputs, 250'000u);
 }

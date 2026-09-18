@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <cstring>
 #include <vector>
@@ -52,6 +53,26 @@ private:
     size_t _bufferIndex;
     double _phase;
 
+    /// Consecutive exact-zero inputs, saturating at _taps. While the whole
+    /// history is zero every convolution term is +-0.0 and their sum is
+    /// exactly +0.0, so the output stage can skip the taps without changing
+    /// a single bit (a silent FM part or AY costs nothing).
+    size_t _zeroRun;
+
+    /// The convolution proper: newest sample first, in coefficient order.
+    /// Every other output path must keep exactly this summation order.
+    double convolve() const
+    {
+        double sum = 0.0;
+        size_t idx = _bufferIndex;
+        for (size_t i = 0; i < _taps; i++)
+        {
+            idx = (idx == 0) ? MAX_TAPS - 1 : idx - 1;
+            sum += _buffer[idx] * _coeffs[i];
+        }
+        return sum;
+    }
+
 public:
     FilterDecimator()
     {
@@ -100,6 +121,7 @@ public:
         std::memset(_buffer, 0, sizeof(_buffer));
         _bufferIndex = 0;
         _phase = 0.0;
+        _zeroRun = _taps;  // a cleared history is all zeros
     }
 
     size_t taps() const { return _taps; }
@@ -121,7 +143,8 @@ public:
     void feedSample(double sample)
     {
         _buffer[_bufferIndex] = sample;
-        _bufferIndex = (_bufferIndex + 1) % MAX_TAPS;
+        _bufferIndex = (_bufferIndex + 1 == MAX_TAPS) ? 0 : _bufferIndex + 1;
+        _zeroRun = (sample == 0.0) ? std::min(_zeroRun + 1, _taps) : 0;
         if (!_master)
             _phase += 1.0;
     }
@@ -140,13 +163,44 @@ public:
         if (!_master)
             _phase -= _samplesPerOutput;
 
-        double sum = 0.0;
-        size_t idx = _bufferIndex;
-        for (size_t i = 0; i < _taps; i++)
+        if (_zeroRun >= _taps)
+            return 0.0;  // exact: see _zeroRun
+
+        return convolve();
+    }
+
+    /// getOutput() for N decimators fed in lockstep with equal tap counts (the
+    /// SSG L/R pairs of both chips, the two FM slaves): one pass over the taps
+    /// with an accumulator per stream. Each stream keeps its own coefficients
+    /// and its own summation order, so every result is bit-identical to its
+    /// individual getOutput() - only the serial dependency between the
+    /// streams is gone, which is what made the per-stream loops latency-bound.
+    template <size_t N>
+    static void getOutputBatch(FilterDecimator* const (&d)[N], double (&out)[N])
+    {
+        bool anyNonZero = false;
+        for (size_t k = 0; k < N; k++)
+        {
+            assert(d[k]->_taps == d[0]->_taps && d[k]->_bufferIndex == d[0]->_bufferIndex);
+            if (!d[k]->_master)
+                d[k]->_phase -= d[k]->_samplesPerOutput;
+            out[k] = 0.0;
+            if (d[k]->_zeroRun < d[k]->_taps)
+                anyNonZero = true;
+        }
+        if (!anyNonZero)
+            return;
+
+        const size_t taps = d[0]->_taps;
+        size_t idx = d[0]->_bufferIndex;
+        double sum[N] = {};
+        for (size_t i = 0; i < taps; i++)
         {
             idx = (idx == 0) ? MAX_TAPS - 1 : idx - 1;
-            sum += _buffer[idx] * _coeffs[i];
+            for (size_t k = 0; k < N; k++)
+                sum[k] += d[k]->_buffer[idx] * d[k]->_coeffs[i];
         }
-        return sum;
+        for (size_t k = 0; k < N; k++)
+            out[k] = sum[k];
     }
 };
