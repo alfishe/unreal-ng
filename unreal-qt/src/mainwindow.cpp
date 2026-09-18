@@ -244,6 +244,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::turboModeToggled, this, &MainWindow::handleTurboModeToggled);
     connect(_menuManager, &MenuManager::tapeTrapsToggled, this, &MainWindow::handleTapeTrapsToggled);
     connect(_menuManager, &MenuManager::turboTapeToggled, this, &MainWindow::handleTurboTapeToggled);
+    connect(_menuManager, &MenuManager::fastDiskToggled, this, &MainWindow::handleFastDiskToggled);
     connect(_menuManager, &MenuManager::stepInRequested, this, &MainWindow::handleStepIn);
     connect(_menuManager, &MenuManager::stepOverRequested, this, &MainWindow::handleStepOver);
     connect(_menuManager, &MenuManager::debuggerToggled, this, &MainWindow::handleDebuggerToggled);
@@ -2415,6 +2416,20 @@ void MainWindow::handleTurboTapeToggled(bool enabled)
             // frame boundary — engaged warp also stands down the same way
             featureManager->setFeature(Features::kTurboTape, enabled);
             qDebug() << "Turbo tape loading" << (enabled ? "enabled" : "disabled");
+        }
+    }
+}
+
+void MainWindow::handleFastDiskToggled(bool enabled)
+{
+    if (_emulator)
+    {
+        EmulatorContext* context = _emulator->GetContext();
+        FeatureManager* featureManager = context ? context->pFeatureManager : nullptr;
+        if (featureManager)
+        {
+            featureManager->setFeature(Features::kFastDisk, enabled);
+            qDebug() << "Fast disk loading" << (enabled ? "enabled" : "disabled");
         }
     }
 }

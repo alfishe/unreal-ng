@@ -25,6 +25,7 @@ class PortDecoder;
 class WD1793;
 class TapeFastLoad;
 class TapeTurboController;
+class DiskFastLoad;
 
 class Core
 {
@@ -59,6 +60,7 @@ protected:
     TapeTurboController* _tapeTurboController = nullptr;
     // VG93* _betaDisk = nullptr;
     WD1793* _betaDisk = nullptr;
+    DiskFastLoad* _diskFastLoad = nullptr;
     SoundManager* _sound = nullptr;
 #ifdef ENABLE_RECORDING
     RecordingManager* _recordingManager = nullptr;

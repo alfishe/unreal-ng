@@ -11,6 +11,7 @@
 #include "emulator/cpu/op_noprefix.h"
 #include "emulator/cpu/opcode_profiler.h"
 #include "emulator/emulator.h"
+#include "emulator/io/fdc/diskfastload.h"
 #include "emulator/io/tape/tapefastload.h"
 #include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/notifications.h"
@@ -313,6 +314,17 @@ void Z80::Z80Step(bool skipBreakpoints)
         if (_context->pTapeFastLoad->HandleLDBytesTrap(*this))
         {
             // Trap consumed the invocation — the routine never executes
+            return;
+        }
+    }
+
+    // Fast disk loading trap (Layer B ROM $3FEC INI sector drain loop trap).
+    // Drains pending sector bytes directly into memory via Z80::wd() when armed.
+    if (pc == 0x3FEC && _context->pDiskFastLoad != nullptr)
+    {
+        if (_context->pDiskFastLoad->HandleSectorDrainTrap(*this))
+        {
+            // Trap consumed the sector drain loop invocation
             return;
         }
     }

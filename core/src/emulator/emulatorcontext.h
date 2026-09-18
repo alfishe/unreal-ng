@@ -27,6 +27,7 @@ class Screen;
 class UlaContention;
 class TapeFastLoad;
 class TapeTurboController;
+class DiskFastLoad;
 class SoundManager;
 #ifdef ENABLE_RECORDING
 class RecordingManager;
@@ -101,6 +102,9 @@ public:
 
     // BDI - Beta Disk Interface controller instance
     WD1793* pBetaDisk = nullptr;
+
+    // Fast disk loading trap instance
+    DiskFastLoad* pDiskFastLoad = nullptr;
 
 	// Video controller parameters and logic
 	Screen* pScreen = nullptr;

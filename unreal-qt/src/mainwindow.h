@@ -102,6 +102,7 @@ private slots:
     void handleTurboModeToggled(bool enabled);
     void handleTapeTrapsToggled(bool enabled);
     void handleTurboTapeToggled(bool enabled);
+    void handleFastDiskToggled(bool enabled);
     void handleStepIn();
     void handleStepOver();
     void handleToolBarToggled(bool visible);

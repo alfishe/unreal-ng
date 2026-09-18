@@ -99,6 +99,9 @@ signals:
     void resetRequested();
     void stopRequested();
 
+    // Machine control signals
+    void fastDiskToggled(bool enabled);
+
     // Speed control signals
     void speedMultiplierChanged(int multiplier);
     void turboModeToggled(bool enabled);
@@ -235,6 +238,7 @@ private:
     QAction* _tapeTrapsAction;
     QAction* _mniAction;
     QAction* _turboTapeAction;
+    QAction* _fastDiskAction = nullptr;
 
     // Debug Menu Actions
     QAction* _stepInAction;

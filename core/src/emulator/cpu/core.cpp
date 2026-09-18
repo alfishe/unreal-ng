@@ -5,6 +5,7 @@
 #include <cassert>
 
 #include "common/modulelogger.h"
+#include "emulator/io/fdc/diskfastload.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/tape/tapefastload.h"
 #include "emulator/io/tape/tapeturbocontroller.h"
@@ -230,6 +231,24 @@ bool Core::Init()
 
     /// endregion </BetaDisk128 Interface>
 
+    /// region <Fast disk loading>
+
+    if (result)
+    {
+        result = false;
+
+        // Instantiate fast disk loading trap
+        _diskFastLoad = new DiskFastLoad(_context);
+        if (_diskFastLoad)
+        {
+            _context->pDiskFastLoad = _diskFastLoad;
+
+            result = true;
+        }
+    }
+
+    /// endregion </Fast disk loading>
+
     /// region <Sound manager>
 
     if (result)
@@ -451,6 +470,13 @@ void Core::Release()
 
         delete _betaDisk;
         _betaDisk = nullptr;
+    }
+
+    _context->pDiskFastLoad = nullptr;
+    if (_diskFastLoad != nullptr)
+    {
+        delete _diskFastLoad;
+        _diskFastLoad = nullptr;
     }
 
     _context->pTapeFastLoad = nullptr;
