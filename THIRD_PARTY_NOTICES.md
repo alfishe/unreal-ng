@@ -3,6 +3,8 @@
 unreal-ng is licensed under the GNU General Public License v3.0 or later (see [LICENSE](LICENSE)).
 It bundles or links the following third-party components. Each keeps its own license file where one is
 vendored; the table records the license as evidenced in this repository and how the component is used.
+INI parsing is own code (`core/src/common/inifile.{h,cpp}`); the former vendored simpleini header and its
+GPL-incompatible convertutf.{c,h} companion were removed on 2026-09-17 (audit item B3).
 Full audit: `docs/inprogress/2026-09-02-gplv3-licensing/license-audit.md`.
 
 ## Heritage
@@ -23,7 +25,6 @@ Portions Copyright (C) SMT, Alone Coder, deathsoft. The license of the original 
 | ymfm @ 81aec25c (with local TTD patch and the CSM key-on fix ported from Furnace, see `PATCHES.md` there) | `core/src/3rdparty/ymfm/` | BSD-3-Clause | static |
 | lodepng 20200306 | `core/src/3rdparty/lodepng/` | zlib | static |
 | digestpp | `core/src/3rdparty/digestpp/` | Public domain | header |
-| simpleini 4.17 | `core/src/3rdparty/simpleini/` | MIT | header |
 | tinywav | `core/src/3rdparty/tinywav/` | ISC | static |
 | simple-fft | `core/src/3rdparty/simple-fft/` | MIT | header |
 | CLI11 2.5.0 | `core/src/3rdparty/cli11/`, `core/automation/cli/lib/cli11/` | BSD-3-Clause | header |
@@ -72,4 +73,3 @@ Portions Copyright (C) SMT, Alone Coder, deathsoft. The license of the original 
 
 * `data/fonts/consolas.ttf` — Microsoft Consolas is proprietary and must be replaced by an OFL font before publication.
 * `core/src/3rdparty/z80ex/` — GPL-2.0-only, not compiled; scheduled for removal.
-* `core/src/3rdparty/simpleini/convertutf.{c,h}` — legacy Unicode Inc. notice with a field-of-use clause, not compiled; scheduled for removal.
