@@ -89,7 +89,155 @@ void MainLoop::Run(volatile bool& stopRequested)
         uint64_t startTime = TimeHelper::GetTimestampUs();
         betweenIterations = startTime - lastRun;
 
-        [[maybe_unused]] unsigned duration1 = measure_us(&MainLoop::RunFrame, this);
+#ifdef _WIN32
+        ULONG64 cyclesBefore = 0;
+        QueryThreadCycleTime(GetCurrentThread(), &cyclesBefore);
+#endif
+        unsigned duration1 = measure_us(&MainLoop::RunFrame, this);
+#ifdef _WIN32
+        ULONG64 cyclesAfter = 0;
+        QueryThreadCycleTime(GetCurrentThread(), &cyclesAfter);
+        // Cycles -> us at the nominal clock (the Frame time line prints the
+        // 10M-LCG probe, which calibrates this if the clock differs)
+        const unsigned frameCpuUs = static_cast<unsigned>((cyclesAfter - cyclesBefore) / 3700);
+#else
+        const unsigned frameCpuUs = duration1;
+#endif
+
+        // Producer health (audio-sync design): a frame that takes longer than
+        // its budget starves the audio ring no matter how precise the pacing.
+        // Summarize per 256-frame window (~5 s), and only when the window was
+        // over budget or came close to it, so a healthy run stays silent.
+        if (!_context->config.turbo_mode)
+        {
+            const unsigned budgetUs = _context->config.frame_duration_us;
+            _frameStatMaxUs = std::max(_frameStatMaxUs, duration1);
+            if (duration1 > budgetUs)
+            {
+                _frameStatOverruns++;
+                // Per-overrun record: the sleep history that preceded this frame
+                // tells whether the core had time to power down before it ran
+                MLOGWARNING("Frame overrun: frame #%u took %u us wall / %u us cpu (%u steps); "
+                            "slept before this frame %u us, before previous frame %u us; "
+                            "clock probe at start %u us (window best so far %u us), cache probe %u us",
+                            _frameStatWindow, duration1, frameCpuUs, _stepCount, _lastWaitUs, _prevWaitUs,
+                            _frameClockProbeUs, _frameStatMinClockProbeUs, _frameCacheProbeUs);
+            }
+            if (duration1 > _frameStatWorstWallUs)
+            {
+                _frameStatWorstWallUs = duration1;
+                _frameStatWorstCpuUs = frameCpuUs;
+                _frameStatWorstIndex = _frameStatWindow;
+                _frameStatWorstCacheProbeUs = _frameCacheProbeUs;
+                _frameStatWorstClockProbeUs = _frameClockProbeUs;
+            }
+            _frameStatSumCacheProbeUs += _frameCacheProbeUs;
+            _frameStatSumClockProbeUs += _frameClockProbeUs;
+            if (_frameStatMinClockProbeUs == 0 || _frameClockProbeUs < _frameStatMinClockProbeUs)
+                _frameStatMinClockProbeUs = _frameClockProbeUs;
+            _frameStatHist[std::min<unsigned>(duration1 / 5000, 4)]++;
+            _frameStatSumCpuUs += _frameCpuUs;
+
+            // Stage split: "other" is whatever RunFrame spent outside the three
+            // timed stages (frame-start/end handlers, HUD, recording, notifications)
+            const unsigned timedUs = _frameCpuUs + _frameVideoUs + _frameSoundUs;
+            _frameStatMaxCpuUs = std::max(_frameStatMaxCpuUs, _frameCpuUs);
+            _frameStatMaxVideoUs = std::max(_frameStatMaxVideoUs, _frameVideoUs);
+            _frameStatMaxSoundUs = std::max(_frameStatMaxSoundUs, _frameSoundUs);
+            _frameStatMaxOtherUs = std::max(_frameStatMaxOtherUs, duration1 > timedUs ? duration1 - timedUs : 0u);
+
+            // Inside the cpu stage: per-step hooks vs the Z80 core (remainder)
+            const unsigned stepScreenUs = static_cast<unsigned>(_stepScreenNs / 1000);
+            const unsigned stepIoUs = static_cast<unsigned>(_stepIoNs / 1000);
+            const unsigned stepSoundUs = static_cast<unsigned>(_stepSoundNs / 1000);
+            const unsigned hooksUs = stepScreenUs + stepIoUs + stepSoundUs;
+            _frameStatMaxStepScreenUs = std::max(_frameStatMaxStepScreenUs, stepScreenUs);
+            _frameStatMaxStepIoUs = std::max(_frameStatMaxStepIoUs, stepIoUs);
+            _frameStatMaxStepSoundUs = std::max(_frameStatMaxStepSoundUs, stepSoundUs);
+            _frameStatSumStepScreenUs += stepScreenUs;
+            _frameStatSumStepIoUs += stepIoUs;
+            _frameStatSumStepSoundUs += stepSoundUs;
+            _frameStatMaxZ80Us = std::max(_frameStatMaxZ80Us, _frameCpuUs > hooksUs ? _frameCpuUs - hooksUs : 0u);
+            _frameStatMaxSteps = std::max(_frameStatMaxSteps, _stepCount);
+
+            // Start-to-start period catches stalls OUTSIDE RunFrame (late
+            // wake-up, blocking log I/O). Gaps over 1 s are pause/anchor
+            // artefacts, not stalls.
+            if (betweenIterations < 1000000)
+                _frameStatMaxPeriodUs = std::max(_frameStatMaxPeriodUs, static_cast<unsigned>(betweenIterations));
+
+            if (++_frameStatWindow == 256)
+            {
+                if (_frameStatOverruns > 0 || _frameStatMaxUs * 4 > budgetUs * 3 || _frameStatMaxPeriodUs > budgetUs * 2)
+                {
+                    // Environment probes (diagnostic only): where this thread runs and
+                    // how fast - a fixed integer workload and the cost of a clock read,
+                    // comparable with BM_CpuSpeedProbe in core-benchmarks
+                    unsigned probeUs = 0;
+                    unsigned clockNs = 0;
+                    {
+                        using clk = std::chrono::steady_clock;
+                        const auto p0 = clk::now();
+                        uint64_t x = 0x9E3779B97F4A7C15ULL;
+                        for (uint32_t i = 0; i < 10'000'000; i++)
+                            x = x * 6364136223846793005ULL + 1442695040888963407ULL;
+                        const auto p1 = clk::now();
+                        for (uint32_t i = 0; i < 1000; i++)
+                            x += static_cast<uint64_t>(clk::now().time_since_epoch().count());
+                        const auto p2 = clk::now();
+                        volatile uint64_t sink = x;
+                        (void)sink;
+                        probeUs = static_cast<unsigned>(std::chrono::duration_cast<std::chrono::microseconds>(p1 - p0).count());
+                        clockNs = static_cast<unsigned>(std::chrono::duration_cast<std::chrono::nanoseconds>(p2 - p1).count() / 1000);
+                    }
+                    unsigned processorNumber = 0;
+                    int threadPriority = 0;
+#ifdef _WIN32
+                    processorNumber = GetCurrentProcessorNumber();
+                    threadPriority = GetThreadPriority(GetCurrentThread());
+#endif
+
+                    const uint64_t logStart = TimeHelper::GetTimestampUs();
+                    MLOGWARNING("Frame time: %u of 256 frames over budget, max %u us, max period %u us "
+                                "(budget %u us); stage max: cpu %u, video %u, sound %u, other %u us; "
+                                "cpu split max: z80 %u, step-screen %u, step-io %u, step-sound %u us (%u steps); "
+                                "worst frame #%u: wall %u us, thread cpu %u us (nominal 3.7 GHz); "
+                                "histogram <5/5-10/10-15/15-20/>20 ms: %u/%u/%u/%u/%u; "
+                                "window avg: cpu %u, step-screen %u, step-io %u, step-sound %u us; "
+                                "clock probe at frame start (200k LCG): worst frame %u us, avg %u us, best %u us; "
+                                "cache probe at frame start: worst frame %u us, avg %u us; "
+                                "env: cpu#%u prio %d, 10M-LCG probe %u us, clock read %u ns; "
+                                "previous log write took %u us",
+                                _frameStatOverruns, _frameStatMaxUs, _frameStatMaxPeriodUs, budgetUs,
+                                _frameStatMaxCpuUs, _frameStatMaxVideoUs, _frameStatMaxSoundUs, _frameStatMaxOtherUs,
+                                _frameStatMaxZ80Us, _frameStatMaxStepScreenUs, _frameStatMaxStepIoUs,
+                                _frameStatMaxStepSoundUs, _frameStatMaxSteps,
+                                _frameStatWorstIndex, _frameStatWorstWallUs, _frameStatWorstCpuUs,
+                                _frameStatHist[0], _frameStatHist[1], _frameStatHist[2], _frameStatHist[3], _frameStatHist[4],
+                                static_cast<unsigned>(_frameStatSumCpuUs / 256), static_cast<unsigned>(_frameStatSumStepScreenUs / 256),
+                                static_cast<unsigned>(_frameStatSumStepIoUs / 256), static_cast<unsigned>(_frameStatSumStepSoundUs / 256),
+                                _frameStatWorstClockProbeUs, static_cast<unsigned>(_frameStatSumClockProbeUs / 256), _frameStatMinClockProbeUs,
+                                _frameStatWorstCacheProbeUs, static_cast<unsigned>(_frameStatSumCacheProbeUs / 256),
+                                processorNumber, threadPriority, probeUs, clockNs, _frameStatLastLogUs);
+                    _frameStatLastLogUs = static_cast<unsigned>(TimeHelper::GetTimestampUs() - logStart);
+                }
+                _frameStatWindow = 0;
+                _frameStatMaxUs = 0;
+                _frameStatMaxPeriodUs = 0;
+                _frameStatOverruns = 0;
+                _frameStatMaxCpuUs = _frameStatMaxVideoUs = _frameStatMaxSoundUs = _frameStatMaxOtherUs = 0;
+                _frameStatMaxZ80Us = _frameStatMaxStepScreenUs = _frameStatMaxStepIoUs = _frameStatMaxStepSoundUs = 0;
+                _frameStatMaxSteps = 0;
+                _frameStatWorstWallUs = _frameStatWorstCpuUs = 0;
+                _frameStatWorstIndex = 0;
+                std::fill(std::begin(_frameStatHist), std::end(_frameStatHist), 0u);
+                _frameStatSumCpuUs = _frameStatSumStepScreenUs = _frameStatSumStepIoUs = _frameStatSumStepSoundUs = 0;
+                _frameStatWorstCacheProbeUs = 0;
+                _frameStatSumCacheProbeUs = 0;
+                _frameStatWorstClockProbeUs = _frameStatMinClockProbeUs = 0;
+                _frameStatSumClockProbeUs = 0;
+            }
+        }
 
         /// region <Handle Pause>
         // Check if Emulator has requested pause (Emulator is single source of truth)
@@ -173,6 +321,8 @@ void MainLoop::Run(volatile bool& stopRequested)
             if (occCell && occCell->load(std::memory_order_relaxed) < refillThresholdFrames)
             {
                 _nextFrameTime = now;  // Re-anchor: refill burst must not distort the cadence after
+                _prevWaitUs = _lastWaitUs;
+                _lastWaitUs = 0;
                 continue;
             }
 
@@ -199,7 +349,11 @@ void MainLoop::Run(volatile bool& stopRequested)
             // against WASAPI's 10 ms pulls and caused steady underruns
             // ("ring errors ... dequeue=N" growing) - see
             // TimeHelper::WaitUntilPrecise and SoundAdaptivity.AVLatencyBudget
+            const auto waitStart = std::chrono::steady_clock::now();
             TimeHelper::WaitUntilPrecise(_nextFrameTime, [&stopRequested] { return (bool)stopRequested; });
+            _prevWaitUs = _lastWaitUs;
+            _lastWaitUs = static_cast<unsigned>(std::chrono::duration_cast<std::chrono::microseconds>(
+                                                    std::chrono::steady_clock::now() - waitStart).count());
         }
         else
         {
@@ -334,7 +488,44 @@ void MainLoop::RunFrame()
     // any manual debug stepping while paused are never affected.
     _screen->SetTurboRenderSkip(!_renderThisFrame);
 
+    _stepScreenNs = _stepIoNs = _stepSoundNs = 0;
+    _stepCount = 0;
+
+    // Clock-speed probe (diagnostic): how fast does this core run right now?
+    {
+        using clk = std::chrono::steady_clock;
+        const auto p0 = clk::now();
+        uint64_t x = 0x9E3779B97F4A7C15ULL;
+        for (uint32_t i = 0; i < 200'000; i++)
+            x = x * 6364136223846793005ULL + 1442695040888963407ULL;
+        const auto p1 = clk::now();
+        volatile uint64_t sink = x;
+        (void)sink;
+        _frameClockProbeUs = static_cast<unsigned>(std::chrono::duration_cast<std::chrono::microseconds>(p1 - p0).count());
+    }
+
+    // Cache-residency probe (diagnostic): is the framebuffer still in cache?
+    _frameCacheProbeUs = 0;
+    {
+        const FramebufferDescriptor& fb = _context->pScreen->GetFramebufferDescriptor();
+        if (fb.memoryBuffer != nullptr && fb.memoryBufferSize >= 65536)
+        {
+            using clk = std::chrono::steady_clock;
+            const auto p0 = clk::now();
+            const volatile uint8_t* base = reinterpret_cast<const volatile uint8_t*>(fb.memoryBuffer);
+            unsigned sum = 0;
+            for (size_t off = 0; off < 65536; off += 64)
+                sum += base[off];
+            const auto p1 = clk::now();
+            volatile unsigned sink = sum;
+            (void)sink;
+            _frameCacheProbeUs = static_cast<unsigned>(std::chrono::duration_cast<std::chrono::microseconds>(p1 - p0).count());
+        }
+    }
+
+    const uint64_t cpuStart = TimeHelper::GetTimestampUs();
     ExecuteCPUFrameCycle();
+    _frameCpuUs = static_cast<unsigned>(TimeHelper::GetTimestampUs() - cpuStart);
 
     _screen->SetTurboRenderSkip(false);
 
@@ -419,14 +610,26 @@ void MainLoop::OnCPUStep()
 
     // Turbo render decimation: skipped frames bypass contingent rendering.
     // Everything below still runs on every CPU step in every mode.
+    using clk = std::chrono::steady_clock;
+    const auto t0 = clk::now();
+
     if (_renderThisFrame)
     {
         _context->pScreen->UpdateScreen();  // Trigger screen update after each CPU command cycle
     }
+    const auto t1 = clk::now();
 
     _context->pBetaDisk->handleStep();
     _context->pTape->handleStep();  // Process tape audio each step
+    const auto t2 = clk::now();
+
     _context->pSoundManager->handleStep();
+    const auto t3 = clk::now();
+
+    _stepScreenNs += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+    _stepIoNs += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
+    _stepSoundNs += std::chrono::duration_cast<std::chrono::nanoseconds>(t3 - t2).count();
+    _stepCount++;
 }
 
 void MainLoop::OnFrameEnd()
@@ -453,8 +656,11 @@ void MainLoop::OnFrameEnd()
     // =========================================================================
     // Turbo render decimation: skipped frames render nothing and keep the
     // previously latched framebuffer for display (decimated preview).
+    _frameVideoUs = 0;
     if (_renderThisFrame)
     {
+        const uint64_t videoStart = TimeHelper::GetTimestampUs();
+
         if (!_context->pScreen->IsScreenHQEnabled())
         {
             _context->pScreen->RenderFrameBatch();
@@ -464,6 +670,8 @@ void MainLoop::OnFrameEnd()
         // for GUI display and capture). Must happen after rendering is finished
         // for both batch and per-t-state (ScreenHQ) modes.
         _context->pScreen->LatchFramebuffer();
+
+        _frameVideoUs = static_cast<unsigned>(TimeHelper::GetTimestampUs() - videoStart);
     }
 
     // Basic sanity check for context corruption
@@ -514,10 +722,12 @@ void MainLoop::OnFrameEnd()
 
     // Audio generation: Skip in turbo mode unless explicitly requested
     const CONFIG& config = _context->config;
+    _frameSoundUs = 0;
     if (!config.turbo_mode || config.turbo_mode_audio)
     {
         if (_context->pSoundManager)
         {
+            const uint64_t soundStart = TimeHelper::GetTimestampUs();
             try
             {
                 _context->pSoundManager->handleFrameEnd();  // Sound manager will call audio callback by itself
@@ -527,6 +737,7 @@ void MainLoop::OnFrameEnd()
                 // Log error but don't crash - audio failure shouldn't stop emulation
                 MLOGERROR("SoundManager::handleFrameEnd failed: %s", e.what());
             }
+            _frameSoundUs = static_cast<unsigned>(TimeHelper::GetTimestampUs() - soundStart);
         }
     }
 

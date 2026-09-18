@@ -84,7 +84,7 @@ The ZX Spectrum is not an isolated Z80 microprocessor; it is an interconnected e
 
 ```
                           ┌───────────────────────────┐
-                          │    Main Z80 CPU (3.5 MHz)  │
+                          │    Main Z80 CPU (3.5 MHz) │
                           └─────────────┬─────────────┘
                                         │ T-states (step-by-step)
          ┌──────────────┬───────────────┼───────────────┬──────────────┐

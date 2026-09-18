@@ -42,6 +42,60 @@ protected:
     // catch-up frames arrive). Zero-initialized = resync on first frame.
     std::chrono::steady_clock::time_point _nextFrameTime{};
 
+    // Frame-time window statistics (run thread only) - see Run()
+    uint32_t _frameStatWindow = 0;
+    unsigned _frameStatMaxUs = 0;         // longest RunFrame in the window
+    unsigned _frameStatMaxPeriodUs = 0;   // longest start-to-start period (includes the wait and logging)
+    unsigned _frameStatLastLogUs = 0;     // cost of the previous summary line itself
+    uint32_t _frameStatOverruns = 0;
+    // Per-stage split of RunFrame (window max, us): where a long frame spends its time
+    unsigned _frameStatMaxCpuUs = 0;      // ExecuteCPUFrameCycle (Z80 + per-t-state video/audio hooks)
+    unsigned _frameStatMaxVideoUs = 0;    // batch render + framebuffer latch
+    unsigned _frameStatMaxSoundUs = 0;    // SoundManager::handleFrameEnd (synthesis, mix, DRC resample, enqueue)
+    unsigned _frameStatMaxOtherUs = 0;    // rest of OnFrameStart/OnFrameEnd (peripherals, HUD, recording, notifications)
+    unsigned _frameCpuUs = 0;             // current-frame stage timings, filled by RunFrame/OnFrameEnd
+    unsigned _frameVideoUs = 0;
+    unsigned _frameSoundUs = 0;
+    // Per-CPU-step hook split inside ExecuteCPUFrameCycle (accumulated per frame
+    // in OnCPUStep, ns): the Z80 core itself is the remainder of the cpu stage.
+    // Four clock reads per step cost ~1.5 ms/frame in total; included in cpu.
+    uint64_t _stepScreenNs = 0;
+    uint64_t _stepIoNs = 0;               // FDC + tape
+    uint64_t _stepSoundNs = 0;
+    uint32_t _stepCount = 0;
+    unsigned _frameStatMaxZ80Us = 0;      // window max of (cpu - screen - io - sound)
+    unsigned _frameStatMaxStepScreenUs = 0;
+    unsigned _frameStatMaxStepIoUs = 0;
+    unsigned _frameStatMaxStepSoundUs = 0;
+    uint32_t _frameStatMaxSteps = 0;
+    // Worst frame of the window: wall time vs this thread's actual CPU time
+    // (QueryThreadCycleTime). CPU << wall means the thread was off-CPU inside
+    // the frame (preempted, blocked); CPU ~= wall means the work itself grew.
+    unsigned _frameStatWorstWallUs = 0;
+    unsigned _frameStatWorstCpuUs = 0;
+    uint32_t _frameStatWorstIndex = 0;      // position of the worst frame inside the window
+    uint32_t _frameStatHist[5] = {};        // frame wall time: <5, 5-10, 10-15, 15-20, >20 ms
+    uint64_t _frameStatSumCpuUs = 0;        // window sums (average = sum / 256)
+    uint64_t _frameStatSumStepScreenUs = 0;
+    uint64_t _frameStatSumStepIoUs = 0;
+    uint64_t _frameStatSumStepSoundUs = 0;
+    // Cache-residency probe at frame start: strided read of the first 64 KB of
+    // the framebuffer (written every frame, so it is hot unless another thread
+    // evicted it). ~10 us from cache, ~80 us from DRAM.
+    // Clock-speed probe at frame start: 200k dependent LCG steps (~0.2 ms at
+    // full clock). A frame that starts on a downclocked core shows it here.
+    unsigned _frameClockProbeUs = 0;
+    unsigned _frameStatWorstClockProbeUs = 0;
+    unsigned _frameStatMinClockProbeUs = 0;
+    uint64_t _frameStatSumClockProbeUs = 0;
+    // How long the thread actually slept before the current and the previous
+    // frame (WaitUntilPrecise wall time; 0 for an emergency-refill frame)
+    unsigned _lastWaitUs = 0;
+    unsigned _prevWaitUs = 0;
+    unsigned _frameCacheProbeUs = 0;
+    unsigned _frameStatWorstCacheProbeUs = 0;
+    uint64_t _frameStatSumCacheProbeUs = 0;
+
     /// region <Realtime scheduling>
 public:
     /// Real-time scheduling request for this instance's emulation thread.
