@@ -339,7 +339,7 @@ void TileGrid::compositeSingleSyncFrame()
     Screen* screen = ctx ? ctx->pScreen : nullptr;
     if (!screen) return;
 
-    auto& desc = screen->GetFramebufferDescriptor();
+auto& desc = screen->GetFramebufferDescriptor();
     if (desc.width == 0 || desc.height == 0) return;
 
     // Allocate or resize backing buffer if needed

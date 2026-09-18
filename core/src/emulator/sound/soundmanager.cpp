@@ -480,7 +480,8 @@ void SoundManager::handleFrameEnd()
     // the carry, the sequence is exactly periodic (903,903,...,904 with
     // period 125 on Pentagon@44.1k) and drift-free by construction.
     size_t samplesThisFrame = SAMPLES_PER_FRAME;
-    uint32_t frameDuration = 0;
+    uint32_t frameDuration = 0;     // T-states (for beeper)
+    uint32_t frameDurationUs = 0;   // microseconds (for sample calculation)
     {
         CONFIG& config = _context->config;
         // Host multiplier only: the Scorpion hardware turbo doubles CPU
@@ -488,12 +489,17 @@ void SoundManager::handleFrameEnd()
         // samples of that frame (it overfilled the ring 2x - hard resyncs)
         uint8_t speedMultiplier = _context->emulatorState.HostSpeedMultiplier();
         frameDuration = config.frame * speedMultiplier;
+        // Wall-clock frame duration: a video frame takes the SAME real time
+        // at any CPU clock, so the realtime sample count (and ring fill
+        // rate) is multiplier-invariant
+        frameDurationUs = config.frame_duration_us;
 
-        if (frameDuration > 0)
+        if (frameDurationUs > 0)
         {
-            _sampleAccumulator += static_cast<uint64_t>(frameDuration) * _coreRate;
-            samplesThisFrame = static_cast<size_t>(_sampleAccumulator / CPU_CLOCK_RATE);
-            _sampleAccumulator %= CPU_CLOCK_RATE;
+            // Accumulate: (frame_us * sample_rate), then divide by 1,000,000 for samples
+            _sampleAccumulator += static_cast<uint64_t>(frameDurationUs) * _coreRate;
+            samplesThisFrame = static_cast<size_t>(_sampleAccumulator / 1'000'000ULL);
+            _sampleAccumulator %= 1'000'000ULL;
 
             // Overflow guard: buffers are sized MAX_SAMPLES_PER_FRAME (speed
             // multiplier >= 3 exceeds it). Drop the excess KNOWINGLY - turbo
@@ -563,7 +569,7 @@ void SoundManager::handleFrameEnd()
     // Cross-check blip's internal fractional accumulator against ours. Both
     // are driven by the same clock ratio and stay in lockstep; >1 sample
     // divergence indicates an accumulator reset bug (logged, not asserted -
-    // snapshot load / multiplier changes may legitimately differ for 1 frame)
+    // snapshot load / reset may legitimately differ for 1 frame)
     {
         int blipRead = _beeper->getLastSamplesRead();
         int diff = blipRead - static_cast<int>(samplesThisFrame);

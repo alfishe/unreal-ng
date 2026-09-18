@@ -147,8 +147,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     _screenWrapper->setHudOverlay(_hudWrapper->softwareOverlay());
     
     // NOTE: We do NOT use a layout manager for contentFrame.
-    // DeviceScreen relies on shrinking itself to maintain aspect ratio, which fights Qt layouts.
-    // We manually resize and center it in resizeEvent and showEvent.
+    // DeviceScreen maintains its aspect ratio itself (fitToParent), which fights Qt layouts.
+    // We fit and center it in resizeEvent, showEvent and on framebuffer geometry changes (init).
     /*
         QSizePolicy dp;
         dp.setHorizontalPolicy(QSizePolicy::Expanding);
@@ -458,8 +458,9 @@ void MainWindow::showEvent(QShowEvent* event)
     QWidget::showEvent(event);
 
     if (_screenWrapper && ui->contentFrame) {
-        _screenWrapper->widget()->resize(ui->contentFrame->size());
-        updatePosition(_screenWrapper->widget(), ui->contentFrame, 0.5, 0.5);
+        // Largest aspect-conforming geometry inside the content frame,
+        // centered - grow-capable, no deferred re-centering needed
+        _screenWrapper->fitToParent();
     }
 
     // First show: size the window so the screen is displayed at 2x, once the
@@ -611,21 +612,12 @@ void MainWindow::closeEvent(QCloseEvent* event)
 void MainWindow::resizeEvent(QResizeEvent* event)
 {
     if (_screenWrapper && ui->contentFrame) {
-        _screenWrapper->widget()->resize(ui->contentFrame->size());
-        updatePosition(_screenWrapper->widget(), ui->contentFrame, 0.5, 0.5);
+        // fitToParent() sets move+resize atomically, so no deferred
+        // re-centering dance is needed anymore
+        _screenWrapper->fitToParent();
 
-        // DeviceScreen::resizeEvent self-resizes to maintain aspect ratio, which invalidates
-        // the position we just set above. Defer re-centering to the next event loop iteration
-        // so it runs after DeviceScreen has settled to its final size.
-        QTimer::singleShot(0, this, [this]() {
-            if (_screenWrapper && ui->contentFrame)
-            {
-                updatePosition(_screenWrapper->widget(), ui->contentFrame, 0.5, 0.5);
-
-                // Repaint contentFrame to clear stale pixels from the previous larger rect
-                ui->contentFrame->update();
-            }
-        });
+        // Repaint contentFrame to clear stale pixels from the previous larger rect
+        ui->contentFrame->update();
     }
 
     // Update normal geometry ONLY when in normal state
@@ -966,8 +958,7 @@ void MainWindow::handleWindowStateChangeLinux(Qt::WindowStates oldState, Qt::Win
 
         if (_screenWrapper && ui->contentFrame && _screenWrapper->widget())
         {
-            _screenWrapper->widget()->resize(ui->contentFrame->size());
-            updatePosition(_screenWrapper->widget(), ui->contentFrame, 0.5, 0.5);
+            _screenWrapper->fitToParent();
         }
     }
 }
@@ -1091,8 +1082,7 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
         case QEvent::Resize:
             if (watched == ui->contentFrame && _screenWrapper && _screenWrapper->widget())
             {
-                _screenWrapper->widget()->resize(ui->contentFrame->size());
-                updatePosition(_screenWrapper->widget(), ui->contentFrame, 0.5, 0.5);
+                _screenWrapper->fitToParent();
             }
             if (_dockingManager)
                 _dockingManager->updateDockedWindows();
@@ -3066,23 +3056,13 @@ void MainWindow::handleGpuAccelerationToggled(bool enabled)
 
     // Show, resize and center the new widget
     _screenWrapper->widget()->show();
-    _screenWrapper->widget()->resize(contentFrame->size());
-    updatePosition(_screenWrapper->widget(), contentFrame, 0.5, 0.5);
+    _screenWrapper->fitToParent();
 
     // Sync HUD geometry with screen
     if (_hudWrapper)
     {
         _hudWrapper->syncGeometryWithParent();
     }
-
-    // Defer final centering after DeviceScreen settles its aspect ratio
-    QTimer::singleShot(0, this, [this, contentFrame]() {
-        if (_screenWrapper && contentFrame)
-        {
-            updatePosition(_screenWrapper->widget(), contentFrame, 0.5, 0.5);
-            contentFrame->update();
-        }
-    });
 
     qInfo() << "Switched to" << (_screenWrapper->isGPUAccelerated() ? "GPU" : "software") << "rendering";
 }

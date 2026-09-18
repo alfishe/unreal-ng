@@ -377,6 +377,25 @@ bool TTDCoverageIndex::FrameTouches(TTDCoverageKind kind, uint64_t frame,
     return std::binary_search(_decodeScratch.begin(), _decodeScratch.end(), key);
 }
 
+bool TTDCoverageIndex::GetFrameKeys(TTDCoverageKind kind, uint64_t frame,
+                                    std::vector<TTDCoverageKey>& outKeys) const
+{
+    outKeys.clear();
+    const size_t kindIdx = static_cast<size_t>(kind);
+    if (kindIdx >= kKindCount || !CoversFrame(kind, frame))
+        return false;
+
+    const uint32_t blockIdx = FindBlockForFrame(kindIdx, frame);
+    if (blockIdx == UINT32_MAX || !MaterializeBlock(kindIdx, blockIdx))
+        return false;
+
+    const uint64_t base = (blockIdx < _blocks[kindIdx].size())
+                              ? _blocks[kindIdx][blockIdx].baseFrame
+                              : _openBlockBaseFrame[kindIdx];
+    DecodeFrameFromCache(static_cast<uint32_t>(frame - base), outKeys);
+    return true;
+}
+
 size_t TTDCoverageIndex::SealedFrameCount(TTDCoverageKind kind) const
 {
     const size_t kindIdx = static_cast<size_t>(kind);

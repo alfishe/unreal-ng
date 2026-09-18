@@ -46,7 +46,7 @@ public:
 /// fails here rather than at someone's seek months later.
 TEST(TTDModelStateContract_Test, DeclaredStateIsCoveredBySerializers)
 {
-    for (const char* model : {"48K", "128k", "PENTAGON", "SCORPION", "PROFSCORP"})
+    for (const char* model : {"48K", "128k", "PENTAGON", "SCORPION", "PROFSCORP", "ATM710", "ATM3"})
     {
         Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
         if (emulator == nullptr)

@@ -327,7 +327,7 @@ QImage EmulatorTile::convertFramebuffer()
     Screen* screen = ctx ? ctx->pScreen : nullptr;
     if (!screen)
     {
-        QImage black(TILE_WIDTH, TILE_HEIGHT, QImage::Format_RGBA8888);
+QImage black(TILE_WIDTH, TILE_HEIGHT, QImage::Format_RGBA8888);
         black.fill(Qt::black);
         return black;
     }
