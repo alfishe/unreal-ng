@@ -157,15 +157,6 @@ protected:
     // endregion </QWidget events override>
 
 protected:
-    void updatePosition(QWidget* widget, QWidget* parent, float xscale, float yscale)
-    {
-        int w = parent->size().width();
-        int h = parent->size().height();
-        widget->move(
-            QPoint(static_cast<int>(static_cast<float>(w) * xscale), static_cast<int>(static_cast<float>(h) * yscale)) -
-            widget->rect().center());
-    }
-
     void arrangeWindows();
 
     /// Resize the window so the emulator screen is shown at an integer scale of its

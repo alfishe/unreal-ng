@@ -90,6 +90,12 @@ public:
     /// @brief Get native size hint
     QSize sizeHint() const;
 
+    /// @brief Largest ratio-conforming geometry inside the parent widget, centered.
+    /// Software backend: delegates to DeviceScreen::fitToParent() (grow-capable).
+    /// GPU backend: the container fills the parent completely; the GL shader
+    /// letterboxes to the native aspect ratio internally, so no resize dance is needed.
+    void fitToParent();
+
     /// @brief Get the underlying widget for layout purposes
     QWidget* widget() const { return _widget; }
 

@@ -168,6 +168,24 @@ struct TTDChipsetState
     uint8_t ulaplus_reg = 0;
     uint8_t ulaplus_cram[64] = {0};
 
+    // ---- CPU clock (model-neutral) ----
+    // A hardware turbo keeps the 20 ms frame and only multiplies the CPU
+    // T-states inside it; the host speed control makes frames run faster in
+    // wall clock. Both are generic CPU concepts, not machine specifics, which
+    // is why they live in the common struct rather than a model serializer -
+    // Scorpion and ATM set them from entirely different ports.
+    //
+    // They MUST be captured: the derivation only runs on the port write that
+    // caused it (PortDecoder_ATM710::updateTurboMode, the Scorpion strobes in
+    // z80.cpp), and RestoreCheckpoint re-runs the paging decode but not that.
+    // Without these a seek across a speed change left the CPU at whatever
+    // clock the live machine happened to be at - and, since the audio path
+    // descales by hw_turbo_shift_applied, produced wrong AY/beeper pitch too.
+    uint8_t hw_turbo_shift = 0;
+    uint8_t hw_turbo_shift_applied = 0;
+    uint8_t current_z80_frequency_multiplier = 1;
+    uint8_t next_z80_frequency_multiplier = 1;
+
     /// Explicit tail filler. MUST keep the struct free of implicit padding:
     /// these objects are copied by member-wise assignment (which leaves padding
     /// bytes untouched) and then hashed byte-wise, so any implicit padding
@@ -178,11 +196,11 @@ struct TTDChipsetState
     /// reserved3/reserved4 around pFFF7, observed as Chipset[137..139] and
     /// [172..174] diffs). Those members are gone with the extended ports they
     /// guarded; this branch saw the same failure at [114..119] instead.
-    uint8_t reserved[10] = {};
+    uint8_t reserved[6] = {};
 };
 
 static_assert(sizeof(TTDChipsetState) == 120, "TTDChipsetState layout must stay stable (hashed byte-wise)");
-static_assert(offsetof(TTDChipsetState, reserved) == 110, "reserved must sit at pad offset 110");
+static_assert(offsetof(TTDChipsetState, reserved) == 114, "reserved must sit at pad offset 114");
 static_assert(offsetof(TTDChipsetState, reserved) + sizeof(TTDChipsetState::reserved)
                   == sizeof(TTDChipsetState),
               "TTDChipsetState has implicit trailing padding - resize reserved[]");

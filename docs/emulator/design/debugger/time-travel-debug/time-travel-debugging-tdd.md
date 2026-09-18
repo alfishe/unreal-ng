@@ -339,17 +339,22 @@ struct TTDCheckpoint
     Z80State     cpu;               // Full struct copy (~250 bytes incl. debug fields).
                                     // MemIf pointers are fixed up on restore, not serialized.
 
-    // --- Chipset / ports ---
-    // Snapshot of the port-latch subset of EmulatorState:
-    // p7FFD, pFE, pEFF7, pXXXX, pBFFD, pFFFD, pDFFD, pFDFD, p1FFD, pFF77,
-    // GMX/Quorum/ATM/TS extended state, cram[], sfile[], border color, screen mode.
-    TTDChipsetState chipset;        // ~1.5 KB (dominated by cram/sfile for TS models)
+    // --- Chipset / ports (MODEL-AGNOSTIC) ---
+    // Standard Spectrum 128K latches only: p7FFD, pFE, pEFF7, pBFFD, pFFFD,
+    // pFF77, border, flags, wd_shadow[], comp_pal[], ULAplus, plus the
+    // model-neutral CPU clock (see below). 120 bytes, fixed.
+    //
+    // Everything machine-specific - ATM's pFFF7 map, Scorpion's ProfROM plane,
+    // GMX/Quorum/TS extended state - is OUT of this struct and reached through
+    // the peripheral registry (6.4). The framework names no machine.
+    TTDChipsetState chipset;        // 120 bytes
 
     // --- Peripherals (each device implements TTDSerializable, Section 6.4) ---
-    std::vector<uint8_t> ayState;       // Per-chip full runtime state
-    std::vector<uint8_t> fdcState;      // WD1793 + FDD positions
-    std::vector<uint8_t> tapeState;     // Playback position/phase
-    std::vector<uint8_t> covoxState;    // DAC latches (trivial)
+    // Keyed by PeripheralId. Only devices actually connected on the active
+    // model appear - an absent device costs nothing, rather than an empty
+    // fixed slot per frame. Core devices (TurboSound, BetaDisk, Tape, Covox)
+    // go through the same registry as model-specific ones.
+    std::unordered_map<uint8_t, std::vector<uint8_t>> peripheralBlobs;
 
     // --- Memory ---
     // References into the page store (Section 6.3); COW — pages shared
@@ -375,6 +380,10 @@ Restore fixups (things that are pointers/derived and must be recomputed, not cop
 - Memory bank mapping (`_bank_write[]`, `_bank_read[]`) — recomputed by re-applying `p7FFD/p1FFD/...` through the existing port-decode path (`Memory::SetRomPage`-family), *not* by serializing raw pointers. This guarantees consistency with paging logic.
 - Screen internal counters — reinitialized via `Screen::InitFrame()` since checkpoints sit on frame boundaries (this is why checkpoints are frame-aligned: mid-frame ULA rendering state never needs serializing).
 - `MemoryAccessTracker` counters, CallTrace — **not** restored (they are observability data, monotone across the session; Section 12.5).
+
+**CPU clock is captured, not re-derived.** `hw_turbo_shift`, `hw_turbo_shift_applied` and the current/next frequency multipliers live in the common chipset struct because a CPU clock multiplier is a generic concept, not a machine specific — Scorpion and ATM set it from entirely different ports. They must be captured rather than rebuilt from the restored latches: the derivation runs *only inside the port write that causes it* (`PortDecoder_ATM710::updateTurboMode`, the Scorpion strobes in `z80.cpp`), and the restore path re-runs the paging decode but not that. Before they were captured, a seek across a speed change left the CPU at whatever clock the live machine happened to be at — and, because the audio path descales by `hw_turbo_shift_applied`, mispitched the AY and beeper with it.
+
+A hardware turbo keeps the 20 ms frame and multiplies only the CPU T-states inside it (the AY/beeper/Covox clocks are unchanged, so the audio path descales); the host speed control instead makes frames run faster in wall clock. A single multiplier cannot express both, which is why the shift is stored alongside it.
 
 ### 6.2 Dirty Page Tracking
 
@@ -511,10 +520,21 @@ public:
     // Optional: peripheral ID for registry indexing
     virtual PeripheralId TTDPeripheralId() const { return PeripheralId::Count; }
 
-    // Optional: enable XOR-delta compression for large state (e.g., GeneralSound sample RAM)
-    virtual bool TTDSupportsDelta() const { return false; }
+    // Optional: contribution to the divergence hash (0 = does not participate)
+    virtual uint64_t TTDHashState() const { return 0; }
 };
 ```
+
+**How a model declares its state.** The framework must not enumerate machines, so the *port decoder* — which owns a machine's latches — declares what extra state exists, and supplies the serializers:
+
+```cpp
+// PortDecoder, both defaulting empty: the right answer for any machine
+// fully described by the standard 128K ports.
+virtual std::vector<ttd::PeripheralId> GetTTDModelStateIds() const;
+virtual std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const;
+```
+
+The split between *declaring* and *implementing* is deliberate: a declared id with no serializer behind it is a **hard error at `StartRecording`**, naming what is missing. A model can therefore state the contract before anyone writes the serializer, and TTD refuses to record rather than producing a session that looks fine and restores wrong. This is the guard against the failure mode that motivated the model-agnostic split in the first place — a machine whose state is captured nowhere, silently.
 
 **Design constraints:**
 - No heap allocation in `TTDSaveState` (runs every frame on the emulator thread).
@@ -1446,6 +1466,9 @@ Phase 1 carries the dominant risk (peripheral state completeness). The divergenc
 3. **Branching history** (keep the future when resuming from the past) — rejected for v1 (4.2); is a single "auto-save emulator snapshot before truncation" safety net wanted instead?
 4. **Third memory interface** (fast reads + TTD-hooked writes, 7.3) — measure first; implement only if debug-read overhead is noticeable in recording sessions.
 5. **Multi-instance** — TTDManager is per-`EmulatorContext` and therefore per-instance by construction; is per-instance memory budgeting needed when many instances run (videowall scenario), or a global pool?
+6. **CMOS / NVRAM contents are not captured** — both `Cmos` (ATM/ZX-Evo, `core/src/emulator/memory/atm/cmos.h`) and `SmucNvram` (Scorpion SMUC, `core/src/emulator/io/rtc/smucnvram.h`) hold `_cmos[0x100]` + `_nvram[0x800]`. Only the *address latch* (`cmos_addr`, in the ATM paging blob) is checkpointed; the 2304 bytes of contents are not. The argument for leaving them out: they are battery-backed **configuration**, changed on the order of once a session, and capturing them costs 2.3 KB in *every* checkpoint — the largest single line item after the RAM pages, for data that is almost always byte-identical to the previous checkpoint. The argument against: a guest that writes CMOS mid-recording (a setup screen, or ZX-Evo BaseConf firmware that uses NVRAM as scratch) will replay against post-write contents no matter where you seek, so the machine silently diverges from what actually happened. **Open:** does BaseConf write NVRAM often enough during normal operation for this to bite? Needs measurement — instrument the writes over a boot + a few minutes of a real BaseConf session before deciding.
+7. **If capture is needed, capture the delta, not the array** — the obvious fix is a `TTDSerializable` per device carrying the full 2304 bytes, which is also the wasteful one. Cheaper shapes, in order of preference: (a) a CMOS/NVRAM **write journal** replayed on seek, since the write rate is the thing that makes capture necessary in the first place and a journal costs exactly what that rate costs; (b) a dirty-flag + full blob only in checkpoints where a write occurred; (c) unconditional full capture. Pick after (6) is measured — the measurement decides the shape, not just the yes/no.
+8. **Neither device participates in the divergence hash** — a consequence of (6): a replay that corrupts CMOS is not detected by the corpus tests. If (6) resolves to "capture", `TTDHashState()` must be implemented alongside, or the capture goes untested in exactly the scenario that motivated it.
 
 ---
 
@@ -1453,15 +1476,19 @@ Phase 1 carries the dominant risk (peripheral state completeness). The divergenc
 
 | Component | Size |
 |---|---|
-| Z80State | ~250 B |
-| Chipset/ports (incl. TS cram/sfile worst case) | ~1.5 KB |
+| TTDCpuState | 48 B |
+| TTDChipsetState (model-agnostic, fixed) | 120 B |
 | AY ×2 (TurboSound) full runtime state | ~200 B |
 | WD1793 + 4×FDD | ~300 B |
 | Tape | ~100 B |
+| Covox | ~8 B |
+| Model blob, if any (Scorpion ProfROM 8 B / ATM paging 44 B) | ≤ 64 B |
 | Page refs (8 pages × 4 B) | 32 B |
-| **Fixed cost per checkpoint** | **< 2.5 KB** |
+| **Fixed cost per checkpoint** | **< 1 KB** |
 | Page payload (COW, typical) | 2–6 × 16 KB dirty |
 | Page payload (worst case, all dirty) | 128 KB |
+
+The peripheral blobs are the whole variable part of the fixed cost: a model with no extra state pays nothing for the registry, and a device that is not connected contributes no blob at all. CMOS/NVRAM contents (2.3 KB) are excluded — see Open Question 6.
 
 Never-touched pages are free (6.3), so these numbers are identical for a 512K Pentagon running software with the same working set — TTD memory scales with what the program touches, not with installed RAM. A 512K machine only costs more when the software genuinely uses the extra pages (RAM-disk, big unpacked data), and then proportionally to actual writes.
 

@@ -178,6 +178,19 @@ QImage DeviceScreenWrapper::grabFramebuffer()
     return QImage();
 }
 
+void DeviceScreenWrapper::fitToParent()
+{
+    if (_software)
+    {
+        _software->fitToParent();
+    }
+    else if (_widget)
+    {
+        if (QWidget* parent = _widget->parentWidget())
+            _widget->resize(parent->size());
+    }
+}
+
 QSize DeviceScreenWrapper::sizeHint() const
 {
     if (_software)

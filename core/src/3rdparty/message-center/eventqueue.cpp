@@ -495,7 +495,6 @@ void EventQueue::Dispatch(int id, Message* message)
     }
 
     MarkDispatchComplete();
-
     // Cleanup message when delivered
     if (message)
     {
