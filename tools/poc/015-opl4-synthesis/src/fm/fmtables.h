@@ -170,12 +170,12 @@ inline constexpr uint8_t kMultTable[16] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10,
 inline constexpr std::array<uint8_t, 16> kKslAtten = {
     0, 24, 32, 37, 40, 43, 45, 47, 48, 50, 51, 52, 53, 54, 55, 56};
 
-// FM rate-index rows 0..3: the shared PCM table parks them on the infinity
-// row (zero increments — YMF278 wave semantics where rate 0 freezes the
-// stage). The OPL FM side creeps at the slowest cadence instead (rates
-// 2-3's 0/1 increment row at the 2^11 period; ymfm freezes only rates
-// 0-1): AR/RR 0 still attacks / releases, just very slowly — the
-// untouched-carrier silence finding.
+// FM rate-index rows 0..3: EgRate yields only 0 (register rate 0 — a
+// hard freeze taken in AdvanceEnvelope per ymfm effective_rate /
+// Nuked's reg_rate gate: key scale never rescues a zero register rate) or
+// 4..63, so rows 1..3 are unreachable from the FM side; rate 0 parks on
+// the slowest 0/1 increment row as a guard rather than misselecting the
+// mid table.
 inline uint8_t FmRateRow(uint8_t rate)
 {
     return rate < 4 ? FmRateOffset(0) : kFmEgRateSelect[rate];

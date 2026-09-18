@@ -616,6 +616,82 @@ void CompareLeadVoice()
     }
 }
 
+// JAMMED2 (mfm_sample_3 module 5) pad voice: the ins2 modulator is
+// AR15/DR0/EGT1 — register decay rate 0, so the envelope HOLDS the attack
+// peak (ymfm effective_rate: rawrate 0 -> 0 before ksrval; Nuked gates
+// every increment on reg_rate != 0) and the FB7-additive loop
+// self-oscillates as a broadband wash for as long as the key is held.
+// The old rate-0 "creep" (keycode applied at DR0) decayed the modulator
+// to SL6 instead — 18 dB below the loop-gain boundary — collapsing the
+// wash into a quiet limit-cycle sine (zc 0.02 vs 0.44 on both
+// references). Guards the freeze level AND the sustained noise character.
+void CompareDr0PadVoice()
+{
+    std::printf("FmCompare: 2-op DR0 pad voice, FB7 additive sustain (JAMMED2 ins2)\n");
+    const uint8_t tls[] = {0x0C, 0x12}; // TL 12/18: above the chaos boundary
+    for (int variant = 0; variant < 2; variant++)
+    {
+        Rig rig;
+        rig.Write(1, 0x05, 0x03); // OPL3 mode + NEW2, as the guest writes it
+        const uint8_t script[][3] = {
+            {0, 0x22, 0x31}, // ch2 modulator: EGT1 KSR1 mult 1
+            {0, 0x25, 0x11}, // ch2 carrier:   EGT1 KSR0 mult 1
+            {0, 0x42, tls[variant]}, // mod TL (loop-gain sweep)
+            {0, 0x45, 0x3F}, // car TL: silent — the feedback loop alone
+            {0, 0x62, 0xF0}, // mod AR15 DR0 — the rate-0 freeze under test
+            {0, 0x65, 0xF1}, // car AR15 DR1
+            {0, 0x82, 0x67}, // mod SL6 RR7
+            {0, 0x85, 0x95}, // car SL9 RR5
+            {0, 0xC2, 0x3F}, // FB7 additive, out 3 (L+R)
+            {0, 0xA2, 0xA0}, // fnum 0x1A0
+            {0, 0xB2, 0x31}, // block 4, key on
+        };
+        for (const auto& w : script)
+            rig.Write(w[0], w[1], w[2]);
+
+        const int n = 12000;
+        std::array<int32_t, 18> ta, tb;
+        int32_t ra, rb;
+        std::vector<int32_t> la(n), lb(n);
+        for (int i = 0; i < 16; i++) // map refresh settle (see CompareFourOpDrum)
+            Step(rig, la[0], ra, lb[0], rb, ta, tb);
+        for (int i = 0; i < n; i++)
+            Step(rig, la[i], ra, lb[i], rb, ta, tb);
+
+        double eA = 0, dA = 0, eB = 0, dB = 0;
+        long long zcA = 0, zcB = 0;
+        for (int i = 0; i < n; i++)
+        {
+            eA += double(la[i]) * la[i];
+            eB += double(lb[i]) * lb[i];
+            if (i > 0)
+            {
+                dA += double(la[i] - la[i - 1]) * (la[i] - la[i - 1]);
+                dB += double(lb[i] - lb[i - 1]) * (lb[i] - lb[i - 1]);
+                zcA += (la[i - 1] < 0) != (la[i] < 0) ? 1 : 0;
+                zcB += (lb[i - 1] < 0) != (lb[i] < 0) ? 1 : 0;
+            }
+        }
+        const double rmsA = std::sqrt(eA / n);
+        const double rmsB = std::sqrt(eB / n);
+        const double hfA = std::sqrt(dA / (eA + 1e-30));
+        const double hfB = std::sqrt(dB / (eB + 1e-30));
+        const double zcRa = zcA / double(n);
+        const double zcRb = zcB / double(n);
+        std::printf("  TL=%2u: rms ours=%.0f ymfm=%.0f (x%.3f)"
+                    " hf ours=%.3f ymfm=%.3f zc ours=%.5f ymfm=%.5f\n",
+                    tls[variant], rmsA, rmsB, rmsA / (rmsB + 1e-30), hfA, hfB, zcRa, zcRb);
+        // The DR0 freeze holds the modulator at the attack peak: the loop
+        // stays loud and chaotic in BOTH engines (zc ~ 0.44-0.55, hf ~
+        // 1.25-1.44 at these TLs). A rate-0 decay regresses to zc ~ 0.02.
+        CHECK(rmsA > 3000 && rmsB > 3000);
+        CHECK(std::fabs(rmsA / (rmsB + 1e-30) - 1.0) < 0.05);
+        CHECK(std::fabs(hfA - hfB) < 0.05);
+        CHECK(std::fabs(zcRa - zcRb) < 0.05);
+        CHECK(zcRa > 0.2 && zcRb > 0.2); // noise wash, not a limit-cycle sine
+    }
+}
+
 } // namespace
 
 void RunFmBackendCompareTests()
@@ -627,6 +703,7 @@ void RunFmBackendCompareTests()
     CompareFourOpDrum();
     CompareFourOpDrumRetrigger();
     CompareLeadVoice();
+    CompareDr0PadVoice();
 }
 
 } // namespace opl4test

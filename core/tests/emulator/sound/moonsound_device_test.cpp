@@ -305,8 +305,9 @@ int MaxAbsSample(const int16_t* buffer, size_t frames)
 /// steady near-full-scale tone - the parameterised form of the reference
 /// voice. fnum gets a per-channel offset so a multi-channel key-on does not
 /// sum N phase-locked copies. Both FM backends use the classic YMF262
-/// operator layout (modulator 0x20+ch for ch<6, 0x28+(ch-6) beyond; carrier
-/// mod+3; 0xC0 routing CHA|CHB = both sides).
+/// operator layout (modulator 0x20 + ch%3 + 8*(ch/3), carrier mod+3;
+/// 0xC0 routing CHA|CHB = both sides) - the same formula the bisect tests
+/// and the engine's own decode use.
 void KeyOnFmChannelThroughPorts(Z80* cpu, int ch)
 {
     const auto fm1 = [cpu](uint8_t reg, uint8_t value)
@@ -314,7 +315,7 @@ void KeyOnFmChannelThroughPorts(Z80* cpu, int ch)
         cpu->out(0xC4, reg);
         cpu->out(0xC5, value);
     };
-    const uint8_t mod = ch < 6 ? static_cast<uint8_t>(0x20 + ch) : static_cast<uint8_t>(0x28 + (ch - 6));
+    const uint8_t mod = static_cast<uint8_t>(0x20 + ch % 3 + 8 * (ch / 3));
     const uint8_t car = static_cast<uint8_t>(mod + 3);
     fm1(mod, 0x01);      // modulator: mult 1
     fm1(car, 0x01);      // carrier: mult 1
@@ -1280,6 +1281,190 @@ TEST_F(MoonSoundDevice_Test, Canary_SramWindow_RoundTripsDistinctBytes)
         EXPECT_EQ(moonsound->waveMemory().Read(kSram + static_cast<uint32_t>(i)), kPattern[i])
             << "SRAM byte " << i << " must land in the wave memory";
     }
+}
+
+/// Hiss bisect round 3 (mfm_sample_2 follow-up, 2026-09-17). The .MFM files
+/// carry the MoonBlaster FM instrument table at offset 8 (11 bytes each:
+/// modFlags carFlags modTL carTL modArDr carArDr modSlRr carSlRr wsM wsC
+/// fbconn), which pins the hiss instruments to ground truth: DJINGLE2 /
+/// DJINGLE4 / PATSTORY ins0 = the lead patch with fbconn 0x0D (FB6, additive),
+/// FOUNTAIN ins2 = the pad with fbconn 0x0B (FB5, additive), DJINGLE4 ins1
+/// and FOUNTAIN ins0 = fbconn 0x0E (FB7, FM). The earlier guest snapshot
+/// "FB=7 on all 18 channels" was shadow garbage (zero C0 writes captured).
+/// Round 2 pinned the hiss to the feedback register at FB7; this round sweeps
+/// FB across the exact guest instruments. Die-accurate Nuked-OPL3
+/// (scratch/nuked-ref/fbtest) reads: lead FB5-add hf=0.07 tonal, FB6-add
+/// hf=0.99 noise, FB7-add 1.15; pad FB5-add hf=0.15 tonal, FB6-add 1.12
+/// noise; FB6-fm 0.93. An engine that disagrees with Nuked at the same C0
+/// is the deviation.
+///
+/// RESOLVED: the init-inclusive guest capture (capture starts before the
+/// melody-advance keypress) shows the player writes C0 twice per channel at
+/// melody init - first the correct fbconn|0x30 from the instrument, then a
+/// stereo-panning write of 0x0F|pan that clobbers every channel to FB7
+/// additive. At FB7 both local backends and Nuked go chaotic for the hiss
+/// melodies' low-TL instruments (sustain hf ~1.2-1.3 here vs Nuked 1.15)
+/// and stay tonal for everything else: the hiss is the demo binary's own
+/// panning clobber, reproduced faithfully - the emulator matches the
+/// die-accurate reference at the exact captured register state (the TRD's
+/// player is byte-identical to the analyzed build). Known inter-reference
+/// gap, unrelated to this verdict: at FB6-additive the local engines read
+/// tonal (hf 0.13) where Nuked still reads noisy (0.99).
+TEST_F(MoonSoundDevice_Test, Diagnostic_MfmHissPatches_SustainedVsRetrig)
+{
+    SoundManager* soundManager = context->pSoundManager;
+    ASSERT_NE(soundManager, nullptr);
+    SoundChip_Moonsound* moonsound = soundManager->getMoonSound();
+    ASSERT_NE(moonsound, nullptr);
+    Z80* cpu = context->pCore->GetZ80();
+    ASSERT_NE(cpu, nullptr);
+    auto* mainLoop = reinterpret_cast<MainLoop_CUT*>(context->pMainLoop);
+    ASSERT_NE(mainLoop, nullptr);
+
+    const auto fm1 = [cpu](uint8_t reg, uint8_t value)
+    {
+        cpu->out(0xC4, reg);
+        cpu->out(0xC5, value);
+    };
+
+    // One variant = a full channel programme. Register numbers follow the
+    // slot map above (same formula the engine uses), so every write lands on
+    // the channel that A0/B0/C0 key and route.
+    struct Patch
+    {
+        const char* name;
+        int ch;             // bank-0 channel number
+        uint8_t modFlags;   // 0x20 + ch%3 + 8*(ch/3)
+        uint8_t modTl;
+        uint8_t modArDr;
+        uint8_t modSlRr;
+        uint8_t carFlags;
+        uint8_t carTl;
+        uint8_t carArDr;
+        uint8_t carSlRr;
+        uint8_t a0;         // fnum low
+        uint8_t b0Kon;      // KON | block | fnum high
+        uint8_t c0;         // feedback | conn | routing
+    };
+    constexpr int kLeadCh = 7;
+    constexpr int kPadCh = 2;
+    const Patch patches[] = {
+        // Lead = MFM ins0 of DJINGLE2/DJINGLE4/PATSTORY (fbconn 0x0D = FB6 add).
+        {"lead-fb4-add", kLeadCh, 0x71, 10, 0xAF, 0x14, 0x31, 18, 0xC7, 0x24, 0xD0, 0x31, 0x39},
+        {"lead-fb5-add", kLeadCh, 0x71, 10, 0xAF, 0x14, 0x31, 18, 0xC7, 0x24, 0xD0, 0x31, 0x3B},
+        {"lead-fb6-add", kLeadCh, 0x71, 10, 0xAF, 0x14, 0x31, 18, 0xC7, 0x24, 0xD0, 0x31, 0x3D},
+        {"lead-fb7-add", kLeadCh, 0x71, 10, 0xAF, 0x14, 0x31, 18, 0xC7, 0x24, 0xD0, 0x31, 0x3F},
+        // Melody 3 ch6 guest row: same instrument, TL5/TL62.
+        {"m3-tl5-62-fb6", kLeadCh, 0x71, 5, 0xAF, 0x14, 0x31, 62, 0xC7, 0x24, 0xD0, 0x31, 0x3D},
+        // Pad = FOUNTAIN ins2 (fbconn 0x0B = FB5 add).
+        {"pad-fb4-add", kPadCh, 0x51, 7, 0x90, 0xB4, 0x04, 10, 0x06, 0xC6, 0x59, 0x31, 0x39},
+        {"pad-fb5-add", kPadCh, 0x51, 7, 0x90, 0xB4, 0x04, 10, 0x06, 0xC6, 0x59, 0x31, 0x3B},
+        {"pad-fb6-add", kPadCh, 0x51, 7, 0x90, 0xB4, 0x04, 10, 0x06, 0xC6, 0x59, 0x31, 0x3D},
+        {"pad-fb7-add", kPadCh, 0x51, 7, 0x90, 0xB4, 0x04, 10, 0x06, 0xC6, 0x59, 0x31, 0x3F},
+        // DJINGLE4 ins1 (fbconn 0x0E = FB7 FM) and FOUNTAIN ins0 (same).
+        {"m5ins1-fb7-fm", kLeadCh, 0xF3, 160, 0xB3, 0xA6, 0xF1, 5, 0xD2, 0xE6, 0xD0, 0x31, 0x3E},
+        {"m10ins0-fb7-fm", kLeadCh, 0x31, 27, 0x41, 0x0B, 0x61, 128, 0x92, 0x3B, 0xD0, 0x31, 0x3E},
+    };
+
+    struct Window
+    {
+        double rms;
+        double hf;
+        double zc;
+        double dc;
+    };
+    const auto measure = [&](int frames, const auto& drive)
+    {
+        double energy = 0.0, diff = 0.0, mean = 0.0;
+        long long samples = 0, crossings = 0;
+        for (int f = 0; f < frames; f++)
+        {
+            drive(f);
+            mainLoop->RunFrame();
+            const int16_t* fm = moonsound->getFmBuffer();
+            double lastV = 0.0;
+            for (int s = 0; s < SAMPLES_PER_FRAME; s++)
+            {
+                const double v = (static_cast<double>(fm[2 * s]) + fm[2 * s + 1]) * 0.5;
+                energy += v * v;
+                mean += v;
+                const double d = (s == 0) ? 0.0 : v - lastV;
+                diff += d * d;
+                if (s > 0 && ((lastV < 0) != (v < 0)))
+                    crossings++;
+                lastV = v;
+            }
+            samples += SAMPLES_PER_FRAME;
+        }
+        Window w;
+        w.rms = std::sqrt(energy / samples);
+        w.hf = std::sqrt(diff / (energy + 1e-30));
+        w.zc = static_cast<double>(crossings) / samples;
+        w.dc = mean / samples;
+        return w;
+    };
+
+    std::cout << "[bisect2] backend=" <<
+#ifdef OPL4_FM_YMFM
+        "ymfm"
+#else
+        "opl4"
+#endif
+              << " (lead ch7 @0x31/0x34, pad ch2 @0x22/0x25)\n";
+    for (const Patch& p : patches)
+    {
+        const uint8_t mod = static_cast<uint8_t>(0x20 + p.ch % 3 + 8 * (p.ch / 3));
+        const uint8_t car = static_cast<uint8_t>(mod + 3);
+        cpu->out(0xC6, 0x05);
+        cpu->out(0xC7, 0x01); // 0x105 NEW: bank 1 live
+        fm1(0x08, 0x00);      // no CSM, note-select 0
+        fm1(0xBD, 0x00);      // no deep LFO, no rhythm
+        fm1(mod, p.modFlags);
+        fm1(car, p.carFlags);
+        fm1(static_cast<uint8_t>(mod + 0x20), p.modTl);
+        fm1(static_cast<uint8_t>(car + 0x20), p.carTl);
+        fm1(static_cast<uint8_t>(mod + 0x40), p.modArDr);
+        fm1(static_cast<uint8_t>(car + 0x40), p.carArDr);
+        fm1(static_cast<uint8_t>(mod + 0x60), p.modSlRr);
+        fm1(static_cast<uint8_t>(car + 0x60), p.carSlRr);
+        fm1(static_cast<uint8_t>(0xA0 + p.ch), p.a0);
+        fm1(static_cast<uint8_t>(0xC0 + p.ch), p.c0);
+        fm1(static_cast<uint8_t>(0xB0 + p.ch), static_cast<uint8_t>(p.b0Kon & ~0x20)); // key off
+
+        const uint8_t b0Ch = static_cast<uint8_t>(0xB0 + p.ch);
+        const auto keyOn = [&]() { fm1(b0Ch, p.b0Kon); };
+        const auto keyOff = [&]() { fm1(b0Ch, static_cast<uint8_t>(p.b0Kon & ~0x20)); };
+
+        keyOn();
+        const Window sustain = measure(120, [](int) {}); // sustained note, no traffic
+        keyOff();
+        const Window release = measure(10, [](int) {});
+
+        // Retrigger cycle: key on 3 frames in, off again at frame 12 - the
+        // player's row cadence at tempo 8 (~6.25 Hz), then repeat.
+        int cycle = 0;
+        const Window retrig = measure(80, [&](int f)
+        {
+            const int phase = f % 16;
+            if (phase == 3)
+            {
+                keyOn();
+                cycle++;
+            }
+            else if (phase == 12)
+                keyOff();
+        });
+
+        std::cout << "[bisect2] " << p.name << ": sustain rms=" << sustain.rms
+                  << " hf=" << sustain.hf << " zc=" << sustain.zc << " dc=" << sustain.dc
+                  << " | release rms=" << release.rms
+                  << " | retrig(x" << cycle << ") rms=" << retrig.rms
+                  << " hf=" << retrig.hf << " zc=" << retrig.zc << " dc=" << retrig.dc << "\n";
+    }
+
+    // Diagnostic pass: mechanics only. The verdict comes from the printed
+    // sustain-vs-retrigger metrics across patches.
+    SUCCEED();
 }
 
 #endif  // UNREALNG_HAVE_OPL4

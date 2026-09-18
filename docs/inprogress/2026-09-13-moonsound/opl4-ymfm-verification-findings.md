@@ -149,6 +149,35 @@ caught by the PoC suites before anything shipped:
    ymfm consumption semantics (3 dB/oct at reg 01's ×4 slope, 0.75 dB per fnum bit 6
    at that slope, block-0 table clamp).
 
+### 2.4 Register rate 0 must freeze — the JAMMED2 pad wash (2026-09-17)
+
+Guest-level co-simulation (three engines on one captured register stream,
+`scratch/replay3way.cpp`) exposed a semantics bug the suites missed because none of
+their voices sustain on a rate-0 segment: **`EgRate` applied the KSR keycode even at
+register rate 0**, so AR0/DR0/RR0 segments "crept" at the keycode-scaled rate
+instead of freezing. Both references freeze outright — ymfm's `effective_rate`
+(`ymfm_fm.h` L145) returns 0 when `rawrate == 0` *before* adding ksrval, and
+Nuked-OPL3 gates every envelope increment on `reg_rate != 0` (`opl3.c` L430); the
+keycode only accelerates nonzero register rates (total rate 4..63).
+
+The audible case: mfm_sample_3 module 5 (JAMMED2.MFM) pads — ins2 modulators are
+AR15/**DR0**/EGT1 and the demo's pan pass clobbers every C0 to FB7-additive. Under
+silicon semantics the modulator holds its attack peak forever, keeping the
+feedback loop at full gain: a sustained broadband wash (both references, zc ≈
+0.44). In-tree, the DR0 creep decayed the modulator to SL6 — 18 dB below the
+loop-gain boundary — collapsing the wash into a quiet limit-cycle sine (zc ≈
+0.02) beating detuned against its neighbours: the reported "dirty, highly
+quantized" chord texture. Fix: `EgRate` early-returns 0 at `regRate == 0` and
+every `AdvanceEnvelope` state breaks on rate 0; NTS (0x108 bit 6 — fnum bit 8 vs
+bit 9 for the keycode LSB) decoded on the way past, as both references do and the
+demo's 0x108 = 0x40 requires.
+
+Verified: `scratch/fbprobe.cpp` (isolated loop, three engines agree to 3 decimals
+at the guest operating point — tree 0.4387 / ymfm 0.4382 / Nuked 0.4380 zc at
+TL18/FB7, was 0.0204 in-tree), `scratch/replay3way.cpp` on the captured stream
+(all five pad channels ch7/8/11/13/15 flip tonal→NOISE, tree ≈ ymfm within 2%),
+guarded by `CompareDr0PadVoice` (`tests/opl4fmcompare.cpp`).
+
 ---
 
 ## 3. Findings in ymfm itself (quirks the harness accommodates)
@@ -301,6 +330,8 @@ half untouched by the adoption).
 | PCM envelope mid-rate cadence 2× (§3.3) | Banded, not asserted equal | Hardware recordings |
 | S == 0 loop corner (§3.4) | Own-model checks on both sides; openMSX lineage favoured | Hardware recordings |
 | ymfm-side quirks (§3.1–§3.10) | Accommodated in-tree; **none upstreamed** — they are accommodations, not fixes we own; the TTD purity pin (§3.8) is local-only by design | — |
+| Register rate 0 freeze (§2.4) | **RESOLVED 2026-09-17** — `EgRate`/`AdvanceEnvelope` freeze at rate 0 + NTS decode; three-engine co-sim agrees; `CompareDr0PadVoice` is the fence | Done — differential + co-sim replay stay the fence |
+| Nuked ch2/4/5 near-silent on the JAMMED2 stream (tree ≈ ymfm loud) | Observed 2026-09-17 in `scratch/replay3way` — pre-existing, unrelated to §2.4; tree/ymfm agreement is the conformance standard | Nuked-side investigation if it recurs |
 
 ---
 

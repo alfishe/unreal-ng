@@ -140,12 +140,21 @@ uint32_t Opl4Fm::KslIndex(const FmOperator& op)
 
 uint8_t Opl4Fm::EgRate(const FmOperator& op, uint8_t regRate) const
 {
-    // KSR (ymfm ymfm_opl.cpp:298,335): 4-bit keycode = block<<1 | fnum
-    // bit (9-nts, nts 0 here); the rate adds the FULL keycode when the KSR
-    // bit is set and keycode>>2 when clear — "off" still adds the key-scale
-    // top bits. Added even at register rate 0 — silicon rates 0..3 creep
-    // (FmRateRow), never freeze.
-    const uint8_t keycode = (op.block << 1) | ((op.fnum >> 9) & 1);
+    // Register rate 0 is a hard freeze — the key-scale adder never applies
+    // (ymfm effective_rate: rawrate == 0 -> 0 before ksrval; Nuked gates
+    // every increment on reg_rate != 0). A DR0 modulator therefore holds
+    // its attack peak forever: the JAMMED2 pads (AR15/DR0/EGT1, FB7
+    // additive) keep the full feedback loop gain and self-oscillate as
+    // broadband noise; adding the keycode at rate 0 decayed them to SL and
+    // collapsed the wash into a quiet sine.
+    if (regRate == 0)
+        return 0;
+    // KSR (ymfm ymfm_opl.cpp:298): 4-bit keycode = block<<1 | the fnum bit
+    // NTS picks (0x108 bit 6: bit 9 clear, bit 8 set — reversed from the
+    // manual); the rate adds the FULL keycode when the KSR bit is set and
+    // keycode>>2 when clear. Nonzero register rates only: rate 4..63.
+    const bool nts = (_regs[0x108] & 0x40) != 0;
+    const uint8_t keycode = (op.block << 1) | ((op.fnum >> (nts ? 8 : 9)) & 1);
     int r = regRate * 4 + (op.ksr ? keycode : (keycode >> 2));
     if (r > 63)
         r = 63;
@@ -234,6 +243,8 @@ void Opl4Fm::AdvanceEnvelope(FmOperator& op)
     case kFmEgAtt:
     {
         const uint8_t rate = EgRate(op, op.ar);
+        if (rate == 0)
+            break; // AR0: frozen at max attenuation (ymfm/Nuked rate-0 gate)
         if (rate >= 63)
         {
             op.envVol = kFmMinAttIndex;
@@ -257,6 +268,8 @@ void Opl4Fm::AdvanceEnvelope(FmOperator& op)
     case kFmEgDec:
     {
         const uint8_t rate = EgRate(op, op.dr);
+        if (rate == 0)
+            break; // DR0: holds the attack peak — the JAMMED2 pad wash lives here
         const uint8_t shift = kFmEgRateShift[rate];
         if (!(_egCnt & ((1u << shift) - 1)))
         {
@@ -286,6 +299,8 @@ void Opl4Fm::AdvanceEnvelope(FmOperator& op)
             // drum envelopes (CRYOGENT, mfm_sample_2) depend on it: a DR1/
             // RR10 op4 must fade in tens of ms, not freeze at SL.
             const uint8_t rate = EgRate(op, op.rr);
+            if (rate == 0)
+                break; // RR0 with EGT0: holds at SL forever (rate-0 freeze)
             const uint8_t shift = kFmEgRateShift[rate];
             if (!(_egCnt & ((1u << shift) - 1)))
             {
@@ -303,6 +318,8 @@ void Opl4Fm::AdvanceEnvelope(FmOperator& op)
     case kFmEgRel:
     {
         const uint8_t rate = EgRate(op, op.rr);
+        if (rate == 0)
+            break; // RR0 key-off never fades (classic OPL eternal sustain)
         const uint8_t shift = kFmEgRateShift[rate];
         if (!(_egCnt & ((1u << shift) - 1)))
         {
