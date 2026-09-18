@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "pch.h"
 
+#include <memory>
 #include <cstring>
 #include <vector>
 
@@ -86,7 +87,8 @@ protected:
 
 TEST_F(SoundHQChainBypass_Test, ChainsSkippedWhileHQOff)
 {
-    SoundManager sound(_context);
+    auto soundOwner = std::make_unique<SoundManager>(_context);  // heap: SoundManager is far too large for the stack
+    SoundManager& sound = *soundOwner;
     ITurboSoundDevice* device = sound.getTurboSound();
     ASSERT_NE(device, nullptr);
     ASSERT_TRUE(sound.getAYChain().isPunchEnabled()) << "AY punch is expected on by default";
@@ -119,7 +121,8 @@ TEST_F(SoundHQChainBypass_Test, ChainsResetWhenHQReturns)
     // bypass must not echo into the first frames after HQ returns. Compare
     // against a reference manager that never left HQ and was reset at the
     // same point - identical rendering, identical (freshly cleared) chain.
-    SoundManager sound(_context);
+    auto soundOwner = std::make_unique<SoundManager>(_context);  // heap: SoundManager is far too large for the stack
+    SoundManager& sound = *soundOwner;
     sound.getAYChain().setRoomMode(AudioCharacterChain::RoomMode::Room_6dB);
     sound.syncAYChainSettings();
     ProgramTone(*sound.getTurboSound());

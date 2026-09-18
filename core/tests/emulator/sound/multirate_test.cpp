@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
@@ -79,7 +80,8 @@ TEST_F(Multirate_Test, CoreRateResolution)
     // Explicit config value wins
     _context->config.sound.coreRate = 96000;
     {
-        SoundManager sound(_context);
+        auto soundOwner = std::make_unique<SoundManager>(_context);  // heap: SoundManager is far too large for the stack
+        SoundManager& sound = *soundOwner;
         EXPECT_EQ(sound.getCoreRate(), 96000u);
     }
 
@@ -87,21 +89,24 @@ TEST_F(Multirate_Test, CoreRateResolution)
     _context->config.sound.coreRate = 0;
     _context->pAudioDeviceSampleRate.store(48000, std::memory_order_release);
     {
-        SoundManager sound(_context);
+        auto soundOwner = std::make_unique<SoundManager>(_context);  // heap: SoundManager is far too large for the stack
+        SoundManager& sound = *soundOwner;
         EXPECT_EQ(sound.getCoreRate(), 48000u);
     }
 
     // auto + unsupported device rate -> conservative 44100
     _context->pAudioDeviceSampleRate.store(22050, std::memory_order_release);
     {
-        SoundManager sound(_context);
+        auto soundOwner = std::make_unique<SoundManager>(_context);  // heap: SoundManager is far too large for the stack
+        SoundManager& sound = *soundOwner;
         EXPECT_EQ(sound.getCoreRate(), 44100u);
     }
 
     // auto + no device rate known -> 44100
     _context->pAudioDeviceSampleRate.store(0, std::memory_order_release);
     {
-        SoundManager sound(_context);
+        auto soundOwner = std::make_unique<SoundManager>(_context);  // heap: SoundManager is far too large for the stack
+        SoundManager& sound = *soundOwner;
         EXPECT_EQ(sound.getCoreRate(), 44100u);
     }
 
@@ -110,7 +115,8 @@ TEST_F(Multirate_Test, CoreRateResolution)
     // resolver must fall back to the published default
     SoundManager::PublishDefaultDeviceSampleRate(48000);
     {
-        SoundManager sound(_context);
+        auto soundOwner = std::make_unique<SoundManager>(_context);  // heap: SoundManager is far too large for the stack
+        SoundManager& sound = *soundOwner;
         EXPECT_EQ(sound.getCoreRate(), 48000u)
             << "auto must match the device rate published before emulator creation";
     }
@@ -118,7 +124,8 @@ TEST_F(Multirate_Test, CoreRateResolution)
     // Per-context cell takes priority over the process-wide default
     _context->pAudioDeviceSampleRate.store(96000, std::memory_order_release);
     {
-        SoundManager sound(_context);
+        auto soundOwner = std::make_unique<SoundManager>(_context);  // heap: SoundManager is far too large for the stack
+        SoundManager& sound = *soundOwner;
         EXPECT_EQ(sound.getCoreRate(), 96000u);
     }
 
@@ -126,7 +133,8 @@ TEST_F(Multirate_Test, CoreRateResolution)
     _context->pAudioDeviceSampleRate.store(0, std::memory_order_release);
     SoundManager::PublishDefaultDeviceSampleRate(22050);
     {
-        SoundManager sound(_context);
+        auto soundOwner = std::make_unique<SoundManager>(_context);  // heap: SoundManager is far too large for the stack
+        SoundManager& sound = *soundOwner;
         EXPECT_EQ(sound.getCoreRate(), 44100u);
     }
 
@@ -150,7 +158,8 @@ TEST_F(Multirate_Test, ExactSampleCountOverPeriodAtEveryRate)
     for (size_t rate : CORE_RATES)
     {
         _context->config.sound.coreRate = static_cast<unsigned>(rate);
-        SoundManager sound(_context);
+        auto soundOwner = std::make_unique<SoundManager>(_context);  // heap: SoundManager is far too large for the stack
+        SoundManager& sound = *soundOwner;
         ASSERT_EQ(sound.getCoreRate(), rate);
 
         constexpr uint32_t FRAMES = 125;
@@ -182,7 +191,8 @@ TEST_F(Multirate_Test, TurboSound_SampleCountFollowsCoreRate)
     for (size_t rate : CORE_RATES)
     {
         _context->config.sound.coreRate = static_cast<unsigned>(rate);
-        SoundManager sound(_context);
+        auto soundOwner = std::make_unique<SoundManager>(_context);  // heap: SoundManager is far too large for the stack
+        SoundManager& sound = *soundOwner;
         ITurboSoundDevice* turboSound = sound.getTurboSound();
         ASSERT_NE(turboSound, nullptr);
         ASSERT_EQ(turboSound->getCoreRate(), rate);
@@ -274,7 +284,8 @@ TEST_F(Multirate_Test, AY_PitchInvariantAcrossRates)
     for (size_t rate : CORE_RATES)
     {
         _context->config.sound.coreRate = static_cast<unsigned>(rate);
-        SoundManager sound(_context);
+        auto soundOwner = std::make_unique<SoundManager>(_context);  // heap: SoundManager is far too large for the stack
+        SoundManager& sound = *soundOwner;
         ITurboSoundDevice* turboSound = sound.getTurboSound();
         ASSERT_NE(turboSound, nullptr);
 
@@ -354,7 +365,8 @@ TEST_F(Multirate_Test, LiveCoreRateChange_RederivesPipeline)
     _context->config.frame = PENTAGON_FRAME;
     _context->config.sound.coreRate = 0;
 
-    SoundManager sound(_context);
+    auto soundOwner = std::make_unique<SoundManager>(_context);  // heap: SoundManager is far too large for the stack
+    SoundManager& sound = *soundOwner;
     ASSERT_EQ(sound.getCoreRate(), 44100u);
 
     sound.handleFrameStart();

@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "pch.h"
 
+#include <memory>
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
@@ -85,7 +86,8 @@ TEST_F(FrameSampleCount_Test, DeviceRendersExactlyWhatTheMixerConsumes)
         {
             SCOPED_TRACE(testing::Message() << "rate " << rate << (hq ? " HQ" : " LQ"));
             _context->config.sound.coreRate = static_cast<unsigned>(rate);
-            SoundManager sound(_context);
+            auto soundOwner = std::make_unique<SoundManager>(_context);  // heap: SoundManager is far too large for the stack
+            SoundManager& sound = *soundOwner;
             ITurboSoundDevice* device = sound.getTurboSound();
             ASSERT_NE(device, nullptr);
             device->setHQEnabled(hq);

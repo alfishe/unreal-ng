@@ -183,7 +183,8 @@ TEST_F(IdleSilence_Test, SoundManager_IdleOutput)
 {
     _context->config.sound.turboSoundKind = TurboSoundKind::AY;
 
-    SoundManager soundManager(_context);
+    auto soundManagerOwner = std::make_unique<SoundManager>(_context);  // heap: SoundManager is far too large for the stack
+    SoundManager& soundManager = *soundManagerOwner;
     soundManager.reset();
 
     // Capture output
@@ -216,7 +217,8 @@ TEST_F(IdleSilence_Test, SoundManager_TSFM_IdleOutput)
 {
     _context->config.sound.turboSoundKind = TurboSoundKind::FM;
 
-    SoundManager soundManager(_context);
+    auto soundManagerOwner = std::make_unique<SoundManager>(_context);  // heap: SoundManager is far too large for the stack
+    SoundManager& soundManager = *soundManagerOwner;
     soundManager.reset();
 
     for (size_t frame = 0; frame < FRAMES_TO_TEST; frame++)
