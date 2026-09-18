@@ -251,6 +251,61 @@ TEST_F(MoonSoundDevice_Test, SharedBus_ArmedCardOverridesLegacyMirrorAt7F)
     context->emulatorState.flags &= ~CF_TRDOS;
 }
 
+/// FM data-port read-back (2026-09-18): the YMF278B answers #C5/#C7 reads
+/// with the last-written value of the latched register - openMSX
+/// MSXMoonSound::readIO -> readReg, and the MoonBlaster/MFM players depend
+/// on it: the pan pass read-modify-writes each channel's C0 (in a,(c) /
+/// and 0Fh / write back with pan bits) to keep the feedback/connection
+/// nibble. Before the read was claimed, #C5 floated to 0xFF, the RMW forced
+/// 0x0F|pan (FB7 + additive) onto every FM channel, and DR0-sustained
+/// modulators self-oscillated into broadband noise - the mfm_sample_2 hiss
+/// and sample-3 JAMMED2/MATIN wash, previously misread as authentic. The
+/// bank is the one selected by the most recent address-port write (the
+/// card author's MBPlayer strobes the register via #C6 and the data via
+/// #C5, so the data port cannot carry the bank), and the read-back mirrors
+/// the write decode's bank-1 -> bank-0 aliasing before NEW.
+TEST_F(MoonSoundDevice_Test, FmPorts_DataReadbackReturnsRegisterFile)
+{
+    SoundManager* soundManager = context->pSoundManager;
+    ASSERT_NE(soundManager, nullptr);
+    SoundChip_Moonsound* moonsound = soundManager->getMoonSound();
+    ASSERT_NE(moonsound, nullptr);
+    Z80* cpu = context->pCore->GetZ80();
+    ASSERT_NE(cpu, nullptr);
+
+    // The card claims both FM data ports unconditionally: the register file
+    // exists in every arming state, and without the claim the legacy paging
+    // decode keeps answering #C5/#C7 (R6 priority).
+    EXPECT_TRUE(moonsound->portDeviceClaimsRead(0xC5));
+    EXPECT_TRUE(moonsound->portDeviceClaimsRead(0xC7));
+
+    // Bank 0, clean pair: ch0 C0 = FB6 + additive. Both data ports read the
+    // same register - the data ports are equivalent, the bank travels with
+    // the address latch.
+    cpu->out(0xC4, 0xC0);
+    cpu->out(0xC5, 0x0D);
+    EXPECT_EQ(cpu->in(0xC5), 0x0D);
+    EXPECT_EQ(cpu->in(0xC7), 0x0D);
+
+    // The player's own mixed-port style: bank-1 latch via #C6, data via #C5
+    // (MBPlayer_out_fm2). Reg 0x105 honors bank 1 even pre-NEW, so this
+    // arms OPL4 mode and the following bank-1 write does not alias.
+    cpu->out(0xC6, 0x05);
+    cpu->out(0xC5, 0x03);
+    cpu->out(0xC6, 0x01);
+    cpu->out(0xC5, 0x20);
+    EXPECT_EQ(cpu->in(0xC5), 0x20);
+    EXPECT_EQ(cpu->in(0xC7), 0x20);
+
+    // Bank 0's shadow survives the bank-1 writes, and the pan RMW keeps the
+    // feedback nibble: read back 0x0D, then 0Fh | pan -> 0x3D, not 0x0F|pan.
+    cpu->out(0xC4, 0xC0);
+    const uint8_t fbCon = static_cast<uint8_t>(cpu->in(0xC5) & 0x0F);
+    EXPECT_EQ(fbCon, 0x0D);
+    cpu->out(0xC5, static_cast<uint8_t>(fbCon | 0x30));
+    EXPECT_EQ(cpu->in(0xC5), 0x3D);
+}
+
 /// FM write path (integration 2.1): address/data latch pairs #C4/#C5 and
 /// #C6/#C7 reach the chip - proven by a chip-state snapshot diff. A border
 /// write (#FE, decoded by the ULA alone) must NOT touch the chip state.

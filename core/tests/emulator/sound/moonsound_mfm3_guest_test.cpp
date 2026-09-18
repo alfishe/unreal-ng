@@ -24,31 +24,26 @@
 #include "emulator/sound/chips/soundchip_moonsound.h"
 #include "emulator/sound/soundmanager.h"
 
-/// Guest-level verification of "MFM Music sample 2" (testdata/sound/moonsound/
-/// mfm_sample_2.trd, 15 melodies per SOURCES.md; fixtures staged at
-/// testdata/sound/moonsound/mfm-sample-2/ from the author's build tree).
+/// Guest-level verification of "MFM Music sample 3" (testdata/sound/moonsound/
+/// mfm_sample_3.trd, 13 melodies per the demo's MoonSound_tabl_music; fixtures
+/// staged at testdata/sound/moonsound/mfm-sample-3/ from the author's build
+/// tree - the TRD's player and all melodies are byte-identical to that tree).
 ///
-/// Symptom report (2026-09-17): melody 7 (CRYOGENT.MFM - the first tune on
-/// melody page 0x13 in MoonSound_tabl_music, reached with six Space presses)
-/// plays only some channels; the rest render as noise.
+/// Symptom report (2026-09-17): module 5 (JAMMED2.MFM - first tune on melody
+/// page 0x13, reached with four Space presses) produces "dirty" sound on 1-3
+/// note channels in the FM synthesizer - "sounds like highly quantized with
+/// pink noise"; the other melodies sound clean.
 ///
-/// This suite reproduces the full guest path: the shipped moonsound.bin is
-/// staged at $6200 with the five melody pages (0x11/0x13/0x14/0x16/0x17)
-/// staged from the author's .MFM files exactly as the disk's own TR-DOS loads
-/// place them (MoonSound_tabl_music offsets), launched at the post-load entry
-/// $6297 (ld sp,#5FFF segment of this build), melody 1 starts by itself, and
-/// Space advances to melody 7. All rendered-audio metrics consume the
-/// registry buffers as what they are - interleaved stereo - by mono-summing
-/// each L/R pair; reading the pair stream linearly as mono fakes a sqrt(2)
-/// first-difference "noise" on any channel routed to one side only (C0 out
-/// bits). Diagnostics beyond the sample-1 metrics:
-///   - a reconstructed FM register snapshot (the card's #C4/#C6 latch model)
-///     over the measurement window, printed as a per-channel operator table -
-///     the "which operators are involved" evidence;
-///   - a per-channel isolation sweep (mute every FM channel but one, measure
-///     that channel's rendered HF character) - in-tree backend only, the
-///     ymfm adapter passes the pre-mixed pair through unmuted.
-class MoonSoundMfm2Guest_Test : public ::testing::Test
+/// Same guest path as the sample-2 suite: the shipped moonsound.bin is staged
+/// at $6200 with the five melody pages (0x11/0x13/0x14/0x16/0x17) placed at
+/// their MoonSound_tabl_music offsets, launched at the post-load entry $62D7
+/// (ld sp,#5FFF segment of this 22424-byte build), melody 1 starts by itself,
+/// Space advances the counter at $6592. All rendered-audio metrics mono-sum
+/// the interleaved L/R pair; diagnostics: reconstructed FM register snapshot,
+/// per-channel isolation sweep and raw channel dumps (in-tree backend only),
+/// plus a full FM write-stream CSV captured from before the melody switch so
+/// module-5 init traffic is visible.
+class MoonSoundMfm3Guest_Test : public ::testing::Test
 {
 protected:
     Emulator* _emulator = nullptr;
@@ -58,7 +53,7 @@ protected:
     {
         MessageCenter::DisposeDefaultMessageCenter();
 
-        // Same staging contract as the sample-1 suite (MoonSound=1, idle
+        // Same staging contract as the sample-1/2 suites (MoonSound=1, idle
         // TSFM pair dropped to AY, Pentagon 128K, harness-staged launch).
         _emulator = EmulatorTestHelper::CreateEmulatorWithTurboSoundKind("PENTAGON", TurboSoundKind::AY, LoggerLevel::LogError);
         if (_emulator)
@@ -97,9 +92,10 @@ protected:
         return reinterpret_cast<MainLoop_CUT*>(_context->pMainLoop);
     }
 
-    /// Demo state variables (moonsound_demo.lst): the melody counter the
-    /// Space handler increments and the on-screen number derived from it.
-    static constexpr uint16_t kCountMusicAddress = 0x654D;
+    /// Demo state variable (moonsound_demo.lst of this build): the melody
+    /// counter the Space handler increments ($6592 - moved from the sample-2
+    /// build's $654D by the larger player).
+    static constexpr uint16_t kCountMusicAddress = 0x6592;
 
     uint8_t GuestPeek(uint16_t address) const
     {
@@ -310,17 +306,38 @@ protected:
         double zc;
     };
 
-    ChannelCharacter MeasureChannelAlone(int ch, SoundChip_Moonsound* moonsound)
+    /// This tune's rows advance only every ~2.4 s and most instruments decay
+    /// to their SL15 sustain floor (silence) within a second - a steady-state
+    /// window samples nothing. A row advance shows up as a write burst (one
+    /// koff/KON per channel), so: run until a frame carries `minWrites` FM
+    /// writes (a fresh row), then measure `frames` frames - the ring-out.
+    bool RunUntilRowBurst(int minWrites, int maxFrames)
+    {
+        _emulator->DisableTurboMode();
+        for (int i = 0; i < maxFrames; i++)
+        {
+            ResetFrameStats();
+            MainLoop()->RunFrame();
+            _frame++;
+            if (_fmOuts >= minWrites)
+                return true;
+        }
+        return false;
+    }
+
+    /// Burst-aligned per-channel isolation: waits for the next row advance,
+    /// then measures `frames` frames of channel `ch` alone (envelopes open).
+    ChannelCharacter MeasureChannelAfterBurst(int ch, int frames, SoundChip_Moonsound* moonsound)
     {
         for (int i = 0; i < 18; i++)
             moonsound->setChannelMute(opl4::ChannelGroup::Fm, static_cast<size_t>(i), i != ch);
+        RunUntilRowBurst(20, 300);
         ChannelCharacter c{};
         double energy = 0.0;
         double diffEnergy = 0.0;
         long long samples = 0;
         long long zeroCrossings = 0;
-        _emulator->DisableTurboMode();
-        for (int f = 0; f < 50; f++)
+        for (int f = 0; f < frames; f++)
         {
             ResetFrameStats();
             MainLoop()->RunFrame();
@@ -352,7 +369,7 @@ protected:
         std::cout << "[sweep] per-channel isolation (mute all but one; tonal: hf<1.0 zc<0.30):\n";
         for (int ch = 0; ch < 18; ch++)
         {
-            const ChannelCharacter c = MeasureChannelAlone(ch, moonsound);
+            const ChannelCharacter c = MeasureChannelAfterBurst(ch, 25, moonsound);
             const char* verdict = c.rms < 1.0 ? "silent" : (c.hf < 1.0 && c.zc < 0.30) ? "tonal" : "NOISE";
             std::cout << "[sweep] ch" << ch << (ch < 10 ? "  " : " ") << "rms=" << c.rms
                       << " hf=" << c.hf << " zc=" << c.zc << " -> " << verdict << "\n";
@@ -412,13 +429,16 @@ protected:
 
 #if !defined(OPL4_FM_YMFM)
     /// Isolates one FM channel and dumps `frames` frames of its mono-summed
-    /// rendered samples to `path` - the offline-FFT evidence for hiss
-    /// channels (broadband vs a high squeal line read identically in the
-    /// hf/zc scalars of the sweep).
+    /// rendered samples to `path` - the offline-FFT evidence for dirty
+    /// channels (pink vs white slope, quantization comb - read identically
+    /// in the hf/zc scalars of the sweep).
     bool DumpChannelSamples(int ch, int frames, SoundChip_Moonsound* moonsound, const std::string& path)
     {
         for (int i = 0; i < 18; i++)
             moonsound->setChannelMute(opl4::ChannelGroup::Fm, static_cast<size_t>(i), i != ch);
+        // Burst-aligned like the sweep: catch the row's ring-out, not the
+        // SL15 silence between rows.
+        RunUntilRowBurst(20, 300);
         _emulator->DisableTurboMode();
         std::vector<int16_t> mono(static_cast<size_t>(frames) * SAMPLES_PER_FRAME);
         for (int f = 0; f < frames; f++)
@@ -442,29 +462,15 @@ protected:
         return written == mono.size();
     }
 
-    /// His-or-reference channel sample dumps per melody: name -> channels
-    /// (hiss set from the sweep verdicts, plus a tonal reference or two).
+    /// Dumps every FM channel of `melody` (the dirty set is not yet known,
+    /// so all 18 go to scratch for offline FFT).
     void DumpMelodyChannelSamples(const char* melody, SoundChip_Moonsound* moonsound)
     {
-        static const struct
+        const std::string scratchPrefix = TestPathHelper::GetUniqueTestScratchPath("mfm3-dirty");
+        for (int ch = 0; ch < 18; ch++)
         {
-            const char* melody;
-            const int channels[8];
-        } kDumps[] = {
-            {"melody3-djingle2", {6, 7, 8, 9, 15, 16, 17, -1}},
-            {"melody5-djingle4", {6, 7, 8, 15, 16, 17, 9, -1}},
-            {"melody10-fountain", {2, 5, 9, 11, 13, 14, 7, -1}},
-            {"melody11-patstory", {6, 7, 8, 9, 15, 16, 17, -1}}};
-        const std::string scratchPrefix = TestPathHelper::GetUniqueTestScratchPath("mfm2-hiss");
-        for (const auto& d : kDumps)
-        {
-            if (strcmp(d.melody, melody) != 0)
-                continue;
-            for (int i = 0; i < 8 && d.channels[i] >= 0; i++)
-            {
-                DumpChannelSamples(d.channels[i], 100, moonsound,
-                                   scratchPrefix + "-" + melody + "-ch" + std::to_string(d.channels[i]) + ".raw");
-            }
+            DumpChannelSamples(ch, 100, moonsound,
+                               scratchPrefix + "-" + melody + "-ch" + std::to_string(ch) + ".raw");
         }
     }
 #endif // !OPL4_FM_YMFM
@@ -474,7 +480,7 @@ protected:
     /// Prints the first `maxFrames` frames of the captured window as a
     /// decoded per-write stream (frequency/KON and C0 routing decoded to a
     /// channel, operator registers raw) - the "what exactly does the player
-    /// command" evidence for a hissing channel.
+    /// command" evidence for a dirty channel.
     void PrintFmWriteStream(int maxFrames, const char* label) const
     {
         std::cout << "[stream:" << label << "] first " << maxFrames << " frames of capture:\n";
@@ -509,10 +515,10 @@ protected:
 
     /// Dumps the whole captured window as CSV (relFrame,bank,reg,data) for
     /// offline analysis - the per-register value timelines the last-value
-    /// snapshot hides (row-rate patch rewrites on hiss channels).
+    /// snapshot hides (row-rate patch rewrites on dirty channels).
     void WriteFmWriteCsv(const char* melody) const
     {
-        const std::string path = TestPathHelper::GetUniqueTestScratchPath(std::string("mfm2-hiss-capture-") + melody + ".csv");
+        const std::string path = TestPathHelper::GetUniqueTestScratchPath(std::string("mfm3-dirty-capture-") + melody + ".csv");
         FILE* f = fopen(path.c_str(), "w");
         if (f == nullptr)
             return;
@@ -582,7 +588,7 @@ protected:
         for (size_t i = 0; i < count; i++)
         {
             std::vector<uint8_t> tune;
-            if (!LoadFixture(std::string("sound/moonsound/mfm-sample-2/") + placements[i].file,
+            if (!LoadFixture(std::string("sound/moonsound/mfm-sample-3/") + placements[i].file,
                              placements[i].size, placements[i].file, tune))
                 return;
             memcpy(memory->RAMPageAddress(ramPage) + placements[i].offset, tune.data(), tune.size());
@@ -612,34 +618,34 @@ protected:
         }
 
         std::vector<uint8_t> demo;
-        if (!LoadFixture("sound/moonsound/mfm-sample-2/moonsound-demo-2.bin", 21920, "demo binary", demo))
+        if (!LoadFixture("sound/moonsound/mfm-sample-3/moonsound-demo-3.bin", 22424, "demo binary", demo))
             return nullptr;
         // Entry-pattern check: the post-load segment of this build starts at
-        // $6297 (file offset 0x97) with ld sp,#5FFF; ld a,10h
-        if (demo[0x97] != 0x31 || demo[0x98] != 0xFF || demo[0x99] != 0x5F || demo[0x9A] != 0x3E)
+        // $62D7 (file offset 0xD7) with ld sp,#5FFF; ld a,10h
+        if (demo[0xD7] != 0x31 || demo[0xD8] != 0xFF || demo[0xD9] != 0x5F || demo[0xDA] != 0x3E)
         {
-            ADD_FAILURE() << "demo binary is not the expected build: entry pattern at $6297 mismatch";
+            ADD_FAILURE() << "demo binary is not the expected build: entry pattern at $62D7 mismatch";
             return nullptr;
         }
 
         // Pages per MoonSound_tabl_music (moonsound_demo.asm): page 0x11
-        // carries melodies 1-6, 0x13 carries 7-8 (CRYOGENT first), 0x14
-        // carries 9-11, 0x16 carries 12-13, 0x17 carries 14-15.
+        // carries melodies 1-4, 0x13 carries 5-6 (JAMMED2 first), 0x14
+        // carries 7-8, 0x16 carries 9-11, 0x17 carries 12-13.
         const MelodyPlacement page11[] = {
-            {"alonebtl.mfm", 9663, 0x0000}, {"djingle1.mfm", 1388, 0x25C0}, {"djingle2.mfm", 1046, 0x2B30},
-            {"djingle3.mfm", 1106, 0x2F50}, {"djingle4.mfm", 1257, 0x33B0}, {"djingle5.mfm", 1628, 0x38A0}};
+            {"aleste.mfm", 4143, 0x0000}, {"forest.mfm", 5472, 0x1030}, {"huishuis.mfm", 3222, 0x2590},
+            {"relaxed.mfm", 1197, 0x3230}};
         const MelodyPlacement page13[] = {
-            {"cryogent.mfm", 7924, 0x0000}, {"dertigap.mfm", 6909, 0x1F00}};
+            {"jammed2.mfm", 7798, 0x0000}, {"jdktheme.mfm", 6511, 0x1E80}};
         const MelodyPlacement page14[] = {
-            {"feedback.mfm", 6541, 0x0000}, {"fountain.mfm", 6161, 0x1990}, {"patstory.mfm", 1299, 0x31B0}};
+            {"matin.mfm", 4000, 0x0000}, {"morngrow.mfm", 10086, 0x0FA0}};
         const MelodyPlacement page16[] = {
-            {"jdk2.mfm", 10801, 0x0000}, {"salmon.mfm", 4489, 0x2A40}};
+            {"parodius.mfm", 10182, 0x0000}, {"riedel.mfm", 2509, 0x27D0}, {"slowdown.mfm", 3199, 0x31A0}};
         const MelodyPlacement page17[] = {
-            {"memory.mfm", 6540, 0x0000}, {"palaceod.mfm", 8811, 0x1990}};
-        StagePage(1, page11, 6);
+            {"randam.mfm", 7909, 0x0000}, {"salmon_1.mfm", 6000, 0x1EF0}};
+        StagePage(1, page11, 4);
         StagePage(3, page13, 2);
-        StagePage(4, page14, 3);
-        StagePage(6, page16, 2);
+        StagePage(4, page14, 2);
+        StagePage(6, page16, 3);
         StagePage(7, page17, 2);
 
         Memory* memory = _context->pMemory;
@@ -658,7 +664,7 @@ protected:
         cpu->iff1 = 0;
         cpu->iff2 = 0;
         cpu->halted = 0;
-        cpu->pc = 0x6297;
+        cpu->pc = 0x62D7;
 
         int launchFrames = 0;
         for (int i = 0; i < 600 && _fmTotal < 300; i++)
@@ -679,12 +685,35 @@ protected:
     }
 };
 
-/// Melody 7 - CRYOGENT.MFM: the reported "only some channels play, the rest
-/// noise" tune. Fences hold on every backend: the mono-summed mix must be
-/// loud and tonal - the old defect read as white noise here (hf ~ sqrt(2) ~
-/// 1.41, zc ~ 0.5), while the healthy mix measures hf ~ 0.10 in-tree and
-/// hf ~ 0.06 on ymfm with zc ~ 0.005 on both.
-TEST_F(MoonSoundMfm2Guest_Test, Mfm2_Melody7_Cryogent_PlaysAllChannelsTonal)
+/// Symptom target: module 5 (JAMMED2.MFM) - "dirty" sound on 1-3 note
+/// channels, "highly quantized with pink noise". Four Space presses reach
+/// it (melody 1 plays by itself). The full-mix metrics, the reconstructed
+/// FM register snapshot, the per-channel isolation sweep and the raw
+/// channel dumps name the dirty channel(s) and the operators behind them;
+/// the write-stream CSV captured from before the switch shows what the
+/// player programs at module-5 init (the sample-2 investigation found the
+/// init panning pass clobbering C0 feedback bits there). The player's
+/// loop-position shadow (MBPlayer_xloop, $9026) is pinned to 0 after the
+/// switch so a looping tune cannot fall silent mid-sweep.
+///
+/// RESOLVED (2026-09-18, overturning 2026-09-17's "authentic" verdict):
+/// an emulator port bug, not the demo. The module-5 init capture (frame
+/// ~175 of the CSV) writes each channel's C0 twice - first the instrument's
+/// fbconn|0x30 (JAMMED2: FB4-FM lead on ch0-5/9/10/12/17, FB7-FM pluck on
+/// ch6/14/16, FB6-ADD pad on ch7/8/11/13/15 - byte-exact against the .MFM
+/// instrument table), then the pan pass's RMW result. That pass reads C0
+/// back through the FM data port (in a,(c)), keeps the low nibble (and
+/// 0Fh) and rewrites it with the pan bits - the original MSX driver does
+/// exactly the same - but the emulator did not answer FM data-port reads,
+/// so the read floated 0xFF and every channel ended at 0x0F|pan = FB7
+/// additive. Real hardware returns the register value (openMSX
+/// MSXMoonSound::readIO -> readReg). With SoundChip_Moonsound claiming
+/// #C5/#C7 reads and returning the register-file shadow, the pad keeps its
+/// authored FB6 and the sweep reads tonal (hf 0.06-0.10). The rate-0
+/// freeze fix stands: DR0+EGT1 is what holds the pad modulator at its
+/// attack peak for the sustained timbre. The ymfm backend shows identical
+/// register traffic and mix-level behavior.
+TEST_F(MoonSoundMfm3Guest_Test, Mfm3_Module5_Jammed2_DirtyChannels_Diagnostic)
 {
     if (!_emulator)
     {
@@ -694,65 +723,66 @@ TEST_F(MoonSoundMfm2Guest_Test, Mfm2_Melody7_Cryogent_PlaysAllChannelsTonal)
     SoundChip_Moonsound* moonsound = StagePlayer();
     ASSERT_NE(moonsound, nullptr);
 
-    // Six Space presses: melody 1 -> 7 (CRYOGENT, page 0x13)
-    for (int i = 0; i < 6; i++)
+    static constexpr uint16_t kXloopShadow = 0x9026; // MBPlayer_xloop (moonsound_demo.lst)
+    const char* name = "module5-jammed2";
+    const int target = 5;
+
+    // Capture from BEFORE the advance key presses: the switch into module 5
+    // happens inside PressMelodyKey, and that is where MBPlayer_init
+    // reprograms the instruments, C0 and 0x104 - windows starting after
+    // arrival only ever see A0/B0 traffic.
+    _fmWrites.clear();
+    _captureFm = true;
+    _captureStartFrame = _frame;
+    int pressed = 0; // melody 1 is already playing (count = 0)
+    while (pressed < target - 1)
     {
         PressMelodyKey(6);
         RunFrames(50);
+        pressed++;
     }
-    ASSERT_EQ(GuestPeek(kCountMusicAddress), 6) << "melody counter did not reach 7";
-    RunFrames(150); // let the tune ramp
+    ASSERT_EQ(GuestPeek(kCountMusicAddress), target - 1) << "melody counter did not reach " << target;
 
-    _captureFm = true;
-    const PlaybackMetrics m = MeasurePlayback(240, moonsound);
-    _captureFm = false;
-    PrintMetrics("melody7-cryogent", m);
-    PrintFmRegisterSnapshot();
+    RunFrames(30); // let MBPlayer_init and the first rows land
+
+    _context->pMemory->DirectWriteToZ80Memory(kXloopShadow, 0);
+    ASSERT_EQ(GuestPeek(kXloopShadow), 0) << "loop-position pin failed";
+
+    // Two steady-state reference rounds (metrics + snapshot), then the
+    // burst-aligned diagnostics: rows advance only every ~2.4 s and the
+    // SL15 instruments ring for under a second, so steady-state windows
+    // show one survivor channel while the row retriggers all eighteen -
+    // the sweep and dumps therefore start at a detected row advance.
+    for (int round = 1; round <= 2; round++)
+    {
+        const PlaybackMetrics m = MeasurePlayback(120, moonsound);
+        char roundName[48];
+        snprintf(roundName, sizeof(roundName), "%s-r%d", name, round);
+        PrintMetrics(roundName, m);
+        PrintFmRegisterSnapshot();
+    }
 #if !defined(OPL4_FM_YMFM)
     PrintChannelSweep(moonsound);
+    DumpMelodyChannelSamples(name, moonsound);
 #endif
+    _captureFm = false;
+    PrintFmWriteStream(12, name);
+    WriteFmWriteCsv(name);
 
     _context->pCore->GetZ80()->busTraceHook = nullptr;
 
-    // Playback mechanics - every backend
-    EXPECT_GT(m.fmPortWrites, 0) << "melody7: FM register writes stopped";
-    EXPECT_GT(m.wavePortWrites, 0) << "melody7: wave-side register writes stopped";
-
-    // Symptom fences (every backend): the mono-summed mix is a drum/lead
-    // arrangement - loud and smooth, not the white-noise bed of the defect.
-    EXPECT_GT(m.fmRms, 300.0) << "melody7: FM output too quiet";
-    EXPECT_LT(m.fmHfRatio, 0.5) << "melody7: FM output is HF noise, not tonal";
-    EXPECT_LT(m.fmZcRate, 0.05) << "melody7: FM zero-crossing rate is noise-like";
+    // Playback mechanics only - this is a diagnostic pass; the per-channel
+    // sweep verdicts in the output carry the findings.
+    EXPECT_GT(_fmTotal, 0) << "FM register writes stopped";
 }
 
-/// Follow-up symptom report (2026-09-17): after the melody-7 fixes, melodies
-/// 3 (DJINGLE2), 5 (DJINGLE4), 10 (FOUNTAIN) and 11 (PATSTORY) still hiss on
-/// one or more FM channels while the other eleven tunes sound clean.
-///
-/// Diagnostic walk through exactly those four melodies: for each one, the
-/// full-mix metrics, the reconstructed FM register snapshot and the
-/// per-channel isolation sweep name the channel(s) with noise character and
-/// the operators behind them. The player's loop-position shadow
-/// (MBPlayer_xloop, $8E75) is pinned to 0 after every switch - three of the
-/// four tunes are loop=255 jingles that would otherwise fall silent a few
-/// seconds in, mid-sweep (MBPlayer_init re-copies the shadow from the song
-/// block, so the pin must be re-applied per melody).
-///
-/// RESOLVED (2026-09-18, overturning 2026-09-17's "authentic" verdict):
-/// an emulator port bug, not the demo. The capture starting before the
-/// melody-advance keypress shows each channel's C0 written twice - the
-/// instrument's fbconn|0x30 first (lead = FB6-add, pad = FB5-add), then
-/// the pan pass's RMW result. That pass reads C0 back through the FM data
-/// port (in a,(c) / and 0Fh / rewrite with the pan bits), exactly like the
-/// original MSX MoonBlaster driver - but the emulator did not answer FM
-/// data-port reads, so the read floated 0xFF and every channel ended at
-/// 0x0F|pan = FB7 additive. Real hardware returns the register value
-/// (openMSX MSXMoonSound::readIO -> readReg); the in-tree/ymfm/Nuked
-/// engines agreed with the noise only because they were fed the same
-/// corrupted stream (see Diagnostic_MfmHissPatches_SustainedVsRetrig).
-/// With SoundChip_Moonsound claiming #C5/#C7 reads and returning the
-/// register-file shadow, all four melodies render tonal on every channel.
-TEST_F(MoonSoundMfm2Guest_Test, Mfm2_HissingMelodies_Diagnostic)
+/// Module 7 (MATIN.MFM - first tune on melody page 0x14, six Space
+/// presses). Symptom report (2026-09-18): FM8/FM9/FM10 render noise where
+/// a clean sine+envelope is expected. Same diagnostic battery as module 5:
+/// init-window capture (per-channel default instruments + the C0 double
+/// write), steady-state metrics, register snapshot, burst-aligned sweep and
+/// raw channel dumps, loop-position pinned so the tune cannot fall silent.
+TEST_F(MoonSoundMfm3Guest_Test, Mfm3_Module7_Matin_Diagnostic)
 {
     if (!_emulator)
     {
@@ -762,59 +792,46 @@ TEST_F(MoonSoundMfm2Guest_Test, Mfm2_HissingMelodies_Diagnostic)
     SoundChip_Moonsound* moonsound = StagePlayer();
     ASSERT_NE(moonsound, nullptr);
 
-    static constexpr uint16_t kXloopShadow = 0x8E75; // MBPlayer_xloop (moonsound_demo.lst)
+    static constexpr uint16_t kXloopShadow = 0x9026; // MBPlayer_xloop (moonsound_demo.lst)
+    const char* name = "module7-matin";
+    const int target = 7;
 
-    struct Target
+    _fmWrites.clear();
+    _captureFm = true;
+    _captureStartFrame = _frame;
+    int pressed = 0; // melody 1 is already playing (count = 0)
+    while (pressed < target - 1)
     {
-        int melody;
-        const char* name;
-    };
-    const Target targets[] = {
-        {3, "melody3-djingle2"}, {5, "melody5-djingle4"}, {10, "melody10-fountain"}, {11, "melody11-patstory"}};
-
-    int pressed = 0;             // melody 1 is already playing (count = 0)
-    int lastFmPortWrites = 0;     // mechanics guard from the final melody
-    for (const Target& t : targets)
-    {
-        // Capture from BEFORE the advance key presses: the switch into this
-        // melody happens inside PressMelodyKey, and that is where
-        // MBPlayer_init reprograms the instruments, C0 and 0x104 - windows
-        // starting after arrival only ever see A0/B0 traffic and cannot
-        // answer where the FB=7 C0 state comes from.
-        _fmWrites.clear();
-        _captureFm = true;
-        _captureStartFrame = _frame;
-        while (pressed < t.melody - 1)
-        {
-            PressMelodyKey(6);
-            RunFrames(50);
-            pressed++;
-        }
-        ASSERT_EQ(GuestPeek(kCountMusicAddress), t.melody - 1) << "melody counter did not reach " << t.melody;
-
-        RunFrames(30); // let MBPlayer_init and the first rows land
-
-        _context->pMemory->DirectWriteToZ80Memory(kXloopShadow, 0);
-        ASSERT_EQ(GuestPeek(kXloopShadow), 0) << "loop-position pin failed";
-
-        const PlaybackMetrics m = MeasurePlayback(120, moonsound);
-        _captureFm = false;
-        lastFmPortWrites = m.fmPortWrites;
-        PrintMetrics(t.name, m);
-        PrintFmRegisterSnapshot();
-        PrintFmWriteStream(12, t.name);
-        WriteFmWriteCsv(t.name);
-#if !defined(OPL4_FM_YMFM)
-        PrintChannelSweep(moonsound);
-        DumpMelodyChannelSamples(t.name, moonsound);
-#endif
+        PressMelodyKey(6);
+        RunFrames(50);
+        pressed++;
     }
+    ASSERT_EQ(GuestPeek(kCountMusicAddress), target - 1) << "melody counter did not reach " << target;
+
+    RunFrames(30); // let MBPlayer_init and the first rows land
+
+    _context->pMemory->DirectWriteToZ80Memory(kXloopShadow, 0);
+    ASSERT_EQ(GuestPeek(kXloopShadow), 0) << "loop-position pin failed";
+
+    for (int round = 1; round <= 2; round++)
+    {
+        const PlaybackMetrics m = MeasurePlayback(120, moonsound);
+        char roundName[48];
+        snprintf(roundName, sizeof(roundName), "%s-r%d", name, round);
+        PrintMetrics(roundName, m);
+        PrintFmRegisterSnapshot();
+    }
+#if !defined(OPL4_FM_YMFM)
+    PrintChannelSweep(moonsound);
+    DumpMelodyChannelSamples(name, moonsound);
+#endif
+    _captureFm = false;
+    PrintFmWriteStream(12, name);
+    WriteFmWriteCsv(name);
 
     _context->pCore->GetZ80()->busTraceHook = nullptr;
 
-    // Playback mechanics only - this is a diagnostic pass; the per-melody
-    // noise verdicts in the sweep output carry the findings.
-    EXPECT_GT(lastFmPortWrites, 0) << "FM register writes stopped";
+    EXPECT_GT(_fmTotal, 0) << "FM register writes stopped";
 }
 
 #endif // UNREALNG_HAVE_OPL4

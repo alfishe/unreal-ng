@@ -351,6 +351,22 @@ uint8_t SoundChip_Moonsound::portDeviceInMethod(uint16_t port)
             // FM status read: BUSY/LD live in the library (2.1)
             return _opl4.ReadStatus(chipTimeNow());
 
+        case PORT_FM_DATA1:
+        case PORT_FM_DATA2:
+            // FM register read-back (2026-09-18): YMF278B silicon answers a
+            // data-port read with the latched register's value (openMSX
+            // MSXMoonSound::readIO -> readReg), and the MoonBlaster/MFM pan
+            // pass depends on it - it read-modify-writes each channel's C0
+            // keeping the feedback/connection nibble (`in a,(c)` / `and 0Fh`)
+            // before adding the pan bits. Until this case existed the read
+            // resolved to the legacy paging decode's bus value, so `and 0Fh`
+            // forced FB7+additive onto every FM channel and the DR0-sustained
+            // pad banks of mfm_sample_2/3 rendered as broadband noise instead
+            // of their authored FB6 organ timbre. Bank: the card-decode rule
+            // the writes already use - the bank of the most recent
+            // address-port write (#C4 -> bank 0, #C6 -> bank 1).
+            return _opl4.ReadFm(chipTimeNow(), _fmBank, _fmLatch[_fmBank]);
+
         case PORT_WAVE_DATA:
             // Wave register read: BUSY semantics and the register value from
             // the library; the address is the host latch.
@@ -426,6 +442,15 @@ bool SoundChip_Moonsound::portDeviceClaimsRead(uint16_t port)
     // motherboard decode (keyboard FE arm on the even mirror) from winning
     // the cycle while the card is attached
     if (low == static_cast<uint8_t>(PORT_FM_ADDR1))
+        return true;
+
+    // FM data ports (#C5/#C7): the register-file read-back drives the bus on
+    // the card's own decode, exactly like the status register on #C4 - the
+    // register file exists regardless of the NEW2 arming state, and the
+    // MoonBlaster pan pass polls it through dirty-high-byte `in a,(c)` forms.
+    // Without the claim the legacy paging decode answers the read instead
+    // (R6 priority) and the guest sees a value that is not the register.
+    if (low == static_cast<uint8_t>(PORT_FM_DATA1) || low == static_cast<uint8_t>(PORT_FM_DATA2))
         return true;
 
     // MoonService-verified arming rule: until the guest sets OPL4 NEW2

@@ -47,6 +47,14 @@ public:
     uint8_t ReadStatus(uint64_t time);
     uint8_t ReadWave(uint64_t time, uint8_t addr);
 
+    // FM data-port read-back (guest-visible): the last-written value of the
+    // addressed register, per bank, through the same aliasing the write
+    // decode applies. YMF278B silicon answers data-port reads from its
+    // register file (openMSX MSXMoonSound::readIO -> readReg); card drivers
+    // read-modify-write C0 through it to preserve feedback/connection while
+    // changing pan.
+    uint8_t ReadFm(uint64_t time, int bank, uint8_t addr);
+
     // OPL4 NEW mode armed (bank-1 reg 0x05 bit 0). Read-only view for hosts
     // that gate shared-bus behaviour on it (ZX cards vs the Beta-128 FDC).
     bool NewMode() const;

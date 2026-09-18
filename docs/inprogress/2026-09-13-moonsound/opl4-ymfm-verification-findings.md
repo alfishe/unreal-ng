@@ -161,7 +161,8 @@ Nuked-OPL3 gates every envelope increment on `reg_rate != 0` (`opl3.c` L430); th
 keycode only accelerates nonzero register rates (total rate 4..63).
 
 The audible case: mfm_sample_3 module 5 (JAMMED2.MFM) pads — ins2 modulators are
-AR15/**DR0**/EGT1 and the demo's pan pass clobbers every C0 to FB7-additive. Under
+AR15/**DR0**/EGT1, and the captured stream held every C0 at FB7-additive — an
+artifact of the FM data-port read-back defect (§2.5), not the demo's intent. Under
 silicon semantics the modulator holds its attack peak forever, keeping the
 feedback loop at full gain: a sustained broadband wash (both references, zc ≈
 0.44). In-tree, the DR0 creep decayed the modulator to SL6 — 18 dB below the
@@ -177,6 +178,55 @@ at the guest operating point — tree 0.4387 / ymfm 0.4382 / Nuked 0.4380 zc at
 TL18/FB7, was 0.0204 in-tree), `scratch/replay3way.cpp` on the captured stream
 (all five pad channels ch7/8/11/13/15 flip tonal→NOISE, tree ≈ ymfm within 2%),
 guarded by `CompareDr0PadVoice` (`tests/opl4fmcompare.cpp`).
+
+**Same class confirmed on module 7 (MATIN, 2026-09-18).** The mfm3 guest
+diagnostic (`Mfm3_Module7_Matin_Diagnostic`) captures the same construction: a
+six-channel auto-panned pad bank (0-based ch6/7/8 out=L, ch10/12/13 out=R)
+carrying the identical Roymans-kit patch — mod M1/EGT1/KSR1/TL19/AR15/DR0/SL6/RR7,
+car TL20/AR15/DR1/SL9/RR5 — found verbatim at `matin.mfm` offset 0x29 with
+**file fb_con = 0x0D (FB6+ADD)**, rewritten by the per-tick stereo pan pass to
+0x0F (FB7+ADD, captured `C0=3C` then `C0=3F`) — which §2.5 explains as the RMW
+pan pass reading 0xFF off the then-unclaimed FM data port, not the author's
+intent. Tooling caveat: the corpus `MATIN.MFM.json` instrument table is
+mis-sliced by one operator (evidence: `insN.car` ≡ `insN+1.mod` byte-chain; the
+captured patch appears in no decoded slot) — matin instrument fields from that
+JSON must not be trusted without byte-checking the binary.
+
+### 2.5 FM data-port read-back — the MFM pan-pass corruption (2026-09-18)
+
+The YMF278B answers FM data-port reads with the last-written value of the
+latched register: openMSX's `MSXMoonSound::readIO` returns
+`ymf262.readReg(opl3latch)` for #C5/#C7, and MoonBlaster-class players depend
+on it — the pan pass read-modify-writes each channel's C0 (`in a,(c)` /
+`and 0Fh` / rewrite with the pan bits; the original MSX driver in mfm_sample_01
+does exactly the same), so the feedback/connection nibble survives only if the
+read returns the register.
+
+`portDeviceClaimsRead` claimed only #C4, so a #C5 read floated to 0xFF and
+every C0 became 0x0F|pan = FB7 additive for the rest of the song; DR0-
+sustained pad modulators then self-oscillated into broadband noise. This
+overturns the 2026-09-17 "authentic" verdicts (sample-2 hiss, sample-3
+JAMMED2/MATIN): the reference engines agreed with the noise because they were
+fed the same corrupted stream — register-traffic agreement cannot certify a
+value the guest only ever saw wrong.
+
+Fix: the device claims #C5/#C7 reads unconditionally (the register file exists
+in every arming state) and returns the FM shadow through `FmBus::Read` /
+`Opl4::ReadFm` for the latched register, with the bank taken from the most
+recent address-port write — the same single-strobe rule the write decode
+applies, including the bank-1 → bank-0 aliasing before NEW. The bank cannot
+live in the data port itself: the card author's MBPlayer strobes registers via
+#C6 and data via #C5 (`MBPlayer_out_fm2`), which a per-port bank rule would
+misroute. Fenced by `MoonSoundDevice_Test.FmPorts_DataReadbackReturnsRegisterFile`.
+
+Verified post-fix: MATIN's init pairs flip `C0=3C→3F` to `C0=1C→3C` (FB6 and
+pan both preserved — the upload write keeps the pan nibble the same way), all
+18 channels read tonal (mix hf 0.50 → 0.058), JAMMED2's pad bank and the four
+sample-2 hiss melodies turn tonal, and `replay3way` on the corrected matin
+capture (`scratch/mfm3-dirty-capture-module7-matin_78456.csv`) reads tonal on
+all three engines. Open hardware question: the ZXM card's CPLD read
+pass-through is inferred (the enable logic does not appear to gate on read vs
+write; MoonService and openMSX both depend on it) but not traced end-to-end.
 
 ---
 
@@ -312,11 +362,13 @@ divergences (§2.2 #5/#6):
   audible at fnum 0x200 / block 4 (~390 Hz) and sets **0xF8 unity FM mix** — see
   the git history / the pre-adoption revision of this file for the full account.
 
-Current cost of the accommodations: **6124 checks in-tree vs 6110 on ymfm** (14
+Current cost of the accommodations: **6152 checks in-tree vs 6138 on ymfm** (14
 checks guarded: tap-based instrumentation plus the two live §2.2 rows), both zero
-failures, whole run < 1 s; cosim 6/6 scenarios, cosim-oracle 55/55 with the golden
-regenerated (12 FM digests changed, every PCM-only digest byte-identical — the PCM
-half untouched by the adoption).
+failures, whole run < 1 s; cosim 6/6 scenarios, cosim-oracle 55/55 — the golden
+was regenerated twice on purpose: 2026-09-15 for the classic-map adoption (12 FM
+digests) and 2026-09-18 for the rate-0 freeze + NTS semantics of §2.4 (25 FM
+digests; every PCM-only digest byte-identical both times — the PCM half is
+untouched by FM-side changes).
 
 ---
 
@@ -331,6 +383,7 @@ half untouched by the adoption).
 | S == 0 loop corner (§3.4) | Own-model checks on both sides; openMSX lineage favoured | Hardware recordings |
 | ymfm-side quirks (§3.1–§3.10) | Accommodated in-tree; **none upstreamed** — they are accommodations, not fixes we own; the TTD purity pin (§3.8) is local-only by design | — |
 | Register rate 0 freeze (§2.4) | **RESOLVED 2026-09-17** — `EgRate`/`AdvanceEnvelope` freeze at rate 0 + NTS decode; three-engine co-sim agrees; `CompareDr0PadVoice` is the fence | Done — differential + co-sim replay stay the fence |
+| FM data-port read-back (§2.5) | **RESOLVED 2026-09-18** — #C5/#C7 read claims returning the `FmBus` shadow (`Opl4::ReadFm`); module-5/7 and the mfm2 hiss melodies render tonal, three-engine replay of the corrected stream agrees; `FmPorts_DataReadbackReturnsRegisterFile` is the fence | Done — device fence + guest reruns stay |
 | Nuked ch2/4/5 near-silent on the JAMMED2 stream (tree ≈ ymfm loud) | Observed 2026-09-17 in `scratch/replay3way` — pre-existing, unrelated to §2.4; tree/ymfm agreement is the conformance standard | Nuked-side investigation if it recurs |
 
 ---

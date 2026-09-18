@@ -44,8 +44,10 @@ static_assert(offsetof(MoonSoundTTDHeader, romHash) + sizeof(MoonSoundTTDHeader:
 ///   #C4  write  FM register address, bank 1
 ///   #C4  read   FM status (BUSY)
 ///   #C5  write  FM data, bank 1
+///   #C5  read   FM register read-back (bank of last addr write)
 ///   #C6  write  FM register address, bank 2
 ///   #C7  write  FM data, bank 2
+///   #C7  read   FM register read-back (same as #C5)
 ///   #7E  write  wave register address
 ///   #7F  write  wave register data
 ///   #7F  read   wave register data

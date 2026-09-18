@@ -21,6 +21,14 @@ void FmBus::Reset()
     // resets the engine alongside.
 }
 
+uint8_t FmBus::Read(uint8_t bank, uint8_t reg) const
+{
+    // Same aliasing rule as Write: one bank until NEW arms, except 0x105.
+    if (bank == 1 && !_newMode && reg != 0x05)
+        bank = 0;
+    return _regs[static_cast<uint16_t>(reg) + (bank ? 256 : 0)];
+}
+
 void FmBus::Write(uint8_t bank, uint8_t reg, uint8_t data)
 {
     // Bank-1 -> bank-0 aliasing until NEW (0x105), except 0x105 itself

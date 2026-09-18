@@ -41,6 +41,13 @@ public:
     void Reset(); // bus state only (register shadow, timers, status, NEW)
     void Write(uint8_t bank, uint8_t reg, uint8_t data);
 
+    // Data-port read-back: the YMF278B register file answers data-port reads
+    // with the last-written value (openMSX MSXMoonSound::readIO -> readReg;
+    // MoonBlaster/MFM players read-modify-write C0 through it). Mirrors the
+    // Write decode's bank-1 -> bank-0 aliasing so the guest reads back
+    // exactly what its writes left.
+    uint8_t Read(uint8_t bank, uint8_t reg) const;
+
     // One 684-clock FM step: engine Advance + timer tick + routing + mute.
     // taps always receive the raw per-channel values (peaks read them);
     // outL/outR carry the routed, mute-applied mix when the engine provides

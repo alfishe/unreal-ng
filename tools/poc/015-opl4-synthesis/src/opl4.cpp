@@ -332,6 +332,12 @@ void Opl4::WriteFm(uint64_t time, int bank, uint8_t addr, uint8_t data)
     _impl->busyUntil = std::max(_impl->busyUntil, _impl->masterPos + kBusyFmWriteClocks);
 }
 
+uint8_t Opl4::ReadFm(uint64_t time, int bank, uint8_t addr)
+{
+    SyncTo(time); // time coherence only - a register read opens no BUSY window
+    return _impl->fmBus.Read(static_cast<uint8_t>(bank & 1), addr);
+}
+
 void Opl4::WriteWave(uint64_t time, uint8_t addr, uint8_t data)
 {
     SyncTo(time);
