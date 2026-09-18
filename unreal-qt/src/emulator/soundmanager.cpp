@@ -262,8 +262,12 @@ void AppSoundManager::audioDataCallback(ma_device* pDevice, void* pOutput, const
         {
             const size_t targetFrames = static_cast<size_t>(SoundManager::DRC_TARGET_MS * rate / 1000.0);
             const size_t dropped = obj->_ringBuffer.discard((occFrames - targetFrames) * 2) / 2;
-            qWarning("AppSoundManager: hard resync - dropped %zu frames (%.0f ms) of overfilled audio",
-                     dropped, dropped * 1000.0 / rate);
+            // Never log from the device callback: a console write here stalls
+            // the real-time audio thread. Print from the GUI thread instead.
+            QMetaObject::invokeMethod(obj, [dropped, rate]() {
+                qWarning("AppSoundManager: hard resync - dropped %zu frames (%.0f ms) of overfilled audio",
+                         dropped, dropped * 1000.0 / rate);
+            }, Qt::QueuedConnection);
         }
     }
 
@@ -305,8 +309,15 @@ void AppSoundManager::audioCallback(void* obj, int16_t* samples, size_t numSampl
             size_t deq = appSoundManager->_ringBuffer.getDequeueErrorCount();
             if (enq != appSoundManager->_lastEnqueueErrors || deq != appSoundManager->_lastDequeueErrors)
             {
-                qWarning("AppSoundManager: ring errors enqueue=%zu dequeue=%zu (occupancy %zu frames)", enq,
-                         deq, appSoundManager->_ringBuffer.getOccupancyStereoFrames());
+                // This runs on the emulation thread inside the frame: a
+                // synchronous console write here can itself overrun the
+                // frame budget and cause the next underrun - the very thing
+                // being reported - so the print is deferred to the GUI thread
+                const size_t occupancy = appSoundManager->_ringBuffer.getOccupancyStereoFrames();
+                QMetaObject::invokeMethod(appSoundManager, [enq, deq, occupancy]() {
+                    qWarning("AppSoundManager: ring errors enqueue=%zu dequeue=%zu (occupancy %zu frames)", enq,
+                             deq, occupancy);
+                }, Qt::QueuedConnection);
                 appSoundManager->_lastEnqueueErrors = enq;
                 appSoundManager->_lastDequeueErrors = deq;
             }

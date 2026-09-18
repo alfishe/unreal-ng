@@ -1174,6 +1174,8 @@ void MainWindow::toggleEmulatorStartStop()
                 // logger.TurnOnLoggingForModule(MODULE_IO, SUBMODULE_IO_OUT);
                 // logger.TurnOnLoggingForModule(MODULE_DISK, SUBMODULE_DISK_FDC);
                 logger.TurnOnLoggingForModule(MODULE_CORE, SUBMODULE_CORE_GENERIC);
+                // Frame pacing / producer health ("Frame time: ..." over-budget summary)
+                logger.TurnOnLoggingForModule(MODULE_CORE, SUBMODULE_CORE_MAINLOOP);
                 logger.TurnOnLoggingForModule(MODULE_LOADER, SUBMODULE_LOADER_SNA);
                 logger.TurnOnLoggingForModule(MODULE_LOADER, SUBMODULE_LOADER_Z80);
 
