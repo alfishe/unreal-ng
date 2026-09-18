@@ -384,8 +384,8 @@ bool Config::ParseConfig(IniFile& inimanager)
 	// MOONSOUND section (card options; enable/volume are the [SOUND] keys above).
 	// Wave ROM path: heritage unreal.ini ships it as [ROM] MOONSOUND=rom\opl4\YRW801...,
 	// so read that key first; an explicit [MOONSOUND] WaveRom overrides it (6.2).
-	CopyStringValue(inimanager.GetValue(rom, "MOONSOUND", nullptr, nullptr), config.moonsound.waveRom, sizeof config.moonsound.waveRom);
-	CopyStringValue(inimanager.GetValue(moonsound, "WaveRom", nullptr, nullptr), config.moonsound.waveRom, sizeof config.moonsound.waveRom);
+	CopyStringValue(inimanager.GetValue(rom, "MOONSOUND", nullptr), config.moonsound.waveRom, sizeof config.moonsound.waveRom);
+	CopyStringValue(inimanager.GetValue(moonsound, "WaveRom", nullptr), config.moonsound.waveRom, sizeof config.moonsound.waveRom);
 	{
 		long ramKb = inimanager.GetLongValue(moonsound, "RamSizeKb", 1024);
 		if (ramKb < 0 || ramKb > 1024)
@@ -398,17 +398,17 @@ bool Config::ParseConfig(IniFile& inimanager)
 
 	// RenderMode: authentic | hifi (default authentic)
 	line[0] = '\0';
-	CopyStringValue(inimanager.GetValue(moonsound, "RenderMode", nullptr, nullptr), line, sizeof line);
+	CopyStringValue(inimanager.GetValue(moonsound, "RenderMode", nullptr), line, sizeof line);
 	config.moonsound.renderMode = (StringHelper::CompareCaseInsensitive(line, "hifi", strlen("hifi")) == 0) ? 1 : 0;
 
 	// Quality: reference | highfidelity (default reference)
 	line[0] = '\0';
-	CopyStringValue(inimanager.GetValue(moonsound, "Quality", nullptr, nullptr), line, sizeof line);
+	CopyStringValue(inimanager.GetValue(moonsound, "Quality", nullptr), line, sizeof line);
 	config.moonsound.quality = (StringHelper::CompareCaseInsensitive(line, "highfidelity", strlen("highfidelity")) == 0) ? 1 : 0;
 
 	// Punch: off | pcm | both (default off)
 	line[0] = '\0';
-	CopyStringValue(inimanager.GetValue(moonsound, "Punch", nullptr, nullptr), line, sizeof line);
+	CopyStringValue(inimanager.GetValue(moonsound, "Punch", nullptr), line, sizeof line);
 	config.moonsound.punch = (StringHelper::CompareCaseInsensitive(line, "pcm", strlen("pcm")) == 0) ? 1
 	                      : (StringHelper::CompareCaseInsensitive(line, "both", strlen("both")) == 0) ? 2 : 0;
 
