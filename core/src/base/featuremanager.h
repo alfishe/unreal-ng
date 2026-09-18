@@ -6,7 +6,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "3rdparty/simpleini/simpleini.h"
+#include "common/inifile.h"
 
 // Forward declaration to avoid circular dependency
 class EmulatorContext;
