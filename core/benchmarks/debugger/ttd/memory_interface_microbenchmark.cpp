@@ -47,6 +47,31 @@
 #include <cstring>
 #include <random>
 #include <vector>
+#ifdef _WIN32
+#include <malloc.h>
+#endif
+
+namespace
+{
+// std::aligned_alloc does not exist on MSVC; the CRT pairs _aligned_malloc with _aligned_free
+inline uint8_t* AllocAlignedBank(size_t bytes)
+{
+#ifdef _WIN32
+    return static_cast<uint8_t*>(_aligned_malloc(bytes, 64));
+#else
+    return static_cast<uint8_t*>(std::aligned_alloc(64, bytes));
+#endif
+}
+
+inline void FreeAlignedBank(void* p)
+{
+#ifdef _WIN32
+    _aligned_free(p);
+#else
+    std::free(p);
+#endif
+}
+}  // namespace
 
 namespace
 {
@@ -66,14 +91,14 @@ struct FlatMemory
     {
         for (size_t i = 0; i < kNumBanks; ++i)
         {
-            banks[i] = static_cast<uint8_t*>(std::aligned_alloc(64, kBankSize));
+            banks[i] = AllocAlignedBank(kBankSize);
             std::memset(banks[i], 0, kBankSize);
         }
     }
 
     ~FlatMemory()
     {
-        for (size_t i = 0; i < kNumBanks; ++i) std::free(banks[i]);
+        for (size_t i = 0; i < kNumBanks; ++i) FreeAlignedBank(banks[i]);
     }
 
     FlatMemory(const FlatMemory&) = delete;

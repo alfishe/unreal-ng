@@ -77,7 +77,7 @@ void PokeDriver(Z80* z80)
     z80->halted = 0;
 }
 
-void RunFrameCostBenchmark(benchmark::State& state, bool playerLoad, bool turbo)
+void RunFrameCostBenchmark(benchmark::State& state, bool playerLoad, bool turbo, size_t coreRate = 0)
 {
     EmulatorManager* manager = EmulatorManager::GetInstance();
     std::shared_ptr<Emulator> emulator = manager->CreateEmulatorWithModel("bench-turbosound", "PENTAGON", LoggerLevel::LogNone);
@@ -100,6 +100,12 @@ void RunFrameCostBenchmark(benchmark::State& state, bool playerLoad, bool turbo)
         return;
     }
 
+    // Core-rate variants: the output stage synthesizes at the core rate, so
+    // its per-frame cost scales with it (192 k = 4.35x the outputs of 44.1 k).
+    // Applied at the next frame boundary - the warm-up frames absorb it.
+    if (coreRate != 0 && context->pSoundManager)
+        context->pSoundManager->requestCoreRate(static_cast<uint32_t>(coreRate));
+
     if (playerLoad)
         PokeDriver(core->GetZ80());
     else
@@ -116,6 +122,8 @@ void RunFrameCostBenchmark(benchmark::State& state, bool playerLoad, bool turbo)
         mainLoop->RunFramePublic();
 
     std::string label = playerLoad ? "player-load" : "idle";
+    if (coreRate != 0)
+        label += ", core " + std::to_string(coreRate) + " Hz";
     if (turbo)
         label += ", turbo";
     state.SetLabel(label);
@@ -146,3 +154,19 @@ static void BM_TurboSoundFrame_PlayerLoad_Turbo(benchmark::State& state)
 BENCHMARK(BM_TurboSoundFrame_Idle)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_TurboSoundFrame_PlayerLoad)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_TurboSoundFrame_PlayerLoad_Turbo)->Iterations(2000)->Unit(benchmark::kMicrosecond);
+
+// ---- Core-rate ladder: the same idle / player-load frames with the output
+// stage running at 44.1 k, 96 k and 192 k. Compare against the MainLoop
+// frame diagnostics ("step-sound") and BM_Decimator_* (the FIR share). ----
+static void BM_TurboSoundFrame_Idle_CoreRate(benchmark::State& state)
+{
+    RunFrameCostBenchmark(state, false, false, static_cast<size_t>(state.range(0)));
+}
+
+static void BM_TurboSoundFrame_PlayerLoad_CoreRate(benchmark::State& state)
+{
+    RunFrameCostBenchmark(state, true, false, static_cast<size_t>(state.range(0)));
+}
+
+BENCHMARK(BM_TurboSoundFrame_Idle_CoreRate)->Arg(44100)->Arg(96000)->Arg(192000)->Iterations(500)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_TurboSoundFrame_PlayerLoad_CoreRate)->Arg(44100)->Arg(96000)->Arg(192000)->Iterations(500)->Unit(benchmark::kMicrosecond);
