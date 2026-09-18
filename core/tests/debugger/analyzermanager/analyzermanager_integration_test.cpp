@@ -25,6 +25,8 @@
 #include "emulator/memory/memory.h"
 #include "base/featuremanager.h"
 
+#include "_helpers/testwaithelper.h"
+
 // Mock Analyzer that tracks breakpoint hits
 class TrackingAnalyzer : public IAnalyzer {
 public:
@@ -157,9 +159,15 @@ TEST_F(AnalyzerManagerIntegration_test, AnalyzerBreakpointIsSilent)
     
     // Execute a few CPU cycles (enough to hit 0x0000 and continue)
     _emulator->RunNCPUCycles(10, false);
-    
-    // Wait briefly for any async notifications
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    // Wait for the analyzer callback, then give MessageCenter a bounded window
+    // to deliver a notification it must not deliver. A fixed 50 ms sleep was
+    // wrong in both directions: it paid its full length on every pass, and it
+    // still only proved "nothing arrived in the interval I guessed".
+    EXPECT_TRUE(TestWait::ForAtLeast(mock->breakpointHitCount, 1))
+        << "Analyzer onBreakpointHit was never called";
+    EXPECT_TRUE(TestWait::ForExactly(messageCenterNotifications, 0))
+        << "Silent breakpoint leaked a MessageCenter notification";
     
     // Remove observer
     messageCenter.RemoveObserverById(NC_EXECUTION_BREAKPOINT, handlerId);
@@ -262,9 +270,12 @@ TEST_F(AnalyzerManagerIntegration_test, MixedBreakpointsBehavior)
     
     // Execute enough cycles to hit the analyzer breakpoint at 0x0000
     _emulator->RunNCPUCycles(10, false);
-    
-    // Wait briefly for any async notifications
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    // As above: wait for the callback, then bound the negative assertion.
+    EXPECT_TRUE(TestWait::ForAtLeast(mock->breakpointHitCount, 1))
+        << "Analyzer onBreakpointHit was never called";
+    EXPECT_TRUE(TestWait::ForExactly(messageCenterNotifications, 0))
+        << "Silent breakpoint leaked a MessageCenter notification";
     
     // Remove observer
     messageCenter.RemoveObserverById(NC_EXECUTION_BREAKPOINT, handlerId);

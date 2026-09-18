@@ -5,7 +5,7 @@
 #include "emulator/sound/audio.h"
 #include "emulator/ports/portdecoder.h"
 #include "common/modulelogger.h"
-#include "debugger/ttd/ttd_serializable.h"  // TTDSerializable (P1.5 peripheral serializer)
+#include "debugger/ttd/ttdserializable.h"  // TTDSerializable (P1.5 peripheral serializer)
 
 class EmulatorContext;
 struct blip_t;
@@ -67,11 +67,19 @@ protected:
     bool _dcRemovalEnabled = false;
     float _dcAccumL = 0.0f;
     float _dcAccumR = 0.0f;
+
+    // Activity tracking for HUD notification
+    bool _frameHadActivity = false;
+    bool _wasActive = false;
     static constexpr float DC_COEF = 0.995f;  // ~7 Hz cutoff @ 44.1 kHz
     float _dcCoefEff = DC_COEF;               // DC_COEF^(44100/fs): same cutoff Hz at every core rate
 
     // Core output rate (multirate plan phase 6)
     size_t _sampleRate;
+
+    // Input clock (T-states fed to blip): base CPU clock x frequency
+    // multiplier - the T-state position is descaled by EmulatorState::AudioTstate
+    size_t _clockRate = CPU_CLOCK_RATE;
 
 public:
     Covox() = delete;
@@ -84,6 +92,11 @@ public:
 
     /// Live core-rate change (device reroute with CoreRate=auto)
     void setSampleRate(size_t sampleRate);
+
+    /// CPU clock change (turbo / speed multiplier): Z80::t counts multiplied
+    /// cycles, so the blip input clock must track base x multiplier to keep
+    /// the output sample count realtime. Frame boundary only
+    void setClockRate(size_t clockRate);
 
     // Frame lifecycle
     void reset();
@@ -130,5 +143,11 @@ public:
     size_t TTDStateSize() const override;
     void   TTDSaveState(uint8_t* dst) const override;
     void   TTDLoadState(const uint8_t* src) override;
+
+    /// Identity used by TTDPeripheralRegistry. Without it the base class
+    /// returns PeripheralId::Count and the device cannot be indexed in a
+    /// checkpoint's blob map.
+    ttd::PeripheralId TTDPeripheralId() const override { return ttd::PeripheralId::Covox; }
+    std::string TTDDeviceName() const override { return "Covox"; }
     /// endregion </TTDSerializable interface>
 };

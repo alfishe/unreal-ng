@@ -28,7 +28,7 @@ provides **massive performance gains** for non-demo usage.
 |:---|:---|
 | [`screenzx.h`](core/src/emulator/video/zx/screenzx.h) | Added `DrawBatch8_Scalar`, `DrawBatch8_NEON`, `RenderScreen_Batch8` declarations |
 | [`screenzx.cpp`](core/src/emulator/video/zx/screenzx.cpp) | Implemented batch methods with NEON SIMD |
-| [`screenzx_benchmark.cpp`](core/benchmarks/emulator/video/screenzx_benchmark.cpp) | Added 4 new benchmarks |
+| [`screenzxbenchmark.cpp`](core/benchmarks/emulator/video/screenzxbenchmark.cpp) | Added 4 new benchmarks |
 | [`screenzx_test.cpp`](core/tests/emulator/video/screenzx_test.cpp) | Added 3 new unit tests |
 
 ### Key Methods

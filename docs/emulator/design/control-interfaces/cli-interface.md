@@ -91,6 +91,20 @@ This allows immediate use without explicit `select` command when only one emulat
 
 See [command-interface.md](./command-interface.md) for complete command reference. All commands listed there are available via CLI.
 
+### Device State Commands
+
+Text renderings of the core device reports (the same data the WebAPI, Lua,
+Python and MCP return — [command-interface.md §3.3](./command-interface.md#33-device-state-reports-ay--ssg-turbosound-fm-beta-disk-fdc)):
+
+```
+state audio ay          AY/SSG overview           state audio ay 0    one chip decoded
+state audio fm          TurboSound FM overview    state audio fm 1    one YM2203 FM half in full
+state fdc               Beta Disk WD1793 (aliases: state disk, state wd1793)
+```
+
+Nested keys are indented, arrays print as `[index]` blocks. A device that is
+not on the machine prints `available: false` and a `description`.
+
 ### CLI-Specific Behavior
 
 **Interactive Help**:
@@ -112,6 +126,32 @@ The CLI supports command aliases for convenience:
 - `u` → `disasm` (disassemble)
 - `quit` → `exit`
 
+**Model Creation Semantics** (strict, matching WebAPI):
+```
+> create pentagon
+Created emulator instance: 550e8400-...
+Model: PENTAGON - Pentagon (128KB)
+Config folder: pentagon128k
+Video mode: ZX
+
+> create atm710
+Error: Failed to create emulator with model 'atm710'
+Reason: model 'ATM710' is not supported by this build (PortDecoder::GetPortDecoderForModel - unknown model 6)
+Available models: PENTAGON, 48K, ...
+
+> models
+Available ZX Spectrum:
+=============================
+  PENTAGON - Pentagon
+  48K - ZX-Spectrum 48K
+  ATM710 - ATM-Turbo 2+ v7.10 (not creatable on this build)
+  ...
+```
+- `create`/`start <model>` echo the RESOLVED model and RAM, not the requested string.
+- A model this build cannot create fails with a `Reason:` line — no silent fallback to 48K.
+- `status` output starts with a `Build: v<version> (<branch> @ <commit>, <type>)` fingerprint line.
+- `GET /api/v1/emulator/models` (`creatable` flags) remains the runtime-authoritative model source.
+
 **Error Messages**:
 ```
 > invalid_command
@@ -125,7 +165,7 @@ The CLI implements the same command semantics as other interfaces (WebAPI, Pytho
 
 | WebAPI Endpoint | CLI Equivalent | Reason Not in CLI |
 | :--- | :--- | :--- |
-| `GET /emulator/models` | — | Model discovery is typically done once at startup via config; CLI users select model when creating emulator |
+| `GET /emulator/models` | `models` | CLI shows the same list with `(not creatable on this build)` markers; the endpoint's `creatable` flags stay authoritative |
 | `DELETE /emulator/{id}` | `stop` | CLI uses `stop` which both stops and removes; separate remove is for advanced orchestration |
 | `POST /emulator/{id}/start` | `resume` | Starting an existing (initialized but not running) emulator uses `resume` in CLI |
 
@@ -138,17 +178,22 @@ The CLI exposes the TTD surface with the `ttd` top-level verb and a subcommand. 
 
 | CLI Verb | Alias | Description | Status |
 | :--- | :--- | :--- | :--- |
-| `ttd status` | `ttd info` | Show session origin (recorded here vs loaded from a file, with the path), machine model, frame range, checkpoint count, write-journal and coverage-index sizes, and memory used. Always available. | ✅ Implemented |
-| `ttd start` | `ttd rec` | Begin recording at the next frame boundary. | 🔮 Phase 1 |
-| `ttd stop` | — | Stop capturing; retain history. | 🔮 Phase 1 |
-| `ttd clear` | — | Drop all captured data. | 🔮 Phase 1 |
-| `ttd seek --frame N` | — | Seek to frame N (optionally `--tstate T` for intra-frame). | 🔮 Phase 2 |
-| `ttd step-back` | `ttd sb` | One instruction back. Add `--unit frame` for full-frame step. | 🔮 Phase 2 |
-| `ttd step-forward` | `ttd sf` | One instruction forward within recorded history. | 🔮 Phase 2 |
-| `ttd find-last --addr A --access W` | `ttd fl` | Reverse watchpoint. Full filter set in the command reference. | 🔮 Phase 4 |
-| `ttd timeline` | — | Paginated per-frame summary (`--from`/`--to`/`--limit`). | 🔮 Phase 3 |
-| `ttd bookmark <add\|remove\|list>` | `ttd bm` | Named markers in the timeline. | 🔮 Phase 3 |
-| `ttd resume-from-here` | — | Truncate future and resume live recording from current position. | 🔮 Phase 2 |
+| `ttd status` | `ttd info` | Session snapshot: origin (recorded here vs loaded from file, with path), machine model, frame range, checkpoint count, write-journal and coverage-index sizes, memory. Always available (doubles as capability probe). | ✅ Implemented |
+| `ttd start` | `ttd rec` | Begin recording at the next frame boundary. | ✅ Implemented |
+| `ttd stop` | — | Stop capturing; retain history. | ✅ Implemented |
+| `ttd invalidate` | `ttd clear`, `ttd reset` | Invalidate the session and drop captured data. | ✅ Implemented |
+| `ttd seek --frame N` | `ttd goto` | Seek to a (frame, tstate) point; optionally `--tstate T` for intra-frame. | ✅ Implemented |
+| `ttd step-back` | `ttd sb`, `back` | One frame back. | ✅ Implemented |
+| `ttd step-forward` | `ttd sf`, `forward` | One frame forward. | ✅ Implemented |
+| `ttd resume` | — | Truncate future at the current (detached) position and resume live recording. | ✅ Implemented |
+| `ttd position` | `ttd pos` | Current time point (frame/tstate) and session bounds. | ✅ Implemented |
+| `ttd markers` | `ttd barriers` | List external-event markers in the timeline. | ✅ Implemented |
+| `ttd dump <path>` | `ttd save` | Serialize the session to a `.ttd` file. | ✅ Implemented |
+| `ttd load <path>` | `ttd open` | Restore a dumped session (model must match the recording). | ✅ Implemented |
+| `ttd find-last --addr A` | `ttd fl` | Reverse watchpoint: find the last access at an address (full filter set in the command reference). | ✅ Implemented |
+| `ttd step-instruction` | `si-back` / `si-forward` | Step one Z80 instruction back or forward within recorded history. | ✅ Implemented |
+| `ttd reverse-step` | `ttd rs` | Reverse-step execution. | ✅ Implemented |
+| `ttd reverse-continue` | `ttd rc` | Reverse-continue execution. | ✅ Implemented |
 
 **Interactive session example** (post-mortem crash forensics):
 
@@ -172,6 +217,93 @@ frame=4823  tstate=14982  pc=0x4A21  value=0x07  physpage=5
 - All run-affecting `ttd` verbs require the emulator to be paused and the CLI session to hold the run-control claim. Read-only verbs (`status`, `timeline`, `bookmark list`) work regardless.
 - The `timetravel` feature flag must be ON for recording/seek/replay. `status` works regardless and returns `{recording: false}` when TTD is off.
 - Seek latency depends on tier density — typically 1–20 ms in the dense (recent) tier; see the [implementation plan](../debugger/time-travel-debug/implementation-plan.md) for targets.
+
+### Mouse Input Commands
+
+The `mouse` verb drives the Kempston Mouse of the selected emulator (source:
+`core/automation/cli/src/commands/cli-processor-mouse.cpp`, output formatting in
+`cli-mouse-format.h`). Full semantics, units and limits: [command-interface.md §11](./command-interface.md#11-mouse-input-injection).
+
+| CLI Command | Alias | Description |
+| :--- | :--- | :--- |
+| `mouse move <dx> <dy>` | | Relative move in emulated pixels, +x right, **+y up**, −127…127 each |
+| `mouse press <button>` / `mouse release <button>` | | `left`/`right`/`middle` or `l`/`r`/`m` |
+| `mouse click <button> [frames]` | | Hold for `frames` (default 2), then release on its own |
+| `mouse buttons <none\|b1,b2…>` | | Exact pressed set; `left,middle` and `left middle` both work |
+| `mouse wheel <steps>` | | −7…7, not 0 |
+| `mouse clear` | `mouse release_all` | Release all buttons, cancel a pending click |
+| `mouse status` | `mouse info` | Multi-line state block |
+| `mouse set <x> <y>` | | Debug: raw counters 0…255 |
+| `mouse help` | | Subcommand help |
+
+Arguments must be whole integers: `10px` or `1.5` gives `Error: Invalid dx '10px': expected an integer`.
+Every successful command prints one line with the resulting state; a second `Warning:` line
+appears when the change cannot reach the program.
+
+**Interactive session example** (Pentagon after reset, shipped config `Wheel=NONE`):
+
+```
+> pause
+> mouse move 10 -5
+Moved: dx=+10 dy=-5 -> X=41 Y=80
+> mouse press l
+Pressed: left -> buttons=L-- (#FADF=0xFE)
+> mouse wheel 1
+Wheel: +1 -> wheel=1 (#FADF=0xFE)
+Warning: no wheel fitted ([INPUT] Wheel=NONE): the guest does not see the wheel counter
+> mouse move 300 0
+Error: dx=300 out of range -127..127; split into several moves with run_frames between them
+> mouse click right 3
+Clicked: right for 3 frames -> buttons=LR- (#FADF=0xFC)
+> mouse status
+Kempston Mouse [present]
+  X=41 (0x29)  Y=80 (0x50)
+  Buttons: left=down right=down middle=up  (mask 0xFC)
+  Wheel: 1 (no wheel fitted)
+  Ports: #FADF=0xFC #FBDF=0x29 #FFDF=0x50
+  Pending click: right, 3 frame(s) left
+  TTD journal: supported
+  Routing: decoded (standard Kempston address decode)
+```
+
+How to read `#FADF`: bits 0–2 are the buttons (0 = pressed: `0xFC` = left and right down),
+bit 3 is always 1, and bits 4–7 are 1 unless a wheel is fitted (`[INPUT] Wheel=KEMPSTON`),
+in which case they carry the wheel counter.
+
+The `Routing:` line (mirrors the WebAPI `/mouse/status` `routing` object) tells whether a
+mouse port read is decoded **right now**: `shadowed - TR-DOS ports accessible (CF_DOSPORTS):
+only Beta Disk operations answer` while TR-DOS owns the port space, `shadowed - hidden by
+model-specific decoder gating` behind the Scorpion DOS trigger / Shadow Monitor, or
+`shadowed - mouse not fitted for this config ([INPUT] Mouse=)` when nothing is connected.
+
+**Notes**:
+- `mouse` commands are refused with `Error: TTD replay in progress; live mouse input refused`
+  while TTD replays. While TTD records they are journalled, `mouse set` included.
+- The CLI does not run frames for you. After a `click`, use `run_frames` (or resume) so the
+  program sees the press and the release.
+
+### Analysis, Capture & Assembly Commands
+
+The analysis, capture and assembly families are available on **all** automation
+interfaces with identical semantics (CLI, WebAPI, Lua, Python). Full argument
+reference: [command-interface.md](./command-interface.md).
+
+| CLI Command | Description |
+| :--- | :--- |
+| `stepout` | Run until the current subroutine returns to its caller. |
+| `skip_until <pc>` | Fast-forward until PC reaches the target (breakpoints skipped, bounded budget). |
+| `find <pattern>` | Search the Z80 address space for a byte pattern (`--from`, `--to`, `--align`, `--max`). |
+| `digest <start> <end>` | Stable 64-bit screen-content digest (`--banks`, `--active`, `--no-border`). |
+| `ports` | Static port map with live routing flags: port/mask/match/device/gate rows from the machine's port decoder, plus TR-DOS active, mouse routing and the Scorpion Shadow Monitor latch. |
+| `beam` | Current raster position and beam zone. |
+| `frame_cost` | Per-frame halt/run cost accounting. |
+| `coverage <start\|stop\|clear\|gaps\|status>` | Executed-address coverage analysis. |
+| `aylog <start\|stop\|clear\|dump\|status>` | AY-3-8910 register access log. |
+| `audiocapture <start\|stop\|clear\|result\|save>` | Audio capture with level stats and WAV export. |
+| `videorecord <start\|stop\|pause\|resume\|status>` | Screen recording (requires `ENABLE_RECORDING` build). |
+| `assemble <addr> <code>` (`asm`) | Assemble Z80 source in place (`--write` to patch RAM). |
+| `label resolve <name\|addr>` | Resolve a label by name or an address to labels + context. |
+| `listing <load\|clear\|info\|source_at\|step_line\|run_to_line>` | Source-level debugging via assembler listings. |
 
 ## Connection Examples
 

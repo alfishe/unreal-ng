@@ -25,8 +25,13 @@ bool DiskImage::allocateMemory(uint8_t cylinders, uint8_t sides)
             track._cylinder = static_cast<uint8_t>(i / sides);
             track._side = static_cast<uint8_t>(i % sides);
 
-            // Blank TR-DOS formatted track (16 x 256, sectors 1..16, valid CRCs, clock marks on every A1)
-            track.formatTrack(track._cylinder, track._side);
+            // Blank TR-DOS formatted track (16 x 256, sectors 1..16, valid CRCs, clock marks on every A1).
+            // The first track is formatted for real; the others are stamped from it (same stream, ID fields
+            // re-addressed) - formatting and re-indexing 160 tracks byte by byte dominated image creation
+            if (i == 0)
+                track.formatTrack(track._cylinder, track._side);
+            else
+                track.restampFrom(_tracks[0], track._cylinder, track._side);
             track.markClean();
         }
         /// endregion </Allocate objects for new disk>

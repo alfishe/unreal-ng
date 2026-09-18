@@ -10,6 +10,25 @@
 
 #include "emulator.h"
 
+/// @struct MachineIdentity
+/// @brief Machine identity snapshot shared by every automation surface
+///
+/// Parity rule: WebAPI, MCP and CLI are equally important consumers and must
+/// report identical machine information. This struct is computed in ONE place
+/// (EmulatorManager::GetMachineIdentity) so the surfaces can never drift;
+/// each module only decides how to serialize it (JSON keys / text lines).
+struct MachineIdentity
+{
+    std::string Model;           ///< Short name from the model table ("48K")
+    std::string ModelFullName;   ///< Human-readable name ("ZX-Spectrum 48k")
+    uint32_t RamKb = 0;          ///< Resolved RAM size in KB
+    std::string VideoMode;       ///< Live video mode name (empty until the screen subsystem exists)
+    bool HasVideoMode = false;   ///< Whether VideoMode carries a value
+    double SpeedMultiplier = 1.0; ///< Live z80 frequency multiplier (turbo)
+    std::string ConfigFolder;    ///< configs/<folder> backing this machine
+    bool Valid = false;          ///< False while the emulator context does not exist yet
+};
+
 /// @class EmulatorManager
 /// @brief Manages multiple emulator instances
 ///
@@ -36,6 +55,17 @@ private:
 
     // Shutdown flag - blocks state changes during application exit
     std::atomic<bool> _isShuttingDown{false};
+
+    /// Recompute per-instance real-time scheduling requests from the current
+    /// selection: exactly one instance - the selected one, or the sole
+    /// instance when nothing is selected - keeps its emulation thread
+    /// real-time; every other thread drops back to normal scheduling
+    /// (user-facing rule: only the ACTIVE emulator may hold real-time
+    /// priority). Called after every selection / instance-map mutation
+    void UpdateRealtimeScheduling();
+
+    /// Same, for callers that already hold _emulatorsMutex
+    void UpdateRealtimeSchedulingLocked();
 
     // Private constructor for a singleton pattern
     EmulatorManager() = default;
@@ -75,16 +105,20 @@ public:
     /// @param symbolicId Optional symbolic identifier for the emulator
     /// @param modelName Name of the model to create (e.g., "PENTAGON", "48K", "128K")
     /// @param level Logging level for the emulator (note: automation-created instances automatically disable all modular logging)
+    /// @param outError Optional; when non-null it receives a human-readable failure reason
+    ///        (unknown model, model not supported by this build, init failure) on nullptr return
     /// @return Shared pointer to the created emulator, or nullptr on failure
-    std::shared_ptr<Emulator> CreateEmulatorWithModel(const std::string& symbolicId, const std::string& modelName, LoggerLevel level = LoggerLevel::LogWarning);
+    std::shared_ptr<Emulator> CreateEmulatorWithModel(const std::string& symbolicId, const std::string& modelName, LoggerLevel level = LoggerLevel::LogWarning, std::string* outError = nullptr);
 
     /// @brief Create a new emulator instance with a specific model and custom RAM size
     /// @param symbolicId Optional symbolic identifier for the emulator
     /// @param modelName Name of the model to create
     /// @param ramSize RAM size in KB (must be supported by the model)
     /// @param level Logging level for the emulator (note: automation-created instances automatically disable all modular logging)
+    /// @param outError Optional; when non-null it receives a human-readable failure reason
+    ///        (unknown model, RAM size not supported, model not supported by this build, init failure) on nullptr return
     /// @return Shared pointer to the created emulator, or nullptr on failure
-    std::shared_ptr<Emulator> CreateEmulatorWithModelAndRAM(const std::string& symbolicId, const std::string& modelName, uint32_t ramSize, LoggerLevel level = LoggerLevel::LogWarning);
+    std::shared_ptr<Emulator> CreateEmulatorWithModelAndRAM(const std::string& symbolicId, const std::string& modelName, uint32_t ramSize, LoggerLevel level = LoggerLevel::LogWarning, std::string* outError = nullptr);
 
     /// @brief Get an existing emulator by ID
     /// @param emulatorId ID of the emulator to retrieve
@@ -99,6 +133,14 @@ public:
     /// @brief Get a list of all available emulator models
     /// @return Vector of model information structures
     std::vector<TMemModel> GetAvailableModels() const;
+
+    /// @brief Snapshot the machine identity of an emulator instance
+    /// @details Single source for the identity information reported by WebAPI,
+    ///          MCP and CLI (parity rule). Works on partially initialized
+    ///          instances: Valid=false when the context does not exist yet.
+    /// @param emulator Emulator instance to describe
+    /// @return Filled MachineIdentity struct
+    static MachineIdentity GetMachineIdentity(Emulator& emulator);
 
     /// @brief Get all emulator IDs
     /// @return Vector of emulator IDs

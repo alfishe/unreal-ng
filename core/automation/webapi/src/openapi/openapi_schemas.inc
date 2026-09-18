@@ -14,10 +14,34 @@
     schemas["EmulatorInfo"]["properties"]["is_running"]["type"] = "boolean";
     schemas["EmulatorInfo"]["properties"]["is_paused"]["type"] = "boolean";
     schemas["EmulatorInfo"]["properties"]["is_debug"]["type"] = "boolean";
+    // Machine identity block (P0-1): every lifecycle response carries it
+    schemas["EmulatorInfo"]["properties"]["model"]["type"] = "string";
+    schemas["EmulatorInfo"]["properties"]["model"]["description"] = "Model short name (e.g. 'PENTAGON', '48K')";
+    schemas["EmulatorInfo"]["properties"]["model_full_name"]["type"] = "string";
+    schemas["EmulatorInfo"]["properties"]["model_full_name"]["description"] = "Human-readable model name";
+    schemas["EmulatorInfo"]["properties"]["ram_kb"]["type"] = "integer";
+    schemas["EmulatorInfo"]["properties"]["ram_kb"]["description"] = "Configured RAM in KB";
+    schemas["EmulatorInfo"]["properties"]["video_mode"]["type"] = "string";
+    schemas["EmulatorInfo"]["properties"]["video_mode"]["nullable"] = true;
+    schemas["EmulatorInfo"]["properties"]["video_mode"]["description"] =
+        "Active video mode name (null until the screen subsystem exists)";
+    schemas["EmulatorInfo"]["properties"]["speed_multiplier"]["type"] = "integer";
+    schemas["EmulatorInfo"]["properties"]["speed_multiplier"]["description"] =
+        "Live Z80 frequency multiplier (reflects turbo)";
+    schemas["EmulatorInfo"]["properties"]["config_folder"]["type"] = "string";
+    schemas["EmulatorInfo"]["properties"]["config_folder"]["description"] = "Machine config folder under configs/";
+
+    schemas["BuildInfo"]["type"] = "object";
+    schemas["BuildInfo"]["description"] = "Build fingerprint captured at CMake configure time";
+    schemas["BuildInfo"]["properties"]["version"]["type"] = "string";
+    schemas["BuildInfo"]["properties"]["git_branch"]["type"] = "string";
+    schemas["BuildInfo"]["properties"]["git_commit"]["type"] = "string";
+    schemas["BuildInfo"]["properties"]["build_type"]["type"] = "string";
 
     schemas["CreateEmulatorRequest"]["type"] = "object";
     schemas["CreateEmulatorRequest"]["properties"]["model"]["type"] = "string";
-    schemas["CreateEmulatorRequest"]["properties"]["model"]["description"] = "Emulator model (e.g., ZX48, ZX128)";
+    schemas["CreateEmulatorRequest"]["properties"]["model"]["description"] =
+        "Model short name; a model that cannot be created on this build fails with 400 (no fallback)";
 
     // Settings Management schemas
     schemas["SettingsResponse"]["type"] = "object";
@@ -37,6 +61,60 @@
     schemas["FeatureInfo"]["properties"]["id"]["type"] = "string";
     schemas["FeatureInfo"]["properties"]["enabled"]["type"] = "boolean";
     schemas["FeatureInfo"]["properties"]["description"]["type"] = "string";
+
+    // Mouse Injection schemas (api/mouse_api.cpp)
+    schemas["MouseState"]["type"] = "object";
+    schemas["MouseState"]["description"] = "Kempston mouse state";
+    schemas["MouseState"]["properties"]["available"]["type"] = "boolean";
+    schemas["MouseState"]["properties"]["available"]["description"] = "A mouse device exists in this emulator";
+    schemas["MouseState"]["properties"]["present"]["type"] = "boolean";
+    schemas["MouseState"]["properties"]["present"]["description"] =
+        "Mouse fitted; when false the guest reads the floating bus on the mouse ports";
+    schemas["MouseState"]["properties"]["wheel_enabled"]["type"] = "boolean";
+    schemas["MouseState"]["properties"]["x"]["type"] = "integer";
+    schemas["MouseState"]["properties"]["x"]["description"] = "X counter 0..255";
+    schemas["MouseState"]["properties"]["y"]["type"] = "integer";
+    schemas["MouseState"]["properties"]["y"]["description"] = "Y counter 0..255";
+    for (const char* button : {"left", "right", "middle"})
+        schemas["MouseState"]["properties"]["buttons"]["properties"][button]["type"] = "boolean";
+    schemas["MouseState"]["properties"]["buttons"]["type"] = "object";
+    schemas["MouseState"]["properties"]["button_mask"]["type"] = "integer";
+    schemas["MouseState"]["properties"]["button_mask"]["description"] =
+        "Active-low internal mask (D0 left, D1 right, D2 middle); 255 = none pressed";
+    schemas["MouseState"]["properties"]["wheel"]["type"] = "integer";
+    schemas["MouseState"]["properties"]["wheel"]["description"] = "Wheel counter 0..15";
+    schemas["MouseState"]["properties"]["ports"]["type"] = "object";
+    schemas["MouseState"]["properties"]["ports"]["description"] = "Bytes IN returns from each port right now";
+    for (const char* port : {"FADF", "FBDF", "FFDF"})
+        schemas["MouseState"]["properties"]["ports"]["properties"][port]["type"] = "integer";
+    schemas["MouseState"]["properties"]["pending_click"]["type"] = "object";
+    schemas["MouseState"]["properties"]["pending_click"]["nullable"] = true;
+    schemas["MouseState"]["properties"]["pending_click"]["properties"]["button"]["type"] = "string";
+    schemas["MouseState"]["properties"]["pending_click"]["properties"]["frames_left"]["type"] = "integer";
+    schemas["MouseState"]["properties"]["ttd_journal"]["type"] = "string";
+    schemas["MouseState"]["properties"]["ttd_journal"]["enum"].append("supported");
+    schemas["MouseState"]["properties"]["ttd_journal"]["enum"].append("unsupported");
+
+    schemas["MouseStatus"]["description"] = "Response from GET /mouse/status";
+    schemas["MouseStatus"]["allOf"][0]["$ref"] = "#/components/schemas/MouseState";
+    schemas["MouseStatus"]["allOf"][1]["type"] = "object";
+    schemas["MouseStatus"]["allOf"][1]["properties"]["emulator_id"]["type"] = "string";
+    schemas["MouseStatus"]["allOf"][1]["properties"]["warning"]["type"] = "string";
+    schemas["MouseStatus"]["allOf"][1]["properties"]["routing"]["type"] = "object";
+    schemas["MouseStatus"]["allOf"][1]["properties"]["routing"]["description"] =
+        "Design Q4 answer: whether mouse port reads are decoded right now and why not";
+    schemas["MouseStatus"]["allOf"][1]["properties"]["routing"]["properties"]["ports_decoded"]["type"] = "boolean";
+    schemas["MouseStatus"]["allOf"][1]["properties"]["routing"]["properties"]["note"]["type"] = "string";
+
+    schemas["MouseInjectResponse"]["type"] = "object";
+    schemas["MouseInjectResponse"]["description"] =
+        "Response from a mouse input POST: echoes the input fields plus the resulting state";
+    schemas["MouseInjectResponse"]["properties"]["success"]["type"] = "boolean";
+    schemas["MouseInjectResponse"]["properties"]["message"]["type"] = "string";
+    schemas["MouseInjectResponse"]["properties"]["warning"]["type"] = "string";
+    schemas["MouseInjectResponse"]["properties"]["warning"]["description"] =
+        "Set when the input cannot reach the guest (mouse or wheel not fitted)";
+    schemas["MouseInjectResponse"]["properties"]["state"]["$ref"] = "#/components/schemas/MouseState";
     schemas["FeatureInfo"]["properties"]["mode"]["type"] = "string";
 
     // Debug Commands schemas
@@ -368,6 +446,12 @@
     schemas["TTDStatusResponse"]["properties"]["coverage_index_bytes"]["format"] = "uint64";
     schemas["TTDStatusResponse"]["properties"]["coverage_index_bytes"]["description"] =
             "Compressed size of the coverage index across all access kinds.";
+    schemas["TTDStatusResponse"]["properties"]["bookmark_count"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["bookmark_count"]["format"] = "uint64";
+    schemas["TTDStatusResponse"]["properties"]["bookmark_count"]["description"] =
+            "Agent bookmarks currently stored beside the timeline (TD-4). "
+            "Advisory annotations — unlike external-event markers they never "
+            "halt a seek.";
 
     schemas["TTDStatusResponse"]["properties"]["session_heap_bytes"]["type"] = "integer";
     schemas["TTDStatusResponse"]["properties"]["session_heap_bytes"]["format"] = "uint64";
@@ -446,14 +530,18 @@
     // ---------------------------------------------------------------------
     schemas["TTDSeekRequest"]["type"] = "object";
     schemas["TTDSeekRequest"]["description"] =
-        "Request body for POST /ttd/seek. frame is required; tinframe "
-        "defaults to 0 (frame boundary).";
+        "Request body for POST /ttd/seek. Either frame (with optional tinframe, "
+        "defaulting to the frame boundary) or bookmark must be present — a "
+        "bookmark label resolves to its stored (frame, tinframe) first.";
     schemas["TTDSeekRequest"]["properties"]["frame"]["type"] = "integer";
     schemas["TTDSeekRequest"]["properties"]["frame"]["format"] = "uint64";
-    schemas["TTDSeekRequest"]["required"].append("frame");
     schemas["TTDSeekRequest"]["properties"]["tinframe"]["type"] = "integer";
     schemas["TTDSeekRequest"]["properties"]["tinframe"]["format"] = "uint32";
     schemas["TTDSeekRequest"]["properties"]["tinframe"]["default"] = 0;
+    schemas["TTDSeekRequest"]["properties"]["bookmark"]["type"] = "string";
+    schemas["TTDSeekRequest"]["properties"]["bookmark"]["description"] =
+            "TD-4 bookmark label to seek to (alternative to frame). Unknown "
+            "labels get a 404.";
 
     schemas["TTDSeekResponse"]["type"] = "object";
     schemas["TTDSeekResponse"]["description"] =
@@ -477,6 +565,10 @@
     schemas["TTDSeekResponse"]["properties"]["state"]["enum"].append("idle");
     schemas["TTDSeekResponse"]["properties"]["state"]["enum"].append("recording");
     schemas["TTDSeekResponse"]["properties"]["state"]["enum"].append("detached");
+    schemas["TTDSeekResponse"]["properties"]["bookmark"]["type"] = "string";
+    schemas["TTDSeekResponse"]["properties"]["bookmark"]["description"] =
+            "Present only when the seek was requested by bookmark label (TD-4). "
+            "Echoes the resolved label.";
 
     // ---------------------------------------------------------------------
     // Reusable marker — external event that acts as a replay barrier.
@@ -570,6 +662,66 @@
         "#/components/schemas/TTDMarker";
 
     // ---------------------------------------------------------------------
+    // TD-4 — agent bookmarks. Advisory annotations stored beside the
+    // timeline (never inside the external-event journal), serialized in the
+    // .ttd session, and never a replay barrier: a bookmark never appears as
+    // a halt_reason.
+    // ---------------------------------------------------------------------
+
+    schemas["TTDBmk"]["type"] = "object";
+    schemas["TTDBmk"]["description"] =
+        "Agent bookmark: a named (frame, tinframe) annotation. Contrast with "
+        "TTDMarker — bookmarks are advisory and never halt a seek.";
+    schemas["TTDBmk"]["properties"]["frame"]["type"] = "integer";
+    schemas["TTDBmk"]["properties"]["frame"]["format"] = "uint64";
+    schemas["TTDBmk"]["properties"]["tinframe"]["type"] = "integer";
+    schemas["TTDBmk"]["properties"]["tinframe"]["format"] = "uint32";
+    schemas["TTDBmk"]["properties"]["label"]["type"] = "string";
+    schemas["TTDBmk"]["properties"]["label"]["description"] =
+            "Unique session key: non-empty, at most 63 characters.";
+
+    schemas["TTDBookmarkAddRequest"]["type"] = "object";
+    schemas["TTDBookmarkAddRequest"]["description"] =
+        "Request body for POST /ttd/bookmarks. When frame is omitted the "
+        "bookmark is placed at the current position (mark-here).";
+    schemas["TTDBookmarkAddRequest"]["properties"]["label"]["type"] = "string";
+    schemas["TTDBookmarkAddRequest"]["properties"]["label"]["maxLength"] = 63;
+    schemas["TTDBookmarkAddRequest"]["properties"]["label"]["minLength"] = 1;
+    schemas["TTDBookmarkAddRequest"]["required"].append("label");
+    schemas["TTDBookmarkAddRequest"]["properties"]["frame"]["type"] = "integer";
+    schemas["TTDBookmarkAddRequest"]["properties"]["frame"]["format"] = "uint64";
+    schemas["TTDBookmarkAddRequest"]["properties"]["tinframe"]["type"] = "integer";
+    schemas["TTDBookmarkAddRequest"]["properties"]["tinframe"]["format"] = "uint32";
+    schemas["TTDBookmarkAddRequest"]["properties"]["tinframe"]["default"] = 0;
+
+    schemas["TTDBookmarksResponse"]["type"] = "object";
+    schemas["TTDBookmarksResponse"]["description"] =
+        "Response from GET /ttd/bookmarks. count is len(bookmarks); the list "
+        "is time-sorted.";
+    schemas["TTDBookmarksResponse"]["properties"]["count"]["type"] = "integer";
+    schemas["TTDBookmarksResponse"]["properties"]["count"]["format"] = "uint64";
+    schemas["TTDBookmarksResponse"]["properties"]["bookmarks"]["type"] = "array";
+    schemas["TTDBookmarksResponse"]["properties"]["bookmarks"]["items"]["$ref"] =
+        "#/components/schemas/TTDBmk";
+
+    schemas["TTDBookmarkAddedResponse"]["type"] = "object";
+    schemas["TTDBookmarkAddedResponse"]["description"] =
+        "Response from POST /ttd/bookmarks (201 Created).";
+    schemas["TTDBookmarkAddedResponse"]["properties"]["added"]["type"] = "boolean";
+    schemas["TTDBookmarkAddedResponse"]["properties"]["label"]["type"] = "string";
+    schemas["TTDBookmarkAddedResponse"]["properties"]["frame"]["type"] = "integer";
+    schemas["TTDBookmarkAddedResponse"]["properties"]["frame"]["format"] = "uint64";
+    schemas["TTDBookmarkAddedResponse"]["properties"]["tinframe"]["type"] = "integer";
+    schemas["TTDBookmarkAddedResponse"]["properties"]["tinframe"]["format"] = "uint32";
+
+    schemas["TTDBookmarkDeletedResponse"]["type"] = "object";
+    schemas["TTDBookmarkDeletedResponse"]["description"] =
+        "Response from DELETE /ttd/bookmarks/{label} (200 OK; unknown labels "
+        "get a 404 instead).";
+    schemas["TTDBookmarkDeletedResponse"]["properties"]["removed"]["type"] = "boolean";
+    schemas["TTDBookmarkDeletedResponse"]["properties"]["label"]["type"] = "string";
+
+    // ---------------------------------------------------------------------
     // Phase 4 — reverse-search + dump + instruction-step schemas
     // ---------------------------------------------------------------------
 
@@ -591,6 +743,29 @@
     schemas["TTDDumpResponse"]["properties"]["bytes"]["format"] = "int64";
     schemas["TTDDumpResponse"]["properties"]["error"]["type"] = "string";
 
+    // POST /ttd/load
+    schemas["TTDLoadRequest"]["type"] = "object";
+    schemas["TTDLoadRequest"]["description"] =
+        "Request body for POST /ttd/load.";
+    schemas["TTDLoadRequest"]["properties"]["path"]["type"] = "string";
+    schemas["TTDLoadRequest"]["properties"]["path"]["description"] =
+        "Filesystem path of the .ttd file to restore.";
+    schemas["TTDLoadRequest"]["required"].append("path");
+
+    schemas["TTDLoadResponse"]["type"] = "object";
+    schemas["TTDLoadResponse"]["description"] =
+        "Response from POST /ttd/load.";
+    schemas["TTDLoadResponse"]["properties"]["ok"]["type"] = "boolean";
+    schemas["TTDLoadResponse"]["properties"]["path"]["type"] = "string";
+    schemas["TTDLoadResponse"]["properties"]["checkpoint_count"]["type"] = "integer";
+    schemas["TTDLoadResponse"]["properties"]["checkpoint_count"]["format"] = "uint64";
+    schemas["TTDLoadResponse"]["properties"]["session_start_frame"]["type"] = "integer";
+    schemas["TTDLoadResponse"]["properties"]["session_start_frame"]["format"] = "uint64";
+    schemas["TTDLoadResponse"]["properties"]["current_end_frame"]["type"] = "integer";
+    schemas["TTDLoadResponse"]["properties"]["current_end_frame"]["format"] = "uint64";
+    schemas["TTDLoadResponse"]["properties"]["state"]["type"] = "string";
+    schemas["TTDLoadResponse"]["properties"]["error"]["type"] = "string";
+
     // POST /ttd/find-last
     schemas["TTDFindLastRequest"]["type"] = "object";
     schemas["TTDFindLastRequest"]["description"] =
@@ -598,8 +773,15 @@
     schemas["TTDFindLastRequest"]["properties"]["addr"]["type"] = "integer";
     schemas["TTDFindLastRequest"]["properties"]["addr"]["format"] = "uint16";
     schemas["TTDFindLastRequest"]["properties"]["addr"]["description"] =
-        "Memory address to search for (required).";
-    schemas["TTDFindLastRequest"]["required"].append("addr");
+        "Single memory address to search for (optional if addr_from/to or pc_from/to are provided).";
+    schemas["TTDFindLastRequest"]["properties"]["addr_from"]["type"] = "integer";
+    schemas["TTDFindLastRequest"]["properties"]["addr_from"]["format"] = "uint16";
+    schemas["TTDFindLastRequest"]["properties"]["addr_from"]["description"] =
+        "Start of memory address range (optional, default 0).";
+    schemas["TTDFindLastRequest"]["properties"]["addr_to"]["type"] = "integer";
+    schemas["TTDFindLastRequest"]["properties"]["addr_to"]["format"] = "uint16";
+    schemas["TTDFindLastRequest"]["properties"]["addr_to"]["description"] =
+        "End of memory address range (optional, default 65535).";
     schemas["TTDFindLastRequest"]["properties"]["access"]["type"] = "string";
     schemas["TTDFindLastRequest"]["properties"]["access"]["enum"].append("write");
     schemas["TTDFindLastRequest"]["properties"]["access"]["enum"].append("read");

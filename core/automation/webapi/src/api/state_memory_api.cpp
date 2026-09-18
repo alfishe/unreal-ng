@@ -5,9 +5,14 @@
 
 #include <drogon/HttpResponse.h>
 #include <debugger/ttd/timetravelmanager.h>  // TimeTravelManager (Item 6 markers)
+#include <emulator/config.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/emulatorcontext.h>
+#include <emulator/memory/memorymap.h>  // TD-3 compact read formats
+#include <emulator/memory/rom.h>  // ROM signatures
+#include <emulator/cpu/core.h>    // Core::GetROM()
+#include <emulator/ports/portdecoder.h>  // Tagged port registry
 #include <json/json.h>
 #include <common/stringhelper.h>
 
@@ -21,6 +26,60 @@ namespace v1
 
 // Helper function declared in emulator_api.cpp
 extern void addCorsHeaders(HttpResponsePtr& resp);
+
+/// Shared renderer for TD-3 Phase 1 compact memory reads: builds the
+/// format-specific payload of a memory window so /memory/read/{address},
+/// /memory/{addr} and /memory/page render identical shapes.
+///   format="hexdump" (default): {format, hexdump} - 16B/line + ASCII sidebar
+///   format="full":              {format, data[], hex} - legacy JSON array
+///   format="sparse":            {format, non_zero, segments[]} - fill runs
+/// Callers keep their own address/length field rendering.
+Json::Value RenderMemoryWindowFormat(const uint8_t* data, size_t size, uint32_t address, const std::string& format)
+{
+    Json::Value ret;
+    ret["format"] = format;
+
+    if (format == "sparse")
+    {
+        ret["non_zero"] = CountNonZeroBytes(data, size);
+        Json::Value segments(Json::arrayValue);
+        for (const MemorySparseSegment& segment : BuildSparseSegments(data, size))
+        {
+            Json::Value item;
+            item["offset"] = segment.offset;
+            item["length"] = segment.length;
+            item["is_fill"] = segment.isFill;
+            if (segment.isFill)
+                item["fill"] = StringHelper::Format("0x%02X", segment.fill);
+            else
+                item["hex"] = segment.hex;
+            segments.append(item);
+        }
+        ret["segments"] = segments;
+    }
+    else if (format == "full")
+    {
+        Json::Value dataJson(Json::arrayValue);
+        for (size_t i = 0; i < size; i++)
+            dataJson.append(data[i]);
+        ret["data"] = dataJson;
+
+        std::string hexStr;
+        hexStr.reserve(size * 3);
+        for (size_t i = 0; i < size; i++)
+        {
+            if (i > 0) hexStr += ' ';
+            hexStr += StringHelper::Format("%02X", data[i]);
+        }
+        ret["hex"] = hexStr;
+    }
+    else // "hexdump" (default)
+    {
+        ret["hexdump"] = FormatHexDump(data, size, address);
+    }
+
+    return ret;
+}
 
 /// @brief GET /api/v1/emulator/{id}/state/memory
 /// @brief Get complete memory configuration
@@ -63,14 +122,7 @@ void EmulatorAPI::getStateMemory(const HttpRequestPtr& req, std::function<void(c
     Json::Value ret;
 
     // Model information
-    std::string model = "ZX Spectrum 48K";
-    if (config.mem_model == MM_SPECTRUM128)
-        model = "ZX Spectrum 128K";
-    else if (config.mem_model == MM_PENTAGON)
-        model = "Pentagon 128K";
-    else if (config.mem_model == MM_PLUS3)
-        model = "ZX Spectrum +3";
-
+    std::string model = Config::GetModelFullName(config.mem_model);
     ret["model"] = model;
 
     // ROM configuration
@@ -92,10 +144,21 @@ void EmulatorAPI::getStateMemory(const HttpRequestPtr& req, std::function<void(c
     {
         Json::Value paging;
         paging["port_7ffd"] = static_cast<int>(state.p7FFD);
+        paging["port_7ffd_hex"] = StringHelper::Format("0x%02X", state.p7FFD);
         paging["ram_bank_3"] = static_cast<int>(state.p7FFD & 0x07);
         paging["screen"] = (state.p7FFD & 0x08) ? 1 : 0;
         paging["rom_select"] = (state.p7FFD & 0x10) ? 1 : 0;
         paging["locked"] = (state.p7FFD & 0x20) ? true : false;
+
+        // Extended paging ports (model-specific)
+        // pEFF7: Scorpion 256K extended paging
+        paging["port_eff7"] = static_cast<int>(state.pEFF7);
+        paging["port_eff7_hex"] = StringHelper::Format("0x%02X", state.pEFF7);
+
+        // pFE: Border/tape/speaker (always available)
+        paging["port_fe"] = static_cast<int>(state.pFE);
+        paging["port_fe_hex"] = StringHelper::Format("0x%02X", state.pFE);
+
         ret["paging"] = paging;
     }
 
@@ -145,14 +208,7 @@ void EmulatorAPI::getStateMemoryRAM(const HttpRequestPtr& req, std::function<voi
     Json::Value ret;
 
     // Model
-    std::string model = "ZX Spectrum 48K";
-    if (config.mem_model == MM_SPECTRUM128)
-        model = "ZX Spectrum 128K";
-    else if (config.mem_model == MM_PENTAGON)
-        model = "Pentagon 128K";
-    else if (config.mem_model == MM_PLUS3)
-        model = "ZX Spectrum +3";
-
+    std::string model = Config::GetModelFullName(config.mem_model);
     ret["model"] = model;
 
     // Bank mapping
@@ -220,7 +276,7 @@ void EmulatorAPI::getStateMemoryRAM(const HttpRequestPtr& req, std::function<voi
 }
 
 /// @brief GET /api/v1/emulator/{id}/state/memory/rom
-/// @brief Get ROM configuration
+/// @brief Get ROM configuration with signatures
 void EmulatorAPI::getStateMemoryROM(const HttpRequestPtr& req,
                                     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                                     const std::string& id) const
@@ -258,25 +314,30 @@ void EmulatorAPI::getStateMemoryROM(const HttpRequestPtr& req,
     CONFIG& config = context->config;
     Memory& memory = *context->pMemory;
     EmulatorState& state = context->emulatorState;
+    ROM* rom = context->pCore ? context->pCore->GetROM() : nullptr;
     Json::Value ret;
 
     // Model information
-    std::string model = "ZX Spectrum 48K";
+    std::string model = Config::GetModelFullName(config.mem_model);
     int totalROMPages = 1;
-    if (config.mem_model == MM_SPECTRUM128)
+    switch (config.mem_model)
     {
-        model = "ZX Spectrum 128K";
-        totalROMPages = 2;
-    }
-    else if (config.mem_model == MM_PENTAGON)
-    {
-        model = "Pentagon 128K";
-        totalROMPages = 4;
-    }
-    else if (config.mem_model == MM_PLUS3)
-    {
-        model = "ZX Spectrum +3";
-        totalROMPages = 4;
+        case MM_SPECTRUM128:
+            totalROMPages = 2;
+            break;
+        case MM_PENTAGON:
+        case MM_PLUS3:
+        case MM_SCORP:
+        case MM_PROFSCORP:
+        case MM_ATM3:
+        case MM_ATM710:
+        case MM_ATM450:
+        case MM_PROFI:
+            totalROMPages = 4;
+            break;
+        default:
+            totalROMPages = 1;
+            break;
     }
 
     ret["model"] = model;
@@ -284,82 +345,45 @@ void EmulatorAPI::getStateMemoryROM(const HttpRequestPtr& req,
     ret["active_rom_page"] = static_cast<int>(memory.GetROMPage());
     ret["rom_size_kb"] = totalROMPages * 16;
 
-    // Available ROM pages
+    // ROM file info
+    if (rom)
+    {
+        ret["rom_file"] = rom->GetROMFilename();
+    }
+
+    // Available ROM pages with signatures
     Json::Value pages = Json::arrayValue;
 
-    if (config.mem_model == MM_SPECTRUM48)
+    // Helper lambda to add page info with signature
+    auto addPageInfo = [&](int pageNum, const std::string& description, bool isActive) {
+        Json::Value pageInfo;
+        pageInfo["page"] = pageNum;
+        pageInfo["description"] = description;
+        pageInfo["active"] = isActive;
+        pageInfo["size_kb"] = 16;
+
+        // Calculate signature for this ROM page
+        uint8_t* pagePtr = memory.ROMPageHostAddress(pageNum);
+        if (pagePtr && rom)
+        {
+            std::string signature = rom->CalculateSignature(pagePtr, 0x4000);
+            pageInfo["signature"] = signature;
+            std::string title = rom->GetROMTitle(signature);
+            pageInfo["title"] = title.empty() ? "Unknown ROM" : title;
+        }
+
+        pages.append(pageInfo);
+    };
+
+    uint8_t activeROMPage = memory.GetROMPage();
+
+    // Page roles come from the core single-source layout table
+    // (ROM::GetROMPageRole - same names on /state/paging, CLI, Lua, Python)
+    for (int i = 0; i < totalROMPages; i++)
     {
-        Json::Value page;
-        page["page"] = 0;
-        page["description"] = "48K BASIC ROM";
-        page["active"] = true;
-        pages.append(page);
-    }
-    else if (config.mem_model == MM_SPECTRUM128)
-    {
-        Json::Value page0;
-        page0["page"] = 0;
-        page0["description"] = "128K Editor/Menu ROM";
-        page0["active"] = (memory.GetROMPage() == 0);
-        pages.append(page0);
-
-        Json::Value page1;
-        page1["page"] = 1;
-        page1["description"] = "48K BASIC ROM";
-        page1["active"] = (memory.GetROMPage() == 1);
-        pages.append(page1);
-    }
-    else if (config.mem_model == MM_PENTAGON)
-    {
-        Json::Value page0;
-        page0["page"] = 0;
-        page0["description"] = "Service ROM";
-        page0["active"] = (memory.GetROMPage() == 0);
-        pages.append(page0);
-
-        Json::Value page1;
-        page1["page"] = 1;
-        page1["description"] = "TR-DOS ROM";
-        page1["active"] = (memory.GetROMPage() == 1);
-        pages.append(page1);
-
-        Json::Value page2;
-        page2["page"] = 2;
-        page2["description"] = "128K Editor/Menu ROM";
-        page2["active"] = (memory.GetROMPage() == 2);
-        pages.append(page2);
-
-        Json::Value page3;
-        page3["page"] = 3;
-        page3["description"] = "48K BASIC ROM";
-        page3["active"] = (memory.GetROMPage() == 3);
-        pages.append(page3);
-    }
-    else if (config.mem_model == MM_PLUS3)
-    {
-        Json::Value page0;
-        page0["page"] = 0;
-        page0["description"] = "+3 Editor ROM";
-        page0["active"] = (memory.GetROMPage() == 0);
-        pages.append(page0);
-
-        Json::Value page1;
-        page1["page"] = 1;
-        page1["description"] = "48K BASIC ROM";
-        page1["active"] = (memory.GetROMPage() == 1);
-        pages.append(page1);
-
-        Json::Value page2;
-        page2["page"] = 2;
-        page2["description"] = "+3DOS ROM";
-        page2["active"] = (memory.GetROMPage() == 2);
-        pages.append(page2);
-
-        Json::Value page3;
-        page3["page"] = 3;
-        page3["description"] = "48K BASIC ROM (copy)";
-        page3["active"] = (memory.GetROMPage() == 3);
-        pages.append(page3);
+        std::string role = rom ? rom->GetROMPageRole(static_cast<uint8_t>(i))
+                               : StringHelper::Format("ROM Page %d", i);
+        addPageInfo(i, role, activeROMPage == i);
     }
 
     ret["pages"] = pages;
@@ -371,6 +395,16 @@ void EmulatorAPI::getStateMemoryROM(const HttpRequestPtr& req,
         mapping["bank0_type"] = "ROM";
         mapping["bank0_page"] = static_cast<int>(memory.GetROMPage());
         mapping["bank0_access"] = "read-only";
+
+        // Add title for currently mapped ROM
+        uint8_t* activePagePtr = memory.ROMPageHostAddress(memory.GetROMPage());
+        if (activePagePtr && rom)
+        {
+            std::string sig = rom->CalculateSignature(activePagePtr, 0x4000);
+            std::string title = rom->GetROMTitle(sig);
+            mapping["bank0_rom_title"] = title.empty() ? "Unknown ROM" : title;
+            mapping["bank0_rom_signature"] = sig;
+        }
     }
     else
     {
@@ -460,16 +494,36 @@ void EmulatorAPI::readMemory(const HttpRequestPtr& req, std::function<void(const
         catch (...) { length = 128; }
     }
 
+    // TD-3 Phase 1 compact read formats: hexdump (default) | full | sparse
+    // (filter=sparse is accepted as an alias for format=sparse)
+    std::string format = "hexdump";
+    auto formatParam = req->getOptionalParameter<std::string>("format");
+    auto filterParam = req->getOptionalParameter<std::string>("filter");
+    if (formatParam && !formatParam->empty()) format = *formatParam;
+    else if (filterParam && *filterParam == "sparse") format = "sparse";
+    if (format != "hexdump" && format != "full" && format != "sparse")
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Invalid format parameter (expected 'hexdump', 'full' or 'sparse')";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    std::vector<uint8_t> buffer(length);
+    for (uint16_t i = 0; i < length; i++)
+        buffer[i] = memory->DirectReadFromZ80Memory(static_cast<uint16_t>(address + i));
+
     Json::Value ret;
     ret["address"] = StringHelper::Format("0x%04X", address);
     ret["length"] = length;
-    
-    Json::Value data = Json::arrayValue;
-    for (uint16_t i = 0; i < length; i++)
-    {
-        data.append(memory->DirectReadFromZ80Memory(address + i));
-    }
-    ret["data"] = data;
+    const Json::Value payload = RenderMemoryWindowFormat(buffer.data(), buffer.size(), address, format);
+    for (const std::string& name : payload.getMemberNames())
+        ret[name] = payload[name];
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
@@ -559,7 +613,7 @@ void EmulatorAPI::writeMemory(const HttpRequestPtr& req, std::function<void(cons
 
     // Thread safety: DirectWriteToZ80Memory now mirrors MemoryWriteDebug's
     // call to TTDDirtyTracker::MarkDirty when TTD is enabled. The dirty
-    // bitmap is documented as emulator-thread-only (ttd_dirty_tracker.h),
+    // bitmap is documented as emulator-thread-only (ttddirtytracker.h),
     // so we must pause the Z80 thread before writing when recording is
     // active. The cost is one paused frame boundary (~20 ms worst case);
     // a no-op when no session is recording.
@@ -592,6 +646,236 @@ void EmulatorAPI::writeMemory(const HttpRequestPtr& req, std::function<void(cons
     ret["success"] = true;
     ret["address"] = StringHelper::Format("0x%04X", address);
     ret["bytes_written"] = static_cast<Json::UInt>(bytesWritten);
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+namespace
+{
+
+/// Parses a hex byte pattern with optional spaces, commas and 0x prefixes ("AF 32 0E", "af320e")
+std::vector<uint8_t> ParseHexPattern(const std::string& text)
+{
+    std::vector<uint8_t> bytes;
+    std::string digits;
+    for (char c : text)
+    {
+        if (std::isspace(static_cast<unsigned char>(c)) || c == ',' || c == ':')
+        {
+            continue;
+        }
+        if ((c == 'x' || c == 'X') && !digits.empty() && digits.back() == '0')
+        {
+            digits.pop_back(); // Strip 0x prefix
+            continue;
+        }
+        if (!std::isxdigit(static_cast<unsigned char>(c)))
+        {
+            return {}; // Malformed character → whole pattern invalid
+        }
+        digits += c;
+        if (digits.size() == 2)
+        {
+            bytes.push_back(static_cast<uint8_t>(std::stoul(digits, nullptr, 16)));
+            digits.clear();
+        }
+    }
+    if (!digits.empty())
+    {
+        return {}; // Trailing nibble
+    }
+    return bytes;
+}
+
+} // namespace
+
+/// @brief POST /api/v1/emulator/{id}/memory/find
+/// @brief Search Z80 memory for a byte pattern
+/// @brief Request body: {"pattern_hex": "AF 32 0E" | "pattern": [175, 50, 14],
+/// @brief                  "start": 0, "end": 65535, "max": 64, "alignment": 1}
+void EmulatorAPI::findMemory(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                             const std::string& id) const
+{
+    auto manager = EmulatorManager::GetInstance();
+    auto emulator = manager->GetEmulator(id);
+
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator with specified ID not found";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    Memory* memory = emulator->GetMemory();
+    if (!memory)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Memory not available";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    auto body = req->getJsonObject();
+    if (!body || (!body->isMember("pattern_hex") && !body->isMember("pattern")))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Request must contain 'pattern_hex' (hex string) or 'pattern' (byte array)";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    // Build the search pattern (hex string or byte array)
+    std::vector<uint8_t> pattern;
+    if (body->isMember("pattern_hex"))
+    {
+        pattern = ParseHexPattern((*body)["pattern_hex"].asString());
+        if (pattern.empty())
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "Invalid 'pattern_hex' — expected hex bytes like \"AF 32 0E\" or \"af320e\"";
+
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+    }
+    else
+    {
+        const Json::Value& array = (*body)["pattern"];
+        if (!array.isArray() || array.size() == 0)
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "'pattern' must be a non-empty byte array";
+
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        for (Json::ArrayIndex i = 0; i < array.size(); i++)
+        {
+            pattern.push_back(static_cast<uint8_t>(array[i].asUInt()));
+        }
+    }
+
+    if (pattern.size() > 64)
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Pattern longer than 64 bytes";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    // Range and limits (end inclusive)
+    const unsigned start = body->isMember("start") ? (*body)["start"].asUInt() : 0u;
+    const unsigned end = body->isMember("end") ? (*body)["end"].asUInt() : 65535u;
+    const unsigned max = body->isMember("max") ? (*body)["max"].asUInt() : 64u;
+    const unsigned alignment = body->isMember("alignment") ? (*body)["alignment"].asUInt() : 1u;
+
+    if (start > 0xFFFF || end > 0xFFFF || start > end)
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Invalid 'start'/'end' range";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    if (alignment != 1 && alignment != 2)
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "'alignment' must be 1 or 2";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    // Scan the CPU view of memory; the first pattern byte gates the inner loop
+    const size_t searchLimit = end - pattern.size() + 1;
+    Json::Value matches(Json::arrayValue);
+    bool truncated = false;
+    size_t found = 0;
+
+    for (size_t position = start; position <= searchLimit; position += alignment)
+    {
+        if (memory->DirectReadFromZ80Memory(static_cast<uint16_t>(position)) != pattern[0])
+        {
+            continue;
+        }
+
+        bool matched = true;
+        for (size_t i = 1; i < pattern.size(); i++)
+        {
+            if (memory->DirectReadFromZ80Memory(static_cast<uint16_t>(position + i)) != pattern[i])
+            {
+                matched = false;
+                break;
+            }
+        }
+        if (!matched)
+        {
+            continue;
+        }
+
+        if (found >= max)
+        {
+            truncated = true;
+            break;
+        }
+
+        Json::Value match;
+        match["address"] = StringHelper::Format("0x%04X", position);
+        Json::Value context(Json::arrayValue);
+        for (size_t i = 0; i < pattern.size() + 4; i++)
+        {
+            context.append(memory->DirectReadFromZ80Memory(static_cast<uint16_t>(position + i)));
+        }
+        match["context"] = context;
+        matches.append(match);
+        found++;
+    }
+
+    Json::Value ret;
+    ret["success"] = true;
+    ret["count"] = static_cast<Json::UInt>(found);
+    ret["matches"] = matches;
+    ret["truncated"] = truncated;
+    ret["range"] = StringHelper::Format("0x%04X-0x%04X", start, end);
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
@@ -672,18 +956,52 @@ void EmulatorAPI::readPage(const HttpRequestPtr& req, std::function<void(const H
         return;
     }
 
+    // TD-3 Phase 1: filter=sparse compresses 0x00/0xFF runs into fill
+    // segments (a full 16K page as a JSON array is the G-6 token-poisoning
+    // case); the default response keeps the legacy data array
+    const bool sparse = req->getOptionalParameter<std::string>("filter").value_or("") == "sparse";
+
+    uint32_t windowSize = length;
+    if (offset >= PAGE_SIZE)
+        windowSize = 0;
+    else if (static_cast<uint32_t>(offset) + length > PAGE_SIZE)
+        windowSize = PAGE_SIZE - offset;
+    const uint8_t* window = windowSize > 0 ? pagePtr + offset : pagePtr;
+
     Json::Value ret;
     ret["type"] = type;
     ret["page"] = page;
     ret["offset"] = StringHelper::Format("0x%04X", offset);
     ret["length"] = length;
-    
-    Json::Value data = Json::arrayValue;
-    for (uint16_t i = 0; i < length && (offset + i) < PAGE_SIZE; i++)
+
+    if (sparse)
     {
-        data.append(pagePtr[offset + i]);
+        ret["format"] = "sparse";
+        ret["non_zero"] = CountNonZeroBytes(window, windowSize);
+        Json::Value segments(Json::arrayValue);
+        for (const MemorySparseSegment& segment : BuildSparseSegments(window, windowSize))
+        {
+            Json::Value item;
+            item["offset"] = segment.offset;
+            item["length"] = segment.length;
+            item["is_fill"] = segment.isFill;
+            if (segment.isFill)
+                item["fill"] = StringHelper::Format("0x%02X", segment.fill);
+            else
+                item["hex"] = segment.hex;
+            segments.append(item);
+        }
+        ret["segments"] = segments;
     }
-    ret["data"] = data;
+    else
+    {
+        Json::Value data = Json::arrayValue;
+        for (uint32_t i = 0; i < windowSize; i++)
+        {
+            data.append(pagePtr[offset + i]);
+        }
+        ret["data"] = data;
+    }
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
@@ -812,6 +1130,199 @@ void EmulatorAPI::setROMProtect(const HttpRequestPtr& req, std::function<void(co
     ret["success"] = true;
     ret["protected"] = s_romWriteProtected;
     ret["message"] = s_romWriteProtected ? "ROM write protection enabled" : "ROM write protection disabled - ROM pages are now writable";
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+namespace
+{
+
+// Thin Json glue over the core single-source serializers (portdecoder.cpp) -
+// the tag/latch/decode dictionaries exist exactly once there and every
+// automation surface (MCP, CLI, Lua, Python) renders the same names
+Json::Value PortTagSetToJsonArray(PortTagSet tags)
+{
+    Json::Value arr = Json::arrayValue;
+    for (const std::string& tagName : PortTagSetToStrings(tags))
+        arr.append(tagName);
+    return arr;
+}
+
+const char* LatchEnumToString(PagingLatch latch)
+{
+    // Core single-source name ("p7FFD", "pFFF7_w2", ...); nullptr for None
+    return PagingLatchToString(latch);
+}
+
+Json::Value DecodeLatchValue(PagingLatch latch, uint32_t value, MEM_MODEL model, uint32_t ramSizeKB)
+{
+    // Core single-source §5.1 dictionary (DecodePagingLatch) with native types:
+    // ints and bools, so the JSON shape matches Lua/Python bindings verbatim
+    Json::Value decoded;
+    for (const DecodedLatchField& field : DecodePagingLatch(latch, value, model, ramSizeKB))
+    {
+        if (field.isBool)
+            decoded[field.key] = field.boolValue;
+        else
+            decoded[field.key] = field.intValue;
+    }
+    return decoded;
+}
+
+} // anonymous namespace
+
+/// @brief GET /api/v1/emulator/{id}/state/paging
+/// @brief Get unified paging state assembled from the tagged port registry (P1-2)
+void EmulatorAPI::getStatePaging(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const
+{
+    auto manager = EmulatorManager::GetInstance();
+    auto emulator = manager->GetEmulator(id);
+
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator with specified ID not found";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    EmulatorContext* context = emulator->GetContext();
+    if (!context)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Unable to access emulator context";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    CONFIG& config = context->config;
+    Memory& memory = *context->pMemory;
+    EmulatorState& state = context->emulatorState;
+    PortDecoder* portDecoder = context->pPortDecoder;
+    ROM* rom = context->pCore ? context->pCore->GetROM() : nullptr;
+    Json::Value ret;
+
+    ret["model"] = Config::GetModelFullName(config.mem_model);
+
+    // Latches array - from tagged port registry
+    Json::Value latches = Json::arrayValue;
+    if (portDecoder)
+    {
+        std::vector<PortMapEntry> latchEntries = portDecoder->GetPagingLatches(Tags(PortTag::Memory));
+
+        for (const PortMapEntry& entry : latchEntries)
+        {
+            Json::Value latchObj;
+            latchObj["port"] = StringHelper::Format("0x%04X", entry.port);
+            latchObj["tags"] = PortTagSetToJsonArray(entry.tags);
+            latchObj["device"] = entry.device ? entry.device : "";
+            latchObj["gate"] = entry.gate ? Json::Value(entry.gate) : Json::Value::null;
+
+            const char* latchName = LatchEnumToString(entry.latch);
+            latchObj["latch"] = latchName ? latchName : Json::Value::null;
+
+            uint32_t value = PortDecoder::ReadPagingLatch(entry.latch, state);
+            latchObj["value"] = StringHelper::Format("0x%02X", value);
+
+            Json::Value decoded = DecodeLatchValue(entry.latch, value, config.mem_model, config.ramsize);
+            if (!decoded.empty())
+                latchObj["decoded"] = decoded;
+
+            latches.append(latchObj);
+        }
+    }
+    ret["latches"] = latches;
+
+    // Banks array - from Memory manager (the single source of window truth)
+    Json::Value banks = Json::arrayValue;
+
+    // Bank 0: 0x0000-0x3FFF
+    {
+        Json::Value bank;
+        bank["bank"] = 0;
+        bank["address_range"] = "0x0000-0x3FFF";
+        if (memory.IsBank0ROM())
+        {
+            bank["type"] = "ROM";
+            uint8_t romPage = memory.GetROMPage();
+            bank["page"] = static_cast<int>(romPage);
+            bank["read_write"] = "read-only";
+
+            // ROM identification (§5.2)
+            if (rom)
+            {
+                uint8_t* pagePtr = memory.ROMPageHostAddress(romPage);
+                if (pagePtr)
+                {
+                    std::string signature = rom->CalculateSignature(pagePtr, 0x4000);
+                    // GetROMTitle already carries the "Unknown ROM, <digest>"
+                    // fallback - identical wording on every surface
+                    bank["name"] = rom->GetROMTitle(signature);
+                    bank["signature"] = signature;
+                }
+                // Role: what the model layout says this slot is (core single
+                // source - ROM::GetROMPageRole, §5.2)
+                bank["role"] = rom->GetROMPageRole(romPage);
+            }
+        }
+        else
+        {
+            bank["type"] = "RAM";
+            bank["page"] = static_cast<int>(memory.GetRAMPageForBank0());
+        }
+        banks.append(bank);
+    }
+
+    // Bank 1: 0x4000-0x7FFF (always RAM page 5, contended)
+    {
+        Json::Value bank;
+        bank["bank"] = 1;
+        bank["address_range"] = "0x4000-0x7FFF";
+        bank["type"] = "RAM";
+        bank["page"] = static_cast<int>(memory.GetRAMPageForBank1());
+        bank["contended"] = true;
+        bank["note"] = "Screen 0 location";
+        banks.append(bank);
+    }
+
+    // Bank 2: 0x8000-0xBFFF (always RAM page 2)
+    {
+        Json::Value bank;
+        bank["bank"] = 2;
+        bank["address_range"] = "0x8000-0xBFFF";
+        bank["type"] = "RAM";
+        bank["page"] = static_cast<int>(memory.GetRAMPageForBank2());
+        banks.append(bank);
+    }
+
+    // Bank 3: 0xC000-0xFFFF (switchable RAM)
+    {
+        Json::Value bank;
+        bank["bank"] = 3;
+        bank["address_range"] = "0xC000-0xFFFF";
+        bank["type"] = "RAM";
+        bank["page"] = static_cast<int>(memory.GetRAMPageForBank3());
+        banks.append(bank);
+    }
+
+    ret["banks"] = banks;
+
+    // Top-level flags
+    ret["paging_locked"] = (state.p7FFD & PORT_7FFD_LOCK) != 0;
+    ret["trdos_active"] = (state.flags & (CF_TRDOS | CF_DOSPORTS)) != 0;
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);

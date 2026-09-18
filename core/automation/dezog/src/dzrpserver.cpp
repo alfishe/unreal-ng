@@ -75,7 +75,16 @@ void Server::stop()
 
     m_stopRequested.store(true);
 
-    // Close listen socket to unblock accept()
+    // The accept/session loops poll their sockets with a 100 ms timeout and
+    // re-check the stop flag, so joining completes within ~100 ms WITHOUT
+    // closing sockets out from under blocking syscalls. close() on the listen
+    // socket while the accept thread is INSIDE accept() deadlocks on Darwin
+    // (close waits for the syscall's fd reference) - observed as a 30+ minute
+    // hang in AutomationDezog_test.StartFailsWhenPortBusy under load.
+    if (m_acceptThread.joinable())
+        m_acceptThread.join();
+
+    // Safe now: no thread is using the sockets anymore.
     if (m_listenSocket != INVALID_SOCKET)
     {
         closeSocket(m_listenSocket);
@@ -92,9 +101,6 @@ void Server::stop()
         }
     }
 
-    if (m_acceptThread.joinable())
-        m_acceptThread.join();
-
     m_running.store(false);
     cleanupSockets();
 
@@ -108,7 +114,17 @@ void Server::acceptLoop()
         sockaddr_in clientAddr{};
         socklen_t clientLen = sizeof(clientAddr);
 
-        int clientSock = accept(m_listenSocket,
+        // Poll with a timeout instead of a blocking accept(): Server::stop()
+        // joins this thread BEFORE closing the listen socket, so the loop must
+        // wake on the stop flag within one poll quantum (a plain accept() would
+        // sleep until a client connects and stall stop() for its full join).
+        int ready = waitForSocketRead(m_listenSocket, 100);
+        if (ready < 0)
+            break;  // listen socket error
+        if (ready == 0)
+            continue;  // timeout - re-check the stop flag
+
+        SOCKET clientSock = accept(m_listenSocket,
                                 reinterpret_cast<sockaddr*>(&clientAddr),
                                 &clientLen);
 
@@ -147,7 +163,7 @@ void Server::acceptLoop()
     }
 }
 
-void Server::sessionLoop(int clientSocket)
+void Server::sessionLoop(SOCKET clientSocket)
 {
     std::vector<uint8_t> recvBuffer;
     recvBuffer.reserve(65536);
@@ -321,7 +337,7 @@ Response Server::makeNak(uint8_t seqNo)
     return resp;
 }
 
-bool Server::sendAll(int socket, const std::vector<uint8_t>& data)
+bool Server::sendAll(SOCKET socket, const std::vector<uint8_t>& data)
 {
     std::lock_guard<std::mutex> lock(m_sessionMutex);
 
@@ -351,7 +367,7 @@ Response Server::handleInit(const Command& cmd)
     // exists). Waiting briefly keeps INIT answering with a real machine type;
     // otherwise DeZog aborts with "Unknown machine type 0 received" or, worse,
     // attaches to nothing and every later command silently returns defaults.
-    if (!m_debug->waitForTarget(TARGET_WAIT_MS))
+    if (!m_debug->waitForTarget(m_config.targetWaitMs))
     {
         // error(1), no version/machine/name: DeZog reports
         // "Remote returned an error code: 1" and ends the session cleanly.

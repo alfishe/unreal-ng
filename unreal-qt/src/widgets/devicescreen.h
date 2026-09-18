@@ -5,10 +5,17 @@
 #include <QWidget>
 #include <functional>
 #include <memory>
+#include <mutex>
+#include <cstdint>
 
 #include "emulator/video/screen.h"  // For DisplayViewport
+#include "framehistory.h"
+#include "crtprofiles.h"
+
+class CRTFilter;
 
 class Emulator;  // Forward declaration
+class MouseManager;
 
 namespace Ui
 {
@@ -27,6 +34,11 @@ public:
     void init(uint16_t width, uint16_t height, void* buffer);
     void detach();
 
+    /// Largest ratio-conforming geometry inside the parent widget, centered.
+    /// Grow-capable replacement for the shrink-only conformToAspectRatio when
+    /// the framebuffer geometry changes (model/video-mode switch).
+    void fitToParent();
+
     /// Copies the latched (tear-free) frame into dst; returns true on success.
     using FrameCopyFn = std::function<bool(uint8_t* dst, size_t dstSize)>;
 
@@ -36,8 +48,15 @@ public:
     /// concurrently and causes mid-frame tearing.
     void setFrameSource(FrameCopyFn frameSource)
     {
+        std::lock_guard<std::mutex> lock(_frameSourceMutex);
         _frameSource = std::move(frameSource);
     }
+
+    /// Thread-safe cut of every paint path into the emulator's framebuffer
+    /// (the tear-free provider captures raw Screen*/EmulatorContext* pointers,
+    /// the legacy wrapper borrows the live buffer). Safe to call from the
+    /// MessageCenter worker; paints after it simply find no source.
+    void clearFrameSource();
 
 public:
     /// Native display size. Fixed: the widget keeps the standard 352x288 (11:9) framing
@@ -55,15 +74,16 @@ public slots:
     void prepareForShutdown();  // Block refreshes during shutdown
 
 public:
-    void setEmulator(std::shared_ptr<Emulator> emulator)
-    {
-        _emulator = emulator;
-    }
+    /// Also retargets Kempston Mouse input (capture is released on change)
+    void setEmulator(std::shared_ptr<Emulator> emulator);
 
     void setDisplayViewport(const DisplayViewport& viewport)
     {
         _displayViewport = viewport;
         _hasViewport = true;
+
+        // Flush temporal cache - old frames had different geometry
+        _frameHistory.clear();
 
         // Aspect ratio is fixed (see sizeHint) - only the source rectangle changes
         update();  // Trigger repaint with new viewport
@@ -76,8 +96,35 @@ public:
     void clearDisplayViewport()
     {
         _hasViewport = false;
+
+        // Flush temporal cache - geometry changed
+        _frameHistory.clear();
+
         update();
     }
+
+    // Temporal blending (gigascreen flicker smoothing)
+    void setTemporalBlendingEnabled(bool enabled);
+    bool temporalBlendingEnabled() const { return _temporalEnabled; }
+    void setTemporalHistorySize(int frames);
+    int temporalHistorySize() const { return _frameHistory.historySize(); }
+    void setTemporalWeightMode(int mode);
+    int temporalWeightMode() const { return _temporalWeightMode; }
+
+    // CRT effects (SIMD-accelerated)
+    void setCRTEffectsEnabled(bool enabled);
+    bool crtEffectsEnabled() const { return _crtEnabled; }
+    void setCRTProfile(CRTProfile profile);
+    void setCRTProfile(const CRTProfileParams& params);
+    CRTProfile crtProfile() const { return _crtParams.profile; }
+    const CRTProfileParams& crtParams() const { return _crtParams; }
+
+    void setMouseCaptured(bool captured);
+    bool isMouseCaptured() const;
+    MouseManager* mouseManager() const { return _mouseManager; }
+
+    /// Framebuffer area currently drawn into the widget (viewport-cropped), in emulated pixels
+    QRectF displaySourceRect() const;
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -85,8 +132,13 @@ protected:
     void keyPressEvent(QKeyEvent* event) override;
     void keyReleaseEvent(QKeyEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void wheelEvent(QWheelEvent* event) override;
+    void focusOutEvent(QFocusEvent* event) override;
 
     void resizeEvent(QResizeEvent* event) override;
+    void conformToAspectRatio();  // Shrink current size to the aspect ratio (safety net for external resizes)
     using QWidget::heightForWidth;  // Bring method declaration from QWidget
     int heightForWidth(int width);
 
@@ -97,6 +149,7 @@ private:
     QImage* devicePixels = nullptr;
     QImage _latchedFrame;           // Owned backing store filled via _frameSource
     FrameCopyFn _frameSource;       // Tear-free frame provider (empty = legacy live-buffer path)
+    mutable std::mutex _frameSourceMutex;  // Guards _frameSource + devicePixels across threads
 
     static constexpr float ratio = static_cast<float>(kNativeWidth) / static_cast<float>(kNativeHeight);
 
@@ -106,6 +159,20 @@ private:
     // Viewport cropping for overscan mode
     DisplayViewport _displayViewport;
     bool _hasViewport = false;
+
+    // Temporal blending
+    FrameHistory _frameHistory;
+    QImage _blendedFrame;
+    bool _temporalEnabled = false;
+    int _temporalWeightMode = 0;
+
+    // CRT effects
+    std::unique_ptr<CRTFilter> _crtFilter;
+    QImage _crtFrame;
+    bool _crtEnabled = false;
+    CRTProfileParams _crtParams;
+
+    MouseManager* _mouseManager = nullptr;  // Kempston Mouse host input (owned via QObject parent)
 };
 
 #endif  // DEVICESCREEN_H

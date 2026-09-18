@@ -120,6 +120,22 @@ void TileGrid::clearAllTiles()
     _focusedTile = nullptr;
 }
 
+void TileGrid::detachAllTiles()
+{
+    // Just release tile widgets without stopping/removing emulators
+    for (EmulatorTile* tile : _tiles)
+    {
+        if (tile)
+        {
+            // Disconnect signals and prepare for deletion
+            tile->disconnect();
+            tile->deleteLater();
+        }
+    }
+    _tiles.clear();
+    _focusedTile = nullptr;
+}
+
 void TileGrid::updateLayout()
 {
     // Prevent re-entrant calls (e.g., from resizeEvent triggered by setMinimumSize)
@@ -323,7 +339,7 @@ void TileGrid::compositeSingleSyncFrame()
     Screen* screen = ctx ? ctx->pScreen : nullptr;
     if (!screen) return;
 
-    auto& desc = screen->GetFramebufferDescriptor();
+auto& desc = screen->GetFramebufferDescriptor();
     if (desc.width == 0 || desc.height == 0) return;
 
     // Allocate or resize backing buffer if needed

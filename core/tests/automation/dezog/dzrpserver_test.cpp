@@ -5,6 +5,8 @@
 
 #include "dezogtestfixture.h"
 
+#include "_helpers/testwaithelper.h"
+
 #include "automation-dezog.h"
 #include "dzrpprotocol.h"
 #include "dzrpserver.h"
@@ -207,7 +209,13 @@ protected:
         ASSERT_NE(_server->getPort(), 0);
 
         ASSERT_TRUE(_client.connect(_server->getPort()));
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+        // The accept runs on the server's own thread, so a connected socket is
+        // not yet a session. Waiting on the server's view of that - rather than
+        // on a 20 ms guess paid by all 24 tests in this suite - is both faster
+        // and the thing the next command actually depends on.
+        ASSERT_TRUE(TestWait::For([this] { return _server->hasClient(); }, std::chrono::milliseconds(2000)))
+            << "server never accepted the client session";
     }
 
     void TearDown() override
@@ -423,7 +431,12 @@ TEST_F(DZRPServer_test, ContinueWithTemporaryBreakpointsStepsAndClears)
     std::vector<uint8_t> payload = cat({{1}, u16(PROGRAM_STORE), {1}, u16(PROGRAM_JP), {0, 0, 0, 0, 0}});
     auto cont = _client.command(dzrp::CommandId::CMD_CONTINUE, payload);
     ASSERT_TRUE(cont.valid);
-    EXPECT_EQ(_adapter->getTemporaryBreakpointCount(), 2u);
+    // The live count races the breakpoint hit: bp1 is the NEXT instruction,
+    // so the emulator hits it within microseconds of the resume and the pause
+    // path clears the temporaries before (or after) this read - whichever
+    // thread wins. The high-water mark deterministically proves both were
+    // installed from the payload.
+    EXPECT_EQ(_adapter->getMaxTemporaryBreakpointCount(), 2u);
 
     auto ntf = _client.waitNotification();
     ASSERT_TRUE(ntf.valid);
@@ -450,8 +463,8 @@ TEST_F(DZRPServer_test, PauseCommandNotifiesManual)
 
     auto cont = _client.command(dzrp::CommandId::CMD_CONTINUE, std::vector<uint8_t>(11, 0));
     ASSERT_TRUE(cont.valid);
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    EXPECT_FALSE(_emulator->IsPaused());
+    EXPECT_TRUE(TestWait::For([&] { return !_emulator->IsPaused(); }, std::chrono::milliseconds(2000)))
+        << "CMD_CONTINUE did not resume the emulator";
 
     auto pause = _client.command(dzrp::CommandId::CMD_PAUSE);
     ASSERT_TRUE(pause.valid);
@@ -527,11 +540,12 @@ TEST_F(DZRPServer_test, CloseThenReconnect)
     auto close = _client.command(dzrp::CommandId::CMD_CLOSE);
     ASSERT_TRUE(close.valid);
     _client.disconnect();
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    ASSERT_TRUE(TestWait::For([this] { return !_server->hasClient(); }, std::chrono::milliseconds(2000)))
+        << "server did not release the closed session";
 
     TestDzrpClient second;
     ASSERT_TRUE(second.connect(_server->getPort()));
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    ASSERT_TRUE(TestWait::For([this] { return _server->hasClient(); }, std::chrono::milliseconds(2000)));
     std::vector<uint8_t> payload = {2, 0, 0, 'X', 0};
     auto resp = second.command(dzrp::CommandId::CMD_INIT, payload);
     EXPECT_TRUE(resp.valid);
@@ -548,7 +562,14 @@ TEST_F(DZRPServer_test, ClientDropWhileRunningCleansUpAndReconnects)
 
     // VS Code window closed / network drop: no CMD_CLOSE, socket just goes away
     _client.disconnect();
-    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    // Wait for the cleanup the test is about, not for a guessed interval: the
+    // server notices the dropped socket on its own thread.
+    EXPECT_TRUE(TestWait::For(
+        [&] { return _emulator->GetBreakpointManager()->GetBreakpointsCount() == 0u && !_emulator->IsPaused(); },
+        std::chrono::milliseconds(2000)))
+        << "dropped session left " << _emulator->GetBreakpointManager()->GetBreakpointsCount()
+        << " breakpoints, paused=" << _emulator->IsPaused();
 
     // Stale breakpoints are gone and the emulator is not left stuck on the hit
     EXPECT_EQ(_emulator->GetBreakpointManager()->GetBreakpointsCount(), 0u);
@@ -557,7 +578,7 @@ TEST_F(DZRPServer_test, ClientDropWhileRunningCleansUpAndReconnects)
     // Fresh session works as if nothing happened
     TestDzrpClient second;
     ASSERT_TRUE(second.connect(_server->getPort()));
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    ASSERT_TRUE(TestWait::For([this] { return _server->hasClient(); }, std::chrono::milliseconds(2000)));
     std::vector<uint8_t> payload = {2, 0, 0, 'X', 0};
     ASSERT_TRUE(second.command(dzrp::CommandId::CMD_INIT, payload).valid);
     ASSERT_TRUE(second.command(dzrp::CommandId::CMD_PAUSE).valid);
@@ -575,7 +596,12 @@ TEST_F(DZRPServer_test, CloseCommandResumesAndDropsBreakpoints)
 
     ASSERT_TRUE(_client.command(dzrp::CommandId::CMD_CLOSE).valid);
     _client.disconnect();
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    EXPECT_TRUE(TestWait::For(
+        [&] { return _emulator->GetBreakpointManager()->GetBreakpointsCount() == 0u && !_emulator->IsPaused(); },
+        std::chrono::milliseconds(2000)))
+        << "CMD_CLOSE left " << _emulator->GetBreakpointManager()->GetBreakpointsCount()
+        << " breakpoints, paused=" << _emulator->IsPaused();
 
     EXPECT_EQ(_emulator->GetBreakpointManager()->GetBreakpointsCount(), 0u);
     EXPECT_FALSE(_emulator->IsPaused());
@@ -665,10 +691,11 @@ TEST_F(DZRPServer_test, HistoryEntryWireFormat)
         EXPECT_EQ(op[b], mem.payload[b]) << "opcode byte " << b;
 
     // Out of range → error 1, and a plain GET_REGISTERS afterwards shows the present again
-    auto far = _client.command(dzrp::CommandId::CMD_GET_HISTORY_ENTRY, {0xFF, 0xFF, 0x00, 0x00});
-    ASSERT_TRUE(far.valid);
-    ASSERT_EQ(far.payload.size(), 1u);
-    EXPECT_EQ(far.payload[0], 1);
+    // 'far' is an empty legacy macro in <windows.h> - do not use it as a name
+    auto outOfRange = _client.command(dzrp::CommandId::CMD_GET_HISTORY_ENTRY, {0xFF, 0xFF, 0x00, 0x00});
+    ASSERT_TRUE(outOfRange.valid);
+    ASSERT_EQ(outOfRange.payload.size(), 1u);
+    EXPECT_EQ(outOfRange.payload[0], 1);
 
     auto regs = _client.command(dzrp::CommandId::CMD_GET_REGISTERS);
     ASSERT_TRUE(regs.valid);
@@ -684,7 +711,8 @@ TEST_F(DZRPServer_test, HistoryEntryWireFormat)
 TEST_F(DZRPServer_test, NotificationWithoutClientDoesNotCrash)
 {
     _client.disconnect();
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    ASSERT_TRUE(TestWait::For([this] { return !_server->hasClient(); }, std::chrono::milliseconds(2000)))
+        << "server still holds a session; the notify below would not exercise the no-client path";
     _server->notifyPause(dzrp::BreakReason::MANUAL, 0x1234, 0);
     SUCCEED();
 }
@@ -747,8 +775,36 @@ TEST_F(AutomationDezog_test, ResolvePortFromEnvironment)
     setEnv(AutomationDezog::PORT_ENV_VAR, nullptr);
 }
 
+TEST_F(AutomationDezog_test, ResolveTargetWaitDefaults)
+{
+    setEnv(AutomationDezog::TARGET_WAIT_ENV_VAR, nullptr);
+    EXPECT_EQ(AutomationDezog::resolveTargetWaitMs(0), dzrp::ServerConfig::DEFAULT_TARGET_WAIT_MS);
+    EXPECT_EQ(AutomationDezog::resolveTargetWaitMs(500), 500);
+    EXPECT_EQ(AutomationDezog::resolveTargetWaitMs(999999), 60000);   // clamped high
+    EXPECT_EQ(AutomationDezog::resolveTargetWaitMs(1), 1);            // clamped low (unchanged)
+}
+
+TEST_F(AutomationDezog_test, ResolveTargetWaitFromEnvironment)
+{
+    setEnv(AutomationDezog::TARGET_WAIT_ENV_VAR, "100");
+    EXPECT_EQ(AutomationDezog::resolveTargetWaitMs(0), 100);
+    EXPECT_EQ(AutomationDezog::resolveTargetWaitMs(2000), 2000);  // explicit wins
+
+    setEnv(AutomationDezog::TARGET_WAIT_ENV_VAR, "garbage");
+    EXPECT_EQ(AutomationDezog::resolveTargetWaitMs(0), dzrp::ServerConfig::DEFAULT_TARGET_WAIT_MS);
+
+    setEnv(AutomationDezog::TARGET_WAIT_ENV_VAR, "0");
+    EXPECT_EQ(AutomationDezog::resolveTargetWaitMs(0), dzrp::ServerConfig::DEFAULT_TARGET_WAIT_MS);  // out of range
+
+    setEnv(AutomationDezog::TARGET_WAIT_ENV_VAR, nullptr);
+}
+
 TEST_F(AutomationDezog_test, StartStopLifecycle)
 {
+    // No emulator exists in this test, so CMD_INIT's waitForTarget would burn
+    // the full DEFAULT_TARGET_WAIT_MS (2 s). Shorten it via the env override.
+    setEnv(AutomationDezog::TARGET_WAIT_ENV_VAR, "100");
+
     AutomationDezog module;
     EXPECT_FALSE(module.isRunning());
     EXPECT_EQ(module.getPort(), 0);
@@ -778,6 +834,8 @@ TEST_F(AutomationDezog_test, StartStopLifecycle)
     // Idempotent stop
     module.stop();
     EXPECT_FALSE(module.isRunning());
+
+    setEnv(AutomationDezog::TARGET_WAIT_ENV_VAR, nullptr);
 }
 
 TEST_F(AutomationDezog_test, StartFailsWhenPortBusy)

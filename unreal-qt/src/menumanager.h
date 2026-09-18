@@ -47,9 +47,18 @@ public:
     // (setChecked does not re-emit triggered)
     void setDebuggerChecked(bool checked);
 
-    // Sync the View -> Toolbar / Status Bar check state (setChecked does not re-emit triggered)
+    // Sync the View -> Toolbar / Status Bar / HUD check state (setChecked does not re-emit triggered)
     void setToolBarChecked(bool checked);
     void setStatusBarChecked(bool checked);
+    void setHudOverlayChecked(bool checked);
+    void setGpuAccelerationChecked(bool checked);
+    void setGpuAccelerationAvailable(bool available);
+    void setCrtEffectsChecked(bool checked);
+    void setCrtEffectsEnabled(bool enabled);
+    void setCrtProfile(int profileIndex);
+    void populateCrtProfileMenu();
+    void setTemporalBlendingChecked(bool checked);
+    void setTemporalBlendingEnabled(bool enabled);
 
     // Actions shared with the transport toolbar (ToolBarManager). Their visible /
     // enabled / checked state is maintained by updateMenuStates()
@@ -63,6 +72,9 @@ public:
     void handleEmulatorStateChanged(int id, Message* message);
     void handleEmulatorInstanceCreated(int id, Message* message);
     void handleFDDDiskChanged(int id, Message* message);
+#ifdef ENABLE_RECORDING
+    void handleRecordingStateChanged(int id, Message* message);
+#endif
 
 signals:
     // Signal emitted when user requests to open a file
@@ -98,6 +110,11 @@ signals:
     // View signals
     void toolBarToggled(bool visible);
     void statusBarToggled(bool visible);
+    void hudOverlayToggled(bool visible);
+    void gpuAccelerationToggled(bool enabled);
+    void crtEffectsToggled(bool enabled);
+    void crtProfileChanged(int profileIndex);
+    void temporalBlendingToggled(bool enabled);
     void debuggerToggled(bool visible);
     void logWindowToggled(bool visible);
     void tapeManagerToggled(bool visible);
@@ -110,10 +127,13 @@ signals:
     void machineModelChangeRequested(const QString& modelShortName);
     void tapeTrapsToggled(bool enabled);
     void turboTapeToggled(bool enabled);
+    void mniRequested();  // Machine -> MNI: NMI + service monitor (plain NMI on other models)
 
     // Tools signals
     void intParametersRequested();
     void audioSettingsRequested();
+    void temporalEffectsRequested();
+    void hudSettingsRequested();
     void screenshotRequested();
 #ifdef ENABLE_RECORDING
     void videoRecordingRequested();
@@ -171,6 +191,12 @@ private:
     // View Menu Actions
     QAction* _toolBarAction;
     QAction* _statusBarAction;
+    QAction* _hudOverlayAction = nullptr;
+    QAction* _gpuAccelerationAction = nullptr;
+    QAction* _crtEffectsAction = nullptr;
+    QMenu* _crtProfileMenu = nullptr;
+    QActionGroup* _crtProfileGroup = nullptr;
+    QAction* _temporalBlendingAction = nullptr;
     QAction* _debuggerAction;
     QAction* _logWindowAction;
     QAction* _tapeManagerAction;
@@ -207,6 +233,7 @@ private:
     std::vector<QAction*> _machineModelActions;
     QString _currentModelShortName;
     QAction* _tapeTrapsAction;
+    QAction* _mniAction;
     QAction* _turboTapeAction;
 
     // Debug Menu Actions
@@ -224,6 +251,8 @@ private:
     QAction* _settingsAction;
     QAction* _intParametersAction;
     QAction* _audioSettingsAction;
+    QAction* _temporalEffectsAction = nullptr;
+    QAction* _hudSettingsAction;
     QAction* _screenshotAction;
 #ifdef ENABLE_RECORDING
     QAction* _videoRecordingAction;

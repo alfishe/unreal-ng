@@ -22,6 +22,8 @@ option(ENABLE_CLI_AUTOMATION "Enable CLI automation" ON)
 option(ENABLE_GDB_AUTOMATION "Enable GDB RSP server automation" OFF)
 option(ENABLE_DEZOG_AUTOMATION "Enable DeZog (DZRP) debug server automation" ON)
 option(ENABLE_ZESARUX_AUTOMATION "Enable ZEsarUX (ZRCP) debug server automation" ON)
+# MCP server automation shares the WebAPI drogon app; effective only when WebAPI is on
+option(ENABLE_MCP_AUTOMATION "Enable MCP server automation (requires WebAPI)" ON)
 
 # Recording support (audio/video capture)
 # Use option() instead of set(FORCE) so that command-line -DENABLE_RECORDING=OFF is respected
@@ -43,6 +45,64 @@ set (SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 # Include CMake helper functions file
 include(${ROOT_DIR}/cmake/func.cmake)
 
+# Build fingerprint (version / git branch / git commit / build type), generated
+# to ${CMAKE_BINARY_DIR}/generated/emulator/buildinfo.h. The root CMakeLists.txt
+# does the same thing for a root-level build; this standalone copy is needed
+# because CI (and any dev who runs `cmake -B build` from inside unreal-qt/)
+# never executes the root CMakeLists.txt, so its configure_file() never runs.
+if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    find_package(Git QUIET)
+
+    # unreal-qt's own project() call carries no VERSION; match the root
+    # CMakeLists.txt's project(unreal VERSION 1.0.0) for a standalone build.
+    set(UNREAL_BUILD_VERSION "1.0.0")
+
+    set(UNREAL_GIT_BRANCH "unknown")
+    set(UNREAL_GIT_COMMIT "unknown")
+
+    if (GIT_FOUND)
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} branch --show-current
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            RESULT_VARIABLE UNREAL_GIT_BRANCH_RESULT
+            OUTPUT_VARIABLE UNREAL_GIT_BRANCH
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            RESULT_VARIABLE UNREAL_GIT_COMMIT_RESULT
+            OUTPUT_VARIABLE UNREAL_GIT_COMMIT
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+        if (UNREAL_GIT_BRANCH STREQUAL "")
+            set(UNREAL_GIT_BRANCH "unknown")
+        endif()
+        if (UNREAL_GIT_COMMIT STREQUAL "")
+            set(UNREAL_GIT_COMMIT "unknown")
+        endif()
+    endif()
+
+    if (CMAKE_BUILD_TYPE)
+        set(UNREAL_BUILD_TYPE "${CMAKE_BUILD_TYPE}")
+    else()
+        set(UNREAL_BUILD_TYPE "MultiConfig")
+    endif()
+
+    configure_file(
+        ${ROOT_DIR}/core/src/emulator/buildinfo.h.in
+        ${CMAKE_BINARY_DIR}/generated/emulator/buildinfo.h
+        @ONLY
+    )
+endif ()
+
+# Add core library if not already defined by parent build
+if (NOT TARGET unrealng::core)
+    add_subdirectory("${ROOT_DIR}/core/src" core)
+endif()
+
 # Add automation if enabled (skip if target already exists from parent build)
 if (ENABLE_AUTOMATION)
     if (NOT TARGET unrealng::automation)
@@ -51,12 +111,14 @@ if (ENABLE_AUTOMATION)
     set(INCLUDE_AUTOMATION True)
 endif ()
 
-# Add recording library if enabled (skip if target already exists from parent build)
+# Add recording library if enabled (skip if target already exists from parent build).
+# Linking: core links unrealng::recording PUBLIC under the same option, so this
+# app inherits it - no direct link needed here (a direct one duplicated the
+# library on the link line: "ld: warning: ignoring duplicate libraries").
 if (ENABLE_RECORDING)
     if (NOT TARGET unrealng::recording)
         add_subdirectory("${ROOT_DIR}/core/recording" recording)
     endif()
-    set(INCLUDE_RECORDING True)
 endif ()
 
 # ========================================
@@ -192,6 +254,11 @@ find_package(Qt6 COMPONENTS Gui REQUIRED)
 find_package(Qt6 COMPONENTS Multimedia REQUIRED)
 find_package(Qt6 COMPONENTS Widgets REQUIRED)
 find_package(Qt6 COMPONENTS Svg REQUIRED)  # Toolbar icons (SVG icon engine must be deployed)
+find_package(Qt6 COMPONENTS OpenGL REQUIRED)
+find_package(Qt6 COMPONENTS OpenGLWidgets REQUIRED)
+if (WIN32)
+    find_package(OpenGL REQUIRED)
+endif()
 
 # Enable CTest for test discovery (inherited from core/tests)
 enable_testing()
@@ -222,6 +289,8 @@ message("DATA_PATH: ${DATA_PATH}")
 # Set include paths for compiler
 include_directories(
     ${SOURCE_DIR}/
+    ${SOURCE_DIR}/hud/core
+    ${SOURCE_DIR}/hud/qt
     ${SOURCE_DIR}/3rdparty/QHexView-5.0
 )
 
@@ -234,13 +303,10 @@ add_subdirectory("3rdparty/QHexView-5.0")
 # C++20 mode has the correct behavior, so override QHexView to match the project standard.
 set_target_properties(QHexView PROPERTIES CXX_STANDARD 20)
 
-# Add core/tests only if not already defined by parent build
-if (NOT TARGET unrealng::core)
-    add_subdirectory("${ROOT_DIR}/core/src" core)
-endif()
 if (TESTS AND NOT TARGET core-tests)
     add_subdirectory("${ROOT_DIR}/core/tests" tests)
 endif()
+
 
 # All sources in /src and subfolders will be compiled
 file (GLOB_RECURSE CPP_FILES ${SOURCE_DIR}/*.cpp)
@@ -298,6 +364,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty"
     "${CMAKE_CURRENT_BINARY_DIR}"  # For Qt-generated ui_*.h headers
+    "${CMAKE_BINARY_DIR}/generated"  # Configure-time generated headers (emulator/buildinfo.h)
     "${ROOT_DIR}/core/src"
     "${ROOT_DIR}/core"  # Added parent directory for proper automation includes
     "${ROOT_DIR}/core/automation"  # For automation headers
@@ -321,7 +388,8 @@ if (ENABLE_AUTOMATION)
         $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:ENABLE_CLI_AUTOMATION>
         $<$<BOOL:${ENABLE_GDB_AUTOMATION}>:ENABLE_GDB_AUTOMATION>
         $<$<BOOL:${ENABLE_DEZOG_AUTOMATION}>:ENABLE_DEZOG_AUTOMATION>
-$<$<BOOL:${ENABLE_ZESARUX_AUTOMATION}>:ENABLE_ZESARUX_AUTOMATION>
+        $<$<BOOL:${ENABLE_ZESARUX_AUTOMATION}>:ENABLE_ZESARUX_AUTOMATION>
+        $<$<BOOL:${ENABLE_MCP_AUTOMATION}>:ENABLE_MCP_AUTOMATION>
     )
 endif ()
 
@@ -371,9 +439,12 @@ if (INCLUDE_AUTOMATION)
         Qt6::Widgets
         Qt6::Multimedia
         Qt6::Svg
+        Qt6::OpenGL
+        Qt6::OpenGLWidgets
+        $<$<PLATFORM_ID:Windows>:OpenGL::GL>
         QHexView
 
-        unrealng::automation # This brings in core (and recording) as PUBLIC dependency
+        unrealng::automation # This brings in core as PUBLIC dependency (core propagates unrealng::recording PUBLIC when ENABLE_RECORDING)
         ${CMAKE_DL_LIBS}
         Threads::Threads
     )
@@ -389,9 +460,12 @@ else ()
         Qt6::Widgets
         Qt6::Multimedia
         Qt6::Svg
+        Qt6::OpenGL
+        Qt6::OpenGLWidgets
+        $<$<PLATFORM_ID:Windows>:OpenGL::GL>
         QHexView
 
-        unrealng::core  # Keep this when automation is disabled (brings recording as PUBLIC dep)
+        unrealng::core  # Keep this when automation is disabled (propagates unrealng::recording PUBLIC when ENABLE_RECORDING)
         Threads::Threads
     )
 endif ()
@@ -564,6 +638,35 @@ add_custom_target(package_all
     COMMENT "Creating package for current platform in ${CMAKE_BINARY_DIR}/packages"
 )
 
+# ========================================
+# hud-core-tests: Dedicated Qt-free test suite (verifies detachment)
+# ========================================
+if (TESTS)
+    file(GLOB_RECURSE HUD_TEST_SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/hud/*.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/hud/core/*.cpp"
+    )
+    add_executable(hud-core-tests ${HUD_TEST_SOURCES})
+    set_target_properties(hud-core-tests PROPERTIES
+        AUTOMOC OFF
+        AUTOUIC OFF
+        AUTORCC OFF
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON
+    )
+    target_include_directories(hud-core-tests PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/hud/core"
+        "${ROOT_DIR}/core/src"
+        "${ROOT_DIR}/core/src/common"
+        "${ROOT_DIR}/core/src/emulator"
+        "${ROOT_DIR}/core/tests"
+    )
+    target_link_libraries(hud-core-tests PRIVATE
+        unrealng::core
+        gtest_main
+    )
+endif()
+
 # <Diagnostics>
 message(STATUS "<unreal-qt diagnostics>")
 message(STATUS "Options:")
@@ -575,6 +678,7 @@ message(STATUS "    ENABLE_CLI_AUTOMATION: ${ENABLE_CLI_AUTOMATION}")
 message(STATUS "    ENABLE_GDB_AUTOMATION: ${ENABLE_GDB_AUTOMATION}")
 message(STATUS "    ENABLE_DEZOG_AUTOMATION: ${ENABLE_DEZOG_AUTOMATION}")
 message(STATUS "    ENABLE_ZESARUX_AUTOMATION: ${ENABLE_ZESARUX_AUTOMATION}")
+message(STATUS "    ENABLE_MCP_AUTOMATION: ${ENABLE_MCP_AUTOMATION}")
 message(STATUS "  ENABLE_RECORDING: ${ENABLE_RECORDING}")
 message(STATUS "Settings:")
 message(STATUS "  PROJECT_NAME:        ${PROJECT_NAME}")

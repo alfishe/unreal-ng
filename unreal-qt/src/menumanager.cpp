@@ -1,10 +1,14 @@
 #include "menumanager.h"
 
+#include <QActionGroup>
 #include <QApplication>
 #include <QMessageBox>
 #include <set>
 
+#include "widgets/crtprofiles.h"
+
 #include "base/featuremanager.h"
+#include "emulator/buildinfo.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/platform.h"
@@ -53,6 +57,13 @@ MenuManager::MenuManager(MainWindow* mainWindow, QMenuBar* menuBar, QObject* par
     messageCenter.AddObserver(NC_FDD_DISK_EJECTED, observerInstance, diskCallback);
     messageCenter.AddObserver(NC_FDD_DISK_PENDING_WRITE, observerInstance, diskCallback);
     messageCenter.AddObserver(NC_FDD_DISK_WRITTEN, observerInstance, diskCallback);
+
+#ifdef ENABLE_RECORDING
+    // Subscribe to recording state changes
+    ObserverCallbackMethod recordingCallback =
+        static_cast<ObserverCallbackMethod>(&MenuManager::handleRecordingStateChanged);
+    messageCenter.AddObserver(NC_RECORDING_STATE, observerInstance, recordingCallback);
+#endif
 }
 
 MenuManager::~MenuManager()
@@ -75,6 +86,13 @@ MenuManager::~MenuManager()
     messageCenter.RemoveObserver(NC_FDD_DISK_EJECTED, observerInstance, diskCallback);
     messageCenter.RemoveObserver(NC_FDD_DISK_PENDING_WRITE, observerInstance, diskCallback);
     messageCenter.RemoveObserver(NC_FDD_DISK_WRITTEN, observerInstance, diskCallback);
+
+#ifdef ENABLE_RECORDING
+    // Unsubscribe from recording state changes
+    ObserverCallbackMethod recordingCallback =
+        static_cast<ObserverCallbackMethod>(&MenuManager::handleRecordingStateChanged);
+    messageCenter.RemoveObserver(NC_RECORDING_STATE, observerInstance, recordingCallback);
+#endif
 }
 
 void MenuManager::createFileMenu()
@@ -213,11 +231,52 @@ void MenuManager::createViewMenu()
     _statusBarAction->setChecked(true);
     connect(_statusBarAction, &QAction::triggered, this, &MenuManager::statusBarToggled);
 
+    // HUD overlay (on-screen toasts, indicators, picture augmentation)
+    _hudOverlayAction = _viewMenu->addAction(tr("&HUD Overlay"));
+    _hudOverlayAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_H));
+    _hudOverlayAction->setStatusTip(tr("Show/hide on-screen HUD overlay (toasts, indicators)"));
+    _hudOverlayAction->setCheckable(true);
+    _hudOverlayAction->setChecked(false);
+    connect(_hudOverlayAction, &QAction::triggered, this, &MenuManager::hudOverlayToggled);
+
+    _viewMenu->addSeparator();
+
+    // GPU acceleration toggle
+    _gpuAccelerationAction = _viewMenu->addAction(tr("&GPU Acceleration"));
+    _gpuAccelerationAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_G));
+    _gpuAccelerationAction->setStatusTip(tr("Use GPU for display rendering (faster scaling, enables CRT effects)"));
+    _gpuAccelerationAction->setCheckable(true);
+    _gpuAccelerationAction->setChecked(false);
+    connect(_gpuAccelerationAction, &QAction::triggered, this, &MenuManager::gpuAccelerationToggled);
+
+    // CRT effects (scanlines, curvature - GPU only)
+    _crtEffectsAction = _viewMenu->addAction(tr("C&RT Effects"));
+    _crtEffectsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C));
+    _crtEffectsAction->setStatusTip(tr("Toggle CRT display effects (scanlines, curvature) - requires GPU acceleration"));
+    _crtEffectsAction->setCheckable(true);
+    _crtEffectsAction->setChecked(false);
+    _crtEffectsAction->setEnabled(false);  // Disabled until GPU is enabled
+    connect(_crtEffectsAction, &QAction::triggered, this, &MenuManager::crtEffectsToggled);
+
+    // CRT profile submenu
+    _crtProfileMenu = _viewMenu->addMenu(tr("CRT &Profile"));
+    _crtProfileMenu->setEnabled(false);
+    _crtProfileGroup = new QActionGroup(this);
+    populateCrtProfileMenu();
+
+    // Temporal blending (gigascreen flicker smoothing) - works for both GPU and software
+    _temporalBlendingAction = _viewMenu->addAction(tr("&Temporal Blending"));
+    _temporalBlendingAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_T));
+    _temporalBlendingAction->setStatusTip(tr("Smooth gigascreen flicker by blending multiple frames"));
+    _temporalBlendingAction->setCheckable(true);
+    _temporalBlendingAction->setChecked(false);
+    connect(_temporalBlendingAction, &QAction::triggered, this, &MenuManager::temporalBlendingToggled);
+
     // Full Screen
     // Single full-screen entry: Cmd+F on macOS, Ctrl+F elsewhere (Qt::CTRL maps to Cmd
     // on macOS). Cocoa's own "Enter Full Screen" View-menu item is suppressed in main().
-    _fullScreenAction = _viewMenu->addAction(tr("&Full Screen"));
-    _fullScreenAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_F));
+    _fullScreenAction = _viewMenu->addAction(tr("&Full Screen\tCtrl+F"));
+    // Shortcut is handled by app-wide QShortcut in MainWindow (works when menu hidden)
     _fullScreenAction->setStatusTip(tr("Toggle full screen mode"));
     _fullScreenAction->setCheckable(true);
     connect(_fullScreenAction, &QAction::triggered, this, &MenuManager::fullScreenToggled);
@@ -297,6 +356,144 @@ void MenuManager::setStatusBarChecked(bool checked)
     if (_statusBarAction)
     {
         _statusBarAction->setChecked(checked);
+    }
+}
+
+void MenuManager::setHudOverlayChecked(bool checked)
+{
+    if (_hudOverlayAction)
+    {
+        _hudOverlayAction->setChecked(checked);
+    }
+}
+
+void MenuManager::setGpuAccelerationChecked(bool checked)
+{
+    if (_gpuAccelerationAction)
+    {
+        _gpuAccelerationAction->setChecked(checked);
+    }
+}
+
+void MenuManager::setGpuAccelerationAvailable(bool available)
+{
+    if (_gpuAccelerationAction)
+    {
+        _gpuAccelerationAction->setEnabled(available);
+        if (!available)
+        {
+            _gpuAccelerationAction->setStatusTip(tr("GPU acceleration not available on this system"));
+        }
+    }
+}
+
+void MenuManager::setCrtEffectsChecked(bool checked)
+{
+    if (_crtEffectsAction)
+    {
+        _crtEffectsAction->setChecked(checked);
+    }
+}
+
+void MenuManager::setCrtEffectsEnabled(bool enabled)
+{
+    if (_crtEffectsAction)
+    {
+        _crtEffectsAction->setEnabled(enabled);
+        _crtEffectsAction->setStatusTip(tr("Toggle CRT display effects (scanlines, phosphor mask) - GPU or SIMD accelerated"));
+    }
+    if (_crtProfileMenu)
+    {
+        _crtProfileMenu->setEnabled(enabled);
+    }
+}
+
+void MenuManager::setTemporalBlendingChecked(bool checked)
+{
+    if (_temporalBlendingAction)
+    {
+        _temporalBlendingAction->setChecked(checked);
+    }
+}
+
+void MenuManager::setTemporalBlendingEnabled(bool enabled)
+{
+    if (_temporalBlendingAction)
+    {
+        _temporalBlendingAction->setEnabled(enabled);
+    }
+}
+
+void MenuManager::setCrtProfile(int profileIndex)
+{
+    if (_crtProfileGroup)
+    {
+        QList<QAction*> actions = _crtProfileGroup->actions();
+        if (profileIndex >= 0 && profileIndex < actions.size())
+        {
+            actions[profileIndex]->setChecked(true);
+        }
+    }
+}
+
+void MenuManager::populateCrtProfileMenu()
+{
+    if (!_crtProfileMenu || !_crtProfileGroup)
+        return;
+
+    _crtProfileMenu->clear();
+
+    // Add built-in profiles
+    auto profiles = CRTProfileParams::AllProfiles();
+    int index = 0;
+    for (CRTProfile profile : profiles)
+    {
+        QString name = CRTProfileParams::ProfileName(profile);
+        QString desc = CRTProfileParams::ProfileDescription(profile);
+
+        QAction* action = _crtProfileMenu->addAction(name);
+        action->setCheckable(true);
+        action->setStatusTip(desc);
+        action->setData(index);
+        _crtProfileGroup->addAction(action);
+
+        connect(action, &QAction::triggered, this, [this, index]() {
+            emit crtProfileChanged(index);
+        });
+
+        if (profile == CRTProfile::None)
+            action->setChecked(true);
+
+        index++;
+    }
+
+    // Add separator and custom shaders section
+    _crtProfileMenu->addSeparator();
+
+    // Scan for custom shaders
+    CRTShaderManager::instance().scanShaderDirectory();
+    auto customShaders = CRTShaderManager::instance().availableShaders();
+
+    if (!customShaders.empty())
+    {
+        for (const QString& shaderName : customShaders)
+        {
+            QAction* action = _crtProfileMenu->addAction(shaderName + " (custom)");
+            action->setCheckable(true);
+            action->setStatusTip(tr("Custom shader: %1").arg(shaderName));
+            action->setData(-1);  // Custom shader marker
+            action->setProperty("shaderName", shaderName);
+            _crtProfileGroup->addAction(action);
+
+            connect(action, &QAction::triggered, this, [this, shaderName]() {
+                emit crtProfileChanged(-1);  // -1 = custom, use property
+            });
+        }
+    }
+    else
+    {
+        QAction* placeholder = _crtProfileMenu->addAction(tr("(No custom shaders)"));
+        placeholder->setEnabled(false);
     }
 }
 
@@ -415,7 +612,13 @@ void MenuManager::createMachineMenu()
     std::set<MEM_MODEL> supportedModels = {
         MM_PENTAGON,      // Pentagon 128K/512K/1024K
         MM_SPECTRUM48,    // ZX-Spectrum 48K
-        MM_SPECTRUM128    // ZX-Spectrum 128K
+        MM_SPECTRUM128,   // ZX-Spectrum 128K
+        MM_ATM710,        // ATM Turbo 2+ v7.10
+        MM_ATM3,          // ZX-Evo / ATM3 / PentEvo
+        MM_SCORP,         // Scorpion ZS-256 (base ROM bundle; design:
+                          // docs/inprogress/2026-09-07-scorpion-zs256-clone)
+        MM_PROFSCORP      // Scorpion ZS-256 + ProfROM 4.01 (512 KB scorp_prof401.rom,
+                          // quadrant switching + #7EFD window; same design doc)
     };
 
     for (const auto& model : models)
@@ -503,6 +706,18 @@ void MenuManager::createMachineMenu()
         _machineModelActions[0]->setChecked(true);
         _currentModelShortName = _machineModelActions[0]->data().toString();
     }
+
+    _machineMenu->addSeparator();
+
+    // MNI - the Scorpion "magic button" (design: 2026-09-07-scorpion-zs256-clone,
+    // Task 6): NMI with the Shadow Monitor paged into #0000 so the handler at
+    // #0066 executes monitor code; plain NMI on other models. F11 at window
+    // level - the debugger window rebinds F11 to Step In while focused, and
+    // Full Screen lives on Ctrl+F.
+    _mniAction = _machineMenu->addAction(tr("&MNI (NMI + Service Monitor)"));
+    _mniAction->setShortcut(QKeySequence(Qt::Key_F11));
+    _mniAction->setStatusTip(tr("Non-maskable interrupt into the service monitor (plain NMI on other models)"));
+    connect(_mniAction, &QAction::triggered, this, &MenuManager::mniRequested);
 
     _machineMenu->addSeparator();
 
@@ -664,6 +879,16 @@ void MenuManager::createToolsMenu()
     _audioSettingsAction->setStatusTip(tr("Configure audio DSP: punch, FIR filter, room simulation"));
     connect(_audioSettingsAction, &QAction::triggered, this, &MenuManager::audioSettingsRequested);
 
+    // Temporal Effects Settings (works for both GPU and software rendering)
+    _temporalEffectsAction = _toolsMenu->addAction(tr("&Temporal Effects..."));
+    _temporalEffectsAction->setStatusTip(tr("Configure frame blending for gigascreen smoothing"));
+    connect(_temporalEffectsAction, &QAction::triggered, this, &MenuManager::temporalEffectsRequested);
+
+    // HUD Settings
+    _hudSettingsAction = _toolsMenu->addAction(tr("&HUD Settings..."));
+    _hudSettingsAction->setStatusTip(tr("Configure which HUD notifications to display"));
+    connect(_hudSettingsAction, &QAction::triggered, this, &MenuManager::hudSettingsRequested);
+
     _toolsMenu->addSeparator();
 
     // Tape Manager Window (design §9.2 — checkable show/hide, hidden until
@@ -737,7 +962,8 @@ void MenuManager::createHelpMenu()
                                  "F5 - Start\n"
                                  "F6 - Pause\n"
                                  "F7 - Resume\n"
-                                 "Ctrl+R - Reset\n\n"
+                                 "Ctrl+R - Reset\n"
+                                 "F11 - MNI (NMI + Service Monitor)\n\n"
 
                                  "Speed:\n"
                                  "F1 - 1x (Normal)\n"
@@ -753,7 +979,7 @@ void MenuManager::createHelpMenu()
                                  "Ctrl+B - Toggle Breakpoint\n\n"
 
                                  "View:\n"
-                                 "F11 - Full Screen\n"
+                                 "Ctrl+F - Full Screen\n"
                                  "Ctrl+1 - Toggle Debugger\n"
                                  "Ctrl+2 - Toggle Log Window");
     });
@@ -767,10 +993,13 @@ void MenuManager::createHelpMenu()
         QMessageBox::about(_mainWindow, tr("About Unreal Speccy"),
                            tr("<h3>Unreal Speccy - Next Generation</h3>"
                               "<p>ZX Spectrum emulator</p>"
-                              "<p>Version 0.1.0 (alpha)</p>"
-                              "<p>Built with Qt %1</p>"
+                              "<p>Version %1 - %2 @ %3</p>"
+                              "<p>Built with Qt %4</p>"
                               "<p>&copy; 2024 Unreal Speccy Project</p>")
-                               .arg(QT_VERSION_STR));
+                               .arg(QLatin1String(buildinfo::kVersion),
+                                    QLatin1String(buildinfo::kGitBranch),
+                                    QLatin1String(buildinfo::kGitCommit),
+                                    QLatin1String(QT_VERSION_STR)));
     });
 }
 
@@ -903,6 +1132,14 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
         FeatureManager* featureManager = context ? context->pFeatureManager : nullptr;
         _tapeTrapsAction->setChecked(featureManager && featureManager->isEnabled(Features::kFastTape));
         _turboTapeAction->setChecked(featureManager && featureManager->isEnabled(Features::kTurboTape));
+        if (_hudOverlayAction)
+        {
+            _hudOverlayAction->setChecked(featureManager && featureManager->isEnabled(Features::kHud));
+        }
+    }
+    else if (_hudOverlayAction)
+    {
+        _hudOverlayAction->setChecked(false);
     }
 
     // Update machine model selection
@@ -991,3 +1228,42 @@ void MenuManager::handleFDDDiskChanged(int id, Message* message)
         }
     }
 }
+
+#ifdef ENABLE_RECORDING
+void MenuManager::handleRecordingStateChanged(int id, Message* message)
+{
+    Q_UNUSED(id);
+
+    if (!message || !message->obj)
+        return;
+
+    RecordingStatePayload* payload = dynamic_cast<RecordingStatePayload*>(message->obj);
+    if (!payload)
+        return;
+
+    // Only respond to events from our active emulator
+    auto activeEmulator = _activeEmulator.lock();
+    if (activeEmulator)
+    {
+        std::string activeId = activeEmulator->GetId();
+        std::string eventEmulatorId = payload->emulatorId.toString();
+        if (activeId != eventEmulatorId)
+            return;
+    }
+
+    // Update recording action state on main thread
+    bool isRecording = payload->recording;
+    QMetaObject::invokeMethod(
+        this, [this, isRecording]() {
+            if (_videoRecordingAction)
+            {
+                // Make button checkable to show recording state
+                _videoRecordingAction->setCheckable(true);
+                _videoRecordingAction->setChecked(isRecording);
+                _videoRecordingAction->setStatusTip(
+                    isRecording ? tr("Recording in progress - click to open panel")
+                                : tr("Open recording panel"));
+            }
+        }, Qt::QueuedConnection);
+}
+#endif

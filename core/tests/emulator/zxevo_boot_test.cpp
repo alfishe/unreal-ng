@@ -1,0 +1,210 @@
+// ZX-Evo (ATM3, 512K BaseConf zxevo.rom) boot regression tests.
+//
+// Guards three fixes without which the machine never reached the interactive
+// EVO Reset Service shell (it either booted the TSConf ROM0 half with a
+// garbage screen or hung in a sticky TR-DOS session):
+//  1. ATM3/ATM710 port handlers must call Memory::UpdateZ80Banks() - the full
+//     original set_banks() equivalent including the TR-DOS session-flag tail
+//     (CF_SETDOSROM / CF_LEAVEDOSRAM re-arming). Calling the decoder's
+//     window-only updateMemoryBanks() directly left CF_TRDOS sticky after the
+//     session closed, dead-arming the tracker and booting to TR-DOS forever.
+//  2. The memory-manager port gate (xx77 / xFF7 / x7F7) must mirror
+//     CF_DOSPORTS: pBF.0 (shaden) OR ~cpm (aFF77 bit 9 clear) OR CF_TRDOS.
+//  3. The Z-Controller data port (low byte 0x57) returns 0xFF ("no card")
+//     so the EVO-DOS SD detection fails cleanly instead of consuming
+//     floating-bus garbage.
+//
+// Expected steady states (zxevo.rom layout, verified against the reference):
+//  - ~5s after reset: the service shell disk-boot retry loop idles in
+//    48K-BASIC-pair ROM page 20 (FFF7[4] = 0x134 -> type 0x100 ROM-from-7FFD)
+//    with the TR-DOS tracker armed (flags == CF_SETDOSROM) and the boot menu
+//    visible on screen.
+//  - Menu key 'U' ("128k basic"): ROM page 30 (128K editor ROM pair) with
+//    initialized BASIC sysvars (ERR_NR = 0xFF).
+
+#include <base/featuremanager.h>
+#include <emulator/emulator.h>
+#include <emulator/emulatorcontext.h>
+#include <emulator/emulatormanager.h>
+#include <emulator/io/keyboard/keyboard.h>
+#include <emulator/memory/memory.h>
+#include <emulator/cpu/z80.h>
+#include <emulator/platform.h>
+#include <emulator/ports/models/portdecoder_atm3.h>
+#include <gtest/gtest.h>
+
+#include "_helpers/emulatortesthelper.h"
+#include "pch.h"
+#include "stdafx.h"
+
+class ZXEvoBoot_Test : public ::testing::Test
+{
+protected:
+    EmulatorManager* _manager = nullptr;
+
+protected:
+    void SetUp() override
+    {
+        _manager = EmulatorManager::GetInstance();
+        ASSERT_NE(_manager, nullptr);
+        auto emulatorIds = _manager->GetEmulatorIds();
+        for (const auto& id : emulatorIds)
+        {
+            _manager->RemoveEmulator(id);
+        }
+    }
+
+    void TearDown() override
+    {
+        auto emulatorIds = _manager->GetEmulatorIds();
+        for (const auto& id : emulatorIds)
+        {
+            _manager->RemoveEmulator(id);
+        }
+    }
+
+    /// Boot through the service-ROM config phase into the interactive shell.
+    ///
+    /// @param turbo  Only for tests asserting on emulated state. Turbo skips
+    ///               rendering on most frames, so the framebuffer assertion
+    ///               below must boot without it - that one drops sound
+    ///               generation instead, which is the part of the per-frame
+    ///               host work it does not assert on either.
+    std::shared_ptr<Emulator> BootToServiceShell(bool turbo)
+    {
+        auto emulator = _manager->CreateEmulatorWithModelAndRAM("zxevo-boot", "ATM3", 4096, LoggerLevel::LogError);
+        EXPECT_NE(emulator, nullptr);
+        if (!emulator)
+            return emulator;
+
+        // Deterministic RTC, same freeze as the Scorpion turbo-detect and SMUC
+        // probes: CMOS::ReadCMOS() used to keep its clock state in function-
+        // local statics shared by every CMOS instance in the process (fixed
+        // alongside this - see cmos.h), so live host time made BaseConf's boot
+        // timeline depend on both wall-clock time and on what any other ATM3
+        // test's CMOS had left behind moments earlier. Order-dependent by
+        // --gtest_shuffle, unreproducible by a fixed seed alone (real time
+        // keeps moving) - exactly the signature that gave this away.
+        if (auto* decoder = static_cast<PortDecoder_ATM3*>(emulator->GetContext()->pPortDecoder))
+            decoder->GetCMOS().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC
+
+        if (turbo)
+            emulator->EnableTurboMode();
+        else if (FeatureManager* features = emulator->GetFeatureManager())
+            features->setFeature(Features::kSoundGeneration, false);
+
+        // 300 frames is the worst case: BaseConf init (ROM26/27 handoff, CMOS
+        // setup) + boot-menu timeout + disk-boot retry loop settling. Stop as
+        // soon as the state the callers assert on is reached - bank 0 on the
+        // 48K-BASIC-pair boot ROM (page 20) with the TR-DOS tracker armed and
+        // no session open. The predicate must cover *every* asserted field: an
+        // early exit on a partial match leaves the rest still settling.
+        EmulatorContext* context = emulator->GetContext();
+        Memory* memory = context->pMemory;
+        Z80* z80 = context->pCore->GetZ80();
+        EmulatorTestHelper::RunUntil(
+            emulator.get(),
+            [&] {
+                const uint8_t flags = context->emulatorState.flags;
+                // PC == 0x613C (a HALT: shell's genuine idle/wait-for-key loop,
+                // confirmed by reading the opcode byte and by its PC never
+                // moving between consecutive polls) is as load-bearing as the
+                // other four fields here, not decoration. Without it,
+                // page/bank0/SETDOSROM/!TRDOS can all be momentarily true one
+                // or two instructions before the shell has actually finished
+                // settling - observed directly: a caller that pressed a menu
+                // key at that instant landed the machine on the *correct*
+                // transient page (25, "processing keypress") but then reverted
+                // to page 20 and stuck there, because the keypress arrived
+                // mid-transition rather than at the idle loop the firmware
+                // expects it from. Reproduces only under real CPU contention
+                // (background load skews exactly which frame this predicate's
+                // 10-frame poll interval lands on) - unreproducible by a fixed
+                // gtest shuffle seed, which is what made it look like it
+                // depended on real time rather than an insufficiently specific
+                // settle condition.
+                return memory->IsBank0ROM() && memory->GetROMPage() == 20u && (flags & CF_SETDOSROM) &&
+                       !(flags & CF_TRDOS) && z80->pc == 0x613C;
+            },
+            300);
+        return emulator;
+    }
+};
+
+TEST_F(ZXEvoBoot_Test, BootsToInteractiveServiceShell)
+{
+    auto emulator = BootToServiceShell(/* turbo */ false);  // asserts on the framebuffer
+    ASSERT_NE(emulator, nullptr);
+
+    EmulatorContext* context = emulator->GetContext();
+    EmulatorState& state = context->emulatorState;
+    Z80& z80 = *context->pCore->GetZ80();
+    Memory* memory = context->pMemory;
+
+    // TR-DOS session tracker healthy: armed (SETDOSROM), no sticky session.
+    // With the old window-only paging bug the flags stayed
+    // CF_TRDOS | CF_DOSPORTS | CF_LEAVEDOSRAM and the machine booted TR-DOS.
+    EXPECT_TRUE(state.flags & CF_SETDOSROM) << "flags=" << std::hex << (int)state.flags;
+    EXPECT_FALSE(state.flags & CF_TRDOS) << "flags=" << std::hex << (int)state.flags;
+
+    // Bank 0 holds the 48K-BASIC-pair boot shell (ROM page 20 via FFF7[4] = 0x134)
+    ASSERT_TRUE(memory->IsBank0ROM());
+    EXPECT_EQ(memory->GetROMPage(), 20u);
+
+    // Live system: R advances frame to frame (HALT idle loop woken by INTs)
+    uint8_t r1 = z80.r_low;
+    emulator->RunNFrames(1, true);
+    uint8_t r2 = z80.r_low;
+    emulator->RunNFrames(1, true);
+    uint8_t r3 = z80.r_low;
+    EXPECT_TRUE(r1 != r2 || r2 != r3);
+
+    // The boot menu is rendered: the framebuffer is not blank
+    Screen* screen = context->pScreen;
+    uint32_t* buffer = nullptr;
+    size_t size = 0;
+    screen->GetFramebufferData(&buffer, &size);
+    ASSERT_NE(buffer, nullptr);
+    ASSERT_GT(size, 0u);
+    size_t litPixels = 0;
+    for (size_t i = 0; i < size; i++)
+    {
+        if (buffer[i] & 0x00FFFFFF)  // any non-black ARGB pixel
+            litPixels++;
+    }
+    EXPECT_GT(litPixels, size / 100);  // > 1% lit (menu + colored window)
+}
+
+TEST_F(ZXEvoBoot_Test, MenuKeyUBoots128KBasic)
+{
+    auto emulator = BootToServiceShell(/* turbo */ true);  // asserts on emulated state only
+    ASSERT_NE(emulator, nullptr);
+
+    EmulatorContext* context = emulator->GetContext();
+    Memory* memory = context->pMemory;
+    Keyboard* keyboard = context->pKeyboard;
+    ASSERT_NE(keyboard, nullptr);
+
+    // 'U' = "U. 128k basic" in the EVO Reset Service menu
+    keyboard->PressKey(ZXKEY_U);
+    emulator->RunNFrames(6, true);
+    keyboard->ReleaseKey(ZXKEY_U);
+    // Every asserted field, not just the ROM page: page 30 appears while BASIC
+    // is still initializing, and stopping there read ERR_NR as 0x00 (seen under
+    // --gtest_shuffle seed 39038).
+    EmulatorTestHelper::RunUntil(
+        emulator.get(),
+        [&] {
+            return memory->IsBank0ROM() && memory->GetROMPage() == 30u &&
+                   !(context->emulatorState.flags & CF_TRDOS) && memory->MemoryReadDebug(0x5C3A, false) == 0xFF;
+        },
+        300);
+
+    // 128K BASIC: bank 0 = 128K editor ROM pair (page 30), no TR-DOS session
+    ASSERT_TRUE(memory->IsBank0ROM());
+    EXPECT_EQ(memory->GetROMPage(), 30u);
+    EXPECT_FALSE(context->emulatorState.flags & CF_TRDOS);
+
+    // BASIC initialized its system variables (ERR_NR = 0xFF = "no error yet")
+    EXPECT_EQ(memory->MemoryReadDebug(0x5C3A, false), 0xFF);
+}

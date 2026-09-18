@@ -123,3 +123,37 @@
     paths["/api/v1/emulator/{id}/debugmode"]["put"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["enabled"]["type"] = "boolean";
     paths["/api/v1/emulator/{id}/debugmode"]["put"]["responses"]["200"]["description"] = "Debug mode updated";
+
+    // Step out endpoint (SP-tracking walk)
+    paths["/api/v1/emulator/{id}/stepout"]["post"]["summary"] = "Step out of current subroutine";
+    paths["/api/v1/emulator/{id}/stepout"]["post"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/stepout"]["post"]["description"] =
+        "SP-tracking walk: runs until a RET-family instruction sits at or above the "
+        "entry stack level, then executes it to land in the caller. Breakpoints are "
+        "skipped for the walk.";
+    paths["/api/v1/emulator/{id}/stepout"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/stepout"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/stepout"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/stepout"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/stepout"]["post"]["responses"]["200"]["description"] =
+        "Step out completed (pc/sp/state)";
+
+    // Skip until endpoint (fast-forward to a PC target)
+    paths["/api/v1/emulator/{id}/skip_until"]["post"]["summary"] = "Fast-forward until PC reaches target";
+    paths["/api/v1/emulator/{id}/skip_until"]["post"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/skip_until"]["post"]["description"] =
+        "Runs until the next instruction to execute is at the target address (or the "
+        "t-state budget is exhausted). Breakpoints are skipped — the walk cannot be "
+        "trapped. Frames rendered during the skip are not captured by recordings.";
+    paths["/api/v1/emulator/{id}/skip_until"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/skip_until"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/skip_until"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/skip_until"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/skip_until"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+        ["properties"]["pc"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/skip_until"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+        ["properties"]["max_tstates"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/skip_until"]["post"]["responses"]["200"]["description"] =
+        "Skip result (hit flag, pc/sp/state)";
+    paths["/api/v1/emulator/{id}/skip_until"]["post"]["responses"]["400"]["description"] =
+        "Missing/invalid pc field";

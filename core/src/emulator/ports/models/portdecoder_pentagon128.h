@@ -51,10 +51,9 @@ public:
 
     bool IsPort_BFFD(uint16_t port);
     bool IsPort_FFFD(uint16_t port);
+    bool IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister) const override;
 
-    /// Whether a decoded port value belongs to the Beta128 FDC register set
-    /// (#1F status/cmd, #3F track, #5F sector, #7F data, #FF system)
-    bool IsBeta128Port(uint16_t decodedPort);
+    // IsBeta128Port() hoisted into the base PortDecoder (shared Beta-128 session gating)
 
     uint16_t decodePort(uint16_t port);
     DecodeResult decodePortEx(uint16_t port);

@@ -4,15 +4,18 @@
 #include "cli-processor.h"
 
 #include <3rdparty/message-center/messagecenter.h>
+#include <debugger/assembler/z80textassembler.h>
 #include <debugger/debugmanager.h>
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/labels/labelmanager.h>
+#include <debugger/listing/listingparser.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/memory/memory.h>
 #include <emulator/notifications.h>
 #include <emulator/platform.h>
 
+#include <cctype>
 #include <iostream>
 #include <sstream>
 
@@ -1143,6 +1146,7 @@ void CLIProcessor::HandleLabel(const ClientSession& session, const std::vector<s
         ss << "  label add <name> <addr>         - Add label" << NEWLINE;
         ss << "  label remove <name>             - Remove label" << NEWLINE;
         ss << "  label toggle <name>             - Toggle active state" << NEWLINE;
+        ss << "  label resolve <name|addr>       - Resolve name or address to label(s)" << NEWLINE;
         session.SendResponse(ss.str());
         return;
     }
@@ -1202,6 +1206,113 @@ void CLIProcessor::HandleLabel(const ClientSession& session, const std::vector<s
         }
         else
             session.SendResponse("Error: Label not found." + std::string(NEWLINE));
+    }
+    else if (subcmd == "resolve" && args.size() >= 2)
+    {
+        // Name direction: exact label lookup. Address direction (0x/$/decimal):
+        // exact label + aliases + nearest labels around the address.
+        const std::string& query = args[1];
+        std::stringstream ss;
+        ss << std::hex << std::uppercase << std::setfill('0');
+
+        bool looksLikeAddress = false;
+        uint16_t address = 0;
+        if (query.rfind("0x", 0) == 0 || query.rfind("0X", 0) == 0 || (!query.empty() && query[0] == '$'))
+        {
+            looksLikeAddress = true;
+            try
+            {
+                const std::string digits = query[0] == '$' ? query.substr(1) : query.substr(2);
+                address = static_cast<uint16_t>(std::stoul(digits, nullptr, 16));
+            }
+            catch (...)
+            {
+                session.SendResponse("Error: Invalid address format.");
+                return;
+            }
+        }
+        else
+        {
+            for (char c : query)
+            {
+                if (!std::isdigit(static_cast<unsigned char>(c)))
+                    break;
+                looksLikeAddress = true;
+            }
+            if (looksLikeAddress)
+            {
+                try
+                {
+                    address = static_cast<uint16_t>(std::stoul(query));
+                }
+                catch (...)
+                {
+                    looksLikeAddress = false;
+                }
+            }
+        }
+
+        if (!looksLikeAddress)
+        {
+            auto label = labelMgr->GetLabelByName(query);
+            if (!label)
+            {
+                std::stringstream hint;
+                hint << "Error: Label not found: " << query;
+                if (labelMgr->GetLabelCount() == 0)
+                    hint << " (no labels loaded — 'symbols load <file>' first)";
+                session.SendResponse(hint.str() + std::string(NEWLINE));
+                return;
+            }
+
+            ss << "Label: " << label->name << " = $" << std::setw(4) << label->address << NEWLINE;
+            if (!label->type.empty())
+                ss << "Type: " << label->type << NEWLINE;
+            session.SendResponse(ss.str());
+            return;
+        }
+
+        ss << "Address: $" << std::setw(4) << address << NEWLINE;
+
+        auto exact = labelMgr->GetLabelByZ80Address(address);
+        if (exact)
+        {
+            ss << "Exact: " << exact->name << NEWLINE;
+        }
+
+        auto atAddress = labelMgr->GetAllLabelsAtAddress(address);
+        if (atAddress.size() > 1)
+        {
+            ss << "Aliases:" << NEWLINE;
+            for (const auto& l : atAddress)
+                ss << "  $" << std::setw(4) << l->address << "  " << l->name << NEWLINE;
+        }
+
+        // Nearest labels around the address — context for disassembly annotation
+        const Label* bestBelow = nullptr;
+        const Label* bestAbove = nullptr;
+        for (const auto& l : labelMgr->GetAllLabels())
+        {
+            if (l->address < address && (!bestBelow || l->address > bestBelow->address))
+                bestBelow = l.get();
+            else if (l->address > address && (!bestAbove || l->address < bestAbove->address))
+                bestAbove = l.get();
+        }
+        if (bestBelow)
+        {
+            ss << std::dec;
+            ss << "Nearest below: " << bestBelow->name << " (-" << (address - bestBelow->address) << ")" << NEWLINE;
+        }
+        if (bestAbove)
+        {
+            ss << std::dec;
+            ss << "Nearest above: " << bestAbove->name << " (+" << (bestAbove->address - address) << ")" << NEWLINE;
+        }
+
+        if (!exact && atAddress.empty())
+            ss << "No label at this address." << NEWLINE;
+
+        session.SendResponse(ss.str());
     }
     else
     {
@@ -1356,4 +1467,472 @@ void CLIProcessor::HandleSymbols(const ClientSession& session, const std::vector
     {
         session.SendResponse("Unknown subcommand: " + subcmd + NEWLINE);
     }
+}
+
+// HandleStepOut — run until the current subroutine returns (mirrors the WebAPI
+// stepout endpoint). Breakpoints are skipped for the walk; emulation ends paused.
+void CLIProcessor::HandleStepOut(const ClientSession& session, const std::vector<std::string>& args)
+{
+    (void)args;  // No parameters
+
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
+        return;
+    }
+
+    if (!emulator->IsPaused())
+    {
+        session.SendResponse("Emulator must be paused before stepping. Use 'pause' command first.");
+        return;
+    }
+
+    try
+    {
+        emulator->StepOut();
+
+        Z80State* z80State = emulator->GetZ80State();
+        std::stringstream ss;
+        ss << "Step out completed" << NEWLINE;
+        if (z80State)
+        {
+            ss << std::hex << std::uppercase << std::setfill('0');
+            ss << "PC: $" << std::setw(4) << z80State->pc << "  SP: $" << std::setw(4) << z80State->sp << NEWLINE;
+        }
+        session.SendResponse(ss.str());
+    }
+    catch (const std::exception& e)
+    {
+        session.SendResponse(std::string("Step out failed: ") + e.what());
+    }
+}
+
+// HandleSkipUntil — fast-forward execution until PC reaches the target address
+// (mirrors the WebAPI skip_until endpoint). Breakpoints are skipped for the walk.
+void CLIProcessor::HandleSkipUntil(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
+        return;
+    }
+
+    if (args.empty())
+    {
+        session.SendResponse("Usage: skip_until <pc> [max_tstates]");
+        return;
+    }
+
+    // Target address: 0x / $ / plain decimal or hex
+    const std::string& targetStr = args[0];
+    uint32_t target32 = 0;
+    try
+    {
+        if (targetStr.rfind("0x", 0) == 0 || targetStr.rfind("0X", 0) == 0)
+            target32 = static_cast<uint32_t>(std::stoul(targetStr.substr(2), nullptr, 16));
+        else if (targetStr[0] == '$')
+            target32 = static_cast<uint32_t>(std::stoul(targetStr.substr(1), nullptr, 16));
+        else
+            target32 = static_cast<uint32_t>(std::stoul(targetStr, nullptr, 0));
+    }
+    catch (...)
+    {
+        session.SendResponse("Invalid target address (expected hex or decimal).");
+        return;
+    }
+
+    if (target32 > 0xFFFF)
+    {
+        session.SendResponse("Target address is out of the 16-bit address range.");
+        return;
+    }
+    const uint16_t target = static_cast<uint16_t>(target32);
+
+    // Safety budget: default 100 frames of emulated time (~2 s), hard cap 200 s
+    EmulatorContext* context = emulator->GetContext();
+    unsigned maxTStates = 0;
+    if (args.size() >= 2)
+    {
+        try
+        {
+            maxTStates = std::stoul(args[1], nullptr, 0);
+        }
+        catch (...)
+        {
+            session.SendResponse("Invalid max_tstates value.");
+            return;
+        }
+    }
+    if (maxTStates == 0 && context)
+    {
+        maxTStates = context->config.frame * 100;
+    }
+    if (maxTStates == 0)
+    {
+        maxTStates = 6988800;  // Fallback if config is unavailable
+    }
+    if (maxTStates > 700000000u)
+    {
+        maxTStates = 700000000u;
+    }
+
+    emulator->RunUntilCondition([target](const Z80State& state) { return state.pc == target; }, maxTStates);
+
+    Z80State* z80State = emulator->GetZ80State();
+    const bool hit = z80State && z80State->pc == target;
+
+    std::stringstream ss;
+    ss << (hit ? "Reached target address" : "T-state budget exhausted before reaching target") << NEWLINE;
+    ss << "Budget: " << std::dec << maxTStates << " t-states" << NEWLINE;
+    if (z80State)
+    {
+        ss << std::hex << std::uppercase << std::setfill('0');
+        ss << "PC: $" << std::setw(4) << z80State->pc << "  SP: $" << std::setw(4) << z80State->sp << NEWLINE;
+    }
+    session.SendResponse(ss.str());
+}
+
+// HandleAssemble — assemble Z80 source text (mirrors the WebAPI assemble
+// endpoint). Bytes are shown; --write also stores them into emulator RAM.
+void CLIProcessor::HandleAssemble(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected.");
+        return;
+    }
+
+    // assemble <addr> <code...> [--write]
+    if (args.size() < 2)
+    {
+        session.SendResponse("Usage: assemble <addr> <code...> [--write]");
+        return;
+    }
+
+    uint16_t address = 0;
+    const std::string& addressStr = args[0];
+    try
+    {
+        if (addressStr.rfind("0x", 0) == 0 || addressStr.rfind("0X", 0) == 0)
+            address = static_cast<uint16_t>(std::stoul(addressStr.substr(2), nullptr, 16));
+        else if (addressStr[0] == '$')
+            address = static_cast<uint16_t>(std::stoul(addressStr.substr(1), nullptr, 16));
+        else
+            address = static_cast<uint16_t>(std::stoul(addressStr, nullptr, 0));
+    }
+    catch (...)
+    {
+        session.SendResponse("Invalid address format.");
+        return;
+    }
+
+    bool write = false;
+    std::string code;
+    for (size_t i = 1; i < args.size(); i++)
+    {
+        if (args[i] == "--write")
+        {
+            write = true;
+            continue;
+        }
+        if (!code.empty())
+            code += " ";
+        code += args[i];
+    }
+
+    if (code.empty())
+    {
+        session.SendResponse("No code provided.");
+        return;
+    }
+
+    Z80TextAssembler assembler;
+    AsmResult result = assembler.Assemble(code, address);
+
+    if (!result.ok)
+    {
+        std::stringstream ss;
+        ss << "Assembly failed (line " << result.error.line << "): " << result.error.message << NEWLINE;
+        ss << "  Source: " << result.error.sourceLine;
+        session.SendResponse(ss.str());
+        return;
+    }
+
+    // Optional: write the emitted bytes into emulator RAM
+    if (write)
+    {
+        Memory* memory = emulator->GetMemory();
+        if (!memory)
+        {
+            session.SendResponse("Memory not available.");
+            return;
+        }
+
+        uint32_t addr = result.startAddress;
+        for (uint8_t b : result.bytes)
+            memory->MemoryWriteFast(static_cast<uint16_t>((addr++) & 0xFFFF), b);
+    }
+
+    std::stringstream ss;
+    ss << std::hex << std::uppercase << std::setfill('0');
+    ss << "Assembled " << std::dec << result.bytes.size() << " bytes at $" << std::hex << std::setw(4)
+       << result.startAddress << "-$" << std::setw(4) << result.endAddress << NEWLINE;
+
+    for (const auto& line : result.lines)
+    {
+        ss << "  $" << std::setw(4) << line.address;
+        if (!line.label.empty())
+            ss << " " << line.label << ":";
+        ss << "  " << line.source;
+        if (!line.bytes.empty())
+        {
+            ss << "   ;";
+            for (uint8_t b : line.bytes)
+                ss << " " << std::setw(2) << static_cast<int>(b);
+        }
+        ss << NEWLINE;
+    }
+
+    if (!result.symbols.empty())
+    {
+        ss << "Symbols:" << NEWLINE;
+        for (const auto& sym : result.symbols)
+            ss << "  " << sym.first << " = $" << std::setw(4) << sym.second << NEWLINE;
+    }
+
+    if (write)
+        ss << "Bytes written to emulator memory." << NEWLINE;
+
+    session.SendResponse(ss.str());
+}
+
+// HandleListing — sjasmplus .lst source-listing navigation (mirrors the WebAPI
+// listing/load, listing/source_at, listing/step_line and listing/run_to_line
+// endpoints).
+void CLIProcessor::HandleListing(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected.");
+        return;
+    }
+
+    auto* ctx = emulator->GetContext();
+    if (!ctx || !ctx->pDebugManager)
+    {
+        session.SendResponse("Debug manager not available.");
+        return;
+    }
+
+    ListingParser* parser = ctx->pDebugManager->GetListingParser();
+    if (!parser)
+    {
+        session.SendResponse("Listing parser not available.");
+        return;
+    }
+
+    const std::string subcommand = args.empty() ? "info" : args[0];
+
+    if (subcommand == "load")
+    {
+        if (args.size() < 2)
+        {
+            session.SendResponse("Usage: listing load <path>");
+            return;
+        }
+
+        if (parser->LoadListing(args[1]))
+        {
+            std::stringstream ss;
+            ss << std::dec;
+            ss << "Loaded " << parser->GetLineCount() << " lines (" << parser->GetCodeLineCount()
+               << " code, " << parser->GetTotalBytes() << " bytes)" << NEWLINE;
+            ss << std::hex << std::uppercase << std::setfill('0');
+            ss << "Address range: $" << std::setw(4) << parser->GetMinAddress() << "-$" << std::setw(4)
+               << parser->GetMaxAddress() << NEWLINE;
+            session.SendResponse(ss.str());
+        }
+        else
+        {
+            session.SendResponse("Failed to load listing: " + args[1]);
+        }
+        return;
+    }
+
+    if (subcommand == "clear")
+    {
+        parser->Clear();
+        session.SendResponse("Listing cleared.");
+        return;
+    }
+
+    if (subcommand == "info")
+    {
+        if (!parser->IsLoaded())
+        {
+            session.SendResponse("No listing loaded. Use 'listing load <path>' first.");
+            return;
+        }
+
+        std::stringstream ss;
+        ss << std::dec;
+        ss << "Source: " << parser->GetSourcePath() << NEWLINE;
+        ss << "Lines: " << parser->GetLineCount() << " (" << parser->GetCodeLineCount() << " code)" << NEWLINE;
+        ss << "Bytes: " << parser->GetTotalBytes() << NEWLINE;
+        ss << std::hex << std::uppercase << std::setfill('0');
+        ss << "Address range: $" << std::setw(4) << parser->GetMinAddress() << "-$" << std::setw(4)
+           << parser->GetMaxAddress();
+        session.SendResponse(ss.str());
+        return;
+    }
+
+    if (!parser->IsLoaded())
+    {
+        session.SendResponse("No listing loaded. Use 'listing load <path>' first.");
+        return;
+    }
+
+    Z80State* z80State = emulator->GetZ80State();
+    if (!z80State)
+    {
+        session.SendResponse("Z80 state not available.");
+        return;
+    }
+
+    if (subcommand == "source" || subcommand == "source_at")
+    {
+        // Address defaults to PC
+        uint16_t address = z80State->pc;
+        if (args.size() >= 2)
+        {
+            try
+            {
+                const std::string& addrStr = args[1];
+                if (addrStr.rfind("0x", 0) == 0 || addrStr.rfind("0X", 0) == 0)
+                    address = static_cast<uint16_t>(std::stoul(addrStr.substr(2), nullptr, 16));
+                else if (addrStr[0] == '$')
+                    address = static_cast<uint16_t>(std::stoul(addrStr.substr(1), nullptr, 16));
+                else
+                    address = static_cast<uint16_t>(std::stoul(addrStr, nullptr, 0));
+            }
+            catch (...)
+            {
+                session.SendResponse("Invalid address format.");
+                return;
+            }
+        }
+
+        const ListingLine* line = parser->FindLineByAddress(address);
+        if (!line)
+        {
+            std::stringstream ss;
+            ss << std::hex << std::uppercase << std::setfill('0');
+            ss << "No source line covers $" << std::setw(4) << address;
+            session.SendResponse(ss.str());
+            return;
+        }
+
+        std::stringstream ss;
+        ss << std::hex << std::uppercase << std::setfill('0');
+        ss << "Line " << std::dec << line->lineNumber;
+        if (line->hasCode)
+            ss << "  $" << std::hex << std::setw(4) << line->addressStart << "-$" << std::setw(4) << line->addressEnd;
+        ss << NEWLINE;
+        ss << "  " << line->source;
+        session.SendResponse(ss.str());
+        return;
+    }
+
+    if (subcommand == "stepline" || subcommand == "step_line")
+    {
+        // Stop on the first instruction whose listing line differs from the starting line
+        const ListingLine* startLine = parser->FindLineByAddress(z80State->pc);
+        const int startLineNumber = startLine ? startLine->lineNumber : -1;
+
+        const unsigned maxTStates = ctx->config.frame * 100;  // ~2 s of emulated time
+        emulator->RunUntilCondition(
+            [parser, startLineNumber](const Z80State& state) {
+                const ListingLine* line = parser->FindLineByAddress(state.pc);
+                return line != nullptr && line->lineNumber != startLineNumber;
+            },
+            maxTStates);
+
+        z80State = emulator->GetZ80State();
+        const ListingLine* endLine = z80State ? parser->FindLineByAddress(z80State->pc) : nullptr;
+        const bool lineChanged = endLine != nullptr && endLine->lineNumber != startLineNumber;
+
+        std::stringstream ss;
+        ss << (lineChanged ? "Stepped to a different source line" : "Stopped without reaching a different source line")
+           << NEWLINE;
+        if (endLine)
+            ss << "Line " << endLine->lineNumber << ": " << endLine->source << NEWLINE;
+        if (z80State)
+        {
+            ss << std::hex << std::uppercase << std::setfill('0');
+            ss << "PC: $" << std::setw(4) << z80State->pc;
+        }
+        session.SendResponse(ss.str());
+        return;
+    }
+
+    if (subcommand == "runtoline" || subcommand == "run_to_line")
+    {
+        if (args.size() < 2)
+        {
+            session.SendResponse("Usage: listing runtoline <line>");
+            return;
+        }
+
+        int lineNumber = 0;
+        try
+        {
+            lineNumber = std::stoi(args[1]);
+        }
+        catch (...)
+        {
+            session.SendResponse("Invalid line number.");
+            return;
+        }
+
+        const ListingLine* target = parser->FindNextCodeLine(lineNumber);
+        if (!target)
+        {
+            session.SendResponse("No code line at or after line " + std::to_string(lineNumber) +
+                                 " in loaded listing");
+            return;
+        }
+
+        const uint16_t targetAddress = target->addressStart;
+        const bool alreadyAt = z80State->pc == targetAddress;
+
+        if (!alreadyAt)
+        {
+            const unsigned maxTStates = ctx->config.frame * 500;  // ~10 s of emulated time
+            emulator->RunUntilCondition(
+                [targetAddress](const Z80State& state) { return state.pc == targetAddress; }, maxTStates);
+        }
+
+        z80State = emulator->GetZ80State();
+        const bool reached = z80State && z80State->pc == targetAddress;
+
+        std::stringstream ss;
+        ss << (alreadyAt ? "Already at target line" : (reached ? "Reached target line"
+                                                                : "Safety limit reached before target line"))
+           << NEWLINE;
+        ss << "Target: line " << target->lineNumber << ": " << target->source << NEWLINE;
+        if (z80State)
+        {
+            ss << std::hex << std::uppercase << std::setfill('0');
+            ss << "PC: $" << std::setw(4) << z80State->pc;
+        }
+        session.SendResponse(ss.str());
+        return;
+    }
+
+    session.SendResponse("Unknown subcommand: " + subcommand +
+                         " (expected load|clear|info|source|stepline|runtoline)");
 }

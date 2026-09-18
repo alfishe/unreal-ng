@@ -70,15 +70,8 @@ The WebAPI implements the same command semantics as other interfaces (CLI, Pytho
 ## Implemented Endpoints
 
 ### 1. List Emulators
-**Endpoint**: `GET /api/v1/emulators`  
-**Description**: Get list of all emulator instances  
-
-**Request**:
-```http
-GET /api/v1/emulators HTTP/1.1
-Host: localhost:8090
-Accept: application/json
-```
+**Endpoint**: `GET /api/v1/emulator`  
+**Description**: Get list of all emulator instances (each entry carries the machine identity block)  
 
 **Response**:
 ```json
@@ -86,59 +79,71 @@ Accept: application/json
   "emulators": [
     {
       "id": "550e8400-e29b-41d4-a716-446655440000",
-      "symbolic_id": "main",
-      "created_at": "2026-01-03T10:30:00Z",
-      "last_activity": "2026-01-03T10:35:22Z",
       "state": "running",
-      "uptime": "00:05:22"
+      "is_running": true,
+      "is_paused": false,
+      "is_debug": false,
+      "model": "PENTAGON",
+      "model_full_name": "Pentagon",
+      "ram_kb": 128,
+      "video_mode": "Standard",
+      "speed_multiplier": 1,
+      "config_folder": "pentagon128k"
     }
   ],
   "count": 1
 }
 ```
 
-### 2. Get Emulator Status
-**Endpoint**: `GET /api/v1/emulators/status`  
-**Description**: Get overall status of all emulators  
+**Machine identity fields** (present on every lifecycle response — list, details, create, model switch; also exposed via the MCP `machine` aspect):
+- `model` / `model_full_name`: short name (for create requests) and human-readable name
+- `ram_kb`: configured RAM
+- `video_mode`: active video mode (`null` until the screen subsystem exists; `ATM16`/`Profi 512x240`/... on builds with extended video support)
+- `speed_multiplier`: live Z80 frequency multiplier (reflects turbo)
+- `config_folder`: machine config folder under `configs/`
+
+### 2. Get Server Status
+**Endpoint**: `GET /api/v1/emulator/status`  
+**Description**: Instance counts by state, build fingerprint, and which machines this build can create  
 
 **Response**:
 ```json
 {
-  "status": "ok",
-  "emulators": [
-    {
-      "id": "550e8400-e29b-41d4-a716-446655440000",
-      "state": "running",
-      "fps": 50.0,
-      "cpu_usage": 45.2
-    }
-  ]
+  "emulator_count": 1,
+  "states": { "running": 1 },
+  "server": {
+    "version": "1.0.0",
+    "git_branch": "master",
+    "git_commit": "5719e27e",
+    "build_type": "Release"
+  },
+  "models_creatable": ["PENTAGON", "48K", "128k", "PLUS3", "PROFI", "SCORPION", "PROFSCORP"]
 }
 ```
 
+> The `server` block is captured at CMake configure time — a branch switch or new commit requires reconfiguring to refresh. Use it to attribute triage sessions to a build. `models_creatable` lists the short names a create can succeed with.
+
 ### 3. Get Emulator Details
-**Endpoint**: `GET /api/v1/emulators/{id}`  
-**Description**: Get detailed information about specific emulator  
+**Endpoint**: `GET /api/v1/emulator/{id}`  
+**Description**: Get detailed information about a specific emulator (with the machine identity block)  
 
 **Parameters**:
-- `id` (path): Emulator UUID or symbolic ID
+- `id` (path): Emulator UUID or index (0-based)
 
 **Response**:
 ```json
 {
   "id": "550e8400-e29b-41d4-a716-446655440000",
-  "symbolic_id": "main",
   "state": "paused",
-  "created_at": "2026-01-03T10:30:00Z",
-  "uptime": "00:05:22",
-  "registers": {
-    "af": "0x44C4",
-    "bc": "0x3F00",
-    "de": "0x0000",
-    "hl": "0x5C00",
-    "pc": "0x0605",
-    "sp": "0xFF24"
-  }
+  "is_running": false,
+  "is_paused": true,
+  "is_debug": false,
+  "model": "PENTAGON",
+  "model_full_name": "Pentagon",
+  "ram_kb": 128,
+  "video_mode": "Standard",
+  "speed_multiplier": 1,
+  "config_folder": "pentagon128k"
 }
 ```
 
@@ -174,28 +179,62 @@ Content-Type: application/json
 **Endpoint**: `POST /api/v1/emulators/{id}/stop`  
 
 ### 5. Create Emulator
-**Endpoint**: `POST /api/v1/emulators`  
-**Description**: Create new emulator instance  
+**Endpoint**: `POST /api/v1/emulator/create` (also `POST /api/v1/emulator/start` = create + start)  
+**Description**: Create new emulator instance. **Strict semantics**: a requested model this build cannot instantiate fails with `400` and a reason — there is NO silent fallback to a default 48K machine.  
 
 **Request**:
 ```json
 {
   "symbolic_id": "test_instance",
-  "config": {
-    "model": "spectrum128",
-    "rom": "128k.rom"
-  }
+  "model": "128k",
+  "ram_size": 128
 }
 ```
 
-**Response**:
+**Response 201**:
 ```json
 {
-  "status": "success",
   "id": "550e8400-e29b-41d4-a716-446655440001",
-  "symbolic_id": "test_instance"
+  "state": "initialized",
+  "symbolic_id": "test_instance",
+  "model": "128k",
+  "model_full_name": "ZX-Spectrum 128k",
+  "ram_kb": 128,
+  "video_mode": null,
+  "speed_multiplier": 1,
+  "config_folder": "spectrum128"
 }
 ```
+
+**Response 400** (model not creatable / unknown / bad RAM):
+```json
+{
+  "error": "Bad Request",
+  "message": "model 'ATM710' is not supported by this build (PortDecoder::GetPortDecoderForModel - unknown model 6)",
+  "requested_model": "ATM710",
+  "available_models_endpoint": "/api/v1/emulator/models"
+}
+```
+
+### 5a. List Models (runtime-authoritative)
+**Endpoint**: `GET /api/v1/emulator/models`  
+**Description**: All known machine models with per-entry `creatable` flags. This endpoint — not docs — is the authoritative model list: a `creatable: false` entry (missing port decoder or config folder in this build) fails on create with the reason above.
+
+```json
+{
+  "models": [
+    { "id": 0, "name": "PENTAGON", "full_name": "Pentagon", "default_ram_kb": 128,
+      "available_ram_sizes_kb": [128, 512, 1024], "creatable": true },
+    { "id": 5, "name": "ATM3", "full_name": "ZX-Evo", "default_ram_kb": 1024,
+      "available_ram_sizes_kb": [1024], "creatable": false }
+  ],
+  "count": 16
+}
+```
+
+### 5b. Switch Model (validate-first)
+**Endpoint**: `POST /api/v1/emulator/{id}/model` (body `{"model": "...", "ram_size": N}`)  
+**Description**: The request is validated BEFORE the current instance is stopped/removed: an unknown model, unsupported RAM or non-creatable model returns `400` and the current emulator keeps running untouched. A successful switch stops the old instance, creates and starts a new one (different ID) and returns the machine identity block for the new instance.
 
 ### 6. Remove Emulator
 **Endpoint**: `DELETE /api/v1/emulators/{id}`  
@@ -218,6 +257,8 @@ Content-Type: application/json
 POST /api/v1/emulator/{id}/step              Execute single instruction
 POST /api/v1/emulator/{id}/steps             Execute N instructions (body: {"count": N})
 POST /api/v1/emulator/{id}/stepover          Step over CALL instructions
+POST /api/v1/emulator/{id}/stepout            Step out of current subroutine (breakpoints skipped)
+POST /api/v1/emulator/{id}/skip_until         Fast-forward until PC reaches target (body: {"pc": "0x8000", "max_tstates": N})
 POST /api/v1/emulator/{id}/run_tstates       Run N t-states (body: {"count": N})
 POST /api/v1/emulator/{id}/run_to_scanline   Run until scanline N (body: {"scanline": N})
 POST /api/v1/emulator/{id}/run_scanlines     Run N scanlines forward (body: {"count": N})
@@ -248,6 +289,60 @@ GET /api/v1/emulator/{id}/memcounters         Memory access statistics
 GET /api/v1/emulator/{id}/calltrace           Call trace history (?limit=N)
 GET /api/v1/emulator/{id}/disasm              Disassemble Z80 code (?address=&count=, default: PC)
 GET /api/v1/emulator/{id}/disasm/page         Disassemble from physical page (?type=&page=&offset=&count=)
+POST /api/v1/emulator/{id}/memory/find        Search Z80 memory for a byte pattern (body: {"pattern_hex": "AF 3C"})
+GET  /api/v1/emulator/{id}/state/screen/digest  Stable screen-content digest (range or banks, border folding; ?mode=active follows the displayed surface)
+GET  /api/v1/emulator/{id}/ports             Static port map + live routing flags (which devices answer which ports, under which gates); rows carry semantic `tags` (memory/rom/screen/sound_ay/…) and the `latch` live-value binding (p7FFD, p1FFD, … or null)
+GET  /api/v1/emulator/{id}/state/paging      Unified paging state (P1-2): tagged latch rows with live values + §5.1 decoded bits, 4-bank table with ROM `name`/`role`/`signature` (§5.2 — role≠name is the wrong-ROM signal), `paging_locked`, `trdos_active`
+GET  /api/v1/emulator/{id}/video/beam         Current raster position and beam zone
+GET  /api/v1/emulator/{id}/frame_cost         Per-frame halt/run cost accounting
+GET  /api/v1/emulator/{id}/state/audio/ay      AY/SSG chips overview (core DeviceState report)
+GET  /api/v1/emulator/{id}/state/audio/ay/{n}  One AY/SSG chip, registers and channels decoded
+GET  /api/v1/emulator/{id}/state/audio/fm      TurboSound FM board latches + both YM2203 summaries (404 without TSFM)
+GET  /api/v1/emulator/{id}/state/audio/fm/{n}  One YM2203 FM half: mode, timers, channels, operators, envelopes, key-on
+GET  /api/v1/emulator/{id}/state/fdc           Beta Disk WD1793: registers, status bits, FSM, signals, drives (404 without Beta Disk)
+```
+
+The three device reports (AY, FM, FDC) are built once in the core
+(`core/src/emulator/state/devicestate.h`) and are byte-for-byte the same
+data the CLI, Lua, Python and MCP return — see
+[command-interface.md §3.3](./command-interface.md#33-device-state-reports-ay--ssg-turbosound-fm-beta-disk-fdc)
+for the field list. Every endpoint also has an active-emulator form without
+`{id}` (`/api/v1/emulator/state/audio/fm`, `/api/v1/emulator/state/fdc`).
+
+### Labels & Symbols
+```
+GET    /api/v1/emulator/{id}/labels            List labels (filters: ?module=&type=&bank=&from=&to=&active=)
+POST   /api/v1/emulator/{id}/labels            Add label (body: {"name", "address", "type", ...})
+DELETE /api/v1/emulator/{id}/labels            Clear all labels
+GET    /api/v1/emulator/{id}/labels/resolve    Resolve by name or address (?name= or ?address=): exact label, aliases at the address, nearest below/above
+GET    /api/v1/emulator/{id}/labels/{name}     Get label by name
+DELETE /api/v1/emulator/{id}/labels/{name}     Remove label
+PUT    /api/v1/emulator/{id}/labels/{name}     Update label (body: {"address", "type", ...})
+```
+
+### Assembler & Source Listings
+```
+POST /api/v1/emulator/{id}/assemble            Assemble Z80 source (body: {"code", "address", "write": false})
+POST /api/v1/emulator/{id}/listing/load        Load source listing (body: {"path"})
+GET  /api/v1/emulator/{id}/listing/source_at   Source line for an address (?address=, default: PC)
+POST /api/v1/emulator/{id}/listing/step_line   Run until the source line changes (body: {"max_tstates": N})
+POST /api/v1/emulator/{id}/listing/run_to_line Run to first code byte of a line (body: {"line": N})
+```
+
+### Analysis & Capture
+```
+POST /api/v1/emulator/{id}/coverage/start      Activate coverage analyzer (body: {"keep": false})
+POST /api/v1/emulator/{id}/coverage/stop       Deactivate (data retained)
+POST /api/v1/emulator/{id}/coverage/clear      Clear collected data
+GET  /api/v1/emulator/{id}/coverage            Coverage summary (executed count, ranges)
+GET  /api/v1/emulator/{id}/coverage/gaps       Executed ranges and gaps (?start=&end=&max=)
+POST /api/v1/emulator/{id}/ay/log              AY log control (body: {"action": "start|stop|clear", "capacity"})
+GET  /api/v1/emulator/{id}/ay/log              Get AY log entries (?count=&offset=)
+POST /api/v1/emulator/{id}/audio/capture       Audio capture control (body: {"action": "start|stop|clear", "seconds"})
+GET  /api/v1/emulator/{id}/audio/capture/status   Capture state and level statistics
+GET  /api/v1/emulator/{id}/audio/capture/result   Captured samples (?format=wav&path=... to export)
+POST /api/v1/emulator/{id}/video/record        Video recording control (body: {"action": "start|stop|pause|resume", ...})
+GET  /api/v1/emulator/{id}/video/record/status    Recording state
 ```
 
 #### Disassembly Response
@@ -837,6 +932,111 @@ curl -X POST http://localhost:8090/api/v1/emulator/{id}/keyboard/macro \
 | `delay_frames` | number | No | 2 | Frames between characters |
 | `tokenized` | boolean | No | false | Enable K-mode token for first char |
 
+### 10. Mouse Input Injection
+
+> **Status**: ✅ Implemented (2026-09). Source: `core/automation/webapi/src/api/mouse_api.cpp`;
+> every range check lives in the core `DebugMouseManager`, so all interfaces answer the same.
+
+Drives the emulated Kempston Mouse. The mouse is **relative**: requests change its X/Y
+counters, and the running program moves its own cursor by how much the counters changed.
+Full command semantics, units and a worked example: [command-interface.md §11](./command-interface.md#11-mouse-input-injection).
+
+```
+POST /api/v1/emulator/{id}/mouse/move         Move by dx/dy emulated pixels      {"dx":10,"dy":-5}
+POST /api/v1/emulator/{id}/mouse/press        Press and hold a button            {"button":"left"}
+POST /api/v1/emulator/{id}/mouse/release      Release a button                   {"button":"left"}
+POST /api/v1/emulator/{id}/mouse/click        Press, hold N frames, release      {"button":"left","frames":2}
+POST /api/v1/emulator/{id}/mouse/buttons      Set the exact pressed set          {"pressed":["left","middle"]}
+POST /api/v1/emulator/{id}/mouse/wheel        Scroll by notches                  {"steps":-1}
+POST /api/v1/emulator/{id}/mouse/release_all  Release all, cancel pending click  (no body)
+POST /api/v1/emulator/{id}/mouse/counters     Debug: write raw X/Y counters      {"x":31,"y":85}
+GET  /api/v1/emulator/{id}/mouse/status       Current mouse state
+GET  /api/v1/emulator/{id}/mouse/buttons      Valid button names and aliases
+```
+
+| Field | Type | Range | Notes |
+|-------|------|-------|-------|
+| `dx` | integer | −127 … 127 | + = right. Either `dx` or `dy` may be omitted (= 0), not both; both 0 is rejected. |
+| `dy` | integer | −127 … 127 | + = **up** |
+| `button` | string | `left`, `right`, `middle`, `l`, `r`, `m` | case-insensitive |
+| `frames` | integer | 1 … 65535 | optional, default 2 |
+| `pressed` | array of button names | — | `[]` = nothing pressed; duplicates ignored |
+| `steps` | integer | −7 … 7, not 0 | + = away from the user |
+| `x`, `y` | integer | 0 … 255 | both required |
+
+Numbers must be JSON integers: `"10"` and `1.5` are rejected with 400.
+
+**Every successful POST returns the resulting state**, so no follow-up status call is needed:
+
+```jsonc
+// POST /mouse/move {"dx":10,"dy":-5}, from reset (X=31, Y=85), shipped config Wheel=NONE
+{
+  "success": true,
+  "dx": 10, "dy": -5,
+  "message": "Mouse moved: dx=+10 dy=-5",
+  "state": {
+    "available": true, "present": true, "wheel_enabled": false,
+    "x": 41, "y": 80,
+    "buttons": {"left": false, "right": false, "middle": false},
+    "button_mask": 255, "wheel": 0,
+    "ports": {"FADF": 255, "FBDF": 41, "FFDF": 80},
+    "pending_click": null,
+    "ttd_journal": "supported"
+  }
+}
+```
+
+`GET /mouse/status` returns the same object as `state` plus `emulator_id`. Field meanings:
+
+| Field | Meaning |
+|-------|---------|
+| `present` | A mouse is fitted: `[INPUT] Mouse=KEMPSTON` **and** feature `kempstonmouse` on. `false` = nothing answers on the ports. |
+| `wheel_enabled` | `[INPUT] Wheel=KEMPSTON`: the wheel counter appears in the top 4 bits of `#FADF`. |
+| `button_mask` | Internal button byte, active-low (a pressed button is bit 0). 254 = left down. |
+| `ports` | What the three ports return right now, as integers. `FADF` = buttons (+ wheel), `FBDF` = X, `FFDF` = Y. |
+| `pending_click` | `null`, or `{"button":"left","frames_left":1}` while a click is being held. |
+| `routing` | `{"ports_decoded": bool, "note": "..."}` — would a mouse port read be decoded right now? Hidden while TR-DOS ports are accessible, when a registered peripheral claims the port family, or behind model-specific gating (Scorpion DOS trigger / Shadow Monitor beta mirrors). Same live source as `GET /ports`. |
+| `ttd_journal` | `"supported"`: TTD recordings include mouse input. |
+
+A successful response may carry a `"warning"` string: the mouse is not fitted
+(`mouse not present: guest reads floating bus on the mouse ports`), or a wheel step was sent
+with no wheel fitted (`no wheel fitted ([INPUT] Wheel=NONE): the guest does not see the wheel counter`).
+The change is still applied.
+
+**Errors** use the usual `{"error": "...", "message": "..."}` body, with CORS headers:
+
+| Condition | Code | `message` example |
+|-----------|------|-------------------|
+| Unknown emulator id | 404 | `Emulator with specified ID not found` |
+| Mouse manager missing | 500 | `Mouse manager not available` |
+| Missing body field | 400 | `Missing 'button' field in request body` |
+| Wrong JSON type | 400 | `'dx' must be an integer` |
+| Out of range | 400 | `dx=200 out of range -127..127; split into several moves with run_frames between them` |
+| Zero move or zero wheel | 400 | `move requires a non-zero dx or dy` |
+| Unknown button | 400 | `Unknown button 'foo'. Valid: left, right, middle (l, r, m)` |
+| TTD replay in progress | 409 | `TTD replay in progress; live mouse input refused` |
+
+409 is returned **only** during TTD replay. Writing counters while TTD records is allowed
+(the write is journalled).
+
+**Example: click an icon 32 px right and 16 px up of the cursor, reproducibly**
+
+```bash
+ID=...   # emulator id
+curl -X POST localhost:8090/api/v1/emulator/$ID/pause
+curl -X POST localhost:8090/api/v1/emulator/$ID/mouse/move  -H 'Content-Type: application/json' -d '{"dx":32,"dy":16}'
+curl -X POST localhost:8090/api/v1/emulator/$ID/run_frames  -H 'Content-Type: application/json' -d '{"count":2}'
+curl -X POST localhost:8090/api/v1/emulator/$ID/mouse/click -H 'Content-Type: application/json' -d '{"button":"left","frames":2}'
+curl -X POST localhost:8090/api/v1/emulator/$ID/run_frames  -H 'Content-Type: application/json' -d '{"count":3}'
+
+curl -X POST localhost:8090/api/v1/emulator/$ID/mouse/wheel -H 'Content-Type: application/json' -d '{"steps":-9}'
+# 400 {"error":"Bad Request","message":"steps=-9 out of range -7..7"}
+```
+
+MCP clients use the `mouse_input` tool (actions `move`, `press`, `release`, `click` with an
+optional `dx`/`dy` pre-move, `buttons`, `wheel`, `release_all`, `status`), which forwards to
+these routes. `counters` is not a `mouse_input` action; reach it through `invoke_api`.
+
 ## Tape Control
 
 Full tape transport, inspection and the offline audio bridge — one-to-one with the CLI `tape` commands ([command-interface.md §10](./command-interface.md#10-tape-control-commands)), the Lua `tape_*` functions and the Python `tape_*` methods. All endpoints are scoped under `/api/v1/emulator/{id}/tape`.
@@ -965,6 +1165,9 @@ All TTD endpoints are scoped under `/api/v1/emulator/{id}/ttd/...`. Full command
 | `GET`  | `/ttd/bookmarks` | — | List bookmarks. | 🔮 Phase 3 |
 | `POST` | `/ttd/bookmarks` | `{"at": T, "label": "..."}` | Add a bookmark at a recorded time point. | 🔮 Phase 3 |
 | `DELETE` | `/ttd/bookmarks/{id}` | — | Remove a bookmark. | 🔮 Phase 3 |
+| `GET`  | `/ttd/coverage/probe` | `?frame=N&kind=executed\|written\|read&addr_from=A1&addr_to=A2&phys_page=P` | Exact per-frame query: did frame N touch the range? Returns `{touched, index_available, frame, kind, addr_from, addr_to, phys_page}`. Frames outside the covered window return `index_available: false, touched: false`. Returns 400 for missing `frame`, invalid `kind`, `addr_from > addr_to`, `phys_page > 255` or non-numeric values. | ✅ Implemented |
+| `GET`  | `/ttd/coverage/scan` | `?from_frame=F1&to_frame=F2&kind=executed\|written\|read&addr_from=A1&addr_to=A2&phys_page=P&limit=L` | Frames in `[F1, F2]` touching the range (window clamped to coverage). Returns `{frames[], first_match, last_match, matching_frames, scanned_frames, truncated, covered_from, covered_to, index_available}`. Same 400 validation as probe (plus `limit >= 1`). | ✅ Implemented |
+| `GET`  | `/ttd/coverage/summary` | `?from_frame=F1&to_frame=F2&kind=K&bucket_size=B&limit=L` | Activity heatmap: per-bucket distinct executed/written/read address counts. Returns `{bucket_size, bucket_count, buckets[] (frame_start/frame_end/executed_distinct/written_distinct/read_distinct/has_keyframe), covered_from, covered_to, index_available}`. `bucket_size=0` (default) = auto. | ✅ Implemented |
 
 **`GET /ttd/status` response shape:**
 

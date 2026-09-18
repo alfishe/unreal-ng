@@ -1,11 +1,12 @@
 #pragma once
 
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
-#include "3rdparty/simpleini/simpleini.h"
+#include "common/inifile.h"
 
 // Forward declaration to avoid circular dependency
 class EmulatorContext;
@@ -34,6 +35,8 @@ constexpr const char* const kOverscan = "overscan";
 constexpr const char* const kPortTrace = "porttrace";
 constexpr const char* const kFastTape = "fasttape";
 constexpr const char* const kTurboTape = "turbotape";
+constexpr const char* const kHud = "hud";
+constexpr const char* const kKempstonMouse = "kempstonmouse";
 
 // Feature Aliases
 constexpr const char* const kDebugModeAlias = "dbg";
@@ -51,6 +54,8 @@ constexpr const char* const kOverscanAlias = "osc";
 constexpr const char* const kPortTraceAlias = "pt";
 constexpr const char* const kFastTapeAlias = "ftape";
 constexpr const char* const kTurboTapeAlias = "ttape";
+constexpr const char* const kHudAlias = "hud";
+constexpr const char* const kKempstonMouseAlias = "kmouse";
 
 // Feature Descriptions
 constexpr const char* const kDebugModeDesc = "Master debug mode, enables/disables all debug features for performance";
@@ -78,6 +83,11 @@ constexpr const char* const kFastTapeDesc =
 constexpr const char* const kTurboTapeDesc =
     "Turbo tape loading: engage turbo mode automatically while the tape signal path plays, so blocks the LD-BYTES trap cannot serve "
     "(headerless, custom-timed, pulse streams) still load at warp speed. Warp ends with the read-gap watchdog, end-of-tape or any stop.";
+constexpr const char* const kHudDesc =
+    "On-screen HUD: indicators and messages over the emulator picture. Zero cost when disabled.";
+
+constexpr const char* const kKempstonMouseDesc =
+    "Kempston Mouse on the bus (when fitted by the machine config [INPUT] Mouse=KEMPSTON). Off: the mouse ports are not decoded.";
 
 // Categories
 constexpr const char* const kCategoryDebug = "debug";
@@ -130,7 +140,7 @@ public:
     void setDefaults();
     void loadFromFile(const std::string& path);
     void saveToFile(const std::string& path) const;
-    void onFeatureChanged();
+    void onFeatureChanged(const std::string& changedFeatureId = "");
 
     EmulatorContext* context() const
     {
@@ -138,6 +148,7 @@ public:
     }
 
 private:
+    /// Find a feature by id or alias. Caller must hold _mutex.
     FeatureInfo* findFeature(const std::string& idOrAlias);
     const FeatureInfo* findFeature(const std::string& idOrAlias) const;
 
@@ -145,4 +156,9 @@ private:
     std::unordered_map<std::string, FeatureInfo> _features;  // id -> FeatureInfo
     std::unordered_map<std::string, std::string> _aliases;   // alias -> id
     mutable bool _dirty = false;                             // Track if the state changed and save is required
+
+    /// Guards _features/_aliases/_dirty: the WebAPI/HTTP thread mutates them
+    /// while the MessageCenter worker reads them (e.g. HudModel feature
+    /// notifications). Recursive so public methods may call each other.
+    mutable std::recursive_mutex _mutex;
 };

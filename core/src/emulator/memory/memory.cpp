@@ -5,6 +5,7 @@
 #include <mutex>
 #include <thread>
 
+#include "3rdparty/message-center/messagecenter.h"
 #include "base/featuremanager.h"
 #include "common/bithelper.h"
 #include "common/modulelogger.h"
@@ -12,7 +13,7 @@
 #include "common/timehelper.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
-#include "debugger/ttd/ttd_dirty_tracker.h"
+#include "debugger/ttd/ttddirtytracker.h"
 #include "debugger/ttd/timetravelmanager.h"  // Phase 4 — RecordMemoryWrite hot-path call
 #include "emulator/emulator.h"
 #include "emulator/memory/memoryaccesstracker.h"
@@ -188,7 +189,7 @@ uint8_t Memory::MemoryReadFast(uint16_t addr, [[maybe_unused]] bool isExecution)
 /// Used from: Z80::DbgMemIf
 /// \param addr 16-bit address in Z80 memory space
 /// \return Byte read from Z80 memory
-uint8_t Memory::MemoryReadDebug(uint16_t addr, [[maybe_unused]] bool isExecution)
+uint8_t Memory::MemoryReadDebug(uint16_t addr, bool isExecution)
 {
     /// region <MemoryReadFast functionality>
 
@@ -254,13 +255,20 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr, [[maybe_unused]] bool isExecution
         uint16_t breakpointID = brk.HandleMemoryRead(addr);
         if (breakpointID != BRK_INVALID)
         {
+            bool isHidden = false;
+            auto* bp = brk.GetBreakpointById(breakpointID);
+            if (bp && (bp->hidden || bp->note == "StepOver" || bp->note == "StepOut" || bp->group == "TemporaryBreakpoints"))
+            {
+                isHidden = true;
+            }
+
             // Pause emulator (single source of truth)
             emulator.Pause();
 
             // Broadcast notification - breakpoint triggered (instance-tagged per GDB TDD §6.3)
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
             BreakpointTriggeredPayload* payload =
-                new BreakpointTriggeredPayload(emulator.GetId(), breakpointID, addr);
+                new BreakpointTriggeredPayload(emulator.GetId(), breakpointID, addr, isHidden);
             messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
 
             // Wait until emulator resumed externally
@@ -365,13 +373,20 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
         uint16_t breakpointID = brk.HandleMemoryWrite(addr);
         if (breakpointID != BRK_INVALID)
         {
+            bool isHidden = false;
+            auto* bp = brk.GetBreakpointById(breakpointID);
+            if (bp && (bp->hidden || bp->note == "StepOver" || bp->note == "StepOut" || bp->group == "TemporaryBreakpoints"))
+            {
+                isHidden = true;
+            }
+
             // Pause emulator (single source of truth)
             emulator.Pause();
 
             // Broadcast notification - breakpoint triggered (instance-tagged per GDB TDD §6.3)
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
             BreakpointTriggeredPayload* payload =
-                new BreakpointTriggeredPayload(emulator.GetId(), breakpointID, addr);
+                new BreakpointTriggeredPayload(emulator.GetId(), breakpointID, addr, isHidden);
             messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
 
             // Wait until emulator resumed externally
@@ -446,7 +461,7 @@ void Memory::AllocateAndExportMemoryToMmap()
     if (!_feature_sharedmemory_enabled)
     {
         // Feature disabled - allocate regular heap memory
-        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES];
+        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES]();  // zero-init: deterministic power-on RAM
         MLOGDEBUG("Memory allocated using heap (sharedmemory feature disabled)");
         return;
     }
@@ -501,7 +516,7 @@ void Memory::AllocateAndExportMemoryToMmap()
         DWORD error = GetLastError();
         LOGERROR("Failed to create file mapping object (Error %lu), falling back to heap allocation", error);
         _mappedMemoryHandle = INVALID_HANDLE_VALUE;
-        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES];
+        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES]();  // zero-init: deterministic power-on RAM
         return;
     }
 
@@ -519,7 +534,7 @@ void Memory::AllocateAndExportMemoryToMmap()
         LOGERROR("Failed to map view of file (Error %lu), falling back to heap allocation", error);
         CloseHandle(_mappedMemoryHandle);
         _mappedMemoryHandle = INVALID_HANDLE_VALUE;
-        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES];
+        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES]();  // zero-init: deterministic power-on RAM
         return;
     }
 
@@ -540,7 +555,7 @@ void Memory::AllocateAndExportMemoryToMmap()
     {
         LOGERROR("Failed to create shared memory object: %s (errno=%d), falling back to heap allocation",
                  strerror(errno), errno);
-        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES];
+        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES]();  // zero-init: deterministic power-on RAM
         return;
     }
 
@@ -551,7 +566,7 @@ void Memory::AllocateAndExportMemoryToMmap()
         close(_mappedMemoryFd);
         shm_unlink(shmName.c_str());
         _mappedMemoryFd = -1;
-        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES];
+        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES]();  // zero-init: deterministic power-on RAM
         return;
     }
 
@@ -565,7 +580,7 @@ void Memory::AllocateAndExportMemoryToMmap()
         close(_mappedMemoryFd);
         shm_unlink(shmName.c_str());
         _mappedMemoryFd = -1;
-        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES];
+        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES]();  // zero-init: deterministic power-on RAM
         return;
     }
 
@@ -740,8 +755,12 @@ void Memory::SetROMMode(ROMModeEnum mode)
     if (mode == RM_CACHE)
         mode = RM_SOS;
 
-    // No RAM/cache/SERVICE
-    state.p1FFD &= ~7;
+    // No RAM/cache/SERVICE — except on Scorpion machines: p1FFD bits 0-2 are
+    // plain OUT #1FFD latches (RAM at #0000 / Shadow Monitor / RS-232 line)
+    // that a ROM-mode switch must not clobber. The #0000 priority chain in
+    // ScorpionMemory::UpdateModelBanks() derives everything from the latches (design §3)
+    if (config.mem_model != MM_SCORP && config.mem_model != MM_PROFSCORP)
+        state.p1FFD &= ~7;
     state.pDFFD &= ~0x10;
     state.flags &= ~CF_CACHEON;
 
@@ -784,6 +803,13 @@ void Memory::UpdateZ80Banks()
     EmulatorState& state = _context->emulatorState;
     const CONFIG& config = _context->config;
 
+    // Model derivatives may own the whole latch-to-bank translation
+    // (ScorpionMemory does for MM_SCORP / MM_PROFSCORP); a true return skips
+    // the generic body below and keeps every base model byte-identical
+    // (design §3)
+    if (UpdateModelBanks())
+        return;
+
     // TR-DOS session machinery requires both DOS and service ROMs to be present
     // (models without them can never enter a TR-DOS session)
     bool dosAvailable = base_dos_rom != nullptr && base_sys_rom != nullptr;
@@ -793,7 +819,15 @@ void Memory::UpdateZ80Banks()
     // flags are re-derived below from the current CF_TRDOS / p7FFD state
     state.flags &= ~(CF_DOSPORTS | CF_Z80FBUS | CF_LEAVEDOSRAM | CF_LEAVEDOSADR | CF_SETDOSROM);
 
-    if ((state.flags & CF_TRDOS) && dosAvailable)
+    if (config.mem_model == MM_ATM710 || config.mem_model == MM_ATM3)
+    {
+        // ATM models own their memory manager: the bank computation runs in the
+        // port decoder (port of the original set_banks() MM_ATM710 / MM_ATM3
+        // branch). The session-flags tail below still applies to every model.
+        if (_context->pPortDecoder)
+            _context->pPortDecoder->UpdateModelMemoryBanks();
+    }
+    else if ((state.flags & CF_TRDOS) && dosAvailable)
     {
         if (state.p7FFD & 0x10)
         {
@@ -839,6 +873,19 @@ void Memory::UpdateZ80Banks()
     // TODO: implement support for extended ports and cache
 }
 
+/// RAM bank mask derived from the configured RAM size (KB): 256 KB → 0x0F,
+/// 1024 KB → 0x3F. config.ramsize is in kilobytes (platform.h RAM_256 = 256);
+/// a byte-based >>14 shift would compute 0 pages and underflow the mask to
+/// 0xFF, unmasking every bank bit (design §3)
+uint8_t Memory::GetRamMask() const
+{
+    uint32_t pages = _context->config.ramsize >> 4;  // KB -> 16 KB pages
+    if (pages == 0 || pages > MAX_RAM_PAGES)
+        pages = MAX_RAM_PAGES;
+
+    return static_cast<uint8_t>(pages - 1);
+}
+
 /// Set ROM page
 /// Address space: [0x0000 - 0x3FFF]
 /// \param page ROM page number
@@ -857,6 +904,9 @@ void Memory::SetROMPage(uint16_t page, bool updatePorts)
     }
     /// endregion </Sanity check>
 
+    // Track previous page for change notification
+    uint16_t prevPage = GetROMPage();
+
     // Set access pointers
     uint8_t* romBankHostAddress = ROMPageHostAddress(page);
 
@@ -872,9 +922,45 @@ void Memory::SetROMPage(uint16_t page, bool updatePorts)
     if (updatePorts)
         _context->pPortDecoder->SetROMPage(page);
 
+    // Record ROM page switch for frame-end notification (zero overhead if HUD disabled)
+    if (page != prevPage && _feature_hud_enabled)
+    {
+        _romSwitchTracker.recordSwitch(static_cast<uint8_t>(page));
+    }
+
     /// region <Debug info>
     MLOGDEBUG("ROM page %d activated. pc: 0x%04X", page, _context->pCore->GetZ80()->pc);
     /// endregion </Debug info>
+}
+
+/// Map a ROM page to any of the four Z80 memory banks (ATM memory manager)
+/// Writes to a ROM-mapped bank are redirected to the trash page
+/// Address space: bank * [0x4000] .. bank * [0x4000] + 0x3FFF
+/// \param bank Z80 memory bank (window) 0-3
+/// \param page ROM page number
+void Memory::SetROMPageToBank(uint8_t bank, uint16_t page)
+{
+    /// region <Override submodule>
+    [[maybe_unused]]
+    static const uint16_t _SUBMODULE = PlatformMemorySubmodulesEnum::SUBMODULE_MEM_ROM;
+    /// endregion </Override submodule>
+
+    /// region <Sanity check>
+    if (bank > 3 || page >= MAX_ROM_PAGES)
+    {
+        std::string message = StringHelper::Format(
+            "Memory::SetROMPageToBank - Invalid bank/page: %d / %04X provided. MAX_ROM_PAGES: %04X", (int)bank, page, MAX_ROM_PAGES);
+        throw std::logic_error(message);
+    }
+    /// endregion </Sanity check>
+
+    _bank_mode[bank] = BANK_ROM;
+    _bank_read[bank] = ROMPageHostAddress(static_cast<uint8_t>(page));
+    _bank_write[bank] = _memory + TRASH_MEMORY_OFFSET;  // Redirect all ROM writes to special memory region
+
+    // Bank 0 ROM identity flags are consumed by the TR-DOS session logic
+    if (bank == 0)
+        SetROMPageFlags();
 }
 
 /// Switch to specified RAM Bank in RAM Page 3
@@ -968,6 +1054,9 @@ void Memory::SetRAMPageToBank3(uint16_t page, bool updatePorts)
     }
     /// endregion </Sanity check>
 
+    // Track previous page for change notification
+    uint8_t prevPage = _bank_ram_page_cache[3];
+
     _bank_mode[3] = BANK_RAM;
     _bank_write[3] = _bank_read[3] = RAMPageAddress(page);
     _bank_ram_page_cache[3] = static_cast<uint8_t>(page & 0xFF);
@@ -980,6 +1069,12 @@ void Memory::SetRAMPageToBank3(uint16_t page, bool updatePorts)
 
     if (updatePorts)
         _context->pPortDecoder->SetRAMPage(page);
+
+    // Record RAM page switch for frame-end notification (zero overhead if HUD disabled)
+    if (prevPage != 0xFF && page != prevPage && _feature_hud_enabled)
+    {
+        _ramSwitchTracker.recordSwitch(static_cast<uint8_t>(page));
+    }
 }
 
 bool Memory::IsBank0ROM()
@@ -994,22 +1089,23 @@ uint16_t Memory::GetROMPage()
 
 uint16_t Memory::GetRAMPageForBank0()
 {
-    return GetRAMPageFromAddress(_bank_read[0]);
+    // Use cache if bank mode is RAM (cache is 0xFF for ROM)
+    return _bank_mode[0] == BANK_RAM ? _bank_ram_page_cache[0] : MEMORY_UNMAPPABLE;
 }
 
 uint16_t Memory::GetRAMPageForBank1()
 {
-    return GetRAMPageFromAddress(_bank_read[1]);
+    return _bank_mode[1] == BANK_RAM ? _bank_ram_page_cache[1] : MEMORY_UNMAPPABLE;
 }
 
 uint16_t Memory::GetRAMPageForBank2()
 {
-    return GetRAMPageFromAddress(_bank_read[2]);
+    return _bank_mode[2] == BANK_RAM ? _bank_ram_page_cache[2] : MEMORY_UNMAPPABLE;
 }
 
 uint16_t Memory::GetRAMPageForBank3()
 {
-    return GetRAMPageFromAddress(_bank_read[3]);
+    return _bank_mode[3] == BANK_RAM ? _bank_ram_page_cache[3] : MEMORY_UNMAPPABLE;
 }
 
 ///
@@ -1030,18 +1126,17 @@ uint16_t Memory::GetROMPageForBank(uint8_t bank)
 
 ///
 /// \param bank Z80 bank [0:3]
-/// \return
+/// \return RAM page number or MEMORY_UNMAPPABLE if bank is not RAM
 uint16_t Memory::GetRAMPageForBank(uint8_t bank)
 {
-    uint16_t result = MEMORY_UNMAPPABLE;
     bank = bank & 0b0000'0011;
 
+    // Use cache (0xFF = not RAM); return MEMORY_UNMAPPABLE if bank is ROM
     if (_bank_mode[bank] == BANK_RAM)
     {
-        result = GetRAMPageFromAddress(_bank_read[bank]);
+        return _bank_ram_page_cache[bank];
     }
-
-    return result;
+    return MEMORY_UNMAPPABLE;
 }
 
 /// Returns absolute page number without distinction to RAM/Cache/Misc/ROM - since they all located in the same block
@@ -1114,7 +1209,7 @@ uint8_t* Memory::RAMPageAddress(uint16_t page)
     return result;
 }
 
-/// Up to MAX_ROM_PAGES 64 pages
+/// Up to MAX_ROM_PAGES pages (2 MB since the ProfROM quadrant expansion)
 /// \param page
 /// \return
 uint8_t* Memory::ROMPageHostAddress(uint8_t page)
@@ -1447,6 +1542,32 @@ void Memory::SetROMPageFlags()
     _isPage0ROM128k = std::get<1>(flags);
     _isPage0ROMDOS = std::get<2>(flags);
     _isPge0ROMService = std::get<3>(flags);
+
+    RecordROMPageSwitch();
+}
+
+/// @brief Record a ROM page change for the frame-end HUD notification
+/// @details Called from SetROMPageFlags, which every ROM switch runs through
+///          right after repointing bank 0 - SetROMPage, SetROM48k, SetROM128k,
+///          SetROMDOS and SetROMSystem alike. Hooking the individual entry
+///          points instead would miss runtime paging on the 128K family, which
+///          reaches the ROM through SetROMMode -> UpdateZ80Banks -> SetROMxxx
+///          and never calls SetROMPage at all (that one only runs at reset).
+///          Self-deduplicating against the tracker's own current page, so the
+///          paths that additionally round-trip through the port decoder back
+///          into SetROMPage still count a switch once.
+void Memory::RecordROMPageSwitch()
+{
+    // Zero overhead when HUD is disabled
+    if (!_feature_hud_enabled)
+        return;
+
+    const uint16_t page = GetROMPage();
+    if (page == MEMORY_UNMAPPABLE)
+        return;
+
+    if (static_cast<uint8_t>(page) != _romSwitchTracker.currentPage)
+        _romSwitchTracker.recordSwitch(static_cast<uint8_t>(page));
 }
 
 /// endregion </Service methods>
@@ -1660,6 +1781,7 @@ void Memory::UpdateFeatureCache()
         _feature_memorytracking_enabled = debugMode && fm->isEnabled(Features::kMemoryTracking);
         _feature_breakpoints_enabled = debugMode && fm->isEnabled(Features::kBreakpoints);
         _feature_ttd_enabled = debugMode && fm->isEnabled(Features::kTimeTravel);
+        _feature_hud_enabled = fm->isEnabled(Features::kHud);
 
         // Handle sharedmemory feature - can be toggled at runtime
         bool sharedMemoryRequested = fm->isEnabled(Features::kSharedMemory);
@@ -1806,3 +1928,62 @@ void Memory::UpdateFeatureCache()
         _feature_sharedmemory_enabled = false;
     }
 }
+
+/// region <Frame lifecycle>
+
+void Memory::handleFrameStart()
+{
+    // Zero overhead when HUD is disabled
+    if (!_feature_hud_enabled)
+        return;
+
+    // Initialize trackers with current page values
+    _ramSwitchTracker.reset(static_cast<uint8_t>(GetRAMPageForBank3()));
+    _romSwitchTracker.reset(static_cast<uint8_t>(GetROMPage()));
+}
+
+void Memory::handleFrameEnd()
+{
+    // Zero overhead when HUD is disabled
+    if (!_feature_hud_enabled || !_context)
+        return;
+
+    // Emit RAM notification if any switches occurred this frame
+    if (_ramSwitchTracker.hadActivity())
+    {
+        MessageCenter::DefaultMessageCenter().Post(
+            NC_MEMORY_PAGE_CHANGED,
+            new MemoryPagePayload(
+                _context->emulatorId, 3,
+                _ramSwitchTracker.currentPage,
+                _ramSwitchTracker.minPage,
+                _ramSwitchTracker.maxPage,
+                _ramSwitchTracker.switchCount));
+    }
+
+    // Emit ROM notification if any switches occurred this frame
+    if (_romSwitchTracker.hadActivity())
+    {
+        auto* payload = new ROMPagePayload(
+            _context->emulatorId,
+            _romSwitchTracker.currentPage,
+            _romSwitchTracker.minPage,
+            _romSwitchTracker.maxPage,
+            _romSwitchTracker.switchCount);
+
+        // ProfROM composes the page as plane * ROM_QUADRANT_PAGES + role, so the
+        // plane falls straight out of the absolute page. floor() is monotonic,
+        // which is what lets the frame's min/max pages carry the plane range too
+        if (_context->config.mem_model == MM_PROFSCORP)
+        {
+            payload->planeAware = true;
+            payload->plane = static_cast<uint8_t>(payload->page / ROM_QUADRANT_PAGES);
+            payload->minPlane = static_cast<uint8_t>(payload->minPage / ROM_QUADRANT_PAGES);
+            payload->maxPlane = static_cast<uint8_t>(payload->maxPage / ROM_QUADRANT_PAGES);
+        }
+
+        MessageCenter::DefaultMessageCenter().Post(NC_ROM_PAGE_CHANGED, payload);
+    }
+}
+
+/// endregion </Frame lifecycle>

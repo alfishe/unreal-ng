@@ -388,3 +388,13 @@ std::string StringHelper::FormatWithCustomThousandsDelimiter(int64_t n, char del
     std::string result = ss.str();
     return result;
 }
+
+std::string StringHelper::FormatFrequencyMHz(uint32_t frequencyHz)
+{
+    // Convert Hz to MHz with one decimal place
+    double mhz = static_cast<double>(frequencyHz) / 1'000'000.0;
+
+    std::ostringstream ss;
+    ss << std::fixed << std::setprecision(1) << mhz << " MHz";
+    return ss.str();
+}

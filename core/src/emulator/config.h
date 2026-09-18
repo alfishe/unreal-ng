@@ -1,7 +1,7 @@
 #pragma once
 #include "stdafx.h"
 
-#include "3rdparty/simpleini/simpleini.h"
+#include "common/inifile.h"
 #include "emulator/emulatorcontext.h"
 #include <string>
 
@@ -60,6 +60,7 @@ private:
 		{ "Quorum", "QUORUM",                    MM_QUORUM, 1024, RAM_128 | RAM_1024 },
 		{ "Orel' BK-08 (LSY)", "LSY256",         MM_LSY256, 256, RAM_256 },
 		{ "ZXM-Phoenix v1.0", "PHOENIX",         MM_PHOENIX, 1024, RAM_1024 | RAM_2048 },
+		{ "ZX Spectrum Next", "NEXT",            MM_NEXT, 2048, RAM_2048 },
 	};
 
 protected:
@@ -85,7 +86,7 @@ public:
 
 	/// Load a config from an explicit .ini file path (custom config override)
 	[[nodiscard]] bool LoadConfigFile(const std::string& filename);
-	[[nodiscard]] bool ParseConfig(CSimpleIniA& inimanager);
+	[[nodiscard]] bool ParseConfig(IniFile& inimanager);
 
 	[[nodiscard]] bool DetermineModel(const char* model, uint32_t ramsize);
 
@@ -105,6 +106,13 @@ public:
 	static const TMemModel* FindModelByShortName(const std::string& shortName);
 
 	/**
+	 * @brief Get the full human-readable name for a memory model
+	 * @param model The MEM_MODEL enum value
+	 * @return Full name string (e.g., "ATM-Turbo 2+ v7.10"), or "Unknown" if not found
+	 */
+	static std::string GetModelFullName(MEM_MODEL model);
+
+	/**
 	 * @brief Map a model (+ optional RAM size) to its config folder under configs/
 	 * @param model Machine model
 	 * @param ramSizeKB RAM size in KB; 0 = use the model's default RAM
@@ -112,9 +120,32 @@ public:
 	 */
 	static std::string GetConfigFolderForModel(MEM_MODEL model, uint32_t ramSizeKB = 0);
 
+	/**
+	 * @brief Check whether a model can actually be instantiated by this build
+	 *
+	 * A model is creatable when BOTH hold:
+	 *  - the build has a port decoder for it (PortDecoder::IsModelSupported), and
+	 *  - its config folder (configs/<folder>/unreal.ini) is resolvable from the
+	 *    executable / resources paths - the same resolution LoadConfig uses,
+	 *    so a "creatable" answer never diverges from what Emulator::Init attempts.
+	 *
+	 * Surfaced via GET /emulator/status (models_creatable) and per-model
+	 * "creatable" flags on GET /emulator/models so triage sessions stop
+	 * discovering unsupported machines one silent 48K fallback at a time.
+	 *
+	 * @param model Model table entry to check (uses its defaultRAM for folder resolution)
+	 * @return True when a create request for this model is expected to succeed
+	 */
+	static bool IsModelCreatable(const TMemModel& model);
+
 	// Helper methods
 protected:
 	void CopyStringValue(const char* src, char* dst, size_t dst_len);
+
+	/// Strip the heritage "<file>:<quadrant>" ProfROM selector suffix if present.
+	/// Quadrant selection is runtime state (EmulatorState::profrom_bank) and
+	/// quadrant 0 is the boot quadrant, so the suffix is never part of the path.
+	void StripProfRomQuadrantSuffix(char* path, size_t len);
     std::string StripComment(const char* src);
     std::string PrintModelAvailableRAM(uint32_t availRAM);
 

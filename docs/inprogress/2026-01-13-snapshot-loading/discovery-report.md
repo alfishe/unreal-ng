@@ -407,7 +407,7 @@ Use NEON/SSE for RLE decompression hot loops.
 4. **Z80-Uncompressed** - Large file, minimal RLE
 
 ### Implementation Plan
-Create `core/benchmarks/loaders/snapshot_benchmark.cpp` following the existing Google Benchmark patterns from [screenzx_benchmark.cpp](core/benchmarks/emulator/video/screenzx_benchmark.cpp).
+Create `core/benchmarks/loaders/snapshot_benchmark.cpp` following the existing Google Benchmark patterns from [screenzxbenchmark.cpp](core/benchmarks/emulator/video/screenzxbenchmark.cpp).
 
 ---
 

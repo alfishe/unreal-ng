@@ -18,6 +18,7 @@ This document outlines the testing practices, conventions, and guidelines used i
 12. [Test Categories](#test-categories)
 13. [Writing New Tests](#writing-new-tests)
 14. [Building and Running Tests](#building-and-running-tests)
+15. [Test Speed & Determinism](#test-speed--determinism)
 
 ---
 
@@ -35,6 +36,11 @@ This document outlines the testing practices, conventions, and guidelines used i
 8. **Test data in testdata/**: Use `TestPathHelper::GetTestDataPath()` for portable paths
 9. **Mark incomplete tests**: Use `FAIL() << "Not Implemented yet"` for placeholder tests
 10. **Timing tests**: Use `TestTimingHelper` for cycle-accurate emulator tests
+11. **Never sleep to wait**: A fixed `sleep_for` is always wrong - use `TestWait::For` / `ForAtLeast` / `ForExactly`
+12. **Budget: under 50 ms per test**: Anything slower needs a reason in a comment (see [Test Speed](#test-speed--determinism))
+13. **Stop when the assertion is satisfied**: Do not keep looping once the test can no longer fail
+14. **Turn off audio work for boot-bound tests**: `EnableTurboMode()` - but never when asserting on rendered pixels
+15. **Avoid heavy buffer fills in test paths**: Use value-initialization (`new T[n]()`) or `ZeroInitBuffer` instead of `std::vector::resize(n, 0)` on multi-megabyte POD buffers to prevent 50+ ms per-element scalar loops in Debug builds
 
 ---
 
@@ -453,6 +459,43 @@ TEST_F(FDC_Test, Timing)
 }
 ```
 
+### TestWait
+
+`_helpers/testwaithelper.h`. **The only sanctioned way to wait for asynchronous
+work.** Never write `std::this_thread::sleep_for` in a test.
+
+A fixed sleep is wrong in both directions: it burns the whole interval on every
+green run (the normal case, where the work landed in microseconds), and it still
+fails spuriously on a loaded machine when the work takes longer than guessed. It
+is slow *and* flaky - there is no tradeoff to make here.
+
+```cpp
+#include "_helpers/testwaithelper.h"
+
+// Wait until a predicate holds. Returns as soon as it does; the timeout only
+// bounds the failure case.
+EXPECT_TRUE(TestWait::For([&] { return observer.hits.load() >= 2; }));
+
+// Same, for an atomic counter.
+EXPECT_TRUE(TestWait::ForAtLeast(messages, 2));
+
+// "Exactly N, and nothing extra arrived." Waits for N, then allows a short
+// bounded settle window for any surplus to show up. Use this instead of
+// sleeping to prove a negative.
+EXPECT_TRUE(TestWait::ForExactly(messages, 2)) << "a no-op strobe must not re-notify";
+```
+
+| Instead of | Write |
+|---|---|
+| `sleep_for(50ms); EXPECT_EQ(n, 2);` | `EXPECT_TRUE(TestWait::ForExactly(n, 2));` |
+| `while (!done && !timedout) sleep_for(250us);` | `TestWait::For([&]{ return done.load(); });` |
+| `sleep_for(100ms);` then assert state | `TestWait::For([&]{ return <state predicate>; });` |
+
+Real case: `ScorpionMachine_Test.TurboStrobePostsCpuFreqChanged` spent 50 ms of
+its 57 ms in one fixed sleep that existed only to prove no extra notification
+arrived. Swapping it for `ForExactly` took the test to 9 ms with a *stronger*
+assertion.
+
 ### EmulatorTestHelper
 
 Provides managed emulator lifecycle and fast state detection for integration tests.
@@ -759,7 +802,8 @@ TEST_F(Emulator_Test, MultiInstanceRun)
         auto emulator = std::make_unique<Emulator>(LoggerLevel::LogError);
         ASSERT_TRUE(emulator->Init());
         emulator->StartAsync();
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        // Wait for the condition, never for the clock (see the TestWait helper)
+        ASSERT_TRUE(TestWait::For([&] { return emulator->IsRunning(); }));
         emulator->Stop();
     }
 }
@@ -1487,7 +1531,87 @@ TEST_F(BasicEncoder_Integration_Test, TRDOSCommandPreservesState)
 }
 ```
 
-### Performance Tips
+## Test Speed & Determinism
+
+The suite is run constantly, in CI and in parallel shards. A slow test is a tax
+on every future change, and slowness almost always comes from the same handful
+of avoidable causes.
+
+### The budget
+
+**Target: under 50 ms per test.** Slower than that needs a one-line comment
+saying why. Legitimate reasons are rare - essentially only "this boots a real
+ROM to a specific machine state". Everything else is a bug in the test.
+
+Measure before optimising:
+
+```bash
+./cmake-build-release/bin/core-tests --gtest_filter="*YourArea*" 2>&1 \
+  | grep -E "^\[       OK \]" \
+  | sed -E 's/^\[       OK \] //; s/ \(([0-9]+) ms\)/ \1/' \
+  | awk '{t=$NF; $NF=""; if (t+0 > 50) printf "%6d ms  %s\n", t, $0}' | sort -rn
+```
+
+### 1. Never wait on the wall clock
+
+See [TestWait](#testwait). A fixed `sleep_for` is both the slowest and the
+least reliable way to synchronise. There is no case where it is correct.
+
+### 2. Stop as soon as the assertion cannot fail
+
+The most common source of a multi-second test is a loop that keeps working after
+its own assertion is already satisfied.
+
+```cpp
+// BEFORE: 8 phases x (reset + 300-frame reboot) = ~2960 frames, 3875 ms
+for (unsigned phase = 0; phase < 8; phase++)
+{
+    ...
+    if (detected) successes++;
+    emulator->Reset();
+    emulator->RunNFrames(300);   // paid even after the first success
+}
+EXPECT_GT(successes, 0);
+
+// AFTER: stops at the first success = ~333 frames, 282 ms (-93%)
+for (unsigned phase = 0; phase < 8; phase++)
+{
+    ...
+    if (detected) { successes++; break; }   // assertion is EXPECT_GT(ok, 0)
+    emulator->Reset();
+    emulator->RunNFrames(300);
+}
+```
+
+Key property: **a failing run still does the full work and prints the full
+diagnostic.** Only the green path gets faster, so you lose nothing when
+debugging.
+
+### 3. Kill per-frame host work you are not asserting on
+
+`EnableTurboMode()` mutes audio, drops the sound DSP to the low-quality path,
+and **decimates video rendering** (`mainloop.cpp`: `_renderThisFrame =
+!config.turbo_mode || ...`). On a boot-bound test that is ~2.7x:
+
+| variant | ProfRomBootDrivesSmucProbes |
+|---|---:|
+| baseline | 205 ms |
+| `setFeature(Features::kSoundHQ, false)` | 165 ms |
+| `setFeature(Features::kSoundGeneration, false)` | 135 ms |
+| `EnableTurboMode()` | **75 ms** |
+
+> **Caveat - do not use turbo blindly.** Because turbo skips rendering on most
+> frames, it is safe only for tests asserting on *emulated state* (memory,
+> registers, ports, via `DirectReadFromZ80Memory` and friends). **Never enable
+> it in a test that asserts on the rendered framebuffer.** If you only need the
+> audio saving and must keep rendering, use the `kSoundGeneration` feature flag
+> instead.
+
+Turbo is host-side only: `config.turbo_mode` never reaches
+`current_z80_frequency_multiplier`, so it does not disturb emulated clock
+behaviour (the Scorpion 7 MHz detection tests run with it on).
+
+### 4. Batch frames, and boot no longer than necessary
 
 | Pattern | Speed |
 |---------|-------|
@@ -1497,6 +1621,77 @@ TEST_F(BasicEncoder_Integration_Test, TRDOSCommandPreservesState)
 | `RunNFrames(1)` in loop | Slow (pause/resume overhead per frame) |
 | `RunNFrames(10)` batches | **10x faster** |
 
+Per-frame stepping is sometimes required - `RunNFrames(n)` derives its t-state
+budget from the CPU multiplier at entry, so a machine that changes clock
+mid-window needs `RunNFrames(1)` in a loop to track real video frames. Say so in
+a comment when you do it, otherwise it reads as the mistake above.
+
+Boot only as far as the state you assert on. PROF ROM finishes RAM check and
+vector init by ~frame 63; booting 300 frames to reach the 128 menu is a
+different requirement. Do not copy a boot count from a neighbouring test without
+checking which one you need.
+
+### 5. Know what your assertion can actually observe
+
+Two traps that make a test pass while the bug is live:
+
+- **Frame-boundary sampling cannot see intra-frame changes.** Reading VRAM
+  between frames misses a value that is written and restored *within* one frame.
+  A real case: the Scorpion menu highlight visibly flashed while `0x58C1` read
+  `0x31` at every boundary and the whole attribute area showed zero changes over
+  600 frames. To catch that class of bug, diff *rendered frames* or query the TTD
+  write journal (`/ttd/find-last`), which sees every write.
+- **Breakpoints do not fire under frame stepping.** `RunNFrames(n)` defaults to
+  `skipBreakpoints = true` (and so does the WebAPI `/run_frame`). A breakpoint
+  armed around a frame-stepped run will never trigger, and the test silently
+  proves nothing.
+
+### 6. Stop on *every* field you assert, not the first one to arrive
+
+An early exit is only correct if its condition is the whole assertion. Cutting
+`ZXEvoBoot.MenuKeyUBoots128KBasic` over to `RunUntil(... GetROMPage() == 30)`
+looked right and passed for days: ROM page 30 appears while BASIC is still
+initializing, so under one shuffle order the test read `ERR_NR` as `0x00`
+instead of `0xFF`. Put the full set of asserted conditions in the predicate -
+the settle then ends exactly when the test's own claim becomes true.
+
+### 7. Power-on RAM is a hidden global input
+
+`Memory::RandomizeMemoryContent()` fills RAM pages 5 and 7 from the **global
+`rand()`**, which nothing seeds. The pattern any one emulator gets therefore
+depends on how many `rand()` calls every preceding test in the process made -
+so speeding up an unrelated boot test can change what a later test's machine
+boots into. Both orders reproduce perfectly; this is a hidden input, not flake,
+and `--gtest_shuffle` is the only thing that finds it.
+
+If your test boots far enough for RAM contents to matter, pin them:
+
+```cpp
+memset(memory->RAMPageAddress(5), 0, PAGE_SIZE);
+memset(memory->RAMPageAddress(7), 0, PAGE_SIZE);
+```
+
+Zero, not a fixed seed. When a real RAM sensitivity exists - the ProfROM
+Service Monitor crashes into page 5 on 2 of 12 sampled patterns
+(`profrom-service-monitor-menu-flashing.md` section 10) - choosing whichever
+seed survives it hides the finding instead of removing the input. Zero matches
+what `Memory` already gives every other page.
+
+### 8. Avoid O(N) buffer initialization loops in Debug builds
+
+When tests exercise subsystem initialization, profiling, or snapshot buffers:
+- **`std::vector<T>::resize(n, 0)` is an unrolled scalar loop in Debug builds (`-O0`).**
+  Standard library implementations (`libc++`, `libstdc++`) construct elements one by one.
+  For multi-megabyte buffers (e.g. 24 MiB memory tracking counters), this takes **~58 ms per buffer**,
+  running ~176 ms per allocation cycle. In suites running across dozens of fixtures, this easily
+  adds seconds of dead wall time - the same pattern hid inside `TTDWriteJournal`'s async-allocated
+  100 MB ring buffer, where it showed up as ~90 ms per test in `TearDown()` instead of `SetUp()`.
+- **Remedy:** Use value-initialized array allocation (`new T[n]()` or `ZeroInitBuffer`) for large POD
+  buffers. Standard C++ guarantees value-initialization of scalars zeros the memory, which compilers
+  lower directly to kernel zero-paging, `calloc`, or bulk `memset` regardless of optimization level (<0.2 ms).
+- **Bulk zeroing:** Use `std::memset` rather than `std::fill` for large POD buffers to avoid scalar loop
+  penalties during counter resets.
+
 ### Common Pitfalls
 
 1. **Using `Start()` instead of `StartAsync()`**: Test hangs forever
@@ -1504,6 +1699,16 @@ TEST_F(BasicEncoder_Integration_Test, TRDOSCommandPreservesState)
 3. **Calling `RunNFrames()` without `Pause()`**: Works but confusing state
 4. **Single-frame loops**: 10x slower than batched execution
 5. **Not checking ROM availability**: Tests fail instead of skip on minimal setups
+6. **`sleep_for` anywhere in a test**: slow and flaky - use `TestWait`
+7. **Looping past the point the assertion is satisfied**: the single biggest
+   source of multi-second tests
+8. **Asserting on frame-boundary state for an intra-frame behaviour**: passes
+   while the bug is live
+9. **An early exit that checks less than the test asserts**: green until the
+   day something upstream shifts the timing
+10. **Leaving power-on RAM to the global `rand()`**: makes the test depend on
+    what ran before it in the same process
+11. **`std::vector::resize(n, 0)` on multi-megabyte POD buffers**: in Debug builds (`-O0`) this runs scalar loops (~58 ms for 24 MiB), causing multi-second test stalls across repeated allocations
 
 ---
 

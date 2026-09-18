@@ -2,11 +2,11 @@
 
 | | |
 |---|---|
-| **Status** | Draft for review |
-| **Version** | 2.1 |
-| **Last updated** | 2026-07-19 |
+| **Status** | Active development |
+| **Version** | 2.2 |
+| **Last updated** | 2026-09-10 |
 | **Scope** | UnrealSpeccy-NG core + Qt debugger UI |
-| **Companion docs** | [time-travel-ux.md](./time-travel-ux.md) (GUI/UX), [overhead-and-gating.md](./overhead-and-gating.md) (budgets & runtime gates), [gdb-reverse-debugging-tdd.md](./gdb-reverse-debugging-tdd.md) (RSP integration) |
+| **Companion docs** | [time-travel-ux.md](./time-travel-ux.md) (GUI/UX), [overhead-and-gating.md](./overhead-and-gating.md) (budgets & runtime gates), [gdb-reverse-debugging-tdd.md](./gdb-reverse-debugging-tdd.md) (RSP integration), [ttd.ksy](../../../core/src/debugger/ttd/ttd.ksy) (Kaitai schema) |
 
 ---
 
@@ -31,16 +31,88 @@ For games (which do read the keyboard), determinism is preserved by journaling h
 
 ### 1.3 Goals
 
-- Frame-accurate rewind over at least 5 minutes of history at < 5% runtime overhead with default settings.
-- T-state-accurate seek within any recorded frame (granularity: one Z80 instruction, same as the existing stepping engine).
-- Reverse memory watchpoints ("find last write/read/execute at address").
-- Timeline UI in the Qt debugger.
-- Zero overhead when the feature is disabled (same pattern as `screenhq`, `memorytracking` feature gates).
+#### 1.3.1 Functional Goals
+
+| Goal | Description | Success Criterion |
+|------|-------------|-------------------|
+| **Frame-accurate rewind** | Jump to any earlier point in recorded history | ≥5 minutes of history retained at default settings |
+| **T-state precision** | Seek to exact instruction boundary within any frame | Granularity matches existing stepping engine (one Z80 instruction) |
+| **Reverse watchpoints** | Find last write/read/execute to any address | Works across full recorded history, including bank-switched memory |
+| **Timeline UI** | Visual timeline with scrubbing and event markers | Integrated into Qt debugger; WebAPI for external tools |
+| **Zero-cost disable** | No overhead when TTD is off | Same gating pattern as `screenhq`, `memorytracking` features |
+| **Universal model support** | Works with all machine models | 48K, 128K, Pentagon, Scorpion, ATM, TS-Conf, GMX, Quorum |
+| **Peripheral state** | Complete capture/restore of all peripherals | AY/TurboSound, FDC/WD1793, Tape, Covox, TSFM, GeneralSound |
+
+#### 1.3.2 Performance Goals
+
+```mermaid
+graph LR
+    subgraph recording["Recording Budget"]
+        R1["Dirty-bit marking<br/>≤2ns per write"]
+        R2["Checkpoint capture<br/>≤0.5ms per frame"]
+        R3["Total overhead<br/>≤15% of frame time"]
+    end
+    
+    subgraph restore["Restore Budget (6ms total)"]
+        S1["Checkpoint lookup<br/><0.1ms"]
+        S2["State restore<br/><2ms"]
+        S3["Page memcpy<br/><2ms"]
+        S4["Intra-frame replay<br/><2ms"]
+    end
+```
+
+| Metric | Target | Rationale |
+|--------|--------|-----------|
+| **Recording overhead** | ≤15% of non-TTD execution | User should not notice performance drop during normal use |
+| **Restore latency** | ≤6ms for any frame | Interactive scrubbing at >100 seeks/second feels responsive |
+| **Checkpoint capture** | ≤0.5ms per frame | 2.5% of 20ms frame budget; leaves headroom for rendering |
+| **Dirty-bit marking** | ≤2ns per write | Hidden within existing debug-write path; no measurable impact |
+| **Memory budget** | 64MB default | 5+ minutes history on 128K; scales with working set, not RAM size |
+
+**Restore latency breakdown** (6ms budget):
+
+1. **Checkpoint lookup** (<0.1ms): Binary search O(log n) over ≤5000 checkpoints
+2. **CPU/chipset restore** (<0.2ms): Field copy ~200 bytes + paging decode
+3. **RAM page restore** (≤2ms): memcpy only differing pages (typically 2–6 × 16KB)
+4. **Peripheral restore** (<0.5ms): TTDLoadState per connected device
+5. **Video sync** (<0.2ms): InitRaster + InitFrame + border color
+6. **Intra-frame replay** (≤3ms): Up to 71,680 T-states at ~30M T/s host speed
+
+#### 1.3.3 Correctness Goals
+
+| Goal | Description | Verification |
+|------|-------------|--------------|
+| **Bit-exact restore** | SeekTo(T) produces identical state to original time T | Divergence corpus tests with hash comparison |
+| **Deterministic replay** | Same checkpoint + same inputs = same result | Per-subsystem round-trip tests |
+| **No silent corruption** | Missing state fields cause test failure, not subtle bugs | Comprehensive TTDSerializable audits |
+| **Graceful degradation** | Budget exhaustion thins history, never crashes | Stress tests with pathological workloads |
+
+#### 1.3.4 Scalability Goals
+
+| Model | RAM | Working Set | History @ 64MB | Notes |
+|-------|-----|-------------|----------------|-------|
+| ZX-48K | 48KB | 1–2 pages/frame | ~8 minutes | Baseline |
+| ZX-128K | 128KB | 2–4 pages/frame | ~5 minutes | Reference target |
+| Pentagon 512K | 512KB | 2–6 pages/frame | ~3 minutes | Common demo platform |
+| Pentagon 1024K | 1MB | varies | ~2 minutes | Extended RAM |
+| **Profi 1024K** | 1MB | varies | ~2 minutes | Profi clone target |
+| ATM Turbo 2+ | 1MB | varies | ~2 minutes | ATM family |
+| **ZX Evo / ATM3** | **4MB** | varies | **~45 seconds** | Maximum scalability target |
+
+**Key insight:** TTD cost scales with *software working set*, not *machine RAM size*. A 512K Pentagon running ordinary 128K software consumes the same TTD memory as a 128K config — never-touched pages contribute zero bytes.
+
+**4MB scalability target:** ZX Evo and ATM3 with 4MB RAM represent the upper bound of supported configurations. At 256 RAM pages, the page store addressing (22-bit keys in TTDCoverageIndex) and per-checkpoint overhead remain constant — only the potential working set grows. Software that touches all 4MB every frame would exhaust the 64MB budget in ~45 seconds; real-world ATM3 software typically touches a fraction, achieving history comparable to smaller machines.
+
+**Large ROM configurations:** Some machines support extended ROM beyond the standard 16–64KB:
+- **Scorpion with ProfROM:** Up to 256KB ROM, organized as 64KB slices with 4×16KB paging within each slice
+- **ATM Turbo 2+:** 512KB ROM possible in some configurations
+- **ZX Evo:** Configurable ROM size up to 512KB
+
+ROM pages are handled identically to RAM pages in TTD: never-touched pages (common for unused ROM banks) contribute zero bytes. ROM paging state is captured via port latches in TTDChipsetState; the page data itself uses the same dirty-tracking and COW store as RAM.
 
 ### 1.4 Non-Goals (This Iteration)
 
 - Anything outside the ZX Spectrum family: this emulator targets Spectrum and its clones (Pentagon, Scorpion, ATM, TS-Conf, GMX, Quorum), and so does TTD.
-- GDB RSP server and IDA/Ghidra integration (Phase 5+, Section 13).
 - Network streaming of history to an external server.
 - Rewind as a *gameplay* feature (smooth 60fps backward playback). TTD is a debugging tool; backward navigation may take tens of milliseconds per jump.
 
@@ -267,17 +339,22 @@ struct TTDCheckpoint
     Z80State     cpu;               // Full struct copy (~250 bytes incl. debug fields).
                                     // MemIf pointers are fixed up on restore, not serialized.
 
-    // --- Chipset / ports ---
-    // Snapshot of the port-latch subset of EmulatorState:
-    // p7FFD, pFE, pEFF7, pXXXX, pBFFD, pFFFD, pDFFD, pFDFD, p1FFD, pFF77,
-    // GMX/Quorum/ATM/TS extended state, cram[], sfile[], border color, screen mode.
-    TTDChipsetState chipset;        // ~1.5 KB (dominated by cram/sfile for TS models)
+    // --- Chipset / ports (MODEL-AGNOSTIC) ---
+    // Standard Spectrum 128K latches only: p7FFD, pFE, pEFF7, pBFFD, pFFFD,
+    // pFF77, border, flags, wd_shadow[], comp_pal[], ULAplus, plus the
+    // model-neutral CPU clock (see below). 120 bytes, fixed.
+    //
+    // Everything machine-specific - ATM's pFFF7 map, Scorpion's ProfROM plane,
+    // GMX/Quorum/TS extended state - is OUT of this struct and reached through
+    // the peripheral registry (6.4). The framework names no machine.
+    TTDChipsetState chipset;        // 120 bytes
 
     // --- Peripherals (each device implements TTDSerializable, Section 6.4) ---
-    std::vector<uint8_t> ayState;       // Per-chip full runtime state
-    std::vector<uint8_t> fdcState;      // WD1793 + FDD positions
-    std::vector<uint8_t> tapeState;     // Playback position/phase
-    std::vector<uint8_t> covoxState;    // DAC latches (trivial)
+    // Keyed by PeripheralId. Only devices actually connected on the active
+    // model appear - an absent device costs nothing, rather than an empty
+    // fixed slot per frame. Core devices (TurboSound, BetaDisk, Tape, Covox)
+    // go through the same registry as model-specific ones.
+    std::unordered_map<uint8_t, std::vector<uint8_t>> peripheralBlobs;
 
     // --- Memory ---
     // References into the page store (Section 6.3); COW — pages shared
@@ -303,6 +380,10 @@ Restore fixups (things that are pointers/derived and must be recomputed, not cop
 - Memory bank mapping (`_bank_write[]`, `_bank_read[]`) — recomputed by re-applying `p7FFD/p1FFD/...` through the existing port-decode path (`Memory::SetRomPage`-family), *not* by serializing raw pointers. This guarantees consistency with paging logic.
 - Screen internal counters — reinitialized via `Screen::InitFrame()` since checkpoints sit on frame boundaries (this is why checkpoints are frame-aligned: mid-frame ULA rendering state never needs serializing).
 - `MemoryAccessTracker` counters, CallTrace — **not** restored (they are observability data, monotone across the session; Section 12.5).
+
+**CPU clock is captured, not re-derived.** `hw_turbo_shift`, `hw_turbo_shift_applied` and the current/next frequency multipliers live in the common chipset struct because a CPU clock multiplier is a generic concept, not a machine specific — Scorpion and ATM set it from entirely different ports. They must be captured rather than rebuilt from the restored latches: the derivation runs *only inside the port write that causes it* (`PortDecoder_ATM710::updateTurboMode`, the Scorpion strobes in `z80.cpp`), and the restore path re-runs the paging decode but not that. Before they were captured, a seek across a speed change left the CPU at whatever clock the live machine happened to be at — and, because the audio path descales by `hw_turbo_shift_applied`, mispitched the AY and beeper with it.
+
+A hardware turbo keeps the 20 ms frame and multiplies only the CPU T-states inside it (the AY/beeper/Covox clocks are unchanged, so the audio path descales); the host speed control instead makes frames run faster in wall clock. A single multiplier cannot express both, which is why the shift is stored alongside it.
 
 ### 6.2 Dirty Page Tracking
 
@@ -423,7 +504,7 @@ A typical demo dirties 2–6 pages per frame (working set + screen), so the stea
 
 ### 6.4 Peripheral Serialization Interface
 
-New minimal interface, implemented by AY/TurboSound, WD1793+FDD, Tape, Covox:
+Universal interface for peripheral state capture, implemented by AY/TurboSound, WD1793+FDD, Tape, Covox, TSFM, GeneralSound, and future expansion devices:
 
 ```cpp
 class TTDSerializable
@@ -432,12 +513,82 @@ public:
     virtual size_t TTDStateSize() const = 0;                  // Fixed per device
     virtual void   TTDSaveState(uint8_t* dst) const = 0;      // memcpy-style, no allocation
     virtual void   TTDLoadState(const uint8_t* src) = 0;
+
+    // Optional: human-readable name for logging
+    virtual std::string TTDDeviceName() const { return "unknown"; }
+
+    // Optional: peripheral ID for registry indexing
+    virtual PeripheralId TTDPeripheralId() const { return PeripheralId::Count; }
+
+    // Optional: contribution to the divergence hash (0 = does not participate)
+    virtual uint64_t TTDHashState() const { return 0; }
 };
 ```
 
-Design constraints: no heap allocation in `TTDSaveState` (runs every frame on the emulator thread); versioning is unnecessary (checkpoints never persist across process runs in v1 — see Open Questions for on-disk sessions).
+**How a model declares its state.** The framework must not enumerate machines, so the *port decoder* — which owns a machine's latches — declares what extra state exists, and supplies the serializers:
 
-The initial per-device state audit (what fields constitute complete state) is the riskiest part of the whole project and gets its own implementation checklist per device, cross-checked against the divergence test.
+```cpp
+// PortDecoder, both defaulting empty: the right answer for any machine
+// fully described by the standard 128K ports.
+virtual std::vector<ttd::PeripheralId> GetTTDModelStateIds() const;
+virtual std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const;
+```
+
+The split between *declaring* and *implementing* is deliberate: a declared id with no serializer behind it is a **hard error at `StartRecording`**, naming what is missing. A model can therefore state the contract before anyone writes the serializer, and TTD refuses to record rather than producing a session that looks fine and restores wrong. This is the guard against the failure mode that motivated the model-agnostic split in the first place — a machine whose state is captured nowhere, silently.
+
+**Design constraints:**
+- No heap allocation in `TTDSaveState` (runs every frame on the emulator thread).
+- Versioning is unnecessary (checkpoints never persist across process runs in v1).
+- Non-connected peripherals contribute zero bytes — the peripheral registry captures only registered devices.
+
+#### 6.4.1 Peripheral Registry and Delta Compression
+
+The `TTDPeripheralRegistry` manages dynamic peripheral registration and efficient state serialization:
+
+```mermaid
+flowchart LR
+    subgraph capture["CaptureAll()"]
+        A["For each registered peripheral"] --> B["TTDSaveState → raw bytes"]
+        B --> C{"Supports delta?"}
+        C -->|yes| D["XOR against previous checkpoint"]
+        D --> E["zstd-1 compress delta"]
+        C -->|no| F["zstd-1 compress raw"]
+        E --> G["Store with header"]
+        F --> G
+    end
+
+    subgraph restore["RestoreAll()"]
+        H["Read blob + header"] --> I{"Is delta?"}
+        I -->|yes| J["Decompress, XOR with previous"]
+        I -->|no| K["Decompress directly"]
+        J --> L["TTDLoadState"]
+        K --> L
+    end
+```
+
+**Blob format** (per peripheral per checkpoint):
+
+| Field | Size | Description |
+|-------|------|-------------|
+| `peripheralId` | 1 byte | PeripheralId enum value |
+| `flags` | 1 byte | Bit 0: isDelta (XOR-encoded against previous) |
+| `uncompressedSize` | 2 bytes | Original state size in bytes |
+| `compressedSize` | 4 bytes | Compressed payload size (0 = uncompressed) |
+| payload | variable | zstd-compressed state (or raw if compression didn't help) |
+
+**XOR-delta compression** is particularly effective for peripherals with large state that changes incrementally:
+
+1. **Capture:** XOR current state against previous checkpoint's state, producing a difference buffer
+2. **Compress:** zstd-1 achieves ~10:1 compression on XOR-delta of unchanged data (all zeros compress extremely well)
+3. **Restore:** Decompress delta, XOR with previous checkpoint's state to recover original
+
+**Benchmark results** (GeneralSound 32KB sample RAM, 4 bytes changed per frame):
+- Full state: ~4KB compressed per checkpoint
+- Delta state: ~50 bytes compressed per checkpoint (80× savings)
+- Capture time: <1ms for 32KB peripheral state
+- Restore time: <2ms for 32KB peripheral state
+
+**Non-connected peripherals:** Devices not registered contribute zero bytes and zero capture/restore time. The registry pattern ensures TTD cost scales with actual peripheral configuration, not potential peripherals.
 
 ### 6.5 Checkpoint Tiering and Eviction
 
@@ -452,6 +603,335 @@ All frames are checkpointed while recording (cheap, per 6.3). Memory is bounded 
 Thinning releases page refs; COW sharing means dropping a checkpoint frees only pages unique to it. Numbers grounded: a 128K model has 8 RAM pages = 128 KB *upper bound* per checkpoint, but the COW cost per checkpoint is only its dirty pages (typically 2–6 × 16 KB); a demo dirtying 4 pages/frame consumes ~3.2 MB/s in the dense tier and far less in thinned tiers. The 64 MB default comfortably yields minutes of history; pathological all-pages-dirty workloads degrade gracefully to less retention, never to failure. The budget is a `features.ini` knob (Section 10.3) for users who want more.
 
 The input journal and write journal are never thinned within the session window (they are tiny relative to pages) — this is what keeps *every* instruction reachable even in thinned regions: restore sparse checkpoint, replay forward with journaled inputs.
+
+### 6.6 Storage Modes
+
+TTD supports two storage modes for checkpoint data:
+
+```cpp
+enum class TTDStorageMode : uint8_t
+{
+    MemoryRing,   // Fixed-size memory buffer, oldest checkpoints evicted
+    DiskStream,   // Memory hot tier + disk overflow for unbounded history
+};
+```
+
+#### 6.6.1 MemoryRing Mode (Default)
+
+The default mode: all checkpoints live in a fixed-size memory ring buffer.
+
+```mermaid
+flowchart LR
+    subgraph ring["Memory Ring (64MB default)"]
+        NEW["New checkpoints"] --> RING["Ring Buffer"]
+        RING -->|"overflow"| EVICT["Evict oldest"]
+    end
+```
+
+**Characteristics:**
+- Simple, predictable memory usage
+- History limited by budget (5+ minutes typical for 128K)
+- Zero disk I/O during recording
+- Oldest checkpoints discarded when budget exceeded
+
+#### 6.6.2 DiskStream Mode
+
+For unbounded history: memory serves as a hot tier, with overflow streamed to disk.
+
+```mermaid
+flowchart TB
+    subgraph emulator["Emulator Thread (never blocks)"]
+        CAP["CaptureNow()"] --> HOT["Memory Ring<br/>(hot tier, 64MB)"]
+    end
+    
+    subgraph background["Background Writer (on-demand)"]
+        HOT -->|"eviction"| WQ["Lock-free Queue<br/>(checkpoint metadata only)"]
+        WQ --> BG["Writer Thread"]
+        BG --> DATA[".ttd data file<br/>(append-only)"]
+        BG --> IDX[".ttdi index file<br/>(optional)"]
+    end
+    
+    subgraph monitor["Adaptive Watermark"]
+        FILL["Ring fill level"] --> ADAPT["Threshold adjustment"]
+        SPEED["Measured write speed"] --> ADAPT
+        ADAPT -->|"disk slow"| EARLIER["Start dumping earlier"]
+        ADAPT -->|"disk fast"| LATER["Start dumping later"]
+    end
+    
+    subgraph fallback["Fallback"]
+        WQ -->|"queue depth > limit"| FB["Log error<br/>Detach disk streaming<br/>Continue memory-only"]
+    end
+```
+
+**Design decisions:**
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| Memory budget = hot tier | Single config knob | User doesn't need to tune two numbers |
+| Background thread lifecycle | On-demand spawn, idle timeout | No idle threads when not streaming |
+| Queue content | Metadata only (~2KB) | Zero-copy: page data read from COW store |
+| Disk write pattern | Append-only | Maximizes throughput, no seeks |
+| Fallback trigger | Queue depth + stall timeout | Graceful degradation, never block emulator |
+
+#### 6.6.3 Zero-Copy Data Flow
+
+Critical constraint: **emulator thread must never block or copy large buffers.**
+
+The COW page store enables zero-copy handoff:
+
+```mermaid
+sequenceDiagram
+    participant E as Emulator Thread
+    participant Q as Lock-free Queue
+    participant W as Writer Thread
+    participant S as Page Store (COW)
+    
+    Note over E: Frame boundary - evict oldest checkpoint
+    E->>Q: Push checkpoint metadata<br/>(~2KB: cpu, chipset, slot indices)
+    Note over E: NO page data copied<br/>Just slot index references (uint32_t)
+    E->>E: Continue immediately
+    
+    W->>Q: Pop checkpoint metadata
+    W->>S: Read slot data by index<br/>(immutable, safe)
+    W->>W: Compress + write to disk
+    W->>S: Release slot refs (refcount--)
+```
+
+**What gets queued (small, fixed-size):**
+
+| Field | Size | Notes |
+|-------|------|-------|
+| TTDCpuState | ~100B | Value copy (acceptable) |
+| TTDChipsetState | ~200B | Value copy (acceptable) |
+| Peripheral blobs | ~1KB | Already serialized |
+| RAM slot indices | 4B × 4 × pages | Just uint32_t refs |
+| **Total** | **~2KB typical** | No 16KB page copies |
+
+**Page data access:**
+- Lives in `TTDCodecPageStore` (shared, thread-safe reads)
+- Slots are **immutable once interned** — no tearing possible
+- Background writer reads directly — zero copy
+- Refcount ensures slot not freed while queued
+
+#### 6.6.4 Adaptive Watermark Algorithm
+
+Inspired by audio ring buffer pacing: start dumping based on predicted overflow, adapt threshold to disk speed.
+
+```cpp
+void OnFrameEnd() {
+    float fillRatio = ringUsedBytes / ringBudget;
+    float drainRate = measuredBytesPerSec;  // From last flush
+    float fillRate = avgBytesPerFrame * fps;
+    
+    // Predict time to overflow vs time to drain queue
+    float timeToFull = (ringBudget - ringUsedBytes) / fillRate;
+    float timeToDrain = queuedBytes / drainRate;
+    
+    // Start dumping if we might not drain in time
+    if (timeToDrain > timeToFull * safetyMargin) {
+        startDumping();
+    }
+    
+    // Adapt threshold based on actual disk performance
+    if (lastFlushWasSlow) {
+        startThreshold = max(0.3f, startThreshold - 0.05f);  // Earlier
+    } else {
+        startThreshold = min(0.7f, startThreshold + 0.01f);  // Later
+    }
+}
+```
+
+**Adaptation behavior:**
+
+| Disk condition | Threshold adjustment | Effect |
+|----------------|---------------------|--------|
+| Fast SSD | Threshold rises to ~70% | More in-memory, fewer flushes |
+| Slow HDD | Threshold drops to ~30% | Start earlier, smaller batches |
+| Busy disk | Threshold drops further | Compensate for variable latency |
+| Sustained slow | Fallback triggered | Memory-only mode, log error |
+
+#### 6.6.5 File Format (Streaming Mode)
+
+The `.ttd` format is extended for append-only streaming:
+
+**Data file structure:**
+
+```
+[Header]
+  magic: "TTDD"
+  flags: STREAMING_MODE bit set
+  schema_version: 2
+  model_info...
+  
+[Record stream] (append-only, self-describing)
+  [RECORD] type=PAGE_SLOT, size=N, payload..., crc32
+  [RECORD] type=PAGE_SLOT, size=N, payload..., crc32
+  [RECORD] type=CHECKPOINT, size=N, payload..., crc32
+  [RECORD] type=SYNC_MARKER, frame=100, counts...
+  ...
+  
+[Trailer] (written on clean close, OPTIONAL)
+  final_counts
+  index_offset
+  [Embedded index]
+```
+
+**Record format (self-describing):**
+
+| Field | Size | Description |
+|-------|------|-------------|
+| `type` | 1B | 0=PAGE_SLOT, 1=CHECKPOINT, 2=SYNC_MARKER |
+| `size` | 4B | Payload size (enables skip without parsing) |
+| `payload` | var | Type-specific data |
+| `crc32` | 4B | Integrity check |
+
+**Sync markers** (every ~50 checkpoints):
+- Running counts: slot_count, checkpoint_count
+- Enable partial recovery without full scan
+- ~100 bytes overhead per marker
+
+#### 6.6.6 Index File (Optional Acceleration)
+
+The `.ttdi` index file accelerates seeks but is **not required for correctness**.
+
+```mermaid
+flowchart TD
+    OPEN["Open session"] --> CHECK{"Index exists<br/>and valid?"}
+    CHECK -->|yes| FAST["O(1) seeks<br/>(direct offset lookup)"]
+    CHECK -->|no| SCAN["Full scan<br/>(one-time cost)"]
+    SCAN --> GEN["Generate index"]
+    GEN --> FAST
+```
+
+**Index file structure:**
+
+```
+[Header]
+  magic: "TTDI"
+  version: 1
+  data_file_size: u64      // Consistency check
+  last_frame: u64
+  slot_count: u32
+  checkpoint_count: u32
+
+[Slot offset table]
+  slot[i].file_offset: u64
+
+[Checkpoint offset table]  
+  checkpoint[i].frame: u64
+  checkpoint[i].file_offset: u64
+
+[Footer]
+  crc32: u32
+```
+
+**Index lifecycle:**
+
+| Event | Action |
+|-------|--------|
+| Session start | Load index if exists, else defer |
+| First seek to cold data | Generate index if missing |
+| Streaming flush | Update in-memory index |
+| Clean close | Write index file |
+| Crash recovery | Regenerate from data file |
+
+**Seek performance:**
+
+| Scenario | Without index | With index |
+|----------|---------------|------------|
+| Find checkpoint N | O(N) scan | O(1) lookup |
+| Cold open (no index) | ~200ms for 100MB file | — |
+| Warm open (index exists) | <1ms | <1ms |
+
+#### 6.6.7 Crash Recovery
+
+The data file is always recoverable; the index is regenerable.
+
+**Recovery scenarios:**
+
+| Scenario | Data file | Index file | Recovery action |
+|----------|-----------|------------|-----------------|
+| Clean close | Complete | Complete | Load directly |
+| Crash mid-record | Truncated | Stale | Scan to last complete record, regenerate index |
+| Crash mid-index | Complete | Corrupt | Regenerate index from data |
+| Both corrupt | Partial | — | Recover to last sync marker |
+
+**Recovery algorithm:**
+
+```cpp
+bool RecoverSession(const std::string& basePath) {
+    std::string dataPath = basePath + ".ttd";
+    std::string indexPath = basePath + ".ttdi";
+    
+    // 1. Validate data file
+    auto dataSize = fileSize(dataPath);
+    if (dataSize < minHeaderSize) return false;
+    
+    // 2. Try loading index
+    if (auto index = tryLoadIndex(indexPath)) {
+        if (index->dataFileSize == dataSize) {
+            // Index matches data - fast path
+            return loadWithIndex(*index);
+        }
+        // Index stale - scan new records only
+        return scanFrom(index->dataFileSize, dataSize);
+    }
+    
+    // 3. No index - full scan (one-time cost)
+    return fullScanAndGenerateIndex(dataPath);
+}
+```
+
+#### 6.6.8 Configuration
+
+```cpp
+struct TTDConfig
+{
+    // Storage mode
+    TTDStorageMode mode = TTDStorageMode::MemoryRing;
+    
+    // Memory budget (serves as hot tier in DiskStream mode)
+    uint64_t memoryBudgetBytes = 64 * 1024 * 1024;
+    
+    // DiskStream mode settings
+    std::string diskPath;                    // Base path for .ttd/.ttdi
+    uint32_t syncMarkerIntervalFrames = 50;  // ~1 second at 50fps
+    
+    // Fallback thresholds
+    uint32_t queueDepthWarning = 100;        // Log warning
+    uint32_t queueDepthError = 500;          // Trigger fallback
+    uint32_t queueStallTimeoutMs = 1000;     // Max time at error depth
+    
+    // Adaptive watermark
+    float initialStartThreshold = 0.5f;      // Start dumping at 50% full
+    float minStartThreshold = 0.3f;          // Never later than 30%
+    float maxStartThreshold = 0.7f;          // Never earlier than 70%
+};
+```
+
+#### 6.6.9 Python Tools Compatibility
+
+Existing Python tools (`tools/verification/ttd-analyzer/`) are updated for the streaming format:
+
+- **Kaitai schema** (`ttd.ksy`): Extended for self-describing records
+- **Recovery mode**: Handle truncated files, regenerate index
+- **Streaming parser**: Process records incrementally without loading full file
+
+```python
+# Example: Streaming record iteration
+def iter_records(ttd_path):
+    with open(ttd_path, 'rb') as f:
+        header = read_header(f)
+        while True:
+            try:
+                record = read_record(f)  # Self-describing
+                yield record
+            except EOFError:
+                break
+            except CRCError as e:
+                log.warning(f"Corrupt record at {e.offset}, stopping")
+                break
+```
 
 ---
 
@@ -503,8 +983,10 @@ SeekTo(target: TTDTimePoint):
           from current RAM contents — tracked by comparing current position's
           page refs with target's; often a handful of pages)
        d. TTDLoadState for each peripheral
-       e. Screen::InitFrame(); reset frame-local counters
-       f. emulatorState.t_states / frame_counter := cp values
+       e. Screen::InitRaster(); re-detect video mode from restored port values
+          (handles all machine models: ZX p7FFD, ATM pFF77, Pentagon AlCo pEFF7)
+       f. Screen::InitFrame(); reset frame-local counters
+       g. emulatorState.t_states / frame_counter := cp values
   3. if target.tInFrame > 0:
        ReplayRun(target)          // Section 8.2
   4. currentPosition = target; notify UI (registers/memory/screen refresh)
@@ -870,18 +1352,68 @@ Retained from v1 of this document, deliberately compressed — none of it affect
 
 ## 14. Performance Budget (Pentagon 128, 3.5 MHz, 50 fps)
 
-| Cost center | When | Estimate | Notes |
+### 14.1 Recording Overhead Budget
+
+**Target: ≤15% overhead compared to non-TTD execution.**
+
+| Cost center | When | Budget | Actual (measured) | Notes |
+|---|---|---|---|---|
+| Dirty-bit set | Every RAM write | 1–2 ns | ~1.5 ns | Cached-flag branch + OR; hidden in existing debug-write path |
+| Write journal append | Every RAM write (if journal on) | 3–5 ns | ~4 ns | 12-byte packed append to ring buffer |
+| Checkpoint capture | Per frame (20 ms budget) | 0.5 ms | 0.1–0.4 ms | 2–6 dirty pages memcpy + <4 KB peripheral serializers |
+| Peripheral capture | Per frame | 0.1 ms | <0.05 ms | zstd-1 + optional delta; only connected devices |
+| Input journal | Per host key event | — | negligible | <1 KB/min for active gameplay |
+| **Total recording overhead** | | **≤15%** | **2–4%** | Measured on release build, Apple M1 |
+
+### 14.2 Restore Latency Budget
+
+**Target: ≤6ms for any random frame restore operation.**
+
+The 6ms budget must cover the complete restore cycle:
+
+```mermaid
+flowchart LR
+    A["Checkpoint lookup<br/>O(log n) binary search<br/><0.1ms"] --> B["CPU/chipset restore<br/>field copy + paging rebuild<br/><0.2ms"]
+    B --> C["RAM page restore<br/>memcpy differing pages<br/>0.5–2ms typical"]
+    C --> D["Peripheral restore<br/>TTDLoadState per device<br/><0.5ms"]
+    D --> E["Screen sync<br/>InitRaster + InitFrame<br/><0.1ms"]
+    E --> F["Intra-frame replay<br/>up to 71680 T-states<br/>1–3ms worst case"]
+```
+
+| Operation | Budget | Actual (measured) | Notes |
 |---|---|---|---|
-| Dirty-bit set | Every RAM write | ~1–2 ns | Cached-flag branch + OR; hidden in the existing debug-write path cost |
-| Write journal append | Every RAM write (if journal on) | ~3–5 ns | 12-byte packed append to ring |
-| Checkpoint capture | Per frame (20 ms budget) | 0.1–0.5 ms | 2–6 dirty pages memcpy + <4 KB serializers |
-| Input journal | Per host key event | negligible | |
-| **Total recording overhead** | | **≈ 2–4% of frame budget** | Meets the < 5% goal; measured, not assumed — benchmark is part of Phase 1 acceptance |
-| SeekTo (dense region) | Interactive | 1–20 ms | Page diff memcpy + ≤ 1 frame replay |
-| SeekTo (thinned region) | Interactive | ≤ ~200 ms | ≤ 50-frame replay, unpaced |
-| FindLastAccess via journal | Interactive | < 100 ms | Linear backward scan |
-| FindLastAccess via replay | Interactive | ~seconds per 10 s scanned | Fallback path |
-| Memory | Steady state | ≤ budget (default 64 MB) | 6.5 |
+| Binary search checkpoints | 0.1 ms | <0.05 ms | O(log n), n ≤ 5000 |
+| CPU/chipset field copy | 0.2 ms | 0.1 ms | ~200 bytes structured copy |
+| RAM page restore (worst case) | 3 ms | 1.5–2 ms | 8 pages × 16 KB = 128 KB memcpy |
+| Peripheral restore | 0.5 ms | 0.2 ms | AY + FDC + tape + covox |
+| Video mode sync (InitRaster) | 0.1 ms | <0.05 ms | Detect and set from port latches |
+| Screen render (RenderOnlyMainScreen) | 0.5 ms | 0.3 ms | Rebuild framebuffer from restored memory |
+| Intra-frame replay | 2 ms | 1–3 ms | Up to 71680 T-states at ~30M T/s host speed |
+| **Total (frame boundary)** | **4 ms** | **2–3 ms** | Checkpoint sits at frame start |
+| **Total (intra-frame)** | **6 ms** | **4–5 ms** | Include replay to exact T-state |
+
+### 14.3 Compression Performance
+
+| Data type | Raw size | Compressed | Ratio | Compress time | Decompress time |
+|---|---|---|---|---|---|
+| RAM page (typical) | 16 KB | 6 KB | 2.7:1 | 40 µs | 10 µs |
+| XOR-delta page (small change) | 16 KB | <200 B | 80:1+ | 20 µs | 5 µs |
+| AY state | 32 B | 24 B | 1.3:1 | <1 µs | <1 µs |
+| FDC state | ~500 B | ~200 B | 2.5:1 | <5 µs | <2 µs |
+| GeneralSound (if delta) | 32 KB | ~50 B | 640:1 | 100 µs | 20 µs |
+
+**Compressor:** zstd level 1 (fastest mode). Empirically chosen: 2.7× ratio at ~40µs/16KB, negligible decompression cost.
+
+### 14.4 Memory Budget
+
+| Model | RAM pages | Typical working set | Checkpoint size | 64 MB budget |
+|---|---|---|---|---|
+| ZX-48K | 3 | 1–2 pages/frame | ~20 KB | ~8 min history |
+| ZX-128K | 8 | 2–4 pages/frame | ~50 KB | ~5 min history |
+| Pentagon 512K | 32 | 2–6 pages/frame | ~80 KB | ~3 min history |
+| Pentagon 1024K | 64 | varies | ~100 KB | ~2 min history |
+
+*Never-touched pages contribute zero bytes to checkpoint storage.*
 
 ---
 
@@ -934,6 +1466,9 @@ Phase 1 carries the dominant risk (peripheral state completeness). The divergenc
 3. **Branching history** (keep the future when resuming from the past) — rejected for v1 (4.2); is a single "auto-save emulator snapshot before truncation" safety net wanted instead?
 4. **Third memory interface** (fast reads + TTD-hooked writes, 7.3) — measure first; implement only if debug-read overhead is noticeable in recording sessions.
 5. **Multi-instance** — TTDManager is per-`EmulatorContext` and therefore per-instance by construction; is per-instance memory budgeting needed when many instances run (videowall scenario), or a global pool?
+6. **CMOS / NVRAM contents are not captured** — both `Cmos` (ATM/ZX-Evo, `core/src/emulator/memory/atm/cmos.h`) and `SmucNvram` (Scorpion SMUC, `core/src/emulator/io/rtc/smucnvram.h`) hold `_cmos[0x100]` + `_nvram[0x800]`. Only the *address latch* (`cmos_addr`, in the ATM paging blob) is checkpointed; the 2304 bytes of contents are not. The argument for leaving them out: they are battery-backed **configuration**, changed on the order of once a session, and capturing them costs 2.3 KB in *every* checkpoint — the largest single line item after the RAM pages, for data that is almost always byte-identical to the previous checkpoint. The argument against: a guest that writes CMOS mid-recording (a setup screen, or ZX-Evo BaseConf firmware that uses NVRAM as scratch) will replay against post-write contents no matter where you seek, so the machine silently diverges from what actually happened. **Open:** does BaseConf write NVRAM often enough during normal operation for this to bite? Needs measurement — instrument the writes over a boot + a few minutes of a real BaseConf session before deciding.
+7. **If capture is needed, capture the delta, not the array** — the obvious fix is a `TTDSerializable` per device carrying the full 2304 bytes, which is also the wasteful one. Cheaper shapes, in order of preference: (a) a CMOS/NVRAM **write journal** replayed on seek, since the write rate is the thing that makes capture necessary in the first place and a journal costs exactly what that rate costs; (b) a dirty-flag + full blob only in checkpoints where a write occurred; (c) unconditional full capture. Pick after (6) is measured — the measurement decides the shape, not just the yes/no.
+8. **Neither device participates in the divergence hash** — a consequence of (6): a replay that corrupts CMOS is not detected by the corpus tests. If (6) resolves to "capture", `TTDHashState()` must be implemented alongside, or the capture goes untested in exactly the scenario that motivated it.
 
 ---
 
@@ -941,15 +1476,19 @@ Phase 1 carries the dominant risk (peripheral state completeness). The divergenc
 
 | Component | Size |
 |---|---|
-| Z80State | ~250 B |
-| Chipset/ports (incl. TS cram/sfile worst case) | ~1.5 KB |
+| TTDCpuState | 48 B |
+| TTDChipsetState (model-agnostic, fixed) | 120 B |
 | AY ×2 (TurboSound) full runtime state | ~200 B |
 | WD1793 + 4×FDD | ~300 B |
 | Tape | ~100 B |
+| Covox | ~8 B |
+| Model blob, if any (Scorpion ProfROM 8 B / ATM paging 44 B) | ≤ 64 B |
 | Page refs (8 pages × 4 B) | 32 B |
-| **Fixed cost per checkpoint** | **< 2.5 KB** |
+| **Fixed cost per checkpoint** | **< 1 KB** |
 | Page payload (COW, typical) | 2–6 × 16 KB dirty |
 | Page payload (worst case, all dirty) | 128 KB |
+
+The peripheral blobs are the whole variable part of the fixed cost: a model with no extra state pays nothing for the registry, and a device that is not connected contributes no blob at all. CMOS/NVRAM contents (2.3 KB) are excluded — see Open Question 6.
 
 Never-touched pages are free (6.3), so these numbers are identical for a 512K Pentagon running software with the same working set — TTD memory scales with what the program touches, not with installed RAM. A 512K machine only costs more when the software genuinely uses the extra pages (RAM-disk, big unpacked data), and then proportionally to actual writes.
 

@@ -58,6 +58,8 @@ enum VideoModeEnum : uint8_t
 
     M_BRD,  // Border only
 
+    M_SCORPION,  // Scorpion ZS-256 (Sinclair-matching 312-line x 224T raster)
+
     M_MAX
 };
 
@@ -416,13 +418,25 @@ public:
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_TS16
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_TS256
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_TSTX
-        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_ATM16
-        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_ATMHR
-        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_ATMTX
-        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_ATMTL
+        // ATM modes: ZX-compatible 312-line PAL timing at base clock
+        // Beam: 448 pixels/line = 224 T-states; 16 vSync + 8 vBlank + 288 visible = 312 lines
+        // maxFrameTiming = 224 x 312 = 69888 = config.frame (synchronized)
+        // 200-line screen vertically centered (44-line borders, like the reference
+        // renderer's (scy-200)/2 centering in dxr_atm0.cpp).
+        // 640-px modes (MC/Text/TextLinear) double the pixel clock inside the
+        // same 160-T screen window: storage is 704-wide (32-px side borders)
+        // while the beam stays 448 px/line - pixelsPerLine is timing,
+        // fullFrameWidth is storage.
+        {448, 288, 320, 200, 64, 44, 448, 64, 32, 16, 8},  // M_ATM16 (EGA 16-color)
+        {704, 288, 640, 200, 32, 44, 448, 64, 32, 16, 8},  // M_ATMHR (HW Multicolor 640x200)
+        {704, 288, 640, 200, 32, 44, 448, 64, 32, 16, 8},  // M_ATMTX (Text 80x25, 640x200)
+        {704, 288, 640, 200, 32, 44, 448, 64, 32, 16, 8},  // M_ATMTL (ZX-Evo Text Linear 80x25, 640x200 - same geometry as TX)
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_PROFI
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_GMX
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_BRD
+        // M_SCORPION: 312 lines x 224T = 69888T frame - same 312-line geometry as
+        // M_ZX48 (Pentagon's row differs only in vSyncLines 16 vs 8)
+        {352, 288, 256, 192, 48, 48, 448, 64, 32, 8, 16},  // M_SCORPION
     };
 
     // Default color table: 0RRrrrGG gggBBbbb
@@ -447,6 +461,10 @@ protected:
     uint8_t* _activeScreenMemoryOffset;
     uint8_t _borderColor;
 
+    // Frame-level screen switch tracking (zero overhead when HUD disabled)
+    bool _feature_hud_enabled = false;
+    uint8_t _screenSwitchCount = 0;
+
     VideoModeEnum _mode;
     RasterState _rasterState;
     FramebufferDescriptor _framebuffer;
@@ -458,16 +476,35 @@ protected:
 bool _turboRenderSkip = false;  // Turbo render decimation: set only for the CPU cycle of a skipped turbo frame
 
     /// region <Obsolete>
+    // NOTE (2026-09-08 audit, Scorpion task): this table is positionally under-filled -
+    // 17 initializers for M_MAX slots - so M_GMX, M_BRD and the appended M_SCORPION slot
+    // stay null. Intentionally left as-is: the table belongs to the obsolete draw path.
     DrawCallback _currentDrawCallback;
     DrawCallback _nullCallback;
     DrawCallback _drawCallback;
     DrawCallback _borderCallback;
 
     DrawCallback _drawCallbacks[M_MAX] = {
-        &Screen::DrawNull,  &Screen::DrawZX,       &Screen::DrawPMC,      &Screen::DrawP16,      &Screen::DrawP384,
-        &Screen::DrawPHR,   &Screen::DrawTimex,    &Screen::DrawTS16,     &Screen::DrawTS256,    &Screen::DrawTSText,
-        &Screen::DrawATM16, &Screen::DrawATMHiRes, &Screen::DrawATM2Text, &Screen::DrawATM3Text, &Screen::DrawProfi,
-        &Screen::DrawGMX,   &Screen::DrawBorder};
+        &Screen::DrawNull,      // M_NUL
+        &Screen::DrawZX,        // M_ZX48
+        &Screen::DrawZX,        // M_ZX128 (same rendering as ZX48)
+        &Screen::DrawZX,        // M_PENTAGON128K (same rendering as ZX48)
+        &Screen::DrawPMC,       // M_PMC
+        &Screen::DrawP16,       // M_P16
+        &Screen::DrawP384,      // M_P384
+        &Screen::DrawPHR,       // M_PHR
+        &Screen::DrawTimex,     // M_TIMEX
+        &Screen::DrawTS16,      // M_TS16
+        &Screen::DrawTS256,     // M_TS256
+        &Screen::DrawTSText,    // M_TSTX
+        &Screen::DrawATM16,     // M_ATM16
+        &Screen::DrawATMHiRes,  // M_ATMHR
+        &Screen::DrawATM2Text,  // M_ATMTX
+        &Screen::DrawATM3Text,  // M_ATMTL
+        &Screen::DrawProfi,     // M_PROFI
+        &Screen::DrawGMX,       // M_GMX
+        &Screen::DrawBorder     // M_BRD
+    };
 
 public:
     VideoControl _vid;
@@ -496,6 +533,40 @@ public:
     virtual void InitMemoryCounters();
     /// endregion </Initialization>
 
+    /// region <Video mode detection>
+protected:
+    /// Result of the per-model video mode detection: port/config state -> (mode, raster)
+    struct ModeSelection
+    {
+        VideoModeEnum mode;
+        RasterModeEnum raster;
+    };
+
+    /// Single routing point: maps the machine model to its per-family
+    /// detector. InitRaster calls only this; adding a model family means
+    /// one case here plus one DetectMode* implementation.
+    ModeSelection DetectVideoMode(MEM_MODEL model) const;
+
+    /// Per-model-family detection - each method fully owns its family's
+    /// mode + raster decision based on the current emulator port state
+    ModeSelection DetectModeZX48(const EmulatorState& state) const;
+    ModeSelection DetectModeZX128(const EmulatorState& state) const;
+    ModeSelection DetectModePentagon(const EmulatorState& state) const;
+    ModeSelection DetectModeATM1(const EmulatorState& state) const;
+    ModeSelection DetectModeATM2(const EmulatorState& state) const;
+    ModeSelection DetectModeATM3(const EmulatorState& state) const;
+    ModeSelection DetectModeProfi(const EmulatorState& state) const;
+    ModeSelection DetectModeScorpion(const EmulatorState& state) const;
+    ModeSelection DetectModeGMX(const EmulatorState& state) const;
+    ModeSelection DetectModeLegacy(const EmulatorState& state) const;
+    /// endregion </Video mode detection>
+
+    /// region <Frame lifecycle>
+public:
+    void handleFrameStart();
+    void handleFrameEnd();
+    /// endregion </Frame lifecycle>
+
 public:
     virtual void SetVideoMode(VideoModeEnum mode);
     virtual void SetActiveScreen(SpectrumScreenEnum screen);
@@ -505,6 +576,15 @@ public:
     virtual uint8_t GetActiveScreen();
     virtual uint8_t GetBorderColor();
     virtual uint32_t GetCurrentTstate();
+
+    /// @brief Read-only access to the calculated raster zone boundaries
+    /// (t-state ranges for blank/border/screen areas, vertical and horizontal)
+    const RasterState& GetRasterState() const { return _rasterState; }
+
+    /// Test observability: raster timing of the active mode. _rasterState is
+    /// refreshed by SetVideoMode, i.e. after InitRaster applied a mode change.
+    uint32_t GetMaxFrameTiming() const { return _rasterState.maxFrameTiming; }
+    uint32_t GetTstatesPerLine() const { return _rasterState.tstatesPerLine; }
 
     virtual void UpdateScreen() = 0;
     virtual void DrawPeriod(uint32_t fromTstate, uint32_t toTstate);
@@ -680,6 +760,21 @@ public:
     // Draw helpers
 public:
     static std::string GetVideoModeName(VideoModeEnum mode);
+
+    /// Physical RAM pages that make up the surface the given video mode actually
+    /// displays - the source for the /state/screen/digest "mode=active" selection
+    /// (P1-3). ZX-family modes keep the classic screen pages (5, plus shadow page
+    /// 7 on banked models, matching the digest default). The ATM hardware modes
+    /// (16c / HiRes / Text / TextLinear) interleave the 7FFD-selected video page
+    /// and the page four below it - the DrawATM* bit-plane layout (atm branch):
+    /// plane pairs live at {videoPage - 4, videoPage} with offsets 0x0000/0x2000.
+    /// Other extended modes (Profi/GMX/TS, renderers still stubbed) fall back to
+    /// the classic pages until their renderers define a surface.
+    /// @param mode Current video mode (Screen::GetVideoMode())
+    /// @param p7FFD Port 7FFD latch value (bit 3 selects the video page on ATM)
+    /// @param bankedZX Model exposes a shadow screen (128K-class paging)
+    static std::vector<uint16_t> GetActiveSurfaceRAMPages(VideoModeEnum mode, uint8_t p7FFD, bool bankedZX);
+
 
     void DrawNull(uint32_t n);      // Non-existing mode (skip draw)
     void DrawZX(uint32_t n);        // Authentic Sinclair ZX Spectrum

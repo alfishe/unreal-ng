@@ -69,6 +69,9 @@ python->start();
 python->executePython("print('Hello from embedded Python!')");
 ```
 
+### Machine Identity and Lifecycle
+The Python bindings do not expose model-selecting instance creation: `ue.Emulator()` always builds the default machine. For multi-instance lifecycle, model switching and strict model validation (`creatable` flags, 400-with-reason failures) use the WebAPI (`POST /api/v1/emulator/create`, `GET /api/v1/emulator/models`) or the CLI (`create`/`start <model>`). Machine identity of an existing instance is observable through state endpoints (e.g. TTD status reports `model_id`/`model_ram_pages`).
+
 ## API Reference
 
 ### Module Functions
@@ -95,6 +98,20 @@ class Emulator:
         
     def reset(self):
         """Hardware reset (equivalent to pressing reset button)"""
+
+    # Device state reports - the same trees the WebAPI, Lua, CLI and MCP
+    # return (command-interface.md section 3.3); dicts/lists/scalars
+    def audio_ay_state(self, chip: int = -1) -> dict:
+        """AY/SSG report: overview (chip=-1) or one chip fully decoded"""
+
+    def audio_fm_state(self, chip: int = -1) -> dict:
+        """TurboSound FM report: board + chip summaries (chip=-1) or one YM2203 FM half
+        (mode, timers, channels[3] with operators[4]: registers, pitch, envelope_state,
+        attenuation_db, key_on). available=False with a description without TSFM"""
+
+    def fdc_state(self) -> dict:
+        """Beta Disk WD1793 report: registers, status_bits, last_command, fsm_state,
+        signals (intrq/drq), beta128_register, density, selected_drive, drives[4]"""
         
     def pause(self):
         """Pause emulation"""
@@ -192,6 +209,81 @@ emu.tape_import("recording.wav", "imported.tap", 0.25)
 ```
 
 Playback `state` is one of `"idle"`, `"playing"`, `"paused"`, `"ended"` — identical strings across CLI, WebAPI, Lua and Python.
+
+### Mouse Input
+
+`Emulator` methods that drive the emulated Kempston Mouse, mirroring the CLI `mouse` commands
+and the WebAPI `/mouse/*` routes (source: `core/automation/python/src/emulator/python_emulator.h`).
+Units, limits and the reasoning behind them: [command-interface.md §11](./command-interface.md#11-mouse-input-injection).
+
+The mouse is **relative**: `mouse_move(10, -5)` means "travelled 10 pixels right and 5 down";
+the program on the machine moves its own cursor by that much. `dy` positive = **up**.
+
+```python
+emu.mouse_move(dx, dy)                  # -127..127 each, not both 0
+emu.mouse_press(button)                 # "left" | "right" | "middle" (or "l" | "r" | "m")
+emu.mouse_release(button)
+emu.mouse_click(button, frames=2)       # hold 1..65535 frames, then release on its own
+emu.mouse_buttons(["left", "middle"])   # exact pressed set; [] = none
+emu.mouse_wheel(steps)                  # -7..7, not 0; + = away from you
+emu.mouse_release_all()                 # also cancels a pending click
+emu.mouse_set_counters(x, y)            # debug: raw counters 0..255
+emu.mouse_status()                      # state dict (below)
+emu.mouse_click_pending()               # True while a click is still holding its button
+emu.mouse_button_names()                # ["left", "right", "middle"]
+```
+
+Every changing method returns the resulting **state dict**:
+
+```python
+{'x': 41, 'y': 80,
+ 'buttons': {'left': False, 'right': False, 'middle': False},
+ 'button_mask': 255,          # active-low: a pressed button is bit 0 (254 = left down)
+ 'wheel': 0, 'wheel_enabled': False, 'present': True,
+ 'ports': {'FADF': 255, 'FBDF': 41, 'FFDF': 80},   # what IN returns now (integers, as in the WebAPI)
+ 'pending_click': None,       # or {'button': 'left', 'frames_left': 1}
+ 'ttd_journal': 'supported'}
+# plus 'warning': '...' when the change cannot reach the program
+# (mouse not fitted, or a wheel step with no wheel fitted)
+```
+
+`mouse_status()` additionally carries `'routing': {'ports_decoded': bool, 'note': str}` —
+the same live answer as the WebAPI `GET /mouse/status` routing object: whether a mouse port
+read is decoded right now, and the reason when it is shadowed (mouse not fitted, TR-DOS ports
+accessible, a registered peripheral claims the port family, or model-specific gating —
+Scorpion DOS trigger / Shadow Monitor). The changing methods (`mouse_move` etc.) do not carry
+it, also matching the WebAPI.
+
+> [!NOTE]
+> `ports` values are integers, the same as in the WebAPI. The Python dict has no `available` key: `mouse_status()` raises
+> instead when there is no mouse device.
+
+**Errors raise** (the `key_*` methods return `False` instead; the difference is deliberate,
+so a mistake is not silently ignored):
+
+| Cause | Exception |
+|-------|-----------|
+| Out-of-range value, zero move/wheel, unknown button name | `ValueError` (message says which value and the allowed range) |
+| TTD replay in progress | `RuntimeError("TTD replay in progress; live mouse input refused")` |
+| No mouse manager / device | `RuntimeError` |
+
+**Worked example** (paused, reproducible):
+
+```python
+emu = unreal.emu_get_selected()
+emu.pause()
+st = emu.mouse_move(10, -5)          # from reset X=31 Y=85 -> st['x'] == 41, st['y'] == 80
+emu.mouse_click("left", frames=2)    # left held for the next 2 frames
+emu.run_frames(3)                    # 2 frames held + 1 for the program to react
+assert emu.mouse_status()["buttons"]["left"] is False
+
+try:
+    emu.mouse_move(200, 0)
+except ValueError as e:
+    print(e)   # dx=200 out of range -127..127; split into several moves with run_frames between them
+```
+
+While TTD records, these calls are written to the TTD input journal, so a replay reproduces them.
 
 ### Feature Management
 
@@ -625,14 +717,18 @@ result = emu.ttd_find_last(addr=0x5800, access='write')
 #   'physpage': 5
 # }
 
-# Full filter set:
+# Full filter set (single address or address/PC range search):
 result = emu.ttd_find_last(
-    addr=0x5800,
-    access='write',            # 'write' | 'read' | 'execute' | 'out'
+    addr=0x5800,                # optional single address
+    addr_from=0x4000,           # optional address range start
+    addr_to=0x8000,             # optional address range end
+    access='write',            # 'write' | 'read' | 'execute' | 'io'
     value=0x07,                # optional exact value match
     pc_from=0x4000,            # optional PC range filter
     pc_to=0x8000,
-    before=14982               # optional: don't search past this absolute tstate
+    before_frame=4823,         # optional: don't search past this frame
+    before_tin=0,
+    phys_page=5
 )
 ```
 
@@ -652,6 +748,24 @@ for bm in emu.ttd_bookmark_list():
     print(bm['frame'], bm['label'])
 ```
 
+**Coverage index queries:**
+
+```python
+probe = emu.ttd_coverage_probe(frame=100, kind='executed', addr_from=0x0038, addr_to=0x0040)
+# {'frame': 100, 'kind': 'executed', 'touched': True, 'index_available': True}
+# Frames outside the covered window: index_available=False, touched=False
+
+scan = emu.ttd_coverage_scan(kind='executed', addr_from=0x0038, addr_to=0x0040, from_frame=1, to_frame=200)
+# {'frames': [18, 19, 20], 'first_match': 18, 'last_match': 20, 'matching_frames': 3,
+#  'scanned_frames': 183, 'truncated': False, 'covered_from': 18, 'covered_to': 197,
+#  'index_available': True}
+
+summary = emu.ttd_coverage_summary(from_frame=1, to_frame=500, kind=None, bucket_size=50)
+# {'from_frame': 1, 'to_frame': 500, 'covered_from': 18, 'covered_to': 497,
+#  'bucket_size': 50, 'bucket_count': 10, 'index_available': True,
+#  'buckets': [{'frame_start': 1, 'frame_end': 50, 'executed_distinct': 412, ...}]}
+```
+
 **Errors** (raise Python exceptions):
 
 | Exception | Meaning |
@@ -663,6 +777,91 @@ for bm in emu.ttd_bookmark_list():
 | `TTDSessionInvalidatedError` | Session invalidated by load/reset/etc. |
 
 **Implementation status:** Sprint 0 foundations ✅ merged; Phase 1 will land `ttd_status` only; the rest ship in Phase 2 (navigation) and Phase 4 (reverse search).
+
+### Analysis, Capture & Assembly
+
+> **Status**: ✅ Implemented (2026-09)
+
+Analysis, capture and assembly methods mirroring the WebAPI endpoints of the
+same names (see [command-interface.md](./command-interface.md)). All methods
+return a dict; on failure the dict carries an `error` string.
+
+```python
+# Stepping helpers
+emu.step_out()                       # run until the current subroutine returns
+emu.skip_until(0x8000)               # fast-forward until PC == target (breakpoints skipped)
+emu.skip_until("0x8000", max_tstates=70000000)  # optional explicit t-state budget
+
+# Memory search
+emu.mem_find("AF 3C")                # hex pattern as string (spaces optional)
+emu.mem_find(0xAF3C)                 # or as a number
+emu.mem_find("AF 3C", start=0x8000, end=0xFFFF, alignment=2, max=32)
+
+# Screen state
+emu.screen_digest()                  # digest screen area (0x4000-0x5AFF), border folded in
+emu.screen_digest(0x4000, 0x5AFF, include_border=False)  # explicit range
+emu.screen_digest(mode="active")     # hash the surface the video mode displays now (ATM modes
+                                     # follow the 7FFD bit-plane pair); result carries
+                                     # 'active_surface': {'video_mode': str, 'pages': [..]}
+emu.ports_map()                      # static port map + live routing flags (P1-5 + P1-2 tags):
+                                     # {'model': str, 'entries': [{'port','mask','match','device','gate',
+                                     #                             'tags': ['memory','rom',...], 'latch'}],
+                                     #  'live': {'trdos_active','mouse_ports_decoded',
+                                     #           'mouse_routing_note','shadow_monitor_paged'}}
+                                     # tags: semantic categories (keyboard/memory/rom/screen/storage/
+                                     #   mouse/joystick/system + sound members sound_ay/sound_covox/...);
+                                     #   a row can carry several (Pentagon #FB = covox AND sounddrive).
+                                     # latch: live-value binding name ('p7FFD', 'p1FFD', 'pDFFD', ...) when
+                                     #   the row is a paging latch; None otherwise.
+emu.paging_state()                   # tagged paging latches + bank table (P1-2):
+                                     # {'model','paging_locked','trdos_active',
+                                     #  'latches': [{'port','latch','tags','device','gate','value',
+                                     #               'decoded': {'ram_bank':..,'shadow_screen':..,...}}],
+                                     #  'banks': [{'bank','address_range','type','page',
+                                     #             'name','role','signature','contended'}]}
+                                     # ROM bank rows carry the §5.2 identification: name = recognized
+                                     # content (SHA-256 catalog), role = the model's layout slot; a
+                                     # role/name mismatch is the one-glance wrong-ROM signal.
+emu.beam_position()                  # { "frame": N, "scanline": N, "tstate": N, "zone": "..." }
+emu.frame_cost()                     # per-frame halt/run cost accounting
+
+# Coverage analyzer
+emu.coverage_start()                 # start clean; keep=True retains old data
+emu.coverage_stop()
+emu.coverage_status(max_ranges=100)  # executed count + first ranges
+emu.coverage_gaps()                  # executed ranges and gaps (start=0x4000, end=0xFFFF)
+
+# AY register log
+emu.ay_log_start()                   # default capacity; capacity=8192 to override
+emu.ay_log_stop()
+emu.ay_log_status()
+emu.ay_log_dump(count=32)            # last N entries (offset=... for pagination)
+
+# Audio capture
+emu.audio_capture_start(2.5)         # capture 2.5 s of stereo audio (default 1.0)
+emu.audio_capture_status()
+emu.audio_capture_result()           # sample stats + per-channel peak/RMS
+emu.audio_capture_result("out.wav")  # additionally export a 16-bit WAV file
+
+# Video recording (requires a build with ENABLE_RECORDING)
+emu.video_record("start", {"format": "gif", "fps": 50, "scale": 2})  # opts dict optional
+emu.video_record("stop")             # also "pause" / "resume"
+emu.video_record_status()             # recording state + live stats (frames, duration, fps)
+
+# Assembler
+emu.assemble("ld a,2\nout (254),a", 0x8000)              # assemble, listing only
+emu.assemble("ld a,2\nout (254),a", "0x8000", write=True)  # + write bytes to RAM
+
+# Label resolution
+emu.label_resolve("main_loop")       # by name
+emu.label_resolve(0x8100)            # by address: exact, aliases, nearest below/above
+
+# Source listings
+emu.listing_load("game.lst")
+emu.listing_source_at()              # source line at PC; emu.listing_source_at(0x8100)
+emu.listing_step_line()              # run until the source line changes (~2 s budget)
+emu.listing_run_to_line(120)         # run to first code byte of line 120 (~10 s budget)
+```
 
 ### Enumerations
 

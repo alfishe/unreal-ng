@@ -239,6 +239,26 @@ void CallTraceBuffer::FlushHotBuffer(uint64_t current_frame)
     evictExpiredHotEvents(current_frame);
 }
 
+/// @brief Transfer ALL hot events back to the cold buffer unconditionally.
+/// @details Session-finalization counterpart to FlushHotBuffer: unlike the frame
+/// tick (which only evicts events idle for hot_timeout_frames), this moves every
+/// pinned event so a subsequent GetRecentEntries/GetAll sees the complete session.
+/// Transferred events keep their accumulated loop_count and are marked was_hot,
+/// which also stops them from being re-promoted if capturing continues.
+void CallTraceBuffer::FlushAllHotToCold()
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    for (auto it = _hotBuffer.begin(); it != _hotBuffer.end();)
+    {
+        // Same transfer as evictExpiredHotEvents, but unconditional
+        Z80ControlFlowEvent ev = it->event;
+        ev.loop_count = it->loop_count;
+        ev.was_hot = true;
+        logToColdBuffer(ev, it->last_seen_frame);
+        it = _hotBuffer.erase(it);
+    }
+}
+
 /// @brief Evict and serialize expired hot events.
 /// @param current_frame The current emulation frame.
 void CallTraceBuffer::evictExpiredHotEvents(uint64_t current_frame)
@@ -267,6 +287,15 @@ void CallTraceBuffer::Reset()
     std::lock_guard<std::mutex> lock(_mutex);
     _coldStart = _coldEnd = _coldSize = 0;
     _hotBuffer.clear();
+
+    // Compression state must be cleared too: stale _coldMap entries point at
+    // dead ring slots, so a re-logged event after a reset (StartCalltraceSession
+    // resets between back-to-back sessions) would silently update the old slot
+    // instead of being appended. The same-PC decode cache may also be stale if
+    // memory changed while capturing was off.
+    _coldMap.clear();
+    _coldLRU.clear();
+    _lastDecodedPC = 0xFFFF;
 }
 
 /// @brief Get the current number of events in the cold buffer.

@@ -2,11 +2,17 @@
 
 #include <QMainWindow>
 #include <QPointer>
+#include <cstdint>
 #include <memory>
+#include <mutex>
+#include <string>
 #include <vector>
 #include <3rdparty/message-center/eventqueue.h>
+#include <common/shmhelper.h>
 
+class Emulator;
 class TileGrid;
+class TileGridWrapper;
 class EmulatorManager;
 #ifdef ENABLE_AUTOMATION
 class Automation;
@@ -68,6 +74,9 @@ public:
     // Single Emulator Sync Mode
     void setSingleEmulatorSyncMode(bool enable, const std::string& emulatorId = "");
 
+    /// Handle GPU acceleration toggle
+    void handleGpuAccelerationToggled(bool enabled);
+
 protected:
     void closeEvent(QCloseEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
@@ -101,6 +110,10 @@ private:
     /// Unbind audio from current tile (mute)
     void unbindAudioFromTile();
 
+    /// Remove the tile whose emulator was destroyed externally (HTTP/CLI);
+    /// runs queued on the GUI thread after the pre-free drain window
+    void removeTileForDestroyedEmulator(const std::string& emulatorId);
+
     /// Set sound feature for all tiles (performance optimization)
     void setSoundForAllTiles(bool enabled);
 
@@ -113,8 +126,17 @@ private:
     /// Open Video Wall recording dialog (Cmd+R / Ctrl+R)
     void handleVideoRecordingRequested();
 
+    // Helper methods for GPU/CPU mode abstraction
+    int tileCount() const;
+    std::vector<std::string> allEmulatorIds() const;
+    std::shared_ptr<Emulator> emulatorAt(int index) const;
+    void setGridFullscreenMode(bool fullscreen);
+    void clearGrid();
+    void publishStatus() const;
+
     // UI Components
-    TileGrid* _tileGrid = nullptr;
+    TileGrid* _tileGrid = nullptr;  // CPU mode grid (used when _useGPU == false)
+    TileGridWrapper* _tileGridWrapper = nullptr;  // Wrapper for GPU mode
 
     // Emulator management (singleton, not owned)
     EmulatorManager* _emulatorManager = nullptr;
@@ -123,8 +145,28 @@ private:
     AppSoundManager* _soundManager = nullptr;
 
     // Currently audio-bound tile (only one at a time)
-    // Using QPointer to auto-nullify when tile is deleted
+    // Using QPointer to auto-nullify when tile is deleted (CPU mode only)
     QPointer<EmulatorTile> _audioBoundTile;
+    int _audioBoundIndex = -1;  // GPU mode: index of audio-bound emulator
+
+    // Observer IDs for reliable lambda removal in the destructor
+    // (capturing lambdas cannot be matched by value - see RemoveObserverById)
+    std::uint64_t _singleSyncObserverId = 0;
+    std::uint64_t _instanceCreatedObserverId = 0;
+    std::uint64_t _instanceDestroyedObserverId = 0;
+
+    // Audio binding bookkeeping. _audioBoundEmulatorId is read from the
+    // MessageCenter worker inside the pre-free drain window and written on
+    // the GUI thread - both sides hold _audioBindMutex.
+    std::mutex _audioBindMutex;
+    std::string _audioBoundEmulatorId;
+
+    // GPU acceleration state
+    bool _useGPU = false;
+    QAction* _gpuAccelerationAction = nullptr;
+
+    // Shared Memory status handle (zero disk I/O publisher)
+    mutable ipc::ShmHandle _statusShm;
 
     // Recording widget dialog
     QPointer<QWidget> _recordingWidget;

@@ -1,0 +1,29 @@
+diff --git a/ymfm_fm.ipp b/ymfm_fm.ipp
+index 9a3015aa..edf2cd82 100644
+--- a/ymfm_fm.ipp
++++ b/ymfm_fm.ipp
+@@ -431,6 +431,24 @@ bool fm_operator<RegisterType>::prepare()
+ 
+ 	// clock the key state
+ 	clock_keystate(uint32_t(m_keyon_live != 0));
++
++	// unreal-ng local patch (CSM), ported from Furnace commit 26739bba
++	// "YM2612: fix CSM on ymfm" (tildearrow, 2023-02-05); see PATCHES.md §4.
++	// On real OPN hardware the CSM key-on raised by a timer A overflow is a
++	// one-sample pulse: the operator's phase resets and the envelope restarts
++	// its attack, then the key drops and the envelope releases - every
++	// overflow retriggers the channel (formant / speech synthesis). Upstream
++	// ymfm only ever keys the operator ON here (the clock_keystate above) and
++	// nothing keys it off again until the next prepare(), which normally
++	// happens 4096 samples later, so the channel sustained like a manually
++	// keyed note and later overflows found it already keyed and could not
++	// retrigger it. Release the CSM key right away unless the operator is
++	// also keyed normally (a held note must not be chopped by CSM).
++	if (m_keyon_live & (1 << KEYON_CSM))
++	{
++		if (!(m_keyon_live & (1 << KEYON_NORMAL)))
++			clock_keystate(0);
++	}
+ 	m_keyon_live &= ~(1 << KEYON_CSM);
+ 
+ 	// we're active until we're quiet after the release

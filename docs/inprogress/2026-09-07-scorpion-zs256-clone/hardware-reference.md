@@ -196,7 +196,7 @@ the Sinclair copyright string (48K BASIC); page2 has **no reset vector** (starts
 > **Loader bug found by this verification:** `rom.cpp` (`MM_SCORP`/`MM_PROFSCORP`
 > cases) assigns the pointers Service-first (`page0→base_sys_rom`,
 > `page1→base_dos_rom`, …), which scrambles all four roles for every bundle above —
-> including the signature-validated `scorpion.rom`. **Fixed 2026-09-08** (uncommitted)
+> including the signature-validated `scorpion.rom`. **Fixed 2026-09-08** (commit `3f49622c`)
 > to `page0→base_128_rom`, `page1→base_sos_rom`, `page2→base_sys_rom`,
 > `page3→base_dos_rom` — the same order the original UnrealSpeccy `set_scorp_profrom()`
 > uses inside every ProfROM quadrant.
@@ -211,51 +211,70 @@ ProfROM (Vladimir Kladov, v3.x-4.x) replaces the 64 KB ROM with a **multiple of 
 software (commanders, editors, assemblers, games — the "ROM-disk" content).
 
 **Selection mechanism (hardware GAL, software-visible contract):** while the Service
-ROM window is paged at `#0000`, **any read of addresses `#0000-#0003`** advances a
-quadrant state machine. The verified transition table (original UnrealSpeccy
-`set_scorp_profrom()`):
+ROM window is paged at `#0000`, **any CPU read of the `#0100-#010F` block** clocks a
+quadrant state machine — row selector `S = A3:A2` (the read of `#0100+4*S` applies row
+`S`), `A0/A1` are not bonded on the GAL so all four addresses of a group are equivalent.
+The transition table, byte-identical across all four independent sources:
 
 ```
-          read #0000  read #0001  read #0002  read #0003
-from Q0:     Q0          Q1          Q2          Q3
-from Q1:     Q3          Q3          Q3          Q2
-from Q2:     Q2          Q2          Q0          Q1
-from Q3:     Q1          Q0          Q1          Q0
+            S=0 #0100-03   S=1 #0104-07   S=2 #0108-0B   S=3 #010C-0F
+from Q0:        Q0              Q3              Q2              Q1
+from Q1:        Q1              Q3              Q2              Q0
+from Q2:        Q2              Q3              Q0              Q1
+from Q3:        Q3              Q2              Q1              Q0
 ```
+
+| Source | Representation |
+|---|---|
+| Original UnrealSpeccy | `set_scorp_profrom()` `switch_table` = `{0,1,2,3, 3,3,3,2, 2,2,0,1, 1,0,1,0}`, strobed by reads of `#0100/#0104/#0108/#010C` while `CF_PROFROM` |
+| ZXMAK2 | `s_profPlaneMap` indexed `(addr & 0x0C) | plane`, subscribed for `RdMem` **and** `RdMemM1` with mask `(addr & 0xFFF0) == 0x0100`, gated on `SYSEN`, remapped before the read completes |
+| Xpeccy | `ZSLays[(adr & 0x000C) >> 2][prt2 & 3]`, gate `(adr & 0xFFF3) == 0x0100 && (p1FFD & 2)` (data reads only, `!m1`) |
+| Scorpion 256 Turbo+ GAL decode | `RDR-`-clocked plane latches `P1/P0`, `T` term requires the service page + the `#01xx` address pattern, `A0/A1` unwired (`materials/Scorpion256TPlus_GAL_decoded.md` §3) |
+
+The historical `set_scorp_profrom(read_address)` parameter is the *selector index*
+0-3 (which of the four strobe groups fired), not a literal address — the four
+references above agree on the block, and the emulator passes the raw address so
+`S` comes from `A3:A2` (M1 fetches included, matching the GAL's `RDR-` clock and
+ZXMAK2's subscription; Xpeccy's `!m1` is a data-reads-only simplification).
 
 Notes grounded in the table's design:
 
-- Reading `#0000` from Q0 is a **no-op** — the reset fetch (`F3` DI … `C3 00 01` JP) of
-  a quadrant-0 boot stays in Q0. This is what makes the scheme transparent to normal
-  execution.
-- The ProfROM service software walks this graph deliberately to expose other quadrants'
-  ROM-disk contents.
+- The `S=0` row is a **hold**: the monitor reads its plane ID from `#0101`
+  (byte value `>> 2` = plane number) without switching, and ordinary execution
+  fetching the block is inert — which makes the scheme transparent to normal
+  execution and to the reset fetch itself (the `#0000-#0003` reset path never
+  clocks the machine).
+- The ProfROM service software walks this graph deliberately to expose other
+  quadrants' ROM-disk contents: the shipped image's ROM-disk switcher at `#E4B5`
+  executes `LD L,(HL)` with `HL = #010C` (484 strobes observed in a single
+  session), and each non-zero quadrant carries a `#0111` stub
+  (`LD BC,#1FFD / LD A,2 / OUT (C),A / LD HL,#010C / LD L,(HL) / XOR A / OUT (C),A /
+  JP 0`) that re-enters quadrant 0 through reads of `#0108` (Q2) / `#010C` (Q1, Q3).
 - `profrom_mask` = {0 → 64 KB (no switching), 1 → 128 KB (Q0-Q1), 3 → 256 KB (Q0-Q3)}.
 - The switching only occurs for the **ProfROM variant** (`MM_PROFSCORP`); the base
   machine never switches (`CF_PROFROM` never set).
-- On reset, quadrant 0 is selected (boot always comes from the image's first 64 KB).
+- On reset, quadrant 0 is selected (boot always comes from the image's first 64 KB;
+  ZXMAK2 does the same in `ResetState`).
 - **The quadrant is a byte of machine state, not a derived value.** In the original
   UnrealSpeccy it lives in `COMPUTER::profrom_bank` and is written only by
-  `set_scorp_profrom()` as `switch_table[read_addr*4 + profrom_bank] & profrom_mask`; the
+  `set_scorp_profrom()` as `switch_table[selector*4 + profrom_bank] & profrom_mask`; the
   new value depends on the *previous* value, i.e. on the whole read history. No
   combination of port latches reproduces it, so every state serializer that must
   reproduce execution (TTD checkpoints, divergence hashes) has to carry the byte
   itself. This codebase still has the field (`EmulatorState::profrom_bank`,
   `TEMP::profrom_mask`), unused until now (§12 item 11).
 
-**Verified against the shipped 512 KB image (`scorp_prof401.rom`, 8 quadrants):**
+**Verified against the shipped image (`scorp_prof401.rom`) and the GAL decode:**
 
-- The image's own code performs the strobe protocol: **15 sites read `#0000-#0003`
-  directly** (`LD A,(nn)` / `LD HL,(nn)` encodings), concentrated in the service pages
-  (5 of 6 sites inside quadrant 0's Service page) — the ProfROM software walks the
-  graph exactly as described.
-- Quadrant headers double as strobe opcodes: Q0/Q4 begin `F3 C3 D1 08`, the other
-  quadrants `F3 C3 03 01`. Walking the verified table over the four reset-fetch reads:
-  starting from Q0 ends in Q0; from Q1 ends in Q1 (self-stabilizing boot vectors);
-  Q2 and Q3 cross-route to each other's entry points.
-- The 4-byte reset fetch (opcode + opcode + two operand bytes) only stays coherent if
-  **every read** (not only M1 fetches) drives the machine — see §12.4 — and operand
-  bytes are fetched from the *post-switch* quadrant (mid-instruction remap).
+- Every quadrant's Service page carries the 16-byte ID block at `#0100`:
+  quadrant 0 = `E5 02 …`, others = `01 06 / 01 0A / 01 0E …` — each page's `#0101`
+  byte shifted right twice equals its plane number, readable without switching
+  because `#0100-#0103` is the hold row.
+- The strobed read returns the **post-switch** quadrant's byte — ZXMAK2 subscribes
+  the gate *before* the memory device "to handle memory switches before read",
+  and the GAL clocks on `RDR-` (the read strobe itself), so operand bytes of the
+  very instruction performing the switch already come from the new plane
+  (mid-instruction remap, §12.4).
 
 ### 5.3 Extended ROM-disk — up to 2 MB via direct window select
 
@@ -343,8 +362,8 @@ silently breaks the path must be verified in Task 2.
 | `#FE` (partial decode: `A5=1, A1=1, A0=0` pattern `xxxxxxxx xx1xxx10`) | R/W | ULA: keyboard, border, ear, mic | selective decode — mirrors answer too; see §12 |
 | `#FF` | W | **border color (Scorpion extension)** | direct latch, 1T visible; coexists with `#FE[2:0]` |
 | `#FF` | R | Beta-128 system port (in DOS session) | FDC side/drive/reset |
-| `#1FFD` | W | memory register (§4.3) | reads return `#FF` |
-| `#7FFD` | W | memory register (§4.2) | write-only |
+| `#1FFD` | W | memory register (§4.3) | reads return `#FF`; a read also **clears the turbo flip-flop** (§13) |
+| `#7FFD` | W | memory register (§4.2) | write-only; a read also **sets the turbo flip-flop** (§13) — returned value meaningless |
 | `#1F/#3F/#5F/#7F` | R/W | WD1793 registers | DOS session active |
 | `#BFFD` / `#FFFD` (mirror-tolerant: `#xC002` masks) | W/R | AY register/data | full mirrors decoded (`#FF05` etc. select AY) |
 | `#7EFD` | W | ROM quadrant window select, bits 5:4 | ProfROM extended images only |
@@ -372,16 +391,37 @@ silently breaks the path must be verified in Task 2.
 
 ## 9. MNI — the "Magic" button
 
-- Physical button on the case wired to the NMI line *through the memory manager*: on
-  press, hardware **sets `#1FFD` bit 1** (preserving every other bit — critically bit 4
-  and bits 6-7, so the interrupted program's `#C000` banking survives) and pulses NMI.
-- The CPU vectors to `#0066`, which now fetches from ROM2 (Shadow Monitor) because bit 1
-  is set.
-- Monitor exit is a **`#1FFD` write** (clearing bit 1) by software; the button-latch is
-  not gated by the `#7FFD` lock (it is hardware, not a port write).
-- ROM0's NMI handler may poll an MNI-flag port on real hardware; emulators universally
-  bypass this by latching the shadow page directly (MISTer does the same) — flag port
-  TBD, treated as a limitation (§12).
+> Rewritten 2026-09-10 to the DD50 ground truth (verified against the schematic and the
+> v4.01 image). The previous text claimed the button sets `#1FFD` bit 1 — disproven: no
+> register is written. Full disassembly and evidence:
+> [profrom-nmi-boot-analysis.md](profrom-nmi-boot-analysis.md).
+
+The button arms **two DD50 flip-flops at once** and writes no register:
+
+| Flip-flop | Effect while armed |
+|---|---|
+| DD50.2 (NMI trigger) | asserts `/NMI` — the CPU accepts it at the next instruction boundary |
+| DD50.1 ("1-DOS / 0-SOS" DOS trigger) | **page 3 (TR-DOS) of the current ProfROM plane forced over `#0000-#3FFF`** — the Beta-128 magic-button mechanism |
+
+- Neither the `#1FFD` latch nor the ProfROM plane register (GAL DD41) is touched: the
+  plane survives the whole session (it moves only via the `#0100+4·S` read strobe, §5.2
+  — the button and `/RESET` are not wired to the GAL), and the interrupted program's
+  banking state survives verbatim.
+- Priority while armed: `#1FFD[1]` (service latch) **still outranks** the trigger —
+  the firmware entry chain relies on this (its `OUT (#1FFD),#12` at TR-DOS `#0033`
+  swaps the service page in mid-chain; both pages carry compatible code at `#0033`).
+  The trigger also overrides RAM-at-`#0000` (`#1FFD[0]`) and any session selection.
+- The CPU vectors to `#0066` **of the forced page 3**. In plane 0 the TR-DOS handler
+  chains into the Service Monitor (`#0066 → #2A56 → #0807 → OUT (C),A at #0033 →
+  service #0035 → #00B6` → menu; the monitor saves context in `#DDxx` RAM, restores
+  `#7FFD`/`#1FFD` on exit and `RETN`s). In planes 1-3, `#0066` of pages 2 and 3 is a
+  **deliberate park loop** (`LD A,6 / OUT (#FE),A / XOR A / OUT (#FE),A / JR #0066` —
+  yellow/black border stripes, no exit): the monitor would clobber the running tool's
+  `#DDxx` data, so NMI in a tool plane parks the CPU instead (analysis doc §3-4).
+- The trigger **releases on the first CPU read from `#4000-#FFFF`** (the Beta-128
+  "leave the ROM window" strobe; writes never release it).
+- `/RESET` clears the trigger but **not** the plane register — "plane 0 after reset"
+  is a software guarantee of the per-plane `#0000` stubs (§5.2, analysis doc §5).
 
 ---
 
@@ -407,7 +447,7 @@ factor for software.
 | # | Item | Status |
 |---|---|---|
 | 1 | `#FE` selective decode exactness (`A4,A3,A1,A0` per bootcamp vs. the GAL equation currently encoded) | kept as documented GAL equation; exact Turbo+ netlist unavailable |
-| 2 | MNI flag port (ROM0 NMI handler polling) | bypassed by direct latch, as in all reference emulators |
+| 2 | MNI flag port | **Resolved 2026-09-10: none exists.** The button is a trigger pair (DD50.1 DOS trigger + DD50.2 NMI, §9) — the earlier "ROM0 NMI handler polls a flag port" concern came from the disproven latch model |
 | 3 | Kempston vs. Beta `#1F` arbitration | on hardware the FDC owns `#1F` only in a DOS session; the monitor polls `#xx1F` *after* unpagin — decoder must keep the FDC answering in that state (MISTer bug 2; see design.md) |
 | 4 | ProfROM state machine on *any read* vs. M1-only | original hardware watches `/RD` + ROMCS + A0-A1; implemented as any read — **required, not just permitted**: the shipped ProfROM image's reset fetch needs operand (non-M1) reads to drive the machine (§5.2), and quadrant switches mid-instruction mean operand bytes are fetched from the newly-selected quadrant — the read-strobe hook must remap before the current access completes |
 | 5 | 512 KB ProfROM ("SMUC support" per UnrealSpeccy docs) | accepted by the ladder via `#7EFD[4]`; the 2-bit state machine alone stops at 256 KB — consistent with original source |
@@ -418,3 +458,53 @@ factor for software.
 | 9 | `#1FFD` bit 2 | **Decided 2026-09-08: not a memory bit — not implemented.** Hardware (programmer's guide): RS-232C output line. Fuse and MISTer ignore it. Original UnrealSpeccy: `if (p1FFD & 4) flags \|= CF_TRDOS` — *set-only and sticky*: clearing the bit did nothing, the session then closed via the normal RAM-execution path. Rejected because no real-hardware software can depend on it and stray writes with bit 2 set would wrongly page TR-DOS in. If UnrealSpeccy-compat is ever wanted, re-add exactly the sticky set-only semantic as a documented extension |
 | 10 | ROM under an open DOS session with `p7FFD[4] = 0` | **Normative: ROM3 (TR-DOS)** per MISTer/Fuse. Heritage UnrealSpeccy / generic `UpdateZ80Banks()` map the service ROM here — the Scorpion branch must not inherit that (§4.4) |
 | 11 | ProfROM quadrant state | **Decided 2026-09-08: kept in `EmulatorState::profrom_bank` and checkpointed** (TTD chipset state + divergence hash). Not derivable from latches (§5.2). The `.z80` format has no slot for it — snapshots of a ProfROM machine mid-walk reload at quadrant 0 (documented limitation) |
+| 12 | Turbo DRAM/video arbitration | not modeled: 7 MHz runs as an ideal 2× T-states per frame (all reference emulators do the same — xpeccy doubles `cpuFrq`, ZXMAK2/UnrealSpeccy have no Scorpion turbo at all). Real machines lose a few % to stretched cycles in screen-heavy loops (§13). Tape auto-adapts to the multiplier like the host speed control, whereas real hardware would break tape timing loops in turbo — pragmatic UX choice, revisit if a tape-turbo incompatibility is reported |
+
+---
+
+## 13. Hardware turbo — the 7 MHz flip-flop
+
+Source: `materials/Scorpion_Turbo_Mode.md` (turbo.jed GAL decode + MAME model),
+cross-checked against xpeccy `scrpIn1FFD`/`scrpIn7FFD`/`compSetTurbo`.
+
+**Software-visible contract.** The turbo flip-flop is clocked by IORQ **reads**
+whose address matches the paging-register decode — `IN` from the `#7FFD`
+family sets it (7 MHz), `IN` from the `#1FFD` family clears it (3.5 MHz):
+
+```
+set   (port & 0xC023) == 0x4021   01xxxxxxxx1xxx01  (#7FFD, and #7EFD on ProfROM)
+clear (port & 0xC023) == 0x0021   00xxxxxxxx1xxx01  (#1FFD, #3FFD...)
+```
+
+The strobe is a pure address decode — it fires whether or not a device claims
+the read, the data bus stays undriven (returned value meaningless), and every
+address mirror clocks it. `RESET` clears it. There is **no read-back status
+bit** on the ZS-256 (programs measure the speed with an interrupt-bounded
+count loop; the GMX adds a status bit in `#7EFD`, the ZS-256 does not).
+
+**What runs faster.** Only the Z80 and everything it times by instruction
+counting. The 50 Hz frame interrupt, the AY (own 1.75 MHz clock), the FDC
+(own 1 MHz + PLL) and video timing are unaffected — in emulator terms the CPU
+executes 2× T-states per 50 Hz frame with the INT window scaled accordingly.
+
+**Emulator model** (`EmulatorState::scorpion_turbo`, applied in
+`Z80::ApplyQueuedFrequencyMultiplier`):
+
+- `PortDecoder_Scorpion256::DecodePortIn` performs the strobe for **every**
+  Scorpion configuration (`MM_SCORP` and `MM_PROFSCORP`) before the normal
+  decode chain — result bytes are served exactly as before.
+- The effective multiplier composes with the host speed control
+  (`next_ << turbo`) at the frame boundary: `Z80FrameCycle` entry and the
+  inline boundaries of the `Emulator` stepping paths all call the same apply,
+  so a mid-run `IN` rescales subsequent frames and the queued host setting is
+  never clobbered by guest code.
+- Every consumer that already divides by `current_z80_frequency_multiplier`
+  (screen descale, sound pacing, tape timing, INT position) inherits the
+  correct behavior without further changes.
+
+**Verification.** Unit: strobe truth table (family mirrors set/clear, unrelated
+ports inert, `#FF` results unchanged, reset clears) + real-CPU-path
+`ScriptedInSevenFFD` + frame composition (`host 4× × turbo = 8×`, turbo off
+returns to the host setting). Live: `scratch/e2e-profrom-boot/pass29.py` —
+139776 T-states span 2 frames at 3.5 MHz and 1 frame after `IN (#7FFD)`, back
+to 2 after `IN (#1FFD)`, on both `SCORPION`/256K and `PROFSCORP`/1024K.

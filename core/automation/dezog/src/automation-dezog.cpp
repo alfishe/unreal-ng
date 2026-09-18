@@ -47,6 +47,43 @@ uint16_t AutomationDezog::resolvePort(uint16_t requested)
     return dzrp::DEFAULT_PORT;
 }
 
+uint32_t AutomationDezog::resolveTargetWaitMs(uint32_t requested)
+{
+    constexpr uint32_t MIN_TARGET_WAIT_MS = 1;
+    constexpr uint32_t MAX_TARGET_WAIT_MS = 60000;
+
+    uint32_t result = requested;
+
+    if (result == 0)
+    {
+        if (const char* env = std::getenv(TARGET_WAIT_ENV_VAR))
+        {
+            try
+            {
+                long value = std::stol(env);
+                if (value >= MIN_TARGET_WAIT_MS && value <= MAX_TARGET_WAIT_MS)
+                    result = static_cast<uint32_t>(value);
+                else
+                    std::cerr << "[DZRP] Ignoring out-of-range " << TARGET_WAIT_ENV_VAR << "='" << env << "'" << std::endl;
+            }
+            catch (...)
+            {
+                std::cerr << "[DZRP] Ignoring invalid " << TARGET_WAIT_ENV_VAR << "='" << env << "'" << std::endl;
+            }
+        }
+    }
+
+    if (result == 0)
+        result = dzrp::ServerConfig::DEFAULT_TARGET_WAIT_MS;
+
+    if (result < MIN_TARGET_WAIT_MS)
+        result = MIN_TARGET_WAIT_MS;
+    else if (result > MAX_TARGET_WAIT_MS)
+        result = MAX_TARGET_WAIT_MS;
+
+    return result;
+}
+
 bool AutomationDezog::start(uint16_t port)
 {
     std::lock_guard<std::mutex> lock(_mutex);
@@ -60,6 +97,7 @@ bool AutomationDezog::start(uint16_t port)
 
     dzrp::ServerConfig config;
     config.port = resolvedPort;
+    config.targetWaitMs = resolveTargetWaitMs(0);
     config.serverName = "Unreal-NG";
     config.serverVersion = "1.0.0";
 

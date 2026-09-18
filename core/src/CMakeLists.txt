@@ -73,6 +73,19 @@ EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/build/" FALSE OUTVAR CPP_FILES)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/CMakeFiles/" FALSE OUTVAR CPP_FILES)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "liblzma/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/recording/" FALSE OUTVAR CPP_FILES) # Moved to separate library
+
+# ymfm (YM2203 core for the TurboSound FM device): vendored at 3rdparty/ymfm
+# and picked up by the recursive *.cpp glob above. ymfm_opn.cpp includes
+# ymfm_fm.ipp (template implementations), so the .ipp never compiles
+# standalone. The vendored .cpp files are not warning-clean under our
+# -Wall -Wextra -Werror (upstream keeps unused parameters) and must not be
+# force-fed stdafx.h, so skip the PCH and relax that single warning on those
+# files only. See 3rdparty/ymfm/PATCHES.md for the local source patch.
+file (GLOB YMFM_CPP ${SOURCE_DIR}/3rdparty/ymfm/*.cpp)
+set_source_files_properties(${YMFM_CPP} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+if (NOT CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
+    set_source_files_properties(${YMFM_CPP} PROPERTIES COMPILE_OPTIONS "-Wno-unused-parameter")
+endif()
 message("CPP_FILES:${CPP_FILES}")
 
 set (SOURCES ${CPP_FILES})
@@ -127,7 +140,18 @@ target_include_directories(${PROJECT_NAME} PUBLIC
     ${SOURCE_DIR}/3rdparty
     ${SOURCE_DIR}/common
     ${SOURCE_DIR}/emulator
+    # Generated build fingerprint header (buildinfo.h) - configured by the
+    # root CMakeLists.txt from git metadata. PUBLIC so every consumer of
+    # core (automation-webapi/mcp/cli, tests, Qt apps) can
+    # #include "emulator/buildinfo.h".
+    ${CMAKE_BINARY_DIR}/generated
 )
+
+# ymfm include dir: SYSTEM so warnings originating in the upstream headers
+# never surface in our translation units (-Werror). PUBLIC so consumers
+# (core-tests, benchmarks, the future TSFM device) inherit it through the
+# core link and can #include <ymfm_opn.h> flat
+target_include_directories(${PROJECT_NAME} SYSTEM PUBLIC ${SOURCE_DIR}/3rdparty/ymfm)
 
 
 # 'stdafx.h' is our precompiled header

@@ -1,18 +1,29 @@
 #include "soundchip_turbosound.h"
 
+#include "3rdparty/message-center/messagecenter.h"
 #include "emulator/cpu/core.h"
+#include "emulator/notifications.h"
 
 /// region <Emulation events>
 void SoundChip_TurboSound::handleFrameStart()
 {
+    // NOTE: the frame buffer clears below run even when synthesis is
+    // suppressed (§6.1): the sound-feature-off output path relies on zeroed
+    // buffers (SoundManager::handleFrameEnd mixes whatever is here), and a
+    // TSFM device clears its word queues here for the same reason.
     _lastTStates = 0;
-    // NOTE: _ayPLL deliberately NOT reset here. The fractional sample phase
-    // must be free-running across frames (audio-sync design, Fix 1): zeroing
-    // it every frame truncated the fractional sample per frame, locking the
-    // AY at 903 samples/frame (never 904) - a systematic -0.019% rate bias
-    // vs the exact accumulator, plus a phase discontinuity at each frame
-    // boundary. _ayPLL resets only in reset().
+    // NOTE: _samplePhase deliberately NOT reset here. The fractional sample
+    // phase must carry across frames (audio-sync design, Fix 1): zeroing it
+    // every frame truncated the fractional sample per frame, locking the AY
+    // at 903 samples/frame (never 904) - a systematic -0.019% rate bias vs
+    // the mixer's accumulator, plus a phase discontinuity at each frame
+    // boundary. _samplePhase resets only in reset() and setCoreRate().
     _ayBufferIndex = 0;
+
+    // Reset activity tracking for HUD notification
+    _frameHadActivity = false;
+    _chip0ActiveThisFrame = false;
+    _chip1ActiveThisFrame = false;
 
     // Initialize render buffers (combined + per-chip)
     memset(_ayBuffer, 0x00, _ayAudioDescriptor.memoryBufferSizeInBytes);
@@ -44,13 +55,36 @@ void SoundChip_TurboSound::handleFrameStart()
 /// - Correct relationship between chip clock and generator periods
 void SoundChip_TurboSound::handleStep()
 {
-    size_t currentTStates = _context->pCore->GetZ80()->t;
+    // Output-stage suppression (§6.1): turbo without audio or the sound
+    // feature off. The manager keeps calling - a device with an emulated
+    // core (TSFM) advances it here - but the legacy device has nothing to
+    // do when its rendering is off, so this early return is the whole
+    // suppressed cost.
+    if (_synthesisSuppressed)
+        return;
 
-    // Scale t-states by speed multiplier for correct AY audio pitch
-    uint8_t speedMultiplier = _context->emulatorState.current_z80_frequency_multiplier;
+    // Hardware turbo descaled: the AY has its own clock, so under the Scorpion
+    // 7 MHz flip-flop the chip must see the real-time position (t/2), not the
+    // doubled CPU count - otherwise it emitted 2x samples per frame
+    size_t currentTStates = _context->emulatorState.AudioTstate(_context->pCore->GetZ80()->t);
+
+    // Scale t-states by the HOST speed multiplier for correct AY audio pitch
+    uint8_t speedMultiplier = _context->emulatorState.HostSpeedMultiplier();
     size_t scaledCurrentTStates = currentTStates * speedMultiplier;
 
-    int32_t diff = scaledCurrentTStates - _lastTStates;
+    // Partition time exactly at the frame boundary: the last instruction of
+    // a frame runs a few T-states past it, and those T-states are counted
+    // again at the top of the next frame (AdjustFrameCounters rebases t,
+    // handleFrameStart zeroes _lastTStates). Clip here so each frame feeds
+    // the accumulator exactly config.frame x multiplier T-states - the same
+    // quantity SoundManager::handleFrameEnd adds to its accumulator - and
+    // the two never disagree on a frame's sample count. The generator time
+    // past the boundary is not lost: the next frame starts counting from 0.
+    const size_t frameTStates = size_t(_context->config.frame) * speedMultiplier;
+    if (frameTStates > 0 && scaledCurrentTStates > frameTStates)
+        scaledCurrentTStates = frameTStates;
+
+    int32_t diff = int32_t(scaledCurrentTStates) - int32_t(_lastTStates);
 
     if (diff > 0)
     {
@@ -58,11 +92,11 @@ void SoundChip_TurboSound::handleStep()
         // Checked once per handleStep batch; per-tick cost is a plain bool.
         const bool tapActive = _nativeTap->isActive();
 
-        _ayPLL += diff * _sampleTStateIncrement;
+        _samplePhase += uint64_t(diff) * _coreRate;
 
-        while (_ayPLL > 1.0 && _ayBufferIndex < MAX_SAMPLES_PER_FRAME * AUDIO_CHANNELS)
+        while (_samplePhase >= CPU_CLOCK_RATE && _ayBufferIndex < MAX_SAMPLES_PER_FRAME * AUDIO_CHANNELS)
         {
-            _ayPLL -= 1.0;
+            _samplePhase -= CPU_CLOCK_RATE;
 
             int16_t leftSample;
             int16_t rightSample;
@@ -192,10 +226,27 @@ void SoundChip_TurboSound::handleStep()
         }
     }
 
-    _lastTStates = scaledCurrentTStates;
+    _lastTStates = currentTStates;
 }
 
-void SoundChip_TurboSound::handleFrameEnd() {}
+void SoundChip_TurboSound::handleFrameEnd()
+{
+    // TurboSound = chip1 (non-default) is active at all, since standard single-AY only uses chip0
+    bool isTurboSound = _chip1ActiveThisFrame;
+
+    // Post notification on activity state change or TurboSound mode change, or while active (to refresh HUD TTL)
+    bool stateChanged = (_frameHadActivity != _wasActive) || (isTurboSound != _wasTurboSound);
+    if (_frameHadActivity || stateChanged)
+    {
+        _wasActive = _frameHadActivity;
+        _wasTurboSound = isTurboSound;
+
+        AudioSource source = isTurboSound ? AudioSource::TurboSound : AudioSource::AY;
+
+        MessageCenter::DefaultMessageCenter().Post(
+            NC_AUDIO_ACTIVITY, new AudioActivityPayload(_context->emulatorId, source, _wasActive));
+    }
+}
 
 /// endregion </Emulation events>
 
@@ -232,9 +283,34 @@ void SoundChip_TurboSound::portDeviceOutMethod(uint16_t port, uint8_t value)
             break;
         case PORT_BFFD:
             _currentChip->writeCurrentRegister(value);
+            _frameHadActivity = true;  // Track register writes for HUD activity
+            // Track which chip is active this frame for TurboSound detection
+            if (_currentChip == _chip0)
+                _chip0ActiveThisFrame = true;
+            else if (_currentChip == _chip1)
+                _chip1ActiveThisFrame = true;
             break;
         default:
-            break;
+            return;  // Not an AY port — no tap
+    }
+
+    // Automation tap (MCP M7j): fires after the write so `chip` identifies the
+    // chip that received it (chip-switch commands report the newly active chip)
+    if (_logSink) [[unlikely]]
+    {
+        AYLogRecord record;
+        record.port = port;
+        record.value = value;
+        record.chip = (_currentChip == _chip1) ? 1 : 0;
+        record.reg = (port == PORT_BFFD) ? _currentChip->getCurrentRegister() : value;
+        if (_context && _context->pCore)
+        {
+            const Z80* z80 = _context->pCore->GetZ80();
+            record.pc = z80->m1_pc;     // PC of the OUT instruction, not the next one
+            record.tacts = z80->t;      // T-states within the current frame
+            record.frame = _context->emulatorState.frame_counter;
+        }
+        _logSink(_logSinkContext, record);
     }
 }
 /// endregion </PortDevice interface methods>

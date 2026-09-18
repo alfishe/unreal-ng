@@ -1,6 +1,8 @@
 // CLI Instance Management Commands
 // Extracted from cli-processor.cpp - 2026-01-08
 
+#include <emulator/buildinfo.h>
+#include <emulator/config.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/notifications.h>
@@ -18,17 +20,23 @@ void CLIProcessor::HandleStatus(const ClientSession& session, const std::vector<
 {
     std::string status;
 
+    // Build fingerprint first (P0-4): attribute everything below to a
+    // specific branch/commit. Mirrors the "server" block of
+    // GET /api/v1/emulator/status.
+    status = std::string("Build: v") + buildinfo::kVersion + " (" + buildinfo::kGitBranch + " @ " +
+             buildinfo::kGitCommit + ", " + buildinfo::kBuildType + ")" + NEWLINE;
+
     // Get all emulator instances from EmulatorManager
     auto* emulatorManager = EmulatorManager::GetInstance();
     auto emulatorIds = emulatorManager->GetEmulatorIds();
 
     if (emulatorIds.empty())
     {
-        status = std::string("No emulator instances found") + NEWLINE;
+        status += std::string("No emulator instances found") + NEWLINE;
     }
     else
     {
-        status = std::string("Emulator Instances:") + NEWLINE;
+        status += std::string("Emulator Instances:") + NEWLINE;
         status += std::string("==================") + NEWLINE;
 
         for (const auto& id : emulatorIds)
@@ -376,6 +384,53 @@ void CLIProcessor::HandleReset(const ClientSession& session, const std::vector<s
     session.SendResponse("Emulator reset\n");
 }
 
+// HandleNmi - pulse the Z80 NMI line (accepted at the next instruction boundary)
+void CLIProcessor::HandleNmi(const ClientSession& session, const std::vector<std::string>& args)
+{
+    std::string errorMessage;
+    auto emulator = ResolveEmulator(session, args, errorMessage);
+
+    if (!emulator)
+    {
+        if (!errorMessage.empty())
+        {
+            session.SendResponse(errorMessage);
+        }
+        else
+        {
+            session.SendResponse("No emulator selected. Use 'select <id>' or 'list' to see available emulators.");
+        }
+        return;
+    }
+
+    emulator->RequestNMI();
+    session.SendResponse("NMI requested\n");
+}
+
+// HandleMni - the Scorpion "magic button": page the Shadow Monitor, then NMI
+// (non-Scorpion models fall back to a plain NMI)
+void CLIProcessor::HandleMni(const ClientSession& session, const std::vector<std::string>& args)
+{
+    std::string errorMessage;
+    auto emulator = ResolveEmulator(session, args, errorMessage);
+
+    if (!emulator)
+    {
+        if (!errorMessage.empty())
+        {
+            session.SendResponse(errorMessage);
+        }
+        else
+        {
+            session.SendResponse("No emulator selected. Use 'select <id>' or 'list' to see available emulators.");
+        }
+        return;
+    }
+
+    emulator->RequestMNI();
+    session.SendResponse("MNI requested (magic button: NMI + service monitor)\n");
+}
+
 // HandlePause - lines 806-844
 void CLIProcessor::HandlePause(const ClientSession& session, const std::vector<std::string>& args)
 {
@@ -471,13 +526,32 @@ void CLIProcessor::HandleCreate(const ClientSession& session, const std::vector<
     {
         // create <model> - create emulator with specific model
         std::string modelName = args[0];
-        auto emulator = emulatorManager->CreateEmulatorWithModel("", modelName);
+        std::string createError;
+        auto emulator = emulatorManager->CreateEmulatorWithModel("", modelName, LoggerLevel::LogWarning, &createError);
 
         if (emulator)
         {
             std::stringstream ss;
             ss << "Created emulator instance: " << emulator->GetId() << NEWLINE;
-            ss << "Model: " << modelName << NEWLINE;
+            // Echo the RESOLVED machine, not the requested string, so a
+            // misresolved model is visible immediately. Identity comes from
+            // EmulatorManager::GetMachineIdentity - the same single source
+            // the WebAPI responses are built from.
+            MachineIdentity identity = EmulatorManager::GetMachineIdentity(*emulator);
+            if (identity.Valid)
+            {
+                ss << "Model: " << identity.Model << " - " << identity.ModelFullName
+                   << " (" << identity.RamKb << "KB)" << NEWLINE;
+                ss << "Config folder: " << identity.ConfigFolder << NEWLINE;
+                if (identity.HasVideoMode)
+                {
+                    ss << "Video mode: " << identity.VideoMode << NEWLINE;
+                }
+            }
+            else
+            {
+                ss << "Model: " << modelName << NEWLINE;
+            }
             ss << "State: initialized (not started)" << NEWLINE;
             ss << "Note: Instance will be auto-selected when started" << NEWLINE;
 
@@ -488,6 +562,10 @@ void CLIProcessor::HandleCreate(const ClientSession& session, const std::vector<
         {
             std::stringstream ss;
             ss << "Error: Failed to create emulator with model '" << modelName << "'" << NEWLINE;
+            if (!createError.empty())
+            {
+                ss << "Reason: " << createError << NEWLINE;
+            }
             ss << "Available models: ";
 
             auto models = emulatorManager->GetAvailableModels();
@@ -603,7 +681,8 @@ void CLIProcessor::HandleStart(const ClientSession& session, const std::vector<s
 
         // Not an existing emulator - treat as model name and create new emulator
         std::string modelName = arg;
-        auto emulator = emulatorManager->CreateEmulatorWithModel("", modelName);
+        std::string createError;
+        auto emulator = emulatorManager->CreateEmulatorWithModel("", modelName, LoggerLevel::LogWarning, &createError);
 
         if (emulator)
         {
@@ -614,17 +693,28 @@ void CLIProcessor::HandleStart(const ClientSession& session, const std::vector<s
             emulatorIds = emulatorManager->GetEmulatorIds();
             bool shouldAutoSelect = (emulatorIds.size() == 1);  // Only auto-select if this is the only emulator
 
+            // Echo the RESOLVED machine, not the requested string (identity
+            // comes from EmulatorManager::GetMachineIdentity - the same single
+            // source the WebAPI responses are built from)
+            MachineIdentity identity = EmulatorManager::GetMachineIdentity(*emulator);
+            std::string resolvedModel = modelName;
+            if (identity.Valid)
+            {
+                resolvedModel = identity.Model + " - " + identity.ModelFullName + " (" +
+                                std::to_string(identity.RamKb) + "KB, config: " + identity.ConfigFolder + ")";
+            }
+
             std::stringstream ss;
             if (startSuccess)
             {
                 ss << "Started emulator instance: " << emulator->GetId() << NEWLINE;
-                ss << "Model: " << modelName << NEWLINE;
+                ss << "Model: " << resolvedModel << NEWLINE;
                 // Note: EmulatorManager handles auto-selection automatically
             }
             else
             {
                 ss << "Created emulator instance: " << emulator->GetId() << NEWLINE;
-                ss << "Model: " << modelName << NEWLINE;
+                ss << "Model: " << resolvedModel << NEWLINE;
                 ss << "Warning: Failed to start emulator automatically" << NEWLINE;
             }
 
@@ -636,6 +726,10 @@ void CLIProcessor::HandleStart(const ClientSession& session, const std::vector<s
         {
             std::stringstream ss;
             ss << "Error: Failed to create emulator with model '" << modelName << "'" << NEWLINE;
+            if (!createError.empty())
+            {
+                ss << "Reason: " << createError << NEWLINE;
+            }
             ss << "Use 'start' without arguments for default 48K, or specify a valid model name" << NEWLINE;
             ss << "Available models: ";
 
@@ -963,6 +1057,12 @@ void CLIProcessor::HandleModels(const ClientSession& session, const std::vector<
         if (model.FullName && model.FullName[0] != '\0')
         {
             ss << " - " << model.FullName;
+        }
+        // Mark machines this build cannot create (missing port decoder or
+        // config folder) so users see it before typing 'start <model>'
+        if (!Config::IsModelCreatable(model))
+        {
+            ss << " (not creatable on this build)";
         }
         ss << NEWLINE;
     }

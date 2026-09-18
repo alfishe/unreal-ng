@@ -50,13 +50,15 @@
 
 #include "emulator/platform.h"       // PlatformModulesEnum, MAX_RAM_PAGES
 #include "common/modulelogger.h"    // ModuleLogger
-#include "ttd_checkpoint.h"
-#include "ttd_external_events.h"
-#include "ttd_input_journal.h"
-#include "ttd_write_journal.h"
-#include "ttd_probe.h"
-#include "ttd_codec_page_store.h"
-#include "ttd_coverage_index.h"
+#include "ttdcheckpoint.h"
+#include "ttdexternalevents.h"
+#include "ttdbookmarks.h"
+#include "ttdinputjournal.h"
+#include "ttdwritejournal.h"
+#include "ttdprobe.h"
+#include "ttdcodecpagestore.h"
+#include "ttdcoverageindex.h"
+#include "ttdperipheralregistry.h"
 #include "timetravelframecache.h"
 
 // Forward declarations — we don't pull emulator headers into this header.
@@ -174,6 +176,97 @@ struct TTDSessionInfo
     /// carries no index — correct but slower for reverse queries.
     size_t coverageIndexFrames = 0;
     size_t coverageIndexBytes = 0;
+
+    /// Advisory bookmarks currently held (TD-4). Zero is a session without
+    /// annotations — complete and correct.
+    size_t bookmarkCount = 0;
+};
+
+/// @brief String conversion for TTDCoverageKind.
+inline const char* TTDCoverageKindToString(TTDCoverageKind kind)
+{
+    switch (kind)
+    {
+        case TTDCoverageKind::Executed: return "executed";
+        case TTDCoverageKind::Written:  return "written";
+        case TTDCoverageKind::Read:     return "read";
+        default:                        return "unknown";
+    }
+}
+
+/// @brief Parse TTDCoverageKind from string ("executed"/"exec", "written"/"write", "read").
+inline bool TTDCoverageKindFromString(const std::string& str, TTDCoverageKind& outKind)
+{
+    if (str == "executed" || str == "exec" || str == "execute")
+    {
+        outKind = TTDCoverageKind::Executed;
+        return true;
+    }
+    if (str == "written" || str == "write")
+    {
+        outKind = TTDCoverageKind::Written;
+        return true;
+    }
+    if (str == "read")
+    {
+        outKind = TTDCoverageKind::Read;
+        return true;
+    }
+    return false;
+}
+
+/// @brief Result of a coverage probe query (TD-7 §3.1.1).
+struct TTDCoverageProbeResult
+{
+    uint64_t frame = 0;
+    TTDCoverageKind kind = TTDCoverageKind::Executed;
+    uint16_t addrFrom = 0;
+    uint16_t addrTo = 0xFFFF;
+    std::optional<uint8_t> physPage;
+    bool touched = false;
+    bool indexAvailable = false;
+};
+
+/// @brief Result of a coverage scan query (TD-7 §3.1.2).
+struct TTDCoverageScanResult
+{
+    TTDCoverageKind kind = TTDCoverageKind::Executed;
+    uint16_t addrFrom = 0;
+    uint16_t addrTo = 0xFFFF;
+    std::optional<uint8_t> physPage;
+    uint64_t scannedFrames = 0;
+    uint64_t matchingFrames = 0;
+    std::vector<uint64_t> frames;
+    uint64_t firstMatch = 0;
+    uint64_t lastMatch = 0;
+    uint64_t coveredFrom = 0;                ///< First frame the index covers; the query window is clamped to it
+    uint64_t coveredTo = 0;                  ///< Last frame the index covers
+    bool truncated = false;
+    bool indexAvailable = false;
+};
+
+/// @brief One bucket in a coverage summary query (TD-7 §3.1.3).
+struct TTDCoverageSummaryBucket
+{
+    uint64_t frameStart = 0;
+    uint64_t frameEnd = 0;
+    uint32_t executedDistinct = 0;
+    uint32_t writtenDistinct = 0;
+    uint32_t readDistinct = 0;
+    bool hasKeyframe = false;
+};
+
+/// @brief Result of a coverage summary query (TD-7 §3.1.3).
+struct TTDCoverageSummaryResult
+{
+    uint64_t fromFrame = 0;
+    uint64_t toFrame = 0;
+    uint64_t coveredFrom = 0;                ///< First frame any covered kind covers
+    uint64_t coveredTo = 0;                  ///< Last frame any covered kind covers
+    uint64_t bucketSize = 50;
+    size_t bucketCount = 0;
+    std::vector<TTDCoverageSummaryBucket> buckets;
+    bool indexAvailable = false;
 };
 
 class TimeTravelManager
@@ -306,8 +399,31 @@ public:
     ///      SeekTo to position the emulator at any checkpoint).
     ///
     /// Refuses unknown future schema versions with a clear error message
-    /// (see ttd_dump_format.h::kMaxSupportedSchemaVersion).
+    /// (see ttddumpformat.h::kMaxSupportedSchemaVersion).
     bool DeserializeSession(std::istream& in, std::string& err);
+
+    /// @brief Session-kind guard decision core (TSFM design §8.2).
+    ///
+    /// Pure decision: does a recorded session's TurboSound-slot blob set
+    /// agree with the live slot device? The slot has exactly two
+    /// inhabitants - the legacy two-AY device (PeripheralId::TurboSound, 0)
+    /// and TSFM (PeripheralId::TSFM, 4). A session recorded with one,
+    /// loaded into an instance running the other, would restore NEITHER
+    /// device (RestoreAll counts the live one under missingBlobs and leaves
+    /// it holding pre-load state) - a silent divergence, so the load is
+    /// refused instead. A session with no slot blob at all (recorded on a
+    /// machine without the device) is not a mismatch.
+    ///
+    /// Exposed as a public static for unit tests; DeserializeSession applies
+    /// it to the baseline checkpoint's blob map.
+    ///
+    /// @param sessionBlobs   Baseline checkpoint peripheral blob map
+    ///                       (keyed by PeripheralId).
+    /// @param liveSlotDevice The device currently in the TurboSound slot.
+    /// @return true when the kinds agree (or the session has no slot blob).
+    static bool TurboSoundSessionKindMatches(
+        const std::unordered_map<uint8_t, std::vector<uint8_t>>& sessionBlobs,
+        const TTDSerializable& liveSlotDevice);
 
     /// @brief Record where a just-deserialized session came from.
     /// Callers that loaded from a path should set it so GetSessionInfo can
@@ -432,6 +548,16 @@ public:
     /// @param key   ZXKeysEnum value (callers cast from the typed enum).
     /// @param pressed true for press, false for release.
     void RecordInputEvent(uint8_t key, bool pressed);
+
+    /// @brief Journal a Kempston Mouse mutation (same contract as RecordInputEvent:
+    /// callers gate on IsRecording() and !IsReplayActive(), and call BEFORE applying).
+    void RecordMouseMove(int dx, int dy);
+    void RecordMouseButtons(uint8_t activeLowMask);
+    void RecordMouseWheel(int steps);
+    void RecordMouseCounters(uint8_t x, uint8_t y);
+
+    /// @brief Journal a whole-matrix keyboard reset (release of every key)
+    void RecordKeyboardReset();
 
     /// @brief Read-only access to the input journal. Used by the seek engine
     /// (Item 4) and by tests.
@@ -595,6 +721,62 @@ public:
     {
         return SeekTo(target, /*outResult=*/nullptr);
     }
+
+    // -----------------------------------------------------------------------
+    // Agent bookmarks (TD-4; ttd-coverage-evaluation.md §TD-4)
+    // -----------------------------------------------------------------------
+    //
+    // Advisory named timeline annotations — the "note to self" that survives
+    // seeks: mark the unpack entry once, then return by label no matter how
+    // far find-last / reverse-continue / step-back wandered. Stored in
+    // TTDBookmarkJournal BESIDE the external-event journal, never inside it:
+    // a bookmark observes the timeline, it is not a replay barrier, and
+    // SeekTo never halts on one (halt_reason has no "bookmark" value).
+    //
+    // Lifecycle mirrors the other journals: cleared on StartRecording /
+    // InvalidateSession / DeserializeSession, clipped by
+    // ResumeRecordingFrom, persisted in the .ttd file as a flag-gated
+    // section (ttd::dump::kFlagsHasBookmarks).
+
+    /// @brief Add a bookmark at an explicit position.
+    ///
+    /// Manager-level validation on top of the journal's label rules: the
+    /// timeline must be non-empty and `time` must lie within the recorded
+    /// bounds (<= SessionEndPosition()) — a bookmark pointing past the end
+    /// can never be sought to and is refused at creation instead.
+    ///
+    /// Callable in any session state (a bookmark added while Recording
+    /// points at history that exists; adding while Detached/Idle annotates
+    /// the browsed timeline).
+    ///
+    /// @return false with *err filled on invalid label / duplicate label /
+    /// out-of-bounds position.
+    bool AddBookmark(const TTDTimePoint& time, const std::string& label,
+                     std::string* err = nullptr);
+
+    /// @brief All bookmarks, time-sorted (thread-safe snapshot copy).
+    std::vector<TTDBookmark> GetBookmarks() const;
+
+    /// @brief Resolve a label to its bookmark. False when unknown.
+    bool FindBookmark(const std::string& label, TTDBookmark& out) const;
+
+    /// @brief Remove a bookmark by label. False when the label is unknown.
+    bool RemoveBookmark(const std::string& label);
+
+    /// @brief Seek to a bookmark's position by label.
+    ///
+    /// Pure composition: FindBookmark + SeekTo. The returned result is
+    /// exactly what a direct SeekTo to the same timepoint would produce —
+    /// in particular a marker between the restore checkpoint and the target
+    /// still reports halt_reason "external_event", and a bookmark itself
+    /// never appears as a halt reason (advisory by construction).
+    ///
+    /// @param label     Bookmark to seek to.
+    /// @param outResult Seek outcome (may be nullptr).
+    /// @param err       Filled with "unknown bookmark ..." on a bad label.
+    /// @return          outResult->reached (false on unknown label).
+    bool SeekToBookmark(const std::string& label, TTDSeekResult* outResult,
+                        std::string* err = nullptr);
 
     // -----------------------------------------------------------------------
     // Resume-from-past (Phase 2 Item 5; parent TDD §8.3)
@@ -786,6 +968,32 @@ public:
     std::optional<TTDSearchResult> FindLastAccess(
         const TTDSearchQuery& query,
         TTDExternalEvent* outBlockingMarker = nullptr);
+
+    /// @brief Probe coverage for a specific frame and address range (TD-7 §3.1.1).
+    TTDCoverageProbeResult QueryCoverageProbe(
+        uint64_t frame,
+        TTDCoverageKind kind,
+        uint16_t addrFrom,
+        uint16_t addrTo,
+        std::optional<uint8_t> physPage = std::nullopt) const;
+
+    /// @brief Scan frames in [fromFrame, toFrame] touching range (TD-7 §3.1.2).
+    TTDCoverageScanResult QueryCoverageScan(
+        uint64_t fromFrame,
+        uint64_t toFrame,
+        TTDCoverageKind kind,
+        uint16_t addrFrom,
+        uint16_t addrTo,
+        std::optional<uint8_t> physPage = std::nullopt,
+        size_t limit = 200) const;
+
+    /// @brief Activity heatmap over [fromFrame, toFrame] (TD-7 §3.1.3).
+    TTDCoverageSummaryResult QueryCoverageSummary(
+        uint64_t fromFrame,
+        uint64_t toFrame,
+        std::optional<TTDCoverageKind> kind = std::nullopt,
+        uint64_t bucketSize = 0,
+        size_t limit = 100) const;
     
     /// @brief Step back one instruction (TDD §10.2 + §16 row 2).
     ///
@@ -957,6 +1165,11 @@ public:
 
     /// @brief Read-only access to the page store (for tests / budget checks).
     inline const TTDCodecPageStore& GetPageStore() const { return _pageStore; }
+
+    /// Model-specific peripheral serializers registered for this session.
+    /// Exposed so the divergence hash can mix in their contribution without
+    /// the hash code knowing which machine is running.
+    inline const TTDPeripheralRegistry& GetPeripheralRegistry() const { return _peripherals; }
 
     /// @brief Number of model-RAM pages (set at StartRecording from the
     /// active model's RAM size).
@@ -1161,10 +1374,9 @@ private:
         TTDChipsetState chipset{};
         uint32_t        z80TInFrame = 0;   ///< z80.t (host-side, not in TTDCpuState)
         std::vector<uint8_t> ram;          ///< model RAM, _modelRamPages × 16 KB
-        std::vector<uint8_t> ay;           ///< peripheral blobs (empty = absent)
-        std::vector<uint8_t> tape;
-        std::vector<uint8_t> covox;
-        std::vector<uint8_t> fdc;
+        /// Peripheral state, keyed by PeripheralId — same representation the
+        /// checkpoints use, produced by the same registry.
+        std::unordered_map<uint8_t, std::vector<uint8_t>> peripheralBlobs;
     };
 
     /// Reused across builds; vector capacities are retained, so the sizable
@@ -1198,6 +1410,31 @@ private:
 
     /// Backing codec page store (4 KB pages, XOR+zstd-1 compression).
     TTDCodecPageStore _pageStore;
+
+    /// Model-specific peripheral serializers. The framework never names a
+    /// machine: it registers whatever the active model provides (see
+    /// RegisterModelPeripherals) and thereafter only calls TTDSerializable.
+    TTDPeripheralRegistry _peripherals;
+
+    /// Serializers owned by this manager for the lifetime of a session. Held
+    /// as a vector of base pointers so adding a model costs one factory line
+    /// in RegisterModelPeripherals and nothing else.
+    std::vector<std::unique_ptr<TTDSerializable>> _ownedPeripherals;
+
+    /// Build and register the serializers the active model needs. Called on
+    /// StartRecording; cleared by ReleaseModelPeripherals on stop.
+    /// Build and register the serializers the active model declares.
+    /// @param err optional; set to a human-readable reason on failure
+    /// @return false when the model declares state no serializer covers - the
+    ///         caller must then refuse to record rather than drop that state
+    bool RegisterModelPeripherals(std::string* err = nullptr);
+    void ReleaseModelPeripherals();
+
+    /// Fingerprint of the loaded ROM set, stored in the .ttd header so playback
+    /// can refuse a session recorded against different ROMs. On Scorpion the
+    /// ProfROM image decides what a plane id even means, so replaying against
+    /// another image would silently produce wrong pages rather than an error.
+    uint64_t ComputeRomSignature() const;
 
     /// Last captured keyframe index. P-frames between this and the next
     /// I-frame restore by walking deltas from this anchor. Updated on
@@ -1280,6 +1517,11 @@ private:
     /// that aren't input-journaled in v1 (Item 6). Same lifecycle as the
     /// input journal: dropped on Invalidate/Start, truncated by Resume.
     TTDExternalEventJournal _externalEvents;
+
+    /// Advisory bookmarks (TD-4) — named annotations BESIDE the barrier
+    /// journal above, never inside it. Same lifecycle: dropped on
+    /// Invalidate/Start, truncated by Resume, persisted in the .ttd file.
+    TTDBookmarkJournal _bookmarks;
 
     /// Write journal — fast-path accelerator for FindLastAccess (Phase 4;
     /// parent TDD §9.3). 64 MB ring of 12-byte TTDWriteRecords (~5.5M records,

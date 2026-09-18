@@ -90,6 +90,10 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     tagKeyboard["name"] = "Keyboard Injection";
     tagKeyboard["description"] = "Keyboard input simulation";
     tags.append(tagKeyboard);
+    Json::Value tagMouse;
+    tagMouse["name"] = "Mouse Injection";
+    tagMouse["description"] = "Kempston mouse input simulation";
+    tags.append(tagMouse);
     Json::Value tagMemState;
     tagMemState["name"] = "Memory State";
     tagMemState["description"] = "Memory inspection (RAM/ROM)";
@@ -149,14 +153,18 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
 #include "openapi/openapi_capture.inc"
 #include "openapi/openapi_basic.inc"
 #include "openapi/openapi_keyboard.inc"
+#include "openapi/openapi_mouse.inc"
 #include "openapi/openapi_settings.inc"
 #include "openapi/openapi_features.inc"
 #include "openapi/openapi_state.inc"
+#include "openapi/openapi_ports.inc"
 #include "openapi/openapi_analyzers.inc"
+#include "openapi/openapi_analysis.inc"
 #include "openapi/openapi_stepping.inc"
 #include "openapi/openapi_breakpoints.inc"
 #include "openapi/openapi_debug.inc"
 #include "openapi/openapi_labels.inc"
+#include "openapi/openapi_assembly.inc"
 #include "openapi/openapi_profiler.inc"
 #include "openapi/openapi_porttrace.inc"
 #include "openapi/openapi_ttd.inc"

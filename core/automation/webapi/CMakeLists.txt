@@ -93,7 +93,9 @@ if (BUILD_ZLIB)
     set(ZLIB_BUILD_SHARED OFF CACHE BOOL "" FORCE)
     set(ZLIB_BUILD_STATIC ON CACHE BOOL "" FORCE)
     set(ZLIB_BUILD_MINIZIP OFF CACHE BOOL "" FORCE)
+    set(ZLIB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
     set(ZLIB_INSTALL OFF CACHE BOOL "" FORCE)
+
     set(Z_PREFIX "" CACHE STRING "" FORCE)
     
     # Set source and binary directories
@@ -224,6 +226,7 @@ set(COMMON_SOURCES
     src/api/state_memory_api.cpp
     src/api/state_screen_api.cpp
     src/api/state_audio_api.cpp
+    src/api/state_device_api.cpp
     src/api/tape_disk_api.cpp
     src/api/snapshot_api.cpp
     src/api/interpreter_api.cpp
@@ -232,9 +235,12 @@ set(COMMON_SOURCES
     src/api/analyzers_api.cpp
     src/api/debug_api.cpp
     src/api/capture_api.cpp
+    src/api/recording_api.cpp
     src/api/profiler_api.cpp
     src/api/porttrace_api.cpp
     src/api/keyboard_api.cpp
+    src/api/mouse_api.cpp
+    src/api/ports_api.cpp
     src/api/ttd_api.cpp
     src/emulator_websocket.cpp
     src/emulator_websocket.h
@@ -255,6 +261,7 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         ${JSONCPP_INCLUDE_DIRS}
         ${ZLIB_INCLUDE_DIR}
         ${ROOT_DIR}/core/src
+        ${CMAKE_BINARY_DIR}/generated  # emulator/buildinfo.h (status server fingerprint block)
     )
 
     target_link_libraries(${PROJECT_NAME} PRIVATE
@@ -305,6 +312,7 @@ else () # Called from upper level CMake => build static library
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${JSONCPP_INCLUDE_DIRS}
         ${ROOT_DIR}/core/src
+        ${CMAKE_BINARY_DIR}/generated  # emulator/buildinfo.h (status server fingerprint block)
         ${ROOT_DIR}/core/automation  # For automation/automation.h
         $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:${ROOT_DIR}/core/automation/lua/src>
         $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:${ROOT_DIR}/core/automation/lua/lib/sol2/sol2-3.5.0/include>

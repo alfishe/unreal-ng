@@ -41,11 +41,11 @@
 #include "3rdparty/message-center/messagecenter.h"
 #include "../emulator_api.h"
 #include "debugger/ttd/timetravelmanager.h"
-#include "debugger/ttd/ttd_external_events.h"
-#include "debugger/ttd/ttd_probe.h"
+#include "debugger/ttd/ttdexternalevents.h"
+#include "debugger/ttd/ttdprobe.h"
 
 #include <fstream>
-#include "debugger/ttd/ttd_probe.h"
+#include "debugger/ttd/ttdprobe.h"
 
 #include <fstream>
 
@@ -207,6 +207,7 @@ void EmulatorAPI::getTTDStatus(const HttpRequestPtr& req,
     ret["page_store_used_bytes"]    = Json::UInt64(0);
     ret["baseline_frames_captured"] = Json::UInt64(0);
     ret["session_heap_bytes"]       = Json::UInt64(0);
+    ret["bookmark_count"]           = Json::UInt64(0);
     ret["ttd_available"]            = false;
 
     if (ttd::TimeTravelManager* mgr = context->pTimeTravelManager)
@@ -229,6 +230,7 @@ void EmulatorAPI::getTTDStatus(const HttpRequestPtr& req,
     ret["write_journal_bytes"]   = Json::UInt64(info.writeJournalBytes);
     ret["coverage_index_frames"] = Json::UInt64(info.coverageIndexFrames);
     ret["coverage_index_bytes"]  = Json::UInt64(info.coverageIndexBytes);
+    ret["bookmark_count"]       = Json::UInt64(info.bookmarkCount);
     ret["write_journal_enabled"]    = info.writeJournalEnabled;
         ret["ttd_available"]            = true;
     }
@@ -461,12 +463,16 @@ void EmulatorAPI::seekTTD(const HttpRequestPtr& req,
     // with reached=false.
     if (rejectIfRecording(mgr, callback)) return;
 
+    // TD-4: the target may be given either as coordinates ("frame" [+ optional
+    // "tinframe"]) or as a bookmark label ("bookmark"). Everything after the
+    // resolution is a plain seek — a bookmark is advisory and never a barrier.
     auto jsonBody = req->getJsonObject();
-    if (!jsonBody || !jsonBody->isMember("frame"))
+    const bool seekByBookmark = jsonBody && jsonBody->isMember("bookmark");
+    if (!seekByBookmark && (!jsonBody || !jsonBody->isMember("frame")))
     {
         Json::Value error;
         error["error"]   = "Bad Request";
-        error["message"] = "Missing required field: frame";
+        error["message"] = "Missing required field: frame (or bookmark)";
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k400BadRequest);
         addCorsHeaders(resp);
@@ -474,9 +480,33 @@ void EmulatorAPI::seekTTD(const HttpRequestPtr& req,
         return;
     }
 
+    std::string bookmarkLabel;
     ttd::TTDTimePoint target{};
-    target.frame    = (*jsonBody)["frame"].asUInt64();
-    target.tInFrame = jsonBody->isMember("tinframe") ? static_cast<uint32_t>((*jsonBody)["tinframe"].asUInt()) : 0;
+    if (seekByBookmark)
+    {
+        bookmarkLabel = (*jsonBody)["bookmark"].asString();
+        ttd::TTDBookmark bm;
+        if (bookmarkLabel.empty() || !mgr->FindBookmark(bookmarkLabel, bm))
+        {
+            Json::Value error;
+            error["error"]   = bookmarkLabel.empty() ? "Bad Request" : "Not Found";
+            error["message"] = bookmarkLabel.empty()
+                                   ? "Field bookmark must be a non-empty bookmark label"
+                                   : "Unknown bookmark label: " + bookmarkLabel;
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(bookmarkLabel.empty() ? HttpStatusCode::k400BadRequest
+                                                       : HttpStatusCode::k404NotFound);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        target = bm.time;
+    }
+    else
+    {
+        target.frame    = (*jsonBody)["frame"].asUInt64();
+        target.tInFrame = jsonBody->isMember("tinframe") ? static_cast<uint32_t>((*jsonBody)["tinframe"].asUInt()) : 0;
+    }
 
     // Pause the emulator while we mutate TTD state so the emulator thread
     // can't advance frame_counter past the restored checkpoint before the
@@ -526,6 +556,8 @@ void EmulatorAPI::seekTTD(const HttpRequestPtr& req,
     }
 
     ret["state"] = ttd::TTDSessionStateToString(mgr->GetState());
+    if (seekByBookmark)
+        ret["bookmark"] = bookmarkLabel;
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
@@ -696,6 +728,149 @@ void EmulatorAPI::getTTDMarkers(const HttpRequestPtr& req,
 }
 
 // -------------------------------------------------------------------------
+// TD-4 — agent bookmarks (advisory annotations, never replay barriers).
+// Stored beside the external-event journal and serialized in the .ttd
+// session; a bookmark never appears as a halt_reason.
+// -------------------------------------------------------------------------
+
+/// @brief GET /api/v1/emulator/{id}/ttd/bookmarks
+///
+/// Response: { "count": N, "bookmarks": [ { "frame", "tinframe", "label" } ] }
+/// Time-sorted. Unlike /ttd/markers these entries never halt a seek.
+void EmulatorAPI::getTTDBookmarks(const HttpRequestPtr& req,
+                                  std::function<void(const HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const
+{
+    auto* mgr = resolveTTD(id, callback);
+    if (!mgr) return;
+
+    const auto bookmarks = mgr->GetBookmarks();  // time-sorted snapshot copy
+
+    Json::Value ret;
+    ret["count"] = Json::UInt64(bookmarks.size());
+
+    Json::Value list(Json::arrayValue);
+    for (const auto& bm : bookmarks)
+    {
+        Json::Value entry;
+        entry["frame"]    = Json::UInt64(bm.time.frame);
+        entry["tinframe"] = Json::UInt(bm.time.tInFrame);
+        entry["label"]    = bm.label;
+        list.append(entry);
+    }
+    ret["bookmarks"] = list;
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/{id}/ttd/bookmarks
+///
+/// Body: { "label": "umt entry", "frame": F (optional), "tinframe": T (optional) }
+/// When frame is omitted the bookmark is placed at the current position.
+/// Labels are keys: non-empty, at most 63 characters, unique per session.
+///
+/// Status codes:
+///   - 201 Created on success
+///   - 400 for label contract violations (missing / empty / overlong)
+///   - 409 for a duplicate label or a position outside the recorded timeline
+void EmulatorAPI::postTTDBookmark(const HttpRequestPtr& req,
+                                  std::function<void(const HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const
+{
+    auto* mgr = resolveTTD(id, callback);
+    if (!mgr) return;
+
+    auto jsonBody = req->getJsonObject();
+    if (!jsonBody || !jsonBody->isMember("label") || !(*jsonBody)["label"].isString() ||
+        (*jsonBody)["label"].asString().empty())
+    {
+        Json::Value error;
+        error["error"]   = "Bad Request";
+        error["message"] = "Missing or empty required field: label "
+                           "(non-empty string, at most 63 characters)";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    const std::string label = (*jsonBody)["label"].asString();
+
+    // Default to the current position so "mark here" needs no coordinates.
+    ttd::TTDTimePoint time = mgr->CurrentPosition();
+    if (jsonBody->isMember("frame"))
+    {
+        time.frame    = (*jsonBody)["frame"].asUInt64();
+        time.tInFrame = jsonBody->isMember("tinframe")
+                            ? static_cast<uint32_t>((*jsonBody)["tinframe"].asUInt())
+                            : 0;
+    }
+
+    std::string err;
+    if (!mgr->AddBookmark(time, label, &err))
+    {
+        // Label contract violations are client errors; a duplicate label or
+        // a position outside the timeline conflicts with the session state.
+        const bool badLabel = err.find("empty") != std::string::npos ||
+                              err.find("longer") != std::string::npos;
+        Json::Value error;
+        error["error"]   = badLabel ? "Bad Request" : "Conflict";
+        error["message"] = err;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(badLabel ? HttpStatusCode::k400BadRequest
+                                     : HttpStatusCode::k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    Json::Value ret;
+    ret["added"]    = true;
+    ret["label"]    = label;
+    ret["frame"]    = Json::UInt64(time.frame);
+    ret["tinframe"] = Json::UInt(time.tInFrame);
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    resp->setStatusCode(HttpStatusCode::k201Created);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief DELETE /api/v1/emulator/{id}/ttd/bookmarks/{label}
+///
+/// Status codes: 200 on success, 404 when the label is unknown.
+void EmulatorAPI::deleteTTDBookmark(const HttpRequestPtr& req,
+                                    std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id, const std::string& label) const
+{
+    auto* mgr = resolveTTD(id, callback);
+    if (!mgr) return;
+
+    if (!mgr->RemoveBookmark(label))
+    {
+        Json::Value error;
+        error["error"]   = "Not Found";
+        error["message"] = "Unknown bookmark label: " + label;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    Json::Value ret;
+    ret["removed"] = true;
+    ret["label"]   = label;
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+// -------------------------------------------------------------------------
 // Phase 4 — Reverse search + dump + instruction step
 // -------------------------------------------------------------------------
 
@@ -839,10 +1014,17 @@ void EmulatorAPI::findLastTTD(const HttpRequestPtr& req,
     if (rejectIfRecording(mgr, callback)) return;
 
     auto json = req->getJsonObject();
-    if (!json || !json->isMember("addr"))
+    const bool hasAddr = json && json->isMember("addr");
+    const bool hasAddrFrom = json && json->isMember("addr_from");
+    const bool hasAddrTo = json && json->isMember("addr_to");
+    const bool hasPcFrom = json && json->isMember("pc_from");
+    const bool hasPcTo = json && json->isMember("pc_to");
+    const bool hasValue = json && json->isMember("value");
+
+    if (!json || (!hasAddr && !hasAddrFrom && !hasAddrTo && !hasPcFrom && !hasPcTo && !hasValue))
     {
         Json::Value err;
-        err["error"] = "Missing 'addr' in request body";
+        err["error"] = "Missing search criteria in request body (must supply 'addr', 'addr_from', 'addr_to', 'pc_from', 'pc_to', or 'value')";
         auto resp = HttpResponse::newHttpJsonResponse(err);
         resp->setStatusCode(k400BadRequest);
         addCorsHeaders(resp);
@@ -851,7 +1033,15 @@ void EmulatorAPI::findLastTTD(const HttpRequestPtr& req,
     }
 
     ttd::TTDSearchQuery q;
-    q.addrFrom = q.addrTo = static_cast<uint16_t>((*json)["addr"].asUInt());
+    if (hasAddr)
+    {
+        q.addrFrom = q.addrTo = static_cast<uint16_t>((*json)["addr"].asUInt());
+    }
+    else
+    {
+        if (hasAddrFrom) q.addrFrom = static_cast<uint16_t>((*json)["addr_from"].asUInt());
+        if (hasAddrTo) q.addrTo = static_cast<uint16_t>((*json)["addr_to"].asUInt());
+    }
 
     if (json->isMember("access"))
         q.access = ttd::TTDAccessTypeFromString((*json)["access"].asCString());
@@ -1105,6 +1295,460 @@ void EmulatorAPI::reverseContinueTTD(const HttpRequestPtr& req,
         m["frame"]  = Json::UInt64(result.blockingMarker.time.frame);
         m["tinframe"] = Json::UInt(result.blockingMarker.time.tInFrame);
         ret["blocked_by_marker"] = m;
+    }
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+static bool ParseUint16Param(const std::string& str, uint16_t& outVal)
+{
+    if (str.empty()) return false;
+    try
+    {
+        size_t idx = 0;
+        int base = (str.rfind("0x", 0) == 0 || str.rfind("0X", 0) == 0) ? 16 : 10;
+        unsigned long val = std::stoul(str, &idx, base);
+        if (val > 0xFFFF) return false;
+        outVal = static_cast<uint16_t>(val);
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+
+static bool ParseUint64Param(const std::string& str, uint64_t& outVal)
+{
+    if (str.empty()) return false;
+    try
+    {
+        size_t idx = 0;
+        int base = (str.rfind("0x", 0) == 0 || str.rfind("0X", 0) == 0) ? 16 : 10;
+        outVal = std::stoull(str, &idx, base);
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+
+/// Builds a 400 response for coverage query parameter validation. Callers add
+/// CORS headers and hand it to the callback.
+static HttpResponsePtr CoverageBadRequest(const std::string& message)
+{
+    Json::Value error;
+    error["error"] = "Bad Request";
+    error["message"] = message;
+    auto resp = HttpResponse::newHttpJsonResponse(error);
+    resp->setStatusCode(HttpStatusCode::k400BadRequest);
+    return resp;
+}
+
+void EmulatorAPI::getTTDCoverageProbe(const HttpRequestPtr& req,
+                                      std::function<void(const HttpResponsePtr&)>&& callback,
+                                      const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator not found with ID: " + id;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    EmulatorContext* context = emulator->GetContext();
+    ttd::TimeTravelManager* mgr = context ? context->pTimeTravelManager : nullptr;
+
+    const std::string frameStr = req->getParameter("frame");
+    const std::string kindStr = req->getParameter("kind");
+    const std::string addrFromStr = req->getParameter("addr_from");
+    const std::string addrToStr = req->getParameter("addr_to");
+    const std::string pageStr = req->getParameter("phys_page");
+
+    uint64_t frame = 0;
+    if (frameStr.empty())
+    {
+        auto resp = CoverageBadRequest("Missing required parameter: frame");
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    if (!ParseUint64Param(frameStr, frame))
+    {
+        auto resp = CoverageBadRequest("Invalid frame: '" + frameStr + "' (expected unsigned integer)");
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    ttd::TTDCoverageKind kind = ttd::TTDCoverageKind::Executed;
+    if (!kindStr.empty() && !ttd::TTDCoverageKindFromString(kindStr, kind))
+    {
+        auto resp = CoverageBadRequest("Invalid kind: '" + kindStr + "' (expected executed, written or read)");
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    uint16_t addrFrom = 0;
+    if (!addrFromStr.empty() && !ParseUint16Param(addrFromStr, addrFrom))
+    {
+        auto resp = CoverageBadRequest("Invalid addr_from: '" + addrFromStr + "' (expected 16-bit address)");
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    uint16_t addrTo = 0xFFFF;
+    if (!addrToStr.empty() && !ParseUint16Param(addrToStr, addrTo))
+    {
+        auto resp = CoverageBadRequest("Invalid addr_to: '" + addrToStr + "' (expected 16-bit address)");
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    if (addrFrom > addrTo)
+    {
+        char rangeBuf[64];
+        snprintf(rangeBuf, sizeof(rangeBuf), "addr_from (0x%04X) must not exceed addr_to (0x%04X)", addrFrom, addrTo);
+        auto resp = CoverageBadRequest(rangeBuf);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    std::optional<uint8_t> physPage;
+    uint16_t pageVal = 0;
+    if (!pageStr.empty())
+    {
+        if (!ParseUint16Param(pageStr, pageVal) || pageVal > 255)
+        {
+            auto resp = CoverageBadRequest("Invalid phys_page: '" + pageStr + "' (expected 0..255)");
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        physPage = static_cast<uint8_t>(pageVal);
+    }
+
+    Json::Value ret;
+    ret["frame"] = Json::UInt64(frame);
+    ret["kind"] = ttd::TTDCoverageKindToString(kind);
+
+    char hexBuf[16];
+    snprintf(hexBuf, sizeof(hexBuf), "0x%04X", addrFrom);
+    ret["addr_from"] = hexBuf;
+    snprintf(hexBuf, sizeof(hexBuf), "0x%04X", addrTo);
+    ret["addr_to"] = hexBuf;
+
+    if (physPage) ret["phys_page"] = *physPage;
+
+    if (mgr)
+    {
+        auto res = mgr->QueryCoverageProbe(frame, kind, addrFrom, addrTo, physPage);
+        ret["touched"] = res.touched;
+        ret["index_available"] = res.indexAvailable;
+    }
+    else
+    {
+        ret["touched"] = false;
+        ret["index_available"] = false;
+    }
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+void EmulatorAPI::getTTDCoverageScan(const HttpRequestPtr& req,
+                                     std::function<void(const HttpResponsePtr&)>&& callback,
+                                     const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator not found with ID: " + id;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    EmulatorContext* context = emulator->GetContext();
+    ttd::TimeTravelManager* mgr = context ? context->pTimeTravelManager : nullptr;
+
+    const std::string fromStr = req->getParameter("from_frame");
+    const std::string toStr = req->getParameter("to_frame");
+    const std::string kindStr = req->getParameter("kind");
+    const std::string addrFromStr = req->getParameter("addr_from");
+    const std::string addrToStr = req->getParameter("addr_to");
+    const std::string pageStr = req->getParameter("phys_page");
+    const std::string limitStr = req->getParameter("limit");
+
+    uint64_t fromFrame = 0;
+    if (!fromStr.empty() && !ParseUint64Param(fromStr, fromFrame))
+    {
+        auto resp = CoverageBadRequest("Invalid from_frame: '" + fromStr + "' (expected unsigned integer)");
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    uint64_t toFrame = mgr ? mgr->GetSessionInfo().currentEndFrame : 0;
+    if (!toStr.empty() && !ParseUint64Param(toStr, toFrame))
+    {
+        auto resp = CoverageBadRequest("Invalid to_frame: '" + toStr + "' (expected unsigned integer)");
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    ttd::TTDCoverageKind kind = ttd::TTDCoverageKind::Executed;
+    if (!kindStr.empty() && !ttd::TTDCoverageKindFromString(kindStr, kind))
+    {
+        auto resp = CoverageBadRequest("Invalid kind: '" + kindStr + "' (expected executed, written or read)");
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    uint16_t addrFrom = 0;
+    if (!addrFromStr.empty() && !ParseUint16Param(addrFromStr, addrFrom))
+    {
+        auto resp = CoverageBadRequest("Invalid addr_from: '" + addrFromStr + "' (expected 16-bit address)");
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    uint16_t addrTo = 0xFFFF;
+    if (!addrToStr.empty() && !ParseUint16Param(addrToStr, addrTo))
+    {
+        auto resp = CoverageBadRequest("Invalid addr_to: '" + addrToStr + "' (expected 16-bit address)");
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    if (addrFrom > addrTo)
+    {
+        char rangeBuf[64];
+        snprintf(rangeBuf, sizeof(rangeBuf), "addr_from (0x%04X) must not exceed addr_to (0x%04X)", addrFrom, addrTo);
+        auto resp = CoverageBadRequest(rangeBuf);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    std::optional<uint8_t> physPage;
+    uint16_t pageVal = 0;
+    if (!pageStr.empty())
+    {
+        if (!ParseUint16Param(pageStr, pageVal) || pageVal > 255)
+        {
+            auto resp = CoverageBadRequest("Invalid phys_page: '" + pageStr + "' (expected 0..255)");
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        physPage = static_cast<uint8_t>(pageVal);
+    }
+
+    size_t limit = 200;
+    if (!limitStr.empty())
+    {
+        uint64_t limitVal = 0;
+        if (!ParseUint64Param(limitStr, limitVal) || limitVal == 0)
+        {
+            auto resp = CoverageBadRequest("Invalid limit: '" + limitStr + "' (expected integer >= 1)");
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        limit = static_cast<size_t>(limitVal);
+    }
+
+    Json::Value ret;
+    ret["kind"] = ttd::TTDCoverageKindToString(kind);
+
+    char hexBuf[16];
+    snprintf(hexBuf, sizeof(hexBuf), "0x%04X", addrFrom);
+    ret["addr_from"] = hexBuf;
+    snprintf(hexBuf, sizeof(hexBuf), "0x%04X", addrTo);
+    ret["addr_to"] = hexBuf;
+
+    if (physPage) ret["phys_page"] = *physPage;
+
+    if (mgr)
+    {
+        auto res = mgr->QueryCoverageScan(fromFrame, toFrame, kind, addrFrom, addrTo, physPage, limit);
+        ret["scanned_frames"] = Json::UInt64(res.scannedFrames);
+        ret["matching_frames"] = Json::UInt64(res.matchingFrames);
+        ret["first_match"] = Json::UInt64(res.firstMatch);
+        ret["last_match"] = Json::UInt64(res.lastMatch);
+        ret["truncated"] = res.truncated;
+        ret["index_available"] = res.indexAvailable;
+        if (res.indexAvailable)
+        {
+            // Echo the covered window so a clamped request range is visible to callers.
+            ret["covered_from"] = Json::UInt64(res.coveredFrom);
+            ret["covered_to"] = Json::UInt64(res.coveredTo);
+        }
+
+        Json::Value frameArray(Json::arrayValue);
+        for (uint64_t f : res.frames)
+        {
+            frameArray.append(Json::UInt64(f));
+        }
+        ret["frames"] = frameArray;
+    }
+    else
+    {
+        ret["scanned_frames"] = Json::UInt64(0);
+        ret["matching_frames"] = Json::UInt64(0);
+        ret["first_match"] = Json::UInt64(0);
+        ret["last_match"] = Json::UInt64(0);
+        ret["truncated"] = false;
+        ret["index_available"] = false;
+        ret["frames"] = Json::Value(Json::arrayValue);
+    }
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+void EmulatorAPI::getTTDCoverageSummary(const HttpRequestPtr& req,
+                                        std::function<void(const HttpResponsePtr&)>&& callback,
+                                        const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator not found with ID: " + id;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    EmulatorContext* context = emulator->GetContext();
+    ttd::TimeTravelManager* mgr = context ? context->pTimeTravelManager : nullptr;
+
+    const std::string fromStr = req->getParameter("from_frame");
+    const std::string toStr = req->getParameter("to_frame");
+    const std::string kindStr = req->getParameter("kind");
+    const std::string bucketStr = req->getParameter("bucket_size");
+    const std::string limitStr = req->getParameter("limit");
+
+    uint64_t fromFrame = 0;
+    if (!fromStr.empty() && !ParseUint64Param(fromStr, fromFrame))
+    {
+        auto resp = CoverageBadRequest("Invalid from_frame: '" + fromStr + "' (expected unsigned integer)");
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    uint64_t toFrame = mgr ? mgr->GetSessionInfo().currentEndFrame : 0;
+    if (!toStr.empty() && !ParseUint64Param(toStr, toFrame))
+    {
+        auto resp = CoverageBadRequest("Invalid to_frame: '" + toStr + "' (expected unsigned integer)");
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    std::optional<ttd::TTDCoverageKind> kind;
+    if (!kindStr.empty())
+    {
+        ttd::TTDCoverageKind parsedKind;
+        if (!ttd::TTDCoverageKindFromString(kindStr, parsedKind))
+        {
+            auto resp = CoverageBadRequest("Invalid kind: '" + kindStr + "' (expected executed, written or read)");
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        kind = parsedKind;
+    }
+
+    uint64_t bucketSize = 0;
+    if (!bucketStr.empty() && !ParseUint64Param(bucketStr, bucketSize))
+    {
+        auto resp = CoverageBadRequest("Invalid bucket_size: '" + bucketStr + "' (expected unsigned integer)");
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    size_t limit = 100;
+    if (!limitStr.empty())
+    {
+        uint64_t limitVal = 0;
+        if (!ParseUint64Param(limitStr, limitVal) || limitVal == 0)
+        {
+            auto resp = CoverageBadRequest("Invalid limit: '" + limitStr + "' (expected integer >= 1)");
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        limit = static_cast<size_t>(limitVal);
+    }
+
+    Json::Value ret;
+    ret["from_frame"] = Json::UInt64(fromFrame);
+    ret["to_frame"] = Json::UInt64(toFrame);
+
+    if (mgr)
+    {
+        auto res = mgr->QueryCoverageSummary(fromFrame, toFrame, kind, bucketSize, limit);
+        ret["bucket_size"] = Json::UInt64(res.bucketSize);
+        ret["bucket_count"] = Json::UInt64(res.bucketCount);
+        ret["index_available"] = res.indexAvailable;
+        if (res.indexAvailable)
+        {
+            // Echo the covered window so a clamped request range is visible to callers.
+            ret["covered_from"] = Json::UInt64(res.coveredFrom);
+            ret["covered_to"] = Json::UInt64(res.coveredTo);
+        }
+
+        Json::Value bucketArray(Json::arrayValue);
+        for (const auto& b : res.buckets)
+        {
+            Json::Value bObj;
+            bObj["frame_start"] = Json::UInt64(b.frameStart);
+            bObj["frame_end"] = Json::UInt64(b.frameEnd);
+            bObj["executed_distinct"] = b.executedDistinct;
+            bObj["written_distinct"] = b.writtenDistinct;
+            bObj["read_distinct"] = b.readDistinct;
+            bObj["has_keyframe"] = b.hasKeyframe;
+            bucketArray.append(bObj);
+        }
+        ret["buckets"] = bucketArray;
+    }
+    else
+    {
+        ret["bucket_size"] = Json::UInt64(0);
+        ret["bucket_count"] = Json::UInt64(0);
+        ret["index_available"] = false;
+        ret["buckets"] = Json::Value(Json::arrayValue);
     }
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);

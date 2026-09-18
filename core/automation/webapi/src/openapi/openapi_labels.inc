@@ -125,3 +125,26 @@
          ["path"]["description"] = "Path to save symbols";
     paths["/api/v1/emulator/{id}/symbols/save"]["post"]["responses"]["200"]["description"] = "Symbols saved";
     paths["/api/v1/emulator/{id}/symbols/save"]["post"]["responses"]["400"]["description"] = "Failed to save symbols";
+
+paths["/api/v1/emulator/{id}/labels/resolve"]["get"]["summary"] = "Resolve label name or address";
+paths["/api/v1/emulator/{id}/labels/resolve"]["get"]["tags"].append("Debug Commands");
+paths["/api/v1/emulator/{id}/labels/resolve"]["get"]["parameters"][0]["name"] = "id";
+paths["/api/v1/emulator/{id}/labels/resolve"]["get"]["parameters"][0]["in"] = "path";
+paths["/api/v1/emulator/{id}/labels/resolve"]["get"]["parameters"][0]["required"] = true;
+paths["/api/v1/emulator/{id}/labels/resolve"]["get"]["parameters"][0]["schema"]["type"] = "string";
+paths["/api/v1/emulator/{id}/labels/resolve"]["get"]["parameters"][1]["name"] = "name";
+paths["/api/v1/emulator/{id}/labels/resolve"]["get"]["parameters"][1]["in"] = "query";
+paths["/api/v1/emulator/{id}/labels/resolve"]["get"]["parameters"][1]["required"] = false;
+paths["/api/v1/emulator/{id}/labels/resolve"]["get"]["parameters"][1]["schema"]["type"] = "string";
+paths["/api/v1/emulator/{id}/labels/resolve"]["get"]["parameters"][1]["description"] = "Label name to resolve to an address";
+paths["/api/v1/emulator/{id}/labels/resolve"]["get"]["parameters"][2]["name"] = "address";
+paths["/api/v1/emulator/{id}/labels/resolve"]["get"]["parameters"][2]["in"] = "query";
+paths["/api/v1/emulator/{id}/labels/resolve"]["get"]["parameters"][2]["required"] = false;
+paths["/api/v1/emulator/{id}/labels/resolve"]["get"]["parameters"][2]["schema"]["type"] = "string";
+paths["/api/v1/emulator/{id}/labels/resolve"]["get"]["parameters"][2]["description"] =
+    "Address (0x/$/decimal) to resolve to label(s); returns aliases and nearest labels";
+paths["/api/v1/emulator/{id}/labels/resolve"]["get"]["responses"]["200"]["description"] =
+    "Resolution result (name direction: label; address direction: exact label, aliases, nearest below/above)";
+paths["/api/v1/emulator/{id}/labels/resolve"]["get"]["responses"]["400"]["description"] =
+    "Missing or invalid 'name'/'address' parameter";
+paths["/api/v1/emulator/{id}/labels/resolve"]["get"]["responses"]["404"]["description"] = "Label not found";

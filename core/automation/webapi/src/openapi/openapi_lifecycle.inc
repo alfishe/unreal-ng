@@ -11,15 +11,35 @@
 
     // POST /api/v1/emulator/create - Create new emulator (without starting)
     paths["/api/v1/emulator/create"]["post"]["summary"] = "Create new emulator";
+    paths["/api/v1/emulator/create"]["post"]["description"] =
+        "Creates a new emulator instance without starting it. A requested model that cannot "
+        "be created on this build (missing port decoder / config folder) fails with 400 + "
+        "reason - there is no silent fallback to a default machine.";
     paths["/api/v1/emulator/create"]["post"]["tags"].append("Emulator Control");
     paths["/api/v1/emulator/create"]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"] =
         "#/components/schemas/CreateEmulatorRequest";
-    paths["/api/v1/emulator/create"]["post"]["responses"]["201"]["description"] = "Emulator created";
+    paths["/api/v1/emulator/create"]["post"]["responses"]["201"]["description"] = "Emulator created (with identity fields)";
+    paths["/api/v1/emulator/create"]["post"]["responses"]["400"]["description"] =
+        "Unknown model / unsupported RAM / model not creatable on this build; body carries "
+        "message, requested_model and available_models_endpoint";
 
     // GET /api/v1/emulator/status
     paths["/api/v1/emulator/status"]["get"]["summary"] = "Get overall emulator status";
+    paths["/api/v1/emulator/status"]["get"]["description"] =
+        "Instance counts by state, the build fingerprint (server block) and the list of "
+        "models this build can actually create (models_creatable)";
     paths["/api/v1/emulator/status"]["get"]["tags"].append("Emulator Management");
     paths["/api/v1/emulator/status"]["get"]["responses"]["200"]["description"] = "Successful response";
+    paths["/api/v1/emulator/status"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["type"] =
+        "object";
+    paths["/api/v1/emulator/status"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["server"]["$ref"] = "#/components/schemas/BuildInfo";
+    paths["/api/v1/emulator/status"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["models_creatable"]["type"] = "array";
+    paths["/api/v1/emulator/status"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["models_creatable"]["items"]["type"] = "string";
+    paths["/api/v1/emulator/status"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["models_creatable"]["description"] = "Model short names a create request can succeed with";
 
     // GET /api/v1/emulator/models
     paths["/api/v1/emulator/models"]["get"]["summary"] = "Get available emulator models";
@@ -48,6 +68,11 @@
          ["models"]["items"]["properties"]["available_ram_sizes_kb"]["type"] = "array";
     paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
          ["models"]["items"]["properties"]["available_ram_sizes_kb"]["items"]["type"] = "integer";
+    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["models"]["items"]["properties"]["creatable"]["type"] = "boolean";
+    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["models"]["items"]["properties"]["creatable"]["description"] =
+        "Whether a create request for this model is expected to succeed on this build";
 
     // GET /api/v1/emulator/{id}
     paths["/api/v1/emulator/{id}"]["get"]["summary"] = "Get emulator details";
@@ -58,6 +83,8 @@
     paths["/api/v1/emulator/{id}"]["get"]["parameters"][0]["description"] = "Emulator UUID or index (0-based)";
     paths["/api/v1/emulator/{id}"]["get"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}"]["get"]["responses"]["200"]["description"] = "Successful response";
+    paths["/api/v1/emulator/{id}"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
+        "#/components/schemas/EmulatorInfo";
 
     // DELETE /api/v1/emulator/{id}
     paths["/api/v1/emulator/{id}"]["delete"]["summary"] = "Remove emulator";
@@ -83,6 +110,8 @@
     paths["/api/v1/emulator/start"]["post"]["responses"]["201"]["description"] = "Emulator created and started";
     paths["/api/v1/emulator/start"]["post"]["responses"]["201"]["content"]["application/json"]["schema"]["$ref"] =
         "#/components/schemas/EmulatorInfo";
+    paths["/api/v1/emulator/start"]["post"]["responses"]["400"]["description"] =
+        "Unknown model / unsupported RAM / model not creatable on this build (no fallback)";
 
     // Control endpoints
     // POST /api/v1/emulator/{id}/start - Start existing emulator
@@ -125,12 +154,35 @@
     paths["/api/v1/emulator/{id}/reset"]["post"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/reset"]["post"]["responses"]["200"]["description"] = "Emulator reset";
 
+    // POST /api/v1/emulator/{id}/nmi - NMI pulse / Scorpion MNI magic button
+    paths["/api/v1/emulator/{id}/nmi"]["post"]["summary"] = "Pulse the NMI line";
+    paths["/api/v1/emulator/{id}/nmi"]["post"]["description"] =
+        "Pulse the Z80 NMI line (accepted at the next instruction boundary: 11T, PC pushed, "
+        "vector #0066, IFF2<-IFF1). With {\"magic\": true} on Scorpion models the Shadow Monitor "
+        "is paged into #0000 first, so the handler at #0066 executes monitor code (the MNI "
+        "magic button). Non-Scorpion models always take the plain NMI.";
+    paths["/api/v1/emulator/{id}/nmi"]["post"]["tags"].append("Emulator Control");
+    paths["/api/v1/emulator/{id}/nmi"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/nmi"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/nmi"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/nmi"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/nmi"]["post"]["requestBody"]["required"] = false;
+    paths["/api/v1/emulator/{id}/nmi"]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+    paths["/api/v1/emulator/{id}/nmi"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["magic"]["type"] = "boolean";
+    paths["/api/v1/emulator/{id}/nmi"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["magic"]["description"] = "true = Scorpion MNI (NMI + Shadow Monitor); default false";
+    paths["/api/v1/emulator/{id}/nmi"]["post"]["responses"]["200"]["description"] = "NMI/MNI requested";
+
     // POST /api/v1/emulator/{id}/model - Switch machine model
     paths["/api/v1/emulator/{id}/model"]["post"]["summary"] = "Switch machine model";
     paths["/api/v1/emulator/{id}/model"]["post"]["description"] =
         "Switch the emulator to a different ZX Spectrum machine model. "
-        "This stops and destroys the current emulator, creates a new one with the requested model, "
-        "and starts it. The new emulator will have a different ID.";
+        "The request is validated BEFORE the current instance is touched: a failed switch "
+        "(unknown model / unsupported RAM / not creatable on this build) returns 400 and "
+        "leaves the current emulator running untouched. A successful switch stops and "
+        "destroys the current emulator, creates a new one with the requested model, and "
+        "starts it. The new emulator will have a different ID.";
     paths["/api/v1/emulator/{id}/model"]["post"]["tags"].append("Emulator Control");
     paths["/api/v1/emulator/{id}/model"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/model"]["post"]["parameters"][0]["in"] = "path";
@@ -158,6 +210,30 @@
          ["new_emulator_id"]["type"] = "string";
     paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
          ["model"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["400"]["description"] = "Invalid model name or missing 'model' field";
+    paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["400"]["description"] =
+        "Unknown model / unsupported RAM / not creatable on this build; the current instance is left untouched. "
+        "Body carries message, requested_model and available_models_endpoint";
     paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["404"]["description"] = "Emulator not found";
 
+    // POST /api/v1/videowall/singlesync - Videowall single-sync mode
+    paths["/api/v1/videowall/singlesync"]["post"]["summary"] = "Set videowall single-sync mode";
+    paths["/api/v1/videowall/singlesync"]["post"]["description"] =
+        "Enable or disable single-sync mode for the standalone videowall. "
+        "When enabled with an emulator_id, the videowall locks onto that "
+        "instance as its sole sync source; when disabled, the videowall "
+        "returns to cycling through all running instances.";
+    paths["/api/v1/videowall/singlesync"]["post"]["tags"].append("Emulator Control");
+    paths["/api/v1/videowall/singlesync"]["post"]["requestBody"]["required"] = true;
+    paths["/api/v1/videowall/singlesync"]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+    paths["/api/v1/videowall/singlesync"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["enable"]["type"] = "boolean";
+    paths["/api/v1/videowall/singlesync"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["enable"]["description"] = "true = lock videowall to a single emulator";
+    paths["/api/v1/videowall/singlesync"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["emulator_id"]["type"] = "string";
+    paths["/api/v1/videowall/singlesync"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["emulator_id"]["description"] = "Emulator instance to sync to (empty when disabling)";
+    paths["/api/v1/videowall/singlesync"]["post"]["responses"]["200"]["description"] = "Mode applied (success=true)";
+    paths["/api/v1/videowall/singlesync"]["post"]["responses"]["400"]["description"] = "Invalid JSON body";
+    paths["/api/v1/videowall/singlesync"]["post"]["responses"]["500"]["description"] =
+        "Could not apply the requested mode (success=false)";

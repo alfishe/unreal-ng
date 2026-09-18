@@ -170,6 +170,12 @@ public:
         return _isPaused;
     }
 
+    /// Output file of the current (or last) recording session (empty before the first start)
+    const std::string& GetOutputFilename() const
+    {
+        return _outputFilename;
+    }
+
     /// Check if encoder can keep up with realtime
     bool IsRealtimeCapable() const
     {
@@ -407,6 +413,9 @@ protected:
     // migrated. We still store our own ID as a belt-and-suspenders check
     // before reacting to a stop notification.
     std::string _recordingEmulatorId;
+
+    // Track recording type for correct stop notification
+    RecordingType _activeRecordingType = RecordingType::VideoAudio;
 
     // MessageCenter callback (Observer interface)
     void onEmulatorStateChange(int id, Message* message);

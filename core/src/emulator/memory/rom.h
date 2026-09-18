@@ -53,14 +53,40 @@ public:
     std::string GetROMFilename();
 	[[nodiscard]] bool LoadROM();
 
+    [[nodiscard]] uint8_t GetROMBanksLoaded() const { return _ROMBanksLoaded; }  // Number of 16KiB ROM pages actually loaded
+
 	[[nodiscard]] bool LoadROMSet();
 	[[nodiscard]] uint16_t LoadROM(string& path, uint8_t* bank, uint16_t max_banks = 1);
 
 	// Signature-related methods
 public:
+	/// @brief Digest every loaded ROM page and resolve the titles of the mapped ROM roles (48K, 128K, DOS, SYS)
 	void CalculateSignatures();
-	std::string CalculateSignature(uint8_t* buffer, size_t length);
-	std::string GetROMTitle(std::string& signature);
-	std::string GetROMTitleByAddress(uint8_t* physicalAddress);  // Get cached title for ROM at physical address
+
+	/// @brief Hex SHA-256 digest of a ROM page, served from the process-wide SignatureCache when the page was
+	///        seen before (every Emulator::Init re-digests the same few images otherwise)
+	/// @param buffer Page content
+	/// @param length Page length in bytes
+	/// @return Hex digest, or an empty string for a null/empty buffer
+	std::string CalculateSignature(const uint8_t* buffer, size_t length);
+
+	/// @brief Human-readable title of a known ROM image
+	/// @param signature Hex SHA-256 digest as returned by CalculateSignature()
+	/// @return Title from the known-ROM table, "Unknown ROM, <digest>" for an unlisted digest, "Empty signature" for ""
+	std::string GetROMTitle(const std::string& signature);
+
+	/// @brief Semantic name of a ROM page slot from the machine's ROM layout
+	///        ("128K Editor/Menu ROM", "TR-DOS ROM", "+3DOS ROM", ...; generic
+	///        "ROM Page N" for models without a curated layout). Single source
+	///        for the /state/paging bank role and the /state/memory/rom page
+	///        descriptions on every automation surface (parity rule)
+	/// @param page ROM page index
+	/// @return Role name for the model's config.mem_model at the given page
+	std::string GetROMPageRole(uint8_t page) const;
+
+	/// @brief Cached title of the mapped ROM role (48K, 128K, DOS, SYS) whose 16 KB page contains an address
+	/// @param physicalAddress Host address inside a ROM page
+	/// @return Title resolved by CalculateSignatures(), or an empty string when the address is in no mapped ROM page
+	std::string GetROMTitleByAddress(const uint8_t* physicalAddress);
 };
 

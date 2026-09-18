@@ -145,6 +145,16 @@ void WD1793::internalReset()
     _waitIndexPulseCount = SIZE_MAX;
     _motorTimeoutTStates = 0;
 
+    // Stop a spinning motor before the controller goes to sleep below: a sleeping
+    // controller never runs processFDDMotorState(), so a motor left spinning here
+    // would never time out and NC_FDD_MOTOR_STOPPED / NC_FDD_STATE_CHANGED would
+    // never be published (stale motor LED in the UI). Guarded so a fresh construction
+    // (motor already off) posts nothing.
+    if (_selectedDrive && _selectedDrive->getMotor())
+    {
+        stopFDDMotor();
+    }
+
     // Clear Force Interrupt condition monitoring
     _interruptConditions = 0;
     _prevReady = false;
@@ -263,16 +273,12 @@ void WD1793::processBeta128(uint8_t value)
 
     if (reset)
     {
-        // Perform full WD1793 chip reset
+        // Perform full WD1793 chip reset. internalReset() also stops a spinning
+        // motor (with notifications) and zeroes the motor timeout and index counters.
         this->reset();
 
         _statusRegister &= ~WDS_NOTRDY;
         raiseIntrq();
-
-        // Stop FDD motor, reset all related counters
-        _selectedDrive->setMotor(false);
-        _motorTimeoutTStates = 0;
-        _indexPulseCounter = 0;
     }
     else
     {
@@ -405,9 +411,6 @@ void WD1793::processFDDMotorState()
         if (_selectedDrive->getMotor())
         {
             stopFDDMotor();
-
-            // Notify via Beta128 status INTRQ bit about changes
-            raiseIntrq();
         }
     }
 }
@@ -1297,6 +1300,10 @@ void WD1793::cmdReadSector(uint8_t value)
     MLOGINFO(message.c_str());
 
     startType2Command();
+    if (!isReady())
+    {
+        return;
+    }
 
     // Step 1: search for ID address mark
     // Per WD1793 datasheet: "If a comparison is not made within 5 index pulses,
@@ -1375,6 +1382,10 @@ void WD1793::cmdWriteSector(uint8_t value)
     MLOGINFO(message.c_str());
 
     startType2Command();
+    if (!isReady())
+    {
+        return;
+    }
 
     // Per WD1793 datasheet: Check write protect before writing
     // If write protected, terminate immediately with WP status
@@ -1507,6 +1518,10 @@ void WD1793::cmdReadAddress(uint8_t value)
     MLOGINFO(message.c_str());
 
     startType3Command();
+    if (!isReady())
+    {
+        return;
+    }
 
     // Step 1: search for ID address mark
     FSMEvent searchIDAM(WDSTATE::S_SEARCH_ID, []() {});
@@ -1530,6 +1545,10 @@ void WD1793::cmdReadTrack(uint8_t value)
     MLOGINFO(message.c_str());
 
     startType3Command();
+    if (!isReady())
+    {
+        return;
+    }
 
     // Get raw track data pointer - validate early
     DiskImage* diskImage = _selectedDrive->getDiskImage();
@@ -1617,6 +1636,10 @@ void WD1793::cmdWriteTrack(uint8_t value)
     MLOGINFO(message.c_str());
 
     startType3Command();
+    if (!isReady())
+    {
+        return;
+    }
 
     // Check write protect first (per datasheet)
     if (_selectedDrive->isWriteProtect())
@@ -1880,6 +1903,10 @@ void WD1793::startType2Command()
 
     // Set required Status Register flags
     _statusRegister |= WDS_BUSY;
+
+    // Ensure the motor is spinning (wakes drive on Type 2 command)
+    prolongFDDMotorRotation();
+
     if (!_selectedDrive || !_selectedDrive->isDiskInserted())
         _statusRegister |= WDS_NOTRDY;
 
@@ -1904,9 +1931,6 @@ void WD1793::startType2Command()
     }
     else
     {
-        // Ensure the motor is spinning
-        prolongFDDMotorRotation();
-
         // Head must be loaded
         loadHead();
 
@@ -1930,6 +1954,10 @@ void WD1793::startType3Command()
 
     // Set required Status Register flags
     _statusRegister |= WDS_BUSY;
+
+    // Ensure the motor is spinning (wakes drive on Type 3 command)
+    prolongFDDMotorRotation();
+
     if (!_selectedDrive || !_selectedDrive->isDiskInserted())
         _statusRegister |= WDS_NOTRDY;
 
@@ -1953,9 +1981,6 @@ void WD1793::startType3Command()
     }
     else
     {
-        // Ensure the motor is spinning
-        prolongFDDMotorRotation();
-
         // Head must be loaded
         loadHead();
 
@@ -3071,15 +3096,22 @@ void WD1793::handleStep()
         return;
     }
 
-    // Check if we should enter sleep mode (idle for too long with motor off)
-    if (_state == S_IDLE && _motorTimeoutTStates == 0)
+    // Idle with the motor off: nothing the FSM could advance on. Commands
+    // arrive through the port handlers (which run process() themselves),
+    // index pulses need the motor, the motor timeout needs the motor. Only
+    // the sleep countdown is evaluated here; the once-per-frame process()
+    // in handleFrameEnd keeps the housekeeping cadence. Without this gate an
+    // awake idle controller ran the whole FSM chain on every instruction
+    // (~3 ms per frame) for the 2 s until it fell asleep - and any Beta128
+    // port poll re-armed those 2 s.
+    if (_state == S_IDLE && _motorTimeoutTStates <= 0)
     {
         updateTimeFromEmulatorState();
         if (_time - _wakeTimestamp > SLEEP_AFTER_IDLE_TSTATES)
         {
             enterSleepMode();
-            return;
         }
+        return;
     }
 
     // We need better precision to read data from the disk at 112 t-states per byte rate, so update FSM state after each

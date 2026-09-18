@@ -16,11 +16,16 @@ EmulatorContext::EmulatorContext(LoggerLevel level)
     this->emulatorState = EmulatorState{};
     this->temporary = TEMP{};
 
+    // The ATM palette must carry the standard ZX colors, not the value-init
+    // black - the extended video modes render through it before any #FF write
+    this->emulatorState.InitAtmPalette();
+
     // Initialize all pointer members to nullptr for safety
     pModuleLogger = nullptr;
     pMainLoop = nullptr;
     pCore = nullptr;
     pKeyboard = nullptr;
+    pMouse = nullptr;
     pMemory = nullptr;
     pPortDecoder = nullptr;
     pTape = nullptr;

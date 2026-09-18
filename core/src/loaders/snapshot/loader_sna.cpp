@@ -483,6 +483,15 @@ bool LoaderSNA::applySnapshotFromStaging()
         // Set up ports
         if (_snapshotMode == SNA_48)
         {
+            // A 48K snapshot carries no TR-DOS state: end any TR-DOS session the
+            // machine was in (e.g. the Pentagon boot menu), exactly as the Z80
+            // paging trap does when PC leaves the ROM. Otherwise the session
+            // outlives the load: bank 0 keeps the DOS ROM instead of BASIC and
+            // the Beta128 ports stay on the bus (every #FF-family read wakes
+            // the FDC, which then runs its FSM per instruction).
+            _context->emulatorState.flags &= ~CF_TRDOS;
+            memory.UpdateZ80Banks();
+
             // Set default 48k mode RAM pages
             memory.SetRAMPageToBank1(5);
             memory.SetRAMPageToBank2(2);
@@ -506,7 +515,18 @@ bool LoaderSNA::applySnapshotFromStaging()
             // Step 1: Unlock paging for state-independent loading
             // Ensures snapshot loads correctly even if port 7FFD was previously locked
             _context->pPortDecoder->UnlockPaging();
-            
+
+            // Step 1b: TR-DOS session state comes from the snapshot, not from
+            // whatever the machine was doing before the load. Clear it here so
+            // the 7FFD write below maps the ROM by bit 4 (bank 0 stays on the
+            // DOS/SYS ROM while a session is active) and the Beta128 ports
+            // leave the bus; step 5 re-activates the session for TR-DOS snapshots.
+            if (!_ext128Header.is_TRDOS)
+            {
+                _context->emulatorState.flags &= ~CF_TRDOS;
+                memory.UpdateZ80Banks();
+            }
+
             // Step 2: Configure 128K memory banks
             memory.SetRAMPageToBank1(5);
             memory.SetRAMPageToBank2(2);

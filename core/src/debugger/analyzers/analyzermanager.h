@@ -227,6 +227,15 @@ public:
     /// @param pc Program counter
     void dispatchCPUStep(Z80* cpu, uint16_t pc);
 
+    /// Hot-path guard for the emulator loop: true when dispatching would reach
+    /// at least one subscriber. Checked before every CPU step in Z80::Z80Step,
+    /// so the no-subscriber path costs two branches.
+    bool hasCPUStepSubscribers() const { return _enabled && !_cpuStepCallbacks.empty(); }
+
+    /// Guard for the per-sample audio dispatch loop in SoundManager::handleFrameEnd —
+    /// true when at least one analyzer subscribes to audio samples
+    bool hasAudioSampleSubscribers() const { return _enabled && !_audioCallbacks.empty(); }
+
     /// Dispatch memory read event to all subscribers
     /// @param addr Memory address
     /// @param val Value read

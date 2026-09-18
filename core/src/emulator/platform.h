@@ -51,11 +51,21 @@ constexpr char const* NC_FDD_DISK_SAVE_RETARGETED = "FDD_DISK_SAVE_RETARGETED"; 
 constexpr char const* NC_FDD_STATE_CHANGED = "FDD_STATE_CHANGED";               // FDC/FDD state changed: selected drive, side, track, sector, motor (payload: FDDStatePayload). Posted only on change - UIs cache it, no polling
 
 constexpr char const* NC_FDC_STATE_CHANGED = "FDC_STATE_CHANGE"; // WD1793 visible state changed: drive/side/track/sector/command/motor (payload: FDCStatePayload). Diff-gated — posted only when the observed tuple actually changes
+constexpr char const* NC_FEATURE_CHANGED = "FEATURE_CHANGED";                   // Feature toggled or mode changed (payload: FeatureChangedPayload). Posted AFTER all UpdateFeatureCache() calls complete so caches are consistent when observers fire. Informational — caches are already up to date.
+constexpr char const* NC_SPEED_CHANGED = "SPEED_CHANGED";                       // Speed multiplier or turbo mode changed (payload: SpeedChangedPayload). Posted from Core after state is committed.
+constexpr char const* NC_FILE_LOADED = "FILE_LOADED";                           // Snapshot / tape / disk file loaded or load failed (payload: FileLoadedPayload). Posted from Emulator after the loader returns.
+constexpr char const* NC_RECORDING_STATE = "RECORDING_STATE";                   // Recording started or stopped (payload: RecordingStatePayload). Posted from RecordingManager.
+constexpr char const* NC_MEMORY_PAGE_CHANGED = "MEMORY_PAGE_CHANGED";           // RAM bank mapping changed (payload: MemoryPagePayload). Posted by Memory on bank switch.
+constexpr char const* NC_ROM_PAGE_CHANGED = "ROM_PAGE_CHANGED";                 // ROM selection changed (payload: ROMPagePayload). Posted by Memory on ROM switch.
+constexpr char const* NC_SCREEN_PAGE_CHANGED = "SCREEN_PAGE_CHANGED";           // Active screen changed: page 5 (normal) or page 7 (shadow) (payload: ScreenPagePayload). Posted by Screen.
+constexpr char const* NC_AUDIO_ACTIVITY = "AUDIO_ACTIVITY";                     // Audio source activity changed (payload: AudioActivityPayload). Posted by sound sources per-frame when activity state changes.
 
 constexpr char const* NC_FILE_OPEN_REQUEST = "FILE_OPEN_REQUEST";               // File open request from emulator
 
 constexpr char const* NC_BREAKPOINT_CHANGED = "BREAKPOINT_CHANGED";             // Breakpoints added, removed, or modified
 constexpr char const* NC_LABEL_CHANGED = "LABEL_CHANGED";                       // Labels added, removed, or modified
+
+constexpr char const* NC_CPU_FREQ_CHANGED = "CPU_FREQ_CHANGED";                 // CPU frequency changed (3.5/7.0/14.0 MHz) - payload: CPUFreqPayload
 
 // endregion </PER-EMULATOR-INSTANCE MessageCenter Notifications>
 
@@ -238,7 +248,8 @@ const uint16_t PAGE_SIZE = 0x4000U;		// Spectrum memory page size is 16Kb (0x400
 const uint16_t MAX_RAM_PAGES = 256;     // 4Mb RAM
 const uint16_t MAX_CACHE_PAGES = 2;     // 32K cache
 const uint16_t MAX_MISC_PAGES = 1;      // trash page (to accomodate ROM writes and other garbage write operations)
-const uint16_t MAX_ROM_PAGES = 64;      // 1Mb
+const uint16_t MAX_ROM_PAGES = 128;     // 2Mb (ProfROM quadrant ladder)
+const uint16_t ROM_QUADRANT_PAGES = 4;  // 64Kb ProfROM quadrant
 
 // TS-conf specific settings
 #define TS_CACHE_SIZE 512
@@ -286,6 +297,9 @@ enum IDE_SCHEME
 };
 
 enum MOUSE_WHEEL_MODE { MOUSE_WHEEL_NONE, MOUSE_WHEEL_KEYBOARD, MOUSE_WHEEL_KEMPSTON }; //0.36.6 from 0.35b2
+
+/// [INPUT] Mouse= (Kempston Mouse design §7.4). AY mouse is not emulated.
+enum MOUSE_TYPE { MOUSE_TYPE_NONE = 0, MOUSE_TYPE_KEMPSTON = 1, MOUSE_TYPE_AY = 2 };
 
 enum MEM_MODEL : uint8_t
 {
@@ -378,6 +392,16 @@ enum ULAPLUS
 	UPLS_TYPE1 = 0,
 	UPLS_TYPE2,
 	UPLS_NONE
+};
+
+/// TurboSound slot device kind ([SOUND] TurboSound, TSFM design §3.1).
+/// AY = legacy two-AY pair (default), FM = TSFM (TurboSound FM, YM2203).
+/// Read once at config load - no runtime switching; a change needs a new
+/// emulator instance.
+enum class TurboSoundKind : uint8_t
+{
+	AY,
+	FM
 };
 
 struct zxkeymap;
@@ -496,6 +520,14 @@ struct CONFIG
 		/// All chip DSP self-designs for this rate at SoundManager construction.
 		unsigned coreRate;
 
+		/// Which device occupies the TurboSound slot ([SOUND] TurboSound,
+		/// TSFM design §3.1): AY = legacy two-AY pair (default), FM = TSFM.
+		TurboSoundKind turboSoundKind = TurboSoundKind::AY;
+
+		/// FM loudness trim in dB relative to the hardware-derived default
+		/// ([SOUND] TSFM_FmTrimDb; 0 = default)
+		double tsfmFmTrimDb = 0.0;
+
 		int covoxFB, covoxDD, sd, saa1099, moonsound;
 		int beeper_vol, micout_vol, micin_vol, ay_vol, aydig_vol, saa1099_vol;
 		int covoxFB_vol, covoxDD_vol, sd_vol, covoxProfi_vol;
@@ -515,6 +547,7 @@ struct CONFIG
 		uint8_t keybpcmode;
 		char mousescale;
 		uint8_t mousewheel; // enum MOUSE_WHEEL_MODE //0.36.6 from 0.35b2
+		bool mouseConfigured; // [INPUT] Mouse= was parsed (false: no ini - device stays fitted)
 		zxkeymap *active_zxk;
 		unsigned JoyId;
 	} input;
@@ -659,7 +692,8 @@ struct TEMP
 		int64_t tape_started;
 	} led;
 
-	uint8_t profrom_mask;
+	uint8_t profrom_mask;         // Scorpion ProfROM: GAL state-machine bits by image size (64K=0, 128K=1, 256K+=3)
+	uint8_t profrom_window_mask;  // Scorpion ProfROM: #7EFD[5:4] select bits by image size (<=256K=0, 512K=1, 1M/2M=3)
 	uint8_t comp_pal_changed;
 
 	uint8_t vidblock, sndblock, inputblock, frameskip;
@@ -747,6 +781,10 @@ enum AY_SCHEME
 #define FF77_ZX         0x03
 #define FF77_TX         0x06
 #define FF77_TL         0x07
+// ATM3 (ZX-Evo BaseConf) video decode is hierarchical: FF77 bits 2..0 select
+// the mode family, and only FF77 = 3 consults the EFF7 z-bits (z0 = EFF7.0
+// -> 16-color 256x192, z5 = EFF7.5 -> hardware multicolor). See
+// Screen::DetectModeATM3 and the BaseConf FPGA video_modedecode.v
 
 // ���� ����� 00 ��� �������
 static const uint8_t Q_F_RAM = 0x01;
@@ -785,6 +823,30 @@ struct EmulatorState
 
     /// endregion </Counters>
 
+    /// region <Frame cost accounting (WebAPI GET /frame_cost)>
+
+    // Work-vs-idle accounting. tstates_halted_current is incremented from the
+    // halted branch of Z80::Z80Step on the emulation thread; the rollup runs in
+    // Core::AdjustFrameCounters at the frame boundary. Readers (WebAPI) get
+    // approximate values without locks — totals are monotonic and the
+    // per-frame fields are advisory.
+    uint32_t tstates_halted_current = 0;  // Halted t-states accumulated in the in-flight frame
+    uint32_t tstates_halted_last = 0;     // Halted t-states in the last completed frame
+    uint64_t tstates_halted_total = 0;    // Cumulative halted (idle) t-states
+    uint64_t tstates_frame_total = 0;     // Cumulative frame t-states (active + halted)
+    uint64_t frame_cost_frames = 0;       // Completed frames accounted
+
+    /// endregion </Frame cost accounting>
+
+    /// region <Screen digest change tracking (WebAPI GET /state/screen/digest)>
+
+    // Poll-driven change detection: updated by the digest endpoint on every
+    // read. changed == (combined digest differs from last_screen_digest).
+    uint64_t last_screen_digest = 0;       // Combined digest returned by the previous poll
+    uint64_t last_screen_digest_frame = 0; // Frame counter at that poll
+
+    /// endregion </Screen digest change tracking>
+
     /// region <Runtime CPU parameters>
 
     // Example:
@@ -795,6 +857,42 @@ struct EmulatorState
     uint32_t current_z80_frequency;             // xN CPU clock generator (in Hz)
     uint8_t current_z80_frequency_multiplier;   // Frequency multiplier comparing to CPU base
     uint8_t next_z80_frequency_multiplier;      // Queued multiplier to apply at next frame start (prevents mid-frame changes)
+    uint8_t scorpion_turbo;                     // Scorpion ZS-256 Turbo+ hardware turbo flip-flop (hardware-reference 13):
+                                                // 1 = 7 MHz. Set by IN from the #7FFD-family decode, cleared by IN from
+                                                // the #1FFD-family decode and by reset. Composes with the host speed
+                                                // multiplier at the frame boundary - see Z80::Z80FrameCycle()
+    uint8_t hw_turbo_shift;                     // Model-neutral HARDWARE turbo: log2 of the guest-visible CPU
+                                                // multiplier (0 = base clock, 1 = 2x e.g. Scorpion 7 MHz, 2 = 4x e.g.
+                                                // 14 MHz clones). Maintained by the model's port decoder from its own
+                                                // latch (Scorpion: scorpion_turbo; ATM/Profi: their turbo bits). The
+                                                // Z80 composes it with the host speed control; audio/video descale it
+
+    uint8_t hw_turbo_shift_applied;             // hw_turbo_shift as composed into current_z80_frequency_multiplier at
+                                                // the last frame boundary. The decoder may flip hw_turbo_shift mid-frame;
+                                                // the frame that is executing still runs with the APPLIED value, so the
+                                                // audio helpers below must use this one (a mid-frame flip otherwise made
+                                                // HostSpeedMultiplier() read 0 for that frame - "blip delivered 958,
+                                                // accumulator expects 882")
+
+    /// Host speed-control multiplier alone (current = host << hw_turbo_shift_applied).
+    /// Audio sample budgeting must use THIS: the host control makes frames
+    /// run faster in wall-clock (excess audio is dropped knowingly), whereas
+    /// the Scorpion hardware turbo keeps the 20 ms frame and only doubles the
+    /// CPU T-states inside it - the AY/beeper/Covox clocks are unchanged
+    /// (hardware-reference 13, profrom-nmi-gaps-and-findings.md 8.5)
+    uint8_t HostSpeedMultiplier() const
+    {
+        return static_cast<uint8_t>(current_z80_frequency_multiplier >> hw_turbo_shift_applied);
+    }
+
+    /// Descale a CPU T-state position into the audio time base: under a
+    /// hardware turbo the CPU counts N x T-states per real-time frame, so the
+    /// sound renderers (blip_buf at CPU_CLOCK_RATE, AY PLL) see t/N - the same
+    /// descale Screen::GetCurrentTstate applies for the ULA
+    uint32_t AudioTstate(uint32_t t) const
+    {
+        return t >> hw_turbo_shift_applied;
+    }
 
     /// endregion </Runtime CPU parameters
 
@@ -822,6 +920,42 @@ struct EmulatorState
 	uint8_t aFE, aFB; // ATM 4.50 system ports
 	unsigned pFFF7[8]; // ATM 7.10 / ATM3(4Mb) memory map
 	// |7ffd|rom|b7b6|b5..b0| b7b6 = 0 for atm2
+	bool atmMemSwapped; // ATM A5-A7 <-> A8-A10 swap flag (vestigial: the swap is not emulated - reference gates it behind the default-off AtmMemSwap ini; kept for the TTD paging blob)
+
+	/// region <ATM Turbo 2+ / ZX-Evo BaseConf video state>
+	// 16-cell programmable palette RAM behind port #FF (both machines). Cell
+	// pointer = the 4-bit border color (border_attr + the FE bright bit), the
+	// write gate = A14 of the last #xx77 write (aFF77 & 0x4000, "pen2").
+	// atmPalette carries the ABGR cell colors (same packing as the ULA
+	// _rgbaColors tables); atmPaletteRegs keeps the raw written byte for the
+	// ATM3 #BE.0D readback. atmBorderBright is the 4th border bit latched from
+	// A3 of every #FE port write (A3 = 0 -> bright border).
+	uint32_t atmPalette[16];
+	uint8_t atmPaletteRegs[16];
+	uint8_t atmBorderBright;
+
+	/// Seed the palette with the standard 16 ZX colors - what the machine
+	/// shows until software overrides cells through #FF (xpeccy vid_reset()
+	/// / zx_set_pal() copy the preset into the live palette the same way at
+	/// every reset). Values mirror ScreenZX's TransformZXSpectrumColorsToRGBA
+	/// tables (ABGR: 0xFF << 24 | B << 16 | G << 8 | R).
+	void InitAtmPalette()
+	{
+		static const uint32_t ZXPAL[16] = {
+			// Brightness = 0
+			0xFF000000, 0xFFC72200, 0xFF1628D6, 0xFFC733D4,
+			0xFF25C500, 0xFFC9C700, 0xFF2AC8CC, 0xFFCACACA,
+			// Brightness = 1
+			0xFF000000, 0xFFFB2B00, 0xFF1C33FF, 0xFFFC40FF,
+			0xFF2FF900, 0xFFFEFB00, 0xFF36FCFF, 0xFFFFFFFF};
+		for (int i = 0; i < 16; i++)
+		{
+			atmPalette[i] = ZXPAL[i];
+			atmPaletteRegs[i] = 0x00;
+		}
+		atmBorderBright = 0;
+	}
+	/// endregion </ATM Turbo 2+ / ZX-Evo BaseConf video state>
 
 	uint8_t wd_shadow[4]; // 2F, 4F, 6F, 8F
 
@@ -872,6 +1006,15 @@ struct EmulatorState
 	uint8_t ulaplus_reg;
 	uint8_t ide_hi_byte_r, ide_hi_byte_w, ide_hi_byte_w1, ide_read, ide_write; // high byte in IDE i/o
 	uint8_t profrom_bank;
+
+// Scorpion magic-button DOS trigger (DD50.1 "1-DOS/0-SOS", hardware-reference §9):
+// armed together with the NMI pulse (DD50.2), it forces page 3 (TR-DOS) of the
+// current ProfROM plane over the #0000-#3FFF window - without touching the #1FFD
+// latch (the service bit still outranks it) or the plane register. Released by
+// the first CPU read from #4000-#FFFF (the Beta128 "leave the ROM window"
+// strobe); cleared by reset. Like profrom_bank it is not reproducible from
+// ports, so TTD checkpoints and the divergence hash carry it explicitly
+uint8_t scorpionDosTrigger;
 };
 
 // bits for State::flags

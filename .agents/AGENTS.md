@@ -35,30 +35,50 @@ We use CMake with Ninja for building:
 # Configure the build system
 cmake -S . -B cmake-build-release -G Ninja
 
-# Build the emulator and tests
+# Build the main applications (unreal-qt, unreal-mcp-bridge, etc.)
 ninja -C cmake-build-release
 ```
 
-## Running Tests & Benchmarks
-Tests are executed using the `core-tests` binary, and benchmarks via `core-benchmarks`:
-```bash
-# Run all tests (sequential, ~37s)
-./cmake-build-release/bin/core-tests
+## Writing Tests
+Full guide: [`core/tests/README.md`](../core/tests/README.md). Non-negotiables:
 
-# Run all tests in parallel (~12s, 3x faster)
+- **Never `sleep_for` to wait.** Use `TestWait::For` / `ForAtLeast` / `ForExactly`
+  (`core/tests/_helpers/testwaithelper.h`). A fixed sleep is simultaneously the
+  slowest and the flakiest way to synchronise.
+- **Under 50 ms per test.** Slower needs a comment justifying it; booting a real
+  ROM to a machine state is about the only good reason.
+- **Stop looping once the assertion can no longer fail** - keep the full work on
+  the failing path so diagnostics stay intact.
+- **`EnableTurboMode()` on boot-bound tests** (~2.7x: mutes audio, decimates
+  rendering). Never in a test that asserts on rendered pixels.
+- **Know what your assertion can see**: frame-boundary VRAM reads miss
+  intra-frame changes, and breakpoints do not fire under `RunNFrames`
+  (`skipBreakpoints = true` by default).
+- **Scratch files need per-process unique names** - `TestPathHelper::GetUniqueTestScratchPath()`.
+- **Avoid `std::vector::resize(n, 0)` on large POD buffers** (~58 ms/24 MiB at `-O0`) — use value-initialization (`new T[n]()`) or `ZeroInitBuffer` for sub-millisecond zero-fill in both Debug and Release.
+
+## Running Tests & Benchmarks
+Tests and benchmarks are opt-in (`-DTESTS=ON`, `-DBENCHMARKS=ON`) to keep standard dev builds fast:
+```bash
+# Configure with tests enabled
+cmake -S . -B cmake-build-release -G Ninja -DTESTS=ON
+
+# Run all tests in parallel (automatically builds core-tests on demand)
 cmake --build cmake-build-release --target test-parallel
-# Or use the script directly:
-./scripts/run-tests-parallel.sh ./cmake-build-release/bin/core-tests
+# Or run tests sequentially:
+ninja -C cmake-build-release core-tests && ./cmake-build-release/bin/core-tests
 
 # Run specific tests
 ./cmake-build-release/bin/core-tests --gtest_filter="*TestName*"
 
-# Run all benchmarks
-./cmake-build-release/bin/core-benchmarks
+# Configure with benchmarks enabled
+cmake -S . -B cmake-build-release -G Ninja -DBENCHMARKS=ON
 
-# Run specific benchmarks
+# Build and run benchmarks
+ninja -C cmake-build-release core-benchmarks
 ./cmake-build-release/bin/core-benchmarks --benchmark_filter="*BenchName*"
 ```
+
 
 ### Parallel Test Execution (GTest Sharding)
 The `test-parallel` CMake target uses GTest's built-in sharding to split tests across 4 processes:
@@ -115,7 +135,9 @@ pkill -9 unreal-qt 2>/dev/null || true
 - Linux: `./cmake-build-release/bin/unreal-qt`
 - Windows: `./cmake-build-release/bin/unreal-qt.exe`
 
-**Available models:** `PENTAGON`, `48K`, `128k`, `PLUS2`, `PLUS2A`, `PLUS3`, `SCORPION`, `ATM1`, `ATM2`, `ATM3`, `PROFI`
+**Available models (short names):** `PENTAGON`, `48K`, `128k`, `PLUS3`, `TSL`, `ATM3` (ZX-Evo), `ATM710`, `ATM450`, `PROFI`, `SCORPION`, `PROFSCORP`, `GMX`, `KAY`, `QUORUM`, `LSY256`, `PHOENIX`
+
+> Runtime-authoritative list: `GET /api/v1/emulator/models` — each entry carries a `creatable` flag. On `master`, ATM/ZX-Evo/TS-Conf machines (and GMX/KAY/QUORUM/LSY256/PHOENIX) are NOT creatable (missing port decoder/config folder): a create request for them fails with HTTP 400 + reason — never a silent 48K fallback. Those machines currently require the `atm` branch build. Build fingerprint: `GET /api/v1/emulator/status` -> `server.git_branch`/`server.git_commit`. MCP clients get identical data: `emulator_manage` action `list_models` / action `server` (all automation modules serve the same information from the same source).
 
 ## Agent Rules & Guidelines
 - **Test Artifacts**: ALL test artifacts and temporary files (e.g. `.wav`, `.trd`, `.sna`) MUST be written to the `scratch/` directory. Do not clutter the project root. Use `TestPathHelper::GetTestScratchPath()` for this.

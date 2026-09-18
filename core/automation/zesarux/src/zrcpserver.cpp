@@ -252,7 +252,7 @@ bool Server::start()
     {
         std::cerr << "[ZRCP] Failed to bind to port " << m_config.port << "\n";
         closeSocket(m_listenSocket);
-        m_listenSocket = -1;
+        m_listenSocket = INVALID_SOCKET;
         return false;
     }
 
@@ -264,7 +264,7 @@ bool Server::start()
     {
         std::cerr << "[ZRCP] Failed to listen\n";
         closeSocket(m_listenSocket);
-        m_listenSocket = -1;
+        m_listenSocket = INVALID_SOCKET;
         return false;
     }
 
@@ -284,10 +284,20 @@ void Server::stop()
 
     m_stopRequested.store(true);
 
+    // The accept/session loops poll their sockets with a 100 ms timeout and
+    // re-check the stop flag, so joining completes within ~100 ms WITHOUT
+    // closing sockets out from under blocking syscalls. close() on the listen
+    // socket while the accept thread is INSIDE accept() deadlocks on Darwin
+    // (close waits for the syscall's fd reference) - same fix as the DZRP
+    // server (see dzrpserver.cpp Server::stop).
+    if (m_acceptThread.joinable())
+        m_acceptThread.join();
+
+    // Safe now: no thread is using the sockets anymore.
     if (m_listenSocket != INVALID_SOCKET)
     {
         closeSocket(m_listenSocket);
-        m_listenSocket = -1;
+        m_listenSocket = INVALID_SOCKET;
     }
 
     {
@@ -295,7 +305,7 @@ void Server::stop()
         if (m_clientSocket != INVALID_SOCKET)
         {
             closeSocket(m_clientSocket);
-            m_clientSocket = -1;
+            m_clientSocket = INVALID_SOCKET;
         }
     }
 
@@ -304,9 +314,6 @@ void Server::stop()
         std::lock_guard<std::mutex> lock(m_runMutex);
         m_runCv.notify_all();
     }
-
-    if (m_acceptThread.joinable())
-        m_acceptThread.join();
 
     m_running.store(false);
     cleanupSockets();
@@ -330,7 +337,17 @@ void Server::acceptLoop()
         sockaddr_in clientAddr{};
         socklen_t clientLen = sizeof(clientAddr);
 
-        int clientSock = accept(m_listenSocket,
+        // Poll with a timeout instead of a blocking accept(): Server::stop()
+        // joins this thread BEFORE closing the listen socket, so the loop must
+        // wake on the stop flag within one poll quantum (see dzrpserver.cpp
+        // Server::acceptLoop).
+        const int ready = waitForSocketRead(m_listenSocket, 100);
+        if (ready < 0)
+            break;  // listen socket error
+        if (ready == 0)
+            continue;  // timeout - re-check the stop flag
+
+        SOCKET clientSock = accept(m_listenSocket,
                                 reinterpret_cast<sockaddr*>(&clientAddr),
                                 &clientLen);
 
@@ -367,7 +384,7 @@ void Server::acceptLoop()
             if (m_clientSocket == clientSock)
             {
                 closeSocket(m_clientSocket);
-                m_clientSocket = -1;
+                m_clientSocket = INVALID_SOCKET;
             }
         }
 
@@ -388,7 +405,7 @@ void Server::acceptLoop()
     }
 }
 
-void Server::sessionLoop(int clientSocket)
+void Server::sessionLoop(SOCKET clientSocket)
 {
     // Welcome banner + prompt (DeZog waits for the prompt after connect)
     sendLine(clientSocket, "Welcome to " + m_config.serverName +

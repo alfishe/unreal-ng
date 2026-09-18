@@ -102,7 +102,17 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
         disp.wasBeta128Gated = true;
     }
 
-    if (decodedPort != 0x0000)
+    uint8_t mouseReg = 0;
+    if (decodedPort == 0x0000 && IsPort_KempstonMouse(port, mouseReg))
+    {
+        // Kempston Mouse: only addresses no table rule claimed (#xxDF is the Beta128 #FF
+        // rule's address - with TR-DOS active the FDC keeps it, design §3.5)
+        result = Default_Port_KempstonMouse_In(port, pc);
+        _lastPortDecoded = true;
+        decodedPort = port;
+        disp.wasHandledInline = true;
+    }
+    else if (decodedPort != 0x0000)
     {
         switch (decodedPort)
         {
@@ -320,20 +330,7 @@ bool PortDecoder_Pentagon128::IsPort_FFFD(uint16_t port)
 /// Whether a decoded port value belongs to the Beta128 FDC register set.
 /// #1F - WD1793 status/command, #3F - track, #5F - sector, #7F - data,
 /// #FF - Beta128 system register
-bool PortDecoder_Pentagon128::IsBeta128Port(uint16_t decodedPort)
-{
-    switch (decodedPort)
-    {
-        case 0x001F:
-        case 0x003F:
-        case 0x005F:
-        case 0x007F:
-        case 0x00FF:
-            return true;
-        default:
-            return false;
-    }
-}
+// IsBeta128Port() hoisted into the base PortDecoder (shared Beta-128 session gating)
 
 uint16_t PortDecoder_Pentagon128::decodePort(uint16_t port)
 {
@@ -667,10 +664,15 @@ std::string PortDecoder_Pentagon128::Dump_FFFD_value(uint8_t value)
     }
     else
     {
-        result = StringHelper::Format("Invalid AY control register: %d", value);
+        result = "[Reg] Unknown register write";
     }
 
     return result;
 }
 
 /// endregion </Debug information>
+
+bool PortDecoder_Pentagon128::IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister) const
+{
+    return Default_IsPort_KempstonMouse(port, outRegister);
+}

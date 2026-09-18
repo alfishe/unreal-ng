@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "unreal-ng": {
+      "command": "cmake-build-release/bin/unreal-mcp-bridge"
+    }
+  }
+}

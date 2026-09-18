@@ -4,6 +4,8 @@
 #include "../emulator_api.h"
 
 #include <drogon/HttpResponse.h>
+#include <emulator/buildinfo.h>
+#include <emulator/config.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/platform.h>
@@ -20,6 +22,38 @@ namespace v1
 // Helper function declared in emulator_api.cpp
 extern void addCorsHeaders(HttpResponsePtr& resp);
 extern std::string stateToString(EmulatorStateEnum state);
+
+namespace
+{
+// Machine identity block shared by lifecycle responses (P0-1: a triage
+// session must always see WHICH machine it is talking to). Computed by
+// EmulatorManager::GetMachineIdentity - the single source the CLI also uses -
+// so every automation surface reports identical information. Every read is
+// guarded so a partially initialized instance still yields a complete
+// object; "video_mode" is null until the screen subsystem exists.
+void AddIdentityFields(Json::Value& target, Emulator& emulator)
+{
+    const MachineIdentity identity = EmulatorManager::GetMachineIdentity(emulator);
+
+    if (!identity.Valid)
+    {
+        target["model"] = Json::Value();
+        target["model_full_name"] = Json::Value();
+        target["ram_kb"] = Json::Value();
+        target["video_mode"] = Json::Value();
+        target["speed_multiplier"] = Json::Value();
+        target["config_folder"] = Json::Value();
+        return;
+    }
+
+    target["model"] = identity.Model;
+    target["model_full_name"] = identity.ModelFullName;
+    target["ram_kb"] = static_cast<Json::UInt>(identity.RamKb);
+    target["video_mode"] = identity.HasVideoMode ? Json::Value(identity.VideoMode) : Json::Value();
+    target["speed_multiplier"] = identity.SpeedMultiplier;
+    target["config_folder"] = identity.ConfigFolder;
+}
+}
 
 /// @brief GET /api/v1/emulator
 /// @brief List all emulators
@@ -42,6 +76,7 @@ void EmulatorAPI::get(const HttpRequestPtr& req, std::function<void(const HttpRe
             emuInfo["is_running"] = emulator->IsRunning();
             emuInfo["is_paused"] = emulator->IsPaused();
             emuInfo["is_debug"] = emulator->IsDebug();
+            AddIdentityFields(emuInfo, *emulator);
             emulators.append(emuInfo);
         }
     }
@@ -96,6 +131,12 @@ void EmulatorAPI::getModels(const HttpRequestPtr& req, std::function<void(const 
             }
             modelInfo["available_ram_sizes_kb"] = availableRAMs;
 
+            // Whether a create request for this model is expected to succeed
+            // on this build (port decoder + config folder present). Lets
+            // clients filter machine lists instead of discovering unsupported
+            // models one failed request at a time.
+            modelInfo["creatable"] = Config::IsModelCreatable(model);
+
             modelsArray.append(modelInfo);
         }
 
@@ -149,6 +190,26 @@ void EmulatorAPI::status(const HttpRequestPtr& req, std::function<void(const Htt
     }
     ret["states"] = states;
 
+    // Build fingerprint + which machines this build can actually create
+    // (P0-4): lets triage sessions attribute behaviour to a specific
+    // branch/commit and discover unsupported machines up front.
+    Json::Value server(Json::objectValue);
+    server["version"] = buildinfo::kVersion;
+    server["git_branch"] = buildinfo::kGitBranch;
+    server["git_commit"] = buildinfo::kGitCommit;
+    server["build_type"] = buildinfo::kBuildType;
+    ret["server"] = server;
+
+    Json::Value creatableModels(Json::arrayValue);
+    for (const TMemModel& model : manager->GetAvailableModels())
+    {
+        if (model.ShortName != nullptr && model.ShortName[0] != '\0' && Config::IsModelCreatable(model))
+        {
+            creatableModels.append(std::string(model.ShortName));
+        }
+    }
+    ret["models_creatable"] = creatableModels;
+
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
     callback(resp);
@@ -160,8 +221,10 @@ void EmulatorAPI::status(const HttpRequestPtr& req, std::function<void(const Htt
 /// @brief {
 /// @brief   "symbolic_id": "my-emulator",
 /// @brief   "model": "48K" | "128K" | "PENTAGON" | etc,
-/// @brief   "ram_size": 128 (in KB, only valid for models that support it)
+/// @brief   "ram_size": 128 (in KB, only valid for models that support it),
 /// @brief }
+/// @brief A non-empty "model" that cannot be created on this build fails with
+/// @brief 400 + reason - there is NO silent fallback to a default machine.
 void EmulatorAPI::createEmulator(const HttpRequestPtr& req,
                                  std::function<void(const HttpResponsePtr&)>&& callback) const
 {
@@ -176,26 +239,18 @@ void EmulatorAPI::createEmulator(const HttpRequestPtr& req,
     try
     {
         std::shared_ptr<Emulator> emulator;
+        std::string createError;
 
         if (!modelName.empty() && ramSize > 0)
         {
-            // Create with specific model and RAM size
-            emulator = manager->CreateEmulatorWithModelAndRAM(symbolicId, modelName, ramSize);
-            if (!emulator)
-            {
-                // Fall back to default 48K if model/RAM combination invalid
-                emulator = manager->CreateEmulator(symbolicId);
-            }
+            // Create with specific model and RAM size - strict: no fallback
+            emulator = manager->CreateEmulatorWithModelAndRAM(symbolicId, modelName, ramSize,
+                                                              LoggerLevel::LogWarning, &createError);
         }
         else if (!modelName.empty())
         {
-            // Create with specific model (default RAM)
-            emulator = manager->CreateEmulatorWithModel(symbolicId, modelName);
-            if (!emulator)
-            {
-                // Fall back to default 48K if model is invalid
-                emulator = manager->CreateEmulator(symbolicId);
-            }
+            // Create with specific model (default RAM) - strict: no fallback
+            emulator = manager->CreateEmulatorWithModel(symbolicId, modelName, LoggerLevel::LogWarning, &createError);
         }
         else
         {
@@ -206,11 +261,16 @@ void EmulatorAPI::createEmulator(const HttpRequestPtr& req,
         if (!emulator)
         {
             Json::Value error;
-            error["error"] = "Failed to create emulator";
-            error["message"] = "Emulator initialization failed";
+            error["error"] = "Bad Request";
+            error["message"] = !createError.empty() ? createError : std::string("Emulator initialization failed");
+            if (!modelName.empty())
+            {
+                error["requested_model"] = modelName;
+            }
+            error["available_models_endpoint"] = "/api/v1/emulator/models";
 
             auto resp = HttpResponse::newHttpJsonResponse(error);
-            resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
             addCorsHeaders(resp);
             callback(resp);
             return;
@@ -220,6 +280,7 @@ void EmulatorAPI::createEmulator(const HttpRequestPtr& req,
         ret["id"] = emulator->GetId();
         ret["state"] = stateToString(emulator->GetState());
         ret["symbolic_id"] = emulator->GetSymbolicId();
+        AddIdentityFields(ret, *emulator);
 
         auto resp = HttpResponse::newHttpJsonResponse(ret);
         resp->setStatusCode(HttpStatusCode::k201Created);
@@ -266,6 +327,7 @@ void EmulatorAPI::getEmulator(const HttpRequestPtr& req, std::function<void(cons
     ret["is_running"] = emulator->IsRunning();
     ret["is_paused"] = emulator->IsPaused();
     ret["is_debug"] = emulator->IsDebug();
+    AddIdentityFields(ret, *emulator);
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
@@ -339,15 +401,19 @@ void EmulatorAPI::startEmulator(const HttpRequestPtr& req,
     try
     {
         std::shared_ptr<Emulator> emulator;
+        std::string createError;
 
-        // Create emulator with specified parameters
+        // Create emulator with specified parameters - strict: a requested
+        // model that cannot be created on this build fails with 400 + reason
+        // instead of falling back to a default machine
         if (!modelName.empty() && ramSize > 0)
         {
-            emulator = manager->CreateEmulatorWithModelAndRAM(symbolicId, modelName, ramSize);
+            emulator = manager->CreateEmulatorWithModelAndRAM(symbolicId, modelName, ramSize,
+                                                              LoggerLevel::LogWarning, &createError);
         }
         else if (!modelName.empty())
         {
-            emulator = manager->CreateEmulatorWithModel(symbolicId, modelName);
+            emulator = manager->CreateEmulatorWithModel(symbolicId, modelName, LoggerLevel::LogWarning, &createError);
         }
         else
         {
@@ -357,11 +423,16 @@ void EmulatorAPI::startEmulator(const HttpRequestPtr& req,
         if (!emulator)
         {
             Json::Value error;
-            error["error"] = "Failed to create emulator";
-            error["message"] = "Emulator initialization failed";
+            error["error"] = "Bad Request";
+            error["message"] = !createError.empty() ? createError : std::string("Emulator initialization failed");
+            if (!modelName.empty())
+            {
+                error["requested_model"] = modelName;
+            }
+            error["available_models_endpoint"] = "/api/v1/emulator/models";
 
             auto resp = HttpResponse::newHttpJsonResponse(error);
-            resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
             addCorsHeaders(resp);
             callback(resp);
             return;
@@ -700,6 +771,80 @@ void EmulatorAPI::resetEmulator(const HttpRequestPtr& req, std::function<void(co
     }
 }
 
+/// @brief POST /api/v1/emulator/{id}/nmi
+/// @brief Pulse the Z80 NMI line (accepted at the next instruction boundary)
+/// @param body Optional JSON: {"magic": true|false}. true = Scorpion MNI
+///        "magic button" - the Shadow Monitor is paged into #0000 before the
+///        NMI so the handler at #0066 executes monitor code. Non-Scorpion models
+///        fall back to a plain NMI regardless of the flag.
+void EmulatorAPI::requestNmi(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                              const std::string& id) const
+{
+    auto manager = EmulatorManager::GetInstance();
+
+    if (!manager->HasEmulator(id))
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator with specified ID not found";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    try
+    {
+        bool magic = false;
+        auto json = req->getJsonObject();
+        if (json && json->isMember("magic") && json->get("magic", false).isBool())
+            magic = json->get("magic", false).asBool();
+
+        auto emulator = manager->GetEmulator(id);
+        if (!emulator)
+        {
+            Json::Value error;
+            error["error"] = "Not Found";
+            error["message"] = "Emulator with specified ID not found";
+
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k404NotFound);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+
+        if (magic)
+            emulator->RequestMNI();
+        else
+            emulator->RequestNMI();
+
+        Json::Value ret;
+        ret["status"] = "success";
+        ret["message"] = magic ? "MNI requested (magic button)" : "NMI requested";
+        ret["emulator_id"] = id;
+        ret["magic"] = magic;
+
+        auto resp = HttpResponse::newHttpJsonResponse(ret);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+    catch (const std::exception& e)
+    {
+        Json::Value error;
+        error["error"] = "Operation failed";
+        error["message"] = e.what();
+        error["emulator_id"] = id;
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+}
+
 /// @brief POST /api/v1/emulator/{id}/model
 /// @brief Switch emulator to a different machine model
 /// @details This stops the current emulator, destroys it, creates a new one with the specified model, and starts it.
@@ -748,6 +893,58 @@ void EmulatorAPI::switchModel(const HttpRequestPtr& req, std::function<void(cons
         ramSize = (*body)["ram_size"].asUInt();
     }
 
+    // Validate BEFORE touching the current instance: a failed model switch
+    // must leave the caller's emulator untouched (the old flow removed the
+    // instance first and a bad model then left the caller with nothing).
+    // These checks mirror the ones inside EmulatorManager create paths.
+    const TMemModel* requestedModel = Config::FindModelByShortName(modelName);
+    if (!requestedModel)
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "unknown model '" + modelName + "'";
+        error["requested_model"] = modelName;
+        error["available_models_endpoint"] = "/api/v1/emulator/models";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    if (ramSize > 0 && (ramSize & requestedModel->AvailRAMs) == 0)
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "RAM size " + std::to_string(ramSize) + "KB is not supported by model '" + modelName +
+                           "' (see available_ram_sizes_kb in /api/v1/emulator/models)";
+        error["requested_model"] = modelName;
+        error["available_models_endpoint"] = "/api/v1/emulator/models";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    if (!Config::IsModelCreatable(*requestedModel))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "model '" + modelName +
+                           "' is not creatable on this build (port decoder or config folder missing)";
+        error["requested_model"] = modelName;
+        error["available_models_endpoint"] = "/api/v1/emulator/models";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
     try
     {
         // Stop the current emulator
@@ -769,20 +966,25 @@ void EmulatorAPI::switchModel(const HttpRequestPtr& req, std::function<void(cons
 
         // Create a new emulator with the requested model
         std::shared_ptr<Emulator> newEmulator;
+        std::string createError;
         if (ramSize > 0)
         {
-            newEmulator = manager->CreateEmulatorWithModelAndRAM(symbolicId, modelName, ramSize);
+            newEmulator = manager->CreateEmulatorWithModelAndRAM(symbolicId, modelName, ramSize,
+                                                                 LoggerLevel::LogWarning, &createError);
         }
         else
         {
-            newEmulator = manager->CreateEmulatorWithModel(symbolicId, modelName);
+            newEmulator = manager->CreateEmulatorWithModel(symbolicId, modelName, LoggerLevel::LogWarning, &createError);
         }
 
         if (!newEmulator)
         {
             Json::Value error;
             error["error"] = "Failed to create emulator";
-            error["message"] = "Could not create emulator with model '" + modelName + "'";
+            error["message"] = !createError.empty()
+                                   ? createError
+                                   : ("Could not create emulator with model '" + modelName + "'");
+            error["requested_model"] = modelName;
             error["available_models_endpoint"] = "/api/v1/emulator/models";
 
             auto resp = HttpResponse::newHttpJsonResponse(error);
@@ -810,29 +1012,13 @@ void EmulatorAPI::switchModel(const HttpRequestPtr& req, std::function<void(cons
 
         newEmulator->Start();
 
-        // Get model info for response
-        EmulatorContext* ctx = newEmulator->GetContext();
-        std::string actualModel = "unknown";
-        if (ctx)
-        {
-            auto models = manager->GetAvailableModels();
-            for (const auto& model : models)
-            {
-                if (model.Model == ctx->config.mem_model)
-                {
-                    actualModel = model.ShortName;
-                    break;
-                }
-            }
-        }
-
         Json::Value ret;
         ret["status"] = "success";
         ret["message"] = "Model switched successfully";
         ret["old_emulator_id"] = id;
         ret["new_emulator_id"] = newEmulator->GetId();
-        ret["model"] = actualModel;
         ret["state"] = stateToString(newEmulator->GetState());
+        AddIdentityFields(ret, *newEmulator);
 
         auto resp = HttpResponse::newHttpJsonResponse(ret);
         resp->setStatusCode(HttpStatusCode::k200OK);
