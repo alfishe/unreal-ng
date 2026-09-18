@@ -36,10 +36,11 @@ struct FmOperator
     bool vib = false;      // LFO PM enable
     bool egt = false;      // envelope type (sustaining)
     uint8_t ksl = 0;       // key scale level shift 0..3 (reg bits 7:6, ymfm bit-swapped)
+    bool keyReq = false;   // key bit as last written; the envelope sees it at the next clock
 
     // Live state
     uint32_t phase = 0;    // 19-bit accumulator
-    int16_t envVol = 0x280; // kFmMaxAttIndex (fm/fmtables.h); literal keeps this header table-free
+    int16_t envVol = 0x3FF; // kFmMaxAttIndex (fm/fmtables.h); literal keeps this header table-free
     uint8_t egState = 0;   // 0 off, 1 rel, 2 sus/dec, 3 attack
     bool keyOn = false;
     int32_t out = 0;       // last output (feedback delay, §4.1)
@@ -108,6 +109,7 @@ public:
 private:
     void UpdateChannelParams(uint8_t ch);
     void KeyOn(FmOperator& op, bool on);
+    void ClockKeyState(FmOperator& op) const;
     uint32_t PhaseStep(const FmOperator& op); // reads LFO/regs for vibrato
     static uint32_t KslIndex(const FmOperator& op);
     uint8_t EgRate(const FmOperator& op, uint8_t regRate) const;

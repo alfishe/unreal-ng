@@ -28,6 +28,18 @@ namespace opl4
 namespace
 {
 
+// Operator output on the FM grid: the total attenuation (envelope + TL + KSL
+// + AM) saturates at the 96 dB ceiling, where the output is zero. The PCM
+// VolFactor clips at -60 dB instead, which silenced quiet FM modulators.
+inline int32_t FmVolFactor(int32_t sample, uint32_t index)
+{
+    if (index >= static_cast<uint32_t>(kFmMaxAttIndex))
+        return 0;
+    const uint32_t shift = index >> 6;
+    const uint32_t step = (index & 0x3F) << 2;
+    return (sample * static_cast<int32_t>(kPowerTable[step])) >> (11 + shift);
+}
+
 inline int16_t SineOf(uint16_t index10)
 {
     // Full 10-bit sine via quadrant folding.
@@ -150,10 +162,11 @@ uint8_t Opl4Fm::EgRate(const FmOperator& op, uint8_t regRate) const
     if (regRate == 0)
         return 0;
     // KSR (ymfm ymfm_opl.cpp:298): 4-bit keycode = block<<1 | the fnum bit
-    // NTS picks (0x108 bit 6: bit 9 clear, bit 8 set — reversed from the
-    // manual); the rate adds the FULL keycode when the KSR bit is set and
-    // keycode>>2 when clear. Nonzero register rates only: rate 4..63.
-    const bool nts = (_regs[0x108] & 0x40) != 0;
+    // NTS picks (bank-0 register 0x08 bit 6, ymfm note_select / Nuked
+    // chip->nts: bit 9 clear, bit 8 set — reversed from the manual); the
+    // rate adds the FULL keycode when the KSR bit is set and keycode>>2
+    // when clear. Nonzero register rates only: rate 4..63.
+    const bool nts = (_regs[0x008] & 0x40) != 0;
     const uint8_t keycode = (op.block << 1) | ((op.fnum >> (nts ? 8 : 9)) & 1);
     int r = regRate * 4 + (op.ksr ? keycode : (keycode >> 2));
     if (r > 63)
@@ -231,7 +244,7 @@ int32_t Opl4Fm::OperatorOutput(FmOperator& op, int32_t modInput) const
     index += KslIndex(op);
     // Unity operator at full 16-bit scale: the 13-bit sine (peak 4096) shifts
     // up by 3. The chip rail is widened to accommodate multiple voices.
-    op.out = VolFactor(wave << 3, index);
+    op.out = FmVolFactor(wave << 3, index);
     return op.out;
 }
 
@@ -278,8 +291,8 @@ void Opl4Fm::AdvanceEnvelope(FmOperator& op)
             // OPL3 sustain level (ymfm ymfm_opl.cpp:329): SL is 3 dB steps
             // (<<5 in the 0.09375 dB index domain) with SL 15 doubling to
             // "no sustain sound" ((SL|(SL+1)&0x10)<<5); capped at this
-            // engine's 60 dB floor. The PCM copy's <<4 halved every
-            // sustain level.
+            // 96 dB ceiling. The PCM copy's <<4 halved every sustain
+            // level.
             int sustainLevel = (op.sl | ((op.sl + 1) & 0x10)) << 5;
             if (sustainLevel > kFmMaxAttIndex)
                 sustainLevel = kFmMaxAttIndex;
@@ -341,17 +354,29 @@ void Opl4Fm::AdvanceEnvelope(FmOperator& op)
 
 void Opl4Fm::KeyOn(FmOperator& op, bool on)
 {
-    if (on && !op.keyOn)
+    // Latched only: like the silicon (ymfm clock_keystate, Nuked's per-sample
+    // key edge) the envelope samples the key once per clock, so a key-off
+    // and key-on written between two clocks are no transition at all.
+    op.keyReq = on;
+}
+
+void Opl4Fm::ClockKeyState(FmOperator& op) const
+{
+    if (op.keyReq == op.keyOn)
+        return;
+    op.keyOn = op.keyReq;
+    if (op.keyOn)
     {
-        op.keyOn = true;
-        op.envVol = kFmMaxAttIndex;
+        // Unlike the PCM engine, FM attack starts from the current envelope
+        // level (ymfm start_attack, Nuked-OPL3): re-keying a sounding note
+        // must not drop it to silence first. The phase restarts.
+        op.phase = 0;
         op.egState = (EgRate(op, op.ar) >= 63) ? kFmEgDec : kFmEgAtt;
         if (op.egState == kFmEgDec)
             op.envVol = kFmMinAttIndex;
     }
-    else if (!on && op.keyOn)
+    else
     {
-        op.keyOn = false;
         op.egState = kFmEgRel;
     }
 }
@@ -560,6 +585,7 @@ void Opl4Fm::Advance(FmOutput& out)
     // Advance envelopes and phases.
     for (auto& op : _ops)
     {
+        ClockKeyState(op);
         AdvanceEnvelope(op);
         op.phase = (op.phase + PhaseStep(op)) & 0x7FFFF;
     }
@@ -643,7 +669,7 @@ void Opl4Fm::Advance(FmOutput& out)
             const auto noiseOut = [this](FmOperator& op) {
                 const uint32_t index = static_cast<uint32_t>(op.envVol)
                     + (static_cast<uint32_t>(op.tl) << 3) + KslIndex(op);
-                op.out = VolFactor((_noise & 2) ? 0x1000 : -0x1000, index);
+                op.out = FmVolFactor((_noise & 2) ? 0x1000 : -0x1000, index);
                 return op.out;
             };
             if (ch == 7) // HH (mod) + SD (car)

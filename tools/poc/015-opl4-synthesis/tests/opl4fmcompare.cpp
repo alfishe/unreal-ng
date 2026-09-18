@@ -692,6 +692,156 @@ void CompareDr0PadVoice()
     }
 }
 
+// Key-on semantics (ymfm start_attack / clock_keystate, Nuked-OPL3): FM
+// attack starts from the CURRENT envelope level, the phase restarts, and
+// the key is sampled once per clock. HAPERT's accordion (MFM ins 3: FB7
+// FM, AR2 modulator/AR3 carrier) re-keyed every note with KOFF/A0/KON in
+// one burst; the old engine dropped each note to silence and faded it
+// back in over ~0.4 s.
+struct TwoStreams
+{
+    std::vector<int32_t> a, b;
+};
+
+void Run(Rig& rig, TwoStreams& s, size_t n)
+{
+    std::array<int32_t, 18> ta, tb;
+    for (size_t i = 0; i < n; i++)
+    {
+        int32_t la, ra, lb, rb;
+        Step(rig, la, ra, lb, rb, ta, tb);
+        s.a.push_back(la + ra);
+        s.b.push_back(lb + rb);
+    }
+}
+
+double RmsRange(const std::vector<int32_t>& v, size_t from, size_t n)
+{
+    double acc = 0;
+    for (size_t i = from; i < from + n; i++)
+        acc += static_cast<double>(v[i]) * v[i];
+    return std::sqrt(acc / static_cast<double>(n));
+}
+
+double BestShapeCorr(const std::vector<int32_t>& x, const std::vector<int32_t>& y, size_t from, size_t n)
+{
+    double best = -1.0;
+    for (int lag = -8; lag <= 8; lag++)
+    {
+        double xy = 0, xx = 0, yy = 0;
+        for (size_t i = from + 8; i < from + n - 8; i++)
+        {
+            const double u = x[i], w = y[static_cast<size_t>(static_cast<long>(i) + lag)];
+            xy += u * w;
+            xx += u * u;
+            yy += w * w;
+        }
+        if (xx > 0 && yy > 0)
+            best = std::max(best, xy / std::sqrt(xx * yy));
+    }
+    return best;
+}
+
+void PatchAccordion(Rig& rig)
+{
+    rig.Write(1, 0x05, 0x01);
+    const uint8_t w[][2] = {
+        {0x20, 0x61}, {0x23, 0x61}, {0x40, 0x20}, {0x43, 0x06}, {0x60, 0x21}, {0x63, 0x31},
+        {0x80, 0x22}, {0x83, 0x02}, {0xE0, 0x00}, {0xE3, 0x00}, {0xC0, 0x3E},
+        {0xA0, 0xE8}, {0xB0, 0x31}, // block 4, fnum 0x1E8, key on
+    };
+    for (const auto& x : w)
+        rig.Write(0, x[0], x[1]);
+}
+
+void CompareRetriggerKeepsLevel()
+{
+    std::printf("FmCompare: re-key of a sounding note (KOFF/A0/KON between clocks)\n");
+    Rig rig;
+    PatchAccordion(rig);
+    TwoStreams s;
+    Run(rig, s, 74000); // ~1.5 s: past the AR2/AR3 attack
+    const size_t cut = s.a.size();
+    rig.Write(0, 0xB0, 0x11); // key off
+    rig.Write(0, 0xA0, 0x02); // next note, same burst
+    rig.Write(0, 0xB0, 0x32); // key on
+    Run(rig, s, 15000);
+    const double before = RmsRange(s.a, cut - 5000, 5000);
+    const double after = RmsRange(s.a, cut, 5000);
+    const double corr = BestShapeCorr(s.a, s.b, cut, 15000);
+    std::printf("  level after/before: ours %.3f ymfm %.3f  shape corr vs ymfm %.3f\n", after / before,
+                RmsRange(s.b, cut, 5000) / RmsRange(s.b, cut - 5000, 5000), corr);
+    CHECK(after > 0.8 * before); // no drop to silence at the re-key
+    CHECK(corr > 0.95);
+}
+
+void CompareRekeyAfterGapStartsFromLevel()
+{
+    std::printf("FmCompare: key-off, one clock, key-on — attack from the current level\n");
+    Rig rig;
+    PatchAccordion(rig);
+    TwoStreams s;
+    Run(rig, s, 74000);
+    rig.Write(0, 0xB0, 0x11);
+    Run(rig, s, 1);
+    const size_t cut = s.a.size();
+    rig.Write(0, 0xB0, 0x31);
+    Run(rig, s, 2000);
+    const double ours = RmsRange(s.a, cut, 1000), ymfm = RmsRange(s.b, cut, 1000);
+    std::printf("  first 20 ms rms: ours %.0f ymfm %.0f (x%.3f)\n", ours, ymfm, ours / ymfm);
+    CHECK(ours > 0.8 * ymfm && ours < 1.25 * ymfm);
+}
+
+double TimeToFraction(const std::vector<int32_t>& v, double fraction)
+{
+    double peak = 0;
+    for (size_t i = 0; i + 256 <= v.size(); i += 256)
+        peak = std::max(peak, RmsRange(v, i, 256));
+    for (size_t i = 0; i + 256 <= v.size(); i += 256)
+        if (RmsRange(v, i, 256) >= fraction * peak)
+            return static_cast<double>(i);
+    return -1;
+}
+
+void CompareSlowAttackTiming()
+{
+    std::printf("FmCompare: slow attack timing (96 dB envelope floor)\n");
+    Rig rig;
+    rig.Write(1, 0x05, 0x01);
+    const uint8_t w[][2] = {
+        {0x20, 0x21}, {0x23, 0x21}, {0x40, 0x3F}, {0x43, 0x00}, {0x60, 0xFF}, {0x63, 0x20},
+        {0x80, 0x0F}, {0x83, 0x0F}, {0xC0, 0x31}, {0xA0, 0x40}, {0xB0, 0x32},
+    };
+    for (const auto& x : w)
+        rig.Write(0, x[0], x[1]);
+    TwoStreams s;
+    Run(rig, s, 49716 * 4);
+    const double ours = TimeToFraction(s.a, 0.5), ymfm = TimeToFraction(s.b, 0.5);
+    std::printf("  AR2 time to -6 dB: ours %.0f ymfm %.0f samples (x%.3f)\n", ours, ymfm, ours / ymfm);
+    CHECK(ours > 0.9 * ymfm && ours < 1.1 * ymfm);
+}
+
+void CompareNtsKsrDecay()
+{
+    std::printf("FmCompare: NTS (bank-0 reg 0x08) picks the KSR keycode bit\n");
+    Rig rig;
+    rig.Write(1, 0x05, 0x01);
+    rig.Write(0, 0x08, 0x40); // NTS: keycode takes F-number bit 8
+    const uint8_t w[][2] = {
+        {0x20, 0x31}, {0x23, 0x31}, {0x40, 0x3F}, {0x43, 0x00}, {0x60, 0xFF}, {0x63, 0xF3},
+        {0x80, 0x0F}, {0x83, 0xF2}, {0xC0, 0x31},
+        {0xA0, 0x9A}, {0xB0, 0x31}, // fnum 0x19A: bit 8 set, bit 9 clear
+    };
+    for (const auto& x : w)
+        rig.Write(0, x[0], x[1]);
+    TwoStreams s;
+    Run(rig, s, 49716);
+    const double ours = RmsRange(s.a, 44000, 4000), ymfm = RmsRange(s.b, 44000, 4000);
+    const double db = 20.0 * std::log10(ours / ymfm);
+    std::printf("  level after 1 s: ours %.0f ymfm %.0f (%+.2f dB)\n", ours, ymfm, db);
+    CHECK(std::fabs(db) < 1.0);
+}
+
 } // namespace
 
 void RunFmBackendCompareTests()
@@ -704,6 +854,10 @@ void RunFmBackendCompareTests()
     CompareFourOpDrumRetrigger();
     CompareLeadVoice();
     CompareDr0PadVoice();
+    CompareRetriggerKeepsLevel();
+    CompareRekeyAfterGapStartsFromLevel();
+    CompareSlowAttackTiming();
+    CompareNtsKsrDecay();
 }
 
 } // namespace opl4test

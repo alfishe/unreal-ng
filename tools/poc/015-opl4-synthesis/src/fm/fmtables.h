@@ -22,11 +22,14 @@ namespace opl4
 {
 
 // ---------------------------------------------------------------------------
-// FM attenuation domain (copy, pre-re-domain): same 10-bit 3/32 dB grid as
-// PCM today; step 5 moves this to the OPL3 domain. See the file comment.
+// FM attenuation domain: 10-bit 3/32 dB grid (TL << 3, SL << 5) with the
+// OPL3 96 dB ceiling (ymfm 0x3FF; Nuked's 9-bit 0x1FF at 3/16 dB). The PCM
+// half keeps its own -60 dB floor: FM carrying that floor attacked from
+// -60 dB (~20% early vs ymfm/Nuked) and silenced quiet modulators.
 // ---------------------------------------------------------------------------
-constexpr int kFmMaxAttIndex = 0x280;
+constexpr int kFmMaxAttIndex = 0x3FF;
 constexpr int kFmMinAttIndex = 0;
+
 
 // ---------------------------------------------------------------------------
 // Envelope rate machinery (copy of the PCM set, openMSX lineage).

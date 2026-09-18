@@ -41,11 +41,13 @@ constexpr size_t kTopStateSize = 92;
 // the ymfm verification backend, so sessions never cross builds. Version 4:
 // the guest-visible FM state (register shadow, timers, status, routing
 // source) moved into the FmBus chunk ahead of a synthesis-only engine chunk
-// (rearchitecture Step 2); [88..91] pins the engine layout tag.
+// (rearchitecture Step 2); [88..91] pins the engine layout tag. In-tree
+// version 5: FM operators carry the latched key bit (FmOperator::keyReq),
+// so older snapshots would key sounding notes off on load.
 #if defined(OPL4_FM_YMFM)
 constexpr uint32_t kStateVersion = 3;
 #else
-constexpr uint32_t kStateVersion = 4;
+constexpr uint32_t kStateVersion = 5;
 #endif
 constexpr uint64_t kStreamReserveFrames = 4410; // ~100 ms of chip audio
 

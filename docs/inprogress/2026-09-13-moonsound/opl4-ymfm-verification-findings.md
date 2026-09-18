@@ -228,6 +228,109 @@ all three engines. Open hardware question: the ZXM card's CPLD read
 pass-through is inferred (the enable logic does not appear to gate on read vs
 write; MoonService and openMSX both depend on it) but not traced end-to-end.
 
+### 2.6 MFM sample 4 / HAPERT "F13" — register stream clean (2026-09-18; verdict superseded by §2.7)
+
+Symptom: melody 1 (HAPERT, the boot tune of `mfm_sample_4.trd`) reported dirt
+on F13 — either hardware channel 13 or FM step 13 (hardware channel 2); both
+play the accordion (instrument 3: FB7-FM, modulator TL32 = 24 dB down, AR2
+slow attack) and the FB6-additive pluck (instrument 4) with one change each
+way. Operator maths was already ruled out (both instruments clean and periodic
+under libopl4 and ymfm for all 16 fbconn values except instrument 4 at FB7),
+leaving three register-stream suspects: bank-1 port routing for ch13, the
+unanswered #C7 read-back, and a mis-landed 0x104 pairing ch13 with ch10.
+
+The guest suite (`moonsound_mfm4_guest_test.cpp`, fixtures staged from the
+author's build tree — the TRD's raw-sector player and HAPERT.MFM are
+byte-identical to `moonsound.bin`/`HAPERT.MFM` there) settles all three on
+the fixed build: 0x104 is written exactly twice in the whole tune (init and
+cleanup, both 0 — zero 4-op chains), the #C6/#C7 bank-1 lanes deliver the
+authored bytes (ch13's register line is the quoted instrument 3 verbatim),
+and the pan-pass RMW preserves the feedback nibble (`3E→1E`/`3E→2E` at f14;
+pre-fix these collapsed to `0x0F|pan` = FB7 additive). Authored C0 restores
+land at every section change (f3138/f4489/f5826/f7177 — the predicted
+instrument-change restore), so the pre-fix corruption window on the F13
+voices was f3152..f4489 and the pluck bytes from f4489 were authored-clean
+even then.
+
+Verdict: **no reproducible dirt anywhere in HAPERT post-fix.** ch13 and ch2
+first sound together at f3152 (the F13 section entry) and measure tonal
+through attack and sustain (hf 0.10/0.33 and 0.09/0.09); the burst-aligned
+sweep finds all 18 channels tonal or silent; the whole ~3-minute tune walks
+clean under per-round mix metrics (dense-final-section hf 0.45-0.67 at
+zc ≤ 0.18 — bright tonal, vs the 1.4/0.5 white-noise band); the ymfm backend
+replays byte-identical register traffic (55294 writes, same KON frames); and
+the offline three-engine replay of the deep capture
+(`scratch/replay3way-mfm4-hapert.log`, stream
+`scratch/mfm4-hapert-capture-melody1-hapert-deep_50906.csv`) is tonal in all
+54 engine × channel combinations. Whatever the audible F13 dirt was, it lived
+on the pre-fix build.
+
+**Superseded (same day):** the register stream is clean, but the dirt was real
+and lived in the in-tree FM synthesis — see §2.7. The hf/zc noise metrics used
+here cannot see it (a click followed by a smooth fade reads "tonal"); only a
+per-channel waveform-shape comparison against ymfm/Nuked exposes it.
+
+### 2.7 FM key-on, envelope floor and NTS — the HAPERT F13 root cause (2026-09-18)
+
+Method: every captured MFM stream (`scratch/mfm{2,3,4}-*capture*.csv`, 7
+captures) replayed through in-tree, ymfm and Nuked with each FM channel
+soloed at register level (other channels' C0 output bits cleared), compared
+per 2-frame window by best normalised cross-correlation (lag ±8) and level
+ratio. A window counts as an in-tree divergence when in-tree ≁ ymfm while
+Nuked ~ ymfm (≥ 0.95). Three defects, all in `fm/fmsynthopl4.cpp`:
+
+1. **Key-on reset the envelope to silence** (`KeyOn`: `envVol = kFmMaxAttIndex`,
+   the PCM `KeyOnHelper` rule applied to FM — openMSX's own comment reads
+   "Unlike FM, the envelope level is reset"). OPL attack starts from the
+   CURRENT level (ymfm `start_attack`, Nuked); the operator **phase restarts**
+   (ymfm `m_phase = 0`, Nuked `pg_reset`), which the engine never did; and the
+   key is **sampled once per clock** (ymfm `clock_keystate`, Nuked's per-sample
+   key edge) — a KOFF/KON pair written between two clocks is no transition.
+   MoonBlaster re-keys every note as KOFF, A0, KON in one burst, so each note
+   dropped to 0 (click) and re-attacked from silence; HAPERT's accordion
+   (AR2/AR3) faded in over ~0.4 s on every one of its 64 notes. Fix:
+   `KeyOn` latches `FmOperator::keyReq`; `ClockKeyState` applies it at the
+   start of each `Advance` (phase reset, level kept, instant attack only at
+   rate ≥ 63). `keyReq` fills the padding byte after `ksl` (layout size
+   unchanged); in-tree `kStateVersion` 4 → 5.
+2. **FM envelope floor at −60 dB** — `kFmMaxAttIndex = 0x280` and the shared
+   PCM `VolFactor` −60 dB clip (the pending "step 5 re-domain" of
+   `fmtables.h`). The OPL3 ceiling is 96 dB (ymfm 0x3FF). Attacks started
+   20 dB up (AR1–9 reached −6 dB 17–20 % early vs ymfm; Nuked agrees with
+   ymfm to ≤ 5 %), releases/decays and SL15 stopped at 60 dB, and quiet
+   modulators (total attenuation past 60 dB) contributed no modulation. Fix:
+   `kFmMaxAttIndex = 0x3FF`; operator output through `FmVolFactor`, which
+   saturates at the 96 dB ceiling. PCM keeps its own −60 dB domain.
+3. **NTS read from bank 1** — `EgRate` read `_regs[0x108]`; NTS is bank-0
+   register 0x08 bit 6 (ymfm `note_select() = byte(0x08, 6, 1)`, Nuked
+   `nts` on the high == 0 path). Songs that set NTS (FOUNTAIN writes 0x08 =
+   0x40) ran every KSR envelope on the wrong keycode bit whenever F-number
+   bits 8 and 9 differ: +6 to +8 dB after 1 s on FOUNTAIN ch15's DR3 carrier.
+
+| Shape sweep, 39 442 audible windows | shape divergences | level > 1.4× / < 0.7× | level > 1.18× / < 0.85× | mean corr vs ymfm |
+|---|---|---|---|---|
+| before | 20 187 | 4 475 | 7 837 | 0.408 |
+| + key-on semantics | 5 | 348 | 940 | 0.9945 |
+| + 96 dB envelope domain | 3 | 334 | 914 | 0.9948 |
+| + NTS bank 0 | 2 | 5 | 16 | 0.9950 |
+
+The two remaining shape windows (HAPERT ch8 f2202/f2216) are an FB7 vibrato
+crossing an octave boundary every frame, where ymfm and Nuked also disagree
+in phase. Envelope timing per rate (AR/DR/RR 1–15, KSR 0/1, two keycodes)
+now matches ymfm everywhere except rate 1 with KSR 0, where in-tree agrees
+with Nuked (0.80 vs 0.77) and ymfm is the outlier.
+
+Fences (`tests/opl4fmcompare.cpp`, all four fail on the old engine):
+`CompareRetriggerKeepsLevel` (level after/before 1.02, shape 1.000 vs ymfm;
+old 0.036), `CompareRekeyAfterGapStartsFromLevel` (0.993× ymfm; old 0.002×),
+`CompareSlowAttackTiming` (AR2 1.000× ymfm; old 0.833×), `CompareNtsKsrDecay`
+(−0.01 dB; old +6.3 dB). Golden self-oracle regenerated: 25 FM/mix digests
+changed, no PCM-only digest; cosim-ymfm 6/6.
+
+Harness note: `scratch/replay3way.cpp` passes a single `int16_t` to
+`OPL3_Generate`, which writes a stereo pair — a stack overwrite in its Nuked
+lane. Treat earlier Nuked numbers from that tool with caution.
+
 ---
 
 ## 3. Findings in ymfm itself (quirks the harness accommodates)
@@ -384,7 +487,8 @@ untouched by FM-side changes).
 | ymfm-side quirks (§3.1–§3.10) | Accommodated in-tree; **none upstreamed** — they are accommodations, not fixes we own; the TTD purity pin (§3.8) is local-only by design | — |
 | Register rate 0 freeze (§2.4) | **RESOLVED 2026-09-17** — `EgRate`/`AdvanceEnvelope` freeze at rate 0 + NTS decode; three-engine co-sim agrees; `CompareDr0PadVoice` is the fence | Done — differential + co-sim replay stay the fence |
 | FM data-port read-back (§2.5) | **RESOLVED 2026-09-18** — #C5/#C7 read claims returning the `FmBus` shadow (`Opl4::ReadFm`); module-5/7 and the mfm2 hiss melodies render tonal, three-engine replay of the corrected stream agrees; `FmPorts_DataReadbackReturnsRegisterFile` is the fence | Done — device fence + guest reruns stay |
-| Nuked ch2/4/5 near-silent on the JAMMED2 stream (tree ≈ ymfm loud) | Observed 2026-09-17 in `scratch/replay3way` — pre-existing, unrelated to §2.4; tree/ymfm agreement is the conformance standard | Nuked-side investigation if it recurs |
+| MFM sample 4 / HAPERT "F13" (§2.6, §2.7) | **RESOLVED 2026-09-18** — root cause in-tree FM synthesis (§2.7: key-on envelope reset / no phase reset / unclocked key, −60 dB FM floor, NTS bank); register stream itself clean: 0x104 always 0, bank-1 lanes authored, pan RMW preserves fbconn; both F13 candidates tonal on their own note-ons (first KON f3152), whole tune clean on both backends + three-engine replay; pre-fix corruption window was f3152..f4489 | Done — `MoonSoundMfm4Guest_Test.*` stays (battery + DeepScan) |
+| Nuked ch2/4/5 near-silent on the JAMMED2 stream (tree ≈ ymfm loud) | Observed 2026-09-17 in `scratch/replay3way` — possibly that tool's `OPL3_Generate` stack overwrite (§2.7 harness note); not yet re-measured with a correct buffer | Re-check with a fixed harness |
 
 ---
 
