@@ -7,7 +7,7 @@
 #include <iostream>
 
 #include "3rdparty/message-center/messagecenter.h"
-#include "3rdparty/simpleini/simpleini.h"
+#include "common/inifile.h"
 #include "common/modulelogger.h"
 #include "common/filehelper.h"
 #include "debugger/ttd/timetravelmanager.h"
@@ -359,9 +359,8 @@ void FeatureManager::loadFromFile(const std::string& path)
         return;
     }
 
-    CSimpleIniA ini;
-    ini.SetUnicode(true);
-    if (ini.LoadFile(path.c_str()) < 0)
+    IniFile ini;
+    if (!ini.LoadFile(path))
     {
         std::cerr << "Failed to load " << path << std::endl;
         return;
@@ -371,17 +370,15 @@ void FeatureManager::loadFromFile(const std::string& path)
         std::lock_guard<std::recursive_mutex> lock(_mutex);
 
         // Traverse all sections (feature ids) in the file
-        auto sections = std::list<CSimpleIniA::Entry>{};
-        ini.GetAllSections(sections);
-        for (const auto& entry : sections)
+        const std::vector<std::string> sections = ini.GetAllSections();
+        for (const std::string& section : sections)
         {
-            const char* section = entry.pItem;
             auto it = _features.find(section);
             if (it == _features.end())
                 continue;  // Only override registered features
             FeatureInfo& f = it->second;
 
-            const char* state = ini.GetValue(section, "state", nullptr);
+            const char* state = ini.GetValue(section.c_str(), "state", nullptr);
             if (state)
             {
                 std::string s = state;
@@ -389,7 +386,7 @@ void FeatureManager::loadFromFile(const std::string& path)
                 f.enabled = (s == Features::kStateOn || s == "true" || s == "1");
             }
 
-            const char* mode = ini.GetValue(section, "mode", nullptr);
+            const char* mode = ini.GetValue(section.c_str(), "mode", nullptr);
             if (mode)
             {
                 f.mode = mode;
@@ -408,8 +405,7 @@ void FeatureManager::loadFromFile(const std::string& path)
 /// @param path Path where to save the features.ini file
 void FeatureManager::saveToFile(const std::string& path) const
 {
-    CSimpleIniA ini;
-    ini.SetUnicode(true);
+    IniFile ini;
 
     {
         std::lock_guard<std::recursive_mutex> lock(_mutex);
@@ -422,7 +418,7 @@ void FeatureManager::saveToFile(const std::string& path) const
         _dirty = false;
     }
 
-    if (ini.SaveFile(path.c_str()) < 0)
+    if (!ini.SaveFile(path))
     {
         std::cerr << "Failed to save " << path << std::endl;
     }

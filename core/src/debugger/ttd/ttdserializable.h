@@ -49,7 +49,8 @@ enum class PeripheralId : uint8_t
     GeneralSound = 5,
     ScorpionProfROM = 6,  // Scorpion ZS 256/1024 ProfROM state machine
     KempstonMouse = 7,    // Kempston Mouse counters/buttons/wheel (core device, every model)
-    MoonSound  = 8,       // ZXM-MoonSound (YMF278B / OPL4): Tier A chip + host latches
+    AtmPaging = 8,        // ATM Turbo 2+ / ATM3 / ZX-Evo BaseConf memory map
+    MoonSound  = 9,       // ZXM-MoonSound (YMF278B / OPL4): Tier A chip + host latches
     // Future: SAA1099, GS512, etc.
     Count
 };

@@ -551,3 +551,51 @@
         "Emulator instance not found";
     paths["/api/v1/emulator/{id}/ttd/reverse-continue"]["post"]["responses"]["501"]["description"] =
         "TTD engine not available in this build";
+
+    // =====================================================================
+    // GET /ttd/coverage/probe — probe address range containment for a frame
+    // =====================================================================
+    paths["/api/v1/emulator/{id}/ttd/coverage/probe"]["get"]["summary"] =
+        "Probe coverage for a single frame (TD-7 §3.1.1)";
+    paths["/api/v1/emulator/{id}/ttd/coverage/probe"]["get"]["tags"].append("Time-Travel Debug");
+    paths["/api/v1/emulator/{id}/ttd/coverage/probe"]["get"]["description"] =
+        "Boolean point query checking if a specified frame touched an address range. Frames outside the "
+        "index covered range report index_available=false (touched=false). Returns 400 when 'frame' is "
+        "missing, 'kind' is not executed/written/read, addr_from exceeds addr_to, or values are malformed.";
+    paths["/api/v1/emulator/{id}/ttd/coverage/probe"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/ttd/coverage/probe"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/ttd/coverage/probe"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/coverage/probe"]["get"]["parameters"][1]["name"] = "frame";
+    paths["/api/v1/emulator/{id}/ttd/coverage/probe"]["get"]["parameters"][1]["in"] = "query";
+    paths["/api/v1/emulator/{id}/ttd/coverage/probe"]["get"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/coverage/probe"]["get"]["parameters"][1]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/ttd/coverage/probe"]["get"]["parameters"][1]["description"] =
+        "Frame number to probe (emulator-absolute frame index)";
+
+    // =====================================================================
+    // GET /ttd/coverage/scan — scan matching frames for address range
+    // =====================================================================
+    paths["/api/v1/emulator/{id}/ttd/coverage/scan"]["get"]["summary"] =
+        "Scan frames touching address range (TD-7 §3.1.2)";
+    paths["/api/v1/emulator/{id}/ttd/coverage/scan"]["get"]["tags"].append("Time-Travel Debug");
+    paths["/api/v1/emulator/{id}/ttd/coverage/scan"]["get"]["description"] =
+        "Multi-frame range scan returning frame numbers touching a given address range. The request window "
+        "is clamped to the index covered range, echoed as covered_from/covered_to. Returns 400 when "
+        "'kind' is not executed/written/read, addr_from exceeds addr_to, or values are malformed.";
+    paths["/api/v1/emulator/{id}/ttd/coverage/scan"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/ttd/coverage/scan"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/ttd/coverage/scan"]["get"]["parameters"][0]["required"] = true;
+
+    // =====================================================================
+    // GET /ttd/coverage/summary — activity heatmap across frame intervals
+    // =====================================================================
+    paths["/api/v1/emulator/{id}/ttd/coverage/summary"]["get"]["summary"] =
+        "Activity heatmap over frame intervals (TD-7 §3.1.3)";
+    paths["/api/v1/emulator/{id}/ttd/coverage/summary"]["get"]["tags"].append("Time-Travel Debug");
+    paths["/api/v1/emulator/{id}/ttd/coverage/summary"]["get"]["description"] =
+        "Aggregated activity heatmap reporting distinct address counts per frame bucket. When the index "
+        "is available the covered window is echoed as covered_from/covered_to. Returns 400 when 'kind' "
+        "is not executed/written/read or values are malformed.";
+    paths["/api/v1/emulator/{id}/ttd/coverage/summary"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/ttd/coverage/summary"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/ttd/coverage/summary"]["get"]["parameters"][0]["required"] = true;

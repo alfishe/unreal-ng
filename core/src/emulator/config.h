@@ -1,7 +1,7 @@
 #pragma once
 #include "stdafx.h"
 
-#include "3rdparty/simpleini/simpleini.h"
+#include "common/inifile.h"
 #include "emulator/emulatorcontext.h"
 #include <string>
 
@@ -61,6 +61,7 @@ private:
 		{ "Quorum", "QUORUM",                    MM_QUORUM, 1024, RAM_128 | RAM_1024 },
 		{ "Orel' BK-08 (LSY)", "LSY256",         MM_LSY256, 256, RAM_256 },
 		{ "ZXM-Phoenix v1.0", "PHOENIX",         MM_PHOENIX, 1024, RAM_1024 | RAM_2048 },
+		{ "ZX Spectrum Next", "NEXT",            MM_NEXT, 2048, RAM_2048 },
 	};
 
 protected:
@@ -86,7 +87,7 @@ public:
 
 	/// Load a config from an explicit .ini file path (custom config override)
 	[[nodiscard]] bool LoadConfigFile(const std::string& filename);
-	[[nodiscard]] bool ParseConfig(CSimpleIniA& inimanager);
+	[[nodiscard]] bool ParseConfig(IniFile& inimanager);
 
 	[[nodiscard]] bool DetermineModel(const char* model, uint32_t ramsize);
 

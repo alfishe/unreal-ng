@@ -14,6 +14,8 @@
 #include "emulator/io/mouse/mouse.h"
 #include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/notifications.h"
+#include "emulator/ports/models/portdecoder_atm3.h"
+#include "emulator/ports/models/portdecoder_atm710.h"
 #include "emulator/ports/models/portdecoder_pentagon128.h"
 #include "emulator/ports/models/portdecoder_pentagon512.h"
 #include "emulator/ports/models/portdecoder_pentagon1024.h"
@@ -113,6 +115,12 @@ PortDecoder* PortDecoder::GetPortDecoderForModel(MEM_MODEL model, EmulatorContex
             // mem_model == MM_PROFSCORP for the #7EFD window latch arm
             result = new PortDecoder_Scorpion256(context);
             break;
+        case MM_ATM710:
+            result = new PortDecoder_ATM710(context);
+            break;
+        case MM_ATM3:
+            result = new PortDecoder_ATM3(context);
+            break;
         default:
             // Static method - no _logger member, so MLOGERROR is not available here.
             // Route through the context's module logger with the same gating.
@@ -175,7 +183,7 @@ uint8_t PortDecoder::DecodePortIn(uint16_t addr, [[maybe_unused]] uint16_t pc)
     result = PeripheralPortIn(addr);
 
     // Track port read access
-    if (_memory && _memory->_memoryAccessTracker)
+    if (_memory && _memory->_memoryAccessTracker && _context->pCore && _context->pCore->GetZ80())
     {
         uint16_t callerAddress = _context->pCore->GetZ80()->m1_pc;
         _memory->_memoryAccessTracker->TrackPortRead(addr, result, callerAddress);
@@ -227,11 +235,10 @@ void PortDecoder::OnPortInComplete(uint16_t port, uint8_t result, [[maybe_unused
         }
     }
 
-    // 2. Port access tracking
+    // 2. Port access tracking (caller PC is provided by the CPU: m1_pc of the IN instruction)
     if (_memory && _memory->_memoryAccessTracker)
     {
-        uint16_t callerAddress = _context->pCore->GetZ80()->m1_pc;
-        _memory->_memoryAccessTracker->TrackPortRead(port, result, callerAddress);
+        _memory->_memoryAccessTracker->TrackPortRead(port, result, pc);
     }
 
     // 3. Port trace capture (runtime feature "porttrace"; single cached-bool test when off)
@@ -279,7 +286,7 @@ void PortDecoder::DecodePortOut(uint16_t addr, [[maybe_unused]] uint8_t value, [
     PeripheralPortOut(addr, value);
 
     // Track port write access
-    if (_memory && _memory->_memoryAccessTracker)
+    if (_memory && _memory->_memoryAccessTracker && _context->pCore && _context->pCore->GetZ80())
     {
         uint16_t callerAddress = _context->pCore->GetZ80()->m1_pc;
         _memory->_memoryAccessTracker->TrackPortWrite(addr, value, callerAddress);
@@ -326,11 +333,10 @@ void PortDecoder::OnPortOutComplete(uint16_t port, uint8_t value, [[maybe_unused
         }
     }
 
-    // 2. Port access tracking
+    // 2. Port access tracking (caller PC is provided by the CPU: m1_pc of the OUT instruction)
     if (_memory && _memory->_memoryAccessTracker)
     {
-        uint16_t callerAddress = _context->pCore->GetZ80()->m1_pc;
-        _memory->_memoryAccessTracker->TrackPortWrite(port, value, callerAddress);
+        _memory->_memoryAccessTracker->TrackPortWrite(port, value, pc);
     }
 
     // 3. Phase 4 — IO write journal (TDD §9.3) + access probe (§9.2).

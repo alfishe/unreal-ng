@@ -801,6 +801,10 @@ enum AY_SCHEME
 #define FF77_ZX         0x03
 #define FF77_TX         0x06
 #define FF77_TL         0x07
+// ATM3 (ZX-Evo BaseConf) video decode is hierarchical: FF77 bits 2..0 select
+// the mode family, and only FF77 = 3 consults the EFF7 z-bits (z0 = EFF7.0
+// -> 16-color 256x192, z5 = EFF7.5 -> hardware multicolor). See
+// Screen::DetectModeATM3 and the BaseConf FPGA video_modedecode.v
 
 // ���� ����� 00 ��� �������
 static const uint8_t Q_F_RAM = 0x01;
@@ -936,6 +940,42 @@ struct EmulatorState
 	uint8_t aFE, aFB; // ATM 4.50 system ports
 	unsigned pFFF7[8]; // ATM 7.10 / ATM3(4Mb) memory map
 	// |7ffd|rom|b7b6|b5..b0| b7b6 = 0 for atm2
+	bool atmMemSwapped; // ATM A5-A7 <-> A8-A10 swap flag (vestigial: the swap is not emulated - reference gates it behind the default-off AtmMemSwap ini; kept for the TTD paging blob)
+
+	/// region <ATM Turbo 2+ / ZX-Evo BaseConf video state>
+	// 16-cell programmable palette RAM behind port #FF (both machines). Cell
+	// pointer = the 4-bit border color (border_attr + the FE bright bit), the
+	// write gate = A14 of the last #xx77 write (aFF77 & 0x4000, "pen2").
+	// atmPalette carries the ABGR cell colors (same packing as the ULA
+	// _rgbaColors tables); atmPaletteRegs keeps the raw written byte for the
+	// ATM3 #BE.0D readback. atmBorderBright is the 4th border bit latched from
+	// A3 of every #FE port write (A3 = 0 -> bright border).
+	uint32_t atmPalette[16];
+	uint8_t atmPaletteRegs[16];
+	uint8_t atmBorderBright;
+
+	/// Seed the palette with the standard 16 ZX colors - what the machine
+	/// shows until software overrides cells through #FF (xpeccy vid_reset()
+	/// / zx_set_pal() copy the preset into the live palette the same way at
+	/// every reset). Values mirror ScreenZX's TransformZXSpectrumColorsToRGBA
+	/// tables (ABGR: 0xFF << 24 | B << 16 | G << 8 | R).
+	void InitAtmPalette()
+	{
+		static const uint32_t ZXPAL[16] = {
+			// Brightness = 0
+			0xFF000000, 0xFFC72200, 0xFF1628D6, 0xFFC733D4,
+			0xFF25C500, 0xFFC9C700, 0xFF2AC8CC, 0xFFCACACA,
+			// Brightness = 1
+			0xFF000000, 0xFFFB2B00, 0xFF1C33FF, 0xFFFC40FF,
+			0xFF2FF900, 0xFFFEFB00, 0xFF36FCFF, 0xFFFFFFFF};
+		for (int i = 0; i < 16; i++)
+		{
+			atmPalette[i] = ZXPAL[i];
+			atmPaletteRegs[i] = 0x00;
+		}
+		atmBorderBright = 0;
+	}
+	/// endregion </ATM Turbo 2+ / ZX-Evo BaseConf video state>
 
 	uint8_t wd_shadow[4]; // 2F, 4F, 6F, 8F
 

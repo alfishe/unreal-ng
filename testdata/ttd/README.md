@@ -91,3 +91,11 @@ state 168 → 120 bytes, `rom_signature` in the header, the fixed per-device blo
 slots replaced by the `TTDPeripheralRegistry` blob map). All four parse and
 carry `cpu_state_size = 48`, `chipset_state_size = 120`, and the four core
 device blobs (TurboSound / BetaDisk / Tape / Covox) through the registry.
+
+Still valid after the 2026-09-12 CPU-clock amendment (`hw_turbo_shift`,
+`hw_turbo_shift_applied` and the two frequency multipliers). Those four bytes
+were taken out of `TTDChipsetState::reserved`, so both struct sizes and
+`schema_version` are unchanged and the fixtures parse as before — they simply
+carry zeros there, which the restore path reads as "no turbo, multiplier 1".
+Re-record only when a change moves a size or the schema version; this one did
+neither.

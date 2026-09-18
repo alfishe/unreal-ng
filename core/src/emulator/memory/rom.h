@@ -53,6 +53,8 @@ public:
     std::string GetROMFilename();
 	[[nodiscard]] bool LoadROM();
 
+    [[nodiscard]] uint8_t GetROMBanksLoaded() const { return _ROMBanksLoaded; }  // Number of 16KiB ROM pages actually loaded
+
 	[[nodiscard]] bool LoadROMSet();
 	[[nodiscard]] uint16_t LoadROM(string& path, uint8_t* bank, uint16_t max_banks = 1);
 

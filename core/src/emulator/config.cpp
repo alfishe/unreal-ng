@@ -14,11 +14,6 @@
 #include <array>
 #include <algorithm>
 
-#ifdef __linux__
-	// Use ICU library for path conversion in SimpleINI parser
-	#define SI_CONVERT_ICU
-#endif
-
 Config::Config(EmulatorContext* context)
 {
 	_context = context;
@@ -162,21 +157,17 @@ bool Config::LoadConfigFile(const std::string& filename)
 
 	_configFilePath = filename;
 
-	// Use SimpleINI config file manager
-	CSimpleIniA inimanager;
-	inimanager.SetUnicode();
-
-	// Load and parse config file (internally within SimpleINI)
-	SI_Error rc = inimanager.LoadFile(_configFilePath.c_str());
-	if (rc == SI_OK)
+	// Load and parse config file
+	IniFile inimanager;
+	if (inimanager.LoadFile(_configFilePath))
 	{
-		MLOGDEBUG("Config::LoadConfigFile - config '%s' successfully loaded to SimpleINI parser", FileHelper::PrintablePath(_configFilePath).c_str());	// FileHelper::PrintablePath is mandatory since Logger works only with 'string' type and formatters
+		MLOGDEBUG("Config::LoadConfigFile - config '%s' successfully loaded to INI parser", FileHelper::PrintablePath(_configFilePath).c_str());	// FileHelper::PrintablePath is mandatory since Logger works only with 'string' type and formatters
 
 		result = true;
 	}
 	else
 	{
-        MLOGDEBUG("Config::LoadConfigFile - error during loading config '%s' by SimpleINI", FileHelper::PrintablePath(_configFilePath).c_str());	// FileHelper::PrintablePath is mandatory since Logger works only with 'string' type and formatters
+        MLOGDEBUG("Config::LoadConfigFile - error during loading config '%s'", FileHelper::PrintablePath(_configFilePath).c_str());	// FileHelper::PrintablePath is mandatory since Logger works only with 'string' type and formatters
 	}
 
 	// Populate configuration fields from config file data
@@ -185,7 +176,7 @@ bool Config::LoadConfigFile(const std::string& filename)
 	return result;
 }
 
-bool Config::ParseConfig(CSimpleIniA& inimanager)
+bool Config::ParseConfig(IniFile& inimanager)
 {
 	bool result = false;
 
@@ -195,7 +186,7 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 
 	// Global settings
 	char configVersion[50];
-	CopyStringValue(inimanager.GetValue("*", "UNREAL", nullptr, nullptr), configVersion, sizeof configVersion);	// Section with name "*" corresponds to global .ini file values (no group)
+	CopyStringValue(inimanager.GetValue("*", "UNREAL", nullptr), configVersion, sizeof configVersion);	// Section with name "*" corresponds to global .ini file values (no group)
 
 	// MISC section
 	config.ConfirmExit = (uint8_t)inimanager.GetLongValue(misc, "ConfirmExit", 0);
@@ -221,7 +212,7 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 	};
 
 	config.reset_rom = RM_SOS;
-	CopyStringValue(inimanager.GetValue(misc, "RESET", nullptr, nullptr), line, sizeof line); // What ROM bank to set active during reset
+	CopyStringValue(inimanager.GetValue(misc, "RESET", nullptr), line, sizeof line); // What ROM bank to set active during reset
 	for (const auto& mapping : resetMappings)
 	{
 		if (StringHelper::CompareCaseInsensitive(line, mapping.name, strlen(mapping.name)) == 0)
@@ -254,25 +245,25 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
     }
 
     // Populate rom files for each platform
-    CopyStringValue(inimanager.GetValue(rom, "PENTAGON", nullptr, nullptr), config.pent_rom_path, sizeof config.pent_rom_path);
-    CopyStringValue(inimanager.GetValue(rom, "48k", nullptr, nullptr), config.zx48_rom_path, sizeof config.zx48_rom_path);
-    CopyStringValue(inimanager.GetValue(rom, "128k", nullptr, nullptr), config.zx128_rom_path, sizeof config.zx128_rom_path);
-    CopyStringValue(inimanager.GetValue(rom, "PLUS3", nullptr, nullptr), config.plus3_rom_path, sizeof config.plus3_rom_path);
-    CopyStringValue(inimanager.GetValue(rom, "ATM1", nullptr, nullptr), config.atm1_rom_path, sizeof config.atm1_rom_path);
-    CopyStringValue(inimanager.GetValue(rom, "ATM2", nullptr, nullptr), config.atm2_rom_path, sizeof config.atm2_rom_path);
-    CopyStringValue(inimanager.GetValue(rom, "ATM3", nullptr, nullptr), config.atm3_rom_path, sizeof config.atm3_rom_path);
-    CopyStringValue(inimanager.GetValue(rom, "SCORP", nullptr, nullptr), config.scorp_rom_path, sizeof config.scorp_rom_path);
-    CopyStringValue(inimanager.GetValue(rom, "PROFROM", nullptr, nullptr), config.prof_rom_path, sizeof config.prof_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "PENTAGON", nullptr), config.pent_rom_path, sizeof config.pent_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "48k", nullptr), config.zx48_rom_path, sizeof config.zx48_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "128k", nullptr), config.zx128_rom_path, sizeof config.zx128_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "PLUS3", nullptr), config.plus3_rom_path, sizeof config.plus3_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "ATM1", nullptr), config.atm1_rom_path, sizeof config.atm1_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "ATM2", nullptr), config.atm2_rom_path, sizeof config.atm2_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "ATM3", nullptr), config.atm3_rom_path, sizeof config.atm3_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "SCORP", nullptr), config.scorp_rom_path, sizeof config.scorp_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "PROFROM", nullptr), config.prof_rom_path, sizeof config.prof_rom_path);
     // The shipped spectrum3 unreal.ini carries "rom\\scorp_prof401.ROM:0" - without
     // stripping, the ":0" leaks into the path and the ROM file lookup fails
     StripProfRomQuadrantSuffix(config.prof_rom_path, sizeof config.prof_rom_path);
-    CopyStringValue(inimanager.GetValue(rom, "GMX", nullptr, nullptr), config.gmx_rom_path, sizeof config.gmx_rom_path);
-    CopyStringValue(inimanager.GetValue(rom, "PROFI", nullptr, nullptr), config.profi_rom_path, sizeof config.profi_rom_path);
-    CopyStringValue(inimanager.GetValue(rom, "KAY", nullptr, nullptr), config.kay_rom_path, sizeof config.kay_rom_path);
-    CopyStringValue(inimanager.GetValue(rom, "QUORUM", nullptr, nullptr), config.quorum_rom_path, sizeof config.quorum_rom_path);
-    CopyStringValue(inimanager.GetValue(rom, "TSL", nullptr, nullptr), config.tsl_rom_path, sizeof config.tsl_rom_path);
-    CopyStringValue(inimanager.GetValue(rom, "LSY", nullptr, nullptr), config.lsy_rom_path, sizeof config.lsy_rom_path);
-    CopyStringValue(inimanager.GetValue(rom, "PHOENIX", nullptr, nullptr), config.phoenix_rom_path, sizeof config.phoenix_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "GMX", nullptr), config.gmx_rom_path, sizeof config.gmx_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "PROFI", nullptr), config.profi_rom_path, sizeof config.profi_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "KAY", nullptr), config.kay_rom_path, sizeof config.kay_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "QUORUM", nullptr), config.quorum_rom_path, sizeof config.quorum_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "TSL", nullptr), config.tsl_rom_path, sizeof config.tsl_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "LSY", nullptr), config.lsy_rom_path, sizeof config.lsy_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "PHOENIX", nullptr), config.phoenix_rom_path, sizeof config.phoenix_rom_path);
 
 	// ULA section (video signal timings)
 	config.intfq = (uint8_t)inimanager.GetLongValue(ula, "int", 50);
@@ -308,13 +299,13 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 	if (config.trdos_interleave > 2)
 		config.trdos_interleave = 0;
 	config.fdd_noise = inimanager.GetLongValue(beta128, "Noise", 0) ? true : false;
-	CopyStringValue(inimanager.GetValue(beta128, "BOOT", nullptr, nullptr), config.appendboot, sizeof config.appendboot);
+	CopyStringValue(inimanager.GetValue(beta128, "BOOT", nullptr), config.appendboot, sizeof config.appendboot);
 
 	// INPUT section - Kempston Mouse (design §7). Legacy Unreal Speccy keys:
 	//   Mouse=NONE|KEMPSTON|AY   Wheel=NONE|KEMPSTON|KEYBOARD   SwapMouse=0|1   MouseScale=-3..3
 	{
 		line[0] = '\0';
-		CopyStringValue(inimanager.GetValue(input, "Mouse", nullptr, nullptr), line, sizeof line);
+		CopyStringValue(inimanager.GetValue(input, "Mouse", nullptr), line, sizeof line);
 		config.input.mouseConfigured = line[0] != '\0';
 		config.input.mouse = MOUSE_TYPE_KEMPSTON;
 		if (StringHelper::CompareCaseInsensitive(line, "NONE", strlen("NONE")) == 0)
@@ -328,7 +319,7 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 			MLOGWARNING("Config: unsupported [INPUT] Mouse='%s', using KEMPSTON", line);
 
 		line[0] = '\0';
-		CopyStringValue(inimanager.GetValue(input, "Wheel", nullptr, nullptr), line, sizeof line);
+		CopyStringValue(inimanager.GetValue(input, "Wheel", nullptr), line, sizeof line);
 		config.input.mousewheel = MOUSE_WHEEL_NONE;
 		if (StringHelper::CompareCaseInsensitive(line, "KEMPSTON", strlen("KEMPSTON")) == 0)
 			config.input.mousewheel = MOUSE_WHEEL_KEMPSTON;
@@ -434,7 +425,7 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 		// struct holds FM from a previous parse of another file.
 		config.sound.turboSoundKind = TurboSoundKind::AY;
 		line[0] = '\0';
-		CopyStringValue(inimanager.GetValue(sound, "TurboSound", nullptr, nullptr), line, sizeof line);
+		CopyStringValue(inimanager.GetValue(sound, "TurboSound", nullptr), line, sizeof line);
 		if (StringHelper::CompareCaseInsensitive(line, "AY", strlen("AY")) == 0)
 		{
 			config.sound.turboSoundKind = TurboSoundKind::AY;
@@ -462,8 +453,8 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 	}
 
 	// Emulated model
-	CopyStringValue(inimanager.GetValue(misc, "HIMEM", "PENTAGON", nullptr), line, sizeof line);
-	config.ramsize = inimanager.GetLongValue(misc, "RamSize", 128, nullptr);
+	CopyStringValue(inimanager.GetValue(misc, "HIMEM", "PENTAGON"), line, sizeof line);
+	config.ramsize = inimanager.GetLongValue(misc, "RamSize", 128);
 	
 	// Make sure we're emulating valid model & configuration
 	if (DetermineModel(line, config.ramsize))

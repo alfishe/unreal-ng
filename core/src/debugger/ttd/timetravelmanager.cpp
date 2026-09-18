@@ -14,6 +14,7 @@
 #include <cstring>
 #include <iostream>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "ttdcheckpoint.h"
 #include "ttddirtytracker.h"
@@ -4516,6 +4517,240 @@ const TTDFrameCache* TimeTravelManager::GetFrameCache(uint64_t frame)
     }
 
     return _frameCache.get();
+}
+
+TTDCoverageProbeResult TimeTravelManager::QueryCoverageProbe(
+    uint64_t frame,
+    TTDCoverageKind kind,
+    uint16_t addrFrom,
+    uint16_t addrTo,
+    std::optional<uint8_t> physPage) const
+{
+    TTDCoverageProbeResult result;
+    result.frame = frame;
+    result.kind = kind;
+    result.addrFrom = addrFrom;
+    result.addrTo = addrTo;
+    result.physPage = physPage;
+    result.touched = false;
+
+    // Per-frame availability. FrameMayContain is a conservative pruning primitive (it answers
+    // "true" whenever it cannot prove absence), so an exact probe must first confirm the frame
+    // is inside [firstCovered, lastCovered]. Frames outside the covered range report
+    // indexAvailable=false instead of a false-positive "touched".
+    result.indexAvailable = _coverageIndex.CoversFrame(kind, frame);
+    if (!result.indexAvailable)
+    {
+        return result;
+    }
+
+    uint16_t offsetLow = addrFrom & 0x3FFF;
+    uint16_t offsetHigh = addrTo & 0x3FFF;
+    if (addrTo < addrFrom || (addrTo - addrFrom) >= 0x3FFF || offsetLow > offsetHigh)
+    {
+        offsetLow = 0;
+        offsetHigh = 0x3FFF;
+    }
+
+    const bool hasPage = physPage.has_value();
+    const uint8_t page = hasPage ? *physPage : 0;
+
+    result.touched = _coverageIndex.FrameMayContain(kind, frame, offsetLow, offsetHigh, hasPage, page);
+    return result;
+}
+
+TTDCoverageScanResult TimeTravelManager::QueryCoverageScan(
+    uint64_t fromFrame,
+    uint64_t toFrame,
+    TTDCoverageKind kind,
+    uint16_t addrFrom,
+    uint16_t addrTo,
+    std::optional<uint8_t> physPage,
+    size_t limit) const
+{
+    TTDCoverageScanResult result;
+    result.kind = kind;
+    result.addrFrom = addrFrom;
+    result.addrTo = addrTo;
+    result.physPage = physPage;
+
+    result.indexAvailable = (_coverageIndex.SealedFrameCount(kind) > 0);
+    if (!result.indexAvailable)
+    {
+        return result;
+    }
+
+    limit = std::clamp(limit, size_t{1}, size_t{1000});
+
+    uint64_t firstCovered = 0, lastCovered = 0;
+    if (!_coverageIndex.CoveredRange(kind, firstCovered, lastCovered))
+    {
+        return result;
+    }
+    result.coveredFrom = firstCovered;
+    result.coveredTo = lastCovered;
+
+    uint64_t startFrame = std::max(fromFrame, firstCovered);
+    uint64_t endFrame = std::min(toFrame, lastCovered);
+    if (startFrame > endFrame)
+    {
+        return result;
+    }
+
+    uint16_t offsetLow = addrFrom & 0x3FFF;
+    uint16_t offsetHigh = addrTo & 0x3FFF;
+    if (addrTo < addrFrom || (addrTo - addrFrom) >= 0x3FFF || offsetLow > offsetHigh)
+    {
+        offsetLow = 0;
+        offsetHigh = 0x3FFF;
+    }
+
+    const bool hasPage = physPage.has_value();
+    const uint8_t page = hasPage ? *physPage : 0;
+
+    for (uint64_t f = startFrame; f <= endFrame; ++f)
+    {
+        result.scannedFrames++;
+        if (_coverageIndex.FrameMayContain(kind, f, offsetLow, offsetHigh, hasPage, page))
+        {
+            result.matchingFrames++;
+            if (result.frames.size() < limit)
+            {
+                if (result.frames.empty())
+                {
+                    result.firstMatch = f;
+                }
+                result.lastMatch = f;
+                result.frames.push_back(f);
+            }
+            else
+            {
+                result.truncated = true;
+            }
+        }
+    }
+
+    return result;
+}
+
+TTDCoverageSummaryResult TimeTravelManager::QueryCoverageSummary(
+    uint64_t fromFrame,
+    uint64_t toFrame,
+    std::optional<TTDCoverageKind> kind,
+    uint64_t bucketSize,
+    size_t limit) const
+{
+    TTDCoverageSummaryResult result;
+    result.fromFrame = fromFrame;
+    result.toFrame = toFrame;
+
+    result.indexAvailable = (_coverageIndex.SealedFrameCount(TTDCoverageKind::Executed) > 0 ||
+                             _coverageIndex.SealedFrameCount(TTDCoverageKind::Written) > 0 ||
+                             _coverageIndex.SealedFrameCount(TTDCoverageKind::Read) > 0);
+    if (!result.indexAvailable)
+    {
+        return result;
+    }
+
+    // Echo the covered window (union across all covered kinds) so callers can see
+    // how the requested range relates to what the index actually covers.
+    for (int k = 0; k < 3; ++k)
+    {
+        const TTDCoverageKind coveredKind = static_cast<TTDCoverageKind>(k);
+        uint64_t firstCovered = 0, lastCovered = 0;
+        if (_coverageIndex.CoveredRange(coveredKind, firstCovered, lastCovered))
+        {
+            result.coveredFrom = (result.coveredFrom == 0) ? firstCovered : std::min(result.coveredFrom, firstCovered);
+            result.coveredTo = std::max(result.coveredTo, lastCovered);
+        }
+    }
+
+    limit = std::clamp(limit, size_t{1}, size_t{500});
+    if (toFrame < fromFrame)
+    {
+        toFrame = fromFrame;
+    }
+
+    const uint64_t totalFrames = toFrame - fromFrame + 1;
+    if (bucketSize == 0)
+    {
+        bucketSize = (totalFrames + limit - 1) / limit;
+        if (bucketSize == 0) bucketSize = 1;
+    }
+
+    result.bucketSize = bucketSize;
+    const size_t bucketCount = static_cast<size_t>((totalFrames + bucketSize - 1) / bucketSize);
+    result.bucketCount = std::min(bucketCount, limit);
+
+    std::vector<TTDCoverageKey> keysScratch;
+    std::unordered_set<TTDCoverageKey> distinctExec;
+    std::unordered_set<TTDCoverageKey> distinctWrite;
+    std::unordered_set<TTDCoverageKey> distinctRead;
+
+    for (size_t b = 0; b < result.bucketCount; ++b)
+    {
+        TTDCoverageSummaryBucket bucket;
+        bucket.frameStart = fromFrame + b * bucketSize;
+        bucket.frameEnd = std::min(bucket.frameStart + bucketSize - 1, toFrame);
+
+        bucket.hasKeyframe = false;
+        auto it = std::lower_bound(_timeline.begin(), _timeline.end(), bucket.frameStart,
+            [](const TTDCheckpoint& cp, uint64_t frame) {
+                return cp.time.frame < frame;
+            });
+        while (it != _timeline.end() && it->time.frame <= bucket.frameEnd)
+        {
+            if (it->frameKind == TTDFrameKind::KeyFrame)
+            {
+                bucket.hasKeyframe = true;
+                break;
+            }
+            ++it;
+        }
+
+        if (!kind || *kind == TTDCoverageKind::Executed)
+        {
+            distinctExec.clear();
+            for (uint64_t f = bucket.frameStart; f <= bucket.frameEnd; ++f)
+            {
+                if (_coverageIndex.GetFrameKeys(TTDCoverageKind::Executed, f, keysScratch))
+                {
+                    distinctExec.insert(keysScratch.begin(), keysScratch.end());
+                }
+            }
+            bucket.executedDistinct = static_cast<uint32_t>(distinctExec.size());
+        }
+
+        if (!kind || *kind == TTDCoverageKind::Written)
+        {
+            distinctWrite.clear();
+            for (uint64_t f = bucket.frameStart; f <= bucket.frameEnd; ++f)
+            {
+                if (_coverageIndex.GetFrameKeys(TTDCoverageKind::Written, f, keysScratch))
+                {
+                    distinctWrite.insert(keysScratch.begin(), keysScratch.end());
+                }
+            }
+            bucket.writtenDistinct = static_cast<uint32_t>(distinctWrite.size());
+        }
+
+        if (!kind || *kind == TTDCoverageKind::Read)
+        {
+            distinctRead.clear();
+            for (uint64_t f = bucket.frameStart; f <= bucket.frameEnd; ++f)
+            {
+                if (_coverageIndex.GetFrameKeys(TTDCoverageKind::Read, f, keysScratch))
+                {
+                    distinctRead.insert(keysScratch.begin(), keysScratch.end());
+                }
+            }
+            bucket.readDistinct = static_cast<uint32_t>(distinctRead.size());
+        }
+
+        result.buckets.push_back(bucket);
+    }
+
+    return result;
 }
 
 } // namespace ttd
