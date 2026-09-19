@@ -5,6 +5,7 @@
 
 #include "emulator/emulator.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/io/keyboard/keyboard.h"
 
 /// @brief Scorpion MNI - the "magic button" (implementation-plan Task 6, reworked
 ///        to the DD50 ground truth, hardware-reference §9): the button arms two
@@ -65,6 +66,39 @@ TEST_F(ScorpionMni_Test, MagicButtonForcesTrdDosAndVectors)
     EXPECT_EQ(BankTag(0xC000), 0x48) << "RAM bank 8 still at #C000";
     EXPECT_TRUE(_context->emulatorState.flags & CF_DOSPORTS) << "FDC ports are on the bus while armed";
     EXPECT_TRUE(z80->nmi_in_progress);
+}
+
+/// @brief The firmware saves #7FFD with the 48K ROM bit forced on and writes only
+///        that bit back on exit; the decoder must put the user's ROM bit back
+///        when the exit stub (#000B: OUT (C),A with A=0) leaves the monitor,
+///        so a 128K ROM program resumes under the 128K ROM
+TEST_F(ScorpionMni_Test, MonitorExitRestoresUserRomBit)
+{
+    for (uint8_t userRom : {uint8_t(0x00), uint8_t(0x10)})
+    {
+        WritePort(0x1FFD, 0x00);
+        WritePort(0x7FFD, userRom);
+        PressMagicButton();
+        ASSERT_TRUE(AcceptNmi());
+
+        _context->pPortDecoder->DecodePortOut(0x1FFD, 0x12, 0x0033);  // entry trick: monitor paged
+        WritePort(0x7FFD, 0x10);   // monitor forces the 48K bit for itself
+        WritePort(0x1FFD, 0x10);   // RAM stub toggles the latch (must not re-save)
+        WritePort(0x1FFD, 0x12);
+        EXPECT_EQ(_context->emulatorState.p7FFD & 0x10, 0x10);
+
+        // Exit: firmware writes the (always 48K) saved bit, then OUT #1FFD,0 at #000B
+        WritePort(0x7FFD, 0x10);
+        _context->pPortDecoder->DecodePortOut(0x1FFD, 0x00, 0x000B);
+
+        EXPECT_EQ(_context->emulatorState.p7FFD, userRom) << "user ROM bit restored";
+
+        // Return stub: OUT (C),D / OUT (C),E at #3C35/#3C39 replays the saved (48K-forced) copy
+        _context->pPortDecoder->DecodePortOut(0x1FFD, 0x00, 0x3C35);
+        _context->pPortDecoder->DecodePortOut(0x7FFD, 0x17, 0x3C39);
+        EXPECT_EQ(_context->emulatorState.p7FFD, userRom) << "return stub write replaced by user value";
+        _core->GetZ80()->nmi_in_progress = false;
+    }
 }
 
 /// @brief The vector executes TR-DOS code: the synthetic page 3 is filled with
@@ -258,4 +292,30 @@ TEST(ScorpionMniEmulator_Test, ProfRomMagicButtonSelectsQuadrantZero)
         << "#0066 is fetched from quadrant-0 page 3 (the firmware entry chain)";
 
     EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetId());
+}
+
+/// @brief Real ProfROM firmware end to end: NMI from the settled 128 menu, "0 -
+///        continue program" must resume the menu under the 128K ROM (the stock
+///        exit stub replays a #7FFD copy with the 48K bit forced on)
+TEST(ScorpionMniEmulator_Test, ProfRomMonitorContinueKeepsMenuRom)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    auto emulator = manager->CreateEmulatorWithModel("", "PROFSCORP", LoggerLevel::LogError);
+    ASSERT_TRUE(emulator);
+    EmulatorState& state = emulator->GetContext()->emulatorState;
+    emulator->EnableTurboMode();
+    emulator->RunNFrames(300);
+    ASSERT_EQ(state.p7FFD & 0x10, 0) << "128 menu runs under ROM0";
+
+    emulator->RequestMNI();
+    emulator->RunNFrames(40);
+    Keyboard* keyboard = emulator->GetContext()->pKeyboard;
+    keyboard->PressKey(ZXKEY_0);
+    emulator->RunNFrames(40);
+    keyboard->ReleaseKey(ZXKEY_0);
+    emulator->RunNFrames(100);
+
+    EXPECT_EQ(state.p1FFD & 0x02, 0) << "monitor left";
+    EXPECT_EQ(state.p7FFD & 0x10, 0) << "still under the 128K ROM";
+    manager->RemoveEmulator(emulator->GetId());
 }
