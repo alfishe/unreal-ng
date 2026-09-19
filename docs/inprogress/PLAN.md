@@ -45,23 +45,24 @@ a trigger fires).
 | 18 | **Tape manager P3 (CSW) + P7 polish**: CSW v1/v2 loader + fixtures (PZX optional), `tr()`/translation file, §8.3 visual nits, then move the docs out of `inprogress/` | [2026-09-01-tape-manager](2026-09-01-tape-manager/) | P1/P1b, P2 (TZX rewrite), P4 (seek/position), P5 (control planes), P6 (Qt window, r6) all landed — verified against code 2026-09-16 |
 | 19 | **Python automation build in CI**: `ENABLE_PYTHON_AUTOMATION=OFF` in all build dirs (module builds CPython from source); recent Lua/Python surface work is only syntax-checked | (build infra; noted by TD-3/TD-4 verification) | Removes the recurring "not compile-verified" caveat |
 | 20 | **P2-4 GS/Covox DeviceState reports** | [2026-09-14-automation-triage-gaps](2026-09-14-automation-triage-gaps/) (D-3) | Do opportunistically with core sound work |
+| 21 | **Pentagon 1024 16-color screen mode extension (Alone Coder v1.1)**: `#EFF7` bit 0 decoding, 4-plane RAM 4/5/6/7 rendering, state reporting (`/state/screen/mode` and `/state/paging`), snapshot & TTD persistence | [2026-09-18-pentagon-1024-16color-mode](2026-09-18-pentagon-1024-16color-mode/) → [technical-design.md](2026-09-18-pentagon-1024-16color-mode/technical-design.md) | Technical design completed (Info Guide #08/#09 30.10.2005 hardware specs & signal multiplexing) |
 
 ## T4 — deferred (revisit on trigger)
 
 | # | Item | Tracked in | Trigger / rationale |
 |:--|:--|:--|:--|
-| 21 | Schema-driven generation of CLI/WebAPI/Lua/Python/docs from one command schema (old Phase 4) | [2026-08-26-automation-gaps](2026-08-26-automation-gaps/) | Manual parity replication cost is now real (2026-09-15 round ×4); grows with every new surface — revisit after T1/T2 |
-| 22 | WebSocket event push, `subscribe`, Lua/Python callbacks (old 0.3.3–0.3.6) | [2026-08-26-automation-gaps](2026-08-26-automation-gaps/) | Polling + `inspect_state` currently sufficient |
-| 23 | TD-7 dedicated coverage-index query (last 20% of G-5) | [2026-09-14-automation-triage-gaps](2026-09-14-automation-triage-gaps/) | 80% covered via TD-2 range find-last |
-| 24 | TD-8 code half: `covered_from` window reporting (G-10) | [2026-09-14-automation-triage-gaps](2026-09-14-automation-triage-gaps/) | Low severity; fold into next TTD API touch |
-| 25 | `get_framebuffer` raw, Python numpy wrapper (old 3.1.1/3.1.3) | [2026-08-26-automation-gaps](2026-08-26-automation-gaps/) | Digest/OCR/screenshot cover current demand; TD-3 may reduce need further |
-| 26 | Headless deterministic mode + RZX-compatible input record/playback (old 3.2.x) | [2026-08-26-automation-gaps](2026-08-26-automation-gaps/) | TTD input journals cover replay; RZX interop is the remaining value |
-| 27 | Realtime monitoring / segmentation widget | [2026-02-23-realtime-monitoring](2026-02-23-realtime-monitoring/) | Analysis + widget design done; no code. Reassess against analyzer value (see #28) |
-| 28 | Interrupt analyzer, routine classifiers, beam-to-execution correlation | [2026-01-14-analyzers](2026-01-14-analyzers/) | Analyzer manager + TRDOS analyzer landed; the rest are research designs |
-| 29 | HUD Phase 4: detach `hud/core` into core + automation surface (`api.md` §6) | [2026-09-07-hud-layer](2026-09-07-hud-layer/) | Deferred by design; trigger = a second client (SDL3 player, screen-viewer) wants the HUD |
-| 30 | Shared-memory coherency / high-performance bridge (gRPC, zero-copy) | [2026-08-27-shared-memory-coherency](2026-08-27-shared-memory-coherency/) + MCP Phase 3 | Research done; only if HTTP loopback proven bottleneck |
-| 31 | MP4/WebM recording, semantic frame diffing, FFT audio, auto-reload/fuzzy/batch symbols | [2026-08-17-mcp](2026-08-17-mcp/) (Phase 3, 2026-09-10 gap report) | Explicitly deferred, mostly Low priority there |
-| 32 | DiskManager, save modes, heatmaps | [2026-01-24-diskimage-modernization](2026-01-24-diskimage-modernization/) | Layout work superseded by universal track model (done); these are UI/UX extras |
+| 22 | Schema-driven generation of CLI/WebAPI/Lua/Python/docs from one command schema (old Phase 4) | [2026-08-26-automation-gaps](2026-08-26-automation-gaps/) | Manual parity replication cost is now real (2026-09-15 round ×4); grows with every new surface — revisit after T1/T2 |
+| 23 | WebSocket event push, `subscribe`, Lua/Python callbacks (old 0.3.3–0.3.6) | [2026-08-26-automation-gaps](2026-08-26-automation-gaps/) | Polling + `inspect_state` currently sufficient |
+| 24 | TD-7 dedicated coverage-index query (last 20% of G-5) | [2026-09-14-automation-triage-gaps](2026-09-14-automation-triage-gaps/) | 80% covered via TD-2 range find-last |
+| 25 | TD-8 code half: `covered_from` window reporting (G-10) | [2026-09-14-automation-triage-gaps](2026-09-14-automation-triage-gaps/) | Low severity; fold into next TTD API touch |
+| 26 | `get_framebuffer` raw, Python numpy wrapper (old 3.1.1/3.1.3) | [2026-08-26-automation-gaps](2026-08-26-automation-gaps/) | Digest/OCR/screenshot cover current demand; TD-3 may reduce need further |
+| 27 | Headless deterministic mode + RZX-compatible input record/playback (old 3.2.x) | [2026-08-26-automation-gaps](2026-08-26-automation-gaps/) | TTD input journals cover replay; RZX interop is the remaining value |
+| 28 | Realtime monitoring / segmentation widget | [2026-02-23-realtime-monitoring](2026-02-23-realtime-monitoring/) | Analysis + widget design done; no code. Reassess against analyzer value (see #28) |
+| 29 | Interrupt analyzer, routine classifiers, beam-to-execution correlation | [2026-01-14-analyzers](2026-01-14-analyzers/) | Analyzer manager + TRDOS analyzer landed; the rest are research designs |
+| 30 | HUD Phase 4: detach `hud/core` into core + automation surface (`api.md` §6) | [2026-09-07-hud-layer](2026-09-07-hud-layer/) | Deferred by design; trigger = a second client (SDL3 player, screen-viewer) wants the HUD |
+| 31 | Shared-memory coherency / high-performance bridge (gRPC, zero-copy) | [2026-08-27-shared-memory-coherency](2026-08-27-shared-memory-coherency/) + MCP Phase 3 | Research done; only if HTTP loopback proven bottleneck |
+| 32 | MP4/WebM recording, semantic frame diffing, FFT audio, auto-reload/fuzzy/batch symbols | [2026-08-17-mcp](2026-08-17-mcp/) (Phase 3, 2026-09-10 gap report) | Explicitly deferred, mostly Low priority there |
+| 33 | DiskManager, save modes, heatmaps | [2026-01-24-diskimage-modernization](2026-01-24-diskimage-modernization/) | Layout work superseded by universal track model (done); these are UI/UX extras |
 
 ## Documentation debt (fix alongside T1-1)
 
@@ -78,3 +79,5 @@ a trigger fires).
 | 2026-09-16 | Flux bridge (KryoFlux/Greaseweazle direct integration) added as **T2 #11** with full design in `2026-09-02-universal-track-model/flux-bridge.md` (WinUAE FloppyBridge prior-art analysis, GPL licence boundary, phases B0–B5). Old T4 "HFE+SCP loaders" retired — implemented in `a637bfa7`, only `LoadDisk`/`SaveDisk` dispatch wiring remains (folded into #11 phase B0). T3/T4 renumbered accordingly |
 | 2026-09-16 | Fast disk loading ($3D13 TR-DOS service trap) added as **T2 #13** with r0 design in `2026-09-16-fast-disk-loading/design.md` (entry-table bytes verified across trdos/trdos503/trdos504t; 5.04TM/6.x decline patterns confirmed; service ABI from the 2026-01-21 forensics). Fast-tape folder reopened via TODO.md — non-standard-loader ERR_NR false-stop defect added as **T1 #5**. Rows renumbered; folder TODO cross-references updated in the same change |
 | 2026-09-16 | DeZog manual E2E (user-verified): VS Code extension session fully functional incl. backward debugging — T3 #17 rescoped to the user guide only (TODO.md updated) |
+| 2026-09-18 | Pentagon 1024 16-color screen mode extension design created in `2026-09-18-pentagon-1024-16color-mode/` (Alone Coder v1.1 30.10.2005 hardware specs, signal multiplexing, memory planes, `#EFF7` bit 0 decoding, video mode detection `M_P16`, state reporting, and test plan) |
+

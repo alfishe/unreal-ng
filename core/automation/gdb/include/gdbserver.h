@@ -153,7 +153,7 @@ private:
     EmulatorContext* _context = nullptr;
 
     // Run-control claim (TDD §3.3)
-    UUID _sessionUuid;  // Generated at session start, used for claim ownership
+    unreal::UUID _sessionUuid;  // Generated at session start, used for claim ownership
 
     // Async state change notification (1A.7.3)
     std::atomic<bool> _waitingForStop{false};    // True when client sent 'c' and we're waiting

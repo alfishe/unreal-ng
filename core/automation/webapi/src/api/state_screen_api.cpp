@@ -4,10 +4,13 @@
 #include "../emulator_api.h"
 
 #include <drogon/HttpResponse.h>
+#include <common/stringhelper.h>
 #include <emulator/config.h>
 #include <emulator/cpu/z80.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
+#include <emulator/platform.h>
+#include <emulator/video/screen.h>
 #include <emulator/video/screendigest.h>
 #include <json/json.h>
 
@@ -194,11 +197,11 @@ void EmulatorAPI::getStateScreenMode(const HttpRequestPtr& req, std::function<vo
     }
 
     EmulatorContext* context = emulator->GetContext();
-    if (!context)
+    if (!context || !context->pScreen)
     {
         Json::Value error;
         error["error"] = "Internal Error";
-        error["message"] = "Unable to access emulator context";
+        error["message"] = "Unable to access emulator context or screen";
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
@@ -208,30 +211,121 @@ void EmulatorAPI::getStateScreenMode(const HttpRequestPtr& req, std::function<vo
     }
 
     CONFIG& config = context->config;
+    EmulatorState& state = context->emulatorState;
+    Screen* screen = context->pScreen;
     Json::Value ret;
 
     std::string model = Config::GetModelFullName(config.mem_model);
     ret["model"] = model;
-    ret["video_mode"] = "standard";
-    ret["resolution"] = "256×192";
-    ret["color_depth"] = "2 colors per attribute block";
-    ret["attribute_size"] = "8×8 pixels";
 
-    Json::Value memory;
-    memory["pixel_data_bytes"] = 6144;
-    memory["attribute_bytes"] = 768;
-    memory["total_bytes"] = 6912;
-    ret["memory_layout"] = memory;
+    // Get actual video mode from screen
+    VideoModeEnum videoMode = screen->GetVideoMode();
+    std::string modeName = screen->GetVideoModeName(videoMode);
+    ret["video_mode"] = modeName;
 
-    if (config.mem_model == MM_SPECTRUM128 || config.mem_model == MM_PENTAGON || config.mem_model == MM_PLUS3)
+    // Mode-specific details
+    switch (videoMode)
     {
-        uint8_t port7FFD = context->emulatorState.p7FFD;
-        bool shadowScreen = (port7FFD & 0x08) != 0;
-        ret["active_screen"] = shadowScreen ? 1 : 0;
-        ret["active_ram_page"] = shadowScreen ? 7 : 5;
+        case M_P16:  // Pentagon 16-color mode (Alone Coder)
+            ret["resolution"] = "256x192";
+            ret["color_depth"] = "4 bpp (16 colors per pixel)";
+            ret["colors"] = 16;
+            ret["bpp"] = 4;
+            ret["attribute_size"] = "per pixel pair";
+            ret["eff7_16col"] = true;
+            {
+                Json::Value memory;
+                memory["pixel_data_bytes"] = 24576;  // 4 planes × 6144
+                memory["planes"] = 4;
+                memory["total_bytes"] = 24576;
+                ret["memory_layout"] = memory;
+            }
+            break;
+
+        case M_PMC:  // Pentagon hardware multicolor
+            ret["resolution"] = "256x192";
+            ret["color_depth"] = "attribute per line";
+            ret["colors"] = 16;
+            ret["eff7_hwmc"] = true;
+            {
+                Json::Value memory;
+                memory["pixel_data_bytes"] = 6144;
+                memory["attribute_bytes"] = 768;
+                memory["total_bytes"] = 6912;
+                ret["memory_layout"] = memory;
+            }
+            break;
+
+        case M_PHR:  // Pentagon 512x192
+            ret["resolution"] = "512x192";
+            ret["color_depth"] = "1 bpp (monochrome)";
+            ret["colors"] = 2;
+            ret["bpp"] = 1;
+            ret["eff7_512"] = true;
+            break;
+
+        case M_P384:  // Pentagon 384x304 overscan
+            ret["resolution"] = "384x304";
+            ret["color_depth"] = "2 colors per attribute block";
+            ret["colors"] = 16;
+            ret["attribute_size"] = "8x8 pixels";
+            ret["overscan"] = true;
+            break;
+
+        default:  // Standard ZX modes
+            ret["resolution"] = "256x192";
+            ret["color_depth"] = "2 colors per attribute block";
+            ret["colors"] = 16;
+            ret["bpp"] = 1;
+            ret["attribute_size"] = "8x8 pixels";
+            {
+                Json::Value memory;
+                memory["pixel_data_bytes"] = 6144;
+                memory["attribute_bytes"] = 768;
+                memory["total_bytes"] = 6912;
+                ret["memory_layout"] = memory;
+            }
+            break;
     }
 
-    ret["compatibility"] = "48K/128K/+2/+2A/+3 standard";
+    // Screen selection (128K+ models)
+    if (config.mem_model == MM_SPECTRUM128 || config.mem_model == MM_PENTAGON || config.mem_model == MM_PLUS3)
+    {
+        uint8_t port7FFD = state.p7FFD;
+        bool shadowScreen = (port7FFD & 0x08) != 0;
+        ret["active_screen"] = shadowScreen ? 1 : 0;
+
+        // For 16-color mode, pages are {4,5} or {6,7}
+        if (videoMode == M_P16 || videoMode == M_PMC)
+        {
+            uint16_t videoPage = shadowScreen ? 7 : 5;
+            Json::Value pages;
+            pages.append(static_cast<int>(videoPage ^ 1));  // 4 or 6
+            pages.append(static_cast<int>(videoPage));       // 5 or 7
+            ret["active_ram_pages"] = pages;
+        }
+        else
+        {
+            ret["active_ram_page"] = shadowScreen ? 7 : 5;
+        }
+    }
+
+    // Pentagon EFF7 state for extended modes
+    if (config.mem_model == MM_PENTAGON)
+    {
+        uint8_t eff7 = state.pEFF7;
+        if (eff7 != 0)
+        {
+            Json::Value eff7_state;
+            eff7_state["value"] = static_cast<int>(eff7);
+            eff7_state["value_hex"] = StringHelper::Format("0x%02X", eff7);
+            eff7_state["16col_enabled"] = (eff7 & EFF7_4BPP) != 0;
+            eff7_state["512_enabled"] = (eff7 & EFF7_512) != 0;
+            eff7_state["hwmc_enabled"] = (eff7 & EFF7_HWMC) != 0;
+            eff7_state["384_enabled"] = (eff7 & EFF7_384) != 0;
+            ret["eff7"] = eff7_state;
+        }
+    }
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);

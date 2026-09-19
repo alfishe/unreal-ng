@@ -239,6 +239,19 @@ public:
     bool LoadTape(const std::string& path);
     bool LoadDisk(const std::string& path);
 
+    /// Outcome of AutostartDisk()
+    struct DiskAutostartResult
+    {
+        bool mounted = false;  // Disk image was mounted in drive A
+        bool started = false;  // Machine was reset into TR-DOS to run the disk
+        std::string message;   // Human readable outcome
+    };
+
+    /// Mount a disk image and, when the machine can run TR-DOS, quick-reset straight into TR-DOS so the
+    /// disk starts by itself (boot file, single BASIC program, or an injected commander). A machine without
+    /// TR-DOS keeps running untouched: the disk is only mounted and the problem is reported (log + HUD)
+    DiskAutostartResult AutostartDisk(const std::string& path);
+
     /// Result of SaveDisk()
     struct DiskSaveResult
     {

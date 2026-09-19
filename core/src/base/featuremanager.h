@@ -35,6 +35,7 @@ constexpr const char* const kOverscan = "overscan";
 constexpr const char* const kPortTrace = "porttrace";
 constexpr const char* const kFastTape = "fasttape";
 constexpr const char* const kTurboTape = "turbotape";
+constexpr const char* const kFastDisk = "fastdisk";
 constexpr const char* const kHud = "hud";
 constexpr const char* const kKempstonMouse = "kempstonmouse";
 
@@ -54,6 +55,7 @@ constexpr const char* const kOverscanAlias = "osc";
 constexpr const char* const kPortTraceAlias = "pt";
 constexpr const char* const kFastTapeAlias = "ftape";
 constexpr const char* const kTurboTapeAlias = "ttape";
+constexpr const char* const kFastDiskAlias = "fdisk";
 constexpr const char* const kHudAlias = "hud";
 constexpr const char* const kKempstonMouseAlias = "kmouse";
 
@@ -83,6 +85,8 @@ constexpr const char* const kFastTapeDesc =
 constexpr const char* const kTurboTapeDesc =
     "Turbo tape loading: engage turbo mode automatically while the tape signal path plays, so blocks the LD-BYTES trap cannot serve "
     "(headerless, custom-timed, pulse streams) still load at warp speed. Warp ends with the read-gap watchdog, end-of-tape or any stop.";
+constexpr const char* const kFastDiskDesc =
+    "Fast disk loading: FDC timing compression and TR-DOS ROM read-loop traps for instant floppy disk operations.";
 constexpr const char* const kHudDesc =
     "On-screen HUD: indicators and messages over the emulator picture. Zero cost when disabled.";
 
@@ -141,6 +145,9 @@ public:
     void loadFromFile(const std::string& path);
     void saveToFile(const std::string& path) const;
     void onFeatureChanged(const std::string& changedFeatureId = "");
+    void onTtdRecordingStarted();
+    void onTtdRecordingStopped();
+    bool isTtdRecordingActive() const;
 
     EmulatorContext* context() const
     {
@@ -156,6 +163,12 @@ private:
     std::unordered_map<std::string, FeatureInfo> _features;  // id -> FeatureInfo
     std::unordered_map<std::string, std::string> _aliases;   // alias -> id
     mutable bool _dirty = false;                             // Track if the state changed and save is required
+
+    // Saved shortcut states during TTD recording
+    mutable bool _ttdShortcutOverrideActive = false;
+    mutable bool _savedFastDiskState = true;
+    mutable bool _savedFastTapeState = true;
+    mutable bool _savedTurboTapeState = true;
 
     /// Guards _features/_aliases/_dirty: the WebAPI/HTTP thread mutates them
     /// while the MessageCenter worker reads them (e.g. HudModel feature

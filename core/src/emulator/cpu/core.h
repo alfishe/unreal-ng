@@ -25,6 +25,8 @@ class PortDecoder;
 class WD1793;
 class TapeFastLoad;
 class TapeTurboController;
+class DiskFastLoad;
+class DiskAutostart;
 
 class Core
 {
@@ -59,6 +61,8 @@ protected:
     TapeTurboController* _tapeTurboController = nullptr;
     // VG93* _betaDisk = nullptr;
     WD1793* _betaDisk = nullptr;
+    DiskFastLoad* _diskFastLoad = nullptr;
+    DiskAutostart* _diskAutostart = nullptr;
     SoundManager* _sound = nullptr;
 #ifdef ENABLE_RECORDING
     RecordingManager* _recordingManager = nullptr;
@@ -111,6 +115,8 @@ public:
     // Z80 Core-related methods
 public:
     void Reset();
+    /// Reset with an explicit ROM mode instead of the configured RESET= mode (e.g. RM_DOS: reset into TR-DOS)
+    void Reset(ROMModeEnum mode);
 
     void SetCPUClockSpeed(uint8_t);
     uint32_t GetBaseCPUFrequency();

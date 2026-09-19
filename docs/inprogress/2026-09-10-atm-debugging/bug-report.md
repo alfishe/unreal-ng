@@ -152,7 +152,7 @@ Added `Config::GetModelFullName(MEM_MODEL model)` and replaced all hardcoded mod
 
 ```bash
 # Load test case
-# In emulator: ATM 7.10 512KB, load /Volumes/TB4-4Tb/Projects/Test/unreal-ng/testdata/machines/atm/2048.scl
+# In emulator: ATM 7.10 512KB, load testdata/machines/atm/2048.scl
 
 # Via MCP - check state
 inspect_state aspects=["timing", "memory_banks", "screen_image"]

@@ -485,6 +485,8 @@ add_custom_command(
         "${DATA_PATH}/rom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${DATA_PATH}/testrom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${DATA_PATH}/boot" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/boot"
     COMMENT "Copying runtime resource files to output directory"
 )
 
@@ -536,6 +538,7 @@ if(APPLE)
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/fonts" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/fonts"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/rom" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/testrom" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/boot" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/boot"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/configs" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/configs"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/core/automation/webapi/resources/html" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/html"
 
@@ -570,6 +573,7 @@ if(APPLE)
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/fonts" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/fonts"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/rom" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/rom"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/testrom" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/boot" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/boot"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/configs" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/configs"
         # WebAPI HTML resources (404 page, index, etc.)
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/core/automation/webapi/resources/html" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/html"
@@ -597,6 +601,7 @@ if(WIN32)
         # Copy only necessary resources
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/fonts" "${CMAKE_BINARY_DIR}/packages/UnrealNG/fonts"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/rom" "${CMAKE_BINARY_DIR}/packages/UnrealNG/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/boot" "${CMAKE_BINARY_DIR}/packages/UnrealNG/boot"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/configs" "${CMAKE_BINARY_DIR}/packages/UnrealNG/configs"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/resources/html" "${CMAKE_BINARY_DIR}/packages/UnrealNG/resources/html"
         # Create the final zip package
@@ -619,12 +624,13 @@ if(UNIX AND NOT APPLE)
         COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/bin/unreal-qt" "${CMAKE_BINARY_DIR}/packages/unreal-qt"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/fonts" "${CMAKE_BINARY_DIR}/packages/fonts"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/rom" "${CMAKE_BINARY_DIR}/packages/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/boot" "${CMAKE_BINARY_DIR}/packages/boot"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/configs" "${CMAKE_BINARY_DIR}/packages/configs"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/resources/html" "${CMAKE_BINARY_DIR}/packages/resources/html"
         # Desktop integration files in XDG layout (copy share/ into ~/.local/share or /usr/share)
         COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/install/linux/unrealng.desktop" "${CMAKE_BINARY_DIR}/packages/share/applications/unrealng.desktop"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/install/linux/icons" "${CMAKE_BINARY_DIR}/packages/share/icons"
-        COMMAND ${CMAKE_COMMAND} -E tar "cfz" "${CMAKE_BINARY_DIR}/packages/UnrealNG-Linux.tar.gz" "--" "${CMAKE_BINARY_DIR}/packages/unreal-qt" "${CMAKE_BINARY_DIR}/packages/fonts" "${CMAKE_BINARY_DIR}/packages/rom" "${CMAKE_BINARY_DIR}/packages/configs" "${CMAKE_BINARY_DIR}/packages/resources" "${CMAKE_BINARY_DIR}/packages/share"
+        COMMAND ${CMAKE_COMMAND} -E tar "cfz" "${CMAKE_BINARY_DIR}/packages/UnrealNG-Linux.tar.gz" "--" "${CMAKE_BINARY_DIR}/packages/unreal-qt" "${CMAKE_BINARY_DIR}/packages/fonts" "${CMAKE_BINARY_DIR}/packages/rom" "${CMAKE_BINARY_DIR}/packages/boot" "${CMAKE_BINARY_DIR}/packages/configs" "${CMAKE_BINARY_DIR}/packages/resources" "${CMAKE_BINARY_DIR}/packages/share"
         DEPENDS ${PROJECT_NAME}
         COMMENT "Creating Linux package in ${CMAKE_BINARY_DIR}/packages"
     )

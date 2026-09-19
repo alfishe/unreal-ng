@@ -14,11 +14,14 @@
 #include "emulator/platform.h"
 #include "emulator/notifications.h"
 #include "recordingmanager.h"
-// Avoid Qt 'signals' macro conflict with WD1793State::signals member
+// Avoid Qt 'signals' and 'slots' macro conflicts with core struct members
 #undef signals
+#undef slots
+#include "debugger/ttd/timetravelmanager.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/fdc/fdd.h"
 #define signals Q_SIGNALS
+#define slots Q_SLOTS
 #include "mainwindow.h"
 
 MenuManager::MenuManager(MainWindow* mainWindow, QMenuBar* menuBar, QObject* parent)
@@ -741,6 +744,30 @@ void MenuManager::createMachineMenu()
     _turboTapeAction->setStatusTip(tr("Run at warp speed while a tape signal is playing (custom loaders included)"));
     _turboTapeAction->setCheckable(true);
     connect(_turboTapeAction, &QAction::triggered, this, &MenuManager::turboTapeToggled);
+
+    // Fast disk loading (design: docs/inprogress/2026-09-16-fast-disk-loading).
+    // FDC timing compression and TR-DOS ROM read-loop traps.
+    _fastDiskAction = _machineMenu->addAction(tr("Fast &Disk Loading"));
+    _fastDiskAction->setStatusTip(tr("FDC timing compression and TR-DOS ROM traps for instant floppy disk operations"));
+    _fastDiskAction->setCheckable(true);
+    connect(_fastDiskAction, &QAction::triggered, this, &MenuManager::fastDiskToggled);
+
+    // TR-DOS disk autostart (design: docs/inprogress/2026-09-18-trdos-autostart).
+    // Opening a disk resets straight into TR-DOS and starts it. Hold Shift while dropping to only mount.
+    _autostartDisksAction = _machineMenu->addAction(tr("&Autostart Disks"));
+    _autostartDisksAction->setStatusTip(
+        tr("Opening a TR-DOS disk quick-resets into TR-DOS and runs it (hold Shift while dropping to only mount)"));
+    _autostartDisksAction->setCheckable(true);
+    _autostartDisksAction->setChecked(true);
+    connect(_autostartDisksAction, &QAction::triggered, this, &MenuManager::autostartDisksToggled);
+}
+
+void MenuManager::setAutostartDisksChecked(bool checked)
+{
+    if (_autostartDisksAction)
+    {
+        _autostartDisksAction->setChecked(checked);
+    }
 }
 
 void MenuManager::updateMachineModelSelection(std::shared_ptr<Emulator> activeEmulator)
@@ -1109,21 +1136,43 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
     // Machine menu - fast tape loading toggle mirrors the runtime 'fasttape'
     // feature (the trap re-reads it on every LD-BYTES invocation, so only the
     // menu state needs syncing)
-    _tapeTrapsAction->setEnabled(emulatorExists);
     if (emulatorExists)
     {
         EmulatorContext* context = activeEmulator->GetContext();
         FeatureManager* featureManager = context ? context->pFeatureManager : nullptr;
-        _tapeTrapsAction->setChecked(featureManager && featureManager->isEnabled(Features::kFastTape));
-        _turboTapeAction->setChecked(featureManager && featureManager->isEnabled(Features::kTurboTape));
+
+        bool ttdActive = (featureManager && featureManager->isEnabled(Features::kTimeTravel)) ||
+                         (context && context->pTimeTravelManager && context->pTimeTravelManager->IsRecording());
+
+        _tapeTrapsAction->setEnabled(!ttdActive);
+        _turboTapeAction->setEnabled(!ttdActive);
+        if (_fastDiskAction)
+        {
+            _fastDiskAction->setEnabled(!ttdActive);
+            _fastDiskAction->setChecked(!ttdActive && featureManager && featureManager->isEnabled(Features::kFastDisk));
+        }
+
+        _tapeTrapsAction->setChecked(!ttdActive && featureManager && featureManager->isEnabled(Features::kFastTape));
+        _turboTapeAction->setChecked(!ttdActive && featureManager && featureManager->isEnabled(Features::kTurboTape));
+
         if (_hudOverlayAction)
         {
             _hudOverlayAction->setChecked(featureManager && featureManager->isEnabled(Features::kHud));
         }
     }
-    else if (_hudOverlayAction)
+    else
     {
-        _hudOverlayAction->setChecked(false);
+        _tapeTrapsAction->setEnabled(false);
+        _turboTapeAction->setEnabled(false);
+        if (_fastDiskAction)
+        {
+            _fastDiskAction->setEnabled(false);
+            _fastDiskAction->setChecked(false);
+        }
+        if (_hudOverlayAction)
+        {
+            _hudOverlayAction->setChecked(false);
+        }
     }
 
     // Update machine model selection

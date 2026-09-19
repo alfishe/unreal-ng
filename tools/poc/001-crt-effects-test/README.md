@@ -51,7 +51,7 @@ Max pixel difference: 1 (rounding only)
 cd python && python3 test_gpu_vs_cpu.py
 
 # View report
-open /Volumes/TB4-4Tb/Projects/Test/unreal-ng/scratch/gpu_vs_cpu_report.html
+open scratch/gpu_vs_cpu_report.html
 ```
 
 ## Requirements

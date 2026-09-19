@@ -11,9 +11,49 @@
 #include "emulator/notifications.h"
 #include "wd1793_collector.h"
 #include "iwd1793observer.h"
+#include "base/featuremanager.h"
+#include "diskfastload.h"
 #include "debugger/ttd/timetravelmanager.h"  // TimeTravelManager (Item 6 markers)
 #include <cstdio>
 #include <cstring>
+
+bool WD1793::isFastDiskArmed() const
+{
+    return _context && _context->pDiskFastLoad && _context->pDiskFastLoad->IsArmed();
+}
+
+bool WD1793::drainSectorRead(const std::function<void(uint8_t byte)>& byteConsumer)
+{
+    // Only a Read Sector command in its byte-transfer phase can be drained
+    if (_lastDecodedCmd != WD_CMD_READ_SECTOR || !_rawDataBuffer || _bytesToRead <= 0)
+        return false;
+
+    const bool inTransfer = (_state == S_READ_BYTE) || (_state == S_WAIT && _state2 == S_READ_BYTE);
+    if (!inTransfer)
+        return false;
+
+    // Byte already latched in the data register and not yet read by the CPU
+    if (_drq_out)
+    {
+        if (byteConsumer)
+            byteConsumer(_dataRegister);
+        clearDrq();
+    }
+    _drq_served = true;
+
+    // Remaining bytes of the sector
+    while (_bytesToRead > 0)
+    {
+        if (byteConsumer)
+            byteConsumer(*_rawDataBuffer);
+        _rawDataBuffer++;
+        _bytesToRead--;
+    }
+
+    // State machine is left untouched: the pending S_READ_BYTE tick sees _bytesToRead == 0
+    // and moves on to S_READ_CRC, which verifies CRC, chains multi-sector reads and raises INTRQ.
+    return true;
+}
 
 /// region <Constructors / destructors>
 
@@ -2447,6 +2487,13 @@ void WD1793::processReadSector()
 /// _rawDataBuffer and _bytesToRead values must be set before reading the first byte
 void WD1793::processReadByte()
 {
+    // Sector was drained by the fast disk trap: nothing left to transfer, go straight to CRC
+    if (_bytesToRead <= 0 && _rawDataBuffer)
+    {
+        transitionFSMWithDelay(WDSTATE::S_READ_CRC, _tstatesPerByte * 2);
+        return;
+    }
+
     // Per WD1793 datasheet: "If the Computer has not read the previous contents of the DR
     // before a new character is transferred, that character is lost and the Lost Data
     // Status bit is set. This sequence continues until the complete data field has been
@@ -2455,6 +2502,16 @@ void WD1793::processReadByte()
     // Note: Lost Data does NOT terminate the command - FDC continues reading.
     // CPU can "recover" by reading later bytes. Only bytes overwritten before being read are lost.
     // _drq_served is initialized to true at command start, so first byte is never flagged as lost.
+    if (!_drq_served && isFastDiskArmed() && _fastDrqHold > 0)
+    {
+        // Fast disk: the compressed byte cell is far shorter than the CPU can service. Hold the byte
+        // for up to one authentic revolution before declaring lost data (Unreal notready() / Xpeccy hold)
+        _fastDrqHold -= FAST_BYTE_CELL_TSTATES;
+        transitionFSMWithDelay(WDSTATE::S_READ_BYTE, FAST_BYTE_CELL_TSTATES);
+        return;
+    }
+    _fastDrqHold = DISK_ROTATION_PERIOD_TSTATES;
+
     if (!_drq_served)
     {
         // Previous byte was not fetched by CPU - it's now overwritten (lost)

@@ -275,6 +275,8 @@ if (NOT TARGET ${PROJECT_NAME})
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${DATA_PATH}/testrom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${DATA_PATH}/boot" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/boot"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${ROOT_DIR}/testdata" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/testdata"
         COMMENT "Copying runtime resource files to output directory"
     )

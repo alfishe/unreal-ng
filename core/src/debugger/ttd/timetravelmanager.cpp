@@ -244,6 +244,10 @@ bool TimeTravelManager::StartRecording()
 
     _state = TTDSessionState::Recording;
     _context->ttdCoverageActive = _enableCoverageIndex;
+    if (_context->pFeatureManager)
+    {
+        _context->pFeatureManager->onTtdRecordingStarted();
+    }
 
     // This is live capture now, not the file it may have replaced.
     _loadedFromFile   = false;
@@ -272,6 +276,10 @@ void TimeTravelManager::StopRecording()
     if (_state != TTDSessionState::Recording)
         return;  // Idempotent
     _state = TTDSessionState::Idle;
+    if (_context && _context->pFeatureManager)
+    {
+        _context->pFeatureManager->onTtdRecordingStopped();
+    }
     MLOGINFO("TimeTravelManager::StopRecording — timeline retained with %zu checkpoints",
              _timeline.size());
 
