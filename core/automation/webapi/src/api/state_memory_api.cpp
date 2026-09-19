@@ -9,6 +9,7 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/emulatorcontext.h>
+#include <emulator/platform.h>
 #include <emulator/memory/memorymap.h>  // TD-3 compact read formats
 #include <emulator/memory/rom.h>  // ROM signatures
 #include <emulator/cpu/core.h>    // Core::GetROM()
@@ -151,9 +152,23 @@ void EmulatorAPI::getStateMemory(const HttpRequestPtr& req, std::function<void(c
         paging["locked"] = (state.p7FFD & 0x20) ? true : false;
 
         // Extended paging ports (model-specific)
-        // pEFF7: Scorpion 256K extended paging
+        // pEFF7: Pentagon/Scorpion extended features
         paging["port_eff7"] = static_cast<int>(state.pEFF7);
         paging["port_eff7_hex"] = StringHelper::Format("0x%02X", state.pEFF7);
+
+        // EFF7 flag interpretation for Pentagon models
+        if (config.mem_model == MM_PENTAGON && state.pEFF7 != 0)
+        {
+            Json::Value eff7_flags;
+            eff7_flags["16col_enabled"] = (state.pEFF7 & EFF7_4BPP) != 0;
+            eff7_flags["512_enabled"] = (state.pEFF7 & EFF7_512) != 0;
+            eff7_flags["extmem_locked"] = (state.pEFF7 & EFF7_LOCKMEM) != 0;
+            eff7_flags["gigascreen_enabled"] = (state.pEFF7 & EFF7_GIGASCREEN) != 0;
+            eff7_flags["hwmc_enabled"] = (state.pEFF7 & EFF7_HWMC) != 0;
+            eff7_flags["384_enabled"] = (state.pEFF7 & EFF7_384) != 0;
+            eff7_flags["cmos_enabled"] = (state.pEFF7 & EFF7_CMOS) != 0;
+            paging["eff7_flags"] = eff7_flags;
+        }
 
         // pFE: Border/tape/speaker (always available)
         paging["port_fe"] = static_cast<int>(state.pFE);

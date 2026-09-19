@@ -61,6 +61,7 @@ static bool TryBeta128MirrorPort(uint16_t port, bool wideDecode, uint16_t& canon
 PortDecoder_Scorpion256::PortDecoder_Scorpion256(EmulatorContext* context) : PortDecoder(context)
 {
     _7FFD_Locked = false;
+    _savedP7FFDValid = false;
 }
 
 PortDecoder_Scorpion256::~PortDecoder_Scorpion256()
@@ -107,6 +108,7 @@ void PortDecoder_Scorpion256::reset()
 
     // Reset memory paging lock latch
     _7FFD_Locked = false;
+    _savedP7FFDValid = false;
 
     // SMUC stub: re-arm the serial-link lines (the EEPROM image itself is
     // battery-backed and survives reset) and clear the IDE window registers
@@ -716,6 +718,15 @@ void PortDecoder_Scorpion256::Port_7FFD(uint8_t value, uint16_t pc)
     // chain — lives in ScorpionMemory::UpdateModelBanks() behind the single
     // UpdateZ80Banks() call (design §3/§5), so the latch that snapshots and
     // the debugger read back is exactly the byte that was written
+    // The ProfROM NMI-return stub (ROM0 #000D -> JP #3C35: OUT (C),D / LD B,#7F /
+    // OUT (C),E) rewrites #7FFD from the monitor's saved copy, whose ROM bit the
+    // firmware forced to 48K - substitute the user's real value once (see Port_1FFD)
+    if (_savedP7FFDValid && pc == 0x3C39)
+    {
+        value = _savedP7FFD;
+        _savedP7FFDValid = false;
+    }
+
     if (!_7FFD_Locked)
     {
         _state->p7FFD = value;
@@ -762,7 +773,31 @@ void PortDecoder_Scorpion256::Port_1FFD(uint8_t value, uint16_t pc)
     static const uint16_t port = 0x1FFD;
     Memory& memory = *_context->pMemory;
 
+    // Service monitor entered from an NMI/magic button: the firmware always saves
+    // #7FFD with the 48K ROM bit set (marker byte #04 pushed by the TR-DOS entry
+    // chain) and writes only that bit back on exit, so the interrupted 128K ROM
+    // program would resume under the 48K ROM. Remember the user's #7FFD when the
+    // Shadow Monitor latch rises at the entry trick (#0033) during the NMI and put it back on the
+    // firmware's exit write (#000B: OUT (C),A with A=0, reached by JP #000B from
+    // #0164). The monitor clears the latch transiently elsewhere and drops the
+    // Z80 NMI flag itself, so the exit is recognised by address, not by NMI state
+    const bool monitorWasOn = (_state->p1FFD & 0x02) != 0;
+    const bool monitorNowOn = (value & 0x02) != 0;
+
+    if (!monitorWasOn && monitorNowOn && pc == 0x0033 && _context->pCore->GetZ80()->nmi_in_progress)
+    {
+        _savedP7FFD = _state->p7FFD;
+        _savedP7FFDValid = true;
+    }
+
     _state->p1FFD = value;
+
+    if (monitorWasOn && !monitorNowOn && pc == 0x000B && _savedP7FFDValid)
+    {
+        if (!_7FFD_Locked)
+            _state->p7FFD = _savedP7FFD;
+    }
+
     memory.UpdateZ80Banks();
 
     MLOGDEBUG(memory.DumpMemoryBankInfo());

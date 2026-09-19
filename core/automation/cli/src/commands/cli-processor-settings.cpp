@@ -258,9 +258,16 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
     }
     else if (settingName == "fast_disk")
     {
-        config.wd93_nodelay = boolValue;
-        ss << "Setting changed: fast_disk = " << (boolValue ? "on" : "off") << NEWLINE;
-        ss << "Fast disk I/O is now " << (boolValue ? "enabled" : "disabled") << NEWLINE;
+        if (featureManager && featureManager->setFeature(Features::kFastDisk, boolValue))
+        {
+            config.wd93_nodelay = boolValue;
+            ss << "Setting changed: fast_disk = " << (boolValue ? "on" : "off") << NEWLINE;
+            ss << "Fast disk loading is now " << (boolValue ? "enabled" : "disabled") << NEWLINE;
+        }
+        else
+        {
+            ss << "Error: Cannot change fast_disk (FeatureManager not available or TTD recording active)" << NEWLINE;
+        }
     }
     else if (settingName == "trdos_present")
     {

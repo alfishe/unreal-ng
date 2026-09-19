@@ -69,6 +69,52 @@ void FeatureManager::clear()
 /// @param idOrAlias Unique identifier or alias of the feature
 /// @param enabled Whether to enable or disable the feature
 /// @return true if the feature was found and updated, false if feature not found
+bool FeatureManager::isTtdRecordingActive() const
+{
+    if (_ttdShortcutOverrideActive)
+    {
+        return true;
+    }
+
+    if (_context && _context->pTimeTravelManager)
+    {
+        if (_context->pTimeTravelManager->IsRecording())
+            return true;
+    }
+
+    return false;
+}
+
+void FeatureManager::onTtdRecordingStarted()
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    if (!_ttdShortcutOverrideActive)
+    {
+        const auto* fd = findFeature(Features::kFastDisk);
+        if (fd) _savedFastDiskState = fd->enabled;
+        const auto* ft = findFeature(Features::kFastTape);
+        if (ft) _savedFastTapeState = ft->enabled;
+        const auto* tt = findFeature(Features::kTurboTape);
+        if (tt) _savedTurboTapeState = tt->enabled;
+        _ttdShortcutOverrideActive = true;
+    }
+    onFeatureChanged(Features::kTimeTravel);
+}
+
+void FeatureManager::onTtdRecordingStopped()
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    if (_ttdShortcutOverrideActive)
+    {
+        _ttdShortcutOverrideActive = false;
+    }
+    onFeatureChanged(Features::kTimeTravel);
+}
+
+/// @brief Set feature enabled/disabled by id or alias.
+/// @param idOrAlias Unique identifier or alias of the feature
+/// @param enabled Whether to enable or disable the feature
+/// @return true if the feature was found and updated, false if feature not found
 bool FeatureManager::setFeature(const std::string& idOrAlias, bool enabled)
 {
     std::string changedId;
@@ -77,6 +123,55 @@ bool FeatureManager::setFeature(const std::string& idOrAlias, bool enabled)
         auto* feature = findFeature(idOrAlias);
         if (feature)
         {
+            const std::string& id = feature->id;
+
+            // Block enabling fast-disk / fast-tape / turbo-tape shortcuts during active TTD recording
+            if (enabled && (id == Features::kFastDisk || id == Features::kFastTape || id == Features::kTurboTape))
+            {
+                if (isTtdRecordingActive())
+                {
+                    if (_context && _context->pModuleLogger)
+                    {
+                        _context->pModuleLogger->Warning(_MODULE, _SUBMODULE,
+                            "Cannot enable shortcut feature '%s' while Time-Travel Debugging (TTD) recording is active",
+                            id.c_str());
+                    }
+                    return false;
+                }
+            }
+
+            // Track TTD recording start / stop to save and restore shortcut states
+            if (id == Features::kTimeTravel)
+            {
+                if (enabled && !_ttdShortcutOverrideActive)
+                {
+                    const auto* fd = findFeature(Features::kFastDisk);
+                    if (fd) _savedFastDiskState = fd->enabled;
+                    const auto* ft = findFeature(Features::kFastTape);
+                    if (ft) _savedFastTapeState = ft->enabled;
+                    const auto* tt = findFeature(Features::kTurboTape);
+                    if (tt) _savedTurboTapeState = tt->enabled;
+                    _ttdShortcutOverrideActive = true;
+                    if (_context && _context->pModuleLogger)
+                    {
+                        _context->pModuleLogger->Info(_MODULE, _SUBMODULE,
+                            "TTD recording active: auto-disabling fastdisk, fasttape, and turbotape shortcuts during session.");
+                    }
+                }
+                else if (!enabled && _ttdShortcutOverrideActive)
+                {
+                    _ttdShortcutOverrideActive = false;
+                    if (_context && _context->pModuleLogger)
+                    {
+                        _context->pModuleLogger->Info(_MODULE, _SUBMODULE,
+                            "TTD recording stopped: restoring shortcut states (fastdisk=%s, fasttape=%s, turbotape=%s).",
+                            _savedFastDiskState ? "ON" : "OFF",
+                            _savedFastTapeState ? "ON" : "OFF",
+                            _savedTurboTapeState ? "ON" : "OFF");
+                    }
+                }
+            }
+
             bool wasEnabled = feature->enabled;
             bool valueChanged = (wasEnabled != enabled);
             feature->enabled = enabled;
@@ -98,7 +193,6 @@ bool FeatureManager::setFeature(const std::string& idOrAlias, bool enabled)
             // This ensures breakpoints/calltrace/memorytracking work as expected
             if (enabled)
             {
-                const std::string& id = feature->id;
                 if (id == Features::kBreakpoints || id == Features::kCallTrace || id == Features::kMemoryTracking ||
                     id == Features::kTimeTravel)
                 {
@@ -198,7 +292,17 @@ bool FeatureManager::isEnabled(const std::string& idOrAlias) const
 {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
     const auto* feature = findFeature(idOrAlias);
-    return feature ? feature->enabled : false;
+    if (!feature)
+        return false;
+
+    // Shortcuts are overridden to OFF during active TTD recording
+    if (feature->id == Features::kFastDisk || feature->id == Features::kFastTape || feature->id == Features::kTurboTape)
+    {
+        if (isTtdRecordingActive())
+            return false;
+    }
+
+    return feature->enabled;
 }
 
 /// @brief List all features and their metadata.
@@ -363,6 +467,14 @@ void FeatureManager::setDefaults()
                      Features::kTurboTapeDesc,
                      true,  // ON by default - the trap stays instant for vanilla blocks; warp picks up
                             // every signal-path block and ends itself (read-gap watchdog / end-of-tape)
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryPerformance});
+
+    registerFeature({Features::kFastDisk,
+                     Features::kFastDiskAlias,
+                     Features::kFastDiskDesc,
+                     true,  // ON by default - compressed FDC timing and ROM loop traps
                      "",
                      {Features::kStateOff, Features::kStateOn},
                      Features::kCategoryPerformance});

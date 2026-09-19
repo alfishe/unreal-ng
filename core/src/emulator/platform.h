@@ -53,6 +53,7 @@ constexpr char const* NC_FDD_STATE_CHANGED = "FDD_STATE_CHANGED";               
 constexpr char const* NC_FDC_STATE_CHANGED = "FDC_STATE_CHANGE"; // WD1793 visible state changed: drive/side/track/sector/command/motor (payload: FDCStatePayload). Diff-gated — posted only when the observed tuple actually changes
 constexpr char const* NC_FEATURE_CHANGED = "FEATURE_CHANGED";                   // Feature toggled or mode changed (payload: FeatureChangedPayload). Posted AFTER all UpdateFeatureCache() calls complete so caches are consistent when observers fire. Informational — caches are already up to date.
 constexpr char const* NC_SPEED_CHANGED = "SPEED_CHANGED";                       // Speed multiplier or turbo mode changed (payload: SpeedChangedPayload). Posted from Core after state is committed.
+constexpr char const* NC_DISK_AUTOSTART = "DISK_AUTOSTART";                       // TR-DOS disk autostart outcome or refusal (payload: DiskAutostartPayload). Posted from Emulator::AutostartDisk.
 constexpr char const* NC_FILE_LOADED = "FILE_LOADED";                           // Snapshot / tape / disk file loaded or load failed (payload: FileLoadedPayload). Posted from Emulator after the loader returns.
 constexpr char const* NC_RECORDING_STATE = "RECORDING_STATE";                   // Recording started or stopped (payload: RecordingStatePayload). Posted from RecordingManager.
 constexpr char const* NC_MEMORY_PAGE_CHANGED = "MEMORY_PAGE_CHANGED";           // RAM bank mapping changed (payload: MemoryPagePayload). Posted by Memory on bank switch.

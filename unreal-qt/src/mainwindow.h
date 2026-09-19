@@ -82,7 +82,8 @@ private slots:
     void openTapeDialog();
     void openDiskDialog();
     void openSpecificFile(const QString& filepath);
-    void loadFile(const QString& filePath);
+    /// Open a file by type. mountOnly: a disk is mounted without the TR-DOS autostart (Shift+drop)
+    void loadFile(const QString& filePath, bool mountOnly = false);
     void saveFileDialog();
     void saveFileDialogZ80();
     void saveDiskDialog();
@@ -102,6 +103,8 @@ private slots:
     void handleTurboModeToggled(bool enabled);
     void handleTapeTrapsToggled(bool enabled);
     void handleTurboTapeToggled(bool enabled);
+    void handleFastDiskToggled(bool enabled);
+    void handleAutostartDisksToggled(bool enabled);
     void handleStepIn();
     void handleStepOver();
     void handleToolBarToggled(bool visible);
@@ -227,6 +230,8 @@ private:
     DeviceScreenWrapper* _screenWrapper = nullptr;
     HudOverlayWrapper* _hudWrapper = nullptr;
     std::shared_ptr<HudModel> _hudModel;
+    bool _autostartDisks = true;      // TR-DOS disk autostart on open (persisted in settings)
+    std::string _nextEmulatorModel;   // Model for the next auto-started emulator (empty = default); consumed once
     bool _hudOverlayVisible = false;  // Session-only HUD visibility state (default off)
     QMutex lockMutex;
     QMutex _audioMutex;              // Protects audio operations from race conditions

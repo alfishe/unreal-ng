@@ -413,6 +413,27 @@ public:
     virtual ~FileLoadedPayload() = default;
 };
 
+/// Payload for NC_DISK_AUTOSTART.
+/// Posted by Emulator::AutostartDisk with the decision taken for a freshly opened disk.
+class DiskAutostartPayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    std::string message;  // Human readable outcome, e.g. "Autostart: GAME" or "This machine has no TR-DOS"
+    bool started;         // true = the machine was reset into TR-DOS to start the disk
+    bool error;           // true = the disk could not be autostarted because of a problem (HUD warning)
+
+    DiskAutostartPayload(const unreal::UUID& id, std::string text, bool wasStarted, bool isError)
+        : MessagePayload()
+        , emulatorId(id)
+        , message(std::move(text))
+        , started(wasStarted)
+        , error(isError)
+    {}
+
+    virtual ~DiskAutostartPayload() = default;
+};
+
 /// Recording type (video, audio, or both)
 enum class RecordingType : uint8_t
 {

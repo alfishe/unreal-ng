@@ -1719,6 +1719,69 @@ public:
             return ctx->pScreen->GetActiveScreen();
         });
 
+        // Detailed video mode state including Pentagon 16-color mode
+        lua.set_function("screen_video_state", [this](sol::this_state s) -> sol::table {
+            sol::state_view lua(s);
+            sol::table result = lua.create_table();
+
+            if (!_emulator) return result;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pScreen) return result;
+
+            Screen* screen = ctx->pScreen;
+            VideoModeEnum mode = screen->GetVideoMode();
+
+            result["video_mode"] = Screen::GetVideoModeName(mode);
+            result["border_color"] = screen->GetBorderColor();
+            result["active_screen"] = screen->GetActiveScreen();
+
+            // Mode-specific details
+            switch (mode)
+            {
+                case M_P16:
+                    result["resolution"] = "256x192";
+                    result["bpp"] = 4;
+                    result["colors"] = 16;
+                    result["eff7_16col"] = true;
+                    break;
+                case M_PMC:
+                    result["resolution"] = "256x192";
+                    result["eff7_hwmc"] = true;
+                    break;
+                case M_PHR:
+                    result["resolution"] = "512x192";
+                    result["bpp"] = 1;
+                    result["eff7_512"] = true;
+                    break;
+                case M_P384:
+                    result["resolution"] = "384x304";
+                    result["overscan"] = true;
+                    break;
+                default:
+                    result["resolution"] = "256x192";
+                    result["bpp"] = 1;
+                    break;
+            }
+
+            // Pentagon EFF7 state
+            if (ctx->config.mem_model == MM_PENTAGON)
+            {
+                uint8_t eff7 = ctx->emulatorState.pEFF7;
+                if (eff7 != 0)
+                {
+                    sol::table eff7_state = lua.create_table();
+                    eff7_state["value"] = static_cast<int>(eff7);
+                    eff7_state["16col_enabled"] = (eff7 & EFF7_4BPP) != 0;
+                    eff7_state["512_enabled"] = (eff7 & EFF7_512) != 0;
+                    eff7_state["hwmc_enabled"] = (eff7 & EFF7_HWMC) != 0;
+                    eff7_state["384_enabled"] = (eff7 & EFF7_384) != 0;
+                    result["eff7"] = eff7_state;
+                }
+            }
+
+            return result;
+        });
+
         // Device state reports (core DeviceState: the same trees the WebAPI,
         // Python, CLI and MCP return). Optional chip index -> the chip's
         // full report, no index -> the overview

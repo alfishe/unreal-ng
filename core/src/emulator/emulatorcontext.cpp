@@ -32,6 +32,8 @@ EmulatorContext::EmulatorContext(LoggerLevel level)
     pTapeFastLoad = nullptr;
     pTapeTurboController = nullptr;
     pBetaDisk = nullptr;
+    pDiskFastLoad = nullptr;
+    pDiskAutostart = nullptr;
     pScreen = nullptr;
     pAudioManagerObj = nullptr;
     pAudioCallback = nullptr;

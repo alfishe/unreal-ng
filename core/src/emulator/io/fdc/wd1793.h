@@ -291,6 +291,10 @@ public:
         _seek_error = false;
     }
 
+    /// Fast disk trap: hands the rest of the current Read Sector transfer (incl. the byte pending in the
+    /// data register) to byteConsumer. The FSM finishes the command itself. Returns false if not applicable.
+    bool drainSectorRead(const std::function<void(uint8_t byte)>& byteConsumer);
+
     /// endregion </WD1793 / VG93 commands>
 
     /// region <WD1793 / VG93 state machine states>
@@ -926,9 +930,41 @@ protected:
         return DISK_ROTATION_PERIOD_TSTATES / bytes;
     }
 
+    /// Fast disk loading armed (feature on, TR-DOS paged in): FDC timing is compressed
+    bool isFastDiskArmed() const;
+
+    /// Compressed FDC timings used while armed. Command start BUSY window and the E=1 settle stay authentic.
+    static constexpr size_t FAST_STEP_TSTATES = 70;       // ~20 us head step (Xpeccy VG_TURBO_STEP)
+    static constexpr size_t FAST_BYTE_CELL_TSTATES = 32;  // per-byte transfer cell
+    static constexpr size_t FAST_CRC_TSTATES = 64;
+    size_t _fastDrqHold = 0;  // T-states left before an unread byte is declared lost (fast mode)
+
+    /// Delay for a transition while armed; unchanged for states that must stay authentic
+    size_t fastDelay(WDSTATE nextState, size_t authentic) const
+    {
+        switch (nextState)
+        {
+            case WDSTATE::S_STEP:
+                return authentic < FAST_STEP_TSTATES ? authentic : FAST_STEP_TSTATES;
+            case WDSTATE::S_VERIFY:
+                return 1;
+            case WDSTATE::S_READ_BYTE:
+                return authentic < FAST_BYTE_CELL_TSTATES ? authentic : FAST_BYTE_CELL_TSTATES;
+            case WDSTATE::S_READ_CRC:
+                return authentic < FAST_CRC_TSTATES ? authentic : FAST_CRC_TSTATES;
+            default:
+                return authentic;
+        }
+    }
+
     /// T-states until the data field of sector passes under the head (rotational latency of a Type II command)
     size_t rotationalDelayToData(const DiskImage::Track& track, const DiskImage::Sector& sector) const
     {
+        if (isFastDiskArmed())
+        {
+            // Rotation teleport (UnrealSpeccy find_marker / Xpeccy+ turbo): sector served in ~100 T-states
+            return 100;
+        }
         const size_t head = headByteOffset(track);
         const size_t bytes = track.bytesUntil(sector, head) + (sector.hasData ? (sector.dataOffset - sector.idamOffset) : 0);
         return bytes * byteCellTStates(track);
@@ -982,6 +1018,11 @@ protected:
 
     void transitionFSMWithDelay(WDSTATE nextState, size_t delayTStates)
     {
+        if (isFastDiskArmed())
+        {
+            delayTStates = fastDelay(nextState, delayTStates);
+        }
+
         /// region <Debug logging>
         std::string delayNote =
             StringHelper::Format(" delay(%d | %.02f ms)", delayTStates, convertTStatesToMsFloat(delayTStates));

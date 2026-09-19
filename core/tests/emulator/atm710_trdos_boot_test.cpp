@@ -72,7 +72,17 @@ protected:
         EmulatorContext* context = emulator->GetContext();
         EmulatorTestHelper::RunUntil(
             emulator.get(),
-            [&] { return StripSpaces(DecodeTextRows(context, 0, 24)).find("SPECTRUM128") != std::string::npos; }, 300);
+            [&] {
+                // Wait for the whole menu (last row is the copyright line): "SPECTRUM128" shows up while the
+                // menu is still being drawn and key presses before it is live are lost - ENTER then lands
+                // on "TR-DOS 48" instead of "SPECTRUM 128"
+                std::string screen = StripSpaces(DecodeTextRows(context, 0, 24));
+                return screen.find("SPECTRUM128") != std::string::npos &&
+                       screen.find("SPECTRUM48") != std::string::npos &&
+                       screen.find("MicroART") != std::string::npos;
+            },
+            300);
+        emulator->RunNFrames(10, true);  // let the menu settle before the first key
 
         Keyboard* keyboard = context->pKeyboard;
         for (int i = 0; i < 2; i++)

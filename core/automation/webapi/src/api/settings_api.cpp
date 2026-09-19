@@ -60,13 +60,12 @@ void EmulatorAPI::getSettings(const HttpRequestPtr& req, std::function<void(cons
     Json::Value ret;
     Json::Value settings(Json::objectValue);
 
-    // I/O Acceleration settings (fast_tape is backed by the runtime 'fasttape'
-    // feature — the sole control plane of the fast-load mechanism)
+    // I/O Acceleration settings (fast_tape, turbo_tape, fast_disk are backed by FeatureManager)
     FeatureManager* featureManager = context->pFeatureManager;
     Json::Value io_accel(Json::objectValue);
     io_accel["fast_tape"] = featureManager && featureManager->isEnabled(Features::kFastTape);
     io_accel["turbo_tape"] = featureManager && featureManager->isEnabled(Features::kTurboTape);
-    io_accel["fast_disk"] = config.wd93_nodelay;
+    io_accel["fast_disk"] = featureManager && featureManager->isEnabled(Features::kFastDisk);
     settings["io_acceleration"] = io_accel;
 
     // Disk Interface settings
@@ -137,9 +136,10 @@ void EmulatorAPI::getSetting(const HttpRequestPtr& req, std::function<void(const
     }
     else if (name == "fast_disk")
     {
+        FeatureManager* featureManager = context->pFeatureManager;
         ret["name"] = "fast_disk";
-        ret["value"] = config.wd93_nodelay;
-        ret["description"] = "Fast disk I/O (removes WD1793 controller delays)";
+        ret["value"] = featureManager && featureManager->isEnabled(Features::kFastDisk);
+        ret["description"] = "Fast disk loading (FDC timing compression and TR-DOS ROM traps)";
     }
     else if (name == "trdos_present")
     {
@@ -253,10 +253,15 @@ void EmulatorAPI::setSetting(const HttpRequestPtr& req, std::function<void(const
     }
     else if (name == "fast_disk")
     {
+        FeatureManager* featureManager = context->pFeatureManager;
+        if (featureManager)
+        {
+            featureManager->setFeature(Features::kFastDisk, boolValue);
+        }
         config.wd93_nodelay = boolValue;
         ret["name"] = "fast_disk";
         ret["value"] = boolValue;
-        ret["message"] = std::string("Fast disk I/O is now ") + (boolValue ? "enabled" : "disabled");
+        ret["message"] = std::string("Fast disk loading is now ") + (boolValue ? "enabled" : "disabled");
     }
     else if (name == "trdos_present")
     {
