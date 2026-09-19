@@ -3,6 +3,7 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatorcontext.h>
 #include <emulator/platform.h>
+#include <emulator/video/screen.h>
 
 #include <algorithm>
 #include <bitset>
@@ -394,35 +395,73 @@ void CLIProcessor::HandleStateScreenMode(const ClientSession& session, EmulatorC
 {
     std::stringstream ss;
     CONFIG& config = context->config;
+    EmulatorState& state = context->emulatorState;
 
     ss << "Video Mode Information" << NEWLINE;
     ss << "======================" << NEWLINE;
     ss << NEWLINE;
 
-    // Determine model
     std::string model = Config::GetModelFullName(config.mem_model);
     ss << "Model: " << model << NEWLINE;
-    ss << "Video Mode: Standard" << NEWLINE;
-    ss << "============================================" << NEWLINE;
-    ss << "Resolution:      256 × 192 pixels" << NEWLINE;
-    ss << "Color Depth:     2 colors per attribute block" << NEWLINE;
-    ss << "Attribute Size:  8 × 8 pixels" << NEWLINE;
-    ss << "Memory Layout:" << NEWLINE;
-    ss << "  Pixel Data:    6144 bytes (32 lines × 192 pixels)" << NEWLINE;
-    ss << "  Attributes:    768 bytes (32 × 24 blocks)" << NEWLINE;
-    ss << "  Total:         6912 bytes per screen" << NEWLINE;
+
+    VideoModeEnum videoMode = M_ZX48;
+    if (context->pScreen)
+    {
+        videoMode = context->pScreen->GetVideoMode();
+    }
+
+    std::string modeName = Screen::GetVideoModeName(videoMode);
+    ss << "Video Mode: " << modeName << NEWLINE;
+
+    switch (videoMode)
+    {
+        case M_P16:
+            ss << "Resolution:      256 × 192 pixels" << NEWLINE;
+            ss << "Color Depth:     16 colors (4bpp, dual-plane)" << NEWLINE;
+            ss << "Memory Layout:   Two 6144-byte planes ({Page^1, Page})" << NEWLINE;
+            ss << "Pixel Format:    Left=(b6>>3)|(b2:0), Right=(b7>>4)|(b5:3>>3)" << NEWLINE;
+            break;
+        case M_PMC:
+            ss << "Resolution:      256 × 192 pixels" << NEWLINE;
+            ss << "Color Depth:     Hardware multicolor (16 colors/line)" << NEWLINE;
+            ss << "Memory Layout:   Dual-plane + attribute timing" << NEWLINE;
+            break;
+        case M_PHR:
+            ss << "Resolution:      512 × 192 pixels" << NEWLINE;
+            ss << "Color Depth:     2 colors (1bpp, dual-plane)" << NEWLINE;
+            break;
+        case M_P384:
+            ss << "Resolution:      384 × 304 pixels" << NEWLINE;
+            ss << "Color Depth:     Standard attribute mode" << NEWLINE;
+            break;
+        default:
+            ss << "Resolution:      256 × 192 pixels" << NEWLINE;
+            ss << "Color Depth:     2 colors per attribute block" << NEWLINE;
+            ss << "Attribute Size:  8 × 8 pixels" << NEWLINE;
+            ss << "Memory Layout:" << NEWLINE;
+            ss << "  Pixel Data:    6144 bytes (32 lines × 192 pixels)" << NEWLINE;
+            ss << "  Attributes:    768 bytes (32 × 24 blocks)" << NEWLINE;
+            ss << "  Total:         6912 bytes per screen" << NEWLINE;
+            break;
+    }
 
     if (config.mem_model == MM_SPECTRUM128 || config.mem_model == MM_PENTAGON || config.mem_model == MM_PLUS3)
     {
-        uint8_t port7FFD = context->emulatorState.p7FFD;
+        uint8_t port7FFD = state.p7FFD;
         bool shadowScreen = (port7FFD & 0x08) != 0;
         ss << "Active Screen:   Screen " << (shadowScreen ? "1" : "0") << " (RAM page " << (shadowScreen ? "7" : "5")
            << ")" << NEWLINE;
     }
 
-    ss << "Compatibility:   48K/128K/+2/+2A/+3 standard" << NEWLINE;
-    ss << NEWLINE;
-    ss << "Note: Enhanced modes (Timex, Pentagon GigaScreen, etc.) not currently active." << NEWLINE;
+    if (config.mem_model == MM_PENTAGON && state.pEFF7 != 0)
+    {
+        ss << NEWLINE;
+        ss << "EFF7 Port State:" << NEWLINE;
+        ss << "  16-color mode: " << ((state.pEFF7 & EFF7_4BPP) ? "enabled" : "disabled") << NEWLINE;
+        ss << "  512-pixel mode: " << ((state.pEFF7 & EFF7_512) ? "enabled" : "disabled") << NEWLINE;
+        ss << "  Hardware multicolor: " << ((state.pEFF7 & EFF7_HWMC) ? "enabled" : "disabled") << NEWLINE;
+        ss << "  384x304 mode: " << ((state.pEFF7 & EFF7_384) ? "enabled" : "disabled") << NEWLINE;
+    }
 
     session.SendResponse(ss.str());
 }
