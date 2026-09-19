@@ -2,6 +2,7 @@
 // Generated: 2026-01-08
 
 #include "../emulator_api.h"
+#include "upload_helper.h"
 
 #include <base/featuremanager.h>
 #include <drogon/HttpResponse.h>
@@ -227,26 +228,52 @@ void EmulatorAPI::loadTape(const HttpRequestPtr& req,
         return;
     }
     
-    auto json = req->getJsonObject();
-    if (!json || !json->isMember("path")) {
+    // Extract content: JSON path, multipart file, or raw body
+    auto content = extractMediaContent(req, MediaType::Tape);
+    if (!content.valid)
+    {
         Json::Value error;
         error["error"] = "Bad Request";
-        error["message"] = "Missing 'path' parameter in request body";
-        
+        error["message"] = content.errorMsg;
+
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k400BadRequest);
         addCorsHeaders(resp);
         callback(resp);
         return;
     }
-    
-    std::string path = (*json)["path"].asString();
+
+    std::string path;
+    if (content.isEmbedded)
+    {
+        std::string stageError;
+        path = UploadHelper::Instance().stageUpload(
+            content.data, content.filename, MediaType::Tape, stageError);
+        if (path.empty())
+        {
+            Json::Value error;
+            error["error"] = "Internal Error";
+            error["message"] = "Failed to stage upload: " + stageError;
+
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+    }
+    else
+    {
+        path = content.path;
+    }
+
     bool success = emulator->LoadTape(path);
-    
+
     Json::Value ret;
     ret["status"] = success ? "success" : "error";
     ret["message"] = success ? "Tape loaded successfully" : "Failed to load tape (check logs for details)";
     ret["path"] = path;
+    if (content.isEmbedded) ret["uploaded"] = true;
     
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     resp->setStatusCode(success ? HttpStatusCode::k200OK : HttpStatusCode::k400BadRequest);
@@ -1238,23 +1265,58 @@ void EmulatorAPI::insertDisk(const HttpRequestPtr& req,
         return;
     }
     
-    auto json = req->getJsonObject();
-    if (!json || !json->isMember("path")) {
+    // Extract content: JSON path, multipart file, or raw body
+    auto content = extractMediaContent(req, MediaType::Disk);
+    if (!content.valid)
+    {
         Json::Value error;
         error["error"] = "Bad Request";
-        error["message"] = "Missing 'path' parameter in request body";
-        
+        error["message"] = content.errorMsg;
+
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k400BadRequest);
         addCorsHeaders(resp);
         callback(resp);
         return;
     }
-    
-    std::string path = (*json)["path"].asString();
 
-    // Optional "autostart": true - quick-reset into TR-DOS and run the disk (drive A only, off by default)
-    const bool autostart = json->isMember("autostart") && (*json)["autostart"].asBool() && driveNum == 0;
+    std::string path;
+    bool wasUploaded = false;
+    if (content.isEmbedded)
+    {
+        std::string stageError;
+        path = UploadHelper::Instance().stageUpload(
+            content.data, content.filename, MediaType::Disk, stageError);
+        if (path.empty())
+        {
+            Json::Value error;
+            error["error"] = "Internal Error";
+            error["message"] = "Failed to stage upload: " + stageError;
+
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        wasUploaded = true;
+    }
+    else
+    {
+        path = content.path;
+    }
+
+    // Optional autostart - quick-reset into TR-DOS and run the disk (drive A only, off by default)
+    // Supported via JSON body ("autostart": true) or X-Autostart header for raw uploads
+    bool autostart = false;
+    if (driveNum == 0)
+    {
+        auto json = req->getJsonObject();
+        if (json && json->isMember("autostart"))
+            autostart = (*json)["autostart"].asBool();
+        else if (content.isEmbedded)
+            autostart = (req->getHeader("X-Autostart") == "true");
+    }
     Emulator::DiskAutostartResult autostartResult;
     bool success;
     if (autostart)
@@ -1277,7 +1339,8 @@ void EmulatorAPI::insertDisk(const HttpRequestPtr& req,
     ret["message"] = success ? "Disk inserted successfully" : "Failed to insert disk (check logs for details)";
     ret["path"] = path;
     ret["drive"] = drive;
-    
+    if (wasUploaded) ret["uploaded"] = true;
+
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     resp->setStatusCode(success ? HttpStatusCode::k200OK : HttpStatusCode::k400BadRequest);
     addCorsHeaders(resp);

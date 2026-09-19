@@ -1,6 +1,6 @@
 # WebAPI Media Upload — Technical Design
 
-**Status:** Draft  
+**Status:** Implemented  
 **Date:** 2026-09-19  
 **Related docs:** [iOS Host Design](ios-host-design.md) §7, [OpenAPI Maintenance](../../../OPENAPI_MAINTENANCE.md)
 
@@ -102,7 +102,20 @@ Over-limit returns `413 Payload Too Large`. No config needed — these are hard 
 
 ## 3. Implementation
 
-### 3.1 Drogon multipart handling
+### 3.1 Drogon body size configuration
+
+**Critical**: Drogon's default `clientMaxMemoryBodySize` is ~64KB. Bodies larger than this
+are written to temp files, causing `req->body()` to return an empty string. We set both
+limits in `automation-webapi.cpp`:
+
+```cpp
+#include "api/upload_helper.h"   // MAX_UPLOAD_BODY_SIZE constant (5 MB)
+
+app.setClientMaxBodySize(api::v1::MAX_UPLOAD_BODY_SIZE);
+app.setClientMaxMemoryBodySize(api::v1::MAX_UPLOAD_BODY_SIZE);
+```
+
+### 3.2 Drogon multipart handling
 
 Drogon provides `HttpRequestPtr::getFile(name)` for multipart. The handler:
 
@@ -143,7 +156,7 @@ void SnapshotController::load(const HttpRequestPtr& req,
 }
 ```
 
-### 3.2 Temp file staging
+### 3.3 Temp file staging
 
 Per-session upload folder: `writable_root/uploads/<session_uuid>/`
 - Created on first upload of the session
@@ -153,14 +166,14 @@ Per-session upload folder: `writable_root/uploads/<session_uuid>/`
 
 No periodic cleanup, no stale-file timers — session lifecycle handles it.
 
-### 3.3 Core loader changes
+### 3.4 Core loader changes
 
 None required — loaders already take paths. The staging approach reuses existing code.
 
 Future optimization: `LoadSnapshotFromMemory(const uint8_t*, size_t)` to avoid disk I/O
 (Phase 2, shared with UE buffer-based loaders).
 
-### 3.4 Resource manager (iOS/Android hosts only)
+### 3.5 Resource manager (iOS/Android hosts only)
 
 A lightweight `HostResourceManager` lives in `unrealng_embed`, **not in core**:
 
@@ -215,35 +228,19 @@ MCP bridge:
 WebAPI: stages content, loads from staged path → success
 ```
 
-### 4.3 Implementation in `mcp-server/`
+### 4.3 Implementation
 
-```typescript
-async function loadSoftware(type: string, path: string, drive?: number) {
-  const isLocalFile = await fs.access(path).then(() => true).catch(() => false);
-  
-  if (isLocalFile) {
-    const content = await fs.readFile(path);
-    const filename = path.split('/').pop()!;
-    const endpoint = getEndpoint(type, drive);  // e.g., /disk/0/insert
-    
-    await fetch(`${webapiBase}/emulator/${emulatorId}/${endpoint}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/octet-stream',
-        'X-Filename': filename,
-      },
-      body: content,
-    });
-  } else {
-    // Assume it's a remote path, use existing JSON body
-    await fetch(`${webapiBase}/emulator/${emulatorId}/${endpoint}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path }),
-    });
-  }
-}
-```
+Implemented in `core/automation/mcp/src/mcp-tools.cpp` (C++):
+
+- `TryReadLocalFile()` — checks if path exists on MCP host and reads content (max 4MB)
+- `ExtractFilename()` — extracts basename from path for X-Filename header
+- `IApiCaller::CallRaw()` — new method for binary body + headers (in `webapi-client.h`)
+- `ForwardCallRaw()` — helper in `mcp-tool-utils.h` wrapping CallRaw
+
+The `load_software` tool now:
+1. Tries to read the path as a local file
+2. If found: uploads via raw body with X-Filename header (shows "(uploaded)" in result)
+3. If not found: falls back to JSON body with path (existing behavior)
 
 ### 4.4 Tool schema update
 
@@ -307,12 +304,12 @@ requestBody:
 
 ## 7. Phases
 
-| Phase | Scope | Estimate |
-|---|---|---|
-| 1 | Multipart + raw body for all three endpoints; temp staging; size limits | 1–2 days |
-| 2 | MCP bridge piggybacking; tool schema update | 0.5 day |
-| 3 | OpenAPI spec; integration tests | 0.5 day |
-| 4 | (Future) In-memory loaders to skip temp files | — |
+| Phase | Scope | Estimate | Status |
+|---|---|---|---|
+| 1 | Multipart + raw body for all three endpoints; temp staging; size limits | 1–2 days | ✅ Done |
+| 2 | MCP bridge piggybacking; tool schema update | 0.5 day | ✅ Done |
+| 3 | OpenAPI spec; integration tests | 0.5 day | ✅ Done |
+| 4 | (Future) In-memory loaders to skip temp files | — | — |
 
 ---
 

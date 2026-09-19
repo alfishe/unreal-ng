@@ -14,6 +14,7 @@
 #include "emulator_websocket.h"  // Triggers auto-registration for WebSocket handlers
 #include "hello_world_api.h"     // Triggers auto-registration for API handlers
 #include "interpreter_api.h"     // Triggers auto-registration for Lua/Python API handlers
+#include "api/upload_helper.h"   // MAX_UPLOAD_BODY_SIZE constant
 
 // Socket includes for port availability checking
 #ifdef _WIN32
@@ -258,6 +259,11 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
         resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
         resp->addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
     });
+
+    // Set max body size for file uploads (covers snapshots, disks, tapes)
+    app.setClientMaxBodySize(api::v1::MAX_UPLOAD_BODY_SIZE);
+    // Also set max memory body size so bodies are kept in memory, not temp files
+    app.setClientMaxMemoryBodySize(api::v1::MAX_UPLOAD_BODY_SIZE);
 
     // Custom 404 page that guides users to API documentation
     // Load from external HTML file for easy maintenance

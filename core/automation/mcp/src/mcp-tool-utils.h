@@ -10,9 +10,11 @@
 #include "mcp-tools.h"
 #include "target-resolver.h"
 
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
+#include <map>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -230,6 +232,33 @@ inline void ResolveAndForward(const Json::Value& args, const std::string& method
             return;
         }
         ForwardCall(method, Endpoint(idOrError, suffix), bodyCopy.get(), caller, okPrefix + " [target " + idOrError + "]", done);
+    });
+}
+
+/// Performs a WebAPI call with raw binary body and wraps the outcome into a ToolResult
+inline void ForwardCallRaw(const std::string& method, const std::string& path,
+                           const std::vector<uint8_t>& body,
+                           const std::map<std::string, std::string>& headers,
+                           IApiCaller& caller, const std::string& okPrefix, ToolCallback done)
+{
+    caller.CallRaw(method, path, body, headers, [okPrefix, done](int status, Json::Value responseBody) {
+        if (status >= 200 && status < 300)
+        {
+            done(ToolResult::Ok(okPrefix, std::move(responseBody)));
+            return;
+        }
+        if (status == 0)
+        {
+            done(ToolResult::Error("WebAPI unreachable — is the emulator running with WebAPI enabled (port 8090)?"));
+            return;
+        }
+        std::string details = DescribeErrorBody(responseBody);
+        std::string text = "WebAPI returned HTTP " + std::to_string(status);
+        if (!details.empty())
+        {
+            text += ": " + details;
+        }
+        done(ToolResult::Error(text));
     });
 }
 

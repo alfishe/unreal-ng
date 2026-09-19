@@ -9,6 +9,7 @@
 #include <json/json.h>
 
 #include "../emulator_api.h"
+#include "upload_helper.h"
 
 using namespace drogon;
 using namespace api::v1;
@@ -56,12 +57,13 @@ void EmulatorAPI::loadSnapshot(const HttpRequestPtr& req, std::function<void(con
         return;
     }
 
-    auto json = req->getJsonObject();
-    if (!json || !json->isMember("path"))
+    // Extract content: JSON path, multipart file, or raw body
+    auto content = extractMediaContent(req, MediaType::Snapshot);
+    if (!content.valid)
     {
         Json::Value error;
         error["error"] = "Bad Request";
-        error["message"] = "Missing 'path' parameter in request body";
+        error["message"] = content.errorMsg;
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k400BadRequest);
@@ -70,13 +72,39 @@ void EmulatorAPI::loadSnapshot(const HttpRequestPtr& req, std::function<void(con
         return;
     }
 
-    std::string path = (*json)["path"].asString();
+    std::string path;
+    if (content.isEmbedded)
+    {
+        // Stage the uploaded content to a temp file
+        std::string stageError;
+        path = UploadHelper::Instance().stageUpload(
+            content.data, content.filename, MediaType::Snapshot, stageError);
+        if (path.empty())
+        {
+            Json::Value error;
+            error["error"] = "Internal Error";
+            error["message"] = "Failed to stage upload: " + stageError;
+
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+    }
+    else
+    {
+        path = content.path;
+    }
+
     bool success = emulator->LoadSnapshot(path);
 
     Json::Value ret;
     ret["status"] = success ? "success" : "error";
     ret["message"] = success ? "Snapshot loaded successfully" : "Failed to load snapshot (check logs for details)";
     ret["path"] = path;
+    if (content.isEmbedded)
+        ret["uploaded"] = true;
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     resp->setStatusCode(success ? HttpStatusCode::k200OK : HttpStatusCode::k400BadRequest);

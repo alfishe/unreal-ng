@@ -95,3 +95,78 @@ class TestMediaControl:
         info = api_client.get_snapshot_info(emu_id)
         assert info["status"] == "loaded"
         assert str(SNAPSHOT_FIXTURE) in info["file"]
+
+
+class TestMediaUpload:
+    """Tests for embedded media upload (webapi-media-upload-tdd.md)."""
+
+    def test_tape_upload_raw_body(self, api_client, active_emulator):
+        """Upload tape via raw body with X-Filename header."""
+        if not TAPE_FIXTURE.exists():
+            pytest.skip(f"Tape fixture missing: {TAPE_FIXTURE}")
+        emu_id = active_emulator
+
+        # Upload using the new method
+        loaded = api_client.load_tape_upload(emu_id, TAPE_FIXTURE)
+        assert loaded["status"] == "success"
+        assert loaded.get("uploaded") is True
+
+        info = api_client.get_tape_info(emu_id)
+        assert info["status"] == "loaded"
+        assert info["format"] == "tap"
+
+        # Cleanup
+        api_client.eject_tape(emu_id)
+
+    def test_disk_upload_raw_body(self, api_client, active_emulator):
+        """Upload disk via raw body with X-Filename header."""
+        if not DISK_FIXTURE.exists():
+            pytest.skip(f"Disk fixture missing: {DISK_FIXTURE}")
+        emu_id = active_emulator
+
+        loaded = api_client.insert_disk_upload(emu_id, "A", DISK_FIXTURE)
+        assert loaded["status"] == "success"
+        assert loaded.get("uploaded") is True
+
+        info = api_client.get_disk_info(emu_id, "A")
+        assert info["status"] == "inserted"
+
+        # Cleanup
+        api_client.eject_disk(emu_id, "A")
+
+    def test_snapshot_upload_raw_body(self, api_client, active_emulator):
+        """Upload snapshot via raw body with X-Filename header."""
+        if not SNAPSHOT_FIXTURE.exists():
+            pytest.skip(f"Snapshot fixture missing: {SNAPSHOT_FIXTURE}")
+        emu_id = active_emulator
+
+        loaded = api_client.load_snapshot_upload(emu_id, SNAPSHOT_FIXTURE)
+        assert loaded["status"] == "success"
+        assert loaded.get("uploaded") is True
+
+    def test_upload_size_limit(self, api_client, active_emulator):
+        """Verify size limit enforcement (>1MB for disk should fail)."""
+        emu_id = active_emulator
+
+        # Create oversized content (>1MB)
+        oversized = b'\x00' * (2 * 1024 * 1024)  # 2MB
+
+        import requests
+        try:
+            api_client.insert_disk_upload(emu_id, "A", oversized, "oversized.trd")
+            pytest.fail("Expected exception for oversized upload")
+        except Exception as e:
+            # Should get 400 or 413 with size error
+            assert "too large" in str(e).lower() or "413" in str(e)
+
+    def test_upload_invalid_extension(self, api_client, active_emulator):
+        """Verify unknown extension is rejected."""
+        emu_id = active_emulator
+
+        content = b'dummy content'
+        import requests
+        try:
+            api_client.load_tape_upload(emu_id, content, "file.xyz")
+            pytest.fail("Expected exception for invalid extension")
+        except Exception as e:
+            assert "extension" in str(e).lower() or "400" in str(e)

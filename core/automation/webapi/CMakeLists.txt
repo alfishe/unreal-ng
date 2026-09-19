@@ -22,61 +22,67 @@ cmake_policy(SET CMP0079 NEW)
 # existing root-level cache entry.
 option(ENABLE_RECORDING "Enable audio/video recording support" ON)
 
-# Find OpenSSL (required by Drogon/Trantor)
-# Try to find OpenSSL, and if it fails, set the root directory explicitly
-find_package(OpenSSL QUIET)
-if (NOT OpenSSL_FOUND)
-    # Fallback: set OpenSSL root directory for Homebrew on ARM64 macOS
-    if (APPLE AND EXISTS "/opt/homebrew/opt/openssl")
-        set(OPENSSL_ROOT_DIR "/opt/homebrew/opt/openssl")
-        set(OPENSSL_LIBRARIES "/opt/homebrew/opt/openssl/lib/libssl.dylib;/opt/homebrew/opt/openssl/lib/libcrypto.dylib")
-        set(OPENSSL_INCLUDE_DIR "/opt/homebrew/opt/openssl/include")
-        message(STATUS "[automation_webapi] Using OpenSSL from Homebrew: ${OPENSSL_ROOT_DIR}")
-    # Fallback: Windows OpenSSL installations
-    elseif (WIN32)
-        # Check common Windows OpenSSL installation paths
-        set(OPENSSL_SEARCH_PATHS
-            "C:/Program Files/OpenSSL-Win64"
-            "C:/OpenSSL-Win64"
-            "$ENV{OPENSSL_ROOT_DIR}"
-        )
-
-        # For MSVC, also check vcpkg paths
-        if(MSVC AND DEFINED ENV{VCPKG_ROOT})
-            list(APPEND OPENSSL_SEARCH_PATHS "$ENV{VCPKG_ROOT}/installed/x64-windows")
-        endif()
-
-        foreach(OPENSSL_PATH ${OPENSSL_SEARCH_PATHS})
-            if(EXISTS "${OPENSSL_PATH}/include/openssl/ssl.h")
-                set(OPENSSL_ROOT_DIR "${OPENSSL_PATH}")
-                message(STATUS "[automation_webapi] Using OpenSSL from: ${OPENSSL_ROOT_DIR}")
-                break()
-            endif()
-        endforeach()
-    endif ()
+if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    message(STATUS "[automation_webapi] Building for iOS: disabling OpenSSL/TLS and c-ares")
+    set(TRANTOR_USE_TLS none CACHE STRING "" FORCE)
+    set(BUILD_C-ARES OFF CACHE BOOL "" FORCE)
+else()
+    # Find OpenSSL (required by Drogon/Trantor)
+    # Try to find OpenSSL, and if it fails, set the root directory explicitly
     find_package(OpenSSL QUIET)
-endif ()
+    if (NOT OpenSSL_FOUND)
+        # Fallback: set OpenSSL root directory for Homebrew on ARM64 macOS
+        if (APPLE AND EXISTS "/opt/homebrew/opt/openssl")
+            set(OPENSSL_ROOT_DIR "/opt/homebrew/opt/openssl")
+            set(OPENSSL_LIBRARIES "/opt/homebrew/opt/openssl/lib/libssl.dylib;/opt/homebrew/opt/openssl/lib/libcrypto.dylib")
+            set(OPENSSL_INCLUDE_DIR "/opt/homebrew/opt/openssl/include")
+            message(STATUS "[automation_webapi] Using OpenSSL from Homebrew: ${OPENSSL_ROOT_DIR}")
+        # Fallback: Windows OpenSSL installations
+        elseif (WIN32)
+            # Check common Windows OpenSSL installation paths
+            set(OPENSSL_SEARCH_PATHS
+                "C:/Program Files/OpenSSL-Win64"
+                "C:/OpenSSL-Win64"
+                "$ENV{OPENSSL_ROOT_DIR}"
+            )
 
-if (NOT OpenSSL_FOUND)
-    if(WIN32 AND MSVC)
-        message(WARNING
-            "[automation_webapi] OpenSSL not found for MSVC — WebAPI automation disabled.\n"
-            "  To enable, install vcpkg and OpenSSL:\n"
-            "    git clone https://github.com/microsoft/vcpkg C:/vcpkg\n"
-            "    C:\\vcpkg\\bootstrap-vcpkg.bat\n"
-            "    vcpkg install openssl:x64-windows-static\n"
-            "    vcpkg integrate install\n"
-            "  Then reconfigure with:\n"
-            "    -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake\n"
-            "    -DVCPKG_TARGET_TRIPLET=x64-windows-static"
-        )
-    else()
-        message(WARNING "[automation_webapi] OpenSSL not found — WebAPI automation disabled.")
-    endif()
-    # Propagate the disabled state so the parent doesn't try to link against
-    # a target that was never created.
-    set(ENABLE_WEBAPI_AUTOMATION OFF PARENT_SCOPE)
-    return()
+            # For MSVC, also check vcpkg paths
+            if(MSVC AND DEFINED ENV{VCPKG_ROOT})
+                list(APPEND OPENSSL_SEARCH_PATHS "$ENV{VCPKG_ROOT}/installed/x64-windows")
+            endif()
+
+            foreach(OPENSSL_PATH ${OPENSSL_SEARCH_PATHS})
+                if(EXISTS "${OPENSSL_PATH}/include/openssl/ssl.h")
+                    set(OPENSSL_ROOT_DIR "${OPENSSL_PATH}")
+                    message(STATUS "[automation_webapi] Using OpenSSL from: ${OPENSSL_ROOT_DIR}")
+                    break()
+                endif()
+            endforeach()
+        endif ()
+        find_package(OpenSSL QUIET)
+    endif ()
+
+    if (NOT OpenSSL_FOUND)
+        if(WIN32 AND MSVC)
+            message(WARNING
+                "[automation_webapi] OpenSSL not found for MSVC — WebAPI automation disabled.\n"
+                "  To enable, install vcpkg and OpenSSL:\n"
+                "    git clone https://github.com/microsoft/vcpkg C:/vcpkg\n"
+                "    C:\\vcpkg\\bootstrap-vcpkg.bat\n"
+                "    vcpkg install openssl:x64-windows-static\n"
+                "    vcpkg integrate install\n"
+                "  Then reconfigure with:\n"
+                "    -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake\n"
+                "    -DVCPKG_TARGET_TRIPLET=x64-windows-static"
+            )
+        else()
+            message(WARNING "[automation_webapi] OpenSSL not found — WebAPI automation disabled.")
+        endif()
+        # Propagate the disabled state so the parent doesn't try to link against
+        # a target that was never created.
+        set(ENABLE_WEBAPI_AUTOMATION OFF PARENT_SCOPE)
+        return()
+    endif ()
 endif ()
 
 # Find or build zlib for Drogon
@@ -229,6 +235,8 @@ set(COMMON_SOURCES
     src/api/state_device_api.cpp
     src/api/tape_disk_api.cpp
     src/api/snapshot_api.cpp
+    src/api/upload_helper.h
+    src/api/upload_helper.cpp
     src/api/interpreter_api.cpp
     src/api/interpreter_api.h
     src/api/basic_api.cpp

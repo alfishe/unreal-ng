@@ -100,6 +100,54 @@ void WebApiClient::Call(const std::string& method, const std::string& path, cons
     }, 120.0);
 }
 
+void WebApiClient::CallRaw(const std::string& method, const std::string& path,
+                           const std::vector<uint8_t>& body,
+                           const std::map<std::string, std::string>& headers,
+                           ApiCallback callback)
+{
+    EnsureClient();
+
+    auto* holder = static_cast<drogon::HttpClientPtr*>(_client);
+    if (!holder || !*holder)
+    {
+        std::cerr << "MCP WebApiClient: loopback client unavailable" << std::endl;
+        callback(0, Json::Value());
+        return;
+    }
+
+    auto req = drogon::HttpRequest::newHttpRequest();
+    req->setPath(path);
+    req->setBody(std::string(reinterpret_cast<const char*>(body.data()), body.size()));
+    req->setContentTypeCode(drogon::CT_APPLICATION_OCTET_STREAM);
+
+    for (const auto& [key, value] : headers)
+    {
+        req->addHeader(key, value);
+    }
+
+    drogon::HttpMethod httpMethod = drogon::Post;
+    if (method == "PUT")
+        httpMethod = drogon::Put;
+
+    req->setMethod(httpMethod);
+
+    (*holder)->sendRequest(req, [callback](drogon::ReqResult result, const drogon::HttpResponsePtr& resp) {
+        if (result != drogon::ReqResult::Ok || !resp)
+        {
+            callback(0, Json::Value());
+            return;
+        }
+
+        Json::Value parsed;
+        auto json = resp->getJsonObject();
+        if (json)
+        {
+            parsed = *json;
+        }
+        callback(static_cast<int>(resp->statusCode()), std::move(parsed));
+    }, 120.0);
+}
+
 /// endregion </WebApiClient>
 
 } // namespace mcp

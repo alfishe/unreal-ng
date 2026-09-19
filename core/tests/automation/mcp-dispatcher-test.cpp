@@ -57,6 +57,25 @@ public:
         }
     }
 
+    void CallRaw(const std::string& method, const std::string& path, const std::vector<uint8_t>& body,
+                 const std::map<std::string, std::string>& headers, ApiCallback callback) override
+    {
+        // Raw uploads are not exercised by the dispatcher tests - record and
+        // answer from the same scripted routes as Call
+        calls.push_back({method, path, Json::Value()});
+        (void)body;
+        (void)headers;
+        auto it = routes.find(method + " " + path);
+        if (it != routes.end())
+        {
+            callback(it->second.first, it->second.second);
+        }
+        else
+        {
+            callback(fallback.first, fallback.second);
+        }
+    }
+
     bool Saw(const std::string& method, const std::string& path) const
     {
         for (const auto& call : calls)
