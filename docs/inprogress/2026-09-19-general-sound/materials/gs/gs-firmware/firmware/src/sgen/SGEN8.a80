@@ -1,0 +1,450 @@
+
+S8_     LD D,C
+        PUSH DE
+        LD D,B
+        EXX
+        POP BC
+S81     SLA B
+        JP C,S818
+
+        SLI C
+        JP C,S8101
+        JP S8100
+
+S81052  SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,6
+        RET
+S81053  SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,5
+        RET
+S81054  SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,4
+        RET
+S81055  SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,3
+        RET
+S81056  SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,2
+        RET
+S81057  SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,1
+        RET
+S81058  SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,0
+        RET
+
+S8102   JP Z,S8104
+S810A   INC E
+        JP Z,S8105
+        LD (DE),A
+        INC E
+        JR Z,S81052
+        LD LY,A
+        ADD A,(HL)
+        RRA
+        LD HY,A
+        ADD A,LY
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S81053
+        ADD A,HY
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S81054
+        LD A,HY
+        LD (DE),A
+        INC E
+        JR Z,S81055
+        LD (DE),A
+        INC E
+        JR Z,S81056
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S81057
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S81058
+S8100   LD A,C
+        ADD A,B
+        LD C,A
+        LD A,(HL)
+        INC HL
+        DEC LX
+        LD (DE),A
+        JP NC,S8102
+        JR Z,S8106
+        INC E
+        JR Z,S8107
+        LD (DE),A
+        DEC E
+        INC E
+S8103    JR Z,S8108
+        INC E
+        JR Z,S8109
+        LD (DE),A
+        INC E
+        JR Z,S81092
+        LD LY,A
+        ADD A,(HL)
+        RRA
+        LD HY,A
+        ADD A,LY
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S81093
+        ADD A,HY
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S81094
+        LD A,HY
+        LD (DE),A
+        INC E
+        JR Z,S81095
+        LD (DE),A
+        INC E
+        JR Z,S81096
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S81097
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S81098
+S8101    LD A,C
+        ADD A,B
+        LD C,A
+        LD A,(HL)
+        INC HL
+        DEC LX
+        LD (DE),A
+        JP NC,S8103
+        JP NZ,S810A
+S8104   INC E
+S8105   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,7
+        RET
+S8106    INC E
+S8107    RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        RET
+S8108    INC E
+S8109    RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,7
+        RET
+S81092   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,6
+        RET
+S81093   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,5
+        RET
+S81094   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,4
+        RET
+S81095   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,3
+        RET
+S81096   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,2
+        RET
+S81097   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,1
+        RET
+S81098   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,0
+        RET
+
+S818    SLI C
+        JP NC,S8180
+        JP S8181
+
+S8184    INC E
+S8185    RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        RET
+S8186    RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,7
+        RET
+S81866   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,6
+        RET
+S81867   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,5
+        RET
+S81868   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,4
+        RET
+S81869   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,3
+        RET
+S8186A   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,2
+        RET
+S8186B   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,1
+        RET
+S8186C   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,0
+        RET
+
+
+
+S8182    JR Z,S8184
+        INC E
+S81822  JR Z,S8185
+S818222 LD (DE),A
+        INC E
+        JR Z,S8186
+        LD LY,A
+        ADD A,(HL)
+        RRA
+        LD HY,A
+        ADD A,LY
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S81866
+        ADD A,HY
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S81867
+        LD (DE),A
+        INC E
+        JR Z,S81868
+        LD A,HY
+        LD (DE),A
+        INC E
+        JR Z,S81869
+        LD (DE),A
+        INC E
+        JR Z,S8186A
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S8186B
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S8186C
+S8181    LD A,C
+        ADD A,B
+        LD C,A
+        LD A,(HL)
+        INC HL
+        DEC LX
+        LD (DE),A
+        JP C,S8182
+        JR Z,S81871
+        JP S81831
+S8183    JR Z,S8187
+        INC E
+        JR Z,S8188
+        LD (DE),A
+S81831  INC E
+        JR Z,S8189
+        LD LY,A
+        ADD A,(HL)
+        RRA
+        LD HY,A
+        ADD A,LY
+        RRA
+        LD (DE),A
+         INC E
+        JR Z,S81891
+        ADD A,HY
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S81892
+        LD (DE),A
+        INC E
+        JR Z,S81893
+        LD A,HY
+        LD (DE),A
+        INC E
+        JR Z,S81894
+        LD (DE),A
+        INC E
+        JR Z,S81895
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S81896
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S81897
+S8180    LD A,C
+        ADD A,B
+        LD C,A
+        LD A,(HL)
+        INC HL
+        DEC LX
+        LD (DE),A
+        JP C,S8183
+        JR Z,S81844
+        INC E
+        JP NZ,S818222
+         RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        RET
+
+
+S81844   INC E
+         RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        RET
+
+S8187    INC E
+S8188    SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        RET
+S8189    SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,7
+        RET
+S81871  INC E
+S81891   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,6
+        RET
+S81892   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,5
+        RET
+S81893   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,4
+        RET
+S81894   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,3
+        RET
+S81895   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,2
+        RET
+S81896   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,1
+        RET
+S81897   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,0
+        RET
+
+
+

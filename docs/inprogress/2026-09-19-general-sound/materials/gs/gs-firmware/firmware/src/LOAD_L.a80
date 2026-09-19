@@ -1,0 +1,120 @@
+
+; RET B,DE - OLD CURADR
+
+
+LOAD    LD B,#81
+
+        LD HL,(CURADR)
+        LD A,(CURADR+2)
+
+        SCF
+        RL H
+        RLA
+        RRC H
+
+        LD E,A
+        LD D,high RAMPG
+
+LOAD_   LD A,(DE)
+        OR A
+        JP Z,LOADWT3
+        LD (CPAGE),A
+        OUT (PAGE),A
+
+        LD A,(NUMPG)
+        CP E
+        JR NZ,LOADWT
+        LD A,H
+        CP #C0
+        JR C,LOADWT2
+        JP LOADWT3
+
+LOADWT  IN A,(FLAGS)
+        AND B
+        JR Z,LOADWT
+        RRCA
+        IN A,(DATRG)
+        JR C,LOADCM
+        ADD A,C
+        LD (HL),A
+        INC L
+        JP NZ,LOADWT
+        INC H
+        JP NZ,LOADWT
+        INC E
+        LD HL,#8000
+        JP LOAD_
+
+LOADCM  IN A,(COMRG)
+        CP #F3
+        JP Z,COMF3
+        CP #F4
+        JP Z,COMF4
+        OUT (RSCOM),A
+        CP #D2
+        JP Z,LOAD3
+        JP LOADWT
+
+
+
+LOADWT2 IN A,(FLAGS)
+        AND B
+        JR Z,LOADWT2
+        RRCA
+        IN A,(DATRG)
+        JR C,LOADCM2
+        LD (HL),A
+        INC L
+        JP NZ,LOADWT2
+        INC H
+        BIT 6,H
+        JP Z,LOADWT2
+LOADWT3 IN A,(FLAGS)
+        AND B
+        JR Z,LOADWT3
+        RRCA
+        IN A,(DATRG)
+        JP NC,LOADWT3
+        IN A,(COMRG)
+        CP #F3
+        JP Z,COMF3
+        CP #F4
+        JP Z,COMF4
+        OUT (RSCOM),A
+        CP #D2
+        JR Z,LOAD3
+        JP LOADWT3
+
+LOADCM2 IN A,(COMRG)
+        CP #F3
+        JP Z,COMF3
+        CP #F4
+        JP Z,COMF4
+        OUT (RSCOM),A
+        CP #D2
+        JR Z,LOAD3
+        JP LOADWT2
+
+
+LOAD3   LD A,E
+        RL H
+        SRL A
+        RR H
+        LD (CURADR),HL
+        LD (CURADR+2),A
+        LD (MEMBOT),HL
+        LD (MEMBOT+2),A
+        LD E,A
+        XOR A
+        LD (CPAGE),A
+        OUT (PAGE),A
+        LD A,E
+        RET
+
+
+
+
+
+
+
+

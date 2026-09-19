@@ -1,0 +1,142 @@
+ENGINE  LD HL,(QTFREE)
+        LD H,high QTMAP
+        LD A,L
+        AND #1C
+        LD L,A
+        LD (QTFREE),HL
+        LD A,(HL)
+        OR A
+        JP NZ,ENG_FUL
+        LD A,(CHANSFX+#000)
+        RLCA
+        RR C
+        LD A,(CHANSFX+#040)
+        RLCA
+        RR C
+        LD A,(CHANSFX+#080)
+        RLCA
+        RR C
+        LD A,(CHANSFX+#0C0)
+        RLCA
+        RR C
+        LD A,(CHANSFX+#100)
+        RLCA
+        RR C
+        LD A,(CHANSFX+#140)
+        RLCA
+        RR C
+        LD A,(CHANSFX+#180)
+        RLCA
+        RR C
+        LD A,(CHANSFX+#1C0)
+        RLCA
+        RR C
+        LD A,(GSCHNS)
+        AND C
+        LD C,A
+        LD (FXCHNS),A
+        JR NZ,ENG_01
+        LD A,(MTSTAT)
+        BIT 6,A
+        RET NZ
+        OR A
+        JP M,ENG_00
+        LD A,(MODULE)
+        OR A
+        JR NZ,ENG_01
+ENG_00  XOR A
+        LD (PROCESS),A
+        RET
+
+ENG_01  LD A,(MODSWCH)
+        OR A
+        JR NZ,ENG_03
+        LD A,(MODULE)
+        OR A
+        JR Z,ENG_03
+
+        LD A,#01
+        LD (SGENOFF),A
+        LD A,(TCKLEFT+1)
+        CP #02
+        JR NC,ENG_05
+        OR A
+        LD A,(TCKLEFT)
+        JR Z,ENG_04
+        SUB #80
+        JR NC,ENG_05
+        JP ENG_04
+
+ENG_03  LD A,#01
+        LD (SGENOFF),A
+        LD A,(FXTICK+1)
+        CP #02
+        JR NC,ENG_05
+        OR A
+        LD A,(FXTICK)
+        JR Z,ENG_04
+        SUB #80
+        JR NC,ENG_05
+ENG_04  NEG
+        LD (SGENOFF),A
+
+ENG_05  XOR A
+        LD (CHANNEL),A
+        OR C
+        JR Z,ENG_07
+        LD IY,CHANSFX
+        SRL C
+ENG_06  PUSH BC
+        CALL C,GEN
+        LD BC,CHANLEN
+        ADD IY,BC
+        POP BC
+        SRL C
+        JR C,ENG_06
+        JR NZ,ENG_06
+
+ENG_07
+        CALL QUANTUM
+        XOR A
+        LD (CPAGE),A
+        OUT (PAGE),A
+        RET
+
+
+ENG_80  LD A,(SGENOFF)
+        LD E,A
+        LD D,#00
+        LD HL,(FXTICK)
+        OR A
+        SBC HL,DE
+        JR Z,ENG_81
+        JR C,ENG_81
+        LD (FXTICK),HL
+        JP ENG_82
+ENG_81
+
+ENG_82  LD A,(MODSWCH)
+        OR A
+        JR NZ,$
+        LD A,(MODULE)
+        OR A
+        JR Z,$
+        LD HL,(TCKLEFT)
+        SBC HL,DE
+        LD (TCKLEFT),HL
+        JR NZ,ENG_83
+
+
+ENG_83
+
+ENG_FUL LD A,(PLAYING)
+        OR A
+        RET NZ
+        DI
+        XOR A
+        LD (FILLALL),A
+        CALL QTPLAY
+        RET
+
+
+

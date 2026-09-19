@@ -1,0 +1,1278 @@
+
+HGET    IN A,(FLAGS)
+        AND #81
+        JR Z,HGET
+        IN A,(DATRG)
+        RET M
+        JP COMINT
+
+HSEND   IN A,(FLAGS)
+        OR A
+        RET P
+        RRCA
+        JP NC,HSEND
+        JP COMINT
+
+HTAIL   LD HL,HTAIL2
+HTAIL2  IN A,(FLAGS)
+        AND #81
+        JR Z,HTAIL2
+        RRCA
+        JR C,HTAIL3
+        IN A,(DATRG)
+        JP (HL)
+HTAIL3  IN A,(COMRG)
+        CP #E0
+        JP NC,COMINT
+        CP #D0
+        JP C,COMINT
+        JR Z,HTAIL5
+        CP #D1
+        JR Z,HTAIL6
+
+        XOR A
+HTAIL4  OUT (OUTRG),A
+        IN A,(DATRG)
+HTAIL6  OUT (RSCOM),A
+        JP (HL)
+HTAIL5  LD A,(ERRCODE)
+        JR HTAIL4
+
+
+
+
+
+
+ERR30
+ERR20
+
+ERR10   LD A,#10        ;NOT ENOUGH FREE SPACE
+        JR ERR
+ERR11   LD A,#11        ;NOT ENOUGH FREE ENTRIES
+        JR ERR
+
+
+
+ERR     LD (ERRCODE),A
+        JP COMINT
+
+
+; #20 - GET MEMORY SIZE
+
+COM20   LD DE,(RAMBOT)
+        LD A,(RAMBOT+2)
+        LD C,A
+        LD HL,(RAMTOP)
+        LD A,(RAMTOP+2)
+        OR A
+        SBC HL,DE
+        SBC A,C
+        LD C,A
+        LD A,L
+        OUT (OUTRG),A
+        OUT (RSCOM),A
+        CALL HSEND
+        LD A,H
+        OUT (OUTRG),A
+        CALL HSEND
+        LD A,C
+        OUT (OUTRG),A
+        RET
+
+; #21 - GET SIZE OF FREE SPACE
+
+COM21   LD DE,(MEMBOT)
+        LD A,(MEMBOT+2)
+        LD C,A
+        LD HL,(MEMTOP)
+        LD A,(MEMTOP+2)
+        OR A
+        SBC HL,DE
+        SBC A,C
+        LD C,A
+        LD A,L
+        OUT (OUTRG),A
+        OUT (RSCOM),A
+        XOR A
+        LD (ERRCODE),A
+        CALL HSEND
+        LD A,H
+        OUT (OUTRG),A
+        CALL HSEND
+        LD A,C
+        OUT (OUTRG),A
+        RET
+
+COM22   IN A,(DATRG)
+        LD E,A
+        LD D,high RAMPG
+        LD A,(DE)
+        OUT (OUTRG),A
+        OUT (RSCOM),A
+        RET
+
+COM23   LD A,(NUMPG)
+        OUT (OUTRG),A
+        OUT (RSCOM),A
+        RET
+
+
+COM2A   LD A,(MODVOL)
+        OUT (OUTRG),A
+        IN A,(DATRG)
+        OUT (RSCOM),A
+        CP #40
+        JR C,COM2A_
+        LD A,#40
+COM2A_  LD (MODVOL),A
+        LD IY,CHANS
+        LD B,#08
+        LD DE,CHANLEN
+COM2A__ SET 0,(IY+CHSTAT)
+        ADD IY,DE
+        DJNZ COM2A__
+        RET
+
+COM2B   LD A,(FXVOL)
+        OUT (OUTRG),A
+        IN A,(DATRG)
+        OUT (RSCOM),A
+        CP #40
+        JR C,COM2B_
+        LD A,#40
+COM2B_  LD (FXVOL),A
+        LD IY,CHANSFX
+        LD B,#08
+        LD DE,CHANLEN
+COM2B__ SET 0,(IY+CHSTAT)
+        ADD IY,DE
+        DJNZ COM2B__
+        RET
+
+COM2C   LD A,(CURMOD)
+        OUT (OUTRG),A
+        IN A,(DATRG)
+        OUT (RSCOM),A
+        OR A
+        JR Z,COM2C_
+        LD B,A
+        LD A,(CNTMOD)
+        CP B
+        JR C,COM2C__
+        LD A,B
+        LD (CURMOD),A
+        RET
+COM2C_  LD A,(CNTMOD)
+        LD (CURMOD),A
+        RET
+COM2C__ XOR A
+        LD (CURMOD),A
+        RET
+
+COM2D   LD A,(CURSMP)
+        OUT (OUTRG),A
+        IN A,(DATRG)
+        OUT (RSCOM),A
+        OR A
+        JR Z,COM2D_
+        LD B,A
+        LD A,(CNTSMP)
+        CP B
+        JR C,COM2D__
+        LD A,B
+        LD (CURSMP),A
+        RET
+COM2D_  LD A,(CNTSMP)
+        LD (CURSMP),A
+        RET
+COM2D__ XOR A
+        LD (CURSMP),A
+        RET
+
+COM2E   LD A,(CURFX)
+        OUT (OUTRG),A
+        IN A,(DATRG)
+        OUT (RSCOM),A
+        OR A
+        JR Z,COM2E_
+        LD B,A
+        LD A,(CNTFX)
+        CP B
+        JR C,COM2E__
+        LD A,B
+        LD (CURFX),A
+        RET
+COM2E_  LD A,(CNTFX)
+        LD (CURFX),A
+        RET
+COM2E__ XOR A
+        LD (CURFX),A
+        RET
+
+COM2F   IN A,(DATRG)
+        OUT (RSCOM),A
+        LD E,A
+        CALL HGET
+        LD D,A
+        OR E
+        JR Z,COM2F_
+        LD HL,(CNTTRK)
+        SBC HL,DE
+        JR C,COM2F__
+        LD (CURTRK),DE
+        RET
+COM2F_  LD HL,(CNTTRK)
+        LD (CURTRK),HL
+        RET
+COM2F__ LD HL,#0000
+        LD (CURTRK),HL
+        RET
+
+COM30   LD A,(CNTMOD)
+        OR A
+        JP NZ,INITVAR
+        INC A
+        LD (CNTMOD),A
+        LD (CURMOD),A
+        OUT (OUTRG),A
+        IN A,(DATRG)
+        OUT (RSCOM),A
+        LD C,#00
+        CALL LOAD
+        LD A,#00
+        LD (CONVERT),A
+        CALL PLAYMD
+        RET
+
+COM65   IN A,(DATRG)
+        LD C,A
+        LD A,(CURMOD)
+        LD B,A
+        JP COM65_
+
+COM31   IN A,(DATRG)
+        OR A
+        JR NZ,COM31_
+        LD A,(CURMOD)
+        OR A
+        JP Z,COM31_1
+COM31_  LD B,A
+        LD A,(CNTMOD)
+        CP B
+        JP C,COM31_2
+        LD A,B
+        LD C,#00
+COM65_  OUT (OUTRG),A
+        OUT (RSCOM),A
+        LD A,(BUSY)
+        PUSH AF
+        LD A,#FF
+        LD (BUSY),A
+        LD A,B
+        LD (MODULE),A
+        LD (CURMOD),A
+        LD A,%00000011
+        LD (MTSTAT),A
+        LD A,#06
+        LD (MTSPEED),A
+        LD A,C
+        LD (MTSNGPS),A
+        XOR A
+        LD (MTFLAGS),A
+        LD (MTCOUNT),A
+        LD (MTPATPS),A
+        LD (MTPDT),A
+        LD (MTPDT2),A
+        LD (MTBRKFL),A
+        LD (MTBRKPS),A
+        LD (MTJMPFL),A
+        INC A
+        LD (MTTYPE),A
+        LD A,#40
+        LD (MTVOL),A
+        DEC A
+        LD (MTROWS),A
+        LD A,125
+        CALL FXF
+        LD IY,CHANS
+        LD B,#08
+        LD DE,CHANLEN
+COM31__ RES 7,(IY+CHSTAT)
+        SET 0,(IY+CHSTAT)
+        LD (IY+CHVOL),#40
+        LD (IY+CHMVOL),#40
+        ADD IY,DE
+        DJNZ COM31__
+        CALL INITPAT
+        CALL EFXGTNT
+        LD A,#FF
+        LD (PROCESS),A
+        POP AF
+        LD (BUSY),A
+        RET
+
+COM31_1
+COM31_2 XOR A
+        LD (CURMOD),A
+        OUT (OUTRG),A
+        OUT (RSCOM),A
+        RET
+
+COM32   LD A,(MODULE)
+        OUT (OUTRG),A
+        IN A,(DATRG)
+        OUT (RSCOM),A
+        LD HL,MTSTAT
+        SET 7,(HL)
+        RET
+
+COM33   LD A,(MODULE)
+        OUT (OUTRG),A
+        IN A,(DATRG)
+        OUT (RSCOM),A
+        LD A,(MODULE)
+        OR A
+        RET Z
+        LD HL,MTSTAT
+        BIT 6,(HL)
+        RET NZ
+        LD A,#FF
+        LD (PROCESS),A
+        RES 7,(HL)
+        LD (PROCESS),A
+        RET
+
+COM34   LD A,(MODFADE)
+        OUT (OUTRG),A
+        IN A,(DATRG)
+        OUT (RSCOM),A
+        LD (MODFADE),A
+        RET
+
+COM35   LD A,(MTVOL)
+        OUT (OUTRG),A
+        IN A,(DATRG)
+        OUT (RSCOM),A
+        CP #40
+        JR C,COM35_
+        LD A,#40
+COM35_  LD (MTVOL),A
+        LD IY,CHANS
+        LD B,#08
+        LD DE,CHANLEN
+COM35__ SET 0,(IY+CHSTAT)
+        ADD IY,DE
+        DJNZ COM35__
+        RET
+
+COM36   LD A,#FF
+        OUT (OUTRG),A
+        OUT (RSCOM),A
+        RET
+
+
+COM37   OUT (RSCOM),A
+        LD HL,MTSTAT
+        SET 7,(HL)
+        LD HL,#0000
+        XOR A
+        LD (CURADR),HL
+        LD (CURADR+2),A
+        LD (MEMBOT),HL
+        LD (MEMBOT+2),A
+        LD (CURMOD),A
+        LD (CNTMOD),A
+        LD (MODULE),A
+        RET
+
+COM3E   IN A,(DATRG)
+        CP #01
+        JR Z,COM38
+        LD LX,#80
+        OR A
+        JR Z,COM38_
+        XOR A
+        OUT (OUTRG),A
+        IN A,(DATRG)
+        OUT (RSCOM),A
+        RET
+
+
+COM38   LD LX,#00
+COM38_  LD A,(CNTFX)
+        CP 60
+        JP NC,COM38_9
+        INC A
+        OUT (OUTRG),A
+        PUSH AF
+        IN A,(DATRG)
+        OUT (RSCOM),A
+        POP AF
+        LD (CNTFX),A
+        LD (CURFX),A
+        CALL GETFX
+        PUSH HL
+        POP IY
+        LD E,L
+        LD D,H
+        INC DE
+        LD BC,#003F
+        LD (HL),B
+        LDIR
+        LD HL,(CURADR)
+        LD A,(CURADR+2)
+        LD (IY+8),L
+        LD (IY+9),H
+        LD (IY+10),A
+        LD C,LX
+        CALL LOAD
+        LD A,(CURADR)
+        SUB (IY+8)
+        LD (IY+11),A
+        LD (IY+17),A
+        LD A,(CURADR+1)
+        SBC A,(IY+9)
+        LD (IY+12),A
+        LD (IY+18),A
+        LD A,(CURADR+2)
+        SBC A,(IY+10)
+        LD (IY+13),A
+        LD (IY+19),A
+        LD (IY+16),#FF
+        LD (IY+20),#40
+        LD (IY+23),#80
+        LD (IY+24),#0F
+        LD (IY+25),#0F
+        LD (IY+26),#80
+        LD (IY+27),#FF
+        LD (IY+28),#FF
+        LD (IY+31),60
+        LD E,60
+        CALL GETPER
+        LD (IY+54),L
+        LD (IY+55),H
+        CALL GETFRQ
+        LD (IY+56),L
+        LD (IY+57),H
+        RET
+
+
+COM38_9 XOR A
+        OUT (OUTRG),A
+        LD (CURFX),A
+        IN A,(DATRG)
+        OUT (RSCOM),A
+        RET
+
+GETFX   DEC A
+        CP #20
+        JR C,GETFX2
+        SUB #20
+        LD H,#00
+        ADD A,A
+        ADD A,A
+        ADD A,A
+        RL H
+        ADD A,A
+        RL H
+        ADD A,A
+        RL H
+        ADD A,A
+        RL H
+        LD L,A
+        LD A,H
+        ADD A,(high BUFFER)+1
+        LD H,A
+        PUSH HL
+        POP IY
+        RET
+
+GETFX2  LD H,#00
+        ADD A,A
+        ADD A,A
+        ADD A,A
+        RL H
+        ADD A,A
+        RL H
+        ADD A,A
+        RL H
+        ADD A,A
+        RL H
+        LD L,A
+        LD A,H
+        ADD A,high SMPADR
+        LD H,A
+        PUSH HL
+        POP IY
+        RET
+
+
+COM39   IN A,(DATRG)
+        OR A
+        JR NZ,COM39_1
+        LD A,(CURFX)
+COM39_1 LD (CURFX),A
+        LD B,A
+        LD A,(CNTFX)
+        CP B
+        JP C,COM39_9
+        XOR A
+        OUT (OUTRG),A
+        OUT (RSCOM),A
+        LD A,(CURFX)
+        CALL GETFX
+        LD A,(BUSY)
+        PUSH AF
+        LD A,#FF
+        LD (BUSY),A
+        PUSH HL
+        POP IY
+        CALL PLAYFX
+        POP AF
+        LD (BUSY),A
+        RET
+
+
+COM39_9 LD A,#FF
+        OUT (OUTRG),A
+        OUT (RSCOM),A
+        RET
+
+COM3B
+COM3C   LD A,(FXFADE)
+        OUT (OUTRG),A
+        IN A,(DATRG)
+        OUT (RSCOM),A
+        LD (FXFADE),A
+        RET
+
+
+COM3D   LD A,(FXMVOL)
+        OUT (OUTRG),A
+        IN A,(DATRG)
+        OUT (RSCOM),A
+        CP #40
+        JR C,COM3D_
+        LD A,#40
+COM3D_  LD (FXMVOL),A
+        LD IY,CHANSFX
+        LD B,#08
+        LD DE,CHANLEN
+COM3D__ SET 0,(IY+CHSTAT)
+        ADD IY,DE
+        DJNZ COM3D__
+        RET
+
+COM3F
+
+
+COM40   IN A,(DATRG)
+        OUT (RSCOM),A
+        LD E,A
+        LD A,(CURFX)
+        OR A
+        RET Z
+        CALL GETFX
+        LD A,E
+        CP 96
+        JR C,COM40_
+        LD E,95
+COM40_  LD (IY+31),E
+        CALL GETPER
+        LD (IY+54),L
+        LD (IY+55),H
+        CALL GETFRQ
+        LD (IY+56),L
+        LD (IY+57),H
+        RET
+
+COM41   IN A,(DATRG)
+        OUT (RSCOM),A
+        LD E,A
+        LD A,(CURFX)
+        OR A
+        RET Z
+        CALL GETFX
+        LD A,E
+        CP #41
+        JR C,COM41_
+        LD E,#40
+COM41_  LD (IY+20),E
+        RET
+
+
+
+COM42   LD A,(CURFX)
+        CALL GETFX
+        PUSH HL
+        POP IY
+        LD A,(IY+21)
+        OUT (OUTRG),A
+        IN A,(DATRG)
+        OUT (RSCOM),A
+        LD (IY+21),A
+        RET
+
+
+COM45   LD A,(CURFX)
+        CALL GETFX
+        PUSH HL
+        POP IY
+        LD A,(IY+26)
+        OUT (OUTRG),A
+        IN A,(DATRG)
+        OUT (RSCOM),A
+        LD (IY+26),A
+        RET
+
+
+COM46   LD A,(CURFX)
+        CALL GETFX
+        PUSH HL
+        POP IY
+        LD A,(IY+24)
+        OUT (OUTRG),A
+        IN A,(DATRG)
+        OUT (RSCOM),A
+        LD (IY+24),A
+        RET
+
+COM47   LD A,(CURFX)
+        CALL GETFX
+        PUSH HL
+        POP IY
+        LD A,(IY+25)
+        OUT (OUTRG),A
+        IN A,(DATRG)
+        OUT (RSCOM),A
+        LD (IY+25),A
+        RET
+
+COM48   LD A,(CURFX)
+        CALL GETFX
+        PUSH HL
+        POP IY
+        IN A,(DATRG)
+        OUT (RSCOM),A
+        LD (IY+14),A
+        CALL HGET
+        LD (IY+15),A
+        CALL HGET
+        LD (IY+16),A
+        RET
+
+COM49   LD A,(CURFX)
+        CALL GETFX
+        PUSH HL
+        POP IY
+        IN A,(DATRG)
+        OUT (RSCOM),A
+        LD (IY+17),A
+        CALL HGET
+        LD (IY+18),A
+        CALL HGET
+        LD (IY+19),A
+        RET
+
+
+
+
+COM58   LD B,#00
+        OUT (OUTRG),A
+        JP COM50_
+
+COM50   IN A,(DATRG)
+        LD B,A
+
+COM50_  IN A,(COMRG)
+        OUT (RSCOM),A
+        AND #07
+        LD E,A
+
+        CALL HGET
+        LD L,A
+
+        LD A,E
+        CP #04
+        CALL NC,HGET
+        LD H,A
+
+        LD A,E
+        CP #07
+        CALL Z,HGET
+        LD D,A
+
+        LD A,B
+        OR A
+        JR NZ,C50_00
+        LD A,(LSTCHN)
+        OR A
+        JP Z,ERR20
+
+C50_00  LD B,A
+        LD C,#01
+        LD IY,CHANSFX
+C50_01  LD A,B
+        AND C
+        JR NZ,C50_02
+        RLC C
+        LD A,LY
+        ADD A,low CHANLEN
+        LD LY,A
+        LD A,HY
+        ADC A,#00
+        LD HY,A
+        JP C50_01
+
+C50_02  LD A,E
+        OR A
+        JP Z,C50_80
+        CP #02
+        JP Z,C50_A0
+        CP #04
+        JP Z,C50_C0
+        CP #05
+        JP Z,C50_D0
+        CP #06
+        JP Z,C50_E0
+        CP #07
+        JP Z,C50_F0
+C50_LP
+
+
+
+
+C50_80  SET 7,(IY+CHSTAT)
+        LD A,L
+        AND #7F
+        CP 96
+        JP NC,C50_LP
+
+C50_81  LD A,(IY+CHSMP)
+        OR A
+        JP Z,C50_LP
+        PUSH DE
+        PUSH BC
+        PUSH HL
+        LD E,L
+        RES 7,E
+        CALL GETFRQ
+        LD (IY+CHFRQL),L
+        LD (IY+CHFRQH),H
+        CALL GETPER
+        LD (IY+CHPERL),L
+        LD (IY+CHPERH),H
+        BIT 7,(IY+CHSTAT)
+        JR NZ,C50_82
+        LD A,(IY+CHNOTE)
+        CP E
+        JR Z,C50_83
+        LD (IY+CHNOTE),E
+C50_82  LD (IY+CHCNTL),#00
+        LD (IY+CHCNTH),#00
+C50_83  POP HL
+        PUSH HL
+        BIT 7,(IY+CHSTAT)
+        JR NZ,C50_84
+        BIT 7,L
+C50_84
+        POP HL
+        POP BC
+        POP DE
+        JP C50_LP
+
+C50_90  LD A,L
+        CP #40
+        JR C,C50_91
+        LD L,#40
+C50_91  LD (IY+CHVOL),A
+        LD (IY+CHMVOL),A
+        JP C50_LP
+
+C50_A0  LD (IY+CHFINE),L
+        JP C50_LP
+
+C50_B0  LD (IY+CHPAN),L
+        JP C50_LP
+
+C50_C0  LD A,H
+        OR A
+        JR NZ,C50_C1
+        OR L
+        JR NZ,C50_C1
+        LD L,#01
+C50_C1  LD A,H
+        CP #20
+        JR C,C50_C2
+        LD HL,#1FFF
+C50_C2  LD A,(IY+CHSTAT)
+        SET 7,(IY+CHSTAT)
+        LD (IY+CHPERL),L
+        LD (IY+CHPERH),H
+        LD (IY+CHCNTL),#00
+        LD (IY+CHCNTH),#00
+        LD (IY+CHSTAT),A
+        JP C50_LP
+
+C50_D0  LD A,H
+        OR A
+        JR NZ,C50_D1
+        OR L
+        JR NZ,C50_D1
+        LD L,#01
+C50_D1  LD A,H
+        CP #80
+        JR C,C50_D2
+        LD HL,#7FFF
+C50_D2  LD A,(IY+CHSTAT)
+        SET 7,(IY+CHSTAT)
+        LD (IY+CHFRQL),L
+        LD (IY+CHFRQH),H
+        LD (IY+CHCNTL),#00
+        LD (IY+CHCNTH),#00
+        LD (IY+CHSTAT),A
+        JP C50_LP
+
+
+C50_E0
+
+C50_F0
+
+COM60   LD A,(MTSNGPS)
+        OUT (OUTRG),A
+        OUT (RSCOM),A
+        RET
+
+COM61   LD A,(MTPATPS)
+        OUT (OUTRG),A
+        OUT (RSCOM),A
+        RET
+
+COM62   LD A,(MTSNGPS)
+        RRCA
+        RRCA
+        AND #C0
+        LD B,A
+        LD A,(MTPATPS)
+        AND #3F
+        OR B
+        OUT (OUTRG),A
+        OUT (RSCOM),A
+        RET
+
+COM64   LD HL,CHANS+CHMVOL
+        JP COM64_
+COM63   LD HL,CHANS+CHREAL
+COM64_  LD DE,CHANLEN
+        LD B,#04
+        LD A,(HL)
+        OUT (OUTRG),A
+        OUT (RSCOM),A
+        JP COM63__
+
+COM63_  LD A,(HL)
+        OUT (OUTRG),A
+COM63__ SET 7,(HL)
+        CALL HSEND
+        ADD HL,DE
+        DJNZ COM63_
+        RET
+
+COM66   IN A,(DATRG)
+        OUT (RSCOM),A
+        CALL FXF
+        RET
+
+COM67   LD A,(MTSPEED)
+        OUT (OUTRG),A
+        OUT (RSCOM),A
+        RET
+
+COM68   LD A,(MTBPM)
+        OUT (OUTRG),A
+        OUT (RSCOM),A
+        RET
+
+COM69   LD A,#FF
+        LD (INGEN),A
+        CALL ENGINE
+        XOR A
+        LD (INGEN),A
+        OUT (RSCOM),A
+        RET
+
+
+COM3A   IN A,(DATRG)
+        OUT (RSCOM),A
+        LD C,A
+        CPL
+        LD B,A
+        LD A,(FXCHNS)
+        AND B
+        LD (FXCHNS),A
+        LD IY,CHANSFX
+        LD DE,CHANLEN
+        SLA C
+        JR NC,COM3A_2
+COM3A_1 RES 7,(IY+CHSTAT)
+COM3A_2 ADD IY,DE
+        SLA C
+        JR C,COM3A_1
+        JP NZ,COM3A_2
+        RET
+
+COM80   IN A,(DATRG)
+        OR A
+        JR NZ,COM80_1
+        LD A,(CURFX)
+COM80_1 LD (CURFX),A
+        LD C,A
+        LD A,(CNTFX)
+        CP C
+        JP C,COM39_9
+        IN A,(COMRG)
+        OUT (RSCOM),A
+        LD B,A
+        BIT 3,B
+        CALL NZ,HGET
+        LD E,A
+        BIT 4,B
+        CALL NZ,HGET
+        LD D,A
+        LD A,C
+        CALL GETFX
+        PUSH DE
+        PUSH BC
+        CALL COM80_2
+        POP  BC
+        POP  DE
+        PUSH HL
+        POP  IY
+        BIT 4,B
+        JR Z,COM80_4
+        LD (IY+CHVOL),D
+        LD (IY+CHMVOL),D
+COM80_4 BIT 3,B
+        RET Z
+        CALL GETFRQ
+        LD (IY+CHFRQL),L
+        LD (IY+CHFRQH),H
+        CALL GETPER
+        LD (IY+CHPERL),L
+        LD (IY+CHPERH),H
+        RET
+
+
+COM80_2 PUSH IY
+        LD IY,CHANSFX
+        LD DE,CHANLEN
+        LD A,B
+        AND #07
+COM80_3 JP Z,PLFX_12
+        ADD IY,DE
+        DEC A
+        JP COM80_3
+
+COMA0   IN A,(DATRG)
+        LD C,A
+        IN A,(COMRG)
+        OUT (RSCOM),A
+        LD B,A
+        LD IY,CHANSFX
+        LD DE,CHANLEN
+        AND #07
+COMA0_1 JR Z,COMA0_2
+        ADD IY,DE
+        DEC A
+        JP NZ,COMA0_1
+COMA0_2 BIT 3,B
+        JR NZ,COMA0_3
+        LD E,C
+        CALL GETPER
+        LD (IY+CHPERL),L
+        LD (IY+CHPERH),H
+        CALL GETFRQ
+        LD (IY+CHFRQL),L
+        LD (IY+CHFRQH),H
+        RET
+COMA0_3 LD (IY+CHVOL),C
+        LD (IY+CHMVOL),C
+        SET 0,(IY+CHSTAT)
+        RET
+
+
+
+; INPUT : E=NOTE,IY=CHANNEL
+; OUTPUT: HL=PERIOD OR FREQUENCY
+; USED  : HL,D,BC,A
+
+
+
+GETPER  LD HL,AMFRQTB   ; FOR AMIGA FREQUENCY
+        JR GETFRQ_
+
+GETFRQ  LD HL,GSFRQTB
+GETFRQ_ LD A,(IY+CHFINE)
+        RRA
+        AND #0F
+        JR Z,GETFRQ2
+        LD C,A
+        ADD A,A
+        ADD A,C
+        ADD A,A
+        ADD A,A
+        ADD A,A
+        LD B,0
+        RL B
+        ADD A,A
+        RL B
+        ADD A,A
+        RL B
+        LD C,A
+        ADD HL,BC
+        ADD HL,BC
+GETFRQ2 LD D,0
+        LD A,E
+        CP 96
+        JR C,GETFRQ3
+        LD E,95
+GETFRQ3 SLA E
+        ADD HL,DE
+        LD E,(HL)
+        INC HL
+        LD D,(HL)
+        EX DE,HL
+        LD E,A
+        BIT 0,(IY+CHFINE)
+        RET Z
+        RET
+
+
+
+
+PLAYFX  LD C,#00
+        LD A,(MTSTAT)
+        OR A
+        JP M,PLFX_03
+        LD A,(MODULE)
+        OR A
+        JR Z,PLFX_03
+        LD IY,CHANS
+        LD DE,CHANLEN
+        LD B,#04
+
+PLFX_00 BIT 7,(IY+CHSTAT)
+        JR Z,PLFX_01
+        LD A,(IY+CHMVOL)
+        OR A
+        JR Z,PLFX_01
+        LD A,C
+        OR (IY+CHRDR)
+        LD C,A
+PLFX_01 ADD IY,DE
+        DJNZ  PLFX_00
+
+PLFX_03 PUSH HL
+        POP IY
+        LD HL,GSCHNS
+        LD A,(HL)
+        OR A
+        SCF
+        RET Z
+        LD A,(FXCHNS)
+        OR C
+        CPL
+        AND (HL)
+        LD C,A
+        AND (IY+24)
+        JR NZ,PLFX_10
+        LD A,(IY+26)
+        CP #40
+        JR NC,PLFX_04
+        LD A,C
+        AND (IY+25)
+        JR NZ,PLFX_10
+        JP PLFX_05
+PLFX_04 LD A,(FXCHNS)
+        CPL
+        AND (HL)
+        AND (IY+24)
+        JR NZ,PLFX_10
+        LD A,(FXCHNS)
+        CPL
+        AND (HL)
+        AND (IY+25)
+        JR NZ,PLFX_10
+
+PLFX_05 LD A,(FXCHNS)
+        LD B,A
+        LD A,(GSCHNS)
+        AND B
+        LD B,A
+        PUSH IY
+        LD IY,CHANSFX
+        LD L,A
+        LD H,#FF
+        LD DE,CHANLEN
+        SRL B
+        JP C,PLFX_06
+        JP NZ,PLFX_07
+        JP PLFX_08
+
+PLFX_06 LD A,(IY+CHPRIOR)
+        CP H
+        JR NC,PLFX_07
+        LD H,A
+        LD L,(IY+CHRDR)
+
+PLFX_07 ADD IY,DE
+        SRL B
+        JP C,PLFX_06
+        JP NZ,PLFX_07
+
+PLFX_08 POP IY
+        LD A,L
+        OR A
+        SCF
+        RET Z
+        LD A,H
+        CP (IY+26)
+        LD A,L
+        JR C,PLFX_10
+        SCF
+        RET
+
+PLFX_10 LD B,A
+        PUSH IY
+        LD IY,CHANSFX
+        LD DE,CHANLEN
+        SRL B
+        JP C,PLFX_12
+PLFX_11 ADD IY,DE
+        SRL B
+        JP NC,PLFX_11
+
+PLFX_12 LD A,(FXCHNS)
+        OR (IY+CHRDR)
+        LD (FXCHNS),A
+        EX (SP),IY
+        LD E,(IY+8)
+        LD D,(IY+9)
+        LD A,(IY+10)
+        SLI D
+        RLA
+        RRC D
+        EX (SP),IY
+        LD (IY+CHCURP),A
+        LD (IY+CHCURL),E
+        LD (IY+CHCURH),D
+        EX (SP),IY
+        LD A,(IY+8)
+        ADD A,(IY+11)
+        LD E,A
+        LD A,(IY+9)
+        ADC A,(IY+12)
+        LD D,A
+        LD A,(IY+10)
+        ADC A,(IY+13)
+        SLI D
+        RLA
+        RRC D
+        EX (SP),IY
+        LD (IY+CHENDP),A
+        LD (IY+CHENDL),E
+        LD (IY+CHENDH),D
+        LD (IY+CHLPBP),#FF
+        EX (SP),IY
+        LD A,(IY+16)
+        INC A
+        JR Z,PLFX_13
+        LD A,(IY+8)
+        ADD A,(IY+14)
+        LD E,A
+        LD A,(IY+9)
+        ADC A,(IY+15)
+        LD D,A
+        LD A,(IY+10)
+        ADC A,(IY+16)
+        SLI D
+        RLA
+        RRC D
+        EX (SP),IY
+        LD (IY+CHLPBP),A
+        LD (IY+CHLPBL),E
+        LD (IY+CHLPBH),D
+        EX (SP),IY
+        LD A,(IY+8)
+        ADD A,(IY+17)
+        LD E,A
+        LD A,(IY+9)
+        ADC A,(IY+18)
+        LD D,A
+        LD A,(IY+10)
+        ADC A,(IY+19)
+        SLI D
+        RLA
+        RRC D
+        EX (SP),IY
+        LD (IY+CHLPEP),A
+        LD (IY+CHLPEL),E
+        LD (IY+CHLPEH),D
+        EX (SP),IY
+PLFX_13 LD E,(IY+20)
+        LD D,(IY+21)
+        LD B,(IY+31)
+        LD C,(IY+23)
+        LD L,(IY+22)
+        LD H,(IY+6)
+        EX (SP),IY
+        LD (IY+CHVOL),E
+        LD (IY+CHMVOL),E
+        LD (IY+CHFINE),D
+        LD (IY+CHNOTE),B
+        LD (IY+CHPAN),C
+        LD (IY+CHRLNT),L
+        LD (IY+CHSQZ),H
+        EX (SP),IY
+        LD E,(IY+54)
+        LD D,(IY+55)
+        LD L,(IY+56)
+        LD H,(IY+57)
+        LD C,(IY+26)
+        EX (SP),IY
+        SRL D
+        RR E
+        SRL D
+        RR E
+        LD (IY+CHPERL),E
+        LD (IY+CHPERH),D
+        LD (IY+CHFRQL),L
+        LD (IY+CHFRQH),H
+        LD (IY+CHPRIOR),C
+        LD (IY+CHFADVH),#FF
+        LD (IY+CHFADVL),#FF
+        LD (IY+CHDELVH),#FF
+        LD (IY+CHDELVL),#FF
+        LD (IY+CHEPAN),#20
+        LD (IY+CHEVOL),#40
+        LD (IY+CHCNTL),#00
+        LD (IY+CHCNTH),#00
+        LD (IY+CHVOL),#40
+        LD (IY+CHPAN),#80
+
+
+        SET 7,(IY+CHSTAT)
+        SET 0,(IY+CHSTAT)
+        PUSH IY
+        POP HL
+        POP IY
+        LD A,#FF
+        LD (PROCESS),A
+        RET
+
+
+
+
+
+
+

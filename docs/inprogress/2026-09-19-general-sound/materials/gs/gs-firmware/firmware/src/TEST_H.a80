@@ -1,0 +1,201 @@
+
+TCOM    IN A,(FLAGS)
+        RRCA
+        JR NC,TCOM
+TCOM_   IN A,(COMRG)
+        CP #20
+        JP NC,COMINT2
+        CP #01
+        JR Z,TCOM
+        OUT (RSCOM),A
+        LD HL,TCOMTB
+        ADD A,A
+        ADD A,L
+        LD L,A
+        LD A,(HL)
+        INC L
+        LD H,(HL)
+        LD L,A
+        JP (HL)
+
+
+TCOM2   LD HL,DAC0
+        LD A,#3F
+        OUT (VOL0),A
+TCOMDAC LD (HL),0
+        LD A,(HL)
+        LD IY,TCONT1
+        JP TWAIT
+TCONT1  LD (HL),#FF
+        LD A,(HL)
+        LD IY,TCOMDAC
+        JP TWAIT
+
+
+TCOM3   LD HL,DAC1
+        LD A,#3F
+        OUT (VOL1),A
+        JR TCOMDAC
+TCOM4   LD HL,DAC2
+        LD A,#3F
+        OUT (VOL2),A
+        JR TCOMDAC
+TCOM5   LD HL,DAC3
+        LD A,#3F
+        OUT (VOL3),A
+        JR TCOMDAC
+
+
+TCOM6   XOR A
+        OUT (OUTRG),A
+        LD IY,TCONT2
+        JP TWAIT
+TCONT2  LD A,#FF
+        OUT (OUTRG),A
+        LD IY,TCOM6
+        JP TWAIT
+
+
+
+TCOM7   LD C,VOL0
+        LD HL,DAC0
+        LD (HL),#FF
+        LD A,(HL)
+TCOMVOL LD A,#00
+        OUT (C),A
+        LD IY,TCONT3
+        JP TWAIT
+TCONT3  LD A,#FF
+        OUT (C),A
+        LD IY,TCOMVOL
+        JP TWAIT
+
+TCOM8   LD C,VOL1
+        LD HL,DAC1
+        LD (HL),#FF
+        LD A,(HL)
+        JR TCOMVOL
+TCOM9   LD C,VOL2
+        LD HL,DAC2
+        LD (HL),#FF
+        LD A,(HL)
+        JR TCOMVOL
+TCOMA   LD C,VOL3
+        LD HL,DAC3
+        LD (HL),#FF
+        LD A,(HL)
+        JR TCOMVOL
+
+
+
+TCOMB   LD HL,DAC0
+        LD C,VOL0
+TCOMTST LD B,#3F
+
+TCOMT4  OUT (C),B
+
+        LD D,114
+
+TCOMT5  LD (HL),#00
+        LD A,(HL)
+        XOR A
+TCOMT6  DEC A
+        JR NZ,TCOMT6
+
+        LD (HL),#FF
+        LD A,(HL)
+        XOR A
+TCOMT7  DEC A
+        JR NZ,TCOMT7
+
+        DEC D
+        JR NZ,TCOMT5
+
+        DEC B
+        JP P,TCOMT4
+
+        IN A,(FLAGS)
+        RRCA
+        JR NC,TCOMTST
+        JP TCOM_
+
+TCOMC   LD HL,DAC1
+        LD C,VOL1
+        JP TCOMTST
+TCOMD   LD HL,DAC2
+        LD C,VOL2
+        JP TCOMTST
+TCOME   LD HL,DAC3
+        LD C,VOL3
+        JP TCOMTST
+
+TCOMF   LD A,#3F
+        OUT (VOL0),A
+        OUT (VOL1),A
+        OUT (VOL2),A
+        OUT (VOL3),A
+        LD B,#00
+        LD L,B
+TCONT8  LD H,high DAC0
+        LD (HL),B
+        LD A,(HL)
+        INC H
+        LD (HL),B
+        LD A,(HL)
+        INC H
+        LD (HL),B
+        LD A,(HL)
+        INC H
+        LD (HL),B
+        LD A,(HL)
+        DJNZ TCONT8
+        IN A,(FLAGS)
+        RRCA
+        JP NC,TCONT8
+        JP TCOM_
+
+TCOM10  IN A,(DATRG)
+        OUT (OUTRG),A
+        JP TCOM_
+TCOM11  IN A,(DATRG)
+        JP TCOM_
+
+
+TCOM12  LD HL,DAC0
+TCONT9  LD A,#3F
+        OUT (VOL0),A
+        OUT (VOL1),A
+        OUT (VOL2),A
+        OUT (VOL3),A
+TCONTA  IN A,(DATRG)
+        LD (HL),A
+        LD A,(HL)
+TCONTB  DJNZ TCONTB
+        LD (HL),#00
+        LD A,(HL)
+TCONTC  DJNZ TCONTC
+        IN A,(FLAGS)
+        RRCA
+        JP C,TCOM_
+        JP TCONTA
+
+
+TCOM13 LD HL,DAC1
+        JR TCONT9
+TCOM14 LD HL,DAC2
+        JR TCONT9
+TCOM15 LD HL,DAC3
+        JR TCONT9
+
+TWAIT   LD B,#04
+TWAIT1  LD DE,38686
+TWAIT2  IN A,(FLAGS)
+        RRCA
+        JP C,TCOM_
+        DEC DE
+        LD A,D
+        OR E
+        JR NZ,TWAIT2
+        DJNZ TWAIT2
+        JP (IY)
+

@@ -1,0 +1,414 @@
+
+S7_     LD D,C
+        PUSH DE
+        LD D,B
+        EXX
+        POP BC
+S71     SLA B
+        JP C,S718
+
+        SLI C
+        JP C,S7101
+        JP S7100
+
+S71052  SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,5
+        RET
+S71053  SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,4
+        RET
+S71054  SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,3
+        RET
+S71055  SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,2
+        RET
+S71056  SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,1
+        RET
+S71057  SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,0
+        RET
+
+S7102   JR Z,S7104
+S710A   INC E
+        JR Z,S7105
+        LD (DE),A
+        INC E
+        JR Z,S71052
+        LD LY,A
+        ADD A,(HL)
+        RRA
+        LD HY,A
+        ADD A,LY
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S71053
+        ADD A,HY
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S71054
+        LD A,HY
+        LD (DE),A
+        INC E
+        JR Z,S71055
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S71056
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S71057
+S7100   LD A,C
+        ADD A,B
+        LD C,A
+        LD A,(HL)
+        INC HL
+        DEC LX
+        LD (DE),A
+        JP NC,S7102
+        JR Z,S7106
+        INC E
+        JR Z,S7107
+        LD (DE),A
+        DEC E
+        INC E
+S7103    JR Z,S7108
+        INC E
+        JR Z,S7109
+        LD (DE),A
+        INC E
+        JR Z,S71092
+        LD LY,A
+        ADD A,(HL)
+        RRA
+        LD HY,A
+        ADD A,LY
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S71093
+        ADD A,HY
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S71094
+        LD A,HY
+        LD (DE),A
+        INC E
+        JR Z,S71095
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S71096
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S71097
+S7101    LD A,C
+        ADD A,B
+        LD C,A
+        LD A,(HL)
+        INC HL
+        DEC LX
+        LD (DE),A
+        JP NC,S7103
+        JP NZ,S710A
+S7104   INC E
+S7105   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,6
+        RET
+S7106    INC E
+S7107    RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        RET
+S7108    INC E
+S7109    RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,6
+        RET
+S71092   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,5
+        RET
+S71093   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,4
+        RET
+S71094   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,3
+        RET
+S71095   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,2
+        RET
+S71096   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,1
+        RET
+S71097   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,0
+        RET
+
+S718    SLI C
+        JP NC,S7180
+        JP S7181
+
+S7184    INC E
+S7185    RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        RET
+S7186    RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,6
+        RET
+S71866   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,5
+        RET
+S71867   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,4
+        RET
+S71868   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,3
+        RET
+S71869   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,2
+        RET
+S7186A   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,1
+        RET
+S7186B   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,0
+        RET
+
+
+
+S7182    JR Z,S7184
+        INC E
+S71822  JR Z,S7185
+S718222 LD (DE),A
+        INC E
+        JR Z,S7186
+        LD LY,A
+        ADD A,(HL)
+        RRA
+        LD HY,A
+        ADD A,LY
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S71866
+        ADD A,HY
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S71867
+        LD A,HY
+        LD (DE),A
+        INC E
+        JR Z,S71868
+        LD (DE),A
+        INC E
+        JR Z,S71869
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S7186A
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S7186B
+S7181    LD A,C
+        ADD A,B
+        LD C,A
+        LD A,(HL)
+        INC HL
+        DEC LX
+        LD (DE),A
+        JP C,S7182
+        JR Z,S71871
+        JP S71831
+S7183    JR Z,S7187
+        INC E
+        JR Z,S7188
+        LD (DE),A
+S71831  INC E
+        JR Z,S7189
+        LD LY,A
+        ADD A,(HL)
+        RRA
+        LD HY,A
+        ADD A,LY
+        RRA
+        LD (DE),A
+         INC E
+        JR Z,S71891
+        ADD A,HY
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S71892
+        LD A,HY
+        LD (DE),A
+        INC E
+        JR Z,S71893
+        LD (DE),A
+        INC E
+        JR Z,S71894
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S71895
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S71896
+S7180    LD A,C
+        ADD A,B
+        LD C,A
+        LD A,(HL)
+        INC HL
+        DEC LX
+        LD (DE),A
+        JP C,S7183
+        JR Z,S71844
+        INC E
+        JP NZ,S718222
+         RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        RET
+
+
+S71844   INC E
+         RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        RET
+
+S7187    INC E
+S7188    SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        RET
+S7189    SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,6
+        RET
+S71871  INC E
+S71891   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,5
+        RET
+S71892   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,4
+        RET
+S71893   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,3
+        RET
+S71894   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,2
+        RET
+S71895   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,1
+        RET
+S71896   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,0
+        RET
+
+
+

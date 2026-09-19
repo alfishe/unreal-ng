@@ -1,0 +1,627 @@
+COMHZ   OUT (RSCOM),A
+COMINT  LD SP,ISTACK
+COMINT_ IN A,(FLAGS)
+        RRCA
+        JR C,COMINT1
+        LD A,(PROCESS)
+        OR A
+        JR Z,COMINT_
+        LD A,(BUSY)
+        OR A
+        JR NZ,COMINT_
+        IN A,(FLAGS)
+        RRCA
+        JR C,COMINT1
+        LD A,#FF
+        LD (INGEN),A
+        PUSH DE
+        CALL ENGINE
+        POP DE
+        XOR A
+        LD (INGEN),A
+        JP COMINT_
+
+COMINT1 IN A,(COMRG)
+        CP #20
+        JR C,COMLOW
+COMINT2 CP #F0
+        JR C,COMHIGH
+        SUB #D0
+
+COMLOW  ADD A,A
+        LD H,high COMTAB
+        LD L,A
+        LD A,(HL)
+        INC L
+        LD H,(HL)
+        LD L,A
+        JP (HL)
+
+
+COMHIGH LD HL,COMINT_
+        PUSH HL
+        LD L,A
+        LD H,high COMTABH
+        XOR A
+        LD (CPAGE),A
+        OUT (PAGE),A
+        LD A,(HL)
+        INC H
+        LD H,(HL)
+        LD L,A
+        JP (HL)
+
+WTDTL   IN A,(FLAGS)
+        AND #81
+        JR Z,WTDTL
+        IN A,(DATRG)
+        JP P,COMINT1
+        JP (IY)
+
+WTDTG   IN A,(FLAGS)
+        OR A
+        JP P,WTDTG
+        IN A,(DATRG)
+        JP (IY)
+
+;        UNPHASE 
+;        ORG $+#00FF&#FF00
+;        PHASE $-GSRomBaseL
+	align 256
+
+COMTAB  DEFW COM00,COM01,COM02,COM03,COM04,COM05,COM06,COM07
+        DEFW COM08,COM09,COM0A,COM0B,COM0C,COM0D,COM0E,COM0F
+        DEFW COM10,COM11,COM12,COM13,COM14,COM15,COM16,COM17
+        DEFW COM18,COM19,COM1A,COM1B,COM1C,COM1D,COM1E,COM1F
+        DEFW COMF0,COMF1,COMF2,COMF3,COMF4,COMF5,COMF6,COMF7
+        DEFW COMF8,COMF9,COMFA,COMFB,COMFC,COMFD,COMFE,COMFF
+
+
+COMZ    OUT (RSCOM),A
+        JP COMINT_
+
+; #00 - RESET FLAGS COMMAND
+COM00   IN A,(DATRG)
+        OUT (RSCOM),A
+        JP COMINT_
+
+; #01 - INITIALIZE DAC'S COMMAND
+COM01   OUT (RSCOM),A
+        LD A,#80
+        LD HL,DAC0
+        LD (HL),A
+        LD B,(HL)
+        INC H
+        LD (HL),A
+        LD B,(HL)
+        INC H
+        LD (HL),A
+        LD B,(HL)
+        INC H
+        LD (HL),A
+        LD B,(HL)
+        JP COMINT_
+
+; #02 - INITIALIZE VOLUME CONTROL REGISTERS
+COM02   OUT (RSCOM),A
+        LD A,#3F
+        OUT (VOL0),A
+        OUT (VOL1),A
+        OUT (VOL2),A
+        OUT (VOL3),A
+        JP COMINT_
+
+; #03 - RESET VOLUME CONTROL REGISTERS
+COM03   OUT (RSCOM),A
+        XOR A
+        OUT (VOL0),A
+        OUT (VOL1),A
+        OUT (VOL2),A
+        OUT (VOL3),A
+        JP COMINT_
+
+; #04 - SET CURRENT CHANNEL
+COM04   IN A,(DATRG)
+        OUT (RSCOM),A
+        AND #07
+        LD E,A
+        JP COMINT_
+
+; #05 - SET VOLUME OF CURRENT CHANNEL
+COM05   IN A,(DATRG)
+        OUT (RSCOM),A
+        LD B,A
+        LD A,E
+        CP #04
+        JP NC,COMINT_
+        ADD A,VOL0
+        LD C,A
+        OUT (C),B
+        JP COMINT_
+
+; #06 - OUTPUT BYTE TO CUR CHANNEL
+COM06   IN A,(DATRG)
+        OUT (RSCOM),A
+        LD B,A
+        LD A,E
+        CP #04
+        JP NC,COMINT_
+        ADD A,high DAC0
+        LD H,A
+        LD L,#00
+        LD (HL),B
+        LD A,(HL)
+        JP COMINT_
+
+; #07 - OUTPUT BYTE TO CUR CHANNEL WITH VOLUME CONTROL
+COM07   IN A,(DATRG)
+        OUT (RSCOM),A
+        LD B,A
+        LD A,E
+        CP #04
+        JP NC,COMINT_
+        ADD A,high DAC0
+        LD H,A
+        LD L,#00
+        LD (HL),B
+        SUB high DAC0
+        ADD A,VOL0
+        LD C,A
+        LD IY,COM07_1
+        JP WTDTL
+COM07_1 OUT (C),A
+        LD A,(HL)
+        JP COMINT_
+
+; #08
+COM08   EQU COMZ
+
+
+
+; #09 - SET PHISICAL VOLUME OF CHANNEL
+COM09   IN A,(DATRG)
+        OUT (RSCOM),A
+        LD B,A
+        RLCA
+        RLCA
+        AND #03
+        ADD A,VOL0
+        LD C,A
+        LD A,B
+        AND #3F
+        OUT (C),A
+        JP COMINT_
+
+; #0A - OUTPUT BYTE TO CHANNEL
+COM0A   IN A,(DATRG)
+        OUT (RSCOM),A
+        LD B,A
+        LD IY,COM0A_1
+        JP WTDTL
+COM0A_1 AND #03
+        ADD A,high DAC0
+        LD H,A
+        LD L,#00
+        LD (HL),B
+        LD A,(HL)
+        JP COMINT_
+
+; #0B - OUTPUT BYTE TO CHANNEL WITH VOLUME CONTROL
+COM0B   IN A,(DATRG)
+        OUT (RSCOM),A
+        LD C,A
+        LD IY,COM0B_1
+        JP WTDTL
+COM0B_1 LD B,A
+        RLCA
+        RLCA
+        AND #03
+        ADD A,high DAC0
+        LD H,A
+        LD L,#00
+        LD (HL),C
+        SUB high DAC0
+        ADD A,VOL0
+        LD C,A
+        LD A,B
+        AND #3F
+        OUT (C),A
+        LD A,(HL)
+        JP COMINT_
+
+; #0C - OUTPUT TO ALL CHANNELS
+COM0C   IN A,(DATRG)
+        OUT (RSCOM),A
+        LD HL,DAC0
+        LD (HL),A
+        LD A,(HL)
+        INC H
+        LD IY,COM0C_1
+        JP WTDTL
+COM0C_1 LD (HL),A
+        LD A,(HL)
+        INC H
+        LD IY,COM0C_2
+        JP WTDTL
+COM0C_2 LD (HL),A
+        LD A,(HL)
+        INC H
+        LD IY,COM0C_3
+        JP WTDTL
+COM0C_3 LD (HL),A
+        LD A,(HL)
+        JP COMINT_
+
+; #0D - OUTPUT BYTES TO CHANNELS
+COM0D   IN A,(DATRG)
+        OUT (RSCOM),A
+        AND #0F
+        JP Z,COMINT_
+        RLCA
+        RLCA
+        RLCA
+        RLCA
+        LD B,A
+        LD HL,DAC0
+        LD IY,COM0D_3
+        JP COM0D_2
+COM0D_3 LD (HL),A
+        LD A,(HL)
+        INC H
+        JP COM0D_2
+COM0D_1 JP Z,COMINT_
+        INC H
+COM0D_2 SLA B
+        JR NC,COM0D_1
+        JP WTDTL
+
+; #0E - GO IN COVOX MODE
+COM0E   OUT (RSCOM),A
+        LD HL,DAC0
+        LD BC,DAC2
+COM0E_1 IN A,(DATRG)
+        LD (HL),A
+        LD (BC),A
+        LD A,(HL)
+        LD A,(BC)
+        IN A,(FLAGS)
+        RRCA
+        JP NC,COM0E_1
+        JP COMINT_
+
+; #0F - GO IN STEREO COVOX MODE
+COM0F   IN A,(DATRG)
+        OUT (RSCOM),A
+        CP "Y"
+        JP NZ,COMINT_
+        LD HL,DAC0
+        LD DE,DAC2
+COM0F_1 IN A,(DATRG)
+        LD (HL),A
+        IN A,(COMRG)
+        LD (DE),A
+        LD A,(HL)
+        LD A,(DE)
+        IN A,(FLAGS)
+        OR A
+        JP M,COM0F_1
+        LD B,#00
+        OUT (RSCOM),A
+COM0F_2 IN A,(FLAGS)
+        AND #81
+        JR NZ,COM0F_1
+        DJNZ COM0F_2
+COM0F_3 IN A,(FLAGS)
+        AND #81
+        JR Z,COM0F_3
+        CP #80
+        JR NZ,COM0F_1
+        IN A,(DATRG)
+        CP "N"
+        JP NZ,COM0F_1
+COM0F_4 IN A,(FLAGS)
+        AND #81
+        JR Z,COM0F_4
+        CP #01
+        JR NZ,COM0F_1
+        IN A,(COMRG)
+        CP #0F
+        JP NZ,COM0F_1
+        OUT (RSCOM),A
+COM0F_5 IN A,(FLAGS)
+        AND #81
+        JR Z,COM0F_5
+        CP #01
+        JR NZ,COM0F_1
+        IN A,(COMRG)
+        CP #AA
+        JP NZ,COM0F_1
+        OUT (RSCOM),A
+        JP COMINT_
+
+
+
+
+
+
+
+; #10 - OUTPUT TO PORT
+COM10   IN A,(DATRG)
+        OUT (RSCOM),A
+        LD C,A
+        LD IY,COM10_1
+        JP WTDTL
+COM10_1 OUT (C),A
+        JP COMINT_
+
+; #11 - INPUT FROM PORT
+COM11   IN A,(DATRG)
+        LD C,A
+        IN A,(C)
+        OUT (OUTRG),A
+        OUT (RSCOM),A
+        JP COMINT_
+
+; #12 - OUT TO PAGE REGISTER
+COM12   IN A,(DATRG)
+        OUT (RSCOM),A
+        OUT (PAGE),A
+        JP COMINT_
+
+; #13 - JUMP TO ADRESS
+COM13   IN A,(DATRG)
+        OUT (RSCOM),A
+        LD L,A
+        LD IY,COM13_1
+        JP WTDTL
+COM13_1 LD H,A
+        JP (HL)
+
+
+; #14 - RECEIVE  BLOCK
+; 70+27*WAIT PER LOOP : 171K,123K,96K PER SECOND MAX
+
+COM14   IN A,(DATRG)
+        OUT (RSCOM),A
+        CPL
+        LD C,A
+        LD HL,WTDTL
+        LD IY,COM14_1
+        JP (HL)
+COM14_1 CPL
+        LD B,A
+        INC BC
+        LD IY,COM14_2
+        JP (HL)
+COM14_2 LD E,A
+        LD IY,COM14_3
+        JP (HL)
+COM14_3 LD D,A
+        LD A,B
+        OR C
+        JP Z,COMINT_
+        LD LX,B
+        LD B,#81
+        BIT 0,C
+        JR NZ,COM14_7
+
+COM14_6 IN A,(FLAGS)
+        AND B
+        JR Z,COM14_6
+        IN A,(DATRG)
+        JP P,COMINT1
+        LD (DE),A
+        INC DE
+        INC C
+COM14_7 IN A,(FLAGS)
+        AND B
+        JR Z,COM14_7
+        IN A,(DATRG)
+        JP P,COMINT1
+        LD (DE),A
+        INC DE
+        INC C
+        JP NZ,COM14_6
+COM14_5 INC LX
+        JP NZ,COM14_6
+        JP COMINT_
+
+; #15 - TRANSMIT BLOCK
+COM15   IN A,(DATRG)
+        CPL
+        LD C,A
+        LD IY,COM15_1
+        JP WTDTG
+COM15_1 CPL
+        LD B,A
+        INC BC
+        LD IY,COM15_2
+        JP WTDTG
+COM15_2 LD E,A
+        LD IY,COM15_3
+        JP WTDTG
+COM15_3 LD D,A
+        LD A,B
+        OR C
+        JP Z,COMINT_
+        LD LX,B
+        LD B,#81
+        LD A,(DE)
+        INC DE
+        OUT (OUTRG),A
+        OUT (RSCOM),A
+        LD HL,COM15_4
+        INC C
+        JP NZ,COM15_4
+        INC LX
+        JP Z,COMINT_
+
+COM15_4 IN A,(FLAGS)
+        AND B
+        JR Z,COM15_5
+        JP P,COMINT1
+        IN A,(FLAGS)
+        AND B
+        JR Z,COM15_5
+        JP P,COMINT1
+        IN A,(FLAGS)
+        AND B
+        JR Z,COM15_5
+        JP P,COMINT1
+        IN A,(FLAGS)
+        AND B
+        JR Z,COM15_5
+        JP P,COMINT1
+        JP (HL)
+
+COM15_5 LD A,(DE)
+        OUT (OUTRG),A
+        INC DE
+        INC C
+        JP NZ,COM15_4
+
+COM15_7 INC LX
+        JP NZ,COM15_4
+        JP COMINT_
+
+
+
+
+; #16 - PUT BYTE
+COM16   IN A,(DATRG)
+        OUT (RSCOM),A
+        LD B,A
+        LD IY,COM16_1
+        JP WTDTL
+COM16_1 LD L,A
+        LD IY,COM16_2
+        JP WTDTL
+COM16_2 LD H,A
+        LD (HL),B
+        JP COMINT_
+
+; #17 - GET BYTE
+COM17   IN A,(DATRG)
+        LD L,A
+        LD IY,COM17_1
+        JP WTDTL
+COM17_1 LD H,A
+        LD A,(HL)
+        OUT (OUTRG),A
+        OUT (RSCOM),A
+        JP COMINT_
+
+
+; #18 - SET MEMORY POINTER
+COM18   IN A,(DATRG)
+        OUT (RSCOM),A
+        LD E,A
+        LD IY,COM18_1
+        JP WTDTL
+COM18_1 LD D,A
+        JP COMINT_
+
+; #19 - PUT BYTE TO MEMORY POINTER
+COM19   IN A,(DATRG)
+        OUT (RSCOM),A
+        LD (DE),A
+        JP COMINT_
+
+; #1A - GET BYTE FROM MEMORY POINTER
+COM1A   LD A,(DE)
+        OUT (OUTRG),A
+        OUT (RSCOM),A
+        JP COMINT_
+
+; #1B - INCREMENT POINTER
+COM1B   OUT (RSCOM),A
+        INC DE
+        JP COMINT_
+
+; #1C - PUT BYTE TO SYSTEM AREA
+COM1C   IN A,(DATRG)
+        OUT (RSCOM),A
+        LD L,A
+        LD IY,COM1C_1
+        JP WTDTL
+COM1C_1 LD H,#20
+        LD (HL),A
+        JP COMINT_
+
+; #1D - GET BYTE FROM SYSTEM AREA
+COM1D   IN A,(DATRG)
+        LD L,A
+        LD H,#20
+        LD A,(HL)
+        OUT (OUTRG),A
+        OUT (RSCOM),A
+        JP COMINT_
+
+COM1E   EQU COMZ
+COM1F   EQU COMZ
+
+
+
+
+COMF0   LD A,(ERRCODE)  ; GET STATUS
+        OUT (OUTRG),A
+        OUT (RSCOM),A
+        JP COMINT_
+
+COMF1   EQU COMZ
+
+COMF2   EQU COMZ
+
+COMF3   OUT (RSCOM),A
+        JP INITVAR
+
+COMF4   OUT (RSCOM),A
+        JP #0000
+
+COMF5   OUT (RSCOM),A
+        LD A,HX
+        AND #80
+        JP NZ,COMF5_1
+        LD A,#FF
+        LD (BUSY),A
+        JP COMINT_
+COMF5_1 OR #40
+        LD HX,A
+        JP COMINT_
+
+COMF6   OUT (RSCOM),A
+        LD A,HX
+        AND #80
+        JP NZ,COMF6_1
+        XOR A
+        LD (BUSY),A
+        JP COMINT_
+COMF6_1 LD HX,A
+        JP COMINT_
+
+COMF7   LD A,HX
+        OUT (OUTRG),A
+        OUT (RSCOM),A
+        JP COMINT_
+
+
+COMF8   EQU COMZ
+COMF9   EQU COMZ
+
+
+; #FA - TEST COMMAND
+
+COMFA   OUT (RSCOM),A
+        XOR A
+        LD (CPAGE),A
+        OUT (PAGE),A
+        JP TCOM
+
+COMFB   EQU COMZ
+COMFC   EQU COMZ
+COMFD   EQU COMZ
+COMFE   EQU COMZ
+COMFF   EQU COMZ
+
+
+

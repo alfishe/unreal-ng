@@ -1,0 +1,172 @@
+
+;VOLUME CALCULATION FOR MODULES AND FX
+
+CALCVOL RES 0,(IY+CHSTAT)
+        LD DE,#FC00
+        LD A,(IY+CHMVOL)
+        AND #7F
+        JP Z,CALCV_Z
+        CP #40
+        CALL C,MUL64
+        LD A,(IY+CHEVOL)
+        OR A
+        JP Z,CALCV_Z
+        CP #40
+        CALL C,MUL64
+
+        LD A,(IY+CHFADVH)
+        SRL A
+        SRL A
+        ADC A,#00
+        JP Z,CALCV_Z
+        CP #40
+        CALL C,MUL64
+
+        BIT 6,(IY+CHSTAT)
+        JP Z,CALCV_N
+
+        LD A,(FXVOL)
+        OR A
+        JP Z,CALCV_Z
+        CP #40
+        CALL C,MUL64
+        LD A,(FXMVOL)
+        OR A
+        JP Z,CALCV_Z
+        CP #40
+        CALL C,MUL64
+        JP CALCV_X
+
+
+CALCV_N LD A,(MTVOL)
+        OR A
+        JP Z,CALCV_Z
+        CP #40
+        CALL C,MUL64
+        LD A,(MODVOL)
+        OR A
+        JP Z,CALCV_Z
+        CP #40
+        CALL C,MUL64
+
+CALCV_X LD C,(IY+CHPAN)
+        LD A,(IY+CHEPAN)
+        SUB #20
+        JR Z,CALCV_V
+        JR NC,CALCV_I
+        NEG
+CALCV_I CP #20
+        JR C,CALCV_U
+        LD H,(IY+CHPAN)
+        LD A,H
+        OR A
+        JP P,CALCV_Q
+        NEG
+        LD H,A
+        JP CALCV_Q
+
+CALCV_U RLCA
+        RLCA
+        RLCA
+        LD L,A
+        LD A,(IY+CHPAN)
+        OR A
+        JP P,CALCV_T
+        NEG
+CALCV_T LD B,A
+        XOR A
+        JP CALCV_M
+
+CALCV_R ADD A,B
+CALCV_E SRL B
+CALCV_M SLA L
+        JR C,CALCV_R
+        JR NZ,CALCV_E
+        SRL A
+        LD H,A
+CALCV_Q LD A,(IY+CHEPAN)
+        CP #20
+        JR C,CALCV_P
+        LD A,C
+        ADD A,H
+        LD C,A
+        JR NC,CALCV_V
+        LD C,#FF
+        JP CALCV_W
+CALCV_P LD A,C
+        SUB H
+        LD C,#00
+        JR C,CALCV_O
+        LD C,A
+CALCV_V LD A,C
+        CP #80
+        JR Z,CALCV_Y
+        OR A
+        JP M,CALCV_W
+CALCV_O BIT 5,(IY+CHSTAT)
+        JR Z,CALCV_Y
+        SRL A
+        CALL MUL64
+        JP CALCV_Y
+
+CALCV_W BIT 5,(IY+CHSTAT)
+        JR NZ,CALCV_Y
+        NEG
+        SRL A
+        CALL MUL64
+
+
+CALCV_Y LD A,D
+        SRL A
+        SRL A
+        ADC A,#00
+
+CALCV_Z LD C,A
+        LD HL,VOLRQTB
+        LD A,L
+        ADD A,(IY+CHRDN)
+        LD L,A
+        LD (HL),C
+        RET
+
+MUL64   LD B,A
+        LD HL,#0000
+        AND #0F
+        JR Z,MUL64_F
+        SLA B
+        SLA B
+        JP MUL64_E
+
+MUL64_A ADD HL,DE
+MUL64_E SRL D
+        RR E
+        SLA B
+        JP C,MUL64_A
+        JP NZ,MUL64_E
+        EX DE,HL
+        RET
+
+MUL64_F LD A,B
+        OR A
+        JR Z,MUL64_S
+        SRL D
+        RR E
+        CP #20
+        RET Z
+        LD L,E
+        LD H,D
+        SRL D
+        RR E
+        CP #10
+        RET Z
+        ADD HL,DE
+MUL64_S EX DE,HL
+        RET
+
+
+
+
+
+
+
+

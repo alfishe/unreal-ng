@@ -1,0 +1,378 @@
+
+S6_     LD D,C
+        PUSH DE
+        LD D,B
+        EXX
+        POP BC
+S61     SLA B
+        JP C,S618
+
+        SLI C
+        JP C,S6101
+        JP S6100
+
+S61052  SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,4
+        RET
+S61053  SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,3
+        RET
+S61054  SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,2
+        RET
+S61055  SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,1
+        RET
+S61056  SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,0
+        RET
+
+S6102   JR Z,S6104
+S610A   INC E
+        JR Z,S6105
+        LD LY,A
+        ADD A,(HL)
+        RRA
+        LD HY,A
+        ADD A,LY
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S61052
+        ADD A,HY
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S61053
+        LD A,HY
+        LD (DE),A
+        INC E
+        JR Z,S61054
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S61055
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S61056
+S6100   LD A,C
+        ADD A,B
+        LD C,A
+        LD A,(HL)
+        INC HL
+        DEC LX
+        LD (DE),A
+        JP NC,S6102
+        JR Z,S6106
+        INC E
+        JR Z,S6107
+        LD (DE),A
+        DEC E
+        INC E
+S6103    JR Z,S6108
+        INC E
+        JR Z,S6109
+        LD LY,A
+        ADD A,(HL)
+        RRA
+        LD HY,A
+        ADD A,LY
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S61092
+        ADD A,HY
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S61093
+        LD A,HY
+        LD (DE),A
+        INC E
+        JR Z,S61094
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S61095
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S61096
+S6101    LD A,C
+        ADD A,B
+        LD C,A
+        LD A,(HL)
+        INC HL
+        DEC LX
+        LD (DE),A
+        JP NC,S6103
+        JP NZ,S610A
+S6104   INC E
+S6105   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,5
+        RET
+S6106    INC E
+S6107    RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        RET
+S6108    INC E
+S6109    RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,5
+        RET
+S61092   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,4
+        RET
+S61093   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,3
+        RET
+S61094   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,2
+        RET
+S61095   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,1
+        RET
+S61096   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,0
+        RET
+
+S618    SLI C
+        JP NC,S6180
+        JP S6181
+
+S6184    INC E
+S6185    RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        RET
+S6186    RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,5
+        RET
+S61866   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,4
+        RET
+S61867   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,3
+        RET
+S61868   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,2
+        RET
+S61869   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,1
+        RET
+S6186A   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,0
+        RET
+
+
+
+S6182    JR Z,S6184
+        INC E
+S61822  JR Z,S6185
+S618222 LD (DE),A
+        INC E
+        JR Z,S6186
+        LD LY,A
+        ADD A,(HL)
+        RRA
+        LD HY,A
+        ADD A,LY
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S61866
+        ADD A,HY
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S61867
+        LD A,HY
+        LD (DE),A
+        INC E
+        JR Z,S61868
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S61869
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S6186A
+S6181    LD A,C
+        ADD A,B
+        LD C,A
+        LD A,(HL)
+        INC HL
+        DEC LX
+        LD (DE),A
+        JP C,S6182
+        JR Z,S61871
+        JP S61831
+S6183    JR Z,S6187
+        INC E
+        JR Z,S6188
+        LD (DE),A
+S61831  INC E
+        JR Z,S6189
+        LD LY,A
+        ADD A,(HL)
+        RRA
+        LD HY,A
+        ADD A,LY
+        RRA
+        LD (DE),A
+         INC E
+        JR Z,S61891
+        ADD A,HY
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S61892
+        LD A,HY
+        LD (DE),A
+        INC E
+        JR Z,S61893
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S61894
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S61895
+S6180    LD A,C
+        ADD A,B
+        LD C,A
+        LD A,(HL)
+        INC HL
+        DEC LX
+        LD (DE),A
+        JP C,S6183
+        JR Z,S61844
+        INC E
+        JP NZ,S618222
+         RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        RET
+
+
+S61844   INC E
+         RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        RET
+
+S6187    INC E
+S6188    SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        RET
+S6189    SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,5
+        RET
+S61871  INC E
+S61891   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,4
+        RET
+S61892   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,3
+        RET
+S61893   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,2
+        RET
+S61894   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,1
+        RET
+S61895   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,0
+        RET
+
+
+

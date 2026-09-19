@@ -1,0 +1,30 @@
+
+	DEVICE ZXSPECTRUM48
+
+	include "src/__MAIN.a80"
+
+
+	;calc ROM CRC
+	LUA
+		s=0
+		for i = _c("GSRomBaseL+8"), _c("GSRomBaseL+16383"), 2 do
+		  s=s+sj.get_word(i)
+		end
+		for i = _c("GSRomBaseH"), _c("GSRomBaseH+16383"), 2 do
+		  s=s+sj.get_word(i)
+		end
+		if 1==0 then
+		  _pc("org 6")
+		  sj.add_word(s)
+		end
+		print ("ROM CS: ",s-2128680)
+	ENDLUA
+
+;	SAVEBIN "gsroml",GSRomBaseL,#4000
+;	SAVEBIN "gsromh",GSRomBaseH,#4000
+
+	include "patch/patch.a80"
+
+	SAVEBIN "gsroml_",GSRomBaseL,#4000
+	SAVEBIN "gsromh_",GSRomBaseH,#4000
+

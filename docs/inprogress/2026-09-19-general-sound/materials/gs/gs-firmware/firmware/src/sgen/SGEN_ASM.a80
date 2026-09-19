@@ -1,0 +1,15 @@
+
+	MODULE SGEN
+
+        INCLUDE "SGEN.a80"
+        INCLUDE "SGEN1_L.a80"
+        INCLUDE "SGEN2_L.a80"
+        INCLUDE "SGEN3.a80"
+        INCLUDE "SGEN4.a80"
+        INCLUDE "SGEN5.a80"
+        INCLUDE "SGEN6.a80"
+        INCLUDE "SGEN7.a80"
+        INCLUDE "SGEN8.a80"
+___END
+	ENDMODULE
+

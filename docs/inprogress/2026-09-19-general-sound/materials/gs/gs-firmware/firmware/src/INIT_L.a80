@@ -1,0 +1,219 @@
+INIT    DI
+        OUT (RSCOM),A
+
+INIT_   XOR A
+        OUT (OUTRG),A
+        LD L,A
+        LD H,A
+        LD BC,#0004
+        LD SP,#0008
+        JR INIT02
+
+INIT00  OUT (PAGE),A
+        LD SP,#C000
+        LD C,#04
+        DEC A
+
+INIT01  POP DE
+        ADD HL,DE
+        POP DE
+        ADD HL,DE
+        POP DE
+        ADD HL,DE
+        POP DE
+        ADD HL,DE
+
+INIT02  POP DE
+        ADD HL,DE
+        POP DE
+        ADD HL,DE
+        POP DE
+        ADD HL,DE
+        POP DE
+        ADD HL,DE
+        DJNZ INIT01
+        DEC C
+        JR NZ,INIT01
+        OR A
+        JR Z,INIT00
+
+        LD DE,(ROMCRC)
+        SBC HL,DE
+      ; JR NZ,INIT_
+
+INIT03
+        LD HL,RAMPG
+        LD DE,RAMPG+1
+        LD BC,#003F
+        LD (HL),B
+        LDIR
+
+        XOR A
+        LD (#7FFF),A
+        OUT (PAGE),A
+        EXX
+        LD A,(#8000)
+        LD D,A
+        LD A,(#FFFF)
+        LD E,A
+        EXX
+
+        LD HL,#8000
+        LD DE,#FFFF
+        LD BC,#3FAA
+
+INITR01 LD A,B
+        OUT (PAGE),A
+        LD (HL),C
+        LD (DE),A
+        DJNZ INITR01
+
+        XOR A
+        OUT (PAGE),A
+        EXX
+        LD A,D
+        LD (#8000),A
+        LD A,E
+        LD (#FFFF),A
+        EXX
+
+        LD A,(#7FFF)
+        LD LX,A
+
+        LD A,#C0
+        LD (#7FFF),A
+
+        LD HL,#FFFF
+        LD DE,RAMPG
+        LD B,#3F
+
+INITR02 LD A,#40
+        SUB B
+        OUT (PAGE),A
+        CP (HL)
+        JR NZ,INITR05
+        LD (DE),A
+        LD A,(#8000)
+        CP #AA
+        JR Z,INITR06
+INITR04 XOR A
+        LD (HL),A
+        LD (#8000),A
+INITR05 DJNZ INITR02
+
+        JP INITR0E
+
+
+INITR06 LD A,#01
+        LD (HL),A
+INITR07 CP (HL)
+        JR NZ,INITR04
+        RLC (HL)
+        RLCA
+        JR NC,INITR07
+        LD A,#FE
+        LD (HL),A
+INITR08 CP (HL)
+        JR NZ,INITR04
+        RLC (HL)
+        RLCA
+        JR C,INITR08
+
+INITR08e
+        EXX
+        LD HL,#8000
+
+        LD C,#AA
+
+INITR09 LD A,C
+        XOR H
+
+INITR0A XOR L
+        LD (HL),A
+        XOR L
+        INC L
+        XOR L
+        LD (HL),A
+        XOR L
+        INC L
+        XOR L
+        LD (HL),A
+        XOR L
+        INC L
+        XOR L
+        LD (HL),A
+        XOR L
+        INC L
+        JP NZ,INITR0A
+        INC H
+        JP NZ,INITR09
+
+        LD H,#80
+
+INITR0B LD A,C
+        XOR H
+        XOR L
+        XOR (HL)
+        JR NZ,INITR0D
+        INC L
+        LD A,C
+        XOR H
+        XOR L
+        XOR (HL)
+        JR NZ,INITR0D
+        INC L
+        LD A,C
+        XOR H
+        XOR L
+        XOR (HL)
+        JR NZ,INITR0D
+        INC L
+        LD A,C
+        XOR H
+        XOR L
+        XOR (HL)
+        JR NZ,INITR0D
+        INC L
+        JP NZ,INITR0B
+        INC H
+        JP NZ,INITR0B
+
+        LD HL,#0000
+        LD SP,HL
+        LD BC,#0008
+
+INIT0C  PUSH HL
+        PUSH HL
+        PUSH HL
+        PUSH HL
+        PUSH HL
+        PUSH HL
+        PUSH HL
+        PUSH HL
+        DJNZ INIT0C
+        DEC C
+        JP NZ,INIT0C
+
+        EXX
+INIT0Ce INC E
+        EXX
+
+INITR0D EXX
+        DEC B
+        JP NZ,INITR02
+
+INITR0E LD A,E
+        LD (NUMPG),A
+        OUT (OUTRG),A
+        LD A,LX
+        LD (DE),A
+
+
+        XOR A
+        OUT (PAGE),A
+        JP INITVAR
+
+
+
+
+
