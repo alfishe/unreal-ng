@@ -51,6 +51,8 @@ public:
     void setToolBarChecked(bool checked);
     void setStatusBarChecked(bool checked);
     void setHudOverlayChecked(bool checked);
+    /// Reflect the persisted "Autostart disks" preference in the Machine menu
+    void setAutostartDisksChecked(bool checked);
     void setGpuAccelerationChecked(bool checked);
     void setGpuAccelerationAvailable(bool available);
     void setCrtEffectsChecked(bool checked);
@@ -98,6 +100,10 @@ signals:
     void resumeRequested();
     void resetRequested();
     void stopRequested();
+
+    // Machine control signals
+    void fastDiskToggled(bool enabled);
+    void autostartDisksToggled(bool enabled);
 
     // Speed control signals
     void speedMultiplierChanged(int multiplier);
@@ -235,6 +241,8 @@ private:
     QAction* _tapeTrapsAction;
     QAction* _mniAction;
     QAction* _turboTapeAction;
+    QAction* _fastDiskAction = nullptr;
+    QAction* _autostartDisksAction = nullptr;
 
     // Debug Menu Actions
     QAction* _stepInAction;

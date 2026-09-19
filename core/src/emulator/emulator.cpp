@@ -25,6 +25,7 @@
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/notifications.h"
+#include "emulator/io/fdc/diskautostart.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/memory/scorpion/scorpionromwindow.h"
 #include "loaders/snapshot/loader_sna.h"
@@ -702,6 +703,74 @@ void Emulator::ClearAudioCallback()
 
 /// endregion </Integration interfaces>
 
+// region Disk autostart
+
+Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path)
+{
+    DiskAutostartResult result;
+
+    result.mounted = LoadDisk(path);
+    if (!result.mounted)
+    {
+        result.message = "Disk could not be loaded";
+        return result;
+    }
+
+    auto report = [&](const std::string& text, bool started, bool error) {
+        result.message = text;
+        if (error)
+            MLOGERROR("%s", text.c_str());
+        else
+            MLOGINFO("%s", text.c_str());
+        MessageCenter::DefaultMessageCenter().Post(
+            NC_DISK_AUTOSTART, new DiskAutostartPayload(_context->emulatorId, text, started, error));
+    };
+
+    DiskImage* image = _context->coreState.diskImages[0];
+    DiskAutostart* autostart = _context->pDiskAutostart;
+    if (image == nullptr || autostart == nullptr)
+    {
+        report("Disk autostart is not available", false, true);
+        return result;
+    }
+
+    // Prepare + reset run with the emulator thread parked (image and machine state are edited)
+    bool wasRunning = _isRunning && !_isPaused;
+    if (wasRunning)
+    {
+        Pause();
+        sleep_ms(20);
+    }
+
+    DiskAutostart::Plan plan = autostart->Prepare(*image);
+    const bool start = plan.action == DiskAutostart::Action::Boot || plan.action == DiskAutostart::Action::BootNamed ||
+                       plan.action == DiskAutostart::Action::BootCommander ||
+                       plan.action == DiskAutostart::Action::BootGenerated;
+
+    if (start)
+    {
+        // Same rule as Reset(): a reset must never append to a recorded TTD timeline
+        if (_context->pTimeTravelManager && _context->pTimeTravelManager->IsRecording())
+            _context->pTimeTravelManager->StopRecording();
+
+        autostart->Disarm();
+        _core->Reset(RM_DOS);  // Quick reset straight into TR-DOS: PC = 0 with the DOS ROM active
+        if (plan.action == DiskAutostart::Action::BootNamed)
+            autostart->Arm(plan.bootName);
+    }
+
+    if (wasRunning)
+    {
+        Resume();
+    }
+
+    result.started = start;
+    report(plan.message, start, plan.action == DiskAutostart::Action::Unsupported);
+    return result;
+}
+
+// endregion Disk autostart
+
 // region Regular workflow
 
 void Emulator::Reset()
@@ -746,6 +815,9 @@ void Emulator::Reset()
 
     // Now perform reset while paused (safe, no race condition).
     // The live emulator state is teleported; the TTD timeline is not.
+    if (_context && _context->pDiskAutostart)
+        _context->pDiskAutostart->Disarm();  // A user reset cancels a pending autostart hook
+
     _core->Reset();
 
     // Resume if it was running before

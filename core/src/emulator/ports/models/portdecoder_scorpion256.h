@@ -30,6 +30,10 @@ protected:
     // NVRAM / RTC / IDE init chains. The stubs stay wired behind the flag for
     // verification tests (profrom-smuc-not-found-and-driver-disassembly.md, 8)
     bool _smucEnabled = false;
+
+    // Saved #7FFD state prior to entering Shadow Monitor via #1FFD bit 1
+    uint8_t _savedP7FFD = 0x00;
+    bool _savedP7FFDValid = false;
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>

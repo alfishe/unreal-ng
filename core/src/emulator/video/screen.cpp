@@ -659,7 +659,7 @@ void Screen::SetActiveScreen(SpectrumScreenEnum screen)
 /// \param color
 void Screen::SetBorderColor(uint8_t color)
 {
-    // Flush/Render all pending pixels using the CURRENT (old) border color 
+    // Flush/Render all pending pixels using the CURRENT (old) border color
     // up to the exact CPU T-state of the I/O port write.
     // This fixes pixel-perfect multicolor effects (raster bars) across all models.
     UpdateScreen();
@@ -1081,9 +1081,19 @@ std::vector<uint16_t> Screen::GetActiveSurfaceRAMPages(VideoModeEnum mode, uint8
             return {altPage, videoPage};
         }
 
-        // ZX family and every other mode (Pentagon AlCo variants build on the
-        // standard screen pages; Profi/GMX/TS renderers are stubbed on master
-        // and fall back to the classic surface until they define one)
+        // Pentagon 16-color (AlCo) and hardware multicolor: bit-planes at
+        // {videoPage ^ 1, videoPage}. Screen 0 = pages {4, 5}, Screen 1 = {6, 7}.
+        // XOR with 1 gives the adjacent page (5^1=4, 7^1=6), unlike ATM's -4.
+        case M_P16:
+        case M_PMC:
+        {
+            const uint16_t videoPage = (p7FFD & 0x08) ? 7 : 5;
+            const uint16_t altPage = videoPage ^ 1;
+            return {altPage, videoPage};
+        }
+
+        // ZX family and every other mode: fall back to the classic surface
+        // (Profi/GMX/TS renderers are stubbed on master until they define one)
         default:
         {
             if (bankedZX)

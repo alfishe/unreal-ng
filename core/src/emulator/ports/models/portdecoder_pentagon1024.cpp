@@ -106,6 +106,17 @@ void PortDecoder_Pentagon1024::Port_EFF7_Out(uint16_t port, uint8_t value, uint1
         _memory->UpdateZ80Banks();
     }
 
+    // Video mode bits (0, 1, 5, 6) - trigger mode re-detection via InitRaster
+    // Pattern follows ATM3's Port_EFF7_Out (portdecoder_atm3.cpp:497-500)
+    constexpr uint8_t VIDEO_MODE_BITS = EFF7_4BPP | EFF7_512 | EFF7_HWMC | EFF7_384;
+    bool videoModeChanged = ((prevValue ^ value) & VIDEO_MODE_BITS) != 0;
+    if (videoModeChanged && _context->pScreen)
+    {
+        _context->pScreen->InitRaster();
+        MLOGDEBUG("Port_EFF7_Out: video bits changed (0x%02X -> 0x%02X), InitRaster() called",
+                  prevValue, value);
+    }
+
     if (!key_exists(_loggingMutePorts, port))
     {
         MLOGDEBUG(DumpPortValue(0xEFF7, port, value, pc, Dump_EFF7_value(value).c_str()));

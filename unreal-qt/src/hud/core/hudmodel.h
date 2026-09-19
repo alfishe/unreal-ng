@@ -159,6 +159,7 @@ private:
     void onSpeedChanged(int id, Message* message);
     void onRecording(int id, Message* message);
     void onFileLoaded(int id, Message* message);
+    void onDiskAutostart(int id, Message* message);
     void onMemoryPageChanged(int id, Message* message);
     void onRomPageChanged(int id, Message* message);
     void onScreenPageChanged(int id, Message* message);

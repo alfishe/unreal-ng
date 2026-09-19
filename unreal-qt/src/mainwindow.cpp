@@ -105,6 +105,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
     _lastDirectory = settings.value("LastFileDirectory", QCoreApplication::applicationDirPath()).toString();
     _lastSaveDirectory = settings.value("LastSaveDirectory", QCoreApplication::applicationDirPath()).toString();
+    _autostartDisks = settings.value("AutostartDisks", true).toBool();
     qDebug() << "Loading last directory from settings:" << _lastDirectory;
 
 #ifdef ENABLE_AUTOMATION
@@ -244,6 +245,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::turboModeToggled, this, &MainWindow::handleTurboModeToggled);
     connect(_menuManager, &MenuManager::tapeTrapsToggled, this, &MainWindow::handleTapeTrapsToggled);
     connect(_menuManager, &MenuManager::turboTapeToggled, this, &MainWindow::handleTurboTapeToggled);
+    connect(_menuManager, &MenuManager::fastDiskToggled, this, &MainWindow::handleFastDiskToggled);
+    connect(_menuManager, &MenuManager::autostartDisksToggled, this, &MainWindow::handleAutostartDisksToggled);
+    _menuManager->setAutostartDisksChecked(_autostartDisks);
     connect(_menuManager, &MenuManager::stepInRequested, this, &MainWindow::handleStepIn);
     connect(_menuManager, &MenuManager::stepOverRequested, this, &MainWindow::handleStepOver);
     connect(_menuManager, &MenuManager::debuggerToggled, this, &MainWindow::handleDebuggerToggled);
@@ -964,8 +968,8 @@ void MainWindow::dropEvent(QDropEvent* event)
         qDebug() << pathList.size() << "files dropped";
         qDebug() << pathList.join(",");
 
-        // Load the first dropped file
-        loadFile(pathList.first());
+        // Load the first dropped file (Shift held while dropping = mount a disk without autostart)
+        loadFile(pathList.first(), QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier));
     }
 
     // Remove drop area highlight
@@ -1128,7 +1132,9 @@ void MainWindow::toggleEmulatorStartStop()
         // manager, in log lines, and it is what TTD stores as emulator_id in a
         // session dump. It used to be "test", which is what every recording made
         // from this app was labelled with.
-        auto newEmulator = _emulatorManager->CreateEmulator("unreal-qt", LoggerLevel::LogInfo);
+        auto newEmulator = _nextEmulatorModel.empty()
+            ? _emulatorManager->CreateEmulator("unreal-qt", LoggerLevel::LogInfo)
+            : _emulatorManager->CreateEmulatorWithModelAndRAM("unreal-qt", _nextEmulatorModel, 128, LoggerLevel::LogInfo);
 
         // Initialize emulator instance
         if (newEmulator)
@@ -1835,7 +1841,7 @@ void MainWindow::openDiskDialog()
     }
 }
 
-void MainWindow::loadFile(const QString& filePath)
+void MainWindow::loadFile(const QString& filePath, bool mountOnly)
 {
     // Save directory to settings
     saveLastDirectory(filePath);
@@ -1846,10 +1852,18 @@ void MainWindow::loadFile(const QString& filePath)
     std::string file = filePath.toStdString();
 
     // Auto-start emulator if not running (except for symbol files which don't need it)
+    bool freshlyStarted = false;
     if (!_emulator && category != FileSymbol && category != FileUnknown)
     {
+        freshlyStarted = true;
         qDebug() << "Auto-starting emulator for file:" << filePath;
+
+        // A disk to autostart needs TR-DOS: with no emulator at all the default machine is Pentagon 128K
+        if (category == FileDisk && _autostartDisks && !mountOnly)
+            _nextEmulatorModel = "Pentagon";
+
         toggleEmulatorStartStop();
+        _nextEmulatorModel.clear();
     }
 
     switch (category)
@@ -1887,7 +1901,10 @@ void MainWindow::loadFile(const QString& filePath)
         case FileDisk:
             if (_emulator)
             {
-                bool result = _emulator->LoadDisk(file);
+                // Quick reset into TR-DOS only while the machine is running; paused or stopped machines just mount
+                const bool autostart = _autostartDisks && !mountOnly &&
+                                       (freshlyStarted || (_emulator->IsRunning() && !_emulator->IsPaused()));
+                bool result = autostart ? _emulator->AutostartDisk(file).mounted : _emulator->LoadDisk(file);
                 if (!result)
                     qWarning() << "Failed to load disk:" << filePath;
             }
@@ -2417,6 +2434,28 @@ void MainWindow::handleTurboTapeToggled(bool enabled)
             qDebug() << "Turbo tape loading" << (enabled ? "enabled" : "disabled");
         }
     }
+}
+
+void MainWindow::handleFastDiskToggled(bool enabled)
+{
+    if (_emulator)
+    {
+        EmulatorContext* context = _emulator->GetContext();
+        FeatureManager* featureManager = context ? context->pFeatureManager : nullptr;
+        if (featureManager)
+        {
+            featureManager->setFeature(Features::kFastDisk, enabled);
+            qDebug() << "Fast disk loading" << (enabled ? "enabled" : "disabled");
+        }
+    }
+}
+
+void MainWindow::handleAutostartDisksToggled(bool enabled)
+{
+    _autostartDisks = enabled;
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
+    settings.setValue("AutostartDisks", enabled);
+    qDebug() << "Disk autostart" << (enabled ? "enabled" : "disabled");
 }
 
 void MainWindow::handleStepIn()

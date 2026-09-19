@@ -240,7 +240,7 @@ GDBSession::GDBSession(int socket, bool noAckMode)
     : _socket(socket)
     , _noAckMode(noAckMode)
     , _reader(std::make_unique<GDBPacketReader>())
-    , _sessionUuid(UUID::Generate())
+    , _sessionUuid(unreal::UUID::Generate())
 {
 }
 

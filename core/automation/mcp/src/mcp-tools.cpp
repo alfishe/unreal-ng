@@ -584,8 +584,8 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["aspects"]["type"] = "array";
     schema["properties"]["aspects"]["items"]["type"] = "string";
     Json::Value allowed(Json::arrayValue);
-    for (const char* aspect : {"machine", "registers", "memory", "memory_map", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "screen_ocr",
-                               "screen_image", "screen_digest", "timing", "rom", "audio_ay", "audio_fm", "fdc", "mouse"})
+    for (const char* aspect : {"machine", "registers", "memory", "memory_map", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "video",
+                               "screen_ocr", "screen_image", "screen_digest", "timing", "rom", "audio_ay", "audio_fm", "fdc", "mouse"})
     {
         allowed.append(aspect);
     }
@@ -631,7 +631,8 @@ void RegisterInspectState(ToolRegistry& registry)
     registry.Register(
         "inspect_state",
         "Inspect emulator state in one call: registers, memory ranges, disassembly, stack words, breakpoints, memory banks, "
-        "paging state (tagged latches + bank table), static port map with tags (ports), screen OCR text, screen image metadata, screen digest hash, raster timing, "
+        "paging state (tagged latches + bank table), static port map with tags (ports), video mode (resolution, color depth, "
+        "EFF7 state for Pentagon 16col/HWMC), screen OCR text, screen image metadata, screen digest hash, raster timing, "
         "ROM signatures, AY/SSG chips (audio_ay), TurboSound FM YM2203 halves (audio_fm), Beta Disk WD1793 (fdc), "
         "Kempston mouse + port routing (mouse). Combine aspects to reduce round-trips.",
         std::move(schema),
@@ -653,8 +654,8 @@ void RegisterInspectState(ToolRegistry& registry)
             for (const std::string& aspect : aspects)
             {
                 if (aspect != "machine" && aspect != "registers" && aspect != "memory" && aspect != "memory_map" && aspect != "disasm" && aspect != "stack" &&
-                    aspect != "breakpoints" && aspect != "memory_banks" && aspect != "paging" && aspect != "ports" && aspect != "screen_ocr" && aspect != "screen_image" &&
-                    aspect != "screen_digest" && aspect != "timing" && aspect != "rom" && aspect != "audio_ay" &&
+                    aspect != "breakpoints" && aspect != "memory_banks" && aspect != "paging" && aspect != "ports" && aspect != "video" &&
+                    aspect != "screen_ocr" && aspect != "screen_image" && aspect != "screen_digest" && aspect != "timing" && aspect != "rom" && aspect != "audio_ay" &&
                     aspect != "audio_fm" && aspect != "fdc" && aspect != "mouse")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
@@ -824,6 +825,16 @@ void RegisterInspectState(ToolRegistry& registry)
                         {
                             steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", Endpoint(id, "/state/screen/digest"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "video")
+                        {
+                            // Video mode: resolution, color depth, EFF7 state for Pentagon 16col/HWMC modes
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, "/state/screen/mode"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
                                     next(true);
                                 });

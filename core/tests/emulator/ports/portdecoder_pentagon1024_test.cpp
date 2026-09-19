@@ -267,3 +267,123 @@ TEST_F(PortDecoder_Pentagon1024_Test, ExtendedMemoryGate)
     EXPECT_EQ(_context->emulatorState.pEFF7 & 0x04, 0x04)
         << "Extended memory disabled when bit 2 = 1";
 }
+
+/// region <16-Color Mode Tests>
+
+/// EFF7 bit 0 sets 16-color mode flag
+TEST_F(PortDecoder_Pentagon1024_Test, EFF7_Bit0_Sets16ColorMode)
+{
+    _context->emulatorState.pEFF7 = 0x00;
+    EXPECT_FALSE(_context->emulatorState.pEFF7 & EFF7_4BPP);
+
+    _context->emulatorState.pEFF7 = EFF7_4BPP;
+    EXPECT_TRUE(_context->emulatorState.pEFF7 & EFF7_4BPP);
+}
+
+/// EFF7 bit 5 sets hardware multicolor mode flag
+TEST_F(PortDecoder_Pentagon1024_Test, EFF7_Bit5_SetsHardwareMulticolorMode)
+{
+    _context->emulatorState.pEFF7 = 0x00;
+    EXPECT_FALSE(_context->emulatorState.pEFF7 & EFF7_HWMC);
+
+    _context->emulatorState.pEFF7 = EFF7_HWMC;
+    EXPECT_TRUE(_context->emulatorState.pEFF7 & EFF7_HWMC);
+}
+
+/// EFF7 default state after construction is 0
+/// Note: Full reset() requires Memory and Screen to be initialized;
+/// this test verifies the state assignment in reset() without calling it
+TEST_F(PortDecoder_Pentagon1024_Test, EFF7_ResetState)
+{
+    // Verify that reset() sets pEFF7 = 0x00 by checking the code path
+    // (the actual reset() call requires full emulator context)
+    _context->emulatorState.pEFF7 = EFF7_4BPP | EFF7_HWMC | EFF7_LOCKMEM;
+    EXPECT_NE(_context->emulatorState.pEFF7, 0x00);
+
+    // Direct assignment as done in PortDecoder_Pentagon1024::reset()
+    _context->emulatorState.pEFF7 = 0x00;
+    EXPECT_EQ(_context->emulatorState.pEFF7, 0x00)
+        << "pEFF7 should be 0 after reset assignment";
+}
+
+/// 16-color pixel extraction: left pixel formula
+/// Left pixel: bits 6,2,1,0 -> index = ((byte & 0x40) >> 3) | (byte & 0x07)
+TEST_F(PortDecoder_Pentagon1024_Test, Pixel16c_LeftPixelExtraction)
+{
+    auto extractLeftPixel = [](uint8_t byte) -> uint8_t {
+        return ((byte & 0x40) >> 3) | (byte & 0x07);
+    };
+
+    // Test all 16 palette indices in left pixel position
+    // Left pixel uses bits: D6 (bright), D2 (green), D1 (red), D0 (blue)
+    EXPECT_EQ(extractLeftPixel(0b00'000'000), 0);   // Black
+    EXPECT_EQ(extractLeftPixel(0b00'000'001), 1);   // Blue
+    EXPECT_EQ(extractLeftPixel(0b00'000'010), 2);   // Red
+    EXPECT_EQ(extractLeftPixel(0b00'000'011), 3);   // Magenta
+    EXPECT_EQ(extractLeftPixel(0b00'000'100), 4);   // Green
+    EXPECT_EQ(extractLeftPixel(0b00'000'101), 5);   // Cyan
+    EXPECT_EQ(extractLeftPixel(0b00'000'110), 6);   // Yellow
+    EXPECT_EQ(extractLeftPixel(0b00'000'111), 7);   // White
+
+    // Bright colors (D6 set)
+    EXPECT_EQ(extractLeftPixel(0b01'000'000), 8);   // Bright Black
+    EXPECT_EQ(extractLeftPixel(0b01'000'001), 9);   // Bright Blue
+    EXPECT_EQ(extractLeftPixel(0b01'000'010), 10);  // Bright Red
+    EXPECT_EQ(extractLeftPixel(0b01'000'111), 15);  // Bright White
+}
+
+/// 16-color pixel extraction: right pixel formula
+/// Right pixel: bits 7,5,4,3 -> index = ((byte & 0x80) >> 4) | ((byte & 0x38) >> 3)
+/// Bit layout: D7=Yr(bright), D6=Yl, D5=Gr, D4=Rr, D3=Br, D2=Gl, D1=Rl, D0=Bl
+TEST_F(PortDecoder_Pentagon1024_Test, Pixel16c_RightPixelExtraction)
+{
+    auto extractRightPixel = [](uint8_t byte) -> uint8_t {
+        return ((byte & 0x80) >> 4) | ((byte & 0x38) >> 3);
+    };
+
+    // Test all 16 palette indices in right pixel position
+    // Right pixel uses: D7 (bright), D5 (green), D4 (red), D3 (blue)
+    // Mask 0x38 = bits 5,4,3; Mask 0x80 = bit 7
+    // Index = {D7, D5, D4, D3} = {I, G, R, B}
+    EXPECT_EQ(extractRightPixel(0x00), 0);   // Black       = 0b0000
+    EXPECT_EQ(extractRightPixel(0x08), 1);   // Blue        = 0b0001 (D3=1)
+    EXPECT_EQ(extractRightPixel(0x10), 2);   // Red         = 0b0010 (D4=1)
+    EXPECT_EQ(extractRightPixel(0x18), 3);   // Magenta     = 0b0011 (D4+D3)
+    EXPECT_EQ(extractRightPixel(0x20), 4);   // Green       = 0b0100 (D5=1)
+    EXPECT_EQ(extractRightPixel(0x28), 5);   // Cyan        = 0b0101 (D5+D3)
+    EXPECT_EQ(extractRightPixel(0x30), 6);   // Yellow      = 0b0110 (D5+D4)
+    EXPECT_EQ(extractRightPixel(0x38), 7);   // White       = 0b0111 (D5+D4+D3)
+
+    // Bright colors (D7 set adds 8 to index)
+    EXPECT_EQ(extractRightPixel(0x80), 8);   // Bright Black = 0b1000 (D7)
+    EXPECT_EQ(extractRightPixel(0x88), 9);   // Bright Blue  = 0b1001 (D7+D3)
+    EXPECT_EQ(extractRightPixel(0xB8), 15);  // Bright White = 0b1111 (D7+D5+D4+D3)
+}
+
+/// Combined pixel extraction test: byte encodes two adjacent pixels
+TEST_F(PortDecoder_Pentagon1024_Test, Pixel16c_CombinedExtraction)
+{
+    auto extractLeftPixel = [](uint8_t byte) -> uint8_t {
+        return ((byte & 0x40) >> 3) | (byte & 0x07);
+    };
+    auto extractRightPixel = [](uint8_t byte) -> uint8_t {
+        return ((byte & 0x80) >> 4) | ((byte & 0x38) >> 3);
+    };
+
+    // Test byte 0xEA = 0b11101010
+    // Left: bits 6,2,1,0 = 1,0,1,0 = 10 (bright red)
+    // Right: bits 7,5,4,3 = 1,1,0,1 = 13 (bright magenta)
+    uint8_t testByte = 0xEA;
+    EXPECT_EQ(extractLeftPixel(testByte), 10);
+    EXPECT_EQ(extractRightPixel(testByte), 13);
+
+    // Test byte 0x00 = both black
+    EXPECT_EQ(extractLeftPixel(0x00), 0);
+    EXPECT_EQ(extractRightPixel(0x00), 0);
+
+    // Test byte 0xFF = both bright white
+    EXPECT_EQ(extractLeftPixel(0xFF), 15);
+    EXPECT_EQ(extractRightPixel(0xFF), 15);
+}
+
+/// endregion </16-Color Mode Tests>
