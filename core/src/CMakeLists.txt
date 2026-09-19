@@ -67,17 +67,15 @@ add_subdirectory(3rdparty/liblzma)
 # forward it manually.
 add_subdirectory(3rdparty/zstd)
 
-# libopl4 — MoonSound (YMF278B / OPL4) synthesis library.
-# TEMPORARY home: tools/poc/015-opl4-synthesis; migrates to core/src/3rdparty
-# once the integration stabilises. Declared here — not in the root file — so
-# every entry point that builds core (root, unreal-qt, unreal-videowall,
-# core/tests standalone) picks the target up exactly once; the guard also
-# protects the -DBUILD_POC=ON path, where tools/poc/CMakeLists.txt adds the
-# same directory and must skip it (see the matching guard there).
-# EXCLUDE_FROM_ALL keeps the opl4tests research binary out of default
-# builds; the opl4 library itself is still compiled as a dependency of core.
+# libopl4 — MoonSound (YMF278B / OPL4) synthesis library, vendored in-house at
+# 3rdparty/opl4 (std-lib only, own CMakeLists.txt). Declared here — not in the
+# root file — so every entry point that builds core (root, unreal-qt,
+# unreal-videowall, core/tests standalone) picks the target up exactly once.
+# EXCLUDE_FROM_ALL keeps its opl4tests binary out of default builds; the opl4
+# library itself is still compiled as a dependency of core. The guard lets
+# tools/poc (-DBUILD_POC=ON) skip its research copy of the same target.
 if (NOT TARGET opl4)
-    add_subdirectory(${ROOT_DIR}/tools/poc/015-opl4-synthesis 015-opl4-synthesis EXCLUDE_FROM_ALL)
+    add_subdirectory(3rdparty/opl4 EXCLUDE_FROM_ALL)
 endif()
 
 # All C++ sources in /src and sub-folders will be compiled
@@ -85,16 +83,25 @@ file (GLOB_RECURSE CPP_FILES ${SOURCE_DIR}/*.cpp)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/build/" FALSE OUTVAR CPP_FILES)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/CMakeFiles/" FALSE OUTVAR CPP_FILES)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "liblzma/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
+EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/opl4/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/recording/" FALSE OUTVAR CPP_FILES) # Moved to separate library
 
-# ymfm (YM2203 core for the TurboSound FM device): vendored at 3rdparty/ymfm
-# and picked up by the recursive *.cpp glob above. ymfm_opn.cpp includes
+# ymfm (YM2203 core for the TurboSound FM device): vendored at 3rdparty/ymfm.
+# Only the OPN family and what it links against (SSG, ADPCM) is compiled; the
+# OPL/PCM pair in the same directory is not used by core. ymfm_opn.cpp includes
 # ymfm_fm.ipp (template implementations), so the .ipp never compiles
 # standalone. The vendored .cpp files are not warning-clean under our
 # -Wall -Wextra -Werror (upstream keeps unused parameters) and must not be
 # force-fed stdafx.h, so skip the PCH and relax that single warning on those
 # files only. See 3rdparty/ymfm/PATCHES.md for the local source patch.
-file (GLOB YMFM_CPP ${SOURCE_DIR}/3rdparty/ymfm/*.cpp)
+file (GLOB YMFM_ALL_CPP ${SOURCE_DIR}/3rdparty/ymfm/*.cpp)
+list(REMOVE_ITEM CPP_FILES ${YMFM_ALL_CPP})
+set(YMFM_CPP
+    ${SOURCE_DIR}/3rdparty/ymfm/ymfm_opn.cpp
+    ${SOURCE_DIR}/3rdparty/ymfm/ymfm_ssg.cpp
+    ${SOURCE_DIR}/3rdparty/ymfm/ymfm_adpcm.cpp
+)
+list(APPEND CPP_FILES ${YMFM_CPP})
 set_source_files_properties(${YMFM_CPP} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 if (NOT CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
     set_source_files_properties(${YMFM_CPP} PROPERTIES COMPILE_OPTIONS "-Wno-unused-parameter")
@@ -186,7 +193,7 @@ target_link_libraries(${PROJECT_NAME} PUBLIC $<TARGET_NAME:zstd::libzstd>)
 # soundmanager.h only forward-declare the device class. The static-archive
 # dependency still reaches final executables (CMake's $<LINK_ONLY:>
 # propagation), so unreal-qt / automation binaries resolve opl4 symbols
-# without inheriting the PoC include path.
+# without inheriting the library's include path.
 target_link_libraries(${PROJECT_NAME} PRIVATE opl4)
 
 # Compile gate for the MoonSound device implementation. PUBLIC: core-tests
@@ -194,14 +201,6 @@ target_link_libraries(${PROJECT_NAME} PRIVATE opl4)
 # gate as the core library build (a mismatch would be an ODR hazard).
 target_compile_definitions(${PROJECT_NAME} PUBLIC UNREALNG_HAVE_OPL4=1)
 
-# Mirror the libopl4 FM backend selection (tools/poc CMake option
-# OPL4_FM_BACKEND=ymfm) as a PUBLIC define: opl4 is linked PRIVATE, so the
-# option's own PUBLIC define stops at core's translation units, but
-# core-tests compiles the core sources (and test helpers that program the
-# reference FM voice) directly and must match the selected register map.
-if (OPL4_FM_BACKEND STREQUAL "ymfm")
-    target_compile_definitions(${PROJECT_NAME} PUBLIC OPL4_FM_YMFM=1)
-endif()
 
 # Platform-specific framework and library linkage
 # Note: Recording-specific frameworks (VideoToolbox, AVFoundation, CoreMedia, CoreVideo, AudioToolbox)

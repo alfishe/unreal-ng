@@ -1091,7 +1091,7 @@ TEST_F(MoonSoundDevice_Test, TTD_IdentityAndSizeStableAcrossConfigs)
 
 // ===========================================================================
 // Conformance canaries (core-tdd 12.2): thin per-field rows promoted from
-// the PoC sweep families (tools/poc/015-opl4-synthesis/tests/opl4sweep.cpp)
+// the PoC sweep families (core/src/3rdparty/opl4/tests/opl4sweep.cpp)
 // to the device level - one register behaviour each, asserted on audio
 // rendered through the real port/bus/frame path. The exact per-step numbers
 // and full grids stay in the PoC suite; these pin the same semantics where
@@ -1673,13 +1673,7 @@ TEST_F(MoonSoundDevice_Test, Diagnostic_MfmHissPatches_SustainedVsRetrig)
         return w;
     };
 
-    std::cout << "[bisect2] backend=" <<
-#ifdef OPL4_FM_YMFM
-        "ymfm"
-#else
-        "opl4"
-#endif
-              << " (lead ch7 @0x31/0x34, pad ch2 @0x22/0x25)\n";
+    std::cout << "[bisect2] lead ch7 @0x31/0x34, pad ch2 @0x22/0x25\n";
     for (const Patch& p : patches)
     {
         const uint8_t mod = static_cast<uint8_t>(0x20 + p.ch % 3 + 8 * (p.ch / 3));

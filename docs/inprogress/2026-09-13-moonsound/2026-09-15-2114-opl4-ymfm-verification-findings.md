@@ -362,6 +362,23 @@ the new rate: HiFi −55…−57 dB, Authentic −36…−50 dB (HoldDrop). Devi
 tails carry the tone, and the pitch is within 1 %. On the old `setCoreRate` it
 fails at every rate except 44100.
 
+### 2.9 Library vendored into core; guest tests removed (2026-09-18)
+
+libopl4 now builds from `core/src/3rdparty/opl4`, a copy of the POC without
+co-simulation. The ymfm FM backend, its build option and the ymfm
+differential tests are gone from core, and core compiles only
+`ymfm_opn/ssg/adpcm` for TurboSound FM. The POC in
+`tools/poc/015-opl4-synthesis` is untouched and no longer built by core.
+
+The disk- and guest-binary-driven tests named as fences above
+(`MoonSoundMfmGuest_Test`, `MoonSoundMfm2/3/4Guest_Test`,
+`MoonSoundDemoGuest_Test`, `MoonServiceGuest_Test`) were deleted. Their
+regressions are covered by libopl4's `tests/opl4fmtests.cpp` (CRYOGENT
+drum/lead, JAMMED2 DR0 pad, HAPERT re-key, attack timing, NTS, sine purity),
+asserted against absolute reference values, and by the device test.
+The co-simulation fences (`cosim-oracle`, `cosim-ymfm`, `FmCompare*`) exist
+only in the POC.
+
 ---
 
 ## 3. Findings in ymfm itself (quirks the harness accommodates)
