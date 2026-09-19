@@ -104,8 +104,9 @@ Consequences:
   the DRC base ratio handles core↔device conversion — no hidden OS
   resampler. The granted rate is published process-wide
   (`PublishDefaultDeviceSampleRate`) **before any emulator exists**, so
-  `CoreRate=auto` resolves to the device family (resolution priority:
-  explicit config → per-emulator cell → process-wide default → 44100).
+  the core rate resolves to the device family (resolution priority:
+  per-emulator cell → process-wide default → 44100). The core rate is
+  runtime-only: `[SOUND] CoreRate` is ignored (a set value logs a warning).
 - **Reroute** (default output change / hotplug): miniaudio notification →
   GUI-thread re-init at the new output's native rate → ring dropped →
   `deviceReinitialized(rate)` → DRC re-bases next frame. A device is
@@ -115,11 +116,12 @@ Consequences:
   `kAudioDevicePropertyNominalSampleRate` listener on the active device
   triggers the same re-negotiation (macOS; WASAPI invalidates the stream
   on format changes, which routes through the reroute path anyway).
-- **Live core re-rate**: with `CoreRate=auto`, a device rate change
-  requests `SoundManager::requestCoreRate` — applied at the next frame
+- **Live core re-rate**: every device rate change (bind, reroute, nominal
+  rate switch) requests `SoundManager::requestCoreRate` — applied at the next frame
   boundary on the emulation thread, re-deriving every DSP stage (blip
   resamplers, AY PLL + decimation FIRs, character chains, sample
-  accumulator, recording rate). Deferred while a recording is active.
+  accumulator, recording rate, MoonSound's libopl4 output rate via
+  `Opl4::SetOutputRate`). Deferred while a recording is active.
   On every rate republish the DRC controller state is reset
   (`resetDrcController`) so tracking restarts from fresh occupancy.
 
@@ -189,6 +191,8 @@ fill at BIND time — after the emulator (and its sound stack) is built.
 Auto therefore always resolved to 44100; a 48 kHz device got a 44.1k core
 and 44.1k FLAC recordings. **Fix:** process-wide default published at
 device init (section 5). **Guard:** `Multirate_Test.CoreRateResolution`.
+Since 2026-09-18 an explicit `CoreRate` is ignored as well: a stale value in
+any loaded config pinned the core at 44.1 kHz on a 48 kHz device.
 
 ### 6.9 Same-device rate switches were invisible
 miniaudio only notifies on device *changes*; a nominal-rate switch on the

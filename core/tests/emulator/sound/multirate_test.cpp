@@ -76,36 +76,36 @@ protected:
 
 TEST_F(Multirate_Test, CoreRateResolution)
 {
-    // Explicit config value wins
+    // The [SOUND] CoreRate config value is ignored: no device -> 44100
     _context->config.sound.coreRate = 96000;
     {
         SoundManager sound(_context);
-        EXPECT_EQ(sound.getCoreRate(), 96000u);
+        EXPECT_EQ(sound.getCoreRate(), 44100u) << "config must not pin the core rate";
     }
-
-    // auto + supported device rate published -> match the device
     _context->config.sound.coreRate = 0;
+
+    // Supported device rate published -> match the device
     _context->pAudioDeviceSampleRate.store(48000, std::memory_order_release);
     {
         SoundManager sound(_context);
         EXPECT_EQ(sound.getCoreRate(), 48000u);
     }
 
-    // auto + unsupported device rate -> conservative 44100
+    // Unsupported device rate -> conservative 44100
     _context->pAudioDeviceSampleRate.store(22050, std::memory_order_release);
     {
         SoundManager sound(_context);
         EXPECT_EQ(sound.getCoreRate(), 44100u);
     }
 
-    // auto + no device rate known -> 44100
+    // No device rate known -> 44100
     _context->pAudioDeviceSampleRate.store(0, std::memory_order_release);
     {
         SoundManager sound(_context);
         EXPECT_EQ(sound.getCoreRate(), 44100u);
     }
 
-    // auto + process-wide default published (frontend audio init happens
+    // Process-wide default published (frontend audio init happens
     // BEFORE emulator creation - the per-context cell is 0 at that point):
     // resolver must fall back to the published default
     SoundManager::PublishDefaultDeviceSampleRate(48000);
@@ -149,7 +149,7 @@ TEST_F(Multirate_Test, ExactSampleCountOverPeriodAtEveryRate)
 
     for (size_t rate : CORE_RATES)
     {
-        _context->config.sound.coreRate = static_cast<unsigned>(rate);
+        _context->pAudioDeviceSampleRate.store(static_cast<uint32_t>(rate), std::memory_order_release);
         SoundManager sound(_context);
         ASSERT_EQ(sound.getCoreRate(), rate);
 
@@ -181,7 +181,7 @@ TEST_F(Multirate_Test, TurboSound_SampleCountFollowsCoreRate)
 
     for (size_t rate : CORE_RATES)
     {
-        _context->config.sound.coreRate = static_cast<unsigned>(rate);
+        _context->pAudioDeviceSampleRate.store(static_cast<uint32_t>(rate), std::memory_order_release);
         SoundManager sound(_context);
         ITurboSoundDevice* turboSound = sound.getTurboSound();
         ASSERT_NE(turboSound, nullptr);
@@ -273,7 +273,7 @@ TEST_F(Multirate_Test, AY_PitchInvariantAcrossRates)
 
     for (size_t rate : CORE_RATES)
     {
-        _context->config.sound.coreRate = static_cast<unsigned>(rate);
+        _context->pAudioDeviceSampleRate.store(static_cast<uint32_t>(rate), std::memory_order_release);
         SoundManager sound(_context);
         ITurboSoundDevice* turboSound = sound.getTurboSound();
         ASSERT_NE(turboSound, nullptr);
@@ -352,7 +352,6 @@ TEST_F(Multirate_Test, LiveCoreRateChange_RederivesPipeline)
     _context->pAudioCallback.store(&CallbackCapture::callback, std::memory_order_release);
     _context->pAudioManagerObj.store(&capture, std::memory_order_release);
     _context->config.frame = PENTAGON_FRAME;
-    _context->config.sound.coreRate = 0;
 
     SoundManager sound(_context);
     ASSERT_EQ(sound.getCoreRate(), 44100u);
@@ -388,7 +387,6 @@ TEST_F(Multirate_Test, DeviceRateChange_TriggersAutoCoreRerate)
     // next frame boundary by the emulator's own SoundManager).
     SoundManager* sound = _context->pSoundManager;
     ASSERT_NE(sound, nullptr);
-    ASSERT_EQ(_context->config.sound.coreRate, 0u) << "Test requires CoreRate=auto";
     ASSERT_EQ(sound->getCoreRate(), 44100u);
 
     _emulator->SetAudioDeviceSampleRate(48000);
@@ -396,11 +394,11 @@ TEST_F(Multirate_Test, DeviceRateChange_TriggersAutoCoreRerate)
     EXPECT_EQ(sound->getCoreRate(), 48000u)
         << "Auto core rate must follow the re-established device rate";
 
-    // Explicitly configured rate must NOT follow the device
+    // A [SOUND] CoreRate value does not pin it: the device always wins
     _context->config.sound.coreRate = 44100;
     _emulator->SetAudioDeviceSampleRate(96000);
     sound->handleFrameStart();
-    EXPECT_EQ(sound->getCoreRate(), 48000u) << "Explicit CoreRate pins the core rate";
+    EXPECT_EQ(sound->getCoreRate(), 96000u) << "the core rate must follow the device regardless of config";
     _context->config.sound.coreRate = 0;
     _emulator->SetAudioDeviceSampleRate(0);
 }

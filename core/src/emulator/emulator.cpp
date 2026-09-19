@@ -671,12 +671,13 @@ void Emulator::SetAudioDeviceSampleRate(uint32_t rate)
         _context->pSoundManager->resetDrcController();
     }
 
-    // CoreRate=auto: a device-rate CHANGE (hotplug / reroute at a different
-    // native rate) requests a full pipeline re-rate - every digital filter
-    // re-derives for the new core rate at the next frame boundary on the
-    // emulation thread (SoundManager::handleFrameStart applies it there;
-    // deferred while a recording is in progress).
-    if (rate != 0 && _context->config.sound.coreRate == 0 && _context->pSoundManager)
+    // The core rate always follows the device: a device-rate change (bind,
+    // hotplug, reroute at a different native rate) requests a full pipeline
+    // re-rate - every digital filter re-derives for the new core rate at the
+    // next frame boundary on the emulation thread (SoundManager::
+    // handleFrameStart applies it there; deferred while a recording is in
+    // progress).
+    if (rate != 0 && _context->pSoundManager)
     {
         _context->pSoundManager->requestCoreRate(rate);
     }

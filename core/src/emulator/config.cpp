@@ -346,26 +346,14 @@ bool Config::ParseConfig(IniFile& inimanager)
 	config.sound.covoxFB = (int)inimanager.GetLongValue(sound, "CovoxFB", 0);
 	config.sound.covoxDD = (int)inimanager.GetLongValue(sound, "CovoxDD", 0);
 
-	// Core audio rate: auto | 44100 | 48000 | 88200 | 96000 | 176400 | 192000
-	// (multirate plan phase 6). 0 = auto. Unsupported values fall back to auto.
+	// Core audio rate: legacy key. The core rate always follows the audio
+	// device at runtime (SoundManager::resolveCoreRate / requestCoreRate);
+	// an explicit value here is ignored.
 	{
-		long rate = inimanager.GetLongValue(sound, "CoreRate", 0);  // "auto" parses as 0
-		switch (rate)
-		{
-			case 0:
-			case 44100:
-			case 48000:
-			case 88200:
-			case 96000:
-			case 176400:
-			case 192000:
-				config.sound.coreRate = (unsigned)rate;
-				break;
-			default:
-				MLOGWARNING("Config: unsupported [SOUND] CoreRate=%ld, using auto", rate);
-				config.sound.coreRate = 0;
-				break;
-		}
+		const long rate = inimanager.GetLongValue(sound, "CoreRate", 0);  // "auto" parses as 0
+		if (rate != 0)
+			MLOGWARNING("Config: [SOUND] CoreRate=%ld is ignored - the core audio rate follows the audio device", rate);
+		config.sound.coreRate = 0;
 	}
 
 	// MoonSound (ZXM-MoonSound / YMF278B / OPL4): legacy enable + volume keys.

@@ -22,19 +22,15 @@
 
 std::atomic<uint32_t> SoundManager::_defaultDeviceSampleRate{0};
 
-/// Resolve the core audio rate from [SOUND] CoreRate (multirate plan phase 6).
-/// Explicit supported rates pass through (validated at config load); auto (0)
-/// matches the audio device's native rate when known and supported, else
-/// falls back to 44100. The device rate comes from the per-emulator cell if
-/// the frontend already bound this emulator, otherwise from the process-wide
-/// default published at audio device init (the usual case: emulators are
-/// constructed BEFORE the frontend binds audio to them).
+/// Resolve the core audio rate from the audio device (runtime only; the
+/// [SOUND] CoreRate config value is ignored): the device's native rate when
+/// known and supported, else 44100. The device rate comes from the
+/// per-emulator cell if the frontend already bound this emulator, otherwise
+/// from the process-wide default published at audio device init (the usual
+/// case: emulators are constructed BEFORE the frontend binds audio to them).
+/// Later device changes arrive through requestCoreRate().
 size_t SoundManager::resolveCoreRate() const
 {
-    const unsigned configured = _context->config.sound.coreRate;
-    if (configured != 0)
-        return configured;
-
     uint32_t devRate = _context->pAudioDeviceSampleRate.load(std::memory_order_relaxed);
     if (devRate == 0)
         devRate = _defaultDeviceSampleRate.load(std::memory_order_acquire);

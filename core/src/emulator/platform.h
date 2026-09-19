@@ -515,9 +515,9 @@ struct CONFIG
 		unsigned fq, ayfq, saa1099fq;
 
 		/// Core audio rate from [SOUND] CoreRate (multirate plan phase 6):
-		/// one of 44100/48000/88200/96000/176400/192000, or 0 = auto
-		/// (match the audio device's native rate when known, else 44100).
-		/// All chip DSP self-designs for this rate at SoundManager construction.
+		/// Legacy [SOUND] CoreRate: always 0 and ignored. The core audio rate
+		/// follows the audio device at runtime (SoundManager::resolveCoreRate /
+		/// requestCoreRate): 44100/48000/88200/96000/176400/192000, else 44100.
 		unsigned coreRate;
 
 		/// Which device occupies the TurboSound slot ([SOUND] TurboSound,
