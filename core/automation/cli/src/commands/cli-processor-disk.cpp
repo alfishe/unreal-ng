@@ -134,7 +134,7 @@ void CLIProcessor::HandleDiskInsert(const ClientSession& session, std::shared_pt
 {
     if (args.size() < 3)
     {
-        session.SendResponse(std::string("Error: Missing arguments") + NEWLINE + "Usage: disk insert <drive> <file>" +
+        session.SendResponse(std::string("Error: Missing arguments") + NEWLINE + "Usage: disk insert <drive> <file> [autostart]" +
                              NEWLINE);
         return;
     }
@@ -150,14 +150,28 @@ void CLIProcessor::HandleDiskInsert(const ClientSession& session, std::shared_pt
 
     std::string filepath = args[2];
 
+    // Optional trailing "autostart": quick-reset into TR-DOS and run the disk (drive A only, off by default)
+    const bool autostart = args.size() > 3 && (args[3] == "autostart" || args[3] == "--autostart");
+
     // Use existing LoadDisk method with drive parameter
     // Note: LoadDisk currently hardcoded to drive 0, need to update it
-    bool success = emulator->LoadDisk(filepath);
+    std::string autostartNote;
+    bool success;
+    if (autostart && drive == 0)
+    {
+        Emulator::DiskAutostartResult result = emulator->AutostartDisk(filepath);
+        success = result.mounted;
+        autostartNote = std::string(" (") + result.message + ")";
+    }
+    else
+    {
+        success = emulator->LoadDisk(filepath);
+    }
 
     if (success)
     {
         session.SendResponse(std::string("Disk inserted in drive ") + static_cast<char>('A' + drive) + ": " + filepath +
-                             NEWLINE);
+                             autostartNote + NEWLINE);
     }
     else
     {

@@ -725,6 +725,7 @@ void HudModel::subscribeObservers()
     add(NC_SPEED_CHANGED, [this](int id, Message* msg) { onSpeedChanged(id, msg); });
     add(NC_RECORDING_STATE, [this](int id, Message* msg) { onRecording(id, msg); });
     add(NC_FILE_LOADED, [this](int id, Message* msg) { onFileLoaded(id, msg); });
+    add(NC_DISK_AUTOSTART, [this](int id, Message* msg) { onDiskAutostart(id, msg); });
     add(NC_MEMORY_PAGE_CHANGED, [this](int id, Message* msg) { onMemoryPageChanged(id, msg); });
     add(NC_ROM_PAGE_CHANGED, [this](int id, Message* msg) { onRomPageChanged(id, msg); });
     add(NC_SCREEN_PAGE_CHANGED, [this](int id, Message* msg) { onScreenPageChanged(id, msg); });
@@ -1257,6 +1258,28 @@ void HudModel::onFileLoaded(int, Message* message)
         }
 
     }
+    notify(req);
+}
+
+void HudModel::onDiskAutostart(int, Message* message)
+{
+    if (!message)
+        return;
+    auto* p = dynamic_cast<DiskAutostartPayload*>(message->obj);
+    if (!p || !matchesInstance(p->emulatorId))
+        return;
+
+    if (!isCategoryEnabled(HudCategory::forFileKind("disk")))
+        return;
+
+    HudToastRequest req;
+    req.icon = "floppy";
+    req.dedupKey = "disk-autostart";
+    req.coalesceCount = false;
+    req.title = p->error ? "Disk Autostart Failed" : (p->started ? "Disk Autostart" : "Disk Mounted");
+    req.body = p->message;
+    req.priority = p->error ? HudPriority::High : HudPriority::Normal;
+    req.ttl = p->error ? HudTiming::ToastFileLoadFailed : HudTiming::ToastFileLoaded;
     notify(req);
 }
 

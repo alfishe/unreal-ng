@@ -1252,9 +1252,27 @@ void EmulatorAPI::insertDisk(const HttpRequestPtr& req,
     }
     
     std::string path = (*json)["path"].asString();
-    bool success = emulator->LoadDisk(path);
-    
+
+    // Optional "autostart": true - quick-reset into TR-DOS and run the disk (drive A only, off by default)
+    const bool autostart = json->isMember("autostart") && (*json)["autostart"].asBool() && driveNum == 0;
+    Emulator::DiskAutostartResult autostartResult;
+    bool success;
+    if (autostart)
+    {
+        autostartResult = emulator->AutostartDisk(path);
+        success = autostartResult.mounted;
+    }
+    else
+    {
+        success = emulator->LoadDisk(path);
+    }
+
     Json::Value ret;
+    if (autostart)
+    {
+        ret["autostarted"] = autostartResult.started;
+        ret["autostart_message"] = autostartResult.message;
+    }
     ret["status"] = success ? "success" : "error";
     ret["message"] = success ? "Disk inserted successfully" : "Failed to insert disk (check logs for details)";
     ret["path"] = path;

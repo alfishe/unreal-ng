@@ -5,6 +5,7 @@
 #include <cassert>
 
 #include "common/modulelogger.h"
+#include "emulator/io/fdc/diskautostart.h"
 #include "emulator/io/fdc/diskfastload.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/tape/tapefastload.h"
@@ -243,6 +244,10 @@ bool Core::Init()
         {
             _context->pDiskFastLoad = _diskFastLoad;
 
+            // TR-DOS disk autostart service
+            _diskAutostart = new DiskAutostart(_context);
+            _context->pDiskAutostart = _diskAutostart;
+
             result = true;
         }
     }
@@ -472,6 +477,13 @@ void Core::Release()
         _betaDisk = nullptr;
     }
 
+    _context->pDiskAutostart = nullptr;
+    if (_diskAutostart != nullptr)
+    {
+        delete _diskAutostart;
+        _diskAutostart = nullptr;
+    }
+
     _context->pDiskFastLoad = nullptr;
     if (_diskFastLoad != nullptr)
     {
@@ -571,8 +583,13 @@ void Core::UseDebugMemoryInterface()
 
 void Core::Reset()
 {
+    Reset(static_cast<ROMModeEnum>(_config->reset_rom));
+}
+
+void Core::Reset(ROMModeEnum mode)
+{
     // Set default ROM according to config settings (can be overriden for advanced platforms like TS-Conf and ATM)
-    _mode = static_cast<ROMModeEnum>(_config->reset_rom);
+    _mode = mode;
 
     // Reset EmulatorState fields that are not covered by individual peripheral resets
     // These must be cleared BEFORE peripheral resets so PortDecoder::reset() can set

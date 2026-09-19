@@ -11,6 +11,7 @@
 #include "emulator/cpu/op_noprefix.h"
 #include "emulator/cpu/opcode_profiler.h"
 #include "emulator/emulator.h"
+#include "emulator/io/fdc/diskautostart.h"
 #include "emulator/io/fdc/diskfastload.h"
 #include "emulator/io/tape/tapefastload.h"
 #include "emulator/memory/memoryaccesstracker.h"
@@ -316,6 +317,14 @@ void Z80::Z80Step(bool skipBreakpoints)
             // Trap consumed the invocation — the routine never executes
             return;
         }
+    }
+
+    // TR-DOS disk autostart: one-shot rewrite of the cold-start RUN "boot" line into RUN "<name>".
+    // Only armed for a single-BASIC-program autostart; one compare per instruction otherwise
+    if (pc == DiskAutostart::COMMAND_LOOP_ENTRY && _context->pDiskAutostart != nullptr &&
+        _context->pDiskAutostart->IsArmed())
+    {
+        _context->pDiskAutostart->HandleCommandLoopHook(*this);
     }
 
     // Fast disk loading trap (Layer B ROM $3FEC INI sector drain loop trap).

@@ -751,6 +751,23 @@ void MenuManager::createMachineMenu()
     _fastDiskAction->setStatusTip(tr("FDC timing compression and TR-DOS ROM traps for instant floppy disk operations"));
     _fastDiskAction->setCheckable(true);
     connect(_fastDiskAction, &QAction::triggered, this, &MenuManager::fastDiskToggled);
+
+    // TR-DOS disk autostart (design: docs/inprogress/2026-09-18-trdos-autostart).
+    // Opening a disk resets straight into TR-DOS and starts it. Hold Shift while dropping to only mount.
+    _autostartDisksAction = _machineMenu->addAction(tr("&Autostart Disks"));
+    _autostartDisksAction->setStatusTip(
+        tr("Opening a TR-DOS disk quick-resets into TR-DOS and runs it (hold Shift while dropping to only mount)"));
+    _autostartDisksAction->setCheckable(true);
+    _autostartDisksAction->setChecked(true);
+    connect(_autostartDisksAction, &QAction::triggered, this, &MenuManager::autostartDisksToggled);
+}
+
+void MenuManager::setAutostartDisksChecked(bool checked)
+{
+    if (_autostartDisksAction)
+    {
+        _autostartDisksAction->setChecked(checked);
+    }
 }
 
 void MenuManager::updateMachineModelSelection(std::shared_ptr<Emulator> activeEmulator)

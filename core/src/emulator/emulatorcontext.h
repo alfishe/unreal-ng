@@ -28,6 +28,7 @@ class UlaContention;
 class TapeFastLoad;
 class TapeTurboController;
 class DiskFastLoad;
+class DiskAutostart;
 class SoundManager;
 #ifdef ENABLE_RECORDING
 class RecordingManager;
@@ -105,6 +106,7 @@ public:
 
     // Fast disk loading trap instance
     DiskFastLoad* pDiskFastLoad = nullptr;
+    DiskAutostart* pDiskAutostart = nullptr;
 
 	// Video controller parameters and logic
 	Screen* pScreen = nullptr;
