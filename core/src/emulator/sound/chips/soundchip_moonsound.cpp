@@ -305,11 +305,19 @@ void SoundChip_Moonsound::postAudioActivity(bool fmActive, bool pcmActive)
 
 void SoundChip_Moonsound::setCoreRate(size_t coreRate)
 {
-    // The library's output rate is fixed at Configure() time; a live change
-    // is a re-design, not a state-preserving switch. Record the request -
-    // the render stage re-designs; chip state must not reset on a reroute.
-    if (coreRate != _coreRate)
-        _coreRate = coreRate;
+    // Live core-rate change (SoundManager::applyCoreRate, frame boundary):
+    // like the AY path, re-derive everything rate-dependent and keep chip
+    // state. In libopl4 only the render layer depends on the output rate;
+    // pending chip-grid audio is kept and rendered at the new rate.
+    if (coreRate == _coreRate)
+        return;
+    _coreRate = coreRate;
+    _opl4.SetOutputRate(static_cast<uint32_t>(coreRate));
+    if (_opl4.OutputRate() != coreRate)
+    {
+        MLOGWARNING("MoonSound: core rate %zu Hz is outside the library range; output stays at %u Hz",
+                    coreRate, static_cast<unsigned>(_opl4.OutputRate()));
+    }
 }
 
 /// endregion </Frame lifecycle>

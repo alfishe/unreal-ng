@@ -27,8 +27,11 @@ constexpr uint32_t kChipOutputRate = 44100;
 
 enum class RenderMode
 {
-    Authentic, // chip rate reducer on (HoldDrop), default
-    HiFi       // reducer bypassed, FM resampled from the 49516.4 Hz grid
+    Authentic, // chip rate reducer on (HoldDrop), library default: the
+               // bit-exact 44.1 kHz chip stream. Unverified against hardware;
+               // its hold/drop jitter measures -16 dB THD+N on a 4 kHz FM
+               // sine, so the emulator defaults to HiFi
+    HiFi       // FM band-limited from the 49516.4 Hz grid
 };
 
 enum class Quality

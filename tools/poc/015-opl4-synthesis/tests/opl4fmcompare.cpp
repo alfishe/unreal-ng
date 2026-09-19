@@ -842,6 +842,57 @@ void CompareNtsKsrDecay()
     CHECK(std::fabs(db) < 1.0);
 }
 
+void CompareNativeSinePurity()
+{
+    std::printf("FmCompare: native FM sine purity (half-step sine table)\n");
+    Rig rig;
+    rig.Write(1, 0x05, 0x01);
+    const uint8_t w[][2] = {{0x20, 0x21}, {0x23, 0x21}, {0x40, 0x3F}, {0x43, 0x00}, {0x60, 0xF0},
+                            {0x63, 0xF0}, {0x80, 0x00}, {0x83, 0x00}, {0xC0, 0x31}, {0xA0, 0x44}, {0xB0, 0x32}};
+    for (const auto& x : w)
+        rig.Write(0, x[0], x[1]);
+    TwoStreams s;
+    Run(rig, s, 60000);
+    // Harmonic content: correlate against the first five harmonics of the
+    // measured fundamental period (zero crossings of the steady tone).
+    auto thd = [](const std::vector<int32_t>& v) {
+        const size_t from = 10000, n = v.size() - from;
+        double sum = 0;
+        for (size_t i = from; i < v.size(); i++)
+            sum += v[i];
+        const double mean = sum / static_cast<double>(n);
+        size_t first = 0, last = 0, crossings = 0;
+        for (size_t i = from + 1; i < v.size(); i++)
+            if (v[i - 1] < mean && v[i] >= mean)
+            {
+                if (!crossings) first = i;
+                last = i;
+                crossings++;
+            }
+        const double period = static_cast<double>(last - first) / static_cast<double>(crossings - 1);
+        double sig = 0, harm = 0, total = 0;
+        for (int k = 1; k <= 5; k++)
+        {
+            double c = 0, d = 0;
+            for (size_t i = first; i < last; i++)
+            {
+                const double ph = 2.0 * M_PI * k * static_cast<double>(i - first) / period;
+                c += (v[i] - mean) * std::cos(ph);
+                d += (v[i] - mean) * std::sin(ph);
+            }
+            const double p = (c * c + d * d);
+            (k == 1 ? sig : harm) += p;
+        }
+        for (size_t i = first; i < last; i++)
+            total += (v[i] - mean) * (v[i] - mean);
+        (void)total;
+        return 10.0 * std::log10(harm / sig);
+    };
+    const double ours = thd(s.a), ymfm = thd(s.b);
+    std::printf("  H2..H5 re H1: ours %.1f dB ymfm %.1f dB\n", ours, ymfm);
+    CHECK(ours < -54.0); // i*pi/512 sampling put a -54 dB H3 on every sine
+}
+
 } // namespace
 
 void RunFmBackendCompareTests()
@@ -858,6 +909,7 @@ void RunFmBackendCompareTests()
     CompareRekeyAfterGapStartsFromLevel();
     CompareSlowAttackTiming();
     CompareNtsKsrDecay();
+    CompareNativeSinePurity();
 }
 
 } // namespace opl4test

@@ -27,7 +27,7 @@
 /// exact arming sequence executed by the CPU core, not just a host-side call.
 ///
 /// Protocol ground truth: docs/inprogress/2026-09-13-moonsound/
-/// opl4-unreal-ng-integration.md sections 2.4 and 12.1.
+/// 2026-09-13-0217-opl4-unreal-ng-integration.md sections 2.4 and 12.1.
 class MoonServiceGuest_Test : public ::testing::Test
 {
 protected:

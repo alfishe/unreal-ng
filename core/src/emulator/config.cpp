@@ -396,10 +396,11 @@ bool Config::ParseConfig(IniFile& inimanager)
 		config.moonsound.ramSizeKb = (unsigned)ramKb;
 	}
 
-	// RenderMode: authentic | hifi (default authentic)
+	// RenderMode: hifi | authentic (default hifi — band-limited FM; authentic
+	// is the HoldDrop reducer, opt-in until a hardware recording confirms it)
 	line[0] = '\0';
 	CopyStringValue(inimanager.GetValue(moonsound, "RenderMode", nullptr), line, sizeof line);
-	config.moonsound.renderMode = (StringHelper::CompareCaseInsensitive(line, "hifi", strlen("hifi")) == 0) ? 1 : 0;
+	config.moonsound.renderMode = (StringHelper::CompareCaseInsensitive(line, "authentic", strlen("authentic")) == 0) ? 0 : 1;
 
 	// Quality: reference | highfidelity (default reference)
 	line[0] = '\0';

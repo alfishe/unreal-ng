@@ -28,7 +28,7 @@ Secondary but load-bearing: replace the current statistical comparator (RMS rati
 
 - Changing the PCM engine's behaviour. It is openMSX-audited and the user reports it working. It moves files and gains an interface; its arithmetic is untouched.
 - Changing the time model, the 49516.4 Hz FM grid (`clock/684`), the 44100 Hz output grid (`clock/768`), the reducer, the render layer, or the character chain.
-- Host integration (`opl4-unreal-ng-integration.md`), TTD tiers (`opl4-ttd-integration-tdd.md`). Both are downstream and are touched only where the state-size contract changes (§6 steps 3 and 7).
+- Host integration (`2026-09-13-0217-opl4-unreal-ng-integration.md`), TTD tiers (`2026-09-13-0217-opl4-ttd-integration-tdd.md`). Both are downstream and are touched only where the state-size contract changes (§6 steps 3 and 7).
 
 ---
 
@@ -70,7 +70,7 @@ Backend selection is a compile-time type alias (`opl4.h` L22-29) plus a CMake ca
 | Timers T1/T2 and their status bits | `AdvanceTimers` L553-575 |
 | Synthesis: phase, envelope, waveforms, connections, 4-op, rhythm, LFO, routing | rest of the file |
 
-`Opl4FmYmfm` therefore has to **re-implement the first two field-for-field** (its header says so explicitly) so that guest-visible behaviour does not change with the backend. That duplication is the direct source of findings §3.5 (reg 0x04 RST storage differs) and part of §3.6 (address latch) in `opl4-ymfm-verification-findings.md`. A third backend would duplicate it a third time.
+`Opl4FmYmfm` therefore has to **re-implement the first two field-for-field** (its header says so explicitly) so that guest-visible behaviour does not change with the backend. That duplication is the direct source of findings §3.5 (reg 0x04 RST storage differs) and part of §3.6 (address latch) in `2026-09-15-2114-opl4-ymfm-verification-findings.md`. A third backend would duplicate it a third time.
 
 ### 2.3 Root cause of the FM quality problem
 
@@ -96,7 +96,7 @@ The linear-vs-log difference matters separately: silicon adds the sine's own att
 - L227: level RMS ratio within 5 %
 - L287: the classic-map block declares DIVERGENT only beyond **25 %** RMS
 
-Missing phase reset, half-scale sustain level, wrong sustain-phase rate, and one-tap feedback all sit comfortably inside those bands. Additionally, ymfm's YMF262 is a careful reimplementation, not a die-derived model, and `opl4-ymfm-verification-findings.md` §3.1/§3.3/§3.5 already records places where ymfm is the unverified side. Arbitrating "in-tree vs ymfm" by RMS produces the open-items table in §5 of that document rather than answers.
+Missing phase reset, half-scale sustain level, wrong sustain-phase rate, and one-tap feedback all sit comfortably inside those bands. Additionally, ymfm's YMF262 is a careful reimplementation, not a die-derived model, and `2026-09-15-2114-opl4-ymfm-verification-findings.md` §3.1/§3.3/§3.5 already records places where ymfm is the unverified side. Arbitrating "in-tree vs ymfm" by RMS produces the open-items table in §5 of that document rather than answers.
 
 **Nuked-OPL3 is the correct oracle for the FM half.** YMF278B's FM block is a YMF262 block; Nuked-OPL3 is derived from die analysis, is sample-exact, is two files, and is LGPL-2.1 (compatible with this GPL-3.0 tree, and in any case linked only into test harnesses). With a structurally isomorphic engine the diff becomes exact equality, and the remaining questions (rhythm B0-kon suppression, ws 3/5 table choice) resolve themselves instead of waiting on hardware recordings.
 
@@ -560,10 +560,10 @@ This is the substantive step. Work inside `src/fm/fmsynthopl4.cpp` + `src/fm/fmt
 
 ### Step 7 — Documentation and log reconciliation
 
-1. Update `docs/inprogress/2026-09-13-moonsound/opl4-core-tdd.md` §4 to describe the OPL3 domain, and §12.2 to describe exact diffing.
-2. In `opl4-ymfm-verification-findings.md`: mark §2.2 #5 (envelope shift ladder) as resolved by re-domaining; move §2.2 #6 (rhythm B0-kon) and §2.2 #1 (ws 3/5) from "await hardware recordings" to "arbitrated by Nuked-OPL3" and record the answers; mark §3.9 (per-channel taps) as an engine capability rather than an accommodation; mark §3.5/§3.6 as eliminated by the bus extraction.
+1. Update `docs/inprogress/2026-09-13-moonsound/2026-09-13-0217-opl4-core-tdd.md` §4 to describe the OPL3 domain, and §12.2 to describe exact diffing.
+2. In `2026-09-15-2114-opl4-ymfm-verification-findings.md`: mark §2.2 #5 (envelope shift ladder) as resolved by re-domaining; move §2.2 #6 (rhythm B0-kon) and §2.2 #1 (ws 3/5) from "await hardware recordings" to "arbitrated by Nuked-OPL3" and record the answers; mark §3.9 (per-channel taps) as an engine capability rather than an accommodation; mark §3.5/§3.6 as eliminated by the bus extraction.
 3. Update `README.md` layout and build sections.
-4. Mark `opl4-fm-backend-comparison.md` superseded: its two-build-tree A/B procedure dies with `OPL4_FM_BACKEND`. Keep the historical measurements, prepend a pointer to the runtime-selection workflow.
+4. Mark `2026-09-15-2114-opl4-fm-backend-comparison.md` superseded: its two-build-tree A/B procedure dies with `OPL4_FM_BACKEND`. Keep the historical measurements, prepend a pointer to the runtime-selection workflow.
 5. Add a short `cosim/README.md` section on the script format and on adding a fourth backend — the whole point of the interface is that the next one costs one file.
 
 ---

@@ -169,7 +169,7 @@ rendering work (e.g. `atm_video_modes_suite_test.cpp`, 980 lines).
 | Beeper | Implemented | `/state/audio/beeper` |
 | General Sound | Not implemented in core | Endpoint placeholder returns `not_implemented` |
 | Covox | Core present (config, mixing) | Endpoint placeholder returns `not_implemented` |
-| **MoonSound (OPL4)** | **Design only** — `docs/inprogress/2026-09-13-moonsound/` (3 docs: chip TDD, integration, TTD). Config keys `[SOUND] MoonSound/MoonSoundVol` + `MOONSOUND` ROM path already shipped in `data/configs/*/unreal.ini` but unparsed; `AudioSourceType::Moonsound` placeholder in recording | **None.** The integration TDD has no automation/observability section (grep for webapi/mcp/automation in `opl4-unreal-ng-integration.md` matches nothing relevant) |
+| **MoonSound (OPL4)** | **Design only** — `docs/inprogress/2026-09-13-moonsound/` (3 docs: chip TDD, integration, TTD). Config keys `[SOUND] MoonSound/MoonSoundVol` + `MOONSOUND` ROM path already shipped in `data/configs/*/unreal.ini` but unparsed; `AudioSourceType::Moonsound` placeholder in recording | **None.** The integration TDD has no automation/observability section (grep for webapi/mcp/automation in `2026-09-13-0217-opl4-unreal-ng-integration.md` matches nothing relevant) |
 
 ## 7. Branch topology (as of 2026-09-14)
 

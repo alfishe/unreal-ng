@@ -1,13 +1,13 @@
 # 015 — libopl4: YMF278B (OPL4) synthesis library PoC
 
 Standalone implementation of the chip library specified in
-[opl4-core-tdd.md](../../docs/inprogress/2026-09-13-moonsound/opl4-core-tdd.md)
+[2026-09-13-0217-opl4-core-tdd.md](../../docs/inprogress/2026-09-13-moonsound/2026-09-13-0217-opl4-core-tdd.md)
 (Revision 1, 2026-09-13). No dependency beyond the C++ standard library; no
 allocation on the audio path after `configure()`; deterministic and fully
 serialisable chip state.
 
 Host integration (port decoding, mixer, TTD tiers) is **out of scope** here —
-see `opl4-unreal-ng-integration.md` and `opl4-ttd-integration-tdd.md`.
+see `2026-09-13-0217-opl4-unreal-ng-integration.md` and `2026-09-13-0217-opl4-ttd-integration-tdd.md`.
 
 ## Layout
 

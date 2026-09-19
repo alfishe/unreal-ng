@@ -3,7 +3,7 @@
 > **Status: executed and superseded.** All four tiers landed (2026-09-15): PoC
 > sweeps + fuzz in `opl4sweep.cpp`, oracle golden 55 digests, core canaries — and the
 > follow-on classic-map adoption closed the §2.1 divergence set (see
-> [`opl4-ymfm-verification-findings.md`](opl4-ymfm-verification-findings.md) §2.1–§2.3,
+> [`2026-09-15-2114-opl4-ymfm-verification-findings.md`](2026-09-15-2114-opl4-ymfm-verification-findings.md) §2.1–§2.3,
 > §5). The `#if !defined(OPL4_FM_YMFM)` map-specific guards described below were
 > mostly removed by the adoption; the residual guard inventory lives in the findings
 > doc §4.
@@ -54,7 +54,7 @@ In `opl4sweep.cpp`: 64-128 LCG-seeded random FM+PCM register streams with timest
 7. Fuzz tier.
 8. cosim-oracle new cases + digest generation (verify old 15 unchanged, new all match; `cosim-ymfm` stays 6/6).
 9. Core canaries + core suite run.
-10. Docs: [`opl4-core-tdd.md`](docs/inprogress/2026-09-13-moonsound/opl4-core-tdd.md) §12.2 gains implemented-inventory table (family → file → checks); [`opl4-unreal-ng-integration.md`](docs/inprogress/2026-09-13-moonsound/opl4-unreal-ng-integration.md) §12.2 unit-status refresh.
+10. Docs: [`2026-09-13-0217-opl4-core-tdd.md`](docs/inprogress/2026-09-13-moonsound/2026-09-13-0217-opl4-core-tdd.md) §12.2 gains implemented-inventory table (family → file → checks); [`2026-09-13-0217-opl4-unreal-ng-integration.md`](docs/inprogress/2026-09-13-moonsound/2026-09-13-0217-opl4-unreal-ng-integration.md) §12.2 unit-status refresh.
 
 ## Verification
 

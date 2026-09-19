@@ -46,6 +46,8 @@ private:
     double Convolve(const double* hist, size_t phase) const;
 
     std::vector<double> _coeffs;
+    std::vector<double> _table; // (_phases + 1) x _taps kernels, one per fractional offset
+    size_t _phases = 0;
     size_t _taps = 0;
     double _phaseStep = 1.0;
     double _phase = 0.0;
@@ -54,20 +56,26 @@ private:
     size_t _histPos = 0;
 };
 
-// YAC513 + LF347 board analog model (§8.3): 1st-order RC pole at 4.08 kHz
-// cascaded with a 2nd-order Sallen-Key LP (f0 = 27.7 kHz, Q = 1.306), whose
-// +2.6 dB peaking cancels the DAC ZOH sinc droop. Direct Form II Transposed.
+// YAC513 + LF347 board analog model (§8.3): 1st-order RC low-pass at
+// 4.08 kHz cascaded with a 2nd-order Sallen-Key low-pass (f0 = 27.7 kHz,
+// Q = 1.306). Realised as a minimum-phase FIR designed at Configure() from
+// the analog magnitude up to Nyquist (cepstral folding): a bilinear biquad
+// cannot represent the Sallen-Key corner above the 44.1/48 kHz Nyquist
+// (its forced Nyquist zero cost up to 35 dB at 20 kHz). 64 taps match the
+// analog magnitude to 0.003 dB over 0-20 kHz at 44.1..192 kHz.
 class BoardAnalog
 {
 public:
+    static constexpr size_t kTaps = 64;
+
     void Configure(double sampleRate);
     void Process(float& l, float& r);
-    void Reset() { _z1l = _z1r = _z2l = _z2r = _z3l = _z3r = 0.0f; }
+    void Reset();
 
 private:
-    float _b0 = 1, _b1 = 0, _a1 = 0;          // 1-pole RC
-    float _q0 = 1, _q1 = 0, _q2 = 0, _p1 = 0, _p2 = 0; // Sallen-Key biquad
-    float _z1l = 0, _z1r = 0, _z2l = 0, _z2r = 0, _z3l = 0, _z3r = 0;
+    float _h[kTaps] = {1.0f};        // identity until configured
+    float _xl[kTaps] = {}, _xr[kTaps] = {}; // history ring, newest at _pos
+    size_t _pos = 0;
 };
 
 // Punch chain (§8.4): hybrid transient designer + exciter. First-difference
@@ -147,22 +155,39 @@ private:
 
     // Per-group render state for ProcessGroup: each mixer source gets its
     // own board-analog and DC-blocker state so the streams stay independent.
+    // Resampler outputs that did not fit the caller's buffer: one input frame
+    // emits up to floor(out/in)+1 frames (4-5 at 192 kHz), so an output cap
+    // can land mid-input. The tail is carried to the next call - dropping it
+    // lost samples and cut the waveform at every upsampling rate.
+    struct ResampleCarry
+    {
+        float frame[24] = {};
+        size_t count = 0, pos = 0;
+        void Reset() { count = pos = 0; }
+    };
+
     struct GroupStage
     {
         BoardAnalog analog;
+        ResampleCarry carry;
         float dcX1L = 0, dcX1R = 0, dcY1L = 0, dcY1R = 0;
         void Reset()
         {
             analog.Reset();
+            carry.Reset();
             dcX1L = dcX1R = dcY1L = dcY1R = 0;
         }
     };
+    ResampleCarry _carryMain; // ProcessChip (mixed Authentic path)
 
     uint32_t _outputRate = 44100;
     RenderMode _mode = RenderMode::Authentic;
     Quality _quality = Quality::Reference;
+    // User character settings: survive Configure() (mode/quality changes).
     bool _boardAnalogOn = false;
     RoomMode _room = RoomMode::Off;
+    PunchPreset _punchFm = PunchPreset::Off;
+    PunchPreset _punchPcm = PunchPreset::Off;
 
     PolyphaseResampler _main;   // chip 44100 -> output
     PolyphaseResampler _fm;     // HiFi: 49516.4 -> output

@@ -5,9 +5,9 @@ YMF278B device in `core/src`; verified 2026-09-16).
 
 ## Progress
 - Complete design documentation:
-  [opl4-unreal-ng-integration.md](opl4-unreal-ng-integration.md) (integration
-  architecture), [opl4-core-tdd.md](opl4-core-tdd.md) + 
-  [opl4-ttd-integration-tdd.md](opl4-ttd-integration-tdd.md) (TTD-complete
+  [2026-09-13-0217-opl4-unreal-ng-integration.md](2026-09-13-0217-opl4-unreal-ng-integration.md) (integration
+  architecture), [2026-09-13-0217-opl4-core-tdd.md](2026-09-13-0217-opl4-core-tdd.md) + 
+  [2026-09-13-0217-opl4-ttd-integration-tdd.md](2026-09-13-0217-opl4-ttd-integration-tdd.md) (TTD-complete
   device design following the TSFM playbook).
 - Precondition landed: the TSFM track proved the pattern this design reuses
   (device split core/output, TTD-deterministic engine patching, FM-only taps,

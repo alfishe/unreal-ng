@@ -520,6 +520,19 @@ size_t Opl4::ChannelCount(ChannelGroup g) const
                                    : static_cast<size_t>(Opl4Pcm::kSlotCount);
 }
 
+void Opl4::SetOutputRate(uint32_t rate)
+{
+    if (rate < kChipOutputRate || rate > 192000 || rate == _impl->cfg.outputRate)
+        return;
+    _impl->cfg.outputRate = rate;
+    _render->Configure(_impl->cfg); // keeps board/punch/room, resets render state
+}
+
+uint32_t Opl4::OutputRate() const
+{
+    return _impl->cfg.outputRate;
+}
+
 void Opl4::SetRenderMode(RenderMode m)
 {
     _impl->cfg.mode = m;

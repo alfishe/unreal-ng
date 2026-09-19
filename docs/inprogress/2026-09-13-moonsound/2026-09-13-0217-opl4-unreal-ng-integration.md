@@ -1,11 +1,11 @@
 # ZXM-MoonSound in unreal-ng — integration and mixing design
 
 **Revision 5** (2026-09-14). Records the end-to-end demo verification on the card author's complete 26-disk corpus — every disk plays, both engines audible (§12.6) — and the test-pinned gain staging / no-clip proof (§5.3, §12.7). The one remaining harness failure is a TR-DOS double-sided loader stall in the disk subsystem, independent of the card (§12.8).
-**Revision 4** (2026-09-14). Revision 3 resolved the low-byte port-decode blocker. This revision records the openMSX reference audit (`opl4-openmsx-audit-and-diff-harness.md`): status LD moved to bit 1, LD now opens only on tone-load writes, wave writes are gated on NEW2 (0x105 bit 1), and the PCM loop end switched to the chip's stored-complement form. See that document for the full suspect-by-suspect diff.
+**Revision 4** (2026-09-14). Revision 3 resolved the low-byte port-decode blocker. This revision records the openMSX reference audit (`2026-09-14-1828-opl4-openmsx-audit-and-diff-harness.md`): status LD moved to bit 1, LD now opens only on tone-load writes, wave writes are gated on NEW2 (0x105 bit 1), and the PCM loop end switched to the chip's stored-complement form. See that document for the full suspect-by-suspect diff.
 **Revision 3** (2026-09-14). Revision 1 was the pre-implementation design draft (2026-09-13); Revision 2 recorded implementation and live verification. This revision resolves the former §12.5 blocker: guest I/O never reached the card because the Z80 immediate port forms leave A in the high address byte and the card decodes A0..A7 only (§2.5) — now fixed and guest-verified with the author's own binary.
-**Status:** phases 0–4 + TTD Tier A implemented and verified end to end; the author's complete disk set plays FM + PCM in-app (§12.6). Open: TTD Tier B (wave SRAM), the §12.8 harness loader stall. Depends on `opl4-core-tdd.md` (the chip library).
+**Status:** phases 0–4 + TTD Tier A implemented and verified end to end; the author's complete disk set plays FM + PCM in-app (§12.6). Open: TTD Tier B (wave SRAM), the §12.8 harness loader stall. Depends on `2026-09-13-0217-opl4-core-tdd.md` (the chip library).
 **Scope:** wiring `libopl4` into unreal-ng — port decoding, device lifecycle, configuration, the sound-device registry, mixing, gain staging, TTD, recording, UI surface.
-**Companion:** TTD details for this device live in `opl4-ttd-integration-tdd.md`; §7 here is the summary and that document is authoritative where they differ.
+**Companion:** TTD details for this device live in `2026-09-13-0217-opl4-ttd-integration-tdd.md`; §7 here is the summary and that document is authoritative where they differ.
 **Out of scope:** chip behaviour and DSP internals (see the core TDD).
 
 ---
@@ -33,7 +33,7 @@
 | D3 | The device is split into **core** (always runs) and **output stage** (skippable), following the TSFM pattern. `libopl4`'s `run()` / `render()` split maps onto it directly. | Busy, LD and timers are guest-visible; turbo and sound-off must not change them. |
 | D4 | Port decoding is **full 16-bit**, not partial. | §2. The card's CPLD does full decode precisely because #C4/#C6/#7E collide with the ULA under ZX partial decoding. |
 | D5 | Two registry sources: `Moonsound_FM` and `Moonsound_PCM`. The existing `AudioSourceType::Moonsound` placeholder is replaced by these two. | R5. A single stereo source cannot express "mute the FM, keep the samples", which is the first thing anyone wants. |
-| D6 | The core rate is **not** forced to 44100 when MoonSound is enabled, but 44100 is recommended and logged as such. At 44100 the device takes the library's bit-exact bypass path. | Forcing the core rate would be a hidden global side effect of one device's presence. A log line is honest and sufficient. |
+| D6 | The core rate is **not** forced to 44100 when MoonSound is enabled, but 44100 is recommended and logged as such. At 44100 the device takes the library's bit-exact bypass path. | Forcing the core rate would be a hidden global side effect of one device's presence. A log line is honest and sufficient. **Live changes (2026-09-18):** a device renegotiation (`SoundManager::requestCoreRate`, applied at the next frame start by `applyCoreRate`) reaches the chip through `SoundChip_Moonsound::setCoreRate` → `Opl4::SetOutputRate`, like the AY/TS/TSFM path. Chip state and pending chip-grid audio are kept; the render layer re-designs for any rate from 44100 to 192000. |
 | D7 | **Wide mix plus soft limiter in `SoundManager` is a prerequisite**, not a follow-up. MoonSound is a 16-bit full-scale source; summing it with AY and beeper in the current path will clip. | It was deferred out of TSFM scope. It cannot be deferred here. |
 | D8 | The library's character chain is used for MoonSound rather than `AudioCharacterChain`, because it needs to sit on the FM and PCM taps inside the library where the separate sums exist. `AudioCharacterChain` remains the host-side chain for AY and beeper. | Avoids duplicating the FM/PCM split across the library boundary. |
 | D9 | Wave RAM enters TTD through a **dirty-page delta**, not a full 1 MiB blob per checkpoint. The library exposes a dirty bitmap for exactly this. | 1 MiB per checkpoint is not viable for time-travel. |
@@ -293,7 +293,7 @@ MoonSoundVol = 8000     ; 0..8192, legacy scale
 [MOONSOUND]
 WaveRom      = yrw801.rom   ; path relative to the ROM directory; optional
 RamSizeKb    = 1024         ; ZXM-MoonSound fits 2 x 512 KiB SRAM
-RenderMode   = authentic    ; authentic | hifi
+RenderMode   = hifi         ; hifi | authentic (default hifi; see 2026-09-18-2045-opl4-output-stage-harshness.md)
 Quality      = reference    ; reference | highfidelity
 Punch        = off          ; off | pcm | both
 BoardAnalog  = 0            ; YAC513 + LF347 output filter model
@@ -553,7 +553,7 @@ truncation.
 
 The actual design routes wave SRAM through the same codec page store that model
 RAM uses, via a new generic peripheral paged-region mechanism. See
-`opl4-ttd-integration-tdd.md` §5 and §9 for the mechanism, the framework change
+`2026-09-13-0217-opl4-ttd-integration-tdd.md` §5 and §9 for the mechanism, the framework change
 it requires, and the size and cost budgets.
 
 Summary of what changed for a reader of this document:

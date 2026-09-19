@@ -46,7 +46,7 @@ In `opl4sweep.cpp`: 64-128 LCG-seeded random FM+PCM register streams with timest
 7. Fuzz tier.
 8. cosim-oracle new cases + digest generation (verify old 15 unchanged, new all match; `cosim-ymfm` stays 6/6).
 9. Core canaries + core suite run.
-10. Docs: [`opl4-core-tdd.md`](docs/inprogress/2026-09-13-moonsound/opl4-core-tdd.md) §12.2 gains implemented-inventory table (family → file → checks); [`opl4-unreal-ng-integration.md`](docs/inprogress/2026-09-13-moonsound/opl4-unreal-ng-integration.md) §12.2 unit-status refresh.
+10. Docs: [`2026-09-13-0217-opl4-core-tdd.md`](docs/inprogress/2026-09-13-moonsound/2026-09-13-0217-opl4-core-tdd.md) §12.2 gains implemented-inventory table (family → file → checks); [`2026-09-13-0217-opl4-unreal-ng-integration.md`](docs/inprogress/2026-09-13-moonsound/2026-09-13-0217-opl4-unreal-ng-integration.md) §12.2 unit-status refresh.
 
 ## Verification
 

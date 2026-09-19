@@ -13,10 +13,10 @@ healthy on both backends (§2.1 table).
 (a) divergences and bugs the A/B exposed in the in-tree engine, and (b) quirks and
 limitations of ymfm itself that the harness had to accommodate. Each entry cites the
 code or run that evidences it.
-**Companions:** [`opl4-openmsx-audit-and-diff-harness.md`](opl4-openmsx-audit-and-diff-harness.md) §6 is
-authoritative for the Revision-5 backend bring-up; [`opl4-core-tdd.md`](opl4-core-tdd.md) §12.2/§13.2 for
-the chip-model view; [`opl4-unreal-ng-integration.md`](opl4-unreal-ng-integration.md) §12.2 for the current
-suite inventory; [`opl4-fm-backend-comparison.md`](opl4-fm-backend-comparison.md) is the narrative explainer
+**Companions:** [`2026-09-14-1828-opl4-openmsx-audit-and-diff-harness.md`](2026-09-14-1828-opl4-openmsx-audit-and-diff-harness.md) §6 is
+authoritative for the Revision-5 backend bring-up; [`2026-09-13-0217-opl4-core-tdd.md`](2026-09-13-0217-opl4-core-tdd.md) §12.2/§13.2 for
+the chip-model view; [`2026-09-13-0217-opl4-unreal-ng-integration.md`](2026-09-13-0217-opl4-unreal-ng-integration.md) §12.2 for the current
+suite inventory; [`2026-09-15-2114-opl4-fm-backend-comparison.md`](2026-09-15-2114-opl4-fm-backend-comparison.md) is the narrative explainer
 of the two FM backends and the MFM guest-level confirmation. Nothing in this file changes
 behaviour — every finding below is
 already encoded as a guard, an adapter accommodation, or a documented divergence;
@@ -331,6 +331,37 @@ Harness note: `scratch/replay3way.cpp` passes a single `int16_t` to
 `OPL3_Generate`, which writes a stereo pair — a stack overwrite in its Nuked
 lane. Treat earlier Nuked numbers from that tool with caution.
 
+### 2.8 Live core-rate renegotiation — MoonSound stayed at 44.1 kHz (2026-09-18)
+
+Symptom: after the host audio device renegotiated (for example 44100 → 48000),
+AY/TS/TSFM followed and MoonSound did not. `SoundChip_Moonsound::setCoreRate`
+only recorded the rate: libopl4's output rate was fixed at `Configure()`. The
+device kept rendering 44.1 kHz audio into frames sized for the new rate. At
+48 kHz the tone played 8.8 % sharp (633.7 Hz instead of 582.5 Hz); at 88.2 kHz
+and above half of every frame was silent and the tone was 2–4.4× too high.
+
+Fix: `Opl4::SetOutputRate(rate)` (44100..192000) re-runs the render layer's
+`Configure` at the new rate. That layer is the only rate-dependent part: the
+chip, FM and PCM streams run on chip grids, so chip state and pending audio are
+kept. User settings (board, punch, room) survive. `setCoreRate` calls it, as
+the AY path re-derives its PLL and decimators.
+
+The switching test found a second, older bug: **both render paths dropped
+resampler output when upsampling.** One input frame emits 2–4 output frames at
+88.2–192 kHz, and when the caller's frame cap landed mid-input
+(`ProcessGroup`, `ProcessChip`) the rest were discarded. That cost 15–44
+samples per second and cut the waveform (−15 dB THD+N on a pure sine). A
+per-stage `ResampleCarry` now emits them first on the next call.
+
+Fences: PoC `TestLiveOutputRateSwitch` switches a sustained FM sine through
+48 / 88.2 / 96 / 176.4 / 192 / 44.1 kHz in both modes on both render APIs. It
+asserts exactly `rate` frames per second and the tone's pitch and purity at
+the new rate: HiFi −55…−57 dB, Authentic −36…−50 dB (HoldDrop). Device
+`CoreRateRenegotiation_AllStandardRatesRenderFullFramesInTune` goes through
+`SoundManager::requestCoreRate`: every rate reaches `Opl4::OutputRate()`, frame
+tails carry the tone, and the pitch is within 1 %. On the old `setCoreRate` it
+fails at every rate except 44100.
+
 ---
 
 ## 3. Findings in ymfm itself (quirks the harness accommodates)
@@ -489,6 +520,8 @@ untouched by FM-side changes).
 | FM data-port read-back (§2.5) | **RESOLVED 2026-09-18** — #C5/#C7 read claims returning the `FmBus` shadow (`Opl4::ReadFm`); module-5/7 and the mfm2 hiss melodies render tonal, three-engine replay of the corrected stream agrees; `FmPorts_DataReadbackReturnsRegisterFile` is the fence | Done — device fence + guest reruns stay |
 | MFM sample 4 / HAPERT "F13" (§2.6, §2.7) | **RESOLVED 2026-09-18** — root cause in-tree FM synthesis (§2.7: key-on envelope reset / no phase reset / unclocked key, −60 dB FM floor, NTS bank); register stream itself clean: 0x104 always 0, bank-1 lanes authored, pan RMW preserves fbconn; both F13 candidates tonal on their own note-ons (first KON f3152), whole tune clean on both backends + three-engine replay; pre-fix corruption window was f3152..f4489 | Done — `MoonSoundMfm4Guest_Test.*` stays (battery + DeepScan) |
 | Nuked ch2/4/5 near-silent on the JAMMED2 stream (tree ≈ ymfm loud) | Observed 2026-09-17 in `scratch/replay3way` — possibly that tool's `OPL3_Generate` stack overwrite (§2.7 harness note); not yet re-measured with a correct buffer | Re-check with a fixed harness |
+| Output stage harshness (2026-09-18) | **RESOLVED** — the synthesis matched ymfm/Nuked; the output stage added the harshness: HoldDrop jitter (D2, now opt-in), a broken `PolyphaseResampler`, a high-pass board filter never configured on the split path, a mixed-`Render()` staging bug, and a whole-step sine table. See [2026-09-18-2045-opl4-output-stage-harshness.md](2026-09-18-2045-opl4-output-stage-harshness.md) | Hardware recording for D2 |
+| Live core-rate renegotiation (§2.8) | **RESOLVED 2026-09-18** — `Opl4::SetOutputRate` wired from `setCoreRate`; the upsampling output-drop bug fixed (`ResampleCarry`) | Done — rate-switch fences stay |
 
 ---
 

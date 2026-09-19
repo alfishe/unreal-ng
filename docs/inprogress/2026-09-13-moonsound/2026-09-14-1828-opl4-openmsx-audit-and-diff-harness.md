@@ -5,7 +5,7 @@
 (the de-facto MoonSound reference), the fixes that fell out of it, and the
 design of the register-stream differential harness that keeps us honest
 from here on.
-**Companion:** `opl4-core-tdd.md` (chip library), `opl4-unreal-ng-integration.md`
+**Companion:** `2026-09-13-0217-opl4-core-tdd.md` (chip library), `2026-09-13-0217-opl4-unreal-ng-integration.md`
 Revision 4 (device wiring).
 **Revision 5** (2026-09-14): §6 records the ymfm OPL3 verification backend —
 the license-clean in-tree comparator §4.4 called for — and the three FM
@@ -13,7 +13,7 @@ divergences it exposed.
 **Post-fix verification (2026-09-14):** with the audit fixes and the ymfm
 comparator in place, the card author's complete 26-disk corpus plays FM +
 PCM end to end in-app, and the audio path (gain staging, no clipping) is
-test-pinned — see `opl4-unreal-ng-integration.md` §12.6 and §12.7
+test-pinned — see `2026-09-13-0217-opl4-unreal-ng-integration.md` §12.6 and §12.7
 (Revision 5). The one remaining failure is a disk-subsystem loader stall
 unrelated to the chip (integration §12.8).
 
@@ -265,7 +265,7 @@ any real MoonSound FM repertoire — the actionable outcome of the A/B.
 **Post-fix note (2026-09-15):** all three divergences are resolved — the
 in-tree engine adopted the classic map (state schema v3) and the comparator
 now asserts the match; see
-[`opl4-ymfm-verification-findings.md`](opl4-ymfm-verification-findings.md) §2.1/§2.3.
+[`2026-09-15-2114-opl4-ymfm-verification-findings.md`](2026-09-15-2114-opl4-ymfm-verification-findings.md) §2.1/§2.3.
 
 ### 6.3 Verification matrix
 

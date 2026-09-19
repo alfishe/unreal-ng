@@ -9,11 +9,11 @@ open decision (§11) is closed.
 **Scope:** what each of the two interchangeable FM implementations of the MoonSound
 (YMF278B / OPL4) card is, how the swap works, where the engines agree and diverge, and what
 that means for real guest music — the narrative companion to the evidence log
-[`opl4-ymfm-verification-findings.md`](opl4-ymfm-verification-findings.md). Every divergence
+[`2026-09-15-2114-opl4-ymfm-verification-findings.md`](2026-09-15-2114-opl4-ymfm-verification-findings.md). Every divergence
 below is reproduced by a named artifact there; nothing in this file changes behaviour.
-**Companions:** [`opl4-openmsx-audit-and-diff-harness.md`](opl4-openmsx-audit-and-diff-harness.md) §6
-(Revision-5 backend bring-up), [`opl4-core-tdd.md`](opl4-core-tdd.md) §12.2/§13.2 (chip-model
-view), [`opl4-unreal-ng-integration.md`](opl4-unreal-ng-integration.md) §12.2 (suite inventory).
+**Companions:** [`2026-09-14-1828-opl4-openmsx-audit-and-diff-harness.md`](2026-09-14-1828-opl4-openmsx-audit-and-diff-harness.md) §6
+(Revision-5 backend bring-up), [`2026-09-13-0217-opl4-core-tdd.md`](2026-09-13-0217-opl4-core-tdd.md) §12.2/§13.2 (chip-model
+view), [`2026-09-13-0217-opl4-unreal-ng-integration.md`](2026-09-13-0217-opl4-unreal-ng-integration.md) §12.2 (suite inventory).
 
 ---
 
@@ -247,7 +247,7 @@ asked per reference, and today the answer differs:
    against it — fully compliant. openMSX's FM half is itself a software model (an OPL3
    engine embedded in its `YMF278`), so it is a strong second opinion, not ground truth;
    the open corners below would need arbitrating against it too.
-3. **vs HDL** — the co-simulation tier ([`opl4-core-tdd.md`](opl4-core-tdd.md) §12.4,
+3. **vs HDL** — the co-simulation tier ([`2026-09-13-0217-opl4-core-tdd.md`](2026-09-13-0217-opl4-core-tdd.md) §12.4,
    MSX1_MiSTer OPL4 core) is **designed but not executed**. Caveat on the reference chain:
    that core's FM was itself validated against Nuked-OPL3 (core-tdd §13 reference table) —
    so even the HDL tier ultimately chains back to software references. Nuked-OPL3
@@ -323,7 +323,7 @@ local exception, 3.8); each has an accommodation in the adapter, comparator or c
 
 Which behaviour matches YMF278B **silicon** for ws 3/5 (§2.2 #1), the PCM mid-rate cadence
 (3.3) and the S == 0 corner (3.4) is unresolved — those need hardware recordings (the HDL /
-hardware tier, [`opl4-core-tdd.md`](opl4-core-tdd.md) §12.4);
+hardware tier, [`2026-09-13-0217-opl4-core-tdd.md`](2026-09-13-0217-opl4-core-tdd.md) §12.4);
 the log keeps them banded, not asserted equal.
 
 ---

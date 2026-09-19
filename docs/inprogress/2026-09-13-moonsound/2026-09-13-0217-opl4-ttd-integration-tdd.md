@@ -5,14 +5,14 @@
 state + host-side latches, `MoonSoundTTDHeader`) — is implemented and
 test-pinned (save-neutrality / restore-exactness / round-trip in
 `moonsound_device_test.cpp`, `TTD_*`; summary in
-`opl4-unreal-ng-integration.md` §7.5); the determinism lessons its raw-image
+`2026-09-13-0217-opl4-unreal-ng-integration.md` §7.5); the determinism lessons its raw-image
 route forced are recorded in §4.5 (2026-09-17). Tier B — the wave-SRAM paged
 region of §5/§9 — is **not implemented yet**: until it lands, TTD for this device
 is explicitly incomplete rather than silently wrong (the device header
 carries the same note). The body below is the design for both tiers,
 authoritative for the still-open Tier B and the framework change it
 requires.
-**Companions:** `opl4-core-tdd.md` (chip library), `opl4-unreal-ng-integration.md` (device wiring).
+**Companions:** `2026-09-13-0217-opl4-core-tdd.md` (chip library), `2026-09-13-0217-opl4-unreal-ng-integration.md` (device wiring).
 **Supersedes:** §7 of the integration document, which described a device-local dirty-page scheme written before the existing TTD subsystem was examined. The scheme below uses what is already in the tree.
 **Scope:** how `SoundChip_Moonsound` participates in time-travel debugging — state partition, blob layout, wave-SRAM capture, capture/restore paths, per-frame size and cost budgets, divergence detection, framework changes required, tests.
 
@@ -31,7 +31,7 @@ Glossary at the end (§14).
 | R5 | `TTDStateSize()` must be **stable for the lifetime of the device instance**. | `ttdserializable.h` contract. |
 | R6 | Capture must be **allocation-free and side-effect free**, running on the emulator thread. | Same contract. |
 | R7 | A session recorded with MoonSound must remain loadable on a build without it, and vice versa, with the mismatch visible in `TTDRestoreReport` rather than silent. | Registry design. |
-| R8 | The chip library must not take a dependency on emulator TTD types. | `opl4-core-tdd.md` R10. |
+| R8 | The chip library must not take a dependency on emulator TTD types. | `2026-09-13-0217-opl4-core-tdd.md` R10. |
 
 ---
 
@@ -477,6 +477,7 @@ one filter length after a seek:
 | Core rate | Path | Discontinuity window |
 |---|---|---|
 | 44100 | bypass (core TDD R6) | **0 samples** |
+| any, `HiFi` (emulator default since 2026-09-18) | FM resampled from 49 516.4 Hz even at 44100 | ≤ 96 FM samples, then a sub-sample shift of the output grid (resampler phase restarts); the DC blocker also restarts. Compare shift-invariantly (`TTD_RestoreHiFi_ConvergesAfterFilterWindow`) |
 | 48000 / 96000 / 192000, `Reference` | 96-tap polyphase | ≤ 96 input samples ≈ 2.2 ms |
 | any, `HighFidelity` | 192-tap polyphase | ≤ 192 input samples ≈ 4.4 ms |
 

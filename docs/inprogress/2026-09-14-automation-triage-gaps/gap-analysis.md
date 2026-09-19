@@ -318,7 +318,7 @@ precedent that new peripherals (MoonSound) also won't get aspects.
   placeholders ([state_audio_api.cpp:474-499](../../../core/automation/webapi/src/api/state_audio_api.cpp)).
 - MoonSound: no core, no endpoints, no MCP aspect. `AudioSourceType::Moonsound`
   is a placeholder in the recording manager and multitrack dialog. The
-  integration TDD (`opl4-unreal-ng-integration.md`) covers port decoding,
+  integration TDD (`2026-09-13-0217-opl4-unreal-ng-integration.md`) covers port decoding,
   lifecycle, mixing, gain staging, TTD, UI — and contains **no
   automation/observability section at all** (a grep for
   webapi|mcp|automation matches nothing substantive in the document).

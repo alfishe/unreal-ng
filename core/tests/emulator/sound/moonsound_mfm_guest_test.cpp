@@ -39,7 +39,7 @@
 /// MOONSOUND FM" tunes - FM-only, PCM legitimately silent - so the
 /// low-amplitude-vs-PCM symptom was this FM rendering, not a mix imbalance.
 /// Root cause: the three classic-map divergences
-/// (opl4-ymfm-verification-findings.md section 2.1) - the player (author's
+/// (2026-09-15-2114-opl4-ymfm-verification-findings.md section 2.1) - the player (author's
 /// mfm_player.asm, MBPlayer) writes the classic YMF262 operator map
 /// register stream (0x20/0x23, 0x28/0x2B ... 0xC0-0xC5), which the in-tree
 /// linear map misrouted (envelope/TL writes land on the wrong operators,

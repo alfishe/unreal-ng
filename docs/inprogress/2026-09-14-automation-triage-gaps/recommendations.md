@@ -311,7 +311,7 @@ with TR-DOS open) shows differing `ports_decoded` in one call.
 ### P2-2. MoonSound automation section in the design (do now, before implementation)
 
 Closes D-3 (future-proofing). Write into
-`docs/inprogress/2026-09-13-moonsound/opl4-unreal-ng-integration.md`:
+`docs/inprogress/2026-09-13-moonsound/2026-09-13-0217-opl4-unreal-ng-integration.md`:
 
 - **State:** a `DeviceState::Moonsound` report following the FM pattern:
   FM half (OPL4/YMF262-compatible registers, timers, key-on) and PCM half
@@ -326,7 +326,7 @@ Closes D-3 (future-proofing). Write into
   the port decode: #C2-#C3 style indexed access — encode it as rules).
 - **Capture:** the two registry sources in `/audio/capture` and multitrack
   (the `AudioSourceType::Moonsound` placeholder splits per D5).
-- **TTD:** the design's `opl4-ttd-integration-tdd.md` already plans chip
+- **TTD:** the design's `2026-09-13-0217-opl4-ttd-integration-tdd.md` already plans chip
   state capture — cross-link the WebAPI state to it.
 
 **Accept:** the integration TDD contains an "Automation & observability"

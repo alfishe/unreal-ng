@@ -100,6 +100,13 @@ public:
 
     // Render configuration — may change at any time, never affects the core.
     void SetRenderMode(RenderMode m);
+    // Live output-rate change (host audio device renegotiation, 44100..192000):
+    // only the render layer depends on the output rate. Chip state and the
+    // chip-rate streams (44.1 kHz chip / 49516.4 Hz FM grids) are kept, so no
+    // pending audio is lost; the resamplers and filters are re-designed and
+    // restart (Tier C). Call at a frame boundary.
+    void SetOutputRate(uint32_t rate);
+    uint32_t OutputRate() const;
     void SetQuality(Quality q);
     void SetBoardAnalog(bool on);
     void SetPunch(ChannelGroup g, PunchPreset p);

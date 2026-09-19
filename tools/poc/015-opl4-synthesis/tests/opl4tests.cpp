@@ -811,6 +811,223 @@ void TestDiscardPendingAudio()
     CHECK_EQ_I(n, 1000u); // only the post-discard frames arrive
 }
 
+// ---------------------------------------------------------------------------
+// Output-stage purity (2026-09-18-2045-opl4-output-stage-harshness.md).
+// THD+N by least-squares fit of DC + sine + cosine at the known pitch: the
+// residual is everything that is not the tone.
+// ---------------------------------------------------------------------------
+double ThdNdB(const std::vector<float>& x, size_t from, double f0, double fs)
+{
+    double s11 = 0, s12 = 0, s13 = 0, s22 = 0, s23 = 0, s33 = 0, y1 = 0, y2 = 0, y3 = 0;
+    const size_t n = x.size();
+    for (size_t i = from; i < n; i++)
+    {
+        const double w = 2.0 * M_PI * f0 * static_cast<double>(i) / fs;
+        const double a = 1.0, b = std::sin(w), c = std::cos(w), y = x[i];
+        s11 += a * a; s12 += a * b; s13 += a * c; s22 += b * b; s23 += b * c; s33 += c * c;
+        y1 += a * y; y2 += b * y; y3 += c * y;
+    }
+    // Solve the 3x3 normal equations (Cramer).
+    const double det = s11 * (s22 * s33 - s23 * s23) - s12 * (s12 * s33 - s23 * s13) + s13 * (s12 * s23 - s22 * s13);
+    const double k0 = (y1 * (s22 * s33 - s23 * s23) - s12 * (y2 * s33 - s23 * y3) + s13 * (y2 * s23 - s22 * y3)) / det;
+    const double k1 = (s11 * (y2 * s33 - s23 * y3) - y1 * (s12 * s33 - s23 * s13) + s13 * (s12 * y3 - y2 * s13)) / det;
+    const double k2 = (s11 * (s22 * y3 - y2 * s23) - s12 * (s12 * y3 - y2 * s13) + y1 * (s12 * s23 - s22 * s13)) / det;
+    double fit = 0, res = 0;
+    for (size_t i = from; i < n; i++)
+    {
+        const double w = 2.0 * M_PI * f0 * static_cast<double>(i) / fs;
+        const double t = k1 * std::sin(w) + k2 * std::cos(w);
+        const double e = x[i] - k0 - t;
+        fit += t * t;
+        res += e * e;
+    }
+    return 10.0 * std::log10(res / fit);
+}
+
+void TestResamplerPurityAndDirection()
+{
+    std::printf("TestResamplerPurityAndDirection\n");
+    const double fmRate = static_cast<double>(kMasterClockHz) / static_cast<double>(kFmDivider);
+    PolyphaseResampler r;
+    r.Configure(fmRate, 44100.0, Quality::Reference);
+    std::vector<float> out;
+    float frame[24];
+    for (size_t i = 0; i < 60000; i++)
+    {
+        const float v = 0.5f * static_cast<float>(std::sin(2.0 * M_PI * 4231.1 * static_cast<double>(i) / fmRate));
+        const size_t n = r.Process(v, v, frame);
+        for (size_t j = 0; j < n; j++)
+            out.push_back(frame[j * 2]);
+    }
+    const double thd = ThdNdB(out, 400, 4231.1, 44100.0);
+    std::printf("  4.23 kHz sine 49516.4 -> 44100: THD+N %.1f dB\n", thd);
+    CHECK(thd < -60.0); // the old blended-FIR scheme measured -10 dB here
+
+    // Output time must advance with the phase: a slow ramp stays monotonic.
+    PolyphaseResampler ramp;
+    ramp.Configure(fmRate, 44100.0, Quality::Reference);
+    std::vector<float> rout;
+    for (size_t i = 0; i < 4000; i++)
+    {
+        const float v = static_cast<float>(i) * 1e-4f;
+        const size_t n = ramp.Process(v, v, frame);
+        for (size_t j = 0; j < n; j++)
+            rout.push_back(frame[j * 2]);
+    }
+    int backwards = 0;
+    for (size_t i = 200; i + 1 < rout.size(); i++)
+        if (rout[i + 1] <= rout[i])
+            backwards++;
+    CHECK_EQ_I(backwards, 0);
+}
+
+std::vector<float> RenderFmSine(RenderMode mode, bool board, bool mixed, int fnum, int blk,
+                                bool boardBeforeModeChange = false)
+{
+    TestChip tc(2u << 20, 1u << 20, 44100);
+    if (boardBeforeModeChange)
+    {
+        // Settings applied first must survive the mode/quality reconfigure.
+        tc.chip.SetBoardAnalog(board);
+        tc.chip.SetRenderMode(mode);
+        tc.chip.SetQuality(Quality::HighFidelity);
+        tc.chip.EnableSplitStreams(!mixed);
+    }
+    else
+    {
+        tc.cfg.mode = mode;
+        tc.chip.Configure(tc.cfg, &tc.mem);
+        tc.chip.EnableSplitStreams(!mixed);
+        tc.chip.Reset(0);
+        tc.chip.SetBoardAnalog(board);
+    }
+    uint64_t t = 10;
+    tc.chip.WriteFm(t, 1, 0x05, 0x01);
+    const uint8_t w[][2] = {{0x20, 0x21}, {0x23, 0x21}, {0x40, 0x3F}, {0x43, 0x00}, {0x60, 0xF0},
+                            {0x63, 0xF0}, {0x80, 0x00}, {0x83, 0x00}, {0xC0, 0x31}};
+    for (const auto& x : w)
+        tc.chip.WriteFm(t += 10, 0, x[0], x[1]);
+    tc.chip.WriteFm(t += 10, 0, 0xA0, static_cast<uint8_t>(fnum & 0xFF));
+    tc.chip.WriteFm(t += 10, 0, 0xB0, static_cast<uint8_t>(0x20 | (blk << 2) | (fnum >> 8)));
+    std::vector<float> mono;
+    std::vector<float> fm(2 * 1024), pcm(2 * 1024);
+    for (int frame = 1; frame <= 100; frame++)
+    {
+        tc.chip.Run(static_cast<uint64_t>(frame) * 882 * kOutClocks);
+        const size_t n = mixed ? tc.chip.Render(fm.data(), 882) : tc.chip.RenderSplit(fm.data(), pcm.data(), 882);
+        for (size_t i = 0; i < n; i++)
+            mono.push_back(0.5f * (fm[i * 2] + fm[i * 2 + 1]));
+    }
+    return mono;
+}
+
+double RmsFrom(const std::vector<float>& v, size_t from)
+{
+    double acc = 0;
+    for (size_t i = from; i < v.size(); i++)
+        acc += static_cast<double>(v[i]) * v[i];
+    return std::sqrt(acc / static_cast<double>(v.size() - from));
+}
+
+void TestChipSinePurityPerMode()
+{
+    std::printf("TestChipSinePurityPerMode\n");
+    const double f0 = 700.0 * 128.0 * (static_cast<double>(kMasterClockHz) / kFmDivider) / 1048576.0;
+    for (bool mixed : {false, true})
+    {
+        const auto hifi = RenderFmSine(RenderMode::HiFi, false, mixed, 700, 7);
+        const auto auth = RenderFmSine(RenderMode::Authentic, false, mixed, 700, 7);
+        const double tH = ThdNdB(hifi, 4410, f0, 44100.0), tA = ThdNdB(auth, 4410, f0, 44100.0);
+        std::printf("  %s 4.23 kHz FM sine: HiFi THD+N %.1f dB (%zu frames), Authentic %.1f dB (HoldDrop jitter)\n",
+                    mixed ? "Render()     " : "RenderSplit()", tH, hifi.size(), tA);
+        CHECK(hifi.size() == 88200);  // 100 frames x 882: no stalled or runaway staging
+        CHECK(tH < -45.0);            // was -9.8 dB with the blended FIR
+        CHECK(tA < -12.0 && tA > -20.0); // HoldDrop stays what D2 models (opt-in)
+    }
+}
+
+void TestBoardAnalogOnSplitPath()
+{
+    std::printf("TestBoardAnalogOnSplitPath\n");
+    // Analog RC 4.08 kHz x Sallen-Key 27.7 kHz: -0.05 dB at 438 Hz, -3.03 dB at 4.23 kHz.
+    const struct { int fnum, blk; double want; } cases[] = {{580, 4, -0.05}, {700, 7, -3.03}};
+    for (const auto& c : cases)
+    {
+        const double off = RmsFrom(RenderFmSine(RenderMode::HiFi, false, false, c.fnum, c.blk), 4410);
+        const double on = RmsFrom(RenderFmSine(RenderMode::HiFi, true, false, c.fnum, c.blk), 4410);
+        const double g = 20.0 * std::log10(on / off);
+        std::printf("  fnum %d blk %d: board gain %+.2f dB (analog %+.2f)\n", c.fnum, c.blk, g, c.want);
+        CHECK(std::fabs(g - c.want) < 0.15);
+    }
+
+    // BoardAnalog survives a render-mode / quality change (Configure used to
+    // reset it silently).
+    const double off = RmsFrom(RenderFmSine(RenderMode::HiFi, false, false, 700, 7, true), 4410);
+    const double on = RmsFrom(RenderFmSine(RenderMode::HiFi, true, false, 700, 7, true), 4410);
+    const double g = 20.0 * std::log10(on / off);
+    std::printf("  board set before SetRenderMode/SetQuality: gain %+.2f dB\n", g);
+    CHECK(std::fabs(g + 3.03) < 0.15);
+}
+
+// Live output-rate switch (host device renegotiation): every standard rate,
+// both modes, split render. Chip state and pending chip-grid audio survive;
+// after each switch the renderer delivers rate/50 frames per 20 ms and the
+// tone keeps its pitch at the new rate.
+void TestLiveOutputRateSwitch()
+{
+    std::printf("TestLiveOutputRateSwitch\n");
+    const double f0 = 580.0 * 16.0 * (static_cast<double>(kMasterClockHz) / kFmDivider) / 1048576.0;
+    const uint32_t rates[] = {48000, 88200, 96000, 176400, 192000, 44100};
+    for (bool mixed : {false, true})
+    for (RenderMode mode : {RenderMode::HiFi, RenderMode::Authentic})
+    {
+        TestChip tc(2u << 20, 1u << 20, 44100);
+        tc.cfg.mode = mode;
+        tc.chip.Configure(tc.cfg, &tc.mem);
+        tc.chip.EnableSplitStreams(!mixed);
+        tc.chip.Reset(0);
+        uint64_t t = 10;
+        tc.chip.WriteFm(t, 1, 0x05, 0x01);
+        const uint8_t w[][2] = {{0x20, 0x21}, {0x23, 0x21}, {0x40, 0x3F}, {0x43, 0x00}, {0x60, 0xF0},
+                                {0x63, 0xF0}, {0x80, 0x00}, {0x83, 0x00}, {0xC0, 0x31}, {0xA0, 0x44}, {0xB0, 0x32}};
+        for (const auto& x : w)
+            tc.chip.WriteFm(t += 10, 0, x[0], x[1]);
+        std::vector<float> fm(2 * 8192), pcm(2 * 8192);
+        uint64_t clock = 0;
+        const uint64_t frameClocks = 882 * kOutClocks; // 20 ms of chip time
+        auto runFrames = [&](int frames, uint32_t rate, std::vector<float>* mono) {
+            size_t total = 0;
+            for (int f = 0; f < frames; f++)
+            {
+                clock += frameClocks;
+                tc.chip.Run(clock);
+                const size_t n = mixed ? tc.chip.Render(fm.data(), rate / 50)
+                                       : tc.chip.RenderSplit(fm.data(), pcm.data(), rate / 50);
+                total += n;
+                if (mono)
+                    for (size_t i = 0; i < n; i++)
+                        mono->push_back(fm[i * 2]);
+            }
+            return total;
+        };
+        runFrames(25, 44100, nullptr);
+        for (uint32_t rate : rates)
+        {
+            tc.chip.SetOutputRate(rate);
+            CHECK_EQ_I(tc.chip.OutputRate(), rate);
+            std::vector<float> mono;
+            runFrames(2, rate, nullptr); // settle past the restarted filters
+            const size_t total = runFrames(50, rate, &mono);
+            const double thd = ThdNdB(mono, 0, f0, static_cast<double>(rate));
+            std::printf("  %s %s %6u Hz: %zu frames / 1 s (want %u), 438 Hz tone THD+N %.1f dB\n",
+                        mixed ? "Render()     " : "RenderSplit()", mode == RenderMode::HiFi ? "HiFi     " : "Authentic",
+                        rate, total, rate, thd);
+            CHECK(total + 2 >= rate && total <= rate + 2); // rate/50 per frame: no gaps
+            CHECK(thd < (mode == RenderMode::HiFi ? -45.0 : -30.0)); // right pitch at the new rate
+        }
+    }
+}
+
 int main()
 {
     TestPowerTable();
@@ -833,6 +1050,10 @@ int main()
     TestHiFiAt44100();
     TestRenderSplit();
     TestDiscardPendingAudio();
+    TestResamplerPurityAndDirection();
+    TestChipSinePurityPerMode();
+    TestBoardAnalogOnSplitPath();
+    TestLiveOutputRateSwitch();
 
     RunVectorTests(); // §12.2 vector categories (opl4vectors.cpp)
     RunSweepTests();  // §12.2.1 conformance sweeps (opl4sweep.cpp)

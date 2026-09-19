@@ -549,7 +549,7 @@ struct CONFIG
 		char waveRom[FILENAME_MAX];
 		/// Sample RAM in KiB, 0..1024 (ZXM-MoonSound carries 2 x 512 KiB)
 		unsigned ramSizeKb;
-		/// 0 = authentic (chip-rate window reducer), 1 = hifi (twin-grid)
+		/// 1 = hifi (twin-grid, band-limited FM; ini default), 0 = authentic (HoldDrop reducer)
 		uint8_t renderMode;
 		/// 0 = reference, 1 = highfidelity (resampler FIR length)
 		uint8_t quality;

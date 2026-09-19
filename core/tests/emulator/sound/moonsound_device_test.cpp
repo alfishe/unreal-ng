@@ -837,6 +837,8 @@ TEST_F(MoonSoundDevice_Test, TTD_SaveNeutralAndRestoreExact_ReplaysIdenticalAudi
     Z80* cpu = context->pCore->GetZ80();
     ASSERT_NE(cpu, nullptr);
 
+    // Zero-sample restore window: the 44100 bypass path (TTD TDD §7.2).
+    moonsound->chip().SetRenderMode(opl4::RenderMode::Authentic);
     KeyOnFmCh0ThroughPorts(cpu);
 
     const size_t frameSamples = SAMPLES_PER_FRAME * AUDIO_CHANNELS;
@@ -885,6 +887,117 @@ TEST_F(MoonSoundDevice_Test, TTD_SaveNeutralAndRestoreExact_ReplaysIdenticalAudi
                   0)
             << "replayed frame " << i << " differs from the saved-interleaved run";
     }
+    EXPECT_EQ(hashWithSaves, hashReplay);
+}
+
+/// HiFi restore (TTD TDD §7.2): Tier A (chip state, hash) is exact; the
+/// render layer restarts, so audio converges within the resampler window.
+TEST_F(MoonSoundDevice_Test, TTD_RestoreHiFi_ConvergesAfterFilterWindow)
+{
+    constexpr size_t kRestoreWindowSamples = 256; // 96-tap FIR at 49516.4 Hz + margin
+    SoundManager* soundManager = context->pSoundManager;
+    ASSERT_NE(soundManager, nullptr);
+    SoundChip_Moonsound* moonsound = soundManager->getMoonSound();
+    ASSERT_NE(moonsound, nullptr);
+    Z80* cpu = context->pCore->GetZ80();
+    ASSERT_NE(cpu, nullptr);
+
+    // HiFi (the emulator default) resamples FM even at 44100, so the render
+    // layer's Tier C state (resampler history, DC blocker) restarts on
+    // restore: TTD TDD §7.2's bounded window, then the replay converges.
+    moonsound->chip().SetRenderMode(opl4::RenderMode::HiFi);
+    KeyOnFmCh0ThroughPorts(cpu);
+
+    const size_t frameSamples = SAMPLES_PER_FRAME * AUDIO_CHANNELS;
+    const auto runFrameCapture = [moonsound, frameSamples](std::vector<int16_t>& audio)
+    {
+        // No residual drain here: in HiFi the residual is real resampled
+        // audio, and discarding it would cut the waveform at every frame.
+        moonsound->handleFrameStart();
+        moonsound->handleFrameEnd(SAMPLES_PER_FRAME);
+        audio.insert(audio.end(), moonsound->getFmBuffer(), moonsound->getFmBuffer() + frameSamples);
+    };
+
+    std::vector<uint8_t> blob(moonsound->TTDStateSize());
+    std::vector<int16_t> audioA;
+    for (int i = 0; i < 3; i++)
+    {
+        runFrameCapture(audioA);
+        moonsound->TTDSaveState(blob.data());
+    }
+    const std::vector<uint8_t> checkpoint = blob;
+
+    // Phase A tail: three more frames WITH saves interleaved.
+    for (int i = 0; i < 3; i++)
+    {
+        runFrameCapture(audioA);
+        moonsound->TTDSaveState(blob.data());
+    }
+    const uint64_t hashWithSaves = moonsound->TTDHashState();
+
+    // Phase B: restore the checkpoint, replay WITHOUT any saves.
+    moonsound->TTDLoadState(checkpoint.data());
+    std::vector<int16_t> audioB;
+    for (int i = 0; i < 3; i++)
+        runFrameCapture(audioB);
+    const uint64_t hashReplay = moonsound->TTDHashState();
+
+    ASSERT_EQ(audioB.size(), 3 * frameSamples);
+    // The restarted resampler lands its output grid up to one sample off the
+    // original (phase reset, Tier C). A sub-sample shift decorrelates this
+    // bright test voice sample-wise while it sounds identical, so compare
+    // shift-invariantly after the window: magnitude spectra and level.
+    const int16_t* a = audioA.data() + 3 * frameSamples;
+    const int16_t* b = audioB.data();
+    constexpr size_t kN = 1024;
+    const size_t from = kRestoreWindowSamples; // in frames (left channel)
+    ASSERT_LE((from + 882 + kN) * AUDIO_CHANNELS, 3 * frameSamples);
+    const auto magnitude = [](const int16_t* x, size_t start) {
+        std::vector<double> m(kN / 2);
+        for (size_t k = 1; k < kN / 2; k++)
+        {
+            double re = 0, im = 0;
+            for (size_t n = 0; n < kN; n++)
+            {
+                const double w = 0.5 - 0.5 * std::cos(2.0 * M_PI * static_cast<double>(n) / kN); // Hann
+                const double ph = 2.0 * M_PI * static_cast<double>(k * n) / kN;
+                const double v = w * x[(start + n) * AUDIO_CHANNELS];
+                re += v * std::cos(ph);
+                im -= v * std::sin(ph);
+            }
+            m[k] = std::sqrt(re * re + im * im);
+        }
+        return m;
+    };
+    const auto correlate = [](const std::vector<double>& p, const std::vector<double>& q) {
+        double pq = 0, pp = 0, qq = 0;
+        for (size_t k = 1; k < p.size(); k++)
+        {
+            pq += p[k] * q[k];
+            pp += p[k] * p[k];
+            qq += q[k] * q[k];
+        }
+        return pq / std::sqrt(pp * qq);
+    };
+    const auto magA = magnitude(a, from);
+    const double spectral = correlate(magA, magnitude(b, from));
+    // Baseline: the uninterrupted run against itself at other time offsets
+    // (the same steady voice; only window leakage differs). The replay must
+    // be as close as the worst of those.
+    double baseline = 1.0;
+    for (size_t off = 11; off <= 882; off += 11)
+        baseline = std::min(baseline, correlate(magA, magnitude(a, from + off)));
+    double ea = 0, eb = 0;
+    for (size_t i = from * AUDIO_CHANNELS; i < 3 * frameSamples; i++)
+    {
+        ea += static_cast<double>(a[i]) * a[i];
+        eb += static_cast<double>(b[i]) * b[i];
+    }
+    const double levelDb = 10.0 * std::log10(eb / ea);
+    std::cout << "[ttd-hifi] after " << kRestoreWindowSamples << " samples: magnitude-spectrum correlation "
+              << spectral << " (same-run worst time-offset baseline " << baseline << "), level " << levelDb << " dB\n";
+    EXPECT_GT(spectral, baseline - 1e-4) << "replay must converge to the same sound after the window";
+    EXPECT_LT(std::fabs(levelDb), 0.05);
     EXPECT_EQ(hashWithSaves, hashReplay);
 }
 
@@ -1152,6 +1265,11 @@ TEST_F(MoonSoundDevice_Test, Canary_FmWaveformSelect_SineBipolarRectifiedUnipola
         cpu->out(0xC4, reg);
         cpu->out(0xC5, value);
     };
+
+    // Raw chip waveforms: the bit-exact Authentic bypass path. HiFi (the
+    // emulator default) resamples FM and runs the DC blocker, which strips
+    // the half/rectified sines' DC this row measures.
+    moonsound->chip().SetRenderMode(opl4::RenderMode::Authentic);
 
     cpu->out(0xC4, 0x01);
     cpu->out(0xC5, 0x20); // WSE: waveform select enable
@@ -1617,5 +1735,65 @@ TEST_F(MoonSoundDevice_Test, Diagnostic_MfmHissPatches_SustainedVsRetrig)
     // sustain-vs-retrigger metrics across patches.
     SUCCEED();
 }
+
+/// Live core-rate renegotiation (audio device change, CoreRate=auto): every
+/// standard rate reaches the chip at the next frame boundary, exactly like
+/// the AY/TS/TSFM path (SoundManager::applyCoreRate). A MoonSound that kept
+/// rendering at 44.1 kHz would leave the frame tail silent and play the tone
+/// sharp or flat by the rate ratio.
+TEST_F(MoonSoundDevice_Test, CoreRateRenegotiation_AllStandardRatesRenderFullFramesInTune)
+{
+    SoundManager* soundManager = context->pSoundManager;
+    ASSERT_NE(soundManager, nullptr);
+    SoundChip_Moonsound* moonsound = soundManager->getMoonSound();
+    ASSERT_NE(moonsound, nullptr);
+    Z80* cpu = context->pCore->GetZ80();
+    ASSERT_NE(cpu, nullptr);
+    auto* mainLoop = reinterpret_cast<MainLoop_CUT*>(context->pMainLoop);
+    ASSERT_NE(mainLoop, nullptr);
+
+    KeyOnFmCh0ThroughPorts(cpu); // fnum 0x303, block 4
+    cpu->out(0xC4, 0x40);        // modulator TL 63: a near-pure carrier sine
+    cpu->out(0xC5, 0x3F);
+    const double f0 = 0x303 * 16.0 * (33868800.0 / 684.0) / 1048576.0; // ~582.6 Hz
+    const double frameSeconds = static_cast<double>(context->config.frame) / CPU_CLOCK_RATE;
+
+    for (uint32_t rate : {48000u, 88200u, 96000u, 176400u, 192000u, 44100u})
+    {
+        soundManager->requestCoreRate(rate);
+        FlushAudioPipe(mainLoop, 3); // applied at the next frame start, then settle
+        mainLoop->RunFrame();
+        EXPECT_EQ(soundManager->getCoreRate(), rate);
+        EXPECT_EQ(moonsound->getCoreRate(), rate);
+        EXPECT_EQ(moonsound->chip().OutputRate(), rate);
+
+        // The frame is rate * frame duration samples; all of it must carry the tone.
+        const size_t n = static_cast<size_t>(rate * frameSeconds) - 2;
+        const int16_t* buf = moonsound->getFmBuffer();
+        // One full period of the tone at this rate: its peak is the tone's amplitude.
+        const size_t period = static_cast<size_t>(rate / f0) + 1;
+        int tailPeak = 0;
+        for (size_t i = n - period; i < n; i++)
+            tailPeak = std::max(tailPeak, std::abs(static_cast<int>(buf[i * AUDIO_CHANNELS])));
+        EXPECT_GT(tailPeak, 500) << rate << " Hz: frame tail is silent (chip still at the old rate?)";
+
+        // Pitch from rising zero crossings of the left channel.
+        size_t first = 0, last = 0, crossings = 0;
+        for (size_t i = 1; i < n; i++)
+            if (buf[(i - 1) * AUDIO_CHANNELS] < 0 && buf[i * AUDIO_CHANNELS] >= 0)
+            {
+                if (!crossings)
+                    first = i;
+                last = i;
+                crossings++;
+            }
+        ASSERT_GT(crossings, 5u) << rate << " Hz";
+        const double measured = rate * static_cast<double>(crossings - 1) / static_cast<double>(last - first);
+        std::cout << "[core-rate] " << rate << " Hz: frame " << n + 2 << " samples, tail peak " << tailPeak
+                  << ", tone " << measured << " Hz (want " << f0 << ")\n";
+        EXPECT_NEAR(measured, f0, f0 * 0.01) << rate << " Hz";
+    }
+}
+
 
 #endif  // UNREALNG_HAVE_OPL4

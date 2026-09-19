@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <complex>
 #include <cstring>
 
 namespace opl4
@@ -93,6 +94,33 @@ void PolyphaseResampler::Configure(double inputRate, double outputRate, Quality 
     // Reverse: history[0] is the newest sample; convolve in natural order.
     std::reverse(_coeffs.begin(), _coeffs.end());
 
+    // Polyphase table: the windowed sinc evaluated at every fractional
+    // output position. Row f centres the kernel m/2 + (1 - f) input samples
+    // behind the newest, so output time advances with the phase. A single
+    // fixed FIR blended between neighbouring input positions (the previous
+    // scheme) aliased high harmonics and ran the blend backwards in time.
+    _phases = 512;
+    const double m = static_cast<double>(_taps - 1);
+    const double norm = 2.0 * fc / designRate;
+    const double i0beta = BesselI0(beta);
+    _table.assign((_phases + 1) * _taps, 0.0);
+    for (size_t p = 0; p <= _phases; p++)
+    {
+        const double centre = m / 2.0 + (1.0 - static_cast<double>(p) / static_cast<double>(_phases));
+        double sum = 0.0;
+        for (size_t i = 0; i < _taps; i++)
+        {
+            const double x = static_cast<double>(i) - centre;
+            const double t = x / (m / 2.0);
+            const double w = (std::fabs(t) <= 1.0) ? BesselI0(beta * std::sqrt(1.0 - t * t)) / i0beta : 0.0;
+            const double h = norm * Sinc(norm * x) * w;
+            _table[p * _taps + i] = h;
+            sum += h;
+        }
+        for (size_t i = 0; i < _taps; i++)
+            _table[p * _taps + i] /= sum; // unity DC per phase
+    }
+
     _histL.assign(_taps, 0.0);
     _histR.assign(_taps, 0.0);
     _orderedL.assign(_taps, 0.0); // scratch, no allocation on the audio path
@@ -113,16 +141,18 @@ void PolyphaseResampler::Reset()
 
 double PolyphaseResampler::Convolve(const double* hist, size_t phase) const
 {
-    // Fractional delay interpolation of the FIR: linear blend between the
-    // two neighbouring integer taps (phase in [0,1)).
-    const double frac = static_cast<double>(phase) / 1024.0;
-    double acc0 = 0.0, acc1 = 0.0;
-    for (size_t i = 0; i < _taps - 1; i++)
-    {
-        acc0 += hist[i] * _coeffs[i];
-        acc1 += hist[i + 1] * _coeffs[i];
-    }
-    return acc0 * (1.0 - frac) + acc1 * frac;
+    // Kernel for this fractional position: linear blend of the two nearest
+    // table rows (512 rows keep the kernel interpolation error far below the
+    // Kaiser stop band).
+    const double pos = static_cast<double>(phase) / 1024.0 * static_cast<double>(_phases);
+    const size_t r0 = std::min(static_cast<size_t>(pos), _phases - 1);
+    const double t = pos - static_cast<double>(r0);
+    const double* k0 = &_table[r0 * _taps];
+    const double* k1 = k0 + _taps;
+    double acc = 0.0;
+    for (size_t i = 0; i < _taps; i++)
+        acc += hist[i] * (k0[i] + t * (k1[i] - k0[i]));
+    return acc;
 }
 
 size_t PolyphaseResampler::Process(float inL, float inR, float* out)
@@ -157,60 +187,105 @@ size_t PolyphaseResampler::Process(float inL, float inR, float* out)
 }
 
 // ---------------------------------------------------------------------------
-// Board analog (§8.3): RC pole 4.08 kHz + Sallen-Key f0 27.7 kHz Q 1.306.
-// Bilinear transform with pre-warping; coefficients in double, state float.
+// Board analog (§8.3): RC low-pass 4.08 kHz + Sallen-Key low-pass f0 27.7 kHz
+// Q 1.306, as a minimum-phase FIR (see the class comment).
 // ---------------------------------------------------------------------------
 void BoardAnalog::Configure(double sampleRate)
 {
-    // 1st-order RC: R3 = 1k, C2 = 39 nF.
-    const double fc1 = 1.0 / (2.0 * M_PI * 1000.0 * 39e-9);
-    const double k1 = 2.0 * sampleRate;
-    const double w1 = 2.0 * M_PI * fc1;
-    const double b0d = k1 / (k1 + w1), b1d = -b0d, a1d = (w1 - k1) / (k1 + w1);
+    // Analog response: RC (R3 = 1k, C2 = 39 nF) x Sallen-Key (R4 = R5 = 1k,
+    // C11 = 15 nF, C3 = 2.2 nF): H(s) = w1/(s + w1) * w0^2/(s^2 + (w0/Q)s + w0^2).
+    const double w1 = 1.0 / (1000.0 * 39e-9);
+    const double rc = 1000.0 * 1000.0 * 15e-9 * 2.2e-9;
+    const double w0 = 1.0 / std::sqrt(rc);
+    const double q = std::sqrt(rc) / (2.2e-9 * 2000.0);
+    auto logMag = [&](double f) {
+        const std::complex<double> s(0.0, 2.0 * M_PI * f);
+        const std::complex<double> h = (w1 / (s + w1)) * (w0 * w0 / (s * s + (w0 / q) * s + w0 * w0));
+        return std::log(std::max(std::abs(h), 1e-9));
+    };
 
-    // Sallen-Key LP: R4 = R5 = 1k, C11 = 15 nF, C3 = 2.2 nF
-    // f0 = 27.7 kHz, Q = 1.306. H(s) = w0^2 / (s^2 + (w0/Q) s + w0^2).
-    const double r4 = 1000.0, r5 = 1000.0, c11 = 15e-9, c3 = 2.2e-9;
-    const double w0 = 1.0 / std::sqrt(r4 * r5 * c11 * c3);
-    const double q = std::sqrt(r4 * r5 * c11 * c3) / (c3 * (r4 + r5));
-    const double k2 = 2.0 * sampleRate;
-    const double k2s = k2 * k2;
-    const double denom = k2s + (w0 / q) * k2 + w0 * w0;
-    const double q0d = k2s / denom;
-    const double q1d = -2.0 * k2s / denom;
-    const double q2d = k2s / denom;
-    const double p1d = (2.0 * (w0 * w0) - 2.0 * k2s) / denom;
-    const double p2d = (k2s - (w0 / q) * k2 + w0 * w0) / denom;
+    // Minimum phase from the magnitude: real cepstrum of the log magnitude,
+    // folded onto positive quefrencies, exponentiated back (N-point DFTs;
+    // configure-time only).
+    constexpr size_t kN = 1024;
+    std::vector<std::complex<double>> buf(kN);
+    auto dft = [](std::vector<std::complex<double>>& x, bool inverse) {
+        // Iterative radix-2 FFT (n is a power of two).
+        const size_t n = x.size();
+        for (size_t i = 1, j = 0; i < n; i++)
+        {
+            size_t bit = n >> 1;
+            for (; j & bit; bit >>= 1)
+                j ^= bit;
+            j ^= bit;
+            if (i < j)
+                std::swap(x[i], x[j]);
+        }
+        for (size_t len = 2; len <= n; len <<= 1)
+        {
+            const std::complex<double> wl = std::polar(1.0, (inverse ? 2.0 : -2.0) * M_PI / static_cast<double>(len));
+            for (size_t i = 0; i < n; i += len)
+            {
+                std::complex<double> w = 1.0;
+                for (size_t k = 0; k < len / 2; k++)
+                {
+                    const std::complex<double> u = x[i + k], v = x[i + k + len / 2] * w;
+                    x[i + k] = u + v;
+                    x[i + k + len / 2] = u - v;
+                    w *= wl;
+                }
+            }
+        }
+        if (inverse)
+            for (auto& v : x)
+                v /= static_cast<double>(n);
+    };
+    for (size_t k = 0; k < kN; k++)
+    {
+        const size_t mirrored = (k <= kN / 2) ? k : kN - k;
+        buf[k] = logMag(static_cast<double>(mirrored) * sampleRate / static_cast<double>(kN));
+    }
+    dft(buf, true); // real cepstrum
+    for (size_t k = 1; k < kN / 2; k++)
+        buf[k] = 2.0 * buf[k].real();
+    buf[0] = buf[0].real();
+    buf[kN / 2] = buf[kN / 2].real();
+    for (size_t k = kN / 2 + 1; k < kN; k++)
+        buf[k] = 0.0;
+    dft(buf, false);
+    for (auto& v : buf)
+        v = std::exp(v);
+    dft(buf, true); // minimum-phase impulse response
 
-    _b0 = static_cast<float>(b0d);
-    _b1 = static_cast<float>(b1d);
-    _a1 = static_cast<float>(a1d);
-    _q0 = static_cast<float>(q0d);
-    _q1 = static_cast<float>(q1d);
-    _q2 = static_cast<float>(q2d);
-    _p1 = static_cast<float>(p1d);
-    _p2 = static_cast<float>(p2d);
+    double sum = 0.0;
+    for (size_t i = 0; i < kTaps; i++)
+        sum += buf[i].real();
+    for (size_t i = 0; i < kTaps; i++)
+        _h[i] = static_cast<float>(buf[i].real() / sum); // unity DC, as the analog chain
+    Reset();
+}
+
+void BoardAnalog::Reset()
+{
+    std::fill(std::begin(_xl), std::end(_xl), 0.0f);
+    std::fill(std::begin(_xr), std::end(_xr), 0.0f);
+    _pos = 0;
 }
 
 void BoardAnalog::Process(float& l, float& r)
 {
-    // RC pole (DF1), then Sallen-Key biquad (DF2T), both channels.
-    for (float* s : {&l, &r})
+    _pos = (_pos + kTaps - 1) % kTaps;
+    _xl[_pos] = l;
+    _xr[_pos] = r;
+    float accL = 0.0f, accR = 0.0f;
+    for (size_t i = 0; i < kTaps; i++)
     {
-        float& z1 = (s == &l) ? _z1l : _z1r;
-        const float v0 = *s * _b0 + z1;
-        z1 = *s * _b1 - v0 * _a1;
-        *s = v0;
+        const size_t j = (_pos + i) % kTaps;
+        accL += _h[i] * _xl[j];
+        accR += _h[i] * _xr[j];
     }
-    for (float* s : {&l, &r})
-    {
-        float& z2 = (s == &l) ? _z2l : _z2r;
-        float& z3 = (s == &l) ? _z3l : _z3r;
-        const float v = *s * _q0 + z2;
-        z2 = *s * _q1 + z3 - v * _p1;
-        z3 = *s * _q2 - v * _p2;
-        *s = v;
-    }
+    l = accL;
+    r = accR;
 }
 
 // ---------------------------------------------------------------------------
@@ -324,8 +399,6 @@ void Opl4Render::Configure(const Opl4Config& cfg)
     _outputRate = cfg.outputRate;
     _mode = cfg.mode;
     _quality = cfg.quality;
-    _boardAnalogOn = false;
-    _room = RoomMode::Off;
 
     const double fmRate = static_cast<double>(kMasterClockHz) / static_cast<double>(kFmDivider);
     if (_mode == RenderMode::HiFi)
@@ -346,10 +419,14 @@ void Opl4Render::Configure(const Opl4Config& cfg)
     _resFm.Configure(GroupInputRate(ChannelGroup::Fm), _outputRate, _quality);
     _resPcm.Configure(GroupInputRate(ChannelGroup::Pcm), _outputRate, _quality);
     _analog.Configure(_outputRate);
-    _chainFm.SetPunch(PunchPreset::Off, _outputRate);
-    _chainPcm.SetPunch(PunchPreset::Off, _outputRate);
-    _chainFm.SetRoom(RoomMode::Off, _outputRate);
-    _chainPcm.SetRoom(RoomMode::Off, _outputRate);
+    _groupFm.analog.Configure(_outputRate); // split-source renders (ProcessGroup)
+    _groupPcm.analog.Configure(_outputRate);
+    // Re-apply the character settings at the (possibly new) rate: a mode or
+    // quality change must not silently drop BoardAnalog / punch / room.
+    _chainFm.SetPunch(_punchFm, _outputRate);
+    _chainPcm.SetPunch(_punchPcm, _outputRate);
+    _chainFm.SetRoom(_room, _outputRate);
+    _chainPcm.SetRoom(_room, _outputRate);
     ResetRenderState();
 }
 
@@ -365,15 +442,22 @@ void Opl4Render::ResetRenderState()
     _chainPcm.Reset();
     _groupFm.Reset();
     _groupPcm.Reset();
+    _carryMain.Reset();
     _dcX1L = _dcX1R = _dcY1L = _dcY1R = 0;
 }
 
 void Opl4Render::SetPunchPreset(ChannelGroup g, PunchPreset p)
 {
     if (g == ChannelGroup::Fm)
+    {
+        _punchFm = p;
         _chainFm.SetPunch(p, _outputRate);
+    }
     else
+    {
+        _punchPcm = p;
         _chainPcm.SetPunch(p, _outputRate);
+    }
 }
 
 bool Opl4Render::UnityBypass() const
@@ -420,10 +504,25 @@ size_t Opl4Render::ProcessChip(const int32_t* chipStereo, size_t frames,
 
     size_t written = 0;
     size_t i = 0;
+    const auto emit = [&](float l, float r) {
+        if (_chainFm.Active() || _chainPcm.Active())
+        {
+            // Chip stream: FM/PCM chains were applied pre-sum upstream in
+            // the device; on the mixed chip stream run the FM chain.
+            _chainFm.Process(l, r);
+        }
+        PostStages(l, r);
+        out[written * 2 + 0] = l;
+        out[written * 2 + 1] = r;
+        written++;
+    };
+    ResampleCarry& carry = _carryMain;
+    for (; carry.pos < carry.count && written < maxOutFrames; carry.pos++)
+        emit(carry.frame[carry.pos * 2 + 0], carry.frame[carry.pos * 2 + 1]);
     // Resampler scratch: one input frame can emit floor(out/in)+1 output
     // frames; 12 covers output rates up to ~529 kHz (spec caps at 192 kHz).
     float frame[24];
-    for (; i < frames && written < maxOutFrames; i++)
+    while (i < frames && written < maxOutFrames)
     {
         size_t n;
         if (_outputRate == kChipOutputRate)
@@ -437,19 +536,15 @@ size_t Opl4Render::ProcessChip(const int32_t* chipStereo, size_t frames,
             n = _main.Process(static_cast<float>(chipStereo[i * 2 + 0]) * kNormScale,
                               static_cast<float>(chipStereo[i * 2 + 1]) * kNormScale, frame);
         }
-        for (size_t j = 0; j < n && written < maxOutFrames; j++)
+        i++;
+        size_t j = 0;
+        for (; j < n && written < maxOutFrames; j++)
+            emit(frame[j * 2 + 0], frame[j * 2 + 1]);
+        if (j < n)
         {
-            float l = frame[j * 2 + 0], r = frame[j * 2 + 1];
-            if (_chainFm.Active() || _chainPcm.Active())
-            {
-                // Chip stream: FM/PCM chains were applied pre-sum upstream in
-                // the device; on the mixed chip stream run the FM chain.
-                _chainFm.Process(l, r);
-            }
-            PostStages(l, r);
-            out[written * 2 + 0] = l;
-            out[written * 2 + 1] = r;
-            written++;
+            std::copy(frame + j * 2, frame + n * 2, carry.frame);
+            carry.count = n - j;
+            carry.pos = 0;
         }
     }
     if (consumedFrames)
@@ -491,6 +586,12 @@ size_t Opl4Render::ProcessSplit(const int32_t* fmStereo, size_t fmFrames,
         pcmOut += _pcm.Process(static_cast<float>(pcmStereo[i * 2 + 0]) * kNormScale,
                                static_cast<float>(pcmStereo[i * 2 + 1]) * kNormScale,
                                _pcmStage.data() + pcmOut * 2);
+
+    // Trim the stages to what was actually produced: the resize above only
+    // reserved room, and counting that unfilled room as staged output on
+    // the next call emitted silence and grew the backlog without bound.
+    _fmStage.resize(fmOut * 2);
+    _pcmStage.resize(pcmOut * 2);
 
     const size_t n = std::min({fmOut, pcmOut, maxOutFrames});
     for (size_t i = 0; i < n; i++)
@@ -556,10 +657,30 @@ size_t Opl4Render::ProcessGroup(ChannelGroup g, const int32_t* stereo, size_t fr
 
     size_t written = 0;
     size_t i = 0;
+    const auto emit = [&](float l, float r) {
+        chain.Process(l, r);
+        if (_boardAnalogOn)
+            st.analog.Process(l, r);
+        // DC blocker (§8.6), per-group state.
+        const float yl = l - st.dcX1L + _dcR * st.dcY1L;
+        const float yr = r - st.dcX1R + _dcR * st.dcY1R;
+        st.dcX1L = l;
+        st.dcX1R = r;
+        st.dcY1L = yl;
+        st.dcY1R = yr;
+        out[written * 2 + 0] = yl;
+        out[written * 2 + 1] = yr;
+        written++;
+    };
+    // Resampler outputs carried from the previous call come first (see
+    // ResampleCarry).
+    ResampleCarry& carry = st.carry;
+    for (; carry.pos < carry.count && written < maxOutFrames; carry.pos++)
+        emit(carry.frame[carry.pos * 2 + 0], carry.frame[carry.pos * 2 + 1]);
     // Same scratch sizing argument as ProcessChip: one input frame can emit
     // floor(out/in)+1 output frames; 12 covers every supported rate.
     float frame[24];
-    for (; i < frames && written < maxOutFrames; i++)
+    while (i < frames && written < maxOutFrames)
     {
         size_t n;
         if (inRate == static_cast<double>(_outputRate))
@@ -573,24 +694,15 @@ size_t Opl4Render::ProcessGroup(ChannelGroup g, const int32_t* stereo, size_t fr
             n = res.Process(static_cast<float>(stereo[i * 2 + 0]) * kNormScale,
                             static_cast<float>(stereo[i * 2 + 1]) * kNormScale, frame);
         }
-        for (size_t j = 0; j < n && written < maxOutFrames; j++)
+        i++;
+        size_t j = 0;
+        for (; j < n && written < maxOutFrames; j++)
+            emit(frame[j * 2 + 0], frame[j * 2 + 1]);
+        if (j < n)
         {
-            float l = frame[j * 2 + 0], r = frame[j * 2 + 1];
-            chain.Process(l, r);
-            if (_boardAnalogOn)
-                st.analog.Process(l, r);
-            // DC blocker (§8.6), per-group state.
-            const float yl = l - st.dcX1L + _dcR * st.dcY1L;
-            const float yr = r - st.dcX1R + _dcR * st.dcY1R;
-            st.dcX1L = l;
-            st.dcX1R = r;
-            st.dcY1L = yl;
-            st.dcY1R = yr;
-            l = yl;
-            r = yr;
-            out[written * 2 + 0] = l;
-            out[written * 2 + 1] = r;
-            written++;
+            std::copy(frame + j * 2, frame + n * 2, carry.frame);
+            carry.count = n - j;
+            carry.pos = 0;
         }
     }
     if (consumedFrames)
