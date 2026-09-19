@@ -37,65 +37,13 @@ string Config::GetScreenshotsFolder()
 	
 	if (!initialized)
 	{
-#ifdef __APPLE__
-		// On macOS, check if we're running from a DMG or other read-only location
-		std::string basePath = FileHelper::GetResourcesPath();
-		std::string testPath = FileHelper::PathCombine(basePath, "/screenshots");
-		
-		// Try to create the directory to test if it's writable
-		bool isWritable = false;
+		std::string dirPath = FileHelper::PathCombine(FileHelper::GetWritablePath(), "screenshots");
 		try {
-			if (!std::filesystem::exists(FileHelper::ToFsPath(testPath))) {
-				isWritable = std::filesystem::create_directories(FileHelper::ToFsPath(testPath));
-			} else {
-				// Directory exists, check if it's writable by creating a test file
-				std::string testFile = FileHelper::PathCombine(testPath, "/test.tmp");
-				FILE* fp = FileHelper::OpenFile(testFile, "w");
-				if (fp) {
-					fclose(fp);
-					remove(testFile.c_str());
-					isWritable = true;
-				}
-			}
+			std::filesystem::create_directories(FileHelper::ToFsPath(dirPath));
 		} catch (const std::exception&) {
-			isWritable = false;
+			// Ignore directory creation errors
 		}
-		
-		if (!isWritable) {
-			// If not writable (e.g., running from DMG), use ~/Library/Application Support/UnrealNG/
-			const char* homeDir = getenv("HOME");
-			if (homeDir) {
-				std::string dirPath = std::string(homeDir) + "/Library/Application Support/UnrealNG/screenshots";
-				// Create the directory if it doesn't exist
-				try {
-					std::filesystem::create_directories(FileHelper::ToFsPath(dirPath));
-				} catch (const std::exception&) {
-					// If we can't create the directory, fall back to temporary directory
-					dirPath = "/tmp/UnrealNG/screenshots";
-					std::filesystem::create_directories(FileHelper::ToFsPath(dirPath));
-				}
-				screenshotsPath = dirPath;
-			} else {
-				// Fallback to temporary directory if HOME is not available
-				screenshotsPath = "/tmp/UnrealNG/screenshots";
-				std::filesystem::create_directories(FileHelper::ToFsPath(screenshotsPath));
-			}
-		} else {
-			// Location is writable, use it
-			screenshotsPath = testPath;
-		}
-#else
-		// On Windows and Linux, use the executable directory
-		std::string basePath = FileHelper::GetExecutablePath();
-		screenshotsPath = FileHelper::PathCombine(basePath, "/screenshots");
-		
-		// Create the directory if it doesn't exist
-		try {
-			std::filesystem::create_directories(FileHelper::ToFsPath(screenshotsPath));
-		} catch (const std::exception&) {
-			// Ignore errors
-		}
-#endif
+		screenshotsPath = dirPath;
 		initialized = true;
 	}
 
@@ -264,6 +212,14 @@ bool Config::ParseConfig(IniFile& inimanager)
     CopyStringValue(inimanager.GetValue(rom, "TSL", nullptr), config.tsl_rom_path, sizeof config.tsl_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "LSY", nullptr), config.lsy_rom_path, sizeof config.lsy_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "PHOENIX", nullptr), config.phoenix_rom_path, sizeof config.phoenix_rom_path);
+#ifdef MOD_GSZ80
+    // General Sound firmware ROM ([ROM] GS). Defaults to the shipped 32 KB
+    // gs105a.rom (data/rom) so a fitted card always has firmware even when a
+    // hand-written config omits the key; bootGS.rom is the 512 KB NeoGS flash
+    // image - the LLE card would only use its first 32 KB (with a warning).
+    // Relative paths resolve against the resources dir in SoundChip_GeneralSound::loadROM.
+    CopyStringValue(inimanager.GetValue(rom, "GS", "rom/gs105a.rom"), config.gs_rom_path, sizeof config.gs_rom_path);
+#endif
 
 	// ULA section (video signal timings)
 	config.intfq = (uint8_t)inimanager.GetLongValue(ula, "int", 50);
@@ -397,6 +353,71 @@ bool Config::ParseConfig(IniFile& inimanager)
 	// FM loudness trim in dB relative to the hardware-derived default (0 = default)
 	config.sound.tsfmFmTrimDb = inimanager.GetDoubleValue(sound, "TSFM_FmTrimDb", 0.0);
 
+	// General Sound emulation kind ([SOUND] GSType, GS design §5.1):
+	// Z80 = LLE coprocessor card, BASS = legacy HLE (out of scope - no
+	// device is created), NGS = NeoGS FPGA card (neogs-tdd.md - P2
+	// placeholder, no device is created yet), NONE = no GS card. A missing
+	// key keeps NONE; unknown values warn and fall back to NONE.
+	{
+		// Explicit default first: a missing key must reset to NONE even when
+		// the struct holds Z80 from a previous parse of another file.
+		config.sound.gsTypeKind = GSTypeKind::NONE;
+		line[0] = '\0';
+		CopyStringValue(inimanager.GetValue(sound, "GSType", nullptr), line, sizeof line);
+		if (StringHelper::CompareCaseInsensitive(line, "Z80", strlen("Z80")) == 0)
+		{
+			config.sound.gsTypeKind = GSTypeKind::Z80;
+		}
+		else if (StringHelper::CompareCaseInsensitive(line, "BASS", strlen("BASS")) == 0)
+		{
+			config.sound.gsTypeKind = GSTypeKind::BASS;
+		}
+		else if (StringHelper::CompareCaseInsensitive(line, "NGS", strlen("NGS")) == 0)
+		{
+			config.sound.gsTypeKind = GSTypeKind::NGS;
+		}
+		else if (line[0] != '\0' && StringHelper::CompareCaseInsensitive(line, "NONE", strlen("NONE")) != 0)
+		{
+			MLOGWARNING("Config: unsupported [SOUND] GSType='%s', using NONE", line);
+		}
+	}
+
+	// GS volume on the shared 0-8192 ini scale (shipped GSVol=8000, same
+	// domain as BeeperVol) and the reset-coupling flag: GSReset=1 makes the
+	// ZX reset reinitialize the card too (Unreal: "if (gsreset) reset_gs()"),
+	// GSReset=0 (the legacy default) keeps it running - separate subsystem
+	// with its own #33 reset line
+	config.sound.gs_vol = (int)inimanager.GetLongValue(sound, "GSVol", 8000);
+	config.sound.gsreset = (uint8_t)inimanager.GetLongValue(sound, "GSReset", 0);
+#ifdef MOD_GSZ80
+	// NeoGS placeholders (neogs-tdd.md §3.2): RAM size in KB, SD card image
+	// and the MP3 decode path, all consumed by no card until the P2
+	// implementation lands. SDCARD is the original UnrealSpeccy key, kept as
+	// an alias so existing configs load. The GS Z80 card has its own fixed
+	// geometry, so RamSize only matters for NeoGS.
+	config.gs_ramsize = (unsigned)inimanager.GetLongValue(ngs, "RamSize", 2048);
+	CopyStringValue(inimanager.GetValue(ngs, "SDCardImage", nullptr), config.ngs_sd_card_path, sizeof config.ngs_sd_card_path);
+	if (!config.ngs_sd_card_path[0])
+		CopyStringValue(inimanager.GetValue(ngs, "SDCARD", nullptr), config.ngs_sd_card_path, sizeof config.ngs_sd_card_path);
+	{
+		config.ngsMP3SupportKind = NGSMP3SupportKind::Stub;
+		line[0] = '\0';
+		CopyStringValue(inimanager.GetValue(ngs, "MP3Support", "stub"), line, sizeof line);
+		if (StringHelper::CompareCaseInsensitive(line, "none", strlen("none")) == 0)
+		{
+			config.ngsMP3SupportKind = NGSMP3SupportKind::None;
+		}
+		else if (StringHelper::CompareCaseInsensitive(line, "software", strlen("software")) == 0)
+		{
+			config.ngsMP3SupportKind = NGSMP3SupportKind::Software;
+		}
+		else if (StringHelper::CompareCaseInsensitive(line, "stub", strlen("stub")) != 0)
+		{
+			MLOGWARNING("Config: unsupported [NGS] MP3Support='%s', using stub", line);
+		}
+	}
+#endif
+
 	// VIDEO section
 	// A/V sync video delay: auto (-1) = match the audio path latency
 	// (~2 frames); 0 = lowest input latency (audio trails by the ring depth)
@@ -509,6 +530,18 @@ const TMemModel* Config::FindModelByShortName(const std::string& shortName)
 			{
 				return &mem_model[i];
 			}
+		}
+	}
+	return nullptr;
+}
+
+const TMemModel* Config::FindModelByEnum(MEM_MODEL model)
+{
+	for (uint8_t i = 0; i < N_MM_MODELS; i++)
+	{
+		if (mem_model[i].Model == model)
+		{
+			return &mem_model[i];
 		}
 	}
 	return nullptr;

@@ -409,18 +409,30 @@ MachineIdentity EmulatorManager::GetMachineIdentity(Emulator& emulator)
 
     const CONFIG& config = context->config;
 
-    const TMemModel* modelInfo = nullptr;
-    for (const TMemModel& entry : Config::GetAvailableModels())
+    // Use direct model lookup instead of iterating a temporary vector
+    // (the vector copies struct with pointers, which should be safe, but
+    // this avoids potential issues with constexpr string literals on iOS)
+    const TMemModel* modelInfo = Config::FindModelByEnum(config.mem_model);
+
+    if (modelInfo != nullptr && modelInfo->ShortName != nullptr)
     {
-        if (entry.Model == config.mem_model)
-        {
-            modelInfo = &entry;
-            break;
-        }
+        try { identity.Model = std::string(modelInfo->ShortName); }
+        catch (...) { identity.Model = "unknown"; }
+    }
+    else
+    {
+        identity.Model = "unknown";
     }
 
-    identity.Model = modelInfo != nullptr && modelInfo->ShortName != nullptr ? std::string(modelInfo->ShortName) : std::string("unknown");
-    identity.ModelFullName = modelInfo != nullptr && modelInfo->FullName != nullptr ? std::string(modelInfo->FullName) : std::string("unknown");
+    if (modelInfo != nullptr && modelInfo->FullName != nullptr)
+    {
+        try { identity.ModelFullName = std::string(modelInfo->FullName); }
+        catch (...) { identity.ModelFullName = "unknown"; }
+    }
+    else
+    {
+        identity.ModelFullName = "unknown";
+    }
     identity.RamKb = config.ramsize;
     if (context->pScreen != nullptr)
     {
