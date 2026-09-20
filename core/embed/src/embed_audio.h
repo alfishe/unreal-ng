@@ -43,7 +43,11 @@ public:
     void SetActive(int active);
     void Close();
 
-private:
+    uint32_t GetSampleRate() const { return _deviceDescriptor.sampleRate.load(std::memory_order_relaxed); }
+    AudioDeviceDescriptor& GetDeviceDescriptor() { return _deviceDescriptor; }
+    const std::atomic<uint32_t>* GetOccupancyFrames() const { return &_deviceDescriptor.occupancyFrames; }
     static void AudioProducerCallback(void* obj, int16_t* samples, size_t numSamples);
+
+private:
     static void MiniaudioDeviceCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount);
 };

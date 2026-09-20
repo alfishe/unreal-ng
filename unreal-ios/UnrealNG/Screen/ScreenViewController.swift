@@ -2,17 +2,47 @@ import UIKit
 import Metal
 import QuartzCore
 
+// CRT effect parameters - must match Metal shader struct layout
+struct CRTParams {
+    var inputSize: SIMD2<Float> = SIMD2(320, 240)
+    var outputSize: SIMD2<Float> = SIMD2(1920, 1080)
+    var scanlineWeight: Float = 0.3      // Basic profile default
+    var curvature: Float = 0.02          // Subtle curve
+    var bloomStrength: Float = 0.1       // Soft glow
+    var brightness: Float = 1.0
+    var contrast: Float = 1.0
+    var saturation: Float = 1.0
+
+    static var basic: CRTParams {
+        var p = CRTParams()
+        p.scanlineWeight = 0.3
+        p.curvature = 0.02
+        p.bloomStrength = 0.1
+        return p
+    }
+
+    static var none: CRTParams {
+        var p = CRTParams()
+        p.scanlineWeight = 0.0
+        p.curvature = 0.0
+        p.bloomStrength = 0.0
+        return p
+    }
+}
+
 final class ScreenViewController: UIViewController {
 
     // Metal Pipeline
     private var metalDevice: MTLDevice!
     private var commandQueue: MTLCommandQueue!
     private var pipelineState: MTLRenderPipelineState!
+    private var crtPipelineState: MTLRenderPipelineState!
     private var metalLayer: CAMetalLayer!
     private var displayLink: CADisplayLink?
 
     private var vertexBuffer: MTLBuffer!
     private var texCoordBuffer: MTLBuffer!
+    private var crtParamsBuffer: MTLBuffer!
     private var texture: MTLTexture?
 
     private var frameWidth: UInt16 = 320
@@ -21,6 +51,14 @@ final class ScreenViewController: UIViewController {
 
     // Framebuffer Pixel Storage (RGBA8)
     private var pixelBuffer: [UInt8] = []
+
+    // CRT Effect Settings
+    var crtEnabled: Bool = true {
+        didSet { updateCRTParams() }
+    }
+    var crtParams: CRTParams = .basic {
+        didSet { updateCRTParams() }
+    }
 
     // HUD Layer
     private let hudOverlayView = UIView()
@@ -60,6 +98,7 @@ final class ScreenViewController: UIViewController {
         metalLayer.frame = view.bounds
         metalLayer.contentsScale = UIScreen.main.scale
         updateQuadGeometry()
+        updateCRTParams()
     }
 
     // MARK: - Metal Setup
@@ -84,6 +123,7 @@ final class ScreenViewController: UIViewController {
             return
         }
 
+        // Simple passthrough pipeline (CRT disabled)
         let vertexFunction = defaultLibrary.makeFunction(name: "presentVertexShader")
         let fragmentFunction = defaultLibrary.makeFunction(name: "presentFragmentShader")
 
@@ -96,6 +136,16 @@ final class ScreenViewController: UIViewController {
             pipelineState = try device.makeRenderPipelineState(descriptor: pipelineDescriptor)
         } catch {
             print("ScreenViewController: Failed to create pipeline state: \(error)")
+        }
+
+        // CRT effect pipeline
+        let crtFragmentFunction = defaultLibrary.makeFunction(name: "presentCRTFragmentShader")
+        pipelineDescriptor.fragmentFunction = crtFragmentFunction
+
+        do {
+            crtPipelineState = try device.makeRenderPipelineState(descriptor: pipelineDescriptor)
+        } catch {
+            print("ScreenViewController: Failed to create CRT pipeline state: \(error)")
         }
 
         let positions: [Float] = [
@@ -113,6 +163,21 @@ final class ScreenViewController: UIViewController {
 
         vertexBuffer = device.makeBuffer(bytes: positions, length: positions.count * MemoryLayout<Float>.size, options: [])
         texCoordBuffer = device.makeBuffer(bytes: texCoords, length: texCoords.count * MemoryLayout<Float>.size, options: [])
+
+        // CRT parameters buffer
+        crtParamsBuffer = device.makeBuffer(length: MemoryLayout<CRTParams>.size, options: .storageModeShared)
+        updateCRTParams()
+    }
+
+    private func updateCRTParams() {
+        guard let buffer = crtParamsBuffer else { return }
+
+        var params = crtEnabled ? crtParams : .none
+        params.inputSize = SIMD2(Float(frameWidth), Float(frameHeight))
+        params.outputSize = SIMD2(Float(view.bounds.width * UIScreen.main.scale),
+                                   Float(view.bounds.height * UIScreen.main.scale))
+
+        memcpy(buffer.contents(), &params, MemoryLayout<CRTParams>.size)
     }
 
     private func updateQuadGeometry() {
@@ -184,6 +249,7 @@ final class ScreenViewController: UIViewController {
             frameHeight = h
             updateQuadGeometry()
             ensureTexture(width: Int(w), height: Int(h))
+            updateCRTParams()
         }
 
         if ts != lastLatchTs {
@@ -203,8 +269,10 @@ final class ScreenViewController: UIViewController {
 
     private func render() {
         guard let drawable = metalLayer.nextDrawable(),
-              let texture = texture,
-              let pipelineState = pipelineState else { return }
+              let texture = texture else { return }
+
+        let activePipeline = crtEnabled ? crtPipelineState : pipelineState
+        guard let activePipeline = activePipeline else { return }
 
         let renderPassDescriptor = MTLRenderPassDescriptor()
         renderPassDescriptor.colorAttachments[0].texture = drawable.texture
@@ -215,10 +283,15 @@ final class ScreenViewController: UIViewController {
         guard let commandBuffer = commandQueue.makeCommandBuffer(),
               let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else { return }
 
-        renderEncoder.setRenderPipelineState(pipelineState)
+        renderEncoder.setRenderPipelineState(activePipeline)
         renderEncoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
         renderEncoder.setVertexBuffer(texCoordBuffer, offset: 0, index: 1)
         renderEncoder.setFragmentTexture(texture, index: 0)
+
+        if crtEnabled {
+            renderEncoder.setFragmentBuffer(crtParamsBuffer, offset: 0, index: 0)
+        }
+
         renderEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
         renderEncoder.endEncoding()
 
@@ -254,7 +327,7 @@ final class ScreenViewController: UIViewController {
 
         helpLabel.textColor = UIColor(white: 0.7, alpha: 1.0)
         helpLabel.font = .systemFont(ofSize: 11, weight: .regular)
-        helpLabel.text = "Double-tap screen to toggle HUD"
+        helpLabel.text = "Double-tap: HUD | Triple-tap: CRT"
 
         stack.addArrangedSubview(statusLabel)
         stack.addArrangedSubview(ipLabel)
@@ -291,10 +364,24 @@ final class ScreenViewController: UIViewController {
         let doubleTap = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap))
         doubleTap.numberOfTapsRequired = 2
         view.addGestureRecognizer(doubleTap)
+
+        let tripleTap = UITapGestureRecognizer(target: self, action: #selector(handleTripleTap))
+        tripleTap.numberOfTapsRequired = 3
+        view.addGestureRecognizer(tripleTap)
+
+        doubleTap.require(toFail: tripleTap)
     }
 
     @objc private func handleDoubleTap() {
         isHUDEnabled.toggle()
+    }
+
+    @objc private func handleTripleTap() {
+        crtEnabled.toggle()
+
+        // Brief feedback
+        let generator = UIImpactFeedbackGenerator(style: .light)
+        generator.impactOccurred()
     }
 
     // MARK: - Status Bar
@@ -355,7 +442,7 @@ final class ScreenViewController: UIViewController {
 
     private func resolveZXKeyName(from press: UIPress) -> String? {
         guard let key = press.key else { return nil }
-        
+
         switch key.keyCode {
         case .keyboardUpArrow:
             return "up"

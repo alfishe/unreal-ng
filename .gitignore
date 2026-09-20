@@ -111,3 +111,4 @@ features.ini
 
 # iOS build artifacts
 unreal-ios/Frameworks/
+*.xcuserstate

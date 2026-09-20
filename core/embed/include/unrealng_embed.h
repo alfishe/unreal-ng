@@ -71,6 +71,10 @@ APP_EXPORT app_result app_keyboard_release(app_emulator* emu, const char* key_na
 APP_EXPORT app_result app_keyboard_tap(app_emulator* emu, const char* key_name, uint16_t hold_frames);
 APP_EXPORT app_result app_keyboard_release_all(app_emulator* emu);
 
+// Notifications
+typedef void (*app_notification_fn)(const char* event_type, const char* json_payload, void* user_data);
+APP_EXPORT void app_set_notification_callback(app_notification_fn callback, void* user_data);
+
 // System info
 APP_EXPORT const char* app_get_version_string(void);
 

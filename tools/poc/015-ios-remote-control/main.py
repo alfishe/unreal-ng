@@ -21,7 +21,8 @@ from PySide6.QtGui import QColor, QFont, QKeyEvent, QPainter, QPen, QBrush, QPal
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QLineEdit, QPushButton, QComboBox, QTabWidget, QGroupBox, QFileDialog,
-    QTextEdit, QSplitter, QFrame, QGridLayout, QSizePolicy, QStyleOption, QStyle
+    QTextEdit, QSplitter, QFrame, QGridLayout, QSizePolicy, QStyleOption, QStyle,
+    QCheckBox
 )
 
 DEFAULT_HOST = "127.0.0.1"
@@ -201,6 +202,7 @@ class RemoteControlApp(QMainWindow):
         self.setAcceptDrops(True)
 
         self.current_emu_id: Optional[str] = None
+        self._pending_create_model: Optional[str] = None
         self.workers: List[APIWorker] = []
 
         self.init_ui()
@@ -212,38 +214,57 @@ class RemoteControlApp(QMainWindow):
         main_layout.setContentsMargins(16, 16, 16, 16)
         main_layout.setSpacing(12)
 
-        # 1. Connection Header
-        conn_group = QGroupBox("Target Emulator Connection")
-        conn_layout = QHBoxLayout(conn_group)
+        # 1. Connection & Machine Control Header
+        conn_group = QGroupBox("Target Emulator Connection & Machine Config")
+        conn_layout = QVBoxLayout(conn_group)
+        conn_layout.setSpacing(8)
 
-        conn_layout.addWidget(QLabel("LAN IP:"))
+        # Row 1: Connection & Active Instance
+        conn_row1 = QHBoxLayout()
+        conn_row1.addWidget(QLabel("LAN IP:"))
         self.ip_input = QLineEdit(DEFAULT_HOST)
-        self.ip_input.setFixedWidth(140)
-        conn_layout.addWidget(self.ip_input)
+        self.ip_input.setFixedWidth(130)
+        conn_row1.addWidget(self.ip_input)
 
-        conn_layout.addWidget(QLabel("Port:"))
+        conn_row1.addWidget(QLabel("Port:"))
         self.port_input = QLineEdit(str(DEFAULT_PORT))
-        self.port_input.setFixedWidth(70)
-        conn_layout.addWidget(self.port_input)
+        self.port_input.setFixedWidth(60)
+        conn_row1.addWidget(self.port_input)
 
         self.connect_btn = QPushButton("Connect / Refresh")
         self.connect_btn.setObjectName("actionBtn")
         self.connect_btn.clicked.connect(self.fetch_status)
-        conn_layout.addWidget(self.connect_btn)
+        conn_row1.addWidget(self.connect_btn)
 
-        conn_layout.addSpacing(16)
-        conn_layout.addWidget(QLabel("Instance:"))
+        conn_row1.addSpacing(12)
+        conn_row1.addWidget(QLabel("Instance:"))
         self.emu_combo = QComboBox()
-        self.emu_combo.setMinimumWidth(220)
+        self.emu_combo.setMinimumWidth(200)
         self.emu_combo.currentIndexChanged.connect(self.on_emu_selected)
-        conn_layout.addWidget(self.emu_combo)
+        conn_row1.addWidget(self.emu_combo)
 
         self.reset_btn = QPushButton("Reset Emulator")
         self.reset_btn.setToolTip("Trigger hardware reset (POST /api/v1/emulator/{id}/reset)")
         self.reset_btn.clicked.connect(self.reset_emulator)
-        conn_layout.addWidget(self.reset_btn)
+        conn_row1.addWidget(self.reset_btn)
+        conn_row1.addStretch()
 
-        conn_layout.addStretch()
+        # Row 2: Machine Creation & Model Selection
+        conn_row2 = QHBoxLayout()
+        conn_row2.addWidget(QLabel("Machine Model:"))
+        self.model_combo = QComboBox()
+        self.model_combo.setMinimumWidth(220)
+        self.model_combo.setToolTip("Select machine hardware model to create")
+        conn_row2.addWidget(self.model_combo)
+
+        self.create_emu_btn = QPushButton("Create & Switch Machine")
+        self.create_emu_btn.setToolTip("Dispose current active machine instance and create a new instance with the selected model")
+        self.create_emu_btn.clicked.connect(self.create_selected_machine)
+        conn_row2.addWidget(self.create_emu_btn)
+        conn_row2.addStretch()
+
+        conn_layout.addLayout(conn_row1)
+        conn_layout.addLayout(conn_row2)
         main_layout.addWidget(conn_group)
 
         # 2. Splitter (Controls + Log)
@@ -281,6 +302,18 @@ class RemoteControlApp(QMainWindow):
         # Tab 2: Disks
         disk_tab = QWidget()
         disk_layout = QVBoxLayout(disk_tab)
+
+        disk_opts_layout = QHBoxLayout()
+        self.autorun_cb = QCheckBox("Autorun Mode (Autostart)")
+        self.autorun_cb.setChecked(True)
+        self.autorun_cb.setToolTip("Automatically reset machine into TR-DOS and autorun disk on insertion")
+        self.fastdisk_cb = QCheckBox("Fast Disk Load")
+        self.fastdisk_cb.setChecked(True)
+        self.fastdisk_cb.setToolTip("Enable fast disk I/O feature prior to insertion")
+        disk_opts_layout.addWidget(self.autorun_cb)
+        disk_opts_layout.addWidget(self.fastdisk_cb)
+        disk_opts_layout.addStretch()
+
         disk_file_layout = QHBoxLayout()
         self.disk_path_input = QLineEdit()
         self.disk_path_input.setPlaceholderText("Select .trd, .scl, .dsk, or .fdi...")
@@ -303,6 +336,7 @@ class RemoteControlApp(QMainWindow):
         disk_ctrl_layout.addWidget(self.disk_insert_btn)
         disk_ctrl_layout.addWidget(self.disk_eject_btn)
 
+        disk_layout.addLayout(disk_opts_layout)
         disk_layout.addLayout(disk_file_layout)
         disk_layout.addLayout(disk_ctrl_layout)
         disk_layout.addStretch()
@@ -424,8 +458,15 @@ class RemoteControlApp(QMainWindow):
                 self.emu_combo.blockSignals(False)
 
                 if self.emu_combo.count() > 0:
-                    self.emu_combo.setCurrentIndex(0)
-                    self.current_emu_id = self.emu_combo.itemData(0)
+                    idx = -1
+                    if self.current_emu_id:
+                        idx = self.emu_combo.findData(self.current_emu_id)
+                    if idx < 0:
+                        idx = 0
+                    self.emu_combo.blockSignals(True)
+                    self.emu_combo.setCurrentIndex(idx)
+                    self.emu_combo.blockSignals(False)
+                    self.current_emu_id = self.emu_combo.itemData(idx)
                     self.log(f"Connected to target: {len(data['emulators'])} instance(s). Activated #{self.current_emu_id[:8]}.", "SUCCESS")
                 else:
                     self.current_emu_id = None
@@ -434,6 +475,74 @@ class RemoteControlApp(QMainWindow):
                 self.emu_combo.clear()
                 self.current_emu_id = None
                 self.log(f"Failed to connect: {msg}", "ERROR")
+
+        elif action == "fetch_models":
+            if success and "models" in data:
+                current_data = self.model_combo.currentData()
+                self.model_combo.blockSignals(True)
+                self.model_combo.clear()
+
+                for model in data["models"]:
+                    if model.get("creatable", True):
+                        name = model.get("name", "")
+                        full_name = model.get("full_name", "") or name
+                        ram_sizes = model.get("available_ram_sizes_kb", [])
+                        if not ram_sizes:
+                            ram_sizes = [model.get("default_ram_kb", 0)]
+
+                        if len(ram_sizes) > 1:
+                            for ram in ram_sizes:
+                                label = f"{full_name} {ram}K"
+                                item_data = {"model": name, "ram_size": ram}
+                                self.model_combo.addItem(label, item_data)
+                        else:
+                            ram = ram_sizes[0] if ram_sizes else 0
+                            label = f"{full_name} {ram}K" if (ram and ram not in (48, 128)) else full_name
+                            item_data = {"model": name, "ram_size": ram} if ram else {"model": name}
+                            self.model_combo.addItem(label, item_data)
+
+                self.model_combo.blockSignals(False)
+
+                if self.model_combo.count() > 0:
+                    idx = -1
+                    if current_data:
+                        for i in range(self.model_combo.count()):
+                            if self.model_combo.itemData(i) == current_data:
+                                idx = i
+                                break
+                    if idx < 0:
+                        for i in range(self.model_combo.count()):
+                            d = self.model_combo.itemData(i)
+                            if isinstance(d, dict) and d.get("model") == "PENTAGON" and d.get("ram_size") == 128:
+                                idx = i
+                                break
+                    if idx >= 0:
+                        self.model_combo.setCurrentIndex(idx)
+
+        elif action == "dispose_old_emu":
+            self.log(f"Old emulator instance disposed ({msg}).", "INFO")
+            if hasattr(self, "_pending_create_payload") and self._pending_create_payload:
+                payload = self._pending_create_payload
+                label = getattr(self, "_pending_create_label", "selected configuration")
+                start_url = f"{self.get_base_url()}/api/v1/emulator/start"
+                self.log(f"Starting new machine configuration '{label}'...", "INFO")
+                self.run_async("start_new_emu", start_url, "POST", json_data=payload)
+
+        elif action == "start_new_emu":
+            if success and "id" in data:
+                new_id = data["id"]
+                label = getattr(self, "_pending_create_label", "selected configuration")
+                self.current_emu_id = new_id
+                self.log(f"Successfully created & started machine configuration '{label}' (#{new_id[:8]}).", "SUCCESS")
+                self.fetch_status()
+            else:
+                self.log(f"Failed to create new machine configuration: {msg}", "ERROR")
+
+        elif action == "enable_fastdisk":
+            if success:
+                self.log("Fast disk load feature enabled.", "SUCCESS")
+            else:
+                self.log(f"Failed to set fast disk option: {msg}", "ERROR")
 
         elif action == "reset_emulator":
             if success:
@@ -445,7 +554,16 @@ class RemoteControlApp(QMainWindow):
             if not success:
                 self.log(f"Keyboard event failed: {msg}", "ERROR")
 
-        elif action in ("upload_snapshot", "insert_disk", "eject_disk", "insert_tape", "eject_tape"):
+        elif action == "insert_disk":
+            if success:
+                msg_extra = ""
+                if data.get("autostarted"):
+                    msg_extra = f" [{data.get('autostart_message', 'Autostarted')}]"
+                self.log(f"Disk inserted successfully{msg_extra}: {msg}", "SUCCESS")
+            else:
+                self.log(f"Disk insert failed: {msg}", "ERROR")
+
+        elif action in ("upload_snapshot", "eject_disk", "insert_tape", "eject_tape"):
             if success:
                 self.log(f"{action} successful: {msg}", "SUCCESS")
             else:
@@ -455,6 +573,32 @@ class RemoteControlApp(QMainWindow):
         url = f"{self.get_base_url()}/api/v1/emulator"
         self.log(f"Connecting to WebAPI at {url}...")
         self.run_async("fetch_status", url, "GET")
+        if self.model_combo.count() == 0:
+            models_url = f"{self.get_base_url()}/api/v1/emulator/models"
+            self.run_async("fetch_models", models_url, "GET")
+
+    def create_selected_machine(self):
+        data = self.model_combo.currentData()
+        payload = {}
+        if isinstance(data, dict):
+            payload = dict(data)
+        elif isinstance(data, str):
+            payload = {"model": data}
+        else:
+            self.log("No machine model selected.", "ERROR")
+            return
+
+        display_label = self.model_combo.currentText()
+        self._pending_create_payload = payload
+        self._pending_create_label = display_label
+        if self.current_emu_id:
+            self.log(f"Disposing active machine instance #{self.current_emu_id[:8]}...", "INFO")
+            dispose_url = f"{self.get_base_url()}/api/v1/emulator/{self.current_emu_id}"
+            self.run_async("dispose_old_emu", dispose_url, "DELETE")
+        else:
+            self.log(f"Creating & starting new machine configuration '{display_label}'...", "INFO")
+            start_url = f"{self.get_base_url()}/api/v1/emulator/start"
+            self.run_async("start_new_emu", start_url, "POST", json_data=payload)
 
     def on_emu_selected(self, index: int):
         if index >= 0 and index < self.emu_combo.count():
@@ -494,12 +638,29 @@ class RemoteControlApp(QMainWindow):
             return
         drive_idx = self.drive_combo.currentIndex()
 
+        # 1. Fast Disk Load (On by default)
+        if self.fastdisk_cb.isChecked():
+            fastdisk_url = f"{self.get_base_url()}/api/v1/emulator/{self.current_emu_id}/feature/fastdisk"
+            self.run_async("enable_fastdisk", fastdisk_url, "POST", json_data={"enabled": True})
+
+        # 2. Autorun Mode (On by default for Drive 0)
+        extra_headers = {"X-Filename": os.path.basename(path)}
+        if self.autorun_cb.isChecked() and drive_idx == 0:
+            extra_headers["X-Autostart"] = "true"
+
         url = f"{self.get_base_url()}/api/v1/emulator/{self.current_emu_id}/disk/{drive_idx}/insert"
         filename = os.path.basename(path)
-        self.log(f"Inserting disk {filename} into Drive {drive_idx}...")
+        opt_info = []
+        if self.autorun_cb.isChecked() and drive_idx == 0:
+            opt_info.append("Autorun")
+        if self.fastdisk_cb.isChecked():
+            opt_info.append("FastDisk")
+        opt_str = f" ({', '.join(opt_info)})" if opt_info else ""
+
+        self.log(f"Inserting disk {filename} into Drive {drive_idx}{opt_str}...")
         with open(path, "rb") as f:
             raw_data = f.read()
-        self.run_async("insert_disk", url, "POST", raw_body=raw_data, extra_headers={"X-Filename": filename})
+        self.run_async("insert_disk", url, "POST", raw_body=raw_data, extra_headers=extra_headers)
 
     def eject_disk(self):
         if not self.current_emu_id:
