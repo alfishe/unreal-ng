@@ -31,6 +31,15 @@ FOUNDATION_EXPORT NSString * const UNGCubeInstancesChangedNotification;
 
 - (BOOL)getFrameInfoForIndex:(NSInteger)index width:(uint16_t *)w height:(uint16_t *)h timestamp:(uint64_t *)ts NS_SWIFT_NAME(getFrameInfo(forIndex:width:height:timestamp:));
 - (BOOL)copyFrameForIndex:(NSInteger)index toBuffer:(void *)dst size:(size_t)size NS_SWIFT_NAME(copyFrame(forIndex:toBuffer:size:));
+/// Atomically copies the latest end-of-frame staged snapshot for a face.
+/// Staging is refreshed by the VIDEO_FRAME_REFRESH notification exactly at
+/// frame boundaries (never mid-frame), so the copied image is always a
+/// complete, tear-free frame. `sequence` bumps on every staged frame - use
+/// it to skip redundant copies. Returns NO until the first frame is staged.
+- (BOOL)copyStagedFrameForIndex:(NSInteger)index toBuffer:(void *)dst capacity:(size_t)capacity width:(uint16_t *)outWidth height:(uint16_t *)outHeight sequence:(uint64_t *)outSequence NS_SWIFT_NAME(copyStagedFrame(forIndex:toBuffer:capacity:width:height:sequence:));
+/// Current staging sequence for a face (0 = nothing staged yet). Lets the
+/// renderer poll for new frames without copying anything.
+- (uint64_t)stagedFrameSequenceForIndex:(NSInteger)index NS_SWIFT_NAME(stagedFrameSequence(forIndex:));
 - (nullable NSString *)modelNameForIndex:(NSInteger)index NS_SWIFT_NAME(modelName(forIndex:));
 - (nullable NSString *)instanceIdForIndex:(NSInteger)index NS_SWIFT_NAME(instanceId(forIndex:));
 

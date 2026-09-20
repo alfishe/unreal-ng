@@ -200,6 +200,7 @@ class VideoCubeControlApp(QMainWindow):
 
         self.current_emu_id: Optional[str] = None
         self.emulator_instances: List[Dict[str, Any]] = []
+        self.singlesync_active: bool = False
         self.workers: List[APIWorker] = []
 
         self.setAcceptDrops(True)
@@ -398,14 +399,17 @@ class VideoCubeControlApp(QMainWindow):
                 if self.emu_combo.count() > 0:
                     self.current_emu_id = self.emu_combo.itemData(0)
 
-                if len(self.emulator_instances) != FACE_COUNT:
+                count = len(self.emulator_instances)
+                if count == FACE_COUNT:
+                    self.log(f"Connected to 3D Video Cube: {count} dedicated instance(s) running.", "SUCCESS")
+                elif count == 1 and self.singlesync_active:
+                    self.log("Connected: single-sync mode - 1 emulator replicated to all 6 faces.", "SUCCESS")
+                else:
                     self.log(
                         f"Expected {FACE_COUNT} cube face instances but WebAPI reports "
-                        f"{len(self.emulator_instances)}. If the cube is rendering locally, "
+                        f"{count}. If the cube is rendering locally, "
                         "a stale app process is still holding the WebAPI port: kill the app "
                         "(swipe it away), relaunch, and reconnect.", "ERROR")
-                else:
-                    self.log(f"Connected to 3D Video Cube: {len(self.emulator_instances)} instance(s) running.", "SUCCESS")
 
         elif action == "auto_demo_push":
             if success:
@@ -422,7 +426,17 @@ class VideoCubeControlApp(QMainWindow):
             else:
                 self.log(f"Failed to re-create face instance: {msg}", "ERROR")
 
-        elif action in ("upload_snapshot", "insert_disk", "reset_emulator", "set_overscan", "set_singlesync"):
+        elif action == "set_singlesync":
+            if success:
+                mode = ("single emulator replicated to 6 faces" if self.singlesync_active
+                        else "6 dedicated emulators (re-spawned)")
+                self.log(f"Cube topology switching to: {mode}. Refreshing in a moment...", "SUCCESS")
+                # The bridge applies the topology asynchronously (destroy/respawn)
+                QTimer.singleShot(2500, self.fetch_status)
+            else:
+                self.log(f"Failed to set single-sync mode: {msg}", "ERROR")
+
+        elif action in ("upload_snapshot", "insert_disk", "reset_emulator", "set_overscan"):
             if success:
                 self.log(f"Operation {action} succeeded on targeted face.", "SUCCESS")
             else:
@@ -441,6 +455,22 @@ class VideoCubeControlApp(QMainWindow):
         candidates = load_whitelisted_snapshots(root_dir)
         if not candidates:
             self.log("No whitelisted demo snapshots found on disk.", "ERROR")
+            return
+
+        # Single-sync mode collapses the cube to one live emulator replicated
+        # on all 6 faces - a single random snapshot covers the whole cube
+        if len(self.emulator_instances) == 1 and self.singlesync_active:
+            emu = self.emulator_instances[0]
+            emu_id = emu.get("id", "")
+            abs_path = random.choice(candidates)
+            self.log(
+                f"🚀 Single-sync mode: pushing '{os.path.basename(abs_path)}' to the "
+                f"master emulator (#{emu_id[:8]}), replicated on all 6 faces...", "INFO")
+            url = f"{self.get_base_url()}/api/v1/emulator/{emu_id}/snapshot/load"
+            with open(abs_path, "rb") as f:
+                raw = f.read()
+            self.run_async("auto_demo_push", url, "POST", raw_body=raw,
+                           extra_headers={"X-Filename": os.path.basename(abs_path)})
             return
 
         instances = self.emulator_instances[:FACE_COUNT]
@@ -497,6 +527,9 @@ class VideoCubeControlApp(QMainWindow):
                 self.run_async("select_emulator", url, "GET")
 
     def on_singlesync_toggled(self, checked: bool):
+        # Track the requested mode: while active, 1 live instance is the
+        # expected topology (replicated to all 6 faces), not a port conflict
+        self.singlesync_active = checked
         url = f"{self.get_base_url()}/api/v1/videowall/singlesync"
         payload = {"enable": checked}
         if self.current_emu_id:

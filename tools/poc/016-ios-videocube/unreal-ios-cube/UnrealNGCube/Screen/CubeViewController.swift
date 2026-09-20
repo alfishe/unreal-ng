@@ -34,10 +34,23 @@ final class CubeViewController: UIViewController {
 
     // 6 Live Textures for 6 Cube Faces
     private var faceTextures: [MTLTexture?] = Array(repeating: nil, count: 6)
-    private var facePixelBuffers: [[UInt8]] = Array(repeating: [], count: 6)
     private var faceWidths: [UInt16] = Array(repeating: 320, count: 6)
     private var faceHeights: [UInt16] = Array(repeating: 240, count: 6)
-    private var faceTimestamps: [UInt64] = Array(repeating: 0, count: 6)
+
+    // Tear-free frame pipeline: the bridge stages complete end-of-frame
+    // snapshots (VIDEO_FRAME_REFRESH, posted at the emulator's frame
+    // boundary). Each display tick copies the newest snapshot into a slot of
+    // a per-face staging ring; a blit encoder then moves it into the private
+    // texture inside the SAME command buffer that draws it. The CPU never
+    // writes textures directly - that raced in-flight GPU reads from earlier
+    // ticks and showed up on screen as tearing.
+    private static let stagingRingDepth = 4             // > max in-flight command buffers (drawable count 3)
+    private static let stagingCapacity = 384 * 304 * 4  // largest framebuffer (overscan), RGBA8
+    private var faceStagingRings: [[MTLBuffer?]] = Array(repeating: Array(repeating: nil, count: 4), count: 6)
+    private var faceRingCursor = Array(repeating: 0, count: 6)
+    private var faceLastStagedSlot = Array(repeating: -1, count: 6)
+    private var faceUploadedSeq = Array(repeating: UInt64(0), count: 6)
+    private var faceDirty = Array(repeating: false, count: 6)
 
     // 3D Physics Engine & Rotation
     private var rotX: Float = 0.3
@@ -200,8 +213,21 @@ final class CubeViewController: UIViewController {
             mipmapped: false
         )
         descriptor.usage = [.shaderRead]
+        // GPU-private: contents arrive exclusively via blit encoders, so no
+        // CPU write can ever race an in-flight GPU read (the tearing source)
+        descriptor.storageMode = .private
         faceTextures[index] = metalDevice.makeTexture(descriptor: descriptor)
-        facePixelBuffers[index] = [UInt8](repeating: 0, count: width * height * 4)
+    }
+
+    private func ensureStagingSlot(face: Int, slot: Int) -> MTLBuffer? {
+        if let buffer = faceStagingRings[face][slot], buffer.length >= CubeViewController.stagingCapacity {
+            return buffer
+        }
+        guard let buffer = metalDevice.makeBuffer(length: CubeViewController.stagingCapacity, options: .storageModeShared) else {
+            return nil
+        }
+        faceStagingRings[face][slot] = buffer
+        return buffer
     }
 
     // MARK: - Display Loop & Physics
@@ -221,29 +247,30 @@ final class CubeViewController: UIViewController {
     @objc private func onDisplayTick() {
         let bridge = UNGCubeBridge.shared()
 
-        // 1. Fetch frames for 6 active instances
+        // 1. Pull the newest end-of-frame staged snapshots into the staging
+        // ring (CPU side). The bridge staged them atomically at the
+        // emulator's frame boundary, so every copy is a complete frame
         for i in 0..<6 {
+            let seqNow = bridge.stagedFrameSequence(forIndex: i)
+            if seqNow == 0 || seqNow == faceUploadedSeq[i] { continue }
+
+            let slot = faceRingCursor[i] % CubeViewController.stagingRingDepth
+            guard let staging = ensureStagingSlot(face: i, slot: slot) else { continue }
+
             var w: UInt16 = 0
             var h: UInt16 = 0
-            var ts: UInt64 = 0
+            var seq: UInt64 = 0
+            if bridge.copyStagedFrame(forIndex: i, toBuffer: staging.contents(), capacity: staging.length, width: &w, height: &h, sequence: &seq),
+               seq != faceUploadedSeq[i] {
+                faceUploadedSeq[i] = seq
+                faceDirty[i] = true
+                faceLastStagedSlot[i] = slot
+                faceRingCursor[i] += 1
 
-            if bridge.getFrameInfo(forIndex: i, width: &w, height: &h, timestamp: &ts) {
                 if w != faceWidths[i] || h != faceHeights[i] {
                     faceWidths[i] = w
                     faceHeights[i] = h
                     ensureFaceTexture(index: i, width: Int(w), height: Int(h))
-                }
-
-                if ts != faceTimestamps[i] {
-                    faceTimestamps[i] = ts
-                    let size = Int(w) * Int(h) * 4
-                    if facePixelBuffers[i].count != size {
-                        facePixelBuffers[i] = [UInt8](repeating: 0, count: size)
-                    }
-                    if bridge.copyFrame(forIndex: i, toBuffer: &facePixelBuffers[i], size: size) {
-                        let region = MTLRegionMake2D(0, 0, Int(w), Int(h))
-                        faceTextures[i]?.replace(region: region, mipmapLevel: 0, withBytes: facePixelBuffers[i], bytesPerRow: Int(w) * 4)
-                    }
                 }
             }
         }
@@ -294,8 +321,33 @@ final class CubeViewController: UIViewController {
         renderPass.depthAttachment.clearDepth = 1.0
         renderPass.depthAttachment.storeAction = .dontCare
 
-        guard let commandBuffer = commandQueue.makeCommandBuffer(),
-              let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPass) else { return }
+        guard let commandBuffer = commandQueue.makeCommandBuffer() else { return }
+
+        // Atomic GPU-side upload: ring slot -> private texture via a blit
+        // encoder, hardware-ordered before the render encoder inside this
+        // command buffer. Ring depth exceeds the layer's in-flight command
+        // buffer count, so a CPU refill never collides with a pending blit.
+        if let blit = commandBuffer.makeBlitCommandEncoder() {
+            for i in 0..<6 where faceDirty[i] {
+                faceDirty[i] = false
+                let slot = faceLastStagedSlot[i]
+                guard slot >= 0,
+                      let staging = faceStagingRings[i][slot],
+                      let tex = faceTextures[i] else { continue }
+                let w = Int(faceWidths[i])
+                let h = Int(faceHeights[i])
+                guard w > 0, h > 0 else { continue }
+                blit.copy(from: staging, sourceOffset: 0,
+                          sourceBytesPerRow: w * 4,
+                          sourceBytesPerImage: w * h * 4,
+                          sourceSize: MTLSize(width: w, height: h, depth: 1),
+                          to: tex, destinationSlice: 0, destinationLevel: 0,
+                          destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0))
+            }
+            blit.endEncoding()
+        }
+
+        guard let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPass) else { return }
 
         // Calculate Matrices using aspect ratio from exact drawable dimensions
         let aspect = Float(drawWidth) / Float(drawHeight)
