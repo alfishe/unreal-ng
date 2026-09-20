@@ -124,7 +124,11 @@ app_result app_init(const app_init_params* params)
 
 #if defined(ENABLE_AUTOMATION)
     try {
-        Automation::GetInstance().start();
+        // Host-requested listen port: 0 keeps the documented 8090 default.
+        // Without this the port parameter was silently ignored and every
+        // embed host raced for 8090 - whichever process lost the race served
+        // nothing while the automation client talked to a different process.
+        Automation::GetInstance().start(params->webapi_port);
     } catch (...) {
         LOGERROR("app_init - Automation initialization failed");
     }

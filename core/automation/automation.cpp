@@ -55,7 +55,7 @@ Automation& Automation::GetInstance()
 
 /// region <Methods>
 
-bool Automation::start()
+bool Automation::start(uint16_t webApiPort)
 {
     bool result = true;
 
@@ -74,7 +74,7 @@ bool Automation::start()
 #endif
 
 #if ENABLE_WEBAPI_AUTOMATION
-    result &= startWebAPI();
+    result &= startWebAPI(webApiPort);
 #endif
 
 #if ENABLE_CLI_AUTOMATION
@@ -212,14 +212,14 @@ bool Automation::startPython()
 #endif
 
 #if ENABLE_WEBAPI_AUTOMATION
-bool Automation::startWebAPI()
+bool Automation::startWebAPI(uint16_t port)
 {
     bool result = true;
 
     _webAPI = new AutomationWebAPI();
     if (_webAPI)
     {
-        _webAPI->start();
+        _webAPI->start(port);
     }
     else
     {

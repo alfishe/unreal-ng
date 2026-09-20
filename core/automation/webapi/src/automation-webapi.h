@@ -8,6 +8,7 @@ class AutomationWebAPI
 protected:
     std::thread* _thread = nullptr;
     volatile bool _stopThread = false;
+    uint16_t _port = 8090;
     /// endregion </Fields>
 
     /// region <Constructors / destructors>
@@ -35,7 +36,9 @@ public:
 
     /// region <Methods>
 public:
-    void start();
+    /// @brief Start the WebAPI server thread
+    /// @param port Listen port; 0 falls back to the default 8090
+    void start(uint16_t port = 8090);
     void stop();
     /// endregion </Methods>
 

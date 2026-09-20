@@ -80,7 +80,9 @@ public:
 
     /// region <Methods>
 public:
-    bool start();
+    /// @brief Start all enabled automation modules
+    /// @param webApiPort WebAPI listen port; 0 falls back to the default 8090
+    bool start(uint16_t webApiPort = 8090);
     void stop();
     
     // Videowall
@@ -112,7 +114,7 @@ public:
 protected:
     bool startLua();
     bool startPython();
-    bool startWebAPI();
+    bool startWebAPI(uint16_t port);
     bool startCLI();
     bool startGDB();
     bool startDezog();

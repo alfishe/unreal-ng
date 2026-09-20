@@ -138,10 +138,11 @@ static std::string loadHtmlFile(const std::string& filename)
 }
 
 /// region <Methods>
-void AutomationWebAPI::start()
+void AutomationWebAPI::start(uint16_t port)
 {
     stop();
 
+    _port = (port != 0) ? port : 8090;
     _stopThread = false;
 
     // Create a new thread and run HTTP server in it
@@ -194,7 +195,7 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
 
     // CRITICAL: Check port availability BEFORE drogon initialization
     // This prevents drogon from calling exit() on bind failure
-    const int port = 8090;
+    const int port = static_cast<int>(webApi->_port);
     if (!isPortAvailable(port))
     {
         std::cerr << std::endl;
@@ -216,11 +217,11 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
     }
 
     // Log startup info
-    LOG_INFO << "Starting server on port 8090.";
-    LOG_INFO << "API Documentation: http://localhost:8090/";
-    LOG_INFO << "Emulator API: http://localhost:8090/api/v1/emulator";
-    LOG_INFO << "OpenAPI Spec: http://localhost:8090/api/v1/openapi.json";
-    LOG_INFO << "WebSocket: ws://localhost:8090/api/v1/websocket";
+    LOG_INFO << "Starting server on port " << port << ".";
+    LOG_INFO << "API Documentation: http://localhost:" << port << "/";
+    LOG_INFO << "Emulator API: http://localhost:" << port << "/api/v1/emulator";
+    LOG_INFO << "OpenAPI Spec: http://localhost:" << port << "/api/v1/openapi.json";
+    LOG_INFO << "WebSocket: ws://localhost:" << port << "/api/v1/websocket";
 
     drogon::HttpAppFramework& app = drogon::app();
 
@@ -325,7 +326,7 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
     app.setLogPath(logPath)
         .setLogLevel(trantor::Logger::kNumberOfLogLevels)
         .disableSigtermHandling()  // SIGTERM is handled by the main application (unreal-qt or testclient)
-        .addListener("0.0.0.0", 8090)
+        .addListener("0.0.0.0", port)
         .setThreadNum(4)
         .setIdleConnectionTimeout(60)
         .setKeepaliveRequestsNumber(100)
@@ -338,7 +339,7 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
     catch (const std::exception& e)
     {
         LOG_ERROR << "WebAPI server failed to start: " << e.what();
-        LOG_ERROR << "Port 8090 may already be in use. WebAPI will be disabled.";
+        LOG_ERROR << "Port " << port << " may already be in use. WebAPI will be disabled.";
         // Don't exit - just let the thread end gracefully
     }
 }
