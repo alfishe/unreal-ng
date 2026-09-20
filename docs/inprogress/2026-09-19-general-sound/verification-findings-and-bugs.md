@@ -151,10 +151,28 @@ what the firmware does (COM30/PLAYMD parses but never starts the engine).
 
 | Area | Finding |
 |:-----|:--------|
-| Models with GS | `pentagon128k`, `pentagon512k`, `scorpion`, `profscorp` — all `GSType=Z80`, `GSVol=8000`, `gs105a.rom` |
-| Port decode | GS rows present in `portdecoder_pentagon128.cpp` (`#00B3/#00BB/#0033`, low-byte mask) and `portdecoder_scorpion256.cpp` (`(#xx & 0x00F7)==0x00B3` chain) |
+| Models with GS | `pentagon128k`, `pentagon512k`, `scorpion`, `profscorp`, `atm3`, `atm710` — all `GSType=Z80`, `GSVol=8000`, `gs105a.rom` (ATM pair enabled 2026-09-20, see §5.1) |
+| Port decode | GS rows present in `portdecoder_pentagon128.cpp` (`#00B3/#00BB/#0033`, low-byte mask), `portdecoder_scorpion256.cpp` (`(#xx & 0x00F7)==0x00B3` chain) and `portdecoder_atm710.cpp` (same F7-mask family + `#33` full low byte; ATM3 inherits the ATM710 chain) |
 | Mixer registry | GS device registered `mute=false, volume=1.0` (`SoundManager` `AudioDeviceInfo`) — not muted by default |
 | features.ini | `[sound] state=on` |
+
+### 5.1 GS enabled on the ATM models (2026-09-20)
+
+Follow-up to this audit: both ATM configs (`data/configs/atm3`, `data/configs/atm710`) carried
+the full GS wiring (`GSVol`, `gs105a.rom` ROM entry) but were shipped `GSType=NONE`, and the
+ATM710 decoder (shared by ATM3 through inheritance) had no GS arms — the card would have been
+created by a config flip alone but unreachable from the main CPU. Changes:
+
+- `portdecoder_atm710.cpp`: `DecodePortIn` arm for the `(#xx & 0x00F7)==0x00B3` family (read
+  side, normalized to the canonical keys) and `DecodePortOut` arms for the same family plus
+  `#33` (write-only reset/NMI). Verified against every existing ATM arm for collisions — A0=1
+  excludes `#FE`/AY, A1=1 excludes `#7FFD`, low bytes differ from `#77`/`#xF7` (manager group)
+  and the `0x9F` palette mask; placed ahead of the Beta128 arm like the Pentagon table rows.
+- Configs: `GSType=NONE` → `GSType=Z80` in both ATM `unreal.ini` files.
+- Regression tests: `PortDecoder_ATM710_Test.GSHostPortsNormalizeMirrorsToCanonicalKeys`,
+  `.GSHostPortsReachableDuringTrdosSession`, `PortDecoder_ATM3_Test.GSHostPortsReachBaseDecodeThroughOverrides`
+  (mock `PortDevice` registered via `RegisterPortHandler` under the canonical keys, exactly the
+  production `SoundManager::attachToPorts` mechanism).
 
 ## 6. Bugs Found
 

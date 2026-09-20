@@ -129,6 +129,17 @@ uint8_t PortDecoder_ATM710::DecodePortIn(uint16_t port, uint16_t pc)
     // IN A,(F7), CP 1E/1F) must fail so that TR-DOS entry from the 128
     // menu boots classic TR-DOS instead of the sys-BIOS RST 08 launcher.
 
+    // General Sound host ports (GS design §6): #B3/#BB decode by the low
+    // byte with bit3 masked (the (port & 0xF7) == 0xB3 family in Unreal
+    // io.cpp), mirrors normalized to the canonical device keys. #33 has no
+    // read side - it stays undecoded here. PeripheralPortIn marks the port
+    // decoded only when the card is fitted (GSType=Z80); without the card
+    // the access keeps the floating-bus result
+    else if ((port & 0x00F7) == 0x00B3)
+    {
+        const uint16_t gsPort = (port & 0x00FF) == 0x00BB ? 0x00BB : 0x00B3;
+        result = PeripheralPortIn(gsPort);
+    }
     // Beta128 FDC ports
     else if (IsBeta128Port(decodedPort))
     {
@@ -220,6 +231,27 @@ void PortDecoder_ATM710::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc
         else if (IsPort_FFFD(port))
         {
             PeripheralPortOut(PORT_FFFD, value);
+        }
+        // General Sound host ports (GS design §6): #B3/#BB decode by the low
+        // byte with bit3 masked - the (port & 0xF7) == 0xB3 family in Unreal
+        // io.cpp - and #33 fully. Explicit arms normalize mirrors to the
+        // canonical device keys (the raw fall-through dispatches by the exact
+        // 16-bit key and would miss e.g. OUT (#01B3),n). No collision with the
+        // arms above: all three addresses carry A0=1 (outside #FE and both AY
+        // decodes) and A1=1 (outside #7FFD), and their low bytes differ from
+        // #77/#xF7 (memory-manager group) and the 0x9F palette mask. Placed
+        // ahead of the Beta128 arm for the same reason as on the Pentagon
+        // table: the GS addresses carry bits 7,1,0 that the #xxFF-family
+        // system-register decodes key on
+        else if ((port & 0x00F7) == 0x00B3)
+        {
+            const uint16_t gsPort = (port & 0x00FF) == 0x00BB ? 0x00BB : 0x00B3;
+            PeripheralPortOut(gsPort, value);
+        }
+        else if ((port & 0x00FF) == 0x0033)
+        {
+            // GS control (bit7 reset, bit6 NMI) - write-only, no IN counterpart
+            PeripheralPortOut(0x0033, value);
         }
         else
         {

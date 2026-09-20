@@ -652,3 +652,85 @@ TEST_F(PortDecoder_ATM710_Test, PaletteFF_WriteGates_Pen2AndDosLine)
 }
 
 /// endregion </ATM palette port #FF tests>
+
+/// region <General Sound port decode tests>
+
+namespace
+{
+    // Minimal PortDevice registered under the canonical GS keys the same way
+    // SoundManager::attachToPorts registers SoundChip_GeneralSound
+    class GsPortMockDevice : public PortDevice
+    {
+    public:
+        uint8_t portDeviceInMethod(uint16_t port) override
+        {
+            lastPort = port;
+            inCalls++;
+            return static_cast<uint8_t>(port ^ 0xFF);
+        }
+
+        void portDeviceOutMethod(uint16_t port, uint8_t value) override
+        {
+            lastPort = port;
+            lastValue = value;
+            outCalls++;
+        }
+
+        uint16_t lastPort = 0;
+        uint8_t lastValue = 0;
+        int inCalls = 0;
+        int outCalls = 0;
+    };
+}  // namespace
+
+TEST_F(PortDecoder_ATM710_Test, GSHostPortsNormalizeMirrorsToCanonicalKeys)
+{
+    GsPortMockDevice gs;
+    ASSERT_TRUE(_portDecoder->RegisterPortHandler(0x00B3, &gs, static_cast<PortTagSet>(PortTag::SoundGs)));
+    ASSERT_TRUE(_portDecoder->RegisterPortHandler(0x00BB, &gs, static_cast<PortTagSet>(PortTag::SoundGs)));
+    ASSERT_TRUE(_portDecoder->RegisterPortHandler(0x0033, &gs, static_cast<PortTagSet>(PortTag::SoundGs)));
+
+    // IN mirrors: the bit3-masked (port & 0xF7) == 0xB3 family normalizes to
+    // the canonical device keys
+    EXPECT_EQ(_portDecoder->DecodePortIn(0x02B3, 0x0000), 0x4C) << "#02B3 read answers through key #00B3";
+    EXPECT_EQ(gs.lastPort, 0x00B3);
+    EXPECT_EQ(_portDecoder->DecodePortIn(0x01BB, 0x0000), 0x44) << "#01BB read answers through key #00BB";
+    EXPECT_EQ(gs.lastPort, 0x00BB);
+
+    // OUT mirrors: data/command/control all reach the canonical keys
+    _portDecoder->DecodePortOut(0x01B3, 0x5A, 0x0000);
+    EXPECT_EQ(gs.lastPort, 0x00B3);
+    EXPECT_EQ(gs.lastValue, 0x5A);
+    _portDecoder->DecodePortOut(0x02BB, 0xC3, 0x0000);
+    EXPECT_EQ(gs.lastPort, 0x00BB);
+    EXPECT_EQ(gs.lastValue, 0xC3);
+    _portDecoder->DecodePortOut(0x0133, 0x80, 0x0000);
+    EXPECT_EQ(gs.lastPort, 0x0033);
+    EXPECT_EQ(gs.lastValue, 0x80);
+
+    // Neighbouring low bytes stay outside the family: #B7/#F3 keep bit3
+    // unmasked by the F7 mask, #3B is not the control port
+    int outsBefore = gs.outCalls;
+    _portDecoder->DecodePortOut(0x00B7, 0x00, 0x0000);
+    _portDecoder->DecodePortOut(0x00F3, 0x00, 0x0000);
+    _portDecoder->DecodePortOut(0x003B, 0x00, 0x0000);
+    EXPECT_EQ(gs.outCalls, outsBefore) << "#B7/#F3/#3B must not reach the GS card";
+}
+
+TEST_F(PortDecoder_ATM710_Test, GSHostPortsReachableDuringTrdosSession)
+{
+    // The GS card is a separate bus device - it must answer regardless of
+    // the TR-DOS session state that gates the FDC/memory-manager ports
+    // (same contract as the Pentagon table rows, which precede Beta128)
+    GsPortMockDevice gs;
+    ASSERT_TRUE(_portDecoder->RegisterPortHandler(0x00B3, &gs, static_cast<PortTagSet>(PortTag::SoundGs)));
+
+    EmulatorState& state = _context->emulatorState;
+    state.flags |= CF_TRDOS | CF_DOSPORTS;
+
+    _portDecoder->DecodePortOut(0x00B3, 0x11, 0x0000);
+    EXPECT_EQ(gs.lastPort, 0x00B3) << "#B3 must reach the GS card inside a TR-DOS session";
+    EXPECT_EQ(gs.lastValue, 0x11);
+}
+
+/// endregion </General Sound port decode tests>
