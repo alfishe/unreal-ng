@@ -1579,7 +1579,89 @@ namespace PythonBindings
                 SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
                 return gs ? gs->readStatus() : -1;
             }, "Read GS status register (IN #BB semantics)")
-            
+
+            // GS coprocessor triage: always-on activity counters + opt-in
+            // port/DAC event trace - the "is the GS Z80 alive and doing DAC
+            // pushes" tool, same data model as CLI 'gsporttrace' / WebAPI /
+            // MCP / Lua (see gsporttrace.h).
+            .def("gs_counters", [](Emulator& self) -> py::object {
+                auto* ctx = self.GetContext();
+                SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+                if (!gs) return py::none();
+
+                const GSActivityCounters& c = gs->getActivityCounters();
+                py::dict d;
+                d["cpu_steps"] = c.cpuSteps;
+                d["interrupts_accepted"] = c.interruptsAccepted;
+                d["nmis_accepted"] = c.nmisAccepted;
+                d["dac_fetches"] = c.dacFetches;
+                d["volume_latch_writes"] = c.volumeLatchWrites;
+                d["host_commands_received"] = c.hostCommandsReceived;
+                d["host_data_written"] = c.hostDataWritten;
+                d["host_data_read"] = c.hostDataRead;
+                d["last_dac_fetch_gs_cycle"] = c.lastDacFetchGsCycle;
+                d["last_dac_fetch_frame"] = c.lastDacFetchFrame;
+                d["trace_capturing"] = gs->isPortTraceCapturing();
+                d["trace_event_count"] = gs->getPortTraceEventCount();
+                d["pc"] = gs->getCPUReg(regPC);
+                d["halted"] = gs->isCPUHalted();
+                return d;
+            }, "GS activity counters: CPU steps, interrupts/NMIs accepted, DAC fetches, volume writes, host mailbox traffic")
+            .def("gs_porttrace_start", [](Emulator& self) {
+                auto* ctx = self.GetContext();
+                SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+                if (gs) gs->startPortTrace();
+            }, "Start capturing the GS port/DAC event trace (clears the buffer)")
+            .def("gs_porttrace_stop", [](Emulator& self) {
+                auto* ctx = self.GetContext();
+                SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+                if (gs) gs->stopPortTrace();
+            }, "Stop capturing the GS port/DAC event trace")
+            .def("gs_porttrace_pause", [](Emulator& self) {
+                auto* ctx = self.GetContext();
+                SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+                if (gs) gs->pausePortTrace();
+            }, "Pause the GS port/DAC event trace")
+            .def("gs_porttrace_resume", [](Emulator& self) {
+                auto* ctx = self.GetContext();
+                SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+                if (gs) gs->resumePortTrace();
+            }, "Resume a paused GS port/DAC event trace")
+            .def("gs_porttrace_clear", [](Emulator& self) {
+                auto* ctx = self.GetContext();
+                SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+                if (gs) gs->clearPortTrace();
+            }, "Clear the GS port/DAC event trace buffer")
+            .def("gs_porttrace_events", [](Emulator& self, int count) -> py::object {
+                auto* ctx = self.GetContext();
+                SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+                if (!gs) return py::none();
+
+                auto events = gs->getPortTraceLast(static_cast<size_t>(count));
+                py::list result;
+                for (const auto& e : events)
+                {
+                    py::dict ev;
+                    ev["timestamp"] = e.timestamp;
+                    ev["frame"] = e.frameNumber;
+                    switch (e.side)
+                    {
+                        case GSTraceSide::Host: ev["side"] = "host"; break;
+                        case GSTraceSide::GsInternal: ev["side"] = "gs"; break;
+                        case GSTraceSide::DacFetch: ev["side"] = "dac"; break;
+                        case GSTraceSide::Interrupt: ev["side"] = "interrupt"; break;
+                    }
+                    ev["direction"] = e.isOut() ? "out" : "in";
+                    ev["port"] = e.port;
+                    ev["value"] = e.value;
+                    ev["pc"] = e.pc;
+                    if (e.side == GSTraceSide::DacFetch) ev["channel"] = e.channel;
+                    if (e.side == GSTraceSide::Interrupt) ev["nmi"] = e.isNmi();
+                    result.append(ev);
+                }
+                return result;
+            }, "Last N buffered GS trace events (host ports, GS-side ports, DAC fetches, interrupts)", py::arg("count") = 50)
+
             // Advanced disk operations
             .def("disk_info", [](Emulator& self, int drive) -> py::dict {
                 py::dict info;

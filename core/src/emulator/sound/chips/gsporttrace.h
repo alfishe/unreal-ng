@@ -1,0 +1,124 @@
+#pragma once
+#include "stdafx.h"
+
+#include <atomic>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "common/ringbuffer.h"
+
+/// ============================================================================
+/// GENERAL SOUND PORT/ACTIVITY TRACER
+/// ============================================================================
+/// Structured, low-overhead ring buffer of I/O and DAC events for the GS
+/// coprocessor (SoundChip_GeneralSound) - the GS-scoped counterpart of the
+/// main-Z80 PortDiagnosticRecorder (core/src/emulator/ports/portdiagrecorder.h).
+///
+/// The GS card has its own independent Z80 core, its own 8-bit GS-side port
+/// space (0x00-0x0B) and a separate 16-bit host-side port space (#B3/#BB/#33
+/// as seen by the MAIN Z80). Both are folded into one event stream here so a
+/// single trace answers "is the GS coprocessor alive and doing DAC pushes".
+///
+/// Runtime-gated by FeatureManager feature "porttrace_gs" (alias "ptgs").
+/// ============================================================================
+
+/// Which side of the card originated the event
+enum class GSTraceSide : uint8_t
+{
+    Host = 0,       // ZX-side port access (#B3/#BB/#33), main Z80 is the actor
+    GsInternal = 1, // GS-side port access (0x00-0x0B), GS Z80 is the actor
+    DacFetch = 2,   // GS Z80 read in 0x6000-0x7FFF: DAC channel sample latch
+    Interrupt = 3,  // 37.5 kHz periodic interrupt accepted (or NMI)
+};
+
+namespace GSTraceFlags
+{
+constexpr uint8_t kDirectionOut = 1u << 0;  // 0 = IN/read, 1 = OUT/write
+constexpr uint8_t kNmi          = 1u << 1;  // Interrupt event was an NMI, not the periodic INT
+}  // namespace GSTraceFlags
+
+/// One structured record per GS I/O operation, DAC fetch, or interrupt. 24 bytes.
+struct GSTraceEvent
+{
+    int64_t  timestamp = 0;   // GS cycle domain (12 MHz), from totalGsCycles() - monotonic across frames
+    uint32_t frameNumber = 0; // Emulator (ZX) frame counter at event time
+    uint16_t port = 0;        // Host: #B3/#BB/#33. GsInternal: 0x00-0x0B. DacFetch: 0x6000-0x7FFF address. Interrupt: unused (0)
+    uint16_t pc = 0;          // GS CPU PC at the time of the event
+    uint8_t  value = 0;       // Data byte (port value, or DAC sample byte)
+    uint8_t  channel = 0;     // DacFetch only: channel index 0-3
+    GSTraceSide side = GSTraceSide::Host;
+    uint8_t  flags = 0;       // GSTraceFlags bitfield
+
+    bool isOut() const { return flags & GSTraceFlags::kDirectionOut; }
+    bool isNmi() const { return flags & GSTraceFlags::kNmi; }
+};
+
+/// Cheap always-on activity counters (no ring buffer, no feature flag) - the
+/// first thing to check when triaging "is the GS coprocessor doing anything
+/// at all": cpuSteps/interruptsAccepted prove the core is executing,
+/// dacFetches/lastDacFetchGsCycle prove it is actually producing audio data.
+struct GSActivityCounters
+{
+    uint64_t cpuSteps = 0;             // z80ex_step() calls that returned > 0 t-states
+    uint64_t interruptsAccepted = 0;   // z80ex_int() acceptances (37.5 kHz periodic)
+    uint64_t nmisAccepted = 0;         // z80ex_nmi() acceptances (#33 bit6)
+    uint64_t dacFetches = 0;           // Reads in 0x6000-0x7FFF (any channel)
+    uint64_t volumeLatchWrites = 0;    // GS-side OUT to ports 0x06-0x09
+    uint64_t hostCommandsReceived = 0; // ZX OUT #BB
+    uint64_t hostDataWritten = 0;      // ZX OUT #B3
+    uint64_t hostDataRead = 0;         // ZX IN #B3
+    int64_t  lastDacFetchGsCycle = -1; // totalGsCycles() at the most recent DAC fetch, -1 = never
+    uint32_t lastDacFetchFrame = 0;    // Frame number of the most recent DAC fetch
+};
+
+/// Single-producer (GS coprocessor callbacks, emulator thread), occasional
+/// consumers (CLI/WebAPI/MCP/Lua/Python). Deliberately smaller/simpler than
+/// PortDiagnosticRecorder (no filter DSL, no export formats) - the GS port
+/// space is 12 addresses wide and a raw capture is already small.
+class GSPortTraceRecorder
+{
+public:
+    static constexpr size_t kDefaultCapacity = 65536;  // 1.5 MB - GS traffic is orders of magnitude sparser than main-Z80
+
+    GSPortTraceRecorder() : _events(std::make_unique<RingBuffer<GSTraceEvent>>(kDefaultCapacity)) {}
+
+    void start()
+    {
+        _events->clear();
+        _capturing.store(true, std::memory_order_release);
+    }
+    void stop() { _capturing.store(false, std::memory_order_release); }
+    void pause() { _paused.store(true, std::memory_order_release); }
+    void resume() { _paused.store(false, std::memory_order_release); }
+    void clear() { _events->clear(); }
+
+    bool isCapturing() const
+    {
+        return _capturing.load(std::memory_order_acquire) && !_paused.load(std::memory_order_acquire);
+    }
+    bool isArmed() const { return _capturing.load(std::memory_order_acquire); }
+
+    void record(const GSTraceEvent& event)
+    {
+        if (isCapturing())
+            _events->push(event);
+    }
+
+    std::vector<GSTraceEvent> getAll() const { return _events->getAll(); }
+    std::vector<GSTraceEvent> getLast(size_t count) const
+    {
+        std::vector<GSTraceEvent> all = _events->getAll();
+        if (all.size() <= count)
+            return all;
+        return std::vector<GSTraceEvent>(all.end() - static_cast<long>(count), all.end());
+    }
+    size_t eventCount() const { return _events->size(); }
+    uint64_t totalProduced() const { return _events->totalEventsProduced(); }
+    uint64_t totalEvicted() const { return _events->totalEventsEvicted(); }
+
+private:
+    std::atomic<bool> _capturing{false};
+    std::atomic<bool> _paused{false};
+    std::unique_ptr<RingBuffer<GSTraceEvent>> _events;
+};

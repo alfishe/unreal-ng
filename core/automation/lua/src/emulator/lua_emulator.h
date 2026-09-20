@@ -1931,6 +1931,100 @@ public:
             return gs ? gs->readStatus() : -1;
         });
 
+        // GS coprocessor triage: always-on activity counters + opt-in
+        // port/DAC event trace - the "is the GS Z80 alive and doing DAC
+        // pushes" tool, same data model as CLI 'gsporttrace' / WebAPI /
+        // MCP / Python (see gsporttrace.h).
+        lua.set_function("gs_counters", [this]() -> sol::object {
+            sol::state_view lua_view(*_lua);
+            if (!_emulator) return sol::make_object(lua_view, sol::lua_nil);
+            auto* ctx = _emulator->GetContext();
+            SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+            if (!gs) return sol::make_object(lua_view, sol::lua_nil);
+
+            const GSActivityCounters& c = gs->getActivityCounters();
+            sol::table t = lua_view.create_table();
+            t["cpu_steps"] = static_cast<double>(c.cpuSteps);
+            t["interrupts_accepted"] = static_cast<double>(c.interruptsAccepted);
+            t["nmis_accepted"] = static_cast<double>(c.nmisAccepted);
+            t["dac_fetches"] = static_cast<double>(c.dacFetches);
+            t["volume_latch_writes"] = static_cast<double>(c.volumeLatchWrites);
+            t["host_commands_received"] = static_cast<double>(c.hostCommandsReceived);
+            t["host_data_written"] = static_cast<double>(c.hostDataWritten);
+            t["host_data_read"] = static_cast<double>(c.hostDataRead);
+            t["last_dac_fetch_gs_cycle"] = static_cast<double>(c.lastDacFetchGsCycle);
+            t["last_dac_fetch_frame"] = static_cast<double>(c.lastDacFetchFrame);
+            t["trace_capturing"] = gs->isPortTraceCapturing();
+            t["trace_event_count"] = static_cast<double>(gs->getPortTraceEventCount());
+            t["pc"] = gs->getCPUReg(regPC);
+            t["halted"] = gs->isCPUHalted();
+            return t;
+        });
+
+        lua.set_function("gs_porttrace_start", [this]() {
+            if (!_emulator) return;
+            auto* ctx = _emulator->GetContext();
+            SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+            if (gs) gs->startPortTrace();
+        });
+        lua.set_function("gs_porttrace_stop", [this]() {
+            if (!_emulator) return;
+            auto* ctx = _emulator->GetContext();
+            SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+            if (gs) gs->stopPortTrace();
+        });
+        lua.set_function("gs_porttrace_pause", [this]() {
+            if (!_emulator) return;
+            auto* ctx = _emulator->GetContext();
+            SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+            if (gs) gs->pausePortTrace();
+        });
+        lua.set_function("gs_porttrace_resume", [this]() {
+            if (!_emulator) return;
+            auto* ctx = _emulator->GetContext();
+            SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+            if (gs) gs->resumePortTrace();
+        });
+        lua.set_function("gs_porttrace_clear", [this]() {
+            if (!_emulator) return;
+            auto* ctx = _emulator->GetContext();
+            SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+            if (gs) gs->clearPortTrace();
+        });
+
+        lua.set_function("gs_porttrace_events", [this](sol::optional<int> count) -> sol::object {
+            sol::state_view lua_view(*_lua);
+            if (!_emulator) return sol::make_object(lua_view, sol::lua_nil);
+            auto* ctx = _emulator->GetContext();
+            SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+            if (!gs) return sol::make_object(lua_view, sol::lua_nil);
+
+            auto events = gs->getPortTraceLast(static_cast<size_t>(count.value_or(50)));
+            sol::table result = lua_view.create_table();
+            int idx = 1;
+            for (const auto& e : events)
+            {
+                sol::table ev = lua_view.create_table();
+                ev["timestamp"] = static_cast<double>(e.timestamp);
+                ev["frame"] = e.frameNumber;
+                switch (e.side)
+                {
+                    case GSTraceSide::Host: ev["side"] = "host"; break;
+                    case GSTraceSide::GsInternal: ev["side"] = "gs"; break;
+                    case GSTraceSide::DacFetch: ev["side"] = "dac"; break;
+                    case GSTraceSide::Interrupt: ev["side"] = "interrupt"; break;
+                }
+                ev["direction"] = e.isOut() ? "out" : "in";
+                ev["port"] = e.port;
+                ev["value"] = e.value;
+                ev["pc"] = e.pc;
+                if (e.side == GSTraceSide::DacFetch) ev["channel"] = e.channel;
+                if (e.side == GSTraceSide::Interrupt) ev["nmi"] = e.isNmi();
+                result[idx++] = ev;
+            }
+            return result;
+        });
+
         // Advanced disk operations
         lua.set_function("disk_info", [this](int drive) -> sol::table {
             sol::state_view lua_view(*_lua);

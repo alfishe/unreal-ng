@@ -294,6 +294,8 @@ void SoundChip_GeneralSound::runTo(int64_t target)
             {
                 _nmiPending = false;
                 _intQuantum = static_cast<int16_t>(_intQuantum + t);
+                _activityCounters.nmisAccepted++;
+                traceEvent(GSTraceSide::Interrupt, 0, 0, false, 0, GSTraceFlags::kNmi);
                 continue;
             }
         }
@@ -305,7 +307,11 @@ void SoundChip_GeneralSound::runTo(int64_t target)
             // design §2.4 note)
             int t = z80ex_int(_cpu);
             if (t > 0)
+            {
                 _intQuantum = static_cast<int16_t>(_intQuantum + t);
+                _activityCounters.interruptsAccepted++;
+                traceEvent(GSTraceSide::Interrupt, 0, 0, false);
+            }
             _intQuantum = static_cast<int16_t>(_intQuantum - GS_CYCLES_PER_INT);
             _gsCyclesAbs += GS_CYCLES_PER_INT;
             continue;
@@ -315,10 +321,37 @@ void SoundChip_GeneralSound::runTo(int64_t target)
         if (t <= 0)
             break; // Defensive: a stuck core must not hang the emulator
         _intQuantum = static_cast<int16_t>(_intQuantum + t);
+        _activityCounters.cpuSteps++;
     }
 }
 
 /// endregion </Lazy sync core>
+
+/// region <Diagnostics>
+
+uint32_t SoundChip_GeneralSound::currentFrameNumber() const
+{
+    return _context ? static_cast<uint32_t>(_context->emulatorState.frame_counter) : 0;
+}
+
+void SoundChip_GeneralSound::traceEvent(GSTraceSide side, uint16_t port, uint8_t value, bool isOut, uint8_t channel, uint8_t extraFlags)
+{
+    if (!_portTrace.isCapturing())
+        return;
+
+    GSTraceEvent event;
+    event.timestamp = totalGsCycles();
+    event.frameNumber = currentFrameNumber();
+    event.port = port;
+    event.pc = getCPUReg(regPC);
+    event.value = value;
+    event.channel = channel;
+    event.side = side;
+    event.flags = static_cast<uint8_t>((isOut ? GSTraceFlags::kDirectionOut : 0) | extraFlags);
+    _portTrace.record(event);
+}
+
+/// endregion </Diagnostics>
 
 /// region <Frame lifecycle>
 
@@ -440,9 +473,12 @@ uint8_t SoundChip_GeneralSound::portDeviceInMethod(uint16_t port)
         case 0xB3: // GSDAT: flag clears, the GS->ZX byte returns
             flush();
             _status &= 0x7F;
+            _activityCounters.hostDataRead++;
+            traceEvent(GSTraceSide::Host, PORT_DATA, _dataToHost, false);
             return _dataToHost;
         case 0xBB: // GSCOM read: status, bits 1-6 read as 1 (pull-ups)
             flush();
+            traceEvent(GSTraceSide::Host, PORT_COMMAND, _status | 0x7E, false);
             return _status | 0x7E;
         default:
             return 0xFF;
@@ -455,6 +491,7 @@ void SoundChip_GeneralSound::portDeviceOutMethod(uint16_t port, uint8_t value)
     {
         case 0x33: // GSCTR: bit7 = reset, bit6 = NMI (both discard nothing
             //       else - Unreal out_gs applies them before any flush)
+            traceEvent(GSTraceSide::Host, PORT_CONTROL, value, true);
             if (value & 0x80)
             {
                 resetCard();
@@ -472,11 +509,15 @@ void SoundChip_GeneralSound::portDeviceOutMethod(uint16_t port, uint8_t value)
             flush();
             _dataFromHost = value;
             _status |= 0x80;
+            _activityCounters.hostDataWritten++;
+            traceEvent(GSTraceSide::Host, PORT_DATA, value, true);
             return;
         case 0xBB: // GSCOM write
             flush();
             _commandFromHost = value;
             _status |= 0x01;
+            _activityCounters.hostCommandsReceived++;
+            traceEvent(GSTraceSide::Host, PORT_COMMAND, value, true);
             return;
         default:
             return;
@@ -524,6 +565,7 @@ void SoundChip_GeneralSound::triggerNMI()
 
 uint8_t SoundChip_GeneralSound::gsIn(uint16_t port)
 {
+    traceEvent(GSTraceSide::GsInternal, port & 0x00FF, 0, false);
     switch (port & 0x00FF)
     {
         case 0x01: return _commandFromHost; // flag NOT cleared here - see 0x05
@@ -539,6 +581,7 @@ uint8_t SoundChip_GeneralSound::gsIn(uint16_t port)
 
 void SoundChip_GeneralSound::gsOut(uint16_t port, uint8_t value)
 {
+    traceEvent(GSTraceSide::GsInternal, port & 0x00FF, value, true);
     switch (port & 0x00FF)
     {
         case 0x00: // MPAG - firmware/Xpeccy encoding (design §2.3)
@@ -556,6 +599,7 @@ void SoundChip_GeneralSound::gsOut(uint16_t port, uint8_t value)
             // Volume latches: 6-bit, channel = low nibble - 6 (Unreal gsz80.cpp:353)
             int channel = (port & 0x0F) - 6;
             _channelVol[channel] = value & 0x3F;
+            _activityCounters.volumeLatchWrites++;
             emitSample(); // level change - emit at the current position
             return;
         }
@@ -622,6 +666,10 @@ void SoundChip_GeneralSound::dacFetch(uint16_t addr, uint8_t value)
     {
         int channel = (addr >> 8) & 3;
         _channelData[channel] = value;
+        _activityCounters.dacFetches++;
+        _activityCounters.lastDacFetchGsCycle = totalGsCycles();
+        _activityCounters.lastDacFetchFrame = currentFrameNumber();
+        traceEvent(GSTraceSide::DacFetch, addr, value, false, static_cast<uint8_t>(channel));
         emitSample();
     }
 }

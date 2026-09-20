@@ -164,6 +164,10 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"port-trace", &CLIProcessor::HandlePortTrace},
                         {"porttrace", &CLIProcessor::HandlePortTrace},
 
+                        // General Sound coprocessor triage (activity counters + port/DAC trace)
+                        {"gsporttrace", &CLIProcessor::HandleGSPortTrace},
+                        {"gs-porttrace", &CLIProcessor::HandleGSPortTrace},
+
                         // Settings commands
                         {"setting", &CLIProcessor::HandleSetting},
                         {"settings", &CLIProcessor::HandleSetting},

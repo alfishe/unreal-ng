@@ -694,6 +694,202 @@ void EmulatorAPI::postControlAudioGS(const HttpRequestPtr& req, std::function<vo
     callback(resp);
 }
 
+namespace
+{
+const char* gsTraceSideToString(GSTraceSide side)
+{
+    switch (side)
+    {
+        case GSTraceSide::Host: return "host";
+        case GSTraceSide::GsInternal: return "gs";
+        case GSTraceSide::DacFetch: return "dac";
+        case GSTraceSide::Interrupt: return "interrupt";
+    }
+    return "unknown";
+}
+}  // namespace
+
+/// @brief GET /api/v1/emulator/{id}/state/audio/gs/porttrace?events=N
+/// Always-on activity counters (proves whether the GS coprocessor is
+/// executing and pushing DAC samples) + trace session status, optionally the
+/// last N buffered events. Same data model as CLI 'gsporttrace' / MCP / Lua /
+/// Python - the GS-coprocessor triage tool (see gsporttrace.h).
+void EmulatorAPI::getStateAudioGSPortTrace(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                           const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator not found with ID: " + id;
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    EmulatorContext* context = emulator->GetContext();
+    SoundManager* soundManager = context ? context->pSoundManager : nullptr;
+    SoundChip_GeneralSound* gs = soundManager ? soundManager->getGeneralSound() : nullptr;
+
+    if (!gs)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "General Sound card not fitted (configure [SOUND] GSType=Z80)";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    const GSActivityCounters& c = gs->getActivityCounters();
+    Json::Value ret;
+    Json::Value counters;
+    counters["cpu_steps"] = static_cast<Json::UInt64>(c.cpuSteps);
+    counters["interrupts_accepted"] = static_cast<Json::UInt64>(c.interruptsAccepted);
+    counters["nmis_accepted"] = static_cast<Json::UInt64>(c.nmisAccepted);
+    counters["dac_fetches"] = static_cast<Json::UInt64>(c.dacFetches);
+    counters["volume_latch_writes"] = static_cast<Json::UInt64>(c.volumeLatchWrites);
+    counters["host_commands_received"] = static_cast<Json::UInt64>(c.hostCommandsReceived);
+    counters["host_data_written"] = static_cast<Json::UInt64>(c.hostDataWritten);
+    counters["host_data_read"] = static_cast<Json::UInt64>(c.hostDataRead);
+    counters["last_dac_fetch_gs_cycle"] = static_cast<Json::Int64>(c.lastDacFetchGsCycle);
+    counters["last_dac_fetch_frame"] = static_cast<Json::UInt64>(c.lastDacFetchFrame);
+    ret["counters"] = counters;
+
+    Json::Value trace;
+    trace["capturing"] = gs->isPortTraceCapturing();
+    trace["armed"] = gs->isPortTraceArmed();
+    trace["event_count"] = static_cast<Json::UInt64>(gs->getPortTraceEventCount());
+    trace["total_produced"] = static_cast<Json::UInt64>(gs->getPortTraceTotalProduced());
+    trace["total_evicted"] = static_cast<Json::UInt64>(gs->getPortTraceTotalEvicted());
+    ret["trace"] = trace;
+
+    Json::Value cpu;
+    cpu["pc"] = gs->getCPUReg(regPC);
+    cpu["halted"] = gs->isCPUHalted();
+    ret["cpu"] = cpu;
+
+    std::string eventsParam = req->getParameter("events");
+    if (!eventsParam.empty())
+    {
+        size_t count = 50;
+        try { count = static_cast<size_t>(std::stoul(eventsParam)); } catch (...) {}
+        auto events = gs->getPortTraceLast(count);
+
+        Json::Value eventsJson(Json::arrayValue);
+        for (const auto& e : events)
+        {
+            Json::Value ev;
+            ev["timestamp"] = static_cast<Json::Int64>(e.timestamp);
+            ev["frame"] = e.frameNumber;
+            ev["side"] = gsTraceSideToString(e.side);
+            ev["direction"] = e.isOut() ? "out" : "in";
+            ev["port"] = e.port;
+            ev["value"] = e.value;
+            ev["pc"] = e.pc;
+            if (e.side == GSTraceSide::DacFetch)
+                ev["channel"] = e.channel;
+            if (e.side == GSTraceSide::Interrupt)
+                ev["nmi"] = e.isNmi();
+            eventsJson.append(ev);
+        }
+        ret["events"] = eventsJson;
+    }
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/{id}/control/audio/gs/porttrace — body: {"action": "start|stop|pause|resume|clear"}
+void EmulatorAPI::postControlAudioGSPortTrace(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                              const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator not found with ID: " + id;
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    EmulatorContext* context = emulator->GetContext();
+    SoundManager* soundManager = context ? context->pSoundManager : nullptr;
+    SoundChip_GeneralSound* gs = soundManager ? soundManager->getGeneralSound() : nullptr;
+
+    if (!gs)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "General Sound card not fitted (configure [SOUND] GSType=Z80)";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    auto json = req->getJsonObject();
+    if (!json || !json->isMember("action") || !json->get("action", "").isString())
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Missing or invalid 'action' field";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    const std::string action = json->get("action", "").asString();
+    Json::Value ret;
+    ret["status"] = "success";
+    ret["action"] = action;
+
+    if (action == "start")
+        gs->startPortTrace();
+    else if (action == "stop")
+        gs->stopPortTrace();
+    else if (action == "pause")
+        gs->pausePortTrace();
+    else if (action == "resume")
+        gs->resumePortTrace();
+    else if (action == "clear")
+        gs->clearPortTrace();
+    else
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Unknown action '" + action + "' (expected start, stop, pause, resume or clear)";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
 /// @brief GET /api/v1/emulator/{id}/state/audio/covox
 void EmulatorAPI::getStateAudioCovox(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                      const std::string& id) const

@@ -225,6 +225,10 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getStateAudioChannels, "/api/v1/emulator/{id}/state/audio/channels", drogon::Get);
     // GS control actions (GS design §11.2)
     ADD_METHOD_TO(EmulatorAPI::postControlAudioGS, "/api/v1/emulator/{id}/control/audio/gs", drogon::Post);
+    // GS triage: activity counters + opt-in port/DAC event trace
+    ADD_METHOD_TO(EmulatorAPI::getStateAudioGSPortTrace, "/api/v1/emulator/{id}/state/audio/gs/porttrace", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postControlAudioGSPortTrace, "/api/v1/emulator/{id}/control/audio/gs/porttrace",
+                  drogon::Post);
 
     // Audio state inspection (active emulator - no ID required)
     ADD_METHOD_TO(EmulatorAPI::getStateAudioAYActive, "/api/v1/emulator/state/audio/ay", drogon::Get);
@@ -814,6 +818,20 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void postControlAudioGS(const drogon::HttpRequestPtr& req,
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                             const std::string& id) const;
+
+    /// @brief GET /api/v1/emulator/{id}/state/audio/gs/porttrace?events=N
+    ///        Always-on activity counters + trace session status, optionally
+    ///        the last N buffered events (host ports, GS-side ports, DAC
+    ///        fetches, interrupts) - the GS-coprocessor triage tool.
+    void getStateAudioGSPortTrace(const drogon::HttpRequestPtr& req,
+                                  std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const;
+
+    /// @brief POST /api/v1/emulator/{id}/control/audio/gs/porttrace — body:
+    ///        {"action": "start|stop|pause|resume|clear"}
+    void postControlAudioGSPortTrace(const drogon::HttpRequestPtr& req,
+                                     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                     const std::string& id) const;
 
     void getStateAudioCovox(const drogon::HttpRequestPtr& req,
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback,

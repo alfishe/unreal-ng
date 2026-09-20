@@ -7,6 +7,7 @@
 
 #include "3rdparty/z80ex/z80ex.h"
 #include "emulator/sound/audio.h"
+#include "emulator/sound/chips/gsporttrace.h"
 #include "emulator/ports/portdecoder.h"
 #include "common/modulelogger.h"
 #include "debugger/ttd/ttdserializable.h"  // TTDSerializable (P1.5 peripheral serializer)
@@ -114,6 +115,30 @@ public:
     size_t getRamSizeKB() const { return _ram.size() / 1024; }
     bool isCPUHalted() const { return _cpu && z80ex_doing_halt(_cpu) != 0; }
     uint16_t getCPUReg(Z80_REG_T reg) const { return _cpu ? z80ex_get_reg(_cpu, reg) : 0; }
+
+    /// region <Diagnostics: activity counters + port/DAC trace>
+    /// Cheap always-on counters - the first thing to check when triaging
+    /// "is the GS coprocessor doing anything at all" (CLI/WebAPI/MCP/Lua/Python
+    /// all read this via getActivityCounters()).
+    const GSActivityCounters& getActivityCounters() const { return _activityCounters; }
+    void resetActivityCounters() { _activityCounters = GSActivityCounters{}; }
+
+    /// Structured event trace (host ports, GS-side ports, DAC fetches,
+    /// interrupts) - opt-in, mirrors the main-Z80 port tracer's session model
+    /// but scoped to this chip. See gsporttrace.h.
+    void startPortTrace() { _portTrace.start(); }
+    void stopPortTrace() { _portTrace.stop(); }
+    void pausePortTrace() { _portTrace.pause(); }
+    void resumePortTrace() { _portTrace.resume(); }
+    void clearPortTrace() { _portTrace.clear(); }
+    bool isPortTraceCapturing() const { return _portTrace.isCapturing(); }
+    bool isPortTraceArmed() const { return _portTrace.isArmed(); }
+    std::vector<GSTraceEvent> getPortTraceEvents() const { return _portTrace.getAll(); }
+    std::vector<GSTraceEvent> getPortTraceLast(size_t count) const { return _portTrace.getLast(count); }
+    size_t getPortTraceEventCount() const { return _portTrace.eventCount(); }
+    uint64_t getPortTraceTotalProduced() const { return _portTrace.totalProduced(); }
+    uint64_t getPortTraceTotalEvicted() const { return _portTrace.totalEvicted(); }
+    /// endregion </Diagnostics>
 
     // Automation actions mirroring host-port semantics (each flushes first)
     uint8_t readStatus();           // IN  #BB: _status | 0x7E
@@ -232,4 +257,10 @@ private:
     uint64_t _frameStartZxTacts = 0;
     int64_t _frameGsCycles = 0;
     bool _nmiPending = false;
+
+    // Diagnostics: always-on counters + opt-in structured trace (gsporttrace.h)
+    GSActivityCounters _activityCounters;
+    GSPortTraceRecorder _portTrace;
+    uint32_t currentFrameNumber() const;
+    void traceEvent(GSTraceSide side, uint16_t port, uint8_t value, bool isOut, uint8_t channel = 0, uint8_t extraFlags = 0);
 };

@@ -221,6 +221,9 @@ private:
     void HandleStateAudioFM(const ClientSession& session, EmulatorContext* context, const std::string& chipArg);
     void HandleStateFdc(const ClientSession& session, EmulatorContext* context);
     void HandleStateAudioGS(const ClientSession& session, EmulatorContext* context, const std::string& optionArg);
+
+    // GS coprocessor triage: activity counters + opt-in port/DAC event trace
+    void HandleGSPortTrace(const ClientSession& session, const std::vector<std::string>& args);
     void HandleStateAudioCovox(const ClientSession& session, EmulatorContext* context);
     void HandleStateAudioChannels(const ClientSession& session, EmulatorContext* context);
 
