@@ -246,6 +246,45 @@ in `sound_adaptivity_test.cpp`: `DRC_WindupRecoveryAfterSustainedOverfill`,
 suite 94/94 green. The temp `[drc-diag]` stderr telemetry follows the same
 remove-with-the-diag-test rule as the mainloop one.
 
+### BUG-5 (Critical, FIXED): Interrupt pulse-loss modulated the 37.5 kHz GS sample clock
+
+**Symptom**: steady tones in GS modules still floated in pitch after the BUG-4 fix —
+measured on the pre-DRC core-rate dump (WAV tap, before any resampler/DRC), so the drift
+was generated inside the GS chip domain itself.
+
+**Diagnosis** (per-frame `[gs-diag]` instrumentation + dual raw dump,
+`scratch/gs_tone_probe.sh` / `gs_tone_analyze.py`, 2026-09-20): interrupts accepted per
+frame scattered **740–767 around a mean of ~756** instead of the exact 768 boundaries a
+Pentagon frame contains (245760/320); the pre-DRC tone wobbled p-p 6.98 cents (std 4.43,
+5 s bucket means drifting −1.4…−4.2). The chronic ~1.6% under-production also drained the
+device ring and railed the DRC trim (occupancy hit 0) — the downstream DRC wobble was a
+symptom, not a cause. (The earlier “trim steady ≤±0.5 cents” observation was an aliasing
+artifact of sampling every 250th frame.)
+
+**Root cause**: `runTo()` treated the periodic INT as a one-shot pulse — at each 320-cycle
+quantum boundary it attempted `z80ex_int()` exactly once; whenever the CPU could not
+accept (IFF1=0 — inside the firmware ISR before its `EI`, or the QTDONE quantum-wrap path
+whose 18-byte `LDIR` re-programming runs masked), the boundary was consumed and the
+request **lost**. Each lost request is one missing sample step of the firmware’s
+interrupt-driven mixer, i.e. instantaneous replay-rate modulation. The design (§2.4) had
+always specified level-hold semantics (Xpeccy `intrq |= Z80_INT`); the implementation did
+not match it.
+
+**Fix** (`soundchip_gs.h/.cpp`, 2026-09-20): `_intPending` flag — the boundary asserts the
+request, the top of the `runTo()` loop retries `z80ex_int()` every iteration until the CPU
+accepts, and only acceptance clears it. Persisted as bit 1 of TTD fixed-state byte 23
+(bit 0 = nmiPending; pre-fix captures load as no-pending — they could never hold one).
+
+**Verification**: regression `5_InterruptLevelHoldNoLoss` — a 48%-duty DI loop (masked
+window < 320 cycles) delivers exactly `25·239616/320 = 18720/18721` interrupts where the
+pulse model delivers ~52%; the EI-parked stub is exact. Live re-probe: interrupts/frame
+**{768: 1253, 769: 17}** (the 769s are frame-edge carry), pre-DRC tone **p-p 0.00 cents,
+std 0.00** across all 52 windows, settled trim ±0.001, occupancy 1574–1905 frames, never
+empty. Remaining known artifact: a startup-only DRC rail-bleed (integral filled from an
+empty ring during ~6 s of silence can color the first ~0.4 s of audio ≤ +7 cents before
+unwinding; from 5 s onward the device feed is also 0.00 cents) — follow-up candidate, not
+steady-state float.
+
 ## 7. Non-Bugs (verified correct — do not "fix")
 
 - **`data_pending=true` after COM31**: `OUT (OUTRG)` (`gsOut` case `0x03`) sets
@@ -273,6 +312,7 @@ remove-with-the-diag-test rule as the mainloop one.
 |:---------|:-----|
 | Chip-level test harness | `core/tests/emulator/sound/chips/soundchip_gs_bootdiag_test.cpp` |
 | DRC windup probe / simulation | `scratch/gs_drc_probe.sh`, `scratch/gs_drc_sim.py` |
+| Pitch-drift probe / analyzer | `scratch/gs_tone_build.py`, `scratch/gs_tone_probe.sh`, `scratch/gs_tone_analyze.py` |
 | DRC regression tests | `core/tests/emulator/sound/sound_adaptivity_test.cpp` (BUG-4) |
 | Module playback script | `scratch/gs_mod_verify.sh`, live monitor `scratch/gs_mod_live.sh` |
 | ZX loader program (58 B) | `scratch/gs_prog.json`; module bytes `scratch/gs_mod.json` |
@@ -287,6 +327,9 @@ remove-with-the-diag-test rule as the mainloop one.
 - [ ] Implement the BUG-1 fix (serialize GS control with the emulation thread).
 - [ ] Fix BUG-2 (hex-string register values).
 - [ ] Repaired/rebased PoC `011-ttd-v2-capture-analysis` or exclude from default build (BUG-3).
+- [ ] Startup DRC rail-bleed: faster integral unwind (or fill-phase freeze) so the first
+      ~0.4 s of audio after a cold start cannot inherit a railed trim (BUG-5 verification
+      note) — cosmetic, steady-state is exact.
 - [ ] If pure-GUI silence is ever reported for specific GS software, obtain that TAP/TRD —
       every mechanism GS software uses (COM0E/COM16/COM18/COM30/COM31, interrupts, DAC,
       mixing) is now verified working.

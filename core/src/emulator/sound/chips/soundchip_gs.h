@@ -159,7 +159,7 @@ public:
     ///   [ 9..12] channelData[4]
     ///   [13..20] gsCyclesAbs (int64)
     ///   [21..22] intQuantum (int16)
-    ///   [23]    nmiPending
+    ///   [23]    nmiPending (bit0) | intPending (bit1)
     ///   [24..58] Z80: af bc de hl af2 bc2 de2 hl2 ix iy sp pc memptr (13x2),
     ///            i (1), r (2), r7 (1), iff1 iff2 (2), im (1), halted (1),
     ///            prefix (1)
@@ -257,6 +257,11 @@ private:
     uint64_t _frameStartZxTacts = 0;
     int64_t _frameGsCycles = 0;
     bool _nmiPending = false;
+
+    // Level-held 37.5 kHz INT request (design §2.4): asserted at each quantum
+    // boundary, cleared only by acceptance - the request survives firmware
+    // ISR/QTDONE stretches that run with IFF1 off (see runTo)
+    bool _intPending = false;
 
     // Diagnostics: always-on counters + opt-in structured trace (gsporttrace.h)
     GSActivityCounters _activityCounters;

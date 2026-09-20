@@ -12,7 +12,7 @@ Sound card implementations for ZX Spectrum emulation:
 |:---------|:---------|:-------|
 | [`gs-tdd.md`](gs-tdd.md) | P0 | Round 2 review fixes applied |
 | [`neogs-tdd.md`](neogs-tdd.md) | P2 | Round 2 review fixes applied |
-| [`verification-findings-and-bugs.md`](verification-findings-and-bugs.md) | — | Playback chain verified against firmware sources; 4 bugs found, BUG-4 (DRC windup pitch float) fixed + tested (2026-09-20); GS enabled on atm3/atm710 — decoder arms + configs + regression tests (§5.1) |
+| [`verification-findings-and-bugs.md`](verification-findings-and-bugs.md) | — | Playback chain verified against firmware sources; 5 bugs found, BUG-4 (DRC windup) and BUG-5 (37.5 kHz interrupt pulse-loss — the actual steady-tone pitch float) fixed + tested (2026-09-20); GS enabled on atm3/atm710 — decoder arms + configs + regression tests (§5.1) |
 | [`materials/README.md`](materials/README.md) | — | Materials index |
 
 ## Design Review Round 1 (2026-09-19)

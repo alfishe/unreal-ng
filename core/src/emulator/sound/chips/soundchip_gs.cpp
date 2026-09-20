@@ -129,6 +129,7 @@ void SoundChip_GeneralSound::resetCard()
     _intQuantum = 0;
     _frameStartGsCycles = 0;
     _nmiPending = false;
+    _intPending = false;
 }
 
 void SoundChip_GeneralSound::hostReset()
@@ -281,8 +282,8 @@ void SoundChip_GeneralSound::flush()
 void SoundChip_GeneralSound::runTo(int64_t target)
 {
     // Unreal z80loop model (gsz80.inl:39-82): step instructions while inside
-    // the 320-cycle quantum; at each boundary attempt the periodic interrupt
-    // exactly once, then carry the overshoot into the next quantum
+    // the 320-cycle quantum; at each boundary assert the periodic interrupt
+    // and carry the overshoot into the next quantum
     while (totalGsCycles() < target)
     {
         // NMI from #33 bit6: latched, delivered at the first instruction
@@ -300,18 +301,29 @@ void SoundChip_GeneralSound::runTo(int64_t target)
             }
         }
 
-        if (_intQuantum >= GS_CYCLES_PER_INT)
+        // Level-held periodic INT (design §2.4, Xpeccy intrq |= Z80_INT): a
+        // boundary request stays asserted until the CPU accepts it, i.e.
+        // until IFF1 comes back on after the firmware ISR / masked stretches.
+        // Dropping unaccepted requests modulated the 37.5 kHz sample clock
+        // (740-767 accepted per 768 boundaries) and made steady tones float
+        // in pitch - root cause of the 2026-09-20 drift investigation
+        if (_intPending)
         {
-            // 37.5 kHz quantum boundary - the acceptance attempt is not
-            // retried within the same quantum (level-hold simplification,
-            // design §2.4 note)
             int t = z80ex_int(_cpu);
             if (t > 0)
             {
+                _intPending = false;
                 _intQuantum = static_cast<int16_t>(_intQuantum + t);
                 _activityCounters.interruptsAccepted++;
                 traceEvent(GSTraceSide::Interrupt, 0, 0, false);
             }
+        }
+
+        if (_intQuantum >= GS_CYCLES_PER_INT)
+        {
+            // 37.5 kHz quantum boundary: assert the request, carry the
+            // overshoot into the next quantum
+            _intPending = true;
             _intQuantum = static_cast<int16_t>(_intQuantum - GS_CYCLES_PER_INT);
             _gsCyclesAbs += GS_CYCLES_PER_INT;
             continue;
@@ -749,7 +761,7 @@ void SoundChip_GeneralSound::serializeFixedState(uint8_t* dst) const
     memcpy(&dst[9], _channelData, 4);
     gsTtdWrite64(&dst[13], _gsCyclesAbs);
     gsTtdWrite16(&dst[21], static_cast<uint16_t>(_intQuantum));
-    dst[23] = _nmiPending ? 1 : 0;
+    dst[23] = static_cast<uint8_t>((_nmiPending ? 1 : 0) | (_intPending ? 2 : 0));
 
     uint8_t* z80 = &dst[24];
     gsTtdWrite16(z80 + 0, _cpu->af.w);
@@ -797,7 +809,8 @@ void SoundChip_GeneralSound::TTDLoadState(const uint8_t* src)
     memcpy(_channelData, &src[9], 4);
     _gsCyclesAbs = gsTtdRead64(&src[13]);
     _intQuantum = static_cast<int16_t>(gsTtdRead16(&src[21]));
-    _nmiPending = src[23] != 0;
+    _nmiPending = (src[23] & 1) != 0; // bit1 = intPending (pre-level-hold captures: 0/1 only)
+    _intPending = (src[23] & 2) != 0;
 
     const uint8_t* z80 = &src[24];
     _cpu->af.w = gsTtdRead16(z80 + 0);

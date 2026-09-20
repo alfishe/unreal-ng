@@ -272,3 +272,84 @@ TEST(SoundChip_GeneralSound_BootDiag, 4_InterruptPathDacFetch)
     printf("interrupt path: interrupts=%llu dacFetches=%llu framePeak=%d\n",
            (unsigned long long)interrupts, (unsigned long long)dacFetches, peak);
 }
+
+TEST(SoundChip_GeneralSound_BootDiag, 5_InterruptLevelHoldNoLoss)
+{
+    // Root-cause regression for the 2026-09-20 pitch-drift investigation:
+    // the 37.5 kHz INT is level-held (design §2.4, Xpeccy intrq |= Z80_INT)
+    // - a boundary request arriving while IFF1=0 (firmware ISR, QTDONE
+    // re-programming, DI stretches) stays asserted until the CPU can accept
+    // it. The pulse model dropped such requests (740-767 accepted per 768
+    // boundaries during module playback): every lost request is one missing
+    // sample step, i.e. instantaneous replay-rate wobble - steady tones
+    // floated by several cents before this fix.
+    GSHarness h;
+    ASSERT_TRUE(h.chip->isROMLoaded());
+    ASSERT_TRUE(bootToPost(h));
+
+    // Handler at #4040 (IM2 target): LD A,(#6000); EI; RET
+    static const uint8_t kHandler[] = {0x3A, 0x00, 0x60, 0xFB, 0xC9};
+    for (size_t i = 0; i < sizeof(kHandler); i++)
+        ASSERT_TRUE(h.putByte(0x4040 + i, kHandler[i])) << "putByte #" << i;
+
+    // Stub A (#5000): classic park - DI; IM 2; LD A,#17; LD I,A; LD SP,#4400;
+    // EI; JR self. Measures the fully-unmasked cadence.
+    static const uint8_t kStubA[] = {0xF3, 0xED, 0x5E, 0x3E, 0x17, 0xED, 0x47,
+                                     0x31, 0x00, 0x44, 0xFB, 0x18, 0xFE};
+    for (size_t i = 0; i < sizeof(kStubA); i++)
+        ASSERT_TRUE(h.putByte(0x5000 + i, kStubA[i])) << "putByte #" << i;
+
+    // Stub B (#5100): same init, then an endless loop with a ~193-cycle DI
+    // window every ~398 cycles (48% duty). Each window is shorter than the
+    // 320-cycle quantum, so a boundary landing inside it must still be
+    // delivered right after the EI; the loop period is not a multiple of
+    // 320, so the phase drifts through every alignment.
+    static const uint8_t kStubB[] = {
+        0xF3, 0xED, 0x5E, 0x3E, 0x17, 0xED, 0x47, 0x31, 0x00, 0x44, 0xFB, // init
+        0x06, 0x0E, // loop: LD B,14
+        0x10, 0xFE, // dj1: DJNZ dj1
+        0xF3,       // DI
+        0x06, 0x0E, // LD B,14
+        0x10, 0xFE, // dj2: DJNZ dj2
+        0xFB,       // EI
+        0x18, 0xF4, // JR loop (#510B)
+    };
+    for (size_t i = 0; i < sizeof(kStubB); i++)
+        ASSERT_TRUE(h.putByte(0x5100 + i, kStubB[i])) << "putByte #" << i;
+
+    ASSERT_TRUE(h.jumpTo(0x5000));
+
+    // GS cycles per harness frame: 69888 ZX tacts * 12 MHz / 3.5 MHz = 239616
+    // (exactly 748.8 interrupt boundaries per frame). Over 25 frames the
+    // boundary count is 25*239616/320 = 18720; the tolerance of 1 covers a
+    // boundary deferred across a frame edge when the window ends exactly on
+    // a quantum edge. The pulse model lost ~48% of the boundaries in B.
+    constexpr uint64_t kExpected = 25ULL * 239616 / 320;
+
+    h.runFrames(1); // settle into the self-loop
+    uint64_t before = h.chip->getActivityCounters().interruptsAccepted;
+    h.runFrames(25);
+    uint64_t delta = h.chip->getActivityCounters().interruptsAccepted - before;
+    printf("level-hold A (EI park): %llu interrupts in 25 frames (expected ~%llu)\n",
+           (unsigned long long)delta, (unsigned long long)kExpected);
+    EXPECT_NEAR(static_cast<int64_t>(delta), static_cast<int64_t>(kExpected), 1)
+        << "unmasked cadence: interrupt requests lost";
+
+    // Switch to the masking stub by patching PC through the TTD blob (the
+    // mailbox dispatcher is gone after the COM13 jump). Z80 pc lives at
+    // fixed-state offset 24+22.
+    std::vector<uint8_t> blob(h.chip->TTDStateSize());
+    h.chip->TTDSaveState(blob.data());
+    blob[24 + 22] = 0x00; // pc <- #5100
+    blob[24 + 23] = 0x51;
+    h.chip->TTDLoadState(blob.data());
+
+    h.runFrames(1); // settle into the masked loop
+    before = h.chip->getActivityCounters().interruptsAccepted;
+    h.runFrames(25);
+    delta = h.chip->getActivityCounters().interruptsAccepted - before;
+    printf("level-hold B (48%% DI duty): %llu interrupts in 25 frames (expected ~%llu)\n",
+           (unsigned long long)delta, (unsigned long long)kExpected);
+    EXPECT_NEAR(static_cast<int64_t>(delta), static_cast<int64_t>(kExpected), 1)
+        << "masked-window cadence: interrupt requests lost";
+}
