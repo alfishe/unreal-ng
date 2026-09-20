@@ -410,22 +410,14 @@ TEST_F(EmulatorManager_Test, CreateEmulatorWithUnsupportedRamReportsReason)
 
 TEST_F(EmulatorManager_Test, CreateEmulatorWithNonCreatableModelReportsReason)
 {
-    // ATM710 has no port decoder and no config folder on master: whichever
-    // guard fires first, the caller must learn WHICH model failed and why
+    // A non-creatable model (e.g. NEXT): whichever guard fires first,
+    // the caller must learn WHICH model failed and why
     std::string error;
-    auto emulator = _manager->CreateEmulatorWithModel("", "ATM710", LoggerLevel::LogWarning, &error);
+    auto emulator = _manager->CreateEmulatorWithModel("", "NEXT", LoggerLevel::LogWarning, &error);
 
-    if (PortDecoder::IsModelSupported(MM_ATM710) && Config::FindModelByShortName("ATM710") != nullptr)
-    {
-        // Builds with full ATM support (e.g. the atm branch) create it fine
-        ASSERT_NE(emulator, nullptr);
-    }
-    else
-    {
-        EXPECT_EQ(emulator, nullptr);
-        EXPECT_NE(error.find("ATM710"), std::string::npos) << "reason was: " << error;
-        EXPECT_FALSE(error.empty());
-    }
+    EXPECT_EQ(emulator, nullptr);
+    EXPECT_NE(error.find("NEXT"), std::string::npos) << "reason was: " << error;
+    EXPECT_FALSE(error.empty());
 }
 
 TEST_F(EmulatorManager_Test, CreateEmulatorWithModelLeavesNoOrphanOnError)
