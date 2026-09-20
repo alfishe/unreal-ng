@@ -54,6 +54,10 @@ APP_EXPORT app_result app_create(const char* model, const char* symbolic_id, app
 APP_EXPORT app_result app_start(app_emulator* emu);
 APP_EXPORT void       app_destroy(app_emulator* emu);
 
+// Identity - the manager UUID of the instance, so hosts can map external
+// references (WebAPI ids, MessageCenter payloads) back to their wrappers
+APP_EXPORT app_result app_emulator_id(app_emulator* emu, char* out_uuid, size_t out_size);
+
 // Video — thread-safe; copies presented latched frame
 APP_EXPORT app_result app_frame_info(app_emulator* emu, uint16_t* w, uint16_t* h, uint64_t* latch_ts_us);
 APP_EXPORT app_result app_copy_frame(app_emulator* emu, void* dst_rgba8, size_t dst_size);

@@ -104,6 +104,32 @@ static void OnMessageCenterNotification(int id, Message* msg)
             }
         }
     }
+    else if (topicName == NC_VIDEO_FRAME_REFRESH)
+    {
+        // Per-instance end-of-frame event: the presentation snapshot was
+        // latched (MainLoop::OnFrameEnd -> LatchFramebuffer) immediately
+        // before this post - hosts transfer the complete frame now, at the
+        // frame boundary, instead of sampling the live render buffer
+        if (msg && msg->obj)
+        {
+            if (auto* p = dynamic_cast<EmulatorFramePayload*>(msg->obj))
+            {
+                jsonPayload = "{\"emulator_id\":\"" + p->_emulatorId.toString() + "\",\"frame\":" + std::to_string(p->_frameCounter) + "}";
+            }
+        }
+    }
+    else if (topicName == NC_VIDEOWALL_SINGLE_SYNC_MODE)
+    {
+        // Embed hosts (iOS cube client) apply the real instance topology
+        // switch from this notification
+        if (msg && msg->obj)
+        {
+            if (auto* p = dynamic_cast<VideowallSyncModePayload*>(msg->obj))
+            {
+                jsonPayload = "{\"emulator_id\":\"" + p->_emulatorId.toString() + "\",\"enable\":" + (p->_enable ? "true" : "false") + "}";
+            }
+        }
+    }
 
     cb(topicName.c_str(), jsonPayload.c_str(), userData);
 }
@@ -141,6 +167,8 @@ app_result app_init(const app_init_params* params)
     mc.AddObserver(NC_FDD_DISK_INSERTED, OnMessageCenterNotification);
     mc.AddObserver(NC_FDD_DISK_EJECTED, OnMessageCenterNotification);
     mc.AddObserver(NC_DISK_AUTOSTART, OnMessageCenterNotification);
+    mc.AddObserver(NC_VIDEO_FRAME_REFRESH, OnMessageCenterNotification);
+    mc.AddObserver(NC_VIDEOWALL_SINGLE_SYNC_MODE, OnMessageCenterNotification);
 
     s_initialized = true;
     return APP_OK;
@@ -224,6 +252,20 @@ void app_destroy(app_emulator* emu)
         EmulatorManager::GetInstance()->RemoveEmulator(targetEmu->GetId());
     }
     delete emu;
+}
+
+app_result app_emulator_id(app_emulator* emu, char* out_uuid, size_t out_size)
+{
+    if (!emu || !out_uuid || out_size == 0)
+        return APP_ERR_ARG;
+
+    std::lock_guard<std::mutex> lock(emu->mutex);
+    if (!emu->emu)
+        return APP_ERR_STATE;
+
+    const std::string id = emu->emu->GetId();
+    snprintf(out_uuid, out_size, "%s", id.c_str());
+    return APP_OK;
 }
 
 static bool IsEmulatorValid(const std::shared_ptr<Emulator>& emu)
