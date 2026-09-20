@@ -197,6 +197,11 @@ app_result app_start(app_emulator* emu)
     if (!emu->emu)
         return APP_ERR_ARG;
 
+    // Deterministic realtime boot: an embed host must never inherit a stale
+    // turbo flag (the tape auto-turbo controller re-enables turbo on demand
+    // while a tape program runs)
+    emu->emu->DisableTurboMode();
+
     bool started = EmulatorManager::GetInstance()->StartEmulatorAsync(emu->emu->GetId());
     return started ? APP_OK : APP_ERR_STATE;
 }
@@ -233,68 +238,44 @@ static bool IsEmulatorValid(const std::shared_ptr<Emulator>& emu)
     return true;
 }
 
-static std::shared_ptr<Emulator> GetActiveEmulator(app_emulator* wrapper)
+// Resolve the emulator an API call acts on. The wrapper's OWN instance is
+// authoritative: multi-instance hosts (the 6-face video cube) hold one
+// emulator per face and every call must hit exactly the addressed instance.
+// The manager selection is only a fallback for wrappers whose instance is
+// gone. Resolution never re-binds the wrapper - the previous dynamic
+// adoption collapsed every face onto the selected (first started) instance
+// and rewired their audio rings onto it, which both broke per-face rendering
+// and left a muted, permanently empty occupancy cell attached to the shared
+// instance (the MainLoop emergency refill then skipped frame pacing and the
+// emulator free-ran - observed as unintentional turbo mode).
+static std::shared_ptr<Emulator> ResolveTargetEmulator(app_emulator* wrapper)
 {
     if (!wrapper)
         return nullptr;
 
-    auto manager = EmulatorManager::GetInstance();
-    std::shared_ptr<Emulator> activeEmu;
+    // 1. The wrapper's own instance (an app_create result)
+    if (IsEmulatorValid(wrapper->emu))
+        return wrapper->emu;
 
-    // 1. Check selected emulator ID from EmulatorManager
+    auto manager = EmulatorManager::GetInstance();
+
+    // 2. Selected emulator ID from EmulatorManager
     std::string selectedId = manager->GetSelectedEmulatorId();
     if (!selectedId.empty())
     {
-        activeEmu = manager->GetEmulator(selectedId);
+        if (auto emu = manager->GetEmulator(selectedId); IsEmulatorValid(emu))
+            return emu;
     }
 
-    // 2. Fallback to latest emulator in manager
-    if (!activeEmu)
+    // 3. Fallback to latest emulator in manager
+    auto ids = manager->GetEmulatorIds();
+    if (!ids.empty())
     {
-        auto ids = manager->GetEmulatorIds();
-        if (!ids.empty())
-        {
-            activeEmu = manager->GetEmulator(ids.back());
-        }
+        if (auto emu = manager->GetEmulator(ids.back()); IsEmulatorValid(emu))
+            return emu;
     }
 
-    // 3. Fallback to wrapper's stored emulator ONLY if valid
-    if (!activeEmu && IsEmulatorValid(wrapper->emu))
-    {
-        activeEmu = wrapper->emu;
-    }
-
-    // Validate chosen activeEmu
-    if (!IsEmulatorValid(activeEmu))
-    {
-        if (wrapper->emu)
-        {
-            wrapper->emu.reset();
-        }
-        return nullptr;
-    }
-
-    // Dynamic adoption when active selection changes
-    if (activeEmu != wrapper->emu)
-    {
-        if (IsEmulatorValid(wrapper->emu))
-        {
-            wrapper->emu->SetAudioCallback(nullptr, nullptr, nullptr, nullptr);
-        }
-
-        wrapper->emu = activeEmu;
-
-        uint32_t rate = wrapper->audio.GetSampleRate();
-        if (rate == 0) rate = 44100;
-        activeEmu->SetAudioCallback(&wrapper->audio, EmbedAudio::AudioProducerCallback,
-                                    wrapper->audio.GetOccupancyFrames(), &wrapper->audio.GetDeviceDescriptor());
-        activeEmu->SetAudioDeviceSampleRate(rate);
-
-        LOGINFO("embed_api - Adopted active emulator instance '%s'",
-                activeEmu->GetId().c_str());
-    }
-
-    return activeEmu;
+    return nullptr;
 }
 
 app_result app_frame_info(app_emulator* emu, uint16_t* w, uint16_t* h, uint64_t* latch_ts_us)
@@ -303,11 +284,11 @@ app_result app_frame_info(app_emulator* emu, uint16_t* w, uint16_t* h, uint64_t*
         return APP_ERR_ARG;
 
     std::lock_guard<std::mutex> lock(emu->mutex);
-    std::shared_ptr<Emulator> activeEmu = GetActiveEmulator(emu);
-    if (!activeEmu)
+    std::shared_ptr<Emulator> targetEmu = ResolveTargetEmulator(emu);
+    if (!targetEmu)
         return APP_ERR_STATE;
 
-    return emu->video.GetFrameInfo(activeEmu.get(), w, h, latch_ts_us);
+    return emu->video.GetFrameInfo(targetEmu.get(), w, h, latch_ts_us);
 }
 
 app_result app_copy_frame(app_emulator* emu, void* dst_rgba8, size_t dst_size)
@@ -316,11 +297,11 @@ app_result app_copy_frame(app_emulator* emu, void* dst_rgba8, size_t dst_size)
         return APP_ERR_ARG;
 
     std::lock_guard<std::mutex> lock(emu->mutex);
-    std::shared_ptr<Emulator> activeEmu = GetActiveEmulator(emu);
-    if (!activeEmu)
+    std::shared_ptr<Emulator> targetEmu = ResolveTargetEmulator(emu);
+    if (!targetEmu)
         return APP_ERR_STATE;
 
-    return emu->video.CopyFrame(activeEmu.get(), dst_rgba8, dst_size);
+    return emu->video.CopyFrame(targetEmu.get(), dst_rgba8, dst_size);
 }
 
 void app_set_present_delay(app_emulator* emu, uint8_t frames)
@@ -329,10 +310,10 @@ void app_set_present_delay(app_emulator* emu, uint8_t frames)
         return;
 
     std::lock_guard<std::mutex> lock(emu->mutex);
-    std::shared_ptr<Emulator> activeEmu = GetActiveEmulator(emu);
-    if (activeEmu)
+    std::shared_ptr<Emulator> targetEmu = ResolveTargetEmulator(emu);
+    if (targetEmu)
     {
-        emu->video.SetPresentDelay(activeEmu.get(), frames);
+        emu->video.SetPresentDelay(targetEmu.get(), frames);
     }
 }
 
@@ -342,11 +323,11 @@ app_result app_audio_open_device(app_emulator* emu)
         return APP_ERR_ARG;
 
     std::lock_guard<std::mutex> lock(emu->mutex);
-    std::shared_ptr<Emulator> activeEmu = GetActiveEmulator(emu);
-    if (!activeEmu)
+    std::shared_ptr<Emulator> targetEmu = ResolveTargetEmulator(emu);
+    if (!targetEmu)
         return APP_ERR_STATE;
 
-    return emu->audio.OpenDevice(activeEmu.get());
+    return emu->audio.OpenDevice(targetEmu.get());
 }
 
 app_result app_audio_attach_pull(app_emulator* emu, uint32_t device_rate)
@@ -355,11 +336,11 @@ app_result app_audio_attach_pull(app_emulator* emu, uint32_t device_rate)
         return APP_ERR_ARG;
 
     std::lock_guard<std::mutex> lock(emu->mutex);
-    std::shared_ptr<Emulator> activeEmu = GetActiveEmulator(emu);
-    if (!activeEmu)
+    std::shared_ptr<Emulator> targetEmu = ResolveTargetEmulator(emu);
+    if (!targetEmu)
         return APP_ERR_STATE;
 
-    return emu->audio.AttachPull(activeEmu.get(), device_rate);
+    return emu->audio.AttachPull(targetEmu.get(), device_rate);
 }
 
 size_t app_audio_pull_f32(app_emulator* emu, float* interleaved, size_t frames)
@@ -386,15 +367,15 @@ app_result app_keyboard_press(app_emulator* emu, const char* key_name)
         return APP_ERR_ARG;
 
     std::lock_guard<std::mutex> lock(emu->mutex);
-    std::shared_ptr<Emulator> activeEmu = GetActiveEmulator(emu);
-    if (!activeEmu)
+    std::shared_ptr<Emulator> targetEmu = ResolveTargetEmulator(emu);
+    if (!targetEmu)
         return APP_ERR_STATE;
 
     ZXKeysEnum key = DebugKeyboardManager::ResolveKeyName(key_name);
     if (key == ZXKEY_NONE)
         return APP_ERR_ARG;
 
-    std::string targetId = activeEmu->GetId();
+    std::string targetId = targetEmu->GetId();
     MessageCenter::DefaultMessageCenter().Post(
         MC_KEY_PRESSED,
         new KeyboardEvent(static_cast<uint8_t>(key), KEY_PRESSED, targetId)
@@ -408,15 +389,15 @@ app_result app_keyboard_release(app_emulator* emu, const char* key_name)
         return APP_ERR_ARG;
 
     std::lock_guard<std::mutex> lock(emu->mutex);
-    std::shared_ptr<Emulator> activeEmu = GetActiveEmulator(emu);
-    if (!activeEmu)
+    std::shared_ptr<Emulator> targetEmu = ResolveTargetEmulator(emu);
+    if (!targetEmu)
         return APP_ERR_STATE;
 
     ZXKeysEnum key = DebugKeyboardManager::ResolveKeyName(key_name);
     if (key == ZXKEY_NONE)
         return APP_ERR_ARG;
 
-    std::string targetId = activeEmu->GetId();
+    std::string targetId = targetEmu->GetId();
     MessageCenter::DefaultMessageCenter().Post(
         MC_KEY_RELEASED,
         new KeyboardEvent(static_cast<uint8_t>(key), KEY_RELEASED, targetId)
@@ -431,15 +412,15 @@ app_result app_keyboard_tap(app_emulator* emu, const char* key_name, uint16_t ho
         return APP_ERR_ARG;
 
     std::lock_guard<std::mutex> lock(emu->mutex);
-    std::shared_ptr<Emulator> activeEmu = GetActiveEmulator(emu);
-    if (!activeEmu)
+    std::shared_ptr<Emulator> targetEmu = ResolveTargetEmulator(emu);
+    if (!targetEmu)
         return APP_ERR_STATE;
 
     ZXKeysEnum key = DebugKeyboardManager::ResolveKeyName(key_name);
     if (key == ZXKEY_NONE)
         return APP_ERR_ARG;
 
-    std::string targetId = activeEmu->GetId();
+    std::string targetId = targetEmu->GetId();
     MessageCenter::DefaultMessageCenter().Post(
         MC_KEY_PRESSED,
         new KeyboardEvent(static_cast<uint8_t>(key), KEY_PRESSED, targetId)
@@ -457,11 +438,11 @@ app_result app_keyboard_release_all(app_emulator* emu)
         return APP_ERR_ARG;
 
     std::lock_guard<std::mutex> lock(emu->mutex);
-    std::shared_ptr<Emulator> activeEmu = GetActiveEmulator(emu);
-    if (!activeEmu)
+    std::shared_ptr<Emulator> targetEmu = ResolveTargetEmulator(emu);
+    if (!targetEmu)
         return APP_ERR_STATE;
 
-    std::string targetId = activeEmu->GetId();
+    std::string targetId = targetEmu->GetId();
     auto keys = DebugKeyboardManager::GetAllKeyNames();
     for (const auto& kn : keys)
     {

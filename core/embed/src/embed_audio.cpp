@@ -93,12 +93,34 @@ size_t EmbedAudio::PullF32(float* interleaved, size_t frames)
 
 void EmbedAudio::SetActive(int active)
 {
-    _active.store(active != 0, std::memory_order_release);
-    if (!active)
+    const bool wantActive = (active != 0);
+    const bool wasActive = _active.exchange(wantActive, std::memory_order_acq_rel);
+    if (wantActive == wasActive)
+        return;
+
+    if (wantActive)
     {
-        _ringBuffer.clear();
-        _deviceDescriptor.occupancyFrames.store(0, std::memory_order_release);
+        // Re-arm the producer so the emulator regains its ring-occupancy
+        // cell (the MainLoop pacing/DRC input) at the previous device rate
+        if (_attachedEmulator)
+        {
+            _attachedEmulator->SetAudioCallback(this, AudioProducerCallback,
+                                                GetOccupancyFrames(), &GetDeviceDescriptor());
+            _attachedEmulator->SetAudioDeviceSampleRate(GetSampleRate());
+        }
+        return;
     }
+
+    // Deactivating must fully detach the producer: a muted-but-attached ring
+    // stays pinned at zero occupancy and the MainLoop emergency refill then
+    // reads "starved" on every frame - skipping frame pacing entirely and
+    // free-running the emulator (observed as unintended turbo mode)
+    if (_attachedEmulator)
+    {
+        _attachedEmulator->SetAudioCallback(nullptr, nullptr, nullptr, nullptr);
+    }
+    _ringBuffer.clear();
+    _deviceDescriptor.occupancyFrames.store(0, std::memory_order_release);
 }
 
 void EmbedAudio::Close()
