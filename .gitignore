@@ -14,7 +14,7 @@
 **/[Cc][Mm]ake-[Bb]uild*
 
 # QT build folders
-**/[Bb]uild-*
+**/[Bb]uild-*/
 
 # MSTest test Results
 **/[Tt]est[Rr]esult*
