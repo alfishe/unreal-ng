@@ -81,6 +81,17 @@ void EmulatorAPI::getStateScreen(const HttpRequestPtr& req, std::function<void(c
     ret["is_128k"] = is128K;
     ret["display_mode"] = "standard";
     ret["border_color"] = static_cast<int>(context->pScreen->GetBorderColor());
+    ret["overscan"] = context->pScreen->IsOverscanMode();
+
+    DisplayViewport vp = context->pScreen->GetDisplayViewport();
+    Json::Value vpJson;
+    vpJson["crop_left"] = vp.cropLeft;
+    vpJson["crop_right"] = vp.cropRight;
+    vpJson["crop_top"] = vp.cropTop;
+    vpJson["crop_bottom"] = vp.cropBottom;
+    vpJson["display_width"] = context->pScreen->GetDisplayWidth();
+    vpJson["display_height"] = context->pScreen->GetDisplayHeight();
+    ret["viewport"] = vpJson;
 
     if (is128K)
     {
@@ -817,6 +828,85 @@ void EmulatorAPI::getStateScreenDigest(const HttpRequestPtr& req,
 
     state.last_screen_digest = combined;
     state.last_screen_digest_frame = state.frame_counter;
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+void EmulatorAPI::postOverscanActive(const HttpRequestPtr& req,
+                                     std::function<void(const HttpResponsePtr&)>&& callback) const
+{
+    postOverscan(req, std::move(callback), "");
+}
+
+void EmulatorAPI::postOverscan(const HttpRequestPtr& req,
+                               std::function<void(const HttpResponsePtr&)>&& callback,
+                               const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator with specified ID not found";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    auto json = req->getJsonObject();
+    bool enable = json && json->isMember("enabled") ? (*json)["enabled"].asBool() : true;
+    std::string viewportName = json && json->isMember("viewport") ? (*json)["viewport"].asString() : "";
+
+    // Set overscan mode (only effective for Pentagon machines)
+    emulator->SetOverscanMode(enable);
+
+    // Apply display viewport
+    if (enable)
+    {
+        if (viewportName == "symmetric_horizontal" || viewportName.empty())
+        {
+            emulator->SetDisplayViewport(ViewportPresets::SYMMETRIC_HORIZONTAL);
+        }
+        else if (viewportName == "standard")
+        {
+            emulator->SetDisplayViewport(ViewportPresets::STANDARD);
+        }
+        else if (viewportName == "screen_only")
+        {
+            emulator->SetDisplayViewport(ViewportPresets::SCREEN_ONLY);
+        }
+        else if (viewportName == "full")
+        {
+            emulator->SetDisplayViewport(ViewportPresets::FULL_OVERSCAN);
+        }
+    }
+    else
+    {
+        emulator->SetDisplayViewport(ViewportPresets::FULL_OVERSCAN);
+    }
+
+    DisplayViewport vp = emulator->GetDisplayViewport();
+    Json::Value ret;
+    ret["status"] = "success";
+    ret["overscan"] = emulator->IsOverscanMode();
+
+    Json::Value vpJson;
+    vpJson["crop_left"] = vp.cropLeft;
+    vpJson["crop_right"] = vp.cropRight;
+    vpJson["crop_top"] = vp.cropTop;
+    vpJson["crop_bottom"] = vp.cropBottom;
+    if (emulator->GetContext() && emulator->GetContext()->pScreen)
+    {
+        vpJson["display_width"] = emulator->GetContext()->pScreen->GetDisplayWidth();
+        vpJson["display_height"] = emulator->GetContext()->pScreen->GetDisplayHeight();
+    }
+    ret["viewport"] = vpJson;
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);

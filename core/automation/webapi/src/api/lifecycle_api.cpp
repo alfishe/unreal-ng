@@ -276,6 +276,29 @@ void EmulatorAPI::createEmulator(const HttpRequestPtr& req,
             return;
         }
 
+        bool overscan = json && json->isMember("overscan") ? (*json)["overscan"].asBool() : false;
+        std::string viewportName = json && json->isMember("viewport") ? (*json)["viewport"].asString() : "";
+        if (overscan)
+        {
+            emulator->SetOverscanMode(true);
+            if (viewportName == "symmetric_horizontal" || viewportName.empty())
+            {
+                emulator->SetDisplayViewport(ViewportPresets::SYMMETRIC_HORIZONTAL);
+            }
+            else if (viewportName == "standard")
+            {
+                emulator->SetDisplayViewport(ViewportPresets::STANDARD);
+            }
+            else if (viewportName == "screen_only")
+            {
+                emulator->SetDisplayViewport(ViewportPresets::SCREEN_ONLY);
+            }
+            else if (viewportName == "full")
+            {
+                emulator->SetDisplayViewport(ViewportPresets::FULL_OVERSCAN);
+            }
+        }
+
         Json::Value ret;
         ret["id"] = emulator->GetId();
         ret["state"] = stateToString(emulator->GetState());
@@ -436,6 +459,29 @@ void EmulatorAPI::startEmulator(const HttpRequestPtr& req,
             addCorsHeaders(resp);
             callback(resp);
             return;
+        }
+
+        bool overscan = json && json->isMember("overscan") ? (*json)["overscan"].asBool() : false;
+        std::string viewportName = json && json->isMember("viewport") ? (*json)["viewport"].asString() : "";
+        if (overscan)
+        {
+            emulator->SetOverscanMode(true);
+            if (viewportName == "symmetric_horizontal" || viewportName.empty())
+            {
+                emulator->SetDisplayViewport(ViewportPresets::SYMMETRIC_HORIZONTAL);
+            }
+            else if (viewportName == "standard")
+            {
+                emulator->SetDisplayViewport(ViewportPresets::STANDARD);
+            }
+            else if (viewportName == "screen_only")
+            {
+                emulator->SetDisplayViewport(ViewportPresets::SCREEN_ONLY);
+            }
+            else if (viewportName == "full")
+            {
+                emulator->SetDisplayViewport(ViewportPresets::FULL_OVERSCAN);
+            }
         }
 
         // Start the emulator

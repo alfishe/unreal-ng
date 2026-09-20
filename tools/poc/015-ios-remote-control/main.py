@@ -255,7 +255,14 @@ class RemoteControlApp(QMainWindow):
         self.model_combo = QComboBox()
         self.model_combo.setMinimumWidth(220)
         self.model_combo.setToolTip("Select machine hardware model to create")
+        self.model_combo.currentIndexChanged.connect(self.on_model_combo_changed)
         conn_row2.addWidget(self.model_combo)
+
+        self.overscan_cb = QCheckBox("Enable Overscan Mode (Pentagon 384x304)")
+        self.overscan_cb.setToolTip("Enable overscan video mode (384x304) with symmetric horizontal viewport (352x304 centered)")
+        self.overscan_cb.setChecked(True)
+        self.overscan_cb.toggled.connect(self.on_overscan_toggled)
+        conn_row2.addWidget(self.overscan_cb)
 
         self.create_emu_btn = QPushButton("Create & Switch Machine")
         self.create_emu_btn.setToolTip("Dispose current active machine instance and create a new instance with the selected model")
@@ -538,6 +545,16 @@ class RemoteControlApp(QMainWindow):
             else:
                 self.log(f"Failed to create new machine configuration: {msg}", "ERROR")
 
+        elif action == "set_overscan":
+            if success:
+                vp = data.get("viewport", {})
+                w = vp.get("display_width", 0)
+                h = vp.get("display_height", 0)
+                is_ov = data.get("overscan", False)
+                self.log(f"Overscan mode updated successfully: {'ON' if is_ov else 'OFF'} ({w}x{h}).", "SUCCESS")
+            else:
+                self.log(f"Failed to update overscan mode: {msg}", "ERROR")
+
         elif action == "enable_fastdisk":
             if success:
                 self.log("Fast disk load feature enabled.", "SUCCESS")
@@ -569,6 +586,29 @@ class RemoteControlApp(QMainWindow):
             else:
                 self.log(f"{action} failed: {msg}", "ERROR")
 
+    def on_model_combo_changed(self, index: int):
+        if index < 0 or index >= self.model_combo.count():
+            return
+        data = self.model_combo.itemData(index)
+        model_name = ""
+        if isinstance(data, dict):
+            model_name = data.get("model", "")
+        elif isinstance(data, str):
+            model_name = data
+
+        text = self.model_combo.itemText(index).upper()
+        is_pentagon = "PENTAGON" in model_name.upper() or "PENTAGON" in text
+        self.overscan_cb.blockSignals(True)
+        self.overscan_cb.setChecked(is_pentagon)
+        self.overscan_cb.blockSignals(False)
+
+    def on_overscan_toggled(self, checked: bool):
+        if self.current_emu_id:
+            url = f"{self.get_base_url()}/api/v1/emulator/{self.current_emu_id}/overscan"
+            payload = {"enabled": checked, "viewport": "symmetric_horizontal" if checked else "full"}
+            self.log(f"Setting overscan mode ({'ON' if checked else 'OFF'})...", "INFO")
+            self.run_async("set_overscan", url, "POST", json_data=payload)
+
     def fetch_status(self):
         url = f"{self.get_base_url()}/api/v1/emulator"
         self.log(f"Connecting to WebAPI at {url}...")
@@ -587,6 +627,10 @@ class RemoteControlApp(QMainWindow):
         else:
             self.log("No machine model selected.", "ERROR")
             return
+
+        payload["overscan"] = self.overscan_cb.isChecked()
+        if self.overscan_cb.isChecked():
+            payload["viewport"] = "symmetric_horizontal"
 
         display_label = self.model_combo.currentText()
         self._pending_create_payload = payload

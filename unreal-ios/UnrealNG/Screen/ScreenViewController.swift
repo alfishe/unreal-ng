@@ -52,6 +52,12 @@ final class ScreenViewController: UIViewController {
     // Framebuffer Pixel Storage (RGBA8)
     private var pixelBuffer: [UInt8] = []
 
+    // Zoom & Pan State (Pinch-to-zoom up to 10x native device frame)
+    private var zoomScale: CGFloat = 1.0
+    private var panOffset: CGPoint = .zero
+    private var initialPinchScale: CGFloat = 1.0
+    private var initialPanOffset: CGPoint = .zero
+
     // CRT Effect Settings
     var crtEnabled: Bool = true {
         didSet { updateCRTParams() }
@@ -184,6 +190,8 @@ final class ScreenViewController: UIViewController {
         guard frameWidth > 0, frameHeight > 0 else { return }
 
         let bounds = view.bounds
+        guard bounds.width > 0, bounds.height > 0 else { return }
+
         let aspectView = bounds.width / bounds.height
         let aspectFrame = CGFloat(frameWidth) / CGFloat(frameHeight)
 
@@ -196,11 +204,17 @@ final class ScreenViewController: UIViewController {
             scaleY = Float(aspectView / aspectFrame)
         }
 
+        scaleX *= Float(zoomScale)
+        scaleY *= Float(zoomScale)
+
+        let ndcOffsetX = Float(panOffset.x / (bounds.width / 2.0))
+        let ndcOffsetY = Float(-panOffset.y / (bounds.height / 2.0))
+
         let positions: [Float] = [
-            -scaleX, -scaleY,
-             scaleX, -scaleY,
-            -scaleX,  scaleY,
-             scaleX,  scaleY
+            -scaleX + ndcOffsetX, -scaleY + ndcOffsetY,
+             scaleX + ndcOffsetX, -scaleY + ndcOffsetY,
+            -scaleX + ndcOffsetX,  scaleY + ndcOffsetY,
+             scaleX + ndcOffsetX,  scaleY + ndcOffsetY
         ]
 
         vertexBuffer = metalDevice.makeBuffer(bytes: positions, length: positions.count * MemoryLayout<Float>.size, options: [])
@@ -370,10 +384,29 @@ final class ScreenViewController: UIViewController {
         view.addGestureRecognizer(tripleTap)
 
         doubleTap.require(toFail: tripleTap)
+
+        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
+        pinch.delegate = self
+        view.addGestureRecognizer(pinch)
+
+        let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+        pan.delegate = self
+        view.addGestureRecognizer(pan)
     }
 
     @objc private func handleDoubleTap() {
-        isHUDEnabled.toggle()
+        if zoomScale > 1.05 {
+            // Zoomed in mode: double-tap returns to default screen fit zoom
+            zoomScale = 1.0
+            panOffset = .zero
+            updateQuadGeometry()
+
+            let generator = UIImpactFeedbackGenerator(style: .medium)
+            generator.impactOccurred()
+        } else {
+            // At default screen fit zoom: double-tap controls HUD on/off
+            isHUDEnabled.toggle()
+        }
     }
 
     @objc private func handleTripleTap() {
@@ -382,6 +415,52 @@ final class ScreenViewController: UIViewController {
         // Brief feedback
         let generator = UIImpactFeedbackGenerator(style: .light)
         generator.impactOccurred()
+    }
+
+    @objc private func handlePinch(_ gesture: UIPinchGestureRecognizer) {
+        switch gesture.state {
+        case .began:
+            initialPinchScale = zoomScale
+        case .changed:
+            let newScale = min(max(initialPinchScale * gesture.scale, 1.0), 10.0)
+            zoomScale = newScale
+            if zoomScale <= 1.0 {
+                zoomScale = 1.0
+                panOffset = .zero
+            }
+            updateQuadGeometry()
+        case .ended, .cancelled:
+            if zoomScale <= 1.0 {
+                zoomScale = 1.0
+                panOffset = .zero
+                updateQuadGeometry()
+            }
+        default:
+            break
+        }
+    }
+
+    @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
+        guard zoomScale > 1.0 else { return }
+
+        switch gesture.state {
+        case .began:
+            initialPanOffset = panOffset
+        case .changed:
+            let translation = gesture.translation(in: view)
+            var newOffset = CGPoint(x: initialPanOffset.x + translation.x,
+                                    y: initialPanOffset.y + translation.y)
+
+            let maxPanX = (view.bounds.width / 2.0) * (zoomScale - 1.0)
+            let maxPanY = (view.bounds.height / 2.0) * (zoomScale - 1.0)
+            newOffset.x = min(max(newOffset.x, -maxPanX), maxPanX)
+            newOffset.y = min(max(newOffset.y, -maxPanY), maxPanY)
+
+            panOffset = newOffset
+            updateQuadGeometry()
+        default:
+            break
+        }
     }
 
     // MARK: - Status Bar
@@ -476,5 +555,13 @@ final class ScreenViewController: UIViewController {
             }
             return nil
         }
+    }
+}
+
+// MARK: - UIGestureRecognizerDelegate
+
+extension ScreenViewController: UIGestureRecognizerDelegate {
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        return true
     }
 }
