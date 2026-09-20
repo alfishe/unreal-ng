@@ -407,6 +407,7 @@ LIB_EXPORT void z80ex_set_reg(Z80EX_CONTEXT *cpu, Z80_REG_T reg, Z80EX_WORD valu
 				case 0: IM=IM0; return;
 				case 1: IM=IM1; return;
 				case 2: IM=IM2; return;
+				default: return;
 			}
 		case regIFF1: IFF1=(value & 0x01); return;
 		case regIFF2: IFF2=(value & 0x01); return;
