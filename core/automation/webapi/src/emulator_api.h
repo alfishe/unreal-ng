@@ -223,6 +223,8 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getStateAudioGS, "/api/v1/emulator/{id}/state/audio/gs", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioCovox, "/api/v1/emulator/{id}/state/audio/covox", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioChannels, "/api/v1/emulator/{id}/state/audio/channels", drogon::Get);
+    // GS control actions (GS design §11.2)
+    ADD_METHOD_TO(EmulatorAPI::postControlAudioGS, "/api/v1/emulator/{id}/control/audio/gs", drogon::Post);
 
     // Audio state inspection (active emulator - no ID required)
     ADD_METHOD_TO(EmulatorAPI::getStateAudioAYActive, "/api/v1/emulator/state/audio/ay", drogon::Get);
@@ -805,6 +807,13 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
 
     void getStateAudioGS(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+
+    /// @brief POST /api/v1/emulator/{id}/control/audio/gs — body:
+    ///        {"action": "reset|reset_card|nmi|send_command|send_data|read_status|read_data", "value": 0..255}
+    ///        Host-port semantics (each flushes the GS coprocessor first)
+    void postControlAudioGS(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                            const std::string& id) const;
 
     void getStateAudioCovox(const drogon::HttpRequestPtr& req,
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback,

@@ -6,6 +6,7 @@
 #ifdef __APPLE__
     #include <pthread.h>
     #include <mach/mach.h>
+    #include <mach/mach_time.h>
     #include <mach/thread_policy.h>
 #endif
 #ifdef __linux__
@@ -53,21 +54,17 @@ void ThreadHelper::setThreadName(const char* name)
 void ThreadHelper::setRealtimePriority()
 {
 #ifdef __APPLE__
-    // Time-constraint scheduling - the policy CoreAudio applies to its own
-    // device threads. The kernel guarantees the thread gets its compute
-    // budget within each period window, ahead of every timesharing thread on
-    // the machine (compilers, build servers, browsers - the load that used
-    // to starve the emulation producer and drain the audio ring). Budgets
-    // are sized for a 50 Hz Spectrum frame (20480us Pentagon / 19968us
-    // 128K); a normal-mode frame renders in well under 1 ms, so 4 ms leaves
-    // headroom for TSFM rendering and video capture, and the preemptible
-    // compute phase lets the tighter-constrained CoreAudio thread still
-    // preempt us mid-frame
+    mach_timebase_info_data_t tb;
+    mach_timebase_info(&tb);
+    auto ns2abs = [&](uint64_t ns) {
+        return static_cast<uint32_t>(ns * tb.denom / tb.numer);
+    };
+
     thread_time_constraint_policy_data_t policy;
-    policy.period      = 20000 * 1000;  // ns: one 50 Hz frame
-    policy.computation = 4000 * 1000;   // ns: worst-case frame budget
-    policy.constraint  = 10000 * 1000;  // ns: must start within half a period
-    policy.preemptible = 1;             // audio device threads may preempt us
+    policy.period      = ns2abs(20000000ULL);  // ns: one 50 Hz frame
+    policy.computation = ns2abs(4000000ULL);   // ns: worst-case frame budget
+    policy.constraint  = ns2abs(10000000ULL);  // ns: must start within half a period
+    policy.preemptible = 1;                    // audio device threads may preempt us
 
     thread_policy_set(pthread_mach_thread_np(pthread_self()),
                       THREAD_TIME_CONSTRAINT_POLICY,

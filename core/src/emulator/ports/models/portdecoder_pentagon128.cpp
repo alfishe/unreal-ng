@@ -354,6 +354,15 @@ static constexpr PortMatch const pentagonPortMasksMatches[] =
         // This decodes all 4 SOUNDRIVE channels, resolved to port 0x00FB for handler
         { 0b0000'0000'1111'0101, 0b0000'0000'1111'0001, 0x00FB },   // COVOX/SOUNDRIVE
 
+        // General Sound host ports (GS design §6): full low-byte decode, any
+        // A15-A8 mirror resolves to the canonical device key (Unreal io.cpp
+        // dispatches the same family: #33 exact, #B3/#BB with bit3 masked).
+        // Must precede the Beta128 row below: #B3/#BB carry bits 7,1,0 - the
+        // same set as its #xxFF mask 0x83
+        { 0b0000'0000'1111'1111, 0b0000'0000'1011'0011, 0x00B3 },   // GS #00B3 data
+        { 0b0000'0000'1111'1111, 0b0000'0000'1011'1011, 0x00BB },   // GS #00BB command/status
+        { 0b0000'0000'1111'1111, 0b0000'0000'0011'0011, 0x0033 },   // GS #0033 reset/NMI
+
         { 0b0000'0000'1000'0011, 0b0000'0000'1000'0011, 0x00FF },   // Beta128 #00FF    Match value: (131, 0x0083)
         //{ 0b0000'0000'1001'1111, 0b0000'0000'0000'0011, 0x001F },   // Beta128 #001F    Match value: (131, 0x0083)
         //{ 0b0000'0000'1001'1111, 0b0000'0000'0000'0011, 0x003F },   // Beta128 #003F    Match value: (131, 0x0083)

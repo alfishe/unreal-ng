@@ -16,6 +16,7 @@
 #include <emulator/video/screen.h>
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/chips/soundchip_ay8910.h>
+#include <emulator/sound/chips/soundchip_gs.h>
 #include <base/featuremanager.h>
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/debugmanager.h>
@@ -1499,6 +1500,85 @@ namespace PythonBindings
             .def("fdc_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Fdc(self.GetContext()));
             }, "Beta Disk WD1793 state report: registers, status bits, FSM, signals, drives")
+
+            // General Sound card (GS design §11.6). All actions mirror the
+            // host-port semantics - each flushes the coprocessor to the
+            // current ZX tact first. No-ops / None when the card is not fitted.
+            .def("gs_enabled", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                return ctx && ctx->pSoundManager && ctx->pSoundManager->getGeneralSound() != nullptr;
+            }, "Check if the General Sound card is fitted")
+            .def("gs_state", [](Emulator& self) -> py::object {
+                auto* ctx = self.GetContext();
+                SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+                if (!gs) return py::none();
+
+                py::dict d;
+                const uint8_t status = gs->getStatusRaw();
+                d["device"] = "General Sound (Z80 coprocessor @ 12 MHz, 4 x 8-bit DAC)";
+                d["rom_loaded"] = gs->isROMLoaded();
+                d["ram_kb"] = static_cast<int>(gs->getRamSizeKB());
+                d["status"] = status;
+                d["command_pending"] = (status & 0x01) != 0;
+                d["data_pending"] = (status & 0x80) != 0;
+                d["command_from_host"] = gs->getCommandFromHost();
+                d["data_from_host"] = gs->getDataFromHost();
+                d["data_to_host"] = gs->getDataToHost();
+                d["page"] = gs->getMPAG();
+
+                py::list channels;
+                for (int i = 0; i < 4; i++) {
+                    py::dict channel;
+                    channel["sample"] = gs->getChannelSample(i);
+                    channel["volume"] = gs->getChannelVolume(i);
+                    channels.append(channel);
+                }
+                d["channels"] = channels;
+
+                py::dict cpu;
+                cpu["pc"] = gs->getCPUReg(regPC);
+                cpu["sp"] = gs->getCPUReg(regSP);
+                cpu["af"] = gs->getCPUReg(regAF);
+                cpu["halted"] = gs->isCPUHalted();
+                d["cpu"] = cpu;
+                return d;
+            }, "General Sound state: mailbox flags, MPAG page, DAC channels, coprocessor core")
+            .def("gs_reset", [](Emulator& self) {
+                auto* ctx = self.GetContext();
+                SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+                if (gs) gs->reset();
+            }, "Full power-on reset of the General Sound card")
+            .def("gs_reset_card", [](Emulator& self) {
+                // #33 bit7 semantics: CPU/banking/timing only, mailbox survives
+                auto* ctx = self.GetContext();
+                SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+                if (gs) gs->resetCard();
+            }, "#33 bit7 card reset (CPU/banking/timing only)")
+            .def("gs_nmi", [](Emulator& self) {
+                auto* ctx = self.GetContext();
+                SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+                if (gs) gs->triggerNMI();
+            }, "Pulse the #33 bit6 NMI line")
+            .def("gs_send_command", [](Emulator& self, int byte) {
+                auto* ctx = self.GetContext();
+                SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+                if (gs && byte >= 0 && byte <= 255) gs->sendCommand(static_cast<uint8_t>(byte));
+            }, "Send command byte to GS (OUT #BB semantics)", py::arg("byte"))
+            .def("gs_send_data", [](Emulator& self, int byte) {
+                auto* ctx = self.GetContext();
+                SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+                if (gs && byte >= 0 && byte <= 255) gs->sendData(static_cast<uint8_t>(byte));
+            }, "Send data byte to GS (OUT #B3 semantics)", py::arg("byte"))
+            .def("gs_read_data", [](Emulator& self) -> int {
+                auto* ctx = self.GetContext();
+                SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+                return gs ? gs->readData() : -1;
+            }, "Read data byte from GS (IN #B3 semantics)")
+            .def("gs_read_status", [](Emulator& self) -> int {
+                auto* ctx = self.GetContext();
+                SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+                return gs ? gs->readStatus() : -1;
+            }, "Read GS status register (IN #BB semantics)")
             
             // Advanced disk operations
             .def("disk_info", [](Emulator& self, int drive) -> py::dict {

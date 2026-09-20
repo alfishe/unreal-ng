@@ -1059,6 +1059,10 @@ bool TimeTravelManager::RegisterModelPeripherals(std::string* err)
         ITurboSoundDevice* turboSoundDevice = _context->pSoundManager->getTurboSound();
         _peripherals.Register(turboSoundDevice->TTDPeripheralId(), turboSoundDevice);
         _peripherals.Register(PeripheralId::Covox, _context->pSoundManager->getCovox());
+        // General Sound card ([SOUND] GSType=Z80, GS design §5.3): absent when
+        // the config did not fit one - the registry then simply carries no
+        // blob for it, same as Covox above
+        _peripherals.Register(PeripheralId::GeneralSound, _context->pSoundManager->getGeneralSound());
     }
     _peripherals.Register(PeripheralId::Tape, _context->pTape);
     // Kempston Mouse: core device on every model (design §6.1 - not a model-specific latch)

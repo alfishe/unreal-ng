@@ -86,6 +86,12 @@ set_source_files_properties(${YMFM_CPP} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 if (NOT CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
     set_source_files_properties(${YMFM_CPP} PROPERTIES COMPILE_OPTIONS "-Wno-unused-parameter")
 endif()
+
+# z80ex (Z80 coprocessor core for the General Sound device): single .cpp
+# compilation unit picked up by the glob above. C-style code - must not be
+# force-fed the stdafx.h PCH (ymfm precedent). Werror-clean as C++ after the
+# local patches documented in 3rdparty/z80ex/README.md
+set_source_files_properties(${SOURCE_DIR}/3rdparty/z80ex/z80ex.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 message("CPP_FILES:${CPP_FILES}")
 
 set (SOURCES ${CPP_FILES})

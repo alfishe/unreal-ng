@@ -103,6 +103,21 @@ SoundManager::SoundManager(EmulatorContext* context)
         _devices.push_back({AudioSourceType::COVOX, "COVOX", false, false, 1.0f, 0.0f, false});
     }
 
+    // General Sound card ([SOUND] GSType=Z80, GS design §5.1): LLE Z80
+    // coprocessor + 4xDAC. BASS (legacy HLE) and NGS (NeoGS, neogs-tdd.md
+    // - P2 placeholder that will extend SoundChip_GeneralSound) parse to
+    // their enum values but create no device yet. RAM comes from [NGS]
+    // RamSize as in Unreal (gs_ram_mask derivation), clamped by the card
+    // geometry (128-512 KB). The firmware ROM is optional - the chip warns
+    // and runs zeroed when missing, so a config error never blocks the
+    // machine.
+    if (_context->config.sound.gsTypeKind == GSTypeKind::Z80)
+    {
+        _gs = new SoundChip_GeneralSound(_context, _context->config.gs_ramsize, _coreRate);
+        _gs->loadROM(_context->config.gs_rom_path);
+        _devices.push_back({AudioSourceType::GeneralSound, "GS", false, false, 1.0f, 0.0f, false});
+    }
+
     // Initialize AY character chains (one per TurboSound chip for independent DSP state)
     // - ChipType::AY uses shorter delay and no LP (preserves square wave harmonics)
     // - Punch: AY preset (gentler - square waves already have rich harmonics)
@@ -147,6 +162,11 @@ SoundManager::~SoundManager()
         delete _covox;
     }
 
+    if (_gs)
+    {
+        delete _gs;
+    }
+
     if (_turboSound)
     {
         delete _turboSound;
@@ -169,6 +189,10 @@ void SoundManager::reset()
     _beeper->reset();
     if (_covox)
         _covox->reset();
+    // GS reset follows the GSReset rule (design §5.4): the card is a
+    // separate subsystem and survives a ZX reset unless coupled
+    if (_gs)
+        _gs->hostReset();
 
     std::fill(_beeperBuffer, _beeperBuffer + AUDIO_BUFFER_SAMPLES_PER_FRAME, 0);
     std::fill(_outBuffer, _outBuffer + AUDIO_BUFFER_SAMPLES_PER_FRAME, 0);
@@ -266,6 +290,8 @@ const int16_t* SoundManager::deviceBuffer(AudioSourceType type) const
             return _turboSound ? _turboSound->getFmBuffer(1) : nullptr;
         case AudioSourceType::COVOX:
             return _covox ? _covox->getBuffer() : nullptr;
+        case AudioSourceType::GeneralSound:
+            return _gs ? _gs->getBuffer() : nullptr;
         default:
             return nullptr;
     }
@@ -349,6 +375,8 @@ void SoundManager::applyCoreRate(size_t rate)
     _beeper->setSampleRate(rate);
     if (_covox)
         _covox->setSampleRate(rate);
+    if (_gs)
+        _gs->setSampleRate(rate);
 
     // AY: sample PLL increment, decimation ratios, anti-alias FIR redesign
     _turboSound->setCoreRate(rate);
@@ -429,6 +457,15 @@ void SoundManager::handleFrameStart()
         // (the sound-off output path relies on zeroed buffers).
         _turboSound->setSynthesisSuppressed(suppressed || !_feature_sound_enabled);
         _turboSound->handleFrameStart();
+
+        // GS: same always-advanced rule as the TSFM slot device - the
+        // coprocessor keeps running even when its output stage is suppressed
+        // (program-visible state must not depend on audio settings)
+        if (_gs)
+        {
+            _gs->setSynthesisSuppressed(suppressed || !_feature_sound_enabled);
+            _gs->handleFrameStart();
+        }
 
         if (suppressed)
             return;  // Skip beeper/covox frame setup and buffer clears (never consumed in turbo)
@@ -604,6 +641,11 @@ void SoundManager::handleFrameEnd()
     if (_covox)
         _covox->handleFrameEnd(samplesThisFrame);
 
+    // Finalize GS frame: coprocessor catch-up to the frame end + blip drain
+    // into the registry buffer (posts its own HUD activity notification)
+    if (_gs)
+        _gs->handleFrameEnd(samplesThisFrame);
+
     // Finalize TurboSound frame (activity notification for HUD)
     if (_turboSound)
         _turboSound->handleFrameEnd();
@@ -650,6 +692,9 @@ void SoundManager::handleFrameEnd()
                 break;
             case AudioSourceType::COVOX:
                 srcBuffer = _covox ? _covox->getBuffer() : nullptr;
+                break;
+            case AudioSourceType::GeneralSound:
+                srcBuffer = _gs ? _gs->getBuffer() : nullptr;
                 break;
             default:
                 break;
@@ -918,6 +963,19 @@ bool SoundManager::attachToPorts()
         result &= _context->pPortDecoder->RegisterPortHandler(Covox::PORT_RIGHT_B, _covox);
     }
 
+    // Attach the General Sound card to its host ports #B3/#BB/#33 (GS design
+    // §6). Registered only when the card exists; the decode rows themselves
+    // are static per machine model (Pentagon family table, Scorpion chain).
+    if (_gs && _context->pPortDecoder)
+    {
+        result &= _context->pPortDecoder->RegisterPortHandler(SoundChip_GeneralSound::PORT_DATA, _gs,
+                                                             static_cast<PortTagSet>(PortTag::SoundGs));
+        result &= _context->pPortDecoder->RegisterPortHandler(SoundChip_GeneralSound::PORT_COMMAND, _gs,
+                                                             static_cast<PortTagSet>(PortTag::SoundGs));
+        result &= _context->pPortDecoder->RegisterPortHandler(SoundChip_GeneralSound::PORT_CONTROL, _gs,
+                                                             static_cast<PortTagSet>(PortTag::SoundGs));
+    }
+
     return result;
 }
 
@@ -932,6 +990,14 @@ bool SoundManager::detachFromPorts()
     if (_covox && _context->pPortDecoder)
     {
         _context->pPortDecoder->UnregisterPortHandler(Covox::PORT_RIGHT_B);
+    }
+
+    // Detach the General Sound card from #B3/#BB/#33
+    if (_gs && _context->pPortDecoder)
+    {
+        _context->pPortDecoder->UnregisterPortHandler(SoundChip_GeneralSound::PORT_DATA);
+        _context->pPortDecoder->UnregisterPortHandler(SoundChip_GeneralSound::PORT_COMMAND);
+        _context->pPortDecoder->UnregisterPortHandler(SoundChip_GeneralSound::PORT_CONTROL);
     }
 
     return result;

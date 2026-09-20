@@ -405,6 +405,32 @@ enum class TurboSoundKind : uint8_t
 	FM
 };
 
+/// General Sound emulation kind ([SOUND] GSType, GS design §5.1).
+/// Z80 = LLE coprocessor card (dedicated 12 MHz Z80 + 4xDAC),
+/// BASS = legacy UnrealSpeccy HLE mode (out of scope - parsed but no
+/// device is created), NGS = NeoGS FPGA card (neogs-tdd.md - P2
+/// placeholder, parsed but no device is created yet),
+/// NONE (default) = no GS card fitted.
+/// Read once at config load; a change needs a new emulator instance.
+enum class GSTypeKind : uint8_t
+{
+	NONE,
+	Z80,
+	BASS,
+	NGS
+};
+
+/// NeoGS MP3 decode path ([NGS] MP3Support, neogs-tdd.md §3.2):
+/// None = feature off, Software = host-side decode feeding the DAC stream,
+/// Stub (default) = API surface present but silent. P2 placeholder: Stub
+/// and Software behave identically until the NeoGS implementation lands.
+enum class NGSMP3SupportKind : uint8_t
+{
+	None,
+	Stub,
+	Software
+};
+
 struct zxkeymap;
 
 struct CONFIG
@@ -525,6 +551,11 @@ struct CONFIG
 		/// TSFM design §3.1): AY = legacy two-AY pair (default), FM = TSFM.
 		TurboSoundKind turboSoundKind = TurboSoundKind::AY;
 
+		/// Which GS (General Sound) emulation runs ([SOUND] GSType, GS design
+		/// §5.1): Z80 = LLE coprocessor card, BASS = legacy HLE (parsed but
+		/// not emulated - no device), NONE = no GS card (default).
+		GSTypeKind gsTypeKind = GSTypeKind::NONE;
+
 		/// FM loudness trim in dB relative to the hardware-derived default
 		/// ([SOUND] TSFM_FmTrimDb; 0 = default)
 		double tsfmFmTrimDb = 0.0;
@@ -618,6 +649,11 @@ struct CONFIG
 #ifdef MOD_GSZ80
 	unsigned gs_ramsize;
 	char gs_rom_path[FILENAME_MAX];
+
+	// NeoGS integration placeholders (neogs-tdd.md §3.2): [NGS] section keys
+	// parsed up front, consumed by no card until the P2 implementation lands
+	char ngs_sd_card_path[FILENAME_MAX];
+	NGSMP3SupportKind ngsMP3SupportKind = NGSMP3SupportKind::Stub;
 #endif
 
 	char moonsound_rom_path[FILENAME_MAX];
@@ -625,8 +661,6 @@ struct CONFIG
 #ifdef MOD_MONITOR
 	char sos_labels_path[FILENAME_MAX];
 #endif
-
-	char ngs_sd_card_path[FILENAME_MAX];
 
 	uint8_t zc;
 	char zc_sd_card_path[FILENAME_MAX];

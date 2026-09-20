@@ -56,7 +56,7 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         ss << "  audio fm <N>   - Full FM report of chip N (0/1): mode, timers, channels, operators, envelopes" << NEWLINE;
         ss << "  fdc            - Beta Disk WD1793: registers, status bits, FSM, signals, drives" << NEWLINE;
         ss << "  audio beeper   - Beeper state and activity" << NEWLINE;
-        ss << "  audio gs       - General Sound device state" << NEWLINE;
+        ss << "  audio gs       - General Sound device state (--verbose adds coprocessor registers)" << NEWLINE;
         ss << "  audio covox    - Covox DAC state" << NEWLINE;
         ss << "  audio channels - Audio mixer state for all sound sources" << NEWLINE;
         ss << NEWLINE;
@@ -228,7 +228,8 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
             }
             else if (subcommand == "gs")
             {
-                HandleStateAudioGS(session, context);
+                // state audio gs [verbose|--verbose] (GS design §11.4)
+                HandleStateAudioGS(session, context, args.size() > 2 ? args[2] : "");
                 return;
             }
             else if (subcommand == "covox")
@@ -1184,24 +1185,6 @@ void CLIProcessor::HandleStateAudioBeeper(const ClientSession& session, Emulator
     session.SendResponse(ss.str());
 }
 
-void CLIProcessor::HandleStateAudioGS(const ClientSession& session, EmulatorContext* context)
-{
-    std::stringstream ss;
-    ss << "General Sound Device State" << NEWLINE;
-    ss << "==========================" << NEWLINE;
-    ss << NEWLINE;
-
-    // General Sound is not implemented yet
-    ss << "Status: Not implemented" << NEWLINE;
-    ss << NEWLINE;
-    ss << "General Sound (GS) is a sound expansion device that was planned" << NEWLINE;
-    ss << "for the ZX Spectrum but never released commercially." << NEWLINE;
-    ss << NEWLINE;
-    ss << "This command is reserved for future implementation." << NEWLINE;
-
-    session.SendResponse(ss.str());
-}
-
 void CLIProcessor::HandleStateAudioCovox(const ClientSession& session, EmulatorContext* context)
 {
     std::stringstream ss;
@@ -1275,9 +1258,9 @@ void CLIProcessor::HandleStateAudioChannels(const ClientSession& session, Emulat
     }
     ss << NEWLINE;
 
-    // General Sound (not implemented)
+    // General Sound (implementation: cli-processor-gs.cpp)
     ss << "General Sound:" << NEWLINE;
-    ss << "  Status: Not available" << NEWLINE;
+    ss << "  Status: " << (soundManager->hasGeneralSound() ? "Available (see 'state audio gs')" : "Not fitted") << NEWLINE;
     ss << NEWLINE;
 
     // Covox (not implemented)

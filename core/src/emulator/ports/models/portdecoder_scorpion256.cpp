@@ -266,6 +266,17 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
         // MISTer bug 2) and MAME selects the same DOS I/O view on the trigger
         disp.wasBeta128Gated = true;
     }
+    // General Sound host ports (GS design §6): #B3/#BB by the low byte with
+    // bit3 masked (Unreal io.cpp IN path), mirrors normalized to the
+    // canonical device keys. #33 has no read side - it stays undecoded here
+    // and rides the Scorpion floating bus
+    else if ((port & 0x00F7) == 0x00B3)
+    {
+        const uint16_t gsPort = (port & 0x00FF) == 0x00BB ? 0x00BB : 0x00B3;
+        result = PeripheralPortIn(gsPort);
+        if (_lastPortDecoded)
+            disp.decodedPort = gsPort;
+    }
     else
     {
         // Beta128 mirrors dispatch through the canonical registered device
@@ -409,6 +420,28 @@ void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16
         // peripheral map and used to fall through to the border arm below
         PeripheralPortOut(beta128Port, value);
         disp.decodedPort = beta128Port;
+        disp.wasDecoded = true;
+    }
+
+    // General Sound host ports (GS design §6): #B3/#BB decode by the low
+    // byte with bit3 masked - the (port & 0xF7) == 0xB3 family in Unreal
+    // io.cpp - and #33 fully. Explicit arms normalize mirrors to the
+    // canonical device keys (the raw fall-through dispatches by the exact
+    // 16-bit key and would miss e.g. OUT (#01B3),n). No collision with the
+    // arms above: all three addresses carry A0=1 (outside #FE and both AY
+    // decodes) and A1=1 (outside #7FFD/#1FFD)
+    else if ((port & 0x00F7) == 0x00B3)
+    {
+        const uint16_t gsPort = (port & 0x00FF) == 0x00BB ? 0x00BB : 0x00B3;
+        PeripheralPortOut(gsPort, value);
+        disp.decodedPort = gsPort;
+        disp.wasDecoded = true;
+    }
+    else if ((port & 0x00FF) == 0x0033)
+    {
+        // GS control (bit7 reset, bit6 NMI) - write-only, no IN counterpart
+        PeripheralPortOut(0x0033, value);
+        disp.decodedPort = 0x0033;
         disp.wasDecoded = true;
     }
 

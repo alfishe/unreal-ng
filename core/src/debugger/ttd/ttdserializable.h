@@ -50,6 +50,7 @@ enum class PeripheralId : uint8_t
     ScorpionProfROM = 6,  // Scorpion ZS 256/1024 ProfROM state machine
     KempstonMouse = 7,    // Kempston Mouse counters/buttons/wheel (core device, every model)
     AtmPaging = 8,        // ATM Turbo 2+ / ATM3 / ZX-Evo BaseConf memory map
+    NeoGS = 9,            // NeoGS FPGA card (neogs-tdd.md - P2 placeholder, reserved id, not registered yet)
     // Future: SAA1099, GS512, etc.
     Count
 };

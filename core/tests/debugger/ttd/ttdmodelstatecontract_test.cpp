@@ -27,7 +27,10 @@ namespace
 {
 /// A decoder that declares model state it does not implement - the mistake the
 /// guard exists to catch. Derives from a real decoder so the machine keeps
-/// working normally in every other respect.
+/// working normally in every other respect. Declares NeoGS, a reserved id no
+/// build ever registers: GeneralSound became a real, default-enabled peripheral
+/// (GSType=Z80) whose registered serializer covers the id, so it would no
+/// longer stand in for "declared but unimplemented" state.
 class LyingDecoder : public PortDecoder_Pentagon128
 {
 public:
@@ -35,7 +38,7 @@ public:
 
     std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override
     {
-        return {ttd::PeripheralId::GeneralSound};
+        return {ttd::PeripheralId::NeoGS};
     }
     // CreateTTDSerializers() deliberately left as the empty base implementation.
 };

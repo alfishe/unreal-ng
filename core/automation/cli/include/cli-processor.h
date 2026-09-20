@@ -220,7 +220,7 @@ private:
     void HandleStateAudioBeeper(const ClientSession& session, EmulatorContext* context);
     void HandleStateAudioFM(const ClientSession& session, EmulatorContext* context, const std::string& chipArg);
     void HandleStateFdc(const ClientSession& session, EmulatorContext* context);
-    void HandleStateAudioGS(const ClientSession& session, EmulatorContext* context);
+    void HandleStateAudioGS(const ClientSession& session, EmulatorContext* context, const std::string& optionArg);
     void HandleStateAudioCovox(const ClientSession& session, EmulatorContext* context);
     void HandleStateAudioChannels(const ClientSession& session, EmulatorContext* context);
 

@@ -56,8 +56,9 @@ typedef Z80EX_BYTE (*z80ex_intread_cb)(Z80EX_CONTEXT *cpu, void *user_data);
 /*called when the RETI instruction is executed (useful for emulating Z80 PIO/CTC and such)*/
 typedef void (*z80ex_reti_cb)(Z80EX_CONTEXT *cpu, void *user_data);
 
-#ifndef __Z80EX_SELF_INCLUDE
-	
+/* unreal-ng patch: extern "C" also in the self-include pass - z80ex.cpp is
+compiled as C++ (blip_buf precedent), so the definitions compiled there and
+the declarations every other TU sees must agree on C linkage */
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -145,8 +146,6 @@ extern int z80ex_nmi_possible(Z80EX_CONTEXT *cpu);
 
 #ifdef __cplusplus
 }
-#endif
-
 #endif
 
 #endif

@@ -524,13 +524,25 @@ TEST_F(PortTrace_Test, ActivitySummaryCountsBeta128Gated)
 
 TEST_F(PortTrace_Test, DecodePortExRuleAttribution)
 {
-    // Rule indices follow the Pentagon decode table order
+    // Rule indices follow the Pentagon decode table order. The General
+    // Sound rows (#B3/#BB/#33, GS design §6) sit between SOUNDRIVE and the
+    // Beta128 system row: #B3/#BB carry bits 7,1,0 - the same set as the
+    // #xxFF mask 0x83 - so they must be matched earlier in the table.
     EXPECT_EQ(_portDecoder->decodePortEx(0xFFFD).ruleIndex, 0);
     EXPECT_EQ(_portDecoder->decodePortEx(0xBFFD).ruleIndex, 1);
     EXPECT_EQ(_portDecoder->decodePortEx(0x7FFD).ruleIndex, 2);
     EXPECT_EQ(_portDecoder->decodePortEx(0x00FE).ruleIndex, 3);
     EXPECT_EQ(_portDecoder->decodePortEx(0x00F1).ruleIndex, 4);  // SOUNDRIVE -> COVOX
-    EXPECT_EQ(_portDecoder->decodePortEx(0x00FF).ruleIndex, 5);  // Beta128 system
+    EXPECT_EQ(_portDecoder->decodePortEx(0x00B3).ruleIndex, 5);  // GS data
+    EXPECT_EQ(_portDecoder->decodePortEx(0x00BB).ruleIndex, 6);  // GS command/status
+    EXPECT_EQ(_portDecoder->decodePortEx(0x0033).ruleIndex, 7);  // GS reset/NMI
+    EXPECT_EQ(_portDecoder->decodePortEx(0x00FF).ruleIndex, 8);  // Beta128 system
+
+    // GS rows decode the low byte only - a mirror resolves to the canonical
+    // device key with the same rule attribution
+    DecodeResult gsMirror = _portDecoder->decodePortEx(0x02BB);
+    EXPECT_EQ(gsMirror.port, 0x00BB);
+    EXPECT_EQ(gsMirror.ruleIndex, 6);
 
     // BDI fallback attribution
     DecodeResult bdi = _portDecoder->decodePortEx(0x001F);
@@ -569,9 +581,10 @@ TEST_F(PortTrace_Test, ExportAllFormats)
     ASSERT_EQ(recorder->eventCount(), 3u);
 
     PortTraceSessionInfo info = _portDecoder->getPortTraceSessionInfo();
-    EXPECT_EQ(info.decodeRules.size(), 6u) << "Pentagon decode table must be embedded";
+    EXPECT_EQ(info.decodeRules.size(), 9u) << "Pentagon decode table (incl. GS rows) must be embedded";
     EXPECT_EQ(info.decodeRules[0].port, 0xFFFD);
     EXPECT_EQ(info.decodeRules[2].port, 0x7FFD);
+    EXPECT_EQ(info.decodeRules[6].port, 0x00BB) << "GS command/status row";
 
     // All three formats write successfully; the offline converter
     // (tools/porttrace/porttrace_convert.py) is validated against these exact artifacts
@@ -595,7 +608,7 @@ TEST_F(PortTrace_Test, ExportAllFormats)
     memcpy(&ruleCount, header + 18, 2);
     EXPECT_EQ(version, 1);
     EXPECT_EQ(count, 3u);
-    EXPECT_EQ(ruleCount, 6);
+    EXPECT_EQ(ruleCount, 9);
 }
 
 TEST_F(PortTrace_Test, FilterDescription)

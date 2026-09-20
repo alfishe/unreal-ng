@@ -13,6 +13,7 @@
 #include "emulator/sound/covox.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/chips/soundchip_turbosound.h"
+#include "emulator/sound/chips/soundchip_gs.h"
 #include "stdafx.h"
 
 class EmulatorContext;
@@ -97,9 +98,9 @@ protected:
     Beeper* _beeper = nullptr;
     ITurboSoundDevice* _turboSound = nullptr;  // TurboSound slot (legacy AY pair today, TSFM later - design §3.3)
     Covox* _covox = nullptr;
+    SoundChip_GeneralSound* _gs = nullptr;  // General Sound card ([SOUND] GSType=Z80, GS design §5.1)
     // SoundChip_MoonSound;
     // SoundChip_SAA1099;
-    // SoundChip_GeneralSound;
 
     // Audio character chains (punch enhancement + room simulation)
     // Separate chains per AY chip to preserve independent DSP state
@@ -267,6 +268,10 @@ public:
     // Covox access
     bool hasCovox() const { return _covox != nullptr; }
     Covox* getCovox() const { return _covox; }
+
+    // General Sound access (automation, TTD, tests - M8 pattern)
+    bool hasGeneralSound() const { return _gs != nullptr; }
+    SoundChip_GeneralSound* getGeneralSound() const { return _gs; }
 
     /// Compatibility shim for tape audio. Routes amplitude into the beeper's
     /// blip_buf at the given T-state position. New code should use
