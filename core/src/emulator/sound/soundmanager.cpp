@@ -834,11 +834,49 @@ void SoundManager::updateDrcControl()
         _drcOccFiltered += DRC_EMA_ALPHA * (occMs - _drcOccFiltered);
 
     const double err = (_drcOccFiltered - DRC_TARGET_MS) / DRC_TARGET_MS;
-    _drcErrIntegral = std::clamp(_drcErrIntegral + err, -50.0, 50.0);  // Anti-windup
 
-    const double trim = std::clamp(-(DRC_KP * err + DRC_KI * _drcErrIntegral), -DRC_MAX_TRIM, DRC_MAX_TRIM);
+    // Soft deadband: inside the band the error is noise, above it the band
+    // width is subtracted (unit slope, continuous at the edge - no chatter).
+    const double effErr = (err > DRC_ERR_DEADBAND)    ? err - DRC_ERR_DEADBAND
+                          : (err < -DRC_ERR_DEADBAND) ? err + DRC_ERR_DEADBAND
+                                                      : 0.0;
+
+    // Anti-windup, two rules (GS pitch-drift investigation, 2026-09-20):
+    // 1. The integral may only hold what the actuator can use:
+    //    KI * I <= DRC_MAX_TRIM. The former +-50 clamp let KI*I reach 8x the
+    //    +-0.5% output rail, so any sustained disturbance pinned I at the
+    //    clamp - seconds of railed, wrong-signed trim afterwards, audible as
+    //    the whole mix gliding +-8.6 cents (GS modules expose it loudest).
+    // 2. While the output is railed, back-calculate I from the saturated
+    //    output instead of accumulating: I stays consistent with what is
+    //    actually being produced, so the output leaves the rail the first
+    //    frame the error allows instead of unwinding for ~100 frames.
+    const double integralLimit = DRC_MAX_TRIM / DRC_KI;
+    double trim = -(DRC_KP * effErr + DRC_KI * _drcErrIntegral);
+    if (trim > DRC_MAX_TRIM || trim < -DRC_MAX_TRIM)
+    {
+        trim = std::clamp(trim, -DRC_MAX_TRIM, DRC_MAX_TRIM);
+        _drcErrIntegral = std::clamp(-(trim + DRC_KP * effErr) / DRC_KI, -integralLimit, integralLimit);
+    }
+    else
+    {
+        _drcErrIntegral = std::clamp(_drcErrIntegral + effErr, -integralLimit, integralLimit);
+    }
 
     _drcResampler.setRatio(baseRatio * (1.0 + trim));
+
+    // TEMP DIAG (GS pitch-drift investigation): controller internal state
+    // summary every ~5s on stderr. Remove with the diag test.
+    static const bool drcDiag = getenv("UNREAL_AUDIO_DIAG") != nullptr;
+    static uint32_t drcDiagFrames = 0;
+    if (drcDiag && (drcDiagFrames++ % 250) == 0)
+    {
+        fprintf(stderr,
+                "[drc-diag] engaged=%d core=%zu dev=%.0f occ=%u occMs=%.2f err=%.3f I=%.2f trim=%.5f ratio=%.6f\n",
+                engaged ? 1 : 0, _coreRate, devRate, occCell->load(std::memory_order_relaxed), occMs, err,
+                _drcErrIntegral, trim, baseRatio * (1.0 + trim));
+        fflush(stderr);
+    }
 }
 
 /// @brief Update feature cache flags from FeatureManager.

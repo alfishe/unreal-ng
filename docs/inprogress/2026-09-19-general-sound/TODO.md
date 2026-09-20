@@ -12,6 +12,7 @@ Sound card implementations for ZX Spectrum emulation:
 |:---------|:---------|:-------|
 | [`gs-tdd.md`](gs-tdd.md) | P0 | Round 2 review fixes applied |
 | [`neogs-tdd.md`](neogs-tdd.md) | P2 | Round 2 review fixes applied |
+| [`verification-findings-and-bugs.md`](verification-findings-and-bugs.md) | — | Playback chain verified against firmware sources; 4 bugs found, BUG-4 (DRC windup pitch float) fixed + tested (2026-09-20) |
 | [`materials/README.md`](materials/README.md) | — | Materials index |
 
 ## Design Review Round 1 (2026-09-19)

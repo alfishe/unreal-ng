@@ -168,6 +168,13 @@ protected:
     static constexpr double DRC_KP = 0.08;
     static constexpr double DRC_KI = 0.0008;
     static constexpr double DRC_EMA_ALPHA = 0.05;
+
+    // Error deadband (fraction of the setpoint, +-0.8 ms at the 40 ms
+    // target): occupancy ripple inside the band is measurement noise - the
+    // production-burst/drain sawtooth and device-callback quantization -
+    // not real drift. Feeding it to the controller only modulates playback
+    // pitch (the trim IS cents) without moving the plant anywhere useful.
+    static constexpr double DRC_ERR_DEADBAND = 0.02;
     double _drcOccFiltered = -1.0;  // <0 = uninitialized (seeded on first sample)
     double _drcErrIntegral = 0.0;
 

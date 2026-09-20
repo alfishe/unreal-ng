@@ -490,6 +490,173 @@ TEST_F(SoundAdaptivity_Test, DRC_DisengagedWithoutOccupancyCell)
     EXPECT_EQ(sound->getDrcRatio(), 1.0);
 }
 
+TEST_F(SoundAdaptivity_Test, DRC_WindupRecoveryAfterSustainedOverfill)
+{
+    // REGRESSION GUARD (GS pitch-drift investigation, 2026-09-20): the former
+    // +-50 integral clamp let KI*I reach 8x the +-0.5% actuator rail. After a
+    // sustained overfill (device stall / reroute window) the stale integral
+    // then drove seconds of RAILED, WRONG-SIGNED trim - the whole mix glided
+    // +-8.6 cents while occupancy undershot ~14 ms below the setpoint,
+    // audible as GS module pitch floating. The fixed controller clamps the
+    // integral to the actuator's usable range and back-calculates it while
+    // railed: after release the ring must brake at the setpoint - no
+    // undershoot, no wrong-signed trim.
+    SoundManager* sound = _context->pSoundManager;
+    ASSERT_NE(sound, nullptr);
+
+    CallbackCapture capture;
+    _context->pAudioCallback.store(&CallbackCapture::callback, std::memory_order_release);
+    _context->pAudioManagerObj.store(&capture, std::memory_order_release);
+
+    std::atomic<uint32_t> occCell{0};
+    _context->pAudioRingOccupancy.store(&occCell, std::memory_order_release);
+
+    _context->config.frame = 71680;
+    const double devRate = 44100.0;
+    const double consumePerFrame = 71680.0 * devRate / 3500000.0;  // Real-time DAC
+    const double targetFrames = SoundManager::DRC_TARGET_MS * devRate / 1000.0;
+
+    sound->reset();
+
+    // Phase 1 - feed the controller a forced 300 ms occupancy for 500 frames:
+    // the windup scenario (stalled consumer keeps the ring overfilled)
+    for (int f = 0; f < 500; f++)
+    {
+        sound->handleFrameStart();
+        sound->handleFrameEnd();
+        occCell.store(static_cast<uint32_t>(300.0 * devRate / 1000.0), std::memory_order_relaxed);
+    }
+
+    // Phase 2 - release into the closed loop and watch the recovery
+    double ring = 300.0 * devRate / 1000.0;
+    int wrongSignedFrames = 0;
+    double minRingMs = 1e9;
+    for (int f = 0; f < 4000; f++)
+    {
+        sound->handleFrameStart();
+        sound->handleFrameEnd();
+        ring += static_cast<double>(capture.lastNumSamples) / AUDIO_CHANNELS;
+        ring = std::max(0.0, ring - consumePerFrame);
+        occCell.store(static_cast<uint32_t>(ring), std::memory_order_relaxed);
+
+        const double ringMs = ring * 1000.0 / devRate;
+        minRingMs = std::min(minRingMs, ringMs);
+        if (ringMs < SoundManager::DRC_TARGET_MS - 2.0 && sound->getDrcRatio() > 1.0005)
+            wrongSignedFrames++;  // pushing the ring further below target
+    }
+
+    EXPECT_EQ(wrongSignedFrames, 0)
+        << "Wrong-signed trim after overfill release - integral windup is back";
+    EXPECT_GE(minRingMs, SoundManager::DRC_TARGET_MS - 4.0)
+        << "Ring must brake at the setpoint, not undershoot it (windup signature)";
+
+    _context->pAudioRingOccupancy.store(nullptr, std::memory_order_release);
+}
+
+TEST_F(SoundAdaptivity_Test, DRC_DeadbandRippleKeepsUnityBypass)
+{
+    // The occupancy the controller reads ripples sub-ms every frame
+    // (production burst vs device drain, callback quantization). That is
+    // measurement noise, not drift: inside the deadband the controller must
+    // not touch the ratio at all, so a rate-matched loop stays in exact
+    // unity bypass - zero pitch modulation. The former raw-error path
+    // converted the same ripple into a continuous trim meander.
+    SoundManager* sound = _context->pSoundManager;
+    ASSERT_NE(sound, nullptr);
+
+    CallbackCapture capture;
+    _context->pAudioCallback.store(&CallbackCapture::callback, std::memory_order_release);
+    _context->pAudioManagerObj.store(&capture, std::memory_order_release);
+
+    std::atomic<uint32_t> occCell{0};
+    _context->pAudioRingOccupancy.store(&occCell, std::memory_order_release);
+
+    _context->config.frame = 71680;
+    const double devRate = 44100.0;
+    const double targetFrames = SoundManager::DRC_TARGET_MS * devRate / 1000.0;
+
+    sound->reset();
+
+    // Publish the setpoint BEFORE the prime frame - the prime frame runs the
+    // full pipeline, and reading occ=0 for one frame would rail the trim and
+    // pin the integral (a state a real ring always escapes because occupancy
+    // responds to trim; this rate-matched plant would hold it forever)
+    occCell.store(static_cast<uint32_t>(targetFrames), std::memory_order_relaxed);
+
+    // Prime the pipeline once so the rate-matched drain below starts from
+    // the real per-frame production count
+    sound->handleFrameStart();
+    sound->handleFrameEnd();
+    double lastProduced = static_cast<double>(capture.lastNumSamples) / AUDIO_CHANNELS;
+
+    double ring = targetFrames;
+    double maxRatioDeviation = 0.0;
+    for (int f = 0; f < 1000; f++)
+    {
+        sound->handleFrameStart();
+        sound->handleFrameEnd();
+        const double produced = static_cast<double>(capture.lastNumSamples) / AUDIO_CHANNELS;
+        ring += produced - lastProduced;  // rate-matched DAC: no real offset
+        lastProduced = produced;
+        // Measurement ripple +-0.3 ms (device callback quantization scale)
+        const double jitterFrames = ((f / 4) % 2 == 0) ? 0.3 * devRate / 1000.0 : -0.3 * devRate / 1000.0;
+        occCell.store(static_cast<uint32_t>(std::max(0.0, ring + jitterFrames)), std::memory_order_relaxed);
+        if (f > 100)
+            maxRatioDeviation = std::max(maxRatioDeviation, std::abs(sound->getDrcRatio() - 1.0));
+    }
+
+    EXPECT_DOUBLE_EQ(maxRatioDeviation, 0.0)
+        << "Sub-deadband occupancy ripple must not modulate the resample ratio";
+
+    _context->pAudioRingOccupancy.store(nullptr, std::memory_order_release);
+}
+
+TEST_F(SoundAdaptivity_Test, DRC_CompensatesSustainedRateOffset)
+{
+    // A real production/consumption clock offset (ppm-level on hardware;
+    // 0.2% here for headroom) must be absorbed by the integral as a steady
+    // trim while occupancy stays at the setpoint - the deadband must not
+    // disable tracking, it must only ignore zero-mean ripple.
+    SoundManager* sound = _context->pSoundManager;
+    ASSERT_NE(sound, nullptr);
+
+    CallbackCapture capture;
+    _context->pAudioCallback.store(&CallbackCapture::callback, std::memory_order_release);
+    _context->pAudioManagerObj.store(&capture, std::memory_order_release);
+
+    std::atomic<uint32_t> occCell{0};
+    _context->pAudioRingOccupancy.store(&occCell, std::memory_order_release);
+
+    _context->config.frame = 71680;
+    const double devRate = 44100.0;
+    constexpr double kDeviceSlows = 0.998;  // device consumes 0.2% slower
+    const double consumePerFrame = 71680.0 * devRate / 3500000.0 * kDeviceSlows;
+
+    sound->reset();
+    double ring = SoundManager::DRC_TARGET_MS * devRate / 1000.0;
+    occCell.store(static_cast<uint32_t>(ring), std::memory_order_relaxed);
+
+    auto step = [&] {
+        sound->handleFrameStart();
+        sound->handleFrameEnd();
+        ring += static_cast<double>(capture.lastNumSamples) / AUDIO_CHANNELS;
+        ring = std::max(0.0, ring - consumePerFrame);
+        occCell.store(static_cast<uint32_t>(ring), std::memory_order_relaxed);
+    };
+
+    RunUntilStable(4000, kHoldFrames, step, [&] {
+        return std::abs(ring * 1000.0 / devRate - SoundManager::DRC_TARGET_MS) < 8.0 &&
+               std::abs(sound->getDrcRatio() - kDeviceSlows) < 0.001;
+    });
+
+    EXPECT_NEAR(ring * 1000.0 / devRate, SoundManager::DRC_TARGET_MS, 8.0)
+        << "Occupancy must hold at the setpoint under a sustained rate offset";
+    EXPECT_NEAR(sound->getDrcRatio(), kDeviceSlows, 0.0005)
+        << "Trim must converge to exactly the sustained offset (integral authority)";
+
+    _context->pAudioRingOccupancy.store(nullptr, std::memory_order_release);
+}
+
 /// endregion </DRC rate controller>
 
 TEST_F(SoundAdaptivity_Test, AVLatencyBudget)
