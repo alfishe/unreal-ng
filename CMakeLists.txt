@@ -19,6 +19,9 @@ option(BENCHMARKS "Enable benchmarks" OFF)
 # Enable testclient console app: -DBUILD_TESTCLIENT=ON -> then `ninja testclient`
 option(BUILD_TESTCLIENT "Build testclient console app" OFF)
 option(BUILD_QT_APPS "Build Qt-based applications (unreal-qt, unreal-screen-viewer)" ON)
+if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(BUILD_QT_APPS OFF CACHE BOOL "Qt applications disabled on iOS" FORCE)
+endif()
 option(BUILD_POC "Build PoC research tools (codec comparison etc.)" OFF)
 
 
@@ -359,6 +362,12 @@ if (ENABLE_AUTOMATION)
     message(STATUS ">>> Building automation library")
     add_subdirectory(core/automation)
 endif ()
+
+# ========================================
+# Host Embedding Layer (C ABI & embed audio/video)
+# ========================================
+message(STATUS ">>> Building unrealng_embed library")
+add_subdirectory(core/embed)
 
 # ========================================
 # Emulator Test Console Client

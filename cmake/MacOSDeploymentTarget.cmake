@@ -6,7 +6,11 @@
 # @available, so 12.0 is the floor. Override with -DCMAKE_OSX_DEPLOYMENT_TARGET=...
 # or the MACOSX_DEPLOYMENT_TARGET environment variable.
 if(APPLE AND "${CMAKE_OSX_DEPLOYMENT_TARGET}" STREQUAL "" AND "$ENV{MACOSX_DEPLOYMENT_TARGET}" STREQUAL "")
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum macOS version to target" FORCE)
+    if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "16.0" CACHE STRING "Minimum iOS version to target" FORCE)
+    else()
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum macOS version to target" FORCE)
+    endif()
 endif()
 
 # Exposed to the bundles' custom Info.plist files (LSMinimumSystemVersion); CMake

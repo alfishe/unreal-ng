@@ -1,0 +1,399 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		110000012C99000100000001 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 210000022C99000100000001 /* AppDelegate.swift */; };
+		110000012C99000100000002 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 210000022C99000100000002 /* SceneDelegate.swift */; };
+		110000012C99000100000003 /* ScreenViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 210000022C99000100000003 /* ScreenViewController.swift */; };
+		110000012C99000100000004 /* Present.metal in Sources */ = {isa = PBXBuildFile; fileRef = 210000022C99000100000004 /* Present.metal */; };
+		110000012C99000100000005 /* AudioSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 210000022C99000100000005 /* AudioSession.swift */; };
+		110000012C99000100000006 /* UNGBridge.mm in Sources */ = {isa = PBXBuildFile; fileRef = 210000022C99000100000006 /* UNGBridge.mm */; };
+		110000012C99000100000007 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 210000032C99000100000001 /* Metal.framework */; };
+		110000012C99000100000008 /* MetalKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 210000032C99000100000002 /* MetalKit.framework */; };
+		110000012C99000100000009 /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 210000032C99000100000003 /* AVFoundation.framework */; };
+		110000012C9900010000000A /* AudioToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 210000032C99000100000004 /* AudioToolbox.framework */; };
+		110000012C9900010000000B /* Frameworks/UnrealNGCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 210000032C99000100000005 /* Frameworks/UnrealNGCore.xcframework */; };
+		110000012C9900010000000C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 210000022C9900010000000A /* Assets.xcassets */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		210000012C99000100000001 /* UnrealNG.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = UnrealNG.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		210000022C99000100000001 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		210000022C99000100000002 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
+		210000022C99000100000003 /* ScreenViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenViewController.swift; sourceTree = "<group>"; };
+		210000022C99000100000004 /* Present.metal */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.metal; path = Present.metal; sourceTree = "<group>"; };
+		210000022C99000100000005 /* AudioSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioSession.swift; sourceTree = "<group>"; };
+		210000022C99000100000006 /* UNGBridge.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = UNGBridge.mm; sourceTree = "<group>"; };
+		210000022C99000100000007 /* UNGBridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = UNGBridge.h; sourceTree = "<group>"; };
+		210000022C99000100000008 /* UnrealNG-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "UnrealNG-Bridging-Header.h"; sourceTree = "<group>"; };
+		210000022C99000100000009 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		210000022C9900010000000A /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		210000032C99000100000001 /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
+		210000032C99000100000002 /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
+		210000032C99000100000003 /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
+		210000032C99000100000004 /* AudioToolbox.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AudioToolbox.framework; path = System/Library/Frameworks/AudioToolbox.framework; sourceTree = SDKROOT; };
+		210000032C99000100000005 /* Frameworks/UnrealNGCore.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = Frameworks/UnrealNGCore.xcframework; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		310000012C99000100000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				110000012C99000100000007 /* Metal.framework in Frameworks */,
+				110000012C99000100000008 /* MetalKit.framework in Frameworks */,
+				110000012C99000100000009 /* AVFoundation.framework in Frameworks */,
+				110000012C9900010000000A /* AudioToolbox.framework in Frameworks */,
+				110000012C9900010000000B /* Frameworks/UnrealNGCore.xcframework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		410000012C99000100000001 = {
+			isa = PBXGroup;
+			children = (
+				410000012C99000100000002 /* UnrealNG */,
+				410000012C99000100000006 /* Frameworks */,
+				410000012C99000100000007 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		410000012C99000100000002 /* UnrealNG */ = {
+			isa = PBXGroup;
+			children = (
+				410000012C99000100000008 /* App */,
+				410000012C99000100000003 /* Screen */,
+				410000012C99000100000004 /* Audio */,
+				410000012C99000100000005 /* Bridge */,
+				210000022C9900010000000A /* Assets.xcassets */,
+				210000022C99000100000009 /* Info.plist */,
+			);
+			path = UnrealNG;
+			sourceTree = "<group>";
+		};
+		410000012C99000100000003 /* Screen */ = {
+			isa = PBXGroup;
+			children = (
+				210000022C99000100000003 /* ScreenViewController.swift */,
+				210000022C99000100000004 /* Present.metal */,
+			);
+			path = Screen;
+			sourceTree = "<group>";
+		};
+		410000012C99000100000004 /* Audio */ = {
+			isa = PBXGroup;
+			children = (
+				210000022C99000100000005 /* AudioSession.swift */,
+			);
+			path = Audio;
+			sourceTree = "<group>";
+		};
+		410000012C99000100000005 /* Bridge */ = {
+			isa = PBXGroup;
+			children = (
+				210000022C99000100000007 /* UNGBridge.h */,
+				210000022C99000100000006 /* UNGBridge.mm */,
+				210000022C99000100000008 /* UnrealNG-Bridging-Header.h */,
+			);
+			path = Bridge;
+			sourceTree = "<group>";
+		};
+		410000012C99000100000006 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				210000032C99000100000005 /* Frameworks/UnrealNGCore.xcframework */,
+				210000032C99000100000001 /* Metal.framework */,
+				210000032C99000100000002 /* MetalKit.framework */,
+				210000032C99000100000003 /* AVFoundation.framework */,
+				210000032C99000100000004 /* AudioToolbox.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		410000012C99000100000007 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				210000012C99000100000001 /* UnrealNG.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		410000012C99000100000008 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				210000022C99000100000001 /* AppDelegate.swift */,
+				210000022C99000100000002 /* SceneDelegate.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		510000012C99000100000001 /* UnrealNG */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E10000012C99000100000001 /* Build configuration list for PBXNativeTarget "UnrealNG" */;
+			buildPhases = (
+				710000012C99000100000001 /* Copy Repository Data Resources */,
+				310000012C99000100000001 /* Frameworks */,
+				810000012C99000100000001 /* Sources */,
+				A10000012C99000100000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = UnrealNG;
+			productName = UnrealNG;
+			productReference = 210000012C99000100000001 /* UnrealNG.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		610000012C99000100000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastSwiftUpdateCheck = 1400;
+				LastUpgradeCheck = 1400;
+				TargetAttributes = {
+					510000012C99000100000001 = {
+						CreatedOnToolsVersion = 14.0;
+					};
+				};
+			};
+			buildConfigurationList = E10000012C99000100000002 /* Build configuration list for PBXProject "UnrealNG" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 410000012C99000100000001;
+			productRefGroup = 410000012C99000100000007 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				510000012C99000100000001 /* UnrealNG */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A10000012C99000100000001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				110000012C9900010000000C /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		710000012C99000100000001 /* Copy Repository Data Resources */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Copy Repository Data Resources";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "DEST=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/data\"\nmkdir -p \"${DEST}\"\ncp -R \"${SRCROOT}/../data/rom\" \"${DEST}/\"\ncp -R \"${SRCROOT}/../data/configs\" \"${DEST}/\"\ncp -R \"${SRCROOT}/../data/fonts\" \"${DEST}/\"\nif [ -d \"${SRCROOT}/../data/boot\" ]; then\n  cp -R \"${SRCROOT}/../data/boot\" \"${DEST}/\"\nfi\n# Copy WebAPI HTML resources\ncp -R \"${SRCROOT}/../core/automation/webapi/resources/html\" \"${DEST}/\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		810000012C99000100000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				110000012C99000100000001 /* AppDelegate.swift in Sources */,
+				110000012C99000100000002 /* SceneDelegate.swift in Sources */,
+				110000012C99000100000003 /* ScreenViewController.swift in Sources */,
+				110000012C99000100000004 /* Present.metal in Sources */,
+				110000012C99000100000005 /* AudioSession.swift in Sources */,
+				110000012C99000100000006 /* UNGBridge.mm in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		910000012C99000100000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				DEVELOPMENT_TEAM = 728R6XS6K7;
+				ENABLE_BITCODE = NO;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Frameworks",
+				);
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Frameworks/UnrealNGCore.xcframework/ios-arm64/Headers",
+					"$(SRCROOT)/Frameworks/UnrealNGCore.xcframework/ios-arm64-simulator/Headers",
+					"$(SRCROOT)/../core/embed/include",
+				);
+				INFOPLIST_FILE = UnrealNG/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "org.unreal-ng.UnrealNG";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_OBJC_BRIDGING_HEADER = "UnrealNG/Bridge/UnrealNG-Bridging-Header.h";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		910000012C99000100000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				DEVELOPMENT_TEAM = 728R6XS6K7;
+				ENABLE_BITCODE = NO;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Frameworks",
+				);
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Frameworks/UnrealNGCore.xcframework/ios-arm64/Headers",
+					"$(SRCROOT)/Frameworks/UnrealNGCore.xcframework/ios-arm64-simulator/Headers",
+					"$(SRCROOT)/../core/embed/include",
+				);
+				INFOPLIST_FILE = UnrealNG/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "org.unreal-ng.UnrealNG";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_OBJC_BRIDGING_HEADER = "UnrealNG/Bridge/UnrealNG-Bridging-Header.h";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		910000012C99000100000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMPOUND_ASSIGN_CONVERSION = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+			};
+			name = Debug;
+		};
+		910000012C99000100000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMPOUND_ASSIGN_CONVERSION = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_FAST_MATH = YES;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		E10000012C99000100000001 /* Build configuration list for PBXNativeTarget "UnrealNG" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				910000012C99000100000001 /* Debug */,
+				910000012C99000100000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E10000012C99000100000002 /* Build configuration list for PBXProject "UnrealNG" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				910000012C99000100000003 /* Debug */,
+				910000012C99000100000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 610000012C99000100000001 /* Project object */;
+}

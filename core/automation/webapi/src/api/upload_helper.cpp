@@ -130,8 +130,8 @@ void UploadHelper::ensureUploadDir()
 
     if (_writableRoot.empty())
     {
-        // Fallback to executable path + "uploads"
-        _writableRoot = FileHelper::GetExecutablePath();
+        // Fallback to writable path (set by app_init on iOS/embed)
+        _writableRoot = FileHelper::GetWritablePath();
     }
 
     _uploadDir = _writableRoot + "/uploads/" + _sessionId + "/";
@@ -318,18 +318,54 @@ MediaContent extractMediaContent(const drogon::HttpRequestPtr& req, MediaType ex
         return result;
     }
 
-    // Case 3: JSON with path (existing behavior)
+    // Case 3: JSON with base64 embedded data or path
     auto json = req->getJsonObject();
-    if (json && json->isMember("path"))
+    if (json)
     {
-        result.path = (*json)["path"].asString();
-        result.isEmbedded = false;
-        result.valid = true;
-        return result;
+        if (json->isMember("data") || json->isMember("base64"))
+        {
+            result.filename = json->isMember("filename") ? (*json)["filename"].asString() : "upload.bin";
+            std::string b64Str = json->isMember("data") ? (*json)["data"].asString() : (*json)["base64"].asString();
+            auto vec = drogon::utils::base64DecodeToVector(b64Str);
+            result.data.assign(vec.begin(), vec.end());
+            result.isEmbedded = true;
+
+            // Validate type from filename
+            MediaType actualType = getMediaTypeFromFilename(result.filename);
+            if (actualType == MediaType::Unknown)
+            {
+                actualType = expectedType;
+            }
+            if (expectedType != MediaType::Unknown && actualType != expectedType)
+            {
+                result.errorMsg = "File type mismatch: expected different media type";
+                return result;
+            }
+
+            // Check size limit
+            size_t maxSize = getMaxSizeForMediaType(actualType);
+            if (result.data.size() > maxSize)
+            {
+                result.errorMsg = "File too large: " + std::to_string(result.data.size()) +
+                                  " bytes (max " + std::to_string(maxSize / (1024 * 1024)) + " MB)";
+                return result;
+            }
+
+            result.valid = true;
+            return result;
+        }
+
+        if (json->isMember("path"))
+        {
+            result.path = (*json)["path"].asString();
+            result.isEmbedded = false;
+            result.valid = true;
+            return result;
+        }
     }
 
     // No valid content found
-    result.errorMsg = "Missing content: provide 'path' in JSON, multipart 'file', or raw body with X-Filename header";
+    result.errorMsg = "Missing content: provide 'path' or 'data' (base64) in JSON, multipart 'file', or raw body with X-Filename header";
     return result;
 }
 

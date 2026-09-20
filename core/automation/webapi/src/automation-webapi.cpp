@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "common/threadhelper.h"
+#include "common/filehelper.h"
 #include "emulator_api.h"        // Triggers auto-registration for API handlers
 #include "emulator_websocket.h"  // Triggers auto-registration for WebSocket handlers
 #include "hello_world_api.h"     // Triggers auto-registration for API handlers
@@ -102,6 +103,9 @@ static std::string loadHtmlFile(const std::string& filename)
         // macOS .app bundle path
         "../Resources/html/",     // From MacOS folder to Resources folder in .app bundle
         "../../Resources/html/",  // Alternative .app bundle structure
+
+        // iOS .app bundle path (resources copied to data/html/)
+        FileHelper::GetResourcesPath() + "/html/",
 
         // Standard installation paths
         "/usr/local/share/unreal-speccy/resources/html/",  // Unix standard install
@@ -322,7 +326,10 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
         .setLogLevel(trantor::Logger::kNumberOfLogLevels)
         .disableSigtermHandling()  // SIGTERM is handled by the main application (unreal-qt or testclient)
         .addListener("0.0.0.0", 8090)
-        .setThreadNum(2);
+        .setThreadNum(4)
+        .setIdleConnectionTimeout(60)
+        .setKeepaliveRequestsNumber(100)
+        .setPipeliningRequestsNumber(0);  // Disable pipelining for simpler debugging
 
     try
     {

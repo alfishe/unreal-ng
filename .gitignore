@@ -108,3 +108,6 @@ htmlcov/
 # tools/verification/ttd-analyzer/scripts/record_fixtures.py.
 !testdata/ttd/*.ttd
 features.ini
+
+# iOS build artifacts
+unreal-ios/Frameworks/

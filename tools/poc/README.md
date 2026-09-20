@@ -57,6 +57,7 @@ NNN-name/
 | 012 | [calltrace-viz](012-calltrace-viz/) | Call trace visualization |
 | 013 | [nvenc-poc](013-nvenc-poc/) | NVIDIA NVENC video encoding |
 | 014 | [qt-gui](014-qt-gui/) | Qt GUI framework exploration |
+| 015 | [ios-remote-control](015-ios-remote-control/) | PySide6 remote controller & LAN keyboard bridge for iOS host |
 
 ---
 
