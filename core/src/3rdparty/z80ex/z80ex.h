@@ -64,85 +64,85 @@ extern "C" {
 #endif
 
 /*get version info*/
-extern Z80EX_VERSION *z80ex_get_version();
+LIB_EXPORT Z80EX_VERSION *z80ex_get_version();
 
 /*create and initialize CPU*/
-extern Z80EX_CONTEXT *z80ex_create(z80ex_mread_cb mrcb_fn, void *mrcb_data,
+LIB_EXPORT Z80EX_CONTEXT *z80ex_create(z80ex_mread_cb mrcb_fn, void *mrcb_data,
 	z80ex_mwrite_cb mwcb_fn, void *mwcb_data,
 	z80ex_pread_cb prcb_fn, void *prcb_data,
 	z80ex_pwrite_cb pwcb_fn, void *pwcb_data,
 	z80ex_intread_cb ircb_fn, void *ircb_data);
 
 /*destroy CPU*/
-extern void z80ex_destroy(Z80EX_CONTEXT *cpu);
+LIB_EXPORT void z80ex_destroy(Z80EX_CONTEXT *cpu);
 
 /*do next opcode (instruction or prefix), return number of T-states*/
-extern int z80ex_step(Z80EX_CONTEXT *cpu);
+LIB_EXPORT int z80ex_step(Z80EX_CONTEXT *cpu);
 
 /*returns type of the last opcode, processed with z80ex_step.
 type will be 0 for complete instruction, or dd/fd/cb/ed for opcode prefix.*/
-extern Z80EX_BYTE z80ex_last_op_type(Z80EX_CONTEXT *cpu);
+LIB_EXPORT Z80EX_BYTE z80ex_last_op_type(Z80EX_CONTEXT *cpu);
 	
 /*set T-state callback*/
-extern void z80ex_set_tstate_callback(Z80EX_CONTEXT *cpu, z80ex_tstate_cb cb_fn, void *user_data);
+LIB_EXPORT void z80ex_set_tstate_callback(Z80EX_CONTEXT *cpu, z80ex_tstate_cb cb_fn, void *user_data);
 
 /*set RETI callback*/
-extern void z80ex_set_reti_callback(Z80EX_CONTEXT *cpu, z80ex_reti_cb cb_fn, void *user_data);
+LIB_EXPORT void z80ex_set_reti_callback(Z80EX_CONTEXT *cpu, z80ex_reti_cb cb_fn, void *user_data);
 
 /*set memory read callback*/
-extern void z80ex_set_memread_callback(Z80EX_CONTEXT *cpu, z80ex_mread_cb mrcb_fn, void *mrcb_data);
+LIB_EXPORT void z80ex_set_memread_callback(Z80EX_CONTEXT *cpu, z80ex_mread_cb mrcb_fn, void *mrcb_data);
 
 /*set memory write callback*/
-extern void z80ex_set_memwrite_callback(Z80EX_CONTEXT *cpu, z80ex_mwrite_cb mwcb_fn, void *mwcb_data);
+LIB_EXPORT void z80ex_set_memwrite_callback(Z80EX_CONTEXT *cpu, z80ex_mwrite_cb mwcb_fn, void *mwcb_data);
 
 /*set port read callback*/
-extern void z80ex_set_portread_callback(Z80EX_CONTEXT *cpu, z80ex_pread_cb prcb_fn, void *prcb_data);
+LIB_EXPORT void z80ex_set_portread_callback(Z80EX_CONTEXT *cpu, z80ex_pread_cb prcb_fn, void *prcb_data);
 
 /*set port write callback*/
-extern void z80ex_set_portwrite_callback(Z80EX_CONTEXT *cpu, z80ex_pwrite_cb pwcb_fn, void *pwcb_data);
+LIB_EXPORT void z80ex_set_portwrite_callback(Z80EX_CONTEXT *cpu, z80ex_pwrite_cb pwcb_fn, void *pwcb_data);
 
 /*set INT read callback*/
-extern void z80ex_set_intread_callback(Z80EX_CONTEXT *cpu, z80ex_intread_cb ircb_fn, void *ircb_data);
+LIB_EXPORT void z80ex_set_intread_callback(Z80EX_CONTEXT *cpu, z80ex_intread_cb ircb_fn, void *ircb_data);
 
 /*maskable interrupt*/
 /*returns number of T-states if interrupt was accepted, otherwise 0*/
-extern int z80ex_int(Z80EX_CONTEXT *cpu);
+LIB_EXPORT int z80ex_int(Z80EX_CONTEXT *cpu);
 
 /*non-maskable interrupt*/
 /*returns number of T-states (11 if interrupt was accepted, or 0 if processor
 is doing an instruction right now)*/
-extern int z80ex_nmi(Z80EX_CONTEXT *cpu);
+LIB_EXPORT int z80ex_nmi(Z80EX_CONTEXT *cpu);
 
 /*reset CPU*/
-extern void z80ex_reset(Z80EX_CONTEXT *cpu);
+LIB_EXPORT void z80ex_reset(Z80EX_CONTEXT *cpu);
 
 /*get register value*/
-extern Z80EX_WORD z80ex_get_reg(Z80EX_CONTEXT *cpu, Z80_REG_T reg);
+LIB_EXPORT Z80EX_WORD z80ex_get_reg(Z80EX_CONTEXT *cpu, Z80_REG_T reg);
 
 /*set register value (for 1-byte registers lower byte of <value> will be used)*/
-extern void z80ex_set_reg(Z80EX_CONTEXT *cpu, Z80_REG_T reg, Z80EX_WORD value);
+LIB_EXPORT void z80ex_set_reg(Z80EX_CONTEXT *cpu, Z80_REG_T reg, Z80EX_WORD value);
 
 /*returns 1 if CPU doing HALT instruction now*/
-extern int z80ex_doing_halt(Z80EX_CONTEXT *cpu);
+LIB_EXPORT int z80ex_doing_halt(Z80EX_CONTEXT *cpu);
 
 /*when called from callbacks, returns current T-state of the executing opcode (instruction or prefix),
 else returns T-states taken by last opcode executed*/
-extern int z80ex_op_tstate(Z80EX_CONTEXT *cpu);
+LIB_EXPORT int z80ex_op_tstate(Z80EX_CONTEXT *cpu);
 
 /*generate <w_states> Wait-states. (T-state callback will be called <w_states> times, when defined).
 should be used to simulate WAIT signal or disabled CLK*/ 
-extern void z80ex_w_states(Z80EX_CONTEXT *cpu, unsigned w_states);
+LIB_EXPORT void z80ex_w_states(Z80EX_CONTEXT *cpu, unsigned w_states);
 
 /*spend one T-state doing nothing (often IO devices cannot handle data request on
 the first T-state at which RD/WR goes active).
 for I/O callbacks*/
-extern void z80ex_next_t_state(Z80EX_CONTEXT *cpu);
+LIB_EXPORT void z80ex_next_t_state(Z80EX_CONTEXT *cpu);
 
 /*returns 1 if maskable interrupts are possible in current z80 state*/
-extern int z80ex_int_possible(Z80EX_CONTEXT *cpu);
+LIB_EXPORT int z80ex_int_possible(Z80EX_CONTEXT *cpu);
 
 /*returns 1 if non-maskable interrupts are possible in current z80 state*/
-extern int z80ex_nmi_possible(Z80EX_CONTEXT *cpu);
+LIB_EXPORT int z80ex_nmi_possible(Z80EX_CONTEXT *cpu);
 
 #ifdef __cplusplus
 }
