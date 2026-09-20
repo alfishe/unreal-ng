@@ -109,6 +109,10 @@ htmlcov/
 !testdata/ttd/*.ttd
 features.ini
 
-# iOS build artifacts
-unreal-ios/Frameworks/
+# Binary frameworks are build artifacts - rebuild via
+# unreal-ios/scripts/build-ios-xcframework.sh. Never commit them.
+Frameworks/
+*.xcframework
+*.framework
+xcuserdata/
 *.xcuserstate

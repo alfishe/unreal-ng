@@ -1,0 +1,384 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		110000012C99000100000001 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 210000022C99000100000001 /* AppDelegate.swift */; };
+		110000012C99000100000002 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 210000022C99000100000002 /* SceneDelegate.swift */; };
+		110000012C99000100000003 /* CubeViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 210000022C99000100000003 /* CubeViewController.swift */; };
+		110000012C99000100000004 /* Shaders.metal in Sources */ = {isa = PBXBuildFile; fileRef = 210000022C99000100000004 /* Shaders.metal */; };
+		110000012C99000100000006 /* UNGCubeBridge.mm in Sources */ = {isa = PBXBuildFile; fileRef = 210000022C99000100000006 /* UNGCubeBridge.mm */; };
+		110000012C99000100000007 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 210000032C99000100000001 /* Metal.framework */; };
+		110000012C99000100000008 /* MetalKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 210000032C99000100000002 /* MetalKit.framework */; };
+		110000012C99000100000009 /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 210000032C99000100000003 /* AVFoundation.framework */; };
+		110000012C9900010000000A /* AudioToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 210000032C99000100000004 /* AudioToolbox.framework */; };
+		110000012C9900010000000B /* Frameworks/UnrealNGCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 210000032C99000100000005 /* Frameworks/UnrealNGCore.xcframework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		210000012C99000100000001 /* UnrealNGCube.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = UnrealNGCube.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		210000022C99000100000001 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		210000022C99000100000002 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
+		210000022C99000100000003 /* CubeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CubeViewController.swift; sourceTree = "<group>"; };
+		210000022C99000100000004 /* Shaders.metal */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.metal; path = Shaders.metal; sourceTree = "<group>"; };
+		210000022C99000100000006 /* UNGCubeBridge.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = UNGCubeBridge.mm; sourceTree = "<group>"; };
+		210000022C99000100000007 /* UNGCubeBridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = UNGCubeBridge.h; sourceTree = "<group>"; };
+		210000022C99000100000008 /* UnrealNGCube-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "UnrealNGCube-Bridging-Header.h"; sourceTree = "<group>"; };
+		210000022C99000100000009 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		210000032C99000100000001 /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
+		210000032C99000100000002 /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
+		210000032C99000100000003 /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
+		210000032C99000100000004 /* AudioToolbox.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AudioToolbox.framework; path = System/Library/Frameworks/AudioToolbox.framework; sourceTree = SDKROOT; };
+		210000032C99000100000005 /* Frameworks/UnrealNGCore.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = Frameworks/UnrealNGCore.xcframework; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		310000012C99000100000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				110000012C99000100000007 /* Metal.framework in Frameworks */,
+				110000012C99000100000008 /* MetalKit.framework in Frameworks */,
+				110000012C99000100000009 /* AVFoundation.framework in Frameworks */,
+				110000012C9900010000000A /* AudioToolbox.framework in Frameworks */,
+				110000012C9900010000000B /* Frameworks/UnrealNGCore.xcframework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		410000012C99000100000001 = {
+			isa = PBXGroup;
+			children = (
+				410000012C99000100000002 /* UnrealNGCube */,
+				410000012C99000100000006 /* Frameworks */,
+				410000012C99000100000007 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		410000012C99000100000002 /* UnrealNGCube */ = {
+			isa = PBXGroup;
+			children = (
+				410000012C99000100000008 /* App */,
+				410000012C99000100000003 /* Screen */,
+				410000012C99000100000005 /* Bridge */,
+				210000022C99000100000009 /* Info.plist */,
+			);
+			path = UnrealNGCube;
+			sourceTree = "<group>";
+		};
+		410000012C99000100000003 /* Screen */ = {
+			isa = PBXGroup;
+			children = (
+				210000022C99000100000003 /* CubeViewController.swift */,
+				210000022C99000100000004 /* Shaders.metal */,
+			);
+			path = Screen;
+			sourceTree = "<group>";
+		};
+		410000012C99000100000005 /* Bridge */ = {
+			isa = PBXGroup;
+			children = (
+				210000022C99000100000007 /* UNGCubeBridge.h */,
+				210000022C99000100000006 /* UNGCubeBridge.mm */,
+				210000022C99000100000008 /* UnrealNGCube-Bridging-Header.h */,
+			);
+			path = Bridge;
+			sourceTree = "<group>";
+		};
+		410000012C99000100000006 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				210000032C99000100000005 /* Frameworks/UnrealNGCore.xcframework */,
+				210000032C99000100000001 /* Metal.framework */,
+				210000032C99000100000002 /* MetalKit.framework */,
+				210000032C99000100000003 /* AVFoundation.framework */,
+				210000032C99000100000004 /* AudioToolbox.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		410000012C99000100000007 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				210000012C99000100000001 /* UnrealNGCube.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		410000012C99000100000008 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				210000022C99000100000001 /* AppDelegate.swift */,
+				210000022C99000100000002 /* SceneDelegate.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		510000012C99000100000001 /* UnrealNGCube */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E10000012C99000100000001 /* Build configuration list for PBXNativeTarget "UnrealNGCube" */;
+			buildPhases = (
+				710000012C99000100000001 /* Copy Repository Data Resources */,
+				310000012C99000100000001 /* Frameworks */,
+				810000012C99000100000001 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = UnrealNGCube;
+			productName = UnrealNGCube;
+			productReference = 210000012C99000100000001 /* UnrealNGCube.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		610000012C99000100000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastSwiftUpdateCheck = 1400;
+				LastUpgradeCheck = 1400;
+				TargetAttributes = {
+					510000012C99000100000001 = {
+						CreatedOnToolsVersion = 14.0;
+					};
+				};
+			};
+			buildConfigurationList = E10000012C99000100000002 /* Build configuration list for PBXProject "UnrealNGCube" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 410000012C99000100000001;
+			productRefGroup = 410000012C99000100000007 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				510000012C99000100000001 /* UnrealNGCube */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		710000012C99000100000001 /* Copy Repository Data Resources */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Copy Repository Data Resources";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "CUBE_SRCROOT=\"${SRCROOT}\"\nREPO_ROOT=\"$(cd \"${CUBE_SRCROOT}\" && while [ ! -d \"data/rom\" ] && [ \"/\" != \"$(pwd)\" ]; do cd ..; done; pwd)\"\nDEST=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/data\"\nrm -rf \"${DEST}\"\nmkdir -p \"${DEST}\"\nif [ -d \"${REPO_ROOT}/data/rom\" ]; then\n  cp -R \"${REPO_ROOT}/data/rom\" \"${DEST}/\"\nfi\nif [ -d \"${REPO_ROOT}/data/configs\" ]; then\n  cp -R \"${REPO_ROOT}/data/configs\" \"${DEST}/\"\nfi\nif [ -d \"${REPO_ROOT}/data/fonts\" ]; then\n  cp -R \"${REPO_ROOT}/data/fonts\" \"${DEST}/\"\nfi\nif [ -d \"${REPO_ROOT}/data/boot\" ]; then\n  cp -R \"${REPO_ROOT}/data/boot\" \"${DEST}/\"\nfi\nif [ -d \"${REPO_ROOT}/core/automation/webapi/resources/html\" ]; then\n  cp -R \"${REPO_ROOT}/core/automation/webapi/resources/html\" \"${DEST}/\"\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		810000012C99000100000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				110000012C99000100000001 /* AppDelegate.swift in Sources */,
+				110000012C99000100000002 /* SceneDelegate.swift in Sources */,
+				110000012C99000100000003 /* CubeViewController.swift in Sources */,
+				110000012C99000100000004 /* Shaders.metal in Sources */,
+				110000012C99000100000006 /* UNGCubeBridge.mm in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		910000012C99000100000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				DEVELOPMENT_TEAM = 728R6XS6K7;
+				ENABLE_BITCODE = NO;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Frameworks",
+				);
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Frameworks/UnrealNGCore.xcframework/ios-arm64/Headers",
+					"$(SRCROOT)/Frameworks/UnrealNGCore.xcframework/ios-arm64-simulator/Headers",
+					"$(SRCROOT)/../core/embed/include",
+				);
+				INFOPLIST_FILE = UnrealNGCube/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-framework",
+					"CoreMedia",
+					"-framework",
+					"VideoToolbox",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "org.unreal-ng.UnrealNGCube";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_OBJC_BRIDGING_HEADER = "UnrealNGCube/Bridge/UnrealNGCube-Bridging-Header.h";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		910000012C99000100000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				DEVELOPMENT_TEAM = 728R6XS6K7;
+				ENABLE_BITCODE = NO;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Frameworks",
+				);
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Frameworks/UnrealNGCore.xcframework/ios-arm64/Headers",
+					"$(SRCROOT)/Frameworks/UnrealNGCore.xcframework/ios-arm64-simulator/Headers",
+					"$(SRCROOT)/../core/embed/include",
+				);
+				INFOPLIST_FILE = UnrealNGCube/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-framework",
+					"CoreMedia",
+					"-framework",
+					"VideoToolbox",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "org.unreal-ng.UnrealNGCube";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_OBJC_BRIDGING_HEADER = "UnrealNGCube/Bridge/UnrealNGCube-Bridging-Header.h";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		910000012C99000100000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMPOUND_ASSIGN_CONVERSION = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+			};
+			name = Debug;
+		};
+		910000012C99000100000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMPOUND_ASSIGN_CONVERSION = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_FAST_MATH = YES;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		E10000012C99000100000001 /* Build configuration list for PBXNativeTarget "UnrealNGCube" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				910000012C99000100000001 /* Debug */,
+				910000012C99000100000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E10000012C99000100000002 /* Build configuration list for PBXProject "UnrealNGCube" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				910000012C99000100000003 /* Debug */,
+				910000012C99000100000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 610000012C99000100000001 /* Project object */;
+}
