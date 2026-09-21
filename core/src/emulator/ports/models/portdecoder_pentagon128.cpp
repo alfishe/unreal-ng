@@ -105,8 +105,10 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
     uint8_t mouseReg = 0;
     if (decodedPort == 0x0000 && IsPort_KempstonMouse(port, mouseReg))
     {
-        // Kempston Mouse: only addresses no table rule claimed (#xxDF is the Beta128 #FF
-        // rule's address - with TR-DOS active the FDC keeps it, design §3.5)
+        // Kempston Mouse: only addresses no table rule claimed. The Beta128 #FF rule
+        // needs the exact low byte 0xFF, so #xxDF always falls through to the mouse -
+        // on Pentagon hardware nothing else decodes it (the wide A2-A0=111 FDC
+        // decode claiming #xxDF is a Scorpion trait, see TryBeta128MirrorPort)
         result = Default_Port_KempstonMouse_In(port, pc);
         _lastPortDecoded = true;
         decodedPort = port;
@@ -354,7 +356,18 @@ static constexpr PortMatch const pentagonPortMasksMatches[] =
         // This decodes all 4 SOUNDRIVE channels, resolved to port 0x00FB for handler
         { 0b0000'0000'1111'0101, 0b0000'0000'1111'0001, 0x00FB },   // COVOX/SOUNDRIVE
 
-        { 0b0000'0000'1000'0011, 0b0000'0000'1000'0011, 0x00FF },   // Beta128 #00FF    Match value: (131, 0x0083)
+        // Beta128 #FF system register: the full low byte must equal 0xFF. The partial
+        // A7/A1/A0 mask (0x83) used earlier also claimed #xxF7 - the ATM window port
+        // and the TR-DOS 5.04T machine-probe address. The probe's RAM-relocated
+        // thunk (OUT (C),A with BC=#FFF7) then fed its data bytes to the FDC system
+        // register, and any byte with bit2 clear raised the active-low RESET
+        // mid-command, wedging disk boots (nedodem2.trd's LOAD loop sends 0x40..0x43).
+        // Real hardware keeps them apart: the Pentagon-1024 decoder documents
+        // "A3=0 in 0xF7 distinguishes from 0xFF Beta128 system port", ATM710 routes
+        // #xxF7 to its window registers. Every mirror form software actually uses
+        // carries the exact low byte: OUT (#FF),A rides A on A15-A8 and OUT (C),A
+        // holds C=#FF - see scorpionports_test's 0x18FF case.
+        { 0b0000'0000'1111'1111, 0b0000'0000'1111'1111, 0x00FF },   // Beta128 #00FF    Match: full low byte 0xFF
         //{ 0b0000'0000'1001'1111, 0b0000'0000'0000'0011, 0x001F },   // Beta128 #001F    Match value: (131, 0x0083)
         //{ 0b0000'0000'1001'1111, 0b0000'0000'0000'0011, 0x003F },   // Beta128 #003F    Match value: (131, 0x0083)
         //{ 0b0000'0000'1001'1111, 0b0000'0000'0000'0011, 0x005F },   // Beta128 #005F    Match value: (131, 0x0083)
