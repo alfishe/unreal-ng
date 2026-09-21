@@ -107,7 +107,7 @@ if (b_out) {  // B != 0 (will repeat)
 
 | File | Functions Modified |
 |------|-------------------|
-| [op_ed.cpp](core/src/emulator/cpu/op_ed.cpp) | `ope_A2` (INI), `ope_A3` (OUTI), `ope_AA` (IND), `ope_AB` (OUTD), `ope_B2` (INIR), `ope_B3` (OTIR), `ope_BA` (INDR), `ope_BB` (OTDR) |
+| [op_ed.cpp](../../../core/src/emulator/cpu/op_ed.cpp) | `ope_A2` (INI), `ope_A3` (OUTI), `ope_AA` (IND), `ope_AB` (OUTD), `ope_B2` (INIR), `ope_B3` (OTIR), `ope_BA` (INDR), `ope_BB` (OTDR) |
 
 ---
 

@@ -1,8 +1,8 @@
 # "Scroller by Demarche" (1996) — Reverse Engineering & Boot Analysis
 
 > **Artifact**: Complete disassembly, memory banking architecture, and boot failure analysis of "Scroller by Demarche", a landmark Soviet/Russian Covox demo released in 1996 for the **Pentagon 128**.
-> **Disk Image**: [`testdata/sound/covox/scroller_by_demarche.trd`](testdata/sound/covox/scroller_by_demarche.trd)
-> **Primary Test**: [`core/tests/loaders/disk/scroller_boot_test.cpp`](core/tests/loaders/disk/scroller_boot_test.cpp)
+> **Disk Image**: [`testdata/sound/covox/scroller_by_demarche.trd`](../../../../testdata/sound/covox/scroller_by_demarche.trd)
+> **Primary Test**: [`core/tests/loaders/disk/scroller_boot_test.cpp`](../../../../core/tests/loaders/disk/scroller_boot_test.cpp)
 
 ---
 
@@ -10,31 +10,31 @@
 
 | File | Description |
 |---|---|
-| [`README.md`](docs/disasm/demo/scroller/README.md) | This document — overview, catalog, boot flow, and quick reference. |
-| [`TRIAGE.md`](docs/disasm/demo/scroller/TRIAGE.md) | Forensic triage report: Root cause analysis of the 128K Sinclair editor `$5B00` SWAP trap, bus traces, and fix proposals. |
-| [`emulator-port-comparison.md`](docs/disasm/demo/scroller/emulator-port-comparison.md) | Cross-emulator audit: Port `#7FFD` decoding and boot vectors compared across Unreal-NG, SMT Unreal, USP, Xpeccy, and ZXMAK2. |
-| [`memory-map.md`](docs/disasm/demo/scroller/memory-map.md) | 128K RAM banking map, port `#7FFD` paging states, MegaLZ decrunch destinations, and Covox port `#FB` mapping. |
-| [`make_scroller_sna.py`](docs/disasm/demo/scroller/make_scroller_sna.py) | Standalone Python utility that extracts and decrunches all TRD files into a clean 128K `.sna` snapshot. |
-| [`scroller_by_demarche.sna`](docs/disasm/demo/scroller/scroller_by_demarche.sna) | Pre-generated, verified 128K snapshot that launches directly into the Covox menu (`$9B6B`). |
-| [`patch_scroller_trd.py`](docs/disasm/demo/scroller/patch_scroller_trd.py) | Python tool that patches `SCROLLER.B` on the TRD disk image with the dual-mode fix. |
-| [`patch_scroller_trd_v2.py`](docs/disasm/demo/scroller/patch_scroller_trd_v2.py) | Enhanced patcher that adds paging lock detection plus dual-mode fix. |
-| [`scroller_fixed.trd`](docs/disasm/demo/scroller/scroller_fixed.trd) | Patched TR-DOS disk image with the dual-mode Line 80 fix; boots across all emulators and configurations. |
-| [`scroller_fixed_v2.trd`](docs/disasm/demo/scroller/scroller_fixed_v2.trd) | Enhanced patch with paging lock detection — displays error message if 128K→48K path is used. |
-| [`paging_test.asm`](docs/disasm/demo/scroller/paging_test.asm) | Annotated Z80 source for the 60-byte paging lock detection routine. |
-| [`paging_test.bin`](docs/disasm/demo/scroller/paging_test.bin) | Assembled paging test machine code (60 bytes, ORG `$5CD0`). |
-| [`scroller-loader.bas`](docs/disasm/demo/scroller/scroller-loader.bas) | Annotated original Sinclair BASIC loader script (`SCROLLER.B`) with token decoding and line analysis. |
-| [`scroller-loader-fixed.bas`](docs/disasm/demo/scroller/scroller-loader-fixed.bas) | Annotated patched dual-mode Sinclair BASIC loader script with detailed line breakdown. |
-| [`scroller-loader-fixed-v2.bas`](docs/disasm/demo/scroller/scroller-loader-fixed-v2.bas) | Enhanced v2 loader with paging lock detection (Lines 11-13) and dual-mode fix. |
-| [`scroller_fixed.$B`](docs/disasm/demo/scroller/scroller_fixed.$B) | Standalone Hobeta format binary of the patched BASIC loader (366 bytes, ready for TR-DOS import). |
-| [`scroller_fixed.bin`](docs/disasm/demo/scroller/scroller_fixed.bin) | Raw tokenized Sinclair BASIC memory block (`$00`–`$015D`, 349 bytes). |
-| [`scroller-dispatcher.asm`](docs/disasm/demo/scroller/scroller-dispatcher.asm) | Annotated Z80 disassembly of `SCROLL00.C` (`$6200`–`$62B1`): Entry point, depack table dispatcher, and embedded MegaLZ decruncher. |
-| [`scroller-menu.asm`](docs/disasm/demo/scroller/scroller-menu.asm) | Annotated Z80 disassembly of the Covox menu (`$9B6B`), keyboard scanner, `STARTDEMO` routine (`$9CD6`), and IM2 audio engine (`$BF02`/`$BFBF`). |
+| [`README.md`](README.md) | This document — overview, catalog, boot flow, and quick reference. |
+| [`TRIAGE.md`](TRIAGE.md) | Forensic triage report: Root cause analysis of the 128K Sinclair editor `$5B00` SWAP trap, bus traces, and fix proposals. |
+| [`emulator-port-comparison.md`](emulator-port-comparison.md) | Cross-emulator audit: Port `#7FFD` decoding and boot vectors compared across Unreal-NG, SMT Unreal, USP, Xpeccy, and ZXMAK2. |
+| [`memory-map.md`](memory-map.md) | 128K RAM banking map, port `#7FFD` paging states, MegaLZ decrunch destinations, and Covox port `#FB` mapping. |
+| [`make_scroller_sna.py`](make_scroller_sna.py) | Standalone Python utility that extracts and decrunches all TRD files into a clean 128K `.sna` snapshot. |
+| [`scroller_by_demarche.sna`](scroller_by_demarche.sna) | Pre-generated, verified 128K snapshot that launches directly into the Covox menu (`$9B6B`). |
+| [`patch_scroller_trd.py`](patch_scroller_trd.py) | Python tool that patches `SCROLLER.B` on the TRD disk image with the dual-mode fix. |
+| [`patch_scroller_trd_v2.py`](patch_scroller_trd_v2.py) | Enhanced patcher that adds paging lock detection plus dual-mode fix. |
+| [`scroller_fixed.trd`](scroller_fixed.trd) | Patched TR-DOS disk image with the dual-mode Line 80 fix; boots across all emulators and configurations. |
+| [`scroller_fixed_v2.trd`](scroller_fixed_v2.trd) | Enhanced patch with paging lock detection — displays error message if 128K→48K path is used. |
+| [`paging_test.asm`](paging_test.asm) | Annotated Z80 source for the 60-byte paging lock detection routine. |
+| [`paging_test.bin`](paging_test.bin) | Assembled paging test machine code (60 bytes, ORG `$5CD0`). |
+| [`scroller-loader.bas`](scroller-loader.bas) | Annotated original Sinclair BASIC loader script (`SCROLLER.B`) with token decoding and line analysis. |
+| [`scroller-loader-fixed.bas`](scroller-loader-fixed.bas) | Annotated patched dual-mode Sinclair BASIC loader script with detailed line breakdown. |
+| [`scroller-loader-fixed-v2.bas`](scroller-loader-fixed-v2.bas) | Enhanced v2 loader with paging lock detection (Lines 11-13) and dual-mode fix. |
+| [`scroller_fixed.$B`](scroller_fixed.$B) | Standalone Hobeta format binary of the patched BASIC loader (366 bytes, ready for TR-DOS import). |
+| [`scroller_fixed.bin`](scroller_fixed.bin) | Raw tokenized Sinclair BASIC memory block (`$00`–`$015D`, 349 bytes). |
+| [`scroller-dispatcher.asm`](scroller-dispatcher.asm) | Annotated Z80 disassembly of `SCROLL00.C` (`$6200`–`$62B1`): Entry point, depack table dispatcher, and embedded MegaLZ decruncher. |
+| [`scroller-menu.asm`](scroller-menu.asm) | Annotated Z80 disassembly of the Covox menu (`$9B6B`), keyboard scanner, `STARTDEMO` routine (`$9CD6`), and IM2 audio engine (`$BF02`/`$BFBF`). |
 
 ---
 
 ## 2. Standalone 128K SNA Snapshot Generator (`make_scroller_sna.py`)
 
-To completely bypass the BASIC loader and any Sinclair 128K editor SWAP-hook desynchronization issues, [`make_scroller_sna.py`](docs/disasm/demo/scroller/make_scroller_sna.py) extracts all raw payloads from `scroller_by_demarche.trd`, decompresses them in Python using the authentic MegaLZ routine directly into target RAM pages (0, 1, 2, 3, 4, 5, 7), and generates a standard 128K `.sna` snapshot (131,103 bytes) ready to run in any ZX Spectrum emulator:
+To completely bypass the BASIC loader and any Sinclair 128K editor SWAP-hook desynchronization issues, [`make_scroller_sna.py`](make_scroller_sna.py) extracts all raw payloads from `scroller_by_demarche.trd`, decompresses them in Python using the authentic MegaLZ routine directly into target RAM pages (0, 1, 2, 3, 4, 5, 7), and generates a standard 128K `.sna` snapshot (131,103 bytes) ready to run in any ZX Spectrum emulator:
 
 ```bash
 # Generate clean 128K snapshot starting at the Covox menu ($9B6B):
@@ -64,7 +64,7 @@ python3 docs/disasm/demo/scroller/patch_scroller_trd.py
 - **Dual-Mode Operation**:
   - **Sinclair 128K Editor**: `POKE VAL "23388", VAL "20"` primes `BANK_M` (`$5B5C`). The `$5B00` SWAP trampoline reasserts Page 4 across ROM flips so `SCROLL12` loads into Page 4.
   - **48K BASIC / TR-DOS Boot**: `OUT VAL "32765", VAL "20"` writes directly to the hardware port latch on machines without the 128K editor hook.
-- **Output**: [`scroller_fixed.trd`](docs/disasm/demo/scroller/scroller_fixed.trd) runs out-of-the-box under `RESET=128`, `RESET=BASIC`, or `RESET=DOS` configurations.
+- **Output**: [`scroller_fixed.trd`](scroller_fixed.trd) runs out-of-the-box under `RESET=128`, `RESET=BASIC`, or `RESET=DOS` configurations.
 
 ### Enhanced Patch with Paging Lock Detection (`patch_scroller_trd_v2.py`)
 
@@ -78,9 +78,9 @@ python3 docs/disasm/demo/scroller/patch_scroller_trd_v2.py
   - Attempts page switch and checks if signature is still visible
   - If locked, displays `PAGING LOCKED! Use RESET=BASIC` and stops gracefully
 - **Use Case**: When the demo might be run from the 128K menu → 48K path, this version provides a clear error message instead of a mysterious crash
-- **Output**: [`scroller_fixed_v2.trd`](docs/disasm/demo/scroller/scroller_fixed_v2.trd) (1019 bytes BASIC, 4 sectors)
+- **Output**: [`scroller_fixed_v2.trd`](scroller_fixed_v2.trd) (1019 bytes BASIC, 4 sectors)
 
-Both versions verified by automated tests in [`scroller_boot_test.cpp`](core/tests/loaders/disk/scroller_boot_test.cpp).
+Both versions verified by automated tests in [`scroller_boot_test.cpp`](../../../../core/tests/loaders/disk/scroller_boot_test.cpp).
 
 > [!NOTE]
 > **How to Launch from TR-DOS**:
@@ -89,7 +89,7 @@ Both versions verified by automated tests in [`scroller_boot_test.cpp`](core/tes
 > ```basic
 > RUN "SCROLLER"
 > ```
-> To launch immediately without typing or disk delays, use [`scroller_by_demarche.sna`](docs/disasm/demo/scroller/scroller_by_demarche.sna).
+> To launch immediately without typing or disk delays, use [`scroller_by_demarche.sna`](scroller_by_demarche.sna).
 
 > [!WARNING]
 > **Do NOT use "48 BASIC" from the 128K menu**: Selecting "48 BASIC" from the Sinclair 128K boot menu locks paging permanently (bit 5 of port `#7FFD`). The demo requires page switching and will fail. Use `RESET=BASIC` or `RESET=DOS` boot configuration instead.
@@ -98,7 +98,7 @@ Both versions verified by automated tests in [`scroller_boot_test.cpp`](core/tes
 
 ## 4. Disk Catalog Overview
 
-The demo distribution disk [`scroller_by_demarche.trd`](testdata/sound/covox/scroller_by_demarche.trd) is a standard TR-DOS 640 KB diskette image containing 8 files:
+The demo distribution disk [`scroller_by_demarche.trd`](../../../../testdata/sound/covox/scroller_by_demarche.trd) is a standard TR-DOS 640 KB diskette image containing 8 files:
 
 | File Name | Ext | Start Address | Length | Sectors | Track | Sector | Purpose |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|---|
@@ -170,7 +170,7 @@ With paging locked:
 **This path cannot work** for any software requiring page switching. The solution is to boot directly into TR-DOS or 48K BASIC (`RESET=DOS` or `RESET=BASIC`), bypassing the 128K menu entirely.
 
 ### Paging Lock Detection (scroller_fixed_v2.trd)
-The enhanced patch [`scroller_fixed_v2.trd`](docs/disasm/demo/scroller/scroller_fixed_v2.trd) adds runtime detection of the paging lock condition. Before any loading begins, Lines 11-13 execute a 60-byte machine code test that:
+The enhanced patch [`scroller_fixed_v2.trd`](scroller_fixed_v2.trd) adds runtime detection of the paging lock condition. Before any loading begins, Lines 11-13 execute a 60-byte machine code test that:
 
 1. Writes a 4-byte signature (`$DEADBEEF`) to `$C000`
 2. Attempts to switch to RAM Page 1
@@ -192,4 +192,4 @@ In `scroller_fixed.trd`, Line 80 is patched to:
 - Under 128K Editor: `POKE` updates `BANK_M` (`$5B5C`) so the `$5B00` SWAP routine preserves Page 4 across ROM toggles.
 - Under 48K BASIC / TR-DOS: `OUT` ensures hardware port `#7FFD` receives the latch write even though no 128K SWAP routine exists.
 
-For the exhaustive forensic investigation, hardware bus traces, and mitigation strategies, see [`TRIAGE.md`](docs/disasm/demo/scroller/TRIAGE.md).
+For the exhaustive forensic investigation, hardware bus traces, and mitigation strategies, see [`TRIAGE.md`](TRIAGE.md).

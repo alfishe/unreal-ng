@@ -133,6 +133,11 @@ Emulator* CreateFmEmulator(LoggerLevel level)
         delete emulator;
         return nullptr;
     }
+    // Same test-speed default CreateStandardEmulator applies: per-t-state
+    // screen rendering is ~25% of a player session and nothing here reads
+    // pixels. (soundhq stays on: these tests exercise the HQ output stage.)
+    if (FeatureManager* features = emulator->GetContext()->pFeatureManager)
+        features->setFeature(Features::kScreenHQ, false);
     return emulator;
 }
 

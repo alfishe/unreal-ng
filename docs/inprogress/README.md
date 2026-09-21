@@ -31,6 +31,20 @@ Rules:
 - Adding/removing a marker is a documentation change — safe to do together with any
   commit; it never requires a code change.
 
+## Mandatory Link Sanitization (Relative Paths)
+
+All references to repository files in documentation must use repository-root-relative paths — never machine-specific absolute paths (e.g., `file:///...` or `/Users/...`).
+
+Before finalizing documentation, you **MUST** run `tools/fix-absolute-paths.py` to convert all absolute paths to repository-relative links:
+
+```bash
+# Check for machine-specific absolute paths (dry run)
+python3 tools/fix-absolute-paths.py
+
+# Automatically rewrite absolute paths to repository-relative paths
+python3 tools/fix-absolute-paths.py --apply
+```
+
 ## Lifecycle
 Once a feature or specification is fully implemented and finalized, its documentation should be cleaned up and moved to the appropriate permanent location in the main `docs/` tree. The folder itself stays in `docs/inprogress/` with a `DONE.md` tombstone summarizing the outcome and evidence.
 When work is partially complete and still valuable, leave the folder in place with a `TODO.md` explaining progress and remainders, and make sure the item appears in [PLAN.md](PLAN.md).

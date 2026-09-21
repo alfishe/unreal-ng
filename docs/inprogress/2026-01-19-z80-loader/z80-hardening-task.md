@@ -24,7 +24,7 @@ All format versions load correctly with proper bounds checking.
 ## Changes Made
 
 ### 1. Added BANK_INVALID Sentinel
-**File:** [memory.h](core/src/emulator/memory/memory.h#L19-L24)
+**File:** [memory.h](../../../core/src/emulator/memory/memory.h#L19-L24)
 ```cpp
 enum MemoryBankModeEnum : uint8_t {
     BANK_ROM = 0,

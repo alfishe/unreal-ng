@@ -143,9 +143,13 @@ protected:
     {
         TypeText(emulator, text);
         EmulatorContext* context = emulator->GetContext();
+        // The screen is compared with its spaces stripped (80-column glyph
+        // cells decode with gaps), so the needle must be stripped too: a raw
+        // "DIR B:" never matches and this wait would always burn its 120 frames
+        const std::string needle = StripSpaces(text);
         EmulatorTestHelper::RunUntil(
             emulator.get(),
-            [&] { return StripSpaces(DecodeTextRows(context, 0, 24)).find(text) != std::string::npos; }, 120);
+            [&] { return StripSpaces(DecodeTextRows(context, 0, 24)).find(needle) != std::string::npos; }, 120);
     }
 
     /// Decode rows of the M_ATMTX 80-column text screen (the ATM BIOS / CP/M
