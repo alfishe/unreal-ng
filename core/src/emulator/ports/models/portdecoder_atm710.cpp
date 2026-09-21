@@ -102,7 +102,29 @@ uint8_t PortDecoder_ATM710::DecodePortIn(uint16_t port, uint16_t pc)
     uint8_t result = 0xFF;
     _lastPortDecoded = false;
 
+    PortDecodeDisposition disp;
+
+    // decodePort() MUST run before the claim override below: it canonicalizes
+    // the Beta128 aliases (#xx1F/#xx3F/#xx5F/#xx7F -> #001F.. etc.) that
+    // IsBeta128Port() inside the override matches by exact value. Passing the
+    // raw port there would never match (e.g. #407F stays #407F), so the R6
+    // session-arbitration exception would never fire and a MoonSound wave
+    // claim on low byte #7F would steal every dirty-high-byte FDC data cycle
+    // (#xx7F) - the actual cause of the 2048.scl boot regression this ordering fixes.
     uint16_t decodedPort = decodePort(port);
+
+    // Full-decode low-byte claim override (see portdecoder.h): a registered
+    // low-byte card (e.g. ZXM-MoonSound on #C4-#C7) owns this cycle, so the
+    // motherboard's partial decode below must stand down. Without this, ATM's
+    // A0-only #FE match and A15/A2/A1-only #7FFD match steal the card's own
+    // addr (#C4/#C6, A0=0) and data (#C5/#C7, A15=0) ports.
+    if (OverrideDecodeForFullDecodeClaim(port, decodedPort, disp))
+    {
+        result = GetCachedFullDecodeInValue(port);
+        _lastPortDecoded = true;
+        OnPortInComplete(port, result, pc, disp);
+        return result;
+    }
 
     // Port #FE - keyboard, tape, border
     if (IsPort_FE(port))
@@ -142,7 +164,24 @@ uint8_t PortDecoder_ATM710::DecodePortIn(uint16_t port, uint16_t pc)
 
 void PortDecoder_ATM710::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
+    PortDecodeDisposition disp;
+
+    // decodePort() MUST run before the claim override below - see the comment
+    // in DecodePortIn for why: IsBeta128Port() inside the override only
+    // matches the canonical decoded port, not a dirty-high-byte raw one.
     uint16_t decodedPort = decodePort(port);
+
+    // Full-decode low-byte claim override (see portdecoder.h): a registered
+    // low-byte card (e.g. ZXM-MoonSound on #C4-#C7) owns this cycle, so the
+    // motherboard's partial decode below must stand down. Without this, ATM's
+    // A0-only #FE match and A15/A2/A1-only #7FFD match steal the card's own
+    // addr (#C4/#C6, A0=0) and data (#C5/#C7, A15=0) ports - writes leaked
+    // into the border/beeper and paged RAM/ROM instead of reaching the card.
+    if (OverrideDecodeForFullDecodeClaim(port, decodedPort, disp))
+    {
+        OnPortOutComplete(port, value, pc, disp);
+        return;
+    }
 
     // Port #FE - border, beeper, tape
     if (IsPort_FE(port))

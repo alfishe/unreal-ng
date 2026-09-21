@@ -44,6 +44,30 @@ uint8_t PortDecoder_Pentagon1024::DecodePortIn(uint16_t port, uint16_t pc)
 
 void PortDecoder_Pentagon1024::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
+    // Full-decode low-byte claim override (see portdecoder.h): a registered
+    // card (e.g. ZXM-MoonSound on #C4-#C7) owns this cycle. Must run BEFORE
+    // the #7FFD intercept below - IsPort_7FFD is Pentagon128's loose partial
+    // decode (A15,A2,A1 only), which the card's dirty FM-register writes
+    // (e.g. #C4 with the register number in the high byte) alias into. Without
+    // this check here, Pentagon1024's own #7FFD interception runs ahead of the
+    // override in PortDecoder_Pentagon128::DecodePortOut and still pages RAM.
+    //
+    // decodePortEx() MUST run first: IsBeta128Port() inside the override only
+    // matches the canonical decoded port (e.g. #007F), not a dirty-high-byte
+    // raw one (#407F) - passing the raw port here would silently defeat the R6
+    // session-arbitration exception and let a MoonSound wave claim on low byte
+    // #7F steal FDC disk I/O (the ATM710 2048.scl boot regression this same
+    // ordering fixed there).
+    {
+        uint16_t claimedPort = decodePortEx(port).port;
+        PortDecodeDisposition claimDisp;
+        if (OverrideDecodeForFullDecodeClaim(port, claimedPort, claimDisp))
+        {
+            OnPortOutComplete(port, value, pc, claimDisp);
+            return;
+        }
+    }
+
     if (IsPort_EFF7(port))
     {
         Port_EFF7_Out(port, value, pc);
