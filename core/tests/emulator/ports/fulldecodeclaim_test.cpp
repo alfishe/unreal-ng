@@ -7,9 +7,13 @@
 #include <utility>
 #include <vector>
 
+#include "emulator/memory/memory.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/ports/models/portdecoder_pentagon128.h"
+#include "emulator/ports/models/portdecoder_pentagon1024.h"
 #include "emulator/ports/models/portdecoder_spectrum128.h"
+#include "emulator/ports/models/portdecoder_atm710.h"
+#include "emulator/ports/models/portdecoder_atm3.h"
 
 /// region <Test doubles>
 
@@ -472,3 +476,318 @@ TEST_F(FullDecodeClaim_Spectrum128_Test, Claimed_FMStatusRead_ServedByCard)
 }
 
 /// endregion </Claim override: if-chain decoder path>
+
+/// region <Claim override: ATM710/ATM3 (per-model regression + no-conflict coverage)>
+//
+// ATM's own partial decode is A0-only for #FE and A15/A2/A1-only for the
+// #7FFD/#BFFD/#FFFD family, so it double-decodes MoonSound's own ports:
+//   #C4/#C6 (A0=0, bit0)      -> also matches #FE (border/beeper)
+//   #C4/#C5 (A1=0, bit1)      -> also matches #7FFD (A15=0) / #BFFD (A15=1,A14=0)
+//                                 / #FFFD (A15=1,A14=1), depending on the dirty
+//                                 high byte the guest driver leaves on the bus
+// #C6/#C7 have bit1=1 and so never alias into the 7FFD/BFFD/FFFD family; #C7
+// additionally has bit0=1 and so never aliases into #FE either - only #C4 is
+// exposed to both clashes at once. The claim override must stand the
+// motherboard decode down for exactly these four low bytes (plus the
+// non-clashing #7E/#7F wave ports) and leave everything else - including the
+// ATM-specific #BF/#BE/#57 exact decodes - untouched.
+
+class FullDecodeClaim_ATM710_Test : public ::testing::Test
+{
+protected:
+    EmulatorContext* _context = nullptr;
+    Memory* _memory = nullptr;
+    PortDecoder_ATM710* _portDecoder = nullptr;
+    MockFullDecodeCard _card;
+
+    void SetUp() override
+    {
+        _context = new EmulatorContext(LoggerLevel::LogError);
+
+        // Memory must be attached before the decoder: PortDecoder caches the
+        // pointer in its constructor (mirrors portdecoder_atm710_test.cpp)
+        _memory = new Memory(_context);
+        _context->pMemory = _memory;
+
+        _portDecoder = new PortDecoder_ATM710(_context);
+        _context->config.mem_model = MM_ATM710;
+        _context->pPortDecoder = _portDecoder;
+        _context->emulatorState.flags &= ~CF_TRDOS;
+    }
+
+    void TearDown() override
+    {
+        delete _portDecoder;
+        _portDecoder = nullptr;
+        delete _memory;
+        _memory = nullptr;
+        _context->pMemory = nullptr;
+        _context->pPortDecoder = nullptr;
+        delete _context;
+        _context = nullptr;
+    }
+};
+
+// Baseline (MoonSound not attached / feature off): the known ATM decode quirk
+// stays exactly as it was pre-fix. This pins "no regression when MoonSound is
+// off": the override check only ever intervenes for a registered card low
+// byte, so with none registered the motherboard decode predicates - and thus
+// their outcome - are completely unchanged by the fix.
+//
+// The #C4/#C6 -> #FE alias is asserted at the predicate level rather than by
+// executing the OUT: Default_Port_FE_Out reaches the Z80/tape/beeper/screen
+// objects a bare PortDecoder unit test does not wire up (out of scope for a
+// port-decode-only fixture; the #FE side effects themselves are exercised by
+// the dedicated screen/beeper test suites).
+TEST_F(FullDecodeClaim_ATM710_Test, NoClaim_LegacyDoubleDecodeUnchanged)
+{
+    EXPECT_TRUE(_portDecoder->IsPort_FE(0x04C4)) << "Pre-fix behavior: #C4 still decodes as #FE (A0=0)";
+    EXPECT_TRUE(_portDecoder->IsPort_FE(0x04C6)) << "Pre-fix behavior: #C6 still decodes as #FE (A0=0)";
+
+    ASSERT_EQ(_context->emulatorState.p7FFD, 0);
+    FunnelOut(_portDecoder, 0x04C5, 0x81);
+    EXPECT_EQ(_context->emulatorState.p7FFD, 0x81) << "Pre-fix behavior: #C5 (A15=0) still pages via #7FFD";
+}
+
+TEST_F(FullDecodeClaim_ATM710_Test, Claimed_AddrWrite_DoesNotHitBorder)
+{
+    RegisterMoonSoundClaims(_portDecoder, &_card);
+    _context->emulatorState.border_attr = 0;
+
+    FunnelOut(_portDecoder, 0x04C4, 0x02);
+    FunnelOut(_portDecoder, 0x04C6, 0x03);
+
+    EXPECT_EQ(_context->emulatorState.border_attr, 0) << "ULA #FE arm must stand down for #C4/#C6";
+    ASSERT_EQ(_card.outPorts.size(), 2u);
+    EXPECT_EQ(_card.outPorts[0].first, 0x04C4);
+    EXPECT_EQ(_card.outPorts[1].first, 0x04C6);
+}
+
+TEST_F(FullDecodeClaim_ATM710_Test, Claimed_DataWrite_DoesNotPage)
+{
+    RegisterMoonSoundClaims(_portDecoder, &_card);
+    ASSERT_EQ(_context->emulatorState.p7FFD, 0);
+
+    // #C5 with A15=0 is the dirty write that would otherwise page RAM/ROM
+    // (bit1=0 matches #7FFD's mask); #C7 never collided with paging on ATM
+    // (bit1=1), so this half only proves the card still receives its own
+    // cycle rather than pinning a regression
+    FunnelOut(_portDecoder, 0x04C5, 0x81);
+    FunnelOut(_portDecoder, 0x04C7, 0x82);
+
+    EXPECT_EQ(_context->emulatorState.p7FFD, 0) << "#7FFD paging must not see the card cycle";
+    ASSERT_EQ(_card.outPorts.size(), 2u);
+    EXPECT_EQ(_card.outPorts[0].first, 0x04C5);
+    EXPECT_EQ(_card.outPorts[1].first, 0x04C7);
+}
+
+TEST_F(FullDecodeClaim_ATM710_Test, Claimed_CanonicalPortsStillWork)
+{
+    RegisterMoonSoundClaims(_portDecoder, &_card);
+
+    FunnelOut(_portDecoder, 0x7FFD, 0x05);
+    EXPECT_EQ(_context->emulatorState.p7FFD, 0x05);
+
+    // #FE (canonical, low byte != any of the six claimed bytes) must stay
+    // outside the claim - checked at the predicate level, see
+    // NoClaim_LegacyDoubleDecodeUnchanged for why the OUT itself is not run
+    EXPECT_FALSE(_portDecoder->IsLowByteClaimedByFullDecodeDevice(0x00FE));
+}
+
+TEST_F(FullDecodeClaim_ATM710_Test, Claimed_FMStatusRead_ServedByCard)
+{
+    _card.statusByte = 0x77;
+    RegisterMoonSoundClaims(_portDecoder, &_card);
+
+    uint8_t result = FunnelIn(_portDecoder, 0x04C4);
+
+    EXPECT_EQ(result, 0x77);
+    ASSERT_EQ(_card.inPorts.size(), 1u);
+    EXPECT_EQ(_card.inPorts[0], 0x04C4);
+}
+
+// Wave ports #7E/#7F alias into ATM's own #FE (even) / Beta128 #7F decode;
+// the claim must stand both down without disturbing the FDC's TR-DOS-session
+// arbitration for the other Beta128 ports.
+TEST_F(FullDecodeClaim_ATM710_Test, Claimed_WaveWrite_NoMotherboardSideEffects)
+{
+    RegisterMoonSoundClaims(_portDecoder, &_card);
+    _context->emulatorState.border_attr = 0;
+
+    FunnelOut(_portDecoder, 0x047E, 0x35);
+
+    EXPECT_EQ(_context->emulatorState.border_attr, 0) << "ULA #FE arm must stand down for #7E";
+    ASSERT_EQ(_card.outPorts.size(), 1u);
+    EXPECT_EQ(_card.outPorts[0].first, 0x047E);
+}
+
+class FullDecodeClaim_ATM3_Test : public ::testing::Test
+{
+protected:
+    EmulatorContext* _context = nullptr;
+    Memory* _memory = nullptr;
+    PortDecoder_ATM3* _portDecoder = nullptr;
+    MockFullDecodeCard _card;
+
+    void SetUp() override
+    {
+        _context = new EmulatorContext(LoggerLevel::LogError);
+
+        _memory = new Memory(_context);
+        _context->pMemory = _memory;
+
+        _portDecoder = new PortDecoder_ATM3(_context);
+        _context->config.mem_model = MM_ATM3;
+        _context->pPortDecoder = _portDecoder;
+        _context->emulatorState.flags &= ~CF_TRDOS;
+    }
+
+    void TearDown() override
+    {
+        delete _portDecoder;
+        _portDecoder = nullptr;
+        delete _memory;
+        _memory = nullptr;
+        _context->pMemory = nullptr;
+        _context->pPortDecoder = nullptr;
+        delete _context;
+        _context = nullptr;
+    }
+};
+
+// ATM3 delegates unhandled ports to PortDecoder_ATM710::DecodePortIn/Out, so
+// the same fix must reach it. This is the exact bug report reproduction: a
+// MoonSound-equipped ATM3/ATM710 config with the card's ports wired up.
+TEST_F(FullDecodeClaim_ATM3_Test, Claimed_DirtyWrites_StandDown)
+{
+    RegisterMoonSoundClaims(_portDecoder, &_card);
+    _context->emulatorState.border_attr = 0;
+    ASSERT_EQ(_context->emulatorState.p7FFD, 0);
+
+    FunnelOut(_portDecoder, 0x04C4, 0x02);
+    FunnelOut(_portDecoder, 0x04C5, 0x81);
+
+    EXPECT_EQ(_context->emulatorState.border_attr, 0);
+    EXPECT_EQ(_context->emulatorState.p7FFD, 0);
+    ASSERT_EQ(_card.outPorts.size(), 2u);
+}
+
+// ATM3's own exact-decoded ports (#xBF control, #x57 Z-Controller) sit outside
+// the C4-C7/7E/7F claim space and must be completely unaffected by a card
+// being attached.
+TEST_F(FullDecodeClaim_ATM3_Test, Claimed_OwnPortsUnaffected)
+{
+    RegisterMoonSoundClaims(_portDecoder, &_card);
+
+    FunnelOut(_portDecoder, 0x00BF, 0x01);
+    EXPECT_EQ(_context->emulatorState.pBF, 0x01);
+
+    uint8_t sdResult = FunnelIn(_portDecoder, 0x0057);
+    EXPECT_EQ(sdResult, 0xFF) << "Z-Controller with no SD image reads back 'no card'";
+
+    EXPECT_TRUE(_card.outPorts.empty());
+    EXPECT_TRUE(_card.inPorts.empty());
+}
+
+TEST_F(FullDecodeClaim_ATM3_Test, Claimed_FMStatusRead_ServedByCard)
+{
+    _card.statusByte = 0x99;
+    RegisterMoonSoundClaims(_portDecoder, &_card);
+
+    uint8_t result = FunnelIn(_portDecoder, 0x04C4);
+
+    EXPECT_EQ(result, 0x99);
+    ASSERT_EQ(_card.inPorts.size(), 1u);
+}
+
+/// endregion </Claim override: ATM710/ATM3>
+
+/// region <Claim override: Pentagon1024 (subclass intercepts #7FFD ahead of base)>
+//
+// Pentagon1024::DecodePortOut intercepts #7FFD itself (6-bit bank extension)
+// before delegating to Pentagon128's claim-override-aware dispatch. Without
+// its own override check, a MoonSound dirty FM write aliasing into #7FFD
+// (same loose A15/A2/A1 decode as plain Pentagon128) would page RAM one class
+// earlier than the override could intervene.
+
+class FullDecodeClaim_Pentagon1024_Test : public ::testing::Test
+{
+protected:
+    EmulatorContext* _context = nullptr;
+    Memory* _memory = nullptr;
+    PortDecoder_Pentagon1024* _portDecoder = nullptr;
+    MockFullDecodeCard _card;
+
+    void SetUp() override
+    {
+        _context = new EmulatorContext(LoggerLevel::LogError);
+
+        // Pentagon1024's #7FFD handler dereferences pMemory unconditionally
+        // (Port_7FFD_Out / switchRAMPage), unlike ATM's null-guarded version
+        _memory = new Memory(_context);
+        _context->pMemory = _memory;
+
+        _portDecoder = new PortDecoder_Pentagon1024(_context);
+        _context->config.mem_model = MM_PENTAGON;
+        _context->pPortDecoder = _portDecoder;
+        _context->emulatorState.flags &= ~CF_TRDOS;
+    }
+
+    void TearDown() override
+    {
+        delete _portDecoder;
+        _portDecoder = nullptr;
+        delete _memory;
+        _memory = nullptr;
+        _context->pMemory = nullptr;
+        _context->pPortDecoder = nullptr;
+        delete _context;
+        _context = nullptr;
+    }
+};
+
+// Baseline (MoonSound off): the loose Pentagon-style #7FFD alias still pages,
+// same as Pentagon128's own NoClaim_LooseDecodePinned - no regression from
+// adding the override check ahead of the #7FFD/#EFF7 intercepts.
+TEST_F(FullDecodeClaim_Pentagon1024_Test, NoClaim_LooseDecodeStillPages)
+{
+    ASSERT_EQ(_context->emulatorState.p7FFD, 0);
+    FunnelOut(_portDecoder, 0x04C4, 0x04);
+    EXPECT_EQ(_context->emulatorState.p7FFD, 0x04);
+}
+
+TEST_F(FullDecodeClaim_Pentagon1024_Test, Claimed_FMRegisterWrite_DoesNotPage)
+{
+    RegisterMoonSoundClaims(_portDecoder, &_card);
+    ASSERT_EQ(_context->emulatorState.p7FFD, 0);
+
+    FunnelOut(_portDecoder, 0x04C4, 0x04);
+
+    EXPECT_EQ(_context->emulatorState.p7FFD, 0) << "Paging register must not see the card cycle";
+    ASSERT_EQ(_card.outPorts.size(), 1u);
+    EXPECT_EQ(_card.outPorts[0].first, 0x04C4);
+}
+
+// #EFF7 (low byte F7) never clashes with the card's C4-C7/7E/7F claims, so it
+// must keep working exactly as before while the card is attached.
+TEST_F(FullDecodeClaim_Pentagon1024_Test, Claimed_EFF7StillWorks)
+{
+    RegisterMoonSoundClaims(_portDecoder, &_card);
+
+    FunnelOut(_portDecoder, 0xEFF7, 0x04);
+    EXPECT_EQ(_context->emulatorState.pEFF7, 0x04);
+
+    uint8_t result = FunnelIn(_portDecoder, 0xEFF7);
+    EXPECT_EQ(result, 0x04);
+}
+
+TEST_F(FullDecodeClaim_Pentagon1024_Test, Claimed_Canonical7FFDStillWorks)
+{
+    RegisterMoonSoundClaims(_portDecoder, &_card);
+
+    FunnelOut(_portDecoder, 0x7FFD, 0x07);
+
+    EXPECT_EQ(_context->emulatorState.p7FFD, 0x07);
+}
+
+/// endregion </Claim override: Pentagon1024>
