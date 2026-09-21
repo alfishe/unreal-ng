@@ -34,6 +34,17 @@ static app_emulator* SpawnCubeInstance(int index, char *model, char *sym, char *
         return nullptr;
     }
     app_start(emu);
+    // Pentagon faces come up in overscan mode with the horizontally centered
+    // (symmetric) viewport - matches the controller's default, and the staging
+    // buffer is already sized for the 384x304 overscan frame. Runs on every
+    // spawn, so single-sync collapse/respawn keeps the setting too
+    if (strcmp(kCubeModels[index], "PENTAGON") == 0) {
+        app_set_overscan(emu, 1);
+    }
+    // Every face starts with the "strong" 9 dB room simulation on (AY chips
+    // and beeper; HQ post-processing is the default). Applies to ALL models -
+    // beeper-only machines carry it on their beeper chain
+    app_set_room_mode(emu, 9);
     snprintf(model, 64, "%s", kCubeModels[index]);
     snprintf(sym, 64, "%s", kCubeSymIds[index]);
     uuid[0] = '\0';

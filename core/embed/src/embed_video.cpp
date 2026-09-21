@@ -12,11 +12,14 @@ app_result EmbedVideo::GetFrameInfo(Emulator* emu, uint16_t* width, uint16_t* he
     if (!screen)
         return APP_ERR_STATE;
 
-    const FramebufferDescriptor desc = screen->GetFramebufferDescriptor();
+    // Report the DISPLAY region (viewport-cropped), not the raw framebuffer:
+    // hosts size their textures to these dimensions and CopyFrame delivers
+    // exactly this rect, so e.g. an overscan Pentagon face with the symmetric
+    // horizontal viewport shows the centered 352x304 view, not the full frame
     if (width)
-        *width = static_cast<uint16_t>(desc.width);
+        *width = screen->GetDisplayWidth();
     if (height)
-        *height = static_cast<uint16_t>(desc.height);
+        *height = screen->GetDisplayHeight();
     if (latchTimestampUs)
         *latchTimestampUs = screen->GetLastLatchTimestampUs();
 
@@ -32,7 +35,10 @@ app_result EmbedVideo::CopyFrame(Emulator* emu, void* dstRgba8, size_t dstSize)
     if (!screen)
         return APP_ERR_STATE;
 
-    bool result = screen->CopyPresentedFramebuffer(reinterpret_cast<uint8_t*>(dstRgba8), dstSize);
+    // Viewport-cropped copy matching GetFrameInfo's reported dimensions;
+    // fails (hosts keep their previous staged frame) only across a video-mode
+    // switch or a degenerate crop
+    bool result = screen->CopyPresentedViewport(reinterpret_cast<uint8_t*>(dstRgba8), dstSize);
     return result ? APP_OK : APP_ERR_INTERNAL;
 }
 

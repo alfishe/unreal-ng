@@ -137,4 +137,58 @@ TEST_F(PresentLatch_Test, CopyRejectsUndersizedDestination)
     EXPECT_FALSE(_screen->CopyPresentedFramebuffer(nullptr, fb.memoryBufferSize));
 }
 
+TEST_F(PresentLatch_Test, ViewportCopyCropsToDisplayRegion)
+{
+    FramebufferDescriptor& fb = _screen->GetFramebufferDescriptor();
+    ASSERT_NE(fb.memoryBuffer, nullptr);
+    ASSERT_GT(fb.width, 10u);
+    ASSERT_GT(fb.height, 10u);
+
+    _screen->SetPresentDelayFrames(0);
+
+    // Row-indexed pattern: every byte of row r carries r, so the cropped copy
+    // can be verified positionally
+    for (uint32_t r = 0; r < fb.height; r++)
+        memset(fb.memoryBuffer + static_cast<size_t>(r) * fb.width * 4, r & 0xFF, static_cast<size_t>(fb.width) * 4);
+    _screen->LatchFramebuffer();
+
+    // {cropLeft, cropRight, cropTop, cropBottom}
+    _screen->SetDisplayViewport({1, 2, 3, 4});
+
+    const uint32_t wantW = fb.width - 3;
+    const uint32_t wantH = fb.height - 7;
+    EXPECT_EQ(_screen->GetDisplayWidth(), wantW);
+    EXPECT_EQ(_screen->GetDisplayHeight(), wantH);
+
+    std::vector<uint8_t> cropped(static_cast<size_t>(wantW) * wantH * 4, 0x5A);
+    ASSERT_TRUE(_screen->CopyPresentedViewport(cropped.data(), cropped.size()))
+        << "cropped copy must succeed for a valid viewport";
+
+    // Row r of the crop must come from source row (3 + r): uniform and exact
+    for (uint32_t r = 0; r < wantH; r++)
+    {
+        const uint8_t* row = cropped.data() + static_cast<size_t>(r) * wantW * 4;
+        EXPECT_EQ(row[0], (3 + r) & 0xFF) << "crop row " << r << " first byte";
+        EXPECT_EQ(row[wantW * 4 - 1], (3 + r) & 0xFF) << "crop row " << r << " last byte";
+    }
+
+    // First cropped row must match the same region of a full copy exactly
+    std::vector<uint8_t> full(fb.memoryBufferSize);
+    ASSERT_TRUE(_screen->CopyPresentedFramebuffer(full.data(), full.size()));
+    const uint8_t* region = full.data() + (static_cast<size_t>(3) * fb.width + 1) * 4;
+    EXPECT_EQ(memcmp(cropped.data(), region, static_cast<size_t>(wantW) * 4), 0)
+        << "cropped row differs from the full-copy region";
+
+    // Degenerate zero-height viewport is rejected
+    _screen->SetDisplayViewport({0, 0, 0, fb.height});
+    EXPECT_FALSE(_screen->CopyPresentedViewport(cropped.data(), cropped.size()));
+
+    // Undersized destination is rejected
+    _screen->SetDisplayViewport({1, 2, 3, 4});
+    std::vector<uint8_t> small(cropped.size() - 4);
+    EXPECT_FALSE(_screen->CopyPresentedViewport(small.data(), small.size()));
+
+    _screen->SetDisplayViewport({0, 0, 0, 0});  // restore full view
+}
+
 /// endregion </Screen presentation latch>

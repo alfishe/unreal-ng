@@ -993,6 +993,71 @@ bool Screen::CopyPresentedFramebuffer(uint8_t* dst, size_t dstSize)
     return true;
 }
 
+bool Screen::CopyPresentedViewport(uint8_t* dst, size_t dstSize)
+{
+    if (dst == nullptr)
+        return false;
+
+    std::lock_guard<std::mutex> lock(_presentMutex);
+    if (_presentSlots[0] == nullptr || _presentBufferSize == 0)
+        return false;
+
+    // The crop rect comes from the live framebuffer geometry; right after a
+    // video-mode switch the queued slots can still carry the previous mode's
+    // size, so bail out (hosts keep their last staged frame) instead of
+    // reading rows past a differently shaped buffer
+    if (_presentBufferSize != _framebuffer.memoryBufferSize)
+        return false;
+
+    // Nothing latched yet: serve the zeroed slot (black frame), matching
+    // CopyPresentedFramebuffer's contract
+    const uint8_t* slot = _presentSlots[0];
+    if (_presentLatchCounter != 0)
+    {
+        const uint64_t newest = _presentLatchCounter - 1;
+        uint64_t delay = _presentDelayFrames.load(std::memory_order_acquire);
+        if (delay > newest)
+            delay = newest;
+        slot = _presentSlots[(newest - delay) % PRESENT_SLOTS];
+    }
+
+    // Clamp the crop to the frame so a stale viewport from a previous video
+    // mode cannot underflow the region math
+    const uint32_t framebufferWidth = _framebuffer.width;
+    const uint32_t framebufferHeight = _framebuffer.height;
+    const DisplayViewport viewport = _displayViewport;
+
+    uint32_t cropLeft = viewport.cropLeft;
+    if (cropLeft > framebufferWidth)
+        cropLeft = framebufferWidth;
+    uint32_t cropRight = viewport.cropRight;
+    if (cropRight > framebufferWidth - cropLeft)
+        cropRight = framebufferWidth - cropLeft;
+    uint32_t cropTop = viewport.cropTop;
+    if (cropTop > framebufferHeight)
+        cropTop = framebufferHeight;
+    uint32_t cropBottom = viewport.cropBottom;
+    if (cropBottom > framebufferHeight - cropTop)
+        cropBottom = framebufferHeight - cropTop;
+
+    const uint32_t outWidth = framebufferWidth - cropLeft - cropRight;
+    const uint32_t outHeight = framebufferHeight - cropTop - cropBottom;
+    if (outWidth == 0 || outHeight == 0)
+        return false;
+
+    const size_t needed = static_cast<size_t>(outWidth) * outHeight * 4;
+    if (dstSize < needed)
+        return false;
+
+    // Row-by-row crop: source rows keep the full framebuffer stride
+    for (uint32_t row = 0; row < outHeight; row++)
+    {
+        const uint8_t* src = slot + (static_cast<size_t>(cropTop + row) * framebufferWidth + cropLeft) * 4;
+        memcpy(dst + static_cast<size_t>(row) * outWidth * 4, src, static_cast<size_t>(outWidth) * 4);
+    }
+    return true;
+}
+
 FramebufferDescriptor& Screen::GetFramebufferDescriptor()
 {
     return _framebuffer;

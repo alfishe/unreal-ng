@@ -411,6 +411,45 @@ class VideoCubeControlApp(QMainWindow):
                         "a stale app process is still holding the WebAPI port: kill the app "
                         "(swipe it away), relaunch, and reconnect.", "ERROR")
 
+                # The overscan checkbox is a host-wide preference: propagate
+                # the current state to every Pentagon face right after (re)connect
+                # and topology switches (fetch_status also runs after those)
+                self.apply_overscan_to_all()
+
+        elif action == "fetch_models":
+            if success and "models" in data:
+                # Mirror the unreal-qt Machine menu exactly (MenuManager::
+                # createMachineMenu): same supported set, one entry per RAM
+                # size (plain name when there is only one), so every
+                # configuration selectable on the desktop is selectable here.
+                # Non-creatable models still appear, annotated - the server
+                # rejects their creation with a clear reason on builds that
+                # lack the port decoder/config folder
+                menu_models = {"PENTAGON", "48K", "128k", "ATM710", "ATM3",
+                               "SCORPION", "PROFSCORP"}
+                not_creatable = 0
+                for m in data["models"]:
+                    name = m.get("name", "")
+                    if name not in menu_models:
+                        continue
+                    full = m.get("full_name") or name
+                    rams = m.get("available_ram_sizes_kb") or []
+                    if not rams:
+                        rams = [m.get("default_ram_kb", 0)]
+                    note = "" if m.get("creatable") else "  [not creatable on this build]"
+                    if note:
+                        not_creatable += 1
+                    for ram in rams:
+                        label = full if len(rams) == 1 else f"{full} {ram}K"
+                        self.model_combo.addItem(label + note,
+                                                 {"model": name, "ram_size": ram})
+                cfgs = self.model_combo.count()
+                warn = (f", {not_creatable} model(s) marked not creatable (creation will be rejected)"
+                        if not_creatable else "")
+                self.log(f"Loaded {cfgs} machine configuration(s) - unreal-qt Machine menu parity{warn}.", "SUCCESS")
+            else:
+                self.log(f"Failed to fetch machine models: {msg}", "ERROR")
+
         elif action == "auto_demo_push":
             if success:
                 self.log("Demo snapshot initialized successfully.", "SUCCESS")
@@ -436,11 +475,17 @@ class VideoCubeControlApp(QMainWindow):
             else:
                 self.log(f"Failed to set single-sync mode: {msg}", "ERROR")
 
-        elif action in ("upload_snapshot", "insert_disk", "reset_emulator", "set_overscan"):
+        elif action in ("upload_snapshot", "insert_disk", "reset_emulator"):
             if success:
                 self.log(f"Operation {action} succeeded on targeted face.", "SUCCESS")
             else:
                 self.log(f"Operation {action} failed: {msg}", "ERROR")
+
+        elif action == "set_overscan":
+            # Propagation fans out to every Pentagon face - stay quiet on
+            # success (N log lines per toggle) but surface failures
+            if not success:
+                self.log(f"Overscan propagation failed: {msg}", "ERROR")
 
         elif action.startswith("key_"):
             # Stay quiet on success (every keystroke would spam the log), but
@@ -542,11 +587,31 @@ class VideoCubeControlApp(QMainWindow):
             payload["emulator_id"] = self.current_emu_id
         self.run_async("set_singlesync", url, "POST", json_data=payload)
 
-    def on_overscan_toggled(self, checked: bool):
-        if self.current_emu_id:
-            url = f"{self.get_base_url()}/api/v1/emulator/{self.current_emu_id}/overscan"
-            payload = {"enabled": checked, "viewport": "symmetric_horizontal" if checked else "full"}
+    def apply_overscan_to_all(self):
+        # Overscan is Pentagon-only (the server declines it on other models),
+        # so fan the checkbox state out to every Pentagon instance - in
+        # dedicated mode that is 4 faces, in single-sync mode the single master
+        checked = self.overscan_cb.isChecked()
+        targets = [e for e in self.emulator_instances
+                   if str(e.get("model", "")).upper().startswith("PENTAGON")]
+        if not targets:
+            return
+
+        self.log(f"Propagating overscan {'ON' if checked else 'OFF'} to "
+                 f"{len(targets)} Pentagon instance(s)...", "INFO")
+        for emu in targets:
+            emu_id = emu.get("id", "")
+            url = f"{self.get_base_url()}/api/v1/emulator/{emu_id}/overscan"
+            # Symmetric horizontal = horizontally centered overscan (352x304);
+            # "full" only when disabling, as the natural uncropped frame
+            payload = {"enabled": checked,
+                       "viewport": "symmetric_horizontal" if checked else "full"}
             self.run_async("set_overscan", url, "POST", json_data=payload)
+
+    def on_overscan_toggled(self, checked: bool):
+        # Host-wide setting: applies to ALL Pentagon faces, not just the
+        # selected one (matches the checkbox semantics shown in the UI)
+        self.apply_overscan_to_all()
 
     def reset_emulator(self):
         if self.current_emu_id:

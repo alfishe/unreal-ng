@@ -76,6 +76,11 @@ final class CubeViewController: UIViewController {
         didSet { hudOverlayView.isHidden = !isHUDEnabled }
     }
 
+    // Immersive fullscreen cube: never show the system status bar, in either
+    // orientation (Info.plist also sets UIViewControllerBasedStatusBarAppearance
+    // to false, but keep the override authoritative at the VC level as well)
+    override var prefersStatusBarHidden: Bool { true }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black

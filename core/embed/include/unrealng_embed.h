@@ -63,6 +63,17 @@ APP_EXPORT app_result app_frame_info(app_emulator* emu, uint16_t* w, uint16_t* h
 APP_EXPORT app_result app_copy_frame(app_emulator* emu, void* dst_rgba8, size_t dst_size);
 APP_EXPORT void       app_set_present_delay(app_emulator* emu, uint8_t frames);
 
+// Video mode - Pentagon overscan toggle (M_P384, 384x304). Enabling applies
+// the symmetric horizontal viewport (352x304 - centered, same default as the
+// WebAPI overscan routes); disabling restores the uncropped standard frame.
+// Returns APP_ERR_STATE on machines without overscan support.
+APP_EXPORT app_result app_set_overscan(app_emulator* emu, int enable);
+
+// Audio - room simulation on the character chains (both AY chips + beeper;
+// HQ post-processing is on by default). room_db selects the preset:
+// 0 = off, 6, 9 or 12 (dB). Anything else returns APP_ERR_ARG.
+APP_EXPORT app_result app_set_room_mode(app_emulator* emu, int room_db);
+
 // Audio
 APP_EXPORT app_result app_audio_open_device(app_emulator* emu);
 APP_EXPORT app_result app_audio_attach_pull(app_emulator* emu, uint32_t device_rate);

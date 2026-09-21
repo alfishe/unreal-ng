@@ -298,6 +298,15 @@ void SoundManager::syncAYChainSettings()
     _ayChain1.setRoomMode(_ayChain0.getRoomMode());
 }
 
+void SoundManager::setRoomMode(AudioCharacterChain::RoomMode mode)
+{
+    // Both AY chains (chip 1 via the sync) and the beeper chain carry the room
+    // simulation; the FM chains deliberately stay bypassed (TSFM design §7.2)
+    _ayChain0.setRoomMode(mode);
+    _beeperChain.setRoomMode(mode);
+    syncAYChainSettings();
+}
+
 // Legacy volume API delegates to registry
 void SoundManager::setAYVolume(double volume)
 {

@@ -726,6 +726,16 @@ public:
     /// @return true if a frame was copied
     bool CopyPresentedFramebuffer(uint8_t* dst, size_t dstSize);
 
+    /// @brief Copy the latched frame cropped to the display viewport.
+    /// Same tear-free / A/V-sync semantics as CopyPresentedFramebuffer, but
+    /// dst receives displayWidth x displayHeight tightly packed RGBA rows -
+    /// for embed hosts and other consumers that cannot crop client-side.
+    /// Returns false while a video-mode switch leaves the present slots sized
+    /// differently from the live framebuffer (callers keep their previous
+    /// frame for that instant), for a degenerate zero-size crop, or when the
+    /// destination is too small.
+    bool CopyPresentedViewport(uint8_t* dst, size_t dstSize);
+
     FramebufferDescriptor& GetFramebufferDescriptor();
     void GetFramebufferData(uint32_t** buffer, size_t* size);
 

@@ -4,11 +4,13 @@
 
 #include "common/filehelper.h"
 #include "common/logger.h"
+#include "common/sound/filters/audio_character_chain.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/emulator.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
 #include "emulator/io/keyboard/keyboard.h"
+#include "emulator/sound/soundmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "3rdparty/message-center/messagecenter.h"
 #include "automation.h"
@@ -357,6 +359,53 @@ void app_set_present_delay(app_emulator* emu, uint8_t frames)
     {
         emu->video.SetPresentDelay(targetEmu.get(), frames);
     }
+}
+
+app_result app_set_overscan(app_emulator* emu, int enable)
+{
+    if (!emu)
+        return APP_ERR_ARG;
+
+    std::lock_guard<std::mutex> lock(emu->mutex);
+    std::shared_ptr<Emulator> targetEmu = ResolveTargetEmulator(emu);
+    if (!targetEmu)
+        return APP_ERR_STATE;
+
+    // Mirror the WebAPI overscan routes: switch the video mode and apply the
+    // matching viewport preset - symmetric horizontal (centered 352x304) when
+    // enabled, uncropped full framebuffer when disabled
+    targetEmu->SetOverscanMode(enable != 0);
+    targetEmu->SetDisplayViewport(enable ? ViewportPresets::SYMMETRIC_HORIZONTAL
+                                         : ViewportPresets::FULL_OVERSCAN);
+
+    // SetOverscanMode() declines both on machines without overscan hardware
+    // (ZX48/128) and when the requested mode is already active - the verified
+    // end state tells the host whether the toggle took effect
+    return targetEmu->IsOverscanMode() == (enable != 0) ? APP_OK : APP_ERR_STATE;
+}
+
+app_result app_set_room_mode(app_emulator* emu, int room_db)
+{
+    if (!emu)
+        return APP_ERR_ARG;
+
+    AudioCharacterChain::RoomMode mode;
+    switch (room_db)
+    {
+        case 0:  mode = AudioCharacterChain::RoomMode::Off; break;
+        case 6:  mode = AudioCharacterChain::RoomMode::Room_6dB; break;
+        case 9:  mode = AudioCharacterChain::RoomMode::Room_9dB; break;
+        case 12: mode = AudioCharacterChain::RoomMode::Room_12dB; break;
+        default: return APP_ERR_ARG;
+    }
+
+    std::lock_guard<std::mutex> lock(emu->mutex);
+    std::shared_ptr<Emulator> targetEmu = ResolveTargetEmulator(emu);
+    if (!targetEmu || !targetEmu->GetContext() || !targetEmu->GetContext()->pSoundManager)
+        return APP_ERR_STATE;
+
+    targetEmu->GetContext()->pSoundManager->setRoomMode(mode);
+    return APP_OK;
 }
 
 app_result app_audio_open_device(app_emulator* emu)

@@ -281,6 +281,13 @@ public:
     // Apply AY chain settings to both chips
     void syncAYChainSettings();
 
+    // Room simulation preset for every chain that carries it (both AY chips
+    // via the chain-0 -> chain-1 sync, plus the beeper; the FM chains stay
+    // bypassed per the TSFM design). Single entry point for automation and
+    // embed hosts - mirrors the Audio Settings room combo.
+    void setRoomMode(AudioCharacterChain::RoomMode mode);
+    AudioCharacterChain::RoomMode getRoomMode() const { return _ayChain0.getRoomMode(); }
+
     // Device registry API
     const std::vector<AudioDeviceInfo>& devices() const { return _devices; }
     AudioDeviceInfo* device(AudioSourceType type);

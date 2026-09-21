@@ -159,3 +159,33 @@ TEST_F(SoundHQChainBypass_Test, ChainsResetWhenHQReturns)
     FrameLeavesChipBufferUntouched(sound);
     EXPECT_LT(range(20, 84), 64) << "pre-bypass audio echoed through a stale room delay line";
 }
+
+/// SoundManager::setRoomMode is the automation/embed entry point for the room
+/// simulation preset: it must configure every chain that carries room - both
+/// AY chips (chip 1 via the chain-0 -> chain-1 sync) and the beeper. The FM
+/// chains deliberately stay bypassed (TSFM design §7.2) and have no public
+/// accessor to assert on.
+class SoundManagerRoomMode_Test : public SoundHQChainBypass_Test
+{
+};
+
+TEST_F(SoundManagerRoomMode_Test, SetRoomModePropagatesToAYAndBeeperChains)
+{
+    using RoomMode = AudioCharacterChain::RoomMode;
+
+    SoundManager* sound = _context->pSoundManager;
+    ASSERT_NE(sound, nullptr);
+    EXPECT_EQ(sound->getRoomMode(), RoomMode::Off) << "room must start disabled";
+
+    sound->setRoomMode(RoomMode::Room_9dB);
+
+    EXPECT_EQ(sound->getRoomMode(), RoomMode::Room_9dB);
+    EXPECT_EQ(sound->getAYChain().getRoomMode(), RoomMode::Room_9dB);
+    EXPECT_EQ(sound->getBeeperChain().getRoomMode(), RoomMode::Room_9dB);
+
+    sound->setRoomMode(RoomMode::Off);
+
+    EXPECT_EQ(sound->getRoomMode(), RoomMode::Off);
+    EXPECT_EQ(sound->getAYChain().getRoomMode(), RoomMode::Off);
+    EXPECT_EQ(sound->getBeeperChain().getRoomMode(), RoomMode::Off);
+}
