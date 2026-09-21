@@ -613,17 +613,26 @@ TEST_F(SharedMemory_Test, ExternalProcessRigorousValidation)
 
     // Wait for the emulator thread to actually reach the Run state
     // (Otherwise Pause() will be immediately overriden by Start())
-    for (int i = 0; i < 50 && _emulator->GetState() != StateRun; i++)
+    // Millisecond granularity, not the original microseconds(250): on this
+    // Windows/MinGW toolchain, std::this_thread::sleep_for below ~1ms rounds
+    // down to effectively zero (Windows' coarse timer resolution vs POSIX's
+    // finer-grained nanosleep), so the loop was a near-instant busy-spin that
+    // gave StartAsync()'s freshly spawned OS thread almost no real wall-clock
+    // time to reach StateRun before the budget "ran out" - flaky on Windows,
+    // fine on platforms with precise sub-millisecond sleep_for. The loop
+    // still exits the moment the state flips, so the fast path (~1ms here)
+    // is unaffected; 2000 * 1ms = 2s is a generous ceiling for a thread start.
+    for (int i = 0; i < 2000 && _emulator->GetState() != StateRun; i++)
     {
-        std::this_thread::sleep_for(std::chrono::microseconds(250));
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     ASSERT_EQ(_emulator->GetState(), StateRun) << "Emulator failed to reach StateRun";
 
     _emulator->Pause();
-    // Allow state to transition to Paused
-    for (int i = 0; i < 20 && _emulator->GetState() != StatePaused; i++)
+    // Allow state to transition to Paused (same millisecond-granularity fix)
+    for (int i = 0; i < 2000 && _emulator->GetState() != StatePaused; i++)
     {
-        std::this_thread::sleep_for(std::chrono::microseconds(250));
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     ASSERT_EQ(_emulator->GetState(), StatePaused) << "Emulator should be paused for rigorous memory testing";
 

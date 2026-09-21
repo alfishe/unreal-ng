@@ -141,7 +141,13 @@ public:
     static std::string GetTestDataPath(const std::string& relativePath)
     {
         fs::path root = FindProjectRoot();
-        fs::path fullPath = root / "testdata" / relativePath;
+        // relativePath is written with forward slashes in every caller (e.g.
+        // "loaders/mgt/synthetic.img"). fs::path::operator/ parses that fine,
+        // but .string() otherwise echoes the separators exactly as given -
+        // make_preferred() normalizes the whole path to the platform's native
+        // separator (a no-op on POSIX, backslash on Windows) so this matches
+        // whatever any loader/DiskImage normalizes its own stored path to.
+        fs::path fullPath = (root / "testdata" / relativePath).make_preferred();
         return fullPath.string();
     }
 
