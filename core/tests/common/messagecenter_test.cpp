@@ -12,6 +12,7 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <atomic>
 #include <cstring>
@@ -287,13 +288,20 @@ TEST(EventQueueObserverRemoval_Test, PlainFunctionPointersStillRemovedByAddress)
 
 TEST(MessageCenterVariants_Test, FastCenter_DeliversInlinePayloads)
 {
-    MessageCenterFast mc;
-    mc.start();
+    // Heap-allocated, not a local: MessageCenterFast embeds its
+    // MPMCQueue<MessageFast*, MC_FAST_QUEUE_SIZE> ring buffer directly
+    // (65536 alignas(64) slots -> sizeof(MessageCenterFast) is ~4MB). A
+    // stack-local instance overflows a default ~1MB Windows thread stack
+    // immediately (undefined behavior - manifests as a hang/crash here
+    // rather than a clean fault); macOS's larger default main-thread stack
+    // (8MB) happens to absorb it, which is why this only broke on Windows.
+    auto mc = std::make_unique<MessageCenterFast>();
+    mc->start();
 
     std::atomic<int> received{0};
     std::atomic<uint32_t> lastValue{0};
 
-    mc.addObserver("test_topic", [&](uint16_t topicId, const void* data, size_t size) {
+    mc->addObserver("test_topic", [&](uint16_t topicId, const void* data, size_t size) {
         (void)topicId;
         if (data && size == sizeof(uint32_t))
         {
@@ -305,7 +313,7 @@ TEST(MessageCenterVariants_Test, FastCenter_DeliversInlinePayloads)
     });
 
     const uint32_t payload = 0x12345678;
-    ASSERT_TRUE(mc.post("test_topic", &payload, sizeof(payload)));
+    ASSERT_TRUE(mc->post("test_topic", &payload, sizeof(payload)));
 
     // Dispatch is asynchronous (dedicated thread)
     auto start = std::chrono::steady_clock::now();
@@ -318,7 +326,7 @@ TEST(MessageCenterVariants_Test, FastCenter_DeliversInlinePayloads)
     EXPECT_EQ(received.load(), 1);
     EXPECT_EQ(lastValue.load(), 0x12345678u);
 
-    mc.stop();
+    mc->stop();
 }
 
 TEST(MessageCenterVariants_Test, EmulatorQueue_CriticalBeforeBulk)
@@ -370,12 +378,16 @@ TEST(MessageCenterVariants_Test, FastCenter_ThroughputSanity)
     // --- Fast variant ---
     double fastRate = 0.0;
     {
-        MessageCenterFast mc;
-        mc.start();
+        // Heap-allocated - see the FastCenter_DeliversInlinePayloads comment:
+        // MessageCenterFast is ~4MB (its MPMCQueue ring buffer is a direct
+        // member), too large for a stack-local on a default Windows thread
+        // stack.
+        auto mc = std::make_unique<MessageCenterFast>();
+        mc->start();
 
         std::atomic<int> received{0};
-        const uint16_t topic = mc.registerTopic("bench");
-        mc.addObserver(topic, [&](uint16_t, const void*, size_t) {
+        const uint16_t topic = mc->registerTopic("bench");
+        mc->addObserver(topic, [&](uint16_t, const void*, size_t) {
             received.fetch_add(1, std::memory_order_relaxed);
         });
 
@@ -384,7 +396,7 @@ TEST(MessageCenterVariants_Test, FastCenter_ThroughputSanity)
         int posted = 0;
         for (int i = 0; i < MESSAGES; i++)
         {
-            if (mc.post(topic, &payload, sizeof(payload)))
+            if (mc->post(topic, &payload, sizeof(payload)))
                 posted++;
             else
                 std::this_thread::yield();  // Queue full: let the dispatcher drain
@@ -398,7 +410,7 @@ TEST(MessageCenterVariants_Test, FastCenter_ThroughputSanity)
         fastRate = received.load() / sec;
 
         EXPECT_EQ(received.load(), posted) << "Fast center lost messages";
-        mc.stop();
+        mc->stop();
     }
 
     std::cout << "[perf] MessageCenterFast end-to-end: " << static_cast<long>(fastRate)

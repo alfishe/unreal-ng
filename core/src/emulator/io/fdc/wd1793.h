@@ -1021,10 +1021,15 @@ protected:
     void transitionFSM(WDSTATE nextState)
     {
         /// region <Debug logging>
-        std::string timeMark = StringHelper::Format("  [%d | %d ms]", _time, convertTStatesToMs(_time));
-        std::string message = StringHelper::Format("  %s -> %s <nodelay> %s", WDSTATEToString(_state).c_str(),
-                                                   WDSTATEToString(nextState).c_str(), timeMark.c_str());
-        MLOGINFO(message.c_str());
+        // Same predicate as MLOGINFO: the strings are only built when they will
+        // be emitted (this runs on every FSM transition, i.e. on the FDC hot path)
+        if (_logger && _logger->GetLevel() <= LoggerLevel::LogInfo)
+        {
+            std::string timeMark = StringHelper::Format("  [%d | %d ms]", _time, convertTStatesToMs(_time));
+            std::string message = StringHelper::Format("  %s -> %s <nodelay> %s", WDSTATEToString(_state).c_str(),
+                                                       WDSTATEToString(nextState).c_str(), timeMark.c_str());
+            MLOGINFO(message.c_str());
+        }
         /// endregion </Debug logging>
 
         _state = nextState;
@@ -1039,11 +1044,14 @@ protected:
         }
 
         /// region <Debug logging>
-        std::string delayNote =
-            StringHelper::Format(" delay(%d | %.02f ms)", delayTStates, convertTStatesToMsFloat(delayTStates));
-        std::string message = StringHelper::Format("  %s -> %s %s", WDSTATEToString(_state).c_str(),
-                                                   WDSTATEToString(nextState).c_str(), delayNote.c_str());
-        MLOGINFO(message.c_str());
+        if (_logger && _logger->GetLevel() <= LoggerLevel::LogInfo)
+        {
+            std::string delayNote =
+                StringHelper::Format(" delay(%d | %.02f ms)", delayTStates, convertTStatesToMsFloat(delayTStates));
+            std::string message = StringHelper::Format("  %s -> %s %s", WDSTATEToString(_state).c_str(),
+                                                       WDSTATEToString(nextState).c_str(), delayNote.c_str());
+            MLOGINFO(message.c_str());
+        }
         /// endregion </Debug logging>
 
         _state2 = nextState;
@@ -1056,11 +1064,14 @@ protected:
         WDSTATE nextState = nextStateEvent.getState();
 
         /// region <Debug logging>
-        std::string delayNote =
-            StringHelper::Format(" delay(%d | %d ms)", delayTStates, convertTStatesToMs(delayTStates));
-        std::string message = StringHelper::Format("  %s -> %s %s", WDSTATEToString(_state).c_str(),
-                                                   WDSTATEToString(nextState).c_str(), delayNote.c_str());
-        MLOGINFO(message.c_str());
+        if (_logger && _logger->GetLevel() <= LoggerLevel::LogInfo)
+        {
+            std::string delayNote =
+                StringHelper::Format(" delay(%d | %d ms)", delayTStates, convertTStatesToMs(delayTStates));
+            std::string message = StringHelper::Format("  %s -> %s %s", WDSTATEToString(_state).c_str(),
+                                                       WDSTATEToString(nextState).c_str(), delayNote.c_str());
+            MLOGINFO(message.c_str());
+        }
         /// endregion </Debug logging>
 
         nextStateEvent.executeAction();
