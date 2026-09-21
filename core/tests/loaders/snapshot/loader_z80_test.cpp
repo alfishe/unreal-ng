@@ -7,6 +7,33 @@
 #include "_helpers/testpathhelper.h"
 #include "loader_z80_fuzzing_test.h"  // Includes LoaderZ80CUT
 
+namespace
+{
+    /// Deletes the file at the given path when it goes out of scope, on every
+    /// exit path (assertion failure included: ASSERT_* returns out of the
+    /// TEST_F body, which still unwinds locals normally - only an uncaught
+    /// exception or a whole-process crash skips this, same as any destructor).
+    /// A bare remove() call at the end of the test - the previous pattern -
+    /// never ran once an earlier ASSERT_TRUE failed, leaving scratch files
+    /// behind.
+    class ScopedTestFile
+    {
+    public:
+        explicit ScopedTestFile(std::string path) : _path(std::move(path)) {}
+        ~ScopedTestFile() { std::remove(_path.c_str()); }
+
+        ScopedTestFile(const ScopedTestFile&) = delete;
+        ScopedTestFile& operator=(const ScopedTestFile&) = delete;
+
+        const std::string& path() const { return _path; }
+        const char* c_str() const { return _path.c_str(); }
+        operator const std::string&() const { return _path; }
+
+    private:
+        std::string _path;
+    };
+}
+
 /// region <SetUp / TearDown>
 
 void LoaderZ80_Test::SetUp()
@@ -545,32 +572,29 @@ TEST_F(LoaderZ80_Test, saveBasic)
 {
     // Load a snapshot, then save it to a new file
     static std::string testSnapshotPath = TestPathHelper::GetTestDataPath("loaders/z80/newbench.z80");
-    std::string savePath = TestPathHelper::GetTestDataPath("loaders/z80/test_save_output.z80");
-    
+    ScopedTestFile savePath(TestPathHelper::GetUniqueTestScratchPath("test_save_output.z80"));
+
     // Load original snapshot
     LoaderZ80CUT loader(_context, testSnapshotPath);
     ASSERT_TRUE(loader.load()) << "Failed to load test snapshot";
-    
+
     // Save to new file
     LoaderZ80CUT saver(_context, savePath);
     bool saveResult = saver.save();
     EXPECT_TRUE(saveResult) << "Save failed";
-    
+
     // Verify file was created
     FILE* f = fopen(savePath.c_str(), "rb");
     EXPECT_NE(f, nullptr) << "Saved file was not created";
     if (f) fclose(f);
-    
-    // Cleanup
-    remove(savePath.c_str());
 }
 
 TEST_F(LoaderZ80_Test, saveAndLoadRoundtrip)
 {
     // CRITICAL: Save then load must preserve all state
     static std::string testSnapshotPath = TestPathHelper::GetTestDataPath("loaders/z80/newbench.z80");
-    std::string savePath = TestPathHelper::GetTestDataPath("loaders/z80/test_roundtrip.z80");
-    
+    ScopedTestFile savePath(TestPathHelper::GetUniqueTestScratchPath("test_roundtrip.z80"));
+
     // Load original snapshot
     LoaderZ80CUT loader1(_context, testSnapshotPath);
     ASSERT_TRUE(loader1.load()) << "Failed to load original snapshot";
@@ -602,31 +626,25 @@ TEST_F(LoaderZ80_Test, saveAndLoadRoundtrip)
     EXPECT_EQ(z80->bc, orig_bc) << "BC mismatch after roundtrip";
     EXPECT_EQ(z80->de, orig_de) << "DE mismatch after roundtrip";
     EXPECT_EQ(z80->hl, orig_hl) << "HL mismatch after roundtrip";
-    
-    // Cleanup
-    remove(savePath.c_str());
 }
 
 TEST_F(LoaderZ80_Test, savedFileIsValidZ80)
 {
     // Verify saved file can be validated as a proper Z80 format
     static std::string testSnapshotPath = TestPathHelper::GetTestDataPath("loaders/z80/BBG128.z80");
-    std::string savePath = TestPathHelper::GetTestDataPath("loaders/z80/test_validity.z80");
-    
+    ScopedTestFile savePath(TestPathHelper::GetUniqueTestScratchPath("test_validity.z80"));
+
     // Load 128K snapshot
     LoaderZ80CUT loader1(_context, testSnapshotPath);
     ASSERT_TRUE(loader1.load()) << "Failed to load 128K snapshot";
-    
+
     // Save it
     LoaderZ80CUT saver(_context, savePath);
     ASSERT_TRUE(saver.save()) << "Save failed";
-    
+
     // Validate the saved file
     LoaderZ80CUT validator(_context, savePath);
     EXPECT_TRUE(validator.validate()) << "Saved file failed validation";
-    
-    // Cleanup
-    remove(savePath.c_str());
 }
 
 /// endregion </Save Tests>
