@@ -115,7 +115,7 @@ class APIWorker(QThread):
                     headers["Content-Type"] = "application/octet-stream"
                     resp = requests.post(self.url, data=self.raw_body, headers=headers, proxies=proxies, timeout=(3, 30))
                 elif self.files:
-                    resp = requests.post(self.url, files=self.files, proxies=proxies, timeout=(3, 10))
+                    resp = requests.post(self.url, files=self.files, headers=headers, proxies=proxies, timeout=(3, 10))
                 else:
                     headers["Content-Type"] = "application/json"
                     resp = requests.post(self.url, json=self.json_data, headers=headers, proxies=proxies, timeout=(3, 5))
@@ -442,6 +442,12 @@ class VideoCubeControlApp(QMainWindow):
             else:
                 self.log(f"Operation {action} failed: {msg}", "ERROR")
 
+        elif action.startswith("key_"):
+            # Stay quiet on success (every keystroke would spam the log), but
+            # surface failures - a wrong endpoint/key name must be visible
+            if not success:
+                self.log(f"Keyboard {action[4:]} failed: {msg}", "ERROR")
+
     def fetch_status(self):
         url = f"{self.get_base_url()}/api/v1/emulator"
         self.log(f"Connecting to WebAPI at {url}...")
@@ -563,15 +569,24 @@ class VideoCubeControlApp(QMainWindow):
         if not file_path or not os.path.exists(file_path):
             self.log("Invalid disk path", "ERROR")
             return
-        url = f"{self.get_base_url()}/api/v1/emulator/{self.current_emu_id}/disk/0"
-        with open(file_path, "rb") as f: files = {"file": (os.path.basename(file_path), f, "application/octet-stream")}
-        self.run_async("insert_disk", url, "POST", files=files)
+        url = f"{self.get_base_url()}/api/v1/emulator/{self.current_emu_id}/disk/0/insert"
+        # Read fully before handing to the async worker: the request runs on a
+        # QThread after this method returns, so a file handle would already be
+        # closed by then ("read of closed file")
+        with open(file_path, "rb") as f: raw = f.read()
+        files = {"file": (os.path.basename(file_path), raw, "application/octet-stream")}
+        # Autorun Mode: quick-reset into TR-DOS and boot drive A (server-side,
+        # drive 0 only) via the X-Autostart header
+        headers = {"X-Autostart": "true"} if self.autorun_cb.isChecked() else None
+        self.run_async("insert_disk", url, "POST", files=files, extra_headers=headers)
 
     def on_keyboard_event(self, key_name: str, action: str):
         if not self.current_emu_id: return
-        url = f"{self.get_base_url()}/api/v1/emulator/{self.current_emu_id}/keyboard"
-        payload = {"key": key_name, "action": action}
-        self.run_async(f"key_{action}", url, "POST", json_data=payload)
+        # The API exposes separate press/release endpoints, each taking
+        # {"key": name} - key names are case-insensitive ("enter", "a", "caps")
+        suffix = "press" if action == "press" else "release"
+        url = f"{self.get_base_url()}/api/v1/emulator/{self.current_emu_id}/keyboard/{suffix}"
+        self.run_async(f"key_{action}", url, "POST", json_data={"key": key_name})
 
     def browse_file(self, target_line_edit: QLineEdit, filter_str: str):
         file_path, _ = QFileDialog.getOpenFileName(self, "Select File", "", filter_str)
