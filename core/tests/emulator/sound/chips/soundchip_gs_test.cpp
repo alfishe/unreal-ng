@@ -419,7 +419,6 @@ protected:
         ctx = new EmulatorContext(LoggerLevel::LogError);
         ctx->config.sound.gs_vol = 8000;
         ctx->config.sound.gsTypeKind = GSTypeKind::Z80;
-        ctx->config.gs_ramsize = 512;
     }
 
     void TearDown() override
@@ -467,14 +466,20 @@ TEST_F(GeneralSound_SoundManager_Test, NeoGSTypePlaceholderCreatesNoCard)
     EXPECT_EQ(sm->device(AudioSourceType::GeneralSound), nullptr);
 }
 
-TEST_F(GeneralSound_SoundManager_Test, RamSizeHonouredFromConfig)
+TEST_F(GeneralSound_SoundManager_Test, RamSize_NeoGSConfigDoesNotLeakIntoClassicCard)
 {
-    ctx->config.gs_ramsize = 256;
+    // Shipped configs default [NGS] RamSize to 2048 KB (a NeoGS value). The
+    // classic card must keep the stock 128 KB geometry: the 512 KB clamp
+    // quadruples the firmware POST, and fastdisk-booted trainers probe the
+    // card mid-POST, miss the 0x7E idle signature they require and fall
+    // back to no-GS sound (scorpion-family ZONE128.SCL boots).
+    ctx->config.gs_ramsize = 2048;
     sm = new SoundManager(ctx);
     sm->reset();
 
     ASSERT_NE(sm->getGeneralSound(), nullptr);
-    EXPECT_EQ(sm->getGeneralSound()->getRamSizeKB(), 256u);
+    EXPECT_EQ(sm->getGeneralSound()->getRamSizeKB(), SoundChip_GeneralSound::RAM_SIZE_STANDARD_KB);
+    EXPECT_EQ(sm->getGeneralSound()->getRamSizeKB(), 128u);
 }
 
 /// endregion </SoundManager integration>

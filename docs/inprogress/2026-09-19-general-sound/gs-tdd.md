@@ -273,6 +273,15 @@ gs_vol=100       ; 0-100
 RamSize=512
 ```
 
+> **Implementation note (2026-09-20, BUG-6):** `[NGS] RamSize` stays a NeoGS-only
+> key. The classic card is created with the stock geometry constant
+> `SoundChip_GeneralSound::RAM_SIZE_STANDARD_KB` (128 KB): feeding the shipped 2048 KB
+> NeoGS default into the classic card clamped it to 512 KB, quadrupling the firmware
+> POST so fastdisk-booted trainers probed the card mid-POST and bailed on the missing
+> 0x7E idle signature (scorpion-family ZONE128.SCL boots). The chip constructor still
+> accepts 128-512 KB for expansion-card emulation. See
+> [`verification-findings-and-bugs.md`](verification-findings-and-bugs.md) BUG-6.
+
 ### 4.3 CPU Isolation Strategy
 
 **Critical:** GS requires a dedicated Z80 core isolated from the main emulator.

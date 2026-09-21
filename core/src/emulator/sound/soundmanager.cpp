@@ -106,14 +106,18 @@ SoundManager::SoundManager(EmulatorContext* context)
     // General Sound card ([SOUND] GSType=Z80, GS design §5.1): LLE Z80
     // coprocessor + 4xDAC. BASS (legacy HLE) and NGS (NeoGS, neogs-tdd.md
     // - P2 placeholder that will extend SoundChip_GeneralSound) parse to
-    // their enum values but create no device yet. RAM comes from [NGS]
-    // RamSize as in Unreal (gs_ram_mask derivation), clamped by the card
-    // geometry (128-512 KB). The firmware ROM is optional - the chip warns
-    // and runs zeroed when missing, so a config error never blocks the
+    // their enum values but create no device yet. The classic card gets
+    // the stock 128 KB geometry: [NGS] RamSize is a NeoGS-only key, and
+    // its shipped 2048 KB default used to clamp to 512 KB here - that
+    // quadrupled the firmware POST, so fastdisk-booted trainers probed
+    // the card mid-POST and read 0xFF instead of the 0x7E idle signature
+    // they check for (scorpion-family boots lost that race and fell back
+    // to no-GS sound). The firmware ROM is optional - the chip warns and
+    // runs zeroed when missing, so a config error never blocks the
     // machine.
     if (_context->config.sound.gsTypeKind == GSTypeKind::Z80)
     {
-        _gs = new SoundChip_GeneralSound(_context, _context->config.gs_ramsize, _coreRate);
+        _gs = new SoundChip_GeneralSound(_context, SoundChip_GeneralSound::RAM_SIZE_STANDARD_KB, _coreRate);
         _gs->loadROM(_context->config.gs_rom_path);
         _devices.push_back({AudioSourceType::GeneralSound, "GS", false, false, 1.0f, 0.0f, false});
     }

@@ -285,6 +285,44 @@ empty ring during ~6 s of silence can color the first ~0.4 s of audio ≤ +7 cen
 unwinding; from 5 s onward the device feed is also 0.00 cents) — follow-up candidate, not
 steady-state float.
 
+### BUG-6 (Critical, FIXED): NeoGS RAM default bled into the classic card and lost the boot race on scorpion-family models
+
+**Symptom**: ZONE128.SCL (Betadisk GS trainer) played GS music on every model except
+the scorpion family (SCORPION, PROFSCORP) — the trainer fell back to its no-GS path and
+parked in its menu loop at #8062 with the GS firmware idle in the dispatcher.
+
+**Diagnosis** (ZX-side port trace + 30 ms GS-state timeline, `scratch/gs_scorp_zxtrace.sh` /
+`gs_timeline_probe.sh`, 2026-09-20): port decode and stimulus were identical and correct
+on SCORPION vs PENTAGON (stray `OUT (#F3BB),0xF3` boot-loader write, trainer `OUT (#BB),0`,
+`IN (#BB)`); the divergence was the value read — **0xFF on SCORPION vs 0x7E on PENTAGON**.
+The trainer waits ~167 ms (10 frames) after the probe and does `CP #7E` on the status byte:
+only the exact idle signature (bits 1–6 read as 1, bit0 and bit7 clear) takes the GS-present
+path. 0xFF (bit0 command pending + bit7 boot latch byte) meant the probe landed **during
+the firmware POST**: scorpion-family machines fastdisk-boot to the probe in ~0.7 s of
+emulated time while the 512 KB POST RAM walk takes ~0.78 s, and the POST-end `OUT (#05)`
+discards any command latched meanwhile. Pentagon's slower boot (~3 s) always probed after
+POST.
+
+**Root cause**: SoundManager passed `[NGS] RamSize` into the classic card. Shipped configs
+default that key to 2048 KB (a NeoGS value — `config.cpp` itself notes RamSize "only
+matters for NeoGS"), and the card clamp maps it to 512 KB — quadrupling the POST versus
+the stock 128 KB card that every GS title must support. Emulator fastdisk boot is far
+faster than a real floppy load, so the oversized POST lost a race real hardware never
+sees.
+
+**Fix** (`soundmanager.cpp` + `soundchip_gs.h`, 2026-09-20): classic `GSType=Z80` cards are
+created with the stock geometry constant `RAM_SIZE_STANDARD_KB` (128 KB); `[NGS] RamSize`
+remains a NeoGS-only key. The chip constructor still accepts and clamps 128–512 KB for
+expansion-card emulation.
+
+**Verification**: regression `RamSize_NeoGSConfigDoesNotLeakIntoClassicCard`; live boot of
+ZONE128.SCL on SCORPION / PROFSCORP / PENTAGON — POST walks 4 pairs and ends by ~0.27 s,
+the stray #F3 is consumed instantly, the trainer passes `CP #7E` (`IN (#BB)` = 0x7E at
+#801D on all three models), uploads its 19,649-byte module (complete post-fix trace; the
+pre-fix Pentagon capture stopped at the 200K-event cap mid-upload and under-counted) —
+fits the stock card with a 6.6× margin — and leaves the GS firmware executing the
+interrupt-driven player continuously (68 % of timeline samples in player code on SCORPION).
+
 ## 7. Non-Bugs (verified correct — do not "fix")
 
 - **`data_pending=true` after COM31**: `OUT (OUTRG)` (`gsOut` case `0x03`) sets
@@ -302,7 +340,8 @@ steady-state float.
   `GET /api/v1/emulator/models` with `creatable` flags).
 - Register values in WebAPI bodies must be **decimal** (see BUG-2).
 - Port 8090 may be held by an `UnrealNGCube.app` simulator process — `pkill -9 -f UnrealNGC`
-  if `pkill unreal-qt` is not enough.
+  if `pkill unreal-qt` is not enough, or launch with `UNREAL_WEBAPI_PORT=<port>` to redirect
+  the WebAPI listener (added 2026-09-20 during the BUG-6 investigation).
 - To exercise GS without the race: drive the ZX side
   (`/memory/write` + `/registers/pc` + `/resume`), never the GS control actions, while running.
 
@@ -317,6 +356,7 @@ steady-state float.
 | Module playback script | `scratch/gs_mod_verify.sh`, live monitor `scratch/gs_mod_live.sh` |
 | ZX loader program (58 B) | `scratch/gs_prog.json`; module bytes `scratch/gs_mod.json` |
 | Covox / early verification | `scratch/gs_zx_verify.sh`, `scratch/gs_zx_verify2.sh` |
+| Scorpion boot-race probes | `scratch/gs_scorp_zxtrace.sh`, `scratch/gs_timeline_probe.sh`, `scratch/gs_disasm.py` |
 | Emulator implementation | `core/src/emulator/sound/chips/soundchip_gs.cpp` / `.h` |
 | Firmware sources | `/Volumes/TB4-4Tb/Projects/emulators/github/GeneralSound/firmware/src/v105b/src/` (`COM_L`, `COM_H`, `INIT_L`, `LOAD_L`, `ENGINE_L`, `QUANTUM`, `PLAY`, `GEN_L`, `INTTST` `.a80`) |
 | In-tree firmware copy | [`materials/gs/gs-firmware/`](materials/gs/gs-firmware/) |
@@ -330,6 +370,8 @@ steady-state float.
 - [ ] Startup DRC rail-bleed: faster integral unwind (or fill-phase freeze) so the first
       ~0.4 s of audio after a cold start cannot inherit a railed trim (BUG-5 verification
       note) — cosmetic, steady-state is exact.
-- [ ] If pure-GUI silence is ever reported for specific GS software, obtain that TAP/TRD —
-      every mechanism GS software uses (COM0E/COM16/COM18/COM30/COM31, interrupts, DAC,
-      mixing) is now verified working.
+- [x] The first "specific GS software is silent" report materialized as ZONE128.SCL on the
+      scorpion family and was root-caused as BUG-6 (boot race, fixed 2026-09-20). Keep the
+      standing rule: every mechanism GS software uses (COM0E/COM16/COM18/COM30/COM31,
+      interrupts, DAC, mixing) is verified working — a new silent title means a new
+      investigation, not a reopened old one.

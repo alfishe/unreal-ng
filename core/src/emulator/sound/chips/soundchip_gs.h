@@ -59,6 +59,7 @@ public:
     static constexpr size_t ROM_SIZE = 0x8000;  // 32 KB (2 x 16 KB pages)
     static constexpr size_t PAGE_SIZE = 0x4000; // 16 KB bank granularity
     static constexpr size_t RAM_PAIR_SIZE = 2 * PAGE_SIZE; // MPAG pair granularity
+    static constexpr size_t RAM_SIZE_STANDARD_KB = 128; // stock card; 256/512 KB were expansions
 
     explicit SoundChip_GeneralSound(EmulatorContext* context, size_t ramKB, size_t sampleRate = 44100);
     ~SoundChip_GeneralSound() override;
@@ -214,7 +215,7 @@ private:
     // Dedicated GS Z80 (z80ex - never the main emulator CPU, design §4.3)
     Z80EX_CONTEXT* _cpu = nullptr;
     std::vector<uint8_t> _rom;   // 32 KB firmware
-    std::vector<uint8_t> _ram;   // 128-512 KB (config [NGS] RamSize, clamped)
+    std::vector<uint8_t> _ram;   // 128-512 KB (stock 128 KB unless expanded via ctor)
     bool _romLoaded = false;
 
     // Memory banking (§2.3 MPAG: 0 -> ROM pair, V>=1 -> RAM pair (V-1))
