@@ -226,7 +226,22 @@ void PortDecoder_ATM710::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc
             // Beta128 FDC ports
             if (IsBeta128Port(decodedPort))
             {
-                PeripheralPortOut(decodedPort, value);
+                // The ATM-Turbo 2+ board does not wire #FF bit 6 to the VG93
+                // DDEN input: double density (MFM) is permanent on this
+                // machine. The monitor ROM itself writes #FF = 5C (bit 6 set,
+                // which is FM on a genuine Beta128) right before its MFM
+                // catalog reads, and both reference emulators agree - the
+                // original Unreal wd93cmd.cpp latches only drive / side /
+                // reset / HLT from the system register and ignores bit 6
+                // entirely. Masking keeps the controller in MFM; the #FF
+                // readback exposes only bits 0-5 plus DRQ/INTRQ, so the
+                // change is invisible there.
+                uint8_t fdcValue = value;
+                if (decodedPort == 0x00FF)
+                {
+                    fdcValue &= 0b1011'1111;
+                }
+                PeripheralPortOut(decodedPort, fdcValue);
             }
 
             // ATM palette RAM write. On the real bus the #xxFF access drives

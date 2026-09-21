@@ -19,7 +19,8 @@
     paths["/api/v1/emulator/{id}/settings/{name}"]["get"]["parameters"][1]["name"] = "name";
     paths["/api/v1/emulator/{id}/settings/{name}"]["get"]["parameters"][1]["in"] = "path";
     paths["/api/v1/emulator/{id}/settings/{name}"]["get"]["parameters"][1]["required"] = true;
-    paths["/api/v1/emulator/{id}/settings/{name}"]["get"]["parameters"][1]["description"] = "Setting name";
+    paths["/api/v1/emulator/{id}/settings/{name}"]["get"]["parameters"][1]["description"] =
+        "Setting name (fast_tape, turbo_tape, fast_disk, trdos_traps, audio_rate, ...)";
     paths["/api/v1/emulator/{id}/settings/{name}"]["get"]["parameters"][1]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/settings/{name}"]["get"]["responses"]["200"]["description"] = "Setting value";
 
@@ -36,6 +37,8 @@
     paths["/api/v1/emulator/{id}/settings/{name}"]["put"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["value"]["type"] = "string";
     paths["/api/v1/emulator/{id}/settings/{name}"]["put"]["requestBody"]["content"]["application/json"]["schema"]
-         ["properties"]["value"]["description"] = "New setting value";
+         ["properties"]["value"]["description"] =
+        "New setting value; audio_rate accepts one of 44100, 48000, 88200, 96000, 176400, "
+        "192000 or \"auto\" (rate pin, runtime only - never persisted to the ini)";
     paths["/api/v1/emulator/{id}/settings/{name}"]["put"]["responses"]["200"]["description"] = "Setting updated";
 

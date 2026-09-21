@@ -39,9 +39,9 @@ The TR-DOS analyzer follows a **two-layer architecture**:
 ## References
 
 - [Technical TR-DOS Information](docs/inprogress/2026-01-21-trdos-analyzer/technical_trdos_info.md) - Entry points, system variables, file format
-- [ECI Command Interface](docs/emulator/design/control-interfaces/command-interface.md) - Unified command interface
-- [High-Level Disk Operations](docs/analysis/capture/high-level-disk-operations.md) - Original semantic analyzer design
-- [Custom Loader Examples](docs/inprogress/2026-01-21-trdos-analyzer/materials/) - Real-world loader analysis
+- [ECI Command Interface](../../../control-interfaces/command-interface.md) - Unified command interface
+- [High-Level Disk Operations](../../../../../analysis/capture/high-level-disk-operations.md) - Original semantic analyzer design
+- [Custom Loader Examples](../../../../../inprogress/2026-01-21-trdos-analyzer/materials) - Real-world loader analysis
 
 ## Technical Context
 

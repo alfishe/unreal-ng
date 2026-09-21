@@ -99,6 +99,7 @@ Python and MCP return — [command-interface.md §3.3](./command-interface.md#33
 ```
 state audio ay          AY/SSG overview           state audio ay 0    one chip decoded
 state audio fm          TurboSound FM overview    state audio fm 1    one YM2203 FM half in full
+state audio channels    Mixer overview: per-device levels + master (mute, live core sample rate)
 state fdc               Beta Disk WD1793 (aliases: state disk, state wd1793)
 ```
 
@@ -301,7 +302,7 @@ reference: [command-interface.md](./command-interface.md).
 | `coverage <start\|stop\|clear\|gaps\|status>` | Executed-address coverage analysis. |
 | `aylog <start\|stop\|clear\|dump\|status>` | AY-3-8910 register access log. |
 | `audiocapture <start\|stop\|clear\|result\|save>` | Audio capture with level stats and WAV export. |
-| `videorecord <start\|stop\|pause\|resume\|status>` | Screen recording (requires `ENABLE_RECORDING` build). |
+| `videorecord <start\|stop\|pause\|resume\|status>` | Screen recording (requires `ENABLE_RECORDING` build). `start` accepts `--audio-rate N\|auto` to pin the core audio rate for the whole recording (one step for fixed-rate captures; fails fast if the emulator is paused so the file cannot be mislabeled — see [command-interface.md §5.8](./command-interface.md)). |
 | `assemble <addr> <code>` (`asm`) | Assemble Z80 source in place (`--write` to patch RAM). |
 | `label resolve <name\|addr>` | Resolve a label by name or an address to labels + context. |
 | `listing <load\|clear\|info\|source_at\|step_line\|run_to_line>` | Source-level debugging via assembler listings. |

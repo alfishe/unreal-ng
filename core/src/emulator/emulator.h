@@ -199,11 +199,12 @@ public:
                           const std::atomic<uint32_t>* occupancyFrames = nullptr,
                           const AudioDeviceDescriptor* deviceDescriptor = nullptr);
 
-    /// Report the attached audio device's native sample rate (0 = core rate).
-    /// The DRC resampler converts core->device at this base ratio. With
-    /// [SOUND] CoreRate=auto, a rate CHANGE (device hotplug/reroute) also
-    /// requests a full sound-pipeline re-rate: all digital filters re-derive
-    /// for the new core rate at the next frame boundary.
+    /// Report the attached audio device's native sample rate (0 = no
+    /// device). The DRC resampler converts core->device at this base ratio.
+    /// A rate CHANGE (device hotplug/reroute) re-derives the core rate from
+    /// the priority chain (runtime pin > device > [SOUND] CoreRate): without
+    /// a pin the full sound pipeline re-rates at the next frame boundary;
+    /// with a pin only the DRC base ratio follows the device.
     void SetAudioDeviceSampleRate(uint32_t rate);
     void ClearAudioCallback();
 

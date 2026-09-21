@@ -3583,6 +3583,31 @@ namespace PythonBindings
             return d;
         }, "Arm a buffered stereo capture", py::arg("seconds") = 1.0)
 
+        // Core audio rate control (same switch as CLI 'setting audio_rate',
+        // WebAPI PUT settings/audio_rate and Lua set_audio_rate). Pin the
+        // rate (44100..192000) for this run - never persisted to the ini;
+        // 0 = auto (follow the priority chain: device > [SOUND] CoreRate >
+        // 44100). Applied at the next frame boundary; deferred while a
+        // recording is in progress. Returns False for unsupported rates.
+        .def("set_audio_rate", [](Emulator& self, int rate) -> bool {
+            auto* context = self.GetContext();
+            if (!context || !context->pSoundManager) return false;
+            context->pSoundManager->setCoreRatePin(static_cast<uint32_t>(rate));
+            return context->pSoundManager->getCoreRatePin() == static_cast<uint32_t>(rate);
+        }, py::arg("rate"),
+           "Pin the core audio rate (44100..192000 Hz); 0 releases the pin (auto)")
+
+        .def("get_audio_rate", [](Emulator& self) -> py::dict {
+            py::dict d;
+            auto* context = self.GetContext();
+            if (!context || !context->pSoundManager) { d["error"] = "sound manager not available"; return d; }
+            SoundManager* sound = context->pSoundManager;
+            d["pin"] = sound->getCoreRatePin();  // 0 = auto
+            d["core_rate"] = static_cast<uint64_t>(sound->getCoreRate());
+            d["target_rate"] = static_cast<uint64_t>(sound->getTargetCoreRate());
+            return d;
+        }, "Core audio rate state: pin (0 = auto), effective core_rate, target_rate")
+
         .def("audio_capture_status", [](Emulator& self) -> py::dict {
             py::dict d;
             auto* context = self.GetContext();

@@ -3,10 +3,14 @@
 
 #include "../emulator_api.h"
 
+#include <algorithm>
+
 #include <drogon/HttpResponse.h>
 #include <base/featuremanager.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
+#include <emulator/sound/audio.h>
+#include <emulator/sound/soundmanager.h>
 #include <json/json.h>
 
 using namespace drogon;
@@ -73,6 +77,16 @@ void EmulatorAPI::getSettings(const HttpRequestPtr& req, std::function<void(cons
     disk_if["trdos_present"] = config.trdos_present;
     disk_if["trdos_traps"] = config.trdos_traps;
     settings["disk_interface"] = disk_if;
+
+    // Audio settings: the core-rate priority chain (runtime pin > device >
+    // [SOUND] CoreRate > 44100) - same source the CLI 'setting audio_rate'
+    // and Lua/Python set_audio_rate serve
+    Json::Value audio(Json::objectValue);
+    SoundManager* soundManager = context->pSoundManager;
+    const uint32_t pin = soundManager ? soundManager->getCoreRatePin() : 0;
+    audio["audio_rate"] = pin ? Json::Value(pin) : Json::Value(std::string("auto"));
+    audio["core_rate_hz"] = static_cast<unsigned>(soundManager ? soundManager->getCoreRate() : 44100u);
+    settings["audio"] = audio;
 
     ret["emulator_id"] = id;
     ret["settings"] = settings;
@@ -153,6 +167,17 @@ void EmulatorAPI::getSetting(const HttpRequestPtr& req, std::function<void(const
         ret["value"] = config.trdos_traps;
         ret["description"] = "Use TR-DOS traps for faster disk operations";
     }
+    else if (name == "audio_rate")
+    {
+        SoundManager* soundManager = context->pSoundManager;
+        const uint32_t pin = soundManager ? soundManager->getCoreRatePin() : 0;
+        ret["name"] = "audio_rate";
+        ret["value"] = pin ? Json::Value(pin) : Json::Value(std::string("auto"));
+        ret["core_rate_hz"] = static_cast<unsigned>(soundManager ? soundManager->getCoreRate() : 44100u);
+        ret["description"] = "Runtime core audio rate pin (44100..192000 or auto). "
+                             "Applied at the next frame boundary; deferred while recording. "
+                             "Never persisted to the ini.";
+    }
     else
     {
         Json::Value error;
@@ -218,6 +243,90 @@ void EmulatorAPI::setSetting(const HttpRequestPtr& req, std::function<void(const
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    // Non-boolean setting handled first: the value is a rate number or
+    // "auto" (same switch as CLI 'setting audio_rate'). Never persisted to
+    // the ini - runtime pin only.
+    if (name == "audio_rate")
+    {
+        SoundManager* soundManager = context->pSoundManager;
+        if (!soundManager)
+        {
+            Json::Value error;
+            error["error"] = "Internal Error";
+            error["message"] = "Sound manager not available for this emulator";
+
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+
+        const Json::Value value = (*json)["value"];
+        uint32_t pin = 0;
+        if (value.isString())
+        {
+            std::string text = value.asString();
+            std::transform(text.begin(), text.end(), text.begin(), ::tolower);
+            if (text != "auto")
+            {
+                Json::Value error;
+                error["error"] = "Bad Request";
+                error["message"] = "Invalid audio_rate value. Use 44100, 48000, 88200, 96000, 176400, 192000 or auto";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k400BadRequest);
+                addCorsHeaders(resp);
+                callback(resp);
+                return;
+            }
+        }
+        else if (value.isNumeric())
+        {
+            pin = static_cast<uint32_t>(value.asUInt());
+            if (!IsSupportedCoreRate(pin))
+            {
+                Json::Value error;
+                error["error"] = "Bad Request";
+                error["message"] = "Unsupported audio_rate " + std::to_string(pin) +
+                                    ". Use 44100, 48000, 88200, 96000, 176400, 192000 or auto";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k400BadRequest);
+                addCorsHeaders(resp);
+                callback(resp);
+                return;
+            }
+        }
+        else
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "Invalid audio_rate value. Use 44100..192000 or auto";
+
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+
+        soundManager->setCoreRatePin(pin);
+
+        Json::Value ret;
+        ret["name"] = "audio_rate";
+        ret["value"] = pin ? Json::Value(pin) : Json::Value(std::string("auto"));
+        ret["message"] = pin ? "Core audio rate pinned to " + std::to_string(pin) +
+                                   " Hz (applied at the next frame boundary; deferred while recording)"
+                             : "Core audio rate pin released (follows device, then config)";
+        ret["emulator_id"] = id;
+
+        auto resp = HttpResponse::newHttpJsonResponse(ret);
         addCorsHeaders(resp);
         callback(resp);
         return;

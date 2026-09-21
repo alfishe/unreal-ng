@@ -303,24 +303,21 @@ bool Config::ParseConfig(IniFile& inimanager)
 	config.sound.covoxDD = (int)inimanager.GetLongValue(sound, "CovoxDD", 0);
 
 	// Core audio rate: auto | 44100 | 48000 | 88200 | 96000 | 176400 | 192000
-	// (multirate plan phase 6). 0 = auto. Unsupported values fall back to auto.
+	// (multirate plan phase 6). 0 = auto. Decides the core rate ONLY while
+	// no audio device is attached (headless runs - recordings and analyzers
+	// at a chosen rate); a connected device always outranks it at runtime
+	// (SoundManager::targetCoreRate priority chain). Unsupported values
+	// fall back to auto.
 	{
 		long rate = inimanager.GetLongValue(sound, "CoreRate", 0);  // "auto" parses as 0
-		switch (rate)
+		if (rate == 0 || IsSupportedCoreRate(static_cast<uint32_t>(rate)))
 		{
-			case 0:
-			case 44100:
-			case 48000:
-			case 88200:
-			case 96000:
-			case 176400:
-			case 192000:
-				config.sound.coreRate = (unsigned)rate;
-				break;
-			default:
-				MLOGWARNING("Config: unsupported [SOUND] CoreRate=%ld, using auto", rate);
-				config.sound.coreRate = 0;
-				break;
+			config.sound.coreRate = (unsigned)rate;
+		}
+		else
+		{
+			MLOGWARNING("Config: unsupported [SOUND] CoreRate=%ld, using auto", rate);
+			config.sound.coreRate = 0;
 		}
 	}
 

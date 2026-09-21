@@ -14,6 +14,26 @@ static constexpr const size_t AUDIO_SAMPLING_RATE = 44100;
 /// read CORE_SAMPLING_RATE for clarity.
 static constexpr const size_t CORE_SAMPLING_RATE = AUDIO_SAMPLING_RATE;
 static constexpr const size_t AUDIO_CHANNELS = 2;
+
+/// Single source of truth for the core audio rates the DSP stack supports
+/// (multirate plan phase 6). Config parsing, the SoundManager rate
+/// resolution chain and every automation 'audio_rate' setter validate
+/// through this - no rate list may be duplicated elsewhere.
+constexpr bool IsSupportedCoreRate(uint32_t rate)
+{
+    switch (rate)
+    {
+        case 44100:
+        case 48000:
+        case 88200:
+        case 96000:
+        case 176400:
+        case 192000:
+            return true;
+        default:
+            return false;
+    }
+}
 static constexpr const size_t CPU_CLOCK_RATE = 3.5 * 1'000'000;
 static constexpr const size_t PSG_CLOCK_RATE = CPU_CLOCK_RATE / 2;
 static constexpr const size_t PSG_CLOCKS_PER_AUDIO_SAMPLE = PSG_CLOCK_RATE / AUDIO_SAMPLING_RATE;

@@ -157,7 +157,11 @@ public:
     bool hasClient() const
     {
         std::lock_guard<std::mutex> lock(m_sessionMutex);
-        return m_clientSocket >= 0;
+        // Not `m_clientSocket >= 0`: SOCKET is UINT_PTR (unsigned) on
+        // Windows, so that comparison is always true - even after disconnect
+        // resets the field to INVALID_SOCKET - and hasClient() never reports
+        // false again. POSIX's plain-int SOCKET made the bug invisible there.
+        return m_clientSocket != INVALID_SOCKET;
     }
 
     // Called by emulator when execution pauses

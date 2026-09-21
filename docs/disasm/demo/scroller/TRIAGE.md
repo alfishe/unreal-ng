@@ -3,7 +3,7 @@
 ## 1. Executive Summary
 
 - **Target**: "Scroller by Demarche" (1996) — an iconic Soviet/Russian ZX Spectrum Covox demo written for the **Pentagon 128**.
-- **Disk Image**: [`testdata/sound/covox/scroller_by_demarche.trd`](testdata/sound/covox/scroller_by_demarche.trd).
+- **Disk Image**: [`testdata/sound/covox/scroller_by_demarche.trd`](../../../../testdata/sound/covox/scroller_by_demarche.trd).
 - **User-Reported Symptom**:
   > *"Scroller still doesn't work in emulator - does some loading, then black screen or reset."*
 - **Verdict**: **Port `#7FFD` vs `BANK_M` (`$5B5C`) shadow desynchronization in the 128K Sinclair editor environment**.
@@ -173,7 +173,7 @@ At `$5B14`, the 128K editor provides an inter-ROM trampoline:
 
 ## 5. Hardware Bus Trace & Event Timeline
 
-Captured directly from the emulator's Z80 bus tracer in [`Scroller_Boot_Test.DISABLED_RealtimeGuiFlow_NoPerturbation`](core/tests/loaders/disk/scroller_boot_test.cpp#L716):
+Captured directly from the emulator's Z80 bus tracer in [`Scroller_Boot_Test.DISABLED_RealtimeGuiFlow_NoPerturbation`](../../../../core/tests/loaders/disk/scroller_boot_test.cpp#L716):
 
 ```
 [SEQ 285] OUT #7FFD value=10 pc=5B10 caller=1E7A -> p7FFD=10 bank0=48k trdos=0 bank3=page0
@@ -223,16 +223,16 @@ REM Patched Line 80 (349 bytes total, boots under all menus and models):
    - Bytes 9–10 (`param 1`): Total program length.
    - Bytes 11–12 (`param 2`): Program length without variables.
    When expanding Line 80 from 333 to 349 bytes, **both** `param 1` and `param 2` must be updated to 349. If `param 2` remains at 333, Sinclair BASIC sets `VARS` (`$5C4B`) at `PROG + 333` (in the middle of Line 90), corrupting Line 90 into variable tokens (`0x80 0x0D...`) and throwing `C Nonsense in BASIC, 90:1`.
-4. **Artifact**: Use [`patch_scroller_trd.py`](docs/disasm/demo/scroller/patch_scroller_trd.py) to generate [`scroller_fixed.trd`](docs/disasm/demo/scroller/scroller_fixed.trd), [`scroller_fixed.$B`](docs/disasm/demo/scroller/scroller_fixed.$B), and [`scroller_fixed.bin`](docs/disasm/demo/scroller/scroller_fixed.bin).
+4. **Artifact**: Use [`patch_scroller_trd.py`](patch_scroller_trd.py) to generate [`scroller_fixed.trd`](scroller_fixed.trd), [`scroller_fixed.$B`](scroller_fixed.$B), and [`scroller_fixed.bin`](scroller_fixed.bin).
 
 ### Option 2: Standalone 128K SNA Snapshot (`scroller_by_demarche.sna`)
-For zero-friction playback and regression testing, [`make_scroller_sna.py`](docs/disasm/demo/scroller/make_scroller_sna.py) pre-decrunches all 7 parts directly into their designated 128K RAM banks and outputs a standard 131,103-byte `.sna` snapshot.
+For zero-friction playback and regression testing, [`make_scroller_sna.py`](make_scroller_sna.py) pre-decrunches all 7 parts directly into their designated 128K RAM banks and outputs a standard 131,103-byte `.sna` snapshot.
 - Skips 10 seconds of disk transfers and decompressions entirely.
 - Starts instantly at the Covox menu (`$9B6B`).
 - Completely immune to loader, disk, or firmware menu issues.
 
 ### Option 3: Authentic Pentagon Boot Mode Configuration (`RESET=BASIC` / `RESET=DOS`)
-In [`data/configs/pentagon128k/unreal.ini`](data/configs/pentagon128k/unreal.ini#L48):
+In [`data/configs/pentagon128k/unreal.ini`](../../../../data/configs/pentagon128k/unreal.ini#L48):
 ```ini
 RESET=BASIC   ; or RESET=DOS
 ```
@@ -255,7 +255,7 @@ memory.DirectWriteToZ80Memory(0x5B5C, value);  // REJECTED: Violates hardware fi
 ## 8. Verification Test Reference
 
 The reproduction and validation scenarios are codified in:
-- [`core/tests/loaders/disk/scroller_boot_test.cpp`](core/tests/loaders/disk/scroller_boot_test.cpp)
+- [`core/tests/loaders/disk/scroller_boot_test.cpp`](../../../../core/tests/loaders/disk/scroller_boot_test.cpp)
   - `Scroller_Boot_Test.BootScrollerDemoTRD`: 48K/Clean TR-DOS boot path (passes).
   - `Scroller_Boot_Test.BootScrollerDemoTRD_Via128KMenu`: 128K menu path reproducing the authentic `$5B00` desync failure.
   - `Scroller_Boot_Test.BootScrollerFixedTRD_Via128KMenu`: 128K menu path loading `scroller_fixed.trd`, verifying all 7 TR-DOS loads, all 6 MegaLZ unpacks, `#7FFD` port switches, Covox menu entry (`$9B6B`), Space trigger (`$9CD6`), and 50Hz IM2 audio execution.

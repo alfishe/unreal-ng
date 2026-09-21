@@ -25,7 +25,12 @@ TEST(TimeHelper_Test, WaitUntilPrecise_WakesOnTime)
     // 2 ms budget) fails an otherwise-healthy run. Two outliers of 24 are
     // tolerated; a consistent lateness problem still trips the budget.
     constexpr int kIterations = 24;
-    const auto kFrame = std::chrono::microseconds(20480);  // Pentagon frame
+    // Wake lateness is what is measured, not the wait length: the helper sleeps
+    // in chunks of at most 4 ms (kMaxChunk) and the final wake decides the
+    // lateness, so 5 ms already crosses a chunk boundary (2 chunks) while
+    // keeping all 24 samples. The real Pentagon frame (20480 us) made this
+    // test ~490 ms of pure waiting.
+    const auto kFrame = std::chrono::microseconds(5000);
 
     std::vector<double> lateMs;
     auto next = clock::now();

@@ -10,7 +10,7 @@ Implemented unified memory access commands across all automation interfaces, pro
 
 ### CLI - Unified `memory` Command
 
-New file: [cli-processor-memory.cpp](core/automation/cli/src/commands/cli-processor-memory.cpp)
+New file: [cli-processor-memory.cpp](../../../core/automation/cli/src/commands/cli-processor-memory.cpp)
 
 **Subcommands:**
 | Command | Description |
@@ -33,7 +33,7 @@ New file: [cli-processor-memory.cpp](core/automation/cli/src/commands/cli-proces
 
 ### WebAPI - New Endpoints
 
-Modified: [debug_api.cpp](core/automation/webapi/src/api/debug_api.cpp)
+Modified: [debug_api.cpp](../../../core/automation/webapi/src/api/debug_api.cpp)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -55,7 +55,7 @@ Modified: [debug_api.cpp](core/automation/webapi/src/api/debug_api.cpp)
 
 ### Python Bindings
 
-Modified: [python_emulator.h](core/automation/python/src/emulator/python_emulator.h)
+Modified: [python_emulator.h](../../../core/automation/python/src/emulator/python_emulator.h)
 
 **New Methods on Emulator class:**
 ```python
@@ -77,7 +77,7 @@ emu.memory_info() -> dict
 
 ### Lua Bindings
 
-Modified: [lua_emulator.h](core/automation/lua/src/emulator/lua_emulator.h)
+Modified: [lua_emulator.h](../../../core/automation/lua/src/emulator/lua_emulator.h)
 
 **New Global Functions:**
 ```lua
@@ -111,12 +111,12 @@ memory_info() -> table
 
 | File | Change |
 |------|--------|
-| [cli-processor-memory.cpp](core/automation/cli/src/commands/cli-processor-memory.cpp) | **NEW** - CLI memory command implementation |
-| [cli-processor.cpp](core/automation/cli/src/cli-processor.cpp) | Added dispatch to HandleMemory() |
-| [cli-processor.h](core/automation/cli/include/cli-processor.h) | Added HandleMemory() declaration |
-| [emulator_api.h](core/automation/webapi/src/emulator_api.h) | Added new route declarations |
-| [debug_api.cpp](core/automation/webapi/src/api/debug_api.cpp) | Added putMemory, getMemoryPage, putMemoryPage, getMemoryInfo |
-| [openapi_spec.cpp](core/automation/webapi/src/openapi_spec.cpp) | Added OpenAPI definitions for new endpoints |
-| [python_emulator.h](core/automation/python/src/emulator/python_emulator.h) | Added page access bindings |
-| [lua_emulator.h](core/automation/lua/src/emulator/lua_emulator.h) | Added page access bindings |
-| [command-interface.md](docs/emulator/design/control-interfaces/command-interface.md) | Documented unified memory command |
+| [cli-processor-memory.cpp](../../../core/automation/cli/src/commands/cli-processor-memory.cpp) | **NEW** - CLI memory command implementation |
+| [cli-processor.cpp](../../../core/automation/cli/src/cli-processor.cpp) | Added dispatch to HandleMemory() |
+| [cli-processor.h](../../../core/automation/cli/include/cli-processor.h) | Added HandleMemory() declaration |
+| [emulator_api.h](../../../core/automation/webapi/src/emulator_api.h) | Added new route declarations |
+| [debug_api.cpp](../../../core/automation/webapi/src/api/debug_api.cpp) | Added putMemory, getMemoryPage, putMemoryPage, getMemoryInfo |
+| [openapi_spec.cpp](../../../core/automation/webapi/src/openapi_spec.cpp) | Added OpenAPI definitions for new endpoints |
+| [python_emulator.h](../../../core/automation/python/src/emulator/python_emulator.h) | Added page access bindings |
+| [lua_emulator.h](../../../core/automation/lua/src/emulator/lua_emulator.h) | Added page access bindings |
+| [command-interface.md](../../emulator/design/control-interfaces/command-interface.md) | Documented unified memory command |

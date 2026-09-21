@@ -239,9 +239,10 @@ bool Server::start()
         return false;
     }
 
-    int opt = 1;
-    setsockopt(m_listenSocket, SOL_SOCKET, SO_REUSEADDR,
-               reinterpret_cast<const char*>(&opt), sizeof(opt));
+    // Reject a bind onto a port another live server already holds (see
+    // platform-sockets.h - Windows' SO_REUSEADDR would otherwise let two
+    // listeners share the port instead of failing bind())
+    setListenSocketReuseAddr(m_listenSocket);
 
     sockaddr_in addr{};
     addr.sin_family = AF_INET;

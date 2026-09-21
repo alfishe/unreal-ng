@@ -558,7 +558,7 @@ bookmarks; a bookmark never appears as a `halt_reason`.
 
 ### TD-5 (P1) — timeline summary endpoint
 
-> **Design Specification:** [`designs/ttd-timeline-summary-design.md`](docs/inprogress/2026-09-14-automation-triage-gaps/designs/ttd-timeline-summary-design.md)
+> **Design Specification:** [`designs/ttd-timeline-summary-design.md`](designs/ttd-timeline-summary-design.md)
 
 Closes G-2. Provides a macro, "bird's-eye view" of an entire TTD recording
 session without requiring reverse query enumeration or complex bitset transfers.
@@ -644,7 +644,7 @@ Closes G-8 (and most of G-9's cost).
 
 ### TD-7 (P2) — query the coverage index
 
-> **Design Specification:** [`designs/ttd-coverage-query-design.md`](docs/inprogress/2026-09-14-automation-triage-gaps/designs/ttd-coverage-query-design.md)
+> **Design Specification:** [`designs/ttd-coverage-query-design.md`](designs/ttd-coverage-query-design.md)
 
 Closes G-5 (and subsumes G-2 — the corrected version of what TD-5 was trying
 to do). Exposes the per-frame coverage index (`TTDCoverageIndex`) that the

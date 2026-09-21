@@ -3707,6 +3707,34 @@ public:
             return result;
         });
 
+        // Core audio rate control (same switch as CLI 'setting audio_rate' and
+        // WebAPI PUT settings/audio_rate). Pin the rate (44100..192000) for
+        // this run - never persisted to the ini; 0 = auto (follow the
+        // priority chain: device > [SOUND] CoreRate > 44100). Applied at the
+        // next frame boundary; deferred while a recording is in progress.
+        lua.set_function("set_audio_rate", [this](int rate) -> bool {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return false;
+            auto* context = emulator->GetContext();
+            if (!context || !context->pSoundManager) return false;
+            context->pSoundManager->setCoreRatePin(static_cast<uint32_t>(rate));
+            return context->pSoundManager->getCoreRatePin() == static_cast<uint32_t>(rate);
+        });
+
+        lua.set_function("get_audio_rate", [this]() -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) { result["error"] = "no emulator"; return result; }
+            auto* context = emulator->GetContext();
+            if (!context || !context->pSoundManager) { result["error"] = "sound manager not available"; return result; }
+            SoundManager* sound = context->pSoundManager;
+            result["pin"] = sound->getCoreRatePin();  // 0 = auto
+            result["core_rate"] = static_cast<uint64_t>(sound->getCoreRate());
+            result["target_rate"] = static_cast<uint64_t>(sound->getTargetCoreRate());
+            return result;
+        });
+
         // Video recording control over the RecordingManager (mirrors POST /video/record)
 #ifdef ENABLE_RECORDING
         lua.set_function("video_record", [this](const std::string& action, sol::optional<sol::table> optsOpt) -> sol::table {
@@ -3764,6 +3792,50 @@ public:
                                          ? VideoCaptureRegion::MainScreen
                                          : VideoCaptureRegion::FullFrame);
 
+                // Optional audio-rate pin (same switch as CLI videorecord
+                // --audio-rate): number or "auto"; applied at the next frame
+                // boundary so the recording is stamped with the requested rate
+                SoundManager* sound = context->pSoundManager;
+                bool hasAudioRate = false;
+                uint32_t audioRate = 0;
+                {
+                    const sol::object rateObj = opts["audio_rate"];
+                    if (rateObj.valid())
+                    {
+                        hasAudioRate = true;
+                        if (rateObj.is<int>())
+                        {
+                            audioRate = static_cast<uint32_t>(rateObj.as<int>());
+                        }
+                        else if (rateObj.is<std::string>() && rateObj.as<std::string>() == "auto")
+                        {
+                            audioRate = 0;
+                        }
+                        else
+                        {
+                            result["error"] = "audio_rate must be a number or 'auto'";
+                            return result;
+                        }
+                    }
+                }
+                if (hasAudioRate)
+                {
+                    if (!sound)
+                    {
+                        result["error"] = "sound manager not available";
+                        return result;
+                    }
+                    sound->setCoreRatePin(audioRate);
+                    for (int attempt = 0; attempt < 100 && sound->getCoreRate() != sound->getTargetCoreRate(); attempt++)
+                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                    if (sound->getCoreRate() != sound->getTargetCoreRate())
+                    {
+                        result["error"] = "audio_rate not applied within 1s (emulator paused?) - "
+                                          "resume it or call set_audio_rate before pausing";
+                        return result;
+                    }
+                }
+
                 FeatureManager* fm = context->pFeatureManager;
                 const bool featureWasOff = fm && !fm->isEnabled(Features::kRecording);
                 if (featureWasOff) fm->setFeature(Features::kRecording, true);
@@ -3788,6 +3860,8 @@ public:
                 result["fps"] = fps;
                 result["scale"] = scale;
                 result["region"] = region;
+                if (sound)
+                    result["audio_rate"] = static_cast<uint64_t>(sound->getCoreRate());
                 result["feature_auto_enabled"] = featureWasOff;
                 result["output"] = filename;
                 return result;

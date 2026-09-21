@@ -12,9 +12,9 @@ Implement [.z80](core/tests/build-standalone/bin/testdata/loaders/z80/newbench.z
 
 ## Proposed Changes
 
-### Core Loader [loader_z80.cpp](core/src/loaders/snapshot/loader_z80.cpp) / [loader_z80.h](core/src/loaders/snapshot/loader_z80.h)
+### Core Loader [loader_z80.cpp](../../../core/src/loaders/snapshot/loader_z80.cpp) / [loader_z80.h](../../../core/src/loaders/snapshot/loader_z80.h)
 
-#### [MODIFY] [loader_z80.h](core/src/loaders/snapshot/loader_z80.h)
+#### [MODIFY] [loader_z80.h](../../../core/src/loaders/snapshot/loader_z80.h)
 
 Add save-related method declarations:
 - `bool save()` - Main public save method
@@ -23,9 +23,9 @@ Add save-related method declarations:
 - `Z80MemoryMode determineOutputFormat()` - Decide 48K vs 128K based on current mode
 - `size_t compressPageToBuffer(uint8_t* src, uint8_t* dst)` - Compress 16KB page, return compressed size
 - `uint8_t getModelCodeV3()` - Map current emulator model to Z80 v3 model byte
-- Expose save methods in [LoaderZ80CUT](core/src/loaders/snapshot/loader_z80.h#258-275) for testing
+- Expose save methods in [LoaderZ80CUT](../../../core/src/loaders/snapshot/loader_z80.h#258-275) for testing
 
-#### [MODIFY] [loader_z80.cpp](core/src/loaders/snapshot/loader_z80.cpp)
+#### [MODIFY] [loader_z80.cpp](../../../core/src/loaders/snapshot/loader_z80.cpp)
 
 Implement save functionality:
 
@@ -57,7 +57,7 @@ Implement save functionality:
 
 The existing automation infrastructure already supports `.z80` format through file extension detection. The CLI `snapshot save`, WebAPI `POST /snapshot/save`, Python `save_snapshot()`, and Lua `save_snapshot()` all route through `Emulator::SaveSnapshot()` which detects format by extension.
 
-#### [VERIFY] Already working in [cli-processor-snapshot.cpp](core/automation/cli/src/commands/cli-processor-snapshot.cpp)
+#### [VERIFY] Already working in [cli-processor-snapshot.cpp](../../../core/automation/cli/src/commands/cli-processor-snapshot.cpp)
 
 Existing code validates `.sna` and `.z80` extensions:
 ```cpp
@@ -71,7 +71,7 @@ No changes needed to CLI, WebAPI, Python, or Lua bindings - they already support
 
 ### Emulator Class
 
-#### [MODIFY] [emulator.cpp](core/src/emulator/emulator.cpp)
+#### [MODIFY] [emulator.cpp](../../../core/src/emulator/emulator.cpp)
 
 Update `SaveSnapshot()` to handle `.z80` format:
 - Detect format from extension (`.z80` → LoaderZ80)
@@ -82,7 +82,7 @@ Update `SaveSnapshot()` to handle `.z80` format:
 
 ### Qt UI (Already Wired)
 
-#### [VERIFY] Already working in [menumanager.h](unreal-qt/src/menumanager.h) / [menumanager.cpp](unreal-qt/src/menumanager.cpp)
+#### [VERIFY] Already working in [menumanager.h](../../../unreal-qt/src/menumanager.h) / [menumanager.cpp](../../../unreal-qt/src/menumanager.cpp)
 
 The Save Snapshot submenu already has `.sna` and `.z80` options. Currently `.z80` is disabled (placeholder). Need to enable it once saver is complete.
 
@@ -103,7 +103,7 @@ cmake --build build-standalone --target core-tests
 ./build-standalone/bin/core-tests --gtest_filter="LoaderZ80*"
 ```
 
-**New test cases to add in** [loader_z80_test.cpp](core/tests/loaders/snapshot/loader_z80_test.cpp):
+**New test cases to add in** [loader_z80_test.cpp](../../../core/tests/loaders/snapshot/loader_z80_test.cpp):
 
 | Test Name | Description |
 |-----------|-------------|

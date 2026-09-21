@@ -299,6 +299,7 @@ GET  /api/v1/emulator/{id}/state/audio/ay      AY/SSG chips overview (core Devic
 GET  /api/v1/emulator/{id}/state/audio/ay/{n}  One AY/SSG chip, registers and channels decoded
 GET  /api/v1/emulator/{id}/state/audio/fm      TurboSound FM board latches + both YM2203 summaries (404 without TSFM)
 GET  /api/v1/emulator/{id}/state/audio/fm/{n}  One YM2203 FM half: mode, timers, channels, operators, envelopes, key-on
+GET  /api/v1/emulator/{id}/state/audio/channels  Audio mixer overview: per-device levels + master (muted, sample_rate_hz = live core rate, channels, bit depth)
 GET  /api/v1/emulator/{id}/state/fdc           Beta Disk WD1793: registers, status bits, FSM, signals, drives (404 without Beta Disk)
 ```
 
@@ -396,6 +397,41 @@ Or use hex string format:
 }
 ```
 > **Note**: `force` is required for ROM writes.
+
+### Settings Management
+```
+GET  /api/v1/emulator/{id}/settings            All settings, grouped (io_acceleration, disk_interface, audio)
+GET  /api/v1/emulator/{id}/settings/{name}     One setting value (fast_tape, turbo_tape, fast_disk, trdos_traps, audio_rate, ...)
+PUT  /api/v1/emulator/{id}/settings/{name}     Update a setting (body: {"value": ...})
+```
+
+Settings are per-instance and runtime-only — nothing is written to the ini.
+
+**audio_rate** controls the core audio sample rate — the rate the DSP stack
+and every capture/recording run at. The value is one of 44100, 48000, 88200,
+96000, 176400, 192000 or `"auto"`:
+
+```json
+PUT /api/v1/emulator/{id}/settings/audio_rate
+{"value": 96000}          // pin: overrides even a connected audio device
+{"value": "auto"}         // release: follow device rate > [SOUND] CoreRate > 44100
+```
+
+- Applied at the next frame boundary; deferred while a recording is in progress.
+- Unsupported values fail with HTTP 400.
+- Same switch everywhere: CLI `setting audio_rate`, Lua/Python `set_audio_rate`.
+- `POST /video/record` has no audio-rate option — pin via this endpoint first
+  when a recording must be stamped with a specific rate:
+  `PUT /settings/audio_rate {"value":48000}` → `POST /video/record {"action":"start"}`.
+
+`GET /settings` returns the audio group alongside the others:
+
+```json
+"audio": { "audio_rate": "auto", "core_rate_hz": 44100 }
+```
+
+The live core rate is also visible in `GET /state/audio/channels` →
+`master.sample_rate_hz` (it follows the pin).
 
 ### Breakpoints
 ```

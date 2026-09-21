@@ -1640,7 +1640,7 @@ switch (state) {
 
 > [!IMPORTANT]
 > This keyboard injection is part of a larger unified input injection framework.
-> See [basicencoder.h](core/src/debugger/analyzers/basic-lang/basicencoder.h) for existing input buffer injection methods.
+> See [basicencoder.h](../../../core/src/debugger/analyzers/basic-lang/basicencoder.h) for existing input buffer injection methods.
 
 ### Existing Injection Methods (BasicEncoder)
 
