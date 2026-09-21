@@ -544,6 +544,17 @@ TEST_F(PortTrace_Test, DecodePortExRuleAttribution)
     EXPECT_EQ(gsMirror.port, 0x00BB);
     EXPECT_EQ(gsMirror.ruleIndex, 6);
 
+    // Regression (nedodem2.trd Pentagon boot wedge): the Beta128 #FF rule needs the
+    // full low byte. #xxF7 - the ATM window / TR-DOS 5.04T probe port - must stay
+    // undecoded: its data bytes reached processBeta128 and a bit2-clear value
+    // (e.g. 0x43) raised the active-low FDC RESET mid-LOAD
+    DecodeResult probe = _portDecoder->decodePortEx(0xFFF7);
+    EXPECT_EQ(probe.port, 0x0000);
+    EXPECT_EQ(probe.ruleIndex, PortTraceRule::kNoMatch);
+    EXPECT_EQ(_portDecoder->decodePortEx(0x00F7).port, 0x0000);
+    // The classic OUT (#FF),A mirror form still decodes (A rides A15-A8)
+    EXPECT_EQ(_portDecoder->decodePortEx(0x18FF).ruleIndex, 8);
+
     // BDI fallback attribution
     DecodeResult bdi = _portDecoder->decodePortEx(0x001F);
     EXPECT_EQ(bdi.port, 0x001F);

@@ -64,6 +64,8 @@ bool PortDecoder::IsModelSupported(MEM_MODEL model)
         case MM_PROFI:
         case MM_SCORP:
         case MM_PROFSCORP:
+        case MM_ATM710:
+        case MM_ATM3:
             return true;
         default:
             return false;
@@ -599,7 +601,9 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
         // Data registers answer through exact registered device keys (IsBeta128Port /
         // TryBeta128MirrorPort switch on the five low bytes), so the rows are exact
         // matches - which also lets the registered-handler dedupe below absorb them.
-        // The system register keeps the shipped table qualification (mask 0x83).
+        // The system register requires the full low byte 0xFF: partial-decode
+        // addresses such as #xxF7 must not reach the FDC (see the Pentagon decode
+        // table note on the TR-DOS 5.04T probe reset wedge).
         entries.push_back({0x001F, 0xFFFF, 0x001F, "Beta128 FDC status/command", betaGate,
                            Tags(PortTag::Storage)});
         entries.push_back({0x003F, 0xFFFF, 0x003F, "Beta128 FDC track", betaGate,
@@ -608,7 +612,7 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
                            Tags(PortTag::Storage)});
         entries.push_back({0x007F, 0xFFFF, 0x007F, "Beta128 FDC data", betaGate,
                            Tags(PortTag::Storage)});
-        entries.push_back({0x00FF, 0x0083, 0x0083, "Beta128 system register", betaGate,
+        entries.push_back({0x00FF, 0x00FF, 0x00FF, "Beta128 system register", betaGate,
                            Tags(PortTag::Storage)});
     }
 
