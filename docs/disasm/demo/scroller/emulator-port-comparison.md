@@ -16,7 +16,7 @@ This document presents a technical cross-emulator audit examining:
 
 | Emulator | Port Decode Mask / Condition | Implemented In | Disambiguation Notes |
 |---|---|---|---|
-| **Unreal-NG** | `(port & 0x8006) == 0x0004`<br>*(A15=0, A2=1, A1=0)* | [`core/src/emulator/ports/models/portdecoder_pentagon128.cpp`](core/src/emulator/ports/models/portdecoder_pentagon128.cpp#L352) | Standard Pentagon partial decoding. Explicitly distinguishes `#7FFD` from Soundrive ports `#F1`/`#F9` via `A2=1`. |
+| **Unreal-NG** | `(port & 0x8006) == 0x0004`<br>*(A15=0, A2=1, A1=0)* | [`core/src/emulator/ports/models/portdecoder_pentagon128.cpp`](../../../../core/src/emulator/ports/models/portdecoder_pentagon128.cpp#L352) | Standard Pentagon partial decoding. Explicitly distinguishes `#7FFD` from Soundrive ports `#F1`/`#F9` via `A2=1`. |
 | **Unreal Speccy (SMT)** | `(port & 0x8002) == 0x0000`<br>*(A15=0, A1=0)* | `io.cpp`, `pentagon.cpp` | Classic SMT mask. Soundrive ports `#F1`/`#F9` take precedence when Soundrive is enabled in `unreal.ini`. |
 | **Unreal Speccy Portable** | `(port & 0x8002) == 0x0000`<br>*(A15=0, A1=0)* | `io.cpp` | Inherited verbatim from SMT Unreal core. |
 | **Xpeccy (samstyle)** | `!(port & 0x8000) && !(port & 0x0002)`<br>*(A15=0, A1=0)* | `hardware/pentagon.c` | Standard Pentagon profile decode in Xpeccy core. |
@@ -111,7 +111,7 @@ If you manually configure **Xpeccy**, **classic Unreal Speccy**, or **ZXMAK2** t
 ## 6. Verification and Resolution Summary
 
 1. **Hardware Authenticity**: Unreal-NG's port `#7FFD` decoding mask `(port & 0x8006) == 0x0004` is 100% correct and faithful to authentic Pentagon 128 hardware.
-2. **Boot Mode Parity**: Setting `RESET=BASIC` or `RESET=DOS` in [`data/configs/pentagon128k/unreal.ini`](data/configs/pentagon128k/unreal.ini) restores historical Pentagon defaults and allows unmodified `scroller_by_demarche.trd` to run cleanly without any emulator hacks.
-3. **Patched TRD Disk Image**: The Python tool [`patch_scroller_trd.py`](docs/disasm/demo/scroller/patch_scroller_trd.py) applies the dual-mode fix (`POKE 23388,20: OUT 32765,20`) to produce [`scroller_fixed.trd`](docs/disasm/demo/scroller/scroller_fixed.trd), which boots reliably across all emulators regardless of reset mode.
-4. **Loader-Free Snapshot Solution**: The Python tool [`make_scroller_sna.py`](docs/disasm/demo/scroller/make_scroller_sna.py) creates a clean 128K `.sna` snapshot ([`scroller_by_demarche.sna`](docs/disasm/demo/scroller/scroller_by_demarche.sna)) that completely bypasses all BASIC loader and editor SWAP traps.
-5. **Automated Regression Testing**: Verified by [`Scroller_Boot_Test.RunGeneratedScrollerSNA`](core/tests/loaders/disk/scroller_boot_test.cpp), which loads the snapshot and confirms full interactive execution, menu response, and 50Hz Covox IM2 playback in under 1 second.
+2. **Boot Mode Parity**: Setting `RESET=BASIC` or `RESET=DOS` in [`data/configs/pentagon128k/unreal.ini`](../../../../data/configs/pentagon128k/unreal.ini) restores historical Pentagon defaults and allows unmodified `scroller_by_demarche.trd` to run cleanly without any emulator hacks.
+3. **Patched TRD Disk Image**: The Python tool [`patch_scroller_trd.py`](patch_scroller_trd.py) applies the dual-mode fix (`POKE 23388,20: OUT 32765,20`) to produce [`scroller_fixed.trd`](scroller_fixed.trd), which boots reliably across all emulators regardless of reset mode.
+4. **Loader-Free Snapshot Solution**: The Python tool [`make_scroller_sna.py`](make_scroller_sna.py) creates a clean 128K `.sna` snapshot ([`scroller_by_demarche.sna`](scroller_by_demarche.sna)) that completely bypasses all BASIC loader and editor SWAP traps.
+5. **Automated Regression Testing**: Verified by [`Scroller_Boot_Test.RunGeneratedScrollerSNA`](../../../../core/tests/loaders/disk/scroller_boot_test.cpp), which loads the snapshot and confirms full interactive execution, menu response, and 50Hz Covox IM2 playback in under 1 second.

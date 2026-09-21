@@ -3,7 +3,7 @@
 **Revision 1** (2026-09-13).
 **Status:** design draft, not yet implemented.
 **Scope:** a standalone library. Chip model, memory interface, render/resample stage, character chain, determinism contract, test plan.
-**Out of scope:** host integration, mixing with other devices, config plumbing — see [opl4-unreal-ng-integration.md](docs/inprogress/2026-09-13-moonsound/opl4-unreal-ng-integration.md).
+**Out of scope:** host integration, mixing with other devices, config plumbing — see [opl4-unreal-ng-integration.md](opl4-unreal-ng-integration.md).
 **Non-goal:** licensing analysis.
 
 Glossary at the end (§15).

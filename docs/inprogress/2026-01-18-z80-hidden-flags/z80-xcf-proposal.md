@@ -29,15 +29,15 @@ undocumented_flags = (A | (F & ~Q)) & 0x28
 
 | File | Changes |
 |------|---------|
-| [z80.h](core/src/emulator/cpu/z80.h) | Added `uint8_t q` to `Z80Registers` with documentation |
-| [z80.cpp](core/src/emulator/cpu/z80.cpp) | Constructor and Reset() init; conditional Q update in Z80Step() |
-| [op_noprefix.cpp](core/src/emulator/cpu/op_noprefix.cpp) | SCF/CCF using `(A | (F & ~Q)) & 0x28` |
-| [loader_sna.cpp](core/src/loaders/snapshot/loader_sna.cpp) | Zero memptr and q on load |
-| [loader_z80.cpp](core/src/loaders/snapshot/loader_z80.cpp) | Zero memptr and q on load |
+| [z80.h](../../../core/src/emulator/cpu/z80.h) | Added `uint8_t q` to `Z80Registers` with documentation |
+| [z80.cpp](../../../core/src/emulator/cpu/z80.cpp) | Constructor and Reset() init; conditional Q update in Z80Step() |
+| [op_noprefix.cpp](../../../core/src/emulator/cpu/op_noprefix.cpp) | SCF/CCF using `(A | (F & ~Q)) & 0x28` |
+| [loader_sna.cpp](../../../core/src/loaders/snapshot/loader_sna.cpp) | Zero memptr and q on load |
+| [loader_z80.cpp](../../../core/src/loaders/snapshot/loader_z80.cpp) | Zero memptr and q on load |
 
 ### Key Implementation Details
 
-#### Q Register Update Logic ([z80.cpp](core/src/emulator/cpu/z80.cpp#L260-L277))
+#### Q Register Update Logic ([z80.cpp](../../../core/src/emulator/cpu/z80.cpp#L260-L277))
 ```cpp
 // Save F before opcode
 uint8_t prev_f = cpu.f;
@@ -52,7 +52,7 @@ else
     cpu.q = 0;  // Flags unchanged: Q=0
 ```
 
-#### CCF/SCF Implementation ([op_noprefix.cpp](core/src/emulator/cpu/op_noprefix.cpp#L425-L432))
+#### CCF/SCF Implementation ([op_noprefix.cpp](../../../core/src/emulator/cpu/op_noprefix.cpp#L425-L432))
 ```cpp
 Z80OPCODE op_37(Z80 *cpu) { // scf - Zilog Z80 behavior
     // When Q=F, only A contributes; when Q≠F, F also contributes

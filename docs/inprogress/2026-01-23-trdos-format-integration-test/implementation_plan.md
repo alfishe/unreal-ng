@@ -101,7 +101,7 @@ void writeWithClockMark(unsigned pos, uint8_t byte, bool clockMark) {
 }
 ```
 
-But wait - DiskImage already has this! Check [FullTrack](core/src/emulator/io/fdc/diskimage.h#229-234):
+But wait - DiskImage already has this! Check [FullTrack](../../../core/src/emulator/io/fdc/diskimage.h#229-234):
 ```cpp
 struct FullTrack : public RawTrack {
     uint8_t clockMarksBitmap[TRACK_BITMAP_SIZE_BYTES] = {};  // Already exists!
@@ -109,4 +109,4 @@ struct FullTrack : public RawTrack {
 };
 ```
 
-So unreal-ng DOES have clock mark support in the disk image structure, just not using it in [processWriteTrack()](core/src/emulator/io/fdc/wd1793.cpp#2172-2311).
+So unreal-ng DOES have clock mark support in the disk image structure, just not using it in [processWriteTrack()](../../../core/src/emulator/io/fdc/wd1793.cpp#2172-2311).
