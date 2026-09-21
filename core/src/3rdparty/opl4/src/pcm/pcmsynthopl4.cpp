@@ -18,12 +18,12 @@ void Opl4Pcm::Reset()
     // the temporary's stack-garbage padding into every slot — garbage
     // SaveState would serialize into the TTD hash blob. envVol is the one
     // non-zero default to re-apply afterwards.
-#if defined(__GNUC__)
+#if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wclass-memaccess"
 #endif
     std::memset(_slots.data(), 0, sizeof(_slots));
-#if defined(__GNUC__)
+#if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic pop
 #endif
     for (auto& s : _slots)
