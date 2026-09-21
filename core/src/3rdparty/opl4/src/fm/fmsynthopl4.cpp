@@ -63,10 +63,17 @@ void Opl4Fm::Reset()
     // the temporary's stack-garbage padding into every operator — garbage
     // SaveState would serialize into the TTD hash blob. envVol is the one
     // non-zero default to re-apply afterwards.
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wclass-memaccess"
+#endif
     std::memset(_ops.data(), 0, sizeof(_ops));
+    std::memset(_ch.data(), 0, sizeof(_ch)); // FmChannel has no non-zero defaults
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
     for (auto& op : _ops)
         op.envVol = kFmMaxAttIndex;
-    std::memset(_ch.data(), 0, sizeof(_ch)); // FmChannel has no non-zero defaults
     _fbHist.fill({});
     _rhythm = false;
     _newMode = false;
