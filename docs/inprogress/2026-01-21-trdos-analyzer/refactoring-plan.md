@@ -9,12 +9,12 @@ Refactor the TR-DOS analyzer from a "semantic interpretation" model to a **raw e
 
 ## References
 
-- [High-Level Disk Operations Design](docs/analysis/capture/high-level-disk-operations.md) - Original semantic analyzer design (being simplified)
-- [Emulator Control Interface (ECI)](docs/emulator/design/control-interfaces/command-interface.md) - Unified command interface architecture
+- [High-Level Disk Operations Design](../../analysis/capture/high-level-disk-operations.md) - Original semantic analyzer design (being simplified)
+- [Emulator Control Interface (ECI)](../../emulator/design/control-interfaces/command-interface.md) - Unified command interface architecture
 
 ## ECI Conformance
 
-Per [command-interface.md](docs/emulator/design/control-interfaces/command-interface.md), all automation modules must:
+Per [command-interface.md](../../emulator/design/control-interfaces/command-interface.md), all automation modules must:
 
 1. **Share same command semantics** across CLI, WebAPI, Python, Lua
 2. **Transport-agnostic** - identical response structure regardless of interface  
@@ -34,7 +34,7 @@ Per [command-interface.md](docs/emulator/design/control-interfaces/command-inter
 
 ### 1. Core: Two-Layer Event Architecture
 
-#### [MODIFY] [trdosevent.h](core/src/debugger/analyzers/trdos/trdosevent.h)
+#### [MODIFY] [trdosevent.h](../../../core/src/debugger/analyzers/trdos/trdosevent.h)
 
 Replace semantic `TRDOSEventType` with raw event types:
 
@@ -85,7 +85,7 @@ struct RawBreakpointEvent
 
 ### 2. Core: Simplified Analyzer
 
-#### [MODIFY] [trdosanalyzer.cpp](core/src/debugger/analyzers/trdos/trdosanalyzer.cpp)
+#### [MODIFY] [trdosanalyzer.cpp](../../../core/src/debugger/analyzers/trdos/trdosanalyzer.cpp)
 
 - Remove `TRDOSEvent::format()` entirely
 - Remove semantic event types (`COMMAND_START`, `LOADER_DETECTED`, etc.)
@@ -117,7 +117,7 @@ struct RawBreakpointEvent
 
 ### 4. WebAPI: Pure Passthrough
 
-#### [MODIFY] [analyzers_api.cpp](core/automation/webapi/src/api/analyzers_api.cpp)
+#### [MODIFY] [analyzers_api.cpp](../../../core/automation/webapi/src/api/analyzers_api.cpp)
 
 Remove all formatting logic. Just serialize raw structs to JSON:
 
@@ -144,7 +144,7 @@ ev["sp"] = event.sp;
 
 ### 5. CLI: Mirror WebAPI
 
-#### [MODIFY] [cli-processor-analyzer-mgr.cpp](core/automation/cli/src/commands/cli-processor-analyzer-mgr.cpp)
+#### [MODIFY] [cli-processor-analyzer-mgr.cpp](../../../core/automation/cli/src/commands/cli-processor-analyzer-mgr.cpp)
 
 Update `HandleAnalyzer` to support raw event commands:
 - `analyzer trdos fdc [limit]` - dump raw FDC events

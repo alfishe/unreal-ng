@@ -1024,7 +1024,7 @@ void EmulatorAPI::getStateAudioChannels(const HttpRequestPtr& req,
     // Master audio state
     Json::Value master;
     master["muted"] = (soundManager ? soundManager->isMuted() : false);
-    master["sample_rate_hz"] = 44100;
+    master["sample_rate_hz"] = static_cast<unsigned>(soundManager ? soundManager->getCoreRate() : 44100u);
     master["channels"] = "stereo";
     master["bit_depth"] = 16;
     ret["master"] = master;

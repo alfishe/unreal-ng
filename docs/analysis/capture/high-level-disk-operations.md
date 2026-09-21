@@ -6,7 +6,7 @@ Design document for a high-level analyzer that captures interactions between the
 
 ## 1. Problem Statement
 
-The current [WD1793Collector](core/src/emulator/io/fdc/wd1793_collector.h#15-143) provides **low-level port access logging** (every IN/OUT to FDC ports), which generates thousands of records per disk operation. This is valuable for hardware debugging but overwhelming for understanding *what the software is actually doing*.
+The current [WD1793Collector](../../../core/src/emulator/io/fdc/wd1793_collector.h#15-143) provides **low-level port access logging** (every IN/OUT to FDC ports), which generates thousands of records per disk operation. This is valuable for hardware debugging but overwhelming for understanding *what the software is actually doing*.
 
 **Goal**: Create a **Stage 1 (High-Level) Analyzer** that interprets the low-level FDC interactions and produces human-readable semantic events like:
 
@@ -63,7 +63,7 @@ graph TD
    - Interprets state to produce semantic events
 
 2. **`FDCEventInterpreter`** (New) - Command-level interpreter
-   - Wraps [WD1793Collector](core/src/emulator/io/fdc/wd1793_collector.h#15-143) events
+   - Wraps [WD1793Collector](../../../core/src/emulator/io/fdc/wd1793_collector.h#15-143) events
    - Converts low-level port accesses to command events
    - Tracks sector data flow
 
@@ -263,7 +263,7 @@ Extract from catalog entry at offset `0x08` (type byte).
 
 ### Phase 3: FDC Command Interpretation
 
-- [ ] Hook into [WD1793Collector](core/src/emulator/io/fdc/wd1793_collector.h#15-143) for low-level events
+- [ ] Hook into [WD1793Collector](../../../core/src/emulator/io/fdc/wd1793_collector.h#15-143) for low-level events
 - [ ] Aggregate port accesses into semantic FDC commands
 - [ ] Track sector data flow (read/write byte counts)
 - [ ] Detect head movement and seek patterns
@@ -303,7 +303,7 @@ Extract from catalog entry at offset `0x08` (type byte).
 | File | Changes |
 |:-----|:--------|
 | `core/src/debugger/analyzers/CMakeLists.txt` | Add new source files |
-| [core/src/emulator/io/fdc/wd1793.cpp](core/src/emulator/io/fdc/wd1793.cpp) | Add optional analyzer callback |
+| [core/src/emulator/io/fdc/wd1793.cpp](../../../core/src/emulator/io/fdc/wd1793.cpp) | Add optional analyzer callback |
 | `unreal-qt/mainwindow.cpp` | Add analyzer menu item (Phase 5) |
 
 ### 6.3 Infrastructure Assessment
@@ -313,7 +313,7 @@ Extract from catalog entry at offset `0x08` (type byte).
 
 #### ✅ Available: IAnalyzer Interface
 
-[ianalyzer.h](core/src/debugger/analyzers/ianalyzer.h) provides:
+[ianalyzer.h](../../../core/src/debugger/analyzers/ianalyzer.h) provides:
 
 ```cpp
 class IAnalyzer {
@@ -330,7 +330,7 @@ public:
 
 #### ✅ Available: AnalyzerManager
 
-[analyzermanager.h](core/src/debugger/analyzers/analyzermanager.h) provides:
+[analyzermanager.h](../../../core/src/debugger/analyzers/analyzermanager.h) provides:
 
 | Feature | Status | Method |
 |:--------|:-------|:-------|
@@ -346,7 +346,7 @@ public:
 
 #### ✅ Available: Reference Implementation
 
-[ROMPrintDetector](core/src/debugger/analyzers/rom-print/romprintdetector.h) is an **existing working analyzer** that:
+[ROMPrintDetector](../../../core/src/debugger/analyzers/rom-print/romprintdetector.h) is an **existing working analyzer** that:
 - Sets breakpoints at ROM addresses (`$0010`, `$09F4`, `$15F2`)
 - Captures data on `onBreakpointHit()`
 - Provides query API (`getNewOutput()`, `getFullHistory()`, `getLines()`)
@@ -561,19 +561,19 @@ Use a **ring buffer with configurable size** (default 10K events) to prevent unb
 
 | Component | Status | Location |
 |:----------|:-------|:---------|
-| `IWD1793Observer` | ✅ Done | [iwd1793observer.h](core/src/emulator/io/fdc/iwd1793observer.h) |
-| `RingBuffer<T>` | ✅ Done | [ringbuffer.h](core/src/common/ringbuffer.h) |
-| WD1793 Observer Support | ✅ Done | [wd1793.h](core/src/emulator/io/fdc/wd1793.h) |
-| `TRDOSEvent` types | ✅ Done | [trdosevent.h](core/src/debugger/analyzers/trdos/trdosevent.h) |
-| `TRDOSAnalyzer` class | ✅ Done | [trdosanalyzer.h/cpp](core/src/debugger/analyzers/trdos/) |
-| `AnalyzerManager` | ✅ Done | [analyzermanager.cpp](core/src/debugger/analyzers/analyzermanager.cpp) |
+| `IWD1793Observer` | ✅ Done | [iwd1793observer.h](../../../core/src/emulator/io/fdc/iwd1793observer.h) |
+| `RingBuffer<T>` | ✅ Done | [ringbuffer.h](../../../core/src/common/ringbuffer.h) |
+| WD1793 Observer Support | ✅ Done | [wd1793.h](../../../core/src/emulator/io/fdc/wd1793.h) |
+| `TRDOSEvent` types | ✅ Done | [trdosevent.h](../../../core/src/debugger/analyzers/trdos/trdosevent.h) |
+| `TRDOSAnalyzer` class | ✅ Done | [trdosanalyzer.h/cpp](../../../core/src/debugger/analyzers/trdos) |
+| `AnalyzerManager` | ✅ Done | [analyzermanager.cpp](../../../core/src/debugger/analyzers/analyzermanager.cpp) |
 | Page-Specific Breakpoints | ✅ Done | `requestExecutionBreakpointInPage()` |
 | Silent Dispatch Pattern | ✅ Done | Analyzer breakpoints bypass MessageCenter |
 | Auto-Feature Enable | ✅ Done | `ensureDebugFeaturesEnabled()` |
-| CLI `analyzer` commands | ✅ Done | [cli-processor-analyzer-mgr.cpp](core/automation/cli/src/commands/cli-processor-analyzer-mgr.cpp) |
-| DebugManager registration | ✅ Done | [debugmanager.cpp](core/src/debugger/debugmanager.cpp) |
-| Integration Tests | ✅ Done | [analyzermanager_integration_test.cpp](core/tests/debugger/analyzermanager/analyzermanager_integration_test.cpp) |
-| Unit Tests | ✅ Done | [analyzermanager_test.cpp](core/tests/debugger/analyzermanager/analyzermanager_test.cpp) |
+| CLI `analyzer` commands | ✅ Done | [cli-processor-analyzer-mgr.cpp](../../../core/automation/cli/src/commands/cli-processor-analyzer-mgr.cpp) |
+| DebugManager registration | ✅ Done | [debugmanager.cpp](../../../core/src/debugger/debugmanager.cpp) |
+| Integration Tests | ✅ Done | [analyzermanager_integration_test.cpp](../../../core/tests/debugger/analyzermanager/analyzermanager_integration_test.cpp) |
+| Unit Tests | ✅ Done | [analyzermanager_test.cpp](../../../core/tests/debugger/analyzermanager/analyzermanager_test.cpp) |
 
 ### 10.2 CLI Commands Available
 
@@ -2133,26 +2133,26 @@ This is verified by the `AutoEnablesFeaturesOnFirstBreakpointRequest` integratio
 
 | File | Purpose | Lines |
 |:-----|:--------|:------|
-| [trdosanalyzer.h](core/src/debugger/analyzers/trdos/trdosanalyzer.h) | TRDOSAnalyzer class declaration | 126 |
-| [trdosanalyzer.cpp](core/src/debugger/analyzers/trdos/trdosanalyzer.cpp) | TRDOSAnalyzer implementation | 404 |
-| [trdosevent.h](core/src/debugger/analyzers/trdos/trdosevent.h) | Event types and structures | 100 |
+| [trdosanalyzer.h](../../../core/src/debugger/analyzers/trdos/trdosanalyzer.h) | TRDOSAnalyzer class declaration | 126 |
+| [trdosanalyzer.cpp](../../../core/src/debugger/analyzers/trdos/trdosanalyzer.cpp) | TRDOSAnalyzer implementation | 404 |
+| [trdosevent.h](../../../core/src/debugger/analyzers/trdos/trdosevent.h) | Event types and structures | 100 |
 
 ### 19.2 Infrastructure
 
 | File | Purpose | Lines |
 |:-----|:--------|:------|
-| [analyzermanager.h](core/src/debugger/analyzers/analyzermanager.h) | AnalyzerManager class declaration | 327 |
-| [analyzermanager.cpp](core/src/debugger/analyzers/analyzermanager.cpp) | AnalyzerManager implementation | 656 |
-| [ianalyzer.h](core/src/debugger/analyzers/ianalyzer.h) | IAnalyzer interface | ~50 |
-| [iwd1793observer.h](core/src/emulator/io/fdc/iwd1793observer.h) | FDC observer interface | ~30 |
-| [ringbuffer.h](core/src/common/ringbuffer.h) | Thread-safe ring buffer template | ~150 |
+| [analyzermanager.h](../../../core/src/debugger/analyzers/analyzermanager.h) | AnalyzerManager class declaration | 327 |
+| [analyzermanager.cpp](../../../core/src/debugger/analyzers/analyzermanager.cpp) | AnalyzerManager implementation | 656 |
+| [ianalyzer.h](../../../core/src/debugger/analyzers/ianalyzer.h) | IAnalyzer interface | ~50 |
+| [iwd1793observer.h](../../../core/src/emulator/io/fdc/iwd1793observer.h) | FDC observer interface | ~30 |
+| [ringbuffer.h](../../../core/src/common/ringbuffer.h) | Thread-safe ring buffer template | ~150 |
 
 ### 19.3 Tests
 
 | File | Purpose | Lines |
 |:-----|:--------|:------|
-| [analyzermanager_test.cpp](core/tests/debugger/analyzermanager/analyzermanager_test.cpp) | AnalyzerManager unit tests | 724 |
-| [analyzermanager_integration_test.cpp](core/tests/debugger/analyzermanager/analyzermanager_integration_test.cpp) | AnalyzerManager integration tests | 448 |
+| [analyzermanager_test.cpp](../../../core/tests/debugger/analyzermanager/analyzermanager_test.cpp) | AnalyzerManager unit tests | 724 |
+| [analyzermanager_integration_test.cpp](../../../core/tests/debugger/analyzermanager/analyzermanager_integration_test.cpp) | AnalyzerManager integration tests | 448 |
 | `core/tests/debugger/analyzers/trdos/` | TR-DOS analyzer tests (planned) | - |
 
 ### 19.4 Key Interfaces
@@ -2286,9 +2286,9 @@ if (pc == 0x3D00 || pc == 0x3D21 || pc == 0x0077) {
 ```
 
 **Related Files**:
-- [z80.cpp](core/src/emulator/cpu/z80.cpp) - `Z80::Step()` breakpoint dispatch
-- [analyzermanager.cpp](core/src/debugger/analyzers/analyzermanager.cpp) - `ownsBreakpointAtAddress()`
-- [trdosanalyzer.cpp](core/src/debugger/analyzers/trdos/trdosanalyzer.cpp) - `onActivate()` breakpoint registration
+- [z80.cpp](../../../core/src/emulator/cpu/z80.cpp) - `Z80::Step()` breakpoint dispatch
+- [analyzermanager.cpp](../../../core/src/debugger/analyzers/analyzermanager.cpp) - `ownsBreakpointAtAddress()`
+- [trdosanalyzer.cpp](../../../core/src/debugger/analyzers/trdos/trdosanalyzer.cpp) - `onActivate()` breakpoint registration
 
 **Verification Test**:
 ```cpp

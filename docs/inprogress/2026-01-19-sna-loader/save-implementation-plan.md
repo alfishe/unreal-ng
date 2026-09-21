@@ -12,9 +12,9 @@ Implement [.sna](core/tests/build-standalone/bin/testdata/loaders/sna/s4b-1.sna)
 
 ## Proposed Changes
 
-### Core Loader [loader_sna.cpp](core/src/loaders/snapshot/loader_sna.cpp) / [loader_sna.h](core/src/loaders/snapshot/loader_sna.h)
+### Core Loader [loader_sna.cpp](../../../core/src/loaders/snapshot/loader_sna.cpp) / [loader_sna.h](../../../core/src/loaders/snapshot/loader_sna.h)
 
-#### [MODIFY] [loader_sna.h](core/src/loaders/snapshot/loader_sna.h)
+#### [MODIFY] [loader_sna.h](../../../core/src/loaders/snapshot/loader_sna.h)
 
 Add save-related method declarations:
 - `bool save()` - Main public save method
@@ -23,9 +23,9 @@ Add save-related method declarations:
 - `bool save128kFromStaging()` - Write 128K format
 - `SNA_MODE determineOutputFormat()` - Decide 48K vs 128K based on current mode
 - `bool isPageEmpty(int pageNum)` - Check if RAM page is all zeros
-- Expose save methods in [LoaderSNACUT](core/src/loaders/snapshot/loader_sna.h#163-193) for testing
+- Expose save methods in [LoaderSNACUT](../../../core/src/loaders/snapshot/loader_sna.h#163-193) for testing
 
-#### [MODIFY] [loader_sna.cpp](core/src/loaders/snapshot/loader_sna.cpp)
+#### [MODIFY] [loader_sna.cpp](../../../core/src/loaders/snapshot/loader_sna.cpp)
 
 Implement save functionality:
 - `determineOutputFormat()`: Check port 7FFD lock bit. If locked → 48K, else → 128K
@@ -38,14 +38,14 @@ Implement save functionality:
 
 ### Emulator Class
 
-#### [MODIFY] [emulator.h](core/src/emulator/emulator.h)
+#### [MODIFY] [emulator.h](../../../core/src/emulator/emulator.h)
 
 Add method declaration:
 ```cpp
 bool SaveSnapshot(const std::string& path);
 ```
 
-#### [MODIFY] [emulator.cpp](core/src/emulator/emulator.cpp)
+#### [MODIFY] [emulator.cpp](../../../core/src/emulator/emulator.cpp)
 
 Implement `SaveSnapshot()`:
 - Pause emulator
@@ -58,7 +58,7 @@ Implement `SaveSnapshot()`:
 
 ### CLI Automation
 
-#### [MODIFY] [command-interface.md](docs/emulator/design/control-interfaces/command-interface.md)
+#### [MODIFY] [command-interface.md](../../emulator/design/control-interfaces/command-interface.md)
 
 Add documentation for:
 ```
@@ -71,21 +71,21 @@ snapshot save <file> [--force]   Save snapshot (format from extension: .sna or .
 - Unrecognized extension → Error: "Unknown snapshot format"
 - File exists without `--force` → Error: "File already exists. Use --force to overwrite."
 
-#### [MODIFY] [cli-processor-snapshot.cpp](core/automation/cli/src/commands/cli-processor-snapshot.cpp)
+#### [MODIFY] [cli-processor-snapshot.cpp](../../../core/automation/cli/src/commands/cli-processor-snapshot.cpp)
 
 Add:
-- `HandleSnapshotSave()` function following [HandleSnapshotLoad()](core/automation/cli/src/commands/cli-processor-snapshot.cpp#52-78) pattern
+- `HandleSnapshotSave()` function following [HandleSnapshotLoad()](../../../core/automation/cli/src/commands/cli-processor-snapshot.cpp#52-78) pattern
 - Parse `--force` flag from args
 - Validate file extension (.sna, .z80)
 - Check file existence if not `--force`
-- Update [HandleSnapshot()](core/automation/cli/src/commands/cli-processor-snapshot.cpp#14-51) switch to include `"save"` subcommand
-- Update [ShowSnapshotHelp()](core/automation/cli/src/commands/cli-processor-snapshot.cpp#98-110) with new command
+- Update [HandleSnapshot()](../../../core/automation/cli/src/commands/cli-processor-snapshot.cpp#14-51) switch to include `"save"` subcommand
+- Update [ShowSnapshotHelp()](../../../core/automation/cli/src/commands/cli-processor-snapshot.cpp#98-110) with new command
 
 ---
 
 ### WebAPI Automation
 
-#### [MODIFY] [snapshot_api.cpp](core/automation/webapi/src/api/snapshot_api.cpp)
+#### [MODIFY] [snapshot_api.cpp](../../../core/automation/webapi/src/api/snapshot_api.cpp)
 
 Add:
 - `saveSnapshot()` handler for `POST /api/v1/emulator/:id/snapshot/save`
@@ -97,11 +97,11 @@ Add:
 - Invalid extension → 400 Bad Request: "Unknown snapshot format"
 - File exists + `force=false` → 409 Conflict: "File already exists"
 
-#### [MODIFY] [emulator_api.h](core/automation/webapi/src/emulator_api.h)
+#### [MODIFY] [emulator_api.h](../../../core/automation/webapi/src/emulator_api.h)
 
 Add method declaration for `saveSnapshot()`
 
-#### [MODIFY] [openapi_spec.cpp](core/automation/webapi/src/openapi_spec.cpp)
+#### [MODIFY] [openapi_spec.cpp](../../../core/automation/webapi/src/openapi_spec.cpp)
 
 Add OpenAPI spec for new endpoint
 
@@ -135,13 +135,13 @@ Add `save_snapshot(path, force)` method to Lua emulator type
 
 ### Qt UI
 
-#### [MODIFY] [menumanager.h](unreal-qt/src/menumanager.h)
+#### [MODIFY] [menumanager.h](../../../unreal-qt/src/menumanager.h)
 
 - Replace `_saveSnapshotAction` with `_saveSnapshotMenu` (submenu)
 - Add `_saveSnapshotSnaAction`, `_saveSnapshotZ80Action`
 - Add `QString _lastSnapshotSaveDir` for folder persistence
 
-#### [MODIFY] [menumanager.cpp](unreal-qt/src/menumanager.cpp)
+#### [MODIFY] [menumanager.cpp](../../../unreal-qt/src/menumanager.cpp)
 
 - Convert "Save Snapshot..." to submenu with ".sna" and ".z80" options
 - `.z80` option disabled (placeholder for future)
@@ -169,7 +169,7 @@ cmake --build build-standalone --target core-tests
 ./build-standalone/bin/core-tests --gtest_filter="LoaderSNA*"
 ```
 
-**New test cases to add in** [loader_sna_test.cpp](core/tests/loaders/snapshot/loader_sna_test.cpp):
+**New test cases to add in** [loader_sna_test.cpp](../../../core/tests/loaders/snapshot/loader_sna_test.cpp):
 
 | Test Name | Description |
 |-----------|-------------|

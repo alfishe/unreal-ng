@@ -38,7 +38,7 @@ New test file containing:
 #### Test Group 1: DiskImage Domain Model Tests
 - `ReferenceTrack_LoadAndReindex` - Load reference track, verify reindexFromMFM() finds 16 sectors
 - `ReferenceTrack_SectorOrderedRef` - Verify `sectorsOrderedRef[]` points to correct sectors
-- `ReferenceTrack_GetSector_ReturnsCorrectData` - Verify [getSector(1-16)](core/src/emulator/io/fdc/diskimage.h#283-303) returns expected data
+- `ReferenceTrack_GetSector_ReturnsCorrectData` - Verify [getSector(1-16)](../../../core/src/emulator/io/fdc/diskimage.h#283-303) returns expected data
 - `ReferenceTrack_GetIDForSector_ReturnsCorrectIDAM` - Verify IDAM fields (cylinder, head, sector, size)
 - `ReferenceTrack_GetDataForSector_ReturnsCorrectOffset` - Verify data pointer offset in raw buffer
 

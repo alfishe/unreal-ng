@@ -47,7 +47,11 @@
     schemas["SettingsResponse"]["type"] = "object";
     schemas["SettingsResponse"]["description"] = "List of emulator settings";
     schemas["SettingsResponse"]["properties"]["settings"]["type"] = "object";
-    schemas["SettingsResponse"]["properties"]["settings"]["additionalProperties"]["type"] = "string";
+    schemas["SettingsResponse"]["properties"]["settings"]["additionalProperties"]["type"] = "object";
+    schemas["SettingsResponse"]["properties"]["settings"]["description"] =
+        "Grouped settings: io_acceleration (fast_tape, turbo_tape, fast_disk), "
+        "disk_interface (trdos_present, trdos_traps), audio (audio_rate - pinned rate "
+        "or \"auto\" - and core_rate_hz, the live core rate)";
 
     // Feature Management schemas
     schemas["FeaturesResponse"]["type"] = "object";
@@ -288,6 +292,10 @@
     schemas["AudioChannelsResponse"]["description"] = "Audio channels overview";
     schemas["AudioChannelsResponse"]["properties"]["channel_count"]["type"] = "integer";
     schemas["AudioChannelsResponse"]["properties"]["channels"]["type"] = "array";
+    schemas["AudioChannelsResponse"]["properties"]["master"]["type"] = "object";
+    schemas["AudioChannelsResponse"]["properties"]["master"]["description"] =
+        "Master output state: muted, sample_rate_hz (live core rate - follows the "
+        "settings audio_rate pin), channels, bit_depth";
 
     // Tape/Disk/Snapshot schemas
     schemas["TapeInfoResponse"]["type"] = "object";

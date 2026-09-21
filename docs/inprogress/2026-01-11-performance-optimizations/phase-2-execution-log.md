@@ -13,7 +13,7 @@ Implemented LUT-based coordinate lookups to optimize the `ScreenZX::Draw()` meth
 
 ### New Data Structure
 
-Added `TstateCoordLUT` structure in [`screenzx.h`](core/src/emulator/video/zx/screenzx.h):
+Added `TstateCoordLUT` structure in [`screenzx.h`](../../../core/src/emulator/video/zx/screenzx.h):
 
 ```cpp
 struct TstateCoordLUT

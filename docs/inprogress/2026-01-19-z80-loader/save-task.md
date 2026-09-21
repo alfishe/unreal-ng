@@ -6,7 +6,7 @@
 - [ ] Write unit tests for `compressPage()` (basic RLE)
 - [ ] Write unit tests for `compressPage()` (ED byte handling)  
 - [ ] Write compress/decompress roundtrip test
-- [ ] Implement `compressPage()` in [loader_z80.cpp](core/src/loaders/snapshot/loader_z80.cpp)
+- [ ] Implement `compressPage()` in [loader_z80.cpp](../../../core/src/loaders/snapshot/loader_z80.cpp)
 
 ### State Capture
 - [ ] Write unit tests for `captureStateToStaging()`
@@ -38,7 +38,7 @@
 
 ## Phase 3: Emulator Integration
 
-- [ ] Add `.z80` save branch in [emulator.cpp](core/src/emulator/emulator.cpp) `SaveSnapshot()`
+- [ ] Add `.z80` save branch in [emulator.cpp](../../../core/src/emulator/emulator.cpp) `SaveSnapshot()`
 - [ ] Test integration with LoaderZ80
 
 ## Phase 4: Verify Existing Automation (No New Code Expected)
@@ -50,7 +50,7 @@
 
 ## Phase 5: Qt UI Enable
 
-- [ ] Enable ".z80" option in Save Snapshot submenu [menumanager.cpp](unreal-qt/src/menumanager.cpp)
+- [ ] Enable ".z80" option in Save Snapshot submenu [menumanager.cpp](../../../unreal-qt/src/menumanager.cpp)
 - [ ] Test Qt save dialog for .z80 format
 
 ## Phase 6: Verification & Documentation
