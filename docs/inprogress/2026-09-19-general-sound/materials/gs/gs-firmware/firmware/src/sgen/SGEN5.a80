@@ -1,0 +1,335 @@
+
+S5_     LD D,C
+        PUSH DE
+        LD D,B
+        EXX
+        POP BC
+S51     SLA B
+        JP C,S518
+
+        SLI C
+        JP C,S5101
+        JP S5100
+
+
+S5102   JR Z,S5104
+S510A   INC E
+        JR Z,S5105
+        LD LY,A
+        ADD A,(HL)
+        RRA
+        LD HY,A
+        ADD A,LY
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S51052
+        LD A,HY
+        LD (DE),A
+        INC E
+        JR Z,S51053
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S51054
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S51055
+S5100   LD A,C
+        ADD A,B
+        LD C,A
+        LD A,(HL)
+        INC HL
+        DEC LX
+        LD (DE),A
+        JP NC,S5102
+        JR Z,S5106
+        INC E
+        JR Z,S5107
+        LD (DE),A
+        DEC E
+        INC E
+S5103    JR Z,S5108
+        INC E
+        JR Z,S5109
+        LD LY,A
+        ADD A,(HL)
+        RRA
+        LD HY,A
+        ADD A,LY
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S51092
+        LD A,HY
+        LD (DE),A
+        INC E
+        JR Z,S51093
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S51094
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S51095
+S5101    LD A,C
+        ADD A,B
+        LD C,A
+        LD A,(HL)
+        INC HL
+        DEC LX
+        LD (DE),A
+        JP NC,S5103
+        JP NZ,S510A
+S5104   INC E
+S5105   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,4
+        RET
+S51052  SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,3
+        RET
+S51053  SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,2
+        RET
+S51054  SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,1
+        RET
+S51055  SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,0
+        RET
+S5106    INC E
+S5107    RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        RET
+S5108    INC E
+S5109    RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,4
+        RET
+S51092   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,3
+        RET
+S51093   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,2
+        RET
+S51094   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,1
+        RET
+S51095   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,0
+        RET
+
+S518    SLI C
+        JP NC,S5180
+        JP S5181
+
+S5184    INC E
+S5185    RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        RET
+S5186    RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,4
+        RET
+S51866   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,3
+        RET
+S51867   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,2
+        RET
+S51868   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,1
+        RET
+S51869   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,0
+        RET
+
+S5182    JR Z,S5184
+        INC E
+S51822  JR Z,S5185
+S518222
+        LD LY,A
+        ADD A,(HL)
+        RRA
+        LD HY,A
+        ADD A,LY
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S5186
+        ADD A,HY
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S51866
+        LD A,HY
+        LD (DE),A
+        INC E
+        JR Z,S51867
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S51868
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S51869
+S5181    LD A,C
+        ADD A,B
+        LD C,A
+        LD A,(HL)
+        INC HL
+        DEC LX
+        LD (DE),A
+        JP C,S5182
+        JR Z,S51871
+        JP S51831
+S5183    JR Z,S5187
+        INC E
+        JR Z,S5188
+        LD (DE),A
+S51831  INC E
+        JR Z,S5189
+        LD LY,A
+        ADD A,(HL)
+        RRA
+        LD HY,A
+        ADD A,LY
+        RRA
+        LD (DE),A
+         INC E
+        JR Z,S51891
+        LD A,HY
+        LD (DE),A
+        INC E
+        JR Z,S51892
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S51893
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S51894
+S5180    LD A,C
+        ADD A,B
+        LD C,A
+        LD A,(HL)
+        INC HL
+        DEC LX
+        LD (DE),A
+        JP C,S5183
+        JR Z,S51844
+        INC E
+        JP NZ,S518222
+         RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        RET
+
+
+S51844   INC E
+         RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        RET
+
+S5187    INC E
+S5188    SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        RET
+S5189    SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,4
+        RET
+S51871  INC E
+S51891   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,3
+        RET
+S51892   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,2
+        RET
+S51893   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,1
+        RET
+S51894   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,0
+        RET
+
+
+

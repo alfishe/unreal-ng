@@ -1,0 +1,516 @@
+
+;	DEFINE SKIP_MEM_TEST 1
+
+        ORG GSRomBaseL+4
+
+        DEFB #05 ;LOW	(in BCD!)
+        DEFB #01 ;HIGH	(in BCD!)
+
+
+;patch info
+        ORG GSRomBaseL+#0100
+        DEFM "General  Sound (tm)  ROM"
+        DEFM "Copyright   1997 Stinger"
+        DEFM "Version 1.05b           "
+
+	ORG GSRomBaseL+#0080
+	DB "This is improved ROM Version 1.04 Beta. "
+	DB "Bugfixes by psb & Evgeny Muchkin, 2007, 2015.",0
+
+
+
+;------------------------------------------------------------------------------;
+
+;PLAY.a80
+;patch for >=63 patterns module
+
+        ORG TTY0+9		;in PLAYMD
+L8D6B   LD DE,#0000+1084
+        JR NZ,L8D70
+        LD DE,#0000+600
+        LD HL,#8000+472
+L8D70   LD B,#80
+        SUB A
+L8D73   CP (HL)
+        JR NC,L8D77
+        LD A,(HL)
+L8D77   INC HL
+        DJNZ L8D73
+        INC A
+        LD (PATTS),A
+
+        LD L,A
+        LD H,B
+        ADD HL,HL
+        ADD HL,HL
+        LD A,H
+        LD H,L
+        LD L,B
+        ADD HL,DE
+        ADC A,B
+        SLI H
+        RLA
+        RRC H
+        LD E,A
+        LD (SMPS),HL
+        LD (SMPS+2),A
+
+        NOP
+        NOP
+        NOP
+
+	ORG TTT13+6		;in INITPAT
+	JP Patch11
+
+
+
+;------------------------------------------------------------------------------;
+
+;TABLES_H.a80
+;patch for speed==0 (new cmd #6A - Set player mode)
+
+	ORG COMTABH+#6A-#20	;in table with commands
+	DB low Patch2
+	ORG COMTABH+#6A-#20+#100
+	DB high Patch2
+
+;FX_H.a80
+	ORG FXF_5		;in FXF
+	JP Patch2x
+
+
+
+;------------------------------------------------------------------------------;
+
+;QUANTUM.a80
+;patch for wrong last note speed, etc...
+	ORG EFXGTNT		;in EFXGTNT
+	JP  Patch3
+
+	ORG EFXSKP8+15	;don't change speed here
+	DW 0
+	ORG EFXSKP8+6	;don't change speed here
+	DW 0
+	ORG EFXSKP8+12	;don't change speed here
+	DW 0
+
+
+
+;------------------------------------------------------------------------------;
+
+;PLAY.a80
+;patch for initial note (cmd#64 - get note)
+	ORG RDLP1	;in PLAYMD
+	CALL Patch4:NOP
+
+
+
+;------------------------------------------------------------------------------;
+
+;TABLES_H.a80
+;patch: module relooper (new cmd #6B - Set minimal loop length)
+
+	ORG COMTABH+#6B-#20	;in table with commands
+	DB low Patch5
+	ORG COMTABH+#6B-#20+#100
+	DB high Patch5
+
+;COM_H.a80
+;patch for short loop (cmd#30 - load module)
+	ORG COM65-4		;in COM30
+	CALL Patch5x
+
+;INIT_H.a80
+;patch for store&restore relooper settings
+	ORG INITVAR+1
+	CALL Patch5i1
+	ORG INITV01+25
+	CALL Patch5i2
+	ORG INITR0E+12
+	JP Patch5i3
+
+
+
+;------------------------------------------------------------------------------;
+
+;QUANTUM.a80
+;loop sample if mod cmd 9xx has an offset beyond sample
+	ORG COMM3_
+	JP Patch6
+
+
+
+;------------------------------------------------------------------------------;
+
+;INIT_L.a80
+;skip time consuming ROM CRC check and RAM test
+	IFDEF SKIP_MEM_TEST
+	ORG INIT_+1+2+1+1+3+3 ;skip ROM CRC check
+	JR INIT03
+
+	ORG INITR08e ;skip intensive RAM check and clear
+	JP INIT0Ce
+	ENDIF
+
+
+
+;------------------------------------------------------------------------------;
+
+;PLAY.a80
+;fix samples sign no more than needed
+	ORG SMPMD2f
+	JP Patch7
+
+
+
+;------------------------------------------------------------------------------;
+
+;_GSFRQTB.a80
+;patch for wrong sample frequencies
+	ORG GSFRQTB
+	INCLUDE "GSFRQTB_patched.a80"
+
+	ORG AMTOGS
+	INCLUDE "AMTOGS_patched.a80"
+
+
+;FX_H.a80
+;patch for wrong sample frequencies
+	ORG EFXCNV
+EFXCNv  LD A,H
+        CP #04
+        JR NC,EFXCNv1
+        XOR A
+        LD (CPAGE),A
+        OUT (PAGE),A
+        ADD HL,HL
+        LD A,H
+        ADD A,#F8
+        LD H,A
+        LD A,(HL)
+        INC HL
+        LD H,(HL)
+        LD L,A
+        RET
+
+EFXCNv1 PUSH HL
+        LD E,L
+        LD D,H
+        ADD HL,HL
+        ADD HL,HL
+        ADD HL,DE
+
+        XOR A	;HL A
+        LD C,A	;DE C
+
+        SRL D		;/2
+        RR E
+        RR C
+
+        ADD A,C
+        ADC HL,DE		;+/2
+
+        SRL D		;/4
+        RR E
+        RR C
+
+        SRL D		;/8
+        RR E
+        RR C
+
+        ADD A,C
+        ADC HL,DE		;+/8
+
+        SRL D		;/16
+        RR E
+        RR C
+
+        SRL D		;/32
+        RR E
+        RR C
+
+        SRL D		;/64
+        RR E
+        RR C
+
+        SRL D		;/128
+        RR E
+        RR C
+
+        SRL D		;/256
+        RR E
+        RR C
+
+        ADD A,C
+        ADC HL,DE		;+/256
+
+        SRL E		;/512
+        RR C
+
+        ADD A,C
+        ADC HL,DE		;+/512
+
+        SRL E		;/1024
+        RR C
+
+        ADD A,C
+        ADC HL,DE		;+/1024
+
+        SRL E		;/2048
+        RR C
+
+        SRL E		;/4096
+        RR C
+
+        ADD A,C
+        ADC HL,DE		;+/4096
+
+;        SRL E		;/8192
+;        RR C
+
+;        ADD A,C
+;        ADC HL,DE	;+/8192
+
+        SRL H
+        RR L
+        SRL H
+        RR L
+        SRL H
+        RR L
+        JR NC,EFXCNv2
+        INC HL
+EFXCNv2 POP DE
+        ADD HL,DE
+        ADD HL,DE
+        RET
+;	display $,ARPTAB
+
+
+
+;	ORG EFXNOP2	;block CALL EFXCNV for test GSFRQTB table
+;	RET
+
+
+
+
+
+
+
+
+;------------------------------------------------------------------------------;
+
+	ORG Free1
+
+; >=63 patterns fix
+Patch11
+;        LD A,(HL)
+;        ADD A,A
+;        ADD A,A
+;        LD E,D
+;        LD D,A
+;        LD A,(MODTP)
+;        INC A
+;        LD HL,#0000+1084
+;        JR Z,TTT15
+;        LD HL,#0000+600
+;TTT15   XOR A
+;        LD (CPAGE),A
+;        OUT (PAGE),A
+;        ADD HL,DE
+;        LD DE,#5000
+;        LD BC,#400
+;        CALL LDMEM
+;        XOR A
+;        OUT (#00),A
+;        RET
+
+	LD H,(HL)
+        LD L,D
+        ADD HL,HL,HL,HL
+	JR NC,$+3:INC D
+
+        LD A,(MODTP)
+        INC A
+        LD BC,#0000+1084
+        JR Z,TTT15x
+        LD BC,#0000+600
+TTT15x
+        ADD HL,BC
+	JR NC,$+3:INC D
+	XOR A
+        LD (CPAGE),A
+        OUT (PAGE),A
+	LD A,D
+        LD DE,#5000
+        LD BC,#400
+        CALL LDMEM
+        XOR A
+        OUT (#00),A
+        RET
+
+
+
+
+
+
+
+
+;------------------------------------------------------------------------------;
+
+; new cmd #6A - Set player mode
+PlMode	EQU MODTP+1	;new var
+
+Patch2	LD A,(PlMode)	;command
+	OUT (OUTRG),A
+	IN A,(DATRG)
+	OUT (RSCOM),A
+	LD (PlMode),A
+	RET
+
+Patch2x	LD A,(PlMode):OR A:RET NZ
+	LD HL,MTSTAT
+        SET 7,(HL)
+        RET
+
+
+
+
+
+
+;------------------------------------------------------------------------------;
+
+; last note speed
+Patch3	LD A,(MTSNGPS):OR A:JR NZ,Patch3e	;1st pattern
+	LD A,(MTPATPS):OR A:JR NZ,Patch3e	;1st row
+
+        LD A,6		;init speed at start of MOD
+        LD (MTSPEED),A
+        LD HL,750
+        LD (TICKLEN),HL
+        LD (TCKLEFT),HL
+
+Patch3e	LD IY,CHANS
+	JP EFXGTNT+4
+
+
+
+
+
+
+;------------------------------------------------------------------------------;
+
+; initial note
+Patch4
+	LD (IY+CHCNTL),#00
+	LD (IY+CHREAL),#7F
+	RET
+
+
+
+
+
+;------------------------------------------------------------------------------;
+
+;MOD relooper
+; new cmd #6B - Set minimal loop length (turn on relooper)
+MODLLEN EQU PlMode+1		;minimal loop len
+
+Patch5	IN A,(DATRG):LD L,A
+	OUT (RSCOM),A
+	IN A,(FLAGS):AND #81:JR Z,$-4
+	JP P,Patch5s
+	IN A,(DATRG):LD H,A
+
+	LD DE,16385
+	OR A:SBC HL,DE:ADD HL,DE
+	JR C,Patch5s+3
+
+Patch5s	LD HL,#0200
+	LD (MODLLEN),HL
+	RET
+
+
+;reconstruct MOD after load
+Patch5x
+        CALL PLAYMD		;init MOD
+
+	LD HL,(MODLLEN)
+	LD A,H:OR L:RET Z	;relooper off
+
+	LD A,(MODTP):OR A
+	LD A,31,HL,1084
+	JR NZ,$+7
+	LD A,15,HL,600
+	LD (MODSMPS),A,(MODPTST),HL
+
+	CALL CHIP
+        JP PLAYMD		;init MOD again
+
+	INCLUDE "reloop.a80"
+
+
+;store settings
+Patch5i1
+	LD A,(PlMode),C,A
+	LD DE,(MODLLEN)
+	LD A,(ERRCODE)
+	RET
+
+;restore settings
+Patch5i2
+	LD (ERRCODE),A
+	LD A,C,(PlMode),A
+	LD (MODLLEN),DE
+	RET
+
+;clear vars after full reset!
+Patch5i3
+	XOR A:LD H,A,L,A
+	LD (PlMode),A
+	LD (MODLLEN),HL
+	JP INITVAR
+
+
+
+
+
+
+;------------------------------------------------------------------------------;
+
+; loop sample if mod cmd 9xx has an offset beyond sample
+Patch6	
+	LD A,(IY+CHLPBP)
+	INC A
+	JP Z,Patch6e
+	DEC A
+	LD L,(IY+CHLPBL)
+	LD H,(IY+CHLPBH)
+	LD (IY+CHCURL),L
+	LD (IY+CHCURH),H
+	LD (IY+CHCURP),A
+	JP COMM5
+Patch6e
+	RES 7,(IY+CHSTAT)
+	JP COMM5
+
+
+
+
+
+
+;------------------------------------------------------------------------------;
+
+; calc pages number to fix samples sign
+Patch7
+	LD BC,(MEMBOT+1)
+	RL C
+	RL B
+	LD A,B ;a=last used page#
+	INC A
+	SUB E  ;sub smps page#
+	LD B,A ;num of pages to process
+	JP SMPMD2
+
+
+
+

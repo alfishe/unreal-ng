@@ -105,6 +105,7 @@ public:
 	 * @return Pointer to the model info, or nullptr if not found
 	 */
 	static const TMemModel* FindModelByShortName(const std::string& shortName);
+	static const TMemModel* FindModelByEnum(MEM_MODEL model);
 
 	/**
 	 * @brief Get the full human-readable name for a memory model

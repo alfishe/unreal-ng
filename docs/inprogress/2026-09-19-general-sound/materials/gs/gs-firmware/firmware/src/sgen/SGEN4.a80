@@ -1,0 +1,278 @@
+
+S4_     LD D,C
+        PUSH DE
+        LD D,B
+        EXX
+        POP BC
+S41     SLA B
+        JP C,S418
+
+        SLI C
+        LD HY,B
+        JP C,S4101
+        JP S4100
+
+
+S4102   JR Z,S4104
+S410A   INC E
+        JR Z,S4105
+        LD B,A
+        ADD A,(HL)
+        RRA
+        LD LY,A
+        ADD A,B
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S41052
+        LD A,LY
+        LD (DE),A
+        INC E
+        JR Z,S41053
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S41054
+S4100   LD A,C
+        ADD A,HY
+        LD C,A
+        LD A,(HL)
+        INC HL
+        DEC LX
+        LD (DE),A
+        JP NC,S4102
+        JR Z,S4106
+        INC E
+        JR Z,S4107
+        LD (DE),A
+        INC E
+        JP NZ,S41033
+        JP S4109
+S4103    JR Z,S4108
+        INC E
+        JR Z,S4109
+S41033  LD B,A
+        ADD A,(HL)
+        RRA
+        LD LY,A
+        ADD A,B
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S41092
+        LD A,LY
+        LD (DE),A
+        INC E
+        JR Z,S41093
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S41094
+S4101    LD A,C
+        ADD A,HY
+        LD C,A
+        LD A,(HL)
+        INC HL
+        DEC LX
+        LD (DE),A
+        JP NC,S4103
+        JP NZ,S410A
+S4104   INC E
+S4105   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,3
+        RET
+S41052  SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,2
+        RET
+S41053  SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,1
+        RET
+S41054  SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,0
+        RET
+S4106    INC E
+S4107    RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        RET
+S4108    INC E
+S4109    RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,3
+        RET
+S41092   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,2
+        RET
+S41093   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,1
+        RET
+S41094   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,0
+        RET
+
+S418    SLI C
+        JP NC,S4180
+        JP S4181
+
+S4184    INC E
+S4185    RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        RET
+S41844   INC E
+         RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        RET
+
+S4182    JR Z,S4184
+        INC E
+S41822  JR Z,S4185
+S418222 LD (DE),A
+        INC E
+        JR Z,S4186
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S41866
+        LD (DE),A
+        INC E
+        JR Z,S41867
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S41868
+S4181    LD A,C
+        ADD A,B
+        LD C,A
+        LD A,(HL)
+        INC HL
+        DEC LX
+        LD (DE),A
+        JP C,S4182
+        JR Z,S41871
+        JP S41831
+S4183    JR Z,S4187
+        INC E
+        JR Z,S4188
+        LD (DE),A
+S41831  INC E
+        JR Z,S4189
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+         INC E
+        JR Z,S41891
+        LD (DE),A
+        INC E
+        JR Z,S41892
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S41893
+S4180    LD A,C
+        ADD A,B
+        LD C,A
+        LD A,(HL)
+        INC HL
+        DEC LX
+        LD (DE),A
+        JP C,S4183
+        JR Z,S41844
+        INC E
+        JP NZ,S418222
+         RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        RET
+S4186    RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,3
+        RET
+S41866   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,2
+        RET
+S41867   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,1
+        RET
+S41868   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,0
+        RET
+
+S4187    INC E
+S4188    SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        RET
+S4189    SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,3
+        RET
+S41871  INC E
+S41891   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,2
+        RET
+S41892   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,1
+        RET
+S41893   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,0
+        RET
+
+
+

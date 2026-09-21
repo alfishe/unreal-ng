@@ -1,0 +1,504 @@
+
+
+;**************************************************************
+;* QUANTUM PROCEDURE                                          *
+;**************************************************************
+
+
+QUANTUM LD A,(FXCHNS)
+        CPL
+        LD C,A
+        LD A,(GSCHNS)
+        AND C
+        LD C,A
+
+        LD IY,CHANS     ;CHANNELS
+        LD A,(MTSTAT)
+        AND #C0
+        JR NZ,L221
+
+L204    LD A,C
+        AND (IY+CHRDR)
+        JR Z,L205
+        BIT 7,(IY+CHSTAT)
+        JR Z,L205
+        PUSH BC
+        CALL GEN
+        POP BC
+L205    LD A,LY
+        ADD A,#40
+        LD LY,A
+        JP NC,L204
+        JP L221
+
+L221    XOR A
+        LD (CPAGE),A
+        OUT (PAGE),A
+        LD HL,VOLRQTB
+        LD A,(QTFREE)
+        ADD A,low VOLTAB
+        LD E,A
+        LD D,high VOLTAB
+        LDI
+        LDI
+        LDI
+        LDI
+        LD HL,(QTFREE)
+        LD B,L
+        INC L
+        PUSH BC
+        PUSH HL
+        LD A,(CHANNEL)
+        AND #0F
+        LD HL,INTTB
+        ADD A,A
+        ADD A,L
+        LD L,A
+        LD A,H
+        ADC A,#00
+        LD H,A
+        LD C,(HL)
+        INC HL
+        LD B,(HL)
+        LD A,(CHANNEL)
+        AND #0F
+        LD HL,INTOFF
+        ADD A,L
+        LD L,A
+        LD A,H
+        ADC A,#00
+        LD H,A
+        LD A,(QTFREE)
+        ADD A,#60
+        ADD A,(HL)
+        POP HL
+        LD (HL),A
+        INC L
+        LD (HL),C
+        INC L
+        LD (HL),B
+        POP BC
+        INC L
+        RES 5,L
+        LD (QTFREE),HL
+        LD L,B
+        LD A,(SGENOFF)
+        LD (HL),A
+
+        LD A,(PLAYING)
+        OR A
+        JP NZ,L224
+        LD (QTBUSY),HL
+        CALL QTPLAY
+L224    LD A,(SGENOFF)
+        NEG
+        LD C,A
+        LD B,0
+        LD A,(MTSTAT)
+        AND #C0
+        RET NZ
+        LD HL,(TCKLEFT)
+        OR A
+        SBC HL,BC
+        JR Z,EFXINT
+        LD (TCKLEFT),HL
+        RET
+
+EFXINT  LD A,(MODULE)
+        OR A
+        RET Z
+        LD HL,(TICKLEN)
+        LD (TCKLEFT),HL
+
+        XOR A
+        LD (CPAGE),A
+        OUT (PAGE),A
+        LD IY,CHANS
+        LD B,#04
+
+        LD A,(MTCOUNT)
+        INC A
+        LD (MTCOUNT),A
+        LD HL,MTSPEED
+        CP (HL)
+        JR C,EFXNONT    ;NO NEW NOTE
+        XOR A
+        LD (MTCOUNT),A
+        LD A,(MTPDT2)
+        OR A
+        JR Z,EFXGTNT    ;GET NEW NOTE
+        CALL EFXNONT
+        JP EFXSKIP
+
+EFXNONT LD IY,CHANS
+        LD B,#04
+
+EFXNON1 PUSH BC
+        LD A,(IY+CHCOM)
+        OR (IY+CHPARM)
+        JR NZ,EFXNON2
+        CALL FXNOP
+        JP EFXNON3
+EFXNON2 CALL FXCHK_
+EFXNON3 LD BC,CHANLEN
+        ADD IY,BC
+        POP BC
+        DJNZ EFXNON1
+        RET
+
+EFXNOP  LD L,(IY+CHPERL)	;;not used!
+        LD H,(IY+CHPERL)	;;bug!
+        CALL EFXCNV
+        LD (IY+CHFRQL),L
+        LD (IY+CHFRQH),H
+        RET
+
+
+
+
+
+EFXGTNT LD IY,CHANS
+        XOR A
+        LD (CPAGE),A
+        OUT (PAGE),A
+        LD (CURCHN),A
+
+COMM1   XOR A
+        LD (CPAGE),A
+        OUT (PAGE),A
+        CALL GETROWS
+        LD (IY+CHCOM),B
+        LD (IY+CHPARM),C
+
+        LD A,E
+        OR A
+        JR Z,COMM2
+        LD (IY+CHINS),E
+        PUSH DE
+        PUSH BC
+        CALL EFXNEWI
+        POP BC
+        POP DE
+
+
+COMM2   LD A,D
+        CP #7F
+        JP Z,COMM5
+        LD A,B
+        CP #03
+        JP Z,COMM4
+        CP #05
+        JP Z,COMM4
+        CP #0E
+        JR NZ,COMM3
+        LD A,C
+        AND #F0
+        CP #50
+        JR Z,COMM5_
+        LD (IY+CHNOTE),D
+        LD (IY+CHREAL),D
+        CP #D0
+        JR Z,COMM3__
+        JP COMM3
+COMM5_  LD A,C
+        AND #0F
+        SLA A
+        LD (IY+CHFINE),A
+COMM3   LD (IY+CHNOTE),D
+        LD (IY+CHREAL),D
+        CALL GETSMP
+COMM3__ LD E,(IY+CHNOTE)
+        CALL GETPER
+        LD (IY+CHPERL),L
+        LD (IY+CHPERH),H
+        LD E,(IY+CHNOTE)
+        CALL GETFRQ
+        LD (IY+CHFRQL),L
+        LD (IY+CHFRQH),H
+        LD A,(IY+CHCOM)
+        CP #09
+        JP NZ,COMM5
+        LD A,(IY+CHPARM)
+        OR A
+        JR NZ,FX9_
+        LD A,(IY+CHOFFST)
+FX9_    LD (IY+CHOFFST),A
+        LD H,A
+        LD L,#00
+        XOR A
+        ADC A,A
+        EX DE,HL
+        LD L,(IY+CHCURL)
+        LD H,(IY+CHCURH)
+        LD B,(IY+CHCURP)
+        RL H
+        SRL B
+        RR H
+        ADD HL,DE
+        ADC A,B
+        SLI H
+        RLA
+        RRC H
+        LD (IY+CHCURL),L
+        LD (IY+CHCURH),H
+        LD (IY+CHCURP),A
+        CP (IY+CHENDP)
+        JP C,COMM5
+        JR NZ,COMM3_
+        LD A,H
+        CP (IY+CHENDH)
+        JP C,COMM5
+        JR NZ,COMM3_
+        LD A,L
+        CP (IY+CHENDL)
+        JP C,COMM5
+COMM3_  RES 7,(IY+CHSTAT)
+        JP COMM5
+
+
+COMM4   LD (IY+CHWNT),D
+
+COMM5   XOR A
+        LD (CPAGE),A
+        OUT (PAGE),A
+
+        CALL FXCHK
+
+COMM6   LD BC,CHANLEN
+        ADD IY,BC
+        LD A,(CURCHN)
+        INC A
+        LD (CURCHN),A
+        CP #04
+        JP NZ,COMM1
+
+
+
+EFXSKIP LD HL,MTPATPS
+        INC (HL)
+        LD A,(MTPDT)
+        OR A
+        JR Z,EFXSKP2
+        LD (MTPDT2),A
+        XOR A
+        LD (MTPDT),A
+EFXSKP2 LD A,(MTPDT2)
+        OR A
+        JR Z,EFXSKP3
+        DEC A
+        LD (MTPDT2),A
+        JR Z,EFXSKP3
+        DEC (HL)
+EFXSKP3 LD A,(MTBRKFL)
+        OR A
+        JR Z,EFXSKP4
+        LD A,(MTBRKPS)
+        LD (HL),A
+        XOR A
+        LD (MTBRKPS),A
+        LD (MTBRKFL),A
+        JP EFXSKP5
+EFXSKP4 LD A,(HL)
+        OR A
+        JR NZ,EFXSKP5
+        LD A,(MTPDT2)
+        OR A
+        JR Z,EFXSKP6
+EFXSKP5 LD A,(MTROWS)
+        CP (HL)
+        JR NC,EFXSKPX
+EFXSKP6 LD A,(MTBRKPS)
+        LD (MTPATPS),A
+        XOR A
+        LD (MTBRKPS),A
+        LD (MTJMPFL),A
+        LD HL,MTSNGPS
+        INC (HL)
+        JR Z,EFXSKP7
+        LD A,(MTSNGSZ)
+        CP (HL)
+        JP NC,INITPAT
+
+
+EFXSKP7 LD A,(MTSNGSZ)
+        LD HL,MTSNGLP
+        CP (HL)
+        LD A,#00
+        JR C,EFXSKP8
+        LD A,(HL)
+EFXSKP8 LD (MTSNGPS),A
+        LD A,6
+        LD (MTSPEED),A
+        LD HL,750
+        LD (TICKLEN),HL
+        LD (TCKLEFT),HL
+        XOR A
+        LD (MTBRKPS),A
+        LD (MTJMPFL),A
+        LD (MTBRKFL),A
+        LD (MTPDT),A
+        LD (MTPDT2),A
+
+        JP INITPAT
+
+EFXSKPX LD A,(MTJMPFL)
+        OR A
+        JP NZ,EFXSKP6
+        RET
+
+
+
+GETSMP  SET 7,(IY+CHSTAT)
+        LD A,(IY+CHINS)
+        OR A
+        JR Z,GETSMP2
+        DEC A
+        ADD A,A
+        ADD A,A
+        ADD A,A
+        ADD A,A
+        LD E,A
+        LD A,#54
+        ADC A,#00
+        LD D,A
+        LD A,(DE)
+        LD (IY+CHCURP),A
+        INC DE
+        LD A,(DE)
+        LD (IY+CHCURL),A
+        INC DE
+        LD A,(DE)
+        LD (IY+CHCURH),A
+        INC (IY+CHCURL)
+        CALL Z,GETSMP3
+        INC (IY+CHCURL)
+        CALL Z,GETSMP3
+        INC DE
+        LD A,(DE)
+        LD (IY+CHENDP),A
+        INC DE
+        LD A,(DE)
+        LD (IY+CHENDL),A
+        INC DE
+        LD A,(DE)
+        LD (IY+CHENDH),A
+        INC DE
+        INC DE
+        INC DE
+        LD A,(DE)
+        LD (IY+CHLPBP),A
+        INC DE
+        LD A,(DE)
+        LD (IY+CHLPBL),A
+        INC DE
+        LD A,(DE)
+        LD (IY+CHLPBH),A
+        INC DE
+        LD A,(DE)
+        LD (IY+CHLPEP),A
+        INC DE
+        LD A,(DE)
+        LD (IY+CHLPEL),A
+        INC DE
+        LD A,(DE)
+        LD (IY+CHLPEH),A
+        LD (IY+CHCNTL),#00
+        LD (IY+CHCNTH),#07
+        LD A,(IY+CHCURP)
+        CP (IY+CHENDP)
+        RET C
+        JP NZ,GETSMP2
+        LD A,(IY+CHCURH)
+        CP (IY+CHENDH)
+        RET C
+        JP NZ,GETSMP2
+        LD A,(IY+CHCURL)
+        CP (IY+CHENDL)
+        RET C
+GETSMP2 RES 7,(IY+CHSTAT)
+        RET
+GETSMP3 INC (IY+CHCURH)
+        RET NZ
+        LD (IY+CHCURH),#80
+        INC (IY+CHCURP)
+        RET
+
+
+EFXNEWI LD A,(IY+CHINS)
+        DEC A
+        ADD A,A
+        ADD A,A
+        ADD A,A
+        ADD A,A
+        LD E,A
+        LD A,#54
+        ADC A,#00
+        LD D,A
+        INC DE
+        INC DE
+        INC DE
+        INC DE
+        INC DE
+        INC DE
+        LD A,(DE)
+        LD (IY+CHFINE),A
+        INC DE
+        LD A,(DE)
+        CP #40
+        JR C,GETSMP1
+        LD A,#40
+GETSMP1 LD (IY+CHVOL),A
+        CP (IY+CHMVOL)
+        LD (IY+CHMVOL),A
+        RET Z
+        SET 0,(IY+CHSTAT)
+        RET
+
+GETROWS LD A,(MTPATPS)
+        AND #3F
+        ADD A,A
+        ADD A,A
+        LD L,A
+        LD H,#00
+        ADD HL,HL
+        ADD HL,HL
+        LD A,(CURCHN)
+        ADD A,A
+        ADD A,A
+        ADD A,L
+        LD L,A
+        LD A,H
+        ADC A,#50
+        LD H,A
+        LD A,(HL)
+        AND #10
+        PUSH AF
+        LD A,(HL)
+        AND #0F
+        LD D,A
+        INC HL
+        LD E,(HL)
+        OR E
+        LD A,#7F
+        JR Z,GETRWS2
+        PUSH HL
+        CALL NOTEID
+        POP HL
+GETRWS2 INC HL
+        POP BC
+        LD D,A
+        LD A,(HL)
+        AND #F0
+        RRCA
+        RRCA
+        RRCA
+        RRCA
+        OR B
+        LD E,A
+        LD A,(HL)
+        AND #0F
+        LD B,A
+        INC HL
+        LD C,(HL)
+        RET
+

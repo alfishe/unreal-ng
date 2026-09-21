@@ -1,0 +1,392 @@
+;MEMORY MOVEMENT MODULE - HIGH PART
+
+;PROCEDURE: MOVE MEMORY
+;INPUT    : B ,HL  - SOURCE START LOGICAL ADRESS
+;           C ,DE  - SOURCE END LOGICAL ADRESS
+;           B',HL' - DESTINATION LOGICAL ADRESS
+;OUTPUT   : C ,DE  = DEST-START
+;USES     : TYPE 1 REGS,RAMPG,CPAGE,BUFFER,SYSTEM
+;EFFECT   : MOVES MEMORY REGION {START,END-1} TO DEST
+;           ALL ADRESSES IS LOGICAL
+
+
+MOVMEM  XOR A
+        LD (SYSTEM),A
+        PUSH HL
+        LD A,B
+        EXX
+        POP DE
+        PUSH HL
+        PUSH BC
+        LD C,A
+        OR A
+        SBC HL,DE
+        LD A,B
+        SBC A,C
+        EX DE,HL
+        POP BC
+        POP HL
+        LD C,A
+        OR E
+        OR D
+        RET Z
+        EXX
+        EX DE,HL
+        SBC HL,DE
+        LD A,C
+        SBC A,B
+        LD LX,A
+        OR L
+        OR H
+        EXX
+        RET Z
+        PUSH DE
+        PUSH BC
+
+        BIT 7,C
+        LD A,B
+        EXX
+        JR NZ,MOVL
+        CP C
+        JP C,MOVH
+        JR NZ,MOVL
+        EXX
+        LD A,H
+        EXX
+        CP D
+        JP C,MOVH
+        JR NZ,MOVL
+        EXX
+        LD A,L
+        EXX
+        CP E
+        JP C,MOVH
+
+MOVL    SLI D
+        RL B
+        RRC D
+        PUSH DE
+        EXX
+        EX DE,HL
+        POP HL
+        SLI D
+        RL B
+        RRC D
+        LD A,B
+        LD BC,#0000
+        EXX
+        LD C,A
+ML1     EXX
+        LD A,H
+        CP D
+        JR C,ML3
+        JR NZ,ML2
+        LD A,L
+        CP E
+        JR C,ML3
+ML2     LD A,C
+        SUB L
+        LD C,A
+        LD A,B
+        SBC A,H
+        JR ML4
+ML3     LD A,C
+        SUB E
+        LD C,A
+        LD A,B
+        SBC A,D
+ML4     LD B,A
+        LD A,LX
+        OR A
+        JR NZ,ML6
+        LD A,B
+        EXX
+        CP H
+        JR C,ML7
+        JR NZ,ML5
+        EXX
+        LD A,C
+        EXX
+        CP L
+        JR C,ML7
+ML5     PUSH HL
+        EXX
+        POP BC
+ML6     EXX
+ML7     LD D,high RAMPG
+        LD A,B
+        CP C
+        JR NZ,ML9
+        LD E,B
+        LD A,(DE)
+        LD (SDPAGE),A
+        EXX
+        PUSH BC
+ML8     LD A,C
+        CALL MLDI
+        JP PE,ML8
+        JR MLD
+
+ML9     EXX
+        PUSH BC
+MLA     PUSH BC
+        PUSH DE
+        EXX
+        LD E,B
+        LD A,(DE)
+        LD (SDPAGE),A
+        EXX
+        LD DE,BUFFER
+        LD A,C
+        CALL MLDI
+        POP DE
+        POP BC
+        PUSH HL
+        EXX
+        LD E,C
+        LD A,(DE)
+        LD (SDPAGE),A
+        EXX
+        LD HL,BUFFER
+        LD A,C
+        CALL MLDI
+        POP HL
+        JP PE,MLA
+MLD     BIT 7,H
+        JR NZ,MLB
+        SET 7,H
+        EXX
+        INC B
+        JP MLC
+MLB     SET 7,D
+        EXX
+        INC C
+MLC     POP DE
+        OR A
+        SBC HL,DE
+        LD A,LX
+        SBC A,#00
+        LD LX,A
+        OR L
+        OR H
+        JP NZ,ML1
+
+        POP BC
+        POP DE
+        RET
+
+MOVH    LD A,L
+        OR H
+        JR NZ,MH0
+        DEC LX
+MH0     DEC HL
+        EX DE,HL
+        ADD HL,DE
+        LD A,B
+        ADC A,LX
+        SLI H
+        RLA
+        RRC H
+        LD B,A
+        PUSH HL
+        PUSH DE
+        INC DE
+        LD A,E
+        OR D
+        LD A,LX
+        JR NZ,MHF
+        INC LX
+MHF     EX DE,HL
+        EXX
+        POP DE
+        ADD HL,DE
+        ADC A,B
+        SLI H
+        RLA
+        RRC H
+        EX DE,HL
+        POP HL
+        EXX
+        LD C,A
+MH1     EXX
+        LD A,H
+        CP D
+        JR C,MH3
+        JR NZ,MH2
+        LD A,L
+        CP E
+        JR C,MH3
+MH2     LD C,E
+        LD B,D
+        JR MH4
+MH3     LD C,L
+        LD B,H
+MH4     RES 7,B
+        INC BC
+        LD A,LX
+        OR A
+        JR NZ,MH6
+        LD A,B
+        EXX
+        CP H
+        JR C,MH7
+        JR NZ,MH5
+        EXX
+        LD A,C
+        EXX
+        CP L
+        JR C,MH7
+MH5     PUSH HL
+        EXX
+        POP BC
+MH6     EXX
+MH7     LD D,high RAMPG
+        LD A,B
+        CP C
+        JR NZ,MH9
+        LD E,B
+        LD A,(DE)
+        LD (SDPAGE),A
+        EXX
+        PUSH BC
+MH8     LD A,C
+        CALL MLDD
+        JP PE,MH8
+        JR MHD
+
+MH9     EXX
+        PUSH BC
+MHA     PUSH BC
+        PUSH DE
+        EXX
+        LD E,B
+        LD A,(DE)
+        LD (SDPAGE),A
+        EXX
+        LD DE,BUFFER+#00FF
+        LD A,C
+        CALL MLDD
+        POP DE
+        POP BC
+        PUSH HL
+        EXX
+        LD E,C
+        LD A,(DE)
+        LD (SDPAGE),A
+        EXX
+        LD HL,BUFFER+#00FF
+        LD A,C
+        CALL MLDD
+        POP HL
+        JP PE,MHA
+MHD     BIT 7,H
+        JR NZ,MHB
+        SET 7,H
+        EXX
+        DEC B
+        JP MHC
+MHB     SET 7,D
+        EXX
+        DEC C
+MHC     POP DE
+        OR A
+        SBC HL,DE
+        LD A,LX
+        SBC A,#00
+        LD LX,A
+        OR L
+        OR H
+        JP NZ,MH1
+
+        POP BC
+        POP DE
+        RET
+
+
+;PROCEDURE: LOAD MEMORY BLOCK
+;INPUT    : A,HL  - SOURCE LOGICAL ADRESS
+;           DE    - DESTINATION PHISICAL ADRESS (LOW RAM)
+;           BC    - BLOCK LENGTH
+;USES     : TYPE 2 REGS,RAMPG,CPAGE,SYSTEM
+;EFFECT   : MOVES MEMORY BLOCK FROM HIGH MEMORY TO LOW
+;               SWITCH TO PAGE 0
+
+LDMEM   SLI H
+        RLA
+        RRC H
+LM1     LD LX,A
+        PUSH HL
+        LD L,A
+        LD H,high RAMPG
+        LD A,(HL)
+        POP HL
+        LD (SDPAGE),A
+
+        ADD HL,BC
+        JR NC,LM2
+        JR NZ,LM4
+LM2     SBC HL,BC
+LM3     LD A,C
+        CALL MLDI
+        JP PE,LM3
+        RET
+
+LM4     XOR A
+        SBC HL,BC
+
+LM5     LD A,L
+        NEG
+        CALL MLDI
+        BIT 7,H
+        JP NZ,LM5
+        SET 7,H
+        LD A,LX
+        INC A
+        JP  LM1
+
+;PROCEDURE: SAVE MEMORY BLOCK
+;INPUT    : A,DE  - DESTINATION LOGICAL ADRESS
+;           HL    - SOURCE PHISICAL ADRESS (LOW RAM)
+;           BC    - BLOCK LENGTH
+;USES     : TYPE 2 REGS,RAMPG,CPAGE,SYSTEM
+;EFFECT   : MOVES MEMORY BLOCK FROM LOW MEMORY TO HIGH
+;               SWITCH TO PAGE 0
+
+SVMEM   SLI D
+        RLA
+        RRC D
+SM1     LD LX,A
+        PUSH HL
+        LD L,A
+        LD H,high RAMPG
+        LD A,(HL)
+        POP HL
+        LD (SDPAGE),A
+
+        EX DE,HL
+        ADD HL,BC
+        JR NC,SM2
+        JR NZ,SM4
+SM2     SBC HL,BC
+        EX DE,HL
+SM3     LD A,C
+        CALL MLDI
+        JP PE,SM3
+        RET
+
+SM4     XOR A
+        SBC HL,BC
+        EX DE,HL
+
+SM5     LD A,E
+        NEG
+        CALL MLDI
+        BIT 7,D
+        JP NZ,SM5
+        SET 7,D
+        LD A,LX
+        INC A
+        JP  SM1
+
+
+

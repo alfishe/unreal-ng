@@ -1,0 +1,58 @@
+;MEMORY MOVEMENT MODULE - LOW PART
+
+;        UNPHASE 
+;        ORG $+#00FF&#FF00
+;        PHASE $-GSRomBase
+	align 256
+
+LDITAB  DUP #100:DB #ED,#A0:EDUP
+        RET C
+        LD A,(SYSTEM)
+        LD (CPAGE),A
+        OUT (PAGE),A
+        RET
+
+
+MLDI    NEG
+        ADD A,A
+        LD LY,A
+        LD A,high LDITAB
+        ADC A,#00
+        LD HY,A
+        LD A,(SDPAGE)
+        LD (CPAGE),A
+        OUT (PAGE),A
+        JP (IY)
+
+TLDI    NEG
+        ADD A,A
+        LD LY,A
+        LD A,high LDITAB
+        ADC A,#00
+        LD HY,A
+        SCF
+        JP (IY)
+
+MLDD    NEG
+        ADD A,A
+        LD LY,A
+        LD A,high LDDTAB
+        ADC A,#00
+        LD HY,A
+        LD A,(SDPAGE)
+        LD (CPAGE),A
+        OUT (PAGE),A
+        JP (IY)
+
+;        UNPHASE 
+;        ORG $+#00FF&#FF00
+;        PHASE $-GSRomBase
+	align 256
+
+LDDTAB  DUP #100:DB #ED,#A8:EDUP
+        LD A,(SYSTEM)
+        LD (CPAGE),A
+        OUT (PAGE),A
+        RET
+
+
