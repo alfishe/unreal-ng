@@ -63,15 +63,27 @@ protected:
     bool _soundEnabled = true;
 
     // The core audio rate all chip DSP is designed for (multirate plan phase
-    // 6). Resolved ONCE at construction from [SOUND] CoreRate (auto = device
-    // native rate when already published, else 44100); every filter, chain
-    // and chip designs itself for this value. Changing it requires a sound
-    // stack rebuild - no hot switch.
+    // 6). Resolved at construction from the priority chain below; every
+    // filter, chain and chip designs itself for this value. Changing it
+    // requires a sound stack rebuild - applied only at frame boundaries via
+    // requestCoreRate()/applyCoreRate().
     size_t _coreRate = CORE_SAMPLING_RATE;
 
-    size_t resolveCoreRate() const;
+    // Runtime core-rate pin (automation 'audio_rate': CLI setting, WebAPI
+    // settings, Lua/Python set_audio_rate). Explicit intent for THIS run
+    // only - never written to CONFIG/ini, so it cannot lock a UI client's
+    // rate by accident and cannot go stale. 0 = no pin.
+    std::atomic<uint32_t> _coreRatePin{0};
 
-    // Live core-rate change request (device reroute with CoreRate=auto).
+    // The core rate as ONE pure function of three inputs with a fixed
+    // priority: runtime pin > attached device (per-context cell, else the
+    // process-wide default) > [SOUND] CoreRate > 44100. The ini value can
+    // therefore never pin a UI client that has a device attached; it only
+    // decides the rate while no device is known (the headless case).
+    // Table-tested in Multirate_Test.CoreRateResolution.
+    size_t targetCoreRate() const;
+
+    // Live core-rate change request (device reroute, pin set/release).
     // Written from any thread via requestCoreRate(); APPLIED only at the next
     // frame boundary on the emulation thread (handleFrameStart), which owns
     // all DSP state. 0 = no change pending. Deferred while recording.
@@ -305,6 +317,26 @@ public:
     /// The resolved core audio rate (Hz) - recording and analysis consumers
     /// must read this instead of assuming 44100
     size_t getCoreRate() const { return _coreRate; }
+
+    /// Pin the core audio rate for this run (one of the rates
+    /// IsSupportedCoreRate accepts; 0 = release the pin and follow the
+    /// device/config again). Runtime-only - never persisted to any ini.
+    /// Thread-safe; applied at the next frame boundary like every re-rate,
+    /// deferred while a recording is in progress. Unsupported rates are
+    /// refused with a warning and leave the pin untouched.
+    void setCoreRatePin(uint32_t rate);
+
+    /// Current runtime pin (0 = none)
+    uint32_t getCoreRatePin() const { return _coreRatePin.load(std::memory_order_acquire); }
+
+    /// Recompute the core rate from the priority chain (pin > device >
+    /// [SOUND] CoreRate) and request the change. No-op when the target
+    /// equals the current rate. Call whenever any chain input changes.
+    void reevaluateCoreRate();
+
+    /// Where the rate would land right now (pin > device > config > 44100);
+    /// getCoreRate() reaches this at the next applied frame boundary
+    uint32_t getTargetCoreRate() const { return static_cast<uint32_t>(targetCoreRate()); }
 
     /// Request a live core-rate change (thread-safe; applied at the next
     /// frame boundary on the emulation thread). Every rate-dependent DSP

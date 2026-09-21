@@ -781,8 +781,20 @@ emu.audio_capture_status()
 emu.audio_capture_result()           -- sample stats + per-channel peak/RMS
 emu.audio_capture_result("out.wav")  -- additionally export a 16-bit WAV file
 
+-- Core audio rate (same switch as CLI 'setting audio_rate' and WebAPI
+-- PUT settings/audio_rate): pin 44100..192000 for this run - never persisted.
+-- 0 = auto: follow the resolution chain device rate > [SOUND] CoreRate >
+-- 44100. Applied at the next frame boundary; deferred while a recording is
+-- in progress.
+emu.set_audio_rate(96000)            -- true when the pin took effect
+emu.set_audio_rate(0)                -- release the pin (auto)
+emu.get_audio_rate()                 -- { pin = 96000, core_rate = 96000, target_rate = 96000 }
+
 -- Video recording (requires a build with ENABLE_RECORDING)
 emu.video_record("start", {format = "gif", fps = 50, scale = 2})  -- opts table optional
+emu.video_record("start", {audio_rate = 48000})  -- pin the core rate first (number or "auto");
+                                     -- waits up to 1 s for the rate before recording starts,
+                                     -- errors if the emulator is paused
 emu.video_record("stop")             -- also "pause" / "resume"
 emu.video_record_status()             -- recording state + live stats (frames, duration, fps)
 

@@ -1274,11 +1274,21 @@ subsystem (`RecordingManager`); requires a build with `ENABLE_RECORDING`
 
 | Command | Arguments | Description |
 | :--- | :--- | :--- |
-| `videorecord start [format] [file]` | `[h264\|h265\|vp9\|gif\|rawvideo] [path] [--fps N] [--scale N]` | Start recording. Default format `gif`; default output file under the system temp directory. |
+| `videorecord start [format] [file]` | `[h264\|h265\|vp9\|gif\|rawvideo] [path] [--fps N] [--scale N] [--audio-rate N\|auto]` | Start recording. Default format `gif`; default output file under the system temp directory. |
 | `videorecord stop` | | Stop recording and finalize the file. |
 | `videorecord pause` | | Pause recording. |
 | `videorecord resume` | | Resume a paused recording. |
 | `videorecord status` | | Show recording state, output file, frame rate, and scale factor. |
+
+**Audio rate**: `--audio-rate N` (one of 44100, 48000, 88200, 96000, 176400, 192000)
+pins the core audio rate before the first sample is stamped, so the whole
+recording is made at that rate; `auto` releases the pin (the rate then follows
+the resolution chain — see section 7: connected device rate > `[SOUND] CoreRate`
+> 44100). The pin applies at the next frame boundary: the command waits up to
+1 s and fails with a clear message if the emulator is paused, so a file can
+never be silently mislabeled. The same switch exists as `setting audio_rate`,
+WebAPI `PUT /settings/audio_rate`, Lua/Python `set_audio_rate` and the Lua
+`video_record` `audio_rate` option.
 
 ### 6. System State Inspection
 
@@ -2092,7 +2102,7 @@ Inspect audio hardware state including beeper, AY-3-8912 PSG, General Sound, and
 | `state audio ay <chip> register <N>` | | `<chip-index> <register>` | Show specific AY register (0-15) of specified chip with full decoding and frequency calculations:<br/>**Example: `state audio ay 0 register 0`**<br/>• Register 0: Channel A fine period = 0x123<br/>• Frequency: 432 Hz<br/>• Note: A4 (440 Hz approximately)<br/>• Bit-by-bit decoding with meaning for each register type | 🔮 Planned |
 | `state audio gs` | | | Show General Sound device state (if available):<br/>• Device type and model<br/>• Current register values<br/>• Active channels and volume levels<br/>• Sample playback state<br/>• DMA status (if applicable)<br/>• Whether sound was played since reset via this device | 🔮 Planned |
 | `state audio covox` | | | Show Covox DAC state:<br/>• DAC model (Covox, SounDrive, etc.)<br/>• Current output level (8-bit value)<br/>• Sample rate and buffer status<br/>• Port address being used<br/>• Whether sound was played since reset via this device | 🔮 Planned |
-| `state audio channels` | | | Show audio mixer state for all sound sources:<br/>• Beeper: ON/OFF, level<br/>• AY chips: per-channel ON/OFF, volume<br/>• General Sound: active channels, levels<br/>• Covox: current level<br/>• Master output level and mute state | 🔮 Planned |
+| `state audio channels` | | | Show audio mixer state for all sound sources:<br/>• Beeper: ON/OFF, level<br/>• AY chips: per-channel ON/OFF, volume<br/>• General Sound: active channels, levels<br/>• Covox: current level<br/>• Master output level, mute state, and the live core sample rate (`sample_rate_hz` in the WebAPI master block — follows the `audio_rate` pin, see section 7) | 🔮 Planned |
 
 **AY-3-8912 Registers**:
 
@@ -2300,6 +2310,7 @@ Commands to configure emulator instance behavior and performance characteristics
 | `setting <name> <value>` | `set` | `<setting-name> <value>` | Change a specific setting value | ✅ Implemented |
 | `setting fast_tape <on\|off>` | | `on` or `off` | Enable/disable fast tape loading. When enabled, tape operations execute at maximum speed without audio emulation, significantly reducing loading times. | ✅ Implemented |
 | `setting turbo_tape <on\|off>` | | `on` or `off` | Enable/disable turbo tape loading (feature `turbotape`). While a tape signal plays out, the emulator runs at warp speed — custom loaders included. Composes with `fast_tape`: trapped blocks load instantly, the remaining signal path runs at warp. | ✅ Implemented |
+| `setting audio_rate <value>` | | `<rate>` or `auto` | Pin the core audio sample rate for this run — one of `44100`, `48000`, `88200`, `96000`, `176400`, `192000`, or `auto` to follow the resolution chain (connected device rate > `[SOUND] CoreRate` > 44100). Runtime only, never persisted to the ini. Applied at the next frame boundary; deferred while a recording is in progress. | ✅ Implemented |
 | `setting fast_disk <on\|off>` | | `on` or `off` | Enable/disable fast disk loading. When enabled, FDD operations bypass timing delays for near-instant disk access. | 🔮 Planned |
 | `setting turbo_fdc <on\|off>` | | `on` or `off` | Enable/disable turbo FDC mode. Accelerates WD1793 FDC operations for faster disk I/O. | 🔮 Planned |
 | `setting max_cpu_speed <value>` | | `<multiplier>` or `unlimited` | Set maximum CPU speed multiplier. Values: `1` (3.5MHz), `2` (7MHz), `4` (14MHz), `8` (28MHz), `16` (56MHz), or `unlimited`. Affects execution speed for loading and intensive operations. | 🔮 Planned |
@@ -2321,7 +2332,12 @@ Commands to configure emulator instance behavior and performance characteristics
    - `cpu_frequency`: Direct frequency control in MHz
    - Affects: instruction timing, video frame timing, audio sample rate
 
-3. **Compatibility Settings** (Future):
+3. **Audio Settings**:
+   - `audio_rate`: Runtime pin for the core audio sample rate — the rate the DSP stack and every capture/recording run at
+   - Resolution chain: runtime pin > connected audio device rate > `[SOUND] CoreRate` (ini — headless only, a connected device always outranks it) > 44100
+   - A pinned rate beats even the device rate, which is what fixed-rate headless recordings need; `auto` lets UI clients switch dynamically as the audio device changes
+
+4. **Compatibility Settings** (Future):
    - `timing_model`: `accurate` | `fast` | `compatible`
    - `contention_model`: `full` | `simplified` | `none`
    - `interrupt_timing`: `exact` | `frame` | `scanline`
@@ -2336,6 +2352,7 @@ Commands to configure emulator instance behavior and performance characteristics
 | `turbo_fdc` | Boolean | `off` | `on`, `off` | Turbo FDC operations |
 | `max_cpu_speed` | Integer/String | `1` | `1`, `2`, `4`, `8`, `16`, `unlimited` | CPU speed multiplier |
 | `cpu_frequency` | Float | `3.5` | `3.5` - `112.0` | CPU frequency in MHz |
+| `audio_rate` | Integer/String | `auto` | `44100`, `48000`, `88200`, `96000`, `176400`, `192000`, `auto` | Core audio rate pin (runtime only; `auto` follows device > `[SOUND] CoreRate` > 44100) |
 | `timing_model` | String | `accurate` | `accurate`, `fast`, `compatible` | Timing emulation model |
 
 **Use Cases**:
@@ -2368,6 +2385,15 @@ Commands to configure emulator instance behavior and performance characteristics
    setting cpu_frequency 14.0   # 14MHz (ultra-fast)
    ```
 
+5. **Fixed-Rate Audio Recording**: Headless capture at a chosen rate
+   ```
+   videorecord start h264 out.mp4 --audio-rate 96000   # pin + record in one step
+   # or explicitly:
+   setting audio_rate 96000
+   videorecord start h264 out.mp4
+   setting audio_rate auto      # release the pin afterwards
+   ```
+
 **Notes**:
 - Setting changes take effect immediately
 - Fast modes may affect timing-sensitive software (demos, loaders)
@@ -2375,15 +2401,16 @@ Commands to configure emulator instance behavior and performance characteristics
 - Different instances can have different settings
 - Settings are NOT saved between sessions (use configuration files for persistence)
 - `unlimited` CPU speed runs as fast as host allows (useful for automated tests)
+- `audio_rate` is a runtime pin, never written to the ini; `auto` makes the rate follow the connected audio device (UI clients switch dynamically), falling back to `[SOUND] CoreRate` only when no device is attached
 - Python/Lua bindings provide programmatic setting control
 
 **Implementation**:
 - Settings managed via `EmulatorContext::config` structure
 - Changes trigger appropriate subsystem updates
 - CLI: `CLIProcessor::HandleSetting()`
-- WebAPI: `/api/v1/emulator/{id}/settings` endpoint
-- Python: `emulator.set_setting(name, value)`
-- Lua: `emulator:set_setting(name, value)`
+- WebAPI: `/api/v1/emulator/{id}/settings` and `/api/v1/emulator/{id}/settings/audio_rate` endpoints
+- Python: `emulator.set_setting(name, value)`; audio rate also via `emulator.set_audio_rate(rate)` / `emulator.get_audio_rate()`
+- Lua: `emulator:set_setting(name, value)`; audio rate also via `set_audio_rate(rate)` / `get_audio_rate()`
 
 ---
 

@@ -5,6 +5,8 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/platform.h>
+#include <emulator/sound/audio.h>
+#include <emulator/sound/soundmanager.h>
 
 #include <iostream>
 #include <sstream>
@@ -69,6 +71,24 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
            << NEWLINE;
         ss << NEWLINE;
 
+        ss << "Audio:" << NEWLINE;
+        ss << "  audio_rate    = ";
+        if (context->pSoundManager)
+        {
+            const uint32_t pin = context->pSoundManager->getCoreRatePin();
+            if (pin)
+                ss << pin;
+            else
+                ss << "auto";
+            ss << "  (currently " << context->pSoundManager->getCoreRate() << " Hz)";
+        }
+        else
+        {
+            ss << "unavailable";
+        }
+        ss << "  (Core audio rate: 44100..192000 or auto = follow device/config)" << NEWLINE;
+        ss << NEWLINE;
+
         ss << "Use: setting <name> <value>  to change a setting" << NEWLINE;
         ss << "Example: setting fast_tape on" << NEWLINE;
 
@@ -111,6 +131,24 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
         ss << "  (CPU speed multiplier: 1, 2, 4, 8, 16, unlimited)" << NEWLINE;
         ss << "  turbo_audio   = " << (config.turbo_mode_audio ? "on" : "off") << "  (Enable audio in turbo mode)"
            << NEWLINE;
+        ss << NEWLINE;
+
+        ss << "Audio:" << NEWLINE;
+        ss << "  audio_rate    = ";
+        if (context->pSoundManager)
+        {
+            const uint32_t pin = context->pSoundManager->getCoreRatePin();
+            if (pin)
+                ss << pin;
+            else
+                ss << "auto";
+            ss << "  (currently " << context->pSoundManager->getCoreRate() << " Hz)";
+        }
+        else
+        {
+            ss << "unavailable";
+        }
+        ss << "  (Core audio rate: 44100..192000 or auto = follow device/config)" << NEWLINE;
         ss << NEWLINE;
 
         ss << "Use: setting <name> <value>  to change a setting" << NEWLINE;
@@ -164,6 +202,22 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
             ss << "turbo_audio = " << (config.turbo_mode_audio ? "on" : "off") << NEWLINE;
             ss << "Description: Enable audio generation in turbo mode (high pitch)" << NEWLINE;
         }
+        else if (settingName == "audio_rate")
+        {
+            if (context->pSoundManager)
+            {
+                const uint32_t pin = context->pSoundManager->getCoreRatePin();
+                ss << "audio_rate = " << (pin ? std::to_string(pin) : "auto")
+                   << "  (currently " << context->pSoundManager->getCoreRate() << " Hz)" << NEWLINE;
+            }
+            else
+            {
+                ss << "audio_rate = unavailable (sound manager not initialized)" << NEWLINE;
+            }
+            ss << "Description: Core audio rate pin (44100, 48000, 88200, 96000, 176400, 192000 or auto)" << NEWLINE;
+            ss << "Runtime only - not saved to the ini. auto follows the priority chain:" << NEWLINE;
+            ss << "device rate > [SOUND] CoreRate > 44100" << NEWLINE;
+        }
         else
         {
             ss << "Error: Unknown setting '" << settingName << "'" << NEWLINE;
@@ -209,6 +263,48 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
             catch (...)
             {
                 ss << "Error: Invalid value '" << value << "'. Use 1, 2, 4, 8, 16, or unlimited" << NEWLINE;
+            }
+        }
+        session.SendResponse(ss.str());
+        return;
+    }
+
+    if (settingName == "audio_rate")
+    {
+        SoundManager* soundManager = context->pSoundManager;
+        if (!soundManager)
+        {
+            session.SendResponse(std::string("Error: Sound manager not available for this emulator") + NEWLINE);
+            return;
+        }
+
+        if (valueLower == "auto" || valueLower == "device" || valueLower == "default")
+        {
+            soundManager->setCoreRatePin(0);
+            ss << "Setting changed: audio_rate = auto (pin released, currently " << soundManager->getCoreRate()
+               << " Hz)" << NEWLINE;
+        }
+        else
+        {
+            try
+            {
+                const unsigned long rate = std::stoul(value);
+                if (IsSupportedCoreRate(static_cast<uint32_t>(rate)))
+                {
+                    soundManager->setCoreRatePin(static_cast<uint32_t>(rate));
+                    ss << "Setting changed: audio_rate = " << rate << NEWLINE;
+                    ss << "Applied at the next frame boundary; deferred while a recording is in progress" << NEWLINE;
+                }
+                else
+                {
+                    ss << "Error: Unsupported rate " << value
+                       << ". Use 44100, 48000, 88200, 96000, 176400, 192000 or auto" << NEWLINE;
+                }
+            }
+            catch (...)
+            {
+                ss << "Error: Invalid value '" << value
+                   << "'. Use 44100, 48000, 88200, 96000, 176400, 192000 or auto" << NEWLINE;
             }
         }
         session.SendResponse(ss.str());
