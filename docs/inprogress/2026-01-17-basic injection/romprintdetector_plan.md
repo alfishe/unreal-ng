@@ -146,9 +146,9 @@ void ROMPrintDetector::onBreakpointHit(uint16_t address, BreakpointId bpId, Z80*
 ### Dependencies
 
 **Existing Code to Reuse:**
-- [BasicEncoder](core/src/debugger/analyzers/basic-lang/basicencoder.h#34-35) - Token decoding (already exists)
-- [AnalyzerManager](core/src/debugger/analyzers/analyzermanager.h#44-47) - Lifecycle and breakpoint management (Phase 1-4 ✅)
-- [EmulatorTestHelper](core/tests/_helpers/emulatortesthelper.h#9-34) - Test setup (Phase 3 ✅)
+- [BasicEncoder](../../../core/src/debugger/analyzers/basic-lang/basicencoder.h#34-35) - Token decoding (already exists)
+- [AnalyzerManager](../../../core/src/debugger/analyzers/analyzermanager.h#44-47) - Lifecycle and breakpoint management (Phase 1-4 ✅)
+- [EmulatorTestHelper](../../../core/tests/_helpers/emulatortesthelper.h#9-34) - Test setup (Phase 3 ✅)
 
 **New Code:**
 - `ROMPrintDetector` class

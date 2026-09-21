@@ -59,7 +59,7 @@ protected:
         {
             _context->pAudioCallback.store(nullptr, std::memory_order_release);
             _context->pAudioManagerObj.store(nullptr, std::memory_order_release);
-            _context->pAudioDeviceSampleRate.store(0, std::memory_order_release);
+            _context->config.sound.coreRate = 0;
             EmulatorTestHelper::CleanupEmulator(_emulator);
             _emulator = nullptr;
         }
@@ -84,7 +84,7 @@ TEST_F(FrameSampleCount_Test, DeviceRendersExactlyWhatTheMixerConsumes)
         const bool hq = combo.hq;
         {
             SCOPED_TRACE(testing::Message() << "rate " << rate << (hq ? " HQ" : " LQ"));
-            _context->pAudioDeviceSampleRate.store(static_cast<uint32_t>(rate), std::memory_order_release);
+            _context->config.sound.coreRate = static_cast<unsigned>(rate);
             SoundManager sound(_context);
             ITurboSoundDevice* device = sound.getTurboSound();
             ASSERT_NE(device, nullptr);

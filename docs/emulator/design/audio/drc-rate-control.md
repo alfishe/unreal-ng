@@ -104,9 +104,13 @@ Consequences:
   the DRC base ratio handles core↔device conversion — no hidden OS
   resampler. The granted rate is published process-wide
   (`PublishDefaultDeviceSampleRate`) **before any emulator exists**, so
-  the core rate resolves to the device family (resolution priority:
-  per-emulator cell → process-wide default → 44100). The core rate is
-  runtime-only: `[SOUND] CoreRate` is ignored (a set value logs a warning).
+  the core rate resolves against the device family (priority chain,
+  `SoundManager::targetCoreRate`: runtime pin → per-emulator cell →
+  process-wide default → `[SOUND] CoreRate` → 44100). The ini value only
+  decides the rate while NO device is attached — the headless case — so a
+  stale `CoreRate` in a UI client's ini can never lock the rate; the only
+  way to hold a rate against a device is the runtime pin (automation
+  `audio_rate`), which is never persisted.
 - **Reroute** (default output change / hotplug): miniaudio notification →
   GUI-thread re-init at the new output's native rate → ring dropped →
   `deviceReinitialized(rate)` → DRC re-bases next frame. A device is
@@ -116,14 +120,16 @@ Consequences:
   `kAudioDevicePropertyNominalSampleRate` listener on the active device
   triggers the same re-negotiation (macOS; WASAPI invalidates the stream
   on format changes, which routes through the reroute path anyway).
-- **Live core re-rate**: every device rate change (bind, reroute, nominal
-  rate switch) requests `SoundManager::requestCoreRate` — applied at the next frame
-  boundary on the emulation thread, re-deriving every DSP stage (blip
-  resamplers, AY PLL + decimation FIRs, character chains, sample
-  accumulator, recording rate, MoonSound's libopl4 output rate via
-  `Opl4::SetOutputRate`). Deferred while a recording is active.
-  On every rate republish the DRC controller state is reset
-  (`resetDrcController`) so tracking restarts from fresh occupancy.
+- **Live core re-rate**: a device rate change re-derives the core rate
+  from the priority chain and requests `SoundManager::requestCoreRate` —
+  applied at the next frame boundary on the emulation thread, re-deriving
+  every DSP stage (blip resamplers, AY PLL + decimation FIRs, character
+  chains, sample accumulator, recording rate, MoonSound's libopl4 output
+  rate via `Opl4::SetOutputRate`). Deferred while a recording
+  is active. With a runtime pin standing the target is unchanged (no-op)
+  and only the DRC base ratio follows the device. On every rate republish
+  the DRC controller state is reset (`resetDrcController`) so tracking
+  restarts from fresh occupancy.
 
 ## 6. Field notes — every desync bug found after the design shipped
 

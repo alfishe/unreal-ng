@@ -22,31 +22,32 @@
 
 std::atomic<uint32_t> SoundManager::_defaultDeviceSampleRate{0};
 
-/// Resolve the core audio rate from the audio device (runtime only; the
-/// [SOUND] CoreRate config value is ignored): the device's native rate when
-/// known and supported, else 44100. The device rate comes from the
-/// per-emulator cell if the frontend already bound this emulator, otherwise
-/// from the process-wide default published at audio device init (the usual
-/// case: emulators are constructed BEFORE the frontend binds audio to them).
-/// Later device changes arrive through requestCoreRate().
-size_t SoundManager::resolveCoreRate() const
+/// The core audio rate as ONE pure function of three inputs with a fixed
+/// priority (multirate plan phase 6, refined): runtime pin > attached
+/// device > [SOUND] CoreRate > 44100. The ini value can therefore never
+/// lock a UI client that has a device attached (a stale CoreRate=44100
+/// next to a 48 kHz DAC resolves to 48 kHz) - it only decides the rate
+/// while NO device is known, which is exactly the headless case
+/// (recordings and analyzers at a chosen rate). The device rate comes from
+/// the per-emulator cell if the frontend already bound this emulator,
+/// otherwise from the process-wide default published at audio device init
+/// (the usual case: emulators are constructed BEFORE the frontend binds
+/// audio to them).
+size_t SoundManager::targetCoreRate() const
 {
+    if (const uint32_t pin = _coreRatePin.load(std::memory_order_acquire))
+        return pin;  // explicit runtime intent beats everything
+
     uint32_t devRate = _context->pAudioDeviceSampleRate.load(std::memory_order_relaxed);
     if (devRate == 0)
         devRate = _defaultDeviceSampleRate.load(std::memory_order_acquire);
+    if (IsSupportedCoreRate(devRate))
+        return devRate;  // a connected device always outranks the ini
 
-    switch (devRate)
-    {
-        case 44100:
-        case 48000:
-        case 88200:
-        case 96000:
-        case 176400:
-        case 192000:
-            return devRate;
-        default:
-            return CORE_SAMPLING_RATE;
-    }
+    if (IsSupportedCoreRate(_context->config.sound.coreRate))
+        return _context->config.sound.coreRate;  // headless: rate from the ini
+
+    return CORE_SAMPLING_RATE;
 }
 
 SoundManager::SoundManager(EmulatorContext* context)
@@ -54,7 +55,7 @@ SoundManager::SoundManager(EmulatorContext* context)
     _context = context;
     _logger = context->pModuleLogger;
 
-    _coreRate = resolveCoreRate();
+    _coreRate = targetCoreRate();
     if (_coreRate != CORE_SAMPLING_RATE)
     {
         LOGINFO("SoundManager: core audio rate %zu Hz", _coreRate);
@@ -368,24 +369,33 @@ void SoundManager::setBeeperVolume(double volume)
 /// region <Emulation events>
 void SoundManager::requestCoreRate(uint32_t rate)
 {
-    switch (rate)
+    if (!IsSupportedCoreRate(rate))
     {
-        case 44100:
-        case 48000:
-        case 88200:
-        case 96000:
-        case 176400:
-        case 192000:
-            break;
-        default:
-            LOGWARNING("SoundManager::requestCoreRate: unsupported rate %u ignored", rate);
-            return;
+        LOGWARNING("SoundManager::requestCoreRate: unsupported rate %u ignored", rate);
+        return;
     }
 
     if (rate == _coreRate)
         return;
 
     _pendingCoreRate.store(rate, std::memory_order_release);
+}
+
+void SoundManager::setCoreRatePin(uint32_t rate)
+{
+    if (rate != 0 && !IsSupportedCoreRate(rate))
+    {
+        LOGWARNING("SoundManager::setCoreRatePin: unsupported rate %u ignored", rate);
+        return;
+    }
+
+    _coreRatePin.store(rate, std::memory_order_release);
+    reevaluateCoreRate();
+}
+
+void SoundManager::reevaluateCoreRate()
+{
+    requestCoreRate(static_cast<uint32_t>(targetCoreRate()));
 }
 
 /// Re-derive the whole audio pipeline for a new core rate. Emulation thread

@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/testpathhelper.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -14,15 +15,24 @@
 #include "emulator/sound/beeper.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/sound/chips/soundchip_turbosound.h"
+#ifdef ENABLE_RECORDING
+#include "encoder_base.h"
+#include "recordingmanager.h"
+#endif  // ENABLE_RECORDING
 
 /// Multi-rate core tests (multirate plan phase 7).
 ///
-/// The core audio rate is a construction parameter ([SOUND] CoreRate); every
-/// chip and filter designs itself for it. These tests verify the rate matrix
-/// end-to-end: resolution rules, per-frame sample counts, exactness of the
-/// integer accumulator at every rate, and pitch invariance (the same emulated
-/// tone must measure the same Hz at every core rate - the acceptance
-/// criterion from the evaluation doc).
+/// The core audio rate is ONE pure function of three inputs with a fixed
+/// priority (SoundManager::targetCoreRate): runtime pin > attached device
+/// > [SOUND] CoreRate > 44100. The ini value therefore never locks a UI
+/// client that has a device attached (a stale CoreRate=44100 next to a 48
+/// kHz DAC resolves to 48 kHz) - it only decides the rate while no device
+/// is known, which is the headless case (recordings/analyzers at a chosen
+/// rate). These tests verify the rate matrix end-to-end: resolution rules,
+/// per-frame sample counts, exactness of the integer accumulator at every
+/// rate, and pitch invariance (the same emulated tone must measure the same
+/// Hz at every core rate - the acceptance criterion from the evaluation
+/// doc).
 
 namespace
 {
@@ -76,60 +86,48 @@ protected:
 
 TEST_F(Multirate_Test, CoreRateResolution)
 {
-    // The [SOUND] CoreRate config value is ignored: no device -> 44100
-    _context->config.sound.coreRate = 96000;
+    // Table-driven pin x device x ini -> expected rate for the construction
+    // resolution (the pin is a SoundManager field, so only the device/ini
+    // columns apply at construction; the pin's live behaviour is covered by
+    // CoreRatePin_OverridesDeviceAndIni below).
+    struct RateRow
     {
+        uint32_t deviceCell;      // per-emulator pAudioDeviceSampleRate
+        uint32_t defaultPublished;  // process-wide frontend publication
+        unsigned ini;             // [SOUND] CoreRate
+        uint32_t expected;
+        const char* what;
+    };
+    const RateRow rows[] = {
+        // Headless: the ini is the rate source (recordings at a chosen rate)
+        {0, 0, 96000, 96000, "ini pins the rate while no device is attached"},
+        // The UI-client case a stale ini must NOT be able to lock
+        {48000, 0, 44100, 48000, "a connected device beats the ini value"},
+        // auto with a supported published default (frontend audio init runs
+        // BEFORE emulator creation - the per-context cell is 0 at that point)
+        {0, 48000, 0, 48000, "auto matches the device rate published before creation"},
+        // Per-context cell outranks the process-wide default
+        {96000, 48000, 44100, 96000, "per-context cell beats the published default"},
+        // Unsupported inputs fall through the chain
+        {22050, 0, 44100, 44100, "unsupported device falls back to the ini"},
+        {0, 22050, 96000, 96000, "unsupported default falls back to the ini"},
+        {0, 0, 0, 44100, "nothing known - conservative 44100"},
+    };
+
+    for (const RateRow& row : rows)
+    {
+        SCOPED_TRACE(row.what);
+        _context->config.sound.coreRate = row.ini;
+        _context->pAudioDeviceSampleRate.store(row.deviceCell, std::memory_order_release);
+        SoundManager::PublishDefaultDeviceSampleRate(row.defaultPublished);
+
         SoundManager sound(_context);
-        EXPECT_EQ(sound.getCoreRate(), 44100u) << "config must not pin the core rate";
+        EXPECT_EQ(sound.getCoreRate(), row.expected);
+        EXPECT_EQ(sound.getTargetCoreRate(), row.expected) << "target must equal the resolved rate";
     }
+
+    _context->pAudioDeviceSampleRate.store(0, std::memory_order_release);
     _context->config.sound.coreRate = 0;
-
-    // Supported device rate published -> match the device
-    _context->pAudioDeviceSampleRate.store(48000, std::memory_order_release);
-    {
-        SoundManager sound(_context);
-        EXPECT_EQ(sound.getCoreRate(), 48000u);
-    }
-
-    // Unsupported device rate -> conservative 44100
-    _context->pAudioDeviceSampleRate.store(22050, std::memory_order_release);
-    {
-        SoundManager sound(_context);
-        EXPECT_EQ(sound.getCoreRate(), 44100u);
-    }
-
-    // No device rate known -> 44100
-    _context->pAudioDeviceSampleRate.store(0, std::memory_order_release);
-    {
-        SoundManager sound(_context);
-        EXPECT_EQ(sound.getCoreRate(), 44100u);
-    }
-
-    // Process-wide default published (frontend audio init happens
-    // BEFORE emulator creation - the per-context cell is 0 at that point):
-    // resolver must fall back to the published default
-    SoundManager::PublishDefaultDeviceSampleRate(48000);
-    {
-        SoundManager sound(_context);
-        EXPECT_EQ(sound.getCoreRate(), 48000u)
-            << "auto must match the device rate published before emulator creation";
-    }
-
-    // Per-context cell takes priority over the process-wide default
-    _context->pAudioDeviceSampleRate.store(96000, std::memory_order_release);
-    {
-        SoundManager sound(_context);
-        EXPECT_EQ(sound.getCoreRate(), 96000u);
-    }
-
-    // Unsupported process-wide default -> conservative 44100
-    _context->pAudioDeviceSampleRate.store(0, std::memory_order_release);
-    SoundManager::PublishDefaultDeviceSampleRate(22050);
-    {
-        SoundManager sound(_context);
-        EXPECT_EQ(sound.getCoreRate(), 44100u);
-    }
-
     SoundManager::PublishDefaultDeviceSampleRate(0);  // Reset for other tests
 }
 
@@ -394,14 +392,109 @@ TEST_F(Multirate_Test, DeviceRateChange_TriggersAutoCoreRerate)
     EXPECT_EQ(sound->getCoreRate(), 48000u)
         << "Auto core rate must follow the re-established device rate";
 
-    // A [SOUND] CoreRate value does not pin it: the device always wins
+    // An explicitly configured ini rate must NOT shield the core from the
+    // device either: a stale CoreRate in a UI client's ini can never lock
+    // the rate while a device is attached (device > ini in the chain)
     _context->config.sound.coreRate = 44100;
     _emulator->SetAudioDeviceSampleRate(96000);
     sound->handleFrameStart();
-    EXPECT_EQ(sound->getCoreRate(), 96000u) << "the core rate must follow the device regardless of config";
+    EXPECT_EQ(sound->getCoreRate(), 96000u) << "The attached device must beat the ini value";
     _context->config.sound.coreRate = 0;
     _emulator->SetAudioDeviceSampleRate(0);
 }
+
+TEST_F(Multirate_Test, CoreRatePin_OverridesDeviceAndIni)
+{
+    // The runtime pin ('setting audio_rate' / set_audio_rate) is the only
+    // way to hold a rate against a connected device - explicit intent for
+    // this run, never persisted to any ini
+    SoundManager* sound = _context->pSoundManager;
+    ASSERT_NE(sound, nullptr);
+
+    _emulator->SetAudioDeviceSampleRate(48000);
+    sound->handleFrameStart();
+    ASSERT_EQ(sound->getCoreRate(), 48000u);
+
+    // Pinning: applied at the next frame boundary, never mid-frame
+    sound->setCoreRatePin(96000);
+    EXPECT_EQ(sound->getCoreRate(), 48000u) << "The pin must not jump mid-frame";
+    EXPECT_EQ(sound->getTargetCoreRate(), 96000u) << "The target follows the pin immediately";
+    sound->handleFrameStart();
+    EXPECT_EQ(sound->getCoreRate(), 96000u);
+    EXPECT_EQ(sound->getCoreRatePin(), 96000u);
+
+    // Device change under a pin: the core rate holds; only the DRC base
+    // ratio (device/core) follows the device
+    _emulator->SetAudioDeviceSampleRate(44100);
+    sound->handleFrameStart();
+    EXPECT_EQ(sound->getCoreRate(), 96000u) << "The pin must hold against device changes";
+
+    // Unsupported pin rates are refused and leave the pin untouched
+    sound->setCoreRatePin(22050);
+    EXPECT_EQ(sound->getCoreRatePin(), 96000u) << "Unsupported rates must not change the pin";
+    sound->handleFrameStart();
+    EXPECT_EQ(sound->getCoreRate(), 96000u);
+
+    // Releasing the pin returns control to the device input
+    sound->setCoreRatePin(0);
+    EXPECT_EQ(sound->getTargetCoreRate(), 44100u) << "auto must re-target the device rate";
+    sound->handleFrameStart();
+    EXPECT_EQ(sound->getCoreRate(), 44100u);
+
+    _emulator->SetAudioDeviceSampleRate(0);
+}
+
+#ifdef ENABLE_RECORDING
+namespace
+{
+/// Minimal always-succeeding encoder: puts the RecordingManager into the
+/// recording state without touching files, so the rate deferral path can be
+/// exercised directly
+class StubEncoder : public EncoderBase
+{
+public:
+    bool Start(const std::string& filename, const EncoderConfig& config) override
+    {
+        (void)filename;
+        (void)config;
+        return true;
+    }
+    void Stop() override {}
+    bool IsRecording() const override { return true; }
+    std::string GetType() const override { return "stub"; }
+    std::string GetDisplayName() const override { return "Stub"; }
+    bool SupportsVideo() const override { return false; }
+    bool SupportsAudio() const override { return true; }
+};
+}  // namespace
+
+TEST_F(Multirate_Test, CoreRateChange_DeferredWhileRecording)
+{
+    // A recording must keep one rate end to end: rate requests (device
+    // change or pin) stay pending until the recording stops, then apply at
+    // the next frame boundary
+    RecordingManager* rm = _context->pRecordingManager;
+    ASSERT_NE(rm, nullptr) << "Fixture must create the recording manager";
+    SoundManager* sound = _context->pSoundManager;
+    ASSERT_NE(sound, nullptr);
+    ASSERT_EQ(sound->getCoreRate(), 44100u);
+
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("multirate_deferred.wav");
+    ASSERT_TRUE(rm->StartRecordingWithEncoder(path, std::make_unique<StubEncoder>()));
+
+    sound->setCoreRatePin(48000);
+    sound->handleFrameStart();
+    EXPECT_EQ(sound->getCoreRate(), 44100u) << "A recording must keep one rate end to end";
+    EXPECT_EQ(sound->getTargetCoreRate(), 48000u) << "...but the target already tracks the pin";
+
+    rm->StopRecording();
+    sound->handleFrameStart();
+    EXPECT_EQ(sound->getCoreRate(), 48000u) << "The deferred rate applies once the recording stops";
+
+    sound->setCoreRatePin(0);  // Leave the fixture unpinned
+    sound->handleFrameStart();
+}
+#endif  // ENABLE_RECORDING
 
 /// endregion </Live core-rate change>
 

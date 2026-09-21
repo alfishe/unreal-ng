@@ -114,6 +114,6 @@ The `HALC_ProxyIOContext::IOWorkLoop` messages are logged via Apple System Log (
 
 ## Related Files
 
-- [`unreal-qt/src/emulator/soundmanager.cpp`](unreal-qt/src/emulator/soundmanager.cpp) - Qt audio integration
-- [`core/src/emulator/sound/soundmanager.cpp`](core/src/emulator/sound/soundmanager.cpp) - Core sound mixing
-- [`core/src/3rdparty/miniaudio/miniaudio.h`](core/src/3rdparty/miniaudio/miniaudio.h) - miniaudio library
+- [`unreal-qt/src/emulator/soundmanager.cpp`](../../../../unreal-qt/src/emulator/soundmanager.cpp) - Qt audio integration
+- [`core/src/emulator/sound/soundmanager.cpp`](../../../../core/src/emulator/sound/soundmanager.cpp) - Core sound mixing
+- [`core/src/3rdparty/miniaudio/miniaudio.h`](../../../../core/src/3rdparty/miniaudio/miniaudio.h) - miniaudio library

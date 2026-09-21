@@ -672,15 +672,18 @@ void Emulator::SetAudioDeviceSampleRate(uint32_t rate)
         _context->pSoundManager->resetDrcController();
     }
 
-    // The core rate always follows the device: a device-rate change (bind,
-    // hotplug, reroute at a different native rate) requests a full pipeline
-    // re-rate - every digital filter re-derives for the new core rate at the
-    // next frame boundary on the emulation thread (SoundManager::
-    // handleFrameStart applies it there; deferred while a recording is in
-    // progress).
-    if (rate != 0 && _context->pSoundManager)
+    // Core rate priority chain (runtime pin > device > [SOUND] CoreRate):
+    // a device-rate CHANGE (hotplug / reroute at a different native rate)
+    // re-derives the target and requests a full pipeline re-rate - every
+    // digital filter re-derives for the new core rate at the next frame
+    // boundary on the emulation thread (SoundManager::handleFrameStart
+    // applies it there; deferred while a recording is in progress). With a
+    // runtime pin the target is unchanged (no-op) and only the DRC base
+    // ratio follows the device. The ini CoreRate never participates while
+    // a device is attached - it cannot lock a UI client's rate.
+    if (_context->pSoundManager)
     {
-        _context->pSoundManager->requestCoreRate(rate);
+        _context->pSoundManager->reevaluateCoreRate();
     }
 }
 

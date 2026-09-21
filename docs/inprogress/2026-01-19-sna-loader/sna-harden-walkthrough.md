@@ -5,10 +5,10 @@ Harden the SNA snapshot loader with defensive programming, state-independent loa
 
 ## Changes Made
 
-### 1. Defensive Programming in [loader_sna.cpp](core/src/loaders/snapshot/loader_sna.cpp)
+### 1. Defensive Programming in [loader_sna.cpp](../../../core/src/loaders/snapshot/loader_sna.cpp)
 
 #### File Size Validation
-Added comprehensive file size validation in the [validate()](core/src/loaders/snapshot/loader_z80.cpp#44-129) method:
+Added comprehensive file size validation in the [validate()](../../../core/src/loaders/snapshot/loader_z80.cpp#44-129) method:
 
 **48K SNA Validation:**
 - Exact size check: 49,179 bytes (27 header + 49,152 RAM)
@@ -22,16 +22,16 @@ Added comprehensive file size validation in the [validate()](core/src/loaders/sn
 - Requires at least 1 additional bank (base structure alone is invalid)
 
 #### Detection Logic Fix
-Fixed critical bug in [is128kSnapshot()](core/src/loaders/snapshot/loader_sna.cpp#186-212):
+Fixed critical bug in [is128kSnapshot()](../../../core/src/loaders/snapshot/loader_sna.cpp#186-212):
 - **Bug**: Used `_sna128HeaderSize` which equals `_snaHeaderSize + sizeof(sna128Header)` (31 bytes)
 - **Fix**: Changed to `sizeof(sna128Header)` directly (4 bytes)
 - **Impact**: Fixed double-counting of main header in minimum size calculation
 
 #### State-Independent Loading
-Applied the **Unlock-Write-Assign-Set-Sync** pattern in [applySnapshotFromStaging()](core/src/loaders/snapshot/loader_sna.cpp#397-541) for 128K SNAs:
+Applied the **Unlock-Write-Assign-Set-Sync** pattern in [applySnapshotFromStaging()](../../../core/src/loaders/snapshot/loader_sna.cpp#397-541) for 128K SNAs:
 1. **Unlock**: `_context->pPortDecoder->UnlockPaging()`
 2. **Set**: Configure 128K memory banks (5, 2, currentTopPage)
-3. **Write**: [DecodePortOut(0x7FFD, _ext128Header.port_7FFD, z80.pc)](core/src/emulator/ports/portdecoder.cpp#141-184)
+3. **Write**: [DecodePortOut(0x7FFD, _ext128Header.port_7FFD, z80.pc)](../../../core/src/emulator/ports/portdecoder.cpp#141-184)
 4. **Assign**: `_context->emulatorState.p7FFD = _ext128Header.port_7FFD`
 5. **Sync**: Handle TR-DOS ROM activation if needed
 
@@ -136,15 +136,15 @@ snapshot save <file> [--force]    # Format from extension (.sna)
 - **Directory Persistence**: Separate `LastSaveDirectory` QSettings key
 
 ## Files Modified
-- [loader_sna.cpp](core/src/loaders/snapshot/loader_sna.cpp) - Added defensive programming, validation, and save()
-- [loader_sna_test.cpp](core/tests/loaders/snapshot/loader_sna_test.cpp) - 29 tests including 5 save tests
-- [emulator.cpp](core/src/emulator/emulator.cpp) - Added SaveSnapshot()
-- [menumanager.cpp](unreal-qt/src/menumanager.cpp) - Save submenu and state management
-- [mainwindow.cpp](unreal-qt/src/mainwindow.cpp) - Save file dialog with persistence
-- [cli-processor-snapshot.cpp](core/automation/cli/src/commands/cli-processor-snapshot.cpp) - CLI save command
-- [snapshot_api.cpp](core/automation/webapi/src/api/snapshot_api.cpp) - WebAPI endpoint
-- [python_emulator.h](core/automation/python/src/emulator/python_emulator.h) - Python binding
-- [lua_emulator.h](core/automation/lua/src/emulator/lua_emulator.h) - Lua binding
+- [loader_sna.cpp](../../../core/src/loaders/snapshot/loader_sna.cpp) - Added defensive programming, validation, and save()
+- [loader_sna_test.cpp](../../../core/tests/loaders/snapshot/loader_sna_test.cpp) - 29 tests including 5 save tests
+- [emulator.cpp](../../../core/src/emulator/emulator.cpp) - Added SaveSnapshot()
+- [menumanager.cpp](../../../unreal-qt/src/menumanager.cpp) - Save submenu and state management
+- [mainwindow.cpp](../../../unreal-qt/src/mainwindow.cpp) - Save file dialog with persistence
+- [cli-processor-snapshot.cpp](../../../core/automation/cli/src/commands/cli-processor-snapshot.cpp) - CLI save command
+- [snapshot_api.cpp](../../../core/automation/webapi/src/api/snapshot_api.cpp) - WebAPI endpoint
+- [python_emulator.h](../../../core/automation/python/src/emulator/python_emulator.h) - Python binding
+- [lua_emulator.h](../../../core/automation/lua/src/emulator/lua_emulator.h) - Lua binding
 
 ## Documentation Updated
 - Created [docs/inprogress/2026-01-19-sna-loader/SCOPE.md](docs/inprogress/2026-01-19-sna-loader/SCOPE.md) - Scope of work document

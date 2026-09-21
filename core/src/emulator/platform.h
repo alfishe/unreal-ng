@@ -516,9 +516,10 @@ struct CONFIG
 		unsigned fq, ayfq, saa1099fq;
 
 		/// Core audio rate from [SOUND] CoreRate (multirate plan phase 6):
-		/// Legacy [SOUND] CoreRate: always 0 and ignored. The core audio rate
-		/// follows the audio device at runtime (SoundManager::resolveCoreRate /
-		/// requestCoreRate): 44100/48000/88200/96000/176400/192000, else 44100.
+		/// one of 44100/48000/88200/96000/176400/192000, or 0 = auto.
+		/// Decides the core rate ONLY while no audio device is attached
+		/// (headless runs); a connected device always outranks it at runtime
+		/// (SoundManager::targetCoreRate: pin > device > this > 44100).
 		unsigned coreRate;
 
 		/// Which device occupies the TurboSound slot ([SOUND] TurboSound,
