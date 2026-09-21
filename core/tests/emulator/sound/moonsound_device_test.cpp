@@ -952,18 +952,29 @@ TEST_F(MoonSoundDevice_Test, TTD_RestoreHiFi_ConvergesAfterFilterWindow)
     constexpr size_t kN = 1024;
     const size_t from = kRestoreWindowSamples; // in frames (left channel)
     ASSERT_LE((from + 882 + kN) * AUDIO_CHANNELS, 3 * frameSamples);
-    const auto magnitude = [](const int16_t* x, size_t start) {
+    // Hann window and twiddle table built once: the inner loop is a lookup,
+    // not three trig calls per (bin, sample) pair.
+    std::vector<double> hann(kN), cosTab(kN), sinTab(kN);
+    for (size_t n = 0; n < kN; n++)
+    {
+        const double ang = 2.0 * M_PI * static_cast<double>(n) / kN;
+        hann[n] = 0.5 - 0.5 * std::cos(ang);
+        cosTab[n] = std::cos(ang);
+        sinTab[n] = std::sin(ang);
+    }
+    const auto magnitude = [&](const int16_t* x, size_t start) {
+        std::vector<double> windowed(kN);
+        for (size_t n = 0; n < kN; n++)
+            windowed[n] = hann[n] * x[(start + n) * AUDIO_CHANNELS];
         std::vector<double> m(kN / 2);
         for (size_t k = 1; k < kN / 2; k++)
         {
             double re = 0, im = 0;
             for (size_t n = 0; n < kN; n++)
             {
-                const double w = 0.5 - 0.5 * std::cos(2.0 * M_PI * static_cast<double>(n) / kN); // Hann
-                const double ph = 2.0 * M_PI * static_cast<double>(k * n) / kN;
-                const double v = w * x[(start + n) * AUDIO_CHANNELS];
-                re += v * std::cos(ph);
-                im -= v * std::sin(ph);
+                const size_t idx = (k * n) & (kN - 1); // kN is a power of two
+                re += windowed[n] * cosTab[idx];
+                im -= windowed[n] * sinTab[idx];
             }
             m[k] = std::sqrt(re * re + im * im);
         }
@@ -1587,8 +1598,6 @@ TEST_F(MoonSoundDevice_Test, Diagnostic_MfmHissPatches_SustainedVsRetrig)
     ASSERT_NE(moonsound, nullptr);
     Z80* cpu = context->pCore->GetZ80();
     ASSERT_NE(cpu, nullptr);
-    auto* mainLoop = reinterpret_cast<MainLoop_CUT*>(context->pMainLoop);
-    ASSERT_NE(mainLoop, nullptr);
 
     const auto fm1 = [cpu](uint8_t reg, uint8_t value)
     {
@@ -1635,6 +1644,22 @@ TEST_F(MoonSoundDevice_Test, Diagnostic_MfmHissPatches_SustainedVsRetrig)
         {"m10ins0-fb7-fm", kLeadCh, 0x31, 27, 0x41, 0x0B, 0x61, 128, 0x92, 0x3B, 0xD0, 0x31, 0x3E},
     };
 
+    // Default run is a fast subset (this must stay well under 100 ms): the
+    // patches that carry the FB6/FB7 hiss verdict, short windows. Set
+    // MOONSOUND_FULL_SWEEP=1 for the full 11-patch sweep at the long windows.
+    const bool fullSweep = std::getenv("MOONSOUND_FULL_SWEEP") != nullptr;
+    const int sustainFrames = fullSweep ? 120 : 10;
+    const int releaseFrames = fullSweep ? 10 : 2;
+    const int retrigFrames = fullSweep ? 80 : 16; // fast: one 16-frame key cycle
+    const auto inSubset = [](const char* name)
+    {
+        for (const char* n : {"lead-fb6-add", "lead-fb7-add", "pad-fb5-add", "pad-fb7-add",
+                              "m5ins1-fb7-fm"})
+            if (std::strcmp(n, name) == 0)
+                return true;
+        return false;
+    };
+
     struct Window
     {
         double rms;
@@ -1649,7 +1674,10 @@ TEST_F(MoonSoundDevice_Test, Diagnostic_MfmHissPatches_SustainedVsRetrig)
         for (int f = 0; f < frames; f++)
         {
             drive(f);
-            mainLoop->RunFrame();
+            // Chip-only frame (no Z80 / TurboSound work): the metrics read the
+            // FM buffer, and register traffic comes from drive().
+            moonsound->handleFrameStart();
+            moonsound->handleFrameEnd(SAMPLES_PER_FRAME);
             const int16_t* fm = moonsound->getFmBuffer();
             double lastV = 0.0;
             for (int s = 0; s < SAMPLES_PER_FRAME; s++)
@@ -1676,6 +1704,8 @@ TEST_F(MoonSoundDevice_Test, Diagnostic_MfmHissPatches_SustainedVsRetrig)
     std::cout << "[bisect2] lead ch7 @0x31/0x34, pad ch2 @0x22/0x25\n";
     for (const Patch& p : patches)
     {
+        if (!fullSweep && !inSubset(p.name))
+            continue;
         const uint8_t mod = static_cast<uint8_t>(0x20 + p.ch % 3 + 8 * (p.ch / 3));
         const uint8_t car = static_cast<uint8_t>(mod + 3);
         cpu->out(0xC6, 0x05);
@@ -1699,14 +1729,14 @@ TEST_F(MoonSoundDevice_Test, Diagnostic_MfmHissPatches_SustainedVsRetrig)
         const auto keyOff = [&]() { fm1(b0Ch, static_cast<uint8_t>(p.b0Kon & ~0x20)); };
 
         keyOn();
-        const Window sustain = measure(120, [](int) {}); // sustained note, no traffic
+        const Window sustain = measure(sustainFrames, [](int) {}); // sustained note, no traffic
         keyOff();
-        const Window release = measure(10, [](int) {});
+        const Window release = measure(releaseFrames, [](int) {});
 
         // Retrigger cycle: key on 3 frames in, off again at frame 12 - the
         // player's row cadence at tempo 8 (~6.25 Hz), then repeat.
         int cycle = 0;
-        const Window retrig = measure(80, [&](int f)
+        const Window retrig = measure(retrigFrames, [&](int f)
         {
             const int phase = f % 16;
             if (phase == 3)
