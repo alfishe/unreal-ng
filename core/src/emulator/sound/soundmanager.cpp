@@ -321,7 +321,10 @@ void SoundManager::requestCoreRate(uint32_t rate)
     }
 
     if (rate == _coreRate)
+    {
+        _pendingCoreRate.store(0, std::memory_order_release);  // cancel a superseded request
         return;
+    }
 
     _pendingCoreRate.store(rate, std::memory_order_release);
 }
