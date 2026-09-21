@@ -325,11 +325,18 @@ bool EmulatorTestHelper::IsBASICReady(Emulator* emulator)
 {
     // Check multiple conditions to ensure BASIC is truly ready:
     // 1. ERR_NR == 0x00 (error code 1 = "OK")
-    // 2. PROG pointer is set (BASIC program area initialized, typically 0x5CCB)
-    // This avoids false positives during early ROM initialization.
+    // 2. PROG pointer is set to the exact 48K ROM startup value (0x5CCB) -
+    //    a loose ">= 0x5C00" range check is a false-positive trap: Memory
+    //    randomizes page 5 (screen + low sysvars, RandomizeMemoryContent)
+    //    with rand() to simulate realistic power-on garbage, and any value
+    //    in 0x5C00..0xFFFF (~64% of the 16-bit space) satisfied the old
+    //    check before the ROM had written PROG for real. Whether that
+    //    coincidence happens depends on rand()'s cumulative state, which
+    //    carries across every Emulator created in the process - so this
+    //    fired (or not) depending on prior tests' call order.
     uint8_t errNr = ReadSysVar(emulator, SystemVariables48k::ERR_NR);
     uint16_t prog = ReadSysVar16(emulator, SystemVariables48k::PROG);
-    return errNr == 0x00 && prog >= 0x5C00;
+    return errNr == 0x00 && prog == 0x5CCB;
 }
 
 bool EmulatorTestHelper::RunUntilBASICReady(Emulator* emulator, int maxFrames, int* framesRun)
@@ -337,11 +344,17 @@ bool EmulatorTestHelper::RunUntilBASICReady(Emulator* emulator, int maxFrames, i
     if (!emulator)
         return false;
 
+    // Real 48K ROM cold boot never reaches BASIC in under ~25 frames (other
+    // tests in this suite document ~80-120 frames as the normal range) -
+    // skip the exact-match ready check below that floor so it can only ever
+    // observe genuine ROM-written sysvars, never the pre-boot random fill.
+    constexpr int kMinBootFrames = 25;
+
     for (int i = 0; i < maxFrames; i++)
     {
         emulator->RunFrame(true);  // true = turbo mode (no frame rate limiting)
         // Check every 5 frames (very fast check - just two memory reads)
-        if ((i + 1) % 5 == 0 && IsBASICReady(emulator))
+        if ((i + 1) >= kMinBootFrames && (i + 1) % 5 == 0 && IsBASICReady(emulator))
         {
             if (framesRun)
                 *framesRun = i + 1;
