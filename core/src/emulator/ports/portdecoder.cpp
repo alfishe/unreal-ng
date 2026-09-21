@@ -64,6 +64,8 @@ bool PortDecoder::IsModelSupported(MEM_MODEL model)
         case MM_PROFI:
         case MM_SCORP:
         case MM_PROFSCORP:
+        case MM_ATM710:
+        case MM_ATM3:
             return true;
         default:
             return false;
