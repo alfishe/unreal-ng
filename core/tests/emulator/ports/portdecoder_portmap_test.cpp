@@ -197,12 +197,12 @@ TEST_F(PortDecoder_PortMap_Test, Beta128Rows_RequireTrdosConfig_PentagonUngated)
         ASSERT_NE(FindEntry(entries, port), nullptr) << "missing Beta128 row for #" << static_cast<int>(port);
     }
 
-    // Data registers answer through exact registered keys; the system register keeps
-    // the shipped table qualification (mask 0x83)
+    // Data registers answer through exact registered keys; the system register also
+    // requires the full low byte 0xFF (#xxF7 must not reset the FDC)
     EXPECT_EQ(FindEntry(entries, 0x001F)->mask, 0xFFFF);
     EXPECT_EQ(FindEntry(entries, 0x001F)->match, 0x001F);
-    EXPECT_EQ(FindEntry(entries, 0x00FF)->mask, 0x0083);
-    EXPECT_EQ(FindEntry(entries, 0x00FF)->match, 0x0083);
+    EXPECT_EQ(FindEntry(entries, 0x00FF)->mask, 0x00FF);
+    EXPECT_EQ(FindEntry(entries, 0x00FF)->match, 0x00FF);
 
     // Pentagon: the FDC is always on the bus once configured - no gate
     EXPECT_EQ(FindEntry(entries, 0x001F)->gate, nullptr);
