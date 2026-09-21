@@ -19,31 +19,31 @@ Add a **dual screen mode** to the Screen Viewer that displays both Bank 5 (main)
 
 ### Component Changes
 
-#### [MODIFY] [MainWindow.cpp](unreal-screen-viewer/src/MainWindow.cpp)
+#### [MODIFY] [MainWindow.cpp](../../../unreal-screen-viewer/src/MainWindow.cpp)
 
-1. Add `ModeToolbar*` member and create it in [setupUI()](unreal-screen-viewer/src/MainWindow.cpp#63-83)
+1. Add `ModeToolbar*` member and create it in [setupUI()](../../../unreal-screen-viewer/src/MainWindow.cpp#63-83)
 2. Position between emulator list and status bar
-3. Connect signals to [ScreenViewer](unreal-screen-viewer/src/ScreenViewer.cpp#36-50) for mode changes
+3. Connect signals to [ScreenViewer](../../../unreal-screen-viewer/src/ScreenViewer.cpp#36-50) for mode changes
 4. Save/restore mode+layout via `QSettings`
 
-#### [MODIFY] [MainWindow.h](unreal-screen-viewer/src/MainWindow.h)
+#### [MODIFY] [MainWindow.h](../../../unreal-screen-viewer/src/MainWindow.h)
 
 1. Add `ModeToolbar*` member
 2. Add `ViewMode` enum: `Single`, `DualHorizontal`, `DualVertical`
 
 ---
 
-#### [MODIFY] [ScreenViewer.cpp](unreal-screen-viewer/src/ScreenViewer.cpp)
+#### [MODIFY] [ScreenViewer.cpp](../../../unreal-screen-viewer/src/ScreenViewer.cpp)
 
 1. Add `ViewMode _viewMode` and `DualLayout _dualLayout` members
-2. Modify [paintEvent()](unreal-screen-viewer/src/ScreenViewer.cpp#289-339):
+2. Modify [paintEvent()](../../../unreal-screen-viewer/src/ScreenViewer.cpp#289-339):
    - Single mode: render one screen (current behavior)
    - Dual mode: render both screens with appropriate layout
-3. Modify [refreshScreen()](unreal-screen-viewer/src/ScreenViewer.cpp#189-207): fetch both pages when in dual mode
+3. Modify [refreshScreen()](../../../unreal-screen-viewer/src/ScreenViewer.cpp#189-207): fetch both pages when in dual mode
 4. Add labels for each screen ("Bank 5", "Bank 7")
 5. Disable click-to-toggle in dual mode
 
-#### [MODIFY] [ScreenViewer.h](unreal-screen-viewer/src/ScreenViewer.h)
+#### [MODIFY] [ScreenViewer.h](../../../unreal-screen-viewer/src/ScreenViewer.h)
 
 1. Add enums: `ViewMode { Single, Dual }`, `DualLayout { Horizontal, Vertical }`
 2. Add slots: `setViewMode()`, `setDualLayout()`
@@ -51,7 +51,7 @@ Add a **dual screen mode** to the Screen Viewer that displays both Bank 5 (main)
 
 ---
 
-#### [NEW] [ModeToolbar.h](unreal-screen-viewer/src/ModeToolbar.h)
+#### [NEW] [ModeToolbar.h](../../../unreal-screen-viewer/src/ModeToolbar.h)
 
 ```cpp
 class ModeToolbar : public QWidget {
@@ -71,7 +71,7 @@ public slots:
 };
 ```
 
-#### [NEW] [ModeToolbar.cpp](unreal-screen-viewer/src/ModeToolbar.cpp)
+#### [NEW] [ModeToolbar.cpp](../../../unreal-screen-viewer/src/ModeToolbar.cpp)
 
 - Create toolbar with `QToolButton` icons
 - Use `QButtonGroup` for radio-style selection
@@ -140,7 +140,7 @@ Since this is a Qt GUI feature, manual testing is required:
 | `src/ModeToolbar.h` | NEW |
 | `src/ModeToolbar.cpp` | NEW |
 | `src/ScreenViewer.h` | MODIFY |
-| [src/ScreenViewer.cpp](unreal-screen-viewer/src/ScreenViewer.cpp) | MODIFY |
-| [src/MainWindow.h](unreal-screen-viewer/src/MainWindow.h) | MODIFY |
-| [src/MainWindow.cpp](unreal-screen-viewer/src/MainWindow.cpp) | MODIFY |
-| [CMakeLists.txt](unreal-screen-viewer/CMakeLists.txt) | MODIFY (add new source files) |
+| [src/ScreenViewer.cpp](../../../unreal-screen-viewer/src/ScreenViewer.cpp) | MODIFY |
+| [src/MainWindow.h](../../../unreal-screen-viewer/src/MainWindow.h) | MODIFY |
+| [src/MainWindow.cpp](../../../unreal-screen-viewer/src/MainWindow.cpp) | MODIFY |
+| [CMakeLists.txt](../../../unreal-screen-viewer/CMakeLists.txt) | MODIFY (add new source files) |

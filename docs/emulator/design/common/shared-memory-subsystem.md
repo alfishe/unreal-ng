@@ -105,7 +105,7 @@ struct VideoWallStatusHeader {
 
 ## 4. C++ API Reference & Usage Guide
 
-Header File: [core/src/common/shmhelper.h](core/src/common/shmhelper.h)
+Header File: [core/src/common/shmhelper.h](../../../../core/src/common/shmhelper.h)
 
 ### 4.1 Function Signatures
 

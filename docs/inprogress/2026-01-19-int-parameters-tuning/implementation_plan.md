@@ -13,7 +13,7 @@ Add a new non-blocking dialog to the unreal-qt UI for configuring Z80 interrupt 
 
 ### UI Components
 
-#### [NEW] [intparametersdialog.h](unreal-qt/src/ui/intparametersdialog.h)
+#### [NEW] [intparametersdialog.h](../../../unreal-qt/src/ui/intparametersdialog.h)
 - Dialog class with two slider controls:
   - **intpos** slider (0-2000, step 1) - maps to `config.intstart`
   - **intlen** slider (1-512, step 1) - maps to `config.intlen`
@@ -22,9 +22,9 @@ Add a new non-blocking dialog to the unreal-qt UI for configuring Z80 interrupt 
 - Apply button to commit changes to emulator config
 - Close button to dismiss dialog
 
-#### [NEW] [intparametersdialog.cpp](unreal-qt/src/ui/intparametersdialog.cpp)
-- [loadValues()](unreal-qt/src/ui/intparametersdialog.cpp#110-133) - Load current values from active emulator's `config.intstart` and `config.intlen`
-- [applyValues()](unreal-qt/src/ui/intparametersdialog.cpp#134-162) - Write updated values back to emulator config
+#### [NEW] [intparametersdialog.cpp](../../../unreal-qt/src/ui/intparametersdialog.cpp)
+- [loadValues()](../../../unreal-qt/src/ui/intparametersdialog.cpp#110-133) - Load current values from active emulator's `config.intstart` and `config.intlen`
+- [applyValues()](../../../unreal-qt/src/ui/intparametersdialog.cpp#134-162) - Write updated values back to emulator config
 - Slider/spinbox synchronization
 - Success confirmation message after Apply
 
@@ -32,19 +32,19 @@ Add a new non-blocking dialog to the unreal-qt UI for configuring Z80 interrupt 
 
 ### Menu Integration
 
-#### [MODIFY] [menumanager.h](unreal-qt/src/menumanager.h)
+#### [MODIFY] [menumanager.h](../../../unreal-qt/src/menumanager.h)
 - Add `QAction* _intParametersAction` field to Tools menu actions section
 
-#### [MODIFY] [menumanager.cpp](unreal-qt/src/menumanager.cpp)
-- Add "INT Parameters..." menu item in [createToolsMenu()](unreal-qt/src/menumanager.cpp#328-352)
+#### [MODIFY] [menumanager.cpp](../../../unreal-qt/src/menumanager.cpp)
+- Add "INT Parameters..." menu item in [createToolsMenu()](../../../unreal-qt/src/menumanager.cpp#328-352)
 - Position after Settings action, before screenshot/video actions
 - Connect to signal `intParametersRequested()`
 
-#### [MODIFY] [mainwindow.h](unreal-qt/src/mainwindow.h)
+#### [MODIFY] [mainwindow.h](../../../unreal-qt/src/mainwindow.h)
 - Add slot `handleIntParametersRequested()`
 - Add field `IntParametersDialog* _intParametersDialog = nullptr`
 
-#### [MODIFY] [mainwindow.cpp](unreal-qt/src/mainwindow.cpp)  
+#### [MODIFY] [mainwindow.cpp](../../../unreal-qt/src/mainwindow.cpp)  
 - Implement `handleIntParametersRequested()` to create/show dialog
 - Connect MenuManager signal to slot
 - Clean up dialog in destructor if exists
@@ -53,9 +53,9 @@ Add a new non-blocking dialog to the unreal-qt UI for configuring Z80 interrupt 
 
 ### Build System
 
-#### [MODIFY] [CMakeLists.txt](unreal-qt/CMakeLists.txt)
-- Add [src/ui/intparametersdialog.h](unreal-qt/src/ui/intparametersdialog.h) to UNREAL_QT_HEADERS
-- Add [src/ui/intparametersdialog.cpp](unreal-qt/src/ui/intparametersdialog.cpp) to UNREAL_QT_SOURCES
+#### [MODIFY] [CMakeLists.txt](../../../unreal-qt/CMakeLists.txt)
+- Add [src/ui/intparametersdialog.h](../../../unreal-qt/src/ui/intparametersdialog.h) to UNREAL_QT_HEADERS
+- Add [src/ui/intparametersdialog.cpp](../../../unreal-qt/src/ui/intparametersdialog.cpp) to UNREAL_QT_SOURCES
 
 ## Verification Plan
 

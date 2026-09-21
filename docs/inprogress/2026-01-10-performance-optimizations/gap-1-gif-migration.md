@@ -13,7 +13,7 @@ Migrate the working `GIFAnimationHelper` code from debug code in `mainloop.cpp` 
 ## Current State
 
 ### Debug Code Location
-**File:** [mainloop.cpp](core/src/emulator/mainloop.cpp)
+**File:** [mainloop.cpp](../../../core/src/emulator/mainloop.cpp)
 
 **Start recording (line 83):**
 ```cpp

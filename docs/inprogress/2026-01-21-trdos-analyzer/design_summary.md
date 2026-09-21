@@ -2,7 +2,7 @@
 
 ## Overview
 
-The [high-level-disk-operations.md](docs/analysis/capture/high-level-disk-operations.md) document defines a comprehensive **two-stage event capture and aggregation pipeline** for semantic TR-DOS disk operation analysis.
+The [high-level-disk-operations.md](../../analysis/capture/high-level-disk-operations.md) document defines a comprehensive **two-stage event capture and aggregation pipeline** for semantic TR-DOS disk operation analysis.
 
 ---
 
@@ -27,7 +27,7 @@ struct EventContext {
 };
 ```
 
-**Key insight**: Changed from 7-bit (0-127) to 8-bit (0-255) page addressing to match `MAX_RAM_PAGES = 256` in [platform.h](core/src/emulator/platform.h#L227).
+**Key insight**: Changed from 7-bit (0-127) to 8-bit (0-255) page addressing to match `MAX_RAM_PAGES = 256` in [platform.h](../../../core/src/emulator/platform.h#L227).
 
 ---
 
@@ -445,9 +445,9 @@ graph TD
 
 | Component | Status | Location |
 |:----------|:-------|:---------|
-| `IAnalyzer` | ✅ Exists | [ianalyzer.h](core/src/debugger/analyzers/ianalyzer.h) |
-| `AnalyzerManager` | ✅ Exists | [analyzermanager.h](core/src/debugger/analyzers/analyzermanager.h) |
-| Reference impl | ✅ Exists | [ROMPrintDetector](core/src/debugger/analyzers/rom-print/romprintdetector.h) |
+| `IAnalyzer` | ✅ Exists | [ianalyzer.h](../../../core/src/debugger/analyzers/ianalyzer.h) |
+| `AnalyzerManager` | ✅ Exists | [analyzermanager.h](../../../core/src/debugger/analyzers/analyzermanager.h) |
+| Reference impl | ✅ Exists | [ROMPrintDetector](../../../core/src/debugger/analyzers/rom-print/romprintdetector.h) |
 | `IWD1793Observer` | ⚠️ Create | `core/src/emulator/io/fdc/iwd1793observer.h` |
 | `RingBuffer<T>` | ⚠️ Create | `core/src/common/ringbuffer.h` |
 | `TRDOSAnalyzer` | ⚠️ Create | `core/src/debugger/analyzers/trdos/` |

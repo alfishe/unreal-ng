@@ -245,6 +245,31 @@ inline bool setSocketNonBlocking(SOCKET sock)
 }
 #endif
 
+// Reject a bind onto a port another live socket already owns, matching POSIX
+// semantics for a server socket that must fail loudly on a busy port.
+//
+// SO_REUSEADDR means different things on the two platform families: on POSIX
+// it only lets a new socket reuse an address still lingering in TIME_WAIT
+// from a previous listener - a second bind() while the first socket is
+// actually LISTENing still fails with EADDRINUSE, which is what
+// "StartFailsWhenPortBusy"-style tests rely on. On Windows, SO_REUSEADDR
+// additionally allows two live sockets to bind and listen on the exact same
+// port simultaneously (a long-standing Winsock quirk, not a bug) - a second
+// server on a "busy" port silently succeeds instead of failing. Windows adds
+// SO_EXCLUSIVEADDRUSE specifically to opt back into the POSIX-like exclusive
+// behavior, so use that there instead of SO_REUSEADDR.
+inline void setListenSocketReuseAddr(SOCKET sock)
+{
+    int opt = 1;
+#ifdef _WIN32
+    setsockopt(sock, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
+               reinterpret_cast<const char*>(&opt), sizeof(opt));
+#else
+    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR,
+               reinterpret_cast<const char*>(&opt), sizeof(opt));
+#endif
+}
+
 // Wait for socket to become readable (cross-platform, no FD_SETSIZE limit)
 // Returns: 1 if readable, 0 if timeout, -1 on error
 inline int waitForSocketRead(SOCKET sock, int timeoutMs)

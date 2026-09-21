@@ -47,7 +47,7 @@ amortized into TTD's capture budget). Queries decompress 64-frame blocks
 
 ## 2. Existing Engine Internals (Verified)
 
-### 2.1 `TTDCoverageIndex` ([ttdcoverageindex.h](core/src/debugger/ttd/ttdcoverageindex.h))
+### 2.1 `TTDCoverageIndex` ([ttdcoverageindex.h](../../../../core/src/debugger/ttd/ttdcoverageindex.h))
 
 | Aspect | Detail |
 |:---|:---|

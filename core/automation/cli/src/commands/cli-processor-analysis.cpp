@@ -22,12 +22,14 @@
 #include <emulator/platform.h>
 #include <emulator/ports/portdecoder.h>
 #include <emulator/sound/soundmanager.h>
+#include <emulator/sound/audio.h>
 #include <emulator/video/screendigest.h>
 
 #include <algorithm>
 #include <cmath>
 #include <ctime>
 #include <filesystem>
+#include <thread>
 #include <iomanip>
 #include <sstream>
 
@@ -943,11 +945,13 @@ void CLIProcessor::HandleVideoRecord(const ClientSession& session, const std::ve
             return;
         }
 
-        // videorecord start [format] [filename] [--fps N] [--scale N]
+        // videorecord start [format] [filename] [--fps N] [--scale N] [--audio-rate N|auto]
         std::string format = "gif";
         std::string filename;
         float fps = 50.0f;
         uint32_t scale = 1;
+        bool hasAudioRate = false;
+        uint32_t audioRate = 0;
 
         for (size_t i = 1; i < args.size(); i++)
         {
@@ -979,6 +983,37 @@ void CLIProcessor::HandleVideoRecord(const ClientSession& session, const std::ve
                 if (scale < 1) scale = 1;
                 if (scale > 4) scale = 4;
             }
+            else if (args[i] == "--audio-rate" && i + 1 < args.size())
+            {
+                const std::string rateValue = args[++i];
+                std::string rateLower = rateValue;
+                std::transform(rateLower.begin(), rateLower.end(), rateLower.begin(), ::tolower);
+                if (rateLower == "auto")
+                {
+                    hasAudioRate = true;
+                    audioRate = 0;
+                }
+                else
+                {
+                    try
+                    {
+                        const unsigned long rate = std::stoul(rateValue);
+                        if (!IsSupportedCoreRate(static_cast<uint32_t>(rate)))
+                        {
+                            session.SendResponse("Unsupported audio rate " + rateValue +
+                                                 ". Use 44100, 48000, 88200, 96000, 176400, 192000 or auto.");
+                            return;
+                        }
+                        hasAudioRate = true;
+                        audioRate = static_cast<uint32_t>(rate);
+                    }
+                    catch (...)
+                    {
+                        session.SendResponse("Invalid audio rate value. Use 44100..192000 or auto.");
+                        return;
+                    }
+                }
+            }
             else if (filename.empty() && format == "gif")
             {
                 format = args[i];
@@ -1003,6 +1038,32 @@ void CLIProcessor::HandleVideoRecord(const ClientSession& session, const std::ve
         rm->SetVideoFrameRate(fps);
         rm->SetScaleFactor(scale);
 
+        // Optional core-rate pin before the first sample is stamped: the
+        // recording must start (and stay) at the requested audio rate. The
+        // pin applies at the next frame boundary - wait for it so a paused
+        // emulator fails here instead of producing a mislabeled file.
+        if (hasAudioRate)
+        {
+            SoundManager* sound = context->pSoundManager;
+            if (!sound)
+            {
+                session.SendResponse("Sound manager not available - cannot pin the audio rate.");
+                return;
+            }
+
+            sound->setCoreRatePin(audioRate);
+            for (int attempt = 0; attempt < 100 && sound->getCoreRate() != sound->getTargetCoreRate(); attempt++)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            if (sound->getCoreRate() != sound->getTargetCoreRate())
+            {
+                session.SendResponse("Core rate change not applied within 1s (emulator paused or stuck) - "
+                                     "resume the emulator or set 'setting audio_rate' before pausing.");
+                return;
+            }
+        }
+
         if (!rm->StartRecording(filename, format, ""))
         {
             session.SendResponse("Failed to start recording: " + rm->GetLastRecordingError());
@@ -1010,8 +1071,10 @@ void CLIProcessor::HandleVideoRecord(const ClientSession& session, const std::ve
         }
 
         std::stringstream ss;
-        ss << std::dec << "Recording started: " << filename << " (" << format << ", " << fps << " fps, x" << scale
-           << ")";
+        ss << std::dec << "Recording started: " << filename << " (" << format << ", " << fps << " fps, x" << scale;
+        if (context->pSoundManager)
+            ss << ", " << context->pSoundManager->getCoreRate() << " Hz audio";
+        ss << ")";
         session.SendResponse(ss.str());
         return;
     }

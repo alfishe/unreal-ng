@@ -32,9 +32,9 @@ Some opcodes fail z80test or cause software crashes, likely due to incorrect fla
 - **64KB Z80 address space counters**: `_z80ExecuteCounters[65536]`
 - **Physical page counters**: tracks per-page execution
 - Feature-gated via `_feature_memorytracking_enabled`
-- Hook point: [TrackMemoryExecute()](core/src/emulator/memory/memoryaccesstracker.cpp#534-623) called from `Memory::MemoryRead()` during M1 cycle
+- Hook point: [TrackMemoryExecute()](../../../core/src/emulator/memory/memoryaccesstracker.cpp#534-623) called from `Memory::MemoryRead()` during M1 cycle
 
-### Z80::Z80Step ([z80.cpp](core/src/emulator/cpu/z80.cpp))
+### Z80::Z80Step ([z80.cpp](../../../core/src/emulator/cpu/z80.cpp))
 - Opcode fetched at line 278: `cpu.opcode = m1_cycle()`
 - Opcode dispatched via: [(normal_opcode[opcode])(&cpu)](core/src/emulator/cpu/z80.cpp#404-414) (line 281)
 - Prefix handling stores in `cpu.prefix`

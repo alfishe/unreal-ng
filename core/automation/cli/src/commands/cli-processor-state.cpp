@@ -1288,7 +1288,7 @@ void CLIProcessor::HandleStateAudioChannels(const ClientSession& session, Emulat
     // Master state
     ss << "Master Audio:" << NEWLINE;
     ss << "  Muted: " << (soundManager->isMuted() ? "Yes" : "No") << NEWLINE;
-    ss << "  Sample Rate: 44100 Hz" << NEWLINE;
+    ss << "  Sample Rate: " << soundManager->getCoreRate() << " Hz" << NEWLINE;
     ss << "  Channels: Stereo" << NEWLINE;
     ss << "  Bit Depth: 16-bit" << NEWLINE;
 
