@@ -73,11 +73,16 @@ TEST_F(FrameSampleCount_Test, DeviceRendersExactlyWhatTheMixerConsumes)
     _context->pAudioManagerObj.store(&capture, std::memory_order_release);
 
     Z80* z80 = _context->pCore->GetZ80();
-    // 200 frames per combination: the pre-fix code disagreed on ~30% of
-    // frames from frame 4 on, so this is ample; the full rate x mode matrix
-    // is covered by the multirate suites
-    struct Combo { size_t rate; bool hq; };
-    const Combo combos[] = {{44100, true}, {44100, false}, {48000, true}, {96000, false}};
+    // Frames per combination = the sample accumulator's fractional-pattern
+    // period plus margin, so every fractional phase is visited (2 periods at
+    // the short-period rates). Pentagon frame = 71680 T: @44100 that is 903.168 samples (0.168 =
+    // 21/125 -> period 125 frames), @48000 983.04 and @96000 1966.08 (both
+    // x/25 -> period 25 frames). The pre-fix code disagreed on ~30% of frames
+    // from frame 4 on, so detection needs far fewer than any of these; the
+    // full rate x mode matrix is covered by the multirate suites. Rendering is
+    // real DSP (HQ runs the native-clock FIR path), so cost is linear in frames.
+    struct Combo { size_t rate; bool hq; int frames; };
+    const Combo combos[] = {{44100, true, 130}, {44100, false, 130}, {48000, true, 50}, {96000, false, 50}};
     for (const Combo& combo : combos)
     {
         const size_t rate = combo.rate;
@@ -97,7 +102,7 @@ TEST_F(FrameSampleCount_Test, DeviceRendersExactlyWhatTheMixerConsumes)
             int mismatches = 0;
             int firstMismatch = -1;
             uint32_t overshoot = 0;
-            const int kFrames = 200;
+            const int kFrames = combo.frames;
             for (int frame = 0; frame < kFrames; frame++)
             {
                 z80->t = overshoot;  // where AdjustFrameCounters left the counter
