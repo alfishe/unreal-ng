@@ -1252,13 +1252,22 @@ void PortDecoder::UnregisterFullDecodeLowBytePort(uint8_t port, PortDevice* devi
 /// DecodePortIn/Out right after decodePortEx, before any inline handler runs -
 /// the claiming observer was already serviced by the Z80 I/O funnel tap.
 bool PortDecoder::OverrideDecodeForFullDecodeClaim(uint16_t rawPort, uint16_t& decodedPort,
-                                                   PortDecodeDisposition& disp)
+                                                   PortDecodeDisposition& disp, bool isRead)
 {
     if (decodedPort == 0x0000)
         return false;
 
     PortDevice* observer = _fullDecodeLowByteDevices[rawPort & 0xFF];
     if (observer == nullptr)
+        return false;
+
+    // A read only stands the model decode down when the card actually drives
+    // this port's data (portDeviceClaimsRead) - a registered-but-silent low
+    // byte (e.g. a write-only address latch) never asserts its output buffer,
+    // so the real underlying device (ULA/AY/FDC) must answer exactly as if
+    // the card were not attached. Writes have no such ambiguity: every OUT to
+    // a registered low byte stands the model decode down unconditionally.
+    if (isRead && !observer->portDeviceClaimsRead(rawPort))
         return false;
 
     // Beta-128 registers keep their TR-DOS session arbitration (R6): the FDC

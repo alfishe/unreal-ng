@@ -106,8 +106,12 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
     // card owns this cycle, so the motherboard decode stands down instead of
     // double-delivering into paging or AY state (the observer was already
     // serviced by the Z80 I/O funnel tap; its cached read value is returned so
-    // the trace and direct callers see the card's bus value)
-    if (OverrideDecodeForFullDecodeClaim(port, decodedPort, disp))
+    // the trace and direct callers see the card's bus value). isRead=true: a
+    // registered-but-non-claiming low byte (e.g. #C6/#7E write-only address
+    // latches) leaves decodedPort untouched, so the switch below falls
+    // through to whatever the model would have answered (ULA/AY/paging) as
+    // if the card were not attached.
+    if (OverrideDecodeForFullDecodeClaim(port, decodedPort, disp, /*isRead*/ true))
     {
         result = GetCachedFullDecodeInValue(port);
         _lastPortDecoded = true; // the card drives the bus: no floating bus
@@ -196,8 +200,9 @@ void PortDecoder_Pentagon128::DecodePortOut(uint16_t port, uint8_t value, uint16
     // Full-decode low-byte claim override (see portdecoder.h): a registered
     // card owns this cycle, so the motherboard dispatch stands down instead
     // of double-delivering the write into paging or AY state (the observer
-    // was already serviced by the Z80 I/O funnel tap)
-    OverrideDecodeForFullDecodeClaim(port, decodedPort, disp);
+    // was already serviced by the Z80 I/O funnel tap). isRead=false: a write
+    // always stands the model decode down for a registered low byte.
+    OverrideDecodeForFullDecodeClaim(port, decodedPort, disp, /*isRead*/ false);
 
     if (decodedPort != 0x0000)
     {

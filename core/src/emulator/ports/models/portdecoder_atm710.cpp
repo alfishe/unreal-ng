@@ -117,8 +117,11 @@ uint8_t PortDecoder_ATM710::DecodePortIn(uint16_t port, uint16_t pc)
     // low-byte card (e.g. ZXM-MoonSound on #C4-#C7) owns this cycle, so the
     // motherboard's partial decode below must stand down. Without this, ATM's
     // A0-only #FE match and A15/A2/A1-only #7FFD match steal the card's own
-    // addr (#C4/#C6, A0=0) and data (#C5/#C7, A15=0) ports.
-    if (OverrideDecodeForFullDecodeClaim(port, decodedPort, disp))
+    // addr (#C4/#C6, A0=0) and data (#C5/#C7, A15=0) ports. isRead=true: a
+    // registered-but-non-claiming port (e.g. #C6/#7E, write-only address
+    // latches) falls through below and lets the real ULA answer instead of
+    // handing back stale card cache.
+    if (OverrideDecodeForFullDecodeClaim(port, decodedPort, disp, /*isRead*/ true))
     {
         result = GetCachedFullDecodeInValue(port);
         _lastPortDecoded = true;
@@ -177,7 +180,9 @@ void PortDecoder_ATM710::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc
     // A0-only #FE match and A15/A2/A1-only #7FFD match steal the card's own
     // addr (#C4/#C6, A0=0) and data (#C5/#C7, A15=0) ports - writes leaked
     // into the border/beeper and paged RAM/ROM instead of reaching the card.
-    if (OverrideDecodeForFullDecodeClaim(port, decodedPort, disp))
+    // isRead=false: a write always stands the model decode down for a
+    // registered low byte - there is no "drives the bus" ambiguity for an OUT.
+    if (OverrideDecodeForFullDecodeClaim(port, decodedPort, disp, /*isRead*/ false))
     {
         OnPortOutComplete(port, value, pc, disp);
         return;

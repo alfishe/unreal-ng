@@ -187,7 +187,7 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
     // is the bus value, so the attribute-latch floating bus must not fire
     {
         uint16_t claimedPort = port; // identity placeholder: no arm below resolved yet
-        if (!isBeta128 && OverrideDecodeForFullDecodeClaim(port, claimedPort, disp))
+        if (!isBeta128 && OverrideDecodeForFullDecodeClaim(port, claimedPort, disp, /*isRead*/ true))
         {
             result = GetCachedFullDecodeInValue(port);
             _lastPortDecoded = true; // the card drives the bus
@@ -352,7 +352,7 @@ void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16
     // registered key inside the override
     {
         uint16_t claimedPort = port; // identity placeholder: no arm below resolved yet
-        if (!isBeta128 && OverrideDecodeForFullDecodeClaim(port, claimedPort, disp))
+        if (!isBeta128 && OverrideDecodeForFullDecodeClaim(port, claimedPort, disp, /*isRead*/ false))
         {
             OnPortOutComplete(port, value, pc, disp);
             return;

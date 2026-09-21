@@ -61,7 +61,7 @@ void PortDecoder_Pentagon1024::DecodePortOut(uint16_t port, uint8_t value, uint1
     {
         uint16_t claimedPort = decodePortEx(port).port;
         PortDecodeDisposition claimDisp;
-        if (OverrideDecodeForFullDecodeClaim(port, claimedPort, claimDisp))
+        if (OverrideDecodeForFullDecodeClaim(port, claimedPort, claimDisp, /*isRead*/ false))
         {
             OnPortOutComplete(port, value, pc, claimDisp);
             return;

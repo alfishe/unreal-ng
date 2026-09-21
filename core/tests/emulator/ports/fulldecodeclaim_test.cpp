@@ -138,7 +138,14 @@ protected:
             { 0xBFFD, 0xC4 }, { 0xBFFD, 0xC5 },   // AY #BFFD
             { 0x7FFD, 0xC4 }, { 0x7FFD, 0xC5 },   // Paging #7FFD (A2=1, A1=0)
             { 0x00FE, 0xC4 }, { 0x00FE, 0xC6 }, { 0x00FE, 0x7E },  // ULA #FE (even)
-            { 0x00FF, 0xC7 },                     // Beta128 system port (A7=1,A1=1,A0=1)
+            // #C7 no longer aliases into the Beta128 #FF system register: that
+            // was the old loose A7/A1/A0 (0x83) decode mask, tightened to the
+            // exact low byte #FF (fa5bb796) since real hardware - and #FFF7,
+            // the TR-DOS 5.04T probe port - never decode as the FDC system
+            // register. #7F (the FDC data register) still genuinely clashes
+            // with the card's wave-data claim, but that decode runs through
+            // the BDI positional fallback, not the rule table FindFullDecodeClashes
+            // scans - see the Pentagon behavior suite below for its coverage.
         };
     }
 };
@@ -215,13 +222,11 @@ TEST_F(FullDecodeClashAnalysis_Test, MoonSoundClaims_MinimalSeparatingMasks)
     EXPECT_EQ(ula.separatingBitCount, 2);
     EXPECT_FALSE(ula.precedenceRequired);
 
-    // The Beta-128 #FF rule resolves through its TR-DOS session gate, never
-    // through mask tightening
-    ASSERT_EQ(byPort.count(0x00FF), 1u);
-    const PortDecodeRuleOverride& fdc = byPort.at(0x00FF);
-    EXPECT_EQ(fdc.clashingClaims, (std::vector<uint8_t>{ 0xC7 }));
-    EXPECT_EQ(fdc.separatingBitCount, 0);
-    EXPECT_TRUE(fdc.precedenceRequired);
+    // The Beta-128 #FF rule no longer clashes with any MoonSound claim: #C7
+    // aliased into it only under the old loose A7/A1/A0 decode mask, tightened
+    // to the exact low byte #FF by fa5bb796 (real hardware, and the TR-DOS
+    // 5.04T probe port #FFF7, never decode as the FDC system register)
+    EXPECT_EQ(byPort.count(0x00FF), 0u);
 }
 
 TEST_F(FullDecodeClashAnalysis_Test, UnregisterRemovesClaims)
@@ -234,6 +239,38 @@ TEST_F(FullDecodeClashAnalysis_Test, UnregisterRemovesClaims)
 
     EXPECT_TRUE(_portDecoder->FindFullDecodeClashes().empty());
     EXPECT_FALSE(_portDecoder->IsLowByteClaimedByFullDecodeDevice(0x04C4));
+}
+
+// Direct OverrideDecodeForFullDecodeClaim coverage for the isRead gate: a
+// registered-but-non-claiming low byte (portDeviceClaimsRead false, e.g. an
+// address-latch-only port like the real MoonSound's #C6/#7E) must NOT stand
+// the model decode down on a read - the override previously ignored
+// portDeviceClaimsRead entirely and always substituted the card's stale
+// cached value, even on ports the card never actually drives (the bug this
+// pins). A write has no such ambiguity and always claims a registered byte.
+TEST_F(FullDecodeClashAnalysis_Test, OverrideRespectsReadClaimGate)
+{
+    RegisterMoonSoundClaims(_portDecoder, &_card);   // mock claims reads only for low byte 0xC4
+
+    // #C6: registered, but the mock (mirroring the real chip's #C6 FM_ADDR2
+    // write-only latch) does not claim reads
+    uint16_t decodedRead = 0x00FE;   // whatever the model already resolved #C6 to
+    PortDecodeDisposition dispRead;
+    EXPECT_FALSE(_portDecoder->OverrideDecodeForFullDecodeClaim(0x04C6, decodedRead, dispRead, /*isRead*/ true))
+        << "A non-claiming card must not steal a read";
+    EXPECT_EQ(decodedRead, 0x00FE) << "decodedPort must be left untouched so the model's own device answers";
+
+    uint16_t decodedWrite = 0x00FE;
+    PortDecodeDisposition dispWrite;
+    EXPECT_TRUE(_portDecoder->OverrideDecodeForFullDecodeClaim(0x04C6, decodedWrite, dispWrite, /*isRead*/ false))
+        << "A write always stands the model decode down for a registered low byte";
+    EXPECT_EQ(decodedWrite, 0x0000);
+
+    // #C4: the mock (and the real FM1 status register) claims reads
+    // unconditionally - the override claims regardless of direction
+    uint16_t decodedC4 = 0x00FE;
+    PortDecodeDisposition dispC4;
+    EXPECT_TRUE(_portDecoder->OverrideDecodeForFullDecodeClaim(0x04C4, decodedC4, dispC4, /*isRead*/ true));
 }
 
 /// endregion </Clash analysis API>
@@ -369,8 +406,12 @@ TEST_F(FullDecodeClaim_Pentagon_Test, Claimed_WaveWrite_NoMotherboardSideEffects
 }
 
 // Beta-128 session precedence (R6): with TR-DOS paged in, the FDC keeps the
-// #FF system register even when the card claims low byte #C7 - both devices
-// see the shared-bus cycle, but the session gate owns the dispatch
+// #7F data register even when the card claims that same low byte for wave
+// data - both devices see the shared-bus cycle, but the session gate owns
+// the dispatch. (Not #C7/#FF: that alias was the old loose A7/A1/A0 decode
+// mask, tightened to the exact low byte #FF by fa5bb796 - see
+// MoonSoundClaims_MinimalSeparatingMasks. #7F is the one clash that survives,
+// resolved through the BDI positional fallback rather than the rule table.)
 TEST_F(FullDecodeClaim_Pentagon_Test, Claimed_TrdosSession_FdcKeepsSystemPort)
 {
     MockPortDevice fdc;
@@ -380,12 +421,12 @@ TEST_F(FullDecodeClaim_Pentagon_Test, Claimed_TrdosSession_FdcKeepsSystemPort)
     RegisterMoonSoundClaims(_portDecoder, &_card);
     _context->emulatorState.flags |= CF_TRDOS;
 
-    FunnelOut(_portDecoder, 0x04C7, 0x02);
+    FunnelOut(_portDecoder, 0x817F, 0x02);
 
     ASSERT_EQ(fdc.outPorts.size(), 1u) << "FDC keeps the session-owned port";
-    EXPECT_EQ(fdc.outPorts[0].first, 0x00FF);
+    EXPECT_EQ(fdc.outPorts[0].first, 0x007F);
     ASSERT_EQ(_card.outPorts.size(), 1u) << "The card still observes the shared-bus cycle";
-    EXPECT_EQ(_card.outPorts[0].first, 0x04C7);
+    EXPECT_EQ(_card.outPorts[0].first, 0x817F);
 }
 
 // FDC off the bus (no TR-DOS session): the #7F wave-data alias must neither
@@ -619,6 +660,32 @@ TEST_F(FullDecodeClaim_ATM710_Test, Claimed_WaveWrite_NoMotherboardSideEffects)
     EXPECT_EQ(_context->emulatorState.border_attr, 0) << "ULA #FE arm must stand down for #7E";
     ASSERT_EQ(_card.outPorts.size(), 1u);
     EXPECT_EQ(_card.outPorts[0].first, 0x047E);
+}
+
+// Same isRead-gate regression as the Pentagon suite's
+// OverrideRespectsReadClaimGate: ATM710's DecodePortIn copied the
+// unconditional-cache-substitution pattern, so it needs the same coverage.
+// #C6 (address latch, never claims reads on the real chip) must not steal
+// the read even though it is registered; #C4 (status register, claims
+// unconditionally) must still win regardless of direction.
+TEST_F(FullDecodeClaim_ATM710_Test, OverrideRespectsReadClaimGate)
+{
+    RegisterMoonSoundClaims(_portDecoder, &_card);
+
+    uint16_t decodedRead = 0x00FE;
+    PortDecodeDisposition dispRead;
+    EXPECT_FALSE(_portDecoder->OverrideDecodeForFullDecodeClaim(0x04C6, decodedRead, dispRead, /*isRead*/ true))
+        << "A non-claiming card must not steal a read";
+    EXPECT_EQ(decodedRead, 0x00FE);
+
+    uint16_t decodedWrite = 0x00FE;
+    PortDecodeDisposition dispWrite;
+    EXPECT_TRUE(_portDecoder->OverrideDecodeForFullDecodeClaim(0x04C6, decodedWrite, dispWrite, /*isRead*/ false));
+    EXPECT_EQ(decodedWrite, 0x0000);
+
+    uint16_t decodedC4 = 0x00FE;
+    PortDecodeDisposition dispC4;
+    EXPECT_TRUE(_portDecoder->OverrideDecodeForFullDecodeClaim(0x04C4, decodedC4, dispC4, /*isRead*/ true));
 }
 
 class FullDecodeClaim_ATM3_Test : public ::testing::Test

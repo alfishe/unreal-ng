@@ -63,7 +63,7 @@ uint8_t PortDecoder_Spectrum48::DecodePortIn(uint16_t port, uint16_t pc)
     // an exact Beta-128 registered key unclaimed (R6)
     {
         uint16_t claimedPort = port; // identity placeholder: no arm below resolved yet
-        if (OverrideDecodeForFullDecodeClaim(port, claimedPort, disp))
+        if (OverrideDecodeForFullDecodeClaim(port, claimedPort, disp, /*isRead*/ true))
         {
             result = GetCachedFullDecodeInValue(port);
             _lastPortDecoded = true; // the card drives the bus: no floating bus
@@ -146,7 +146,7 @@ void PortDecoder_Spectrum48::DecodePortOut(uint16_t port, uint8_t value, uint16_
     // unclaimed (R6)
     {
         uint16_t claimedPort = port; // identity placeholder: no arm below resolved yet
-        if (OverrideDecodeForFullDecodeClaim(port, claimedPort, disp))
+        if (OverrideDecodeForFullDecodeClaim(port, claimedPort, disp, /*isRead*/ false))
         {
             OnPortOutComplete(port, value, pc, disp);
             return;

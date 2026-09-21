@@ -669,8 +669,21 @@ public:
     /// Beta-128 register decodes keep their own TR-DOS session arbitration
     /// (R6) and are never overridden. Returns true when the model decode
     /// stood down (decodedPort zeroed, disposition flagged).
+    ///
+    /// @param isRead Pass true from DecodePortIn, false from DecodePortOut.
+    ///        A write always stands the model decode down for a registered
+    ///        low byte - there is no "drives the bus" ambiguity for an OUT.
+    ///        A read is different: only a device whose portDeviceClaimsRead()
+    ///        is true for this exact raw port actually asserts its output
+    ///        buffer this cycle (e.g. ZXM-MoonSound answers #C4/#C5/#C7
+    ///        unconditionally, #7F only once OPL4 NEW2 is armed, but never
+    ///        #C6/#7E - those are write-only address latches). For a
+    ///        registered-but-non-claiming read the model's own device (ULA/
+    ///        AY/FDC) must answer exactly as if the card were not attached -
+    ///        returning false here leaves decodedPort untouched so the
+    ///        caller's normal decode chain runs.
     bool OverrideDecodeForFullDecodeClaim(uint16_t rawPort, uint16_t& decodedPort,
-                                          PortDecodeDisposition& disp);
+                                          PortDecodeDisposition& disp, bool isRead);
 
     /// region <Full-decode clash analysis>
 
