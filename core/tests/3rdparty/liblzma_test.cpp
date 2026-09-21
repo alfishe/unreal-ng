@@ -586,8 +586,11 @@ TEST_F(LzmaTest, PackCoreSrcFolder)
     
     for (const auto& entry : fs::recursive_directory_iterator(srcPath))
     {
-        // Skip 3rdparty vendor libraries and build artifacts to keep test fast and focused on core
-        std::string pathStr = entry.path().string();
+        // Skip 3rdparty vendor libraries and build artifacts to keep test fast and focused on core.
+        // generic_string() (always forward-slash), not string() (native separator -
+        // backslash on Windows, where these substring checks never matched and the
+        // "fast, focused" filter silently packed the entire vendored 3rdparty tree too)
+        std::string pathStr = entry.path().generic_string();
         if (pathStr.find("/3rdparty/") != std::string::npos ||
             pathStr.find("/CMakeFiles/") != std::string::npos)
         {
