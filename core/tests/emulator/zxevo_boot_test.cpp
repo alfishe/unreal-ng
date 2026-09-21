@@ -166,13 +166,18 @@ TEST_F(ZXEvoBoot_Test, BootsToInteractiveServiceShell)
     screen->GetFramebufferData(&buffer, &size);
     ASSERT_NE(buffer, nullptr);
     ASSERT_GT(size, 0u);
+    // GetFramebufferData reports size in BYTES (width*height*RGBA_SIZE, see
+    // Screen::InitFramebuffer) - indexing buffer[] up to the raw byte count
+    // over-reads 4x past the actual uint32_t[] allocation (screenzx.cpp uses
+    // the same /sizeof(uint32_t) conversion for this reason)
+    const size_t pixelCount = size / sizeof(uint32_t);
     size_t litPixels = 0;
-    for (size_t i = 0; i < size; i++)
+    for (size_t i = 0; i < pixelCount; i++)
     {
         if (buffer[i] & 0x00FFFFFF)  // any non-black ARGB pixel
             litPixels++;
     }
-    EXPECT_GT(litPixels, size / 100);  // > 1% lit (menu + colored window)
+    EXPECT_GT(litPixels, pixelCount / 100);  // > 1% lit (menu + colored window)
 }
 
 TEST_F(ZXEvoBoot_Test, MenuKeyUBoots128KBasic)
