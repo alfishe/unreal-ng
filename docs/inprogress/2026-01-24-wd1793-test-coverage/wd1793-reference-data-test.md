@@ -9,7 +9,7 @@ Create comprehensive integration tests for WD1793 FDC using synthesized TR-DOS r
 
 ## Approach
 
-Use [MFMGenerator](core/src/emulator/io/fdc/mfm_parser.h#235-278) class to programmatically generate TR-DOS disk data:
+Use [MFMGenerator](../../../core/src/emulator/io/fdc/mfm_parser.h#235-278) class to programmatically generate TR-DOS disk data:
 - 80 tracks, 2 sides (standard TR-DOS DS/80T disk)
 - 16 sectors per track, 256 bytes each
 - Proper MFM structure (IDAMs, DAMs, CRCs) with correct 1:2 interleave
@@ -27,7 +27,7 @@ New test file containing:
 #### Test Group 1: DiskImage Domain Model Tests
 - `ReferenceTrack_LoadAndReindex` - Load reference track, verify reindexFromMFM() finds 16 sectors
 - `ReferenceTrack_SectorOrderedRef` - Verify `sectorsOrderedRef[]` points to correct sectors
-- `ReferenceTrack_GetSector_ReturnsCorrectData` - Verify [getSector(1-16)](core/src/emulator/io/fdc/diskimage.h#283-303) returns expected data
+- `ReferenceTrack_GetSector_ReturnsCorrectData` - Verify [getSector(1-16)](../../../core/src/emulator/io/fdc/diskimage.h#283-303) returns expected data
 - `ReferenceTrack_GetIDForSector_ReturnsCorrectIDAM` - Verify IDAM fields (cylinder, head, sector, size)
 - `ReferenceTrack_GetDataForSector_ReturnsCorrectOffset` - Verify data pointer offset in raw buffer
 

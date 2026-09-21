@@ -10,7 +10,7 @@ Integrate TRDOSAnalyzer into the **unified analyzer framework** with automation 
 
 ### Design: Unified Analyzer Commands
 
-TRDOSAnalyzer registers as one of many analyzers in [AnalyzerManager](core/src/debugger/analyzers/analyzermanager.h#44-47). Control via unified `analyzer` CLI commands:
+TRDOSAnalyzer registers as one of many analyzers in [AnalyzerManager](../../../core/src/debugger/analyzers/analyzermanager.h#44-47). Control via unified `analyzer` CLI commands:
 
 ```
 analyzer list                    - List all registered analyzers
@@ -30,7 +30,7 @@ analyzer <name> export <path>    - Export to file
 
 **Location**: `core/automation/cli/src/commands/cli-processor-analyzer-mgr.cpp`
 
-Unified analyzer commands using [AnalyzerManager](core/src/debugger/analyzers/analyzermanager.h#44-47):
+Unified analyzer commands using [AnalyzerManager](../../../core/src/debugger/analyzers/analyzermanager.h#44-47):
 
 ```cpp
 void CLIProcessor::HandleAnalyzer(const ClientSession& session, 
@@ -43,14 +43,14 @@ void CLIProcessor::HandleAnalyzer(const ClientSession& session,
 | `enable <name>` | `manager->activate(name)` |
 | `disable <name>` | `manager->deactivate(name)` |
 | `status` | `manager->getActiveAnalyzers()` + per-analyzer stats |
-| `<name> events` | Cast to specific type, call [getEvents()](core/src/debugger/analyzers/trdos/trdosanalyzer.cpp#261-265) |
-| `<name> clear` | Cast to specific type, call [clear()](core/src/debugger/analyzers/trdos/trdosanalyzer.cpp#286-291) |
+| `<name> events` | Cast to specific type, call [getEvents()](../../../core/src/debugger/analyzers/trdos/trdosanalyzer.cpp#261-265) |
+| `<name> clear` | Cast to specific type, call [clear()](../../../core/src/debugger/analyzers/trdos/trdosanalyzer.cpp#286-291) |
 
 ---
 
-#### [MODIFY] [debugmanager.cpp](core/src/debugger/debugmanager.cpp)
+#### [MODIFY] [debugmanager.cpp](../../../core/src/debugger/debugmanager.cpp)
 
-**Location**: [core/src/debugger/debugmanager.cpp](core/src/debugger/debugmanager.cpp)
+**Location**: [core/src/debugger/debugmanager.cpp](../../../core/src/debugger/debugmanager.cpp)
 
 Register TRDOSAnalyzer during initialization:
 
@@ -71,7 +71,7 @@ void DebugManager::init()
 
 ---
 
-#### [MODIFY] [cli-processor.cpp](core/automation/cli/src/cli-processor.cpp) + [.h](core/src/mods.h)
+#### [MODIFY] [cli-processor.cpp](../../../core/automation/cli/src/cli-processor.cpp) + [.h](../../../core/src/mods.h)
 
 Add command dispatch for `analyzer`:
 
@@ -87,8 +87,8 @@ Add command dispatch for `analyzer`:
 |:-----|:-------|
 | `cli/src/commands/cli-processor-analyzer-mgr.cpp` | [NEW] Unified analyzer commands |
 | `cli/include/cli-processor.h` | Add `HandleAnalyzer` |
-| [cli/src/cli-processor.cpp](core/automation/cli/src/cli-processor.cpp) | Add dispatch entry |
-| [debugger/debugmanager.cpp](core/src/debugger/debugmanager.cpp) | Register TRDOSAnalyzer |
+| [cli/src/cli-processor.cpp](../../../core/automation/cli/src/cli-processor.cpp) | Add dispatch entry |
+| [debugger/debugmanager.cpp](../../../core/src/debugger/debugmanager.cpp) | Register TRDOSAnalyzer |
 
 ---
 

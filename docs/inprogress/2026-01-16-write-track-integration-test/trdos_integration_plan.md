@@ -110,7 +110,7 @@ TEST_F(Memory_Test, SetROMSystem_UpdatesAllState)
 This allows tests to work without full emulator context while runtime maintains proper state sync.
 
 ### Phase 1: Add TR-DOS Constants
-Update [spectrumconstants.h](core/src/emulator/spectrumconstants.h) with:
+Update [spectrumconstants.h](../../../core/src/emulator/spectrumconstants.h) with:
 - TR-DOS format entry points for common versions
 - Sector interleave pattern constants
 - Track 0 sector layout (catalog sectors 0-8, disk info sector 9)

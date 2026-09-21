@@ -32,7 +32,7 @@ Based on the flamegraph analysis, the two major CPU consumers are:
 
 #### Oversampling Architecture
 
-**Constants** ([soundchip_ay8910.h:65-76](core/src/emulator/sound/chips/soundchip_ay8910.h#L65-L76)):
+**Constants** ([soundchip_ay8910.h:65-76](../../../core/src/emulator/sound/chips/soundchip_ay8910.h#L65-L76)):
 ```cpp
 static const int AY_OVERSAMPLING_FACTOR = 64;
 static const int AY_SAMPLING_RATE = 44100;
@@ -47,13 +47,13 @@ static const int AY_SAMPLING_RATE = 44100;
 
 #### FIR Filter Processing
 
-**Filter Specifications** ([filter_interpolate.h:75-76](core/src/common/sound/filters/filter_interpolate.h#L75-L76)):
+**Filter Specifications** ([filter_interpolate.h:75-76](../../../core/src/common/sound/filters/filter_interpolate.h#L75-L76)):
 ```cpp
 static constexpr size_t FIR_ORDER = 192;        // 192-tap polyphase filter
 static constexpr size_t DECIMATE_FACTOR = 8;    // Oversampling/decimation factor
 ```
 
-**DSP Pipeline per Audio Sample** ([soundchip_turbosound.cpp:37-63](core/src/emulator/sound/chips/soundchip_turbosound.cpp#L37-L63)):
+**DSP Pipeline per Audio Sample** ([soundchip_turbosound.cpp:37-63](../../../core/src/emulator/sound/chips/soundchip_turbosound.cpp#L37-L63)):
 ```cpp
 // For EACH audio sample (882 samples per frame @ 50 Hz):
 1. _chip0->firLeft().startOversamplingBlock()      // Initialize FIR state
@@ -75,7 +75,7 @@ static constexpr size_t DECIMATE_FACTOR = 8;    // Oversampling/decimation facto
 6. endOversamplingBlock() → calls decimate()      // 192-tap FIR convolution
 ```
 
-**FIR Convolution Complexity** ([filter_interpolate.cpp:70-100](core/src/common/sound/filters/filter_interpolate.cpp#L70-L100)):
+**FIR Convolution Complexity** ([filter_interpolate.cpp:70-100](../../../core/src/common/sound/filters/filter_interpolate.cpp#L70-L100)):
 ```cpp
 double FilterInterpolate::decimate(double* x)
 {
@@ -90,14 +90,14 @@ double FilterInterpolate::decimate(double* x)
 
 #### DC Offset Filtering
 
-**Additional Processing** ([soundchip_ay8910.cpp:431-436](core/src/emulator/sound/chips/soundchip_ay8910.cpp#L431-L436)):
+**Additional Processing** ([soundchip_ay8910.cpp:431-436](../../../core/src/emulator/sound/chips/soundchip_ay8910.cpp#L431-L436)):
 ```cpp
 // Filter out DC offset (analog capacitor simulation)
 _mixedLeft = _filterDCLeft.filter(_mixedLeft);
 _mixedRight = _filterDCRight.filter(_mixedRight);
 ```
 
-**Fields** ([soundchip_ay8910.h:344-349](core/src/emulator/sound/chips/soundchip_ay8910.h#L344-L349)):
+**Fields** ([soundchip_ay8910.h:344-349](../../../core/src/emulator/sound/chips/soundchip_ay8910.h#L344-L349)):
 ```cpp
 FilterInterpolate _leftFIR;
 FilterInterpolate _rightFIR;
