@@ -185,9 +185,25 @@ protected:
         out << std::hex << std::uppercase << std::setfill('0') << std::setw(width) << value;
         return out.str();
     }
+
+    /// Removes every emulator the manager still holds (SetUp/TearDown and the
+    /// forensic replay all start from an empty manager).
+    void RemoveAllEmulators()
+    {
+        for (const auto& id : _manager->GetEmulatorIds())
+        {
+            _manager->RemoveEmulator(id);
+        }
+    }
+
+    /// The whole boot-to-game scenario. `forensic` = false is the fast
+    /// regression run: only what the assertions need. `forensic` = true adds
+    /// the per-access bus trace, per-instruction M1 trace, FDC/loader dumps and
+    /// page dumps - ~3x slower per frame, needed only to diagnose a failure.
+    void RunScenario(bool forensic);
 };
 
-TEST_F(ATM710Game2048Repro_Test, RunBootReachesGameScreen)
+void ATM710Game2048Repro_Test::RunScenario(bool forensic)
 {
     // ---- Phase A: cold boot to the ATM BIOS menu -------------------------
     auto emulator = _manager->CreateEmulatorWithModelAndRAM("atm710-2048-repro", "ATM710", 1024, LoggerLevel::LogError);
@@ -197,9 +213,20 @@ TEST_F(ATM710Game2048Repro_Test, RunBootReachesGameScreen)
     EmulatorState& state = context->emulatorState;
     Memory* memory = context->pMemory;
 
-    EmulatorTestHelper::RunUntil(
+    // The 80-column text mode draws every glyph in its own cell, so the menu
+    // row decodes with a space between letters ("S P E C T R U M   1 2 8").
+    // Every wait below must actually meet its predicate: hitting the cap means
+    // the wait proved nothing and just burned frames.
+    constexpr int kBiosMenuCap = 300;
+    const int biosFrames = EmulatorTestHelper::RunUntil(
         emulator.get(),
-        [&] { return DecodeTextRows(context, 0, 24).find("SPECTRUM128") != std::string::npos; }, 300);
+        [&] { return DecodeTextRows(context, 0, 24).find("S P E C T R U M   1 2 8") != std::string::npos; },
+        kBiosMenuCap);
+    // The menu text is drawn before the BIOS starts polling the keyboard: keys
+    // sent in the first ~10 frames after it appears are lost, which lands the
+    // flow in TR-DOS directly. 20 frames is 2x the measured minimum.
+    emulator->RunNFrames(20, true);
+    ASSERT_LT(biosFrames, kBiosMenuCap) << "BIOS menu never showed SPECTRUM 128";
 
     // ---- Phase B: BIOS menu -> SPECTRUM 128 ------------------------------
     Keyboard* keyboard = context->pKeyboard;
@@ -276,9 +303,12 @@ TEST_F(ATM710Game2048Repro_Test, RunBootReachesGameScreen)
     keyboard->ReleaseKey(ZXKEY_ENTER);
     // "BETA 128" avoids the digits the TR-DOS font draws differently
     // (the "?" cells in the pre-existing banner decode flake)
-    EmulatorTestHelper::RunUntil(
+    constexpr int kTrdosCap = 900;
+    const int trdosFrames = EmulatorTestHelper::RunUntil(
         emulator.get(),
-        [&] { return DecodeZXRows(context, (state.p7FFD & 0x08) ? 7 : 5, 0, 4).find("BETA") != std::string::npos; }, 900);
+        [&] { return DecodeZXRows(context, (state.p7FFD & 0x08) ? 7 : 5, 0, 10).find("BETA") != std::string::npos; },
+        kTrdosCap);
+    ASSERT_LT(trdosFrames, kTrdosCap) << "TR-DOS banner never showed BETA 128";
     for (int i = 0; i < 50; i++)
     {
         emulator->RunFrame(true);
@@ -417,7 +447,7 @@ TEST_F(ATM710Game2048Repro_Test, RunBootReachesGameScreen)
     std::vector<MemEvent> p15CodeWrites;               // writes into p15 $E000-$E300 (entry code), all detail
     std::vector<uint8_t> p15CodeAtCall;                // p15 $E000-$E300 bytes at the $E07D fetch
     DiskImage* dataPhaseImageProbe = sclLoader.getImage();   // re-read these bytes after the run
-    cpu->busTraceHook = [&portTrace, &inTrace, &currentFrame, cpu, memory, &state,
+    auto fullBusHook = [&portTrace, &inTrace, &currentFrame, cpu, memory, &state,
                          &fullTrace, &w1Writes, &depackReads, &w0Reads, &w2Writes, &w2Reads, &w3Writes, &pageProbes,
                          &readProbeCount, &fetchProbeCount, &depFetchProbe,
                          &windowArmed, &windowActive, &windowStartFrame, &loaderDone,
@@ -702,7 +732,7 @@ TEST_F(ATM710Game2048Repro_Test, RunBootReachesGameScreen)
             inTrace.push_back({currentFrame, port, cpu->m1_pc, value});
         }
     };
-    cpu->m1TraceHook = [&m1Seq, &windowActive, &currentFrame, &windowStartFrame, &loaderDone, &loaderM1](uint16_t pc)
+    auto fullM1Hook = [&m1Seq, &windowActive, &currentFrame, &windowStartFrame, &loaderDone, &loaderM1](uint16_t pc)
     {
         if (!loaderDone)
         {
@@ -719,6 +749,26 @@ TEST_F(ATM710Game2048Repro_Test, RunBootReachesGameScreen)
             m1Seq.push_back({currentFrame, pc});
         }
     };
+    if (forensic)
+    {
+        cpu->busTraceHook = fullBusHook;
+        cpu->m1TraceHook = fullM1Hook;
+    }
+    else
+    {
+        // Minimal hook: the derail check below is only meaningful once the
+        // loader has finished, and this OUT is what marks that moment
+        // (windowStartFrame); everything else the full hook records is
+        // diagnostic output only.
+        cpu->busTraceHook = [&windowArmed, &windowStartFrame, &currentFrame](char type, uint16_t port, uint8_t value)
+        {
+            if (windowArmed && type == 'O' && port == 0x3FF7 && value == 0x7F)
+            {
+                windowArmed = false;
+                windowStartFrame = currentFrame;
+            }
+        };
+    }
 
     // ---- Phase F: RUN "boot" + per-frame state trace ---------------------
     auto injection = BasicEncoder::injectToTRDOS(memory, "RUN \"boot\"");
@@ -907,6 +957,8 @@ TEST_F(ATM710Game2048Repro_Test, RunBootReachesGameScreen)
     cpu->m1TraceHook = nullptr;
     windowActive = false;
 
+    if (forensic)
+    {
     // ---- Phase F2: the game init loop under the microscope ---------------
     {
         // Every bus event of the window, minus the AY register writes of the
@@ -1579,16 +1631,22 @@ TEST_F(ATM710Game2048Repro_Test, RunBootReachesGameScreen)
         }
     }
 
+    }
     // ---- Phase G0: exact instruction stream of the stuck state ----------
     // 30 frames of per-instruction PC histogram - shows the real loop(s)
     {
         std::map<uint16_t, int> m1Counts;
-        cpu->m1TraceHook = [&m1Counts](uint16_t pc) { m1Counts[pc]++; };
+        if (forensic)
+        {
+            cpu->m1TraceHook = [&m1Counts](uint16_t pc) { m1Counts[pc]++; };
+        }
         for (int i = 0; i < 30; i++)
         {
             emulator->RunFrame(true);
         }
         cpu->m1TraceHook = nullptr;
+        if (forensic)
+        {
         long long total = 0;
         for (const auto& kv : m1Counts)
         {
@@ -1627,8 +1685,11 @@ TEST_F(ATM710Game2048Repro_Test, RunBootReachesGameScreen)
             std::cout << " [" << Hex((uint16_t)clusterStart, 4) << "-" << Hex(prev, 4) << "]";
         }
         std::cout << "\n";
+        }
     }
 
+    if (forensic)
+    {
     // Non-zero regions per content page (where code/data actually sits)
     for (uint8_t page : {0, 2, 7, 12, 15})
     {
@@ -1775,6 +1836,8 @@ TEST_F(ATM710Game2048Repro_Test, RunBootReachesGameScreen)
         std::cout << "\n";
     }
 
+    }
+
     // ---- Assertions -------------------------------------------------------
     // Black-screen regression (ATM710 1024K, 2048.scl): on entry the game
     // switches FF77 video mode 3 -> 0 (OUT (#BD77),#A8 at $E076). The retired
@@ -1813,4 +1876,18 @@ TEST_F(ATM710Game2048Repro_Test, RunBootReachesGameScreen)
     uint8_t videoPage = (state.p7FFD & 0x08) ? 7 : 5;
     int content = PageNonZero(memory, videoPage) + PageNonZero(memory, videoPage - 4);
     EXPECT_GT(content, 1000) << "Screen is black: active video pages carry no content";
+}
+
+TEST_F(ATM710Game2048Repro_Test, RunBootReachesGameScreen)
+{
+    // Fast regression pass first. If anything fails, replay the identical
+    // scenario with the full forensic capture so a red run still prints the
+    // complete diagnostic dump (bus/M1 traces, FDC timeline, page dumps).
+    RunScenario(false);
+    if (HasFailure())
+    {
+        RemoveAllEmulators();
+        SCOPED_TRACE("forensic replay of the failed fast run");
+        RunScenario(true);
+    }
 }

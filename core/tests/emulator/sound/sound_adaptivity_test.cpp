@@ -462,8 +462,12 @@ TEST_F(SoundAdaptivity_Test, DRC_ConvergesToTargetOccupancy)
     };
 
     // From near-empty (emergency refill seeds ~46ms in the real mainloop;
-    // start there) and from badly overfull
-    for (double startMs : {46.0, 300.0})
+    // start there) and from badly overfull: just under the hard-resync
+    // threshold, the worst overfill that can reach the PI in the field (the
+    // frontend discards down to target in one step above it). Draining is
+    // rate-limited to ~0.5%/frame, so a start beyond it (the old 300 ms) only
+    // adds ~1800 frames of the same ramp.
+    for (double startMs : {46.0, SoundManager::HARD_RESYNC_MS * 0.95})
     {
         double finalFrames = runLoop(startMs * 44100.0 / 1000.0, 3500);
         double finalMs = finalFrames * 1000.0 / 44100.0;
@@ -744,8 +748,10 @@ TEST_F(SoundAdaptivity_Test, EmergencyRefill_NeverFiresAtSteadyState)
     double ring = SoundManager::DRC_TARGET_MS * devRate / 1000.0;
     occCell.store(static_cast<uint32_t>(ring), std::memory_order_relaxed);
 
+    // 500 warm-up frames, then 1000 checked (~8 periods of the 125-frame
+    // sawtooth pattern at Pentagon timing)
     int refillTriggers = 0;
-    for (int f = 0; f < 3000; f++)
+    for (int f = 0; f < 1500; f++)
     {
         // DAC drains first: the trough is right before the production burst
         ring = std::max(0.0, ring - consumePerFrame);
@@ -849,8 +855,11 @@ TEST_F(SoundAdaptivity_Test, DRC_NativeDeviceRate48k_ConvergesAndConverts)
     double ring = SoundManager::DRC_TARGET_MS * 48.0;  // Start at setpoint (in device frames): verify HOLD
     occCell.store(static_cast<uint32_t>(ring), std::memory_order_relaxed);
 
+    // 1500 frames (~30 s emulated): the hold band and the volume ratio are
+    // both scale-free, and a wrong base ratio leaves the band within ~100
+    constexpr int kSoakFrames = 1500;
     uint64_t totalDeviceSamples = 0;
-    for (int f = 0; f < 6000; f++)
+    for (int f = 0; f < kSoakFrames; f++)
     {
         sound->handleFrameStart();
         sound->handleFrameEnd();
@@ -863,8 +872,8 @@ TEST_F(SoundAdaptivity_Test, DRC_NativeDeviceRate48k_ConvergesAndConverts)
     double finalMs = ring * 1000.0 / 48000.0;
     EXPECT_NEAR(finalMs, SoundManager::DRC_TARGET_MS, 8.0) << "Occupancy must hold at setpoint with 48k device";
 
-    // Output volume converted at ~48/44.1: 6000 frames x 903.168 core samples
-    double expectedDevice = 6000.0 * 903.168 * 48000.0 / 44100.0;
+    // Output volume converted at ~48/44.1: kSoakFrames x 903.168 core samples
+    double expectedDevice = kSoakFrames * 903.168 * 48000.0 / 44100.0;
     EXPECT_NEAR(static_cast<double>(totalDeviceSamples), expectedDevice, expectedDevice * 0.002)
         << "Device stream volume must reflect the 48000/44100 base ratio";
 
