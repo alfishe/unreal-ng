@@ -1,0 +1,411 @@
+SGENTBE DEFW S0,S1,S2,S3,S4,S5,S6,S7,S8
+
+SGENTBF DEFW SGEN1,SGEN2,SGEN3,SGEN4
+        DEFW SGEN5,SGEN6,SGEN7,SGEN8
+        DEFW SGEN9
+
+        DEFW 0,0,0,0,0,0
+
+SGEN    EXX
+        INC D
+        DEC D
+        JP Z,SGEN_
+        LD C,A
+        LD A,D
+        DEC A
+        CP #09
+        JP NC,SGEN__
+        ADD A,A
+        ADD A,low SGENTBF
+        LD L,A
+        LD H,high SGENTBF
+        LD A,(HL)
+        INC L
+        LD H,(HL)
+        LD L,A
+        LD A,C
+        JP (HL)
+
+SGEN1   EXX
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        EXX
+        JP SGEN_
+
+SGEN2   EXX
+        SUB (HL)
+        EXX
+        LD H,high DIVTAB3
+        JP NC,SGEN2_2
+        INC H
+SGEN2_2 LD L,A
+        LD A,(HL)
+        EXX
+        ADD A,(HL)
+        LD (DE),A
+        INC E
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        EXX
+        JP SGEN_
+
+SGEN3   EXX
+        ADD A,(HL)
+        RRA
+        EXX
+        LD L,A
+        ADD A,C
+        RRA
+        EXX
+        LD (DE),A
+        INC E
+        EXX
+        LD A,L
+        EXX
+        LD (DE),A
+        INC E
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        EXX
+        JP SGEN_
+
+SGEN4   EXX
+        ADD A,(HL)
+        RRA
+        EXX
+        LD L,A
+        ADD A,C
+        RRA
+        EXX
+        LD (DE),A
+        INC E
+        EXX
+        LD A,L
+        EXX
+        LD (DE),A
+        INC E
+        LD (DE),A
+        INC E
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        EXX
+        JP SGEN_
+
+SGEN5   EXX
+        ADD A,(HL)
+        RRA
+        EXX
+        LD L,A
+        ADD A,C
+        RRA
+        EXX
+        LD (DE),A
+        INC E
+        LD (DE),A
+        INC E
+        EXX
+        LD A,L
+        EXX
+        LD (DE),A
+        INC E
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        LD (DE),A
+        INC E
+        EXX
+        JP SGEN_
+
+SGEN6   EXX
+        ADD A,(HL)
+        RRA
+        EXX
+        LD L,A
+        ADD A,C
+        RRA
+        EXX
+        LD (DE),A
+        INC E
+        LD (DE),A
+        INC E
+        EXX
+        LD A,L
+        EXX
+        LD (DE),A
+        INC E
+        LD (DE),A
+        INC E
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        LD (DE),A
+        INC E
+        EXX
+        JP SGEN_
+
+
+SGEN7   EXX
+        ADD A,(HL)
+        RRA
+        EXX
+        LD L,A
+        ADD A,C
+        RRA
+        LD H,A
+        ADD A,C
+        RRA
+        EXX
+        LD (DE),A
+        INC E
+        EXX
+        LD A,H
+        EXX
+        LD (DE),A
+        INC E
+        EXX
+        ADD A,L
+        RRA
+        EXX
+        LD (DE),A
+        INC E
+        EXX
+        LD A,L
+        EXX
+        LD (DE),A
+        INC E
+        ADD A,(HL)
+        RRA
+        EXX
+        LD H,A
+        ADD A,L
+        RRA
+        EXX
+        LD (DE),A
+        INC E
+        EXX
+        LD A,H
+        EXX
+        LD (DE),A
+        INC E
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        EXX
+        JP SGEN_
+
+SGEN8   EXX
+        ADD A,(HL)
+        RRA
+        EXX
+        LD L,A
+        ADD A,C
+        RRA
+        LD H,A
+        ADD A,C
+        RRA
+        EXX
+        LD (DE),A
+        INC E
+        EXX
+        LD A,H
+        EXX
+        LD (DE),A
+        INC E
+        EXX
+        ADD A,L
+        RRA
+        EXX
+        LD (DE),A
+        INC E
+        EXX
+        LD A,L
+        EXX
+        LD (DE),A
+        INC E
+        LD (DE),A
+        INC E
+        ADD A,(HL)
+        RRA
+        EXX
+        LD H,A
+        ADD A,L
+        RRA
+        EXX
+        LD (DE),A
+        INC E
+        EXX
+        LD A,H
+        EXX
+        LD (DE),A
+        INC E
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        EXX
+        JP SGEN_
+
+SGEN9   EXX
+        ADD A,(HL)
+        RRA
+        EXX
+        LD L,A
+        ADD A,C
+        RRA
+        LD H,A
+        ADD A,C
+        RRA
+        EXX
+        LD (DE),A
+        INC E
+        EXX
+        LD A,H
+        EXX
+        LD (DE),A
+        INC E
+        LD (DE),A
+        INC E
+        EXX
+        ADD A,L
+        RRA
+        EXX
+        LD (DE),A
+        INC E
+        EXX
+        LD A,L
+        EXX
+        LD (DE),A
+        INC E
+        ADD A,(HL)
+        RRA
+        EXX
+        LD H,A
+        ADD A,L
+        RRA
+        EXX
+        LD (DE),A
+        INC E
+        EXX
+        LD A,H
+        EXX
+        LD (DE),A
+        INC E
+        LD (DE),A
+        INC E
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        EXX
+        JP SGEN_
+
+
+SGEN__  JP SGEN_
+
+
+
+
+
+SGEN_   LD A,E
+        CP #09
+        JR NC,S9
+        ADD A,A
+        LD L,A
+        LD H,high SGENTBE
+        LD A,(HL)
+        INC L
+        LD H,(HL)
+        LD L,A
+        JP (HL)
+
+S9      EXX
+        LD C,#FF
+        EXX
+        LD D,#08
+        JP S8
+
+S0      EXX
+        LD C,#00
+        EXX
+        LD D,#01
+        JP S1
+
+
+S3      EXX
+        PUSH BC
+        EXX
+        POP HL
+        LD B,E
+        LD E,H
+        LD C,L
+        CALL S3_
+S_RET   LD LY,E
+        LD E,D
+        LD D,LY
+        PUSH DE
+        EXX
+        POP BC
+        RET
+
+S4      EXX
+        PUSH BC
+        EXX
+        POP HL
+        LD B,E
+        LD E,H
+        LD C,L
+        CALL S4_
+        JP S_RET
+
+S5      EXX
+        PUSH BC
+        EXX
+        POP HL
+        LD B,E
+        LD E,H
+        LD C,L
+        CALL S5_
+        JP S_RET
+
+S6      EXX
+        PUSH BC
+        EXX
+        POP HL
+        LD B,E
+        LD E,H
+        LD C,L
+        CALL S6_
+        JP S_RET
+
+S7      EXX
+        PUSH BC
+        EXX
+        POP HL
+        LD B,E
+        LD E,H
+        LD C,L
+        CALL S7_
+        JP S_RET
+
+S8      EXX
+        PUSH BC
+        EXX
+        POP HL
+        LD B,E
+        LD E,H
+        LD C,L
+        CALL S8_
+        JP S_RET
+
+

@@ -1,0 +1,271 @@
+;(c)Evgeny Muchkin
+
+MODSMPS	equ #5000
+MODPTST	equ #5001
+ChipSP_	equ #5005
+CHIP246 equ #5007
+TOcip_	equ #5009
+CHIPLN  equ #5010	; çÄ4Äãé ëÖåèãéÇ (pointer)
+CHIPPP  equ #5013	; ÑãàçÄ åéÑìãü
+CIP1    equ #5016	; éíäìÑÄ èÖêÖçéëàíú
+CIP2    equ #5019	; äìÑÄ èÖêÖçéëàíú
+CIP3    equ #501c	; äéçÖñ ÅãéäÄ
+
+
+CHIP    DI
+        LD A,(RAMPG)
+        OUT (PAGE),A
+
+	;loop_start correction
+;        LD IX,#8014
+;        LD A,(MODSMPS)
+;        LD B,A		;smps!
+;DOP_I1  LD H,(IX+22)	;len
+;        LD L,(IX+23)
+;        LD D,(IX+28)	;loop len
+;        LD E,(IX+29)
+;        AND A
+;        SBC HL,DE
+;        PUSH HL
+;        LD D,(IX+26)	;loop start
+;        LD E,(IX+27)
+;        AND A
+;        SBC HL,DE
+;        POP HL
+;        JR NC,DOP_I2
+;        LD (IX+26),H
+;        LD (IX+27),L
+;DOP_I2  LD DE,30
+;        ADD IX,DE
+;        DJNZ DOP_I1
+
+        LD DE,(MODPTST)	;patts data!
+
+        LD A,(PATTS)
+        LD L,A
+        LD H,B
+        ADD HL,HL
+        ADD HL,HL
+        LD A,H
+        LD H,L
+        LD L,B
+        ADD HL,DE
+        ADC A,B
+
+        LD (CHIPLN),HL
+        LD (CHIPLN+2),A
+        LD (ChipSP_),SP
+        LD HL,CHIPLN
+        LD DE,CHIPPP
+        PUSH DE
+        LDI:LDI:LDI
+        POP IY
+
+	LD A,(MODSMPS)
+        LD B,A		;smps!
+        LD DE,30
+        LD IX,#8014
+ChIp    LD H,(IX+22)	;len
+        LD L,(IX+23)
+        CALL TOCip
+        ADD IX,DE
+        DJNZ ChIp
+        ;LD HL,#2E4D	;M.K.
+        ;LD (#8438),HL
+        ;LD L,#4B
+        ;LD (#843A),HL
+
+        LD IX,#802A
+	LD A,(MODSMPS)
+        LD B,A		;smps!
+CHIP1   LD A,(RAMPG)
+        OUT (PAGE),A
+        LD H,(IX+6)     ;loop len
+        LD L,(IX+7)
+        LD (CHIP246),HL
+        LD A,(IX)	;len
+        OR (IX+1)
+        JP Z,CHIP2	;skip if no smp
+        LD DE,2
+        CALL CP_DDE
+        JP C,CHIP2	;skip if loop len <2
+
+LUP_LEN LD DE,(MODLLEN)
+        CALL CP_DDE
+        JP NC,CHIP2	;skip if loop len>=LUP_LEN
+        PUSH BC
+        LD B,H,C,L
+        EXX
+        LD BC,0		;reloop counter
+CHIP3   EXX
+        ADD HL,BC
+        CALL CP_DDE
+        EXX
+        INC BC
+        JR C,CHIP3
+        PUSH BC
+        EXX
+
+
+;!!!!!!!!!!!!!!!!!!!!!!!!!!
+        PUSH HL		;new loop len
+        LD B,(IX+6)	;loop len
+        LD C,(IX+7)
+        AND A
+        SBC HL,BC
+
+        LD DE,CHIPPP
+        LD (TOcip_),DE
+        LD IY,CIP1
+        CALL TOCIP
+        LD DE,CHIPLN
+        LD (TOcip_),DE
+
+        LD B,3		;check if free mem
+        LD DE,CIP1+2
+        LD HL,RAMTOP+2
+ChipLP  LD A,(DE)
+        CP (HL)
+        DEC HL,DE
+        JR C,ChipOK
+        JP NZ,ChipSP
+        DJNZ ChipLP
+ChipOK  POP HL
+
+        EX DE,HL	;DE=new loop len
+        LD H,(IX)	;len
+        LD L,(IX+1)
+        LD B,(IX+6)	;loop len
+        LD C,(IX+7)
+        AND A
+        SBC HL,BC
+        ADD HL,DE
+        LD (IX),H	;new smp len
+        LD (IX+1),L
+        LD (IX+6),D	;new loop len
+        LD (IX+7),E
+        LD IY,CIP1
+        LD H,(IX+4)	;loop start
+        LD L,(IX+5)
+        PUSH HL,HL,HL
+        ADD HL,BC
+        CALL TOCIP
+        LD IY,CIP2
+        POP HL
+        ADD HL,DE
+        CALL TOCIP
+        LD HL,CHIPPP
+        LD DE,CIP3
+        LDI:LDI:LDI
+        CALL DIRER
+        LD IY,CIP1
+        POP HL
+        CALL TOCIP
+        POP HL
+CHIP4   LD DE,(CHIP246)	;orig loop len
+        ADD HL,DE
+        LD IY,CIP2
+        CALL TOCIP
+        LD HL,CIP2
+        LD DE,CIP3
+        LDI:LDI:LDI
+        POP BC
+CHIP5   PUSH BC
+        CALL DIRER
+CHIP6   LD HL,(CHIP246)	;orig loop len
+        LD IY,CIP2
+        CALL TOCip
+        POP BC
+        DEC BC
+        LD A,B
+        OR C
+        JR NZ,CHIP5
+        POP BC
+CHIP2   LD DE,(CHIP246)	;orig loop len
+        LD A,(RAMPG)
+        OUT (PAGE),A
+        LD H,(IX+6)	;new loop len
+        LD L,(IX+7)
+        AND A
+        SBC HL,DE
+        LD IY,CHIPPP	;corr mod len
+        CALL TOCip
+        LD H,(IX)
+        LD L,(IX+1)
+        LD IY,CHIPLN	;add pointer
+        CALL TOCip
+        LD DE,30
+        ADD IX,DE
+        DEC B
+        JP NZ,CHIP1
+
+ChipSP  LD SP,(ChipSP_)
+        ;LD A,#FF
+        ;LD (CONVERT),A
+        ;CALL PLAYMD
+        EI
+        ;JP COMINT
+	RET
+
+
+DIRER   LD IY,CIP1
+        LD L,(IY+3)
+        LD H,(IY+4)
+        LD B,(IY+5)
+        EXX
+        LD L,(IY)
+        LD H,(IY+1)
+        LD B,(IY+2)
+        LD E,(IY+6)
+        LD D,(IY+7)
+        LD C,(IY+8)
+        PUSH IX
+        CALL RESI10_
+        POP IX
+        RET
+
+TOCIP   PUSH HL,DE
+        PUSH IY
+        POP DE
+TOcip   LD HL,(TOcip_)	;CHIPLN
+        LDI:LDI:LDI
+        POP DE,HL
+TOCip   CALL ADD_IY
+ADD_IY  LD A,(IY)
+        ADD A,L
+        LD (IY),A
+        LD A,(IY+1)
+        ADC A,H
+        LD (IY+1),A
+        LD A,(IY+2)
+        ADC A,0
+        LD (IY+2),A
+        RET
+
+CP_DDE  PUSH HL
+        AND A
+        SBC HL,DE
+        POP HL
+        RET
+
+;RESID10 ; MOVE BLOCK IN GS
+;          BHL - FROM
+;          CDE - END
+;         'BHL - TO
+
+
+RESI10_ SUB A:OUT (PAGE),A
+        LD (SYSTEM),A,A,B
+        PUSH HL:EXX:POP DE
+        PUSH HL,BC
+        LD C,A:OR A:SBC HL,DE
+        LD A,B:SBC A,C:EX DE,HL
+        POP BC,HL:LD C,A:OR E,D
+        RET Z
+        EXX:EX DE,HL:SBC HL,DE:LD A,C
+        SBC A,B:LD LX,A:OR L,H:EXX
+        RET Z
+        PUSH DE,BC:BIT 7,C:EXX
+        JP NZ,MOVL
+        JP MOVH
+

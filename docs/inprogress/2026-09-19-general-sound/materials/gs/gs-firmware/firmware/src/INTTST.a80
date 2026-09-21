@@ -1,0 +1,377 @@
+;***********************************************************
+;* INTERRUPT HANDLING PROCEDURES                           *
+;***********************************************************
+
+;        UNPHASE 
+;        ORG $+#00FF&#FF00
+;        PHASE $-GSRomBase
+	align 256
+
+INTZ    RET
+
+INT0    EX AF,AF'
+        INC A
+        JR Z,INT0_
+        EX AF,AF'
+        EI
+        RET
+        DEFS 11
+        RET
+INT0_   PUSH DE
+        JP QTDONE
+
+INT1    EX AF,AF'
+        PUSH DE
+        LD E,A
+        LD D,HX
+        LD A,(DE)
+        INC E
+        JR Z,INT1_
+        LD A,E
+        POP DE
+        EX AF,AF'
+        EI
+        RET
+        DEFS 4
+        RET
+        PUSH DE
+INT1_   JP QTDONE
+
+
+INT2    EX AF,AF'
+        PUSH DE
+        LD E,A
+        LD D,HX
+        LD A,(DE)
+        INC D
+        LD A,(DE)
+        INC E
+        JR Z,INT2_
+        LD A,E
+        POP DE
+        EX AF,AF'
+        EI
+        RET
+        DEFS 2
+        RET
+        PUSH DE
+INT2_   JP QTDONE
+
+INT3    EX AF,AF'
+        PUSH DE
+        LD E,A
+        LD D,HX
+        LD A,(DE)
+        INC D
+        INC D
+        LD A,(DE)
+        INC E
+        JR Z,INT3_
+        LD A,E
+        POP DE
+        EX AF,AF'
+        EI
+        RET
+        DEFS 1
+        RET
+        PUSH DE
+INT3_   JP QTDONE
+
+INT4    EX AF,AF'
+        PUSH DE
+        LD E,A
+        LD D,HX
+        LD A,(DE)
+        INC D
+        LD A,(DE)
+        INC D
+        LD A,(DE)
+        INC E
+        JR Z,INT4_
+        LD A,E
+        POP DE
+        EX AF,AF'
+        EI
+        RET
+        RET
+        PUSH DE
+INT4_   JP QTDONE
+
+INT5    EX AF,AF'
+        PUSH DE
+        LD E,A
+        LD D,HX
+        LD A,(DE)
+        INC D
+        INC D
+        INC D
+        LD A,(DE)
+        INC E
+        JR Z,INT5_
+        LD A,E
+        POP DE
+        EX AF,AF'
+        EI
+        RET
+        RET
+        PUSH DE
+INT5_   JP QTDONE
+
+INT6    EX AF,AF'
+        PUSH DE
+        LD E,A
+        LD D,HX
+        LD A,(DE)
+        INC D
+        LD A,(DE)
+        INC D
+        INC D
+        LD A,(DE)
+        INC E
+        JR Z,INT6_
+        LD A,E
+        POP DE
+        EX AF,AF'
+        EI
+        RET
+        PUSH DE
+INT6_   JP QTDONE
+
+INT7    EX AF,AF'
+        PUSH DE
+        LD E,A
+        LD D,HX
+        LD A,(DE)
+        INC D
+        INC D
+        LD A,(DE)
+        INC D
+        LD A,(DE)
+        INC E
+        JR Z,INT7_
+        LD A,E
+        POP DE
+        EX AF,AF'
+        EI
+        RET
+        PUSH DE
+INT7_   JP QTDONE
+
+QTFAULT LD DE,(QTBUSY)
+        LD (DE),A
+        LD (PLAYING),A
+        POP DE
+        EX AF,AF'
+        RET
+
+INT_IM1 IM 1
+        EI
+        EX DE,HL
+        LD HL,(QTBUSY)
+        LD (HL),A
+        LD A,L
+        ADD A,#04
+        AND #1C
+        LD L,A
+        LD (QTBUSY),HL
+        SET 5,L
+        LD A,(HL)
+        OUT (VOL0),A
+        INC L
+        LD A,(HL)
+        OUT (VOL1),A
+        INC L
+        LD A,(HL)
+        OUT (VOL2),A
+        INC L
+        LD A,(HL)
+        OUT (VOL3),A
+        POP AF
+        POP HL
+        EX DE,HL
+        RET
+
+QTDONE  LD A,(QTBUSY)
+        ADD A,#04
+        AND #1C
+        LD E,A
+        LD D,high QTMAP
+        LD A,(DE)
+        OR A
+        JR Z,QTFAULT
+        EX AF,AF'
+        PUSH AF
+        INC E
+        LD A,(DE)
+        LD HX,A
+        INC E
+        LD A,(DE)
+        OR A
+        JR Z,INT_IM1
+        IM 2
+        EX DE,HL
+        LD HL,#4058
+        CP (HL)
+        JR Z,INT_I1
+        LD (HL),A
+        LD HL,#1518
+        LD (#4040),HL
+        EI
+        DEC A
+        JR Z,INT_I0
+        ADD A,#03
+        LD L,A
+        LD H,high INT0
+        PUSH DE
+        PUSH BC
+        LD DE,#4042
+        LDI
+        LDI
+        LDI
+        LDI
+        LDI
+        LDI
+        LDI
+        LDI
+        LDI
+        LDI
+        LDI
+        LDI
+        LDI
+        LDI
+        LDI
+        LDI
+        LD HL,#D508
+        LD (#4040),HL
+        POP BC
+        POP DE
+        LD HL,(QTBUSY)
+        LD (HL),#00
+        LD A,L
+        ADD A,#04
+        AND #1C
+        LD L,A
+        LD (QTBUSY),HL
+        SET 5,L
+        LD A,(HL)
+        OUT (VOL0),A
+        INC L
+        LD A,(HL)
+        OUT (VOL1),A
+        INC L
+        LD A,(HL)
+        OUT (VOL2),A
+        INC L
+        LD A,(HL)
+        OUT (VOL3),A
+        POP AF
+        POP HL
+        EX DE,HL
+        RET
+
+INT_I1  EI
+        LD A,#04
+        LD HL,(QTBUSY)
+        LD (HL),#00
+        ADD A,L
+        AND #1C
+        LD L,A
+        LD (QTBUSY),HL
+        SET 5,L
+        LD A,(HL)
+        OUT (VOL0),A
+        INC L
+        LD A,(HL)
+        OUT (VOL1),A
+        INC L
+        LD A,(HL)
+        OUT (VOL2),A
+        INC L
+        LD A,(HL)
+        OUT (VOL3),A
+        POP AF
+        POP HL
+        EX DE,HL
+        RET
+
+
+INT_I0  LD HL,INT0+2
+        PUSH DE
+        PUSH BC
+        LD DE,#4042
+        LDI
+        LDI
+        LDI
+        LDI
+        LDI
+        LD HL,#3C08
+        LD (#4040),HL
+        POP BC
+        POP DE
+        LD HL,(QTBUSY)
+        LD (HL),A
+        LD A,L
+        ADD A,#04
+        AND #1C
+        LD L,A
+        LD (QTBUSY),HL
+        SET 5,L
+        LD A,(HL)
+        OUT (VOL0),A
+        INC L
+        LD A,(HL)
+        OUT (VOL1),A
+        INC L
+        LD A,(HL)
+        OUT (VOL2),A
+        INC L
+        LD A,(HL)
+        OUT (VOL3),A
+        POP AF
+        POP HL
+        EX DE,HL
+        RET
+
+
+
+
+QTPLAY  DI
+        LD A,#FF
+        LD (PLAYING),A
+        LD HL,(QTBUSY)
+        LD A,(HL)
+        EX AF,AF'
+        INC L
+        LD A,(HL)
+        LD HX,A
+        INC L
+        LD A,(HL)
+        IM 1
+        OR A
+        JR Z,QTPLAY_
+        IM 2
+        LD HL,#4058
+        CP (HL)
+        JR Z,QTPLAY_
+        LD (HL),A
+        LD L,A
+        LD H,high INT0
+        LD DE,#4040
+        LD BC,#0012
+        LDIR
+QTPLAY_ LD HL,(QTBUSY)
+        SET 5,L
+        LD A,(HL)
+        OUT (VOL0),A
+        INC L
+        LD A,(HL)
+        OUT (VOL1),A
+        INC L
+        LD A,(HL)
+        OUT (VOL2),A
+        INC L
+        LD A,(HL)
+        OUT (VOL3),A
+        EI
+        RET
+

@@ -1,0 +1,41 @@
+
+
+
+WTCM    IN A,(FLAGS)
+        RRCA
+        JR NC,WTCM
+        IN A,(COMRG)
+        CP #12
+        JR Z,CM12
+        CP #18
+        JR Z,CM18
+        CP #1A
+        JR Z,CM1A
+        CP #1B
+        JR Z,CM1B
+        CP #20
+        JR Z,CM20
+        OUT (RSCOM),A
+        JP WTCM
+CM12    IN A,(DATRG)
+        OUT (RSCOM),A
+        OUT (PAGE),A
+        JP WTCM
+CM18    IN A,(DATRG)
+        LD E,A
+        OUT (RSCOM),A
+CM18_1  IN A,(FLAGS)
+        OR A
+        JP P,CM18_1
+        IN A,(DATRG)
+        LD D,A
+        JP WTCM
+CM1A    LD A,(DE)
+        OUT (OUTRG),A
+        OUT (RSCOM),A
+        JP WTCM
+CM1B    INC DE
+        OUT (RSCOM),A
+        JP WTCM
+CM20    OUT (RSCOM),A
+        RET

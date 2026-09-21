@@ -1319,9 +1319,15 @@ bool Emulator::LoadSnapshot(const std::string& path)
     // framebuffer when a WebAPI 'pause' is immediately followed by 'snapshot/load').
     // The wait may time out legitimately when paused inside a frame (breakpoint) or in
     // synchronous test mode - proceed anyway in those cases.
+    // On iOS/embed hosts the mainloop can block on video present; use a short timeout
+    // and proceed anyway - the loader's own locking is sufficient for safety.
     if (_mainloop && IsRunning())
     {
-        _mainloop->WaitForPauseConfirmation(250);
+        bool confirmed = _mainloop->WaitForPauseConfirmation(100);
+        if (!confirmed)
+        {
+            MLOGWARNING("LoadSnapshot: pause confirmation timed out, proceeding anyway");
+        }
     }
 
     if (ext == "sna")

@@ -1,17 +1,32 @@
     // Tape control endpoints
     paths["/api/v1/emulator/{id}/tape/load"]["post"]["summary"] = "Load tape image";
+    paths["/api/v1/emulator/{id}/tape/load"]["post"]["description"] = "Load tape from path or embedded content. Accepts: JSON with path, multipart/form-data with file, or raw body with X-Filename header. Max size: 1 MB.";
     paths["/api/v1/emulator/{id}/tape/load"]["post"]["tags"].append("Tape Control");
     paths["/api/v1/emulator/{id}/tape/load"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/tape/load"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/tape/load"]["post"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/tape/load"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    // JSON body option
     paths["/api/v1/emulator/{id}/tape/load"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["path"]["type"] = "string";
     paths["/api/v1/emulator/{id}/tape/load"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["path"]["description"] = "Path to tape image file (.tap, .tzx)";
+    // Multipart upload option
+    paths["/api/v1/emulator/{id}/tape/load"]["post"]["requestBody"]["content"]["multipart/form-data"]["schema"]
+         ["properties"]["file"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/tape/load"]["post"]["requestBody"]["content"]["multipart/form-data"]["schema"]
+         ["properties"]["file"]["format"] = "binary";
+    paths["/api/v1/emulator/{id}/tape/load"]["post"]["requestBody"]["content"]["multipart/form-data"]["schema"]
+         ["properties"]["file"]["description"] = "Tape image file content";
+    // Raw body option
+    paths["/api/v1/emulator/{id}/tape/load"]["post"]["requestBody"]["content"]["application/octet-stream"]["schema"]
+         ["type"] = "string";
+    paths["/api/v1/emulator/{id}/tape/load"]["post"]["requestBody"]["content"]["application/octet-stream"]["schema"]
+         ["format"] = "binary";
     paths["/api/v1/emulator/{id}/tape/load"]["post"]["responses"]["200"]["description"] = "Tape loaded successfully";
     paths["/api/v1/emulator/{id}/tape/load"]["post"]["responses"]["400"]["description"] = "Invalid path or file format";
     paths["/api/v1/emulator/{id}/tape/load"]["post"]["responses"]["404"]["description"] = "Emulator not found";
+    paths["/api/v1/emulator/{id}/tape/load"]["post"]["responses"]["413"]["description"] = "File too large (max 1 MB)";
 
     paths["/api/v1/emulator/{id}/tape/eject"]["post"]["summary"] = "Eject tape";
     paths["/api/v1/emulator/{id}/tape/eject"]["post"]["tags"].append("Tape Control");
@@ -162,6 +177,7 @@
 
     // Disk control endpoints
     paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["summary"] = "Insert disk image";
+    paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["description"] = "Insert disk from path or embedded content. Accepts: JSON with path, multipart/form-data with file, or raw body with X-Filename header. Max size: 1 MB.";
     paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["tags"].append("Disk Control");
     paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["parameters"][0]["in"] = "path";
@@ -173,14 +189,33 @@
     paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["parameters"][1]["description"] =
         "Drive letter (A-D) or number (0-3)";
     paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["parameters"][1]["schema"]["type"] = "string";
+    // JSON body option
     paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["path"]["type"] = "string";
     paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["path"]["description"] = "Path to disk image file (.trd, .scl, .fdi, .udi)";
+    paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["autostart"]["type"] = "boolean";
+    paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["autostart"]["description"] = "Quick-reset into TR-DOS and run (drive A only, default false)";
+    // Multipart upload option
+    paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["requestBody"]["content"]["multipart/form-data"]["schema"]
+         ["properties"]["file"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["requestBody"]["content"]["multipart/form-data"]["schema"]
+         ["properties"]["file"]["format"] = "binary";
+    paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["requestBody"]["content"]["multipart/form-data"]["schema"]
+         ["properties"]["file"]["description"] = "Disk image file content";
+    // Raw body option
+    paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["requestBody"]["content"]["application/octet-stream"]["schema"]
+         ["type"] = "string";
+    paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["requestBody"]["content"]["application/octet-stream"]["schema"]
+         ["format"] = "binary";
     paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["responses"]["200"]["description"] =
         "Disk inserted successfully";
     paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["responses"]["400"]["description"] =
         "Invalid path, file format, or drive parameter";
+    paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["responses"]["413"]["description"] =
+        "File too large (max 1 MB)";
 
     // POST /api/v1/emulator/{id}/disk/{drive}/create - Create blank disk
     paths["/api/v1/emulator/{id}/disk/{drive}/create"]["post"]["summary"] = "Create blank disk";

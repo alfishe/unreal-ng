@@ -9,9 +9,12 @@
 
 #include <json/json.h>
 
+#include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace mcp
 {
@@ -33,6 +36,12 @@ public:
     /// Executes an HTTP method against a WebAPI path, e.g. Call("GET", "/api/v1/emulator", nullptr, cb)
     /// body may be nullptr for GET/DELETE requests
     virtual void Call(const std::string& method, const std::string& path, const Json::Value* body, ApiCallback callback) = 0;
+
+    /// Executes an HTTP method with raw binary body and custom headers (for file uploads)
+    virtual void CallRaw(const std::string& method, const std::string& path,
+                         const std::vector<uint8_t>& body,
+                         const std::map<std::string, std::string>& headers,
+                         ApiCallback callback) = 0;
 };
 
 /// endregion </IApiCaller>
@@ -51,6 +60,10 @@ public:
     WebApiClient& operator=(const WebApiClient&) = delete;
 
     void Call(const std::string& method, const std::string& path, const Json::Value* body, ApiCallback callback) override;
+    void CallRaw(const std::string& method, const std::string& path,
+                 const std::vector<uint8_t>& body,
+                 const std::map<std::string, std::string>& headers,
+                 ApiCallback callback) override;
 
 private:
     /// Lazily created loopback client (requires the drogon app loop to be running)

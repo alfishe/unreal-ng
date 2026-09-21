@@ -33,6 +33,10 @@ public:
 
     static std::string GetExecutablePath();
     static std::string GetResourcesPath();
+    static std::string GetWritablePath();
+
+    static void SetResourcesPathOverride(const std::string& readOnlyRoot);
+    static void SetWritablePathOverride(const std::string& writableRoot);
 
     /// Expand a leading "~" ("~", "~/x", "~\x") to the user's home directory. Everything else is returned untouched.
     static std::string ExpandPath(const std::string& path);

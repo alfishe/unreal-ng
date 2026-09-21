@@ -1,0 +1,277 @@
+
+
+
+
+        ;EX AF,AF'
+
+
+
+INITVAR DI
+
+        LD A,(ERRCODE)
+        EX AF,AF'
+        LD A,(NUMPG)
+
+        LD SP,#8000
+        LD HL,#8080
+        LD B,#00
+
+INITV00 PUSH HL
+        PUSH HL
+        PUSH HL
+        PUSH HL
+        PUSH HL
+        PUSH HL
+        PUSH HL
+        PUSH HL
+        PUSH HL
+        PUSH HL
+        PUSH HL
+        PUSH HL
+        PUSH HL
+        PUSH HL
+        PUSH HL
+        PUSH HL
+        DJNZ INITV00
+
+        LD HL,#0000
+        LD B,#FE
+
+INITV01 PUSH HL
+        PUSH HL
+        PUSH HL
+        PUSH HL
+        PUSH HL
+        PUSH HL
+        PUSH HL
+        PUSH HL
+        PUSH HL
+        PUSH HL
+        PUSH HL
+        PUSH HL
+        PUSH HL
+        PUSH HL
+        PUSH HL
+        PUSH HL
+        DJNZ INITV01
+
+        LD SP,ISTACK
+
+        LD (NUMPG),A
+        EX AF,AF'
+        LD (ERRCODE),A
+
+        LD A,#00
+        LD (INFO),A
+
+        XOR A
+        LD (ROMPG),A
+
+        LD HL,DAC0
+        LD A,(HL)
+        INC H
+        LD A,(HL)
+        INC H
+        LD A,(HL)
+        INC H
+        LD A,(HL)
+
+        LD A,#3F
+        OUT (VOL0),A
+        OUT (VOL1),A
+        OUT (VOL2),A
+        OUT (VOL3),A
+
+        LD HL,CHNVOL
+        LD DE,CHNVOL+1
+        LD BC,#0007
+        LD (HL),#BF
+        LDIR
+
+        LD A,high INTTAB
+        LD I,A
+        LD HL,INT7
+        LD DE,#4040
+        LD BC,#0017
+        LDIR
+        EX DE,HL
+        LD (HL),#C3
+        INC L
+        LD (HL),low INT7
+        INC L
+        LD (HL),high INT7
+
+        LD HL,QTMAP
+        LD (QTFREE),HL
+        LD (QTBUSY),HL
+        LD DE,QTMAP+1
+        LD BC,#001F
+        LD (HL),B
+        LDIR
+
+        LD HL,VOLTAB
+        LD DE,VOLTAB+1
+        LD BC,#001F
+        LD (HL),#3F
+        LDIR
+
+        LD HL,VOLRQTB
+        LD DE,VOLRQTB+1
+        LD BC,#0007
+        LD (HL),#3F
+        LDIR
+
+        LD A,#0F
+        LD (GSCHNS),A
+        LD (MTCHNS),A
+
+        LD A,#40
+        LD (MODVOL),A
+        LD (FXMVOL),A
+        LD (FXVOL),A
+
+        LD A,%11000011
+        LD (MTSTAT),A
+        XOR A
+        LD (MODULE),A
+
+        LD A,(NUMPG)
+
+        SRL A
+        LD B,A
+        LD HL,#8000
+        RR H
+
+        LD A,B
+        LD (RAMTOP),HL
+        LD (RAMTOP+2),A
+        LD (PTRC),HL
+        LD (PTRC+2),A
+        LD (PTRB),HL
+        LD (PTRB+2),A
+        LD (PTRA),HL
+        LD (PTRA+2),A
+        LD (PTR9),HL
+        LD (PTR9+2),A
+        LD (PTR8),HL
+        LD (PTR8+2),A
+        LD (PTR7),HL
+        LD (PTR7+2),A
+        LD (PTR6),HL
+        LD (PTR6+2),A
+        LD (PTR5),HL
+        LD (PTR5+2),A
+        LD (MEMTOP),HL
+        LD (MEMTOP+2),A
+        LD (PTR4),HL
+        LD (PTR4+2),A
+
+
+        LD IY,CHANSFX
+        LD (CURCHAN),IY
+        LD BC,#0801
+        LD DE,CHANLEN
+
+INITV03 LD (IY+CHSTAT),#40
+        LD (IY+CHRDR),C
+        LD (IY+CHRDRI),C
+        LD A,#08
+        SUB B
+        LD (IY+CHRDN),A
+        AND #02
+        JR Z,INITV05
+        SET 5,(IY+CHSTAT)
+INITV05 LD (IY+CHFLAGS),#00
+        LD (IY+CHPORT),#01
+        LD (IY+CHVIBCM),#11
+        LD (IY+CHTRMCM),#11
+        LD (IY+CHOFFST),#01
+        LD (IY+CHWNT),#7F
+        LD (IY+CHOLDV),#80
+        LD (IY+CHEPAN),#20
+        LD (IY+CHEVOL),#40
+        RLC C
+        ADD IY,DE
+        DJNZ INITV03
+
+        LD IY,CHANS
+        LD B,#08
+
+INITV04 LD (IY+CHSTAT),#00
+        LD (IY+CHFLAGS),#00
+        LD (IY+CHPORT),#01
+        LD (IY+CHVIBCM),#11
+        LD (IY+CHTRMCM),#11
+        LD (IY+CHOFFST),#01
+        LD (IY+CHWNT),#7F
+        LD (IY+CHOLDV),#80
+        LD (IY+CHEPAN),#20
+        LD (IY+CHEVOL),#40
+        ADD IY,DE
+        DJNZ INITV04
+
+
+        LD IY,CHANS
+        LD (IY+CHSTAT),#00
+        LD (IY+CHRDR),#01
+        LD (IY+CHRDRI),#01
+        LD (IY+CHRDN),#00
+        ADD IY,DE
+        LD (IY+CHSTAT),#20
+        LD (IY+CHRDR),#04
+        LD (IY+CHRDRI),#04
+        LD (IY+CHRDN),#02
+        ADD IY,DE
+        LD (IY+CHSTAT),#20
+        LD (IY+CHRDR),#08
+        LD (IY+CHRDRI),#08
+        LD (IY+CHRDN),#03
+        ADD IY,DE
+        LD (IY+CHSTAT),#00
+        LD (IY+CHRDR),#02
+        LD (IY+CHRDRI),#02
+        LD (IY+CHRDN),#01
+        LD HL,750
+        LD (TICKLEN),HL
+        LD (TCKLEFT),HL
+        LD (FXTICK),HL
+        LD (FXTCLEN),HL
+        LD HX,#80
+        LD DE,#0000
+        IN A,(DATRG)
+        JP COMINT
+
+
+; B - NUMBER OF CHANNELS
+
+INITCHN LD HL,(#EC60)
+        LD (IY+CHPERL),L  ; C-4
+        LD (IY+CHPERH),H
+        LD HL,(#E060)
+        LD (IY+CHFRQL),L
+        LD (IY+CHFRQH),H
+        LD (IY+CHNOTE),48
+        LD (IY+CHFLAGS),#00
+        LD (IY+CHREAL),#7F
+        LD (IY+CHCNTL),#00
+        LD (IY+CHCNTH),#00
+        LD (IY+CHINS),#00
+        LD (IY+CHSMP),#00
+        LD (IY+CHCOM),#00
+        LD (IY+CHPARM),#00
+        LD (IY+CHVIBPS),#00
+        LD (IY+CHTRMPS),#00
+        LD (IY+CHPATPS),#00
+        LD (IY+CHLPCNT),#00
+        LD A,B
+        LD BC,CHANLEN
+        ADD IY,BC
+        LD B,A
+        DJNZ INITCHN
+        RET
+
+
+
+
+
+

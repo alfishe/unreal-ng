@@ -26,6 +26,8 @@
 #include <cctype>
 #include <cinttypes>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <sstream>
 
 namespace mcp
@@ -94,7 +96,8 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["type"] = "object";
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* action : {"create", "list", "list_models", "server", "status", "start", "stop", "pause", "resume", "reset", "destroy"})
+    for (const char* action : {"create", "list", "list_models", "server", "status", "start", "stop", "pause", "resume", "reset", "destroy",
+                               "gs_reset", "gs_reset_card", "gs_nmi", "gs_send_command", "gs_send_data", "gs_read_status", "gs_read_data"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
@@ -102,7 +105,9 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "Lifecycle operation. 'create' makes a new running instance (fails with a reason on models this build "
         "cannot create — no silent fallback); 'list' shows all instances with their machine identity; "
         "'list_models' enumerates hardware models with creatable flags; 'server' reports the build fingerprint "
-        "and models_creatable; 'status' reports one instance's details.";
+        "and models_creatable; 'status' reports one instance's details. 'gs_*' actions drive the General Sound "
+        "card over the same /control/audio/gs endpoint the WebAPI serves (gs_reset/gs_reset_card/gs_nmi/"
+        "gs_send_command/gs_send_data/gs_read_status/gs_read_data; the byte actions need 'value').";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["target"]["description"] = "Emulator id, or 'auto' to reuse the single instance (auto-created when none exists)";
@@ -113,12 +118,16 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "build-dependent — check the 'creatable' flags before assuming a machine exists)";
     schema["properties"]["ram_size"]["type"] = "integer";
     schema["properties"]["ram_size"]["description"] = "Optional RAM size in KB for 'create' (e.g. 128, 256, 512)";
+    schema["properties"]["value"]["type"] = "integer";
+    schema["properties"]["value"]["description"] = "Byte value (0-255) required by gs_send_command and gs_send_data";
     schema["required"].append("action");
 
     registry.Register(
         "emulator_manage",
         "Manage Unreal-NG emulator instances: create, list, switch models, start/stop/pause/resume/reset/destroy. "
-        "Multi-instance: target identifies the machine; 'auto' reuses the single instance or creates a default 128k one.",
+        "Multi-instance: target identifies the machine; 'auto' reuses the single instance or creates a default 128k one. "
+        "Also drives the General Sound card (gs_reset/gs_reset_card/gs_nmi/gs_send_command/gs_send_data/"
+        "gs_read_status/gs_read_data).",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             std::string action = args["action"].asString();
@@ -212,6 +221,41 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                 {
                     ForwardCall("DELETE", Endpoint(id), nullptr, caller, "Destroyed " + id, done);
                 }
+                else if (action == "gs_reset" || action == "gs_reset_card" || action == "gs_nmi" ||
+                         action == "gs_send_command" || action == "gs_send_data" ||
+                         action == "gs_read_status" || action == "gs_read_data")
+                {
+                    // GS card control (GS design §11.3): forwards to the same
+                    // /control/audio/gs endpoint the WebAPI serves - the "gs_"
+                    // prefix maps 1:1 onto the body action names
+                    Json::Value body;
+                    body["action"] = action.substr(3);
+                    if (action == "gs_send_command" || action == "gs_send_data")
+                    {
+                        if (!args.isMember("value"))
+                        {
+                            done(ToolResult::Error("Action '" + action + "' requires 'value' (0-255)"));
+                            return;
+                        }
+                        body["value"] = args["value"].asInt();
+                    }
+                    caller.Call("POST", Endpoint(id, "/control/audio/gs"), &body, [action, done](int status, Json::Value response) {
+                        if (status >= 200 && status < 300)
+                        {
+                            if (response.isMember("value"))
+                            {
+                                done(ToolResult::Ok("GS " + action.substr(3) + " -> " + std::to_string(response["value"].asInt()),
+                                                    std::move(response)));
+                            }
+                            else
+                            {
+                                done(ToolResult::Ok("GS " + action.substr(3) + " done", std::move(response)));
+                            }
+                            return;
+                        }
+                        done(ToolResult::Error("HTTP " + std::to_string(status) + ": " + DescribeErrorBody(response)));
+                    });
+                }
                 else
                 {
                     done(ToolResult::Error("Unknown action '" + action + "'"));
@@ -239,6 +283,36 @@ void RegisterEmulatorManage(ToolRegistry& registry)
 namespace
 {
 
+// Try to read a local file. Returns true if successful, populates content.
+bool TryReadLocalFile(const std::string& path, std::vector<uint8_t>& content)
+{
+    namespace fs = std::filesystem;
+
+    std::error_code ec;
+    if (!fs::exists(path, ec) || ec)
+        return false;
+
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file.is_open())
+        return false;
+
+    const auto size = file.tellg();
+    if (size <= 0 || size > 4 * 1024 * 1024) // Max 4MB
+        return false;
+
+    content.resize(static_cast<size_t>(size));
+    file.seekg(0);
+    file.read(reinterpret_cast<char*>(content.data()), size);
+    return file.good();
+}
+
+// Extract just the filename from a path
+std::string ExtractFilename(const std::string& path)
+{
+    auto pos = path.find_last_of("/\\");
+    return pos == std::string::npos ? path : path.substr(pos + 1);
+}
+
 void RegisterLoadSoftware(ToolRegistry& registry)
 {
     Json::Value schema;
@@ -258,7 +332,9 @@ void RegisterLoadSoftware(ToolRegistry& registry)
     registry.Register(
         "load_software",
         "Load software into the emulator by auto-detecting the file type: snapshots (.sna .z80), tapes (.tap .tzx), "
-        "disk images (.trd .scl .fdi). The machine must be created first (target:'auto' handles that).",
+        "disk images (.trd .scl .fdi). The machine must be created first (target:'auto' handles that). "
+        "If the path exists locally on the MCP host, the file is uploaded to the emulator automatically; "
+        "otherwise, the path is passed to the emulator for direct loading.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             std::string path = args["path"].asString();
@@ -294,8 +370,13 @@ void RegisterLoadSoftware(ToolRegistry& registry)
                                     ? args["drive"].asString()
                                     : "A";
 
-            TargetResolver::ResolveFromArgs(args, caller, [path, ext, isSnapshot, isTape, isDisk, play, drive, &caller, done](
-                                                              bool ok, const std::string& idOrError) {
+            // Try to read local file for piggybacking (MCP bridge uploads embedded content)
+            auto fileContent = std::make_shared<std::vector<uint8_t>>();
+            const bool isLocalFile = TryReadLocalFile(path, *fileContent);
+            const std::string filename = ExtractFilename(path);
+
+            TargetResolver::ResolveFromArgs(args, caller, [path, ext, isSnapshot, isTape, isDisk, play, drive, &caller, done,
+                                                           isLocalFile, fileContent, filename](bool ok, const std::string& idOrError) {
                 if (!ok)
                 {
                     done(ToolResult::Error(idOrError));
@@ -303,38 +384,72 @@ void RegisterLoadSoftware(ToolRegistry& registry)
                 }
                 const std::string& id = idOrError;
 
-                Json::Value body;
-                body["path"] = path;
+                // Build headers for raw upload
+                std::map<std::string, std::string> headers;
+                headers["X-Filename"] = filename;
 
                 if (isSnapshot)
                 {
-                    ForwardCall("POST", Endpoint(id, "/snapshot/load"), &body, caller,
-                                "Loaded snapshot " + path + " into " + id, done);
+                    if (isLocalFile)
+                    {
+                        ForwardCallRaw("POST", Endpoint(id, "/snapshot/load"), *fileContent, headers, caller,
+                                       "Loaded snapshot " + filename + " (uploaded) into " + id, done);
+                    }
+                    else
+                    {
+                        Json::Value body;
+                        body["path"] = path;
+                        ForwardCall("POST", Endpoint(id, "/snapshot/load"), &body, caller,
+                                    "Loaded snapshot " + path + " into " + id, done);
+                    }
                     return;
                 }
 
                 if (isTape)
                 {
-                    caller.Call("POST", Endpoint(id, "/tape/load"), &body, [&caller, id, path, play, done](int status, Json::Value response) {
+                    auto loadDone = [&caller, id, path, filename, play, done, isLocalFile](int status, Json::Value response) {
                         if (status < 200 || status >= 300)
                         {
                             done(ToolResult::Error("Tape load failed (HTTP " + std::to_string(status) + "): " +
                                                    DescribeErrorBody(response)));
                             return;
                         }
+                        std::string loadedName = isLocalFile ? filename + " (uploaded)" : path;
                         if (!play)
                         {
-                            done(ToolResult::Ok("Loaded tape " + path + " into " + id, std::move(response)));
+                            done(ToolResult::Ok("Loaded tape " + loadedName + " into " + id, std::move(response)));
                             return;
                         }
-                        ForwardCall("POST", Endpoint(id, "/tape/play"), nullptr, caller, "Loaded tape " + path + " and started playback on " + id, done);
-                    });
+                        ForwardCall("POST", Endpoint(id, "/tape/play"), nullptr, caller,
+                                    "Loaded tape " + loadedName + " and started playback on " + id, done);
+                    };
+
+                    if (isLocalFile)
+                    {
+                        caller.CallRaw("POST", Endpoint(id, "/tape/load"), *fileContent, headers, loadDone);
+                    }
+                    else
+                    {
+                        Json::Value body;
+                        body["path"] = path;
+                        caller.Call("POST", Endpoint(id, "/tape/load"), &body, loadDone);
+                    }
                     return;
                 }
 
                 // Disk
-                ForwardCall("POST", Endpoint(id, "/disk/" + drive + "/insert"), &body, caller,
-                            "Inserted disk " + path + " into drive " + drive + " of " + id, done);
+                if (isLocalFile)
+                {
+                    ForwardCallRaw("POST", Endpoint(id, "/disk/" + drive + "/insert"), *fileContent, headers, caller,
+                                   "Inserted disk " + filename + " (uploaded) into drive " + drive + " of " + id, done);
+                }
+                else
+                {
+                    Json::Value body;
+                    body["path"] = path;
+                    ForwardCall("POST", Endpoint(id, "/disk/" + drive + "/insert"), &body, caller,
+                                "Inserted disk " + path + " into drive " + drive + " of " + id, done);
+                }
             });
         });
 }
@@ -585,7 +700,7 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["aspects"]["items"]["type"] = "string";
     Json::Value allowed(Json::arrayValue);
     for (const char* aspect : {"machine", "registers", "memory", "memory_map", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "video",
-                               "screen_ocr", "screen_image", "screen_digest", "timing", "rom", "audio_ay", "audio_fm", "fdc", "mouse"})
+                               "screen_ocr", "screen_image", "screen_digest", "timing", "rom", "audio_ay", "audio_fm", "audio_gs", "fdc", "mouse"})
     {
         allowed.append(aspect);
     }
@@ -600,7 +715,8 @@ void RegisterInspectState(ToolRegistry& registry)
         "'paging' = tagged paging latches + bank table (P1-2 design), 'ports' = static port map with semantic tags, "
         "latch bindings and live routing flags, "
         "'audio_ay' = every AY/SSG chip fully decoded, 'audio_fm' = TurboSound FM board + both YM2203 FM halves (mode, timers, "
-        "channels, operators, envelopes, key-on), 'fdc' = Beta Disk WD1793 registers, status, FSM, drives, 'mouse' = "
+        "channels, operators, envelopes, key-on), 'audio_gs' = General Sound card (mailbox flags, MPAG page, DAC channels, "
+        "coprocessor core; reports unavailable when the card is not fitted), 'fdc' = Beta Disk WD1793 registers, status, FSM, drives, 'mouse' = "
         "Kempston mouse state incl. port routing (fitted vs shadowed).";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
@@ -633,7 +749,7 @@ void RegisterInspectState(ToolRegistry& registry)
         "Inspect emulator state in one call: registers, memory ranges, disassembly, stack words, breakpoints, memory banks, "
         "paging state (tagged latches + bank table), static port map with tags (ports), video mode (resolution, color depth, "
         "EFF7 state for Pentagon 16col/HWMC), screen OCR text, screen image metadata, screen digest hash, raster timing, "
-        "ROM signatures, AY/SSG chips (audio_ay), TurboSound FM YM2203 halves (audio_fm), Beta Disk WD1793 (fdc), "
+        "ROM signatures, AY/SSG chips (audio_ay), TurboSound FM YM2203 halves (audio_fm), General Sound card (audio_gs), Beta Disk WD1793 (fdc), "
         "Kempston mouse + port routing (mouse). Combine aspects to reduce round-trips.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn& progress) {
@@ -656,11 +772,11 @@ void RegisterInspectState(ToolRegistry& registry)
                 if (aspect != "machine" && aspect != "registers" && aspect != "memory" && aspect != "memory_map" && aspect != "disasm" && aspect != "stack" &&
                     aspect != "breakpoints" && aspect != "memory_banks" && aspect != "paging" && aspect != "ports" && aspect != "video" &&
                     aspect != "screen_ocr" && aspect != "screen_image" && aspect != "screen_digest" && aspect != "timing" && aspect != "rom" && aspect != "audio_ay" &&
-                    aspect != "audio_fm" && aspect != "fdc" && aspect != "mouse")
+                    aspect != "audio_fm" && aspect != "audio_gs" && aspect != "fdc" && aspect != "mouse")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, "
-                                            "screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, fdc, mouse"));
+                                            "screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, audio_gs, fdc, mouse"));
                     return;
                 }
             }
@@ -943,6 +1059,18 @@ void RegisterInspectState(ToolRegistry& registry)
                                 });
                             });
                         }
+                        else if (aspect == "audio_gs")
+                        {
+                            // GS card state via the WebAPI (GS design §10.1);
+                            // 404 = no GS fitted ([SOUND] GSType selects the card)
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, "/state/audio/gs"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
                     }
 
                     RunSeries(ReportSeriesProgress(std::move(steps), progress, aspects), [aspects, done, id](Json::Value acc) {
@@ -1065,6 +1193,23 @@ void RegisterInspectState(ToolRegistry& registry)
                                                 << (ch[c]["tone_enabled"].asBool() ? "T" : "") << (ch[c]["noise_enabled"].asBool() ? "N" : "")
                                                 << (ch[c]["envelope_enabled"].asBool() ? "E" : "") << "@" << int(ch[c]["frequency_hz"].asDouble()) << "Hz";
                                     }
+                                }
+                            }
+                            else if (aspect == "audio_gs")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[audio_gs] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[audio_gs] " << value["device"].asString()
+                                        << ", page " << value["page"].asUInt() << ", ram " << value["ram_kb"].asUInt() << " KB"
+                                        << (value["rom_loaded"].asBool() ? ", rom ok" : ", rom missing")
+                                        << (value["command_pending"].asBool() ? ", cmd pending" : "")
+                                        << (value["data_pending"].asBool() ? ", data pending" : "");
+                                    const Json::Value& gsChannels = value["channels"];
+                                    for (Json::ArrayIndex i = 0; i < gsChannels.size(); ++i)
+                                        out << "\n  ch" << i << ": sample " << gsChannels[i]["sample"].asUInt()
+                                            << " vol " << gsChannels[i]["volume"].asUInt();
                                 }
                             }
                             else if (aspect == "mouse")

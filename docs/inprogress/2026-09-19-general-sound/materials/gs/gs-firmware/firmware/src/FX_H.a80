@@ -1,0 +1,756 @@
+FXCHK_  LD HL,FXJP2
+        JP FXCHK__
+FXCHK   LD HL,FXJP1
+FXCHK__ LD A,(IY+CHCOM)
+        AND #1F
+        ADD A,A
+        ADD A,L
+        LD L,A
+        LD A,(HL)
+        INC L
+        LD H,(HL)
+        LD L,A
+        LD A,(IY+CHPARM)
+        JP (HL)
+
+FXE_    LD HL,FXEJP2
+        JP FXE__
+FXE     LD HL,FXEJP1
+FXE__   RRCA
+        RRCA
+        RRCA
+        RRCA
+        AND #0F
+        ADD A,A
+        ADD A,L
+        LD L,A
+        LD A,(HL)
+        INC L
+        LD H,(HL)
+        LD L,A
+        LD A,(IY+CHPARM)
+        AND #0F
+        JP (HL)
+
+FXRET   RET
+
+FXNOP   LD L,(IY+CHPERL)
+        LD H,(IY+CHPERH)
+EFXNOP2 CALL EFXCNV
+        LD (IY+CHFRQL),L
+        LD (IY+CHFRQH),H
+        RET
+
+
+
+EFXCNV  LD A,H
+        CP #04
+        JR NC,EFXCNV1
+        XOR A
+        LD (CPAGE),A
+        OUT (PAGE),A
+        ADD HL,HL
+        LD A,H
+        ADD A,#F8
+        LD H,A
+        LD A,(HL)
+        INC HL
+        LD H,(HL)
+        LD L,A
+        RET
+EFXCNV1 PUSH HL
+        LD C,L
+        LD B,H
+        ADD HL,HL
+        ADD HL,HL
+        EX DE,HL
+        LD HL,#0000
+        ADD HL,DE
+        LD E,C
+        LD D,B
+        ADD HL,DE
+        XOR A
+        LD C,A
+        SRL D
+        RR E
+        RR C
+        SRL D
+        RR E
+        RR C
+        ADD A,C
+        ADC HL,DE
+        SRL D
+        RR E
+        RR C
+        ADD A,C
+        ADC HL,DE
+        SRL D
+        RR E
+        RR C
+        ADD A,C
+        ADC HL,DE
+        SRL D
+        RR E
+        RR C
+        SRL D
+        RR E
+        RR C
+        ADD A,C
+        ADC HL,DE
+        SRL D
+        RR E
+        RR C
+        SRL D
+        RR E
+        RR C
+        SRL E
+        RR C
+        ADD A,C
+        ADC HL,DE
+        SRL E
+        RR C
+        ADD A,C
+        ADC HL,DE
+        SRL E
+        RR C
+        SRL E
+        RR C
+        ADD A,C
+        ADC HL,DE
+        SRL H
+        RR L
+        SRL H
+        RR L
+        SRL H
+        RR L
+        JR NC,EFXCNV2
+        INC HL
+EFXCNV2 POP DE
+        ADD HL,DE
+        ADD HL,DE
+        RET
+
+
+ARPTAB  DEFB 0,1,2,0,1,2,0,1,2,0,1,2,0,1,2,0,1,2,0,1,2
+        DEFB 0,1,2,0,1,2,0,1,2,0,1,2,0,1,2,0,1,2,0,1,2
+
+
+
+FX0     OR A
+        JP Z,FXNOP
+        LD B,A
+        LD A,(MTCOUNT)
+        LD HL,ARPTAB
+        ADD A,L
+        LD L,A
+        LD A,H
+        ADC A,#00
+        LD H,A
+        LD A,(HL)
+        OR A
+        JP Z,FXNOP
+        PUSH AF
+        PUSH BC
+        CALL NOTEFND
+        POP BC
+        POP AF
+        DEC A
+        LD A,B
+        JR NZ,FX0_2
+        RRCA
+        RRCA
+        RRCA
+        RRCA
+FX0_2   AND #0F
+        ADD A,E
+        LD E,A
+        CP 96
+        RET NC
+        CALL GETFRQ
+        LD (IY+CHFRQL),L
+        LD (IY+CHFRQH),H
+        RET
+
+FX1     LD E,A
+        LD D,#00
+        LD L,(IY+CHPERL)
+        LD H,(IY+CHPERH)
+        OR A
+        SBC HL,DE
+        JR NC,FX1_2
+        LD HL,#0000
+FX1_2   PUSH HL
+
+        LD HL,113
+
+FX1_8   POP DE
+        OR A
+        SBC HL,DE
+        JR C,FX1_9
+        ADD HL,DE
+        EX DE,HL
+
+FX1_9   SET 7,(IY+CHFLAGS)
+        LD (IY+CHPERL),E
+        LD (IY+CHPERH),D
+        PUSH DE
+        EX DE,HL
+        CALL EFXCNV
+        LD (IY+CHFRQL),L
+        LD (IY+CHFRQH),H
+        POP DE
+        CALL NOTEFND
+        LD (IY+CHREAL),A
+        RET NC
+        LD (IY+CHNOTE),A
+        RES 7,(IY+CHFLAGS)
+        RET
+
+FX2     LD E,A
+        LD D,#00
+        LD L,(IY+CHPERL)
+        LD H,(IY+CHPERH)
+        ADD HL,DE
+        JR NC,FX2_2
+        LD HL,#FFFF
+FX2_2   PUSH HL
+
+        LD HL,856
+
+FX2_8   POP DE
+        OR A
+        SBC HL,DE
+        JR NC,FX2_9
+        ADD HL,DE
+        EX DE,HL
+
+FX2_9   SET 7,(IY+CHFLAGS)
+        LD (IY+CHPERL),E
+        LD (IY+CHPERH),D
+        PUSH DE
+        EX DE,HL
+        CALL EFXCNV
+        LD (IY+CHFRQL),L
+        LD (IY+CHFRQH),H
+        POP DE
+        CALL NOTEFND
+        LD (IY+CHREAL),A
+        RET NC
+        LD (IY+CHNOTE),A
+        RES 7,(IY+CHFLAGS)
+        RET
+
+FX3     OR A
+        JR Z,FX3_1
+        LD (IY+CHPORT),A
+FX3_1   LD A,(IY+CHWNT)
+        CP 96
+        RET NC
+        LD E,A
+        CALL GETPER
+        EX DE,HL
+        LD L,(IY+CHPERL)
+        LD H,(IY+CHPERH)
+        OR A
+        SBC HL,DE
+        JR Z,FX3_9
+        ADD HL,DE
+        LD C,(IY+CHPORT)
+        LD B,#00
+        JR C,FX3_5
+        SBC HL,BC
+        JR C,FX3_9
+        SBC HL,DE
+        JR C,FX3_9
+
+FX3_2   ADD HL,DE
+        LD (IY+CHPERL),L
+        LD (IY+CHPERH),H
+        BIT 2,(IY+CHFLAGS)
+        CALL Z,EFXCNV
+        BIT 2,(IY+CHFLAGS)
+        JR Z,FX3_3
+        EX DE,HL
+        CALL NOTEFND
+        LD E,A
+        CALL GETFRQ
+FX3_3   LD (IY+CHFRQL),L
+        LD (IY+CHFRQH),H
+        RET
+
+FX3_5   ADD HL,BC
+        JR C,FX3_9
+        SBC HL,DE
+        JR C,FX3_2
+
+FX3_9   LD E,(IY+CHWNT)
+        LD (IY+CHNOTE),E
+        LD (IY+CHREAL),E
+        CALL GETPER
+        LD (IY+CHPERL),L
+        LD (IY+CHPERH),H
+        CALL GETFRQ
+        LD (IY+CHFRQL),L
+        LD (IY+CHFRQH),H
+        RES 7,(IY+CHFLAGS)
+        LD (IY+CHCOM),#00
+        LD (IY+CHPARM),#00
+        LD (IY+CHWNT),#7F
+        RET
+
+
+
+
+
+FX3_    RET
+
+FX4     PUSH DE
+        PUSH BC
+
+        OR A
+        JR Z,FX4_3
+        LD L,A
+        LD H,(IY+CHVIBCM)
+        AND #0F
+        JR Z,FX4_1
+        XOR H
+        AND #0F
+        XOR H
+        LD H,A
+FX4_1   LD A,L
+        AND #F0
+        JR Z,FX4_2
+        XOR H
+        AND #F0
+        XOR H
+        LD H,A
+FX4_2   LD (IY+CHVIBCM),H
+
+FX4_3   LD D,(IY+CHVIBPS)
+
+        LD A,D
+        AND #03
+        JR Z,FX4_5
+        CP #03
+        JR NZ,FX4_A
+        LD A,R
+        AND #03
+        JR Z,FX4_5
+        CP #03
+        JR Z,FX4_5
+FX4_A   DEC A
+        JR Z,FX4_4
+        LD E,#FF
+        JP FX4_6
+
+FX4_4   LD A,D
+        AND #7C
+        RLCA
+        LD E,A
+        BIT 7,D
+        JR NZ,FX4_6
+        LD A,#F8
+        SUB E
+        LD E,A
+        JP FX4_6
+
+FX4_5   LD A,D
+        RRCA
+        RRCA
+        AND #1F
+        LD HL,VIBTB
+        ADD A,L
+        LD L,A
+        LD E,(HL)
+
+FX4_6   LD A,(IY+CHVIBCM)
+        AND #0F
+        JR Z,FX4_9
+        LD B,A
+
+        LD HL,#0000
+        LD D,H
+
+FX4_7   ADD HL,DE
+        DJNZ FX4_7
+
+        LD B,#07
+
+        LD A,L
+FX4_8   SRL H
+        RRA
+        DJNZ FX4_8
+
+        ADC A,D
+
+        LD L,A
+        LD H,#00
+        BIT 7,(IY+CHVIBPS)
+        JR Z,FX4_9
+        DEC H
+        CPL
+        LD L,A
+        INC HL
+
+FX4_9   LD E,(IY+CHPERL)
+        LD D,(IY+CHPERH)
+        ADD HL,DE
+
+        CALL EFXNOP2
+
+        LD A,(IY+CHVIBCM)
+        AND #F0
+        RRCA
+        RRCA
+        ADD A,(IY+CHVIBPS)
+        LD (IY+CHVIBPS),A
+
+        POP BC
+        POP DE
+    ;   LD (IY+CHCNTL),#00
+    ;   LD (IY+CHCNTH),#00
+        RET
+
+FX5     CALL FXA
+        JP FX3_1
+
+
+FX6     CALL FXA
+        PUSH DE
+        PUSH BC
+        JP FX4_3
+
+
+FX7     PUSH DE
+        PUSH BC
+
+        OR A
+        JR Z,FX7_3
+        LD L,A
+        LD H,(IY+CHTRMCM)
+        AND #0F
+        JR Z,FX7_1
+        XOR H
+        AND #0F
+        XOR H
+        LD H,A
+FX7_1   LD A,L
+        AND #F0
+        JR Z,FX7_2
+        XOR H
+        AND #F0
+        XOR H
+        LD H,A
+FX7_2   LD (IY+CHTRMCM),H
+
+FX7_3   LD D,(IY+CHTRMPS)
+
+        LD A,D
+        AND #03
+        JR Z,FX7_5
+        CP #03
+        JR NZ,FX7_A
+        LD A,R
+        AND #03
+        JR Z,FX7_5
+        CP #03
+        JR Z,FX7_5
+FX7_A   DEC A
+        JR Z,FX7_4
+        LD E,#FF
+        JP FX7_6
+
+FX7_4   LD A,D
+        AND #7C
+        RLCA
+        LD E,A
+        BIT 7,D
+        JR NZ,FX7_6
+        LD A,#F8
+        SUB E
+        LD E,A
+        JP FX7_6
+
+FX7_5   LD A,D
+        RRCA
+        RRCA
+        AND #1F
+        LD HL,VIBTB
+        ADD A,L
+        LD L,A
+        LD E,(HL)
+
+FX7_6   LD A,(IY+CHTRMCM)
+        AND #0F
+        JR Z,FX7_9
+        LD B,A
+
+        LD HL,#0000
+        LD D,H
+
+FX7_7   ADD HL,DE
+        DJNZ FX7_7
+
+        LD B,#06
+
+        LD A,L
+FX7_8   SRL H
+        RRA
+        DJNZ FX7_8
+
+        ADC A,D
+
+        BIT 7,(IY+CHTRMPS)
+        JR Z,FX7_9
+        LD L,A
+        LD A,(IY+CHVOL)
+        SUB L
+        JR NC,FX7_B
+        XOR A
+        JP FX7_B
+
+FX7_9   ADD A,(IY+CHVOL)
+        CP #40
+        JR C,FX7_B
+        LD A,#40
+FX7_B   CP (IY+CHMVOL)
+        LD (IY+CHMVOL),A
+        JR Z,FX7_C
+        SET 0,(IY+CHSTAT)
+FX7_C   LD A,(IY+CHTRMCM)
+        AND #F0
+        RRCA
+        RRCA
+        ADD A,(IY+CHTRMPS)
+        LD (IY+CHTRMPS),A
+
+        POP BC
+        POP DE
+        RET
+
+
+FX9     OR A
+
+        RET
+
+        JR Z,FX9_1
+        LD (IY+CHOFFST),A
+FX9_1   LD H,(IY+CHOFFST)
+        LD L,#00
+      ; JP NEWSMP
+
+
+FXA     OR A
+        RET Z
+        LD L,A
+        LD A,(IY+CHVOL)
+        LD H,A
+
+        LD A,L
+        AND #F0
+        JR Z,FXA_1
+        RRCA
+        RRCA
+        RRCA
+        RRCA
+        ADD A,H
+        CP #40
+        JR C,FXA_2
+        LD A,#40
+        JP FXA_2
+FXA_1   LD A,H
+        SUB L
+        JR NC,FXA_2
+        LD A,#00
+        LD (IY+CHCOM),A
+        LD (IY+CHPARM),A
+FXA_2   LD (IY+CHVOL),A
+        CP (IY+CHMVOL)
+        LD (IY+CHMVOL),A
+        RET Z
+        SET 0,(IY+CHSTAT)
+        RET
+
+FXB     DEC A
+        LD (MTSNGPS),A
+        XOR A
+        LD (MTBRKPS),A
+        INC A
+        LD (MTJMPFL),A
+        RET
+
+
+
+FXC     CP #40
+        JR C,FXC_1
+        LD A,#40
+FXC_1   LD (IY+CHVOL),A
+        CP (IY+CHMVOL)
+        LD (IY+CHMVOL),A
+        RET Z
+        SET 0,(IY+CHSTAT)
+        RET
+
+FXD     LD L,A
+        AND #F0
+        RRCA
+        LD H,A
+        RRCA
+        RRCA
+        ADD A,H
+        LD H,A
+        LD A,L
+        AND #0F
+        ADD A,H
+        CP #40
+        JR C,FXD_1
+        XOR A
+FXD_1   LD (MTBRKPS),A
+        LD A,#01
+        LD (MTJMPFL),A
+        RET
+
+FXF     OR A
+        JR Z,FXF_5
+        CP #20
+        JR NC,FXF_1
+FXF_0   LD (MTSPEED),A
+        RET
+FXF_1   LD (MTBPM),A
+        SUB #20
+        LD HL,BPMTAB
+        ADD A,A
+        JR NC,FXF_3
+        INC H
+FXF_3   ADD A,L
+        LD L,A
+        JR NC,FXF_4
+        INC H
+FXF_4   LD A,(HL)
+        INC HL
+        LD H,(HL)
+        LD L,A
+        LD (TICKLEN),HL
+        LD (TCKLEFT),HL
+        RET
+
+FXF_5   LD HL,MTSTAT
+        SET 7,(HL)
+        RET
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+FXE0    AND #01
+        LD (MTFILTR),A
+        RET
+
+FXE3    RES 2,(IY+CHFLAGS)
+        OR A
+        RET Z
+        SET 2,(IY+CHFLAGS)
+        RET
+
+FXE4    RES 1,(IY+CHFLAGS)
+        BIT 2,A
+        JR Z,FXE4_2
+        SET 1,(IY+CHFLAGS)
+FXE4_2  AND #03
+        LD L,A
+        LD A,(IY+CHVIBPS)
+        AND #FC
+        OR L
+        LD (IY+CHVIBPS),A
+        RET
+
+FXE5    ADD A,A
+        LD (IY+CHFINE),A
+        RET
+
+FXE6    OR A
+        JR Z,FXE6_3
+        INC (IY+CHLPCNT)
+        DEC (IY+CHLPCNT)
+        JR Z,FXE6_2
+        DEC (IY+CHLPCNT)
+        RET Z
+FXE6_1  LD A,(IY+CHPATPS)
+        LD (MTBRKPS),A
+        LD A,#01
+        LD (MTBRKFL),A
+        RET
+FXE6_2  LD (IY+CHLPCNT),A
+        JP FXE6_1
+FXE6_3  LD A,(MTPATPS)
+        LD (IY+CHPATPS),A
+        RET
+
+FXE7    RES 0,(IY+CHFLAGS)
+        BIT 2,A
+        JR Z,FXE7_2
+        SET 0,(IY+CHFLAGS)
+FXE7_2  AND #03
+        LD L,A
+        LD A,(IY+CHTRMPS)
+        AND #FC
+        OR L
+        LD (IY+CHTRMPS),A
+        RET
+
+
+FXE9    OR A
+        RET Z
+        LD L,A
+        LD A,(MTCOUNT)
+FXE9_1  SUB L
+        JR NC,FXE9_1
+        ADD A,L
+        RET NZ
+        CALL GETSMP
+        RET
+
+FXEA    RLCA
+        RLCA
+        RLCA
+        RLCA
+        JP FXA
+
+FXEC    LD HL,MTCOUNT
+        CP (HL)
+        RET NZ
+        XOR A
+        LD (IY+CHVOL),A
+        CP (IY+CHMVOL)
+        LD (IY+CHMVOL),A
+        RET Z
+        SET 0,(IY+CHSTAT)
+        RET
+
+FXED    LD HL,MTCOUNT
+        CP (HL)
+        RET NZ
+        CALL GETSMP
+        RET
+
+FXEE    LD HL,MTPDT2
+        INC (HL)
+        DEC (HL)
+        RET NZ
+        INC A
+        LD (MTPDT),A
+        RET
+

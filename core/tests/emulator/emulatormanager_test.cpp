@@ -410,22 +410,14 @@ TEST_F(EmulatorManager_Test, CreateEmulatorWithUnsupportedRamReportsReason)
 
 TEST_F(EmulatorManager_Test, CreateEmulatorWithNonCreatableModelReportsReason)
 {
-    // ATM710 has no port decoder and no config folder on master: whichever
-    // guard fires first, the caller must learn WHICH model failed and why
+    // A non-creatable model (e.g. NEXT): whichever guard fires first,
+    // the caller must learn WHICH model failed and why
     std::string error;
-    auto emulator = _manager->CreateEmulatorWithModel("", "ATM710", LoggerLevel::LogWarning, &error);
+    auto emulator = _manager->CreateEmulatorWithModel("", "NEXT", LoggerLevel::LogWarning, &error);
 
-    if (PortDecoder::IsModelSupported(MM_ATM710) && Config::FindModelByShortName("ATM710") != nullptr)
-    {
-        // Builds with full ATM support (e.g. the atm branch) create it fine
-        ASSERT_NE(emulator, nullptr);
-    }
-    else
-    {
-        EXPECT_EQ(emulator, nullptr);
-        EXPECT_NE(error.find("ATM710"), std::string::npos) << "reason was: " << error;
-        EXPECT_FALSE(error.empty());
-    }
+    EXPECT_EQ(emulator, nullptr);
+    EXPECT_NE(error.find("NEXT"), std::string::npos) << "reason was: " << error;
+    EXPECT_FALSE(error.empty());
 }
 
 TEST_F(EmulatorManager_Test, CreateEmulatorWithModelLeavesNoOrphanOnError)
@@ -480,7 +472,7 @@ TEST_F(EmulatorManager_Test, GetMachineIdentityReportsResolvedMachine)
 // whatever IsModelCreatable reports must match what a create attempt does.
 TEST_F(EmulatorManager_Test, PortDecoderIsModelSupportedMatchesCreatableExpectations)
 {
-    // Models with decoders on master
+    // Models with decoders (GetPortDecoderForModel returns a factory instance)
     EXPECT_TRUE(PortDecoder::IsModelSupported(MM_SPECTRUM48));
     EXPECT_TRUE(PortDecoder::IsModelSupported(MM_PENTAGON));
     EXPECT_TRUE(PortDecoder::IsModelSupported(MM_SPECTRUM128));
@@ -488,14 +480,23 @@ TEST_F(EmulatorManager_Test, PortDecoderIsModelSupportedMatchesCreatableExpectat
     EXPECT_TRUE(PortDecoder::IsModelSupported(MM_PROFI));
     EXPECT_TRUE(PortDecoder::IsModelSupported(MM_SCORP));
     EXPECT_TRUE(PortDecoder::IsModelSupported(MM_PROFSCORP));
+    EXPECT_TRUE(PortDecoder::IsModelSupported(MM_ATM710));
+    EXPECT_TRUE(PortDecoder::IsModelSupported(MM_ATM3));
 
-    // Models without decoders on master (the atm branch adds ATM/TS support)
-    if (!PortDecoder::IsModelSupported(MM_ATM710))
+    // ATM710/ATM3 decoders exist and their config folders ship with the
+    // build (bin/configs/atm710, bin/configs/atm3) - so both must report
+    // creatable: the factory succeeds and IsModelCreatable must agree
     {
-        const TMemModel* model = Config::FindModelByShortName("ATM710");
-        ASSERT_NE(model, nullptr);
-        EXPECT_FALSE(Config::IsModelCreatable(*model));
+        const TMemModel* modelAtm710 = Config::FindModelByShortName("ATM710");
+        ASSERT_NE(modelAtm710, nullptr);
+        EXPECT_TRUE(Config::IsModelCreatable(*modelAtm710));
+
+        const TMemModel* modelAtm3 = Config::FindModelByShortName("ATM3");
+        ASSERT_NE(modelAtm3, nullptr);
+        EXPECT_TRUE(Config::IsModelCreatable(*modelAtm3));
     }
+
+    // Models without decoders (no factory case yet)
     if (!PortDecoder::IsModelSupported(MM_TSL))
     {
         const TMemModel* model = Config::FindModelByShortName("TSL");

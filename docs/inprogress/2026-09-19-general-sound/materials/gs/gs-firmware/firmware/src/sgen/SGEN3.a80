@@ -1,0 +1,554 @@
+
+S3_     LD D,C
+        PUSH DE
+        LD D,B
+        EXX
+        POP BC
+S31     SLA B
+        JP C,S318
+
+S310    LD A,LX
+        ADD A,A
+        JP C,S311
+        ADD A,LX
+        JP C,S311
+        ADD A,E
+        JR Z,S310_
+        JP C,S311
+        BIT 7,B
+        JR Z,S310_
+        LD LY,A
+        LD A,LX
+        SRL A
+        SRL A
+        ADD A,LY
+        JR Z,S310_
+        JP C,S311
+S310_   SLI C
+        JP C,S3101
+        JP S3100
+
+
+S3102   JR Z,S3104
+S310A   INC E
+        JR Z,S3105
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S31052
+        LD (DE),A
+        INC E
+        JR Z,S31053
+S3100   LD A,C
+        ADD A,B
+        LD C,A
+        LD A,(HL)
+        INC HL
+        DEC LX
+        LD (DE),A
+        JP NC,S3102
+        JR Z,S3106
+        INC E
+        JR Z,S3107
+        LD LY,A
+        ADD A,(HL)
+        RRA
+        LD HY,A
+        ADD A,LY
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S3109
+        LD A,HY
+        LD (DE),A
+        INC E
+        JR Z,S31092
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JP NZ,S3101
+        JP S31093
+
+S3103    JR Z,S3108
+        INC E
+        JR Z,S3109
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S31092
+        LD (DE),A
+        INC E
+        JR Z,S31093
+S3101    LD A,C
+        ADD A,B
+        LD C,A
+        LD A,(HL)
+        INC HL
+        DEC LX
+        LD (DE),A
+        JP NC,S3103
+        JP NZ,S310A
+S3104   INC E
+S3105   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,2
+        RET
+S31052  SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,1
+        RET
+S31053  SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,0
+        RET
+S3106    INC E
+S3107    RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        RET
+S3108    INC E
+S3109    RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        DEC D
+        RET
+S31092   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,1
+        RET
+S31093   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,0
+        RET
+
+
+
+
+
+S311    SLI C
+        JP C,S3111
+        JR S3110
+
+S3112   JR Z,S3114
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S31141
+        LD (DE),A
+        INC E
+        JR Z,S31142
+S3110   LD A,C
+        ADD A,B
+        LD C,A
+        LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        JP NC,S3112
+        JR Z,S3115
+        LD LY,A
+        ADD A,(HL)
+        RRA
+        LD HY,A
+        ADD A,LY
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S31151
+        LD A,HY
+        LD (DE),A
+        INC E
+        JR Z,S3116
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JP NZ,S3111
+        JP S31162
+
+S3113   JR Z,S31151
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S3116
+        LD (DE),A
+        INC E
+        JR Z,S31162
+S3111   LD A,C
+        ADD A,B
+        LD C,A
+        LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        JP NC,S3113
+        JP NZ,S3112
+
+        SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,2
+        RET
+S31141  SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,1
+        RET
+S31142  SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,0
+        RET
+S3114   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,2
+        RET
+S3115    RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        RET
+S31151   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        DEC D
+        RET
+S3116    RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,1
+        RET
+S31162   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        LD D,0
+        RET
+
+S318    LD A,LX
+        ADD A,A
+        JP C,S319
+        ADD A,LX
+        JP C,S319
+        LD LY,A
+        LD A,LX
+        SRL A
+        ADD A,LY
+        JP C,S319
+        ADD A,E
+        JR Z,S318_
+        JP C,S319
+        BIT 7,B
+        JR Z,S318_
+        LD LY,A
+        LD A,LX
+        SRL A
+        SRL A
+        ADD A,LY
+        JR Z,S318_
+        JP C,S319
+S318_   SLI C
+        JP NC,S3180
+        JP S3181
+
+S3184    INC E
+S3185    RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        RET
+
+S3182    JR Z,S3184
+        INC E
+S31822  JR Z,S3185
+S318222 LD LY,A
+        ADD A,(HL)
+        RRA
+        LD HY,A
+        ADD A,LY
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S3186
+        LD A,HY
+        LD (DE),A
+        INC E
+        JR Z,S31866
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S31867
+
+S3181    LD A,C
+        ADD A,B
+        LD C,A
+        LD A,(HL)
+        INC HL
+        DEC LX
+        LD (DE),A
+        JP C,S3182
+        JR Z,S31871
+        INC E
+        JR Z,S31891
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S3189
+        LD (DE),A
+        INC E
+        JP NZ,S3180
+        JP S31892
+S31871  INC E
+S31891   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        DEC D
+        RET
+
+S3183    JR Z,S3187
+        INC E
+        JR Z,S3188
+        LD LY,A
+        ADD A,(HL)
+        RRA
+        LD HY,A
+        ADD A,LY
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S31891
+        LD A,HY
+        LD (DE),A
+         INC E
+        JR Z,S3189
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S31892
+S3180    LD A,C
+        ADD A,B
+        LD C,A
+        LD A,(HL)
+        INC HL
+        DEC LX
+        LD (DE),A
+        JP C,S3183
+        JR Z,S31844
+        INC E
+        JP NZ,S318222
+         RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        RET
+S3186    RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        DEC D
+        RET
+S31866   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        DEC D
+        DEC D
+        RET
+S31867   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        DEC D
+        DEC D
+        DEC D
+        RET
+
+S31844   INC E
+         RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        RET
+
+S3187    INC E
+S3188    SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        RET
+S3189    SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        DEC D
+        DEC D
+        RET
+S31892   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        DEC D
+        DEC D
+        DEC D
+        RET
+
+
+S319     SLI C
+        JP NC,S3190
+        JP S3191
+
+S3195    RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        RET
+
+S3192    JR Z,S3195
+        LD LY,A
+        ADD A,(HL)
+        RRA
+        LD HY,A
+        ADD A,LY
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S3196
+        LD A,HY
+        LD (DE),A
+        INC E
+        JR Z,S31966
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S31967
+S3191    LD A,C
+        ADD A,B
+        LD C,A
+        LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        JP C,S3192
+        JR Z,S3199
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S31993
+        LD (DE),A
+        INC E
+        JP NZ,S3190
+        JP S31994
+
+S3193    JR Z,S3198
+        LD LY,A
+        ADD A,(HL)
+        RRA
+        LD HY,A
+        ADD A,LY
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S3199
+S31933  LD A,HY
+        LD (DE),A
+        INC E
+        JR Z,S31993
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S31994
+S3190    LD A,C
+        ADD A,B
+        LD C,A
+        LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        JP C,S3193
+        JP NZ,S3192
+         RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        RET
+S3196    RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        DEC D
+        RET
+S31966   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        DEC D
+        DEC D
+        RET
+S31967   RRC C
+        LD LY,C
+        EXX
+        LD E,LY
+        DEC D
+        DEC D
+        DEC D
+        RET
+
+
+S3198    SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        RET
+S3199    SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        DEC D
+        RET
+S31993   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        DEC D
+        DEC D
+        RET
+S31994   SRL C
+        LD LY,C
+        EXX
+        LD E,LY
+        DEC D
+        DEC D
+        DEC D
+        RET
+

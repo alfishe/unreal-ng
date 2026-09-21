@@ -1,6 +1,7 @@
 import requests
 import time
 import logging
+from pathlib import Path
 
 class UnrealApiClient:
     def __init__(self, base_url="http://localhost:8090"):
@@ -119,6 +120,34 @@ class UnrealApiClient:
         resp = self.session.post(self._url(f"/api/v1/emulator/{emulator_id}/tape/load"), json=data)
         return self._handle_response(resp)
 
+    def load_tape_upload(self, emulator_id, file_path_or_bytes, filename=None):
+        """POST /api/v1/emulator/{id}/tape/load with embedded content.
+
+        Args:
+            emulator_id: Emulator instance ID
+            file_path_or_bytes: Local file path (str/Path) or bytes content
+            filename: Required if file_path_or_bytes is bytes
+        """
+        url = self._url(f"/api/v1/emulator/{emulator_id}/tape/load")
+
+        if isinstance(file_path_or_bytes, (str, Path)):
+            path = Path(file_path_or_bytes)
+            with open(path, 'rb') as f:
+                content = f.read()
+            filename = path.name
+        else:
+            content = file_path_or_bytes
+            if not filename:
+                raise ValueError("filename required when uploading bytes")
+
+        # Use raw body with X-Filename header
+        resp = self.session.post(
+            url,
+            data=content,
+            headers={'Content-Type': 'application/octet-stream', 'X-Filename': filename}
+        )
+        return self._handle_response(resp)
+
     def eject_tape(self, emulator_id):
         """POST /api/v1/emulator/{id}/tape/eject"""
         resp = self.session.post(self._url(f"/api/v1/emulator/{emulator_id}/tape/eject"))
@@ -149,6 +178,27 @@ class UnrealApiClient:
         """POST /api/v1/emulator/{id}/disk/{drive}/insert"""
         data = {"path": file_path}
         resp = self.session.post(self._url(f"/api/v1/emulator/{emulator_id}/disk/{drive}/insert"), json=data)
+        return self._handle_response(resp)
+
+    def insert_disk_upload(self, emulator_id, drive, file_path_or_bytes, filename=None):
+        """POST /api/v1/emulator/{id}/disk/{drive}/insert with embedded content."""
+        url = self._url(f"/api/v1/emulator/{emulator_id}/disk/{drive}/insert")
+
+        if isinstance(file_path_or_bytes, (str, Path)):
+            path = Path(file_path_or_bytes)
+            with open(path, 'rb') as f:
+                content = f.read()
+            filename = path.name
+        else:
+            content = file_path_or_bytes
+            if not filename:
+                raise ValueError("filename required when uploading bytes")
+
+        resp = self.session.post(
+            url,
+            data=content,
+            headers={'Content-Type': 'application/octet-stream', 'X-Filename': filename}
+        )
         return self._handle_response(resp)
 
     def create_disk(self, emulator_id, drive, cylinders=80, sides=2):
@@ -221,6 +271,27 @@ class UnrealApiClient:
         """POST /api/v1/emulator/{id}/snapshot/load"""
         data = {"path": file_path}
         resp = self.session.post(self._url(f"/api/v1/emulator/{emulator_id}/snapshot/load"), json=data)
+        return self._handle_response(resp)
+
+    def load_snapshot_upload(self, emulator_id, file_path_or_bytes, filename=None):
+        """POST /api/v1/emulator/{id}/snapshot/load with embedded content."""
+        url = self._url(f"/api/v1/emulator/{emulator_id}/snapshot/load")
+
+        if isinstance(file_path_or_bytes, (str, Path)):
+            path = Path(file_path_or_bytes)
+            with open(path, 'rb') as f:
+                content = f.read()
+            filename = path.name
+        else:
+            content = file_path_or_bytes
+            if not filename:
+                raise ValueError("filename required when uploading bytes")
+
+        resp = self.session.post(
+            url,
+            data=content,
+            headers={'Content-Type': 'application/octet-stream', 'X-Filename': filename}
+        )
         return self._handle_response(resp)
 
     def get_snapshot_info(self, emulator_id):
