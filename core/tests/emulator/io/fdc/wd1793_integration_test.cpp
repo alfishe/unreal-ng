@@ -33,7 +33,7 @@
 /// WD1793 Integration Tests
 /// Tests full TR-DOS integration scenarios including FORMAT operations
 
-class DISABLED_WD1793_Integration_Test : public ::testing::Test
+class WD1793_Integration_Test : public ::testing::Test
 {
 protected:
     Emulator* _emulator = nullptr;
@@ -71,7 +71,7 @@ protected:
 };
 
 /// @brief Verify TR-DOS catalog structure after format
-TEST_F(DISABLED_WD1793_Integration_Test, TRDOS_CatalogStructure)
+TEST_F(WD1793_Integration_Test, TRDOS_CatalogStructure)
 {
     if (!_emulator)
     {
@@ -134,7 +134,7 @@ TEST_F(DISABLED_WD1793_Integration_Test, TRDOS_CatalogStructure)
 
 /// @brief Verify sector interleave pattern matches TR-DOS standard
 /// TR-DOS uses 1:2 interleave: 1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15, 8, 16
-TEST_F(DISABLED_WD1793_Integration_Test, TRDOS_SectorInterleave)
+TEST_F(WD1793_Integration_Test, TRDOS_SectorInterleave)
 {
     if (!_emulator)
     {
@@ -170,7 +170,7 @@ TEST_F(DISABLED_WD1793_Integration_Test, TRDOS_SectorInterleave)
 }
 
 /// @brief Verify all tracks are populated after format
-TEST_F(DISABLED_WD1793_Integration_Test, AllTracksPopulated)
+TEST_F(WD1793_Integration_Test, AllTracksPopulated)
 {
     if (!_emulator)
     {
@@ -210,9 +210,10 @@ TEST_F(DISABLED_WD1793_Integration_Test, AllTracksPopulated)
 }
 
 /// @brief Integration test: Full FORMAT operation with disk validation
-/// Uses modern BasicEncoder + ScreenOCR patterns for command injection and verification
-/// Executes REAL TR-DOS FORMAT command through proper command injection (not ROM hacks)
-TEST_F(DISABLED_WD1793_Integration_Test, TRDOS_FORMAT_FullOperation)
+/// Executes the REAL TR-DOS FORMAT command: the machine is reset into TR-DOS and its cold start runs the
+/// command (the same mechanism as disk autostart). Synchronous, emulated time only - no emulator thread,
+/// no frame pacing, no keyboard or screen automation to reach the command.
+TEST_F(WD1793_Integration_Test, TRDOS_FORMAT_FullOperation)
 {
     if (!_emulator)
     {
@@ -223,73 +224,9 @@ TEST_F(DISABLED_WD1793_Integration_Test, TRDOS_FORMAT_FullOperation)
     std::cout << "[FORMAT] Full TR-DOS FORMAT Integration Test\n";
     std::cout << "========================================\n";
 
-    // Get emulator context components
-    EmulatorContext* context = _emulator->GetContext();
-    Memory* memory = context->pMemory;
-    std::string emulatorId = _emulator->GetId();
-    auto* mainLoop = reinterpret_cast<MainLoop_CUT*>(context->pMainLoop);
-
     // ========================================
-    // STEP 1: ROM Initialization
+    // STEP 1: Insert an empty disk
     // ========================================
-    std::cout << "[STEP 1] Running ROM initialization (100 frames)...\n";
-    for (int i = 0; i < 100; i++)
-    {
-        mainLoop->RunFrame();
-    }
-
-    // Verify with OCR - RESET=BASIC boots straight into 48K BASIC (no 128K menu)
-    std::string screenInit = ScreenOCR::ocrScreen(emulatorId);
-    std::cout << "[STEP 1] Screen after ROM init:\n" << screenInit << "\n";
-    ASSERT_TRUE(screenInit.find("1982") != std::string::npos || screenInit.find("Sinclair") != std::string::npos)
-        << "48K BASIC should be visible after RESET=BASIC boot. Got:\n"
-        << screenInit;
-    std::cout << "[STEP 1] ✓ 48K BASIC visible\n";
-
-    // ========================================
-    // STEP 2: Enter TR-DOS from 48K BASIC
-    // ========================================
-    // Same entry as real hardware: RANDOMIZE USR 15616 jumps to $3D00, the DOS
-    // session trap maps the TR-DOS ROM into bank0. (The 128K menu "TR-DOS" item
-    // routes through the 128-editor trampoline and is no longer the boot path.)
-    std::cout << "[STEP 2] Entering TR-DOS via RANDOMIZE USR 15616...\n";
-    auto trdosEntry = BasicEncoder::runCommand(_emulator, "RANDOMIZE USR 15616");
-    ASSERT_TRUE(trdosEntry.success) << "Failed to enter TR-DOS: " << trdosEntry.message;
-
-    // Run frames for menu transition
-    for (int i = 0; i < 100; i++)
-    {
-        mainLoop->RunFrame();
-    }
-
-    // Verify TR-DOS prompt via OCR
-    std::string screenTRDOS = ScreenOCR::ocrScreen(emulatorId);
-    std::cout << "[STEP 2] Screen after navigation:\n" << screenTRDOS << "\n";
-
-    // TR-DOS prompt shows "A>" for drive A
-    bool inTRDOS = screenTRDOS.find("A>") != std::string::npos || screenTRDOS.find("Insert") != std::string::npos ||
-                   screenTRDOS.find("TR-DOS") != std::string::npos;
-
-    if (!inTRDOS)
-    {
-        // Run more frames - TR-DOS boot can take longer
-        for (int i = 0; i < 200; i++)
-        {
-            mainLoop->RunFrame();
-        }
-        screenTRDOS = ScreenOCR::ocrScreen(emulatorId);
-        std::cout << "[STEP 2] Screen after extended wait:\n" << screenTRDOS << "\n";
-        inTRDOS = screenTRDOS.find("A>") != std::string::npos;
-    }
-
-    ASSERT_TRUE(inTRDOS) << "TR-DOS prompt should be visible. Got:\n" << screenTRDOS;
-    std::cout << "[STEP 2] ✓ TR-DOS prompt visible\n";
-
-    // ========================================
-    // STEP 3: Insert Empty Disk
-    // ========================================
-    std::cout << "[STEP 3] Inserting empty disk image (80T, 2 sides)...\n";
-
     WD1793* wd1793 = _context->pBetaDisk;
     ASSERT_NE(wd1793, nullptr) << "WD1793 not available";
 
@@ -300,263 +237,156 @@ TEST_F(DISABLED_WD1793_Integration_Test, TRDOS_FORMAT_FullOperation)
     ASSERT_NE(diskImage, nullptr) << "Failed to create disk image";
 
     fdd->insertDisk(diskImage);
-    std::cout << "[STEP 3] ✓ Empty disk inserted\n";
+    std::cout << "[STEP 1] ✓ Empty disk inserted (80T, 2 sides)\n";
 
     // ========================================
-    // STEP 4: Set up breakpoint automation BEFORE injecting command
+    // STEP 2: Start FORMAT through TR-DOS' own cold start
     // ========================================
-    // NOTE: Breakpoints must be set BEFORE injecting command to intercept $1EDD
-    std::cout << "[STEP 4] Setting up FORMAT automation breakpoints...\n";
-
-    Z80* cpu = _context->pCore->GetZ80();
-    ASSERT_NE(cpu, nullptr) << "Z80 not available";
-
-    BreakpointManager* bpMgr = _context->pDebugManager->GetBreakpointsManager();
-    ASSERT_NE(bpMgr, nullptr) << "BreakpointManager not available";
-
-    // Enable debug features for breakpoints to work
-    EmulatorTestHelper::EnableDebugFeatures(_emulator);
-
-    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    bool formatDone = false;
-    bool bpHit = false;
-    int tracksFormatted = 0;
-
-    auto handler = [&](int id, Message* msg) {
-        SimpleNumberPayload* payload = dynamic_cast<SimpleNumberPayload*>(msg->obj);
-        
-        if (cpu->pc == 0x1EDD)
-        {
-            // We're bypassing CALL $3200 which sets up critical FORMAT variables:
-            // 1. $5CE6 = address of sector interleave table for formatting (ROM: $1FB9)
-            // 2. $5CE8 = address of sector table for verification (ROM: $1FBA)
-            // 3. A = drive type (0x80 for 80-track)
-            // Without these, FORMAT uses garbage sector numbers!
-            
-            // Set sector table pointers (critical for FORMAT to work!)
-            memory->DirectWriteToZ80Memory(0x5CE6, 0xB9);  // Low byte of $1FB9
-            memory->DirectWriteToZ80Memory(0x5CE7, 0x1F);  // High byte of $1FB9
-            memory->DirectWriteToZ80Memory(0x5CE8, 0xBA);  // Low byte of $1FBA  
-            memory->DirectWriteToZ80Memory(0x5CE9, 0x1F);  // High byte of $1FBA
-            
-            // Set A=0x80 for 80-track normal format
-            // (the AND #80 at $1EE0 checks for 80-track drive type)
-            cpu->a = 0x80;
-            cpu->pc = 0x1EE0;
-            bpHit = true;
-            std::cout << "[HANDLER] ✓ Breakpoint $1EDD hit - bypassing format-type prompt\n" 
-                      << "           Set $5CE6=$1FB9 (format table), $5CE8=$1FBA (verify table)\n" << std::flush;
-        }
-        _emulator->Resume();
-    };
-    uint64_t handlerId = messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
-
-    // Use page-specific breakpoint for TR-DOS ROM (page 1 on Pentagon)
-    // Only need $1EDD to bypass format-type prompt
-    uint16_t bp1 = bpMgr->AddExecutionBreakpointInPage(0x1EDD, 1, BANK_ROM, "fmt");
-    std::cout << "[STEP 4] ✓ Breakpoint set at $1EDD (TR-DOS ROM page 1)\n";
+    TRDOSTestHelper trdos(_emulator);
+    trdos.startCommand("FORMAT \"testdisk\"");
+    trdos.skipFormatTypePrompt();  // Interactive prompt: unattended run selects 80T DS
+    std::cout << "[STEP 2] ✓ FORMAT started\n";
 
     // ========================================
-    // STEP 5: Inject and execute FORMAT Command
+    // STEP 3: Run until FORMAT completes or fails (emulated time only)
     // ========================================
-    std::cout << "[STEP 5] Injecting FORMAT command...\n";
+    // One poll step = 50 frames = 1 emulated second (the screen OCR per poll is the costly part)
+    constexpr unsigned kFramesPerPoll = 50;
+    constexpr uint64_t kMaxCycles = 180ull * WD1793::Z80_FREQUENCY;  // 180 emulated seconds
 
-    // FORMAT command: FORMAT "diskname" for TR-DOS
-    auto result = BasicEncoder::injectToTRDOS(memory, "FORMAT \"testdisk\"");
-    EXPECT_TRUE(result.success) << "Failed to inject FORMAT command: " << result.message;
-
-    // Inject ENTER to execute
-    BasicEncoder::injectEnter(memory);
-    std::cout << "[STEP 5] ✓ FORMAT command injected\n";
-
-    // ========================================
-    // STEP 6: Run emulator ASYNC for breakpoint handling
-    // ========================================
-    // IMPORTANT: Must run async so MessageCenter handler can call Resume()
-    // while emulator thread waits on WaitWhilePaused() after breakpoint fire
-    std::cout << "[STEP 6] Starting emulator async for FORMAT execution...\n";
-    _emulator->StartAsync();
-    
-    // Wait a short time for initial processing
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    
-    // Verify format-type prompt was bypassed
-    std::string screen = ScreenOCR::ocrScreen(emulatorId);
-    if (screen.find("TURBO-FORMAT") != std::string::npos)
-    {
-        std::cout << "[STEP 6] ⚠ TURBO-FORMAT prompt appeared - breakpoint may not have fired\n";
-        std::cout << "[STEP 6] Current screen:\n" << screen << "\n";
-        _emulator->Stop();
-        FAIL() << "TURBO-FORMAT prompt appeared - breakpoint did not bypass the format-type selection";
-    }
-    std::cout << "[STEP 6] ✓ Format-type prompt bypassed\n";
-
-    // STEP 6b: Wait until FORMAT completes (A> prompt returns) or fails
-    // FORMAT takes 2-3 minutes for 80T DS disk
-    std::cout << "[STEP 6b] Waiting for FORMAT to complete (up to 180 seconds)...\n" << std::flush;
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(180);
     int progress = 0;
     std::string lastProgress;
+    bool formatDone = false;
     bool formatFailed = false;
     std::string failureReason;
 
-    while (!formatDone && !formatFailed && std::chrono::steady_clock::now() < deadline)
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    trdos.runUntil(
+        [&]() {
+            progress++;
 
-        if (!_emulator->IsRunning())
-        {
-            std::cout << "[STEP 6b] ⚠ Emulator stopped unexpectedly!\n" << std::flush;
-            formatFailed = true;
-            failureReason = "Emulator stopped unexpectedly";
-            break;
-        }
+            // Check WD1793 status register for hardware errors
+            // Use const reference to access public const getter (non-const version is protected)
+            const WD1793& wdConst = *wd1793;
+            uint8_t wdStatus = wdConst.getStatusRegister();
+            bool wdBusy = (wdStatus & 0x01);  // WDS_BUSY
 
-        // Check WD1793 status register for hardware errors
-        // Use const reference to access public const getter (non-const version is protected)
-        const WD1793& wdConst = *wd1793;
-        uint8_t wdStatus = wdConst.getStatusRegister();
-        bool wdBusy = (wdStatus & 0x01);  // WDS_BUSY
-
-        // Note: Bit 2 (0x04) means WDS_TRK00 for Type I commands (RESTORE/SEEK/STEP)
-        // but WDS_LOSTDATA for Type II/III commands. Only check for Lost Data
-        // when the FDC is actually executing a write command.
-        auto lastCmd = wd1793->getLastDecodedCommand();
-        bool isWriteCommand = (lastCmd == WD1793::WD_CMD_WRITE_SECTOR || 
-                               lastCmd == WD1793::WD_CMD_WRITE_TRACK);
-        if ((wdStatus & 0x04) && isWriteCommand)
-        {
-            std::cout << "[STEP 6b] ⚠ WD1793 Lost Data error detected (status=0x"
-                      << std::hex << (int)wdStatus << std::dec << ")\n" << std::flush;
-            formatFailed = true;
-            failureReason = "WD1793 Lost Data error";
-            break;
-        }
-        // Note: Bit 5 (0x20) means WDS_HEADLOADED for Type I commands (RESTORE/SEEK/STEP)
-        // but WDS_WRITEFAULT for WRITE TRACK command. Only check for Write Fault
-        // when the FDC is actually executing WRITE TRACK (command byte 0xF0).
-        if ((wdStatus & 0x20) && lastCmd == WD1793::WD_CMD_WRITE_TRACK)
-        {
-            std::cout << "[STEP 6b] ⚠ WD1793 Write Fault detected (status=0x"
-                      << std::hex << (int)wdStatus << std::dec << ")\n" << std::flush;
-            formatFailed = true;
-            failureReason = "WD1793 Write Fault";
-            break;
-        }
-
-        screen = ScreenOCR::ocrScreen(emulatorId);
-
-        // If WD1793 is idle but we haven't seen completion, check if we're stuck
-        // Note: Only check after initial startup - increased from 4 to 20 (10 seconds)
-        // to allow more time for FORMAT to initialize
-        if (!wdBusy && progress > 20)
-        {
-            // WD1793 is not busy - format might have failed silently
-            // Check screen for error messages more thoroughly
-            if (screen.find("A>") == std::string::npos &&
-                screen.find("HEAD") == std::string::npos &&
-                screen.find("Press R") == std::string::npos)
+            // Note: Bit 2 (0x04) means WDS_TRK00 for Type I commands (RESTORE/SEEK/STEP)
+            // but WDS_LOSTDATA for Type II/III commands. Only check for Lost Data
+            // when the FDC is actually executing a write command.
+            auto lastCmd = wd1793->getLastDecodedCommand();
+            bool isWriteCommand = (lastCmd == WD1793::WD_CMD_WRITE_SECTOR || lastCmd == WD1793::WD_CMD_WRITE_TRACK);
+            if ((wdStatus & 0x04) && isWriteCommand)
             {
-                std::cout << "[STEP 6b] ⚠ WD1793 idle but no progress/completion detected\n" << std::flush;
-                std::cout << "[STEP 6b] Debug: lastCmd=" << (int)lastCmd 
-                          << ", status=0x" << std::hex << (int)wdStatus << std::dec << "\n" << std::flush;
+                formatFailed = true;
+                failureReason = "WD1793 Lost Data error";
+                return true;
+            }
+            // Note: Bit 5 (0x20) means WDS_HEADLOADED for Type I commands (RESTORE/SEEK/STEP)
+            // but WDS_WRITEFAULT for WRITE TRACK command. Only check for Write Fault
+            // when the FDC is actually executing WRITE TRACK (command byte 0xF0).
+            if ((wdStatus & 0x20) && lastCmd == WD1793::WD_CMD_WRITE_TRACK)
+            {
+                formatFailed = true;
+                failureReason = "WD1793 Write Fault";
+                return true;
+            }
+
+            const std::string screen = trdos.screenText();
+
+            // The interactive format-type prompt must have been skipped, never shown
+            if (screen.find("TURBO-FORMAT") != std::string::npos)
+            {
+                formatFailed = true;
+                failureReason = "TURBO-FORMAT prompt appeared - the $1EDD bypass did not skip the format-type selection";
+                return true;
+            }
+
+            // If WD1793 is idle but we haven't seen completion, check if we're stuck
+            // (only after initial startup: 10 emulated seconds)
+            if (!wdBusy && progress > 10 && screen.find("A>") == std::string::npos &&
+                screen.find("HEAD") == std::string::npos && screen.find("Press R") == std::string::npos)
+            {
                 formatFailed = true;
                 failureReason = "WD1793 idle without completion or error message";
-                break;
+                return true;
             }
-        }
-        
-        // Extract HEAD/CYLINDER progress from screen
-        std::string currentProgress;
-        auto headPos = screen.find("HEAD");
-        if (headPos != std::string::npos)
-        {
-            // Extract "HEAD X  CYLINDER Y" line
-            auto lineEnd = screen.find('\n', headPos);
-            if (lineEnd == std::string::npos) lineEnd = screen.length();
-            currentProgress = StringHelper::Trim(screen.substr(headPos, lineEnd - headPos));
-        }
-        
-        // Check for format SUCCESS:
-        // 1. A> prompt visible (returned to command prompt)
-        // 2. "Press R for repeat FORMAT" message (format completed, waiting for keypress)
-        if (screen.find("A>") != std::string::npos && screen.find("FORMAT") == std::string::npos)
-        {
-            formatDone = true;
-            std::cout << "[STEP 6b] ✓ Format completed - A> prompt visible\n" << std::flush;
-        }
-        else if (screen.find("repeat FORMAT") != std::string::npos || 
-                 screen.find("Press R") != std::string::npos)
-        {
-            formatDone = true;
-            std::cout << "[STEP 6b] ✓ Format completed - repeat/TR-DOS prompt visible\n" << std::flush;
-        }
-        // Check for format FAILURE (TR-DOS error messages):
-        else if (screen.find("No disk") != std::string::npos)
-        {
-            formatFailed = true;
-            failureReason = "No disk in drive";
-        }
-        else if (screen.find("Disc Error") != std::string::npos ||  // TR-DOS spelling
-                 screen.find("Disk error") != std::string::npos ||
-                 screen.find("disk error") != std::string::npos)
-        {
-            formatFailed = true;
-            failureReason = "Disk/Disc error";
-        }
-        else if (screen.find("Retry,Abort,Ignore") != std::string::npos ||
-                 screen.find("Retry, Abort") != std::string::npos)
-        {
-            formatFailed = true;
-            failureReason = "TR-DOS error prompt (Retry,Abort,Ignore)";
-        }
-        else if (screen.find("Write protect") != std::string::npos)
-        {
-            formatFailed = true;
-            failureReason = "Disk is write protected";
-        }
-        else if (screen.find("Error") != std::string::npos && 
-                 screen.find("HEAD") == std::string::npos)  // Avoid false positives during active formatting
-        {
-            formatFailed = true;
-            failureReason = "TR-DOS error detected";
-        }
-        else if (!currentProgress.empty() && currentProgress != lastProgress)
-        {
-            // Show progress only when HEAD/CYLINDER changes
-            std::cout << "[STEP 6b] " << currentProgress << "\n" << std::flush;
-            lastProgress = currentProgress;
-        }
 
-        progress++;
-    }
-    
-    std::cout << "[STEP 6b] Loop finished after " << (progress / 2) << " seconds\n" << std::flush;
-    
-    // Stop the emulator
-    _emulator->Stop();
+            // Extract HEAD/CYLINDER progress from screen
+            std::string currentProgress;
+            auto headPos = screen.find("HEAD");
+            if (headPos != std::string::npos)
+            {
+                auto lineEnd = screen.find('\n', headPos);
+                if (lineEnd == std::string::npos)
+                    lineEnd = screen.length();
+                currentProgress = StringHelper::Trim(screen.substr(headPos, lineEnd - headPos));
+            }
 
-    // Cleanup breakpoints
-    messageCenter.RemoveObserverById(NC_EXECUTION_BREAKPOINT, handlerId);
-    bpMgr->RemoveBreakpointByID(bp1);
+            // Format SUCCESS: A> prompt is back, or the "repeat FORMAT" message is shown
+            if (trdos.formatFinishedOnScreen())
+            {
+                formatDone = true;
+                std::cout << "[STEP 3] ✓ Format completed\n";
+                return true;
+            }
 
-    // Final screen
-    screen = ScreenOCR::ocrScreen(emulatorId);
-    std::cout << "[STEP 6b] Final screen:\n" << screen << "\n";
+            // Format FAILURE (TR-DOS error messages)
+            struct ErrorPattern
+            {
+                const char* text;
+                const char* reason;
+            };
+            static const ErrorPattern errors[] = {
+                {"No disk", "No disk in drive"},
+                {"Disc Error", "Disk/Disc error"},
+                {"Disk error", "Disk/Disc error"},
+                {"disk error", "Disk/Disc error"},
+                {"Retry,Abort,Ignore", "TR-DOS error prompt (Retry,Abort,Ignore)"},
+                {"Retry, Abort", "TR-DOS error prompt (Retry,Abort,Ignore)"},
+                {"Write protect", "Disk is write protected"},
+            };
+            for (const ErrorPattern& e : errors)
+            {
+                if (screen.find(e.text) != std::string::npos)
+                {
+                    formatFailed = true;
+                    failureReason = e.reason;
+                    return true;
+                }
+            }
+            if (screen.find("Error") != std::string::npos && screen.find("HEAD") == std::string::npos)
+            {
+                // Avoid false positives during active formatting (HEAD/CYLINDER visible)
+                formatFailed = true;
+                failureReason = "TR-DOS error detected";
+                return true;
+            }
 
-    // Check for failure first (exits loop early on error detection)
+            if (!currentProgress.empty() && currentProgress != lastProgress)
+            {
+                std::cout << "[STEP 3] " << currentProgress << "\n" << std::flush;
+                lastProgress = currentProgress;
+            }
+            return false;
+        },
+        kMaxCycles, kFramesPerPoll);
+
+    std::cout << "[STEP 3] Finished after " << progress << " emulated seconds\n" << std::flush;
+
+    const std::string finalScreen = trdos.screenText();
+    std::cout << "[STEP 3] Final screen:\n" << finalScreen << "\n";
+
     if (formatFailed)
     {
-        FAIL() << "FORMAT failed: " << failureReason << "\nScreen:\n" << screen;
+        FAIL() << "FORMAT failed: " << failureReason << "\nScreen:\n" << finalScreen;
     }
-    
-    // Then check for success (or timeout if neither failed nor succeeded)
-    ASSERT_TRUE(formatDone) << "FORMAT did not complete within 180 seconds (timeout)";
+    ASSERT_TRUE(formatDone) << "FORMAT did not complete within 180 emulated seconds";
+    ASSERT_TRUE(trdos.formatPromptSkipped()) << "FORMAT never reached the format-type prompt at $1EDD";
 
     // ========================================
-    // STEP 6: Validate Disk Structure
+    // STEP 4: Validate Disk Structure
     // ========================================
-    std::cout << "[STEP 6] Validating disk structure...\n";
+    std::cout << "[STEP 4] Validating disk structure...\n";
 
     // Check Track 0 (system track)
     DiskImage::Track* track0 = diskImage->getTrackForCylinderAndSide(0, 0);
@@ -572,7 +402,7 @@ TEST_F(DISABLED_WD1793_Integration_Test, TRDOS_FORMAT_FullOperation)
         uint8_t numFiles = sector8[0xE4];
         uint16_t freeSectors = sector8[0xE5] | (sector8[0xE6] << 8);
 
-        std::cout << "[STEP 6] Disk info from sector 8:\n";
+        std::cout << "[STEP 4] Disk info from sector 8:\n";
         std::cout << "  First free sector: " << (int)firstFreeSector << "\n";
         std::cout << "  First free track: " << (int)firstFreeTrack << "\n";
         std::cout << "  Disk type: 0x" << std::hex << (int)diskType << std::dec << "\n";
@@ -586,11 +416,11 @@ TEST_F(DISABLED_WD1793_Integration_Test, TRDOS_FORMAT_FullOperation)
         EXPECT_EQ(numFiles, 0x00) << "Number of files should be 0";
         EXPECT_GE(freeSectors, 2400) << "Free sectors should be ~2544";
 
-        std::cout << "[STEP 6] ✓ Disk info structure valid\n";
+        std::cout << "[STEP 4] ✓ Disk info structure valid\n";
     }
     else
     {
-        std::cout << "[STEP 6] ⚠ Could not read disk info sector\n";
+        std::cout << "[STEP 4] ⚠ Could not read disk info sector\n";
     }
 
     // Count tracks with data
@@ -614,7 +444,7 @@ TEST_F(DISABLED_WD1793_Integration_Test, TRDOS_FORMAT_FullOperation)
         }
     }
 
-    std::cout << "[STEP 6] Tracks with data: " << tracksWithData << " / 160\n";
+    std::cout << "[STEP 4] Tracks with data: " << tracksWithData << " / 160\n";
     EXPECT_GE(tracksWithData, 1) << "At least track 0 should have data";
 
     // ========================================
@@ -622,10 +452,8 @@ TEST_F(DISABLED_WD1793_Integration_Test, TRDOS_FORMAT_FullOperation)
     // ========================================
     std::cout << "\n========================================\n";
     std::cout << "[FORMAT] Test Summary:\n";
-    std::cout << "  ✓ ROM initialized and 48K BASIC visible\n";
-    std::cout << "  ✓ Entered TR-DOS via RANDOMIZE USR 15616\n";
     std::cout << "  ✓ Empty disk inserted\n";
-    std::cout << "  ✓ FORMAT command injected and executed\n";
+    std::cout << "  ✓ FORMAT run by TR-DOS cold start (no key injection)\n";
     std::cout << "  ✓ Disk structure validated\n";
     std::cout << "  Tracks formatted: " << tracksWithData << " / 160\n";
     std::cout << "========================================\n";
