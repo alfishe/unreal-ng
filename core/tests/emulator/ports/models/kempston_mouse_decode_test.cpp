@@ -109,11 +109,8 @@ TEST_P(KempstonMouseModelDecode_Test, MirroredAddressesAnswer)
 TEST_P(KempstonMouseModelDecode_Test, KeyboardKeepsEvenAddresses)
 {
     // Scorpion's keyboard decode also needs A5 = 1 (mask #23), so it never overlaps the
-    // mouse pattern there; on the A0-only machines the ULA arm must win the overlap
-    const std::string model = GetParam();
-    if (model == "SCORPION" || model == "PROFSCORP")
-        GTEST_SKIP() << "no keyboard/mouse address overlap on Scorpion";
-
+    // mouse pattern there; on the A0-only machines the ULA arm must win the overlap.
+    // Either way an even address must never answer as the mouse
     // #03DE: A0 = 0 (ULA keyboard); A0 is part of the mouse decode, so never the mouse
     EXPECT_NE(In(0x03DE), kTestX);
 }
