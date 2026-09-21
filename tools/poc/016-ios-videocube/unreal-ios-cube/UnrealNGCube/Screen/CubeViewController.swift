@@ -64,6 +64,7 @@ final class CubeViewController: UIViewController {
     private var cameraZoomScale: CGFloat = 1.0
     private var initialPinchZoom: CGFloat = 1.0
     private var isAutoRotating: Bool = true
+    private var initialTwoFingerRotZ: Float = 0.0   // rotZ at two-finger gesture start
 
     // HUD
     private let hudOverlayView = UIView()
@@ -410,11 +411,17 @@ final class CubeViewController: UIViewController {
 
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
         pan.delegate = self
+        // One finger spins; two fingers belong to rotate + pinch
+        pan.maximumNumberOfTouches = 1
         view.addGestureRecognizer(pan)
 
         let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
         pinch.delegate = self
         view.addGestureRecognizer(pinch)
+
+        let rotation = UIRotationGestureRecognizer(target: self, action: #selector(handleTwoFingerRotation(_:)))
+        rotation.delegate = self
+        view.addGestureRecognizer(rotation)
     }
 
     @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
@@ -430,6 +437,27 @@ final class CubeViewController: UIViewController {
             initialPinchZoom = cameraZoomScale
         case .changed:
             cameraZoomScale = min(max(initialPinchZoom * gesture.scale, 0.5), 10.0)
+        default:
+            break
+        }
+    }
+
+    @objc private func handleTwoFingerRotation(_ gesture: UIRotationGestureRecognizer) {
+        // Two-finger twist rolls the cube around the screen (Z) axis. The
+        // gesture reports cumulative radians since .began, so rotZ tracks the
+        // fingers 1:1; on release the angular velocity carries over as spin
+        switch gesture.state {
+        case .began:
+            isAutoRotating = false
+            velX = 0
+            velY = 0
+            velZ = 0
+            initialTwoFingerRotZ = rotZ
+        case .changed:
+            rotZ = initialTwoFingerRotZ + Float(gesture.rotation)
+        case .ended:
+            // rad/s -> per-tick delta at the ~60 Hz physics rate, slightly damped
+            velZ = Float(gesture.velocity) / 60.0 * 0.9
         default:
             break
         }
@@ -481,7 +509,7 @@ final class CubeViewController: UIViewController {
 
         helpLabel.textColor = UIColor(white: 0.7, alpha: 1.0)
         helpLabel.font = .systemFont(ofSize: 11, weight: .regular)
-        helpLabel.text = "Swipe: Spin | Pinch: Zoom | 2xTap: Reset | 3xTap: HUD"
+        helpLabel.text = "Swipe: Spin | 2-Finger Twist: Roll | Pinch: Zoom | 2xTap: Reset | 3xTap: HUD"
 
         stack.addArrangedSubview(statusLabel)
         stack.addArrangedSubview(ipLabel)
