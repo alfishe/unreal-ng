@@ -76,6 +76,35 @@ protected:
     }
 };
 
+namespace
+{
+    /// Deletes the file at the given path when it goes out of scope, on every
+    /// exit path (assertion failure included: ASSERT_* returns out of the
+    /// TEST_F body, which still unwinds locals normally). A bare remove() call
+    /// at the end of the test never runs once an earlier ASSERT_* fails,
+    /// leaving scratch files behind.
+    class ScopedTestFile
+    {
+    public:
+        explicit ScopedTestFile(std::string path) : _path(std::move(path)) {}
+        ~ScopedTestFile() { std::error_code ec; std::filesystem::remove(_path, ec); }
+
+        ScopedTestFile(const ScopedTestFile&) = delete;
+        ScopedTestFile& operator=(const ScopedTestFile&) = delete;
+
+        const std::string& path() const { return _path; }
+        operator const std::string&() const { return _path; }
+
+        friend bool operator==(const ScopedTestFile& a, const std::string& b) { return a._path == b; }
+        friend bool operator==(const std::string& a, const ScopedTestFile& b) { return a == b._path; }
+        friend bool operator!=(const ScopedTestFile& a, const std::string& b) { return !(a == b); }
+        friend bool operator!=(const std::string& a, const ScopedTestFile& b) { return !(a == b); }
+
+    private:
+        std::string _path;
+    };
+}
+
 /// region <TRD>
 
 /// L1: every TRD fixture written back is byte-identical to the input
@@ -87,8 +116,9 @@ TEST_F(LoaderRoundTrip_Test, TRD_RoundTrip_ByteIdentical)
     for (const char* fixture : fixtures)
     {
         std::string source = TestPathHelper::GetTestDataPath(fixture);
-        std::string target = TestPathHelper::GetTestScratchPath("roundtrip.trd");
-        removeFile(target);
+        std::string targetPath = TestPathHelper::GetTestScratchPath("roundtrip.trd");
+        removeFile(targetPath);
+        ScopedTestFile target(targetPath);
 
         LoaderTRD loader(_context, source);
         ASSERT_TRUE(loader.loadImage()) << fixture;
@@ -113,7 +143,6 @@ TEST_F(LoaderRoundTrip_Test, TRD_RoundTrip_ByteIdentical)
         ASSERT_EQ(out.size(), in.size()) << fixture;
         EXPECT_EQ(std::memcmp(in.data(), out.data(), in.size()), 0) << fixture << " differs after round trip";
 
-        removeFile(target);
         delete image;
     }
 }
@@ -144,8 +173,9 @@ TEST_F(LoaderRoundTrip_Test, TRD_Load_SectorsIndexedByNumber)
 /// TRD holds only 16 x 256-byte sectors: a foreign track makes the save refuse without writing anything
 TEST_F(LoaderRoundTrip_Test, TRD_WriteImage_RefusesNonTrdosGeometry)
 {
-    std::string target = TestPathHelper::GetTestScratchPath("refused.trd");
-    removeFile(target);
+    std::string targetPath = TestPathHelper::GetTestScratchPath("refused.trd");
+    removeFile(targetPath);
+    ScopedTestFile target(targetPath);
 
     DiskImage image(80, 2);
     LoaderTRD loader(_context, target);
@@ -176,7 +206,6 @@ TEST_F(LoaderRoundTrip_Test, TRD_WriteImage_RefusesNonTrdosGeometry)
     image.getTrackForCylinderAndSide(3, 1)->formatTrack(3, 1);
     EXPECT_TRUE(loader.writeImage(target));
     EXPECT_TRUE(FileHelper::FileExists(target));
-    removeFile(target);
 }
 
 /// endregion </TRD>
@@ -191,8 +220,9 @@ TEST_F(LoaderRoundTrip_Test, SCL_RoundTrip_ByteIdentical)
     for (const char* fixture : fixtures)
     {
         std::string source = TestPathHelper::GetTestDataPath(fixture);
-        std::string target = TestPathHelper::GetTestScratchPath("roundtrip.scl");
-        removeFile(target);
+        std::string targetPath = TestPathHelper::GetTestScratchPath("roundtrip.scl");
+        removeFile(targetPath);
+        ScopedTestFile target(targetPath);
 
         LoaderSCL loader(_context, source);
         ASSERT_TRUE(loader.loadImage()) << fixture;
@@ -207,7 +237,6 @@ TEST_F(LoaderRoundTrip_Test, SCL_RoundTrip_ByteIdentical)
         ASSERT_EQ(out.size(), in.size()) << fixture;
         EXPECT_EQ(std::memcmp(in.data(), out.data(), in.size()), 0) << fixture << " differs after round trip";
 
-        removeFile(target);
         delete image;
     }
 }
@@ -216,10 +245,12 @@ TEST_F(LoaderRoundTrip_Test, SCL_RoundTrip_ByteIdentical)
 TEST_F(LoaderRoundTrip_Test, SCL_To_TRD_To_SCL)
 {
     std::string source = TestPathHelper::GetTestDataPath("loaders/scl/eyeache2.scl");
-    std::string trdPath = TestPathHelper::GetTestScratchPath("via.trd");
-    std::string sclPath = TestPathHelper::GetTestScratchPath("via.scl");
-    removeFile(trdPath);
-    removeFile(sclPath);
+    std::string trdPathStr = TestPathHelper::GetTestScratchPath("via.trd");
+    std::string sclPathStr = TestPathHelper::GetTestScratchPath("via.scl");
+    removeFile(trdPathStr);
+    removeFile(sclPathStr);
+    ScopedTestFile trdPath(trdPathStr);
+    ScopedTestFile sclPath(sclPathStr);
 
     LoaderSCL scl(_context, source);
     ASSERT_TRUE(scl.loadImage());
@@ -243,8 +274,6 @@ TEST_F(LoaderRoundTrip_Test, SCL_To_TRD_To_SCL)
     ASSERT_EQ(out.size(), in.size());
     EXPECT_EQ(std::memcmp(in.data(), out.data(), in.size()), 0);
 
-    removeFile(trdPath);
-    removeFile(sclPath);
     delete reloaded;
 }
 
@@ -252,8 +281,9 @@ TEST_F(LoaderRoundTrip_Test, SCL_To_TRD_To_SCL)
 TEST_F(LoaderRoundTrip_Test, SCL_WriteImage_SkipsDeletedFiles)
 {
     std::string source = TestPathHelper::GetTestDataPath("loaders/scl/insult.scl");
-    std::string target = TestPathHelper::GetTestScratchPath("deleted.scl");
-    removeFile(target);
+    std::string targetPath = TestPathHelper::GetTestScratchPath("deleted.scl");
+    removeFile(targetPath);
+    ScopedTestFile target(targetPath);
 
     LoaderSCL loader(_context, source);
     ASSERT_TRUE(loader.loadImage());
@@ -287,7 +317,6 @@ TEST_F(LoaderRoundTrip_Test, SCL_WriteImage_SkipsDeletedFiles)
     ASSERT_GT(out.size(), 9u);
     EXPECT_EQ(out[8], originalCount - 1) << "SCL header carries the exported count";
 
-    removeFile(target);
     delete exported;
     delete image;
 }
@@ -295,8 +324,9 @@ TEST_F(LoaderRoundTrip_Test, SCL_WriteImage_SkipsDeletedFiles)
 /// SCL export needs a TR-DOS track 0
 TEST_F(LoaderRoundTrip_Test, SCL_WriteImage_RefusesNonTrdosTrack0)
 {
-    std::string target = TestPathHelper::GetTestScratchPath("refused.scl");
-    removeFile(target);
+    std::string targetPath = TestPathHelper::GetTestScratchPath("refused.scl");
+    removeFile(targetPath);
+    ScopedTestFile target(targetPath);
 
     DiskImage image(80, 2);
     LoaderTRD trd(_context, target);

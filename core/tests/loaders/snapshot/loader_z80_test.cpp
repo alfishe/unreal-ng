@@ -29,6 +29,11 @@ namespace
         const char* c_str() const { return _path.c_str(); }
         operator const std::string&() const { return _path; }
 
+        friend bool operator==(const ScopedTestFile& a, const std::string& b) { return a._path == b; }
+        friend bool operator==(const std::string& a, const ScopedTestFile& b) { return a == b._path; }
+        friend bool operator!=(const ScopedTestFile& a, const std::string& b) { return !(a == b); }
+        friend bool operator!=(const std::string& a, const ScopedTestFile& b) { return !(a == b); }
+
     private:
         std::string _path;
     };

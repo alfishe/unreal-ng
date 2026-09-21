@@ -10,6 +10,35 @@
 #include "pch.h"
 #include "_helpers/testpathhelper.h"
 
+namespace
+{
+    /// Deletes the file at the given path when it goes out of scope, on every
+    /// exit path (assertion failure included: ASSERT_* returns out of the
+    /// TEST_F body, which still unwinds locals normally). A bare remove() call
+    /// at the end of the test never runs once an earlier ASSERT_* fails,
+    /// leaving scratch files behind.
+    class ScopedTestFile
+    {
+    public:
+        explicit ScopedTestFile(std::string path) : _path(std::move(path)) {}
+        ~ScopedTestFile() { std::error_code ec; std::filesystem::remove(_path, ec); }
+
+        ScopedTestFile(const ScopedTestFile&) = delete;
+        ScopedTestFile& operator=(const ScopedTestFile&) = delete;
+
+        const std::string& path() const { return _path; }
+        operator const std::string&() const { return _path; }
+
+        friend bool operator==(const ScopedTestFile& a, const std::string& b) { return a._path == b; }
+        friend bool operator==(const std::string& a, const ScopedTestFile& b) { return a == b._path; }
+        friend bool operator!=(const ScopedTestFile& a, const std::string& b) { return !(a == b); }
+        friend bool operator!=(const std::string& a, const ScopedTestFile& b) { return !(a == b); }
+
+    private:
+        std::string _path;
+    };
+}
+
 void LabelManager_test::SetUp()
 {
     _context = new EmulatorContext(LoggerLevel::LogError);
@@ -183,7 +212,7 @@ TEST_F(LabelManager_test, ClearAllLabels)
 TEST_F(LabelManager_test, ParseMapFile)
 {
     // Save test map file to disk
-    std::string tempFilePath = TestPathHelper::GetUniqueTestScratchPath("test_map_file.map");
+    ScopedTestFile tempFilePath(TestPathHelper::GetUniqueTestScratchPath("test_map_file.map"));
     {
         std::ofstream outFile(tempFilePath);
         outFile << _testMapFile.str();
@@ -205,15 +234,12 @@ TEST_F(LabelManager_test, ParseMapFile)
     label = _labelManager->GetLabelByName("WR_SEC");
     ASSERT_NE(label, nullptr);
     EXPECT_EQ(label->address, 0xA2EE);
-
-    // Clean up
-    std::filesystem::remove(tempFilePath);
 }
 
 TEST_F(LabelManager_test, ParseSymFile)
 {
     // Save test sym file to disk
-    std::string tempFilePath = TestPathHelper::GetUniqueTestScratchPath("test_sym_file.sym");
+    ScopedTestFile tempFilePath(TestPathHelper::GetUniqueTestScratchPath("test_sym_file.sym"));
     {
         std::ofstream outFile(tempFilePath);
         outFile << _testSymFile.str();
@@ -235,9 +261,6 @@ TEST_F(LabelManager_test, ParseSymFile)
     label = _labelManager->GetLabelByName("INIT_ROUTINE");
     ASSERT_NE(label, nullptr);
     EXPECT_EQ(label->address, 0x2000);
-
-    // Clean up
-    std::filesystem::remove(tempFilePath);
 }
 
 TEST_F(LabelManager_test, AutoDetectFileFormat)
@@ -280,7 +303,7 @@ TEST_F(LabelManager_test, SaveLabels)
     _labelManager->AddLabel("LABEL3", 0x3000, 0x00, 0x3000, "bss", "module2", "Test label 3");
 
     // Save to a file
-    std::string tempFilePath = TestPathHelper::GetUniqueTestScratchPath("saved_labels.sym");
+    ScopedTestFile tempFilePath(TestPathHelper::GetUniqueTestScratchPath("saved_labels.sym"));
     bool result = _labelManager->SaveLabels(tempFilePath);
     EXPECT_TRUE(result);
 
@@ -304,9 +327,6 @@ TEST_F(LabelManager_test, SaveLabels)
     ASSERT_NE(label, nullptr);
     EXPECT_EQ(label->address, 0x2000);
     EXPECT_EQ(label->type, "data");
-
-    // Clean up
-    std::filesystem::remove(tempFilePath);
 }
 
 // ============================================================================
