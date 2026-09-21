@@ -1,0 +1,96 @@
+;        UNPHASE 
+;        ORG $+#00FF&#FF00
+;        PHASE $+(#c000-GSRomBaseH)
+	align 256
+
+VIBTB   DB 0,24,49,74,97,120,141,161,180,197,212,224,235
+        DB 244,250,253,255,253,250,244,235,224,212,197,180
+        DB 161,141,120,97,74,49,24
+
+COMTABH
+        DB low COM20,low COM21,low COM22,low COM23,low COMHZ,low COMHZ,low COMHZ,low COMHZ  ;#20
+        DB low COMHZ,low COMHZ,low COM2A,low COM2B,low COM2C,low COM2D,low COM2E,low COM2F  ;#28
+        DB low COM30,low COM31,low COM32,low COM33,low COM34,low COM35,low COM36,low COM37  ;#30
+        DB low COM38,low COM39,low COM3A,low COM3B,low COM3C,low COM3D,low COM3E,low COM3F  ;#38
+        DB low COM40,low COM41,low COM42,low COMHZ,low COMHZ,low COM45,low COM46,low COM47  ;#40
+        DB low COM48,low COM49,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ  ;#48
+        DB low COM50,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ  ;#50
+        DB low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ  ;#58
+        DB low COM60,low COM61,low COM62,low COM63,low COM64,low COM65,low COM66,low COM67  ;#60
+        DB low COM68,low COM69,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ  ;#68
+        DB low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ  ;#70
+        DB low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ  ;#78
+        DB low COM80,low COM80,low COM80,low COM80,low COM80,low COM80,low COM80,low COM80  ;#80
+        DB low COM80,low COM80,low COM80,low COM80,low COM80,low COM80,low COM80,low COM80  ;#88
+        DB low COM80,low COM80,low COM80,low COM80,low COM80,low COM80,low COM80,low COM80  ;#90
+        DB low COM80,low COM80,low COM80,low COM80,low COM80,low COM80,low COM80,low COM80  ;#98
+        DB low COMA0,low COMA0,low COMA0,low COMA0,low COMA0,low COMA0,low COMA0,low COMA0  ;#A0
+        DB low COMA0,low COMA0,low COMA0,low COMA0,low COMA0,low COMA0,low COMA0,low COMA0  ;#A8
+        DB low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ  ;#B0
+        DB low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ  ;#B8
+        DB low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ  ;#C0
+        DB low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ  ;#C8
+        DB low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ  ;#D0
+        DB low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ  ;#D8
+        DB low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ  ;#E0
+        DB low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ,low COMHZ  ;#E8
+
+        DEFS #10
+
+        DEFS #20
+
+	DB high COM20,high COM21,high COM22,high COM23,high COMHZ,high COMHZ,high COMHZ,high COMHZ  ;#20
+        DB high COMHZ,high COMHZ,high COM2A,high COM2B,high COM2C,high COM2D,high COM2E,high COM2F  ;#28
+        DB high COM30,high COM31,high COM32,high COM33,high COM34,high COM35,high COM36,high COM37  ;#30
+        DB high COM38,high COM39,high COM3A,high COM3B,high COM3C,high COM3D,high COM3E,high COM3F  ;#38
+        DB high COM40,high COM41,high COM42,high COMHZ,high COMHZ,high COM45,high COM46,high COM47  ;#40
+        DB high COM48,high COM49,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ  ;#48
+        DB high COM50,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ  ;#50
+        DB high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ  ;#58
+        DB high COM60,high COM61,high COM62,high COM63,high COM64,high COM65,high COM66,high COM67  ;#60
+        DB high COM68,high COM69,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ  ;#68
+        DB high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ  ;#70
+        DB high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ  ;#78
+        DB high COM80,high COM80,high COM80,high COM80,high COM80,high COM80,high COM80,high COM80  ;#80
+        DB high COM80,high COM80,high COM80,high COM80,high COM80,high COM80,high COM80,high COM80  ;#88
+        DB high COM80,high COM80,high COM80,high COM80,high COM80,high COM80,high COM80,high COM80  ;#90
+        DB high COM80,high COM80,high COM80,high COM80,high COM80,high COM80,high COM80,high COM80  ;#98
+        DB high COMA0,high COMA0,high COMA0,high COMA0,high COMA0,high COMA0,high COMA0,high COMA0  ;#A0
+        DB high COMA0,high COMA0,high COMA0,high COMA0,high COMA0,high COMA0,high COMA0,high COMA0  ;#A8
+        DB high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ  ;#B0
+        DB high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ  ;#B8
+        DB high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ  ;#C0
+        DB high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ  ;#C8
+        DB high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ  ;#D0
+        DB high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ  ;#D8
+        DB high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ  ;#E0
+        DB high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ,high COMHZ  ;#E8
+
+        DEFS #10
+
+
+
+FXJP1   DW FXNOP,FXNOP,FXNOP,FXNOP,FXNOP,FXNOP,FXNOP,FXNOP
+        DW FXNOP,FXNOP,FXNOP,FXB  ,FXC  ,FXD  ,FXE  ,FXF
+
+        DW FXRET,FXRET,FXRET,FXRET,FXRET,FXRET,FXRET,FXRET
+        DW FXRET,FXRET,FXRET,FXRET,FXRET,FXRET,FXRET,FXRET
+
+FXJP2   DW FX0  ,FX1  ,FX2  ,FX3  ,FX4  ,FX5  ,FX6  ,FX7
+        DW FXRET,FXRET,FXA  ,FXRET,FXRET,FXRET,FXE_ ,FXRET
+
+        DW FXRET,FXRET,FXRET,FXRET,FXRET,FXRET,FXRET,FXRET
+        DW FXRET,FXRET,FXRET,FXRET,FXRET,FXRET,FXRET,FXRET
+
+FXEJP1  DW FXE0,FX1,FX2,FXE3,FXE4,FXE5,FXE6,FXE7
+        DW FXRET,FXE9,FXEA,FXA,FXEC,FXED,FXEE,FXRET
+
+FXEJP2  DW FXRET,FXRET,FXRET,FXRET,FXRET,FXRET,FXRET,FXRET
+        DW FXRET,FXE9,FXRET,FXRET,FXEC,FXED,FXRET,FXRET
+
+TCOMTB  DEFW TCOM ,TCOM ,TCOM2,TCOM3,TCOM4,TCOM5,TCOM6,TCOM7
+        DEFW TCOM8,TCOM9,TCOMA,TCOMB,TCOMC,TCOMD,TCOME,TCOMF
+        DEFW TCOM10,TCOM11,TCOM12,TCOM13,TCOM14,TCOM15,TCOM ,TCOM
+        DEFW TCOM ,TCOM ,TCOM ,TCOM ,TCOM ,TCOM ,TCOM ,TCOM
+
+

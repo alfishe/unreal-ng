@@ -1,0 +1,243 @@
+
+GEN     LD A,(QTFREE)
+        ADD A,high DAC0
+        ADD A,(IY+CHRDN)
+        LD D,A
+        LD A,(SGENOFF)
+        LD E,A
+        LD A,(CHANNEL)
+        OR (IY+CHRDR)
+        LD (CHANNEL),A
+
+GEN_    LD L,(IY+CHCURL)
+        LD H,(IY+CHCURH)
+        LD B,(IY+CHCNTL)
+
+GENLP   EXX
+        LD H,high RAMPG
+        LD L,(IY+CHCURP)
+        LD D,(IY+CHCNTH)
+        LD E,(IY+CHFRQH)
+        LD B,(HL)
+        LD A,B
+        LD (CPAGE),A
+        OUT (PAGE),A
+        LD A,L
+        EXX
+        CP (IY+CHENDP)
+        JP C,GENTP
+
+        PUSH DE
+        EX DE,HL
+        LD L,(IY+CHENDL)
+        LD H,(IY+CHENDH)
+        DEC HL
+        SBC HL,DE
+        INC HL
+        EX DE,HL
+        LD LX,E
+        LD A,D
+        POP DE
+        JR C,GENCHK
+        OR A
+        JR Z,GENENT
+        LD LX,#FF
+        JP GENENT
+
+GENCHK  RES 7,(IY+CHSTAT)
+        LD A,(IY+CHLPBP)
+        INC A
+        JP Z,GENCHK2
+        DEC A
+        LD (IY+CHCURP),A
+        LD L,(IY+CHLPBL)
+        LD H,(IY+CHLPBH)
+        LD A,(IY+CHLPEP)
+        LD (IY+CHENDP),A
+        LD A,(IY+CHLPEL)
+        LD (IY+CHENDL),A
+        LD A,(IY+CHLPEH)
+        LD (IY+CHENDH),A
+     ;  LD (IY+CHCNTL),#00
+     ;  LD (IY+CHCNTH),#00
+        SET 7,(IY+CHSTAT)
+        JP GENLP
+
+GENCHK2 LD (IY+CHREAL),#7F
+        BIT 6,(IY+CHSTAT)
+        JP Z,GENZERO
+        PUSH IY
+        PUSH DE
+        LD IY,CHANS
+        LD B,#08
+        LD DE,CHANLEN
+GENCHK3 SET 0,(IY+CHSTAT)
+        ADD IY,DE
+        DJNZ GENCHK3
+        POP DE
+        POP IY
+        JP GENZERO
+
+
+
+GENTP   LD LX,#FF
+        LD A,H
+        INC A
+        JP M,GENENT
+        OR L
+        JR Z,GENENT
+        NEG
+        LD LX,A
+
+GENENT  LD C,(IY+CHFRQL)
+        LD A,(IY+CHOLDV)
+        PUSH IY
+        CALL #2030
+        POP  IY
+        LD (IY+CHOLDV),A
+        LD (IY+CHCNTH),C
+        LD A,H
+        OR A
+        JP M,GENJ2
+        LD H,#80
+        INC (IY+CHCURP)
+GENJ2   LD A,E
+        OR A
+        JP Z,GENRET
+        BIT 7,(IY+CHSTAT)
+        JP NZ,GENLP
+        JP GENZERO
+
+GENRET  LD (IY+CHCURL),L
+        LD (IY+CHCURH),H
+        LD (IY+CHCNTL),B
+        JP  GENEXT
+
+
+GENZERO LD A,E
+        CP #FF
+        JR NC,GENZENT
+        LD B,(IY+CHOLDV)
+        LD C,#80
+        CP #FD
+        JR NC,GENZ_1
+        CP #F9
+        JR NC,GENZ_2
+        LD A,C
+        ADD A,B
+        RRA
+        LD H,A
+        ADD A,B
+        RRA
+        LD L,A
+        ADD A,B
+        RRA
+        LD (DE),A
+        INC E
+        LD A,L
+        LD (DE),A
+        INC E
+        ADD A,H
+        RRA
+        LD (DE),A
+        INC E
+        LD A,H
+        LD (DE),A
+        INC E
+        ADD A,C
+        RRA
+        LD L,A
+        ADD A,H
+        RRA
+        LD (DE),A
+        INC E
+        LD A,L
+        LD (DE),A
+        INC E
+        ADD A,C
+        RRA
+        LD (DE),A
+        INC E
+        JP GENZENT
+
+GENZ_2  LD A,C
+        ADD A,B
+        RRA
+        LD H,A
+        ADD A,B
+        RRA
+        LD (DE),A
+        INC E
+        LD A,H
+        LD (DE),A
+        INC E
+        ADD A,C
+        RRA
+        LD (DE),A
+        INC E
+        JP GENZENT
+
+GENZ_1  LD A,B
+        ADD A,C
+        RRA
+
+        LD (DE),A
+        INC E
+
+GENZENT LD A,#80
+        BIT 0,E
+        JR Z,GENZJP1
+        LD (DE),A
+        INC E
+        JR Z,GENZEXT
+GENZJP1 BIT 1,E
+        JR Z,GENZJP2
+        LD (DE),A
+        INC E
+        LD (DE),A
+        INC E
+        JR Z,GENZEXT
+GENZJP2 BIT 2,E
+        JR Z,GENZLP
+        LD (DE),A
+        INC E
+        LD (DE),A
+        INC E
+        LD (DE),A
+        INC E
+        LD (DE),A
+        INC E
+        JR Z,GENZEXT
+GENZLP  LD (DE),A
+        INC E
+        LD (DE),A
+        INC E
+        LD (DE),A
+        INC E
+        LD (DE),A
+        INC E
+        LD (DE),A
+        INC E
+        LD (DE),A
+        INC E
+        LD (DE),A
+        INC E
+        LD (DE),A
+        INC E
+        JP NZ,GENZLP
+GENZEXT LD A,(QTFREE)
+        ADD A,high DAC0
+        ADD A,(IY+CHRDN)
+        LD D,A
+        LD E,#FF
+        LD A,#80
+        LD (DE),A
+GENEXT  XOR A
+        LD (CPAGE),A
+        OUT (PAGE),A
+        BIT 0,(IY+CHSTAT)
+        RET Z
+        JP CALCVOL
+
+
+

@@ -37,65 +37,13 @@ string Config::GetScreenshotsFolder()
 	
 	if (!initialized)
 	{
-#ifdef __APPLE__
-		// On macOS, check if we're running from a DMG or other read-only location
-		std::string basePath = FileHelper::GetResourcesPath();
-		std::string testPath = FileHelper::PathCombine(basePath, "/screenshots");
-		
-		// Try to create the directory to test if it's writable
-		bool isWritable = false;
+		std::string dirPath = FileHelper::PathCombine(FileHelper::GetWritablePath(), "screenshots");
 		try {
-			if (!std::filesystem::exists(FileHelper::ToFsPath(testPath))) {
-				isWritable = std::filesystem::create_directories(FileHelper::ToFsPath(testPath));
-			} else {
-				// Directory exists, check if it's writable by creating a test file
-				std::string testFile = FileHelper::PathCombine(testPath, "/test.tmp");
-				FILE* fp = FileHelper::OpenFile(testFile, "w");
-				if (fp) {
-					fclose(fp);
-					remove(testFile.c_str());
-					isWritable = true;
-				}
-			}
+			std::filesystem::create_directories(FileHelper::ToFsPath(dirPath));
 		} catch (const std::exception&) {
-			isWritable = false;
+			// Ignore directory creation errors
 		}
-		
-		if (!isWritable) {
-			// If not writable (e.g., running from DMG), use ~/Library/Application Support/UnrealNG/
-			const char* homeDir = getenv("HOME");
-			if (homeDir) {
-				std::string dirPath = std::string(homeDir) + "/Library/Application Support/UnrealNG/screenshots";
-				// Create the directory if it doesn't exist
-				try {
-					std::filesystem::create_directories(FileHelper::ToFsPath(dirPath));
-				} catch (const std::exception&) {
-					// If we can't create the directory, fall back to temporary directory
-					dirPath = "/tmp/UnrealNG/screenshots";
-					std::filesystem::create_directories(FileHelper::ToFsPath(dirPath));
-				}
-				screenshotsPath = dirPath;
-			} else {
-				// Fallback to temporary directory if HOME is not available
-				screenshotsPath = "/tmp/UnrealNG/screenshots";
-				std::filesystem::create_directories(FileHelper::ToFsPath(screenshotsPath));
-			}
-		} else {
-			// Location is writable, use it
-			screenshotsPath = testPath;
-		}
-#else
-		// On Windows and Linux, use the executable directory
-		std::string basePath = FileHelper::GetExecutablePath();
-		screenshotsPath = FileHelper::PathCombine(basePath, "/screenshots");
-		
-		// Create the directory if it doesn't exist
-		try {
-			std::filesystem::create_directories(FileHelper::ToFsPath(screenshotsPath));
-		} catch (const std::exception&) {
-			// Ignore errors
-		}
-#endif
+		screenshotsPath = dirPath;
 		initialized = true;
 	}
 
@@ -264,6 +212,14 @@ bool Config::ParseConfig(IniFile& inimanager)
     CopyStringValue(inimanager.GetValue(rom, "TSL", nullptr), config.tsl_rom_path, sizeof config.tsl_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "LSY", nullptr), config.lsy_rom_path, sizeof config.lsy_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "PHOENIX", nullptr), config.phoenix_rom_path, sizeof config.phoenix_rom_path);
+#ifdef MOD_GSZ80
+    // General Sound firmware ROM ([ROM] GS). Defaults to the shipped 32 KB
+    // gs105a.rom (data/rom) so a fitted card always has firmware even when a
+    // hand-written config omits the key; bootGS.rom is the 512 KB NeoGS flash
+    // image - the LLE card would only use its first 32 KB (with a warning).
+    // Relative paths resolve against the resources dir in SoundChip_GeneralSound::loadROM.
+    CopyStringValue(inimanager.GetValue(rom, "GS", "rom/gs105a.rom"), config.gs_rom_path, sizeof config.gs_rom_path);
+#endif
 
 	// ULA section (video signal timings)
 	config.intfq = (uint8_t)inimanager.GetLongValue(ula, "int", 50);
@@ -396,7 +352,6 @@ bool Config::ParseConfig(IniFile& inimanager)
 
 	// FM loudness trim in dB relative to the hardware-derived default (0 = default)
 	config.sound.tsfmFmTrimDb = inimanager.GetDoubleValue(sound, "TSFM_FmTrimDb", 0.0);
-
 	// VIDEO section
 	// A/V sync video delay: auto (-1) = match the audio path latency
 	// (~2 frames); 0 = lowest input latency (audio trails by the ring depth)
@@ -509,6 +464,18 @@ const TMemModel* Config::FindModelByShortName(const std::string& shortName)
 			{
 				return &mem_model[i];
 			}
+		}
+	}
+	return nullptr;
+}
+
+const TMemModel* Config::FindModelByEnum(MEM_MODEL model)
+{
+	for (uint8_t i = 0; i < N_MM_MODELS; i++)
+	{
+		if (mem_model[i].Model == model)
+		{
+			return &mem_model[i];
 		}
 	}
 	return nullptr;

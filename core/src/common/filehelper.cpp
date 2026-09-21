@@ -265,8 +265,29 @@ std::string FileHelper::GetExecutablePath()
     return exePath.parent_path().string();
 }
 
+namespace
+{
+    static std::string s_resourcesPathOverride;
+    static std::string s_writablePathOverride;
+}
+
+void FileHelper::SetResourcesPathOverride(const std::string& readOnlyRoot)
+{
+    s_resourcesPathOverride = readOnlyRoot;
+}
+
+void FileHelper::SetWritablePathOverride(const std::string& writableRoot)
+{
+    s_writablePathOverride = writableRoot;
+}
+
 std::string FileHelper::GetResourcesPath()
 {
+    if (!s_resourcesPathOverride.empty())
+    {
+        return s_resourcesPathOverride;
+    }
+
     std::string resourcesPath;
 
 #if defined(_WIN32)
@@ -300,6 +321,32 @@ std::string FileHelper::GetResourcesPath()
 #endif
 
     return resourcesPath;
+}
+
+std::string FileHelper::GetWritablePath()
+{
+    if (!s_writablePathOverride.empty())
+    {
+        return s_writablePathOverride;
+    }
+
+#ifdef __APPLE__
+    const char* homeDir = getenv("HOME");
+    if (homeDir && std::strlen(homeDir) > 0)
+    {
+        return PathCombine(homeDir, "Library/Application Support/UnrealNG");
+    }
+    return "/tmp/UnrealNG";
+#elif defined(_WIN32)
+    return GetExecutablePath();
+#else
+    const char* homeDir = getenv("HOME");
+    if (homeDir && std::strlen(homeDir) > 0)
+    {
+        return PathCombine(homeDir, ".local/share/UnrealNG");
+    }
+    return GetExecutablePath();
+#endif
 }
 
 std::string FileHelper::ExpandPath(const std::string& path)

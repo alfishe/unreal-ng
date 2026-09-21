@@ -1,0 +1,346 @@
+PLAYMD  LD A,(RAMPG)
+        OUT (PAGE),A
+
+        LD IY,CHANS
+        LD DE,CHANLEN
+        LD B,#04
+RDLP1   LD (IY+CHCNTL),#00
+        LD (IY+CHCNTH),#00
+        LD (IY+CHOLDV),#80
+        LD (IY+CHSTAT),#01
+        LD (IY+CHLPCNT),#00
+        LD (IY+CHPATPS),#00
+        LD (IY+CHTRMPS),#00
+        LD (IY+CHVIBPS),#00
+        LD (IY+CHVOL),#40
+        LD (IY+CHMVOL),#40
+        LD (IY+CHINS),#00
+        LD (IY+CHSMP),#00
+        LD (IY+CHPAN),#80
+        LD (IY+CHEPAN),#20
+        LD (IY+CHEVOL),#40
+        LD (IY+CHFADVL),#FF
+        LD (IY+CHFADVH),#FF
+        ADD IY,DE
+        DJNZ RDLP1
+        LD LX,#FF
+        LD A,(#8000+1080)
+        CP "M"
+        JR Z,TTY1
+        CP "4"
+        JR Z,TTY1
+        CP "F"
+        JR Z,TTY1
+        LD LX,#00
+        JP TTY0
+TTY1    LD A,(#8000+1081)
+        CP "."
+        JR Z,TTY2
+        CP "L"
+        JR Z,TTY2
+        CP "!"
+        JR Z,TTY2
+        CP "C"
+        JR Z,TTY2
+        LD LX,#00
+        JP TTY0
+TTY2    LD A,(#8000+1082)
+        CP "K"
+        JR Z,TTY0
+        CP "T"
+        JR Z,TTY0
+        CP "H"
+        JR Z,TTY0
+        LD LX,#00
+TTY0    LD A,LX
+        LD (MODTP),A
+        LD HL,#8000+952
+        OR A
+        JR NZ,TTT10
+        LD HL,#8000+472
+TTT10   LD B,#80
+        XOR A
+FDF2    CP (HL)
+        JR NC,FDF
+        LD A,(HL)
+FDF     INC HL
+        DJNZ FDF2
+        INC A
+        LD (PATTS),A
+        ADD A,A
+        ADD A,A
+        INC LX
+        DEC LX
+        LD HL,#8000+1084
+        JR NZ,TTT12
+        LD HL,#8000+600
+TTT12   LD D,A
+        LD E,0
+        ADD HL,DE
+        SET 7,H
+        LD A,E
+        ADC A,#00
+        LD E,A
+        LD (SMPS),HL
+        LD (SMPS+2),A
+        LD A,LX
+        OR A
+        LD BC,#8000+950
+        JR NZ,TTT11
+        LD BC,#8000+470
+TTT11   LD A,(BC)
+        DEC A
+        LD (MTSNGSZ),A
+        INC BC
+        LD A,(BC)
+        LD (MTSNGLP),A
+
+        LD IX,#5400
+        LD IY,#8000+20
+        LD B,31
+        LD C,E
+
+RDLP3   PUSH BC
+        LD (IX+SMPBEG),C
+        LD (IX+SMPBEG+1),L
+        LD (IX+SMPBEG+2),H
+        LD A,(IY+28)
+        OR A
+        JR NZ,LPL
+        LD A,(IY+29)
+        CP #02
+        JP C,NLPL
+LPL     PUSH HL
+        PUSH BC
+        LD L,(IY+27)
+        LD H,(IY+26)
+        LD E,(IY+23)
+        LD D,(IY+22)
+        SBC HL,DE
+        POP BC
+        POP HL
+        JP NC,NLPL
+        PUSH HL
+        PUSH BC
+        LD E,(IY+27)
+        LD D,(IY+26)
+        EX DE,HL
+        ADD HL,HL
+        EX DE,HL
+        LD B,0
+        RL B
+        SRL C
+        RL H
+        RRC H
+        ADD HL,DE
+        LD A,C
+        ADC A,B
+        LD C,A
+        SLI H
+        RL C
+        RRC H
+        LD (IX+SMPLPB),C
+        LD (IX+SMPLPB+1),L
+        LD (IX+SMPLPB+2),H
+        SRL C
+        RL H
+        RRC H
+        LD E,(IY+29)
+        LD D,(IY+28)
+        EX DE,HL
+        ADD HL,HL
+        EX DE,HL
+        LD B,0
+        RL B
+        ADD HL,DE
+        LD A,C
+        ADC A,B
+        LD C,A
+        SLI H
+        RL C
+        RRC H
+        LD (IX+SMPLPE),C
+        LD (IX+SMPLPE+1),L
+        LD (IX+SMPLPE+2),H
+        POP BC
+        POP HL
+        LD E,(IY+23)
+        LD D,(IY+22)
+        EX DE,HL
+        ADD HL,HL
+        EX DE,HL
+        LD B,#00
+        RL B
+        SRL C
+        RL H
+        RRC H
+        ADD HL,DE
+        LD A,C
+        ADC A,B
+        LD C,A
+        SLI H
+        RL C
+        RRC H
+        JP LPL2
+        LD A,(IX+SMPLPE)
+        CP C
+        JR C,LPL2
+        JR NZ,LPL1
+        LD A,(IX+SMPLPE+2)
+        CP H
+        JR C,LPL2
+        JR NZ,LPL1
+        LD A,(IX+SMPLPE+1)
+        CP L
+        JR C,LPL2
+LPL1    LD A,(IX+SMPEND)
+        LD (IX+SMPLPE),A
+        LD A,(IX+SMPEND+1)
+        LD (IX+SMPLPE+1),A
+        LD A,(IX+SMPEND+2)
+        LD (IX+SMPLPE+2),A
+        JP LPCNT
+
+
+LPL2    LD A,(IX+SMPLPE)
+        LD (IX+SMPEND),A
+        LD A,(IX+SMPLPE+1)
+        LD (IX+SMPEND+1),A
+        LD A,(IX+SMPLPE+2)
+        LD (IX+SMPEND+2),A
+        JP LPCNT
+
+NLPL    LD (IX+SMPLPB),#FF
+        LD E,(IY+23)
+        LD D,(IY+22)
+        EX DE,HL
+        ADD HL,HL
+        EX DE,HL
+        LD B,#00
+        RL B
+
+
+        SRL C
+        RL H
+        RRC H
+
+
+        ADD HL,DE
+        LD A,C
+        ADC A,B
+        LD C,A
+
+        SLI H
+        RL C
+        RRC H
+
+RDLP2   LD (IX+SMPEND+1),L
+        LD (IX+SMPEND+2),H
+        LD (IX+SMPEND),C
+
+LPCNT   LD A,(IY+24)
+        ADD A,A
+        LD (IX+SMPFT),A
+        LD A,(IY+25)
+        LD (IX+SMPVOL),A
+        LD DE,#0010
+        ADD IX,DE
+        LD DE,30
+        ADD IY,DE
+        LD A,C
+        POP BC
+        LD C,A
+        DEC B
+        JP NZ,RDLP3
+
+;       CALL INITPAT
+
+        LD HL,CONVERT
+        LD A,(HL)
+        OR A
+        JR NZ,NOCONV
+        LD (HL),#FF
+
+        LD HL,(SMPS)
+        LD A,(SMPS+2)
+        LD E,A
+        LD D,high RAMPG
+SMPMD2f LD A,(NUMPG)
+        SUB E
+        LD B,A
+
+
+SMPMD2  LD A,(DE)
+        OUT (PAGE),A
+
+SMPMD1  LD A,(HL)
+        ADD A,#80
+        LD (HL),A
+        INC L
+        JP NZ,SMPMD1
+        INC H
+        JP NZ,SMPMD1
+        LD H,#80
+        INC E
+        DJNZ SMPMD2
+
+        LD A,(DE)
+        OUT (PAGE),A
+        OR A
+        JR Z,SMPMD4
+
+SMPMD3  LD A,(HL)
+        ADD A,#80
+        LD (HL),A
+        INC L
+        JP NZ,SMPMD3
+        INC H
+        BIT 6,H
+        JP Z,SMPMD3
+
+SMPMD4
+
+; NOCONV  CALL EFXGTNT
+      ; CALL QUANTUM
+
+NOCONV  XOR A
+        LD (CPAGE),A
+        OUT (PAGE),A
+        RET
+
+
+
+
+
+INITPAT LD A,(MTSNGPS)
+        LD E,A
+        LD D,0
+        LD A,(MODTP)
+        INC A
+        LD HL,#8000+952
+        JR Z,TTT13
+        LD HL,#8000+472
+TTT13   ADD HL,DE
+        LD A,(RAMPG)
+        OUT (PAGE),A
+        LD A,(HL)
+        ADD A,A
+        ADD A,A
+        LD E,D
+        LD D,A
+        LD A,(MODTP)
+        INC A
+        LD HL,#0000+1084
+        JR Z,TTT15
+        LD HL,#0000+600
+TTT15   XOR A
+        LD (CPAGE),A
+        OUT (PAGE),A
+        ADD HL,DE
+        LD DE,#5000
+        LD BC,#400
+        CALL LDMEM
+        XOR A
+        OUT (#00),A
+        RET
+

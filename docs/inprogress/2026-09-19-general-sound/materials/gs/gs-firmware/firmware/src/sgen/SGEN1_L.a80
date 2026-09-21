@@ -1,0 +1,1051 @@
+
+S1      EXX
+        SLA C
+        JR C,S1_6
+        LD A,LX
+        INC A
+        JR Z,S1_2
+        DEC A
+        ADD A,E
+        JR Z,S1_4
+        JR C,S1_2
+        BIT 7,C
+        JR Z,S1_4
+        LD LY,A
+        LD A,LX
+        SRL A
+        SRL A
+        ADD A,LY
+        JR Z,S1_4
+        JR NC,S1_4
+S1_2    SLI B
+        JR NC,S1_3
+        LD A,E
+        AND #03
+        JP Z,S11L0_1
+        DEC A
+        JP Z,S11L1_1
+        DEC A
+        JP Z,S11L2_1
+        JP S11L3
+S1_3    LD A,E
+        AND #03
+        JP Z,S11H0_1
+        DEC A
+        JP Z,S11H1_1
+        DEC A
+        JP Z,S11H2_1
+        JP S11H3
+S1_4    SLI B
+        JR NC,S1_5
+        LD A,E
+        AND #03
+        JP Z,S12L0_1
+        DEC A
+        JP Z,S12L1_1
+        DEC A
+        JP Z,S12L2_1
+        JP S12L3
+S1_5    LD A,E
+        AND #03
+        JP Z,S12H0_1
+        DEC A
+        JP Z,S12H1_1
+        DEC A
+        JP Z,S12H2_1
+        JP S12H3
+
+S1_6    LD A,LX
+        INC A
+        JR Z,S1_7
+        DEC A
+        SRL A
+        ADD A,LX
+        JR Z,S1_9
+        JR C,S1_7
+        ADD A,E
+        JR C,S1_7
+        BIT 7,C
+        JR Z,S1_9
+        LD LY,A
+        LD A,LX
+        SRL A
+        SRL A
+        ADD A,LY
+        JR Z,S1_9
+        JR NC,S1_9
+S1_7    SLI B
+        JR C,S1_8
+        LD A,E
+        AND #03
+        JP Z,S13L0
+        DEC A
+        JP Z,S13L1
+        DEC A
+        JP Z,S13L2
+        JP S13L3
+S1_8    LD A,E
+        AND #03
+        JP Z,S13H0
+        DEC A
+        JP Z,S13H1
+        DEC A
+        JP Z,S13H2
+        JP S13H3
+S1_9    SLI B
+        JR C,S1_A
+        LD A,E
+        AND #03
+        JP Z,S14L0
+        DEC A
+        JP Z,S14L1
+        DEC A
+        JP Z,S14L2
+        JP S14L3
+S1_A    LD A,E
+        AND #03
+        JP Z,S14H0
+        DEC A
+        JP Z,S14H1
+        DEC A
+        JP Z,S14H2
+        JP S14H3
+
+
+S11M0   LD B,A
+        DEC HL
+        LD A,(HL)
+        INC HL
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        LDI
+        INC C
+
+S11L2_1 LD A,B
+S11L2_2 LDI
+        INC C
+        ADD A,C
+        LD B,A
+        JP NC,S11L3
+        ADD A,C
+        JP C,S11M3
+S11G3   LD B,A
+        DEC HL
+        LD A,(HL)
+        INC HL
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S11R1
+        LDI
+        INC C
+
+S11H1_1 LD A,B
+S11H1_2 LDI
+        INC C
+        ADD A,C
+        JP NC,S11H2_2
+        LDI
+        INC C
+        ADD A,C
+        LD B,A
+        JP NC,S11L3
+        ADD A,C
+        JP C,S11M3
+        JP S11G3
+
+S11R1   LD LY,A
+        LD A,B
+        SUB C
+        LD B,A
+        SRL B
+        LD C,#00
+        LD A,LY
+        RET
+
+
+
+
+
+S11M1   LD B,A
+        DEC HL
+        LD A,(HL)
+        INC HL
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        LDI
+        INC C
+
+S11L3   LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        JR Z,S11R2
+        LD A,B
+        ADD A,C
+        JP NC,S11L0_2
+        ADD A,C
+        JR C,S11M0
+S11G0   LD B,A
+        DEC HL
+        LD A,(HL)
+        INC HL
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        LDI
+        INC C
+
+S11H2_1 LD A,B
+S11H2_2 LDI
+        INC C
+        ADD A,C
+        LD B,A
+        JP NC,S11H3
+        LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        JR Z,S11R2
+        LD A,B
+        ADD A,C
+        JP NC,S11L0_2
+        ADD A,C
+        JP C,S11M0
+        JP S11G0
+
+S11R2   LD LY,A
+        LD A,B
+        ADD A,C
+        LD B,A
+        JR NC,S11R2_2
+        LD C,#01
+        SRL B
+        LD A,LY
+        RET
+S11R2_2 LD C,#00
+        RRC B
+        LD A,LY
+        RET
+
+
+S11M2   LD B,A
+        DEC HL
+        LD A,(HL)
+        INC HL
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        JR Z,S11R3
+
+S11L0_1 LD A,B
+S11L0_2 LDI
+        INC C
+        ADD A,C
+        JP NC,S11L1_2
+        ADD A,C
+        JR C,S11M1
+S11G1   LD B,A
+        DEC HL
+        LD A,(HL)
+        INC HL
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        LDI
+        INC C
+
+S11H3   LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        JR Z,S11R4
+        LD A,B
+        ADD A,C
+        JP NC,S11H0_2
+        LDI
+        INC C
+        ADD A,C
+        JP NC,S11L1_2
+        ADD A,C
+        JP C,S11M1
+        JP S11G1
+
+S11R3   LD C,#00
+        RRC B
+        RET
+
+S11R4   LD LY,A
+        LD A,B
+        ADD A,C
+        LD B,A
+        JR NC,S11R4_2
+        LD C,#00
+        RRC B
+        LD A,LY
+        RET
+S11R4_2 LD C,#00
+        SRL B
+        LD A,LY
+        RET
+
+S11R5   LD LY,A
+        LD A,B
+        SUB C
+        LD B,A
+        LD C,#00
+        SRL B
+        LD A,LY
+        RET
+
+
+S11M3   LD B,A
+        DEC HL
+        LD A,(HL)
+        INC HL
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S11R5
+        LDI
+        INC C
+
+S11L1_1 LD A,B
+S11L1_2 LDI
+        INC C
+        ADD A,C
+        JP NC,S11L2_2
+        ADD A,C
+        JR C,S11M2
+S11G2   LD B,A
+        DEC HL
+        LD A,(HL)
+        INC HL
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        JR Z,S11R6
+
+S11H0_1 LD A,B
+S11H0_2 LDI
+        INC C
+        ADD A,C
+        JP NC,S11H1_2
+        LDI
+        INC C
+        ADD A,C
+        JP NC,S11L2_2
+        ADD A,C
+        JP C,S11M2
+        JP S11G2
+
+
+S11R6   LD C,#00
+        SRL B
+        RET
+
+
+
+
+
+S12M0   LD B,A
+        DEC HL
+        LD A,(HL)
+        INC HL
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        LDI
+        INC C
+        DEC LX
+        JR Z,S12R3_3
+
+S12L2_1 LD A,B
+S12L2_2 LDI
+        INC C
+        DEC LX
+        JR Z,S12R2_5
+        ADD A,C
+        LD B,A
+        JP NC,S12L3
+        ADD A,C
+        JP C,S12M3
+S12G3   LD B,A
+        DEC HL
+        LD A,(HL)
+        INC HL
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S12R1
+        LDI
+        INC C
+        DEC LX
+        JR Z,S12R6_3
+S12H1_1 LD A,B
+S12H1_2 LDI
+        INC C
+        DEC LX
+        JR Z,S12R4_4
+        ADD A,C
+        JP NC,S12H2_2
+        LDI
+        INC C
+        DEC LX
+        JR Z,S12R2_5
+        ADD A,C
+        LD B,A
+        JP NC,S12L3
+        ADD A,C
+        JP C,S12M3
+        JP S12G3
+
+S12R2_5 JR S12R2_3
+S12R6_3 JP S12R6_2
+
+S12R1   LD LY,A
+        LD A,B
+        SUB C
+        LD B,A
+        SRL B
+        LD C,#00
+        LD A,LY
+        RET
+
+S12R3_3 DEC HL
+        LD A,(HL)
+        INC HL
+        LD C,#00
+        RRC B
+        RET
+S12R4_4 JP S12R4_3
+
+
+
+S12M1   LD B,A
+        DEC HL
+        LD A,(HL)
+        INC HL
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        LDI
+        INC C
+        DEC LX
+        JR Z,S12R3_3
+
+S12L3   LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        JR Z,S12R2
+        DEC LX
+        JR Z,S12R2
+        LD A,B
+        ADD A,C
+        JP NC,S12L0_2
+        ADD A,C
+        JP C,S12M0
+S12G0   LD B,A
+        DEC HL
+        LD A,(HL)
+        INC HL
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        LDI
+        INC C
+        DEC LX
+        JR Z,S12R6_3
+
+S12H2_1 LD A,B
+S12H2_2 LDI
+        INC C
+        DEC LX
+        JR Z,S12R4_4
+        ADD A,C
+        LD B,A
+        JP NC,S12H3
+        LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        JR Z,S12R2
+        DEC LX
+        JR Z,S12R2
+        LD A,B
+        ADD A,C
+        JP NC,S12L0_2
+        ADD A,C
+        JP C,S12M0
+        JP S12G0
+
+S12R2_3 DEC HL
+        LD A,(HL)
+        INC HL
+S12R2   LD LY,A
+        LD A,B
+        ADD A,C
+        LD B,A
+        JR NC,S12R2_2
+        LD C,#01
+        SRL B
+        LD A,LY
+        RET
+S12R2_2 LD C,#00
+        RRC B
+        LD A,LY
+        RET
+
+
+S12M2   LD B,A
+        DEC HL
+        LD A,(HL)
+        INC HL
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        JR Z,S12R3
+        DEC LX
+        JR Z,S12R3
+
+S12L0_1 LD A,B
+S12L0_2 LDI
+        INC C
+        DEC LX
+        JR Z,S12R2_3
+        ADD A,C
+        JP NC,S12L1_2
+        ADD A,C
+        JP C,S12M1
+S12G1   LD B,A
+        DEC HL
+        LD A,(HL)
+        INC HL
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        LDI
+        INC C
+        DEC LX
+        JR Z,S12R6_5
+
+S12H3   LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        JR Z,S12R4
+        DEC LX
+        JR Z,S12R4
+        LD A,B
+        ADD A,C
+        JP NC,S12H0_2
+        LDI
+        INC C
+        DEC LX
+        JR Z,S12R2_3
+        ADD A,C
+        JP NC,S12L1_2
+        ADD A,C
+        JP C,S12M1
+        JP S12G1
+
+S12R6_5 JP S12R6_2
+
+S12R3_2 DEC HL
+        LD A,(HL)
+        INC HL
+S12R3   LD C,#00
+        RRC B
+        RET
+
+S12R4_3 DEC HL
+        LD A,(HL)
+        INC HL
+S12R4   LD LY,A
+        LD A,B
+        ADD A,C
+        LD B,A
+        JR NC,S12R4_2
+        LD C,#00
+        RRC B
+        LD A,LY
+        RET
+S12R4_2 LD C,#00
+        SRL B
+        LD A,LY
+        RET
+
+S12R5   LD LY,A
+        LD A,B
+        SUB C
+        LD B,A
+        LD C,#00
+        SRL B
+        LD A,LY
+        RET
+
+
+S12M3   LD B,A
+        DEC HL
+        LD A,(HL)
+        INC HL
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S12R5
+        LDI
+        INC C
+        DEC LX
+        JR Z,S12R3_2
+
+S12L1_1 LD A,B
+S12L1_2 LDI
+        INC C
+        DEC LX
+        JR Z,S12R2_4
+        ADD A,C
+        JP NC,S12L2_2
+        ADD A,C
+        JP C,S12M2
+S12G2   LD B,A
+        DEC HL
+        LD A,(HL)
+        INC HL
+        ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        JR Z,S12R6
+        DEC LX
+        JR Z,S12R6
+
+S12H0_1 LD A,B
+S12H0_2 LDI
+        INC C
+        DEC LX
+        JR Z,S12R4_3
+        ADD A,C
+        JP NC,S12H1_2
+        LDI
+        INC C
+        DEC LX
+        JR Z,S12R2_4
+        ADD A,C
+        JP NC,S12L2_2
+        ADD A,C
+        JP C,S12M2
+        JP S12G2
+
+S12R6_2 DEC HL
+        LD A,(HL)
+        INC HL
+S12R6   LD C,#00
+        SRL B
+        RET
+
+S12R2_4 JP S12R2_3
+
+
+
+S13R1   JR NC,S13R1_2
+        SRL B
+        LD C,#01
+        RET
+S13R1_2 RRC B
+        LD C,#00
+        RET
+S13R2   SRL B
+        LD C,#00
+        RET
+
+S13J0   ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+S13H1   LD A,B
+        ADD A,C
+        LD B,A
+        LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        JP C,S13J2
+
+S13K2   ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+S13L3   LD A,B
+        ADD A,C
+        LD B,A
+        LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        JR Z,S13R1
+        JP C,S13K0
+
+        LD A,B
+        ADD A,C
+        LD B,A
+        LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        JP NC,S13K1
+
+S13J1   ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+S13H2   LD A,B
+        ADD A,C
+        LD B,A
+        LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        JP C,S13J3
+
+S13K3   ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S13R2
+S13L0   LD A,B
+        ADD A,C
+        LD B,A
+        LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        JP C,S13K1
+
+        LD A,B
+        ADD A,C
+        LD B,A
+        LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        JP NC,S13K2
+
+S13J2   ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+S13H3   LD A,B
+        ADD A,C
+        LD B,A
+        LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        JR Z,S13R3
+        JP C,S13J0
+
+S13K0   ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+S13L1   LD A,B
+        ADD A,C
+        LD B,A
+        LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        JP C,S13K2
+
+        LD A,B
+        ADD A,C
+        LD B,A
+        LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        JP NC,S13K3
+
+S13J3   ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S13R4
+S13H0   LD A,B
+        ADD A,C
+        LD B,A
+        LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        JP C,S13J1
+
+S13K1   ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+S13L2   LD A,B
+        ADD A,C
+        LD B,A
+        LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        JP C,S13K3
+
+        LD A,B
+        ADD A,C
+        LD B,A
+        LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        JR Z,S13R5
+        JP NC,S13K0
+        JP S13J0
+S13R3   LD C,#01
+        JR NC,S13R3_2
+        RRC B
+        RET
+S13R3_2 SRL B
+        RET
+S13R4   RRC B
+        LD C,#00
+        RET
+
+S13R5   LD C,#01
+        JR NC,S13R5_2
+        RRC B
+        RET
+S13R5_2 SRL B
+        RET
+
+
+S14R5_3 JP S14R5
+S14R1   JR NC,S14R1_2
+        SRL B
+        LD C,#01
+        RET
+S14R1_2 RRC B
+        LD C,#00
+        RET
+S14R2   SRL B
+        LD C,#00
+        RET
+
+S14J0   ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+S14H1   LD A,B
+        ADD A,C
+        LD B,A
+        LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        DEC LX
+        JR Z,S14R5_3
+        JP C,S14J2
+
+S14K2   ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+S14L3   LD A,B
+        ADD A,C
+        LD B,A
+        LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        JR Z,S14R1
+        DEC LX
+        JR Z,S14R1
+        JP C,S14K0
+
+        LD A,B
+        ADD A,C
+        LD B,A
+        LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        DEC LX
+        JR Z,S14R5_3
+        JP NC,S14K1
+
+S14J1   ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+S14H2   LD A,B
+        ADD A,C
+        LD B,A
+        LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        DEC LX
+        JR Z,S14R5_3
+        JP C,S14J3
+
+S14K3   ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S14R2
+S14L0   LD A,B
+        ADD A,C
+        LD B,A
+        LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        DEC LX
+        JR Z,S14R1
+        JP C,S14K1
+
+        LD A,B
+        ADD A,C
+        LD B,A
+        LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        DEC LX
+        JR Z,S14R5
+        JP NC,S14K2
+
+S14J2   ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+S14H3   LD A,B
+        ADD A,C
+        LD B,A
+        LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        JR Z,S14R5
+        DEC LX
+        JR Z,S14R5
+        JP C,S14J0
+
+S14K0   ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+S14L1   LD A,B
+        ADD A,C
+        LD B,A
+        LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        DEC LX
+        JR Z,S14R1_3
+        JP C,S14K2
+
+        LD A,B
+        ADD A,C
+        LD B,A
+        LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        DEC LX
+        JR Z,S14R5
+        JP NC,S14K3
+
+S14J3   ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+        JR Z,S14R4
+S14H0   LD A,B
+        ADD A,C
+        LD B,A
+        LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        DEC LX
+        JR Z,S14R5
+        JP C,S14J1
+
+S14K1   ADD A,(HL)
+        RRA
+        LD (DE),A
+        INC E
+S14L2   LD A,B
+        ADD A,C
+        LD B,A
+        LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        DEC LX
+        JR Z,S14R1_3
+        JP C,S14K3
+
+        LD A,B
+        ADD A,C
+        LD B,A
+        LD A,(HL)
+        INC HL
+        LD (DE),A
+        INC E
+        JR Z,S14R5
+        DEC LX
+        JR Z,S14R5
+        JP NC,S14K0
+        JP S14J0
+
+
+S14R5   LD C,#01
+        JR NC,S14R5_2
+        RRC B
+        RET
+S14R5_2 SRL B
+        RET
+S14R4   RRC B
+        LD C,#00
+        RET
+S14R1_3 JP S14R1
+

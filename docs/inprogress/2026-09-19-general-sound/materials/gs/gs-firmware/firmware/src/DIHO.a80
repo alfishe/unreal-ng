@@ -1,0 +1,206 @@
+;RETURN: E - NOTE
+
+NOTEID  LD HL,AMINOTE
+        CALL DIH
+        LD E,A
+        RET
+
+;RETURN: E - NOTE
+
+NOTEGET LD E,(IY+CHNOTE)
+        LD A,E
+        INC A
+        RET NZ
+NOTEFND LD HL,AMFRQTB
+        LD A,(IY+CHFINE)
+        RRA
+        AND #0F
+        JR Z,NOTEFN1
+        LD C,A
+        ADD A,A
+        ADD A,C
+        ADD A,A
+        ADD A,A
+        ADD A,A
+        LD B,0
+        RL B
+        ADD A,A
+        RL B
+        ADD A,A
+        RL B
+        LD C,A
+        ADD HL,BC
+NOTEFN1 LD E,(IY+CHPERL)
+        LD D,(IY+CHPERH)
+        CALL DIH
+        LD E,A
+        RET
+
+
+
+
+
+DIH     LD BC,#005F
+        PUSH HL
+        INC HL
+        LD A,(HL)
+        DEC HL
+        CP D
+        JR C,DIHRGR
+        JR NZ,DIH2
+        LD A,(HL)
+        CP E
+        JR C,DIHRGR
+        JR NZ,DIH2
+        POP HL
+        XOR A
+        SCF
+        RET
+DIHRGR  LD E,(HL)
+        INC HL
+        LD D,(HL)
+        POP HL
+        XOR A
+        RET
+DIH2    LD A,#BF
+        ADD A,L
+        LD L,A
+        LD A,H
+        ADC A,B
+        LD H,A
+        LD A,(HL)
+        DEC HL
+        CP D
+        JR C,DIH3
+        JR NZ,DIHRLO
+        LD A,(HL)
+        CP E
+        JR C,DIH3
+        JR NZ,DIHRLO
+        POP HL
+        LD A,C
+        SCF
+        RET
+DIHRLO  LD E,(HL)
+        INC HL
+        LD D,(HL)
+        POP HL
+        LD A,C
+        OR A
+        RET
+
+DIH3    POP HL
+
+DIHLP   PUSH HL
+        LD A,B
+        ADD A,C
+        AND #FE
+        ADD A,L
+        LD L,A
+        LD A,H
+        ADC A,#00
+        LD H,A
+        INC HL
+        LD A,(HL)
+        DEC HL
+        CP D
+        JR C,DIHGR
+        JR NZ,DIHLO
+        LD A,(HL)
+        CP E
+        JR C,DIHGR
+        JR NZ,DIHLO
+        POP HL
+        LD A,B
+        ADD A,C
+        SRL A
+        SCF
+        RET
+
+DIHGR   LD A,B
+        ADD A,C
+        SRL A
+        LD C,A
+        POP HL
+        JP DIHLP
+
+DIHLO   LD A,B
+        ADD A,C
+        SRL A
+        CP B
+        LD B,A
+        JR Z,DIHMID
+        POP HL
+        JP DIHLP
+
+DIHMID  PUSH HL
+        PUSH BC
+        LD A,(HL)
+        INC HL
+        SUB E
+        LD C,A
+        LD A,(HL)
+        INC HL
+        SBC A,D
+        LD B,A
+
+        LD A,(HL)
+        INC HL
+        LD H,(HL)
+        LD L,A
+        EX DE,HL
+        OR A
+        SBC HL,DE
+        LD A,H
+        CP B
+        JR C,DIHFLO
+        JR NZ,DIHFGR
+        LD A,L
+        CP C
+        JR C,DIHFLO
+        JR NZ,DIHFGR
+DIHFLO  POP BC
+        POP HL
+        POP HL
+        LD A,C
+        OR A
+        RET
+DIHFGR  POP BC
+        POP HL
+        LD E,(HL)
+        INC HL
+        LD D,(HL)
+        POP HL
+        LD A,B
+        RET
+
+AMINOTE DEFW 6848,6464,6096,5760,5424,5120,4832,4560,4304,4064,3840,3624  ;C-0
+        DEFW 3424,3232,3048,2880,2712,2560,2416,2280,2152,2032,1920,1812  ;C-1
+        DEFW 1712,1616,1524,1440,1356,1280,1208,1140,1076,1016,960,906    ;C-2
+        DEFW 856,808,762,720,678,640,604,570,538,508,480,453              ;C-3
+        DEFW 428,404,381,360,339,320,302,285,269,254,240,226              ;C-4
+        DEFW 214,202,190,180,170,160,151,143,135,127,120,113              ;C-5
+        DEFW 107,101,95,90,85,80,75,71,67,63,60,56                        ;C-6
+        DEFW 53,50,47,45,42,40,37,35,33,31,30,28                          ;C-7
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
