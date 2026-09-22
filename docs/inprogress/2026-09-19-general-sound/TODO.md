@@ -97,33 +97,40 @@ Sound card implementations for ZX Spectrum emulation:
 
 ### GS (P0)
 
-- [ ] Create `SoundChip_GeneralSound` class
-- [ ] Embed z80ex lightweight Z80 core
-- [ ] Implement host port handlers (#B3, #BB, #33)
-- [ ] Implement internal port handlers (0x00–0x0B)
-- [ ] MPAG page encoding (rotated, masked)
-- [ ] DAC sample fetch on memory read
-- [ ] Volume calculation with gs_vfx curve
-- [ ] Interrupt generation (37.5 kHz)
-- [ ] Lazy sync on port access
-- [ ] Config integration (`[SOUND] GSType=Z80`)
-- [ ] ROM loading from `data/rom/`
-- [ ] SoundManager integration
-- [ ] TTD serialization (implement TTDSerializable)
-- [ ] TTD registration in RegisterModelPeripherals()
-- [ ] Unit tests
+- [x] Create `SoundChip_GeneralSound` class (LLE, `soundchip_gs.h/.cpp`) +
+      `SoundChip_GSLightweight` (LW, `soundchip_gslw.h/.cpp` + `gsmodplayer.h/.cpp`)
+      behind the shared `GeneralSoundCard` interface (§7.3 personalities work)
+- [x] Embed z80ex lightweight Z80 core (LLE coprocessor)
+- [x] Implement host port handlers (#B3, #BB, #33)
+- [x] Implement internal port handlers (0x00–0x0B)
+- [x] MPAG page encoding (rotated, masked)
+- [x] DAC sample fetch on memory read
+- [x] Volume calculation with gs_vfx curve
+- [x] Interrupt generation (37.5 kHz)
+- [x] Lazy sync on port access
+- [x] Config integration (`[SOUND] GSType=Z80|LW`)
+- [x] ROM loading from `data/rom/`
+- [x] SoundManager integration, incl. runtime personality switching
+      (`switchGeneralSoundCard`)
+- [x] TTD serialization (implement TTDSerializable) - LLE and LW register
+      under separate peripheral ids (`GeneralSound`/`GeneralSoundLightweight`)
+- [x] TTD registration in RegisterModelPeripherals()
+- [x] Unit tests (GS suites across `core/tests/emulator/sound/chips/`,
+      `core/tests/debugger/ttd/`)
 
 ### Automation (GS)
 
-- [ ] WebAPI: implement `getStateAudioGS` handler
-- [ ] WebAPI: implement `postControlAudioGS` handler
-- [ ] WebAPI: fix openapi.json GS stub description
-- [ ] MCP: add `audio_gs` aspect to inspect_state
-- [ ] MCP: add GS actions to emulator_manage
-- [ ] CLI: add `state audio gs` command
-- [ ] Lua: add gs_* functions to lua_emulator.h
-- [ ] Python: add gs_* functions to python_emulator.h
-- [ ] Docs: update command-interface.md
+- [x] WebAPI: implement `getStateAudioGS` handler
+- [x] WebAPI: implement `postControlAudioGS` handler (9 actions incl.
+      `switch_personality`/`dump_module`)
+- [x] WebAPI: fix openapi.json GS stub description
+- [x] MCP: add `audio_gs` aspect to inspect_state
+- [x] MCP: add GS actions to emulator_manage
+- [x] CLI: add `state audio gs` command + `gs` control command (9 actions)
+- [x] Lua: add gs_* functions to lua_emulator.h
+- [x] Python: add gs_* functions to python_emulator.h
+- [ ] Docs: update command-interface.md - still marks `state audio gs` as
+      "🔮 Planned" (line ~2103); stale, not yet corrected
 
 ### NeoGS (P2)
 
