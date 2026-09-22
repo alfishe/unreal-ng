@@ -320,6 +320,22 @@ masking to 0x3F silenced 0x40 instruments - BUG-11).
   advance one row. `Fxx` splits at param 32: speed vs tempo, both live.
 - Position lives in the row/tick/quantum domain, never the audio sample
   domain: a runtime `setSampleRate` (blip rebuild) cannot disturb it.
+- Song end (firmware QUANTUM.a80 `EFXSKP7`): restart at byte 951's position
+  when it is inside the song (else 0), speed := 6, TICKLEN := 750 (125 BPM)
+  - the `MTBPM` variable is NOT rewritten (COM68 keeps reporting the last
+  Fxx tempo), only the tick length. Plain ProTracker keeps the tempo across
+  the wrap; a module ending on a slow Fxx (cc_wizard.mod: F20) therefore
+  looped 4x slow on the LW card until this was mirrored (BUG-16).
+- DAC byte synthesis mirrors the firmware generator (SGEN1_L.a80 /
+  GEN_L.a80 GENZERO): linear interpolation on the 16.16 fraction between
+  adjacent source bytes (the firmware writes (prev+next)/2 at phase
+  crossings), and a one-shot tail eased to 0x80 by successive halving
+  instead of holding the last byte. Pure nearest-neighbour + hold-last
+  carried ~30x the LLE's energy above 6 kHz on real content (live A/B
+  2026-09-22, the "quantization grain" report); interpolation brings the
+  offline render's >6 kHz share from 1.37% to 0.36% (openmpt123 8-tap:
+  0.45%). SGEN2's box-averaging (steps above 1 byte/quantum) is not needed:
+  the ProTracker period range tops out at ~0.84 byte/quantum.
 - Per-voice playback: 16.16 fixed-point byte position in a 64-bit
   container (a 32-bit one tops out at 65535 bytes; ProTracker samples run
   to 131070 and real modules exceed 64 KB - BUG-12), increment =

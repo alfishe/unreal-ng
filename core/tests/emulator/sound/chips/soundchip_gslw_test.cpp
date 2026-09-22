@@ -732,10 +732,12 @@ TEST(GSModPlayer_LargeSample, OneShotPositionReachesTrueEndBeyond64KB)
     for (int q = 0; q < 200000; q++)
         player.advanceQuantum(out, vols);
 
-    // DAC byte = signed sample ^ 0x80
-    EXPECT_EQ(out[0], static_cast<uint8_t>(((kSampleBytes - 1) & 0xFF) ^ 0x80))
+    // The one-shot ran to its true end: the step is zeroed there (a wrapped
+    // 32-bit position never gets there) and the DAC has eased to 0x80
+    EXPECT_EQ(player.channelIncrement(0), 0)
         << "playback did not reach the true end of a >64KB one-shot sample "
         << "(32-bit position wraparound regression)";
+    EXPECT_EQ(out[0], 0x80) << "one-shot tail not eased to 0x80";
 }
 
 TEST(GSModPlayer_LargeSample, LoopStaysInsideRegionBeyond64KB)
@@ -978,6 +980,96 @@ TEST(GSModPlayer_RealContent, SampleOffsetIsParamTimes256AndOnlyOnNineRows)
     EXPECT_EQ(out[0], 0x40 ^ 0x80) << "904 must start at byte 1024 (param*256)";
     for (int q = 0; q < 6 * 750; q++) player.advanceQuantum(out, vols); // row 1
     EXPECT_EQ(out[0], 0x00 ^ 0x80) << "a plain note after 9xx must start at 0, not at the remembered offset";
+}
+
+TEST(GSModPlayer_RealContent, SongWrapResetsSpeedAndTempoLikeFirmware)
+{
+    // Firmware EFXSKP7: at song end restart at byte 951 (if < length, else
+    // 0), speed := 6, TICKLEN := 750 (125 BPM). cc_wizard.mod ends on F20
+    // (32 BPM) and looped 4x slow on the LW card before this.
+    std::vector<uint8_t> m(1084 + 2 * 1024 + 64, 0x00);
+    putBeWord(m, 20 + 22, 32); m[20 + 25] = 64; putBeWord(m, 20 + 26, 0); putBeWord(m, 20 + 28, 32);
+    m[950] = 2; m[951] = 1; // two positions, restart at position 1
+    m[952] = 0; m[953] = 1;
+    m[1080] = 'M'; m[1081] = '.'; m[1082] = 'K'; m[1083] = '.';
+    putCell(m, 0, 0, 0, 0x00, 0x71, 0x10, 0x00);  // p0 r0: note
+    putCell(m, 1, 0, 0, 0x00, 0x00, 0x0F, 0x03);  // p1 r0: F03 speed 3
+    putCell(m, 1, 0, 1, 0x00, 0x00, 0x0F, 0x20);  // p1 r1: F20 tempo 32
+
+    GSModPlayer player;
+    ASSERT_TRUE(player.parse(m.data(), m.size()));
+    player.start(0);
+    uint8_t out[4], vols[4];
+    // p0: 64 rows * 6 ticks * 750; p1 rows 0..: speed 3, then tempo 32
+    // (2929 quanta/tick) - run until the position wraps
+    int guard = 0;
+    while (!(player.songPosition() == 1 && player.patternPosition() >= 2) && guard++ < 2000000)
+        player.advanceQuantum(out, vols);
+    ASSERT_EQ(player.speed(), 3);
+    ASSERT_EQ(player.bpm(), 32);
+    // Play through the rest of pattern 1 at 32 BPM until the row counter
+    // wraps back to 0 (the song end: position 1 -> restart position 1)
+    guard = 0;
+    while (player.patternPosition() != 0 && guard++ < 20000000)
+        player.advanceQuantum(out, vols);
+    ASSERT_EQ(player.patternPosition(), 0);
+    // Wrapped to the restart position (1, not 0) with the firmware defaults
+    EXPECT_EQ(player.songPosition(), 1) << "restart byte (951) not honoured";
+    EXPECT_EQ(player.speed(), 6) << "speed not reset to 6 at song end";
+    EXPECT_EQ(player.bpm(), 32) << "MTBPM is not rewritten by the firmware wrap (COM68 keeps reporting it)";
+    // The tick length is what matters audibly: back to 750 quanta
+    // (observable as the row rate: 6 ticks * 750 quanta per row)
+    const uint8_t rowBefore = player.patternPosition();
+    for (int q = 0; q < 6 * 750 + 5; q++) player.advanceQuantum(out, vols);
+    EXPECT_EQ(player.patternPosition(), rowBefore + 1) << "tick length not reset to 750 at song end";
+}
+
+TEST(GSModPlayer_Render, UpsamplingInterpolatesBetweenSourceBytes)
+{
+    // Firmware SGEN1 writes (prev+next)/2 at phase crossings; the LW card
+    // interpolates on the 16.16 fraction. A two-level sample (signed 0x00
+    // then 0x40) played below 1 byte/quantum must produce values strictly
+    // between the two DAC levels (0x80 and 0xC0), never only the plateaus
+    std::vector<uint8_t> m(1084 + 1024 + 64, 0x00);
+    putBeWord(m, 20 + 22, 32); m[20 + 25] = 64; putBeWord(m, 20 + 26, 0); putBeWord(m, 20 + 28, 32);
+    m[950] = 1; m[952] = 0; m[1080] = 'M'; m[1081] = '.'; m[1082] = 'K'; m[1083] = '.';
+    for (size_t i = 0; i < 64; i++) m[1084 + 1024 + i] = (i / 32) ? 0x40 : 0x00;
+    putCell(m, 0, 0, 0, 0x03, 0x58, 0x10, 0x00); // period 856: ~0.11 byte/quantum
+
+    GSModPlayer player;
+    ASSERT_TRUE(player.parse(m.data(), m.size()));
+    player.start(0);
+    uint8_t out[4], vols[4];
+    bool between = false;
+    for (int q = 0; q < 2000; q++)
+    {
+        player.advanceQuantum(out, vols);
+        if (out[0] > 0x80 && out[0] < 0xC0) between = true;
+        ASSERT_GE(out[0], 0x80); ASSERT_LE(out[0], 0xC0);
+    }
+    EXPECT_TRUE(between) << "no interpolated values between the two source levels";
+}
+
+TEST(GSModPlayer_Render, OneShotTailEasesToCenter)
+{
+    // Firmware GENZERO: after a one-shot ends the DAC is eased to 0x80 by
+    // halving, not held on the last byte (a held DC step clicks at the
+    // next note). Sample: 16 bytes of signed +0x7E, one-shot.
+    std::vector<uint8_t> m(1084 + 1024 + 16, 0x00);
+    putBeWord(m, 20 + 22, 8); m[20 + 25] = 64; putBeWord(m, 20 + 26, 0); putBeWord(m, 20 + 28, 0);
+    m[950] = 1; m[952] = 0; m[1080] = 'M'; m[1081] = '.'; m[1082] = 'K'; m[1083] = '.';
+    for (size_t i = 0; i < 16; i++) m[1084 + 1024 + i] = 0x7E;
+    putCell(m, 0, 0, 0, 0x00, 0x71, 0x10, 0x00); // period 113: ends within ~20 quanta
+
+    GSModPlayer player;
+    ASSERT_TRUE(player.parse(m.data(), m.size()));
+    player.start(0);
+    uint8_t out[4], vols[4];
+    for (int q = 0; q < 8; q++) player.advanceQuantum(out, vols);
+    EXPECT_EQ(out[0], 0xFE) << "plateau not reproduced before the end";
+    for (int q = 0; q < 40; q++) player.advanceQuantum(out, vols);
+    EXPECT_EQ(player.channelIncrement(0), 0) << "one-shot did not end";
+    EXPECT_EQ(out[0], 0x80) << "tail held on the last byte instead of easing to 0x80";
 }
 
 /// endregion </Player>

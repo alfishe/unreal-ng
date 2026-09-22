@@ -79,6 +79,7 @@ public:
         uint16_t arpeggioPeriods[3] = {0, 0, 0};
         uint8_t offsetParam = 0;
         bool muted = false;           // ECx
+        uint8_t lastOut = 0x80;       // last DAC byte (one-shot end easing, firmware CHOLDV)
     };
 
     GSModPlayer() = default;
@@ -148,6 +149,7 @@ private:
     void processTick();
     void applyEffect(ChannelState& ch, uint8_t effect, uint8_t param, bool rowStart);
     void fetchChannelOutput(int ch, uint8_t& out, uint8_t& vol);
+    void wrapSong();                  // song end: firmware EFXSKP7 semantics
     static uint16_t periodForNote(int note, uint8_t finetune);
     static uint32_t incrementForPeriod(uint16_t period);
 
@@ -158,6 +160,7 @@ private:
     size_t _patternCount = 0;
     uint8_t _patternTable[128] = {};
     size_t _songLength = 0;
+    uint8_t _restartPosition = 0; // byte 951 (firmware MTSNGLP): wrap target when < song length
 
     // Sequencer position (quantum domain - survives audio-rate changes)
     bool _playing = false;

@@ -516,6 +516,15 @@ Root causes found (all in gsmodplayer.cpp, all with regression tests):
   (smp12 here is 65430 bytes) wrapped.
 - LW->LLE replay paced one full GS frame per byte: ~6 minutes frozen for this
   module (the "demo stopped" report). Now 2 INT periods per byte: ~17 s.
+- Render grain: the firmware interpolates (SGEN1 midpoints) and eases
+  one-shot tails to 0x80 (GENZERO); the LW card was nearest-neighbour +
+  hold-last. Live A/B on the demo: >6 kHz energy 0.73% (LW) vs 0.03%
+  (LLE). Fixed with linear interpolation + tail easing; offline >6 kHz
+  share 1.37% -> 0.36%.
+- Song wrap kept the last Fxx tempo (ProTracker behaviour); the firmware's
+  EFXSKP7 resets speed to 6 and TICKLEN to 750 and honours the restart byte
+  (951) - cc_wizard.mod ends on F20 (32 BPM) and looped 4x slow on the LW
+  card ("melody restarted, 4x slower" after a long LLE->LW session).
 
 Operational: every unreal-qt build copies data/configs into the app bundle
 (unreal-qt/CMakeLists.txt), so a GSType edit in cmake-build-*/bin/configs is

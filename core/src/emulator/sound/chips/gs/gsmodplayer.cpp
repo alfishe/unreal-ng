@@ -113,6 +113,7 @@ bool GSModPlayer::parse(const uint8_t* data, size_t size, const char** reason)
     }
 
     _songLength = data[950];
+    _restartPosition = data[951];
     if (_songLength == 0 || _songLength > 128)
     {
         if (reason) *reason = "song length byte out of range";
@@ -365,8 +366,11 @@ void GSModPlayer::processTick()
         if (_breakFlag)
         {
             _breakFlag = false;
-            _songPosition = (_songPosition + 1 >= _songLength) ? 0 : static_cast<uint8_t>(_songPosition + 1);
             _row = (_breakRow < kRowsPerPattern) ? _breakRow : 0;
+            if (_songPosition + 1 >= _songLength)
+                wrapSong();
+            else
+                _songPosition = static_cast<uint8_t>(_songPosition + 1);
             return;
         }
 
@@ -374,9 +378,29 @@ void GSModPlayer::processTick()
         if (_row >= kRowsPerPattern)
         {
             _row = 0;
-            _songPosition = (_songPosition + 1 >= _songLength) ? 0 : static_cast<uint8_t>(_songPosition + 1);
+            if (_songPosition + 1 >= _songLength)
+                wrapSong();
+            else
+                _songPosition = static_cast<uint8_t>(_songPosition + 1);
         }
     }
+}
+
+// Song end (firmware QUANTUM.a80 EFXSKP7): restart at byte 951's position
+// when it is inside the song (else 0), and reset speed to 6 and the tick
+// length to 750 quanta (125 BPM). The firmware does NOT rewrite MTBPM (COM68
+// still reports the old value), only TICKLEN - mirrored here. Without this
+// a module that ends on a slow Fxx (cc_wizard.mod: F20 in its last pattern)
+// looped at 32 BPM forever on the LW card while the LLE played the loop at
+// full tempo (live report 2026-09-22: "restarted, 4x slower").
+void GSModPlayer::wrapSong()
+{
+    _songPosition = (_restartPosition < _songLength) ? _restartPosition : 0;
+    _speed = kDefaultSpeed;
+    _tickQuanta = kDefaultTickQuanta;
+    _rowDelay = 0;
+    _jumpFlag = false;
+    _breakFlag = false;
 }
 
 void GSModPlayer::processRow()
@@ -624,6 +648,17 @@ void GSModPlayer::fetchChannelOutput(int channel, uint8_t& out, uint8_t& vol)
         return;
     }
 
+    // One-shot already finished (increment zeroed below): keep easing the
+    // DAC toward 0x80, firmware GENZERO style, until the next note
+    if (ch.increment == 0)
+    {
+        const int eased = (static_cast<int>(ch.lastOut) - 0x80) / 2;
+        ch.lastOut = static_cast<uint8_t>(0x80 + eased);
+        out = ch.lastOut;
+        vol = static_cast<uint8_t>(std::clamp<int>(ch.volume + ch.tremoloDelta, 0, 64));
+        return;
+    }
+
     // Advance the 16.16 position with loop handling (64-bit throughout - a
     // 131070-byte sample's loopEnd<<16 is ~8.6G, already past uint32_t range)
     uint64_t position = ch.position;
@@ -636,18 +671,50 @@ void GSModPlayer::fetchChannelOutput(int channel, uint8_t& out, uint8_t& vol)
     }
     else if ((position >> 16) >= info.dataLength)
     {
-        position = (static_cast<uint64_t>(info.dataLength) - 1) << 16; // hold last byte
-        ch.increment = 0;                                              // and silence
+        // One-shot end (firmware GEN_L.a80 GENZERO): the DAC is eased from
+        // the last value to 0x80 by successive halving instead of being
+        // held on the last byte forever - holding leaves a DC step that
+        // clicks at the next note (cc_wizard.mod is mostly one-shots)
+        position = (static_cast<uint64_t>(info.dataLength) - 1) << 16;
+        ch.increment = 0;
+        ch.position = position;
+        const int last = static_cast<int>(ch.lastOut) - 0x80;
+        const int eased = last / 2; // toward 0x80, converges in <= 8 quanta
+        ch.lastOut = static_cast<uint8_t>(0x80 + eased);
+        out = ch.lastOut;
+        vol = static_cast<uint8_t>(std::clamp<int>(ch.volume + ch.tremoloDelta, 0, 64));
+        return;
     }
     ch.position = position;
 
-    const uint32_t index = static_cast<uint32_t>(position >> 16);
     // ProTracker sample data is SIGNED 8-bit; the card's DAC latch is
     // 0x80-centered unsigned (the firmware XORs 0x80 on upload, Unreal's
     // gshle did the same). Feeding the raw signed byte turned every
     // near-zero sample into a full-swing 0x00/0xFF - the "fuzz/distortion"
     // on real content (cc_wizard.mod, live-verified 2026-09-22)
-    out = static_cast<uint8_t>(_module[info.dataOffset + std::min<uint32_t>(index, info.dataLength - 1)] ^ 0x80);
+    const uint8_t* data = _module.data() + info.dataOffset;
+    const uint32_t index = static_cast<uint32_t>(position >> 16);
+    auto at = [&](uint32_t i) -> int {
+        // Next-sample lookups wrap inside the loop like the firmware's
+        // GENCHK reload; past a one-shot end they clamp to the last byte
+        if (info.loopLength >= 4 && i >= info.loopStart + info.loopLength)
+            i = info.loopStart + (i - (info.loopStart + info.loopLength));
+        return static_cast<int>(data[std::min<uint32_t>(i, info.dataLength - 1)] ^ 0x80);
+    };
+
+    // Firmware SGEN1 parity (materials/gs/gs-firmware/firmware/src/sgen/):
+    // sample-and-hold with a (prev+next)/2 midpoint at phase crossings -
+    // approximated here by linear interpolation on the 16.16 fraction.
+    // (SGEN2's box-averaging is for steps above 1 byte/quantum, which the
+    // ProTracker period range 113..856 never reaches - max ~0.84.) Pure
+    // nearest-neighbour left ~30x more energy above 6 kHz than the LLE on
+    // the same content (live A/B 2026-09-22)
+    const int frac = static_cast<int>(position & 0xFFFF);
+    const int a = at(index);
+    const int bnext = at(index + 1);
+    const int value = a + (((bnext - a) * frac) >> 16);
+    out = static_cast<uint8_t>(std::clamp(value, 0, 255));
+    ch.lastOut = out;
     // Tremolo delta was rendered once per tick in processTick (PT
     // semantics): held here, not re-derived per quantum
     vol = static_cast<uint8_t>(std::clamp<int>(ch.volume + ch.tremoloDelta, 0, 64));
