@@ -25,6 +25,35 @@
 
 using Spec = DiskImage::TrackFormatSpec;
 
+namespace
+{
+    /// Deletes the file at the given path when it goes out of scope, on every
+    /// exit path (assertion failure included: ASSERT_* returns out of the
+    /// TEST_F body, which still unwinds locals normally). A bare remove() call
+    /// at the end of the test never runs once an earlier ASSERT_* fails,
+    /// leaving scratch files behind.
+    class ScopedTestFile
+    {
+    public:
+        explicit ScopedTestFile(std::string path) : _path(std::move(path)) {}
+        ~ScopedTestFile() { std::error_code ec; std::filesystem::remove(_path, ec); }
+
+        ScopedTestFile(const ScopedTestFile&) = delete;
+        ScopedTestFile& operator=(const ScopedTestFile&) = delete;
+
+        const std::string& path() const { return _path; }
+        operator const std::string&() const { return _path; }
+
+        friend bool operator==(const ScopedTestFile& a, const std::string& b) { return a._path == b; }
+        friend bool operator==(const std::string& a, const ScopedTestFile& b) { return a == b._path; }
+        friend bool operator!=(const ScopedTestFile& a, const std::string& b) { return !(a == b); }
+        friend bool operator!=(const std::string& a, const ScopedTestFile& b) { return !(a == b); }
+
+    private:
+        std::string _path;
+    };
+}
+
 class LoaderHobeta_Test : public ::testing::Test
 {
 protected:
@@ -502,8 +531,9 @@ TEST_F(LoaderHobeta_Test, Export_RoundTrip)
 
     // inject (blank disk) -> export by default selection (first file)
     {
-        std::string target = scratch("hello-export.$C");
-        removeFile(target);
+        std::string targetPath = scratch("hello-export.$C");
+        removeFile(targetPath);
+        ScopedTestFile target(targetPath);
 
         LoaderHobeta loader(_context, fixture("loaders/hobeta/hello.$C"));
         ASSERT_TRUE(loader.loadImage());
@@ -537,15 +567,15 @@ TEST_F(LoaderHobeta_Test, Export_RoundTrip)
         EXPECT_FALSE(loader.writeImage(target));
         EXPECT_FALSE(FileHelper::FileExists(target));
 
-        removeFile(target);
         delete image;
     }
 
     // inject into an existing disk -> export the injected file with a *different* loader instance
     // (header rebuilt from the catalog entry alone) and by name from the same instance
     {
-        std::string target = scratch("hello-export2.$C");
-        removeFile(target);
+        std::string targetPath = scratch("hello-export2.$C");
+        removeFile(targetPath);
+        ScopedTestFile target(targetPath);
 
         LoaderSCL scl(_context, fixture("loaders/scl/insult.scl"));
         ASSERT_TRUE(scl.loadImage());
@@ -581,14 +611,14 @@ TEST_F(LoaderHobeta_Test, Export_RoundTrip)
         uint16_t locator = static_cast<uint16_t>(files[3].entry.StartTrack * 16 + files[3].entry.StartSector);
         EXPECT_EQ(std::memcmp(out.data() + 17, image->getTrack(static_cast<uint8_t>(locator / 16))->getSector(locator % 16)->data, 256), 0);
 
-        removeFile(target);
         delete image;
     }
 
     // Export with no image / from a non-TR-DOS image is refused
     {
-        std::string target = scratch("hello-export3.$C");
-        removeFile(target);
+        std::string targetPath = scratch("hello-export3.$C");
+        removeFile(targetPath);
+        ScopedTestFile target(targetPath);
 
         LoaderHobeta empty(_context, target);
         EXPECT_FALSE(empty.writeImage());

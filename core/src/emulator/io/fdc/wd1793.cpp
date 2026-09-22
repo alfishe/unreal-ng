@@ -3198,9 +3198,11 @@ uint8_t WD1793::portDeviceInMethod(uint16_t port)
     /// region <Debug print>
 
     [[maybe_unused]] uint16_t pc = _context->pCore->GetZ80()->m1_pc;
-    std::string memBankName = _context->pMemory->GetCurrentBankName(0);
+    // Lazy: the name is needed only by log statements, and formatting it (snprintf) on every port
+    // access made TR-DOS status polling a hot spot even with logging off
+    auto memBankName = [this]() { return _context->pMemory->GetCurrentBankName(0); };
 
-    // MLOGINFO("In port:0x%04X, pc: 0x%04X bank: %s", port, pc, memBankName.c_str());
+    // MLOGINFO("In port:0x%04X, pc: 0x%04X bank: %s", port, pc, memBankName().c_str());
 
     /// endregion </Debug print>
 
@@ -3232,7 +3234,7 @@ uint8_t WD1793::portDeviceInMethod(uint16_t port)
                     statusInfo.pop_back();
                 }
                 MLOGDEBUG("In #1F (Get Status Register) - 0x%02X - %s, pc: 0x%04X bank: %s", result, statusInfo.c_str(),
-                          pc, memBankName.c_str());
+                          pc, memBankName().c_str());
             }
 
             // Reset INTRQ (Interrupt request) flag - status register is read
@@ -3241,12 +3243,12 @@ uint8_t WD1793::portDeviceInMethod(uint16_t port)
         case PORT_3F:  // Return the current track number
             result = _trackRegister;
 
-            MLOGDEBUG("In #3F (Get Track Register) - 0x%02X, pc: 0x%04X bank: %s", result, pc, memBankName.c_str());
+            MLOGDEBUG("In #3F (Get Track Register) - 0x%02X, pc: 0x%04X bank: %s", result, pc, memBankName().c_str());
             break;
         case PORT_5F:  // Return current sector number
             result = _sectorRegister;
 
-            MLOGDEBUG("In #5F (Get Sector Register) - 0x%02X, pc: 0x%04X bank: %s", result, pc, memBankName.c_str());
+            MLOGDEBUG("In #5F (Get Sector Register) - 0x%02X, pc: 0x%04X bank: %s", result, pc, memBankName().c_str());
             break;
         case PORT_7F:  // Return data byte and update internal state
             // Read Data Register
@@ -3258,14 +3260,14 @@ uint8_t WD1793::portDeviceInMethod(uint16_t port)
             // Reset DRQ (Data Request) flag
             clearDrq();
 
-            MLOGDEBUG("In #7F (Get Data Register) - 0x%02X, pc: 0x%04X bank: %s", result, pc, memBankName.c_str());
+            MLOGDEBUG("In #7F (Get Data Register) - 0x%02X, pc: 0x%04X bank: %s", result, pc, memBankName().c_str());
             break;
         case PORT_FF:  // Handle Beta128 system port (#FF)
             // Only bits 6 and 7 are used
             result = _beta128status | (_beta128Register & 0x3F);
 
             MLOGDEBUG("In #FF Beta128: %s, pc: 0x%04X bank: %s", StringHelper::FormatBinary(result).c_str(), pc,
-                      memBankName.c_str());
+                      memBankName().c_str());
             break;
         default:
             break;
@@ -3279,9 +3281,11 @@ void WD1793::portDeviceOutMethod(uint16_t port, uint8_t value)
     /// region <Debug print>
 
     uint16_t pc = _context->pCore->GetZ80()->m1_pc;
-    std::string memBankName = _context->pMemory->GetCurrentBankName(0);
+    // Lazy: the name is needed only by log statements, and formatting it (snprintf) on every port
+    // access made TR-DOS status polling a hot spot even with logging off
+    auto memBankName = [this]() { return _context->pMemory->GetCurrentBankName(0); };
 
-    MLOGINFO("Out port:0x%04X, value: 0x%02X pc: 0x%04X bank: %s", port, value, pc, memBankName.c_str());
+    MLOGINFO("Out port:0x%04X, value: 0x%02X pc: 0x%04X bank: %s", port, value, pc, memBankName().c_str());
 
     /// endregion </Debug print>
 

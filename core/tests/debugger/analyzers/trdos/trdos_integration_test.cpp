@@ -28,6 +28,9 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "emulator/emulator.h"
+#include "debugger/analyzers/rom-print/screenocr.h"
+#include "loaders/disk/loader_trd.h"
+#include "_helpers/testpathhelper.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/memory/memory.h"
@@ -61,17 +64,14 @@ protected:
         // Dispose any existing MessageCenter from previous tests
         MessageCenter::DisposeDefaultMessageCenter();
         
-        // Create a full emulator with debug features enabled
+        // Create the emulator through the shared helper: it registers the instance with
+        // EmulatorManager, which ScreenOCR / BasicEncoder automation look instances up in
+        // (a bare `new Emulator` + Init() is invisible to them)
         // Pentagon model includes TR-DOS ROM and Beta128 FDC
-        _emulator = new Emulator(LoggerLevel::LogError);
-        
-        if (!_emulator || !_emulator->Init())
-        {
-            delete _emulator;
-            _emulator = nullptr;
+        _emulator = EmulatorTestHelper::CreateStandardEmulator("Pentagon", LoggerLevel::LogError);
+        if (!_emulator)
             return;
-        }
-        
+
         _context = _emulator->GetContext();
         if (!_context)
         {
@@ -136,7 +136,7 @@ protected:
         
         if (_emulator)
         {
-            delete _emulator;
+            EmulatorTestHelper::CleanupEmulator(_emulator);
             _emulator = nullptr;
         }
         
@@ -739,7 +739,7 @@ TEST_F(TRDOSIntegration_test, ClearResetsBuffer)
 /// This test loads a TR-DOS snapshot and runs actual Z80 code that hits the TR-DOS
 /// entry point, verifying that the analyzer captures events through the full
 /// dispatch chain (Z80::Step -> BreakpointManager -> AnalyzerManager -> TRDOSAnalyzer)
-TEST_F(TRDOSIntegration_test, DISABLED_RealExecution_EventsCollectedViaTRDOSHelper)
+TEST_F(TRDOSIntegration_test, RealExecution_EventsCollectedViaTRDOSHelper)
 {
     if (!_emulator || !_manager || !hasTRDOSRom() || !hasFDC())
     {
@@ -758,7 +758,7 @@ TEST_F(TRDOSIntegration_test, DISABLED_RealExecution_EventsCollectedViaTRDOSHelp
     // 3. Issues FDC commands via the WD1793
     std::cout << "[E2E Test] Executing TR-DOS command via TRDOSTestHelper...\n";
     
-    uint64_t cycles = _helper->executeTRDOSCommandViaBasic("PRINT 1");
+    uint64_t cycles = _helper->executeCommand("CAT");
     
     std::cout << "[E2E Test] Executed " << cycles << " CPU cycles\n";
     std::cout << "[E2E Test] Events collected: " << _analyzer->getEventCount() << "\n";
@@ -791,23 +791,17 @@ TEST_F(TRDOSIntegration_test, DISABLED_RealExecution_EventsCollectedViaTRDOSHelp
 }
 
 /// @brief End-to-end test: Execute CAT command and verify FDC events
-TEST_F(TRDOSIntegration_test, DISABLED_RealExecution_CATCommand_CollectsEvents)
+TEST_F(TRDOSIntegration_test, RealExecution_CATCommand_CollectsEvents)
 {
     if (!_emulator || !_manager || !hasTRDOSRom() || !hasFDC())
     {
         GTEST_SKIP() << "Full emulator environment not available";
     }
     
-    // Insert a formatted disk image so CAT has something to read
-    if (_fdc)
-    {
-        FDD* fdd = _fdc->getDrive();
-        if (fdd && !fdd->isDiskInserted())
-        {
-            DiskImage* disk = new DiskImage(80, 2);
-            fdd->insertDisk(disk);
-        }
-    }
+    // The fixture inserted a blank disk; give it a real TR-DOS structure so CAT has a catalog to read
+    ASSERT_NE(_diskImage, nullptr);
+    LoaderTRDCUT loaderTrd(_context, TestPathHelper::GetTestScratchPath("cat.trd"));
+    ASSERT_TRUE(loaderTrd.format(_diskImage)) << "Failed to format TRD disk image";
     
     // Activate analyzer
     activateAnalyzer();
@@ -815,9 +809,13 @@ TEST_F(TRDOSIntegration_test, DISABLED_RealExecution_CATCommand_CollectsEvents)
     std::cout << "[E2E CAT Test] Executing CAT command...\n";
     
     // Execute CAT command - this reads the disk catalog
-    uint64_t cycles = _helper->executeTRDOSCommandViaBasic("CAT");
+    uint64_t cycles = _helper->executeCommand("CAT");
     
     std::cout << "[E2E CAT Test] Executed " << cycles << " cycles\n";
+    // The catalog of the freshly formatted disk must actually be printed by TR-DOS
+    const std::string screen = ScreenOCR::ocrScreen(_emulator->GetId());
+    EXPECT_NE(screen.find("0 File(s)"), std::string::npos) << "CAT output missing. Screen:\n" << screen;
+
     std::cout << "[E2E CAT Test] Events collected: " << _analyzer->getEventCount() << "\n";
     
     // Report events for debugging
@@ -829,15 +827,18 @@ TEST_F(TRDOSIntegration_test, DISABLED_RealExecution_CATCommand_CollectsEvents)
         std::cout << "[E2E CAT Test] " << e.format() << "\n";
     }
     
-    // Expected: At minimum, if TR-DOS was entered, we should have TRDOS_ENTRY
-    // If CAT executed successfully, we'd also have FDC commands
-    EXPECT_GT(_analyzer->getEventCount(), 0) 
-        << "CAT command should generate events";
+    // The command must have started, and CAT reading the catalog must have gone through the FDC
+    EXPECT_TRUE(eventTypes.count(TRDOSEventType::COMMAND_START) > 0) << "CAT command start not reported";
+
+    const bool sawFdcCommand = eventTypes.count(TRDOSEventType::FDC_CMD_RESTORE) > 0 ||
+                               eventTypes.count(TRDOSEventType::FDC_CMD_SEEK) > 0 ||
+                               eventTypes.count(TRDOSEventType::FDC_CMD_READ) > 0;
+    EXPECT_TRUE(sawFdcCommand) << "CAT must read the catalog through FDC commands";
 }
 
 /// @brief End-to-end test: Direct FORMAT operation and verify Write Track events
 /// This is the most intensive test - it actually formats a disk through TR-DOS
-TEST_F(TRDOSIntegration_test, DISABLED_RealExecution_DirectFormat_CollectsEvents)
+TEST_F(TRDOSIntegration_test, RealExecution_DirectFormat_CollectsEvents)
 {
     if (!_emulator || !_manager || !hasTRDOSRom() || !hasFDC())
     {
@@ -864,8 +865,10 @@ TEST_F(TRDOSIntegration_test, DISABLED_RealExecution_DirectFormat_CollectsEvents
     
     std::cout << "[E2E FORMAT Test] Executing direct FORMAT via TRDOSTestHelper...\n";
     
-    // Call FORMAT directly (this uses TR-DOS ROM's FORMAT routine)
-    uint64_t cycles = _helper->directFormatDisk(0x16); // 80T DS
+    // Real TR-DOS FORMAT (80T DS) through the ROM's own routine
+    uint64_t cycles = 0;
+    const bool formatted = _helper->formatDisk(TRDOSTestHelper::FORMAT_MAX_CYCLES, &cycles);
+    EXPECT_TRUE(formatted) << "FORMAT did not complete within the emulated-time budget";
     
     std::cout << "[E2E FORMAT Test] Executed " << cycles << " cycles\n";
     std::cout << "[E2E FORMAT Test] Events collected: " << _analyzer->getEventCount() << "\n";

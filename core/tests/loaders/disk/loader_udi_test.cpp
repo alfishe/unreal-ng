@@ -20,6 +20,35 @@
 
 using Spec = DiskImage::TrackFormatSpec;
 
+namespace
+{
+    /// Deletes the file at the given path when it goes out of scope, on every
+    /// exit path (assertion failure included: ASSERT_* returns out of the
+    /// TEST_F body, which still unwinds locals normally). A bare remove() call
+    /// at the end of the test never runs once an earlier ASSERT_* fails,
+    /// leaving scratch files behind.
+    class ScopedTestFile
+    {
+    public:
+        explicit ScopedTestFile(std::string path) : _path(std::move(path)) {}
+        ~ScopedTestFile() { std::error_code ec; std::filesystem::remove(_path, ec); }
+
+        ScopedTestFile(const ScopedTestFile&) = delete;
+        ScopedTestFile& operator=(const ScopedTestFile&) = delete;
+
+        const std::string& path() const { return _path; }
+        operator const std::string&() const { return _path; }
+
+        friend bool operator==(const ScopedTestFile& a, const std::string& b) { return a._path == b; }
+        friend bool operator==(const std::string& a, const ScopedTestFile& b) { return a == b._path; }
+        friend bool operator!=(const ScopedTestFile& a, const std::string& b) { return !(a == b); }
+        friend bool operator!=(const std::string& a, const ScopedTestFile& b) { return !(a == b); }
+
+    private:
+        std::string _path;
+    };
+}
+
 class LoaderUDI_Test : public ::testing::Test
 {
 protected:
@@ -297,8 +326,9 @@ TEST_F(LoaderUDI_Test, Save_RoundTrip_ByteExact)
     for (const char* name : fixtures)
     {
         std::string source = fixture(name);
-        std::string target = scratch("roundtrip.udi");
-        removeFile(target);
+        std::string targetPath = scratch("roundtrip.udi");
+        removeFile(targetPath);
+        ScopedTestFile target(targetPath);
 
         LoaderUDI loader(_context, source);
         ASSERT_TRUE(loader.loadImage()) << name;
@@ -314,7 +344,6 @@ TEST_F(LoaderUDI_Test, Save_RoundTrip_ByteExact)
         ASSERT_EQ(out.size(), in.size()) << name;
         EXPECT_EQ(std::memcmp(in.data(), out.data(), in.size()), 0) << name << " differs after round trip";
 
-        removeFile(target);
         delete image;
     }
 }
@@ -322,10 +351,12 @@ TEST_F(LoaderUDI_Test, Save_RoundTrip_ByteExact)
 TEST_F(LoaderUDI_Test, Save_FromTrd_And_Back)
 {
     std::string trdSource = fixture("loaders/trd/EyeAche.trd");
-    std::string udiPath = scratch("from-trd.udi");
-    std::string trdPath = scratch("from-udi.trd");
-    removeFile(udiPath);
-    removeFile(trdPath);
+    std::string udiPathStr = scratch("from-trd.udi");
+    std::string trdPathStr = scratch("from-udi.trd");
+    removeFile(udiPathStr);
+    removeFile(trdPathStr);
+    ScopedTestFile udiPath(udiPathStr);
+    ScopedTestFile trdPath(trdPathStr);
 
     LoaderTRD trd(_context, trdSource);
     ASSERT_TRUE(trd.loadImage());
@@ -359,8 +390,6 @@ TEST_F(LoaderUDI_Test, Save_FromTrd_And_Back)
     std::vector<uint8_t> second = readFile(udiPath);
     EXPECT_EQ(first, second);
 
-    removeFile(udiPath);
-    removeFile(trdPath);
     delete reloaded;
 }
 
@@ -437,8 +466,11 @@ TEST_F(LoaderUDI_Test, Save_AfterWriteTrack_ReadBackThroughController)
 {
     // Format a 9 x 512 track "in the emulator" (formatTrack stands in for the CPU-side WRITE TRACK, which is
     // covered by WD1793_UniversalTrack_Test.WriteTrack_9x512_Then_ReadSector), save as UDI, reload and read a sector
-    std::string udiPath = scratch("write-track.udi");
-    removeFile(udiPath);
+    std::string udiPathStr = scratch("write-track.udi");
+    removeFile(udiPathStr);
+    ScopedTestFile udiPath(udiPathStr);
+    std::string refusedTrdPathStr = scratch("refused.trd");
+    ScopedTestFile refusedTrdPath(refusedTrdPathStr);
 
     LoaderTRD trd(_context, fixture("loaders/trd/EyeAche.trd"));
     ASSERT_TRUE(trd.loadImage());
@@ -450,7 +482,7 @@ TEST_F(LoaderUDI_Test, Save_AfterWriteTrack_ReadBackThroughController)
     track->writeSectorData(4, pattern.data(), pattern.size());
 
     // TRD refuses this image now...
-    EXPECT_FALSE(trd.writeImage(scratch("refused.trd")));
+    EXPECT_FALSE(trd.writeImage(refusedTrdPathStr));
 
     // ...UDI keeps it
     LoaderUDI udi(_context, udiPath);
@@ -489,8 +521,6 @@ TEST_F(LoaderUDI_Test, Save_AfterWriteTrack_ReadBackThroughController)
     EXPECT_FALSE(fdc._statusRegister & WD1793::WDS_CRCERR);
 
     fdc.getDrive()->ejectDisk();
-    removeFile(udiPath);
-    removeFile(scratch("refused.trd"));
     delete reloaded;
 }
 

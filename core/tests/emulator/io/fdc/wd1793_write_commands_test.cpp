@@ -358,9 +358,7 @@ TEST_F(WD1793_WriteCommands_Test, WriteTrack_F7_CRC_Matches_Helper)
 }
 
 /// Test that write track stops at 6250 bytes (no buffer overflow)
-/// NOTE: This is a complex integration test - marked DISABLED pending proper integration test setup
-/// The full format->read sequence should be tested in wd1793_integration_test.cpp
-TEST_F(WD1793_WriteCommands_Test, DISABLED_WriteTrack_Buffer_Overflow_Protected)
+TEST_F(WD1793_WriteCommands_Test, WriteTrack_Buffer_Overflow_Protected)
 {
     static constexpr size_t const TEST_DURATION_TSTATES = 3.5 * 1'000'000 * 2;  // 2 seconds
     static constexpr size_t const TEST_INCREMENT_TSTATES = 100;
@@ -458,9 +456,7 @@ TEST_F(WD1793_WriteCommands_Test, WriteSector_Stops_At_SectorSize)
 }
 
 /// Test that data is written at correct buffer offset
-/// NOTE: This is a complex integration test - marked DISABLED pending proper integration test setup
-/// The full write->read sequence should be tested in wd1793_integration_test.cpp
-TEST_F(WD1793_WriteCommands_Test, DISABLED_WriteSector_Buffer_Alignment)
+TEST_F(WD1793_WriteCommands_Test, WriteSector_Buffer_Alignment)
 {
     static constexpr size_t const TEST_DURATION_TSTATES = 3.5 * 1'000'000 * 2;
     static constexpr size_t const TEST_INCREMENT_TSTATES = 100;
@@ -490,12 +486,14 @@ TEST_F(WD1793_WriteCommands_Test, DISABLED_WriteSector_Buffer_Alignment)
 
     // Write specific pattern
     size_t bytesWritten = 0;
-    for (size_t clk = 0; clk < TEST_DURATION_TSTATES && bytesWritten < 256; clk += TEST_INCREMENT_TSTATES)
+    // Keep processing after the 256th byte until the command finishes: the last byte is
+    // committed to the sector only when the FSM consumes it
+    for (size_t clk = 0; clk < TEST_DURATION_TSTATES; clk += TEST_INCREMENT_TSTATES)
     {
         fdc._time = clk;
         fdc.process();
 
-        if (fdc._beta128status & WD1793::DRQ)
+        if (bytesWritten < 256 && (fdc._beta128status & WD1793::DRQ))
         {
             fdc.writeDataRegister(static_cast<uint8_t>(0xAA + bytesWritten));
             bytesWritten++;

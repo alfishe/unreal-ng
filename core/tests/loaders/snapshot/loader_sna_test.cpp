@@ -7,6 +7,36 @@
 
 #include <vector>
 
+namespace
+{
+    /// Deletes the file at the given path when it goes out of scope, on every
+    /// exit path (assertion failure included: ASSERT_* returns out of the
+    /// TEST_F body, which still unwinds locals normally). A bare remove() call
+    /// at the end of the test never runs once an earlier ASSERT_* fails,
+    /// leaving scratch files behind.
+    class ScopedTestFile
+    {
+    public:
+        explicit ScopedTestFile(std::string path) : _path(std::move(path)) {}
+        ~ScopedTestFile() { std::remove(_path.c_str()); }
+
+        ScopedTestFile(const ScopedTestFile&) = delete;
+        ScopedTestFile& operator=(const ScopedTestFile&) = delete;
+
+        const std::string& path() const { return _path; }
+        const char* c_str() const { return _path.c_str(); }
+        operator const std::string&() const { return _path; }
+
+        friend bool operator==(const ScopedTestFile& a, const std::string& b) { return a._path == b; }
+        friend bool operator==(const std::string& a, const ScopedTestFile& b) { return a == b._path; }
+        friend bool operator!=(const ScopedTestFile& a, const std::string& b) { return !(a == b); }
+        friend bool operator!=(const std::string& a, const ScopedTestFile& b) { return !(a == b); }
+
+    private:
+        std::string _path;
+    };
+}
+
 /// region <SetUp / TearDown>
 
 void LoaderSNA_Test::SetUp()
@@ -433,24 +463,21 @@ TEST_F(LoaderSNA_Test, save48kBasic)
     _context->emulatorState.p7FFD = 0x20;
     _context->pPortDecoder->LockPaging();
     
-    std::string tempPath = TestPathHelper::GetUniqueTestScratchPath("test_save_48k.sna");
+    ScopedTestFile tempPath(TestPathHelper::GetUniqueTestScratchPath("test_save_48k.sna"));
     LoaderSNACUT loader(_context, tempPath);
-    
+
     bool result = loader.save();
     ASSERT_TRUE(result) << "save() should succeed for 48K snapshot";
-    
+
     // Verify file exists and has correct size
     FILE* file = fopen(tempPath.c_str(), "rb");
     ASSERT_NE(file, nullptr) << "Saved file should exist";
-    
+
     fseek(file, 0, SEEK_END);
     long fileSize = ftell(file);
     fclose(file);
-    
+
     EXPECT_EQ(fileSize, 49179) << "48K SNA should be exactly 49179 bytes";
-    
-    // Clean up
-    remove(tempPath.c_str());
 }
 
 TEST_F(LoaderSNA_Test, save128kBasic)
@@ -459,25 +486,22 @@ TEST_F(LoaderSNA_Test, save128kBasic)
     _context->emulatorState.p7FFD = 0x00;
     _context->pPortDecoder->UnlockPaging();
     
-    std::string tempPath = TestPathHelper::GetUniqueTestScratchPath("test_save_128k.sna");
+    ScopedTestFile tempPath(TestPathHelper::GetUniqueTestScratchPath("test_save_128k.sna"));
     LoaderSNACUT loader(_context, tempPath);
-    
+
     bool result = loader.save();
     ASSERT_TRUE(result) << "save() should succeed for 128K snapshot";
-    
+
     // Verify file exists and has correct minimum size
     FILE* file = fopen(tempPath.c_str(), "rb");
     ASSERT_NE(file, nullptr) << "Saved file should exist";
-    
+
     fseek(file, 0, SEEK_END);
     long fileSize = ftell(file);
     fclose(file);
-    
+
     // 128K SNA: header(27) + 3 pages(49152) + ext header(4) + 5 remaining pages(81920) = 131103
     EXPECT_EQ(fileSize, 131103) << "128K SNA should be exactly 131103 bytes";
-    
-    // Clean up
-    remove(tempPath.c_str());
 }
 
 TEST_F(LoaderSNA_Test, saveAndLoadRoundtrip48k)
@@ -495,8 +519,8 @@ TEST_F(LoaderSNA_Test, saveAndLoadRoundtrip48k)
     z80.sp = 0xFF00;
     z80.im = 1;
     
-    std::string tempPath = TestPathHelper::GetUniqueTestScratchPath("test_roundtrip_48k.sna");
-    
+    ScopedTestFile tempPath(TestPathHelper::GetUniqueTestScratchPath("test_roundtrip_48k.sna"));
+
     // Save
     {
         LoaderSNACUT saver(_context, tempPath);
@@ -522,9 +546,6 @@ TEST_F(LoaderSNA_Test, saveAndLoadRoundtrip48k)
     EXPECT_EQ(z80.bc, 0x1234) << "Register BC should be restored";
     EXPECT_EQ(z80.de, 0x5678) << "Register DE should be restored";
     EXPECT_EQ(z80.hl, 0x9ABC) << "Register HL should be restored";
-    
-    // Clean up
-    remove(tempPath.c_str());
 }
 
 // File size sanity tests - prevent oversized snapshots (e.g. 4MB extended memory)
@@ -534,23 +555,21 @@ TEST_F(LoaderSNA_Test, save48kFileSizeExact)
     _context->emulatorState.p7FFD = 0x20;
     _context->pPortDecoder->LockPaging();
     
-    std::string tempPath = TestPathHelper::GetUniqueTestScratchPath("test_size_48k.sna");
+    ScopedTestFile tempPath(TestPathHelper::GetUniqueTestScratchPath("test_size_48k.sna"));
     LoaderSNACUT loader(_context, tempPath);
-    
+
     bool result = loader.save();
     ASSERT_TRUE(result);
-    
+
     FILE* file = fopen(tempPath.c_str(), "rb");
     ASSERT_NE(file, nullptr);
     fseek(file, 0, SEEK_END);
     long fileSize = ftell(file);
     fclose(file);
-    
+
     // 48K SNA: 27 (header) + 49152 (3 pages) = 49179 bytes exactly
     EXPECT_EQ(fileSize, 49179) << "48K SNA must be exactly 49179 bytes";
     EXPECT_LT(fileSize, 100000) << "48K SNA should never exceed 100KB (sanity check)";
-    
-    remove(tempPath.c_str());
 }
 
 TEST_F(LoaderSNA_Test, save128kFileSizeExact)
@@ -559,23 +578,21 @@ TEST_F(LoaderSNA_Test, save128kFileSizeExact)
     _context->emulatorState.p7FFD = 0x00;
     _context->pPortDecoder->UnlockPaging();
     
-    std::string tempPath = TestPathHelper::GetUniqueTestScratchPath("test_size_128k.sna");
+    ScopedTestFile tempPath(TestPathHelper::GetUniqueTestScratchPath("test_size_128k.sna"));
     LoaderSNACUT loader(_context, tempPath);
-    
+
     bool result = loader.save();
     ASSERT_TRUE(result);
-    
+
     FILE* file = fopen(tempPath.c_str(), "rb");
     ASSERT_NE(file, nullptr);
     fseek(file, 0, SEEK_END);
     long fileSize = ftell(file);
     fclose(file);
-    
+
     // 128K SNA: 27 (header) + 49152 (3 pages) + 4 (ext header) + 81920 (5 pages) = 131103 bytes exactly
     EXPECT_EQ(fileSize, 131103) << "128K SNA must be exactly 131103 bytes";
     EXPECT_LT(fileSize, 200000) << "128K SNA should never exceed 200KB (sanity check)";
-    
-    remove(tempPath.c_str());
 }
 
 /// endregion </Save Tests>
@@ -681,35 +698,31 @@ TEST_F(LoaderSNA_Test, save_load_roundtrip_preserves_CF_TRDOS_flag)
     z80->l = 0x34;
     
     // Save to temporary file
-    std::string tempPath = TestPathHelper::GetTestDataPath("loaders/sna/temp_trdos_test.sna");
-    std::string absoluteTempPath = FileHelper::AbsolutePath(tempPath);
-    
+    ScopedTestFile absoluteTempPath(TestPathHelper::GetUniqueTestScratchPath("temp_trdos_test.sna"));
+
     {
         LoaderSNACUT saver(_context, absoluteTempPath);
         ASSERT_TRUE(saver.save()) << "Save failed";
     }
-    
+
     // Clear CF_TRDOS flag before loading
     _context->emulatorState.flags &= ~CF_TRDOS;
     z80->pc = 0x0000;  // Reset PC
     z80->a = 0x00;
-    
+
     // Load back
     {
         LoaderSNACUT loader(_context, absoluteTempPath);
         ASSERT_TRUE(loader.load()) << "Load failed";
     }
-    
+
     // Verify CF_TRDOS flag was restored
-    EXPECT_TRUE(_context->emulatorState.flags & CF_TRDOS) 
+    EXPECT_TRUE(_context->emulatorState.flags & CF_TRDOS)
         << "CF_TRDOS flag should be preserved through save/load";
-    
+
     // Verify other state was also restored
     EXPECT_EQ(z80->pc, 0x3D2F) << "PC should be restored";
     EXPECT_EQ(z80->a, 0x42) << "Register A should be restored";
-    
-    // Cleanup
-    remove(absoluteTempPath.c_str());
 }
 
 // Test save correctly captures CF_TRDOS in is_TRDOS byte
@@ -723,14 +736,13 @@ TEST_F(LoaderSNA_Test, save_captures_CF_TRDOS_flag_in_snapshot)
     z80->pc = 0x3D2F;
     
     // Save to temporary file
-    std::string tempPath = TestPathHelper::GetTestDataPath("loaders/sna/temp_trdos_save_test.sna");
-    std::string absoluteTempPath = FileHelper::AbsolutePath(tempPath);
-    
+    ScopedTestFile absoluteTempPath(TestPathHelper::GetUniqueTestScratchPath("temp_trdos_save_test.sna"));
+
     {
         LoaderSNACUT saver(_context, absoluteTempPath);
         ASSERT_TRUE(saver.save()) << "Save failed";
     }
-    
+
     // Read back the file and check is_TRDOS byte
     FILE* file = FileHelper::OpenExistingFile(absoluteTempPath);
     ASSERT_NE(file, nullptr) << "Failed to open saved snapshot";
@@ -753,9 +765,6 @@ TEST_F(LoaderSNA_Test, save_captures_CF_TRDOS_flag_in_snapshot)
     // Verify is_TRDOS byte is set
     EXPECT_EQ(is_TRDOS, 1) << "is_TRDOS byte should be 1 when CF_TRDOS flag is set";
     EXPECT_EQ(pc, 0x3D2F) << "PC should be saved correctly";
-    
-    // Cleanup
-    remove(absoluteTempPath.c_str());
 }
 
 // Test save correctly clears is_TRDOS when CF_TRDOS not set
@@ -769,14 +778,13 @@ TEST_F(LoaderSNA_Test, save_clears_is_TRDOS_when_CF_TRDOS_not_set)
     z80->pc = 0x8000;  // Not in TR-DOS area
     
     // Save to temporary file
-    std::string tempPath = TestPathHelper::GetTestDataPath("loaders/sna/temp_no_trdos_test.sna");
-    std::string absoluteTempPath = FileHelper::AbsolutePath(tempPath);
-    
+    ScopedTestFile absoluteTempPath(TestPathHelper::GetUniqueTestScratchPath("temp_no_trdos_test.sna"));
+
     {
         LoaderSNACUT saver(_context, absoluteTempPath);
         ASSERT_TRUE(saver.save()) << "Save failed";
     }
-    
+
     // Read back the file and check is_TRDOS byte
     FILE* file = FileHelper::OpenExistingFile(absoluteTempPath);
     ASSERT_NE(file, nullptr) << "Failed to open saved snapshot";
@@ -798,9 +806,6 @@ TEST_F(LoaderSNA_Test, save_clears_is_TRDOS_when_CF_TRDOS_not_set)
     
     // Verify is_TRDOS byte is cleared
     EXPECT_EQ(is_TRDOS, 0) << "is_TRDOS byte should be 0 when CF_TRDOS flag is not set";
-    
-    // Cleanup
-    remove(absoluteTempPath.c_str());
 }
 
 // Test multiple ROM state transitions
@@ -836,9 +841,8 @@ TEST_F(LoaderSNA_Test, save_load_with_different_ROM_states)
         z80->pc = testCase.pc;
         
         // Save
-        std::string tempPath = TestPathHelper::GetTestDataPath("loaders/sna/temp_rom_state_" + testCase.name + ".sna");
-        std::string absoluteTempPath = FileHelper::AbsolutePath(tempPath);
-        
+        ScopedTestFile absoluteTempPath(TestPathHelper::GetUniqueTestScratchPath("temp_rom_state_" + testCase.name + ".sna"));
+
         {
             LoaderSNACUT saver(_context, absoluteTempPath);
             ASSERT_TRUE(saver.save()) << "Save failed for " << testCase.name;
@@ -859,11 +863,8 @@ TEST_F(LoaderSNA_Test, save_load_with_different_ROM_states)
         bool hasCF_TRDOS = (_context->emulatorState.flags & CF_TRDOS) != 0;
         EXPECT_EQ(hasCF_TRDOS, testCase.cf_trdos) 
             << "CF_TRDOS flag mismatch for " << testCase.name;
-        EXPECT_EQ(z80->pc, testCase.pc) 
+        EXPECT_EQ(z80->pc, testCase.pc)
             << "PC mismatch for " << testCase.name;
-        
-        // Cleanup
-        remove(absoluteTempPath.c_str());
     }
 }
 

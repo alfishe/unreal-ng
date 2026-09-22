@@ -444,6 +444,26 @@ TEST_F(Multirate_Test, CoreRatePin_OverridesDeviceAndIni)
     _emulator->SetAudioDeviceSampleRate(0);
 }
 
+TEST_F(Multirate_Test, CoreRatePin_CancelledInSameFrame_DoesNotSwitch)
+{
+    // Pin then unpin before the frame boundary: the superseded pending
+    // request must be dropped, not applied
+    SoundManager* sound = _context->pSoundManager;
+    ASSERT_NE(sound, nullptr);
+
+    _emulator->SetAudioDeviceSampleRate(48000);
+    sound->handleFrameStart();
+    ASSERT_EQ(sound->getCoreRate(), 48000u);
+
+    sound->setCoreRatePin(96000);
+    sound->setCoreRatePin(0);
+    EXPECT_EQ(sound->getTargetCoreRate(), 48000u);
+    sound->handleFrameStart();
+    EXPECT_EQ(sound->getCoreRate(), 48000u) << "A cancelled pin must not switch the core rate";
+
+    _emulator->SetAudioDeviceSampleRate(0);
+}
+
 #ifdef ENABLE_RECORDING
 namespace
 {

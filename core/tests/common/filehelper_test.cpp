@@ -35,6 +35,27 @@ std::string ToForwardSlashes(const std::string& path)
     std::replace(result.begin(), result.end(), '\\', '/');
     return result;
 }
+
+/// Removes the directory tree at the given path when it goes out of scope, on
+/// every exit path (assertion failure included: ASSERT_* returns out of the
+/// TEST_F body, which still unwinds locals normally). A bare cleanup shell-out
+/// at the end of the test never runs once an earlier ASSERT_* fails, leaving
+/// the whole scratch subdirectory behind.
+class ScopedTestDir
+{
+public:
+    explicit ScopedTestDir(std::string path) : _path(std::move(path)) {}
+    ~ScopedTestDir() { std::error_code ec; std::filesystem::remove_all(_path, ec); }
+
+    ScopedTestDir(const ScopedTestDir&) = delete;
+    ScopedTestDir& operator=(const ScopedTestDir&) = delete;
+
+    const std::string& path() const { return _path; }
+    operator const std::string&() const { return _path; }
+
+private:
+    std::string _path;
+};
 } // namespace
 
 /// region <SetUp / TearDown>
@@ -225,11 +246,11 @@ TEST_F(FileHelper_Test, AbsolutePath_ExistingPath)
 {
 #if defined _WIN32
     // Windows-specific test paths
-    std::string tempDir = FileHelperTestDir();
-    std::string tempFile = tempDir + "\\test.txt";
+    ScopedTestDir tempDir(FileHelperTestDir());
+    std::string tempFile = std::string(tempDir) + "\\test.txt";
 
     // Create test directory and file
-    int ret = system(("mkdir \"" + tempDir + "\"").c_str());
+    int ret = system(("mkdir \"" + std::string(tempDir) + "\"").c_str());
     ASSERT_EQ(ret, 0);
     ret = system(("type nul > \"" + tempFile + "\"").c_str());
     ASSERT_EQ(ret, 0);
@@ -247,9 +268,9 @@ TEST_F(FileHelper_Test, AbsolutePath_ExistingPath)
         ~CwdRestorer() { SetCurrentDirectoryA(saved.c_str()); }
     } cwdRestorer;
 
-    const std::string dirLeaf = std::filesystem::path(tempDir).filename().string();
+    const std::string dirLeaf = std::filesystem::path(tempDir.path()).filename().string();
     std::string relPath = ".\\" + dirLeaf + "\\test.txt";
-    SetCurrentDirectoryA(std::filesystem::path(tempDir).parent_path().string().c_str());
+    SetCurrentDirectoryA(std::filesystem::path(tempDir.path()).parent_path().string().c_str());
     result = FileHelper::AbsolutePath(relPath);
     ASSERT_FALSE(result.empty());
     ASSERT_EQ(result, PlatformPath(tempFile));
@@ -259,17 +280,13 @@ TEST_F(FileHelper_Test, AbsolutePath_ExistingPath)
     result = FileHelper::AbsolutePath(uncPath);
     ASSERT_FALSE(result.empty());
     ASSERT_EQ(result, PlatformPath(uncPath));
-
-    // Cleanup
-    ret = system(("rmdir /S /Q \"" + tempDir + "\"").c_str());
-    ASSERT_EQ(ret, 0);
 #else
     // Unix-specific test paths
-    std::string tempDir = FileHelperTestDir();
-    std::string tempFile = tempDir + "/test.txt";
+    ScopedTestDir tempDir(FileHelperTestDir());
+    std::string tempFile = std::string(tempDir) + "/test.txt";
 
     // Create test directory and file
-    int ret = system(("mkdir -p \"" + tempDir + "\"").c_str());
+    int ret = system(("mkdir -p \"" + std::string(tempDir) + "\"").c_str());
     ASSERT_EQ(ret, 0);
     ret = system(("touch \"" + tempFile + "\"").c_str());
     ASSERT_EQ(ret, 0);
@@ -297,9 +314,9 @@ TEST_F(FileHelper_Test, AbsolutePath_ExistingPath)
         ~CwdRestorer() { if (!saved.empty()) { int r = chdir(saved.c_str()); (void)r; } }
     } cwdRestorer;
 
-    const std::string dirLeaf = std::filesystem::path(tempDir).filename().string();
+    const std::string dirLeaf = std::filesystem::path(tempDir.path()).filename().string();
     std::string relPath = "./" + dirLeaf + "/test.txt";
-    ret = chdir(std::filesystem::path(tempDir).parent_path().string().c_str());
+    ret = chdir(std::filesystem::path(tempDir.path()).parent_path().string().c_str());
     ASSERT_EQ(ret, 0);
     result = FileHelper::AbsolutePath(relPath);
     ASSERT_FALSE(result.empty());
@@ -307,17 +324,13 @@ TEST_F(FileHelper_Test, AbsolutePath_ExistingPath)
     ASSERT_EQ(PlatformPath(result), PlatformPath(tempFile));
 
     // Test with symbolic links
-    std::string linkPath = tempDir + "/link.txt";
+    std::string linkPath = std::string(tempDir) + "/link.txt";
     ret = system(("ln -s \"" + tempFile + "\" \"" + linkPath + "\"").c_str());
     ASSERT_EQ(ret, 0);
     result = FileHelper::AbsolutePath(linkPath);
     ASSERT_FALSE(result.empty());
     // Normalize both paths for comparison (macOS /tmp -> /private/tmp)
     ASSERT_EQ(PlatformPath(result), PlatformPath(tempFile));
-
-    // Cleanup
-    ret = system(("rm -rf \"" + tempDir + "\"").c_str());
-    ASSERT_EQ(ret, 0);
 #endif
 }
 

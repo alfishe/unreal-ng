@@ -21,6 +21,35 @@
 /// the #3Dxx hot zone. The synthetic DOS ROM is filled with its tag byte 0xC3, so
 /// the trapped fetch executes JP #C3C3 and parks execution in bank3 RAM — a
 /// deterministic landing used to observe both the open and the close boundaries.
+namespace
+{
+    /// Deletes the file at the given path when it goes out of scope, on every
+    /// exit path (assertion failure included: ASSERT_* returns out of the
+    /// TEST_F body, which still unwinds locals normally). A bare remove() call
+    /// at the end of the test never runs once an earlier ASSERT_* fails,
+    /// leaving scratch files behind.
+    class ScopedTestFile
+    {
+    public:
+        explicit ScopedTestFile(std::string path) : _path(std::move(path)) {}
+        ~ScopedTestFile() { std::error_code ec; std::filesystem::remove(_path, ec); }
+
+        ScopedTestFile(const ScopedTestFile&) = delete;
+        ScopedTestFile& operator=(const ScopedTestFile&) = delete;
+
+        const std::string& path() const { return _path; }
+        operator const std::string&() const { return _path; }
+
+        friend bool operator==(const ScopedTestFile& a, const std::string& b) { return a._path == b; }
+        friend bool operator==(const std::string& a, const ScopedTestFile& b) { return a == b._path; }
+        friend bool operator!=(const ScopedTestFile& a, const std::string& b) { return !(a == b); }
+        friend bool operator!=(const std::string& a, const ScopedTestFile& b) { return !(a == b); }
+
+    private:
+        std::string _path;
+    };
+}
+
 class ScorpionTrdos_Test : public ScorpionMachineFixture
 {
 protected:
@@ -280,10 +309,11 @@ TEST(ScorpionTrdosMount_Test, TrdMountSmoke)
         GTEST_SKIP() << "SCORPION model emulator could not be created (ROM/config missing)";
 
     std::string source = TestPathHelper::GetTestDataPath("loaders/trd/EyeAche.trd");
-    std::string target = TestPathHelper::GetTestScratchPath("scorpiontrdos-mount.trd");
+    std::string targetPath = TestPathHelper::GetTestScratchPath("scorpiontrdos-mount.trd");
     std::error_code ec;
-    std::filesystem::remove(target, ec);
-    std::filesystem::copy_file(source, target, ec);
+    std::filesystem::remove(targetPath, ec);
+    ScopedTestFile target(targetPath);
+    std::filesystem::copy_file(source, target.path(), ec);
     ASSERT_FALSE(ec) << "fixture copy failed: " << source;
 
     ASSERT_TRUE(emulator->LoadDisk(target)) << "the TRD must mount into drive A";
@@ -294,5 +324,4 @@ TEST(ScorpionTrdosMount_Test, TrdMountSmoke)
     EXPECT_EQ(image->getSides(), 2);
 
     EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetId());
-    std::filesystem::remove(target, ec);
 }
