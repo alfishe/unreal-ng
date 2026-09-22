@@ -645,6 +645,14 @@ The Profi was a powerful Czechoslovakian/Russian clone with a focus on expansion
         CP/M mode); Covox answers only when it is off the bus. Confirmed and implemented in this codebase - see
         [profi-1024.md](../hardware/profi-1024.md#sound).
 
+*   **RTC/CMOS (DS12885 / MC146818-compatible):**
+    *   **Ports `#BF`, `#FF`:** register address latch (write-only).
+    *   **Ports `#9F`, `#DF`:** register data (read/write).
+    *   All four decode as one chip select, `(port & 0x9F) == 0x9F`; bit 5 splits address (set) from data
+        (clear). Active only in "extended" mode (`cpm && rom14` - see paging bits above); `#BF`/`#FF` double as
+        the Beta Disk system register outside that mode. Confirmed and implemented in this codebase - see
+        [profi-1024.md](../hardware/profi-1024.md#rtc--cmos).
+
 *   **Profi COM port & Soft XT keyboard:**
     *   **Port `#E0FB` (57595):** XT Keyboard data.
     *   **Port `#E8FB` (59643):** Register (likely for keyboard controller or COM port status/control).

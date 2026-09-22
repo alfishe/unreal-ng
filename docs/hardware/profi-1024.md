@@ -53,6 +53,29 @@ fallback and leak the Right channel into Left whenever Left passed through silen
 decoding/mixing and every other model stay unchanged.
 Enabled the same way as Pentagon/Scorpion Covox, via `[SOUND] CovoxFB=1` in the machine's `unreal.ini`.
 
+## RTC / CMOS
+
+| Port | Dir | Meaning | Condition |
+|:--|:--|:--|:--|
+| `#BF`, `#FF` | W | RTC/CMOS register address latch | EXT mode (`cpm && rom14`) |
+| `#9F`, `#DF` | R/W | RTC/CMOS register data | EXT mode (`cpm && rom14`) |
+
+All four ports decode as one chip select (`(port & 0x9F) == 0x9F`); bit 5 of the port splits address (set) from
+data (clear). A DS12885-style (MC146818-compatible) register file, ported from the same chip-level logic ATM3
+wires (`core/src/emulator/memory/atm/cmos.h`) but kept Profi-owned (`core/src/emulator/memory/profi/proficmos.h`)
+since Profi's real hardware RTC (a karabas-pro clone: a 256-byte RAM fed by the AVR, no counting clock, no I2C) is
+a different, unproven implementation - only the DS12885 register map (`core/src/emulator/io/rtc/ds12885.h`) is
+shared. Time/date registers are synthesized from host time, sampled at most twice a second; the CMOS type is
+hardcoded to `Dallas` (matching the ATM3 wiring - the `[MISC] CMOS=` ini key is not parsed into `config.cmos`
+anywhere in this codebase yet).
+
+EXT mode here is UnrealSpeccy's own definition (`cpm && rom14`) - not Karabas's wider `dosAct && !rom14` variant,
+which would additionally expose RTC/IDE to the SYS ROM. That's a clone extension, unproven by UnrealSpeccy
+sources, so it is intentionally not implemented.
+
+`#BF`/`#FF` alias to the Beta128 system port outside EXT mode (see "Paging latches" above); the RTC/CMOS decode is
+checked first in `PortDecoder_Profi` so it wins whenever EXT mode is active.
+
 ## Video and timing
 
 | Mode name | Trigger | Visible area | Framebuffer |
@@ -71,8 +94,9 @@ The `#DFFD` latch and the 16-entry palette are persisted as `PeripheralId::Profi
 
 ## Known limitations
 
-- RTC (DS12885), IDE, the Kempston joystick and the Covox extended-mode aliases (`#87/#A7/#C7/#E7`) are not
-  implemented yet. Covox/SoundRive itself (`#5F`/`#3F`, NORMAL mode) is implemented - see "Sound" above.
+- IDE, the Kempston joystick and the Covox extended-mode aliases (`#87/#A7/#C7/#E7`) are not implemented yet.
+  Covox/SoundRive (`#5F`/`#3F`, NORMAL mode) and RTC/CMOS (`#BF/#FF/#9F/#DF`, EXT mode) are implemented - see
+  "Sound" and "RTC / CMOS" above.
 - The BIOS drive probe polls the WD1793 for BUSY after every command, so the FDC must show authentic timing while the
   SYS ROM runs: fast disk loading is disarmed there, and a Type II command on a not-ready drive keeps BUSY set for
   64 T-states before ending. With both in place the BIOS reaches its main menu with or without a disk (menu entries:

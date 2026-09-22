@@ -159,7 +159,7 @@ NORMAL  = !cpm && !dosAct                            // joystick/mouse/covox/...
 | `#83,#A3,#C3,#E3` | | R/W | WD1793 regs (extended) | EXT | CONS |
 | `#3F` | | R/W | Beta system (extended) | EXT | CONS |
 | `#8B,#AB,#CB,#EB` | A7=1, A4:0=01011; reg=A10:8 | R/W | IDE, with high-byte latch; A5 polarity swaps read vs write | EXT | CONS |
-| `#BF/#FF` (addr), `#DF/#9F` (data) | | W/R | RTC (DS12885 / MC146818-like) | EXT | CONS/HW |
+| `#BF/#FF` (addr), `#DF/#9F` (data) | | W/R | RTC (DS12885 / MC146818-like) | EXT | CONS/HW - **implemented**, see §6.2 |
 | `#5F` (L), `#3F` (R) | | W | Covox/SoundRive DAC | NORMAL | CONS - **implemented**, see §6.2 |
 | `#87,#A7,#C7,#E7` | | W | Covox in extended mode | EXT | Unreal only [?] - not implemented |
 | `#1F` | | R | Kempston joystick | NORMAL | CONS |
@@ -170,7 +170,7 @@ Overlap resolution order (first match wins): paging/AY (A15-based) → FE family
 
 ### 6.2 Peripherals to add
 * **Beta Disk gating** in `DecodePortIn/Out` following the Pentagon128 pattern; reuses the existing WD1793.
-* **RTC**: 256-byte CMOS (DS12885), address latch + data; deterministic (tick from emulated time, not host clock, so TTD replay stays exact). State captured in TTD (§8).
+* **RTC**: done - `#BF/#FF` (address), `#9F/#DF` (data), EXT mode only (`cpm && rom14`), checked before the FDC/system-port decode since `#BF/#FF` alias to it outside EXT mode. New Profi-owned `ProfiCMOS` (`core/src/emulator/memory/profi/proficmos.{h,cpp}`), sharing only the DS12885 register map (`core/src/emulator/io/rtc/ds12885.h`) with ATM3's `CMOS` - not its I2C NVRAM, which Profi's real RTC never had. **Deviates from the plan below**: serves live host time (mirroring ATM3's own wiring), not a deterministic tick from emulated time, and has no TTD state capture yet - so a TTD-recorded session with RTC reads will see the host clock at replay time, not the clock at capture time. Low priority per Q10.
 * **IDE (Nemo/Profi)**: only if the existing `core/src/emulator/io/hdd` supports the 8-bit high-byte latch; otherwise defer to phase 2. Register with TTD (roadmap ST-3).
 * **Covox/SoundRive**: done - `#5F`/`#3F`, NORMAL mode, mapped onto the existing `Covox` device's `PORT_LEFT_A`/`PORT_RIGHT_A` from `PortDecoder_Profi::DecodePortOut` (the `_A` ports, not `_B` - `computeStereoAmplitudes()`'s mono-compatibility fallback arms on `LeftA==LeftB==RightA==0` and substitutes `RightB` into both channels; using `_B` as the target left the fallback keyed on `_A` alone, leaking Right into Left whenever Left passed through silence). Extended-mode aliases (`#87/#A7/#C7/#E7`) still open.
 * **Kempston mouse / joystick**: base helpers, gated by NORMAL.
@@ -270,7 +270,7 @@ Video-mode timing switches (§7.4) require the frequency multipliers in the chec
 | 5 | TTD: `ProfiPaging`, serializer, contract test | M | 2 |
 | 6 | Standard video via existing renderer; timing decision applied | S | 2 |
 | 7 | Hi-res renderer, palette, geometry, InitRaster hooks | L | 6 |
-| 8 | Covox (done), mouse/joystick gating, RTC, (IDE) | M | 4 |
+| 8 | Covox (done), RTC (done), mouse/joystick gating, (IDE) | M | 4 |
 | 9 | Automation: `/state/paging`, `/state/screen/mode`, CLI ROM-page names, port trace rules, AGENTS.md creatable list, MCP `unreal://machine/profi` | S | 2, 7 |
 | 10 | Full test suite (§10) grows with each step; conformance matrix rows | L | all |
 | 11 | Real recordings for TTD v2 benchmark (roadmap §5.4) | S | 5, 7 |
@@ -291,7 +291,7 @@ All tests follow `core/tests/README.md`: no `sleep_for`, <50 ms except justified
 | DFFD | RAM high bits → page = `hi<<3 \| lo` for all 64 pages; SCO swap matrix (4 windows × 2); SCR page 6; WOROM RAM-at-0 + write-through; CPM/DS80 latches |
 | Decode | `#5FFD`, `#1FFD`, `#DFFD`, `#7FFD`, `#FFFD`, `#BFFD` each hit exactly one handler; A15/A13/A1 boundary sweep over all 65536 ports vs a reference table |
 | ROM/DOS | reset = SYS; `3Dxx` M1 with rom14 sets DOS; fetch ≥ 4000 clears; DFFD.4 clears/blocks; set-over-clear priority |
-| Ports by mode | NORMAL/EXT/CPM×rom14×dosAct truth table: FDC, `#FF/#BF/#3F`, IDE, RTC, Covox (done: `#5F`/`#3F` NORMAL-only, verify FDC wins when `dosAct`), joystick, mouse |
+| Ports by mode | NORMAL/EXT/CPM×rom14×dosAct truth table: FDC, `#FF/#BF/#3F`, IDE, RTC (done: `#BF/#FF/#9F/#DF` EXT-only via `cpm && rom14`, verify RTC wins over FDC's `#BF/#FF` system-port alias when both `dosPorts` and EXT are true), Covox (done: `#5F`/`#3F` NORMAL-only, verify FDC wins when `dosAct`), joystick, mouse |
 | Trace | `decodeRuleIndex` and `decodedPort` per rule; `getPortMapEntries` rows |
 
 ### 10.2 Video tests (`profi_video_test.cpp`, no turbo)
@@ -388,7 +388,8 @@ Reference for behaviour: UnrealSpeccy (`zx-evo/pentevo/unreal/Unreal/io.cpp`, `d
 | Video: standard mode `M_PROFI` on the 312-line row; hi-res `M_PROFIHR` (608x288 storage, 512x240 paper at 4 px/T, page 4/6 + attr 0x38/0x3A, inverted-index border, `ProfiMonochrome`) | done |
 | Tests: decoder truth tables, TTD serializer, golden bank map re-baselined by hand, real-ROM boot (SYS BIOS splash renders in hi-res, 1024K RAM recognised) | done |
 | Covox/SoundRive DAC at `#5F` (L) / `#3F` (R), NORMAL mode only (`PortDecoder_Profi::DecodePortOut` forwards to the existing shared `Covox` device via its canonical Left/Right ports - no changes to `covox.h/cpp` or `soundmanager.cpp`) | done |
-| RTC (DS12885 #BF/#FF + #DF/#9F), IDE (#8B/#AB/#CB/#EB), Kempston joystick #1F, FE read bit 7, Covox extended-mode aliases (#87/#A7/#C7/#E7) | **open** (UnrealSpeccy parity remainder) |
+| RTC (DS12885 #BF/#FF + #DF/#9F, EXT mode - live host time, no TTD state yet, no deterministic tick) | done |
+| IDE (#8B/#AB/#CB/#EB), Kempston joystick #1F, FE read bit 7, Covox extended-mode aliases (#87/#A7/#C7/#E7) | **open** (UnrealSpeccy parity remainder) |
 | Port-trace decode rules / port map (`getPortMapEntries`: #7FFD `0x8002/0x0000`, #DFFD `0xA002/0x8000`, palette #xx7E `0x0081/0x0000`, Beta128 rows gated on `CF_DOSPORTS`), `/state/paging` pDFFD fields (`extended_ram_bank`, `sco`, `worom`, `cpm`, `scr`, `video_512x240`), ROM page names (`ROM::GetROMPageRole`: SYS/Menu, TR-DOS, 128K Editor + STS Monitor, 48K BASIC), WebAPI/CLI/Lua/Python mode reporting (`PROFI`, `PROFIHR` 512x240), MCP resource `unreal://machine/profi`, `ttd.ksy` id list | done |
 | Boot past the BIOS splash to the main menu (with or without a disk) | done, see below |
 

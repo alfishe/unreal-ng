@@ -3,6 +3,7 @@
 
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
+#include "emulator/memory/profi/proficmos.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/screen.h"
 
@@ -53,10 +54,18 @@ public:
 
     /// Palette write (OUT to #xx7E family with DFFD.7): colour from ~A15..A8, index from the previous #FE value
     void Port_Palette_Out(uint16_t port);
+
+    /// EXT mode qualifier (UnrealSpeccy default: cpm && rom14; Karabas additionally allows
+    /// dosAct && !rom14, not implemented here - unproven by UnrealSpeccy sources)
+    bool IsExtMode() const;
     /// endregion <Helper methods>
 
 protected:
     void Port_7FFD(uint8_t value, uint16_t pc);
     void Port_DFFD(uint8_t value, uint16_t pc);
     void ResetPalette();
+
+    /// RTC/CMOS (DS12885-style), EXT mode only. Address: #BF/#FF, data: #9F/#DF
+    /// (UnrealSpeccy io.cpp: `(port & 0x9F) == 0x9F`, bit 5 selects address vs data).
+    ProfiCMOS _cmos;
 };

@@ -24,6 +24,7 @@ namespace
 PortDecoder_Profi::PortDecoder_Profi(EmulatorContext* context) : PortDecoder(context)
 {
     _7FFD_Locked = false;
+    _cmos.SetCMOSType(Dallas);
 }
 
 PortDecoder_Profi::~PortDecoder_Profi()
@@ -83,6 +84,17 @@ uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
     {
         result = PeripheralPortIn(0xBFFD);
         disp.decodedPort = 0xBFFD;
+    }
+    // RTC/CMOS: #9F/#BF/#DF/#FF, EXT mode only - takes priority over the FDC/system-port
+    // decode below, since #BF/#FF alias to the Beta128 system port outside EXT mode.
+    else if ((port & 0x9F) == 0x9F && IsExtMode())
+    {
+        // Only the data ports (#9F/#DF, bit 5 = 0) return real data; the address
+        // strobe (#BF/#FF) is write-only and reads as floating bus.
+        if ((port & 0x20) == 0)
+            result = _cmos.ReadCMOS();
+        _lastPortDecoded = true;
+        disp.decodedPort = port & 0xFF;
     }
     // WD1793 (Beta128) registers and system port: only while the disk interface is
     // on the bus (DOS latch or CP/M mode, CF_DOSPORTS)
@@ -171,6 +183,18 @@ void PortDecoder_Profi::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
         _state->pBFFD = value;
         PeripheralPortOut(0xBFFD, value);
         disp.decodedPort = 0xBFFD;
+        disp.wasDecoded = true;
+    }
+    // RTC/CMOS: #9F/#BF/#DF/#FF, EXT mode only - takes priority over the FDC/system-port
+    // decode below, since #BF/#FF alias to the Beta128 system port outside EXT mode.
+    else if ((port & 0x9F) == 0x9F && IsExtMode())
+    {
+        // Bit 5 set (#BF/#FF) latches the register address; clear (#9F/#DF) writes data.
+        if (port & 0x20)
+            _cmos.SetCMOSAddress(value);
+        else
+            _cmos.WriteCMOS(value);
+        disp.decodedPort = port & 0xFF;
         disp.wasDecoded = true;
     }
     else if (dosPorts)
@@ -290,6 +314,16 @@ bool PortDecoder_Profi::IsPort_DFFD(uint16_t port)
     static const uint16_t mask = 0b1010'0000'0000'0010;
     static const uint16_t match = 0b1000'0000'0000'0000;
     return (port & mask) == match;
+}
+
+bool PortDecoder_Profi::IsExtMode() const
+{
+    // UnrealSpeccy default: EXT = cpm && rom14. Karabas additionally treats
+    // dosAct && !rom14 as EXT (exposing IDE/RTC to the SYS ROM); not implemented
+    // here since it is a clone extension, not proven by UnrealSpeccy sources.
+    const bool cpm = (_state->pDFFD & 0x20) != 0;
+    const bool rom14 = (_state->p7FFD & 0x10) != 0;
+    return cpm && rom14;
 }
 
 uint16_t PortDecoder_Profi::DecodeFDCPort(uint16_t port) const
