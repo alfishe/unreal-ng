@@ -408,6 +408,17 @@ public:
     /// the base class and is shared by the model decoders for session gating
     bool IsBeta128Port(uint16_t decodedPort);
 
+    /// Whether a decoded port value belongs to the General Sound host mailbox
+    /// (#33 reset/NMI, #B3 data, #BB command/status). Shared the same way as
+    /// IsBeta128Port, for model decoders to gate these rows on whether a GS
+    /// card is actually fitted ([SOUND] GSType=Z80|LW) - without the gate, a
+    /// card-less machine still resolves these ports to their canonical form
+    /// and PeripheralPortIn/Out then finds no registered device and logs a
+    /// warning on every access, which GS presence-probing software (the #B3/
+    /// #BB/#33 read/write pattern is the documented detection method) hits on
+    /// every probe.
+    bool IsGsPort(uint16_t decodedPort);
+
     /// region <Port trace (runtime feature "porttrace")>
 
     /// Re-read the porttrace feature flag from FeatureManager and instantiate or

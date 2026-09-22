@@ -292,3 +292,55 @@ TEST_F(PortDecoder_Pentagon128_Test, DecodePort_Beta128AddressMatching_StateInde
 }
 
 /// endregion </Beta128 FDC port gating (TR-DOS visibility)>
+
+/// region <GS host mailbox port gating (card-presence visibility)>
+
+namespace
+{
+    const uint16_t gsPorts[] = { 0x0033, 0x00B3, 0x00BB };
+}
+
+/// Regression: on a card-less machine (no SoundManager attached, or a
+/// SoundManager whose GS slot is unfitted - [SOUND] GSType=NONE) the decode
+/// table still resolves #33/#B3/#BB to their canonical form. Left undecoded,
+/// that used to fall through as an unmapped port (floating bus); routed to
+/// PeripheralPortIn/Out with no registered device, it logs a warning on every
+/// access instead - and GS presence-probing software polls exactly these
+/// ports. The fixture's bare EmulatorContext has no SoundManager
+/// (pSoundManager == nullptr), the same "definitely no card" state as
+/// GSType=NONE.
+TEST_F(PortDecoder_Pentagon128_Test, DecodePortIn_GsPorts_NoCardFitted_NotDecoded)
+{
+    ASSERT_EQ(_context->pSoundManager, nullptr);
+
+    MockFdcDevice gs;
+    for (uint16_t port : gsPorts)
+        _portDecoder->RegisterPortHandler(port, &gs);
+
+    for (uint16_t port : gsPorts)
+    {
+        gs.inPorts.clear();
+        uint8_t result = _portDecoder->DecodePortIn(port, 0x0000);
+
+        EXPECT_EQ(result, 0xFF) << StringHelper::Format("Port #%02X: must stay undecoded with no GS card fitted", port);
+        EXPECT_FALSE(_portDecoder->WasLastPortDecoded())
+            << StringHelper::Format("Port #%02X: no card fitted, nothing should claim it", port);
+        EXPECT_TRUE(gs.inPorts.empty()) << StringHelper::Format("Port #%02X: registered device must not be consulted", port);
+    }
+}
+
+TEST_F(PortDecoder_Pentagon128_Test, DecodePortOut_GsPorts_NoCardFitted_WritesIgnored)
+{
+    ASSERT_EQ(_context->pSoundManager, nullptr);
+
+    MockFdcDevice gs;
+    for (uint16_t port : gsPorts)
+        _portDecoder->RegisterPortHandler(port, &gs);
+
+    for (uint16_t port : gsPorts)
+        _portDecoder->DecodePortOut(port, 0x00, 0x0000);
+
+    EXPECT_TRUE(gs.outPorts.empty()) << "GS writes must be dropped when no card is fitted";
+}
+
+/// endregion </GS host mailbox port gating (card-presence visibility)>

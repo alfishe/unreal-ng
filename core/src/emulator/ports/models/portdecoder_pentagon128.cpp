@@ -6,6 +6,7 @@
 
 #include "common/collectionhelper.h"
 #include "common/stringhelper.h"
+#include "emulator/sound/soundmanager.h"
 #include "cassert"
 
 /// region <Constructors / Destructors>
@@ -102,6 +103,19 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
         disp.wasBeta128Gated = true;
     }
 
+    // GS host mailbox (#33/#B3/#BB): the decode table resolves these
+    // unconditionally, same as every other row, but no port handler is ever
+    // registered for them unless a card is actually fitted ([SOUND] GSType).
+    // Left undecoded on a card-less machine, this used to fall through
+    // silently (undecoded port -> floating bus); now it would resolve and
+    // reach PeripheralPortIn, which logs a warning for every access with no
+    // registered device - and GS presence probes (the documented detection
+    // method IS reading/writing #B3/#BB/#33) do exactly that repeatedly.
+    if (IsGsPort(decodedPort) && !(_context->pSoundManager && _context->pSoundManager->getGeneralSound()))
+    {
+        decodedPort = 0x0000;
+    }
+
     uint8_t mouseReg = 0;
     if (decodedPort == 0x0000 && IsPort_KempstonMouse(port, mouseReg))
     {
@@ -180,6 +194,12 @@ void PortDecoder_Pentagon128::DecodePortOut(uint16_t port, uint8_t value, uint16
     {
         decodedPort = 0x0000; // FDC not on the bus: drop the write
         disp.wasBeta128Gated = true;
+    }
+
+    // Same GS card-presence gate as DecodePortIn - see its comment.
+    if (IsGsPort(decodedPort) && !(_context->pSoundManager && _context->pSoundManager->getGeneralSound()))
+    {
+        decodedPort = 0x0000;
     }
 
     if (decodedPort != 0x0000)

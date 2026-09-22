@@ -1117,6 +1117,22 @@ bool PortDecoder::IsBeta128Port(uint16_t decodedPort)
     }
 }
 
+/// Whether a decoded port value belongs to the General Sound host mailbox
+/// (#33/#B3/#BB) — see the header doc comment for why model decoders gate
+/// these on card presence.
+bool PortDecoder::IsGsPort(uint16_t decodedPort)
+{
+    switch (decodedPort)
+    {
+        case 0x0033:
+        case 0x00B3:
+        case 0x00BB:
+            return true;
+        default:
+            return false;
+    }
+}
+
 std::string PortDecoder::GetPCAddressLocator(uint16_t pc)
 {
     std::string result;
