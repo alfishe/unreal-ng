@@ -127,7 +127,9 @@ Method groups (see `generalsoundcard.h` for the authoritative list):
   `restoreMailbox(snapshot)` / `accumulateActivityCounters(other)` are pure
   virtual; `captureModuleUpload(bytes, playing)` (default: none) and
   `replayModuleUpload(bytes, startPlayback)` (default: no-op) carry default
-  bodies so LLE needs no capture logic and LW no replay logic.
+  bodies; both shipped personalities implement both sides (LLE mirrors the
+  COM30..D2 stream at the host-port layer, LW replays through its own
+  interpreter), so the handoff is bidirectional.
 
 ### 2.3 SoundManager integration
 
@@ -299,7 +301,13 @@ length at 950, 128-entry pattern table at 952, `M.K.`/`M!K!`/`4CHN`/
 Validation: minimum size, tag, song length 1..128, order entries <= 127,
 exact expected size (truncation rejected). Loop handling: `loopLengthWords
 < 2` means one-shot (hold last byte, increment zeroed); loops that overrun
-their sample are clamped to playable ranges.
+their sample are clamped to playable ranges. Sample bytes are SIGNED
+8-bit (ProTracker); the player converts to the card's 0x80-centred DAC
+domain with `^ 0x80` at fetch time - exactly what the firmware does on
+upload (BUG-10, 2026-09-22: the raw signed byte was fed to the DAC and
+every near-zero sample became a full-swing 0x00/0xFF - the "fuzz" heard on
+all real content). Sample volume is the ProTracker 0..64 range (0x40 = full;
+masking to 0x3F silenced 0x40 instruments - BUG-11).
 
 ### 5.2 Timing model (firmware QUANTUM/QTPLAY mirror)
 
@@ -312,7 +320,9 @@ their sample are clamped to playable ranges.
   advance one row. `Fxx` splits at param 32: speed vs tempo, both live.
 - Position lives in the row/tick/quantum domain, never the audio sample
   domain: a runtime `setSampleRate` (blip rebuild) cannot disturb it.
-- Per-voice playback: 16.16 fixed-point byte position, increment =
+- Per-voice playback: 16.16 fixed-point byte position in a 64-bit
+  container (a 32-bit one tops out at 65535 bytes; ProTracker samples run
+  to 131070 and real modules exceed 64 KB - BUG-12), increment =
   `3546895 * 65536 / (period * 37500)` (Amiga PAL rate resampled onto the
   card clock; the firmware's GSFRQTB+CHFADV equivalent), period clamped to
   the PT range 113..856.
@@ -323,8 +333,12 @@ Implemented: 0xx arpeggio, 1xx/2xx portamento slides (with memory), 3xx
 tone portamento (target latched from row or param-only rows), 4xx vibrato
 + 7xx tremolo (32-entry sine, rendered once **per tempo tick** — PT/firmware
 CHFADV semantics; rendering per quantum turned 4xx/7xx into kHz-rate FM/ring
-modulation, BUG-9), 5xx/6xx combined
-slides, 9xx offset (row + memory), Axx volume slide (memory), Bxx/Cxx
+modulation, BUG-9; rendered only on rows whose effect column IS 4xx/6xx
+or 7xx - the remembered param is memory for the next such row, not a
+standing modulation, BUG-13), 5xx (continues the 3xx tone portamento AND
+slides volume - BUG-14) / 6xx combined slides, 9xx offset (`param * 256`
+bytes, param 0 reuses memory, plain notes start at 0 - BUG-15), Axx
+volume slide (memory), Bxx/Cxx
 position/pattern break (deferred to row end, PT semantics), Dxx pattern
 break, E1x/E2x fine slides, EAx/EBx fine volume, ECx cut, EDx delayed
 note, E9x retrigger, EEx row delay, Fxx speed/tempo. Parse-and-ignore
@@ -334,8 +348,8 @@ their PT semantics.
 
 ### 5.4 Volume model
 
-Per-channel latch 0-63 = row volume (sample default, Cxx, slides, tremolo)
-scaled by the card as `(rowVolume * MODVOL * MTVOL) >> 12` before the 6-bit
+Row volume is the ProTracker 0..64 domain (sample default, Cxx, slides,
+tremolo; 0x40 = full). The card scales it as `(rowVolume * MODVOL * MTVOL) >> 12` before the 6-bit
 latch write (the firmware VOL_H math). MODVOL (COM2A) scales music
 channels, MTVOL (COM35) is the module master (COM31 resets it to 0x40);
 FXVOL (COM2B) / FXMVOL (COM3D) belong to the SFX path (no-op in v1).
@@ -460,12 +474,14 @@ verified against gs105a end-to-end (COM2C -> 1, ~749 DAC fetches/frame):
    falls), then wait for and consume the slot reply before any module byte
    flows.
 3. **Paced stream, one byte per firmware drain** - a #B3 write raises the
-   pending flag and the loader clears it by reading DATRG; the replay
-   advances a frame whenever bit7 (either pending direction) stands.
-   Batching into the 16-deep FIFO instead wedges the gs105a load machine
-   (measured: the tail stalls with the firmware polling FLAGS forever and
-   the module never parses). Each byte waits at most 200 frames (one HSEND
-   timeout is ~73).
+   shared bit7 and the loader's DATRG read clears it; the replay advances
+   the card **two INT periods at a time** (640 cycles - the loader consumes
+   a byte within a few hundred) until bit7 falls, bounded at 200 frames'
+   worth of cycles (one HSEND timeout is ~73 frames). Advancing a whole
+   239602-cycle frame per byte instead froze the emulation for ~6 minutes
+   on a 381 KB module (the "demo stopped" report, 2026-09-22); the current
+   pacing takes ~17 s for the same module. The latch model has no FIFO, so
+   a byte is never written before the previous one is consumed.
 4. **D2 terminator** - wait for the command to pop, then an 8-frame LOAD3
    settle margin (LOAD3 posts no completion reply).
 5. **COM31 resume** (when the outgoing card was playing) - param first,

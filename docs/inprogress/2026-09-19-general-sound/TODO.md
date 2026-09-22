@@ -156,3 +156,18 @@ See [`materials/README.md`](materials/README.md) for complete index.
 | GS Schematic | `materials/gs/gs-firmware/sch/GS_schematic.pdf` |
 | NeoGS Differences | `materials/neogs/NEOGS-DIFFERENCES.md` |
 | NeoGS FPGA Source | `materials/neogs/fpgaD/` |
+
+## LW real-content pass (2026-09-22)
+
+- [x] BUG-10..15 (signed samples, volume 0x40, 9xx offset, vibrato/tremolo
+      gating, 5xx portamento, 64 KB position) - see
+      `verification-findings-and-bugs.md`; cross-checked against openmpt123 on
+      the demo's own module (`dump_module` action): waveform corr 0.986
+- [x] LW<->LLE bidirectional module handoff; LW->LLE replay paced per
+      INT period (381 KB: ~6 min -> ~17 s)
+- [ ] **Next:** LW render quality - nearest-neighbour sample-and-hold at
+      37.5 kHz sounds slightly rougher (quantization grain) than the LLE;
+      candidates: sub-quantum position/blip placement, or matching the
+      firmware's exact DAC fetch cadence
+- [ ] LW->LLE replay still freezes emulation for the replay duration
+      (~17 s on a 381 KB module) - consider chunking across frames

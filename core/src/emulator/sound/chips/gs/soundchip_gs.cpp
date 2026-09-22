@@ -752,19 +752,26 @@ void SoundChip_GeneralSound::replayModuleUpload(const std::vector<uint8_t>& byte
     // the 16-deep FIFO instead wedges the gs105a load machine (verified
     // empirically: the tail stalls with the firmware polling FLAGS
     // forever and the module never parses)
-    constexpr size_t kMaxByteWaitFrames = 200; // one HSEND timeout is ~73 frames
+    // Per-byte pacing at loader granularity, NOT frame granularity: the
+    // firmware's LOADWT consumes a byte within a few hundred GS cycles, so
+    // waiting a whole 239602-cycle frame per byte turned a 381 KB module
+    // into ~6 minutes of frozen emulation (live-verified 2026-09-22: the
+    // "demo stopped" report on every LW->LLE switch). Step 2 interrupt
+    // periods at a time and bound the wait in cycles (200 frames' worth).
+    constexpr int64_t kByteStepCycles = 2 * GS_CYCLES_PER_INT;
+    constexpr int64_t kMaxByteWaitCycles = 200 * 239602; // one HSEND timeout is ~73 frames
     for (size_t pushed = 0; pushed < bytes.size(); pushed++)
     {
         sendData(bytes[pushed]);
-        size_t wait = 0;
+        int64_t waited = 0;
         // bit7 falls when the loader's DATRG read consumes the byte; no
         // host #B3 read here (it would clear bit7 under the firmware)
-        while ((_mb.status & 0x80) != 0 && wait < kMaxByteWaitFrames)
+        while ((_mb.status & 0x80) != 0 && waited < kMaxByteWaitCycles)
         {
-            replayAdvanceFrame();
-            wait++;
+            runTo(totalGsCycles() + kByteStepCycles);
+            waited += kByteStepCycles;
         }
-        if (wait >= kMaxByteWaitFrames)
+        if (waited >= kMaxByteWaitCycles)
         {
             MLOGWARNING("GS: personality switch module replay stalled at byte %zu of %zu - firmware not draining",
                         pushed + 1, bytes.size());

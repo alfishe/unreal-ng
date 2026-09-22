@@ -103,8 +103,10 @@ public:
     bool isStopped() const { return !_playing; }
 
     /// Advance exactly one 320-cycle quantum. Fills out[4] with 0x80-centered
-    /// DAC bytes and vols[4] with 0-63 per-channel volumes (row volume +
-    /// tremolo, before the card's MODVOL/MTVOL scaling).
+    /// DAC bytes (the signed ProTracker sample XOR 0x80, as the firmware
+    /// uploads it) and vols[4] with 0-64 per-channel volumes (ProTracker
+    /// range, 0x40 = full; row volume + tremolo, before the card's
+    /// MODVOL/MTVOL scaling maps it onto the 6-bit latch).
     void advanceQuantum(uint8_t out[kChannels], uint8_t vols[kChannels]);
 
     // Position queries (firmware COM60/61/62 variables)
@@ -121,6 +123,12 @@ public:
 
     /// Per-channel current row volume (query 64 domain, 0-63)
     uint8_t channelVolume(int channel) const { return _channels[channel].volume; }
+
+    /// Per-channel current Amiga period and playback step (test/diagnostic
+    /// introspection: pins down effect correctness - e.g. that vibrato's
+    /// increment offset doesn't outlive the row that carries it)
+    uint16_t channelPeriod(int channel) const { return _channels[channel].period; }
+    int64_t channelIncrement(int channel) const { return _channels[channel].increment; }
 
     /// COM66: external tempo change (firmware FXF - rescales the tick
     /// length without touching the row/tick speed)

@@ -764,13 +764,51 @@ void EmulatorAPI::postControlAudioGS(const HttpRequestPtr& req, std::function<vo
         ret["requested"] = soundManager->requestGeneralSoundCardSwitch(personalityKind);
         ret["note"] = "applied at the next frame boundary";
     }
+    else if (action == "dump_module")
+    {
+        // Diagnostics: write the last completed COM30..D2 upload (the raw
+        // ProTracker module the host streamed) to a file, so real content
+        // can be rendered offline / cross-checked against a reference player
+        std::vector<uint8_t> bytes;
+        bool playing = false;
+        if (!gs->captureModuleUpload(bytes, playing))
+        {
+            Json::Value error;
+            error["error"] = "Not Found";
+            error["message"] = "No completed module upload to dump (no COM30..D2 stream captured yet)";
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k404NotFound);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        std::string path = json->get("path", "").asString();
+        if (path.empty())
+            path = "gs-module-dump.mod";
+        std::ofstream out(path, std::ios::binary);
+        if (!out)
+        {
+            Json::Value error;
+            error["error"] = "Internal Server Error";
+            error["message"] = "Cannot open '" + path + "' for writing";
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        ret["path"] = path;
+        ret["bytes"] = static_cast<Json::UInt64>(bytes.size());
+        ret["playing"] = playing;
+    }
     else
     {
         Json::Value error;
         error["error"] = "Bad Request";
         error["message"] =
             "Unknown action '" + action +
-            "' (expected reset, reset_card, nmi, send_command, send_data, read_status, read_data or switch_personality)";
+            "' (expected reset, reset_card, nmi, send_command, send_data, read_status, read_data, switch_personality or dump_module)";
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k400BadRequest);

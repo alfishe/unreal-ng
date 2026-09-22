@@ -491,3 +491,32 @@ documented "rendered per quantum" as design — corrected to per tick.
 - [x] The second report (NEARTHGS.TRD silent after a clean module load) was root-caused as
       BUG-7 (ini parse, 128 KB card) + BUG-8 (data latch lost the param-first trio), both
       fixed 2026-09-20 — the standing rule held again.
+
+## 2026-09-22 - LW real-content pass (cc_wizard.mod via thebrd2.trd, cross-checked against openmpt123)
+
+Method: `dump_module` (new GS control action) wrote the exact COM30..D2 stream the
+demo uploads (381198 bytes, M.K., 16 patterns); rendered offline through
+`GSModPlayer` (scratch/modtest/render_gsmodplayer.cpp) and through
+`openmpt123 --filter 1` (nearest-neighbour, like the card). Result after the
+fixes below: envelope correlation 0.999, spectral centroid ratio 1.00, raw
+waveform correlation 0.986 (was 0.07 / 1.51 / -0.20).
+
+Root causes found (all in gsmodplayer.cpp, all with regression tests):
+- Sample bytes are SIGNED 8-bit; the DAC latch is 0x80-centred - the player
+  fed the raw byte (no `^ 0x80`). Every near-zero sample became a full-swing
+  0x00/0xFF: the broadband "fuzz/distortion".
+- Volume was masked with `& 0x3F`: ProTracker's full volume 0x40 (13 of 17
+  samples, 848 Cxx rows in this module) became 0 - the "sample dropouts".
+- 9xx sample offset was `param` bytes instead of `param * 256`, and the
+  remembered offset was applied to every later plain note (177 uses here).
+- Vibrato/tremolo were rendered from the remembered param on every tick
+  instead of only on rows carrying 4xx/6xx/7xx - a standing pitch warble.
+- 5xx only slid volume; it must also continue the 3xx tone portamento.
+- 16.16 position/loopEnd lived in 32-bit containers: any sample over 64 KB
+  (smp12 here is 65430 bytes) wrapped.
+- LW->LLE replay paced one full GS frame per byte: ~6 minutes frozen for this
+  module (the "demo stopped" report). Now 2 INT periods per byte: ~17 s.
+
+Operational: every unreal-qt build copies data/configs into the app bundle
+(unreal-qt/CMakeLists.txt), so a GSType edit in cmake-build-*/bin/configs is
+overwritten on the next build - edit data/configs/<machine>/unreal.ini.

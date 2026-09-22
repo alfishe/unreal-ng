@@ -19,6 +19,7 @@
 #include <cmath>
 #include <cstring>
 #include <memory>
+#include <set>
 #include <vector>
 
 #include "emulator/emulatorcontext.h"
@@ -731,7 +732,8 @@ TEST(GSModPlayer_LargeSample, OneShotPositionReachesTrueEndBeyond64KB)
     for (int q = 0; q < 200000; q++)
         player.advanceQuantum(out, vols);
 
-    EXPECT_EQ(out[0], static_cast<uint8_t>((kSampleBytes - 1) & 0xFF))
+    // DAC byte = signed sample ^ 0x80
+    EXPECT_EQ(out[0], static_cast<uint8_t>(((kSampleBytes - 1) & 0xFF) ^ 0x80))
         << "playback did not reach the true end of a >64KB one-shot sample "
         << "(32-bit position wraparound regression)";
 }
@@ -781,9 +783,201 @@ TEST(GSModPlayer_LargeSample, LoopStaysInsideRegionBeyond64KB)
     for (int q = 0; q < 200000; q++)
         player.advanceQuantum(out, vols);
 
-    EXPECT_EQ(out[0], 0xFF)
+    EXPECT_EQ(out[0], 0xFF ^ 0x80) // DAC byte = signed sample ^ 0x80
         << "loop position escaped [loopStart, loopStart+loopLength) on a "
         << ">64KB sample (32-bit loopEnd wraparound regression)";
+}
+
+TEST(GSModPlayer_Effects, VibratoDoesNotOutliveItsRow)
+{
+    // Regression for the 2026-09-21 live-demo "constant pitch warble"
+    // report: vibrato's per-tick period offset used to apply unconditionally
+    // once ch.vibratoParam was ever set (sticky), bleeding into every later
+    // row/note that carried no 4xx/6xx effect at all. Real ProTracker only
+    // bends pitch while the row's effect column IS 4xx/6xx.
+    std::vector<uint8_t> m(1084 + 1 * 1024 + 64, 0x00);
+    putBeWord(m, 20 + 22, 32);
+    m[20 + 25] = 63;
+    putBeWord(m, 20 + 26, 0);
+    putBeWord(m, 20 + 28, 32); // whole 64-byte sample loops (long test window)
+    m[950] = 1;
+    m[952] = 0;
+    m[1080] = 'M'; m[1081] = '.'; m[1082] = 'K'; m[1083] = '.';
+    for (size_t i = 0; i < 64; i++)
+        m[1084 + 1024 + i] = (i / 16) % 2 ? 0x30 : 0xB0;
+
+    // Row 0: note (sample 1, period 400 = 0x190), effect 4 (vibrato,
+    // rate=4 depth=8 - strong enough that a leak is unmistakable)
+    putCell(m, 0, 0, 0, 0x01, 0x90, 0x14, 0x48);
+    // Row 1: no note, no effect - the held note must play at its clean period
+
+    GSModPlayer player;
+    const char* reason = nullptr;
+    ASSERT_TRUE(player.parse(m.data(), m.size(), &reason)) << (reason ? reason : "");
+    player.start(0);
+
+    auto expectedIncrement = [](uint16_t period) -> int64_t {
+        const uint64_t num = 3546895ull * 65536ull;
+        const uint64_t den = static_cast<uint64_t>(period) * GSModPlayer::kQuantumRate;
+        return static_cast<int64_t>(num / den);
+    };
+
+    uint8_t out[GSModPlayer::kChannels];
+    uint8_t vols[GSModPlayer::kChannels];
+
+    // Mid row 0 (default speed 6, 750 quanta/tick -> row is 4500 quanta):
+    // confirm the vibrato is actually engaged (sanity - a vacuous test would
+    // not catch a broken gate the same way)
+    bool sawVibratoOffset = false;
+    for (int q = 0; q < 4500; q++)
+    {
+        player.advanceQuantum(out, vols);
+        if (player.channelIncrement(0) != expectedIncrement(400))
+            sawVibratoOffset = true;
+    }
+    EXPECT_TRUE(sawVibratoOffset) << "vibrato never engaged during its own row - test is vacuous";
+
+    // Well into row 1 (no effect column at all): the increment must be back
+    // to the exact clean value for the held period, every single quantum
+    for (int q = 0; q < 1500; q++)
+    {
+        player.advanceQuantum(out, vols);
+        ASSERT_EQ(player.channelIncrement(0), expectedIncrement(player.channelPeriod(0)))
+            << "vibrato offset survived into a row with no 4xx/6xx effect (quantum " << q << ")";
+    }
+}
+
+TEST(GSModPlayer_Effects, EffectFiveContinuesToneportamentoFromThreeMemory)
+{
+    // Regression: effect 5xx ("tone portamento + volume slide") only slid
+    // volume, dropping the tone-portamento glide that 3xx started - a
+    // module using the common "3xx then 5xx" idiom (glide toward a target,
+    // then fade while still gliding) played the target note with a volume
+    // fade but NEVER actually bent the pitch there.
+    auto buildModule = [](uint8_t row2Effect) {
+        std::vector<uint8_t> m(1084 + 1 * 1024 + 64, 0x00);
+        putBeWord(m, 20 + 22, 32);
+        m[20 + 25] = 63;
+        putBeWord(m, 20 + 26, 0);
+        putBeWord(m, 20 + 28, 32); // whole 64-byte sample loops (long test window)
+        m[950] = 1;
+        m[952] = 0;
+        m[1080] = 'M'; m[1081] = '.'; m[1082] = 'K'; m[1083] = '.';
+        for (size_t i = 0; i < 64; i++)
+            m[1084 + 1024 + i] = (i / 16) % 2 ? 0x30 : 0xB0;
+
+        // Row 0: plain note, sample 1, period 856 (lowest pitch in range)
+        putCell(m, 0, 0, 0, 0x03, 0x58, 0x10, 0x00);
+        // Row 1: 3xx toward period 113 (target), speed 8/tick - no new note
+        putCell(m, 0, 0, 1, 0x00, 0x71, 0x03, 0x08);
+        // Row 2: variant effect, param 4 (same volume-slide magnitude either way)
+        putCell(m, 0, 0, 2, 0x00, 0x00, row2Effect, 0x04);
+        return m;
+    };
+
+    const auto runToRow2End = [](GSModPlayer& player) {
+        // 3 rows * speed 6 * 750 quanta/tick
+        for (int q = 0; q < 3 * 6 * 750; q++)
+        {
+            uint8_t out[GSModPlayer::kChannels];
+            uint8_t vols[GSModPlayer::kChannels];
+            player.advanceQuantum(out, vols);
+        }
+    };
+
+    GSModPlayer withPortamento; // effect 0x05: must keep gliding toward 113
+    {
+        const auto m = buildModule(0x05);
+        const char* reason = nullptr;
+        ASSERT_TRUE(withPortamento.parse(m.data(), m.size(), &reason)) << (reason ? reason : "");
+        withPortamento.start(0);
+        runToRow2End(withPortamento);
+    }
+
+    GSModPlayer volumeOnly; // effect 0x0A: plain volume slide, no portamento
+    {
+        const auto m = buildModule(0x0A);
+        const char* reason = nullptr;
+        ASSERT_TRUE(volumeOnly.parse(m.data(), m.size(), &reason)) << (reason ? reason : "");
+        volumeOnly.start(0);
+        runToRow2End(volumeOnly);
+    }
+
+    // Both glided identically through row 1 (3xx); only 0x05 keeps gliding
+    // in row 2, so it must end up closer to the target (lower period) than
+    // the volume-only control
+    EXPECT_LT(withPortamento.channelPeriod(0), volumeOnly.channelPeriod(0))
+        << "effect 5xx did not continue the 3xx tone-portamento glide";
+    // Sanity: both still above the target (glide is gradual, not instant)
+    EXPECT_GT(volumeOnly.channelPeriod(0), 113);
+}
+
+TEST(GSModPlayer_RealContent, SignedSamplesAreConvertedToUnsignedDac)
+{
+    // ProTracker sample bytes are signed; the DAC latch is 0x80-centered.
+    // A sample of all 0x00 (digital silence) must come out as 0x80, and
+    // 0x7F (full positive) as 0xFF - feeding the raw byte produced the
+    // full-swing fuzz heard on every real module (cc_wizard.mod, 2026-09-22)
+    std::vector<uint8_t> m(1084 + 1024 + 64, 0x00);
+    putBeWord(m, 20 + 22, 32); m[20 + 25] = 64; putBeWord(m, 20 + 26, 0); putBeWord(m, 20 + 28, 32);
+    m[950] = 1; m[952] = 0; m[1080] = 'M'; m[1081] = '.'; m[1082] = 'K'; m[1083] = '.';
+    for (size_t i = 0; i < 32; i++) m[1084 + 1024 + i] = 0x00; // signed 0
+    for (size_t i = 32; i < 64; i++) m[1084 + 1024 + i] = 0x7F; // signed +127
+    putCell(m, 0, 0, 0, 0x00, 0x71, 0x10, 0x00); // period 113, sample 1
+
+    GSModPlayer player;
+    ASSERT_TRUE(player.parse(m.data(), m.size()));
+    player.start(0);
+    uint8_t out[4], vols[4];
+    std::set<uint8_t> seen;
+    for (int q = 0; q < 400; q++) { player.advanceQuantum(out, vols); seen.insert(out[0]); }
+    EXPECT_TRUE(seen.count(0x80)) << "signed 0x00 must map to DAC 0x80";
+    EXPECT_TRUE(seen.count(0xFF)) << "signed 0x7F must map to DAC 0xFF";
+    EXPECT_FALSE(seen.count(0x00)) << "raw signed byte leaked into the DAC";
+    EXPECT_FALSE(seen.count(0x7F)) << "raw signed byte leaked into the DAC";
+}
+
+TEST(GSModPlayer_RealContent, VolumeSixtyFourIsFullNotSilent)
+{
+    // 0x40 is ProTracker's full volume (13 of cc_wizard.mod's 17 samples and
+    // its 848 Cxx commands use it); masking with 0x3F turned it into 0
+    std::vector<uint8_t> m(1084 + 1024 + 64, 0x00);
+    putBeWord(m, 20 + 22, 32); m[20 + 25] = 64; putBeWord(m, 20 + 26, 0); putBeWord(m, 20 + 28, 32);
+    m[950] = 1; m[952] = 0; m[1080] = 'M'; m[1081] = '.'; m[1082] = 'K'; m[1083] = '.';
+    putCell(m, 0, 0, 0, 0x00, 0x71, 0x10, 0x00);        // note, sample 1 (vol 64)
+    putCell(m, 0, 0, 1, 0x00, 0x00, 0x0C, 0x40);        // row 1: C40 (set volume 64)
+
+    GSModPlayer player;
+    ASSERT_TRUE(player.parse(m.data(), m.size()));
+    player.start(0);
+    uint8_t out[4], vols[4];
+    player.advanceQuantum(out, vols);
+    EXPECT_EQ(vols[0], 64) << "sample header volume 0x40 must be full, not masked to 0";
+    for (int q = 0; q < 6 * 750; q++) player.advanceQuantum(out, vols); // into row 1
+    EXPECT_EQ(vols[0], 64) << "C40 must set full volume, not 0";
+}
+
+TEST(GSModPlayer_RealContent, SampleOffsetIsParamTimes256AndOnlyOnNineRows)
+{
+    // 9xx = start at param*256 bytes; a later plain note starts at 0 again
+    // (the memory is for 900, not for every note). cc_wizard.mod uses 9xx
+    // 177 times - every hit landed at the wrong position before
+    constexpr uint32_t kLen = 2048;
+    std::vector<uint8_t> m(1084 + 1024 + kLen, 0x00);
+    putBeWord(m, 20 + 22, kLen / 2); m[20 + 25] = 64; putBeWord(m, 20 + 26, 0); putBeWord(m, 20 + 28, 0);
+    m[950] = 1; m[952] = 0; m[1080] = 'M'; m[1081] = '.'; m[1082] = 'K'; m[1083] = '.';
+    for (uint32_t i = 0; i < kLen; i++) m[1084 + 1024 + i] = static_cast<uint8_t>(i < 1024 ? 0x00 : 0x40); // marker from byte 1024
+    putCell(m, 0, 0, 0, 0x00, 0x71, 0x19, 0x04);        // row 0: note + 904 -> offset 1024
+    putCell(m, 0, 0, 1, 0x00, 0x71, 0x10, 0x00);        // row 1: plain note -> offset 0
+
+    GSModPlayer player;
+    ASSERT_TRUE(player.parse(m.data(), m.size()));
+    player.start(0);
+    uint8_t out[4], vols[4];
+    player.advanceQuantum(out, vols);
+    EXPECT_EQ(out[0], 0x40 ^ 0x80) << "904 must start at byte 1024 (param*256)";
+    for (int q = 0; q < 6 * 750; q++) player.advanceQuantum(out, vols); // row 1
+    EXPECT_EQ(out[0], 0x00 ^ 0x80) << "a plain note after 9xx must start at 0, not at the remembered offset";
 }
 
 /// endregion </Player>

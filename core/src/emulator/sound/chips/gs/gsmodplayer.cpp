@@ -88,7 +88,11 @@ bool GSModPlayer::parse(const uint8_t* data, size_t size, const char** reason)
         info.name[22] = '\0';
         info.lengthWords = readBe16(header + 22);
         info.finetune = header[24] & 0x0F;
-        info.volume = header[25] & 0x3F;
+        // ProTracker volume is 0..64 (0x40 = full); masking with 0x3F turned
+        // the common 0x40 into 0 and silenced most instruments of real
+        // modules (cc_wizard.mod: 13 of 17 samples at 64) - reported as
+        // sample dropouts. The card's 6-bit latch maps 64 -> 63 downstream.
+        info.volume = std::min<uint8_t>(header[25], 64);
         info.loopStartWords = readBe16(header + 26);
         info.loopLengthWords = readBe16(header + 28);
         if (info.loopLengthWords < 2)
@@ -288,20 +292,27 @@ void GSModPlayer::processTick()
         const uint8_t* note = rowData + i * 4;
         const uint8_t effect = note[2] & 0x0F;
         const uint8_t param = note[3];
-        applyEffect(_channels[i], effect, param, _tick == 0);
-    }
-
-    // Vibrato/tremolo render ONCE PER TICK (PT semantics, firmware CHFADV
-    // cadence): the sine advances at the tick rate and the deltas compose
-    // with the current period/volume for the whole tick without permanently
-    // altering them. Rendering per QUANTUM instead advanced the sine at
-    // 37.5 kHz - 4xx/7xx became kHz-rate FM/ring modulation and the whole
-    // mix turned audibly dirty (live NEARTHGS report); the depth is the
-    // canonical sine*depth/128 as well
-    for (int i = 0; i < kChannels; i++)
-    {
         ChannelState& ch = _channels[i];
-        if (ch.vibratoParam != 0)
+        applyEffect(ch, effect, param, _tick == 0);
+
+        // Vibrato/tremolo render ONCE PER TICK (PT semantics, firmware
+        // CHFADV cadence): the sine advances at the tick rate and the
+        // deltas compose with the current period/volume for the whole tick
+        // without permanently altering them. Rendering per QUANTUM instead
+        // advanced the sine at 37.5 kHz - 4xx/7xx became kHz-rate FM/ring
+        // modulation and the whole mix turned audibly dirty (live NEARTHGS
+        // report); the depth is the canonical sine*depth/128 as well.
+        //
+        // Gated on THIS row's effect column, not on the remembered param:
+        // PT only bends pitch/volume while the row's effect is actually
+        // 4xx/6xx (vibrato) or 7xx (tremolo) - vibratoParam/tremoloParam
+        // are memory for the NEXT time that effect reappears (0-param
+        // reuse), not a standing modulation that outlives the row. Applying
+        // it unconditionally bled a stale vibrato's pitch wobble into every
+        // later unrelated note once any 4xx/6xx had ever been seen -
+        // reported as constant pitch-warble distortion on real content
+        // (2026-09-21).
+        if (effect == 0x04 || effect == 0x06)
         {
             const uint8_t rate = ch.vibratoParam >> 4;
             const int depth = ch.vibratoParam & 0x0F;
@@ -311,13 +322,24 @@ void GSModPlayer::processTick()
                 std::clamp<int>(ch.period - delta, kMinPeriod, kMaxPeriod)));
             ch.vibratoPos = static_cast<uint16_t>((ch.vibratoPos + rate * 64) % (32 * 64));
         }
-        if (ch.tremoloParam != 0)
+        else
+        {
+            // Not vibrating this row: play the clean period (undoes any
+            // offset left over from a previous 4xx/6xx row)
+            ch.increment = incrementForPeriod(ch.period);
+        }
+
+        if (effect == 0x07)
         {
             const uint8_t rate = ch.tremoloParam >> 4;
             const int depth = ch.tremoloParam & 0x0F;
             const int sine = kSineTable[(ch.tremoloPos / 64) % 32];
             ch.tremoloDelta = static_cast<int8_t>(sine * depth / 128);
             ch.tremoloPos = static_cast<uint16_t>((ch.tremoloPos + rate * 64) % (32 * 64));
+        }
+        else
+        {
+            ch.tremoloDelta = 0;
         }
     }
 
@@ -392,16 +414,21 @@ void GSModPlayer::processRow()
             {
                 ch.period = period;
                 ch.position = 0;
-                // 9xx offset from the row itself; a remembered one applies too
-                if (effect != 0x09)
-                    ch.position = static_cast<uint64_t>(ch.offsetParam) << 16;
                 ch.vibratoPos = 0;
                 ch.tremoloPos = 0;
                 ch.increment = incrementForPeriod(ch.period);
-                if (effect == 0x09 && param != 0)
+                // 9xx sample offset: param * 256 BYTES (PT semantics), param 0
+                // reuses the last non-zero offset. Only a row that carries 9xx
+                // starts mid-sample - a plain note always starts at 0 (the
+                // memory is for 900, not for every later note). Previously the
+                // offset was param bytes (256x too small) and the memory was
+                // applied to every subsequent note: cc_wizard.mod uses 9xx 177
+                // times, every hit landed at the wrong sample position
+                if (effect == 0x09)
                 {
-                    ch.offsetParam = param;
-                    ch.position = static_cast<uint64_t>(param) << 16;
+                    if (param != 0)
+                        ch.offsetParam = param;
+                    ch.position = static_cast<uint64_t>(ch.offsetParam) << 24; // (param*256) << 16
                 }
             }
         }
@@ -422,7 +449,21 @@ void GSModPlayer::applyEffect(ChannelState& ch, uint8_t effect, uint8_t param, b
 
     auto slideVolume = [&ch](int delta)
     {
-        ch.volume = static_cast<uint8_t>(std::clamp<int>(ch.volume + delta, 0, 63));
+        ch.volume = static_cast<uint8_t>(std::clamp<int>(ch.volume + delta, 0, 64));
+    };
+
+    // Tone-portamento step toward the latched 3xx target, shared by 0x03
+    // and 0x05 (5xx reuses whatever speed 3xx last set - its own param is
+    // the volume-slide amount, never a portamento speed)
+    auto tonePortamento = [&ch, &slidePeriod]()
+    {
+        if (ch.portamentoTarget == 0 || ch.portamentoParam == 0)
+            return;
+        const int step = ch.portamentoParam;
+        if (ch.period < ch.portamentoTarget)
+            slidePeriod(std::min<int>(step, ch.portamentoTarget - ch.period));
+        else if (ch.period > ch.portamentoTarget)
+            slidePeriod(-std::min<int>(step, ch.period - ch.portamentoTarget));
     };
 
     switch (effect)
@@ -453,29 +494,31 @@ void GSModPlayer::applyEffect(ChannelState& ch, uint8_t effect, uint8_t param, b
 
         case 0x03: // tone portamento toward the latched target
             if (rowStart && param != 0) ch.portamentoParam = param;
-            if (ch.portamentoTarget != 0 && ch.portamentoParam != 0)
-            {
-                const int step = ch.portamentoParam;
-                if (ch.period < ch.portamentoTarget)
-                    slidePeriod(std::min<int>(step, ch.portamentoTarget - ch.period));
-                else if (ch.period > ch.portamentoTarget)
-                    slidePeriod(-std::min<int>(step, ch.period - ch.portamentoTarget));
-            }
+            tonePortamento();
             break;
 
         case 0x04: // vibrato (rendered per tick after the effect loop)
             if (rowStart && param != 0) ch.vibratoParam = param;
             break;
 
-        case 0x05: // portamento + volume slide
-        case 0x06: // vibrato + volume slide
-        {
+        case 0x05: // tone portamento (3xx memory) + volume slide
+            tonePortamento();
             if (param != 0) ch.volumeSlideParam = param;
-            const uint8_t slide = ch.volumeSlideParam;
-            if (slide != 0)
+            if (ch.volumeSlideParam != 0)
+            {
+                const uint8_t slide = ch.volumeSlideParam;
                 slideVolume((slide >> 4) != 0 ? (slide >> 4) : -(slide & 0x0F));
+            }
             break;
-        }
+
+        case 0x06: // vibrato (own memory, rendered after the loop) + volume slide
+            if (param != 0) ch.volumeSlideParam = param;
+            if (ch.volumeSlideParam != 0)
+            {
+                const uint8_t slide = ch.volumeSlideParam;
+                slideVolume((slide >> 4) != 0 ? (slide >> 4) : -(slide & 0x0F));
+            }
+            break;
 
         case 0x07: // tremolo (rendered per tick after the effect loop)
             if (rowStart && param != 0) ch.tremoloParam = param;
@@ -504,7 +547,7 @@ void GSModPlayer::applyEffect(ChannelState& ch, uint8_t effect, uint8_t param, b
 
         case 0x0C: // set volume
             if (rowStart)
-                ch.volume = param & 0x3F;
+                ch.volume = std::min<uint8_t>(param, 64); // Cxx: 0..64
             break;
 
         case 0x0D: // pattern break - deferred to the row end
@@ -599,10 +642,15 @@ void GSModPlayer::fetchChannelOutput(int channel, uint8_t& out, uint8_t& vol)
     ch.position = position;
 
     const uint32_t index = static_cast<uint32_t>(position >> 16);
-    out = _module[info.dataOffset + std::min<uint32_t>(index, info.dataLength - 1)];
+    // ProTracker sample data is SIGNED 8-bit; the card's DAC latch is
+    // 0x80-centered unsigned (the firmware XORs 0x80 on upload, Unreal's
+    // gshle did the same). Feeding the raw signed byte turned every
+    // near-zero sample into a full-swing 0x00/0xFF - the "fuzz/distortion"
+    // on real content (cc_wizard.mod, live-verified 2026-09-22)
+    out = static_cast<uint8_t>(_module[info.dataOffset + std::min<uint32_t>(index, info.dataLength - 1)] ^ 0x80);
     // Tremolo delta was rendered once per tick in processTick (PT
     // semantics): held here, not re-derived per quantum
-    vol = static_cast<uint8_t>(std::clamp<int>(ch.volume + ch.tremoloDelta, 0, 63));
+    vol = static_cast<uint8_t>(std::clamp<int>(ch.volume + ch.tremoloDelta, 0, 64));
 }
 
 /// endregion </Sequencer>
