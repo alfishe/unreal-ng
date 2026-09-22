@@ -6,6 +6,18 @@
 
 #include "debugger/ttd/profi/ttdprofipaging.h"
 #include "emulator/memory/memory.h"
+#include "emulator/sound/covox.h"
+#include "emulator/sound/soundmanager.h"
+
+namespace
+{
+    // ZX Profi's own Covox DAC lives on ports #5F (Left), #3F (Right) - distinct
+    // physical ports from the Pentagon/Scorpion Soundrive set (#F1/#F3/#F9/#FB).
+    // Writes are forwarded into the shared Covox device via its standard
+    // Left/Right ports, so the device itself stays model-agnostic.
+    constexpr uint8_t kProfiCovoxLeftPort  = 0x5F;
+    constexpr uint8_t kProfiCovoxRightPort = 0x3F;
+}
 
 /// region <Constructors / Destructors>
 
@@ -170,6 +182,24 @@ void PortDecoder_Profi::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
             disp.decodedPort = fdcPort;
             disp.wasDecoded = true;
         }
+    }
+    // Covox/SoundRive DAC: #5F (Left), #3F (Right). NORMAL mode only - the FDC/CP'M
+    // port set (dosPorts above) takes priority when the disk interface is on the bus.
+    else if (const uint8_t lowByte = port & 0xFF;
+             lowByte == kProfiCovoxLeftPort || lowByte == kProfiCovoxRightPort)
+    {
+        if (_context->pSoundManager && _context->pSoundManager->hasCovox())
+        {
+            // Use the A ports, not B: computeStereoAmplitudes()'s mono-compatibility
+            // fallback keys on LeftA/LeftB/RightA==0 and then substitutes RightB into
+            // BOTH channels. Profi never touches LeftB/RightB, so routing through them
+            // left the fallback armed on LeftA/RightA alone - every time Left passed
+            // through exact silence while Right was active, it leaked Right into Left.
+            uint16_t canonicalPort = (lowByte == kProfiCovoxLeftPort) ? Covox::PORT_LEFT_A : Covox::PORT_RIGHT_A;
+            _context->pSoundManager->getCovox()->portDeviceOutMethod(canonicalPort, value);
+        }
+        disp.decodedPort = lowByte;
+        disp.wasDecoded = true;
     }
 
     // Universal handler for breakpoints, tracking, analyzers

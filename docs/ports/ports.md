@@ -638,6 +638,13 @@ The Profi was a powerful Czechoslovakian/Russian clone with a focus on expansion
         *   The "Profi COM port & Soft XT keyboard" section lists ports `#E0FB-#EFFB`. These are not IDE but COM/Keyboard.
         *   The main "ATM IDE" or "NemoIDE" port schemes are common for clones. Profi might use a variation of these or its own scheme if it has IDE. The table does not clearly assign standard IDE ports to Profi (`9`) under the "ATM IDE" or "NemoIDE" sections. However, the general section "8 bit IDE by Pera Putnik" (`#2B-#EF`) or "divIDE" (`#A3-#BF`, `#E3`) are generic IDE solutions Profi might have adopted or been compatible with.
 
+*   **Covox/SoundRive DAC:**
+    *   **Port `#5F`:** Left channel (write-only 8-bit DAC).
+    *   **Port `#3F`:** Right channel (write-only 8-bit DAC).
+    *   These double as the Beta Disk FDC registers above when the disk interface is on the bus (DOS latch or
+        CP/M mode); Covox answers only when it is off the bus. Confirmed and implemented in this codebase - see
+        [profi-1024.md](../hardware/profi-1024.md#sound).
+
 *   **Profi COM port & Soft XT keyboard:**
     *   **Port `#E0FB` (57595):** XT Keyboard data.
     *   **Port `#E8FB` (59643):** Register (likely for keyboard controller or COM port status/control).

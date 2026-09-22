@@ -10,9 +10,10 @@ ZX Profi 1024 (`MM_PROFI`): design complete; implementation in progress on branc
 - [x] Technical design: [technical-design.md](technical-design.md) (status in section 14)
 - [x] Automation and docs pass: port map / port-trace rules, `/state/paging` pDFFD fields, ROM page names, `PROFI`/`PROFIHR` mode reporting (WebAPI, CLI, Lua, Python), MCP resource `unreal://machine/profi`, permanent docs updated
 - [x] Config, decoder, banks, DOS latch and FDC ports, palette, TTD, standard + hi-res video, tests, real-ROM boot to the BIOS splash
+- [x] Covox/SoundRive DAC wired at `#5F`/`#3F` (NORMAL mode only; `#3F/#5F` are Beta128 FDC registers while `CF_DOSPORTS` is set) - forwards into the shared `Covox` device via its canonical Left/Right ports, isolated to `PortDecoder_Profi::DecodePortOut`
 
 ## Remaining
-- [ ] Covox/SoundRive, RTC (DS12885), IDE, Kempston joystick, FE read bit 7
+- [ ] RTC (DS12885), IDE, Kempston joystick, FE read bit 7
 - [ ] Verify the BIOS menu entries boot (CP/M, TR-DOS 48K/128K, Sinclair 48/128); BIOS main menu itself is reached (fixed FDC BUSY visibility, technical-design.md section 14)
 - [ ] Hi-res real-hardware timing evidence (design section 12 Q3), real recordings for TTD v2 benchmark
 - [ ] Commit (only on explicit request): decide `testdata/machines/profi/` fixtures and `testdata/NOTICE.md` row

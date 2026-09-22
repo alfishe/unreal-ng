@@ -1,8 +1,11 @@
 # ZX Profi 1024 (model `PROFI`)
 
 The Profi 1024 is creatable on this build (`emulator_manage action=create model=PROFI`, CLI `create PROFI`,
-`POST /api/v1/emulator/start {"model": "PROFI"}`). Configuration lives in `data/configs/profi/unreal.ini`; the ROM
-image is `data/rom/profi.rom`. Design notes and open work: [technical-design.md](../inprogress/2026-09-21-profi/technical-design.md).
+`POST /api/v1/emulator/start {"model": "PROFI"}`). Configuration lives in `data/configs/profi/unreal.ini`; the
+default ROM image is `data/rom/profi/romain_2.91_ramdisk_d.rom` (karabas-pro's ROMain firmware, TR-DOS RAM disk on
+drive D). Alternative 64K ROM images (Micco Software menu ROM, other ROMain builds, DivMMC, Gluk+DFFD) live under
+`data/rom/profi/`, see its `README.md`. Design notes and open work:
+[technical-design.md](../inprogress/2026-09-21-profi/technical-design.md).
 
 ## ROM layout (4 pages of 16 KB)
 
@@ -33,6 +36,23 @@ the bus: DOS latch set or CP/M mode (`CF_DOSPORTS`). In CP/M mode the system por
 both set the "modified" ports `#83/#A3/#C3/#E3` and `#3F` apply. The AY ports `#FFFD/#BFFD` and `#FE` are always on
 the bus.
 
+`#3F`/`#5F` are shared with the Covox DAC below: which device answers depends on whether the disk interface is on
+the bus.
+
+## Sound
+
+| Port | Dir | Meaning | Condition |
+|:--|:--|:--|:--|
+| `#5F` | W | Covox/SoundRive DAC, Left channel | disk interface off the bus (`!CF_DOSPORTS`) |
+| `#3F` | W | Covox/SoundRive DAC, Right channel | disk interface off the bus (`!CF_DOSPORTS`) |
+
+Profi's own Covox ports are `#5F`/`#3F`, not the Pentagon/Scorpion Soundrive set (`#F1/#F3/#F9/#FB`). The write is
+forwarded from `PortDecoder_Profi::DecodePortOut` into the shared `Covox` device via its canonical Left/Right ports
+(`Covox::PORT_LEFT_A`/`PORT_RIGHT_A` - not the `_B` ports, which would arm the device's mono-compatibility
+fallback and leak the Right channel into Left whenever Left passed through silence), so the device's own
+decoding/mixing and every other model stay unchanged.
+Enabled the same way as Pentagon/Scorpion Covox, via `[SOUND] CovoxFB=1` in the machine's `unreal.ini`.
+
 ## Video and timing
 
 | Mode name | Trigger | Visible area | Framebuffer |
@@ -51,7 +71,8 @@ The `#DFFD` latch and the 16-entry palette are persisted as `PeripheralId::Profi
 
 ## Known limitations
 
-- RTC (DS12885), IDE, Covox/SoundRive and the Kempston joystick are not implemented yet.
+- RTC (DS12885), IDE, the Kempston joystick and the Covox extended-mode aliases (`#87/#A7/#C7/#E7`) are not
+  implemented yet. Covox/SoundRive itself (`#5F`/`#3F`, NORMAL mode) is implemented - see "Sound" above.
 - The BIOS drive probe polls the WD1793 for BUSY after every command, so the FDC must show authentic timing while the
   SYS ROM runs: fast disk loading is disarmed there, and a Type II command on a not-ready drive keeps BUSY set for
   64 T-states before ending. With both in place the BIOS reaches its main menu with or without a disk (menu entries:
