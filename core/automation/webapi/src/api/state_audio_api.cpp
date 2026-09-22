@@ -7,6 +7,7 @@
 #include <json/json.h>
 
 #include <bitset>
+#include <filesystem>
 #include <vector>
 
 #include "../emulator_api.h"
@@ -792,6 +793,40 @@ void EmulatorAPI::postControlAudioGS(const HttpRequestPtr& req, std::function<vo
         std::string path = json->get("path", "").asString();
         if (path.empty())
             path = "gs-module-dump.mod";
+
+        // WebAPI has no per-caller filesystem sandbox, and this is the only
+        // GS action that takes a caller-supplied path: without a check, a
+        // remote client (the server binds 0.0.0.0 by default) could write
+        // the captured module to an arbitrary absolute path or escape the
+        // working directory via "..", i.e. an arbitrary-file-write primitive
+        // dressed up as a diagnostics dump. Restrict to a relative path with
+        // no ".." component - matches the "drop a .mod in the working/scratch
+        // directory" use this action was actually built for.
+        const std::filesystem::path requested(path);
+        bool pathIsSafe = !requested.is_absolute();
+        if (pathIsSafe)
+        {
+            for (const auto& part : requested)
+            {
+                if (part == "..")
+                {
+                    pathIsSafe = false;
+                    break;
+                }
+            }
+        }
+        if (!pathIsSafe)
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "'path' must be a relative path with no '..' component: '" + path + "'";
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+
         std::ofstream out(path, std::ios::binary);
         if (!out)
         {

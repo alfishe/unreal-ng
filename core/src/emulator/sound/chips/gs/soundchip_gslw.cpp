@@ -289,7 +289,15 @@ void SoundChip_GSLightweight::acceptHostData(uint8_t value)
 
     if (_loading)
     {
-        if (!_discardLoad)
+        // Cap at the card's configured RAM size: real hardware has nowhere
+        // else to put the bytes either, but there _store is a window into a
+        // fixed RAM array (COM30 overwrites in place, wrapping); here it's a
+        // growing std::vector, so with no cap a runaway host loop (or a COM30
+        // stream that never sends the terminating D2) would grow it without
+        // bound. Dropping past the cap isn't a byte-exact wrap, but it is
+        // memory-safe, and a load that overflows the card's own RAM was never
+        // going to parse as a valid module anyway.
+        if (!_discardLoad && _store.size() < _ramKB * 1024)
             _store.push_back(value);
         return;
     }

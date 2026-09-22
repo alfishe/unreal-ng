@@ -562,8 +562,11 @@ void SoundChip_GeneralSound::onHostDataWrite(uint8_t value)
     _mb.dataFromHost = value;
     _mb.status |= 0x80;
     // The dummy slot byte precedes the OUT #BB,0x30 that opens capture, so
-    // it never enters the store
-    if (_uploadLive)
+    // it never enters the store. Capped at the card's actual RAM size: the
+    // firmware has nowhere else to put more bytes than that either, and
+    // without the cap a host stream that never sends the terminating D2
+    // would grow this vector without bound.
+    if (_uploadLive && _uploadStore.size() < _ram.size())
         _uploadStore.push_back(value);
 }
 
