@@ -196,6 +196,7 @@ TEST_F(ScorpionRaster_Test, VideoModeNamesAppendWithoutShift)
         "GMX",                  // M_GMX
         "Border only",          // M_BRD
         "Scorpion 256k",        // M_SCORPION
+        "Profi 512x240",        // M_PROFIHR
     };
     static_assert(sizeof(expected) / sizeof(expected[0]) == M_MAX, "expected name table must cover every mode");
 

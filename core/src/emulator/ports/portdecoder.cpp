@@ -521,12 +521,17 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
                                Tags(PortTag::Memory) | PortTag::Rom, PagingLatch::P1FFD});
             break;
         case MM_PROFI:
-            // IsPort_7FFD / IsPort_DFFD (PortDecoder_Profi); #DFFD bit 7 selects the
-            // Profi 512x240 video mode (Screen::InitVideoMode mode detection)
-            entries.push_back({0x7FFD, 0x8006, 0x0004, "Memory paging (RAM bank, shadow screen, ROM)", nullptr,
+            // IsPort_7FFD / IsPort_DFFD (PortDecoder_Profi): #7FFD = A15=0 & A1=0,
+            // #DFFD = A15=1 & A13=0 & A1=0; #DFFD bit 7 selects the 512x240 hi-res
+            // mode (Screen::InitVideoMode mode detection)
+            entries.push_back({0x7FFD, 0x8002, 0x0000, "Memory paging (RAM bank, shadow screen, ROM14, lock)", nullptr,
                                Tags(PortTag::Memory) | PortTag::Rom | PortTag::Screen, PagingLatch::P7FFD});
-            entries.push_back({0xDFFD, 0x2002, 0x0000, "Profi extended paging (1024K) + video mode (bit 7)", nullptr,
-                               Tags(PortTag::Memory) | PortTag::Screen, PagingLatch::PDFFD});
+            entries.push_back({0xDFFD, 0xA002, 0x8000,
+                               "Profi extended paging (RAM high bits, SCO, WOROM, CP/M, SCR) + video mode (bit 7)",
+                               nullptr, Tags(PortTag::Memory) | PortTag::Rom | PortTag::Screen, PagingLatch::PDFFD});
+            // Palette write OUT #xx7E (A7=0, A0=0, only while DFFD bit 7 is set); data is in A15:A8
+            entries.push_back({0x007E, 0x0081, 0x0000, "Profi palette write (OUT #xx7E, hi-res only)", nullptr,
+                               Tags(PortTag::Screen)});
             break;
         case MM_SCORP:
         case MM_PROFSCORP:
@@ -597,7 +602,9 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
     // through the registered device key.
     if (_context->config.trdos_present)
     {
-        const char* betaGate = scorpion ? "CF_TRDOS / Shadow Monitor / magic-button trigger" : nullptr;
+        const char* betaGate = scorpion ? "CF_TRDOS / Shadow Monitor / magic-button trigger"
+                               : (model == MM_PROFI) ? "CF_DOSPORTS (DOS latch or CP/M mode)"
+                                                     : nullptr;
         // Data registers answer through exact registered device keys (IsBeta128Port /
         // TryBeta128MirrorPort switch on the five low bytes), so the rows are exact
         // matches - which also lets the registered-handler dedupe below absorb them.
@@ -873,6 +880,10 @@ std::vector<DecodedLatchField> DecodePagingLatch(PagingLatch latch, uint32_t val
             break;
         case PagingLatch::PDFFD:
             intField("extended_ram_bank", static_cast<int>(value & 0x07));
+            boolField("sco", (value & 0x08) != 0);
+            boolField("worom", (value & 0x10) != 0);
+            boolField("cpm", (value & 0x20) != 0);
+            boolField("scr", (value & 0x40) != 0);
             boolField("video_512x240", (value & 0x80) != 0);
             break;
         case PagingLatch::PEFF7:

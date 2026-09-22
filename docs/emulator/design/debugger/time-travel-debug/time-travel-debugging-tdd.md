@@ -40,7 +40,7 @@ For games (which do read the keyboard), determinism is preserved by journaling h
 | **Reverse watchpoints** | Find last write/read/execute to any address | Works across full recorded history, including bank-switched memory |
 | **Timeline UI** | Visual timeline with scrubbing and event markers | Integrated into Qt debugger; WebAPI for external tools |
 | **Zero-cost disable** | No overhead when TTD is off | Same gating pattern as `screenhq`, `memorytracking` features |
-| **Universal model support** | Works with all machine models | 48K, 128K, Pentagon, Scorpion, ATM, TS-Conf, GMX, Quorum |
+| **Universal model support** | Works with all machine models | 48K, 128K, Pentagon, Scorpion, ATM, Profi, TS-Conf, GMX, Quorum |
 | **Peripheral state** | Complete capture/restore of all peripherals | AY/TurboSound, FDC/WD1793, Tape, Covox, TSFM, GeneralSound |
 
 #### 1.3.2 Performance Goals
@@ -570,7 +570,7 @@ flowchart LR
 
 | Field | Size | Description |
 |-------|------|-------------|
-| `peripheralId` | 1 byte | PeripheralId enum value |
+| `peripheralId` | 1 byte | PeripheralId enum value (0 TurboSound, 1 BetaDisk, 2 Tape, 3 Covox, 4 TSFM, 5 GeneralSound, 6 ScorpionProfROM, 7 KempstonMouse, 8 AtmPaging, 9 ProfiPaging - the Profi #DFFD latch and 16-entry palette) |
 | `flags` | 1 byte | Bit 0: isDelta (XOR-encoded against previous) |
 | `uncompressedSize` | 2 bytes | Original state size in bytes |
 | `compressedSize` | 4 bytes | Compressed payload size (0 = uncompressed) |

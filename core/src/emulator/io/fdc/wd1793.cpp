@@ -1934,6 +1934,11 @@ void WD1793::startType1Command()
     _stepCounter = 0;
 }
 
+namespace
+{
+constexpr size_t NOT_READY_BUSY_HOLD_TSTATES = 64;  // BUSY stays visible this long when a Type II command finds the drive not ready
+}
+
 void WD1793::startType2Command()
 {
     MLOGINFO("==>> Start Type 2 command (%s)", getWD_COMMANDName(_lastDecodedCmd));
@@ -1966,8 +1971,11 @@ void WD1793::startType2Command()
 
     if (!isReady())
     {
-        // If the drive is not ready - end immediately
-        transitionFSM(WD1793::S_END_COMMAND);
+        // Drive not ready: the command is not executed and ends with NOT READY + INTRQ. The chip still raises
+        // BUSY first and drops it a short time later, so software polling for BUSY after issuing the command
+        // (Profi BIOS: OUT #1F,#86 then wait for BUSY=1) sees it. Ending inside the register write hid BUSY
+        // entirely and the BIOS hung at "Please wait ...". Hold BUSY for ~18 us (64 T-states: more than the BIOS's first poll, ~30 T after the OUT).
+        transitionFSMWithDelay(WD1793::S_END_COMMAND, NOT_READY_BUSY_HOLD_TSTATES);
     }
     else
     {

@@ -6,17 +6,17 @@
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/screen.h"
 
+/// ZX Profi 1024 port decoder.
 ///
-/// See: https://worldofspectrum.org/faq/reference/128kreference.htm
-/// See: https://zx-pk.ru/threads/11490-paging-ports-of-zx-clones.html?langid=1
-/// See: http://zx.clan.su/forum/11-46-1
+/// Behaviour follows the UnrealSpeccy reference implementation (io.cpp / memory.cpp),
+/// cross-checked with ZXMAK2 and Xpeccy. Design: docs/inprogress/2026-09-21-profi/technical-design.md
+///
+/// Latches:
+///   #7FFD  bits 2:0 RAM low, 3 screen (5|7), 4 ROM14 (1 = 48K/DOS side), 5 lock
+///   #DFFD  bits 2:0 RAM high, 3 SCO, 4 WOROM, 5 CPM, 6 SCR, 7 DS80 (512x240 + palette)
+///   DOS latch = CF_TRDOS (set by the $3Dxx M1 trap, cleared on fetch from >= $4000)
 class PortDecoder_Profi : public PortDecoder
 {
-    /// region <Fields>
-protected:
-    // _7FFD_Locked is now inherited from PortDecoder base class
-    /// endregion </Fields>
-
     /// region <Constructors / Destructors>
 public:
     PortDecoder_Profi() = delete;                 // Disable default constructor; C++ 11 feature
@@ -30,17 +30,33 @@ public:
     uint8_t DecodePortIn(uint16_t port, uint16_t pc) override;
     void DecodePortOut(uint16_t port, uint8_t value, uint16_t pc) override;
 
-    void SetRAMPage(uint8_t oage) override;
+    void SetRAMPage(uint8_t page) override;
     void SetROMPage(uint8_t page) override;
+
+    /// Latch-to-bank translation (called from Memory::UpdateZ80Banks after the ROM slot is chosen)
+    void UpdateModelMemoryBanks() override;
+
+    std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
+    std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
     /// endregion </Interface methods>
 
     /// region <Helper methods>
 public:
-    bool IsPort_7FFD(uint16_t port);
-    bool IsPort_DFFD(uint16_t port);
+    /// #7FFD: A15=0, A1=0 (A2 is not decoded)
+    static bool IsPort_7FFD(uint16_t port);
+    /// #DFFD: A15=1, A13=0, A1=0
+    static bool IsPort_DFFD(uint16_t port);
+
+    /// Decode a Profi FDC port for the current mode.
+    /// @return canonical Beta128 port (#1F/#3F/#5F/#7F/#FF) or 0 when the address is not an FDC port
+    uint16_t DecodeFDCPort(uint16_t port) const;
+
+    /// Palette write (OUT to #xx7E family with DFFD.7): colour from ~A15..A8, index from the previous #FE value
+    void Port_Palette_Out(uint16_t port);
     /// endregion <Helper methods>
 
 protected:
     void Port_7FFD(uint8_t value, uint16_t pc);
     void Port_DFFD(uint8_t value, uint16_t pc);
+    void ResetPalette();
 };

@@ -43,7 +43,7 @@ Reference design: `docs/inprogress/2026-08-17-mcp/`.
              ├── mcp-analysis.cpp      debug_code / analyze_performance (Phase 2)
              ├── mcp-media.cpp         capture_media (Phase 2)
              ├── mcp-router.cpp        search_api / invoke_api + OpenAPI cache
-             ├── mcp-resources.cpp     6 resources (5 embedded + dynamic)
+             ├── mcp-resources.cpp     7 resources (6 embedded + dynamic)
              └── target-resolver.cpp   "auto" → create/reuse/refuse
                        │
                 webapi-client.cpp      IApiCaller → drogon HttpClient
@@ -96,7 +96,7 @@ never JSON-RPC errors.
 ## Resources
 
 `unreal://keyboard-layout`, `unreal://basic-reference`, `unreal://z80-isa`,
-`unreal://trdos-commands`, `unreal://memory-map` (embedded markdown) and
+`unreal://trdos-commands`, `unreal://memory-map`, `unreal://machine/profi` (embedded markdown) and
 `unreal://emulator-state` (dynamic instance overview).
 
 ## Quick test

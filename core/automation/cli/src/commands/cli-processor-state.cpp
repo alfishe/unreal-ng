@@ -430,6 +430,11 @@ void CLIProcessor::HandleStateScreenMode(const ClientSession& session, EmulatorC
             ss << "Resolution:      512 × 192 pixels" << NEWLINE;
             ss << "Color Depth:     2 colors (1bpp, dual-plane)" << NEWLINE;
             break;
+        case M_PROFIHR:
+            ss << "Resolution:      512 × 240 pixels (framebuffer 608 × 288)" << NEWLINE;
+            ss << "Color Depth:     1bpp with 16-entry Profi palette (OUT #xx7E)" << NEWLINE;
+            ss << "Raster:          312 lines × 224 T (69888 T frame)" << NEWLINE;
+            break;
         case M_P384:
             ss << "Resolution:      384 × 304 pixels" << NEWLINE;
             ss << "Color Depth:     Standard attribute mode" << NEWLINE;
@@ -521,6 +526,11 @@ void CLIProcessor::HandleStateMemory(const ClientSession& session, EmulatorConte
             (memory.GetROMPage() == 2) ? "128K Editor" : (memory.GetROMPage() == 3 ? "48K BASIC" : "Service/TR-DOS");
     else if (config.mem_model == MM_PLUS3)
         romMode = (memory.GetROMPage() == 0) ? "128K Editor" : "48K BASIC";
+    else if (config.mem_model == MM_PROFI)
+        romMode = (memory.GetROMPage() == 0)   ? "SYS/Menu"
+                  : (memory.GetROMPage() == 1) ? "TR-DOS"
+                  : (memory.GetROMPage() == 2) ? "128K Editor + STS Monitor"
+                                               : "48K BASIC";
 
     ss << "  ROM Mode:         " << romMode << NEWLINE;
     ss << "  Bank 0 (0x0000-0x3FFF): " << memory.GetCurrentBankName(0) << NEWLINE;
@@ -543,6 +553,16 @@ void CLIProcessor::HandleStateMemory(const ClientSession& session, EmulatorConte
         ss << "  Screen:           " << ((state.p7FFD & 0x08) ? "1 (Shadow)" : "0 (Normal)") << NEWLINE;
         ss << "  ROM Select:       " << ((state.p7FFD & 0x10) ? "1" : "0") << NEWLINE;
         ss << "  Paging Locked:    " << ((state.p7FFD & 0x20) ? "YES" : "NO") << NEWLINE;
+        if (config.mem_model == MM_PROFI)
+        {
+            ss << "  Port 0xDFFD:      0x" << std::hex << std::setw(2) << std::setfill('0') << (int)state.pDFFD
+               << std::dec << NEWLINE;
+            ss << "  RAM High Bits:    " << (int)(state.pDFFD & 0x07) << NEWLINE;
+            ss << "  SCO/WOROM/CPM/SCR: " << ((state.pDFFD & 0x08) ? "1" : "0") << "/"
+               << ((state.pDFFD & 0x10) ? "1" : "0") << "/" << ((state.pDFFD & 0x20) ? "1" : "0") << "/"
+               << ((state.pDFFD & 0x40) ? "1" : "0") << NEWLINE;
+            ss << "  512x240 Video:    " << ((state.pDFFD & 0x80) ? "ON" : "OFF") << NEWLINE;
+        }
     }
 
     session.SendResponse(ss.str());
@@ -670,6 +690,13 @@ void CLIProcessor::HandleStateMemoryROM(const ClientSession& session, EmulatorCo
         ss << "  Page 0: Service ROM " << ((memory.GetROMPage() == 0) ? "[ACTIVE]" : "") << NEWLINE;
         ss << "  Page 1: TR-DOS ROM " << ((memory.GetROMPage() == 1) ? "[ACTIVE]" : "") << NEWLINE;
         ss << "  Page 2: 128K Editor/Menu ROM " << ((memory.GetROMPage() == 2) ? "[ACTIVE]" : "") << NEWLINE;
+        ss << "  Page 3: 48K BASIC ROM " << ((memory.GetROMPage() == 3) ? "[ACTIVE]" : "") << NEWLINE;
+    }
+    else if (config.mem_model == MM_PROFI)
+    {
+        ss << "  Page 0: SYS/Menu ROM " << ((memory.GetROMPage() == 0) ? "[ACTIVE]" : "") << NEWLINE;
+        ss << "  Page 1: TR-DOS ROM " << ((memory.GetROMPage() == 1) ? "[ACTIVE]" : "") << NEWLINE;
+        ss << "  Page 2: 128K Editor + STS Monitor ROM " << ((memory.GetROMPage() == 2) ? "[ACTIVE]" : "") << NEWLINE;
         ss << "  Page 3: 48K BASIC ROM " << ((memory.GetROMPage() == 3) ? "[ACTIVE]" : "") << NEWLINE;
     }
     else if (config.mem_model == MM_PLUS3)

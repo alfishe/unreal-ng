@@ -292,7 +292,7 @@ GET /api/v1/emulator/{id}/disasm/page         Disassemble from physical page (?t
 POST /api/v1/emulator/{id}/memory/find        Search Z80 memory for a byte pattern (body: {"pattern_hex": "AF 3C"})
 GET  /api/v1/emulator/{id}/state/screen/digest  Stable screen-content digest (range or banks, border folding; ?mode=active follows the displayed surface)
 GET  /api/v1/emulator/{id}/ports             Static port map + live routing flags (which devices answer which ports, under which gates); rows carry semantic `tags` (memory/rom/screen/sound_ay/…) and the `latch` live-value binding (p7FFD, p1FFD, … or null)
-GET  /api/v1/emulator/{id}/state/paging      Unified paging state (P1-2): tagged latch rows with live values + §5.1 decoded bits, 4-bank table with ROM `name`/`role`/`signature` (§5.2 — role≠name is the wrong-ROM signal), `paging_locked`, `trdos_active`
+GET  /api/v1/emulator/{id}/state/paging      Unified paging state (P1-2): tagged latch rows with live values + §5.1 decoded bits, 4-bank table with ROM `name`/`role`/`signature` (§5.2 — role≠name is the wrong-ROM signal), `paging_locked`, `trdos_active`; on `PROFI` the `pDFFD` latch decodes to `extended_ram_bank`, `sco`, `worom`, `cpm`, `scr`, `video_512x240` (see [profi-1024.md](../../../hardware/profi-1024.md))
 GET  /api/v1/emulator/{id}/video/beam         Current raster position and beam zone
 GET  /api/v1/emulator/{id}/frame_cost         Per-frame halt/run cost accounting
 GET  /api/v1/emulator/{id}/state/audio/ay      AY/SSG chips overview (core DeviceState report)

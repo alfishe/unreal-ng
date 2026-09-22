@@ -123,18 +123,52 @@ TEST_F(PortDecoder_PortMap_Test, Plus3_BothPagingLatchesListed)
     EXPECT_EQ(disk->match, 0x1000);
 }
 
-TEST_F(PortDecoder_PortMap_Test, Profi_ExtendedPagingRow)
+TEST_F(PortDecoder_PortMap_Test, Profi_PagingRowsMatchDecoder)
 {
     _context->config.mem_model = MM_PROFI;
     PortDecoder_Profi decoder(_context);
 
     const std::vector<PortMapEntry> entries = decoder.getPortMapEntries();
-    ASSERT_NE(FindEntry(entries, 0x7FFD), nullptr);
 
+    // #7FFD: A15=0 and A1=0 (A2 not decoded)
+    const PortMapEntry* paging = FindEntry(entries, 0x7FFD);
+    ASSERT_NE(paging, nullptr);
+    EXPECT_EQ(paging->mask, 0x8002);
+    EXPECT_EQ(paging->match, 0x0000);
+
+    // #DFFD: A15=1, A13=0, A1=0
     const PortMapEntry* extended = FindEntry(entries, 0xDFFD);
     ASSERT_NE(extended, nullptr);
-    EXPECT_EQ(extended->mask, 0x2002);
-    EXPECT_EQ(extended->match, 0x0000);
+    EXPECT_EQ(extended->mask, 0xA002);
+    EXPECT_EQ(extended->match, 0x8000);
+
+    // Palette write OUT #xx7E (A7=0, A0=0)
+    const PortMapEntry* palette = FindEntry(entries, 0x007E);
+    ASSERT_NE(palette, nullptr);
+    EXPECT_EQ(palette->mask, 0x0081);
+    EXPECT_EQ(palette->match, 0x0000);
+
+    // Every row agrees with the decoder's own predicates
+    for (uint32_t port = 0; port < 0x10000; port += 0x0101)
+    {
+        const bool inPaging = ((port & paging->mask) == paging->match);
+        const bool inExtended = ((port & extended->mask) == extended->match);
+        EXPECT_EQ(inPaging, (port & 0x8002) == 0) << std::hex << port;
+        EXPECT_FALSE(inPaging && inExtended) << std::hex << port;  // A15 separates them
+    }
+}
+
+TEST_F(PortDecoder_PortMap_Test, Profi_Beta128RowsGatedOnDosPorts)
+{
+    _context->config.mem_model = MM_PROFI;
+    _context->config.trdos_present = true;
+    PortDecoder_Profi decoder(_context);
+
+    const std::vector<PortMapEntry> entries = decoder.getPortMapEntries();
+    const PortMapEntry* status = FindEntry(entries, 0x001F);
+    ASSERT_NE(status, nullptr);
+    ASSERT_NE(status->gate, nullptr);
+    EXPECT_NE(std::string(status->gate).find("CF_DOSPORTS"), std::string::npos);
 }
 
 TEST_F(PortDecoder_PortMap_Test, Scorpion_NarrowedFeJoystickRowAndMouseGate)

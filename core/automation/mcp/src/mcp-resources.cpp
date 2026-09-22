@@ -219,6 +219,42 @@ vs Sinclair 69888 (311 lines) — 2.27% faster frame; INT every 71680 T; no M1 w
 - Bank pages: invoke_api GET /api/v1/emulator/{id}/memory/page/ram/{n} (add ?filter=sparse to compress 0x00/0xFF runs).
 )md";
 
+const char* const kMachineProfi = R"md(# Profi 1024 (model PROFI)
+
+Creatable via `emulator_manage action=create model=PROFI` (config `data/configs/profi/unreal.ini`, ROM `data/rom/profi.rom`).
+
+## ROM pages (16K each)
+| Page | Content |
+|:--|:--|
+| 0 | SYS / menu ROM (BIOS) |
+| 1 | TR-DOS |
+| 2 | 128K editor + STS monitor |
+| 3 | 48K BASIC |
+
+## Paging ports (write decode)
+| Port | Decode | Bits |
+|:--|:--|:--|
+| #7FFD | A15=0 and A1=0 | 2:0 RAM low bits, 3 screen select, 4 ROM14, 5 lock |
+| #DFFD | A15=1, A13=0, A1=0 | 2:0 RAM high bits (1024K), 3 SCO, 4 WOROM, 5 CPM, 6 SCR, 7 DS80 (512x240 hi-res) |
+| OUT #xx7E | A7=0, A0=0, only while DS80 is set | palette write (entry index from the previous #FE value, colour in A15:A8) |
+
+The DOS latch is the CF_TRDOS flag. WD1793 ports (#1F/#3F/#5F/#7F, system #FF) answer only while the disk
+interface is on the bus (DOS latch or CP/M mode); in CP/M mode with ROM14 set the "modified" ports #83/#A3/#C3/#E3 apply.
+
+## Video
+Standard mode `PROFI`: 256x192 in a 352x288 framebuffer. Hi-res mode `PROFIHR` (#DFFD bit 7): 512x240 in a 608x288
+framebuffer. Both use the 312-line x 224 T raster (69888 T per frame, INT-to-paper 12580 T).
+`inspect_state aspects:["video"]` reports `video_mode` = PROFI or PROFIHR with resolution.
+
+## State
+`inspect_state aspects:["paging"]` reports the tagged latches: p7FFD and pDFFD with decoded fields `extended_ram_bank`,
+`sco`, `worom`, `cpm`, `scr`, `video_512x240`. TTD persists the #DFFD latch and palette as PeripheralId ProfiPaging (9).
+
+## Known limitations
+RTC, IDE, Covox and Kempston joystick are not implemented. The BIOS boots to its main menu (with or without a
+disk); launching the menu entries (CP/M, TR-DOS, Sinclair) has not been verified yet.
+)md";
+
 struct StaticResource
 {
     const char* uri;
@@ -234,6 +270,7 @@ const StaticResource kStaticResources[] = {
     {"unreal://z80-isa", "z80-isa", "Z80 instruction set reference: load/arithmetic/rotate/control-flow blocks and T-state notes", "text/markdown", kZ80Isa},
     {"unreal://trdos-commands", "trdos-commands", "TR-DOS 5.03 commands, TRD file system layout, disk inspection via WebAPI", "text/markdown", kTrdosCommands},
     {"unreal://memory-map", "memory-map", "48K/128K/Pentagon memory maps, screen layout math, 0x7FFD paging bits", "text/markdown", kMemoryMap},
+    {"unreal://machine/profi", "machine-profi", "Profi 1024 machine: ROM pages, #7FFD/#DFFD/palette ports, 512x240 hi-res mode, timing, limitations", "text/markdown", kMachineProfi},
 };
 
 constexpr size_t kStaticResourceCount = sizeof(kStaticResources) / sizeof(kStaticResources[0]);

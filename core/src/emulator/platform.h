@@ -1003,6 +1003,7 @@ struct EmulatorState
 	} tape;
 	
 	uint8_t comp_pal[0x10];
+	uint8_t profiPalette[0x10];			// Profi hi-res palette: raw ~A15..A8 (GGGRRRBB), index = {bright,G,R,B}
 	uint8_t ulaplus_cram[64];
 	uint8_t ulaplus_mode;
 	uint8_t ulaplus_reg;

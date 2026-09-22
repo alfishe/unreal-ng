@@ -60,6 +60,8 @@ enum VideoModeEnum : uint8_t
 
     M_SCORPION,  // Scorpion ZS-256 (Sinclair-matching 312-line x 224T raster)
 
+    M_PROFIHR,  // Profi 512x240 hi-res (DFFD.7): standard 312-line x 224T beam, 4 px/T in the paper window
+
     M_MAX
 };
 
@@ -431,12 +433,19 @@ public:
         {704, 288, 640, 200, 32, 44, 448, 64, 32, 16, 8},  // M_ATMHR (HW Multicolor 640x200)
         {704, 288, 640, 200, 32, 44, 448, 64, 32, 16, 8},  // M_ATMTX (Text 80x25, 640x200)
         {704, 288, 640, 200, 32, 44, 448, 64, 32, 16, 8},  // M_ATMTL (ZX-Evo Text Linear 80x25, 640x200 - same geometry as TX)
-        {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_PROFI
+        // M_PROFI: standard Profi mode. 312 lines x 224T = 69888T frame (UnrealSpeccy PRESET.PROFI,
+        // ZXMAK2, Xpeccy - the corpus consensus, not verified on real hardware)
+        {352, 288, 256, 192, 48, 48, 448, 64, 32, 8, 16},  // M_PROFI
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_GMX
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_BRD
         // M_SCORPION: 312 lines x 224T = 69888T frame - same 312-line geometry as
         // M_ZX48 (Pentagon's row differs only in vSyncLines 16 vs 8)
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 8, 16},  // M_SCORPION
+        // M_PROFIHR: same beam and timing as M_PROFI (no emulator changes the frame in hi-res).
+        // 512x240 paper drawn at 4 px/T inside the 128 T paper window; the paper starts 24 lines
+        // above the standard one (240 lines centred on the 192-line window). Storage is wider than
+        // the beam: 48 px side borders at 2 px/T.
+        {608, 288, 512, 240, 48, 24, 448, 64, 32, 8, 16},  // M_PROFIHR
     };
 
     // Default color table: 0RRrrrGG gggBBbbb

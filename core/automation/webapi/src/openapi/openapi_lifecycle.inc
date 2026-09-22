@@ -195,7 +195,7 @@
     paths["/api/v1/emulator/{id}/model"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
          ["model"]["type"] = "string";
     paths["/api/v1/emulator/{id}/model"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
-         ["model"]["description"] = "Model short name (e.g., 'PENTAGON', '48K', '128K', 'SCORPION')";
+         ["model"]["description"] = "Model short name (e.g., 'PENTAGON', '48K', '128K', 'SCORPION', 'PROFI')";
     paths["/api/v1/emulator/{id}/model"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
          ["ram_size"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/model"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]

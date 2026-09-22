@@ -521,12 +521,20 @@ TEST_F(WD1793_SleepTimeout_Test, ReadSectorWithoutDiskInsertedFailsGracefully)
     _fdc->getDrive()->insertDisk(nullptr);
     _fdc->portDeviceOutMethod(WD1793::PORT_1F, 0x80);
 
-    // Command sets BUSY and NOTRDY initially; transition to S_END_COMMAND is queued
+    // Command sets BUSY and NOTRDY initially; BUSY stays visible for a short hold (a real chip raises it
+    // before it notices the drive is not ready - the Profi BIOS polls for it) and then S_END_COMMAND runs
     EXPECT_TRUE(_fdc->getStatusRegister() & WD1793::WDS_NOTRDY);
     EXPECT_TRUE(_fdc->getStatusRegister() & WD1793::WDS_BUSY);
 
-    // On the very next CPU step, S_END_COMMAND executes: BUSY is cleared, INTRQ raised
+    // Still inside the hold: BUSY must remain set
+    _z80->t += 20;
+    _fdc->handleStep();
+    EXPECT_TRUE(_fdc->getStatusRegister() & WD1793::WDS_BUSY) << "BUSY dropped inside the hold window";
+
+    // Past the hold, the next CPU step executes S_END_COMMAND: BUSY is cleared, INTRQ raised
     _z80->t += 100;
+    _fdc->handleStep();
+    _z80->t += 10;
     _fdc->handleStep();
 
     EXPECT_TRUE(_fdc->getStatusRegister() & WD1793::WDS_NOTRDY);

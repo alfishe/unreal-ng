@@ -264,6 +264,16 @@ void EmulatorAPI::getStateScreenMode(const HttpRequestPtr& req, std::function<vo
             ret["eff7_512"] = true;
             break;
 
+        case M_PROFIHR:  // Profi 512x240 hi-res (#DFFD bit 7), 608x288 framebuffer, standard 312-line raster
+            ret["resolution"] = "512x240";
+            ret["color_depth"] = "1 bpp, per-pixel palette (16 entries)";
+            ret["colors"] = 16;
+            ret["bpp"] = 1;
+            ret["profi_hires"] = true;
+            ret["framebuffer"] = "608x288";
+            ret["raster"] = "312 lines x 224 T (69888 T frame)";
+            break;
+
         case M_P384:  // Pentagon 384x304 overscan
             ret["resolution"] = "384x304";
             ret["color_depth"] = "2 colors per attribute block";
@@ -325,6 +335,18 @@ void EmulatorAPI::getStateScreenMode(const HttpRequestPtr& req, std::function<vo
             eff7_state["384_enabled"] = (eff7 & EFF7_384) != 0;
             ret["eff7"] = eff7_state;
         }
+    }
+
+    // Profi #DFFD state (video mode bits)
+    if (config.mem_model == MM_PROFI)
+    {
+        Json::Value dffd;
+        dffd["value"] = static_cast<int>(state.pDFFD);
+        dffd["value_hex"] = StringHelper::Format("0x%02X", state.pDFFD);
+        dffd["video_512x240"] = (state.pDFFD & 0x80) != 0;
+        dffd["scr"] = (state.pDFFD & 0x40) != 0;
+        ret["dffd"] = dffd;
+        ret["active_screen"] = (state.p7FFD & 0x08) ? 1 : 0;
     }
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);

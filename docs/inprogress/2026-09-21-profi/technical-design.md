@@ -128,6 +128,8 @@ Copy the Scorpion `[ROM.profi]` block: `HIMEM=PROFI`, `RAMSize=1024`, `Beta128=1
 `config.mem_model = MM_PROFI`, `ula_type = ULA_DISCRETE_LOGIC` path already exists (`ulacontention.cpp:138`). Frame/INT timing per §7.
 
 ### 5.3 ROM role mapping
+Automation surfaces name the pages through `ROM::GetROMPageRole` (SYS/Menu ROM, TR-DOS ROM, 128K Editor + STS Monitor ROM, 48K BASIC ROM).
+
 `rom.cpp:172-177` assigns roles `sys=0, dos=1, 128=2, sos=3` for `MM_PROFI` — **consistent with the verified image**. The audit's suggested `128=0, sys=2` mapping is wrong and must not be applied. A boot test (§10.4) proves it: SYS menu text on page 0 after reset.
 
 ---
@@ -227,7 +229,7 @@ Unreal, Xpeccy and ZXMAK2 do **not** change the frame, INT or CPU frequency when
 Decision: hi-res keeps the standard 3.5 MHz, 69888 T frame and INT. 512 pixels do not fit the 256-px paper window at 2 px/T, so the renderer draws two hi-res pixels per standard pixel slot on the standard beam (storage wider than beam, the same technique the ATM 640/704-wide modes use); the 240 lines are centred on the 192-line paper as Unreal and Xpeccy do. Timing option `ProfiHiresRaster=pico` (192 T/line, first paper 9238 T after INT) is available as an experiment and is covered by tests so it can become default if real-hardware evidence appears. See §12 Q3.
 
 ### 7.5 Border in hi-res
-Hardware shows the border **inverted** (`rgbi = ~BORDER[2:0]`). Implemented as an explicit flag in the renderer; test asserts it.
+Shown through the palette with the **inverted** index (`palette[~border & 7]`, non-bright): ZXMAK2 `ProfiRenderer` and Xpeccy (`nextbrd ^= 7`) agree; Karabas matches. Implemented in `ScreenZX::DrawProfiHiRes`.
 
 ### 7.6 Renderer structure
 `Screen::DrawProfi(n)` per beam-clock, like `DrawATMHiRes` (per-`n` T-state chunks, `vbuf` writes with `vptr`). Pixel/attribute pages via `GetActiveSurfaceRAMPages()` returning `{4|6, 0x38|0x3A}` for `M_PROFIHR`. `Screen::GetVideoModeName` → "PROFI" / "PROFI512" so `/state/screen/mode` reports the mode. Frame-size consumers (Qt viewer, `recordingmanager.cpp:162`, screencapture, GIF) must handle the 512-wide storage; ATM 704-wide already forced the same, so no new consumer work is expected beyond verifying.
@@ -367,3 +369,30 @@ Working copy of the full upstream tree (VHDL, docs, other ROMs) is in `scratch/p
 ## 13. Deliverable checklist for "done"
 
 Mirrors roadmap DoD-1..9: functional tests; `GetTTDModelStateIds`/serializers; no >4 KB blobs (none here); COW overlays via Beta Disk; conformance matrix; UNS round-trip when it lands; automation reports honestly; per-machine MCP resource; real recordings captured. Quality gates before any commit (only on explicit request): `ninja -C cmake-build-release`, `core-tests`, zero warnings, links checked with `tools/fix-absolute-paths.py`.
+
+
+---
+
+## 14. Implementation status (branch `profi`, 2026-09-21)
+
+Reference for behaviour: UnrealSpeccy (`zx-evo/pentevo/unreal/Unreal/io.cpp`, `drawers.cpp`).
+
+| Area | Status |
+|---|---|
+| `data/configs/profi/unreal.ini`; timing defaults in `Config::ApplyModelTimingDefaults` (69888 T, INT-to-paper 12580 T, INT 28 T) | done |
+| Decoder rewrite: #7FFD/#DFFD masks (B3, B4), lock + WOROM override (B6, B7), `p7FFD` written (B2), ROM polarity (B1), reset into SYS (B8), FE-then-paging-then-AY dispatch | done |
+| Bank mapping (`PortDecoder_Profi::UpdateModelMemoryBanks`, called from `Memory::UpdateZ80Banks`): RAM high bits, SCO, SCR, WOROM, CPM (`CF_DOSPORTS`) | done |
+| DOS latch (`CF_TRDOS` via the existing $3Dxx M1 trap) and Beta Disk ports: normal, CP/M (#BF) and "modified" (#83/#A3/#C3/#E3, #3F) sets | done |
+| Palette port (`OUT #xx7E`, previous-FE index) and `profiPalette` state | done |
+| TTD: `PeripheralId::ProfiPaging = 9`, `TTDProfiPaging`, declared through `GetTTDModelStateIds`; contract test includes PROFI; seek test on a real PROFI | done |
+| Video: standard mode `M_PROFI` on the 312-line row; hi-res `M_PROFIHR` (608x288 storage, 512x240 paper at 4 px/T, page 4/6 + attr 0x38/0x3A, inverted-index border, `ProfiMonochrome`) | done |
+| Tests: decoder truth tables, TTD serializer, golden bank map re-baselined by hand, real-ROM boot (SYS BIOS splash renders in hi-res, 1024K RAM recognised) | done |
+| Covox/SoundRive (#5F/#3F normal, #87 modified), RTC (DS12885 #BF/#FF + #DF/#9F), IDE (#8B/#AB/#CB/#EB), Kempston joystick #1F, FE read bit 7 | **open** (UnrealSpeccy parity remainder) |
+| Port-trace decode rules / port map (`getPortMapEntries`: #7FFD `0x8002/0x0000`, #DFFD `0xA002/0x8000`, palette #xx7E `0x0081/0x0000`, Beta128 rows gated on `CF_DOSPORTS`), `/state/paging` pDFFD fields (`extended_ram_bank`, `sco`, `worom`, `cpm`, `scr`, `video_512x240`), ROM page names (`ROM::GetROMPageRole`: SYS/Menu, TR-DOS, 128K Editor + STS Monitor, 48K BASIC), WebAPI/CLI/Lua/Python mode reporting (`PROFI`, `PROFIHR` 512x240), MCP resource `unreal://machine/profi`, `ttd.ksy` id list | done |
+| Boot past the BIOS splash to the main menu (with or without a disk) | done, see below |
+
+### Boot hang at "Please wait ..." - root causes and fixes
+The BIOS drive probe issues an FDC command and immediately polls `IN A,(#1F) / RRCA / JR NC` (`$0797`) until BUSY = 1. Two emulation shortcuts hid BUSY, so the BIOS spun forever:
+1. **Fast disk loading** collapsed the Restore/verify delay to 1 T-state while "TR-DOS paged in" - which the DOS latch also reports for the Profi SYS ROM. `DiskFastLoad::IsArmed()` now declines on `MM_PROFI` with ROM14 = 0 (UnrealSpeccy's own docs: "Profi service ROM can work only when all TR-DOS delays are enabled").
+2. **A Type II command (Read Sector, `OUT #1F,#86`) on a not-ready drive** ended inside the register write. A real 1793 raises BUSY and drops it shortly after; `startType2Command` now holds BUSY for 64 T-states (`NOT_READY_BUSY_HOLD_TSTATES`) before ending. Test `WD1793_SleepTimeout_Test.ReadSectorWithoutDiskInsertedFailsGracefully` was adapted to the hold.
+Result: the BIOS shows its main menu ("Основное Меню": CP/M, TR-DOS 48K/128K, Sinclair 48/128, test menu) with or without a disk. Tests: `ProfiBoot_Test.BiosReachesMainMenuWithoutDisk`, `BiosLeavesPleaseWaitWithDisk`. Not yet verified: launching the menu entries.

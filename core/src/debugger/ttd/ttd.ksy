@@ -367,7 +367,7 @@ types:
       184 once the Scorpion ProfROM fields were added). Every
       extended / model-specific latch that used to live here (pXXXX, pDFFD,
       pFDFD, p1FFD, the GMX p7xFD group, Quorum p00 / p80FD, the ATM pFFF7
-      array, Scorpion ProfROM state, video_mode, ...) moved out into
+      array, the Profi palette, Scorpion ProfROM state, video_mode, ...) moved out into
       per-model serializers reached through TTDPeripheralRegistry and is
       carried in `peripheral_blob` entries instead. The common format is
       model-agnostic: it knows nothing about any specific machine.
@@ -452,7 +452,10 @@ types:
     seq:
       - id: peripheral_id
         type: u1
-        doc: PeripheralId enum value (see ttdserializable.h).
+        doc: |
+          PeripheralId enum value (see ttdserializable.h): 0 TurboSound, 1 BetaDisk,
+          2 Tape, 3 Covox, 4 TSFM, 5 GeneralSound, 6 ScorpionProfROM, 7 KempstonMouse,
+          8 AtmPaging, 9 ProfiPaging (Profi 1024: pDFFD latch + 16-entry palette).
       - id: state
         type: peripheral_blob
 

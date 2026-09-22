@@ -692,8 +692,20 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
             config.intlen   = 32;
             break;
 
+        case MM_PROFI:
+            // Profi: 312 x 224T frame, INT-to-first-paper distance 12580T, INT 28T
+            // (UnrealSpeccy PRESET.PROFI, "thanks to DDp"; also ZXMAK2 12583T).
+            // Consensus of the emulators, not verified on real hardware.
+            // The raster paper starts at T=16152 (line 72 * 224 + 24), INT fires at
+            // intstart+1 => 16152 - 3572 = 12580T.
+            config.frame    = 69888;   // 224 * 312
+            config.t_line   = 224;
+            config.intstart = 3571;
+            config.intlen   = 28;
+            break;
+
         default:
-            // Leave existing values for TSConf, ATM, Profi, etc.
+            // Leave existing values for TSConf, ATM, etc.
             break;
     }
 
@@ -735,6 +747,12 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
                 config.t_line = 224;
                 config.intstart = 1794;
                 config.intlen = 32;
+                break;
+            case MM_PROFI:
+                config.frame = 69888;   // 224 * 312
+                config.t_line = 224;
+                config.intstart = 3571;
+                config.intlen = 28;
                 break;
             default:
                 break;

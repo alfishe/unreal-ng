@@ -175,14 +175,17 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
         {
             drawImage = &_latchedFrame;
         }
-        else if (devicePixels != nullptr)
+        // A frame source is installed: never fall back to devicePixels. It wraps the emulator's framebuffer, which is
+        // freed and reallocated when the guest switches video mode (Profi 352x288 <-> 512x240 hi-res, ATM, AlCo)
+        // before the queued re-attach runs - a null or dangling image would be drawn / handed to the GPU.
+        else if (!_frameSource && devicePixels != nullptr)
         {
             legacyCopy = devicePixels->copy();
             drawImage = &legacyCopy;
         }
     }
 
-    if (!drawImage)
+    if (!drawImage || drawImage->isNull())
         return;
 
     // Temporal blending: push frame to history and use blended result
@@ -337,9 +340,9 @@ QImage DeviceScreen::grabFramebuffer()
     {
         frame = _latchedFrame;  // Tear-free latched frame (shared bits; copied below)
     }
-    else if (devicePixels != nullptr)
+    else if (!_frameSource && devicePixels != nullptr)
     {
-        frame = *devicePixels;  // Legacy live buffer
+        frame = *devicePixels;  // Legacy live buffer (only when no tear-free source exists - see paintEvent)
     }
     if (frame.isNull())
         return QImage();

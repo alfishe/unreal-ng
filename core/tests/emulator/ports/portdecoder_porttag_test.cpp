@@ -153,7 +153,7 @@ TEST_F(PortDecoder_PortTag_Test, Profi_DFFDIsMemoryAndScreen)
     const PortMapEntry* extended = FindEntry(latches, 0xDFFD);
     ASSERT_NE(extended, nullptr);
     EXPECT_EQ(extended->latch, PagingLatch::PDFFD);
-    EXPECT_EQ(extended->tags, Tags(PortTag::Memory) | PortTag::Screen);
+    EXPECT_EQ(extended->tags, Tags(PortTag::Memory) | PortTag::Rom | PortTag::Screen);
 
     // The video-steering bit is visible as a Screen-tagged RAM-paging port
     // (query set carries BOTH bits - `Tags(Screen) | Tags(Memory)`, not `&`:
@@ -459,11 +459,26 @@ TEST_F(PortDecoder_PortTag_Test, DecodeLatchDictionary)
 
     // Profi DFFD: extended bank 3 + 512x240 video bit
     fields = DecodePagingLatch(PagingLatch::PDFFD, 0x83, MM_PROFI);
-    ASSERT_EQ(fields.size(), 2u);
+    ASSERT_EQ(fields.size(), 6u);
     EXPECT_EQ(fields[0].key, "extended_ram_bank");
     EXPECT_EQ(fields[0].intValue, 3);
-    EXPECT_EQ(fields[1].key, "video_512x240");
+    EXPECT_EQ(fields[5].key, "video_512x240");
+    EXPECT_TRUE(fields[5].boolValue);
+    EXPECT_FALSE(fields[1].boolValue);  // sco
+
+    // Every flag bit maps to its own key (SCO, WOROM, CPM, SCR)
+    fields = DecodePagingLatch(PagingLatch::PDFFD, 0x78, MM_PROFI);
+    ASSERT_EQ(fields.size(), 6u);
+    EXPECT_EQ(fields[0].intValue, 0);
+    EXPECT_EQ(fields[1].key, "sco");
     EXPECT_TRUE(fields[1].boolValue);
+    EXPECT_EQ(fields[2].key, "worom");
+    EXPECT_TRUE(fields[2].boolValue);
+    EXPECT_EQ(fields[3].key, "cpm");
+    EXPECT_TRUE(fields[3].boolValue);
+    EXPECT_EQ(fields[4].key, "scr");
+    EXPECT_TRUE(fields[4].boolValue);
+    EXPECT_FALSE(fields[5].boolValue);
 }
 
 /// endregion </Serialization single source>
@@ -492,6 +507,12 @@ TEST_F(PortDecoder_PortTag_Test, RomPageRolePerModelLayout)
     EXPECT_EQ(rom.GetROMPageRole(3), "48K BASIC ROM (copy)");
 
     _context->config.mem_model = MM_SCORP;
+    EXPECT_EQ(rom.GetROMPageRole(3), "48K BASIC ROM");
+
+    _context->config.mem_model = MM_PROFI;
+    EXPECT_EQ(rom.GetROMPageRole(0), "SYS/Menu ROM");
+    EXPECT_EQ(rom.GetROMPageRole(1), "TR-DOS ROM");
+    EXPECT_EQ(rom.GetROMPageRole(2), "128K Editor + STS Monitor ROM");
     EXPECT_EQ(rom.GetROMPageRole(3), "48K BASIC ROM");
 
     // Beyond the curated 4-page layouts and on uncurated models: generic name

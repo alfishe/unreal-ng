@@ -152,6 +152,7 @@ public:
     /// @brief ATM extended mode renderer (EGA, HiRes, Text modes)
     /// @param tstate T-state timing position
     void DrawATMMode(uint32_t tstate);
+    void DrawProfiHiRes(uint32_t tstate);
 
     /// @brief EFF7 z-mode renderer over the ZX raster (M_P16 AlCo 16c /
     /// M_PMC hardware multicolor - Pentagon and ZX-Evo BaseConf)

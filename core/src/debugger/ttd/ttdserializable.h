@@ -50,6 +50,7 @@ enum class PeripheralId : uint8_t
     ScorpionProfROM = 6,  // Scorpion ZS 256/1024 ProfROM state machine
     KempstonMouse = 7,    // Kempston Mouse counters/buttons/wheel (core device, every model)
     AtmPaging = 8,        // ATM Turbo 2+ / ATM3 / ZX-Evo BaseConf memory map
+    ProfiPaging = 9,      // Profi 1024: #DFFD latch, hi-res palette
     // Future: SAA1099, GS512, etc.
     Count
 };
