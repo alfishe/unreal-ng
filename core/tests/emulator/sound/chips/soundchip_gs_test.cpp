@@ -18,7 +18,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
 #include "emulator/sound/audio.h"
-#include "emulator/sound/chips/soundchip_gs.h"
+#include "emulator/sound/chips/gs/soundchip_gs.h"
 #include "emulator/sound/soundmanager.h"
 
 namespace
@@ -142,11 +142,27 @@ TEST_F(SoundChip_GeneralSound_Test, StatusBit7_SetOnDataWrite)
 
 TEST_F(SoundChip_GeneralSound_Test, StatusBit7_ClearOnDataRead)
 {
+    // Exact original semantics (Unreal in_gs #B3 / ZXMAK2 readB3): bit7 is
+    // ONE shared flip-flop - any host IN #B3 clears it, whichever side set
+    // it. Stage a card reply through the TTD blob (the GS CPU is the only
+    // runtime producer - the firmware writes port 0x03)
+    std::vector<uint8_t> blob = saveState();
+    blob[2] = 0x42; // dataToHost
+    blob[0] = 0x80; // status: data flip-flop up
+    chip->TTDLoadState(blob.data());
+
+    EXPECT_EQ(chip->readData(), 0x42);
+    EXPECT_EQ(chip->getStatusRaw() & 0x80, 0) << "IN #B3 must clear bit7";
+
+    // The shared flip-flop cuts both ways: a host write raises it, a host
+    // read clears it again (real senders poll bit7 for the CARD's DATRG
+    // read; a host that reads #B3 mid-handshake destroys its own handshake,
+    // exactly like the real board)
     chip->sendData(0x99);
     ASSERT_NE(chip->getStatusRaw() & 0x80, 0);
-
     (void)chip->readData();
-    EXPECT_EQ(chip->getStatusRaw() & 0x80, 0) << "IN #B3 must clear the data-pending flag";
+    EXPECT_EQ(chip->getStatusRaw() & 0x80, 0) << "IN #B3 clears the shared bit7 unconditionally";
+    EXPECT_EQ(chip->getDataFromHost(), 0x99) << "the host->card latch itself survives";
 }
 
 TEST_F(SoundChip_GeneralSound_Test, StatusRead_PullUpBits)
@@ -164,8 +180,9 @@ TEST_F(SoundChip_GeneralSound_Test, DataToHost_ReturnedByPortB3Read)
     // Stage a GS->ZX byte through the TTD interface (the only public producer
     // is the GS CPU itself - the firmware writes port 0x03)
     std::vector<uint8_t> blob = saveState();
-    blob[2] = 0x42;  // dataToHost
-    blob[0] = 0x80;  // status: data pending
+    blob[2] = 0x42;    // dataToHost
+    blob[23] |= 0x08;  // dataToHostPending
+    blob[0] = 0x80;    // status: data pending
     chip->TTDLoadState(blob.data());
 
     EXPECT_EQ(chip->portDeviceInMethod(SoundChip_GeneralSound::PORT_DATA), 0x42);
@@ -198,7 +215,170 @@ TEST_F(SoundChip_GeneralSound_Test, Port33_Bit6LatchesNmi)
     EXPECT_EQ(blob[23], 1);
 }
 
+TEST_F(SoundChip_GeneralSound_Test, CommandLatch_PacedCommandsDispatchInOrder)
+{
+    // Dispatcher-shaped stub (the firmware's COMINT_/COMINT1 + handler ack
+    // shape, COM_L.a80): poll FLAGS bit0, read COMRG, record it to (HL++) in
+    // window 1, ack via RSCOM. Exact original semantics: the command register
+    // is a single latch - each command must get card time before the next
+    // one lands (real hosts get that pacing for free from their own OUT
+    // instruction timing; back-to-back writes with zero elapsed ZX time
+    // overwrite the latch, same as Unreal/ZXMAK2)
+    const uint8_t program[] = {
+        0x21, 0x00, 0x40,                    // LD HL,#4000 (window 1, fixed RAM page 3)
+        0xDB, 0x04, 0xE6, 0x01, 0x28, 0xFA,  // loop: IN A,(FLAGS); AND 1; JR Z,loop
+        0xDB, 0x01,                          // IN A,(COMRG) - reads the latch
+        0x77,                                // LD (HL),A - record the command
+        0x23,                                // INC HL
+        0xD3, 0x05,                          // OUT (RSCOM),A - ack (clears bit0)
+        0x18, 0xF2                           // JR loop
+    };
+    const std::string romPath = writeRom("gs-cmdlatch.rom", program, sizeof(program));
+    chip->loadROM(romPath);
+
+    chip->portDeviceOutMethod(SoundChip_GeneralSound::PORT_COMMAND, 0x30);
+    runOneFrame(); // the dispatcher consumes and acks within the frame
+    ASSERT_EQ(chip->getStatusRaw() & 0x01, 0) << "stub never acked the first command";
+
+    chip->portDeviceOutMethod(SoundChip_GeneralSound::PORT_COMMAND, 0xD1);
+    runOneFrame();
+    ASSERT_EQ(chip->getStatusRaw() & 0x01, 0) << "stub never acked the second command";
+
+    // Window 1 (0x4000) is RAM page 3 - the last page of the TTD RAM image
+    auto recorded = [this](size_t i) {
+        const std::vector<uint8_t> blob = saveState();
+        return blob[chip->TTDStateSize() - 512 * 1024 + 3 * SoundChip_GeneralSound::PAGE_SIZE + i];
+    };
+    EXPECT_EQ(recorded(0), 0x30) << "first command was lost";
+    EXPECT_EQ(recorded(1), 0xD1) << "second command was lost";
+}
+
+TEST_F(SoundChip_GeneralSound_Test, CommandLatch_BackToBackWriteOverwrites)
+{
+    // Single latch, exact original semantics (Unreal gsz80.cpp out_gs:
+    // gscmd = val): a second write with no card time in between replaces
+    // the first; bit0 stays up until the card's RSCOM ack
+    chip->portDeviceOutMethod(SoundChip_GeneralSound::PORT_COMMAND, 0x30);
+    chip->portDeviceOutMethod(SoundChip_GeneralSound::PORT_COMMAND, 0xD1);
+
+    EXPECT_EQ(chip->getCommandFromHost(), 0xD1) << "the latch holds the newest command";
+    EXPECT_NE(chip->getStatusRaw() & 0x01, 0) << "bit0 stays up until the card acks";
+}
+
 /// endregion </Host port protocol>
+
+/// region <v1 module handoff capture (host-port layer, no ROM needed)>
+
+TEST_F(SoundChip_GeneralSound_Test, ModuleCapture_ByteExactAfterD2)
+{
+    const std::vector<uint8_t> payload = {0x11, 0x22, 0x33, 0x44, 0x55, 0xAA, 0xFF, 0x00};
+
+    chip->portDeviceOutMethod(SoundChip_GeneralSound::PORT_DATA, 0x01); // dummy slot byte - excluded
+    chip->portDeviceOutMethod(SoundChip_GeneralSound::PORT_COMMAND, 0x30);
+    for (uint8_t b : payload)
+        chip->portDeviceOutMethod(SoundChip_GeneralSound::PORT_DATA, b);
+    chip->portDeviceOutMethod(SoundChip_GeneralSound::PORT_COMMAND, 0xD2);
+
+    std::vector<uint8_t> bytes;
+    bool playing = true;
+    ASSERT_TRUE(chip->captureModuleUpload(bytes, playing));
+    EXPECT_EQ(bytes, payload) << "captured stream must match the payload byte-for-byte, dummy excluded";
+    EXPECT_FALSE(playing) << "no COM31/33 was sent - playing must be false";
+}
+
+TEST_F(SoundChip_GeneralSound_Test, ModuleCapture_MidUploadNotCapturable)
+{
+    chip->portDeviceOutMethod(SoundChip_GeneralSound::PORT_DATA, 0x01);
+    chip->portDeviceOutMethod(SoundChip_GeneralSound::PORT_COMMAND, 0x30);
+    chip->portDeviceOutMethod(SoundChip_GeneralSound::PORT_DATA, 0xAA); // stream open, no D2 yet
+
+    std::vector<uint8_t> bytes;
+    bool playing = true;
+    EXPECT_FALSE(chip->captureModuleUpload(bytes, playing)) << "a partial stream must not be handed off";
+    EXPECT_TRUE(bytes.empty());
+    EXPECT_FALSE(playing);
+}
+
+TEST_F(SoundChip_GeneralSound_Test, ModuleCapture_PlayingFlagTracksStartStopContinue)
+{
+    const auto load = [&]() {
+        chip->portDeviceOutMethod(SoundChip_GeneralSound::PORT_DATA, 0x01);
+        chip->portDeviceOutMethod(SoundChip_GeneralSound::PORT_COMMAND, 0x30);
+        chip->portDeviceOutMethod(SoundChip_GeneralSound::PORT_DATA, 0x99);
+        chip->portDeviceOutMethod(SoundChip_GeneralSound::PORT_COMMAND, 0xD2);
+    };
+    std::vector<uint8_t> bytes;
+    bool playing = false;
+
+    load();
+    chip->portDeviceOutMethod(SoundChip_GeneralSound::PORT_COMMAND, 0x31); // start
+    ASSERT_TRUE(chip->captureModuleUpload(bytes, playing));
+    EXPECT_TRUE(playing) << "COM31 must mark the module as playing";
+
+    chip->portDeviceOutMethod(SoundChip_GeneralSound::PORT_COMMAND, 0x32); // stop
+    ASSERT_TRUE(chip->captureModuleUpload(bytes, playing));
+    EXPECT_FALSE(playing) << "COM32 must clear the playing flag";
+
+    chip->portDeviceOutMethod(SoundChip_GeneralSound::PORT_COMMAND, 0x33); // continue
+    ASSERT_TRUE(chip->captureModuleUpload(bytes, playing));
+    EXPECT_TRUE(playing) << "COM33 (continue) must mark the module as playing";
+}
+
+TEST_F(SoundChip_GeneralSound_Test, ModuleCapture_ResetCommandClearsStore)
+{
+    chip->portDeviceOutMethod(SoundChip_GeneralSound::PORT_DATA, 0x01);
+    chip->portDeviceOutMethod(SoundChip_GeneralSound::PORT_COMMAND, 0x30);
+    chip->portDeviceOutMethod(SoundChip_GeneralSound::PORT_DATA, 0x99);
+    chip->portDeviceOutMethod(SoundChip_GeneralSound::PORT_COMMAND, 0xD2);
+    std::vector<uint8_t> bytes;
+    bool playing = false;
+    ASSERT_TRUE(chip->captureModuleUpload(bytes, playing)) << "precondition: module captured";
+
+    chip->portDeviceOutMethod(SoundChip_GeneralSound::PORT_COMMAND, 0xF3); // warm restart (INITVAR)
+    EXPECT_FALSE(chip->captureModuleUpload(bytes, playing))
+        << "COM_F3 resets CNTMOD - the stale module must not be handed off";
+}
+
+TEST_F(SoundChip_GeneralSound_Test, ModuleCapture_HardwareResetClearsStore)
+{
+    // Firmware: HALT - just needs a ROM so #33 bit7's resetCard() has a live
+    // coprocessor to reboot; the capture itself never touches the CPU
+    const uint8_t program[] = {0x76};
+    chip->loadROM(writeRom("gs-modcapture-reset.rom", program, sizeof(program)));
+
+    chip->portDeviceOutMethod(SoundChip_GeneralSound::PORT_DATA, 0x01);
+    chip->portDeviceOutMethod(SoundChip_GeneralSound::PORT_COMMAND, 0x30);
+    chip->portDeviceOutMethod(SoundChip_GeneralSound::PORT_DATA, 0x99);
+    chip->portDeviceOutMethod(SoundChip_GeneralSound::PORT_COMMAND, 0xD2);
+    std::vector<uint8_t> bytes;
+    bool playing = false;
+    ASSERT_TRUE(chip->captureModuleUpload(bytes, playing)) << "precondition: module captured";
+
+    chip->portDeviceOutMethod(SoundChip_GeneralSound::PORT_CONTROL, 0x80); // #33 bit7: hardware reset
+    EXPECT_FALSE(chip->captureModuleUpload(bytes, playing))
+        << "#33 reboots the firmware (POST resets CNTMOD) - the stale module must not survive";
+}
+
+TEST_F(SoundChip_GeneralSound_Test, ModuleCapture_AutomationPathAlsoCaptures)
+{
+    // sendData/sendCommand (automation actions) must feed the same capture
+    // as the ZX-side ports - the switch machinery uses whichever path drove
+    // the original upload
+    const std::vector<uint8_t> payload = {0x01, 0x02, 0x03};
+    chip->sendData(0x01);
+    chip->sendCommand(0x30);
+    for (uint8_t b : payload)
+        chip->sendData(b);
+    chip->sendCommand(0xD2);
+
+    std::vector<uint8_t> bytes;
+    bool playing = true;
+    ASSERT_TRUE(chip->captureModuleUpload(bytes, playing));
+    EXPECT_EQ(bytes, payload);
+    EXPECT_FALSE(playing);
+}
+
+/// endregion </v1 module handoff capture>
 
 /// region <GS-side ports via real firmware execution>
 
@@ -480,6 +660,30 @@ TEST_F(GeneralSound_SoundManager_Test, RamSize_NeoGSConfigDoesNotLeakIntoClassic
     ASSERT_NE(sm->getGeneralSound(), nullptr);
     EXPECT_EQ(sm->getGeneralSound()->getRamSizeKB(), SoundChip_GeneralSound::RAM_SIZE_STANDARD_KB);
     EXPECT_EQ(sm->getGeneralSound()->getRamSizeKB(), 128u);
+}
+
+TEST_F(GeneralSound_SoundManager_Test, RamSize_ClassicGSRamSizeHonoured)
+{
+    // [SOUND] GSRamSize is the classic card's own geometry key (default 128
+    // KB stock): 512 KB for Nether Earth GS-class software that loads big
+    // modules, 256 KB for the middle expansion. The chip ctor still clamps
+    // the original 128-512 KB card range.
+    ctx->config.sound.gsRamKB = 512;
+    sm = new SoundManager(ctx);
+    sm->reset();
+
+    ASSERT_NE(sm->getGeneralSound(), nullptr);
+    EXPECT_EQ(sm->getGeneralSound()->getRamSizeKB(), 512u);
+
+    delete sm;
+    sm = nullptr;
+
+    ctx->config.sound.gsRamKB = 256;
+    sm = new SoundManager(ctx);
+    sm->reset();
+
+    ASSERT_NE(sm->getGeneralSound(), nullptr);
+    EXPECT_EQ(sm->getGeneralSound()->getRamSizeKB(), 256u);
 }
 
 /// endregion </SoundManager integration>

@@ -63,14 +63,59 @@ struct GSActivityCounters
     uint64_t cpuSteps = 0;             // z80ex_step() calls that returned > 0 t-states
     uint64_t interruptsAccepted = 0;   // z80ex_int() acceptances (37.5 kHz periodic)
     uint64_t nmisAccepted = 0;         // z80ex_nmi() acceptances (#33 bit6)
+
+    // 37.5 kHz interrupt accounting (GS pitch-stability triage): the DAC
+    // sample clock IS the interrupt clock - the firmware ISR performs
+    // exactly one LD A,(DE) sample fetch per acceptance, so a module's
+    // playback rate - and therefore its pitch - is the ACCEPTED rate, not
+    // the generated one. Triage invariant:
+    //   interruptPeriods == interruptsAccepted + interruptsCoalesced
+    // (+1 for one request still in flight); a gap anywhere else means
+    // samples are vanishing. interruptsCoalesced is the one honest loss: a
+    // second 320-cycle boundary arrived while the previous request was
+    // still pending (one flip-flop, so they merge) - real hardware loses
+    // that sample too, the handler is genuinely slower than the period.
+    uint64_t interruptPeriods = 0;     // 320-cycle boundaries crossed (INT flip-flop set events)
+    uint64_t interruptsCoalesced = 0;  // boundaries that merged into a still-pending request
+
     uint64_t dacFetches = 0;           // Reads in 0x6000-0x7FFF (any channel)
     uint64_t volumeLatchWrites = 0;    // GS-side OUT to ports 0x06-0x09
     uint64_t hostCommandsReceived = 0; // ZX OUT #BB
+    uint64_t hostCommandsDropped = 0;  // ZX OUT #BB while the 16-deep FIFO was full
     uint64_t hostDataWritten = 0;      // ZX OUT #B3
-    uint64_t hostDataRead = 0;         // ZX IN #B3
+    uint64_t hostDataDropped = 0;      // ZX OUT #B3 while the 16-deep data FIFO was full
+    uint64_t hostDataRead = 0;          // ZX IN #B3
     int64_t  lastDacFetchGsCycle = -1; // totalGsCycles() at the most recent DAC fetch, -1 = never
     uint32_t lastDacFetchFrame = 0;    // Frame number of the most recent DAC fetch
 };
+
+/// Fold one card's counters into another across a runtime personality
+/// switch (SoundManager::switchGeneralSoundCard): the monotonic counters
+/// add up so triage totals survive the handoff (the per-card invariant
+/// interruptPeriods == interruptsAccepted + interruptsCoalesced survives
+/// summing both sides); lastDacFetch* keeps the most recent sighting.
+/// Personalities without a coprocessor re-zero cpuSteps afterwards - their
+/// data model defines it as always 0.
+inline void accumulateGSActivityCounters(GSActivityCounters& dst, const GSActivityCounters& src)
+{
+    dst.cpuSteps += src.cpuSteps;
+    dst.interruptsAccepted += src.interruptsAccepted;
+    dst.nmisAccepted += src.nmisAccepted;
+    dst.interruptPeriods += src.interruptPeriods;
+    dst.interruptsCoalesced += src.interruptsCoalesced;
+    dst.dacFetches += src.dacFetches;
+    dst.volumeLatchWrites += src.volumeLatchWrites;
+    dst.hostCommandsReceived += src.hostCommandsReceived;
+    dst.hostCommandsDropped += src.hostCommandsDropped;
+    dst.hostDataWritten += src.hostDataWritten;
+    dst.hostDataDropped += src.hostDataDropped;
+    dst.hostDataRead += src.hostDataRead;
+    if (src.lastDacFetchGsCycle > dst.lastDacFetchGsCycle)
+    {
+        dst.lastDacFetchGsCycle = src.lastDacFetchGsCycle;
+        dst.lastDacFetchFrame = src.lastDacFetchFrame;
+    }
+}
 
 /// Single-producer (GS coprocessor callbacks, emulator thread), occasional
 /// consumers (CLI/WebAPI/MCP/Lua/Python). Deliberately smaller/simpler than

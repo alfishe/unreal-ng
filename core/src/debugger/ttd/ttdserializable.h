@@ -51,6 +51,7 @@ enum class PeripheralId : uint8_t
     KempstonMouse = 7,    // Kempston Mouse counters/buttons/wheel (core device, every model)
     AtmPaging = 8,        // ATM Turbo 2+ / ATM3 / ZX-Evo BaseConf memory map
     NeoGS = 9,            // NeoGS FPGA card (neogs-tdd.md - P2 placeholder, reserved id, not registered yet)
+    GeneralSoundLightweight = 10, // GS lightweight personality (in-tree mod player, no coprocessor)
     // Future: SAA1099, GS512, etc.
     Count
 };

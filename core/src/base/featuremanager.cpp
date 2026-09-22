@@ -459,6 +459,14 @@ void FeatureManager::setDefaults()
                      {Features::kStateOff, Features::kStateOn},
                      Features::kCategoryPerformance});
 
+    registerFeature({Features::kGSLightweight,
+                     Features::kGSLightweightAlias,
+                     Features::kGSLightweightDesc,
+                     false,  // OFF by default - [SOUND] GSType decides the fitted personality
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryPerformance});
+
     _dirty = false;
 }
 

@@ -11,6 +11,8 @@ Sound card implementations for ZX Spectrum emulation:
 | Document | Priority | Status |
 |:---------|:---------|:-------|
 | [`gs-tdd.md`](gs-tdd.md) | P0 | Round 2 review fixes applied |
+| [`gs-card-interface.md`](gs-card-interface.md) | — | Phase 0 design snapshot for the card-personalities work (interface contract, LW interpreter design); superseded by the as-built TDD |
+| [`gs-card-personalities-tdd.md`](gs-card-personalities-tdd.md) | P0 | As-built record: `GeneralSoundCard` interface, `SoundChip_GSLightweight` card + `gsmodplayer`, runtime switching, replay algorithm (§7.3), TTD contracts (§5.5); phases 0-4 gated, phase 5 tests 18/18 |
 | [`neogs-tdd.md`](neogs-tdd.md) | P2 | Round 2 review fixes applied |
 | [`verification-findings-and-bugs.md`](verification-findings-and-bugs.md) | — | Playback chain verified against firmware sources; 6 bugs found, BUG-4 (DRC windup), BUG-5 (37.5 kHz interrupt pulse-loss — the steady-tone pitch float) and BUG-6 (NeoGS RAM default bled into the classic card — scorpion-family boot race, stock 128 KB card restored) fixed + tested (2026-09-20); GS enabled on atm3/atm710 — decoder arms + configs + regression tests (§5.1) |
 | [`materials/README.md`](materials/README.md) | — | Materials index |

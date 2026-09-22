@@ -176,7 +176,9 @@
         "Drive the GS card the way ZX software does (each action flushes the coprocessor to the current ZX tact "
         "first): reset (full power-on), reset_card (#33 bit7 - CPU/banking/timing, mailbox survives), nmi (#33 "
         "bit6), send_command (OUT #BB), send_data (OUT #B3), read_status (IN #BB, returns the value), read_data "
-        "(IN #B3, clears the data-pending flag and returns the value).";
+        "(IN #B3, clears the data-pending flag and returns the value), switch_personality (runtime LLE <-> "
+        "lightweight card swap - the host mailbox and activity counters survive the handoff; applied at the "
+        "next frame boundary).";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["required"] = true;
@@ -201,10 +203,19 @@
                                                                ["properties"]["action"]["enum"].append("read_data");
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
                                                                ["properties"]["value"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["action"]["enum"].append("switch_personality");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["personality"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["personality"]["enum"].append("z80");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["personality"]["enum"].append("lw");
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["200"]["description"] =
-        "Action result (read_status/read_data carry the byte in 'value')";
+        "Action result (read_status/read_data carry the byte in 'value'; switch_personality carries the requested "
+        "target and the current personality)";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["400"]["description"] =
-        "Unknown action or invalid value";
+        "Unknown action, invalid value or unknown personality";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["404"]["description"] =
         "Emulator or GS card not found";
 

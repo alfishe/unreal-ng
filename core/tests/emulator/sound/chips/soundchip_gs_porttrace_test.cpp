@@ -12,7 +12,7 @@
 #include "_helpers/testpathhelper.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/audio.h"
-#include "emulator/sound/chips/soundchip_gs.h"
+#include "emulator/sound/chips/gs/soundchip_gs.h"
 
 namespace
 {

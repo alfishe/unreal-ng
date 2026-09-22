@@ -23,6 +23,9 @@ SoundChip_GeneralSound::SoundChip_GeneralSound(EmulatorContext* context, size_t 
 {
     _logger = _context ? _context->pModuleLogger : nullptr;
 
+    // Mailbox overflow drops land in this card's activity counters
+    _mb.counters = &_activityCounters;
+
     // RAM is banked in 32 KB pairs; the original GS card range is 128-512 KB
     // (NeoGS lifts the cap - P2). Configured sizes outside the range clamp to
     // the nearest original-GS size.
@@ -94,10 +97,7 @@ void SoundChip_GeneralSound::reset()
     // Host mailbox and the external DAC/volume latches flip back to their
     // power-on state (resetCard - the #33 pulse - leaves them alone: they are
     // flip-flops outside the GS CPU, Unreal gsz80.cpp:555 keeps them too)
-    _dataFromHost = 0;
-    _dataToHost = 0;
-    _commandFromHost = 0;
-    _status = 0;
+    _mb.resetAll();
     for (int i = 0; i < 4; i++)
     {
         _channelData[i] = 0x80; // Midpoint = silence
@@ -130,6 +130,14 @@ void SoundChip_GeneralSound::resetCard()
     _frameStartGsCycles = 0;
     _nmiPending = false;
     _intPending = false;
+
+    // #33 reboots the firmware (POST), which resets CNTMOD to 0 - any
+    // previously uploaded module is functionally gone even though its old
+    // bytes still sit in GS RAM, so the handoff capture must forget it too
+    _uploadStore.clear();
+    _uploadLive = false;
+    _uploadHadModule = false;
+    _uploadPlaying = false;
 }
 
 void SoundChip_GeneralSound::hostReset()
@@ -322,8 +330,16 @@ void SoundChip_GeneralSound::runTo(int64_t target)
         if (_intQuantum >= GS_CYCLES_PER_INT)
         {
             // 37.5 kHz quantum boundary: assert the request, carry the
-            // overshoot into the next quantum
-            _intPending = true;
+            // overshoot into the next quantum. One flip-flop: a second
+            // boundary while the previous request is still pending merges
+            // into it - real hardware loses that sample too (the handler is
+            // genuinely slower than the period), so the coalesced counter
+            // is the honest place for it
+            _activityCounters.interruptPeriods++;
+            if (_intPending)
+                _activityCounters.interruptsCoalesced++;
+            else
+                _intPending = true;
             _intQuantum = static_cast<int16_t>(_intQuantum - GS_CYCLES_PER_INT);
             _gsCyclesAbs += GS_CYCLES_PER_INT;
             continue;
@@ -482,16 +498,16 @@ uint8_t SoundChip_GeneralSound::portDeviceInMethod(uint16_t port)
 {
     switch (port & 0x00FF)
     {
-        case 0xB3: // GSDAT: flag clears, the GS->ZX byte returns
+        case 0xB3: // GSDAT: bit7 clears, the GS->ZX byte returns
             flush();
-            _status &= 0x7F;
+            _mb.status &= 0x7F;  // Original Unreal: clear bit7 directly
             _activityCounters.hostDataRead++;
-            traceEvent(GSTraceSide::Host, PORT_DATA, _dataToHost, false);
-            return _dataToHost;
+            traceEvent(GSTraceSide::Host, PORT_DATA, _mb.dataToHost, false);
+            return _mb.dataToHost;
         case 0xBB: // GSCOM read: status, bits 1-6 read as 1 (pull-ups)
             flush();
-            traceEvent(GSTraceSide::Host, PORT_COMMAND, _status | 0x7E, false);
-            return _status | 0x7E;
+            traceEvent(GSTraceSide::Host, PORT_COMMAND, _mb.status | 0x7E, false);
+            return _mb.status | 0x7E;
         default:
             return 0xFF;
     }
@@ -517,22 +533,71 @@ void SoundChip_GeneralSound::portDeviceOutMethod(uint16_t port, uint8_t value)
                 return;
             }
             return;
-        case 0xB3: // GSDAT write
+        // Exact original semantics (Unreal gsz80.cpp out_gs / ZXMAK2
+        // GeneralSoundDevice.writeB3/writeBB): single latch + shared status
+        // flip-flops, no queues. bit7 = data flip-flop (either direction),
+        // bit0 = command flip-flop, cleared only by the card's RSCOM (0x05).
+        case 0xB3: // GSDAT write: latch byte, raise bit7
             flush();
-            _dataFromHost = value;
-            _status |= 0x80;
-            _activityCounters.hostDataWritten++;
             traceEvent(GSTraceSide::Host, PORT_DATA, value, true);
+            onHostDataWrite(value);
             return;
-        case 0xBB: // GSCOM write
+        case 0xBB: // GSCOM write: latch command, raise bit0
             flush();
-            _commandFromHost = value;
-            _status |= 0x01;
-            _activityCounters.hostCommandsReceived++;
             traceEvent(GSTraceSide::Host, PORT_COMMAND, value, true);
+            onHostCommandWrite(value);
             return;
         default:
             return;
+    }
+}
+
+// Shared latch + v1 module handoff capture (host-port layer, personality-
+// agnostic: mirrors the raw COM30..D2 payload stream as it goes by,
+// independent of where the firmware parks it in GS RAM) - used by both the
+// ZX-side ports and the automation sendData/sendCommand actions
+void SoundChip_GeneralSound::onHostDataWrite(uint8_t value)
+{
+    _activityCounters.hostDataWritten++;
+    _mb.dataFromHost = value;
+    _mb.status |= 0x80;
+    // The dummy slot byte precedes the OUT #BB,0x30 that opens capture, so
+    // it never enters the store
+    if (_uploadLive)
+        _uploadStore.push_back(value);
+}
+
+void SoundChip_GeneralSound::onHostCommandWrite(uint8_t value)
+{
+    _activityCounters.hostCommandsReceived++;
+    _mb.commandFromHost = value;
+    _mb.status |= 0x01;
+
+    if (value == 0x30)
+    {
+        _uploadStore.clear();
+        _uploadLive = true;
+    }
+    else if (value == 0xD2 && _uploadLive)
+    {
+        _uploadLive = false;
+        _uploadHadModule = !_uploadStore.empty();
+    }
+    else if (value == 0x31 || value == 0x33)
+    {
+        _uploadPlaying = true;
+    }
+    else if (value == 0x32)
+    {
+        _uploadPlaying = false;
+    }
+    else if (value == 0xF3 || value == 0xF4 || value == 0x00)
+    {
+        // Reset wipes the firmware's module RAM: nothing left to hand off
+        _uploadStore.clear();
+        _uploadLive = false;
+        _uploadHadModule = false;
+        _uploadPlaying = false;
     }
 }
 
@@ -541,28 +606,26 @@ void SoundChip_GeneralSound::portDeviceOutMethod(uint16_t port, uint8_t value)
 uint8_t SoundChip_GeneralSound::readStatus()
 {
     flush();
-    return _status | 0x7E;
+    return _mb.status | 0x7E;
 }
 
 uint8_t SoundChip_GeneralSound::readData()
 {
     flush();
-    _status &= 0x7F;
-    return _dataToHost;
+    _mb.status &= 0x7F; // IN #B3: clear bit7
+    return _mb.dataToHost;
 }
 
 void SoundChip_GeneralSound::sendCommand(uint8_t command)
 {
     flush();
-    _commandFromHost = command;
-    _status |= 0x01;
+    onHostCommandWrite(command);
 }
 
 void SoundChip_GeneralSound::sendData(uint8_t data)
 {
     flush();
-    _dataFromHost = data;
-    _status |= 0x80;
+    onHostDataWrite(data);
 }
 
 void SoundChip_GeneralSound::triggerNMI()
@@ -573,6 +636,179 @@ void SoundChip_GeneralSound::triggerNMI()
 
 /// endregion </Host port interface>
 
+/// region <Runtime personality switch (SoundManager::switchGeneralSoundCard)>
+
+GSForwardMailbox SoundChip_GeneralSound::snapshotMailbox() const
+{
+    GSForwardMailbox snapshot = _mb;
+    snapshot.counters = nullptr; // owner back-pointer, not protocol state
+    return snapshot;
+}
+
+void SoundChip_GeneralSound::restoreMailbox(const GSForwardMailbox& snapshot)
+{
+    _mb = snapshot;
+    _mb.counters = &_activityCounters; // rebind drop accounting to this card
+}
+
+void SoundChip_GeneralSound::accumulateActivityCounters(const GSActivityCounters& other)
+{
+    accumulateGSActivityCounters(_activityCounters, other);
+}
+
+bool SoundChip_GeneralSound::captureModuleUpload(std::vector<uint8_t>& bytes, bool& playing) const
+{
+    // Only a load that reached its D2 terminator is replayable (a switch
+    // mid-upload keeps the mailbox but loses the partial stream, same
+    // documented limit as the LW side)
+    if (_uploadLive || !_uploadHadModule || _uploadStore.empty())
+    {
+        bytes.clear();
+        playing = false;
+        return false;
+    }
+
+    bytes = _uploadStore;
+    playing = _uploadPlaying;
+    return true;
+}
+
+void SoundChip_GeneralSound::replayDrainReply()
+{
+    // Switch-internal consumption of a card->host byte (the COM30/COM31
+    // acks the replay itself produces) - keeps bit7 clean for the mailbox
+    // snapshot restored afterwards. Only call when no host->card byte is
+    // in flight: bit7 is shared by both directions.
+    if (_mb.status & 0x80)
+        (void)readData();
+}
+
+void SoundChip_GeneralSound::replayAdvanceFrame()
+{
+    // One ZX frame of GS card time through the same lazy-sync core the
+    // frame boundary uses: the firmware's COMINT/WTDTL loops drain the
+    // FIFOs while the ZX clock stands still. The card ends up ahead of
+    // the ZX clock - harmless: emitSample synthesizes nothing until the
+    // first handleFrameStart sets the frame bases, and runTo targets
+    // re-derive from those bases afterwards
+    runTo(totalGsCycles() + frameGsLength());
+}
+
+void SoundChip_GeneralSound::replayModuleUpload(const std::vector<uint8_t>& bytes, bool startPlayback)
+{
+    if (bytes.empty())
+        return;
+
+    if (!isROMLoaded())
+    {
+        MLOGWARNING("GS: personality switch cannot replay the module upload - no firmware ROM");
+        return;
+    }
+
+    // A healthy firmware drains a paced upload at ~700+ bytes/frame, but
+    // POST eats 15-55 frames before the COMINT loop consumes anything.
+    // The stall bound turns a wedged firmware into a warning instead of a
+    // hang (the queues simply stop draining).
+    constexpr size_t kMaxStallFrames = 1000;
+    size_t stall = 0;
+
+    // The factory hands over a constructed-but-unbooted card: the COM30
+    // stream must not interleave with POST. Advance frames until the volume
+    // latches report the past-INITVAR signature (the INITVAR tail's own
+    // DATRG read has already consumed the boot-reply flag by then - the
+    // NUMPG value merely sits in the #B3 latch), then settle a few frames.
+    // An already booted card skips straight to the drain
+    if (_activityCounters.volumeLatchWrites < 4)
+    {
+        size_t boot = 0;
+        while (_activityCounters.volumeLatchWrites < 4 && boot < kMaxStallFrames)
+        {
+            replayAdvanceFrame();
+            boot++;
+        }
+        for (int i = 0; i < 4; i++)
+            replayAdvanceFrame();
+    }
+    replayDrainReply();
+
+    // COM30 open, the way a real loader sequences it: param first, then the
+    // command; bit0 falls when the firmware dispatches. The slot reply lands
+    // in the #B3 latch (its bit7 flag is consumed by the handler's own
+    // DATRG param read - shared flip-flop), so drain the latch, not the flag
+    sendData(0x01);
+    sendCommand(0x30);
+    stall = 0;
+    while ((_mb.status & 0x01) != 0 && stall < kMaxStallFrames)
+    {
+        replayAdvanceFrame();
+        stall++;
+    }
+    replayAdvanceFrame();
+    (void)readData(); // consume the slot reply latch (clears bit7 if held)
+
+    // Paced stream, one byte per firmware drain: a #B3 write raises the
+    // pending flag and the loader clears it by reading DATRG - exactly
+    // how real loaders pace #B3 writes between FLAGS polls. Batching into
+    // the 16-deep FIFO instead wedges the gs105a load machine (verified
+    // empirically: the tail stalls with the firmware polling FLAGS
+    // forever and the module never parses)
+    constexpr size_t kMaxByteWaitFrames = 200; // one HSEND timeout is ~73 frames
+    for (size_t pushed = 0; pushed < bytes.size(); pushed++)
+    {
+        sendData(bytes[pushed]);
+        size_t wait = 0;
+        // bit7 falls when the loader's DATRG read consumes the byte; no
+        // host #B3 read here (it would clear bit7 under the firmware)
+        while ((_mb.status & 0x80) != 0 && wait < kMaxByteWaitFrames)
+        {
+            replayAdvanceFrame();
+            wait++;
+        }
+        if (wait >= kMaxByteWaitFrames)
+        {
+            MLOGWARNING("GS: personality switch module replay stalled at byte %zu of %zu - firmware not draining",
+                        pushed + 1, bytes.size());
+            return;
+        }
+    }
+
+    // D2 terminator, then a settle margin for the parse (LOAD3 posts no
+    // completion reply - the command popping plus the margin is the done
+    // signal)
+    sendCommand(0xD2);
+    stall = 0;
+    while ((_mb.status & 0x01) != 0 && stall < kMaxStallFrames)
+    {
+        replayAdvanceFrame();
+        stall++;
+    }
+    for (int i = 0; i < 8; i++)
+    {
+        replayDrainReply();
+        replayAdvanceFrame();
+    }
+
+    // Resume playback the way the host would (DATRG 1 + COM31 starts module 1;
+    // the param must be queued first - an empty DATRG read latches the last
+    // uploaded module byte into the selector)
+    if (startPlayback)
+    {
+        sendData(0x01);
+        sendCommand(0x31);
+        stall = 0;
+        while ((_mb.status & 0x01) != 0 && stall < kMaxStallFrames)
+        {
+            replayAdvanceFrame();
+            stall++;
+        }
+        for (int i = 0; i < 3; i++)
+            replayAdvanceFrame();
+        (void)readData(); // COM31 status reply: latch drain (flag may be gone)
+    }
+}
+
+/// endregion </Runtime personality switch>
+
 /// region <GS-side ports (internal Z80, 0x00-0x0B)>
 
 uint8_t SoundChip_GeneralSound::gsIn(uint16_t port)
@@ -580,13 +816,15 @@ uint8_t SoundChip_GeneralSound::gsIn(uint16_t port)
     traceEvent(GSTraceSide::GsInternal, port & 0x00FF, 0, false);
     switch (port & 0x00FF)
     {
-        case 0x01: return _commandFromHost; // flag NOT cleared here - see 0x05
-        case 0x02: _status &= 0x7F; return _dataFromHost;
-        case 0x03: _status |= 0x80; _dataToHost = 0xFF; return 0xFF;
-        case 0x04: return _status;
-        case 0x05: _status &= 0xFE; return 0xFF;
-        case 0x0A: _status = (_status & 0x7F) | ((_mpag << 7) & 0x80); return 0xFF;
-        case 0x0B: _status = (_status & 0xFE) | ((_channelVol[0] >> 5) & 1); return 0xFF;
+        // Exact original semantics (Unreal gsz80.cpp z80gs::in / ZXMAK2):
+        case 0x01: return _mb.commandFromHost; // COMRG: no flag change (RSCOM 0x05 clears bit0)
+        case 0x02: _mb.status &= 0x7F; return _mb.dataFromHost; // DATRG: clear bit7, return host byte
+        case 0x03: _mb.status |= 0x80; _mb.dataToHost = 0xFF; return 0xFF; // OUTRG read: set bit7
+        case 0x04: return _mb.status; // FLAGS
+        case 0x05: _mb.status &= 0xFE; return 0xFF; // RSCOM: clear bit0
+        // gspage in the original is rol8(MPAG,1), so (gspage<<7)&0x80 == raw MPAG bit7
+        case 0x0A: _mb.status = (_mb.status & 0x7F) | (_mpag & 0x80); return 0xFF;
+        case 0x0B: _mb.status = (_mb.status & 0xFE) | ((_channelVol[0] >> 5) & 1); return 0xFF;
         default: return 0xFF; // NGS ports (P2) and unmapped read open bus
     }
 }
@@ -600,9 +838,9 @@ void SoundChip_GeneralSound::gsOut(uint16_t port, uint8_t value)
             _mpag = value;
             applyBanking();
             return;
-        case 0x02: _status &= 0x7F; return;
-        case 0x03: _status |= 0x80; _dataToHost = value; return;
-        case 0x05: _status &= 0xFE; return;
+        case 0x02: _mb.status &= 0x7F; return; // DATRG write: clear bit7
+        case 0x03: _mb.status |= 0x80; _mb.dataToHost = value; return; // OUTRG: set bit7, latch reply
+        case 0x05: _mb.status &= 0xFE; return; // RSCOM: clear bit0
         case 0x06:
         case 0x07:
         case 0x08:
@@ -615,8 +853,8 @@ void SoundChip_GeneralSound::gsOut(uint16_t port, uint8_t value)
             emitSample(); // level change - emit at the current position
             return;
         }
-        case 0x0A: _status = (_status & 0x7F) | ((_mpag << 7) & 0x80); return;
-        case 0x0B: _status = (_status & 0xFE) | ((_channelVol[0] >> 5) & 1); return;
+        case 0x0A: _mb.status = (_mb.status & 0x7F) | (_mpag & 0x80); return;
+        case 0x0B: _mb.status = (_mb.status & 0xFE) | ((_channelVol[0] >> 5) & 1); return;
         default: return;
     }
 }
@@ -752,15 +990,17 @@ int64_t gsTtdRead64(const uint8_t* src)
 
 void SoundChip_GeneralSound::serializeFixedState(uint8_t* dst) const
 {
-    dst[0] = _status;
-    dst[1] = _dataFromHost;
-    dst[2] = _dataToHost;
-    dst[3] = _commandFromHost;
+    dst[0] = _mb.status;
+    dst[1] = _mb.dataFromHost;
+    dst[2] = _mb.dataToHost;
+    dst[3] = _mb.commandFromHost;
     dst[4] = _mpag;
     memcpy(&dst[5], _channelVol, 4);
     memcpy(&dst[9], _channelData, 4);
     gsTtdWrite64(&dst[13], _gsCyclesAbs);
     gsTtdWrite16(&dst[21], static_cast<uint16_t>(_intQuantum));
+    // bits 2/3 were the queue-era pending flags; _mb.status (dst[0]) is
+    // authoritative now, the slots stay reserved for layout compatibility
     dst[23] = static_cast<uint8_t>((_nmiPending ? 1 : 0) | (_intPending ? 2 : 0));
 
     uint8_t* z80 = &dst[24];
@@ -785,6 +1025,9 @@ void SoundChip_GeneralSound::serializeFixedState(uint8_t* dst) const
     z80[32] = static_cast<uint8_t>(_cpu->im);
     z80[33] = _cpu->halted ? 1 : 0;
     z80[34] = _cpu->prefix; // runTo can legally stop right after a prefix byte
+
+    // dst[59..94]: queue-era slots, reserved (zero) for layout compatibility
+    std::fill_n(&dst[59], 36, static_cast<uint8_t>(0));
 }
 
 size_t SoundChip_GeneralSound::TTDStateSize() const
@@ -800,10 +1043,10 @@ void SoundChip_GeneralSound::TTDSaveState(uint8_t* dst) const
 
 void SoundChip_GeneralSound::TTDLoadState(const uint8_t* src)
 {
-    _status = src[0];
-    _dataFromHost = src[1];
-    _dataToHost = src[2];
-    _commandFromHost = src[3];
+    _mb.status = src[0];
+    _mb.dataFromHost = src[1];
+    _mb.dataToHost = src[2];
+    _mb.commandFromHost = src[3];
     _mpag = src[4];
     memcpy(_channelVol, &src[5], 4);
     memcpy(_channelData, &src[9], 4);
@@ -811,6 +1054,7 @@ void SoundChip_GeneralSound::TTDLoadState(const uint8_t* src)
     _intQuantum = static_cast<int16_t>(gsTtdRead16(&src[21]));
     _nmiPending = (src[23] & 1) != 0; // bit1 = intPending (pre-level-hold captures: 0/1 only)
     _intPending = (src[23] & 2) != 0;
+    // bits 2/3: queue-era pending flags, ignored - _mb.status is authoritative
 
     const uint8_t* z80 = &src[24];
     _cpu->af.w = gsTtdRead16(z80 + 0);
@@ -834,6 +1078,8 @@ void SoundChip_GeneralSound::TTDLoadState(const uint8_t* src)
     _cpu->im = static_cast<IM_MODE>(z80[32] & 3);
     _cpu->halted = z80[33] ? 1 : 0;
     _cpu->prefix = z80[34];
+
+    // src[59..94]: queue-era slots, ignored
 
     memcpy(_ram.data(), src + TTD_FIXED_STATE_SIZE, _ram.size());
     applyBanking();

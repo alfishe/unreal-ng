@@ -407,9 +407,11 @@ enum class TurboSoundKind : uint8_t
 
 /// General Sound emulation kind ([SOUND] GSType, GS design §5.1).
 /// Z80 = LLE coprocessor card (dedicated 12 MHz Z80 + 4xDAC),
-/// BASS = legacy UnrealSpeccy HLE mode (out of scope - parsed but no
-/// device is created), NGS = NeoGS FPGA card (neogs-tdd.md - P2
-/// placeholder, parsed but no device is created yet),
+/// LW = lightweight in-tree mod player (HLE, no coprocessor - the BASS
+/// replacement, design: docs/inprogress/2026-09-19-general-sound),
+/// BASS = legacy UnrealSpeccy HLE mode (deprecated alias of LW at parse
+/// time - no BASS library is linked in this tree), NGS = NeoGS FPGA card
+/// (neogs-tdd.md - P2 placeholder, parsed but no device is created yet),
 /// NONE (default) = no GS card fitted.
 /// Read once at config load; a change needs a new emulator instance.
 enum class GSTypeKind : uint8_t
@@ -417,6 +419,7 @@ enum class GSTypeKind : uint8_t
 	NONE,
 	Z80,
 	BASS,
+	LW,
 	NGS
 };
 
@@ -556,6 +559,13 @@ struct CONFIG
 		/// §5.1): Z80 = LLE coprocessor card, BASS = legacy HLE (parsed but
 		/// not emulated - no device), NONE = no GS card (default).
 		GSTypeKind gsTypeKind = GSTypeKind::NONE;
+
+		/// Classic GS card RAM size in KB ([SOUND] GSRamSize): 128 (stock,
+		/// default - the fast POST keeps scorpion-family fastdisk boots past
+		/// their 0x7E idle-signature probe), 256/512 for expansion cards
+		/// required by some games (Nether Earth GS needs 512). Clamped to
+		/// 128-512 at parse; a change needs a new emulator instance.
+		unsigned gsRamKB = 128;
 
 		/// FM loudness trim in dB relative to the hardware-derived default
 		/// ([SOUND] TSFM_FmTrimDb; 0 = default)

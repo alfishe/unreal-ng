@@ -15,7 +15,7 @@
 #include <emulator/video/screen.h>
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/chips/soundchip_ay8910.h>
-#include <emulator/sound/chips/soundchip_gs.h>
+#include <emulator/sound/chips/gs/soundchip_gs.h>
 #include "../../../automation.h"
 #include <debugger/debugmanager.h>
 #include <debugger/mouse/debugmousemanager.h>
@@ -1847,17 +1847,21 @@ public:
             sol::state_view lua_view(*_lua);
             if (!_emulator) return sol::make_object(lua_view, sol::lua_nil);
             auto* ctx = _emulator->GetContext();
-            SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+            GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
             if (!gs) return sol::make_object(lua_view, sol::lua_nil);
 
             sol::table t = lua_view.create_table();
             const uint8_t status = gs->getStatusRaw();
-            t["device"] = "General Sound (Z80 coprocessor @ 12 MHz, 4 x 8-bit DAC)";
+            t["device"] = gs->hasCoprocessor() ? "General Sound (Z80 coprocessor @ 12 MHz, 4 x 8-bit DAC)"
+                                               : "General Sound (lightweight mod player, 4 x 8-bit DAC)";
+            t["implementation"] = gs->implementation() == GSCardImplementation::LLE ? "lle" : "lightweight";
             t["rom_loaded"] = gs->isROMLoaded();
             t["ram_kb"] = static_cast<int>(gs->getRamSizeKB());
             t["status"] = status;
             t["command_pending"] = (status & 0x01) != 0;
             t["data_pending"] = (status & 0x80) != 0;
+            t["command_queue_count"] = static_cast<double>(gs->getCommandQueueCount());
+            t["data_queue_count"] = static_cast<double>(gs->getDataQueueCount());
             t["command_from_host"] = gs->getCommandFromHost();
             t["data_from_host"] = gs->getDataFromHost();
             t["data_to_host"] = gs->getDataToHost();
@@ -1873,6 +1877,7 @@ public:
             t["channels"] = channels;
 
             sol::table cpu = lua_view.create_table();
+            cpu["coprocessor"] = gs->hasCoprocessor();
             cpu["pc"] = gs->getCPUReg(regPC);
             cpu["sp"] = gs->getCPUReg(regSP);
             cpu["af"] = gs->getCPUReg(regAF);
@@ -1884,7 +1889,7 @@ public:
         lua.set_function("gs_reset", [this]() {
             if (!_emulator) return;
             auto* ctx = _emulator->GetContext();
-            SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+            GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
             if (gs) gs->reset();
         });
 
@@ -1892,42 +1897,42 @@ public:
             // #33 bit7 semantics: CPU/banking/timing only, mailbox survives
             if (!_emulator) return;
             auto* ctx = _emulator->GetContext();
-            SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+            GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
             if (gs) gs->resetCard();
         });
 
         lua.set_function("gs_nmi", [this]() {
             if (!_emulator) return;
             auto* ctx = _emulator->GetContext();
-            SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+            GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
             if (gs) gs->triggerNMI();
         });
 
         lua.set_function("gs_send_command", [this](int byte) {
             if (!_emulator || byte < 0 || byte > 255) return;
             auto* ctx = _emulator->GetContext();
-            SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+            GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
             if (gs) gs->sendCommand(static_cast<uint8_t>(byte));
         });
 
         lua.set_function("gs_send_data", [this](int byte) {
             if (!_emulator || byte < 0 || byte > 255) return;
             auto* ctx = _emulator->GetContext();
-            SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+            GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
             if (gs) gs->sendData(static_cast<uint8_t>(byte));
         });
 
         lua.set_function("gs_read_data", [this]() -> int {
             if (!_emulator) return -1;
             auto* ctx = _emulator->GetContext();
-            SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+            GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
             return gs ? gs->readData() : -1;
         });
 
         lua.set_function("gs_read_status", [this]() -> int {
             if (!_emulator) return -1;
             auto* ctx = _emulator->GetContext();
-            SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+            GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
             return gs ? gs->readStatus() : -1;
         });
 
@@ -1939,18 +1944,22 @@ public:
             sol::state_view lua_view(*_lua);
             if (!_emulator) return sol::make_object(lua_view, sol::lua_nil);
             auto* ctx = _emulator->GetContext();
-            SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+            GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
             if (!gs) return sol::make_object(lua_view, sol::lua_nil);
 
             const GSActivityCounters& c = gs->getActivityCounters();
             sol::table t = lua_view.create_table();
             t["cpu_steps"] = static_cast<double>(c.cpuSteps);
             t["interrupts_accepted"] = static_cast<double>(c.interruptsAccepted);
+            t["interrupt_periods"] = static_cast<double>(c.interruptPeriods);
+            t["interrupts_coalesced"] = static_cast<double>(c.interruptsCoalesced);
             t["nmis_accepted"] = static_cast<double>(c.nmisAccepted);
             t["dac_fetches"] = static_cast<double>(c.dacFetches);
             t["volume_latch_writes"] = static_cast<double>(c.volumeLatchWrites);
             t["host_commands_received"] = static_cast<double>(c.hostCommandsReceived);
+            t["host_commands_dropped"] = static_cast<double>(c.hostCommandsDropped);
             t["host_data_written"] = static_cast<double>(c.hostDataWritten);
+            t["host_data_dropped"] = static_cast<double>(c.hostDataDropped);
             t["host_data_read"] = static_cast<double>(c.hostDataRead);
             t["last_dac_fetch_gs_cycle"] = static_cast<double>(c.lastDacFetchGsCycle);
             t["last_dac_fetch_frame"] = static_cast<double>(c.lastDacFetchFrame);
@@ -1964,31 +1973,31 @@ public:
         lua.set_function("gs_porttrace_start", [this]() {
             if (!_emulator) return;
             auto* ctx = _emulator->GetContext();
-            SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+            GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
             if (gs) gs->startPortTrace();
         });
         lua.set_function("gs_porttrace_stop", [this]() {
             if (!_emulator) return;
             auto* ctx = _emulator->GetContext();
-            SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+            GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
             if (gs) gs->stopPortTrace();
         });
         lua.set_function("gs_porttrace_pause", [this]() {
             if (!_emulator) return;
             auto* ctx = _emulator->GetContext();
-            SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+            GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
             if (gs) gs->pausePortTrace();
         });
         lua.set_function("gs_porttrace_resume", [this]() {
             if (!_emulator) return;
             auto* ctx = _emulator->GetContext();
-            SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+            GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
             if (gs) gs->resumePortTrace();
         });
         lua.set_function("gs_porttrace_clear", [this]() {
             if (!_emulator) return;
             auto* ctx = _emulator->GetContext();
-            SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+            GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
             if (gs) gs->clearPortTrace();
         });
 
@@ -1996,7 +2005,7 @@ public:
             sol::state_view lua_view(*_lua);
             if (!_emulator) return sol::make_object(lua_view, sol::lua_nil);
             auto* ctx = _emulator->GetContext();
-            SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+            GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
             if (!gs) return sol::make_object(lua_view, sol::lua_nil);
 
             auto events = gs->getPortTraceLast(static_cast<size_t>(count.value_or(50)));

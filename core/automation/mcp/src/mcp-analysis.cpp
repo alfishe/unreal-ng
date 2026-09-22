@@ -650,6 +650,8 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
                                 const Json::Value& c = acc["gs"]["counters"];
                                 out << " - cpuSteps=" << c.get("cpu_steps", 0).asUInt64()
                                     << " interrupts=" << c.get("interrupts_accepted", 0).asUInt64()
+                                    << " intPeriods=" << c.get("interrupt_periods", 0).asUInt64()
+                                    << " intCoalesced=" << c.get("interrupts_coalesced", 0).asUInt64()
                                     << " dacFetches=" << c.get("dac_fetches", 0).asUInt64();
                             }
                             done(ToolResult::Ok(out.str(), std::move(acc)));

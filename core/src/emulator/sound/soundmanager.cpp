@@ -101,22 +101,31 @@ SoundManager::SoundManager(EmulatorContext* context)
         _devices.push_back({AudioSourceType::COVOX, "COVOX", false, false, 1.0f, 0.0f, false});
     }
 
-    // General Sound card ([SOUND] GSType=Z80, GS design §5.1): LLE Z80
-    // coprocessor + 4xDAC. BASS (legacy HLE) and NGS (NeoGS, neogs-tdd.md
-    // - P2 placeholder that will extend SoundChip_GeneralSound) parse to
-    // their enum values but create no device yet. The classic card gets
-    // the stock 128 KB geometry: [NGS] RamSize is a NeoGS-only key, and
-    // its shipped 2048 KB default used to clamp to 512 KB here - that
-    // quadrupled the firmware POST, so fastdisk-booted trainers probed
-    // the card mid-POST and read 0xFF instead of the 0x7E idle signature
-    // they check for (scorpion-family boots lost that race and fell back
-    // to no-GS sound). The firmware ROM is optional - the chip warns and
-    // runs zeroed when missing, so a config error never blocks the
-    // machine.
-    if (_context->config.sound.gsTypeKind == GSTypeKind::Z80)
+    // General Sound card ([SOUND] GSType, GS design §5.1): personality slot
+    // behind the GeneralSoundCard interface (design:
+    // docs/inprogress/2026-09-19-general-sound). Z80 = LLE coprocessor
+    // + 4xDAC; LW = in-tree lightweight mod player (no coprocessor); NGS
+    // (NeoGS, neogs-tdd.md) is a P2 placeholder that parses but creates no
+    // device yet. RAM comes from [SOUND] GSRamSize (default 128 KB stock):
+    // [NGS] RamSize is a NeoGS-only key and must not leak here - its shipped
+    // 2048 KB default clamps to 512 KB, which quadruples the firmware POST so
+    // fastdisk-booted trainers probe the card mid-POST and read 0xFF instead
+    // of the 0x7E idle signature they check for (scorpion-family boots lost
+    // that race and fell back to no-GS sound, verification BUG-6). The
+    // firmware ROM is optional - the chip warns and runs zeroed when
+    // missing, so a config error never blocks the machine.
+    if (_context->config.sound.gsTypeKind == GSTypeKind::Z80 || _context->config.sound.gsTypeKind == GSTypeKind::LW)
     {
-        _gs = new SoundChip_GeneralSound(_context, SoundChip_GeneralSound::RAM_SIZE_STANDARD_KB, _coreRate);
-        _gs->loadROM(_context->config.gs_rom_path);
+        GSTypeKind gsKind = _context->config.sound.gsTypeKind;
+        if (gsKind == GSTypeKind::Z80 && _context->pFeatureManager
+            && _context->pFeatureManager->isEnabled(Features::kGSLightweight))
+        {
+            // gs_lightweight feature override: fit the lightweight card
+            // without touching [SOUND] GSType (runtime switching design) -
+            // the configured personality returns when the feature clears
+            gsKind = GSTypeKind::LW;
+        }
+        _gs = createGeneralSoundCard(gsKind);
         _devices.push_back({AudioSourceType::GeneralSound, "GS", false, false, 1.0f, 0.0f, false});
     }
 
@@ -448,6 +457,15 @@ void SoundManager::handleFrameStart()
                 applyCoreRate(pending);
         }
     }
+
+    // Apply a pending GS personality switch (gs_lightweight feature toggle,
+    // WebAPI action=switch_personality) at the frame boundary: the switch
+    // deletes and recreates the card, and this thread owns the card between
+    // frames (the new card receives setSynthesisSuppressed/handleFrameStart
+    // right below, so audio flows within the same frame)
+    const uint8_t pendingGS = _pendingGSSwitch.exchange(0xFF, std::memory_order_acq_rel);
+    if (pendingGS != 0xFF)
+        switchGeneralSoundCard(static_cast<GSTypeKind>(pendingGS));
 
     // Turbo mode without audio: no synthesis at all this frame. Decided once here so
     // the per-step and per-edge paths only test a cached bool. Recording keeps the
@@ -979,6 +997,32 @@ void SoundManager::UpdateFeatureCache()
         {
             _turboSound->setHQEnabled(isHQActive());
         }
+
+        // GS personality follows the gs_lightweight feature (runtime
+        // switching design): ON fits the lightweight card, OFF returns to
+        // the configured [SOUND] GSType personality - the config file is
+        // never touched. Requested here, applied at the next frame
+        // boundary (the switch recreates the card). Driven by an actual
+        // feature TRANSITION only: this cache refresh runs on every
+        // FeatureManager notification (any feature), and re-requesting the
+        // configured personality each time would silently revert a runtime
+        // WebAPI switch_personality override at the next unrelated feature
+        // event (observed live: LW -> LLE switch reverted within 38 ms by a
+        // ring-error feature refresh while GSType=LW was configured)
+        const bool gsLightweightOn = _context->pFeatureManager->isEnabled(Features::kGSLightweight);
+        if (gsLightweightOn != _gsLightweightFeatureWasOn)
+        {
+            _gsLightweightFeatureWasOn = gsLightweightOn;
+            if (gsLightweightOn)
+            {
+                requestGeneralSoundCardSwitch(GSTypeKind::LW);
+            }
+            else if (_context->config.sound.gsTypeKind == GSTypeKind::Z80
+                     || _context->config.sound.gsTypeKind == GSTypeKind::LW)
+            {
+                requestGeneralSoundCardSwitch(_context->config.sound.gsTypeKind);
+            }
+        }
     }
     else
     {
@@ -1038,6 +1082,131 @@ void SoundManager::SoundManager::writeToWaveFile(uint8_t* buffer, size_t len)
 
 /// endregion </Wave file export>
 
+/// region <General Sound personality switching>
+
+GeneralSoundCard* SoundManager::createGeneralSoundCard(GSTypeKind kind) const
+{
+    switch (kind)
+    {
+        case GSTypeKind::Z80:
+        {
+            // LLE: second z80ex coprocessor + gs105a firmware. The ROM is
+            // optional - loadROM warns and runs zeroed when missing, so a
+            // config error never blocks the machine
+            auto* card = new SoundChip_GeneralSound(_context, _context->config.sound.gsRamKB, _coreRate);
+            card->loadROM(_context->config.gs_rom_path);
+            return card;
+        }
+        case GSTypeKind::LW:
+            // Lightweight personality: same mailbox contract, in-tree player,
+            // no ROM (loadROM would only warn) - the virtual RAM geometry
+            // still comes from [SOUND] GSRamSize for the 20/21/23 queries
+            return new SoundChip_GSLightweight(_context, _context->config.sound.gsRamKB, _coreRate);
+        default:
+            // BASS folded into LW at config parse; NONE/NGS parse but map to
+            // no device (neogs-tdd.md P2 placeholder)
+            LOGWARNING("SoundManager: GSType %u maps to no creatable personality - no General Sound card",
+                       static_cast<unsigned>(kind));
+            return nullptr;
+    }
+}
+
+bool SoundManager::switchGeneralSoundCard(GSTypeKind target)
+{
+    if (target != GSTypeKind::Z80 && target != GSTypeKind::LW)
+    {
+        LOGWARNING("SoundManager: personality switch target GSType %u is not switchable (Z80 | LW)",
+                   static_cast<unsigned>(target));
+        return false;
+    }
+
+    if (!_gs)
+    {
+        LOGWARNING("SoundManager: personality switch requested but no General Sound card is fitted ([SOUND] GSType)");
+        return false;
+    }
+
+    const GSCardImplementation targetImplementation =
+        target == GSTypeKind::Z80 ? GSCardImplementation::LLE : GSCardImplementation::LW;
+    if (_gs->implementation() == targetImplementation)
+        return true; // already the requested personality
+
+    const char* from = _gs->implementation() == GSCardImplementation::LLE ? "LLE (Z80)" : "lightweight";
+    const char* to = targetImplementation == GSCardImplementation::LLE ? "LLE (Z80)" : "lightweight";
+
+    // 1. Snapshot the outgoing card: host-visible mailbox, activity counters
+    //    and the v1 module handoff payload (only the lightweight card
+    //    captures one - its upload store survives the parse)
+    const GSForwardMailbox mailbox = _gs->snapshotMailbox();
+    const GSActivityCounters counters = _gs->getActivityCounters();
+    std::vector<uint8_t> moduleBytes;
+    bool wasPlaying = false;
+    const bool hadModule = _gs->captureModuleUpload(moduleBytes, wasPlaying);
+
+    // 2. Unregister the host ports first - the decoder holds the outgoing
+    //    card's raw pointer and must never dispatch into a deleted object
+    auto* decoder = _context->pPortDecoder;
+    if (decoder)
+    {
+        decoder->UnregisterPortHandler(GeneralSoundCard::PORT_DATA);
+        decoder->UnregisterPortHandler(GeneralSoundCard::PORT_COMMAND);
+        decoder->UnregisterPortHandler(GeneralSoundCard::PORT_CONTROL);
+    }
+
+    // 3. Construct the target (the LLE loads its firmware ROM inside the
+    //    factory); on failure roll the ports back onto the surviving card
+    GeneralSoundCard* card = createGeneralSoundCard(target);
+    if (!card)
+    {
+        if (decoder)
+        {
+            decoder->RegisterPortHandler(GeneralSoundCard::PORT_DATA, _gs, static_cast<PortTagSet>(PortTag::SoundGs));
+            decoder->RegisterPortHandler(GeneralSoundCard::PORT_COMMAND, _gs, static_cast<PortTagSet>(PortTag::SoundGs));
+            decoder->RegisterPortHandler(GeneralSoundCard::PORT_CONTROL, _gs, static_cast<PortTagSet>(PortTag::SoundGs));
+        }
+        LOGERROR("SoundManager: General Sound personality switch to %s failed at construction - keeping %s", to, from);
+        return false;
+    }
+
+    delete _gs;
+    _gs = card;
+
+    // 4. Re-register the host ports for the new card (#B3/#BB/#33, GS design §6)
+    bool portsRegistered = true;
+    if (decoder)
+    {
+        portsRegistered &= decoder->RegisterPortHandler(GeneralSoundCard::PORT_DATA, _gs, static_cast<PortTagSet>(PortTag::SoundGs));
+        portsRegistered &= decoder->RegisterPortHandler(GeneralSoundCard::PORT_COMMAND, _gs, static_cast<PortTagSet>(PortTag::SoundGs));
+        portsRegistered &= decoder->RegisterPortHandler(GeneralSoundCard::PORT_CONTROL, _gs, static_cast<PortTagSet>(PortTag::SoundGs));
+    }
+    if (!portsRegistered)
+        LOGWARNING("SoundManager: GS host port re-registration failed after the personality switch");
+
+    // 5. Module handoff on virgin queues (running BEFORE the mailbox restore
+    //    keeps the param/command/stream/D2 ordering pristine), then restore
+    //    the host-visible mailbox and fold the counters - triage totals
+    //    survive the handoff
+    if (hadModule)
+        _gs->replayModuleUpload(moduleBytes, wasPlaying);
+    _gs->restoreMailbox(mailbox);
+    _gs->accumulateActivityCounters(counters);
+
+    LOGINFO("SoundManager: General Sound personality switched %s -> %s%s", from, to,
+            hadModule ? " (module upload replayed)" : "");
+    return portsRegistered;
+}
+
+bool SoundManager::requestGeneralSoundCardSwitch(GSTypeKind target)
+{
+    if (target != GSTypeKind::Z80 && target != GSTypeKind::LW)
+        return false;
+
+    _pendingGSSwitch.store(static_cast<uint8_t>(target), std::memory_order_release);
+    return true;
+}
+
+/// endregion </General Sound personality switching>
+
 /// region <Port interconnection>
 
 bool SoundManager::attachToPorts()
@@ -1058,11 +1227,11 @@ bool SoundManager::attachToPorts()
     // are static per machine model (Pentagon family table, Scorpion chain).
     if (_gs && _context->pPortDecoder)
     {
-        result &= _context->pPortDecoder->RegisterPortHandler(SoundChip_GeneralSound::PORT_DATA, _gs,
+        result &= _context->pPortDecoder->RegisterPortHandler(GeneralSoundCard::PORT_DATA, _gs,
                                                              static_cast<PortTagSet>(PortTag::SoundGs));
-        result &= _context->pPortDecoder->RegisterPortHandler(SoundChip_GeneralSound::PORT_COMMAND, _gs,
+        result &= _context->pPortDecoder->RegisterPortHandler(GeneralSoundCard::PORT_COMMAND, _gs,
                                                              static_cast<PortTagSet>(PortTag::SoundGs));
-        result &= _context->pPortDecoder->RegisterPortHandler(SoundChip_GeneralSound::PORT_CONTROL, _gs,
+        result &= _context->pPortDecoder->RegisterPortHandler(GeneralSoundCard::PORT_CONTROL, _gs,
                                                              static_cast<PortTagSet>(PortTag::SoundGs));
     }
 
@@ -1085,9 +1254,9 @@ bool SoundManager::detachFromPorts()
     // Detach the General Sound card from #B3/#BB/#33
     if (_gs && _context->pPortDecoder)
     {
-        _context->pPortDecoder->UnregisterPortHandler(SoundChip_GeneralSound::PORT_DATA);
-        _context->pPortDecoder->UnregisterPortHandler(SoundChip_GeneralSound::PORT_COMMAND);
-        _context->pPortDecoder->UnregisterPortHandler(SoundChip_GeneralSound::PORT_CONTROL);
+        _context->pPortDecoder->UnregisterPortHandler(GeneralSoundCard::PORT_DATA);
+        _context->pPortDecoder->UnregisterPortHandler(GeneralSoundCard::PORT_COMMAND);
+        _context->pPortDecoder->UnregisterPortHandler(GeneralSoundCard::PORT_CONTROL);
     }
 
     return result;

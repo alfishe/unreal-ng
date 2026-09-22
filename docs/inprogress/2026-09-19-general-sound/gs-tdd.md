@@ -249,8 +249,8 @@ rv = (r + l/2) / 2;
 
 | File | Purpose |
 |:-----|:--------|
-| `core/src/emulator/sound/chips/soundchip_gs.h` | GS device class declaration |
-| `core/src/emulator/sound/chips/soundchip_gs.cpp` | GS device implementation |
+| `core/src/emulator/sound/chips/gs/soundchip_gs.h` | GS device class declaration |
+| `core/src/emulator/sound/chips/gs/soundchip_gs.cpp` | GS device implementation |
 | `core/tests/emulator/sound/soundchip_gs_test.cpp` | Unit tests |
 
 ### 4.2 Files to Modify

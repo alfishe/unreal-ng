@@ -16,7 +16,7 @@
 #include <emulator/video/screen.h>
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/chips/soundchip_ay8910.h>
-#include <emulator/sound/chips/soundchip_gs.h>
+#include <emulator/sound/chips/gs/soundchip_gs.h>
 #include <base/featuremanager.h>
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/debugmanager.h>
@@ -1510,17 +1510,21 @@ namespace PythonBindings
             }, "Check if the General Sound card is fitted")
             .def("gs_state", [](Emulator& self) -> py::object {
                 auto* ctx = self.GetContext();
-                SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+                GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
                 if (!gs) return py::none();
 
                 py::dict d;
                 const uint8_t status = gs->getStatusRaw();
-                d["device"] = "General Sound (Z80 coprocessor @ 12 MHz, 4 x 8-bit DAC)";
+                d["device"] = gs->hasCoprocessor() ? "General Sound (Z80 coprocessor @ 12 MHz, 4 x 8-bit DAC)"
+                                                   : "General Sound (lightweight mod player, 4 x 8-bit DAC)";
+                d["implementation"] = gs->implementation() == GSCardImplementation::LLE ? "lle" : "lightweight";
                 d["rom_loaded"] = gs->isROMLoaded();
                 d["ram_kb"] = static_cast<int>(gs->getRamSizeKB());
                 d["status"] = status;
                 d["command_pending"] = (status & 0x01) != 0;
                 d["data_pending"] = (status & 0x80) != 0;
+                d["command_queue_count"] = gs->getCommandQueueCount();
+                d["data_queue_count"] = gs->getDataQueueCount();
                 d["command_from_host"] = gs->getCommandFromHost();
                 d["data_from_host"] = gs->getDataFromHost();
                 d["data_to_host"] = gs->getDataToHost();
@@ -1536,47 +1540,48 @@ namespace PythonBindings
                 d["channels"] = channels;
 
                 py::dict cpu;
+                cpu["coprocessor"] = gs->hasCoprocessor();
                 cpu["pc"] = gs->getCPUReg(regPC);
                 cpu["sp"] = gs->getCPUReg(regSP);
                 cpu["af"] = gs->getCPUReg(regAF);
                 cpu["halted"] = gs->isCPUHalted();
                 d["cpu"] = cpu;
                 return d;
-            }, "General Sound state: mailbox flags, MPAG page, DAC channels, coprocessor core")
+            }, "General Sound state: mailbox flags, FIFO queue depths, MPAG page, DAC channels, coprocessor core")
             .def("gs_reset", [](Emulator& self) {
                 auto* ctx = self.GetContext();
-                SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+                GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
                 if (gs) gs->reset();
             }, "Full power-on reset of the General Sound card")
             .def("gs_reset_card", [](Emulator& self) {
                 // #33 bit7 semantics: CPU/banking/timing only, mailbox survives
                 auto* ctx = self.GetContext();
-                SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+                GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
                 if (gs) gs->resetCard();
             }, "#33 bit7 card reset (CPU/banking/timing only)")
             .def("gs_nmi", [](Emulator& self) {
                 auto* ctx = self.GetContext();
-                SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+                GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
                 if (gs) gs->triggerNMI();
             }, "Pulse the #33 bit6 NMI line")
             .def("gs_send_command", [](Emulator& self, int byte) {
                 auto* ctx = self.GetContext();
-                SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+                GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
                 if (gs && byte >= 0 && byte <= 255) gs->sendCommand(static_cast<uint8_t>(byte));
             }, "Send command byte to GS (OUT #BB semantics)", py::arg("byte"))
             .def("gs_send_data", [](Emulator& self, int byte) {
                 auto* ctx = self.GetContext();
-                SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+                GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
                 if (gs && byte >= 0 && byte <= 255) gs->sendData(static_cast<uint8_t>(byte));
             }, "Send data byte to GS (OUT #B3 semantics)", py::arg("byte"))
             .def("gs_read_data", [](Emulator& self) -> int {
                 auto* ctx = self.GetContext();
-                SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+                GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
                 return gs ? gs->readData() : -1;
             }, "Read data byte from GS (IN #B3 semantics)")
             .def("gs_read_status", [](Emulator& self) -> int {
                 auto* ctx = self.GetContext();
-                SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+                GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
                 return gs ? gs->readStatus() : -1;
             }, "Read GS status register (IN #BB semantics)")
 
@@ -1586,18 +1591,22 @@ namespace PythonBindings
             // MCP / Lua (see gsporttrace.h).
             .def("gs_counters", [](Emulator& self) -> py::object {
                 auto* ctx = self.GetContext();
-                SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+                GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
                 if (!gs) return py::none();
 
                 const GSActivityCounters& c = gs->getActivityCounters();
                 py::dict d;
                 d["cpu_steps"] = c.cpuSteps;
                 d["interrupts_accepted"] = c.interruptsAccepted;
+                d["interrupt_periods"] = c.interruptPeriods;
+                d["interrupts_coalesced"] = c.interruptsCoalesced;
                 d["nmis_accepted"] = c.nmisAccepted;
                 d["dac_fetches"] = c.dacFetches;
                 d["volume_latch_writes"] = c.volumeLatchWrites;
                 d["host_commands_received"] = c.hostCommandsReceived;
+                d["host_commands_dropped"] = c.hostCommandsDropped;
                 d["host_data_written"] = c.hostDataWritten;
+                d["host_data_dropped"] = c.hostDataDropped;
                 d["host_data_read"] = c.hostDataRead;
                 d["last_dac_fetch_gs_cycle"] = c.lastDacFetchGsCycle;
                 d["last_dac_fetch_frame"] = c.lastDacFetchFrame;
@@ -1606,35 +1615,35 @@ namespace PythonBindings
                 d["pc"] = gs->getCPUReg(regPC);
                 d["halted"] = gs->isCPUHalted();
                 return d;
-            }, "GS activity counters: CPU steps, interrupts/NMIs accepted, DAC fetches, volume writes, host mailbox traffic")
+            }, "GS activity counters: CPU steps, interrupts/NMIs accepted + period/coalesce accounting, DAC fetches, volume writes, host mailbox traffic + FIFO drops")
             .def("gs_porttrace_start", [](Emulator& self) {
                 auto* ctx = self.GetContext();
-                SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+                GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
                 if (gs) gs->startPortTrace();
             }, "Start capturing the GS port/DAC event trace (clears the buffer)")
             .def("gs_porttrace_stop", [](Emulator& self) {
                 auto* ctx = self.GetContext();
-                SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+                GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
                 if (gs) gs->stopPortTrace();
             }, "Stop capturing the GS port/DAC event trace")
             .def("gs_porttrace_pause", [](Emulator& self) {
                 auto* ctx = self.GetContext();
-                SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+                GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
                 if (gs) gs->pausePortTrace();
             }, "Pause the GS port/DAC event trace")
             .def("gs_porttrace_resume", [](Emulator& self) {
                 auto* ctx = self.GetContext();
-                SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+                GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
                 if (gs) gs->resumePortTrace();
             }, "Resume a paused GS port/DAC event trace")
             .def("gs_porttrace_clear", [](Emulator& self) {
                 auto* ctx = self.GetContext();
-                SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+                GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
                 if (gs) gs->clearPortTrace();
             }, "Clear the GS port/DAC event trace buffer")
             .def("gs_porttrace_events", [](Emulator& self, int count) -> py::object {
                 auto* ctx = self.GetContext();
-                SoundChip_GeneralSound* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+                GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
                 if (!gs) return py::none();
 
                 auto events = gs->getPortTraceLast(static_cast<size_t>(count));

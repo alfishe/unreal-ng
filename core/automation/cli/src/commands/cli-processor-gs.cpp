@@ -3,7 +3,7 @@
 
 #include <emulator/emulator.h>
 #include <emulator/emulatorcontext.h>
-#include <emulator/sound/chips/soundchip_gs.h>
+#include <emulator/sound/chips/gs/soundchip_gs.h>
 #include <emulator/sound/soundmanager.h>
 
 #include <algorithm>
@@ -35,7 +35,7 @@ void CLIProcessor::HandleStateAudioGS(const ClientSession& session, EmulatorCont
     ss << NEWLINE;
 
     SoundManager* soundManager = context->pSoundManager;
-    SoundChip_GeneralSound* gs = soundManager ? soundManager->getGeneralSound() : nullptr;
+    GeneralSoundCard* gs = soundManager ? soundManager->getGeneralSound() : nullptr;
 
     if (!gs)
     {
@@ -52,7 +52,8 @@ void CLIProcessor::HandleStateAudioGS(const ClientSession& session, EmulatorCont
     const uint8_t status = gs->getStatusRaw();
     const bool verbose = optionArg == "--verbose" || optionArg == "verbose" || optionArg == "-v";
 
-    ss << "Device: General Sound (Z80 coprocessor @ 12 MHz, 4 x 8-bit DAC)" << NEWLINE;
+    ss << "Device: " << (gs->hasCoprocessor() ? "General Sound (Z80 coprocessor @ 12 MHz, 4 x 8-bit DAC)"
+                                               : "General Sound (lightweight mod player, 4 x 8-bit DAC)") << NEWLINE;
     ss << "ROM:    " << (gs->isROMLoaded() ? "Loaded (32 KB)" : "Missing (zero-filled)") << NEWLINE;
     ss << "RAM:    " << gs->getRamSizeKB() << " KB" << NEWLINE;
     ss << "Page:   " << (int)gs->getMPAG() << " (MPAG banking latch)" << NEWLINE;
@@ -62,6 +63,8 @@ void CLIProcessor::HandleStateAudioGS(const ClientSession& session, EmulatorCont
     ss << "  Status:          0x" << std::hex << std::setw(2) << std::setfill('0') << (int)status << NEWLINE;
     ss << "  Command Pending: " << ((status & 0x01) ? "Yes" : "No") << " (bit0)" << NEWLINE;
     ss << "  Data Pending:    " << ((status & 0x80) ? "Yes" : "No") << " (bit7)" << NEWLINE;
+    ss << "  Command queue:   " << gs->getCommandQueueCount() << "/16 pending (FIFO depth)" << NEWLINE;
+    ss << "  Data queue:      " << gs->getDataQueueCount() << "/16 pending (FIFO depth)" << NEWLINE;
     ss << "  Command from ZX: 0x" << std::hex << std::setw(2) << (int)gs->getCommandFromHost() << NEWLINE;
     ss << "  Data from ZX:    0x" << std::hex << std::setw(2) << (int)gs->getDataFromHost() << NEWLINE;
     ss << "  Data to ZX:      0x" << std::hex << std::setw(2) << (int)gs->getDataToHost() << NEWLINE;
@@ -76,7 +79,12 @@ void CLIProcessor::HandleStateAudioGS(const ClientSession& session, EmulatorCont
     }
     ss << NEWLINE;
 
-    if (verbose)
+    if (!gs->hasCoprocessor())
+    {
+        ss << "Coprocessor: none (lightweight personality - no registers)" << NEWLINE;
+        ss << NEWLINE;
+    }
+    else if (verbose)
     {
         ss << "Coprocessor (Z80ex):" << NEWLINE;
         ss << "  PC: 0x" << std::hex << std::setw(4) << gs->getCPUReg(regPC) << NEWLINE;
@@ -109,7 +117,7 @@ void CLIProcessor::HandleGSPortTrace(const ClientSession& session, const std::ve
 
     EmulatorContext* context = emulator->GetContext();
     SoundManager* soundManager = context ? context->pSoundManager : nullptr;
-    SoundChip_GeneralSound* gs = soundManager ? soundManager->getGeneralSound() : nullptr;
+    GeneralSoundCard* gs = soundManager ? soundManager->getGeneralSound() : nullptr;
     if (!gs)
     {
         session.SendResponse(std::string("Error: General Sound card is not fitted (set [SOUND] GSType=Z80).") + NEWLINE);
@@ -153,11 +161,15 @@ void CLIProcessor::HandleGSPortTrace(const ClientSession& session, const std::ve
         ss << "================================" << NEWLINE;
         ss << "  CPU steps:            " << c.cpuSteps << NEWLINE;
         ss << "  Periodic INTs taken:  " << c.interruptsAccepted << NEWLINE;
+        ss << "  INT periods (320c):   " << c.interruptPeriods << NEWLINE;
+        ss << "  INTs coalesced:       " << c.interruptsCoalesced << NEWLINE;
         ss << "  NMIs taken:           " << c.nmisAccepted << NEWLINE;
         ss << "  DAC fetches:          " << c.dacFetches << NEWLINE;
         ss << "  Volume latch writes:  " << c.volumeLatchWrites << NEWLINE;
         ss << "  Host commands (OUT #BB): " << c.hostCommandsReceived << NEWLINE;
+        ss << "  Commands dropped (FIFO full): " << c.hostCommandsDropped << NEWLINE;
         ss << "  Host data written (OUT #B3): " << c.hostDataWritten << NEWLINE;
+        ss << "  Data dropped (FIFO full):    " << c.hostDataDropped << NEWLINE;
         ss << "  Host data read (IN #B3):     " << c.hostDataRead << NEWLINE;
         if (c.lastDacFetchGsCycle >= 0)
             ss << "  Last DAC fetch: GS cycle " << c.lastDacFetchGsCycle << ", frame " << c.lastDacFetchFrame << NEWLINE;
@@ -168,8 +180,11 @@ void CLIProcessor::HandleGSPortTrace(const ClientSession& session, const std::ve
            << ", " << gs->getPortTraceEventCount() << " events buffered"
            << " (produced " << gs->getPortTraceTotalProduced() << ", evicted " << gs->getPortTraceTotalEvicted() << ")"
            << NEWLINE;
-        ss << "PC=0x" << std::hex << std::setw(4) << std::setfill('0') << gs->getCPUReg(regPC)
-           << " halted=" << std::dec << (gs->isCPUHalted() ? "yes" : "no") << NEWLINE;
+        if (gs->hasCoprocessor())
+            ss << "PC=0x" << std::hex << std::setw(4) << std::setfill('0') << gs->getCPUReg(regPC)
+               << " halted=" << std::dec << (gs->isCPUHalted() ? "yes" : "no") << NEWLINE;
+        else
+            ss << "PC=- (lightweight personality, no coprocessor)" << NEWLINE;
         ss << NEWLINE << "Use 'gsporttrace start' to begin capturing, 'gsporttrace events [n]' to inspect." << NEWLINE;
     }
     else if (sub == "events")

@@ -6,6 +6,7 @@
 //   3. Covox streaming DAC output (#0E, interrupt-independent render path)
 //   4. 37.5 kHz interrupt + DAC-fetch-from-handler path (#13 jump to a stub
 //      that installs IM2/I=0x17 and reads #6000 from the handler)
+//   5. interrupt level-hold cadence (no request lost across DI windows)
 //
 // Firmware-source protocol notes (v105b sources, same dispatcher family as
 // the gs105a ROM):
@@ -17,6 +18,8 @@
 //     exit on a new command. No flag wait, no interrupts involved.
 //   WTDTL: JP P tests the sign flag of AND #81 (IN A,(n) does not set
 //     flags) - it aborts only when a command arrived with no data pending.
+//   COMF4/INIT: COMF4 acks, then jumps to #0000 where INIT acks the mailbox
+//     a SECOND time (INIT_L.a80:1-2) before the POST.
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -25,7 +28,7 @@
 
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/audio.h"
-#include "emulator/sound/chips/soundchip_gs.h"
+#include "emulator/sound/chips/gs/soundchip_gs.h"
 
 namespace
 {
@@ -131,7 +134,17 @@ bool bootToPost(GSHarness& h)
     {
         h.runFrames(50);
         if (h.chip->getActivityCounters().volumeLatchWrites >= 4)
+        {
+            // The POST leaves an unread reply in the latch (INITR0E replies
+            // NUMPG at POST end, INIT_H INITVAR follows). Consume it so the
+            // harness' sendDataWait - which polls the ZX-side bit7, the OR
+            // of both data directions - does not stall on it forever. Real
+            // ZX software either reads the reply (guide §2.3 ReadData) or
+            // never polls bit7 while streaming (Nether Earth GS).
+            if (h.chip->readStatus() & 0x80)
+                (void)h.chip->portDeviceInMethod(kPortData);
             return true;
+        }
     }
     return false;
 }
@@ -157,6 +170,16 @@ void patchFixedRam(SoundChip_GeneralSound& chip, uint16_t addr, uint8_t value)
     const size_t ramOffset = chip.TTDStateSize() - chip.getRamSizeKB() * 1024;
     blob[ramOffset + 3 * SoundChip_GeneralSound::PAGE_SIZE + (addr - 0x4000)] = value;
     chip.TTDLoadState(blob.data());
+}
+
+// Read one byte of the fixed window (__MAIN.a80 PHASE variables live there:
+// PROCESS=0x4084, CURMOD=0x4096, MODVOL=0x40A4, FXVOL=0x40A5)
+uint8_t readFixedRam(SoundChip_GeneralSound& chip, uint16_t addr)
+{
+    std::vector<uint8_t> blob(chip.TTDStateSize());
+    chip.TTDSaveState(blob.data());
+    const size_t ramOffset = chip.TTDStateSize() - chip.getRamSizeKB() * 1024;
+    return blob[ramOffset + 3 * SoundChip_GeneralSound::PAGE_SIZE + (addr - 0x4000)];
 }
 } // namespace
 
@@ -353,3 +376,4 @@ TEST(SoundChip_GeneralSound_BootDiag, 5_InterruptLevelHoldNoLoss)
     EXPECT_NEAR(static_cast<int64_t>(delta), static_cast<int64_t>(kExpected), 1)
         << "masked-window cadence: interrupt requests lost";
 }
+

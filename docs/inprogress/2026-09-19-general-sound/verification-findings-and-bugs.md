@@ -275,6 +275,31 @@ request, the top of the `runTo()` loop retries `z80ex_int()` every iteration unt
 accepts, and only acceptance clears it. Persisted as bit 1 of TTD fixed-state byte 23
 (bit 0 = nmiPending; pre-fix captures load as no-pending — they could never hold one).
 
+**Permanent instrumentation** (2026-09-21, carried over from `gs-int-defer.patch`,
+counters-only scope — the patch's own core fix is the BUG-5 fix above):
+`GSActivityCounters` now carries `interruptPeriods` (320-cycle boundaries crossed) and
+`interruptsCoalesced` (a boundary that merged into a still-pending request — one flip-flop,
+the one honest hardware loss when the handler genuinely outruns the period). Triage
+invariant: `interruptPeriods == interruptsAccepted + interruptsCoalesced` (±1 request in
+flight); a gap elsewhere means samples are vanishing. Both are surfaced in the WebAPI GS
+porttrace counters (`interrupt_periods` / `interrupts_coalesced`). ISR-side overrun
+coverage (the QTDONE straddle shape — main-loop DI windows were already covered by the
+bootdiag level-hold regression) lives in `soundchip_gs_intrate_test.cpp`: 360 T handler →
+88.89 % accepted (vs 50 % for the drop model), 568 T → 56.34 %, and every workload lands
+within 0.01 cents of the rate its own duration implies; lost == coalesced exactly.
+
+**Surface parity** (2026-09-21): every `GSActivityCounters` field — including the four
+added by the BUG-8/BUG-5 instrumentation (`interruptPeriods`, `interruptsCoalesced`,
+`hostCommandsDropped`, `hostDataDropped`) — is now exposed on all five automation
+surfaces with identical snake_case keys: WebAPI `/state/audio/gs/porttrace` JSON,
+CLI `gsporttrace counters`, Lua `gs_counters()`, Python `gs_counters()` (direct
+bindings), and MCP `gs_porttrace` (pass-through of the WebAPI JSON, so parity is
+automatic; its one-line summary also prints intPeriods/intCoalesced). The FIFO queue
+depths (`command_queue_count` / `data_queue_count`, the 16-deep backlog behind
+BUG-8-class triage) are on all four state surfaces: WebAPI `/state/audio/gs`, CLI
+`state audio gs`, Lua `gs_state()`, Python `gs_state()`. Field documentation lives in
+`gsporttrace.h` (single source per the automation doctrine).
+
 **Verification**: regression `5_InterruptLevelHoldNoLoss` — a 48%-duty DI loop (masked
 window < 320 cycles) delivers exactly `25·239616/320 = 18720/18721` interrupts where the
 pulse model delivers ~52%; the EI-parked stub is exact. Live re-probe: interrupts/frame
@@ -323,6 +348,85 @@ pre-fix Pentagon capture stopped at the 200K-event cap mid-upload and under-coun
 fits the stock card with a 6.6× margin — and leaves the GS firmware executing the
 interrupt-driven player continuously (68 % of timeline samples in player code on SCORPION).
 
+### BUG-7 (Critical, FIXED): double-';' ini comments silently shrank GSRamSize to 128 KB
+
+**Symptom**: NEARTHGS.TRD (Nether Earth GS) registered its module correctly on the
+`GSRamSize=512` configs but the game still ended silent — and a fresh card reported
+`ram_kb: 128` through the WebAPI GS state despite the ini saying 512.
+
+**Diagnosis** (config trace + `?ram=1` fixed-window timeline, `scratch/gs_nearth_ram.py`,
+2026-09-20): `IniFile::StripInlineComment` scans **backward** from the line end and
+truncates at the **last** ';' — a heritage SimpleIni patch that allows values containing
+';'. The shipped comment `GSRamSize=512  ; classic GS card RAM in KB (128 stock / 256 /
+512 expansion); 512 for …` contains a second ';', so the backward strip kept
+`512 ; classic … expansion` as the raw value; `GetLongValue` rejects any trailing text
+and **silently returned the default 128**. `GSType` worked because its comment has a
+single ';'. The 128 KB card still registered the small NEARTHGS module — the failure
+moved to the playback phase, which made it look like a different bug.
+
+**Fix** (2026-09-20): removed the second ';' from every GSRamSize comment
+(pentagon128k/pentagon512k/atm3/atm710) and fixed the same pattern in 9 `MouseScale`
+comments (`[-3;3]` → `[-3..3]`, benign — value == default). `IniFile::GetLongValue`
+gained an optional `bool* parsedToNumber` out-param and `config.cpp` now logs an
+MLOGWARNING when GSRamSize is present but unparseable, so this class of trap can never
+be silent again.
+
+**Verification**: live `ram_kb: 512`; regression `RamSize_ClassicGSRamSizeHonoured`
+(256/512) covers the key; the warning fires for a crafted double-';' value.
+
+### BUG-8 (Critical, FIXED): single #B3 data latch lost the param-first playback trio
+
+**Symptom**: with the card at 512 KB and the module loaded (CNTMOD=1, 49/49 commands
+delivered, stream clean), the game went silent right at the playback request.
+
+**Diagnosis** (timestamped GS port trace, `scratch/gs_nearth_trio2.sh`, 2026-09-20): the
+game's closing trio writes each parameter to #B3 **before** its command to #BB with no
+handshake (`62C3-62DC`: `00,31 40,2B 25,2A`, ~87 ZX tacts of straight-line code). The
+firmware pops the #31 at +43 GS cycles but only reaches COM31's `IN A,(DATRG)` at +173 —
+by then the single data latch already holds the 0x40 meant for COM2B. P=64 > CNTMOD=1
+takes the error path (CURMOD := 0, reply 0), COM2B consumes the 0x25 and COM2A a stale
+byte — end state MODVOL=FXVOL=0x25, CURMOD=0, PROCESS=0: module registered but never
+selected. The dispatch path is ~110 cycles of straight-line firmware code — **no timing
+tuning can make a single latch survive** a param-overwrite window of ~87 cycles.
+
+**Fix** (`soundchip_gs.cpp`/`.h`, 2026-09-20): the host->GS data path is now an in-order
+16-deep FIFO mirroring the command FIFO (itself added for the same game's boot burst
+F4,30,D1, which a single command latch loses to the POST — regression
+`6_BurstCommandsSurvivePostAndLoadModule`) — #B3 writes push, the GS DATRG read (port 0x02)
+pops, `_dataFromHostPending` tracks queue-non-empty, an empty-queue DATRG read returns
+the stale shadow latch (WTDTL drain loops keep their behavior), TTD blob extended to 95
+fixed bytes ([77] count / [78] head / [79..94] ring), `hostDataDropped` counter added.
+
+**Verification**: regression `7_ParamFirstTrioDispatchesInOrder` (bootdiag; asserts
+CURMOD=1, MODVOL=0x25, FXVOL=0x40 after the trio — the latch model yields 0/0x25/0x25);
+live NEARTHGS run: playback starts at t=42.7 s (the exact old failure moment), PROC/PLAY
+=0xFF continuously, DAC fetches climbing to 2.9M+ with volume latches active — music.
+
+### BUG-9 (Major, FIXED): per-quantum vibrato/tremolo rendering made the whole LW mix audibly dirty
+
+**Symptom** (2026-09-21, live NEARTHGS on the LW personality, user report): music plays
+correctly on the LLE but the LW card sounds "very dirty and noisy" — sample-format-grade
+noise on top of an otherwise recognizable track.
+
+**Diagnosis**: the sample path itself was clean (signed MOD bytes, 0x80-centered
+conversion, LLE-shaped downmix all correct — `mod_form.txt` confirms standard 8-bit
+signed samples). The defect was in `gsmodplayer.cpp`: 4xx vibrato and 7xx tremolo were
+rendered **per quantum** (37.5 kHz) — the sine position advanced `rate*64` every 26.7 µs,
+producing 1.1–17 kHz sine sweeps = FM/ring modulation across the entire mix; the vibrato
+depth was also 4x the canonical `sine*depth/128` and tremolo `(sine*depth)/64` chopped
+near full scale. ProTracker semantics (and the firmware's CHFADV cadence) render these
+effects **per tempo tick** (~50 Hz), holding the delta for the whole tick.
+
+**Fix** (`gsmodplayer.h`/`.cpp`, 2026-09-21): per-tick pass in `processTick()` after the
+effect loop — vibrato composes `sine*depth/128` onto the current period for the tick
+(without permanently altering it), tremolo stores a `tremoloDelta` (`int8_t`, added in
+`ChannelState`) applied in `fetchChannelOutput` as `clamp(volume + tremoloDelta, 0, 63)`;
+`fetchChannelOutput` no longer re-derives any modulation per quantum.
+
+**Verification**: GS test suite green; live NEARTHGS re-run on LW — user-confirmed
+"sound with good quality appeared" (2026-09-21). The personalities TDD §5.3 originally
+documented "rendered per quantum" as design — corrected to per tick.
+
 ## 7. Non-Bugs (verified correct — do not "fix")
 
 - **`data_pending=true` after COM31**: `OUT (OUTRG)` (`gsOut` case `0x03`) sets
@@ -333,6 +437,12 @@ interrupt-driven player continuously (68 % of timeline samples in player code on
   (data flag clears when the firmware consumes DATRG).
 - **Static channel samples while paused** — a sampling artifact of the observing script
   (pause freezes the emulator), not a playback defect.
+- **Deferred personality switch while paused** (personalities work, 2026-09-21) — the
+  WebAPI `switch_personality` action only stores the pending target;
+  `SoundManager::handleFrameStart` consumes it, and the paused main loop never reaches a
+  frame boundary. A switch "not applying" on a paused instance applies at the first
+  frame after resume — by design (the same frame-boundary contract as the core-rate
+  switch), not a lost request.
 
 ## 8. Verification Environment Notes
 
@@ -357,7 +467,10 @@ interrupt-driven player continuously (68 % of timeline samples in player code on
 | ZX loader program (58 B) | `scratch/gs_prog.json`; module bytes `scratch/gs_mod.json` |
 | Covox / early verification | `scratch/gs_zx_verify.sh`, `scratch/gs_zx_verify2.sh` |
 | Scorpion boot-race probes | `scratch/gs_scorp_zxtrace.sh`, `scratch/gs_timeline_probe.sh`, `scratch/gs_disasm.py` |
-| Emulator implementation | `core/src/emulator/sound/chips/soundchip_gs.cpp` / `.h` |
+| NEARTHGS RAM timeline / trio probes | `scratch/gs_nearth_ram.py`, `scratch/gs_nearth_trio2.sh` |
+| LW mod player (BUG-9 fix) | `core/src/emulator/sound/chips/gs/gsmodplayer.cpp` / `.h` |
+| Personalities live smoke log | `scratch/gs-smoke4-app.log` (+ `gs-smoke3-app.log`) |
+| Emulator implementation | `core/src/emulator/sound/chips/gs/soundchip_gs.cpp` / `.h` |
 | Firmware sources | `/Volumes/TB4-4Tb/Projects/emulators/github/GeneralSound/firmware/src/v105b/src/` (`COM_L`, `COM_H`, `INIT_L`, `LOAD_L`, `ENGINE_L`, `QUANTUM`, `PLAY`, `GEN_L`, `INTTST` `.a80`) |
 | In-tree firmware copy | [`materials/gs/gs-firmware/`](materials/gs/gs-firmware/) |
 | Test module | `mods/_test/_test_spd_aft_loop.mod` in the GeneralSound repo |
@@ -375,3 +488,6 @@ interrupt-driven player continuously (68 % of timeline samples in player code on
       standing rule: every mechanism GS software uses (COM0E/COM16/COM18/COM30/COM31,
       interrupts, DAC, mixing) is verified working — a new silent title means a new
       investigation, not a reopened old one.
+- [x] The second report (NEARTHGS.TRD silent after a clean module load) was root-caused as
+      BUG-7 (ini parse, 128 KB card) + BUG-8 (data latch lost the param-first trio), both
+      fixed 2026-09-20 — the standing rule held again.

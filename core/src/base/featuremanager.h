@@ -38,6 +38,7 @@ constexpr const char* const kTurboTape = "turbotape";
 constexpr const char* const kFastDisk = "fastdisk";
 constexpr const char* const kHud = "hud";
 constexpr const char* const kKempstonMouse = "kempstonmouse";
+constexpr const char* const kGSLightweight = "gs_lightweight";
 
 // Feature Aliases
 constexpr const char* const kDebugModeAlias = "dbg";
@@ -58,6 +59,7 @@ constexpr const char* const kTurboTapeAlias = "ttape";
 constexpr const char* const kFastDiskAlias = "fdisk";
 constexpr const char* const kHudAlias = "hud";
 constexpr const char* const kKempstonMouseAlias = "kmouse";
+constexpr const char* const kGSLightweightAlias = "gslw";
 
 // Feature Descriptions
 constexpr const char* const kDebugModeDesc = "Master debug mode, enables/disables all debug features for performance";
@@ -92,6 +94,10 @@ constexpr const char* const kHudDesc =
 
 constexpr const char* const kKempstonMouseDesc =
     "Kempston Mouse on the bus (when fitted by the machine config [INPUT] Mouse=KEMPSTON). Off: the mouse ports are not decoded.";
+
+constexpr const char* const kGSLightweightDesc =
+    "General Sound lightweight personality: fit the in-tree ProTracker player card (no coprocessor firmware needed). Off keeps the "
+    "personality from [SOUND] GSType; runtime switching carries the host mailbox across.";
 
 // Categories
 constexpr const char* const kCategoryDebug = "debug";

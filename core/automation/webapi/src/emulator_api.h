@@ -813,8 +813,11 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
 
     /// @brief POST /api/v1/emulator/{id}/control/audio/gs — body:
-    ///        {"action": "reset|reset_card|nmi|send_command|send_data|read_status|read_data", "value": 0..255}
-    ///        Host-port semantics (each flushes the GS coprocessor first)
+    ///        {"action": "reset|reset_card|nmi|send_command|send_data|read_status|read_data|switch_personality",
+    ///         "value": 0..255, "personality": "z80|lle|lw|lightweight"}
+    ///        Host-port semantics (each flushes the GS coprocessor first);
+    ///        switch_personality requests a runtime personality swap applied
+    ///        at the next frame boundary
     void postControlAudioGS(const drogon::HttpRequestPtr& req,
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                             const std::string& id) const;
