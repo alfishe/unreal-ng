@@ -230,8 +230,14 @@ TEST(SoundChip_GeneralSound_BootDiag, 3_CovoxStreamProducesAudio)
     const uint64_t dacBefore = h.chip->getActivityCounters().dacFetches;
 
     // 0x80 (silence) for 16 frames, then a square wave between 0xD0/0x30
+    // The covox loop has no flag-wait (design: gsmailbox.h, COM0E) - it
+    // polls DATRG as fast as the GS core executes, ~7488 fetches/frame
+    // (~10x the 37.5 kHz interrupt rate), not throttled by anything the
+    // host does. 2000 frames overshot the 1,000,000-fetch floor below by
+    // ~15x (measured: 748800 fetches from just the first 100 frames); 160
+    // clears it with a comfortable margin.
     int peak = 0;
-    for (int i = 0; i < 2000; i++)
+    for (int i = 0; i < 160; i++)
     {
         const uint8_t sample = static_cast<uint8_t>(0x80 + 80 * ((i / 16) % 2));
         h.chip->portDeviceOutMethod(kPortData, sample);
