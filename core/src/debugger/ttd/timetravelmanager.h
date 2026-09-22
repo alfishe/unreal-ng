@@ -1171,28 +1171,46 @@ public:
     /// the hash code knowing which machine is running.
     inline const TTDPeripheralRegistry& GetPeripheralRegistry() const { return _peripherals; }
 
-    /// @brief Re-point a single already-registered peripheral slot at a new
-    /// object, without touching any other slot.
+    /// @brief Re-point a peripheral slot at a new object, for an owner that
+    /// replaces its own device instance at runtime.
     ///
-    /// For a peripheral whose owner can replace the underlying instance at
-    /// runtime (currently: General Sound personality switching,
-    /// SoundManager::switchGeneralSoundCard deletes the outgoing card and
-    /// installs a new one under the same GeneralSoundCard* the SoundManager
-    /// exposes). RegisterModelPeripherals only runs at StartRecording/session
-    /// load, so a switch that happens while a recording is already active
-    /// would otherwise leave the registry holding a dangling pointer to the
+    /// Currently: General Sound personality switching. SoundManager::
+    /// switchGeneralSoundCard deletes the outgoing card and installs a new
+    /// one under the same GeneralSoundCard* the SoundManager exposes.
+    /// RegisterModelPeripherals only runs at StartRecording/session load, so
+    /// a switch that happens while a recording is already active would
+    /// otherwise leave the registry holding a dangling pointer to the
     /// just-deleted card - the next checkpoint's TTDSaveState call would be a
     /// use-after-free. The owner calls this immediately after the swap
     /// (whether or not TTD is currently recording - the registry array
     /// persists after StopRecording too, ready for the next
     /// StartRecording/seek, so a stale pointer left uncorrected here would
     /// resurface later even outside an active recording).
-    /// A null TimeTravelManager pointer (TTD unavailable) or an id with no
-    /// existing registration (unmapped by RegisterModelPeripherals for the
-    /// active model) is a caller error to guard against, not this method's
-    /// job - it simply forwards to the registry the same way
-    /// RegisterModelPeripherals's own per-device calls do.
-    inline void UpdatePeripheral(PeripheralId id, TTDSerializable* device) { _peripherals.Register(id, device); }
+    ///
+    /// @p newId is the slot to (re-)register @p device under - the device's
+    /// own `TTDPeripheralId()`, not necessarily the slot the previous device
+    /// occupied: the GS personalities register under different ids
+    /// (GeneralSound for LLE, GeneralSoundLightweight for LW - same pattern
+    /// as the TurboSound/TSFM slot split in RegisterModelPeripherals), so a
+    /// personality switch moves the registration to a different slot rather
+    /// than reusing the old one. @p oldId, if different from @p newId, is
+    /// unregistered first - leaving it registered would keep offering a
+    /// blob-less capture for a slot nothing occupies anymore, and would leave
+    /// a stale pointer in that slot exactly as bad as the use-after-free this
+    /// method exists to prevent had @p device simply been registered under
+    /// the wrong slot instead. Pass the same value for both when the device
+    /// keeps its slot (the common case for every other peripheral type).
+    ///
+    /// A null TimeTravelManager pointer (TTD unavailable) is a caller error
+    /// to guard against, not this method's job. An @p oldId with no existing
+    /// registration (e.g. no GS card was fitted at RegisterModelPeripherals
+    /// time) is harmless - Unregister on an absent id is a no-op.
+    inline void UpdatePeripheral(PeripheralId oldId, PeripheralId newId, TTDSerializable* device)
+    {
+        if (oldId != newId)
+            _peripherals.Unregister(oldId);
+        _peripherals.Register(newId, device);
+    }
 
     /// @brief Number of model-RAM pages (set at StartRecording from the
     /// active model's RAM size).

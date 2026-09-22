@@ -78,7 +78,9 @@ TEST_F(TTDGeneralSoundSwitch_Test, SwitchDuringRecordingRepointsRegistry)
     ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
 
     GeneralSoundCard* before = sm->getGeneralSound();
-    ASSERT_EQ(context->pTimeTravelManager->GetPeripheralRegistry().GetDevice(ttd::PeripheralId::GeneralSound),
+    const ttd::PeripheralId beforeId = before->TTDPeripheralId();
+    ASSERT_EQ(beforeId, ttd::PeripheralId::GeneralSound) << "ATM710 boots LLE";
+    ASSERT_EQ(context->pTimeTravelManager->GetPeripheralRegistry().GetDevice(beforeId),
               static_cast<ttd::TTDSerializable*>(before))
         << "registry must have picked up the boot-time card at StartRecording";
 
@@ -87,10 +89,17 @@ TEST_F(TTDGeneralSoundSwitch_Test, SwitchDuringRecordingRepointsRegistry)
     ASSERT_NE(after, nullptr);
     EXPECT_NE(after, before) << "the switch must replace the card object (the freed pointer)";
 
-    EXPECT_EQ(context->pTimeTravelManager->GetPeripheralRegistry().GetDevice(ttd::PeripheralId::GeneralSound),
+    // LLE and LW register under different peripheral ids (GeneralSound vs
+    // GeneralSoundLightweight - same split as the TurboSound/TSFM slots), so
+    // the switch must move the registration, not just repoint the same slot.
+    const ttd::PeripheralId afterId = after->TTDPeripheralId();
+    ASSERT_EQ(afterId, ttd::PeripheralId::GeneralSoundLightweight);
+    EXPECT_EQ(context->pTimeTravelManager->GetPeripheralRegistry().GetDevice(afterId),
               static_cast<ttd::TTDSerializable*>(after))
-        << "UpdatePeripheral must re-point the registry at the new card - "
+        << "UpdatePeripheral must register the new card under its own slot - "
            "otherwise the next checkpoint saves through a dangling pointer";
+    EXPECT_EQ(context->pTimeTravelManager->GetPeripheralRegistry().GetDevice(beforeId), nullptr)
+        << "the outgoing personality's slot must be vacated, not left pointing at the freed card";
 
     context->pTimeTravelManager->StopRecording();
 }
@@ -111,11 +120,11 @@ TEST_F(TTDGeneralSoundSwitch_Test, CheckpointAfterSwitchCapturesTheNewCard)
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
     context->pTimeTravelManager->GetPeripheralRegistry().CaptureAll(blobs);
 
-    const auto it = blobs.find(static_cast<uint8_t>(ttd::PeripheralId::GeneralSound));
-    ASSERT_NE(it, blobs.end()) << "GeneralSound must still be registered and captured post-switch";
+    const auto afterId = static_cast<uint8_t>(after->TTDPeripheralId());
+    const auto it = blobs.find(afterId);
+    ASSERT_NE(it, blobs.end()) << "the LW card's own slot must still be registered and captured post-switch";
 
-    const auto restored = ttd::TTDPeripheralRegistry::DecodeBlob(
-        static_cast<uint8_t>(ttd::PeripheralId::GeneralSound), it->second);
+    const auto restored = ttd::TTDPeripheralRegistry::DecodeBlob(afterId, it->second);
     EXPECT_EQ(restored.size(), after->TTDStateSize())
         << "captured blob must match the NEW (LW) card's state size, not a stale LLE one";
 

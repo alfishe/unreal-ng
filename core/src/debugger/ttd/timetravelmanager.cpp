@@ -1061,8 +1061,13 @@ bool TimeTravelManager::RegisterModelPeripherals(std::string* err)
         _peripherals.Register(PeripheralId::Covox, _context->pSoundManager->getCovox());
         // General Sound card ([SOUND] GSType=Z80, GS design §5.3): absent when
         // the config did not fit one - the registry then simply carries no
-        // blob for it, same as Covox above
-        _peripherals.Register(PeripheralId::GeneralSound, _context->pSoundManager->getGeneralSound());
+        // blob for it, same as Covox above. Registered under the live card's
+        // own peripheral id, same pattern as the TurboSound slot just above -
+        // LLE (GeneralSound) and LW (GeneralSoundLightweight) are different
+        // slots, so a session recorded on one personality cannot silently
+        // restore into the other.
+        if (GeneralSoundCard* gs = _context->pSoundManager->getGeneralSound())
+            _peripherals.Register(gs->TTDPeripheralId(), gs);
     }
     _peripherals.Register(PeripheralId::Tape, _context->pTape);
     // Kempston Mouse: core device on every model (design §6.1 - not a model-specific latch)

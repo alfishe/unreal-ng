@@ -1129,6 +1129,9 @@ bool SoundManager::switchGeneralSoundCard(GSTypeKind target)
     std::vector<uint8_t> moduleBytes;
     bool wasPlaying = false;
     const bool hadModule = _gs->captureModuleUpload(moduleBytes, wasPlaying);
+    // The outgoing card's TTD slot - captured before delete below, since
+    // it's read through the about-to-be-freed pointer (see 3b.)
+    const ttd::PeripheralId outgoingTtdId = _gs->TTDPeripheralId();
 
     // 2. Unregister the host ports first - the decoder holds the outgoing
     //    card's raw pointer and must never dispatch into a deleted object
@@ -1159,17 +1162,20 @@ bool SoundManager::switchGeneralSoundCard(GSTypeKind target)
     _gs = card;
 
     // 3b. Re-point the TTD peripheral registry at the new card. TTD registers
-    //     GeneralSound by raw pointer only at StartRecording/session load
+    //     the GS slot by raw pointer only at StartRecording/session load
     //     (RegisterModelPeripherals) - without this, a switch during an
     //     active recording leaves the registry holding a pointer to the card
     //     just deleted above, and the next checkpoint's TTDSaveState call is
-    //     a use-after-free. Safe to call unconditionally: a null
-    //     TimeTravelManager (TTD unavailable) or an id the current model
-    //     never registered (no GS card fitted at RegisterModelPeripherals
-    //     time - can't happen here, we already know _gs was non-null) both
-    //     no-op harmlessly.
+    //     a use-after-free. LLE and LW register under different peripheral
+    //     ids (GeneralSound vs GeneralSoundLightweight, same split as the
+    //     TurboSound/TSFM slots) so a checkpoint recorded on one personality
+    //     cannot silently restore into the other - UpdatePeripheral moves the
+    //     registration from the outgoing card's slot to the new card's own
+    //     TTDPeripheralId(), which differs across a personality switch by
+    //     construction. Safe to call unconditionally: a null
+    //     TimeTravelManager (TTD unavailable) no-ops.
     if (_context && _context->pTimeTravelManager)
-        _context->pTimeTravelManager->UpdatePeripheral(ttd::PeripheralId::GeneralSound, _gs);
+        _context->pTimeTravelManager->UpdatePeripheral(outgoingTtdId, _gs->TTDPeripheralId(), _gs);
 
     // 4. Re-register the host ports for the new card (#B3/#BB/#33, GS design §6)
     bool portsRegistered = true;
