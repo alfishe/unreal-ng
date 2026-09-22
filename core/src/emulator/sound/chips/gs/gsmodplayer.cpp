@@ -181,6 +181,13 @@ uint16_t GSModPlayer::periodForNote(int note, uint8_t finetune)
 
 uint32_t GSModPlayer::incrementForPeriod(uint16_t period)
 {
+    // A channel that has never played a note (or an explicit period=0, which
+    // no valid ProTracker note encodes) has nothing to advance by - integer
+    // division below would be by zero (SIGFPE on x86, silently 0 on ARM64;
+    // either way, undefined behavior worth not reaching).
+    if (period == 0)
+        return 0;
+
     // Amiga PAL rate: freq = 3546895 / period. Per-quantum 16.16 step =
     // freq * 65536 / 37500 - the firmware's GSFRQTB+CHFADV equivalent
     // resampled onto the card's 37.5 kHz sample clock
@@ -243,6 +250,12 @@ uint8_t GSModPlayer::currentPattern() const
 
 void GSModPlayer::setBpm(uint8_t bpm)
 {
+    // 0 is not a valid tempo (same rule the 0xF effect path already applies
+    // via its "param != 0" guard) - ignoring it here avoids a divide-by-zero
+    // below instead of merely relying on every caller to filter it first.
+    if (bpm == 0)
+        return;
+
     _bpm = bpm;
     // FXF: TICKLEN = 37500/(0.4*BPM) quanta, floored like the firmware's
     // integer math (the Fxx effect path uses the same expression)
@@ -367,7 +380,7 @@ void GSModPlayer::processTick()
         {
             _breakFlag = false;
             _row = (_breakRow < kRowsPerPattern) ? _breakRow : 0;
-            if (_songPosition + 1 >= _songLength)
+            if (static_cast<size_t>(_songPosition) + 1 >= _songLength)
                 wrapSong();
             else
                 _songPosition = static_cast<uint8_t>(_songPosition + 1);
@@ -378,7 +391,7 @@ void GSModPlayer::processTick()
         if (_row >= kRowsPerPattern)
         {
             _row = 0;
-            if (_songPosition + 1 >= _songLength)
+            if (static_cast<size_t>(_songPosition) + 1 >= _songLength)
                 wrapSong();
             else
                 _songPosition = static_cast<uint8_t>(_songPosition + 1);

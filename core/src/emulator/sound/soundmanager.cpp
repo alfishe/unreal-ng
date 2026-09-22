@@ -934,19 +934,6 @@ void SoundManager::updateDrcControl()
     }
 
     _drcResampler.setRatio(baseRatio * (1.0 + trim));
-
-    // TEMP DIAG (GS pitch-drift investigation): controller internal state
-    // summary every ~5s on stderr. Remove with the diag test.
-    static const bool drcDiag = getenv("UNREAL_AUDIO_DIAG") != nullptr;
-    static uint32_t drcDiagFrames = 0;
-    if (drcDiag && (drcDiagFrames++ % 250) == 0)
-    {
-        fprintf(stderr,
-                "[drc-diag] engaged=%d core=%zu dev=%.0f occ=%u occMs=%.2f err=%.3f I=%.2f trim=%.5f ratio=%.6f\n",
-                engaged ? 1 : 0, _coreRate, devRate, occCell->load(std::memory_order_relaxed), occMs, err,
-                _drcErrIntegral, trim, baseRatio * (1.0 + trim));
-        fflush(stderr);
-    }
 }
 
 /// @brief Update feature cache flags from FeatureManager.

@@ -269,20 +269,25 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                         {
                             if (response.isMember("value"))
                             {
-                                done(ToolResult::Ok("GS " + action.substr(3) + " -> " + std::to_string(response["value"].asInt()),
-                                                    std::move(response)));
+                                std::string message = "GS " + action.substr(3) + " -> " + std::to_string(response["value"].asInt());
+                                done(ToolResult::Ok(std::move(message), std::move(response)));
                             }
                             else if (action == "gs_switch_personality")
                             {
-                                done(ToolResult::Ok("GS personality switch to '" + response.get("personality", "").asString() +
-                                                        "' requested (" + response.get("note", "").asString() + ")",
-                                                    std::move(response)));
+                                // Built in a local first: argument evaluation order in a
+                                // function call is unspecified, so inlining this string
+                                // expression alongside std::move(response) let the compiler
+                                // legally move response out before reading it - GCC did,
+                                // Clang happened not to (empty summary on GCC builds only).
+                                std::string message = "GS personality switch to '" + response.get("personality", "").asString() +
+                                                        "' requested (" + response.get("note", "").asString() + ")";
+                                done(ToolResult::Ok(std::move(message), std::move(response)));
                             }
                             else if (action == "gs_dump_module")
                             {
-                                done(ToolResult::Ok("GS module dumped: " + std::to_string(response.get("bytes", 0).asUInt64()) +
-                                                        " bytes -> " + response.get("path", "").asString(),
-                                                    std::move(response)));
+                                std::string message = "GS module dumped: " + std::to_string(response.get("bytes", 0).asUInt64()) +
+                                                        " bytes -> " + response.get("path", "").asString();
+                                done(ToolResult::Ok(std::move(message), std::move(response)));
                             }
                             else
                             {
