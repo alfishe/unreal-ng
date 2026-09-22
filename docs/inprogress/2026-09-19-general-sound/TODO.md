@@ -174,3 +174,13 @@ See [`materials/README.md`](materials/README.md) for complete index.
 - [ ] LW->LLE replay still freezes emulation for the replay duration
       (~17 s on a 381 KB module) - consider chunking across frames
 
+## TTD + GS personality switching (2026-09-22)
+
+- [x] BUG-17: TTD peripheral registry held a dangling `GeneralSoundCard*`
+      across a personality switch during an active recording (reproduced as
+      a real SIGSEGV) - fixed with `TimeTravelManager::UpdatePeripheral`,
+      3 regression tests added (`ttdgeneralsoundswitch_test.cpp`)
+- [ ] TTD restore-report (`sizeMismatches`/`missingBlobs`/`unclaimedBlobs`)
+      not surfaced on any automation surface - seeking across a
+      personality/module-size boundary silently leaves GS state stale; see
+      `diagnostics-gaps-proposal.md` §7.2

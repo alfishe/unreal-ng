@@ -1171,6 +1171,29 @@ public:
     /// the hash code knowing which machine is running.
     inline const TTDPeripheralRegistry& GetPeripheralRegistry() const { return _peripherals; }
 
+    /// @brief Re-point a single already-registered peripheral slot at a new
+    /// object, without touching any other slot.
+    ///
+    /// For a peripheral whose owner can replace the underlying instance at
+    /// runtime (currently: General Sound personality switching,
+    /// SoundManager::switchGeneralSoundCard deletes the outgoing card and
+    /// installs a new one under the same GeneralSoundCard* the SoundManager
+    /// exposes). RegisterModelPeripherals only runs at StartRecording/session
+    /// load, so a switch that happens while a recording is already active
+    /// would otherwise leave the registry holding a dangling pointer to the
+    /// just-deleted card - the next checkpoint's TTDSaveState call would be a
+    /// use-after-free. The owner calls this immediately after the swap
+    /// (whether or not TTD is currently recording - the registry array
+    /// persists after StopRecording too, ready for the next
+    /// StartRecording/seek, so a stale pointer left uncorrected here would
+    /// resurface later even outside an active recording).
+    /// A null TimeTravelManager pointer (TTD unavailable) or an id with no
+    /// existing registration (unmapped by RegisterModelPeripherals for the
+    /// active model) is a caller error to guard against, not this method's
+    /// job - it simply forwards to the registry the same way
+    /// RegisterModelPeripherals's own per-device calls do.
+    inline void UpdatePeripheral(PeripheralId id, TTDSerializable* device) { _peripherals.Register(id, device); }
+
     /// @brief Number of model-RAM pages (set at StartRecording from the
     /// active model's RAM size).
     inline uint16_t GetModelRamPages() const { return _modelRamPages; }

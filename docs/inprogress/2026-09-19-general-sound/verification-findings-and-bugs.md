@@ -529,3 +529,47 @@ Root causes found (all in gsmodplayer.cpp, all with regression tests):
 Operational: every unreal-qt build copies data/configs into the app bundle
 (unreal-qt/CMakeLists.txt), so a GSType edit in cmake-build-*/bin/configs is
 overwritten on the next build - edit data/configs/<machine>/unreal.ini.
+
+## 2026-09-22 - BUG-17: TTD use-after-free on GS personality switch
+
+Found while auditing what TTD needs from the diagnostics-gaps work (all 5
+automation surfaces gained a `switch_personality` action this session -
+making the scenario below trivially reachable, not hypothetical). Root cause
+and fix: `docs/inprogress/2026-09-19-general-sound/diagnostics-gaps-proposal.md`
+§6.1.
+
+**Symptom (reproduced, not just theorized):** `SIGSEGV` (exit 139) inside a
+core-tests run, isolated to `TTDPeripheralRegistry::CaptureAll` reading
+through a `GeneralSoundCard*` that had already been `delete`d by
+`SoundManager::switchGeneralSoundCard`.
+
+**Repro conditions:** TTD recording active (any of WebAPI/MCP/CLI/Lua/Python
+can start one) + a GS personality switch (any of the same 5 surfaces) while
+that recording is still running, followed by the next periodic checkpoint
+(`OnFrameBoundary`) or an explicit capture.
+
+**Fix:** `TimeTravelManager::UpdatePeripheral(PeripheralId, TTDSerializable*)`
+(`core/src/debugger/ttd/timetravelmanager.h`) re-points a single already-
+registered slot without touching `RegisterModelPeripherals`'s once-at-start
+registration of everything else; `SoundManager::switchGeneralSoundCard`
+(`core/src/emulator/sound/soundmanager.cpp`) calls it immediately after
+`_gs = card` (the pointer swap), unconditionally - a null
+`pTimeTravelManager` or an id the model never registered both no-op.
+
+**Regression test:** `core/tests/debugger/ttd/ttdgeneralsoundswitch_test.cpp`
+(3 tests). `CheckpointAfterSwitchCapturesTheNewCard` reproduces the SIGSEGV
+directly when the fix is reverted (verified by hand: `exit 139`, no gtest
+output past `[ RUN ]` - the crash happens inside the library call, gtest
+never gets to report a failure) and passes with it in place.
+`SwitchDuringRecordingRepointsRegistry` gives a deterministic (non-crash-
+dependent) identity check for the same fix. `SwitchWithoutRecordingIsUnaffected`
+covers the far more common case - the switch tests in
+`soundchip_gslw_test.cpp` all run with no TTD manager involved at all.
+
+**Related, not yet fixed:** seeking a TTD timeline across a checkpoint
+boundary where the registered GS card's `TTDStateSize()` differs from what
+was recorded (a different personality, or - LW only - a different uploaded
+module size) hits `RestoreAll`'s existing `sizeMismatches` guard: the load is
+skipped, not crashed, but GS state is then silently stale for that
+checkpoint with no counter surfaced to any automation surface. See proposal
+§6.2 - documented as a known limitation, not yet addressed.

@@ -1171,6 +1171,19 @@ bool SoundManager::switchGeneralSoundCard(GSTypeKind target)
     delete _gs;
     _gs = card;
 
+    // 3b. Re-point the TTD peripheral registry at the new card. TTD registers
+    //     GeneralSound by raw pointer only at StartRecording/session load
+    //     (RegisterModelPeripherals) - without this, a switch during an
+    //     active recording leaves the registry holding a pointer to the card
+    //     just deleted above, and the next checkpoint's TTDSaveState call is
+    //     a use-after-free. Safe to call unconditionally: a null
+    //     TimeTravelManager (TTD unavailable) or an id the current model
+    //     never registered (no GS card fitted at RegisterModelPeripherals
+    //     time - can't happen here, we already know _gs was non-null) both
+    //     no-op harmlessly.
+    if (_context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->UpdatePeripheral(ttd::PeripheralId::GeneralSound, _gs);
+
     // 4. Re-register the host ports for the new card (#B3/#BB/#33, GS design §6)
     bool portsRegistered = true;
     if (decoder)
