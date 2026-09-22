@@ -56,6 +56,17 @@ public:
     {
         (void)suppressed;
     }
+
+    /// Sample-generation clocking of the emulated core may be skipped. Pushed once per frame by the
+    /// manager: true only while the output stage is suppressed AND time-travel debugging neither records
+    /// nor replays. What the CPU can observe (registers, timers, busy, status, IRQ) stays exact; only the
+    /// internal synthesis state (e.g. FM operator phases / envelopes), which feeds nothing but the sound
+    /// output, is frozen. Under TTD it is part of the hashed core state, so it is never skipped there.
+    /// Devices without such state ignore it
+    virtual void setCoreSynthesisSkipped(bool skipped)
+    {
+        (void)skipped;
+    }
     /// endregion </Lifecycle>
 
     /// region <Rate / quality>

@@ -372,6 +372,12 @@ public:
 	// master clocking function
 	uint32_t clock(uint32_t chanmask);
 
+	// [unreal-ng patch] advance the clock counter by 'count' clocks WITHOUT synthesising: for a core whose
+	// output is muted. The counter's low bits are CPU-observable (timer B first-load uses
+	// -(m_total_clocks & 15), see engine_mode_write), so a skipped stretch must still be counted;
+	// operator phases and envelopes (sound output only) are left frozen
+	void skip_clocks(uint32_t count) { m_total_clocks += uint8_t(count); }
+
 	// compute sum of channel outputs
 	void output(output_data &output, uint32_t rshift, int32_t clipmax, uint32_t chanmask) const;
 

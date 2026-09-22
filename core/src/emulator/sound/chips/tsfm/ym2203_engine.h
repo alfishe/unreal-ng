@@ -122,6 +122,13 @@ public:
         return int16_t(m_last_fm.data[0]);
     }
 
+    /// Count @p count FM sample clocks without synthesising them (muted core, see
+    /// ITurboSoundDevice::setCoreSynthesisSkipped): keeps the CPU-observable clock counter exact
+    void skipFmClocks(uint32_t count)
+    {
+        m_fm.skip_clocks(count);
+    }
+
     uint32_t fmClockPrescale() const
     {
         return m_fm.clock_prescale();  // 6 / 3 / 2
