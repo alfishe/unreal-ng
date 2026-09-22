@@ -405,13 +405,42 @@ Provides reliable test data path resolution across different execution environme
 
 TEST_F(LoaderTest, LoadFile)
 {
-    // Get path to test data file
+    // Get path to test data file (read-only fixture under testdata/ - never write here)
     std::string path = TestPathHelper::GetTestDataPath("loaders/sna/test.sna");
     
     // Use the path
     LoaderSNA loader(_context, path);
 }
 ```
+
+`GetTestDataPath` resolves fixtures checked into `testdata/` - it is for **input only**. Any file a test
+*writes* (a save-roundtrip target, a synthetic ROM bundle, a dumped session) belongs under `scratch/` instead,
+via one of:
+
+- `TestPathHelper::GetScratchDir()` - the `<project_root>/scratch` directory itself (created on demand).
+- `TestPathHelper::GetTestScratchPath("name.ext")` - an absolute path under `scratch/` with a fixed leaf name.
+  Fine for a test that never runs concurrently with another copy of itself writing the same name.
+- `TestPathHelper::GetUniqueTestScratchPath("name.ext")` - the same, with the current process id inserted into
+  the filename stem (`name.ext` -> `name_29987.ext`). Parallel GTest shards (see
+  [Parallel Test Execution](#parallel-test-execution)) run several copies of the test binary concurrently, so any
+  scratch artifact with a name shared across processes lets one shard's cleanup delete another shard's
+  in-progress file - prefer this over `GetTestScratchPath` whenever a test could plausibly run under sharding
+  (which, in practice, is essentially always).
+
+Never write to the OS temp directory or a hardcoded path (`/tmp/...`, `C:\Temp\...`) - those aren't cleaned up
+by CI and aren't scoped to the repository. See
+[Local RAII cleanup helpers (ScopedTestFile)](#local-raii-cleanup-helpers-scopedtestfile) below for how to make
+sure a scratch file a test creates is actually removed afterward, and
+[Parallel Test Execution](#parallel-test-execution) for the shard-isolation rule this all exists to satisfy.
+
+### Local RAII cleanup helpers (ScopedTestFile)
+
+Do not add a new shared helper file or class (e.g. bolting a `ScopedTestFile` onto `testpathhelper.h`) just to
+delete a scratch file after a test. Declare a small, local RAII guard in an anonymous namespace at the top of the
+test `.cpp` file that needs it instead - see `core/tests/loaders/snapshot/loader_z80_test.cpp` or
+`core/tests/loaders/disk/loader_dsk_test.cpp` for the pattern, and
+[Parallel Test Execution](#parallel-test-execution) for why a bare trailing `remove()` call is not enough on its
+own (an earlier `ASSERT_*` failure skips it, leaking the file).
 
 ### TestTimingHelper
 
@@ -1021,6 +1050,53 @@ wait
 - Static/global variables modified between tests
 - Singleton state not reset in TearDown
 - File system conflicts (scratch files/directories with fixed names shared across processes)
+
+**Cleanup must be guaranteed, not just attempted at the end of the test.** A bare `remove(path.c_str())` (or
+`std::filesystem::remove`/`remove_all`) as the last statement in a `TEST_F` body only runs if every `ASSERT_*`
+above it passed - `ASSERT_*` expands to a `return;` on failure, which skips every statement after it, including
+that cleanup call, and leaves the file (or directory) behind in `scratch/` permanently. `EXPECT_*` does not have
+this problem (it doesn't return early), but any test that mixes file creation with `ASSERT_*` checks needs RAII
+cleanup instead of a trailing call.
+
+The fix used throughout this suite (see `core/tests/loaders/snapshot/loader_z80_test.cpp`,
+`core/tests/loaders/disk/loader_dsk_test.cpp`, and others) is a small `ScopedTestFile` class, declared locally in
+an anonymous namespace at the top of the test `.cpp` file (never added to a shared helper header - see
+[Local RAII cleanup helpers (ScopedTestFile)](#local-raii-cleanup-helpers-scopedtestfile) above), whose
+destructor removes the file unconditionally:
+
+```cpp
+namespace
+{
+    class ScopedTestFile
+    {
+    public:
+        explicit ScopedTestFile(std::string path) : _path(std::move(path)) {}
+        ~ScopedTestFile() { std::remove(_path.c_str()); }
+
+        ScopedTestFile(const ScopedTestFile&) = delete;
+        ScopedTestFile& operator=(const ScopedTestFile&) = delete;
+
+        const std::string& path() const { return _path; }
+        operator const std::string&() const { return _path; }
+
+    private:
+        std::string _path;
+    };
+}
+```
+
+Construct it from `TestPathHelper::GetUniqueTestScratchPath(...)` at the point the path is first needed, and drop
+the trailing cleanup call entirely - the destructor fires on every exit path a normal C++ destructor would
+(`ASSERT_*` early return included), the same way it would for any other stack-local RAII object. A directory
+tree needs the same treatment with `std::filesystem::remove_all` instead of `remove` (see `ScopedTestDir` in
+`core/tests/common/filehelper_test.cpp`).
+
+One caveat: `EXPECT_EQ`/`ASSERT_EQ` and other GoogleTest comparisons resolve `operator==` through template
+argument deduction, which does **not** invoke the class's implicit `operator const std::string&()` conversion
+(deduction requires the argument to already be the deduced type). Comparing a `ScopedTestFile` against a
+`std::string` therefore needs an explicit `operator==`/`operator!=` pair (hidden friends, as in the files above)
+- the same applies to any other templated API such as `std::filesystem::path(...)` or `std::filesystem::copy_file`,
+which need `.path()` called explicitly rather than relying on the conversion operator.
 
 ### Filtering Tests
 

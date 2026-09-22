@@ -25,6 +25,35 @@
 using Spec = DiskImage::TrackFormatSpec;
 using TrackOrder = LoaderMGT::TrackOrder;
 
+namespace
+{
+    /// Deletes the file at the given path when it goes out of scope, on every
+    /// exit path (assertion failure included: ASSERT_* returns out of the
+    /// TEST_F body, which still unwinds locals normally). A bare remove() call
+    /// at the end of the test never runs once an earlier ASSERT_* fails,
+    /// leaving scratch files behind.
+    class ScopedTestFile
+    {
+    public:
+        explicit ScopedTestFile(std::string path) : _path(std::move(path)) {}
+        ~ScopedTestFile() { std::error_code ec; std::filesystem::remove(_path, ec); }
+
+        ScopedTestFile(const ScopedTestFile&) = delete;
+        ScopedTestFile& operator=(const ScopedTestFile&) = delete;
+
+        const std::string& path() const { return _path; }
+        operator const std::string&() const { return _path; }
+
+        friend bool operator==(const ScopedTestFile& a, const std::string& b) { return a._path == b; }
+        friend bool operator==(const std::string& a, const ScopedTestFile& b) { return a == b._path; }
+        friend bool operator!=(const ScopedTestFile& a, const std::string& b) { return !(a == b); }
+        friend bool operator!=(const std::string& a, const ScopedTestFile& b) { return !(a == b); }
+
+    private:
+        std::string _path;
+    };
+}
+
 class LoaderMGT_Test : public ::testing::Test
 {
 protected:
@@ -343,8 +372,9 @@ TEST_F(LoaderMGT_Test, Save_RoundTrip)
 
     for (const Case& c : cases)
     {
-        std::string target = scratch(c.target);
-        removeFile(target);
+        std::string targetPath = scratch(c.target);
+        removeFile(targetPath);
+        ScopedTestFile target(targetPath);
 
         LoaderMGT loader(_context, fixture(c.source));
         ASSERT_TRUE(loader.loadImage()) << c.source;
@@ -386,19 +416,20 @@ TEST_F(LoaderMGT_Test, Save_RoundTrip)
     ASSERT_TRUE(loader.serialize(image, TrackOrder::SideMajor, out, warnings));
     EXPECT_EQ(out, imgBytes);
 
-    std::string target = scratch("override.mgt");
-    removeFile(target);
+    std::string targetPath = scratch("override.mgt");
+    removeFile(targetPath);
+    ScopedTestFile target(targetPath);
     loader.setTrackOrder(TrackOrder::SideMajor);
     ASSERT_TRUE(loader.writeImage(target));
     EXPECT_EQ(readFile(target), imgBytes) << "setTrackOrder(SideMajor) must win over the .mgt extension";
-    removeFile(target);
 
     delete image;
 }
 
 TEST_F(LoaderMGT_Test, WriteImage_RefusesNonPlusDGeometry)
 {
-    std::string target = scratch("refused.mgt");
+    std::string targetPath = scratch("refused.mgt");
+    ScopedTestFile target(targetPath);
 
     // Default DiskImage = 16 x 256 TR-DOS tracks
     {

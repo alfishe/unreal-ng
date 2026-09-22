@@ -38,6 +38,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <random>
 #include <sstream>
@@ -65,6 +66,32 @@ namespace
 /// Located at offset 0 of RAM page 0 (CPU address 0x4000).
 /// Used by HashScreen() to bound the framebuffer digest.
 constexpr uint32_t kVramSize = 6912;
+
+/// Deletes the file at the given path when it goes out of scope, on every
+/// exit path (assertion failure included: ASSERT_* returns out of the
+/// TEST_F body, which still unwinds locals normally). A bare remove() call
+/// at the end of the test never runs once an earlier ASSERT_* fails,
+/// leaving scratch files behind.
+class ScopedTestFile
+{
+public:
+    explicit ScopedTestFile(std::string path) : _path(std::move(path)) {}
+    ~ScopedTestFile() { std::error_code ec; std::filesystem::remove(_path, ec); }
+
+    ScopedTestFile(const ScopedTestFile&) = delete;
+    ScopedTestFile& operator=(const ScopedTestFile&) = delete;
+
+    const std::string& path() const { return _path; }
+    operator const std::string&() const { return _path; }
+
+    friend bool operator==(const ScopedTestFile& a, const std::string& b) { return a._path == b; }
+    friend bool operator==(const std::string& a, const ScopedTestFile& b) { return a == b._path; }
+    friend bool operator!=(const ScopedTestFile& a, const std::string& b) { return !(a == b); }
+    friend bool operator!=(const std::string& a, const ScopedTestFile& b) { return !(a == b); }
+
+private:
+    std::string _path;
+};
 
 } // namespace
 
@@ -651,7 +678,7 @@ TEST_F(TTD_Seek_Exhaustive_RoundTrip_Test, DiskFile_WriteAndRead_PreservesAllRef
     ASSERT_EQ(refsBefore.size(), kRecordedFrames + 1);
 
     // Write to a scratch .ttd file.
-    const std::string tmpPath = TestPathHelper::GetUniqueTestScratchPath("ttd_seek_exhaustive_session.ttd");
+    const ScopedTestFile tmpPath(TestPathHelper::GetUniqueTestScratchPath("ttd_seek_exhaustive_session.ttd"));
     {
         std::ofstream out(tmpPath, std::ios::binary | std::ios::trunc);
         ASSERT_TRUE(out.good());
@@ -691,11 +718,6 @@ TEST_F(TTD_Seek_Exhaustive_RoundTrip_Test, DiskFile_WriteAndRead_PreservesAllRef
         EXPECT_EQ(HashScreen(), refsAfter[i].vramHash)
             << "PostDiskFile cp " << i << ": vramHash drift";
     }
-
-    // Clean up the scratch session file (its name is PID-unique, so without
-    // this removal sessions would accumulate in scratch/ run over run)
-    std::error_code removeEc;
-    std::filesystem::remove(tmpPath, removeEc);
 }
 
 // ===========================================================================

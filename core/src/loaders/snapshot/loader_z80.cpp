@@ -21,6 +21,16 @@ LoaderZ80::LoaderZ80(EmulatorContext* context, const std::string& path)
 
 LoaderZ80::~LoaderZ80()
 {
+    // validate() opens _file and leaves it open for stageLoad() to read from
+    // when called via load(); a standalone validate() call (no load()) never
+    // reaches load()'s CloseFile, so close here as a safety net - otherwise
+    // the handle outlives the object and blocks removing the file (Windows).
+    if (_file != nullptr)
+    {
+        FileHelper::CloseFile(_file);
+        _file = nullptr;
+    }
+
     freeStagingMemory();
 }
 

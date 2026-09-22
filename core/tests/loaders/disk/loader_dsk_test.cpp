@@ -21,6 +21,35 @@
 
 using Spec = DiskImage::TrackFormatSpec;
 
+namespace
+{
+    /// Deletes the file at the given path when it goes out of scope, on every
+    /// exit path (assertion failure included: ASSERT_* returns out of the
+    /// TEST_F body, which still unwinds locals normally). A bare remove() call
+    /// at the end of the test never runs once an earlier ASSERT_* fails,
+    /// leaving scratch files behind.
+    class ScopedTestFile
+    {
+    public:
+        explicit ScopedTestFile(std::string path) : _path(std::move(path)) {}
+        ~ScopedTestFile() { std::error_code ec; std::filesystem::remove(_path, ec); }
+
+        ScopedTestFile(const ScopedTestFile&) = delete;
+        ScopedTestFile& operator=(const ScopedTestFile&) = delete;
+
+        const std::string& path() const { return _path; }
+        operator const std::string&() const { return _path; }
+
+        friend bool operator==(const ScopedTestFile& a, const std::string& b) { return a._path == b; }
+        friend bool operator==(const std::string& a, const ScopedTestFile& b) { return a == b._path; }
+        friend bool operator!=(const ScopedTestFile& a, const std::string& b) { return !(a == b); }
+        friend bool operator!=(const std::string& a, const ScopedTestFile& b) { return !(a == b); }
+
+    private:
+        std::string _path;
+    };
+}
+
 class LoaderDSK_Test : public ::testing::Test
 {
 protected:
@@ -427,8 +456,9 @@ TEST_F(LoaderDSK_Test, Save_RoundTrip)
 
     for (const char* name : fixtures)
     {
-        std::string target = scratch("roundtrip.dsk");
-        removeFile(target);
+        std::string targetPath = scratch("roundtrip.dsk");
+        removeFile(targetPath);
+        ScopedTestFile target(targetPath);
 
         LoaderDSK loader(_context, fixture(name));
         ASSERT_TRUE(loader.loadImage()) << name;
@@ -462,7 +492,6 @@ TEST_F(LoaderDSK_Test, Save_RoundTrip)
         ASSERT_TRUE(back.writeImage(target));
         EXPECT_EQ(readFile(target), saved) << name;
 
-        removeFile(target);
         delete reloaded;
         delete image;
     }

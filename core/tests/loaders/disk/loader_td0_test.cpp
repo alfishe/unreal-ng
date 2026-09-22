@@ -21,6 +21,35 @@
 /// Fixtures are produced by core/tests/emulator/io/fdc/tools/td0_image_generator.py; the expected sector
 /// contents of trdos-sample.td0 are recomputed here with the generator's rule (sectorContent()).
 
+namespace
+{
+    /// Deletes the file at the given path when it goes out of scope, on every
+    /// exit path (assertion failure included: ASSERT_* returns out of the
+    /// TEST_F body, which still unwinds locals normally). A bare remove() call
+    /// at the end of the test never runs once an earlier ASSERT_* fails,
+    /// leaving scratch files behind.
+    class ScopedTestFile
+    {
+    public:
+        explicit ScopedTestFile(std::string path) : _path(std::move(path)) {}
+        ~ScopedTestFile() { std::error_code ec; std::filesystem::remove(_path, ec); }
+
+        ScopedTestFile(const ScopedTestFile&) = delete;
+        ScopedTestFile& operator=(const ScopedTestFile&) = delete;
+
+        const std::string& path() const { return _path; }
+        operator const std::string&() const { return _path; }
+
+        friend bool operator==(const ScopedTestFile& a, const std::string& b) { return a._path == b; }
+        friend bool operator==(const std::string& a, const ScopedTestFile& b) { return a == b._path; }
+        friend bool operator!=(const ScopedTestFile& a, const std::string& b) { return !(a == b); }
+        friend bool operator!=(const std::string& a, const ScopedTestFile& b) { return !(a == b); }
+
+    private:
+        std::string _path;
+    };
+}
+
 class LoaderTD0_Test : public ::testing::Test
 {
 protected:
@@ -582,8 +611,9 @@ TEST_F(LoaderTD0_Test, Save_RoundTrip)
 
     for (const char* name : fixtures)
     {
-        std::string target = scratch("roundtrip.td0");
-        removeFile(target);
+        std::string targetPath = scratch("roundtrip.td0");
+        removeFile(targetPath);
+        ScopedTestFile target(targetPath);
 
         LoaderTD0 loader(_context, fixture(name));
         ASSERT_TRUE(loader.loadImage()) << name << ": " << joinWarnings(loader.lastWarnings());
@@ -615,7 +645,6 @@ TEST_F(LoaderTD0_Test, Save_RoundTrip)
         EXPECT_EQ(back.getDriveType(), loader.getDriveType());
         expectSameModel(image, reloaded, name);
 
-        removeFile(target);
         delete reloaded;
         delete image;
     }
@@ -741,8 +770,9 @@ TEST_F(LoaderTD0_Test, Save_Serialize_ByteLayout)
 
 TEST_F(LoaderTD0_Test, Save_FromTrd_ValidatesAsTrdos)
 {
-    std::string target = scratch("from-trd.td0");
-    removeFile(target);
+    std::string targetPath = scratch("from-trd.td0");
+    removeFile(targetPath);
+    ScopedTestFile target(targetPath);
 
     LoaderTRD trd(_context, fixture("loaders/trd/EyeAche.trd"));
     ASSERT_TRUE(trd.loadImage());
@@ -763,17 +793,16 @@ TEST_F(LoaderTD0_Test, Save_FromTrd_ValidatesAsTrdos)
     TRDValidationReport report;
     EXPECT_TRUE(trd.validateTRDOSImage(reloaded, report));
 
-    std::string trdPath = scratch("from-td0.trd");
-    LoaderTRD trdOut(_context, trdPath);
+    std::string trdPathStr = scratch("from-td0.trd");
+    ScopedTestFile trdPath(trdPathStr);
+    LoaderTRD trdOut(_context, trdPathStr);
     trdOut.setImage(reloaded);
-    ASSERT_TRUE(trdOut.writeImage(trdPath));
+    ASSERT_TRUE(trdOut.writeImage(trdPathStr));
     std::vector<uint8_t> a = readFile(fixture("loaders/trd/EyeAche.trd"));
-    std::vector<uint8_t> b = readFile(trdPath);
+    std::vector<uint8_t> b = readFile(trdPathStr);
     ASSERT_EQ(a.size(), b.size());
     EXPECT_EQ(std::memcmp(a.data(), b.data(), a.size()), 0);
 
-    removeFile(target);
-    removeFile(trdPath);
     delete reloaded;
 }
 

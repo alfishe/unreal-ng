@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 #include "emulator/emulatorcontext.h"
 
@@ -58,6 +59,11 @@ public:
 
     /// Arm the one-shot hook for BootNamed (call after the reset, before the CPU runs)
     void Arm(const std::string& name);
+
+    /// Arm the same one-shot hook with an arbitrary, already tokenized TR-DOS command line (e.g. the
+    /// bytes of `CAT`): TR-DOS cold-starts after Reset(RM_DOS) and executes it instead of RUN "boot".
+    /// @p label is used for logging only
+    void ArmCommand(const std::vector<uint8_t>& commandLine, const std::string& label);
     void Disarm();
     bool IsArmed() const { return _armed; }
 
@@ -67,5 +73,6 @@ public:
 private:
     EmulatorContext* _context = nullptr;
     bool _armed = false;
-    std::string _name;
+    std::string _name;                // Log label (file name for BootNamed)
+    std::vector<uint8_t> _commandLine;  // Tokenized line the hook writes over the cold-start RUN "boot"
 };

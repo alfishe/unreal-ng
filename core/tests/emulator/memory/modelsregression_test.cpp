@@ -26,6 +26,31 @@ namespace
 {
     using PortWrite = std::pair<uint16_t, uint8_t>;
 
+    /// Deletes the file at the given path when it goes out of scope, on every
+    /// exit path (BuildMachine failure included). The previous pattern
+    /// deleted the ROM bundle only after the writes loop completed, so a
+    /// BuildMachine failure (ADD_FAILURE + early return) left it behind.
+    class ScopedTestFile
+    {
+    public:
+        explicit ScopedTestFile(std::string path) : _path(std::move(path)) {}
+        ~ScopedTestFile() { std::error_code ec; std::filesystem::remove(_path, ec); }
+
+        ScopedTestFile(const ScopedTestFile&) = delete;
+        ScopedTestFile& operator=(const ScopedTestFile&) = delete;
+
+        const std::string& path() const { return _path; }
+        operator const std::string&() const { return _path; }
+
+        friend bool operator==(const ScopedTestFile& a, const std::string& b) { return a._path == b; }
+        friend bool operator==(const std::string& a, const ScopedTestFile& b) { return a == b._path; }
+        friend bool operator!=(const ScopedTestFile& a, const std::string& b) { return !(a == b); }
+        friend bool operator!=(const std::string& a, const ScopedTestFile& b) { return !(a == b); }
+
+    private:
+        std::string _path;
+    };
+
     /// Logical ROM role names per hardware-reference 5.1 layout of each model's bundle
     /// (the synthetic pages carry their own tags; this only translates a page id to
     /// the role the loader assigned to it in rom.cpp)
@@ -299,6 +324,7 @@ std::vector<ModelsRegressionRow> ModelsRegression_Test::RunSequence(const char* 
 {
     std::vector<ModelsRegressionRow> rows;
     const std::string leaf = std::string(modelName) + "-golden.rom";
+    const ScopedTestFile romGuard(TestPathHelper::GetUniqueTestScratchPath(leaf));
 
     if (!BuildMachine(model, ramSizeKB, trdosPresent, leaf))
     {
@@ -328,9 +354,6 @@ std::vector<ModelsRegressionRow> ModelsRegression_Test::RunSequence(const char* 
         WritePort(write.first, write.second);
         capture(write.first, write.second);
     }
-
-    std::error_code ec;
-    std::filesystem::remove(TestPathHelper::GetUniqueTestScratchPath(leaf), ec);
 
     return rows;
 }

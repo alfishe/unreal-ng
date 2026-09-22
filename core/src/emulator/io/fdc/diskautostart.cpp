@@ -160,14 +160,31 @@ DiskAutostart::Plan DiskAutostart::Prepare(DiskImage& image)
 
 void DiskAutostart::Arm(const std::string& name)
 {
+    // RUN "<name>"
+    std::vector<uint8_t> line;
+    line.push_back(0xF7);
+    line.push_back(0x22);
+    for (char c : name)
+        line.push_back(static_cast<uint8_t>(c));
+    line.push_back(0x22);
+
     _name = name;
+    _commandLine = std::move(line);
     _armed = !name.empty();
+}
+
+void DiskAutostart::ArmCommand(const std::vector<uint8_t>& commandLine, const std::string& label)
+{
+    _name = label;
+    _commandLine = commandLine;
+    _armed = !commandLine.empty();
 }
 
 void DiskAutostart::Disarm()
 {
     _armed = false;
     _name.clear();
+    _commandLine.clear();
 }
 
 bool DiskAutostart::HandleCommandLoopHook(Z80& cpu)
@@ -192,13 +209,10 @@ bool DiskAutostart::HandleCommandLoopHook(Z80& cpu)
         }
     }
 
-    // RUN "<name>" <ENTER> <end marker>, pointers exactly as the ROM code at $0298 leaves them
+    // <command line> <ENTER> <end marker>, pointers exactly as the ROM code at $0298 leaves them
     uint16_t addr = eLine;
-    cpu.wd(addr++, 0xF7);
-    cpu.wd(addr++, 0x22);
-    for (char c : _name)
-        cpu.wd(addr++, static_cast<uint8_t>(c));
-    cpu.wd(addr++, 0x22);
+    for (uint8_t b : _commandLine)
+        cpu.wd(addr++, b);
 
     const uint16_t enter = addr;
     cpu.wd(SYSVAR_K_CUR, static_cast<uint8_t>(enter & 0xFF));
@@ -213,7 +227,7 @@ bool DiskAutostart::HandleCommandLoopHook(Z80& cpu)
     }
 
     _context->pModuleLogger->Info(PlatformModulesEnum::MODULE_DISK, PlatformDiskSubmodulesEnum::SUBMODULE_DISK_FDC,
-                                  "DiskAutostart: cold-start line rewritten to RUN \"%s\"", _name.c_str());
+                                  "DiskAutostart: cold-start line rewritten (%s)", _name.c_str());
     Disarm();
     return true;
 }

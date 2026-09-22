@@ -8,8 +8,10 @@
 #include <random>
 #include <set>
 
+#include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
 #include "_helpers/testtiminghelper.h"
+#include "3rdparty/message-center/messagecenter.h"
 #include "common/dumphelper.h"
 #include "common/filehelper.h"
 #include "common/modulelogger.h"
@@ -203,14 +205,160 @@ TEST_F(WD1793_Test, isTypeNCommand)
 
 /// region <Status bits behavior>
 
-TEST_F(WD1793_Test, DISABLED_Beta128_Status_INTRQ)
+namespace
 {
-    FAIL() << "Not Implemented yet";
+/// Advance simulated FDC time (no wall-clock waiting) until the FSM is idle or the budget runs out
+template <class FDC>
+void RunFdcUntilIdle(FDC& fdc, int64_t& clk, int64_t budgetTStates, int64_t step = 100)
+{
+    for (int64_t end = clk + budgetTStates; clk < end; clk += step)
+    {
+        fdc._time = clk;
+        fdc.process();
+        if (fdc._state == WD1793::S_IDLE)
+            break;
+    }
+}
+}  // namespace
+
+/// Port-level tests run against the real Beta Disk interface of an emulator created through the
+/// shared helper (a hand-built context has no memory/core wiring for the port entry points).
+/// Time is simulated: advancing the emulator T-state counter and calling process() - no sleeping
+class WD1793_Ports_Test : public ::testing::Test
+{
+protected:
+    Emulator* _emulator = nullptr;
+    EmulatorContext* _context = nullptr;
+    WD1793* _fdc = nullptr;
+    std::unique_ptr<DiskImage> _disk;
+
+    void SetUp() override
+    {
+        MessageCenter::DisposeDefaultMessageCenter();
+        _emulator = EmulatorTestHelper::CreateStandardEmulator("Pentagon", LoggerLevel::LogError);
+        ASSERT_NE(_emulator, nullptr);
+        _context = _emulator->GetContext();
+        _fdc = _context->pBetaDisk;
+        ASSERT_NE(_fdc, nullptr);
+
+        _disk = std::make_unique<DiskImage>(MAX_CYLINDERS, MAX_SIDES);
+        _disk->getTrackForCylinderAndSide(0, 0)->formatTrack(0, 0);
+        _fdc->getDrive()->insertDisk(_disk.get());
+
+        _fdc->portDeviceOutMethod(0xFF, 0x04);  // Reset off, drive A, side 0, MFM
+    }
+
+    void TearDown() override
+    {
+        if (_fdc)
+            _fdc->getDrive()->ejectDisk();
+        _disk.reset();
+        if (_emulator)
+        {
+            EmulatorTestHelper::CleanupEmulator(_emulator);
+            _emulator = nullptr;
+        }
+        MessageCenter::DisposeDefaultMessageCenter();
+    }
+
+    /// Advance simulated time and let the FDC catch up
+    void Advance(uint64_t tStates)
+    {
+        _context->emulatorState.t_states += tStates;
+        _fdc->process();
+    }
+
+    bool Busy() const
+    {
+        const WD1793* fdc = _fdc;  // const overload: plain getter, no side effects on the status bits
+        return (fdc->getStatusRegister() & WD1793::WDS_BUSY) != 0;
+    }
+
+    /// Run until the FDC leaves the busy state, at most budget simulated T-states
+    void RunUntilNotBusy(uint64_t budget = 10 * Z80_FREQUENCY, uint64_t step = 100)
+    {
+        for (uint64_t spent = 0; spent < budget && Busy(); spent += step)
+            Advance(step);
+    }
+
+    bool Intrq() const { return (_fdc->getBeta128Status() & WD1793::INTRQ) != 0; }
+    bool Drq() const { return (_fdc->getBeta128Status() & WD1793::DRQ) != 0; }
+};
+
+/// INTRQ (Beta128 port #FF bit 7) is low while a command runs, high when it completes and is
+/// released by a read of the status register (#1F) or by writing a new command
+TEST_F(WD1793_Ports_Test, Beta128_Status_INTRQ)
+{
+    // Seek to track 5: takes simulated time, so INTRQ must stay low while it executes
+    _fdc->portDeviceOutMethod(WD1793::PORT_3F, 0);  // Track register = 0
+    _fdc->portDeviceOutMethod(WD1793::PORT_7F, 5);  // Data register = target track
+    _fdc->portDeviceOutMethod(WD1793::PORT_1F, 0x10);  // SEEK
+    EXPECT_FALSE(Intrq()) << "INTRQ must be clear once a command is written";
+
+    bool sawBusyWithoutIntrq = false;
+    for (int i = 0; i < 20 && Busy(); i++)
+    {
+        Advance(1000);
+        if (Busy() && !Intrq())
+            sawBusyWithoutIntrq = true;
+    }
+    EXPECT_TRUE(sawBusyWithoutIntrq) << "INTRQ must stay low while the command is executing";
+
+    RunUntilNotBusy();
+    ASSERT_FALSE(Busy()) << "Seek must complete within simulated 10 s";
+    EXPECT_TRUE(Intrq()) << "INTRQ must be raised on command completion";
+    EXPECT_EQ(_fdc->getTrackRegister(), 5);
+
+    // Port #FF exposes INTRQ in bit 7
+    EXPECT_TRUE(_fdc->portDeviceInMethod(WD1793::PORT_FF) & WD1793::INTRQ);
+
+    // Reading the status register releases INTRQ
+    _fdc->portDeviceInMethod(WD1793::PORT_1F);
+    EXPECT_FALSE(Intrq()) << "Status register read must clear INTRQ";
+    EXPECT_FALSE(_fdc->portDeviceInMethod(WD1793::PORT_FF) & WD1793::INTRQ);
+
+    // A new command write clears INTRQ; its completion raises it again
+    _fdc->portDeviceOutMethod(WD1793::PORT_1F, 0x00);  // RESTORE
+    EXPECT_FALSE(Intrq()) << "Command write must clear INTRQ";
+    RunUntilNotBusy();
+    ASSERT_FALSE(Busy());
+    EXPECT_TRUE(Intrq()) << "RESTORE completion must raise INTRQ";
+    EXPECT_EQ(_fdc->getTrackRegister(), 0);
 }
 
-TEST_F(WD1793_Test, DISABLED_Beta128_Status_DRQ)
+/// DRQ (Beta128 port #FF bit 6) is raised when the data register holds a byte for the CPU and is
+/// released by the CPU reading it; a full sector read delivers exactly 256 bytes
+TEST_F(WD1793_Ports_Test, Beta128_Status_DRQ)
 {
-    FAIL() << "Not Implemented yet";
+    _fdc->portDeviceOutMethod(WD1793::PORT_1F, 0x08);  // RESTORE (track 0)
+    RunUntilNotBusy();
+    ASSERT_FALSE(Busy());
+
+    _fdc->portDeviceOutMethod(WD1793::PORT_5F, 1);     // Sector register = 1
+    _fdc->portDeviceOutMethod(WD1793::PORT_1F, 0x80);  // READ SECTOR
+    EXPECT_FALSE(Drq()) << "No DRQ before the first byte is ready";
+
+    size_t bytesRead = 0;
+    bool drqSeenOnPort = false;
+    for (uint64_t spent = 0; spent < 4 * Z80_FREQUENCY && bytesRead < 256; spent += 50)
+    {
+        Advance(50);
+        if (Drq())
+        {
+            drqSeenOnPort |= (_fdc->portDeviceInMethod(WD1793::PORT_FF) & WD1793::DRQ) != 0;
+            _fdc->portDeviceInMethod(WD1793::PORT_7F);  // CPU takes the byte
+            bytesRead++;
+            EXPECT_FALSE(Drq()) << "Reading the data register must clear DRQ, byte " << bytesRead;
+        }
+    }
+
+    EXPECT_EQ(bytesRead, 256u) << "A sector read must deliver exactly 256 bytes";
+    EXPECT_TRUE(drqSeenOnPort) << "DRQ must be visible in bit 6 of port #FF";
+
+    RunUntilNotBusy(Z80_FREQUENCY);
+    EXPECT_FALSE(Busy());
+    EXPECT_FALSE(Drq()) << "DRQ must be low after the command completes";
+    EXPECT_TRUE(Intrq()) << "Command completion raises INTRQ";
 }
 
 /// endregion </Status bits behavior>
@@ -621,9 +769,66 @@ TEST_F(WD1793_Test, FDD_Rotation_Index_NotCountingIfMotorStops)
 }
 
 /// Test index strobe timings and stability
-TEST_F(WD1793_Test, DISABLED_FDD_Rotation_Index_Stability)
+TEST_F(WD1793_Test, FDD_Rotation_Index_Stability)
 {
-    FAIL() << "Not implemented yet";
+    // Index pulses must arrive at a steady 5 per second (200 ms per revolution), each with a
+    // constant width - simulated time only, sampled the way the CPU would poll status
+    static constexpr int64_t const TEST_INCREMENT_TSTATES = 100;
+    static constexpr int64_t const TEST_DURATION_TSTATES = 2 * Z80_FREQUENCY;
+    static constexpr int64_t const REVOLUTION_TSTATES = Z80_FREQUENCY / FDD_RPS;
+
+    _context->pModuleLogger->SetLoggingLevel(LogError);
+
+    WD1793CUT fdc(_context);
+    fdc.resetTime();
+
+    DiskImage diskImage(MAX_CYLINDERS, MAX_SIDES);
+    fdc.getDrive()->insertDisk(&diskImage);
+    fdc.prolongFDDMotorRotation();
+
+    std::vector<int64_t> risingEdges;
+    std::vector<int64_t> pulseWidths;
+    bool prev = false;
+    int64_t edgeAt = 0;
+
+    for (int64_t clk = 10; clk < TEST_DURATION_TSTATES; clk += TEST_INCREMENT_TSTATES)
+    {
+        fdc.prolongFDDMotorRotation();  // Keep the motor spinning for the whole run
+        fdc._time = clk;
+        fdc.process();
+        fdc.processFDDIndexStrobe();
+
+        const bool index = fdc._index;
+        if (index && !prev)
+        {
+            risingEdges.push_back(clk);
+            edgeAt = clk;
+        }
+        else if (!index && prev)
+        {
+            pulseWidths.push_back(clk - edgeAt);
+        }
+        prev = index;
+    }
+
+    // 2 s at 5 RPS = 10 pulses (one at the boundary may be missed)
+    ASSERT_GE(risingEdges.size(), 9u);
+    ASSERT_LE(risingEdges.size(), 11u);
+
+    for (size_t i = 1; i < risingEdges.size(); i++)
+    {
+        EXPECT_IN_RANGE(risingEdges[i] - risingEdges[i - 1], REVOLUTION_TSTATES - 2 * TEST_INCREMENT_TSTATES,
+                        REVOLUTION_TSTATES + 2 * TEST_INCREMENT_TSTATES)
+            << "Index period must be stable at pulse " << i;
+    }
+
+    ASSERT_FALSE(pulseWidths.empty());
+    for (size_t i = 1; i < pulseWidths.size(); i++)
+    {
+        EXPECT_IN_RANGE(pulseWidths[i], pulseWidths[0] - 2 * TEST_INCREMENT_TSTATES,
+                        pulseWidths[0] + 2 * TEST_INCREMENT_TSTATES)
+            << "Index pulse width must be stable at pulse " << i;
+    }
 }
 
 /// endregion <FDD related>

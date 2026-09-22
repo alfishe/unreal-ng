@@ -169,13 +169,69 @@ TEST_F(IdleSilence_Test, TurboSoundFM_IdleSilence)
     }
 }
 
-/// Test that beeper outputs silence when idle (no edge transitions)
+/// Run idle frames after the given speaker edges (all in frame 0) and return the
+/// settled output samples of the last frame
+static std::vector<int16_t> RunBeeperIdle(SoundManager& soundManager, EmulatorContext* context,
+                                          const std::vector<std::pair<uint32_t, uint8_t>>& edges)
+{
+    constexpr size_t kFrames = 20;
+    std::vector<int16_t> last;
+
+    for (size_t frame = 0; frame < kFrames; frame++)
+    {
+        context->pCore->GetZ80()->tt = 0;
+        soundManager.handleFrameStart();
+
+        if (frame == 0)
+        {
+            for (const auto& [t, value] : edges)
+            {
+                context->pCore->GetZ80()->tt = t << 8;
+                soundManager.getBeeper().handlePortOut(value, t);
+            }
+        }
+
+        context->pCore->GetZ80()->tt = PENTAGON_FRAME << 8;
+        soundManager.handleFrameEnd();
+
+        const AudioFrameDescriptor& desc = soundManager.getAudioBufferDescriptor();
+        const int16_t* out = reinterpret_cast<const int16_t*>(desc.memoryBuffer);
+        last.assign(out, out + MAX_SAMPLES_PER_FRAME * AUDIO_CHANNELS);
+    }
+    return last;
+}
+
+/// A beeper that never toggles, or is toggled and returned to the low level, must be
+/// silent afterwards; one held at a constant high level must output a constant (no
+/// drift or noise). Regression guard for "silent hissing" in the beeper path
 TEST_F(IdleSilence_Test, Beeper_IdleSilence)
 {
-    // The beeper test requires SoundManager for proper initialization
-    // This is a placeholder - beeper idle silence should be tested
-    // at the SoundManager level
-    GTEST_SKIP() << "Beeper idle silence requires SoundManager integration test";
+    _context->config.sound.turboSoundKind = TurboSoundKind::AY;
+
+    {
+        SoundManager sm(_context);
+        sm.reset();
+        auto out = RunBeeperIdle(sm, _context, {});
+        EXPECT_EQ(findPeak(out.data(), out.size()), 0) << "Never-toggled beeper is not silent";
+    }
+    {
+        SoundManager sm(_context);
+        sm.reset();
+        auto out = RunBeeperIdle(sm, _context, {{1000, 0x10}, {2000, 0x00}});
+        EXPECT_EQ(findPeak(out.data(), out.size()), 0) << "Beeper returned to low level is not silent";
+    }
+    {
+        SoundManager sm(_context);
+        sm.reset();
+        auto out = RunBeeperIdle(sm, _context, {{1000, 0x10}});
+        ASSERT_FALSE(out.empty());
+        EXPECT_NE(out[0], 0) << "Held-high beeper must produce output";
+        // The frame fills only its active part of the buffer; the tail is unused
+        const size_t active = AudioFrameDescriptor::durationInSamples * AUDIO_CHANNELS;
+        ASSERT_LE(active, out.size());
+        for (size_t i = 1; i < active; i++)
+            ASSERT_EQ(out[i], out[0]) << "Held beeper level must be constant, sample " << i;
+    }
 }
 
 /// Test full SoundManager output is silent when no emulation runs

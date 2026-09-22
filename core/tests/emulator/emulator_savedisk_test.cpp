@@ -24,6 +24,35 @@
 /// Emulator::SaveDisk - format by extension, UDI re-target when the strict format refuses
 /// (docs/inprogress/2026-09-02-universal-track-model/loader-registry.md, section 4)
 
+namespace
+{
+    /// Deletes the file at the given path when it goes out of scope, on every
+    /// exit path (assertion failure included: ASSERT_* returns out of the
+    /// TEST_F body, which still unwinds locals normally). A bare remove() call
+    /// at the end of the test never runs once an earlier ASSERT_* fails,
+    /// leaving scratch files behind.
+    class ScopedTestFile
+    {
+    public:
+        explicit ScopedTestFile(std::string path) : _path(std::move(path)) {}
+        ~ScopedTestFile() { std::error_code ec; std::filesystem::remove(_path, ec); }
+
+        ScopedTestFile(const ScopedTestFile&) = delete;
+        ScopedTestFile& operator=(const ScopedTestFile&) = delete;
+
+        const std::string& path() const { return _path; }
+        operator const std::string&() const { return _path; }
+
+        friend bool operator==(const ScopedTestFile& a, const std::string& b) { return a._path == b; }
+        friend bool operator==(const std::string& a, const ScopedTestFile& b) { return a == b._path; }
+        friend bool operator!=(const ScopedTestFile& a, const std::string& b) { return !(a == b); }
+        friend bool operator!=(const std::string& a, const ScopedTestFile& b) { return !(a == b); }
+
+    private:
+        std::string _path;
+    };
+}
+
 class EmulatorSaveDisk_Test : public ::testing::Test
 {
 protected:
@@ -76,7 +105,7 @@ protected:
 
 TEST_F(EmulatorSaveDisk_Test, Save_Trd_InPlace)
 {
-    std::string trd = scratchCopy("loaders/trd/EyeAche.trd", "savedisk.trd");
+    ScopedTestFile trd(scratchCopy("loaders/trd/EyeAche.trd", "savedisk.trd"));
     ASSERT_TRUE(_emulator->LoadDisk(trd));
 
     DiskImage* image = _emulator->GetContext()->coreState.diskImages[0];
@@ -95,15 +124,14 @@ TEST_F(EmulatorSaveDisk_Test, Save_Trd_InPlace)
     std::vector<uint8_t> file = readFile(trd);
     ASSERT_EQ(file.size(), 655360u);
     EXPECT_EQ(file[3 * 4096 + 2 * 256], 0x5A);
-
-    removeFile(trd);
 }
 
 TEST_F(EmulatorSaveDisk_Test, Save_Trd_RefusedByGeometry_RetargetsToUdi)
 {
-    std::string trd = scratchCopy("loaders/trd/EyeAche.trd", "retarget.trd");
-    std::string udi = TestPathHelper::GetTestScratchPath("retarget.udi");
-    removeFile(udi);
+    ScopedTestFile trd(scratchCopy("loaders/trd/EyeAche.trd", "retarget.trd"));
+    std::string udiPath = TestPathHelper::GetTestScratchPath("retarget.udi");
+    removeFile(udiPath);
+    ScopedTestFile udi(udiPath);
     std::vector<uint8_t> original = readFile(trd);
     ASSERT_TRUE(_emulator->LoadDisk(trd));
 
@@ -167,20 +195,19 @@ TEST_F(EmulatorSaveDisk_Test, Save_Trd_RefusedByGeometry_RetargetsToUdi)
     EXPECT_FALSE(result.saved);
     EXPECT_FALSE(result.retargeted);
     EXPECT_FALSE(FileHelper::FileExists(udi));
-
-    removeFile(trd);
-    removeFile(udi);
 }
 
 TEST_F(EmulatorSaveDisk_Test, Save_As_ByExtension)
 {
-    std::string trd = scratchCopy("loaders/trd/EyeAche.trd", "saveas.trd");
+    ScopedTestFile trd(scratchCopy("loaders/trd/EyeAche.trd", "saveas.trd"));
     ASSERT_TRUE(_emulator->LoadDisk(trd));
 
-    std::string udi = TestPathHelper::GetTestScratchPath("saveas.udi");
-    std::string fdi = TestPathHelper::GetTestScratchPath("saveas.fdi");
-    removeFile(udi);
-    removeFile(fdi);
+    std::string udiPath = TestPathHelper::GetTestScratchPath("saveas.udi");
+    std::string fdiPath = TestPathHelper::GetTestScratchPath("saveas.fdi");
+    removeFile(udiPath);
+    removeFile(fdiPath);
+    ScopedTestFile udi(udiPath);
+    ScopedTestFile fdi(fdiPath);
 
     Emulator::DiskSaveResult result = _emulator->SaveDisk(0, udi);
     EXPECT_TRUE(result.saved) << result.reason;
@@ -193,10 +220,6 @@ TEST_F(EmulatorSaveDisk_Test, Save_As_ByExtension)
 
     EXPECT_FALSE(_emulator->SaveDisk(1).saved) << "no disk in drive B";
     EXPECT_FALSE(_emulator->SaveDisk(7).saved);
-
-    removeFile(trd);
-    removeFile(udi);
-    removeFile(fdi);
 }
 
 /// Emulator::LoadDisk selects the loader by extension for every implemented format

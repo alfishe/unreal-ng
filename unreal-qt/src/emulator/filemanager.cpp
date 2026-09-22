@@ -18,6 +18,10 @@ PatternCategoryMap FileManager::_extensions =
     { "scl", SupportedFileCategoriesEnum::FileDisk },
     { "udi", SupportedFileCategoriesEnum::FileDisk },
     { "fdi", SupportedFileCategoriesEnum::FileDisk },
+    { "dsk", SupportedFileCategoriesEnum::FileDisk },
+    { "td0", SupportedFileCategoriesEnum::FileDisk },
+    { "mgt", SupportedFileCategoriesEnum::FileDisk },
+    { "img", SupportedFileCategoriesEnum::FileDisk },
 
     { "gz", SupportedFileCategoriesEnum::FileArchive },
     { "tar", SupportedFileCategoriesEnum::FileArchive },

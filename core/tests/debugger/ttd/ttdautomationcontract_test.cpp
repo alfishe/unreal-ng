@@ -44,6 +44,35 @@
 #include "debugger/ttd/ttdexternalevents.h"
 #include "debugger/ttd/ttdprobe.h"
 
+namespace
+{
+    /// Deletes the file at the given path when it goes out of scope, on every
+    /// exit path (assertion failure included: ASSERT_* returns out of the
+    /// TEST_F body, which still unwinds locals normally). A bare remove() call
+    /// at the end of the test never runs once an earlier ASSERT_* fails,
+    /// leaving scratch files behind.
+    class ScopedTestFile
+    {
+    public:
+        explicit ScopedTestFile(std::string path) : _path(std::move(path)) {}
+        ~ScopedTestFile() { std::remove(_path.c_str()); }
+
+        ScopedTestFile(const ScopedTestFile&) = delete;
+        ScopedTestFile& operator=(const ScopedTestFile&) = delete;
+
+        const std::string& path() const { return _path; }
+        operator const std::string&() const { return _path; }
+
+        friend bool operator==(const ScopedTestFile& a, const std::string& b) { return a._path == b; }
+        friend bool operator==(const std::string& a, const ScopedTestFile& b) { return a == b._path; }
+        friend bool operator!=(const ScopedTestFile& a, const std::string& b) { return !(a == b); }
+        friend bool operator!=(const std::string& a, const ScopedTestFile& b) { return !(a == b); }
+
+    private:
+        std::string _path;
+    };
+}
+
 /// region <Test fixture>
 
 class TTD_Automation_Contract_Test : public ::testing::Test
@@ -418,7 +447,7 @@ TEST_F(TTD_Automation_Contract_Test, Dump_SerializeSession_RoundTrip)
     ASSERT_GT(checkpointCount, 0u);
 
     // Serialize to a scratch file
-    const std::string tmpfile = TestPathHelper::GetUniqueTestScratchPath("ttd_contract_dump.bin");
+    const ScopedTestFile tmpfile(TestPathHelper::GetUniqueTestScratchPath("ttd_contract_dump.bin"));
 
     {
         std::ofstream out(tmpfile, std::ios::binary);
@@ -455,7 +484,6 @@ TEST_F(TTD_Automation_Contract_Test, Dump_SerializeSession_RoundTrip)
     emu2->Stop();
     emu2->Release();
     delete emu2;
-    remove(tmpfile.c_str());
 }
 
 /// endregion
