@@ -81,9 +81,19 @@ struct GSActivityCounters
     uint64_t dacFetches = 0;           // Reads in 0x6000-0x7FFF (any channel)
     uint64_t volumeLatchWrites = 0;    // GS-side OUT to ports 0x06-0x09
     uint64_t hostCommandsReceived = 0; // ZX OUT #BB
-    uint64_t hostCommandsDropped = 0;  // ZX OUT #BB while the 16-deep FIFO was full
+    // Dead since the 2026-09-21 single-latch mailbox rewrite (was: 16-deep
+    // command FIFO full). A same-direction OUT #BB before the card consumes
+    // the pending one now just overwrites the latch - nothing increments
+    // this on either personality. Kept for TTD/API layout stability; see
+    // docs/inprogress/2026-09-19-general-sound/diagnostics-gaps-proposal.md
+    // for a real command-clobber counter proposal.
+    uint64_t hostCommandsDropped = 0;
     uint64_t hostDataWritten = 0;      // ZX OUT #B3
-    uint64_t hostDataDropped = 0;      // ZX OUT #B3 while the 16-deep data FIFO was full
+    // LLE: dead for the same reason as hostCommandsDropped (single latch,
+    // no drop path). LW: counts overflow of the internal param-ordering
+    // buffer (PARAM_QUEUE_CAPACITY=16 in soundchip_gslw.cpp), NOT a mailbox
+    // FIFO - a real, LW-specific backlog condition.
+    uint64_t hostDataDropped = 0;
     uint64_t hostDataRead = 0;          // ZX IN #B3
     int64_t  lastDacFetchGsCycle = -1; // totalGsCycles() at the most recent DAC fetch, -1 = never
     uint32_t lastDacFetchFrame = 0;    // Frame number of the most recent DAC fetch

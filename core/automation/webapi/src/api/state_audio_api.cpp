@@ -523,8 +523,15 @@ void EmulatorAPI::getStateAudioGS(const HttpRequestPtr& req, std::function<void(
     ret["status"] = status;
     ret["command_pending"] = (status & 0x01) != 0;  // bit0: ZX command waiting
     ret["data_pending"] = (status & 0x80) != 0;     // bit7: GS data waiting
-    ret["command_queue_count"] = static_cast<Json::UInt64>(gs->getCommandQueueCount());  // 16-deep host->GS command FIFO backlog
-    ret["data_queue_count"] = static_cast<Json::UInt64>(gs->getDataQueueCount());        // 16-deep host->GS data FIFO backlog
+    // Both cards use a single-latch mailbox (2026-09-21 firmware-parity rewrite,
+    // not a FIFO): command_queue_count is always 0 or 1 (mirrors command_pending)
+    // on both personalities. data_queue_count is 0/1 on the LLE (mirrors
+    // data_pending) but on the LW card counts its internal param-ordering
+    // buffer (0..16, soundchip_gslw's PARAM_QUEUE_CAPACITY) - a real backlog
+    // depth, not a bit mirror, because the instant-dispatch LW model buffers
+    // params ahead of the command that consumes them.
+    ret["command_queue_count"] = static_cast<Json::UInt64>(gs->getCommandQueueCount());
+    ret["data_queue_count"] = static_cast<Json::UInt64>(gs->getDataQueueCount());
     ret["command_from_host"] = gs->getCommandFromHost();
     ret["data_from_host"] = gs->getDataFromHost();
     ret["data_to_host"] = gs->getDataToHost();

@@ -13,8 +13,10 @@
 ///
 /// SoundManager, the TTD peripheral registry and every automation surface
 /// (CLI/WebAPI/MCP/Lua/Python) talk to this type only. The host-port mailbox
-/// semantics (FIFO queues, direction-split pending bits, stale-latch
-/// readbacks) are part of the contract and are shared code (gsmailbox.h).
+/// semantics (single-latch command/data flip-flops, original hardware
+/// behavior - a same-direction write before the card consumes the previous
+/// one just overwrites it, no queueing) are part of the contract and are
+/// shared code (gsmailbox.h).
 
 #include <cstddef>
 #include <cstdint>

@@ -162,9 +162,10 @@ public:
     void accumulateActivityCounters(const GSActivityCounters& other) override;
 
     /// Receiving side of the v1 module handoff: mailbox-paced upload of the
-    /// captured COM30 stream (param + command + stream + D2), one frame of
-    /// GS card time per paced chunk so the 16-deep FIFOs never overflow;
-    /// COM31 restarts playback when the outgoing card was playing
+    /// captured COM30 stream (param + command + stream + D2), paced a few
+    /// interrupt periods at a time per byte so the single-latch protocol
+    /// never overwrites a byte the firmware hasn't consumed yet; COM31
+    /// restarts playback when the outgoing card was playing
     void replayModuleUpload(const std::vector<uint8_t>& bytes, bool startPlayback) override;
 
     /// Capturing side of the v1 module handoff (bidirectional): the raw
@@ -262,8 +263,8 @@ private:
     const uint8_t* _bankR[4] = {};  // nullptr never happens for reads (ROM/RAM)
     uint8_t* _bankW[4] = {};        // nullptr -> write discarded (ROM windows)
 
-    // Host mailbox: shadow latches, the ZX-visible status byte,
-    // direction-split pending flags and both FIFO rings - the shared
+    // Host mailbox: shadow latches and the ZX-visible status byte (shared
+    // command/data flip-flop, original hardware semantics) - the shared
     // protocol truth for every card personality (gsmailbox.h)
     GSForwardMailbox _mb;
 
