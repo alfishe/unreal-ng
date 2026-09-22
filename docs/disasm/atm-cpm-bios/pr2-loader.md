@@ -140,7 +140,7 @@ at that point (deliver keys as raw matrix presses afterwards).
 
 ## Emulation Verification
 
-`core/tests/emulator/atm710_cpm_boot_test.cpp`:
+`core/tests/emulator/machines/atm710/atm710_cpm_boot_test.cpp`:
 
 - `CpmDirListsPrinceCatalog` - disk reads/catalog verification
 - `Pr2GameRunsOn1024` / `Pr2GameRunsOn512` - full launch, EGA title screen
