@@ -14,6 +14,7 @@
 #include "_helpers/testpathhelper.h"
 #include "_helpers/tsfmplayerharness.h"
 #include "base/featuremanager.h"
+#include "debugger/ttd/timetravelmanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -54,6 +55,30 @@ uint64_t Fnv1a(const void* data, size_t size, uint64_t hash = 146959810393466560
     {
         hash ^= p[i];
         hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
+/// Digest of only what the CPU can observe of the chip core: board latches plus, per chip, the address
+/// latch, FM clock phase, timer/busy counters and the status register (timer flags, busy). Unlike
+/// CoreHash() it excludes the FM operator state (phases, envelopes), which feeds nothing but the sound
+/// output - so it must be identical in every mode, sound off / turbo included
+uint64_t ObservableHash(SoundChip_TurboSoundFM& device)
+{
+    uint64_t hash = 1469598103934665603ULL;
+    const TsfmBoard& board = device.board();
+    const uint8_t boardByte = uint8_t(board.chip | (board.statusRead ? 2 : 0) | (board.fmEnabled ? 4 : 0));
+    hash = Fnv1a(&boardByte, 1, hash);
+
+    for (int i = 0; i < 2; i++)
+    {
+        TsfmChip* c = device.chip(i);
+        hash = Fnv1a(&c->address, 1, hash);
+        hash = Fnv1a(&c->fmClockPhase, sizeof(c->fmClockPhase), hash);
+        hash = Fnv1a(c->intf._timer, sizeof(c->intf._timer), hash);
+        hash = Fnv1a(&c->intf._busy, sizeof(c->intf._busy), hash);
+        const uint8_t status = c->fm.read_status();
+        hash = Fnv1a(&status, 1, hash);
     }
     return hash;
 }
@@ -1006,16 +1031,19 @@ protected:
     struct SessionOutcome
     {
         std::vector<uint64_t> coreHashes;
+        std::vector<uint64_t> observableHashes;
         std::vector<uint32_t> wordCounts;
         std::vector<uint64_t> maxWordT;
         uint32_t probeRenderedSamples = 0;
+        bool coreSynthesisSkipped = false;  // device flag at the end of the session
     };
 
     enum class RunMode
     {
         Normal,
         Turbo,
-        SoundOff
+        SoundOff,
+        SoundOffUnderTtd  // Sound off while TTD records: the full core must keep running
     };
 
     // The P4 gate text pins the cross-mode comparison at 300 frames
@@ -1033,8 +1061,10 @@ protected:
 
         if (mode == RunMode::Turbo)
             fm->EnableTurboMode();
-        if (mode == RunMode::SoundOff)
+        if (mode == RunMode::SoundOff || mode == RunMode::SoundOffUnderTtd)
             fm->GetFeatureManager()->setFeature(Features::kSoundGeneration, false);
+        if (mode == RunMode::SoundOffUnderTtd)
+            EXPECT_TRUE(fm->GetContext()->pTimeTravelManager->StartRecording()) << "TTD recording did not start";
 
         TsfmPlayerHarness harness;
         EXPECT_TRUE(harness.Setup(fm, 0));
@@ -1063,7 +1093,9 @@ protected:
             outcome.wordCounts.push_back(wordCount);
             outcome.maxWordT.push_back(maxWordT);
             outcome.coreHashes.push_back(CoreHash(*device));
+            outcome.observableHashes.push_back(ObservableHash(*device));
         }
+        outcome.coreSynthesisSkipped = device->isCoreSynthesisSkipped();
 
         // Output-stage liveness probe: RunNFrames left the device at the
         // START of the next frame (the boundary crossing ran OnFrameStart,
@@ -1119,44 +1151,72 @@ TEST_F(TsfmPlayer_Test, PlayerCompletesInitAndKeepsPlaying)
     ReleaseFmEmulator(fm);
 }
 
-TEST_F(TsfmPlayer_Test, CoreHashSameInTurboAndSoundOff)
+TEST_F(TsfmPlayer_Test, CpuObservableCoreSameInTurboAndSoundOff)
 {
-    // P4 gate, design D3: turbo and sound-off switch the output stage off
-    // only - the core keeps answering busy polls and running timers on the
-    // same T-state axis. The per-frame core hash must equal the normal
-    // session's, or a TTD recording made in one mode would replay
-    // divergently in another. Since P6 the output stage renders in the
-    // normal session (its sample count is asserted below) and consumes the
-    // word production; the suppressed modes render nothing and clear the
-    // queues at every frame start (§6.1)
+    // Turbo and sound-off switch the output stage off only - the core keeps answering busy polls and
+    // running timers on the same T-state axis. What the CPU can observe (address latch, timers, busy,
+    // status, FM clock phase) must equal the normal session's in every frame. The output stage renders
+    // in the normal session (its sample count is asserted below) and consumes the word production; the
+    // suppressed modes render nothing and clear the queues at every frame start (§6.1)
     const SessionOutcome normal = RunPlayerSession(RunMode::Normal);
     const SessionOutcome turbo = RunPlayerSession(RunMode::Turbo);
     const SessionOutcome soundOff = RunPlayerSession(RunMode::SoundOff);
 
-    ASSERT_EQ(normal.coreHashes.size(), size_t(kFrames)) << "normal session truncated";
-    ASSERT_EQ(turbo.coreHashes.size(), size_t(kFrames)) << "turbo session truncated";
-    ASSERT_EQ(soundOff.coreHashes.size(), size_t(kFrames)) << "sound-off session truncated";
+    ASSERT_EQ(normal.observableHashes.size(), size_t(kFrames)) << "normal session truncated";
+    ASSERT_EQ(turbo.observableHashes.size(), size_t(kFrames)) << "turbo session truncated";
+    ASSERT_EQ(soundOff.observableHashes.size(), size_t(kFrames)) << "sound-off session truncated";
     EXPECT_GT(normal.probeRenderedSamples, 400u) << "normal session renders no audio (output stage dead?)";
     EXPECT_EQ(turbo.probeRenderedSamples, 0u) << "turbo session rendered audio";
     EXPECT_EQ(soundOff.probeRenderedSamples, 0u) << "sound-off session rendered audio";
 
     for (int frame = 0; frame < kFrames; frame++)
     {
-        ASSERT_EQ(turbo.coreHashes[frame], normal.coreHashes[frame]) << "turbo core diverged at frame " << frame;
-        ASSERT_EQ(soundOff.coreHashes[frame], normal.coreHashes[frame])
-            << "sound-off core diverged at frame " << frame;
+        ASSERT_EQ(turbo.observableHashes[frame], normal.observableHashes[frame])
+            << "turbo CPU-observable core diverged at frame " << frame;
+        ASSERT_EQ(soundOff.observableHashes[frame], normal.observableHashes[frame])
+            << "sound-off CPU-observable core diverged at frame " << frame;
         // Words still queued after a suppressed frame must all have been
         // produced after the frame-start clear: on the rebased T axis (§5.2
         // rollover) their timestamps are intra-frame positions, bounded by
         // the RunNFrames exit-overshoot drift (a few T per frame, ~1 kT by
         // session end). A clear that failed to run would leave a whole frame
-        // queued with timestamps spread up to 71680. Both suppressed modes
-        // share the T axis, so they must drain identically
+        // queued with timestamps spread up to 71680
         EXPECT_LT(turbo.maxWordT[frame], 8192u) << "turbo drained stale words after frame " << frame;
         EXPECT_LT(soundOff.maxWordT[frame], 8192u) << "sound-off drained stale words after frame " << frame;
-        EXPECT_EQ(turbo.wordCounts[frame], soundOff.wordCounts[frame])
-            << "suppressed modes straggled differently at frame " << frame;
     }
+}
+
+TEST_F(TsfmPlayer_Test, FmSynthesisSkippedWhenSoundOffOutsideTtd)
+{
+    // With the output stage off and no TTD, the FM operator clocking is skipped (host CPU saving):
+    // the flag is set and the full core state (which includes the operator phases) has moved away from
+    // the normal session's. In the normal session nothing is skipped
+    const SessionOutcome normal = RunPlayerSession(RunMode::Normal);
+    const SessionOutcome turbo = RunPlayerSession(RunMode::Turbo);
+    const SessionOutcome soundOff = RunPlayerSession(RunMode::SoundOff);
+
+    EXPECT_FALSE(normal.coreSynthesisSkipped) << "normal session must run the whole core";
+    EXPECT_TRUE(turbo.coreSynthesisSkipped) << "turbo session must skip FM synthesis clocking";
+    EXPECT_TRUE(soundOff.coreSynthesisSkipped) << "sound-off session must skip FM synthesis clocking";
+    EXPECT_NE(soundOff.coreHashes.back(), normal.coreHashes.back())
+        << "FM operators still advance in a sound-off session (nothing was skipped)";
+}
+
+TEST_F(TsfmPlayer_Test, FullCoreHashSameInSoundOffUnderTtd)
+{
+    // Design D3 under TTD: the full core hash (FM operator state included) is part of the recorded
+    // state, so a TTD recording made with sound off must match a normal session frame for frame -
+    // the core is never frozen while TTD records or replays
+    const SessionOutcome normal = RunPlayerSession(RunMode::Normal);
+    const SessionOutcome soundOffTtd = RunPlayerSession(RunMode::SoundOffUnderTtd);
+
+    ASSERT_EQ(soundOffTtd.coreHashes.size(), size_t(kFrames)) << "sound-off TTD session truncated";
+    EXPECT_FALSE(soundOffTtd.coreSynthesisSkipped) << "the core must not be frozen while TTD records";
+    EXPECT_EQ(soundOffTtd.probeRenderedSamples, 0u) << "sound-off session rendered audio";
+
+    for (int frame = 0; frame < kFrames; frame++)
+        ASSERT_EQ(soundOffTtd.coreHashes[frame], normal.coreHashes[frame])
+            << "full core hash diverged under TTD at frame " << frame;
 }
 
 /// endregion

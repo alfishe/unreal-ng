@@ -105,6 +105,9 @@ core/
     ├── emulator/                          # Mirrors core/src/emulator/
     │   ├── emulator_test.cpp
     │   ├── emulator_test.h
+    │   ├── machines/                      # Per-machine integration tests (Key Rule 4)
+    │   │   ├── atm710/                    #   e.g. atm710_cpm_boot_test.cpp
+    │   │   └── zxevo/                     #   e.g. zxevo_boot_test.cpp
     │   ├── io/
     │   │   ├── fdc/
     │   │   │   ├── wd1793_test.cpp        # Tests for wd1793.cpp
@@ -136,6 +139,13 @@ core/
 1. **Mirror the source structure**: If source is at `core/src/emulator/io/fdc/wd1793.cpp`, test goes to `core/tests/emulator/io/fdc/wd1793_test.cpp`
 2. **Special directories**: `_helpers/` (prefixed with underscore) contains shared test utilities
 3. **Third-party tests**: `3rdparty/` for testing external library integrations
+4. **Per-machine integration tests**: Boot/regression tests that exercise one machine model across
+   subsystems (CPU + memory + ports + video together, e.g. ROM boot flows) do NOT mirror a single
+   source file. They live in `emulator/machines/<machine>/` (e.g. `machines/atm710/`,
+   `machines/zxevo/`), and their filenames keep the machine prefix (`atm710_cpm_boot_test.cpp`),
+   matching the `ports/models/` precedent. Unit tests of a machine-specific *component* (a port
+   decoder, a memory paging quirk, a raster behavior) still mirror `core/src` and stay in their
+   subsystem directory.
 
 ---
 

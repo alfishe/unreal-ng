@@ -1,4 +1,5 @@
 #include "soundmanager.h"
+#include "debugger/ttd/timetravelmanager.h"
 
 #include <cmath>
 
@@ -487,15 +488,22 @@ void SoundManager::handleFrameStart()
             suppressed = false;
 #endif
         _synthesisSuppressed = suppressed;
-        _beeper->setSynthesisSuppressed(suppressed);
+
+        // Sound feature off = GENERATION off for every generator, exactly like turbo without audio:
+        // the port / register / level state keeps being tracked (what the program can read back and
+        // what the first edge after un-muting depends on), only synthesis and filtering stop
+        const bool generationOff = suppressed || !_feature_sound_enabled;
+        _beeper->setSynthesisSuppressed(generationOff);
         if (_covox)
-            _covox->setSynthesisSuppressed(suppressed);
+            _covox->setSynthesisSuppressed(generationOff);
 #ifdef UNREALNG_HAVE_OPL4
         if (_moonsound)
         {
-            _moonsound->setSynthesisSuppressed(suppressed);
+            // Sound feature off is generation off for MoonSound too: output dropped and buffers zeroed,
+            // chip state untouched (SoundChip_Moonsound::handleFrameEnd)
+            _moonsound->setSynthesisSuppressed(generationOff);
             // D3: the synthesis core runs every frame - including suppressed
-            // (turbo) frames, where this is the only hook that fires: BUSY/LD
+            // (turbo / sound-off) frames, where this is the only hook that fires: BUSY/LD
             // and register state stay guest-correct.
             _moonsound->handleFrameStart();
         }
@@ -506,7 +514,15 @@ void SoundManager::handleFrameStart()
         // its output stage is off. Sound feature off counts as suppressed
         // for the device's rendering; its frame buffer clears still run
         // (the sound-off output path relies on zeroed buffers).
-        _turboSound->setSynthesisSuppressed(suppressed || !_feature_sound_enabled);
+        const bool turboSoundSuppressed = generationOff;
+        _turboSound->setSynthesisSuppressed(turboSoundSuppressed);
+
+        // With the output stage off, the FM core's internal synthesis state feeds nothing the CPU can
+        // see - except through the TTD core hash, so TTD recording / replay keeps the full core running
+        const ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+        const bool ttdActive = ttd != nullptr && (ttd->IsRecording() || ttd->IsReplayActive());
+        _turboSound->setCoreSynthesisSkipped(turboSoundSuppressed && !ttdActive);
+
         _turboSound->handleFrameStart();
 
         if (suppressed)
@@ -605,7 +621,11 @@ void SoundManager::handleFrameEnd()
     // inside the devices. On the first HQ frame after a bypass the chains'
     // delay lines and envelopes are cleared so they do not replay audio
     // from before the switch.
-    const bool chainsActive = isHQActive();
+    // Sound feature off: no generator runs, no character chain runs, nothing is mixed. The frame
+    // buffers are zeroed instead, so the output path (and the per-device meters) see silence
+    const bool soundOff = !_feature_sound_enabled;
+
+    const bool chainsActive = isHQActive() && !soundOff;
     if (chainsActive && _chainsBypassed)
     {
         _ayChain0.reset();
@@ -642,46 +662,59 @@ void SoundManager::handleFrameEnd()
     /// endregion </Process AY>
 
     /// region <Process beeper>
-    // Finalize the beeper's blip_buf frame — produces band-limited output
-    _beeper->handleFrameEnd(frameDuration);
-
-    // Cross-check blip's internal fractional accumulator against ours. Both
-    // are driven by the same clock ratio and stay in lockstep; >1 sample
-    // divergence indicates an accumulator reset bug (logged, not asserted -
-    // snapshot load / reset may legitimately differ for 1 frame)
+    if (soundOff)
     {
-        int blipRead = _beeper->getLastSamplesRead();
-        int diff = blipRead - static_cast<int>(samplesThisFrame);
-        if (diff > 1 || diff < -1)
-        {
-            if ((_blipMismatchCount++ % 256) == 0)
-            {
-                LOGWARNING("SoundManager: blip delivered %d samples, accumulator expects %zu", blipRead,
-                            samplesThisFrame);
-            }
-        }
-
-        // Pad shortfall with the last delivered value so the mixer never
-        // consumes a stale tail (blip can be 1 short right after a reset)
-        if (blipRead >= 1 && static_cast<size_t>(blipRead) < samplesThisFrame)
-        {
-            for (size_t i = blipRead; i < samplesThisFrame; i++)
-            {
-                _beeperBuffer[i * 2] = _beeperBuffer[(blipRead - 1) * 2];
-                _beeperBuffer[i * 2 + 1] = _beeperBuffer[(blipRead - 1) * 2 + 1];
-            }
-        }
+        // The beeper only tracked its level this frame (no deltas were generated)
+        memset(_beeperBuffer, 0x00, _beeperAudioDescriptor.memoryBufferSizeInBytes);
     }
+    else
+    {
+        // Finalize the beeper's blip_buf frame — produces band-limited output
+        _beeper->handleFrameEnd(frameDuration);
 
-    // Beeper chain: operates on alias-free blip_buf output (HQ only, see above)
-    if (chainsActive)
-        _beeperChain.processInt16(_beeperBuffer, samplesThisFrame);
+        // Cross-check blip's internal fractional accumulator against ours. Both
+        // are driven by the same clock ratio and stay in lockstep; >1 sample
+        // divergence indicates an accumulator reset bug (logged, not asserted -
+        // snapshot load / reset may legitimately differ for 1 frame)
+        {
+            int blipRead = _beeper->getLastSamplesRead();
+            int diff = blipRead - static_cast<int>(samplesThisFrame);
+            if (diff > 1 || diff < -1)
+            {
+                if ((_blipMismatchCount++ % 256) == 0)
+                {
+                    LOGWARNING("SoundManager: blip delivered %d samples, accumulator expects %zu", blipRead,
+                                samplesThisFrame);
+                }
+            }
+
+            // Pad shortfall with the last delivered value so the mixer never
+            // consumes a stale tail (blip can be 1 short right after a reset)
+            if (blipRead >= 1 && static_cast<size_t>(blipRead) < samplesThisFrame)
+            {
+                for (size_t i = blipRead; i < samplesThisFrame; i++)
+                {
+                    _beeperBuffer[i * 2] = _beeperBuffer[(blipRead - 1) * 2];
+                    _beeperBuffer[i * 2 + 1] = _beeperBuffer[(blipRead - 1) * 2 + 1];
+                }
+            }
+        }
+
+        // Beeper chain: operates on alias-free blip_buf output (HQ only, see above)
+        if (chainsActive)
+            _beeperChain.processInt16(_beeperBuffer, samplesThisFrame);
+    }
     /// endregion </Process beeper>
 
     /// region <Registry-driven mixing with mute/solo/volume + peak calculation>
     // Finalize Covox frame (DC removal etc.) before mixing
     if (_covox)
-        _covox->handleFrameEnd(samplesThisFrame);
+    {
+        if (soundOff)
+            memset(_covox->getBuffer(), 0x00, AudioFrameDescriptor::memoryBufferSizeInBytes);
+        else
+            _covox->handleFrameEnd(samplesThisFrame);
+    }
 
 #ifdef UNREALNG_HAVE_OPL4
     // Finalize MoonSound frame (advance the core to the frame end; render)
@@ -716,6 +749,14 @@ void SoundManager::handleFrameEnd()
     // Mix each device according to audibility rules and compute peaks
     for (auto& d : _devices)
     {
+        if (soundOff)
+        {
+            // All sources are silent; the output buffer is already cleared
+            d.peak = 0.0f;
+            d.activeRecently = false;
+            continue;
+        }
+
         // Audibility: if any solo is active, only soloed devices are audible;
         // otherwise, non-muted devices are audible
         bool audible = soloActive ? d.solo : !d.mute;

@@ -81,6 +81,31 @@ void SoundChip_TurboSoundFM::advanceChip(TsfmChip& c, int32_t delta, uint64_t t0
     // Walk FM sample boundaries and timer expiries in time order, so a CSM
     // key-on from timer A lands on the right FM sample (§5.2 ordering rule:
     // at the same T-state, expiry is processed before the sample).
+    if (_coreSynthesisSkipped)
+    {
+        // Sound off and no TTD: the FM operators (phases, envelopes) feed only the sound output, so
+        // their clocking is skipped. Everything the CPU can observe stays exact - timers expire on
+        // their T-state (CSM key-on included), busy counts down, and the sample-clock phase keeps
+        // its alignment for the moment synthesis resumes
+        while (delta > 0)
+        {
+            const int32_t period = 12 * int32_t(c.fm.fmClockPrescale());
+            if (c.fmClockPhase >= period)
+                c.fmClockPhase = period - 1;
+
+            const int32_t n = std::min(delta, c.intf.clocksToNextExpiry());  // INT32_MAX when both stopped
+            c.intf.advance(n);
+
+            // FM sample clocks that would have completed in these n T-states; the engine still counts
+            // them (its low clock-counter bits are CPU-observable through the timer B first load)
+            const int32_t total = c.fmClockPhase + n;
+            c.fm.skipFmClocks(uint32_t(total / period));
+            c.fmClockPhase = total % period;
+            delta -= n;
+        }
+        return;
+    }
+
     while (delta > 0)
     {
         const int32_t period = 12 * int32_t(c.fm.fmClockPrescale());

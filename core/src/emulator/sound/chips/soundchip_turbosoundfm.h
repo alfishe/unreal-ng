@@ -137,6 +137,7 @@ protected:
     size_t _coreRate = AUDIO_SAMPLING_RATE;
     bool _hqEnabled = true;
     bool _synthesisSuppressed = false;
+    bool _coreSynthesisSkipped = false;  // FM operator clocking frozen (sound off, no TTD); see ITurboSoundDevice
     bool _prescalerWarned = false;  // one §9.4 warning per device instance
 
     // Render loop state — the legacy SoundChip_TurboSound loop copied
@@ -273,6 +274,12 @@ public:
     {
         _synthesisSuppressed = suppressed;
     }
+
+    void setCoreSynthesisSkipped(bool skipped) override
+    {
+        _coreSynthesisSkipped = skipped;
+    }
+    bool isCoreSynthesisSkipped() const { return _coreSynthesisSkipped; }
 
     /// Redesigns all six decimators for the rate (§6.3): four SSG ones at
     /// the generator rate (identical to the legacy device — bit-identity,
