@@ -51,6 +51,7 @@ void PortDecoder_Profi::reset()
     _screen->SetBorderColor(COLOR_WHITE);
     _screen->SetActiveScreen(SCREEN_NORMAL);
     _7FFD_Locked = false;
+    _covoxWasReachable = false;  // DOS latch is on right after reset (see below): NOT NORMAL mode
 
     // Profi boots into the SYS (service / menu) ROM: DOS latch on, ROM14 = 0.
     // SetROMMode raises CF_TRDOS and rebuilds the banks through UpdateZ80Banks(),
@@ -224,6 +225,28 @@ void PortDecoder_Profi::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
         }
         disp.decodedPort = lowByte;
         disp.wasDecoded = true;
+    }
+
+    // Silence Covox exactly once when #3F/#5F stop being NORMAL-mode Covox ports and
+    // become FDC/CMOS registers instead (dosPorts above may be stale if THIS instruction
+    // is the 7FFD/DFFD write that caused the transition, so re-read the flag fresh).
+    // Covox has no idle timeout: with the bus taken away, its DAC latches would otherwise
+    // hold their last written level forever - inaudible on real hardware (AC-coupled
+    // output stage) but a permanent stuck tone through a digital audio pipeline.
+    const bool dosPortsNow = (_state->flags & CF_DOSPORTS) != 0;
+    if (dosPortsNow && _covoxWasReachable)
+    {
+        if (_context->pSoundManager && _context->pSoundManager->hasCovox())
+        {
+            Covox* covox = _context->pSoundManager->getCovox();
+            covox->portDeviceOutMethod(Covox::PORT_LEFT_A, 0x80);
+            covox->portDeviceOutMethod(Covox::PORT_RIGHT_A, 0x80);
+        }
+        _covoxWasReachable = false;
+    }
+    else if (!dosPortsNow)
+    {
+        _covoxWasReachable = true;
     }
 
     // Universal handler for breakpoints, tracking, analyzers

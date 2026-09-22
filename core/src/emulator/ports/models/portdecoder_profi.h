@@ -68,4 +68,8 @@ protected:
     /// RTC/CMOS (DS12885-style), EXT mode only. Address: #BF/#FF, data: #9F/#DF
     /// (UnrealSpeccy io.cpp: `(port & 0x9F) == 0x9F`, bit 5 selects address vs data).
     ProfiCMOS _cmos;
+
+    /// Tracks whether #3F/#5F currently belong to Covox (NORMAL mode, !dosPorts) so a
+    /// NORMAL -> dosPorts transition can silence the DAC exactly once (see DecodePortOut).
+    bool _covoxWasReachable = true;
 };
