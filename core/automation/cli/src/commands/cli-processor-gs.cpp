@@ -7,7 +7,9 @@
 #include <emulator/sound/soundmanager.h>
 
 #include <algorithm>
+#include <fstream>
 #include <iomanip>
+#include <optional>
 #include <sstream>
 
 #include "cli-processor.h"
@@ -213,6 +215,178 @@ void CLIProcessor::HandleGSPortTrace(const ClientSession& session, const std::ve
     else
     {
         ss << "Usage: gsporttrace <start|stop|pause|resume|clear|status|counters|events [n]>" << NEWLINE;
+    }
+
+    session.SendResponse(ss.str());
+}
+
+namespace
+{
+std::optional<uint8_t> parseByteArg(const std::string& text)
+{
+    try
+    {
+        size_t pos = 0;
+        unsigned long value = std::stoul(text, &pos, 0); // base 0: accepts 0x.. / decimal
+        if (pos != text.size() || value > 0xFF)
+            return std::nullopt;
+        return static_cast<uint8_t>(value);
+    }
+    catch (...)
+    {
+        return std::nullopt;
+    }
+}
+} // namespace
+
+/// 'gs' command: live control of the General Sound card, the same actions
+/// the WebAPI /control/audio/gs endpoint and the MCP gs_* tool actions
+/// serve (GS card personalities design §11.3) - previously CLI-only had
+/// read access (state audio gs / gsporttrace); this closes that gap so all
+/// automation surfaces (WebAPI/MCP/Lua/Python/CLI) offer the same actions.
+///   gs reset                          - full power-on reset
+///   gs reset_card                     - #33 bit7 pulse (mailbox survives)
+///   gs nmi                            - #33 bit6 pulse
+///   gs send_command <byte>            - OUT #BB (0-255, decimal or 0x..)
+///   gs send_data <byte>               - OUT #B3
+///   gs read_status                    - IN #BB
+///   gs read_data                      - IN #B3
+///   gs switch_personality <z80|lle|lw|lightweight> - runtime card swap
+///   gs dump_module [path]             - write the last COM30..D2 upload
+void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse(std::string("Error: No emulator selected.") + NEWLINE);
+        return;
+    }
+
+    EmulatorContext* context = emulator->GetContext();
+    SoundManager* soundManager = context ? context->pSoundManager : nullptr;
+    GeneralSoundCard* gs = soundManager ? soundManager->getGeneralSound() : nullptr;
+    if (!gs)
+    {
+        session.SendResponse(std::string("Error: General Sound card is not fitted (set [SOUND] GSType=Z80 or LW).") + NEWLINE);
+        return;
+    }
+
+    static const char* kUsage =
+        "Usage: gs <reset|reset_card|nmi|send_command <byte>|send_data <byte>|"
+        "read_status|read_data|switch_personality <z80|lle|lw|lightweight>|dump_module [path]>";
+
+    if (args.empty())
+    {
+        session.SendResponse(std::string(kUsage) + NEWLINE);
+        return;
+    }
+
+    std::string sub = args[0];
+    std::transform(sub.begin(), sub.end(), sub.begin(), ::tolower);
+
+    std::stringstream ss;
+
+    if (sub == "reset")
+    {
+        gs->reset();
+        ss << "GS: full reset done." << NEWLINE;
+    }
+    else if (sub == "reset_card")
+    {
+        gs->resetCard();
+        ss << "GS: card reset done (mailbox survives)." << NEWLINE;
+    }
+    else if (sub == "nmi")
+    {
+        gs->triggerNMI();
+        ss << "GS: NMI pulsed." << NEWLINE;
+    }
+    else if (sub == "send_command" || sub == "send_data")
+    {
+        if (args.size() < 2)
+        {
+            ss << "Error: '" << sub << "' requires a byte value (0-255)." << NEWLINE;
+        }
+        else if (auto byte = parseByteArg(args[1]))
+        {
+            if (sub == "send_command")
+                gs->sendCommand(*byte);
+            else
+                gs->sendData(*byte);
+            ss << "GS: " << sub << "(0x" << std::hex << std::setw(2) << std::setfill('0') << (int)*byte << std::dec
+               << ") done." << NEWLINE;
+        }
+        else
+        {
+            ss << "Error: invalid byte value '" << args[1] << "' (expected 0-255)." << NEWLINE;
+        }
+    }
+    else if (sub == "read_status")
+    {
+        const uint8_t value = gs->readStatus();
+        ss << "GS status: 0x" << std::hex << std::setw(2) << std::setfill('0') << (int)value << std::dec << NEWLINE;
+    }
+    else if (sub == "read_data")
+    {
+        const uint8_t value = gs->readData();
+        ss << "GS data: 0x" << std::hex << std::setw(2) << std::setfill('0') << (int)value << std::dec << NEWLINE;
+    }
+    else if (sub == "switch_personality")
+    {
+        if (args.size() < 2)
+        {
+            ss << "Error: 'switch_personality' requires z80, lle, lw or lightweight." << NEWLINE;
+        }
+        else
+        {
+            std::string target = args[1];
+            std::transform(target.begin(), target.end(), target.begin(), ::tolower);
+
+            GSTypeKind kind;
+            if (target == "z80" || target == "lle")
+                kind = GSTypeKind::Z80;
+            else if (target == "lw" || target == "lightweight")
+                kind = GSTypeKind::LW;
+            else
+            {
+                ss << "Error: unknown personality '" << args[1] << "' (expected z80, lle, lw or lightweight)." << NEWLINE;
+                session.SendResponse(ss.str());
+                return;
+            }
+
+            if (soundManager->requestGeneralSoundCardSwitch(kind))
+                ss << "GS: personality switch to '" << target << "' requested (applied at the next frame boundary)." << NEWLINE;
+            else
+                ss << "Error: personality switch request failed." << NEWLINE;
+        }
+    }
+    else if (sub == "dump_module")
+    {
+        std::vector<uint8_t> bytes;
+        bool playing = false;
+        if (!gs->captureModuleUpload(bytes, playing))
+        {
+            ss << "Error: no completed module upload to dump (no COM30..D2 stream captured yet)." << NEWLINE;
+        }
+        else
+        {
+            const std::string path = args.size() > 1 ? args[1] : "gs-module-dump.mod";
+            std::ofstream out(path, std::ios::binary);
+            if (!out)
+            {
+                ss << "Error: cannot open '" << path << "' for writing." << NEWLINE;
+            }
+            else
+            {
+                out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+                ss << "GS: module dumped (" << bytes.size() << " bytes, playing=" << (playing ? "yes" : "no")
+                   << ") -> " << path << NEWLINE;
+            }
+        }
+    }
+    else
+    {
+        ss << kUsage << NEWLINE;
     }
 
     session.SendResponse(ss.str());

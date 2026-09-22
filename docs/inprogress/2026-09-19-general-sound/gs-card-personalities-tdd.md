@@ -555,6 +555,45 @@ shadow latches and triage totals all survive the handoff.
   with `personality` (normalized), `current`, `requested` and the note
   `applied at the next frame boundary`; 400 on missing/unknown personality.
   OpenAPI spec (`openapi_state.inc`) documents the action enum.
+- WebAPI `action=dump_module` (2026-09-22, added for the real-content
+  verification in §5): writes the last completed COM30..D2 upload
+  (`captureModuleUpload`) to a file - `path` (optional, default
+  `gs-module-dump.mod`), responds with `path`/`bytes`/`playing`; 404 when
+  no upload has completed yet.
+
+### 8.1 Automation surface parity (2026-09-22)
+
+All five automation surfaces expose the same nine control actions
+(`reset`/`reset_card`/`nmi`/`send_command`/`send_data`/`read_status`/
+`read_data`/`switch_personality`/`dump_module`) plus full read access
+(mailbox/channels/coprocessor state, activity counters, port trace).
+`switch_personality` and `dump_module` were WebAPI-only through
+2026-09-21; closed everywhere below the same day.
+
+| Surface | Read (state + counters + trace) | Control (9 actions) |
+|:--|:--|:--|
+| WebAPI | `GET .../state/audio/gs`, `.../porttrace` | `POST .../control/audio/gs` (`action` field) |
+| MCP `inspect_state` | `aspects: ["audio_gs"]` - **not** `domain` (no such param; passing it is silently ignored and falls back to the default aspect set `registers`/`disasm`/`screen_ocr`, no error) | - |
+| MCP `emulator_manage` | - (use `inspect_state`) | `gs_reset` / `gs_reset_card` / `gs_nmi` / `gs_send_command` / `gs_send_data` / `gs_read_status` / `gs_read_data` / `gs_switch_personality` (needs `personality`) / `gs_dump_module` (optional `path`) - all forward to the same `/control/audio/gs` endpoint |
+| MCP `analyze_gs_activity` | Wraps `porttrace` start/run/stop/read into one round-trip | - |
+| CLI | `state audio gs [--verbose]`, `gsporttrace <start\|stop\|pause\|resume\|clear\|status\|counters\|events [n]>` | `gs <reset\|reset_card\|nmi\|send_command <byte>\|send_data <byte>\|read_status\|read_data\|switch_personality <z80\|lle\|lw\|lightweight>\|dump_module [path]>` (added 2026-09-22 - previously CLI had no GS control at all, only the other subsystems did) |
+| Lua | `gs_state()`, `gs_counters()`, `gs_porttrace_*()` | `gs_reset()` / `gs_reset_card()` / `gs_nmi()` / `gs_send_command(byte)` / `gs_send_data(byte)` / `gs_read_status()` / `gs_read_data()` / `gs_switch_personality(personality)` / `gs_dump_module(path?)` |
+| Python | `gs_state()`, `gs_counters()`, `gs_porttrace_*()` | same nine methods on `Emulator`, snake_case, `gs_dump_module(path="gs-module-dump.mod")` |
+
+Lua/Python caveat: both interpreters' `_emulator` binds to whatever
+instance `Automation`/`LuaEmulator::setEmulator` was last pointed at -
+nothing in the WebAPI multi-instance lifecycle (`EmulatorManager`) wires it
+to an instance created via `POST /api/v1/emulator/start`. Every `gs_*`
+call (old and new alike) degrades gracefully when unset - bool actions
+return `false`, byte reads return `-1`, table/dict actions return
+nil/None - rather than crashing, but a Lua/Python script talking to a
+WebAPI-created instance needs that binding wired first; this is a
+pre-existing gap in the interpreter's emulator binding, not specific to
+GS. Live-verified 2026-09-22: `gs_switch_personality`/`gs_dump_module`
+return `false`/`nil` against a WebAPI instance exactly like every
+untouched sibling (`gs_read_status` returns `-1`, `gs_state` returns nil)
+under the same unset binding - both new functions match the existing
+family's failure contract, not a regression.
 
 ## 9. Config and TTD registration
 

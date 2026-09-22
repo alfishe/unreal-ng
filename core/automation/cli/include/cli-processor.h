@@ -224,6 +224,10 @@ private:
 
     // GS coprocessor triage: activity counters + opt-in port/DAC event trace
     void HandleGSPortTrace(const ClientSession& session, const std::vector<std::string>& args);
+    // GS card control: reset/reset_card/nmi/send_command/send_data/read_status/
+    // read_data/switch_personality/dump_module - same actions as the WebAPI
+    // /control/audio/gs endpoint and the MCP gs_* tool actions
+    void HandleGS(const ClientSession& session, const std::vector<std::string>& args);
     void HandleStateAudioCovox(const ClientSession& session, EmulatorContext* context);
     void HandleStateAudioChannels(const ClientSession& session, EmulatorContext* context);
 

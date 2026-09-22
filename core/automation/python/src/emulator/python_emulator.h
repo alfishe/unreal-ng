@@ -1584,6 +1584,51 @@ namespace PythonBindings
                 GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
                 return gs ? gs->readStatus() : -1;
             }, "Read GS status register (IN #BB semantics)")
+            .def("gs_switch_personality", [](Emulator& self, const std::string& personality) -> bool {
+                // Runtime personality switch (GS card personalities design
+                // §11.3): requested here, applied at the next frame boundary
+                // on the emulation thread - same semantics as the WebAPI
+                // switch_personality action and the MCP gs_switch_personality
+                // tool action
+                auto* ctx = self.GetContext();
+                SoundManager* sm = ctx ? ctx->pSoundManager : nullptr;
+                if (!sm) return false;
+
+                GSTypeKind target;
+                if (personality == "z80" || personality == "lle")
+                    target = GSTypeKind::Z80;
+                else if (personality == "lw" || personality == "lightweight")
+                    target = GSTypeKind::LW;
+                else
+                    return false;
+
+                return sm->requestGeneralSoundCardSwitch(target);
+            }, "Request a GS card personality swap ('z80'/'lle' or 'lw'/'lightweight'), applied at the next frame boundary",
+               py::arg("personality"))
+            .def("gs_dump_module", [](Emulator& self, const std::string& path) -> py::object {
+                // Diagnostics: write the last completed COM30..D2 upload
+                // (the raw ProTracker module the host streamed) to a file -
+                // same data dump_module serves via the WebAPI/MCP
+                auto* ctx = self.GetContext();
+                GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+                if (!gs) return py::none();
+
+                std::vector<uint8_t> bytes;
+                bool playing = false;
+                if (!gs->captureModuleUpload(bytes, playing))
+                    return py::none();
+
+                std::ofstream out(path, std::ios::binary);
+                if (!out) return py::none();
+                out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+
+                py::dict d;
+                d["path"] = path;
+                d["bytes"] = bytes.size();
+                d["playing"] = playing;
+                return d;
+            }, "Write the last completed COM30..D2 module upload to a file (default 'gs-module-dump.mod')",
+               py::arg("path") = "gs-module-dump.mod")
 
             // GS coprocessor triage: always-on activity counters + opt-in
             // port/DAC event trace - the "is the GS Z80 alive and doing DAC

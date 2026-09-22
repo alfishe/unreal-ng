@@ -168,6 +168,9 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"gsporttrace", &CLIProcessor::HandleGSPortTrace},
                         {"gs-porttrace", &CLIProcessor::HandleGSPortTrace},
 
+                        // General Sound card control (reset/nmi/send/read/switch_personality/dump_module)
+                        {"gs", &CLIProcessor::HandleGS},
+
                         // Settings commands
                         {"setting", &CLIProcessor::HandleSetting},
                         {"settings", &CLIProcessor::HandleSetting},
@@ -594,6 +597,14 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  state screen verbose         - Show screen configuration (detailed)" << NEWLINE;
     oss << "  state screen mode            - Show video mode details" << NEWLINE;
     oss << "  state screen flash           - Show flash state and counter" << NEWLINE;
+    oss << "  state audio gs [--verbose]   - General Sound card state" << NEWLINE;
+    oss << NEWLINE;
+    oss << "General Sound card:" << NEWLINE;
+    oss << "  gsporttrace <start|stop|pause|resume|clear|status|counters|events [n]>" << NEWLINE;
+    oss << "                                - GS activity counters + opt-in port/DAC event trace" << NEWLINE;
+    oss << "  gs <reset|reset_card|nmi|send_command <byte>|send_data <byte>|read_status|read_data" << NEWLINE;
+    oss << "      |switch_personality <z80|lle|lw|lightweight>|dump_module [path]>" << NEWLINE;
+    oss << "                                - GS card control (same actions as WebAPI /control/audio/gs)" << NEWLINE;
     oss << NEWLINE;
     oss << "Emulator Settings:" << NEWLINE;
     oss << "  setting, setting list        - List all emulator settings and their values" << NEWLINE;

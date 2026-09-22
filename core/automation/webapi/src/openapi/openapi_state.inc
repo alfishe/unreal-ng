@@ -178,7 +178,8 @@
         "bit6), send_command (OUT #BB), send_data (OUT #B3), read_status (IN #BB, returns the value), read_data "
         "(IN #B3, clears the data-pending flag and returns the value), switch_personality (runtime LLE <-> "
         "lightweight card swap - the host mailbox and activity counters survive the handoff; applied at the "
-        "next frame boundary).";
+        "next frame boundary), dump_module (writes the last completed COM30..D2 module upload to a file - "
+        "'path' optional, defaults to 'gs-module-dump.mod'; 404 when no upload has completed yet).";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["required"] = true;
@@ -211,13 +212,17 @@
                                                                ["properties"]["personality"]["enum"].append("z80");
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
                                                                ["properties"]["personality"]["enum"].append("lw");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["action"]["enum"].append("dump_module");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["path"]["type"] = "string";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["200"]["description"] =
         "Action result (read_status/read_data carry the byte in 'value'; switch_personality carries the requested "
-        "target and the current personality)";
+        "target and the current personality; dump_module carries 'path', 'bytes' and 'playing')";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["400"]["description"] =
         "Unknown action, invalid value or unknown personality";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["404"]["description"] =
-        "Emulator or GS card not found";
+        "Emulator or GS card not found, or (dump_module) no completed module upload captured yet";
 
     paths["/api/v1/emulator/{id}/state/audio/covox"]["get"]["summary"] = "Get Covox state";
     paths["/api/v1/emulator/{id}/state/audio/covox"]["get"]["tags"].append("Audio State");
