@@ -150,22 +150,24 @@ void CLIProcessor::HandleDiskInsert(const ClientSession& session, std::shared_pt
 
     std::string filepath = args[2];
 
-    // Optional trailing "autostart": quick-reset into TR-DOS and run the disk (drive A only, off by default)
+    // Optional trailing "autostart": quick-reset into TR-DOS and run the disk (drive A only - a TR-DOS/
+    // Beta 128 hardware convention, not a missing feature; requesting it for another drive is now a hard
+    // error via AutostartDisk() itself, not silently ignored)
     const bool autostart = args.size() > 3 && (args[3] == "autostart" || args[3] == "--autostart");
 
-    // Use existing LoadDisk method with drive parameter
-    // Note: LoadDisk currently hardcoded to drive 0, need to update it
     std::string autostartNote;
+    std::string errorMessage;
     bool success;
-    if (autostart && drive == 0)
+    if (autostart)
     {
-        Emulator::DiskAutostartResult result = emulator->AutostartDisk(filepath);
+        Emulator::DiskAutostartResult result = emulator->AutostartDisk(filepath, drive);
         success = result.mounted;
+        errorMessage = result.message;
         autostartNote = std::string(" (") + result.message + ")";
     }
     else
     {
-        success = emulator->LoadDisk(filepath);
+        success = emulator->LoadDisk(filepath, drive, &errorMessage);
     }
 
     if (success)
@@ -175,7 +177,7 @@ void CLIProcessor::HandleDiskInsert(const ClientSession& session, std::shared_pt
     }
     else
     {
-        session.SendResponse(std::string("Error: Failed to insert disk: ") + filepath + NEWLINE);
+        session.SendResponse(std::string("Error: Failed to insert disk: ") + filepath + " - " + errorMessage + NEWLINE);
     }
 }
 

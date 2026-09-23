@@ -69,8 +69,8 @@ WebAPI's thread calls `run()`), and `stopMCP()` runs **after** `stopWebAPI()`.
 
 | Tool | Purpose |
 |:--|:--|
-| `emulator_manage` | create/list/status/start/stop/pause/resume/reset/destroy, list_models, server (build fingerprint + models_creatable); GS card actions gs_reset/gs_reset_card/gs_nmi/gs_send_command/gs_send_data/gs_read_status/gs_read_data (`value` = byte 0-255) |
-| `load_software` | load `.sna/.z80` snapshots, `.tap/.tzx` tapes (auto-play flag), `.trd/.scl/.fdi` disks |
+| `emulator_manage` | create/list/status/start/stop/pause/resume/reset/destroy, list_models, server (build fingerprint + models_creatable); GS card actions gs_reset/gs_reset_card/gs_nmi/gs_send_command/gs_send_data/gs_read_status/gs_read_data (`value` = byte 0-255), gs_switch_personality (`personality`: z80/lle/lw/lightweight), gs_dump_module (optional `path`) |
+| `load_software` | load `.sna/.z80` snapshots, `.tap/.tzx` tapes (auto-play flag), `.trd/.scl/.fdi/.udi/.dsk/.td0/.mgt/.img` disks (`autostart` flag: drive A only, quick-reset into TR-DOS and run the disk) |
 | `control_execution` | run/pause/resume/step/step_n/step_over/step_out, run_frames/run_tstates/run_to_interrupt, breakpoints (add/remove/enable/disable/clear/list); the raw `skip_until` endpoint is reachable via `invoke_api` |
 | `inspect_state` | aspects fan-out: machine, registers, memory, disasm, stack, breakpoints, memory_banks, screen_ocr, screen_image, screen_digest, timing, rom, audio_ay (every AY/SSG chip decoded), audio_fm (TurboSound FM board + both YM2203 halves: mode, timers, channels, operators, envelopes, key-on), audio_gs (General Sound card: mailbox flags, MPAG page, DAC channels, coprocessor core; unavailable when not fitted), fdc (Beta Disk WD1793 registers, status, FSM, drives) |
 | `type_input` | type (tokenized BASIC entry), tap/press/release, combo, macro, release_all, status, list_keys |

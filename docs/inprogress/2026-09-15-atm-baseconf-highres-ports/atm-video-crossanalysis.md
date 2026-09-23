@@ -54,7 +54,12 @@ vestigial and only survives in the TTD paging blob). The earlier table entry
 ### Memory Layout (EGA mode)
 - 4 planes at offsets: 0x4000, 0x8000, 0xC000, 0x10000
 - Each plane = 16KB, total 64KB video RAM
-- Video page from bits 3,6 of port 7FFD
+- Video page from port 7FFD bit 3 only (verified 2026-09-23 against
+  unreal-speccy `dxr_atm0.cpp` plane-offset structure and ZXMAK2
+  `MemoryAtm710.cs` `videoPage = (CMR0 & 0x08) == 0 ? 5 : 7` - CMR0 is the
+  raw #7FFD byte, `BusWritePort7FFD_128` sets `CMR0 = value` directly, no
+  other bits involved. The "bits 3,6" note above was a stale error; kept
+  struck through for history, not the current understanding.)
 
 ## Implementation Status in unreal-ng
 
@@ -93,6 +98,19 @@ vestigial and only survives in the TTD paging blob). The earlier table entry
 - [ ] Video mode switching side effects (AtmApplySideEffectsWhenChangeVideomode)
 - [ ] Programmable palette via port writes
 - [ ] Character ROM location verification for text modes
-- [ ] Border rendering for ATM modes
+
+### Resolved (2026-09-23)
+- [x] **Border rendering for ATM modes**: was never actually implemented
+  correctly - the raster descriptors gave M_ATM16/ATMHR/ATMTX/ATMTL a
+  nonzero `screenOffsetLeft` (64/32px) and wider `fullFrameWidth`,
+  modeling a ZX-style scanned side border that doesn't exist on real ATM
+  hardware. Cross-checked against 3 independent ZXMAK2 renderer classes
+  (`Atm320Renderer`/`Atm640Renderer`/`AtmTxtRenderer` `CreateParams()`,
+  all `c_ulaBorderLeftT = c_ulaBorderRightT = 0`): these modes are
+  edge-to-edge horizontally, only top/bottom border exists. Fixed in
+  `screen.h` `rasterDescriptors[]`: `screenOffsetLeft=0`,
+  `fullFrameWidth == screenWidth` for all four modes. See
+  `docs/inprogress/2026-09-22-atm-hires-border-and-addressing/` for the
+  full investigation writeup.
 - [ ] End-to-end frame test (as agent noted)
 - [ ] M_ATMTX/ATMHR plane interleave fix (text mode menu rendering)

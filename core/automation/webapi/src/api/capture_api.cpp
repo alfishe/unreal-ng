@@ -134,12 +134,14 @@ void EmulatorAPI::captureScreen(const HttpRequestPtr& req, std::function<void(co
     // Parse query parameters
     std::string format = req->getParameter("format");
     std::string modeStr = req->getParameter("mode");
+    std::string path = req->getParameter("path");
+    if (path.empty()) path = req->getParameter("filename");
     
     if (format.empty()) format = "gif";
     CaptureMode mode = (modeStr == "full") ? CaptureMode::FullFramebuffer : CaptureMode::ScreenOnly;
 
     // Capture screen
-    auto result = ScreenCapture::captureScreen(id, format, mode);
+    auto result = ScreenCapture::captureScreen(id, format, mode, path);
 
     if (!result.success)
     {
@@ -161,7 +163,15 @@ void EmulatorAPI::captureScreen(const HttpRequestPtr& req, std::function<void(co
     ret["width"] = result.width;
     ret["height"] = result.height;
     ret["size"] = static_cast<Json::UInt64>(result.originalSize);
-    ret["data"] = result.base64Data;
+    if (!result.savedFile.empty())
+    {
+        ret["saved"] = true;
+        ret["file"] = result.savedFile;
+    }
+    if (!result.base64Data.empty())
+    {
+        ret["data"] = result.base64Data;
+    }
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);

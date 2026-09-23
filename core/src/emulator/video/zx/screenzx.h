@@ -1,5 +1,8 @@
 #pragma once
+#include <memory>
+
 #include "common/modulelogger.h"
+#include "emulator/video/atm/screenatm.h"
 #include "emulator/video/screen.h"
 #include "stdafx.h"
 
@@ -89,6 +92,10 @@ protected:
     uint8_t _lastLatchSymbolX = 0xFF;  // Track which cell was last latched
     uint8_t _lastLatchZxY = 0xFF;      // Track which line was last latched
 
+    // ATM Turbo 2+/3/710 extended mode renderer - only allocated for ATM
+    // machine models (see constructor); nullptr for plain Spectrum/Pentagon
+    std::unique_ptr<ScreenAtm> _atmScreen;
+
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -148,10 +155,6 @@ public:
     /// @deprecated CLEANUP: Remove after Phase 3 verification complete
     /// @param tstate T-state timing position
     void DrawLUT_Ternary(uint32_t tstate);
-
-    /// @brief ATM extended mode renderer (EGA, HiRes, Text modes)
-    /// @param tstate T-state timing position
-    void DrawATMMode(uint32_t tstate);
 
     /// @brief EFF7 z-mode renderer over the ZX raster (M_P16 AlCo 16c /
     /// M_PMC hardware multicolor - Pentagon and ZX-Evo BaseConf)

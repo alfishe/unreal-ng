@@ -607,6 +607,37 @@ namespace PythonBindings
                 ctx->coreState.diskFilePaths[drive] = "<blank>";
                 return true;
             }, "Create blank disk", py::arg("drive"), py::arg("cylinders") = 80, py::arg("sides") = 2)
+            .def("disk_load", [](Emulator& self, const std::string& path, int drive, bool autostart) -> py::dict {
+                py::dict result;
+                if (drive < 0 || drive > 3)
+                {
+                    result["success"] = false;
+                    result["message"] = "invalid drive " + std::to_string(drive) + " (valid range: 0-3 / A-D)";
+                    return result;
+                }
+                if (autostart)
+                {
+                    // Drive A (0) only - a TR-DOS/Beta 128 hardware convention: requesting it for another
+                    // drive is a hard failure (result["success"]=False, message explains why), never
+                    // silently ignored or redirected to drive A.
+                    Emulator::DiskAutostartResult r = self.AutostartDisk(path, static_cast<uint8_t>(drive));
+                    result["success"] = r.mounted;
+                    result["started"] = r.started;
+                    result["message"] = r.message;
+                }
+                else
+                {
+                    std::string error;
+                    bool ok = self.LoadDisk(path, static_cast<uint8_t>(drive), &error);
+                    result["success"] = ok;
+                    result["started"] = false;
+                    result["message"] = ok ? "mounted" : error;
+                }
+                return result;
+            }, "Insert a disk image (.trd/.scl/.fdi/.udi/...) into the requested drive (0-3 / A-D), optionally "
+               "quick-resetting into TR-DOS to run it (autostart, drive A only - same as the Qt UI's "
+               "drag-and-drop autostart)",
+               py::arg("path"), py::arg("drive") = 0, py::arg("autostart") = false)
             .def("disk_list", [](Emulator& self) -> py::list {
                 py::list drives;
                 auto* ctx = self.GetContext();

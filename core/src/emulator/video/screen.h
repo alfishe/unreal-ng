@@ -421,16 +421,19 @@ public:
         // ATM modes: ZX-compatible 312-line PAL timing at base clock
         // Beam: 448 pixels/line = 224 T-states; 16 vSync + 8 vBlank + 288 visible = 312 lines
         // maxFrameTiming = 224 x 312 = 69888 = config.frame (synchronized)
-        // 200-line screen vertically centered (44-line borders, like the reference
-        // renderer's (scy-200)/2 centering in dxr_atm0.cpp).
-        // 640-px modes (MC/Text/TextLinear) double the pixel clock inside the
-        // same 160-T screen window: storage is 704-wide (32-px side borders)
-        // while the beam stays 448 px/line - pixelsPerLine is timing,
-        // fullFrameWidth is storage.
-        {448, 288, 320, 200, 64, 44, 448, 64, 32, 16, 8},  // M_ATM16 (EGA 16-color)
-        {704, 288, 640, 200, 32, 44, 448, 64, 32, 16, 8},  // M_ATMHR (HW Multicolor 640x200)
-        {704, 288, 640, 200, 32, 44, 448, 64, 32, 16, 8},  // M_ATMTX (Text 80x25, 640x200)
-        {704, 288, 640, 200, 32, 44, 448, 64, 32, 16, 8},  // M_ATMTL (ZX-Evo Text Linear 80x25, 640x200 - same geometry as TX)
+        // 200-line screen vertically centered (44-line top/bottom border, like the
+        // reference renderer's (scy-200)/2 centering in dxr_atm0.cpp).
+        // NO side border: cross-checked against 3 independent ZXMAK2 renderer
+        // classes (Atm320Renderer/Atm640Renderer/AtmTxtRenderer CreateParams,
+        // all c_ulaBorderLeftT=c_ulaBorderRightT=0) - ATM extended modes are
+        // edge-to-edge horizontally, fullFrameWidth == screenWidth. Only
+        // top/bottom border exists. pixelsPerLine stays the ZX-compatible beam
+        // timing (448 px/224T); fullFrameWidth is storage, now equal to the
+        // active picture width with zero side margin.
+        {320, 288, 320, 200, 0, 44, 448, 64, 32, 16, 8},  // M_ATM16 (EGA 16-color)
+        {640, 288, 640, 200, 0, 44, 448, 64, 32, 16, 8},  // M_ATMHR (HW Multicolor 640x200)
+        {640, 288, 640, 200, 0, 44, 448, 64, 32, 16, 8},  // M_ATMTX (Text 80x25, 640x200)
+        {640, 288, 640, 200, 0, 44, 448, 64, 32, 16, 8},  // M_ATMTL (ZX-Evo Text Linear 80x25, 640x200 - same geometry as TX)
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_PROFI
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_GMX
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16},  // M_BRD

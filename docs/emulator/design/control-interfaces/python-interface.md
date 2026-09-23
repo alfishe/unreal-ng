@@ -210,6 +210,39 @@ emu.tape_import("recording.wav", "imported.tap", 0.25)
 
 Playback `state` is one of `"idle"`, `"playing"`, `"paused"`, `"ended"` — identical strings across CLI, WebAPI, Lua and Python.
 
+### Disk Operations
+
+`Emulator` methods for the four floppy drives (0-3 / A-D), mirroring the CLI `disk` commands and the WebAPI `/disk/{drive}/*` endpoints.
+
+```python
+# Load / eject (path: .trd/.scl/.fdi/.udi/.dsk/.td0/.mgt/.img, auto-detected)
+emu.disk_load("/path/to/game.trd")             # insert into drive 0 (A)
+# -> {"success", "started": False, "message"}
+emu.disk_load("/path/to/game.trd", drive=0, autostart=True)  # + autostart: quick-reset
+    # into TR-DOS and run the disk (same as the Qt UI's drag-and-drop autostart /
+    # WebAPI "autostart": true / CLI "disk insert <drive> <file> autostart") - drive 0 only
+# -> {"success", "started", "message"}; message explains what autostart did
+#    (e.g. "Autostart: boot", "No BASIC programs on disk - mounted only")
+emu.disk_eject(0)
+
+# A non-zero `drive` is accepted but currently still mounts into drive 0 - a pre-existing
+# limitation of the underlying LoadDisk/AutostartDisk (not specific to Python); disk_load
+# adds a "warning" key to the result in that case rather than silently mis-inserting.
+
+# Blank disk
+emu.disk_create(drive=1, cylinders=80, sides=2)   # drive 1 (B)
+
+# Inspection
+emu.disk_is_inserted(0)
+emu.disk_get_path(0)
+emu.disk_list()          # list of {"id", "letter", "inserted", "path"}
+emu.disk_info(0)         # None without a disk, else geometry/catalog details
+
+# Raw sector access (read-only)
+emu.disk_read_sector(0, 0, 0, 1)      # drive 0, cyl 0, side 0, sector 1
+emu.disk_read_sector_hex(0, 0, 1)     # drive 0, track 0, sector 1
+```
+
 ### Mouse Input
 
 `Emulator` methods that drive the emulated Kempston Mouse, mirroring the CLI `mouse` commands

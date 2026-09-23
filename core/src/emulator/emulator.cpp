@@ -708,14 +708,24 @@ void Emulator::ClearAudioCallback()
 
 // region Disk autostart
 
-Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path)
+Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, uint8_t drive)
 {
     DiskAutostartResult result;
 
-    result.mounted = LoadDisk(path);
+    if (drive != 0)
+    {
+        result.message = "autostart only supports drive A (TR-DOS/Beta 128's \"RUN boot\" convention "
+                          "always boots from drive A) - insert into drive " +
+                          std::string(1, static_cast<char>('A' + drive)) + " without autostart instead";
+        MLOGERROR("AutostartDisk: %s", result.message.c_str());
+        return result;
+    }
+
+    std::string loadError;
+    result.mounted = LoadDisk(path, drive, &loadError);
     if (!result.mounted)
     {
-        result.message = "Disk could not be loaded";
+        result.message = loadError.empty() ? "Disk could not be loaded" : loadError;
         return result;
     }
 
@@ -1544,19 +1554,40 @@ bool Emulator::LoadTape(const std::string& path)
     return result;
 }
 
-bool Emulator::LoadDisk(const std::string& path)
+bool Emulator::LoadDisk(const std::string& path, uint8_t drive, std::string* error)
 {
+    auto fail = [&](const std::string& message) -> bool
+    {
+        if (error)
+        {
+            *error = message;
+        }
+        MLOGERROR("LoadDisk: %s", message.c_str());
+        return false;
+    };
+
     // Guard against operations during destruction (thread safety)
     if (_state == StateDestroying || _isReleased)
     {
-        MLOGWARNING("LoadDisk rejected - emulator is being destroyed");
-        return false;
+        return fail("emulator is being destroyed");
+    }
+
+    if (drive >= 4)
+    {
+        return fail("invalid drive index " + std::to_string(static_cast<int>(drive)) +
+                    " (valid range: 0-3 / A-D)");
+    }
+
+    if (!_context || !_context->coreState.diskDrives[drive])
+    {
+        return fail(std::string("drive ") + static_cast<char>('A' + drive) +
+                    " is not present on this machine");
     }
 
     bool result = false;
 
     MLOGEMPTY();
-    MLOGINFO("Loading disk image from file: '%s'", path.c_str());
+    MLOGINFO("Loading disk image from file: '%s' into drive %c", path.c_str(), static_cast<char>('A' + drive));
 
     // Validate and resolve path
     std::string resolvedPath = FileHelper::AbsolutePath(path);
@@ -1564,6 +1595,11 @@ bool Emulator::LoadDisk(const std::string& path)
     // Check file exists
     if (!FileHelper::FileExists(resolvedPath))
     {
+        std::string message = "file not found: '" + path + "'";
+        if (error)
+        {
+            *error = message;
+        }
         MLOGERROR("LoadDisk() - File not found: '%s'", path.c_str());
         if (_context)
         {
@@ -1595,20 +1631,18 @@ bool Emulator::LoadDisk(const std::string& path)
         LoaderTRD loaderTrd(_context, resolvedPath);
         if (loaderTrd.loadImage())
         {
-            // FIXME: use active drive, not fixed A:
-
             /// region <Mount new disk image and release previous>
-            DiskImage* oldImage = _context->coreState.diskImages[0];
+            DiskImage* oldImage = _context->coreState.diskImages[drive];
             DiskImage* diskImage = loaderTrd.getImage();
-            _context->coreState.diskImages[0] = diskImage;
+            _context->coreState.diskImages[drive] = diskImage;
 
-            if (_context->coreState.diskDrives[0])
+            if (_context->coreState.diskDrives[drive])
             {
-                _context->coreState.diskDrives[0]->insertDisk(diskImage);
+                _context->coreState.diskDrives[drive]->insertDisk(diskImage);
             }
             
             // Store file path for API queries and for "Save" back to the same file
-            _context->coreState.diskFilePaths[0] = resolvedPath;
+            _context->coreState.diskFilePaths[drive] = resolvedPath;
             diskImage->setFilePath(resolvedPath);
 
             if (oldImage != nullptr)
@@ -1619,6 +1653,10 @@ bool Emulator::LoadDisk(const std::string& path)
             
             result = true;  // Successfully loaded TRD disk
         }
+        else if (error)
+        {
+            *error = loaderTrd.lastWarnings().empty() ? "failed to load TRD image" : loaderTrd.lastWarnings().back();
+        }
     }
 
     if (ext == "scl")
@@ -1626,20 +1664,18 @@ bool Emulator::LoadDisk(const std::string& path)
         LoaderSCL loader(_context, path);
         if (loader.loadImage())
         {
-            // FIXME: use active drive, not fixed A:
-
             /// region <Mount new disk image and release previous>
-            DiskImage* oldImage = _context->coreState.diskImages[0];
+            DiskImage* oldImage = _context->coreState.diskImages[drive];
             DiskImage* diskImage = loader.getImage();
-            _context->coreState.diskImages[0] = diskImage;
+            _context->coreState.diskImages[drive] = diskImage;
 
-            if (_context->coreState.diskDrives[0])
+            if (_context->coreState.diskDrives[drive])
             {
-                _context->coreState.diskDrives[0]->insertDisk(diskImage);
+                _context->coreState.diskDrives[drive]->insertDisk(diskImage);
             }
             
             // Store file path for API queries and for "Save" back to the same file
-            _context->coreState.diskFilePaths[0] = resolvedPath;
+            _context->coreState.diskFilePaths[drive] = resolvedPath;
             diskImage->setFilePath(resolvedPath);
 
             if (oldImage != nullptr)
@@ -1649,6 +1685,10 @@ bool Emulator::LoadDisk(const std::string& path)
             /// endregion </Mount new disk image and release previous>
             
             result = true;  // Successfully loaded SCL disk
+        }
+        else if (error)
+        {
+            *error = loader.lastWarnings().empty() ? "failed to load SCL image" : loader.lastWarnings().back();
         }
     }
 
@@ -1662,20 +1702,18 @@ bool Emulator::LoadDisk(const std::string& path)
                 MLOGWARNING("LoadDisk(UDI): %s", warning.c_str());
             }
 
-            // FIXME: use active drive, not fixed A:
-
             /// region <Mount new disk image and release previous>
-            DiskImage* oldImage = _context->coreState.diskImages[0];
+            DiskImage* oldImage = _context->coreState.diskImages[drive];
             DiskImage* diskImage = loader.getImage();
-            _context->coreState.diskImages[0] = diskImage;
+            _context->coreState.diskImages[drive] = diskImage;
 
-            if (_context->coreState.diskDrives[0])
+            if (_context->coreState.diskDrives[drive])
             {
-                _context->coreState.diskDrives[0]->insertDisk(diskImage);
+                _context->coreState.diskDrives[drive]->insertDisk(diskImage);
             }
             
             // Store file path for API queries and for "Save" back to the same file
-            _context->coreState.diskFilePaths[0] = resolvedPath;
+            _context->coreState.diskFilePaths[drive] = resolvedPath;
             diskImage->setFilePath(resolvedPath);
 
             if (oldImage != nullptr)
@@ -1692,6 +1730,10 @@ bool Emulator::LoadDisk(const std::string& path)
             {
                 MLOGERROR("LoadDisk(UDI): %s", warning.c_str());
             }
+            if (error)
+            {
+                *error = loader.lastWarnings().empty() ? "failed to load UDI image" : loader.lastWarnings().back();
+            }
         }
     }
 
@@ -1705,20 +1747,18 @@ bool Emulator::LoadDisk(const std::string& path)
                 MLOGWARNING("LoadDisk(FDI): %s", warning.c_str());
             }
 
-            // FIXME: use active drive, not fixed A:
-
             /// region <Mount new disk image and release previous>
-            DiskImage* oldImage = _context->coreState.diskImages[0];
+            DiskImage* oldImage = _context->coreState.diskImages[drive];
             DiskImage* diskImage = loader.getImage();
-            _context->coreState.diskImages[0] = diskImage;
+            _context->coreState.diskImages[drive] = diskImage;
 
-            if (_context->coreState.diskDrives[0])
+            if (_context->coreState.diskDrives[drive])
             {
-                _context->coreState.diskDrives[0]->insertDisk(diskImage);
+                _context->coreState.diskDrives[drive]->insertDisk(diskImage);
             }
             
             // Store file path for API queries and for "Save" back to the same file
-            _context->coreState.diskFilePaths[0] = resolvedPath;
+            _context->coreState.diskFilePaths[drive] = resolvedPath;
             diskImage->setFilePath(resolvedPath);
 
             if (oldImage != nullptr)
@@ -1735,6 +1775,10 @@ bool Emulator::LoadDisk(const std::string& path)
             {
                 MLOGERROR("LoadDisk(FDI): %s", warning.c_str());
             }
+            if (error)
+            {
+                *error = loader.lastWarnings().empty() ? "failed to load FDI image" : loader.lastWarnings().back();
+            }
         }
     }
 
@@ -1748,20 +1792,18 @@ bool Emulator::LoadDisk(const std::string& path)
                 MLOGWARNING("LoadDisk(DSK): %s", warning.c_str());
             }
 
-            // FIXME: use active drive, not fixed A:
-
             /// region <Mount new disk image and release previous>
-            DiskImage* oldImage = _context->coreState.diskImages[0];
+            DiskImage* oldImage = _context->coreState.diskImages[drive];
             DiskImage* diskImage = loader.getImage();
-            _context->coreState.diskImages[0] = diskImage;
+            _context->coreState.diskImages[drive] = diskImage;
 
-            if (_context->coreState.diskDrives[0])
+            if (_context->coreState.diskDrives[drive])
             {
-                _context->coreState.diskDrives[0]->insertDisk(diskImage);
+                _context->coreState.diskDrives[drive]->insertDisk(diskImage);
             }
             
             // Store file path for API queries and for "Save" back to the same file
-            _context->coreState.diskFilePaths[0] = resolvedPath;
+            _context->coreState.diskFilePaths[drive] = resolvedPath;
             diskImage->setFilePath(resolvedPath);
 
             if (oldImage != nullptr)
@@ -1778,6 +1820,10 @@ bool Emulator::LoadDisk(const std::string& path)
             {
                 MLOGERROR("LoadDisk(DSK): %s", warning.c_str());
             }
+            if (error)
+            {
+                *error = loader.lastWarnings().empty() ? "failed to load DSK image" : loader.lastWarnings().back();
+            }
         }
     }
 
@@ -1791,20 +1837,18 @@ bool Emulator::LoadDisk(const std::string& path)
                 MLOGWARNING("LoadDisk(TD0): %s", warning.c_str());
             }
 
-            // FIXME: use active drive, not fixed A:
-
             /// region <Mount new disk image and release previous>
-            DiskImage* oldImage = _context->coreState.diskImages[0];
+            DiskImage* oldImage = _context->coreState.diskImages[drive];
             DiskImage* diskImage = loader.getImage();
-            _context->coreState.diskImages[0] = diskImage;
+            _context->coreState.diskImages[drive] = diskImage;
 
-            if (_context->coreState.diskDrives[0])
+            if (_context->coreState.diskDrives[drive])
             {
-                _context->coreState.diskDrives[0]->insertDisk(diskImage);
+                _context->coreState.diskDrives[drive]->insertDisk(diskImage);
             }
             
             // Store file path for API queries and for "Save" back to the same file
-            _context->coreState.diskFilePaths[0] = resolvedPath;
+            _context->coreState.diskFilePaths[drive] = resolvedPath;
             diskImage->setFilePath(resolvedPath);
 
             if (oldImage != nullptr)
@@ -1821,6 +1865,10 @@ bool Emulator::LoadDisk(const std::string& path)
             {
                 MLOGERROR("LoadDisk(TD0): %s", warning.c_str());
             }
+            if (error)
+            {
+                *error = loader.lastWarnings().empty() ? "failed to load TD0 image" : loader.lastWarnings().back();
+            }
         }
     }
 
@@ -1834,20 +1882,18 @@ bool Emulator::LoadDisk(const std::string& path)
                 MLOGWARNING("LoadDisk(MGT): %s", warning.c_str());
             }
 
-            // FIXME: use active drive, not fixed A:
-
             /// region <Mount new disk image and release previous>
-            DiskImage* oldImage = _context->coreState.diskImages[0];
+            DiskImage* oldImage = _context->coreState.diskImages[drive];
             DiskImage* diskImage = loader.getImage();
-            _context->coreState.diskImages[0] = diskImage;
+            _context->coreState.diskImages[drive] = diskImage;
 
-            if (_context->coreState.diskDrives[0])
+            if (_context->coreState.diskDrives[drive])
             {
-                _context->coreState.diskDrives[0]->insertDisk(diskImage);
+                _context->coreState.diskDrives[drive]->insertDisk(diskImage);
             }
             
             // Store file path for API queries and for "Save" back to the same file
-            _context->coreState.diskFilePaths[0] = resolvedPath;
+            _context->coreState.diskFilePaths[drive] = resolvedPath;
             diskImage->setFilePath(resolvedPath);
 
             if (oldImage != nullptr)
@@ -1864,7 +1910,18 @@ bool Emulator::LoadDisk(const std::string& path)
             {
                 MLOGERROR("LoadDisk(MGT): %s", warning.c_str());
             }
+            if (error)
+            {
+                *error = loader.lastWarnings().empty() ? "failed to load MGT image" : loader.lastWarnings().back();
+            }
         }
+    }
+
+    if (!result && error && error->empty() && ext != "trd" && ext != "scl" && ext != "udi" && ext != "fdi" &&
+        ext != "dsk" && ext != "td0" && ext != "mgt" && ext != "img")
+    {
+        *error = "unsupported disk image extension '." + ext + "' (supported: .trd .scl .fdi .udi .dsk .td0 .mgt .img)";
+        MLOGERROR("LoadDisk: %s", error->c_str());
     }
 
     if (wasRunning)

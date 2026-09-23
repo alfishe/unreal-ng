@@ -6,6 +6,7 @@
 #include <cstring>
 
 #include "emulator/video/screen.h"
+#include "emulator/video/screencapture.h"
 
 /// Tests for screen capture dimensions without full emulator
 class ScreenCaptureTest : public ::testing::Test
@@ -72,3 +73,11 @@ TEST_F(ScreenCaptureTest, VideoModeEnum_HasExpectedValues)
     EXPECT_LT(M_ATM16, M_MAX);
     EXPECT_LT(M_ATMHR, M_MAX);
 }
+
+TEST_F(ScreenCaptureTest, CaptureScreen_NonExistentEmulator_ReturnsError)
+{
+    auto res = ScreenCapture::captureScreen("non-existent-id", "png");
+    EXPECT_FALSE(res.success);
+    EXPECT_FALSE(res.errorMessage.empty());
+}
+
