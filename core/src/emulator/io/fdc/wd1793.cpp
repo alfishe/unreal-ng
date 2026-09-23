@@ -1218,7 +1218,8 @@ void WD1793::cmdRestore(uint8_t value)
     // Direction must always be out (towards Track 0)
     _stepDirectionIn = false;
 
-    // Check if already at track 0 - if so, complete immediately
+    // Check if already at track 0 - if so, complete immediately (see type1CommandVerify()
+    // for how BUSY is still kept briefly visible even on this immediate-completion path)
     if (_selectedDrive->isTrack00())
     {
         _trackRegister = 0;
@@ -1248,7 +1249,8 @@ void WD1793::cmdSeek(uint8_t value)
 
     startType1Command();
 
-    // Check if already at target track - if so, complete immediately
+    // Check if already at target track - if so, complete immediately (see type1CommandVerify()
+    // for how BUSY is still kept briefly visible even on this immediate-completion path)
     if (_trackRegister == _dataRegister)
     {
         _selectedDrive->setTrack(_trackRegister);
@@ -1934,6 +1936,14 @@ void WD1793::startType1Command()
     _stepCounter = 0;
 }
 
+namespace
+{
+// Minimum T-states BUSY stays visible on any synchronous (zero-step-delay) command completion:
+// a Type I command (Restore/Seek) already at the target track (see type1CommandVerify()), or a
+// Type II command finding the drive not ready (see startType2Command()).
+constexpr size_t NOT_READY_BUSY_HOLD_TSTATES = 64;
+}
+
 void WD1793::startType2Command()
 {
     MLOGINFO("==>> Start Type 2 command (%s)", getWD_COMMANDName(_lastDecodedCmd));
@@ -1966,8 +1976,11 @@ void WD1793::startType2Command()
 
     if (!isReady())
     {
-        // If the drive is not ready - end immediately
-        transitionFSM(WD1793::S_END_COMMAND);
+        // Drive not ready: the command is not executed and ends with NOT READY + INTRQ. The chip still raises
+        // BUSY first and drops it a short time later, so software polling for BUSY after issuing the command
+        // (Profi BIOS: OUT #1F,#86 then wait for BUSY=1) sees it. Ending inside the register write hid BUSY
+        // entirely and the BIOS hung at "Please wait ...". Hold BUSY for ~18 us (64 T-states: more than the BIOS's first poll, ~30 T after the OUT).
+        transitionFSMWithDelay(WD1793::S_END_COMMAND, NOT_READY_BUSY_HOLD_TSTATES);
     }
     else
     {
@@ -2068,8 +2081,12 @@ void WD1793::type1CommandVerify()
     }
     else
     {
-        // No, verification is not required, command execution finished
-        transitionFSM(WD1793::S_END_COMMAND);
+        // No, verification is not required, command execution finished.
+        // Still hold BUSY visible for a minimum number of T-states: cmdRestore()/cmdSeek() can reach
+        // here synchronously (already at track 0 / already at target track, zero step delay elapsed),
+        // and ending the command with zero delay would clear BUSY before software polling for BUSY=1
+        // right after issuing the command (e.g. Profi service ROM) ever observes it, hanging forever.
+        transitionFSMWithDelay(WD1793::S_END_COMMAND, NOT_READY_BUSY_HOLD_TSTATES);
     }
 }
 

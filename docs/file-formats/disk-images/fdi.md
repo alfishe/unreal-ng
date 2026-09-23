@@ -56,3 +56,14 @@ Data area:
 ## Save
 
 Exports sector data with flags. Variable sector sizes and deleted marks preserved.
+
+## Limitation: no weak/flaky ("floating") sector support
+
+FDI's sector header has exactly one CHRN + one flags byte + one data blob per physical
+slot — a single fixed capture, forever. It has no field for "this ID or data byte decodes
+differently across revolutions", so it cannot represent a weak/floating sector used by
+copy-protection (see [Flaky/floating sector emulator](../../WD1793/FlakySectorEmulator.md)
+and the [Black Raven / VORON case study](../../disasm/black-raven-voron-protection/README.md)
+for a concrete title this affects). SCP, HFE and extended DSK can all express this
+(via `DiskImage::RawTrack`'s weak-bit bitmap); FDI cannot, and converting an FDI to one of
+those formats will never recover the missing information — it was never captured.

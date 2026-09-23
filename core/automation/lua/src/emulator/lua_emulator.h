@@ -2147,10 +2147,11 @@ public:
         // -----------------------------------------------------------------
 
         lua.set_function("ttd_status", [this]() -> sol::table {
+            Emulator* emulator = effectiveEmulator();
             sol::state_view lua_view(*_lua);
             sol::table info = lua_view.create_table();
-            if (!_emulator) { info["ttd_available"] = false; return info; }
-            auto* ctx = _emulator->GetContext();
+            if (!emulator) { info["ttd_available"] = false; return info; }
+            auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager)
             {
                 info["state"]         = "idle";
@@ -2184,8 +2185,9 @@ public:
         // ttd_start([mode]) - start recording
         // mode: "gaming" (smaller files, no journal) or "development" (default, full journal)
         lua.set_function("ttd_start", [this](sol::optional<std::string> modeOpt) -> bool {
-            if (!_emulator) return false;
-            auto* ctx = _emulator->GetContext();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return false;
+            auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager) return false;
             // Set journal mode before starting
             bool enableJournal = true;  // default: development mode
@@ -2201,39 +2203,44 @@ public:
 
         // ttd_set_journal_enabled(bool) - configure write journal capture
         lua.set_function("ttd_set_journal_enabled", [this](bool enabled) {
-            if (!_emulator) return;
-            auto* ctx = _emulator->GetContext();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return;
+            auto* ctx = emulator->GetContext();
             if (ctx && ctx->pTimeTravelManager)
                 ctx->pTimeTravelManager->SetEnableWriteJournal(enabled);
         });
 
         lua.set_function("ttd_get_journal_enabled", [this]() -> bool {
-            if (!_emulator) return true;
-            auto* ctx = _emulator->GetContext();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return true;
+            auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager) return true;
             return ctx->pTimeTravelManager->GetEnableWriteJournal();
         });
 
         lua.set_function("ttd_stop", [this]() {
-            if (!_emulator) return;
-            auto* ctx = _emulator->GetContext();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return;
+            auto* ctx = emulator->GetContext();
             if (ctx && ctx->pTimeTravelManager)
                 ctx->pTimeTravelManager->StopRecording();
         });
 
         lua.set_function("ttd_invalidate", [this](sol::optional<std::string> reason) {
-            if (!_emulator) return;
-            auto* ctx = _emulator->GetContext();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return;
+            auto* ctx = emulator->GetContext();
             if (ctx && ctx->pTimeTravelManager)
                 ctx->pTimeTravelManager->InvalidateSession(
                     reason.value_or("lua invalidate").c_str());
         });
 
         lua.set_function("ttd_seek", [this](uint64_t frame, sol::optional<uint32_t> tInFrameOpt) -> sol::table {
+            Emulator* emulator = effectiveEmulator();
             sol::state_view lua_view(*_lua);
             sol::table result = lua_view.create_table();
-            if (!_emulator) { result["reached"] = false; return result; }
-            auto* ctx = _emulator->GetContext();
+            if (!emulator) { result["reached"] = false; return result; }
+            auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager)
             {
                 result["reached"] = false;
@@ -2273,22 +2280,25 @@ public:
         });
 
         lua.set_function("ttd_step_back", [this]() -> bool {
-            if (!_emulator) return false;
-            auto* ctx = _emulator->GetContext();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return false;
+            auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager) return false;
             return ctx->pTimeTravelManager->StepBackFrame();
         });
 
         lua.set_function("ttd_step_forward", [this]() -> bool {
-            if (!_emulator) return false;
-            auto* ctx = _emulator->GetContext();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return false;
+            auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager) return false;
             return ctx->pTimeTravelManager->StepForwardFrame();
         });
 
         lua.set_function("ttd_resume", [this](sol::optional<uint64_t> frameOpt, sol::optional<uint32_t> tInFrameOpt) -> bool {
-            if (!_emulator) return false;
-            auto* ctx = _emulator->GetContext();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return false;
+            auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager) return false;
             ttd::TTDTimePoint from = ctx->pTimeTravelManager->CurrentPosition();
             if (frameOpt)
@@ -2298,10 +2308,11 @@ public:
         });
 
         lua.set_function("ttd_position", [this]() -> sol::table {
+            Emulator* emulator = effectiveEmulator();
             sol::state_view lua_view(*_lua);
             sol::table result = lua_view.create_table();
-            if (!_emulator) { result["error"] = "no emulator"; return result; }
-            auto* ctx = _emulator->GetContext();
+            if (!emulator) { result["error"] = "no emulator"; return result; }
+            auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager)
             {
                 result["error"] = "TTD not available";
@@ -2321,10 +2332,11 @@ public:
         });
 
         lua.set_function("ttd_markers", [this]() -> sol::table {
+            Emulator* emulator = effectiveEmulator();
             sol::state_view lua_view(*_lua);
             sol::table result = lua_view.create_table();
-            if (!_emulator) return result;
-            auto* ctx = _emulator->GetContext();
+            if (!emulator) return result;
+            auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager) return result;
             const auto& journal = ctx->pTimeTravelManager->GetExternalEvents();
             int idx = 1;  // Lua tables are 1-based
@@ -2348,11 +2360,12 @@ public:
         lua.set_function("ttd_bookmark_add", [this](const std::string& label,
                                                      sol::optional<uint64_t> frameOpt,
                                                      sol::optional<uint32_t> tInFrameOpt) -> sol::table {
+            Emulator* emulator = effectiveEmulator();
             sol::state_view lua_view(*_lua);
             sol::table result = lua_view.create_table();
             result["added"] = false;
-            if (!_emulator) { result["error"] = "no emulator"; return result; }
-            auto* ctx = _emulator->GetContext();
+            if (!emulator) { result["error"] = "no emulator"; return result; }
+            auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager) { result["error"] = "TTD not available"; return result; }
 
             // Position omitted → current position (mark here).
@@ -2377,10 +2390,11 @@ public:
         });
 
         lua.set_function("ttd_bookmarks", [this]() -> sol::table {
+            Emulator* emulator = effectiveEmulator();
             sol::state_view lua_view(*_lua);
             sol::table result = lua_view.create_table();
-            if (!_emulator) return result;
-            auto* ctx = _emulator->GetContext();
+            if (!emulator) return result;
+            auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager) return result;
             int idx = 1;  // Lua tables are 1-based
             for (const auto& bm : ctx->pTimeTravelManager->GetBookmarks())
@@ -2395,8 +2409,9 @@ public:
         });
 
         lua.set_function("ttd_bookmark_delete", [this](const std::string& label) -> bool {
-            if (!_emulator) return false;
-            auto* ctx = _emulator->GetContext();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return false;
+            auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager) return false;
             return ctx->pTimeTravelManager->RemoveBookmark(label);
         });
@@ -2406,10 +2421,11 @@ public:
         // checkpoint and the target still surfaces as halt_reason
         // "external_event". A bookmark itself never halts anything.
         lua.set_function("ttd_seek_bookmark", [this](const std::string& label) -> sol::table {
+            Emulator* emulator = effectiveEmulator();
             sol::state_view lua_view(*_lua);
             sol::table result = lua_view.create_table();
-            if (!_emulator) { result["reached"] = false; return result; }
-            auto* ctx = _emulator->GetContext();
+            if (!emulator) { result["reached"] = false; return result; }
+            auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager)
             {
                 result["reached"] = false;
@@ -2445,8 +2461,9 @@ public:
         // -----------------------------------------------------------------
 
         lua.set_function("ttd_dump", [this](const std::string& path) -> bool {
-            if (!_emulator) return false;
-            auto* ctx = _emulator->GetContext();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return false;
+            auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager) return false;
             std::ofstream out(path, std::ios::binary);
             if (!out.is_open()) return false;
@@ -2459,11 +2476,12 @@ public:
         // restores into an instance of the model it came from. Returns a table
         // with ok/error so scripts can report the reason.
         lua.set_function("ttd_load", [this](const std::string& path) -> sol::table {
+            Emulator* emulator = effectiveEmulator();
             sol::state_view lua_view(*_lua);
             sol::table result = lua_view.create_table();
             result["ok"] = false;
-            if (!_emulator) { result["error"] = "no emulator"; return result; }
-            auto* ctx = _emulator->GetContext();
+            if (!emulator) { result["error"] = "no emulator"; return result; }
+            auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager) { result["error"] = "TTD not available"; return result; }
             std::ifstream in(path, std::ios::binary);
             if (!in.is_open()) { result["error"] = "cannot open file: " + path; return result; }
@@ -2491,10 +2509,11 @@ public:
                                                    sol::optional<uint8_t> physPageOpt,
                                                    sol::optional<uint16_t> addrFromOpt,
                                                    sol::optional<uint16_t> addrToOpt) -> sol::table {
+            Emulator* emulator = effectiveEmulator();
             sol::state_view lua_view(*_lua);
             sol::table result = lua_view.create_table();
-            if (!_emulator) { result["found"] = false; return result; }
-            auto* ctx = _emulator->GetContext();
+            if (!emulator) { result["found"] = false; return result; }
+            auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager) { result["found"] = false; return result; }
 
             ttd::TTDSearchQuery q;
@@ -2567,15 +2586,17 @@ public:
         });
 
         lua.set_function("ttd_step_instruction_back", [this]() -> bool {
-            if (!_emulator) return false;
-            auto* ctx = _emulator->GetContext();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return false;
+            auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager) return false;
             return ctx->pTimeTravelManager->StepBackInstruction();
         });
 
         lua.set_function("ttd_step_instruction_forward", [this]() -> bool {
-            if (!_emulator) return false;
-            auto* ctx = _emulator->GetContext();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return false;
+            auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager) return false;
             return ctx->pTimeTravelManager->StepForwardInstruction();
         });
@@ -2585,25 +2606,28 @@ public:
         // -----------------------------------------------------------------
 
         lua.set_function("ttd_reverse_step", [this](sol::optional<uint32_t> countOpt) -> bool {
-            if (!_emulator) return false;
-            auto* ctx = _emulator->GetContext();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return false;
+            auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager) return false;
             return ctx->pTimeTravelManager->ReverseStepInstructions(
                 countOpt.value_or(1));
         });
 
         lua.set_function("ttd_reverse_step_tstates", [this](uint64_t tstates) -> bool {
-            if (!_emulator) return false;
-            auto* ctx = _emulator->GetContext();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return false;
+            auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager) return false;
             return ctx->pTimeTravelManager->ReverseStepTStates(tstates);
         });
 
         lua.set_function("ttd_reverse_continue", [this](sol::table pcsTable) -> sol::table {
+            Emulator* emulator = effectiveEmulator();
             sol::state_view lua_view(*_lua);
             sol::table result = lua_view.create_table();
-            if (!_emulator) { result["matched"] = false; return result; }
-            auto* ctx = _emulator->GetContext();
+            if (!emulator) { result["matched"] = false; return result; }
+            auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager) { result["matched"] = false; return result; }
 
             std::vector<uint16_t> pcs;
