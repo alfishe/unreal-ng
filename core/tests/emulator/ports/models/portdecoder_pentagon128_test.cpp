@@ -343,4 +343,30 @@ TEST_F(PortDecoder_Pentagon128_Test, DecodePortOut_GsPorts_NoCardFitted_WritesIg
     EXPECT_TRUE(gs.outPorts.empty()) << "GS writes must be dropped when no card is fitted";
 }
 
+/// Regression: #33 also satisfies the BDI fallback pattern (port & 0x83 ==
+/// 0x03, the same shape as #1F/#3F/#5F/#7F), which decodePortEx only tries
+/// when no table row already claimed the port. An earlier, wrong shape of
+/// the GS card-presence gate resolved #33 to the GS row first and zeroed it
+/// afterward - discarding the fallback outright, so a card-less Pentagon
+/// with TR-DOS active lost #33 as an access route to the WD1793 track
+/// register (#3F). The gate now lives inside decodePortEx's row-matching
+/// loop instead, so a skipped GS row lets the fallback run exactly as it
+/// would if the GS rows didn't exist in the table at all.
+TEST_F(PortDecoder_Pentagon128_Test, DecodePortIn_Port33_NoCardFitted_TrdosActive_FallsThroughToFdcTrackRegister)
+{
+    ASSERT_EQ(_context->pSoundManager, nullptr);
+    _context->emulatorState.flags |= CF_TRDOS;
+
+    MockFdcDevice fdc;
+    fdc.statusByte = 0x5A;
+    _portDecoder->RegisterPortHandler(0x003F, &fdc);
+
+    uint8_t result = _portDecoder->DecodePortIn(0x0033, 0x0000);
+
+    EXPECT_EQ(result, 0x5A) << "#33 must fall through the BDI pattern to the FDC track register with TR-DOS active";
+    EXPECT_TRUE(_portDecoder->WasLastPortDecoded());
+    ASSERT_EQ(fdc.inPorts.size(), 1u);
+    EXPECT_EQ(fdc.inPorts[0], 0x003F);
+}
+
 /// endregion </GS host mailbox port gating (card-presence visibility)>

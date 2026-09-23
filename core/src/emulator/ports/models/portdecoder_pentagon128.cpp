@@ -88,6 +88,26 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
     // Reset decoded flag before processing
     _lastPortDecoded = false;
 
+    // GS host mailbox (#33/#B3/#BB): decodePortEx resolves these
+    // unconditionally (it stays a pure, card-independent address->rule
+    // mapper - the port tracer's introspection needs #33 to always name the
+    // GS row regardless of live card state), but no port handler is ever
+    // registered for them unless a card is actually fitted ([SOUND] GSType).
+    // Live dispatch steps the GS row aside here instead: #33 also satisfies
+    // the BDI fallback pattern (the same shape as #1F/#3F/#5F/#7F), so
+    // re-deriving it directly from the raw port - rather than just zeroing
+    // decodedPort - lets a card-less Pentagon with TR-DOS active keep #33 as
+    // an access route to the WD1793 track register (#3F), exactly as it
+    // would if the GS rows didn't exist in the table at all. Must run BEFORE
+    // the Beta128/CF_TRDOS gate below so a fallback-resolved FDC port is
+    // still subject to that gate.
+    if (IsGsPort(decodedPort) && !(_context->pSoundManager && _context->pSoundManager->getGeneralSound()))
+    {
+        DecodeResult bdi = TryBdiFallback(port);
+        decodedPort = bdi.port;
+        disp.decodeRuleIndex = bdi.ruleIndex;
+    }
+
     // Beta128 FDC ports (#1F/#3F/#5F/#7F/#FF) are decoded by the disk interface
     // only while the TR-DOS ROM is paged in (CF_TRDOS, maintained by the M1 fetch
     // hook in Z80Step: executing from $3Dxx pages DOS in, leaving the ROM area
@@ -101,19 +121,6 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
     {
         decodedPort = 0x0000; // FDC not on the bus: leave the port undecoded
         disp.wasBeta128Gated = true;
-    }
-
-    // GS host mailbox (#33/#B3/#BB): the decode table resolves these
-    // unconditionally, same as every other row, but no port handler is ever
-    // registered for them unless a card is actually fitted ([SOUND] GSType).
-    // Left undecoded on a card-less machine, this used to fall through
-    // silently (undecoded port -> floating bus); now it would resolve and
-    // reach PeripheralPortIn, which logs a warning for every access with no
-    // registered device - and GS presence probes (the documented detection
-    // method IS reading/writing #B3/#BB/#33) do exactly that repeatedly.
-    if (IsGsPort(decodedPort) && !(_context->pSoundManager && _context->pSoundManager->getGeneralSound()))
-    {
-        decodedPort = 0x0000;
     }
 
     uint8_t mouseReg = 0;
@@ -188,18 +195,22 @@ void PortDecoder_Pentagon128::DecodePortOut(uint16_t port, uint8_t value, uint16
     PortDecodeDisposition disp;
     disp.decodeRuleIndex = decoded.ruleIndex;
 
+    // Same GS card-presence gate as DecodePortIn (BDI fallback re-derived
+    // from the raw port, must run before the Beta128/CF_TRDOS gate below) -
+    // see its comment.
+    if (IsGsPort(decodedPort) && !(_context->pSoundManager && _context->pSoundManager->getGeneralSound()))
+    {
+        DecodeResult bdi = TryBdiFallback(port);
+        decodedPort = bdi.port;
+        disp.decodeRuleIndex = bdi.ruleIndex;
+    }
+
     // Same TR-DOS gate as DecodePortIn: with the FDC off the bus its registers
     // cannot be written - hardware would silently ignore the OUT
     if (IsBeta128Port(decodedPort) && !(_context->emulatorState.flags & CF_TRDOS))
     {
         decodedPort = 0x0000; // FDC not on the bus: drop the write
         disp.wasBeta128Gated = true;
-    }
-
-    // Same GS card-presence gate as DecodePortIn - see its comment.
-    if (IsGsPort(decodedPort) && !(_context->pSoundManager && _context->pSoundManager->getGeneralSound()))
-    {
-        decodedPort = 0x0000;
     }
 
     if (decodedPort != 0x0000)
@@ -426,15 +437,33 @@ DecodeResult PortDecoder_Pentagon128::decodePortEx(uint16_t port)
 
     if (result.port == 0x0000)
     {
-        // Simplified resolving for BDI ports 1F, 3F, 5F, 7F
-        static constexpr const uint8_t portsMask  = 0b1000'0011;    // 0x83 (131)
-        static constexpr const uint8_t portsMatch = 0b0000'0011;    // 0x03 (3)
-        if ((port & portsMask) == portsMatch)
-        {
-            // result = (port & 0x60) | 0x1F;
-            result.port = (port & 0b0110'0000) | 0b0001'1111;
-            result.ruleIndex = PortTraceRule::kBdiFallback;
-        }
+        DecodeResult bdi = TryBdiFallback(port);
+        if (bdi.port != 0x0000)
+            result = bdi;
+    }
+
+    return result;
+}
+
+/// BDI fallback (#1F/#3F/#5F/#7F): a partial decode - port & 0x83 == 0x03 -
+/// resolved to the canonical FDC register via bits 6-5. Extracted out of
+/// decodePortEx so live dispatch (DecodePortIn/Out) can re-derive it on
+/// its own: decodePortEx stays a pure, card-independent address->rule
+/// mapper (the port tracer's introspection needs that address #33 always
+/// names the GS row, rule-attribution-wise, regardless of whether a card
+/// happens to be fitted right now), while live dispatch needs the GS row to
+/// step aside for this fallback when no card claims it - see the GS
+/// card-presence gate in DecodePortIn/Out for why.
+DecodeResult PortDecoder_Pentagon128::TryBdiFallback(uint16_t port)
+{
+    DecodeResult result;
+
+    static constexpr const uint8_t portsMask  = 0b1000'0011;    // 0x83 (131)
+    static constexpr const uint8_t portsMatch = 0b0000'0011;    // 0x03 (3)
+    if ((port & portsMask) == portsMatch)
+    {
+        result.port = (port & 0b0110'0000) | 0b0001'1111;
+        result.ruleIndex = PortTraceRule::kBdiFallback;
     }
 
     return result;

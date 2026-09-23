@@ -60,6 +60,11 @@ public:
     std::vector<PortTraceDecodeRule> getPortTraceDecodeRules() const override;
 
 protected:
+    /// BDI (#1F/#3F/#5F/#7F) partial-decode fallback, extracted out of
+    /// decodePortEx so live dispatch can re-derive it independently of the
+    /// full table scan - see decodePortEx's definition for why.
+    static DecodeResult TryBdiFallback(uint16_t port);
+
     void Port_7FFD_Out(uint16_t port, uint8_t value, uint16_t pc);
     virtual void switchRAMPage(uint8_t value);
     /// endregion <Helper methods>
