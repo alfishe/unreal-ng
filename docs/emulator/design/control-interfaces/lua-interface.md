@@ -155,6 +155,42 @@ local result = tape_import("recording.wav", "imported.tap", 0.25)
 
 Playback `state` is one of `"idle"`, `"playing"`, `"paused"`, `"ended"` — identical strings across CLI, WebAPI, Lua and Python.
 
+### Disk Operations
+
+Global functions for the four floppy drives (0-3 / A-D), mirroring the CLI `disk` commands
+and the WebAPI `/disk/{drive}/*` endpoints.
+
+```lua
+-- Load / eject (path: .trd/.scl/.fdi/.udi/.dsk/.td0/.mgt/.img, auto-detected)
+local r = disk_load("/path/to/game.trd")          -- insert into drive 0 (A)
+-- r = {success, started=false, message}
+local r = disk_load("/path/to/game.trd", 0, true) -- + autostart: quick-reset into TR-DOS
+                                                    -- and run the disk (same as the Qt UI's
+                                                    -- drag-and-drop autostart / WebAPI
+                                                    -- "autostart":true / CLI "disk insert
+                                                    -- <drive> <file> autostart) - drive 0 only
+-- r = {success, started, message}; message explains what autostart did
+--     (e.g. "Autostart: boot", "No BASIC programs on disk - mounted only")
+local ok = disk_eject(0)
+
+-- A non-zero `drive` is accepted but currently still mounts into drive 0 - a pre-existing
+-- limitation of the underlying LoadDisk/AutostartDisk (not specific to Lua); disk_load
+-- adds a `warning` field to the result in that case rather than silently mis-inserting.
+
+-- Blank disk
+local ok = disk_create(1, 80, 2)   -- drive 1 (B), 80 cylinders, 2 sides
+
+-- Inspection
+local inserted = disk_is_inserted(0)
+local path     = disk_get_path(0)
+local drives   = disk_list()   -- array of {id, letter, inserted, path}
+local info     = disk_info(0)  -- nil without a disk, else geometry/catalog details
+
+-- Raw sector access (read-only)
+local sector = disk_read_sector(0, 0, 0, 1)      -- drive 0, cyl 0, side 0, sector 1
+local hex    = disk_read_sector_hex(0, 0, 1)      -- drive 0, track 0, sector 1
+```
+
 ### Mouse Input
 
 > **Status**: ✅ Implemented (2026-09). Source: `core/automation/lua/src/emulator/lua_emulator.h`

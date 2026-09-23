@@ -36,7 +36,8 @@ MediaType getMediaTypeFromFilename(const std::string& filename)
         return MediaType::Snapshot;
 
     // Disks
-    if (ext == ".trd" || ext == ".scl" || ext == ".fdi" || ext == ".udi" || ext == ".td0" || ext == ".img")
+    if (ext == ".trd" || ext == ".scl" || ext == ".fdi" || ext == ".udi" || ext == ".td0" || ext == ".img" ||
+        ext == ".dsk" || ext == ".mgt")
         return MediaType::Disk;
 
     // Tapes

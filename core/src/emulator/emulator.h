@@ -238,7 +238,15 @@ public:
     bool LoadSnapshot(const std::string& path);
     bool SaveSnapshot(const std::string& path);
     bool LoadTape(const std::string& path);
-    bool LoadDisk(const std::string& path);
+    /// @param drive Target floppy drive, 0-3 (A-D). Must name a drive this machine actually has;
+    ///               anything else is a hard failure (see `error`), never a silent fallback to A.
+    /// @param error When non-null and the call fails, receives a human-readable reason
+    ///               (invalid/absent drive, file not found, unsupported extension, format-specific
+    ///               loader errors). The Qt UI's own drag-and-drop / Open File flow always passes
+    ///               drive 0 today (unreal-qt/src/mainwindow.cpp) - that is a UI default, not a
+    ///               limitation of this method; every other caller (WebAPI, CLI, MCP, Lua, Python)
+    ///               must pass the drive the caller actually asked for.
+    bool LoadDisk(const std::string& path, uint8_t drive = 0, std::string* error = nullptr);
 
     /// Outcome of AutostartDisk()
     struct DiskAutostartResult
@@ -251,7 +259,10 @@ public:
     /// Mount a disk image and, when the machine can run TR-DOS, quick-reset straight into TR-DOS so the
     /// disk starts by itself (boot file, single BASIC program, or an injected commander). A machine without
     /// TR-DOS keeps running untouched: the disk is only mounted and the problem is reported (log + HUD)
-    DiskAutostartResult AutostartDisk(const std::string& path);
+    /// @param drive Must be 0 (A) - TR-DOS/Beta 128's own "RUN boot" convention only ever boots from drive
+    ///              A, this is a hardware constraint, not a missing feature. Any other value is a hard
+    ///              failure (`mounted=false`, `message` explains why) rather than a silent fallback to A.
+    DiskAutostartResult AutostartDisk(const std::string& path, uint8_t drive = 0);
 
     /// Result of SaveDisk()
     struct DiskSaveResult
