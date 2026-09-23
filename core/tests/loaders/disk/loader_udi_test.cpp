@@ -47,6 +47,23 @@ namespace
     private:
         std::string _path;
     };
+
+    /// First "UDIW" weak-map chunk signature at or after `from` (std::string::npos when absent)
+    size_t findWeakChunk(const std::vector<uint8_t>& data, size_t from = 0)
+    {
+        for (size_t i = from; i + 4 <= data.size(); i++)
+        {
+            if (std::memcmp(data.data() + i, "UDIW", 4) == 0) return i;
+        }
+        return std::string::npos;
+    }
+
+    /// Recompute the trailing CRC after in-place edits
+    void recomputeCrc(std::vector<uint8_t>& data)
+    {
+        const uint32_t crc = LoaderUDI::computeCrc(data.data(), data.size() - 4);
+        std::memcpy(data.data() + data.size() - 4, &crc, 4);
+    }
 }
 
 class LoaderUDI_Test : public ::testing::Test
@@ -630,3 +647,147 @@ TEST_F(LoaderUDI_Test, Load_Truncated_And_MultiRevolution_Rejected)
 }
 
 /// endregion </Save>
+
+/// region <Weak-bit map (UDIW chunk)>
+
+TEST_F(LoaderUDI_Test, WeakChunk_RoundTrip)
+{
+    // Weak marks on two tracks survive a save/load cycle: the chunk is emitted once, applied on load,
+    // and a second save reproduces the identical file
+    DiskImage image(2, 2);
+    image.getTrackForCylinderAndSide(0, 0)->formatTrack(0, 0, Spec::trdos());
+    image.getTrackForCylinderAndSide(1, 1)->formatTrack(1, 1, Spec::trdos());
+
+    const DiskImage::Sector* sector = image.getTrackForCylinderAndSide(0, 0)->getRawSector(0);
+    for (size_t i = 0; i < 8; i++) image.getTrackForCylinderAndSide(0, 0)->setWeakByte(sector->dataOffset + i, true);
+    image.getTrackForCylinderAndSide(1, 1)->setWeakByte(100, true);
+    image.getTrackForCylinderAndSide(1, 1)->setWeakByte(105, true);  // separate run: the gap must stay solid
+
+    std::vector<uint8_t> data = serializeImage(image);
+
+    LoaderUDICUT loader(_context, "");
+    std::vector<std::string> warnings;
+    DiskImage* reloaded = loader.parse(data.data(), data.size(), warnings);
+    ASSERT_NE(reloaded, nullptr) << (warnings.empty() ? "" : warnings[0]);
+    EXPECT_TRUE(warnings.empty());
+
+    DiskImage::Track* marked = reloaded->getTrackForCylinderAndSide(0, 0);
+    ASSERT_NE(marked, nullptr);
+    EXPECT_TRUE(marked->hasWeakBits());
+    for (size_t i = 0; i < 8; i++) EXPECT_TRUE(marked->weakByte(sector->dataOffset + i)) << "byte " << i;
+    EXPECT_FALSE(marked->weakByte(sector->dataOffset + 8));
+
+    DiskImage::Track* twoRuns = reloaded->getTrackForCylinderAndSide(1, 1);
+    ASSERT_NE(twoRuns, nullptr);
+    EXPECT_TRUE(twoRuns->weakByte(100));
+    EXPECT_TRUE(twoRuns->weakByte(105));
+    EXPECT_FALSE(twoRuns->weakByte(101));
+
+    EXPECT_TRUE(loader._trailer.empty()) << "chunk stripped from the trailer on load";
+
+    std::vector<uint8_t> again;
+    ASSERT_TRUE(loader.serialize(reloaded, again, warnings));
+    EXPECT_TRUE(warnings.empty());
+    EXPECT_EQ(again, data) << "regenerated chunk must reproduce the file byte for byte";
+
+    delete reloaded;
+}
+
+TEST_F(LoaderUDI_Test, WeakChunk_CommentPreserved_AndNotDuplicated)
+{
+    DiskImage image(1, 1);
+    image.getTrackForCylinderAndSide(0, 0)->formatTrack(0, 0, Spec::trdos());
+    image.getTrackForCylinderAndSide(0, 0)->setWeakByte(50, true);
+
+    LoaderUDI writer(_context, "");
+    const std::vector<uint8_t> comment = {'T', 'R', 'X', '2', 'X', ' ', 't', 'e', 's', 't', 0};
+    writer.setTrailer(comment);
+
+    std::vector<uint8_t> data;
+    std::vector<std::string> warnings;
+    ASSERT_TRUE(writer.serialize(&image, data, warnings));
+    EXPECT_TRUE(warnings.empty());
+
+    // The chunk sits after the comment, and exactly one chunk exists in the file
+    const size_t chunkPos = findWeakChunk(data);
+    ASSERT_NE(chunkPos, std::string::npos);
+    EXPECT_EQ(findWeakChunk(data, chunkPos + 4), std::string::npos) << "chunk duplicated";
+    const size_t crcPos = data.size() - 4;
+    EXPECT_LT(chunkPos, crcPos);
+
+    LoaderUDICUT reader(_context, "");
+    DiskImage* reloaded = reader.parse(data.data(), data.size(), warnings);
+    ASSERT_NE(reloaded, nullptr);
+    EXPECT_TRUE(warnings.empty());
+    EXPECT_EQ(reader._trailer, comment) << "only the comment survives after the chunk is stripped";
+    EXPECT_TRUE(reloaded->getTrackForCylinderAndSide(0, 0)->weakByte(50));
+
+    std::vector<uint8_t> again;
+    ASSERT_TRUE(reader.serialize(reloaded, again, warnings));
+    const size_t againPos = findWeakChunk(again);
+    ASSERT_NE(againPos, std::string::npos);
+    EXPECT_EQ(findWeakChunk(again, againPos + 4), std::string::npos) << "second save duplicated the chunk";
+    EXPECT_EQ(again, data);
+
+    delete reloaded;
+}
+
+TEST_F(LoaderUDI_Test, WeakChunk_Malformed_Ignored)
+{
+    DiskImage image(1, 1);
+    image.getTrackForCylinderAndSide(0, 0)->formatTrack(0, 0, Spec::trdos());
+    image.getTrackForCylinderAndSide(0, 0)->setWeakByte(50, true);
+    std::vector<uint8_t> data = serializeImage(image);
+
+    const size_t chunkPos = findWeakChunk(data);
+    ASSERT_NE(chunkPos, std::string::npos);
+    ASSERT_GT(data.size(), chunkPos + LoaderUDI::WEAK_CHUNK_HEADER_SIZE + LoaderUDI::WEAK_CHUNK_RECORD_SIZE);
+
+    LoaderUDI loader(_context, "");
+    std::vector<std::string> warnings;
+
+    // Truncated: record count says 3, only 1 record present - the whole chunk is ignored, load still succeeds
+    {
+        std::vector<uint8_t> truncated = data;
+        truncated[chunkPos + 6] = 3;
+        truncated[chunkPos + 7] = 0;
+        recomputeCrc(truncated);
+        warnings.clear();
+        DiskImage* reloaded = loader.parse(truncated.data(), truncated.size(), warnings);
+        ASSERT_NE(reloaded, nullptr) << "weak map is advisory, never structural";
+        ASSERT_FALSE(warnings.empty());
+        EXPECT_NE(warnings.back().find("truncated"), std::string::npos);
+        EXPECT_FALSE(reloaded->getTrackForCylinderAndSide(0, 0)->hasWeakBits());
+        delete reloaded;
+    }
+
+    // Unknown chunk version: ignored the same way
+    {
+        std::vector<uint8_t> versioned = data;
+        versioned[chunkPos + 4] = 2;
+        recomputeCrc(versioned);
+        warnings.clear();
+        DiskImage* reloaded = loader.parse(versioned.data(), versioned.size(), warnings);
+        ASSERT_NE(reloaded, nullptr);
+        ASSERT_FALSE(warnings.empty());
+        EXPECT_NE(warnings.back().find("version"), std::string::npos);
+        EXPECT_FALSE(reloaded->getTrackForCylinderAndSide(0, 0)->hasWeakBits());
+        delete reloaded;
+    }
+
+    // Out-of-range record (cylinder 5 on a 1-cylinder image): the record is skipped with a warning
+    {
+        std::vector<uint8_t> outOfRange = data;
+        outOfRange[chunkPos + LoaderUDI::WEAK_CHUNK_HEADER_SIZE] = 5;  // first record's cylinder
+        recomputeCrc(outOfRange);
+        warnings.clear();
+        DiskImage* reloaded = loader.parse(outOfRange.data(), outOfRange.size(), warnings);
+        ASSERT_NE(reloaded, nullptr);
+        ASSERT_FALSE(warnings.empty());
+        EXPECT_NE(warnings.back().find("out of range"), std::string::npos);
+        EXPECT_FALSE(reloaded->getTrackForCylinderAndSide(0, 0)->hasWeakBits());
+        delete reloaded;
+    }
+}
+
+/// endregion </Weak-bit map (UDIW chunk)>
