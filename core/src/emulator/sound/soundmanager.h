@@ -267,6 +267,16 @@ public:
     void reset();
     void mute();
     void unmute();
+    /// Emulator paused: no more handleFrameEnd calls will arrive until
+    /// resumed, so a device mid-playback at the moment of pause would
+    /// otherwise keep reporting "active" (buffer non-silent, HUD nudge / UI
+    /// LED lit) for as long as the pause lasts - nothing left to naturally
+    /// clear it. Forwards to the GS card (see GeneralSoundCard::
+    /// onEmulatorPaused for why GS specifically needs the explicit push) and
+    /// mirrors the result onto the device registry row so a UI that reads
+    /// devices() directly (audiosettingswidget) sees it immediately, not
+    /// only on the next frame that never comes until resume.
+    void onEmulatorPaused();
 
     /// Force low-quality DSP while turbo mode is on (audio is muted anyway, and the
     /// HQ FIR / oversampling chain is pure CPU cost at 50x speed). The `soundhq`

@@ -254,6 +254,26 @@ TEST(SoundChip_GeneralSound_BootDiag, 3_CovoxStreamProducesAudio)
     EXPECT_GT(h.chip->getActivityCounters().dacFetches, dacBefore + 1000000)
         << "covox streaming produced no DAC fetches";
     EXPECT_GT(peak, 1000) << "DAC activity never reached the mixed frame buffer";
+
+    // Regression: pausing the emulator stops handleFrameStart/End from being
+    // called at all, so a card mid-playback at the exact instant of pause
+    // would otherwise keep reporting "active" (non-silent buffer,
+    // hadAudioActivityLastFrame() still true) indefinitely - nothing left to
+    // clear it since no more frames ever arrive. onEmulatorPaused() is the
+    // explicit push that closes that gap (soundmanager.cpp wires it into
+    // Emulator::Pause()).
+    //
+    // hadAudioActivityLastFrame() is strictly per-frame (did the sample
+    // value actually change during THIS frame) - the square wave above only
+    // flips once every 16 iterations, so the loop's last frame alone isn't
+    // guaranteed to be a flip. Force one so the "was active" precondition is
+    // real, not a coincidence of where the loop happened to stop.
+    h.chip->portDeviceOutMethod(kPortData, 0x30);
+    h.runFrames(1);
+    ASSERT_TRUE(h.chip->hadAudioActivityLastFrame()) << "covox stream must be audibly active before pause";
+    h.chip->onEmulatorPaused();
+    EXPECT_FALSE(h.chip->hadAudioActivityLastFrame()) << "activity must clear on pause";
+    EXPECT_EQ(bufferPeak(*h.chip), 0) << "buffer must be silenced on pause";
 }
 
 TEST(SoundChip_GeneralSound_BootDiag, 4_InterruptPathDacFetch)

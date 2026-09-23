@@ -228,6 +228,20 @@ void SoundManager::unmute()
     _mute = false;
 }
 
+void SoundManager::onEmulatorPaused()
+{
+    if (!_gs)
+        return;
+
+    _gs->onEmulatorPaused();
+
+    if (AudioDeviceInfo* gsDevice = device(AudioSourceType::GeneralSound))
+    {
+        gsDevice->peak = 0.0f;
+        gsDevice->activeRecently = false;
+    }
+}
+
 const AudioFrameDescriptor& SoundManager::getAudioBufferDescriptor()
 {
     return _beeperAudioDescriptor;

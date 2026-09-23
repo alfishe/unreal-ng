@@ -1194,6 +1194,18 @@ void SoundChip_GSLightweight::handleFrameEnd(size_t expectedSamples)
     }
 }
 
+void SoundChip_GSLightweight::onEmulatorPaused()
+{
+    memset(_buffer, 0, _audioDescriptor.memoryBufferSizeInBytes);
+
+    if (_wasActive)
+    {
+        _wasActive = false;
+        MessageCenter::DefaultMessageCenter().Post(
+            NC_AUDIO_ACTIVITY, new AudioActivityPayload(_context->emulatorId, AudioSource::GeneralSound, false));
+    }
+}
+
 /// endregion </Frame lifecycle>
 
 /// region <Audio pipeline>

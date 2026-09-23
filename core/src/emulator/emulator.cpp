@@ -1049,6 +1049,17 @@ void Emulator::Pause(bool broadcast)
         _mainloop->WaitForPauseConfirmation(500);
     }
 
+    // No more handleFrameEnd calls will arrive until Resume() - a device
+    // mid-playback at this exact instant (GS in particular: see
+    // SoundManager::onEmulatorPaused) would otherwise keep reporting
+    // "active" for as long as the pause lasts, with nothing left to clear
+    // it. Unconditional (not gated on broadcast): audio must actually stop
+    // regardless of whether this pause is UI-visible.
+    if (_context->pSoundManager)
+    {
+        _context->pSoundManager->onEmulatorPaused();
+    }
+
     // Update state and broadcast only if requested
     // broadcast=false is used for internal operations like shared memory migration
     // where we don't want to trigger UI updates during the brief pause

@@ -689,6 +689,34 @@ TEST_F(SoundChip_GSLightweight_Test, TTD_RoundTripDeterministic)
     }
 }
 
+/// Regression: pausing the emulator stops handleFrameStart/End from being
+/// called at all (MainLoop's pause loop never reaches SoundManager::
+/// handleFrameEnd), so a card mid-playback at the exact instant of pause
+/// would otherwise keep reporting "active" (non-silent buffer,
+/// hadAudioActivityLastFrame() still true) for as long as the pause lasts -
+/// nothing left to naturally clear it since no more frames ever arrive to
+/// update it. onEmulatorPaused() is the explicit push that closes that gap.
+TEST_F(SoundChip_GSLightweight_Test, OnEmulatorPaused_SilencesBufferAndClearsActivity)
+{
+    ASSERT_EQ(uploadModule(buildTestModule(false)), 1);
+    ASSERT_EQ(startPlayback(), 1);
+    runFrames(5);
+    ASSERT_TRUE(chip->hadAudioActivityLastFrame()) << "playback must be audibly active before pause";
+
+    bool sawNonZeroSample = false;
+    const int16_t* buf = chip->getBuffer();
+    for (int i = 0; i < SAMPLES_PER_FRAME * 2; i++)
+        if (buf[i] != 0)
+            sawNonZeroSample = true;
+    ASSERT_TRUE(sawNonZeroSample) << "test setup: buffer must actually carry sound before pause";
+
+    chip->onEmulatorPaused();
+
+    EXPECT_FALSE(chip->hadAudioActivityLastFrame()) << "activity must clear on pause";
+    for (int i = 0; i < SAMPLES_PER_FRAME * 2; i++)
+        EXPECT_EQ(buf[i], 0) << "buffer must be silenced on pause (sample " << i << ")";
+}
+
 TEST(GSModPlayer_LargeSample, OneShotPositionReachesTrueEndBeyond64KB)
 {
     // Regression for the 2026-09-21 live-demo distortion: ChannelState's

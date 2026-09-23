@@ -87,6 +87,20 @@ public:
     virtual void handleFrameStart() = 0;
     virtual void handleFrameEnd(size_t expectedSamples = 0) = 0;
 
+    /// Emulator paused: no further handleFrameStart/End calls will arrive
+    /// until resumed, so the card's own internal state (coprocessor timing,
+    /// module playback position) is already frozen by construction - nothing
+    /// to do there. What DOES need an explicit push here: getBuffer() still
+    /// holds whatever the last rendered frame produced (silence or not), and
+    /// _wasActive still holds whatever it was at the moment of pause - with
+    /// no more handleFrameEnd calls to update either, a card that happened to
+    /// be mid-playback when pause hit would keep reporting "active" (buffer
+    /// non-silent, activity indicator lit) for as long as the pause lasts.
+    /// Zeroes the buffer and, if _wasActive was true, posts one final
+    /// NC_AUDIO_ACTIVITY(false) so the HUD nudge and the audio-settings LED
+    /// go dark immediately rather than staying stuck on the pre-pause state.
+    virtual void onEmulatorPaused() = 0;
+
     // Buffer access for the SoundManager registry (one frame of stereo int16)
     virtual int16_t* getBuffer() = 0;
 

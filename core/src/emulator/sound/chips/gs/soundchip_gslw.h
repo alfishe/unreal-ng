@@ -75,6 +75,7 @@ public:
     // Frame lifecycle (SoundManager calls; expectedSamples = mixer count)
     void handleFrameStart() override;
     void handleFrameEnd(size_t expectedSamples = 0) override;
+    void onEmulatorPaused() override;
 
     // PortDevice interface (ZX-side ports #B3/#BB/#33)
     uint8_t portDeviceInMethod(uint16_t port) override;
