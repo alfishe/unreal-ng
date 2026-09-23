@@ -7,6 +7,7 @@
 #include "emulator/mainloop.h"
 
 #include "base/featuremanager.h"
+#include "widgets/ttdwidget.h"
 
 #include <algorithm>
 #include <chrono>
@@ -276,7 +277,23 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_toolBarManager, &ToolBarManager::startOrResumeRequested, this, &MainWindow::handleStartOrResumeRequested);
     connect(_toolBarManager, &ToolBarManager::pauseRequested, this, &MainWindow::handlePauseEmulator);
     connect(_toolBarManager, &ToolBarManager::restartRequested, this, &MainWindow::handleRestartRequested);
+    connect(_toolBarManager, &ToolBarManager::ttdToggled, this, &MainWindow::handleTtdToggled);
     _toolBarManager->restoreSettings();
+
+    _ttdWidget = new TtdWidget(this, this);
+    _ttdWidget->setVisible(false);
+    ui->verticalLayout->insertWidget(0, _ttdWidget);
+    connect(_ttdWidget, &TtdWidget::heightChanged, this, &MainWindow::adjustWindowHeightForTtdWidget);
+    connect(_ttdWidget, &TtdWidget::visibilityChanged, this, [this](bool visible) {
+        if (_toolBarManager && _toolBarManager->ttdAction())
+        {
+            QAction* act = _toolBarManager->ttdAction();
+            if (act->isChecked() != visible)
+            {
+                act->setChecked(visible);
+            }
+        }
+    });
 
     // Create the status bar (device LEDs + FPS)
     _statusBarManager = new StatusBarManager(this, _menuManager, this);
@@ -3709,6 +3726,11 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator)
         _hudWrapper->syncGeometryWithParent();
     }
 
+    if (_ttdWidget)
+    {
+        _ttdWidget->updateState(_emulator);
+    }
+
     qDebug() << "MainWindow::adoptEmulator() - Successfully adopted emulator"
              << QString::fromStdString(_emulator->GetId());
 }
@@ -3807,12 +3829,75 @@ void MainWindow::releaseEmulator()
     qDebug() << "MainWindow::releaseEmulator() - Emulator released and destroyed";
 }
 
+void MainWindow::refreshViewport()
+{
+    if (_screenWrapper)
+    {
+        _screenWrapper->refresh();
+    }
+}
+
+void MainWindow::adjustWindowHeightForTtdWidget()
+{
+    if (!_ttdWidget || isMaximized() || isFullScreen())
+        return;
+
+    // Re-entrancy guard: resizing the window triggers layout passes which could
+    // re-invoke this method via signal cascades. Prevent that.
+    if (_adjustingTtdHeight)
+        return;
+    _adjustingTtdHeight = true;
+
+    const int targetTtdHeight = _ttdWidget->desiredHeight();
+    const int delta = targetTtdHeight - _lastTtdWidgetHeight;
+
+    if (delta != 0)
+    {
+        _lastTtdWidgetHeight = targetTtdHeight;
+
+        const int newWindowHeight = height() + delta;
+        resize(width(), std::max(minimumHeight(), newWindowHeight));
+
+        if (ui->verticalLayout)
+        {
+            ui->verticalLayout->activate();
+        }
+
+        if (_screenWrapper)
+        {
+            _screenWrapper->fitToParent();
+        }
+        if (ui->contentFrame)
+        {
+            ui->contentFrame->update();
+        }
+    }
+
+    _adjustingTtdHeight = false;
+}
+
+void MainWindow::handleTtdToggled(bool visible)
+{
+    if (!_ttdWidget)
+        return;
+
+    if (_ttdWidget->isVisibleByUser() == visible)
+        return;
+
+    _ttdWidget->setVisibleByUser(visible);
+}
+
 void MainWindow::onBindingStateChanged(EmulatorStateEnum state)
 {
     qDebug() << "MainWindow::onBindingStateChanged(" << getEmulatorStateName(state) << ")";
 
     // Menus, toolbar and status bar all derive their state from the emulator
     updateMenuStates();
+
+    if (_ttdWidget)
+    {
+        _ttdWidget->updateState(_emulator);
+    }
 
 #ifdef ENABLE_RECORDING
     // Single mechanism: rebind recording widget on any state change

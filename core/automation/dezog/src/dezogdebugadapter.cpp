@@ -1241,8 +1241,8 @@ std::optional<dzrp::IDebugInterface::HistoryEntry> DezogDebugAdapter::getHistory
     if (getMachineType() == dzrp::MachineType::ZX48K)
         entry.slots = {0, 1};
     else
-        entry.slots = {static_cast<uint8_t>(ROM_BANK_BASE + (e.slots[0] & 0x01)),
-                       e.slots[1], e.slots[2], e.slots[3]};
+        entry.slots = {static_cast<uint8_t>(ROM_BANK_BASE + (e.bankSlots[0] & 0x01)),
+                       e.bankSlots[1], e.bankSlots[2], e.bankSlots[3]};
     for (int i = 0; i < 4; ++i)
         entry.opcodes[i] = e.opcodes[i];
     entry.spContent = e.spContent;

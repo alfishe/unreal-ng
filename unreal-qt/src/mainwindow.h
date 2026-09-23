@@ -42,6 +42,7 @@
 class AudioSettingsWidget;
 class HudOverlayWrapper;
 class HudModel;
+class TtdWidget;
 #ifdef ENABLE_RECORDING
 class VideoRecordingWidget;
 #endif
@@ -64,12 +65,15 @@ public:
 
     // Disable object copy
     MainWindow(const MainWindow&) = delete;
-    MainWindow& operator=(const MainWindow&) = delete;
+    // Public screen refresh helper (called by TtdWidget on scrub)
+    void refreshViewport();
 
     // region <Slots>
 private slots:
     void toggleEmulatorStartStop();
     void tryAdoptRemainingEmulator();
+    void handleTtdToggled(bool visible);
+    void adjustWindowHeightForTtdWidget();
     void handleMessageScreenRefresh(int id, Message* message);
     void handleVideoModeChanged(int id, Message* message);
     void handleFileOpenRequest(int id, Message* message);
@@ -271,6 +275,9 @@ private:
     DockingManager* _dockingManager = nullptr;
     MenuManager* _menuManager = nullptr;
     ToolBarManager* _toolBarManager = nullptr;
+    TtdWidget* _ttdWidget = nullptr;
+    int _lastTtdWidgetHeight = 0;
+    bool _adjustingTtdHeight = false;
     StatusBarManager* _statusBarManager = nullptr;
 
     // Audio settings dialog (singleton, toggled via menu)

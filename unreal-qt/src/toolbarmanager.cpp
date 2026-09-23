@@ -66,6 +66,17 @@ ToolBarManager::ToolBarManager(MainWindow* mainWindow, MenuManager* menuManager,
     _toolBar->addAction(record);
 #endif
 
+    // ---- TTD (Time Travel Debugging) Right-Aligned ------------------------
+    QWidget* spacer = new QWidget(_toolBar);
+    spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    _toolBar->addWidget(spacer);
+
+    _ttdAction = new QAction(tintedSvgIcon(QStringLiteral("timetravel")), tr("Time Travel Debugging (TTD)"), this);
+    _ttdAction->setCheckable(true);
+    _ttdAction->setToolTip(tr("Toggle Time Travel Debugging (TTD) Control Panel"));
+    connect(_ttdAction, &QAction::toggled, this, &ToolBarManager::ttdToggled);
+    _toolBar->addAction(_ttdAction);
+
     // View -> Toolbar
     connect(_menuManager, &MenuManager::toolBarToggled, this, &ToolBarManager::setVisibleByUser);
 

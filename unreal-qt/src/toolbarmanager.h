@@ -36,10 +36,13 @@ public:
     void hideForFullScreen();
     void restoreVisibility();
 
+    QAction* ttdAction() const { return _ttdAction; }
+
 signals:
     void startOrResumeRequested();
     void pauseRequested();
     void restartRequested();
+    void ttdToggled(bool visible);
 
 private:
     MainWindow* _mainWindow;
@@ -49,6 +52,7 @@ private:
     QAction* _startAction = nullptr;
     QAction* _pauseAction = nullptr;
     QAction* _restartAction = nullptr;
+    QAction* _ttdAction = nullptr;
 
     bool _visibleByUser = true;
 };
