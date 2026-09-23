@@ -223,11 +223,23 @@ void EmulatorAPI::getStateScreenMode(const HttpRequestPtr& req, std::function<vo
     std::string modeName = screen->GetVideoModeName(videoMode);
     ret["video_mode"] = modeName;
 
-    // Mode-specific details
+    // Universal resolution: rasterDescriptors[] has the correct active-picture
+    // size for every mode (including ones the switch below doesn't special-case
+    // yet - TSConf/Profi/Scorpion/GMX modes are a known follow-up, see
+    // docs/inprogress/2026-09-22-atm-hires-border-and-addressing/). Previously
+    // this endpoint hardcoded "256x192" for every mode the switch didn't name
+    // explicitly, which silently misreported ATM's 320x200/640x200 modes.
+    if (videoMode < M_MAX)
+    {
+        const RasterDescriptor& rd = screen->rasterDescriptors[videoMode];
+        ret["resolution"] = std::to_string(rd.screenWidth) + "x" + std::to_string(rd.screenHeight);
+    }
+
+    // Mode-specific details (bpp/colors/memory_layout - genuinely differ by
+    // decode scheme, can't be derived from raster geometry alone)
     switch (videoMode)
     {
         case M_P16:  // Pentagon 16-color mode (Alone Coder)
-            ret["resolution"] = "256x192";
             ret["color_depth"] = "4 bpp (16 colors per pixel)";
             ret["colors"] = 16;
             ret["bpp"] = 4;
@@ -243,7 +255,6 @@ void EmulatorAPI::getStateScreenMode(const HttpRequestPtr& req, std::function<vo
             break;
 
         case M_PMC:  // Pentagon hardware multicolor
-            ret["resolution"] = "256x192";
             ret["color_depth"] = "attribute per line";
             ret["colors"] = 16;
             ret["eff7_hwmc"] = true;
@@ -257,7 +268,6 @@ void EmulatorAPI::getStateScreenMode(const HttpRequestPtr& req, std::function<vo
             break;
 
         case M_PHR:  // Pentagon 512x192
-            ret["resolution"] = "512x192";
             ret["color_depth"] = "1 bpp (monochrome)";
             ret["colors"] = 2;
             ret["bpp"] = 1;
@@ -265,15 +275,62 @@ void EmulatorAPI::getStateScreenMode(const HttpRequestPtr& req, std::function<vo
             break;
 
         case M_P384:  // Pentagon 384x304 overscan
-            ret["resolution"] = "384x304";
             ret["color_depth"] = "2 colors per attribute block";
             ret["colors"] = 16;
             ret["attribute_size"] = "8x8 pixels";
             ret["overscan"] = true;
             break;
 
-        default:  // Standard ZX modes
-            ret["resolution"] = "256x192";
+        case M_ATM16:  // ATM EGA 16-color, 320x200 - 2 physical RAM pages
+                        // (videoPage from #7FFD bit3, altPage=videoPage-4),
+                        // each split into 2 sub-planes at +0/+0x2000, giving
+                        // 4 bit-planes total -> 4bpp/16 colors. See
+                        // core/src/emulator/video/atm/screenatm.cpp.
+            ret["color_depth"] = "4 bpp (16 colors per pixel)";
+            ret["colors"] = 16;
+            ret["bpp"] = 4;
+            ret["attribute_size"] = "per pixel pair (bit-planar, no attribute blocks)";
+            {
+                Json::Value memory;
+                memory["pixel_data_bytes"] = 16000;  // 2 pages x 8000 bytes
+                memory["planes"] = 4;
+                memory["total_bytes"] = 16000;
+                ret["memory_layout"] = memory;
+            }
+            break;
+
+        case M_ATMHR:  // ATM Hardware Multicolor, 640x200 - 1bpp bitmap plane
+                        // + a paired attribute plane, but attribute is fetched
+                        // per 8x1-pixel cell (NOT 8x8 like plain ZX) - true
+                        // per-scanline multicolor.
+            ret["color_depth"] = "1 bpp bitmap + attribute per 8x1 cell";
+            ret["colors"] = 16;
+            ret["bpp"] = 1;
+            ret["attribute_size"] = "8x1 pixels";
+            {
+                Json::Value memory;
+                memory["pixel_data_bytes"] = 16000;
+                memory["attribute_bytes"] = 16000;
+                memory["total_bytes"] = 32000;
+                ret["memory_layout"] = memory;
+            }
+            break;
+
+        case M_ATMTX:   // ATM Text 80x25, 640x200 - character codes + per-cell
+        case M_ATMTL:   // attribute, built-in font. ATMTL (ZX-Evo linear text)
+                         // differs only in RAM addressing, not resolution/bpp.
+            ret["color_depth"] = "text mode, 16-color ink/paper per character cell";
+            ret["colors"] = 16;
+            ret["attribute_size"] = "8x8 pixels (1 character cell)";
+            ret["text_columns"] = 80;
+            ret["text_rows"] = 25;
+            break;
+
+        default:  // Standard ZX modes. NOTE: TSConf (M_TS16/M_TS256/M_TSTX),
+                   // Profi (M_PROFI), Scorpion (M_SCORPION) and GMX (M_GMX)
+                   // extended modes also fall through here - their bpp/colors/
+                   // memory_layout are not yet characterized for this endpoint
+                   // (resolution above is still correct via rasterDescriptors).
             ret["color_depth"] = "2 colors per attribute block";
             ret["colors"] = 16;
             ret["bpp"] = 1;
