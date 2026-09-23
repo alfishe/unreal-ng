@@ -1,8 +1,12 @@
 # Recipe: Real Sinclairs (48K, 128K, +3)
 
-The original machines — and the control group for clone debugging. Also the
-boundary for expansion cards: the emulator deliberately keeps clone-world
-sound cards **off** real Sinclair models.
+The original machines — and the control group for clone debugging. Some
+clone-world features (sound cards, TurboSound) are *architecturally*
+scoped to specific models in the codebase, but this repo's **shipped
+default configs currently enable them for every model, Sinclairs
+included** (verified 2026-09-23 on `master` — see the `audio_ay` and "Card
+policy boundary" notes below) — don't assume model choice alone gates
+card availability without checking the instance's actual config.
 
 | Model id | RAM (KB) | Sound | Disk |
 |:--|:--|:--|:--|
@@ -104,12 +108,13 @@ insert directly.
   enforce that distinction. If a test depends on 48K being genuinely silent,
   verify the instance's actual `TurboSound`/`SD`/`CovoxFB` config values
   rather than trusting the model name alone.
-- **`PLUS3` failed to create in this environment** (verified 2026-09-23,
-  `HTTP 400: initialization failed for model 'PLUS3' (config folder
-  'spectrum3' missing, or ROM files failed to load)`) despite
-  `list_models` reporting `creatable:true` and both `plus3.rom`/
-  `plus341.rom` being present at the expected path and size. Root cause
-  not identified — `128k` and `48K` create fine on the same server. If you
-  hit this, don't assume the recipe's PLUS3 commands are wrong; check
-  server-side ROM loading first (`data/rom/plus3*.rom` presence, config's
-  empty `ROMSET=` key) before spending time on the WebAPI/MCP call itself.
+- **`PLUS3` create failure, root-caused and fixed 2026-09-23**: the shipped
+  `data/configs/spectrum3/unreal.ini` `[ROM]` section was simply missing
+  the `48k=`/`128k=`/`PLUS3=` lines that `spectrum48`/`spectrum128`'s
+  configs both carry (a config-file omission, not a code bug —
+  `config.cpp:199` reads `[ROM] PLUS3=` and got nothing). Fixed by adding
+  the three lines in the same position/format as the sibling configs.
+  Live-verified: `PLUS3` now creates and boots into the real +3 ROM
+  (`" 1982 Amstrad"` copyright banner in `screen_ocr`/`capture/ocr`
+  output). If this regresses, check that key first before assuming a code
+  change is needed.
