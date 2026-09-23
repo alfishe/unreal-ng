@@ -307,7 +307,7 @@ void TtdWidget::setVisibleByUser(bool visible)
     setVisible(visible);
     emit visibilityChanged(visible);
 
-    if (visible && _activeEmulator)
+    if ((visible || _lastIsRecording) && _activeEmulator)
     {
         if (!_telemetryTimer->isActive())
         {
@@ -357,6 +357,15 @@ void TtdWidget::updateTelemetry()
     _loadBtn->setEnabled(true);
 
     const bool isRecording = (info.state == ttd::TTDSessionState::Recording);
+    if (_lastIsRecording != isRecording)
+    {
+        _lastIsRecording = isRecording;
+        emit recordingStateChanged(isRecording);
+        if (!isVisible() && !_lastIsRecording)
+        {
+            _telemetryTimer->stop();
+        }
+    }
     const bool isDetached = (info.state == ttd::TTDSessionState::Detached);
     const bool hasHistory = (info.checkpointCount > 0);
 

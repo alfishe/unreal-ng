@@ -50,6 +50,7 @@ public:
 signals:
     void visibilityChanged(bool visible);
     void heightChanged();
+    void recordingStateChanged(bool isRecording);
 
 public slots:
     void onRecordToggled();
@@ -75,6 +76,7 @@ private:
 
     bool _visibleByUser = false;
     bool _isInternalSliderUpdate = false;
+    bool _lastIsRecording = false;
 
     // Control Row (Top)
     QWidget* _controlContainer = nullptr;

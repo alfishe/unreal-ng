@@ -13,6 +13,8 @@
 #include <QResizeEvent>
 #include <QSettings>
 #include <QTimer>
+#include <functional>
+#include <vector>
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "common/modulelogger.h"
@@ -45,6 +47,7 @@ class HudModel;
 class TtdWidget;
 #ifdef ENABLE_RECORDING
 class VideoRecordingWidget;
+class RecordingWidget;
 #endif
 class DockingManager;
 
@@ -67,6 +70,7 @@ public:
     MainWindow(const MainWindow&) = delete;
     // Public screen refresh helper (called by TtdWidget on scrub)
     void refreshViewport();
+    std::shared_ptr<Emulator> activeEmulator() const { return _emulator; }
 
     // region <Slots>
 private slots:
@@ -74,6 +78,10 @@ private slots:
     void tryAdoptRemainingEmulator();
     void handleTtdToggled(bool visible);
     void adjustWindowHeightForTtdWidget();
+#ifdef ENABLE_RECORDING
+    void adjustWindowHeightForRecordingWidget();
+    void openAdvancedRecordingDialog();
+#endif
     void handleMessageScreenRefresh(int id, Message* message);
     void handleVideoModeChanged(int id, Message* message);
     void handleFileOpenRequest(int id, Message* message);
@@ -138,6 +146,7 @@ private slots:
     void handleRestartRequested();
 #ifdef ENABLE_RECORDING
     void handleVideoRecordingRequested();
+    void handleVideoRecordingToggled(bool visible);
     void handleQuickRecord(const QString& presetName);
 #endif
     void updateMenuStates();
@@ -226,6 +235,46 @@ private:
     void handleFullScreenShortcutWindows();
     void handleFullScreenShortcutLinux();
 
+    // region <Mutually Exclusive Top Panels>
+    /// Structure representing a top-docked banner widget participating in mutual exclusion.
+    /// Only one such panel can be expanded / visible at any time. Opening any panel in this
+    /// collection automatically closes all other active panels in the group.
+    struct ExclusiveTopPanel
+    {
+        QWidget* widget = nullptr;
+        std::function<bool()> isVisibleByUser;
+        std::function<void(bool)> setVisibleByUser;
+    };
+
+    /// Register a panel in the mutually exclusive top banners collection.
+    void registerExclusiveTopPanel(QWidget* widget,
+                                   std::function<bool()> isVisibleByUser,
+                                   std::function<void(bool)> setVisibleByUser);
+
+    /// Helper to register a panel and automatically connect its visibilityChanged(bool) signal.
+    template <typename TPanel>
+    void registerExclusiveTopPanelHelper(TPanel* panel)
+    {
+        if (!panel)
+            return;
+
+        registerExclusiveTopPanel(panel,
+            [panel]() { return panel->isVisibleByUser(); },
+            [panel](bool visible) { panel->setVisibleByUser(visible); }
+        );
+
+        connect(panel, &TPanel::visibilityChanged, this, [this, panel](bool visible) {
+            if (visible)
+            {
+                closeOtherExclusiveTopPanels(panel);
+            }
+        });
+    }
+
+    /// Close all mutually exclusive top panels except the specified one.
+    void closeOtherExclusiveTopPanels(QWidget* exceptWidget = nullptr);
+    // endregion </Mutually Exclusive Top Panels>
+
 private:
     Ui::MainWindow* ui = nullptr;
     DebuggerWindow* debuggerWindow = nullptr;
@@ -283,6 +332,13 @@ private:
     // Audio settings dialog (singleton, toggled via menu)
     QPointer<AudioSettingsWidget> _audioSettingsWidget;
 #ifdef ENABLE_RECORDING
+    RecordingWidget* _recordingWidget = nullptr;
+    int _lastRecordingWidgetHeight = 0;
+    bool _adjustingRecordingHeight = false;
     QPointer<VideoRecordingWidget> _videoRecordingWidget;
 #endif
+
+    // Collection of top-docked panels participating in mutual exclusion
+    std::vector<ExclusiveTopPanel> _exclusiveTopPanels;
+    bool _closingOtherPanels = false;
 };

@@ -3,6 +3,7 @@
 #include <QAction>
 #include <QObject>
 #include <QToolBar>
+#include <chrono>
 #include <memory>
 
 class Emulator;
@@ -37,14 +38,40 @@ public:
     void restoreVisibility();
 
     QAction* ttdAction() const { return _ttdAction; }
+#ifdef ENABLE_RECORDING
+    QAction* recordAction() const { return _recordAction; }
+#endif
+
+    void setVideoRecordingActive(bool active);
+    void setTtdRecordingActive(bool active);
+    void updateRecordingStates();
+
+    bool isVideoRecordingActive() const { return _videoRecordingActive; }
+    bool isTtdRecordingActive() const { return _ttdRecordingActive; }
 
 signals:
     void startOrResumeRequested();
     void pauseRequested();
     void restartRequested();
     void ttdToggled(bool visible);
+#ifdef ENABLE_RECORDING
+    void recordingToggled(bool visible);
+#endif
+
+private slots:
+    void onBreathingTick();
 
 private:
+    void startBreathingAnimationIfNeeded();
+    void stopBreathingAnimationIfIdle();
+    QIcon createBreathingRecordIcon(qreal intensity, qreal bloom);
+    QIcon createBreathingTtdIcon(qreal intensity, qreal bloom);
+
+    bool isVideoRecording() const;
+    bool isTtdRecording() const;
+    std::shared_ptr<Emulator> getActiveEmulator() const;
+    void updateActiveTooltips();
+
     MainWindow* _mainWindow;
     MenuManager* _menuManager;
     QToolBar* _toolBar = nullptr;
@@ -53,6 +80,20 @@ private:
     QAction* _pauseAction = nullptr;
     QAction* _restartAction = nullptr;
     QAction* _ttdAction = nullptr;
+#ifdef ENABLE_RECORDING
+    QAction* _recordAction = nullptr;
+#endif
 
     bool _visibleByUser = true;
+    bool _videoRecordingActive = false;
+    bool _ttdRecordingActive = false;
+    QTimer* _breathingTimer = nullptr;
+    qreal _breathingPhase = 0.0;
+    int _tickCount = 0;
+    std::chrono::steady_clock::time_point _lastTooltipUpdateTime{};
+
+    QIcon _normalRecordIcon;
+    QIcon _normalTtdIcon;
+
+    std::weak_ptr<Emulator> _activeEmulator;
 };

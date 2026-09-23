@@ -144,6 +144,7 @@ signals:
 #ifdef ENABLE_RECORDING
     void videoRecordingRequested();
     void quickRecordRequested(const QString& presetName);
+    void recordingStateChanged(bool isRecording);
 #endif
 
 private:

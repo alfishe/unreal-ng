@@ -8,6 +8,9 @@
 
 #include "base/featuremanager.h"
 #include "widgets/ttdwidget.h"
+#ifdef ENABLE_RECORDING
+#include "widgets/recordingwidget.h"
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -278,6 +281,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_toolBarManager, &ToolBarManager::pauseRequested, this, &MainWindow::handlePauseEmulator);
     connect(_toolBarManager, &ToolBarManager::restartRequested, this, &MainWindow::handleRestartRequested);
     connect(_toolBarManager, &ToolBarManager::ttdToggled, this, &MainWindow::handleTtdToggled);
+#ifdef ENABLE_RECORDING
+    connect(_toolBarManager, &ToolBarManager::recordingToggled, this, &MainWindow::handleVideoRecordingToggled);
+#endif
     _toolBarManager->restoreSettings();
 
     _ttdWidget = new TtdWidget(this, this);
@@ -294,6 +300,53 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
             }
         }
     });
+    connect(_ttdWidget, &TtdWidget::recordingStateChanged, this, [this](bool isRecording) {
+        if (_toolBarManager)
+        {
+            _toolBarManager->setTtdRecordingActive(isRecording);
+        }
+    });
+
+#ifdef ENABLE_RECORDING
+    _recordingWidget = new RecordingWidget(this, this);
+    _recordingWidget->setVisible(false);
+    ui->verticalLayout->insertWidget(0, _recordingWidget);
+    connect(_recordingWidget, &RecordingWidget::heightChanged, this, &MainWindow::adjustWindowHeightForRecordingWidget);
+    connect(_recordingWidget, &RecordingWidget::visibilityChanged, this, [this](bool visible) {
+        if (_menuManager && _menuManager->videoRecordingAction())
+        {
+            QAction* act = _menuManager->videoRecordingAction();
+            if (act->isChecked() != visible)
+            {
+                act->setChecked(visible);
+            }
+        }
+    });
+    connect(_recordingWidget, &RecordingWidget::recordingStateChanged, this, [this](bool isRecording) {
+        if (_toolBarManager)
+        {
+            _toolBarManager->setVideoRecordingActive(isRecording);
+        }
+    });
+    connect(_menuManager, &MenuManager::recordingStateChanged, this, [this](bool isRecording) {
+        if (_toolBarManager)
+        {
+            _toolBarManager->setVideoRecordingActive(isRecording);
+        }
+    });
+    connect(_recordingWidget, &RecordingWidget::advancedSettingsRequested, this, &MainWindow::openAdvancedRecordingDialog);
+#endif
+
+    // Register top banner widgets into the mutually exclusive collection.
+    // Unreal-NG uses a mutually exclusive panel policy for top-docked control banners
+    // (Time Travel Debugging timeline, Recording controls, and future tools).
+    // When any registered panel is expanded, any other currently open banner panel
+    // auto-closes immediately so that only one banner occupies the top slot at any time.
+    // Future panels can be added simply by calling registerExclusiveTopPanelHelper(panel).
+    registerExclusiveTopPanelHelper(_ttdWidget);
+#ifdef ENABLE_RECORDING
+    registerExclusiveTopPanelHelper(_recordingWidget);
+#endif
 
     // Create the status bar (device LEDs + FPS)
     _statusBarManager = new StatusBarManager(this, _menuManager, this);
@@ -2821,15 +2874,36 @@ void MainWindow::handleMachineModelChangeRequested(const QString& modelSpec)
 #ifdef ENABLE_RECORDING
 void MainWindow::handleVideoRecordingRequested()
 {
+    if (!_recordingWidget)
+        return;
+
+    const bool visible = (_menuManager && _menuManager->videoRecordingAction())
+        ? _menuManager->videoRecordingAction()->isChecked()
+        : !_recordingWidget->isVisibleByUser();
+
+    handleVideoRecordingToggled(visible);
+}
+
+void MainWindow::handleVideoRecordingToggled(bool visible)
+{
+    if (!_recordingWidget)
+        return;
+
+    if (_recordingWidget->isVisibleByUser() == visible)
+        return;
+
+    _recordingWidget->setVisibleByUser(visible);
+}
+
+void MainWindow::openAdvancedRecordingDialog()
+{
     if (_videoRecordingWidget)
     {
-        _videoRecordingWidget->close();
+        _videoRecordingWidget->raise();
+        _videoRecordingWidget->activateWindow();
         return;
     }
 
-    // Widget can be opened without an emulator — the benchmark is fully
-    // synthetic, and recording-specific controls are disabled via
-    // updateRecordingControls() when no context is available.
     EmulatorContext* context = nullptr;
     if (m_binding && m_binding->emulator())
     {
@@ -2838,8 +2912,11 @@ void MainWindow::handleVideoRecordingRequested()
 
     _videoRecordingWidget = new VideoRecordingWidget(context, nullptr);
     _videoRecordingWidget->setAttribute(Qt::WA_DeleteOnClose);
-    // Non-modal tool window: stays on top, does NOT block the main window
     _videoRecordingWidget->setWindowFlags(Qt::Tool | Qt::Window);
+    connect(_videoRecordingWidget, &QWidget::destroyed, this, [this]() {
+        if (_recordingWidget)
+            _recordingWidget->reloadSettings();
+    });
     _videoRecordingWidget->show();
     _videoRecordingWidget->raise();
     _videoRecordingWidget->activateWindow();
@@ -3876,6 +3953,101 @@ void MainWindow::adjustWindowHeightForTtdWidget()
     _adjustingTtdHeight = false;
 }
 
+#ifdef ENABLE_RECORDING
+void MainWindow::adjustWindowHeightForRecordingWidget()
+{
+    if (!_recordingWidget || isMaximized() || isFullScreen())
+        return;
+
+    if (_adjustingRecordingHeight)
+        return;
+    _adjustingRecordingHeight = true;
+
+    const int targetRecordingHeight = _recordingWidget->desiredHeight();
+    const int delta = targetRecordingHeight - _lastRecordingWidgetHeight;
+
+    if (delta != 0)
+    {
+        _lastRecordingWidgetHeight = targetRecordingHeight;
+
+        const int newWindowHeight = height() + delta;
+        resize(width(), std::max(minimumHeight(), newWindowHeight));
+
+        if (ui->verticalLayout)
+        {
+            ui->verticalLayout->activate();
+        }
+
+        if (_screenWrapper)
+        {
+            _screenWrapper->fitToParent();
+        }
+        if (ui->contentFrame)
+        {
+            ui->contentFrame->update();
+        }
+    }
+
+    _adjustingRecordingHeight = false;
+}
+#endif
+
+// region <Mutually Exclusive Top Panels>
+
+/**
+ * @brief Register a top banner widget in the mutually exclusive panel collection.
+ *
+ * Unreal-NG supports multiple expandable top-docked control banners (e.g. Time Travel
+ * Debugging timeline, Video/Audio Recording control bar, and future diagnostic/profiling tools).
+ * To maintain a clean, uncluttered layout and prevent excessive vertical growth of the emulator
+ * window, these panels are mutually exclusive when active.
+ *
+ * @param widget Pointer to the QWidget instance.
+ * @param isVisibleByUser Functor returning whether the widget is currently intended to be visible by the user.
+ * @param setVisibleByUser Functor setting the user visibility state of the widget (showing/hiding and adjusting layout).
+ */
+void MainWindow::registerExclusiveTopPanel(QWidget* widget,
+                                           std::function<bool()> isVisibleByUser,
+                                           std::function<void(bool)> setVisibleByUser)
+{
+    if (!widget)
+        return;
+
+    _exclusiveTopPanels.push_back({widget, std::move(isVisibleByUser), std::move(setVisibleByUser)});
+}
+
+/**
+ * @brief Closes all registered top panels except the specified one.
+ *
+ * Protected with a re-entrancy guard (_closingOtherPanels) so cascading visibility signals
+ * during panel closing cannot cause recursive closure or loop cycles.
+ *
+ * @param exceptWidget Pointer to the panel that should remain open (all others are closed).
+ */
+void MainWindow::closeOtherExclusiveTopPanels(QWidget* exceptWidget)
+{
+    if (_closingOtherPanels)
+        return;
+
+    _closingOtherPanels = true;
+    for (const auto& entry : _exclusiveTopPanels)
+    {
+        if (entry.widget != exceptWidget && entry.widget)
+        {
+            if (entry.isVisibleByUser && entry.isVisibleByUser())
+            {
+                if (entry.setVisibleByUser)
+                {
+                    entry.setVisibleByUser(false);
+                }
+            }
+        }
+    }
+    _closingOtherPanels = false;
+}
+
+// endregion </Mutually Exclusive Top Panels>
+
 void MainWindow::handleTtdToggled(bool visible)
 {
     if (!_ttdWidget)
@@ -3900,6 +4072,11 @@ void MainWindow::onBindingStateChanged(EmulatorStateEnum state)
     }
 
 #ifdef ENABLE_RECORDING
+    if (_recordingWidget)
+    {
+        _recordingWidget->updateState(_emulator);
+    }
+
     // Single mechanism: rebind recording widget on any state change
     if (_videoRecordingWidget)
     {
