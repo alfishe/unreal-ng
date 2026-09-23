@@ -117,6 +117,17 @@ public:
     virtual bool isROMLoaded() const = 0;             // LW: always false
     virtual size_t getRamSizeKB() const = 0;          // LW: virtual geometry
 
+    /// True when the stereo mix actually changed during the most recently
+    /// finished frame (handleFrameEnd) - the same signal NC_AUDIO_ACTIVITY
+    /// is posted from. Deliberately NOT "is any sample in getBuffer()
+    /// non-zero": a DAC channel latched to a non-centre value by a command
+    /// and then left alone (e.g. a one-shot digi sample's last byte, or a
+    /// firmware self-test tone) renders as a constant-but-non-zero PCM level
+    /// forever after, which a naive peak-amplitude check reports as
+    /// perpetually "active" even though nothing is actually playing anymore.
+    /// This is what a UI activity indicator should poll instead of getBuffer().
+    virtual bool hadAudioActivityLastFrame() const = 0;
+
     // Coprocessor capability: the register/debug views below carry real
     // values only on the LLE card; non-coprocessor personalities return
     // zeros/false and automation prints a placeholder instead

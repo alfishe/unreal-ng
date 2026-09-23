@@ -92,6 +92,7 @@ public:
     uint8_t getChannelVolume(int channel) const override { return _channelVol[channel & 3]; }
     bool isROMLoaded() const override { return false; }
     size_t getRamSizeKB() const override { return _ramKB; }
+    bool hadAudioActivityLastFrame() const override { return _wasActive; }
 
     // Coprocessor capability: this is the lightweight personality
     bool hasCoprocessor() const override { return false; }

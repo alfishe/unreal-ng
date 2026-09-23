@@ -782,7 +782,22 @@ void SoundManager::handleFrameEnd()
                 peak = absVal;
         }
         d.peak = peak;
-        d.activeRecently = (peak > 0.001f);
+        if (d.type == AudioSourceType::GeneralSound)
+        {
+            // Peak amplitude alone is the wrong signal for GS: a DAC channel
+            // latched away from centre by a command (a one-shot digi sample's
+            // last byte, a firmware self-test tone) and then left alone
+            // renders as a constant-but-non-zero PCM level forever after, so
+            // a naive peak > threshold check reads as permanently "active"
+            // once anything has ever touched a channel - not just while the
+            // card is actually playing. hadAudioActivityLastFrame() is the
+            // same delta-based signal NC_AUDIO_ACTIVITY/the HUD nudge use.
+            d.activeRecently = _gs && _gs->hadAudioActivityLastFrame();
+        }
+        else
+        {
+            d.activeRecently = (peak > 0.001f);
+        }
 
         // Mix into output if audible
         if (audible && d.volume > 0.0f)

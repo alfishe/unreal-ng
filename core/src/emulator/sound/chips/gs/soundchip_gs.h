@@ -118,6 +118,7 @@ public:
     uint8_t getChannelVolume(int channel) const override { return _channelVol[channel & 3]; }
     bool isROMLoaded() const override { return _romLoaded; }
     size_t getRamSizeKB() const override { return _ram.size() / 1024; }
+    bool hadAudioActivityLastFrame() const override { return _wasActive; }
     bool isCPUHalted() const override { return _cpu && z80ex_doing_halt(_cpu) != 0; }
     uint16_t getCPUReg(Z80_REG_T reg) const override { return _cpu ? z80ex_get_reg(_cpu, reg) : 0; }
 
