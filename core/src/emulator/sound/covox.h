@@ -26,20 +26,71 @@ struct blip_t;
 /// Mono COVOX compatibility: When only #FB (RightB) is written (other channels
 /// at midpoint), the output is automatically centered — RightB goes to both
 /// speakers. This matches the behavior of simple single-DAC Covox hardware.
+///
+/// Hardware references (mode 2 port map):
+/// - VELESOFT DAC-for-ZX database, SoundDrive 1.05:
+///   https://velesoft.speccy.cz/da_for_zx-cz.htm
+/// - BC Info Guide #4, ZX Spectrum Ports Guide (Black_Cat, 2008) — decode
+///   pattern 1111B0A1; transcribed in docs/ports/zx-ports-full-table.md
 class Covox : public PortDevice, public ttd::TTDSerializable
 {
 public:
-    // Port addresses for 4 channels
+    // Port addresses for 4 channels - SoundDrive 1.05 "mode 2" mirror set
     static constexpr uint16_t PORT_LEFT_A  = 0x00F1;  // Left channel A
     static constexpr uint16_t PORT_LEFT_B  = 0x00F3;  // Left channel B
     static constexpr uint16_t PORT_RIGHT_A = 0x00F9;  // Right channel A
     static constexpr uint16_t PORT_RIGHT_B = 0x00FB;  // Right channel B
 
-    // Port decoding mask/match (catches all 4 ports)
+    // Port decoding mask/match (catches all 4 mode-2 ports)
     static constexpr uint8_t PORT_MASK  = 0xF5;  // Check bits 7-4, 2, 0
     static constexpr uint8_t PORT_MATCH = 0xF1;  // 1111x0x1
 
+    // SoundDrive 1.05 "mode 1" primary port set (#0F/#1F/#4F/#5F). Aliases
+    // into the Beta128 FDC's wide mirror decode (bits 0,1=1, bit7=0), so a
+    // machine can only have one peripheral answering there at a time; the
+    // Pentagon/Scorpion decoder resolves the conflict the same way the
+    // reference implementations do (pentevo/Unreal io.cpp:
+    // `conf.sound.sd && (port & 0xAF) == 0x0F`; Xpeccy soundrive.c
+    // SDRV_105_1): Beta128 keeps the ports while TR-DOS is paged in,
+    // SoundDrive claims them the rest of the time when SD is fitted.
+    //
+    // These constants carry a 0x0100 marker bit and are NOT the literal bus
+    // addresses - PortDecoder's port-device map is a single exact-address
+    // table (RegisterPortHandler no-ops if the key is already taken), and
+    // SoundManager::attachToPorts() runs before the Beta disk's, so
+    // registering Covox at the raw #0F/#1F/#4F/#5F would win that race and
+    // permanently block WD1793 registration whenever SD=1 - breaking disk
+    // access outright regardless of TR-DOS state (caught by
+    // WD1793_Integration_Test.TRDOS_FORMAT_FullOperation). The marker keeps
+    // Covox's dispatch-map slot distinct from the FDC's; portToChannel() and
+    // the mode-1 mask check below only look at the low byte, so the marker
+    // bit is transparent to them. PortDecoder_Pentagon128::DecodePortOut()
+    // is the only place that maps a raw #0F/#1F/#4F/#5F write onto these
+    // marked keys, and only once the Beta128 gate has already decided
+    // TR-DOS isn't claiming the address.
+    static constexpr uint16_t PORT_LEFT_A_MODE1  = 0x010F;
+    static constexpr uint16_t PORT_LEFT_B_MODE1  = 0x011F;
+    static constexpr uint16_t PORT_RIGHT_A_MODE1 = 0x014F;
+    static constexpr uint16_t PORT_RIGHT_B_MODE1 = 0x015F;
+
+    static constexpr uint8_t PORT_MASK_MODE1  = 0xAF;
+    static constexpr uint8_t PORT_MATCH_MODE1 = 0x0F;
+
     enum class Channel { LeftA = 0, LeftB = 1, RightA = 2, RightB = 3, Count = 4 };
+
+    // Stale-channel decay: mode-1 and mode-2 addresses are two different bus
+    // schemes for the SAME 4 physical DAC latches, so software that switches
+    // between them (e.g. a demo's device-selection menu) commonly abandons
+    // the previously-used channel without ever rewriting it back to silence.
+    // Left frozen forever, that stale non-midpoint latch permanently defeats
+    // the single-channel mono-centering in computeStereoAmplitudes() and
+    // reintroduces the exact wrong-side-panning/click behavior the centering
+    // was meant to fix (see balldreams2.sna SD1.05<->Covox switching). Digi/
+    // PCM engines refresh an active channel far more than once per video
+    // frame, so a channel that goes STALE_CHANNEL_FRAMES whole frames
+    // without a single write is safe to treat as abandoned and silently
+    // decay back to the 0x80 midpoint (see handleFrameStart()).
+    static constexpr int STALE_CHANNEL_FRAMES = 3;
 
 protected:
     EmulatorContext* _context;
@@ -62,6 +113,15 @@ protected:
 
     // Per-channel mute (for UI)
     bool _channelMute[4] = {false, false, false, false};
+
+    // Stale-channel decay state (see STALE_CHANNEL_FRAMES doc, public section)
+    bool _writtenThisFrame[4] = {false, false, false, false};
+    int _staleFrameCount[4] = {0, 0, 0, 0};
+
+    /// Synthetically silence one abandoned channel through the normal
+    /// delta/blip path (called from handleFrameStart, T-state 0 - before any
+    /// real writes this frame - so the decay never clips real playback)
+    void decayStaleChannel(Channel ch);
 
     // DC offset removal (optional, applied post-blip)
     bool _dcRemovalEnabled = false;
@@ -117,6 +177,13 @@ public:
     // Per-channel mute control
     void setChannelMute(Channel ch, bool mute) { _channelMute[static_cast<int>(ch)] = mute; }
     bool isChannelMuted(Channel ch) const { return _channelMute[static_cast<int>(ch)]; }
+
+    /// Last stereo amplitude computed from the DAC latches (updated
+    /// synchronously in portDeviceOutMethod(), independent of blip_buf/frame
+    /// timing) - lets tests assert on the mono-vs-stereo mixing decision
+    /// without depending on a fully wired frame/clock pipeline.
+    int32_t lastLeftAmplitude() const { return _lastL; }
+    int32_t lastRightAmplitude() const { return _lastR; }
 
     // PortDevice interface
     uint8_t portDeviceInMethod(uint16_t port) override;

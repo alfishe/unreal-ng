@@ -226,6 +226,7 @@ TEST_F(PortDecoder_PortTag_Test, SoundAyFamilyIsTheAyRowsOnEveryModel)
 TEST_F(PortDecoder_PortTag_Test, Pentagon_CovoxRowCarriesBothMembers)
 {
     _context->config.mem_model = MM_PENTAGON;
+    _context->config.sound.sd = 1;  // SoundDrive fitted: quad rows carry both members
     PortDecoder_Pentagon128 decoder(_context);
 
     const std::vector<PortMapEntry> pentagonEntries = decoder.getPortMapEntries();
@@ -233,11 +234,20 @@ TEST_F(PortDecoder_PortTag_Test, Pentagon_CovoxRowCarriesBothMembers)
     ASSERT_NE(covox, nullptr);
     EXPECT_EQ(covox->tags, Tags(PortTag::SoundCovox) | PortTag::SoundSoundDrive);
 
-    EXPECT_EQ(decoder.GetSoundEntries(PortTag::SoundCovox).size(), 1u);
-    EXPECT_EQ(decoder.GetSoundEntries(PortTag::SoundSoundDrive).size(), 1u);
+    // Two rows now: SoundDrive mode 2 (#F1/#F3/#F9/#FB) and mode 1
+    // (#0F/#1F/#4F/#5F, TR-DOS-gated) - both wired by SoundManager when SD=1
+    const PortMapEntry* mode1 = FindEntry(pentagonEntries, 0x001F);
+    ASSERT_NE(mode1, nullptr);
+    EXPECT_EQ(mode1->tags, Tags(PortTag::SoundCovox) | PortTag::SoundSoundDrive);
+    EXPECT_NE(mode1->gate, nullptr) << "mode 1 row must document the TR-DOS precedence";
 
-    // 128K has no Covox: the member query is a fitment answer
+    EXPECT_EQ(decoder.GetSoundEntries(PortTag::SoundCovox).size(), 2u);
+    EXPECT_EQ(decoder.GetSoundEntries(PortTag::SoundSoundDrive).size(), 2u);
+
+    // 128K has no Covox: the member query is a fitment answer (real 128K
+    // configs ship SD=0, so the DAC row is absent there)
     _context->config.mem_model = MM_SPECTRUM128;
+    _context->config.sound.sd = 0;
     PortDecoder_Spectrum128 decoder128(_context);
     EXPECT_FALSE(decoder128.HasAnyTaggedPort(Tags(PortTag::SoundCovox)));
 }
@@ -357,8 +367,10 @@ TEST_F(PortDecoder_PortTag_Test, TagNamesCarryEverySoundMember)
 {
     // Pentagon #FB answers both covox and SoundDrive: the wire names must
     // report BOTH members. Guards the else-if regression that silently
-    // dropped the second member on WebAPI
+    // dropped the second member on WebAPI (SD=1 fits the quad SoundDrive,
+    // whose #FB also answers plain Covox software)
     _context->config.mem_model = MM_PENTAGON;
+    _context->config.sound.sd = 1;
     PortDecoder_Pentagon128 decoder(_context);
 
     const std::vector<PortMapEntry> entries = decoder.getPortMapEntries();

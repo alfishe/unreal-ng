@@ -166,18 +166,42 @@ TEST_F(PortDecoder_PortMap_Test, Scorpion_NarrowedFeJoystickRowAndMouseGate)
     EXPECT_NE(std::string(buttons->gate).find("TR-DOS"), std::string::npos);
 }
 
-TEST_F(PortDecoder_PortMap_Test, Pentagon_CovoxRowResolvesToFB)
+TEST_F(PortDecoder_PortMap_Test, Pentagon_CovoxRowFollowsConfigMode)
 {
     _context->config.mem_model = MM_PENTAGON;
     PortDecoder_Pentagon128 decoder(_context);
 
-    const std::vector<PortMapEntry> entries = decoder.getPortMapEntries();
+    std::vector<PortMapEntry> entries = decoder.getPortMapEntries();
     ASSERT_NE(FindEntry(entries, 0x7FFD), nullptr);
 
+    // SD=1: the SoundDrive mode-2 quad row (mask/match = decode 1111B0A1) at
+    // #FB, plus the mode-1 quad row (#0F/#1F/#4F/#5F, TR-DOS-gated)
+    _context->config.sound.sd = 1;
+    entries = decoder.getPortMapEntries();
     const PortMapEntry* covox = FindEntry(entries, 0x00FB);
     ASSERT_NE(covox, nullptr);
     EXPECT_EQ(covox->mask, 0x00F5);
     EXPECT_EQ(covox->match, 0x00F1);
+
+    const PortMapEntry* mode1 = FindEntry(entries, 0x001F);
+    ASSERT_NE(mode1, nullptr);
+    EXPECT_EQ(mode1->mask, 0x00AF);
+    EXPECT_EQ(mode1->match, 0x000F);
+
+    // CovoxFB=1 alone: mono Covox row, exact #FB address, no mode-1 row
+    _context->config.sound.sd = 0;
+    _context->config.sound.covoxFB = 1;
+    entries = decoder.getPortMapEntries();
+    covox = FindEntry(entries, 0x00FB);
+    ASSERT_NE(covox, nullptr);
+    EXPECT_EQ(covox->mask, 0xFFFF);
+    EXPECT_EQ(covox->match, 0x00FB);
+    EXPECT_EQ(FindEntry(entries, 0x001F), nullptr);
+
+    // Neither flag: no DAC device fitted, no row advertised
+    _context->config.sound.covoxFB = 0;
+    EXPECT_EQ(FindEntry(decoder.getPortMapEntries(), 0x00FB), nullptr);
+    EXPECT_EQ(FindEntry(decoder.getPortMapEntries(), 0x001F), nullptr);
 }
 
 /// endregion </Static rows per model>

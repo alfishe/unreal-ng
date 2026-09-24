@@ -68,7 +68,11 @@ Covox::~Covox()
 void Covox::reset()
 {
     for (int i = 0; i < 4; i++)
+    {
         _dacValue[i] = 0x80;  // Midpoint = silence
+        _writtenThisFrame[i] = false;
+        _staleFrameCount[i] = 0;
+    }
 
     _lastL = 0;
     _lastR = 0;
@@ -84,6 +88,26 @@ void Covox::handleFrameStart()
 {
     // Reset activity tracking for the new frame
     _frameHadActivity = false;
+
+    // Stale-channel decay: a channel that went a whole frame without any
+    // write extends its idle streak; once it crosses the threshold, silence
+    // it (see the member comment in covox.h for why this is needed)
+    for (int i = 0; i < 4; i++)
+    {
+        if (_writtenThisFrame[i])
+        {
+            _staleFrameCount[i] = 0;
+        }
+        else
+        {
+            _staleFrameCount[i]++;
+            if (_staleFrameCount[i] >= STALE_CHANNEL_FRAMES && _dacValue[i] != 0x80)
+            {
+                decayStaleChannel(static_cast<Channel>(i));
+            }
+        }
+        _writtenThisFrame[i] = false;
+    }
 }
 
 void Covox::handleFrameEnd(size_t expectedSamples)
@@ -168,15 +192,24 @@ Covox::Channel Covox::portToChannel(uint16_t port)
         case 0xF3: return Channel::LeftB;
         case 0xF9: return Channel::RightA;
         case 0xFB: return Channel::RightB;
+        case 0x0F: return Channel::LeftA;
+        case 0x1F: return Channel::LeftB;
+        case 0x4F: return Channel::RightA;
+        case 0x5F: return Channel::RightB;
         default:   return Channel::RightB;  // Fallback for mono COVOX compatibility
     }
 }
 
 void Covox::portDeviceOutMethod(uint16_t port, uint8_t value)
 {
-    // COVOX/SOUNDRIVE ports: #F1, #F3, #F9, #FB (bits[7:4]=1111, bit2=0, bit0=1)
+    // COVOX/SOUNDRIVE mode-2 mirror ports: #F1, #F3, #F9, #FB (bits[7:4]=1111,
+    // bit2=0, bit0=1). Mode-1 primary ports: #0F, #1F, #4F, #5F (bit7=0,
+    // bit5=1, bits[3:0]=1111) - the caller (PortDecoder_Pentagon128) only
+    // forwards these once TR-DOS has released the aliased Beta128 addresses
     uint8_t lowByte = port & 0xFF;
-    if ((lowByte & PORT_MASK) != PORT_MATCH)
+    bool isMode2 = (lowByte & PORT_MASK) == PORT_MATCH;
+    bool isMode1 = (lowByte & PORT_MASK_MODE1) == PORT_MATCH_MODE1;
+    if (!isMode2 && !isMode1)
         return;
 
     uint32_t currentTState = (_context && _context->pCore && _context->pCore->GetZ80())
@@ -186,6 +219,8 @@ void Covox::portDeviceOutMethod(uint16_t port, uint8_t value)
     // Update the DAC value for this channel
     Channel ch = portToChannel(port);
     _dacValue[static_cast<int>(ch)] = value;
+    _writtenThisFrame[static_cast<int>(ch)] = true;
+    _staleFrameCount[static_cast<int>(ch)] = 0;
 
     // Compute new stereo amplitudes from all 4 channels
     int32_t newL, newR;
@@ -212,6 +247,36 @@ void Covox::portDeviceOutMethod(uint16_t port, uint8_t value)
     }
 
     // Update tracked state
+    _lastL = newL;
+    _lastR = newR;
+}
+
+void Covox::decayStaleChannel(Channel ch)
+{
+    _dacValue[static_cast<int>(ch)] = 0x80;
+
+    int32_t newL, newR;
+    computeStereoAmplitudes(newL, newR);
+
+    int32_t deltaL = newL - _lastL;
+    int32_t deltaR = newR - _lastR;
+
+    // T-state 0: called from handleFrameStart, before any real write this
+    // frame, so the synthetic step lands at the very start of the frame
+    if (!_synthesisSuppressed)
+    {
+        if (deltaL != 0)
+        {
+            blip_add_delta(_blipL, 0, deltaL);
+            _frameHadActivity = true;
+        }
+        if (deltaR != 0)
+        {
+            blip_add_delta(_blipR, 0, deltaR);
+            _frameHadActivity = true;
+        }
+    }
+
     _lastL = newL;
     _lastR = newR;
 }
@@ -243,15 +308,25 @@ void Covox::computeStereoAmplitudes(int32_t& outL, int32_t& outR) const
     int32_t ra = _channelMute[2] ? 0 : (static_cast<int32_t>(_dacValue[2]) - 128);
     int32_t rb = _channelMute[3] ? 0 : (static_cast<int32_t>(_dacValue[3]) - 128);
 
-    // Mono FB COVOX compatibility: RightB (#FB) is the standard mono Covox port.
-    // When only FB is used (la/lb/ra at midpoint), mix rb into both channels
-    // for centered mono output. Full Soundrive uses all 4 channels for true stereo.
-    bool monoMode = (la == 0 && lb == 0 && ra == 0);
-    if (monoMode)
+    // Mono COVOX compatibility: classic single-DAC covox software only ever
+    // drives one of the four channels (traditionally #FB/RightB, but the
+    // SoundDrive 1.05 "mode 1" primary set has the same single-DAC digi
+    // players wired to #1F/LeftB instead - see balldreams2.sna). Center
+    // whichever single channel is active to both speakers so mono playback
+    // doesn't get silently panned hard to one side; true SoundDrive stereo
+    // (2+ channels active) still sums independently per side below.
+    int32_t soleActive = 0;
+    int activeChannels = 0;
+    if (la != 0) { soleActive = la; activeChannels++; }
+    if (lb != 0) { soleActive = lb; activeChannels++; }
+    if (ra != 0) { soleActive = ra; activeChannels++; }
+    if (rb != 0) { soleActive = rb; activeChannels++; }
+
+    if (activeChannels <= 1)
     {
-        // Mono: RightB goes to both speakers
-        outL = rb * 128;
-        outR = rb * 128;
+        // Silence, or exactly one channel driven: center it on both speakers
+        outL = soleActive * 128;
+        outR = soleActive * 128;
     }
     else
     {
@@ -267,7 +342,13 @@ void Covox::computeStereoAmplitudes(int32_t& outL, int32_t& outR) const
 //
 // Layout: 4 bytes - the four DAC latches (_dacValue[0..3]).
 // The DAC latches are the only CPU-visible machine state (set via OUT to
-// ports 0xF1/0xF3/0xF9/0xFB). Everything else is host-side audio pipeline.
+// ports 0xF1/0xF3/0xF9/0xFB, or their #0F/#1F/#4F/#5F mode-1 aliases).
+// Everything else is host-side audio pipeline, including the stale-channel
+// decay countdown (_staleFrameCount/_writtenThisFrame) - it is a host-only
+// mixing heuristic with no hardware equivalent, so a TTD load resets it to
+// "just written" for all channels. Worst case: a channel captured mid-decay
+// gets up to STALE_CHANNEL_FRAMES extra frames before re-centering after the
+// jump - inaudible in practice and never affects _dacValue itself.
 
 static constexpr size_t kCovoxStateSize = 4;
 static_assert(kCovoxStateSize == 4, "Covox state size drift");

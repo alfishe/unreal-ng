@@ -3,6 +3,7 @@
 
 #include "portdecoder_pentagon128_test.h"
 #include <common/stringhelper.h>
+#include <emulator/sound/covox.h>
 #include <vector>
 
 /// region <Beta128 FDC port gating helpers>
@@ -107,11 +108,93 @@ TEST_F(PortDecoder_Pentagon128_Test, SoundrivePortsNotDecodedAs7FFD)
         EXPECT_FALSE(is7FFD) << "SOUNDRIVE port 0x" << std::hex << port
                              << " should NOT be decoded as 7FFD";
 
-        // Also verify decodePort() returns COVOX (0x00FB), not 7FFD
+        // Each SOUNDRIVE channel must decode to its own address - a single
+        // rule that collapsed all four onto 0x00FB (COVOX) previously aliased
+        // Left A/Left B/Right A writes onto the Right B DAC channel and broke
+        // quad SoundDrive playback (balldreams2.sna: mono Covox on #FB kept
+        // working while independent 4-channel output stayed silent)
         uint16_t decoded = _portDecoder->decodePort(port);
-        EXPECT_EQ(decoded, 0x00FB) << "SOUNDRIVE port 0x" << std::hex << port
-                                    << " should decode to 0x00FB (COVOX), not 0x" << decoded;
+        EXPECT_EQ(decoded, port) << "SOUNDRIVE port 0x" << std::hex << port
+                                  << " should decode to itself, not 0x" << decoded;
     }
+}
+
+// Regression (balldreams2.sna): DecodePortOut() is the path real Z80 OUT
+// instructions take (PeripheralPortOut() alone, as exercised by CovoxTest's
+// RoutingDecoderStub, bypasses decodePortEx() entirely and would not have
+// caught this). A single registered device must see the four SOUNDRIVE
+// addresses undisturbed so Covox::portToChannel() can tell them apart -
+// previously they all arrived as 0x00FB and only the Right B channel moved
+TEST_F(PortDecoder_Pentagon128_Test, SoundriveQuadPortsReachHandlerUndisturbed)
+{
+    MockFdcDevice soundDrive;
+    const uint16_t ports[] = { 0x00F1, 0x00F3, 0x00F9, 0x00FB };
+
+    for (uint16_t port : ports)
+    {
+        ASSERT_TRUE(_portDecoder->RegisterPortHandler(port, &soundDrive));
+    }
+
+    for (size_t i = 0; i < std::size(ports); i++)
+    {
+        _portDecoder->DecodePortOut(ports[i], static_cast<uint8_t>(0x10 + i), 0x0000);
+    }
+
+    ASSERT_EQ(soundDrive.outPorts.size(), std::size(ports));
+    for (size_t i = 0; i < std::size(ports); i++)
+    {
+        EXPECT_EQ(soundDrive.outPorts[i].first, ports[i])
+            << "SOUNDRIVE write #" << i << " should reach the handler as port 0x"
+            << std::hex << ports[i] << ", not aliased to another channel";
+        EXPECT_EQ(soundDrive.outPorts[i].second, static_cast<uint8_t>(0x10 + i));
+    }
+}
+
+// Regression (balldreams2.sna, "SoundDrive v1.02" primary port set): #0F,
+// #1F, #4F, #5F alias into the Beta128 FDC's wide mirror decode. TR-DOS
+// active must keep Beta128's exclusive claim (untouched by the SD fitment);
+// TR-DOS inactive + SD=1 must route the write to Covox at the port's own
+// channel instead of silently dropping it - see reference decoders
+// (pentevo/Unreal io.cpp, Xpeccy soundrive.c SDRV_105_1)
+TEST_F(PortDecoder_Pentagon128_Test, SoundriveModeOnePortsRespectTrdosPrecedence)
+{
+    _context->config.sound.sd = 1;
+
+    MockFdcDevice fdc;
+    for (uint16_t port : { 0x001F, 0x003F, 0x005F, 0x007F, 0x00FF })
+        _portDecoder->RegisterPortHandler(port, &fdc);
+
+    MockFdcDevice soundDrive;
+    for (uint16_t port : { Covox::PORT_LEFT_A_MODE1, Covox::PORT_LEFT_B_MODE1,
+                            Covox::PORT_RIGHT_A_MODE1, Covox::PORT_RIGHT_B_MODE1 })
+        _portDecoder->RegisterPortHandler(port, &soundDrive);
+
+    // TR-DOS active: Beta128 keeps #1F, SoundDrive must not see the write
+    _context->emulatorState.flags |= CF_TRDOS;
+    _portDecoder->DecodePortOut(0x001F, 0xAA, 0x0000);
+    ASSERT_EQ(fdc.outPorts.size(), 1u);
+    EXPECT_EQ(fdc.outPorts[0].first, 0x001F);
+    EXPECT_TRUE(soundDrive.outPorts.empty()) << "Beta128 must win while TR-DOS is paged in";
+
+    // TR-DOS inactive: SoundDrive claims the same address, Beta128 must not
+    // see it, and each of the four ports keeps its own channel identity
+    _context->emulatorState.flags &= ~CF_TRDOS;
+    const uint16_t rawPorts[] = { 0x000F, 0x001F, 0x004F, 0x005F };
+    const uint16_t markedPorts[] = { Covox::PORT_LEFT_A_MODE1, Covox::PORT_LEFT_B_MODE1,
+                                      Covox::PORT_RIGHT_A_MODE1, Covox::PORT_RIGHT_B_MODE1 };
+    for (size_t i = 0; i < std::size(rawPorts); i++)
+    {
+        _portDecoder->DecodePortOut(rawPorts[i], static_cast<uint8_t>(0x20 + i), 0x0000);
+    }
+
+    ASSERT_EQ(soundDrive.outPorts.size(), std::size(rawPorts));
+    for (size_t i = 0; i < std::size(rawPorts); i++)
+    {
+        EXPECT_EQ(soundDrive.outPorts[i].first, markedPorts[i])
+            << "raw port 0x" << std::hex << rawPorts[i] << " should route to its own marked channel key";
+        EXPECT_EQ(soundDrive.outPorts[i].second, static_cast<uint8_t>(0x20 + i));
+    }
+    EXPECT_EQ(fdc.outPorts.size(), 1u) << "Beta128 must not see any TR-DOS-inactive SoundDrive write";
 }
 
 // Verify 7FFD still works with various high byte combinations

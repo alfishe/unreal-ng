@@ -94,8 +94,11 @@ SoundManager::SoundManager(EmulatorContext* context)
         _devices.push_back({AudioSourceType::FM2, "FM 2", false, false, 1.0f, 0.0f, false});
     }
 
-    // Covox if config flag is set (Pentagon/Scorpion style)
-    if (_context->config.sound.covoxFB)
+    // Covox / SoundDrive when either config flag is set. The same 4-channel
+    // DAC class serves both: SD=1 wires the full SoundDrive quad (#F1/#F3/
+    // #F9/#FB), CovoxFB=1 alone wires only the mono Covox port #FB
+    // (see attachToPorts)
+    if (_context->config.sound.covoxFB || _context->config.sound.sd)
     {
         _covox = new Covox(_context, _coreRate);
         _devices.push_back({AudioSourceType::COVOX, "COVOX", false, false, 1.0f, 0.0f, false});
@@ -960,9 +963,27 @@ bool SoundManager::attachToPorts()
     // result = _ay8910->attachToPorts(_context->pPortDecoder);
     result = _turboSound->attachToPorts(_context->pPortDecoder);
 
-    // Attach SOUNDRIVE/Covox to port #FB (all 4 ports decode to same handler)
+    // SoundDrive (SD=1): register the full mode-2 quad - #F1 Left A, #F3 Left
+    // B, #F9 Right A, #FB Right B (SoundDrive 1.05 mode 2 port map, decode
+    // 1111B0A1) - plus the mode-1 primary quad #0F/#1F/#4F/#5F, which the
+    // Pentagon/Scorpion decoder only forwards once TR-DOS has released those
+    // Beta128-aliased addresses (see PortDecoder_Pentagon128::DecodePortOut).
+    // The decoder dispatch is an exact-address map, so every port must be
+    // registered (the Covox class also re-checks the mask defensively in its
+    // handler).
+    // CovoxFB=1 alone: mono Covox at #FB only - classic single-DAC behavior.
     if (_covox && _context->pPortDecoder)
     {
+        if (_context->config.sound.sd)
+        {
+            result &= _context->pPortDecoder->RegisterPortHandler(Covox::PORT_LEFT_A, _covox);
+            result &= _context->pPortDecoder->RegisterPortHandler(Covox::PORT_LEFT_B, _covox);
+            result &= _context->pPortDecoder->RegisterPortHandler(Covox::PORT_RIGHT_A, _covox);
+            result &= _context->pPortDecoder->RegisterPortHandler(Covox::PORT_LEFT_A_MODE1, _covox);
+            result &= _context->pPortDecoder->RegisterPortHandler(Covox::PORT_LEFT_B_MODE1, _covox);
+            result &= _context->pPortDecoder->RegisterPortHandler(Covox::PORT_RIGHT_A_MODE1, _covox);
+            result &= _context->pPortDecoder->RegisterPortHandler(Covox::PORT_RIGHT_B_MODE1, _covox);
+        }
         result &= _context->pPortDecoder->RegisterPortHandler(Covox::PORT_RIGHT_B, _covox);
     }
 
@@ -976,10 +997,19 @@ bool SoundManager::detachFromPorts()
     //_ay8910->detachFromPorts();
     _turboSound->detachFromPorts();
 
-    // Detach SOUNDRIVE/Covox from port #FB
+    // Detach SOUNDRIVE/Covox from every port it may own; unregistering an
+    // absent key is a no-op, so the mode-1/mode-2 quad ports are also
+    // covered in mono Covox mode
     if (_covox && _context->pPortDecoder)
     {
+        _context->pPortDecoder->UnregisterPortHandler(Covox::PORT_LEFT_A);
+        _context->pPortDecoder->UnregisterPortHandler(Covox::PORT_LEFT_B);
+        _context->pPortDecoder->UnregisterPortHandler(Covox::PORT_RIGHT_A);
         _context->pPortDecoder->UnregisterPortHandler(Covox::PORT_RIGHT_B);
+        _context->pPortDecoder->UnregisterPortHandler(Covox::PORT_LEFT_A_MODE1);
+        _context->pPortDecoder->UnregisterPortHandler(Covox::PORT_LEFT_B_MODE1);
+        _context->pPortDecoder->UnregisterPortHandler(Covox::PORT_RIGHT_A_MODE1);
+        _context->pPortDecoder->UnregisterPortHandler(Covox::PORT_RIGHT_B_MODE1);
     }
 
     return result;
