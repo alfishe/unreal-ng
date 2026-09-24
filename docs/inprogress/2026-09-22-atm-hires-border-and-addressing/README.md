@@ -186,3 +186,63 @@ stale "bits 3,6" line in `atm-video-crossanalysis.md` has been corrected.
   measurement, to be internally consistent — most likely legitimate
   hand-drawn pixel art, not corruption. Worth remembering before assuming
   every odd-looking gradient in ATM demo graphics is a rendering bug.
+
+## Verification of the landed fixes (2026-09-23)
+
+Post-fix verification combined the master test suite with live pixel-level
+checks via WebAPI (`scratch/atm_fresh_per_mode.py`, captures in
+`scratch/atm_final_*.png`).
+
+**Suite** (master `69273c70`, clean tree): 1356/1356 green, including the
+117-test ATM video suite — mode matrices for every FF77/aFE/EFF7 value,
+`fullFrameWidth == screenWidth` per extended mode, 288-line frames with
+border rows exactly in border color, `RenderFrameBatch` vs per-T-state
+equivalence for all four modes.
+
+**Live** (per mode, fresh instance so the FF77 write is the legal
+first write after boot — see gate note below): solid-white VRAM planes,
+red FE border, 3 frames, full + screen-only PNG capture, Pillow analysis:
+
+| Mode | Full frame | Screen-only crop | Screen band | Border rows |
+|---|---|---|---|---|
+| FF77=0 EGA `M_ATM16` | 320x288 | 320x200 | 0 non-white px | 0 non-red px |
+| FF77=2 MC `M_ATMHR` | 640x288 | 640x200 | 0 non-white px | 0 non-red px |
+| FF77=6 TX `M_ATMTX` | 640x288 | 640x200 | uniform (see note) | 0 non-red px |
+
+No side stripes, no border bleed into the screen band, exact native
+crop sizes. (The TX live row was run with a VRAM fill whose attr-plane
+interpretation was wrong for the binary under test, so its color check is
+inconclusive live — TX rendering is pinned by the unit tests instead.)
+
+**xx77 write gate (why "switch modes twice" seems broken but isn't):**
+during live verification, a second FF77 write on the same instance was
+ignored and the mode stayed put. This is correct hardware behavior, not a
+regression: the ATM710 xx77 decode accepts writes only while
+`DOSEN || SYSEN` (`PortDecoder_ATM710::DecodePortOut`, after ZXMAK2
+`MemoryAtm710.cs BusWritePortXX77_SYS` / Xpeccy's dos-line gate). With
+~CPM set and code executing from RAM, the session closes
+(`CF_LEAVEDOSRAM`) and later xx77 writes are dropped. Test code that needs
+repeat writes must either reopen the session or drive `pFF77` directly
+(the unit-suite `SetFF77Mode` helper).
+
+## Open: absolute vertical anchor of the ATM window
+
+Original report item "shifts in first lines (up to 8, sometimes zero,
+floating)" traced to unreal-speccy's free-running video counter
+(`atm.cpp`, `AtmApplySideEffectsWhenChangeVideomode`): ATM-to-ATM mode
+changes mid-frame add +8/+64 offsets to `IncCounter_InRaster/InBorder`
+instead of re-deriving addressing from the beam, so the first lines can
+appear shifted by up to 8 scanlines depending on when the OUT lands —
+an emulation artifact of that counter model, not scheduled hardware
+behavior. This codebase derives addressing purely from beam position
+(`ScreenAtm`, fixed offset per frame), which is why the shift never
+reproduces here.
+
+Still open: the *absolute* anchor differs between references — unreal
+maps screen line y to ray line y+56 with ZX paper at t=14395 (line 64.26,
+so the ATM window sits ~8 lines above ZX paper), while this codebase uses
+`screenOffsetTop` 44 for ATM vs 48 for ZX (ATM 4 lines above ZX paper,
+beam line 68 with 24 vSync/vBlank lines). A 4-line discrepancy in the
+ATM-vs-ZX relative offset vs unreal; no test or demo has exposed it yet.
+Worth reconciling against ZXMAK2's `c_ulaFirstPaperLine=56` convention
+before doing raster-timing-sensitive work.

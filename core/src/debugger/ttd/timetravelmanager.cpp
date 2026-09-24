@@ -4321,10 +4321,10 @@ void TimeTravelManager::CaptureM1(uint16_t pc)
     // 128K-style 4-slot view (ROM page + RAM banks 1..3). The DZRP layer maps
     // these to DeZog's model; a 48K machine still reports 4 here harmlessly.
     e.slotCount = 4;
-    e.slots[0] = static_cast<uint8_t>(_memory->GetROMPage());
-    e.slots[1] = static_cast<uint8_t>(_memory->GetRAMPageForBank1());
-    e.slots[2] = static_cast<uint8_t>(_memory->GetRAMPageForBank2());
-    e.slots[3] = static_cast<uint8_t>(_memory->GetRAMPageForBank3());
+    e.bankSlots[0] = static_cast<uint8_t>(_memory->GetROMPage());
+    e.bankSlots[1] = static_cast<uint8_t>(_memory->GetRAMPageForBank1());
+    e.bankSlots[2] = static_cast<uint8_t>(_memory->GetRAMPageForBank2());
+    e.bankSlots[3] = static_cast<uint8_t>(_memory->GetRAMPageForBank3());
 
     // Accesses of this instruction pack contiguously into the shared arena,
     // starting at the current arena end. The write hooks below append and bump

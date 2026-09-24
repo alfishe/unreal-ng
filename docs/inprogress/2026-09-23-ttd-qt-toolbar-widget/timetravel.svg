@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Dial: circle r=5.75 around (8,8), drawn counter-clockwise from 9 o'clock to 10:30 -->
+  <path d="M2.25 8A5.75 5.75 0 1 0 3.93 3.93"/>
+  <!-- Arrowhead at 10:30, tangent to the arc, pointing counter-clockwise -->
+  <path d="M3.93 1.73V3.93H6.13"/>
+  <!-- Clock hands -->
+  <path d="M8 5V8L10.2 9.3"/>
+</svg>

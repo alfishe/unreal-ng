@@ -33,7 +33,8 @@ class EmulatorContext;
 ///         (TLEN+7)/8   clock bitmap, bit i (LSB first) of byte i/8 => byte i carries a missing-clock mark
 ///         [(TLEN+7)/8  FM/MFM select bitmap, type 2 only]
 ///   optional trailer: any bytes between the last track and the CRC (e.g. an ASCIIZ comment written by TRX2X);
-///         preserved verbatim
+///         preserved verbatim; an optional "UDIW" weak-bit map chunk may live there too - it is applied to the
+///         loaded tracks and stripped from the trailer on load, and regenerated after the comment on save
 ///   last  4   CRC-32 over everything before it (CRCHelper::crcUDI, signed arithmetic-shift variant)
 ///
 /// See docs/inprogress/2026-09-02-universal-track-model/loader-udi.md
@@ -50,6 +51,14 @@ public:
     static constexpr const uint8_t TRACK_TYPE_FM = 1;
     static constexpr const uint8_t TRACK_TYPE_MIXED = 2;
     static constexpr const uint8_t TRACK_TYPE_MULTIREV_FLAG = 0x80;
+
+    /// Weak-bit map chunk carried in the trailer (docs/file-formats/disk-images/udi.md, "Weak-Bit Map"):
+    /// per-track weak-byte ranges applied to the loaded image. Advisory metadata - malformed records
+    /// produce warnings, never a load failure.
+    static constexpr const char* WEAK_CHUNK_SIGNATURE = "UDIW";
+    static constexpr uint16_t WEAK_CHUNK_VERSION = 1;
+    static constexpr size_t WEAK_CHUNK_HEADER_SIZE = 8;   // signature + u16 version + u16 record count
+    static constexpr size_t WEAK_CHUNK_RECORD_SIZE = 7;   // u8 cylinder, u8 side, u8 flags, u16 offset, u16 length
     /// endregion </Constants>
 
     /// region <Fields>
@@ -65,6 +74,18 @@ protected:
     uint8_t _reserved = 0;                  // Header byte 0x0B ("unused"; some writers store 1), preserved
     bool _ignoreCrc = false;                // Load images with a wrong CRC (warning instead of failure)
     /// endregion </Fields>
+
+    /// region <Weak-bit map>
+protected:
+    /// Applies the "UDIW" chunk found in the trailer (if any) to the freshly parsed image and strips its
+    /// bytes, so a later save regenerates it instead of duplicating it. Out-of-range records are ignored
+    /// with a warning; a malformed chunk is ignored entirely (the map is advisory, never structural).
+    void applyWeakMapChunk(DiskImage* image, std::vector<std::string>& warnings);
+
+    /// Appends one "UDIW" chunk describing every track with weak bits (one record per maximal run of
+    /// weak bytes) to `out`. Nothing is emitted for images without weak bits.
+    void appendWeakMapChunk(DiskImage* diskImage, std::vector<uint8_t>& out, std::vector<std::string>& warnings) const;
+    /// endregion </Weak-bit map>
 
     /// region <Constructors / destructors>
 public:

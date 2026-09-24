@@ -172,6 +172,9 @@ def crc32c(data: bytes, seed: int = 0) -> int:
 MAX_PERIPHERAL_BLOBS_PER_CHECKPOINT = 64
 
 # PeripheralId enum (ttdserializable.h), for readable reporting of peripheral_blobs.
+# Was missing 7/8 (only went up to 6) - fixed 2026-09-23 while auditing this
+# module against the real enum; unlabelled ids used to print as bare integers
+# (e.g. KempstonMouse showed as "7" in `info` output).
 PERIPHERAL_ID_NAMES = {
     0: "TurboSound",
     1: "BetaDisk",
@@ -180,7 +183,13 @@ PERIPHERAL_ID_NAMES = {
     4: "TSFM",
     5: "GeneralSound",
     6: "ScorpionProfROM",
+    7: "KempstonMouse",
+    8: "AtmPaging",
 }
+
+# Mirrors ttd::PeripheralBlobHeader (ttdperipheralregistry.h): peripheralId(u8)
+# + flags(u8) + reserved(u16) + uncompressedSize(u32) + compressedSize(u32).
+PERIPHERAL_BLOB_HEADER_SIZE = 12
 
 
 @dataclass
@@ -808,6 +817,49 @@ def parse_blob(r: _Reader) -> bytes:
     return r.take(size)
 
 
+def decode_peripheral_blob(expected_id: int, blob: bytes) -> bytes:
+    """Unwrap a ``Checkpoint.peripheral_blobs[id]`` entry into the raw device
+    state bytes a device's own ``TTDSaveState``/``TTDLoadState`` would see.
+
+    ``Checkpoint.peripheral_blobs`` holds the on-disk wrapped form (a 12-byte
+    ``PeripheralBlobHeader`` + a possibly-zstd-compressed payload), exactly as
+    ``TTDPeripheralRegistry::EncodeBlob`` writes it (ttdperipheralregistry.cpp)
+    — analysis code almost never wants that wrapper, it wants the device
+    state, so this mirrors ``TTDPeripheralRegistry::DecodeBlob`` byte-for-byte
+    rather than leaving every caller to reimplement it.
+
+    Returns ``b""`` on any of the same conditions the C++ decoder refuses on
+    (header too short, id mismatch, size mismatch) — mirroring its
+    fail-soft-by-returning-empty contract rather than raising, since a
+    mismatched blob is data the file legitimately carries, not malformed
+    input the parser should choke on.
+    """
+    if len(blob) < PERIPHERAL_BLOB_HEADER_SIZE:
+        return b""
+
+    peripheral_id, flags, reserved, uncompressed_size, compressed_size = (
+        struct.unpack_from("<BBHII", blob, 0)
+    )
+    del flags, reserved  # header fields with no decode-time meaning today
+
+    if peripheral_id != expected_id:
+        return b""
+
+    payload = blob[PERIPHERAL_BLOB_HEADER_SIZE:]
+
+    if compressed_size > 0:
+        # compressedSize != 0 signals a zstd-compressed payload (see
+        # EncodeBlob: 0 means "stored raw" even when compression was tried
+        # but didn't shrink the payload).
+        if compressed_size != len(payload):
+            return b""
+        return _decompress_zstd(payload, uncompressed_size)
+
+    if len(payload) != uncompressed_size:
+        return b""
+    return payload
+
+
 def parse_slot(r: _Reader, index: int) -> PageSlot:
     """Parse one v2 page-store slot.
 
@@ -1068,7 +1120,24 @@ def _self_test() -> None:
     )
     # XOR helper.
     assert _xor_buffers(b"\x00\xFF", b"\xFF\x00") == b"\xFF\xFF"
-    print("self-test: OK (crc32c + xor)")
+
+    # decode_peripheral_blob: build a synthetic EncodeBlob-shaped wrapper
+    # (header + raw-stored payload, compressedSize=0) and round-trip it,
+    # without needing a real .ttd fixture on disk.
+    state = bytes(range(32))
+    header = struct.pack("<BBHII", 4, 0, 0, len(state), 0)  # id=TSFM, stored raw
+    assert decode_peripheral_blob(4, header + state) == state, (
+        "decode_peripheral_blob: raw-stored round-trip failed"
+    )
+    assert decode_peripheral_blob(5, header + state) == b"", (
+        "decode_peripheral_blob: must refuse a blob whose header id disagrees "
+        "with the caller's expected id"
+    )
+    assert decode_peripheral_blob(4, header[:4]) == b"", (
+        "decode_peripheral_blob: must refuse a header shorter than 12 bytes"
+    )
+
+    print("self-test: OK (crc32c + xor + decode_peripheral_blob)")
 
 
 if __name__ == "__main__":

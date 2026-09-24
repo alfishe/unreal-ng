@@ -13,6 +13,7 @@
 #include "iwd1793observer.h"
 #include "base/featuremanager.h"
 #include "diskfastload.h"
+#include "flakysectoremulator.h"
 #include "debugger/ttd/timetravelmanager.h"  // TimeTravelManager (Item 6 markers)
 #include <cstdio>
 #include <cstring>
@@ -1392,6 +1393,7 @@ void WD1793::cmdReadSector(uint8_t value)
         }
 
         this->_currentSector = sector;
+        this->_currentReadTrack = track;
         this->_sectorSize = sector->dataSize;  // 128 / 256 / 512 / 1024 from the sector's own ID field
         this->_sectorData = sector->data;
         this->_rawDataBuffer = sector->data;
@@ -2307,7 +2309,11 @@ DiskImage::Sector* WD1793::locateSectorForType2(DiskImage::Track* track, uint8_t
     // Side compare: bit 1 (C) enables the comparison, bit 3 (S) carries the expected side
     const int side = (_commandRegister & CMD_SIDE_CMP_FLAG) ? ((_commandRegister & CMD_SIDE) ? 1 : 0) : -1;
 
-    DiskImage::Sector* sector = track->findSector(cylinder, side, sectorNo, headByteOffset(*track));
+    // Flaky/"floating" sector emulation lives in its own module and only engages when the track actually
+    // carries weak-bit marks (FDI never does; SCP/HFE/DSK/UDI captures of protected media can).
+    DiskImage::Sector* sector = track->hasWeakBits()
+        ? FlakySectorEmulator::findSector(*track, cylinder, side, sectorNo, headByteOffset(*track), _indexPulseCounter)
+        : track->findSector(cylinder, side, sectorNo, headByteOffset(*track));
 
     if (sector && !sector->idCrcValid)
     {
@@ -2551,6 +2557,14 @@ void WD1793::processReadByte()
     // Read the next byte from the raw data buffer
     _dataRegister = *(_rawDataBuffer++);
     _bytesToRead--;
+
+    // Flaky/"floating" sector emulation lives in its own module - only invoked when the track actually
+    // carries weak-bit marks (FDI never does; SCP/HFE/DSK/UDI captures of protected media can).
+    if (_currentReadTrack && _currentReadTrack->hasWeakBits())
+    {
+        const size_t offset = static_cast<size_t>((_rawDataBuffer - 1) - _currentReadTrack->rawData());
+        FlakySectorEmulator::mutateWeakDataByte(*_currentReadTrack, offset, _time, _dataRegister);
+    }
 
     // Byte is ready to be consumed by the host
     raiseDrq();
@@ -3352,15 +3366,10 @@ void WD1793::portDeviceOutMethod(uint16_t port, uint8_t value)
             notifyFdcStateChanged();
             break;
         case PORT_5F:  // Write to Sector Register
+            // No clamp on the value: the real chip latches any byte, and protected media relies on it
+            // (VORON's R=192..196 band is only addressable with sector numbers far above TR-DOS's 1..16)
             _sectorRegister = value;
 
-            // TODO: remove debug
-            if (_sectorRegister == 0 || _sectorRegister > 16)
-            {
-                //_sectorRegister = _sectorRegister;
-
-                _sectorRegister = 16;
-            }
             MLOGINFO(StringHelper::Format("  #5F - Set sector: 0x%02X", _sectorRegister).c_str());
             notifyFDDStateChanged();
             notifyFdcStateChanged();

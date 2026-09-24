@@ -204,11 +204,153 @@ DiskImage* LoaderUDI::parse(const uint8_t* data, size_t len, std::vector<std::st
     // Anything between the last track and the CRC is kept verbatim (TRX2X writes an ASCIIZ comment there)
     _trailer.assign(data + offset, data + end);
 
+    // An optional "UDIW" weak-bit map in the trailer is applied to the tracks and stripped here,
+    // so serialize() regenerates it instead of duplicating it
+    applyWeakMapChunk(image, warnings);
+
     image->markClean();
     return image;
 }
 
 /// endregion </Parsing>
+
+/// region <Weak-bit map>
+
+void LoaderUDI::applyWeakMapChunk(DiskImage* image, std::vector<std::string>& warnings)
+{
+    // First "UDIW" occurrence in the trailer - the bytes before it are the preserved comment
+    size_t pos = std::string::npos;
+    for (size_t i = 0; i + 4 <= _trailer.size(); i++)
+    {
+        if (std::memcmp(_trailer.data() + i, WEAK_CHUNK_SIGNATURE, 4) == 0)
+        {
+            pos = i;
+            break;
+        }
+    }
+    if (pos == std::string::npos) return;
+
+    if (pos + WEAK_CHUNK_HEADER_SIZE > _trailer.size())
+    {
+        warnings.push_back("UDI weak-bit map chunk is truncated, ignored");
+        return;
+    }
+
+    const uint16_t version = readU16(_trailer.data() + pos + 4);
+    if (version != WEAK_CHUNK_VERSION)
+    {
+        warnings.push_back(StringHelper::Format("UDI weak-bit map version %d is not supported (expected 1), ignored", version));
+        return;
+    }
+
+    const uint16_t recordCount = readU16(_trailer.data() + pos + 6);
+    const size_t chunkEnd = pos + WEAK_CHUNK_HEADER_SIZE + static_cast<size_t>(recordCount) * WEAK_CHUNK_RECORD_SIZE;
+    if (chunkEnd > _trailer.size())
+    {
+        warnings.push_back("UDI weak-bit map chunk is truncated, ignored");
+        return;
+    }
+
+    bool flaggedRecord = false;
+    size_t skippedRecords = 0;
+    for (uint16_t recordIndex = 0; recordIndex < recordCount; recordIndex++)
+    {
+        const uint8_t* record = _trailer.data() + pos + WEAK_CHUNK_HEADER_SIZE + static_cast<size_t>(recordIndex) * WEAK_CHUNK_RECORD_SIZE;
+        const uint8_t cylinder = record[0];
+        const uint8_t side = record[1];
+        const uint16_t streamOffset = readU16(record + 3);
+        const uint16_t length = readU16(record + 5);
+
+        DiskImage::Track* track = image->getTrackForCylinderAndSide(cylinder, side);
+        if (!track || static_cast<size_t>(streamOffset) + length > track->rawSize())
+        {
+            skippedRecords++;
+            continue;
+        }
+        if (record[2] != 0) flaggedRecord = true;  // Reserved flag bits: still applied (forward compatibility)
+
+        for (uint16_t i = 0; i < length; i++)
+        {
+            track->setWeakByte(streamOffset + i, true);
+        }
+    }
+
+    if (skippedRecords != 0)
+    {
+        warnings.push_back(StringHelper::Format("UDI weak-bit map: %zu of %d record(s) out of range ignored", skippedRecords, recordCount));
+    }
+    if (flaggedRecord)
+    {
+        warnings.push_back("UDI weak-bit map: unknown flag bits set, records applied anyway");
+    }
+
+    // Strip the chunk: the comment before it survives, serialize() regenerates the map from the tracks
+    _trailer.erase(_trailer.begin() + pos, _trailer.begin() + chunkEnd);
+}
+
+void LoaderUDI::appendWeakMapChunk(DiskImage* diskImage, std::vector<uint8_t>& out, std::vector<std::string>& warnings) const
+{
+    std::vector<uint8_t> records;
+    const auto emitRun = [&records](uint8_t cylinder, uint8_t side, size_t start, size_t length)
+    {
+        records.push_back(cylinder);
+        records.push_back(side);
+        records.push_back(0);  // flags, reserved
+        putU16(records, static_cast<uint16_t>(start));
+        putU16(records, static_cast<uint16_t>(length));
+    };
+
+    bool overflow = false;
+    const uint8_t cylinders = diskImage->getCylinders();
+    const uint8_t sides = diskImage->getSides();
+    for (uint8_t cylinder = 0; cylinder < cylinders && !overflow; cylinder++)
+    {
+        for (uint8_t side = 0; side < sides; side++)
+        {
+            DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(cylinder, side);
+            if (!track || !track->hasWeakBits()) continue;
+
+            const size_t rawSize = track->rawSize();
+            const std::vector<uint8_t>& weak = track->weakBitmap();
+
+            size_t runStart = 0;
+            bool inRun = false;
+            for (size_t offset = 0; offset <= rawSize; offset++)
+            {
+                const bool weakByte = offset < rawSize && (weak[offset >> 3] & (1u << (offset & 7))) != 0;
+                if (weakByte && !inRun)
+                {
+                    runStart = offset;
+                    inRun = true;
+                }
+                else if (!weakByte && inRun)
+                {
+                    if (records.size() / WEAK_CHUNK_RECORD_SIZE >= 0xFFFF)
+                    {
+                        overflow = true;
+                        break;
+                    }
+                    emitRun(cylinder, side, runStart, offset - runStart);
+                    inRun = false;
+                }
+            }
+            if (overflow) break;
+        }
+    }
+
+    if (overflow)
+    {
+        warnings.push_back("UDI weak-bit map: more than 65535 weak ranges, the rest is dropped");
+    }
+    if (records.empty()) return;
+
+    out.insert(out.end(), WEAK_CHUNK_SIGNATURE, WEAK_CHUNK_SIGNATURE + 4);
+    putU16(out, WEAK_CHUNK_VERSION);
+    putU16(out, static_cast<uint16_t>(records.size() / WEAK_CHUNK_RECORD_SIZE));
+    out.insert(out.end(), records.begin(), records.end());
+}
+
+/// endregion </Weak-bit map>
 
 /// region <Serialisation>
 
@@ -270,15 +412,13 @@ bool LoaderUDI::serialize(DiskImage* diskImage, std::vector<uint8_t>& out, std::
             {
                 out.insert(out.end(), bitmapSize - clock.size(), 0);
             }
-
-            if (track->hasWeakBits())
-            {
-                warnings.push_back(StringHelper::Format("UDI cannot store weak bits: track cylinder %d side %d saved without them", cylinder, side));
-            }
         }
     }
 
     out.insert(out.end(), _trailer.begin(), _trailer.end());
+
+    // Weak bits ride after the preserved comment as the "UDIW" chunk (parse strips it, so it never duplicates)
+    appendWeakMapChunk(diskImage, out, warnings);
 
     // Size field = everything before the CRC
     const uint32_t size = static_cast<uint32_t>(out.size());

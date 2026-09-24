@@ -4,8 +4,8 @@
 > - Each commit permission is **one-time only** — no blanket permissions
 > - Steps before any commit:
 >   1. Run quality checks:
->      - Build: `ninja -C cmake-build-release` must pass
->      - Tests: `./cmake-build-release/bin/core-tests` must pass
+>      - Build: `ninja -C cmake-build-agent-release` must pass
+>      - Tests: `./cmake-build-agent-release/bin/core-tests` must pass
 >      - No compiler warnings (zero-warnings policy)
 >      - Documentation: verify all cross-references and links are valid
 >   2. Report results and wait for explicit "commit" instruction
@@ -34,10 +34,10 @@
 We use CMake with Ninja for building:
 ```bash
 # Configure the build system
-cmake -S . -B cmake-build-release -G Ninja
+cmake -S . -B cmake-build-agent-release -G Ninja
 
 # Build the main applications (unreal-qt, unreal-mcp-bridge, etc.)
-ninja -C cmake-build-release
+ninja -C cmake-build-agent-release
 ```
 
 ## Writing Tests
@@ -62,22 +62,22 @@ Full guide: [`core/tests/README.md`](../core/tests/README.md). Non-negotiables:
 Tests and benchmarks are opt-in (`-DTESTS=ON`, `-DBENCHMARKS=ON`) to keep standard dev builds fast:
 ```bash
 # Configure with tests enabled
-cmake -S . -B cmake-build-release -G Ninja -DTESTS=ON
+cmake -S . -B cmake-build-agent-release -G Ninja -DTESTS=ON
 
 # Run all tests in parallel (automatically builds core-tests on demand)
-cmake --build cmake-build-release --target test-parallel
+cmake --build cmake-build-agent-release --target test-parallel
 # Or run tests sequentially:
-ninja -C cmake-build-release core-tests && ./cmake-build-release/bin/core-tests
+ninja -C cmake-build-agent-release core-tests && ./cmake-build-agent-release/bin/core-tests
 
 # Run specific tests
-./cmake-build-release/bin/core-tests --gtest_filter="*TestName*"
+./cmake-build-agent-release/bin/core-tests --gtest_filter="*TestName*"
 
 # Configure with benchmarks enabled
-cmake -S . -B cmake-build-release -G Ninja -DBENCHMARKS=ON
+cmake -S . -B cmake-build-agent-release -G Ninja -DBENCHMARKS=ON
 
 # Build and run benchmarks
-ninja -C cmake-build-release core-benchmarks
-./cmake-build-release/bin/core-benchmarks --benchmark_filter="*BenchName*"
+ninja -C cmake-build-agent-release core-benchmarks
+./cmake-build-agent-release/bin/core-benchmarks --benchmark_filter="*BenchName*"
 ```
 
 
@@ -90,7 +90,7 @@ The `test-parallel` CMake target uses GTest's built-in sharding to split tests a
 Manual sharding (useful for CI pipelines):
 ```bash
 for i in 0 1 2 3; do
-  GTEST_TOTAL_SHARDS=4 GTEST_SHARD_INDEX=$i ./cmake-build-release/bin/core-tests &
+  GTEST_TOTAL_SHARDS=4 GTEST_SHARD_INDEX=$i ./cmake-build-agent-release/bin/core-tests &
 done
 wait
 ```
@@ -108,7 +108,7 @@ sleep 1
 lsof -i :8090 2>/dev/null && echo "WARNING: Port 8090 still in use!" || echo "Port 8090 is free"
 
 # 3. Start the freshly built emulator (macOS path)
-./cmake-build-release/bin/unreal-qt.app/Contents/MacOS/unreal-qt &
+./cmake-build-agent-release/bin/unreal-qt.app/Contents/MacOS/unreal-qt &
 sleep 4
 
 # 4. Verify WebAPI is responding
@@ -132,9 +132,9 @@ pkill -9 unreal-qt 2>/dev/null || true
 ```
 
 **Platform-specific binary paths:**
-- macOS: `./cmake-build-release/bin/unreal-qt.app/Contents/MacOS/unreal-qt`
-- Linux: `./cmake-build-release/bin/unreal-qt`
-- Windows: `./cmake-build-release/bin/unreal-qt.exe`
+- macOS: `./cmake-build-agent-release/bin/unreal-qt.app/Contents/MacOS/unreal-qt`
+- Linux: `./cmake-build-agent-release/bin/unreal-qt`
+- Windows: `./cmake-build-agent-release/bin/unreal-qt.exe`
 
 **Available models (short names):** `PENTAGON`, `48K`, `128k`, `PLUS3`, `TSL`, `ATM3` (ZX-Evo), `ATM710`, `ATM450`, `PROFI`, `SCORPION`, `PROFSCORP`, `GMX`, `KAY`, `QUORUM`, `LSY256`, `PHOENIX`
 

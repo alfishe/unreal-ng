@@ -936,10 +936,11 @@ void MenuManager::createToolsMenu()
     connect(_screenshotAction, &QAction::triggered, this, &MenuManager::screenshotRequested);
 
 #ifdef ENABLE_RECORDING
-    // Recording (dialog toggle)
+    // Recording (widget toggle)
     _videoRecordingAction = _toolsMenu->addAction(tr("&Recording"));
-    _videoRecordingAction->setStatusTip(tr("Open recording panel"));
-    connect(_videoRecordingAction, &QAction::triggered, this, &MenuManager::videoRecordingRequested);
+    _videoRecordingAction->setCheckable(true);
+    _videoRecordingAction->setStatusTip(tr("Toggle recording panel"));
+    connect(_videoRecordingAction, &QAction::toggled, this, &MenuManager::videoRecordingRequested);
 
     _toolsMenu->addSeparator();
 
@@ -1306,13 +1307,11 @@ void MenuManager::handleRecordingStateChanged(int id, Message* message)
         this, [this, isRecording]() {
             if (_videoRecordingAction)
             {
-                // Make button checkable to show recording state
-                _videoRecordingAction->setCheckable(true);
-                _videoRecordingAction->setChecked(isRecording);
                 _videoRecordingAction->setStatusTip(
                     isRecording ? tr("Recording in progress - click to open panel")
                                 : tr("Open recording panel"));
             }
+            emit recordingStateChanged(isRecording);
         }, Qt::QueuedConnection);
 }
 #endif
