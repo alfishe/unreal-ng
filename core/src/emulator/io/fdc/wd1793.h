@@ -702,6 +702,7 @@ protected:
     uint16_t _crcAccumulator = 0xFFFF;   // CRC accumulator for track formatting operations
     DiskImage::Track* _writeTrackTarget = nullptr;  // Track being written by Write Track command (for reindexing)
     DiskImage::Sector* _currentSector = nullptr;    // Sector matched by the last ID search (Type II / READ ADDRESS)
+    DiskImage::Track* _currentReadTrack = nullptr;  // Track backing _rawDataBuffer, for weak-byte lookups while reading
     size_t _writeTrackLength = DiskImage::RawTrack::RAW_TRACK_SIZE;  // Length of the track being written (WRITE TRACK)
     DiskImage::Encoding _writeTrackEncoding = DiskImage::Encoding::MFM;  // Density the track is being written with
     size_t _tstatesPerByte = WD93_TSTATES_PER_FDC_BYTE;  // Byte cell of the track in use (112 T MFM 6250, 224 T FM 3125)
@@ -1340,6 +1341,7 @@ public:
     using WD1793::_crcStartPosition;
     using WD1793::_writeTrackLength;
     using WD1793::_currentSector;
+    using WD1793::_currentReadTrack;
     using WD1793::_sectorSize;
     using WD1793::_tstatesPerByte;
     using WD1793::_rotationalDelayTStates;

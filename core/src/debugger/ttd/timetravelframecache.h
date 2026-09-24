@@ -64,7 +64,7 @@ struct TTDFrameCacheEntry
     uint16_t spContent = 0;              ///< word at (SP)
 
     uint8_t  slotCount = 0;
-    uint8_t  slots[8] = {0};             ///< bank per slot
+    uint8_t  bankSlots[8] = {0};          ///< bank per slot (not "slots": that name is a Qt macro in Qt TUs)
 
     // Reference into the frame's shared access arena (cold part).
     uint32_t accessOffset = 0;

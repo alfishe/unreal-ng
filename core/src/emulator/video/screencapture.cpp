@@ -8,6 +8,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 
 // Default ZX Spectrum screen dimensions (fallback when Screen unavailable)
 static constexpr uint16_t ZX_SCREEN_WIDTH = 256;
@@ -29,7 +30,8 @@ ScreenCapture::CaptureResult ScreenCapture::captureAsPng(const std::string& emul
 
 ScreenCapture::CaptureResult ScreenCapture::captureScreen(const std::string& emulatorId, 
                                                            const std::string& format,
-                                                           CaptureMode mode)
+                                                           CaptureMode mode,
+                                                           const std::string& filePath)
 {
     CaptureResult result;
     
@@ -131,7 +133,37 @@ ScreenCapture::CaptureResult ScreenCapture::captureScreen(const std::string& emu
     }
 
     result.originalSize = encodedData.size();
-    result.base64Data = base64Encode(encodedData);
+
+    if (!filePath.empty())
+    {
+        // Create missing parent directories (e.g. a fresh clone without scratch/) — persistent failures surface in fopen below
+        const std::filesystem::path outPath(filePath);
+        if (outPath.has_parent_path() && !outPath.parent_path().empty())
+        {
+            std::error_code ec;
+            std::filesystem::create_directories(outPath.parent_path(), ec);
+        }
+        FILE* f = std::fopen(filePath.c_str(), "wb");
+        if (!f)
+        {
+            result.errorMessage = "Failed to open output file for writing: " + filePath;
+            return result;
+        }
+        size_t written = std::fwrite(encodedData.data(), 1, encodedData.size(), f);
+        std::fclose(f);
+        if (written != encodedData.size())
+        {
+            std::remove(filePath.c_str());  // do not leave a truncated image behind
+            result.errorMessage = "Failed to write complete image data to " + filePath;
+            return result;
+        }
+        result.savedFile = filePath;
+    }
+    else
+    {
+        result.base64Data = base64Encode(encodedData);
+    }
+
     result.success = true;
 
     return result;

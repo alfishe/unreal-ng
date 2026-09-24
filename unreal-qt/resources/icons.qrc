@@ -11,5 +11,7 @@
         <file>icons/disk.svg</file>
         <file>icons/hdd.svg</file>
         <file>icons/sound.svg</file>
+        <file>icons/timetravel.svg</file>
+        <file>icons/close.svg</file>
     </qresource>
 </RCC>

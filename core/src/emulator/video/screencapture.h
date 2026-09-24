@@ -29,6 +29,7 @@ public:
         uint16_t height = 0;
         std::string base64Data;   // Base64-encoded image
         std::string errorMessage;
+        std::string savedFile;    // Path if saved directly to file
     };
 
     /// @brief Capture current screen as GIF (single frame)
@@ -49,10 +50,12 @@ public:
     /// @param emulatorId Emulator UUID
     /// @param format "gif" or "png" (default: gif)
     /// @param mode ScreenOnly (mode-dependent) or FullFramebuffer (with border)
-    /// @return CaptureResult with base64-encoded image data
+    /// @param filePath Optional file path to save binary image directly to disk
+    /// @return CaptureResult with base64-encoded image data or saved file path
     static CaptureResult captureScreen(const std::string& emulatorId,
                                         const std::string& format = "gif",
-                                        CaptureMode mode = CaptureMode::ScreenOnly);
+                                        CaptureMode mode = CaptureMode::ScreenOnly,
+                                        const std::string& filePath = "");
 
 private:
     /// @brief Encode image data to GIF format

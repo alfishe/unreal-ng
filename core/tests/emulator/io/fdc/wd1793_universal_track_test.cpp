@@ -13,6 +13,7 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/fdd.h"
+#include "emulator/io/fdc/flakysectoremulator.h"
 
 /// WD1793 on the universal track model
 /// (docs/inprogress/2026-09-02-universal-track-model/test-plan.md, section 3):
@@ -806,4 +807,115 @@ TEST_F(WD1793_UniversalTrack_Test, WriteTrack_Fm_MatchesFormatter)
 }
 
 /// endregion </FM>
+
+/// region <Flaky sectors (FlakySectorEmulator)>
+
+TEST_F(WD1793_UniversalTrack_Test, FlakySector_WeakIdamVisibleExactlyOneInFourRevolutions)
+{
+    // A weak ID Address Mark: the sector appears on exactly one revolution in every window of four
+    // (the WD1793 datasheet ID-search window), with a phase fixed by the sector's position
+    DiskImage image(1, 1);
+    DiskImage::Track* track = image.getTrackForCylinderAndSide(0, 0);
+    track->formatTrack(0, 0, Spec::trdos());
+
+    const DiskImage::Sector* sector = track->findSector(5);  // ID number 5 (getSector() is 0-based logical!)
+    ASSERT_NE(sector, nullptr);
+    for (size_t i = 0; i < 6; i++) track->setWeakByte(sector->idamOffset + i, true);
+
+    size_t visibleTotal = 0;
+    for (size_t revolution = 0; revolution < 16; revolution++)
+    {
+        const bool visible = FlakySectorEmulator::findSector(*track, 0, 0, 5, 0, revolution) != nullptr;
+        if (visible) visibleTotal++;
+        EXPECT_EQ(visible, FlakySectorEmulator::isIdamVisible(*track, *sector, revolution)) << "revolution " << revolution;
+    }
+    EXPECT_EQ(visibleTotal, 4u) << "exactly one visible revolution per four";
+
+    // Every window of 4 consecutive revolutions contains exactly one hit: a search that keeps
+    // retrying cannot miss within the datasheet window
+    for (size_t start = 0; start + 4 <= 16; start++)
+    {
+        size_t windowHits = 0;
+        for (size_t revolution = start; revolution < start + 4; revolution++)
+        {
+            if (FlakySectorEmulator::findSector(*track, 0, 0, 5, 0, revolution) != nullptr) windowHits++;
+        }
+        EXPECT_EQ(windowHits, 1u) << "window starting at revolution " << start;
+    }
+
+    // Solid sectors ignore the revolution counter entirely
+    for (size_t revolution = 0; revolution < 8; revolution++)
+    {
+        EXPECT_NE(FlakySectorEmulator::findSector(*track, 0, 0, 6, 0, revolution), nullptr) << "revolution " << revolution;
+    }
+}
+
+TEST_F(WD1793_UniversalTrack_Test, FlakySector_WeakDataMutatesPerRead)
+{
+    // Weak data byte: deterministic per clock (TTD replay), different across clocks
+    DiskImage image(1, 1);
+    DiskImage::Track* track = image.getTrackForCylinderAndSide(0, 0);
+    track->formatTrack(0, 0, Spec::trdos());
+
+    const DiskImage::Sector* sector = track->findSector(7);
+    ASSERT_NE(sector, nullptr);
+
+    // Solid byte: never touched
+    uint8_t solid = sector->data[0];
+    FlakySectorEmulator::mutateWeakDataByte(*track, sector->dataOffset, 12345, solid);
+    EXPECT_EQ(solid, sector->data[0]);
+
+    // Weak byte: same clock repeats, different clock gives different garbage
+    track->setWeakByte(sector->dataOffset, true);
+    uint8_t a = 0, b = 0, c = 0;
+    FlakySectorEmulator::mutateWeakDataByte(*track, sector->dataOffset, 1000, a);
+    FlakySectorEmulator::mutateWeakDataByte(*track, sector->dataOffset, 1000, b);
+    FlakySectorEmulator::mutateWeakDataByte(*track, sector->dataOffset, 1100, c);
+    EXPECT_EQ(a, b) << "same clock, same result (TTD replay)";
+    EXPECT_NE(a, c) << "different clock, different garbage";
+    EXPECT_NE(a, sector->data[0]);
+}
+
+TEST_F(WD1793_UniversalTrack_Test, FlakySector_ReadThroughController_BytesDifferAndCrcErr)
+{
+    // End to end through the FDC: a weak-marked, CRC-bad data field delivers different bytes on
+    // every read and raises CRCERR - the fuzzy-data (acetone spot) shape of the VORON1 protection
+    DiskImage image(1, 1);
+    DiskImage::Track* track = image.getTrackForCylinderAndSide(0, 0);
+    track->formatTrack(0, 0, Spec::trdos());
+
+    track->findSector(3)->data[7] ^= 0xFF;  // stored data no longer matches its CRC
+    track->reindex();
+    const DiskImage::Sector* damaged = track->findSector(3);  // reindex rebuilds the sector index
+    ASSERT_NE(damaged, nullptr);
+    EXPECT_FALSE(damaged->dataCrcValid);
+    for (size_t i = 0; i < damaged->dataSize; i++) track->setWeakByte(damaged->dataOffset + i, true);
+
+    WD1793CUT fdc(_context);
+    prepare(fdc, image, 0);
+
+    fdc._sectorRegister = 3;
+    issue(fdc, 0x80);  // Read Sector
+    std::vector<uint8_t> first = runReadUntilIdle(fdc, fdc._time + 1000);
+    EXPECT_EQ(first.size(), 256u);
+    EXPECT_TRUE(fdc._statusRegister & WD1793::WDS_CRCERR) << "stored data CRC is wrong";
+
+    fdc._sectorRegister = 3;
+    issue(fdc, 0x80);
+    std::vector<uint8_t> second = runReadUntilIdle(fdc, fdc._time + 1000);
+    EXPECT_EQ(second.size(), 256u);
+    EXPECT_TRUE(fdc._statusRegister & WD1793::WDS_CRCERR);
+    EXPECT_NE(first, second) << "weak data must read differently on the next pass";
+
+    // A solid neighbour sector on the same (weak-carrying) track still reads its exact stored bytes
+    const DiskImage::Sector* solidSector = track->findSector(4);
+    fdc._sectorRegister = 4;
+    issue(fdc, 0x80);
+    std::vector<uint8_t> solid = runReadUntilIdle(fdc, fdc._time + 1000);
+    EXPECT_EQ(solid.size(), 256u);
+    EXPECT_FALSE(fdc._statusRegister & WD1793::WDS_CRCERR);
+    EXPECT_EQ(solid, std::vector<uint8_t>(solidSector->data, solidSector->data + solidSector->dataSize));
+}
+
+/// endregion </Flaky sectors (FlakySectorEmulator)>
 

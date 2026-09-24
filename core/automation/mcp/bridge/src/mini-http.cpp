@@ -17,6 +17,7 @@ constexpr SocketHandle kInvalidSocket = INVALID_SOCKET;
 #define BRIDGE_CLOSE closesocket
 #define BRIDGE_GET_LAST_ERROR WSAGetLastError()
 #else
+#include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -27,6 +28,12 @@ constexpr SocketHandle kInvalidSocket = -1;
 #define BRIDGE_CLOSE close
 #define BRIDGE_GET_LAST_ERROR errno
 #endif
+
+// Connect must never hang on a wedged/restarting server: the daemon otherwise blocks on the OS's
+// default TCP connect timeout (which varies by platform/network and can run well past a minute),
+// even though the actual failure - "nothing is listening (yet)" - is knowable in milliseconds on
+// loopback. recv() already has its own long, separately-justified timeout below.
+constexpr int kConnectTimeoutSeconds = 5;
 
 namespace
 {
@@ -67,6 +74,87 @@ bool EnsureSocketLibrary()
 /// endregion </Platform bootstrap>
 
 /// region <Helpers>
+
+/// Non-blocking connect bounded by `timeoutSeconds`. On timeout or failure, `sock` is left
+/// connected-or-not exactly as connect()/select() leaves it - the caller closes it either way.
+/// `error` is only written on failure.
+bool ConnectWithTimeout(SocketHandle sock, const struct sockaddr* addr, int addrLen, int timeoutSeconds,
+                        std::string& error)
+{
+#ifdef _WIN32
+    u_long nonBlocking = 1;
+    ioctlsocket(sock, FIONBIO, &nonBlocking);
+#else
+    const int originalFlags = fcntl(sock, F_GETFL, 0);
+    fcntl(sock, F_SETFL, originalFlags | O_NONBLOCK);
+#endif
+
+    bool connected = false;
+    if (connect(sock, addr, addrLen) == 0)
+    {
+        connected = true; // Common case on loopback: completes synchronously
+    }
+    else
+    {
+#ifdef _WIN32
+        const bool inProgress = BRIDGE_GET_LAST_ERROR == WSAEWOULDBLOCK;
+#else
+        const bool inProgress = errno == EINPROGRESS;
+#endif
+        if (!inProgress)
+        {
+            error = "connect failed";
+        }
+        else
+        {
+            fd_set writeSet;
+            FD_ZERO(&writeSet);
+            FD_SET(sock, &writeSet);
+            struct timeval tv;
+            tv.tv_sec = timeoutSeconds;
+            tv.tv_usec = 0;
+
+            const int selected = select(static_cast<int>(sock) + 1, nullptr, &writeSet, nullptr, &tv);
+            if (selected == 0)
+            {
+                error = "connect timeout after " + std::to_string(timeoutSeconds) + "s";
+            }
+            else if (selected < 0)
+            {
+                error = "connect failed (select error)";
+            }
+            else
+            {
+                int soError = 0;
+#ifdef _WIN32
+                int soErrorLen = sizeof(soError);
+                getsockopt(sock, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&soError), &soErrorLen);
+#else
+                socklen_t soErrorLen = sizeof(soError);
+                getsockopt(sock, SOL_SOCKET, SO_ERROR, &soError, &soErrorLen);
+#endif
+                if (soError != 0)
+                {
+                    error = "connect failed (errno " + std::to_string(soError) + ")";
+                }
+                else
+                {
+                    connected = true;
+                }
+            }
+        }
+    }
+
+    // Restore blocking mode unconditionally - send()/recv() below assume a blocking socket
+#ifdef _WIN32
+    u_long blocking = 0;
+    ioctlsocket(sock, FIONBIO, &blocking);
+#else
+    fcntl(sock, F_SETFL, originalFlags);
+#endif
+
+    return connected;
+}
 
 bool SendAll(SocketHandle sock, const char* data, size_t length)
 {
@@ -223,8 +311,11 @@ HttpResult Post(const std::string& host, int port, const std::string& path, cons
         return result;
     }
 
-    // New connection per request — see mini-http.h
+    // New connection per request — see mini-http.h. Bounded by kConnectTimeoutSeconds so a
+    // restarting/wedged server (nothing accepting the SYN, or accepting but never completing the
+    // handshake) fails in seconds instead of blocking on the OS's default connect timeout.
     SocketHandle sock = kInvalidSocket;
+    std::string connectError;
     for (struct addrinfo* it = info; it != nullptr; it = it->ai_next)
     {
         sock = socket(it->ai_family, it->ai_socktype, it->ai_protocol);
@@ -232,7 +323,8 @@ HttpResult Post(const std::string& host, int port, const std::string& path, cons
         {
             continue;
         }
-        if (connect(sock, it->ai_addr, static_cast<int>(it->ai_addrlen)) == 0)
+        if (ConnectWithTimeout(sock, it->ai_addr, static_cast<int>(it->ai_addrlen), kConnectTimeoutSeconds,
+                               connectError))
         {
             break;
         }
@@ -243,20 +335,30 @@ HttpResult Post(const std::string& host, int port, const std::string& path, cons
 
     if (sock == kInvalidSocket)
     {
-        result.error = "connection refused";
+        result.error = connectError.empty() ? "connection refused" : connectError;
         return result;
     }
 
-    // Bound a wedged server so the daemon never hangs forever. Generous:
-    // MCP tool calls (run_frames, recordings, searches) can take minutes.
+    // Bound a wedged server so the daemon never hangs forever. Receive is deliberately generous:
+    // MCP tool calls (run_frames, recordings, searches) can take minutes, and a non-SSE response
+    // typically arrives as a single write anyway, so there is no meaningful "time to first byte"
+    // signal to time out on more tightly. Send has no equivalent justification for a long bound -
+    // MCP request bodies are tiny (single JSON-RPC lines) - so it gets the same short bound as
+    // connect purely as a belt-and-braces guard against a stuck local TCP send buffer.
 #ifdef _WIN32
     DWORD receiveTimeoutMs = 300000;
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&receiveTimeoutMs, sizeof(receiveTimeoutMs));
+    DWORD sendTimeoutMs = kConnectTimeoutSeconds * 1000;
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char*)&sendTimeoutMs, sizeof(sendTimeoutMs));
 #else
     struct timeval timeout;
     timeout.tv_sec = 300;
     timeout.tv_usec = 0;
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    struct timeval sendTimeout;
+    sendTimeout.tv_sec = kConnectTimeoutSeconds;
+    sendTimeout.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &sendTimeout, sizeof(sendTimeout));
 #endif
 
     std::string request;

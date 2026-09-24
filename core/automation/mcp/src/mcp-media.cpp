@@ -75,7 +75,7 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["format"]["type"] = "string";
-    schema["properties"]["format"]["description"] = "screenshot: png|gif (default png). record_start: gif (native) or h264/h265/hevc/vp9/rawvideo (default gif)";
+    schema["properties"]["format"]["description"] = "screenshot: png|gif (default gif — pass png explicitly for lossless stills). record_start: gif (native) or h264/h265/hevc/vp9/rawvideo (default gif)";
     schema["properties"]["mode"]["type"] = "string";
     schema["properties"]["mode"]["enum"] = Json::Value(Json::arrayValue);
     schema["properties"]["mode"]["enum"].append("screen");
@@ -97,7 +97,9 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     schema["properties"]["region"]["enum"].append("main");
     schema["properties"]["region"]["description"] = "Recording capture region (default full)";
     schema["properties"]["filename"]["type"] = "string";
-    schema["properties"]["filename"]["description"] = "Output file for recording (default: scratch-dir video-<id>-<stamp>.<ext>)";
+    schema["properties"]["filename"]["description"] = "Output file for recording or screenshot (e.g. scratch/screen.png). Saves binary directly to disk on server side.";
+    schema["properties"]["path"]["type"] = "string";
+    schema["properties"]["path"]["description"] = "Alias for filename.";
     schema["properties"]["every_nth"]["description"] =
         "\"auto\" or integer ≥1 (requires frames): measure the effect's visual update quantum Q via screen digests "
         "(auto) or use Q directly; the recorder is paused across static frames and fps defaults to 50/Q";
@@ -113,7 +115,7 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
 
     registry.Register(
         "capture_media",
-        "Media capture: screenshots (PNG/GIF with OCR-friendly metadata), deterministic screen digests, video recording "
+        "Media capture: screenshots (PNG/GIF with OCR-friendly metadata or saved to file), deterministic screen digests, video recording "
         "(GIF native) with optional every_nth:'auto' visual-quantum detection for duplicate-free bounded recordings, and "
         "one-shot audio capture with DSP analysis (dominant frequency, RMS/peak, optional WAV export).",
         std::move(schema),
@@ -123,8 +125,12 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
             if (action == "screenshot")
             {
                 bool includeImage = args.isMember("include_image") && args["include_image"].asBool();
+                std::string pathArg;
+                if (args.isMember("filename") && args["filename"].isString()) pathArg = args["filename"].asString();
+                else if (args.isMember("path") && args["path"].isString()) pathArg = args["path"].asString();
+
                 TargetResolver::ResolveFromArgs(
-                    args, caller, [&args, includeImage, &caller, done](bool ok, const std::string& idOrError) {
+                    args, caller, [&args, includeImage, pathArg, &caller, done](bool ok, const std::string& idOrError) {
                         if (!ok)
                         {
                             done(ToolResult::Error(idOrError));
@@ -139,6 +145,10 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                         if (args.isMember("mode") && args["mode"].isString() && !args["mode"].asString().empty())
                         {
                             query += "mode=" + args["mode"].asString() + "&";
+                        }
+                        if (!pathArg.empty())
+                        {
+                            query += "path=" + pathArg + "&";
                         }
                         if (!query.empty())
                         {
@@ -155,13 +165,22 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                                 return;
                             }
                             std::ostringstream out;
-                            out << "Screenshot " << body.get("width", 0).asUInt() << "x" << body.get("height", 0).asUInt() << " "
-                                << body.get("format", "").asString();
-                            if (!includeImage && body.isMember("data"))
+                            if (body.get("saved", false).asBool() && body.isMember("file"))
                             {
-                                out << " (metadata only — " << body.get("size", 0).asUInt()
-                                    << " bytes; include_image:true for pixels)";
-                                body.removeMember("data");
+                                out << "Screenshot saved to " << body["file"].asString() << " ("
+                                    << body.get("width", 0).asUInt() << "x" << body.get("height", 0).asUInt() << " "
+                                    << body.get("format", "").asString() << ", " << body.get("size", 0).asUInt() << " bytes)";
+                            }
+                            else
+                            {
+                                out << "Screenshot " << body.get("width", 0).asUInt() << "x" << body.get("height", 0).asUInt() << " "
+                                    << body.get("format", "").asString();
+                                if (!includeImage && body.isMember("data"))
+                                {
+                                    out << " (metadata only — " << body.get("size", 0).asUInt()
+                                        << " bytes; include_image:true for pixels)";
+                                    body.removeMember("data");
+                                }
                             }
                             out << " [target " << idOrError << "]";
                             done(ToolResult::Ok(out.str(), std::move(body)));
