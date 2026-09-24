@@ -1,6 +1,8 @@
 #include "soundchip_turbosoundfm.h"
 
 #include <algorithm>
+#include <cassert>
+#include <cstring>
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "emulator/cpu/core.h"
@@ -644,3 +646,240 @@ void SoundChip_TurboSoundFM::detachFromPorts()
 }
 
 /// endregion </Ports interaction>
+
+/// region <TTDSerializable interface (§8.2)>
+
+namespace
+{
+/// Cursor-based little-endian writers/readers, matching soundchip_ay8910.cpp.
+inline void put_u8 (uint8_t*& cur, uint8_t v)   { *cur++ = v; }
+inline void put_u16(uint8_t*& cur, uint16_t v)  { std::memcpy(cur, &v, 2); cur += 2; }
+inline void put_i32(uint8_t*& cur, int32_t v)   { std::memcpy(cur, &v, 4); cur += 4; }
+inline void put_u64(uint8_t*& cur, uint64_t v)  { std::memcpy(cur, &v, 8); cur += 8; }
+inline void put_f64(uint8_t*& cur, double v)    { std::memcpy(cur, &v, 8); cur += 8; }
+
+inline uint8_t  get_u8 (const uint8_t*& cur)  { return *cur++; }
+inline uint16_t get_u16(const uint8_t*& cur)  { uint16_t v; std::memcpy(&v, cur, 2); cur += 2; return v; }
+inline int32_t  get_i32(const uint8_t*& cur)  { int32_t v; std::memcpy(&v, cur, 4); cur += 4; return v; }
+inline uint64_t get_u64(const uint8_t*& cur)  { uint64_t v; std::memcpy(&v, cur, 8); cur += 8; return v; }
+inline double   get_f64(const uint8_t*& cur)  { double v; std::memcpy(&v, cur, 8); cur += 8; return v; }
+
+// ymfm's save_restore() serializes ym2203 (FM engine, its dormant internal
+// SSG copy, and the SSG resampler) into a caller-owned byte vector. Measured
+// and pinned by ymfm_ttd_patch_test.cpp (YmfmTtdPatch.*): fixed at 494 bytes
+// for the vendored/patched engine as long as the register file and channel
+// topology don't change.
+constexpr size_t kYmfmStateSize = 494;
+
+// address(1) + fmClockPhase(4) + timer[2](8) + busy(4) + ymfmSize(2) +
+// ymfm payload(kYmfmStateSize) + SSG payload(57, SoundChip_AY8910)
+constexpr size_t kTsfmChipStateSize = 1 + 4 + 4 + 4 + 4 + 2 + kYmfmStateSize + 57;
+static_assert(kTsfmChipStateSize == 570, "TSFM per-chip state size drift");
+
+// Render-loop free-running accumulators (§6.2): _samplePhase (the mixer-exact
+// sample PLL) and _decimationPhase (LQ boxcar phase) are explicitly NOT reset
+// per-frame (handleFrameStart's own comment: "only reset() and setCoreRate()
+// clear them") - they carry fractional position across every frame of a
+// session. They gate how many times updateState() ticks the tone/noise/
+// envelope generators between two T-states, so excluding them from TTD state
+// does not just affect audio buffering (like the rest of the output stage) -
+// it lets the actual generator PHASE COUNTERS drift after a restore, a few
+// ticks per seek, because the restored device starts accumulating from
+// whatever these fields happened to hold live rather than their true
+// historical value. Found via SeekTo_NoiseGeneratorStateDeterministicFromDeltaFrame
+// (ttdtsfm_test.cpp): a channel B tone counter differed by a few ticks after
+// resuming playback from a restored checkpoint, even though every other byte
+// of the payload (registers, LFSR, ymfm engine, timers) matched exactly.
+// v3 addition: each SSG decimator's own fractional resampling phase
+// (FilterDecimator::_phase) is the SAME class of persistent, tick-gating
+// accumulator as _samplePhase/_decimationPhase above - it decides how many
+// generator ticks the inner `while (!hasOutput())` loop in handleStep() runs
+// before the next output sample, so it must be restored to its true
+// historical value too. It was missed in v2 because it lives inside
+// FilterDecimator, not SoundChip_TurboSoundFM, and only surfaced once the
+// v2 fix's own regression test (SeekTo_NoiseGeneratorStateDeterministicFrom
+// DeltaFrame) was re-run against the v3-motivating output-stage-flush change
+// below: flushing the decimators via reset() (needed to clear stale FIR
+// history and avoid an audible click) also zeroed this phase, which
+// reintroduced the exact same drift class in a different accumulator. Only
+// the 4 SSG decimators need this (chip0/chip1 x left/right); each chip's FM
+// decimator runs permanently in slave mode (attachMaster() in setCoreRate())
+// so its own _phase is never consulted while a master is attached.
+constexpr size_t kRenderPhaseStateSize =
+    8 /* samplePhase */ + 8 /* decimationPhase */ + 4 * 8 /* 4 SSG decimator phases */;
+
+// version(1) + board(1) + render-loop phase(40) + 2 x per-chip payload
+constexpr size_t kTsfmStateSize = 1 + 1 + kRenderPhaseStateSize + 2 * kTsfmChipStateSize;
+static_assert(kTsfmStateSize == 1190, "TSFM state size must match design §8.2 + the v2/v3 render-phase fixes (1190 bytes)");
+
+constexpr uint8_t kTsfmStateVersion = 3;
+
+uint8_t EncodeBoardByte(const TsfmBoard& b)
+{
+    uint8_t v = b.chip & 0x01;
+    v |= b.statusRead ? 0x02 : 0;
+    v |= b.fmEnabled  ? 0x04 : 0;
+    return v;
+}
+
+void DecodeBoardByte(uint8_t v, TsfmBoard& b)
+{
+    b.chip = v & 0x01;
+    b.statusRead = (v & 0x02) != 0;
+    b.fmEnabled  = (v & 0x04) != 0;
+}
+} // anonymous namespace
+
+size_t SoundChip_TurboSoundFM::TTDStateSize() const
+{
+    return kTsfmStateSize;
+}
+
+void SoundChip_TurboSoundFM::TTDSaveState(uint8_t* dst) const
+{
+    uint8_t* cur = dst;
+
+    put_u8(cur, kTsfmStateVersion);
+    put_u8(cur, EncodeBoardByte(_board));
+    put_u64(cur, _samplePhase);
+    put_f64(cur, _decimationPhase);
+    put_f64(cur, _chips[0]->ssg.decimatorLeft().phase());
+    put_f64(cur, _chips[0]->ssg.decimatorRight().phase());
+    put_f64(cur, _chips[1]->ssg.decimatorLeft().phase());
+    put_f64(cur, _chips[1]->ssg.decimatorRight().phase());
+
+    for (int i = 0; i < 2; ++i)
+    {
+        TsfmChip& c = *_chips[i];  // non-const through the unique_ptr, see header comment
+
+        put_u8 (cur, c.address);
+        put_i32(cur, c.fmClockPhase);
+        put_i32(cur, c.intf._timer[0]);
+        put_i32(cur, c.intf._timer[1]);
+        put_i32(cur, c.intf._busy);
+
+        // ymfm serializes via push_back into a caller-owned vector; the
+        // scratch buffer is pre-reserved (TsfmChip::ttdScratch) so this does
+        // not allocate on the steady-state save path.
+        c.ttdScratch.clear();
+        ymfm::ymfm_saved_state state(c.ttdScratch, /*saving=*/true);
+        c.fm.save_restore(state);
+        assert(c.ttdScratch.size() == kYmfmStateSize &&
+               "ymfm engine payload size drifted from the §8.2-measured 494 bytes");
+
+        put_u16(cur, static_cast<uint16_t>(c.ttdScratch.size()));
+        std::memcpy(cur, c.ttdScratch.data(), c.ttdScratch.size());
+        cur += c.ttdScratch.size();
+
+        c.ssg.TTDSaveState(cur);
+        cur += c.ssg.TTDStateSize();
+    }
+
+    assert(static_cast<size_t>(cur - dst) == kTsfmStateSize);
+}
+
+void SoundChip_TurboSoundFM::TTDLoadState(const uint8_t* src)
+{
+    const uint8_t* cur = src;
+
+    const uint8_t version = get_u8(cur);
+    assert(version == kTsfmStateVersion &&
+           "TTD blob predates the v2/v3 render-phase fixes (soundchip_turbosoundfm.cpp) "
+           "and cannot be loaded by this build");
+    (void)version;
+    TsfmBoard board;
+    DecodeBoardByte(get_u8(cur), board);
+    _board = board;
+    _samplePhase = get_u64(cur);
+    _decimationPhase = get_f64(cur);
+    const double chip0LeftPhase = get_f64(cur);
+    const double chip0RightPhase = get_f64(cur);
+    const double chip1LeftPhase = get_f64(cur);
+    const double chip1RightPhase = get_f64(cur);
+
+    for (int i = 0; i < 2; ++i)
+    {
+        TsfmChip& c = *_chips[i];
+
+        c.address = get_u8(cur);
+        c.fmClockPhase = get_i32(cur);
+        c.intf._timer[0] = get_i32(cur);
+        c.intf._timer[1] = get_i32(cur);
+        c.intf._busy = get_i32(cur);
+
+        const uint16_t ymfmSize = get_u16(cur);
+        assert(ymfmSize == kYmfmStateSize &&
+               "TTD blob's ymfm payload size does not match this build's engine layout");
+        c.ttdScratch.assign(cur, cur + ymfmSize);
+        cur += ymfmSize;
+        ymfm::ymfm_saved_state state(c.ttdScratch, /*saving=*/false);
+        c.fm.save_restore(state);
+
+        c.ssg.TTDLoadState(cur);
+        cur += c.ssg.TTDStateSize();
+    }
+
+    // Output-stage FLUSH (not restore) of AUDIO CONTENT: the decimator FIR
+    // history, hold register, LQ boxcar and word queues are not part of TTD
+    // state (§8.2 policy - they're host-side rendering caches, not chip
+    // state) and are therefore left holding whatever they had LIVE right
+    // before this seek - i.e. audio content from a completely different
+    // point in the tune. Left untouched, the next samples mix that stale,
+    // uncorrelated history with the freshly-restored (different-timeline)
+    // generator output through the decimator's FIR taps, producing an
+    // audible click/discontinuity right at the seek point (reported against
+    // scratch/tsfm-issues3.ttd). The fix is not to restore this content
+    // (that would need yet more TTD payload for a purely cosmetic concern)
+    // but to FLUSH it to silence here, exactly as reset() already does for
+    // these same fields (minus resetChip(), which would erase the chip
+    // state just restored above) - a clean, silent decimator settling in
+    // over one filter length is inaudible; stale foreign history snapping
+    // into new content is not.
+    _chips[0]->words.clear();
+    _chips[1]->words.clear();
+    for (auto& c : _chips)
+    {
+        c->out.hold = 0.0;
+        c->out.lqSum = 0.0;
+        c->out.lqCount = 0;
+        c->ssg.decimatorLeft().reset();
+        c->ssg.decimatorRight().reset();
+        c->out.decimator.reset();
+    }
+
+    // reset() above also zeroed each SSG decimator's own resampling PHASE
+    // (FilterDecimator::_phase) along with its FIR history - but unlike the
+    // history (pure audio content, correctly flushed to silence), phase is
+    // a tick-gating accumulator with the same determinism requirement as
+    // _samplePhase/_decimationPhase above (v3 fix; see kRenderPhaseStateSize
+    // comment). Restore it explicitly on top of the flush: buffer silent,
+    // phase historically correct.
+    _chips[0]->ssg.decimatorLeft().setPhase(chip0LeftPhase);
+    _chips[0]->ssg.decimatorRight().setPhase(chip0RightPhase);
+    _chips[1]->ssg.decimatorLeft().setPhase(chip1LeftPhase);
+    _chips[1]->ssg.decimatorRight().setPhase(chip1RightPhase);
+
+    // Next syncTo() adopts the framework-restored T-state instead of trying
+    // to advance from wherever the core last was (§5.2 convention, matches
+    // reset()).
+    _adoptCpuClock = true;
+}
+
+uint64_t SoundChip_TurboSoundFM::TTDHashState() const
+{
+    // FNV-1a over the full serialized payload - simplest way to guarantee
+    // the hash tracks every field TTDSaveState captures, with no separate
+    // field list to keep in sync.
+    std::vector<uint8_t> buf(kTsfmStateSize);
+    TTDSaveState(buf.data());
+
+    uint64_t hash = 0xcbf29ce484222325ull;  // FNV-1a offset basis
+    for (uint8_t b : buf)
+    {
+        hash ^= b;
+        hash *= 0x100000001b3ull;  // FNV-1a prime
+    }
+    return hash;
+}
+
+/// endregion </TTDSerializable interface>

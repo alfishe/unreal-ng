@@ -106,6 +106,16 @@ public:
     double samplesPerOutput() const { return _samplesPerOutput; }
     const std::vector<double>& coefficients() const { return _coeffs; }
 
+    /// Fractional resampling phase (TTD state for a standalone/master
+    /// decimator - a slave's own phase is unused while `_master` is set).
+    /// This is a generator-tick-gating accumulator, not just output
+    /// buffering: it decides how many input ticks land before the next
+    /// output sample, so a caller restoring historical state needs to set
+    /// it back explicitly after reset() (which zeroes it along with the
+    /// FIR history) rather than leaving it at either zero or a stale value.
+    double phase() const { return _phase; }
+    void setPhase(double p) { _phase = p; }
+
     /// Slave mode (§6.3): produce output exactly when `master` does. The
     /// master must outlive the slave and must not itself be a slave. Rate
     /// compatibility is the caller's contract: fed 2x as often as the

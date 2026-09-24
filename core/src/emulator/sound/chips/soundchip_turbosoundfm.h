@@ -3,6 +3,7 @@
 #include <stdafx.h>
 
 #include <memory>
+#include <vector>
 
 #include "common/sound/filters/filter_decimator.h"
 #include "emulator/emulatorcontext.h"
@@ -59,6 +60,10 @@ public:
         // uninitialised until reset() runs.
         fm.ssg_override(ssgAdapter);
         resetChip();
+
+        // TTD save-path scratch (§8.2): reserved once so TTDSaveState never
+        // allocates on its steady-state path (measured ymfm payload: 494 B).
+        ttdScratch.reserve(1024);
     }
 
     TsfmChip(const TsfmChip&) = delete;
@@ -99,6 +104,11 @@ public:
 
     // Output stage (§6): hold register, decimator, LQ boxcar, raw DAC tap
     TsfmOutputState out;
+
+    // TTD save-path scratch (§8.2): ymfm_saved_state serializes into a
+    // vector via push_back; reserved in the constructor so TTDSaveState
+    // never allocates on its steady-state path (measured payload: 494 B).
+    std::vector<uint8_t> ttdScratch;
 };
 
 class SoundChip_TurboSoundFM : public ITurboSoundDevice
@@ -413,22 +423,36 @@ public:
     /// endregion </Ports interaction>
 
     /// region <TTDSerializable interface>
-    /// P5 fills in the §8.2 layout (1142 bytes, PeripheralId::TSFM = 4).
-    /// Until then the device reports an empty payload - enough for the
-    /// session-kind guard of P3 to distinguish it from TurboSound.
+    /// §8.2 layout (v3), 1190 bytes, PeripheralId::TSFM = 4:
+    ///   u8 version (= 3)
+    ///   u8 board (chip | statusRead<<1 | fmEnabled<<2)
+    ///   f64 samplePhase, f64 decimationPhase        (v2: render-loop PLL/LQ phase)
+    ///   f64 x4: chip{0,1}.ssg.decimator{Left,Right}().phase()  (v3: per-decimator
+    ///     resampling phase - all four of these are tick-gating accumulators,
+    ///     not "just" output buffering: they decide how many generator ticks
+    ///     land before the next output sample, so they must be restored to
+    ///     their exact historical value for forward-replay determinism, not
+    ///     reset to zero or left at whatever the live device held pre-seek)
+    ///   per chip x2:
+    ///     u8  address
+    ///     i32 fmClockPhase
+    ///     i32 timerRemaining[2]   (-1 = stopped)
+    ///     i32 busyRemaining
+    ///     u16 ymfmSize            (= 494, asserted)
+    ///     u8[ymfmSize] ymfm::ym2203::save_restore() payload
+    ///     u8[57] SoundChip_AY8910::TTDSaveState() payload (SSG half)
+    /// Everything else in the output stage (decimator FIR history/content,
+    /// hold register, LQ boxcar accumulator, word queues, DC path, native
+    /// taps) is genuinely just rendering cache - NOT part of TTD state, and
+    /// TTDLoadState actively FLUSHES it to silence on restore (not merely
+    /// "doesn't touch it") to avoid mixing stale pre-seek audio content with
+    /// the freshly-restored generator output, which produced an audible
+    /// click. Same policy as every other TTD-registered device otherwise.
 public:
-    size_t TTDStateSize() const override
-    {
-        return 0;
-    }
-
-    void TTDSaveState(uint8_t* /*dst*/) const override
-    {
-    }
-
-    void TTDLoadState(const uint8_t* /*src*/) override
-    {
-    }
+    size_t TTDStateSize() const override;
+    void TTDSaveState(uint8_t* dst) const override;
+    void TTDLoadState(const uint8_t* src) override;
+    uint64_t TTDHashState() const override;
 
     ttd::PeripheralId TTDPeripheralId() const override
     {
