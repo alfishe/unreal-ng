@@ -647,9 +647,16 @@ void SoundManager::handleFrameEnd()
             _covox->handleFrameEnd(samplesThisFrame);
     }
 
-    // Finalize TurboSound frame (activity notification for HUD)
-    if (_turboSound)
-        _turboSound->handleFrameEnd();
+    // NOTE: _turboSound->handleFrameEnd() is NOT called again here. It
+    // already ran once at the top of this function (word-queue drain +
+    // HUD activity notification, §6.1) and its activity-tracking flags
+    // (_frameHadActivity, _wasActive, _chip1ActiveThisFrame, _wasFM, ...)
+    // are not reset between calls - a second call here would re-evaluate
+    // the same already-updated flags and re-post NC_AUDIO_ACTIVITY a second
+    // time whenever the device is active, which is exactly what happened
+    // before this was removed (found while auditing HUD notification
+    // volume). The device's own comment on handleFrameEnd() already states
+    // it drains to end-of-frame and is "always called" - once.
 
     // Determine if any device has solo active
     bool soloActive = false;
