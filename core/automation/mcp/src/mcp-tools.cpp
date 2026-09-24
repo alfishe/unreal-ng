@@ -327,14 +327,19 @@ void RegisterLoadSoftware(ToolRegistry& registry)
     schema["properties"]["play"]["type"] = "boolean";
     schema["properties"]["play"]["default"] = false;
     schema["properties"]["play"]["description"] = "Start tape playback immediately after loading a tape";
+    schema["properties"]["autostart"]["type"] = "boolean";
+    schema["properties"]["autostart"]["default"] = false;
+    schema["properties"]["autostart"]["description"] =
+        "Disk images only, drive A only: quick-reset into TR-DOS and run the disk, same as the Qt UI's "
+        "drag-and-drop autostart. Ignored for snapshots/tapes and for drives other than A.";
     schema["required"].append("path");
 
     registry.Register(
         "load_software",
         "Load software into the emulator by auto-detecting the file type: snapshots (.sna .z80), tapes (.tap .tzx), "
-        "disk images (.trd .scl .fdi). The machine must be created first (target:'auto' handles that). "
-        "If the path exists locally on the MCP host, the file is uploaded to the emulator automatically; "
-        "otherwise, the path is passed to the emulator for direct loading.",
+        "disk images (.trd .scl .fdi .udi .dsk .td0 .mgt .img). The machine must be created first (target:'auto' "
+        "handles that). If the path exists locally on the MCP host, the file is uploaded to the emulator "
+        "automatically; otherwise, the path is passed to the emulator for direct loading.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             std::string path = args["path"].asString();
@@ -349,7 +354,8 @@ void RegisterLoadSoftware(ToolRegistry& registry)
             if (dot == std::string::npos || dot + 1 >= path.size())
             {
                 done(ToolResult::Error("Cannot determine file type of '" + path +
-                                            "'. Supported: .sna .z80 (snapshot), .tap .tzx (tape), .trd .scl .fdi (disk)"));
+                                            "'. Supported: .sna .z80 (snapshot), .tap .tzx (tape), "
+                                            ".trd .scl .fdi .udi .dsk .td0 .mgt .img (disk)"));
                 return;
             }
             std::string ext = path.substr(dot + 1);
@@ -357,15 +363,18 @@ void RegisterLoadSoftware(ToolRegistry& registry)
 
             bool isSnapshot = ext == "sna" || ext == "z80";
             bool isTape = ext == "tap" || ext == "tzx";
-            bool isDisk = ext == "trd" || ext == "scl" || ext == "fdi";
+            bool isDisk = ext == "trd" || ext == "scl" || ext == "fdi" || ext == "udi" || ext == "dsk" ||
+                          ext == "td0" || ext == "mgt" || ext == "img";
             if (!isSnapshot && !isTape && !isDisk)
             {
                 done(ToolResult::Error("Unsupported file type '." + ext +
-                                            "'. Supported: .sna .z80 (snapshot), .tap .tzx (tape), .trd .scl .fdi (disk)"));
+                                            "'. Supported: .sna .z80 (snapshot), .tap .tzx (tape), "
+                                            ".trd .scl .fdi .udi .dsk .td0 .mgt .img (disk)"));
                 return;
             }
 
             bool play = args.isMember("play") && args["play"].asBool();
+            bool autostart = args.isMember("autostart") && args["autostart"].asBool();
             std::string drive = args.isMember("drive") && args["drive"].isString() && !args["drive"].asString().empty()
                                     ? args["drive"].asString()
                                     : "A";
@@ -375,7 +384,7 @@ void RegisterLoadSoftware(ToolRegistry& registry)
             const bool isLocalFile = TryReadLocalFile(path, *fileContent);
             const std::string filename = ExtractFilename(path);
 
-            TargetResolver::ResolveFromArgs(args, caller, [path, ext, isSnapshot, isTape, isDisk, play, drive, &caller, done,
+            TargetResolver::ResolveFromArgs(args, caller, [path, ext, isSnapshot, isTape, isDisk, play, autostart, drive, &caller, done,
                                                            isLocalFile, fileContent, filename](bool ok, const std::string& idOrError) {
                 if (!ok)
                 {
@@ -387,6 +396,10 @@ void RegisterLoadSoftware(ToolRegistry& registry)
                 // Build headers for raw upload
                 std::map<std::string, std::string> headers;
                 headers["X-Filename"] = filename;
+                if (autostart && isDisk)
+                {
+                    headers["X-Autostart"] = "true";
+                }
 
                 if (isSnapshot)
                 {
@@ -447,6 +460,10 @@ void RegisterLoadSoftware(ToolRegistry& registry)
                 {
                     Json::Value body;
                     body["path"] = path;
+                    if (autostart)
+                    {
+                        body["autostart"] = true;
+                    }
                     ForwardCall("POST", Endpoint(id, "/disk/" + drive + "/insert"), &body, caller,
                                 "Inserted disk " + path + " into drive " + drive + " of " + id, done);
                 }

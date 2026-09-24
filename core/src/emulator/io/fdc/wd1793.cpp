@@ -13,6 +13,7 @@
 #include "iwd1793observer.h"
 #include "base/featuremanager.h"
 #include "diskfastload.h"
+#include "flakysectoremulator.h"
 #include "debugger/ttd/timetravelmanager.h"  // TimeTravelManager (Item 6 markers)
 #include <cstdio>
 #include <cstring>
@@ -1218,7 +1219,8 @@ void WD1793::cmdRestore(uint8_t value)
     // Direction must always be out (towards Track 0)
     _stepDirectionIn = false;
 
-    // Check if already at track 0 - if so, complete immediately
+    // Check if already at track 0 - if so, complete immediately (see type1CommandVerify()
+    // for how BUSY is still kept briefly visible even on this immediate-completion path)
     if (_selectedDrive->isTrack00())
     {
         _trackRegister = 0;
@@ -1248,7 +1250,8 @@ void WD1793::cmdSeek(uint8_t value)
 
     startType1Command();
 
-    // Check if already at target track - if so, complete immediately
+    // Check if already at target track - if so, complete immediately (see type1CommandVerify()
+    // for how BUSY is still kept briefly visible even on this immediate-completion path)
     if (_trackRegister == _dataRegister)
     {
         _selectedDrive->setTrack(_trackRegister);
@@ -1390,6 +1393,7 @@ void WD1793::cmdReadSector(uint8_t value)
         }
 
         this->_currentSector = sector;
+        this->_currentReadTrack = track;
         this->_sectorSize = sector->dataSize;  // 128 / 256 / 512 / 1024 from the sector's own ID field
         this->_sectorData = sector->data;
         this->_rawDataBuffer = sector->data;
@@ -1936,7 +1940,10 @@ void WD1793::startType1Command()
 
 namespace
 {
-constexpr size_t NOT_READY_BUSY_HOLD_TSTATES = 64;  // BUSY stays visible this long when a Type II command finds the drive not ready
+// Minimum T-states BUSY stays visible on any synchronous (zero-step-delay) command completion:
+// a Type I command (Restore/Seek) already at the target track (see type1CommandVerify()), or a
+// Type II command finding the drive not ready (see startType2Command()).
+constexpr size_t NOT_READY_BUSY_HOLD_TSTATES = 64;
 }
 
 void WD1793::startType2Command()
@@ -2076,8 +2083,12 @@ void WD1793::type1CommandVerify()
     }
     else
     {
-        // No, verification is not required, command execution finished
-        transitionFSM(WD1793::S_END_COMMAND);
+        // No, verification is not required, command execution finished.
+        // Still hold BUSY visible for a minimum number of T-states: cmdRestore()/cmdSeek() can reach
+        // here synchronously (already at track 0 / already at target track, zero step delay elapsed),
+        // and ending the command with zero delay would clear BUSY before software polling for BUSY=1
+        // right after issuing the command (e.g. Profi service ROM) ever observes it, hanging forever.
+        transitionFSMWithDelay(WD1793::S_END_COMMAND, NOT_READY_BUSY_HOLD_TSTATES);
     }
 }
 
@@ -2298,7 +2309,11 @@ DiskImage::Sector* WD1793::locateSectorForType2(DiskImage::Track* track, uint8_t
     // Side compare: bit 1 (C) enables the comparison, bit 3 (S) carries the expected side
     const int side = (_commandRegister & CMD_SIDE_CMP_FLAG) ? ((_commandRegister & CMD_SIDE) ? 1 : 0) : -1;
 
-    DiskImage::Sector* sector = track->findSector(cylinder, side, sectorNo, headByteOffset(*track));
+    // Flaky/"floating" sector emulation lives in its own module and only engages when the track actually
+    // carries weak-bit marks (FDI never does; SCP/HFE/DSK/UDI captures of protected media can).
+    DiskImage::Sector* sector = track->hasWeakBits()
+        ? FlakySectorEmulator::findSector(*track, cylinder, side, sectorNo, headByteOffset(*track), _indexPulseCounter)
+        : track->findSector(cylinder, side, sectorNo, headByteOffset(*track));
 
     if (sector && !sector->idCrcValid)
     {
@@ -2542,6 +2557,14 @@ void WD1793::processReadByte()
     // Read the next byte from the raw data buffer
     _dataRegister = *(_rawDataBuffer++);
     _bytesToRead--;
+
+    // Flaky/"floating" sector emulation lives in its own module - only invoked when the track actually
+    // carries weak-bit marks (FDI never does; SCP/HFE/DSK/UDI captures of protected media can).
+    if (_currentReadTrack && _currentReadTrack->hasWeakBits())
+    {
+        const size_t offset = static_cast<size_t>((_rawDataBuffer - 1) - _currentReadTrack->rawData());
+        FlakySectorEmulator::mutateWeakDataByte(*_currentReadTrack, offset, _time, _dataRegister);
+    }
 
     // Byte is ready to be consumed by the host
     raiseDrq();
@@ -3343,15 +3366,10 @@ void WD1793::portDeviceOutMethod(uint16_t port, uint8_t value)
             notifyFdcStateChanged();
             break;
         case PORT_5F:  // Write to Sector Register
+            // No clamp on the value: the real chip latches any byte, and protected media relies on it
+            // (VORON's R=192..196 band is only addressable with sector numbers far above TR-DOS's 1..16)
             _sectorRegister = value;
 
-            // TODO: remove debug
-            if (_sectorRegister == 0 || _sectorRegister > 16)
-            {
-                //_sectorRegister = _sectorRegister;
-
-                _sectorRegister = 16;
-            }
             MLOGINFO(StringHelper::Format("  #5F - Set sector: 0x%02X", _sectorRegister).c_str());
             notifyFDDStateChanged();
             notifyFdcStateChanged();

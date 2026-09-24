@@ -70,7 +70,7 @@ WebAPI's thread calls `run()`), and `stopMCP()` runs **after** `stopWebAPI()`.
 | Tool | Purpose |
 |:--|:--|
 | `emulator_manage` | create/list/status/start/stop/pause/resume/reset/destroy, list_models, server (build fingerprint + models_creatable) |
-| `load_software` | load `.sna/.z80` snapshots, `.tap/.tzx` tapes (auto-play flag), `.trd/.scl/.fdi` disks |
+| `load_software` | load `.sna/.z80` snapshots, `.tap/.tzx` tapes (auto-play flag), `.trd/.scl/.fdi/.udi/.dsk/.td0/.mgt/.img` disks (`autostart` flag: drive A only, quick-reset into TR-DOS and run the disk) |
 | `control_execution` | run/pause/resume/step/step_n/step_over/step_out, run_frames/run_tstates/run_to_interrupt, breakpoints (add/remove/enable/disable/clear/list); the raw `skip_until` endpoint is reachable via `invoke_api` |
 | `inspect_state` | aspects fan-out: machine, registers, memory, disasm, stack, breakpoints, memory_banks, screen_ocr, screen_image, screen_digest, timing, rom, audio_ay (every AY/SSG chip decoded), audio_fm (TurboSound FM board + both YM2203 halves: mode, timers, channels, operators, envelopes, key-on), fdc (Beta Disk WD1793 registers, status, FSM, drives) |
 | `type_input` | type (tokenized BASIC entry), tap/press/release, combo, macro, release_all, status, list_keys |

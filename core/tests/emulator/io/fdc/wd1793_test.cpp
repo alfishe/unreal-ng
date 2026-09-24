@@ -1541,6 +1541,59 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_Verify)
     /// endregion </Main test loop>
 }
 
+// Regression test for a hang where cmdRestore() completing synchronously (already at track 0, no
+// verify requested) cleared BUSY within the same OUT that issued the command, before software polling
+// for BUSY=1 right after the OUT (e.g. Profi service ROM: OUT #1F,#08 then wait for BUSY=1) ever
+// observed it. See type1CommandVerify().
+TEST_F(WD1793_Test, FSM_CMD_Restore_AlreadyAtTrack0_BusyStaysVisible)
+{
+    // Mirrors NOT_READY_BUSY_HOLD_TSTATES in wd1793.cpp: the minimum number of T-states BUSY must
+    // stay visible when a Type I command completes synchronously (no physical head movement needed).
+    static constexpr size_t const BUSY_HOLD_TSTATES = 64;
+    static constexpr size_t const WITHIN_HOLD_TSTATES = BUSY_HOLD_TSTATES / 2;
+    static constexpr size_t const PAST_HOLD_TSTATES = BUSY_HOLD_TSTATES * 4;
+    static constexpr size_t const TEST_INCREMENT_TSTATES = 10;  // Tick size used to step the FSM
+
+    WD1793CUT fdc(_context);
+
+    // Already at track 0
+    fdc._selectedDrive->setTrack(0);
+
+    // RESTORE: no head load, no verify, fastest stepping rate
+    const uint8_t restoreCommand = 0b0000'0000;
+    WD1793CUT::WD_COMMANDS decodedCommand = WD1793CUT::decodeWD93Command(restoreCommand);
+    uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, restoreCommand);
+    fdc._commandRegister = restoreCommand;
+    fdc._lastDecodedCmd = decodedCommand;
+    fdc.resetTime();
+
+    ASSERT_EQ(decodedCommand, WD1793::WD_CMD_RESTORE);
+    ASSERT_TRUE(fdc._selectedDrive->isTrack00());
+
+    // Issue the command. Even though the drive is already at the target track, BUSY must still be
+    // visible right after the OUT - it must not clear within the same instant it was set.
+    fdc.cmdRestore(commandValue);
+    EXPECT_TRUE(fdc._statusRegister & WD1793::WDS_BUSY) << "BUSY cleared synchronously with the OUT - "
+                                                             "software polling for BUSY=1 would hang forever";
+    EXPECT_EQ(fdc._beta128status & WD1793::INTRQ, 0) << "INTRQ must not be raised before the hold elapses";
+
+    // Still within the minimum hold window: BUSY must remain set
+    fdc._time = WITHIN_HOLD_TSTATES;
+    fdc.process();
+    EXPECT_TRUE(fdc._statusRegister & WD1793::WDS_BUSY) << "BUSY dropped inside the hold window";
+
+    // Past the hold window: one tick moves WAIT -> S_END_COMMAND, the next executes it:
+    // BUSY clears, INTRQ raised
+    fdc._time = PAST_HOLD_TSTATES;
+    fdc.process();
+    fdc._time = PAST_HOLD_TSTATES + TEST_INCREMENT_TSTATES;
+    fdc.process();
+    EXPECT_FALSE(fdc._statusRegister & WD1793::WDS_BUSY);
+    EXPECT_TRUE(fdc._beta128status & WD1793::INTRQ);
+    EXPECT_EQ(fdc._trackRegister, 0);
+    EXPECT_EQ(fdc._state, WD1793::S_IDLE);
+}
+
 /// endregion </RESTORE>
 
 /// region <SEEK>
@@ -1745,6 +1798,59 @@ TEST_F(WD1793_Test, FSM_CMD_Seek_All_Rates)
     }
 
     /// endregion </Main test loop>
+}
+
+// Regression test for a hang where cmdSeek() completing synchronously (already at the target track, no
+// verify requested) cleared BUSY within the same OUT that issued the command, before software polling
+// for BUSY=1 right after the OUT ever observed it. See type1CommandVerify().
+TEST_F(WD1793_Test, FSM_CMD_Seek_AlreadyAtTargetTrack_BusyStaysVisible)
+{
+    // Mirrors NOT_READY_BUSY_HOLD_TSTATES in wd1793.cpp: the minimum number of T-states BUSY must
+    // stay visible when a Type I command completes synchronously (no physical head movement needed).
+    static constexpr size_t const BUSY_HOLD_TSTATES = 64;
+    static constexpr size_t const WITHIN_HOLD_TSTATES = BUSY_HOLD_TSTATES / 2;
+    static constexpr size_t const PAST_HOLD_TSTATES = BUSY_HOLD_TSTATES * 4;
+    static constexpr size_t const TEST_INCREMENT_TSTATES = 10;  // Tick size used to step the FSM
+
+    WD1793CUT fdc(_context);
+
+    // Already at the requested track
+    fdc._selectedDrive->setTrack(5);
+    fdc._trackRegister = 5;
+    fdc._dataRegister = 5;
+
+    // SEEK: no head load, no verify, fastest stepping rate
+    const uint8_t seekCommand = 0b0001'0000;
+    WD1793CUT::WD_COMMANDS decodedCommand = WD1793CUT::decodeWD93Command(seekCommand);
+    uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, seekCommand);
+    fdc._commandRegister = seekCommand;
+    fdc._lastDecodedCmd = decodedCommand;
+    fdc.resetTime();
+
+    ASSERT_EQ(decodedCommand, WD1793::WD_CMD_SEEK);
+
+    // Issue the command. Even though the drive is already at the target track, BUSY must still be
+    // visible right after the OUT - it must not clear within the same instant it was set.
+    fdc.cmdSeek(commandValue);
+    EXPECT_TRUE(fdc._statusRegister & WD1793::WDS_BUSY) << "BUSY cleared synchronously with the OUT - "
+                                                             "software polling for BUSY=1 would hang forever";
+    EXPECT_EQ(fdc._beta128status & WD1793::INTRQ, 0) << "INTRQ must not be raised before the hold elapses";
+
+    // Still within the minimum hold window: BUSY must remain set
+    fdc._time = WITHIN_HOLD_TSTATES;
+    fdc.process();
+    EXPECT_TRUE(fdc._statusRegister & WD1793::WDS_BUSY) << "BUSY dropped inside the hold window";
+
+    // Past the hold window: one tick moves WAIT -> S_END_COMMAND, the next executes it:
+    // BUSY clears, INTRQ raised
+    fdc._time = PAST_HOLD_TSTATES;
+    fdc.process();
+    fdc._time = PAST_HOLD_TSTATES + TEST_INCREMENT_TSTATES;
+    fdc.process();
+    EXPECT_FALSE(fdc._statusRegister & WD1793::WDS_BUSY);
+    EXPECT_TRUE(fdc._beta128status & WD1793::INTRQ);
+    EXPECT_EQ(fdc._trackRegister, 5);
+    EXPECT_EQ(fdc._state, WD1793::S_IDLE);
 }
 
 /// endregion <SEEK>

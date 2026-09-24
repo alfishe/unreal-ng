@@ -1,5 +1,5 @@
 #include "pch.h"
-#include "emulator/video/zx/atmfont.h"
+#include "emulator/video/atm/atmfont.h"
 #include "emulator/video/zx/screenzx.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
@@ -405,7 +405,7 @@ TEST_F(ATMVideoMode_Test, Render_ATM16_NibbleDecodeAndLinearStride)
     ASSERT_EQ(_screen->GetVideoMode(), M_ATM16);
 
     auto& fb = _screen->GetFramebufferDescriptor();
-    ASSERT_EQ(fb.width, 448u);
+    ASSERT_EQ(fb.width, 320u);  // no side border: fullFrameWidth == screenWidth
     ASSERT_EQ(fb.height, 288u);
     auto* px = reinterpret_cast<uint32_t*>(fb.memoryBuffer);
     auto At = [&](uint32_t row, uint32_t col) -> uint32_t& { return px[row * fb.width + col]; };
@@ -433,23 +433,23 @@ TEST_F(ATMVideoMode_Test, Render_ATM16_NibbleDecodeAndLinearStride)
     ap[40] = 0x0F;
 
     const uint32_t row0 = 44;  // screenOffsetTop
-    _screen->DrawATMMode(68 * 224 + 32);  // q=0 -> px0,px1
-    _screen->DrawATMMode(68 * 224 + 33);  // q=1 -> px2,px3
-    _screen->DrawATMMode(68 * 224 + 34);  // q=2 -> px4,px5
-    _screen->DrawATMMode(68 * 224 + 35);  // q=3 -> px6,px7
-    _screen->DrawATMMode(69 * 224 + 32);  // screenY=1, q=0 -> row 45, px0,px1
+    _screen->Draw(68 * 224 + 32);  // q=0 -> px0,px1
+    _screen->Draw(68 * 224 + 33);  // q=1 -> px2,px3
+    _screen->Draw(68 * 224 + 34);  // q=2 -> px4,px5
+    _screen->Draw(68 * 224 + 35);  // q=3 -> px6,px7
+    _screen->Draw(69 * 224 + 32);  // screenY=1, q=0 -> row 45, px0,px1
 
-    EXPECT_EQ(At(row0, 64), zx16(0x07));  // white
-    EXPECT_EQ(At(row0, 65), zx16(0x01));  // blue
-    EXPECT_EQ(At(row0, 66), zx16(0x00));  // black
-    EXPECT_EQ(At(row0, 67), zx16(0x03));  // magenta
-    EXPECT_EQ(At(row0, 68), zx16(0x0C));  // bright green (bright flag from b6)
-    EXPECT_EQ(At(row0, 69), zx16(0x00));  // black
-    EXPECT_EQ(At(row0, 70), zx16(0x03));  // magenta
-    EXPECT_EQ(At(row0, 71), zx16(0x08));  // bright black renders as black
+    EXPECT_EQ(At(row0, 0), zx16(0x07));  // white
+    EXPECT_EQ(At(row0, 1), zx16(0x01));  // blue
+    EXPECT_EQ(At(row0, 2), zx16(0x00));  // black
+    EXPECT_EQ(At(row0, 3), zx16(0x03));  // magenta
+    EXPECT_EQ(At(row0, 4), zx16(0x0C));  // bright green (bright flag from b6)
+    EXPECT_EQ(At(row0, 5), zx16(0x00));  // black
+    EXPECT_EQ(At(row0, 6), zx16(0x03));  // magenta
+    EXPECT_EQ(At(row0, 7), zx16(0x08));  // bright black renders as black
     // 40-byte stride: byte group 0 of the NEXT line renders from offset 40
-    EXPECT_EQ(At(45, 64), zx16(0x07));
-    EXPECT_EQ(At(45, 65), zx16(0x01));
+    EXPECT_EQ(At(45, 0), zx16(0x07));
+    EXPECT_EQ(At(45, 1), zx16(0x01));
 }
 
 TEST_F(ATMVideoMode_Test, Render_ATMHR_MSBFirstPixelsAndPlaneAlternation)
@@ -460,7 +460,7 @@ TEST_F(ATMVideoMode_Test, Render_ATMHR_MSBFirstPixelsAndPlaneAlternation)
     ASSERT_EQ(_screen->GetVideoMode(), M_ATMHR);
 
     auto& fb = _screen->GetFramebufferDescriptor();
-    ASSERT_EQ(fb.width, 704u);  // 640-px mode: doubled pixel clock, 32-px borders
+    ASSERT_EQ(fb.width, 640u);  // no side border: fullFrameWidth == screenWidth
     ASSERT_EQ(fb.height, 288u);
     auto* px = reinterpret_cast<uint32_t*>(fb.memoryBuffer);
     auto At = [&](uint32_t row, uint32_t col) -> uint32_t& { return px[row * fb.width + col]; };
@@ -476,28 +476,28 @@ TEST_F(ATMVideoMode_Test, Render_ATMHR_MSBFirstPixelsAndPlaneAlternation)
     vp[0x2000] = 0x08;       // bit 3 set -> 5th pixel of group 1 is ink
     ap[0x2000] = 0x02;       // red ink, black paper
 
-    _screen->DrawATMMode(68 * 224 + 32);  // n=0, half=0: group 0 bits 7..4
-    _screen->DrawATMMode(68 * 224 + 34);  // n=1, half=0: group 1 bits 7..4 (plane +0x2000)
-    _screen->DrawATMMode(68 * 224 + 35);  // n=1, half=1: group 1 bits 3..0
+    _screen->Draw(68 * 224 + 32);  // n=0, half=0: group 0 bits 7..4
+    _screen->Draw(68 * 224 + 34);  // n=1, half=0: group 1 bits 7..4 (plane +0x2000)
+    _screen->Draw(68 * 224 + 35);  // n=1, half=1: group 1 bits 3..0
 
     auto ink = [this](uint8_t a) { return _screen->TransformZXSpectrumColorsToRGBA(a, true); };
     auto paper = [this](uint8_t a) { return _screen->TransformZXSpectrumColorsToRGBA(a, false); };
 
     // MSB-first order: px0 <- bit7 (ink), px1..3 <- bits 6..4 (paper)
-    EXPECT_EQ(At(44, 32), ink(0x47));
-    EXPECT_EQ(At(44, 33), paper(0x47));
-    EXPECT_EQ(At(44, 34), paper(0x47));
-    EXPECT_EQ(At(44, 35), paper(0x47));
-    // Group 1 (odd -> plane +0x2000) spans cols 40..47: bits 7..4 paper
-    EXPECT_EQ(At(44, 40), paper(0x02));
-    EXPECT_EQ(At(44, 41), paper(0x02));
-    EXPECT_EQ(At(44, 42), paper(0x02));
-    EXPECT_EQ(At(44, 43), paper(0x02));
+    EXPECT_EQ(At(44, 0), ink(0x47));
+    EXPECT_EQ(At(44, 1), paper(0x47));
+    EXPECT_EQ(At(44, 2), paper(0x47));
+    EXPECT_EQ(At(44, 3), paper(0x47));
+    // Group 1 (odd -> plane +0x2000) spans cols 8..15: bits 7..4 paper
+    EXPECT_EQ(At(44, 8), paper(0x02));
+    EXPECT_EQ(At(44, 9), paper(0x02));
+    EXPECT_EQ(At(44, 10), paper(0x02));
+    EXPECT_EQ(At(44, 11), paper(0x02));
     // Group 1 half=1: px4 <- bit3 (ink), px5..7 <- bits 2..0 (paper)
-    EXPECT_EQ(At(44, 44), ink(0x02));
-    EXPECT_EQ(At(44, 45), paper(0x02));
-    EXPECT_EQ(At(44, 46), paper(0x02));
-    EXPECT_EQ(At(44, 47), paper(0x02));
+    EXPECT_EQ(At(44, 12), ink(0x02));
+    EXPECT_EQ(At(44, 13), paper(0x02));
+    EXPECT_EQ(At(44, 14), paper(0x02));
+    EXPECT_EQ(At(44, 15), paper(0x02));
 }
 
 TEST_F(ATMVideoMode_Test, Render_ATMTX_FontAndCrossPlaneAttrs)
@@ -508,7 +508,7 @@ TEST_F(ATMVideoMode_Test, Render_ATMTX_FontAndCrossPlaneAttrs)
     ASSERT_EQ(_screen->GetVideoMode(), M_ATMTX);
 
     auto& fb = _screen->GetFramebufferDescriptor();
-    ASSERT_EQ(fb.width, 704u);
+    ASSERT_EQ(fb.width, 640u);  // no side border: fullFrameWidth == screenWidth
     auto* px = reinterpret_cast<uint32_t*>(fb.memoryBuffer);
     auto At = [&](uint32_t row, uint32_t col) -> uint32_t& { return px[row * fb.width + col]; };
 
@@ -527,21 +527,21 @@ TEST_F(ATMVideoMode_Test, Render_ATMTX_FontAndCrossPlaneAttrs)
     // Row 0 of 'A': font bits 7..4 at t (half=0), bits 3..0 at t+1 (half=1)
     const uint8_t glyphA = ATM_FONT[0x41];
     const uint8_t glyphB = ATM_FONT[0x42];
-    _screen->DrawATMMode(68 * 224 + 32);  // n=0 half=0: 'A' bits 7..4
-    _screen->DrawATMMode(68 * 224 + 33);  // n=0 half=1: 'A' bits 3..0
-    _screen->DrawATMMode(68 * 224 + 34);  // n=1 half=0: 'B' bits 7..4
+    _screen->Draw(68 * 224 + 32);  // n=0 half=0: 'A' bits 7..4
+    _screen->Draw(68 * 224 + 33);  // n=0 half=1: 'A' bits 3..0
+    _screen->Draw(68 * 224 + 34);  // n=1 half=0: 'B' bits 7..4
 
     auto ink = [this](uint8_t a) { return _screen->TransformZXSpectrumColorsToRGBA(a, true); };
     auto paper = [this](uint8_t a) { return _screen->TransformZXSpectrumColorsToRGBA(a, false); };
 
     for (int k = 0; k < 4; ++k)
     {
-        EXPECT_EQ(At(44, 32 + k), ((glyphA >> (7 - k)) & 1) ? ink(0x47) : paper(0x47));
-        EXPECT_EQ(At(44, 36 + k), ((glyphA >> (3 - k)) & 1) ? ink(0x47) : paper(0x47));
+        EXPECT_EQ(At(44, k), ((glyphA >> (7 - k)) & 1) ? ink(0x47) : paper(0x47));
+        EXPECT_EQ(At(44, 4 + k), ((glyphA >> (3 - k)) & 1) ? ink(0x47) : paper(0x47));
     }
     for (int k = 0; k < 4; ++k)
     {
-        EXPECT_EQ(At(44, 40 + k), ((glyphB >> (7 - k)) & 1) ? ink(0x20) : paper(0x20));
+        EXPECT_EQ(At(44, 8 + k), ((glyphB >> (7 - k)) & 1) ? ink(0x20) : paper(0x20));
     }
 }
 
@@ -560,7 +560,7 @@ TEST_F(ATMVideoMode_Test, Render_ATM_BorderOpaqueAndFullLineCoverage)
 
     // Sweep one full border row (beam line 24 = framebuffer row 0)
     for (uint32_t t = 24 * 224; t < 25 * 224; ++t)
-        _screen->DrawATMMode(t);
+        _screen->Draw(t);
 
     const uint32_t expected = _screen->TransformZXSpectrumColorsToRGBA(0x02, true); // red border
     for (uint32_t col = 0; col < fb.width; ++col)
@@ -582,7 +582,7 @@ TEST_F(ATMVideoMode_Test, Render_ATMTL_DedicatedPageContent)
     ASSERT_EQ(_screen->GetVideoMode(), M_ATMTL);
 
     auto& fb = _screen->GetFramebufferDescriptor();
-    ASSERT_EQ(fb.width, 704u);  // 640-px mode: doubled pixel clock, 32-px borders
+    ASSERT_EQ(fb.width, 640u);  // no side border: fullFrameWidth == screenWidth
     ASSERT_EQ(fb.height, 288u);
     auto* px = reinterpret_cast<uint32_t*>(fb.memoryBuffer);
     auto At = [&](uint32_t row, uint32_t col) -> uint32_t& { return px[row * fb.width + col]; };
@@ -596,8 +596,8 @@ TEST_F(ATMVideoMode_Test, Render_ATMTL_DedicatedPageContent)
     page[0x01C0] = 0x41;   // row 0, even column 0: 'A'
     page[0x31C0] = 0x47;   // even-column attrs
 
-    _screen->DrawATMMode(68 * 224 + 32);  // n=0 half=0: 'A' bits 7..4
-    _screen->DrawATMMode(68 * 224 + 33);  // n=0 half=1: 'A' bits 3..0
+    _screen->Draw(68 * 224 + 32);  // n=0 half=0: 'A' bits 7..4
+    _screen->Draw(68 * 224 + 33);  // n=0 half=1: 'A' bits 3..0
 
     auto ink = [this](uint8_t a) { return _screen->TransformZXSpectrumColorsToRGBA(a, true); };
     auto paper = [this](uint8_t a) { return _screen->TransformZXSpectrumColorsToRGBA(a, false); };
@@ -605,13 +605,13 @@ TEST_F(ATMVideoMode_Test, Render_ATMTL_DedicatedPageContent)
     const uint8_t glyph = ATM_FONT[0x41];
     for (int k = 0; k < 4; ++k)
     {
-        EXPECT_EQ(At(44, 32 + k), ((glyph >> (7 - k)) & 1) ? ink(0x47) : paper(0x47));
-        EXPECT_EQ(At(44, 36 + k), ((glyph >> (3 - k)) & 1) ? ink(0x47) : paper(0x47));
+        EXPECT_EQ(At(44, k), ((glyph >> (7 - k)) & 1) ? ink(0x47) : paper(0x47));
+        EXPECT_EQ(At(44, 4 + k), ((glyph >> (3 - k)) & 1) ? ink(0x47) : paper(0x47));
     }
     // Column 1 renders the blank glyph of code 0 - the all-ink page-5 fill
     // must not leak through as ink pixels
     const uint8_t blank = ATM_FONT[0];
-    EXPECT_EQ(At(44, 40), ((blank >> 7) & 1) ? ink(0x00) : paper(0x00));
+    EXPECT_EQ(At(44, 8), ((blank >> 7) & 1) ? ink(0x00) : paper(0x00));
 }
 
 /// endregion </ATM Renderer Tests>

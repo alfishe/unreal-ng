@@ -1306,10 +1306,10 @@ void EmulatorAPI::insertDisk(const HttpRequestPtr& req,
         path = content.path;
     }
 
-    // Optional autostart - quick-reset into TR-DOS and run the disk (drive A only, off by default)
-    // Supported via JSON body ("autostart": true) or X-Autostart header for raw uploads
+    // Optional autostart - quick-reset into TR-DOS and run the disk (drive A only - a TR-DOS/Beta 128
+    // hardware convention, not a missing feature; requesting it for another drive is a hard error, not
+    // silently ignored). Supported via JSON body ("autostart": true) or X-Autostart header for raw uploads
     bool autostart = false;
-    if (driveNum == 0)
     {
         auto json = req->getJsonObject();
         if (json && json->isMember("autostart"))
@@ -1318,15 +1318,16 @@ void EmulatorAPI::insertDisk(const HttpRequestPtr& req,
             autostart = (req->getHeader("X-Autostart") == "true");
     }
     Emulator::DiskAutostartResult autostartResult;
+    std::string loadError;
     bool success;
     if (autostart)
     {
-        autostartResult = emulator->AutostartDisk(path);
+        autostartResult = emulator->AutostartDisk(path, driveNum);
         success = autostartResult.mounted;
     }
     else
     {
-        success = emulator->LoadDisk(path);
+        success = emulator->LoadDisk(path, driveNum, &loadError);
     }
 
     Json::Value ret;
@@ -1336,7 +1337,14 @@ void EmulatorAPI::insertDisk(const HttpRequestPtr& req,
         ret["autostart_message"] = autostartResult.message;
     }
     ret["status"] = success ? "success" : "error";
-    ret["message"] = success ? "Disk inserted successfully" : "Failed to insert disk (check logs for details)";
+    if (success)
+    {
+        ret["message"] = "Disk inserted successfully";
+    }
+    else
+    {
+        ret["message"] = "Failed to insert disk: " + (autostart ? autostartResult.message : loadError);
+    }
     ret["path"] = path;
     ret["drive"] = drive;
     if (wasUploaded) ret["uploaded"] = true;
