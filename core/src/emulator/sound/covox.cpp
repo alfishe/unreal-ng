@@ -16,6 +16,7 @@
 
 Covox::Covox(EmulatorContext* context, size_t sampleRate)
     : _context(context)
+    , _fitment(context->config.sound.sd ? Fitment::Quad : Fitment::Mono)
     , _sampleRate(sampleRate)
 {
     // Allocate blip_buf accumulators for stereo output
@@ -183,6 +184,43 @@ uint8_t Covox::portDeviceInMethod([[maybe_unused]] uint16_t port)
     return 0xFF;
 }
 
+namespace
+{
+    /// Shared mask/match test for tryClaimOut/In: whether rawPort is one of
+    /// the addresses this Covox instance's fitment answers on
+    bool MatchesFitment(Covox::Fitment fitment, uint16_t rawPort)
+    {
+        uint8_t lowByte = rawPort & 0xFF;
+        switch (fitment)
+        {
+            case Covox::Fitment::Quad:
+                return (lowByte & Covox::PORT_MASK) == Covox::PORT_MATCH ||
+                       (lowByte & Covox::PORT_MASK_MODE1) == Covox::PORT_MATCH_MODE1;
+            case Covox::Fitment::Mono:
+                return lowByte == (Covox::PORT_RIGHT_B & 0xFF);
+        }
+        return false;
+    }
+}
+
+bool Covox::tryClaimOut(uint16_t rawPort, uint8_t value)
+{
+    if (!MatchesFitment(_fitment, rawPort))
+        return false;
+
+    portDeviceOutMethod(rawPort, value);
+    return true;
+}
+
+bool Covox::tryClaimIn(uint16_t rawPort, uint8_t& outValue)
+{
+    if (!MatchesFitment(_fitment, rawPort))
+        return false;
+
+    outValue = portDeviceInMethod(rawPort);
+    return true;
+}
+
 Covox::Channel Covox::portToChannel(uint16_t port)
 {
     uint8_t lowByte = port & 0xFF;
@@ -204,8 +242,9 @@ void Covox::portDeviceOutMethod(uint16_t port, uint8_t value)
 {
     // COVOX/SOUNDRIVE mode-2 mirror ports: #F1, #F3, #F9, #FB (bits[7:4]=1111,
     // bit2=0, bit0=1). Mode-1 primary ports: #0F, #1F, #4F, #5F (bit7=0,
-    // bit5=1, bits[3:0]=1111) - the caller (PortDecoder_Pentagon128) only
-    // forwards these once TR-DOS has released the aliased Beta128 addresses
+    // bit5=1, bits[3:0]=1111) - tryClaimOut() (or a direct caller, e.g. a
+    // test) already applied the Fitment/mask check; this re-checks
+    // defensively since portDeviceOutMethod() is still reachable directly
     uint8_t lowByte = port & 0xFF;
     bool isMode2 = (lowByte & PORT_MASK) == PORT_MATCH;
     bool isMode1 = (lowByte & PORT_MASK_MODE1) == PORT_MATCH_MODE1;

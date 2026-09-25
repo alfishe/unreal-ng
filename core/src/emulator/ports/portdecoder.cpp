@@ -1,5 +1,6 @@
 #include "portdecoder.h"
 
+#include <algorithm>
 #include <cassert>
 
 #include "base/featuremanager.h"
@@ -1197,6 +1198,50 @@ void PortDecoder::UnregisterPortHandler(uint16_t port)
         _portDevices.erase(port);
         _portDeviceTags.erase(port);
     }
+}
+
+bool PortDecoder::RegisterSelfDecodingDevice(PortDevice* device)
+{
+    bool result = false;
+
+    if (device && std::find(_selfDecodingDevices.begin(), _selfDecodingDevices.end(), device) == _selfDecodingDevices.end())
+    {
+        _selfDecodingDevices.push_back(device);
+        result = true;
+    }
+
+    return result;
+}
+
+void PortDecoder::UnregisterSelfDecodingDevice(PortDevice* device)
+{
+    auto it = std::find(_selfDecodingDevices.begin(), _selfDecodingDevices.end(), device);
+    if (it != _selfDecodingDevices.end())
+    {
+        _selfDecodingDevices.erase(it);
+    }
+}
+
+bool PortDecoder::DispatchSelfDecodingOut(uint16_t rawPort, uint8_t value)
+{
+    for (PortDevice* device : _selfDecodingDevices)
+    {
+        if (device->tryClaimOut(rawPort, value))
+            return true;
+    }
+
+    return false;
+}
+
+bool PortDecoder::DispatchSelfDecodingIn(uint16_t rawPort, uint8_t& outValue)
+{
+    for (PortDevice* device : _selfDecodingDevices)
+    {
+        if (device->tryClaimIn(rawPort, outValue))
+            return true;
+    }
+
+    return false;
 }
 
 /// Pass port IN operation to the peripheral device registered to handle specified port

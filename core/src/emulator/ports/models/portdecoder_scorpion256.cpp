@@ -263,18 +263,41 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
         // stay undecoded so Z80::in() serves the floating bus. While the monitor
         // is paged (#1FFD bit1) or the trigger is armed the FDC keeps answering -
         // the monitor polls it right after unpaging (hardware-reference 12.3,
-        // MISTer bug 2) and MAME selects the same DOS I/O view on the trigger
-        disp.wasBeta128Gated = true;
+        // MISTer bug 2) and MAME selects the same DOS I/O view on the trigger.
+        //
+        // #1F/#5F also alias SoundDrive mode 1 (Covox::PORT_LEFT_B_MODE1/
+        // PORT_RIGHT_B_MODE1) - give it a chance before falling back to the
+        // floating bus, same precedence as Pentagon (PortDecoder_Pentagon128
+        // ::DecodePortIn)
+        if (DispatchSelfDecodingIn(port, result))
+        {
+            _lastPortDecoded = true;
+            disp.decodedPort = port;
+        }
+        else
+        {
+            disp.wasBeta128Gated = true;
+        }
     }
     else
     {
         // Beta128 mirrors dispatch through the canonical registered device
-        // key; everything else keeps its identity (Covox etc.)
+        // key; everything else keeps its identity. Self-decoding peripherals
+        // (Covox/SoundDrive mode 1 or 2 - see DecodePortOut) are tried before
+        // the exact-address map, since they are never registered there
         const uint16_t dispatchPort = isBeta128 ? beta128Port : port;
-        result = PeripheralPortIn(dispatchPort);
-        // Identity decode: mark decoded only when a device actually responded
-        if (_lastPortDecoded)
-            disp.decodedPort = dispatchPort;
+        if (!isBeta128 && DispatchSelfDecodingIn(port, result))
+        {
+            _lastPortDecoded = true;
+            disp.decodedPort = port;
+        }
+        else
+        {
+            result = PeripheralPortIn(dispatchPort);
+            // Identity decode: mark decoded only when a device actually responded
+            if (_lastPortDecoded)
+                disp.decodedPort = dispatchPort;
+        }
     }
 
     // Scorpion floating bus (programmer's manual, port #FF): a read from ANY
@@ -429,16 +452,35 @@ void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16
         disp.wasBeta128Gated = isBeta128;  // trace attribution: FDC off the bus
     }
 
-    // Gated FDC writes without a border collision: hardware ignores them
+    // Gated FDC writes without a border collision: hardware ignores them,
+    // unless a self-decoding peripheral claims the address instead - #1F/#5F
+    // also alias SoundDrive mode 1 (Covox::PORT_LEFT_B_MODE1/PORT_RIGHT_B_MODE1)
     else if (isBeta128)
     {
-        disp.wasBeta128Gated = true;
+        if (DispatchSelfDecodingOut(port, value))
+        {
+            disp.decodedPort = port;
+            disp.wasDecoded = true;
+        }
+        else
+        {
+            disp.wasBeta128Gated = true;
+        }
     }
 
-    // Everything else: registered peripherals (Covox etc.)
+    // Everything else: self-decoding peripherals first (Covox/SoundDrive mode
+    // 1 or 2 - never registered in the exact-address map), then whatever else
+    // is registered there
     else
     {
-        PeripheralPortOut(port, value);
+        if (DispatchSelfDecodingOut(port, value))
+        {
+            disp.decodedPort = port;
+        }
+        else
+        {
+            PeripheralPortOut(port, value);
+        }
         disp.wasDecoded = true;
     }
 

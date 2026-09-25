@@ -65,9 +65,9 @@ public:
 };
 
 /// SoundDrive 1.05 mode 2 (SD=1): all four ports (#F1 L-A, #F3 L-B, #F9 R-A,
-/// #FB R-B) must reach the DAC - decoder dispatch is an exact-address map,
-/// so a port that is not registered is silently dropped (previously only #FB
-/// was wired and the quad was dead)
+/// #FB R-B) must reach the DAC. Covox is a self-decoding device
+/// (RegisterSelfDecodingDevice), tried via DispatchSelfDecodingOut() - not
+/// wired into the exact-address port-device map at all
 TEST_F(CovoxTest, SoundDriveWiresAllFourQuadPorts)
 {
     EmulatorContext* ctx2 = new EmulatorContext(LoggerLevel::LogError);
@@ -86,10 +86,24 @@ TEST_F(CovoxTest, SoundDriveWiresAllFourQuadPorts)
     const uint16_t ports[4] = {Covox::PORT_LEFT_A, Covox::PORT_LEFT_B, Covox::PORT_RIGHT_A, Covox::PORT_RIGHT_B};
     for (int i = 0; i < 4; i++)
     {
-        decoder.PeripheralPortOut(ports[i], 0xFF);
+        EXPECT_TRUE(decoder.DispatchSelfDecodingOut(ports[i], 0xFF));
         uint8_t latches[4];
         covox->TTDSaveState(latches);
         EXPECT_EQ(latches[i], 0xFF) << "quad port index " << i << " did not reach the DAC";
+    }
+
+    // Mode 1 (#0F/#1F/#4F/#5F) reaches the same 4 physical channels via the
+    // self-decoding path too - the model decoders are responsible for the
+    // TR-DOS/Beta128 precedence, DispatchSelfDecodingOut() itself is unaware
+    // of that arbitration and always tries Covox
+    const uint16_t mode1Ports[4] = {Covox::PORT_LEFT_A_MODE1, Covox::PORT_LEFT_B_MODE1,
+                                     Covox::PORT_RIGHT_A_MODE1, Covox::PORT_RIGHT_B_MODE1};
+    for (int i = 0; i < 4; i++)
+    {
+        EXPECT_TRUE(decoder.DispatchSelfDecodingOut(mode1Ports[i], 0x11 + i));
+        uint8_t latches[4];
+        covox->TTDSaveState(latches);
+        EXPECT_EQ(latches[i], 0x11 + i) << "mode-1 port index " << i << " did not reach the DAC";
     }
 
     sm2->detachFromPorts();
@@ -99,15 +113,13 @@ TEST_F(CovoxTest, SoundDriveWiresAllFourQuadPorts)
 }
 
 /// Regression: SoundManager::attachToPorts() runs before the Beta disk's
-/// (core.cpp), so if Covox registered SoundDrive "mode 1" at the literal
-/// #0F/#1F/#4F/#5F, it would win the exact-address dispatch-map race and
-/// WD1793's later RegisterPortHandler(0x001F, ...) etc. would silently no-op
-/// - breaking disk access outright whenever SD=1, regardless of TR-DOS state
-/// (this is exactly what broke WD1793_Integration_Test.TRDOS_FORMAT_
-/// FullOperation during development). Covox must claim marked keys
-/// (Covox::PORT_*_MODE1, raw port | 0x0100) instead, leaving the raw FDC
-/// addresses free for a real Beta128/WD1793 registration
-TEST_F(CovoxTest, SoundDriveModeOneDoesNotStealBeta128Addresses)
+/// (core.cpp). Covox is registered as a self-decoding device
+/// (RegisterSelfDecodingDevice), not in the exact-address port-device map,
+/// so it can never collide with WD1793's RegisterPortHandler(0x001F, ...)
+/// etc. regardless of registration order - this is what broke
+/// WD1793_Integration_Test.TRDOS_FORMAT_FullOperation when SoundDrive mode 1
+/// was first wired at the raw #0F/#1F/#4F/#5F addresses
+TEST_F(CovoxTest, SoundDriveDoesNotStealBeta128Addresses)
 {
     EmulatorContext* ctx2 = new EmulatorContext(LoggerLevel::LogError);
     ctx2->config.sound.covoxFB = 0;
@@ -164,12 +176,13 @@ TEST_F(CovoxTest, CovoxFBAloneWiresOnlyMonoPort)
     const uint16_t quadOnly[3] = {Covox::PORT_LEFT_A, Covox::PORT_LEFT_B, Covox::PORT_RIGHT_A};
     for (int i = 0; i < 3; i++)
     {
-        decoder.PeripheralPortOut(quadOnly[i], 0xFF);
+        EXPECT_FALSE(decoder.DispatchSelfDecodingOut(quadOnly[i], 0xFF))
+            << "mono fitment must decline quad-only port index " << i;
         covox->TTDSaveState(latches);
         EXPECT_EQ(latches[i], 0x80) << "quad-only port index " << i << " should stay at the silence midpoint";
     }
 
-    decoder.PeripheralPortOut(Covox::PORT_RIGHT_B, 0xFF);
+    EXPECT_TRUE(decoder.DispatchSelfDecodingOut(Covox::PORT_RIGHT_B, 0xFF));
     covox->TTDSaveState(latches);
     EXPECT_EQ(latches[3], 0xFF);
 
