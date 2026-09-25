@@ -502,6 +502,21 @@ TEST_F(FusePhase_Test, AllOpcodes)
     // is handled structurally in runCase, not by exclusion.)
     static const std::set<std::string> skipAF = {"edb2_1", "edb3_1", "edb9_2", "edbb_1"};
 
+    // tests.expected was corrected (not skipped) for the *repeat* iteration
+    // of the four block I/O instructions (INIR/OTIR/INDR/OTDR when B-1 != 0
+    // and the instruction loops back on itself): edb2_1, edb3_1, edba_1,
+    // edbb_1. The classic FUSE vectors here (~2003-2004, Patrik Rak's early
+    // notes) expected MEMPTR = BC_before +-1 unconditionally, the same
+    // formula used on the non-repeating exit. Later hardware-level analysis
+    // (z80test's z80memptr suite, cross-checked against real NMOS Z80
+    // silicon) showed the repeat iteration re-uses the internal WZ/MEMPTR
+    // latch for the relative-jump-back address instead: MEMPTR = PC_of_the_ED_prefix + 1
+    // (in these vectors PC = 0x0000 at the start of the instruction, so the
+    // corrected value is 0x0001 in all four). core/src/3rdparty/unreal-z80
+    // implements the silicon-verified behavior; the four final-register
+    // lines were updated accordingly instead of exempted, since the old
+    // values are simply wrong, not a legitimate implementation choice.
+
     int passed = 0, failed = 0;
     std::string failureReport;
 

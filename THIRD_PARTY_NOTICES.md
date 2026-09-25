@@ -29,6 +29,7 @@ Portions Copyright (C) SMT, Alone Coder, deathsoft. The license of the original 
 | simple-fft | `core/src/3rdparty/simple-fft/` | MIT | header |
 | CLI11 2.5.0 | `core/src/3rdparty/cli11/`, `core/automation/cli/lib/cli11/` | BSD-3-Clause | header |
 | message-center | `core/src/3rdparty/message-center/` | project code (GPL-3.0-or-later) | static |
+| unreal-z80 @ bc988168 (Z80 opcode execution engine behind the `Z80` class; local patches, see `PATCHES.md` there) | `core/src/3rdparty/unreal-z80/` | project code (extracted from this repository's Z80 core, see Heritage) | static |
 | gif.h (Charlie Tangora) | `core/recording/src/3rdparty/gif/` | Public domain | static |
 | NVIDIA nvEncodeAPI.h | `core/recording/src/platform/windows/nvEncodeAPI.h` | MIT | header; the driver DLL is loaded at run time and never shipped |
 | Drogon 1.9.11 | `core/automation/webapi/lib/drogon/` | MIT | static |

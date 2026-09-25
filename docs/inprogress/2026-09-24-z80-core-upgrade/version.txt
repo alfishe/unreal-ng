@@ -1,0 +1,26 @@
+Note:      This file documents core/src/3rdparty/unreal-z80/ (repo-root-
+           relative) - it lives here in docs/inprogress/ alongside
+           patches.md rather than inside the vendored directory itself.
+
+Upstream:  unreal-z80 (standalone Z80 CPU library extracted from this
+           emulator's core/src/emulator/cpu)
+Commit:    b7451bdbf5afad1de74004e0a7d573a39c6266e2 (2026-09-24)
+Version:   0.2.0
+
+Copied from upstream z80lib/: include/z80cpu.h and every file of src/
+(z80cpu.cpp, z80tables.cpp, z80daa.cpp, opcodes-flat.cpp,
+opcodes-paged.cpp, opcodes-callback.cpp, z80cpu-internal.h,
+z80cpu-dispatch.h, z80cpu-opcodes.inc, z80step.inc, z80tables-data.inc,
+opcodes-base.inc, opcodes-cb.inc, opcodes-dd.inc, opcodes-fd.inc,
+opcodes-ed.inc, opcodes-xxcb.inc). Not copied: the upstream CMake project,
+tests, demo, benchmarks, docs and thirdparty/z80ex.
+
+License: MIT (LICENSE, copied verbatim from upstream). The project's own
+code; see upstream LICENSE for the copyright line.
+
+Local modifications: none. The six changes that were previously carried as
+a local patch (Z80Lib namespace, INT/NMI-ack and halted-M1 contention
+hooks, Z80CpuRegHalted, bulk register accessors, RETN hook) were upstreamed
+in library version 0.2.0 (commit faf7b7b onward) and are now part of this
+copy verbatim. See PATCHES.md for the history and for what to check on the
+next upgrade.

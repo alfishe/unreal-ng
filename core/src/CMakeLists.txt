@@ -86,6 +86,19 @@ set_source_files_properties(${YMFM_CPP} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 if (NOT CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
     set_source_files_properties(${YMFM_CPP} PROPERTIES COMPILE_OPTIONS "-Wno-unused-parameter")
 endif()
+
+# unreal-z80 (Z80 opcode execution engine behind the Z80 class): vendored at
+# 3rdparty/unreal-z80/{include,src} and picked up by the recursive *.cpp glob
+# above; the opcode units (*.inc) are #included by the three bus builds
+# (opcodes-flat/paged/callback.cpp). The library is self-contained C++17, so
+# its sources skip stdafx.h, and they resolve "z80cpu.h" from its own include
+# dir, scoped to these files only (the core includes the public header by its
+# 3rdparty/ path). Warning-clean under our -Wall -Wextra -Werror. See
+# 3rdparty/unreal-z80/PATCHES.md for the local patches.
+file (GLOB UNREALZ80_CPP ${SOURCE_DIR}/3rdparty/unreal-z80/src/*.cpp)
+set_source_files_properties(${UNREALZ80_CPP} PROPERTIES
+    SKIP_PRECOMPILE_HEADERS ON
+    INCLUDE_DIRECTORIES "${SOURCE_DIR}/3rdparty/unreal-z80/include")
 message("CPP_FILES:${CPP_FILES}")
 
 set (SOURCES ${CPP_FILES})

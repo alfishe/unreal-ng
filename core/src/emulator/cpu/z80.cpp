@@ -1,6 +1,7 @@
 #include "z80.h"
 
 #include "3rdparty/message-center/messagecenter.h"
+#include "3rdparty/unreal-z80/include/z80cpu.h"
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
 #include "common/timehelper.h"
@@ -8,7 +9,6 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/ttd/timetravelmanager.h"
-#include "emulator/cpu/op_noprefix.h"
 #include "emulator/cpu/opcode_profiler.h"
 #include "emulator/emulator.h"
 #include "emulator/io/fdc/diskautostart.h"
@@ -22,6 +22,259 @@
 #include "emulator/video/screen.h"
 #include "emulator/video/ulacontention.h"
 #include "stdafx.h"
+
+/// region <Execution engine bridge>
+
+/// Callback trampolines between the vendored unreal-z80 engine (opaque C API,
+/// 3rdparty/unreal-z80) and the Z80 instance that owns it (userData).
+///
+/// The engine executes opcodes; everything around it stays host logic and is
+/// reached through these callbacks with the same observable behavior the
+/// in-class interpreter had:
+///  - memory and ports go through MemIf / the port decoder / floating bus /
+///    busTraceHook (the *NoContention helpers shared with rd/wd/in/out);
+///  - ULA contention is returned from the engine's wait-state hook at the
+///    first T of each cycle - the same T the interpreter evaluated it at. The
+///    hook is installed only while the model has contention enabled
+///    (UpdateEngineContention), so uncontended models pay nothing for it;
+///  - the opcode-fetch bookkeeping (m1_pc, m1TraceHook, TTD coverage/probe)
+///    and the decoded prefix/opcode fields follow the interpreter's rules.
+///
+/// Opcode fetches are recognized from the instruction byte stream itself:
+/// the engine flags every instruction-stream read (m1State != 0 - opcode,
+/// prefix, operand and displacement bytes alike, see z80cpu.h), and the
+/// prefix structure decides which of those bytes are opcode (M1) fetches -
+/// the first byte, the byte after a CB/ED/DD/FD prefix, and the byte after
+/// the displacement of DD CB d / FD CB d. So this is known before the read,
+/// and the bookkeeping runs ahead of it exactly as in m1_cycle().
+///
+/// Timing: the engine counts plain T-states, the host counts tt (t << 8 plus
+/// a fraction, advanced by cycles * rate). Before any host code runs inside
+/// an instruction the host tt is set to the equivalent of the engine's
+/// current T, so ULA/screen/sound/port code observes exactly the T it did
+/// before. A tt change made by host code inside a callback (hardware turbo
+/// rescaling from a port write) is carried over into the rest of the
+/// instruction and its end time.
+struct Z80EngineBridge
+{
+    static void Wire(Z80CPU* engine, Z80* cpu)
+    {
+        Z80CpuSetMemoryBus(engine, &MemRead, cpu, &MemWrite, cpu);
+        Z80CpuSetPortBus(engine, &PortIn, cpu, &PortOut, cpu);
+        Z80CpuSetRetnFn(engine, &Retn, cpu);
+
+        // Wait-state hook: see Z80::UpdateEngineContention (installed on demand).
+        // INT and NMI acceptance stay host-driven (ProcessInterrupts /
+        // HandleINT), so the engine's IM2 vector hook is not used. RETI has no
+        // host consumer (no Z80 PIO/CTC daisy chain is emulated) - unwired.
+    }
+
+    static void SetContention(Z80CPU* engine, Z80* cpu, bool enabled)
+    {
+        Z80CpuSetContendFn(engine, enabled ? &Contend : nullptr, cpu);
+    }
+
+    static uint8_t MemRead(Z80CPU* engine, uint16_t addr, int m1State, void* userData)
+    {
+        Z80& cpu = *static_cast<Z80*>(userData);
+        const uint32_t engineT = Z80CpuTstates(engine);
+
+        // Opcode (M1) fetch: decided by the instruction structure, before the
+        // read (see the region comment)
+        const bool isOpcodeFetch = m1State != 0 && cpu._engineExpectOpcode;
+        if (isOpcodeFetch)
+        {
+            // Continuation fetches (CB opcode byte, DD/FD chain) are
+            // instruction-start fetches for the bookkeeping while the
+            // interpreter's prefix was still 0; it ran at the start of the M1
+            // cycle, 3 T before the data transfer (instruction-stream reads are
+            // never contended). The first fetch was already handled by Z80Step
+            if (cpu._engineM1Count > 0 && cpu.prefix == 0x0000)
+            {
+                cpu.PublishEngineTime(engineT - 3);
+                const uint32_t published = cpu.tt;
+                cpu.OnInstructionFetch(addr);
+                cpu.AbsorbHostTimeChange(published);
+            }
+        }
+
+        cpu.PublishEngineTime(engineT);
+        const uint32_t published = cpu.tt;
+
+        // m1State is set for the opcode fetch and for every instruction-stream
+        // byte (operands, displacements) - exactly the reads the interpreter
+        // issued as rd(addr, isExecution = true)
+        const uint8_t value = cpu.MemoryReadNoContention(addr, m1State != 0);
+
+        if (isOpcodeFetch)
+            OnOpcodeByte(cpu, value);
+        else if (m1State != 0 && cpu._engineIndexCbDisplacement)
+        {
+            // DD CB d / FD CB d: the displacement is followed by the opcode byte
+            cpu._engineIndexCbDisplacement = false;
+            cpu._engineExpectOpcode = true;
+        }
+
+        cpu.AbsorbHostTimeChange(published);
+        return value;
+    }
+
+    static void MemWrite(Z80CPU* engine, uint16_t addr, uint8_t value, void* userData)
+    {
+        Z80& cpu = *static_cast<Z80*>(userData);
+        cpu.PublishEngineTime(Z80CpuTstates(engine));
+        const uint32_t published = cpu.tt;
+
+        cpu.MemoryWriteNoContention(addr, value);
+
+        cpu.AbsorbHostTimeChange(published);
+    }
+
+    static uint8_t PortIn(Z80CPU* engine, uint16_t port, void* userData)
+    {
+        Z80& cpu = *static_cast<Z80*>(userData);
+        cpu.PublishEngineTime(Z80CpuTstates(engine));
+        const uint32_t published = cpu.tt;
+
+        // Port handlers may inspect Z80::pc: expose the mid-instruction value
+        // the interpreter had there (past the instruction's fetched bytes)
+        cpu.pc = Z80CpuGetReg(engine, Z80CpuRegPc);
+
+        const uint8_t value = cpu.PortInNoContention(port);
+
+        cpu.AbsorbHostTimeChange(published);
+        return value;
+    }
+
+    static void PortOut(Z80CPU* engine, uint16_t port, uint8_t value, void* userData)
+    {
+        Z80& cpu = *static_cast<Z80*>(userData);
+        cpu.PublishEngineTime(Z80CpuTstates(engine));
+        const uint32_t published = cpu.tt;
+
+        cpu.pc = Z80CpuGetReg(engine, Z80CpuRegPc);
+
+        cpu.PortOutNoContention(port, value);
+
+        cpu.AbsorbHostTimeChange(published);
+    }
+
+    /// Wait-state hook (ULA contention): called at the first T of every bus
+    /// cycle while installed
+    static int Contend(Z80CPU* engine, uint16_t addr, Z80CpuAccessKind kind, void* userData)
+    {
+        Z80& cpu = *static_cast<Z80*>(userData);
+        UlaContention* ula = cpu._context->pUlaContention;
+        if (ula == nullptr)
+            return 0;
+
+        switch (kind)
+        {
+            case Z80CpuAccessRead:
+            case Z80CpuAccessWrite:
+                if (!ula->IsAddressContended(addr))
+                    return 0;
+
+                // Same T as rd()/wd(): the cycle start, before the access
+                cpu.PublishEngineTime(Z80CpuTstates(engine));
+                return ula->GetContentionDelay();
+
+            case Z80CpuAccessPortIn:
+            case Z80CpuAccessPortOut:
+                // in()/out() evaluated IO contention at the IORQ T-state, one T
+                // into the IO cycle
+                cpu.PublishEngineTime(Z80CpuTstates(engine) + 1);
+                return ula->GetIOContentionDelay(addr);
+
+            default:
+                // Instruction-stream reads (M1, operands) were never contended
+                // by rd(addr, true); the post-IORQ extension is not modeled by
+                // UlaContention
+                return 0;
+        }
+    }
+
+    /// RETN ends the NMI service session
+    static void Retn(Z80CPU*, void* userData)
+    {
+        static_cast<Z80*>(userData)->retn();
+    }
+
+    /// Decoded-operation fields, the "prefix" state that gates the opcode
+    /// fetch bookkeeping, and whether the next instruction-stream byte is an
+    /// opcode - reproduced from the interpreter's rules:
+    ///  - XX         -> prefix 0,      opcode XX
+    ///  - CB XX      -> prefix 0xCB,   opcode XX (the XX fetch still counted
+    ///                  as an instruction-start fetch: prefix was set after it)
+    ///  - ED XX      -> prefix 0xED,   opcode XX (prefix set before the fetch)
+    ///  - DD/FD.. XX -> prefix 0xDD/FD (last one), every fetch counted
+    ///  - DD/FD CB d XX -> prefix 0xDDCB/0xFDCB, opcode XX (not counted)
+    ///  - DD/FD ED XX   -> prefix 0, opcode XX (all fetches counted)
+    static void OnOpcodeByte(Z80& cpu, uint8_t value)
+    {
+        const uint8_t index = cpu._engineM1Count++;
+        const bool afterEd = index > 0 && cpu._engineLastM1Byte == 0xED;
+        const bool isIndexPrefix = (value | 0x20) == 0xFD;
+
+        cpu.opcode = value;
+        cpu._engineLastM1Byte = value;
+        cpu._engineExpectOpcode = false;  // Default: this was the final opcode byte
+
+        // LD R,A (ED 4F) is the only instruction that writes R (see
+        // ExecuteEngineInstruction for why the host needs to know)
+        if (afterEd && value == 0x4F)
+            cpu._engineWroteR = true;
+
+        if (index == 0)
+        {
+            if (value == 0xED)
+                cpu.prefix = 0x00ED;
+            else if (value == 0xCB)
+                cpu._engineCbPending = true;
+            else if (isIndexPrefix)
+                cpu._engineIndexPrefix = value;
+            else
+                return;
+
+            cpu._engineExpectOpcode = true;  // A prefix: the opcode byte follows
+            return;
+        }
+
+        if (cpu._engineCbPending)
+        {
+            cpu._engineCbPending = false;
+            cpu.prefix = 0x00CB;
+            return;
+        }
+
+        if (cpu._engineIndexPrefix != 0 && !cpu._engineIndexResolved)
+        {
+            if (isIndexPrefix)
+            {
+                cpu._engineIndexPrefix = value;
+                cpu._engineExpectOpcode = true;
+                return;
+            }
+
+            cpu._engineIndexResolved = true;
+            if (value == 0xCB)
+            {
+                cpu.prefix = static_cast<uint16_t>(cpu._engineIndexPrefix * 0x100 + 0xCB);
+                cpu._engineIndexCbDisplacement = true;  // d, then the opcode byte
+            }
+            else if (value == 0xED)
+            {
+                cpu._engineExpectOpcode = true;  // prefix stays 0 (interpreter quirk)
+            }
+            else
+            {
+                cpu.prefix = cpu._engineIndexPrefix;
+            }
+        }
+    }
+};
+
+/// endregion </Execution engine bridge>
 
 /// region <Constructors / Destructors>
 
@@ -90,6 +343,15 @@ Z80::Z80(EmulatorContext* context) : Z80State{}
 
     // Create opcode profiler
     _opcodeProfiler = new OpcodeProfiler(context);
+
+    // Opcode execution engine: callback bus wired to this instance (see
+    // Z80EngineBridge) - never the flat/paged fast paths, so every access
+    // keeps flowing through MemIf, the port decoder, ULA contention and the
+    // debug/trace hooks exactly as the in-class interpreter did
+    _engine = Z80CpuCreate();
+    if (_engine == nullptr)
+        throw std::bad_alloc();
+    Z80EngineBridge::Wire(_engine, this);
 }
 
 Z80::~Z80()
@@ -110,6 +372,12 @@ Z80::~Z80()
     {
         delete _opcodeProfiler;
         _opcodeProfiler = nullptr;
+    }
+
+    if (_engine)
+    {
+        Z80CpuDestroy(_engine);
+        _engine = nullptr;
     }
 
     _context = nullptr;
@@ -362,19 +630,21 @@ void Z80::Z80Step(bool skipBreakpoints)
         // Preserve previous PC register state
         cpu.prev_pc = m1_pc;
 
-        // Save F register before opcode execution (for Q register update)
-        uint8_t prev_f = cpu.f;
-
         // Regular Z80 bus cycle
-        // 1. Fetch opcode (Z80 M1 bus cycle)
+        // 1. Opcode fetch bookkeeping (m1_pc, m1TraceHook, TTD coverage /
+        // probe) for the instruction's first M1 cycle. Runs before the engine
+        // loads the registers, so a hook that patches CPU state at the fetch
+        // (e.g. redirects PC) takes effect exactly as with the former in-class
+        // m1_cycle(). The fetch itself happens inside the engine step below
         cpu.prefix = 0x0000;
-        cpu.opcode = m1_cycle();
+        OnInstructionFetch(cpu.pc);
 
         // 1a. Call trace hook (pre-execution) — appends control-flow events
         // while a calltrace session is capturing; the decoder wants the
         // register state the instruction acts on (SP before CALL pushes /
         // RET pops). The cached feature flag keeps this to a single bool check
-        // when calltrace is off
+        // when calltrace is off. It decodes the instruction from memory at
+        // m1_pc, so it does not depend on the fetch having happened
         if (_feature_calltrace_enabled && _memory != nullptr)
         {
             MemoryAccessTracker& tracker = _memory->GetAccessTracker();
@@ -385,8 +655,10 @@ void Z80::Z80Step(bool skipBreakpoints)
             }
         }
 
-        // 2. Emulate fetched Z80 opcode
-        (normal_opcode[opcode])(&cpu);
+        // 2. Fetch and execute the instruction (vendored unreal-z80 engine).
+        // Leaves prefix/opcode, all registers, Q, MEMPTR, EI shadow and HALT
+        // state in the Z80State fields
+        ExecuteEngineInstruction();
 
         // 2a. Opcode profiling hook (after opcode execution)
         if (_feature_opcodeprofiler_enabled && _opcodeProfiler)
@@ -394,21 +666,10 @@ void Z80::Z80Step(bool skipBreakpoints)
             _opcodeProfiler->LogExecution(m1_pc, prefix, opcode, f, a, _context->emulatorState.frame_counter, t);
         }
 
-        // 3. Update Q register based on whether flags were modified
-        // Q captures YF/XF from flag-modifying instructions only
-        // SCF/CCF update Q internally even if F doesn't numerically change
-        if (cpu.f != prev_f)
-        {
-            cpu.q = cpu.f & 0x28;  // Flags changed: capture YF/XF
-        }
-        else if (cpu.opcode == 0x37 || cpu.opcode == 0x3F)
-        {
-            // SCF/CCF set Q internally, preserve their value
-        }
-        else
-        {
-            cpu.q = 0;  // Non-flag-modifying instruction: Q=0
-        }
+        // 3. Q register: maintained by the engine per instruction class (a
+        // flag-writing instruction loads Q = F & 0x28 even when F is
+        // numerically unchanged; POP AF / EX AF,AF' and non-flag
+        // instructions clear it) and synced back with the other registers
     }
 
     /// region <Debug trace capture>
@@ -590,42 +851,7 @@ uint8_t Z80::m1_cycle()
 
     // Record PC for current opcode (prefixes should not alter original PC)
     if (prefix == 0x0000)
-    {
-        m1_pc = cpu.pc;
-
-        if (m1TraceHook)
-            m1TraceHook(m1_pc);
-
-        // Per-frame execution coverage for reverse search. One predictable
-        // branch on a plain bool when recording is off, which is the common
-        // case; the page lookup and the append only happen while a session is
-        // actually capturing. This is the only record that a frame executed a
-        // given address - instruction fetches are not journalled - so without
-        // it a reverse breakpoint has no choice but to replay every frame.
-        if (_context->ttdCoverageActive && _context->pTimeTravelManager != nullptr)
-        {
-            _context->pTimeTravelManager->RecordExecutedCoverage(
-                _memory->GetPhysPageForZ80Address(m1_pc), m1_pc);
-        }
-
-        // Phase 4 - access probe for Execute access type (TDD 9.2).
-        // Fires once per instruction at the M1 (instruction fetch) cycle.
-        if (_context->ttdProbe.IsArmed())
-        {
-            // Resolve the bank the opcode was fetched from, so a reverse
-            // breakpoint can distinguish "PC 0xC000 in page 3" from the same
-            // address reached with a different page banked in. Code executing
-            // from ROM reports kPhysPageNone.
-            const uint8_t execPhysPage = _memory->GetPhysPageForZ80Address(m1_pc);
-            if (_context->ttdProbe.Matches(m1_pc, ttd::TTDAccessType::Execute, 0, m1_pc, execPhysPage))
-            {
-                const auto& st = _context->emulatorState;
-                const ttd::TTDTimePoint tp{st.frame_counter, t};
-                _context->ttdProbe.RecordHit(tp, m1_pc, /*value=*/0, execPhysPage,
-                                              ttd::TTDAccessType::Execute);
-            }
-        }
-    }
+        OnInstructionFetch(cpu.pc);
 
     // Z80 CPU M1 cycle logic
     r_low = ((r_low + 1) & 0x7f) | (r_low & 0x80);  // Keep memory refresh register ticking
@@ -640,6 +866,47 @@ uint8_t Z80::m1_cycle()
     IncrementCPUCyclesCounter(1);
 
     return opcode;
+}
+
+/// Opcode fetch bookkeeping, shared by m1_cycle() and the engine bridge.
+/// Called at the start of an M1 cycle whose fetch counts as an instruction
+/// start (the core's "prefix == 0" fetches - see Z80EngineBridge).
+void Z80::OnInstructionFetch(uint16_t fetchPc)
+{
+    m1_pc = fetchPc;
+
+    if (m1TraceHook)
+        m1TraceHook(m1_pc);
+
+    // Per-frame execution coverage for reverse search. One predictable
+    // branch on a plain bool when recording is off, which is the common
+    // case; the page lookup and the append only happen while a session is
+    // actually capturing. This is the only record that a frame executed a
+    // given address - instruction fetches are not journalled - so without
+    // it a reverse breakpoint has no choice but to replay every frame.
+    if (_context->ttdCoverageActive && _context->pTimeTravelManager != nullptr)
+    {
+        _context->pTimeTravelManager->RecordExecutedCoverage(
+            _memory->GetPhysPageForZ80Address(m1_pc), m1_pc);
+    }
+
+    // Phase 4 - access probe for Execute access type (TDD 9.2).
+    // Fires once per instruction at the M1 (instruction fetch) cycle.
+    if (_context->ttdProbe.IsArmed())
+    {
+        // Resolve the bank the opcode was fetched from, so a reverse
+        // breakpoint can distinguish "PC 0xC000 in page 3" from the same
+        // address reached with a different page banked in. Code executing
+        // from ROM reports kPhysPageNone.
+        const uint8_t execPhysPage = _memory->GetPhysPageForZ80Address(m1_pc);
+        if (_context->ttdProbe.Matches(m1_pc, ttd::TTDAccessType::Execute, 0, m1_pc, execPhysPage))
+        {
+            const auto& st = _context->emulatorState;
+            const ttd::TTDTimePoint tp{st.frame_counter, t};
+            _context->ttdProbe.RecordHit(tp, m1_pc, /*value=*/0, execPhysPage,
+                                          ttd::TTDAccessType::Execute);
+        }
+    }
 }
 
 /// Dispatching memory read method. Used directly from Z80 microcode (CPULogic and opcode)
@@ -664,6 +931,14 @@ uint8_t Z80::rd(uint16_t addr, bool isExecution)
 
     IncrementCPUCyclesCounter(3);
 
+    return MemoryReadNoContention(addr, isExecution);
+}
+
+/// Memory read access itself (MemIf dispatch + bus trace), without contention
+/// or T-state accounting - the timing is owned by the caller (rd() or the
+/// execution engine)
+uint8_t Z80::MemoryReadNoContention(uint16_t addr, bool isExecution)
+{
     uint8_t value = (_memory->*MemIf->MemoryRead)(addr, isExecution);
 
     if (busTraceHook)
@@ -693,6 +968,13 @@ void Z80::wd(uint16_t addr, uint8_t val)
 
     IncrementCPUCyclesCounter(3);
 
+    MemoryWriteNoContention(addr, val);
+}
+
+/// Memory write access itself (MemIf dispatch + bus trace), without
+/// contention or T-state accounting
+void Z80::MemoryWriteNoContention(uint16_t addr, uint8_t val)
+{
     (_memory->*MemIf->MemoryWrite)(addr, val);
 
     if (busTraceHook)
@@ -714,6 +996,13 @@ uint8_t Z80::in(uint16_t port)
         }
     }
 
+    return PortInNoContention(port);
+}
+
+/// Port read itself (model port decoder, bus trace, floating bus), without
+/// IO contention - the timing is owned by the caller (in() or the engine)
+uint8_t Z80::PortInNoContention(uint16_t port)
+{
     PortDecoder& portDecoder = *_context->pPortDecoder;
 
     // Let model-specific decoder to process port input
@@ -758,6 +1047,12 @@ void Z80::out(uint16_t port, uint8_t val)
         }
     }
 
+    PortOutNoContention(port, val);
+}
+
+/// Port write itself (model port decoder, bus trace), without IO contention
+void Z80::PortOutNoContention(uint16_t port, uint8_t val)
+{
     PortDecoder& portDecoder = *_context->pPortDecoder;
 
     // Let model-specific decoder to process port output
@@ -774,6 +1069,174 @@ void Z80::retn()
     // keeps a plain RET executed deep inside an NMI handler from silently
     // ending it - only RETN does that, per the Z80 interrupt architecture
     nmi_in_progress = false;
+}
+
+/// Execute exactly one instruction on the engine.
+///
+/// The Z80Registers fields are the source of truth between instructions (the
+/// debugger, TTD restore, snapshot loaders, fast-load traps and tests write
+/// them directly), so the whole register file is loaded into the engine
+/// before the step (unless it still holds exactly what the previous step
+/// stored) and stored back after it.
+void Z80::ExecuteEngineInstruction()
+{
+    Z80CPU* engine = _engine;
+
+    // Wait-state hook only while the model has ULA contention (Pentagon and
+    // other uncontended models run without the per-cycle callback)
+    UlaContention* ula = _context->pUlaContention;
+    const bool contention = ula != nullptr && ula->IsContentionEnabled();
+    if (contention != _engineContention)
+    {
+        Z80EngineBridge::SetContention(engine, this, contention);
+        _engineContention = contention;
+    }
+
+    /// region <Load: Z80Registers -> engine>
+    // The engine still holds what the last step stored into the fields unless
+    // something wrote them since (debugger, TTD restore, INT/NMI acceptance,
+    // traps, tests) - compare against that copy and load only on a
+    // difference. Field-wise, same widths as the stores that produced them
+    const Z80CpuRegisters& stored = _engineRegsStored;
+    const uint8_t r = static_cast<uint8_t>((r_low & 0x7F) | (r_hi & 0x80));
+    const bool engineCurrent = _engineRegsValid && stored.pc == pc && stored.af == af &&
+                               stored.bc == bc && stored.de == de && stored.hl == hl && stored.sp == sp &&
+                               stored.ix == ix && stored.iy == iy && stored.memptr == memptr && stored.q == q &&
+                               stored.r == r && stored.afAlt == alt.af && stored.bcAlt == alt.bc &&
+                               stored.deAlt == alt.de && stored.hlAlt == alt.hl && stored.i == i &&
+                               stored.im == im && stored.iff1 == iff1 && stored.iff2 == iff2;
+    if (!engineCurrent)
+    {
+        Z80CpuRegisters regs;
+        regs.af = af;
+        regs.bc = bc;
+        regs.de = de;
+        regs.hl = hl;
+        regs.afAlt = alt.af;
+        regs.bcAlt = alt.bc;
+        regs.deAlt = alt.de;
+        regs.hlAlt = alt.hl;
+        regs.ix = ix;
+        regs.iy = iy;
+        regs.pc = pc;
+        regs.sp = sp;
+        regs.memptr = memptr;
+        regs.i = i;
+        regs.r = r;
+        regs.im = im;
+        regs.iff1 = iff1;
+        regs.iff2 = iff2;
+        regs.q = q;
+
+        // HALT model (unchanged): a halted CPU re-executes the HALT opcode
+        // every step (its M1 fetch included) until INT/NMI moves PC past it,
+        // and the latch lives in `halted`. So the engine never sees its latch
+        // set - it always performs the fetch, as the interpreter did
+        regs.halted = 0;
+
+        Z80CpuSetRegisters(engine, &regs);
+    }
+    else if (stored.halted)
+    {
+        Z80CpuSetReg(engine, Z80CpuRegHalted, 0);  // HALT re-executes (see above)
+    }
+
+    if (outc0 != _engineOutC0)
+    {
+        Z80CpuSetOutC0Value(engine, outc0);
+        _engineOutC0 = outc0;
+    }
+
+    Z80CpuSetTstates(engine, t);
+    /// endregion </Load: Z80Registers -> engine>
+
+    _engineTtBase = tt;
+    _engineTBase = t;
+    _engineTtAdjust = 0;
+    _engineM1Count = 0;
+    _engineIndexPrefix = 0;
+    _engineIndexResolved = false;
+    _engineCbPending = false;
+    _engineIndexCbDisplacement = false;
+    _engineExpectOpcode = true;
+    _engineLastM1Byte = 0;
+    _engineWroteR = false;
+
+    Z80CpuStep(engine);
+
+    /// region <Store: engine -> Z80Registers>
+    tt = EngineHostTt(Z80CpuTstates(engine));
+
+    Z80CpuRegisters& regs = _engineRegsStored;
+    Z80CpuGetRegisters(engine, &regs);
+    _engineRegsValid = true;
+    const bool engineHalted = regs.halted != 0;
+    af = regs.af;
+    bc = regs.bc;
+    de = regs.de;
+    hl = regs.hl;
+    alt.af = regs.afAlt;
+    alt.bc = regs.bcAlt;
+    alt.de = regs.deAlt;
+    alt.hl = regs.hlAlt;
+    ix = regs.ix;
+    iy = regs.iy;
+    pc = regs.pc;
+    sp = regs.sp;
+    memptr = regs.memptr;
+    i = regs.i;
+    im = regs.im;
+    iff1 = regs.iff1;
+    iff2 = regs.iff2;
+    q = regs.q;
+
+    // R: the engine exposes the 7-bit refresh counter plus R7. The host keeps
+    // bit 7 of r_low as well (loaders and the register view read r_low as a
+    // whole byte): the refresh increment never touches it, only LD R,A
+    // rewrites it together with r_hi
+    if (_engineWroteR)
+    {
+        r_low = regs.r;
+        r_hi = static_cast<uint8_t>(regs.r & 0x80);
+    }
+    else
+    {
+        r_low = static_cast<uint8_t>((regs.r & 0x7F) | (r_low & 0x80));
+    }
+
+    // HALT executed: latch it, remember when it was entered (first time only)
+    if (engineHalted)
+    {
+        if (!halted)
+            haltpos = static_cast<uint16_t>(t);
+        halted = 1;
+        halt_cycle = 0;
+    }
+
+    // EI shadow: the engine blocks INT right after EI (IFF1 set, INT not yet
+    // possible); ProcessInterrupts expresses the same as "t == eipos"
+    if (iff1 && !Z80CpuIntPossible(engine))
+        eipos = static_cast<int32_t>(t);
+    /// endregion </Store: engine -> Z80Registers>
+}
+
+/// Host tt that corresponds to an engine T-state of the current instruction
+uint32_t Z80::EngineHostTt(uint32_t engineT) const
+{
+    return _engineTtBase + (engineT - _engineTBase) * rate + _engineTtAdjust;
+}
+
+/// Make the host time current before host code runs inside an instruction
+void Z80::PublishEngineTime(uint32_t engineT)
+{
+    tt = EngineHostTt(engineT);
+}
+
+/// Host code inside a bus callback may move tt (hardware turbo rescale on a
+/// port write): keep that shift for the rest of the instruction
+void Z80::AbsorbHostTimeChange(uint32_t publishedTt)
+{
+    _engineTtAdjust += tt - publishedTt;
 }
 
 /// endregion </Z80 lifecycle>

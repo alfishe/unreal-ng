@@ -1,6 +1,7 @@
 #pragma once
 #include <functional>
 
+#include "3rdparty/unreal-z80/include/z80cpu.h"  // Opcode execution engine (vendored unreal-z80)
 #include "emulator/cpu/cpulogic.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
@@ -9,8 +10,9 @@
 // Defined in /emulator/cpu/op_ddcb.cpp - pointers to registers in Z80 state
 extern uint8_t* direct_registers[8];
 
-// Forward declaration
+// Forward declarations
 class OpcodeProfiler;
+struct Z80EngineBridge;    // Engine bus/hook trampolines (z80.cpp)
 
 /// region <Structures>
 
@@ -355,6 +357,37 @@ protected:
     // tracker's CallTraceBuffer; the session state is polled live, the cached
     // flag only avoids the lookup when the calltrace feature is off
     bool _feature_calltrace_enabled = false;
+
+    /// region <Execution engine>
+    /// Opcodes are executed by the vendored unreal-z80 engine (callback bus).
+    /// The Z80Registers/Z80State fields stay the source of truth between
+    /// instructions: Z80Step() loads them into the engine, runs exactly one
+    /// instruction and stores the result back (see ExecuteEngineInstruction).
+    friend struct Z80EngineBridge;
+    Z80CPU* _engine = nullptr;
+
+    // Register file as last stored into the Z80Registers fields after a step.
+    // When the fields still hold exactly these values at the next step (no
+    // debugger/TTD/trap write in between - the common case) the engine
+    // already has them and the load is skipped
+    Z80CpuRegisters _engineRegsStored{};
+    bool _engineRegsValid = false;   // _engineRegsStored matches the engine
+    uint8_t _engineOutC0 = 0;        // OUT (C),0 value last given to the engine
+
+    // Per-instruction bridge state (valid only inside ExecuteEngineInstruction)
+    uint32_t _engineTtBase = 0;      // host tt when the instruction started
+    uint32_t _engineTBase = 0;       // engine T when the instruction started
+    uint32_t _engineTtAdjust = 0;    // host-side tt changes made from inside bus callbacks (e.g. hardware turbo rescale)
+    uint8_t _engineM1Count = 0;      // opcode (M1) fetches seen so far in this instruction
+    uint8_t _engineIndexPrefix = 0;  // last DD/FD prefix byte of this instruction (0 - none)
+    bool _engineIndexResolved = false;  // DD/FD chain ended (the byte after it was fetched)
+    bool _engineCbPending = false;   // unprefixed CB fetched: its opcode byte comes next
+    bool _engineIndexCbDisplacement = false;  // DD/FD CB: the next stream byte is the displacement
+    bool _engineExpectOpcode = true; // the next instruction-stream byte is an opcode (M1) fetch
+    bool _engineContention = false;  // the engine's wait-state hook is installed
+    uint8_t _engineLastM1Byte = 0;   // previous opcode byte of this instruction
+    bool _engineWroteR = false;      // this instruction was LD R,A
+    /// endregion </Execution engine>
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -462,6 +495,17 @@ public:
 
 protected:
     __forceinline void IncrementCPUCyclesCounter(uint8_t cycles);  // Increment cycle counters
+
+    // Execution engine bridge (z80.cpp)
+    void OnInstructionFetch(uint16_t fetchPc);  // m1_pc / m1TraceHook / TTD coverage+probe for an opcode fetch
+    void ExecuteEngineInstruction();            // Sync registers in, run one engine instruction, sync back
+    uint32_t EngineHostTt(uint32_t engineT) const;  // Host tt equivalent of an engine T-state
+    void PublishEngineTime(uint32_t engineT);   // Set host tt for the engine T before host code observes it
+    void AbsorbHostTimeChange(uint32_t publishedTt);  // Keep tt changes host code made inside a callback
+    uint8_t MemoryReadNoContention(uint16_t addr, bool isExecution);  // rd() without the timing part
+    void MemoryWriteNoContention(uint16_t addr, uint8_t val);         // wd() without the timing part
+    uint8_t PortInNoContention(uint16_t port);                        // in() without the timing part
+    void PortOutNoContention(uint16_t port, uint8_t val);             // out() without the timing part
 
     // TSConf specific
     // TODO: Move to plugin
