@@ -94,8 +94,11 @@ SoundManager::SoundManager(EmulatorContext* context)
         _devices.push_back({AudioSourceType::FM2, "FM 2", false, false, 1.0f, 0.0f, false});
     }
 
-    // Covox if config flag is set (Pentagon/Scorpion style)
-    if (_context->config.sound.covoxFB)
+    // Covox / SoundDrive when either config flag is set. The same 4-channel
+    // DAC class serves both: SD=1 wires the full SoundDrive quad (#F1/#F3/
+    // #F9/#FB), CovoxFB=1 alone wires only the mono Covox port #FB
+    // (see attachToPorts)
+    if (_context->config.sound.covoxFB || _context->config.sound.sd)
     {
         _covox = new Covox(_context, _coreRate);
         _devices.push_back({AudioSourceType::COVOX, "COVOX", false, false, 1.0f, 0.0f, false});
@@ -644,9 +647,16 @@ void SoundManager::handleFrameEnd()
             _covox->handleFrameEnd(samplesThisFrame);
     }
 
-    // Finalize TurboSound frame (activity notification for HUD)
-    if (_turboSound)
-        _turboSound->handleFrameEnd();
+    // NOTE: _turboSound->handleFrameEnd() is NOT called again here. It
+    // already ran once at the top of this function (word-queue drain +
+    // HUD activity notification, §6.1) and its activity-tracking flags
+    // (_frameHadActivity, _wasActive, _chip1ActiveThisFrame, _wasFM, ...)
+    // are not reset between calls - a second call here would re-evaluate
+    // the same already-updated flags and re-post NC_AUDIO_ACTIVITY a second
+    // time whenever the device is active, which is exactly what happened
+    // before this was removed (found while auditing HUD notification
+    // volume). The device's own comment on handleFrameEnd() already states
+    // it drains to end-of-frame and is "always called" - once.
 
     // Determine if any device has solo active
     bool soloActive = false;
@@ -960,10 +970,14 @@ bool SoundManager::attachToPorts()
     // result = _ay8910->attachToPorts(_context->pPortDecoder);
     result = _turboSound->attachToPorts(_context->pPortDecoder);
 
-    // Attach SOUNDRIVE/Covox to port #FB (all 4 ports decode to same handler)
+    // SoundDrive/Covox is a self-decoding device (Covox::tryClaimOut/In):
+    // its Fitment (Mono #FB only vs Quad mode-1+mode-2) is baked in at
+    // construction from config.sound.sd/covoxFB, so registration is just
+    // "plug the card in" - no per-port wiring, and no exact-address
+    // dispatch-map slot to collide with WD1793 or anything else.
     if (_covox && _context->pPortDecoder)
     {
-        result &= _context->pPortDecoder->RegisterPortHandler(Covox::PORT_RIGHT_B, _covox);
+        result &= _context->pPortDecoder->RegisterSelfDecodingDevice(_covox);
     }
 
     return result;
@@ -976,10 +990,9 @@ bool SoundManager::detachFromPorts()
     //_ay8910->detachFromPorts();
     _turboSound->detachFromPorts();
 
-    // Detach SOUNDRIVE/Covox from port #FB
     if (_covox && _context->pPortDecoder)
     {
-        _context->pPortDecoder->UnregisterPortHandler(Covox::PORT_RIGHT_B);
+        _context->pPortDecoder->UnregisterSelfDecodingDevice(_covox);
     }
 
     return result;

@@ -865,6 +865,22 @@ Soundrive was another sound device, often simpler than General Sound, providing 
     *   `#0F, #1F, #4F, #5F` and mirrors `#F1, #F3, #F9, #FB`.
     *   **DECODING:** `xxxxxxxxxB0Axxx1` and `xxxxxxxxxxxxB0A1` for the mirrors.
     *   **WRITE:** `LA,LB,RA,RB` (Left A, Left B, Right A, Right B channels). This is a more compact scheme.
+    *   **Mode 2 (the `#F1/#F3/#F9/#FB` mirror set) is the common one** — VELESOFT's
+        DAC-for-ZX database documents SoundDrive 1.05 mode 2 as `#F1` L-A, `#F3` L-B,
+        `#F9` R-C, `#FB` R-D, with `#FB` explicitly doubling as the plain Covox port
+        (mono Covox software works unchanged on a fitted SoundDrive).
+    *   **Sources:** [BC Info Guide #4 — ZX Spectrum Ports Guide (Black_Cat, 2008,
+        www.zx.clan.su)](zx-ports-full-table.md) — the SOUNDRIVE v1.02/v1.05 tables;
+        VELESOFT DAC-for-ZX, <https://velesoft.speccy.cz/da_for_zx-cz.htm>.
+    *   **This emulator** decodes both sets on Pentagon/Scorpion, when `SD=1`:
+        the mirror set `#F1/#F3/#F9/#FB` via mask `0xF5`/match `0xF1` (pattern
+        `1111B0A1`), and the primary set `#0F/#1F/#4F/#5F` via mask
+        `0xAF`/match `0x0F` — see `core/src/emulator/sound/covox.h`. The
+        primary set physically aliases into the Beta128 FDC's wide mirror
+        decode, so `PortDecoder_Pentagon128::DecodePortOut()` only routes it
+        to SoundDrive while TR-DOS is not paged in (Beta128 keeps the
+        addresses otherwise) — matching the reference decoders (pentevo/
+        Unreal `io.cpp`, Xpeccy `soundrive.c` SDRV_105_1).
 
 ### TurboSound / TurboSound FM
 
@@ -1121,6 +1137,22 @@ Soundrive was another sound device, often simpler than General Sound, providing 
     *   `#0F, #1F, #4F, #5F` and mirrors `#F1, #F3, #F9, #FB`.
     *   **DECODING:** `xxxxxxxxxB0Axxx1` and `xxxxxxxxxxxxB0A1` for the mirrors.
     *   **WRITE:** `LA,LB,RA,RB` (Left A, Left B, Right A, Right B channels). This is a more compact scheme.
+    *   **Mode 2 (the `#F1/#F3/#F9/#FB` mirror set) is the common one** — VELESOFT's
+        DAC-for-ZX database documents SoundDrive 1.05 mode 2 as `#F1` L-A, `#F3` L-B,
+        `#F9` R-C, `#FB` R-D, with `#FB` explicitly doubling as the plain Covox port
+        (mono Covox software works unchanged on a fitted SoundDrive).
+    *   **Sources:** [BC Info Guide #4 — ZX Spectrum Ports Guide (Black_Cat, 2008,
+        www.zx.clan.su)](zx-ports-full-table.md) — the SOUNDRIVE v1.02/v1.05 tables;
+        VELESOFT DAC-for-ZX, <https://velesoft.speccy.cz/da_for_zx-cz.htm>.
+    *   **This emulator** decodes both sets on Pentagon/Scorpion, when `SD=1`:
+        the mirror set `#F1/#F3/#F9/#FB` via mask `0xF5`/match `0xF1` (pattern
+        `1111B0A1`), and the primary set `#0F/#1F/#4F/#5F` via mask
+        `0xAF`/match `0x0F` — see `core/src/emulator/sound/covox.h`. The
+        primary set physically aliases into the Beta128 FDC's wide mirror
+        decode, so `PortDecoder_Pentagon128::DecodePortOut()` only routes it
+        to SoundDrive while TR-DOS is not paged in (Beta128 keeps the
+        addresses otherwise) — matching the reference decoders (pentevo/
+        Unreal `io.cpp`, Xpeccy `soundrive.c` SDRV_105_1).
 
 ### TurboSound / TurboSound FM
 
@@ -1431,6 +1463,9 @@ The MB-02+ was a powerful Russian clone, seemingly integrating many features lik
     *   `#0F, #1F, #3F, #4F, #5F, #7F` for Left channels A, B, Control, and Right channels C, D, Control respectively. (Direct DAC writes or 8255 control).
 *   **SOUNDRIVE v1.05 (SOUNDRIVE/COVOX):**
     *   `#0F, #1F, #4F, #5F` (and mirrors `#F1, #F3, #F9, #FB`) for Left A, Left B, Right A, Right B DAC channels.
+
+Sources for both tables: BC Info Guide #4 ([zx-ports-full-table.md](zx-ports-full-table.md));
+VELESOFT mode-2 port assignment: <https://velesoft.speccy.cz/da_for_zx-cz.htm>.
 
 ---
 

@@ -529,8 +529,14 @@ TEST_F(PortTrace_Test, DecodePortExRuleAttribution)
     EXPECT_EQ(_portDecoder->decodePortEx(0xBFFD).ruleIndex, 1);
     EXPECT_EQ(_portDecoder->decodePortEx(0x7FFD).ruleIndex, 2);
     EXPECT_EQ(_portDecoder->decodePortEx(0x00FE).ruleIndex, 3);
-    EXPECT_EQ(_portDecoder->decodePortEx(0x00F1).ruleIndex, 4);  // SOUNDRIVE -> COVOX
-    EXPECT_EQ(_portDecoder->decodePortEx(0x00FF).ruleIndex, 5);  // Beta128 system
+    EXPECT_EQ(_portDecoder->decodePortEx(0x00FF).ruleIndex, 4);  // Beta128 system
+
+    // SOUNDRIVE/Covox is not in the static table at all - it's a
+    // self-decoding device (Covox::tryClaimOut/In, PortDecoder::
+    // DispatchSelfDecodingOut/In), tried from DecodePortOut/In()'s fallback
+    // once the table above has declined the raw port
+    EXPECT_EQ(_portDecoder->decodePortEx(0x00F1).port, 0x0000);
+    EXPECT_EQ(_portDecoder->decodePortEx(0x00FB).port, 0x0000);
 
     // Regression (nedodem2.trd Pentagon boot wedge): the Beta128 #FF rule needs the
     // full low byte. #xxF7 - the ATM window / TR-DOS 5.04T probe port - must stay
@@ -541,7 +547,7 @@ TEST_F(PortTrace_Test, DecodePortExRuleAttribution)
     EXPECT_EQ(probe.ruleIndex, PortTraceRule::kNoMatch);
     EXPECT_EQ(_portDecoder->decodePortEx(0x00F7).port, 0x0000);
     // The classic OUT (#FF),A mirror form still decodes (A rides A15-A8)
-    EXPECT_EQ(_portDecoder->decodePortEx(0x18FF).ruleIndex, 5);
+    EXPECT_EQ(_portDecoder->decodePortEx(0x18FF).ruleIndex, 4);
 
     // BDI fallback attribution
     DecodeResult bdi = _portDecoder->decodePortEx(0x001F);
@@ -553,8 +559,10 @@ TEST_F(PortTrace_Test, DecodePortExRuleAttribution)
     EXPECT_EQ(none.port, 0x0000);
     EXPECT_EQ(none.ruleIndex, PortTraceRule::kNoMatch);
 
-    // decodePort() delegation stays consistent with decodePortEx()
-    EXPECT_EQ(_portDecoder->decodePort(0x00F1), 0x00FB);
+    // decodePort() delegation stays consistent with decodePortEx() - SOUNDRIVE
+    // ports are outside the static table, so neither resolves them
+    EXPECT_EQ(_portDecoder->decodePort(0x00F1), 0x0000);
+    EXPECT_EQ(_portDecoder->decodePort(0x00FB), 0x0000);
     EXPECT_EQ(_portDecoder->decodePort(0x0001), 0x0000);
 }
 
@@ -580,7 +588,7 @@ TEST_F(PortTrace_Test, ExportAllFormats)
     ASSERT_EQ(recorder->eventCount(), 3u);
 
     PortTraceSessionInfo info = _portDecoder->getPortTraceSessionInfo();
-    EXPECT_EQ(info.decodeRules.size(), 6u) << "Pentagon decode table must be embedded";
+    EXPECT_EQ(info.decodeRules.size(), 5u) << "Pentagon decode table must be embedded";
     EXPECT_EQ(info.decodeRules[0].port, 0xFFFD);
     EXPECT_EQ(info.decodeRules[2].port, 0x7FFD);
 
@@ -606,7 +614,7 @@ TEST_F(PortTrace_Test, ExportAllFormats)
     memcpy(&ruleCount, header + 18, 2);
     EXPECT_EQ(version, 1);
     EXPECT_EQ(count, 3u);
-    EXPECT_EQ(ruleCount, 6);
+    EXPECT_EQ(ruleCount, 5);
 }
 
 TEST_F(PortTrace_Test, FilterDescription)
