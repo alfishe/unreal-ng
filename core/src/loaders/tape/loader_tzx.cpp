@@ -69,12 +69,11 @@ namespace
         }
     }
 
-    /// region <Hardware ID table (TZX $33 and legacy parseHardware)>
+    /// region <Hardware ID table (TZX $33)>
 
-    // Single source of truth for both the legacy parseHardware() walker and
-    // the $33 hardwareNote assembler: '\0'-separated strings, an empty string
-    // terminating each group. Group index = hardware type; entry 0 of a group
-    // is the category name, entries 1..N are the IDs.
+    // Lookup table for the $33 hardwareNote assembler: '\0'-separated strings,
+    // an empty string terminating each group. Group index = hardware type;
+    // entry 0 of a group is the category name, entries 1..N are the IDs.
     const char hardwareIDs[] =
             "computer\0"
             "ZX Spectrum 16k\0"
@@ -243,7 +242,7 @@ namespace
         }
     }
 
-    /// endregion </Hardware ID table (TZX $33 and legacy parseHardware)>
+    /// endregion </Hardware ID table (TZX $33)>
 }
 
 /// endregion </Little-endian readers and shared helpers>
@@ -1492,77 +1491,3 @@ bool LoaderTZX::DecodeCswRle16(const uint8_t* data, size_t dataLen, uint32_t pul
 }
 
 /// endregion </Pulse helpers>
-
-/// region <Helper methods>
-
-void LoaderTZX::parseHardware(uint8_t* data)
-{
-    /// region <Hardware IDs>
-
-    // The string table lives at file scope — shared with the $33
-    // hardwareNote assembler (LookupHardwareEntry above).
-
-    static const char* UNKNOWN_ID = "??";
-    /// endregion </Hardware IDs>
-
-    uint8_t* ptr = data;
-    uint16_t hardwareRecords = *data;
-
-    for (uint16_t i = 0; i < hardwareRecords; i++)
-    {
-        uint8_t type_n = *ptr++;
-        uint8_t id_n = *ptr++;
-        uint8_t value_n = *ptr++;
-        const char *type = hardwareIDs;
-        const char *ptrID;
-        const char *value;
-
-        for (uint16_t j = 0; j < type_n; j++)
-        {
-            if (!*type)
-                break;
-
-            while (*type)
-                type++;
-            type += 2;
-        }
-
-        if (!*type)
-        {
-            type = UNKNOWN_ID;
-            ptrID = UNKNOWN_ID;
-            break;
-        }
-        else
-        {
-            ptrID = type + strlen(type) + 1;
-
-            for (uint16_t k = 0; k < id_n; k++)
-            {
-                if (!*ptrID)
-                {
-                    ptrID = UNKNOWN_ID;
-                    break;
-                }
-
-                ptrID += strlen(ptrID) + 1;
-            }
-        }
-
-        switch (value_n)
-        {
-            case 0: value = "compatible with"; break;
-            case 1: value = "uses"; break;
-            case 2: value = "compatible, but doesn't use"; break;
-            case 3: value = "incompatible with"; break;
-            default: value = "??";
-        }
-
-        char bf[512];
-        snprintf(bf, sizeof(bf), "%s %s: %s", value, type, ptrID);
-        //named_cell(bf);
-    }
-    //named_cell("-");
-}
-
-/// endregion </Helper methods>

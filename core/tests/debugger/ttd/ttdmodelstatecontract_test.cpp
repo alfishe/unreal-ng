@@ -128,15 +128,20 @@ TEST(TTDModelStateContract_Test, DeclaredButUnimplementedStateRefusesRecording)
     fm->setFeature(Features::kDebugMode, true);
     fm->setFeature(Features::kTimeTravel, true);
 
-    PortDecoder* original = context->pPortDecoder;
-    LyingDecoder lying(context);
-    context->pPortDecoder = &lying;
+    // Scoped: the decoder's destructor logs through the context's logger, so it
+    // must be gone before CleanupEmulator frees the context
+    bool started = false;
+    {
+        PortDecoder* original = context->pPortDecoder;
+        LyingDecoder lying(context);
+        context->pPortDecoder = &lying;
 
-    // Exercised through the public entry point: refusing to record is the
-    // behaviour that matters, not the private helper that decides it.
-    const bool started = context->pTimeTravelManager->StartRecording();
+        // Exercised through the public entry point: refusing to record is the
+        // behaviour that matters, not the private helper that decides it.
+        started = context->pTimeTravelManager->StartRecording();
 
-    context->pPortDecoder = original;  // restore before anything else touches it
+        context->pPortDecoder = original;  // restore before anything else touches it
+    }
 
     EXPECT_FALSE(started) << "a model declaring uncovered state must not record";
     EXPECT_NE(context->pTimeTravelManager->GetState(), ttd::TTDSessionState::Recording);
