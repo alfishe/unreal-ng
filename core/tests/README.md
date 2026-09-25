@@ -899,6 +899,17 @@ TEST_F(Disassembler_Test, commandType)
 }
 ```
 
+### CPU Hardware-Verification Suites
+
+`core/tests/z80/z80test/` (`Z80TestVerification.*`) runs all 163 hardware-captured CRC test
+vectors from Patrik Rak's z80test-1.2a directly through the real in-tree Z80 core — currently
+159/159 passing, 4 intentionally out of scope (non-Zilog CPU flavors). A genuinely independent
+second implementation of the same vectors, written from scratch in Python with no dependency on
+the C++ core, lives alongside it in `z80test/python_reference/` and also passes 159/159. See
+[`z80test/README.md`](z80/z80test/README.md) for details, including how the two relate to each
+other and to the separate ZEXALL/zexdoc/zexbit/zexfix coverage in
+`tools/poc/017-z80-standalone-cpu/`.
+
 ### Placeholder Tests (Not Yet Implemented)
 
 ```cpp
