@@ -2503,14 +2503,12 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
     //   u8  encoding       (0=Full, 1=XorPrev, 2=Zero)
     //   u32 refcount       (informational; reader uses timeline-derived refcount)
     //   u32 prev_slot      (compact index; 0xFFFFFFFF when encoding != XorPrev)
-    //   u32 crc32c         (always 0 on write — reader recomputes from decompressed bytes)
+    //   u32 crc32c         (CRC32C of the reconstructed 4 KB, from the page store)
     //   u32 payload_size   (bytes of zstd-compressed payload)
     //   u8[payload_size]   payload
     //
-    // We re-derive the payload via Compress(GetPage(idx)) because the codec
-    // page store doesn't yet expose its internal compressed payload. This is
-    // a redundant ~10 us per slot on serialize (a future optimization adds
-    // GetPayload/GetCrc32C accessors).
+    // The stored payload and CRC are written as they are (GetPayload /
+    // GetCrc32C): no decompress/recompress on serialize.
     for (uint32_t idx = 0; idx < _pageStore.GetCapacity(); ++idx)
     {
         if (_pageStore.GetRefCount(idx) == 0)

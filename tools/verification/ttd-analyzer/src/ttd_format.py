@@ -294,7 +294,7 @@ class PageSlot:
     encoding: int              # ENCODING_FULL / ENCODING_XOR_PREV / ENCODING_ZERO
     refcount: int              # informational; reader rebuilds its own
     prev_slot: int             # compact index for XorPrev; NEVER_TOUCHED_SLOT otherwise
-    crc32c_stored: int         # always 0 on write; reader recomputes
+    crc32c_stored: int         # CRC32C of the reconstructed 4 KB, as written by the C++ page store
     payload: bytes             # compressed bytes (or b"" for Zero)
 
 
@@ -491,9 +491,9 @@ class TtdDump:
         """Decompressed 4 KB content for a slot, walking XorPrev chains.
 
         Raises ``TtdFormatError`` on out-of-range indices, payload
-        decompression failures, or CRC32C mismatch (writer's stored CRC is
-        0 on write, so this triggers only if the file was tampered with or
-        truncated post-write).
+        decompression failures, or a CRC32C mismatch between the stored CRC
+        (the C++ writer stores the CRC of the reconstructed 4 KB) and the
+        CRC of what this reader reconstructed.
         """
         if slot_index == NEVER_TOUCHED_SLOT:
             raise TtdFormatError(
@@ -533,21 +533,20 @@ class TtdDump:
                 f"slot {slot_index} has unknown encoding {slot.encoding}"
             )
 
-        # CRC verification. Writer stores 0 (we trust the file); the integrity
-        # we want to verify is that decompression produced the original bytes.
-        # The C++ writer writes 0 in the crc field and recomputes on read,
-        # matching this behavior. If the file was tampered with after writing,
-        # this check catches it.
+        # CRC verification: the C++ writer stores the CRC32C of the
+        # reconstructed 4 KB (timetravelmanager.cpp SerializeSession writes
+        # GetCrc32C), including for Zero pieces. zstd frames carry no checksum
+        # of their own, so this compare is what catches a damaged payload that
+        # still decompresses - and a damaged link poisons every later piece of
+        # its XorPrev chain. Only verified content is cached.
         actual_crc = crc32c(result)
-        # We don't compare against slot.crc32c_stored because v2 writers store
-        # 0 (see ttd_dump_format.h). Instead we surface the computed CRC via
-        # PageSlot for callers that want to cross-check two dumps.
+        if actual_crc != slot.crc32c_stored:
+            raise TtdFormatError(
+                f"slot {slot_index}: CRC32C mismatch (stored "
+                f"{slot.crc32c_stored:#010x}, reconstructed {actual_crc:#010x})"
+            )
 
         self._sub_page_cache[slot_index] = result
-        # Stash the computed CRC on the slot for diagnostic access.
-        # Done outside the cached path above to recompute on every miss.
-        # Use object.__setattr__ to bypass the frozen-dataclass check if any.
-        object.__setattr__(slot, "crc32c_stored", actual_crc)
         return result
 
     def materialize_ram(self, cp: Checkpoint) -> bytes:
@@ -879,7 +878,7 @@ def parse_slot(r: _Reader, index: int) -> PageSlot:
         u8  encoding       (0=Full, 1=XorPrev, 2=Zero)
         u32 refcount       (informational; reader rebuilds its own)
         u32 prev_slot      (compact index; NEVER_TOUCHED_SLOT if encoding != XorPrev)
-        u32 crc32c         (always 0 on write; reader recomputes from decompressed bytes)
+        u32 crc32c         (CRC32C of the reconstructed 4 KB; reader verifies it)
         u32 payload_size
         u8[payload_size]   payload (empty for Zero; zstd-compressed otherwise)
     """

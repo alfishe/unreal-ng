@@ -29,8 +29,8 @@
 #     4 × 4 KB sub-pages, each with its own slot in the page store.
 #   * Per-slot encoding discriminator: Full / XorPrev / Zero.
 #   * zstd level-1 compression of every non-Zero slot payload.
-#   * Per-slot CRC32C integrity field (4 bytes; writer stores 0, reader
-#     recomputes from decompressed bytes and surfaces mismatches).
+#   * Per-slot CRC32C integrity field (4 bytes): the CRC of the reconstructed
+#     4 KB, stored by the writer and verified by readers.
 #   * Per-checkpoint frame_kind (I-frame vs P-frame) + keyframe_anchor.
 #   * Checkpoint RAM refs are now 4 * model_ram_pages u32 slot indices.
 #   * No v1 backwards compatibility - older files are refused with an error.
@@ -217,8 +217,8 @@ types:
         u8  encoding       (0=Full, 1=XorPrev, 2=Zero)
         u32 refcount       (informational; reader rebuilds its own)
         u32 prev_slot      (compact index; 0xFFFFFFFF when encoding != XorPrev)
-        u32 crc32c         (always 0 on write; reader recomputes from
-                            decompressed bytes and surfaces mismatches)
+        u32 crc32c         (CRC32C of the reconstructed 4 KB; readers
+                            verify it after reconstruction)
         u32 payload_size   (bytes of zstd-compressed payload; 0 for Zero)
         u8[payload_size]   payload
     seq:
@@ -244,11 +244,13 @@ types:
       - id: crc32c
         type: u4
         doc: |
-          CRC32C (Castagnoli) of the RECONSTRUCTED 4 KB content. The v2
-          writer always stores 0 here and recomputes on read to surface
-          truncation or post-write tampering. A non-zero value on read
-          that does not equal the recomputed CRC is reported as an
-          integrity error.
+          CRC32C (Castagnoli) of the RECONSTRUCTED 4 KB content (after
+          decompression and, for XorPrev, applying the delta chain), as
+          computed by the page store when the piece was captured; Zero
+          pieces carry the CRC of an all-zero 4 KB. Readers recompute it
+          after reconstruction and treat a mismatch as an integrity error.
+          zstd frames carry no checksum of their own, so this is the only
+          check on page payloads.
       - id: payload_size
         type: u4
         doc: |
