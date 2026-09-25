@@ -77,21 +77,25 @@ TEST(TTDModelStateContract_Test, DeclaredStateIsCoveredBySerializers)
     }
 }
 
-/// PROFSCORP must actually declare its ProfROM state - if this regresses, the
-/// plane/page latches go uncaptured and a seek lands on the wrong ROM page.
-TEST(TTDModelStateContract_Test, ProfScorpDeclaresProfRomState)
+/// Both Scorpion variants must declare their model state: #1FFD and the magic
+/// button trigger drive the paging chain on each, the ProfROM plane on
+/// PROFSCORP. If this regresses, a seek lands on the wrong ROM / RAM page.
+TEST(TTDModelStateContract_Test, ScorpionModelsDeclareScorpionState)
 {
-    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PROFSCORP", LoggerLevel::LogError);
-    ASSERT_NE(emulator, nullptr);
+    for (const char* model : {"SCORPION", "PROFSCORP"})
+    {
+        Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
+        ASSERT_NE(emulator, nullptr) << model;
 
-    EmulatorContext* context = emulator->GetContext();
-    const auto declared = context->pPortDecoder->GetTTDModelStateIds();
+        EmulatorContext* context = emulator->GetContext();
+        const auto declared = context->pPortDecoder->GetTTDModelStateIds();
 
-    EXPECT_NE(std::find(declared.begin(), declared.end(), ttd::PeripheralId::ScorpionProfROM),
-              declared.end())
-        << "PROFSCORP must declare ScorpionProfROM state";
+        EXPECT_NE(std::find(declared.begin(), declared.end(), ttd::PeripheralId::ScorpionProfROM),
+                  declared.end())
+            << model << " must declare ScorpionProfROM state (#1FFD, DOS trigger, plane)";
 
-    EmulatorTestHelper::CleanupEmulator(emulator);
+        EmulatorTestHelper::CleanupEmulator(emulator);
+    }
 }
 
 /// A machine described entirely by the standard 128K ports declares nothing,
