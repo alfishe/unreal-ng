@@ -420,11 +420,8 @@ void SoundChip_AY8910::updateMixer()
     _mixedLeft /= 3.0;
 
     // Filter out DC offset
-    if (true)
-    {
-        _mixedLeft = _filterDCLeft.filter(_mixedLeft);
-        _mixedRight = _filterDCRight.filter(_mixedRight);
-    }
+    _mixedLeft = _filterDCLeft.filter(_mixedLeft);
+    _mixedRight = _filterDCRight.filter(_mixedRight);
 }
 
 void SoundChip_AY8910::setMixer(uint8_t mixerValue)
