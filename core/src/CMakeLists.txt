@@ -119,6 +119,10 @@ message("SOURCES:${SOURCES}")
 add_library(${PROJECT_NAME} STATIC ${SOURCES})
 add_library(unrealng::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 
+if (ENABLE_LTO AND ENABLE_LTO_SUPPORTED)
+    set_target_properties(${PROJECT_NAME} PROPERTIES INTERPROCEDURAL_OPTIMIZATION ON)
+endif()
+
 # Declare _DEBUG symbol for compiler
 if (CMAKE_BUILD_TYPE MATCHES Debug)
     message(STATUS "CMAKE_BUILD_TYPE:${CMAKE_BUILD_TYPE} - defining '_DEBUG'")

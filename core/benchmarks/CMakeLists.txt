@@ -111,6 +111,10 @@ else()
     add_executable(${PROJECT_NAME} EXCLUDE_FROM_ALL ${SOURCES})
 endif()
 
+if (ENABLE_LTO AND ENABLE_LTO_SUPPORTED)
+    set_target_properties(${PROJECT_NAME} PROPERTIES INTERPROCEDURAL_OPTIMIZATION ON)
+endif()
+
 # Enable benchmark wrappers in code
 target_compile_definitions(${PROJECT_NAME} PRIVATE _CODE_UNDER_BENCHMARK)
 

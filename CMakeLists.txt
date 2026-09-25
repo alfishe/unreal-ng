@@ -20,6 +20,17 @@ option(BENCHMARKS "Enable benchmarks" OFF)
 option(BUILD_TESTCLIENT "Build testclient console app" OFF)
 option(BUILD_QT_APPS "Build Qt-based applications (unreal-qt, unreal-screen-viewer)" ON)
 option(BUILD_POC "Build PoC research tools (codec comparison etc.)" OFF)
+# Enable link-time optimization: -DENABLE_LTO=ON. Lets the compiler inline
+# small cross-translation-unit calls (e.g. the vendored unreal-z80 engine's
+# accessors like Z80CpuTstates, called from core/src/emulator/cpu/z80.cpp in
+# a different TU) that plain compilation can never inline. Opt-in: slower
+# builds, and not every third-party dependency in this tree is guaranteed
+# LTO-clean, so it is scoped to the `core`/`core-tests`/`core-benchmarks`
+# targets only (see their CMakeLists.txt), not the whole unified build.
+option(ENABLE_LTO "Enable interprocedural/link-time optimization for core/core-tests/core-benchmarks" OFF)
+# check_ipo_supported() needs a language enabled (project()), so the actual
+# check runs just after project(unreal ...) below; ENABLE_LTO_SUPPORTED is
+# set there.
 
 
 
@@ -41,6 +52,14 @@ option(ENABLE_RECORDING "Enable audio/video recording support" ON)
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/MacOSDeploymentTarget.cmake)
 
 project(unreal VERSION 1.0.0)
+
+if (ENABLE_LTO)
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT ENABLE_LTO_SUPPORTED OUTPUT ENABLE_LTO_ERROR LANGUAGES CXX)
+    if (NOT ENABLE_LTO_SUPPORTED)
+        message(WARNING "ENABLE_LTO was requested but IPO/LTO is not supported by this toolchain: ${ENABLE_LTO_ERROR}")
+    endif()
+endif()
 
 # Validate toolchain/dependency compatibility (MSVC+vcpkg OR MinGW+pacman)
 validate_toolchain_dependencies()

@@ -161,6 +161,9 @@ if (NOT TARGET ${PROJECT_NAME})
     # Compile tests into executable (EXCLUDE_FROM_ALL so tests are opt-in and not built by default)
     add_executable(${PROJECT_NAME} EXCLUDE_FROM_ALL ${SOURCES})
     set_target_properties(${PROJECT_NAME} PROPERTIES AUTOMOC OFF)
+    if (ENABLE_LTO AND ENABLE_LTO_SUPPORTED)
+        set_target_properties(${PROJECT_NAME} PROPERTIES INTERPROCEDURAL_OPTIMIZATION ON)
+    endif()
 
     # Declare _ALWAYS_USE_LOGGING for compiler
     target_compile_definitions(${PROJECT_NAME} PRIVATE _ALWAYS_USE_LOGGING)
