@@ -331,13 +331,20 @@ def _check_fully_recognized(dump: TtdDump, rep: IntegrityReport) -> None:
                     checkpoint_index=cp.index,
                     message=f"peripheral id {pid} is not in PERIPHERAL_ID_NAMES (ttdserializable.h)",
                 ))
-            elif blob and not decode_peripheral_blob(pid, blob):
-                rep.issues.append(Issue(
-                    severity="error",
-                    code="peripheral_blob_undecodable",
-                    checkpoint_index=cp.index,
-                    message=f"{PERIPHERAL_ID_NAMES[pid]} blob does not decode (header or decompression)",
-                ))
+            elif blob:
+                try:
+                    decoded = decode_peripheral_blob(pid, blob)
+                except TtdFormatError as e:
+                    decoded, reason = b"", str(e)
+                else:
+                    reason = "header or decompression"
+                if not decoded:
+                    rep.issues.append(Issue(
+                        severity="error",
+                        code="peripheral_blob_undecodable",
+                        checkpoint_index=cp.index,
+                        message=f"{PERIPHERAL_ID_NAMES[pid]} blob does not decode ({reason})",
+                    ))
 
 
 def _verify_crcs(rep: IntegrityReport, dump: TtdDump) -> None:
