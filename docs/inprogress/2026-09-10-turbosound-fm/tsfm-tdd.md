@@ -393,6 +393,8 @@ Worked example at /6:
 
 **One timeline across frames.** The half-tick cursor `h` is not frame-relative: at each frame start it is rebased by the frame length together with the word timestamps, and it runs a constant `kFmRenderLagT` = 256 T-states (~73 µs, about 3 samples at 44.1 kHz) behind them. The render loop does not run exactly frame/16 SSG ticks per frame (the decimators' fractional phase carries over) and runs up to one output sample of ticks ahead of the core; the lag keeps every half-tick behind the newest word the core has produced. FM therefore sounds ~73 µs later than SSG - a constant offset, inaudible. The cursor re-anchors on a core-rate or LQ/HQ switch and when it has lost the timeline (see ISSUES.md #16, #20).
 
+**SSG register writes use the same timeline.** An OUT to an SSG register is latched at once (reads see it) and applied to the generators on the SSG tick of its T-state: the render loop applies every queued write timed at or before the tick's cursor position just before ticking (SsgWriteQueue, ISSUES.md #22).
+
 Why not hold on the 16-T-state SSG grid? The FM period would be 4.5 ticks there, too. That gives ±1.14 µs of periodic jitter, which puts a −31 dB sideband at 16.3 kHz for an 8 kHz tone.
 
 **Muting.** Mute is applied at the hold input (the DAC data line), not after decimation. That is where the board applies it, and it avoids a click from the filter's step response being cut off.

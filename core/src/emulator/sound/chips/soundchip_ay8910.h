@@ -383,7 +383,8 @@ protected:
     /// region <Fields>
 protected:
     // AY8910 registers
-    uint8_t _registers[16] = { 0 };
+    uint8_t _registers[16] = { 0 };         // CPU-visible register file (reads, state reports)
+    uint8_t _appliedRegisters[16] = { 0 };  // generator-side view: what applyRegister() has delivered
 
     // 3x Tone generators (A,B,C) + 1x Noise Generator + 1x Envelope Generator
     ToneGenerator _toneGenerators[3];
@@ -469,7 +470,16 @@ public:
 
     // Logic-level interface
     uint8_t readRegister(uint8_t regAddr);
+    /// latchRegister + applyRegister at once
     void writeRegister(uint8_t regAddr, uint8_t value);
+
+    // Split write for devices that time register writes to their T-state:
+    // the CPU sees the value at once (latch), the generators get it when the
+    // render loop reaches the write's time (apply). Tone and envelope
+    // periods combine the halves as the generators know them
+    void latchRegister(uint8_t regAddr, uint8_t value);
+    void applyRegister(uint8_t regAddr, uint8_t value);
+    uint8_t getCurrentRegisterIndex() const { return _currentRegister; }
 
     // User-configurable audio settings
     void setStereoMode(AYStereoMode mode);

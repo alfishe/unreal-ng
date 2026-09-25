@@ -8,6 +8,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/audio.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
+#include "emulator/sound/chips/ssgwritequeue.h"
 #include "emulator/sound/native_audio_tap.h"
 #include "emulator/sound/chips/iturbosounddevice.h"  // ITurboSoundDevice (TSFM design §3.3)
 
@@ -61,6 +62,8 @@ protected:
 
     // HQ DSP flag (FIR filters vs simple averaging)
     bool _hqEnabled = true;
+    // Anti-alias FIR tier, applied by setCoreRate ([SOUND] DecimatorQuality)
+    FilterDecimator::Quality _decimatorQuality = FilterDecimator::Quality::Reference;
 
     // Output-stage suppression (design §6.1): pushed once per frame by the
     // manager; gates rendering only (the legacy device has no separate core)
@@ -69,6 +72,21 @@ protected:
     // LQ -> HQ switch or synthesis resumed: the decimator histories hold audio
     // from before the gap; cleared at the next frame start (ISSUES #7)
     bool _outputFlushPending = false;
+
+    // Render cursor on the T-state timeline (the same scheme as TSFM's, so the
+    // two stay bit-identical): continuous across frames, rebased with the
+    // pending writes, kTurboSoundRenderLagT behind them, +16 T per SSG tick.
+    // Re-anchored on a rate or quality switch and when far off its lag
+    int64_t _renderT = -kTurboSoundRenderLagT;
+    bool _renderReanchor = false;
+    // Last T-state seen (handleStep, port write): the frame rebase delta and
+    // the TTD base. false until the first one after reset / restore
+    int64_t _lastSeenT = 0;
+    bool _seenT = false;
+    // SSG register writes timed to their T-state, per chip (0 = _chip0, the
+    // 0xFF chip; 1 = _chip1): the CPU sees a write at once, the generators on
+    // the tick it falls in (SsgWriteQueue). TTD state
+    SsgWriteQueue _ssgWrites[2];
 
     // Native-rate recording tap (218.75 kHz, pre-decimation).
     // shared_ptr so a DSD encoder worker can outlive this chip safely.
@@ -194,6 +212,11 @@ public:
         // For HQ mode, we feed DECIMATE_FACTOR sub-samples per output sample to the FIR
         _decimationPhase = 0.0;
         _outputFlushPending = false;
+        _renderT = -kTurboSoundRenderLagT;
+        _renderReanchor = false;
+        _seenT = false;
+        _ssgWrites[0].clear();
+        _ssgWrites[1].clear();
         // Effective generator rate = PSG_CLOCK_RATE / 8
         // _decimationStep = how many generator ticks per FIR sub-sample
         _decimationStep = (double)(PSG_CLOCK_RATE / 8) / (double)(_coreRate * FilterInterpolate::DECIMATE_FACTOR);
@@ -215,6 +238,8 @@ public:
     // Feature cache update
     void setHQEnabled(bool enabled) override
     {
+        if (enabled != _hqEnabled)
+            _renderReanchor = true;
         if (enabled && !_hqEnabled)
             _outputFlushPending = true;  // the HQ decimators were not fed in LQ
         _hqEnabled = enabled;
@@ -232,17 +257,23 @@ public:
     /// the same frame boundary), recomputes the decimation ratios and
     /// redesigns the HQ anti-alias FIRs. Call at construction / sound stack
     /// rebuild only, at a frame boundary.
+    void setDecimatorQuality(FilterDecimator::Quality quality) override
+    {
+        _decimatorQuality = quality;
+    }
+
     void setCoreRate(size_t rate) override
     {
         _coreRate = rate;
         _samplePhase = 0;
+        _renderReanchor = true;
         _lqTicksPerSample = (double)(PSG_CLOCK_RATE / 8) / (double)rate;
         _decimationStep = (double)(PSG_CLOCK_RATE / 8) / (double)(rate * FilterInterpolate::DECIMATE_FACTOR);
 
-        _chip0->decimatorLeft().configure((double)rate);
-        _chip0->decimatorRight().configure((double)rate);
-        _chip1->decimatorLeft().configure((double)rate);
-        _chip1->decimatorRight().configure((double)rate);
+        _chip0->decimatorLeft().configure((double)rate, _decimatorQuality);
+        _chip0->decimatorRight().configure((double)rate, _decimatorQuality);
+        _chip1->decimatorLeft().configure((double)rate, _decimatorQuality);
+        _chip1->decimatorRight().configure((double)rate, _decimatorQuality);
     }
 
     /// Track the Z80 frequency multiplier (turbo switches): the sample PLL
@@ -299,6 +330,16 @@ public:
     /// region <TTDSerializable interface (P1.5 - parent TDD 6.4)>
     /// Each child SoundChip_AY8910 serializes itself via its own TTDSerializable.
     size_t TTDStateSize() const override;
+private:
+    int64_t nowT() const;
+    /// Timed SSG register write at the current T-state (see SsgWriteQueue);
+    /// applied at once while synthesis is suppressed
+    void queueSsgWrite(int chipIndex, uint8_t reg, uint8_t value);
+    /// Apply every pending SSG write timed at or before t (render cursor)
+    void applySsgWrites(int64_t t);
+    /// Apply every pending SSG write now (nothing will tick them in)
+    void applyAllSsgWrites();
+public:
     void   TTDSaveState(uint8_t* dst) const override;
     void   TTDLoadState(const uint8_t* src) override;
 

@@ -350,6 +350,18 @@ bool Config::ParseConfig(IniFile& inimanager)
 
 	// FM loudness trim in dB relative to the hardware-derived default (0 = default)
 	config.sound.tsfmFmTrimDb = inimanager.GetDoubleValue(sound, "TSFM_FmTrimDb", 0.0);
+
+	// Anti-alias decimator tier: Reference (default) | HighFidelity. Unknown
+	// values warn and keep the default; a missing key resets to it
+	{
+		config.sound.decimatorHighFidelity = false;
+		line[0] = '\0';
+		CopyStringValue(inimanager.GetValue(sound, "DecimatorQuality", nullptr), line, sizeof line);
+		if (StringHelper::CompareCaseInsensitive(line, "HighFidelity", strlen("HighFidelity")) == 0)
+			config.sound.decimatorHighFidelity = true;
+		else if (line[0] != '\0' && StringHelper::CompareCaseInsensitive(line, "Reference", strlen("Reference")) != 0)
+			MLOGWARNING("Config: unsupported [SOUND] DecimatorQuality='%s', using Reference", line);
+	}
 	// VIDEO section
 	// A/V sync video delay: auto (-1) = match the audio path latency
 	// (~2 frames); 0 = lowest input latency (audio trails by the ring depth)

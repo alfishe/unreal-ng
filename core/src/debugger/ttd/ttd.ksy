@@ -434,12 +434,21 @@ types:
       - id: next_z80_frequency_multiplier
         type: u1
         doc: Queued multiplier, applied at the next frame start.
+      - id: cpu_t_in_frame
+        size: 3
+        doc: |
+          z80.t at the capture, 24-bit little-endian: the CPU's in-frame
+          T-state (a frame ends when its last instruction crosses the
+          boundary, so a checkpoint's CPU sits a few T-states in - the
+          overshoot). Restored with the checkpoint so a replayed frame runs
+          with the original instruction timing. Taken from the former
+          reserved tail; sessions recorded before it read 0.
       - id: reserved
-        size: 6
+        size: 3
         doc: |
           Explicit tail filler keeping the struct free of implicit padding
           (sizeof == 120; four bytes were taken from it for the CPU clock
-          fields above). The C++ side copies these objects by member-wise
+          fields above, three for cpu_t_in_frame). The C++ side copies these objects by member-wise
           assignment and hashes them byte-wise, so unnamed padding would
           leak uninitialized bytes into the hash. Always zero.
 

@@ -899,6 +899,130 @@ TEST_F(TsfmOutput_Test, ResumeAfterSuppressionContinuesWithoutStep)
 
 /// endregion
 
+/// region <TimedSsgWrites>
+
+TEST_F(TsfmOutput_Test, SsgWritesLandOnTheirOwnTick)
+{
+    // An OUT to an SSG register used to reach the generators wherever the
+    // render loop happened to stand when the instruction ran: rendering only
+    // advances in whole output samples (22.7 us at 44.1 kHz), so a write moved
+    // by up to one output sample - "digital" playback through the volume
+    // register lost ~14 dB of SNR to that jitter. Writes are timed now: each
+    // is applied on the SSG tick (16 T) its T-state falls in, a constant lag
+    // behind the CPU.
+    //
+    // A pulse train on channel A's volume (tone and noise off: the volume is
+    // the output level) - 15 at t, 0 at t + 160 T, every start at a different
+    // offset - driven like the CPU drives the device: handleStep once per
+    // 12 T "instruction", the OUT inside it. Read per tick through the native
+    // tap (218.75 kHz, before decimation): every pulse must be exactly 10
+    // ticks wide and start at the same lag after its write, to the tick.
+    // Both TurboSound-slot devices
+    std::unique_ptr<ITurboSoundDevice> devices[] = {std::make_unique<SoundChip_TurboSoundFM>(_context),
+                                                    std::make_unique<SoundChip_TurboSound>(_context)};
+    const char* names[] = {"TSFM", "TurboSound"};
+    const uint8_t selectCmd[] = {0xFE, 0xFF};  // a chip of each device (select word differs)
+    for (int d = 0; d < 2; d++)
+    {
+        SCOPED_TRACE(names[d]);
+        ITurboSoundDevice& device = *devices[d];
+        device.setHQEnabled(false);  // LQ: the tap is fed the same per tick either way
+        device.getNativeTap()->activate();
+
+        auto write = [&](uint64_t t, uint8_t reg, uint8_t value)
+        {
+            SetT(t);
+            device.portDeviceOutMethod(PORT_FFFD, reg);
+            device.portDeviceOutMethod(PORT_BFFD, value);
+        };
+
+        struct Pulse
+        {
+            int64_t start;  // absolute T of the "volume 15" write
+        };
+        std::vector<Pulse> pulses;
+        constexpr int kFrames = 2;
+        constexpr int64_t kWidthT = 160;
+        uint64_t overshoot = 0;  // where the last instruction left the counter (AdjustFrameCounters)
+        for (int frame = 0; frame < kFrames; frame++)
+        {
+            SetT(overshoot);
+            device.handleFrameStart();
+            if (frame == 0)
+            {
+                SetT(10);
+                device.portDeviceOutMethod(PORT_FFFD, selectCmd[d]);
+                write(12, 7, 0x3F);  // tone and noise off on all channels
+                write(14, 8, 0);
+            }
+            // Pulses every 1000 T, the start offset cycling through 0..28 T
+            std::vector<std::pair<uint64_t, uint8_t>> events;
+            for (uint64_t k = 1; k * 1000 + 400 < PENTAGON_FRAME; k++)
+            {
+                const uint64_t t = k * 1000 + (k * 7) % 29;
+                events.push_back({t, 15});
+                events.push_back({t + kWidthT, 0});
+                pulses.push_back({int64_t(frame) * PENTAGON_FRAME + int64_t(t)});
+            }
+            // 12 T instructions until one crosses the frame end, as the CPU
+            // does; the next frame starts at its overshoot
+            size_t next = 0;
+            uint64_t t = overshoot;
+            do
+            {
+                t += 12;
+                // The OUT executes inside the instruction ending at t
+                while (next < events.size() && events[next].first <= t)
+                {
+                    write(events[next].first, 8, events[next].second);
+                    next++;
+                }
+                SetT(t);
+                device.handleStep();
+            } while (t < PENTAGON_FRAME);
+            overshoot = t - PENTAGON_FRAME;
+            SetT(overshoot);
+            device.handleFrameEnd();
+        }
+
+        std::vector<float> tap(device.getNativeTap()->available() * 2);
+        const size_t ticks = device.getNativeTap()->pop(tap.data(), tap.size() / 2);
+        ASSERT_GT(ticks, size_t(4000)) << "the tap saw too few ticks";
+        float high = 0.0f;
+        for (size_t i = 0; i < ticks; i++)
+            high = std::max(high, tap[i * 2]);
+        ASSERT_GT(high, 0.05f) << "no pulse reached the output";
+
+        // Tick i sits at render time 16 i - lag: the cursor starts at -lag
+        // and runs continuously across frames
+        std::vector<int64_t> starts;
+        std::vector<int> widths;
+        for (size_t i = 1; i < ticks; i++)
+        {
+            if (tap[i * 2] > high / 2 && tap[(i - 1) * 2] <= high / 2)
+            {
+                size_t j = i;
+                while (j < ticks && tap[j * 2] > high / 2)
+                    j++;
+                starts.push_back(int64_t(i) * 16 - kTurboSoundRenderLagT);
+                widths.push_back(int(j - i));
+            }
+        }
+        ASSERT_EQ(starts.size(), pulses.size()) << "every pulse must appear once";
+        int64_t lo = INT64_MAX, hi = INT64_MIN;
+        for (size_t k = 0; k < pulses.size(); k++)
+        {
+            EXPECT_EQ(widths[k], int(kWidthT / 16)) << "pulse " << k << " is not 160 T wide";
+            const int64_t lag = starts[k] - pulses[k].start;
+            lo = std::min(lo, lag);
+            hi = std::max(hi, lag);
+        }
+        EXPECT_LT(hi - lo, 16) << "pulses start " << lo << ".." << hi << " T after their writes: not on their own tick";
+    }
+}
+
+/// endregion
+
 /// region <TsfmGain>
 
 class TsfmGain_Test : public TsfmOutput_Test
@@ -984,6 +1108,48 @@ TEST_F(TsfmGain_Test, Reference)
         }
         EXPECT_GE(peak, int16_t(4915 * 0.90)) << "SSG too quiet: " << peak;
         EXPECT_LE(peak, int16_t(4915 * 1.33)) << "SSG too loud: " << peak;
+    }
+}
+
+TEST_F(TsfmGain_Test, DecimatorQualityAppliesToEveryDecimator)
+{
+    // [SOUND] DecimatorQuality=HighFidelity: both TurboSound-slot devices
+    // build every anti-alias FIR at the HighFidelity tier (192 taps at the SSG
+    // rate, 384 at the FM rate, beta 9) and keep it across a live rate switch;
+    // the FM decimators stay slaves of chip-0 SSG left
+    for (const size_t rate : {size_t(44100), size_t(96000)})
+    {
+        SCOPED_TRACE(testing::Message() << "rate " << rate);
+        FilterDecimator ssgRef;
+        FilterDecimator fmRef;
+        ssgRef.configure(double(rate), FilterDecimator::Quality::HighFidelity);
+        fmRef.configure(double(rate), FilterDecimator::Quality::HighFidelity, false, 2.0 * FilterDecimator::INPUT_RATE);
+
+        auto fm = std::make_unique<SoundChip_TurboSoundFM>(_context);
+        fm->setDecimatorQuality(FilterDecimator::Quality::HighFidelity);
+        fm->setCoreRate(44100);
+        fm->setCoreRate(rate);  // a live switch keeps the tier
+        auto legacy = std::make_unique<SoundChip_TurboSound>(_context);
+        legacy->setDecimatorQuality(FilterDecimator::Quality::HighFidelity);
+        legacy->setCoreRate(rate);
+        for (int chip = 0; chip < 2; chip++)
+        {
+            for (ITurboSoundDevice* device : {static_cast<ITurboSoundDevice*>(fm.get()),
+                                              static_cast<ITurboSoundDevice*>(legacy.get())})
+            {
+                EXPECT_EQ(device->getChip(chip)->decimatorLeft().taps(), 192u);
+                EXPECT_EQ(device->getChip(chip)->decimatorRight().coefficients(), ssgRef.coefficients());
+            }
+            EXPECT_EQ(fm->outputState(chip)->decimator.taps(), 384u);
+            EXPECT_EQ(fm->outputState(chip)->decimator.coefficients(), fmRef.coefficients());
+        }
+
+        // Slave wiring intact: an HQ render still fills the FM buffer
+        fm->setHQEnabled(true);
+        ProgramFmNote(*fm, FmNoteProgram{});
+        const int16_t peak = RunFmNotePeak(*fm, 12, 6);
+        EXPECT_GE(peak, int16_t(kFmOneCarrierPeak * 0.95)) << "HighFidelity FM render lost level: " << peak;
+        EXPECT_LE(peak, int16_t(kFmOneCarrierPeak * 1.05)) << "HighFidelity FM render gained level: " << peak;
     }
 }
 

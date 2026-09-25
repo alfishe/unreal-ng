@@ -75,6 +75,9 @@ SoundManager::SoundManager(EmulatorContext* context)
             _turboSound = new SoundChip_TurboSound(_context);
             break;
     }
+    _turboSound->setDecimatorQuality(_context->config.sound.decimatorHighFidelity
+                                         ? FilterDecimator::Quality::HighFidelity
+                                         : FilterDecimator::Quality::Reference);
     _turboSound->setCoreRate(_coreRate);
 
     // Build the device registry based on what this machine has

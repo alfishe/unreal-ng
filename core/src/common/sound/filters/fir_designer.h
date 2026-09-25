@@ -71,6 +71,23 @@ inline std::vector<double> kaiser(size_t taps, double fc, double fs, double beta
     return h;
 }
 
+/// The kaiser() prototype as a continuous function of the tap position:
+/// position p in [0, taps-1] gives the (not normalized) coefficient of tap p,
+/// fractional positions interpolate the windowed sinc itself, and the window
+/// is zero outside [0, taps-1]. At integer positions the value is computed
+/// with the same expression as kaiser() (bitwise identical before its
+/// normalization).
+inline double kaiserAt(double position, size_t taps, double fc, double fs, double beta, double i0beta)
+{
+    const double M = static_cast<double>(taps - 1);
+    const double m = position - M / 2.0;
+    const double t = 2.0 * m / M;
+    if (t < -1.0 || t > 1.0)
+        return 0.0;
+    const double w = besselI0(beta * std::sqrt(std::max(0.0, 1.0 - t * t))) / i0beta;
+    return 2.0 * fc / fs * sinc(2.0 * fc / fs * m) * w;
+}
+
 /// Hamming-windowed sinc lowpass (matches MATLAB fir1 normalization).
 inline std::vector<double> hamming(size_t taps, double fc, double fs)
 {

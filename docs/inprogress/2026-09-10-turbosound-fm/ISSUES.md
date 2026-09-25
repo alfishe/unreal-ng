@@ -24,6 +24,10 @@ Everything found while verifying the TurboSound FM implementation against real h
 | 18 | AY DC remover: delayed step after bursts, bass cut below ~150 Hz | AY output | fixed, 5 Hz high-pass |
 | 19 | Mixer and devices disagreed on sample counts for 128K/+3/ATM frames | mixer | fixed |
 | 20 | Host speed multiplier > 1: device renders mult x samples, FM cursor re-anchors every frame | devices / mixer | open |
+| 21 | Decimator outputs up to one input sample (4.57 us) late | FilterDecimator | fixed |
+| 22 | AY register writes reached the generators on the output-sample grid | devices | fixed |
+| 23 | TTD restored the CPU at T 0 instead of the frame's overshoot | TTD | fixed |
+| 24 | Quality::HighFidelity decimator never selectable | config | fixed, [SOUND] DecimatorQuality |
 
 ---
 
@@ -174,3 +178,31 @@ Everything found while verifying the TurboSound FM implementation against real h
 **Observed.** With the host speed multiplier above 1 the devices scale T-states by it and render mult x samples per frame, while the mixer consumes the base frame's count (the rest of the device buffer is dropped). FM words are timed in unscaled T-states, so the FM render cursor runs mult x faster than the words and re-anchors at every frame start.
 
 **Status.** Open, pre-existing. No zero samples result (the device renders more than is consumed), but the output is not a clean time-scaled render. Needs a decision on what audio a multiplied frame should carry.
+
+## 21. Decimator outputs up to one input sample late
+
+**Observed.** Found in review, reproduced in a model: a 1 kHz tone through the 96-tap Reference decimator reached only ~35 dB SNR, a 10 kHz tone ~15 dB, for AY and FM alike.
+
+**Cause.** An output falls due when the phase accumulator crosses samplesPerOutput, which happens between two input samples; the filter was evaluated at the newest input sample, so every output was up to one input sample (4.57 us at 218.75 kHz) late - a jitter that sounds as non-harmonic error on high notes.
+
+**Fix.** FilterDecimator evaluates the FIR at the exact instant: the residue left in _phase after the subtraction is the output's fractional position; the kernel is tabulated at 256 fractional offsets (FirDesigner::kaiserAt, rows normalized to unit DC gain, row 0 = the integer design) and interpolated linearly. A slave (TSFM FM) takes its master's instant scaled to its own rate. Reference now 78.6-79.6 dB at 1-10 kHz, HighFidelity 117-121 dB, the FM slave ~86 dB. Designs share one table (cache). About +9% render time. Tests `FilterDecimator_Test.ExactOutputInstants*`, `SlaveUsesItsMastersInstant`, `IntegerRatioIsThePlainIntegerDesign`.
+
+## 22. AY register writes on the output-sample grid
+
+**Observed.** Found in review: AY "digital" playback through the volume register measured 16-20 dB SNR against 47-50 dB in xpeccy-plus.
+
+**Cause.** The render loop runs once per instruction and advances only in whole output samples; an OUT to an SSG register reached the generators wherever rendering stood - up to one output sample (22.7 us at 44.1 kHz) away from its T-state.
+
+**Fix.** Both TurboSound-slot devices time SSG writes like the FM words: the CPU sees the value at once (SoundChip_AY8910::latchRegister), the generators on the SSG tick of the write's T-state (applyRegister via SsgWriteQueue), on the render cursor that also carries the FM words - a constant 256 T lag (kTurboSoundRenderLagT), shared so the devices stay bit-identical. Tone and envelope periods combine the halves from a generator-side register mirror. Pending writes and the cursor are TTD state (AY blob 73 bytes, legacy TurboSound 925, TSFM v4 2000). Test `TsfmOutput_Test.SsgWritesLandOnTheirOwnTick` (both devices: every pulse exactly its width, every start the same lag after its write to the tick).
+
+## 23. TTD restored the CPU at T 0
+
+**Observed.** With register writes timed exactly (22), the TSFM delta-frame determinism test diverged by one generator tick after a seek.
+
+**Cause.** A frame ends when its last instruction crosses the boundary, so a checkpoint's CPU sits a few T-states into the next frame (the overshoot). Checkpoints did not store z80.t, and every restore path forced it to 0: a replayed frame ran with every CPU event shifted by the overshoot. The peripherals also restored before z80.t was set, reading the live pre-seek value.
+
+**Fix.** TTDChipsetState carries cpu_t_in_frame (3 bytes of the former reserved tail - size unchanged, older dumps read 0); CaptureChipsetState takes it as a required argument, RestoreCheckpoint sets z80.t before the peripherals load. Intra-frame replay counts from it, the frame cache replays only the rest of the frame, ResumeRecordingFrom cuts at the real resume position. Seek, resume and divergence tests updated to the true position (a frame-aligned seek lands at the stored overshoot; an intra-frame seek on the first instruction boundary at or after the target).
+
+## 24. HighFidelity decimator selectable
+
+**Fix.** [SOUND] DecimatorQuality = Reference (default) | HighFidelity, read at sound-stack construction; both devices apply it to every decimator at setCoreRate and keep it across live rate switches. Reference stays the default: HighFidelity roughly doubles the TurboSound rendering cost (TSFM: ~1.0 -> ~1.9 ms per frame, 5% -> 9% of a core). Tests `Config_Test.DecimatorQuality*`, `TsfmGain_Test.DecimatorQualityAppliesToEveryDecimator`.
