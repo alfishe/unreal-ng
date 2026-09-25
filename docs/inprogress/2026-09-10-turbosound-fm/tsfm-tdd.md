@@ -441,7 +441,7 @@ Pan: FM goes centre on both channels (hardware). Stereo split is not offered, be
 
 - FM1/FM2 get their own `AudioCharacterChain`, with punch Off and room Off.
 - AY chains keep today's defaults.
-- No DC blocker on FM: the ymfm output is symmetric around zero.
+- FM gets the board's output coupling instead of a generic DC blocker: a one-pole high-pass at 1.33 Hz (C14/C15 = 10 µF into 12 kΩ, schematic rev C) after the mute gate, per chip (`TsfmOutputState::coupling`). The ymfm output is symmetric around zero, so it only acts on stuck carriers and mute steps (ISSUES.md #5).
 
 ---
 

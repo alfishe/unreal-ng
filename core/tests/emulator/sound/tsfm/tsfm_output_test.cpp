@@ -1,9 +1,13 @@
 #include "stdafx.h"
 #include "pch.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <sstream>
+#include <string>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -49,7 +53,10 @@ void LogSinkTrampoline(void* context, const AYLogRecord& record)
 
 /// The FM note used by MuteAtHoldInput and TsfmGain: channel 2 (the OPN CSM
 /// channel), three modulators at TL 0x7F (silent), carrier at TL 0 (the
-/// design §7.1 reference: word +-8168), fastest attack, ~770 Hz
+/// design §7.1 reference: word +-8168), fastest attack, fnum 0x100, block 7,
+/// carrier MUL 1: phase step ((512 << 7) >> 2) x 2 / 2 = 16384 = 2^20 / 64 -
+/// 64 FM words per cycle, 759.5 Hz. (Block 0 / MUL 0 was 2.97 Hz: DC to the
+/// output coupling high-pass, which attenuated it by 0.8 dB.)
 struct FmNoteProgram
 {
     uint8_t modulatorTl = 0x7F;
@@ -110,9 +117,10 @@ protected:
             {0x42, note.modulatorTl}, {0x46, note.modulatorTl},
             {0x4A, note.modulatorTl}, {0x4E, note.carrierTl},
             {0x52, 0x1F}, {0x56, 0x1F}, {0x5A, 0x1F}, {0x5E, 0x1F},  // AR: fastest
-            // ch2 fnum 0x100 - the 0xA0 region is a latched pair: the upper
-            // write only latches, the lower write commits both halves
-            {0xA6, 0x41},
+            {0x3E, 0x01},  // carrier MUL 1
+            // ch2 fnum 0x100, block 7 - the 0xA0 region is a latched pair: the
+            // upper write only latches, the lower write commits both halves
+            {0xA6, 0x39},
             {0xA2, 0x00},
             {0x28, 0xF2},  // key on, channel 2, all four operators
         };
@@ -410,6 +418,201 @@ TEST_F(TsfmOutput_Test, HoldNoJitter)
 
 /// endregion
 
+/// region <TsfmTimeline>
+
+/// HoldNoJitter pins the word-to-half-tick mapping inside one frame; these
+/// pin it across frame boundaries, where the words and the render cursor are
+/// rebased separately. A tone with an exactly known period is rendered for
+/// many frames; each frame's phase is fitted against one global output-sample
+/// index, so any per-frame slip of the FM content relative to the output
+/// sample clock shows up as a phase step between consecutive frames.
+///
+/// Tone: channel 2, algorithm 7, carrier only (modulators at TL 0x7F),
+/// fnum 1024, block 7, MUL 1 -> phase step ((2048 << 7) >> 2) = 65536 =
+/// 2^20 / 16: exactly 16 FM words per cycle = 1152 T (~3038 Hz).
+class TsfmTimeline_Test : public TsfmOutput_Test
+{
+protected:
+    static constexpr double kPi = 3.14159265358979323846;
+    static constexpr double kPeriodT = 16.0 * 72.0;
+    static constexpr double kMaxSlipT = 4.0;
+
+    /// Worst frame-to-frame slip of one measured run
+    struct SlipReport
+    {
+        double worstT = 0.0;
+        int worstFrame = 0;
+        int slipped = 0;  // boundaries over kMaxSlipT
+        int boundaries = 0;
+        int16_t peak = 0;
+    };
+
+    /// Opens frame 0 and keys the tone inside it, as a running machine would:
+    /// a write before the first frame start would sit on a pseudo-frame of its
+    /// own and shift the timeline by its length
+    void StartTone(SoundChip_TurboSoundFM& device)
+    {
+        SetT(0);
+        device.handleFrameStart();
+        SetT(100);
+        device.portDeviceOutMethod(PORT_FFFD, 0xFA);  // chip 0, FM on
+        const uint8_t setup[][2] = {
+            {0xB2, 0x07},                                            // ch2 algorithm 7
+            {0x42, 0x7F}, {0x46, 0x7F}, {0x4A, 0x7F}, {0x4E, 0x00},  // TL: carrier only
+            {0x3E, 0x01},                                            // carrier MUL 1
+            {0x52, 0x1F}, {0x56, 0x1F}, {0x5A, 0x1F}, {0x5E, 0x1F},  // AR: fastest
+            {0xA6, 0x3C},                                            // block 7, fnum hi 4 (latched)
+            {0xA2, 0x00},                                            // fnum lo, commits
+            {0x28, 0xF2},                                            // key on ch2, all ops
+        };
+        for (const auto& [reg, data] : setup)
+        {
+            device.portDeviceOutMethod(PORT_FFFD, reg);
+            device.portDeviceOutMethod(PORT_BFFD, data);
+        }
+    }
+
+    /// Render `frames` frames at the device's current rate and measure the
+    /// slips from `settleFrames` on. `frameOpen`: frame 0 was already opened
+    /// by StartTone. The mean step is removed - a constant step is a frequency
+    /// mismatch between the tone and the nominal output rate, not a slip
+    SlipReport RunAndMeasure(SoundChip_TurboSoundFM& device, int frames, int settleFrames, bool frameOpen)
+    {
+        // Output sample period in T: the mixer's integer accumulator emits
+        // one sample per CPU_CLOCK_RATE / rate T on average
+        const double omega = 2.0 * kPi * (double(CPU_CLOCK_RATE) / double(device.getCoreRate())) / kPeriodT;
+
+        SlipReport report;
+        std::vector<double> phases;
+        uint64_t n = 0;  // output-sample index, continuous across frames
+        for (int frame = 0; frame < frames; frame++)
+        {
+            if (frame > 0 || !frameOpen)
+            {
+                SetT(0);
+                device.handleFrameStart();
+            }
+            SetT(PENTAGON_FRAME);
+            device.handleStep();
+            device.handleFrameEnd();
+
+            const int16_t* fm = device.getFmBuffer(0);
+            const size_t samples = device.getRenderedSamplesThisFrame();
+
+            // Least-squares fit y = a cos(wn) + b sin(wn) over this frame
+            double cc = 0, ss = 0, cs = 0, yc = 0, ys = 0;
+            for (size_t i = 0; i < samples; i++, n++)
+            {
+                const double y = fm[i * AUDIO_CHANNELS];
+                const double c = std::cos(omega * double(n));
+                const double s = std::sin(omega * double(n));
+                cc += c * c;
+                ss += s * s;
+                cs += c * s;
+                yc += y * c;
+                ys += y * s;
+                if (frame >= settleFrames)
+                    report.peak = std::max<int16_t>(report.peak, int16_t(std::abs(y)));
+            }
+            if (frame < settleFrames)
+                continue;
+            const double det = cc * ss - cs * cs;
+            const double a = (yc * ss - ys * cs) / det;
+            const double b = (ys * cc - yc * cs) / det;
+            phases.push_back(std::atan2(b, a));
+        }
+
+        std::vector<double> slips;
+        for (size_t k = 1; k < phases.size(); k++)
+        {
+            double d = phases[k] - phases[k - 1];
+            while (d > kPi) d -= 2.0 * kPi;
+            while (d < -kPi) d += 2.0 * kPi;
+            slips.push_back(d / (2.0 * kPi) * kPeriodT);
+        }
+        double mean = 0;
+        for (const double s : slips)
+            mean += s;
+        mean /= double(slips.size());
+
+        report.boundaries = int(slips.size());
+        for (size_t k = 0; k < slips.size(); k++)
+        {
+            const double dev = std::abs(slips[k] - mean);
+            if (dev > kMaxSlipT)
+                report.slipped++;
+            if (dev > report.worstT)
+            {
+                report.worstT = dev;
+                report.worstFrame = int(k) + 1 + settleFrames;
+            }
+        }
+        return report;
+    }
+
+    static std::string Describe(const SlipReport& r)
+    {
+        std::ostringstream s;
+        s << "FM content slipped " << r.worstT << " T at frame " << r.worstFrame << "; " << r.slipped << " of "
+          << r.boundaries << " frame boundaries slipped by more than " << kMaxSlipT << " T";
+        return s.str();
+    }
+};
+
+TEST_F(TsfmTimeline_Test, ContinuousAcrossFrames)
+{
+    // Deliberately over the 50 ms budget: four sessions of 120 frames of pure
+    // DSP; fewer frames at 48 kHz would miss the slips (only ~1 frame in 4)
+    for (const bool hq : {true, false})
+    {
+        for (const size_t rate : {size_t(44100), size_t(48000)})
+        {
+            SCOPED_TRACE(testing::Message() << (hq ? "HQ " : "LQ ") << rate);
+            auto device = std::make_unique<SoundChip_TurboSoundFM>(_context);
+            device->setCoreRate(rate);
+            device->setHQEnabled(hq);
+            StartTone(*device);
+
+            const SlipReport r = RunAndMeasure(*device, 120, 10, true);
+            ASSERT_GT(r.peak, 1000) << "the FM tone never sounded";
+            EXPECT_LE(r.worstT, kMaxSlipT) << Describe(r);
+        }
+    }
+}
+
+TEST_F(TsfmTimeline_Test, ContinuousAfterLiveRateSwitch)
+{
+    // SoundManager::applyCoreRate switches a RUNNING device at a frame
+    // boundary when the output device's rate changes: the sample accumulator
+    // restarts and the decimators are redesigned, moving the render loop
+    // against the CPU clock by up to one old-rate sample. The switch frame
+    // itself may slip once (every filter is re-derived there anyway); after it
+    // the FM timeline must be continuous again at the new rate, with no drift
+    // pushing the cursor out of its window later on. Each segment's phase
+    // tracking restarts at the new rate; the first two frames are excluded
+    auto device = std::make_unique<SoundChip_TurboSoundFM>(_context);
+    device->setCoreRate(44100);
+    StartTone(*device);
+    SlipReport r = RunAndMeasure(*device, 40, 10, true);
+    ASSERT_GT(r.peak, 1000) << "the FM tone never sounded";
+    EXPECT_LE(r.worstT, kMaxSlipT) << "44100 before the switches: " << Describe(r);
+
+    for (const bool hq : {true, false})
+    {
+        device->setHQEnabled(hq);
+        for (const size_t rate : {size_t(48000), size_t(96000), size_t(192000), size_t(44100)})
+        {
+            SCOPED_TRACE(testing::Message() << (hq ? "HQ " : "LQ ") << "switched to " << rate);
+            device->setCoreRate(rate);
+            r = RunAndMeasure(*device, 40, 2, false);
+            EXPECT_GT(r.peak, 1000) << "the FM tone dropped out after the switch";
+            EXPECT_LE(r.worstT, kMaxSlipT) << Describe(r);
+        }
+    }
+}
+
+/// endregion
+
 /// region <MuteAtHoldInput>
 
 TEST_F(TsfmOutput_Test, MuteAtHoldInput)
@@ -464,6 +667,58 @@ TEST_F(TsfmOutput_Test, MuteAtHoldInput)
     // rings the same way. A stale-hold or DC-dump bug feeds the filter a
     // full-scale step and lands far above this bound
     EXPECT_LE(togglePeak, steadyPeak + steadyPeak / 5) << "the mute toggle clicked above the steady-state peak";
+}
+
+/// endregion
+
+/// region <FmOutputCoupling>
+
+TEST_F(TsfmOutput_Test, FmCouplingMatchesSchematic)
+{
+    // Rev C: C14/C15 = 10 uF into R17||R18 (R19||R20) = 24 k||24 k = 12 k at
+    // the DA5 virtual grounds, running at the 437.5 kHz half-tick rate
+    auto device = std::make_unique<SoundChip_TurboSoundFM>(_context);
+    for (int chip = 0; chip < 2; chip++)
+    {
+        const FilterDCBlocker& coupling = device->outputState(chip)->coupling;
+        EXPECT_NEAR(coupling.cutoffHz(), 1.0 / (2.0 * 3.14159265358979323846 * 12000.0 * 10e-6), 1e-12);
+        EXPECT_NEAR(coupling.cutoffHz(), 1.33, 0.01);
+        EXPECT_DOUBLE_EQ(coupling.sampleRate(), 437500.0);
+    }
+}
+
+TEST_F(TsfmOutput_Test, FmCouplingReleasesStuckDc)
+{
+    // Issue #5 / #13: a tune can leave the DAC at a constant word (a stuck
+    // carrier, or a DC step at mute - hardware-reference §5.3). The coupling
+    // passes the step and then releases it with RC = 120 ms; without it the
+    // offset reached the mix for good. Also mute: the grounded data line is
+    // a step the other way, released the same way
+    auto device = std::make_unique<SoundChip_TurboSoundFM>(_context);
+    SetT(100);
+    device->portDeviceOutMethod(PORT_FFFD, 0xFA);  // chip 0, FM on
+    device->chip(0)->words.push(0, 16384);         // DAC held at +0.5
+
+    const double rcSeconds = 1.0 / (2.0 * 3.14159265358979323846 * kTsfmFmCouplingHz);
+    const int64_t halfTicksPerSecond = int64_t(kTsfmFmInputRate);
+    int64_t h = 8;
+    device->fmHalfTick(0, h);
+    EXPECT_NEAR(device->outputState(0)->lastFed, 0.5, 1e-4) << "the step itself passes";
+
+    auto runSeconds = [&](double seconds)
+    {
+        for (int64_t i = 0; i < int64_t(seconds * double(halfTicksPerSecond)); i++)
+            device->fmHalfTick(0, h += 8);
+        return device->outputState(0)->lastFed;
+    };
+    EXPECT_NEAR(runSeconds(rcSeconds), 0.5 * std::exp(-1.0), 2e-3) << "one time constant";
+    EXPECT_LT(std::fabs(runSeconds(4.0 * rcSeconds)), 0.5 * 0.01) << "released after 5 RC";
+
+    // Mute: the held +0.5 drops to 0 at the DAC -> a -0.5 step, released too
+    device->portDeviceOutMethod(PORT_FFFD, 0xFE);  // chip 0, FM muted
+    device->fmHalfTick(0, h += 8);
+    EXPECT_NEAR(device->outputState(0)->lastFed, -0.5, 0.01) << "mute step passes";
+    EXPECT_LT(std::fabs(runSeconds(5.0 * rcSeconds)), 0.5 * 0.01) << "mute step released after 5 RC";
 }
 
 /// endregion

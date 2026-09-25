@@ -24,6 +24,8 @@
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "debugger/ttd/ttddumpformat.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
@@ -787,6 +789,12 @@ TEST(TTD_TSFM_ManagerIntegration_Test, SeekTo_FlushesOutputStageToAvoidClickFrom
     EXPECT_EQ(out1->hold, 0.0) << "chip 1 hold register not flushed on restore";
     EXPECT_EQ(out1->lqSum, 0.0) << "chip 1 LQ boxcar sum not flushed on restore";
     EXPECT_EQ(out1->lqCount, 0u) << "chip 1 LQ boxcar count not flushed on restore";
+    // The FM output coupling is part of the output stage: a charged capacitor
+    // from the pre-seek audio would bleed into the restored timeline
+    EXPECT_EQ(out0->lastFed, 0.0) << "chip 0 coupling output not flushed on restore";
+    EXPECT_EQ(out1->lastFed, 0.0) << "chip 1 coupling output not flushed on restore";
+    EXPECT_EQ(out0->coupling.filter(0.0), 0.0) << "chip 0 coupling state not flushed on restore";
+    EXPECT_EQ(out1->coupling.filter(0.0), 0.0) << "chip 1 coupling state not flushed on restore";
 
     // The decimators' FIR history must be cleared too (not just the simple
     // scalar fields above): a decimator carrying stale taps produces a
@@ -798,6 +806,87 @@ TEST(TTD_TSFM_ManagerIntegration_Test, SeekTo_FlushesOutputStageToAvoidClickFrom
     EXPECT_FALSE(fm->getChip(1)->decimatorLeft().hasOutput())
         << "chip 1 SSG-left decimator not flushed";
 
+    emulator.Stop();
+    emulator.Release();
+}
+
+/// The render-phase fix restores the device's _samplePhase to its recorded
+/// value; the mixer's own frame sample accumulator (SoundManager) was left at
+/// its live pre-seek value. From the seek on, the two counts disagreed every
+/// few frames - the mixer read one never-rendered, zero sample past the
+/// device's last one: a click every ~6 frames for the rest of the session
+/// (BW Demo report, "after ttd rewind clicking continues all over").
+TEST(TTD_TSFM_ManagerIntegration_Test, SeekTo_KeepsDeviceAndMixerSampleCountsEqual)
+{
+    Emulator emulator(LoggerLevel::LogError);
+    emulator.SetCustomConfigPath(
+        EmulatorTestHelper::StageTurboSoundKindConfig(TurboSoundKind::FM));
+    ASSERT_TRUE(emulator.Init());
+
+    EmulatorContext* context = emulator.GetContext();
+    ASSERT_NE(context, nullptr);
+    ttd::TimeTravelManager* ttdMgr = context->pTimeTravelManager;
+    ASSERT_NE(ttdMgr, nullptr);
+    FeatureManager* featureManager = emulator.GetFeatureManager();
+    ASSERT_NE(featureManager, nullptr);
+    featureManager->setFeature(Features::kDebugMode, true);
+    featureManager->setFeature(Features::kTimeTravel, true);
+    context->pMemory->UpdateFeatureCache();
+
+    const auto sna = TestPathHelper::FindProjectRoot() / "testdata/sound/tsfm/tech_support.sna";
+    ASSERT_TRUE(emulator.LoadSnapshot(sna.string()))
+        << "fixture missing: " << sna.string();
+
+    auto* fm = dynamic_cast<SoundChip_TurboSoundFM*>(context->pSoundManager->getTurboSound());
+    ASSERT_NE(fm, nullptr) << "Test precondition: FM slot kind must be active";
+
+    // The mixer hands each finished frame to the audio callback from inside
+    // SoundManager::handleFrameEnd, before the next frame starts - the device's
+    // rendered count still belongs to that same frame there
+    struct CountCheck
+    {
+        SoundChip_TurboSoundFM* fm = nullptr;
+        int mismatches = 0;
+        static void Callback(void* obj, int16_t* /*samples*/, size_t numSamples)
+        {
+            auto* self = static_cast<CountCheck*>(obj);
+            if (numSamples / 2 != self->fm->getRenderedSamplesThisFrame())
+                self->mismatches++;
+        }
+    } check;
+    check.fm = fm;
+    context->pAudioCallback.store(&CountCheck::Callback, std::memory_order_release);
+    context->pAudioManagerObj.store(&check, std::memory_order_release);
+
+    auto countDisagreements = [&](int frames, int* firstMismatch) -> int
+    {
+        int mismatches = 0;
+        for (int i = 0; i < frames; i++)
+        {
+            check.mismatches = 0;
+            emulator.RunNFrames(1, /*skipBreakpoints=*/true);
+            if (check.mismatches > 0 && mismatches++ == 0)
+                *firstMismatch = i;
+        }
+        return mismatches;
+    };
+
+    ASSERT_TRUE(ttdMgr->StartRecording());
+    int first = -1;
+    ASSERT_EQ(countDisagreements(100, &first), 0)
+        << "precondition: device and mixer sample counts disagree before any seek (first at frame " << first << ")";
+    ttdMgr->StopRecording();
+
+    // Frame 30 sits at a different fractional sample phase than the live
+    // head (frame ~100): at 44.1 kHz the pattern period is 125 frames
+    ASSERT_TRUE(ttdMgr->SeekTo({30, 0}));
+    first = -1;
+    const int mismatches = countDisagreements(60, &first);
+    EXPECT_EQ(mismatches, 0) << mismatches << " of 60 frames after the seek rendered a different count than "
+                             << "the mixer consumed (first " << first << " frames after the seek)";
+
+    context->pAudioCallback.store(nullptr, std::memory_order_release);
+    context->pAudioManagerObj.store(nullptr, std::memory_order_release);
     emulator.Stop();
     emulator.Release();
 }

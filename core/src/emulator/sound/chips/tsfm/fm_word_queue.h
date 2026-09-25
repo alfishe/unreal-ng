@@ -19,7 +19,7 @@
 /// One queued FM DAC sample
 struct FmWord
 {
-    uint64_t t = 0;     // frame-relative T-state of the sample
+    uint64_t t = 0;     // frame-relative T-state; words carried over from the previous frame are negative (two's complement, compare as int64_t)
     int16_t word = 0;   // YM3014 16-bit DAC word (left channel)
 };
 

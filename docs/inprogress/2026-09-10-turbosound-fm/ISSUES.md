@@ -8,7 +8,7 @@ Everything found while verifying the TurboSound FM implementation against real h
 | 2 | Clicks: device and mixer disagree on the frame's sample count | mixer | fixed, uncommitted |
 | 3 | CSM does not retrigger on Timer A overflow | ymfm | fixed, `279bbe2c` |
 | 4 | HQ character chains ran with HQ off | mixer / CPU | fixed, `7840d135` |
-| 5 | Sub-audio FM content reaches the output (no coupling high-pass) | FM output stage | open, by design so far |
+| 5 | Sub-audio FM content reaches the output (no coupling high-pass) | FM output stage | fixed, 1.33 Hz coupling |
 | 6 | int16 mix has no headroom for loud FM | mixer | open, tracked separately |
 | 7 | LQ → HQ switch replays stale decimator history | devices | open, minor |
 | 8 | SSG opposite-side leakage symmetric at −19 dB, hardware asymmetric | SSG pan | open, cosmetic |
@@ -19,6 +19,9 @@ Everything found while verifying the TurboSound FM implementation against real h
 | 13 | Moe-bius tune leaves an FM channel keyed after it ends | tune content | not a bug; documented |
 | 14 | Device state (AY, FM, FDC) not reachable from the automation interfaces | automation | fixed, uncommitted |
 | 15 | Fresh floppy drives reported a random head track | FDD | fixed, uncommitted |
+| 16 | FM content slipped up to ~80 T at most frame boundaries | FM output stage | fixed |
+| 17 | After a TTD seek the device and mixer sample counts disagreed | TTD / mixer | fixed |
+| 18 | AY DC remover: delayed step after bursts, bass cut below ~150 Hz | AY output | fixed, 5 Hz high-pass |
 
 ---
 
@@ -66,7 +69,7 @@ Everything found while verifying the TurboSound FM implementation against real h
 
 **Cause.** Faithful chip behaviour. The real board's output coupling capacitors (`C16/C17`, hardware-reference §5) remove it; the emulator's FM path has no high-pass by design ("no DC blocker on FM: the ymfm output is symmetric around zero", design §7.2).
 
-**Status.** Open. A first-order high-pass on the FM buffers matching the board's coupling would hide it. The capacitor values are not in the hardware reference; a cutoff of about 5–10 Hz is the usual figure for such a stage. Not part of any fix so far.
+**Fix.** The board's coupling is modelled from the schematic (rev C): FM1/FM2 reach the DA5 mixer through C14/C15 = 10 µF into two 24 kΩ resistors to the op-amp virtual grounds (12 kΩ), fc = 1.33 Hz. A one-pole high-pass (`FilterDCBlocker`) per chip at the 437.5 kHz half-tick rate, after the mute gate - the mute grounds the DAC data line, the capacitor sits after the DAC buffer. It passes steps and releases them with RC = 120 ms: the Moe-bius stuck carrier (0.25 Hz) is attenuated ~15 dB and a mute step no longer leaves a DC offset. Tests `TsfmOutput_Test.FmCouplingMatchesSchematic`, `FmCouplingReleasesStuckDc`. The shared test note in `tsfm_output_test.cpp` was 2.97 Hz, not the "~770 Hz" its comment claimed (block 0, MUL 0); it is 759.5 Hz now (block 7, MUL 1), so the gain references measure an audible tone.
 
 ## 6. int16 mix has no headroom for loud FM
 
@@ -131,3 +134,27 @@ Everything found while verifying the TurboSound FM implementation against real h
 **Cause.** `FDD::FDD` seeded `_track` from `std::random_device` ("unknown position like a real drive"), so every untouched drive carried garbage into state reports and TTD snapshots; the TTD serializer tests had to force known tracks to be deterministic.
 
 **Fix (uncommitted).** The constructor sets track 0; a fresh drive reports track 0, bottom side, motor off, no disk, not write-protected. `DeviceState_Test.FdcReportListsControllerAndDrives` pins that for all four drives and the controller (drive 0, side 0, track 0, sector 1, DRQ/INTRQ low). 267 disk/TTD tests unchanged.
+
+## 16. FM content slipped at frame boundaries
+
+**Observed.** Clicks at the start and end of FM-only passages, like accumulated phase errors.
+
+**Cause.** The FM render cursor restarted at 0 every frame while the word timestamps were rebased by the frame length, and the render loop does not run exactly frame/16 SSG ticks per frame (the decimators' fractional phase carries over). The end-of-frame drain dumped the unplayed words into the hold. The FM content shifted by up to ~80 T (one FM word is 72 T) at 83% of frame boundaries at 44.1 kHz, 24% at 48 kHz.
+
+**Fix.** One continuous timeline: the cursor is rebased with the words, runs a constant 256 T behind them, the drain is gone, and the cursor re-anchors on a rate or HQ/LQ switch. Tests `TsfmTimeline_Test.ContinuousAcrossFrames`, `ContinuousAfterLiveRateSwitch`.
+
+## 17. Sample counts disagreed after a TTD seek
+
+**Observed.** After a TTD rewind the music clicked all through the fragment: one exactly-zero sample every ~6 frames (issue 2's signature).
+
+**Cause.** The TTD restore brings back the device's `_samplePhase` (needed for generator determinism) but not the mixer's own accumulator, and it left the per-frame render cursor at its live pre-seek values.
+
+**Fix.** `TTDLoadState` restarts the per-frame cursor like a frame start and hands the restored phase to the mixer (`SoundManager::adoptSamplePhase`). Test `TTD_TSFM_ManagerIntegration_Test.SeekTo_KeepsDeviceAndMixerSampleCountsEqual`.
+
+## 18. AY DC remover
+
+**Observed.** On the BW Demo music start, the player's R13 write restarts an old envelope for ~0.3 ms (faithful). 4.7 ms later the output stepped back from a small negative plateau.
+
+**Cause.** `FilterDC` subtracted the mean of the last 1024 samples (4.68 ms at 218.75 kHz): any burst returns as a step one window later, and the bass is cut (-21 dB at 50 Hz, -10 dB at 100 Hz).
+
+**Fix.** A one-pole high-pass at 5 Hz (`FilterDCBlocker`, `SoundChip_AY8910::OUTPUT_HIGHPASS_HZ`). The board's SSG coupling is lower (C8-C13 = 10 µF into 47 kΩ, ~0.34 Hz); 5 Hz is the measured knee on real music - lower cutoffs add no 30-150 Hz content, only slow DC wander that costs mix headroom (issue 6). Tests `FilterDCBlocker_Test.*`, `SoundChip_AY8910_Test.OutputDcRemoval*`.
