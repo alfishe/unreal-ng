@@ -36,8 +36,9 @@
 #define Z80OPCODE int Z80FAST
 #define Z80LOGIC uint8_t Z80FAST
 
-typedef int (Z80FAST* STEPFUNC)(struct Z80CPU*, int tact0);
-typedef uint8_t (Z80FAST* LOGICFUNC)(struct Z80CPU*, uint8_t byte);
+struct Z80Regs;
+typedef int (Z80FAST* STEPFUNC)(struct Z80CPU*, int tact0, struct Z80Regs* rf);
+typedef uint8_t (Z80FAST* LOGICFUNC)(struct Z80Regs*, uint8_t byte);
 
 // T-state accounting: the core scales by cpu->rate (256 for 1x); the
 // standalone core counts plain T-states.
@@ -98,12 +99,19 @@ struct Z80AltRegs
     };
 };
 
-// The CPU state. Register block layout mirrors the packed core Z80Registers
-// (little-endian byte order in the 16-bit unions, same as the core).
-struct Z80CPU
+// The register file: packed, member-for-member the layout of the core's
+// Z80Registers from pc to nmi_in_progress (little-endian byte order in the
+// 16-bit unions). It is the engine's view of the public Z80CpuRegisterFile
+// (z80cpu.h) - same size and offsets, pinned by static_asserts in
+// z80cpu.cpp - so a host can attach its own block and the engine works on it
+// in place (Z80CpuAttachRegisterFile). The hot path (Step, handlers, bus
+// primitives) reaches it through `rf`, loaded from cpu->regs once per
+// instruction and passed as an argument, reloaded only after out-of-line
+// calls (docs/hot-cold-path-guide.md, rules 2.2 and 2.5); the API and cold
+// code use Z80R(cpu).
+#pragma pack(push, 1)  // outside the body: packs the struct itself (host layout)
+struct Z80Regs
 {
-    // ---- register file (packed, core-compatible layout) ----
-#pragma pack(push, 1)
     union
     {
         uint16_t pc;
@@ -213,12 +221,26 @@ struct Z80CPU
     };
     uint8_t q;
 
-    int32_t eipos;     // T-state of the last EI (kept for state parity/dumps)
-    uint16_t haltpos;  // T-state when HALT was entered
+    // Host-owned slots, kept only so the block is contiguous with the core's
+    // Z80Registers (eipos/haltpos sit between q and im there). The engine
+    // never reads or writes them: with an attached register file they are
+    // the host's own EI-shadow / HALT-entry bookkeeping.
+    int32_t reservedEipos;
+    uint16_t reservedHaltpos;
 
     uint8_t im;              // interrupt mode 0/1/2
     bool nmi_in_progress;    // RETN clears this (ported retn() method)
+};
 #pragma pack(pop)
+
+// The CPU state. Register block layout mirrors the packed core Z80Registers
+// (little-endian byte order in the 16-bit unions, same as the core).
+struct Z80CPU
+{
+    // Active register file: &ownedRegs, or the host block attached with
+    // Z80CpuAttachRegisterFile. First member: one load from the context.
+    Z80Regs* regs;
+
 
     // ---- execution state ----
     uint32_t t;         // T-states since reset (plain, unscaled)
@@ -336,8 +358,21 @@ struct Z80CPU
     }
 
     // RETN leaves the NMI session (core Z80::retn).
-    Z80INLINE void retn() { nmi_in_progress = false; }
+    Z80INLINE void retn() { regs->nmi_in_progress = false; }
+
+    // Default register storage (standalone hosts, tests, benchmarks).
+    alignas(8) Z80Regs ownedRegs;  // default storage (also the detach target)
 };
+
+// Register access outside the hot path (API, INT/NMI, reset).
+#define Z80R(cpu) (*(cpu)->regs)
+
+// Refresh counter tick (every M1, the halted NOP, the INT/NMI acknowledge):
+// the low 7 bits count, bit 7 of r_low is left as it is - a host sharing the
+// register file (Z80CpuAttachRegisterFile) keeps its own meaning for that
+// bit, and LD R,A is the only instruction that writes it.
+#define Z80_R_INC(rf) ((rf)->r_low = static_cast<uint8_t>((((rf)->r_low + 1) & 0x7F) | ((rf)->r_low & 0x80)))
+#define Z80_R_DEC(rf) ((rf)->r_low = static_cast<uint8_t>((((rf)->r_low - 1) & 0x7F) | ((rf)->r_low & 0x80)))
 
 // ---- standardized T-model machinery (see the cputact block above) ----
 
@@ -364,6 +399,19 @@ Z80INLINE void Z80ContendT(Z80CPU* cpu, uint16_t addr, Z80CpuAccessKind kind, in
 {
     if (__builtin_expect(cpu->contend != nullptr, 0))
         tact += Z80ContendSlow(cpu, addr, kind, cycleStart);
+}
+
+// Same, for the bus primitives that carry the handler's register-file
+// pointer: reloaded from the context after the out-of-line hook, so it is
+// dead across the call (no callee-saved register, no save/restore in the
+// handler prologue - it lives in an argument register all instruction long).
+Z80INLINE void Z80ContendRT(Z80Regs*& rf, Z80CPU* cpu, uint16_t addr, Z80CpuAccessKind kind, int cycleStart, int& tact)
+{
+    if (__builtin_expect(cpu->contend != nullptr, 0))
+    {
+        tact += Z80ContendSlow(cpu, addr, kind, cycleStart);
+        rf = cpu->regs;
+    }
 }
 
 // Seed the accumulator from the tact0 argument (T-touching handlers). No
@@ -406,21 +454,21 @@ Z80INLINE void Z80ContendT(Z80CPU* cpu, uint16_t addr, Z80CpuAccessKind kind, in
 // handler - so one instruction costs one call/return pair and no state has
 // to survive any call. Plain `return f(...)` everywhere: every compiler
 // emits the jump at -O2, and correctness never depends on it.
-[[maybe_unused]] Z80NOINLINE static int Z80FinishFlags(Z80CPU* cpu, int tact)
+[[maybe_unused]] Z80NOINLINE static int Z80FinishFlags(Z80CPU* cpu, int tact, Z80Regs* rf)
 {
     cpu->t = static_cast<uint32_t>(tact);
-    cpu->q = cpu->f & 0x28;
+    rf->q = rf->f & 0x28;
     return tact;
 }
 
-[[maybe_unused]] Z80NOINLINE static int Z80FinishNoFlags(Z80CPU* cpu, int tact)
+[[maybe_unused]] Z80NOINLINE static int Z80FinishNoFlags(Z80CPU* cpu, int tact, Z80Regs* rf)
 {
     cpu->t = static_cast<uint32_t>(tact);
-    cpu->q = 0;
+    rf->q = 0;
     return tact;
 }
 
-#define Z80_RETURN_Q(qmask, t) return ((qmask) ? Z80FinishFlags(cpu, (t)) : Z80FinishNoFlags(cpu, (t)))
+#define Z80_RETURN_Q(qmask, t) return ((qmask) ? Z80FinishFlags(cpu, (t), rf) : Z80FinishNoFlags(cpu, (t), rf))
 
 // ---- library-private namespace ----
 // Everything below with external linkage (the flag/DAA tables and their
@@ -464,29 +512,29 @@ void Z80TablesInit(void);
 
 // ---- inlined micro-operations (ported from core cpulogic.cpp) ----
 
-Z80INLINE void and8(Z80CPU* cpu, uint8_t src)
+Z80INLINE void and8(Z80Regs* rf, uint8_t src)
 {
-    cpu->a &= src;
-    cpu->f = log_f[cpu->a] | HF;
+    rf->a &= src;
+    rf->f = log_f[rf->a] | HF;
 }
 
-Z80INLINE void or8(Z80CPU* cpu, uint8_t src)
+Z80INLINE void or8(Z80Regs* rf, uint8_t src)
 {
-    cpu->a |= src;
-    cpu->f = log_f[cpu->a];
+    rf->a |= src;
+    rf->f = log_f[rf->a];
 }
 
-Z80INLINE void xor8(Z80CPU* cpu, uint8_t src)
+Z80INLINE void xor8(Z80Regs* rf, uint8_t src)
 {
-    cpu->a ^= src;
-    cpu->f = log_f[cpu->a];
+    rf->a ^= src;
+    rf->f = log_f[rf->a];
 }
 
 // BIT n,(HL) and xxCB BIT n,(xx+d): X/Y flags come from MEMPTR high byte.
-Z80INLINE void bitmem(Z80CPU* cpu, uint8_t src, uint8_t bit)
+Z80INLINE void bitmem(Z80Regs* rf, uint8_t src, uint8_t bit)
 {
-    cpu->f = log_f[src & (1 << bit)] | HF | (cpu->f & CF);
-    cpu->f = (cpu->f & ~(F3 | F5)) | (cpu->memh & (F3 | F5));
+    rf->f = log_f[src & (1 << bit)] | HF | (rf->f & CF);
+    rf->f = (rf->f & ~(F3 | F5)) | (rf->memh & (F3 | F5));
 }
 
 Z80INLINE void op_set(uint8_t& src, uint8_t bit)
@@ -500,9 +548,9 @@ Z80INLINE void res(uint8_t& src, uint8_t bit)
 }
 
 // BIT n,r: X/Y flags come from the operand itself.
-Z80INLINE void bit(Z80CPU* cpu, uint8_t src, uint8_t bit)
+Z80INLINE void bit(Z80Regs* rf, uint8_t src, uint8_t bit)
 {
-    cpu->f = log_f[src & (1 << bit)] | HF | (cpu->f & CF) | (src & (F3 | F5));
+    rf->f = log_f[src & (1 << bit)] | HF | (rf->f & CF) | (src & (F3 | F5));
 }
 
 Z80INLINE uint8_t resbyte(uint8_t src, uint8_t bit)
@@ -515,47 +563,47 @@ Z80INLINE uint8_t setbyte(uint8_t src, uint8_t bit)
     return src | (1 << bit);
 }
 
-Z80INLINE void inc8(Z80CPU* cpu, uint8_t& x)
+Z80INLINE void inc8(Z80Regs* rf, uint8_t& x)
 {
-    cpu->f = inc_f[x] | (cpu->f & CF);
+    rf->f = inc_f[x] | (rf->f & CF);
     x++;
 }
 
-Z80INLINE void dec8(Z80CPU* cpu, uint8_t& x)
+Z80INLINE void dec8(Z80Regs* rf, uint8_t& x)
 {
-    cpu->f = dec_f[x] | (cpu->f & CF);
+    rf->f = dec_f[x] | (rf->f & CF);
     x--;
 }
 
-Z80INLINE void add8(Z80CPU* cpu, uint8_t src)
+Z80INLINE void add8(Z80Regs* rf, uint8_t src)
 {
-    cpu->f = adc_f[cpu->a + src * 0x100];
-    cpu->a += src;
+    rf->f = adc_f[rf->a + src * 0x100];
+    rf->a += src;
 }
 
-Z80INLINE void sub8(Z80CPU* cpu, uint8_t src)
+Z80INLINE void sub8(Z80Regs* rf, uint8_t src)
 {
-    cpu->f = sbc_f[cpu->a * 0x100 + src];
-    cpu->a -= src;
+    rf->f = sbc_f[rf->a * 0x100 + src];
+    rf->a -= src;
 }
 
-Z80INLINE void adc8(Z80CPU* cpu, uint8_t src)
+Z80INLINE void adc8(Z80Regs* rf, uint8_t src)
 {
-    uint8_t carry = ((cpu->f)&CF);
-    cpu->f = adc_f[cpu->a + src * 0x100 + 0x10000 * carry];
-    cpu->a += src + carry;
+    uint8_t carry = ((rf->f)&CF);
+    rf->f = adc_f[rf->a + src * 0x100 + 0x10000 * carry];
+    rf->a += src + carry;
 }
 
-Z80INLINE void sbc8(Z80CPU* cpu, uint8_t src)
+Z80INLINE void sbc8(Z80Regs* rf, uint8_t src)
 {
-    uint8_t carry = ((cpu->f)&CF);
-    cpu->f = sbc_f[cpu->a * 0x100 + src + 0x10000 * carry];
-    cpu->a -= src + carry;
+    uint8_t carry = ((rf->f)&CF);
+    rf->f = sbc_f[rf->a * 0x100 + src + 0x10000 * carry];
+    rf->a -= src + carry;
 }
 
-Z80INLINE void cp8(Z80CPU* cpu, uint8_t src)
+Z80INLINE void cp8(Z80Regs* rf, uint8_t src)
 {
-    cpu->f = cp_f[cpu->a * 0x100 + src];
+    rf->f = cp_f[rf->a * 0x100 + src];
 }
 
 }  // namespace Z80Lib

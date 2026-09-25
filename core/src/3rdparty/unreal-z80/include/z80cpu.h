@@ -25,6 +25,7 @@
 #ifndef Z80CPU_H
 #define Z80CPU_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -119,7 +120,7 @@ typedef enum
     Z80CpuRegCount
 } Z80CpuReg;
 
-// Library version string, e.g. "0.2.0".
+// Library version string, e.g. "0.3.0".
 const char* Z80CpuVersion(void);
 
 // Lifecycle. The CPU starts in the post-reset state with no bus wired:
@@ -205,6 +206,96 @@ typedef struct Z80CpuRegisters
 
 void Z80CpuGetRegisters(const Z80CPU* cpu, Z80CpuRegisters* regs);
 void Z80CpuSetRegisters(Z80CPU* cpu, const Z80CpuRegisters* regs);
+
+// Zero-copy register file. The engine executes directly on this block: a
+// host that keeps its own register structure with exactly this layout
+// attaches it once and never copies registers around a step. Packed,
+// native (little-endian) 16-bit words; the 8-bit halves of the pairs follow
+// the little-endian byte order (low byte first).
+// Conventions the host must follow while attached:
+//  - R: rLow bits 0-6 are the refresh counter (the engine advances them,
+//    bit 7 of rLow is left as it is), rHi bit 7 is R7. LD R,A writes
+//    rLow = A and rHi = A & 0x80. The observable R is
+//    (rLow & 0x7F) | (rHi & 0x80).
+//  - iff1/iff2/halted are 0 or 1; im is 0..2; q holds only bits 3 and 5.
+//  - halted is the live HALT latch: the engine sets it on HALT, clears it
+//    on INT/NMI acknowledge, and runs halted M1 quanta while it is set.
+//  - reservedEipos/reservedHaltpos are host-owned: the engine never reads
+//    or writes them (they exist so the block is contiguous with a host
+//    structure that keeps its EI-shadow/HALT-entry bookkeeping there).
+// Layout is a contract: every offset is pinned by the static assertions
+// below (a drift is a compile error, never silent corruption).
+#pragma pack(push, 1)
+typedef struct Z80CpuRegisterFile
+{
+    uint16_t pc;
+    uint16_t sp;
+    uint8_t rLow;     // refresh counter (bits 0-6), bit 7 host-stable
+    uint8_t i;
+    uint8_t rHi;      // bit 7 = R7
+    uint8_t iff1;
+    uint8_t iff2;
+    uint8_t halted;
+    uint16_t bc, de, hl, af;
+    uint16_t ix, iy;
+    uint16_t bcAlt, deAlt, hlAlt, afAlt;
+    uint16_t memptr;
+    uint8_t q;
+    int32_t reservedEipos;     // host-owned, never touched by the engine
+    uint16_t reservedHaltpos;  // host-owned, never touched by the engine
+    uint8_t im;
+    uint8_t nmiInProgress;     // set by NMI acknowledge, cleared by RETN
+} Z80CpuRegisterFile;
+#pragma pack(pop)
+
+#if defined(__cplusplus)
+#define Z80CPU_STATIC_ASSERT(c, m) static_assert(c, m)
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+#define Z80CPU_STATIC_ASSERT(c, m) _Static_assert(c, m)
+#else  /* C89/C99: a negative array size is the compile error */
+#define Z80CPU_SA_CAT2(a, b) a##b
+#define Z80CPU_SA_CAT(a, b) Z80CPU_SA_CAT2(a, b)
+#define Z80CPU_STATIC_ASSERT(c, m) typedef char Z80CPU_SA_CAT(z80cpu_layout_check_, __LINE__)[(c) ? 1 : -1]
+#endif
+Z80CPU_STATIC_ASSERT(sizeof(Z80CpuRegisterFile) == 41, "Z80CpuRegisterFile size");
+Z80CPU_STATIC_ASSERT(offsetof(Z80CpuRegisterFile, pc) == 0, "pc");
+Z80CPU_STATIC_ASSERT(offsetof(Z80CpuRegisterFile, sp) == 2, "sp");
+Z80CPU_STATIC_ASSERT(offsetof(Z80CpuRegisterFile, rLow) == 4, "rLow");
+Z80CPU_STATIC_ASSERT(offsetof(Z80CpuRegisterFile, i) == 5, "i");
+Z80CPU_STATIC_ASSERT(offsetof(Z80CpuRegisterFile, rHi) == 6, "rHi");
+Z80CPU_STATIC_ASSERT(offsetof(Z80CpuRegisterFile, iff1) == 7, "iff1");
+Z80CPU_STATIC_ASSERT(offsetof(Z80CpuRegisterFile, iff2) == 8, "iff2");
+Z80CPU_STATIC_ASSERT(offsetof(Z80CpuRegisterFile, halted) == 9, "halted");
+Z80CPU_STATIC_ASSERT(offsetof(Z80CpuRegisterFile, bc) == 10, "bc");
+Z80CPU_STATIC_ASSERT(offsetof(Z80CpuRegisterFile, de) == 12, "de");
+Z80CPU_STATIC_ASSERT(offsetof(Z80CpuRegisterFile, hl) == 14, "hl");
+Z80CPU_STATIC_ASSERT(offsetof(Z80CpuRegisterFile, af) == 16, "af");
+Z80CPU_STATIC_ASSERT(offsetof(Z80CpuRegisterFile, ix) == 18, "ix");
+Z80CPU_STATIC_ASSERT(offsetof(Z80CpuRegisterFile, iy) == 20, "iy");
+Z80CPU_STATIC_ASSERT(offsetof(Z80CpuRegisterFile, bcAlt) == 22, "bcAlt");
+Z80CPU_STATIC_ASSERT(offsetof(Z80CpuRegisterFile, deAlt) == 24, "deAlt");
+Z80CPU_STATIC_ASSERT(offsetof(Z80CpuRegisterFile, hlAlt) == 26, "hlAlt");
+Z80CPU_STATIC_ASSERT(offsetof(Z80CpuRegisterFile, afAlt) == 28, "afAlt");
+Z80CPU_STATIC_ASSERT(offsetof(Z80CpuRegisterFile, memptr) == 30, "memptr");
+Z80CPU_STATIC_ASSERT(offsetof(Z80CpuRegisterFile, q) == 32, "q");
+Z80CPU_STATIC_ASSERT(offsetof(Z80CpuRegisterFile, reservedEipos) == 33, "reservedEipos");
+Z80CPU_STATIC_ASSERT(offsetof(Z80CpuRegisterFile, reservedHaltpos) == 37, "reservedHaltpos");
+Z80CPU_STATIC_ASSERT(offsetof(Z80CpuRegisterFile, im) == 39, "im");
+Z80CPU_STATIC_ASSERT(offsetof(Z80CpuRegisterFile, nmiInProgress) == 40, "nmiInProgress");
+
+// Attach a host-owned register file: from now on every register access of
+// the engine (execution, reset, interrupts, the Get/Set register APIs) goes
+// to this memory, with no copy: its current contents become the CPU state
+// as they are (the host's registers win). The block must stay valid until
+// detached. Pass null to detach: the attached contents are copied back into
+// the engine's own storage, which becomes active again, so no state is lost
+// switching back. Attaching another block while one is attached switches
+// straight to it (its contents win again).
+void Z80CpuAttachRegisterFile(Z80CPU* cpu, Z80CpuRegisterFile* file);
+
+// The register file the engine currently executes on (the attached host
+// block, or the engine's own storage) - a direct, always-current view.
+Z80CpuRegisterFile* Z80CpuRegisterFilePtr(Z80CPU* cpu);
 
 // Bus wiring. Any callback may be null: memory reads return 0xFF, writes and
 // port writes are discarded, port reads return 0xFF, INT vector = 0xFF

@@ -359,19 +359,13 @@ protected:
     bool _feature_calltrace_enabled = false;
 
     /// region <Execution engine>
-    /// Opcodes are executed by the vendored unreal-z80 engine (callback bus).
-    /// The Z80Registers/Z80State fields stay the source of truth between
-    /// instructions: Z80Step() loads them into the engine, runs exactly one
-    /// instruction and stores the result back (see ExecuteEngineInstruction).
+    /// Opcodes are executed by the vendored unreal-z80 engine (callback bus),
+    /// running directly on this instance's Z80Registers memory - attached
+    /// once in the constructor (Z80CpuAttachRegisterFile), no per-step
+    /// register copy in either direction (see ExecuteEngineInstruction).
     friend struct Z80EngineBridge;
     Z80CPU* _engine = nullptr;
 
-    // Register file as last stored into the Z80Registers fields after a step.
-    // When the fields still hold exactly these values at the next step (no
-    // debugger/TTD/trap write in between - the common case) the engine
-    // already has them and the load is skipped
-    Z80CpuRegisters _engineRegsStored{};
-    bool _engineRegsValid = false;   // _engineRegsStored matches the engine
     uint8_t _engineOutC0 = 0;        // OUT (C),0 value last given to the engine
 
     // Per-instruction bridge state (valid only inside ExecuteEngineInstruction)
@@ -385,8 +379,6 @@ protected:
     bool _engineIndexCbDisplacement = false;  // DD/FD CB: the next stream byte is the displacement
     bool _engineExpectOpcode = true; // the next instruction-stream byte is an opcode (M1) fetch
     bool _engineContention = false;  // the engine's wait-state hook is installed
-    uint8_t _engineLastM1Byte = 0;   // previous opcode byte of this instruction
-    bool _engineWroteR = false;      // this instruction was LD R,A
     /// endregion </Execution engine>
     /// endregion </Fields>
 

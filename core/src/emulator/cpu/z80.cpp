@@ -23,6 +23,47 @@
 #include "emulator/video/ulacontention.h"
 #include "stdafx.h"
 
+#include <cstddef>
+
+/// region <Register file layout contract>
+
+/// Zero-copy register file: the engine executes directly on Z80Registers
+/// memory (Z80CpuAttachRegisterFile, see the constructor), so its published
+/// Z80CpuRegisterFile layout (3rdparty/unreal-z80/include/z80cpu.h) must be
+/// byte-identical to the tail of Z80Registers from `pc` onward (`tt`/`t` sit
+/// before `pc` and are not part of the shared block - T-state stays synced
+/// separately via Z80CpuTstates/SetTstates, unchanged by this). A drift in
+/// either repository's field order/width is a compile error here, never
+/// silent corruption. eipos/haltpos are intentionally excluded from the
+/// engine's own bookkeeping (reservedEipos/reservedHaltpos in
+/// Z80CpuRegisterFile - the engine never reads or writes them) because the
+/// host derives them independently (see ExecuteEngineInstruction); they are
+/// only present in the struct so the block stays contiguous with
+/// Z80Registers.
+#define Z80_LAYOUT_OFFSET(field) (offsetof(Z80Registers, field) - offsetof(Z80Registers, pc))
+static_assert(Z80_LAYOUT_OFFSET(pc) == offsetof(Z80CpuRegisterFile, pc), "pc");
+static_assert(Z80_LAYOUT_OFFSET(sp) == offsetof(Z80CpuRegisterFile, sp), "sp");
+static_assert(Z80_LAYOUT_OFFSET(ir_) == offsetof(Z80CpuRegisterFile, rLow), "r_low");
+static_assert(Z80_LAYOUT_OFFSET(int_flags) == offsetof(Z80CpuRegisterFile, rHi), "r_hi/iff1/iff2/halted");
+static_assert(Z80_LAYOUT_OFFSET(bc) == offsetof(Z80CpuRegisterFile, bc), "bc");
+static_assert(Z80_LAYOUT_OFFSET(de) == offsetof(Z80CpuRegisterFile, de), "de");
+static_assert(Z80_LAYOUT_OFFSET(hl) == offsetof(Z80CpuRegisterFile, hl), "hl");
+static_assert(Z80_LAYOUT_OFFSET(af) == offsetof(Z80CpuRegisterFile, af), "af");
+static_assert(Z80_LAYOUT_OFFSET(ix) == offsetof(Z80CpuRegisterFile, ix), "ix");
+static_assert(Z80_LAYOUT_OFFSET(iy) == offsetof(Z80CpuRegisterFile, iy), "iy");
+static_assert(Z80_LAYOUT_OFFSET(alt) == offsetof(Z80CpuRegisterFile, bcAlt), "alt");
+static_assert(Z80_LAYOUT_OFFSET(memptr) == offsetof(Z80CpuRegisterFile, memptr), "memptr");
+static_assert(Z80_LAYOUT_OFFSET(q) == offsetof(Z80CpuRegisterFile, q), "q");
+static_assert(Z80_LAYOUT_OFFSET(eipos) == offsetof(Z80CpuRegisterFile, reservedEipos), "eipos");
+static_assert(Z80_LAYOUT_OFFSET(haltpos) == offsetof(Z80CpuRegisterFile, reservedHaltpos), "haltpos");
+static_assert(Z80_LAYOUT_OFFSET(im) == offsetof(Z80CpuRegisterFile, im), "im");
+static_assert(Z80_LAYOUT_OFFSET(nmi_in_progress) == offsetof(Z80CpuRegisterFile, nmiInProgress), "nmi_in_progress");
+static_assert(sizeof(Z80Registers) - offsetof(Z80Registers, pc) == sizeof(Z80CpuRegisterFile),
+              "Z80Registers[pc..nmi_in_progress] size must match Z80CpuRegisterFile");
+#undef Z80_LAYOUT_OFFSET
+
+/// endregion </Register file layout contract>
+
 /// region <Execution engine bridge>
 
 /// Callback trampolines between the vendored unreal-z80 engine (opaque C API,
@@ -213,17 +254,10 @@ struct Z80EngineBridge
     static void OnOpcodeByte(Z80& cpu, uint8_t value)
     {
         const uint8_t index = cpu._engineM1Count++;
-        const bool afterEd = index > 0 && cpu._engineLastM1Byte == 0xED;
         const bool isIndexPrefix = (value | 0x20) == 0xFD;
 
         cpu.opcode = value;
-        cpu._engineLastM1Byte = value;
         cpu._engineExpectOpcode = false;  // Default: this was the final opcode byte
-
-        // LD R,A (ED 4F) is the only instruction that writes R (see
-        // ExecuteEngineInstruction for why the host needs to know)
-        if (afterEd && value == 0x4F)
-            cpu._engineWroteR = true;
 
         if (index == 0)
         {
@@ -352,6 +386,12 @@ Z80::Z80(EmulatorContext* context) : Z80State{}
     if (_engine == nullptr)
         throw std::bad_alloc();
     Z80EngineBridge::Wire(_engine, this);
+
+    // Zero-copy register file: the engine executes directly on this
+    // instance's Z80Registers memory from now on (layout pinned by the
+    // static_asserts above) - no per-step copy in either direction. `pc` is
+    // the first shared field (see those asserts for what's excluded).
+    Z80CpuAttachRegisterFile(_engine, reinterpret_cast<Z80CpuRegisterFile*>(&pc));
 }
 
 Z80::~Z80()
@@ -1073,11 +1113,12 @@ void Z80::retn()
 
 /// Execute exactly one instruction on the engine.
 ///
-/// The Z80Registers fields are the source of truth between instructions (the
-/// debugger, TTD restore, snapshot loaders, fast-load traps and tests write
-/// them directly), so the whole register file is loaded into the engine
-/// before the step (unless it still holds exactly what the previous step
-/// stored) and stored back after it.
+/// The engine runs directly on this instance's Z80Registers memory
+/// (Z80CpuAttachRegisterFile in the constructor) - there is no register copy
+/// in either direction. Whatever the debugger/TTD restore/snapshot
+/// loaders/fast-load traps/tests write into the fields is exactly what the
+/// engine executes on, live; whatever the engine writes during Step() is
+/// immediately visible in the fields, no read-back needed.
 void Z80::ExecuteEngineInstruction()
 {
     Z80CPU* engine = _engine;
@@ -1092,54 +1133,13 @@ void Z80::ExecuteEngineInstruction()
         _engineContention = contention;
     }
 
-    /// region <Load: Z80Registers -> engine>
-    // The engine still holds what the last step stored into the fields unless
-    // something wrote them since (debugger, TTD restore, INT/NMI acceptance,
-    // traps, tests) - compare against that copy and load only on a
-    // difference. Field-wise, same widths as the stores that produced them
-    const Z80CpuRegisters& stored = _engineRegsStored;
-    const uint8_t r = static_cast<uint8_t>((r_low & 0x7F) | (r_hi & 0x80));
-    const bool engineCurrent = _engineRegsValid && stored.pc == pc && stored.af == af &&
-                               stored.bc == bc && stored.de == de && stored.hl == hl && stored.sp == sp &&
-                               stored.ix == ix && stored.iy == iy && stored.memptr == memptr && stored.q == q &&
-                               stored.r == r && stored.afAlt == alt.af && stored.bcAlt == alt.bc &&
-                               stored.deAlt == alt.de && stored.hlAlt == alt.hl && stored.i == i &&
-                               stored.im == im && stored.iff1 == iff1 && stored.iff2 == iff2;
-    if (!engineCurrent)
-    {
-        Z80CpuRegisters regs;
-        regs.af = af;
-        regs.bc = bc;
-        regs.de = de;
-        regs.hl = hl;
-        regs.afAlt = alt.af;
-        regs.bcAlt = alt.bc;
-        regs.deAlt = alt.de;
-        regs.hlAlt = alt.hl;
-        regs.ix = ix;
-        regs.iy = iy;
-        regs.pc = pc;
-        regs.sp = sp;
-        regs.memptr = memptr;
-        regs.i = i;
-        regs.r = r;
-        regs.im = im;
-        regs.iff1 = iff1;
-        regs.iff2 = iff2;
-        regs.q = q;
-
-        // HALT model (unchanged): a halted CPU re-executes the HALT opcode
-        // every step (its M1 fetch included) until INT/NMI moves PC past it,
-        // and the latch lives in `halted`. So the engine never sees its latch
-        // set - it always performs the fetch, as the interpreter did
-        regs.halted = 0;
-
-        Z80CpuSetRegisters(engine, &regs);
-    }
-    else if (stored.halted)
-    {
-        Z80CpuSetReg(engine, Z80CpuRegHalted, 0);  // HALT re-executes (see above)
-    }
+    // HALT model (unchanged): a halted CPU re-executes the HALT opcode every
+    // step (its M1 fetch included) until INT/NMI moves PC past it. `halted`
+    // is shared memory now, so clearing it here reaches the engine directly:
+    // capture the pre-step value first (needed below to detect the instant
+    // HALT is (re-)entered), then force the real fetch+execute path.
+    const bool wasHalted = halted != 0;
+    halted = 0;
 
     if (outc0 != _engineOutC0)
     {
@@ -1148,7 +1148,6 @@ void Z80::ExecuteEngineInstruction()
     }
 
     Z80CpuSetTstates(engine, t);
-    /// endregion </Load: Z80Registers -> engine>
 
     _engineTtBase = tt;
     _engineTBase = t;
@@ -1159,57 +1158,20 @@ void Z80::ExecuteEngineInstruction()
     _engineCbPending = false;
     _engineIndexCbDisplacement = false;
     _engineExpectOpcode = true;
-    _engineLastM1Byte = 0;
-    _engineWroteR = false;
 
     Z80CpuStep(engine);
 
-    /// region <Store: engine -> Z80Registers>
+    // pc, af, bc, de, hl, alt.*, ix, iy, sp, memptr, i, r_low, r_hi, im,
+    // iff1, iff2, q, halted are already current - the engine just wrote them
+    // in place. Only tt (derived from the engine's plain T-state count) and
+    // the two host-only EI-shadow/HALT-entry fields below need deriving.
     tt = EngineHostTt(Z80CpuTstates(engine));
 
-    Z80CpuRegisters& regs = _engineRegsStored;
-    Z80CpuGetRegisters(engine, &regs);
-    _engineRegsValid = true;
-    const bool engineHalted = regs.halted != 0;
-    af = regs.af;
-    bc = regs.bc;
-    de = regs.de;
-    hl = regs.hl;
-    alt.af = regs.afAlt;
-    alt.bc = regs.bcAlt;
-    alt.de = regs.deAlt;
-    alt.hl = regs.hlAlt;
-    ix = regs.ix;
-    iy = regs.iy;
-    pc = regs.pc;
-    sp = regs.sp;
-    memptr = regs.memptr;
-    i = regs.i;
-    im = regs.im;
-    iff1 = regs.iff1;
-    iff2 = regs.iff2;
-    q = regs.q;
-
-    // R: the engine exposes the 7-bit refresh counter plus R7. The host keeps
-    // bit 7 of r_low as well (loaders and the register view read r_low as a
-    // whole byte): the refresh increment never touches it, only LD R,A
-    // rewrites it together with r_hi
-    if (_engineWroteR)
+    // HALT executed: remember when it was (re-)entered (first time only)
+    if (halted)
     {
-        r_low = regs.r;
-        r_hi = static_cast<uint8_t>(regs.r & 0x80);
-    }
-    else
-    {
-        r_low = static_cast<uint8_t>((regs.r & 0x7F) | (r_low & 0x80));
-    }
-
-    // HALT executed: latch it, remember when it was entered (first time only)
-    if (engineHalted)
-    {
-        if (!halted)
+        if (!wasHalted)
             haltpos = static_cast<uint16_t>(t);
-        halted = 1;
         halt_cycle = 0;
     }
 
@@ -1217,7 +1179,6 @@ void Z80::ExecuteEngineInstruction()
     // possible); ProcessInterrupts expresses the same as "t == eipos"
     if (iff1 && !Z80CpuIntPossible(engine))
         eipos = static_cast<int32_t>(t);
-    /// endregion </Store: engine -> Z80Registers>
 }
 
 /// Host tt that corresponds to an engine T-state of the current instruction

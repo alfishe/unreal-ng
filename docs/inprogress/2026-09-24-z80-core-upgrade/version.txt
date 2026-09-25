@@ -5,7 +5,10 @@ Note:      This file documents core/src/3rdparty/unreal-z80/ (repo-root-
 Upstream:  unreal-z80 (standalone Z80 CPU library extracted from this
            emulator's core/src/emulator/cpu)
 Commit:    b7451bdbf5afad1de74004e0a7d573a39c6266e2 (2026-09-24)
-Version:   0.2.0
+           + uncommitted working-tree changes on top (zero-copy register
+           file, library version 0.3.0) as of 2026-09-24. Re-pin to a real
+           commit once upstream commits that work.
+Version:   0.3.0
 
 Copied from upstream z80lib/: include/z80cpu.h and every file of src/
 (z80cpu.cpp, z80tables.cpp, z80daa.cpp, opcodes-flat.cpp,
@@ -22,5 +25,12 @@ Local modifications: none. The six changes that were previously carried as
 a local patch (Z80Lib namespace, INT/NMI-ack and halted-M1 contention
 hooks, Z80CpuRegHalted, bulk register accessors, RETN hook) were upstreamed
 in library version 0.2.0 (commit faf7b7b onward) and are now part of this
-copy verbatim. See PATCHES.md for the history and for what to check on the
-next upgrade.
+copy verbatim.
+
+0.3.0 adds the zero-copy register file: Z80CpuRegisterFile (published,
+layout pinned by static_asserts), Z80CpuAttachRegisterFile/
+Z80CpuRegisterFilePtr, and the internal Z80Regs/`rf` threading through every
+opcode handler. This is what core/src/emulator/cpu/z80.cpp now uses instead
+of the per-step Z80CpuGetRegisters/SetRegisters bulk copy - see
+register-zero-copy-tdd.md for the design and results. See patches.md for the
+full history and what to check on the next upgrade.

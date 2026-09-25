@@ -6,6 +6,8 @@
 // context, debugger, contention and frame-loop concerns.
 
 #include "z80cpu-internal.h"
+
+#include <cstring>
 #include "z80cpu-dispatch.h"
 
 #include <cstdlib>
@@ -13,7 +15,7 @@
 
 const char* Z80CpuVersion(void)
 {
-    return "0.2.0";
+    return "0.3.0";
 }
 
 // Null-bus stubs: an unwired callback is a stub, never a null pointer, so
@@ -25,6 +27,20 @@ static void NullMemWrite(Z80CPU*, uint16_t, uint8_t, void*) {}
 static uint8_t NullPortIn(Z80CPU*, uint16_t, void*) { return 0xFF; }
 static void NullPortOut(Z80CPU*, uint16_t, uint8_t, void*) {}
 static uint8_t NullIntVector(Z80CPU*, void*) { return 0xFF; }
+
+// DDCB/FDCB destination registers: b,c,d,e,h,l,<trash>,a - pointers into
+// the active register file, rebound whenever it changes.
+static void BindDirectRegisters(Z80CPU* cpu)
+{
+    cpu->directRegisters[0] = &Z80R(cpu).b;
+    cpu->directRegisters[1] = &Z80R(cpu).c;
+    cpu->directRegisters[2] = &Z80R(cpu).d;
+    cpu->directRegisters[3] = &Z80R(cpu).e;
+    cpu->directRegisters[4] = &Z80R(cpu).h;
+    cpu->directRegisters[5] = &Z80R(cpu).l;
+    cpu->directRegisters[6] = &cpu->trashRegister;
+    cpu->directRegisters[7] = &Z80R(cpu).a;
+}
 
 Z80CPU* Z80CpuCreate(void)
 {
@@ -38,15 +54,8 @@ Z80CPU* Z80CpuCreate(void)
     Z80CpuSetPortBus(cpu, nullptr, nullptr, nullptr, nullptr);
     Z80CpuSetIntVectorFn(cpu, nullptr, nullptr);
 
-    // DDCB/FDCB destination registers: b,c,d,e,h,l,<trash>,a
-    cpu->directRegisters[0] = &cpu->b;
-    cpu->directRegisters[1] = &cpu->c;
-    cpu->directRegisters[2] = &cpu->d;
-    cpu->directRegisters[3] = &cpu->e;
-    cpu->directRegisters[4] = &cpu->h;
-    cpu->directRegisters[5] = &cpu->l;
-    cpu->directRegisters[6] = &cpu->trashRegister;
-    cpu->directRegisters[7] = &cpu->a;
+    cpu->regs = &cpu->ownedRegs;
+    BindDirectRegisters(cpu);
 
     Z80CpuReset(cpu);
 
@@ -66,32 +75,30 @@ void Z80CpuDestroy(Z80CPU* cpu)
 // cleared - a real chip leaves them undefined).
 void Z80CpuReset(Z80CPU* cpu)
 {
-    cpu->nmi_in_progress = false;
+    Z80R(cpu).nmi_in_progress = false;
 
     cpu->t = 3;  // the reset sequence itself costs 3 T-states (core parity)
 
-    cpu->int_flags = 0;  // IM0, IFF1=IFF2=0, not halted (also clears r_hi)
-    cpu->ir_ = 0;        // I = R = 0
-    cpu->pc = 0x0000;
-    cpu->im = 0;
-    cpu->sp = 0xFFFF;  // real chip behavior
-    cpu->af = 0xFFFF;  // real chip behavior
-    cpu->q = 0;
+    Z80R(cpu).int_flags = 0;  // IM0, IFF1=IFF2=0, not halted (also clears r_hi)
+    Z80R(cpu).ir_ = 0;        // I = R = 0
+    Z80R(cpu).pc = 0x0000;
+    Z80R(cpu).im = 0;
+    Z80R(cpu).sp = 0xFFFF;  // real chip behavior
+    Z80R(cpu).af = 0xFFFF;  // real chip behavior
+    Z80R(cpu).q = 0;
 
-    cpu->bc = 0;
-    cpu->de = 0;
-    cpu->hl = 0;
-    cpu->ix = 0;
-    cpu->iy = 0;
+    Z80R(cpu).bc = 0;
+    Z80R(cpu).de = 0;
+    Z80R(cpu).hl = 0;
+    Z80R(cpu).ix = 0;
+    Z80R(cpu).iy = 0;
 
-    cpu->alt.af = 0;
-    cpu->alt.bc = 0;
-    cpu->alt.de = 0;
-    cpu->alt.hl = 0;
+    Z80R(cpu).alt.af = 0;
+    Z80R(cpu).alt.bc = 0;
+    Z80R(cpu).alt.de = 0;
+    Z80R(cpu).alt.hl = 0;
 
-    cpu->memptr = 0;
-    cpu->eipos = 0;
-    cpu->haltpos = 0;
+    Z80R(cpu).memptr = 0;
 
     cpu->opword = 0;
     cpu->halt_cycle = 0;
@@ -102,7 +109,7 @@ void Z80CpuReset(Z80CPU* cpu)
 
 int Z80CpuHalted(const Z80CPU* cpu)
 {
-    return cpu->halted ? 1 : 0;
+    return Z80R(cpu).halted ? 1 : 0;
 }
 
 // Post-EI shadow derived from the dispatched opcode: cpu->opcode holds the
@@ -113,7 +120,7 @@ int Z80CpuHalted(const Z80CPU* cpu)
 // clearing is needed on INT/NMI entry.)
 int Z80CpuIntPossible(const Z80CPU* cpu)
 {
-    if (!cpu->iff1)
+    if (!Z80R(cpu).iff1)
         return 0;
     // EI is 0xFB unprefixed or behind a DD/FD prefix (prefix byte 0); CB FB
     // (SET 7,E) and ED FB (NOP) share the byte but must not shadow the next
@@ -179,10 +186,10 @@ static uint8_t Z80CpuAckRead(Z80CPU* cpu, uint16_t addr, int& tact)
 // memory cycles; tact enters at the first T of M2 and leaves after M3.
 static int Z80CpuPushPc(Z80CPU* cpu, int tact)
 {
-    uint16_t sp = cpu->sp;
-    tact = Z80CpuAckWrite(cpu, --sp, cpu->pch, tact);
-    tact = Z80CpuAckWrite(cpu, --sp, cpu->pcl, tact);
-    cpu->sp = sp;
+    uint16_t sp = Z80R(cpu).sp;
+    tact = Z80CpuAckWrite(cpu, --sp, Z80R(cpu).pch, tact);
+    tact = Z80CpuAckWrite(cpu, --sp, Z80R(cpu).pcl, tact);
+    Z80R(cpu).sp = sp;
     return tact;
 }
 
@@ -190,32 +197,32 @@ static int Z80CpuPushPc(Z80CPU* cpu, int tact)
 // (M1=5T restart fetch, M2/M3=3T+3T push).
 int Z80CpuNmi(Z80CPU* cpu)
 {
-    cpu->nmi_in_progress = true;
+    Z80R(cpu).nmi_in_progress = true;
 
     // If halted: unblock by moving PC past the HALT (return lands after it).
     // Keyed on the HALT latch, not on the byte at PC: an interrupt taken at
     // the boundary before a not-yet-executed HALT must return to it.
-    if (cpu->halted)
-        cpu->pc++;
+    if (Z80R(cpu).halted)
+        Z80R(cpu).pc++;
 
     // The acknowledge starts with an M1 cycle (opcode fetch, ignored) that
     // performs a refresh like any M1: R increases (FUSE, z80ex, silicon).
-    cpu->r_low++;
+    Z80_R_INC(cpu->regs);
 
     // M1 = 5 T restart fetch, then the two 3 T push cycles (11 T + waits)
     const int t0 = static_cast<int>(cpu->t);
     const int tact = Z80CpuPushPc(cpu, t0 + 5);
     cpu->t = static_cast<uint32_t>(tact);
 
-    cpu->pc = 0x0066;
-    cpu->memptr = 0x0066;
-    cpu->halted = 0;
+    Z80R(cpu).pc = 0x0066;
+    Z80R(cpu).memptr = 0x0066;
+    Z80R(cpu).halted = 0;
     cpu->halt_cycle = 0;
-    cpu->q = 0;  // the acknowledge cycle writes no flags
+    Z80R(cpu).q = 0;  // the acknowledge cycle writes no flags
 
     // IFF2 keeps a copy of IFF1 for RETN; maskable ints disabled in handler
-    cpu->iff2 = cpu->iff1;
-    cpu->iff1 = 0;
+    Z80R(cpu).iff2 = Z80R(cpu).iff1;
+    Z80R(cpu).iff1 = 0;
 
     return tact - t0;
 }
@@ -228,25 +235,25 @@ int Z80CpuInt(Z80CPU* cpu)
         return 0;
 
     // If halted: unblock by moving PC past the HALT (see Z80CpuNmi)
-    if (cpu->halted)
-        cpu->pc++;
+    if (Z80R(cpu).halted)
+        Z80R(cpu).pc++;
 
     // Real-chip quirk: LD A,I / LD A,R (ED 57 / ED 5F) copy IFF2 into P/V
     // late in the instruction, and an INT accepted at the very next boundary
     // clears IFF2 before that copy settles - P/V then reads 0 (interrupts
     // "were disabled"). Only these two instructions expose IFF2 in F.
     if (cpu->opword == 0xED57 || cpu->opword == 0xED5F)
-        cpu->f &= ~PV;
+        Z80R(cpu).f &= ~PV;
 
     // The acknowledge cycle is an M1 cycle with refresh: R increases in
     // every mode (FUSE, z80ex, silicon).
-    cpu->r_low++;
+    Z80_R_INC(cpu->regs);
 
     uint16_t handlerAddress;
     const int t0 = static_cast<int>(cpu->t);
     int tact;
 
-    if (cpu->im < 2)
+    if (Z80R(cpu).im < 2)
     {
         // IM0/IM1 restart at 0x38. (IM0's bus-byte execution is not modeled,
         // matching the core: im < 2 -> 0x38.)
@@ -262,7 +269,7 @@ int Z80CpuInt(Z80CPU* cpu)
         // supplies the freshly pushed bytes, as on the chip: 19 T + waits.
         const uint8_t vector = cpu->intVector(cpu, cpu->intVectorData);
         tact = Z80CpuPushPc(cpu, t0 + 7);
-        const uint16_t vectorAddress = static_cast<uint16_t>(vector + cpu->i * 0x100);
+        const uint16_t vectorAddress = static_cast<uint16_t>(vector + Z80R(cpu).i * 0x100);
         const uint8_t low = Z80CpuAckRead(cpu, vectorAddress, tact);
         const uint8_t high = Z80CpuAckRead(cpu, static_cast<uint16_t>(vectorAddress + 1), tact);
         handlerAddress = static_cast<uint16_t>(low + 0x100 * high);
@@ -270,15 +277,15 @@ int Z80CpuInt(Z80CPU* cpu)
     cpu->t = static_cast<uint32_t>(tact);
     const int duration = tact - t0;
 
-    cpu->pc = handlerAddress;
-    cpu->memptr = handlerAddress;
-    cpu->halted = 0;
+    Z80R(cpu).pc = handlerAddress;
+    Z80R(cpu).memptr = handlerAddress;
+    Z80R(cpu).halted = 0;
     cpu->halt_cycle = 0;
-    cpu->q = 0;  // the acknowledge cycle writes no flags
+    Z80R(cpu).q = 0;  // the acknowledge cycle writes no flags
 
     // No double acceptance until EI
-    cpu->iff1 = 0;
-    cpu->iff2 = 0;
+    Z80R(cpu).iff1 = 0;
+    Z80R(cpu).iff2 = 0;
 
     return duration;
 }
@@ -287,27 +294,27 @@ uint16_t Z80CpuGetReg(const Z80CPU* cpu, Z80CpuReg reg)
 {
     switch (reg)
     {
-        case Z80CpuRegAf: return cpu->af;
-        case Z80CpuRegBc: return cpu->bc;
-        case Z80CpuRegDe: return cpu->de;
-        case Z80CpuRegHl: return cpu->hl;
-        case Z80CpuRegAfAlt: return cpu->alt.af;
-        case Z80CpuRegBcAlt: return cpu->alt.bc;
-        case Z80CpuRegDeAlt: return cpu->alt.de;
-        case Z80CpuRegHlAlt: return cpu->alt.hl;
-        case Z80CpuRegIx: return cpu->ix;
-        case Z80CpuRegIy: return cpu->iy;
-        case Z80CpuRegPc: return cpu->pc;
-        case Z80CpuRegSp: return cpu->sp;
-        case Z80CpuRegI: return cpu->i;
-        case Z80CpuRegR: return (cpu->r_low & 0x7F) | (cpu->r_hi & 0x80);
-        case Z80CpuRegR7: return (cpu->r_hi & 0x80) >> 7;
-        case Z80CpuRegIm: return cpu->im;
-        case Z80CpuRegIff1: return cpu->iff1;
-        case Z80CpuRegIff2: return cpu->iff2;
-        case Z80CpuRegMemptr: return cpu->memptr;
-        case Z80CpuRegQ: return cpu->q;
-        case Z80CpuRegHalted: return cpu->halted ? 1 : 0;
+        case Z80CpuRegAf: return Z80R(cpu).af;
+        case Z80CpuRegBc: return Z80R(cpu).bc;
+        case Z80CpuRegDe: return Z80R(cpu).de;
+        case Z80CpuRegHl: return Z80R(cpu).hl;
+        case Z80CpuRegAfAlt: return Z80R(cpu).alt.af;
+        case Z80CpuRegBcAlt: return Z80R(cpu).alt.bc;
+        case Z80CpuRegDeAlt: return Z80R(cpu).alt.de;
+        case Z80CpuRegHlAlt: return Z80R(cpu).alt.hl;
+        case Z80CpuRegIx: return Z80R(cpu).ix;
+        case Z80CpuRegIy: return Z80R(cpu).iy;
+        case Z80CpuRegPc: return Z80R(cpu).pc;
+        case Z80CpuRegSp: return Z80R(cpu).sp;
+        case Z80CpuRegI: return Z80R(cpu).i;
+        case Z80CpuRegR: return (Z80R(cpu).r_low & 0x7F) | (Z80R(cpu).r_hi & 0x80);
+        case Z80CpuRegR7: return (Z80R(cpu).r_hi & 0x80) >> 7;
+        case Z80CpuRegIm: return Z80R(cpu).im;
+        case Z80CpuRegIff1: return Z80R(cpu).iff1;
+        case Z80CpuRegIff2: return Z80R(cpu).iff2;
+        case Z80CpuRegMemptr: return Z80R(cpu).memptr;
+        case Z80CpuRegQ: return Z80R(cpu).q;
+        case Z80CpuRegHalted: return Z80R(cpu).halted ? 1 : 0;
         default: return 0;
     }
 }
@@ -316,81 +323,81 @@ void Z80CpuSetReg(Z80CPU* cpu, Z80CpuReg reg, uint16_t value)
 {
     switch (reg)
     {
-        case Z80CpuRegAf: cpu->af = value; break;
-        case Z80CpuRegBc: cpu->bc = value; break;
-        case Z80CpuRegDe: cpu->de = value; break;
-        case Z80CpuRegHl: cpu->hl = value; break;
-        case Z80CpuRegAfAlt: cpu->alt.af = value; break;
-        case Z80CpuRegBcAlt: cpu->alt.bc = value; break;
-        case Z80CpuRegDeAlt: cpu->alt.de = value; break;
-        case Z80CpuRegHlAlt: cpu->alt.hl = value; break;
-        case Z80CpuRegIx: cpu->ix = value; break;
-        case Z80CpuRegIy: cpu->iy = value; break;
-        case Z80CpuRegPc: cpu->pc = value; break;
-        case Z80CpuRegSp: cpu->sp = value; break;
-        case Z80CpuRegI: cpu->i = static_cast<uint8_t>(value); break;
+        case Z80CpuRegAf: Z80R(cpu).af = value; break;
+        case Z80CpuRegBc: Z80R(cpu).bc = value; break;
+        case Z80CpuRegDe: Z80R(cpu).de = value; break;
+        case Z80CpuRegHl: Z80R(cpu).hl = value; break;
+        case Z80CpuRegAfAlt: Z80R(cpu).alt.af = value; break;
+        case Z80CpuRegBcAlt: Z80R(cpu).alt.bc = value; break;
+        case Z80CpuRegDeAlt: Z80R(cpu).alt.de = value; break;
+        case Z80CpuRegHlAlt: Z80R(cpu).alt.hl = value; break;
+        case Z80CpuRegIx: Z80R(cpu).ix = value; break;
+        case Z80CpuRegIy: Z80R(cpu).iy = value; break;
+        case Z80CpuRegPc: Z80R(cpu).pc = value; break;
+        case Z80CpuRegSp: Z80R(cpu).sp = value; break;
+        case Z80CpuRegI: Z80R(cpu).i = static_cast<uint8_t>(value); break;
         case Z80CpuRegR:
-            cpu->r_low = value & 0x7F;
-            cpu->r_hi = value & 0x80;
+            Z80R(cpu).r_low = static_cast<uint8_t>(value);  // as LD R,A
+            Z80R(cpu).r_hi = value & 0x80;
             break;
-        case Z80CpuRegR7: cpu->r_hi = static_cast<uint8_t>(value & 0x80); break;
-        case Z80CpuRegIm: cpu->im = static_cast<uint8_t>(value > 2 ? 2 : value); break;
-        case Z80CpuRegIff1: cpu->iff1 = static_cast<uint8_t>(value & 1); break;
-        case Z80CpuRegIff2: cpu->iff2 = static_cast<uint8_t>(value & 1); break;
-        case Z80CpuRegMemptr: cpu->memptr = value; break;
-        case Z80CpuRegQ: cpu->q = static_cast<uint8_t>(value & 0x28); break;
-        case Z80CpuRegHalted: cpu->halted = static_cast<uint8_t>(value ? 1 : 0); break;
+        case Z80CpuRegR7: Z80R(cpu).r_hi = static_cast<uint8_t>(value & 0x80); break;
+        case Z80CpuRegIm: Z80R(cpu).im = static_cast<uint8_t>(value > 2 ? 2 : value); break;
+        case Z80CpuRegIff1: Z80R(cpu).iff1 = static_cast<uint8_t>(value & 1); break;
+        case Z80CpuRegIff2: Z80R(cpu).iff2 = static_cast<uint8_t>(value & 1); break;
+        case Z80CpuRegMemptr: Z80R(cpu).memptr = value; break;
+        case Z80CpuRegQ: Z80R(cpu).q = static_cast<uint8_t>(value & 0x28); break;
+        case Z80CpuRegHalted: Z80R(cpu).halted = static_cast<uint8_t>(value ? 1 : 0); break;
         default: break;
     }
 }
 
 void Z80CpuGetRegisters(const Z80CPU* cpu, Z80CpuRegisters* regs)
 {
-    regs->af = cpu->af;
-    regs->bc = cpu->bc;
-    regs->de = cpu->de;
-    regs->hl = cpu->hl;
-    regs->afAlt = cpu->alt.af;
-    regs->bcAlt = cpu->alt.bc;
-    regs->deAlt = cpu->alt.de;
-    regs->hlAlt = cpu->alt.hl;
-    regs->ix = cpu->ix;
-    regs->iy = cpu->iy;
-    regs->pc = cpu->pc;
-    regs->sp = cpu->sp;
-    regs->memptr = cpu->memptr;
-    regs->i = cpu->i;
-    regs->r = static_cast<uint8_t>((cpu->r_low & 0x7F) | (cpu->r_hi & 0x80));
-    regs->im = cpu->im;
-    regs->iff1 = cpu->iff1;
-    regs->iff2 = cpu->iff2;
-    regs->q = cpu->q;
-    regs->halted = cpu->halted ? 1 : 0;
+    regs->af = Z80R(cpu).af;
+    regs->bc = Z80R(cpu).bc;
+    regs->de = Z80R(cpu).de;
+    regs->hl = Z80R(cpu).hl;
+    regs->afAlt = Z80R(cpu).alt.af;
+    regs->bcAlt = Z80R(cpu).alt.bc;
+    regs->deAlt = Z80R(cpu).alt.de;
+    regs->hlAlt = Z80R(cpu).alt.hl;
+    regs->ix = Z80R(cpu).ix;
+    regs->iy = Z80R(cpu).iy;
+    regs->pc = Z80R(cpu).pc;
+    regs->sp = Z80R(cpu).sp;
+    regs->memptr = Z80R(cpu).memptr;
+    regs->i = Z80R(cpu).i;
+    regs->r = static_cast<uint8_t>((Z80R(cpu).r_low & 0x7F) | (Z80R(cpu).r_hi & 0x80));
+    regs->im = Z80R(cpu).im;
+    regs->iff1 = Z80R(cpu).iff1;
+    regs->iff2 = Z80R(cpu).iff2;
+    regs->q = Z80R(cpu).q;
+    regs->halted = Z80R(cpu).halted ? 1 : 0;
 }
 
 void Z80CpuSetRegisters(Z80CPU* cpu, const Z80CpuRegisters* regs)
 {
-    cpu->af = regs->af;
-    cpu->bc = regs->bc;
-    cpu->de = regs->de;
-    cpu->hl = regs->hl;
-    cpu->alt.af = regs->afAlt;
-    cpu->alt.bc = regs->bcAlt;
-    cpu->alt.de = regs->deAlt;
-    cpu->alt.hl = regs->hlAlt;
-    cpu->ix = regs->ix;
-    cpu->iy = regs->iy;
-    cpu->pc = regs->pc;
-    cpu->sp = regs->sp;
-    cpu->memptr = regs->memptr;
-    cpu->i = regs->i;
-    cpu->r_low = static_cast<uint8_t>(regs->r & 0x7F);
-    cpu->r_hi = static_cast<uint8_t>(regs->r & 0x80);
-    cpu->im = static_cast<uint8_t>(regs->im > 2 ? 2 : regs->im);
-    cpu->iff1 = static_cast<uint8_t>(regs->iff1 & 1);
-    cpu->iff2 = static_cast<uint8_t>(regs->iff2 & 1);
-    cpu->q = static_cast<uint8_t>(regs->q & 0x28);
-    cpu->halted = regs->halted ? 1 : 0;
+    Z80R(cpu).af = regs->af;
+    Z80R(cpu).bc = regs->bc;
+    Z80R(cpu).de = regs->de;
+    Z80R(cpu).hl = regs->hl;
+    Z80R(cpu).alt.af = regs->afAlt;
+    Z80R(cpu).alt.bc = regs->bcAlt;
+    Z80R(cpu).alt.de = regs->deAlt;
+    Z80R(cpu).alt.hl = regs->hlAlt;
+    Z80R(cpu).ix = regs->ix;
+    Z80R(cpu).iy = regs->iy;
+    Z80R(cpu).pc = regs->pc;
+    Z80R(cpu).sp = regs->sp;
+    Z80R(cpu).memptr = regs->memptr;
+    Z80R(cpu).i = regs->i;
+    Z80R(cpu).r_low = regs->r;  // as LD R,A: the full byte, R7 also in r_hi
+    Z80R(cpu).r_hi = static_cast<uint8_t>(regs->r & 0x80);
+    Z80R(cpu).im = static_cast<uint8_t>(regs->im > 2 ? 2 : regs->im);
+    Z80R(cpu).iff1 = static_cast<uint8_t>(regs->iff1 & 1);
+    Z80R(cpu).iff2 = static_cast<uint8_t>(regs->iff2 & 1);
+    Z80R(cpu).q = static_cast<uint8_t>(regs->q & 0x28);
+    Z80R(cpu).halted = regs->halted ? 1 : 0;
 }
 
 void Z80CpuSetMemoryBus(Z80CPU* cpu, Z80CpuMemReadFn readFn, void* readData,
@@ -487,4 +494,48 @@ uint16_t Z80CpuInstructionPc(const Z80CPU* cpu)
 void Z80CpuSetOutC0Value(Z80CPU* cpu, uint8_t value)
 {
     cpu->outc0 = value;
+}
+
+// ---- zero-copy register file ----------------------------------------------
+
+// The engine's internal view (anonymous 8/16-bit unions) and the public
+// plain-field struct describe the same 41 bytes.
+static_assert(sizeof(Z80Regs) == sizeof(Z80CpuRegisterFile), "register file size");
+static_assert(offsetof(Z80Regs, pc) == offsetof(Z80CpuRegisterFile, pc), "pc");
+static_assert(offsetof(Z80Regs, sp) == offsetof(Z80CpuRegisterFile, sp), "sp");
+static_assert(offsetof(Z80Regs, ir_) == offsetof(Z80CpuRegisterFile, rLow), "r_low");
+static_assert(offsetof(Z80Regs, int_flags) == offsetof(Z80CpuRegisterFile, rHi), "r_hi");
+static_assert(offsetof(Z80Regs, bc) == offsetof(Z80CpuRegisterFile, bc), "bc");
+static_assert(offsetof(Z80Regs, de) == offsetof(Z80CpuRegisterFile, de), "de");
+static_assert(offsetof(Z80Regs, hl) == offsetof(Z80CpuRegisterFile, hl), "hl");
+static_assert(offsetof(Z80Regs, af) == offsetof(Z80CpuRegisterFile, af), "af");
+static_assert(offsetof(Z80Regs, ix) == offsetof(Z80CpuRegisterFile, ix), "ix");
+static_assert(offsetof(Z80Regs, iy) == offsetof(Z80CpuRegisterFile, iy), "iy");
+static_assert(offsetof(Z80Regs, alt) == offsetof(Z80CpuRegisterFile, bcAlt), "alt");
+static_assert(offsetof(Z80Regs, memptr) == offsetof(Z80CpuRegisterFile, memptr), "memptr");
+static_assert(offsetof(Z80Regs, q) == offsetof(Z80CpuRegisterFile, q), "q");
+static_assert(offsetof(Z80Regs, reservedEipos) == offsetof(Z80CpuRegisterFile, reservedEipos), "eipos");
+static_assert(offsetof(Z80Regs, reservedHaltpos) == offsetof(Z80CpuRegisterFile, reservedHaltpos), "haltpos");
+static_assert(offsetof(Z80Regs, im) == offsetof(Z80CpuRegisterFile, im), "im");
+static_assert(offsetof(Z80Regs, nmi_in_progress) == offsetof(Z80CpuRegisterFile, nmiInProgress), "nmi");
+static_assert(sizeof(bool) == 1, "nmi_in_progress is one byte");
+
+void Z80CpuAttachRegisterFile(Z80CPU* cpu, Z80CpuRegisterFile* file)
+{
+    if (file)
+    {
+        cpu->regs = reinterpret_cast<Z80Regs*>(file);
+    }
+    else
+    {
+        if (cpu->regs != &cpu->ownedRegs)
+            std::memcpy(&cpu->ownedRegs, cpu->regs, sizeof(Z80Regs));
+        cpu->regs = &cpu->ownedRegs;
+    }
+    BindDirectRegisters(cpu);
+}
+
+Z80CpuRegisterFile* Z80CpuRegisterFilePtr(Z80CPU* cpu)
+{
+    return reinterpret_cast<Z80CpuRegisterFile*>(cpu->regs);
 }

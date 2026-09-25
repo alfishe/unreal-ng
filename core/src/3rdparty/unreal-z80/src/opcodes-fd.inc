@@ -3,876 +3,876 @@
 
 // FD prefix opcodes
 
-Z80OPCODE opy_09(Z80CPU *cpu, int tact0) { // add iy,bc
+Z80OPCODE opy_09(Z80CPU *cpu, int tact0, Z80Regs *rf) { // add iy,bc
    Z80_T_BEGIN(cpu);
-   cpu->memptr = cpu->iy + 1;
+   rf->memptr = rf->iy + 1;
 
-   int iy = cpu->iy & 0xFFFF;
-   int bc = cpu->bc & 0xFFFF;
+   int iy = rf->iy & 0xFFFF;
+   int bc = rf->bc & 0xFFFF;
 
    int halfIY = iy & 0x0FFF;
    int halfBC = bc & 0x0FFF;
 
    // Clear flags
-   cpu->f = (cpu->f & ~(NF | CF | F5 | F3 | HF));
+   rf->f = (rf->f & ~(NF | CF | F5 | F3 | HF));
 
     // Set half-carry flag (HF)
-   cpu->f |= ((halfIY + halfBC) >> 8) & 0x10; // HF
+   rf->f |= ((halfIY + halfBC) >> 8) & 0x10; // HF
 
    // Do add
    iy = iy + bc;
 
    if (iy & 0x10000)
-	   cpu->f |= CF;
+	   rf->f |= CF;
 
    // Store result to registers
-   cpu->iy = iy & 0xFFFF;
-   cpu->f |= (cpu->yh & (F5 | F3));
+   rf->iy = iy & 0xFFFF;
+   rf->f |= (rf->yh & (F5 | F3));
 
    cputact(7);
    Z80_RETURN_Q(0x28, tact_);
 }
 
-Z80OPCODE opy_19(Z80CPU *cpu, int tact0) { // add iy,de
+Z80OPCODE opy_19(Z80CPU *cpu, int tact0, Z80Regs *rf) { // add iy,de
     Z80_T_BEGIN(cpu);
-    cpu->memptr = cpu->iy + 1;
+    rf->memptr = rf->iy + 1;
 
-    int iy = cpu->iy & 0xFFFF;
-    int de = cpu->de & 0xFFFF;
+    int iy = rf->iy & 0xFFFF;
+    int de = rf->de & 0xFFFF;
 
     int halfIY = iy & 0x0FFF;
     int halfDE = de & 0x0FFF;
 
     // Clear flags
-    cpu->f = (cpu->f & ~(NF | CF | F5 | F3 | HF));
+    rf->f = (rf->f & ~(NF | CF | F5 | F3 | HF));
 
     // Set half-carry flag (HF)
-    cpu->f |= ((halfIY + halfDE) >> 8) & 0x10; // HF
+    rf->f |= ((halfIY + halfDE) >> 8) & 0x10; // HF
 
     // Do add
     iy = iy + de;
 
     if (iy & 0x10000)
-        cpu->f |= CF;
+        rf->f |= CF;
 
     // Store result to registers
-    cpu->iy = iy & 0xFFFFF;
-    cpu->f |= (cpu->yh & (F5 | F3));
+    rf->iy = iy & 0xFFFFF;
+    rf->f |= (rf->yh & (F5 | F3));
 
     cputact(7);
     Z80_RETURN_Q(0x28, tact_);
 }
 
-Z80OPCODE opy_21(Z80CPU *cpu, int tact0) { // ld iy,nnnn
+Z80OPCODE opy_21(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld iy,nnnn
     Z80_T_BEGIN(cpu);
-    uint16_t pc = cpu->pc;
+    uint16_t pc = rf->pc;
 
-   cpu->yl = Z80Rd(cpu, pc++, true);
-   cpu->yh = Z80Rd(cpu, pc++, true);
+   rf->yl = Z80Rd(cpu, pc++, true);
+   rf->yh = Z80Rd(cpu, pc++, true);
 
-   cpu->pc = pc;
+   rf->pc = pc;
     Z80_RETURN_Q(0, tact_);
 }
 
-Z80OPCODE opy_22(Z80CPU *cpu, int tact0) { // ld (nnnn),iy
+Z80OPCODE opy_22(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld (nnnn),iy
     Z80_T_BEGIN(cpu);
-    uint16_t pc = cpu->pc;
+    uint16_t pc = rf->pc;
 
     uint16_t addr = Z80Rd(cpu, pc++, true);
     addr += Z80Rd(cpu, pc++, true) * 0x100;
 
-    cpu->memptr = addr + 1;
+    rf->memptr = addr + 1;
 
-    Z80Wd(cpu, addr, cpu->yl);
-    Z80Wd(cpu, addr + 1, cpu->yh);
+    Z80Wd(cpu, addr, rf->yl);
+    Z80Wd(cpu, addr + 1, rf->yh);
 
-    cpu->pc = pc;
+    rf->pc = pc;
     Z80_RETURN_Q(0, tact_);
 }
 
-Z80OPCODE opy_23(Z80CPU *cpu, int tact0) { // inc iy
+Z80OPCODE opy_23(Z80CPU *cpu, int tact0, Z80Regs *rf) { // inc iy
    Z80_T_BEGIN(cpu);
-   cpu->iy = (cpu->iy + 1) & 0xFFFF;
+   rf->iy = (rf->iy + 1) & 0xFFFF;
    cputact(2);
    Z80_RETURN_Q(0, tact_);
 }
 
-Z80OPCODE opy_24(Z80CPU *cpu, int tact0) { // inc yh
-   inc8(cpu, cpu->yh);
+Z80OPCODE opy_24(Z80CPU *cpu, int tact0, Z80Regs *rf) { // inc yh
+   inc8(rf, rf->yh);
    Z80_RETURN_Q(0x28, tact0);
 }
 
-Z80OPCODE opy_25(Z80CPU *cpu, int tact0) { // dec yh
-   dec8(cpu, cpu->yh);
+Z80OPCODE opy_25(Z80CPU *cpu, int tact0, Z80Regs *rf) { // dec yh
+   dec8(rf, rf->yh);
    Z80_RETURN_Q(0x28, tact0);
 }
 
-Z80OPCODE opy_26(Z80CPU *cpu, int tact0) { // ld yh,nn
+Z80OPCODE opy_26(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld yh,nn
     Z80_T_BEGIN(cpu);
-    uint16_t pc = cpu->pc;
+    uint16_t pc = rf->pc;
 
-    cpu->yh = Z80Rd(cpu, pc++, true);
+    rf->yh = Z80Rd(cpu, pc++, true);
 
-    cpu->pc = pc;
+    rf->pc = pc;
     Z80_RETURN_Q(0, tact_);
 }
 
-Z80OPCODE opy_29(Z80CPU *cpu, int tact0) { // add iy,iy
+Z80OPCODE opy_29(Z80CPU *cpu, int tact0, Z80Regs *rf) { // add iy,iy
     Z80_T_BEGIN(cpu);
-    cpu->memptr = cpu->iy + 1;
+    rf->memptr = rf->iy + 1;
 
-    int iy = cpu->iy & 0xFFFF;
+    int iy = rf->iy & 0xFFFF;
 
     // Clear flags
-    cpu->f = (cpu->f & ~(NF | CF | F5 | F3 | HF));
+    rf->f = (rf->f & ~(NF | CF | F5 | F3 | HF));
 
     // Set half-carry flag (HF)
-    cpu->f |= ((iy >> 7) & 0x10); // HF
+    rf->f |= ((iy >> 7) & 0x10); // HF
 
     // Do add
     iy = iy+ iy;
 
     if (iy & 0x10000)
-        cpu->f |= CF;
+        rf->f |= CF;
 
     // Store result to registers
-    cpu->iy = iy & 0xFFFF;
-    cpu->f |= (cpu->yh & (F5 | F3));
+    rf->iy = iy & 0xFFFF;
+    rf->f |= (rf->yh & (F5 | F3));
 
     cputact(7);
     Z80_RETURN_Q(0x28, tact_);
 }
 
-Z80OPCODE opy_2A(Z80CPU *cpu, int tact0) { // ld iy,(nnnn)
+Z80OPCODE opy_2A(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld iy,(nnnn)
     Z80_T_BEGIN(cpu);
-    uint16_t pc = cpu->pc;
+    uint16_t pc = rf->pc;
 
     uint16_t addr = Z80Rd(cpu, pc++, true);
     addr += Z80Rd(cpu, pc++, true) * 0x100;
 
-    cpu->memptr = addr + 1;
+    rf->memptr = addr + 1;
 
-    cpu->yl = Z80Rd(cpu, addr);
-    cpu->yh = Z80Rd(cpu, addr + 1);
+    rf->yl = Z80Rd(cpu, addr);
+    rf->yh = Z80Rd(cpu, addr + 1);
 
-    cpu->pc = pc;
+    rf->pc = pc;
     Z80_RETURN_Q(0, tact_);
 }
 
-Z80OPCODE opy_2B(Z80CPU *cpu, int tact0) { // dec iy
+Z80OPCODE opy_2B(Z80CPU *cpu, int tact0, Z80Regs *rf) { // dec iy
    Z80_T_BEGIN(cpu);
-   cpu->iy = (cpu->iy - 1) & 0xFFFF;
+   rf->iy = (rf->iy - 1) & 0xFFFF;
 
    cputact(2);
    Z80_RETURN_Q(0, tact_);
 }
 
-Z80OPCODE opy_2C(Z80CPU *cpu, int tact0) { // inc yl
-   inc8(cpu, cpu->yl);
+Z80OPCODE opy_2C(Z80CPU *cpu, int tact0, Z80Regs *rf) { // inc yl
+   inc8(rf, rf->yl);
    Z80_RETURN_Q(0x28, tact0);
 }
 
-Z80OPCODE opy_2D(Z80CPU *cpu, int tact0) { // dec yl
-   dec8(cpu, cpu->yl);
+Z80OPCODE opy_2D(Z80CPU *cpu, int tact0, Z80Regs *rf) { // dec yl
+   dec8(rf, rf->yl);
    Z80_RETURN_Q(0x28, tact0);
 }
 
-Z80OPCODE opy_2E(Z80CPU *cpu, int tact0) { // ld yl,nn
+Z80OPCODE opy_2E(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld yl,nn
     Z80_T_BEGIN(cpu);
-    uint16_t pc = cpu->pc;
+    uint16_t pc = rf->pc;
 
-    cpu->yl = Z80Rd(cpu, pc++, true);
+    rf->yl = Z80Rd(cpu, pc++, true);
 
-    cpu->pc = pc;
+    rf->pc = pc;
     Z80_RETURN_Q(0, tact_);
 }
 
-Z80OPCODE opy_34(Z80CPU *cpu, int tact0) { // inc (iy+nn)
+Z80OPCODE opy_34(Z80CPU *cpu, int tact0, Z80Regs *rf) { // inc (iy+nn)
     Z80_T_BEGIN(cpu);
-    uint16_t pc = cpu->pc;
+    uint16_t pc = rf->pc;
     int8_t displacement = Z80Rd(cpu, pc++, true);
 
     // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
-    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+    rf->memptr = (rf->iy + displacement) & 0xFFFF;
 
     cputact(5);
 
-    uint8_t value = Z80Rd(cpu, cpu->iy + displacement);
-    inc8(cpu, value);
+    uint8_t value = Z80Rd(cpu, rf->iy + displacement);
+    inc8(rf, value);
 
     cputact(1);
 
-    Z80Wd(cpu, cpu->iy + displacement, value);
+    Z80Wd(cpu, rf->iy + displacement, value);
 
-    cpu->pc = pc;
+    rf->pc = pc;
     Z80_RETURN_Q(0x28, tact_);
 }
 
-Z80OPCODE opy_35(Z80CPU *cpu, int tact0) { // dec (iy+nn)
+Z80OPCODE opy_35(Z80CPU *cpu, int tact0, Z80Regs *rf) { // dec (iy+nn)
     Z80_T_BEGIN(cpu);
-    uint16_t pc = cpu->pc;
+    uint16_t pc = rf->pc;
     int8_t displacement = Z80Rd(cpu, pc++, true);
 
     // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
-    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+    rf->memptr = (rf->iy + displacement) & 0xFFFF;
 
     cputact(5);
 
-    uint8_t value = Z80Rd(cpu, cpu->iy + displacement);
-    dec8(cpu, value);
+    uint8_t value = Z80Rd(cpu, rf->iy + displacement);
+    dec8(rf, value);
 
     cputact(1);
 
-    Z80Wd(cpu, cpu->iy + displacement, value);
+    Z80Wd(cpu, rf->iy + displacement, value);
 
-    cpu->pc = pc;
+    rf->pc = pc;
     Z80_RETURN_Q(0x28, tact_);
 }
 
-Z80OPCODE opy_36(Z80CPU *cpu, int tact0) { // ld (iy+nn),nn
+Z80OPCODE opy_36(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld (iy+nn),nn
     Z80_T_BEGIN(cpu);
-    uint16_t pc = cpu->pc;
+    uint16_t pc = rf->pc;
 
     int8_t displacement = Z80Rd(cpu, pc++, true);
 
     // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
-    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+    rf->memptr = (rf->iy + displacement) & 0xFFFF;
     uint8_t value = Z80Rd(cpu, pc++, true);
 
     cputact(2);
 
-    Z80Wd(cpu, cpu->iy + displacement, value);
+    Z80Wd(cpu, rf->iy + displacement, value);
 
-    cpu->pc = pc;
+    rf->pc = pc;
     Z80_RETURN_Q(0, tact_);
 }
 
-Z80OPCODE opy_39(Z80CPU *cpu, int tact0) { // add iy,sp
+Z80OPCODE opy_39(Z80CPU *cpu, int tact0, Z80Regs *rf) { // add iy,sp
    Z80_T_BEGIN(cpu);
-   cpu->memptr = cpu->iy + 1;
+   rf->memptr = rf->iy + 1;
 
-   int iy = cpu->iy & 0xFFFF;
-   int sp = cpu->sp & 0xFFFF;
+   int iy = rf->iy & 0xFFFF;
+   int sp = rf->sp & 0xFFFF;
 
    int halfIY = iy & 0x0FFF;
    int halfSP = sp & 0x0FFF;
 
    // Clear flags
-   cpu->f = (cpu->f & ~(NF | CF | F5 | F3 | HF));
+   rf->f = (rf->f & ~(NF | CF | F5 | F3 | HF));
 
     // Set half-carry flag (HF)
-   cpu->f |= ((halfIY + halfSP) >> 8) & 0x10; // HF
+   rf->f |= ((halfIY + halfSP) >> 8) & 0x10; // HF
 
    // Do add
    iy = iy + sp;
 
    if (iy & 0x10000)
-	   cpu->f |= CF;
+	   rf->f |= CF;
 
    // Store result to registers
-   cpu->iy = iy & 0xFFFF;
-   cpu->f |= (cpu->yh & (F5 | F3));
+   rf->iy = iy & 0xFFFF;
+   rf->f |= (rf->yh & (F5 | F3));
 
    cputact(7);
    Z80_RETURN_Q(0x28, tact_);
 }
 
-Z80OPCODE opy_44(Z80CPU *cpu, int tact0) { // ld b,yh
-   cpu->b = cpu->yh;
+Z80OPCODE opy_44(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld b,yh
+   rf->b = rf->yh;
    Z80_RETURN_Q(0, tact0);
 }
 
-Z80OPCODE opy_45(Z80CPU *cpu, int tact0) { // ld b,yl
-   cpu->b = cpu->yl;
+Z80OPCODE opy_45(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld b,yl
+   rf->b = rf->yl;
    Z80_RETURN_Q(0, tact0);
 }
 
-Z80OPCODE opy_46(Z80CPU *cpu, int tact0) { // ld b,(iy+nn)
+Z80OPCODE opy_46(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld b,(iy+nn)
     Z80_T_BEGIN(cpu);
-    uint16_t pc = cpu->pc;
+    uint16_t pc = rf->pc;
 
     int8_t displacement = Z80Rd(cpu, pc++, true);
 
     // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
-    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+    rf->memptr = (rf->iy + displacement) & 0xFFFF;
 
     cputact(5);
 
-    cpu->b = Z80Rd(cpu, cpu->iy + displacement);
+    rf->b = Z80Rd(cpu, rf->iy + displacement);
 
-    cpu->pc = pc;
+    rf->pc = pc;
     Z80_RETURN_Q(0, tact_);
 }
 
-Z80OPCODE opy_4C(Z80CPU *cpu, int tact0) { // ld c,yh
-   cpu->c = cpu->yh;
+Z80OPCODE opy_4C(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld c,yh
+   rf->c = rf->yh;
    Z80_RETURN_Q(0, tact0);
 }
 
-Z80OPCODE opy_4D(Z80CPU *cpu, int tact0) { // ld c,yl
-   cpu->c = cpu->yl;
+Z80OPCODE opy_4D(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld c,yl
+   rf->c = rf->yl;
    Z80_RETURN_Q(0, tact0);
 }
 
-Z80OPCODE opy_4E(Z80CPU *cpu, int tact0) { // ld c,(iy+nn)
+Z80OPCODE opy_4E(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld c,(iy+nn)
     Z80_T_BEGIN(cpu);
-    uint16_t pc = cpu->pc;
+    uint16_t pc = rf->pc;
 
    int8_t displacement = Z80Rd(cpu, pc++, true);
 
    // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
-   cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+   rf->memptr = (rf->iy + displacement) & 0xFFFF;
 
    cputact(5);
 
-   cpu->c = Z80Rd(cpu, cpu->iy + displacement);
+   rf->c = Z80Rd(cpu, rf->iy + displacement);
 
-   cpu->pc = pc;
+   rf->pc = pc;
     Z80_RETURN_Q(0, tact_);
 }
 
-Z80OPCODE opy_54(Z80CPU *cpu, int tact0) { // ld d,yh
-   cpu->d = cpu->yh;
+Z80OPCODE opy_54(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld d,yh
+   rf->d = rf->yh;
    Z80_RETURN_Q(0, tact0);
 }
 
-Z80OPCODE opy_55(Z80CPU *cpu, int tact0) { // ld d,yl
-   cpu->d = cpu->yl;
+Z80OPCODE opy_55(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld d,yl
+   rf->d = rf->yl;
    Z80_RETURN_Q(0, tact0);
 }
 
-Z80OPCODE opy_56(Z80CPU *cpu, int tact0) { // ld d,(iy+nn)
+Z80OPCODE opy_56(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld d,(iy+nn)
     Z80_T_BEGIN(cpu);
-    uint16_t pc = cpu->pc;
+    uint16_t pc = rf->pc;
     int8_t displacement = Z80Rd(cpu, pc++, true);
 
     // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
-    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+    rf->memptr = (rf->iy + displacement) & 0xFFFF;
 
     cputact(5);
 
-    cpu->d = Z80Rd(cpu, cpu->iy + displacement);
+    rf->d = Z80Rd(cpu, rf->iy + displacement);
 
-    cpu->pc = pc;
+    rf->pc = pc;
     Z80_RETURN_Q(0, tact_);
 }
 
-Z80OPCODE opy_5C(Z80CPU *cpu, int tact0) { // ld e,yh
-   cpu->e = cpu->yh;
+Z80OPCODE opy_5C(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld e,yh
+   rf->e = rf->yh;
    Z80_RETURN_Q(0, tact0);
 }
 
-Z80OPCODE opy_5D(Z80CPU *cpu, int tact0) { // ld e,yl
-   cpu->e = cpu->yl;
+Z80OPCODE opy_5D(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld e,yl
+   rf->e = rf->yl;
    Z80_RETURN_Q(0, tact0);
 }
 
-Z80OPCODE opy_5E(Z80CPU *cpu, int tact0) { // ld e,(iy+nn)
+Z80OPCODE opy_5E(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld e,(iy+nn)
     Z80_T_BEGIN(cpu);
-    uint16_t pc = cpu->pc;
+    uint16_t pc = rf->pc;
     int8_t displacement = Z80Rd(cpu, pc++, true);
 
     // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
-    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+    rf->memptr = (rf->iy + displacement) & 0xFFFF;
 
     cputact(5);
 
-    cpu->e = Z80Rd(cpu, cpu->iy + displacement);
+    rf->e = Z80Rd(cpu, rf->iy + displacement);
 
-    cpu->pc = pc;
+    rf->pc = pc;
     Z80_RETURN_Q(0, tact_);
 }
 
-Z80OPCODE opy_60(Z80CPU *cpu, int tact0) { // ld yh,b
-   cpu->yh = cpu->b;
+Z80OPCODE opy_60(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld yh,b
+   rf->yh = rf->b;
    Z80_RETURN_Q(0, tact0);
 }
 
-Z80OPCODE opy_61(Z80CPU *cpu, int tact0) { // ld yh,c
-   cpu->yh = cpu->c;
+Z80OPCODE opy_61(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld yh,c
+   rf->yh = rf->c;
    Z80_RETURN_Q(0, tact0);
 }
 
-Z80OPCODE opy_62(Z80CPU *cpu, int tact0) { // ld yh,d
-   cpu->yh = cpu->d;
+Z80OPCODE opy_62(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld yh,d
+   rf->yh = rf->d;
    Z80_RETURN_Q(0, tact0);
 }
 
-Z80OPCODE opy_63(Z80CPU *cpu, int tact0) { // ld yh,e
-   cpu->yh = cpu->e;
+Z80OPCODE opy_63(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld yh,e
+   rf->yh = rf->e;
    Z80_RETURN_Q(0, tact0);
 }
 
-Z80OPCODE opy_65(Z80CPU *cpu, int tact0) { // ld yh,yl
-   cpu->yh = cpu->yl;
+Z80OPCODE opy_65(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld yh,yl
+   rf->yh = rf->yl;
    Z80_RETURN_Q(0, tact0);
 }
 
-Z80OPCODE opy_66(Z80CPU *cpu, int tact0) { // ld h,(iy+nn)
+Z80OPCODE opy_66(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld h,(iy+nn)
     Z80_T_BEGIN(cpu);
-    uint16_t pc = cpu->pc;
+    uint16_t pc = rf->pc;
     int8_t displacement = Z80Rd(cpu, pc++, true);
 
     // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
-    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+    rf->memptr = (rf->iy + displacement) & 0xFFFF;
 
     cputact(5);
 
-    cpu->h = Z80Rd(cpu, cpu->iy + displacement);
+    rf->h = Z80Rd(cpu, rf->iy + displacement);
 
-    cpu->pc = pc;
+    rf->pc = pc;
     Z80_RETURN_Q(0, tact_);
 }
 
-Z80OPCODE opy_67(Z80CPU *cpu, int tact0) { // ld yh,a
-   cpu->yh = cpu->a;
+Z80OPCODE opy_67(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld yh,a
+   rf->yh = rf->a;
    Z80_RETURN_Q(0, tact0);
 }
 
-Z80OPCODE opy_68(Z80CPU *cpu, int tact0) { // ld yl,b
-   cpu->yl = cpu->b;
+Z80OPCODE opy_68(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld yl,b
+   rf->yl = rf->b;
    Z80_RETURN_Q(0, tact0);
 }
 
-Z80OPCODE opy_69(Z80CPU *cpu, int tact0) { // ld yl,c
-   cpu->yl = cpu->c;
+Z80OPCODE opy_69(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld yl,c
+   rf->yl = rf->c;
    Z80_RETURN_Q(0, tact0);
 }
 
-Z80OPCODE opy_6A(Z80CPU *cpu, int tact0) { // ld yl,d
-   cpu->yl = cpu->d;
+Z80OPCODE opy_6A(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld yl,d
+   rf->yl = rf->d;
    Z80_RETURN_Q(0, tact0);
 }
 
-Z80OPCODE opy_6B(Z80CPU *cpu, int tact0) { // ld yl,e
-   cpu->yl = cpu->e;
+Z80OPCODE opy_6B(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld yl,e
+   rf->yl = rf->e;
    Z80_RETURN_Q(0, tact0);
 }
 
-Z80OPCODE opy_6C(Z80CPU *cpu, int tact0) { // ld yl,yh
-   cpu->yl = cpu->yh;
+Z80OPCODE opy_6C(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld yl,yh
+   rf->yl = rf->yh;
    Z80_RETURN_Q(0, tact0);
 }
 
-Z80OPCODE opy_6E(Z80CPU *cpu, int tact0) { // ld l,(iy+nn)
+Z80OPCODE opy_6E(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld l,(iy+nn)
     Z80_T_BEGIN(cpu);
-    uint16_t pc = cpu->pc;
+    uint16_t pc = rf->pc;
     int8_t displacement = Z80Rd(cpu, pc++, true);
 
     // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
-    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+    rf->memptr = (rf->iy + displacement) & 0xFFFF;
 
     cputact(5);
 
-    cpu->l = Z80Rd(cpu, cpu->iy + displacement);
+    rf->l = Z80Rd(cpu, rf->iy + displacement);
 
-    cpu->pc = pc;
+    rf->pc = pc;
     Z80_RETURN_Q(0, tact_);
 }
 
-Z80OPCODE opy_6F(Z80CPU *cpu, int tact0) { // ld yl,a
-   cpu->yl = cpu->a;
+Z80OPCODE opy_6F(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld yl,a
+   rf->yl = rf->a;
    Z80_RETURN_Q(0, tact0);
 }
 
-Z80OPCODE opy_70(Z80CPU *cpu, int tact0) { // ld (iy+nn),b
+Z80OPCODE opy_70(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld (iy+nn),b
     Z80_T_BEGIN(cpu);
-    uint16_t pc = cpu->pc;
+    uint16_t pc = rf->pc;
     int8_t displacement = Z80Rd(cpu, pc++, true);
 
     // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
-    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+    rf->memptr = (rf->iy + displacement) & 0xFFFF;
 
     cputact(5);
 
-    Z80Wd(cpu, cpu->iy + displacement, cpu->b);
+    Z80Wd(cpu, rf->iy + displacement, rf->b);
 
-    cpu->pc = pc;
+    rf->pc = pc;
     Z80_RETURN_Q(0, tact_);
 }
 
-Z80OPCODE opy_71(Z80CPU *cpu, int tact0) { // ld (iy+nn),c
+Z80OPCODE opy_71(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld (iy+nn),c
     Z80_T_BEGIN(cpu);
-    uint16_t pc = cpu->pc;
+    uint16_t pc = rf->pc;
     int8_t displacement = Z80Rd(cpu, pc++, true);
 
     // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
-    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+    rf->memptr = (rf->iy + displacement) & 0xFFFF;
 
     cputact(5);
 
-    Z80Wd(cpu, cpu->iy + displacement, cpu->c);
+    Z80Wd(cpu, rf->iy + displacement, rf->c);
 
-    cpu->pc = pc;
+    rf->pc = pc;
     Z80_RETURN_Q(0, tact_);
 }
 
-Z80OPCODE opy_72(Z80CPU *cpu, int tact0) { // ld (iy+nn),d
+Z80OPCODE opy_72(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld (iy+nn),d
     Z80_T_BEGIN(cpu);
-    uint16_t pc = cpu->pc;
+    uint16_t pc = rf->pc;
     int8_t displacement = Z80Rd(cpu, pc++, true);
 
     // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
-    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+    rf->memptr = (rf->iy + displacement) & 0xFFFF;
 
     cputact(5);
 
-    Z80Wd(cpu, cpu->iy + displacement, cpu->d);
+    Z80Wd(cpu, rf->iy + displacement, rf->d);
 
-    cpu->pc = pc;
+    rf->pc = pc;
     Z80_RETURN_Q(0, tact_);
 }
 
-Z80OPCODE opy_73(Z80CPU *cpu, int tact0) { // ld (iy+nn),e
+Z80OPCODE opy_73(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld (iy+nn),e
     Z80_T_BEGIN(cpu);
-    uint16_t pc = cpu->pc;
+    uint16_t pc = rf->pc;
     int8_t displacement = Z80Rd(cpu, pc++, true);
 
     // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
-    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+    rf->memptr = (rf->iy + displacement) & 0xFFFF;
 
     cputact(5);
 
-    Z80Wd(cpu, cpu->iy + displacement, cpu->e);
+    Z80Wd(cpu, rf->iy + displacement, rf->e);
 
-    cpu->pc = pc;
+    rf->pc = pc;
     Z80_RETURN_Q(0, tact_);
 }
 
-Z80OPCODE opy_74(Z80CPU *cpu, int tact0) { // ld (iy+nn),h
+Z80OPCODE opy_74(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld (iy+nn),h
     Z80_T_BEGIN(cpu);
-    uint16_t pc = cpu->pc;
+    uint16_t pc = rf->pc;
     int8_t displacement = Z80Rd(cpu, pc++, true);
 
     // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
-    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+    rf->memptr = (rf->iy + displacement) & 0xFFFF;
 
     cputact(5);
 
-    Z80Wd(cpu, cpu->iy + displacement, cpu->h);
+    Z80Wd(cpu, rf->iy + displacement, rf->h);
 
-    cpu->pc = pc;
+    rf->pc = pc;
     Z80_RETURN_Q(0, tact_);
 }
 
-Z80OPCODE opy_75(Z80CPU *cpu, int tact0) { // ld (iy+nn),l
+Z80OPCODE opy_75(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld (iy+nn),l
     Z80_T_BEGIN(cpu);
-    uint16_t pc = cpu->pc;
+    uint16_t pc = rf->pc;
     int8_t displacement = Z80Rd(cpu, pc++, true);
 
     // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
-    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+    rf->memptr = (rf->iy + displacement) & 0xFFFF;
 
     cputact(5);
 
-    Z80Wd(cpu, cpu->iy + displacement, cpu->l);
+    Z80Wd(cpu, rf->iy + displacement, rf->l);
 
-    cpu->pc = pc;
+    rf->pc = pc;
     Z80_RETURN_Q(0, tact_);
 }
 
-Z80OPCODE opy_77(Z80CPU *cpu, int tact0) { // ld (iy+nn),a
+Z80OPCODE opy_77(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld (iy+nn),a
     Z80_T_BEGIN(cpu);
-    uint16_t pc = cpu->pc;
+    uint16_t pc = rf->pc;
     int8_t displacement = Z80Rd(cpu, pc++, true);
 
     // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
-    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+    rf->memptr = (rf->iy + displacement) & 0xFFFF;
 
     cputact(5);
 
-    Z80Wd(cpu, cpu->iy + displacement, cpu->a);
+    Z80Wd(cpu, rf->iy + displacement, rf->a);
 
-    cpu->pc = pc;
+    rf->pc = pc;
     Z80_RETURN_Q(0, tact_);
 }
 
-Z80OPCODE opy_7C(Z80CPU *cpu, int tact0) { // ld a,yh
-   cpu->a = cpu->yh;
+Z80OPCODE opy_7C(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld a,yh
+   rf->a = rf->yh;
    Z80_RETURN_Q(0, tact0);
 }
 
-Z80OPCODE opy_7D(Z80CPU *cpu, int tact0) { // ld a,yl
-   cpu->a = cpu->yl;
+Z80OPCODE opy_7D(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld a,yl
+   rf->a = rf->yl;
    Z80_RETURN_Q(0, tact0);
 }
 
-Z80OPCODE opy_7E(Z80CPU *cpu, int tact0) { // ld a,(iy+nn)
+Z80OPCODE opy_7E(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld a,(iy+nn)
     Z80_T_BEGIN(cpu);
-    uint16_t pc = cpu->pc;
+    uint16_t pc = rf->pc;
     int8_t displacement = Z80Rd(cpu, pc++, true);
 
     // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
-    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+    rf->memptr = (rf->iy + displacement) & 0xFFFF;
 
     cputact(5);
 
-    cpu->a = Z80Rd(cpu, cpu->iy + displacement);
+    rf->a = Z80Rd(cpu, rf->iy + displacement);
 
-    cpu->pc = pc;
+    rf->pc = pc;
     Z80_RETURN_Q(0, tact_);
 }
 
-Z80OPCODE opy_84(Z80CPU *cpu, int tact0) { // add a,yh
-   add8(cpu, cpu->yh);
+Z80OPCODE opy_84(Z80CPU *cpu, int tact0, Z80Regs *rf) { // add a,yh
+   add8(rf, rf->yh);
    Z80_RETURN_Q(0x28, tact0);
 }
 
-Z80OPCODE opy_85(Z80CPU *cpu, int tact0) { // add a,yl
-   add8(cpu, cpu->yl);
+Z80OPCODE opy_85(Z80CPU *cpu, int tact0, Z80Regs *rf) { // add a,yl
+   add8(rf, rf->yl);
    Z80_RETURN_Q(0x28, tact0);
 }
 
-Z80OPCODE opy_86(Z80CPU *cpu, int tact0) { // add a,(iy+nn)
+Z80OPCODE opy_86(Z80CPU *cpu, int tact0, Z80Regs *rf) { // add a,(iy+nn)
     Z80_T_BEGIN(cpu);
-    uint16_t pc = cpu->pc;
+    uint16_t pc = rf->pc;
     int8_t displacement = Z80Rd(cpu, pc++, true);
 
     // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
-    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+    rf->memptr = (rf->iy + displacement) & 0xFFFF;
 
     cputact(5);
 
-    add8(cpu, Z80Rd(cpu, cpu->iy + displacement));
+    add8(rf, Z80Rd(cpu, rf->iy + displacement));
 
-    cpu->pc = pc;
+    rf->pc = pc;
     Z80_RETURN_Q(0x28, tact_);
 }
 
-Z80OPCODE opy_8C(Z80CPU *cpu, int tact0) { // adc a,yh
-   adc8(cpu, cpu->yh);
+Z80OPCODE opy_8C(Z80CPU *cpu, int tact0, Z80Regs *rf) { // adc a,yh
+   adc8(rf, rf->yh);
    Z80_RETURN_Q(0x28, tact0);
 }
 
-Z80OPCODE opy_8D(Z80CPU *cpu, int tact0) { // adc a,yl
-   adc8(cpu, cpu->yl);
+Z80OPCODE opy_8D(Z80CPU *cpu, int tact0, Z80Regs *rf) { // adc a,yl
+   adc8(rf, rf->yl);
    Z80_RETURN_Q(0x28, tact0);
 }
 
-Z80OPCODE opy_8E(Z80CPU *cpu, int tact0) { // adc a,(iy+nn)
+Z80OPCODE opy_8E(Z80CPU *cpu, int tact0, Z80Regs *rf) { // adc a,(iy+nn)
     Z80_T_BEGIN(cpu);
-    uint16_t pc = cpu->pc;
+    uint16_t pc = rf->pc;
     int8_t displacement = Z80Rd(cpu, pc++, true);
 
     // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
-    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+    rf->memptr = (rf->iy + displacement) & 0xFFFF;
 
     cputact(5);
 
-    adc8(cpu, Z80Rd(cpu, cpu->iy + displacement));
+    adc8(rf, Z80Rd(cpu, rf->iy + displacement));
 
-    cpu->pc = pc;
+    rf->pc = pc;
     Z80_RETURN_Q(0x28, tact_);
 }
 
-Z80OPCODE opy_94(Z80CPU *cpu, int tact0) { // sub yh
-   sub8(cpu, cpu->yh);
+Z80OPCODE opy_94(Z80CPU *cpu, int tact0, Z80Regs *rf) { // sub yh
+   sub8(rf, rf->yh);
    Z80_RETURN_Q(0x28, tact0);
 }
 
-Z80OPCODE opy_95(Z80CPU *cpu, int tact0) { // sub yl
-   sub8(cpu, cpu->yl);
+Z80OPCODE opy_95(Z80CPU *cpu, int tact0, Z80Regs *rf) { // sub yl
+   sub8(rf, rf->yl);
    Z80_RETURN_Q(0x28, tact0);
 }
 
-Z80OPCODE opy_96(Z80CPU *cpu, int tact0) { // sub (iy+nn)
+Z80OPCODE opy_96(Z80CPU *cpu, int tact0, Z80Regs *rf) { // sub (iy+nn)
     Z80_T_BEGIN(cpu);
-    uint16_t pc = cpu->pc;
+    uint16_t pc = rf->pc;
     int8_t displacement = Z80Rd(cpu, pc++, true);
 
     // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
-    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+    rf->memptr = (rf->iy + displacement) & 0xFFFF;
 
     cputact(5);
 
-    sub8(cpu, Z80Rd(cpu, cpu->iy + displacement));
+    sub8(rf, Z80Rd(cpu, rf->iy + displacement));
 
-    cpu->pc = pc;
+    rf->pc = pc;
     Z80_RETURN_Q(0x28, tact_);
 }
 
-Z80OPCODE opy_9C(Z80CPU *cpu, int tact0) { // sbc a,yh
-   sbc8(cpu, cpu->yh);
+Z80OPCODE opy_9C(Z80CPU *cpu, int tact0, Z80Regs *rf) { // sbc a,yh
+   sbc8(rf, rf->yh);
    Z80_RETURN_Q(0x28, tact0);
 }
 
-Z80OPCODE opy_9D(Z80CPU *cpu, int tact0) { // sbc a,yl
-   sbc8(cpu, cpu->yl);
+Z80OPCODE opy_9D(Z80CPU *cpu, int tact0, Z80Regs *rf) { // sbc a,yl
+   sbc8(rf, rf->yl);
    Z80_RETURN_Q(0x28, tact0);
 }
 
-Z80OPCODE opy_9E(Z80CPU *cpu, int tact0) { // sbc a,(iy+nn)
+Z80OPCODE opy_9E(Z80CPU *cpu, int tact0, Z80Regs *rf) { // sbc a,(iy+nn)
     Z80_T_BEGIN(cpu);
-    uint16_t pc = cpu->pc;
+    uint16_t pc = rf->pc;
     int8_t displacement = Z80Rd(cpu, pc++, true);
 
     // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
-    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+    rf->memptr = (rf->iy + displacement) & 0xFFFF;
 
     cputact(5);
 
-    sbc8(cpu, Z80Rd(cpu, cpu->iy + displacement));
+    sbc8(rf, Z80Rd(cpu, rf->iy + displacement));
 
-    cpu->pc = pc;
+    rf->pc = pc;
     Z80_RETURN_Q(0x28, tact_);
 }
 
-Z80OPCODE opy_A4(Z80CPU *cpu, int tact0) { // and yh
-   and8(cpu, cpu->yh);
+Z80OPCODE opy_A4(Z80CPU *cpu, int tact0, Z80Regs *rf) { // and yh
+   and8(rf, rf->yh);
    Z80_RETURN_Q(0x28, tact0);
 }
 
-Z80OPCODE opy_A5(Z80CPU *cpu, int tact0) { // and yl
-   and8(cpu, cpu->yl);
+Z80OPCODE opy_A5(Z80CPU *cpu, int tact0, Z80Regs *rf) { // and yl
+   and8(rf, rf->yl);
    Z80_RETURN_Q(0x28, tact0);
 }
 
-Z80OPCODE opy_A6(Z80CPU *cpu, int tact0) { // and (iy+nn)
+Z80OPCODE opy_A6(Z80CPU *cpu, int tact0, Z80Regs *rf) { // and (iy+nn)
     Z80_T_BEGIN(cpu);
-    uint16_t pc = cpu->pc;
+    uint16_t pc = rf->pc;
     int8_t displacement = Z80Rd(cpu, pc++, true);
 
     // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
-    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+    rf->memptr = (rf->iy + displacement) & 0xFFFF;
 
     cputact(5);
 
-    and8(cpu, Z80Rd(cpu, cpu->iy + displacement));
+    and8(rf, Z80Rd(cpu, rf->iy + displacement));
 
-    cpu->pc = pc;
+    rf->pc = pc;
     Z80_RETURN_Q(0x28, tact_);
 }
 
-Z80OPCODE opy_AC(Z80CPU *cpu, int tact0) { // xor yh
-   xor8(cpu, cpu->yh);
+Z80OPCODE opy_AC(Z80CPU *cpu, int tact0, Z80Regs *rf) { // xor yh
+   xor8(rf, rf->yh);
    Z80_RETURN_Q(0x28, tact0);
 }
 
-Z80OPCODE opy_AD(Z80CPU *cpu, int tact0) { // xor yl
-   xor8(cpu, cpu->yl);
+Z80OPCODE opy_AD(Z80CPU *cpu, int tact0, Z80Regs *rf) { // xor yl
+   xor8(rf, rf->yl);
    Z80_RETURN_Q(0x28, tact0);
 }
 
-Z80OPCODE opy_AE(Z80CPU *cpu, int tact0) { // xor (iy+nn)
+Z80OPCODE opy_AE(Z80CPU *cpu, int tact0, Z80Regs *rf) { // xor (iy+nn)
     Z80_T_BEGIN(cpu);
-    uint16_t pc = cpu->pc;
+    uint16_t pc = rf->pc;
     int8_t displacement = Z80Rd(cpu, pc++, true);
 
     // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
-    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+    rf->memptr = (rf->iy + displacement) & 0xFFFF;
 
     cputact(5);
 
-    xor8(cpu, Z80Rd(cpu, cpu->iy + displacement));
+    xor8(rf, Z80Rd(cpu, rf->iy + displacement));
 
-    cpu->pc = pc;
+    rf->pc = pc;
     Z80_RETURN_Q(0x28, tact_);
 }
 
-Z80OPCODE opy_B4(Z80CPU *cpu, int tact0) { // or yh
-   or8(cpu, cpu->yh);
+Z80OPCODE opy_B4(Z80CPU *cpu, int tact0, Z80Regs *rf) { // or yh
+   or8(rf, rf->yh);
    Z80_RETURN_Q(0x28, tact0);
 }
 
-Z80OPCODE opy_B5(Z80CPU *cpu, int tact0) { // or yl
-   or8(cpu, cpu->yl);
+Z80OPCODE opy_B5(Z80CPU *cpu, int tact0, Z80Regs *rf) { // or yl
+   or8(rf, rf->yl);
    Z80_RETURN_Q(0x28, tact0);
 }
 
-Z80OPCODE opy_B6(Z80CPU *cpu, int tact0) { // or (iy+nn)
+Z80OPCODE opy_B6(Z80CPU *cpu, int tact0, Z80Regs *rf) { // or (iy+nn)
     Z80_T_BEGIN(cpu);
-    uint16_t pc = cpu->pc;
+    uint16_t pc = rf->pc;
     int8_t displacement = Z80Rd(cpu, pc++, true);
 
     // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
-    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+    rf->memptr = (rf->iy + displacement) & 0xFFFF;
 
     cputact(5);
 
-    or8(cpu, Z80Rd(cpu, cpu->iy + displacement));
+    or8(rf, Z80Rd(cpu, rf->iy + displacement));
 
-    cpu->pc = pc;
+    rf->pc = pc;
     Z80_RETURN_Q(0x28, tact_);
 }
 
-Z80OPCODE opy_BC(Z80CPU *cpu, int tact0) { // cp yh
-   cp8(cpu, cpu->yh);
+Z80OPCODE opy_BC(Z80CPU *cpu, int tact0, Z80Regs *rf) { // cp yh
+   cp8(rf, rf->yh);
    Z80_RETURN_Q(0x28, tact0);
 }
 
-Z80OPCODE opy_BD(Z80CPU *cpu, int tact0) { // cp yl
-   cp8(cpu, cpu->yl);
+Z80OPCODE opy_BD(Z80CPU *cpu, int tact0, Z80Regs *rf) { // cp yl
+   cp8(rf, rf->yl);
    Z80_RETURN_Q(0x28, tact0);
 }
 
-Z80OPCODE opy_BE(Z80CPU *cpu, int tact0) { // cp (iy+nn)
+Z80OPCODE opy_BE(Z80CPU *cpu, int tact0, Z80Regs *rf) { // cp (iy+nn)
     Z80_T_BEGIN(cpu);
-    uint16_t pc = cpu->pc;
+    uint16_t pc = rf->pc;
     int8_t displacement = Z80Rd(cpu, pc++, true);
 
     // MEMPTR = IY+d for all (iy+d) addressing (FUSE-verified)
-    cpu->memptr = (cpu->iy + displacement) & 0xFFFF;
+    rf->memptr = (rf->iy + displacement) & 0xFFFF;
 
     cputact(5);
 
-    cp8(cpu, Z80Rd(cpu, cpu->iy + displacement));
+    cp8(rf, Z80Rd(cpu, rf->iy + displacement));
 
-    cpu->pc = pc;
+    rf->pc = pc;
     Z80_RETURN_Q(0x28, tact_);
 }
 
-Z80OPCODE opy_E1(Z80CPU *cpu, int tact0) { // pop iy
+Z80OPCODE opy_E1(Z80CPU *cpu, int tact0, Z80Regs *rf) { // pop iy
    Z80_T_BEGIN(cpu);
-   uint16_t sp = cpu->sp & 0xFFFF;
+   uint16_t sp = rf->sp & 0xFFFF;
 
-   cpu->yl = Z80Rd(cpu, sp++);
-   cpu->yh = Z80Rd(cpu, sp++);
+   rf->yl = Z80Rd(cpu, sp++);
+   rf->yh = Z80Rd(cpu, sp++);
 
-   cpu->sp = sp & 0xFFFF;
+   rf->sp = sp & 0xFFFF;
    Z80_RETURN_Q(0, tact_);
 }
 
-Z80OPCODE opy_E3(Z80CPU *cpu, int tact0) { // ex (sp),iy
+Z80OPCODE opy_E3(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ex (sp),iy
     Z80_T_BEGIN(cpu);
-    uint16_t sp = cpu->sp & 0xFFFF;
+    uint16_t sp = rf->sp & 0xFFFF;
 
     uint16_t value = Z80Rd(cpu, sp) + 0x100 * Z80Rd(cpu, sp + 1);
     cputact(1);
 
     // Real Z80 write order: high byte (SP+1) first, then low (SP) - FUSE-verified
-    Z80Wd(cpu, sp + 1, cpu->yh);
-    Z80Wd(cpu, sp, cpu->yl);
+    Z80Wd(cpu, sp + 1, rf->yh);
+    Z80Wd(cpu, sp, rf->yl);
 
-    cpu->memptr = value;
+    rf->memptr = value;
 
-    cpu->iy = value;
+    rf->iy = value;
 
     cputact(2);
     Z80_RETURN_Q(0, tact_);
 }
 
-Z80OPCODE opy_E5(Z80CPU *cpu, int tact0) { // push iy
+Z80OPCODE opy_E5(Z80CPU *cpu, int tact0, Z80Regs *rf) { // push iy
    Z80_T_BEGIN(cpu);
    cputact(1);
 
-   uint16_t sp = cpu->sp;
+   uint16_t sp = rf->sp;
 
-   Z80Wd(cpu, --sp, cpu->yh);
-   Z80Wd(cpu, --sp, cpu->yl);
+   Z80Wd(cpu, --sp, rf->yh);
+   Z80Wd(cpu, --sp, rf->yl);
 
-   cpu->sp = sp;
+   rf->sp = sp;
    Z80_RETURN_Q(0, tact_);
 }
 
-Z80OPCODE opy_E9(Z80CPU *cpu, int tact0) { // jp (iy)
+Z80OPCODE opy_E9(Z80CPU *cpu, int tact0, Z80Regs *rf) { // jp (iy)
 
-   cpu->pc = cpu->iy & 0xFFFF;
+   rf->pc = rf->iy & 0xFFFF;
    Z80_RETURN_Q(0, tact0);
 }
 
-Z80OPCODE opy_F9(Z80CPU *cpu, int tact0) { // ld sp,iy
+Z80OPCODE opy_F9(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld sp,iy
    Z80_T_BEGIN(cpu);
-   cpu->sp = cpu->iy & 0xFFFF;
+   rf->sp = rf->iy & 0xFFFF;
 
    cputact(2);
    Z80_RETURN_Q(0, tact_);

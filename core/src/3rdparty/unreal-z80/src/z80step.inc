@@ -25,28 +25,33 @@
 //     read callback, so the inline branch adds nothing to the hot path,
 //     while moving it out of line made the compiler save one more register
 //     pair on every step (measured -5% on the callback bus).
-static Z80INLINE int HaltedQuantum(Z80CPU* cpu)
+static Z80INLINE int HaltedQuantum(Z80CPU* cpu, Z80Regs* rf)
 {
     int tact_ = static_cast<int>(cpu->t);
-    Z80HaltT(cpu, tact_);
+    Z80HaltT(rf, cpu, tact_);
     cpu->t = static_cast<uint32_t>(tact_);
-    cpu->r_low++;  // see Z80M1T: bit 7 of r_low is never observed
-    cpu->q = 0;    // the halted CPU executes NOPs, which do not write F
+    Z80_R_INC(rf);  // refresh tick, bit 7 of r_low kept
+    rf->q = 0;    // the halted CPU executes NOPs, which do not write F
     return static_cast<int>(cpu->t);
 }
 
 #ifdef Z80_HALT_OUT_OF_LINE
-Z80COLD static int HaltedStep(Z80CPU* cpu) { return HaltedQuantum(cpu); }
+Z80COLD static int HaltedStep(Z80CPU* cpu) { return HaltedQuantum(cpu, cpu->regs); }
 #endif
 
 int Step(Z80CPU* cpu)
 {
+    // The active register file, loaded once per instruction and passed to
+    // the handler as an argument: every register access in the instruction
+    // is then one base-register access (no reload of cpu->regs after the
+    // byte stores that may alias it).
+    Z80Regs* rf = cpu->regs;
 #ifdef Z80_HALT_OUT_OF_LINE
-    if (__builtin_expect(cpu->halted != 0, 0))
+    if (__builtin_expect(rf->halted != 0, 0))
         return HaltedStep(cpu);
 #else
-    if (cpu->halted)
-        return HaltedQuantum(cpu);
+    if (rf->halted)
+        return HaltedQuantum(cpu, rf);
 #endif
 
     // Seed the accumulator once per instruction and pass it to the handler
@@ -59,8 +64,9 @@ int Step(Z80CPU* cpu)
 
     // Regular bus cycle: fetch opcode (M1, which also clears the prefix
     // byte through the opword store) and dispatch.
-    cpu->m1pc = cpu->pc;
+    const uint16_t pc = rf->pc;
+    cpu->m1pc = pc;
     int tact_ = t0;
-    const uint8_t opcode = Z80M1(cpu);
-    return (normal_opcode[opcode])(cpu, tact_);
+    const uint8_t opcode = Z80M1AtT(rf, cpu, pc, tact_);
+    return (normal_opcode[opcode])(cpu, tact_, rf);
 }

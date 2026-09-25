@@ -80,7 +80,7 @@ Z80COLD static Z80ColdRet Z80WdNullPage(Z80CPU* cpu, uint16_t addr, uint8_t val,
     return {cpu, static_cast<uint64_t>(static_cast<uint32_t>(tactAfter)) << 32};
 }
 
-static Z80INLINE uint8_t Z80RdKindT(Z80CPU*& cpu, uint16_t addr, bool isExecution, Z80CpuAccessKind kind, int& tact)
+static Z80INLINE uint8_t Z80RdKindT(Z80Regs*& rf, Z80CPU*& cpu, uint16_t addr, bool isExecution, Z80CpuAccessKind kind, int& tact)
 {
     Z80ColdRet r;
     if (__builtin_expect(cpu->contend == nullptr, 1))
@@ -94,6 +94,7 @@ static Z80INLINE uint8_t Z80RdKindT(Z80CPU*& cpu, uint16_t addr, bool isExecutio
     else
         r = Z80RdContended(cpu, addr, isExecution, kind, tact);
     cpu = r.cpu;
+    rf = cpu->regs;  // cold path only: rf is dead across the call (see Z80ContendRT)
     tact = static_cast<int>(static_cast<uint32_t>(r.packed >> 32));
     return static_cast<uint8_t>(r.packed);
 }
@@ -101,17 +102,17 @@ static Z80INLINE uint8_t Z80RdKindT(Z80CPU*& cpu, uint16_t addr, bool isExecutio
 // isExecution marks instruction-byte fetches at PC (operand/displacement/
 // address bytes; hosts use it for execution tracking) - a 3 T cycle, so it
 // contends as Z80CpuAccessOperand; the M1 cycle itself goes through Z80M1T.
-static Z80INLINE uint8_t Z80RdT(Z80CPU*& cpu, uint16_t addr, bool isExecution, int& tact)
+static Z80INLINE uint8_t Z80RdT(Z80Regs*& rf, Z80CPU*& cpu, uint16_t addr, bool isExecution, int& tact)
 {
-    return Z80RdKindT(cpu, addr, isExecution, isExecution ? Z80CpuAccessOperand : Z80CpuAccessRead, tact);
+    return Z80RdKindT(rf, cpu, addr, isExecution, isExecution ? Z80CpuAccessOperand : Z80CpuAccessRead, tact);
 }
 
-static Z80INLINE uint8_t Z80RdT(Z80CPU*& cpu, uint16_t addr, int& tact)
+static Z80INLINE uint8_t Z80RdT(Z80Regs*& rf, Z80CPU*& cpu, uint16_t addr, int& tact)
 {
-    return Z80RdKindT(cpu, addr, false, Z80CpuAccessRead, tact);
+    return Z80RdKindT(rf, cpu, addr, false, Z80CpuAccessRead, tact);
 }
 
-static Z80INLINE void Z80WdT(Z80CPU*& cpu, uint16_t addr, uint8_t val, int& tact)
+static Z80INLINE void Z80WdT(Z80Regs*& rf, Z80CPU*& cpu, uint16_t addr, uint8_t val, int& tact)
 {
     Z80ColdRet r;
     if (__builtin_expect(cpu->contend == nullptr, 1))
@@ -128,56 +129,64 @@ static Z80INLINE void Z80WdT(Z80CPU*& cpu, uint16_t addr, uint8_t val, int& tact
     else
         r = Z80WdContended(cpu, addr, val, tact);
     cpu = r.cpu;
+    rf = cpu->regs;
     tact = static_cast<int>(static_cast<uint32_t>(r.packed >> 32));
 }
 
 // Opcode fetch cycle: refresh tick, 4 T total. PC advances before the fetch
 // (z80ex semantics), matching the other builds' Z80M1T shape.
-static Z80INLINE uint8_t Z80M1T(Z80CPU*& cpu, int& tact)
+// M1 at a PC the caller already holds (Step: read once, also stored as
+// m1pc - a reload after that store would be needed otherwise, since the
+// context may alias the register file as far as the compiler knows).
+static Z80INLINE uint8_t Z80M1AtT(Z80Regs*& rf, Z80CPU*& cpu, uint16_t addr, int& tact)
 {
-    // R refresh tick: R7 lives in r_hi and every reader of r_low masks
-    // bit 7 (LD A,R, the register API), so a plain 8-bit increment is
-    // equivalent to the masked form - one instruction instead of three.
-    cpu->r_low++;
-    const uint16_t addr = cpu->pc++;
-    const uint8_t opcode = Z80RdKindT(cpu, addr, true, Z80CpuAccessM1, tact);
+    Z80_R_INC(rf);  // refresh tick, bit 7 of r_low kept (see z80cpu-internal.h)
+    rf->pc = static_cast<uint16_t>(addr + 1);
+    const uint8_t opcode = Z80RdKindT(rf, cpu, addr, true, Z80CpuAccessM1, tact);
     cpu->opword = opcode;  // opcode + prefix byte cleared, one store
     tact += 1;
 
     return opcode;
 }
 
-// Port I/O: identical to the callback bus (see opcodes-callback.cpp).
-static Z80INLINE uint8_t Z80PinT(Z80CPU* cpu, uint16_t port, int& tact)
+static Z80INLINE uint8_t Z80M1T(Z80Regs*& rf, Z80CPU*& cpu, int& tact)
 {
-    Z80ContendT(cpu, port, Z80CpuAccessPortIn, tact - 1, tact);
+    return Z80M1AtT(rf, cpu, rf->pc, tact);
+}
+
+// Port I/O: identical to the callback bus (see opcodes-callback.cpp).
+static Z80INLINE uint8_t Z80PinT(Z80Regs*& rf, Z80CPU* cpu, uint16_t port, int& tact)
+{
+    Z80ContendRT(rf, cpu, port, Z80CpuAccessPortIn, tact - 1, tact);
     cpu->t = static_cast<uint32_t>(tact);
     const uint8_t value = cpu->in(port);
-    Z80ContendT(cpu, port, Z80CpuAccessPortInPost, tact, tact);
+    rf = cpu->regs;
+    Z80ContendRT(rf, cpu, port, Z80CpuAccessPortInPost, tact, tact);
     return value;
 }
 
-static Z80INLINE void Z80PoutT(Z80CPU* cpu, uint16_t port, uint8_t val, int& tact)
+static Z80INLINE void Z80PoutT(Z80Regs*& rf, Z80CPU* cpu, uint16_t port, uint8_t val, int& tact)
 {
-    Z80ContendT(cpu, port, Z80CpuAccessPortOut, tact - 1, tact);
+    Z80ContendRT(rf, cpu, port, Z80CpuAccessPortOut, tact - 1, tact);
     cpu->t = static_cast<uint32_t>(tact);
     cpu->out(port, val);
-    Z80ContendT(cpu, port, Z80CpuAccessPortOutPost, tact, tact);
+    rf = cpu->regs;
+    Z80ContendRT(rf, cpu, port, Z80CpuAccessPortOutPost, tact, tact);
 }
 
 // HALT quantum (z80step.inc): one 4 T M1 cycle at PC, reported to the
 // contention hook like any M1 (waits extend the quantum).
-static Z80INLINE void Z80HaltT(Z80CPU* cpu, int& tact)
+static Z80INLINE void Z80HaltT(Z80Regs*& rf, Z80CPU* cpu, int& tact)
 {
-    Z80ContendT(cpu, cpu->pc, Z80CpuAccessM1, tact, tact);
+    Z80ContendRT(rf, cpu, rf->pc, Z80CpuAccessM1, tact, tact);
     tact += 4;
 }
 
-#define Z80Rd(...) Z80RdT(__VA_ARGS__, tact_)
-#define Z80Wd(cpu, addr, val) Z80WdT(cpu, addr, val, tact_)
-#define Z80M1(cpu) Z80M1T(cpu, tact_)
-#define Z80Pin(cpu, port) Z80PinT(cpu, port, tact_)
-#define Z80Pout(cpu, port, val) Z80PoutT(cpu, port, val, tact_)
+#define Z80Rd(...) Z80RdT(rf, __VA_ARGS__, tact_)
+#define Z80Wd(cpu, addr, val) Z80WdT(rf, cpu, addr, val, tact_)
+#define Z80M1(cpu) Z80M1T(rf, cpu, tact_)
+#define Z80Pin(cpu, port) Z80PinT(rf, cpu, port, tact_)
+#define Z80Pout(cpu, port, val) Z80PoutT(rf, cpu, port, val, tact_)
 
 #include "z80cpu-opcodes.inc"
 #include "opcodes-base.inc"
