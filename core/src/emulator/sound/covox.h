@@ -32,6 +32,19 @@ struct blip_t;
 ///   https://velesoft.speccy.cz/da_for_zx-cz.htm
 /// - BC Info Guide #4, ZX Spectrum Ports Guide (Black_Cat, 2008) — decode
 ///   pattern 1111B0A1; transcribed in docs/ports/zx-ports-full-table.md
+///
+/// Self-decoding device (PortDevice::tryClaimOut/In, PortDecoder::
+/// RegisterSelfDecodingDevice): Fitment (Mono vs Quad) is baked in at
+/// construction from config, so SoundManager just "plugs the card in" -
+/// no per-port dispatch-map wiring, no per-model mask/match duplication.
+/// This mirrors how multi-machine Speccy-clone emulators structure the
+/// same peripheral - e.g. Xpeccy's `sdrvCreate(type)` + one shared
+/// `zx_dev_wr()` dispatch tried by every machine after its own FDC-
+/// precedence gate (`/Volumes/TB4-4Tb/Projects/emulators/github/Xpeccy/
+/// src/libxpeccy/hardware/common.c`) - adopted here after
+/// `PortDecoder_Scorpion256` turned out to have none of
+/// `PortDecoder_Pentagon128`'s per-model SoundDrive fix (see
+/// docs/inprogress/2026-09-23-sounddrive-quad-wiring/DONE.md, session 3).
 class Covox : public PortDevice, public ttd::TTDSerializable
 {
 public:
@@ -45,36 +58,34 @@ public:
     static constexpr uint8_t PORT_MASK  = 0xF5;  // Check bits 7-4, 2, 0
     static constexpr uint8_t PORT_MATCH = 0xF1;  // 1111x0x1
 
-    // SoundDrive 1.05 "mode 1" primary port set (#0F/#1F/#4F/#5F). Aliases
-    // into the Beta128 FDC's wide mirror decode (bits 0,1=1, bit7=0), so a
-    // machine can only have one peripheral answering there at a time; the
-    // Pentagon/Scorpion decoder resolves the conflict the same way the
-    // reference implementations do (pentevo/Unreal io.cpp:
-    // `conf.sound.sd && (port & 0xAF) == 0x0F`; Xpeccy soundrive.c
-    // SDRV_105_1): Beta128 keeps the ports while TR-DOS is paged in,
-    // SoundDrive claims them the rest of the time when SD is fitted.
-    //
-    // These constants carry a 0x0100 marker bit and are NOT the literal bus
-    // addresses - PortDecoder's port-device map is a single exact-address
-    // table (RegisterPortHandler no-ops if the key is already taken), and
-    // SoundManager::attachToPorts() runs before the Beta disk's, so
-    // registering Covox at the raw #0F/#1F/#4F/#5F would win that race and
-    // permanently block WD1793 registration whenever SD=1 - breaking disk
-    // access outright regardless of TR-DOS state (caught by
-    // WD1793_Integration_Test.TRDOS_FORMAT_FullOperation). The marker keeps
-    // Covox's dispatch-map slot distinct from the FDC's; portToChannel() and
-    // the mode-1 mask check below only look at the low byte, so the marker
-    // bit is transparent to them. PortDecoder_Pentagon128::DecodePortOut()
-    // is the only place that maps a raw #0F/#1F/#4F/#5F write onto these
-    // marked keys, and only once the Beta128 gate has already decided
-    // TR-DOS isn't claiming the address.
-    static constexpr uint16_t PORT_LEFT_A_MODE1  = 0x010F;
-    static constexpr uint16_t PORT_LEFT_B_MODE1  = 0x011F;
-    static constexpr uint16_t PORT_RIGHT_A_MODE1 = 0x014F;
-    static constexpr uint16_t PORT_RIGHT_B_MODE1 = 0x015F;
+    // SoundDrive 1.05 "mode 1" primary port set (#0F/#1F/#4F/#5F). These
+    // addresses alias into the Beta128 FDC's wide mirror decode (bits
+    // 0,1=1, bit7=0) on Pentagon/Scorpion, so a machine can only have one
+    // peripheral answering there at a time. Covox is a *self-decoding*
+    // device (PortDevice::tryClaimOut/In, registered via
+    // PortDecoder::RegisterSelfDecodingDevice) rather than being wired into
+    // any model's exact-address port-device map, so it never competes for a
+    // dispatch-map slot with WD1793 or any other exact-match peripheral;
+    // each model's DecodePortOut/In only offers a raw port to the
+    // self-decoding chain once its own higher-priority decode (Beta128
+    // precedence while TR-DOS is paged in, memory latches, AY, ...) has
+    // already declined it - matching the reference implementations
+    // (pentevo/Unreal io.cpp: `conf.sound.sd && (port & 0xAF) == 0x0F`;
+    // Xpeccy soundrive.c SDRV_105_1/SDRV_105_2, dispatched from one shared
+    // `zx_dev_wr()` tried by every machine after its own `flgBDI` gate).
+    static constexpr uint16_t PORT_LEFT_A_MODE1  = 0x000F;
+    static constexpr uint16_t PORT_LEFT_B_MODE1  = 0x001F;
+    static constexpr uint16_t PORT_RIGHT_A_MODE1 = 0x004F;
+    static constexpr uint16_t PORT_RIGHT_B_MODE1 = 0x005F;
 
     static constexpr uint8_t PORT_MASK_MODE1  = 0xAF;
     static constexpr uint8_t PORT_MATCH_MODE1 = 0x0F;
+
+    /// Fitment baked in at construction from config (mirrors Xpeccy's
+    /// sdrvCreate(type) - the card itself knows what it is, not the
+    /// machine): Quad answers both mode-1 and mode-2 addresses (SD=1),
+    /// Mono answers only the exact #FB Covox port (CovoxFB=1, SD=0)
+    enum class Fitment { Mono, Quad };
 
     enum class Channel { LeftA = 0, LeftB = 1, RightA = 2, RightB = 3, Count = 4 };
 
@@ -94,6 +105,9 @@ public:
 
 protected:
     EmulatorContext* _context;
+
+    // Fitment baked in at construction (see Fitment doc, public section)
+    Fitment _fitment;
 
     // Audio buffer (one frame of stereo int16)
     AudioFrameDescriptor _audioDescriptor;
@@ -188,6 +202,13 @@ public:
     // PortDevice interface
     uint8_t portDeviceInMethod(uint16_t port) override;
     void portDeviceOutMethod(uint16_t port, uint8_t value) override;
+
+    /// Self-decoding: recognizes mode-1/mode-2 SoundDrive addresses (Quad
+    /// fitment) or the exact #FB port (Mono fitment) and, if the raw port
+    /// matches, forwards to portDeviceOutMethod()/portDeviceInMethod().
+    /// See PortDevice::tryClaimOut/In and the Fitment doc above.
+    bool tryClaimOut(uint16_t rawPort, uint8_t value) override;
+    bool tryClaimIn(uint16_t rawPort, uint8_t& outValue) override;
 
     // Determine which channel a port address maps to
     static Channel portToChannel(uint16_t port);

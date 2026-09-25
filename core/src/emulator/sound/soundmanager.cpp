@@ -970,28 +970,14 @@ bool SoundManager::attachToPorts()
     // result = _ay8910->attachToPorts(_context->pPortDecoder);
     result = _turboSound->attachToPorts(_context->pPortDecoder);
 
-    // SoundDrive (SD=1): register the full mode-2 quad - #F1 Left A, #F3 Left
-    // B, #F9 Right A, #FB Right B (SoundDrive 1.05 mode 2 port map, decode
-    // 1111B0A1) - plus the mode-1 primary quad #0F/#1F/#4F/#5F, which the
-    // Pentagon/Scorpion decoder only forwards once TR-DOS has released those
-    // Beta128-aliased addresses (see PortDecoder_Pentagon128::DecodePortOut).
-    // The decoder dispatch is an exact-address map, so every port must be
-    // registered (the Covox class also re-checks the mask defensively in its
-    // handler).
-    // CovoxFB=1 alone: mono Covox at #FB only - classic single-DAC behavior.
+    // SoundDrive/Covox is a self-decoding device (Covox::tryClaimOut/In):
+    // its Fitment (Mono #FB only vs Quad mode-1+mode-2) is baked in at
+    // construction from config.sound.sd/covoxFB, so registration is just
+    // "plug the card in" - no per-port wiring, and no exact-address
+    // dispatch-map slot to collide with WD1793 or anything else.
     if (_covox && _context->pPortDecoder)
     {
-        if (_context->config.sound.sd)
-        {
-            result &= _context->pPortDecoder->RegisterPortHandler(Covox::PORT_LEFT_A, _covox);
-            result &= _context->pPortDecoder->RegisterPortHandler(Covox::PORT_LEFT_B, _covox);
-            result &= _context->pPortDecoder->RegisterPortHandler(Covox::PORT_RIGHT_A, _covox);
-            result &= _context->pPortDecoder->RegisterPortHandler(Covox::PORT_LEFT_A_MODE1, _covox);
-            result &= _context->pPortDecoder->RegisterPortHandler(Covox::PORT_LEFT_B_MODE1, _covox);
-            result &= _context->pPortDecoder->RegisterPortHandler(Covox::PORT_RIGHT_A_MODE1, _covox);
-            result &= _context->pPortDecoder->RegisterPortHandler(Covox::PORT_RIGHT_B_MODE1, _covox);
-        }
-        result &= _context->pPortDecoder->RegisterPortHandler(Covox::PORT_RIGHT_B, _covox);
+        result &= _context->pPortDecoder->RegisterSelfDecodingDevice(_covox);
     }
 
     return result;
@@ -1004,19 +990,9 @@ bool SoundManager::detachFromPorts()
     //_ay8910->detachFromPorts();
     _turboSound->detachFromPorts();
 
-    // Detach SOUNDRIVE/Covox from every port it may own; unregistering an
-    // absent key is a no-op, so the mode-1/mode-2 quad ports are also
-    // covered in mono Covox mode
     if (_covox && _context->pPortDecoder)
     {
-        _context->pPortDecoder->UnregisterPortHandler(Covox::PORT_LEFT_A);
-        _context->pPortDecoder->UnregisterPortHandler(Covox::PORT_LEFT_B);
-        _context->pPortDecoder->UnregisterPortHandler(Covox::PORT_RIGHT_A);
-        _context->pPortDecoder->UnregisterPortHandler(Covox::PORT_RIGHT_B);
-        _context->pPortDecoder->UnregisterPortHandler(Covox::PORT_LEFT_A_MODE1);
-        _context->pPortDecoder->UnregisterPortHandler(Covox::PORT_LEFT_B_MODE1);
-        _context->pPortDecoder->UnregisterPortHandler(Covox::PORT_RIGHT_A_MODE1);
-        _context->pPortDecoder->UnregisterPortHandler(Covox::PORT_RIGHT_B_MODE1);
+        _context->pPortDecoder->UnregisterSelfDecodingDevice(_covox);
     }
 
     return result;

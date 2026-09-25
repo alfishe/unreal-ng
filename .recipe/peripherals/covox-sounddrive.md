@@ -16,6 +16,11 @@ answering there at a time: **Beta128 wins while TR-DOS is paged in**,
 SoundDrive claims the same addresses the rest of the time when `SD=1`
 (matches the reference decoders — pentevo/Unreal `io.cpp` and Xpeccy
 `soundrive.c` SDRV_105_1 — so this isn't emulator-specific behavior).
+Covox is a self-decoding `PortDevice`, so both `PortDecoder_Pentagon128`
+and `PortDecoder_Scorpion256` support the full quad (Scorpion verified live
+against a real 4-channel tracker, `SQTrackerV1.0.trd`). `ATM710`/`ATM3`/
+ProfScorpion ship `SD=1` too but haven't been verified against real content
+yet.
 
 All are **config-file toggles** — changing them needs a new instance.
 On the `profi` branch the Profi gets its own Covox/SoundDrive at `#5F/#3F`
@@ -73,12 +78,18 @@ For driver work, trace the DAC writes directly — a `port_trace` filtered on
 software pushed, with PC attribution for who wrote it
 ([port-trace.md](../analysis/port-trace.md)).
 
-Cheap fitment check: `GET /emulator/{id}/ports` shows the rows the wiring
-actually installed — with `SD=1`, two rows: `SoundDrive quad DAC mode 2
-(#F1 L-A, #F3 L-B, #F9 R-A, #FB R-B...)` and `SoundDrive quad DAC mode 1
-(#0F L-A, #1F L-B, #4F R-A, #5F R-B)` (the mode-1 row's `gate` field states
-the TR-DOS precedence); `Covox (mono #FB)` when only `CovoxFB=1`; no row at
-all when neither flag is set.
+Cheap fitment check **on Pentagon**: `GET /emulator/{id}/ports` shows the
+rows the wiring actually installed — with `SD=1`, two rows: `SoundDrive
+quad DAC mode 2 (#F1 L-A, #F3 L-B, #F9 R-A, #FB R-B...)` and `SoundDrive
+quad DAC mode 1 (#0F L-A, #1F L-B, #4F R-A, #5F R-B)` (the mode-1 row's
+`gate` field states the TR-DOS precedence); `Covox (mono #FB)` when only
+`CovoxFB=1`; no row at all when neither flag is set. **On Scorpion (and
+every other model) `/ports` advertises nothing for Covox/SoundDrive at
+all** — `PortDecoder::getPortMapEntries()`'s SD-gated rows only exist in
+the `MM_PENTAGON` case — even though the device is fully wired and working
+there too (Covox is self-decoding, so dispatch doesn't depend on this
+advertisement). Don't read an absent `/ports` row on Scorpion as "not
+fitted"; use the port-trace/audio-capture checks below instead.
 
 ## Pitfalls
 
@@ -106,3 +117,15 @@ all when neither flag is set.
   as a regression mid-disk-operation.
 - **Silence proves nothing until software actually writes the port** —
   combine the capture with a port trace before concluding the card is dead.
+- **Plain 128K models don't decode Covox/SoundDrive at all** —
+  `PortDecoder_Spectrum128` has no routing for it whatsoever, even though
+  clone configs (e.g. `spectrum128/unreal.ini`) ship `SD=1`. Only the
+  Pentagon/Scorpion-family decoders (`PortDecoder_Pentagon128`,
+  `PortDecoder_Scorpion256`) wire it up.
+- **Port-trace device attribution needs the low-byte mask, not an exact
+  key** — self-decoded events carry the raw port (e.g. `0x850F` from
+  `OUT (n),A`), so `PortDiagnosticRecorder::ResolveDeviceId` mask-matches
+  the low byte for the other seven SoundDrive addresses after the exact
+  `#FB` case. A build without that check attributes every non-`#FB`
+  SoundDrive write to the generic `"Custom"` device instead of `"Covox"` -
+  cosmetic (dispatch itself is unaffected), but confusing when debugging.
