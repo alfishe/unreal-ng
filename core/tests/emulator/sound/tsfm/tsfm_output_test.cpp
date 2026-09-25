@@ -437,6 +437,12 @@ protected:
     static constexpr double kPeriodT = 16.0 * 72.0;
     static constexpr double kMaxSlipT = 4.0;
 
+    // Frame length (the device clips at config.frame - set both) and the
+    // per-frame drive: one step at the frame end, or instruction-granular
+    uint32_t _frameT = PENTAGON_FRAME;
+    bool _stepped = false;
+    uint32_t _overshoot = 0;
+
     /// Worst frame-to-frame slip of one measured run
     struct SlipReport
     {
@@ -489,11 +495,29 @@ protected:
         {
             if (frame > 0 || !frameOpen)
             {
-                SetT(0);
+                SetT(_overshoot);  // where AdjustFrameCounters left the counter
                 device.handleFrameStart();
             }
-            SetT(PENTAGON_FRAME);
-            device.handleStep();
+            if (_stepped)
+            {
+                // Instruction-granular: steps through the frame, the last
+                // instruction runs 0..7 T past its end, then the counter is
+                // rebased by the frame length before the frame-end hook
+                for (uint32_t t = 500; t < _frameT; t += 500)
+                {
+                    SetT(t);
+                    device.handleStep();
+                }
+                _overshoot = uint32_t((frame * 5) % 8);
+                SetT(_frameT + _overshoot);
+                device.handleStep();
+                SetT(_overshoot);
+            }
+            else
+            {
+                SetT(_frameT);
+                device.handleStep();
+            }
             device.handleFrameEnd();
 
             const int16_t* fm = device.getFmBuffer(0);
@@ -578,6 +602,36 @@ TEST_F(TsfmTimeline_Test, ContinuousAcrossFrames)
             EXPECT_LE(r.worstT, kMaxSlipT) << Describe(r);
         }
     }
+}
+
+TEST_F(TsfmTimeline_Test, ContinuousWithInstructionGranularSteps)
+{
+    // The real core drives the device once per instruction and ends a frame
+    // a few T-states past its boundary; the 128K/+3 frame (70908 T) is not a
+    // whole number of 16 T SSG ticks nor of microseconds. The FM timeline must
+    // stay continuous under both. Over the 50 ms budget like the test above
+    // (~140 steps per frame, 4 sessions of 120 frames)
+    const uint32_t configFrame = _context->config.frame;
+    for (const uint32_t frameT : {PENTAGON_FRAME, 70908u})
+    {
+        for (const auto& [rate, hq] : {std::pair<size_t, bool>{44100, true}, std::pair<size_t, bool>{48000, false}})
+        {
+            SCOPED_TRACE(testing::Message() << "frame " << frameT << (hq ? " HQ " : " LQ ") << rate);
+            _context->config.frame = frameT;
+            _frameT = frameT;
+            _stepped = true;
+            _overshoot = 0;
+            auto device = std::make_unique<SoundChip_TurboSoundFM>(_context);
+            device->setCoreRate(rate);
+            device->setHQEnabled(hq);
+            StartTone(*device);
+
+            const SlipReport r = RunAndMeasure(*device, 120, 10, true);
+            ASSERT_GT(r.peak, 1000) << "the FM tone never sounded";
+            EXPECT_LE(r.worstT, kMaxSlipT) << Describe(r);
+        }
+    }
+    _context->config.frame = configFrame;
 }
 
 TEST_F(TsfmTimeline_Test, ContinuousAfterLiveRateSwitch)
@@ -719,6 +773,128 @@ TEST_F(TsfmOutput_Test, FmCouplingReleasesStuckDc)
     device->fmHalfTick(0, h += 8);
     EXPECT_NEAR(device->outputState(0)->lastFed, -0.5, 0.01) << "mute step passes";
     EXPECT_LT(std::fabs(runSeconds(5.0 * rcSeconds)), 0.5 * 0.01) << "mute step released after 5 RC";
+}
+
+/// endregion
+
+/// region <OutputStageFlush>
+
+TEST_F(TsfmOutput_Test, HQReturnDoesNotReplayPreSwitchAudio)
+{
+    // ISSUES #7: in LQ the HQ decimators are not fed, so their FIR history
+    // still holds the audio from before the LQ period; on the way back to HQ
+    // it replayed (~0.3 ms of a tone that stopped long ago). Both TurboSound
+    // slot devices: a 1 kHz SSG tone in HQ, LQ, the tone silenced and settled
+    // (8 tau of the AY output high-pass), back to HQ - the first HQ samples
+    // must continue the settled silence
+    auto runFrame = [this](ITurboSoundDevice& device)
+    {
+        SetT(0);
+        device.handleFrameStart();
+        SetT(PENTAGON_FRAME);
+        device.handleStep();
+        device.handleFrameEnd();
+    };
+    auto poke = [this](ITurboSoundDevice& device, uint8_t reg, uint8_t value)
+    {
+        SetT(100);
+        device.portDeviceOutMethod(PORT_FFFD, reg);
+        device.portDeviceOutMethod(PORT_BFFD, value);
+    };
+
+    std::unique_ptr<ITurboSoundDevice> devices[] = {std::make_unique<SoundChip_TurboSoundFM>(_context),
+                                                    std::make_unique<SoundChip_TurboSound>(_context)};
+    const char* names[] = {"TSFM", "TurboSound"};
+    const int chipOf0xFE[] = {0, 1};
+    const double tauMs = 1000.0 / (2.0 * 3.14159265358979323846 * SoundChip_AY8910::OUTPUT_HIGHPASS_HZ);
+    const int settleFrames = int(std::ceil(8.0 * tauMs / 20.0));
+    for (int d = 0; d < 2; d++)
+    {
+        SCOPED_TRACE(names[d]);
+        ITurboSoundDevice& device = *devices[d];
+        device.setHQEnabled(true);
+        SetT(50);
+        device.portDeviceOutMethod(PORT_FFFD, 0xFE);  // chip 0 (TSFM: FM muted; legacy: ignored select)
+        poke(device, 0, 109);                          // channel A ~1 kHz
+        poke(device, 1, 0);
+        poke(device, 7, 0x3E);                         // tone A only
+        poke(device, 8, 15);
+        for (int f = 0; f < 5; f++)
+            runFrame(device);
+
+        device.setHQEnabled(false);
+        poke(device, 8, 0);
+        for (int f = 0; f < settleFrames; f++)
+            runFrame(device);
+
+        device.setHQEnabled(true);
+        runFrame(device);
+        // The 0xFE chip: TSFM's chip 0, the legacy device's chip 1
+        const int16_t* buf = device.getChipBuffer(chipOf0xFE[d]);  // left/right interleaved
+        int lo = buf[0], hi = buf[0];
+        for (size_t i = 0; i < 40; i += 2)  // first 20 samples, left channel
+        {
+            lo = std::min<int>(lo, buf[i]);
+            hi = std::max<int>(hi, buf[i]);
+        }
+        EXPECT_LT(hi - lo, 64) << "the first HQ samples replayed the pre-switch tone (range " << hi - lo << ")";
+    }
+}
+
+TEST_F(TsfmOutput_Test, ResumeAfterSuppressionContinuesWithoutStep)
+{
+    // While synthesis is suppressed (turbo without audio) nothing is
+    // rendered, but the chip keeps running: the FM output moves on while the
+    // hold, the output coupling and the decimator history keep the pre-gap
+    // state. On resume that came back as a step (old coupling charge plus the
+    // jump from the stale hold to the live level). A near-DC carrier (2.97 Hz,
+    // block 0 / MUL 0) makes any step stand out against a sample-to-sample
+    // change of a few LSB; the first resumed frame must be step-free
+    auto device = std::make_unique<SoundChip_TurboSoundFM>(_context);
+    device->setHQEnabled(true);
+    SetT(100);
+    device->portDeviceOutMethod(PORT_FFFD, 0xFA);  // chip 0, FM on
+    const uint8_t setup[][2] = {
+        {0x42, 0x7F}, {0x46, 0x7F}, {0x4A, 0x7F}, {0x4E, 0x00},  // carrier only (algorithm 0 output O4)
+        {0x52, 0x1F}, {0x56, 0x1F}, {0x5A, 0x1F}, {0x5E, 0x1F},  // AR: fastest
+        {0xA6, 0x01}, {0xA2, 0x00},                              // fnum 0x100, block 0: 2.97 Hz
+        {0x28, 0xF2},                                            // key on ch2
+    };
+    for (const auto& [reg, data] : setup)
+    {
+        device->portDeviceOutMethod(PORT_FFFD, reg);
+        device->portDeviceOutMethod(PORT_BFFD, data);
+    }
+    auto runFrame = [&]()
+    {
+        SetT(0);
+        device->handleFrameStart();
+        SetT(PENTAGON_FRAME);
+        device->handleStep();
+        device->handleFrameEnd();
+    };
+    auto maxAdjacentStep = [&]()
+    {
+        const int16_t* fm = device->getFmBuffer(0);
+        int step = 0;
+        for (size_t i = 2; i < device->getRenderedSamplesThisFrame() * AUDIO_CHANNELS; i += 2)
+            step = std::max(step, std::abs(int(fm[i]) - int(fm[i - 2])));
+        return step;
+    };
+
+    for (int f = 0; f < 4; f++)  // ~80 ms: well up the first quarter period
+        runFrame();
+    const int steadyStep = maxAdjacentStep();
+    ASSERT_GT(std::abs(int(device->getFmBuffer(0)[0])), 500) << "precondition: the carrier is not sounding";
+
+    device->setSynthesisSuppressed(true);
+    for (int f = 0; f < 3; f++)  // 60 ms gap: the carrier moves on
+        runFrame();
+    device->setSynthesisSuppressed(false);
+    runFrame();
+
+    EXPECT_LE(maxAdjacentStep(), steadyStep + 16)
+        << "a step in the first frame after the gap (steady-state step " << steadyStep << ")";
 }
 
 /// endregion

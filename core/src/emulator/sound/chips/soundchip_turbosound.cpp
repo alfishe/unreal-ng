@@ -29,6 +29,18 @@ void SoundChip_TurboSound::handleFrameStart()
     memset(_ayBuffer, 0x00, _ayAudioDescriptor.memoryBufferSizeInBytes);
     memset(_chip0Buffer, 0x00, _chip0AudioDescriptor.memoryBufferSizeInBytes);
     memset(_chip1Buffer, 0x00, _chip1AudioDescriptor.memoryBufferSizeInBytes);
+
+    // Audio from before an LQ -> HQ switch or a suppression gap must not
+    // replay through the HQ decimators (ISSUES #7). History only: the
+    // resampling phases gate generator ticks and keep their position
+    if (_outputFlushPending)
+    {
+        _chip0->decimatorLeft().clearHistory();
+        _chip0->decimatorRight().clearHistory();
+        _chip1->decimatorLeft().clearHistory();
+        _chip1->decimatorRight().clearHistory();
+        _outputFlushPending = false;
+    }
 }
 
 /// @brief Generate audio samples synchronized to CPU t-states
