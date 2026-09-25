@@ -1,12 +1,97 @@
 #include "soundchip_turbosound.h"
 
+#include <cstring>
+
 #include "3rdparty/message-center/messagecenter.h"
 #include "emulator/cpu/core.h"
 #include "emulator/notifications.h"
 
 /// region <Emulation events>
+int64_t SoundChip_TurboSound::nowT() const
+{
+    // The AY is clocked from its own socket: AudioTstate undoes the Scorpion
+    // hardware turbo; the host speed multiplier is not applied (as TSFM).
+    // No core: a standalone device (serializer tests) sits at T 0
+    if (!_context->pCore)
+        return 0;
+    return int64_t(_context->emulatorState.AudioTstate(_context->pCore->GetZ80()->t));
+}
+
+void SoundChip_TurboSound::queueSsgWrite(int chipIndex, uint8_t reg, uint8_t value)
+{
+    SoundChip_AY8910* chip = chipIndex == 0 ? _chip0 : _chip1;
+    if (_synthesisSuppressed)
+    {
+        // Nothing renders, so no tick would ever take it: the generators
+        // simply follow the register file
+        chip->applyRegister(reg, value);
+        return;
+    }
+    SsgWriteQueue& q = _ssgWrites[chipIndex];
+    if (q.full())
+    {
+        chip->applyRegister(q.front().reg, q.front().value);
+        q.pop();
+    }
+    q.push(SsgWrite{_lastSeenT, reg, value});
+}
+
+void SoundChip_TurboSound::applySsgWrites(int64_t t)
+{
+    for (int i = 0; i < 2; i++)
+    {
+        SoundChip_AY8910* chip = i == 0 ? _chip0 : _chip1;
+        SsgWriteQueue& q = _ssgWrites[i];
+        while (!q.empty() && q.front().t <= t)
+        {
+            chip->applyRegister(q.front().reg, q.front().value);
+            q.pop();
+        }
+    }
+}
+
+void SoundChip_TurboSound::applyAllSsgWrites()
+{
+    for (int i = 0; i < 2; i++)
+    {
+        SoundChip_AY8910* chip = i == 0 ? _chip0 : _chip1;
+        SsgWriteQueue& q = _ssgWrites[i];
+        while (!q.empty())
+        {
+            chip->applyRegister(q.front().reg, q.front().value);
+            q.pop();
+        }
+    }
+}
+
 void SoundChip_TurboSound::handleFrameStart()
 {
+    // Frame rollover: AdjustFrameCounters already rebased z80->t; shift the
+    // render cursor and every pending write by the same delta so they stay on
+    // one continuous timeline (the TSFM scheme, kept bit-identical)
+    if (_seenT)
+    {
+        const int64_t now = nowT();
+        const int64_t delta = _lastSeenT - now;
+        if (delta != 0)
+        {
+            _ssgWrites[0].rebase(delta);
+            _ssgWrites[1].rebase(delta);
+            _renderT -= delta;
+        }
+        _lastSeenT = now;
+    }
+    // Off its lag window: a rate or quality switch moved the render loop
+    // against the CPU clock, or the timeline was lost (host speed multiplier
+    // > 1, rendering resumed after suppression) - re-anchor
+    if (_renderReanchor || _renderT < -4 * kTurboSoundRenderLagT || _renderT > 0)
+    {
+        _renderT = -kTurboSoundRenderLagT;
+        _renderReanchor = false;
+    }
+    if (_synthesisSuppressed)
+        applyAllSsgWrites();  // queued just before suppression began
+
     // NOTE: the frame buffer clears below run even when synthesis is
     // suppressed (§6.1): the sound-feature-off output path relies on zeroed
     // buffers (SoundManager::handleFrameEnd mixes whatever is here), and a
@@ -29,6 +114,18 @@ void SoundChip_TurboSound::handleFrameStart()
     memset(_ayBuffer, 0x00, _ayAudioDescriptor.memoryBufferSizeInBytes);
     memset(_chip0Buffer, 0x00, _chip0AudioDescriptor.memoryBufferSizeInBytes);
     memset(_chip1Buffer, 0x00, _chip1AudioDescriptor.memoryBufferSizeInBytes);
+
+    // Audio from before an LQ -> HQ switch or a suppression gap must not
+    // replay through the HQ decimators (ISSUES #7). History only: the
+    // resampling phases gate generator ticks and keep their position
+    if (_outputFlushPending)
+    {
+        _chip0->decimatorLeft().clearHistory();
+        _chip0->decimatorRight().clearHistory();
+        _chip1->decimatorLeft().clearHistory();
+        _chip1->decimatorRight().clearHistory();
+        _outputFlushPending = false;
+    }
 }
 
 /// @brief Generate audio samples synchronized to CPU t-states
@@ -55,6 +152,11 @@ void SoundChip_TurboSound::handleFrameStart()
 /// - Correct relationship between chip clock and generator periods
 void SoundChip_TurboSound::handleStep()
 {
+    // The timeline follows the core in every mode (the frame rebase and the
+    // write timestamps need it), rendering does not
+    _lastSeenT = nowT();
+    _seenT = true;
+
     // Output-stage suppression (§6.1): turbo without audio or the sound
     // feature off. The manager keeps calling - a device with an emulated
     // core (TSFM) advances it here - but the legacy device has nothing to
@@ -112,8 +214,11 @@ void SoundChip_TurboSound::handleStep()
                 // Feed generator samples to decimator until we have an output
                 while (!_chip0->decimatorLeft().hasOutput())
                 {
-                    // Tick generators (bypass internal prescaler)
+                    // Tick generators (bypass internal prescaler), with the
+                    // register writes timed up to this tick applied first
+                    applySsgWrites(_renderT);
                     updateState(true);
+                    _renderT += 16;
 
                     // Native-rate tap for DSD capture (pre-decimation, both chips summed)
                     if (tapActive)
@@ -164,8 +269,11 @@ void SoundChip_TurboSound::handleStep()
                 {
                     _decimationPhase -= 1.0;
 
-                    // Tick generators directly (bypass internal prescaler)
+                    // Tick generators directly (bypass internal prescaler),
+                    // with the register writes timed up to this tick applied
+                    applySsgWrites(_renderT);
                     updateState(true);
+                    _renderT += 16;
 
                     double l = _chip0->mixedLeft() + _chip1->mixedLeft();
                     double r = _chip0->mixedRight() + _chip1->mixedRight();
@@ -282,7 +390,15 @@ void SoundChip_TurboSound::portDeviceOutMethod(uint16_t port, uint8_t value)
             _currentChip->setRegister(value);
             break;
         case PORT_BFFD:
-            _currentChip->writeCurrentRegister(value);
+        {
+            // SSG register: the CPU sees it now, the generators on the tick
+            // of this T-state (SsgWriteQueue)
+            _lastSeenT = nowT();
+            _seenT = true;
+            const uint8_t reg = _currentChip->getCurrentRegisterIndex();
+            _currentChip->latchRegister(reg, value);
+            queueSsgWrite(_currentChip == _chip0 ? 0 : 1, reg, value);
+
             _frameHadActivity = true;  // Track register writes for HUD activity
             // Track which chip is active this frame for TurboSound detection
             if (_currentChip == _chip0)
@@ -290,6 +406,7 @@ void SoundChip_TurboSound::portDeviceOutMethod(uint16_t port, uint8_t value)
             else if (_currentChip == _chip1)
                 _chip1ActiveThisFrame = true;
             break;
+        }
         default:
             return;  // Not an AY port — no tap
     }
@@ -354,13 +471,21 @@ void SoundChip_TurboSound::detachFromPorts()
 // Layout: 1 byte current-chip index + chip0 full state + chip1 full state.
 // Delegates to each child SoundChip_AY8910's own TTDSerializable methods.
 
+namespace
+{
+// Timeline tail (the same scheme as TSFM's v4): render cursor offset + per
+// chip pending SSG writes {count, kCapacity x {i32 t offset, u8 reg, u8 value}}
+constexpr size_t kSsgQueueStateSize = 1 + SsgWriteQueue::kCapacity * (4 + 1 + 1);
+constexpr size_t kTimelineStateSize = 8 + 2 * kSsgQueueStateSize;
+}  // namespace
+
 size_t SoundChip_TurboSound::TTDStateSize() const
 {
     // _chip0 and _chip1 are always created in the constructor; both contribute
     // their fixed-size payload. If a chip pointer were somehow null we still
     // report the same fixed size (the round-trip contract is size-stable).
     const size_t oneChip = _chip0 ? _chip0->TTDStateSize() : 0;
-    return 1 /*current-chip index*/ + 2 * oneChip;
+    return 1 /*current-chip index*/ + 2 * oneChip + kTimelineStateSize;
 }
 
 void SoundChip_TurboSound::TTDSaveState(uint8_t* dst) const
@@ -384,6 +509,27 @@ void SoundChip_TurboSound::TTDSaveState(uint8_t* dst) const
         _chip1->TTDSaveState(cur);
         cur += _chip1->TTDStateSize();
     }
+
+    // Timeline tail, relative to the last T-state seen (the frame end at a
+    // checkpoint): the cursor decides on which tick every SSG write lands,
+    // and a write pending at the checkpoint has not reached the generators
+    const int64_t base = _lastSeenT;
+    const int64_t cursor = _renderT - base;
+    std::memcpy(cur, &cursor, 8);
+    cur += 8;
+    for (const SsgWriteQueue& q : _ssgWrites)
+    {
+        *cur++ = uint8_t(q.size());
+        for (size_t k = 0; k < SsgWriteQueue::kCapacity; ++k)
+        {
+            const SsgWrite w = (k < q.size()) ? q.at(k) : SsgWrite{};
+            const int32_t offset = (k < q.size()) ? int32_t(w.t - base) : 0;
+            std::memcpy(cur, &offset, 4);
+            cur += 4;
+            *cur++ = w.reg;
+            *cur++ = w.value;
+        }
+    }
 }
 
 void SoundChip_TurboSound::TTDLoadState(const uint8_t* src)
@@ -405,6 +551,38 @@ void SoundChip_TurboSound::TTDLoadState(const uint8_t* src)
 
     // Restore the active-chip pointer.
     _currentChip = (currentIdx == 1 && _chip1) ? _chip1 : _chip0;
+
+    // Timeline tail, rebuilt around the restored CPU position (the machine
+    // resumes at the start of a frame - the rebase a frame start does)
+    const int64_t base = nowT();
+    _lastSeenT = base;
+    _seenT = true;
+    int64_t cursor = 0;
+    std::memcpy(&cursor, cur, 8);
+    cur += 8;
+    _renderT = base + cursor;
+    _renderReanchor = false;
+    for (SsgWriteQueue& q : _ssgWrites)
+    {
+        q.clear();
+        const size_t count = *cur++;
+        for (size_t k = 0; k < SsgWriteQueue::kCapacity; ++k)
+        {
+            int32_t offset = 0;
+            std::memcpy(&offset, cur, 4);
+            cur += 4;
+            const uint8_t reg = *cur++;
+            const uint8_t value = *cur++;
+            if (k < count)
+                q.push(SsgWrite{base + offset, reg, value});
+        }
+    }
+
+    // The per-frame render cursor restarts like handleFrameStart: left at
+    // its pre-seek values it miscounted the first frame after the seek and
+    // shifted _samplePhase against the mixer for good (the TSFM fix, 4c0b7153)
+    _lastTStates = 0;
+    _ayBufferIndex = 0;
 }
 
 /// endregion </TTDSerializable>

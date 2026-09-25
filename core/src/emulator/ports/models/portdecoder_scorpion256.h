@@ -65,8 +65,9 @@ public:
     bool ScorpionTrDosSelected() const;                                 // TR-DOS session or armed DOS trigger
 
     /// region <TTD model-specific state>
-    /// ProfROM plane/page and the #7EFD / #1FFD latches that the model-agnostic
-    /// TTDChipsetState does not carry. Declared here because this decoder owns
+    /// #1FFD, the DD50.1 trigger and (PROFSCORP) the ProfROM plane / #7EFD latch:
+    /// paging inputs the model-agnostic TTDChipsetState does not carry, on both
+    /// Scorpion variants. Declared here because this decoder owns
     /// those latches (see PortDecoder::GetTTDModelStateIds).
     std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
     std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;

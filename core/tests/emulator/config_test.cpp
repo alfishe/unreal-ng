@@ -111,6 +111,26 @@ TEST_F(Config_Test, FmTrimDbDefaultsToZero)
     EXPECT_DOUBLE_EQ(_context->config.sound.tsfmFmTrimDb, 0.0);
 }
 
+TEST_F(Config_Test, DecimatorQualityParsed)
+{
+    ASSERT_TRUE(LoadSoundKeys("DecimatorQuality=HighFidelity\n"));
+    EXPECT_TRUE(_context->config.sound.decimatorHighFidelity);
+    ASSERT_TRUE(LoadSoundKeys("DecimatorQuality=highfidelity\n"));
+    EXPECT_TRUE(_context->config.sound.decimatorHighFidelity) << "case-insensitive";
+    ASSERT_TRUE(LoadSoundKeys("DecimatorQuality=Reference\n"));
+    EXPECT_FALSE(_context->config.sound.decimatorHighFidelity);
+}
+
+TEST_F(Config_Test, DecimatorQualityDefaultsToReference)
+{
+    // Missing key resets a stale HighFidelity; unknown values keep Reference
+    ASSERT_TRUE(LoadSoundKeys("DecimatorQuality=HighFidelity\n"));
+    ASSERT_TRUE(LoadSoundKeys("TurboSound=AY\n"));
+    EXPECT_FALSE(_context->config.sound.decimatorHighFidelity);
+    ASSERT_TRUE(LoadSoundKeys("DecimatorQuality=ultra\n"));
+    EXPECT_FALSE(_context->config.sound.decimatorHighFidelity);
+}
+
 TEST_F(Config_Test, ShippedConfigsProduceExpectedTurboSoundKind)
 {
     // TSFM ships enabled on all machines as the default sound device.

@@ -1253,6 +1253,20 @@ void fm_engine_base<RegisterType>::reset()
 	// reset the operators
 	for (auto &op : m_operator)
 		op->reset();
+
+	// unreal-ng local patch (reset determinism): the envelope clock and the
+	// running clock count are chip state that a hardware reset clears.
+	// Upstream keeps both counting across reset(), so after a machine reset
+	// the envelope timing (and the timer B first-load offset derived from
+	// the low clock bits) depended on how long the instance had been up
+	m_env_counter = 0;
+	m_total_clocks = 0;
+
+	// ...and the prepare scheduling (patch 1 state) returns to its
+	// constructor values: every channel is re-prepared on the next clock
+	m_active_channels = ALL_CHANNELS;
+	m_modified_channels = ALL_CHANNELS;
+	m_prepare_count = 0;
 }
 
 

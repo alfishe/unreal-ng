@@ -19,7 +19,7 @@
 /// One queued FM DAC sample
 struct FmWord
 {
-    uint64_t t = 0;     // frame-relative T-state of the sample
+    uint64_t t = 0;     // frame-relative T-state; words carried over from the previous frame are negative (two's complement, compare as int64_t)
     int16_t word = 0;   // YM3014 16-bit DAC word (left channel)
 };
 
@@ -27,8 +27,9 @@ class FmWordQueue
 {
 public:
     /// 4096 words ~= 4.1 frames of headroom at /6 (996 words per Pentagon
-    /// frame) - the P6 drain consumes a frame's worth per frame, and the
-    /// suppressed path clears at each frame start
+    /// frame) - the render loop consumes a frame's worth per frame and keeps
+    /// only the words inside its constant lag (a few) queued across the
+    /// boundary; the suppressed path clears at each frame start
     static constexpr size_t kCapacity = 4096;
 
     bool empty() const

@@ -530,6 +530,12 @@ struct CONFIG
 		/// ([SOUND] TSFM_FmTrimDb; 0 = default)
 		double tsfmFmTrimDb = 0.0;
 
+		/// Anti-alias decimator tier for the TurboSound-slot devices
+		/// ([SOUND] DecimatorQuality): false = Reference (96 taps at the SSG
+		/// rate, Kaiser beta 5, ~56 dB stopband), true = HighFidelity (192
+		/// taps, beta 9, ~90 dB). Read at sound-stack construction
+		bool decimatorHighFidelity = false;
+
 		int covoxFB, covoxDD, sd, saa1099, moonsound;
 		int beeper_vol, micout_vol, micin_vol, ay_vol, aydig_vol, saa1099_vol;
 		int covoxFB_vol, covoxDD_vol, sd_vol, covoxProfi_vol;

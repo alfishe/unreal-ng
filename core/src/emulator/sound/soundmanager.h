@@ -254,6 +254,17 @@ public:
     /// Evaluated once per frame in handleFrameStart.
     bool isSynthesisSuppressed() const { return _synthesisSuppressed; }
 
+    /// TTD restore of a device that carries its own copy of the sample phase
+    /// (same units as _sampleAccumulator - SoundChip_TurboSoundFM restores it
+    /// for generator determinism): take the same position, so the frame's
+    /// sample count and the device's rendered count stay equal. Left behind,
+    /// the mixer kept its pre-seek phase and read one never-rendered (zero)
+    /// sample every few frames for the rest of the session
+    void adoptSamplePhase(uint64_t tstateRatePhase)
+    {
+        _sampleAccumulator = tstateRatePhase;
+    }
+
     const AudioFrameDescriptor& getAudioBufferDescriptor();
     Beeper& getBeeper();
 

@@ -1,7 +1,12 @@
 #pragma once
 
 /// @file ttdscorpionprofrom.h
-/// @brief TTD serializer for Scorpion ZS 256/1024 ProfROM state.
+/// @brief TTD serializer for Scorpion ZS 256 paging state, plain and ProfROM.
+///
+/// Registered for both MM_SCORP and MM_PROFSCORP: #1FFD and the magic-button
+/// trigger are paging inputs on both; the plane fields stay 0 on the plain
+/// Scorpion. (The name predates the plain-Scorpion registration; the id is
+/// stored in .ttd files, so it is kept.)
 ///
 /// Per TDD §6.4: model-specific chipset state uses the peripheral registry
 /// rather than bloating TTDChipsetState. The common TTD framework knows

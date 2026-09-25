@@ -400,7 +400,7 @@ DivergenceFrame TTDDivergenceHarness::CaptureCurrentFrame()
     // ExtractHashesFromTimeline's hash of the stored checkpoint, so the
     // two are directly comparable.
     const TTDCpuState cpu = CaptureCpuState(*static_cast<const Z80State*>(z80));
-    TTDChipsetState chipset = CaptureChipsetState(_context->emulatorState);
+    TTDChipsetState chipset = CaptureChipsetState(_context->emulatorState, static_cast<uint32_t>(z80->t));
 
     uint64_t composite = HashBytes(reinterpret_cast<const uint8_t*>(&cpu), sizeof(TTDCpuState));
     composite = HashCombine(composite,

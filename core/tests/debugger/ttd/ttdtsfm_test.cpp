@@ -24,6 +24,8 @@
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "debugger/ttd/ttddumpformat.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
@@ -317,8 +319,8 @@ TEST_F(TtdTsfm_Test, SessionKindMismatchRefused)
 // bytes) never wrote a TurboSound/TSFM blob to ANY checkpoint - confirmed
 // against a real user recording (scratch/tsfm-issues.ttd: 0/1169
 // checkpoints). §8.2's real TTDStateSize/TTDSaveState/TTDLoadState/
-// TTDHashState are now implemented in soundchip_turbosoundfm.cpp (v2,
-// 1190-byte payload: board latches + the render-loop's free-running
+// TTDHashState are now implemented in soundchip_turbosoundfm.cpp (v4,
+// 2000-byte payload: board latches + the render-loop's free-running
 // _samplePhase/_decimationPhase accumulators + per-chip address/fmClockPhase/
 // timers/busy + ymfm::ym2203::save_restore() + the SSG half's existing
 // AY8910 serializer). The render-phase fields were added after
@@ -355,10 +357,11 @@ protected:
 
 TEST_F(TTD_TurboSoundFM_Serializer_Test, TTDStateSize_IsNonZero)
 {
-    // Design §8.2 (v3) pins this at 1190 bytes (1 version + 1 board + 40
+    // Design §8.2 (v4) pins this at 2000 bytes (1 version + 1 board + 48
     // render-phase accumulators (samplePhase, decimationPhase, 4 per-
     // decimator phases) + 2 x (1 address + 4 fmClockPhase + 2x4 timers + 4
-    // busy + 2 ymfmSize + 494 ymfm payload + 57 AY payload)). A
+    // busy + 2 ymfmSize + 494 ymfm payload + 73 AY payload) + 778 timeline
+    // tail (render cursor + pending timed SSG writes)). A
     // registered TTD-capable device that always reports 0 bytes is invisible
     // to TTDPeripheralRegistry::CaptureAll - it is never
     // written to any checkpoint, which is the root cause of this bug.
@@ -438,8 +441,10 @@ TEST(TTD_TSFM_ManagerIntegration_Test, CaptureNow_PopulatesTsfmStateBlob)
            "docs/inprogress/2026-09-10-turbosound-fm/ttd-fm-state-gap.md.";
     const auto tsfmState = ttd::TTDPeripheralRegistry::DecodeBlob(
         static_cast<uint8_t>(ttd::PeripheralId::TSFM), tsfmBlob->second);
-    EXPECT_EQ(tsfmState.size(), 1190u)
-        << "TSFM blob must contain the full §8.2 (v3) payload";
+    // v4: 2 version/board + 48 render phases + 2 x 586 chip payloads (73-byte
+    // AY payload each) + 778 timeline tail (render cursor + pending SSG writes)
+    EXPECT_EQ(tsfmState.size(), 2000u)
+        << "TSFM blob must contain the full §8.2 (v4) payload";
 
     emulator.Stop();
     emulator.Release();
@@ -637,7 +642,9 @@ TEST(TTD_TSFM_ManagerIntegration_Test, SeekTo_NoiseGeneratorStateDeterministicFr
     ttdMgr->StopRecording();
     ASSERT_GE(ttdMgr->GetCheckpointCount(), 141u);
 
-    // chip0's SSG payload offset within the 1190 B TSFM (v3) blob,
+    // chip0's SSG payload offset within the 2000 B TSFM (v4) blob (the v4
+    // additions are appended at the end, so this offset is unchanged; the 57
+    // bytes read below are the registers + generator state),
     // independently derived from design §8.2 (not imported from production
     // code - the point is to catch a production layout bug, not assume it's
     // right): version(1) + board(1) + samplePhase(8) + decimationPhase(8) +
@@ -681,8 +688,10 @@ TEST(TTD_TSFM_ManagerIntegration_Test, SeekTo_NoiseGeneratorStateDeterministicFr
     //    noise sub-state alone matches exactly.
     ASSERT_TRUE(ttdMgr->SeekTo({100, 0}));
     {
-        std::vector<uint8_t> live(57);
+        // Registers + generator state: the first 57 bytes of the AY payload
+        std::vector<uint8_t> live(ssg0->TTDStateSize());
         ssg0->TTDSaveState(live.data());
+        live.resize(57);
         EXPECT_EQ(live, refAt100)
             << "noise generator state (period/counter/out/LFSR) did not restore "
                "bit-identical on the keyframe at frame 100";
@@ -696,16 +705,20 @@ TEST(TTD_TSFM_ManagerIntegration_Test, SeekTo_NoiseGeneratorStateDeterministicFr
     //    mismatch that "heals" once frame 100 is crossed again.
     ASSERT_TRUE(ttdMgr->SeekTo({61, 0}));
     {
-        std::vector<uint8_t> live(57);
+        // Registers + generator state: the first 57 bytes of the AY payload
+        std::vector<uint8_t> live(ssg0->TTDStateSize());
         ssg0->TTDSaveState(live.data());
+        live.resize(57);
         EXPECT_EQ(live, refAt61)
             << "noise generator state did not restore bit-identical on the "
                "delta frame at frame 61";
     }
     emulator.RunNFrames(79, /*skipBreakpoints=*/true);  // 61 -> 140 in the new timeline
     {
-        std::vector<uint8_t> live(57);
+        // Registers + generator state: the first 57 bytes of the AY payload
+        std::vector<uint8_t> live(ssg0->TTDStateSize());
         ssg0->TTDSaveState(live.data());
+        live.resize(57);
         EXPECT_EQ(live, refAt140)
             << "noise generator diverged from the original recording after "
                "resuming from a delta-frame seek - it should reproduce the "
@@ -787,6 +800,12 @@ TEST(TTD_TSFM_ManagerIntegration_Test, SeekTo_FlushesOutputStageToAvoidClickFrom
     EXPECT_EQ(out1->hold, 0.0) << "chip 1 hold register not flushed on restore";
     EXPECT_EQ(out1->lqSum, 0.0) << "chip 1 LQ boxcar sum not flushed on restore";
     EXPECT_EQ(out1->lqCount, 0u) << "chip 1 LQ boxcar count not flushed on restore";
+    // The FM output coupling is part of the output stage: a charged capacitor
+    // from the pre-seek audio would bleed into the restored timeline
+    EXPECT_EQ(out0->lastFed, 0.0) << "chip 0 coupling output not flushed on restore";
+    EXPECT_EQ(out1->lastFed, 0.0) << "chip 1 coupling output not flushed on restore";
+    EXPECT_EQ(out0->coupling.filter(0.0), 0.0) << "chip 0 coupling state not flushed on restore";
+    EXPECT_EQ(out1->coupling.filter(0.0), 0.0) << "chip 1 coupling state not flushed on restore";
 
     // The decimators' FIR history must be cleared too (not just the simple
     // scalar fields above): a decimator carrying stale taps produces a
@@ -798,6 +817,87 @@ TEST(TTD_TSFM_ManagerIntegration_Test, SeekTo_FlushesOutputStageToAvoidClickFrom
     EXPECT_FALSE(fm->getChip(1)->decimatorLeft().hasOutput())
         << "chip 1 SSG-left decimator not flushed";
 
+    emulator.Stop();
+    emulator.Release();
+}
+
+/// The render-phase fix restores the device's _samplePhase to its recorded
+/// value; the mixer's own frame sample accumulator (SoundManager) was left at
+/// its live pre-seek value. From the seek on, the two counts disagreed every
+/// few frames - the mixer read one never-rendered, zero sample past the
+/// device's last one: a click every ~6 frames for the rest of the session
+/// (BW Demo report, "after ttd rewind clicking continues all over").
+TEST(TTD_TSFM_ManagerIntegration_Test, SeekTo_KeepsDeviceAndMixerSampleCountsEqual)
+{
+    Emulator emulator(LoggerLevel::LogError);
+    emulator.SetCustomConfigPath(
+        EmulatorTestHelper::StageTurboSoundKindConfig(TurboSoundKind::FM));
+    ASSERT_TRUE(emulator.Init());
+
+    EmulatorContext* context = emulator.GetContext();
+    ASSERT_NE(context, nullptr);
+    ttd::TimeTravelManager* ttdMgr = context->pTimeTravelManager;
+    ASSERT_NE(ttdMgr, nullptr);
+    FeatureManager* featureManager = emulator.GetFeatureManager();
+    ASSERT_NE(featureManager, nullptr);
+    featureManager->setFeature(Features::kDebugMode, true);
+    featureManager->setFeature(Features::kTimeTravel, true);
+    context->pMemory->UpdateFeatureCache();
+
+    const auto sna = TestPathHelper::FindProjectRoot() / "testdata/sound/tsfm/tech_support.sna";
+    ASSERT_TRUE(emulator.LoadSnapshot(sna.string()))
+        << "fixture missing: " << sna.string();
+
+    auto* fm = dynamic_cast<SoundChip_TurboSoundFM*>(context->pSoundManager->getTurboSound());
+    ASSERT_NE(fm, nullptr) << "Test precondition: FM slot kind must be active";
+
+    // The mixer hands each finished frame to the audio callback from inside
+    // SoundManager::handleFrameEnd, before the next frame starts - the device's
+    // rendered count still belongs to that same frame there
+    struct CountCheck
+    {
+        SoundChip_TurboSoundFM* fm = nullptr;
+        int mismatches = 0;
+        static void Callback(void* obj, int16_t* /*samples*/, size_t numSamples)
+        {
+            auto* self = static_cast<CountCheck*>(obj);
+            if (numSamples / 2 != self->fm->getRenderedSamplesThisFrame())
+                self->mismatches++;
+        }
+    } check;
+    check.fm = fm;
+    context->pAudioCallback.store(&CountCheck::Callback, std::memory_order_release);
+    context->pAudioManagerObj.store(&check, std::memory_order_release);
+
+    auto countDisagreements = [&](int frames, int* firstMismatch) -> int
+    {
+        int mismatches = 0;
+        for (int i = 0; i < frames; i++)
+        {
+            check.mismatches = 0;
+            emulator.RunNFrames(1, /*skipBreakpoints=*/true);
+            if (check.mismatches > 0 && mismatches++ == 0)
+                *firstMismatch = i;
+        }
+        return mismatches;
+    };
+
+    ASSERT_TRUE(ttdMgr->StartRecording());
+    int first = -1;
+    ASSERT_EQ(countDisagreements(100, &first), 0)
+        << "precondition: device and mixer sample counts disagree before any seek (first at frame " << first << ")";
+    ttdMgr->StopRecording();
+
+    // Frame 30 sits at a different fractional sample phase than the live
+    // head (frame ~100): at 44.1 kHz the pattern period is 125 frames
+    ASSERT_TRUE(ttdMgr->SeekTo({30, 0}));
+    first = -1;
+    const int mismatches = countDisagreements(60, &first);
+    EXPECT_EQ(mismatches, 0) << mismatches << " of 60 frames after the seek rendered a different count than "
+                             << "the mixer consumed (first " << first << " frames after the seek)";
+
+    context->pAudioCallback.store(nullptr, std::memory_order_release);
+    context->pAudioManagerObj.store(nullptr, std::memory_order_release);
     emulator.Stop();
     emulator.Release();
 }

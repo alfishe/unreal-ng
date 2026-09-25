@@ -75,6 +75,9 @@ SoundManager::SoundManager(EmulatorContext* context)
             _turboSound = new SoundChip_TurboSound(_context);
             break;
     }
+    _turboSound->setDecimatorQuality(_context->config.sound.decimatorHighFidelity
+                                         ? FilterDecimator::Quality::HighFidelity
+                                         : FilterDecimator::Quality::Reference);
     _turboSound->setCoreRate(_coreRate);
 
     // Build the device registry based on what this machine has
@@ -497,7 +500,7 @@ void SoundManager::handleFrameEnd()
     /// region <Determine actual samples for this frame>
     // Per-frame sample count derives from the machine's frame length, NOT the
     // 50 Hz SAMPLES_PER_FRAME constant: Pentagon (71680 t-states, 48.83 fps)
-    // produces 903.168 samples/frame, ZX48/128 produces 880.5888.
+    // produces 903.168 samples/frame, ZX48 880.5888, ZX128 (70908) 893.4408.
     //
     // Exact integer accumulator (audio-sync design, Fix 1): the fractional
     // part is CARRIED, not rounded away. Rounding emitted a systematic rate
@@ -505,9 +508,18 @@ void SoundManager::handleFrameEnd()
     // realtime ring drift and audio-behind-video drift in recordings. With
     // the carry, the sequence is exactly periodic (903,903,...,904 with
     // period 125 on Pentagon@44.1k) and drift-free by construction.
+    //
+    // Units: T-states x rate, modulo CPU_CLOCK_RATE - the same accumulator
+    // every device (TurboSound, TSFM) renders its buffers with, so both count
+    // the same samples in every frame. config.frame_duration_us is the pacing
+    // clock, rounded UP to whole microseconds; counting in it disagreed with
+    // the devices on every other frame wherever the frame is not a whole
+    // number of microseconds (70908 T = 20259.43 us on 128K/+3, 99880 T on
+    // ATM): the mixer read a never-rendered zero sample or dropped one.
+    // Recordings stamp video with the same exact frame/CPU_CLOCK_RATE
+    // duration; the realtime pacing difference (<30 ppm) is absorbed by DRC.
     size_t samplesThisFrame = SAMPLES_PER_FRAME;
     uint32_t frameDuration = 0;     // T-states (for beeper)
-    uint32_t frameDurationUs = 0;   // microseconds (for sample calculation)
     {
         CONFIG& config = _context->config;
         // Host multiplier only: the Scorpion hardware turbo doubles CPU
@@ -515,21 +527,17 @@ void SoundManager::handleFrameEnd()
         // samples of that frame (it overfilled the ring 2x - hard resyncs)
         uint8_t speedMultiplier = _context->emulatorState.HostSpeedMultiplier();
         frameDuration = config.frame * speedMultiplier;
-        // Wall-clock frame duration: a video frame takes the SAME real time
-        // at any CPU clock, so the realtime sample count (and ring fill
-        // rate) is multiplier-invariant
-        frameDurationUs = config.frame_duration_us;
 
-        if (frameDurationUs > 0)
+        // A video frame takes the same real time at any CPU clock, so the
+        // sample count is multiplier-invariant: the base frame length
+        if (config.frame > 0)
         {
-            // Accumulate: (frame_us * sample_rate), then divide by 1,000,000 for samples
-            _sampleAccumulator += static_cast<uint64_t>(frameDurationUs) * _coreRate;
-            samplesThisFrame = static_cast<size_t>(_sampleAccumulator / 1'000'000ULL);
-            _sampleAccumulator %= 1'000'000ULL;
+            _sampleAccumulator += static_cast<uint64_t>(config.frame) * _coreRate;
+            samplesThisFrame = static_cast<size_t>(_sampleAccumulator / CPU_CLOCK_RATE);
+            _sampleAccumulator %= CPU_CLOCK_RATE;
 
-            // Overflow guard: buffers are sized MAX_SAMPLES_PER_FRAME (speed
-            // multiplier >= 3 exceeds it). Drop the excess KNOWINGLY - turbo
-            // has no realtime constraint; a silent overrun would be worse.
+            // Overflow guard: buffers are sized MAX_SAMPLES_PER_FRAME. Drop
+            // the excess KNOWINGLY; a silent overrun would be worse.
             if (samplesThisFrame > MAX_SAMPLES_PER_FRAME)
             {
                 if ((_accumulatorClampCount++ % 256) == 0)

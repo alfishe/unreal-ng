@@ -305,7 +305,7 @@ TEST(TTDCpuStateTest, Capture_SensibleSize)
 TEST(TTDChipsetStateTest, CaptureRestore_RoundTrip_PortLatches)
 {
     EmulatorState original = MakeCanonicalState();
-    TTDChipsetState captured = CaptureChipsetState(original);
+    TTDChipsetState captured = CaptureChipsetState(original, 0);
 
     EmulatorState restored{};
     std::memset(&restored, 0xFF, sizeof(restored));  // All ones to expose misses
@@ -345,13 +345,13 @@ TEST(TTDChipsetStateTest, Restore_NullDestinationIsSafe)
 TEST(TTDChipsetStateTest, Capture_DetectsAllPortLatchChanges)
 {
     EmulatorState baseline = MakeCanonicalState();
-    TTDChipsetState baseCaptured = CaptureChipsetState(baseline);
+    TTDChipsetState baseCaptured = CaptureChipsetState(baseline, 0);
 
 #define EXPECT_FIELD_SEEN(fieldGetter, newValue) \
     do { \
         EmulatorState perturbed = baseline; \
         fieldGetter(perturbed) = (newValue); \
-        TTDChipsetState p = CaptureChipsetState(perturbed); \
+        TTDChipsetState p = CaptureChipsetState(perturbed, 0); \
         EXPECT_NE(std::memcmp(&baseCaptured, &p, sizeof(TTDChipsetState)), 0) \
             << "Change was not captured"; \
     } while (0)
@@ -384,7 +384,7 @@ TEST(TTDChipsetStateTest, CaptureRestore_PaletteArrays)
     for (int i = 0; i < 64; ++i) src.ulaplus_cram[i] = static_cast<uint8_t>(0x80 + i);
     for (int i = 0; i < 4; ++i)  src.wd_shadow[i] = static_cast<uint8_t>(0xF0 + i);
 
-    TTDChipsetState captured = CaptureChipsetState(src);
+    TTDChipsetState captured = CaptureChipsetState(src, 0);
 
     EmulatorState restored{};
     std::memset(&restored, 0, sizeof(restored));
@@ -417,7 +417,7 @@ TEST(TTDStateLayoutTest, AssignmentPreservesEveryByte)
     std::memset(chipRaw, 0xAA, sizeof(chipRaw));
     TTDChipsetState* chipDst = new (chipRaw) TTDChipsetState;
 
-    const TTDChipsetState chipSrc = CaptureChipsetState(MakeCanonicalState());
+    const TTDChipsetState chipSrc = CaptureChipsetState(MakeCanonicalState(), 0);
     *chipDst = chipSrc;
     EXPECT_EQ(std::memcmp(chipDst, &chipSrc, sizeof(TTDChipsetState)), 0)
         << "TTDChipsetState has implicit padding that assignment does not copy";
@@ -453,7 +453,7 @@ TEST(TTDCheckpointTest, Composite_RoundTrip)
     cp.time.frame = 42;
     cp.globalT = 42 * 69888;
     cp.cpu = CaptureCpuState(cpuSrc);
-    cp.chipset = CaptureChipsetState(chipSrc);
+    cp.chipset = CaptureChipsetState(chipSrc, 0);
 
     // Pretend we have peripheral blobs from a not-yet-implemented device.
     // Round-trip through a vector copy to simulate the in-RAM blob target.

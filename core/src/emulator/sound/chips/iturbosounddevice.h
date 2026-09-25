@@ -70,6 +70,11 @@ public:
     /// endregion </Lifecycle>
 
     /// region <Rate / quality>
+    /// Anti-alias FIR design tier ([SOUND] DecimatorQuality). Stored only: it
+    /// takes effect at the next setCoreRate(), the one point where the
+    /// devices redesign their filters (and restart the sample accumulator in
+    /// step with the mixer) - so set it before the first setCoreRate()
+    virtual void setDecimatorQuality(FilterDecimator::Quality quality) = 0;
     virtual void setCoreRate(size_t rate) = 0;
     virtual size_t getCoreRate() const = 0;
     virtual void setHQEnabled(bool enabled) = 0;

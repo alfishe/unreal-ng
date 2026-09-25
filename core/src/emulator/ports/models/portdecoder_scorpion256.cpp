@@ -627,22 +627,17 @@ bool PortDecoder_Scorpion256::IsPort_7EFD(uint16_t port)
 
 std::vector<ttd::PeripheralId> PortDecoder_Scorpion256::GetTTDModelStateIds() const
 {
-    // Only the ProfROM variant carries the quadrant state machine; the base
-    // Scorpion is fully described by the standard ports plus #1FFD, which it
-    // does not use for anything TTD cannot rebuild from the paging decode.
-    if (_context->config.mem_model == MM_PROFSCORP)
-        return {ttd::PeripheralId::ScorpionProfROM};
-
-    return {};
+    // Both variants: #1FFD (RAM at #0000, service monitor, high #C000 bank
+    // bits) and the DD50.1 magic-button trigger drive the paging chain and are
+    // not in the model-agnostic TTDChipsetState. The ProfROM plane state rides
+    // in the same blob; on the plain Scorpion it is simply zero
+    return {ttd::PeripheralId::ScorpionProfROM};
 }
 
 std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Scorpion256::CreateTTDSerializers() const
 {
     std::vector<std::unique_ptr<ttd::TTDSerializable>> serializers;
-
-    if (_context->config.mem_model == MM_PROFSCORP)
-        serializers.push_back(std::make_unique<ttd::TTDScorpionProfROM>(_context));
-
+    serializers.push_back(std::make_unique<ttd::TTDScorpionProfROM>(_context));
     return serializers;
 }
 
