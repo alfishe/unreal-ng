@@ -54,6 +54,7 @@ struct TsfmOutputState
     double hold = 0.0;                    // newest FM word / 32768, held until the next word
     FilterDCBlocker coupling{kTsfmFmInputRate, kTsfmFmCouplingHz};  // C14/C15 into the DA5 mixer
     double lastFed = 0.0;                 // newest coupled half-tick value (LQ sample with no half-tick)
+    bool couplingSettlePending = false;   // after a flush: settle the coupling on the first live word
     FilterDecimator decimator;            // 437.5 kHz -> core rate, HQ path
     double lqSum = 0.0;                   // LQ boxcar: sum of gated half-tick values
     uint32_t lqCount = 0;                 // LQ boxcar: half-ticks summed for this output sample
@@ -184,6 +185,9 @@ protected:
     // Rate or quality switch: the render loop's position against the CPU
     // clock moved; re-anchor the cursor at the next frame start
     bool _renderReanchor = false;
+    // LQ -> HQ switch or synthesis resumed: the output stage holds audio from
+    // before the gap; flushed at the next frame start (emulation thread)
+    bool _outputFlushPending = false;
 
     // FM gain = kFmBaseGain * 10^(trim/20) (§7.1); [SOUND] TSFM_FmTrimDb
     double _fmGain = kFmBaseGain;
@@ -283,6 +287,10 @@ public:
 protected:
     void advanceChip(TsfmChip& c, int32_t delta, uint64_t t0);
 
+    /// Silence the output-stage audio content - hold, coupling, LQ boxcar,
+    /// decimator histories - keeping every tick-gating phase (determinism)
+    void flushOutputStage();
+
     /// LQ boxcar output of one chip's FM hold stream: average of the summed
     /// half-ticks (or the current hold when no half-tick landed on this
     /// output sample), resetting the accumulator
@@ -303,11 +311,15 @@ public:
     {
         if (enabled != _hqEnabled)
             _renderReanchor = true;
+        if (enabled && !_hqEnabled)
+            _outputFlushPending = true;  // the HQ decimators were not fed in LQ
         _hqEnabled = enabled;
     }
 
     void setSynthesisSuppressed(bool suppressed) override
     {
+        if (!suppressed && _synthesisSuppressed)
+            _outputFlushPending = true;  // nothing was rendered while suppressed
         _synthesisSuppressed = suppressed;
     }
 

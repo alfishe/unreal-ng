@@ -31,19 +31,31 @@ void SoundChip_TurboSoundFM::fmHalfTick(int chipIndex, int64_t h)
     // exactly 9 half-ticks - across frame boundaries too, since the cursor
     // and the words share one rebased timeline. Signed compare: words left
     // over from the previous frame sit at negative T after the rebase
+    bool consumed = false;
     while (!c.words.empty() && int64_t(c.words.front().t) <= h)
     {
         o.hold = static_cast<double>(c.words.front().word) / 32768.0;
         if (o.nativeTap->isActive())
             o.nativeTap->push(static_cast<float>(o.hold), static_cast<float>(o.hold));
         c.words.pop();
+        consumed = true;
     }
 
     // Mute-at-hold-input (§6.2): the board mute grounds the DAC data line,
     // so the filter (and its state) sees silence while FM is disabled -
     // no click on unmute, the decimator stays warmed up. The output coupling
     // capacitor sits after the DAC buffer, so it sees the gated value too
-    const double sample = o.coupling.filter(_board.fmEnabled ? o.hold : 0.0);
+    const double gated = _board.fmEnabled ? o.hold : 0.0;
+
+    // First live word after a flush (TTD seek, resume after a gap): the chip
+    // may be mid-sound; pick the coupling up at the level it is fed instead
+    // of passing a step from the flushed 0 to it
+    if (consumed && o.couplingSettlePending)
+    {
+        o.coupling.settle(gated);
+        o.couplingSettlePending = false;
+    }
+    const double sample = o.coupling.filter(gated);
     o.lastFed = sample;
     if (_hqEnabled)
         o.decimator.feedSample(sample);
@@ -63,6 +75,22 @@ double SoundChip_TurboSoundFM::fmLqSample(int chipIndex)
     o.lqSum = 0.0;
     o.lqCount = 0;
     return sample;
+}
+
+void SoundChip_TurboSoundFM::flushOutputStage()
+{
+    for (auto& c : _chips)
+    {
+        c->out.hold = 0.0;
+        c->out.coupling.reset();
+        c->out.couplingSettlePending = true;
+        c->out.lastFed = 0.0;
+        c->out.lqSum = 0.0;
+        c->out.lqCount = 0;
+        c->ssg.decimatorLeft().clearHistory();
+        c->ssg.decimatorRight().clearHistory();
+        c->out.decimator.clearHistory();
+    }
 }
 
 void SoundChip_TurboSoundFM::syncTo(uint64_t t)
@@ -169,6 +197,7 @@ void SoundChip_TurboSoundFM::reset()
     _decimationPhase = 0.0;
     _renderT = -kFmRenderLagT;
     _renderReanchor = false;
+    _outputFlushPending = false;
     for (auto& c : _chips)
     {
         c->out.hold = 0.0;
@@ -224,6 +253,15 @@ void SoundChip_TurboSoundFM::handleFrameStart()
     {
         _renderT = -kFmRenderLagT;
         _renderReanchor = false;
+    }
+
+    // Audio from before an LQ -> HQ switch or a suppression gap must not
+    // replay: the HQ decimators were not fed and the hold / coupling still
+    // carry the old level (ISSUES #7). Applied here, on the emulation thread
+    if (_outputFlushPending)
+    {
+        flushOutputStage();
+        _outputFlushPending = false;
     }
 
     // When the output stage is off, nobody drains the word queues - clear
@@ -844,25 +882,15 @@ void SoundChip_TurboSoundFM::TTDLoadState(const uint8_t* src)
     // into new content is not.
     _chips[0]->words.clear();
     _chips[1]->words.clear();
-    for (auto& c : _chips)
-    {
-        c->out.hold = 0.0;
-        c->out.coupling.reset();
-        c->out.lastFed = 0.0;
-        c->out.lqSum = 0.0;
-        c->out.lqCount = 0;
-        c->ssg.decimatorLeft().reset();
-        c->ssg.decimatorRight().reset();
-        c->out.decimator.reset();
-    }
+    flushOutputStage();
+    _outputFlushPending = false;
 
-    // reset() above also zeroed each SSG decimator's own resampling PHASE
-    // (FilterDecimator::_phase) along with its FIR history - but unlike the
-    // history (pure audio content, correctly flushed to silence), phase is
-    // a tick-gating accumulator with the same determinism requirement as
-    // _samplePhase/_decimationPhase above (v3 fix; see kRenderPhaseStateSize
-    // comment). Restore it explicitly on top of the flush: buffer silent,
-    // phase historically correct.
+    // The flush keeps each SSG decimator's resampling PHASE
+    // (FilterDecimator::_phase) - but that is the live pre-seek one, and
+    // phase is a tick-gating accumulator with the same determinism
+    // requirement as _samplePhase/_decimationPhase above (v3 fix; see
+    // kRenderPhaseStateSize comment). Restore it explicitly on top of the
+    // flush: buffer silent, phase historically correct.
     _chips[0]->ssg.decimatorLeft().setPhase(chip0LeftPhase);
     _chips[0]->ssg.decimatorRight().setPhase(chip0RightPhase);
     _chips[1]->ssg.decimatorLeft().setPhase(chip1LeftPhase);

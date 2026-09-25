@@ -130,6 +130,12 @@ TEST(FilterDCBlocker_Test, ResetAndConfigure)
     const double rc = 1.0 / (2.0 * kPi * 20.0);
     EXPECT_NEAR(f.coefficient(), rc / (rc + 1.0 / 48000.0), 1e-15);
 
+    // settle(x): as if the input had rested at x - the next sample at x
+    // outputs 0, a change passes as is
+    f.settle(0.4);
+    EXPECT_EQ(f.filter(0.4), 0.0) << "settled at the input level: no output";
+    EXPECT_NEAR(f.filter(0.5), f.coefficient() * 0.1, 1e-15) << "only the change passes";
+
     FilterDCBlocker unconfigured;
     EXPECT_EQ(unconfigured.filter(0.3), 0.3) << "unconfigured filter passes the input";
 }

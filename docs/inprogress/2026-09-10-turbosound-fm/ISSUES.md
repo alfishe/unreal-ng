@@ -10,7 +10,7 @@ Everything found while verifying the TurboSound FM implementation against real h
 | 4 | HQ character chains ran with HQ off | mixer / CPU | fixed, `7840d135` |
 | 5 | Sub-audio FM content reaches the output (no coupling high-pass) | FM output stage | fixed, 1.33 Hz coupling |
 | 6 | int16 mix has no headroom for loud FM | mixer | open, tracked separately |
-| 7 | LQ → HQ switch replays stale decimator history | devices | open, minor |
+| 7 | LQ → HQ switch replays stale decimator history | devices | fixed |
 | 8 | SSG opposite-side leakage symmetric at −19 dB, hardware asymmetric | SSG pan | open, cosmetic |
 | 9 | Furnace's frequency-latch semantics differ from upstream ymfm | ymfm | reviewed, not adopted |
 | 10 | Chip-to-chip FM level difference on the real board | hardware | not modelled |
@@ -22,6 +22,8 @@ Everything found while verifying the TurboSound FM implementation against real h
 | 16 | FM content slipped up to ~80 T at most frame boundaries | FM output stage | fixed |
 | 17 | After a TTD seek the device and mixer sample counts disagreed | TTD / mixer | fixed |
 | 18 | AY DC remover: delayed step after bursts, bass cut below ~150 Hz | AY output | fixed, 5 Hz high-pass |
+| 19 | Mixer and devices disagreed on sample counts for 128K/+3/ATM frames | mixer | fixed |
+| 20 | Host speed multiplier > 1: device renders mult x samples, FM cursor re-anchors every frame | devices / mixer | open |
 
 ---
 
@@ -81,7 +83,7 @@ Everything found while verifying the TurboSound FM implementation against real h
 
 **Observed.** On a low-quality to high-quality switch both TurboSound devices output about 0.3 ms of pre-switch history: the FIR history ring is not fed in LQ mode.
 
-**Status.** Open, minor (a tiny click on a manual quality toggle). `SoundHQChainBypass_Test.ChainsResetWhenHQReturns` measures around it deliberately. A fix is to clear the decimator rings on the switch.
+**Fix.** Both devices clear the decimator histories at the first frame start after an LQ → HQ switch, and after synthesis resumes from suppression (turbo without audio), keeping the resampling phases (they gate generator ticks). TSFM also zeroes the FM hold and resets the output coupling, which then settles at the first live word, so a resume in the middle of a sound neither replays the old level nor steps to the new one. `FilterDecimator::clearHistory()`; tests `TsfmOutput_Test.HQReturnDoesNotReplayPreSwitchAudio` (both devices), `ResumeAfterSuppressionContinuesWithoutStep`; `SoundHQChainBypass_Test.ChainsResetWhenHQReturns` now checks from the first sample.
 
 ## 8. SSG leakage symmetry
 
@@ -158,3 +160,17 @@ Everything found while verifying the TurboSound FM implementation against real h
 **Cause.** `FilterDC` subtracted the mean of the last 1024 samples (4.68 ms at 218.75 kHz): any burst returns as a step one window later, and the bass is cut (-21 dB at 50 Hz, -10 dB at 100 Hz).
 
 **Fix.** A one-pole high-pass at 5 Hz (`FilterDCBlocker`, `SoundChip_AY8910::OUTPUT_HIGHPASS_HZ`). The board's SSG coupling is lower (C8-C13 = 10 µF into 47 kΩ, ~0.34 Hz); 5 Hz is the measured knee on real music - lower cutoffs add no 30-150 Hz content, only slow DC wander that costs mix headroom (issue 6). Tests `FilterDCBlocker_Test.*`, `SoundChip_AY8910_Test.OutputDcRemoval*`.
+
+## 19. Sample counts disagreed on 128K/+3/ATM frames
+
+**Observed.** Found in review, confirmed by simulating both accumulators: on a 70908 T frame (spectrum128, spectrum3) the device and the mixer produced different per-frame sample counts on ~50% of frames at 44.1/48 kHz (13% at 96 kHz), on a 99880 T frame (atm710, atm3) on 31-50%. Pentagon (71680) and 48K/Scorpion (69888) were exact. The beeper disagreed the same way.
+
+**Cause.** Issue 2's fix gave the devices the mixer's integer accumulator, but in different units: the devices count T-states x rate modulo CPU_CLOCK_RATE, the mixer counted config.frame_duration_us x rate modulo 1e6. frame_duration_us is rounded up to whole microseconds for pacing; 70908 T = 20259.43 us and 99880 T = 28537.14 us are not whole, so the two sequences drifted apart - the issue 2 click on every other frame, on both TurboSound devices.
+
+**Fix.** The mixer counts in T-states (config.frame x rate modulo CPU_CLOCK_RATE, multiplier-invariant); frame_duration_us stays the pacing clock only (the <30 ppm difference is absorbed by DRC, and recordings already stamp video with the exact frame/CPU_CLOCK_RATE). SoundManager::adoptSamplePhase is a plain copy now. Tests `FrameSampleCount_Test.DeviceMatchesMixerOnEveryShippedFrameLength` (69888/70908/99880, both devices), `BeeperMatchesMixerOnEveryShippedFrameLength`, `TsfmTimeline_Test.ContinuousWithInstructionGranularSteps` (per-instruction steps, frame overshoot, 70908).
+
+## 20. Host speed multiplier > 1
+
+**Observed.** With the host speed multiplier above 1 the devices scale T-states by it and render mult x samples per frame, while the mixer consumes the base frame's count (the rest of the device buffer is dropped). FM words are timed in unscaled T-states, so the FM render cursor runs mult x faster than the words and re-anchors at every frame start.
+
+**Status.** Open, pre-existing. No zero samples result (the device renders more than is consumed), but the output is not a clean time-scaled render. Needs a decision on what audio a multiplied frame should carry.

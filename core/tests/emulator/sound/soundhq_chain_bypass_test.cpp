@@ -157,11 +157,9 @@ TEST_F(SoundHQChainBypass_Test, ChainsResetWhenHQReturns)
     // First HQ frame after the bypass: a stale room delay line would echo
     // the tone at -6 dB (thousands of LSB) over its first ~2 ms (the AY room
     // delay, 88 samples at 44.1 k); a reset chain over a flat input stays
-    // flat. The device's own decimator replays ~0.3 ms of pre-bypass history
-    // on its LQ -> HQ switch (samples 0..~13) and the room repeats that one
-    // delay later, so the window between the two is what the chain reset
-    // must keep flat
+    // flat. The device clears its own decimator history on the LQ -> HQ
+    // switch (ISSUES #7), so the window starts at the first sample
     sound.setTurboLowQualityOverride(false);
     FrameLeavesChipBufferUntouched(sound);
-    EXPECT_LT(range(20, 84), 64) << "pre-bypass audio echoed through a stale room delay line";
+    EXPECT_LT(range(0, 84), 64) << "pre-bypass audio replayed (device decimator or stale room delay line)";
 }

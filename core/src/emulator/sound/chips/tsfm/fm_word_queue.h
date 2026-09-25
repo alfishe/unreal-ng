@@ -27,8 +27,9 @@ class FmWordQueue
 {
 public:
     /// 4096 words ~= 4.1 frames of headroom at /6 (996 words per Pentagon
-    /// frame) - the P6 drain consumes a frame's worth per frame, and the
-    /// suppressed path clears at each frame start
+    /// frame) - the render loop consumes a frame's worth per frame and keeps
+    /// only the words inside its constant lag (a few) queued across the
+    /// boundary; the suppressed path clears at each frame start
     static constexpr size_t kCapacity = 4096;
 
     bool empty() const

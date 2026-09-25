@@ -66,6 +66,10 @@ protected:
     // manager; gates rendering only (the legacy device has no separate core)
     bool _synthesisSuppressed = false;
 
+    // LQ -> HQ switch or synthesis resumed: the decimator histories hold audio
+    // from before the gap; cleared at the next frame start (ISSUES #7)
+    bool _outputFlushPending = false;
+
     // Native-rate recording tap (218.75 kHz, pre-decimation).
     // shared_ptr so a DSD encoder worker can outlive this chip safely.
     std::shared_ptr<NativeAudioTap> _nativeTap = std::make_shared<NativeAudioTap>();
@@ -189,6 +193,7 @@ public:
         // The /8 prescaler is handled here, not inside updateState()
         // For HQ mode, we feed DECIMATE_FACTOR sub-samples per output sample to the FIR
         _decimationPhase = 0.0;
+        _outputFlushPending = false;
         // Effective generator rate = PSG_CLOCK_RATE / 8
         // _decimationStep = how many generator ticks per FIR sub-sample
         _decimationStep = (double)(PSG_CLOCK_RATE / 8) / (double)(_coreRate * FilterInterpolate::DECIMATE_FACTOR);
@@ -210,11 +215,15 @@ public:
     // Feature cache update
     void setHQEnabled(bool enabled) override
     {
+        if (enabled && !_hqEnabled)
+            _outputFlushPending = true;  // the HQ decimators were not fed in LQ
         _hqEnabled = enabled;
     }
 
     void setSynthesisSuppressed(bool suppressed) override
     {
+        if (!suppressed && _synthesisSuppressed)
+            _outputFlushPending = true;  // nothing was rendered while suppressed
         _synthesisSuppressed = suppressed;
     }
 

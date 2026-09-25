@@ -49,6 +49,16 @@ public:
         _y1 = 0.0;
     }
 
+    /// Steady state for an input that has rested at `x`: the next sample at
+    /// the same level outputs 0, later samples pass only the change. Picks the
+    /// filter up after a gap in which its input was not rendered, without the
+    /// step a reset (rest at 0) would pass
+    void settle(double x)
+    {
+        _x1 = x;
+        _y1 = 0.0;
+    }
+
     double sampleRate() const { return _sampleRate; }
     double cutoffHz() const { return _cutoffHz; }
     double coefficient() const { return _a; }

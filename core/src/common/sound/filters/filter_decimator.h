@@ -102,6 +102,15 @@ public:
         _phase = 0.0;
     }
 
+    /// Clear the FIR history only; the resampling phase (a tick-gating
+    /// accumulator, see phase()) keeps its position. For a history that went
+    /// stale while the filter was not fed (LQ mode, suppressed synthesis)
+    void clearHistory()
+    {
+        std::memset(_buffer, 0, sizeof(_buffer));
+        _bufferIndex = 0;
+    }
+
     size_t taps() const { return _taps; }
     double samplesPerOutput() const { return _samplesPerOutput; }
     const std::vector<double>& coefficients() const { return _coeffs; }
