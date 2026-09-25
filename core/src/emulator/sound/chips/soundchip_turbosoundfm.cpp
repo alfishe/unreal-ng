@@ -8,6 +8,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/notifications.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/sound/soundmanager.h"
 
 /// region <Core loop (§5.2)>
 
@@ -19,7 +20,7 @@ uint64_t SoundChip_TurboSoundFM::nowT() const
     return _context->emulatorState.AudioTstate(_context->pCore->GetZ80()->t);
 }
 
-void SoundChip_TurboSoundFM::fmHalfTick(int chipIndex, uint64_t h)
+void SoundChip_TurboSoundFM::fmHalfTick(int chipIndex, int64_t h)
 {
     TsfmChip& c = *_chips[chipIndex];
     TsfmOutputState& o = c.out;
@@ -27,8 +28,10 @@ void SoundChip_TurboSoundFM::fmHalfTick(int chipIndex, uint64_t h)
     // Consume every word that has landed by half-tick boundary h into the
     // hold register (§6.2). The tap sees the raw, pre-mute DAC stream;
     // words are 72 T apart at /6, half-ticks 8 T, so each word is held for
-    // exactly 9 half-ticks - no jitter
-    while (!c.words.empty() && c.words.front().t <= h)
+    // exactly 9 half-ticks - across frame boundaries too, since the cursor
+    // and the words share one rebased timeline. Signed compare: words left
+    // over from the previous frame sit at negative T after the rebase
+    while (!c.words.empty() && int64_t(c.words.front().t) <= h)
     {
         o.hold = static_cast<double>(c.words.front().word) / 32768.0;
         if (o.nativeTap->isActive())
@@ -38,8 +41,10 @@ void SoundChip_TurboSoundFM::fmHalfTick(int chipIndex, uint64_t h)
 
     // Mute-at-hold-input (§6.2): the board mute grounds the DAC data line,
     // so the filter (and its state) sees silence while FM is disabled -
-    // no click on unmute, the decimator stays warmed up
-    const double sample = _board.fmEnabled ? o.hold : 0.0;
+    // no click on unmute, the decimator stays warmed up. The output coupling
+    // capacitor sits after the DAC buffer, so it sees the gated value too
+    const double sample = o.coupling.filter(_board.fmEnabled ? o.hold : 0.0);
+    o.lastFed = sample;
     if (_hqEnabled)
         o.decimator.feedSample(sample);
     else
@@ -53,7 +58,7 @@ double SoundChip_TurboSoundFM::fmLqSample(int chipIndex)
 {
     TsfmOutputState& o = _chips[chipIndex]->out;
     if (o.lqCount == 0)
-        return o.hold;  // no half-tick landed on this output sample
+        return o.lastFed;  // no half-tick landed on this output sample
     const double sample = o.lqSum / o.lqCount;
     o.lqSum = 0.0;
     o.lqCount = 0;
@@ -162,10 +167,13 @@ void SoundChip_TurboSoundFM::reset()
     _samplePhase = 0;
     _ayBufferIndex = 0;
     _decimationPhase = 0.0;
-    _renderT = 0;
+    _renderT = -kFmRenderLagT;
+    _renderReanchor = false;
     for (auto& c : _chips)
     {
         c->out.hold = 0.0;
+        c->out.coupling.reset();
+        c->out.lastFed = 0.0;
         c->out.lqSum = 0.0;
         c->out.lqCount = 0;
         c->ssg.decimatorLeft().reset();
@@ -199,7 +207,23 @@ void SoundChip_TurboSoundFM::handleFrameStart()
             _syncedT = uint64_t(int64_t(_syncedT) - int64_t(delta));
             _chips[0]->words.rebase(delta);
             _chips[1]->words.rebase(delta);
+            _renderT -= delta;
         }
+    }
+
+    // The FM cursor carries its position across the boundary: the render loop
+    // does not run exactly frame/16 ticks per frame (the decimators' fractional
+    // phase carries over), so restarting it at the frame start slipped the FM
+    // content by up to ~80 T (about one FM word) at most boundaries. At 1x it
+    // saws within about one output sample around its anchor with no drift. A
+    // rate or quality switch moves the render loop against the CPU clock
+    // (re-anchor once, together with the filter redesign, instead of letting
+    // the offsets pile up); far outside the window it has lost the timeline
+    // (host speed multiplier > 1, synthesis resumed after suppression)
+    if (_renderReanchor || _renderT < -4 * kFmRenderLagT || _renderT > 0)
+    {
+        _renderT = -kFmRenderLagT;
+        _renderReanchor = false;
     }
 
     // When the output stage is off, nobody drains the word queues - clear
@@ -223,13 +247,11 @@ void SoundChip_TurboSoundFM::handleFrameStart()
 
     // Render-loop frame base (§6.2), same set as the legacy device (§11):
     // _samplePhase and _decimationPhase carry across frames - only reset()
-    // and setCoreRate() clear them; the FM cursor is frame-relative like the word
-    // timestamps, so it restarts here. The buffer clears run even when
-    // synthesis is suppressed: the sound-feature-off mixing path relies on
-    // zeroed buffers.
+    // and setCoreRate() clear them; the FM cursor was rebased above with the
+    // word timestamps. The buffer clears run even when synthesis is
+    // suppressed: the sound-feature-off mixing path relies on zeroed buffers.
     _lastTStates = 0;
     _ayBufferIndex = 0;
-    _renderT = 0;
     memset(_ayBuffer, 0x00, _ayAudioDescriptor.memoryBufferSizeInBytes);
     memset(_chip0Buffer, 0x00, _chip0AudioDescriptor.memoryBufferSizeInBytes);
     memset(_chip1Buffer, 0x00, _chip1AudioDescriptor.memoryBufferSizeInBytes);
@@ -489,24 +511,9 @@ void SoundChip_TurboSoundFM::handleFrameEnd()
             NC_AUDIO_ACTIVITY, new AudioActivityPayload(_context->emulatorId, AudioSource::FM, _wasFM));
     }
 
-    // §6.1 axis trap: z80->t already reads into the NEW frame here - drain
-    // to the device's own end-of-frame position, never to nowT(). Words
-    // landing between the last render tick and the frame end must reach the
-    // hold register now, not one frame late; the decimators stay untouched
-    // (their feed cadence belongs to the tick loop, §6.2)
-    if (_synthesisSuppressed)
-        return;
-
-    for (auto& c : _chips)
-    {
-        while (!c->words.empty() && c->words.front().t <= _syncedT)
-        {
-            c->out.hold = static_cast<double>(c->words.front().word) / 32768.0;
-            if (c->out.nativeTap->isActive())
-                c->out.nativeTap->push(static_cast<float>(c->out.hold), static_cast<float>(c->out.hold));
-            c->words.pop();
-        }
-    }
+    // No FM word drain here: words the render cursor has not reached stay
+    // queued and are rebased into the next frame (§6.2). Draining them into
+    // the hold skipped their samples and slipped the FM timeline
 }
 
 /// endregion </Emulation events>
@@ -840,6 +847,8 @@ void SoundChip_TurboSoundFM::TTDLoadState(const uint8_t* src)
     for (auto& c : _chips)
     {
         c->out.hold = 0.0;
+        c->out.coupling.reset();
+        c->out.lastFed = 0.0;
         c->out.lqSum = 0.0;
         c->out.lqCount = 0;
         c->ssg.decimatorLeft().reset();
@@ -858,6 +867,24 @@ void SoundChip_TurboSoundFM::TTDLoadState(const uint8_t* src)
     _chips[0]->ssg.decimatorRight().setPhase(chip0RightPhase);
     _chips[1]->ssg.decimatorLeft().setPhase(chip1LeftPhase);
     _chips[1]->ssg.decimatorRight().setPhase(chip1RightPhase);
+
+    // The word queues were flushed above; re-anchor the FM cursor at its lag
+    // like reset() (audio content only - it gates no chip state)
+    _renderT = -kFmRenderLagT;
+    _renderReanchor = false;
+
+    // Checkpoints sit on a frame boundary and the machine resumes at T 0 of a
+    // fresh frame, so the per-frame render cursor restarts like
+    // handleFrameStart - its live pre-seek values miscounted the first frame
+    // (up to a few samples too many) and shifted _samplePhase for good.
+    // _samplePhase itself is historical now, the mixer's accumulator is
+    // still the live pre-seek one: it takes the device's position. Either
+    // left out, the two frame sample counts disagreed every few frames after
+    // any seek (issue #2 again: one zero sample per 904-sample frame)
+    _lastTStates = 0;
+    _ayBufferIndex = 0;
+    if (_context->pSoundManager)
+        _context->pSoundManager->adoptSamplePhase(_samplePhase);
 
     // Next syncTo() adopts the framework-restored T-state instead of trying
     // to advance from wherever the core last was (§5.2 convention, matches

@@ -130,7 +130,7 @@ flowchart LR
         OTHER["...any other registered source<br/>(sample player, OPL3-class, future chips)"]
     end
     T1(("① chip render"))
-    DC["DC filter<br/>(FilterDC)"]
+    DC["DC filter<br/>(FilterDCBlocker, 5 Hz)"]
     T2(("② post-DC"))
     CHAIN["Character chain<br/>(punch + room)"]
     T3(("③ post-chain"))

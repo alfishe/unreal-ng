@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "pch.h"
 
+#include <cmath>
 #include <cstring>
 #include <vector>
 
@@ -10,6 +11,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/chips/iturbosounddevice.h"
+#include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/soundmanager.h"
 
 /// With `soundhq` off (or the turbo low-quality override on) the character
@@ -128,11 +130,15 @@ TEST_F(SoundHQChainBypass_Test, ChainsResetWhenHQReturns)
         FrameLeavesChipBufferUntouched(sound);  // fill the room delay line with the tone
 
     // Bypass, then silence the tone and let the raw render settle to flat
-    // while the chain is skipped - its delay line still holds the tone
+    // while the chain is skipped - its delay line still holds the tone. The
+    // AY output coupling (one-pole high-pass) releases the tone's DC offset
+    // with its time constant: 8 tau leave ~0.03% (a few LSB)
     sound.setTurboLowQualityOverride(true);
     sound.getTurboSound()->portDeviceOutMethod(0xFFFD, 8);
     sound.getTurboSound()->portDeviceOutMethod(0xBFFD, 0);
-    for (int i = 0; i < 5; i++)
+    const double tauMs = 1000.0 / (2.0 * 3.14159265358979323846 * SoundChip_AY8910::OUTPUT_HIGHPASS_HZ);
+    const int settleFrames = int(std::ceil(8.0 * tauMs / 20.0));
+    for (int i = 0; i < settleFrames; i++)
         FrameLeavesChipBufferUntouched(sound);
 
     ITurboSoundDevice* device = sound.getTurboSound();

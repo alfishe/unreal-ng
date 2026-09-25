@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "common/sound/filters/filter_decimator.h"
+#include "common/sound/filters/filterdcblocker.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/audio.h"
 #include "emulator/sound/chips/iturbosounddevice.h"
@@ -33,13 +34,26 @@ struct TsfmBoard
     bool fmEnabled = false;   // FM audio path enabled; bit 2 = 0 (muted)
 };
 
+/// FM input rate (§6.3): the YM2203 sample clock at prescaler /6 is
+/// PSG_CLOCK_RATE/4 = 437.5 kHz = exactly 2x the SSG generator rate
+constexpr double kTsfmFmInputRate = static_cast<double>(PSG_CLOCK_RATE) / 4.0;
+
+/// FM output coupling (schematic rev C): each YM3014 buffer output (FM1/FM2)
+/// reaches the DA5 mixer through C14/C15 = 10 uF into two 24 k resistors to
+/// the op-amp virtual grounds (R17||R18, R19||R20 = 12 k):
+/// fc = 1 / (2 pi * 12 k * 10 uF) = 1.33 Hz
+constexpr double kTsfmFmCouplingHz = 1.0 / (2.0 * 3.14159265358979323846 * 12000.0 * 10e-6);
+
 /// Per-chip output-stage state (§6): the sample-and-hold value of the newest
-/// consumed FM word, its mono 437.5 kHz decimator (slave of chip-0 SSG left,
-/// §6.3), the LQ boxcar accumulator and the raw pre-mute DAC tap (§6.4).
+/// consumed FM word, the coupling high-pass after the mute gate, its mono
+/// 437.5 kHz decimator (slave of chip-0 SSG left, §6.3), the LQ boxcar
+/// accumulator and the raw pre-mute DAC tap (§6.4).
 /// Not TTD state — the §8.2 payload (P5) carries core state only.
 struct TsfmOutputState
 {
     double hold = 0.0;                    // newest FM word / 32768, held until the next word
+    FilterDCBlocker coupling{kTsfmFmInputRate, kTsfmFmCouplingHz};  // C14/C15 into the DA5 mixer
+    double lastFed = 0.0;                 // newest coupled half-tick value (LQ sample with no half-tick)
     FilterDecimator decimator;            // 437.5 kHz -> core rate, HQ path
     double lqSum = 0.0;                   // LQ boxcar: sum of gated half-tick values
     uint32_t lqCount = 0;                 // LQ boxcar: half-ticks summed for this output sample
@@ -138,11 +152,16 @@ protected:
     int16_t* const _fm0Buffer = (int16_t*)_fm0AudioDescriptor.memoryBuffer;
     int16_t* const _fm1Buffer = (int16_t*)_fm1AudioDescriptor.memoryBuffer;
 
-    /// FM input rate (§6.3): the YM2203 sample clock at prescaler /6 is
-    /// PSG_CLOCK_RATE/4 = 437.5 kHz = exactly 2x the SSG generator rate
-    static constexpr double kFmInputRate = static_cast<double>(PSG_CLOCK_RATE) / 4.0;
+    static constexpr double kFmInputRate = kTsfmFmInputRate;
     /// FM loudness baseline (§7.1): full-scale DAC word -> 0.30 in the mix
     static constexpr double kFmBaseGain = 0.30;
+    /// Constant lag of the FM render cursor behind the word timeline (§6.2).
+    /// The render loop's position against the CPU clock saws within about one
+    /// output sample of SSG ticks (<= ~112 T at 44.1 kHz), and an anchor can
+    /// land anywhere on that sawtooth; lagging by more than twice that keeps
+    /// every half-tick behind the newest word, so the hold never waits on a
+    /// word the core has not produced yet. A constant shift, ~73 us, no jitter
+    static constexpr int64_t kFmRenderLagT = 256;
 
     size_t _coreRate = AUDIO_SAMPLING_RATE;
     bool _hqEnabled = true;
@@ -159,7 +178,12 @@ protected:
     uint32_t _lastTStates = 0;
     double _decimationPhase = 0.0;
     double _lqTicksPerSample = (double)(PSG_CLOCK_RATE / 8) / (double)AUDIO_SAMPLING_RATE;
-    uint64_t _renderT = 0;  // SSG-tick cursor of the render loop (§6.2), frame-relative
+    // FM half-tick cursor of the render loop (§6.2) on the word timeline:
+    // continuous across frames (rebased with the words), kFmRenderLagT behind
+    int64_t _renderT = -kFmRenderLagT;
+    // Rate or quality switch: the render loop's position against the CPU
+    // clock moved; re-anchor the cursor at the next frame start
+    bool _renderReanchor = false;
 
     // FM gain = kFmBaseGain * 10^(trim/20) (§7.1); [SOUND] TSFM_FmTrimDb
     double _fmGain = kFmBaseGain;
@@ -254,7 +278,7 @@ public:
     /// (the tap sees the raw pre-mute value), then feed the gated hold —
     /// board mute grounds the DAC data line — to the HQ decimator or the LQ
     /// boxcar accumulator. Public: §12.4 drives half-tick sequences directly
-    void fmHalfTick(int chipIndex, uint64_t h);
+    void fmHalfTick(int chipIndex, int64_t h);
 
 protected:
     void advanceChip(TsfmChip& c, int32_t delta, uint64_t t0);
@@ -277,6 +301,8 @@ public:
 
     void setHQEnabled(bool enabled) override
     {
+        if (enabled != _hqEnabled)
+            _renderReanchor = true;
         _hqEnabled = enabled;
     }
 
@@ -298,6 +324,7 @@ public:
     {
         _coreRate = rate;
         _samplePhase = 0;  // in step with SoundManager::applyCoreRate
+        _renderReanchor = true;
         _lqTicksPerSample = (double)(PSG_CLOCK_RATE / 8) / (double)rate;
 
         _chips[0]->ssg.decimatorLeft().configure((double)rate);
