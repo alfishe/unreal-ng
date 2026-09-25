@@ -678,7 +678,7 @@ const Base& EnsureBase()
             f.tInFrame=e.tInFrame; f.pc=e.pc; f.sp=e.sp; f.af=e.af; f.bc=e.bc; f.de=e.de;
             f.hl=e.hl; f.ix=e.ix; f.iy=e.iy; f.af2=e.af2; f.bc2=e.bc2; f.de2=e.de2; f.hl2=e.hl2;
             f.i=e.i; f.r=e.r; f.im=e.im; for(int b=0;b<4;++b) f.opcodes[b]=e.opcodes[b];
-            f.spContent=e.spContent; f.slotCount=e.slotCount; for(int sx=0;sx<8;++sx) f.slots[sx]=e.slots[sx];
+            f.spContent=e.spContent; f.slotCount=e.slotCount; for(int sx=0;sx<8;++sx) f.slots[sx]=e.bankSlots[sx];
             uint16_t nacc=0; const ttd::TTDFrameCacheAccess* acc=c->AccessesOf(idx,nacc);
             uint8_t mc=0,pc=0;
             for(uint16_t a=0;a<nacc;++a){ if(acc[a].kind==ttd::TTDAccessKind::PortWrite){ if(pc<2) f.portWrites[pc]={acc[a].addr,acc[a].value}; pc++;} else { if(mc<4) f.memWrites[mc]={acc[a].addr,acc[a].value}; mc++;} }
@@ -689,7 +689,7 @@ const Base& EnsureBase()
             sp.tInFrame=e.tInFrame; sp.pc=e.pc; sp.sp=e.sp; sp.af=e.af; sp.bc=e.bc; sp.de=e.de;
             sp.hl=e.hl; sp.ix=e.ix; sp.iy=e.iy; sp.af2=e.af2; sp.bc2=e.bc2; sp.de2=e.de2; sp.hl2=e.hl2;
             sp.i=e.i; sp.r=e.r; sp.im=e.im; for(int b=0;b<4;++b) sp.opcodes[b]=e.opcodes[b];
-            sp.spContent=e.spContent; sp.slotCount=e.slotCount; for(int sx=0;sx<8;++sx) sp.slots[sx]=e.slots[sx];
+            sp.spContent=e.spContent; sp.slotCount=e.slotCount; for(int sx=0;sx<8;++sx) sp.slots[sx]=e.bankSlots[sx];
             sp.accessOffset=static_cast<uint32_t>(g_base.arena.size());
             sp.memCount=mc; sp.portCount=pc;
             for(uint16_t a=0;a<nacc;++a) g_base.arena.push_back({acc[a].addr,acc[a].value,(uint8_t)acc[a].kind});
@@ -699,7 +699,7 @@ const Base& EnsureBase()
             co.tInFrame=e.tInFrame; co.pc=e.pc; co.sp=e.sp; co.af=e.af; co.bc=e.bc; co.de=e.de;
             co.hl=e.hl; co.ix=e.ix; co.iy=e.iy; co.af2=e.af2; co.bc2=e.bc2; co.de2=e.de2; co.hl2=e.hl2;
             co.i=e.i; co.r=e.r; co.im=e.im; for(int b=0;b<4;++b) co.opcodes[b]=e.opcodes[b];
-            co.spContent=e.spContent; co.slotCount=e.slotCount; for(int sx=0;sx<8;++sx) co.slots[sx]=e.slots[sx];
+            co.spContent=e.spContent; co.slotCount=e.slotCount; for(int sx=0;sx<8;++sx) co.slots[sx]=e.bankSlots[sx];
             g_base.cpu.push_back(co);
 
             TinyHotEntry th{}; th.tInFrame=e.tInFrame; th.pc=e.pc; th.coldOffset=static_cast<uint32_t>(g_base.tinyCold.size());
@@ -708,7 +708,7 @@ const Base& EnsureBase()
             tc.sp=e.sp; tc.af=e.af; tc.bc=e.bc; tc.de=e.de; tc.hl=e.hl; tc.ix=e.ix; tc.iy=e.iy;
             tc.af2=e.af2; tc.bc2=e.bc2; tc.de2=e.de2; tc.hl2=e.hl2; tc.i=e.i; tc.r=e.r; tc.im=e.im;
             for(int b=0;b<4;++b) tc.opcodes[b]=e.opcodes[b];
-            tc.spContent=e.spContent; tc.slotCount=e.slotCount; for(int sx=0;sx<8;++sx) tc.slots[sx]=e.slots[sx];
+            tc.spContent=e.spContent; tc.slotCount=e.slotCount; for(int sx=0;sx<8;++sx) tc.slots[sx]=e.bankSlots[sx];
             g_base.tinyCold.push_back(tc);
         }
     }
