@@ -1805,11 +1805,6 @@ void Screen::DrawATM3Text(uint32_t n)
     video.vptr = vptr;
 }
 
-void Screen::DrawProfi(uint32_t n)
-{
-    (void)n;
-}
-
 void Screen::DrawGMX(uint32_t n)
 {
     (void)n;

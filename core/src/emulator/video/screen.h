@@ -513,7 +513,7 @@ bool _turboRenderSkip = false;  // Turbo render decimation: set only for the CPU
         &Screen::DrawATMHiRes,  // M_ATMHR
         &Screen::DrawATM2Text,  // M_ATMTX
         &Screen::DrawATM3Text,  // M_ATMTL
-        &Screen::DrawProfi,     // M_PROFI
+        &Screen::DrawNull,      // M_PROFI - own renderer is ScreenZX (M_PROFI) / ScreenProfi (M_PROFIHR), never this obsolete table
         &Screen::DrawGMX,       // M_GMX
         &Screen::DrawBorder     // M_BRD
     };
@@ -802,7 +802,6 @@ public:
     void DrawATMHiRes(uint32_t n);  // ATM HiRes
     void DrawATM2Text(uint32_t n);  // ATM Text
     void DrawATM3Text(uint32_t n);  // ATM Text linear
-    void DrawProfi(uint32_t n);     // Profi
     void DrawGMX(uint32_t n);       // GMX
     void DrawBorder(uint32_t n);    // Border only
 
