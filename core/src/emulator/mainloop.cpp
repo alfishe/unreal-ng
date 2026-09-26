@@ -157,6 +157,22 @@ void MainLoop::Run(volatile bool& stopRequested)
                     break;  // Exit pause loop
                 }
 
+                // Re-confirm on EVERY park iteration (same rule as
+                // Emulator::WaitWhilePaused): a Resume() -> Pause() flip-flop
+                // inside one wait window invalidates the confirmation
+                // (InvalidatePauseConfirmation) while this loop never leaves
+                // the park - without re-confirming, every
+                // WaitForPauseConfirmation() caller burned its full timeout
+                // against a thread that was in fact parked
+                if (!_isPausedConfirmed.load(std::memory_order_acquire))
+                {
+                    {
+                        std::lock_guard<std::mutex> confirmLock(_pauseMutex);
+                        _isPausedConfirmed.store(true, std::memory_order_release);
+                    }
+                    _pauseCV.notify_all();
+                }
+
                 // Use condition variable to wait for resume (more responsive than polling)
                 std::unique_lock<std::mutex> lock(_pauseMutex);
                 _pauseCV.wait_for(lock, std::chrono::milliseconds(20), [emulator, &stopRequested]() {

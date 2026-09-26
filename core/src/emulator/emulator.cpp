@@ -1136,6 +1136,24 @@ void Emulator::Resume(bool broadcast)
     }
 
     _stopRequested = false;
+
+    // Eagerly invalidate the pause confirmation from the park we are exiting.
+    // The run loop clears it only after its parked wait wakes (up to its 20 ms
+    // poll); until then a Pause() issued by the same thread (or another
+    // control thread) would see a stale "parked" confirmation and return
+    // while the loop is already executing the next frame - two Z80 drivers
+    // at once (observed as heap corruption in shared collectors, e.g.
+    // WD1793Collector::recordCommandStart, and as torn FSMEvent copies).
+    //
+    // BEFORE the flag flip and the wake-up, never after: invalidating last
+    // raced a Pause() from another thread - the woken CPU thread saw the new
+    // pause, re-parked and confirmed it, and this late invalidation then
+    // erased that fresh confirmation while the thread slept on. Every
+    // WaitForPauseConfirmation() caller burned its full timeout against a
+    // thread that was in fact parked (500 ms stalls in DeZog history browsing)
+    if (_mainloop)
+        _mainloop->InvalidatePauseConfirmation();
+
     {
         // Mirror Pause(): the flag flip must be mutex-protected so the parked
         // CPU thread's CV predicate (WaitWhilePaused) can't miss the transition.
@@ -1145,16 +1163,6 @@ void Emulator::Resume(bool broadcast)
     _resumeCV.notify_all();  // Wake the CPU thread parked mid-frame at a breakpoint
     ResetLineStepAnchor();  // Full-speed run invalidates line-step anchor
     // MainLoop::Run() will detect this via Emulator::IsPaused() check and resume.
-
-    // Eagerly invalidate the pause confirmation from the park we are exiting.
-    // The run loop clears it only after its parked wait wakes (up to its 20 ms
-    // poll); until then a Pause() issued by the same thread (or another
-    // control thread) would see a stale "parked" confirmation and return
-    // while the loop is already executing the next frame - two Z80 drivers
-    // at once (observed as heap corruption in shared collectors, e.g.
-    // WD1793Collector::recordCommandStart, and as torn FSMEvent copies).
-    if (_mainloop)
-        _mainloop->InvalidatePauseConfirmation();
 
     // Note: Don't unconditionally set _isRunning = true here.
     // In synchronous test mode, _isRunning may be false and should stay false.
