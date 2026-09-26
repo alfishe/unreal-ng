@@ -2,6 +2,28 @@
 
 #include "common/threadhelper.h"
 
+#ifdef __APPLE__
+#include <mach/mach.h>
+#include <mach/thread_policy.h>
+#include <pthread.h>
+
+namespace
+{
+/// Whether the calling thread currently runs under a real-time
+/// (time-constraint) policy: thread_policy_get reports get_default = TRUE
+/// when the policy is not set on the thread
+bool HasTimeConstraintPolicy()
+{
+    thread_time_constraint_policy_data_t policy{};
+    mach_msg_type_number_t count = THREAD_TIME_CONSTRAINT_POLICY_COUNT;
+    boolean_t getDefault = FALSE;
+    thread_policy_get(pthread_mach_thread_np(pthread_self()), THREAD_TIME_CONSTRAINT_POLICY,
+                      (thread_policy_t)&policy, &count, &getDefault);
+    return !getDefault;
+}
+}  // namespace
+#endif
+
 /// region <Realtime scheduling API>
 
 /// @brief ThreadHelper::setRealtimePriority / setNormalPriority act on the CALLING thread
@@ -24,5 +46,22 @@ TEST(ThreadHelper_Test, RealtimeRoundTripIsIdempotentAndReversible)
 
     SUCCEED();
 }
+
+#ifdef __APPLE__
+/// @brief The drop really releases the real-time policy. A thread left under
+/// it keeps a 4 ms / 20 ms computation budget and is throttled by the kernel
+/// whenever it runs longer - a de-selected emulator instance running turbo,
+/// or this very test runner (every test after this one ran 4-5x slower while
+/// the release used an invalid zeroed time-constraint policy that the kernel
+/// rejected)
+TEST(ThreadHelper_Test, NormalPriorityReleasesTheRealtimePolicy)
+{
+    ThreadHelper::setRealtimePriority();
+    EXPECT_TRUE(HasTimeConstraintPolicy()) << "elevation must apply the time-constraint policy";
+
+    ThreadHelper::setNormalPriority();
+    EXPECT_FALSE(HasTimeConstraintPolicy()) << "the drop must return the thread to timeshare scheduling";
+}
+#endif
 
 /// endregion </Realtime scheduling API>

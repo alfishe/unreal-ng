@@ -91,18 +91,19 @@ void ThreadHelper::setRealtimePriority()
 void ThreadHelper::setNormalPriority()
 {
 #ifdef __APPLE__
-    // A zeroed time-constraint policy releases the real-time constraint and
-    // returns the thread to timeshare scheduling
-    thread_time_constraint_policy_data_t policy;
-    policy.period      = 0;
-    policy.computation = 0;
-    policy.constraint  = 0;
-    policy.preemptible = 1;
-
+    // Back to timeshare scheduling: THREAD_STANDARD_POLICY is what releases a
+    // time-constraint policy. A zeroed THREAD_TIME_CONSTRAINT_POLICY (used
+    // here before) is rejected as invalid, so the thread silently kept the
+    // real-time policy with its 4 ms / 20 ms budget - and a real-time thread
+    // that runs longer than its computation budget is throttled by the
+    // kernel: every "dropped" thread doing continuous work (a de-selected
+    // emulator instance in turbo, the test runner after ThreadHelper_Test)
+    // ran at a fraction of the CPU for the rest of its life
+    thread_standard_policy_data_t policy;
     thread_policy_set(pthread_mach_thread_np(pthread_self()),
-                      THREAD_TIME_CONSTRAINT_POLICY,
+                      THREAD_STANDARD_POLICY,
                       (thread_policy_t)&policy,
-                      THREAD_TIME_CONSTRAINT_POLICY_COUNT);
+                      THREAD_STANDARD_POLICY_COUNT);
 #endif
 #ifdef __linux__
     // Dropping back to the default policy is always permitted
