@@ -377,16 +377,21 @@ not functional gaps in the emulator itself:
   `testdata/NOTICE.md` row" as an open commit decision (only on explicit request per
   AGENTS.md) - this note just records *where* the staged files currently live so they
   aren't lost or duplicated.
-- **Fixed**: `.agents/AGENTS.md`'s "Creatable on master" line used to list `PROFI`
-  directly under the "on master" heading while qualifying it inline as "(branch
-  `profi`; ...)" - documenting a branch fact under a master-only heading. Reworded so
-  `PROFI` is called out separately as "additionally creatable on branch `profi` (not
-  yet merged)", with the master list left accurate on its own. Merge pass done
-  (2026-09-25): `PROFI` folded into the master list with an "IDE not yet implemented"
-  note; the same branch wording was removed from `.recipe/` (`machines/profi.md`
-  rewritten to the current feature set, `_common/machines.md`, `README.md`,
-  `peripherals/covox-sounddrive.md`) and the MCP resource `unreal://machine/profi`
-  no longer lists RTC/Covox as missing.
+- **`.agents/AGENTS.md`'s "Creatable on master" line got ahead of the actual merge.**
+  It originally listed `PROFI` directly under the "on master" heading while qualifying
+  it inline as "(branch `profi`; ...)" - documenting a branch fact under a master-only
+  heading. A later pass (2026-09-25) went further and folded `PROFI` into the master
+  list outright with an "IDE not yet implemented" note, and dropped the same
+  branch-qualifier wording from `.recipe/` (`machines/profi.md`, `_common/machines.md`,
+  `README.md`, `peripherals/covox-sounddrive.md`) - but **`profi` has not actually
+  merged to master yet** (`git merge-base --is-ancestor HEAD origin/master` fails as of
+  this writing). That wording is therefore premature, not wrong-then-fixed: it will
+  become accurate the moment the merge lands, and the plan is to merge shortly, so it's
+  being left as-is rather than reverted-then-refixed. Two things it caused ARE fixed
+  regardless of merge timing: `mcp-resources.cpp`'s `unreal://machine/profi` resource
+  had drifted the other way, still listing the Covox CP/M-extended-mode aliases as a
+  "known limitation" after they were implemented (§2.5) - corrected to describe them
+  and drop them from the limitations list.
 
 ---
 
