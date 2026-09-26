@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "3rdparty/message-center/messagecenter.h"
+#include "_helpers/soundcardscope.h"
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testtiminghelper.h"
 #include "common/sound/filters/masterlimiter.h"
@@ -36,6 +37,11 @@
 /// (e.g. UdiZvezdnoeBoot_Test.CatThenLoadFiles).
 class MoonSoundDevice_Test : public ::testing::Test
 {
+protected:
+    // Keep the General Sound / MoonSound cards the configs fit (the MoonSound card is the subject):
+    // declared first, so it is active before any machine is created
+    SoundCardScope _soundCards;
+
 protected:
     Emulator* emulator = nullptr;
     EmulatorContext* context = nullptr;

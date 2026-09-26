@@ -533,6 +533,11 @@ bool Config::ParseConfig(IniFile& inimanager)
 		// Apply hardware-accurate INT timing defaults based on the selected model
 		ApplyModelTimingDefaults(config);
 
+		// The config is loaded and valid: the process-wide hook gets the last
+		// word before any device is created from it
+		if (const ConfigLoadedHook& hook = ConfigLoadedHookStorage())
+			hook(config);
+
 		result = true;
 	}
 	else
@@ -542,6 +547,17 @@ bool Config::ParseConfig(IniFile& inimanager)
 	}
 
 	return result;
+}
+
+Config::ConfigLoadedHook& Config::ConfigLoadedHookStorage()
+{
+	static ConfigLoadedHook hook;
+	return hook;
+}
+
+void Config::SetConfigLoadedHook(ConfigLoadedHook hook)
+{
+	ConfigLoadedHookStorage() = std::move(hook);
 }
 
 bool Config::DetermineModel(const char* model, uint32_t ramsize)

@@ -2,10 +2,16 @@
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "emulator/emulatormanager.h"
+#include "_helpers/soundcardscope.h"
 
 int main(int argc, char **argv)
 {
   ::testing::InitGoogleTest(&argc, argv);
+
+  // General Sound / MoonSound are left out of every machine unless a test opts
+  // in with a SoundCardScope (see soundcardscope.h for why)
+  SoundCardScope::InstallPolicy();
+
   int result = RUN_ALL_TESTS();
 
   // Tear down the process-global singletons BEFORE static destruction starts.

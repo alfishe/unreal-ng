@@ -3,6 +3,7 @@
 
 #include "common/inifile.h"
 #include "emulator/emulatorcontext.h"
+#include <functional>
 #include <string>
 
 struct CONFIG;
@@ -89,7 +90,23 @@ public:
 	[[nodiscard]] bool LoadConfigFile(const std::string& filename);
 	[[nodiscard]] bool ParseConfig(IniFile& inimanager);
 
+	/// Process-wide hook called for every config that loaded and validated
+	/// successfully (model resolved, model timing defaults applied) - the last
+	/// step of ParseConfig, before any device is created from the config.
+	/// Whatever it changes wins over the .ini: the point to overlay settings on
+	/// every machine a process creates without editing the shipped configs
+	/// (the test runner leaves the General Sound / MoonSound cards out unless a
+	/// test asks for them). Not called for a config that failed validation.
+	/// An empty hook (the default) changes nothing
+	using ConfigLoadedHook = std::function<void(CONFIG&)>;
+	static void SetConfigLoadedHook(ConfigLoadedHook hook);
+
 	[[nodiscard]] bool DetermineModel(const char* model, uint32_t ramsize);
+
+private:
+	static ConfigLoadedHook& ConfigLoadedHookStorage();
+
+public:
 
 	// Model enumeration methods (static - no Config instance required)
 public:
