@@ -12,7 +12,7 @@ order is §I in the review doc itself.
   `soundmanager.cpp` (removed the redundant second call at the former
   `:652`, kept the first which drains TSFM's word queues before the mix).
   Verified with a new regression test,
-  `core/tests/emulator/sound/audio_activity_notification_test.cpp`
+  `core/tests/emulator/sound/audioactivityindicators_test.cpp`
   (parameterized AY/FM), confirmed to catch the exact duplicate-post
   regression when the removed call is reintroduced. Full suite green
   (3299/3299). **Not yet committed** — working tree only as of 2026-09-24.

@@ -96,9 +96,9 @@ public:
     /// no more handleFrameEnd calls to update either, a card that happened to
     /// be mid-playback when pause hit would keep reporting "active" (buffer
     /// non-silent, activity indicator lit) for as long as the pause lasts.
-    /// Zeroes the buffer and, if _wasActive was true, posts one final
-    /// NC_AUDIO_ACTIVITY(false) so the HUD nudge and the audio-settings LED
-    /// go dark immediately rather than staying stuck on the pre-pause state.
+    /// Zeroes the buffer and clears _wasActive so the audio-settings LED
+    /// (and the HUD nudge held from it, SoundManager::onEmulatorPaused) go
+    /// dark immediately rather than staying stuck on the pre-pause state.
     virtual void onEmulatorPaused() = 0;
 
     // Buffer access for the SoundManager registry (one frame of stereo int16)
@@ -132,8 +132,8 @@ public:
     virtual size_t getRamSizeKB() const = 0;          // LW: virtual geometry
 
     /// True when the stereo mix actually changed during the most recently
-    /// finished frame (handleFrameEnd) - the same signal NC_AUDIO_ACTIVITY
-    /// is posted from. Deliberately NOT "is any sample in getBuffer()
+    /// finished frame (handleFrameEnd) - the GS audio-settings LED, which
+    /// the HUD nudge is held from (AudioActivityIndicators). Deliberately NOT "is any sample in getBuffer()
     /// non-zero": a DAC channel latched to a non-centre value by a command
     /// and then left alone (e.g. a one-shot digi sample's last byte, or a
     /// firmware self-test tone) renders as a constant-but-non-zero PCM level

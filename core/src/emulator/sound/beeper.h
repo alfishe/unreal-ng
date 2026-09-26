@@ -64,9 +64,11 @@ protected:
     int16_t* _outputBuffer = nullptr;
     int _lastSamplesRead = 0;  // Samples delivered on last handleFrameEnd
 
-    // Activity tracking for HUD notification
-    bool _frameHadActivity = false;    // Any delta added this frame
-    bool _wasActive = false;           // Activity state at last frame end
+    // Audio-settings LED (and the HUD nudge held from it): a level change
+    // landed this frame. Not the output peak - a level left away from rest
+    // renders as a constant non-zero output, which is silence
+    bool _frameHadSound = false;
+    bool _hadSoundLastFrame = false;
 
     // Clock rate and sample rate (passed at construction)
     size_t _clockRate;
@@ -83,6 +85,9 @@ public:
     /// region <Methods>
 public:
     void reset();
+
+    /// A level change (port #FE or tape) landed in the last finished frame
+    bool hadSoundLastFrame() const { return _hadSoundLastFrame; }
 
     /// Live core-rate change (device reroute with CoreRate=auto): re-point
     /// the blip_buf resampler at the new output rate and clear pending deltas

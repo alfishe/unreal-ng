@@ -4,7 +4,7 @@
 **Status (updated 2026-09-14):** Tier A — the fixed POD blob (library chip
 state + host-side latches, `MoonSoundTTDHeader`) — is implemented and
 test-pinned (save-neutrality / restore-exactness / round-trip in
-`moonsound_device_test.cpp`, `TTD_*`; summary in
+`soundchip_moonsound_test.cpp`, `TTD_*`; summary in
 `2026-09-13-0217-opl4-unreal-ng-integration.md` §7.5); the determinism lessons its raw-image
 route forced are recorded in §4.5 (2026-09-17). Tier B — the wave-SRAM paged
 region of §5/§9 — is **not implemented yet**: until it lands, TTD for this device

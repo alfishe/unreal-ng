@@ -1452,13 +1452,15 @@ void HudModel::onAudioActivity(int, Message* message)
             return;
     }
 
+    // The core holds each source for a second past its last sound
+    // (AudioActivityIndicators) and posts every frame while held, so
+    // "inactive" means gone now. The TTL only covers posts stopping without
+    // a final "inactive" (emulator gone)
     if (p->active)
-    {
-        // Show indicator with 1s cooldown - stays visible after audio stops
         setIndicatorAt(key, HudTilePosition::TopLeft, HudState::Active, label, "", icon,
                        std::chrono::milliseconds(1000), true);
-    }
-    // When inactive: let the TTL handle fadeout (no immediate clear)
+    else
+        clearIndicator(key);
 }
 
 void HudModel::onMoonSoundActivity()
@@ -1478,11 +1480,12 @@ void HudModel::onMoonSoundActivity()
     }
     else
     {
-        // Both parts silent: let the 1s TTL expire the nudge (audio convention)
+        // Both parts silent (the core already held them for a second)
+        clearIndicator("moon");
         return;
     }
 
-    // Same contract as the other audio nudges: TopLeft, 1s cooldown
+    // Same contract as the other audio nudges: TopLeft, 1s TTL
     setIndicatorAt("moon", HudTilePosition::TopLeft, HudState::Active, label, "", "moonsound",
                    std::chrono::milliseconds(1000), true);
 }

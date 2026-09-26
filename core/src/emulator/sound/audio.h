@@ -15,6 +15,10 @@ static constexpr const size_t AUDIO_SAMPLING_RATE = 44100;
 static constexpr const size_t CORE_SAMPLING_RATE = AUDIO_SAMPLING_RATE;
 static constexpr const size_t AUDIO_CHANNELS = 2;
 
+/// Peak (fraction of int16 full scale) above which a frame buffer counts as
+/// carrying sound - audio-settings LEDs and the HUD audio nudges
+static constexpr const float AUDIO_ACTIVITY_PEAK = 0.001f;
+
 /// Single source of truth for the core audio rates the DSP stack supports
 /// (multirate plan phase 6). Config parsing, the SoundManager rate
 /// resolution chain and every automation 'audio_rate' setter validate

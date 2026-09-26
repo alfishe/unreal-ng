@@ -62,6 +62,8 @@ Beeper::~Beeper()
 
 void Beeper::reset()
 {
+    _frameHadSound = false;
+    _hadSoundLastFrame = false;
     _portFEState = 0xFF;  // Force initial state change on first port #FE write
     _lastPortFEAmplitude = DAC_LEVEL_00;  // Baseline EAR=0 MIC=0 level
     _lastTapeAmplitude = 0;
@@ -72,8 +74,7 @@ void Beeper::reset()
 
 void Beeper::handleFrameStart()
 {
-    // Reset activity tracking for the new frame
-    _frameHadActivity = false;
+    _frameHadSound = false;
 }
 
 void Beeper::handlePortOut(uint8_t value, uint32_t frameTState)
@@ -101,7 +102,7 @@ void Beeper::handlePortOut(uint8_t value, uint32_t frameTState)
         // at sub-sample precision, producing alias-free output.
         blip_add_delta(_blipL, frameTState, delta);
         blip_add_delta(_blipR, frameTState, delta);
-        _frameHadActivity = true;
+        _frameHadSound = true;
     }
 }
 
@@ -116,6 +117,7 @@ void Beeper::handleTapeAudio(int32_t amplitude, uint32_t frameTState)
     {
         blip_add_delta(_blipL, frameTState, delta);
         blip_add_delta(_blipR, frameTState, delta);
+        _frameHadSound = true;
     }
 }
 
@@ -135,6 +137,8 @@ void Beeper::setSynthesisSuppressed(bool suppressed)
 
 void Beeper::handleFrameEnd(uint32_t frameDuration)
 {
+    _hadSoundLastFrame = _frameHadSound;
+
     if (!_blipL || !_blipR || !_outputBuffer || frameDuration == 0)
         return;
 
@@ -155,13 +159,8 @@ void Beeper::handleFrameEnd(uint32_t frameDuration)
 
     _lastSamplesRead = avail;
 
-    // Post notification while active (to refresh HUD TTL) or on state change
-    if (_frameHadActivity || _frameHadActivity != _wasActive)
-    {
-        _wasActive = _frameHadActivity;
-        MessageCenter::DefaultMessageCenter().Post(
-            NC_AUDIO_ACTIVITY, new AudioActivityPayload(_context->emulatorId, AudioSource::Beeper, _wasActive));
-    }
+    // HUD activity: SoundManager (AudioActivityIndicators), from the
+    // audio-settings LED computed on this buffer
 }
 
 /// endregion </Methods>

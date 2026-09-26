@@ -14,7 +14,7 @@ still open (updated 2026-09-18).
   (44.1–192 kHz), HiFi render default.
 - **TTD**: chip state in the peripheral registry, exact Authentic restore,
   bounded HiFi restore window.
-- **Tests**: `moonsound_device_test.cpp` (device, TTD, canaries, core-rate
+- **Tests**: `soundchip_moonsound_test.cpp` (device, TTD, canaries, core-rate
   renegotiation). The disk- and guest-binary-driven tests (MFM samples 1–4,
   demo disk, MoonService) were removed on 2026-09-18; their regressions are
   covered by libopl4's `opl4fmtests.cpp`.

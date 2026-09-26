@@ -41,16 +41,6 @@ static int16_t TrimToI16(float value)
 
 /// endregion </Gain staging>
 
-/// region <Activity detection>
-
-/// Silence floor for the HUD activity scan. A releasing FM envelope decays
-/// geometrically and can hover at +/-1 LSB for a while before the backend
-/// clamps it out; anything at or below this threshold is inaudible tail, not
-/// activity (~-72 dB of full scale).
-constexpr int16_t kActivityThreshold = 8;
-
-/// endregion </Activity detection>
-
 /// region <Constructors / destructors>
 
 SoundChip_Moonsound::SoundChip_Moonsound(EmulatorContext* context, size_t coreRate)
@@ -192,8 +182,6 @@ void SoundChip_Moonsound::reset()
     _fmLatch[1] = 0;
     _fmBank = 0;
     _waveLatch = 0;
-    _wasFmActive = false;
-    _wasPcmActive = false;
 
     // The time axis restarts; the monotonic clamp below keeps any straggler
     // call from walking the freshly reset core backwards.
@@ -228,14 +216,8 @@ void SoundChip_Moonsound::handleFrameEnd(size_t expectedSamples)
 
     const size_t frameBytes = expectedSamples * AUDIO_CHANNELS * sizeof(int16_t);
 
-    // Activity detection for the HUD nudge: a sample above the silence floor
-    // in a part's rendered stream marks that part active this frame. The
-    // split buffers are the audible truth, so channel mutes and silent
-    // patches read as silence. Turbo/suppressed frames carry no audible
-    // output - both parts read silent and any previously active part posts
-    // its transition.
-    bool fmActive = false;
-    bool pcmActive = false;
+    // HUD activity: SoundManager (AudioActivityIndicators), from the
+    // audio-settings LEDs computed on the split FM / PCM buffers below
 
     if (_synthesisSuppressed)
     {
@@ -261,14 +243,7 @@ void SoundChip_Moonsound::handleFrameEnd(size_t expectedSamples)
             _fmBuffer[i] = TrimToI16(_fmScratch[i]);
             _pcmBuffer[i] = TrimToI16(_pcmScratch[i]);
         }
-        for (size_t i = 0; i < renderedSamples && (!fmActive || !pcmActive); i++)
-        {
-            fmActive = fmActive || std::abs(_fmBuffer[i]) > kActivityThreshold;
-            pcmActive = pcmActive || std::abs(_pcmBuffer[i]) > kActivityThreshold;
-        }
     }
-
-    postAudioActivity(fmActive, pcmActive);
 
     // The frame is complete: fold its whole duration into the absolute axis
     // (3.2). The multiplier is still the one this frame ran with - the
@@ -279,26 +254,6 @@ void SoundChip_Moonsound::handleFrameEnd(size_t expectedSamples)
 void SoundChip_Moonsound::setSynthesisSuppressed(bool suppressed)
 {
     _synthesisSuppressed = suppressed;
-}
-
-void SoundChip_Moonsound::postAudioActivity(bool fmActive, bool pcmActive)
-{
-    // Per-part NC_AUDIO_ACTIVITY (HUD "Moon FM" / "Moon PCM" / "Moonsound"
-    // nudge): post while a part stays active (the HUD TTL refresh) or once
-    // on the active->silent transition - never for steady silence.
-    if (fmActive || fmActive != _wasFmActive)
-    {
-        _wasFmActive = fmActive;
-        MessageCenter::DefaultMessageCenter().Post(
-            NC_AUDIO_ACTIVITY, new AudioActivityPayload(_context->emulatorId, AudioSource::MoonFM, fmActive));
-    }
-
-    if (pcmActive || pcmActive != _wasPcmActive)
-    {
-        _wasPcmActive = pcmActive;
-        MessageCenter::DefaultMessageCenter().Post(
-            NC_AUDIO_ACTIVITY, new AudioActivityPayload(_context->emulatorId, AudioSource::MoonPCM, pcmActive));
-    }
 }
 
 void SoundChip_Moonsound::setCoreRate(size_t coreRate)

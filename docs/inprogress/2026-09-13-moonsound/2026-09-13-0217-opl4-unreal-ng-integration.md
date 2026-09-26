@@ -129,7 +129,7 @@ sharper than the conservative reading assumed:
   `PC ≥ #4000`.
 
 The implemented and unit-verified design
-(`core/tests/emulator/sound/moonsound_device_test.cpp`):
+(`core/tests/emulator/sound/chips/soundchip_moonsound_test.cpp`):
 
 1. `SoundChip_Moonsound` registers writes for all seven ports as before, but
    does **not** own `#7F` reads statically.
@@ -855,7 +855,7 @@ the last open item of the demo verification.
 
 ### 12.7 Gain staging and clipping — test-pinned (2026-09-14)
 
-Three device tests in `moonsound_device_test.cpp` pin the §5.3 chain end to
+Three device tests in `soundchip_moonsound_test.cpp` pin the §5.3 chain end to
 end, all through the real port funnel and the real frame lifecycle (wide bus
 + limiter exactly as production):
 

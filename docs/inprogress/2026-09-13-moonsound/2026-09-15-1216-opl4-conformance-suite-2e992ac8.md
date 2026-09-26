@@ -39,7 +39,7 @@ One digest per sweep family over a representative sub-sweep: ~40 new cases, `gol
 
 In `opl4sweep.cpp`: 64-128 LCG-seeded random FM+PCM register streams with timestamps; assert no crash, no NaN/denormal, replay-determinism; failing seeds become permanent vectors.
 
-### Tier 4 — Core GTest canaries: extend [`core/tests/emulator/sound/moonsound_device_test.cpp`](core/tests/emulator/sound/moonsound_device_test.cpp)
+### Tier 4 — Core GTest canaries: extend [`core/tests/emulator/sound/chips/soundchip_moonsound_test.cpp`](core/tests/emulator/sound/chips/soundchip_moonsound_test.cpp)
 
 6-8 thin tests (<50 ms each, no turbo — they assert on rendered audio), reusing the existing port helpers (`KeyOnFmChannelThroughPorts`, `KeyOnPcmSlotThroughPorts`, `UploadSquareToneThroughPorts`): FM TL ladder row, FM envelope stage row, waveform symmetry, PCM loop E=0 wrap, PCM pan row, PCM TL 0x7F special, block-mix field row, SRAM access round-trip.
 

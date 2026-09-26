@@ -570,11 +570,12 @@ TEST_F(MoonSoundDevice_Test, FrameEnd_KeyedPcmTone_RendersIntoPcmSourceOnly)
 /// HUD nudge feed: per-part NC_AUDIO_ACTIVITY. A keyed FM voice posts
 /// AudioSource::MoonFM activity and never touches MoonPCM; a keyed PCM slot
 /// adds AudioSource::MoonPCM; key-off with a real release rate posts the
-/// single active->silent transition instead of steady-state spam. The HUD
+/// single active->silent transition instead of steady-state spam, once the
+/// one-second hold (AudioActivityIndicators) has run out. The HUD
 /// combines the two streams into its "Moon FM" / "Moon PCM" / "Moonsound"
-/// nudge, so this pins the device half of that contract through the real
-/// frame lifecycle (frames, not direct handleFrameEnd calls, because the
-/// SoundManager frame hook is what carries the posts).
+/// nudge, so this pins the MoonSound half of that contract through the real
+/// frame lifecycle (frames, not direct handleFrameEnd calls, because
+/// SoundManager posts from its LEDs at frame end).
 TEST_F(MoonSoundDevice_Test, FrameEnd_ActiveParts_PostPerPartAudioActivityForHud)
 {
     SoundManager* soundManager = context->pSoundManager;
@@ -647,7 +648,7 @@ TEST_F(MoonSoundDevice_Test, FrameEnd_ActiveParts_PostPerPartAudioActivityForHud
     cpu->out(0x7F, 0x00);  // PCM slot 0 key off (KON cleared, pan centre)
 
     bool bothSilent = false;
-    for (int frame = 0; frame < 15 && !bothSilent; frame++)
+    for (int frame = 0; frame < 15 + AudioActivityIndicators::HOLD_FRAMES && !bothSilent; frame++)
     {
         mainLoop->RunFrame();
         bothSilent = WaitForCondition(

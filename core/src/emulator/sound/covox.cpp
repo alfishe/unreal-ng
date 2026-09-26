@@ -68,6 +68,8 @@ Covox::~Covox()
 
 void Covox::reset()
 {
+    _frameHadSound = false;
+    _hadSoundLastFrame = false;
     for (int i = 0; i < 4; i++)
     {
         _dacValue[i] = 0x80;  // Midpoint = silence
@@ -87,8 +89,7 @@ void Covox::reset()
 
 void Covox::handleFrameStart()
 {
-    // Reset activity tracking for the new frame
-    _frameHadActivity = false;
+    _frameHadSound = false;
 
     // Stale-channel decay: a channel that went a whole frame without any
     // write extends its idle streak; once it crosses the threshold, silence
@@ -113,6 +114,8 @@ void Covox::handleFrameStart()
 
 void Covox::handleFrameEnd(size_t expectedSamples)
 {
+    _hadSoundLastFrame = _frameHadSound;
+
     CONFIG& config = _context->config;
     uint8_t speedMultiplier = _context->emulatorState.HostSpeedMultiplier();  // hardware turbo excluded (see SoundManager)
     uint32_t frameDuration = config.frame * speedMultiplier;
@@ -165,13 +168,8 @@ void Covox::handleFrameEnd(size_t expectedSamples)
         }
     }
 
-    // Post notification while active (to refresh HUD TTL) or on state change
-    if (_frameHadActivity || _frameHadActivity != _wasActive)
-    {
-        _wasActive = _frameHadActivity;
-        MessageCenter::DefaultMessageCenter().Post(
-            NC_AUDIO_ACTIVITY, new AudioActivityPayload(_context->emulatorId, AudioSource::Covox, _wasActive));
-    }
+    // HUD activity: SoundManager (AudioActivityIndicators), from the
+    // audio-settings LED computed on this buffer
 }
 
 /// endregion </Frame lifecycle>
@@ -274,15 +272,10 @@ void Covox::portDeviceOutMethod(uint16_t port, uint8_t value)
     if (!_synthesisSuppressed)
     {
         if (deltaL != 0)
-        {
             blip_add_delta(_blipL, currentTState, deltaL);
-            _frameHadActivity = true;
-        }
         if (deltaR != 0)
-        {
             blip_add_delta(_blipR, currentTState, deltaR);
-            _frameHadActivity = true;
-        }
+        _frameHadSound = _frameHadSound || deltaL != 0 || deltaR != 0;
     }
 
     // Update tracked state
@@ -305,15 +298,10 @@ void Covox::decayStaleChannel(Channel ch)
     if (!_synthesisSuppressed)
     {
         if (deltaL != 0)
-        {
             blip_add_delta(_blipL, 0, deltaL);
-            _frameHadActivity = true;
-        }
         if (deltaR != 0)
-        {
             blip_add_delta(_blipR, 0, deltaR);
-            _frameHadActivity = true;
-        }
+        _frameHadSound = _frameHadSound || deltaL != 0 || deltaR != 0;
     }
 
     _lastL = newL;

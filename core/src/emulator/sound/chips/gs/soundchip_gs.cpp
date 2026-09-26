@@ -428,25 +428,16 @@ void SoundChip_GeneralSound::handleFrameEnd(size_t expectedSamples)
     for (int i = samplesR; i < samplesThisFrame; i++)
         _buffer[i * 2 + 1] = 0;
 
-    // Post notification while active (to refresh HUD TTL) or on state change
-    if (_frameHadActivity || _frameHadActivity != _wasActive)
-    {
-        _wasActive = _frameHadActivity;
-        MessageCenter::DefaultMessageCenter().Post(
-            NC_AUDIO_ACTIVITY, new AudioActivityPayload(_context->emulatorId, AudioSource::GeneralSound, _wasActive));
-    }
+    // Activity of this frame: the audio-settings LED and, held for a second,
+    // the HUD nudge (SoundManager / AudioActivityIndicators)
+    _wasActive = _frameHadActivity;
 }
 
 void SoundChip_GeneralSound::onEmulatorPaused()
 {
     memset(_buffer, 0, _audioDescriptor.memoryBufferSizeInBytes);
 
-    if (_wasActive)
-    {
-        _wasActive = false;
-        MessageCenter::DefaultMessageCenter().Post(
-            NC_AUDIO_ACTIVITY, new AudioActivityPayload(_context->emulatorId, AudioSource::GeneralSound, false));
-    }
+    _wasActive = false;
 }
 
 /// endregion </Frame lifecycle>

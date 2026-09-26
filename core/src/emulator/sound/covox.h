@@ -137,14 +137,16 @@ protected:
     /// real writes this frame - so the decay never clips real playback)
     void decayStaleChannel(Channel ch);
 
+    // Audio-settings LED (and the HUD nudge held from it): a level change
+    // landed this frame. Not the output peak - a level left away from rest
+    // renders as a constant non-zero output, which is silence
+    bool _frameHadSound = false;
+    bool _hadSoundLastFrame = false;
+
     // DC offset removal (optional, applied post-blip)
     bool _dcRemovalEnabled = false;
     float _dcAccumL = 0.0f;
     float _dcAccumR = 0.0f;
-
-    // Activity tracking for HUD notification
-    bool _frameHadActivity = false;
-    bool _wasActive = false;
     static constexpr float DC_COEF = 0.995f;  // ~7 Hz cutoff @ 44.1 kHz
     float _dcCoefEff = DC_COEF;               // DC_COEF^(44100/fs): same cutoff Hz at every core rate
 
@@ -183,6 +185,9 @@ public:
     ///        accumulator (0 = compute locally via rounding, legacy behavior).
     ///        Passing it keeps the covox stream in lockstep with the mixer.
     void handleFrameEnd(size_t expectedSamples = 0);
+
+    /// A DAC level change landed in the last finished frame
+    bool hadSoundLastFrame() const { return _hadSoundLastFrame; }
 
     // DC removal control (for UI section)
     void setDCRemovalEnabled(bool enabled) { _dcRemovalEnabled = enabled; }

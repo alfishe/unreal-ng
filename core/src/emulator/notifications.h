@@ -567,7 +567,8 @@ enum class AudioSource : uint8_t
 };
 
 /// Payload for NC_AUDIO_ACTIVITY.
-/// Posted by audio sources when activity state changes.
+/// Posted by SoundManager (AudioActivityIndicators) from the audio-settings
+/// LEDs: every frame while a source is held active, once when it goes silent.
 class AudioActivityPayload : public MessagePayload
 {
 public:

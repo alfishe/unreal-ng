@@ -246,6 +246,7 @@ void SoundManager::reset()
     // Reset all chips state
     if (_turboSound)
         _turboSound->reset();
+    _activityIndicators.reset();
     _beeper->reset();
     if (_covox)
         _covox->reset();
@@ -294,16 +295,16 @@ void SoundManager::unmute()
 
 void SoundManager::onEmulatorPaused()
 {
-    if (!_gs)
-        return;
+    if (_gs)
+        _gs->onEmulatorPaused();
 
-    _gs->onEmulatorPaused();
-
-    if (AudioDeviceInfo* gsDevice = device(AudioSourceType::GeneralSound))
+    // Nothing plays while paused: every LED and HUD nudge goes dark now
+    for (AudioDeviceInfo& d : _devices)
     {
-        gsDevice->peak = 0.0f;
-        gsDevice->activeRecently = false;
+        d.peak = 0.0f;
+        d.activeRecently = false;
     }
+    _activityIndicators.stop(_context->emulatorId);
 }
 
 const AudioFrameDescriptor& SoundManager::getAudioBufferDescriptor()
@@ -844,20 +845,13 @@ void SoundManager::handleFrameEnd()
 #endif
 
     // Finalize GS frame: coprocessor catch-up to the frame end + blip drain
-    // into the registry buffer (posts its own HUD activity notification)
+    // into the registry buffer
     if (_gs)
         _gs->handleFrameEnd(samplesThisFrame);
 
     // NOTE: _turboSound->handleFrameEnd() is NOT called again here. It
-    // already ran once at the top of this function (word-queue drain +
-    // HUD activity notification, §6.1) and its activity-tracking flags
-    // (_frameHadActivity, _wasActive, _chip1ActiveThisFrame, _wasFM, ...)
-    // are not reset between calls - a second call here would re-evaluate
-    // the same already-updated flags and re-post NC_AUDIO_ACTIVITY a second
-    // time whenever the device is active, which is exactly what happened
-    // before this was removed (found while auditing HUD notification
-    // volume). The device's own comment on handleFrameEnd() already states
-    // it drains to end-of-frame and is "always called" - once.
+    // already ran once at the top of this function (word-queue drain, §6.1)
+    // and is "always called" - once.
 
     // Determine if any device has solo active
     bool soloActive = false;
@@ -952,12 +946,24 @@ void SoundManager::handleFrameEnd()
             // a naive peak > threshold check reads as permanently "active"
             // once anything has ever touched a channel - not just while the
             // card is actually playing. hadAudioActivityLastFrame() is the
-            // same delta-based signal NC_AUDIO_ACTIVITY/the HUD nudge use.
+            // signal the HUD nudge is held from (AudioActivityIndicators).
             d.activeRecently = _gs && _gs->hadAudioActivityLastFrame();
+        }
+        else if (d.type == AudioSourceType::Beeper)
+        {
+            // Same reason as GS: a beeper (or tape level) left high renders
+            // as a constant non-zero output - silence, not activity
+            d.activeRecently = _beeper->hadSoundLastFrame();
+        }
+        else if (d.type == AudioSourceType::COVOX)
+        {
+            // Same again for a DAC latched away from 0x80 (DC removal is off
+            // by default)
+            d.activeRecently = _covox && _covox->hadSoundLastFrame();
         }
         else
         {
-            d.activeRecently = (peak > 0.001f);
+            d.activeRecently = (peak > AUDIO_ACTIVITY_PEAK);
         }
 
         // Mix into output if audible
@@ -983,6 +989,10 @@ void SoundManager::handleFrameEnd()
         }
     }
     /// endregion </Registry-driven mixing>
+
+    // HUD audio nudges: the LEDs just computed, held for a second - one
+    // measurement, so every nudge agrees with its LED
+    _activityIndicators.endFrame(_context->emulatorId, _devices);
 
     if (_wideMix)
     {

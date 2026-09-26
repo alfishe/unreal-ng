@@ -14,6 +14,8 @@
 #include "emulator/sound/covox.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/chips/soundchip_turbosound.h"
+#include "emulator/sound/audioactivityindicators.h"
+#include "emulator/sound/audiodeviceinfo.h"
 #include "emulator/sound/chips/gs/soundchip_gs.h"
 #include "emulator/sound/chips/gs/soundchip_gslw.h"
 #include "emulator/platform.h"  // GSTypeKind (personality switching)
@@ -21,42 +23,6 @@
 
 class EmulatorContext;
 class SoundChip_Moonsound;
-
-/// Audio source types for device/channel selection (shared with recording)
-enum class AudioSourceType
-{
-    MasterMix,
-    Beeper,
-    AY1_All,
-    AY2_All,
-    AY3_All,
-    COVOX,
-    GeneralSound,
-    Moonsound_FM,
-    Moonsound_PCM,
-    AY1_ChannelA, AY1_ChannelB, AY1_ChannelC,
-    AY2_ChannelA, AY2_ChannelB, AY2_ChannelC,
-    AY3_ChannelA, AY3_ChannelB, AY3_ChannelC,
-    FM1,  // TSFM chip 0 FM-only buffer (design §7.2)
-    FM2,  // TSFM chip 1 FM-only buffer
-    Custom
-};
-
-/// Per-device descriptor for the registry-driven mixer
-struct AudioDeviceInfo
-{
-    AudioSourceType type;
-    std::string     name;
-
-    // Monitor state (runtime, per emulator instance)
-    bool  mute   = false;
-    bool  solo   = false;
-    float volume = 1.0f;
-
-    // Read-only status for UI (updated each frame)
-    float peak           = 0.0f;
-    bool  activeRecently = false;
-};
 
 class SoundManager
 {
@@ -241,6 +207,7 @@ protected:
 
     // Device registry (replaces hardwired master volumes)
     std::vector<AudioDeviceInfo> _devices;
+    AudioActivityIndicators _activityIndicators;  // HUD audio nudges: the LEDs above, held for a second
 
     // Legacy master volume fields kept for backward compat (delegate to registry)
     double _ayVolume = 1.0;
@@ -287,10 +254,9 @@ public:
     /// otherwise keep reporting "active" (buffer non-silent, HUD nudge / UI
     /// LED lit) for as long as the pause lasts - nothing left to naturally
     /// clear it. Forwards to the GS card (see GeneralSoundCard::
-    /// onEmulatorPaused for why GS specifically needs the explicit push) and
-    /// mirrors the result onto the device registry row so a UI that reads
-    /// devices() directly (audiosettingswidget) sees it immediately, not
-    /// only on the next frame that never comes until resume.
+    /// onEmulatorPaused), clears every registry row's LED so a UI that reads
+    /// devices() directly (audiosettingswidget) sees it immediately, and
+    /// ends every HUD nudge (AudioActivityIndicators::stop).
     void onEmulatorPaused();
 
     /// Force low-quality DSP while turbo mode is on (audio is muted anyway, and the
@@ -333,6 +299,11 @@ public:
     ITurboSoundDevice* getTurboSound() const
     {
         return _turboSound;
+    }
+    /// HUD audio nudges: every source's LED held for a second
+    const AudioActivityIndicators& getActivityIndicators() const
+    {
+        return _activityIndicators;
     }
     SoundChip_AY8910* getAYChip(int index) const;
     int getAYChipCount() const;

@@ -201,14 +201,6 @@ protected:
     // (out.nativeTap, §6.4) carry the raw pre-mute DAC stream per chip.
     std::shared_ptr<NativeAudioTap> _nativeTap = std::make_shared<NativeAudioTap>();
 
-    // Activity tracking for HUD notification (matches legacy TurboSound logic)
-    bool _frameHadActivity = false;    // Any register write this frame
-    bool _chip0ActiveThisFrame = false; // Chip 0 had activity
-    bool _chip1ActiveThisFrame = false; // Chip 1 had activity (TurboSound mode)
-    bool _fmActiveThisFrame = false;    // FM registers (>=0x10) were written
-    bool _wasActive = false;           // Activity state at last frame end
-    bool _wasTurboSound = false;       // Was in TurboSound mode at last frame
-    bool _wasFM = false;               // Was in FM mode at last frame
     /// endregion </Fields>
 
     /// region <Interfacing fields>

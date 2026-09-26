@@ -565,7 +565,7 @@ Files that touch `SoundManager` audio (from `git grep` at `af072f83`):
 `soundchip_ay8910_test` (chip-level, should not be affected: voicing sits in `SoundManager`),
 `ttdcorpus_test`, `ttdtsfm_test` (§4.6), and also everything else that runs
 `SoundManager::handleFrameEnd`: `multirate_test`, `frame_sample_count_test`,
-`sound_adaptivity_test`, `idle_silence_test`, `audio_activity_notification_test`,
+`sound_adaptivity_test`, `idle_silence_test`, `audioactivityindicators_test`,
 `device_registry_test`, `tsfm_soundmanager_test`, `beeper_test`, `covox_test`,
 `ttdreplaymode_test`, `frame_pacing_test`. Voicing outputs
 exact zero on silent input (no DC path, denormal flush), so the silence/idle tests should pass

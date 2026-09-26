@@ -106,11 +106,6 @@ void SoundChip_TurboSound::handleFrameStart()
     // boundary. _samplePhase resets only in reset() and setCoreRate().
     _ayBufferIndex = 0;
 
-    // Reset activity tracking for HUD notification
-    _frameHadActivity = false;
-    _chip0ActiveThisFrame = false;
-    _chip1ActiveThisFrame = false;
-
     // Initialize render buffers (combined + per-chip)
     memset(_ayBuffer, 0x00, _ayAudioDescriptor.memoryBufferSizeInBytes);
     memset(_chip0Buffer, 0x00, _chip0AudioDescriptor.memoryBufferSizeInBytes);
@@ -340,21 +335,8 @@ void SoundChip_TurboSound::handleStep()
 
 void SoundChip_TurboSound::handleFrameEnd()
 {
-    // TurboSound = chip1 (non-default) is active at all, since standard single-AY only uses chip0
-    bool isTurboSound = _chip1ActiveThisFrame;
-
-    // Post notification on activity state change or TurboSound mode change, or while active (to refresh HUD TTL)
-    bool stateChanged = (_frameHadActivity != _wasActive) || (isTurboSound != _wasTurboSound);
-    if (_frameHadActivity || stateChanged)
-    {
-        _wasActive = _frameHadActivity;
-        _wasTurboSound = isTurboSound;
-
-        AudioSource source = isTurboSound ? AudioSource::TurboSound : AudioSource::AY;
-
-        MessageCenter::DefaultMessageCenter().Post(
-            NC_AUDIO_ACTIVITY, new AudioActivityPayload(_context->emulatorId, source, _wasActive));
-    }
+    // Nothing to drain. HUD activity: SoundManager (AudioActivityIndicators),
+    // from the audio-settings LEDs computed on the chip buffers
 }
 
 /// endregion </Emulation events>
@@ -399,13 +381,6 @@ void SoundChip_TurboSound::portDeviceOutMethod(uint16_t port, uint8_t value)
             const uint8_t reg = _currentChip->getCurrentRegisterIndex();
             _currentChip->latchRegister(reg, value);
             queueSsgWrite(_currentChip == _chip0 ? 0 : 1, reg, value);
-
-            _frameHadActivity = true;  // Track register writes for HUD activity
-            // Track which chip is active this frame for TurboSound detection
-            if (_currentChip == _chip0)
-                _chip0ActiveThisFrame = true;
-            else if (_currentChip == _chip1)
-                _chip1ActiveThisFrame = true;
             break;
         }
         default:

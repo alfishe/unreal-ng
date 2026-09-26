@@ -261,12 +261,6 @@ void SoundChip_TurboSoundFM::reset()
 
 void SoundChip_TurboSoundFM::handleFrameStart()
 {
-    // Reset activity tracking for the new frame
-    _frameHadActivity = false;
-    _chip0ActiveThisFrame = false;
-    _chip1ActiveThisFrame = false;
-    _fmActiveThisFrame = false;
-
     // Frame rollover (§5.2): Core::AdjustFrameCounters already subtracted
     // the frame length from z80->t; shift the core's position and every
     // queued word timestamp by the same delta so they land on the new
@@ -574,31 +568,8 @@ void SoundChip_TurboSoundFM::handleStep()
 
 void SoundChip_TurboSoundFM::handleFrameEnd()
 {
-    // Determine audio sources for HUD notification
-    // Post separate notifications for AY/TS and FM so they can be displayed independently
-    bool isTurboSound = _chip1ActiveThisFrame;
-    bool isFM = _fmActiveThisFrame;
-
-    // Post AY/TurboSound notification on activity or mode change
-    bool ayStateChanged = (_frameHadActivity != _wasActive) || (isTurboSound != _wasTurboSound);
-    if (_frameHadActivity || ayStateChanged)
-    {
-        _wasActive = _frameHadActivity;
-        _wasTurboSound = isTurboSound;
-
-        AudioSource aySource = isTurboSound ? AudioSource::TurboSound : AudioSource::AY;
-        MessageCenter::DefaultMessageCenter().Post(
-            NC_AUDIO_ACTIVITY, new AudioActivityPayload(_context->emulatorId, aySource, _wasActive));
-    }
-
-    // Post separate FM notification if FM state changed
-    bool fmStateChanged = (isFM != _wasFM);
-    if (isFM || fmStateChanged)
-    {
-        _wasFM = isFM;
-        MessageCenter::DefaultMessageCenter().Post(
-            NC_AUDIO_ACTIVITY, new AudioActivityPayload(_context->emulatorId, AudioSource::FM, _wasFM));
-    }
+    // HUD activity (AY/TS and FM): SoundManager (AudioActivityIndicators),
+    // from the audio-settings LEDs computed on the chip / FM buffers
 
     // No FM word drain here: words the render cursor has not reached stay
     // queued and are rebased into the next frame (§6.2). Draining them into
@@ -628,15 +599,6 @@ uint8_t SoundChip_TurboSoundFM::portDeviceInMethod(uint16_t port)
 void SoundChip_TurboSoundFM::portDeviceOutMethod(uint16_t port, uint8_t value)
 {
     syncTo(nowT());
-    _frameHadActivity = true;  // Track activity for HUD notification
-
-    // Track per-chip activity for HUD
-    // chip 0 = primary (AY), chip 1 = secondary (TurboSound mode when accessed)
-    if (_board.chip == 0)
-        _chip0ActiveThisFrame = true;
-    else
-        _chip1ActiveThisFrame = true;
-
     TsfmChip& c = *_chips[_board.chip];
 
     switch (port)
@@ -674,7 +636,6 @@ void SoundChip_TurboSoundFM::portDeviceOutMethod(uint16_t port, uint8_t value)
             else
             {
                 // FM register; sets busy itself; allowed while muted
-                _fmActiveThisFrame = true;  // Track FM access for HUD
                 c.fm.write_data(value);
                 // Key-on mirror for the state report: 0x28 = ch (bits 0-1,
                 // 3 = none) | slot mask (bits 4-7)
