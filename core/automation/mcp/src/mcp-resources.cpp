@@ -250,9 +250,14 @@ framebuffer. Both use the 312-line x 224 T raster (69888 T per frame, INT-to-pap
 `inspect_state aspects:["paging"]` reports the tagged latches: p7FFD and pDFFD with decoded fields `extended_ram_bank`,
 `sco`, `worom`, `cpm`, `scr`, `video_512x240`. TTD persists the #DFFD latch and palette as PeripheralId ProfiPaging (9).
 
+## Peripherals
+RTC/CMOS (DS12885): address #BF/#FF, data #9F/#DF, only in EXT mode (CPM and ROM14). Covox DAC: #5F left, #3F right,
+only while the disk interface is off the bus. #FE read bit 7 reports GX0 in DS80. NMI (magic button) raises the DOS latch while DS80 is off.
+
 ## Known limitations
-RTC, IDE, Covox and Kempston joystick are not implemented. The BIOS boots to its main menu (with or without a
-disk); launching the menu entries (CP/M, TR-DOS, Sinclair) has not been verified yet.
+IDE (#xx8B/AB/CB/EB), Kempston joystick, extended keyboard and the Covox extended-mode aliases are not implemented.
+The BIOS boots to its main menu (with or without a disk); launching the menu entries (CP/M, TR-DOS, Sinclair) has
+not been verified yet.
 )md";
 
 struct StaticResource

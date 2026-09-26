@@ -23,7 +23,7 @@ ProfScorpion ship `SD=1` too but haven't been verified against real content
 yet.
 
 All are **config-file toggles** — changing them needs a new instance.
-On the `profi` branch the Profi gets its own Covox/SoundDrive at `#5F/#3F`
+The Profi has its own Covox DAC at `#5F/#3F`
 (see [machines/profi.md](../machines/profi.md)).
 
 Port-map ground truth: VELESOFT DAC-for-ZX database, SoundDrive 1.05
@@ -112,7 +112,7 @@ fitted"; use the port-trace/audio-capture checks below instead.
   brief click right at the switch, not a persistent imbalance.
 - **No register state exists for a DAC** — it's a latch, not a chip; don't
   look for per-register endpoints. The write value *is* the output level.
-- **Profi port arbitration silences the DAC by design** (branch) — during
+- **Profi port arbitration silences the DAC by design** — during
   FDC/CMOS activity on `#3F/#5F` the Profi DAC goes quiet; don't file that
   as a regression mid-disk-operation.
 - **Silence proves nothing until software actually writes the port** —
