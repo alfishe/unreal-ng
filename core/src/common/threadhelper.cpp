@@ -8,6 +8,7 @@
     #include <mach/mach.h>
     #include <mach/mach_time.h>
     #include <mach/thread_policy.h>
+    #include <pthread/qos.h>
 #endif
 #ifdef __linux__
     #include <pthread.h>
@@ -86,6 +87,17 @@ void ThreadHelper::setRealtimePriority()
     // mixer it is supposed to feed
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
 #endif
+}
+
+void ThreadHelper::setInteractivePriority()
+{
+#ifdef __APPLE__
+    // User-interactive QoS: the class the main thread of a foreground app
+    // runs at - highest timeshare band, P-cores preferred, minimal timer
+    // coalescing. Not real-time: no computation budget to violate
+    pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+#endif
+    // Linux / Windows: stock scheduling (see the role table in the header)
 }
 
 void ThreadHelper::setNormalPriority()

@@ -1,5 +1,7 @@
 #include "messagecenter.h"
 
+#include "common/threadhelper.h"
+
 #ifdef _WIN32
     // windows.h cannot be included from function => C2958 linking and many other errors
     #ifndef WIN32_LEAN_AND_MEAN
@@ -144,6 +146,11 @@ void MessageCenter::ThreadWorker()
         setThreadDescription(GetCurrentThread(), wname);
     }
 #endif
+
+    // Every emulated frame reaches the UI through this thread
+    // (NC_VIDEO_FRAME_REFRESH). At default QoS a parallel build delays it
+    // 25-100 ms on macOS and the picture stutters while the audio plays on
+    ThreadHelper::setInteractivePriority();
 
 #ifdef _DEBUG
     std::cout << "MessageCenter thread started" << std::endl;

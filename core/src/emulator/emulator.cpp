@@ -1022,10 +1022,11 @@ void Emulator::StartAsync()
 
     _asyncThread = new std::thread([this, threadName]() {
         ThreadHelper::setThreadName(threadName.c_str());
-        // Frame pacing quality: without an interactive QoS class the OS
-        // coalesces this thread's wait_until frame deadlines and it wakes
-        // up to ~30ms late - more than the audio ring headroom can absorb
-        ThreadHelper::setRealtimePriority();
+        // Scheduling is NOT set here: MainLoop::Run owns it (UpdateRealtimeScheduling),
+        // elevating only the active instance during cadenced playback. Elevating
+        // every thread here left non-active instances and turbo runs real-time
+        // forever - MainLoop believed they were not, so never dropped them - and
+        // a time-constraint thread running flat out is throttled by the kernel
 
         this->Start();
     });
