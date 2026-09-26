@@ -67,10 +67,14 @@ TEST(FeatureChangedNotification_Test, SetFeaturePostsNotificationWithPayload)
     std::string capturedFeatureId;
     bool capturedEnabled = false;
 
+    // Only the feature under test: CreateStandardEmulator switches screenhq /
+    // soundhq off, and those notifications are delivered asynchronously - they
+    // may still be queued when this observer is added
     uint64_t obsId = mc.AddObserver(NC_FEATURE_CHANGED, [&](int, Message* msg) {
         if (!msg) return;
         auto* payload = dynamic_cast<FeatureChangedPayload*>(msg->obj);
-        if (payload && payload->emulatorId == emu->GetContext()->emulatorId)
+        if (payload && payload->emulatorId == emu->GetContext()->emulatorId &&
+            payload->featureId == Features::kHud)
         {
             capturedId = payload->emulatorId;
             capturedFeatureId = payload->featureId;

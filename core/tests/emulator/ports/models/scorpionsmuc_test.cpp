@@ -27,10 +27,31 @@ constexpr uint8_t SdaOut = 0x10;
 constexpr uint8_t WriteProtect = 0x20;
 constexpr uint8_t SclOut = 0x40;
 
-EmulatorContext* CreateProfScorpContext(std::shared_ptr<Emulator>& emulator)
+/// A manager-created instance removed from the (process-wide) manager when
+/// the test ends - left registered it outlives the test and changes what
+/// later tests see (sole-instance selection, instance lists)
+struct ManagedEmulator
+{
+    std::shared_ptr<Emulator> emulator;
+
+    Emulator* operator->() const { return emulator.get(); }
+
+    ~ManagedEmulator()
+    {
+        if (emulator)
+        {
+            const std::string id = emulator->GetId();
+            emulator.reset();
+            EmulatorManager::GetInstance()->RemoveEmulator(id);
+        }
+    }
+};
+
+EmulatorContext* CreateProfScorpContext(ManagedEmulator& holder)
 {
     EmulatorManager* manager = EmulatorManager::GetInstance();
-    emulator = manager->CreateEmulatorWithModel("", "PROFSCORP", LoggerLevel::LogError);
+    holder.emulator = manager->CreateEmulatorWithModel("", "PROFSCORP", LoggerLevel::LogError);
+    std::shared_ptr<Emulator>& emulator = holder.emulator;
     if (!emulator)
         return nullptr;
 
@@ -120,7 +141,7 @@ uint8_t ShiftByteIn(PortDecoder_Scorpion256* decoder)
 /// presence polls (#0E91) actually test
 TEST(ScorpionSMUC_Test, SerialEEPROMWriteAndReadback)
 {
-    std::shared_ptr<Emulator> emulator;
+    ManagedEmulator emulator;
     EmulatorContext* context = CreateProfScorpContext(emulator);
     ASSERT_TRUE(context);
     PortDecoder_Scorpion256* decoder = GetScorpionDecoder(context);
@@ -157,7 +178,7 @@ TEST(ScorpionSMUC_Test, SerialEEPROMWriteAndReadback)
 /// task-file readback that a controller-presence signature test relies on
 TEST(ScorpionSMUC_Test, SmucRegisterStubsAnswer)
 {
-    std::shared_ptr<Emulator> emulator;
+    ManagedEmulator emulator;
     EmulatorContext* context = CreateProfScorpContext(emulator);
     ASSERT_TRUE(context);
     PortDecoder_Scorpion256* decoder = GetScorpionDecoder(context);
@@ -182,7 +203,7 @@ TEST(ScorpionSMUC_Test, SmucRegisterStubsAnswer)
 /// default byte 0x61 into the EEPROM through the serial link
 TEST(ScorpionSMUC_Test, ProfRomBootDrivesSmucProbes)
 {
-    std::shared_ptr<Emulator> emulator;
+    ManagedEmulator emulator;
     EmulatorContext* context = CreateProfScorpContext(emulator);
     ASSERT_TRUE(context);
     EmulatorState& state = context->emulatorState;
@@ -275,7 +296,7 @@ TEST(ScorpionSMUC_Test, ProfRomBootDrivesSmucProbes)
 /// the SMUC board present. D4-D0 per half-row, pressed key reads 0
 TEST(ScorpionSMUC_Test, KeyboardRowsAreNotShadowedBySmuc)
 {
-    std::shared_ptr<Emulator> emulator;
+    ManagedEmulator emulator;
     EmulatorContext* context = CreateProfScorpContext(emulator); // board PRESENT
     ASSERT_TRUE(context);
     PortDecoder_Scorpion256* decoder = GetScorpionDecoder(context);

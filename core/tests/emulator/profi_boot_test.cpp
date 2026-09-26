@@ -33,8 +33,6 @@ protected:
     {
         _manager = EmulatorManager::GetInstance();
         ASSERT_NE(_manager, nullptr);
-        for (const auto& id : _manager->GetEmulatorIds())
-            _manager->RemoveEmulator(id);
 
         _emulator = _manager->CreateEmulatorWithModelAndRAM("profi-boot", "PROFI", 1024, LoggerLevel::LogError);
         if (!_emulator)
@@ -43,8 +41,14 @@ protected:
 
     void TearDown() override
     {
-        for (const auto& id : _manager->GetEmulatorIds())
+        // Only our own instance: the manager is process-wide, and wiping it
+        // also hid instances other tests had leaked
+        if (_emulator)
+        {
+            const std::string id = _emulator->GetId();
+            _emulator.reset();
             _manager->RemoveEmulator(id);
+        }
     }
 
     /// Decode rows of the standard ZX bitmap screen (RAM page 5/7) with the font found at `fontOffset` of ROM page `fontPage`
