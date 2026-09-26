@@ -397,7 +397,7 @@ StateNode Ay(EmulatorContext* context)
     ret["turbo_sound"] = sm->hasTurboSound();
     ITurboSoundDevice* ts = sm->getTurboSound();
     const bool fm = ts && ts->hasFm();
-    ret["slot_device"] = fm ? "TSFM" : "TurboSound";
+    ret["slot_device"] = !ts ? "None" : (fm ? "TSFM" : "TurboSound");
     if (ayCount == 0)
         ret["description"] = "No AY chips available";
     else if (ayCount == 1)

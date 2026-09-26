@@ -396,13 +396,16 @@ enum ULAPLUS
 };
 
 /// TurboSound slot device kind ([SOUND] TurboSound, TSFM design §3.1).
-/// AY = legacy two-AY pair (default), FM = TSFM (TurboSound FM, YM2203).
+/// AY = legacy two-AY pair (default), FM = TSFM (TurboSound FM, YM2203),
+/// None = no sound chip in the slot at all (a bare 48K: the AY ports are not
+/// decoded and the program reads the floating bus).
 /// Read once at config load - no runtime switching; a change needs a new
 /// emulator instance.
 enum class TurboSoundKind : uint8_t
 {
 	AY,
-	FM
+	FM,
+	None
 };
 
 /// General Sound emulation kind ([SOUND] GSType, GS design §5.1).
@@ -552,7 +555,8 @@ struct CONFIG
 		unsigned coreRate;
 
 		/// Which device occupies the TurboSound slot ([SOUND] TurboSound,
-		/// TSFM design §3.1): AY = legacy two-AY pair (default), FM = TSFM.
+		/// TSFM design §3.1): AY = legacy two-AY pair (default), FM = TSFM,
+		/// None = slot empty (no AY at all).
 		TurboSoundKind turboSoundKind = TurboSoundKind::AY;
 
 		/// Which GS (General Sound) emulation runs ([SOUND] GSType, GS design

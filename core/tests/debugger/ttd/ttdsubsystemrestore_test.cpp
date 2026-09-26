@@ -26,6 +26,7 @@
 #include <gtest/gtest.h>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
 
 #include <cstdint>
@@ -59,6 +60,7 @@
 class TTD_Subsystem_Restore_Test : public ::testing::Test
 {
 protected:
+    SoundCardScope _turboSound{TestSound::TurboSound};  // the slot is the subject
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
     ttd::TimeTravelManager* _ttd = nullptr;

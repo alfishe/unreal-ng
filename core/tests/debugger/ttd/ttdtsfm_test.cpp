@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelmanager.h"
@@ -58,6 +59,7 @@ private:
 class TtdTsfm_Test : public ::testing::Test
 {
 protected:
+    SoundCardScope _turboSound{TestSound::TurboSound};  // the slot is the subject
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
     ttd::TimeTravelManager* _ttd = nullptr;
@@ -312,6 +314,31 @@ TEST_F(TtdTsfm_Test, SessionKindMismatchRefused)
               ttd::PeripheralId::TurboSound);
 }
 
+/// An empty TurboSound slot (TurboSound=None) leaves the AY ports on the
+/// floating bus, so a session recorded with a slot device would diverge on
+/// its first AY read: refused, same as a kind mismatch
+TEST_F(TtdTsfm_Test, SessionWithSlotDeviceRefusedOnEmptySlot)
+{
+    const std::string data = MakeLegacySession();
+    ASSERT_FALSE(data.empty());
+
+    Emulator empty(LoggerLevel::LogError);
+    empty.SetCustomConfigPath(EmulatorTestHelper::StageTurboSoundKindConfig(TurboSoundKind::None));
+    ASSERT_TRUE(empty.Init());
+    ASSERT_FALSE(empty.GetContext()->pSoundManager->hasTurboSound()) << "precondition: the slot is empty";
+    empty.GetFeatureManager()->setFeature(Features::kDebugMode, true);
+    empty.GetFeatureManager()->setFeature(Features::kTimeTravel, true);
+    empty.GetContext()->pMemory->UpdateFeatureCache();
+
+    std::istringstream in(data, std::ios::binary);
+    std::string err;
+    EXPECT_FALSE(empty.GetContext()->pTimeTravelManager->DeserializeSession(in, err));
+    EXPECT_NE(err.find("TurboSound slot mismatch"), std::string::npos) << err;
+
+    empty.Stop();
+    empty.Release();
+}
+
 // ===========================================================================
 // Regression coverage for the P5 gap (fixed 2026-09-23): until now,
 // SoundChip_TurboSoundFM::TTDStateSize() was the P3-era stub (always 0), so
@@ -411,6 +438,7 @@ TEST(TTD_TSFM_ManagerIntegration_Test, CaptureNow_PopulatesTsfmStateBlob)
     // Mirrors TTD_AY_ManagerIntegration_Test.CaptureNow_PopulatesAyStateBlob
     // (ttdayserializer_test.cpp) but on the FM slot kind - this is the exact
     // configuration of the originally reported recording (scratch/tsfm-issues.ttd).
+    SoundCardScope turboSound(TestSound::TurboSound);  // the slot is the subject
     Emulator emulator(LoggerLevel::LogError);
     emulator.SetCustomConfigPath(
         EmulatorTestHelper::StageTurboSoundKindConfig(TurboSoundKind::FM));
@@ -461,6 +489,7 @@ TEST(TTD_TSFM_ManagerIntegration_Test, CaptureNow_PopulatesTsfmStateBlob)
 /// reported scratch/tsfm-issues.ttd recording was made.
 TEST(TTD_TSFM_ManagerIntegration_Test, CaptureNow_PopulatesRealDemoPlaybackState)
 {
+    SoundCardScope turboSound(TestSound::TurboSound);  // the slot is the subject
     Emulator emulator(LoggerLevel::LogError);
     emulator.SetCustomConfigPath(
         EmulatorTestHelper::StageTurboSoundKindConfig(TurboSoundKind::FM));
@@ -526,6 +555,7 @@ TEST(TTD_TSFM_ManagerIntegration_Test, CaptureNow_PopulatesRealDemoPlaybackState
 /// SeekTo path, not just through TTDSaveState/TTDLoadState in isolation.
 TEST(TTD_TSFM_ManagerIntegration_Test, SeekTo_RestoresTsfmStateBitIdenticalOnKeyAndDeltaFrames)
 {
+    SoundCardScope turboSound(TestSound::TurboSound);  // the slot is the subject
     Emulator emulator(LoggerLevel::LogError);
     emulator.SetCustomConfigPath(
         EmulatorTestHelper::StageTurboSoundKindConfig(TurboSoundKind::FM));
@@ -606,6 +636,7 @@ TEST(TTD_TSFM_ManagerIntegration_Test, SeekTo_RestoresTsfmStateBitIdenticalOnKey
 ///      symptom.
 TEST(TTD_TSFM_ManagerIntegration_Test, SeekTo_NoiseGeneratorStateDeterministicFromDeltaFrame)
 {
+    SoundCardScope turboSound(TestSound::TurboSound);  // the slot is the subject
     Emulator emulator(LoggerLevel::LogError);
     emulator.SetCustomConfigPath(
         EmulatorTestHelper::StageTurboSoundKindConfig(TurboSoundKind::FM));
@@ -749,6 +780,7 @@ TEST(TTD_TSFM_ManagerIntegration_Test, SeekTo_NoiseGeneratorStateDeterministicFr
 /// state).
 TEST(TTD_TSFM_ManagerIntegration_Test, SeekTo_FlushesOutputStageToAvoidClickFromStaleHistory)
 {
+    SoundCardScope turboSound(TestSound::TurboSound);  // the slot is the subject
     Emulator emulator(LoggerLevel::LogError);
     emulator.SetCustomConfigPath(
         EmulatorTestHelper::StageTurboSoundKindConfig(TurboSoundKind::FM));
@@ -831,6 +863,7 @@ TEST(TTD_TSFM_ManagerIntegration_Test, SeekTo_FlushesOutputStageToAvoidClickFrom
 /// (BW Demo report, "after ttd rewind clicking continues all over").
 TEST(TTD_TSFM_ManagerIntegration_Test, SeekTo_KeepsDeviceAndMixerSampleCountsEqual)
 {
+    SoundCardScope turboSound(TestSound::TurboSound);  // the slot is the subject
     Emulator emulator(LoggerLevel::LogError);
     emulator.SetCustomConfigPath(
         EmulatorTestHelper::StageTurboSoundKindConfig(TurboSoundKind::FM));

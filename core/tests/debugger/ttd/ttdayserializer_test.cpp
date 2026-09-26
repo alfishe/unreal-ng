@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/soundcardscope.h"
 #include "common/modulelogger.h"
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "debugger/ttd/timetravelmanager.h"
@@ -356,6 +357,7 @@ TEST(TTD_AY_ManagerIntegration_Test, CaptureNow_PopulatesAyStateBlob)
     // Verify the TimeTravelManager capture path actually fills the ayState checkpoint
     // blob with a TurboSound payload when recording. This is the wire-up test
     // for P1.5 (peripheral capture in CaptureNow).
+    SoundCardScope turboSound(TestSound::TurboSound);  // the slot is the subject
     Emulator emulator(LoggerLevel::LogError);
     // The ayState blob checked below is the legacy TurboSound payload; the
     // shipped default slot is FM now, so stage the AY ini before Init

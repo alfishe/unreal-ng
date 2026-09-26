@@ -12,6 +12,7 @@
 #include <string>
 #include <unordered_map>
 
+#include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
 #include "emulator/config.h"
 #include "emulator/emulator.h"
@@ -21,6 +22,9 @@
 class Config_Test : public ::testing::Test
 {
 protected:
+    // Parser tests: the slot kind must reach the config as written, not the
+    // runner's empty-slot policy
+    SoundCardScope _turboSound{TestSound::TurboSound};
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
 
@@ -67,6 +71,12 @@ TEST_F(Config_Test, TurboSoundKindParsesFm)
 {
     ASSERT_TRUE(LoadSoundKeys("TurboSound=FM\n"));
     EXPECT_EQ(_context->config.sound.turboSoundKind, TurboSoundKind::FM);
+}
+
+TEST_F(Config_Test, TurboSoundKindParsesNone)
+{
+    ASSERT_TRUE(LoadSoundKeys("TurboSound=None\n"));
+    EXPECT_EQ(_context->config.sound.turboSoundKind, TurboSoundKind::None);
 }
 
 // Same acceptance as the RESET= mapping idiom: exact value, any case

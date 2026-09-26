@@ -67,9 +67,13 @@ SoundManager::SoundManager(EmulatorContext* context)
     // TurboSound slot device (TSFM design §3.2): the config kind decides what
     // occupies the slot. SoundManager holds it through ITurboSoundDevice from
     // here on - everything below (registry, chains, TTD registration) is
-    // device-agnostic.
+    // device-agnostic. TurboSound = None leaves the slot empty: no AY/TSFM
+    // device exists, its ports stay undecoded and every path below skips it.
     switch (_context->config.sound.turboSoundKind)
     {
+        case TurboSoundKind::None:
+            LOGINFO("SoundManager: TurboSound slot empty (no AY / TSFM fitted)");
+            break;
         case TurboSoundKind::FM:
             // TSFM (2 x YM2203): the chip core advances in T-states; its
             // output stage is silent until P6, but the core, ports and
@@ -81,16 +85,22 @@ SoundManager::SoundManager(EmulatorContext* context)
             _turboSound = new SoundChip_TurboSound(_context);
             break;
     }
-    _turboSound->setDecimatorQuality(_context->config.sound.decimatorHighFidelity
-                                         ? FilterDecimator::Quality::HighFidelity
-                                         : FilterDecimator::Quality::Reference);
-    _turboSound->setCoreRate(_coreRate);
+    if (_turboSound)
+    {
+        _turboSound->setDecimatorQuality(_context->config.sound.decimatorHighFidelity
+                                             ? FilterDecimator::Quality::HighFidelity
+                                             : FilterDecimator::Quality::Reference);
+        _turboSound->setCoreRate(_coreRate);
+    }
 
     // Build the device registry based on what this machine has
     // Beeper is always present
     _devices.push_back({AudioSourceType::Beeper, "Beeper", false, false, 1.0f, 0.0f, false});
-    // AY 1 is always present (single AY or first chip of TurboSound)
-    _devices.push_back({AudioSourceType::AY1_All, "AY 1", false, false, 1.0f, 0.0f, false});
+    // AY 1 whenever the slot is occupied (single AY or first chip of TurboSound)
+    if (_turboSound)
+    {
+        _devices.push_back({AudioSourceType::AY1_All, "AY 1", false, false, 1.0f, 0.0f, false});
+    }
     // AY 2 only if TurboSound (second chip)
     if (_turboSound && _turboSound->getChipCount() > 1)
     {
@@ -234,7 +244,8 @@ SoundManager::~SoundManager()
 void SoundManager::reset()
 {
     // Reset all chips state
-    _turboSound->reset();
+    if (_turboSound)
+        _turboSound->reset();
     _beeper->reset();
     if (_covox)
         _covox->reset();
@@ -479,7 +490,8 @@ void SoundManager::applyCoreRate(size_t rate)
 #endif
 
     // AY: sample PLL increment, decimation ratios, anti-alias FIR redesign
-    _turboSound->setCoreRate(rate);
+    if (_turboSound)
+        _turboSound->setCoreRate(rate);
 
     // Character chains: re-derive envelope/room/punch coefficients for the
     // new rate (setup preserves chip type and presets; resets DSP state)
@@ -582,16 +594,19 @@ void SoundManager::handleFrameStart()
         // its output stage is off. Sound feature off counts as suppressed
         // for the device's rendering; its frame buffer clears still run
         // (the sound-off output path relies on zeroed buffers).
-        const bool turboSoundSuppressed = generationOff;
-        _turboSound->setSynthesisSuppressed(turboSoundSuppressed);
+        if (_turboSound)
+        {
+            const bool turboSoundSuppressed = generationOff;
+            _turboSound->setSynthesisSuppressed(turboSoundSuppressed);
 
-        // With the output stage off, the FM core's internal synthesis state feeds nothing the CPU can
-        // see - except through the TTD core hash, so TTD recording / replay keeps the full core running
-        const ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
-        const bool ttdActive = ttd != nullptr && (ttd->IsRecording() || ttd->IsReplayActive());
-        _turboSound->setCoreSynthesisSkipped(turboSoundSuppressed && !ttdActive);
+            // With the output stage off, the FM core's internal synthesis state feeds nothing the CPU can
+            // see - except through the TTD core hash, so TTD recording / replay keeps the full core running
+            const ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+            const bool ttdActive = ttd != nullptr && (ttd->IsRecording() || ttd->IsReplayActive());
+            _turboSound->setCoreSynthesisSkipped(turboSoundSuppressed && !ttdActive);
 
-        _turboSound->handleFrameStart();
+            _turboSound->handleFrameStart();
+        }
 
         // GS: same always-advanced rule as the TSFM slot device - the
         // coprocessor keeps running even when its output stage is suppressed
@@ -630,7 +645,8 @@ void SoundManager::handleStep()
     // work is unobservable to the program: the AY register file is written
     // by PortDecoder on OUT. Recording keeps the full path so DSD
     // native-rate capture and recorded audio stay intact.
-    _turboSound->handleStep();
+    if (_turboSound)
+        _turboSound->handleStep();
 }
 
 void SoundManager::handleFrameEnd()
@@ -641,7 +657,8 @@ void SoundManager::handleFrameEnd()
     // device must drain to its own end-of-frame position, never to
     // AudioTstate(z80->t). Always called - the device handles suppression
     // internally and posts HUD notifications regardless.
-    _turboSound->handleFrameEnd();
+    if (_turboSound)
+        _turboSound->handleFrameEnd();
 
     // Turbo without audio: the frame still ENDS for every device with an
     // emulated core - its program-visible state (GS coprocessor catch-up,
@@ -1400,10 +1417,8 @@ bool SoundManager::requestGeneralSoundCardSwitch(GSTypeKind target)
 
 bool SoundManager::attachToPorts()
 {
-    bool result = false;
-
-    // result = _ay8910->attachToPorts(_context->pPortDecoder);
-    result = _turboSound->attachToPorts(_context->pPortDecoder);
+    // An empty TurboSound slot claims no ports: #FFFD / #BFFD read the floating bus
+    bool result = _turboSound ? _turboSound->attachToPorts(_context->pPortDecoder) : true;
 
     // SoundDrive/Covox is a self-decoding device (Covox::tryClaimOut/In):
     // its Fitment (Mono #FB only vs Quad mode-1+mode-2) is baked in at
@@ -1444,8 +1459,8 @@ bool SoundManager::detachFromPorts()
 {
     bool result = true;
 
-    //_ay8910->detachFromPorts();
-    _turboSound->detachFromPorts();
+    if (_turboSound)
+        _turboSound->detachFromPorts();
 
     if (_covox && _context->pPortDecoder)
     {

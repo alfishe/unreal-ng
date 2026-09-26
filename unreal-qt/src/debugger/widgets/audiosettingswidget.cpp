@@ -491,7 +491,8 @@ void AudioSettingsWidget::refreshFromContext()
         // selector locks to the board's YM2203 (§8.3)
         ITurboSoundDevice* tsDevice = sm->getTurboSound();
         const bool isFm = tsDevice && tsDevice->hasFm();
-        _ayGroup->setTitle(isFm ? "TurboSound FM" : "TurboSound");
+        _ayGroup->setTitle(!tsDevice ? "TurboSound (not fitted)" : (isFm ? "TurboSound FM" : "TurboSound"));
+        _ayGroup->setEnabled(tsDevice != nullptr);
         _chip1SectionLabel->setText(isFm ? "SSG 1" : "AY1");
         _chip2SectionLabel->setText(isFm ? "SSG 2" : "AY2");
         _tsfmControls->setVisible(isFm);

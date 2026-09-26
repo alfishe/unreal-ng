@@ -1064,9 +1064,10 @@ bool TimeTravelManager::RegisterModelPeripherals(std::string* err)
     {
         // TurboSound slot: register under the live device's own peripheral
         // id (legacy TurboSound = 0, TSFM = 4) so a session recorded on one
-        // device cannot load on the other (design §8.2)
-        ITurboSoundDevice* turboSoundDevice = _context->pSoundManager->getTurboSound();
-        _peripherals.Register(turboSoundDevice->TTDPeripheralId(), turboSoundDevice);
+        // device cannot load on the other (design §8.2). An empty slot
+        // (TurboSound = None) registers nothing, same as an absent Covox.
+        if (ITurboSoundDevice* turboSoundDevice = _context->pSoundManager->getTurboSound())
+            _peripherals.Register(turboSoundDevice->TTDPeripheralId(), turboSoundDevice);
         _peripherals.Register(PeripheralId::Covox, _context->pSoundManager->getCovox());
         // General Sound card ([SOUND] GSType=Z80, GS design §5.3): absent when
         // the config did not fit one - the registry then simply carries no
@@ -3202,6 +3203,23 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
                       ", this instance runs device id " + std::to_string(liveId) +
                       (liveId == legacyId ? " (legacy TurboSound)" : " (TSFM)") +
                       " - set [SOUND] TurboSound to the recorded kind and restart";
+                return false;
+            }
+        }
+        else
+        {
+            // Empty slot (TurboSound = None) but the session carries a slot
+            // blob: the recording machine answered the AY ports, this one
+            // leaves them on the floating bus - a replay would diverge on the
+            // first AY read. Refused for the same reason as a kind mismatch.
+            const auto& blobs = _timeline.front().peripheralBlobs;
+            const bool sessionHasSlot =
+                blobs.find(static_cast<uint8_t>(PeripheralId::TurboSound)) != blobs.end() ||
+                blobs.find(static_cast<uint8_t>(PeripheralId::TSFM)) != blobs.end();
+            if (sessionHasSlot)
+            {
+                err = "TurboSound slot mismatch: session was recorded with a TurboSound-slot device, "
+                      "this instance has none - set [SOUND] TurboSound to the recorded kind and restart";
                 return false;
             }
         }

@@ -9,6 +9,7 @@
 #include <gtest/gtest.h>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -52,6 +53,7 @@ Emulator* CreateFmEmulator(LoggerLevel level)
         out.write(ini.data(), static_cast<std::streamsize>(ini.size()));
     }
 
+    SoundCardScope turboSound(TestSound::TurboSound);  // FM asked for: keep the slot
     Emulator* emulator = new Emulator(level);
     emulator->SetCustomConfigPath(target.string());
     if (!emulator->Init())

@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/soundcardscope.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -77,6 +78,7 @@ constexpr int16_t SENTINEL = 0x7C7C;
 class SoundAdaptivity_Test : public ::testing::Test
 {
 protected:
+    SoundCardScope _turboSound{TestSound::TurboSound};  // the slot is the subject
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
 

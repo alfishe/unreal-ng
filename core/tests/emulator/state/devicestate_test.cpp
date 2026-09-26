@@ -4,6 +4,7 @@
 #include <string>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/soundcardscope.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -30,6 +31,7 @@ const StateNode& At(const StateNode& n, const char* key)
 class DeviceState_Test : public ::testing::Test
 {
 protected:
+    SoundCardScope _turboSound{TestSound::TurboSound};  // the slot is the subject
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
 

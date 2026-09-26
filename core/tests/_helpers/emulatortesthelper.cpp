@@ -8,8 +8,10 @@
 #include "emulator/emulatormanager.h"
 #include "emulator/memory/memory.h"
 #include "emulator/platform.h"
+#include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
 
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 
@@ -33,15 +35,14 @@ namespace
             ini.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
         }
 
-        const std::string to = std::string("TurboSound=") + (kind == TurboSoundKind::FM ? "FM" : "AY");
-        const size_t atAy = ini.find("TurboSound=AY");
-        const size_t atFm = ini.find("TurboSound=FM");
-        if (atAy != std::string::npos)
-            ini.replace(atAy, to.size(), to);  // both slot literals are the same length
-        else if (atFm != std::string::npos)
-            ini.replace(atFm, to.size(), to);
-        else
+        const char* value = kind == TurboSoundKind::FM ? "FM" : kind == TurboSoundKind::None ? "None" : "AY";
+        const std::string to = std::string("TurboSound=") + value;
+        size_t at = ini.find("TurboSound=AY");
+        if (at == std::string::npos)
+            at = ini.find("TurboSound=FM");
+        if (at == std::string::npos)
             return std::string();
+        ini.replace(at, strlen("TurboSound=AY"), to);  // both shipped literals are the same length
 
         const fs::path target =
             TestPathHelper::GetUniqueTestScratchPath("forced-slot-" + modelConfigFolder + ".ini");
@@ -124,7 +125,10 @@ Emulator* EmulatorTestHelper::CreateEmulatorWithTurboSoundKind(const std::string
         return nullptr;
 
     // Same boot shape as the TSFM suites' own helpers: the staged ini
-    // self-identifies the machine, no preferred model needed
+    // self-identifies the machine, no preferred model needed. Asking for a
+    // slot kind is asking for the slot: the runner's sound policy would
+    // otherwise empty it (SoundCardScope)
+    SoundCardScope turboSound(TestSound::TurboSound);
     Emulator* emulator = new Emulator(logLevel);
     emulator->SetCustomConfigPath(staged);
     if (!emulator->Init())

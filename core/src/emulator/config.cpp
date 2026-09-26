@@ -371,7 +371,7 @@ bool Config::ParseConfig(IniFile& inimanager)
 	config.moonsound.boardAnalog = (inimanager.GetLongValue(moonsound, "BoardAnalog", 0) != 0) ? 1 : 0;
 
 	// TurboSound slot device kind (TSFM design §3.1): AY (legacy two-AY pair,
-	// default) or FM (TSFM). Unknown values warn and fall back to AY; a missing
+	// default), FM (TSFM) or None (no sound chip fitted). Unknown values warn and fall back to AY; a missing
 	// key keeps the default. The legacy [AY] Chip/Scheme keys are NOT honoured:
 	// every shipped ini carries Chip=YM2203 and nothing ever parsed them, so
 	// honouring them now would silently switch every machine to TSFM.
@@ -388,6 +388,10 @@ bool Config::ParseConfig(IniFile& inimanager)
 		else if (StringHelper::CompareCaseInsensitive(line, "FM", strlen("FM")) == 0)
 		{
 			config.sound.turboSoundKind = TurboSoundKind::FM;
+		}
+		else if (StringHelper::CompareCaseInsensitive(line, "None", strlen("None")) == 0)
+		{
+			config.sound.turboSoundKind = TurboSoundKind::None;
 		}
 		else if (line[0] != '\0')
 		{

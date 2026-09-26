@@ -7,32 +7,61 @@
 
 namespace
 {
-std::atomic<int> g_activeScopes{0};
+/// One counter per TestSound bit (scopes nest and overlap)
+std::atomic<int> g_activeScopes[3]{};
+
+template <typename F>
+void ForEachDevice(TestSound devices, F&& f)
+{
+    for (int bit = 0; bit < 3; bit++)
+    {
+        if (static_cast<uint8_t>(devices) & (1u << bit))
+            f(g_activeScopes[bit]);
+    }
+}
+
+int BitIndex(TestSound device)
+{
+    const auto value = static_cast<uint8_t>(device);
+    for (int bit = 0; bit < 3; bit++)
+    {
+        if (value == (1u << bit))
+            return bit;
+    }
+    return -1;
+}
 }  // namespace
 
-SoundCardScope::SoundCardScope()
+SoundCardScope::SoundCardScope() : SoundCardScope(TestSound::All)
 {
-    g_activeScopes.fetch_add(1, std::memory_order_acq_rel);
+}
+
+SoundCardScope::SoundCardScope(TestSound devices) : _devices(devices)
+{
+    ForEachDevice(_devices, [](std::atomic<int>& count) { count.fetch_add(1, std::memory_order_acq_rel); });
 }
 
 SoundCardScope::~SoundCardScope()
 {
-    g_activeScopes.fetch_sub(1, std::memory_order_acq_rel);
+    ForEachDevice(_devices, [](std::atomic<int>& count) { count.fetch_sub(1, std::memory_order_acq_rel); });
 }
 
-bool SoundCardScope::Active()
+bool SoundCardScope::Active(TestSound device)
 {
-    return g_activeScopes.load(std::memory_order_acquire) > 0;
+    const int bit = BitIndex(device);
+    return bit >= 0 && g_activeScopes[bit].load(std::memory_order_acquire) > 0;
 }
 
 void SoundCardScope::InstallPolicy()
 {
     Config::SetConfigLoadedHook([](CONFIG& config)
     {
-        if (Active())
-            return;  // the test asked for the machine as configured
-
-        config.sound.gsTypeKind = GSTypeKind::NONE;
-        config.sound.moonsound = 0;
+        // Devices a test asked for keep the configured value
+        if (!Active(TestSound::GeneralSound))
+            config.sound.gsTypeKind = GSTypeKind::NONE;
+        if (!Active(TestSound::MoonSound))
+            config.sound.moonsound = 0;
+        if (!Active(TestSound::TurboSound))
+            config.sound.turboSoundKind = TurboSoundKind::None;
     });
 }
