@@ -1,5 +1,6 @@
 #include "automation-webapi.h"
 
+#include <cstdlib>
 #include <drogon/HttpController.h>
 #include <drogon/WebSocketController.h>
 
@@ -190,7 +191,16 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
 
     // CRITICAL: Check port availability BEFORE drogon initialization
     // This prevents drogon from calling exit() on bind failure
-    const int port = 8090;
+    // The listen port can be moved with the UNREAL_WEBAPI_PORT env var
+    // (1-65535) so a second instance can run beside one that already
+    // owns the default port - e.g. diagnostics against a live server
+    int port = 8090;
+    if (const char* portEnv = getenv("UNREAL_WEBAPI_PORT"))
+    {
+        const long parsed = strtol(portEnv, nullptr, 10);
+        if (parsed >= 1 && parsed <= 65535)
+            port = static_cast<int>(parsed);
+    }
     if (!isPortAvailable(port))
     {
         std::cerr << std::endl;
@@ -203,7 +213,7 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
         std::cerr << std::endl;
         std::cerr << "To use WebAPI, either:" << std::endl;
         std::cerr << "  - Stop other instances using port " << port << std::endl;
-        std::cerr << "  - Configure a different port (future enhancement)" << std::endl;
+        std::cerr << "  - Set UNREAL_WEBAPI_PORT to a free port and restart" << std::endl;
         std::cerr << "========================================" << std::endl;
         std::cerr << std::endl;
 
@@ -212,11 +222,11 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
     }
 
     // Log startup info
-    LOG_INFO << "Starting server on port 8090.";
-    LOG_INFO << "API Documentation: http://localhost:8090/";
-    LOG_INFO << "Emulator API: http://localhost:8090/api/v1/emulator";
-    LOG_INFO << "OpenAPI Spec: http://localhost:8090/api/v1/openapi.json";
-    LOG_INFO << "WebSocket: ws://localhost:8090/api/v1/websocket";
+    LOG_INFO << "Starting server on port " << port << ".";
+    LOG_INFO << "API Documentation: http://localhost:" << port << "/";
+    LOG_INFO << "Emulator API: http://localhost:" << port << "/api/v1/emulator";
+    LOG_INFO << "OpenAPI Spec: http://localhost:" << port << "/api/v1/openapi.json";
+    LOG_INFO << "WebSocket: ws://localhost:" << port << "/api/v1/websocket";
 
     drogon::HttpAppFramework& app = drogon::app();
 
@@ -292,7 +302,7 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
         },
         {drogon::Get});
 
-    LOG_INFO << "Swagger UI Documentation: http://localhost:8090/api/v1/docs";
+    LOG_INFO << "Swagger UI Documentation: http://localhost:" << port << "/api/v1/docs";
 
     // Create a writable log directory in the user's home folder
     std::string logPath;
@@ -321,7 +331,7 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
     app.setLogPath(logPath)
         .setLogLevel(trantor::Logger::kNumberOfLogLevels)
         .disableSigtermHandling()  // SIGTERM is handled by the main application (unreal-qt or testclient)
-        .addListener("0.0.0.0", 8090)
+        .addListener("0.0.0.0", static_cast<uint16_t>(port))
         .setThreadNum(2);
 
     try
@@ -331,7 +341,7 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
     catch (const std::exception& e)
     {
         LOG_ERROR << "WebAPI server failed to start: " << e.what();
-        LOG_ERROR << "Port 8090 may already be in use. WebAPI will be disabled.";
+        LOG_ERROR << "Port " << port << " may already be in use. WebAPI will be disabled.";
         // Don't exit - just let the thread end gracefully
     }
 }

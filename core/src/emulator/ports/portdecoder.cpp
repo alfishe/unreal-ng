@@ -1,5 +1,6 @@
 #include "portdecoder.h"
 
+#include <algorithm>
 #include <cassert>
 
 #include "base/featuremanager.h"
@@ -532,12 +533,17 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
                                Tags(PortTag::Memory) | PortTag::Rom, PagingLatch::P1FFD});
             break;
         case MM_PROFI:
-            // IsPort_7FFD / IsPort_DFFD (PortDecoder_Profi); #DFFD bit 7 selects the
-            // Profi 512x240 video mode (Screen::InitVideoMode mode detection)
-            entries.push_back({0x7FFD, 0x8006, 0x0004, "Memory paging (RAM bank, shadow screen, ROM)", nullptr,
+            // IsPort_7FFD / IsPort_DFFD (PortDecoder_Profi): #7FFD = A15=0 & A1=0,
+            // #DFFD = A15=1 & A13=0 & A1=0; #DFFD bit 7 selects the 512x240 hi-res
+            // mode (Screen::InitVideoMode mode detection)
+            entries.push_back({0x7FFD, 0x8002, 0x0000, "Memory paging (RAM bank, shadow screen, ROM14, lock)", nullptr,
                                Tags(PortTag::Memory) | PortTag::Rom | PortTag::Screen, PagingLatch::P7FFD});
-            entries.push_back({0xDFFD, 0x2002, 0x0000, "Profi extended paging (1024K) + video mode (bit 7)", nullptr,
-                               Tags(PortTag::Memory) | PortTag::Screen, PagingLatch::PDFFD});
+            entries.push_back({0xDFFD, 0xA002, 0x8000,
+                               "Profi extended paging (RAM high bits, SCO, WOROM, CP/M, SCR) + video mode (bit 7)",
+                               nullptr, Tags(PortTag::Memory) | PortTag::Rom | PortTag::Screen, PagingLatch::PDFFD});
+            // Palette write OUT #xx7E (A7=0, A0=0, only while DFFD bit 7 is set); data is in A15:A8
+            entries.push_back({0x007E, 0x0081, 0x0000, "Profi palette write (OUT #xx7E, hi-res only)", nullptr,
+                               Tags(PortTag::Screen)});
             break;
         case MM_SCORP:
         case MM_PROFSCORP:
@@ -578,8 +584,27 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
                 entries.push_back({0x7FFD, 0x8006, 0x0004, "Memory paging (RAM bank, shadow screen, ROM)", nullptr,
                                    Tags(PortTag::Memory) | PortTag::Rom | PortTag::Screen, PagingLatch::P7FFD});
             }
-            entries.push_back({0x00FB, 0x00F5, 0x00F1, "Covox / SoundDrive (#F1,#F3,#F9,#FB)", nullptr,
-                               Tags(PortTag::SoundCovox) | PortTag::SoundSoundDrive});
+            // Advertise only what dispatch actually wires (SoundManager::
+            // attachToPorts): SD=1 registers the full mode-2 quad plus the
+            // mode-1 primary quad, CovoxFB=1 alone registers #FB only; with
+            // neither flag no device exists
+            if (_context->config.sound.sd)
+            {
+                entries.push_back({0x00FB, 0x00F5, 0x00F1, "SoundDrive quad DAC mode 2 (#F1 L-A, #F3 L-B, #F9 R-A, #FB R-B; #FB doubles as mono Covox)", nullptr,
+                                   Tags(PortTag::SoundCovox) | PortTag::SoundSoundDrive});
+                // Mode 1 (#0F/#1F/#4F/#5F) aliases the Beta128 FDC's wide
+                // mirror decode (bits 0,1=1, bit7=0) - PortDecoder_Pentagon128
+                // only routes these to SoundDrive once TR-DOS has released
+                // them, so the advertised row states that precedence
+                entries.push_back({0x001F, 0x00AF, 0x000F, "SoundDrive quad DAC mode 1 (#0F L-A, #1F L-B, #4F R-A, #5F R-B)",
+                                   "!CF_TRDOS (Beta128 FDC not paged in claims these addresses first)",
+                                   Tags(PortTag::SoundCovox) | PortTag::SoundSoundDrive});
+            }
+            else if (_context->config.sound.covoxFB)
+            {
+                entries.push_back({0x00FB, 0xFFFF, 0x00FB, "Covox (mono #FB)", nullptr,
+                                   Tags(PortTag::SoundCovox)});
+            }
             break;
         default:
             break;  // MM_SPECTRUM48: no paging / system latches
@@ -608,7 +633,9 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
     // through the registered device key.
     if (_context->config.trdos_present)
     {
-        const char* betaGate = scorpion ? "CF_TRDOS / Shadow Monitor / magic-button trigger" : nullptr;
+        const char* betaGate = scorpion ? "CF_TRDOS / Shadow Monitor / magic-button trigger"
+                               : (model == MM_PROFI) ? "CF_DOSPORTS (DOS latch or CP/M mode)"
+                                                     : nullptr;
         // Data registers answer through exact registered device keys (IsBeta128Port /
         // TryBeta128MirrorPort switch on the five low bytes), so the rows are exact
         // matches - which also lets the registered-handler dedupe below absorb them.
@@ -884,6 +911,10 @@ std::vector<DecodedLatchField> DecodePagingLatch(PagingLatch latch, uint32_t val
             break;
         case PagingLatch::PDFFD:
             intField("extended_ram_bank", static_cast<int>(value & 0x07));
+            boolField("sco", (value & 0x08) != 0);
+            boolField("worom", (value & 0x10) != 0);
+            boolField("cpm", (value & 0x20) != 0);
+            boolField("scr", (value & 0x40) != 0);
             boolField("video_512x240", (value & 0x80) != 0);
             break;
         case PagingLatch::PEFF7:
@@ -1122,6 +1153,22 @@ bool PortDecoder::IsBeta128Port(uint16_t decodedPort) const
         case 0x005F:
         case 0x007F:
         case 0x00FF:
+            return true;
+        default:
+            return false;
+    }
+}
+
+/// Whether a decoded port value belongs to the General Sound host mailbox
+/// (#33/#B3/#BB) — see the header doc comment for why model decoders gate
+/// these on card presence.
+bool PortDecoder::IsGsPort(uint16_t decodedPort)
+{
+    switch (decodedPort)
+    {
+        case 0x0033:
+        case 0x00B3:
+        case 0x00BB:
             return true;
         default:
             return false;
@@ -1494,6 +1541,50 @@ uint8_t PortDecoder::NotifyFullDecodeIn(uint16_t port, bool& handled, bool& clai
     _lastFullDecodeInValue = result;
 
     return result;
+}
+
+bool PortDecoder::RegisterSelfDecodingDevice(PortDevice* device)
+{
+    bool result = false;
+
+    if (device && std::find(_selfDecodingDevices.begin(), _selfDecodingDevices.end(), device) == _selfDecodingDevices.end())
+    {
+        _selfDecodingDevices.push_back(device);
+        result = true;
+    }
+
+    return result;
+}
+
+void PortDecoder::UnregisterSelfDecodingDevice(PortDevice* device)
+{
+    auto it = std::find(_selfDecodingDevices.begin(), _selfDecodingDevices.end(), device);
+    if (it != _selfDecodingDevices.end())
+    {
+        _selfDecodingDevices.erase(it);
+    }
+}
+
+bool PortDecoder::DispatchSelfDecodingOut(uint16_t rawPort, uint8_t value)
+{
+    for (PortDevice* device : _selfDecodingDevices)
+    {
+        if (device->tryClaimOut(rawPort, value))
+            return true;
+    }
+
+    return false;
+}
+
+bool PortDecoder::DispatchSelfDecodingIn(uint16_t rawPort, uint8_t& outValue)
+{
+    for (PortDevice* device : _selfDecodingDevices)
+    {
+        if (device->tryClaimIn(rawPort, outValue))
+            return true;
+    }
+
+    return false;
 }
 
 /// Pass port IN operation to the peripheral device registered to handle specified port

@@ -645,6 +645,12 @@ std::string ROM::GetROMPageRole(uint8_t page) const
         "+3 Editor ROM", "48K BASIC ROM", "+3DOS ROM", "48K BASIC ROM (copy)"
     };
 
+    // Profi 1024 ROM layout (data/rom/profi.rom): SYS/menu, TR-DOS, 128K + STS monitor, 48K
+    static const char* PROFI_ROLES[] =
+    {
+        "SYS/Menu ROM", "TR-DOS ROM", "128K Editor + STS Monitor ROM", "48K BASIC ROM"
+    };
+
     const CONFIG& config = _context->config;
 
     switch (config.mem_model)
@@ -657,6 +663,9 @@ std::string ROM::GetROMPageRole(uint8_t page) const
         case MM_SCORP:
         case MM_PROFSCORP:
             return (page < 4) ? PENTAGON_SCORP_ROLES[page]
+                              : StringHelper::Format("ROM Page %d", static_cast<int>(page));
+        case MM_PROFI:
+            return (page < 4) ? PROFI_ROLES[page]
                               : StringHelper::Format("ROM Page %d", static_cast<int>(page));
         case MM_PLUS3:
             return (page < 4) ? PLUS3_ROLES[page]

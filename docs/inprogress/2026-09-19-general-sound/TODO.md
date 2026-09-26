@@ -11,7 +11,11 @@ Sound card implementations for ZX Spectrum emulation:
 | Document | Priority | Status |
 |:---------|:---------|:-------|
 | [`gs-tdd.md`](gs-tdd.md) | P0 | Round 2 review fixes applied |
+| [`gs-card-interface.md`](gs-card-interface.md) | — | Phase 0 design snapshot for the card-personalities work (interface contract, LW interpreter design); superseded by the as-built TDD |
+| [`gs-card-personalities-tdd.md`](gs-card-personalities-tdd.md) | P0 | As-built record: `GeneralSoundCard` interface, `SoundChip_GSLightweight` card + `gsmodplayer`, runtime switching, replay algorithm (§7.3), TTD contracts (§5.5); phases 0-4 gated, phase 5 tests 18/18 |
 | [`neogs-tdd.md`](neogs-tdd.md) | P2 | Round 2 review fixes applied |
+| [`verification-findings-and-bugs.md`](verification-findings-and-bugs.md) | — | Playback chain verified against firmware sources; 6 bugs found, BUG-4 (DRC windup), BUG-5 (37.5 kHz interrupt pulse-loss — the steady-tone pitch float) and BUG-6 (NeoGS RAM default bled into the classic card — scorpion-family boot race, stock 128 KB card restored) fixed + tested (2026-09-20); GS enabled on atm3/atm710 — decoder arms + configs + regression tests (§5.1); BUG-10..16 (real-content playback correctness) + render-quality pass (2026-09-22) |
+| [`diagnostics-gaps-proposal.md`](diagnostics-gaps-proposal.md) | — | WebAPI/MCP/CLI/Lua/Python triage gaps found while debugging BUG-10..16 (§1-§5: PROPOSAL, not implemented), a concrete wiring plan for those gaps (§6), and the TTD-specific angle (§7): BUG-17 (TTD use-after-free on GS personality switch, §7.1) IMPLEMENTED + tested 2026-09-22; the TTD restore-report visibility gap (§7.2) is still PROPOSAL |
 | [`materials/README.md`](materials/README.md) | — | Materials index |
 
 ## Design Review Round 1 (2026-09-19)
@@ -93,33 +97,40 @@ Sound card implementations for ZX Spectrum emulation:
 
 ### GS (P0)
 
-- [ ] Create `SoundChip_GeneralSound` class
-- [ ] Embed z80ex lightweight Z80 core
-- [ ] Implement host port handlers (#B3, #BB, #33)
-- [ ] Implement internal port handlers (0x00–0x0B)
-- [ ] MPAG page encoding (rotated, masked)
-- [ ] DAC sample fetch on memory read
-- [ ] Volume calculation with gs_vfx curve
-- [ ] Interrupt generation (37.5 kHz)
-- [ ] Lazy sync on port access
-- [ ] Config integration (`[SOUND] GSType=Z80`)
-- [ ] ROM loading from `data/rom/`
-- [ ] SoundManager integration
-- [ ] TTD serialization (implement TTDSerializable)
-- [ ] TTD registration in RegisterModelPeripherals()
-- [ ] Unit tests
+- [x] Create `SoundChip_GeneralSound` class (LLE, `soundchip_gs.h/.cpp`) +
+      `SoundChip_GSLightweight` (LW, `soundchip_gslw.h/.cpp` + `gsmodplayer.h/.cpp`)
+      behind the shared `GeneralSoundCard` interface (§7.3 personalities work)
+- [x] Embed z80ex lightweight Z80 core (LLE coprocessor)
+- [x] Implement host port handlers (#B3, #BB, #33)
+- [x] Implement internal port handlers (0x00–0x0B)
+- [x] MPAG page encoding (rotated, masked)
+- [x] DAC sample fetch on memory read
+- [x] Volume calculation with gs_vfx curve
+- [x] Interrupt generation (37.5 kHz)
+- [x] Lazy sync on port access
+- [x] Config integration (`[SOUND] GSType=Z80|LW`)
+- [x] ROM loading from `data/rom/`
+- [x] SoundManager integration, incl. runtime personality switching
+      (`switchGeneralSoundCard`)
+- [x] TTD serialization (implement TTDSerializable) - LLE and LW register
+      under separate peripheral ids (`GeneralSound`/`GeneralSoundLightweight`)
+- [x] TTD registration in RegisterModelPeripherals()
+- [x] Unit tests (GS suites across `core/tests/emulator/sound/chips/`,
+      `core/tests/debugger/ttd/`)
 
 ### Automation (GS)
 
-- [ ] WebAPI: implement `getStateAudioGS` handler
-- [ ] WebAPI: implement `postControlAudioGS` handler
-- [ ] WebAPI: fix openapi.json GS stub description
-- [ ] MCP: add `audio_gs` aspect to inspect_state
-- [ ] MCP: add GS actions to emulator_manage
-- [ ] CLI: add `state audio gs` command
-- [ ] Lua: add gs_* functions to lua_emulator.h
-- [ ] Python: add gs_* functions to python_emulator.h
-- [ ] Docs: update command-interface.md
+- [x] WebAPI: implement `getStateAudioGS` handler
+- [x] WebAPI: implement `postControlAudioGS` handler (9 actions incl.
+      `switch_personality`/`dump_module`)
+- [x] WebAPI: fix openapi.json GS stub description
+- [x] MCP: add `audio_gs` aspect to inspect_state
+- [x] MCP: add GS actions to emulator_manage
+- [x] CLI: add `state audio gs` command + `gs` control command (9 actions)
+- [x] Lua: add gs_* functions to lua_emulator.h
+- [x] Python: add gs_* functions to python_emulator.h
+- [ ] Docs: update command-interface.md - still marks `state audio gs` as
+      "🔮 Planned" (line ~2103); stale, not yet corrected
 
 ### NeoGS (P2)
 
@@ -153,3 +164,30 @@ See [`materials/README.md`](materials/README.md) for complete index.
 | GS Schematic | `materials/gs/gs-firmware/sch/GS_schematic.pdf` |
 | NeoGS Differences | `materials/neogs/NEOGS-DIFFERENCES.md` |
 | NeoGS FPGA Source | `materials/neogs/fpgaD/` |
+
+## LW real-content pass (2026-09-22)
+
+- [x] BUG-16: song wrap resets speed/TICKLEN and honours byte 951 (firmware
+      EFXSKP7); cc_wizard's F20 ending no longer loops 4x slow
+- [x] BUG-10..15 (signed samples, volume 0x40, 9xx offset, vibrato/tremolo
+      gating, 5xx portamento, 64 KB position) - see
+      `verification-findings-and-bugs.md`; cross-checked against openmpt123 on
+      the demo's own module (`dump_module` action): waveform corr 0.986
+- [x] LW<->LLE bidirectional module handoff; LW->LLE replay paced per
+      INT period (381 KB: ~6 min -> ~17 s)
+- [x] LW render quality: firmware-style interpolation (SGEN1 midpoints ->
+      linear on the 16.16 fraction) and GENZERO tail easing; >6 kHz share
+      1.37% -> 0.36% offline, live A/B pending re-listen
+- [ ] LW->LLE replay still freezes emulation for the replay duration
+      (~17 s on a 381 KB module) - consider chunking across frames
+
+## TTD + GS personality switching (2026-09-22)
+
+- [x] BUG-17: TTD peripheral registry held a dangling `GeneralSoundCard*`
+      across a personality switch during an active recording (reproduced as
+      a real SIGSEGV) - fixed with `TimeTravelManager::UpdatePeripheral`,
+      3 regression tests added (`ttdgeneralsoundswitch_test.cpp`)
+- [ ] TTD restore-report (`sizeMismatches`/`missingBlobs`/`unclaimedBlobs`)
+      not surfaced on any automation surface - seeking across a
+      personality/module-size boundary silently leaves GS state stale; see
+      `diagnostics-gaps-proposal.md` §7.2

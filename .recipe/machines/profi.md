@@ -1,31 +1,20 @@
 # Recipe: Profi 1024
 
-The Profi — a 1024K clone with its own `#DFFD` paging extension, Profi FDC
-ports, RTC/CMOS and a 512x240 hi-res video mode... on paper. **As of this
-writing the model is creatable but `PortDecoder_Profi` is a near-stub** —
-verify what you actually need before relying on any of the features below.
-
-**Status (verified 2026-09-23 against a live `master` build):** `PROFI` now
-shows `creatable: true` and boots (the missing piece used to be
-`data/configs/profi/unreal.ini`, which now exists). But the port decoder
-itself only implements `#7FFD`-style 128K paging plus a declared-but-inert
-`#DFFD` register — no distinct Profi FDC group (the FDC you see is plain
-Beta128), no RTC/CMOS, no Covox/SoundDrive arbitration, no working hi-res
-mode, and ROM bank selection is inverted versus real hardware. This is a
-**documented, tracked gap**, not a guess — see the defect table (B1-B10) in
-the design doc below before assuming a Profi-specific behavior works.
+The Profi is a 1024K clone with its own `#DFFD` paging extension, a SYS
+(service/menu) ROM it boots into, mode-dependent FDC port sets, RTC/CMOS, a
+Covox DAC and a 512x240 hi-res video mode with a 16-entry palette.
 
 Ground truth:
-[portdecoder_profi.h](../../core/src/emulator/ports/models/portdecoder_profi.h)/[.cpp](../../core/src/emulator/ports/models/portdecoder_profi.cpp)
-(the stub itself — read `Port_DFFD`'s comment, it says outright it's not
-implemented), design doc with the full defect list
-[docs/inprogress/2026-09-21-profi/technical-design.md](../../docs/inprogress/2026-09-21-profi/technical-design.md)
-§2 "Current state (verified against master)".
+[portdecoder_profi.h](../../core/src/emulator/ports/models/portdecoder_profi.h)/[.cpp](../../core/src/emulator/ports/models/portdecoder_profi.cpp),
+MCP resource `unreal://machine/profi` (port tables, ROM pages, video modes),
+design + status docs in
+[docs/inprogress/2026-09-21-profi/](../../docs/inprogress/2026-09-21-profi/)
+(`technical-design.md`, `2026-09-25-profi-reconciliation.md` for the parity
+matrix and open gaps, `TODO.md`).
 
 > **How to use the sections:** [MCP](#mcp-preferred) is preferred —
-> `emulator_manage` creates the machine, `invoke_api` reads the port map
-> and paging (both will show you the stub's actual behavior, not the
-> aspirational one). Use [WebAPI](#webapi) only inside host-side
+> `emulator_manage` creates the machine, `inspect_state` / `invoke_api` read
+> paging, video and ports. Use [WebAPI](#webapi) only inside host-side
 > Python/bash pipelines or when MCP is unavailable (policy:
 > [_common/transports.md](../_common/transports.md)). Shared patterns:
 > [_common/machines.md](../_common/machines.md).
@@ -33,42 +22,43 @@ implemented), design doc with the full defect list
 ## MCP (preferred)
 
 ```text
-emulator_manage {"action":"create","model":"PROFI"}   # 1024K, no ram_size choice - creatable on master now
+emulator_manage {"action":"create","model":"PROFI"}   # 1024K only, boots into the SYS/BIOS menu
 
 emulator_manage {"action":"list_models"}
 #   → models[].name (NOT .id, which is a numeric index) == "PROFI",
 #     creatable:true, available_ram_sizes_kb:[1024]
 
-invoke_api {"method":"GET","path":"/emulator/{id}/ports"}
-#   → today: #7FFD, #DFFD, standard AY/Beta128/mouse rows only - no
-#     Profi-specific FDC/RTC/CMOS/Covox rows exist yet
+inspect_state {"aspects":["paging"]}
+#   → p7FFD + pDFFD with decoded fields extended_ram_bank, sco, worom, cpm,
+#     scr, video_512x240; banks[0].role shows which ROM page is mapped
 
-invoke_api {"method":"GET","path":"/emulator/{id}/state/paging"}
-#   → banks[0].role - check which ROM actually loaded; B1 (ROM select
-#     inverted) means this may not be the ROM you expect
+inspect_state {"aspects":["video"]}
+#   → video_mode = PROFI (256x192) or PROFIHR (512x240, #DFFD bit 7)
+
+invoke_api {"method":"GET","path":"/emulator/{id}/ports"}
+#   → decoded port map: #7FFD, #DFFD, palette #xx7E, AY, Beta128 (gated by
+#     CF_DOSPORTS). RTC/CMOS and Covox are decoded but have no port-map rows yet
 ```
 
-### What's real today vs. what's designed but not built
+### What works / what doesn't
 
-| Claim (design intent) | Actual state on master |
+| Area | State |
 |:--|:--|
-| `#7FFD` + `#DFFD` paging → 64 RAM pages | `#DFFD` is declared (`state.pDFFD`) but **never written** (B5) — extended RAM/hi-res unreachable |
-| Profi's own DOS/FDC port group | Not implemented — `/ports` shows plain Beta128 rows, no Profi-specific decode |
-| RTC/CMOS at EXT-mode ports | Not implemented at all (B9) |
-| Covox/SoundDrive at `#5F`/`#3F` with FDC arbitration | Not implemented (B9) — those addresses are just the Beta128 FDC ports here |
-| 512x240 hi-res video | `M_PROFI`/`R_512_240`/`DetectModeProfi` exist in `Screen`, but `DrawProfi` is a no-op and the raster geometry row is still the plain 256x192 one |
-| TTD paging reversibility (`ttdprofipaging`) | Not registered (B10) — once `#DFFD` is made live, restore will silently lose it until this is fixed |
-| ROM boot order (SYS→DOS→128K→48K) | **Inverted** (B1): `isROM0 ? RM_128 : RM_SOS` is backwards vs. hardware's `7FFD.4=1` selecting the DOS/48K side |
-
-Don't build automation against any row in the right column — check the
-design doc's defect table for current status before relying on it, it's
-being fixed incrementally and this table will go stale.
+| `#7FFD` + `#DFFD` paging, 64 RAM pages, SCO / WOROM / CPM / SCR, lock + DFFD.4 override | implemented |
+| ROM order SYS=0, DOS=1, 128=2, 48=3; reset into SYS; DOS latch via `#3Dxx` M1 trap | implemented |
+| FDC ports: normal `#1F..#7F/#FF`, CP/M `#BF`, extended `#83/#A3/#C3/#E3` + `#3F` | implemented |
+| RTC/CMOS: address `#BF/#FF`, data `#9F/#DF`, EXT mode only (CPM ∧ ROM14) | implemented |
+| Covox: `#5F` left, `#3F` right, only while the disk interface is off the bus | implemented |
+| 512x240 hi-res (DS80), palette `OUT #xx7E` (9-bit), `#FE` read bit 7 (GX0) | implemented |
+| NMI (magic button) → DOS latch while DS80 is off | implemented |
+| TTD: `#DFFD` + palette as `PeripheralId::ProfiPaging` | implemented |
+| IDE (`#xx8B/AB/CB/EB`) | **not implemented** — design: `docs/inprogress/2026-09-21-profi/2026-09-25-ide-hdd-design.md` |
+| Kempston joystick, extended keyboard, Covox extended-mode aliases | not implemented |
+| BIOS menu entries (CP/M, TR-DOS, Sinclair 48/128) | main menu reached; entries not yet verified |
 
 ## WebAPI
 
 ```bash
-curl -s "$BASE/emulator/status" | jq '{branch: .server.git_branch, commit: .server.git_commit}'
-
 curl -s "$BASE/emulator/models" | jq '.models[] | select(.name=="PROFI")'
 #   name is the string id ("PROFI"); .id in this response is an unrelated numeric index
 
@@ -79,35 +69,30 @@ EMU_ID=$(curl -s -X POST "$BASE/emulator/start" -H 'Content-Type: application/js
 # follow-up GET:
 curl -s "$BASE/emulator/$EMU_ID" | jq '{id, model, ram_kb, config_folder}'
 
-# Machine-specific decoded ports (today: no Profi-specific rows, see table above)
+curl -s "$BASE/emulator/$EMU_ID/state/paging" | jq .
+curl -s "$BASE/emulator/$EMU_ID/state/screen/mode" | jq .     # PROFI / PROFIHR
 curl -s "$BASE/emulator/$EMU_ID/ports" | jq '.entries[] | {port, device}'
-
-# Screen mode - will read 256x192/ZX today, not 512x240, until DrawProfi lands
-curl -s "$BASE/emulator/$EMU_ID/state/screen/mode" | jq .
 ```
 
 TTD on Profi follows the standard recipes —
 [recording](../analysis/ttd-recording.md),
-[reverse debugging](../analysis/ttd-reverse-debugging.md) — but per B10
-above, `#DFFD` state is not yet part of the reversible model state.
+[reverse debugging](../analysis/ttd-reverse-debugging.md).
 
 ## Pitfalls
 
-- **The model being `creatable: true` does not mean the machine is
-  Profi-accurate.** It means the config folder exists; the port decoder
-  behind it is still mostly the 128K-clone baseline it started from. Cross
-  check any specific claim against the design doc's defect table (§2)
-  before writing automation against it.
-- **`GET /emulator/{id}/models` uses `.id` for a numeric index, `.name` for
-  the string model id** (`"PROFI"`) — filtering on `.id=="PROFI"` silently
+- **Many ports depend on the mode.** EXT mode = `#DFFD.5` (CPM) and
+  `#7FFD.4` (ROM14) both set; RTC and the extended FDC set only answer then.
+  `#3F`/`#5F` are Covox in normal mode but FDC registers while the DOS latch
+  or CP/M mode puts the disk interface on the bus. Check `pDFFD`/`p7FFD`
+  and the DOS latch before reading a port result.
+- **The machine resets into the SYS ROM with the DOS latch on**, not into
+  48K BASIC — `banks[0].role` right after reset is the SYS page.
+- **`#DFFD` is not Scorpion's `#1FFD`** — different register, different bit
+  meanings.
+- **`GET /emulator/models` uses `.id` for a numeric index, `.name` for the
+  string model id** (`"PROFI"`) — filtering on `.id=="PROFI"` silently
   returns nothing; use `.name`.
 - **`POST /emulator/start`'s response doesn't carry `model`/`ram_kb`** —
-  confirm those with a follow-up `GET /emulator/{id}` instead of expecting
-  them on the create response.
-- **No `ram_size` choice** — the model is 1024K only; sending `ram_size`
-  values other than 1024 is rejected by the RAM bitmask check.
-- **ROM select is inverted (B1)** — don't trust which ROM you think you
-  booted without checking `/state/paging` `banks[0].role`.
-- **`#DFFD` is not Scorpion's `#1FFD`** — different extension register,
-  different bit meanings — moot in practice right now since `#DFFD` isn't
-  functionally wired up yet (B5), but will matter once it is.
+  confirm those with a follow-up `GET /emulator/{id}`.
+- **No `ram_size` choice** — the model is 1024K only; other values are
+  rejected by the RAM bitmask check.

@@ -157,7 +157,6 @@ protected:
     /// region <Legacy file validation (existing test coverage)>
 protected:
     bool validateFile();
-    void parseHardware(uint8_t* data);
     /// endregion </Legacy file validation (existing test coverage)>
 };
 
@@ -179,7 +178,6 @@ public:
     using LoaderTZX::_file;
 
     using LoaderTZX::validateFile;
-    using LoaderTZX::parseHardware;
     using LoaderTZX::Load;
     using LoaderTZX::ParseHeaderAndScan;
     using LoaderTZX::ScanOneBlock;

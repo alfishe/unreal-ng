@@ -44,8 +44,11 @@ std::vector<HudCategoryDescriptor> g_categories = {
     {HudNotificationCategory::AudioTSFM, QObject::tr("TurboSound FM Activity"),
      QObject::tr("Show when TurboSound FM (TSFM) is active"),
      QObject::tr("Audio"), true},  // Default on - TSFM is opt-in hardware
-    {HudNotificationCategory::AudioFM, QObject::tr("FM Synthesis Activity"),
+    {HudNotificationCategory::AudioFM, QObject::tr("Moonsound Activity"),
      QObject::tr("Show when FM synthesis (YM2203 FM part) is active"),
+     QObject::tr("Audio"), true},  // Default on
+    {HudNotificationCategory::AudioGeneralSound, QObject::tr("General Sound Activity"),
+     QObject::tr("Show when the General Sound card is actually producing sound"),
      QObject::tr("Audio"), true},  // Default on
     {HudNotificationCategory::AudioMoonSound, QObject::tr("MoonSound Activity"),
      QObject::tr("Show when MoonSound (OPL4) synthesis is active - 'Moon FM' (FM only), 'Moon PCM' (wave only) or 'Moonsound' (both)"),
@@ -235,6 +238,13 @@ void HudSettingsDialog::createUI()
     scrollArea->setWidgetResizable(true);
     scrollArea->setFrameShape(QFrame::NoFrame);
     scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    // AlwaysOn rather than the default AsNeeded: on platforms with transient/
+    // overlay scrollbars (macOS), AsNeeded still only flashes the scrollbar
+    // briefly on scroll, so it reads as "no scrollbar" even though the
+    // category list is taller than the dialog - a persistent bar is the only
+    // way to make "more content below" visible without the user scrolling
+    // first to discover it.
+    scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
 
     auto* scrollContent = new QWidget(scrollArea);
     auto* scrollLayout = new QVBoxLayout(scrollContent);

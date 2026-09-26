@@ -284,16 +284,17 @@ TEST_F(McpDispatcher_Test, ToolsCall_UnknownTool_IsInvalidParams)
 // resources
 // ===========================================================================
 
-TEST_F(McpDispatcher_Test, ResourcesList_ContainsSixResources)
+TEST_F(McpDispatcher_Test, ResourcesList_ContainsSevenResources)
 {
     Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("resources/list"));
 
     const Json::Value& resources = response["result"]["resources"];
     ASSERT_TRUE(resources.isArray());
-    EXPECT_EQ(resources.size(), 6u);
+    EXPECT_EQ(resources.size(), 7u);
 
     const char* expectedUris[] = {"unreal://keyboard-layout", "unreal://basic-reference", "unreal://z80-isa",
-                                  "unreal://trdos-commands",  "unreal://memory-map",      "unreal://emulator-state"};
+                                  "unreal://trdos-commands",  "unreal://memory-map",      "unreal://emulator-state",
+                                  "unreal://machine/profi"};
     for (const char* uri : expectedUris)
     {
         bool found = false;
@@ -309,6 +310,20 @@ TEST_F(McpDispatcher_Test, ResourcesList_ContainsSixResources)
         }
         EXPECT_TRUE(found) << "resource missing: " << uri;
     }
+}
+
+TEST_F(McpDispatcher_Test, ResourcesRead_MachineProfi_DescribesPortsAndVideoModes)
+{
+    Json::Value params;
+    params["uri"] = "unreal://machine/profi";
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("resources/read", params));
+
+    const Json::Value& contents = response["result"]["contents"];
+    ASSERT_TRUE(contents.isArray());
+    ASSERT_EQ(contents.size(), 1u);
+    const std::string text = contents[0]["text"].asString();
+    EXPECT_NE(text.find("#DFFD"), std::string::npos);
+    EXPECT_NE(text.find("PROFIHR"), std::string::npos);
 }
 
 TEST_F(McpDispatcher_Test, ResourcesRead_EmbeddedResource_ReturnsMarkdownText)

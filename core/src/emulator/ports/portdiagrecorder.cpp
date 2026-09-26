@@ -9,6 +9,8 @@
 #include <fstream>
 #include <sstream>
 
+#include "emulator/sound/covox.h"
+
 // Binary export writes raw PortTraceEvent structs; pin the layout the Python
 // converter (tools/porttrace/porttrace_convert.py, struct "<QIHHHBBBBxx") depends on
 static_assert(sizeof(PortTraceEvent) == 24, "PortTraceEvent must stay 24 bytes (binary trace format v1)");
@@ -868,6 +870,21 @@ PortDeviceId PortDiagnosticRecorder::ResolveDeviceId(uint16_t decodedPort)
         case 0x007F: return PortDeviceId::WD1793_Data;
         case 0x00FF: return PortDeviceId::Beta128_System;
         case 0x00FB: return PortDeviceId::Covox;
-        default:     return PortDeviceId::Custom;
+        default:     break;
     }
+
+    // Covox/SoundDrive is a self-decoding device (PortDevice::tryClaimOut/In,
+    // PortDecoder::DispatchSelfDecodingOut/In): its disposition carries the
+    // RAW port undisturbed (e.g. 0x850F from `OUT (n),A`, A=0x85), not a
+    // canonicalized exact key, so the switch above only ever catches the
+    // literal #FB case. Recognize the other seven SoundDrive addresses by
+    // low-byte mask/match the same way Covox::tryClaimOut() does, so the
+    // trace attributes them correctly instead of falling into "Custom"
+    uint8_t lowByte = decodedPort & 0xFF;
+    bool isMode2 = (lowByte & Covox::PORT_MASK) == Covox::PORT_MATCH;
+    bool isMode1 = (lowByte & Covox::PORT_MASK_MODE1) == Covox::PORT_MATCH_MODE1;
+    if (isMode2 || isMode1)
+        return PortDeviceId::Covox;
+
+    return PortDeviceId::Custom;
 }

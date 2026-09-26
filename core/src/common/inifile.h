@@ -71,8 +71,14 @@ public:
     /// absent. The returned pointer stays valid until this object is modified.
     [[nodiscard]] const char* GetValue(const char* section, const char* key, const char* defaultValue = nullptr) const;
 
-    /// Numeric lookups with SimpleIni-compatible conversion rules (see class comment).
-    [[nodiscard]] long GetLongValue(const char* section, const char* key, long defaultValue = 0) const;
+    /// Numeric lookups with SimpleIni-compatible conversion rules (see class
+    /// comment). parsedToNumber (optional) reports whether the stored value
+    /// converted cleanly - false for a missing/empty key OR any value with
+    /// trailing text. NB: StripInlineComment cuts at the LAST comment marker,
+    /// so an inline comment containing a second ';' survives into the value
+    /// and fails numeric conversion (the silent-default trap warned about at
+    /// the [SOUND] GSRamSize parse in config.cpp).
+    [[nodiscard]] long GetLongValue(const char* section, const char* key, long defaultValue = 0, bool* parsedToNumber = nullptr) const;
     [[nodiscard]] double GetDoubleValue(const char* section, const char* key, double defaultValue = 0) const;
 
     /// All section names in first-seen order (the unnamed root section, when

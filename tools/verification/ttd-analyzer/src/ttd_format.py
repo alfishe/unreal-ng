@@ -185,6 +185,10 @@ PERIPHERAL_ID_NAMES = {
     6: "ScorpionProfROM",
     7: "KempstonMouse",
     8: "AtmPaging",
+    9: "ProfiPaging",
+    10: "MoonSound",
+    11: "GeneralSoundLightweight",
+    12: "NeoGS",
 }
 
 # Mirrors ttd::PeripheralBlobHeader (ttdperipheralregistry.h): peripheralId(u8)
@@ -274,7 +278,12 @@ class ChipsetState:
     hw_turbo_shift_applied: int
     current_z80_frequency_multiplier: int
     next_z80_frequency_multiplier: int
-    reserved: bytes  # 6 bytes of explicit filler, always zero
+    # z80.t at the capture (24-bit LE): the CPU's in-frame T-state - a frame
+    # ends when its last instruction crosses the boundary, so a checkpoint's
+    # CPU sits a few T-states in (the overshoot). Sessions recorded before the
+    # field existed read 0 (it came out of the former 6-byte reserved tail).
+    cpu_t_in_frame: int
+    reserved: bytes  # 3 bytes of explicit filler, always zero
 
 
 @dataclass
@@ -289,7 +298,7 @@ class PageSlot:
     encoding: int              # ENCODING_FULL / ENCODING_XOR_PREV / ENCODING_ZERO
     refcount: int              # informational; reader rebuilds its own
     prev_slot: int             # compact index for XorPrev; NEVER_TOUCHED_SLOT otherwise
-    crc32c_stored: int         # always 0 on write; reader recomputes
+    crc32c_stored: int         # CRC32C of the reconstructed 4 KB, as written by the C++ page store
     payload: bytes             # compressed bytes (or b"" for Zero)
 
 
@@ -311,6 +320,10 @@ class Checkpoint:
     # model-specific ones (e.g. the Scorpion ProfROM plane / page / latches) —
     # so a device absent on this machine simply has no entry.
     peripheral_blobs: Dict[int, bytes] = field(default_factory=dict)
+    # CPU / chipset bytes the header declares but this parser has no field
+    # for (skipped). Non-zero means the file carries state this parser does
+    # not decode - `validate` reports it.
+    unparsed_state_bytes: int = 0
 
     # Backward-compat shim: ``ram_page_refs`` was the v1 name for the per-page
     # ref vector. v2 exposes the flat sub-slot list above; this property returns
@@ -442,6 +455,8 @@ class TtdDump:
     checkpoints: List[Checkpoint] = field(default_factory=list)
     journal: Optional[JournalSection] = None
     coverage: Optional[CoverageIndexSection] = None
+    # Bytes after the last section this parser knows about (should be 0)
+    trailing_bytes: int = 0
     # Lazily-decompressed sub-page cache. Keyed by slot index; populated on
     # first ``get_sub_page`` call for that slot. The cache holds onto the
     # bytes for the lifetime of the TtdDump, which is the right policy for
@@ -480,9 +495,9 @@ class TtdDump:
         """Decompressed 4 KB content for a slot, walking XorPrev chains.
 
         Raises ``TtdFormatError`` on out-of-range indices, payload
-        decompression failures, or CRC32C mismatch (writer's stored CRC is
-        0 on write, so this triggers only if the file was tampered with or
-        truncated post-write).
+        decompression failures, or a CRC32C mismatch between the stored CRC
+        (the C++ writer stores the CRC of the reconstructed 4 KB) and the
+        CRC of what this reader reconstructed.
         """
         if slot_index == NEVER_TOUCHED_SLOT:
             raise TtdFormatError(
@@ -522,21 +537,20 @@ class TtdDump:
                 f"slot {slot_index} has unknown encoding {slot.encoding}"
             )
 
-        # CRC verification. Writer stores 0 (we trust the file); the integrity
-        # we want to verify is that decompression produced the original bytes.
-        # The C++ writer writes 0 in the crc field and recomputes on read,
-        # matching this behavior. If the file was tampered with after writing,
-        # this check catches it.
+        # CRC verification: the C++ writer stores the CRC32C of the
+        # reconstructed 4 KB (timetravelmanager.cpp SerializeSession writes
+        # GetCrc32C), including for Zero pieces. zstd frames carry no checksum
+        # of their own, so this compare is what catches a damaged payload that
+        # still decompresses - and a damaged link poisons every later piece of
+        # its XorPrev chain. Only verified content is cached.
         actual_crc = crc32c(result)
-        # We don't compare against slot.crc32c_stored because v2 writers store
-        # 0 (see ttd_dump_format.h). Instead we surface the computed CRC via
-        # PageSlot for callers that want to cross-check two dumps.
+        if actual_crc != slot.crc32c_stored:
+            raise TtdFormatError(
+                f"slot {slot_index}: CRC32C mismatch (stored "
+                f"{slot.crc32c_stored:#010x}, reconstructed {actual_crc:#010x})"
+            )
 
         self._sub_page_cache[slot_index] = result
-        # Stash the computed CRC on the slot for diagnostic access.
-        # Done outside the cached path above to recompute on every miss.
-        # Use object.__setattr__ to bypass the frozen-dataclass check if any.
-        object.__setattr__(slot, "crc32c_stored", actual_crc)
         return result
 
     def materialize_ram(self, cp: Checkpoint) -> bytes:
@@ -804,7 +818,8 @@ def parse_chipset(r: _Reader) -> ChipsetState:
         hw_turbo_shift_applied=r.u8(),
         current_z80_frequency_multiplier=r.u8(),
         next_z80_frequency_multiplier=r.u8(),
-        reserved=r.take(6),
+        cpu_t_in_frame=int.from_bytes(r.take(3), "little"),
+        reserved=r.take(3),
     )
 
 
@@ -867,7 +882,7 @@ def parse_slot(r: _Reader, index: int) -> PageSlot:
         u8  encoding       (0=Full, 1=XorPrev, 2=Zero)
         u32 refcount       (informational; reader rebuilds its own)
         u32 prev_slot      (compact index; NEVER_TOUCHED_SLOT if encoding != XorPrev)
-        u32 crc32c         (always 0 on write; reader recomputes from decompressed bytes)
+        u32 crc32c         (CRC32C of the reconstructed 4 KB; reader verifies it)
         u32 payload_size
         u8[payload_size]   payload (empty for Zero; zstd-compressed otherwise)
     """
@@ -939,7 +954,9 @@ def parse_checkpoint(
     cpu_start = r._pos
     cpu = parse_cpu(r)
     cpu_read = r._pos - cpu_start
+    unparsed = 0
     if cpu_state_size > 0 and cpu_read < cpu_state_size:
+        unparsed += cpu_state_size - cpu_read
         r.take(cpu_state_size - cpu_read)  # skip padding/new fields
 
     # Parse chipset state - use header size if provided for version compatibility
@@ -947,6 +964,7 @@ def parse_checkpoint(
     chipset = parse_chipset(r)
     chipset_read = r._pos - chipset_start
     if chipset_state_size > 0 and chipset_read < chipset_state_size:
+        unparsed += chipset_state_size - chipset_read
         r.take(chipset_state_size - chipset_read)  # skip padding/new fields
     elif chipset_state_size > 0 and chipset_read > chipset_state_size:
         # Parser reads more than file has - backtrack
@@ -981,6 +999,7 @@ def parse_checkpoint(
         chipset=chipset,
         ram_sub_slots=ram_sub_slots,
         peripheral_blobs=peripheral_blobs,
+        unparsed_state_bytes=unparsed,
     )
 
 
@@ -1011,7 +1030,7 @@ def parse_bytes(data: bytes) -> TtdDump:
         coverage = parse_coverage_section(r)
 
     return TtdDump(header=header, slots=slots, checkpoints=checkpoints,
-                   journal=journal, coverage=coverage)
+                   journal=journal, coverage=coverage, trailing_bytes=r.remaining)
 
 
 def parse_coverage_section(r: _Reader) -> Optional[CoverageIndexSection]:
@@ -1095,6 +1114,80 @@ def parse_journal_section(r: _Reader) -> Optional[JournalSection]:
         section.payloads.append(bytes(r.take(block.compressed_size)))
 
     return section
+
+
+@dataclass
+class WriteRecord:
+    """One decoded write-journal record (TTDWriteRecord)."""
+    global_t: int
+    addr: int
+    is_io: bool
+    m1pc: int
+    value: int
+    phys_page: int
+
+
+def _read_varint(data: bytes, pos: int, end: int) -> Tuple[int, int]:
+    """LEB128 varint as written by the journal's AppendVarint."""
+    result = 0
+    shift = 0
+    while True:
+        if pos >= end or shift > 63:
+            raise TtdFormatError("journal block: truncated varint")
+        b = data[pos]
+        pos += 1
+        result |= (b & 0x7F) << shift
+        if not b & 0x80:
+            return result, pos
+        shift += 7
+
+
+def decode_journal_block(block: JournalBlock, payload: bytes) -> List[WriteRecord]:
+    """Decompress and un-transpose one journal block (inverse of the C++
+    EncodeBlock in ttdwritejournal.cpp). Raises TtdFormatError unless the
+    block decodes to exactly its directory's record count, consumes every
+    byte, and spans exactly the directory's globalT range."""
+    raw = _decompress_zstd(payload, block.raw_size)
+    count = block.record_count
+    gt_bytes, pos = _read_varint(raw, 0, len(raw))
+    base_t, pos = _read_varint(raw, pos, len(raw))
+    addr_start = pos + gt_bytes
+    m1pc_start = addr_start + count * 2
+    value_start = m1pc_start + count * 2
+    page_start = value_start + count
+    io_start = page_start + count
+    end = io_start + (count + 7) // 8
+    if end != len(raw):
+        raise TtdFormatError(
+            f"journal block: columns for {count} records need {end} bytes, "
+            f"block holds {len(raw)}")
+
+    records: List[WriteRecord] = []
+    t = base_t
+    gt_pos = pos
+    for i in range(count):
+        delta, gt_pos = _read_varint(raw, gt_pos, addr_start)
+        if i:
+            t += delta
+        records.append(WriteRecord(
+            global_t=t & ((1 << 40) - 1),
+            addr=raw[addr_start + 2 * i] | (raw[addr_start + 2 * i + 1] << 8),
+            is_io=bool((raw[io_start + i // 8] >> (i & 7)) & 1),
+            m1pc=raw[m1pc_start + 2 * i] | (raw[m1pc_start + 2 * i + 1] << 8),
+            value=raw[value_start + i],
+            phys_page=raw[page_start + i],
+        ))
+    if gt_pos != addr_start:
+        raise TtdFormatError(
+            f"journal block: globalT column is {gt_bytes} bytes, "
+            f"{count} deltas used {gt_pos - pos}")
+    if records and (records[0].global_t != block.first_global_t
+                    or records[-1].global_t != block.last_global_t):
+        raise TtdFormatError(
+            f"journal block: records span globalT {records[0].global_t}.."
+            f"{records[-1].global_t}, directory says {block.first_global_t}.."
+            f"{block.last_global_t}")
+    return records
 
 
 def parse_file(path: str) -> TtdDump:

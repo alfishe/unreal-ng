@@ -6,6 +6,7 @@
 
 #include "common/collectionhelper.h"
 #include "common/stringhelper.h"
+#include "emulator/sound/soundmanager.h"
 #include "cassert"
 
 /// region <Constructors / Destructors>
@@ -87,6 +88,26 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
     // Reset decoded flag before processing
     _lastPortDecoded = false;
 
+    // GS host mailbox (#33/#B3/#BB): decodePortEx resolves these
+    // unconditionally (it stays a pure, card-independent address->rule
+    // mapper - the port tracer's introspection needs #33 to always name the
+    // GS row regardless of live card state), but no port handler is ever
+    // registered for them unless a card is actually fitted ([SOUND] GSType).
+    // Live dispatch steps the GS row aside here instead: #33 also satisfies
+    // the BDI fallback pattern (the same shape as #1F/#3F/#5F/#7F), so
+    // re-deriving it directly from the raw port - rather than just zeroing
+    // decodedPort - lets a card-less Pentagon with TR-DOS active keep #33 as
+    // an access route to the WD1793 track register (#3F), exactly as it
+    // would if the GS rows didn't exist in the table at all. Must run BEFORE
+    // the Beta128/CF_TRDOS gate below so a fallback-resolved FDC port is
+    // still subject to that gate.
+    if (IsGsPort(decodedPort) && !(_context->pSoundManager && _context->pSoundManager->getGeneralSound()))
+    {
+        DecodeResult bdi = TryBdiFallback(port);
+        decodedPort = bdi.port;
+        disp.decodeRuleIndex = bdi.ruleIndex;
+    }
+
     // Beta128 FDC ports (#1F/#3F/#5F/#7F/#FF) are decoded by the disk interface
     // only while the TR-DOS ROM is paged in (CF_TRDOS, maintained by the M1 fetch
     // hook in Z80Step: executing from $3Dxx pages DOS in, leaving the ROM area
@@ -96,10 +117,10 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
     // Matches the original UnrealSpeccy: io.cpp gates the whole WD93 block on
     // CF_DOSPORTS, which memory.cpp set_banks() raises exactly when CF_TRDOS
     // is set for the Pentagon memory model.
-    if (IsBeta128Port(decodedPort) && !(_context->emulatorState.flags & CF_TRDOS))
+    bool betaGateTriggered = IsBeta128Port(decodedPort) && !(_context->emulatorState.flags & CF_TRDOS);
+    if (betaGateTriggered)
     {
         decodedPort = 0x0000; // FDC not on the bus: leave the port undecoded
-        disp.wasBeta128Gated = true;
     }
 
     // Full-decode low-byte claim override (see portdecoder.h): a registered
@@ -150,6 +171,20 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
                 break;
         }
     }
+    else if (DispatchSelfDecodingIn(port, result))
+    {
+        // Self-decoding peripheral (SoundDrive mode 1 or 2 - see
+        // DecodePortOut for the full rationale) claimed the raw port: mode 2
+        // (#F1/#F3/#F9/#FB) never matched the static table at all, mode 1
+        // (#0F/#1F/#4F/#5F) only reaches here once the Beta128 gate above
+        // already declined it
+        decodedPort = port;
+        _lastPortDecoded = true;
+    }
+    else if (betaGateTriggered)
+    {
+        disp.wasBeta128Gated = true;
+    }
     disp.decodedPort = decodedPort;
     disp.wasDecoded = _lastPortDecoded;
 
@@ -189,12 +224,23 @@ void PortDecoder_Pentagon128::DecodePortOut(uint16_t port, uint8_t value, uint16
     PortDecodeDisposition disp;
     disp.decodeRuleIndex = decoded.ruleIndex;
 
+    // Same GS card-presence gate as DecodePortIn (BDI fallback re-derived
+    // from the raw port, must run before the Beta128/CF_TRDOS gate below) -
+    // see its comment.
+    if (IsGsPort(decodedPort) && !(_context->pSoundManager && _context->pSoundManager->getGeneralSound()))
+    {
+        DecodeResult bdi = TryBdiFallback(port);
+        decodedPort = bdi.port;
+        disp.decodeRuleIndex = bdi.ruleIndex;
+    }
+
     // Same TR-DOS gate as DecodePortIn: with the FDC off the bus its registers
     // cannot be written - hardware would silently ignore the OUT
-    if (IsBeta128Port(decodedPort) && !(_context->emulatorState.flags & CF_TRDOS))
+    bool betaGateTriggered = IsBeta128Port(decodedPort) && !(_context->emulatorState.flags & CF_TRDOS);
+    if (betaGateTriggered)
     {
-        decodedPort = 0x0000; // FDC not on the bus: drop the write
-        disp.wasBeta128Gated = true;
+        decodedPort = 0x0000; // FDC not on the bus: drop the write (unless a
+                               // self-decoding peripheral claims it below)
     }
 
     // Full-decode low-byte claim override (see portdecoder.h): a registered
@@ -222,6 +268,25 @@ void PortDecoder_Pentagon128::DecodePortOut(uint16_t port, uint8_t value, uint16
                 PeripheralPortOut(decodedPort, value);
                 break;
         }
+    }
+    else if (DispatchSelfDecodingOut(port, value))
+    {
+        // Self-decoding peripheral (SoundDrive mode 1 or 2) claimed the raw
+        // port. Mode 2 (#F1/#F3/#F9/#FB) is a completely separate address
+        // family from Beta128 and never matched the static table above at
+        // all; mode 1 (#0F/#1F/#4F/#5F - Covox::PORT_*_MODE1) aliases into
+        // the wide Beta128 mirror decode and only reaches here once the gate
+        // above has already decided TR-DOS isn't claiming the address -
+        // matching the reference decoders (pentevo/Unreal io.cpp: `conf.
+        // sound.sd && (port & 0xAF) == 0x0F`; Xpeccy soundrive.c
+        // SDRV_105_1/SDRV_105_2, tried from one shared dispatch point after
+        // each machine's own FDC-precedence gate).
+        decodedPort = port;
+        disp.wasDecoded = true;
+    }
+    else if (betaGateTriggered)
+    {
+        disp.wasBeta128Gated = true;
     }
     disp.decodedPort = decodedPort;
 
@@ -373,10 +438,21 @@ static constexpr PortMatch const pentagonPortMasksMatches[] =
         { 0b1000'0000'0000'0110, 0b0000'0000'0000'0100, 0x7FFD },   // Mem #7FFD        A15=0, A2=1, A1=0 (excludes SOUNDRIVE F1/F9)
         { 0b0000'0000'0000'0001, 0b0000'0000'0000'0000, 0x00FE },   // Sys $00FE        Match value: (0x0000)
 
-        // COVOX/SOUNDRIVE ports #F1,#F3,#F9,#FB - decoded as: bits[7:4]=1111, bit2=0, bit0=1
-        // Mask: 11110101 (0xF5), Match: 11110001 (0xF1)
-        // This decodes all 4 SOUNDRIVE channels, resolved to port 0x00FB for handler
-        { 0b0000'0000'1111'0101, 0b0000'0000'1111'0001, 0x00FB },   // COVOX/SOUNDRIVE
+        // COVOX/SOUNDRIVE (#F1/#F3/#F9/#FB mode 2, #0F/#1F/#4F/#5F mode 1) is
+        // NOT in this table: Covox is a self-decoding PortDevice
+        // (tryClaimOut/In), tried via DispatchSelfDecodingOut/In() from
+        // DecodePortOut/In() once the arms above have declined the raw port.
+        // See Covox::PORT_LEFT_A_MODE1's doc for why it lives outside the
+        // exact-address dispatch map entirely.
+
+        // General Sound host ports (GS design §6): full low-byte decode, any
+        // A15-A8 mirror resolves to the canonical device key (Unreal io.cpp
+        // dispatches the same family: #33 exact, #B3/#BB with bit3 masked).
+        // Must precede the Beta128 row below: #B3/#BB carry bits 7,1,0 - the
+        // same set as its #xxFF mask 0x83
+        { 0b0000'0000'1111'1111, 0b0000'0000'1011'0011, 0x00B3 },   // GS #00B3 data
+        { 0b0000'0000'1111'1111, 0b0000'0000'1011'1011, 0x00BB },   // GS #00BB command/status
+        { 0b0000'0000'1111'1111, 0b0000'0000'0011'0011, 0x0033 },   // GS #0033 reset/NMI
 
         // Beta128 #FF system register: the full low byte must equal 0xFF. The partial
         // A7/A1/A0 mask (0x83) used earlier also claimed #xxF7 - the ATM window port
@@ -419,15 +495,33 @@ DecodeResult PortDecoder_Pentagon128::decodePortEx(uint16_t port)
 
     if (result.port == 0x0000)
     {
-        // Simplified resolving for BDI ports 1F, 3F, 5F, 7F
-        static constexpr const uint8_t portsMask  = 0b1000'0011;    // 0x83 (131)
-        static constexpr const uint8_t portsMatch = 0b0000'0011;    // 0x03 (3)
-        if ((port & portsMask) == portsMatch)
-        {
-            // result = (port & 0x60) | 0x1F;
-            result.port = (port & 0b0110'0000) | 0b0001'1111;
-            result.ruleIndex = PortTraceRule::kBdiFallback;
-        }
+        DecodeResult bdi = TryBdiFallback(port);
+        if (bdi.port != 0x0000)
+            result = bdi;
+    }
+
+    return result;
+}
+
+/// BDI fallback (#1F/#3F/#5F/#7F): a partial decode - port & 0x83 == 0x03 -
+/// resolved to the canonical FDC register via bits 6-5. Extracted out of
+/// decodePortEx so live dispatch (DecodePortIn/Out) can re-derive it on
+/// its own: decodePortEx stays a pure, card-independent address->rule
+/// mapper (the port tracer's introspection needs that address #33 always
+/// names the GS row, rule-attribution-wise, regardless of whether a card
+/// happens to be fitted right now), while live dispatch needs the GS row to
+/// step aside for this fallback when no card claims it - see the GS
+/// card-presence gate in DecodePortIn/Out for why.
+DecodeResult PortDecoder_Pentagon128::TryBdiFallback(uint16_t port)
+{
+    DecodeResult result;
+
+    static constexpr const uint8_t portsMask  = 0b1000'0011;    // 0x83 (131)
+    static constexpr const uint8_t portsMatch = 0b0000'0011;    // 0x03 (3)
+    if ((port & portsMask) == portsMatch)
+    {
+        result.port = (port & 0b0110'0000) | 0b0001'1111;
+        result.ruleIndex = PortTraceRule::kBdiFallback;
     }
 
     return result;

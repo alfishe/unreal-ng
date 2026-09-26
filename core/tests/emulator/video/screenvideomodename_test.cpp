@@ -17,7 +17,7 @@ namespace
 constexpr VideoModeEnum kRealModes[] = {
     M_NUL,     M_ZX48,    M_ZX128,  M_PENTAGON128K, M_PMC,     M_P16,        M_P384,
     M_PHR,     M_TIMEX,   M_TS16,   M_TS256,        M_TSTX,    M_ATM16,      M_ATMHR,
-    M_ATMTX,   M_ATMTL,   M_PROFI,  M_GMX,          M_BRD,     M_SCORPION,
+    M_ATMTX,   M_ATMTL,   M_PROFI,  M_GMX,          M_BRD,     M_SCORPION,   M_PROFIHR,
 };
 }  // namespace
 

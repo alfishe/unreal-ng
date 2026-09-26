@@ -7,10 +7,13 @@
 #include <json/json.h>
 
 #include <bitset>
+#include <filesystem>
+#include <vector>
 
 #include "../emulator_api.h"
 #include "statenode_json.h"
 #include <emulator/state/devicestate.h>
+#include <emulator/sound/chips/gs/soundchip_gs.h>
 
 
 using namespace drogon;
@@ -471,15 +474,593 @@ void EmulatorAPI::getStateAudioBeeper(const HttpRequestPtr& req, std::function<v
 }
 
 /// @brief GET /api/v1/emulator/{id}/state/audio/gs
+/// General Sound card state (GS design §10.1): mailbox flags, MPAG page,
+/// per-channel DAC sample/volume and the coprocessor core. 404 when the
+/// machine has no GS fitted ([SOUND] GSType=Z80 selects the card).
 void EmulatorAPI::getStateAudioGS(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                   const std::string& id) const
 {
+    auto emulator = getEmulatorByIdOrIndex(id);
+
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator not found with ID: " + id;
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    EmulatorContext* context = emulator->GetContext();
+    SoundManager* soundManager = context ? context->pSoundManager : nullptr;
+    GeneralSoundCard* gs = soundManager ? soundManager->getGeneralSound() : nullptr;
+
+    if (!gs)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "General Sound card not fitted (configure [SOUND] GSType=Z80 or LW)";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    const uint8_t status = gs->getStatusRaw();
+
     Json::Value ret;
-    ret["status"] = "not_implemented";
-    ret["description"] =
-        "General Sound (GS) is a sound expansion device that was planned for the ZX Spectrum but never released "
-        "commercially.";
-    ret["note"] = "This endpoint is reserved for future implementation.";
+    ret["device"] = gs->hasCoprocessor() ? "General Sound (Z80 coprocessor @ 12 MHz, 4 x 8-bit DAC)"
+                                         : "General Sound (lightweight mod player, 4 x 8-bit DAC)";
+    ret["implementation"] = gs->implementation() == GSCardImplementation::LLE ? "lle" : "lightweight";
+    ret["enabled"] = true;
+    ret["rom_loaded"] = gs->isROMLoaded();
+    ret["ram_kb"] = static_cast<Json::UInt64>(gs->getRamSizeKB());
+    ret["status"] = status;
+    ret["command_pending"] = (status & 0x01) != 0;  // bit0: ZX command waiting
+    ret["data_pending"] = (status & 0x80) != 0;     // bit7: GS data waiting
+    // Both cards use a single-latch mailbox (2026-09-21 firmware-parity rewrite,
+    // not a FIFO): command_queue_count is always 0 or 1 (mirrors command_pending)
+    // on both personalities. data_queue_count is 0/1 on the LLE (mirrors
+    // data_pending) but on the LW card counts its internal param-ordering
+    // buffer (0..16, soundchip_gslw's PARAM_QUEUE_CAPACITY) - a real backlog
+    // depth, not a bit mirror, because the instant-dispatch LW model buffers
+    // params ahead of the command that consumes them.
+    ret["command_queue_count"] = static_cast<Json::UInt64>(gs->getCommandQueueCount());
+    ret["data_queue_count"] = static_cast<Json::UInt64>(gs->getDataQueueCount());
+    ret["command_from_host"] = gs->getCommandFromHost();
+    ret["data_from_host"] = gs->getDataFromHost();
+    ret["data_to_host"] = gs->getDataToHost();
+    ret["page"] = gs->getMPAG();  // MPAG banking latch (GS design §2.3)
+
+    Json::Value channels(Json::arrayValue);
+    for (int i = 0; i < 4; i++)
+    {
+        Json::Value channel;
+        channel["sample"] = gs->getChannelSample(i);
+        channel["volume"] = gs->getChannelVolume(i);
+        channels.append(channel);
+    }
+    ret["channels"] = channels;
+
+    Json::Value cpu;
+    if (gs->hasCoprocessor())
+    {
+        cpu["pc"] = gs->getCPUReg(regPC);
+        cpu["sp"] = gs->getCPUReg(regSP);
+        cpu["af"] = gs->getCPUReg(regAF);
+        cpu["halted"] = gs->isCPUHalted();
+    }
+    else
+    {
+        cpu["coprocessor"] = false;  // lightweight personality: no registers to show
+    }
+    ret["cpu"] = cpu;
+
+    // ?ram=1 - read-only dump of the fixed RAM window (0x4000-0x7FFF, RAM page 3),
+    // where the firmware keeps its runtime variables (NUMPG #4080 .. MTSTAT #4151).
+    // Dumped through the public TTD serializer; purely diagnostic, no state
+    // changes. LLE-only: the lightweight card has no firmware RAM window.
+    if (req->getParameter("ram") == "1" && gs->hasCoprocessor())
+    {
+        std::vector<uint8_t> blob(gs->TTDStateSize());
+        gs->TTDSaveState(blob.data());
+        const size_t windowOffset = blob.size() - gs->getRamSizeKB() * 1024 + 3 * SoundChip_GeneralSound::PAGE_SIZE;
+
+        static const char kHexDigits[] = "0123456789abcdef";
+        std::string windowHex(SoundChip_GeneralSound::PAGE_SIZE * 2, '0');
+        for (size_t i = 0; i < SoundChip_GeneralSound::PAGE_SIZE; i++)
+        {
+            const uint8_t byte = blob[windowOffset + i];
+            windowHex[i * 2] = kHexDigits[byte >> 4];
+            windowHex[i * 2 + 1] = kHexDigits[byte & 0x0F];
+        }
+        ret["fixed_window_base"] = 0x4000;
+        ret["fixed_window_hex"] = windowHex;
+    }
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/{id}/control/audio/gs
+/// @param body {"action": "reset|reset_card|nmi|send_command|send_data|read_status|read_data|switch_personality",
+///              "value": 0..255 (byte actions), "personality": "z80|lle|lw|lightweight" (switch_personality)}
+/// Actions mirror the host-port semantics - each flushes the GS coprocessor
+/// to the current ZX tact first (GS design §10.1):
+///   reset             - full power-on reset (mailbox, volumes and timing too)
+///   reset_card        - #33 bit7 pulse (CPU/banking/timing only, mailbox survives)
+///   nmi               - #33 bit6 pulse
+///   send_command      - OUT #BB semantics (sets the command-pending flag)
+///   send_data         - OUT #B3 semantics (sets the data-pending flag)
+///   read_status       - IN #BB semantics (returns status | 0x7E)
+///   read_data         - IN #B3 semantics (clears bit7, returns the GS->ZX byte)
+///   switch_personality - runtime GS card personality swap (gs-card-
+///                       personalities design): the host mailbox and activity
+///                       counters survive the handoff; a module captured by
+///                       the lightweight card is replayed through a fresh
+///                       LLE firmware. Requested here, applied at the next
+///                       frame boundary on the emulation thread
+void EmulatorAPI::postControlAudioGS(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                     const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator not found with ID: " + id;
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    EmulatorContext* context = emulator->GetContext();
+    SoundManager* soundManager = context ? context->pSoundManager : nullptr;
+    GeneralSoundCard* gs = soundManager ? soundManager->getGeneralSound() : nullptr;
+
+    if (!gs)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "General Sound card not fitted (configure [SOUND] GSType=Z80 or LW)";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    auto json = req->getJsonObject();
+    if (!json || !json->isMember("action") || !json->get("action", "").isString())
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Missing or invalid 'action' field";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    const std::string action = json->get("action", "").asString();
+    const bool needsValue = (action == "send_command" || action == "send_data");
+
+    int value = 0;
+    if (json->isMember("value"))
+    {
+        if (!json->get("value", 0).isNumeric() || json->get("value", 0).asInt() < 0
+            || json->get("value", 0).asInt() > 255)
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "'value' must be an integer in 0..255";
+
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        value = json->get("value", 0).asInt();
+    }
+    else if (needsValue)
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Action '" + action + "' requires a 'value' field (0..255)";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    // switch_personality selects the target with a string instead of a byte
+    GSTypeKind personalityKind = GSTypeKind::NONE;
+    if (action == "switch_personality")
+    {
+        if (!json->isMember("personality") || !json->get("personality", "").isString())
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "Action 'switch_personality' requires a 'personality' field ('z80'|'lle' or 'lw'|'lightweight')";
+
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+
+        const std::string personality = json->get("personality", "").asString();
+        if (personality == "z80" || personality == "lle")
+        {
+            personalityKind = GSTypeKind::Z80;
+        }
+        else if (personality == "lw" || personality == "lightweight")
+        {
+            personalityKind = GSTypeKind::LW;
+        }
+        else
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "Unknown personality '" + personality + "' (expected z80, lle, lw or lightweight)";
+
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+    }
+
+    Json::Value ret;
+    ret["status"] = "success";
+    ret["action"] = action;
+
+    if (action == "reset")
+    {
+        gs->reset();
+    }
+    else if (action == "reset_card")
+    {
+        gs->resetCard();
+    }
+    else if (action == "nmi")
+    {
+        gs->triggerNMI();
+    }
+    else if (action == "send_command")
+    {
+        gs->sendCommand(static_cast<uint8_t>(value));
+    }
+    else if (action == "send_data")
+    {
+        gs->sendData(static_cast<uint8_t>(value));
+    }
+    else if (action == "read_status")
+    {
+        ret["value"] = gs->readStatus();
+    }
+    else if (action == "read_data")
+    {
+        ret["value"] = gs->readData();
+    }
+    else if (action == "switch_personality")
+    {
+        // HTTP thread: request the frame-boundary switch (the synchronous
+        // switchGeneralSoundCard deletes/recreates the card and belongs to
+        // the emulation thread)
+        ret["personality"] = personalityKind == GSTypeKind::LW ? "lw" : "z80";
+        ret["current"] = gs->implementation() == GSCardImplementation::LLE ? "z80" : "lw";
+        ret["requested"] = soundManager->requestGeneralSoundCardSwitch(personalityKind);
+        ret["note"] = "applied at the next frame boundary";
+    }
+    else if (action == "dump_module")
+    {
+        // Diagnostics: write the last completed COM30..D2 upload (the raw
+        // ProTracker module the host streamed) to a file, so real content
+        // can be rendered offline / cross-checked against a reference player
+        std::vector<uint8_t> bytes;
+        bool playing = false;
+        if (!gs->captureModuleUpload(bytes, playing))
+        {
+            Json::Value error;
+            error["error"] = "Not Found";
+            error["message"] = "No completed module upload to dump (no COM30..D2 stream captured yet)";
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k404NotFound);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        std::string path = json->get("path", "").asString();
+        if (path.empty())
+            path = "gs-module-dump.mod";
+
+        // WebAPI has no per-caller filesystem sandbox, and this is the only
+        // GS action that takes a caller-supplied path: without a check, a
+        // remote client (the server binds 0.0.0.0 by default) could write
+        // the captured module to an arbitrary absolute path or escape the
+        // working directory via "..", i.e. an arbitrary-file-write primitive
+        // dressed up as a diagnostics dump. Restrict to a relative path with
+        // no ".." component - matches the "drop a .mod in the working/scratch
+        // directory" use this action was actually built for.
+        const std::filesystem::path requested(path);
+        bool pathIsSafe = !requested.is_absolute();
+        if (pathIsSafe)
+        {
+            for (const auto& part : requested)
+            {
+                if (part == "..")
+                {
+                    pathIsSafe = false;
+                    break;
+                }
+            }
+        }
+        if (!pathIsSafe)
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "'path' must be a relative path with no '..' component: '" + path + "'";
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+
+        std::ofstream out(path, std::ios::binary);
+        if (!out)
+        {
+            Json::Value error;
+            error["error"] = "Internal Server Error";
+            error["message"] = "Cannot open '" + path + "' for writing";
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        ret["path"] = path;
+        ret["bytes"] = static_cast<Json::UInt64>(bytes.size());
+        ret["playing"] = playing;
+    }
+    else
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] =
+            "Unknown action '" + action +
+            "' (expected reset, reset_card, nmi, send_command, send_data, read_status, read_data, switch_personality or dump_module)";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+namespace
+{
+const char* gsTraceSideToString(GSTraceSide side)
+{
+    switch (side)
+    {
+        case GSTraceSide::Host: return "host";
+        case GSTraceSide::GsInternal: return "gs";
+        case GSTraceSide::DacFetch: return "dac";
+        case GSTraceSide::Interrupt: return "interrupt";
+    }
+    return "unknown";
+}
+}  // namespace
+
+/// @brief GET /api/v1/emulator/{id}/state/audio/gs/porttrace?events=N
+/// Always-on activity counters (proves whether the GS coprocessor is
+/// executing and pushing DAC samples) + trace session status, optionally the
+/// last N buffered events. Same data model as CLI 'gsporttrace' / MCP / Lua /
+/// Python - the GS-coprocessor triage tool (see gsporttrace.h).
+void EmulatorAPI::getStateAudioGSPortTrace(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                           const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator not found with ID: " + id;
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    EmulatorContext* context = emulator->GetContext();
+    SoundManager* soundManager = context ? context->pSoundManager : nullptr;
+    GeneralSoundCard* gs = soundManager ? soundManager->getGeneralSound() : nullptr;
+
+    if (!gs)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "General Sound card not fitted (configure [SOUND] GSType=Z80 or LW)";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    const GSActivityCounters& c = gs->getActivityCounters();
+    Json::Value ret;
+    Json::Value counters;
+    counters["cpu_steps"] = static_cast<Json::UInt64>(c.cpuSteps);
+    counters["interrupts_accepted"] = static_cast<Json::UInt64>(c.interruptsAccepted);
+    counters["interrupt_periods"] = static_cast<Json::UInt64>(c.interruptPeriods);
+    counters["interrupts_coalesced"] = static_cast<Json::UInt64>(c.interruptsCoalesced);
+    counters["nmis_accepted"] = static_cast<Json::UInt64>(c.nmisAccepted);
+    counters["dac_fetches"] = static_cast<Json::UInt64>(c.dacFetches);
+    counters["volume_latch_writes"] = static_cast<Json::UInt64>(c.volumeLatchWrites);
+    counters["host_commands_received"] = static_cast<Json::UInt64>(c.hostCommandsReceived);
+    counters["host_commands_dropped"] = static_cast<Json::UInt64>(c.hostCommandsDropped);
+    counters["host_data_written"] = static_cast<Json::UInt64>(c.hostDataWritten);
+    counters["host_data_dropped"] = static_cast<Json::UInt64>(c.hostDataDropped);
+    counters["host_data_read"] = static_cast<Json::UInt64>(c.hostDataRead);
+    counters["last_dac_fetch_gs_cycle"] = static_cast<Json::Int64>(c.lastDacFetchGsCycle);
+    counters["last_dac_fetch_frame"] = static_cast<Json::UInt64>(c.lastDacFetchFrame);
+    ret["counters"] = counters;
+
+    Json::Value trace;
+    trace["capturing"] = gs->isPortTraceCapturing();
+    trace["armed"] = gs->isPortTraceArmed();
+    trace["event_count"] = static_cast<Json::UInt64>(gs->getPortTraceEventCount());
+    trace["total_produced"] = static_cast<Json::UInt64>(gs->getPortTraceTotalProduced());
+    trace["total_evicted"] = static_cast<Json::UInt64>(gs->getPortTraceTotalEvicted());
+    ret["trace"] = trace;
+
+    Json::Value cpu;
+    if (gs->hasCoprocessor())
+    {
+        cpu["pc"] = gs->getCPUReg(regPC);
+        cpu["halted"] = gs->isCPUHalted();
+    }
+    ret["cpu"] = cpu;
+
+    std::string eventsParam = req->getParameter("events");
+    if (!eventsParam.empty())
+    {
+        size_t count = 50;
+        try { count = static_cast<size_t>(std::stoul(eventsParam)); } catch (...) {}
+        auto events = gs->getPortTraceLast(count);
+
+        Json::Value eventsJson(Json::arrayValue);
+        for (const auto& e : events)
+        {
+            Json::Value ev;
+            ev["timestamp"] = static_cast<Json::Int64>(e.timestamp);
+            ev["frame"] = e.frameNumber;
+            ev["side"] = gsTraceSideToString(e.side);
+            ev["direction"] = e.isOut() ? "out" : "in";
+            ev["port"] = e.port;
+            ev["value"] = e.value;
+            ev["pc"] = e.pc;
+            if (e.side == GSTraceSide::DacFetch)
+                ev["channel"] = e.channel;
+            if (e.side == GSTraceSide::Interrupt)
+                ev["nmi"] = e.isNmi();
+            eventsJson.append(ev);
+        }
+        ret["events"] = eventsJson;
+    }
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/{id}/control/audio/gs/porttrace — body: {"action": "start|stop|pause|resume|clear"}
+void EmulatorAPI::postControlAudioGSPortTrace(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                              const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator not found with ID: " + id;
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    EmulatorContext* context = emulator->GetContext();
+    SoundManager* soundManager = context ? context->pSoundManager : nullptr;
+    GeneralSoundCard* gs = soundManager ? soundManager->getGeneralSound() : nullptr;
+
+    if (!gs)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "General Sound card not fitted (configure [SOUND] GSType=Z80 or LW)";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    auto json = req->getJsonObject();
+    if (!json || !json->isMember("action") || !json->get("action", "").isString())
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Missing or invalid 'action' field";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    const std::string action = json->get("action", "").asString();
+    Json::Value ret;
+    ret["status"] = "success";
+    ret["action"] = action;
+
+    if (action == "start")
+        gs->startPortTrace();
+    else if (action == "stop")
+        gs->stopPortTrace();
+    else if (action == "pause")
+        gs->pausePortTrace();
+    else if (action == "resume")
+        gs->resumePortTrace();
+    else if (action == "clear")
+        gs->clearPortTrace();
+    else
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Unknown action '" + action + "' (expected start, stop, pause, resume or clear)";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
@@ -586,16 +1167,35 @@ void EmulatorAPI::getStateAudioChannels(const HttpRequestPtr& req,
     }
     ret["ay_channels"] = ayChannels;
 
-    // General Sound (not implemented)
+    // General Sound (dedicated detail endpoint: /state/audio/gs)
     Json::Value gs;
-    gs["available"] = false;
-    gs["status"] = "not_implemented";
+    bool hasGS = (soundManager && soundManager->hasGeneralSound());
+    gs["available"] = hasGS;
+    if (hasGS)
+    {
+        GeneralSoundCard* gsChip = soundManager->getGeneralSound();
+        const uint8_t gsStatus = gsChip->getStatusRaw();
+        gs["rom_loaded"] = gsChip->isROMLoaded();
+        gs["ram_kb"] = (int)gsChip->getRamSizeKB();
+        gs["cpu_halted"] = gsChip->isCPUHalted();
+        gs["command_pending"] = (gsStatus & 0x01) != 0;
+        gs["data_pending"] = (gsStatus & 0x80) != 0;
+        Json::Value gsChannels(Json::arrayValue);
+        for (int i = 0; i < 4; i++)
+        {
+            Json::Value channel;
+            channel["name"] = std::string("GS") + std::to_string(i + 1);
+            channel["sample"] = (int)gsChip->getChannelSample(i);
+            channel["volume"] = (int)gsChip->getChannelVolume(i);
+            gsChannels.append(channel);
+        }
+        gs["channels"] = gsChannels;
+    }
     ret["general_sound"] = gs;
 
-    // Covox (not implemented)
+    // Covox (detail endpoint reserved; presence follows the config)
     Json::Value covox;
-    covox["available"] = false;
-    covox["status"] = "not_implemented";
+    covox["available"] = (soundManager && soundManager->hasCovox());
     ret["covox"] = covox;
 
     // Master audio state

@@ -1,7 +1,7 @@
 # MCP Server (Model Context Protocol)
 
 > AI-agent control surface for Unreal-NG: 11 smart tools + 2 router tools,
-> 6 resources, Streamable HTTP with optional SSE progress streaming, and a
+> 7 resources, Streamable HTTP with optional SSE progress streaming, and a
 > zero-dependency stdio bridge for IDE integration.
 
 ## Overview
@@ -131,6 +131,7 @@ smart tool doesn't cover the use case.
 | `unreal://z80-isa` | Z80 instruction set reference (markdown) |
 | `unreal://trdos-commands` | TR-DOS command reference |
 | `unreal://memory-map` | 48K/128K memory map |
+| `unreal://machine/profi` | Profi 1024: ROM pages, ports, hi-res mode, limitations |
 | `unreal://emulator-state` | live instance overview (dynamic — fetched per read) |
 
 ## Protocol details

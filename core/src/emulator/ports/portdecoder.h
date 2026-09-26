@@ -267,6 +267,19 @@ public:
     /// which reads the device ID and the wave RAM window at #7F right after
     /// arming FM2 reg 05). The default keeps the legacy-priority rule (R6).
     virtual bool portDeviceClaimsRead(uint16_t) { return false; }
+
+    /// Self-decoding hook for devices whose address pattern can't be
+    /// expressed as a single exact key in PortDecoder's dispatch map -
+    /// e.g. Covox/SoundDrive, which recognize several bus addresses via a
+    /// mask/match rule that also aliases other peripherals (Beta128 FDC) on
+    /// some models. PortDecoder::DispatchSelfDecodingOut/In() tries every
+    /// registered self-decoding device, in registration order, for any raw
+    /// port no exact match (or higher-priority model-specific decode)
+    /// claimed. Returns true when this device recognized and handled the
+    /// raw port; the default declines, so exact-match-only devices (WD1793,
+    /// AY, memory latches, ...) never need to implement these.
+    virtual bool tryClaimOut(uint16_t /*rawPort*/, uint8_t /*value*/) { return false; }
+    virtual bool tryClaimIn(uint16_t /*rawPort*/, uint8_t& /*outValue*/) { return false; }
 };
 
 typedef uint8_t (PortDevice::* PortDeviceInMethod)(uint16_t port);              // Class method callback
@@ -402,6 +415,14 @@ protected:
     uint16_t _lastFullDecodeInPort = 0x0000;
     uint8_t _lastFullDecodeInValue = 0xFF;
 
+    // Self-decoding devices (see PortDevice::tryClaimOut/In) - tried, in
+    // registration order, for any raw port no exact-match device or
+    // higher-priority model-specific decode claimed first. Kept separate
+    // from _portDevices because these devices recognize a MASK/MATCH
+    // pattern across several raw addresses, not one exact key (see
+    // Covox: mode-1/mode-2 SoundDrive ports)
+    std::vector<PortDevice*> _selfDecodingDevices;
+
     // Semantic tags passed via the RegisterPortHandler overload, so dynamic
     // devices land in the tag collections instead of the anonymous fallback
     // row (port-tags-paging design §4.2)
@@ -482,6 +503,17 @@ public:
     /// set is identical on every Beta-128 machine, so the predicate lives on
     /// the base class and is shared by the model decoders for session gating
     bool IsBeta128Port(uint16_t decodedPort) const;
+
+    /// Whether a decoded port value belongs to the General Sound host mailbox
+    /// (#33 reset/NMI, #B3 data, #BB command/status). Shared the same way as
+    /// IsBeta128Port, for model decoders to gate these rows on whether a GS
+    /// card is actually fitted ([SOUND] GSType=Z80|LW) - without the gate, a
+    /// card-less machine still resolves these ports to their canonical form
+    /// and PeripheralPortIn/Out then finds no registered device and logs a
+    /// warning on every access, which GS presence-probing software (the #B3/
+    /// #BB/#33 read/write pattern is the documented detection method) hits on
+    /// every probe.
+    bool IsGsPort(uint16_t decodedPort);
 
     /// region <Port trace (runtime feature "porttrace")>
 
@@ -715,6 +747,21 @@ public:
     /// bus); an otherwise-undecoded port is driven by the observer too
     /// (floating bus suppressed for it).
     uint8_t NotifyFullDecodeIn(uint16_t port, bool& handled, bool& claimsBus);
+
+    /// Self-decoding device registration (see PortDevice::tryClaimOut/In).
+    /// A device may only be registered once; unregister is a no-op if absent
+    bool RegisterSelfDecodingDevice(PortDevice* device);
+    void UnregisterSelfDecodingDevice(PortDevice* device);
+
+    /// Tries every registered self-decoding device, in registration order,
+    /// against the raw port. Model DecodePortIn/Out() implementations call
+    /// this as their final fallback - after exact-match dispatch and any
+    /// higher-priority model-specific decode (e.g. Beta128 FDC precedence)
+    /// have already declined the address - and use the return value to
+    /// distinguish "a self-decoding peripheral claimed this" from "truly
+    /// unmapped" for port-trace disposition. Stops at the first claim.
+    bool DispatchSelfDecodingOut(uint16_t rawPort, uint8_t value);
+    bool DispatchSelfDecodingIn(uint16_t rawPort, uint8_t& outValue);
     
     /// Unlock port 7FFD paging for snapshot loading or debug sessions
     /// Clears both the emulatorState.p7FFD lock bit AND the hardware latch (_7FFD_Locked)

@@ -1,101 +1,144 @@
 # TTD fixture corpus
 
-Recorded `.ttd` sessions used by the offline tooling — the analyzer
-(`tools/verification/ttd-analyzer/`), the codec PoC
-(`tools/poc/01-ttd-compression/`) and the PoC GUI
-(`tools/poc/010-ttd-gui/`). No C++ test reads these files; the dump-format
-tests generate their own fixture, so a stale corpus breaks tools, not CI.
+Recorded `.ttd` sessions from real emulator runs. They are read by:
 
-## Provenance
+- the C++ test `TTD_Corpus_Test` (`core/tests/debugger/ttd/ttdcorpus_test.cpp`).
+  It loads every fixture here into an instance that already holds its own
+  TurboSound FM history, restores several checkpoints, checks that every
+  device matches the recording byte for byte, and replays 25 frames to check
+  the replay matches the recording exactly;
+- the analyzer (`tools/verification/ttd-analyzer/`);
+- the codec PoC (`tools/poc/01-ttd-compression/`) and the PoC GUI
+  (`tools/poc/010-ttd-gui/`).
 
-Every fixture must be reproducible from a named starting point. A recording of
-"whatever the instance happened to be running" is worthless as a fixture: two
-of these once captured the program left over from the previous recording and
-rendered identical screens.
+The fixtures are written by the production writer, so they are tied to the
+on-disk format: **a format change makes them stale, and `TTD_Corpus_Test`
+fails.** Don't convert old files; re-record them as described below.
 
-| Fixture | Model | Starting point | Settle |
+All paths in this file are relative to the project root.
+
+## Corpus
+
+| Fixture | Model | Starting point | Settle frames |
 |---|---|---|---|
-| `idle_session.ttd` | Pentagon 128K | cold boot, no snapshot — the recording *is* the boot, ending at the 128K menu | n/a |
-| `active_demo.ttd` | Pentagon 128K | `testdata/loaders/sna/Dizzy Y.sna` (the recorder's default) | **none** — record immediately from the loaded state |
-| `demo_7threality.ttd` | Pentagon 128K | `testdata/loaders/sna/7threality.sna` | default |
-| `demo_across-the-edge-second.ttd` | Pentagon 128K | `testdata/loaders/sna/across-the-edge-second.sna` | default |
+| `idle_session.ttd` | Pentagon 128K | cold boot, no snapshot: the recording is the boot, ending at the 128K menu | 0 |
+| `active_demo.ttd` | Pentagon 128K | `testdata/loaders/sna/Dizzy Y.sna` | 0 |
+| `demo_7threality.ttd` | Pentagon 128K | `testdata/loaders/sna/7threality.sna` | 100 |
+| `demo_across-the-edge-second.ttd` | Pentagon 128K | `testdata/loaders/sna/across-the-edge-second.sna` | 100 |
+| `tsfm_tech_support.ttd` | Pentagon 128K | `testdata/sound/tsfm/tech_support.sna` (TurboSound FM music) | 0 |
 
-`active_demo` is deliberately recorded with **zero settle frames**. Loading the
-snapshot on a paused machine and starting the recording at that exact state is
-what makes the capture repeatable — let the program run first and the contents
-depend on how many frames elapsed before recording began.
+Each fixture records 300 frames (301 checkpoints). The table lives in code as
+`CORPUS` in `tools/verification/ttd-analyzer/scripts/record_fixtures.py`. To
+add or change a fixture, edit that list and this table together.
 
-The snapshot for `active_demo` is the one hardcoded in the recorder's default
-set, so `record_fixtures.py` with no `--snapshot` reproduces both default
-fixtures exactly. Change it in one place (the `fixtures` list in the script) if
-it ever needs to differ, not by passing a different snapshot by hand.
+## Re-recording (after a format change)
 
-## Re-recording
+1. Build, then start the desktop app with the WebAPI on port 8090. You don't
+   need to create an instance: the recorder creates a fresh one for each
+   fixture and deletes it afterwards, and leaves any other instances alone.
 
-The fixtures are produced by the same writer production uses, so they are
-coupled to the on-disk format: **any format change invalidates them.** The
-reader refuses a file whose `cpu_state_size` / `chipset_state_size` /
-`schema_version` disagree with the running build, and the Python parser fails
-with a structural error rather than silently misparsing. When that happens,
-re-record — do not attempt to convert.
+   ```bash
+   ninja -C cmake-build-agent-release
+   ./cmake-build-agent-release/bin/unreal-qt.app/Contents/MacOS/unreal-qt &   # macOS
+   ```
 
-Start an emulator with the WebAPI enabled. The recorder drives whatever
-instance is already running and does not switch models, so make sure it is the
-right one — create it explicitly if in doubt:
+2. Re-record the whole corpus into `testdata/ttd/`:
+
+   ```bash
+   python3 tools/verification/ttd-analyzer/scripts/record_fixtures.py
+   ```
+
+   Or re-record a single fixture:
+
+   ```bash
+   python3 tools/verification/ttd-analyzer/scripts/record_fixtures.py --only tsfm_tech_support
+   ```
+
+3. Validate the files and run the C++ gate:
+
+   ```bash
+   for f in testdata/ttd/*.ttd; do tools/verification/ttd-analyzer/run.sh validate "$f"; done
+   ./cmake-build-agent-release/bin/core-tests --gtest_filter='TTD_Corpus_Test.*'
+   ```
+
+The script can run from any directory. It resolves relative paths from the
+project root and passes absolute paths to the emulator, so the emulator must
+run on the same machine.
+
+### What the recorder fixes, and why
+
+A fixture is only useful if re-recording it gives the same file. So that it
+does, the recorder pins everything that would otherwise depend on the
+machine or on what ran before:
+
+- **A fresh instance per fixture.** An instance that has already run something
+  keeps state such as the FM chips' internal counters, and a new recording
+  would pick that up.
+- **Core audio rate 44100 Hz, `soundhq` and `screenhq` on.** Without this, the
+  app follows the host's audio device (often 48 kHz). SSG tick scheduling
+  depends on the output rate and the decimator mode, so a replay is exact
+  only with the same rate and mode as the recording. `TTD_Corpus_Test` runs
+  with these same settings.
+- **Length in emulated frames, not wall-clock time.** Settling and recording
+  both use `run_frames`, because the emulator doesn't run at 50 Hz. Unthrottled
+  it once ran ~9x realtime and turned a nominal 6-second recording into 2714
+  frames.
+
+After a re-record, 4 of the 5 files are byte-identical to the previous
+recording except for the capture timestamp (`captured_at_unix_ms`).
+`idle_session` is the exception: power-on RAM is deliberately randomized
+(`Memory::RandomizeMemoryContent`), so its RAM contents differ from one
+recording to the next. Its checkpoints, CPU state and device blobs still
+match.
+
+### Ad-hoc recordings
+
+To make a one-off recording from another snapshot, put it in `scratch/`, not
+here:
 
 ```bash
-curl -s -X POST http://localhost:8090/api/v1/emulator/start \
-  -H "Content-Type: application/json" -d '{"model":"PENTAGON"}'
+python3 tools/verification/ttd-analyzer/scripts/record_fixtures.py \
+    --out-dir scratch --snapshot "testdata/loaders/sna/Dizzy Y.sna" --frames 600 --name dizzy
 ```
 
-```bash
-R=tools/verification/ttd-analyzer/scripts/record_fixtures.py
+`--emulator-id <id>` records on an existing instance (after a reset) instead of
+a fresh one. That's handy for debugging, but the result is not reproducible.
 
-# The default set: idle_session (no snapshot) + active_demo (Dizzy Y.sna).
-# --settle-frames 0 keeps active_demo repeatable.
-python3 $R --out-dir "$(pwd)/testdata/ttd" --settle-frames 0
-
-# The two demo captures. --name only takes effect together with --snapshot.
-python3 $R --out-dir "$(pwd)/testdata/ttd" --name demo_7threality \
-    --snapshot "testdata/loaders/sna/7threality.sna"
-python3 $R --out-dir "$(pwd)/testdata/ttd" --name demo_across-the-edge-second \
-    --snapshot "testdata/loaders/sna/across-the-edge-second.sna"
-```
-
-Paths are resolved by the **emulator**, not by the script: both the snapshot
-path and the output path are interpreted on the machine running the emulator.
-
-The recorder drives the recording length by **checkpoint count, not wall
-clock**. The emulator is not obliged to run at 50 Hz — unthrottled it has run
-~9x realtime, which turned a nominal "6 second" recording into 2714 frames
-instead of 300 and left the fixtures unreproducible.
-
-## Verifying a fixture
+## Inspecting a fixture
 
 ```bash
-cd tools/verification/ttd-analyzer
-pip install -r requirements.txt          # zstandard is required to read page slots
-python3 -m src.main info     ../../../testdata/ttd/idle_session.ttd
-python3 -m src.main validate ../../../testdata/ttd/idle_session.ttd
+pip install -r tools/verification/ttd-analyzer/requirements.txt   # zstandard is required
+tools/verification/ttd-analyzer/run.sh info     testdata/ttd/tsfm_tech_support.ttd
+tools/verification/ttd-analyzer/run.sh validate testdata/ttd/tsfm_tech_support.ttd
 ```
 
 `info` prints the header, including the struct sizes to compare against the
-current build. A fixture recorded before a format amendment shows its old
-sizes there, which is the quickest way to tell a stale fixture from a corrupt
-one.
+current build. A stale fixture shows its old sizes there, which is the quickest
+way to tell a stale fixture from a corrupt one.
+
+`validate` fails if any byte of the file is left unrecognized:
+
+- bytes after the last section;
+- unparsed CPU or chipset fields;
+- an unknown device ID or a device blob that won't decode;
+- a journal block that doesn't decode to exactly its directory entry (record
+  count, size, time range).
+
+It also decodes every referenced memory page and checks its checksum. The
+write journal has no checksum of its own, so a corrupt zstd frame is caught
+but a flipped byte that still decodes is not.
 
 ## Status
 
-Re-recorded 2026-09-12 against the model-agnostic checkpoint format (chipset
-state 168 → 120 bytes, `rom_signature` in the header, the fixed per-device blob
-slots replaced by the `TTDPeripheralRegistry` blob map). All four parse and
-carry `cpu_state_size = 48`, `chipset_state_size = 120`, and the four core
-device blobs (TurboSound / BetaDisk / Tape / Covox) through the registry.
+Re-recorded 2026-09-25 (all five; `tsfm_tech_support` is new). Header:
+`cpu_state_size = 48`, `chipset_state_size = 120`. Changes since the previous
+recording:
 
-Still valid after the 2026-09-12 CPU-clock amendment (`hw_turbo_shift`,
-`hw_turbo_shift_applied` and the two frequency multipliers). Those four bytes
-were taken out of `TTDChipsetState::reserved`, so both struct sizes and
-`schema_version` are unchanged and the fixtures parse as before — they simply
-carry zeros there, which the restore path reads as "no turbo, multiplier 1".
-Re-record only when a change moves a size or the schema version; this one did
-neither.
+- `TTDChipsetState` now stores the CPU's T-state within the frame
+  (`cpu_t_in_frame`, 3 bytes taken from `reserved`). A restore puts the CPU back
+  exactly where the capture was taken, not at T 0. The struct size didn't
+  change, and older files read 0 there.
+- SSG register writes are now timed. The AY blob grew from 57 to 73 bytes (the
+  registers the generators actually use are appended). The TurboSound FM blob
+  is v4, 2000 bytes: the render-cursor offset plus both chips' queues of
+  pending timed writes.

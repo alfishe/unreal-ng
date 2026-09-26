@@ -524,13 +524,31 @@ TEST_F(PortTrace_Test, ActivitySummaryCountsBeta128Gated)
 
 TEST_F(PortTrace_Test, DecodePortExRuleAttribution)
 {
-    // Rule indices follow the Pentagon decode table order
+    // Rule indices follow the Pentagon decode table order. The General
+    // Sound rows (#B3/#BB/#33, GS design §6) sit between #FE and the
+    // Beta128 system row: #B3/#BB carry bits 7,1,0 - the same set as the
+    // #xxFF mask 0x83 - so they must be matched earlier in the table.
     EXPECT_EQ(_portDecoder->decodePortEx(0xFFFD).ruleIndex, 0);
     EXPECT_EQ(_portDecoder->decodePortEx(0xBFFD).ruleIndex, 1);
     EXPECT_EQ(_portDecoder->decodePortEx(0x7FFD).ruleIndex, 2);
     EXPECT_EQ(_portDecoder->decodePortEx(0x00FE).ruleIndex, 3);
-    EXPECT_EQ(_portDecoder->decodePortEx(0x00F1).ruleIndex, 4);  // SOUNDRIVE -> COVOX
-    EXPECT_EQ(_portDecoder->decodePortEx(0x00FF).ruleIndex, 5);  // Beta128 system
+    EXPECT_EQ(_portDecoder->decodePortEx(0x00B3).ruleIndex, 4);  // GS data
+    EXPECT_EQ(_portDecoder->decodePortEx(0x00BB).ruleIndex, 5);  // GS command/status
+    EXPECT_EQ(_portDecoder->decodePortEx(0x0033).ruleIndex, 6);  // GS reset/NMI
+    EXPECT_EQ(_portDecoder->decodePortEx(0x00FF).ruleIndex, 7);  // Beta128 system
+
+    // GS rows decode the low byte only - a mirror resolves to the canonical
+    // device key with the same rule attribution
+    DecodeResult gsMirror = _portDecoder->decodePortEx(0x02BB);
+    EXPECT_EQ(gsMirror.port, 0x00BB);
+    EXPECT_EQ(gsMirror.ruleIndex, 5);
+
+    // SOUNDRIVE/Covox is not in the static table at all - it's a
+    // self-decoding device (Covox::tryClaimOut/In, PortDecoder::
+    // DispatchSelfDecodingOut/In), tried from DecodePortOut/In()'s fallback
+    // once the table above has declined the raw port
+    EXPECT_EQ(_portDecoder->decodePortEx(0x00F1).port, 0x0000);
+    EXPECT_EQ(_portDecoder->decodePortEx(0x00FB).port, 0x0000);
 
     // Regression (nedodem2.trd Pentagon boot wedge): the Beta128 #FF rule needs the
     // full low byte. #xxF7 - the ATM window / TR-DOS 5.04T probe port - must stay
@@ -541,7 +559,7 @@ TEST_F(PortTrace_Test, DecodePortExRuleAttribution)
     EXPECT_EQ(probe.ruleIndex, PortTraceRule::kNoMatch);
     EXPECT_EQ(_portDecoder->decodePortEx(0x00F7).port, 0x0000);
     // The classic OUT (#FF),A mirror form still decodes (A rides A15-A8)
-    EXPECT_EQ(_portDecoder->decodePortEx(0x18FF).ruleIndex, 5);
+    EXPECT_EQ(_portDecoder->decodePortEx(0x18FF).ruleIndex, 7);
 
     // BDI fallback attribution
     DecodeResult bdi = _portDecoder->decodePortEx(0x001F);
@@ -553,8 +571,10 @@ TEST_F(PortTrace_Test, DecodePortExRuleAttribution)
     EXPECT_EQ(none.port, 0x0000);
     EXPECT_EQ(none.ruleIndex, PortTraceRule::kNoMatch);
 
-    // decodePort() delegation stays consistent with decodePortEx()
-    EXPECT_EQ(_portDecoder->decodePort(0x00F1), 0x00FB);
+    // decodePort() delegation stays consistent with decodePortEx() - SOUNDRIVE
+    // ports are outside the static table, so neither resolves them
+    EXPECT_EQ(_portDecoder->decodePort(0x00F1), 0x0000);
+    EXPECT_EQ(_portDecoder->decodePort(0x00FB), 0x0000);
     EXPECT_EQ(_portDecoder->decodePort(0x0001), 0x0000);
 }
 
@@ -580,9 +600,10 @@ TEST_F(PortTrace_Test, ExportAllFormats)
     ASSERT_EQ(recorder->eventCount(), 3u);
 
     PortTraceSessionInfo info = _portDecoder->getPortTraceSessionInfo();
-    EXPECT_EQ(info.decodeRules.size(), 6u) << "Pentagon decode table must be embedded";
+    EXPECT_EQ(info.decodeRules.size(), 8u) << "Pentagon decode table (incl. GS rows) must be embedded";
     EXPECT_EQ(info.decodeRules[0].port, 0xFFFD);
     EXPECT_EQ(info.decodeRules[2].port, 0x7FFD);
+    EXPECT_EQ(info.decodeRules[5].port, 0x00BB) << "GS command/status row";
 
     // All three formats write successfully; the offline converter
     // (tools/porttrace/porttrace_convert.py) is validated against these exact artifacts
@@ -606,7 +627,7 @@ TEST_F(PortTrace_Test, ExportAllFormats)
     memcpy(&ruleCount, header + 18, 2);
     EXPECT_EQ(version, 1);
     EXPECT_EQ(count, 3u);
-    EXPECT_EQ(ruleCount, 6);
+    EXPECT_EQ(ruleCount, 8);
 }
 
 TEST_F(PortTrace_Test, FilterDescription)

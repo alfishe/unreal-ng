@@ -14,6 +14,9 @@
 #include "emulator/sound/covox.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/chips/soundchip_turbosound.h"
+#include "emulator/sound/chips/gs/soundchip_gs.h"
+#include "emulator/sound/chips/gs/soundchip_gslw.h"
+#include "emulator/platform.h"  // GSTypeKind (personality switching)
 #include "stdafx.h"
 
 class EmulatorContext;
@@ -86,6 +89,10 @@ protected:
     // Table-tested in Multirate_Test.CoreRateResolution.
     size_t targetCoreRate() const;
 
+    /// Personality factory shared by Init and switchGeneralSoundCard (GS
+    /// design §5.1); nullptr for kinds that map to no device (NONE/NGS)
+    GeneralSoundCard* createGeneralSoundCard(GSTypeKind kind) const;
+
     // Live core-rate change request (device reroute, pin set/release).
     // Written from any thread via requestCoreRate(); APPLIED only at the next
     // frame boundary on the emulation thread (handleFrameStart), which owns
@@ -112,11 +119,26 @@ protected:
     Beeper* _beeper = nullptr;
     ITurboSoundDevice* _turboSound = nullptr;  // TurboSound slot (legacy AY pair today, TSFM later - design §3.3)
     Covox* _covox = nullptr;
+    GeneralSoundCard* _gs = nullptr;  // General Sound slot ([SOUND] GSType=Z80|LW - any personality, GS design §5.1)
 #ifdef UNREALNG_HAVE_OPL4
     SoundChip_Moonsound* _moonsound = nullptr;
 #endif
     // SoundChip_SAA1099;
-    // SoundChip_GeneralSound;
+
+    // Pending GS personality switch request (gs_lightweight feature,
+    // WebAPI action=switch_personality): the switch deletes and recreates
+    // the card, so like the core-rate change it is only APPLIED at the
+    // frame boundary on the emulation thread. 0xFF = none pending (a
+    // GSTypeKind value otherwise)
+    std::atomic<uint8_t> _pendingGSSwitch{0xFF};
+
+    // Last gs_lightweight feature state seen by UpdateFeatureCache. The
+    // feature drives a personality switch only on an actual TRANSITION
+    // (on -> lightweight, off -> configured [SOUND] GSType): the cache
+    // refresh itself fires on every FeatureManager notification (any
+    // feature), and re-requesting the configured personality there would
+    // silently clobber a runtime WebAPI switch_personality override
+    bool _gsLightweightFeatureWasOn = false;
 
     // Audio character chains (punch enhancement + room simulation)
     // Separate chains per AY chip to preserve independent DSP state
@@ -194,6 +216,13 @@ protected:
     static constexpr double DRC_KP = 0.08;
     static constexpr double DRC_KI = 0.0008;
     static constexpr double DRC_EMA_ALPHA = 0.05;
+
+    // Error deadband (fraction of the setpoint, +-0.8 ms at the 40 ms
+    // target): occupancy ripple inside the band is measurement noise - the
+    // production-burst/drain sawtooth and device-callback quantization -
+    // not real drift. Feeding it to the controller only modulates playback
+    // pitch (the trim IS cents) without moving the plant anywhere useful.
+    static constexpr double DRC_ERR_DEADBAND = 0.02;
     double _drcOccFiltered = -1.0;  // <0 = uninitialized (seeded on first sample)
     double _drcErrIntegral = 0.0;
 
@@ -253,6 +282,16 @@ public:
     void reset();
     void mute();
     void unmute();
+    /// Emulator paused: no more handleFrameEnd calls will arrive until
+    /// resumed, so a device mid-playback at the moment of pause would
+    /// otherwise keep reporting "active" (buffer non-silent, HUD nudge / UI
+    /// LED lit) for as long as the pause lasts - nothing left to naturally
+    /// clear it. Forwards to the GS card (see GeneralSoundCard::
+    /// onEmulatorPaused for why GS specifically needs the explicit push) and
+    /// mirrors the result onto the device registry row so a UI that reads
+    /// devices() directly (audiosettingswidget) sees it immediately, not
+    /// only on the next frame that never comes until resume.
+    void onEmulatorPaused();
 
     /// Force low-quality DSP while turbo mode is on (audio is muted anyway, and the
     /// HQ FIR / oversampling chain is pure CPU cost at 50x speed). The `soundhq`
@@ -268,6 +307,17 @@ public:
     /// level state is still tracked so program-visible behaviour is unchanged.
     /// Evaluated once per frame in handleFrameStart.
     bool isSynthesisSuppressed() const { return _synthesisSuppressed; }
+
+    /// TTD restore of a device that carries its own copy of the sample phase
+    /// (same units as _sampleAccumulator - SoundChip_TurboSoundFM restores it
+    /// for generator determinism): take the same position, so the frame's
+    /// sample count and the device's rendered count stay equal. Left behind,
+    /// the mixer kept its pre-seek phase and read one never-rendered (zero)
+    /// sample every few frames for the rest of the session
+    void adoptSamplePhase(uint64_t tstateRatePhase)
+    {
+        _sampleAccumulator = tstateRatePhase;
+    }
 
     const AudioFrameDescriptor& getAudioBufferDescriptor();
     Beeper& getBeeper();
@@ -295,6 +345,30 @@ public:
     bool hasCovox() const { return _covox != nullptr; }
     Covox* getCovox() const { return _covox; }
 
+    // General Sound access (automation, TTD, tests - M8 pattern). The slot is
+    // personality-agnostic: LLE (Z80+firmware) or LW (in-tree mod player) both
+    // arrive as GeneralSoundCard (design: docs/inprogress/2026-09-19-general-sound)
+    bool hasGeneralSound() const { return _gs != nullptr; }
+    GeneralSoundCard* getGeneralSound() const { return _gs; }
+
+    /// Swap the General Sound card's personality at runtime (design:
+    /// gs-card-interface.md §Runtime switching). The forward mailbox
+    /// (queues, latches, pending flags) and the activity counters survive
+    /// the handoff; a completed module upload captured by the lightweight
+    /// card is replayed through a fresh LLE firmware (v1 limit: LLE -> LW
+    /// stops playback, the module lives inside firmware RAM). The GS mixer
+    /// slot and device registry entry are shared - no audio rerouting.
+    /// Must run on the emulation thread (same ownership as the frame
+    /// lifecycle); no-op (true) when the requested personality is already
+    /// fitted. GSTypeKind::NONE/NGS map to no card - rejected.
+    bool switchGeneralSoundCard(GSTypeKind target);
+
+    /// Thread-safe variant for cross-thread callers (WebAPI actions, the
+    /// gs_lightweight feature toggle): queues the target and returns true;
+    /// the switch itself runs at the next frame boundary on the emulation
+    /// thread (handleFrameStart), the only point where the card may be
+    /// deleted/recreated safely
+    bool requestGeneralSoundCardSwitch(GSTypeKind target);
 #ifdef UNREALNG_HAVE_OPL4
     // MoonSound access
     bool hasMoonSound() const { return _moonsound != nullptr; }

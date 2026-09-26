@@ -44,13 +44,14 @@ StateNode AyChipNode(SoundChip_AY8910* chip, int index)
         registers[SoundChip_AY8910::AYRegisterNames[reg]] = int(regs[reg]);
     ret["registers"] = registers;
 
+    // Everything below decodes the register file - what the program wrote.
+    // The generators receive a write on the tick of its T-state (timed SSG
+    // writes), so right after an OUT their own copy can still lag behind
     StateNode channels = StateNode::Array();
     const char* channelNames[] = {"A", "B", "C"};
-    const auto* toneGens = chip->getToneGenerators();
     for (int ch = 0; ch < 3; ch++)
     {
         StateNode channel = StateNode::Object();
-        const auto& toneGen = toneGens[ch];
         const uint8_t fine = regs[ch * 2];
         const uint8_t coarse = regs[ch * 2 + 1];
         const uint16_t period = uint16_t((coarse << 8) | fine);
@@ -59,10 +60,11 @@ StateNode AyChipNode(SoundChip_AY8910* chip, int index)
         channel["fine"] = int(fine);
         channel["coarse"] = int(coarse);
         channel["frequency_hz"] = 1750000.0 / (16.0 * (period + 1));
-        channel["volume"] = int(toneGen.volume());
-        channel["tone_enabled"] = toneGen.toneEnabled();
-        channel["noise_enabled"] = toneGen.noiseEnabled();
-        channel["envelope_enabled"] = toneGen.envelopeEnabled();
+        const uint8_t volumeReg = regs[8 + ch];
+        channel["volume"] = int(volumeReg & 0x0F);
+        channel["tone_enabled"] = (regs[7] & (0x01 << ch)) == 0;
+        channel["noise_enabled"] = (regs[7] & (0x08 << ch)) == 0;
+        channel["envelope_enabled"] = (volumeReg & 0x10) != 0;
         channels.push(channel);
     }
     ret["channels"] = channels;
@@ -414,12 +416,9 @@ StateNode Ay(EmulatorContext* context)
         SoundChip_AY8910* chip = sm->getAYChip(i);
         if (chip)
         {
-            bool active = false;
-            const auto* toneGens = chip->getToneGenerators();
-            for (int ch = 0; ch < 3; ch++)
-                if (toneGens[ch].toneEnabled() || toneGens[ch].noiseEnabled())
-                    active = true;
-            info["active_channels"] = active;
+            // Tone or noise enabled on any channel, decoded from the mixer register
+            const uint8_t mixerReg = chip->getRegisters()[7];
+            info["active_channels"] = (mixerReg & 0x3F) != 0x3F;
             info["envelope_active"] = chip->getEnvelopeGenerator().out() > 0;
         }
         info["sound_played_since_reset"] = false;

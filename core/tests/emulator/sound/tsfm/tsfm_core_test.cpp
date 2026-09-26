@@ -884,6 +884,38 @@ TEST_F(TsfmCore_Test, WordCountPerFrame)
     EXPECT_EQ(lastTimestamps[0], 71640);
 }
 
+TEST_F(TsfmCore_Test, ResetClearsEngineCounters)
+{
+    // ymfm local patch 5: a reset clears the envelope clock and the running
+    // clock count. Upstream kept both counting from construction, so after a
+    // machine reset the FM state - and every TTD recording started from one -
+    // depended on how long the instance had been up. A device that ran for a
+    // few frames and a fresh one must hold byte-identical engine state after
+    // a reset
+    auto engineState = [](SoundChip_TurboSoundFM& device)
+    {
+        std::vector<uint8_t> all;
+        for (int i = 0; i < 2; i++)
+        {
+            std::vector<uint8_t> state;
+            ymfm::ymfm_saved_state saver(state, true);
+            device.chip(i)->fm.save_restore(saver);
+            all.insert(all.end(), state.begin(), state.end());
+        }
+        return all;
+    };
+
+    auto fresh = std::make_unique<SoundChip_TurboSoundFM>(_context);
+    _device->syncTo(0);
+    _device->syncTo(3 * 71680 + 1234);  // ~3 frames of FM clocks: both counters move
+    ASSERT_NE(engineState(*_device), engineState(*fresh)) << "precondition: running changed nothing";
+
+    _device->reset();
+    fresh->reset();
+    EXPECT_EQ(engineState(*_device), engineState(*fresh))
+        << "the engine carried state across reset (envelope clock / clock count)";
+}
+
 TEST_F(TsfmCore_Test, FrameRolloverRebase)
 {
     // §5.2 frame rollover: AdjustFrameCounters subtracts the frame length

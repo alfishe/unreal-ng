@@ -29,8 +29,8 @@
 #     4 × 4 KB sub-pages, each with its own slot in the page store.
 #   * Per-slot encoding discriminator: Full / XorPrev / Zero.
 #   * zstd level-1 compression of every non-Zero slot payload.
-#   * Per-slot CRC32C integrity field (4 bytes; writer stores 0, reader
-#     recomputes from decompressed bytes and surfaces mismatches).
+#   * Per-slot CRC32C integrity field (4 bytes): the CRC of the reconstructed
+#     4 KB, stored by the writer and verified by readers.
 #   * Per-checkpoint frame_kind (I-frame vs P-frame) + keyframe_anchor.
 #   * Checkpoint RAM refs are now 4 * model_ram_pages u32 slot indices.
 #   * No v1 backwards compatibility - older files are refused with an error.
@@ -217,8 +217,8 @@ types:
         u8  encoding       (0=Full, 1=XorPrev, 2=Zero)
         u32 refcount       (informational; reader rebuilds its own)
         u32 prev_slot      (compact index; 0xFFFFFFFF when encoding != XorPrev)
-        u32 crc32c         (always 0 on write; reader recomputes from
-                            decompressed bytes and surfaces mismatches)
+        u32 crc32c         (CRC32C of the reconstructed 4 KB; readers
+                            verify it after reconstruction)
         u32 payload_size   (bytes of zstd-compressed payload; 0 for Zero)
         u8[payload_size]   payload
     seq:
@@ -244,11 +244,13 @@ types:
       - id: crc32c
         type: u4
         doc: |
-          CRC32C (Castagnoli) of the RECONSTRUCTED 4 KB content. The v2
-          writer always stores 0 here and recomputes on read to surface
-          truncation or post-write tampering. A non-zero value on read
-          that does not equal the recomputed CRC is reported as an
-          integrity error.
+          CRC32C (Castagnoli) of the RECONSTRUCTED 4 KB content (after
+          decompression and, for XorPrev, applying the delta chain), as
+          computed by the page store when the piece was captured; Zero
+          pieces carry the CRC of an all-zero 4 KB. Readers recompute it
+          after reconstruction and treat a mismatch as an integrity error.
+          zstd frames carry no checksum of their own, so this is the only
+          check on page payloads.
       - id: payload_size
         type: u4
         doc: |
@@ -367,7 +369,7 @@ types:
       184 once the Scorpion ProfROM fields were added). Every
       extended / model-specific latch that used to live here (pXXXX, pDFFD,
       pFDFD, p1FFD, the GMX p7xFD group, Quorum p00 / p80FD, the ATM pFFF7
-      array, Scorpion ProfROM state, video_mode, ...) moved out into
+      array, the Profi palette, Scorpion ProfROM state, video_mode, ...) moved out into
       per-model serializers reached through TTDPeripheralRegistry and is
       carried in `peripheral_blob` entries instead. The common format is
       model-agnostic: it knows nothing about any specific machine.
@@ -434,12 +436,21 @@ types:
       - id: next_z80_frequency_multiplier
         type: u1
         doc: Queued multiplier, applied at the next frame start.
+      - id: cpu_t_in_frame
+        size: 3
+        doc: |
+          z80.t at the capture, 24-bit little-endian: the CPU's in-frame
+          T-state (a frame ends when its last instruction crosses the
+          boundary, so a checkpoint's CPU sits a few T-states in - the
+          overshoot). Restored with the checkpoint so a replayed frame runs
+          with the original instruction timing. Taken from the former
+          reserved tail; sessions recorded before it read 0.
       - id: reserved
-        size: 6
+        size: 3
         doc: |
           Explicit tail filler keeping the struct free of implicit padding
           (sizeof == 120; four bytes were taken from it for the CPU clock
-          fields above). The C++ side copies these objects by member-wise
+          fields above, three for cpu_t_in_frame). The C++ side copies these objects by member-wise
           assignment and hashes them byte-wise, so unnamed padding would
           leak uninitialized bytes into the hash. Always zero.
 
@@ -452,7 +463,11 @@ types:
     seq:
       - id: peripheral_id
         type: u1
-        doc: PeripheralId enum value (see ttdserializable.h).
+        doc: |
+          PeripheralId enum value (see ttdserializable.h): 0 TurboSound, 1 BetaDisk,
+          2 Tape, 3 Covox, 4 TSFM, 5 GeneralSound, 6 ScorpionProfROM, 7 KempstonMouse,
+          8 AtmPaging, 9 ProfiPaging (Profi 1024: pDFFD latch + 16-entry palette),
+          10 MoonSound, 11 GeneralSoundLightweight, 12 NeoGS (reserved).
       - id: state
         type: peripheral_blob
 

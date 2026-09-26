@@ -13,6 +13,8 @@
 //   profile_report                      → fan-out: opcode counters + memory status
 //                                        + calltrace entries + unified status
 //   porttrace                           → start → run_frames → stop → events
+//   gs_porttrace                        → General Sound coprocessor triage:
+//                                        start → run_frames → stop → counters+events
 //
 // Drogon-free; all calls go through the loopback IApiCaller.
 
@@ -309,12 +311,13 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"coverage_start", "coverage_stop", "coverage_read", "coverage_gaps", "coverage_clear", "frame_cost",
-                               "profile_start", "profile_stop", "profile_status", "profile_report", "porttrace"})
+                               "profile_start", "profile_stop", "profile_status", "profile_report", "porttrace", "gs_porttrace"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
     schema["properties"]["action"]["description"] =
-        "Analysis operation: executed-address coverage, per-frame CPU cost, profiler sessions, or a one-shot port I/O trace.";
+        "Analysis operation: executed-address coverage, per-frame CPU cost, profiler sessions, a one-shot main-Z80 port I/O "
+        "trace, or gs_porttrace (General Sound coprocessor triage - CPU steps/interrupts/DAC fetches + event trace).";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["clear"]["type"] = "boolean";
@@ -562,9 +565,105 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
                 return;
             }
 
+            if (action == "gs_porttrace")
+            {
+                // General Sound coprocessor triage: is the GS Z80 alive and
+                // doing DAC pushes? Start capture -> run frames -> stop ->
+                // read counters+events in one call (no feature flag needed,
+                // the GS tracer is always instantiated when the card is fitted).
+                unsigned frames = args.isMember("frames") ? args["frames"].asUInt() : 10u;
+                if (frames < 1) frames = 1;
+                if (frames > 1000) frames = 1000;
+                unsigned limit = args.isMember("limit") ? args["limit"].asUInt() : 32u;
+                if (limit < 1) limit = 1;
+                if (limit > 1024) limit = 1024;
+
+                TargetResolver::ResolveFromArgs(
+                    args, caller, [frames, limit, &caller, done, progress](bool ok, const std::string& idOrError) {
+                        if (!ok)
+                        {
+                            done(ToolResult::Error(idOrError));
+                            return;
+                        }
+                        const std::string& id = idOrError;
+
+                        std::vector<SeriesStep> steps;
+                        steps.push_back([&caller, id](Json::Value& acc, std::function<void(bool)> next) {
+                            auto body = std::make_shared<Json::Value>();
+                            (*body)["action"] = "start";
+                            caller.Call("POST", Endpoint(id, "/state/audio/gs/porttrace"), body.get(),
+                                        [body, &acc, next](int status, Json::Value respBody) mutable {
+                                            if (status < 200 || status >= 300)
+                                            {
+                                                acc["error"] = "GS port trace start failed (HTTP " + std::to_string(status) +
+                                                               "): " + DescribeErrorBody(respBody);
+                                                next(false);
+                                                return;
+                                            }
+                                            next(true);
+                                        });
+                        });
+                        steps.push_back([&caller, id, frames](Json::Value& acc, std::function<void(bool)> next) {
+                            RunFrames(caller, id, frames, [frames, &acc, next](bool ok, Json::Value) mutable {
+                                acc["frames_run"] = frames;
+                                if (!ok)
+                                {
+                                    acc["error"] = "Emulator did not run the requested frames";
+                                }
+                                next(ok);
+                            });
+                        });
+                        steps.push_back([&caller, id](Json::Value&, std::function<void(bool)> next) {
+                            auto body = std::make_shared<Json::Value>();
+                            (*body)["action"] = "stop";
+                            caller.Call("POST", Endpoint(id, "/state/audio/gs/porttrace"), body.get(),
+                                        [body, next](int, Json::Value) { next(true); });
+                        });
+                        steps.push_back([&caller, id, limit](Json::Value& acc, std::function<void(bool)> next) {
+                            caller.Call("GET", Endpoint(id, "/state/audio/gs/porttrace") + "?events=" + std::to_string(limit),
+                                        nullptr, [&acc, next](int status, Json::Value body) mutable {
+                                            if (status == 200)
+                                            {
+                                                acc["gs"] = std::move(body);
+                                            }
+                                            else
+                                            {
+                                                acc["error"] = "GS state not available (HTTP " + std::to_string(status) +
+                                                               "): " + DescribeErrorBody(body);
+                                            }
+                                            next(true);
+                                        });
+                        });
+
+                        RunSeries(ReportSeriesProgress(std::move(steps), progress,
+                                                       {"start capture", "run frames", "stop capture", "read counters+events"}),
+                                  [id, done](Json::Value acc) {
+                            if (acc.isMember("error") && acc["error"].isString())
+                            {
+                                done(ToolResult::Error(acc["error"].asString()));
+                                return;
+                            }
+                            std::ostringstream out;
+                            out << "GS port trace [target " << id << "]: ran " << acc.get("frames_run", 0).asUInt() << " frames";
+                            if (acc.isMember("gs") && acc["gs"].isObject() && acc["gs"]["counters"].isObject())
+                            {
+                                const Json::Value& c = acc["gs"]["counters"];
+                                out << " - cpuSteps=" << c.get("cpu_steps", 0).asUInt64()
+                                    << " interrupts=" << c.get("interrupts_accepted", 0).asUInt64()
+                                    << " intPeriods=" << c.get("interrupt_periods", 0).asUInt64()
+                                    << " intCoalesced=" << c.get("interrupts_coalesced", 0).asUInt64()
+                                    << " dacFetches=" << c.get("dac_fetches", 0).asUInt64();
+                            }
+                            done(ToolResult::Ok(out.str(), std::move(acc)));
+                        });
+                    });
+                return;
+            }
+
             done(ToolResult::Error("Unknown action '" + action +
                                             "'. Valid: coverage_start, coverage_stop, coverage_read, coverage_gaps, coverage_clear, "
-                                            "frame_cost, profile_start, profile_stop, profile_status, profile_report, porttrace"));
+                                            "frame_cost, profile_start, profile_stop, profile_status, profile_report, porttrace, "
+                                            "gs_porttrace"));
         });
 }
 

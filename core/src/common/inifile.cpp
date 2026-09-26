@@ -199,8 +199,11 @@ const char* IniFile::GetValue(const char* section, const char* key, const char* 
     return defaultValue;
 }
 
-long IniFile::GetLongValue(const char* section, const char* key, long defaultValue) const
+long IniFile::GetLongValue(const char* section, const char* key, long defaultValue, bool* parsedToNumber) const
 {
+    if (parsedToNumber)
+        *parsedToNumber = false;
+
     const char* raw = GetValue(section, key, nullptr);
     if (raw == nullptr || raw[0] == '\0')
     {
@@ -227,6 +230,8 @@ long IniFile::GetLongValue(const char* section, const char* key, long defaultVal
     {
         return defaultValue;
     }
+    if (parsedToNumber)
+        *parsedToNumber = true;
     return result;
 }
 

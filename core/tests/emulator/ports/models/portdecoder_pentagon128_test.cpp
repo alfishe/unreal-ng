@@ -3,6 +3,7 @@
 
 #include "portdecoder_pentagon128_test.h"
 #include <common/stringhelper.h>
+#include <emulator/sound/covox.h>
 #include <vector>
 
 /// region <Beta128 FDC port gating helpers>
@@ -107,11 +108,90 @@ TEST_F(PortDecoder_Pentagon128_Test, SoundrivePortsNotDecodedAs7FFD)
         EXPECT_FALSE(is7FFD) << "SOUNDRIVE port 0x" << std::hex << port
                              << " should NOT be decoded as 7FFD";
 
-        // Also verify decodePort() returns COVOX (0x00FB), not 7FFD
+        // SoundDrive/Covox is a self-decoding device (tryClaimOut), no longer
+        // present in the static decode table at all - a raw SOUNDRIVE port
+        // simply doesn't match any table rule
         uint16_t decoded = _portDecoder->decodePort(port);
-        EXPECT_EQ(decoded, 0x00FB) << "SOUNDRIVE port 0x" << std::hex << port
-                                    << " should decode to 0x00FB (COVOX), not 0x" << decoded;
+        EXPECT_EQ(decoded, 0x0000) << "SOUNDRIVE port 0x" << std::hex << port
+                                    << " must not be resolved by the static decode table";
     }
+}
+
+// Regression (balldreams2.sna): DecodePortOut() is the path real Z80 OUT
+// instructions take. A previous collapsing decode-table rule aliased Left
+// A/Left B/Right A writes onto the Right B DAC channel; Covox is now a
+// self-decoding device (RegisterSelfDecodingDevice/tryClaimOut), tried from
+// DecodePortOut()'s fallback with the raw port undisturbed, so
+// Covox::portToChannel() can still tell the four SOUNDRIVE channels apart
+TEST_F(PortDecoder_Pentagon128_Test, SoundriveQuadPortsReachHandlerUndisturbed)
+{
+    _context->config.sound.sd = 1;
+    Covox covox(_context);
+    ASSERT_TRUE(_portDecoder->RegisterSelfDecodingDevice(&covox));
+
+    const uint16_t ports[] = { 0x00F1, 0x00F3, 0x00F9, 0x00FB };
+    for (size_t i = 0; i < std::size(ports); i++)
+    {
+        _portDecoder->DecodePortOut(ports[i], static_cast<uint8_t>(0x10 + i), 0x0000);
+    }
+
+    uint8_t latches[4];
+    covox.TTDSaveState(latches);
+    for (size_t i = 0; i < std::size(ports); i++)
+    {
+        EXPECT_EQ(latches[i], static_cast<uint8_t>(0x10 + i))
+            << "SOUNDRIVE write #" << i << " (port 0x" << std::hex << ports[i]
+            << ") did not reach its own channel";
+    }
+
+    _portDecoder->UnregisterSelfDecodingDevice(&covox);
+}
+
+// Regression (balldreams2.sna, "SoundDrive v1.02" primary port set): #0F,
+// #1F, #4F, #5F alias into the Beta128 FDC's wide mirror decode. TR-DOS
+// active must keep Beta128's exclusive claim (untouched by the SD fitment);
+// TR-DOS inactive + SD=1 must route the write to Covox at the port's own
+// channel instead of silently dropping it - see reference decoders
+// (pentevo/Unreal io.cpp, Xpeccy soundrive.c SDRV_105_1)
+TEST_F(PortDecoder_Pentagon128_Test, SoundriveModeOnePortsRespectTrdosPrecedence)
+{
+    _context->config.sound.sd = 1;
+
+    MockFdcDevice fdc;
+    for (uint16_t port : { 0x001F, 0x003F, 0x005F, 0x007F, 0x00FF })
+        _portDecoder->RegisterPortHandler(port, &fdc);
+
+    Covox covox(_context);
+    ASSERT_TRUE(_portDecoder->RegisterSelfDecodingDevice(&covox));
+
+    // TR-DOS active: Beta128 keeps #1F, SoundDrive must not see the write
+    _context->emulatorState.flags |= CF_TRDOS;
+    _portDecoder->DecodePortOut(0x001F, 0xAA, 0x0000);
+    ASSERT_EQ(fdc.outPorts.size(), 1u);
+    EXPECT_EQ(fdc.outPorts[0].first, 0x001F);
+    uint8_t latches[4];
+    covox.TTDSaveState(latches);
+    EXPECT_EQ(latches[static_cast<int>(Covox::Channel::LeftB)], 0x80)
+        << "Beta128 must win while TR-DOS is paged in - SoundDrive must not see the write";
+
+    // TR-DOS inactive: SoundDrive claims the same addresses, Beta128 must not
+    // see them, and each of the four ports keeps its own channel identity
+    _context->emulatorState.flags &= ~CF_TRDOS;
+    const uint16_t rawPorts[] = { 0x000F, 0x001F, 0x004F, 0x005F };
+    for (size_t i = 0; i < std::size(rawPorts); i++)
+    {
+        _portDecoder->DecodePortOut(rawPorts[i], static_cast<uint8_t>(0x20 + i), 0x0000);
+    }
+
+    covox.TTDSaveState(latches);
+    for (size_t i = 0; i < std::size(rawPorts); i++)
+    {
+        EXPECT_EQ(latches[i], static_cast<uint8_t>(0x20 + i))
+            << "raw port 0x" << std::hex << rawPorts[i] << " should reach its own channel";
+    }
+    EXPECT_EQ(fdc.outPorts.size(), 1u) << "Beta128 must not see any TR-DOS-inactive SoundDrive write";
+
+    _portDecoder->UnregisterSelfDecodingDevice(&covox);
 }
 
 // Verify 7FFD still works with various high byte combinations
@@ -292,3 +372,81 @@ TEST_F(PortDecoder_Pentagon128_Test, DecodePort_Beta128AddressMatching_StateInde
 }
 
 /// endregion </Beta128 FDC port gating (TR-DOS visibility)>
+
+/// region <GS host mailbox port gating (card-presence visibility)>
+
+namespace
+{
+    const uint16_t gsPorts[] = { 0x0033, 0x00B3, 0x00BB };
+}
+
+/// Regression: on a card-less machine (no SoundManager attached, or a
+/// SoundManager whose GS slot is unfitted - [SOUND] GSType=NONE) the decode
+/// table still resolves #33/#B3/#BB to their canonical form. Left undecoded,
+/// that used to fall through as an unmapped port (floating bus); routed to
+/// PeripheralPortIn/Out with no registered device, it logs a warning on every
+/// access instead - and GS presence-probing software polls exactly these
+/// ports. The fixture's bare EmulatorContext has no SoundManager
+/// (pSoundManager == nullptr), the same "definitely no card" state as
+/// GSType=NONE.
+TEST_F(PortDecoder_Pentagon128_Test, DecodePortIn_GsPorts_NoCardFitted_NotDecoded)
+{
+    ASSERT_EQ(_context->pSoundManager, nullptr);
+
+    MockFdcDevice gs;
+    for (uint16_t port : gsPorts)
+        _portDecoder->RegisterPortHandler(port, &gs);
+
+    for (uint16_t port : gsPorts)
+    {
+        gs.inPorts.clear();
+        uint8_t result = _portDecoder->DecodePortIn(port, 0x0000);
+
+        EXPECT_EQ(result, 0xFF) << StringHelper::Format("Port #%02X: must stay undecoded with no GS card fitted", port);
+        EXPECT_FALSE(_portDecoder->WasLastPortDecoded())
+            << StringHelper::Format("Port #%02X: no card fitted, nothing should claim it", port);
+        EXPECT_TRUE(gs.inPorts.empty()) << StringHelper::Format("Port #%02X: registered device must not be consulted", port);
+    }
+}
+
+TEST_F(PortDecoder_Pentagon128_Test, DecodePortOut_GsPorts_NoCardFitted_WritesIgnored)
+{
+    ASSERT_EQ(_context->pSoundManager, nullptr);
+
+    MockFdcDevice gs;
+    for (uint16_t port : gsPorts)
+        _portDecoder->RegisterPortHandler(port, &gs);
+
+    for (uint16_t port : gsPorts)
+        _portDecoder->DecodePortOut(port, 0x00, 0x0000);
+
+    EXPECT_TRUE(gs.outPorts.empty()) << "GS writes must be dropped when no card is fitted";
+}
+
+/// Regression: #33 also satisfies the BDI fallback pattern (port & 0x83 ==
+/// 0x03, the same shape as #1F/#3F/#5F/#7F), which decodePortEx only tries
+/// when no table row already claimed the port. An earlier, wrong shape of
+/// the GS card-presence gate resolved #33 to the GS row first and zeroed it
+/// afterward - discarding the fallback outright, so a card-less Pentagon
+/// with TR-DOS active lost #33 as an access route to the WD1793 track
+/// register (#3F). The gate now lives inside decodePortEx's row-matching
+/// loop instead, so a skipped GS row lets the fallback run exactly as it
+/// would if the GS rows didn't exist in the table at all.
+TEST_F(PortDecoder_Pentagon128_Test, DecodePortIn_Port33_NoCardFitted_TrdosActive_FallsThroughToFdcTrackRegister)
+{
+    ASSERT_EQ(_context->pSoundManager, nullptr);
+    _context->emulatorState.flags |= CF_TRDOS;
+
+    MockFdcDevice fdc;
+    fdc.statusByte = 0x5A;
+    _portDecoder->RegisterPortHandler(0x003F, &fdc);
+
+    uint8_t result = _portDecoder->DecodePortIn(0x0033, 0x0000);
+
+    EXPECT_EQ(result, 0x5A) << "#33 must fall through the BDI pattern to the FDC track register with TR-DOS active";
+    EXPECT_TRUE(_portDecoder->WasLastPortDecoded());
+    ASSERT_EQ(fdc.inPorts.size(), 1u);
+    EXPECT_EQ(fdc.inPorts[0], 0x003F);
+}
+
+/// endregion </GS host mailbox port gating (card-presence visibility)>

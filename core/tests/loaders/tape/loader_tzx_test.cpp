@@ -41,14 +41,3 @@ void LoaderTZX_Test::TearDown()
 }
 
 /// endregion </Setup / TearDown>
-
-TEST_F(LoaderTZX_Test, parseHardware)
-{
-    static std::string testTapePath = TestPathHelper::GetTestDataPath("loaders/tap/action.tap");
-    std::string absoluteSnapshotPath = FileHelper::AbsolutePath(testTapePath);
-
-    LoaderTZXCUT loader(_context, testTapePath);
-    uint8_t data[] = { 0x1, };
-
-    loader.parseHardware(data);
-}

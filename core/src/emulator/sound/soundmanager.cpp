@@ -81,6 +81,9 @@ SoundManager::SoundManager(EmulatorContext* context)
             _turboSound = new SoundChip_TurboSound(_context);
             break;
     }
+    _turboSound->setDecimatorQuality(_context->config.sound.decimatorHighFidelity
+                                         ? FilterDecimator::Quality::HighFidelity
+                                         : FilterDecimator::Quality::Reference);
     _turboSound->setCoreRate(_coreRate);
 
     // Build the device registry based on what this machine has
@@ -100,13 +103,43 @@ SoundManager::SoundManager(EmulatorContext* context)
         _devices.push_back({AudioSourceType::FM2, "FM 2", false, false, 1.0f, 0.0f, false});
     }
 
-    // Covox if config flag is set (Pentagon/Scorpion style)
-    if (_context->config.sound.covoxFB)
+    // Covox / SoundDrive when either config flag is set. The same 4-channel
+    // DAC class serves both: SD=1 wires the full SoundDrive quad (#F1/#F3/
+    // #F9/#FB), CovoxFB=1 alone wires only the mono Covox port #FB
+    // (see attachToPorts)
+    if (_context->config.sound.covoxFB || _context->config.sound.sd)
     {
         _covox = new Covox(_context, _coreRate);
         _devices.push_back({AudioSourceType::COVOX, "COVOX", false, false, 1.0f, 0.0f, false});
     }
 
+    // General Sound card ([SOUND] GSType, GS design §5.1): personality slot
+    // behind the GeneralSoundCard interface (design:
+    // docs/inprogress/2026-09-19-general-sound). Z80 = LLE coprocessor
+    // + 4xDAC; LW = in-tree lightweight mod player (no coprocessor); NGS
+    // (NeoGS, neogs-tdd.md) is a P2 placeholder that parses but creates no
+    // device yet. RAM comes from [SOUND] GSRamSize (default 128 KB stock):
+    // [NGS] RamSize is a NeoGS-only key and must not leak here - its shipped
+    // 2048 KB default clamps to 512 KB, which quadruples the firmware POST so
+    // fastdisk-booted trainers probe the card mid-POST and read 0xFF instead
+    // of the 0x7E idle signature they check for (scorpion-family boots lost
+    // that race and fell back to no-GS sound, verification BUG-6). The
+    // firmware ROM is optional - the chip warns and runs zeroed when
+    // missing, so a config error never blocks the machine.
+    if (_context->config.sound.gsTypeKind == GSTypeKind::Z80 || _context->config.sound.gsTypeKind == GSTypeKind::LW)
+    {
+        GSTypeKind gsKind = _context->config.sound.gsTypeKind;
+        if (gsKind == GSTypeKind::Z80 && _context->pFeatureManager
+            && _context->pFeatureManager->isEnabled(Features::kGSLightweight))
+        {
+            // gs_lightweight feature override: fit the lightweight card
+            // without touching [SOUND] GSType (runtime switching design) -
+            // the configured personality returns when the feature clears
+            gsKind = GSTypeKind::LW;
+        }
+        _gs = createGeneralSoundCard(gsKind);
+        _devices.push_back({AudioSourceType::GeneralSound, "GS", false, false, 1.0f, 0.0f, false});
+    }
     // MoonSound (ZXM-MoonSound / YMF278B / OPL4) if the legacy key is set
     // (D1/D2). Two registry sources (D5), legacy volume scale.
 #ifdef UNREALNG_HAVE_OPL4
@@ -172,6 +205,10 @@ SoundManager::~SoundManager()
         delete _covox;
     }
 
+    if (_gs)
+    {
+        delete _gs;
+    }
 #ifdef UNREALNG_HAVE_OPL4
     if (_moonsound)
     {
@@ -201,6 +238,10 @@ void SoundManager::reset()
     _beeper->reset();
     if (_covox)
         _covox->reset();
+    // GS reset follows the GSReset rule (design §5.4): the card is a
+    // separate subsystem and survives a ZX reset unless coupled
+    if (_gs)
+        _gs->hostReset();
 #ifdef UNREALNG_HAVE_OPL4
     if (_moonsound)
         _moonsound->reset();
@@ -238,6 +279,20 @@ void SoundManager::mute()
 void SoundManager::unmute()
 {
     _mute = false;
+}
+
+void SoundManager::onEmulatorPaused()
+{
+    if (!_gs)
+        return;
+
+    _gs->onEmulatorPaused();
+
+    if (AudioDeviceInfo* gsDevice = device(AudioSourceType::GeneralSound))
+    {
+        gsDevice->peak = 0.0f;
+        gsDevice->activeRecently = false;
+    }
 }
 
 const AudioFrameDescriptor& SoundManager::getAudioBufferDescriptor()
@@ -313,6 +368,8 @@ const int16_t* SoundManager::deviceBuffer(AudioSourceType type) const
             return _turboSound ? _turboSound->getFmBuffer(1) : nullptr;
         case AudioSourceType::COVOX:
             return _covox ? _covox->getBuffer() : nullptr;
+        case AudioSourceType::GeneralSound:
+            return _gs ? _gs->getBuffer() : nullptr;
 #ifdef UNREALNG_HAVE_OPL4
         case AudioSourceType::Moonsound_FM:
             return _moonsound ? _moonsound->getFmBuffer() : nullptr;
@@ -414,6 +471,8 @@ void SoundManager::applyCoreRate(size_t rate)
     _beeper->setSampleRate(rate);
     if (_covox)
         _covox->setSampleRate(rate);
+    if (_gs)
+        _gs->setSampleRate(rate);
 #ifdef UNREALNG_HAVE_OPL4
     if (_moonsound)
         _moonsound->setCoreRate(rate);
@@ -477,6 +536,15 @@ void SoundManager::handleFrameStart()
         }
     }
 
+    // Apply a pending GS personality switch (gs_lightweight feature toggle,
+    // WebAPI action=switch_personality) at the frame boundary: the switch
+    // deletes and recreates the card, and this thread owns the card between
+    // frames (the new card receives setSynthesisSuppressed/handleFrameStart
+    // right below, so audio flows within the same frame)
+    const uint8_t pendingGS = _pendingGSSwitch.exchange(0xFF, std::memory_order_acq_rel);
+    if (pendingGS != 0xFF)
+        switchGeneralSoundCard(static_cast<GSTypeKind>(pendingGS));
+
     // Turbo mode without audio: no synthesis at all this frame. Decided once here so
     // the per-step and per-edge paths only test a cached bool. Recording keeps the
     // full path so captured audio stays intact.
@@ -525,6 +593,15 @@ void SoundManager::handleFrameStart()
 
         _turboSound->handleFrameStart();
 
+        // GS: same always-advanced rule as the TSFM slot device - the
+        // coprocessor keeps running even when its output stage is suppressed
+        // (program-visible state must not depend on audio settings)
+        if (_gs)
+        {
+            _gs->setSynthesisSuppressed(suppressed || !_feature_sound_enabled);
+            _gs->handleFrameStart();
+        }
+
         if (suppressed)
             return;  // Skip beeper/covox frame setup and buffer clears (never consumed in turbo)
     }
@@ -566,7 +643,7 @@ void SoundManager::handleFrameEnd()
     /// region <Determine actual samples for this frame>
     // Per-frame sample count derives from the machine's frame length, NOT the
     // 50 Hz SAMPLES_PER_FRAME constant: Pentagon (71680 t-states, 48.83 fps)
-    // produces 903.168 samples/frame, ZX48/128 produces 880.5888.
+    // produces 903.168 samples/frame, ZX48 880.5888, ZX128 (70908) 893.4408.
     //
     // Exact integer accumulator (audio-sync design, Fix 1): the fractional
     // part is CARRIED, not rounded away. Rounding emitted a systematic rate
@@ -574,9 +651,18 @@ void SoundManager::handleFrameEnd()
     // realtime ring drift and audio-behind-video drift in recordings. With
     // the carry, the sequence is exactly periodic (903,903,...,904 with
     // period 125 on Pentagon@44.1k) and drift-free by construction.
+    //
+    // Units: T-states x rate, modulo CPU_CLOCK_RATE - the same accumulator
+    // every device (TurboSound, TSFM) renders its buffers with, so both count
+    // the same samples in every frame. config.frame_duration_us is the pacing
+    // clock, rounded UP to whole microseconds; counting in it disagreed with
+    // the devices on every other frame wherever the frame is not a whole
+    // number of microseconds (70908 T = 20259.43 us on 128K/+3, 99880 T on
+    // ATM): the mixer read a never-rendered zero sample or dropped one.
+    // Recordings stamp video with the same exact frame/CPU_CLOCK_RATE
+    // duration; the realtime pacing difference (<30 ppm) is absorbed by DRC.
     size_t samplesThisFrame = SAMPLES_PER_FRAME;
     uint32_t frameDuration = 0;     // T-states (for beeper)
-    uint32_t frameDurationUs = 0;   // microseconds (for sample calculation)
     {
         CONFIG& config = _context->config;
         // Host multiplier only: the Scorpion hardware turbo doubles CPU
@@ -584,21 +670,17 @@ void SoundManager::handleFrameEnd()
         // samples of that frame (it overfilled the ring 2x - hard resyncs)
         uint8_t speedMultiplier = _context->emulatorState.HostSpeedMultiplier();
         frameDuration = config.frame * speedMultiplier;
-        // Wall-clock frame duration: a video frame takes the SAME real time
-        // at any CPU clock, so the realtime sample count (and ring fill
-        // rate) is multiplier-invariant
-        frameDurationUs = config.frame_duration_us;
 
-        if (frameDurationUs > 0)
+        // A video frame takes the same real time at any CPU clock, so the
+        // sample count is multiplier-invariant: the base frame length
+        if (config.frame > 0)
         {
-            // Accumulate: (frame_us * sample_rate), then divide by 1,000,000 for samples
-            _sampleAccumulator += static_cast<uint64_t>(frameDurationUs) * _coreRate;
-            samplesThisFrame = static_cast<size_t>(_sampleAccumulator / 1'000'000ULL);
-            _sampleAccumulator %= 1'000'000ULL;
+            _sampleAccumulator += static_cast<uint64_t>(config.frame) * _coreRate;
+            samplesThisFrame = static_cast<size_t>(_sampleAccumulator / CPU_CLOCK_RATE);
+            _sampleAccumulator %= CPU_CLOCK_RATE;
 
-            // Overflow guard: buffers are sized MAX_SAMPLES_PER_FRAME (speed
-            // multiplier >= 3 exceeds it). Drop the excess KNOWINGLY - turbo
-            // has no realtime constraint; a silent overrun would be worse.
+            // Overflow guard: buffers are sized MAX_SAMPLES_PER_FRAME. Drop
+            // the excess KNOWINGLY; a silent overrun would be worse.
             if (samplesThisFrame > MAX_SAMPLES_PER_FRAME)
             {
                 if ((_accumulatorClampCount++ % 256) == 0)
@@ -722,9 +804,21 @@ void SoundManager::handleFrameEnd()
         _moonsound->handleFrameEnd(samplesThisFrame);
 #endif
 
-    // Finalize TurboSound frame (activity notification for HUD)
-    if (_turboSound)
-        _turboSound->handleFrameEnd();
+    // Finalize GS frame: coprocessor catch-up to the frame end + blip drain
+    // into the registry buffer (posts its own HUD activity notification)
+    if (_gs)
+        _gs->handleFrameEnd(samplesThisFrame);
+
+    // NOTE: _turboSound->handleFrameEnd() is NOT called again here. It
+    // already ran once at the top of this function (word-queue drain +
+    // HUD activity notification, §6.1) and its activity-tracking flags
+    // (_frameHadActivity, _wasActive, _chip1ActiveThisFrame, _wasFM, ...)
+    // are not reset between calls - a second call here would re-evaluate
+    // the same already-updated flags and re-post NC_AUDIO_ACTIVITY a second
+    // time whenever the device is active, which is exactly what happened
+    // before this was removed (found while auditing HUD notification
+    // volume). The device's own comment on handleFrameEnd() already states
+    // it drains to end-of-frame and is "always called" - once.
 
     // Determine if any device has solo active
     bool soloActive = false;
@@ -783,6 +877,9 @@ void SoundManager::handleFrameEnd()
             case AudioSourceType::COVOX:
                 srcBuffer = _covox ? _covox->getBuffer() : nullptr;
                 break;
+            case AudioSourceType::GeneralSound:
+                srcBuffer = _gs ? _gs->getBuffer() : nullptr;
+                break;
 #ifdef UNREALNG_HAVE_OPL4
             case AudioSourceType::Moonsound_FM:
                 srcBuffer = _moonsound ? _moonsound->getFmBuffer() : nullptr;
@@ -807,7 +904,22 @@ void SoundManager::handleFrameEnd()
                 peak = absVal;
         }
         d.peak = peak;
-        d.activeRecently = (peak > 0.001f);
+        if (d.type == AudioSourceType::GeneralSound)
+        {
+            // Peak amplitude alone is the wrong signal for GS: a DAC channel
+            // latched away from centre by a command (a one-shot digi sample's
+            // last byte, a firmware self-test tone) and then left alone
+            // renders as a constant-but-non-zero PCM level forever after, so
+            // a naive peak > threshold check reads as permanently "active"
+            // once anything has ever touched a channel - not just while the
+            // card is actually playing. hadAudioActivityLastFrame() is the
+            // same delta-based signal NC_AUDIO_ACTIVITY/the HUD nudge use.
+            d.activeRecently = _gs && _gs->hadAudioActivityLastFrame();
+        }
+        else
+        {
+            d.activeRecently = (peak > 0.001f);
+        }
 
         // Mix into output if audible
         if (audible && d.volume > 0.0f)
@@ -953,9 +1065,34 @@ void SoundManager::updateDrcControl()
         _drcOccFiltered += DRC_EMA_ALPHA * (occMs - _drcOccFiltered);
 
     const double err = (_drcOccFiltered - DRC_TARGET_MS) / DRC_TARGET_MS;
-    _drcErrIntegral = std::clamp(_drcErrIntegral + err, -50.0, 50.0);  // Anti-windup
 
-    const double trim = std::clamp(-(DRC_KP * err + DRC_KI * _drcErrIntegral), -DRC_MAX_TRIM, DRC_MAX_TRIM);
+    // Soft deadband: inside the band the error is noise, above it the band
+    // width is subtracted (unit slope, continuous at the edge - no chatter).
+    const double effErr = (err > DRC_ERR_DEADBAND)    ? err - DRC_ERR_DEADBAND
+                          : (err < -DRC_ERR_DEADBAND) ? err + DRC_ERR_DEADBAND
+                                                      : 0.0;
+
+    // Anti-windup, two rules (GS pitch-drift investigation, 2026-09-20):
+    // 1. The integral may only hold what the actuator can use:
+    //    KI * I <= DRC_MAX_TRIM. The former +-50 clamp let KI*I reach 8x the
+    //    +-0.5% output rail, so any sustained disturbance pinned I at the
+    //    clamp - seconds of railed, wrong-signed trim afterwards, audible as
+    //    the whole mix gliding +-8.6 cents (GS modules expose it loudest).
+    // 2. While the output is railed, back-calculate I from the saturated
+    //    output instead of accumulating: I stays consistent with what is
+    //    actually being produced, so the output leaves the rail the first
+    //    frame the error allows instead of unwinding for ~100 frames.
+    const double integralLimit = DRC_MAX_TRIM / DRC_KI;
+    double trim = -(DRC_KP * effErr + DRC_KI * _drcErrIntegral);
+    if (trim > DRC_MAX_TRIM || trim < -DRC_MAX_TRIM)
+    {
+        trim = std::clamp(trim, -DRC_MAX_TRIM, DRC_MAX_TRIM);
+        _drcErrIntegral = std::clamp(-(trim + DRC_KP * effErr) / DRC_KI, -integralLimit, integralLimit);
+    }
+    else
+    {
+        _drcErrIntegral = std::clamp(_drcErrIntegral + effErr, -integralLimit, integralLimit);
+    }
 
     _drcResampler.setRatio(baseRatio * (1.0 + trim));
 }
@@ -1007,6 +1144,32 @@ void SoundManager::UpdateFeatureCache()
         if (_turboSound)
         {
             _turboSound->setHQEnabled(isHQActive());
+        }
+
+        // GS personality follows the gs_lightweight feature (runtime
+        // switching design): ON fits the lightweight card, OFF returns to
+        // the configured [SOUND] GSType personality - the config file is
+        // never touched. Requested here, applied at the next frame
+        // boundary (the switch recreates the card). Driven by an actual
+        // feature TRANSITION only: this cache refresh runs on every
+        // FeatureManager notification (any feature), and re-requesting the
+        // configured personality each time would silently revert a runtime
+        // WebAPI switch_personality override at the next unrelated feature
+        // event (observed live: LW -> LLE switch reverted within 38 ms by a
+        // ring-error feature refresh while GSType=LW was configured)
+        const bool gsLightweightOn = _context->pFeatureManager->isEnabled(Features::kGSLightweight);
+        if (gsLightweightOn != _gsLightweightFeatureWasOn)
+        {
+            _gsLightweightFeatureWasOn = gsLightweightOn;
+            if (gsLightweightOn)
+            {
+                requestGeneralSoundCardSwitch(GSTypeKind::LW);
+            }
+            else if (_context->config.sound.gsTypeKind == GSTypeKind::Z80
+                     || _context->config.sound.gsTypeKind == GSTypeKind::LW)
+            {
+                requestGeneralSoundCardSwitch(_context->config.sound.gsTypeKind);
+            }
         }
     }
     else
@@ -1067,6 +1230,150 @@ void SoundManager::SoundManager::writeToWaveFile(uint8_t* buffer, size_t len)
 
 /// endregion </Wave file export>
 
+/// region <General Sound personality switching>
+
+GeneralSoundCard* SoundManager::createGeneralSoundCard(GSTypeKind kind) const
+{
+    switch (kind)
+    {
+        case GSTypeKind::Z80:
+        {
+            // LLE: second z80ex coprocessor + gs105a firmware. The ROM is
+            // optional - loadROM warns and runs zeroed when missing, so a
+            // config error never blocks the machine
+            auto* card = new SoundChip_GeneralSound(_context, _context->config.sound.gsRamKB, _coreRate);
+            card->loadROM(_context->config.gs_rom_path);
+            return card;
+        }
+        case GSTypeKind::LW:
+            // Lightweight personality: same mailbox contract, in-tree player,
+            // no ROM (loadROM would only warn) - the virtual RAM geometry
+            // still comes from [SOUND] GSRamSize for the 20/21/23 queries
+            return new SoundChip_GSLightweight(_context, _context->config.sound.gsRamKB, _coreRate);
+        default:
+            // BASS folded into LW at config parse; NONE/NGS parse but map to
+            // no device (neogs-tdd.md P2 placeholder)
+            LOGWARNING("SoundManager: GSType %u maps to no creatable personality - no General Sound card",
+                       static_cast<unsigned>(kind));
+            return nullptr;
+    }
+}
+
+bool SoundManager::switchGeneralSoundCard(GSTypeKind target)
+{
+    if (target != GSTypeKind::Z80 && target != GSTypeKind::LW)
+    {
+        LOGWARNING("SoundManager: personality switch target GSType %u is not switchable (Z80 | LW)",
+                   static_cast<unsigned>(target));
+        return false;
+    }
+
+    if (!_gs)
+    {
+        LOGWARNING("SoundManager: personality switch requested but no General Sound card is fitted ([SOUND] GSType)");
+        return false;
+    }
+
+    const GSCardImplementation targetImplementation =
+        target == GSTypeKind::Z80 ? GSCardImplementation::LLE : GSCardImplementation::LW;
+    if (_gs->implementation() == targetImplementation)
+        return true; // already the requested personality
+
+    const char* from = _gs->implementation() == GSCardImplementation::LLE ? "LLE (Z80)" : "lightweight";
+    const char* to = targetImplementation == GSCardImplementation::LLE ? "LLE (Z80)" : "lightweight";
+
+    // 1. Snapshot the outgoing card: host-visible mailbox, activity counters
+    //    and the v1 module handoff payload (only the lightweight card
+    //    captures one - its upload store survives the parse)
+    const GSForwardMailbox mailbox = _gs->snapshotMailbox();
+    const GSActivityCounters counters = _gs->getActivityCounters();
+    std::vector<uint8_t> moduleBytes;
+    bool wasPlaying = false;
+    const bool hadModule = _gs->captureModuleUpload(moduleBytes, wasPlaying);
+    // The outgoing card's TTD slot - captured before delete below, since
+    // it's read through the about-to-be-freed pointer (see 3b.)
+    const ttd::PeripheralId outgoingTtdId = _gs->TTDPeripheralId();
+
+    // 2. Unregister the host ports first - the decoder holds the outgoing
+    //    card's raw pointer and must never dispatch into a deleted object
+    auto* decoder = _context->pPortDecoder;
+    if (decoder)
+    {
+        decoder->UnregisterPortHandler(GeneralSoundCard::PORT_DATA);
+        decoder->UnregisterPortHandler(GeneralSoundCard::PORT_COMMAND);
+        decoder->UnregisterPortHandler(GeneralSoundCard::PORT_CONTROL);
+    }
+
+    // 3. Construct the target (the LLE loads its firmware ROM inside the
+    //    factory); on failure roll the ports back onto the surviving card
+    GeneralSoundCard* card = createGeneralSoundCard(target);
+    if (!card)
+    {
+        if (decoder)
+        {
+            decoder->RegisterPortHandler(GeneralSoundCard::PORT_DATA, _gs, static_cast<PortTagSet>(PortTag::SoundGs));
+            decoder->RegisterPortHandler(GeneralSoundCard::PORT_COMMAND, _gs, static_cast<PortTagSet>(PortTag::SoundGs));
+            decoder->RegisterPortHandler(GeneralSoundCard::PORT_CONTROL, _gs, static_cast<PortTagSet>(PortTag::SoundGs));
+        }
+        LOGERROR("SoundManager: General Sound personality switch to %s failed at construction - keeping %s", to, from);
+        return false;
+    }
+
+    delete _gs;
+    _gs = card;
+
+    // 3b. Re-point the TTD peripheral registry at the new card. TTD registers
+    //     the GS slot by raw pointer only at StartRecording/session load
+    //     (RegisterModelPeripherals) - without this, a switch during an
+    //     active recording leaves the registry holding a pointer to the card
+    //     just deleted above, and the next checkpoint's TTDSaveState call is
+    //     a use-after-free. LLE and LW register under different peripheral
+    //     ids (GeneralSound vs GeneralSoundLightweight, same split as the
+    //     TurboSound/TSFM slots) so a checkpoint recorded on one personality
+    //     cannot silently restore into the other - UpdatePeripheral moves the
+    //     registration from the outgoing card's slot to the new card's own
+    //     TTDPeripheralId(), which differs across a personality switch by
+    //     construction. Safe to call unconditionally: a null
+    //     TimeTravelManager (TTD unavailable) no-ops.
+    if (_context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->UpdatePeripheral(outgoingTtdId, _gs->TTDPeripheralId(), _gs);
+
+    // 4. Re-register the host ports for the new card (#B3/#BB/#33, GS design §6)
+    bool portsRegistered = true;
+    if (decoder)
+    {
+        portsRegistered &= decoder->RegisterPortHandler(GeneralSoundCard::PORT_DATA, _gs, static_cast<PortTagSet>(PortTag::SoundGs));
+        portsRegistered &= decoder->RegisterPortHandler(GeneralSoundCard::PORT_COMMAND, _gs, static_cast<PortTagSet>(PortTag::SoundGs));
+        portsRegistered &= decoder->RegisterPortHandler(GeneralSoundCard::PORT_CONTROL, _gs, static_cast<PortTagSet>(PortTag::SoundGs));
+    }
+    if (!portsRegistered)
+        LOGWARNING("SoundManager: GS host port re-registration failed after the personality switch");
+
+    // 5. Module handoff on virgin queues (running BEFORE the mailbox restore
+    //    keeps the param/command/stream/D2 ordering pristine), then restore
+    //    the host-visible mailbox and fold the counters - triage totals
+    //    survive the handoff
+    if (hadModule)
+        _gs->replayModuleUpload(moduleBytes, wasPlaying);
+    _gs->restoreMailbox(mailbox);
+    _gs->accumulateActivityCounters(counters);
+
+    LOGINFO("SoundManager: General Sound personality switched %s -> %s%s", from, to,
+            hadModule ? " (module upload replayed)" : "");
+    return portsRegistered;
+}
+
+bool SoundManager::requestGeneralSoundCardSwitch(GSTypeKind target)
+{
+    if (target != GSTypeKind::Z80 && target != GSTypeKind::LW)
+        return false;
+
+    _pendingGSSwitch.store(static_cast<uint8_t>(target), std::memory_order_release);
+    return true;
+}
+
+/// endregion </General Sound personality switching>
+
 /// region <Port interconnection>
 
 bool SoundManager::attachToPorts()
@@ -1076,10 +1383,27 @@ bool SoundManager::attachToPorts()
     // result = _ay8910->attachToPorts(_context->pPortDecoder);
     result = _turboSound->attachToPorts(_context->pPortDecoder);
 
-    // Attach SOUNDRIVE/Covox to port #FB (all 4 ports decode to same handler)
+    // SoundDrive/Covox is a self-decoding device (Covox::tryClaimOut/In):
+    // its Fitment (Mono #FB only vs Quad mode-1+mode-2) is baked in at
+    // construction from config.sound.sd/covoxFB, so registration is just
+    // "plug the card in" - no per-port wiring, and no exact-address
+    // dispatch-map slot to collide with WD1793 or anything else.
     if (_covox && _context->pPortDecoder)
     {
-        result &= _context->pPortDecoder->RegisterPortHandler(Covox::PORT_RIGHT_B, _covox);
+        result &= _context->pPortDecoder->RegisterSelfDecodingDevice(_covox);
+    }
+
+    // Attach the General Sound card to its host ports #B3/#BB/#33 (GS design
+    // §6). Registered only when the card exists; the decode rows themselves
+    // are static per machine model (Pentagon family table, Scorpion chain).
+    if (_gs && _context->pPortDecoder)
+    {
+        result &= _context->pPortDecoder->RegisterPortHandler(GeneralSoundCard::PORT_DATA, _gs,
+                                                             static_cast<PortTagSet>(PortTag::SoundGs));
+        result &= _context->pPortDecoder->RegisterPortHandler(GeneralSoundCard::PORT_COMMAND, _gs,
+                                                             static_cast<PortTagSet>(PortTag::SoundGs));
+        result &= _context->pPortDecoder->RegisterPortHandler(GeneralSoundCard::PORT_CONTROL, _gs,
+                                                             static_cast<PortTagSet>(PortTag::SoundGs));
     }
 
 #ifdef UNREALNG_HAVE_OPL4
@@ -1101,10 +1425,17 @@ bool SoundManager::detachFromPorts()
     //_ay8910->detachFromPorts();
     _turboSound->detachFromPorts();
 
-    // Detach SOUNDRIVE/Covox from port #FB
     if (_covox && _context->pPortDecoder)
     {
-        _context->pPortDecoder->UnregisterPortHandler(Covox::PORT_RIGHT_B);
+        _context->pPortDecoder->UnregisterSelfDecodingDevice(_covox);
+    }
+
+    // Detach the General Sound card from #B3/#BB/#33
+    if (_gs && _context->pPortDecoder)
+    {
+        _context->pPortDecoder->UnregisterPortHandler(GeneralSoundCard::PORT_DATA);
+        _context->pPortDecoder->UnregisterPortHandler(GeneralSoundCard::PORT_COMMAND);
+        _context->pPortDecoder->UnregisterPortHandler(GeneralSoundCard::PORT_CONTROL);
     }
 
 #ifdef UNREALNG_HAVE_OPL4

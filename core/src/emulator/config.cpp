@@ -301,6 +301,7 @@ bool Config::ParseConfig(IniFile& inimanager)
 	// SOUND section
 	config.sound.covoxFB = (int)inimanager.GetLongValue(sound, "CovoxFB", 0);
 	config.sound.covoxDD = (int)inimanager.GetLongValue(sound, "CovoxDD", 0);
+	config.sound.sd = (int)inimanager.GetLongValue(sound, "SD", 0);
 
 	// Core audio rate: auto | 44100 | 48000 | 88200 | 96000 | 176400 | 192000
 	// (multirate plan phase 6). 0 = auto. Decides the core rate ONLY while
@@ -397,6 +398,123 @@ bool Config::ParseConfig(IniFile& inimanager)
 
 	// FM loudness trim in dB relative to the hardware-derived default (0 = default)
 	config.sound.tsfmFmTrimDb = inimanager.GetDoubleValue(sound, "TSFM_FmTrimDb", 0.0);
+
+	// General Sound emulation kind ([SOUND] GSType, GS design §5.1):
+	// Z80 = LLE coprocessor card, LW/LIGHT = lightweight in-tree mod player
+	// (docs/inprogress/2026-09-19-general-sound), BASS = legacy
+	// upstream HLE spelling kept as a deprecated alias of LW (no BASS library
+	// is linked), NGS = NeoGS FPGA card (neogs-tdd.md - P2 placeholder, no
+	// device is created yet), NONE = no GS card. A missing key keeps NONE;
+	// unknown values warn and fall back to NONE.
+	{
+		// Explicit default first: a missing key must reset to NONE even when
+		// the struct holds Z80 from a previous parse of another file.
+		config.sound.gsTypeKind = GSTypeKind::NONE;
+		line[0] = '\0';
+		CopyStringValue(inimanager.GetValue(sound, "GSType", nullptr), line, sizeof line);
+		if (StringHelper::CompareCaseInsensitive(line, "Z80", strlen("Z80")) == 0)
+		{
+			config.sound.gsTypeKind = GSTypeKind::Z80;
+		}
+		else if (StringHelper::CompareCaseInsensitive(line, "LW", strlen("LW")) == 0 ||
+		         StringHelper::CompareCaseInsensitive(line, "LIGHT", strlen("LIGHT")) == 0)
+		{
+			config.sound.gsTypeKind = GSTypeKind::LW;
+		}
+		else if (StringHelper::CompareCaseInsensitive(line, "BASS", strlen("BASS")) == 0)
+		{
+			// Upstream HLE spelling: same intent as LW (host-command-driven
+			// mod player), implemented in-tree without the BASS library
+			config.sound.gsTypeKind = GSTypeKind::LW;
+			MLOGWARNING("Config: [SOUND] GSType=BASS is deprecated, using the in-tree lightweight card (GSType=LW)");
+		}
+		else if (StringHelper::CompareCaseInsensitive(line, "NGS", strlen("NGS")) == 0)
+		{
+			config.sound.gsTypeKind = GSTypeKind::NGS;
+		}
+		else if (line[0] != '\0' && StringHelper::CompareCaseInsensitive(line, "NONE", strlen("NONE")) != 0)
+		{
+			MLOGWARNING("Config: unsupported [SOUND] GSType='%s', using NONE", line);
+		}
+	}
+
+	// GS volume on the shared 0-8192 ini scale (shipped GSVol=8000, same
+	// domain as BeeperVol) and the reset-coupling flag: GSReset=1 makes the
+	// ZX reset reinitialize the card too (Unreal: "if (gsreset) reset_gs()"),
+	// GSReset=0 (the legacy default) keeps it running - separate subsystem
+	// with its own #33 reset line
+	config.sound.gs_vol = (int)inimanager.GetLongValue(sound, "GSVol", 8000);
+	config.sound.gsreset = (uint8_t)inimanager.GetLongValue(sound, "GSReset", 0);
+#ifdef MOD_GSZ80
+	// Classic GS card RAM geometry ([SOUND] GSRamSize): 128 KB stock (the
+	// default - the resulting ~0.3 s POST keeps scorpion-family fastdisk
+	// boots past their 0x7E idle-signature probe, see verification BUG-6),
+	// 256/512 KB expansion cards for software that requires them (Nether
+	// Earth GS loads a 283 KB module and needs 512). Values outside 128-512
+	// clamp to the nearest card size with a warning.
+	{
+		bool gsRamParsed = false;
+		long gsRamKB = inimanager.GetLongValue(sound, "GSRamSize", 128, &gsRamParsed);
+		const char* rawGsRam = inimanager.GetValue(sound, "GSRamSize", nullptr);
+		if (rawGsRam != nullptr && rawGsRam[0] != '\0' && !gsRamParsed)
+		{
+			// IniFile strips inline comments with a backward scan (values may
+			// legitimately contain ';'), so a comment carrying a SECOND ';' survives
+			// the strip and the numeric conversion rejects the whole value. That
+			// shipped as a silent 128 KB fallback on the GSRamSize=512 configs
+			// (Nether Earth GS got a 128 KB card, its 283 KB module wrapped the
+			// card and the music never played) - never let it hide behind the
+			// default again.
+			MLOGWARNING("Config: [SOUND] GSRamSize='%s' is not a plain number, using %ld (inline comments must not contain a second ';')",
+			            rawGsRam, gsRamKB);
+		}
+		if (gsRamKB < 128 || gsRamKB > 512)
+		{
+			MLOGWARNING("Config: [SOUND] GSRamSize=%ld out of range (128-512), clamped", gsRamKB);
+			gsRamKB = gsRamKB < 128 ? 128 : 512;
+		}
+		config.sound.gsRamKB = (unsigned)gsRamKB;
+	}
+#endif
+#ifdef MOD_GSZ80
+	// NeoGS placeholders (neogs-tdd.md §3.2): RAM size in KB, SD card image
+	// and the MP3 decode path, all consumed by no card until the P2
+	// implementation lands. SDCARD is the original UnrealSpeccy key, kept as
+	// an alias so existing configs load. The GS Z80 card has its own fixed
+	// geometry, so RamSize only matters for NeoGS.
+	config.gs_ramsize = (unsigned)inimanager.GetLongValue(ngs, "RamSize", 2048);
+	CopyStringValue(inimanager.GetValue(ngs, "SDCardImage", nullptr), config.ngs_sd_card_path, sizeof config.ngs_sd_card_path);
+	if (!config.ngs_sd_card_path[0])
+		CopyStringValue(inimanager.GetValue(ngs, "SDCARD", nullptr), config.ngs_sd_card_path, sizeof config.ngs_sd_card_path);
+	{
+		config.ngsMP3SupportKind = NGSMP3SupportKind::Stub;
+		line[0] = '\0';
+		CopyStringValue(inimanager.GetValue(ngs, "MP3Support", "stub"), line, sizeof line);
+		if (StringHelper::CompareCaseInsensitive(line, "none", strlen("none")) == 0)
+		{
+			config.ngsMP3SupportKind = NGSMP3SupportKind::None;
+		}
+		else if (StringHelper::CompareCaseInsensitive(line, "software", strlen("software")) == 0)
+		{
+			config.ngsMP3SupportKind = NGSMP3SupportKind::Software;
+		}
+		else if (StringHelper::CompareCaseInsensitive(line, "stub", strlen("stub")) != 0)
+		{
+			MLOGWARNING("Config: unsupported [NGS] MP3Support='%s', using stub", line);
+		}
+	}
+#endif
+	// Anti-alias decimator tier: Reference (default) | HighFidelity. Unknown
+	// values warn and keep the default; a missing key resets to it
+	{
+		config.sound.decimatorHighFidelity = false;
+		line[0] = '\0';
+		CopyStringValue(inimanager.GetValue(sound, "DecimatorQuality", nullptr), line, sizeof line);
+		if (StringHelper::CompareCaseInsensitive(line, "HighFidelity", strlen("HighFidelity")) == 0)
+			config.sound.decimatorHighFidelity = true;
+		else if (line[0] != '\0' && StringHelper::CompareCaseInsensitive(line, "Reference", strlen("Reference")) != 0)
+			MLOGWARNING("Config: unsupported [SOUND] DecimatorQuality='%s', using Reference", line);
+	}
 	// VIDEO section
 	// A/V sync video delay: auto (-1) = match the audio path latency
 	// (~2 frames); 0 = lowest input latency (audio trails by the ring depth)
@@ -740,8 +858,20 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
             config.intlen   = 32;
             break;
 
+        case MM_PROFI:
+            // Profi: 312 x 224T frame, INT-to-first-paper distance 12580T, INT 28T
+            // (UnrealSpeccy PRESET.PROFI, "thanks to DDp"; also ZXMAK2 12583T).
+            // Consensus of the emulators, not verified on real hardware.
+            // The raster paper starts at T=16152 (line 72 * 224 + 24), INT fires at
+            // intstart+1 => 16152 - 3572 = 12580T.
+            config.frame    = 69888;   // 224 * 312
+            config.t_line   = 224;
+            config.intstart = 3571;
+            config.intlen   = 28;
+            break;
+
         default:
-            // Leave existing values for TSConf, ATM, Profi, etc.
+            // Leave existing values for TSConf, ATM, etc.
             break;
     }
 
@@ -783,6 +913,12 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
                 config.t_line = 224;
                 config.intstart = 1794;
                 config.intlen = 32;
+                break;
+            case MM_PROFI:
+                config.frame = 69888;   // 224 * 312
+                config.t_line = 224;
+                config.intstart = 3571;
+                config.intlen = 28;
                 break;
             default:
                 break;

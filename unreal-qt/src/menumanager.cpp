@@ -620,8 +620,9 @@ void MenuManager::createMachineMenu()
         MM_ATM3,          // ZX-Evo / ATM3 / PentEvo
         MM_SCORP,         // Scorpion ZS-256 (base ROM bundle; design:
                           // docs/inprogress/2026-09-07-scorpion-zs256-clone)
-        MM_PROFSCORP      // Scorpion ZS-256 + ProfROM 4.01 (512 KB scorp_prof401.rom,
+        MM_PROFSCORP,     // Scorpion ZS-256 + ProfROM 4.01 (512 KB scorp_prof401.rom,
                           // quadrant switching + #7EFD window; same design doc)
+        MM_PROFI          // Profi 1024K (design: docs/inprogress/2026-09-21-profi)
     };
 
     for (const auto& model : models)

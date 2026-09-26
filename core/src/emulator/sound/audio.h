@@ -47,6 +47,9 @@ static constexpr const double AUDIO_SAMPLE_TSTATE_INCREMENT = (double)AUDIO_SAMP
 /// Rounded UP: pacing emulation even 1 us faster than the audio produced per
 /// frame makes the playback ring buffer fill up, delaying audio behind video.
 /// Falls back to a 50 Hz frame when t-states per frame is not configured yet.
+/// Pacing only: per-frame sample counts come from the exact t-state count
+/// (SoundManager::handleFrameEnd), which this rounding would break wherever
+/// the frame is not a whole number of microseconds (70908 T, 99880 T).
 static constexpr uint32_t CalculateFrameDurationUs(uint32_t frameTStates)
 {
     return frameTStates == 0

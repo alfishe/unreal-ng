@@ -216,9 +216,11 @@ public:
     /// (11T, PC pushed, vector #0066, IFF2<-IFF1). Safe to call while running.
     void RequestNMI();
 
-    /// Scorpion "magic button": page the Shadow Monitor at #0000 (#1FFD bit 1)
-    /// and pulse NMI, so the handler at #0066 executes monitor code. Non-Scorpion
-    /// models fall back to a plain NMI. Safe to call while running.
+    /// "Magic button": Scorpion pages the Shadow Monitor at #0000 (#1FFD bit 1) and
+    /// pulses NMI, so the handler at #0066 executes monitor code; Profi raises the
+    /// CF_TRDOS DOS-latch (same effect as the #3Dxx M1 trap) when DS80=0, then
+    /// pulses NMI. Every other model falls back to a plain NMI. Safe to call while
+    /// running.
     void RequestMNI();
 
     void Start();

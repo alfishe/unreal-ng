@@ -2,7 +2,7 @@
 
 This plan outlines the implementation steps to add a right-aligned toggle icon to the `unreal-qt` main transport toolbar and embed a Time Travel Debugging (`TtdWidget`) control panel in the desktop UI.
 
-The primary design specification is documented in [ttd-qt-toolbar-widget-design.md](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/docs/inprogress/2026-09-23-ttd-qt-toolbar-widget/ttd-qt-toolbar-widget-design.md).
+The primary design specification is documented in [ttd-qt-toolbar-widget-design.md](ttd-qt-toolbar-widget-design.md).
 
 ## User Review Required
 
@@ -13,36 +13,36 @@ The primary design specification is documented in [ttd-qt-toolbar-widget-design.
 
 ### Icons & Resources
 
-#### [NEW] [timetravel.svg](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-qt/resources/icons/timetravel.svg)
+#### [NEW] [timetravel.svg](../../../unreal-qt/resources/icons/timetravel.svg)
 - Add 16x16 theme-aware vector SVG icon for Time Travel Debugging (counter-clockwise timeline arc with 22.5° rotated arrowhead).
 
-#### [MODIFY] [icons.qrc](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-qt/resources/icons.qrc)
+#### [MODIFY] [icons.qrc](../../../unreal-qt/resources/icons.qrc)
 - Add `<file>icons/timetravel.svg</file>`.
 
 ---
 
 ### Toolbar & Main Window UI
 
-#### [MODIFY] [toolbarmanager.h](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-qt/src/toolbarmanager.h)
-#### [MODIFY] [toolbarmanager.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-qt/src/toolbarmanager.cpp)
+#### [MODIFY] [toolbarmanager.h](../../../unreal-qt/src/toolbarmanager.h)
+#### [MODIFY] [toolbarmanager.cpp](../../../unreal-qt/src/toolbarmanager.cpp)
 - Add a dynamic expanding spacer widget (`QSizePolicy::Expanding`) before the TTD action in `_toolBar`.
 - Add `_ttdAction` (`QAction` with `tintedSvgIcon("timetravel")`, checkable).
 - Connect `_ttdAction::toggled(bool)` signal to show/hide the `TtdWidget` panel.
 
-#### [NEW] [ttdwidget.h](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-qt/src/widgets/ttdwidget.h)
-#### [NEW] [ttdwidget.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-qt/src/widgets/ttdwidget.cpp)
+#### [NEW] [ttdwidget.h](../../../unreal-qt/src/widgets/ttdwidget.h)
+#### [NEW] [ttdwidget.cpp](../../../unreal-qt/src/widgets/ttdwidget.cpp)
 - Create `TtdWidget` inheriting from `QWidget`.
 - Top Row: Record/Stop, Load `.ttd`, Export `.ttd`, Clear session buttons, plus live session state & heap memory telemetry label (`TTDSessionInfo`).
 - Bottom Row: Jump Start (`|<`), Step Back (`-1F`), Timeline Slider (`QSlider`), Step Forward (`+1F`), Jump End (`>|`), and Resume Recording from Here buttons.
 - `QTimer` (`100ms`) updates slider range (`sessionStartFrame` to `currentEndFrame`) and session memory statistics dynamically while recording.
 
-#### [MODIFY] [mainwindow.h](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-qt/src/mainwindow.h)
-#### [MODIFY] [mainwindow.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-qt/src/mainwindow.cpp)
+#### [MODIFY] [mainwindow.h](../../../unreal-qt/src/mainwindow.h)
+#### [MODIFY] [mainwindow.cpp](../../../unreal-qt/src/mainwindow.cpp)
 - Embed `TtdWidget` into `MainWindow` layout below the transport toolbar.
 - Connect toolbar toggle action to show/hide `TtdWidget`.
 - Connect timeline slider scrubbing to `TimeTravelManager::SeekTo` and trigger `DeviceScreen` update for instant video frame repainting.
 
-#### [MODIFY] [CMakeLists.txt](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-qt/src/CMakeLists.txt)
+#### [MODIFY] [CMakeLists.txt](../../../unreal-qt/CMakeLists.txt)
 - Register `src/widgets/ttdwidget.h` and `src/widgets/ttdwidget.cpp`.
 
 ---

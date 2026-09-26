@@ -3,6 +3,7 @@
 #include "emulator/sound/soundmanager.h"
 #include "emulator/sound/covox.h"
 #include "emulator/sound/audio.h"
+#include "emulator/ports/portdecoder.h"
 
 class CovoxTest : public ::testing::Test
 {
@@ -48,6 +49,145 @@ TEST_F(CovoxTest, CovoxNotRegisteredWhenConfigDisabled)
     EXPECT_FALSE(sm2->hasCovox());
     EXPECT_EQ(sm2->device(AudioSourceType::COVOX), nullptr);
 
+    delete sm2;
+    delete ctx2;
+}
+
+/// Minimal concrete decoder for routing tests: the exact-address registration
+/// map and dispatch (RegisterPortHandler / PeripheralPortOut) live on the
+/// PortDecoder base and are all these tests exercise. reset() is the single
+/// pure virtual; DecodePortIn/DecodePortOut keep their base behavior
+class RoutingDecoderStub : public PortDecoder
+{
+public:
+    explicit RoutingDecoderStub(EmulatorContext* context) : PortDecoder(context) {}
+    void reset() override {}
+};
+
+/// SoundDrive 1.05 mode 2 (SD=1): all four ports (#F1 L-A, #F3 L-B, #F9 R-A,
+/// #FB R-B) must reach the DAC. Covox is a self-decoding device
+/// (RegisterSelfDecodingDevice), tried via DispatchSelfDecodingOut() - not
+/// wired into the exact-address port-device map at all
+TEST_F(CovoxTest, SoundDriveWiresAllFourQuadPorts)
+{
+    EmulatorContext* ctx2 = new EmulatorContext(LoggerLevel::LogError);
+    ctx2->config.sound.covoxFB = 0;
+    ctx2->config.sound.sd = 1;
+    SoundManager* sm2 = new SoundManager(ctx2);
+    sm2->reset();
+    ASSERT_TRUE(sm2->hasCovox());
+
+    RoutingDecoderStub decoder(ctx2);
+    ctx2->pPortDecoder = &decoder;
+    ASSERT_TRUE(sm2->attachToPorts());
+    Covox* covox = sm2->getCovox();
+    ASSERT_NE(covox, nullptr);
+
+    const uint16_t ports[4] = {Covox::PORT_LEFT_A, Covox::PORT_LEFT_B, Covox::PORT_RIGHT_A, Covox::PORT_RIGHT_B};
+    for (int i = 0; i < 4; i++)
+    {
+        EXPECT_TRUE(decoder.DispatchSelfDecodingOut(ports[i], 0xFF));
+        uint8_t latches[4];
+        covox->TTDSaveState(latches);
+        EXPECT_EQ(latches[i], 0xFF) << "quad port index " << i << " did not reach the DAC";
+    }
+
+    // Mode 1 (#0F/#1F/#4F/#5F) reaches the same 4 physical channels via the
+    // self-decoding path too - the model decoders are responsible for the
+    // TR-DOS/Beta128 precedence, DispatchSelfDecodingOut() itself is unaware
+    // of that arbitration and always tries Covox
+    const uint16_t mode1Ports[4] = {Covox::PORT_LEFT_A_MODE1, Covox::PORT_LEFT_B_MODE1,
+                                     Covox::PORT_RIGHT_A_MODE1, Covox::PORT_RIGHT_B_MODE1};
+    for (int i = 0; i < 4; i++)
+    {
+        EXPECT_TRUE(decoder.DispatchSelfDecodingOut(mode1Ports[i], 0x11 + i));
+        uint8_t latches[4];
+        covox->TTDSaveState(latches);
+        EXPECT_EQ(latches[i], 0x11 + i) << "mode-1 port index " << i << " did not reach the DAC";
+    }
+
+    sm2->detachFromPorts();
+    ctx2->pPortDecoder = nullptr;
+    delete sm2;
+    delete ctx2;
+}
+
+/// Regression: SoundManager::attachToPorts() runs before the Beta disk's
+/// (core.cpp). Covox is registered as a self-decoding device
+/// (RegisterSelfDecodingDevice), not in the exact-address port-device map,
+/// so it can never collide with WD1793's RegisterPortHandler(0x001F, ...)
+/// etc. regardless of registration order - this is what broke
+/// WD1793_Integration_Test.TRDOS_FORMAT_FullOperation when SoundDrive mode 1
+/// was first wired at the raw #0F/#1F/#4F/#5F addresses
+TEST_F(CovoxTest, SoundDriveDoesNotStealBeta128Addresses)
+{
+    EmulatorContext* ctx2 = new EmulatorContext(LoggerLevel::LogError);
+    ctx2->config.sound.covoxFB = 0;
+    ctx2->config.sound.sd = 1;
+    SoundManager* sm2 = new SoundManager(ctx2);
+    sm2->reset();
+    ASSERT_TRUE(sm2->hasCovox());
+
+    RoutingDecoderStub decoder(ctx2);
+    ctx2->pPortDecoder = &decoder;
+    ASSERT_TRUE(sm2->attachToPorts());
+
+    // A stand-in FDC must still be able to claim the raw Beta128 addresses
+    class MockFdc final : public PortDevice
+    {
+    public:
+        uint8_t portDeviceInMethod(uint16_t) override { return 0xFF; }
+        void portDeviceOutMethod(uint16_t, uint8_t) override {}
+    } fdc;
+
+    EXPECT_TRUE(decoder.RegisterPortHandler(0x001F, &fdc)) << "#1F must stay free for WD1793";
+    EXPECT_TRUE(decoder.RegisterPortHandler(0x003F, &fdc)) << "#3F must stay free for WD1793";
+    EXPECT_TRUE(decoder.RegisterPortHandler(0x005F, &fdc)) << "#5F must stay free for WD1793";
+    EXPECT_TRUE(decoder.RegisterPortHandler(0x007F, &fdc)) << "#7F must stay free for WD1793";
+
+    decoder.UnregisterPortHandler(0x001F);
+    decoder.UnregisterPortHandler(0x003F);
+    decoder.UnregisterPortHandler(0x005F);
+    decoder.UnregisterPortHandler(0x007F);
+    sm2->detachFromPorts();
+    ctx2->pPortDecoder = nullptr;
+    delete sm2;
+    delete ctx2;
+}
+
+/// CovoxFB=1 alone (SD=0): classic single-DAC behavior - #FB drives the
+/// DAC, the three SoundDrive quad ports stay unwired
+TEST_F(CovoxTest, CovoxFBAloneWiresOnlyMonoPort)
+{
+    EmulatorContext* ctx2 = new EmulatorContext(LoggerLevel::LogError);
+    ctx2->config.sound.covoxFB = 1;
+    ctx2->config.sound.sd = 0;
+    SoundManager* sm2 = new SoundManager(ctx2);
+    sm2->reset();
+    ASSERT_TRUE(sm2->hasCovox());
+
+    RoutingDecoderStub decoder(ctx2);
+    ctx2->pPortDecoder = &decoder;
+    ASSERT_TRUE(sm2->attachToPorts());
+    Covox* covox = sm2->getCovox();
+    ASSERT_NE(covox, nullptr);
+
+    uint8_t latches[4];
+    const uint16_t quadOnly[3] = {Covox::PORT_LEFT_A, Covox::PORT_LEFT_B, Covox::PORT_RIGHT_A};
+    for (int i = 0; i < 3; i++)
+    {
+        EXPECT_FALSE(decoder.DispatchSelfDecodingOut(quadOnly[i], 0xFF))
+            << "mono fitment must decline quad-only port index " << i;
+        covox->TTDSaveState(latches);
+        EXPECT_EQ(latches[i], 0x80) << "quad-only port index " << i << " should stay at the silence midpoint";
+    }
+
+    EXPECT_TRUE(decoder.DispatchSelfDecodingOut(Covox::PORT_RIGHT_B, 0xFF));
+    covox->TTDSaveState(latches);
+    EXPECT_EQ(latches[3], 0xFF);
+
+    sm2->detachFromPorts();
+    ctx2->pPortDecoder = nullptr;
     delete sm2;
     delete ctx2;
 }
@@ -192,6 +332,79 @@ TEST_F(CovoxTest, DCRemovalReducesOffset)
     // The last sample should be closer to zero than the raw initial offset
     // Due to DC removal, it should be significantly reduced
     EXPECT_LT(std::abs(buf[SAMPLES_PER_FRAME * 2 - 2]), 10000);
+}
+
+// Regression (balldreams2.sna): a mono digi player driving SoundDrive "mode
+// 1" LeftB (#1F) alone - not the classic #FB - must still be centered to
+// both speakers. Before this fix, only RightB (#FB) got the mono-compat
+// centering, so any other single active channel panned hard to its own
+// side instead of playing on both (reported as "only one left channel")
+TEST_F(CovoxTest, SingleActiveChannelOtherThanRightBIsCentered)
+{
+    Covox* covox = sm->getCovox();
+    ASSERT_NE(covox, nullptr);
+
+    covox->portDeviceOutMethod(Covox::PORT_LEFT_B_MODE1, 0xC0);
+
+    EXPECT_GT(covox->lastLeftAmplitude(), 0) << "LeftB alone should still produce a positive amplitude";
+    EXPECT_EQ(covox->lastLeftAmplitude(), covox->lastRightAmplitude())
+        << "single active channel must be centered on both speakers, not panned hard left";
+}
+
+// A genuine two-channel signal on the same side must NOT be force-centered -
+// only exactly one active channel triggers the mono-compat behavior
+TEST_F(CovoxTest, TwoActiveChannelsOnSameSideStaysUncentered)
+{
+    Covox* covox = sm->getCovox();
+    ASSERT_NE(covox, nullptr);
+
+    covox->portDeviceOutMethod(Covox::PORT_LEFT_A, 0xC0);
+    covox->portDeviceOutMethod(Covox::PORT_LEFT_B, 0xC0);
+
+    EXPECT_GT(covox->lastLeftAmplitude(), 0);
+    EXPECT_EQ(covox->lastRightAmplitude(), 0) << "Right side must stay silent, not centered";
+}
+
+// Regression (balldreams2.sna): switching a demo's device selection from
+// SoundDrive mode-1 (LeftB / #1F) to Covox (RightB / #FB) and back leaves
+// RightB's latch frozen at its last non-midpoint value forever, since
+// nothing in the demo ever rewrites it. Without decay, that stale RightB
+// permanently defeats mono-centering for the LeftB signal that resumes
+// afterward (reported as "sd works only with left channel" / clicks on
+// switching). After STALE_CHANNEL_FRAMES frames of silence on RightB, it
+// must decay back to midpoint and centering must resume.
+TEST_F(CovoxTest, StaleChannelDecaysAndCenteringResumes)
+{
+    Covox* covox = sm->getCovox();
+    ASSERT_NE(covox, nullptr);
+
+    // SD mode: LeftB carries the signal, centered (single active channel)
+    covox->portDeviceOutMethod(Covox::PORT_LEFT_B_MODE1, 0xC0);
+    ASSERT_GT(covox->lastLeftAmplitude(), 0);
+    ASSERT_EQ(covox->lastLeftAmplitude(), covox->lastRightAmplitude());
+
+    // Switch to Covox: RightB now carries the signal, LeftB abandoned but
+    // still latched from before - both non-midpoint, so no longer "mono"
+    covox->portDeviceOutMethod(Covox::PORT_RIGHT_B, 0x62);
+    EXPECT_NE(covox->lastLeftAmplitude(), covox->lastRightAmplitude())
+        << "two distinct stale+live channels must not be force-centered";
+
+    // Switch back to SD: LeftB resumes, but RightB is still frozen at 0x62
+    // from before - immediately after the switch centering is still broken
+    covox->portDeviceOutMethod(Covox::PORT_LEFT_B_MODE1, 0xC0);
+    ASSERT_NE(covox->lastLeftAmplitude(), covox->lastRightAmplitude());
+
+    // Let RightB go stale: several frames pass with LeftB refreshed every
+    // frame (as a real digi engine would) but RightB never rewritten
+    for (int frame = 0; frame < Covox::STALE_CHANNEL_FRAMES + 1; frame++)
+    {
+        covox->handleFrameStart();
+        covox->portDeviceOutMethod(Covox::PORT_LEFT_B_MODE1, 0xC0);
+    }
+
+    EXPECT_GT(covox->lastLeftAmplitude(), 0);
+    EXPECT_EQ(covox->lastLeftAmplitude(), covox->lastRightAmplitude())
+        << "RightB should have decayed to midpoint, restoring mono centering";
 }
 
 TEST_F(CovoxTest, MonoOutputOnBothChannels)

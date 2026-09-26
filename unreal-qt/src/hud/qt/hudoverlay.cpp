@@ -1291,6 +1291,21 @@ void HudOverlay::drawIcon(QPainter& painter, const QString& iconName, const QRec
         wave2.lineTo(cx + w / 2, y2 - waveH / 2);
         painter.drawPath(wave2);
     }
+    else if (iconName == "generalsound")
+    {
+        // General Sound icon: smooth sine curve, distinct from AY's square
+        // wave and Covox's stepped wave - the GS card is a sampled/DAC
+        // playback engine (ProTracker-style modules), not a tone generator
+        int cx = r.center().x();
+        int cy = r.center().y();
+        int w = r.width() - 4;
+        int h = r.height() - 4;
+        QPainterPath wave;
+        wave.moveTo(cx - w / 2, cy);
+        wave.cubicTo(cx - w / 4, cy - h / 2, cx - w / 8, cy - h / 2, cx, cy);
+        wave.cubicTo(cx + w / 8, cy + h / 2, cx + w / 4, cy + h / 2, cx + w / 2, cy);
+        painter.drawPath(wave);
+    }
     else if (iconName == "moonsound")
     {
         // MoonSound icon: crescent moon with sound-wave arcs (OPL4 FM + PCM).

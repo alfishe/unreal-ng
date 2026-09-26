@@ -71,6 +71,11 @@ nc localhost 8765
 | `disasm [addr] [count]` | Disassemble from address |
 | `disasm_page <ram\|rom> <page> [offset] [count]` | Disassemble physical page |
 
+### Audio
+| Command | Description |
+|---------|-------------|
+| `state audio gs [--verbose]` | General Sound card state: mailbox flags, MPAG page, DAC channels; `--verbose` adds the coprocessor registers |
+
 ### Media
 | Command | Description |
 |---------|-------------|

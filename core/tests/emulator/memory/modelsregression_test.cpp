@@ -402,8 +402,9 @@ void ModelsRegression_Test::VerifyRowsAgainstGoldens(const char* decoderName,
 //   - PortDecoder_Pentagon1024 honors bit 5 as pb5 while #EFF7 bit 2 = 0
 //     (extension enabled); once #EFF7 bit 2 is set the decoder falls back to
 //     3-bit banking and bit 5 becomes the lock again
-//   - The +3 and Profi decoders apply #7FFD D4 with the ROM polarity opposite
-//     to the 128K decoder (bit set -> BASIC 128)
+//   - The +3 decoder applies #7FFD D4 with the ROM polarity opposite
+//     to the 128K decoder (bit set -> BASIC 128). Profi was fixed to the
+//     128K polarity (bit set -> 48K/DOS side) with the Profi rewrite
 //   - Port_1FFD is a no-op stub for both the +3 and the Scorpion decoders
 static const std::vector<ModelsRegressionRow> kGoldenRows_Spectrum48 = {
     // Reset baseline only - the 48K has no paging ports
@@ -544,33 +545,36 @@ static const std::vector<ModelsRegressionRow> kGoldenRows_Pentagon1024 = {
 };
 
 static const std::vector<ModelsRegressionRow> kGoldenRows_Profi = {
-    // Profi
-    {"Profi", 0, 0x0000, 0x00, "R48", "RAM5", "RAM2", "RAM0"},
-    {"Profi", 1, 0x7FFD, 0x00, "R48", "RAM5", "RAM2", "RAM0"},
-    {"Profi", 2, 0xDFFD, 0x00, "R48", "RAM5", "RAM2", "RAM0"},
-    {"Profi", 3, 0xDFFD, 0x01, "R48", "RAM5", "RAM2", "RAM0"},
-    {"Profi", 4, 0xDFFD, 0x02, "R48", "RAM5", "RAM2", "RAM0"},
-    {"Profi", 5, 0xDFFD, 0x03, "R48", "RAM5", "RAM2", "RAM0"},
-    {"Profi", 6, 0xDFFD, 0x04, "R48", "RAM5", "RAM2", "RAM0"},
-    {"Profi", 7, 0xDFFD, 0x05, "R48", "RAM5", "RAM2", "RAM0"},
-    {"Profi", 8, 0xDFFD, 0x06, "R48", "RAM5", "RAM2", "RAM0"},
-    {"Profi", 9, 0xDFFD, 0x07, "R48", "RAM5", "RAM2", "RAM0"},
-    {"Profi", 10, 0xDFFD, 0x08, "R48", "RAM5", "RAM2", "RAM0"},
-    {"Profi", 11, 0xDFFD, 0x09, "R48", "RAM5", "RAM2", "RAM0"},
-    {"Profi", 12, 0xDFFD, 0x0A, "R48", "RAM5", "RAM2", "RAM0"},
-    {"Profi", 13, 0xDFFD, 0x0B, "R48", "RAM5", "RAM2", "RAM0"},
-    {"Profi", 14, 0xDFFD, 0x0C, "R48", "RAM5", "RAM2", "RAM0"},
-    {"Profi", 15, 0xDFFD, 0x0D, "R48", "RAM5", "RAM2", "RAM0"},
-    {"Profi", 16, 0xDFFD, 0x0E, "R48", "RAM5", "RAM2", "RAM0"},
-    {"Profi", 17, 0xDFFD, 0x0F, "R48", "RAM5", "RAM2", "RAM0"},
-    {"Profi", 18, 0x7FFD, 0x01, "R48", "RAM5", "RAM2", "RAM1"},
-    {"Profi", 19, 0xDFFD, 0x08, "R48", "RAM5", "RAM2", "RAM1"},
-    {"Profi", 20, 0x7FFD, 0x07, "R48", "RAM5", "RAM2", "RAM7"},
-    {"Profi", 21, 0xDFFD, 0x0F, "R48", "RAM5", "RAM2", "RAM7"},
-    {"Profi", 22, 0x7FFD, 0x08, "R48", "RAM5", "RAM2", "RAM0"},
-    {"Profi", 23, 0x7FFD, 0x10, "R128", "RAM5", "RAM2", "RAM0"},
-    {"Profi", 24, 0x7FFD, 0x30, "R128", "RAM5", "RAM2", "RAM0"},
-    {"Profi", 25, 0x7FFD, 0x00, "R128", "RAM5", "RAM2", "RAM0"},
+    // Profi 1024 on a 256 KB config (RAM mask 0x0F). Derived by hand from the UnrealSpeccy mapper
+    // (technical-design section 3): page = (DFFD[2:0]<<3 | 7FFD[2:0]) & mask; SCO (DFFD.3) puts the
+    // page at #4000 and RAM7 at #C000. Reset leaves the DOS latch on (SYS ROM); with the latch on,
+    // 7FFD.4 selects TR-DOS. Bit 5 locks paging (write 25 is ignored).
+    {"Profi", 0, 0x0000, 0x00, "SRV", "RAM5", "RAM2", "RAM0"},
+    {"Profi", 1, 0x7FFD, 0x00, "SRV", "RAM5", "RAM2", "RAM0"},
+    {"Profi", 2, 0xDFFD, 0x00, "SRV", "RAM5", "RAM2", "RAM0"},
+    {"Profi", 3, 0xDFFD, 0x01, "SRV", "RAM5", "RAM2", "RAM8"},
+    {"Profi", 4, 0xDFFD, 0x02, "SRV", "RAM5", "RAM2", "RAM0"},
+    {"Profi", 5, 0xDFFD, 0x03, "SRV", "RAM5", "RAM2", "RAM8"},
+    {"Profi", 6, 0xDFFD, 0x04, "SRV", "RAM5", "RAM2", "RAM0"},
+    {"Profi", 7, 0xDFFD, 0x05, "SRV", "RAM5", "RAM2", "RAM8"},
+    {"Profi", 8, 0xDFFD, 0x06, "SRV", "RAM5", "RAM2", "RAM0"},
+    {"Profi", 9, 0xDFFD, 0x07, "SRV", "RAM5", "RAM2", "RAM8"},
+    {"Profi", 10, 0xDFFD, 0x08, "SRV", "RAM0", "RAM2", "RAM7"},
+    {"Profi", 11, 0xDFFD, 0x09, "SRV", "RAM8", "RAM2", "RAM7"},
+    {"Profi", 12, 0xDFFD, 0x0A, "SRV", "RAM0", "RAM2", "RAM7"},
+    {"Profi", 13, 0xDFFD, 0x0B, "SRV", "RAM8", "RAM2", "RAM7"},
+    {"Profi", 14, 0xDFFD, 0x0C, "SRV", "RAM0", "RAM2", "RAM7"},
+    {"Profi", 15, 0xDFFD, 0x0D, "SRV", "RAM8", "RAM2", "RAM7"},
+    {"Profi", 16, 0xDFFD, 0x0E, "SRV", "RAM0", "RAM2", "RAM7"},
+    {"Profi", 17, 0xDFFD, 0x0F, "SRV", "RAM8", "RAM2", "RAM7"},
+    {"Profi", 18, 0x7FFD, 0x01, "SRV", "RAM9", "RAM2", "RAM7"},
+    {"Profi", 19, 0xDFFD, 0x08, "SRV", "RAM1", "RAM2", "RAM7"},
+    {"Profi", 20, 0x7FFD, 0x07, "SRV", "RAM7", "RAM2", "RAM7"},
+    {"Profi", 21, 0xDFFD, 0x0F, "SRV", "RAM15", "RAM2", "RAM7"},
+    {"Profi", 22, 0x7FFD, 0x08, "SRV", "RAM8", "RAM2", "RAM7"},
+    {"Profi", 23, 0x7FFD, 0x10, "DOS", "RAM8", "RAM2", "RAM7"},
+    {"Profi", 24, 0x7FFD, 0x30, "DOS", "RAM8", "RAM2", "RAM7"},
+    {"Profi", 25, 0x7FFD, 0x00, "DOS", "RAM8", "RAM2", "RAM7"},
 };
 
 /// endregion </Golden bank maps>

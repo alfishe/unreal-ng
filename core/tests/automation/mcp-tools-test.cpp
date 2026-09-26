@@ -191,6 +191,110 @@ TEST_F(McpTools_Test, EmulatorManage_StartStopDestroy_VerbAndPath)
     EXPECT_TRUE(_caller->Saw("DELETE", "/api/v1/emulator/emu-1"));
 }
 
+TEST_F(McpTools_Test, EmulatorManage_GsByteActions_PostControlAudioGsWithValue)
+{
+    Json::Value response;
+    response["action"] = "send_command";
+    _caller->routes["POST /api/v1/emulator/emu-1/control/audio/gs"] = {200, response};
+
+    Json::Value args;
+    args["action"] = "gs_send_command";
+    args["value"] = 0x36;
+    mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
+
+    ASSERT_FALSE(result.isError);
+    const auto* call = _caller->Last("POST", "/api/v1/emulator/emu-1/control/audio/gs");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["action"].asString(), "send_command");
+    EXPECT_EQ(call->body["value"].asInt(), 0x36);
+}
+
+TEST_F(McpTools_Test, EmulatorManage_GsSendCommand_MissingValueIsError)
+{
+    Json::Value args;
+    args["action"] = "gs_send_command";
+    mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
+
+    EXPECT_TRUE(result.isError);
+    EXPECT_FALSE(_caller->Saw("POST", "/api/v1/emulator/emu-1/control/audio/gs"));
+}
+
+TEST_F(McpTools_Test, EmulatorManage_GsSwitchPersonality_PostsPersonalityBody)
+{
+    Json::Value response;
+    response["action"] = "switch_personality";
+    response["personality"] = "lw";
+    response["current"] = "z80";
+    response["requested"] = true;
+    response["note"] = "applied at the next frame boundary";
+    _caller->routes["POST /api/v1/emulator/emu-1/control/audio/gs"] = {200, response};
+
+    Json::Value args;
+    args["action"] = "gs_switch_personality";
+    args["personality"] = "lw";
+    mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
+
+    ASSERT_FALSE(result.isError);
+    const auto* call = _caller->Last("POST", "/api/v1/emulator/emu-1/control/audio/gs");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["action"].asString(), "switch_personality");
+    EXPECT_EQ(call->body["personality"].asString(), "lw");
+    // Human summary surfaces the applied-when note, not just "done"
+    EXPECT_NE(result.text.find("lw"), std::string::npos);
+}
+
+TEST_F(McpTools_Test, EmulatorManage_GsSwitchPersonality_MissingPersonalityIsError)
+{
+    Json::Value args;
+    args["action"] = "gs_switch_personality";
+    mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
+
+    EXPECT_TRUE(result.isError);
+    EXPECT_FALSE(_caller->Saw("POST", "/api/v1/emulator/emu-1/control/audio/gs"));
+}
+
+TEST_F(McpTools_Test, EmulatorManage_GsDumpModule_PostsOptionalPathBody)
+{
+    Json::Value response;
+    response["action"] = "dump_module";
+    response["path"] = "/tmp/mine.mod";
+    response["bytes"] = 3196;
+    response["playing"] = true;
+    _caller->routes["POST /api/v1/emulator/emu-1/control/audio/gs"] = {200, response};
+
+    // No 'path' arg: the body must NOT carry a path field (server default applies)
+    Json::Value args;
+    args["action"] = "gs_dump_module";
+    mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
+    ASSERT_FALSE(result.isError);
+    const auto* call1 = _caller->Last("POST", "/api/v1/emulator/emu-1/control/audio/gs");
+    ASSERT_NE(call1, nullptr);
+    EXPECT_EQ(call1->body["action"].asString(), "dump_module");
+    EXPECT_FALSE(call1->body.isMember("path"));
+    EXPECT_NE(result.text.find("3196"), std::string::npos);
+
+    // Explicit path: forwarded verbatim
+    args["path"] = "/tmp/mine.mod";
+    RunTool(*_registry, "emulator_manage", args, *_caller);
+    const auto* call2 = _caller->Last("POST", "/api/v1/emulator/emu-1/control/audio/gs");
+    ASSERT_NE(call2, nullptr);
+    EXPECT_EQ(call2->body["path"].asString(), "/tmp/mine.mod");
+}
+
+TEST_F(McpTools_Test, EmulatorManage_GsDumpModule_NoUploadSurfacesError)
+{
+    Json::Value error;
+    error["error"] = "Not Found";
+    error["message"] = "No completed module upload to dump (no COM30..D2 stream captured yet)";
+    _caller->routes["POST /api/v1/emulator/emu-1/control/audio/gs"] = {404, error};
+
+    Json::Value args;
+    args["action"] = "gs_dump_module";
+    mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
+
+    EXPECT_TRUE(result.isError);
+}
+
 TEST_F(McpTools_Test, EmulatorManage_Create_PostsStartWithDefaultModel)
 {
     Json::Value created;

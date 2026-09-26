@@ -40,6 +40,12 @@ bool DiskFastLoad::IsArmed() const
     if (!(_context->emulatorState.flags & CF_TRDOS) || _context->pBetaDisk == nullptr)
         return false;
 
+    // Profi: with the DOS latch on and ROM14 = 0 the SYS (service / BIOS) ROM is paged in, not TR-DOS.
+    // It polls the FDC with authentic timing (waits for BUSY after Restore; UnrealSpeccy doc: "Profi
+    // service ROM can work only when all TR-DOS delays are enabled"), so decline compression there.
+    if (_context->config.mem_model == MM_PROFI && !(_context->emulatorState.p7FFD & 0x10))
+        return false;
+
     // Bank 0 must be ROM. If it is mapped to RAM (e.g. CP/M TPA), decline.
     return _context->pMemory && _context->pMemory->GetMemoryBankMode(0) == BANK_ROM;
 }

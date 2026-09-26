@@ -7,6 +7,9 @@ headers `a/<file>` → apply with `-p1` from this directory):
 * `ymfm-ttd.patch` — patches 1–3 below (time-travel debugging invariants),
 * `ymfm-furnace-csm.patch` — patch 4 below (CSM key-on pulse, from Furnace).
 
+Patch 5 (reset clears the running counters) is small and documented inline
+below; it has no separate patch file.
+
 Together they change three files; everything else is byte-identical to the
 commit in VERSION.txt.
 
@@ -121,6 +124,32 @@ unaffected.
 400 FM samples, no manual key-on, fast release — one burst per overflow,
 each starting on the overflow sample; on pristine upstream the test sees
 a single sustained burst and fails.
+
+## 5. `ymfm_fm.ipp` — `fm_engine_base::reset` — clear the running counters
+
+**What:** `reset()` also zeroes `m_env_counter` (the envelope generator
+clock) and `m_total_clocks` (the low 8 bits of the clock count), and returns
+the prepare scheduling added by patch 1 (`m_active_channels`,
+`m_modified_channels`, `m_prepare_count`) to its constructor values, so
+every channel is re-prepared on the next clock.
+
+**Why:** upstream `reset()` restores registers, channels and operators but
+leaves both counters running from construction. After a machine reset the
+envelope clock phase - and the timer B first-load offset, which is taken
+from the low clock bits (`-(m_total_clocks & 15)`) - therefore depended on
+how long the emulator instance had been up: two recordings from the same
+reset + snapshot differed in exactly these bytes of the TTD payload
+(found 2026-09-25 re-recording `testdata/ttd/`). A real chip's /IC reset
+clears its internal state. The YM2203 has no LFO, so the LFO counter
+(`reset_lfo()`, OPNA only) is not involved.
+
+**Interaction with patch 1:** the scheduling fields it serializes are now
+also reset; all five fields were already serialized, so the TTD payload
+stays 494 bytes.
+
+**Test:** `TsfmCore_Test.ResetClearsEngineCounters`
+(`core/tests/emulator/sound/tsfm/tsfm_core_test.cpp`): two devices, one run
+for a while first, give byte-identical ymfm state after a reset.
 
 ## Furnace changes reviewed and NOT ported (2026-09-13)
 

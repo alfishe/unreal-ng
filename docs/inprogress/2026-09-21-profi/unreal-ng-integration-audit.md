@@ -49,6 +49,10 @@ serializer, tests.
   ports like `#5FFD` (A15=0, A13=0, A2=1, A1=0) satisfy both, and `DecodePortOut` fires both handlers. Real decode
   needs schematic verification (ports `#DFFD` vs `#7FFD` on Profi are distinguished by A15/A13, plus A2 for 7FFD).
 - `IsPort_7FFD` comment cites SOUNDRIVE `F1/F9` conflict; Soundrive/Covox-Profi (`config covoxProfi_vol`) is not wired.
+  **Amended**: Covox is now wired at Profi's actual hardware ports `#5F` (L) / `#3F` (R), NORMAL mode only
+  (`DecodePortOut` forwards to the shared `Covox` device via its `PORT_LEFT_A`/`PORT_RIGHT_A` - not `_B`, which
+  would arm the device's mono-compatibility fallback and leak Right into Left - so the device itself and every
+  other model stay untouched); see technical-design.md §6.2.
 - `reset()` (`:17-49`) forces `SetROMMode(RM_SOS)`, sets bank1=5, bank2=2, bank3=0 but never calls `UpdateZ80Banks`
   with a Profi model; no `ApplyBootROMDefaults` override (base hook `portdecoder.h:376`).
 - `DecodePortIn` has no Beta128 gating (`IsBeta128Port && !CF_TRDOS`) unlike Pentagon128 (`portdecoder_pentagon128.cpp:97-107`);

@@ -25,7 +25,7 @@ what create requests accept). `ram_size` is validated against the model's
 | `ATM3` | ZX-Evo (ATM Turbo 3) | 4096 | creatable |
 | `SCORPION` | ZS Scorpion | 256, 1024 | creatable |
 | `PROFSCORP` | ZS Scorpion + PROF ROM | 256, 1024 | creatable |
-| `PROFI` | Profi | 1024 | creatable on `master` (verified 2026-09-23 — the `profi` branch note below is now stale for base creatability; it may still carry additional in-progress Profi features not yet on master) |
+| `PROFI` | Profi | 1024 | creatable; IDE not yet implemented (see [machines/profi.md](../machines/profi.md)) |
 | `TSL`, `ATM450`, `GMX`, `KAY`, `QUORUM`, `LSY256`, `PHOENIX`, `NEXT` | various | — | no factory port decoder → HTTP 400 + reason, never a silent 48K fallback |
 
 The runtime list is **authoritative over this table** — builds and branches
@@ -93,7 +93,6 @@ Work-in-progress hardware lives on side branches — a recipe may name one:
 
 | Branch | Adds | Config delta |
 |:--|:--|:--|
-| `profi` | Profi 1024 machine (RTC/CMOS, Covox/SoundDrive at its own ports, hi-res 512x240, TTD paging) — **base creatability now on `master`** (verified 2026-09-23), this row is for any Profi feature not yet merged | `configs/profi/unreal.ini` |
 | `generalsound` | General Sound **Z80 LLE** mode (default `GSType=Z80` on clone models), GS state + port-trace endpoints | `GSType=Z80`, `GS=rom/gs105a.rom` |
 | `moonsound` | MoonSound (OPL4) card engine; clone-only policy | `MoonSound=1` clones, `=0` real Sinclairs |
 
@@ -101,7 +100,7 @@ On `master` the same config keys exist but some are inert (`MoonSound=` has
 no engine; `GSType=BASS` is the legacy HLE mode). Always check
 `server.git_branch` before asserting hardware behavior that depends on a
 branch. Design docs: [docs/inprogress/](../../docs/inprogress/) —
-`2026-09-21-profi/`, `2026-09-19-general-sound/`, `2026-09-13-moonsound/`.
+`2026-09-19-general-sound/`, `2026-09-13-moonsound/`.
 
 ## Pitfalls
 

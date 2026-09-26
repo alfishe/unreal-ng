@@ -737,6 +737,18 @@ void ScreenZX::Draw(uint32_t tstate)
         return;
     }
 
+    // Profi 512x240 hi-res (DFFD.7): own fetch and geometry. _profiScreen is
+    // allocated lazily on first use - only machines whose detected video
+    // mode actually becomes M_PROFIHR ever reach here, so plain
+    // Spectrum/Pentagon/ATM machines never allocate one.
+    if (_mode == M_PROFIHR)
+    {
+        if (!_profiScreen)
+            _profiScreen = std::make_unique<ScreenProfi>(_context, _memory);
+        _profiScreen->Draw(tstate, rasterDescriptors[_mode], _framebuffer, _borderColor);
+        return;
+    }
+
     // Pentagon / ZX-Evo BaseConf EFF7 z-modes: same ZX raster and LUT, but a
     // different plane / attribute fetch (ported from xpeccy vidDrawAlco /
     // vidDrawHwmc)
@@ -1128,7 +1140,7 @@ void ScreenZX::RenderFrameBatch()
     // across the whole frame instead so ScreenHQ=OFF still produces correct
     // output (Draw dispatches to _atmScreen->Draw / DrawAlcoMode).
     if (_mode == M_ATM16 || _mode == M_ATMHR || _mode == M_ATMTX || _mode == M_ATMTL ||
-        _mode == M_P16 || _mode == M_PMC)
+        _mode == M_P16 || _mode == M_PMC || _mode == M_PROFIHR)
     {
         if (_framebuffer.memoryBuffer == nullptr)
             return;

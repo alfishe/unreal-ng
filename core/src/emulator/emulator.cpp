@@ -901,6 +901,27 @@ void Emulator::RequestMNI()
         state.scorpionDosTrigger = 1;
         _context->pMemory->UpdateZ80Banks();
     }
+    else if (config.mem_model == MM_PROFI)
+    {
+        // Profi "magic button" (Karabas video.vhd/TOP:1197-1199 `dos_act` set condition,
+        // OR-ed with the #3Dxx M1 trap): NMI with DS80=0 raises the same CF_TRDOS latch
+        // the M1 trap sets, landing #0000 on the SYS/DOS ROM exactly like a real 3Dxx
+        // entry - UpdateZ80Banks() re-derives CF_LEAVEDOSADR/CF_DOSPORTS from CF_TRDOS
+        // (Memory::UpdateZ80Banks, MM_PROFI branch), so the session closes on the normal
+        // PC>=#4000 fetch with no extra bookkeeping here. DS80=1 (hi-res) blocks it per
+        // Karabas - the button has no effect while the palette-writable hi-res mode is
+        // active. Deliberately NOT gated on DFFD.4 (WOROM): the existing #3Dxx M1 trap
+        // (Memory::UpdateZ80Banks) doesn't gate on it either (design §4.2/Q7 - the
+        // Karabas RTL blocks entry there too, but that gate was "not adopted" to match
+        // the Unreal/ZXMAK2 consensus); WOROM's RAM-at-#0000 override already makes the
+        // ROM invisible regardless of the latch, so a second gate here would be redundant
+        // and inconsistent with the M1 trap's own behaviour.
+        if (!(state.pDFFD & 0x80))
+        {
+            state.flags |= CF_TRDOS;
+            _context->pMemory->UpdateZ80Banks();
+        }
+    }
 
     _core->GetZ80()->RequestNonMaskedInterrupt();
 
@@ -1057,6 +1078,17 @@ void Emulator::Pause(bool broadcast)
     if (_mainloop && _isRunning)
     {
         _mainloop->WaitForPauseConfirmation(500);
+    }
+
+    // No more handleFrameEnd calls will arrive until Resume() - a device
+    // mid-playback at this exact instant (GS in particular: see
+    // SoundManager::onEmulatorPaused) would otherwise keep reporting
+    // "active" for as long as the pause lasts, with nothing left to clear
+    // it. Unconditional (not gated on broadcast): audio must actually stop
+    // regardless of whether this pause is UI-visible.
+    if (_context->pSoundManager)
+    {
+        _context->pSoundManager->onEmulatorPaused();
     }
 
     // Update state and broadcast only if requested

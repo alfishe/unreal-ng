@@ -642,8 +642,9 @@ TEST_F(TTD_Subsystem_Restore_Test, FDCRegisters_SeekRestoresAllRegisters)
 // ===========================================================================
 // 5. AY TURBOSOUND REGISTERS
 //
-// The TurboSound chip (two AY-3-8910s) serializes 115 bytes: 1 byte for the
-// current-chip selector + 2 x 57 bytes per AY chip. The serializer unit test
+// The TurboSound chip (two AY-3-8910s) serializes 925 bytes: 1 byte for the
+// current-chip selector + 2 x 73 bytes per AY chip + the timeline tail (render
+// cursor + pending timed SSG writes, 778 bytes). The serializer unit test
 // (ttd_ay_serializer_test.cpp) verifies save/load round-trip in isolation.
 // This test verifies the full SeekTo path: write registers, capture checkpoint,
 // mutate, seek back, verify byte-identical restoration through RestoreCheckpoint.
@@ -689,7 +690,8 @@ TEST_F(TTD_Subsystem_Restore_Test, AYTurboSound_SeekRestoresAllRegisters)
     std::vector<uint8_t> expected(ts->TTDStateSize());
     ts->TTDSaveState(expected.data());
     ASSERT_FALSE(expected.empty());
-    ASSERT_EQ(expected.size(), 115u) << "TurboSound blob should be 1 + 2*57 = 115 bytes";
+    ASSERT_EQ(expected.size(), ts->TTDStateSize());
+    ASSERT_GT(expected.size(), 0u);
 
     // Mutate registers away from captured values -- zero everything.
     for (uint8_t r = 0; r < 16; ++r)

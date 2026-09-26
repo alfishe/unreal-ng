@@ -401,3 +401,58 @@ TEST_F(PortDecoder_ATM3_Test, PortBE_ReadbackRegisters)
 }
 
 /// endregion </ATM palette port #FF tests - exact decode and manager gate>
+
+/// region <General Sound port delegation tests>
+
+namespace
+{
+    // Minimal PortDevice registered under the canonical GS keys the same way
+    // SoundManager::attachToPorts registers SoundChip_GeneralSound
+    class GsPortMockDevice : public PortDevice
+    {
+    public:
+        uint8_t portDeviceInMethod(uint16_t port) override
+        {
+            lastPort = port;
+            return static_cast<uint8_t>(port ^ 0xFF);
+        }
+
+        void portDeviceOutMethod(uint16_t port, uint8_t value) override
+        {
+            lastPort = port;
+            lastValue = value;
+        }
+
+        uint16_t lastPort = 0;
+        uint8_t lastValue = 0;
+    };
+}  // namespace
+
+TEST_F(PortDecoder_ATM3_Test, GSHostPortsReachBaseDecodeThroughOverrides)
+{
+    // The ATM3 overrides (#57 Z-Controller, #xBE/#xBF, CMOS windows, the
+    // memory-manager gate) must not swallow the GS family: the arms live in
+    // the ATM710 base decode and are reached through the delegation tails
+    // of DecodePortIn/DecodePortOut
+    GsPortMockDevice gs;
+    ASSERT_TRUE(_portDecoder->RegisterPortHandler(0x00B3, &gs, static_cast<PortTagSet>(PortTag::SoundGs)));
+    ASSERT_TRUE(_portDecoder->RegisterPortHandler(0x00BB, &gs, static_cast<PortTagSet>(PortTag::SoundGs)));
+    ASSERT_TRUE(_portDecoder->RegisterPortHandler(0x0033, &gs, static_cast<PortTagSet>(PortTag::SoundGs)));
+
+    // Manager gate open (aFF77=0 at reset): the x7F7/xx77/xFF7 group stays
+    // hungry but must leave the GS family alone
+    EmulatorState& state = _context->emulatorState;
+    state.aFF77 = 0x0000;
+
+    EXPECT_EQ(_portDecoder->DecodePortIn(0x02B3, 0x0000), 0x4C) << "#02B3 read answers through key #00B3";
+    EXPECT_EQ(gs.lastPort, 0x00B3);
+
+    _portDecoder->DecodePortOut(0x01BB, 0xC3, 0x0000);
+    EXPECT_EQ(gs.lastPort, 0x00BB);
+    EXPECT_EQ(gs.lastValue, 0xC3);
+    _portDecoder->DecodePortOut(0x0033, 0x80, 0x0000);
+    EXPECT_EQ(gs.lastPort, 0x0033);
+    EXPECT_EQ(gs.lastValue, 0x80);
+}
+
+/// endregion </General Sound port delegation tests>

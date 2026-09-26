@@ -27,6 +27,9 @@ from .ttd_format import (
     PERIPHERAL_ID_NAMES,
     NEVER_TOUCHED_PAGE_REF,  # backward-compat alias
     SUB_PAGES_PER_EMU_PAGE,
+    TtdFormatError,
+    decode_journal_block,
+    decode_peripheral_blob,
 )
 
 
@@ -201,6 +204,10 @@ def check_integrity(dump: TtdDump) -> IntegrityReport:
                 ),
             ))
 
+    # ---- Everything recognized: no skipped state, no unknown device, no
+    # undecodable blob, nothing after the last known section ----
+    _check_fully_recognized(dump, rep)
+
     # ---- Optional: CRC verification (only if no errors so far) ----
     # Decompression + CRC recompute is expensive (walks every XorPrev chain);
     # we skip it if structural checks already failed since results would be
@@ -288,6 +295,58 @@ def _check_slot(rep: IntegrityReport, slot: PageSlot) -> None:
             ))
 
 
+def _check_fully_recognized(dump: TtdDump, rep: IntegrityReport) -> None:
+    """Every byte of the file maps to something this parser decodes.
+
+    A format amendment the parser has not caught up with would otherwise
+    pass silently: the reader skips CPU / chipset bytes beyond the fields it
+    knows, keeps unknown peripheral blobs verbatim, and stops after the last
+    section it knows.
+    """
+    if dump.trailing_bytes:
+        rep.issues.append(Issue(
+            severity="error",
+            code="trailing_bytes",
+            message=f"{dump.trailing_bytes} byte(s) after the last known section",
+        ))
+    for cp in dump.checkpoints:
+        if cp.unparsed_state_bytes:
+            rep.issues.append(Issue(
+                severity="error",
+                code="unparsed_state_fields",
+                checkpoint_index=cp.index,
+                message=(
+                    f"{cp.unparsed_state_bytes} CPU/chipset byte(s) beyond the fields "
+                    f"this parser knows (header cpu={dump.header.cpu_state_size}, "
+                    f"chipset={dump.header.chipset_state_size})"
+                ),
+            ))
+            break  # the layout is per file: one report is enough
+    for cp in dump.checkpoints:
+        for pid, blob in cp.peripheral_blobs.items():
+            if pid not in PERIPHERAL_ID_NAMES:
+                rep.issues.append(Issue(
+                    severity="error",
+                    code="unknown_peripheral_id",
+                    checkpoint_index=cp.index,
+                    message=f"peripheral id {pid} is not in PERIPHERAL_ID_NAMES (ttdserializable.h)",
+                ))
+            elif blob:
+                try:
+                    decoded = decode_peripheral_blob(pid, blob)
+                except TtdFormatError as e:
+                    decoded, reason = b"", str(e)
+                else:
+                    reason = "header or decompression"
+                if not decoded:
+                    rep.issues.append(Issue(
+                        severity="error",
+                        code="peripheral_blob_undecodable",
+                        checkpoint_index=cp.index,
+                        message=f"{PERIPHERAL_ID_NAMES[pid]} blob does not decode ({reason})",
+                    ))
+
+
 def _verify_crcs(rep: IntegrityReport, dump: TtdDump) -> None:
     """Re-decompress every slot referenced by any checkpoint and verify CRC.
 
@@ -320,9 +379,9 @@ def _check_journal(dump: TtdDump, rep: IntegrityReport) -> None:
 
     The journal is the largest section in a typical file - 71% of a demo
     recording - and is stored as compressed blocks that nothing else reads, so
-    a truncated or mis-sized block would otherwise go unnoticed. These checks
-    compare the directory's numbers for internal consistency; they do not
-    decompress payloads.
+    a truncated or mis-sized block would otherwise go unnoticed. The directory
+    is checked for internal consistency, then every block is decompressed and
+    decoded record by record against its directory entry.
     """
     journal = getattr(dump, "journal", None)
     if journal is None or not journal.record_count:
@@ -351,6 +410,25 @@ def _check_journal(dump: TtdDump, rep: IntegrityReport) -> None:
                 "error", "journal_time_inverted",
                 f"journal block {i} spans globalT {block.first_global_t} to "
                 f"{block.last_global_t}, which runs backwards"))
+
+    # Payloads: every block must decode to exactly its directory entry - record
+    # count, byte size, globalT range - with records in time order
+    prev_t = None
+    for i, (block, payload) in enumerate(zip(journal.blocks, journal.payloads)):
+        try:
+            records = decode_journal_block(block, payload)
+        except TtdFormatError as e:
+            rep.issues.append(Issue(
+                "error", "journal_block_undecodable", f"journal block {i}: {e}"))
+            continue
+        for rec in records:
+            if prev_t is not None and rec.global_t < prev_t:
+                rep.issues.append(Issue(
+                    "error", "journal_records_unordered",
+                    f"journal block {i}: record at globalT {rec.global_t} "
+                    f"follows {prev_t}"))
+                break
+            prev_t = rec.global_t
 
     # Blocks are appended in time order. A gap is legal (the ring drops old
     # records), an overlap means two blocks claim the same instant.

@@ -30,7 +30,8 @@
         "Tagged paging latches + bank table (P1-2 design). Returns model, latches array (port, tags, device, "
         "gate, latch name, value, decoded bits), banks array (bank, address_range, type, page, ROM name/role/signature "
         "when applicable), paging_locked and trdos_active flags. Same report as CLI `paging`, Lua `paging_state()`, "
-        "Python `paging_state()` and MCP `inspect_state` aspect `paging`.";
+        "Python `paging_state()` and MCP `inspect_state` aspect `paging`. On PROFI the pDFFD latch decodes to "
+        "extended_ram_bank (bits 2:0), sco, worom, cpm, scr and video_512x240 (bit 7).";
     paths["/api/v1/emulator/{id}/state/paging"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/state/paging"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/state/paging"]["get"]["parameters"][0]["required"] = true;
@@ -54,7 +55,8 @@
     paths["/api/v1/emulator/{id}/state/screen/mode"]["get"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/state/screen/mode"]["get"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/state/screen/mode"]["get"]["responses"]["200"]["description"] =
-        "Screen mode information";
+        "Screen mode information. video_mode is one of the Screen mode names (e.g. ZX, P16, PROFI, PROFIHR); "
+        "PROFIHR (Profi #DFFD bit 7) reports resolution 512x240 in a 608x288 framebuffer.";
 
     paths["/api/v1/emulator/{id}/state/screen/flash"]["get"]["summary"] = "Get flash state";
     paths["/api/v1/emulator/{id}/state/screen/flash"]["get"]["tags"].append("Screen State");
@@ -157,11 +159,72 @@
 
     paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["summary"] = "Get General Sound state";
     paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["tags"].append("Audio State");
+    paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["description"] =
+        "General Sound card (dedicated 12 MHz Z80 coprocessor + 4 x 8-bit DAC, requires [SOUND] GSType=Z80): "
+        "mailbox status with decoded flags, host command/data bytes, MPAG banking latch, per-channel DAC sample "
+        "and 6-bit volume, firmware/RAM fitment and the coprocessor PC/SP/AF/halted state. 404 when the machine "
+        "has no GS card fitted.";
     paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["responses"]["200"]["description"] = "GS state";
+    paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["responses"]["404"]["description"] =
+        "Emulator or GS card not found";
+
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["summary"] = "General Sound control actions";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["tags"].append("Audio State");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["description"] =
+        "Drive the GS card the way ZX software does (each action flushes the coprocessor to the current ZX tact "
+        "first): reset (full power-on), reset_card (#33 bit7 - CPU/banking/timing, mailbox survives), nmi (#33 "
+        "bit6), send_command (OUT #BB), send_data (OUT #B3), read_status (IN #BB, returns the value), read_data "
+        "(IN #B3, clears the data-pending flag and returns the value), switch_personality (runtime LLE <-> "
+        "lightweight card swap - the host mailbox and activity counters survive the handoff; applied at the "
+        "next frame boundary), dump_module (writes the last completed COM30..D2 module upload to a file - "
+        "'path' optional, defaults to 'gs-module-dump.mod'; 404 when no upload has completed yet).";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["type"] = "object";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["action"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["action"]["enum"].append("reset");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["action"]["enum"].append("reset_card");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["action"]["enum"].append("nmi");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["action"]["enum"].append("send_command");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["action"]["enum"].append("send_data");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["action"]["enum"].append("read_status");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["action"]["enum"].append("read_data");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["value"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["action"]["enum"].append("switch_personality");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["personality"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["personality"]["enum"].append("z80");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["personality"]["enum"].append("lw");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["action"]["enum"].append("dump_module");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["path"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["200"]["description"] =
+        "Action result (read_status/read_data carry the byte in 'value'; switch_personality carries the requested "
+        "target and the current personality; dump_module carries 'path', 'bytes' and 'playing')";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["400"]["description"] =
+        "Unknown action, invalid value or unknown personality";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["404"]["description"] =
+        "Emulator or GS card not found, or (dump_module) no completed module upload captured yet";
 
     paths["/api/v1/emulator/{id}/state/audio/covox"]["get"]["summary"] = "Get Covox state";
     paths["/api/v1/emulator/{id}/state/audio/covox"]["get"]["tags"].append("Audio State");

@@ -279,18 +279,52 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
         // stay undecoded so Z80::in() serves the floating bus. While the monitor
         // is paged (#1FFD bit1) or the trigger is armed the FDC keeps answering -
         // the monitor polls it right after unpaging (hardware-reference 12.3,
-        // MISTer bug 2) and MAME selects the same DOS I/O view on the trigger
-        disp.wasBeta128Gated = true;
+        // MISTer bug 2) and MAME selects the same DOS I/O view on the trigger.
+        //
+        // #1F/#5F also alias SoundDrive mode 1 (Covox::PORT_LEFT_B_MODE1/
+        // PORT_RIGHT_B_MODE1) - give it a chance before falling back to the
+        // floating bus, same precedence as Pentagon (PortDecoder_Pentagon128
+        // ::DecodePortIn)
+        if (DispatchSelfDecodingIn(port, result))
+        {
+            _lastPortDecoded = true;
+            disp.decodedPort = port;
+        }
+        else
+        {
+            disp.wasBeta128Gated = true;
+        }
+    }
+    // General Sound host ports (GS design §6): #B3/#BB by the low byte with
+    // bit3 masked (Unreal io.cpp IN path), mirrors normalized to the
+    // canonical device keys. #33 has no read side - it stays undecoded here
+    // and rides the Scorpion floating bus
+    else if ((port & 0x00F7) == 0x00B3)
+    {
+        const uint16_t gsPort = (port & 0x00FF) == 0x00BB ? 0x00BB : 0x00B3;
+        result = PeripheralPortIn(gsPort);
+        if (_lastPortDecoded)
+            disp.decodedPort = gsPort;
     }
     else
     {
         // Beta128 mirrors dispatch through the canonical registered device
-        // key; everything else keeps its identity (Covox etc.)
+        // key; everything else keeps its identity. Self-decoding peripherals
+        // (Covox/SoundDrive mode 1 or 2 - see DecodePortOut) are tried before
+        // the exact-address map, since they are never registered there
         const uint16_t dispatchPort = isBeta128 ? beta128Port : port;
-        result = PeripheralPortIn(dispatchPort);
-        // Identity decode: mark decoded only when a device actually responded
-        if (_lastPortDecoded)
-            disp.decodedPort = dispatchPort;
+        if (!isBeta128 && DispatchSelfDecodingIn(port, result))
+        {
+            _lastPortDecoded = true;
+            disp.decodedPort = port;
+        }
+        else
+        {
+            result = PeripheralPortIn(dispatchPort);
+            // Identity decode: mark decoded only when a device actually responded
+            if (_lastPortDecoded)
+                disp.decodedPort = dispatchPort;
+        }
     }
 
     // Scorpion floating bus (programmer's manual, port #FF): a read from ANY
@@ -443,6 +477,28 @@ void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16
         disp.wasDecoded = true;
     }
 
+    // General Sound host ports (GS design §6): #B3/#BB decode by the low
+    // byte with bit3 masked - the (port & 0xF7) == 0xB3 family in Unreal
+    // io.cpp - and #33 fully. Explicit arms normalize mirrors to the
+    // canonical device keys (the raw fall-through dispatches by the exact
+    // 16-bit key and would miss e.g. OUT (#01B3),n). No collision with the
+    // arms above: all three addresses carry A0=1 (outside #FE and both AY
+    // decodes) and A1=1 (outside #7FFD/#1FFD)
+    else if ((port & 0x00F7) == 0x00B3)
+    {
+        const uint16_t gsPort = (port & 0x00FF) == 0x00BB ? 0x00BB : 0x00B3;
+        PeripheralPortOut(gsPort, value);
+        disp.decodedPort = gsPort;
+        disp.wasDecoded = true;
+    }
+    else if ((port & 0x00FF) == 0x0033)
+    {
+        // GS control (bit7 reset, bit6 NMI) - write-only, no IN counterpart
+        PeripheralPortOut(0x0033, value);
+        disp.decodedPort = 0x0033;
+        disp.wasDecoded = true;
+    }
+
     // Border port: match the LOW BYTE only - OUT (#FF),A puts A on lines
     // A15-A8, so the decoder sees #nnFF for whatever A holds and an exact
     // 16-bit compare would miss every such write. No collision with the arms
@@ -460,16 +516,35 @@ void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16
         disp.wasBeta128Gated = isBeta128;  // trace attribution: FDC off the bus
     }
 
-    // Gated FDC writes without a border collision: hardware ignores them
+    // Gated FDC writes without a border collision: hardware ignores them,
+    // unless a self-decoding peripheral claims the address instead - #1F/#5F
+    // also alias SoundDrive mode 1 (Covox::PORT_LEFT_B_MODE1/PORT_RIGHT_B_MODE1)
     else if (isBeta128)
     {
-        disp.wasBeta128Gated = true;
+        if (DispatchSelfDecodingOut(port, value))
+        {
+            disp.decodedPort = port;
+            disp.wasDecoded = true;
+        }
+        else
+        {
+            disp.wasBeta128Gated = true;
+        }
     }
 
-    // Everything else: registered peripherals (Covox etc.)
+    // Everything else: self-decoding peripherals first (Covox/SoundDrive mode
+    // 1 or 2 - never registered in the exact-address map), then whatever else
+    // is registered there
     else
     {
-        PeripheralPortOut(port, value);
+        if (DispatchSelfDecodingOut(port, value))
+        {
+            disp.decodedPort = port;
+        }
+        else
+        {
+            PeripheralPortOut(port, value);
+        }
         disp.wasDecoded = true;
     }
 
@@ -616,22 +691,17 @@ bool PortDecoder_Scorpion256::IsPort_7EFD(uint16_t port)
 
 std::vector<ttd::PeripheralId> PortDecoder_Scorpion256::GetTTDModelStateIds() const
 {
-    // Only the ProfROM variant carries the quadrant state machine; the base
-    // Scorpion is fully described by the standard ports plus #1FFD, which it
-    // does not use for anything TTD cannot rebuild from the paging decode.
-    if (_context->config.mem_model == MM_PROFSCORP)
-        return {ttd::PeripheralId::ScorpionProfROM};
-
-    return {};
+    // Both variants: #1FFD (RAM at #0000, service monitor, high #C000 bank
+    // bits) and the DD50.1 magic-button trigger drive the paging chain and are
+    // not in the model-agnostic TTDChipsetState. The ProfROM plane state rides
+    // in the same blob; on the plain Scorpion it is simply zero
+    return {ttd::PeripheralId::ScorpionProfROM};
 }
 
 std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Scorpion256::CreateTTDSerializers() const
 {
     std::vector<std::unique_ptr<ttd::TTDSerializable>> serializers;
-
-    if (_context->config.mem_model == MM_PROFSCORP)
-        serializers.push_back(std::make_unique<ttd::TTDScorpionProfROM>(_context));
-
+    serializers.push_back(std::make_unique<ttd::TTDScorpionProfROM>(_context));
     return serializers;
 }
 
