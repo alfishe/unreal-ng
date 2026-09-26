@@ -108,7 +108,7 @@ Karabas additionally switches among four 64K images through AVR soft switches / 
 
 ### 4.2 DOS latch rules [HW], refined by the emulator review
 
-* **Set** on an M1 fetch at `3D00-3DFF` while `rom14=1` (Unreal/ZXMAK2 do not gate on `pDFFD.4`; Karabas blocks it — not adopted, Q7). *[?]* Karabas also sets it on NMI when DS80=0 and via `#008B.6`/`.7`; phase 1 implements only the M1 trap.
+* **Set** on an M1 fetch at `3D00-3DFF` while `rom14=1` (Unreal/ZXMAK2 do not gate on `pDFFD.4`; Karabas blocks it — not adopted, Q7). *[?]* Karabas also sets it on NMI when DS80=0 and via `#008B.6`/`.7`; the NMI path ("magic button") is implemented (`Emulator::RequestMNI()`, not gated on `pDFFD.4` for the same Q7 reason as the M1 trap - see the 2026-09-25 reconciliation report §4.1 G5), `#008B.6`/`.7` remain out of scope (Karabas-only registers, §11).
 * **Clear** on the first M1 fetch with `A15:14 != 00`, or whenever `pDFFD.4=1`.
 * **Reset value 1** (SYS ROM boots). This is what makes reset land in the menu (fixes B8).
 * Set wins over clear when both would fire.
@@ -344,7 +344,7 @@ Under `testdata/machines/profi/` (Karabas-Pro is MIT, licence copied as `LICENSE
 
 Working copy of the full upstream tree (VHDL, docs, other ROMs) is in `scratch/profi/kp` (git-ignored). Reference documents for the design are in this folder. Cross-emulator sources reviewed: UnrealSpeccy (`unreal-speccy`, `zx-evo/pentevo/unreal`), ZXMAK2 `Hardware/Profi`, Xpeccy(+plus).
 
-**Karabas-only features and whether we add them**: `#008B/#018B/#028B`, DivMMC, ZiFi, turbo 7/14 MHz, 6 MB RAM, AVR ROM-bank switching, `fd_port` correction (blocks full-address ports after `OUT (n),A`), NMI→DOS — none needed for original Profi software. A single optional `ProfiFdPortQuirk` is *not* planned.
+**Karabas-only features and whether we add them**: `#008B/#018B/#028B`, DivMMC, ZiFi, turbo 7/14 MHz, 6 MB RAM, AVR ROM-bank switching, `fd_port` correction (blocks full-address ports after `OUT (n),A`) — none needed for original Profi software. A single optional `ProfiFdPortQuirk` is *not* planned. (NMI→DOS was originally on this "not needed" list too, but is implemented as of the 2026-09-25 reconciliation report - it's ZXMAK2/Karabas consensus, not Karabas-only.)
 
 ---
 

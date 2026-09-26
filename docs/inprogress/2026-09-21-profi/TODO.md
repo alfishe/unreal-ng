@@ -15,6 +15,7 @@ ZX Profi 1024 (`MM_PROFI`): design complete; implementation in progress on branc
 - [x] Hi-res renderer extracted into its own class `ScreenProfi` (`video/profi/`, commit `f773998d`) - the `ScreenAtm` pattern; never a method on `ScreenZX`
 - [x] Reconciliation against the reference emulator sources: [reconciliation-2026-09-25.md](reconciliation-2026-09-25.md) (parity matrix, TTD bit-to-bit verdict, gap list)
 - [x] Palette gaps from the reconciliation (section 1.4): full 9-bit `GGGRRRBBB` storage (extra blue LSB from `#FE.D7`) and `#FE` read bit 7 ("GX0"/UniCopy, DS80-gated)
+- [x] NMI -> DOS latch ("magic button", reconciliation G5): `Emulator::RequestMNI()` raises `CF_TRDOS` when DS80=0, not gated on `pDFFD.4` (Q7 consensus); 8 tests in `profimni_test.cpp`
 
 ## Remaining
 - [ ] IDE
