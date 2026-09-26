@@ -1334,16 +1334,17 @@ STEPFUNC const logic_opcode[0x100] =
 
 Z80OPCODE op_CB(Z80 *cpu)
 {
+    // Record used prefix BEFORE the second M1: the CB byte started the
+    // instruction, the opcode byte after it must not run the instruction-start
+    // work again (m1_pc, coverage, TTD probes - see Z80::m1_cycle)
+    const uint16_t outer = cpu->prefix;
+    cpu->prefix = outer ? outer : 0xCB;
+
     uint8_t opcode = cpu->m1_cycle();
 
-    // Record used prefix
-    if (cpu->prefix > 0)
+    if (outer > 0)
     {
-        cpu->prefix = (cpu->prefix << 8) + opcode;
-    }
-    else
-    {
-        cpu->prefix = 0xCB;
+        cpu->prefix = (outer << 8) + opcode;
     }
 
     // Execute CB-prefixed opcode

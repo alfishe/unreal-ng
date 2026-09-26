@@ -220,6 +220,11 @@ Z80INLINE void Z80FAST ddfd_prefixes(Z80 *cpu, uint8_t opcode)
     // instruction's own Q is set by Z80Step after it runs.
     cpu->q = 0;
 
+    // Record used prefix BEFORE the next M1: the byte after a prefix is not
+    // an instruction start (m1_pc, coverage, TTD probes - see Z80::m1_cycle)
+    // unless it is another DD/FD, handled below
+    cpu->prefix = op1;
+
     opcode = cpu->m1_cycle();
 
     // DD/FD followed by another DD/FD: op1 is a redundant prefix - on the
@@ -231,6 +236,10 @@ Z80INLINE void Z80FAST ddfd_prefixes(Z80 *cpu, uint8_t opcode)
     // of looping inside one step forever.
     if ((opcode | 0x20) == 0xFD)
     {
+        // The prefix just fetched starts the next instruction: its start is
+        // recorded now, with the machine at the boundary the next step starts
+        // from (the M1 is spent, as it is for any step resuming a prefix)
+        cpu->RecordInstructionStart(static_cast<uint16_t>(cpu->pc - 1));
         cpu->boundary = (opcode == 0xDD) ? Z80_BOUNDARY_PREFIX_DD : Z80_BOUNDARY_PREFIX_FD;
         return;
     }
@@ -285,9 +294,10 @@ Z80INLINE void Z80FAST ddfd_prefixes(Z80 *cpu, uint8_t opcode)
         return;
     }
 
-    // ED prefix
+    // ED prefix (the DD/FD before it is ignored: an ED instruction)
     if (opcode == 0xED)
     {
+        cpu->prefix = 0xED;
         opcode = cpu->m1_cycle();
 
         (ext_opcode[opcode])(cpu);

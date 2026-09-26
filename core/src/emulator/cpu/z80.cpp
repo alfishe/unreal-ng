@@ -396,7 +396,10 @@ void Z80::Z80Step(bool skipBreakpoints)
             // The previous step fetched this prefix (its M1, R and T are
             // spent) and stopped because the prefix before it was redundant:
             // run the instruction the pending prefix introduces, from the
-            // byte after it. The instruction starts at the prefix
+            // byte after it. The instruction starts at the prefix: its start
+            // was recorded when it was fetched (ddfd_prefixes); m1_pc is set
+            // again because it is host-side state a TTD restore at this
+            // boundary does not bring back
             cpu.opcode = (entryBoundary == Z80_BOUNDARY_PREFIX_DD) ? 0xDD : 0xFD;
             m1_pc = static_cast<uint16_t>(cpu.pc - 1);
         }
@@ -663,44 +666,12 @@ uint8_t Z80::m1_cycle()
     [[maybe_unused]] const TEMP& temporary = _context->temporary;
     [[maybe_unused]] const PortDecoder& portDecoder = *_context->pPortDecoder;
 
-    // Record PC for current opcode (prefixes should not alter original PC)
+    // Record PC for current opcode (prefixes should not alter original PC):
+    // only the M1 that starts an instruction runs the instruction-start work.
+    // Prefix handlers set a non-zero prefix BEFORE fetching the next byte, so
+    // the M1s inside an instruction (after CB/ED/DD/FD) do not run it
     if (prefix == 0x0000)
-    {
-        m1_pc = cpu.pc;
-
-        if (m1TraceHook)
-            m1TraceHook(m1_pc);
-
-        // Per-frame execution coverage for reverse search. One predictable
-        // branch on a plain bool when recording is off, which is the common
-        // case; the page lookup and the append only happen while a session is
-        // actually capturing. This is the only record that a frame executed a
-        // given address - instruction fetches are not journalled - so without
-        // it a reverse breakpoint has no choice but to replay every frame.
-        if (_context->ttdCoverageActive && _context->pTimeTravelManager != nullptr)
-        {
-            _context->pTimeTravelManager->RecordExecutedCoverage(
-                _memory->GetPhysPageForZ80Address(m1_pc), m1_pc);
-        }
-
-        // Phase 4 - access probe for Execute access type (TDD 9.2).
-        // Fires once per instruction at the M1 (instruction fetch) cycle.
-        if (_context->ttdProbe.IsArmed())
-        {
-            // Resolve the bank the opcode was fetched from, so a reverse
-            // breakpoint can distinguish "PC 0xC000 in page 3" from the same
-            // address reached with a different page banked in. Code executing
-            // from ROM reports kPhysPageNone.
-            const uint8_t execPhysPage = _memory->GetPhysPageForZ80Address(m1_pc);
-            if (_context->ttdProbe.Matches(m1_pc, ttd::TTDAccessType::Execute, 0, m1_pc, execPhysPage))
-            {
-                const auto& st = _context->emulatorState;
-                const ttd::TTDTimePoint tp{st.frame_counter, t};
-                _context->ttdProbe.RecordHit(tp, m1_pc, /*value=*/0, execPhysPage,
-                                              ttd::TTDAccessType::Execute);
-            }
-        }
-    }
+        RecordInstructionStart(cpu.pc);
 
     // Z80 CPU M1 cycle logic
     r_low = ((r_low + 1) & 0x7f) | (r_low & 0x80);  // Keep memory refresh register ticking
@@ -715,6 +686,50 @@ uint8_t Z80::m1_cycle()
     IncrementCPUCyclesCounter(1);
 
     return opcode;
+}
+
+/// Instruction-start bookkeeping: m1_pc (the address every access of the
+/// instruction is attributed to - memory tracker, TTD write journal and
+/// probes, calltrace), the M1 trace hook (TTD per-frame instruction capture),
+/// execution coverage and the TTD execute probe. Runs once per instruction:
+/// from m1_cycle for the first byte, and from ddfd_prefixes for a prefix that
+/// turned out to start an instruction of its own (after a redundant one).
+void Z80::RecordInstructionStart(uint16_t addr)
+{
+    m1_pc = addr;
+
+    if (m1TraceHook)
+        m1TraceHook(m1_pc);
+
+    // Per-frame execution coverage for reverse search. One predictable
+    // branch on a plain bool when recording is off, which is the common
+    // case; the page lookup and the append only happen while a session is
+    // actually capturing. This is the only record that a frame executed a
+    // given address - instruction fetches are not journalled - so without
+    // it a reverse breakpoint has no choice but to replay every frame.
+    if (_context->ttdCoverageActive && _context->pTimeTravelManager != nullptr)
+    {
+        _context->pTimeTravelManager->RecordExecutedCoverage(
+            _memory->GetPhysPageForZ80Address(m1_pc), m1_pc);
+    }
+
+    // Phase 4 - access probe for Execute access type (TDD 9.2).
+    // Fires once per instruction, at its start.
+    if (_context->ttdProbe.IsArmed())
+    {
+        // Resolve the bank the opcode was fetched from, so a reverse
+        // breakpoint can distinguish "PC 0xC000 in page 3" from the same
+        // address reached with a different page banked in. Code executing
+        // from ROM reports kPhysPageNone.
+        const uint8_t execPhysPage = _memory->GetPhysPageForZ80Address(m1_pc);
+        if (_context->ttdProbe.Matches(m1_pc, ttd::TTDAccessType::Execute, 0, m1_pc, execPhysPage))
+        {
+            const auto& st = _context->emulatorState;
+            const ttd::TTDTimePoint tp{st.frame_counter, t};
+            _context->ttdProbe.RecordHit(tp, m1_pc, /*value=*/0, execPhysPage,
+                                          ttd::TTDAccessType::Execute);
+        }
+    }
 }
 
 /// Dispatching memory read method. Used directly from Z80 microcode (CPULogic and opcode)

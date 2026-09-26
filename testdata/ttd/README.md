@@ -130,6 +130,10 @@ but a flipped byte that still decodes is not.
 
 ## Status
 
+Re-recorded 2026-09-26 again (all five) after the instruction-start fix: for
+CB/DD/FD/DDCB instructions the write journal's writer PC (`m1_pc`) is now the
+instruction's first byte, not its second. Checkpoints are unaffected.
+
 Re-recorded 2026-09-26 (all five) after Z80 core fixes: the INT/NMI
 acknowledge now advances R (every recording diverged at the first frame's INT
 otherwise), and `TTDCpuState` carries the instruction-boundary state

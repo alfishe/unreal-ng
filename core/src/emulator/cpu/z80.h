@@ -391,6 +391,7 @@ public:
     /// region <Z80 lifecycle>
 public:
     uint8_t m1_cycle();
+    void RecordInstructionStart(uint16_t addr);  // m1_pc + instruction-start hooks (once per instruction)
     uint8_t in(uint16_t port);
     void out(uint16_t port, uint8_t val);
     void retn();
