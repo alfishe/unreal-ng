@@ -58,6 +58,7 @@ TTDCpuState CaptureCpuState(const Z80State& src)
     // Undocumented but observable
     dst.memptr = src.memptr;
     dst.q = src.q;
+    dst.boundary = src.boundary;
 
     // HALT / interrupt bookkeeping
     dst.eipos = src.eipos;
@@ -102,6 +103,7 @@ void RestoreCpuState(const TTDCpuState& src, Z80State* dst)
     // Undocumented but observable
     dst->memptr = src.memptr;
     dst->q = src.q;
+    dst->boundary = src.boundary;
 
     // HALT / interrupt bookkeeping
     dst->eipos = src.eipos;

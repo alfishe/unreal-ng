@@ -39,7 +39,8 @@ Z80::Z80(EmulatorContext* context) : Z80State{}
     // Ensure register memory and unions do not contain garbage
     Z80State::tt = 0;
     t = 0;      // Initialize t-state counter
-    eipos = 0;  // Initialize EI command position
+    eipos = 0;  // Unused layout slot (see z80.h)
+    boundary = Z80_BOUNDARY_NONE;
     pc = 0;
     sp = 0;
     ir_ = 0;
@@ -160,15 +161,19 @@ void Z80::Reset()
 
     // Clear undocumented internal registers
     memptr = 0;     // MEMPTR (WZ) internal address buffer
-    eipos = 0;      // EI command position
+    eipos = 0;      // Unused layout slot (see z80.h)
+    boundary = Z80_BOUNDARY_NONE;  // No INT shadow / pending prefix after reset
     haltpos = 0;    // HALT position
 
     // All that takes 3 clock cycles
     IncrementCPUCyclesCounter(3);
 }
 
-/// Single CPU command cycle (non-interruptable)
-void Z80::Z80Step(bool skipBreakpoints)
+/// Instruction-start work that belongs to the first byte of an instruction:
+/// TR-DOS ROM session paging, debugger breakpoints, analyzer step events and
+/// the ROM traps (fast tape/disk loading, disk autostart). Returns true when
+/// a trap consumed the instruction (it must not execute).
+bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
 {
     [[maybe_unused]] Z80& cpu = *this;
     [[maybe_unused]] const CONFIG& config = _context->config;
@@ -315,7 +320,7 @@ void Z80::Z80Step(bool skipBreakpoints)
         if (_context->pTapeFastLoad->HandleLDBytesTrap(*this))
         {
             // Trap consumed the invocation — the routine never executes
-            return;
+            return true;
         }
     }
 
@@ -334,11 +339,38 @@ void Z80::Z80Step(bool skipBreakpoints)
         if (_context->pDiskFastLoad->HandleSectorDrainTrap(*this))
         {
             // Trap consumed the sector drain loop invocation
-            return;
+            return true;
         }
     }
 
-    if (cpu.vm1 && cpu.halted)
+    return false;
+}
+
+/// Single CPU command cycle (non-interruptable)
+void Z80::Z80Step(bool skipBreakpoints)
+{
+    [[maybe_unused]] Z80& cpu = *this;
+    [[maybe_unused]] const CONFIG& config = _context->config;
+    [[maybe_unused]] EmulatorState& state = _context->emulatorState;
+    [[maybe_unused]] TEMP& temporary = _context->temporary;
+    [[maybe_unused]] Memory& memory = *_context->pMemory;
+    [[maybe_unused]] Emulator& emulator = *_context->pEmulator;
+
+    // Boundary state describes the boundary BEFORE this step (it already
+    // decided INT/NMI acceptance in ProcessInterrupts); this step's own
+    // instruction sets a new one (EI, RETN/RETI, LD A,I/R, redundant prefix)
+    const uint8_t entryBoundary = cpu.boundary;
+    cpu.boundary = Z80_BOUNDARY_NONE;
+    const bool prefixPending =
+        entryBoundary == Z80_BOUNDARY_PREFIX_DD || entryBoundary == Z80_BOUNDARY_PREFIX_FD;
+
+    // A pending prefix continues an instruction whose start (first prefix
+    // byte) already went through the instruction-start work in the previous
+    // step - breakpoints and traps must not fire mid-instruction
+    if (!prefixPending && RunInstructionStartHooks(skipBreakpoints))
+        return;
+
+    if (cpu.vm1 && cpu.halted && !prefixPending)
     {
         // Z80 in HALT state. No further opcode processing will be done until INT or NMI arrives
         cpu.tt += cpu.rate * 1;
@@ -355,20 +387,32 @@ void Z80::Z80Step(bool skipBreakpoints)
     }
     else
     {
-        // Some counter correction for <???>
-        if (cpu.pch & temporary.evenM1_C0)
-            cpu.tt += (cpu.tt & cpu.rate);
-
-        // Preserve previous PC register state
-        cpu.prev_pc = m1_pc;
-
         // Save F register before opcode execution (for Q register update)
         uint8_t prev_f = cpu.f;
-
-        // Regular Z80 bus cycle
-        // 1. Fetch opcode (Z80 M1 bus cycle)
         cpu.prefix = 0x0000;
-        cpu.opcode = m1_cycle();
+
+        if (prefixPending)
+        {
+            // The previous step fetched this prefix (its M1, R and T are
+            // spent) and stopped because the prefix before it was redundant:
+            // run the instruction the pending prefix introduces, from the
+            // byte after it. The instruction starts at the prefix
+            cpu.opcode = (entryBoundary == Z80_BOUNDARY_PREFIX_DD) ? 0xDD : 0xFD;
+            m1_pc = static_cast<uint16_t>(cpu.pc - 1);
+        }
+        else
+        {
+            // Some counter correction for <???>
+            if (cpu.pch & temporary.evenM1_C0)
+                cpu.tt += (cpu.tt & cpu.rate);
+
+            // Preserve previous PC register state
+            cpu.prev_pc = m1_pc;
+
+            // Regular Z80 bus cycle
+            // 1. Fetch opcode (Z80 M1 bus cycle)
+            cpu.opcode = m1_cycle();
+        }
 
         // 1a. Call trace hook (pre-execution) — appends control-flow events
         // while a calltrace session is capturing; the decoder wants the
@@ -553,12 +597,10 @@ void Z80::ApplyHardwareTurboNow()
 
     // Preserve the raster instant: the in-frame position is expressed in
     // scaled T-states, so it must be rescaled together with the multiplier
-    // (the same instant is 2x further into a 2x longer frame). eipos/haltpos
-    // are frame positions too
+    // (the same instant is 2x further into a 2x longer frame). haltpos is a
+    // frame position too
     auto rescale = [&](uint32_t v) { return static_cast<uint32_t>(static_cast<uint64_t>(v) * desiredMultiplier / oldMultiplier); };
     cpu.t = rescale(cpu.t);
-    if (cpu.eipos >= 0)
-        cpu.eipos = static_cast<int32_t>(rescale(static_cast<uint32_t>(cpu.eipos)));
     cpu.haltpos = static_cast<uint16_t>(rescale(cpu.haltpos));
 
     state.current_z80_frequency_multiplier = desiredMultiplier;
@@ -886,6 +928,11 @@ bool Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
     VideoControl& video = _context->pScreen->_vid;
     bool intHandled = false;
 
+    // A pending prefix is the middle of an instruction: neither INT nor NMI
+    // is accepted until the instruction it introduces has run
+    const bool prefixPending =
+        cpu.boundary == Z80_BOUNDARY_PREFIX_DD || cpu.boundary == Z80_BOUNDARY_PREFIX_FD;
+
     // NMI processing (accepted at the instruction boundary, priority over INT).
     // Requested via RequestNonMaskedInterrupt(); on Scorpion models the MNI
     // "magic button" orchestration (Emulator::RequestMNI) pages the Shadow
@@ -893,14 +940,23 @@ bool Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
     // lives here. The model-specific block from the original UnrealSpeccy
     // (ATM3 bank switching / Scorpion pc>0x4000 guard) moved to that layer -
     // the MNI latch already owns the ROM selection.
-    if (_nmi_pending_count > 0)
+    // The request stays pending while it is refused: inside an instruction
+    // (pending prefix), and right after an NMI acknowledge - the chip takes
+    // no second NMI response without an instruction between (Sainz de
+    // Baranda 2022, Visual Z80). The EI shadow does not block NMI.
+    if (_nmi_pending_count > 0 && !prefixPending && cpu.boundary != Z80_BOUNDARY_NMI_ACK)
     {
         _nmi_pending_count = 0;
         cpu.nmi_in_progress = true;
 
-        // If CPU halted - unblock it by moving PC forward (return lands past the HALT)
-        if (DirectRead(cpu.pc) == 0x76)
+        // If CPU halted - unblock it by moving PC forward (return lands past
+        // the HALT). Keyed on the HALT latch, not on the byte at PC: an NMI
+        // at the boundary before a not-yet-executed HALT must return to it
+        if (cpu.halted)
             cpu.pc++;
+
+        // The acknowledge M1 is a refresh cycle like any M1: R advances
+        cpu.r_low = ((cpu.r_low + 1) & 0x7f) | (cpu.r_low & 0x80);
 
         // NMI timing per Z80 manual: 11T (M1=5T restart fetch, M2=3T push PCH, M3=3T push PCL).
         // The accept IS the cycle for this iteration: ProcessInterrupts returns true and
@@ -918,10 +974,13 @@ bool Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
         cpu.memptr = 0x0066;
         cpu.halted = 0;
 
-        // IFF2 keeps a copy of IFF1 for RETN; maskable interrupts disabled in the handler
-        cpu.iff2 = cpu.iff1;
+        // Maskable interrupts disabled in the handler; IFF2 is left alone and
+        // keeps the pre-NMI state for RETN (UM0080 table 1 "Accept NMI:
+        // IFF1 0, IFF2 unchanged"; Sean Young's nested-NMI hardware test) -
+        // copying IFF1 into it lost the outer state on a nested NMI
         cpu.iff1 = 0;
         cpu.int_pending = false;
+        cpu.boundary = Z80_BOUNDARY_NMI_ACK;
 
         video.memcyc_lcmd = 0;  // new command, start accumulate number of busy memcycles
 
@@ -954,8 +1013,7 @@ bool Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
     // Important! Interrupts are in fact enabled only after command executed after EI (delay to 1 command)
     // See: https://floooh.github.io/2021/12/06/z80-instruction-timing.html
     // See: https://www.msx.org/forum/development/msx-development/question-about-z80r800-irqs-and-eidi-behaviour
-    if (cpu.int_pending && cpu.iff1 && cpu.t != cpu.eipos  // Make delay until command after EI executed
-    )
+    if (cpu.int_pending && cpu.iff1 && cpu.boundary != Z80_BOUNDARY_INT_SHADOW && !prefixPending)
     {
         HandleINT();
         intHandled = true;  // Signal caller to skip Z80Step this iteration
@@ -981,29 +1039,24 @@ void Z80::HandleINT(uint8_t vector)
 
     /// region <CPU is stopped on HALT (opcode 0x76) command>
 
-    // If CPU halted - unblock it by moving PC forward
-    if (DirectRead(cpu.pc) == 0x76)
+    // If CPU halted - unblock it by moving PC forward. Keyed on the HALT
+    // latch, not on the byte at PC: an INT at the boundary before a
+    // not-yet-executed HALT must return to the HALT, not skip it
+    if (cpu.halted)
         cpu.pc++;
 
     /// endregion </CPU is stopped on HALT (opcode 0x76) command>
 
-    /// region <Determine interrupt handler address>
-    uint16_t interruptHandlerAddress;
-    if (cpu.im < 2)
-    {
-        // IM0, IM1
-        interruptHandlerAddress = 0x38;
-    }
-    else
-    {
-        // IM2
-        // Raw memory access without T-state accounting: the vector fetch time
-        // is already included in interruptDuration below (rd() would add +3T per byte)
-        uint16_t vectorAddress = vector + cpu.i * 0x100;
-        interruptHandlerAddress = (_memory->*MemIf->MemoryRead)(vectorAddress, false) +
-                                  0x100 * (_memory->*MemIf->MemoryRead)(vectorAddress + 1, false);
-    }
-    /// endregion </Determine interrupt handler address>
+    // NMOS quirk: LD A,I / LD A,R copy IFF2 into P/V late in the instruction,
+    // and an INT accepted at the very next boundary clears IFF2 before that
+    // copy settles - P/V reads 0 (Zilog Z80 Family Q&A, Data Book 1989
+    // pp. 412-413; FUSE, redcode Z80, z80ex, openMSX). NMI does not do this
+    if (cpu.boundary == Z80_BOUNDARY_LD_A_IR)
+        cpu.f &= ~PV;
+    cpu.boundary = Z80_BOUNDARY_NONE;
+
+    // The acknowledge M1 is a refresh cycle like any M1: R advances
+    cpu.r_low = ((cpu.r_low + 1) & 0x7f) | (cpu.r_low & 0x80);
 
     /// region <Calculate INT duration>
 
@@ -1040,6 +1093,27 @@ void Z80::HandleINT(uint8_t vector)
     (_memory->*MemIf->MemoryWrite)(--sp, cpu.pch);
     (_memory->*MemIf->MemoryWrite)(--sp, cpu.pcl);
     cpu.sp = sp;
+
+    /// region <Determine interrupt handler address>
+    uint16_t interruptHandlerAddress;
+    if (cpu.im < 2)
+    {
+        // IM0, IM1
+        interruptHandlerAddress = 0x38;
+    }
+    else
+    {
+        // IM2, in machine-cycle order: the PC push (M2/M3, above) comes
+        // before the vector-table read (M4/M5), so a stack that overlaps the
+        // table supplies the freshly pushed bytes, as on the chip (FUSE,
+        // MAME, z80ex, redcode Z80).
+        // Raw memory access without T-state accounting: the vector fetch time
+        // is already included in interruptDuration above (rd() would add +3T per byte)
+        uint16_t vectorAddress = vector + cpu.i * 0x100;
+        interruptHandlerAddress = (_memory->*MemIf->MemoryRead)(vectorAddress, false) +
+                                  0x100 * (_memory->*MemIf->MemoryRead)(vectorAddress + 1, false);
+    }
+    /// endregion </Determine interrupt handler address>
 
     // Jump to interrupt handler
     cpu.pc = interruptHandlerAddress;

@@ -1660,9 +1660,10 @@ Z80OPCODE op_FB(Z80 *cpu) { // ei
     cpu->iff1 = 1;
     cpu->iff2 = 1;
 
-    // Remember EI command timing mark since in fact interrupts are enabled only
-    // after the CPU command after EI
-    cpu->eipos = cpu->t;
+    // Interrupts are in fact enabled only after the instruction following EI:
+    // INT is refused at the next boundary (the shadow; NMI is not blocked).
+    // DD/FD FB also land here and are EI too
+    cpu->boundary = Z80_BOUNDARY_INT_SHADOW;
 }
 
 Z80OPCODE op_FC(Z80 *cpu) { // call m,nnnn

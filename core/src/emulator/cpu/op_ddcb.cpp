@@ -212,14 +212,28 @@ uint8_t* direct_registers[8];
 
 Z80INLINE void Z80FAST ddfd_prefixes(Z80 *cpu, uint8_t opcode)
 {
-    uint8_t op1; // last DD/FD prefix
+    const uint8_t op1 = opcode; // the DD/FD prefix in effect
 
-    do
+    // The prefix M1 is the "previous instruction" SCF/CCF read Q from, and
+    // it writes no flags: Q = 0 behind any DD/FD (Tony Brewer's hardware
+    // finding; FUSE, MAME, redcode Z80 agree). Only SCF/CCF read Q; every
+    // instruction's own Q is set by Z80Step after it runs.
+    cpu->q = 0;
+
+    opcode = cpu->m1_cycle();
+
+    // DD/FD followed by another DD/FD: op1 is a redundant prefix - on the
+    // chip an instruction of its own (4 T, R+1) after which no interrupt is
+    // accepted. The step ends here with the next prefix already fetched; the
+    // next Z80Step runs the instruction it introduces (Z80_BOUNDARY_PREFIX_*,
+    // INT and NMI refused until then). One step per redundant prefix keeps a
+    // chain over memory filled with DD/FD returning to the frame loop instead
+    // of looping inside one step forever.
+    if ((opcode | 0x20) == 0xFD)
     {
-        op1 = opcode;
-        opcode = cpu->m1_cycle();
+        cpu->boundary = (opcode == 0xDD) ? Z80_BOUNDARY_PREFIX_DD : Z80_BOUNDARY_PREFIX_FD;
+        return;
     }
-    while ((opcode | 0x20) == 0xFD); // opcode == DD/FD
 
     // xxCB prefix - bit operations
     // DDCB - IX base address

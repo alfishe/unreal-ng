@@ -130,7 +130,14 @@ but a flipped byte that still decodes is not.
 
 ## Status
 
-Re-recorded 2026-09-25 (all five; `tsfm_tech_support` is new). Header:
+Re-recorded 2026-09-26 (all five) after Z80 core fixes: the INT/NMI
+acknowledge now advances R (every recording diverged at the first frame's INT
+otherwise), and `TTDCpuState` carries the instruction-boundary state
+(`boundary`: INT shadow after EI or RETN/RETI, pending DD/FD prefix, LD A,I/R
+quirk, NMI just acknowledged) in the former padding byte at offset 35. Struct
+sizes are unchanged (`cpu_state_size = 48`); older files read 0 (none) there.
+
+Previously re-recorded 2026-09-25 (all five; `tsfm_tech_support` is new). Header:
 `cpu_state_size = 48`, `chipset_state_size = 120`. Changes since the previous
 recording:
 

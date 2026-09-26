@@ -25,6 +25,13 @@
 ///   - IFF1/IFF2 cleared on acceptance
 ///   - HALT released: pushed return address points past the HALT opcode
 ///   - EI delay: the instruction immediately after EI cannot be interrupted
+///
+/// Boundary rules (Z80State::boundary, real-silicon behaviour):
+///   - INT refused right after EI (DD/FD FB too, not CB FB / ED FB) and right
+///     after a RETN/RETI that set IFF1 (Weissflog 2021, Sainz de Baranda 2022)
+///   - INT right after LD A,I / LD A,R clears P/V (NMOS)
+///   - the acknowledge M1 advances R; IM2 pushes PC before reading the table
+///   - an INT at the boundary before a not-yet-executed HALT returns to it
 
 class IntAcceptance_Test : public ::testing::Test
 {
@@ -62,8 +69,18 @@ protected:
     bool acceptInterrupt()
     {
         _z80->t = _intStart + 2;  // Inside the window (strict > int_start)
-        _z80->eipos = 0;
+        _z80->boundary = Z80_BOUNDARY_NONE;
         return _z80->ProcessInterrupts(false, _intStart, _intEnd);
+    }
+
+    /// Offer the INT at the current boundary without touching the boundary
+    /// state (a window covering any t): true if accepted
+    bool offerInterrupt() { return _z80->ProcessInterrupts(false, 0, 0xFFFFFFFFu); }
+
+    void load(uint16_t addr, std::initializer_list<uint8_t> bytes)
+    {
+        for (uint8_t b : bytes)
+            _memory->DirectWriteToZ80Memory(addr++, b);
     }
 };
 
@@ -133,21 +150,164 @@ TEST_F(IntAcceptance_Test, HALT_ReleasedWithReturnPastHalt)
 TEST_F(IntAcceptance_Test, EIDelay_BlocksAcceptanceAtEIPos)
 {
     _z80->im = 1;
-    _z80->iff1 = _z80->iff2 = 1;
+    _z80->iff1 = _z80->iff2 = 0;
+    _z80->sp = 0xA000;
+    _z80->boundary = Z80_BOUNDARY_NONE;
+    load(0x8000, {0xFB, 0x00});  // EI; NOP
     _z80->pc = 0x8000;
-
-    // eipos == t models "the instruction right after EI is executing":
-    // acceptance must be deferred by exactly one instruction
     _z80->t = _intStart + 2;
-    _z80->eipos = _z80->t;
 
-    bool taken = _z80->ProcessInterrupts(false, _intStart, _intEnd);
-    EXPECT_FALSE(taken) << "INT must not be accepted at the EI position";
+    _z80->Z80Step();  // EI
+    EXPECT_EQ(_z80->boundary, Z80_BOUNDARY_INT_SHADOW);
+    EXPECT_FALSE(_z80->ProcessInterrupts(false, _intStart, _intEnd))
+        << "INT must not be accepted at the boundary right after EI";
 
     // One instruction later the same pending INT must be accepted
-    _z80->t = _intStart + 6;  // Still inside the window
-    taken = _z80->ProcessInterrupts(false, _intStart, _intEnd);
-    EXPECT_TRUE(taken);
+    _z80->Z80Step();  // NOP
+    EXPECT_TRUE(_z80->ProcessInterrupts(false, _intStart, _intEnd));
+    EXPECT_EQ(_z80->pc, 0x0038u);
+}
+
+TEST_F(IntAcceptance_Test, EIShadow_OnlyForRealEi)
+{
+    // DD/FD FB are EI; CB FB (SET 7,E) and ED FB (NOP) share the byte but
+    // must not shadow the next boundary
+    struct Case
+    {
+        std::initializer_list<uint8_t> code;
+        bool shadow;
+    };
+    for (const Case& c : {Case{{0xDD, 0xFB}, true}, Case{{0xFD, 0xFB}, true}, Case{{0xCB, 0xFB}, false},
+                          Case{{0xED, 0xFB}, false}})
+    {
+        _z80->im = 1;
+        _z80->iff1 = _z80->iff2 = 1;
+        _z80->sp = 0xA000;
+        _z80->boundary = Z80_BOUNDARY_NONE;
+        load(0x8000, c.code);
+        _z80->pc = 0x8000;
+        _z80->Z80Step();
+        EXPECT_EQ(offerInterrupt(), !c.shadow) << "opcode " << std::hex << int(*(c.code.begin() + 1));
+    }
+}
+
+TEST_F(IntAcceptance_Test, RetnRetiThatSetIff1_ShadowTheNextBoundary)
+{
+    // RETN/RETI copy IFF2 to IFF1 too late for the next boundary's INT
+    // sampling: when that copy sets IFF1 (inside an NMI handler) INT is
+    // refused there, and accepted one instruction later. Every ED 45-family
+    // alias shares the two bodies
+    for (uint8_t op : {0x45, 0x4D, 0x55, 0x5D, 0x65, 0x6D, 0x75, 0x7D})
+    {
+        _z80->im = 1;
+        _z80->iff1 = 0;
+        _z80->iff2 = 1;
+        _z80->sp = 0xA000;
+        _z80->boundary = Z80_BOUNDARY_NONE;
+        _memory->DirectWriteToZ80Memory(0xA000, 0x00);  // return to $9000: NOP
+        _memory->DirectWriteToZ80Memory(0xA001, 0x90);
+        load(0x9000, {0x00});
+        load(0x8000, {0xED, op});
+        _z80->pc = 0x8000;
+
+        _z80->Z80Step();
+        EXPECT_EQ(_z80->iff1, 1u);
+        EXPECT_EQ(_z80->boundary, Z80_BOUNDARY_INT_SHADOW) << "ED " << std::hex << int(op);
+        EXPECT_FALSE(offerInterrupt()) << "ED " << std::hex << int(op);
+        _z80->Z80Step();  // NOP at $9000
+        EXPECT_TRUE(offerInterrupt()) << "ED " << std::hex << int(op);
+    }
+
+    // IFF1 already set (EI; RETI in an IM2 handler): no shadow
+    _z80->iff1 = _z80->iff2 = 1;
+    _z80->sp = 0xA000;
+    _z80->boundary = Z80_BOUNDARY_NONE;
+    _memory->DirectWriteToZ80Memory(0xA000, 0x00);
+    _memory->DirectWriteToZ80Memory(0xA001, 0x90);
+    load(0x8000, {0xED, 0x4D});
+    _z80->pc = 0x8000;
+    _z80->Z80Step();
+    EXPECT_EQ(_z80->boundary, Z80_BOUNDARY_NONE);
+    EXPECT_TRUE(offerInterrupt());
+}
+
+TEST_F(IntAcceptance_Test, LdAIr_IntAcceptedNextClearsPV)
+{
+    // NMOS: LD A,I / LD A,R copy IFF2 into P/V late; an INT accepted at the
+    // very next boundary clears IFF2 before the copy settles - P/V reads 0.
+    // Not after any other instruction
+    for (uint8_t op : {0x57, 0x5F})
+    {
+        _z80->im = 1;
+        _z80->iff1 = _z80->iff2 = 1;
+        _z80->sp = 0xA000;
+        _z80->boundary = Z80_BOUNDARY_NONE;
+        load(0x8000, {0xED, op});
+        _z80->pc = 0x8000;
+        _z80->Z80Step();
+        EXPECT_TRUE(_z80->f & 0x04) << "P/V = IFF2 = 1";
+        EXPECT_EQ(_z80->boundary, Z80_BOUNDARY_LD_A_IR);
+        ASSERT_TRUE(offerInterrupt());
+        EXPECT_FALSE(_z80->f & 0x04) << "cleared by the acknowledge, ED " << std::hex << int(op);
+    }
+
+    _z80->iff1 = _z80->iff2 = 1;
+    _z80->sp = 0xA000;
+    load(0x8000, {0xED, 0x57, 0x00});  // LD A,I; NOP
+    _z80->pc = 0x8000;
+    _z80->Z80Step();
+    _z80->Z80Step();
+    ASSERT_TRUE(offerInterrupt());
+    EXPECT_TRUE(_z80->f & 0x04) << "one instruction later P/V stays";
+}
+
+TEST_F(IntAcceptance_Test, Acknowledge_AdvancesR)
+{
+    // The acknowledge M1 is a refresh cycle: R advances by one in every
+    // mode, bit 7 kept
+    for (uint8_t im : {1, 2})
+    {
+        _z80->im = im;
+        _z80->i = 0xBE;
+        _z80->iff1 = _z80->iff2 = 1;
+        _z80->sp = 0xA000;
+        _z80->pc = 0x8000;
+        _z80->r_low = 0xFF;  // bit 7 set, low 7 bits about to wrap
+        ASSERT_TRUE(acceptInterrupt());
+        EXPECT_EQ(_z80->r_low, 0x80) << "IM" << int(im) << ": low 7 bits wrap, bit 7 kept";
+    }
+}
+
+TEST_F(IntAcceptance_Test, IM2_PushesPcBeforeReadingTheVectorTable)
+{
+    // Machine-cycle order M2/M3 push, then M4/M5 table read: a stack that
+    // overlaps the table supplies the freshly pushed PC as the handler address
+    _z80->im = 2;
+    _z80->i = 0x9F;       // table entry at $9FFF (open bus vector $FF)
+    _z80->iff1 = _z80->iff2 = 1;
+    _z80->pc = 0xC234;
+    _z80->sp = 0xA001;    // push writes $A000 (PCH) and $9FFF (PCL)
+    _memory->DirectWriteToZ80Memory(0x9FFF, 0x11);  // stale table bytes
+    _memory->DirectWriteToZ80Memory(0xA000, 0x22);
+
+    ASSERT_TRUE(acceptInterrupt());
+    EXPECT_EQ(_z80->pc, 0xC234u) << "handler = the pushed return address (table read after the push)";
+}
+
+TEST_F(IntAcceptance_Test, BeforeUnexecutedHalt_ReturnsToTheHalt)
+{
+    // PC at a HALT that has not executed yet (latch clear): the INT returns
+    // to the HALT, which then executes - it must not be skipped
+    _z80->im = 1;
+    _z80->iff1 = _z80->iff2 = 1;
+    _z80->sp = 0xA000;
+    _memory->DirectWriteToZ80Memory(0x8100, 0x76);
+    _z80->pc = 0x8100;
+    _z80->halted = 0;
+
+    ASSERT_TRUE(acceptInterrupt());
+    EXPECT_EQ(_z80->DirectRead(0x9FFF), 0x81);
+    EXPECT_EQ(_z80->DirectRead(0x9FFE), 0x00) << "return address is the HALT itself";
 }
 
 TEST_F(IntAcceptance_Test, NoAcceptanceOutsideWindow)
@@ -159,7 +319,7 @@ TEST_F(IntAcceptance_Test, NoAcceptanceOutsideWindow)
 
     // Exactly at int_start: strict sampling means not yet visible
     _z80->t = _intStart;
-    _z80->eipos = 0;
+    _z80->boundary = Z80_BOUNDARY_NONE;
     EXPECT_FALSE(_z80->ProcessInterrupts(false, _intStart, _intEnd));
 
     // Past the window end with no pending latch: no acceptance

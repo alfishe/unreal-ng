@@ -247,12 +247,9 @@ struct Z80Registers
 
     /// endregion </Undocumented Internal Registers>
 
-    // EI shadow position: t-state of the last EI, used to defer INT acceptance
-    // by one instruction. Must cover the full frame t-state range - as uint16_t
-    // it truncated for t > 65535, silently losing the EI shadow in the last
-    // ~6K t-states of a Pentagon frame (where its INT window lives at 71635).
-    // Signed: AdjustFrameCounters subtracts the frame length on wrap, which
-    // may legitimately go negative (the '!=' guard then never matches).
+    // Unused layout slot (formerly the t-state of the last EI). The INT shadow
+    // after EI is now Z80State::boundary; the slot stays so this packed block
+    // keeps the layout unreal-z80's Z80CpuRegisterFile mirrors (reservedEipos).
     int32_t eipos;
     uint16_t haltpos;
 
@@ -288,8 +285,35 @@ struct Z80DecodedOperation
     };
 };
 
+/// Instruction-boundary state: what the CPU carries from one instruction
+/// boundary to the next beyond the registers, i.e. what decides the next
+/// INT/NMI acceptance. One value at a time - each is a property of the last
+/// instruction or the last acknowledge. Set by that instruction/acknowledge,
+/// cleared when the next Z80Step starts. Same values and meaning as
+/// unreal-z80's Z80CpuBoundary.
+enum Z80BoundaryEnum : uint8_t
+{
+    Z80_BOUNDARY_NONE = 0,
+    /// A redundant DD/FD prefix (followed by another DD/FD) ended the step:
+    /// that next prefix is fetched and its instruction runs in the next
+    /// Z80Step. INT and NMI are refused (no boundary inside an instruction).
+    Z80_BOUNDARY_PREFIX_DD,
+    Z80_BOUNDARY_PREFIX_FD,
+    /// After EI, or after a RETN/RETI that set IFF1 (IFF2 reaches IFF1 too
+    /// late for this boundary's INT sampling): INT refused, NMI accepted.
+    Z80_BOUNDARY_INT_SHADOW,
+    /// After LD A,I / LD A,R: an INT accepted here clears P/V (NMOS: the
+    /// acknowledge clears IFF2 before the copy settles). NMI does not.
+    Z80_BOUNDARY_LD_A_IR,
+    /// An NMI was just acknowledged: a second NMI is refused until an
+    /// instruction has run.
+    Z80_BOUNDARY_NMI_ACK,
+};
+
 struct Z80State : public Z80Registers, public Z80DecodedOperation
 {
+    uint8_t boundary = Z80_BOUNDARY_NONE;  // Z80BoundaryEnum (see above)
+
     uint32_t z80_index;  // CPU Enumeration index (for multiple Z80 in system, like Spectrum with GS/NGS)
 
     uint16_t prev_pc;  // PC on previous cycle
@@ -399,6 +423,7 @@ public:
     // Z80 CPU control methods
     void Reset();  // Z80 chip reset
     void Z80Step(bool skipBreakpoints = false);  // Single opcode execution
+    bool RunInstructionStartHooks(bool skipBreakpoints);  // true: a trap consumed the instruction
 
 public:
     /// Run instructions until the frame T-state limit (the continuous main

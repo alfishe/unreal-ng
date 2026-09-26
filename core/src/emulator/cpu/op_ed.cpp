@@ -143,8 +143,20 @@ Z80OPCODE ope_44(Z80 *cpu) { // neg
    cpu->a = -cpu->a;
 }
 
-Z80OPCODE ope_45(Z80 *cpu) { // retn
+// RETN/RETI copy IFF2 to IFF1 too late for the INT sampling at the next
+// boundary: when that copy sets IFF1 (only possible inside an NMI handler:
+// IFF1 = 0, IFF2 = 1) INT is refused there, like after EI (Weissflog 2021,
+// Sainz de Baranda 2022; redcode Z80 and Visual Z80 agree). All ED 45-family
+// aliases share these two bodies.
+static inline void retxRestoreIff1(Z80 *cpu)
+{
+   if (!cpu->iff1 && cpu->iff2)
+      cpu->boundary = Z80_BOUNDARY_INT_SHADOW;
    cpu->iff1 = cpu->iff2;
+}
+
+Z80OPCODE ope_45(Z80 *cpu) { // retn
+   retxRestoreIff1(cpu);
 
    uint16_t sp = cpu->sp;
 
@@ -236,7 +248,7 @@ Z80OPCODE ope_4B(Z80 *cpu) { // ld bc,(nnnn)
 #define ope_4C ope_44   // neg
 
 Z80OPCODE ope_4D(Z80 *cpu) { // reti
-    cpu->iff1 = cpu->iff2;
+    retxRestoreIff1(cpu);
 
     uint16_t sp = cpu->sp;
 
@@ -335,6 +347,7 @@ Z80OPCODE ope_57(Z80 *cpu) { // ld a,i
    cpu->a = cpu->i;
    cpu->f = (log_f[cpu->a] & ~(PV | HF | NF)) | (cpu->iff2 ? PV : 0) | (cpu->f & CF);
    cputact(1);
+   cpu->boundary = Z80_BOUNDARY_LD_A_IR;  // an INT accepted next clears P/V (HandleINT)
 }
 
 Z80OPCODE ope_58(Z80 *cpu) { // in e,(c)
@@ -409,6 +422,7 @@ Z80OPCODE ope_5F(Z80 *cpu) { // ld a,r
    cpu->a = (cpu->r_low & 0x7F) | cpu->r_hi;
    cpu->f = (log_f[cpu->a] & ~(PV | HF | NF)) | (cpu->iff2 ? PV : 0) | (cpu->f & CF);
    cputact(1);
+   cpu->boundary = Z80_BOUNDARY_LD_A_IR;  // an INT accepted next clears P/V (HandleINT)
 }
 
 Z80OPCODE ope_60(Z80 *cpu) { // in h,(c)

@@ -146,7 +146,17 @@ protected:
 
     static void ExpectSame(const MachineState& actual, const MachineState& expected, const std::string& where)
     {
-        EXPECT_EQ(std::memcmp(&actual.cpu, &expected.cpu, sizeof(actual.cpu)), 0) << where << ": CPU state differs";
+        {
+            const auto* a = reinterpret_cast<const uint8_t*>(&actual.cpu);
+            const auto* e = reinterpret_cast<const uint8_t*>(&expected.cpu);
+            size_t first = 0;
+            while (first < sizeof(actual.cpu) && a[first] == e[first])
+                first++;
+            EXPECT_EQ(first, sizeof(actual.cpu))
+                << where << ": CPU state differs from byte " << first << " (TTDCpuState offset; actual "
+                << int(first < sizeof(actual.cpu) ? a[first] : 0) << ", recorded "
+                << int(first < sizeof(actual.cpu) ? e[first] : 0) << ")";
+        }
         EXPECT_EQ(std::memcmp(&actual.chipset, &expected.chipset, sizeof(actual.chipset)), 0)
             << where << ": chipset differs (cpu_t_in_frame " << ttd::GetChipsetCpuTInFrame(actual.chipset)
             << " vs " << ttd::GetChipsetCpuTInFrame(expected.chipset) << ")";

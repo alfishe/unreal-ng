@@ -93,13 +93,17 @@ struct TTDCpuState
     uint16_t memptr = 0;        ///< MEMPTR / WZ — affects BIT n,(HL) undocumented flags
     uint8_t  q = 0;             ///< Q register — affects CCF/SCF undocumented flag behavior
 
-    // Padding at offset 35 (before eipos) — see reserved0.
-    uint8_t  reserved1 = 0;
+    /// Instruction-boundary state (Z80BoundaryEnum: INT shadow after EI or
+    /// RETN/RETI, pending DD/FD prefix, LD A,I/R quirk, NMI just
+    /// acknowledged). Restoring it matters: without it an interrupt fires one
+    /// instruction too early after EI, or inside a split prefix chain. Sits
+    /// in the former padding byte at offset 35 (checkpoints written before it
+    /// existed carry 0 = none there).
+    uint8_t  boundary = 0;
 
     // ---- HALT / interrupt bookkeeping ----
-    /// EI instruction position. Restoring this matters because the Z80
-    /// disables interrupts for one instruction after EI; an incomplete
-    /// restore would let an interrupt fire one instruction too early.
+    /// Legacy EI position (the Z80's eipos slot is unused since the INT
+    /// shadow moved to boundary); kept for layout stability.
     uint16_t eipos = 0;
     /// HALT instruction position — used for HALT timing/accounting.
     uint16_t haltpos = 0;
@@ -123,14 +127,14 @@ struct TTDCpuState
 // trailing padding, which absolute offsets alone cannot see.
 static_assert(sizeof(TTDCpuState) == 48, "TTDCpuState layout must stay stable (hashed byte-wise)");
 static_assert(offsetof(TTDCpuState, memptr) == 32, "reserved0 must sit at pad offset 31");
-static_assert(offsetof(TTDCpuState, eipos) == 36, "reserved1 must sit at pad offset 35");
+static_assert(offsetof(TTDCpuState, eipos) == 36, "boundary must sit at pad offset 35");
 static_assert(offsetof(TTDCpuState, halt_cycle) == 44, "reserved2 must sit at pad offset 43");
 static_assert(offsetof(TTDCpuState, halt_cycle) + sizeof(uint32_t) == sizeof(TTDCpuState),
               "TTDCpuState has implicit trailing padding - check reserved0/1/2 placement");
 static_assert(offsetof(TTDCpuState, memptr) == offsetof(TTDCpuState, reserved0) + 1,
               "TTDCpuState reserved0 does not fill the alignment gap before memptr");
-static_assert(offsetof(TTDCpuState, eipos) == offsetof(TTDCpuState, reserved1) + 1,
-              "TTDCpuState reserved1 does not fill the alignment gap before eipos");
+static_assert(offsetof(TTDCpuState, eipos) == offsetof(TTDCpuState, boundary) + 1,
+              "TTDCpuState boundary does not fill the alignment gap before eipos");
 static_assert(offsetof(TTDCpuState, halt_cycle) == offsetof(TTDCpuState, reserved2) + 1,
               "TTDCpuState reserved2 does not fill the alignment gap before halt_cycle");
 

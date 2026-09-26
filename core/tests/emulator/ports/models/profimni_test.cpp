@@ -38,7 +38,7 @@ protected:
     {
         Z80* z80 = _core->GetZ80();
         z80->t = 100;  // away from the INT window edges; NMI ignores the window
-        z80->eipos = 0;
+        z80->boundary = Z80_BOUNDARY_NONE;
         return z80->ProcessInterrupts(false, 0, 0);
     }
 
@@ -180,7 +180,7 @@ TEST(ProfiMniEmulator_Test, RequestMniRaisesDosLatch)
 
     Z80* z80 = context->pCore->GetZ80();
     z80->t = 100;
-    z80->eipos = 0;
+    z80->boundary = Z80_BOUNDARY_NONE;
     EXPECT_TRUE(z80->ProcessInterrupts(false, 0, 0));
     EXPECT_EQ(z80->pc, 0x0066u) << "the CPU lands on the NMI vector";
 

@@ -56,6 +56,7 @@ Z80State MakeCanonicalZ80()
 
     z.memptr = 0xFEDC;
     z.q = 0x28;  // Only bits 3 and 5 are significant
+    z.boundary = Z80_BOUNDARY_NMI_ACK;
 
     z.eipos = 0xE100;
     z.haltpos = 0x7000;
@@ -141,7 +142,7 @@ EmulatorState MakeCanonicalState()
     EXPECT_EQ(expected.alt.hl, actual.alt.hl);
     CHECK(i); CHECK(r_low); CHECK(r_hi);
     CHECK(iff1); CHECK(iff2); CHECK(im); CHECK(halted);
-    CHECK(memptr); CHECK(q);
+    CHECK(memptr); CHECK(q); CHECK(boundary);
     CHECK(eipos); CHECK(haltpos);
     CHECK(nmi_in_progress);
     CHECK(int_pending);
@@ -270,6 +271,7 @@ TEST(TTDCpuStateTest, Capture_DetectsAllArchitecturalChanges)
     EXPECT_FIELD_SEEN([](Z80State& z)->uint8_t& { return z.halted; }, 0x00);
     EXPECT_FIELD_SEEN([](Z80State& z)->uint16_t& { return z.memptr; }, 0xFFFF);
     EXPECT_FIELD_SEEN([](Z80State& z)->uint8_t& { return z.q; }, 0xFF);
+    EXPECT_FIELD_SEEN([](Z80State& z)->uint8_t& { return z.boundary; }, 0xFF);
     // eipos is int32_t in the current Z80State (it stores a t-state position,
     // not a 16-bit register), so the getter must match or the reference will not bind.
     EXPECT_FIELD_SEEN([](Z80State& z)->int32_t& { return z.eipos; }, 0xFFFF);

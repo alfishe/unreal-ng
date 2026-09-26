@@ -41,7 +41,7 @@ protected:
     {
         Z80* z80 = _core->GetZ80();
         z80->t = 100;  // away from the INT window edges; NMI ignores the window
-        z80->eipos = 0;
+        z80->boundary = Z80_BOUNDARY_NONE;
         return z80->ProcessInterrupts(false, 0, 0);
     }
 };
@@ -210,7 +210,7 @@ TEST(ScorpionMniEmulator_Test, RequestMniArmsTriggerAndForcesTrdDos)
         << "the real TR-DOS ROM is mapped at #0000";
 
     z80->t = 100;
-    z80->eipos = 0;
+    z80->boundary = Z80_BOUNDARY_NONE;
     EXPECT_TRUE(z80->ProcessInterrupts(false, 0, 0));
     EXPECT_EQ(z80->pc, 0x0066u) << "the CPU lands on the NMI vector in TR-DOS";
 
@@ -240,7 +240,7 @@ TEST(ScorpionMniEmulator_Test, RequestNmiLeavesLatchesAlone)
     EXPECT_EQ(context->emulatorState.scorpionDosTrigger, 0) << "plain NMI does not arm the DOS trigger";
 
     z80->t = 100;
-    z80->eipos = 0;
+    z80->boundary = Z80_BOUNDARY_NONE;
     EXPECT_TRUE(z80->ProcessInterrupts(false, 0, 0));
     EXPECT_EQ(z80->pc, 0x0066u);
 
@@ -285,7 +285,7 @@ TEST(ScorpionMniEmulator_Test, ProfRomMagicButtonSelectsQuadrantZero)
         << "#0000 maps quadrant-0 TR-DOS, not the plane-1 page";
 
     z80->t = 100;
-    z80->eipos = 0;
+    z80->boundary = Z80_BOUNDARY_NONE;
     EXPECT_TRUE(z80->ProcessInterrupts(false, 0, 0));
     EXPECT_EQ(z80->pc, 0x0066u);
     EXPECT_EQ(memory->DirectReadFromZ80Memory(0x0066), memory->ROMPageHostAddress(3)[0x66])

@@ -365,7 +365,7 @@ protected:
         _z80->im = tc.im;
         _z80->halted = tc.halted ? 1 : 0;
         _z80->prefix = 0;
-        _z80->eipos = 0;
+        _z80->boundary = Z80_BOUNDARY_NONE;
     }
 
     /// Run one FUSE case; returns list of mismatch descriptions (empty = pass)

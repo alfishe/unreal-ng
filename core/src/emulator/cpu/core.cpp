@@ -807,7 +807,6 @@ void Core::AdjustFrameCounters()
 
     // Re-adjust Core frame t-state counter and interrupt position
     _z80->t -= scaledFrame;
-    _z80->eipos -= scaledFrame;
 
     // Drop any stale INT request latched near the frame edge. The ULA INT line
     // is only asserted inside [intstart, intstart+intlen); ProcessInterrupts
