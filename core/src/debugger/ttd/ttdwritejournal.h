@@ -36,13 +36,12 @@
 #include <cstddef>
 #include <atomic>
 #include <functional>
-#include <future>
+#include <memory>
 #include <optional>
 #include <vector>
 #include <ostream>
 #include <istream>
 
-#include "common/zeroinitbuffer.h"
 
 namespace ttd {
 
@@ -79,23 +78,26 @@ public:
     /// next power-of-two records). Default 64 MB — provides ~50 seconds at
     /// max-intensity workload (2300 writes/frame), several minutes typical.
     ///
+    /// Memory is committed lazily, one chunk at a time as the ring fills (see
+    /// LazyRing), so construction is cheap and a short session pays only for
+    /// the records it writes.
+    ///
     /// @param ringBytes  Desired ring size in bytes.
-    /// @param asyncAlloc If true, allocation happens on a background thread.
-    ///                   Call WaitReady() before first use.
+    /// @param asyncAlloc Kept for API compatibility: construction no longer
+    ///                   allocates the ring, so there is nothing to offload.
     explicit TTDWriteJournal(size_t ringBytes = 64u * 1024 * 1024,
                              bool asyncAlloc = false);
 
-    ~TTDWriteJournal();
+    ~TTDWriteJournal() = default;
 
     TTDWriteJournal(const TTDWriteJournal&) = delete;
     TTDWriteJournal& operator=(const TTDWriteJournal&) = delete;
 
-    /// @brief Block until async allocation completes. No-op if sync-allocated.
-    /// Call this before first Append() when using asyncAlloc=true.
-    void WaitReady();
+    /// @brief Kept for API compatibility: the journal is ready on construction.
+    void WaitReady() {}
 
-    /// @brief Check if async allocation is complete (non-blocking).
-    bool IsReady() const { return _ready.load(std::memory_order_acquire); }
+    /// @brief Kept for API compatibility: always true.
+    bool IsReady() const { return true; }
 
     // -----------------------------------------------------------------------
     // Capture path (emulator thread only; called from MemoryWriteDebug /
@@ -179,9 +181,10 @@ public:
     /// @brief True iff Size() == 0.
     inline bool IsEmpty() const { return _seqHead == _seqTail; }
 
-    /// @brief Read-only access to the underlying ring + tail (for tests and
-    /// for the analyzer tool — not used by the engine itself).
-    inline const ZeroInitBuffer<TTDWriteRecord>& Ring() const { return _ring; }
+    /// @brief Read-only access to the sequence cursors and to a live record by
+    /// its sequence number, SeqTail() <= seq < SeqHead() (for tests and for
+    /// the analyzer tool — not used by the engine itself).
+    inline const TTDWriteRecord& RecordAt(uint64_t seq) const { return _ring[SeqToIdx(seq)]; }
     inline uint64_t SeqHead() const { return _seqHead; }
     inline uint64_t SeqTail() const { return _seqTail; }
 
@@ -189,18 +192,59 @@ private:
     /// @brief Resolve a sequence number to a ring index.
     inline size_t SeqToIdx(uint64_t seq) const { return static_cast<size_t>(seq & _mask); }
 
-    // See zeroinitbuffer.h: the 64-128 MiB fill this ring needs was the
-    // dominant cost of every TTD test that starts recording, hidden behind
-    // the async-allocation offload below (~90 ms in Debug, paid in
-    // ~TTDWriteJournal() rather than here, since these short-lived tests
-    // reach the destructor before the background fill finishes).
-    ZeroInitBuffer<TTDWriteRecord> _ring;   // power-of-two size
+    /// Power-of-two ring of records whose memory is committed a chunk at a
+    /// time on first write. Allocating (and zero-filling) the whole 64 MiB
+    /// ring up front cost every recording start ~10% of a full test run in
+    /// memory fills, even when it was offloaded to a background thread
+    /// (StartRecording waits for it) - while a typical session only ever
+    /// touches a small part of it. A slot in a chunk not yet written reads as
+    /// a zero record, exactly like the zero-filled ring did.
+    class LazyRing
+    {
+    public:
+        static constexpr size_t kMaxChunkShift = 16;  // 64K records = 768 KiB per chunk
+
+        void Configure(size_t capacity)
+        {
+            _capacity = capacity;
+            _chunkShift = 0;
+            while ((size_t(1) << _chunkShift) < capacity && _chunkShift < kMaxChunkShift)
+                _chunkShift++;
+            _chunkMask = (size_t(1) << _chunkShift) - 1;
+            _chunks.clear();
+            _chunks.resize((capacity + _chunkMask) >> _chunkShift);
+        }
+
+        size_t size() const { return _capacity; }
+
+        /// Writable slot: commits (zero-initialized) its chunk on first use
+        TTDWriteRecord& operator[](size_t idx)
+        {
+            std::unique_ptr<TTDWriteRecord[]>& chunk = _chunks[idx >> _chunkShift];
+            if (!chunk)
+                chunk.reset(new TTDWriteRecord[_chunkMask + 1]());
+            return chunk[idx & _chunkMask];
+        }
+
+        /// Read-only slot: a never-written chunk reads as zero records
+        const TTDWriteRecord& operator[](size_t idx) const
+        {
+            static const TTDWriteRecord kZero{};
+            const std::unique_ptr<TTDWriteRecord[]>& chunk = _chunks[idx >> _chunkShift];
+            return chunk ? chunk[idx & _chunkMask] : kZero;
+        }
+
+    private:
+        std::vector<std::unique_ptr<TTDWriteRecord[]>> _chunks;
+        size_t _capacity = 0;
+        size_t _chunkShift = 0;
+        size_t _chunkMask = 0;
+    };
+
+    LazyRing _ring;                      // power-of-two size
     size_t   _mask = 0;                  // capacity - 1, for fast modulo
     uint64_t _seqHead = 0;               // absolute count of appends
     uint64_t _seqTail = 0;               // absolute seq of oldest live record
-
-    std::atomic<bool> _ready{false};     // true when allocation complete
-    std::future<void> _allocFuture;      // async allocation handle
 };
 
 } // namespace ttd

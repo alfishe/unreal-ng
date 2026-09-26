@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cassert>
+#include <new>
 #include <mutex>
 #include <thread>
 
@@ -41,6 +42,42 @@
 #include <mach/vm_map.h>
 #endif
 #endif
+
+namespace
+{
+/// Private (not shared) emulated memory: zero-filled pages straight from the
+/// OS. The kernel hands out anonymous pages already zeroed and commits them on
+/// first touch, so the ~6 MiB block (MAX_PAGES for the largest model) costs
+/// nothing for the pages a machine never uses. `new uint8_t[n]()` zero-filled
+/// all of it on every emulator instance instead, and a freed block handed
+/// back by the allocator had to be zeroed again - memory fills were a top
+/// cost of a test run that creates thousands of instances
+uint8_t* AllocateZeroedRegion(size_t size)
+{
+#ifdef _WIN32
+    void* p = VirtualAlloc(nullptr, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    if (p == nullptr)
+        throw std::bad_alloc();  // same contract as the array-new it replaced
+#else
+    void* p = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (p == MAP_FAILED)
+        throw std::bad_alloc();  // same contract as the array-new it replaced
+#endif
+    return static_cast<uint8_t*>(p);
+}
+
+void FreeZeroedRegion(uint8_t* p, size_t size)
+{
+    if (!p)
+        return;
+#ifdef _WIN32
+    (void)size;
+    VirtualFree(p, 0, MEM_RELEASE);
+#else
+    munmap(p, size);
+#endif
+}
+}  // namespace
 
 // Global mutex to serialize shared memory migrations across ALL emulator instances
 // This prevents race conditions when multiple emulators toggle shared memory simultaneously
@@ -461,7 +498,7 @@ void Memory::AllocateAndExportMemoryToMmap()
     if (!_feature_sharedmemory_enabled)
     {
         // Feature disabled - allocate regular heap memory
-        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES]();  // zero-init: deterministic power-on RAM
+        _memory = AllocateZeroedRegion(_memorySize);  // zero-init: deterministic power-on RAM
         MLOGDEBUG("Memory allocated using heap (sharedmemory feature disabled)");
         return;
     }
@@ -516,7 +553,7 @@ void Memory::AllocateAndExportMemoryToMmap()
         DWORD error = GetLastError();
         LOGERROR("Failed to create file mapping object (Error %lu), falling back to heap allocation", error);
         _mappedMemoryHandle = INVALID_HANDLE_VALUE;
-        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES]();  // zero-init: deterministic power-on RAM
+        _memory = AllocateZeroedRegion(_memorySize);  // zero-init: deterministic power-on RAM
         return;
     }
 
@@ -534,7 +571,7 @@ void Memory::AllocateAndExportMemoryToMmap()
         LOGERROR("Failed to map view of file (Error %lu), falling back to heap allocation", error);
         CloseHandle(_mappedMemoryHandle);
         _mappedMemoryHandle = INVALID_HANDLE_VALUE;
-        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES]();  // zero-init: deterministic power-on RAM
+        _memory = AllocateZeroedRegion(_memorySize);  // zero-init: deterministic power-on RAM
         return;
     }
 
@@ -555,7 +592,7 @@ void Memory::AllocateAndExportMemoryToMmap()
     {
         LOGERROR("Failed to create shared memory object: %s (errno=%d), falling back to heap allocation",
                  strerror(errno), errno);
-        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES]();  // zero-init: deterministic power-on RAM
+        _memory = AllocateZeroedRegion(_memorySize);  // zero-init: deterministic power-on RAM
         return;
     }
 
@@ -566,7 +603,7 @@ void Memory::AllocateAndExportMemoryToMmap()
         close(_mappedMemoryFd);
         shm_unlink(shmName.c_str());
         _mappedMemoryFd = -1;
-        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES]();  // zero-init: deterministic power-on RAM
+        _memory = AllocateZeroedRegion(_memorySize);  // zero-init: deterministic power-on RAM
         return;
     }
 
@@ -580,7 +617,7 @@ void Memory::AllocateAndExportMemoryToMmap()
         close(_mappedMemoryFd);
         shm_unlink(shmName.c_str());
         _mappedMemoryFd = -1;
-        _memory = new uint8_t[PAGE_SIZE * MAX_PAGES]();  // zero-init: deterministic power-on RAM
+        _memory = AllocateZeroedRegion(_memorySize);  // zero-init: deterministic power-on RAM
         return;
     }
 
@@ -642,10 +679,10 @@ void Memory::UnmapMemory()
     }
     else
     {
-        // Regular heap memory - just delete
+        // Private (not shared) memory - see AllocateZeroedRegion
         if (_memory)
         {
-            delete[] _memory;
+            FreeZeroedRegion(_memory, _memorySize);
             _memory = nullptr;
         }
     }
@@ -1862,8 +1899,8 @@ void Memory::UpdateFeatureCache()
                         // See MigratePointersAfterReallocation() for full documentation
                         MigratePointersAfterReallocation(oldMemory, _memory);
 
-                        // Free old heap memory (safe now that all pointers updated)
-                        delete[] oldMemory;
+                        // Free the old private memory (safe now that all pointers updated)
+                        FreeZeroedRegion(oldMemory, _memorySize);
 
                         LOGDEBUG("Shared memory enabled - migrated %zu bytes to shared memory", _memorySize);
                     }
@@ -1889,8 +1926,8 @@ void Memory::UpdateFeatureCache()
                     // Save old shared memory pointer for offset calculation
                     uint8_t* oldMemory = _memory;
 
-                    // Allocate new heap memory
-                    uint8_t* newMemory = new uint8_t[_memorySize];
+                    // Allocate new private memory (fully overwritten by the copy below)
+                    uint8_t* newMemory = AllocateZeroedRegion(_memorySize);
 
                     // Copy content from shared memory to heap
                     memcpy(newMemory, _memory, _memorySize);

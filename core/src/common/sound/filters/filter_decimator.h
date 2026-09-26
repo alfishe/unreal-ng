@@ -80,19 +80,27 @@ private:
     /// standalone. Cleared by configure() — re-attach after a redesign.
     const FilterDecimator* _master = nullptr;
 
-    double _buffer[HISTORY];
+    // History ring, mirrored: every sample is stored at i and at i + HISTORY,
+    // so the taps of getOutput() read one contiguous run backwards from any
+    // start without a wrap check per tap (the same values in the same order,
+    // bit-identical output - it only removes the per-tap branch/modulo)
+    double _buffer[2 * HISTORY];
     size_t _bufferIndex;
     double _phase;
 
     static std::shared_ptr<const PhaseTable> phaseTableFor(size_t taps, double fc, double inputRate, double beta)
     {
         // Designs repeat (4 SSG decimators per device, one device per
-        // emulator instance): build each once while anything uses it
+        // emulator instance): build each once per process. Held strongly:
+        // there are only a handful of (taps, fc, rate, quality) designs, a few
+        // hundred KB each, while a weak cache expired whenever the last
+        // instance went away and every new instance (every test) redesigned
+        // them - ~257 x 97 Kaiser evaluations each
         static std::mutex mutex;
-        static std::map<std::tuple<size_t, double, double, double>, std::weak_ptr<const PhaseTable>> cache;
+        static std::map<std::tuple<size_t, double, double, double>, std::shared_ptr<const PhaseTable>> cache;
         const auto key = std::make_tuple(taps, fc, inputRate, beta);
         std::lock_guard<std::mutex> lock(mutex);
-        if (auto cached = cache[key].lock())
+        if (auto cached = cache[key])
             return cached;
 
         auto table = std::make_shared<PhaseTable>();
@@ -205,6 +213,7 @@ public:
     void feedSample(double sample)
     {
         _buffer[_bufferIndex] = sample;
+        _buffer[_bufferIndex + HISTORY] = sample;
         _bufferIndex = (_bufferIndex + 1) % HISTORY;
         if (!_master)
             _phase += 1.0;
@@ -262,13 +271,41 @@ public:
         const double* b = a + length;
         double ya = 0.0;
         double yb = 0.0;
-        size_t idx = (_bufferIndex + HISTORY - whole) % HISTORY;
-        for (size_t i = 0; i < length; i++)
+        // Newest-first taps: the sample just before `start`, then backwards.
+        // In the mirrored ring that is one contiguous run ending at
+        // start + HISTORY - 1 (length <= MAX_TAPS < HISTORY keeps it in range).
+        // Four interleaved accumulators per dot product: independent chains the
+        // compiler can pipeline/vectorize (a single running sum is one serial
+        // dependency chain under strict FP). Deterministic - the summation
+        // order is fixed - but not bit-identical to a single-chain sum
+        const size_t start = (_bufferIndex + HISTORY - whole) % HISTORY;
+        const double* x = &_buffer[start + HISTORY - 1];
+        double ya0 = 0.0, ya1 = 0.0, ya2 = 0.0, ya3 = 0.0;
+        double yb0 = 0.0, yb1 = 0.0, yb2 = 0.0, yb3 = 0.0;
+        size_t i = 0;
+        for (; i + 3 < length; i += 4)
         {
-            idx = (idx == 0) ? HISTORY - 1 : idx - 1;
-            ya += _buffer[idx] * a[i];
-            yb += _buffer[idx] * b[i];
+            const double s0 = x[-static_cast<ptrdiff_t>(i)];
+            const double s1 = x[-static_cast<ptrdiff_t>(i + 1)];
+            const double s2 = x[-static_cast<ptrdiff_t>(i + 2)];
+            const double s3 = x[-static_cast<ptrdiff_t>(i + 3)];
+            ya0 += s0 * a[i];
+            ya1 += s1 * a[i + 1];
+            ya2 += s2 * a[i + 2];
+            ya3 += s3 * a[i + 3];
+            yb0 += s0 * b[i];
+            yb1 += s1 * b[i + 1];
+            yb2 += s2 * b[i + 2];
+            yb3 += s3 * b[i + 3];
         }
+        for (; i < length; i++)
+        {
+            const double s0 = x[-static_cast<ptrdiff_t>(i)];
+            ya0 += s0 * a[i];
+            yb0 += s0 * b[i];
+        }
+        ya = (ya0 + ya1) + (ya2 + ya3);
+        yb = (yb0 + yb1) + (yb2 + yb3);
         return ya + t * (yb - ya);
     }
 };

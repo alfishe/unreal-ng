@@ -34,7 +34,9 @@
 ///
 /// @tparam T Element type. Must be a trivially copyable primitive/POD type (e.g. `uint32_t`, `uint8_t`).
 #include <cstddef>
+#include <cstdlib>
 #include <cstring>
+#include <new>
 #include <memory>
 #include <type_traits>
 
@@ -58,17 +60,23 @@ public:
     ZeroInitBuffer& operator=(const ZeroInitBuffer&) = delete;
 
     /// @brief Allocate n zero-initialized elements, discarding any previously allocated content.
-    /// @details Employs array value-initialization (`new T[n]()`), lowering to kernel zero-paging
-    ///          or bulk `memset`/`calloc` across compilers, avoiding per-element constructor loops.
+    /// @details `std::calloc`, not `new T[n]()`: the array-new form lowers to an allocation plus
+    ///          a bulk `memset` on macOS, which writes - and so commits - every page of a multi-MB
+    ///          buffer up front (the 64 MiB TTDWriteJournal ring made `__bzero` ~10% of a full
+    ///          test run, once per recording started). A large `calloc` takes fresh VM pages the
+    ///          kernel already hands out zeroed, so it skips the fill and pages are committed
+    ///          only as they are first written.
     /// @param n Number of elements to allocate. If 0, frees existing storage and sets size to 0.
     void resize(size_t n)
     {
-        _data.reset(n ? new T[n]() : nullptr);
+        _data.reset(n ? static_cast<T*>(std::calloc(n, sizeof(T))) : nullptr);
+        if (n && !_data)
+            throw std::bad_alloc();
         _size = n;
     }
 
     /// @brief Free backing storage immediately and reset size to zero.
-    /// @details Directly releases the `std::unique_ptr<T[]>`, freeing memory immediately without
+    /// @details Directly releases the backing storage, freeing memory immediately without
     ///          allocating temporary vector instances (replacing the previous `std::vector::swap` idiom).
     void reset()
     {
@@ -120,14 +128,18 @@ public:
     /// @brief Subscript access to element at specified index (unchecked, matching std::vector).
     /// @param i Zero-based index of element.
     /// @return Reference to the element at index `i`.
-    T& operator[](size_t i) { return _data[i]; }
+    T& operator[](size_t i) { return _data.get()[i]; }
 
     /// @brief Subscript access to element at specified index (const overload, unchecked).
     /// @param i Zero-based index of element.
     /// @return Const reference to the element at index `i`.
-    const T& operator[](size_t i) const { return _data[i]; }
+    const T& operator[](size_t i) const { return _data.get()[i]; }
 
 private:
-    std::unique_ptr<T[]> _data;
+    struct FreeDeleter
+    {
+        void operator()(T* p) const { std::free(p); }
+    };
+    std::unique_ptr<T, FreeDeleter> _data;
     size_t _size = 0;
 };

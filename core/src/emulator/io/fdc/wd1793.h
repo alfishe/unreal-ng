@@ -26,6 +26,10 @@ class WD1793 : public PortDecoder, public PortDevice, public ttd::TTDSerializabl
 public:
     /// Diff-gate cache for NC_FDC_STATE_CHANGED — the display-relevant tuple that was
     /// posted last. An aggregate of plain values so comparison stays trivial.
+    /// DRQ is deliberately not part of it: it toggles once per data byte (~6250
+    /// times per track while formatting), far beyond anything a display follows,
+    /// and gating on it turned a disk format into ~a million posts. Posts still
+    /// carry the current DRQ level
     struct FdcNotifyCache
     {
         uint8_t driveId = 0;
@@ -34,7 +38,6 @@ public:
         uint8_t sectorRegister = 0;
         uint8_t physicalTrack = 0;
         bool busy = false;
-        bool drq = false;
         bool motorOn = false;
     };
 
@@ -749,6 +752,10 @@ protected:
     // last posted visible-state tuple so unchanged snapshots are not re-posted
     FdcNotifyCache _lastNotifiedFdcState;
     bool _fdcNotifyCacheValid = false;
+
+    // Owning emulator id, parsed once for the payloads (it never changes)
+    std::string _notifyEmulatorId;
+    unreal::UUID _notifyEmulatorUuid;
 
     /// endregion </Fields>
 

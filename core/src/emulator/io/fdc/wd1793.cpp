@@ -259,7 +259,7 @@ void WD1793::process()
     /// endregion </HandlerMap as the replacement for lengthy switch()>
 
     // Publish the visible FDC state after the FSM advanced (diff-gated — posts
-    // only when drive/side/track/sector/busy/drq/motor actually changed)
+    // only when drive/side/track/sector/busy/motor actually changed)
     notifyFdcStateChanged();
 }
 
@@ -387,7 +387,7 @@ void WD1793::notifyFdcStateChanged()
         const FdcNotifyCache& last = _lastNotifiedFdcState;
         if (last.driveId == driveId && last.side == side && last.trackRegister == _trackRegister &&
             last.sectorRegister == _sectorRegister && last.physicalTrack == physicalTrack && last.busy == busy &&
-            last.drq == drq && last.motorOn == motorOn)
+            last.motorOn == motorOn)
         {
             return;
         }
@@ -399,14 +399,19 @@ void WD1793::notifyFdcStateChanged()
     _lastNotifiedFdcState.sectorRegister = _sectorRegister;
     _lastNotifiedFdcState.physicalTrack = physicalTrack;
     _lastNotifiedFdcState.busy = busy;
-    _lastNotifiedFdcState.drq = drq;
     _lastNotifiedFdcState.motorOn = motorOn;
     _fdcNotifyCacheValid = true;
 
-    // Resolve owning emulator instance (same pattern as FDD::insertDisk)
+    // Resolve owning emulator instance (same pattern as FDD::insertDisk); the
+    // parsed UUID is cached - the id is fixed for the controller's lifetime
     const std::string emulatorId = (_context && _context->pEmulator) ? _context->pEmulator->GetId() : "";
+    if (emulatorId != _notifyEmulatorId)
+    {
+        _notifyEmulatorId = emulatorId;
+        _notifyEmulatorUuid = emulatorId.empty() ? unreal::UUID() : unreal::UUID(emulatorId);
+    }
 
-    FDCStatePayload* payload = new FDCStatePayload(emulatorId.empty() ? unreal::UUID() : unreal::UUID(emulatorId));
+    FDCStatePayload* payload = new FDCStatePayload(_notifyEmulatorUuid);
     payload->_driveId = driveId;
     payload->_side = side;
     payload->_trackRegister = _trackRegister;

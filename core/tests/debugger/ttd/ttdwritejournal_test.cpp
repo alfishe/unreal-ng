@@ -495,12 +495,11 @@ void ExpectExactRoundTrip(size_t count)
         break;
     }
 
-    const auto& ring = dst.Ring();
     for (size_t i = 0; i < count; ++i)
     {
         // Records were appended oldest-first into a freshly cleared journal,
-        // so ring index i is expected[i] as long as we stayed under capacity.
-        if (!SameRecord(ring[i], expected[i]))
+        // so live record i is expected[i] as long as we stayed under capacity.
+        if (!SameRecord(dst.RecordAt(dst.SeqTail() + i), expected[i]))
         {
             if (mismatches == 0)
                 firstMismatch = i;
