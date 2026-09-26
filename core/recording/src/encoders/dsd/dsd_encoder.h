@@ -1,6 +1,6 @@
 #pragma once
 
-#include "encoder_base.h"
+#include "common/encoder_base.h"
 #include "dsd_types.h"
 #include "pcm_to_dsd_converter.h"
 #include "native_dsd_converter.h"

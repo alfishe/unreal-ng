@@ -10,6 +10,10 @@ struct EncoderConfig;
 
 /// @brief Abstract base class for all recording encoders
 ///
+/// Lives in core, not in the optional recording library: core's tape-audio
+/// renderer writes through it too (native WAV always, ffmpeg FLAC when the
+/// recording library is built), so the contract must exist in every build.
+///
 /// Encoders receive video frames and audio samples and encode them to a specific format.
 /// Each encoder decides which media types it supports:
 /// - Video-only encoders (GIF, PNG sequence) ignore audio

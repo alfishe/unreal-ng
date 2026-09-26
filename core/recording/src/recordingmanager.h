@@ -8,8 +8,8 @@
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
 #include "emulator/sound/soundmanager.h"  // AudioSourceType lives here now
-#include "encoder_base.h"
-#include "encoderconfig.h"
+#include "common/encoder_base.h"
+#include "common/encoderconfig.h"
 #include "stdafx.h"
 
 /// region <Forward declarations>

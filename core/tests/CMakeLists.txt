@@ -24,8 +24,29 @@ include(${ROOT_DIR}/cmake/func.cmake)
 # Recording support (audio/video capture)
 option(ENABLE_RECORDING "Enable audio/video recording support" ON)
 
-# GDB automation support (must match root CMakeLists.txt setting)
-option(ENABLE_GDB_AUTOMATION "Enable GDB RSP server automation" OFF)
+# Automation (must match root CMakeLists.txt; in a unified build the root's
+# cached values win). Tests for an automation module are compiled only when
+# the module itself is: same master switch and same per-module flags as
+# core/automation/CMakeLists.txt
+option(ENABLE_AUTOMATION "Enable automation features (Lua, Python, WebAPI, CLI)" ON)
+option(ENABLE_CLI_AUTOMATION "Enable CLI automation" ON)
+option(ENABLE_WEBAPI_AUTOMATION "Enable WebAPI automation" ON)
+option(ENABLE_MCP_AUTOMATION "Enable MCP server automation (requires ENABLE_WEBAPI_AUTOMATION)" ON)
+option(ENABLE_GDB_AUTOMATION "Enable GDB RSP server automation" ON)
+option(ENABLE_DEZOG_AUTOMATION "Enable DeZog (DZRP) debug server automation" ON)
+if (NOT ENABLE_AUTOMATION)
+    set(ENABLE_CLI_AUTOMATION OFF)
+    set(ENABLE_WEBAPI_AUTOMATION OFF)
+    set(ENABLE_MCP_AUTOMATION OFF)
+    set(ENABLE_GDB_AUTOMATION OFF)
+    set(ENABLE_DEZOG_AUTOMATION OFF)
+    set(ENABLE_ZESARUX_AUTOMATION OFF)
+endif ()
+# GDB tests link the automation_gdb library: only when it was built
+# (a standalone core/tests configure never builds core/automation)
+if (ENABLE_GDB_AUTOMATION AND NOT TARGET automation_gdb)
+    set(ENABLE_GDB_AUTOMATION OFF)
+endif ()
 
 # Set paths
 set(CORE_DIR ${ROOT_DIR}/core/src)
@@ -101,6 +122,11 @@ if (NOT ENABLE_RECORDING)
     EXCLUDE_FILES_FROM_DIR_IN_LIST("${TEST_CPP_FILES}" "/recording/" FALSE OUTVAR TEST_CPP_FILES)
 endif()
 
+# CLI tests (header-only CLI helpers) follow the CLI module
+if (NOT ENABLE_CLI_AUTOMATION)
+    EXCLUDE_FILES_FROM_DIR_IN_LIST("${TEST_CPP_FILES}" "/automation/cli-" FALSE OUTVAR TEST_CPP_FILES)
+endif()
+
 # Exclude GDB tests if GDB automation is disabled
 if (NOT ENABLE_GDB_AUTOMATION)
     EXCLUDE_FILES_FROM_DIR_IN_LIST("${TEST_CPP_FILES}" "/gdb/" FALSE OUTVAR TEST_CPP_FILES)
@@ -111,7 +137,6 @@ endif()
 # compiled in directly (core sources are already part of this binary), so no
 # linking of the automation_dezog library is required. Follows the same
 # ENABLE_DEZOG_AUTOMATION option as the rest of the tree.
-option(ENABLE_DEZOG_AUTOMATION "Enable DeZog (DZRP) debug server automation" ON)
 if (ENABLE_DEZOG_AUTOMATION)
     list(APPEND TEST_CPP_FILES
         ${ROOT_DIR}/core/automation/dezog/src/dzrpprotocol.cpp
@@ -145,11 +170,12 @@ endif ()
 # compiled into the test binary when the vendored jsoncpp_static target exists —
 # i.e. when the unified build added core/automation (WebAPI + MCP enabled)
 # before this directory. Otherwise the tests/automation folder is excluded.
-if (TARGET jsoncpp_static)
+if (ENABLE_WEBAPI_AUTOMATION AND ENABLE_MCP_AUTOMATION AND TARGET jsoncpp_static)
     set(MCP_TESTS_AVAILABLE TRUE)
 else()
     set(MCP_TESTS_AVAILABLE FALSE)
-    EXCLUDE_FILES_FROM_DIR_IN_LIST("${TEST_CPP_FILES}" "/automation/mcp/" FALSE OUTVAR TEST_CPP_FILES)
+    # The suites sit flat in tests/automation as mcp-*.cpp
+    EXCLUDE_FILES_FROM_DIR_IN_LIST("${TEST_CPP_FILES}" "/automation/mcp-" FALSE OUTVAR TEST_CPP_FILES)
 endif()
 
 set (SOURCES "${CORE_CPP_FILES};${TEST_CPP_FILES};${GOOGLETEST_FILES}")

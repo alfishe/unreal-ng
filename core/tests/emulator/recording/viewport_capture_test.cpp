@@ -6,7 +6,7 @@
 
 #include "emulator/video/screen.h"
 #include "recordingmanager.h"
-#include "encoderconfig.h"
+#include "common/encoderconfig.h"
 
 /// Viewport capture region tests: verify that VideoCaptureRegion::Viewport
 /// correctly crops the framebuffer according to DisplayViewport settings.

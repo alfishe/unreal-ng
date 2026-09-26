@@ -339,7 +339,7 @@ TEST(NativeDSDConverterTest, PunchDoesNotBreakModulator)
 /// region <DSDEncoder end-to-end>
 
 #include "encoders/dsd/dsd_encoder.h"
-#include "encoderconfig.h"
+#include "common/encoderconfig.h"
 #include "_helpers/testpathhelper.h"
 
 #include <chrono>

@@ -10,8 +10,8 @@
 #include <atomic>
 #include <deque>
 
-#include "encoder_base.h"
-#include "encoderconfig.h"
+#include "common/encoder_base.h"
+#include "common/encoderconfig.h"
 #include "common/subprocess.h"
 #include "common/named_pipe.h"
 

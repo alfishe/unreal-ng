@@ -2,12 +2,14 @@
 #include "_helpers/testpathhelper.h"
 #include "_helpers/tzxtapebuilder.h"
 #include "common/filehelper.h"
-#include "common/subprocess.h"
 #include "emulator/io/tape/tapecatalog.h"
-#include "ffmpeg_probe.h"
 #include "loaders/tape/loader_tape.h"
 #include "tapeaudio/tapeaudioimporter.h"
 #include "tapeaudio/tapeaudiorenderer.h"
+#ifdef ENABLE_RECORDING
+#include "common/subprocess.h"  // ffmpeg plumbing: optional recording library
+#include "ffmpeg_probe.h"
+#endif
 
 #include <cstdint>
 #include <string>
@@ -210,6 +212,7 @@ TEST(TapeAudioImporter_Test, RomTapeExportsToTapAndBack)
     EXPECT_EQ(roundTripped.blocks[1].data, DataBlock(300));
 }
 
+#ifdef ENABLE_RECORDING
 // Disabled: depends on ffmpeg being installed on the build machine.
 //
 // A unit test must not change behaviour with the contents of $PATH. These
@@ -298,6 +301,24 @@ TEST(TapeAudioImporter_Test, DISABLED_Mp3ImportSurvivesLossyEncoding)
     EXPECT_EQ(roundTripped.blocks[0].data, HeaderBlock());
     EXPECT_EQ(roundTripped.blocks[1].data, DataBlock(300));
 }
+#else
+// Built without the recording library: compressed formats are refused with
+// the build reason (WAV stays available) - deterministic, no $PATH involved
+TEST(TapeAudioImporter_Test, CompressedImportRefusedWithoutFfmpegSupport)
+{
+    // The decode path is chosen by extension before the file is read, so a
+    // placeholder file is enough
+    const std::string mp3 = TestPathHelper::GetTestScratchPath("tapeaudio-import/off.mp3");
+    uint8_t id3[] = {'I', 'D', '3'};
+    ASSERT_TRUE(FileHelper::SaveBufferToFile(mp3, id3, sizeof(id3)));
+
+    TapeImportRequest request;
+    request.sourcePath = mp3;
+    const TapeImportResult imported = ImportAudioToTape(request);
+    EXPECT_FALSE(imported.ok);
+    EXPECT_NE(imported.errorText.find("ENABLE_RECORDING=OFF"), std::string::npos) << imported.errorText;
+}
+#endif  // ENABLE_RECORDING
 
 TEST(TapeAudioImporter_Test, SilenceOnlyInputIsAnError)
 {

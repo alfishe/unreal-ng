@@ -4,8 +4,8 @@
 #include <string>
 #include <vector>
 
-#include "encoder_base.h"
-#include "encoderconfig.h"
+#include "common/encoder_base.h"
+#include "common/encoderconfig.h"
 
 /// @brief Platform-native encoder factory
 ///

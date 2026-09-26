@@ -67,6 +67,13 @@ add_subdirectory(3rdparty/liblzma)
 # forward it manually.
 add_subdirectory(3rdparty/zstd)
 
+# gif — GIF writer shared by core (ScreenCapture) and the optional recording
+# library; its own target so neither layer owns it (see its CMakeLists.txt).
+# The guard lets every entry point that builds core declare it exactly once.
+if (NOT TARGET gif)
+    add_subdirectory(3rdparty/gif)
+endif()
+
 # libopl4 — MoonSound (YMF278B / OPL4) synthesis library, vendored in-house at
 # 3rdparty/opl4 (std-lib only, own CMakeLists.txt). Declared here — not in the
 # root file — so every entry point that builds core (root, unreal-qt,
@@ -84,6 +91,7 @@ EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/build/" FALSE OUTVAR CPP_FILES)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/CMakeFiles/" FALSE OUTVAR CPP_FILES)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "liblzma/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/opl4/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
+EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/gif/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/recording/" FALSE OUTVAR CPP_FILES) # Moved to separate library
 
 # ymfm (YM2203 core for the TurboSound FM device): vendored at 3rdparty/ymfm.
@@ -193,6 +201,9 @@ target_link_libraries(${PROJECT_NAME} PRIVATE lzma)
 # automation/lua, automation/webapi, tests). All consumers need zstd's
 # include path available.
 target_link_libraries(${PROJECT_NAME} PUBLIC $<TARGET_NAME:zstd::libzstd>)
+
+# Link gif (ScreenCapture). PRIVATE: no public core header includes gif.h
+target_link_libraries(${PROJECT_NAME} PRIVATE gif)
 
 # Link libopl4 (MoonSound / YMF278B synthesis). PRIVATE: only core sources
 # include opl4 headers or call the library — public headers such as

@@ -5,7 +5,7 @@
 #include <filesystem>
 
 #include "3rdparty/gif/gif.h"
-#include "encoderconfig.h"
+#include "common/encoderconfig.h"
 #include "emulator/video/screen.h"
 #include "_helpers/testpathhelper.h"
 

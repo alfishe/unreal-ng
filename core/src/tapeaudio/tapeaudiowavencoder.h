@@ -3,8 +3,8 @@
 #include "stdafx.h"
 
 #include "3rdparty/tinywav/tinywav.h"
-#include "encoder_base.h"
-#include "encoderconfig.h"
+#include "common/encoder_base.h"
+#include "common/encoderconfig.h"
 
 #include <string>
 

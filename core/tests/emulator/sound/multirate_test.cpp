@@ -17,7 +17,7 @@
 #include "emulator/sound/soundmanager.h"
 #include "emulator/sound/chips/soundchip_turbosound.h"
 #ifdef ENABLE_RECORDING
-#include "encoder_base.h"
+#include "common/encoder_base.h"
 #include "recordingmanager.h"
 #endif  // ENABLE_RECORDING
 

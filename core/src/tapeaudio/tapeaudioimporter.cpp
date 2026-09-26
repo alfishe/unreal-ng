@@ -5,10 +5,12 @@
 #include "common/filehelper.h"
 #include "3rdparty/tinywav/tinywav.h"
 #include "emulator/io/tape/tapecatalog.h"
-#include "ffmpeg_probe.h"
+#ifdef ENABLE_RECORDING
+#include "ffmpeg_probe.h"  // ffmpeg plumbing lives in the optional recording library
+#include "common/subprocess.h"
+#endif
 #include "loaders/tape/writer_tap.h"
 #include "loaders/tape/writer_tzx.h"
-#include "common/subprocess.h"
 #include "tapeaudio/tapeaudioconfig.h"
 #include "tapeaudio/tapepulseextractor.h"
 #include "tapeaudio/taperecognizer.h"
@@ -88,6 +90,15 @@ namespace
     bool DecodeViaFfmpeg(const std::string& path, const std::string& formatLabel,
                          std::vector<float>& samples, uint32_t& sampleRate, std::string& errorText)
     {
+#ifndef ENABLE_RECORDING
+        // Built without the recording library (ENABLE_RECORDING=OFF): no ffmpeg plumbing
+        (void)path;
+        (void)samples;
+        (void)sampleRate;
+        errorText = formatLabel + " import unavailable: this build has no ffmpeg support (ENABLE_RECORDING=OFF); "
+                    "WAV import needs no ffmpeg";
+        return false;
+#else
         const std::string ffmpeg = FFmpegProbe::findFFmpeg();
         if (!FFmpegProbe::isAvailable(ffmpeg))
         {
@@ -123,6 +134,7 @@ namespace
             samples[i / 2] = static_cast<float>(value) / 32768.0f;
         }
         return true;
+#endif  // ENABLE_RECORDING
     }
 
     /// RecognizedBlock → TapeBlock + descriptor, mirroring LoaderTZX's emit

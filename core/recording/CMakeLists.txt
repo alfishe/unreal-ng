@@ -59,6 +59,13 @@ target_include_directories(${PROJECT_NAME} PUBLIC
     ${ROOT_DIR}/core/src/emulator
 )
 
+# GIF writer (shared with core, declared by core/src). PUBLIC: gif_encoder.h
+# includes gif.h. Declared here too for standalone recording builds.
+if (NOT TARGET gif)
+    add_subdirectory(${ROOT_DIR}/core/src/3rdparty/gif ${CMAKE_CURRENT_BINARY_DIR}/gif)
+endif()
+target_link_libraries(${PROJECT_NAME} PUBLIC gif)
+
 # Define ENABLE_RECORDING for code that includes recording headers
 target_compile_definitions(${PROJECT_NAME} PUBLIC ENABLE_RECORDING)
 

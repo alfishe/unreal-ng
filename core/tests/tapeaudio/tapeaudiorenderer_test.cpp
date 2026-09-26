@@ -3,7 +3,9 @@
 #include "_helpers/tzxtapebuilder.h"
 #include "3rdparty/tinywav/tinywav.h"
 #include "common/filehelper.h"
-#include "ffmpeg_probe.h"
+#ifdef ENABLE_RECORDING
+#include "ffmpeg_probe.h"  // ffmpeg plumbing: optional recording library
+#endif
 #include "tapeaudio/tapeaudioconfig.h"
 #include "tapeaudio/tapeaudiorenderer.h"
 
@@ -341,6 +343,7 @@ TEST(TapeAudioRenderer_Test, ErrorPathsAreStructured)
     EXPECT_NE(r3.errorText.find("out of range"), std::string::npos);
 }
 
+#ifdef ENABLE_RECORDING
 // Disabled: depends on ffmpeg being installed on the build machine.
 //
 // A unit test must not change behaviour with the contents of $PATH. These
@@ -383,3 +386,25 @@ TEST(TapeAudioRenderer_Test, DISABLED_FlacRenderOrHonestSkip)
         EXPECT_NE(result.errorText.find("WAV"), std::string::npos);
     }
 }
+#else
+// Built without the recording library: the FLAC path must refuse with the
+// build reason and the WAV alternative - deterministic, no $PATH involved
+TEST(TapeAudioRenderer_Test, FlacRenderRefusedWithoutFfmpegSupport)
+{
+    TzxTapeBuilder builder;
+    builder.AddPulseSequence({3500, 7000});
+    builder.AddPause(10);
+    const std::string source = WriteScratchTzx("flac-off.tzx", builder);
+
+    TapeRenderRequest request;
+    request.sourcePath = source;
+    request.outputPath = TestPathHelper::GetTestScratchPath("tapeaudio-render/flac-off.flac");
+    request.sampleRate = RATE;
+
+    const TapeRenderResult result = RenderTapeToAudio(request);
+    EXPECT_FALSE(result.ok);
+    EXPECT_NE(result.errorText.find("ENABLE_RECORDING=OFF"), std::string::npos) << result.errorText;
+    EXPECT_NE(result.errorText.find("WAV"), std::string::npos) << result.errorText;
+    EXPECT_FALSE(IsFlacRenderAvailable());
+}
+#endif  // ENABLE_RECORDING

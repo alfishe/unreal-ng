@@ -4,7 +4,7 @@
 #include <vector>
 
 #include "common/threadhelper.h"
-#include "encoderconfig.h"
+#include "common/encoderconfig.h"
 #include "emulator/sound/native_audio_tap.h"
 
 DSDEncoder::DSDEncoder()

@@ -4,8 +4,10 @@
 
 #include "common/filehelper.h"
 #include "emulator/io/tape/tapepulsegen.h"
-#include "encoders/ffmpeg_pipe_encoder.h"
+#ifdef ENABLE_RECORDING
+#include "encoders/ffmpeg_pipe_encoder.h"  // ffmpeg plumbing lives in the optional recording library
 #include "ffmpeg_probe.h"
+#endif
 #include "loaders/tape/loader_tape.h"
 #include "tapeaudio/tapeaudioconfig.h"
 #include "tapeaudio/tapeaudiowavencoder.h"
@@ -209,7 +211,9 @@ TapeRenderResult RenderTapeToAudio(const TapeRenderRequest& request)
     config.videoCodec.clear();  // audio-only: no video pipe, no video input args
     config.videoWidth = 0;
     config.videoHeight = 0;
+#ifdef ENABLE_RECORDING
     config.ffmpegPath = FFmpegProbe::findFFmpeg();
+#endif
 
     std::unique_ptr<EncoderBase> encoder;
     if (ext == "wav")
@@ -219,6 +223,11 @@ TapeRenderResult RenderTapeToAudio(const TapeRenderRequest& request)
     }
     else if (ext == "flac")
     {
+#ifndef ENABLE_RECORDING
+        result.errorText = "FLAC render unavailable: this build has no ffmpeg support (ENABLE_RECORDING=OFF); "
+                           "export WAV instead";
+        return result;
+#else
         if (!FFmpegProbe::isAvailable(config.ffmpegPath))
         {
             result.errorText = "ffmpeg not found — FLAC render unavailable; export WAV instead";
@@ -228,6 +237,7 @@ TapeRenderResult RenderTapeToAudio(const TapeRenderRequest& request)
         flacEncoder->setBlocking(true);  // offline render may outrun realtime
         encoder = std::move(flacEncoder);
         result.encoderUsed = "ffmpeg(flac)";
+#endif  // ENABLE_RECORDING
     }
     else
     {
@@ -333,6 +343,10 @@ TapeRenderResult RenderTapeToAudio(const TapeRenderRequest& request)
 
 bool IsFlacRenderAvailable()
 {
+#ifdef ENABLE_RECORDING
     // Same probe the FLAC path uses — one filesystem lookup, no subprocess
     return FFmpegProbe::isAvailable(FFmpegProbe::findFFmpeg());
+#else
+    return false;  // no ffmpeg plumbing in this build (ENABLE_RECORDING=OFF)
+#endif
 }

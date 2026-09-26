@@ -1,5 +1,5 @@
 #include "realtime_estimator.h"
-#include "encoderconfig.h"
+#include "common/encoderconfig.h"
 
 #include <algorithm>
 #include <cmath>
