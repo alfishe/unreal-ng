@@ -17,6 +17,17 @@ namespace
     // Left/Right ports, so the device itself stays model-agnostic.
     constexpr uint8_t kProfiCovoxLeftPort  = 0x5F;
     constexpr uint8_t kProfiCovoxRightPort = 0x3F;
+
+    // CP/M-extended-mode Covox aliases (UnrealSpeccy io.cpp): #1F..#7F belong to the FDC
+    // while CP/M mode (IsExtMode()) is active, so the DAC moves here instead. Decode is
+    // (port & 0x9F) == 0x87 (covers #87/#A7/#C7/#E7) then (port & 0x60): 0x40 -> Left
+    // (#C7), 0x20 -> Right (#A7); 0x00 (#87) and 0x60 (#E7) are unused 8255 control-
+    // register addresses - not implemented, matching every reference emulator.
+    constexpr uint8_t kProfiCovoxExtMask  = 0x9F;
+    constexpr uint8_t kProfiCovoxExtMatch = 0x87;
+    constexpr uint8_t kProfiCovoxExtLRMask = 0x60;
+    constexpr uint8_t kProfiCovoxExtLeftBits  = 0x40;  // #C7
+    constexpr uint8_t kProfiCovoxExtRightBits = 0x20;  // #A7
 }
 
 /// region <Constructors / Destructors>
@@ -51,7 +62,8 @@ void PortDecoder_Profi::reset()
     _screen->SetBorderColor(COLOR_WHITE);
     _screen->SetActiveScreen(SCREEN_NORMAL);
     _7FFD_Locked = false;
-    _covoxWasReachable = false;  // DOS latch is on right after reset (see below): NOT NORMAL mode
+    _covoxWasReachable = false;  // DOS latch is on right after reset (see below): a plain TR-DOS
+                                  // session, not NORMAL mode and not CP/M-extended mode either
 
     // Profi boots into the SYS (service / menu) ROM: DOS latch on, ROM14 = 0.
     // SetROMMode raises CF_TRDOS and rebuilds the banks through UpdateZ80Banks(),
@@ -212,9 +224,30 @@ void PortDecoder_Profi::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
             disp.decodedPort = fdcPort;
             disp.wasDecoded = true;
         }
+        // Covox/SoundRive DAC, CP/M-extended-mode aliases (#C7 Left, #A7 Right): real
+        // Profi hardware moves the DAC here because the FDC has taken #1F..#7F away from
+        // it. See the kProfiCovoxExt* constants above for the decode.
+        else if (IsExtMode())
+        {
+            const uint8_t lowByte = static_cast<uint8_t>(port);
+            const uint8_t lrBits = lowByte & kProfiCovoxExtLRMask;
+            if ((lowByte & kProfiCovoxExtMask) == kProfiCovoxExtMatch &&
+                (lrBits == kProfiCovoxExtLeftBits || lrBits == kProfiCovoxExtRightBits))
+            {
+                if (_context->pSoundManager && _context->pSoundManager->hasCovox())
+                {
+                    // Use the A ports, not B - see the NORMAL-mode branch below for why.
+                    uint16_t canonicalPort = (lrBits == kProfiCovoxExtLeftBits) ? Covox::PORT_LEFT_A : Covox::PORT_RIGHT_A;
+                    _context->pSoundManager->getCovox()->portDeviceOutMethod(canonicalPort, value);
+                }
+                disp.decodedPort = lowByte;
+                disp.wasDecoded = true;
+            }
+        }
     }
     // Covox/SoundRive DAC: #5F (Left), #3F (Right). NORMAL mode only - the FDC/CP'M
-    // port set (dosPorts above) takes priority when the disk interface is on the bus.
+    // port set (dosPorts above) takes priority when the disk interface is on the bus;
+    // the CP/M-extended-mode aliases (#C7/#A7) are handled inside that branch instead.
     else if (const uint8_t lowByte = port & 0xFF;
              lowByte == kProfiCovoxLeftPort || lowByte == kProfiCovoxRightPort)
     {
@@ -232,14 +265,16 @@ void PortDecoder_Profi::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
         disp.wasDecoded = true;
     }
 
-    // Silence Covox exactly once when #3F/#5F stop being NORMAL-mode Covox ports and
-    // become FDC/CMOS registers instead (dosPorts above may be stale if THIS instruction
-    // is the 7FFD/DFFD write that caused the transition, so re-read the flag fresh).
+    // Silence Covox exactly once when it becomes completely unreachable: a TR-DOS/Beta128
+    // FDC session with no CP/M-extended-mode alias available (dosPorts above may be stale
+    // if THIS instruction is the 7FFD/DFFD write that caused the transition, so re-read
+    // both flags fresh). Entering CP/M-extended mode (IsExtMode()) does NOT silence it -
+    // the DAC just moves from #5F/#3F to #C7/#A7, it never loses the bus.
     // Covox has no idle timeout: with the bus taken away, its DAC latches would otherwise
     // hold their last written level forever - inaudible on real hardware (AC-coupled
     // output stage) but a permanent stuck tone through a digital audio pipeline.
-    const bool dosPortsNow = (_state->flags & CF_DOSPORTS) != 0;
-    if (dosPortsNow && _covoxWasReachable)
+    const bool covoxReachableNow = !(_state->flags & CF_DOSPORTS) || IsExtMode();
+    if (!covoxReachableNow && _covoxWasReachable)
     {
         if (_context->pSoundManager && _context->pSoundManager->hasCovox())
         {
@@ -249,7 +284,7 @@ void PortDecoder_Profi::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
         }
         _covoxWasReachable = false;
     }
-    else if (!dosPortsNow)
+    else if (covoxReachableNow)
     {
         _covoxWasReachable = true;
     }

@@ -74,7 +74,9 @@ protected:
     /// (UnrealSpeccy io.cpp: `(port & 0x9F) == 0x9F`, bit 5 selects address vs data).
     ProfiCMOS _cmos;
 
-    /// Tracks whether #3F/#5F currently belong to Covox (NORMAL mode, !dosPorts) so a
-    /// NORMAL -> dosPorts transition can silence the DAC exactly once (see DecodePortOut).
+    /// Tracks whether Covox currently has a live port set - either #3F/#5F (NORMAL,
+    /// !dosPorts) or #C7/#A7 (CP/M-extended mode, IsExtMode()) - so the transition into a
+    /// plain TR-DOS/Beta128 FDC session (dosPorts && !IsExtMode(), where Covox has no
+    /// ports at all) can silence the DAC exactly once (see DecodePortOut).
     bool _covoxWasReachable = true;
 };

@@ -17,6 +17,8 @@ ZX Profi 1024 (`MM_PROFI`): design complete; implementation in progress on branc
 - [x] Palette gaps from the reconciliation (section 1.4): full 9-bit `GGGRRRBBB` storage (extra blue LSB from `#FE.D7`) and `#FE` read bit 7 ("GX0"/UniCopy, DS80-gated)
 - [x] NMI -> DOS latch ("magic button", reconciliation G5): `Emulator::RequestMNI()` raises `CF_TRDOS` when DS80=0, not gated on `pDFFD.4` (Q7 consensus); 8 tests in `profimni_test.cpp`
 - [x] TTD gap T4 (reconciliation section 4.2): fold DOS-latch flags (`CF_TRDOS`/`CF_DOSPORTS`) into `TTDProfiPaging::TTDHashState`, not the persisted blob; 2 tests in `ttdprofipaging_test.cpp`
+- [x] Covox CP/M-extended-mode aliases (reconciliation G4): `#C7` Left, `#A7` Right - real hardware behavior (DAC moves off the FDC-claimed `#1F..#7F`), not a UnrealSpeccy-only quirk; fixed the mono-leak silencing to not fire on entering ExtMode (the DAC just moves alias, it never loses the bus); 8 tests in `profi_covox_test.cpp`
+- [x] Documentation drift cleanup (reconciliation section 7): reworded the stale `ProfiHiresRaster=pico` claim in technical-design.md section 7.4, and `.agents/AGENTS.md`'s "Creatable on master" wording (still needs a final pass on the actual merge)
 
 ## Remaining
 - [ ] IDE (blocks TTD gaps T1/T3 - RTC-CMOS-in-TTD and an IDE serializer, both deferred until IDE itself lands)
