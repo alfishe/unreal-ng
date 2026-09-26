@@ -1112,6 +1112,19 @@ void SoundChip_GeneralSound::TTDLoadState(const uint8_t* src)
     if (_blipL) blip_clear(_blipL);
     if (_blipR) blip_clear(_blipR);
     _frameHadActivity = false;
+
+    // Frame-relative bases, exactly as handleFrameStart() would set them: a
+    // checkpoint is captured at the frame boundary, after the previous
+    // frame's handleFrameEnd but before the next frame's handleFrameStart
+    // (RunNFrames runs OnFrameStart after OnFrameEnd). The resumed frame
+    // does not re-run handleFrameStart, so without this its handleFrameEnd
+    // catches up to a target computed from the pre-seek history - the card
+    // then ran whole frames ahead of (or behind) the recording on replay.
+    // CPU t and the chipset are restored before the peripherals, so
+    // currentZxTacts() already reads the resumed position
+    _frameStartZxTacts = currentZxTacts();
+    _frameStartGsCycles = totalGsCycles();
+    _frameGsCycles = frameGsLength();
 }
 
 uint64_t SoundChip_GeneralSound::TTDHashState() const
