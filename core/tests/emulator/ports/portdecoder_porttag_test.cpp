@@ -153,7 +153,7 @@ TEST_F(PortDecoder_PortTag_Test, Profi_DFFDIsMemoryAndScreen)
     const PortMapEntry* extended = FindEntry(latches, 0xDFFD);
     ASSERT_NE(extended, nullptr);
     EXPECT_EQ(extended->latch, PagingLatch::PDFFD);
-    EXPECT_EQ(extended->tags, Tags(PortTag::Memory) | PortTag::Screen);
+    EXPECT_EQ(extended->tags, Tags(PortTag::Memory) | PortTag::Rom | PortTag::Screen);
 
     // The video-steering bit is visible as a Screen-tagged RAM-paging port
     // (query set carries BOTH bits - `Tags(Screen) | Tags(Memory)`, not `&`:
@@ -226,6 +226,7 @@ TEST_F(PortDecoder_PortTag_Test, SoundAyFamilyIsTheAyRowsOnEveryModel)
 TEST_F(PortDecoder_PortTag_Test, Pentagon_CovoxRowCarriesBothMembers)
 {
     _context->config.mem_model = MM_PENTAGON;
+    _context->config.sound.sd = 1;  // SoundDrive fitted: quad rows carry both members
     PortDecoder_Pentagon128 decoder(_context);
 
     const std::vector<PortMapEntry> pentagonEntries = decoder.getPortMapEntries();
@@ -233,11 +234,20 @@ TEST_F(PortDecoder_PortTag_Test, Pentagon_CovoxRowCarriesBothMembers)
     ASSERT_NE(covox, nullptr);
     EXPECT_EQ(covox->tags, Tags(PortTag::SoundCovox) | PortTag::SoundSoundDrive);
 
-    EXPECT_EQ(decoder.GetSoundEntries(PortTag::SoundCovox).size(), 1u);
-    EXPECT_EQ(decoder.GetSoundEntries(PortTag::SoundSoundDrive).size(), 1u);
+    // Two rows now: SoundDrive mode 2 (#F1/#F3/#F9/#FB) and mode 1
+    // (#0F/#1F/#4F/#5F, TR-DOS-gated) - both wired by SoundManager when SD=1
+    const PortMapEntry* mode1 = FindEntry(pentagonEntries, 0x001F);
+    ASSERT_NE(mode1, nullptr);
+    EXPECT_EQ(mode1->tags, Tags(PortTag::SoundCovox) | PortTag::SoundSoundDrive);
+    EXPECT_NE(mode1->gate, nullptr) << "mode 1 row must document the TR-DOS precedence";
 
-    // 128K has no Covox: the member query is a fitment answer
+    EXPECT_EQ(decoder.GetSoundEntries(PortTag::SoundCovox).size(), 2u);
+    EXPECT_EQ(decoder.GetSoundEntries(PortTag::SoundSoundDrive).size(), 2u);
+
+    // 128K has no Covox: the member query is a fitment answer (real 128K
+    // configs ship SD=0, so the DAC row is absent there)
     _context->config.mem_model = MM_SPECTRUM128;
+    _context->config.sound.sd = 0;
     PortDecoder_Spectrum128 decoder128(_context);
     EXPECT_FALSE(decoder128.HasAnyTaggedPort(Tags(PortTag::SoundCovox)));
 }
@@ -357,8 +367,10 @@ TEST_F(PortDecoder_PortTag_Test, TagNamesCarryEverySoundMember)
 {
     // Pentagon #FB answers both covox and SoundDrive: the wire names must
     // report BOTH members. Guards the else-if regression that silently
-    // dropped the second member on WebAPI
+    // dropped the second member on WebAPI (SD=1 fits the quad SoundDrive,
+    // whose #FB also answers plain Covox software)
     _context->config.mem_model = MM_PENTAGON;
+    _context->config.sound.sd = 1;
     PortDecoder_Pentagon128 decoder(_context);
 
     const std::vector<PortMapEntry> entries = decoder.getPortMapEntries();
@@ -459,11 +471,26 @@ TEST_F(PortDecoder_PortTag_Test, DecodeLatchDictionary)
 
     // Profi DFFD: extended bank 3 + 512x240 video bit
     fields = DecodePagingLatch(PagingLatch::PDFFD, 0x83, MM_PROFI);
-    ASSERT_EQ(fields.size(), 2u);
+    ASSERT_EQ(fields.size(), 6u);
     EXPECT_EQ(fields[0].key, "extended_ram_bank");
     EXPECT_EQ(fields[0].intValue, 3);
-    EXPECT_EQ(fields[1].key, "video_512x240");
+    EXPECT_EQ(fields[5].key, "video_512x240");
+    EXPECT_TRUE(fields[5].boolValue);
+    EXPECT_FALSE(fields[1].boolValue);  // sco
+
+    // Every flag bit maps to its own key (SCO, WOROM, CPM, SCR)
+    fields = DecodePagingLatch(PagingLatch::PDFFD, 0x78, MM_PROFI);
+    ASSERT_EQ(fields.size(), 6u);
+    EXPECT_EQ(fields[0].intValue, 0);
+    EXPECT_EQ(fields[1].key, "sco");
     EXPECT_TRUE(fields[1].boolValue);
+    EXPECT_EQ(fields[2].key, "worom");
+    EXPECT_TRUE(fields[2].boolValue);
+    EXPECT_EQ(fields[3].key, "cpm");
+    EXPECT_TRUE(fields[3].boolValue);
+    EXPECT_EQ(fields[4].key, "scr");
+    EXPECT_TRUE(fields[4].boolValue);
+    EXPECT_FALSE(fields[5].boolValue);
 }
 
 /// endregion </Serialization single source>
@@ -492,6 +519,12 @@ TEST_F(PortDecoder_PortTag_Test, RomPageRolePerModelLayout)
     EXPECT_EQ(rom.GetROMPageRole(3), "48K BASIC ROM (copy)");
 
     _context->config.mem_model = MM_SCORP;
+    EXPECT_EQ(rom.GetROMPageRole(3), "48K BASIC ROM");
+
+    _context->config.mem_model = MM_PROFI;
+    EXPECT_EQ(rom.GetROMPageRole(0), "SYS/Menu ROM");
+    EXPECT_EQ(rom.GetROMPageRole(1), "TR-DOS ROM");
+    EXPECT_EQ(rom.GetROMPageRole(2), "128K Editor + STS Monitor ROM");
     EXPECT_EQ(rom.GetROMPageRole(3), "48K BASIC ROM");
 
     // Beyond the curated 4-page layouts and on uncurated models: generic name

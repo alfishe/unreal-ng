@@ -650,7 +650,9 @@ void TimeTravelManager::CaptureNow(TTDCheckpoint& out)
     {
         out.cpu     = CaptureCpuState(*static_cast<Z80State*>(cpu));
     }
-    out.chipset = CaptureChipsetState(st);
+    // The CPU resumes where the frame's last instruction left it, a few
+    // T-states in (the overshoot) - restored with the checkpoint
+    out.chipset = CaptureChipsetState(st, cpu ? static_cast<uint32_t>(cpu->t) : 0u);
 
     // --- Model-specific chipset state (TDD §6.4) ---
     // Whatever the active model registered serializes itself here. The
@@ -1156,6 +1158,12 @@ void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
     // RestoreChipsetState is a pure field copy into emulatorState. It does
     // NOT re-run the port decoder — that's the next sub-step.
     RestoreChipsetState(cp.chipset, &_context->emulatorState);
+
+    // The CPU's in-frame position (the frame-end overshoot) - before the
+    // peripherals load, so devices rebuild their timelines around the
+    // position the machine really resumes at
+    if (cpu)
+        cpu->t = GetChipsetCpuTInFrame(cp.chipset);
 
     // --- Step 2a2: Model-specific chipset state (TDD §6.4) ---
     // MUST run before UpdateZ80Banks: model serializers restore latches that
@@ -1787,17 +1795,11 @@ bool TimeTravelManager::SeekToInternal(const TTDTimePoint& target, TTDSeekResult
 
     // ------------------------------------------------------------------
     // Step 2: RestoreCheckpoint(cp). Leaves emulatorState.t_states /
-    // frame_counter set to the checkpoint's frame boundary. The Z80
-    // accumulator (z80.t) is NOT in the captured field set (it's host-
-    // side per the field-exclusion list in ttdcheckpoint.h) so we sync
-    // it explicitly — checkpoints always sit at frame boundaries, where
-    // z80.t == 0 (post-AdjustFrameCounters reset).
+    // frame_counter set to the checkpoint's frame boundary and z80.t at the
+    // CPU's in-frame position there - the last instruction's overshoot past
+    // the boundary (TTDChipsetState::cpu_t_in_frame), not 0.
     // ------------------------------------------------------------------
     RestoreCheckpoint(cp);
-
-    Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
-    if (z80)
-        z80->t = 0;
 
     // ------------------------------------------------------------------
     // Step 3: intra-frame silent replay if target.tInFrame > 0.
@@ -1906,7 +1908,9 @@ void TimeTravelManager::ReplayWithinFrame(uint64_t targetFrame, uint32_t targetT
     // (typically a few hundred events) and the linear scan exits early on
     // the first event past the target.
     // ------------------------------------------------------------------
-    uint32_t currentTInFrame = 0;
+    // The CPU resumes at the checkpoint's overshoot, not at 0
+    const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    uint32_t currentTInFrame = z80 ? static_cast<uint32_t>(z80->t) : 0;
 
     for (const auto& ev : _inputJournal.Events())
     {
@@ -2083,20 +2087,25 @@ bool TimeTravelManager::ResumeRecordingFrom(const TTDTimePoint& from)
     TruncateTimelineAfter(from);
 
     // ------------------------------------------------------------------
-    // Step 3: truncate input journal after `from`. Events exactly at `from`
-    // are kept (they happened at the resume point, not after it).
+    // Step 3: truncate input journal after the resume point. Events exactly
+    // at it are kept (they happened at the resume point, not after it). The
+    // resume point is where the machine actually stands: a frame-aligned
+    // `from` restores the checkpoint's CPU at its overshoot past the frame
+    // boundary (TTDChipsetState::cpu_t_in_frame), so events recorded there
+    // after the seek sit at (from.frame, overshoot), not at tInFrame 0.
     // ------------------------------------------------------------------
-    _inputJournal.DropAfter(from);
-    _externalEvents.DropAfter(from);  // Phase 2 Item 6 — markers past `from` are dead future
-    _bookmarks.DropAfter(from);  // TD-4 — bookmarks past `from` are dead future
+    const TTDTimePoint here = CurrentPosition();
+    const TTDTimePoint cut = (from < here) ? here : from;
+    _inputJournal.DropAfter(cut);
+    _externalEvents.DropAfter(cut);  // Phase 2 Item 6 — markers past the resume point are dead future
+    _bookmarks.DropAfter(cut);  // TD-4 — bookmarks past the resume point are dead future
 
-    // Phase 4 — write journal: convert `from` to a globalT and drop records
-    // strictly past it. Records exactly at `from` are kept (they happened
-    // at the resume point, not after it).
+    // Phase 4 — write journal: convert the resume point to a globalT and
+    // drop records strictly past it. Records exactly at it are kept.
     if (_writeJournal)
     {
         const uint32_t frameT = _context ? _context->config.frame : 69888;
-        const uint64_t globalT = from.frame * frameT + from.tInFrame;
+        const uint64_t globalT = cut.frame * frameT + cut.tInFrame;
         _writeJournal->DropAfter(globalT);
     }
 
@@ -2503,14 +2512,12 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
     //   u8  encoding       (0=Full, 1=XorPrev, 2=Zero)
     //   u32 refcount       (informational; reader uses timeline-derived refcount)
     //   u32 prev_slot      (compact index; 0xFFFFFFFF when encoding != XorPrev)
-    //   u32 crc32c         (always 0 on write — reader recomputes from decompressed bytes)
+    //   u32 crc32c         (CRC32C of the reconstructed 4 KB, from the page store)
     //   u32 payload_size   (bytes of zstd-compressed payload)
     //   u8[payload_size]   payload
     //
-    // We re-derive the payload via Compress(GetPage(idx)) because the codec
-    // page store doesn't yet expose its internal compressed payload. This is
-    // a redundant ~10 us per slot on serialize (a future optimization adds
-    // GetPayload/GetCrc32C accessors).
+    // The stored payload and CRC are written as they are (GetPayload /
+    // GetCrc32C): no decompress/recompress on serialize.
     for (uint32_t idx = 0; idx < _pageStore.GetCapacity(); ++idx)
     {
         if (_pageStore.GetRefCount(idx) == 0)
@@ -3555,11 +3562,8 @@ replay_fallback:
             }
         }
 
-        // Restore checkpoint silently.
+        // Restore checkpoint silently (z80.t = its overshoot, see RestoreCheckpoint)
         RestoreCheckpoint(cp);
-        Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
-        if (z80)
-            z80->t = 0;
 
         // Arm probe, replay, extract hits.
         _context->ttdProbe.Reset();
@@ -3799,11 +3803,8 @@ TimeTravelManager::EnumerateM1InRange(uint64_t startGlobalT,
         if (i == endCpIdx)
             result.earliestScannedGlobalT = intervalStartGlobalT;
 
-        // Restore the checkpoint + sync z80.t to 0 (frame boundary).
+        // Restore the checkpoint (z80.t = its overshoot, see RestoreCheckpoint)
         RestoreCheckpoint(cp);
-        Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
-        if (z80)
-            z80->t = 0;
 
         // Arm probe with Execute + full address range, no value/PC filter.
         TTDSearchQuery q;
@@ -4374,11 +4375,16 @@ void TimeTravelManager::BuildFrameCache(uint64_t frame, TTDFrameCache& out)
     _frameCaptureActive = true;
     z80->m1TraceHook = [this](uint16_t pc) { CaptureM1(pc); };
 
-    // Replay the whole frame forward. A frame is frameT t-states at 1x and
-    // scales with the CPU frequency multiplier (turbo runs more instructions
-    // per frame — e.g. 16x at 56 MHz), so run the full scaled frame length,
-    // otherwise a turbo frame would be captured only 1/multiplier of the way.
-    emu->RunTStates(static_cast<unsigned>(frameT) * (mult ? mult : 1), /*skipBreakpoints=*/true);
+    // Replay the rest of the frame forward. A frame is frameT t-states at 1x
+    // and scales with the CPU frequency multiplier (turbo runs more
+    // instructions per frame — e.g. 16x at 56 MHz), so run to the scaled
+    // frame end, otherwise a turbo frame would be captured only
+    // 1/multiplier of the way. The frame starts where the restore left the
+    // CPU - the previous frame's overshoot past the boundary, not 0 - so
+    // only the remainder is run (running a full frame spilled into the next)
+    const uint32_t startT = static_cast<uint32_t>(z80->t);
+    if (startT < frameTStates)
+        emu->RunTStates(static_cast<unsigned>(frameTStates - startT), /*skipBreakpoints=*/true);
 
     z80->m1TraceHook = prevHook;
     _frameCaptureActive = false;
@@ -4390,13 +4396,13 @@ void TimeTravelManager::SaveLiveState(LiveStateSnapshot& out)
     Z80* z80 = (_context && _context->pCore) ? _context->pCore->GetZ80() : nullptr;
     if (z80)
         out.cpu = CaptureCpuState(*static_cast<Z80State*>(z80));
-    out.chipset = CaptureChipsetState(_context->emulatorState);
+    out.chipset = CaptureChipsetState(_context->emulatorState, z80 ? static_cast<uint32_t>(z80->t) : 0u);
     if (_context->pScreen)
     {
     }
-    // z80.t (the per-frame t-state counter) is host-side and deliberately
-    // NOT part of TTDCpuState — SeekToInternal syncs it manually after
-    // restores too.
+    // z80.t (the per-frame t-state counter) is not part of TTDCpuState; a
+    // live snapshot can sit anywhere inside a frame, so it is kept here
+    // (checkpoints carry it in TTDChipsetState::cpu_t_in_frame).
     out.z80TInFrame = z80 ? z80->t : 0;
 
     // Peripherals — the same registry, and therefore the same blobs, the

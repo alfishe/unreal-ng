@@ -196,14 +196,38 @@ struct TTDChipsetState
     /// reserved3/reserved4 around pFFF7, observed as Chipset[137..139] and
     /// [172..174] diffs). Those members are gone with the extended ports they
     /// guarded; this branch saw the same failure at [114..119] instead.
-    uint8_t reserved[6] = {};
+    ///
+    /// cpu_t_in_frame (taken from that tail): z80.t at the capture, 24-bit
+    /// little-endian. A frame ends when its last instruction crosses the
+    /// boundary, so after AdjustFrameCounters the CPU sits a few T-states
+    /// into the next frame (the overshoot), not at 0. Restoring it keeps the
+    /// replayed frame's instruction timing identical to the original run;
+    /// resuming at 0 shifted every CPU event of the rest of the replay by the
+    /// overshoot (e.g. every AY register write). Dumps without it read 0.
+    uint8_t cpu_t_in_frame[3] = {0, 0, 0};
+    uint8_t reserved[3] = {};
 };
 
 static_assert(sizeof(TTDChipsetState) == 120, "TTDChipsetState layout must stay stable (hashed byte-wise)");
-static_assert(offsetof(TTDChipsetState, reserved) == 114, "reserved must sit at pad offset 114");
+static_assert(offsetof(TTDChipsetState, cpu_t_in_frame) == 114, "cpu_t_in_frame must sit at former pad offset 114");
+static_assert(offsetof(TTDChipsetState, reserved) == 117, "reserved must sit at pad offset 117");
 static_assert(offsetof(TTDChipsetState, reserved) + sizeof(TTDChipsetState::reserved)
                   == sizeof(TTDChipsetState),
               "TTDChipsetState has implicit trailing padding - resize reserved[]");
+
+/// @brief z80.t stored in / read from a chipset snapshot (cpu_t_in_frame)
+inline void SetChipsetCpuTInFrame(TTDChipsetState& state, uint32_t t)
+{
+    state.cpu_t_in_frame[0] = uint8_t(t);
+    state.cpu_t_in_frame[1] = uint8_t(t >> 8);
+    state.cpu_t_in_frame[2] = uint8_t(t >> 16);
+}
+
+inline uint32_t GetChipsetCpuTInFrame(const TTDChipsetState& state)
+{
+    return uint32_t(state.cpu_t_in_frame[0]) | (uint32_t(state.cpu_t_in_frame[1]) << 8) |
+           (uint32_t(state.cpu_t_in_frame[2]) << 16);
+}
 
 /// @brief Frame kind discriminator (I-frame / P-frame).
 ///
@@ -303,10 +327,12 @@ TTDCpuState CaptureCpuState(const Z80State& src);
 /// the caller already has them set up correctly for the live emulator.
 void RestoreCpuState(const TTDCpuState& src, Z80State* dst);
 
-/// @brief Snapshot the port-latch + counter subset of an EmulatorState.
+/// @brief Snapshot the port-latch + counter subset of an EmulatorState,
+/// plus the CPU's in-frame T-state (z80.t, see cpu_t_in_frame) - required so
+/// every capture path records where the CPU stands in the frame.
 /// Peripheral-bearing sub-structs (tape, nvram) are ignored — those are
 /// handled via TTDSerializable at the checkpoint-orchestration layer.
-TTDChipsetState CaptureChipsetState(const EmulatorState& src);
+TTDChipsetState CaptureChipsetState(const EmulatorState& src, uint32_t cpuTInFrame);
 
 /// @brief Restore the port-latch + counter subset of an EmulatorState.
 /// Does NOT re-run the port decoder — that is the caller's responsibility

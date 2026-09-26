@@ -66,7 +66,7 @@ status                  # Show all instances status
 models                  # List supported models and RAM configurations
 ```
 
-Supported models: `48K`, `128K`, `PENTAGON` (128/256/512/1024K), `PLUS3`, `SCORPION`, `PROFI`, `KAY`, `ATM710`, `ATM450`, `ATM3`, `TSL`, `PHOENIX`
+Supported models (see [Profi 1024](../hardware/profi-1024.md) for that machine): `48K`, `128K`, `PENTAGON` (128/256/512/1024K), `PLUS3`, `SCORPION`, `PROFI`, `KAY`, `ATM710`, `ATM450`, `ATM3`, `TSL`, `PHOENIX`
 
 #### Execution Control
 ```

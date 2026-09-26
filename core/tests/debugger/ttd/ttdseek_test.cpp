@@ -205,6 +205,7 @@ TEST_F(TTD_Seek_Test, SeekTo_FrameAligned_AtBaseline_IsNoOp)
     ASSERT_TRUE(_ttd->StartRecording());
     // Capture baseline hash BEFORE running any frames.
     const uint64_t baselineHash = HashNow();
+    const uint32_t baselineT = static_cast<uint32_t>(_context->pCore->GetZ80()->t);
 
     RunFrames(2);
     _ttd->StopRecording();
@@ -215,7 +216,9 @@ TEST_F(TTD_Seek_Test, SeekTo_FrameAligned_AtBaseline_IsNoOp)
     // Seek back to baseline — state must match what we captured.
     EXPECT_TRUE(_ttd->SeekTo({0, 0}));
     EXPECT_EQ(_ttd->CurrentPosition().frame,    0u);
-    EXPECT_EQ(_ttd->CurrentPosition().tInFrame, 0u);
+    // The CPU resumes exactly where it stood at the capture (in-frame T is
+    // part of the checkpoint, TTDChipsetState::cpu_t_in_frame)
+    EXPECT_EQ(_ttd->CurrentPosition().tInFrame, baselineT);
     EXPECT_EQ(HashNow(), baselineHash)
         << "Seek to baseline must reproduce the same machine state";
 }
@@ -227,10 +230,15 @@ TEST_F(TTD_Seek_Test, SeekTo_FrameAligned_ToMidpoint_CheckpointRestored)
     _ttd->StopRecording();
     ASSERT_EQ(_ttd->GetCheckpointCount(), 5u);
 
-    // Seek to frame 2 (a checkpoint exists there)
+    // Seek to frame 2 (a checkpoint exists there). The CPU resumes at the
+    // frame's overshoot - where frame 1's last instruction crossed the
+    // boundary - exactly as the live run did, not at 0
     EXPECT_TRUE(_ttd->SeekTo({2, 0}));
     EXPECT_EQ(_ttd->CurrentPosition().frame,    2u);
-    EXPECT_EQ(_ttd->CurrentPosition().tInFrame, 0u);
+    const ttd::TTDCheckpoint* cp = _ttd->GetCheckpoint(2);
+    ASSERT_NE(cp, nullptr);
+    EXPECT_EQ(_ttd->CurrentPosition().tInFrame, ttd::GetChipsetCpuTInFrame(cp->chipset));
+    EXPECT_LT(_ttd->CurrentPosition().tInFrame, 24u) << "an overshoot is shorter than the longest instruction";
     EXPECT_EQ(_ttd->GetState(), ttd::TTDSessionState::Detached);
 }
 
@@ -330,12 +338,14 @@ TEST_F(TTD_Seek_Test, SeekTo_IntraFrame_ToSmallTInFrame_Succeeds)
     // Intra-frame replay will engage.
     EXPECT_TRUE(_ttd->SeekTo({1, 100}));
     EXPECT_EQ(_ttd->CurrentPosition().frame,    1u);
-    // The intra-frame position after replay should be 100. We read it
-    // from z80.t directly (CurrentPosition() derives from t_states which
-    // is updated by RunTStates).
+    // Replay stops on the first instruction boundary at or after 100 (the
+    // frame starts at its real overshoot, so 100 itself is a boundary only by
+    // chance). We read it from z80.t directly (CurrentPosition() derives
+    // from t_states which is updated by RunTStates).
     Z80* z80 = _context->pCore->GetZ80();
     ASSERT_NE(z80, nullptr);
-    EXPECT_EQ(z80->t, 100u);
+    EXPECT_GE(z80->t, 100u);
+    EXPECT_LT(z80->t, 100u + 24u) << "overshot the target by more than one instruction";
     EXPECT_EQ(_ttd->GetState(), ttd::TTDSessionState::Detached);
 }
 

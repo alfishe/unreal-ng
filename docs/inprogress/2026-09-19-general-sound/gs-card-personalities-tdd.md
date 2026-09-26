@@ -61,7 +61,7 @@ shipped gs105a ROM).
 | SFX commands | full | v1: parse + ack-shaped no-op | full |
 | POST timing | real 0.3-1.1 s (BUG-6 visible) | skipped (idle signature prompt) | TBD |
 | Coprocessor introspection | `hasCoprocessor()` true, live regs | false, regs read 0 | true |
-| TTD peripheral id | `GeneralSound` (=5) | `GeneralSoundLightweight` (=10) | `NeoGS` (=9, reserved) |
+| TTD peripheral id | `GeneralSound` (=5) | `GeneralSoundLightweight` (=11) | `NeoGS` (=12, reserved) |
 | Config `[SOUND] GSType` | `Z80` | `LW`/`LIGHT` (`BASS` = deprecated alias) | `NGS` (parses, P2) |
 | Runtime switch target | yes | yes | no (factory returns nullptr) |
 
@@ -602,7 +602,7 @@ family's failure contract, not a regression.
 - `config.cpp` `[SOUND] GSType`: `LW`/`LIGHT` -> LW; legacy `BASS` -> LW
   with a deprecation warning (no BASS library ever existed; upstream intent
   preserved).
-- `ttdserializable.h`: `GeneralSoundLightweight = 10` (NeoGS = 9 stays
+- `ttdserializable.h`: `GeneralSoundLightweight = 11` (NeoGS = 12 stays
   reserved; ids are append-only).
 - LW TTD blob: fixed 95-byte header - [0..3] mailbox latches, [4] LLE mpag
   slot (always 0), [5..8] channelVol, [9..12] channelData, [13..20]

@@ -113,7 +113,7 @@ call.
 |:--|:--|
 | [machines/pentagon.md](machines/pentagon.md) | Pentagon 128/512/1024 via `ram_size`, Pentagon-1024 `#EFF7` register (GigaScreen, 512x192, a4b), sound-stack defaults |
 | [machines/scorpion.md](machines/scorpion.md) | SCORPION/PROFSCORP, Shadow Monitor `#1FFD`, ProfROM `#7EFD`, built-in Beta128, SOS/128K ROM bit |
-| [machines/profi.md](machines/profi.md) | Profi 1024: branch-aware creatability, `#7FFD`+`#DFFD` paging, RTC/CMOS, Covox port arbitration, hi-res video, TTD paging |
+| [machines/profi.md](machines/profi.md) | Profi 1024: `#7FFD`+`#DFFD` paging, RTC/CMOS, Covox port arbitration, hi-res video, TTD paging |
 | [machines/atm.md](machines/atm.md) | ATM710 + ATM3/ZX-Evo: `#FF77` control, `#FFF7` memory manager, CP/M bit, CMOS shaden ports, turbo, video modes |
 | [machines/spectrum.md](machines/spectrum.md) | 48K/128k/PLUS3: the real-Sinclair boundary, AY/FDC per model, clone-vs-Sinclair differential debugging |
 

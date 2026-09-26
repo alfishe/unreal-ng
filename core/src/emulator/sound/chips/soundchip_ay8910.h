@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <string>
 #include <cmath>
-#include "common/sound/filters/filter_dc.h"
+#include "common/sound/filters/filterdcblocker.h"
 #include "common/sound/filters/filter_decimator.h"
 #include "common/sound/filters/filter_interpolate.h"
 #include "emulator/ports/portdecoder.h"
@@ -118,6 +118,16 @@ protected:
     static constexpr double CYCLES_PER_SAMPLE = AY_BASE_FREQUENCY / AY_SAMPLING_RATE;
 public:
     static const char* AYRegisterNames[16];
+
+    /// Rate of updateMixer(): every render loop ticks the generators once per
+    /// 8 AY clocks (updateState(true)), 218.75 kHz
+    static constexpr double GENERATOR_RATE = AY_BASE_FREQUENCY / 8.0;
+
+    /// Output DC removal: one-pole high-pass modelling the output coupling
+    /// capacitor (FilterDCBlocker). 5 Hz keeps the whole bass band (lower
+    /// cutoffs add no 30-150 Hz content on real music) while bounding the slow
+    /// DC wander that eats mix headroom (it doubles by 2 Hz)
+    static constexpr double OUTPUT_HIGHPASS_HZ = 5.0;
 
 protected:
     // Number of tone generators in AY8910
@@ -373,7 +383,8 @@ protected:
     /// region <Fields>
 protected:
     // AY8910 registers
-    uint8_t _registers[16] = { 0 };
+    uint8_t _registers[16] = { 0 };         // CPU-visible register file (reads, state reports)
+    uint8_t _appliedRegisters[16] = { 0 };  // generator-side view: what applyRegister() has delivered
 
     // 3x Tone generators (A,B,C) + 1x Noise Generator + 1x Envelope Generator
     ToneGenerator _toneGenerators[3];
@@ -401,9 +412,9 @@ protected:
     FilterDecimator _leftDecimator;
     FilterDecimator _rightDecimator;
 
-    // Remove DC offset (work as analog capacitors per channel)
-    FilterDC<double> _filterDCLeft;
-    FilterDC<double> _filterDCRight;
+    // Remove DC offset like the output coupling capacitors (one per side)
+    FilterDCBlocker _filterDCLeft{GENERATOR_RATE, OUTPUT_HIGHPASS_HZ};
+    FilterDCBlocker _filterDCRight{GENERATOR_RATE, OUTPUT_HIGHPASS_HZ};
 
     // User-configurable settings
     AYStereoMode _stereoMode = AYStereoMode::ABC;
@@ -459,7 +470,16 @@ public:
 
     // Logic-level interface
     uint8_t readRegister(uint8_t regAddr);
+    /// latchRegister + applyRegister at once
     void writeRegister(uint8_t regAddr, uint8_t value);
+
+    // Split write for devices that time register writes to their T-state:
+    // the CPU sees the value at once (latch), the generators get it when the
+    // render loop reaches the write's time (apply). Tone and envelope
+    // periods combine the halves as the generators know them
+    void latchRegister(uint8_t regAddr, uint8_t value);
+    void applyRegister(uint8_t regAddr, uint8_t value);
+    uint8_t getCurrentRegisterIndex() const { return _currentRegister; }
 
     // User-configurable audio settings
     void setStereoMode(AYStereoMode mode);

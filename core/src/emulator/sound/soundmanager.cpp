@@ -75,6 +75,9 @@ SoundManager::SoundManager(EmulatorContext* context)
             _turboSound = new SoundChip_TurboSound(_context);
             break;
     }
+    _turboSound->setDecimatorQuality(_context->config.sound.decimatorHighFidelity
+                                         ? FilterDecimator::Quality::HighFidelity
+                                         : FilterDecimator::Quality::Reference);
     _turboSound->setCoreRate(_coreRate);
 
     // Build the device registry based on what this machine has
@@ -94,8 +97,11 @@ SoundManager::SoundManager(EmulatorContext* context)
         _devices.push_back({AudioSourceType::FM2, "FM 2", false, false, 1.0f, 0.0f, false});
     }
 
-    // Covox if config flag is set (Pentagon/Scorpion style)
-    if (_context->config.sound.covoxFB)
+    // Covox / SoundDrive when either config flag is set. The same 4-channel
+    // DAC class serves both: SD=1 wires the full SoundDrive quad (#F1/#F3/
+    // #F9/#FB), CovoxFB=1 alone wires only the mono Covox port #FB
+    // (see attachToPorts)
+    if (_context->config.sound.covoxFB || _context->config.sound.sd)
     {
         _covox = new Covox(_context, _coreRate);
         _devices.push_back({AudioSourceType::COVOX, "COVOX", false, false, 1.0f, 0.0f, false});
@@ -567,7 +573,7 @@ void SoundManager::handleFrameEnd()
     /// region <Determine actual samples for this frame>
     // Per-frame sample count derives from the machine's frame length, NOT the
     // 50 Hz SAMPLES_PER_FRAME constant: Pentagon (71680 t-states, 48.83 fps)
-    // produces 903.168 samples/frame, ZX48/128 produces 880.5888.
+    // produces 903.168 samples/frame, ZX48 880.5888, ZX128 (70908) 893.4408.
     //
     // Exact integer accumulator (audio-sync design, Fix 1): the fractional
     // part is CARRIED, not rounded away. Rounding emitted a systematic rate
@@ -575,9 +581,18 @@ void SoundManager::handleFrameEnd()
     // realtime ring drift and audio-behind-video drift in recordings. With
     // the carry, the sequence is exactly periodic (903,903,...,904 with
     // period 125 on Pentagon@44.1k) and drift-free by construction.
+    //
+    // Units: T-states x rate, modulo CPU_CLOCK_RATE - the same accumulator
+    // every device (TurboSound, TSFM) renders its buffers with, so both count
+    // the same samples in every frame. config.frame_duration_us is the pacing
+    // clock, rounded UP to whole microseconds; counting in it disagreed with
+    // the devices on every other frame wherever the frame is not a whole
+    // number of microseconds (70908 T = 20259.43 us on 128K/+3, 99880 T on
+    // ATM): the mixer read a never-rendered zero sample or dropped one.
+    // Recordings stamp video with the same exact frame/CPU_CLOCK_RATE
+    // duration; the realtime pacing difference (<30 ppm) is absorbed by DRC.
     size_t samplesThisFrame = SAMPLES_PER_FRAME;
     uint32_t frameDuration = 0;     // T-states (for beeper)
-    uint32_t frameDurationUs = 0;   // microseconds (for sample calculation)
     {
         CONFIG& config = _context->config;
         // Host multiplier only: the Scorpion hardware turbo doubles CPU
@@ -585,21 +600,17 @@ void SoundManager::handleFrameEnd()
         // samples of that frame (it overfilled the ring 2x - hard resyncs)
         uint8_t speedMultiplier = _context->emulatorState.HostSpeedMultiplier();
         frameDuration = config.frame * speedMultiplier;
-        // Wall-clock frame duration: a video frame takes the SAME real time
-        // at any CPU clock, so the realtime sample count (and ring fill
-        // rate) is multiplier-invariant
-        frameDurationUs = config.frame_duration_us;
 
-        if (frameDurationUs > 0)
+        // A video frame takes the same real time at any CPU clock, so the
+        // sample count is multiplier-invariant: the base frame length
+        if (config.frame > 0)
         {
-            // Accumulate: (frame_us * sample_rate), then divide by 1,000,000 for samples
-            _sampleAccumulator += static_cast<uint64_t>(frameDurationUs) * _coreRate;
-            samplesThisFrame = static_cast<size_t>(_sampleAccumulator / 1'000'000ULL);
-            _sampleAccumulator %= 1'000'000ULL;
+            _sampleAccumulator += static_cast<uint64_t>(config.frame) * _coreRate;
+            samplesThisFrame = static_cast<size_t>(_sampleAccumulator / CPU_CLOCK_RATE);
+            _sampleAccumulator %= CPU_CLOCK_RATE;
 
-            // Overflow guard: buffers are sized MAX_SAMPLES_PER_FRAME (speed
-            // multiplier >= 3 exceeds it). Drop the excess KNOWINGLY - turbo
-            // has no realtime constraint; a silent overrun would be worse.
+            // Overflow guard: buffers are sized MAX_SAMPLES_PER_FRAME. Drop
+            // the excess KNOWINGLY; a silent overrun would be worse.
             if (samplesThisFrame > MAX_SAMPLES_PER_FRAME)
             {
                 if ((_accumulatorClampCount++ % 256) == 0)
@@ -722,9 +733,16 @@ void SoundManager::handleFrameEnd()
     if (_gs)
         _gs->handleFrameEnd(samplesThisFrame);
 
-    // Finalize TurboSound frame (activity notification for HUD)
-    if (_turboSound)
-        _turboSound->handleFrameEnd();
+    // NOTE: _turboSound->handleFrameEnd() is NOT called again here. It
+    // already ran once at the top of this function (word-queue drain +
+    // HUD activity notification, §6.1) and its activity-tracking flags
+    // (_frameHadActivity, _wasActive, _chip1ActiveThisFrame, _wasFM, ...)
+    // are not reset between calls - a second call here would re-evaluate
+    // the same already-updated flags and re-post NC_AUDIO_ACTIVITY a second
+    // time whenever the device is active, which is exactly what happened
+    // before this was removed (found while auditing HUD notification
+    // volume). The device's own comment on handleFrameEnd() already states
+    // it drains to end-of-frame and is "always called" - once.
 
     // Determine if any device has solo active
     bool soloActive = false;
@@ -1251,10 +1269,14 @@ bool SoundManager::attachToPorts()
     // result = _ay8910->attachToPorts(_context->pPortDecoder);
     result = _turboSound->attachToPorts(_context->pPortDecoder);
 
-    // Attach SOUNDRIVE/Covox to port #FB (all 4 ports decode to same handler)
+    // SoundDrive/Covox is a self-decoding device (Covox::tryClaimOut/In):
+    // its Fitment (Mono #FB only vs Quad mode-1+mode-2) is baked in at
+    // construction from config.sound.sd/covoxFB, so registration is just
+    // "plug the card in" - no per-port wiring, and no exact-address
+    // dispatch-map slot to collide with WD1793 or anything else.
     if (_covox && _context->pPortDecoder)
     {
-        result &= _context->pPortDecoder->RegisterPortHandler(Covox::PORT_RIGHT_B, _covox);
+        result &= _context->pPortDecoder->RegisterSelfDecodingDevice(_covox);
     }
 
     // Attach the General Sound card to its host ports #B3/#BB/#33 (GS design
@@ -1280,10 +1302,9 @@ bool SoundManager::detachFromPorts()
     //_ay8910->detachFromPorts();
     _turboSound->detachFromPorts();
 
-    // Detach SOUNDRIVE/Covox from port #FB
     if (_covox && _context->pPortDecoder)
     {
-        _context->pPortDecoder->UnregisterPortHandler(Covox::PORT_RIGHT_B);
+        _context->pPortDecoder->UnregisterSelfDecodingDevice(_covox);
     }
 
     // Detach the General Sound card from #B3/#BB/#33

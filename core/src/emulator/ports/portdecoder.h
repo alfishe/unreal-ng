@@ -223,6 +223,19 @@ class PortDevice
 public:
     virtual uint8_t portDeviceInMethod(uint16_t port) = 0;
     virtual void portDeviceOutMethod(uint16_t port, uint8_t) = 0;
+
+    /// Self-decoding hook for devices whose address pattern can't be
+    /// expressed as a single exact key in PortDecoder's dispatch map -
+    /// e.g. Covox/SoundDrive, which recognize several bus addresses via a
+    /// mask/match rule that also aliases other peripherals (Beta128 FDC) on
+    /// some models. PortDecoder::DispatchSelfDecodingOut/In() tries every
+    /// registered self-decoding device, in registration order, for any raw
+    /// port no exact match (or higher-priority model-specific decode)
+    /// claimed. Returns true when this device recognized and handled the
+    /// raw port; the default declines, so exact-match-only devices (WD1793,
+    /// AY, memory latches, ...) never need to implement these.
+    virtual bool tryClaimOut(uint16_t /*rawPort*/, uint8_t /*value*/) { return false; }
+    virtual bool tryClaimIn(uint16_t /*rawPort*/, uint8_t& /*outValue*/) { return false; }
 };
 
 typedef uint8_t (PortDevice::* PortDeviceInMethod)(uint16_t port);              // Class method callback
@@ -326,6 +339,14 @@ protected:
 
     // Registered port handlers from external peripheral devices
     std::map<uint16_t, PortDevice*> _portDevices;
+
+    // Self-decoding devices (see PortDevice::tryClaimOut/In) - tried, in
+    // registration order, for any raw port no exact-match device or
+    // higher-priority model-specific decode claimed first. Kept separate
+    // from _portDevices because these devices recognize a MASK/MATCH
+    // pattern across several raw addresses, not one exact key (see
+    // Covox: mode-1/mode-2 SoundDrive ports)
+    std::vector<PortDevice*> _selfDecodingDevices;
 
     // Semantic tags passed via the RegisterPortHandler overload, so dynamic
     // devices land in the tag collections instead of the anonymous fallback
@@ -557,6 +578,21 @@ public:
 
     uint8_t PeripheralPortIn(uint16_t port);
     void PeripheralPortOut(uint16_t port, uint8_t value);
+
+    /// Self-decoding device registration (see PortDevice::tryClaimOut/In).
+    /// A device may only be registered once; unregister is a no-op if absent
+    bool RegisterSelfDecodingDevice(PortDevice* device);
+    void UnregisterSelfDecodingDevice(PortDevice* device);
+
+    /// Tries every registered self-decoding device, in registration order,
+    /// against the raw port. Model DecodePortIn/Out() implementations call
+    /// this as their final fallback - after exact-match dispatch and any
+    /// higher-priority model-specific decode (e.g. Beta128 FDC precedence)
+    /// have already declined the address - and use the return value to
+    /// distinguish "a self-decoding peripheral claimed this" from "truly
+    /// unmapped" for port-trace disposition. Stops at the first claim.
+    bool DispatchSelfDecodingOut(uint16_t rawPort, uint8_t value);
+    bool DispatchSelfDecodingIn(uint16_t rawPort, uint8_t& outValue);
     
     /// Unlock port 7FFD paging for snapshot loading or debug sessions
     /// Clears both the emulatorState.p7FFD lock bit AND the hardware latch (_7FFD_Locked)

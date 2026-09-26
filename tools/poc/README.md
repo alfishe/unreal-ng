@@ -57,6 +57,10 @@ NNN-name/
 | 012 | [calltrace-viz](012-calltrace-viz/) | Call trace visualization |
 | 013 | [nvenc-poc](013-nvenc-poc/) | NVIDIA NVENC video encoding |
 | 014 | [qt-gui](014-qt-gui/) | Qt GUI framework exploration |
+| 015 | [ios-remote-control](015-ios-remote-control/) | iOS remote control |
+| 016 | [ios-videocube](016-ios-videocube/) | iOS video cube |
+| 017 | [z80-standalone-cpu](017-z80-standalone-cpu/) | Z80 CPU extracted into a z80ex-style standalone library (full undocumented support, ZEXALL-verified, benchmarked) |
+| 018 | [tui-debuggers](018-tui-debuggers/) | Classic + TSConf debugger TUIs (FTXUI, golden-exact fork band, swappable mock/REST WebAPI backends) |
 
 ---
 

@@ -1,5 +1,16 @@
 # Z80 Reference Implementation Status
 
+> [!WARNING]
+> **Superseded, 2026-09-24.** This document describes the Python `z80_reference.py` reference
+> model, which was abandoned (now deleted; its source lived under
+> `core/tests/z80/z80test/to-delete/`, a directory literally named for deletion) and replaced by
+> a C++ gtest runner (`core/tests/z80/z80test/z80test_runner.cpp`) that drives the same 163
+> vectors directly through the real in-tree Z80 core instead of a hand-written reference model.
+> Current state: **159/159 passing**, 4 intentionally out of scope (non-Zilog CPU flavors) — see
+> [`core/tests/z80/z80test/README.md`](../../../core/tests/z80/z80test/README.md) and
+> [`z80test-verification-gaps.md`](z80test-verification-gaps.md) in this folder for the
+> up-to-date picture. The 114/163 figure and root-cause analysis below are historical only.
+
 **Date**: 2026-01-19  
 **Last Updated**: 2026-01-28 (All block I/O tests fixed!)
 

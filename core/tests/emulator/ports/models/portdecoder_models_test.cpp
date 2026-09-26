@@ -127,18 +127,18 @@ TEST_F(PortDecoder_Spectrum3_Test, IsPort_1FFD)
 
 /// region <Profi>
 
-// Port #7FFD - equation /IORQ /WR /A15 A2 /A1 (as ZX-Spectrum 128k)
+// Port #7FFD - equation /IORQ /WR /A15 /A1 (A2 is not decoded: UnrealSpeccy, ZXMAK2, Xpeccy)
 TEST_F(PortDecoder_Profi_Test, IsPort_7FFD)
 {
     ExpectDecodeMatchesEquation(
-        "#7FFD", [this](uint16_t port) { return _portDecoder->IsPort_7FFD(port); }, {0b1000'0000'0000'0110, 0b0000'0000'0000'0100});
+        "#7FFD", [this](uint16_t port) { return _portDecoder->IsPort_7FFD(port); }, {0b1000'0000'0000'0010, 0b0000'0000'0000'0000});
 }
 
-// Port #DFFD - sensitivity xx0xxxxx xxxxxx0x; equation /IORQ /WR /A13 /A1
+// Port #DFFD - equation /IORQ /WR A15 /A13 /A1 (A15=1 keeps it disjoint from #7FFD)
 TEST_F(PortDecoder_Profi_Test, IsPort_DFFD)
 {
     ExpectDecodeMatchesEquation(
-        "#DFFD", [this](uint16_t port) { return _portDecoder->IsPort_DFFD(port); }, {0b0010'0000'0000'0010, 0b0000'0000'0000'0000});
+        "#DFFD", [this](uint16_t port) { return _portDecoder->IsPort_DFFD(port); }, {0b1010'0000'0000'0010, 0b1000'0000'0000'0000});
 }
 
 /// endregion </Profi>

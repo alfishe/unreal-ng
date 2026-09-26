@@ -3,6 +3,7 @@
 
 #include "common/modulelogger.h"
 #include "emulator/video/atm/screenatm.h"
+#include "emulator/video/profi/screenprofi.h"
 #include "emulator/video/screen.h"
 #include "stdafx.h"
 
@@ -92,9 +93,13 @@ protected:
     uint8_t _lastLatchSymbolX = 0xFF;  // Track which cell was last latched
     uint8_t _lastLatchZxY = 0xFF;      // Track which line was last latched
 
-    // ATM Turbo 2+/3/710 extended mode renderer - only allocated for ATM
-    // machine models (see constructor); nullptr for plain Spectrum/Pentagon
+    // ATM Turbo 2+/3/710 extended mode renderer - lazily allocated on first
+    // use in Draw(); nullptr for machines that never reach M_ATM16/HR/TX/TL
     std::unique_ptr<ScreenAtm> _atmScreen;
+
+    // Profi hi-res (M_PROFIHR) renderer - lazily allocated on first use in
+    // Draw(); nullptr for machines that never reach M_PROFIHR
+    std::unique_ptr<ScreenProfi> _profiScreen;
 
     /// endregion </Fields>
 

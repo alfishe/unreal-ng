@@ -33,7 +33,7 @@ input). Parent materials: `gs-tdd.md`,
 | Reply bytes | firmware-true | bit-exact vs LLE (probe-captured) | TBD |
 | SFX commands | full | v1: parse + ack-shaped no-op | full |
 | POST timing | real 0.3-1.1 s (BUG-6 visible) | skipped (idle signature prompt) | TBD |
-| TTD peripheral | `GeneralSound` (=5) | `GeneralSoundLightweight` (=10) | `NeoGS` (=9, reserved) |
+| TTD peripheral | `GeneralSound` (=5) | `GeneralSoundLightweight` (=11) | `NeoGS` (=12, reserved) |
 | `hasCoprocessor()` | true | false | true |
 | Config `[SOUND] GSType` | `Z80` | `LW`/`LIGHT` (`BASS` = deprecated alias) | `NGS` (parses, P2) |
 
@@ -237,7 +237,7 @@ the MCP surface proxies. Switching mid-note: audio gap of one frame max
 - `config.cpp` `[SOUND] GSType`: `LW`/`LIGHT` -> LW; `BASS` -> LW +
   deprecation warning ("BASS HLE is replaced by the in-tree lightweight
   card"). `Z80`/`NGS` unchanged.
-- `ttdserializable.h`: `GeneralSoundLightweight = 10` (NeoGS = 9 stays
+- `ttdserializable.h`: `GeneralSoundLightweight = 11` (NeoGS = 12 stays
   reserved; ids are append-only).
 - SoundManager `_gs` becomes `GeneralSoundCard*`; factory
   `createGeneralSoundCard(kind, context)`; device registry entry unchanged

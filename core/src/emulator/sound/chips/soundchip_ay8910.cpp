@@ -333,6 +333,7 @@ void SoundChip_AY8910::reset()
     memset(&_registers, 0x00, sizeof(_registers));
     _currentRegister = 0;
     _registers[AY_MIXER_CONTROL] = 0xFF;  // Mute all generator outputs
+    std::memcpy(_appliedRegisters, _registers, sizeof(_registers));
 
     // Reset generators
     _toneGenerators[AY_CHANNEL_A].reset();
@@ -420,11 +421,8 @@ void SoundChip_AY8910::updateMixer()
     _mixedLeft /= 3.0;
 
     // Filter out DC offset
-    if (true)
-    {
-        _mixedLeft = _filterDCLeft.filter(_mixedLeft);
-        _mixedRight = _filterDCRight.filter(_mixedRight);
-    }
+    _mixedLeft = _filterDCLeft.filter(_mixedLeft);
+    _mixedRight = _filterDCRight.filter(_mixedRight);
 }
 
 void SoundChip_AY8910::setMixer(uint8_t mixerValue)
@@ -486,6 +484,12 @@ uint8_t SoundChip_AY8910::readRegister(uint8_t regAddr)
 
 void SoundChip_AY8910::writeRegister(uint8_t regAddr, uint8_t value)
 {
+    latchRegister(regAddr, value);
+    applyRegister(regAddr, value);
+}
+
+void SoundChip_AY8910::latchRegister(uint8_t regAddr, uint8_t value)
+{
     // Invalid register address provided - ignore it
     if (regAddr > 0x0F)
     {
@@ -495,77 +499,62 @@ void SoundChip_AY8910::writeRegister(uint8_t regAddr, uint8_t value)
     // Track that this chip has been written to (for TurboSound detection)
     _hasBeenWritten = true;
 
-    // XOR value with previous state => all non-zeroed bits indicate the change
-    //uint8_t changedBits = _registers[regAddr] ^ value;
-
-    // Apply new register value
     _registers[regAddr] = value;
+}
+
+void SoundChip_AY8910::applyRegister(uint8_t regAddr, uint8_t value)
+{
+    if (regAddr > 0x0F)
+    {
+        return;
+    }
+
+    const uint8_t* regs = _appliedRegisters;
+    _appliedRegisters[regAddr] = value;
 
     switch (regAddr)
     {
         // Change period (frequency) for Channel A Tone Generator
         case AY_A_FINE:
         case AY_A_COARSE:
-            _toneGenerators[AY_CHANNEL_A].setPeriod(_registers[AY_A_FINE], _registers[AY_A_COARSE]);
+            _toneGenerators[AY_CHANNEL_A].setPeriod(regs[AY_A_FINE], regs[AY_A_COARSE]);
             break;
         // Change period (frequency) for Channel B Tone Generator
         case AY_B_FINE:
         case AY_B_COARSE:
-            _toneGenerators[AY_CHANNEL_B].setPeriod(_registers[AY_B_FINE], _registers[AY_B_COARSE]);
+            _toneGenerators[AY_CHANNEL_B].setPeriod(regs[AY_B_FINE], regs[AY_B_COARSE]);
             break;
         // Change period (frequency) for Channel C Tone Generator
         case AY_C_FINE:
         case AY_C_COARSE:
-            _toneGenerators[AY_CHANNEL_C].setPeriod(_registers[AY_C_FINE], _registers[AY_C_COARSE]);
+            _toneGenerators[AY_CHANNEL_C].setPeriod(regs[AY_C_FINE], regs[AY_C_COARSE]);
             break;
         // Change period (frequency) for Noise Generator
         case AY_NOISE_PERIOD:
-            _noiseGenerator.setPeriod(_registers[AY_NOISE_PERIOD]);
+            _noiseGenerator.setPeriod(regs[AY_NOISE_PERIOD]);
             break;
         case AY_MIXER_CONTROL:
-            setMixer(_registers[AY_MIXER_CONTROL]);
+            setMixer(regs[AY_MIXER_CONTROL]);
             break;
-        // Change volume for Channel A
+        // Change volume for Channel A/B/C
         case AY_A_VOLUME:
-        {
-            ToneGenerator& generator = _toneGenerators[AY_CHANNEL_A];
-            uint8_t volume = _registers[AY_A_VOLUME];
-            bool isEnvelopeEnabled = (volume & 0b0001'0000) >> 4;
-
-            generator.setVolume(volume);
-            generator.setEnvelopeEnabled(isEnvelopeEnabled);
-            break;
-        }
-        // Change volume for Channel B
         case AY_B_VOLUME:
-        {
-            ToneGenerator& generator = _toneGenerators[AY_CHANNEL_B];
-            uint8_t volume = _registers[AY_B_VOLUME];
-            bool isEnvelopeEnabled = (volume & 0b0001'0000) >> 4;
-
-            generator.setVolume(volume);
-            generator.setEnvelopeEnabled(isEnvelopeEnabled);
-            break;
-        }
-        // Change volume for Channel C
         case AY_C_VOLUME:
         {
-            ToneGenerator& generator = _toneGenerators[AY_CHANNEL_C];
-            uint8_t volume = _registers[AY_C_VOLUME];
-            bool isEnvelopeEnabled = (volume & 0b0001'0000) >> 4;
-
+            ToneGenerator& generator = _toneGenerators[AY_CHANNEL_A + (regAddr - AY_A_VOLUME)];
+            const uint8_t volume = regs[regAddr];
             generator.setVolume(volume);
-            generator.setEnvelopeEnabled(isEnvelopeEnabled);
+            generator.setEnvelopeEnabled((volume & 0b0001'0000) != 0);
             break;
         }
         // Change period (frequency) for Envelope Generator
         case AY_ENVELOPE_PERIOD_FINE:
         case AY_ENVELOPE_PERIOD_COARSE:
-            _envelopeGenerator.setPeriod(_registers[AY_ENVELOPE_PERIOD_FINE], _registers[AY_ENVELOPE_PERIOD_COARSE]);
+            _envelopeGenerator.setPeriod(regs[AY_ENVELOPE_PERIOD_FINE], regs[AY_ENVELOPE_PERIOD_COARSE]);
             break;
         // Set one of 16 envelope shapes
         case AY_ENVELOPE_SHAPE:
-            _envelopeGenerator.setShape(_registers[AY_ENVELOPE_SHAPE]);
+            _envelopeGenerator.setShape(regs[AY_ENVELOPE_SHAPE]);
             break;
         default:
             // Do nothing
@@ -947,7 +936,7 @@ std::string SoundChip_AY8910::dumpAY8910VolumeState(uint8_t channel)
 
 /// region <TTDSerializable (P1.5 — parent TDD §6.4)>
 //
-// Byte-by-byte packed layout for one AY chip (57 bytes, alignment-safe via
+// Byte-by-byte packed layout for one AY chip (73 bytes, alignment-safe via
 // per-field memcpy — no struct, no padding assumptions):
 //
 //   Offset  Size  Field
@@ -970,8 +959,10 @@ std::string SoundChip_AY8910::dumpAY8910VolumeState(uint8_t channel)
 //   51       4    env._counter
 //   55       1    env._segment
 //   56       1    env._out
+//   57      16    _appliedRegisters[0..15] (generator-side view; differs from
+//                 _registers while a device holds timed writes not yet applied)
 //   ------  ---
-//   57 bytes total
+//   73 bytes total
 
 namespace
 {
@@ -996,8 +987,9 @@ static constexpr size_t kAYChipStateSize =
     16 + 1 +                // registers + currentRegister
     3 * kAYToneStateSize +  // 3 tone generators
     1 + 2 + 1 + 4 +         // noise generator
-    1 + 4 + 4 + 1 + 1;      // envelope generator
-static_assert(kAYChipStateSize == 57, "AY chip state size drift");
+    1 + 4 + 4 + 1 + 1 +     // envelope generator
+    16;                     // applied (generator-side) registers
+static_assert(kAYChipStateSize == 73, "AY chip state size drift");
 
 size_t SoundChip_AY8910::TTDStateSize() const
 {
@@ -1041,6 +1033,9 @@ void SoundChip_AY8910::TTDSaveState(uint8_t* dst) const
     put_u32(cur, _envelopeGenerator._counter);
     put_u8 (cur, _envelopeGenerator._segment);
     put_i8 (cur, _envelopeGenerator._out);
+
+    // --- Generator-side register view ---
+    std::memcpy(cur, _appliedRegisters, 16); cur += 16;
 }
 
 void SoundChip_AY8910::TTDLoadState(const uint8_t* src)
@@ -1077,6 +1072,9 @@ void SoundChip_AY8910::TTDLoadState(const uint8_t* src)
     _envelopeGenerator._counter    = get_u32(cur);
     _envelopeGenerator._segment    = get_u8 (cur);
     _envelopeGenerator._out        = get_i8 (cur);
+
+    // --- Generator-side register view ---
+    std::memcpy(_appliedRegisters, cur, 16); cur += 16;
 
     // Note: _tick, filters, panning, mixer buffers, stereoMode, chipModel are
     // intentionally not restored — they are host-side / user-config / transient

@@ -851,10 +851,18 @@ TEST_F(DezogHistory_test, EntryOpcodesAndSpWordAreCoherentWithMemory)
     installProgram();
     runToJp(1);
 
-    for (uint32_t i = 0; i < 4; ++i)
+    // Exactly the three executed instructions, newest first; the JP at the
+    // stop has not executed and is not history (the replayed frame starts at
+    // the checkpoint's real CPU position - with it shifted, the JP used to
+    // fall below the present cutoff as a fourth entry)
+    const uint16_t executed[] = {PROGRAM_START + 3, PROGRAM_START + 1, PROGRAM_START};
+    EXPECT_EQ(_emulator->GetZ80State()->pc, PROGRAM_JP);
+    EXPECT_EQ(_adapter->getHistoryEntry(3), std::nullopt) << "nothing ran before DI in this session";
+    for (uint32_t i = 0; i < 3; ++i)
     {
         auto e = _adapter->getHistoryEntry(i);
         ASSERT_TRUE(e.has_value()) << i;
+        EXPECT_EQ(e->regs.pc, executed[i]) << "index " << i;
         // While materialized at this entry, live memory must match the entry payload
         auto mem = _adapter->readMemory(e->regs.pc, 4);
         for (int b = 0; b < 4; ++b)

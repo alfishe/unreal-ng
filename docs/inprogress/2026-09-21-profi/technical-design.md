@@ -108,7 +108,7 @@ Karabas additionally switches among four 64K images through AVR soft switches / 
 
 ### 4.2 DOS latch rules [HW], refined by the emulator review
 
-* **Set** on an M1 fetch at `3D00-3DFF` while `rom14=1` (Unreal/ZXMAK2 do not gate on `pDFFD.4`; Karabas blocks it — not adopted, Q7). *[?]* Karabas also sets it on NMI when DS80=0 and via `#008B.6`/`.7`; phase 1 implements only the M1 trap.
+* **Set** on an M1 fetch at `3D00-3DFF` while `rom14=1` (Unreal/ZXMAK2 do not gate on `pDFFD.4`; Karabas blocks it — not adopted, Q7). *[?]* Karabas also sets it on NMI when DS80=0 and via `#008B.6`/`.7`; the NMI path ("magic button") is implemented (`Emulator::RequestMNI()`, not gated on `pDFFD.4` for the same Q7 reason as the M1 trap - see the 2026-09-25 reconciliation report §4.1 G5), `#008B.6`/`.7` remain out of scope (Karabas-only registers, §11).
 * **Clear** on the first M1 fetch with `A15:14 != 00`, or whenever `pDFFD.4=1`.
 * **Reset value 1** (SYS ROM boots). This is what makes reset land in the menu (fixes B8).
 * Set wins over clear when both would fire.
@@ -128,6 +128,8 @@ Copy the Scorpion `[ROM.profi]` block: `HIMEM=PROFI`, `RAMSize=1024`, `Beta128=1
 `config.mem_model = MM_PROFI`, `ula_type = ULA_DISCRETE_LOGIC` path already exists (`ulacontention.cpp:138`). Frame/INT timing per §7.
 
 ### 5.3 ROM role mapping
+Automation surfaces name the pages through `ROM::GetROMPageRole` (SYS/Menu ROM, TR-DOS ROM, 128K Editor + STS Monitor ROM, 48K BASIC ROM).
+
 `rom.cpp:172-177` assigns roles `sys=0, dos=1, 128=2, sos=3` for `MM_PROFI` — **consistent with the verified image**. The audit's suggested `128=0, sys=2` mapping is wrong and must not be applied. A boot test (§10.4) proves it: SYS menu text on page 0 after reset.
 
 ---
@@ -157,9 +159,9 @@ NORMAL  = !cpm && !dosAct                            // joystick/mouse/covox/...
 | `#83,#A3,#C3,#E3` | | R/W | WD1793 regs (extended) | EXT | CONS |
 | `#3F` | | R/W | Beta system (extended) | EXT | CONS |
 | `#8B,#AB,#CB,#EB` | A7=1, A4:0=01011; reg=A10:8 | R/W | IDE, with high-byte latch; A5 polarity swaps read vs write | EXT | CONS |
-| `#BF/#FF` (addr), `#DF/#9F` (data) | | W/R | RTC (DS12885 / MC146818-like) | EXT | CONS/HW |
-| `#5F` (L), `#3F` (R) | | W | Covox/SoundRive DAC | NORMAL | CONS |
-| `#87,#A7,#C7,#E7` | | W | Covox in extended mode | EXT | Unreal only [?] |
+| `#BF/#FF` (addr), `#DF/#9F` (data) | | W/R | RTC (DS12885 / MC146818-like) | EXT | CONS/HW - **implemented**, see §6.2 |
+| `#5F` (L), `#3F` (R) | | W | Covox/SoundRive DAC | NORMAL | CONS - **implemented**, see §6.2 |
+| `#87,#A7,#C7,#E7` | | W | Covox in extended mode | EXT | Unreal only [?] - not implemented |
 | `#1F` | | R | Kempston joystick | NORMAL | CONS |
 | `#FBDF,#FFDF,#FADF` | | R | Kempston mouse | NORMAL | CONS |
 | `#008B,#018B,#028B` | | W | Karabas system/turbo/lock | KP | **not implemented**; see §11 |
@@ -168,9 +170,9 @@ Overlap resolution order (first match wins): paging/AY (A15-based) → FE family
 
 ### 6.2 Peripherals to add
 * **Beta Disk gating** in `DecodePortIn/Out` following the Pentagon128 pattern; reuses the existing WD1793.
-* **RTC**: 256-byte CMOS (DS12885), address latch + data; deterministic (tick from emulated time, not host clock, so TTD replay stays exact). State captured in TTD (§8).
+* **RTC**: done - `#BF/#FF` (address), `#9F/#DF` (data), EXT mode only (`cpm && rom14`), checked before the FDC/system-port decode since `#BF/#FF` alias to it outside EXT mode. New Profi-owned `ProfiCMOS` (`core/src/emulator/memory/profi/proficmos.{h,cpp}`), sharing only the DS12885 register map (`core/src/emulator/io/rtc/ds12885.h`) with ATM3's `CMOS` - not its I2C NVRAM, which Profi's real RTC never had. **Deviates from the plan below**: serves live host time (mirroring ATM3's own wiring), not a deterministic tick from emulated time, and has no TTD state capture yet - so a TTD-recorded session with RTC reads will see the host clock at replay time, not the clock at capture time. Low priority per Q10.
 * **IDE (Nemo/Profi)**: only if the existing `core/src/emulator/io/hdd` supports the 8-bit high-byte latch; otherwise defer to phase 2. Register with TTD (roadmap ST-3).
-* **Covox/SoundRive**: existing Covox device, mapped to the Profi ports.
+* **Covox/SoundRive**: done - `#5F`/`#3F`, NORMAL mode, mapped onto the existing `Covox` device's `PORT_LEFT_A`/`PORT_RIGHT_A` from `PortDecoder_Profi::DecodePortOut` (the `_A` ports, not `_B` - `computeStereoAmplitudes()`'s mono-compatibility fallback arms on `LeftA==LeftB==RightA==0` and substitutes `RightB` into both channels; using `_B` as the target left the fallback keyed on `_A` alone, leaking Right into Left whenever Left passed through silence). Extended-mode aliases (`#87/#A7/#C7/#E7`) still open.
 * **Kempston mouse / joystick**: base helpers, gated by NORMAL.
 
 ### 6.3 Unresolved port decode details
@@ -212,11 +214,12 @@ Geometry: paper 512×240, right border 48, left border 48 (**storage 608×288** 
 
 ### 7.3 Palette
 
-Write: `OUT (xx7E), n` with DS80=1, A7=0 & A0=0. **Colour** comes from the address bus: `c = ~(A15:A8)`; **index** = `(previous #FE write value ^ 0x0F) & 0x0F`. Format `GGGRRRBB(B)`:
+Write: `OUT (xx7E), n` with DS80=1, A7=0 & A0=0. **Colour** comes from the address bus: `c = ~(A15:A8)`; **index** = `(previous #FE write value ^ 0x0F) & 0x0F`. Format `GGGRRRBBB` (9 bits, Karabas `video.vhd:205-208`):
 
-* Emulators: Unreal/ZXMAK2 use `Gg0Rr0Bb` (2 bits/channel, mid bits ignored); Xpeccy 3+3+2. Karabas (clone, non-authoritative) uses 3-3-3.
-* Decision: **implement Unreal/ZXMAK2 `Gg0Rr0Bb` as the reference behaviour** (demo-validated) and make the decode a superset that also accepts the 3-bit patterns Xpeccy writes; Karabas's third blue bit is not modelled. 
-* Reset palette: standard 16 Spectrum colours (bright = high intensity). *[?]* (§12 Q5)
+* Emulators: Unreal/ZXMAK2 use `Gg0Rr0Bb` (2 bits/channel, mid bits ignored); Xpeccy 3+3+2 (`GGGRRRBB`, 8 bits). Karabas RTL is 3-3-3: the 8 bits from the address bus give G(3)/R(3)/B(2), and a 9th bit - the extra blue LSB - is carried in `#FE` bit 7 of the write that supplies the index (latched alongside it, `TOP:1417`/`VID:205-208`).
+* Decision: **implement the Karabas 9-bit `GGGRRRBBB` layout** (`EmulatorState::profiPalette` is `uint16_t[16]`, bits 8:6 G / 5:3 R / 2:0 B; bit 0 = the extra blue LSB from `#FE.D7`) - a superset of every other emulator's format, and the only one hardware-accurate for blue. `PortDecoder_Profi::Port_Palette_Out` / `ScreenProfi::Draw`'s `paletteColor` lambda implement the pack/unpack.
+* Reset palette: standard 16 Spectrum colours, Karabas defaults (`video.vhd:199-203`) - each active channel level 4/7 non-bright, 6/7 bright, index 8 (bright off) = black. `PortDecoder_Profi::ResetPalette`.
+* `#FE` read bit 7 ("GX0"/UniCopy palette-present flag, 5.xx boards): in DS80, `palette[idx](6) xor palette[idx](0)` where `idx` is the same previous-`#FE`-derived index as the palette write; outside DS80 the wire reads 1. `PortDecoder_Profi::Port_FE_In_GX0` (Karabas `video.vhd:219`, ZXMAK2 `UlaProfi5XX.cs:34-53`).
 
 The "index from previous FE write" rule means the `#FE` latch must remember the last value on every FE-family OUT, not only on `#xx7E`.
 
@@ -224,13 +227,13 @@ The "index from previous FE write" rule means the `#FE` latch must remember the 
 
 Unreal, Xpeccy and ZXMAK2 do **not** change the frame, INT or CPU frequency when DFFD.7 is set (Unreal/Xpeccy only switch the draw routine, with the 240 lines centred on the 192-line paper). ZXMAK2 alone switches to a 192 T/line raster with a 19 T INT offset but keeps the frame at 69888. The only real-hardware evidence in the corpus is pico-spec's recalibration against photos of a real Profi running the *mcprofi2016* demo: 192 T/line, first paper 9238 T after INT, frame 69888 (one demo, uncorroborated). ZXMAK2 also carries an unimplemented comment that the DS80 frame may be 59904 (312×192). The Karabas 3 MHz / 59904 clock change is a clone property and is **not** adopted.
 
-Decision: hi-res keeps the standard 3.5 MHz, 69888 T frame and INT. 512 pixels do not fit the 256-px paper window at 2 px/T, so the renderer draws two hi-res pixels per standard pixel slot on the standard beam (storage wider than beam, the same technique the ATM 640/704-wide modes use); the 240 lines are centred on the 192-line paper as Unreal and Xpeccy do. Timing option `ProfiHiresRaster=pico` (192 T/line, first paper 9238 T after INT) is available as an experiment and is covered by tests so it can become default if real-hardware evidence appears. See §12 Q3.
+Decision: hi-res keeps the standard 3.5 MHz, 69888 T frame and INT. 512 pixels do not fit the 256-px paper window at 2 px/T, so the renderer draws two hi-res pixels per standard pixel slot on the standard beam (storage wider than beam, the same technique the ATM 640/704-wide modes use); the 240 lines are centred on the 192-line paper as Unreal and Xpeccy do. A `ProfiHiresRaster=pico` timing variant (192 T/line, first paper 9238 T after INT, per pico-spec's calibration against a real Profi) is an **unimplemented proposal**, not a shipped option - no such config key, code path, or test exists in the tree today. It would only be worth adding if real-hardware evidence corroborates pico-spec's numbers (§12 Q3); until then this stays the standard 3.5 MHz timing above.
 
 ### 7.5 Border in hi-res
-Hardware shows the border **inverted** (`rgbi = ~BORDER[2:0]`). Implemented as an explicit flag in the renderer; test asserts it.
+Shown through the palette with the **inverted** index (`palette[~border & 7]`, non-bright): ZXMAK2 `ProfiRenderer` and Xpeccy (`nextbrd ^= 7`) agree; Karabas matches. Implemented in `ScreenProfi::Draw`.
 
 ### 7.6 Renderer structure
-`Screen::DrawProfi(n)` per beam-clock, like `DrawATMHiRes` (per-`n` T-state chunks, `vbuf` writes with `vptr`). Pixel/attribute pages via `GetActiveSurfaceRAMPages()` returning `{4|6, 0x38|0x3A}` for `M_PROFIHR`. `Screen::GetVideoModeName` → "PROFI" / "PROFI512" so `/state/screen/mode` reports the mode. Frame-size consumers (Qt viewer, `recordingmanager.cpp:162`, screencapture, GIF) must handle the 512-wide storage; ATM 704-wide already forced the same, so no new consumer work is expected beyond verifying.
+Implemented as `ScreenProfi` (`core/src/emulator/video/profi/screenprofi.{h,cpp}`), a Profi-specific renderer following the `ScreenAtm` pattern: not a `Screen` subclass, owned and lazily allocated by `ScreenZX`, driven per T-state from `ScreenZX::Draw` only when `_mode == M_PROFIHR`. `Screen::DrawProfi(n)` (the `M_PROFI` slot in `Screen`'s per-mode draw table) is an intentional no-op - the standard 256×192 Profi mode renders through the existing ZX path, since it is bit-identical to a stock Spectrum screen. The monochrome variant (Profi 3.xx / `config.profi_monochrome`) is a branch inside `ScreenProfi::Draw`, not a separate class, matching how `ScreenAtm` keeps its four extended modes (M_ATM16/ATMHR/ATMTX/ATMTL) as branches of one `Draw()` rather than one class per mode. Pixel/attribute pages via `GetActiveSurfaceRAMPages()` returning `{4|6, 0x38|0x3A}` for `M_PROFIHR`. `Screen::GetVideoModeName` → "PROFI" / "PROFIHR" so `/state/screen/mode` reports the mode. Frame-size consumers (Qt viewer, `recordingmanager.cpp:162`, screencapture, GIF) must handle the 512-wide storage; ATM 704-wide already forced the same, so no new consumer work is expected beyond verifying.
 
 ---
 
@@ -268,7 +271,7 @@ Video-mode timing switches (§7.4) require the frequency multipliers in the chec
 | 5 | TTD: `ProfiPaging`, serializer, contract test | M | 2 |
 | 6 | Standard video via existing renderer; timing decision applied | S | 2 |
 | 7 | Hi-res renderer, palette, geometry, InitRaster hooks | L | 6 |
-| 8 | Covox, mouse/joystick gating, RTC, (IDE) | M | 4 |
+| 8 | Covox (done), RTC (done), mouse/joystick gating, (IDE) | M | 4 |
 | 9 | Automation: `/state/paging`, `/state/screen/mode`, CLI ROM-page names, port trace rules, AGENTS.md creatable list, MCP `unreal://machine/profi` | S | 2, 7 |
 | 10 | Full test suite (§10) grows with each step; conformance matrix rows | L | all |
 | 11 | Real recordings for TTD v2 benchmark (roadmap §5.4) | S | 5, 7 |
@@ -289,7 +292,7 @@ All tests follow `core/tests/README.md`: no `sleep_for`, <50 ms except justified
 | DFFD | RAM high bits → page = `hi<<3 \| lo` for all 64 pages; SCO swap matrix (4 windows × 2); SCR page 6; WOROM RAM-at-0 + write-through; CPM/DS80 latches |
 | Decode | `#5FFD`, `#1FFD`, `#DFFD`, `#7FFD`, `#FFFD`, `#BFFD` each hit exactly one handler; A15/A13/A1 boundary sweep over all 65536 ports vs a reference table |
 | ROM/DOS | reset = SYS; `3Dxx` M1 with rom14 sets DOS; fetch ≥ 4000 clears; DFFD.4 clears/blocks; set-over-clear priority |
-| Ports by mode | NORMAL/EXT/CPM×rom14×dosAct truth table: FDC, `#FF/#BF/#3F`, IDE, RTC, Covox, joystick, mouse |
+| Ports by mode | NORMAL/EXT/CPM×rom14×dosAct truth table: FDC, `#FF/#BF/#3F`, IDE, RTC (done: `#BF/#FF/#9F/#DF` EXT-only via `cpm && rom14`, verify RTC wins over FDC's `#BF/#FF` system-port alias when both `dosPorts` and EXT are true), Covox (done: `#5F`/`#3F` NORMAL-only, verify FDC wins when `dosAct`), joystick, mouse |
 | Trace | `decodeRuleIndex` and `decodedPort` per rule; `getPortMapEntries` rows |
 
 ### 10.2 Video tests (`profi_video_test.cpp`, no turbo)
@@ -341,7 +344,7 @@ Under `testdata/machines/profi/` (Karabas-Pro is MIT, licence copied as `LICENSE
 
 Working copy of the full upstream tree (VHDL, docs, other ROMs) is in `scratch/profi/kp` (git-ignored). Reference documents for the design are in this folder. Cross-emulator sources reviewed: UnrealSpeccy (`unreal-speccy`, `zx-evo/pentevo/unreal`), ZXMAK2 `Hardware/Profi`, Xpeccy(+plus).
 
-**Karabas-only features and whether we add them**: `#008B/#018B/#028B`, DivMMC, ZiFi, turbo 7/14 MHz, 6 MB RAM, AVR ROM-bank switching, `fd_port` correction (blocks full-address ports after `OUT (n),A`), NMI→DOS — none needed for original Profi software. A single optional `ProfiFdPortQuirk` is *not* planned.
+**Karabas-only features and whether we add them**: `#008B/#018B/#028B`, DivMMC, ZiFi, turbo 7/14 MHz, 6 MB RAM, AVR ROM-bank switching, `fd_port` correction (blocks full-address ports after `OUT (n),A`) — none needed for original Profi software. A single optional `ProfiFdPortQuirk` is *not* planned. (NMI→DOS was originally on this "not needed" list too, but is implemented as of the 2026-09-25 reconciliation report - it's ZXMAK2/Karabas consensus, not Karabas-only.)
 
 ---
 
@@ -353,17 +356,46 @@ Working copy of the full upstream tree (VHDL, docs, other ROMs) is in `scratch/p
 | Q2 | Do SYS-ROM (page 0) accesses see extended ports (Karabas only) or normal ports (Unreal/ZXMAK2/Xpeccy)? | Emulator review §5.6 | Emulator rule, switch for the Karabas variant; settle with `profi_v450.ROM`/menu boot test |
 | Q3 | Hi-res line/frame timing | No emulator changes the frame; ZXMAK2 uses 192 T/line; pico-spec calibrated on a real Profi (mcprofi2016): 192 T/line, paper 9238 T after INT, frame 69888 | Standard 3.5 MHz frame; 192 T/line raster as option; need a real-hardware capture to decide |
 | Q4 | SCR window gated by `7FFD.3` (Xpeccy) or not (RTL, others)? | RTL vs one emulator | Not gated |
-| Q5 | Power-on palette; `#FE` read bit 7 meaning | RTL flag, no emulator implements | Standard 16 colours; bit 7 = 1 in DS80 *[?]* |
+| Q5 | Power-on palette; `#FE` read bit 7 meaning | **Resolved from Karabas RTL** (`video.vhd:199-203,219`) | Standard 16 colours at levels 4/7 (non-bright) / 6/7 (bright); bit 7 = GX0 = `palette[idx](6) xor palette[idx](0)` in DS80, else 1. Implemented (`Port_FE_In_GX0`, `ResetPalette`) |
 | Q6 | Palette write mask A7=0 & A0=0 vs exact `xx7E` | 4 variants | A7=0 & A0=0 (Unreal/ZXMAK2 form) |
 | Q7 | DOS entry when DFFD.4=1 | RTL blocks, others don't | Do not block (Unreal/ZXMAK2); RTL-only behaviour |
 | Q8 | FDC alias width | Unreal loose / others strict | Loose (UnrealSpeccy) |
 | Q9 | Which existing Profi goldens encode the wrong ROM polarity and need re-baselining? | `modelsregression_test` | Re-baseline in the decoder change, reviewed line by line |
 | Q10 | RTC behaviour: Karabas RTC is a 256-byte RAM fed by the AVR; real DS12885 counts time | RTL comment | Deterministic counters from emulated time; low priority |
 
-**Risks**: unverified hardware facts (Q1, Q3, Q5); goldens locking mistakes; 512-wide frame consumers; TTD timing-multiplier restore in hi-res; the CPLD (FDC, `#FF` system latch) is **not** in the Karabas repo, so `#FF`/`#BF` bit behaviour is taken from the WD/Beta convention and the emulators, not from the RTL.
+**Risks**: unverified hardware facts (Q1, Q3); goldens locking mistakes; 512-wide frame consumers; TTD timing-multiplier restore in hi-res; the CPLD (FDC, `#FF` system latch) is **not** in the Karabas repo, so `#FF`/`#BF` bit behaviour is taken from the WD/Beta convention and the emulators, not from the RTL.
 
 ---
 
 ## 13. Deliverable checklist for "done"
 
 Mirrors roadmap DoD-1..9: functional tests; `GetTTDModelStateIds`/serializers; no >4 KB blobs (none here); COW overlays via Beta Disk; conformance matrix; UNS round-trip when it lands; automation reports honestly; per-machine MCP resource; real recordings captured. Quality gates before any commit (only on explicit request): `ninja -C cmake-build-release`, `core-tests`, zero warnings, links checked with `tools/fix-absolute-paths.py`.
+
+
+---
+
+## 14. Implementation status (branch `profi`, 2026-09-21)
+
+Reference for behaviour: UnrealSpeccy (`zx-evo/pentevo/unreal/Unreal/io.cpp`, `drawers.cpp`).
+
+| Area | Status |
+|---|---|
+| `data/configs/profi/unreal.ini`; timing defaults in `Config::ApplyModelTimingDefaults` (69888 T, INT-to-paper 12580 T, INT 28 T) | done |
+| Decoder rewrite: #7FFD/#DFFD masks (B3, B4), lock + WOROM override (B6, B7), `p7FFD` written (B2), ROM polarity (B1), reset into SYS (B8), FE-then-paging-then-AY dispatch | done |
+| Bank mapping (`PortDecoder_Profi::UpdateModelMemoryBanks`, called from `Memory::UpdateZ80Banks`): RAM high bits, SCO, SCR, WOROM, CPM (`CF_DOSPORTS`) | done |
+| DOS latch (`CF_TRDOS` via the existing $3Dxx M1 trap) and Beta Disk ports: normal, CP/M (#BF) and "modified" (#83/#A3/#C3/#E3, #3F) sets | done |
+| Palette port (`OUT #xx7E`, previous-FE index) and `profiPalette` state | done |
+| TTD: `PeripheralId::ProfiPaging = 9`, `TTDProfiPaging`, declared through `GetTTDModelStateIds`; contract test includes PROFI; seek test on a real PROFI | done |
+| Video: standard mode `M_PROFI` on the 312-line row; hi-res `M_PROFIHR` (608x288 storage, 512x240 paper at 4 px/T, page 4/6 + attr 0x38/0x3A, inverted-index border, `ProfiMonochrome`) | done |
+| Tests: decoder truth tables, TTD serializer, golden bank map re-baselined by hand, real-ROM boot (SYS BIOS splash renders in hi-res, 1024K RAM recognised) | done |
+| Covox/SoundRive DAC at `#5F` (L) / `#3F` (R), NORMAL mode only (`PortDecoder_Profi::DecodePortOut` forwards to the existing shared `Covox` device via its canonical Left/Right ports - no changes to `covox.h/cpp` or `soundmanager.cpp`) | done |
+| RTC (DS12885 #BF/#FF + #DF/#9F, EXT mode - live host time, no TTD state yet, no deterministic tick) | done |
+| IDE (#8B/#AB/#CB/#EB), Kempston joystick #1F, FE read bit 7, Covox extended-mode aliases (#87/#A7/#C7/#E7) | **open** (UnrealSpeccy parity remainder) |
+| Port-trace decode rules / port map (`getPortMapEntries`: #7FFD `0x8002/0x0000`, #DFFD `0xA002/0x8000`, palette #xx7E `0x0081/0x0000`, Beta128 rows gated on `CF_DOSPORTS`), `/state/paging` pDFFD fields (`extended_ram_bank`, `sco`, `worom`, `cpm`, `scr`, `video_512x240`), ROM page names (`ROM::GetROMPageRole`: SYS/Menu, TR-DOS, 128K Editor + STS Monitor, 48K BASIC), WebAPI/CLI/Lua/Python mode reporting (`PROFI`, `PROFIHR` 512x240), MCP resource `unreal://machine/profi`, `ttd.ksy` id list | done |
+| Boot past the BIOS splash to the main menu (with or without a disk) | done, see below |
+
+### Boot hang at "Please wait ..." - root causes and fixes
+The BIOS drive probe issues an FDC command and immediately polls `IN A,(#1F) / RRCA / JR NC` (`$0797`) until BUSY = 1. Two emulation shortcuts hid BUSY, so the BIOS spun forever:
+1. **Fast disk loading** collapsed the Restore/verify delay to 1 T-state while "TR-DOS paged in" - which the DOS latch also reports for the Profi SYS ROM. `DiskFastLoad::IsArmed()` now declines on `MM_PROFI` with ROM14 = 0 (UnrealSpeccy's own docs: "Profi service ROM can work only when all TR-DOS delays are enabled").
+2. **A Type II command (Read Sector, `OUT #1F,#86`) on a not-ready drive** ended inside the register write. A real 1793 raises BUSY and drops it shortly after; `startType2Command` now holds BUSY for 64 T-states (`NOT_READY_BUSY_HOLD_TSTATES`) before ending. Test `WD1793_SleepTimeout_Test.ReadSectorWithoutDiskInsertedFailsGracefully` was adapted to the hold.
+Result: the BIOS shows its main menu ("Основное Меню": CP/M, TR-DOS 48K/128K, Sinclair 48/128, test menu) with or without a disk. Tests: `ProfiBoot_Test.BiosReachesMainMenuWithoutDisk`, `BiosLeavesPleaseWaitWithDisk`. Not yet verified: launching the menu entries.

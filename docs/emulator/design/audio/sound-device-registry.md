@@ -68,8 +68,20 @@ void setDeviceVolume(AudioSourceType, float);
 
 Registration happens in `SoundManager` construction based on the machine
 config: Beeper and AY 1 always; AY 2 when TurboSound; COVOX when
-`covoxFB`; others as they are implemented. Absent device → not in the
-registry → no UI row, no capture source (matches UX doc §3.1).
+`covoxFB` or `sd` (SD=1 fits the full SoundDrive quad on both port
+schemes — mirror set `#F1/#F3/#F9/#FB` and primary set `#0F/#1F/#4F/#5F`,
+VELESOFT SoundDrive 1.05 modes 2 and 1, <https://velesoft.speccy.cz/da_for_zx-cz.htm> —
+CovoxFB=1 alone only the mono `#FB` port); others as they are implemented.
+Absent device → not in the registry → no UI row, no capture source
+(matches UX doc §3.1). Covox is a *self-decoding* `PortDevice`
+(`tryClaimOut`/`tryClaimIn`, `PortDecoder::RegisterSelfDecodingDevice`) —
+`SoundManager::attachToPorts()` just plugs it in once, with no per-port
+wiring — so on Pentagon/Scorpion, where the primary port set aliases into
+the Beta128 FDC's decode, each model's own `DecodePortOut`/`DecodePortIn`
+tries `DispatchSelfDecodingOut`/`In` only once its own Beta128/TR-DOS
+precedence has already declined the address. See
+[covox-sounddrive.md](../../../../.recipe/peripherals/covox-sounddrive.md)
+for the fitment precedence and the mode-switch stale-channel decay.
 
 ### 3.2 Uniform buffer contract
 

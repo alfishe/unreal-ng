@@ -1795,6 +1795,12 @@ public:
                     result["bpp"] = 1;
                     result["eff7_512"] = true;
                     break;
+                case M_PROFIHR:
+                    result["resolution"] = "512x240";
+                    result["bpp"] = 1;
+                    result["colors"] = 16;
+                    result["profi_hires"] = true;
+                    break;
                 case M_P384:
                     result["resolution"] = "384x304";
                     result["overscan"] = true;

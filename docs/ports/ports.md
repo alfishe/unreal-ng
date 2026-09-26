@@ -638,6 +638,21 @@ The Profi was a powerful Czechoslovakian/Russian clone with a focus on expansion
         *   The "Profi COM port & Soft XT keyboard" section lists ports `#E0FB-#EFFB`. These are not IDE but COM/Keyboard.
         *   The main "ATM IDE" or "NemoIDE" port schemes are common for clones. Profi might use a variation of these or its own scheme if it has IDE. The table does not clearly assign standard IDE ports to Profi (`9`) under the "ATM IDE" or "NemoIDE" sections. However, the general section "8 bit IDE by Pera Putnik" (`#2B-#EF`) or "divIDE" (`#A3-#BF`, `#E3`) are generic IDE solutions Profi might have adopted or been compatible with.
 
+*   **Covox/SoundRive DAC:**
+    *   **Port `#5F`:** Left channel (write-only 8-bit DAC).
+    *   **Port `#3F`:** Right channel (write-only 8-bit DAC).
+    *   These double as the Beta Disk FDC registers above when the disk interface is on the bus (DOS latch or
+        CP/M mode); Covox answers only when it is off the bus. Confirmed and implemented in this codebase - see
+        [profi-1024.md](../hardware/profi-1024.md#sound).
+
+*   **RTC/CMOS (DS12885 / MC146818-compatible):**
+    *   **Ports `#BF`, `#FF`:** register address latch (write-only).
+    *   **Ports `#9F`, `#DF`:** register data (read/write).
+    *   All four decode as one chip select, `(port & 0x9F) == 0x9F`; bit 5 splits address (set) from data
+        (clear). Active only in "extended" mode (`cpm && rom14` - see paging bits above); `#BF`/`#FF` double as
+        the Beta Disk system register outside that mode. Confirmed and implemented in this codebase - see
+        [profi-1024.md](../hardware/profi-1024.md#rtc--cmos).
+
 *   **Profi COM port & Soft XT keyboard:**
     *   **Port `#E0FB` (57595):** XT Keyboard data.
     *   **Port `#E8FB` (59643):** Register (likely for keyboard controller or COM port status/control).
@@ -850,6 +865,22 @@ Soundrive was another sound device, often simpler than General Sound, providing 
     *   `#0F, #1F, #4F, #5F` and mirrors `#F1, #F3, #F9, #FB`.
     *   **DECODING:** `xxxxxxxxxB0Axxx1` and `xxxxxxxxxxxxB0A1` for the mirrors.
     *   **WRITE:** `LA,LB,RA,RB` (Left A, Left B, Right A, Right B channels). This is a more compact scheme.
+    *   **Mode 2 (the `#F1/#F3/#F9/#FB` mirror set) is the common one** — VELESOFT's
+        DAC-for-ZX database documents SoundDrive 1.05 mode 2 as `#F1` L-A, `#F3` L-B,
+        `#F9` R-C, `#FB` R-D, with `#FB` explicitly doubling as the plain Covox port
+        (mono Covox software works unchanged on a fitted SoundDrive).
+    *   **Sources:** [BC Info Guide #4 — ZX Spectrum Ports Guide (Black_Cat, 2008,
+        www.zx.clan.su)](zx-ports-full-table.md) — the SOUNDRIVE v1.02/v1.05 tables;
+        VELESOFT DAC-for-ZX, <https://velesoft.speccy.cz/da_for_zx-cz.htm>.
+    *   **This emulator** decodes both sets on Pentagon/Scorpion, when `SD=1`:
+        the mirror set `#F1/#F3/#F9/#FB` via mask `0xF5`/match `0xF1` (pattern
+        `1111B0A1`), and the primary set `#0F/#1F/#4F/#5F` via mask
+        `0xAF`/match `0x0F` — see `core/src/emulator/sound/covox.h`. The
+        primary set physically aliases into the Beta128 FDC's wide mirror
+        decode, so `PortDecoder_Pentagon128::DecodePortOut()` only routes it
+        to SoundDrive while TR-DOS is not paged in (Beta128 keeps the
+        addresses otherwise) — matching the reference decoders (pentevo/
+        Unreal `io.cpp`, Xpeccy `soundrive.c` SDRV_105_1).
 
 ### TurboSound / TurboSound FM
 
@@ -1106,6 +1137,22 @@ Soundrive was another sound device, often simpler than General Sound, providing 
     *   `#0F, #1F, #4F, #5F` and mirrors `#F1, #F3, #F9, #FB`.
     *   **DECODING:** `xxxxxxxxxB0Axxx1` and `xxxxxxxxxxxxB0A1` for the mirrors.
     *   **WRITE:** `LA,LB,RA,RB` (Left A, Left B, Right A, Right B channels). This is a more compact scheme.
+    *   **Mode 2 (the `#F1/#F3/#F9/#FB` mirror set) is the common one** — VELESOFT's
+        DAC-for-ZX database documents SoundDrive 1.05 mode 2 as `#F1` L-A, `#F3` L-B,
+        `#F9` R-C, `#FB` R-D, with `#FB` explicitly doubling as the plain Covox port
+        (mono Covox software works unchanged on a fitted SoundDrive).
+    *   **Sources:** [BC Info Guide #4 — ZX Spectrum Ports Guide (Black_Cat, 2008,
+        www.zx.clan.su)](zx-ports-full-table.md) — the SOUNDRIVE v1.02/v1.05 tables;
+        VELESOFT DAC-for-ZX, <https://velesoft.speccy.cz/da_for_zx-cz.htm>.
+    *   **This emulator** decodes both sets on Pentagon/Scorpion, when `SD=1`:
+        the mirror set `#F1/#F3/#F9/#FB` via mask `0xF5`/match `0xF1` (pattern
+        `1111B0A1`), and the primary set `#0F/#1F/#4F/#5F` via mask
+        `0xAF`/match `0x0F` — see `core/src/emulator/sound/covox.h`. The
+        primary set physically aliases into the Beta128 FDC's wide mirror
+        decode, so `PortDecoder_Pentagon128::DecodePortOut()` only routes it
+        to SoundDrive while TR-DOS is not paged in (Beta128 keeps the
+        addresses otherwise) — matching the reference decoders (pentevo/
+        Unreal `io.cpp`, Xpeccy `soundrive.c` SDRV_105_1).
 
 ### TurboSound / TurboSound FM
 
@@ -1416,6 +1463,9 @@ The MB-02+ was a powerful Russian clone, seemingly integrating many features lik
     *   `#0F, #1F, #3F, #4F, #5F, #7F` for Left channels A, B, Control, and Right channels C, D, Control respectively. (Direct DAC writes or 8255 control).
 *   **SOUNDRIVE v1.05 (SOUNDRIVE/COVOX):**
     *   `#0F, #1F, #4F, #5F` (and mirrors `#F1, #F3, #F9, #FB`) for Left A, Left B, Right A, Right B DAC channels.
+
+Sources for both tables: BC Info Guide #4 ([zx-ports-full-table.md](zx-ports-full-table.md));
+VELESOFT mode-2 port assignment: <https://velesoft.speccy.cz/da_for_zx-cz.htm>.
 
 ---
 

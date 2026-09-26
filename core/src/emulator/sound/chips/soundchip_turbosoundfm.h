@@ -6,9 +6,11 @@
 #include <vector>
 
 #include "common/sound/filters/filter_decimator.h"
+#include "common/sound/filters/filterdcblocker.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/audio.h"
 #include "emulator/sound/chips/iturbosounddevice.h"
+#include "emulator/sound/chips/ssgwritequeue.h"
 #include "emulator/sound/chips/tsfm/fm_word_queue.h"
 #include "emulator/sound/chips/tsfm/ym2203_engine.h"
 #include "emulator/sound/native_audio_tap.h"
@@ -33,13 +35,27 @@ struct TsfmBoard
     bool fmEnabled = false;   // FM audio path enabled; bit 2 = 0 (muted)
 };
 
+/// FM input rate (§6.3): the YM2203 sample clock at prescaler /6 is
+/// PSG_CLOCK_RATE/4 = 437.5 kHz = exactly 2x the SSG generator rate
+constexpr double kTsfmFmInputRate = static_cast<double>(PSG_CLOCK_RATE) / 4.0;
+
+/// FM output coupling (schematic rev C): each YM3014 buffer output (FM1/FM2)
+/// reaches the DA5 mixer through C14/C15 = 10 uF into two 24 k resistors to
+/// the op-amp virtual grounds (R17||R18, R19||R20 = 12 k):
+/// fc = 1 / (2 pi * 12 k * 10 uF) = 1.33 Hz
+constexpr double kTsfmFmCouplingHz = 1.0 / (2.0 * 3.14159265358979323846 * 12000.0 * 10e-6);
+
 /// Per-chip output-stage state (§6): the sample-and-hold value of the newest
-/// consumed FM word, its mono 437.5 kHz decimator (slave of chip-0 SSG left,
-/// §6.3), the LQ boxcar accumulator and the raw pre-mute DAC tap (§6.4).
+/// consumed FM word, the coupling high-pass after the mute gate, its mono
+/// 437.5 kHz decimator (slave of chip-0 SSG left, §6.3), the LQ boxcar
+/// accumulator and the raw pre-mute DAC tap (§6.4).
 /// Not TTD state — the §8.2 payload (P5) carries core state only.
 struct TsfmOutputState
 {
     double hold = 0.0;                    // newest FM word / 32768, held until the next word
+    FilterDCBlocker coupling{kTsfmFmInputRate, kTsfmFmCouplingHz};  // C14/C15 into the DA5 mixer
+    double lastFed = 0.0;                 // newest coupled half-tick value (LQ sample with no half-tick)
+    bool couplingSettlePending = false;   // after a flush: settle the coupling on the first live word
     FilterDecimator decimator;            // 437.5 kHz -> core rate, HQ path
     double lqSum = 0.0;                   // LQ boxcar: sum of gated half-tick values
     uint32_t lqCount = 0;                 // LQ boxcar: half-ticks summed for this output sample
@@ -84,6 +100,7 @@ public:
         fmKeyOn[0] = fmKeyOn[1] = fmKeyOn[2] = 0;
         intf.reset();
         ssg.setChipModel(AYChipModel::YM2149);
+        ssgWrites.clear();
     }
 
     SoundChip_AY8910 ssg;      // SSG half, model YM2149
@@ -101,6 +118,10 @@ public:
 
     // Output-side hand-off (not TTD state, §6)
     FmWordQueue words;
+
+    // SSG register writes timed to their T-state, applied by the render loop
+    // on the tick they fall in (TTD state: pending writes are chip input)
+    SsgWriteQueue ssgWrites;
 
     // Output stage (§6): hold register, decimator, LQ boxcar, raw DAC tap
     TsfmOutputState out;
@@ -138,14 +159,17 @@ protected:
     int16_t* const _fm0Buffer = (int16_t*)_fm0AudioDescriptor.memoryBuffer;
     int16_t* const _fm1Buffer = (int16_t*)_fm1AudioDescriptor.memoryBuffer;
 
-    /// FM input rate (§6.3): the YM2203 sample clock at prescaler /6 is
-    /// PSG_CLOCK_RATE/4 = 437.5 kHz = exactly 2x the SSG generator rate
-    static constexpr double kFmInputRate = static_cast<double>(PSG_CLOCK_RATE) / 4.0;
+    static constexpr double kFmInputRate = kTsfmFmInputRate;
     /// FM loudness baseline (§7.1): full-scale DAC word -> 0.30 in the mix
     static constexpr double kFmBaseGain = 0.30;
+    /// Constant lag of the render cursor behind the word and SSG-write
+    /// timeline (§6.2, see kTurboSoundRenderLagT)
+    static constexpr int64_t kFmRenderLagT = kTurboSoundRenderLagT;
 
     size_t _coreRate = AUDIO_SAMPLING_RATE;
     bool _hqEnabled = true;
+    // Anti-alias FIR tier, applied by setCoreRate ([SOUND] DecimatorQuality)
+    FilterDecimator::Quality _decimatorQuality = FilterDecimator::Quality::Reference;
     bool _synthesisSuppressed = false;
     bool _coreSynthesisSkipped = false;  // FM operator clocking frozen (sound off, no TTD); see ITurboSoundDevice
     bool _prescalerWarned = false;  // one §9.4 warning per device instance
@@ -159,7 +183,15 @@ protected:
     uint32_t _lastTStates = 0;
     double _decimationPhase = 0.0;
     double _lqTicksPerSample = (double)(PSG_CLOCK_RATE / 8) / (double)AUDIO_SAMPLING_RATE;
-    uint64_t _renderT = 0;  // SSG-tick cursor of the render loop (§6.2), frame-relative
+    // FM half-tick cursor of the render loop (§6.2) on the word timeline:
+    // continuous across frames (rebased with the words), kFmRenderLagT behind
+    int64_t _renderT = -kFmRenderLagT;
+    // Rate or quality switch: the render loop's position against the CPU
+    // clock moved; re-anchor the cursor at the next frame start
+    bool _renderReanchor = false;
+    // LQ -> HQ switch or synthesis resumed: the output stage holds audio from
+    // before the gap; flushed at the next frame start (emulation thread)
+    bool _outputFlushPending = false;
 
     // FM gain = kFmBaseGain * 10^(trim/20) (§7.1); [SOUND] TSFM_FmTrimDb
     double _fmGain = kFmBaseGain;
@@ -254,10 +286,22 @@ public:
     /// (the tap sees the raw pre-mute value), then feed the gated hold —
     /// board mute grounds the DAC data line — to the HQ decimator or the LQ
     /// boxcar accumulator. Public: §12.4 drives half-tick sequences directly
-    void fmHalfTick(int chipIndex, uint64_t h);
+    void fmHalfTick(int chipIndex, int64_t h);
 
 protected:
     void advanceChip(TsfmChip& c, int32_t delta, uint64_t t0);
+
+    /// Silence the output-stage audio content - hold, coupling, LQ boxcar,
+    /// decimator histories - keeping every tick-gating phase (determinism)
+    void flushOutputStage();
+
+    /// Timed SSG register write at the current core position (see
+    /// SsgWriteQueue); applied at once while synthesis is suppressed
+    void queueSsgWrite(TsfmChip& c, uint8_t reg, uint8_t value);
+    /// Apply every pending SSG write timed at or before t (render cursor)
+    void applySsgWrites(int64_t t);
+    /// Apply every pending SSG write now (nothing will tick them in)
+    void applyAllSsgWrites();
 
     /// LQ boxcar output of one chip's FM hold stream: average of the summed
     /// half-ticks (or the current hold when no half-tick landed on this
@@ -277,11 +321,17 @@ public:
 
     void setHQEnabled(bool enabled) override
     {
+        if (enabled != _hqEnabled)
+            _renderReanchor = true;
+        if (enabled && !_hqEnabled)
+            _outputFlushPending = true;  // the HQ decimators were not fed in LQ
         _hqEnabled = enabled;
     }
 
     void setSynthesisSuppressed(bool suppressed) override
     {
+        if (!suppressed && _synthesisSuppressed)
+            _outputFlushPending = true;  // nothing was rendered while suppressed
         _synthesisSuppressed = suppressed;
     }
 
@@ -294,18 +344,24 @@ public:
     /// Redesigns all six decimators for the rate (§6.3): four SSG ones at
     /// the generator rate (identical to the legacy device — bit-identity,
     /// §11), two FM ones at kFmInputRate in slave mode under chip-0 SSG left
+    void setDecimatorQuality(FilterDecimator::Quality quality) override
+    {
+        _decimatorQuality = quality;
+    }
+
     void setCoreRate(size_t rate) override
     {
         _coreRate = rate;
         _samplePhase = 0;  // in step with SoundManager::applyCoreRate
+        _renderReanchor = true;
         _lqTicksPerSample = (double)(PSG_CLOCK_RATE / 8) / (double)rate;
 
-        _chips[0]->ssg.decimatorLeft().configure((double)rate);
-        _chips[0]->ssg.decimatorRight().configure((double)rate);
-        _chips[1]->ssg.decimatorLeft().configure((double)rate);
-        _chips[1]->ssg.decimatorRight().configure((double)rate);
-        _chips[0]->out.decimator.configure((double)rate, FilterDecimator::Quality::Reference, false, kFmInputRate);
-        _chips[1]->out.decimator.configure((double)rate, FilterDecimator::Quality::Reference, false, kFmInputRate);
+        _chips[0]->ssg.decimatorLeft().configure((double)rate, _decimatorQuality);
+        _chips[0]->ssg.decimatorRight().configure((double)rate, _decimatorQuality);
+        _chips[1]->ssg.decimatorLeft().configure((double)rate, _decimatorQuality);
+        _chips[1]->ssg.decimatorRight().configure((double)rate, _decimatorQuality);
+        _chips[0]->out.decimator.configure((double)rate, _decimatorQuality, false, kFmInputRate);
+        _chips[1]->out.decimator.configure((double)rate, _decimatorQuality, false, kFmInputRate);
 
         // FM decimators run in slave mode: chip-0 SSG left gates the output
         // cadence of every stream (§6.3)
@@ -423,8 +479,8 @@ public:
     /// endregion </Ports interaction>
 
     /// region <TTDSerializable interface>
-    /// §8.2 layout (v3), 1190 bytes, PeripheralId::TSFM = 4:
-    ///   u8 version (= 3)
+    /// §8.2 layout (v4), 2000 bytes, PeripheralId::TSFM = 4:
+    ///   u8 version (= 4)
     ///   u8 board (chip | statusRead<<1 | fmEnabled<<2)
     ///   f64 samplePhase, f64 decimationPhase        (v2: render-loop PLL/LQ phase)
     ///   f64 x4: chip{0,1}.ssg.decimator{Left,Right}().phase()  (v3: per-decimator
@@ -440,7 +496,12 @@ public:
     ///     i32 busyRemaining
     ///     u16 ymfmSize            (= 494, asserted)
     ///     u8[ymfmSize] ymfm::ym2203::save_restore() payload
-    ///     u8[57] SoundChip_AY8910::TTDSaveState() payload (SSG half)
+    ///     u8[73] SoundChip_AY8910::TTDSaveState() payload (SSG half)
+    ///   v4 timeline tail (relative to the synced position; rebuilt around
+    ///   the restored CPU position):
+    ///     i64 render cursor offset (decides the tick of every SSG write)
+    ///     per chip x2: u8 pending SSG write count, then
+    ///       SsgWriteQueue::kCapacity x {i32 t offset, u8 reg, u8 value}
     /// Everything else in the output stage (decimator FIR history/content,
     /// hold register, LQ boxcar accumulator, word queues, DC path, native
     /// taps) is genuinely just rendering cache - NOT part of TTD state, and

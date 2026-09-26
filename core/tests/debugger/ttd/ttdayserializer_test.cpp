@@ -115,17 +115,17 @@ protected:
     }
 };
 
-TEST_F(TTD_AY_Serializer_Test, TTDStateSize_IsStable_57Bytes)
+TEST_F(TTD_AY_Serializer_Test, TTDStateSize_IsStable_73Bytes)
 {
     // Per the layout in soundchip_ay8910.cpp (registers + currentRegister +
-    // 3 tone gens + noise gen + envelope gen = 57). TDD §6.4 requires this to
-    // be fixed per device instance.
-    EXPECT_EQ(_chipA->TTDStateSize(), 57u);
-    EXPECT_EQ(_chipB->TTDStateSize(), 57u);
+    // 3 tone gens + noise gen + envelope gen = 57, + 16 generator-side
+    // registers = 73). TDD §6.4 requires this to be fixed per device instance.
+    EXPECT_EQ(_chipA->TTDStateSize(), 73u);
+    EXPECT_EQ(_chipB->TTDStateSize(), 73u);
 
     // Stability: size doesn't change after state mutation.
     _chipA->writeRegister(AY_A_FINE, 0x42);
-    EXPECT_EQ(_chipA->TTDStateSize(), 57u);
+    EXPECT_EQ(_chipA->TTDStateSize(), 73u);
 }
 
 TEST_F(TTD_AY_Serializer_Test, RoundTrip_DefaultState_IsByteIdentical)
@@ -270,11 +270,13 @@ protected:
     }
 };
 
-TEST_F(TTD_TurboSound_Serializer_Test, TTDStateSize_IsStable_115Bytes)
+TEST_F(TTD_TurboSound_Serializer_Test, TTDStateSize_IsStable_925Bytes)
 {
-    // 1 byte current-chip selector + 2 × 57-byte AY chips = 115 bytes.
-    EXPECT_EQ(_ttsA->TTDStateSize(), 115u);
-    EXPECT_EQ(_ttsB->TTDStateSize(), 115u);
+    // 1 byte current-chip selector + 2 x 73-byte AY chips + timeline tail
+    // (8-byte render cursor offset + 2 x pending SSG writes {1 + 64 x 6})
+    // = 1 + 146 + 8 + 770 = 925 bytes.
+    EXPECT_EQ(_ttsA->TTDStateSize(), 925u);
+    EXPECT_EQ(_ttsB->TTDStateSize(), 925u);
 }
 
 TEST_F(TTD_TurboSound_Serializer_Test, RoundTrip_DefaultState_IsByteIdentical)
@@ -382,8 +384,8 @@ TEST(TTD_AY_ManagerIntegration_Test, CaptureNow_PopulatesAyStateBlob)
         << "TurboSound must register itself and appear in the checkpoint";
     const auto ayState = ttd::TTDPeripheralRegistry::DecodeBlob(
         static_cast<uint8_t>(ttd::PeripheralId::TurboSound), ayBlob->second);
-    EXPECT_EQ(ayState.size(), 115u)
-        << "TurboSound blob must contain the payload (1 + 2×57 bytes)";
+    EXPECT_EQ(ayState.size(), 925u)
+        << "TurboSound blob must contain the payload (1 + 2x73 bytes + 778 timeline tail)";
 
     emulator.Stop();
     emulator.Release();

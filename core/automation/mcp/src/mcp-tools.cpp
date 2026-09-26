@@ -807,7 +807,7 @@ void RegisterInspectState(ToolRegistry& registry)
         "inspect_state",
         "Inspect emulator state in one call: registers, memory ranges, disassembly, stack words, breakpoints, memory banks, "
         "paging state (tagged latches + bank table), static port map with tags (ports), video mode (resolution, color depth, "
-        "EFF7 state for Pentagon 16col/HWMC), screen OCR text, screen image metadata, screen digest hash, raster timing, "
+        "EFF7 state for Pentagon 16col/HWMC, PROFI/PROFIHR 512x240 for Profi), screen OCR text, screen image metadata, screen digest hash, raster timing, "
         "ROM signatures, AY/SSG chips (audio_ay), TurboSound FM YM2203 halves (audio_fm), General Sound card (audio_gs), Beta Disk WD1793 (fdc), "
         "Kempston mouse + port routing (mouse). Combine aspects to reduce round-trips.",
         std::move(schema),
@@ -1007,7 +1007,7 @@ void RegisterInspectState(ToolRegistry& registry)
                         }
                         else if (aspect == "video")
                         {
-                            // Video mode: resolution, color depth, EFF7 state for Pentagon 16col/HWMC modes
+                            // Video mode: resolution, color depth, EFF7 state for Pentagon 16col/HWMC modes, PROFIHR 512x240 for Profi
                             steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", Endpoint(id, "/state/screen/mode"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);

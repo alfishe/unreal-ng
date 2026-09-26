@@ -281,7 +281,10 @@ QImage DeviceScreenGLWindow::grabFramebuffer()
         {
             frame = _latchedFrame;
         }
-        else if (_devicePixels != nullptr)
+        // A frame source is installed: never fall back to _devicePixels. It wraps the emulator's framebuffer, which
+        // is freed and reallocated when the guest switches video mode (Profi 352x288 <-> 512x240 hi-res, ATM, AlCo)
+        // before the queued re-attach runs - a null or dangling image would be uploaded to the GPU.
+        else if (!_frameSource && _devicePixels != nullptr)
         {
             frame = _devicePixels->copy();
         }
@@ -421,14 +424,17 @@ void DeviceScreenGLWindow::updateTexture()
         {
             sourceImage = &_latchedFrame;
         }
-        else if (_devicePixels != nullptr)
+        // A frame source is installed: never fall back to _devicePixels. It wraps the emulator's framebuffer, which
+        // is freed and reallocated when the guest switches video mode (Profi 352x288 <-> 512x240 hi-res, ATM, AlCo)
+        // before the queued re-attach runs - a null or dangling image would be uploaded to the GPU.
+        else if (!_frameSource && _devicePixels != nullptr)
         {
             legacyCopy = _devicePixels->copy();
             sourceImage = &legacyCopy;
         }
     }
 
-    if (!sourceImage)
+    if (!sourceImage || sourceImage->isNull())
         return;
 
     QImage* uploadImage = sourceImage;

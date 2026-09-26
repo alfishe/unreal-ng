@@ -301,6 +301,7 @@ bool Config::ParseConfig(IniFile& inimanager)
 	// SOUND section
 	config.sound.covoxFB = (int)inimanager.GetLongValue(sound, "CovoxFB", 0);
 	config.sound.covoxDD = (int)inimanager.GetLongValue(sound, "CovoxDD", 0);
+	config.sound.sd = (int)inimanager.GetLongValue(sound, "SD", 0);
 
 	// Core audio rate: auto | 44100 | 48000 | 88200 | 96000 | 176400 | 192000
 	// (multirate plan phase 6). 0 = auto. Decides the core rate ONLY while
@@ -455,7 +456,17 @@ bool Config::ParseConfig(IniFile& inimanager)
 		}
 	}
 #endif
-
+	// Anti-alias decimator tier: Reference (default) | HighFidelity. Unknown
+	// values warn and keep the default; a missing key resets to it
+	{
+		config.sound.decimatorHighFidelity = false;
+		line[0] = '\0';
+		CopyStringValue(inimanager.GetValue(sound, "DecimatorQuality", nullptr), line, sizeof line);
+		if (StringHelper::CompareCaseInsensitive(line, "HighFidelity", strlen("HighFidelity")) == 0)
+			config.sound.decimatorHighFidelity = true;
+		else if (line[0] != '\0' && StringHelper::CompareCaseInsensitive(line, "Reference", strlen("Reference")) != 0)
+			MLOGWARNING("Config: unsupported [SOUND] DecimatorQuality='%s', using Reference", line);
+	}
 	// VIDEO section
 	// A/V sync video delay: auto (-1) = match the audio path latency
 	// (~2 frames); 0 = lowest input latency (audio trails by the ring depth)
@@ -799,8 +810,20 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
             config.intlen   = 32;
             break;
 
+        case MM_PROFI:
+            // Profi: 312 x 224T frame, INT-to-first-paper distance 12580T, INT 28T
+            // (UnrealSpeccy PRESET.PROFI, "thanks to DDp"; also ZXMAK2 12583T).
+            // Consensus of the emulators, not verified on real hardware.
+            // The raster paper starts at T=16152 (line 72 * 224 + 24), INT fires at
+            // intstart+1 => 16152 - 3572 = 12580T.
+            config.frame    = 69888;   // 224 * 312
+            config.t_line   = 224;
+            config.intstart = 3571;
+            config.intlen   = 28;
+            break;
+
         default:
-            // Leave existing values for TSConf, ATM, Profi, etc.
+            // Leave existing values for TSConf, ATM, etc.
             break;
     }
 
@@ -842,6 +865,12 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
                 config.t_line = 224;
                 config.intstart = 1794;
                 config.intlen = 32;
+                break;
+            case MM_PROFI:
+                config.frame = 69888;   // 224 * 312
+                config.t_line = 224;
+                config.intstart = 3571;
+                config.intlen = 28;
                 break;
             default:
                 break;

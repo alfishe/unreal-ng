@@ -47,11 +47,13 @@ enum class PeripheralId : uint8_t
     Covox      = 3,
     TSFM       = 4,
     GeneralSound = 5,
-    ScorpionProfROM = 6,  // Scorpion ZS 256/1024 ProfROM state machine
+    ScorpionProfROM = 6,  // Scorpion ZS 256 paging (#1FFD, DOS trigger) + ProfROM state machine
     KempstonMouse = 7,    // Kempston Mouse counters/buttons/wheel (core device, every model)
     AtmPaging = 8,        // ATM Turbo 2+ / ATM3 / ZX-Evo BaseConf memory map
-    NeoGS = 9,            // NeoGS FPGA card (neogs-tdd.md - P2 placeholder, reserved id, not registered yet)
-    GeneralSoundLightweight = 10, // GS lightweight personality (in-tree mod player, no coprocessor)
+    ProfiPaging = 9,      // Profi 1024: #DFFD latch, hi-res palette
+    // 10 reserved: MoonSound (moonsound branch, see ttd-v2-migration/branch-merge-strategy.md)
+    GeneralSoundLightweight = 11, // GS lightweight personality (in-tree mod player, no coprocessor)
+    NeoGS = 12,           // NeoGS FPGA card (neogs-tdd.md - P2 placeholder, reserved id, not registered yet)
     // Future: SAA1099, GS512, etc.
     Count
 };

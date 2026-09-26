@@ -117,10 +117,10 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
     // Matches the original UnrealSpeccy: io.cpp gates the whole WD93 block on
     // CF_DOSPORTS, which memory.cpp set_banks() raises exactly when CF_TRDOS
     // is set for the Pentagon memory model.
-    if (IsBeta128Port(decodedPort) && !(_context->emulatorState.flags & CF_TRDOS))
+    bool betaGateTriggered = IsBeta128Port(decodedPort) && !(_context->emulatorState.flags & CF_TRDOS);
+    if (betaGateTriggered)
     {
         decodedPort = 0x0000; // FDC not on the bus: leave the port undecoded
-        disp.wasBeta128Gated = true;
     }
 
     uint8_t mouseReg = 0;
@@ -155,6 +155,20 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
                 result = PeripheralPortIn(decodedPort);
                 break;
         }
+    }
+    else if (DispatchSelfDecodingIn(port, result))
+    {
+        // Self-decoding peripheral (SoundDrive mode 1 or 2 - see
+        // DecodePortOut for the full rationale) claimed the raw port: mode 2
+        // (#F1/#F3/#F9/#FB) never matched the static table at all, mode 1
+        // (#0F/#1F/#4F/#5F) only reaches here once the Beta128 gate above
+        // already declined it
+        decodedPort = port;
+        _lastPortDecoded = true;
+    }
+    else if (betaGateTriggered)
+    {
+        disp.wasBeta128Gated = true;
     }
     disp.decodedPort = decodedPort;
     disp.wasDecoded = _lastPortDecoded;
@@ -207,10 +221,11 @@ void PortDecoder_Pentagon128::DecodePortOut(uint16_t port, uint8_t value, uint16
 
     // Same TR-DOS gate as DecodePortIn: with the FDC off the bus its registers
     // cannot be written - hardware would silently ignore the OUT
-    if (IsBeta128Port(decodedPort) && !(_context->emulatorState.flags & CF_TRDOS))
+    bool betaGateTriggered = IsBeta128Port(decodedPort) && !(_context->emulatorState.flags & CF_TRDOS);
+    if (betaGateTriggered)
     {
-        decodedPort = 0x0000; // FDC not on the bus: drop the write
-        disp.wasBeta128Gated = true;
+        decodedPort = 0x0000; // FDC not on the bus: drop the write (unless a
+                               // self-decoding peripheral claims it below)
     }
 
     if (decodedPort != 0x0000)
@@ -231,6 +246,25 @@ void PortDecoder_Pentagon128::DecodePortOut(uint16_t port, uint8_t value, uint16
                 PeripheralPortOut(decodedPort, value);
                 break;
         }
+    }
+    else if (DispatchSelfDecodingOut(port, value))
+    {
+        // Self-decoding peripheral (SoundDrive mode 1 or 2) claimed the raw
+        // port. Mode 2 (#F1/#F3/#F9/#FB) is a completely separate address
+        // family from Beta128 and never matched the static table above at
+        // all; mode 1 (#0F/#1F/#4F/#5F - Covox::PORT_*_MODE1) aliases into
+        // the wide Beta128 mirror decode and only reaches here once the gate
+        // above has already decided TR-DOS isn't claiming the address -
+        // matching the reference decoders (pentevo/Unreal io.cpp: `conf.
+        // sound.sd && (port & 0xAF) == 0x0F`; Xpeccy soundrive.c
+        // SDRV_105_1/SDRV_105_2, tried from one shared dispatch point after
+        // each machine's own FDC-precedence gate).
+        decodedPort = port;
+        disp.wasDecoded = true;
+    }
+    else if (betaGateTriggered)
+    {
+        disp.wasBeta128Gated = true;
     }
     disp.decodedPort = decodedPort;
 
@@ -382,10 +416,12 @@ static constexpr PortMatch const pentagonPortMasksMatches[] =
         { 0b1000'0000'0000'0110, 0b0000'0000'0000'0100, 0x7FFD },   // Mem #7FFD        A15=0, A2=1, A1=0 (excludes SOUNDRIVE F1/F9)
         { 0b0000'0000'0000'0001, 0b0000'0000'0000'0000, 0x00FE },   // Sys $00FE        Match value: (0x0000)
 
-        // COVOX/SOUNDRIVE ports #F1,#F3,#F9,#FB - decoded as: bits[7:4]=1111, bit2=0, bit0=1
-        // Mask: 11110101 (0xF5), Match: 11110001 (0xF1)
-        // This decodes all 4 SOUNDRIVE channels, resolved to port 0x00FB for handler
-        { 0b0000'0000'1111'0101, 0b0000'0000'1111'0001, 0x00FB },   // COVOX/SOUNDRIVE
+        // COVOX/SOUNDRIVE (#F1/#F3/#F9/#FB mode 2, #0F/#1F/#4F/#5F mode 1) is
+        // NOT in this table: Covox is a self-decoding PortDevice
+        // (tryClaimOut/In), tried via DispatchSelfDecodingOut/In() from
+        // DecodePortOut/In() once the arms above have declined the raw port.
+        // See Covox::PORT_LEFT_A_MODE1's doc for why it lives outside the
+        // exact-address dispatch map entirely.
 
         // General Sound host ports (GS design §6): full low-byte decode, any
         // A15-A8 mirror resolves to the canonical device key (Unreal io.cpp

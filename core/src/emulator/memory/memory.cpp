@@ -850,6 +850,14 @@ void Memory::UpdateZ80Banks()
         }
     }
 
+    if (config.mem_model == MM_PROFI && _context->pPortDecoder)
+    {
+        // Profi: ROM slot chosen above (same as the generic model); the RAM windows,
+        // WOROM and CPM (CF_DOSPORTS) are derived from #7FFD/#DFFD by the decoder
+        // (port of the UnrealSpeccy set_banks() MM_PROFI case)
+        _context->pPortDecoder->UpdateModelMemoryBanks();
+    }
+
     unsigned char dosflags = CF_LEAVEDOSRAM;
     if (config.mem_model == MM_PENTAGON || config.mem_model == MM_PROFI)
         dosflags = CF_LEAVEDOSADR;

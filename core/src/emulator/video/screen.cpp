@@ -422,9 +422,9 @@ Screen::ModeSelection Screen::DetectModeATM3(const EmulatorState& state) const
 Screen::ModeSelection Screen::DetectModeProfi(const EmulatorState& state) const
 {
     if (state.pDFFD & 0x80)
-        return { M_PROFI, R_512_240 };
+        return { M_PROFIHR, R_512_240 };
 
-    return { _vid.mode, R_256_192 };
+    return { M_PROFI, R_256_192 };
 }
 
 // GMX: 7EFD bit 3 selects the extended 320x200 mode; without it the model
@@ -570,6 +570,8 @@ void Screen::SetVideoMode(VideoModeEnum mode)
         case M_P384:  // Pentagon overscan - same ULA behavior as standard Pentagon
         case M_PHR:
         case M_SCORPION:  // Scorpion ZS-256 - discrete-logic ULA, contention-free
+        case M_PROFI:     // Profi - discrete-logic ULA, no contention
+        case M_PROFIHR:
             _rasterState.borderUpdateTStates = 1;
             _rasterState.contentionEnabled = false;
             _rasterState.fetchType = ULA_DISCRETE_LOGIC;
@@ -839,6 +841,8 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
         case M_ATMHR:   // ATM Hardware Multicolor 640x200
         case M_ATMTX:   // ATM Text 80x25 (640x200)
         case M_ATMTL:   // ATM3 Linear Text
+        case M_PROFI:   // Profi standard / hi-res
+        case M_PROFIHR:
             break;
         default:
             MLOGWARNING("AllocateFramebuffer: Unknown video mode");
@@ -1092,6 +1096,10 @@ std::vector<uint16_t> Screen::GetActiveSurfaceRAMPages(VideoModeEnum mode, uint8
             return {altPage, videoPage};
         }
 
+        // Profi hi-res: bitmap page 4 (6 with 7FFD.3), attribute page 0x38 (0x3A)
+        case M_PROFIHR:
+            return (p7FFD & 0x08) ? std::vector<uint16_t>{6, 0x3A} : std::vector<uint16_t>{4, 0x38};
+
         // ZX family and every other mode: fall back to the classic surface
         // (Profi/GMX/TS renderers are stubbed on master until they define one)
         default:
@@ -1168,6 +1176,9 @@ std::string Screen::GetVideoModeName(VideoModeEnum mode)
             break;
         case M_SCORPION:
             result = "Scorpion";
+            break;
+        case M_PROFIHR:
+            result = "PROFIHR";
             break;
         default:
             result = "Unknown";
@@ -1794,11 +1805,6 @@ void Screen::DrawATM3Text(uint32_t n)
     video.vptr = vptr;
 }
 
-void Screen::DrawProfi(uint32_t n)
-{
-    (void)n;
-}
-
 void Screen::DrawGMX(uint32_t n)
 {
     (void)n;
@@ -1848,6 +1854,7 @@ std::string Screen::GetVideoVideoModeName(VideoModeEnum mode)
         "GMX",                  // M_GMX
         "Border only",          // M_BRD
         "Scorpion 256k",        // M_SCORPION
+        "Profi 512x240",        // M_PROFIHR
     };
     static_assert(std::size(videoModeName) == M_MAX, "videoModeName array size mismatch with VideoModeEnum");
 

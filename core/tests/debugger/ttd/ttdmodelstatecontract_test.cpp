@@ -49,7 +49,7 @@ public:
 /// fails here rather than at someone's seek months later.
 TEST(TTDModelStateContract_Test, DeclaredStateIsCoveredBySerializers)
 {
-    for (const char* model : {"48K", "128k", "PENTAGON", "SCORPION", "PROFSCORP", "ATM710", "ATM3"})
+    for (const char* model : {"48K", "128k", "PENTAGON", "SCORPION", "PROFSCORP", "ATM710", "ATM3", "PROFI"})
     {
         Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
         if (emulator == nullptr)
@@ -80,21 +80,25 @@ TEST(TTDModelStateContract_Test, DeclaredStateIsCoveredBySerializers)
     }
 }
 
-/// PROFSCORP must actually declare its ProfROM state - if this regresses, the
-/// plane/page latches go uncaptured and a seek lands on the wrong ROM page.
-TEST(TTDModelStateContract_Test, ProfScorpDeclaresProfRomState)
+/// Both Scorpion variants must declare their model state: #1FFD and the magic
+/// button trigger drive the paging chain on each, the ProfROM plane on
+/// PROFSCORP. If this regresses, a seek lands on the wrong ROM / RAM page.
+TEST(TTDModelStateContract_Test, ScorpionModelsDeclareScorpionState)
 {
-    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PROFSCORP", LoggerLevel::LogError);
-    ASSERT_NE(emulator, nullptr);
+    for (const char* model : {"SCORPION", "PROFSCORP"})
+    {
+        Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
+        ASSERT_NE(emulator, nullptr) << model;
 
-    EmulatorContext* context = emulator->GetContext();
-    const auto declared = context->pPortDecoder->GetTTDModelStateIds();
+        EmulatorContext* context = emulator->GetContext();
+        const auto declared = context->pPortDecoder->GetTTDModelStateIds();
 
-    EXPECT_NE(std::find(declared.begin(), declared.end(), ttd::PeripheralId::ScorpionProfROM),
-              declared.end())
-        << "PROFSCORP must declare ScorpionProfROM state";
+        EXPECT_NE(std::find(declared.begin(), declared.end(), ttd::PeripheralId::ScorpionProfROM),
+                  declared.end())
+            << model << " must declare ScorpionProfROM state (#1FFD, DOS trigger, plane)";
 
-    EmulatorTestHelper::CleanupEmulator(emulator);
+        EmulatorTestHelper::CleanupEmulator(emulator);
+    }
 }
 
 /// A machine described entirely by the standard 128K ports declares nothing,
@@ -131,15 +135,20 @@ TEST(TTDModelStateContract_Test, DeclaredButUnimplementedStateRefusesRecording)
     fm->setFeature(Features::kDebugMode, true);
     fm->setFeature(Features::kTimeTravel, true);
 
-    PortDecoder* original = context->pPortDecoder;
-    LyingDecoder lying(context);
-    context->pPortDecoder = &lying;
+    // Scoped: the decoder's destructor logs through the context's logger, so it
+    // must be gone before CleanupEmulator frees the context
+    bool started = false;
+    {
+        PortDecoder* original = context->pPortDecoder;
+        LyingDecoder lying(context);
+        context->pPortDecoder = &lying;
 
-    // Exercised through the public entry point: refusing to record is the
-    // behaviour that matters, not the private helper that decides it.
-    const bool started = context->pTimeTravelManager->StartRecording();
+        // Exercised through the public entry point: refusing to record is the
+        // behaviour that matters, not the private helper that decides it.
+        started = context->pTimeTravelManager->StartRecording();
 
-    context->pPortDecoder = original;  // restore before anything else touches it
+        context->pPortDecoder = original;  // restore before anything else touches it
+    }
 
     EXPECT_FALSE(started) << "a model declaring uncovered state must not record";
     EXPECT_NE(context->pTimeTravelManager->GetState(), ttd::TTDSessionState::Recording);

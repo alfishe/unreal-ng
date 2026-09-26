@@ -307,8 +307,10 @@ TEST_F(DezogZesaruxFixture, HistoryIndexesAndErrors)
     const std::string entry = _client.command("cpu-history get 0");
     EXPECT_EQ(entry.substr(0, 3), "PC=");
 
+    // Exactly the five stepped instructions (the instruction at the current
+    // PC has not executed)
     const std::string size = _client.command("cpu-history get-size");
-    EXPECT_GT(std::stoul(size), 5u);
+    EXPECT_EQ(std::stoul(size), 5u);
 
     EXPECT_EQ(_client.command("cpu-history get 4294967295"), "ERROR: index out of range");
     EXPECT_EQ(_client.command("cpu-history bogus"), "Error. Unknown parameter");

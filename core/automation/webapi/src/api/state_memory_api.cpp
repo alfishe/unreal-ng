@@ -170,6 +170,22 @@ void EmulatorAPI::getStateMemory(const HttpRequestPtr& req, std::function<void(c
             paging["eff7_flags"] = eff7_flags;
         }
 
+        // pDFFD: Profi 1024 extended paging / video mode latch
+        if (config.mem_model == MM_PROFI)
+        {
+            paging["port_dffd"] = static_cast<int>(state.pDFFD);
+            paging["port_dffd_hex"] = StringHelper::Format("0x%02X", state.pDFFD);
+
+            Json::Value dffdFlags;
+            dffdFlags["extended_ram_bank"] = static_cast<int>(state.pDFFD & 0x07);
+            dffdFlags["sco"] = (state.pDFFD & 0x08) != 0;
+            dffdFlags["worom"] = (state.pDFFD & 0x10) != 0;
+            dffdFlags["cpm"] = (state.pDFFD & 0x20) != 0;
+            dffdFlags["scr"] = (state.pDFFD & 0x40) != 0;
+            dffdFlags["video_512x240"] = (state.pDFFD & 0x80) != 0;
+            paging["dffd_flags"] = dffdFlags;
+        }
+
         // pFE: Border/tape/speaker (always available)
         paging["port_fe"] = static_cast<int>(state.pFE);
         paging["port_fe_hex"] = StringHelper::Format("0x%02X", state.pFE);

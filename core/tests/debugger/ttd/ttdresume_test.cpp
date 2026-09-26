@@ -287,18 +287,20 @@ TEST_F(TTD_Resume_Test, InputJournal_EventAtResumePointKept)
     RunFrames(5);  // 6 checkpoints at frames 0..5.
     _ttd->StopRecording();
 
-    // Position emulator at frame 3, tInFrame == 0 (SeekTo syncs z80.t = 0
-    // at frame-aligned targets — see timetravelmanager.cpp SeekTo step 2).
+    // Position emulator at frame 3. A frame-aligned seek restores the CPU at
+    // the frame's overshoot (TTDChipsetState::cpu_t_in_frame), so the resume
+    // point is (3, overshoot), not (3, 0).
     ASSERT_TRUE(_ttd->SeekTo({3, 0}));
     ASSERT_EQ(_ttd->CurrentPosition().frame, 3u);
+    const uint32_t resumeT = _ttd->CurrentPosition().tInFrame;
 
-    // Capture an event at exactly (3, 0).
+    // Capture an event exactly at the resume point.
     _ttd->RecordInputEvent(static_cast<uint8_t>(ZXKEY_A), /*pressed=*/true);
     ASSERT_EQ(_ttd->GetInputJournal().Size(), 1u);
     EXPECT_EQ(_ttd->GetInputJournal().Events()[0].time.frame, 3u);
-    EXPECT_EQ(_ttd->GetInputJournal().Events()[0].time.tInFrame, 0u);
+    EXPECT_EQ(_ttd->GetInputJournal().Events()[0].time.tInFrame, resumeT);
 
-    // Resume from (3, 0). Event at (3, 0) is AT the resume point — KEPT
+    // Resume from (3, 0). The event is AT the resume point — KEPT
     // (DropAfter uses strict greater-than for the cutoff).
     ASSERT_TRUE(_ttd->ResumeRecordingFrom({3, 0}));
     EXPECT_EQ(_ttd->GetInputJournal().Size(), 1u);
