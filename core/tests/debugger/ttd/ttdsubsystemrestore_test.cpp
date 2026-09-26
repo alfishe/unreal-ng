@@ -642,9 +642,10 @@ TEST_F(TTD_Subsystem_Restore_Test, FDCRegisters_SeekRestoresAllRegisters)
 // ===========================================================================
 // 5. AY TURBOSOUND REGISTERS
 //
-// The TurboSound chip (two AY-3-8910s) serializes 925 bytes: 1 byte for the
+// The TurboSound chip (two AY-3-8910s) serializes 981 bytes: 1 byte for the
 // current-chip selector + 2 x 73 bytes per AY chip + the timeline tail (render
-// cursor + pending timed SSG writes, 778 bytes). The serializer unit test
+// cursor + pending timed SSG writes, 778 bytes) + the render-phase and
+// frame-progress tails (56 bytes). The serializer unit test
 // (ttd_ay_serializer_test.cpp) verifies save/load round-trip in isolation.
 // This test verifies the full SeekTo path: write registers, capture checkpoint,
 // mutate, seek back, verify byte-identical restoration through RestoreCheckpoint.

@@ -32,12 +32,9 @@ Mouse* DebugMouseManager::Device() const
 
 bool DebugMouseManager::IsReplaying() const
 {
-    return _context && _context->ttdReplayActive;
-}
-
-bool DebugMouseManager::IsRecording() const
-{
-    return _context && _context->pTimeTravelManager && _context->pTimeTravelManager->IsRecording();
+    // The TTD journal owns input: a replay, or the machine re-executing
+    // recorded history (TimeTravelManager::OwnsInput)
+    return _context && _context->pTimeTravelManager && _context->pTimeTravelManager->OwnsInput();
 }
 
 MouseInjectResult DebugMouseManager::Guard() const
@@ -51,7 +48,7 @@ MouseInjectResult DebugMouseManager::Guard() const
     else if (IsReplaying())
     {
         result.status = MouseInjectStatus::ReplayActive;
-        result.message = "TTD replay in progress; live mouse input refused";
+        result.message = "TTD replay in progress (recorded input drives the machine); live mouse input refused";
     }
     return result;
 }
@@ -65,34 +62,48 @@ MouseInjectResult DebugMouseManager::Success(const std::string& message) const
     return result;
 }
 
-// Journal BEFORE applying: the entry's time point is the moment of mutation (same as keyboard)
+// Every mouse mutation goes through TimeTravelManager::SubmitLiveInput when TTD is
+// present: refused while the journal owns input, applied on the machine's thread at an
+// instruction boundary and journalled there while recording (same as keyboard)
+bool DebugMouseManager::Submit(const ttd::TTDInputEvent& ev, Mouse& mouse)
+{
+    if (_context && _context->pTimeTravelManager)
+        return _context->pTimeTravelManager->SubmitLiveInput(ev);
+    return ttd::TTDInputJournal::Apply(ev, nullptr, &mouse);
+}
 
 void DebugMouseManager::ApplyMove(Mouse& mouse, int dx, int dy)
 {
-    if (IsRecording())
-        _context->pTimeTravelManager->RecordMouseMove(dx, dy);
-    mouse.Move(dx, dy);
+    ttd::TTDInputEvent ev;
+    ev.kind = ttd::TTDInputKind::MouseMove;
+    ev.dx = static_cast<int16_t>(dx);
+    ev.dy = static_cast<int16_t>(dy);
+    Submit(ev, mouse);
 }
 
 void DebugMouseManager::ApplyButtons(Mouse& mouse, uint8_t activeLowMask)
 {
-    if (IsRecording())
-        _context->pTimeTravelManager->RecordMouseButtons(activeLowMask);
-    mouse.SetButtons(activeLowMask);
+    ttd::TTDInputEvent ev;
+    ev.kind = ttd::TTDInputKind::MouseButtons;
+    ev.buttonMask = activeLowMask;
+    Submit(ev, mouse);
 }
 
 void DebugMouseManager::ApplyWheel(Mouse& mouse, int steps)
 {
-    if (IsRecording())
-        _context->pTimeTravelManager->RecordMouseWheel(steps);
-    mouse.SetWheel(steps);
+    ttd::TTDInputEvent ev;
+    ev.kind = ttd::TTDInputKind::MouseWheel;
+    ev.wheelSteps = static_cast<int8_t>(steps);
+    Submit(ev, mouse);
 }
 
 void DebugMouseManager::ApplyCounters(Mouse& mouse, uint8_t x, uint8_t y)
 {
-    if (IsRecording())
-        _context->pTimeTravelManager->RecordMouseCounters(x, y);
-    mouse.SetCounters(x, y);
+    ttd::TTDInputEvent ev;
+    ev.kind = ttd::TTDInputKind::MouseCounters;
+    ev.dx = x;
+    ev.dy = y;
+    Submit(ev, mouse);
 }
 
 /// endregion </Guards and journal>

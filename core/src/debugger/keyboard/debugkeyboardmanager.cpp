@@ -50,20 +50,31 @@ DebugKeyboardManager::~DebugKeyboardManager()
 
 /// region <Journalled matrix mutation>
 
-/// The one place every automation path changes the matrix: refused during TTD replay
-/// (the journal injects recorded events instead) and journalled BEFORE the change while
-/// TTD records. Timed operations (tap, combo, type, sequences) used to call Keyboard
+/// Live input is refused while the TTD journal owns input: a replay, or the machine
+/// re-executing recorded history (TimeTravelManager::OwnsInput)
+bool DebugKeyboardManager::IsInputOwnedByJournal() const
+{
+    return _context && _context->pTimeTravelManager && _context->pTimeTravelManager->OwnsInput();
+}
+
+/// The one place every automation path changes the matrix. With TTD present the change
+/// goes through TimeTravelManager::SubmitLiveInput: refused while the journal owns input,
+/// applied on the machine's thread at an instruction boundary and journalled there while
+/// recording. Timed operations (tap, combo, type, sequences) used to call Keyboard
 /// directly and were missing from the journal.
 bool DebugKeyboardManager::ApplyKey(ZXKeysEnum key, bool pressed)
 {
     if (key == ZXKEY_NONE || !_keyboard)
         return false;
 
-    if (_context && _context->ttdReplayActive)
-        return false;
-
-    if (_context && _context->pTimeTravelManager && _context->pTimeTravelManager->IsRecording())
-        _context->pTimeTravelManager->RecordInputEvent(static_cast<uint8_t>(key), pressed);
+    if (_context && _context->pTimeTravelManager)
+    {
+        ttd::TTDInputEvent ev;
+        ev.kind = ttd::TTDInputKind::Key;
+        ev.key = static_cast<uint8_t>(key);
+        ev.pressed = pressed;
+        return _context->pTimeTravelManager->SubmitLiveInput(ev);
+    }
 
     if (pressed)
         _keyboard->PressKey(key);
@@ -81,10 +92,10 @@ void DebugKeyboardManager::PressKey(ZXKeysEnum key)
     if (key == ZXKEY_NONE)
         return;
 
-    // TTD silent-replay suppression (parent TDD §8.2 + Appendix C) and journal
-    // capture (Phase 2 Item 3) both live in ApplyKey. Live input must not mutate
-    // the matrix during replay.
-    if (_context && _context->ttdReplayActive)
+    // TTD input ownership (parent TDD §8.2 + Appendix C) and journal capture
+    // (Phase 2 Item 3) both live in ApplyKey. Live input must not mutate the
+    // matrix while the journal drives it.
+    if (IsInputOwnedByJournal())
         return;
 
     // Track in our direct press set
@@ -103,8 +114,8 @@ void DebugKeyboardManager::ReleaseKey(ZXKeysEnum key)
     if (key == ZXKEY_NONE)
         return;
 
-    // TTD silent-replay suppression + journal capture: see ApplyKey
-    if (_context && _context->ttdReplayActive)
+    // TTD input ownership + journal capture: see ApplyKey
+    if (IsInputOwnedByJournal())
         return;
 
     // Remove from our direct press set
@@ -153,11 +164,18 @@ void DebugKeyboardManager::ReleaseAllKeys()
     
     // Whole-matrix reset (also clears host press counters), journalled as one event so a
     // replay reaches the same all-released matrix
-    if (_keyboard && !(_context && _context->ttdReplayActive))
+    if (_keyboard)
     {
-        if (_context && _context->pTimeTravelManager && _context->pTimeTravelManager->IsRecording())
-            _context->pTimeTravelManager->RecordKeyboardReset();
-        _keyboard->Reset();
+        if (_context && _context->pTimeTravelManager)
+        {
+            ttd::TTDInputEvent ev;
+            ev.kind = ttd::TTDInputKind::KeyboardReset;
+            _context->pTimeTravelManager->SubmitLiveInput(ev);
+        }
+        else
+        {
+            _keyboard->Reset();
+        }
     }
 }
 

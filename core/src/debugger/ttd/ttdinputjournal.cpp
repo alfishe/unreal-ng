@@ -44,6 +44,58 @@ size_t TTDInputJournal::InjectDueEvents(Keyboard& keyboard, const TTDTimePoint& 
     return InjectDueEvents(&keyboard, nullptr, now);
 }
 
+bool TTDInputJournal::Apply(const TTDInputEvent& ev, Keyboard* keyboard, Mouse* mouse)
+{
+    switch (ev.kind)
+    {
+        case TTDInputKind::Key:
+            if (!keyboard)
+                return false;
+            {
+                // ZXKeysEnum is `enum ZXKeysEnum : uint8_t` (unscoped, explicit
+                // underlying type). static_cast is the canonical conversion from
+                // the underlying integer type back to the enum.
+                const auto key = static_cast<ZXKeysEnum>(ev.key);
+                if (ev.pressed)
+                    keyboard->PressKey(key);
+                else
+                    keyboard->ReleaseKey(key);
+            }
+            break;
+
+        case TTDInputKind::KeyboardReset:
+            if (!keyboard)
+                return false;
+            keyboard->Reset();
+            break;
+
+        case TTDInputKind::MouseMove:
+            if (!mouse)
+                return false;
+            mouse->Move(ev.dx, ev.dy);
+            break;
+
+        case TTDInputKind::MouseButtons:
+            if (!mouse)
+                return false;
+            mouse->SetButtons(ev.buttonMask);
+            break;
+
+        case TTDInputKind::MouseWheel:
+            if (!mouse)
+                return false;
+            mouse->SetWheel(ev.wheelSteps);
+            break;
+
+        case TTDInputKind::MouseCounters:
+            if (!mouse)
+                return false;
+            mouse->SetCounters(static_cast<uint8_t>(ev.dx), static_cast<uint8_t>(ev.dy));
+            break;
+    }
+    return true;
+}
+
 size_t TTDInputJournal::InjectDueEvents(Keyboard* keyboard, Mouse* mouse, const TTDTimePoint& now)
 {
     size_t injected = 0;
@@ -52,56 +104,18 @@ size_t TTDInputJournal::InjectDueEvents(Keyboard* keyboard, Mouse* mouse, const 
         if (!(ev.time == now))
             continue;
 
-        switch (ev.kind)
-        {
-            case TTDInputKind::Key:
-                if (!keyboard)
-                    continue;
-                {
-                    // ZXKeysEnum is `enum ZXKeysEnum : uint8_t` (unscoped, explicit
-                    // underlying type). static_cast is the canonical conversion from
-                    // the underlying integer type back to the enum.
-                    const auto key = static_cast<ZXKeysEnum>(ev.key);
-                    if (ev.pressed)
-                        keyboard->PressKey(key);
-                    else
-                        keyboard->ReleaseKey(key);
-                }
-                break;
-
-            case TTDInputKind::KeyboardReset:
-                if (!keyboard)
-                    continue;
-                keyboard->Reset();
-                break;
-
-            case TTDInputKind::MouseMove:
-                if (!mouse)
-                    continue;
-                mouse->Move(ev.dx, ev.dy);
-                break;
-
-            case TTDInputKind::MouseButtons:
-                if (!mouse)
-                    continue;
-                mouse->SetButtons(ev.buttonMask);
-                break;
-
-            case TTDInputKind::MouseWheel:
-                if (!mouse)
-                    continue;
-                mouse->SetWheel(ev.wheelSteps);
-                break;
-
-            case TTDInputKind::MouseCounters:
-                if (!mouse)
-                    continue;
-                mouse->SetCounters(static_cast<uint8_t>(ev.dx), static_cast<uint8_t>(ev.dy));
-                break;
-        }
-        ++injected;
+        if (Apply(ev, keyboard, mouse))
+            ++injected;
     }
     return injected;
+}
+
+size_t TTDInputJournal::FirstIndexAtOrAfter(const TTDTimePoint& t) const
+{
+    // The journal is sorted by time (appended in application order)
+    auto it = std::lower_bound(_events.begin(), _events.end(), t,
+                               [](const TTDInputEvent& ev, const TTDTimePoint& at) { return ev.time < at; });
+    return static_cast<size_t>(it - _events.begin());
 }
 
 // ---------------------------------------------------------------------------

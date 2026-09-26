@@ -602,12 +602,15 @@ void SoundManager::handleFrameStart()
             _gs->handleFrameStart();
         }
 
-        if (suppressed)
-            return;  // Skip beeper/covox frame setup and buffer clears (never consumed in turbo)
-    }
+        // Covox frame start runs in every mode: its idle-channel decay writes
+        // the DAC latch (TTD state), so it must not depend on turbo; the
+        // decay's audio step is gated on the covox's own suppressed flag
+        if (_covox)
+            _covox->handleFrameStart();
 
-    if (_covox)
-        _covox->handleFrameStart();
+        if (suppressed)
+            return;  // Skip beeper frame setup and buffer clears (never consumed in turbo)
+    }
 
     // Beeper starts its frame (blip_buf ready to receive deltas)
     _beeper->handleFrameStart();
@@ -639,6 +642,25 @@ void SoundManager::handleFrameEnd()
     // AudioTstate(z80->t). Always called - the device handles suppression
     // internally and posts HUD notifications regardless.
     _turboSound->handleFrameEnd();
+
+    // Turbo without audio: the frame still ENDS for every device with an
+    // emulated core - its program-visible state (GS coprocessor catch-up,
+    // MoonSound core + time axis) must not depend on the host audio mode,
+    // or a turbo stretch would change the machine's trajectory and its TTD
+    // checkpoints. Only the host-audio work below (sample accounting,
+    // character chains, mixing, delivery) is skipped - the same condition
+    // MainLoop used to gate this whole call on
+    const CONFIG& frameConfig = _context->config;
+    if (frameConfig.turbo_mode && !frameConfig.turbo_mode_audio)
+    {
+        if (_gs)
+            _gs->handleFrameEnd(0);
+#ifdef UNREALNG_HAVE_OPL4
+        if (_moonsound)
+            _moonsound->handleFrameEnd(0);
+#endif
+        return;
+    }
 
     /// region <Determine actual samples for this frame>
     // Per-frame sample count derives from the machine's frame length, NOT the

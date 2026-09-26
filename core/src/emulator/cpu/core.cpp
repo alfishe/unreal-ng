@@ -780,9 +780,11 @@ void Core::CPUFrameCycle()
         _z80->Z80FrameCycle();
     }
 
-    // uint32_t t = _context->pCore->GetZ80()->t;
-    // MLOGINFO("tState counter after the frame: %d", t);
+    FinishCPUFrame();
+}
 
+void Core::FinishCPUFrame()
+{
     AdjustFrameCounters();
 
     // Sync memory content to disk (if shared memory mapping is enabled)

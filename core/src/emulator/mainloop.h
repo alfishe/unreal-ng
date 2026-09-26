@@ -162,6 +162,12 @@ public:
     ///       callers observe the park immediately instead of burning their timeout.
     void ConfirmPauseFromCpu();
 
+    /// @brief The caller is the emulator loop's own thread
+    bool IsRunThread() const
+    {
+        return _runThreadId.load(std::memory_order_acquire) == std::this_thread::get_id();
+    }
+
     /// @brief Eagerly drop a (possibly) stale pause confirmation
     /// @note Called from Emulator::Resume()/Stop() right after un-parking the CPU
     ///       thread. Without this, a Pause() issued immediately after Resume()
@@ -173,6 +179,22 @@ public:
 protected:
     void RunFrame();
     void ExecuteCPUFrameCycle();
+
+    /// region <Frame lifecycle>
+public:
+    /// The frame boundary, identical in every run path (main loop RunFrame
+    /// and all Emulator::Run*): after the CPU side closed the frame
+    /// (Core::FinishCPUFrame), run the frame-end hooks, the next frame's
+    /// start hooks and the CPU frame start. Outside this call the machine is
+    /// always inside a started frame - pause points, TTD captures and
+    /// restores never see a half-crossed boundary
+    void CompleteFrame();
+
+    /// Start the current frame again after its state was replaced from
+    /// outside the frame flow (power-on, reset, snapshot load): frame-start
+    /// hooks + CPU frame start at the current CPU position, no frame end
+    void RestartFrame();
+    /// endregion </Frame lifecycle>
 
     /// region <Event handlers>
 public:

@@ -88,7 +88,7 @@ TEST_F(CovoxTest, SoundDriveWiresAllFourQuadPorts)
     {
         EXPECT_TRUE(decoder.DispatchSelfDecodingOut(ports[i], 0xFF));
         uint8_t latches[4];
-        covox->TTDSaveState(latches);
+        covox->getDacLatches(latches);
         EXPECT_EQ(latches[i], 0xFF) << "quad port index " << i << " did not reach the DAC";
     }
 
@@ -102,7 +102,7 @@ TEST_F(CovoxTest, SoundDriveWiresAllFourQuadPorts)
     {
         EXPECT_TRUE(decoder.DispatchSelfDecodingOut(mode1Ports[i], 0x11 + i));
         uint8_t latches[4];
-        covox->TTDSaveState(latches);
+        covox->getDacLatches(latches);
         EXPECT_EQ(latches[i], 0x11 + i) << "mode-1 port index " << i << " did not reach the DAC";
     }
 
@@ -178,12 +178,12 @@ TEST_F(CovoxTest, CovoxFBAloneWiresOnlyMonoPort)
     {
         EXPECT_FALSE(decoder.DispatchSelfDecodingOut(quadOnly[i], 0xFF))
             << "mono fitment must decline quad-only port index " << i;
-        covox->TTDSaveState(latches);
+        covox->getDacLatches(latches);
         EXPECT_EQ(latches[i], 0x80) << "quad-only port index " << i << " should stay at the silence midpoint";
     }
 
     EXPECT_TRUE(decoder.DispatchSelfDecodingOut(Covox::PORT_RIGHT_B, 0xFF));
-    covox->TTDSaveState(latches);
+    covox->getDacLatches(latches);
     EXPECT_EQ(latches[3], 0xFF);
 
     sm2->detachFromPorts();

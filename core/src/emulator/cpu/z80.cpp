@@ -477,6 +477,68 @@ void Z80::RecomputeFrameTiming()
     _frameLimit = config.frame * state.current_z80_frequency_multiplier;
     _intStart = config.intstart * state.current_z80_frequency_multiplier;
     _intEnd = (config.intstart + config.intlen) * state.current_z80_frequency_multiplier;
+
+    // INT window crossing the frame end: its tail lives at the start of the
+    // next frame (raised there by BeginFrame), so the in-frame end wraps
+    _intWraps = _intEnd >= _frameLimit;
+    if (_intWraps)
+        _intEnd -= _frameLimit;
+}
+
+void Z80::BeginFrame()
+{
+    // Apply queued HOST speed multiplier change at the frame boundary (if any).
+    // Hardware turbo strobes are applied immediately by ApplyHardwareTurboNow
+    ApplyQueuedFrequencyMultiplier();
+
+    // Scaled frame length and INT window - members, so a mid-frame hardware
+    // turbo switch (ApplyHardwareTurboNow) is picked up by the next step
+    RecomputeFrameTiming();
+
+    haltpos = 0;
+
+    // INT interrupt handling lasts for more than 1 frame
+    if (_intWraps)
+        int_pending = true;
+}
+
+Z80::StepResult Z80::StepInstruction(bool skipBreakpoints)
+{
+    // A CPU never put through a frame start (bare Core fixtures driving the
+    // CPU directly) has no frame geometry yet
+    if (_frameLimit == 0)
+        RecomputeFrameTiming();
+
+    // Input takes effect before this instruction: recorded journal events due
+    // at or before now (TTD playback) and live input queued by other threads.
+    // An event stamped T is first visible to the instruction starting at T -
+    // the machine state AT T (a seek target, a pause) does not include it yet.
+    // One relaxed load per instruction when there is none
+    if (_context->ttdInputWork.load(std::memory_order_relaxed) && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->ServiceInput();
+
+    StepResult result;
+
+    // Handle interrupts if arrived. Returns true if an interrupt was accepted -
+    // in that case the acceptance IS the "instruction" that consumes this step
+    const bool nmiPending = _nmi_pending_count > 0;
+    if (ProcessInterrupts(_intWraps, _intStart, _intEnd))
+    {
+        if (nmiPending)
+            result.nmiAccepted = true;
+        else
+            result.intAccepted = true;
+    }
+    else
+    {
+        // Perform single Z80 command cycle
+        Z80Step(skipBreakpoints);
+    }
+
+    // Update peripheral states after CPU cycle
+    OnCPUStep();
+
+    return result;
 }
 
 void Z80::ApplyHardwareTurboNow()
@@ -519,32 +581,13 @@ void Z80::ApplyHardwareTurboNow()
 /// Execute number of cpu cycles equivalent to full frame screen render
 void Z80::Z80FrameCycle()
 {
-    [[maybe_unused]] const CONFIG& config = _context->config;
-    [[maybe_unused]] Z80& cpu = *this;
-    [[maybe_unused]] EmulatorState& state = _context->emulatorState;
-
-    // Apply queued HOST speed multiplier change at the frame boundary (if any).
-    // Hardware turbo strobes are applied immediately by ApplyHardwareTurboNow
-    ApplyQueuedFrequencyMultiplier();
-
-    // Scaled frame length and INT window - members, so a mid-frame hardware
-    // turbo switch (ApplyHardwareTurboNow) is picked up by the loop below
-    RecomputeFrameTiming();
-
-    bool int_occurred = false;
-
-    cpu.haltpos = 0;
-
-    // INT interrupt handling lasts for more than 1 frame
-    if (_intEnd >= _frameLimit)
-    {
-        _intEnd -= _frameLimit;
-        cpu.int_pending = true;
-        int_occurred = true;
-    }
+    // A CPU never put through a frame start (bare Core fixtures) has no
+    // frame geometry yet
+    if (_frameLimit == 0)
+        RecomputeFrameTiming();
 
     // Cover whole frame (control by effective t-states)
-    while (cpu.t < _frameLimit)
+    while (t < _frameLimit)
     {
         // Mid-frame pause park. Pause() is otherwise observed only at frame
         // boundaries (MainLoop::Run), so an in-flight frame - which under
@@ -552,22 +595,12 @@ void Z80::Z80FrameCycle()
         // would delay the park and its confirmation until the frame completes.
         // One volatile read per instruction keeps the unpaused hot path cheap;
         // WaitWhilePaused parks + confirms and wakes on Resume()/Stop() via CV.
+        // Everything the loop reads lives in members, so work done while parked
+        // (a TTD restore, stepping from another thread) is picked up here
         if (Emulator* emulator = _context->pEmulator; emulator && emulator->IsPaused())
             emulator->WaitWhilePaused();
 
-        // Handle interrupts if arrived
-        // Returns true if INT was handled - in that case, skip Z80Step for this iteration
-        // because INT entry IS the "instruction" that consumes this cycle
-        bool intHandled = ProcessInterrupts(int_occurred, _intStart, _intEnd);
-
-        if (!intHandled)
-        {
-            // Perform single Z80 command cycle
-            Z80Step();
-        }
-
-        // Update peripheral states after CPU cycle
-        OnCPUStep();
+        StepInstruction();
     }
 }
 

@@ -309,6 +309,21 @@ public:
     void RunUntilInterrupt(bool skipBreakpoints = true);                      // Run until Z80 accepts maskable interrupt (iff1 1→0)
     void RunUntilCondition(std::function<bool(const Z80State&)> predicate, unsigned maxTStates = 0);
 
+    /// Start the current frame again after machine state was replaced from
+    /// outside the frame flow (reset, snapshot load). See MainLoop::RestartFrame
+    void RestartFrame();
+
+private:
+    /// The one stepping primitive of every Emulator::Run* path: a single
+    /// Z80::StepInstruction and, when it reached the frame limit, the full
+    /// frame boundary (Core::FinishCPUFrame + MainLoop::CompleteFrame) - the
+    /// same sequence as the continuous main loop, so every path produces the
+    /// same machine trajectory, TTD checkpoints and device frame calls.
+    /// @param frameCompleted set when this step closed a frame
+    Z80::StepResult ExecuteStep(bool skipBreakpoints, bool* frameCompleted = nullptr);
+
+public:
+
     // Actions
     bool LoadROM(std::string path);
 

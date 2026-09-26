@@ -133,6 +133,12 @@ public:
     bool IsTurboMode() const;
 
     void CPUFrameCycle();
+
+    /// CPU-side close of a frame whose last instruction reached the frame
+    /// limit: rebase the in-frame counters (AdjustFrameCounters) and sync
+    /// shared memory. Shared by the main loop and every Emulator::Run* path;
+    /// the lifecycle hooks follow in MainLoop::CompleteFrame
+    void FinishCPUFrame();
     void AdjustFrameCounters();
 
     // Event handlers

@@ -27,11 +27,11 @@
 
 namespace
 {
-/// Build a 42-byte tape-state buffer with known non-trivial field values.
+/// Build a 53-byte tape-state buffer with known non-trivial field values.
 /// Layout must match the cursor-packed format in tape.cpp.
 std::vector<uint8_t> CraftKnownTapeBuffer()
 {
-    std::vector<uint8_t> buf(42, 0);
+    std::vector<uint8_t> buf(53, 0);
     uint8_t* cur = buf.data();
 
     // _tapeStarted = 1
@@ -48,6 +48,13 @@ std::vector<uint8_t> CraftKnownTapeBuffer()
     put64(cur, 0xAABBCCDDEEFF0011ull);  // _currentPulseIdxInBlock
     put64(cur, 0x2233445566778899ull);  // _currentOffsetWithinPulse
     put64(cur, 0xFEDCBA9876543210ull);  // _currentClockCount
+
+    *cur++ = 1;     // _tapeBitState
+    *cur++ = 0;     // _lastTapeBit
+    *cur++ = 0x42;  // _initialErrNr
+    auto put32 = [](uint8_t*& c, uint32_t v) { std::memcpy(c, &v, 4); c += 4; };
+    put32(cur, 7);   // _framesSinceLastRead
+    put32(cur, 13);  // _earPollsThisFrame
 
     return buf;
 }
@@ -79,10 +86,10 @@ protected:
     }
 };
 
-TEST_F(TTD_Tape_Serializer_Test, TTDStateSize_IsStable_42Bytes)
+TEST_F(TTD_Tape_Serializer_Test, TTDStateSize_IsStable_53Bytes)
 {
-    EXPECT_EQ(_tapeA->TTDStateSize(), 42u);
-    EXPECT_EQ(_tapeB->TTDStateSize(), 42u);
+    EXPECT_EQ(_tapeA->TTDStateSize(), 53u);
+    EXPECT_EQ(_tapeB->TTDStateSize(), 53u);
 }
 
 TEST_F(TTD_Tape_Serializer_Test, RoundTrip_DefaultState_IsByteIdentical)
@@ -190,8 +197,8 @@ TEST(TTD_Tape_ManagerIntegration_Test, CaptureNow_PopulatesTapeStateBlob)
     ASSERT_NE(tapeBlob, cp->peripheralBlobs.end());
     const auto tapeState = ttd::TTDPeripheralRegistry::DecodeBlob(
         static_cast<uint8_t>(ttd::PeripheralId::Tape), tapeBlob->second);
-    EXPECT_EQ(tapeState.size(), 42u)
-        << "tapeState blob must contain the Tape position payload (42 bytes)";
+    EXPECT_EQ(tapeState.size(), 53u)
+        << "tapeState blob must contain the Tape position + signal + watchdog payload (53 bytes)";
 
     emulator.Stop();
     emulator.Release();

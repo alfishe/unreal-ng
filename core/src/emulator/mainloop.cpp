@@ -377,11 +377,10 @@ void MainLoop::RunFrame()
 #endif
     /// endregion <Sanity checks>
 
-    /// region <Frame start handlers>
-
-    OnFrameStart();
-
-    /// endregion </Frame start handlers>
+    // The frame was already started: by the previous frame's boundary
+    // (CompleteFrame) or by RestartFrame after power-on / reset / snapshot
+    // load. RunFrame only executes it and closes it - the same lifecycle
+    // every Emulator::Run* path uses
 
     // Execute CPU cycles for single video frame
 
@@ -397,11 +396,11 @@ void MainLoop::RunFrame()
 
     _screen->SetTurboRenderSkip(false);
 
-    /// region <Frame end handlers>
+    /// region <Frame boundary>
 
-    OnFrameEnd();
+    CompleteFrame();
 
-    /// endregion </Frame end handlers
+    /// endregion </Frame boundary>
 
     // Process external periphery devices
 
@@ -414,6 +413,80 @@ void MainLoop::RunFrame()
     // Queue new frame data to Video/Audio encoding
     // Note: Recording is handled by RecordingManager via OnFrameEnd() callback
     // when the recording feature is enabled
+}
+
+void MainLoop::CompleteFrame()
+{
+    // Guard against null context during shutdown
+    if (!_context)
+        return;
+
+    // The closed frame's end work runs against the geometry it executed
+    // with: the queued multiplier is applied only afterwards (BeginFrame),
+    // and device frame starts still see the old applied value (they read
+    // next_z80_frequency_multiplier when they need the queued one)
+    OnFrameEnd();
+    OnFrameStart();
+    _cpu->GetZ80()->BeginFrame();
+
+    // The new frame renders from its own t=0 (InitFrame reset the raster
+    // counters; the per-t-state tracker follows)
+    _screen->ResetPrevTstate();
+
+    // Everything below observes the machine ready to execute the first
+    // instruction of the new frame: a TTD checkpoint labelled N holds the
+    // state AFTER frame N's start (device frame bases, CPU frame geometry
+    // included), so a restore never has to run any frame hook and every
+    // pause point, capture and restore sees the same frame phase.
+    //
+    // Order vs automation input matters: host input injected below is
+    // journaled at (N, t) and replayed from the journal after a restore of
+    // checkpoint N, so it must NOT already be inside that checkpoint (a
+    // replay would apply it twice - e.g. a mouse move is additive).
+    // TTD per-frame checkpoint capture (parent TDD §7.1).
+    // OnFrameBoundary is a no-op when the TTD manager is null, when the
+    // session state is not Recording, or when the timetravel feature flag
+    // is off (the cached bool in Memory gates the dirty hook). Cost when
+    // idle: one predictable branch. Cost when recording: dirty pages get
+    // a 16 KB Intern each, clean pages get a cheap AddRef.
+    if (_context->pTimeTravelManager)
+    {
+        try
+        {
+            _context->pTimeTravelManager->OnFrameBoundary();
+        }
+        catch (const std::exception& e)
+        {
+            MLOGERROR("TimeTravelManager::OnFrameBoundary failed: %s", e.what());
+        }
+    }
+
+    // Process keyboard injection sequences (for automation)
+    // This is called each frame to advance any queued key sequences (tap/release timing)
+    if (_context->pDebugManager && _context->pDebugManager->GetKeyboardManager())
+    {
+        _context->pDebugManager->GetKeyboardManager()->OnFrame();
+    }
+
+    // Release timed mouse clicks (automation) at frame boundaries
+    if (_context->pDebugManager && _context->pDebugManager->GetMouseManager())
+    {
+        _context->pDebugManager->GetMouseManager()->OnFrame();
+    }
+}
+
+void MainLoop::RestartFrame()
+{
+    // Guard against null context during shutdown
+    if (!_context)
+        return;
+
+    // Machine state was replaced from outside the frame flow (power-on,
+    // reset, snapshot load): re-establish the frame start at the current
+    // position so devices take their frame bases from the new state. No
+    // frame end - the interrupted frame is not closed, it is abandoned
+    OnFrameStart();
+    _cpu->GetZ80()->BeginFrame();
 }
 
 void MainLoop::OnFrameStart()
@@ -571,21 +644,19 @@ void MainLoop::OnFrameEnd()
         }
     }
 
-    // Audio generation: Skip in turbo mode unless explicitly requested
-    const CONFIG& config = _context->config;
-    if (!config.turbo_mode || config.turbo_mode_audio)
+    // Sound frame end runs for every frame: device cores always reach the
+    // frame end; SoundManager itself skips the host-audio work (rendering,
+    // mixing, delivery) in turbo mode without audio
+    if (_context->pSoundManager)
     {
-        if (_context->pSoundManager)
+        try
         {
-            try
-            {
-                _context->pSoundManager->handleFrameEnd();  // Sound manager will call audio callback by itself
-            }
-            catch (const std::exception& e)
-            {
-                // Log error but don't crash - audio failure shouldn't stop emulation
-                MLOGERROR("SoundManager::handleFrameEnd failed: %s", e.what());
-            }
+            _context->pSoundManager->handleFrameEnd();  // Sound manager will call audio callback by itself
+        }
+        catch (const std::exception& e)
+        {
+            // Log error but don't crash - audio failure shouldn't stop emulation
+            MLOGERROR("SoundManager::handleFrameEnd failed: %s", e.what());
         }
     }
 
@@ -654,37 +725,6 @@ void MainLoop::OnFrameEnd()
     if (_context->pDebugManager && _context->pDebugManager->GetAnalyzerManager())
     {
         _context->pDebugManager->GetAnalyzerManager()->dispatchFrameEnd();
-    }
-
-    // TTD per-frame checkpoint capture (parent TDD §7.1).
-    // OnFrameBoundary is a no-op when the TTD manager is null, when the
-    // session state is not Recording, or when the timetravel feature flag
-    // is off (the cached bool in Memory gates the dirty hook). Cost when
-    // idle: one predictable branch. Cost when recording: dirty pages get
-    // a 16 KB Intern each, clean pages get a cheap AddRef.
-    if (_context->pTimeTravelManager)
-    {
-        try
-        {
-            _context->pTimeTravelManager->OnFrameBoundary();
-        }
-        catch (const std::exception& e)
-        {
-            MLOGERROR("TimeTravelManager::OnFrameBoundary failed: %s", e.what());
-        }
-    }
-
-    // Process keyboard injection sequences (for automation)
-    // This is called each frame to advance any queued key sequences (tap/release timing)
-    if (_context->pDebugManager && _context->pDebugManager->GetKeyboardManager())
-    {
-        _context->pDebugManager->GetKeyboardManager()->OnFrame();
-    }
-
-    // Release timed mouse clicks (automation) at frame boundaries
-    if (_context->pDebugManager && _context->pDebugManager->GetMouseManager())
-    {
-        _context->pDebugManager->GetMouseManager()->OnFrame();
     }
 
     _lastFrameRendered = _renderThisFrame;

@@ -179,6 +179,11 @@ public:
     // checks are read from the same thread.
     bool ttdReplayActive = false;
 
+    /// TTD input work pending for the executing thread: journal playback is
+    /// armed or live input is queued (TimeTravelManager::ServiceInput). One
+    /// relaxed load per instruction when idle
+    std::atomic<bool> ttdInputWork{false};
+
     // Phase 4 - reverse-search access probe (parent TDD 9.2). Inline
     // instance: every hot-path call site (MemoryWriteDebug, MemoryReadDebug,
     // Z80 M1 cycle, DecodePortOut) reads `ttdProbe.IsArmed()` with one

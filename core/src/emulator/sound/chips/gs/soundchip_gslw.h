@@ -156,7 +156,11 @@ public:
     ///            bit3 subCommandExpected, bit4 subCommand80, bit5 subCommandA0)
     ///            [40] curChannel<<5 | subCommandSelector&0x1F [41] reply count
     ///            [42] reply head [43..58] reply ring[16]
-    ///   [59..94] mailbox queues - the shared LLE layout verbatim
+    ///   [59..76] mailbox parameter queue (count, head, ring[16])
+    ///   [77..88] frame timeline - same slots as the LLE card: GS cycles since
+    ///            the frame start, ZX tacts at the frame start, frame length
+    ///            in GS cycles (u32 each)
+    ///   [89..94] reserved (always 0)
     ///   [95..  ] upload store (u32 len + bytes), player runtime blob
     ///            (u32 len + bytes)
     size_t TTDStateSize() const override;

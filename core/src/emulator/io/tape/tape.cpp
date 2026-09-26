@@ -966,18 +966,28 @@ bool Tape::getPilotSample(size_t clockCount)
 
 /// region <TTDSerializable (P1.5 — parent TDD §6.4, §4 row 3)>
 //
-// Cursor-packed layout (41 bytes, alignment-safe via per-field memcpy):
+// Cursor-packed layout (53 bytes, alignment-safe via per-field memcpy):
 //
 //   Offset  Size  Field
 //   ------  ----  ----------------------------------------
 //   0        1    _tapeStarted (0/1)
-//   1        8    _tapePosition
-//   9        8    _currentTapeBlockIndex
-//   17       8    _currentPulseIdxInBlock
-//   25       8    _currentOffsetWithinPulse
-//   33       8    _currentClockCount
+//   1        1    _playbackFrozen (0/1)
+//   2        8    _tapePosition
+//   10       8    _currentTapeBlockIndex
+//   18       8    _currentPulseIdxInBlock
+//   26       8    _currentOffsetWithinPulse
+//   34       8    _currentClockCount
+//   42       1    _tapeBitState (EAR level the CPU reads on port #FE bit 6)
+//   43       1    _lastTapeBit (edge detection of the band-limited EAR step)
+//   44       1    _initialErrNr (loader-exit detection baseline)
+//   45       4    _framesSinceLastRead (read-gap watchdog countdown)
+//   49       4    _earPollsThisFrame (sustained EAR-polling resume counter)
 //   ------  ---
-//   41 bytes total
+//   53 bytes total
+//
+// The last five decide what the program reads and when the watchdogs pause,
+// stop or resume playback: left out, a restore kept their live values and a
+// replay diverged from the recording as soon as the tape was involved.
 //
 // size_t is serialized as uint64_t (the position indices never approach 2^63;
 // this keeps the format identical on 32-bit and 64-bit hosts).
@@ -985,14 +995,16 @@ bool Tape::getPilotSample(size_t clockCount)
 namespace
 {
 inline void put_u8 (uint8_t*& cur, uint8_t v)   { *cur++ = v; }
+inline void put_u32(uint8_t*& cur, uint32_t v) { std::memcpy(cur, &v, 4); cur += 4; }
 inline void put_u64(uint8_t*& cur, uint64_t v) { std::memcpy(cur, &v, 8); cur += 8; }
 
 inline uint8_t  get_u8 (const uint8_t*& cur)   { return *cur++; }
+inline uint32_t get_u32(const uint8_t*& cur)   { uint32_t v; std::memcpy(&v, cur, 4); cur += 4; return v; }
 inline uint64_t get_u64(const uint8_t*& cur)   { uint64_t v; std::memcpy(&v, cur, 8); cur += 8; return v; }
 } // anonymous namespace
 
-static constexpr size_t kTapeStateSize = 2 + 5 * 8;  // = 42 (design §11: + _playbackFrozen)
-static_assert(kTapeStateSize == 42, "Tape state size drift");
+static constexpr size_t kTapeStateSize = 2 + 5 * 8 + 3 + 2 * 4;  // = 53
+static_assert(kTapeStateSize == 53, "Tape state size drift");
 
 size_t Tape::TTDStateSize() const
 {
@@ -1009,6 +1021,11 @@ void Tape::TTDSaveState(uint8_t* dst) const
     put_u64(cur, static_cast<uint64_t>(_currentPulseIdxInBlock));
     put_u64(cur, static_cast<uint64_t>(_currentOffsetWithinPulse));
     put_u64(cur, _currentClockCount);
+    put_u8 (cur, _tapeBitState ? 1 : 0);
+    put_u8 (cur, _lastTapeBit ? 1 : 0);
+    put_u8 (cur, _initialErrNr);
+    put_u32(cur, _framesSinceLastRead);
+    put_u32(cur, _earPollsThisFrame);
 }
 
 void Tape::TTDLoadState(const uint8_t* src)
@@ -1021,6 +1038,11 @@ void Tape::TTDLoadState(const uint8_t* src)
     _currentPulseIdxInBlock   = static_cast<size_t>(get_u64(cur));
     _currentOffsetWithinPulse = static_cast<size_t>(get_u64(cur));
     _currentClockCount        = get_u64(cur);
+    _tapeBitState             = (get_u8(cur) != 0);
+    _lastTapeBit              = (get_u8(cur) != 0);
+    _initialErrNr             = get_u8(cur);
+    _framesSinceLastRead      = get_u32(cur);
+    _earPollsThisFrame        = get_u32(cur);
 
     // Recompute the derived _currentTapeBlock pointer from the restored index.
     // Tape content (_tapeBlocks) is invariant within a session — it is NOT

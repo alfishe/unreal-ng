@@ -30,6 +30,7 @@
 #include "common/modulelogger.h"
 #include "emulator/cpu/z80.h"            // Z80, Z80State
 #include "emulator/emulator.h"           // Emulator::RunTStates (seek engine)
+#include "emulator/mainloop.h"           // MainLoop::IsRunThread (live input gateway)
 #include "emulator/emulatorcontext.h"    // EmulatorContext
 #include "emulator/notifications.h"   // EmulatorFramePayload
 #include "emulator/io/fdc/wd1793.h"      // WD1793 (peripheral, P1.5)
@@ -206,6 +207,7 @@ bool TimeTravelManager::StartRecording()
         _dirtyTracker->ResetSession();
         _dirtyScratch.clear();
         _inputJournal.Clear();  // Phase 2 Item 3 — drop any prior input events
+        DisarmInputPlayback();
         _externalEvents.Clear();  // Phase 2 Item 6 — drop any prior markers
         _bookmarks.Clear();  // TD-4 — prior bookmarks point into wiped history
         if (_writeJournal)
@@ -246,6 +248,7 @@ bool TimeTravelManager::StartRecording()
     _timeline.push_back(std::move(baseline));
 
     _state = TTDSessionState::Recording;
+    DisarmInputPlayback();  // live input again (journaled while recording)
     _context->ttdCoverageActive = _enableCoverageIndex;
     if (_context->pFeatureManager)
     {
@@ -382,6 +385,7 @@ void TimeTravelManager::InvalidateSession(const char* reason)
     _dirtyScratch.clear();
     ReleaseModelPeripherals();  // serializers are session-scoped, like the timeline
     _inputJournal.Clear();  // Phase 2 Item 3 — input history invalidates with the timeline
+    DisarmInputPlayback();
     _externalEvents.Clear();  // Phase 2 Item 6 — markers invalidate with the timeline
     _bookmarks.Clear();  // TD-4 — bookmarks invalidate with the timeline
     if (_writeJournal)
@@ -602,8 +606,8 @@ void TimeTravelManager::OnFrameBoundary()
     // ResumeRecordingFrom() to continue capturing new frames beyond the
     // original session end, or StartRecording() to begin a fresh session.
     //
-    // This runs on the emulator thread (called from MainLoop::OnFrameEnd
-    // and Emulator::RunFrame's boundary handler). Emulator::Pause() is
+    // This runs on the thread driving the frame (called from
+    // MainLoop::CompleteFrame, the boundary of every run path). Emulator::Pause() is
     // safe to call here — it just sets the _isPaused flag, which the
     // MainLoop checks at the top of its next iteration.
     // ------------------------------------------------------------------
@@ -1023,7 +1027,7 @@ bool TimeTravelManager::RestoreCheckpointForTesting(size_t idx)
         return false;
     }
 
-    RestoreCheckpoint(_timeline[idx]);
+    RestoreCheckpointForReplay(_timeline[idx]);
     return true;
 }
 
@@ -1172,7 +1176,13 @@ void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
     // peripherals load, so devices rebuild their timelines around the
     // position the machine really resumes at
     if (cpu)
+    {
         cpu->t = GetChipsetCpuTInFrame(cp.chipset);
+
+        // Frame geometry (frame limit, INT window) derives from the restored
+        // multiplier; every run path reads it from the CPU
+        static_cast<Z80*>(cpu)->RecomputeFrameTiming();
+    }
 
     // --- Step 2a2: Model-specific chipset state (TDD §6.4) ---
     // MUST run before UpdateZ80Banks: model serializers restore latches that
@@ -1469,6 +1479,148 @@ size_t TimeTravelManager::InjectDueInputEvents(const TTDTimePoint& now)
     }
 
     return _inputJournal.InjectDueEvents(_context->pKeyboard, _context->pMouse, now);
+}
+
+// ---------------------------------------------------------------------------
+// Input ownership (live input vs the recorded journal)
+// ---------------------------------------------------------------------------
+
+bool TimeTravelManager::OwnsInput() const
+{
+    if (!_context)
+        return false;
+
+    // Seek / reverse-query replay: always journal-driven
+    if (_context->ttdReplayActive)
+        return true;
+
+    // Seeked into the past and (possibly) running forward through it: the
+    // recorded session is still being re-executed until its end
+    if (_state != TTDSessionState::Detached || _timeline.empty())
+        return false;
+    return _context->emulatorState.frame_counter <= _timeline.back().time.frame;
+}
+
+bool TimeTravelManager::SubmitLiveInput(const TTDInputEvent& ev)
+{
+    if (!_context || OwnsInput())
+        return false;
+
+    // The machine lives on the emulator loop's thread: while the loop runs,
+    // only that thread mutates input state - queue for its next instruction
+    // boundary. Applied at once when the caller IS that thread (automation
+    // sequences advanced at the frame boundary) or in synchronous mode (loop
+    // not running: the caller is the only thread driving the machine).
+    const bool loopRunning = _context->pEmulator && _context->pEmulator->IsRunning();
+    const bool onLoopThread = _context->pMainLoop && _context->pMainLoop->IsRunThread();
+    if (loopRunning && !onLoopThread)
+    {
+        {
+            std::lock_guard<std::mutex> lock(_pendingInputMutex);
+            _pendingInput.push_back(ev);
+        }
+        _context->ttdInputWork.store(true, std::memory_order_release);
+        return true;
+    }
+
+    ApplyLiveInput(ev);
+    return true;
+}
+
+void TimeTravelManager::ApplyLiveInput(TTDInputEvent ev)
+{
+    // Journal BEFORE applying: the entry's time point is the moment of mutation
+    if (_state == TTDSessionState::Recording)
+    {
+        ev.time = InputEventTimeNow(_context);
+        _inputJournal.Record(ev);
+    }
+    TTDInputJournal::Apply(ev, _context->pKeyboard, _context->pMouse);
+}
+
+void TimeTravelManager::ServiceInput()
+{
+    if (!_context)
+        return;
+
+    // 1. Journal playback: every event due at or before the current machine time
+    if (_inputPlaybackArmed)
+    {
+        const TTDTimePoint now = InputEventTimeNow(_context);
+        const auto& events = _inputJournal.Events();
+        while (_inputCursor < events.size() && !(now < events[_inputCursor].time))
+        {
+            TTDInputJournal::Apply(events[_inputCursor], _context->pKeyboard, _context->pMouse);
+            ++_inputCursor;
+        }
+        if (_inputCursor >= events.size())
+            _inputPlaybackArmed = false;
+    }
+
+    // 2. Live input queued by other threads: applied (and journaled) here, or
+    //    dropped when the journal took over input while it waited
+    std::vector<TTDInputEvent> pending;
+    {
+        std::lock_guard<std::mutex> lock(_pendingInputMutex);
+        pending.swap(_pendingInput);
+    }
+    if (!pending.empty() && !OwnsInput())
+    {
+        for (const TTDInputEvent& ev : pending)
+            ApplyLiveInput(ev);
+    }
+
+    UpdateInputWorkFlag();
+}
+
+void TimeTravelManager::UpdateInputWorkFlag()
+{
+    if (!_context)
+        return;
+
+    bool pending;
+    {
+        std::lock_guard<std::mutex> lock(_pendingInputMutex);
+        pending = !_pendingInput.empty();
+    }
+    _context->ttdInputWork.store(_inputPlaybackArmed || pending, std::memory_order_release);
+}
+
+void TimeTravelManager::ArmInputPlayback()
+{
+    if (!_context)
+        return;
+
+    // Events stamped with exactly the restored time were applied after the
+    // checkpoint was captured, before the next instruction: the cursor starts
+    // at them and the first step applies them (Z80::StepInstruction)
+    _inputCursor = _inputJournal.FirstIndexAtOrAfter(InputEventTimeNow(_context));
+    _inputPlaybackArmed = _inputCursor < _inputJournal.Size();
+    UpdateInputWorkFlag();
+}
+
+void TimeTravelManager::DisarmInputPlayback()
+{
+    _inputPlaybackArmed = false;
+    _inputCursor = 0;
+    UpdateInputWorkFlag();
+}
+
+void TimeTravelManager::OnMachineReset()
+{
+    DisarmInputPlayback();
+    if (_state == TTDSessionState::Detached)
+    {
+        // The machine no longer sits on the recorded timeline (which is
+        // kept): back to Idle-with-history, live input allowed
+        _state = TTDSessionState::Idle;
+    }
+}
+
+void TimeTravelManager::RestoreCheckpointForReplay(const TTDCheckpoint& cp)
+{
+    RestoreCheckpoint(cp);
+    ArmInputPlayback();
 }
 
 // ---------------------------------------------------------------------------
@@ -1808,7 +1960,7 @@ bool TimeTravelManager::SeekToInternal(const TTDTimePoint& target, TTDSeekResult
     // CPU's in-frame position there - the last instruction's overshoot past
     // the boundary (TTDChipsetState::cpu_t_in_frame), not 0.
     // ------------------------------------------------------------------
-    RestoreCheckpoint(cp);
+    RestoreCheckpointForReplay(cp);
 
     // ------------------------------------------------------------------
     // Step 3: intra-frame silent replay if target.tInFrame > 0.
@@ -1906,57 +2058,17 @@ void TimeTravelManager::ReplayWithinFrame(uint64_t targetFrame, uint32_t targetT
     EnterReplayMode();
 
     // ------------------------------------------------------------------
-    // Walk the input journal for events scheduled inside [0, targetTInFrame]
-    // of the target frame. Replay runs in chunks: advance the emulator by
-    // (next_event.tInFrame - current.tInFrame) t-states, inject the event(s)
-    // scheduled at that time, repeat. After the last in-interval event, run
-    // the remaining delta to targetTInFrame.
-    //
-    // Single-pass linear scan of the journal. We could binary-search for
-    // the first event in the target frame, but the journal is small
-    // (typically a few hundred events) and the linear scan exits early on
-    // the first event past the target.
+    // Run to the target. Recorded input is applied by the stepping engine
+    // itself (ServiceInput after every instruction, armed by the restore
+    // that positioned the machine), at exactly the instruction boundaries it
+    // was recorded at - the same path a Detached forward run uses.
     // ------------------------------------------------------------------
     // The CPU resumes at the checkpoint's overshoot, not at 0
     const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
-    uint32_t currentTInFrame = z80 ? static_cast<uint32_t>(z80->t) : 0;
+    const uint32_t currentTInFrame = z80 ? static_cast<uint32_t>(z80->t) : 0;
 
-    for (const auto& ev : _inputJournal.Events())
-    {
-        // Skip events from other frames. We only care about the target
-        // frame — events before are already encoded in the restored
-        // checkpoint's RAM/CPU state; events after are out of range.
-        if (ev.time.frame != targetFrame)
-            continue;
-
-        // Skip events past the target — they belong to a future position.
-        if (ev.time.tInFrame > targetTInFrame)
-            break;
-
-        // Skip events we've already passed (shouldn't happen since we walk
-        // in ascending order, but defensive against journal corruption).
-        if (ev.time.tInFrame < currentTInFrame)
-            continue;
-
-        // Run the emulator from currentTInFrame to ev.time.tInFrame.
-        const uint32_t delta = ev.time.tInFrame - currentTInFrame;
-        if (delta > 0)
-        {
-            _context->pEmulator->RunTStates(delta, /*skipBreakpoints=*/true);
-            currentTInFrame = ev.time.tInFrame;
-        }
-
-        // Inject this event (and any other events at the same TTDTimePoint).
-        InjectDueInputEvents(ev.time);
-    }
-
-    // Run the remaining delta to reach targetTInFrame.
     if (currentTInFrame < targetTInFrame)
-    {
-        const uint32_t delta = targetTInFrame - currentTInFrame;
-        _context->pEmulator->RunTStates(delta, /*skipBreakpoints=*/true);
-        // currentTInFrame = targetTInFrame;  // (unused after this point)
-    }
+        _context->pEmulator->RunTStates(targetTInFrame - currentTInFrame, /*skipBreakpoints=*/true);
 
     ExitReplayMode();
 }
@@ -2124,6 +2236,7 @@ bool TimeTravelManager::ResumeRecordingFrom(const TTDTimePoint& from)
     // counter is set by SeekTo).
     // ------------------------------------------------------------------
     _state = TTDSessionState::Recording;
+    DisarmInputPlayback();  // live input again (journaled while recording)
 
     MLOGINFO("TimeTravelManager::ResumeRecordingFrom — resumed at "
              "(frame=%llu, tInFrame=%u); timeline %zu→%zu checkpoints, "
@@ -2211,6 +2324,7 @@ bool TimeTravelManager::ResumeRecordingLive()
     }
 
     _state = TTDSessionState::Recording;
+    DisarmInputPlayback();  // live input again (journaled while recording)
     _context->ttdCoverageActive = _enableCoverageIndex;
 
     MLOGINFO("TimeTravelManager::ResumeRecordingLive — resumed at (frame=%llu, tInFrame=%u); "
@@ -2873,6 +2987,7 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
     _timeline.clear();
     _pageStore.Reset();
     _inputJournal.Clear();
+    DisarmInputPlayback();
     _externalEvents.Clear();
     _bookmarks.Clear();  // TD-4 — the file's own bookmarks load below (if any)
     _dirtyScratch.clear();
@@ -3572,7 +3687,7 @@ replay_fallback:
         }
 
         // Restore checkpoint silently (z80.t = its overshoot, see RestoreCheckpoint)
-        RestoreCheckpoint(cp);
+        RestoreCheckpointForReplay(cp);
 
         // Arm probe, replay, extract hits.
         _context->ttdProbe.Reset();
@@ -3813,7 +3928,7 @@ TimeTravelManager::EnumerateM1InRange(uint64_t startGlobalT,
             result.earliestScannedGlobalT = intervalStartGlobalT;
 
         // Restore the checkpoint (z80.t = its overshoot, see RestoreCheckpoint)
-        RestoreCheckpoint(cp);
+        RestoreCheckpointForReplay(cp);
 
         // Arm probe with Execute + full address range, no value/PC filter.
         TTDSearchQuery q;
@@ -4417,6 +4532,8 @@ void TimeTravelManager::SaveLiveState(LiveStateSnapshot& out)
     // Peripherals — the same registry, and therefore the same blobs, the
     // checkpoints carry.
     _peripherals.CaptureAll(out.peripheralBlobs);
+    out.inputCursor = _inputCursor;
+    out.inputPlaybackArmed = _inputPlaybackArmed;
 
     // Full RAM copy (model pages only — e.g. 128 KB on a 128K model). The
     // build replay overwrites live RAM with historic content as it runs, so
@@ -4448,7 +4565,10 @@ void TimeTravelManager::RestoreLiveState(const LiveStateSnapshot& snap)
         RestoreCpuState(snap.cpu, static_cast<Z80State*>(z80));
     RestoreChipsetState(snap.chipset, &_context->emulatorState);
     if (z80)
+    {
         z80->t = snap.z80TInFrame;
+        z80->RecomputeFrameTiming();  // geometry follows the restored multiplier
+    }
     if (_memory)
         _memory->UpdateZ80Banks();
 
@@ -4468,6 +4588,9 @@ void TimeTravelManager::RestoreLiveState(const LiveStateSnapshot& snap)
     }
 
     _peripherals.RestoreAll(snap.peripheralBlobs);
+    _inputCursor = snap.inputCursor;
+    _inputPlaybackArmed = snap.inputPlaybackArmed;
+    UpdateInputWorkFlag();
 
     ResyncScreenCaches();
 }

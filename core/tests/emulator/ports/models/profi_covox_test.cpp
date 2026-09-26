@@ -46,7 +46,7 @@ protected:
     Covox* GetCovox() { return _context->pSoundManager->getCovox(); }
 
     /// Channel order matches Covox::Channel: LeftA=0, LeftB=1, RightA=2, RightB=3
-    void GetLatches(uint8_t (&out)[4]) { GetCovox()->TTDSaveState(out); }
+    void GetLatches(uint8_t (&out)[4]) { GetCovox()->getDacLatches(out); }
 
     /// reset() boots with the DOS latch already on (a plain TR-DOS session, where
     /// #5F/#3F are Beta128 FDC ports and Covox has no ports at all) - drop it so

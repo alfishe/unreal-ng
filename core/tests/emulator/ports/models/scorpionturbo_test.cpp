@@ -11,6 +11,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/mainloop.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
 #include "emulator/ports/portdecoder.h"
@@ -64,15 +65,13 @@ protected:
     }
 
     /// Run one frame through the path the running emulator actually uses:
-    /// MainLoop::Run -> Core::CPUFrameCycle -> Z80::Z80FrameCycle, whose
-    /// prologue applies the queued host multiplier and re-derives the frame
-    /// geometry. Deliberately NOT Emulator::RunNFrames: that carries its own
-    /// frame loop which re-implements the same prologue ("must match
-    /// Z80FrameCycle pattern"), so driving the tests through it would assert
-    /// against the copy and leave Z80FrameCycle itself uncovered - verified by
-    /// mutation (commenting out Z80FrameCycle's ApplyQueuedFrequencyMultiplier
-    /// leaves a RunNFrames-driven version of these tests green).
-    void CrossFrameBoundary() { _context->pCore->CPUFrameCycle(); }
+    /// MainLoop::RunFrame -> Core::CPUFrameCycle, then the frame boundary
+    /// (MainLoop::CompleteFrame), whose Z80::BeginFrame applies the queued
+    /// host multiplier and re-derives the frame geometry for the next frame.
+    /// Every run path (Emulator::Run* included) shares that one boundary, so
+    /// there is no re-implemented copy that could keep these tests green
+    /// while the real path regressed.
+    void CrossFrameBoundary() { reinterpret_cast<MainLoop_CUT*>(_context->pMainLoop)->RunFrame(); }
 };
 
 /// @brief The flip-flop doubles the T-states executed per 50 Hz frame and the

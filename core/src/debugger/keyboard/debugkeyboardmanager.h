@@ -295,6 +295,9 @@ private:
     /// Journalled matrix mutation shared by every path (replay guard + TTD journal + apply)
     /// @return false when refused (replay active, no keyboard, ZXKEY_NONE)
     bool ApplyKey(ZXKeysEnum key, bool pressed);
+
+    /// Live input refused while the TTD journal owns input (TimeTravelManager::OwnsInput)
+    bool IsInputOwnedByJournal() const;
     
     /// Get TR-DOS E-mode key for a keyword
     /// @param keyword Keyword name (uppercase)

@@ -85,7 +85,7 @@ TEST_F(PortDecoder_Scorpion256_Soundrive_Test, ModeTwoQuadPortsReachHandlerViaOu
     }
 
     uint8_t latches[4];
-    covox.TTDSaveState(latches);
+    covox.getDacLatches(latches);
     for (size_t i = 0; i < std::size(lowBytes); i++)
     {
         EXPECT_EQ(latches[i], static_cast<uint8_t>(0x10 + i))
@@ -115,7 +115,7 @@ TEST_F(PortDecoder_Scorpion256_Soundrive_Test, ModeOnePortsRespectBeta128Precede
     ASSERT_EQ(fdc.outPorts.size(), 1u);
     EXPECT_EQ(fdc.outPorts[0].first, 0x001F);
     uint8_t latches[4];
-    covox.TTDSaveState(latches);
+    covox.getDacLatches(latches);
     EXPECT_EQ(latches[static_cast<int>(Covox::Channel::LeftB)], 0x80)
         << "Beta128 must win while a TR-DOS session is open";
 
@@ -131,7 +131,7 @@ TEST_F(PortDecoder_Scorpion256_Soundrive_Test, ModeOnePortsRespectBeta128Precede
         _portDecoder->DecodePortOut(rawPorts[i], static_cast<uint8_t>(0x20 + i), 0x0000);
     }
 
-    covox.TTDSaveState(latches);
+    covox.getDacLatches(latches);
     for (size_t i = 0; i < std::size(rawPorts); i++)
     {
         EXPECT_EQ(latches[i], static_cast<uint8_t>(0x20 + i))

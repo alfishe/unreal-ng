@@ -39,8 +39,12 @@ constexpr char kMagic[4] = {'T', 'T', 'D', 'D'};
 /// machine's 256 pages were found to truncate to 0); chipset_state shrank
 /// to 120 bytes (from 168, or 184 with the Scorpion ProfROM fields) when
 /// the extended / model-specific port latches
-/// moved out to TTDPeripheralRegistry serializers. Sessions recorded before
-/// an amendment do not parse and must be re-recorded.
+/// moved out to TTDPeripheralRegistry serializers. Per-frame checkpoints
+/// moved to AFTER the new frame's start (MainLoop::CompleteFrame): a
+/// checkpoint now carries the started frame's state (the General Sound
+/// blobs gained their frame timeline in bytes 77..88) - a semantic change
+/// older files would parse but restore one frame start off. Sessions recorded
+/// before an amendment must be re-recorded.
 constexpr uint16_t kSchemaVersion = 1;
 
 /// Bit 0 of header.flags — set when the writer is little-endian (always 1

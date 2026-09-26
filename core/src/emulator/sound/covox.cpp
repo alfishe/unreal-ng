@@ -379,18 +379,18 @@ void Covox::computeStereoAmplitudes(int32_t& outL, int32_t& outR) const
 
 /// region <TTDSerializable (P1.5 - parent TDD 6.4)>
 //
-// Layout: 4 bytes - the four DAC latches (_dacValue[0..3]).
-// The DAC latches are the only CPU-visible machine state (set via OUT to
-// ports 0xF1/0xF3/0xF9/0xFB, or their #0F/#1F/#4F/#5F mode-1 aliases).
-// Everything else is host-side audio pipeline, including the stale-channel
-// decay countdown (_staleFrameCount/_writtenThisFrame) - it is a host-only
-// mixing heuristic with no hardware equivalent, so a TTD load resets it to
-// "just written" for all channels. Worst case: a channel captured mid-decay
-// gets up to STALE_CHANNEL_FRAMES extra frames before re-centering after the
-// jump - inaudible in practice and never affects _dacValue itself.
+// Layout (9 bytes):
+//   [0..3] the four DAC latches (_dacValue[0..3]) - the CPU-visible state
+//          (set via OUT to ports 0xF1/0xF3/0xF9/0xFB, or their #0F/#1F/#4F/#5F
+//          mode-1 aliases)
+//   [4..7] per-channel idle-frame countdown (_staleFrameCount, saturated at 255)
+//   [8]    per-channel "written this frame" bits (_writtenThisFrame, bit i)
+// The countdown is not hardware, but it writes the DAC latch: a channel idle
+// for STALE_CHANNEL_FRAMES frames decays to 0x80. Left out of the state, a
+// restore kept the live countdown and the channel re-centered on a different
+// frame than recorded - the latch, and every checkpoint after it, diverged.
 
-static constexpr size_t kCovoxStateSize = 4;
-static_assert(kCovoxStateSize == 4, "Covox state size drift");
+static constexpr size_t kCovoxStateSize = 9;
 
 size_t Covox::TTDStateSize() const
 {
@@ -400,10 +400,23 @@ size_t Covox::TTDStateSize() const
 void Covox::TTDSaveState(uint8_t* dst) const
 {
     std::memcpy(dst, _dacValue, 4);
+    uint8_t written = 0;
+    for (int i = 0; i < 4; i++)
+    {
+        dst[4 + i] = static_cast<uint8_t>(std::min(_staleFrameCount[i], 255));
+        if (_writtenThisFrame[i])
+            written |= static_cast<uint8_t>(1u << i);
+    }
+    dst[8] = written;
 }
 
 void Covox::TTDLoadState(const uint8_t* src)
 {
     std::memcpy(_dacValue, src, 4);
+    for (int i = 0; i < 4; i++)
+    {
+        _staleFrameCount[i] = src[4 + i];
+        _writtenThisFrame[i] = (src[8] & (1u << i)) != 0;
+    }
 }
 /// endregion </TTDSerializable>

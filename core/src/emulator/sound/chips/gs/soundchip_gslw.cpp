@@ -1309,6 +1309,12 @@ void SoundChip_GSLightweight::serializeFixedState(uint8_t* dst) const
 
     // [77..94]: reserved (queue-era data-queue slots, zero)
     std::fill_n(&dst[77], 18, static_cast<uint8_t>(0));
+
+    // [77..88]: the current frame's timeline, same slots as the LLE card
+    // (SoundChip_GeneralSound::serializeFixedState)
+    lwTtdWrite32(&dst[77], static_cast<uint32_t>(totalGsCycles() - _frameStartGsCycles));
+    lwTtdWrite32(&dst[81], static_cast<uint32_t>(_frameStartZxTacts));
+    lwTtdWrite32(&dst[85], static_cast<uint32_t>(_frameGsCycles));
 }
 
 size_t SoundChip_GSLightweight::TTDStateSize() const
@@ -1404,18 +1410,10 @@ void SoundChip_GSLightweight::TTDLoadState(const uint8_t* src)
     if (_blipR) blip_clear(_blipR);
     _frameHadActivity = false;
 
-    // Frame-relative bases, exactly as handleFrameStart() would set them: a
-    // checkpoint is captured at the frame boundary, after the previous
-    // frame's handleFrameEnd but before the next frame's handleFrameStart
-    // (RunNFrames runs OnFrameStart after OnFrameEnd). The resumed frame
-    // does not re-run handleFrameStart, so without this its handleFrameEnd
-    // catches up to a target computed from the pre-seek history - the card
-    // then ran whole frames ahead of (or behind) the recording on replay.
-    // CPU t and the chipset are restored before the peripherals, so
-    // currentZxTacts() already reads the resumed position
-    _frameStartZxTacts = currentZxTacts();
-    _frameStartGsCycles = totalGsCycles();
-    _frameGsCycles = frameGsLength();
+    // The frame timeline the checkpoint was taken in (see serializeFixedState)
+    _frameStartGsCycles = totalGsCycles() - static_cast<int64_t>(lwTtdRead32(&src[77]));
+    _frameStartZxTacts = lwTtdRead32(&src[81]);
+    _frameGsCycles = static_cast<int64_t>(lwTtdRead32(&src[85]));
 }
 
 uint64_t SoundChip_GSLightweight::TTDHashState() const

@@ -25,8 +25,8 @@
 ///     by session-invalidation hooks (Reset / Load* / speed change) in P1.6.
 ///
 /// Threading (per TDD §7.2):
-///   - OnFrameBoundary() runs on the emulator thread (called from MainLoop::
-///     OnFrameEnd) — appends to the timeline, no locks.
+///   - OnFrameBoundary() runs on the thread driving the frame (called from
+///     MainLoop::CompleteFrame) — appends to the timeline, no locks.
 ///   - Start/Stop/Invalidate/Seek are called from the control thread while
 ///     the emulator is paused (existing pause discipline; no new concurrency).
 ///
@@ -44,6 +44,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <vector>
 #include <string>
@@ -456,8 +457,14 @@ public:
 
     /// @brief Capture a checkpoint at the current frame boundary.
     ///
-    /// Called from MainLoop::OnFrameEnd (and the equivalent boundary in
-    /// Emulator::RunTStates). No-op if not Recording. Cost when recording:
+    /// Called from MainLoop::CompleteFrame - the one frame boundary every run
+    /// path (main loop and all Emulator::Run*) goes through - AFTER the new
+    /// frame's start (frame-start hooks, CPU frame geometry): checkpoint N
+    /// is the machine ready to execute frame N's first instruction, the same
+    /// frame phase as every other capture point (a recording's baseline taken
+    /// at a pause), so a restore never runs any frame hook. Host input
+    /// injected at the boundary comes after the capture and is replayed from
+    /// the input journal. No-op if not Recording. Cost when recording:
     ///   - Dirty pages: one 16 KB Intern per dirty page (typically 2–6/frame)
     ///   - Clean pages: one AddRef each (no memcpy)
     ///   - CPU + chipset: field copies (< 2 KB)
@@ -573,6 +580,40 @@ public:
     /// No-op when replay is not active (defensive — the seek engine should
     /// already be inside an EnterReplayMode / ExitReplayMode pair).
     size_t InjectDueInputEvents(const TTDTimePoint& now);
+
+    // -----------------------------------------------------------------------
+    // Input ownership: live input vs the recorded journal
+    // -----------------------------------------------------------------------
+    //
+    // While the machine executes recorded history, its input comes from the
+    // journal ONLY - applied straight to the keyboard matrix / mouse at the
+    // recorded instruction boundaries - and every live source (host UI via
+    // MessageCenter, automation) is refused. Outside history, live input is
+    // applied on the machine's own thread at an instruction boundary and
+    // journaled there while recording, so the recorded time is the moment
+    // the program could first see the change.
+
+    /// @brief True while the journal owns input: a seek replay is running, or
+    /// the machine sits Detached inside the recorded session (seeked into the
+    /// past and possibly running forward through it). Live input is refused.
+    bool OwnsInput() const;
+
+    /// @brief The one entry point for live input (any thread). Refused (false)
+    /// while OwnsInput(). While the emulator loop runs, the event is queued
+    /// and applied - and journaled when recording - by the machine's thread at
+    /// the next instruction boundary (ServiceInput); in synchronous mode (loop
+    /// not running, the caller is the only thread) it is applied at once.
+    /// `ev.time` is ignored: the time is stamped when the event is applied.
+    bool SubmitLiveInput(const TTDInputEvent& ev);
+
+    /// @brief Executing thread, before every instruction (Z80::StepInstruction;
+    /// cheap gate: EmulatorContext::ttdInputWork): play due journal events,
+    /// then apply queued live input.
+    void ServiceInput();
+
+    /// @brief The machine left the recorded timeline from outside (reset):
+    /// a Detached session returns to Idle and journal playback stops.
+    void OnMachineReset();
 
     // -----------------------------------------------------------------------
     // Seek engine (Phase 2 Item 4; parent TDD §8.1)
@@ -1418,6 +1459,8 @@ private:
         /// Peripheral state, keyed by PeripheralId — same representation the
         /// checkpoints use, produced by the same registry.
         std::unordered_map<uint8_t, std::vector<uint8_t>> peripheralBlobs;
+        size_t inputCursor = 0;            ///< journal playback cursor (ServiceInput)
+        bool   inputPlaybackArmed = false;
     };
 
     /// Reused across builds; vector capacities are retained, so the sizable
@@ -1553,6 +1596,31 @@ private:
     /// Dropped on InvalidateSession/StartRecording; truncated by Item 5
     /// Resume-from-past.
     TTDInputJournal _inputJournal;
+
+    /// Journal playback: next event to apply while the machine executes
+    /// recorded history (armed by a navigation restore, see ArmInputPlayback)
+    size_t _inputCursor = 0;
+    bool _inputPlaybackArmed = false;
+
+    /// Live input waiting for the machine's thread (SubmitLiveInput)
+    std::mutex _pendingInputMutex;
+    std::vector<TTDInputEvent> _pendingInput;
+
+    /// Position the playback cursor at the restored machine time (events
+    /// journaled at exactly that time are applied by the next instruction)
+    void ArmInputPlayback();
+    void DisarmInputPlayback();
+
+    /// Apply one live event on the machine's thread, journaling it first
+    /// (stamped with the current time) while recording
+    void ApplyLiveInput(TTDInputEvent ev);
+
+    /// Refresh EmulatorContext::ttdInputWork (per-step gate)
+    void UpdateInputWorkFlag();
+
+    /// RestoreCheckpoint + ArmInputPlayback: every restore that navigates
+    /// history (seek, reverse queries) - not the capture/restore self-test
+    void RestoreCheckpointForReplay(const TTDCheckpoint& cp);
 
     /// External-event journal — replay barriers for nondeterminism sources
     /// that aren't input-journaled in v1 (Item 6). Same lifecycle as the

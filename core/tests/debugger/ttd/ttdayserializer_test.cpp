@@ -270,13 +270,15 @@ protected:
     }
 };
 
-TEST_F(TTD_TurboSound_Serializer_Test, TTDStateSize_IsStable_925Bytes)
+TEST_F(TTD_TurboSound_Serializer_Test, TTDStateSize_IsStable_981Bytes)
 {
     // 1 byte current-chip selector + 2 x 73-byte AY chips + timeline tail
     // (8-byte render cursor offset + 2 x pending SSG writes {1 + 64 x 6})
-    // = 1 + 146 + 8 + 770 = 925 bytes.
-    EXPECT_EQ(_ttsA->TTDStateSize(), 925u);
-    EXPECT_EQ(_ttsB->TTDStateSize(), 925u);
+    // + render-phase tail (sample phase, LQ phase, 4 decimator phases: 48)
+    // + frame-progress tail (render position, samples produced: 8)
+    // = 1 + 146 + 8 + 770 + 48 + 8 = 981 bytes.
+    EXPECT_EQ(_ttsA->TTDStateSize(), 981u);
+    EXPECT_EQ(_ttsB->TTDStateSize(), 981u);
 }
 
 TEST_F(TTD_TurboSound_Serializer_Test, RoundTrip_DefaultState_IsByteIdentical)
@@ -384,8 +386,8 @@ TEST(TTD_AY_ManagerIntegration_Test, CaptureNow_PopulatesAyStateBlob)
         << "TurboSound must register itself and appear in the checkpoint";
     const auto ayState = ttd::TTDPeripheralRegistry::DecodeBlob(
         static_cast<uint8_t>(ttd::PeripheralId::TurboSound), ayBlob->second);
-    EXPECT_EQ(ayState.size(), 925u)
-        << "TurboSound blob must contain the payload (1 + 2x73 bytes + 778 timeline tail)";
+    EXPECT_EQ(ayState.size(), 981u)
+        << "TurboSound blob must contain the payload (1 + 2x73 bytes + 778 timeline tail + 56 render tails)";
 
     emulator.Stop();
     emulator.Release();

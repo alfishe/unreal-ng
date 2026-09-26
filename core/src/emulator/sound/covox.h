@@ -192,6 +192,13 @@ public:
     void setChannelMute(Channel ch, bool mute) { _channelMute[static_cast<int>(ch)] = mute; }
     bool isChannelMuted(Channel ch) const { return _channelMute[static_cast<int>(ch)]; }
 
+    /// The four DAC latches (LeftA, LeftB, RightA, RightB order of Channel)
+    void getDacLatches(uint8_t (&out)[4]) const
+    {
+        for (int i = 0; i < 4; i++)
+            out[i] = _dacValue[i];
+    }
+
     /// Last stereo amplitude computed from the DAC latches (updated
     /// synchronously in portDeviceOutMethod(), independent of blip_buf/frame
     /// timing) - lets tests assert on the mono-vs-stereo mixing decision

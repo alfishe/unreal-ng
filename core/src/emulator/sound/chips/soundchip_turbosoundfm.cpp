@@ -754,12 +754,14 @@ namespace
 inline void put_u8 (uint8_t*& cur, uint8_t v)   { *cur++ = v; }
 inline void put_u16(uint8_t*& cur, uint16_t v)  { std::memcpy(cur, &v, 2); cur += 2; }
 inline void put_i32(uint8_t*& cur, int32_t v)   { std::memcpy(cur, &v, 4); cur += 4; }
+inline void put_u32(uint8_t*& cur, uint32_t v)  { std::memcpy(cur, &v, 4); cur += 4; }
 inline void put_u64(uint8_t*& cur, uint64_t v)  { std::memcpy(cur, &v, 8); cur += 8; }
 inline void put_f64(uint8_t*& cur, double v)    { std::memcpy(cur, &v, 8); cur += 8; }
 
 inline uint8_t  get_u8 (const uint8_t*& cur)  { return *cur++; }
 inline uint16_t get_u16(const uint8_t*& cur)  { uint16_t v; std::memcpy(&v, cur, 2); cur += 2; return v; }
 inline int32_t  get_i32(const uint8_t*& cur)  { int32_t v; std::memcpy(&v, cur, 4); cur += 4; return v; }
+inline uint32_t get_u32(const uint8_t*& cur)  { uint32_t v; std::memcpy(&v, cur, 4); cur += 4; return v; }
 inline uint64_t get_u64(const uint8_t*& cur)  { uint64_t v; std::memcpy(&v, cur, 8); cur += 8; return v; }
 inline double   get_f64(const uint8_t*& cur)  { double v; std::memcpy(&v, cur, 8); cur += 8; return v; }
 
@@ -817,11 +819,21 @@ constexpr size_t kRenderPhaseStateSize =
 constexpr size_t kSsgQueueStateSize = 1 + SsgWriteQueue::kCapacity * (4 + 1 + 1);
 constexpr size_t kTimelineStateSize = 8 /* render cursor offset */ + 2 * kSsgQueueStateSize;
 
-// version(1) + board(1) + render-loop phase(48) + 2 x per-chip payload + v4 tail
-constexpr size_t kTsfmStateSize = 1 + 1 + kRenderPhaseStateSize + 2 * kTsfmChipStateSize + kTimelineStateSize;
-static_assert(kTsfmStateSize == 2000, "TSFM state size must match design §8.2 + render-phase fixes + v4 timeline (2000 bytes)");
+// v5 tail: the current frame's render progress - the frame position the
+// render loop has reached (_lastTStates, scaled T-states) and the samples it
+// has produced (_ayBufferIndex). A checkpoint is taken inside a started frame:
+// at its first instruction (both 0) for per-frame checkpoints, anywhere for a
+// recording's baseline. Restarting them at 0 on a mid-frame restore rendered
+// [0, t) a second time - extra generator ticks and a shifted _samplePhase
+constexpr size_t kFrameProgressStateSize = 4 /* lastTStates */ + 4 /* ayBufferIndex */;
 
-constexpr uint8_t kTsfmStateVersion = 4;
+// version(1) + board(1) + render-loop phase(48) + 2 x per-chip payload + v4 tail + v5 tail
+constexpr size_t kTsfmStateSize =
+    1 + 1 + kRenderPhaseStateSize + 2 * kTsfmChipStateSize + kTimelineStateSize + kFrameProgressStateSize;
+static_assert(kTsfmStateSize == 2008,
+              "TSFM state size must match design §8.2 + render-phase fixes + v4 timeline + v5 frame progress (2008 bytes)");
+
+constexpr uint8_t kTsfmStateVersion = 5;
 
 uint8_t EncodeBoardByte(const TsfmBoard& b)
 {
@@ -900,6 +912,10 @@ void SoundChip_TurboSoundFM::TTDSaveState(uint8_t* dst) const
         }
     }
 
+    // v5 tail: the current frame's render progress
+    put_u32(cur, _lastTStates);
+    put_u32(cur, static_cast<uint32_t>(_ayBufferIndex));
+
     assert(static_cast<size_t>(cur - dst) == kTsfmStateSize);
 }
 
@@ -909,7 +925,7 @@ void SoundChip_TurboSoundFM::TTDLoadState(const uint8_t* src)
 
     const uint8_t version = get_u8(cur);
     assert(version == kTsfmStateVersion &&
-           "TTD blob predates the v4 timeline (soundchip_turbosoundfm.cpp) "
+           "TTD blob predates the v5 frame progress (soundchip_turbosoundfm.cpp) "
            "and cannot be loaded by this build");
     (void)version;
     TsfmBoard board;
@@ -964,6 +980,10 @@ void SoundChip_TurboSoundFM::TTDLoadState(const uint8_t* src)
         }
     }
 
+    // v5 tail: the current frame's render progress
+    const uint32_t lastTStates = get_u32(cur);
+    const uint32_t ayBufferIndex = get_u32(cur);
+
     // Output-stage FLUSH (not restore) of AUDIO CONTENT: the decimator FIR
     // history, hold register, LQ boxcar and word queues are not part of TTD
     // state (§8.2 policy - they're host-side rendering caches, not chip
@@ -1001,18 +1021,32 @@ void SoundChip_TurboSoundFM::TTDLoadState(const uint8_t* src)
     _renderT = base + cursorOffset;
     _renderReanchor = false;
 
-    // Checkpoints sit on a frame boundary and the machine resumes at T 0 of a
-    // fresh frame, so the per-frame render cursor restarts like
-    // handleFrameStart - its live pre-seek values miscounted the first frame
-    // (up to a few samples too many) and shifted _samplePhase for good.
+    // The per-frame render progress is historical (v5 tail): the frame was
+    // rendered up to the checkpoint's position - left at its live pre-seek
+    // values it miscounted the first frame (up to a few samples too many)
+    // and shifted _samplePhase for good; restarted at 0 on a mid-frame
+    // checkpoint it rendered [0, t) twice. The samples already produced this
+    // frame are output content from before the seek: silence (Tier C).
+    _lastTStates = lastTStates;
+    _ayBufferIndex = ayBufferIndex;
+    memset(_ayBuffer, 0x00, _ayAudioDescriptor.memoryBufferSizeInBytes);
+    memset(_chip0Buffer, 0x00, _chip0AudioDescriptor.memoryBufferSizeInBytes);
+    memset(_chip1Buffer, 0x00, _chip1AudioDescriptor.memoryBufferSizeInBytes);
+    memset(_fm0Buffer, 0x00, _fm0AudioDescriptor.memoryBufferSizeInBytes);
+    memset(_fm1Buffer, 0x00, _fm1AudioDescriptor.memoryBufferSizeInBytes);
+
     // _samplePhase itself is historical now, the mixer's accumulator is
-    // still the live pre-seek one: it takes the device's position. Either
-    // left out, the two frame sample counts disagreed every few frames after
-    // any seek (issue #2 again: one zero sample per 904-sample frame)
-    _lastTStates = 0;
-    _ayBufferIndex = 0;
+    // still the live pre-seek one: it takes the device's phase AT THE FRAME
+    // START (the mixer advances once per frame end) - the progress above
+    // un-applied. Either left out, the two frame sample counts disagreed
+    // every few frames after any seek (issue #2 again: one zero sample per
+    // 904-sample frame)
     if (_context->pSoundManager)
-        _context->pSoundManager->adoptSamplePhase(_samplePhase);
+    {
+        const uint64_t frameStartPhase = _samplePhase - uint64_t(_lastTStates) * _coreRate +
+                                         uint64_t(_ayBufferIndex / AUDIO_CHANNELS) * CPU_CLOCK_RATE;
+        _context->pSoundManager->adoptSamplePhase(frameStartPhase);
+    }
 
     // The core continues from the restored CPU position (_syncedT = base
     // above): the restore sets z80.t before the devices load, so the next

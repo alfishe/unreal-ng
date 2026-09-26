@@ -194,7 +194,11 @@ public:
     ///   [24..58] Z80: af bc de hl af2 bc2 de2 hl2 ix iy sp pc memptr (13x2),
     ///            i (1), r (2), r7 (1), iff1 iff2 (2), im (1), halted (1),
     ///            prefix (1)
-    ///   [59..94] reserved (queue-era slots, always 0)
+    ///   [59..76] reserved (queue-era slots, always 0)
+    ///   [77..80] GS cycles since the frame start (u32)
+    ///   [81..84] ZX tacts at the frame start (u32, AudioTstate domain)
+    ///   [85..88] frame length in GS cycles (u32)
+    ///   [89..94] reserved (always 0)
     ///   [95..  ] RAM image (config-sized)
     size_t TTDStateSize() const override;
     void TTDSaveState(uint8_t* dst) const override;
@@ -204,8 +208,7 @@ public:
     uint64_t TTDHashState() const override;
     /// endregion </TTDSerializable interface>
 
-    /// Fixed part of the TTD blob (everything except the RAM image);
-    /// [59..94] are reserved queue-era slots kept for layout compatibility
+    /// Fixed part of the TTD blob (everything except the RAM image)
     static constexpr size_t TTD_FIXED_STATE_SIZE = 95;
 
 private:

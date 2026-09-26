@@ -72,8 +72,10 @@ static_assert(offsetof(MoonSoundTTDHeader, romHash) + sizeof(MoonSoundTTDHeader:
 ///
 /// Time base (3.2): libopl4 needs ONE monotonic T-state axis for the whole
 /// session, while the host z80->t is a per-frame counter the core rebases
-/// every frame. The device therefore keeps an absolute origin that advances
-/// by one frame duration at each frame start; absolute chip time is
+/// every frame. The device therefore keeps an absolute origin - the start of
+/// the current frame - that advances by one frame duration when that frame
+/// ends (handleFrameEnd, which runs for every frame, suppressed ones
+/// included); absolute chip time is
 ///   _tstateOrigin + AudioTstate(z80->t) * HostSpeedMultiplier()
 /// and every value handed to the library is clamped monotonic - a machine
 /// switch or hard reset mid-session must never move chip time backwards.
@@ -108,8 +110,14 @@ public:
 
     // Frame lifecycle
     void reset();
+
+    /// Idempotent: the time axis is advanced by the previous frame's end, so
+    /// a repeated frame start (MainLoop::RestartFrame) adds no chip time
     void handleFrameStart();
 
+    /// Runs the core to the end of the frame, renders it (unless suppressed)
+    /// and folds the frame's duration into the time axis. Called for every
+    /// frame, turbo-without-audio included (SoundManager::handleFrameEnd)
     /// @param expectedSamples exact per-frame sample count from the
     ///        SoundManager accumulator (same contract as Covox).
     void handleFrameEnd(size_t expectedSamples);

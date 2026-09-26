@@ -21,13 +21,14 @@
 /// At ~10 keys/sec sustained typing, a 5-minute session is ~3 000 events =
 /// ~50 KB. Negligible vs. the page store budget.
 ///
-/// Thread model: Record() runs on the host input thread (whoever calls
-/// DebugKeyboardManager::PressKey). Read access (EventsUpTo, Size,
-/// PeekNextEventTimeOnOrAfter) runs on the control thread during seek.
-/// DropAfter / Clear run on the control thread under pause. The existing
-/// MessageCenter delivery already serializes host key events onto a single
-/// thread, so no internal locking is required — matching the page store's
-/// threading model.
+/// Thread model: Record() and Apply() run on the thread executing the machine
+/// (the emulator loop, or the caller of a synchronous Emulator::Run*). Live
+/// input from other threads (MessageCenter host keys/mouse, automation) is
+/// queued by TimeTravelManager::SubmitLiveInput and applied + journaled there
+/// at an instruction boundary, so a journal entry's time IS the moment the
+/// program could first observe the change - which is what makes replay exact.
+/// DropAfter / Clear run on the control thread under pause. No internal
+/// locking is required.
 
 #include <cstdint>
 #include <cstddef>
@@ -61,6 +62,13 @@ namespace ttd {
 /// One ordered journal for every device (Kempston Mouse design §6.2, option (a)
 /// "discriminated union"): the ascending-time invariant and the replay merge stay
 /// trivially correct with a single stream.
+///
+/// Adding an input device (e.g. a Kempston joystick fed from host controllers):
+/// add a kind here and its case in TTDInputJournal::Apply, and route every live
+/// source through TimeTravelManager::SubmitLiveInput - never mutate the device
+/// directly. That one path gives it replay ownership (live input refused while
+/// the journal drives the machine), marshalling onto the machine's thread and an
+/// exact journal time. (A Sinclair joystick is keyboard keys: no new kind.)
 enum class TTDInputKind : uint8_t
 {
     Key = 0,            ///< keyboard matrix press / release (key, pressed)
@@ -154,6 +162,15 @@ public:
     /// @brief Inject every event with time == `now` into the live input devices.
     /// A null device skips the events of its kind (they are not counted).
     size_t InjectDueEvents(Keyboard* keyboard, Mouse* mouse, const TTDTimePoint& now);
+
+    /// @brief Apply one event to the input devices (the single mutation path
+    /// shared by replay and live input). Returns false when the event's device
+    /// is absent.
+    static bool Apply(const TTDInputEvent& ev, Keyboard* keyboard, Mouse* mouse);
+
+    /// @brief Index of the first event with time >= `t` (Size() when none) -
+    /// the replay cursor for a machine positioned at `t`.
+    size_t FirstIndexAtOrAfter(const TTDTimePoint& t) const;
 
     // -----------------------------------------------------------------------
     // Lifecycle (control thread; emulator paused)

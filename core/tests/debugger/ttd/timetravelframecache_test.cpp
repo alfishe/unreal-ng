@@ -224,11 +224,14 @@ TEST_F(TTD_FrameCache_Test, ScalesWithCpuFrequencyMultiplier)
     // the instructions and the cache must capture the WHOLE turbo frame (not
     // just 1/multiplier of it) with the reserve sized accordingly.
     const uint8_t kMultiplier = 16;  // 3.5 MHz * 16 = 56 MHz
-    // Set the active multiplier directly: the queued next->current swap happens
-    // in the frame-cycle path, not RunNFrames' manual loop. Both fields so the
-    // boundary check leaves it in place. RunNFrames then uses a 16x frameLimit.
+    // Set the active multiplier directly (a queued change would only apply at
+    // the next frame boundary, leaving the current frame at 1x). Both fields
+    // so the boundary's queued-change check leaves it in place, then re-derive
+    // the CPU frame geometry the way every direct state write must (the TTD
+    // restore does the same): RunNFrames then uses a 16x frameLimit.
     _context->emulatorState.current_z80_frequency_multiplier = kMultiplier;
     _context->emulatorState.next_z80_frequency_multiplier = kMultiplier;
+    _context->pCore->GetZ80()->RecomputeFrameTiming();
     ASSERT_EQ(_context->emulatorState.current_z80_frequency_multiplier, kMultiplier);
 
     installBusyProgram();

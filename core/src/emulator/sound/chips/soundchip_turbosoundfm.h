@@ -479,8 +479,8 @@ public:
     /// endregion </Ports interaction>
 
     /// region <TTDSerializable interface>
-    /// §8.2 layout (v4), 2000 bytes, PeripheralId::TSFM = 4:
-    ///   u8 version (= 4)
+    /// §8.2 layout (v5), 2008 bytes, PeripheralId::TSFM = 4:
+    ///   u8 version (= 5)
     ///   u8 board (chip | statusRead<<1 | fmEnabled<<2)
     ///   f64 samplePhase, f64 decimationPhase        (v2: render-loop PLL/LQ phase)
     ///   f64 x4: chip{0,1}.ssg.decimator{Left,Right}().phase()  (v3: per-decimator
@@ -502,6 +502,10 @@ public:
     ///     i64 render cursor offset (decides the tick of every SSG write)
     ///     per chip x2: u8 pending SSG write count, then
     ///       SsgWriteQueue::kCapacity x {i32 t offset, u8 reg, u8 value}
+    ///   v5 frame-progress tail (the checkpoint is inside a started frame,
+    ///   mid-frame for a recording's baseline):
+    ///     u32 lastTStates (scaled frame position rendered up to)
+    ///     u32 ayBufferIndex (samples produced this frame, x AUDIO_CHANNELS)
     /// Everything else in the output stage (decimator FIR history/content,
     /// hold register, LQ boxcar accumulator, word queues, DC path, native
     /// taps) is genuinely just rendering cache - NOT part of TTD state, and

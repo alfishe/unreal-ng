@@ -383,18 +383,32 @@ void Keyboard::OnKey(ZXKeysEnum key, bool isPressed, bool shift, bool ctrl, bool
 
 /// region <Handle MessageCenter keyboard events>
 
-/// Host (desktop front end) keystrokes arrive here directly, not through
-/// DebugKeyboardManager, so the TTD replay guard and input journal are applied here:
-/// suppressed while TTD replays, journalled (before the matrix changes) while it records.
+/// Host (desktop front end) keystrokes arrive here on the MessageCenter thread, not
+/// through DebugKeyboardManager, so the TTD input ownership rule applies here: refused
+/// while the recorded journal drives the machine (replay, or re-executing recorded
+/// history), otherwise handed to the machine's thread through the TTD live-input gateway,
+/// which journals it at the instruction boundary where it takes effect.
 bool Keyboard::IsHostInputSuppressed() const
 {
-    return _context && _context->ttdReplayActive;
+    return _context && _context->pTimeTravelManager && _context->pTimeTravelManager->OwnsInput();
 }
 
-void Keyboard::JournalHostKey(ZXKeysEnum key, bool pressed)
+void Keyboard::SubmitHostKey(ZXKeysEnum key, bool pressed)
 {
-    if (_context && _context->pTimeTravelManager && _context->pTimeTravelManager->IsRecording())
-        _context->pTimeTravelManager->RecordInputEvent(static_cast<uint8_t>(key), pressed);
+    if (_context && _context->pTimeTravelManager)
+    {
+        ttd::TTDInputEvent ev;
+        ev.kind = ttd::TTDInputKind::Key;
+        ev.key = static_cast<uint8_t>(key);
+        ev.pressed = pressed;
+        _context->pTimeTravelManager->SubmitLiveInput(ev);
+        return;
+    }
+
+    if (pressed)
+        PressKey(key);
+    else
+        ReleaseKey(key);
 }
 void Keyboard::OnKeyPressed([[maybe_unused]] int id, Message* message)
 {
@@ -433,14 +447,12 @@ void Keyboard::OnKeyPressed([[maybe_unused]] int id, Message* message)
         if (zxModifier != ZXKEY_NONE)
         {
             increaseKeyPressCounter(zxModifier);
-            JournalHostKey(zxModifier, /*pressed=*/true);
-            PressKey(zxModifier);
+            SubmitHostKey(zxModifier, /*pressed=*/true);
         }
 
         // Base key afterwards
         increaseKeyPressCounter(zxBase);
-        JournalHostKey(zxBase, /*pressed=*/true);
-        PressKey(zxBase);
+        SubmitHostKey(zxBase, /*pressed=*/true);
 
         MLOGINFO("OnKeyPressed: 0x%02X", zxKey);
         // printf("OnKeyPressed: 0x%02X\n", zxKey);
@@ -491,16 +503,14 @@ void Keyboard::OnKeyReleased([[maybe_unused]] int id, Message* message)
         {
             if (decreaseKeyPressCounter(zxModifier) == 0)
             {
-                JournalHostKey(zxModifier, /*pressed=*/false);
-                ReleaseKey(zxModifier);
+                SubmitHostKey(zxModifier, /*pressed=*/false);
             }
         }
 
         // Base key afterwards
         if (decreaseKeyPressCounter(zxBase) == 0)
         {
-            JournalHostKey(zxBase, /*pressed=*/false);
-            ReleaseKey(zxBase);
+            SubmitHostKey(zxBase, /*pressed=*/false);
         }
 
         MLOGINFO("OnKeyReleased: 0x%02X", zxKey);

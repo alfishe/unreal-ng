@@ -8,6 +8,10 @@
 
 class EmulatorContext;
 class Mouse;
+namespace ttd
+{
+struct TTDInputEvent;
+}
 
 /// Kempston Mouse button - the value is its bit in the active-low mask
 enum class MouseButton : uint8_t
@@ -113,7 +117,7 @@ public:
     static std::vector<std::string> GetAllButtonNames();
     /// endregion </Names>
 
-    /// Frame pump (emulator thread, MainLoop::OnFrameEnd)
+    /// Frame pump (emulator thread, MainLoop::CompleteFrame)
     void OnFrame();
 
 private:
@@ -121,12 +125,13 @@ private:
     MouseInjectResult Guard() const;  // NoDevice / ReplayActive
     MouseInjectResult Success(const std::string& message) const;
 
-    // Journal + apply: shared by automation, host and timed paths
+    // Submit through the TTD live-input gateway (ownership + journal + apply on the
+    // machine's thread): shared by automation, host and timed paths
+    bool Submit(const ttd::TTDInputEvent& ev, Mouse& mouse);
     void ApplyMove(Mouse& mouse, int dx, int dy);
     void ApplyButtons(Mouse& mouse, uint8_t activeLowMask);
     void ApplyWheel(Mouse& mouse, int steps);
     void ApplyCounters(Mouse& mouse, uint8_t x, uint8_t y);
-    bool IsRecording() const;
     bool IsReplaying() const;
 
     void CancelPendingLocked();

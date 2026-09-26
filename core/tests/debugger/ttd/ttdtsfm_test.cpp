@@ -320,7 +320,7 @@ TEST_F(TtdTsfm_Test, SessionKindMismatchRefused)
 // against a real user recording (scratch/tsfm-issues.ttd: 0/1169
 // checkpoints). §8.2's real TTDStateSize/TTDSaveState/TTDLoadState/
 // TTDHashState are now implemented in soundchip_turbosoundfm.cpp (v4,
-// 2000-byte payload: board latches + the render-loop's free-running
+// 2008-byte payload: board latches + the render-loop's free-running
 // _samplePhase/_decimationPhase accumulators + per-chip address/fmClockPhase/
 // timers/busy + ymfm::ym2203::save_restore() + the SSG half's existing
 // AY8910 serializer). The render-phase fields were added after
@@ -357,11 +357,12 @@ protected:
 
 TEST_F(TTD_TurboSoundFM_Serializer_Test, TTDStateSize_IsNonZero)
 {
-    // Design §8.2 (v4) pins this at 2000 bytes (1 version + 1 board + 48
+    // Design §8.2 (v5) pins this at 2008 bytes (1 version + 1 board + 48
     // render-phase accumulators (samplePhase, decimationPhase, 4 per-
     // decimator phases) + 2 x (1 address + 4 fmClockPhase + 2x4 timers + 4
     // busy + 2 ymfmSize + 494 ymfm payload + 73 AY payload) + 778 timeline
-    // tail (render cursor + pending timed SSG writes)). A
+    // tail (render cursor + pending timed SSG writes) + 8 frame-progress
+    // tail (render position + samples produced this frame)). A
     // registered TTD-capable device that always reports 0 bytes is invisible
     // to TTDPeripheralRegistry::CaptureAll - it is never
     // written to any checkpoint, which is the root cause of this bug.
@@ -441,10 +442,11 @@ TEST(TTD_TSFM_ManagerIntegration_Test, CaptureNow_PopulatesTsfmStateBlob)
            "docs/inprogress/2026-09-10-turbosound-fm/ttd-fm-state-gap.md.";
     const auto tsfmState = ttd::TTDPeripheralRegistry::DecodeBlob(
         static_cast<uint8_t>(ttd::PeripheralId::TSFM), tsfmBlob->second);
-    // v4: 2 version/board + 48 render phases + 2 x 586 chip payloads (73-byte
+    // v5: 2 version/board + 48 render phases + 2 x 586 chip payloads (73-byte
     // AY payload each) + 778 timeline tail (render cursor + pending SSG writes)
-    EXPECT_EQ(tsfmState.size(), 2000u)
-        << "TSFM blob must contain the full §8.2 (v4) payload";
+    // + 8 frame-progress tail
+    EXPECT_EQ(tsfmState.size(), 2008u)
+        << "TSFM blob must contain the full §8.2 (v5) payload";
 
     emulator.Stop();
     emulator.Release();
@@ -642,7 +644,7 @@ TEST(TTD_TSFM_ManagerIntegration_Test, SeekTo_NoiseGeneratorStateDeterministicFr
     ttdMgr->StopRecording();
     ASSERT_GE(ttdMgr->GetCheckpointCount(), 141u);
 
-    // chip0's SSG payload offset within the 2000 B TSFM (v4) blob (the v4
+    // chip0's SSG payload offset within the 2008 B TSFM (v5) blob (the v4/v5
     // additions are appended at the end, so this offset is unchanged; the 57
     // bytes read below are the registers + generator state),
     // independently derived from design §8.2 (not imported from production

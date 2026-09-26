@@ -136,7 +136,7 @@ TEST_F(PortDecoder_Pentagon128_Test, SoundriveQuadPortsReachHandlerUndisturbed)
     }
 
     uint8_t latches[4];
-    covox.TTDSaveState(latches);
+    covox.getDacLatches(latches);
     for (size_t i = 0; i < std::size(ports); i++)
     {
         EXPECT_EQ(latches[i], static_cast<uint8_t>(0x10 + i))
@@ -170,7 +170,7 @@ TEST_F(PortDecoder_Pentagon128_Test, SoundriveModeOnePortsRespectTrdosPrecedence
     ASSERT_EQ(fdc.outPorts.size(), 1u);
     EXPECT_EQ(fdc.outPorts[0].first, 0x001F);
     uint8_t latches[4];
-    covox.TTDSaveState(latches);
+    covox.getDacLatches(latches);
     EXPECT_EQ(latches[static_cast<int>(Covox::Channel::LeftB)], 0x80)
         << "Beta128 must win while TR-DOS is paged in - SoundDrive must not see the write";
 
@@ -183,7 +183,7 @@ TEST_F(PortDecoder_Pentagon128_Test, SoundriveModeOnePortsRespectTrdosPrecedence
         _portDecoder->DecodePortOut(rawPorts[i], static_cast<uint8_t>(0x20 + i), 0x0000);
     }
 
-    covox.TTDSaveState(latches);
+    covox.getDacLatches(latches);
     for (size_t i = 0; i < std::size(rawPorts); i++)
     {
         EXPECT_EQ(latches[i], static_cast<uint8_t>(0x20 + i))

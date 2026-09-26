@@ -5,6 +5,7 @@
 #include "3rdparty/message-center/messagecenter.h"
 #include "emulator/cpu/core.h"
 #include "emulator/notifications.h"
+#include "emulator/sound/soundmanager.h"
 
 /// region <Emulation events>
 int64_t SoundChip_TurboSound::nowT() const
@@ -468,8 +469,9 @@ void SoundChip_TurboSound::detachFromPorts()
 
 /// region <TTDSerializable (P1.5 — parent TDD §6.4)>
 //
-// Layout: 1 byte current-chip index + chip0 full state + chip1 full state.
-// Delegates to each child SoundChip_AY8910's own TTDSerializable methods.
+// Layout: 1 byte current-chip index + chip0 full state + chip1 full state
+// (each child SoundChip_AY8910's own TTDSerializable payload) + timeline tail
+// + render-phase tail + frame-progress tail.
 
 namespace
 {
@@ -477,6 +479,19 @@ namespace
 // chip pending SSG writes {count, kCapacity x {i32 t offset, u8 reg, u8 value}}
 constexpr size_t kSsgQueueStateSize = 1 + SsgWriteQueue::kCapacity * (4 + 1 + 1);
 constexpr size_t kTimelineStateSize = 8 + 2 * kSsgQueueStateSize;
+
+// Render-phase tail (the same accumulators as TSFM's v2/v3 fixes): the
+// render loop's free-running sample phase, the LQ boxcar phase and the four
+// HQ decimators' resampling phases decide how many generator ticks land
+// before each output sample - tick-gating state, so a restore must bring
+// back their historical values or the tone/noise/envelope counters drift
+// from the recording after a seek
+constexpr size_t kRenderPhaseStateSize = 8 /* samplePhase */ + 8 /* decimationPhase */ + 4 * 8 /* decimator phases */;
+
+// Frame-progress tail (TSFM's v5): the frame position the render loop has
+// reached and the samples it has produced - non-zero for a checkpoint taken
+// mid-frame (a recording's baseline)
+constexpr size_t kFrameProgressStateSize = 4 /* lastTStates */ + 4 /* ayBufferIndex */;
 }  // namespace
 
 size_t SoundChip_TurboSound::TTDStateSize() const
@@ -485,7 +500,8 @@ size_t SoundChip_TurboSound::TTDStateSize() const
     // their fixed-size payload. If a chip pointer were somehow null we still
     // report the same fixed size (the round-trip contract is size-stable).
     const size_t oneChip = _chip0 ? _chip0->TTDStateSize() : 0;
-    return 1 /*current-chip index*/ + 2 * oneChip + kTimelineStateSize;
+    return 1 /*current-chip index*/ + 2 * oneChip + kTimelineStateSize + kRenderPhaseStateSize +
+           kFrameProgressStateSize;
 }
 
 void SoundChip_TurboSound::TTDSaveState(uint8_t* dst) const
@@ -530,6 +546,19 @@ void SoundChip_TurboSound::TTDSaveState(uint8_t* dst) const
             *cur++ = w.value;
         }
     }
+
+    // Render-phase tail
+    const double phases[5] = {_decimationPhase,
+                              _chip0->decimatorLeft().phase(), _chip0->decimatorRight().phase(),
+                              _chip1->decimatorLeft().phase(), _chip1->decimatorRight().phase()};
+    std::memcpy(cur, &_samplePhase, 8);
+    cur += 8;
+    std::memcpy(cur, phases, sizeof(phases));
+    cur += sizeof(phases);
+
+    // Frame-progress tail
+    const uint32_t progress[2] = {_lastTStates, static_cast<uint32_t>(_ayBufferIndex)};
+    std::memcpy(cur, progress, sizeof(progress));
 }
 
 void SoundChip_TurboSound::TTDLoadState(const uint8_t* src)
@@ -578,11 +607,50 @@ void SoundChip_TurboSound::TTDLoadState(const uint8_t* src)
         }
     }
 
-    // The per-frame render cursor restarts like handleFrameStart: left at
-    // its pre-seek values it miscounted the first frame after the seek and
-    // shifted _samplePhase against the mixer for good (the TSFM fix, 4c0b7153)
-    _lastTStates = 0;
-    _ayBufferIndex = 0;
+    // Render-phase tail: historical tick-gating accumulators
+    std::memcpy(&_samplePhase, cur, 8);
+    cur += 8;
+    double phases[5];
+    std::memcpy(phases, cur, sizeof(phases));
+    cur += sizeof(phases);
+    _decimationPhase = phases[0];
+
+    // Output stage: FLUSH the audio content (decimator history is output from
+    // before the seek, not chip state - TSFM's click-on-seek policy), then put
+    // the historical resampling phases back on top of the flushed decimators
+    _chip0->decimatorLeft().clearHistory();
+    _chip0->decimatorRight().clearHistory();
+    _chip1->decimatorLeft().clearHistory();
+    _chip1->decimatorRight().clearHistory();
+    _chip0->decimatorLeft().setPhase(phases[1]);
+    _chip0->decimatorRight().setPhase(phases[2]);
+    _chip1->decimatorLeft().setPhase(phases[3]);
+    _chip1->decimatorRight().setPhase(phases[4]);
+    _outputFlushPending = false;
+
+    // Frame-progress tail: the frame was rendered up to the checkpoint's
+    // position (0 for a per-frame checkpoint). Left at its pre-seek values
+    // the cursor miscounted the first frame and shifted _samplePhase against
+    // the mixer for good (the TSFM fix, 4c0b7153); restarted at 0 on a
+    // mid-frame checkpoint it rendered [0, t) twice. The samples produced
+    // before the seek are output content: silence (Tier C)
+    uint32_t progress[2];
+    std::memcpy(progress, cur, sizeof(progress));
+    _lastTStates = progress[0];
+    _ayBufferIndex = progress[1];
+    memset(_ayBuffer, 0x00, _ayAudioDescriptor.memoryBufferSizeInBytes);
+    memset(_chip0Buffer, 0x00, _chip0AudioDescriptor.memoryBufferSizeInBytes);
+    memset(_chip1Buffer, 0x00, _chip1AudioDescriptor.memoryBufferSizeInBytes);
+
+    // The mixer's accumulator is still the live pre-seek one: it takes the
+    // device's phase at the frame start (the mixer advances once per frame
+    // end) - otherwise the two frame sample counts disagree after any seek
+    if (_context->pSoundManager)
+    {
+        const uint64_t frameStartPhase = _samplePhase - uint64_t(_lastTStates) * _coreRate +
+                                         uint64_t(_ayBufferIndex / AUDIO_CHANNELS) * CPU_CLOCK_RATE;
+        _context->pSoundManager->adoptSamplePhase(frameStartPhase);
+    }
 }
 
 /// endregion </TTDSerializable>

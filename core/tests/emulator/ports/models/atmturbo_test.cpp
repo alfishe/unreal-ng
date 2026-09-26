@@ -5,6 +5,7 @@
 
 #include "emulator/emulator.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/mainloop.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 
@@ -99,8 +100,8 @@ TEST_F(AtmTurboDecoder_Test, NoCombinationReachesFourteenMegahertz)
     }
 }
 
-/// Composition is an Emulator-layer concern: the queued multiplier is applied by
-/// Z80FrameCycle's prologue. Driven exactly like ScorpionTurbo_Test - state is
+/// Composition is an Emulator-layer concern: the queued multiplier is applied at
+/// the frame boundary (Z80::BeginFrame). Driven exactly like ScorpionTurbo_Test - state is
 /// set directly rather than through ports, because the running BIOS owns #FF77
 class AtmTurboClock_Test : public ::testing::Test
 {
@@ -133,7 +134,19 @@ protected:
         _context = nullptr;
     }
 
-    void CrossFrameBoundary() { _context->pCore->CPUFrameCycle(); }
+    /// One frame through the running emulator's path (CPU frame, then the
+    /// frame boundary MainLoop::CompleteFrame whose Z80::BeginFrame applies
+    /// the queued multiplier). The running BIOS reprograms #FF77 - and with it
+    /// hw_turbo_shift - during the frame, so the clock under test is planted
+    /// AT the boundary: after the frame's code ran, before the boundary
+    /// applies it. That is exactly when a decoder write would be picked up
+    template <typename Plant>
+    void CrossFrameBoundary(Plant plant)
+    {
+        _context->pCore->CPUFrameCycle();
+        plant(_context->emulatorState);
+        _context->pMainLoop->CompleteFrame();
+    }
 };
 
 TEST_F(AtmTurboClock_Test, HardwareShiftReachesTheCpuAndTheReportedFrequency)
@@ -141,13 +154,13 @@ TEST_F(AtmTurboClock_Test, HardwareShiftReachesTheCpuAndTheReportedFrequency)
     EmulatorState& state = _context->emulatorState;
     state.next_z80_frequency_multiplier = 1;   // host at 1x
 
-    state.hw_turbo_shift = 1;                  // what the decoder sets for 7 MHz
-    CrossFrameBoundary();
+    // what the decoder sets for 7 MHz
+    CrossFrameBoundary([](EmulatorState& s) { s.hw_turbo_shift = 1; });
     EXPECT_EQ(state.current_z80_frequency_multiplier, 2);
     EXPECT_EQ(state.current_z80_frequency, state.base_z80_frequency * 2) << "7 MHz reporting";
 
-    state.hw_turbo_shift = 0;                  // BIOS turbo off
-    CrossFrameBoundary();
+    // BIOS turbo off
+    CrossFrameBoundary([](EmulatorState& s) { s.hw_turbo_shift = 0; });
     EXPECT_EQ(state.current_z80_frequency_multiplier, 1);
     EXPECT_EQ(state.current_z80_frequency, state.base_z80_frequency) << "3.5 MHz reporting";
 }
@@ -157,12 +170,10 @@ TEST_F(AtmTurboClock_Test, HardwareClockComposesWithHostSpeedMultiplier)
     EmulatorState& state = _context->emulatorState;
     state.next_z80_frequency_multiplier = 4;   // host asks for 4x
 
-    state.hw_turbo_shift = 1;
-    CrossFrameBoundary();
+    CrossFrameBoundary([](EmulatorState& s) { s.hw_turbo_shift = 1; });
     EXPECT_EQ(state.current_z80_frequency_multiplier, 8) << "host 4x x hardware 2x";
 
-    state.hw_turbo_shift = 0;
-    CrossFrameBoundary();
+    CrossFrameBoundary([](EmulatorState& s) { s.hw_turbo_shift = 0; });
     EXPECT_EQ(state.current_z80_frequency_multiplier, 4) << "turbo off returns to the host setting";
     EXPECT_EQ(state.next_z80_frequency_multiplier, 4) << "host intent preserved across toggles";
 }

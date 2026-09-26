@@ -48,10 +48,11 @@ protected:
     }
 };
 
-TEST_F(TTD_Covox_Serializer_Test, TTDStateSize_IsStable_4Bytes)
+TEST_F(TTD_Covox_Serializer_Test, TTDStateSize_IsStable_9Bytes)
 {
-    EXPECT_EQ(_covoxA->TTDStateSize(), 4u);
-    EXPECT_EQ(_covoxB->TTDStateSize(), 4u);
+    // 4 DAC latches + 4 idle-frame countdowns + 1 written-this-frame bitmask
+    EXPECT_EQ(_covoxA->TTDStateSize(), 9u);
+    EXPECT_EQ(_covoxB->TTDStateSize(), 9u);
 }
 
 TEST_F(TTD_Covox_Serializer_Test, RoundTrip_DefaultState_IsByteIdentical)
@@ -180,8 +181,8 @@ TEST(TTD_Covox_ManagerIntegration_Test, CaptureNow_PopulatesCovoxStateBlob)
         ASSERT_NE(covoxBlob, cp->peripheralBlobs.end());
         const auto covoxState = ttd::TTDPeripheralRegistry::DecodeBlob(
             static_cast<uint8_t>(ttd::PeripheralId::Covox), covoxBlob->second);
-        EXPECT_EQ(covoxState.size(), 4u)
-            << "covoxState blob must contain the 4-byte DAC payload when Covox is present";
+        EXPECT_EQ(covoxState.size(), 9u)
+            << "covoxState blob must contain the 9-byte DAC + idle-countdown payload when Covox is present";
     }
     // else: covoxState may be empty — that's a valid no-op for a model without Covox.
 

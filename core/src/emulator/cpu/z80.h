@@ -401,17 +401,44 @@ public:
     void Z80Step(bool skipBreakpoints = false);  // Single opcode execution
 
 public:
+    /// Run instructions until the frame T-state limit (the continuous main
+    /// loop's CPU pass). Frame-start work is NOT done here: it belongs to the
+    /// frame boundary (BeginFrame, called by MainLoop::CompleteFrame /
+    /// RestartFrame), so every run path shares one lifecycle
     void Z80FrameCycle();
+
+    /// What one StepInstruction() did besides executing code
+    struct StepResult
+    {
+        bool nmiAccepted = false;  // the step was an NMI acceptance (no opcode ran)
+        bool intAccepted = false;  // the step was a maskable INT acceptance (no opcode ran)
+    };
+
+    /// The single CPU stepping primitive every run path uses (main loop,
+    /// Emulator::Run*, TTD replay): interrupt sampling against the current
+    /// frame geometry, then either the interrupt acceptance or one opcode,
+    /// then the per-step peripheral dispatch. An accepted interrupt IS the
+    /// step - no opcode runs in the same iteration
+    StepResult StepInstruction(bool skipBreakpoints = false);
+
+    /// The CPU is at or past the end of the current frame
+    bool IsFrameComplete() const { return t >= _frameLimit; }
+
+    /// CPU half of the frame start (MainLoop::CompleteFrame / RestartFrame):
+    /// apply the queued frequency multiplier, derive the frame geometry, and
+    /// raise the INT carried over from the previous frame when the INT window
+    /// wraps the frame end. Must run exactly once per frame, before its first
+    /// instruction
+    void BeginFrame();
 
     /// @brief Apply the queued frequency multiplier change, if any.
     ///
     /// The effective multiplier composes the host speed control
     /// (next_z80_frequency_multiplier) with the Scorpion hardware turbo
     /// state (hw_turbo_shift, driven by the model decoder - Scorpion: scorpion_turbo,
-    /// hardware-reference 13). Called at every
-    /// frame start: Z80FrameCycle entry and the inline frame boundaries of
-    /// the Emulator stepping paths, so the scaled INT window / frame limit
-    /// are always derived from the applied value.
+    /// hardware-reference 13). Called once per frame start by BeginFrame, so
+    /// the scaled INT window / frame limit are always derived from the
+    /// applied value.
     void ApplyQueuedFrequencyMultiplier();
 
     /// Apply a HARDWARE turbo change immediately, mid-frame (model port decoders
@@ -425,7 +452,8 @@ public:
     void ApplyHardwareTurboNow();
 
     /// (Re)derive the scaled frame length and INT window from the current
-    /// multiplier; read by Z80FrameCycle every iteration
+    /// multiplier; read by StepInstruction every step. Pure derivation (no
+    /// INT raise): safe mid-frame (hardware turbo) and after a TTD restore
     void RecomputeFrameTiming();
 
     /// Post NC_CPU_FREQ_CHANGED with the applied frequency/multiplier. Shared
@@ -437,7 +465,8 @@ public:
 
     uint32_t _frameLimit = 0;   // config.frame * multiplier
     unsigned _intStart = 0;     // config.intstart * multiplier
-    unsigned _intEnd = 0;       // (config.intstart + intlen) * multiplier
+    unsigned _intEnd = 0;       // (config.intstart + intlen) * multiplier, wrapped into the frame when _intWraps
+    bool _intWraps = false;     // INT window crosses the frame end: raised at frame start (BeginFrame)
 
     // Trigger updates
 public:

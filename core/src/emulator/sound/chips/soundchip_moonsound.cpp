@@ -207,21 +207,14 @@ void SoundChip_Moonsound::reset()
 
 void SoundChip_Moonsound::handleFrameStart()
 {
-    // Rebase the origin (3.2): the previous frame is complete when this is
-    // called, so fold its whole duration into the absolute axis whether or
-    // not handleFrameEnd ran (the mainloop skips it under turbo without
-    // audio). Then advance the core to the frame boundary - run() always,
-    // render() never here (D3).
-    _tstateOrigin += frameDuration();
+    // The previous frame's end already advanced the core to this frame's
+    // origin and folded the frame into the axis (3.2), so there is no time
+    // to account here - the call is idempotent (a frame restarted after a
+    // reset or snapshot load must not gain a phantom frame of chip time).
+    // Run() to the origin is a no-op after a frame end and only matters for
+    // the very first frame after reset (origin 0): run() always, render()
+    // never here (D3).
     _opl4.Run(monotonicChipTime(_tstateOrigin));
-
-    if (_synthesisSuppressed)
-    {
-        // Turbo without audio (3.3): handleFrameEnd is skipped by the
-        // mainloop in this mode, so drop pending delivery audio here to
-        // keep the library's buffers bounded across a turbo session.
-        _opl4.DiscardPendingAudio();
-    }
 }
 
 void SoundChip_Moonsound::handleFrameEnd(size_t expectedSamples)
@@ -276,6 +269,11 @@ void SoundChip_Moonsound::handleFrameEnd(size_t expectedSamples)
     }
 
     postAudioActivity(fmActive, pcmActive);
+
+    // The frame is complete: fold its whole duration into the absolute axis
+    // (3.2). The multiplier is still the one this frame ran with - the
+    // queued one is applied after the frame hooks (Z80::BeginFrame)
+    _tstateOrigin += frameDuration();
 }
 
 void SoundChip_Moonsound::setSynthesisSuppressed(bool suppressed)

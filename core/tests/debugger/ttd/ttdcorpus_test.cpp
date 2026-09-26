@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "_helpers/soundcardscope.h"
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
@@ -29,7 +30,7 @@
 ///   - the session loads;
 ///   - seeking to a checkpoint restores every device exactly: each device
 ///     re-serializes to the recorded blob, byte for byte (the TSFM blob is
-///     the 2000-byte v4 payload);
+///     the 2008-byte v5 payload);
 ///   - replay is deterministic: from a restored checkpoint, running forward
 ///     reproduces the recorded checkpoints - CPU, chipset (including the
 ///     in-frame T-state) and every device blob.
@@ -64,6 +65,11 @@ std::unordered_map<uint8_t, std::vector<uint8_t>> Decoded(const std::unordered_m
 
 class TTD_Corpus_Test : public ::testing::Test
 {
+protected:
+    // Keep the General Sound / MoonSound cards the configs fit (the fixtures were recorded on the shipped configs, cards included):
+    // declared first, so it is active before any machine is created
+    SoundCardScope _soundCards;
+
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
