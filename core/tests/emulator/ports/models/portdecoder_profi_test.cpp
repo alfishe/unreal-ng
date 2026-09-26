@@ -254,19 +254,72 @@ TEST_F(ProfiPortDecoder_Test, PaletteWrite)
 {
     // Without DS80 the write is ignored
     WritePort(0x00FE, 0x05);
-    const uint8_t before = State().profiPalette[0x0A];
+    const uint16_t before = State().profiPalette[0x0A];
     WritePort(0xE27E, 0x00);
     EXPECT_EQ(State().profiPalette[0x0A], before);
 
     OutDFFD(0x80);
-    WritePort(0x00FE, 0x05);            // index source: 0x05 ^ 0x0F = 0x0A
-    WritePort(0xE27E, 0x00);            // colour = ~0xE2 = 0x1D
-    EXPECT_EQ(State().profiPalette[0x0A], 0x1D);
+    WritePort(0x00FE, 0x05);            // index source: 0x05 ^ 0x0F = 0x0A; D7=0 -> blue LSB = 0
+    WritePort(0xE27E, 0x00);            // colour = ~0xE2 = 0x1D -> entry = 0x1D << 1 | 0 = 0x3A
+    EXPECT_EQ(State().profiPalette[0x0A], 0x3A);
 
     // A7=1 is not the palette port
     WritePort(0x00FE, 0x05);
     WritePort(0xFFFE, 0x00);            // A7=1: border write only
-    EXPECT_EQ(State().profiPalette[0x0A], 0x1D);
+    EXPECT_EQ(State().profiPalette[0x0A], 0x3A);
+}
+
+/// @brief The extra blue LSB (9th palette bit) is latched from #FE.D7 of the write that supplies
+/// the index, per Karabas video.vhd:205-208 (`palette[idx] <= (not A15..A8) & BORDER(7)`).
+TEST_F(ProfiPortDecoder_Test, PaletteWriteCarriesExtraBlueBitFromFEBit7)
+{
+    OutDFFD(0x80);
+
+    WritePort(0x00FE, 0x85);            // D7=1 -> blue LSB = 1; index = 0x85 ^ 0x0F = 0x0A
+    WritePort(0xE27E, 0x00);            // colour = ~0xE2 = 0x1D -> entry = 0x1D << 1 | 1 = 0x3B
+    EXPECT_EQ(State().profiPalette[0x0A], 0x3B);
+
+    WritePort(0x00FE, 0x05);            // D7=0 -> blue LSB = 0; same index 0x0A
+    WritePort(0xE27E, 0x00);
+    EXPECT_EQ(State().profiPalette[0x0A], 0x3A) << "D7=0 clears the extra blue bit on the next write";
+}
+
+/// @brief Power-on palette matches the Karabas defaults (video.vhd:199-203): each active channel
+/// is level 4/7 non-bright, 6/7 bright, out of the now-3-bit (0..7) range for G/R/B alike.
+TEST_F(ProfiPortDecoder_Test, ResetPaletteMatchesHardwareDefaults)
+{
+    EXPECT_EQ(State().profiPalette[0x00], 0x000) << "black";
+    EXPECT_EQ(State().profiPalette[0x01], 0x004) << "B4";
+    EXPECT_EQ(State().profiPalette[0x02], 0x020) << "R4";
+    EXPECT_EQ(State().profiPalette[0x04], 0x100) << "G4";
+    EXPECT_EQ(State().profiPalette[0x07], 0x124) << "G4R4B4";
+    EXPECT_EQ(State().profiPalette[0x08], 0x000) << "bright black stays black";
+    EXPECT_EQ(State().profiPalette[0x0F], 0x1B6) << "G6R6B6 (bright white)";
+}
+
+/// @brief #FE bit 7 ("GX0"/UniCopy palette-present flag): in DS80, bit6 XOR bit0 of the palette
+/// entry selected by the previous #FE write's index; outside DS80 it reads 1.
+/// Karabas video.vhd:219, ZXMAK2 UlaProfi5XX.cs:34-53.
+TEST_F(ProfiPortDecoder_Test, FEReadBit7ReportsGX0InDS80)
+{
+    // Outside DS80: bit 7 always reads 1 regardless of palette contents
+    WritePort(0x00FE, 0x05);
+    EXPECT_NE(ReadPort(0x00FE) & 0x80, 0) << "bit 7 pulled high outside DS80";
+
+    OutDFFD(0x80);
+
+    // Program index 0x0A (from #FE=0x05, D7=0) with colour 0x20 (G=001, R=000, B=00):
+    // entry = (0x20 << 1) | 0 = 0x40 -> bit6=1 (G's LSB), bit0=0 (extra blue LSB) -> GX0 = 1^0 = 1
+    WritePort(0x00FE, 0x05);
+    WritePort(0xDF7E, 0x00);            // colour = ~0xDF = 0x20
+    WritePort(0x00FE, 0x05);            // re-latch #FE so the same index (0x0A) is selected on read
+    EXPECT_NE(ReadPort(0x00FE) & 0x80, 0) << "bit6=1 xor bit0=0 -> GX0=1";
+
+    // Rewrite the same index with D7=1 this time: entry = (0x20 << 1) | 1 = 0x41 -> bit6=1, bit0=1
+    WritePort(0x00FE, 0x85);            // D7=1 -> blue LSB=1, index still 0x0A
+    WritePort(0xDF7E, 0x00);            // colour = ~0xDF = 0x20
+    WritePort(0x00FE, 0x05);            // re-latch #FE (D7=0) so the read selects index 0x0A again
+    EXPECT_EQ(ReadPort(0x00FE) & 0x80, 0) << "bit6=1 xor bit0=1 -> GX0=0";
 }
 
 /// @brief DS80 selects the Profi hi-res raster (Screen::DetectModeProfi)

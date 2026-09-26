@@ -214,11 +214,12 @@ Geometry: paper 512×240, right border 48, left border 48 (**storage 608×288** 
 
 ### 7.3 Palette
 
-Write: `OUT (xx7E), n` with DS80=1, A7=0 & A0=0. **Colour** comes from the address bus: `c = ~(A15:A8)`; **index** = `(previous #FE write value ^ 0x0F) & 0x0F`. Format `GGGRRRBB(B)`:
+Write: `OUT (xx7E), n` with DS80=1, A7=0 & A0=0. **Colour** comes from the address bus: `c = ~(A15:A8)`; **index** = `(previous #FE write value ^ 0x0F) & 0x0F`. Format `GGGRRRBBB` (9 bits, Karabas `video.vhd:205-208`):
 
-* Emulators: Unreal/ZXMAK2 use `Gg0Rr0Bb` (2 bits/channel, mid bits ignored); Xpeccy 3+3+2. Karabas (clone, non-authoritative) uses 3-3-3.
-* Decision: **implement Unreal/ZXMAK2 `Gg0Rr0Bb` as the reference behaviour** (demo-validated) and make the decode a superset that also accepts the 3-bit patterns Xpeccy writes; Karabas's third blue bit is not modelled. 
-* Reset palette: standard 16 Spectrum colours (bright = high intensity). *[?]* (§12 Q5)
+* Emulators: Unreal/ZXMAK2 use `Gg0Rr0Bb` (2 bits/channel, mid bits ignored); Xpeccy 3+3+2 (`GGGRRRBB`, 8 bits). Karabas RTL is 3-3-3: the 8 bits from the address bus give G(3)/R(3)/B(2), and a 9th bit - the extra blue LSB - is carried in `#FE` bit 7 of the write that supplies the index (latched alongside it, `TOP:1417`/`VID:205-208`).
+* Decision: **implement the Karabas 9-bit `GGGRRRBBB` layout** (`EmulatorState::profiPalette` is `uint16_t[16]`, bits 8:6 G / 5:3 R / 2:0 B; bit 0 = the extra blue LSB from `#FE.D7`) - a superset of every other emulator's format, and the only one hardware-accurate for blue. `PortDecoder_Profi::Port_Palette_Out` / `ScreenProfi::Draw`'s `paletteColor` lambda implement the pack/unpack.
+* Reset palette: standard 16 Spectrum colours, Karabas defaults (`video.vhd:199-203`) - each active channel level 4/7 non-bright, 6/7 bright, index 8 (bright off) = black. `PortDecoder_Profi::ResetPalette`.
+* `#FE` read bit 7 ("GX0"/UniCopy palette-present flag, 5.xx boards): in DS80, `palette[idx](6) xor palette[idx](0)` where `idx` is the same previous-`#FE`-derived index as the palette write; outside DS80 the wire reads 1. `PortDecoder_Profi::Port_FE_In_GX0` (Karabas `video.vhd:219`, ZXMAK2 `UlaProfi5XX.cs:34-53`).
 
 The "index from previous FE write" rule means the `#FE` latch must remember the last value on every FE-family OUT, not only on `#xx7E`.
 
@@ -229,10 +230,10 @@ Unreal, Xpeccy and ZXMAK2 do **not** change the frame, INT or CPU frequency when
 Decision: hi-res keeps the standard 3.5 MHz, 69888 T frame and INT. 512 pixels do not fit the 256-px paper window at 2 px/T, so the renderer draws two hi-res pixels per standard pixel slot on the standard beam (storage wider than beam, the same technique the ATM 640/704-wide modes use); the 240 lines are centred on the 192-line paper as Unreal and Xpeccy do. Timing option `ProfiHiresRaster=pico` (192 T/line, first paper 9238 T after INT) is available as an experiment and is covered by tests so it can become default if real-hardware evidence appears. See §12 Q3.
 
 ### 7.5 Border in hi-res
-Shown through the palette with the **inverted** index (`palette[~border & 7]`, non-bright): ZXMAK2 `ProfiRenderer` and Xpeccy (`nextbrd ^= 7`) agree; Karabas matches. Implemented in `ScreenZX::DrawProfiHiRes`.
+Shown through the palette with the **inverted** index (`palette[~border & 7]`, non-bright): ZXMAK2 `ProfiRenderer` and Xpeccy (`nextbrd ^= 7`) agree; Karabas matches. Implemented in `ScreenProfi::Draw`.
 
 ### 7.6 Renderer structure
-`Screen::DrawProfi(n)` per beam-clock, like `DrawATMHiRes` (per-`n` T-state chunks, `vbuf` writes with `vptr`). Pixel/attribute pages via `GetActiveSurfaceRAMPages()` returning `{4|6, 0x38|0x3A}` for `M_PROFIHR`. `Screen::GetVideoModeName` → "PROFI" / "PROFI512" so `/state/screen/mode` reports the mode. Frame-size consumers (Qt viewer, `recordingmanager.cpp:162`, screencapture, GIF) must handle the 512-wide storage; ATM 704-wide already forced the same, so no new consumer work is expected beyond verifying.
+Implemented as `ScreenProfi` (`core/src/emulator/video/profi/screenprofi.{h,cpp}`), a Profi-specific renderer following the `ScreenAtm` pattern: not a `Screen` subclass, owned and lazily allocated by `ScreenZX`, driven per T-state from `ScreenZX::Draw` only when `_mode == M_PROFIHR`. `Screen::DrawProfi(n)` (the `M_PROFI` slot in `Screen`'s per-mode draw table) is an intentional no-op - the standard 256×192 Profi mode renders through the existing ZX path, since it is bit-identical to a stock Spectrum screen. The monochrome variant (Profi 3.xx / `config.profi_monochrome`) is a branch inside `ScreenProfi::Draw`, not a separate class, matching how `ScreenAtm` keeps its four extended modes (M_ATM16/ATMHR/ATMTX/ATMTL) as branches of one `Draw()` rather than one class per mode. Pixel/attribute pages via `GetActiveSurfaceRAMPages()` returning `{4|6, 0x38|0x3A}` for `M_PROFIHR`. `Screen::GetVideoModeName` → "PROFI" / "PROFIHR" so `/state/screen/mode` reports the mode. Frame-size consumers (Qt viewer, `recordingmanager.cpp:162`, screencapture, GIF) must handle the 512-wide storage; ATM 704-wide already forced the same, so no new consumer work is expected beyond verifying.
 
 ---
 
@@ -355,14 +356,14 @@ Working copy of the full upstream tree (VHDL, docs, other ROMs) is in `scratch/p
 | Q2 | Do SYS-ROM (page 0) accesses see extended ports (Karabas only) or normal ports (Unreal/ZXMAK2/Xpeccy)? | Emulator review §5.6 | Emulator rule, switch for the Karabas variant; settle with `profi_v450.ROM`/menu boot test |
 | Q3 | Hi-res line/frame timing | No emulator changes the frame; ZXMAK2 uses 192 T/line; pico-spec calibrated on a real Profi (mcprofi2016): 192 T/line, paper 9238 T after INT, frame 69888 | Standard 3.5 MHz frame; 192 T/line raster as option; need a real-hardware capture to decide |
 | Q4 | SCR window gated by `7FFD.3` (Xpeccy) or not (RTL, others)? | RTL vs one emulator | Not gated |
-| Q5 | Power-on palette; `#FE` read bit 7 meaning | RTL flag, no emulator implements | Standard 16 colours; bit 7 = 1 in DS80 *[?]* |
+| Q5 | Power-on palette; `#FE` read bit 7 meaning | **Resolved from Karabas RTL** (`video.vhd:199-203,219`) | Standard 16 colours at levels 4/7 (non-bright) / 6/7 (bright); bit 7 = GX0 = `palette[idx](6) xor palette[idx](0)` in DS80, else 1. Implemented (`Port_FE_In_GX0`, `ResetPalette`) |
 | Q6 | Palette write mask A7=0 & A0=0 vs exact `xx7E` | 4 variants | A7=0 & A0=0 (Unreal/ZXMAK2 form) |
 | Q7 | DOS entry when DFFD.4=1 | RTL blocks, others don't | Do not block (Unreal/ZXMAK2); RTL-only behaviour |
 | Q8 | FDC alias width | Unreal loose / others strict | Loose (UnrealSpeccy) |
 | Q9 | Which existing Profi goldens encode the wrong ROM polarity and need re-baselining? | `modelsregression_test` | Re-baseline in the decoder change, reviewed line by line |
 | Q10 | RTC behaviour: Karabas RTC is a 256-byte RAM fed by the AVR; real DS12885 counts time | RTL comment | Deterministic counters from emulated time; low priority |
 
-**Risks**: unverified hardware facts (Q1, Q3, Q5); goldens locking mistakes; 512-wide frame consumers; TTD timing-multiplier restore in hi-res; the CPLD (FDC, `#FF` system latch) is **not** in the Karabas repo, so `#FF`/`#BF` bit behaviour is taken from the WD/Beta convention and the emulators, not from the RTL.
+**Risks**: unverified hardware facts (Q1, Q3); goldens locking mistakes; 512-wide frame consumers; TTD timing-multiplier restore in hi-res; the CPLD (FDC, `#FF` system latch) is **not** in the Karabas repo, so `#FF`/`#BF` bit behaviour is taken from the WD/Beta convention and the emulators, not from the RTL.
 
 ---
 

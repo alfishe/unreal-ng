@@ -17,19 +17,21 @@
 #include "debugger/ttd/ttdserializable.h"
 
 #include <cstddef>
+#include <cstdint>
 
 class EmulatorContext;
 
 namespace ttd {
 
 /// @brief Packed Profi model state (no implicit padding: blobs are copied and hashed byte-wise).
+/// profiPalette comes first so the trailing uint8_t needs no alignment padding.
 struct ProfiPagingState
 {
-    uint8_t pDFFD;              ///< #DFFD latch
-    uint8_t profiPalette[16];   ///< hi-res palette, raw GGGRRRBB per entry
+    uint16_t profiPalette[16];     ///< hi-res palette, 9-bit GGGRRRBBB per entry (see EmulatorState::profiPalette)
+    uint8_t pDFFD;                 ///< #DFFD latch
 };
 
-static_assert(sizeof(ProfiPagingState) == 17, "ProfiPagingState layout changed");
+static_assert(sizeof(ProfiPagingState) == 34, "ProfiPagingState layout changed");
 
 /// @brief TTDSerializable implementation for Profi model state.
 class TTDProfiPaging : public TTDSerializable

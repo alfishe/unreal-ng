@@ -55,6 +55,11 @@ public:
     /// Palette write (OUT to #xx7E family with DFFD.7): colour from ~A15..A8, index from the previous #FE value
     void Port_Palette_Out(uint16_t port);
 
+    /// #FE read bit 7 ("GX0" / UniCopy palette-present flag, 5.xx boards): in DS80, the palette
+    /// entry selected by the previous #FE write's index reports (bit6 XOR bit0) on readback;
+    /// outside DS80 the wire is pulled high. Karabas video.vhd:219, ZXMAK2 UlaProfi5XX.cs:34-53.
+    uint8_t Port_FE_In_GX0() const;
+
     /// EXT mode qualifier (UnrealSpeccy default: cpm && rom14; Karabas additionally allows
     /// dosAct && !rom14, not implemented here - unproven by UnrealSpeccy sources)
     bool IsExtMode() const;

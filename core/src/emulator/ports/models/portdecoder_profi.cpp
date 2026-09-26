@@ -108,6 +108,11 @@ uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
     else if (IsFEPort(port))
     {
         result = Default_Port_FE_In(port, pc);
+        // GX0 (bit 7): "palette exists" detector read by Profi 5.xx software (UniCopy).
+        // Default_Port_FE_In leaves bit 7 = 1 (keyboard/tape never touch it), so only
+        // override it in DS80.
+        if (_state->pDFFD & 0x80)
+            result = static_cast<uint8_t>((result & 0x7F) | Port_FE_In_GX0());
         _lastPortDecoded = true;
         disp.decodedPort = 0x00FE;
         disp.wasHandledInline = true;
@@ -377,20 +382,41 @@ uint16_t PortDecoder_Profi::DecodeFDCPort(uint16_t port) const
 void PortDecoder_Profi::Port_Palette_Out(uint16_t port)
 {
     // colour = ~A15..A8 (data bus is not used), index = (previous #FE value ^ 0xF) & 0xF.
-    // Format: bits 7:5 G, 4:2 R, 1:0 B (UnrealSpeccy draw path; 3-3-2 superset of its Gg0Rr0Bb)
+    // Karabas video.vhd:205-208: palette[idx] <= (not A15..A8) & BORDER(7), where BORDER is the
+    // #FE register latched by the PRECEDING #FE OUT. That gives a 9-bit entry: bits 8:6 G, 5:3 R,
+    // 2:1 B from the address bus (the old 3-3-2 GGGRRRBB byte, shifted up by one), bit 0 the extra
+    // blue LSB carried in #FE.D7 - so blue ends up 3-bit like G/R (GGGRRRBBB, VID:62-65/231-233).
     const uint8_t index = static_cast<uint8_t>((_state->pFE ^ 0x0F) & 0x0F);
-    _state->profiPalette[index] = static_cast<uint8_t>(~(port >> 8));
+    const uint16_t colour = static_cast<uint16_t>(static_cast<uint8_t>(~(port >> 8)));
+    const uint16_t blueLsb = (_state->pFE & 0x80) ? 0x01 : 0x00;
+    _state->profiPalette[index] = static_cast<uint16_t>((colour << 1) | blueLsb);
+}
+
+uint8_t PortDecoder_Profi::Port_FE_In_GX0() const
+{
+    // Karabas video.vhd:219: GX0 = palette(idx)(6) xor palette(idx)(0) in DS80, else 1.
+    // idx is the same (previous #FE value ^ 0xF) index the palette write uses; bit 6 of our
+    // 9-bit entry is G's LSB, bit 0 is the extra blue LSB (see Port_Palette_Out).
+    const uint8_t index = static_cast<uint8_t>((_state->pFE ^ 0x0F) & 0x0F);
+    const uint16_t entry = _state->profiPalette[index];
+    const bool gx0 = ((entry >> 6) ^ entry) & 0x01;
+    return gx0 ? 0x80 : 0x00;
 }
 
 void PortDecoder_Profi::ResetPalette()
 {
-    // Standard 16 Spectrum colours: index = {bright, G, R, B}
+    // Standard 16 Spectrum colours, index = {bright, G, R, B}. Karabas reset defaults
+    // (video.vhd:199-203): each active channel is level 4/7 non-bright, 6/7 bright, out of a
+    // 3-bit (0..7) range - now that blue is 3-bit too (see Port_Palette_Out) all three channels
+    // share the same levels.
     for (uint8_t i = 0; i < 16; i++)
     {
-        const uint8_t blue = (i & 0x01) ? ((i & 0x08) ? 0x03 : 0x02) : 0x00;
-        const uint8_t red = (i & 0x02) ? ((i & 0x08) ? 0x07 : 0x05) : 0x00;
-        const uint8_t green = (i & 0x04) ? ((i & 0x08) ? 0x07 : 0x05) : 0x00;
-        _state->profiPalette[i] = static_cast<uint8_t>((green << 5) | (red << 2) | blue);
+        const bool bright = (i & 0x08) != 0;
+        const uint16_t level = bright ? 0x06 : 0x04;
+        const uint16_t green = (i & 0x04) ? level : 0x00;
+        const uint16_t red = (i & 0x02) ? level : 0x00;
+        const uint16_t blue = (i & 0x01) ? level : 0x00;
+        _state->profiPalette[i] = static_cast<uint16_t>((green << 6) | (red << 3) | blue);
     }
 }
 

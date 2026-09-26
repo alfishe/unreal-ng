@@ -55,13 +55,14 @@ void ScreenProfi::Draw(uint32_t tstate, const RasterDescriptor& rd, FramebufferD
 
     EmulatorState& state = _context->emulatorState;
 
-    // Palette entry -> ABGR (raw GGGRRRBB: 3-bit G, 3-bit R, 2-bit B)
+    // Palette entry -> ABGR (9-bit GGGRRRBBB: 3-bit G, 3-bit R, 3-bit B - the extra blue LSB
+    // comes from #FE.D7 latched at the time of the palette write, see Port_Palette_Out)
     auto paletteColor = [&state](uint8_t index) -> uint32_t
     {
-        const uint8_t raw = state.profiPalette[index & 0x0F];
-        const uint32_t g = ((raw >> 5) & 0x07) * 255 / 7;
-        const uint32_t r = ((raw >> 2) & 0x07) * 255 / 7;
-        const uint32_t b = (raw & 0x03) * 255 / 3;
+        const uint16_t raw = state.profiPalette[index & 0x0F];
+        const uint32_t g = ((raw >> 6) & 0x07) * 255 / 7;
+        const uint32_t r = ((raw >> 3) & 0x07) * 255 / 7;
+        const uint32_t b = (raw & 0x07) * 255 / 7;
         return 0xFF000000u | (b << 16) | (g << 8) | r;
     };
 
