@@ -65,6 +65,16 @@ uint64_t TTDProfiPaging::TTDHashState() const
         h *= 0x100000001b3ULL;           // FNV-1a prime
     }
 
+    // Fold in the DOS-latch/session flags (2026-09-25 reconciliation report, gap T4):
+    // MachineStateSnapshot never hashes `flags` itself, so without this a checkpoint
+    // differing only in CF_TRDOS/CF_DOSPORTS (e.g. mid-#3Dxx-trap or mid-magic-button)
+    // was invisible to the divergence detector, even though TTDLoadState/TTDChipsetState
+    // restore those bits correctly. Deliberately not added to Snapshot()/the persisted
+    // blob - this only widens what the hash covers, not what gets saved/restored.
+    const uint8_t dosFlags = _context->emulatorState.flags & (CF_TRDOS | CF_DOSPORTS);
+    h ^= static_cast<uint64_t>(dosFlags);
+    h *= 0x100000001b3ULL;
+
     return h;
 }
 

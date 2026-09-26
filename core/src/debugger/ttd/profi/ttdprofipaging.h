@@ -44,6 +44,13 @@ public:
     void TTDLoadState(const uint8_t* src) override;
     std::string TTDDeviceName() const override { return "ProfiPaging"; }
     PeripheralId TTDPeripheralId() const override { return PeripheralId::ProfiPaging; }
+    /// FNV-1a over the persisted blob (Snapshot()), then folds in
+    /// flags & (CF_TRDOS | CF_DOSPORTS) - the DOS-latch/session bits already travel
+    /// in TTDChipsetState (restore is correct without this), but MachineStateSnapshot's
+    /// divergence hash never hashes `flags` at all (machinestatehash.h), so a checkpoint
+    /// differing only in the DOS latch was otherwise hash-invisible. NOT part of
+    /// Snapshot()/the persisted blob: it must never change TTDStateSize() or what
+    /// TTDSaveState()/TTDLoadState() round-trip, only what the divergence hash covers.
     uint64_t TTDHashState() const override;
 
 private:

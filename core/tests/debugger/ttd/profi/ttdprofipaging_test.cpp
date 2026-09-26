@@ -74,6 +74,51 @@ TEST_F(TTDProfiPaging_Test, HashSensitiveToEveryField)
     }
 }
 
+/// @brief T4 (2026-09-25 reconciliation report section 4.2): the DOS-latch/session
+///        flags (CF_TRDOS, CF_DOSPORTS) are folded into the hash even though they are
+///        NOT part of the serialized blob - MachineStateSnapshot itself never hashes
+///        `flags`, so a checkpoint differing only in the DOS latch was otherwise
+///        invisible to the divergence detector. Unrelated flag bits must not perturb it.
+TEST_F(TTDProfiPaging_Test, HashSensitiveToDosLatchFlagsButNotToOthers)
+{
+    ttd::TTDProfiPaging serializer(_context);
+    State().flags &= ~(CF_TRDOS | CF_DOSPORTS);
+    const uint64_t baseline = serializer.TTDHashState();
+
+    State().flags |= CF_TRDOS;
+    EXPECT_NE(serializer.TTDHashState(), baseline) << "CF_TRDOS";
+    State().flags &= ~CF_TRDOS;
+    EXPECT_EQ(serializer.TTDHashState(), baseline);
+
+    State().flags |= CF_DOSPORTS;
+    EXPECT_NE(serializer.TTDHashState(), baseline) << "CF_DOSPORTS";
+    State().flags &= ~CF_DOSPORTS;
+    EXPECT_EQ(serializer.TTDHashState(), baseline);
+
+    // A flag outside the folded mask (e.g. CF_LEAVEDOSADR, re-derived by
+    // Memory::UpdateZ80Banks on every restore) must not change the hash
+    State().flags |= CF_LEAVEDOSADR;
+    EXPECT_EQ(serializer.TTDHashState(), baseline) << "CF_LEAVEDOSADR is not part of the folded mask";
+    State().flags &= ~CF_LEAVEDOSADR;
+}
+
+/// @brief T4 must not change what gets saved/restored or the blob size - only the hash
+TEST_F(TTDProfiPaging_Test, DosLatchFlagsAreNotPartOfTheSavedBlob)
+{
+    ttd::TTDProfiPaging serializer(_context);
+    ASSERT_EQ(serializer.TTDStateSize(), 34u) << "T4 must not resize the persisted blob";
+
+    State().flags &= ~(CF_TRDOS | CF_DOSPORTS);
+    std::vector<uint8_t> blobFlagsOff(serializer.TTDStateSize());
+    serializer.TTDSaveState(blobFlagsOff.data());
+
+    State().flags |= (CF_TRDOS | CF_DOSPORTS);
+    std::vector<uint8_t> blobFlagsOn(serializer.TTDStateSize());
+    serializer.TTDSaveState(blobFlagsOn.data());
+
+    EXPECT_EQ(blobFlagsOff, blobFlagsOn) << "the DOS-latch flags must not leak into the saved blob";
+}
+
 /// @brief Restore through the serializer plus the paging re-decode rebuilds the RAM windows
 TEST_F(TTDProfiPaging_Test, RestoreRebuildsBankMap)
 {
