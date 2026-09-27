@@ -17,7 +17,7 @@ materials/
 │       └── sch/                 # Schematics (PDF, PNG, PCB)
 │
 ├── neogs/                       # NeoGS FPGA-based successor
-│   ├── NEOGS-DIFFERENCES.md     # Key differences vs GS
+│   ├── neogs-differences.md     # Key differences vs GS
 │   ├── ngs_c_cpld.pdf           # Rev C CPLD documentation
 │   ├── ngs_b.pdf                # Rev B full documentation
 │   ├── NGS_b_scheme.pdf         # Schematic
@@ -69,7 +69,7 @@ materials/
 
 | File | Source | Description |
 |:-----|:-------|:------------|
-| `NEOGS-DIFFERENCES.md` | — | Key differences vs original GS |
+| `neogs-differences.md` | — | Key differences vs original GS |
 | `vs1001_datasheet.pdf` | [VLSI](https://www.vlsi.fi/fileadmin/datasheets/vs1001.pdf) | VS1001K MP3 decoder datasheet |
 | `acex.pdf` | [GitHub](https://raw.githubusercontent.com/alfishe/neogs/master/docs/acex.pdf) | Altera ACEX 1K (EP1K30/50) FPGA datasheet |
 | `ma8201_dac.pdf` | [GitHub](https://raw.githubusercontent.com/alfishe/neogs/master/docs/_chips/ma8201.pdf) | MA8201 I2S audio DAC datasheet |

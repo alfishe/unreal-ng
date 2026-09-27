@@ -77,8 +77,8 @@ Sound card implementations for ZX Spectrum emulation:
 - [x] §5.3 old TTD registration → RegisterModelPeripherals pattern
 - [x] §4.5 "matches AY limitation" → see §2.2 decision
 - [x] neogs-tdd §3.3 readback 0x3F → 0x7F
-- [x] NEOGS-DIFFERENCES §3.3 GSCFG0 bits 4-5/7 added
-- [x] NEOGS-DIFFERENCES §6.1 "ignore ports ≥ 0x0F" for P0
+- [x] neogs-differences §3.3 GSCFG0 bits 4-5/7 added
+- [x] neogs-differences §6.1 "ignore ports ≥ 0x0F" for P0
 
 ### Fabricated API — Fixed
 
@@ -172,7 +172,7 @@ See [`materials/README.md`](materials/README.md) for complete index.
 | English Guide | `materials/gs/gs-programming-guide.md` |
 | GS Firmware Source | `materials/gs/gs-firmware/` |
 | GS Schematic | `materials/gs/gs-firmware/sch/GS_schematic.pdf` |
-| NeoGS Differences | `materials/neogs/NEOGS-DIFFERENCES.md` |
+| NeoGS Differences | `materials/neogs/neogs-differences.md` |
 | NeoGS FPGA Source | `materials/neogs/fpgaD/` |
 
 ## LW real-content pass (2026-09-22)

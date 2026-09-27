@@ -39,10 +39,10 @@ Cross-reference these sibling designs for established patterns:
 ### 2.1 Memory Map (GS Internal)
 
 ```
-0x0000–0x3FFF  ROM page 0 (or RAM0 when NOROM bit set)
+0x0000–0x3FFF  ROM page 0 (always; NOROM exists only on NeoGS)
 0x4000–0x7FFF  RAM page 1 (fixed = upper half of MPAG 1; DAC sample buffers)
 0x8000–0xBFFF  ROM/RAM page N (switchable via port 0x00)
-0xC000–0xFFFF  ROM/RAM page M (switchable via port 0x00 or 0x10)
+0xC000–0xFFFF  ROM/RAM page N+1 (same port 0x00 write; port 0x10 exists only on NeoGS)
 ```
 
 **DAC sample fetch:** Any memory read with `(addr & 0xE000) == 0x6000` triggers DAC output.
@@ -94,7 +94,7 @@ Cross-reference these sibling designs for established patterns:
 | 0x0A | R/W | Status bit 7 ← NOT page bit 0 (GS_PORTS.TXT) |
 | 0x0B | R/W | Status bit 0 ← bit 5 of volume 1 (port 6) |
 
-> **NGS-only ports (P2, out of scope):** 0x0F (GSCFG0), 0x10 (MPAGEX), 0x16–0x19 (ch 5–8), 0x1B–0x1F (DMA).
+> **NeoGS-only ports:** 0x0C–0x0E (interrupt controller), 0x0F (GSCFG0), 0x10 (MPAGEX), 0x11–0x15 (SPI: SD, MP3), 0x16–0x19 (ch 5–8), 0x1B–0x1F (DMA), 0x20–0x23 (PG0–PG3). See neogs-tdd.md §3.3.
 
 ### 2.3 MPAG Page Encoding (Original GS — P0)
 
@@ -125,8 +125,9 @@ _mpagValue = val;  // Preserve for port 0x0A copyback
 
 **_ramPairMask** = `(ram_kb / 32) - 1` — limits pair index to physical RAM.
 
-> **NeoGS (P2):** Uses rotated encoding `gspage = rol8(val,1) & mask` with NOROM bit
-> controlling ROM/RAM selection wholesale. See neogs-tdd.md §2.2.
+> **NeoGS:** MPAG v sets 16 KB pages 2v / 2v+1 (rotated encoding in EXPAG mode);
+> NOROM selects flash or RAM for windows 0, 2 and 3, while window 1 is always RAM.
+> See neogs-tdd.md §3.2.
 
 ### 2.4 Timing
 

@@ -160,7 +160,7 @@ ReadData:
 ### 4.1 GS Internal Memory Map
 
 ```
-#0000-#3FFF  ROM page 0 (or RAM0 when NOROM set)
+#0000-#3FFF  ROM page 0 (always on GS)
 #4000-#7FFF  RAM page 1 (fixed = upper half of MPAG 1, DAC buffers)
 #8000-#BFFF  ROM/RAM page N (switchable)
 #C000-#FFFF  ROM/RAM page M (switchable)
