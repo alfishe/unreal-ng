@@ -109,7 +109,7 @@ struct BankMapping {
 
 struct EventContext {
     // Instruction context
-    uint16_t m1_pc;              // Current M1 Program Counter
+    uint16_t m1_pc;              // Address of the current instruction's first byte
     uint16_t callerAddress;      // Immediate return address from stack (SP)
     std::vector<uint16_t> stackTrace;  // Full trace up to RAM caller
     uint16_t originalRAMCaller;  // First non-ROM address in stack (user code entry)

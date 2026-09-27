@@ -146,6 +146,8 @@ z80:
     iff1: true
     iff2: true
     halted: false
+    boundary: none          # instruction-boundary state (Z80BoundaryEnum)
+    int_acked_in_pulse: false
 
 peripherals:
   psg0:

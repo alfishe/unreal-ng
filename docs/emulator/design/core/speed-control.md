@@ -136,8 +136,10 @@ frame and hard-resynced every few frames (121–140 ms dropped each time).
 
 **Timing of the switch.** A hardware strobe is applied **immediately, mid-frame**
 (`Z80::ApplyHardwareTurboNow`, called by the model decoder right after it flips
-`hw_turbo_shift`): the in-frame position `t` (and `eipos`/`haltpos`) is rescaled to the
-new T-domain so the raster instant is preserved, the multiplier/frequency/
+`hw_turbo_shift`): the in-frame position `t` (and `haltpos`) is rescaled to the
+new T-domain so the raster instant is preserved (the post-EI interrupt shadow is
+`Z80State::boundary`, a property of the last instruction, so it needs no
+rescaling), the multiplier/frequency/
 `hw_turbo_shift_applied` are updated, and `Z80::RecomputeFrameTiming()` refreshes the
 frame length and INT window that `Z80FrameCycle` now reads from members on every
 iteration. Host speed changes still apply at the frame boundary. Firmware depends on

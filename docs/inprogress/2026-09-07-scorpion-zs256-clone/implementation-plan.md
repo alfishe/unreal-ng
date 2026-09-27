@@ -224,7 +224,7 @@ snapshots.
 **Files:**
 - Modify: `core/src/emulator/cpu/z80.cpp` / `z80.h`:
   - `RequestNonMaskedInterrupt()`: `_nmi_pending_count = 1;`
-  - instruction-boundary accept: push PC, `PC = 0x0066`, `IFF2 = IFF1`, `IFF1 = 0`, `state.nmi_in_progress = true`, clear pending
+  - instruction-boundary accept: push PC, `PC = 0x0066`, `IFF2 = IFF1`, `IFF1 = 0`, `state.nmi_in_progress = true`, clear pending (corrected 2026-09-27: `IFF1 = 0` only, IFF2 unchanged - see design.md §7.1)
   - `RETN` decode: `IFF1 = IFF2; nmi_in_progress = false` (audit existing RETN/ED-4D path)
   - remove the dead commented block (`z80.cpp:668-692`) — replaced by the real path; keep `pc > 0x4000` Scorpion guard **out** (MNI latch handles ROM selection; the original guard applied to a different NMI source — note in commit)
   - `Z80::retn()` is already an empty stub called by the `ED45` handler after `iff1 = iff2` (`op_ed.cpp:146-161`): fill it with `nmi_in_progress = false` (audit that the other `RETN` aliases `ED55/5D/65/6D/75/7D` call the same helper)

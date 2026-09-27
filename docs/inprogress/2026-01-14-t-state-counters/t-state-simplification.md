@@ -4,6 +4,11 @@
 
 **Status:** Implementation Plan
 
+> **Note (2026-09-26):** `eipos` no longer drives the EI delay. The post-EI
+> interrupt shadow is `Z80State::boundary` (set by EI, cleared by the next
+> instruction), which needs no frame adjustment or rescaling; the `eipos`
+> field stays only as a layout slot. The `eipos` rows below are historical.
+
 **Parent:** [Analyzer Architecture](./analyzer-architecture.md)
 
 ---

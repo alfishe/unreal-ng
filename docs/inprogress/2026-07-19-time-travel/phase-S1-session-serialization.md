@@ -131,16 +131,16 @@ compiler):
 | 31     | _pad_before_memptr | u1 | aligns memptr to 2-byte boundary |
 | 32-33  | memptr           | u16  |                                  |
 | 34     | q                | u8   |                                  |
-| 35     | _pad_before_eipos | u1  | aligns eipos to 2-byte boundary  |
-| 36-37  | eipos            | u16  |                                  |
+| 35     | boundary         | u8   | instruction-boundary state (Z80BoundaryEnum; was padding until 2026-09-26, older files: 0) |
+| 36-37  | eipos            | u16  | legacy, unused since `boundary`  |
 | 38-39  | haltpos          | u16  |                                  |
 | 40-42  | nmi_in_progress..int_gate | u8 | 3 × u8                |
-| 43     | _pad_before_halt_cycle | u1 | aligns halt_cycle to 4-byte bdry |
+| 43     | int_acked_in_pulse | u8 | INT pulse already acknowledged, ZX-Evo (was padding until 2026-09-27, older files: 0) |
 | 44-47  | halt_cycle       | u32  |                                  |
 
-`ttd.ksy` declares these as `_pad_*` fields (Kaitai convention for
-"consumed but not exported"); the Python parser skips them with `r.u8()`
-calls annotated with the same offset comments. **A future hardening pass
+`ttd.ksy` declares the remaining filler (offset 31) as a `reserved` field;
+offsets 35 and 43 became real fields in 2026-09 (`boundary`,
+`int_acked_in_pulse`) and the Python parser reads them. **A future hardening pass
 on the C++ side could `static_assert(offsetof(TTDCpuState, memptr) == 32)`
 to catch the day a new field lands and shifts the layout.**
 

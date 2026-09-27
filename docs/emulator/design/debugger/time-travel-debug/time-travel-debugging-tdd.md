@@ -125,7 +125,7 @@ The design deliberately maximizes reuse. Verified against the current codebase:
 | Component | Location | What TTD uses it for |
 |-----------|----------|----------------------|
 | `EmulatorState` | `core/src/emulator/platform.h:755` | `t_states` (uint64, cumulative), `frame_counter` (uint64), all port latches (`p7FFD`, `pFE`, `pEFF7`, `p1FFD`, `pDFFD`, AY ports, GMX/ATM/TS extended state) — the canonical machine-state struct to checkpoint |
-| `Z80State` | `core/src/emulator/cpu/z80.h:283` | Complete CPU state incl. undocumented internals (MEMPTR, Q register, `eipos`, `haltpos`, IFF1/2, IM, halted). POD, `#pragma pack(1)` for the register block — trivially copyable |
+| `Z80State` | `core/src/emulator/cpu/z80.h` | Complete CPU state incl. undocumented internals (MEMPTR, Q register, `haltpos`, IFF1/2, IM, halted) and the interrupt-decision state: `boundary` (`Z80BoundaryEnum`: INT shadow after EI or a RETN/RETI that set IFF1, pending DD/FD prefix, LD A,I/R quirk, NMI just acknowledged) and `int_acked_in_pulse` (ZX-Evo INT pulse already acknowledged). Both are captured in `TTDCpuState` (former padding bytes at offsets 35 and 43); without them a restore could take an interrupt one instruction early or twice in one pulse. `eipos` is a legacy layout slot, unused. POD, `#pragma pack(1)` for the register block — trivially copyable |
 | Atomic stepping engine | `Emulator::RunTStates / RunFrame / RunNFrames / RunNCPUCycles` (`emulator.cpp:1316–1550`) | **The replay engine.** Already handles INT timing, frame boundaries, `OnFrameStart/End`, `skipBreakpoints`. TTD seek = restore checkpoint + `RunTStates(delta, /*skipBreakpoints*/ true)` |
 | `MainLoop::OnFrameEnd()` | `core/src/emulator/mainloop.cpp:258` | Checkpoint capture hook — runs on the emulator thread at every frame boundary, after `t_states` is updated |
 | `Memory::MemoryWriteDebug()` | `core/src/emulator/memory/memory.cpp:237` | Dirty-page marking + write journal hook. Already demonstrates the exact pattern: cached feature flag → tracker call → breakpoint check |
@@ -1091,6 +1091,12 @@ The **write probe** is not a BreakpointManager breakpoint (those pause the emula
 if (_context->ttdReplayActive && _ttdProbe.armed && _ttdProbe.Matches(addr))
     _ttdProbe.RecordHit(currentTimePoint(), z80.m1_pc, value);
 ```
+
+`z80.m1_pc` is the address of the writing instruction's first byte: the CPU
+records it once per instruction (`Z80::RecordInstructionStart`), so a write
+by `LD (IX+d),A` or `SET n,(HL)` is attributed to the prefix byte, not to the
+opcode after it. A redundant DD/FD prefix is an instruction of its own. The
+same address feeds the write journal and the execute probe.
 
 ### 9.3 Write Journal (Fast Path)
 

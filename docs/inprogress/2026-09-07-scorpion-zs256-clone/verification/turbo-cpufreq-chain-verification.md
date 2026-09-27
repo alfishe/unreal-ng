@@ -114,7 +114,7 @@ The "Computer speed" menu option is **strictly a configuration staging setting**
 [Z80::ApplyHardwareTurboNow]
    │  desiredMultiplier = next_multiplier << hw_turbo_shift (e.g. 1 << 0 = 1)
    │  Rescales in-frame raster instant: cpu.t = cpu.t * desired / old
-   │  Rescales eipos and haltpos
+   │  Rescales haltpos (eipos until 2026-09-26; the EI shadow is now boundary state)
    │  Sets current_z80_frequency_multiplier = 1, current_z80_frequency = 3'500'000 Hz
    │  Calls RecomputeFrameTiming() (_frameLimit: 139'776 -> 69'888 T)
    │  Calls NotifyCPUFrequencyChanged()

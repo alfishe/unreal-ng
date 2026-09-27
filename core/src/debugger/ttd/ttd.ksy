@@ -272,13 +272,13 @@ types:
       Excludes host-side fields (memory interface pointers, debugger
       cursors, transient decode scratch).
 
-      The C++ writer emits sizeof(TTDCpuState) == 48 bytes verbatim. Three
-      alignment gaps (offsets 31, 35, 43) are declared as named ``reservedN``
-      members on the C++ side rather than left as implicit padding: these
-      objects are copied by member-wise assignment (which does not copy
-      padding) and then hashed byte-wise, so unnamed padding would leak
-      uninitialized bytes into the hash. They are always zero and appear
-      below as regular fields.
+      The C++ writer emits sizeof(TTDCpuState) == 48 bytes verbatim. The
+      alignment gaps are named members on the C++ side rather than implicit
+      padding: these objects are copied by member-wise assignment (which does
+      not copy padding) and then hashed byte-wise, so unnamed padding would
+      leak uninitialized bytes into the hash. Offset 31 is ``reserved0``
+      (always zero); offsets 35 and 43 now carry ``boundary`` and
+      ``int_acked_in_pulse`` (zero in sessions recorded before them).
     seq:
       - id: pc
         type: u2

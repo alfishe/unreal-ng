@@ -7,6 +7,8 @@ As the program counter is pushed onto the stack so that a `RETN` instruction can
 
 When the registers have been loaded, a `RETN` command is required to start the program. IFF2 is short for interrupt flip-flop 2, and for all practical purposes is the interrupt-enabled flag. Set means enabled.
 
+**unreal-ng loader:** since `RETN` copies IFF2 into IFF1, both flip-flops are set from bit 2 of byte 19 (as libspectrum/FUSE do). The saver writes IFF2 there.
+
 | Offset | Size | Description |
 | :--- | :--- | :--- |
 | 0 | 1 | byte I |

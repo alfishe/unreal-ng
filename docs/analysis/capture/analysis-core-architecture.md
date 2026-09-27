@@ -74,7 +74,7 @@ This section details the **internal data structures** used to capture and store 
 
 ```cpp
 struct Z80ControlFlowEvent {
-    uint16_t m1_pc;                     // PC at M1 cycle (instruction fetch)
+    uint16_t m1_pc;                     // Address of the instruction's first byte (one per instruction, prefixes included)
     uint16_t target_addr;               // Jump/call/return target
     std::vector<uint8_t> opcode_bytes;  // Full instruction bytes
     uint8_t flags;                      // Z80 F register (S,Z,H,P,N,C)

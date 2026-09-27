@@ -104,8 +104,15 @@ z80:
   interrupts:
     im: 1              # Interrupt Mode (0, 1, or 2)
     iff1: true         # Main interrupt enable flip-flop
-    iff2: true         # Temp storage for NMI, copy of IFF1
+    iff2: true         # Keeps the pre-NMI IFF1 (EI/DI set both; NMI clears IFF1 only)
     halted: false
+    # Instruction-boundary state - what decides the next INT/NMI acceptance
+    # beyond the registers (Z80BoundaryEnum): none | prefix_dd | prefix_fd |
+    # int_shadow (after EI, or a RETN/RETI that set IFF1) | ld_a_ir (an INT
+    # accepted now clears P/V) | nmi_ack (a second NMI waits for an
+    # instruction). Needed for an exact restore at any instruction boundary.
+    boundary: none
+    int_acked_in_pulse: false   # INT pulse already acknowledged (ZX-Evo: the acknowledge ends it)
 
 
 # State of peripheral chips.

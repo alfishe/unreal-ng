@@ -365,6 +365,14 @@ if (_nmi_pending_count > 0 && at instruction boundary):
 on RETN: IFF1 = IFF2; nmi_in_progress = false;   (hook into existing RETN decode)
 ```
 
+> **Correction 2026-09-27:** the chip clears IFF1 only and leaves IFF2 alone
+> (UM0080 table 1; Sean Young's nested-NMI test) - `IFF2 = IFF1` lost the outer
+> state on a nested NMI. The core now also advances R on the acknowledge,
+> releases HALT by the HALT latch, refuses an NMI inside a split prefix chain
+> and a second NMI before an instruction has run (the request stays pending),
+> and accepts NMI right after EI. See `core/src/emulator/cpu/z80.cpp`
+> (`ProcessInterrupts`) and `core/tests/emulator/cpu/nmi_test.cpp`.
+
 Model-agnostic (ATM3 will reuse it later); no Scorpion behavior leaks into the core.
 
 ### 7.2 Magic-button orchestration
