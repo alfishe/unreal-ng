@@ -6,6 +6,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/video/zx/screenzx.h"
 #include "emulator/config.h"
+#include "_helpers/testpathhelper.h"
 
 /// Test fixture for INT timing verification per model
 class INTTiming_Test : public ::testing::Test
@@ -376,6 +377,73 @@ TEST_F(INTTiming_Test, ApplyDefaults_Plus3)
     // Plus3 uses same ULA timing as ZX-128K
     EXPECT_EQ(config.intstart, 2056u);
     EXPECT_EQ(config.intlen, 36u);
+}
+
+/// =========== ATM Turbo 2+ / ATM3 frame and INT ===========
+/// The ATM frame is the 312 x 224T raster at the base clock in every video
+/// mode; the FF77.3 turbo multiplies the CPU only. UnrealSpeccy's
+/// PRESET.ATM1_2_7.0MHz (99880T) stretched the frame instead because that
+/// emulator paces at a fixed 50 Hz - here the frame length sets the frame
+/// period, so 99880T ran the machine at 35.04 FPS.
+
+TEST_F(INTTiming_Test, ApplyDefaults_ATM_CanonicalGeometryIsBaseClockRaster)
+{
+    for (MEM_MODEL model : {MM_ATM710, MM_ATM3})
+    {
+        SCOPED_TRACE(testing::Message() << "mem_model = " << int(model));
+        CONFIG config = {};
+        config.mem_model = model;
+        config.frame = 99880;  // the stale UnrealSpeccy 7 MHz preset must not survive
+        config.intstart = 0;
+        config.intlen = 0;
+
+        Config configHelper(_context);
+        configHelper.ApplyModelTimingDefaults(config, true /* canonicalGeometry */);
+
+        EXPECT_EQ(config.frame, 69888u);
+        EXPECT_EQ(config.t_line, 224u);
+        EXPECT_EQ(config.intstart, 1756u);
+        EXPECT_EQ(config.intlen, 32u);
+        EXPECT_EQ(config.frame_duration_us, 19968u) << "50.08 FPS, not 35.04";
+    }
+}
+
+TEST_F(INTTiming_Test, ATM_INTToZXPaperMatchesReference)
+{
+    CONFIG& config = _context->config;
+    config.mem_model = MM_ATM710;
+    config.frame = 69888;
+    config.t_line = 224;
+    config.intstart = 0;
+    config.intlen = 0;
+    Config(_context).ApplyModelTimingDefaults(config);
+    _screen->SetVideoMode(M_ZX48);  // ATM ZX-compatible mode
+
+    const uint32_t paperT = _screen->_rasterState.screenAreaStart +
+                            _screen->rasterDescriptors[M_ZX48].screenOffsetLeft / 2;
+    const uint32_t intFiresAt = config.intstart + 1;  // acceptance is strictly after intstart
+    // UnrealSpeccy PRESET.ATM1_2_3.5MHz paper field (DDp); Xpeccy ULA.ATM2 gives 14384T
+    EXPECT_EQ(paperT - intFiresAt, 14395u);
+}
+
+TEST_F(INTTiming_Test, ShippedAtmConfigs_FrameEqualsRasterInEveryMode)
+{
+    for (const char* folder : {"atm710", "atm3"})
+    {
+        SCOPED_TRACE(folder);
+        const fs::path ini = TestPathHelper::FindProjectRoot() / "data" / "configs" / folder / "unreal.ini";
+        ASSERT_TRUE(fs::exists(ini)) << ini;
+        ASSERT_TRUE(Config(_context).LoadConfigFile(ini.string()));
+
+        const CONFIG& config = _context->config;
+        EXPECT_EQ(config.frame_duration_us, 19968u) << "50.08 FPS, not 35.04";
+        EXPECT_EQ(config.intstart, 1756u);
+        for (VideoModeEnum mode : {M_ZX48, M_ATM16, M_ATMHR, M_ATMTX})
+        {
+            _screen->SetVideoMode(mode);
+            EXPECT_EQ(config.frame, _screen->GetMaxFrameTiming()) << "mode " << int(mode);
+        }
+    }
 }
 
 TEST_F(INTTiming_Test, ApplyDefaults_PreservesUserIntstart)

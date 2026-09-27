@@ -772,8 +772,8 @@ void SoundManager::handleFrameEnd()
     // the same samples in every frame. config.frame_duration_us is the pacing
     // clock, rounded UP to whole microseconds; counting in it disagreed with
     // the devices on every other frame wherever the frame is not a whole
-    // number of microseconds (70908 T = 20259.43 us on 128K/+3, 99880 T on
-    // ATM): the mixer read a never-rendered zero sample or dropped one.
+    // number of microseconds (70908 T = 20259.43 us on 128K/+3): the mixer
+    // read a never-rendered zero sample or dropped one.
     // Recordings stamp video with the same exact frame/CPU_CLOCK_RATE
     // duration; the realtime pacing difference (<30 ppm) is absorbed by DRC.
     size_t samplesThisFrame = SAMPLES_PER_FRAME;

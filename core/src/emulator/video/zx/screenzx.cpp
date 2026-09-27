@@ -714,12 +714,7 @@ void ScreenZX::UpdateScreen()
 /// @param tstate Clock time mark
 void ScreenZX::Draw(uint32_t tstate)
 {
-    // Use configFrameDuration for ATM modes (config.frame = 99880) instead of maxFrameTiming
-    // which is calculated from rasterDescriptor and may not match the actual frame timing
-    uint32_t frameLimit = (_mode >= M_ATM16 && _mode <= M_ATMTL)
-                         ? _rasterState.configFrameDuration
-                         : _rasterState.maxFrameTiming;
-    if (_mode == M_NUL || tstate >= frameLimit || tstate >= MAX_FRAME_TSTATES)
+    if (_mode == M_NUL || tstate >= _rasterState.maxFrameTiming || tstate >= MAX_FRAME_TSTATES)
     {
         return;
     }

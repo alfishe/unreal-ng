@@ -912,8 +912,21 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
             config.intlen   = 28;
             break;
 
+        case MM_ATM450:
+        case MM_ATM710:
+        case MM_ATM3:
+            // ATM Turbo 1/2+ and ZX-Evo BaseConf: 312 x 224T frame at the base
+            // clock in every video mode; the FF77.3 turbo multiplies the CPU only.
+            // INT-to-first-ZX-paper distance 14395T (UnrealSpeccy
+            // PRESET.ATM1_2_3.5MHz, "thanks to DDp"; Xpeccy ULA.ATM2: 14384T).
+            // ZX paper starts at T=16152 (line 72 * 224 + 24), INT fires at
+            // intstart+1 => 16152 - 1757 = 14395T.
+            config.intstart = 1756;
+            config.intlen   = 32;
+            break;
+
         default:
-            // Leave existing values for TSConf, ATM, etc.
+            // Leave existing values for TSConf etc.
             break;
     }
 
@@ -961,6 +974,14 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
                 config.t_line = 224;
                 config.intstart = 3571;
                 config.intlen = 28;
+                break;
+            case MM_ATM450:
+            case MM_ATM710:
+            case MM_ATM3:
+                config.frame = 69888;   // 224 * 312
+                config.t_line = 224;
+                config.intstart = 1756;
+                config.intlen = 32;
                 break;
             default:
                 break;

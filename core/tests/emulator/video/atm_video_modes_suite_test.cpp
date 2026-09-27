@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "emulator/video/atm/atmfont.h"
+#include "emulator/video/atm/screenatm.h"
 #include "emulator/video/zx/screenzx.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
@@ -101,7 +102,7 @@ protected:
 
     /// Beam T-state inside the screen window: screen row 0 is beam line 68
     /// (24 vSync/vBlank lines + 44 screenOffsetTop), window starts at T 32
-    static uint32_t BeamT(uint32_t screenY, uint32_t tInLine) { return (68 + screenY) * 224 + tInLine; }
+    static uint32_t BeamT(uint32_t screenY, uint32_t tInWindow) { return (68 + screenY) * 224 + ScreenAtm::SCREEN_START_T + tInWindow; }
 
     uint32_t InkColor(uint8_t attr) const { return _screen->TransformZXSpectrumColorsToRGBA(attr, true); }
     uint32_t PaperColor(uint8_t attr) const { return _screen->TransformZXSpectrumColorsToRGBA(attr, false); }
@@ -542,7 +543,7 @@ TEST_F(ATMVideoModesSuite_Test, Port7FFD_ShadowBit_SwitchesRendererPlanes)
     p7[0] = 0x00;
 
     const uint32_t* clut = _screen->_vid.clut;
-    _screen->Draw(BeamT(0, 32));  // q=0, j=0 -> plane ap+0
+    _screen->Draw(BeamT(0, 0));  // q=0, j=0 -> plane ap+0
     EXPECT_EQ(At(44, 0), clut[7]);
     EXPECT_EQ(At(44, 1), clut[1]);
 
@@ -550,7 +551,7 @@ TEST_F(ATMVideoModesSuite_Test, Port7FFD_ShadowBit_SwitchesRendererPlanes)
     pd->DecodePortOut(0x7FFD, 0x08, 0);
     EXPECT_EQ(_context->emulatorState.p7FFD, 0x08);
 
-    _screen->Draw(BeamT(0, 32));
+    _screen->Draw(BeamT(0, 0));
     EXPECT_EQ(At(44, 0), clut[0]);
     EXPECT_EQ(At(44, 1), clut[0]);
 }
@@ -590,8 +591,8 @@ TEST_F(ATMVideoModesSuite_Test, Render_ATMTX_All25TextRows_AddressedAt1C0Plus64P
     {
         SCOPED_TRACE(testing::Message() << "text row " << r);
         // Font row 0 of the glyph, both halves of the char cell (t, t+1)
-        _screen->Draw(BeamT(8 * r, 32));
-        _screen->Draw(BeamT(8 * r, 33));
+        _screen->Draw(BeamT(8 * r, 0));
+        _screen->Draw(BeamT(8 * r, 1));
         const uint8_t glyph = ATM_FONT[0x41 + r];
         const uint32_t row = 44 + 8 * r;
         for (uint32_t k = 0; k < 8; ++k)
@@ -628,8 +629,8 @@ TEST_F(ATMVideoModesSuite_Test, Render_ATMTX_PerScanlineFontLines)
     for (uint32_t s = 0; s < 8; ++s)
     {
         SCOPED_TRACE(testing::Message() << "scanline " << s);
-        _screen->Draw(BeamT(16 + s, 32));
-        _screen->Draw(BeamT(16 + s, 33));
+        _screen->Draw(BeamT(16 + s, 0));
+        _screen->Draw(BeamT(16 + s, 1));
         const uint8_t glyph = ATM_FONT[s * 256 + code];
         const uint32_t row = 44 + 16 + s;
         for (uint32_t k = 0; k < 8; ++k)
@@ -663,8 +664,8 @@ TEST_F(ATMVideoModesSuite_Test, Render_ATMTX_AttrQuirkByteAlignment)
     vp[0x2000 + T0 + 1] = 0x44;           // 'D' at char column 3
     ap[1 + T0 + 1] = 0x30;                // black ink on yellow paper
 
-    _screen->Draw(BeamT(0, 34));   // n=1, half=0 -> cols 40..43, bits 7..4
-    _screen->Draw(BeamT(0, 38));   // n=3, half=0 -> cols 56..59, bits 7..4
+    _screen->Draw(BeamT(0, 2));   // n=1, half=0 -> cols 40..43, bits 7..4
+    _screen->Draw(BeamT(0, 6));   // n=3, half=0 -> cols 56..59, bits 7..4
 
     const uint8_t gB = ATM_FONT[0x42];
     const uint8_t gD = ATM_FONT[0x44];
@@ -715,9 +716,9 @@ TEST_F(ATMVideoModesSuite_Test, Render_ATMTL_LinearRowStrideAndColumnParity)
     for (uint32_t r = 0; r < 25; ++r)
     {
         SCOPED_TRACE(testing::Message() << "text row " << r);
-        _screen->Draw(BeamT(8 * r, 32));  // col 0, bits 7..4
-        _screen->Draw(BeamT(8 * r, 33));  // col 0, bits 3..0
-        _screen->Draw(BeamT(8 * r, 34));  // col 1, bits 7..4
+        _screen->Draw(BeamT(8 * r, 0));  // col 0, bits 7..4
+        _screen->Draw(BeamT(8 * r, 1));  // col 0, bits 3..0
+        _screen->Draw(BeamT(8 * r, 2));  // col 1, bits 7..4
         const uint8_t glyph = ATM_FONT[0x41 + r];
         const uint32_t row = 44 + 8 * r;
         for (uint32_t k = 0; k < 8; ++k)
@@ -730,8 +731,8 @@ TEST_F(ATMVideoModesSuite_Test, Render_ATMTL_LinearRowStrideAndColumnParity)
     for (uint32_t s = 0; s < 8; ++s)
     {
         SCOPED_TRACE(testing::Message() << "scanline " << s);
-        _screen->Draw(BeamT(16 + s, 32));
-        _screen->Draw(BeamT(16 + s, 33));
+        _screen->Draw(BeamT(16 + s, 0));
+        _screen->Draw(BeamT(16 + s, 1));
         const uint8_t glyph = ATM_FONT[s * 256 + 0x43];
         const uint32_t row = 44 + 16 + s;
         for (uint32_t k = 0; k < 8; ++k)
@@ -762,9 +763,9 @@ TEST_F(ATMVideoModesSuite_Test, Render_ATMHR_Linear40ByteStride_SecondLine)
     vp[40] = 0x10;  ap[40] = 0x47;              // screenY 1 (offset 40): bit 4 -> px3 ink
     vp[0x2000 + 40] = 0x80;  ap[0x2000 + 40] = 0x02;  // odd byte group, screenY 1
 
-    _screen->Draw(BeamT(0, 32));         // row 44
-    _screen->Draw(BeamT(1, 32));         // row 45
-    _screen->Draw(BeamT(1, 34));         // row 45, odd byte group n=1
+    _screen->Draw(BeamT(0, 0));         // row 44
+    _screen->Draw(BeamT(1, 0));         // row 45
+    _screen->Draw(BeamT(1, 2));         // row 45, odd byte group n=1
 
     EXPECT_EQ(At(44, 0), InkColor(0x47));
     EXPECT_EQ(At(45, 0), PaperColor(0x47));
@@ -794,7 +795,7 @@ TEST_F(ATMVideoModesSuite_Test, Render_ATM16_PlaneHalvesStride_SecondLine)
     vp[0x2000 + 40] = 0x00;
     ap[0x2000 + 40] = 0x0F;  // left nibble 7 (white), right 1 (blue)
 
-    _screen->Draw(BeamT(1, 34));  // t'=2 -> j=0, q=2 -> plane ap+0x2000
+    _screen->Draw(BeamT(1, 2));  // t'=2 -> j=0, q=2 -> plane ap+0x2000
     EXPECT_EQ(At(45, 4), _screen->_vid.clut[7]);
     EXPECT_EQ(At(45, 5), _screen->_vid.clut[1]);
 }
@@ -817,7 +818,7 @@ TEST_F(ATMVideoModesSuite_Test, Render_ATM16_CLUTBrightFlagRegression)
     // bt = 0x8C: left = 4 (green, b6=0), right = 1|8 = 9 (BRIGHT blue, b7=1)
     ap[0] = 0x8C;
 
-    _screen->Draw(BeamT(0, 32));
+    _screen->Draw(BeamT(0, 0));
     EXPECT_EQ(px[44 * fb.width + 0], 0xFF25C500u);  // clut[4] green
     EXPECT_EQ(px[44 * fb.width + 1], 0xFFFB2B00u);  // clut[9] BRIGHT blue
     EXPECT_NE(px[44 * fb.width + 1], 0xFFC72200u);  // not the non-bright blue
@@ -852,7 +853,7 @@ TEST_F(ATMVideoModesSuite_Test, Render_ATM16_PalettePortProgramsColorsAndBorder)
     uint8_t* ap = _memory->RAMPageAddress(1);  // EGA plane q0 = ap + 0
     ap[0] = 0x0F;                              // pair (0,1): colors 7 and 1
 
-    _screen->Draw(BeamT(0, 32));  // first pixel pair of row 44
+    _screen->Draw(BeamT(0, 0));  // first pixel pair of row 44
     // ATM extended modes have no side border (screenOffsetLeft=0, verified
     // against 3 independent ZXMAK2 renderer classes) - only top/bottom
     // border remains, so exercise that instead of a "left border" t-state.
@@ -929,7 +930,7 @@ TEST_F(ATMVideoModesSuite_Test, Render_ATMHR_AttributeBit7IsPaperBright_NoFlash)
     vp[0] = 0x80;  // bit 7 set -> first pixel ink, second paper
     ap[0] = 0xC7;  // ink = 7 | 8 = 15 (bright white), paper = 0 | 8 = 8 (bright black)
 
-    _screen->Draw(BeamT(0, 32));  // byte group n=0, bits 7..4 -> cols 0..3
+    _screen->Draw(BeamT(0, 0));  // byte group n=0, bits 7..4 -> cols 0..3
     EXPECT_EQ(At(44, 0), state.atmPalette[15]);
     EXPECT_EQ(At(44, 1), state.atmPalette[8]);
 }
@@ -1055,6 +1056,28 @@ TEST_F(ATMVideoModesSuite_Test, Timing_ATM3ZModes_KeepAtm312LineFrame)
     uint16_t x, y;
     EXPECT_TRUE(_screen->TransformTstateToFramebufferCoords(69888, &x, &y))
         << "69888 T is still inside the Pentagon 320-line frame";
+}
+
+TEST_F(ATMVideoModesSuite_Test, Timing_AtmWindowWrapsZxPaper)
+{
+    // ZX-Evo BaseConf video_sync_h.v / video_sync_v.v: the 320x200 ATM window
+    // spans hcount 108..428 and lines 76..276 against the ZX paper's 140..396
+    // and 80..272 - 16T and 4 lines more on each side (Xpeccy vid_atm_org)
+    const RasterDescriptor& zx = _screen->rasterDescriptors[M_ZX48];
+    const uint32_t zxPaperStartT = zx.screenOffsetLeft / 2;
+    const uint32_t zxPaperEndT = zxPaperStartT + zx.screenWidth / 2;
+    const uint32_t zxPaperLine = zx.vSyncLines + zx.vBlankLines + zx.screenOffsetTop;
+
+    EXPECT_EQ(ScreenAtm::SCREEN_START_T + 16, zxPaperStartT);
+    EXPECT_EQ(ScreenAtm::SCREEN_END_T, zxPaperEndT + 16);
+
+    for (VideoModeEnum mode : {M_ATM16, M_ATMHR, M_ATMTX, M_ATMTL})
+    {
+        const RasterDescriptor& atm = _screen->rasterDescriptors[mode];
+        const uint32_t atmLine = atm.vSyncLines + atm.vBlankLines + atm.screenOffsetTop;
+        EXPECT_EQ(atmLine + 4, zxPaperLine) << "mode " << int(mode);
+        EXPECT_EQ(atmLine + atm.screenHeight, zxPaperLine + zx.screenHeight + 4) << "mode " << int(mode);
+    }
 }
 
 /// endregion </Renderer: ATM3 EFF7 z-modes (ALCO / HWMC)>

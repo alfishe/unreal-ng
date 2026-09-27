@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "emulator/video/atm/atmfont.h"
+#include "emulator/video/atm/screenatm.h"
 #include "emulator/video/zx/screenzx.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
@@ -394,7 +395,7 @@ TEST_F(ATMVideoMode_Test, PortDecoderFF77_NotifiesOnModeChange)
 
 /// region <ATM Renderer Tests (reference: dxr_atm0/2/6.cpp)>
 /// Geometry: visible rows start at beam line 24 (16 vSync + 8 vBlank),
-/// screenOffsetTop = 44 -> screen row 0 is beam line 68, T = 68*224 + 32..
+/// screenOffsetTop = 44 -> screen row 0 is beam line 68, T = 68*224 + ScreenAtm::SCREEN_START_T..
 /// EGA cols: 64 + 8j + 2q; MC/TX cols: 32 + ... (704-wide frame).
 
 TEST_F(ATMVideoMode_Test, Render_ATM16_NibbleDecodeAndLinearStride)
@@ -433,11 +434,11 @@ TEST_F(ATMVideoMode_Test, Render_ATM16_NibbleDecodeAndLinearStride)
     ap[40] = 0x0F;
 
     const uint32_t row0 = 44;  // screenOffsetTop
-    _screen->Draw(68 * 224 + 32);  // q=0 -> px0,px1
-    _screen->Draw(68 * 224 + 33);  // q=1 -> px2,px3
-    _screen->Draw(68 * 224 + 34);  // q=2 -> px4,px5
-    _screen->Draw(68 * 224 + 35);  // q=3 -> px6,px7
-    _screen->Draw(69 * 224 + 32);  // screenY=1, q=0 -> row 45, px0,px1
+    _screen->Draw(68 * 224 + ScreenAtm::SCREEN_START_T);  // q=0 -> px0,px1
+    _screen->Draw(68 * 224 + ScreenAtm::SCREEN_START_T + 1);  // q=1 -> px2,px3
+    _screen->Draw(68 * 224 + ScreenAtm::SCREEN_START_T + 2);  // q=2 -> px4,px5
+    _screen->Draw(68 * 224 + ScreenAtm::SCREEN_START_T + 3);  // q=3 -> px6,px7
+    _screen->Draw(69 * 224 + ScreenAtm::SCREEN_START_T);  // screenY=1, q=0 -> row 45, px0,px1
 
     EXPECT_EQ(At(row0, 0), zx16(0x07));  // white
     EXPECT_EQ(At(row0, 1), zx16(0x01));  // blue
@@ -476,9 +477,9 @@ TEST_F(ATMVideoMode_Test, Render_ATMHR_MSBFirstPixelsAndPlaneAlternation)
     vp[0x2000] = 0x08;       // bit 3 set -> 5th pixel of group 1 is ink
     ap[0x2000] = 0x02;       // red ink, black paper
 
-    _screen->Draw(68 * 224 + 32);  // n=0, half=0: group 0 bits 7..4
-    _screen->Draw(68 * 224 + 34);  // n=1, half=0: group 1 bits 7..4 (plane +0x2000)
-    _screen->Draw(68 * 224 + 35);  // n=1, half=1: group 1 bits 3..0
+    _screen->Draw(68 * 224 + ScreenAtm::SCREEN_START_T);  // n=0, half=0: group 0 bits 7..4
+    _screen->Draw(68 * 224 + ScreenAtm::SCREEN_START_T + 2);  // n=1, half=0: group 1 bits 7..4 (plane +0x2000)
+    _screen->Draw(68 * 224 + ScreenAtm::SCREEN_START_T + 3);  // n=1, half=1: group 1 bits 3..0
 
     auto ink = [this](uint8_t a) { return _screen->TransformZXSpectrumColorsToRGBA(a, true); };
     auto paper = [this](uint8_t a) { return _screen->TransformZXSpectrumColorsToRGBA(a, false); };
@@ -527,9 +528,9 @@ TEST_F(ATMVideoMode_Test, Render_ATMTX_FontAndCrossPlaneAttrs)
     // Row 0 of 'A': font bits 7..4 at t (half=0), bits 3..0 at t+1 (half=1)
     const uint8_t glyphA = ATM_FONT[0x41];
     const uint8_t glyphB = ATM_FONT[0x42];
-    _screen->Draw(68 * 224 + 32);  // n=0 half=0: 'A' bits 7..4
-    _screen->Draw(68 * 224 + 33);  // n=0 half=1: 'A' bits 3..0
-    _screen->Draw(68 * 224 + 34);  // n=1 half=0: 'B' bits 7..4
+    _screen->Draw(68 * 224 + ScreenAtm::SCREEN_START_T);  // n=0 half=0: 'A' bits 7..4
+    _screen->Draw(68 * 224 + ScreenAtm::SCREEN_START_T + 1);  // n=0 half=1: 'A' bits 3..0
+    _screen->Draw(68 * 224 + ScreenAtm::SCREEN_START_T + 2);  // n=1 half=0: 'B' bits 7..4
 
     auto ink = [this](uint8_t a) { return _screen->TransformZXSpectrumColorsToRGBA(a, true); };
     auto paper = [this](uint8_t a) { return _screen->TransformZXSpectrumColorsToRGBA(a, false); };
@@ -596,8 +597,8 @@ TEST_F(ATMVideoMode_Test, Render_ATMTL_DedicatedPageContent)
     page[0x01C0] = 0x41;   // row 0, even column 0: 'A'
     page[0x31C0] = 0x47;   // even-column attrs
 
-    _screen->Draw(68 * 224 + 32);  // n=0 half=0: 'A' bits 7..4
-    _screen->Draw(68 * 224 + 33);  // n=0 half=1: 'A' bits 3..0
+    _screen->Draw(68 * 224 + ScreenAtm::SCREEN_START_T);  // n=0 half=0: 'A' bits 7..4
+    _screen->Draw(68 * 224 + ScreenAtm::SCREEN_START_T + 1);  // n=0 half=1: 'A' bits 3..0
 
     auto ink = [this](uint8_t a) { return _screen->TransformZXSpectrumColorsToRGBA(a, true); };
     auto paper = [this](uint8_t a) { return _screen->TransformZXSpectrumColorsToRGBA(a, false); };

@@ -53,7 +53,7 @@ static constexpr const double AUDIO_SAMPLE_TSTATE_INCREMENT = (double)AUDIO_SAMP
 /// Falls back to a 50 Hz frame when t-states per frame is not configured yet.
 /// Pacing only: per-frame sample counts come from the exact t-state count
 /// (SoundManager::handleFrameEnd), which this rounding would break wherever
-/// the frame is not a whole number of microseconds (70908 T, 99880 T).
+/// the frame is not a whole number of microseconds (70908 T).
 static constexpr uint32_t CalculateFrameDurationUs(uint32_t frameTStates)
 {
     return frameTStates == 0

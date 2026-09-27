@@ -18,6 +18,16 @@ public:
     ScreenAtm(EmulatorContext* context, Memory* memory);
     /// endregion </Constructors / Destructors>
 
+    /// region <Constants>
+public:
+    /// Screen T-window inside a 224T line: the 320-dot ATM window starts 16T
+    /// before the ZX paper (T=24) and ends 16T after it (ZX-Evo BaseConf
+    /// video_sync_h.v HPIX_BEG_ATM=108 / HPIX_END_ATM=428 vs Pentagon 140/396,
+    /// in 2-dot T units; Xpeccy vid_atm_org).
+    static constexpr uint32_t SCREEN_START_T = 8;
+    static constexpr uint32_t SCREEN_END_T = SCREEN_START_T + 160;
+    /// endregion </Constants>
+
     /// region <Methods>
 public:
     /// Render a single T-state for the current ATM extended video mode

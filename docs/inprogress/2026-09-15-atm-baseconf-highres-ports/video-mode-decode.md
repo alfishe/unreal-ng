@@ -91,6 +91,36 @@ using the ZX48 descriptor (`M_ZX48`, 224T x 312) for `M_P16`/`M_PMC`
 (`Timing_ATM3ZModes_KeepAtm312LineFrame`). Without the override the beam
 mapping of the ALCO/HWMC renderers stretches past the framebuffer bottom.
 
+## Timing: frame, INT and the 320x200 window (ATM Turbo 2+ and ATM3)
+
+Reference numbers, one table for every ATM video mode. T is a 3.5 MHz tick
+(2 dots). "Paper" is the first ZX pixel.
+
+| What | Value | Source |
+|------|-------|--------|
+| Frame | 312 lines x 224 T = 69888 T (50.08 FPS) in every mode | Xpeccy `ULA.ATM2` 448x312 dots; UnrealSpeccy `atm.cpp` "312 scanlines, 224 T each (noturbo)" |
+| 7 MHz turbo (FF77.3) | multiplies the CPU only, frame unchanged | Xpeccy `atm2Out77` -> `compSetHwTurbo`; `PortDecoder_ATM710::updateTurboMode` |
+| INT to ZX paper | 14395 T -> `intstart=1756` (INT fires at 1757, paper at 16152 = line 72 x 224 + 24) | UnrealSpeccy `PRESET.ATM1_2_3.5MHz` (DDp); Xpeccy `ULA.ATM2` gives 14384 T |
+| INT length | 32 T | both |
+| 320x200 window vs ZX paper | starts 16 T earlier and 4 lines higher, ends 16 T and 4 lines later: T 8..168 of the line, lines 68..267 | ZX-Evo BaseConf `video_sync_h.v` (`HPIX_BEG_ATM` 108 vs 140) and `video_sync_v.v` (`VPIX_BEG_ATM` 76 vs 80); Xpeccy `vid_atm_org` |
+
+UnrealSpeccy also ships `PRESET.ATM1_2_7.0MHz=99880,17989,...`. That preset
+is not a raster. UnrealSpeccy has no CPU turbo and paces at a fixed `int=50`,
+so a longer frame just means "more CPU ticks per 20 ms" (99880 T = ~5 MHz).
+In unreal-ng the frame length sets the frame period, so the same number gave
+a 28537 us frame: 35.04 FPS, INT at 35 Hz, music at 70% tempo. Its second
+field (17989) is UnrealSpeccy's INT-to-paper distance copied from the Pentagon
+preset. Read as unreal-ng's `intstart` (INT position in the raster), it put
+the INT at raster line 80, mid-picture. Both configs (`data/configs/atm710`,
+`data/configs/atm3`) and `Config::ApplyModelTimingDefaults` now carry the
+3.5 MHz numbers. Tests: `INTTiming_Test.ApplyDefaults_ATM_*`,
+`ATM_INTToZXPaperMatchesReference`, `ShippedAtmConfigs_FrameEqualsRasterInEveryMode`,
+`ATMVideoModesSuite_Test.Timing_AtmWindowWrapsZxPaper`.
+
+INI note: `IniFile` strips an inline comment from the *last* `;`, so a
+comment that contains another `;` leaves text in the value. The value then
+reads as "not a number" and the default is used silently.
+
 ## Renderer details
 
 ### Shared conventions (DrawATMMode: EGA / HWM / TX / TL)

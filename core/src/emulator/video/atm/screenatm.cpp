@@ -29,11 +29,8 @@ void ScreenAtm::Draw(uint32_t tstate, VideoModeEnum mode, const RasterDescriptor
     constexpr uint32_t VISIBLE_LINES = 288;
     constexpr uint32_t SCREEN_LINES = 200;
     constexpr uint32_t BYTES_PER_LINE = 40;
-    // Screen T-window inside a line (160 T). 320-px modes render 2 px/T
-    // (cols 64..383 of the 448-wide frame); 640-px modes double the pixel
-    // clock inside the same window (4 px/T, cols 32..671 of the 704-wide frame)
-    constexpr uint32_t SCREEN_START_T = 32;
-    constexpr uint32_t SCREEN_END_T = SCREEN_START_T + 160;
+    // 320-px modes render 2 px/T inside the 160T screen window; 640-px modes
+    // double the pixel clock inside the same window (4 px/T)
 
     if (framebuffer.memoryBuffer == nullptr)
         return;
@@ -72,31 +69,11 @@ void ScreenAtm::Draw(uint32_t tstate, VideoModeEnum mode, const RasterDescriptor
         return;
     }
 
-    // Side borders on screen rows: pixel clock derived from this mode's own
-    // raster geometry (screenOffsetLeft px painted over SCREEN_START_T
-    // T-states), not a hard-coded 2 px/T. 320-wide modes (M_ATM16) are
-    // 64px/32T = 2 px/T; 704-wide hires modes (M_ATMHR/TX/TL) are
-    // 32px/32T = 1 px/T. Using 2 px/T unconditionally used to overreach into
-    // the first screen columns for hires modes.
-    const uint32_t pxPerT = rd.screenOffsetLeft / SCREEN_START_T;
-    if (tInLine < SCREEN_START_T)
-    {
-        const uint32_t x = pxPerT * tInLine;
-        for (uint32_t k = 0; k < pxPerT; ++k)
-            if (x + k < rd.fullFrameWidth)
-                framebufferARGB[rowOffset + x + k] = borderColor;
+    // Screen rows carry no side border in the framebuffer (screenOffsetLeft == 0)
+    if (tInLine < SCREEN_START_T || tInLine >= SCREEN_END_T)
         return;
-    }
-    if (tInLine >= SCREEN_END_T)
-    {
-        const uint32_t x = rd.screenOffsetLeft + rd.screenWidth + pxPerT * (tInLine - SCREEN_END_T);
-        for (uint32_t k = 0; k < pxPerT; ++k)
-            if (x + k < rd.fullFrameWidth)
-                framebufferARGB[rowOffset + x + k] = borderColor;
-        return;
-    }
 
-    // --- Screen window [32, 192) ---
+    // --- Screen window [SCREEN_START_T, SCREEN_END_T) ---
     const uint32_t t = tInLine - SCREEN_START_T;         // 0..159
     const uint32_t screenY = fbRow - rd.screenOffsetTop; // 0..199
 
