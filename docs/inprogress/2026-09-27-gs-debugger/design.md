@@ -276,15 +276,24 @@ virtual GSDebugAccess* debugAccess() { return nullptr; }   // GeneralSoundCard
 | Window | Kind | Page |
 |---|---|---|
 | `#0000-#3FFF` | ROM | 0 |
-| `#4000-#7FFF` | RAM | 3 (fixed) |
+| `#4000-#7FFF` | RAM | 1, fixed: the upper half of MPAG 1 (§11 risk 7) |
 | `#8000-#BFFF` | ROM or RAM | MPAG 0: ROM 0; MPAG V: RAM `2·((V-1)&mask)` |
 | `#C000-#FFFF` | ROM or RAM | MPAG 0: ROM 1; MPAG V: RAM `2·((V-1)&mask)+1` |
 
-- Pages are expressed as 16K units, so the key layout the breakpoint manager
-  already uses (`[pageType:8][page:8][addr:16]`) works unchanged for GS: up
-  to 32 RAM pages of 16K.
-- NeoGS has up to 4 MB, which is 256 pages of 16K. That still fits 8 bits for
-  the page. Its flash is a new `MemoryBankModeEnum` value.
+- The target never hard-codes this table: `windows()` and `mapAddress()`
+  read the card's live bank pointers (`_bankR` / `_bankW` against `_rom` /
+  `_ram`). The debugger shows whatever the emulation does, so a correction of
+  the emulation's map (§11 risk 7) needs no debugger change.
+- GS RAM is 128-512 KB = 8-32 pages of 16K. NeoGS has up to 4 MB = 256 pages
+  (current FPGA; the fpgaD revision in our materials addresses 2 MB), which
+  still fits the 8-bit page field. NeoGS flash is a new `MemoryBankModeEnum`
+  value.
+- **NeoGS windows are all switchable.** In its current FPGA, each of the four
+  windows has its own 8-bit page register (ports `#20`-`#23`, `ports.v:159-162,
+  416-442`; reset values PG0 = 0, PG1 = 3). `MPAG` / `MPAGEX` write PG2 / PG3,
+  and `GSCFG0` bit NOROM chooses ROM or RAM (`memmap.v`). The window table is
+  therefore four rows of `{kind, page, writable}` for any card, never a GS
+  special case.
 
 **Pages are always 16K** (decided in review; the Spectrum standard). The
 MPAG register selects 32K pairs, but the debugger never shows pairs: MPAG 3
@@ -341,16 +350,36 @@ class DebugManager
 - New constructor argument: `IDebugTarget* target`.
 - `FindAddressBreakpoint(uint16_t)` uses `target->mapAddress(addr)` in place
   of `_context->pMemory`, then calls the existing page overload.
+- **The page-tied key changes to the physical address.** Today it is
+  `[pageType:8][page:8][z80address:16]` (`breakpointmanager.cpp:1406-1410`,
+  `:1501-1502`), i.e. page plus *CPU* address. A breakpoint on ROM page 0 at
+  `#0038` therefore misses when the same byte executes at `#8038`. The new key
+  is `[pageType:8][page:8][offset:16]` with `offset = addr & #3FFF` (taken from
+  `MemoryPageDescriptor::offset` / `BreakpointDescriptor::bankOffset`, which
+  both exist). Address-only breakpoints keep the `0xFFFF'0000 | addr` key.
+  - This fixes the same miss on the main CPU: on a 128K machine RAM page 5 is
+    visible at `#4000` and, when paged in, at `#C000`; page 2 at `#8000` and
+    `#C000`.
+  - Existing page-tied breakpoints are created with a CPU address. On add, the
+    manager converts it to the offset (`addr & #3FFF`). Saved breakpoint
+    files keep their format; the conversion happens on load.
+  - The hot filter `addressFlags[]` is indexed by CPU address. A page-tied
+    breakpoint marks the CPU addresses of *every* window where its page can
+    appear (four entries at most), so the filter stays a single lookup.
 - The `_DEBUG` log line in `HandlePCChange` uses the target too.
-- Nothing else changes: descriptors, groups, the hot filter and the Handle*
-  entry points are all per instance already.
+- Descriptors, groups and the Handle* entry points are per instance already.
 
 **`LabelManager`** (needed for L2: one address, different names per page)
 
-- The lookup becomes `std::multimap<uint16_t, shared_ptr<Label>>`, plus a
-  new `GetLabelByAddress(addr, const MemoryPageDescriptor&)`.
-  - It returns the label whose page matches.
-  - Failing that, it returns an any-page label (`bank == 0xFFFF`).
+- Page-tied labels are indexed by physical address, `(bankType, bank,
+  bankOffset)`, in a new map. Address-only labels stay in
+  `_labelsByZ80Address`. New lookup `GetLabelByAddress(addr, const
+  MemoryPageDescriptor&)`:
+  - It returns the page-tied label at the page and offset the CPU address maps
+    to now, so a ROM 0 label shows at `#0038` and at `#8038`.
+  - Failing that, it returns an address-only label.
+  - `.map` entries such as `ROM1:C000` store page 1 offset `#0000`: the offset
+    is `address & #3FFF`, whatever window the file wrote.
 - The old `GetLabelByAddress(addr)` keeps its behaviour for the main target:
   the first label at that address.
 - The "below `#4000` is ROM" guess in `AddLabel` moves to the target: labels
@@ -965,9 +994,11 @@ flowchart LR
 | 1 | Tight-mode cost (flush at every main memory access) | Measured in phase 1. If too high, flush only at instruction start. The card can then be one whole main instruction behind (still meets S4's "within one instruction"). |
 | 2 | Contention makes the table total wrong on 48K / 128K | Progress uses the table total plus contention so far (§5.4); marked "contended" |
 | 3 | Labels that cannot be placed on an older binary (routine rewritten, not just patched) | Listed as missing in the mark-up report; named by hand if needed, in the same `.map` (§6.2) |
-| 4 | NeoGS sources behind the NedoPC site's browser check | Imported manually once (SVN checkout or a browser download), with the revision recorded |
-| 5 | `LabelManager` multimap change touches main-CPU code paths | Old single-address lookup kept; covered by the existing label tests |
+| 4 | NeoGS sources | A local git-svn mirror of NedoPC `ngs` exists (synced 2026-09-19); imported from it with the revision recorded |
+| 5 | `LabelManager` physical index touches main-CPU code paths | Old address-only lookup kept; covered by the existing label tests plus new mirror tests |
 | 6 | Qt widget refactor size | Widget by widget, with the main window working after each step |
+| 7 | Which RAM the GS fixed window `#4000-#7FFF` shows | **Resolved 2026-09-27**: the upper half of MPAG 1 (16K RAM page 1), from the original schematic; the emulator mapped MPAG 2's upper half and was fixed (GS verification findings BUG-10). The target still reads the live map, never a copy of this table. |
+| 8 | Changing the page-tied breakpoint key affects the main CPU | Intended: it fixes misses at mirrored pages (§3.3). Covered by tests on 128K page 5 at `#4000` / `#C000` and GS ROM 0 at `#0038` / `#8038`. |
 
 ## 12. References
 
@@ -982,3 +1013,25 @@ Documents this design depends on directly:
 - [`docs/inprogress/2026-09-19-general-sound/gs-tdd.md`](../2026-09-19-general-sound/gs-tdd.md) — card emulation, catch-up and mailbox.
 - [`docs/inprogress/2026-09-19-general-sound/neogs-tdd.md`](../2026-09-19-general-sound/neogs-tdd.md) — NeoGS target (phase 6).
 - [`core/src/3rdparty/unreal-z80/README.md`](../../../core/src/3rdparty/unreal-z80/README.md) — card CPU library API used in §4.
+
+## Appendix A. Page mapping: verification of an external analysis
+
+A separate analysis of GS / NeoGS paging was reviewed against primary
+sources before this design was fixed. Its claims, one by one:
+
+| Claim | Verdict | Evidence |
+|---|---|---|
+| The page register is port `#30` | **Wrong.** It is port `#00` on both GS and NeoGS. | Original GS port doc `materials/neogs/GS_PORTS.TXT` (CP866): "порт 0 — расширенная память"; `materials/neogs/ports.inc:38` `MPAG equ #00`; emulator `soundchip_gs.cpp:850`. |
+| MPAG low bits select `#8000-#BFFF`, high bits `#C000-#FFFF` | **Wrong for GS.** D0-D3 select one 32K page for the whole `#8000-#FFFF`; D4-D7 are unused. On NeoGS, normal mode sets PG2 = 2v, PG3 = 2v+1; only in extended mode (`GSCFG0.EXPAG`) do `MPAG` and `MPAGEX` set the two windows separately. | `GS_PORTS.TXT` lines 1-4; NeoGS `fpgaD/ports/ports.v:406-415`; current `fpga/current/ports/ports.v:416-429`. |
+| Window 0 (`#0000-#3FFF`) is switchable through a latch | **Wrong for GS** (always ROM 0). **Right for the current NeoGS FPGA**: PG0 at port `#20`, plus `GSCFG0.NOROM` for ROM / RAM. The older fpgaD fixes page 0. | `GS_PORTS.TXT` "#0000-#3FFF - первые 16Kb ПЗУ"; `fpga/current/memmap/memmap.v`, `ports.v:434-436`; `fpgaD/memmap/memmap.v`. |
+| Window 1 is fixed RAM page 0 | **Wrong**: it is the upper half of MPAG 1 (16K RAM page 1). Settled by the original schematic, see §11 risk 7. | GS doc and Xpeccy (`gs.c:120`): first 16K of the first RAM page. NeoGS FPGA (`memmap.v`: `high_addr = 3`) and Unreal Speccy (`gsz80.cpp:132`, `GSRAM_M + 3*PAGE`, with RAM pages 0-1 holding the ROM copy): upper half of MPAG 1. Firmware probe (`INIT_L.a80:50-81`): expects `#7FFF` to alias `#FFFF` of some page. Emulator before the fix: upper half of MPAG 2. Original schematic `GeneralSound/v.1.0/GS_GENER.TXT`: the `0x4000` window decode and page 1 both select chip RAM1, and A14=1 picks its upper half. |
+| With MPAG 0, ROM page 0 is also visible at `#8000` | **Right.** MPAG 0 maps the 32K ROM to `#8000-#FFFF`: ROM 0 at `#8000`, ROM 1 at `#C000`. | `GS_PORTS.TXT` "страница 0 - ПЗУ"; emulator `applyBanking`; Xpeccy `gs.c:65-66`. |
+| Physical address = page × 16K + (address & `#3FFF`); breakpoints and labels should be stored by physical address | **Right**, and the current breakpoint key does not do it (it keys page + CPU address). Adopted in §3.3. | `breakpointmanager.cpp:1406-1410`. |
+| NeoGS RAM is 2 MB, pages 0-127 | **Right for fpgaD, outdated for the current FPGA**, which has 8-bit pages and `mema21`: 4 MB, 256 pages. | `fpgaD/memmap/memmap.v` (7-bit `mode_pg`); `fpga/current/memmap/memmap.v` (8-bit, `mema21`). |
+| Flat ROM / RAM arrays plus four window pointers | **Already so** in the emulator (`_rom`, `_ram`, `_bankR[4]`, `_bankW[4]`). | `soundchip_gs.h:263-271`. |
+| Two views: CPU 64K and a physical page inspector | **Already required** (V3). | requirements V3. |
+
+Sources outside the repository used here live under
+`/Volumes/TB4-4Tb/Projects/emulators/github/`: `neogs` (git-svn mirror of
+NedoPC `ngs`, FPGA and firmware sources), `GeneralSound` (original hardware
+revisions and programming guides), `Xpeccy`, `unreal-speccy`.

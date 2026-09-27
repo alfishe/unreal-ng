@@ -50,7 +50,8 @@ This document asks for:
 | **host** | The Spectrum side of the card conversation. |
 | **host command / data byte** | A byte the Spectrum writes to the card's command port (`#BB`) or data port (`#B3`). The firmware reads it, runs the matching command handler, and may answer through the data port. |
 | **command table** | The firmware's list of command handlers, indexed by command number (GS: `COMTAB` / `COMTABH` in the firmware sources). |
-| **page / bank** | A 16 KB (or 32 KB) piece of ROM or RAM that the CPU sees through one of its address windows; which piece is visible is switched by a port write. |
+| **page / bank** | A 16 KB piece of ROM or RAM, the Spectrum standard unit. The CPU sees four 16 KB windows (`#0000`, `#4000`, `#8000`, `#C000`); a port write chooses which page a switchable window shows. The GS page register selects 32 KB at once: two consecutive 16 KB pages. |
+| **physical address** | Where a byte really lives: memory kind (ROM, RAM, flash), 16 KB page number, and offset inside the page (`CPU address & #3FFF`). One physical byte can be visible at two CPU addresses: with page register 0, GS ROM page 0 appears at both `#0000` and `#8000`. |
 | **catch-up** | How the card runs today: it does not run in lockstep with the main CPU. It runs in bursts - when the Spectrum touches a card port, and at the end of each frame - executing as many card instructions as fit into the main-CPU time that passed since the last burst. |
 | **LLE / LW card** | The two GS models the emulator has: LLE runs the real firmware on a card CPU; LW (lightweight) plays modules with an in-emulator player and has no card CPU. |
 | **machine time** | One time line for the whole machine. Each CPU's position on it is its own clock count divided by its clock rate. |
@@ -142,7 +143,7 @@ tells whether it is met.
 |---|---|---|---|
 | T1 | P0 | Every CPU in the machine is a debug target with a stable id (`main`, `gs`, later `neogs`). The list of targets can be queried. The LW card is not a debug target (§4.11). | Pentagon with an LLE GS card lists `main` and `gs`; with an LW card or no card, only `main`. |
 | T2 | P0 | Each target has its **own** breakpoint set and **own** label set. Nothing is shared implicitly: a label `PLAY` defined on `gs` never appears in the main CPU's disassembly, a breakpoint at `#0038` on `gs` never fires on the main CPU. | Set a `gs` breakpoint at `#0038` and a `main` breakpoint at `#0038`; each fires only for its CPU. |
-| T3 | P0 | Each target describes its own memory: its address windows, which pages exist (ROM, RAM, flash), how pages are switched, and which page each window shows right now. Breakpoints and labels can be tied to a page on every target, as on the main CPU today. | A `gs` breakpoint at `#8000` in RAM page 2 fires when page 2 is mapped, not when ROM or page 3 is. |
+| T3 | P0 | Each target describes its own memory: its four 16 KB windows, which pages exist (ROM, RAM, flash), how pages are switched, and which page each window shows right now. Breakpoints and labels tied to a page are stored by **physical address** (kind, 16 KB page, offset in page), so they match at every CPU address where that page is visible. | A `gs` breakpoint on ROM page 0 offset `#0038` fires at `#0038`, and at `#8038` while the page register is 0. A breakpoint on RAM page 4 offset `#0000` fires at `#8000` or `#C000`, whichever window shows page 4. |
 | T4 | P1 | Targets follow the machine: switching the GS card between LLE and LW at runtime, or removing the card, removes the `gs` target and brings it back later with its breakpoints and labels intact (kept but inactive while the card has no CPU). | Switch LLE → LW → LLE; the `gs` breakpoints are still there and fire again. |
 | T5 | P1 | Every notification, log entry and API response that concerns a CPU carries its target id (breakpoint hit, pause, step done, register dump). | A `gs` breakpoint hit arrives in the UI and in automation as "target `gs`, breakpoint 3, PC `#0C32`". |
 
@@ -168,7 +169,7 @@ flowchart TB
         end
         subgraph NGS["Target neogs (later)"]
             NCPU["Card Z80, 12/24 MHz"]
-            NMEM["Memory map:<br/>512 KB flash, 2-4 MB RAM"]
+            NMEM["Memory map:<br/>512 KB flash, up to 4 MB RAM,<br/>4 switchable windows"]
         end
         Mailbox["Host ↔ card mailbox<br/>ports #B3 / #BB"]
         Log["Command log"]
@@ -260,7 +261,7 @@ stateDiagram-v2
 | ID | Pri | Requirement | Check |
 |---|---|---|---|
 | L1 | P0 | A separate label set per target, with the same features as main-CPU labels (add, rename, delete, import, export). | Import a label file into `gs`; `main` labels unchanged. |
-| L2 | P0 | Labels can be tied to a page, because the card's upper windows are paged: `#8000` in ROM and `#8000` in RAM page 3 carry different names. | Disassembly of `#8000` shows the name for the page currently mapped. |
+| L2 | P0 | Labels can be tied to a page and are stored by physical address like breakpoints (T3). `#8000` in ROM and `#8000` in RAM page 5 carry different names, and a ROM label shows at every CPU address where its page is visible. | Disassembly of `#8038` with page register 0 shows the label of ROM page 0 offset `#0038`. |
 | L3 | P0 | **Firmware symbols from the sources, marked up on the binaries.** Symbol files are kept in `data/symbols/gs/` in the same format as the existing main-CPU files in `data/symbols/` (address, label, type, comment, with a 16K page prefix per label). The binaries are the truth: the sources (GS: the 1997 code plus patches, which builds v1.05b; NeoGS: N5) supply the names, and each label is placed on each shipped ROM (`gs104.rom`, `gs105a.rom`, `gs105b.rom`) where its routine's bytes are. A mark-up report per ROM lists labels that matched, moved, changed (patch areas) or could not be placed. An automated check confirms that every shipped label points at the bytes the sources give it, outside the reported changed ranges. | `COM30` and `COMTAB` are named in all three GS ROMs. The report for v1.05a lists its changed ranges, and they agree with the patch notes. |
 | L4 | P0 | **Automatic loading by signature.** When the card boots, its ROM's SHA-256 selects the firmware profile (F2), and the profile names its symbol file; the symbols load into the `gs` target without user action. An unknown ROM loads no symbols and says so, showing its SHA-256. | Boot with `gs105a.rom`: `COMINT`, `COMTAB` and the command handlers appear by name. Boot with a patched ROM: "unknown firmware, no symbols". |
 | L5 | P2 | User-added card labels persist per firmware SHA-256 and come back for the same ROM in the next session, separate from the shipped symbol file. | Add a label, restart, boot the same ROM; the label is there; the file in `data/symbols/gs/` is unchanged. |
@@ -348,9 +349,9 @@ sequenceDiagram
 |---|---|---|---|
 | N1 | P0 | Nothing in the design assumes the GS memory map, port list, number of DAC channels or command table. Each card model supplies: its address windows and pages, its port list with names, its hardware panel fields, its command tables per firmware version, its firmware variable map. | Adding NeoGS needs only a new card description plus its own panel fields, no change to the debugger core. |
 | N2 | P1 | The card CPU clock can change while running (NeoGS 12 ↔ 24 MHz); time conversion (§4.2) follows the current clock. | Switch NeoGS to 24 MHz mid-frame; a main breakpoint still reports the card at the matching cycle. |
-| N3 | P1 | Large and deep memory: NeoGS has 2-4 MB of RAM and 512 KB of flash with extended paging; memory views, page-tied breakpoints and labels handle page numbers beyond GS's 16 RAM pages. | Breakpoint in NeoGS RAM page 100 fires only for that page. |
+| N3 | P1 | Large and deep memory: NeoGS has up to 4 MB of RAM (256 pages of 16 KB; the older fpgaD revision addresses 2 MB) and 512 KB of flash. Its current FPGA can switch **all four** windows (page ports `#20`-`#23`, besides `MPAG` / `MPAGEX`), and `GSCFG0` selects ROM or RAM. Memory views, page-tied breakpoints and labels handle 8-bit page numbers and switchable windows 0 and 1. | A breakpoint in NeoGS RAM page 200 fires only for that page, in whichever window it is mapped. |
 | N4 | P2 | NeoGS-only devices appear as inspectable state: SD card (current sector, transfer state), MP3 decoder (buffer fill, status), DMA (source, destination, remaining count). | — |
-| N5 | P1 | **NeoGS firmware symbols from its sources, plus a comparison with GS.** The NeoGS firmware sources are in the NedoPC SVN repository `ngs` (`svn.nedopc.com`, folder `/z80/`). It contains `main_rom/` (`main_ngs.a80`, `main_full.a80`, `ngs_sd_drv.a80`, `version.a80`, `build.bat`, the built `neogs.rom`), `gs105a_fix/`, `loader_ngs/`, `bootGS01/`, `sdcomand.a80` and `ports_ngs.a80`. They are imported into the GS materials and used to mark up the NeoGS ROM binary like L3. The results go into `data/symbols/gs/` and a NeoGS firmware profile. A comparison against the GS v1.05a firmware is a deliverable too: each routine is marked "same as GS `NAME`", "changed from GS `NAME`" or "NeoGS only", which shows what NeoGS adds on top of GS. | The mark-up report places every label, or lists it. The profile names every command in its command table. The comparison report lists every routine in one of the three classes. |
+| N5 | P1 | **NeoGS firmware symbols from its sources, plus a comparison with GS.** The NeoGS firmware sources are in the NedoPC SVN repository `ngs` (`svn.nedopc.com`, folder `/z80/`); a local git-svn mirror synced on 2026-09-19 exists, so no download is needed. It contains `main_rom/` (`main_ngs.a80`, `main_full.a80`, `ngs_sd_drv.a80`, `version.a80`, `build.bat`, the built `neogs.rom`), `gs105a_fix/`, `loader_ngs/`, `bootGS01/`, `sdcomand.a80` and `ports_ngs.a80`. They are imported into the GS materials and used to mark up the NeoGS ROM binary like L3. The results go into `data/symbols/gs/` and a NeoGS firmware profile. A comparison against the GS v1.05a firmware is a deliverable too: each routine is marked "same as GS `NAME`", "changed from GS `NAME`" or "NeoGS only", which shows what NeoGS adds on top of GS. | The mark-up report places every label, or lists it. The profile names every command in its command table. The comparison report lists every routine in one of the three classes. |
 
 ### 4.10 Performance
 
@@ -427,13 +428,13 @@ Every step uses one requirement: F1, F4, B3/B4, T2, L4, S5/S6, F5.
 | Freeze the other CPU when stepping one? | Yes. The other CPU is frozen but keeps relative timing by the clock ratio. | S5 |
 | Which firmware versions, and how | Firmware profiles as metadata tables selected by ROM signature. Built in first; later read from files by signature. | F2, L4 |
 | Where firmware symbols come from | Names from the sources, marked up directly on each ROM binary, verified, in `data/symbols/gs/`, existing `.map` format. | L3 |
-| NeoGS firmware | Sources from the NedoPC SVN (`ngs`, `/z80/`), built and verified like GS; plus a routine-by-routine comparison with GS. | N5 |
+| NeoGS firmware | Sources from the NedoPC SVN (`ngs`, `/z80/`, local mirror), marked up on the binary like GS; plus a routine-by-routine comparison with GS. | N5 |
 | GDB / DeZog for the card | The same adapter, one more instance per target on its own port. | A3 |
 | LW card | No debugger; a read-only inspector of the command log and interpreter state. | §4.11 |
 | Window layout | Separate front-ends: a second window, a separate process over the API, or task-specific interfaces. | U1, A4 |
 | Command log lifetime | Background recording after activation, like the port trace; optionally switched on with the debugger. The ring holds a full load plus 5 minutes of play. Payloads dropped, uploads logged as one block with their destination. Always-on to be decided in the design. | F1-F1c |
 | v1.05b | Added as a ROM option. | R1 |
-| Page size in the debugger | 16K pages everywhere (the Spectrum standard); MPAG's 32K pairs are shown as two 16K pages. | T3 |
+| Page size in the debugger | 16K pages everywhere (the Spectrum standard); MPAG's 32K pairs are shown as two 16K pages. Breakpoints and labels are stored by physical address (kind, page, offset). | T3, L2 |
 | Signatures | SHA-256, as the emulator's signature cache and known-ROM table use. | F2, L4 |
 
 ### Left to the design
@@ -454,11 +455,11 @@ Every step uses one requirement: F1, F4, B3/B4, T2, L4, S5/S6, F5.
 | [`docs/inprogress/2026-09-19-general-sound/gs-card-personalities-tdd.md`](../2026-09-19-general-sound/gs-card-personalities-tdd.md) | LLE vs LW cards, runtime switching (relevant to T4, V6) | implemented |
 | [`docs/inprogress/2026-09-19-general-sound/diagnostics-gaps-proposal.md`](../2026-09-19-general-sound/diagnostics-gaps-proposal.md) | Gaps found in live triage: no card disassembly, partial register read-out, fixed banked-RAM window, LW player black box | proposal |
 | [`docs/inprogress/2026-09-19-general-sound/verification-findings-and-bugs.md`](../2026-09-19-general-sound/verification-findings-and-bugs.md) | Playback verification against the firmware sources; protocol pitfalls (relevant to F4) | done |
-| [`docs/inprogress/2026-09-19-general-sound/neogs-tdd.md`](../2026-09-19-general-sound/neogs-tdd.md) | NeoGS hardware and emulation plan: 12/24 MHz, 2-4 MB RAM, 512 KB flash, extended paging, 8 channels, DMA, SD, VS1001 (§4.9) | design |
+| [`docs/inprogress/2026-09-19-general-sound/neogs-tdd.md`](../2026-09-19-general-sound/neogs-tdd.md) | NeoGS hardware and emulation plan: 12/24 MHz, 2-4 MB RAM (current FPGA 4 MB, fpgaD 2 MB), 512 KB flash, extended paging, 8 channels, DMA, SD, VS1001 (§4.9) | design |
 | [`docs/inprogress/2026-09-19-general-sound/materials/README.md`](../2026-09-19-general-sound/materials/README.md) | Index of GS / NeoGS reference materials | reference |
 | [`.../materials/gs/gs-programming-guide.md`](../2026-09-19-general-sound/materials/gs/gs-programming-guide.md) | Host-side protocol and command reference (incomplete, see F2) | reference |
 | [`.../materials/gs/gs-firmware/`](../2026-09-19-general-sound/materials/gs/gs-firmware/) | GS firmware sources; command tables `COMTAB` (`firmware/src/COM_L.a80:72`) and `COMTABH` (`firmware/src/TABLES_H.a80`) | reference |
-| [`.../materials/neogs/`](../2026-09-19-general-sound/materials/neogs/) | NeoGS FPGA sources and notes (`NEOGS-DIFFERENCES.md`) | reference |
+| [`.../materials/neogs/`](../2026-09-19-general-sound/materials/neogs/) | NeoGS FPGA sources and notes (`neogs-differences.md`) | reference |
 | [`.../materials/gs/gs-firmware/readme.md`](../2026-09-19-general-sound/materials/gs/gs-firmware/readme.md) | Firmware history: 1997 sources plus the 2007 (v1.05a) and 2015 (v1.05b) binary patches; routines stay in place (L3) | reference |
 | [`.../materials/gs/gs-firmware/firmware/patch/`](../2026-09-19-general-sound/materials/gs/gs-firmware/firmware/patch/) | The patch sources: the areas where versions differ (L3) | reference |
 | [`.../materials/neogs/ngsrom109/`](../2026-09-19-general-sound/materials/neogs/ngsrom109/) | NeoGS firmware binary `full_ngs.rom`, input to the GS comparison (N5) | reference |
