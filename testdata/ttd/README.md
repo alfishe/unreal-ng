@@ -130,6 +130,11 @@ but a flipped byte that still decodes is not.
 
 ## Status
 
+Re-recorded 2026-09-27 (all five) after the General Sound fixed window
+`0x4000-0x7FFF` moved to the upper half of MPAG 1 (RAM page 1, was page 3):
+the firmware's variables and DAC buffers now sit in a different part of the GS
+RAM image, and the firmware holds back page 1 instead of page 2.
+
 Re-recorded 2026-09-27 (all five) after the General Sound coprocessor moved
 from z80ex to unreal-z80: the GS device blob (id 5) keeps its size, but its
 Z80 block now carries the library's register set (R as one byte, Q, the
