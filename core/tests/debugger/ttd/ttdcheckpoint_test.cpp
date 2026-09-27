@@ -63,6 +63,7 @@ Z80State MakeCanonicalZ80()
     z.nmi_in_progress = true;
     z.int_pending = true;
     z.int_gate = false;  // Inverted from default to ensure capture sees it
+    z.int_acked_in_pulse = 1;
     z.halt_cycle = 0xDEADBEEF;
 
     // Host-side fields — sentinel values to verify preservation
@@ -147,6 +148,7 @@ EmulatorState MakeCanonicalState()
     CHECK(nmi_in_progress);
     CHECK(int_pending);
     CHECK(int_gate);
+    CHECK(int_acked_in_pulse);
     CHECK(halt_cycle);
 #undef CHECK
 
@@ -279,6 +281,7 @@ TEST(TTDCpuStateTest, Capture_DetectsAllArchitecturalChanges)
     EXPECT_FIELD_SEEN([](Z80State& z)->bool& { return z.nmi_in_progress; }, false);
     EXPECT_FIELD_SEEN([](Z80State& z)->bool& { return z.int_pending; }, false);
     EXPECT_FIELD_SEEN([](Z80State& z)->bool& { return z.int_gate; }, true);
+    EXPECT_FIELD_SEEN([](Z80State& z)->uint8_t& { return z.int_acked_in_pulse; }, 0x00);
     EXPECT_FIELD_SEEN([](Z80State& z)->unsigned& { return z.halt_cycle; }, 0xFFFFFFFFu);
 #undef EXPECT_FIELD_SEEN
 }

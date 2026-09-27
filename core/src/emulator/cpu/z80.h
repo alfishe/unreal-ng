@@ -336,6 +336,11 @@ struct Z80State : public Z80Registers, public Z80DecodedOperation
 
     // Interrupts / HALT
     bool int_pending;  // INT pending
+    /// The current INT pulse was acknowledged and, on machines whose INT is
+    /// cleared by the acknowledge (ZX-Evo: zint.v ends the pulse on IORQ+M1),
+    /// stays down until the pulse window ends - one INT per pulse however
+    /// short the handler and however long the (turbo-scaled) window
+    uint8_t int_acked_in_pulse = 0;
     bool int_gate;     // External interrupts gate (True - enabled; False - disabled)
     unsigned halt_cycle;
 
@@ -500,6 +505,7 @@ public:
 public:
     void RequestMaskedInterrupt();
     void RequestNonMaskedInterrupt();
+    bool IntClearedByAcknowledge() const;  // machine's INT pulse ends at the acknowledge
     bool ProcessInterrupts(bool int_occured,  // Take care about incoming interrupts
                            unsigned int_start, unsigned int_end);  // Returns true if INT was handled (skip Z80Step)
 

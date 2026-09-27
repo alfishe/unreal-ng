@@ -111,8 +111,10 @@ struct TTDCpuState
     uint8_t  nmi_in_progress = 0;
     uint8_t  int_pending = 0;   ///< INT line state (latched)
     uint8_t  int_gate = 1;      ///< External interrupts gate (1 = enabled)
-    // Padding at offset 43 (before halt_cycle) — see reserved0.
-    uint8_t  reserved2 = 0;
+    /// The current INT pulse was acknowledged (machines whose INT ends at the
+    /// acknowledge, e.g. ZX-Evo): no second INT until the pulse window ends.
+    /// Former padding byte at offset 43 (older files read 0).
+    uint8_t  int_acked_in_pulse = 0;
 
     uint32_t halt_cycle = 0;   ///< Cycle at which HALT became active
 };
@@ -128,15 +130,15 @@ struct TTDCpuState
 static_assert(sizeof(TTDCpuState) == 48, "TTDCpuState layout must stay stable (hashed byte-wise)");
 static_assert(offsetof(TTDCpuState, memptr) == 32, "reserved0 must sit at pad offset 31");
 static_assert(offsetof(TTDCpuState, eipos) == 36, "boundary must sit at pad offset 35");
-static_assert(offsetof(TTDCpuState, halt_cycle) == 44, "reserved2 must sit at pad offset 43");
+static_assert(offsetof(TTDCpuState, halt_cycle) == 44, "int_acked_in_pulse must sit at pad offset 43");
 static_assert(offsetof(TTDCpuState, halt_cycle) + sizeof(uint32_t) == sizeof(TTDCpuState),
               "TTDCpuState has implicit trailing padding - check reserved0/1/2 placement");
 static_assert(offsetof(TTDCpuState, memptr) == offsetof(TTDCpuState, reserved0) + 1,
               "TTDCpuState reserved0 does not fill the alignment gap before memptr");
 static_assert(offsetof(TTDCpuState, eipos) == offsetof(TTDCpuState, boundary) + 1,
               "TTDCpuState boundary does not fill the alignment gap before eipos");
-static_assert(offsetof(TTDCpuState, halt_cycle) == offsetof(TTDCpuState, reserved2) + 1,
-              "TTDCpuState reserved2 does not fill the alignment gap before halt_cycle");
+static_assert(offsetof(TTDCpuState, halt_cycle) == offsetof(TTDCpuState, int_acked_in_pulse) + 1,
+              "TTDCpuState int_acked_in_pulse does not fill the alignment gap before halt_cycle");
 
 /// @brief Chipset state — the port-latch subset of EmulatorState plus
 /// counters. Captured at frame boundaries so the restore path can rebuild

@@ -328,6 +328,82 @@ TEST_F(IntAcceptance_Test, NoAcceptanceOutsideWindow)
     EXPECT_FALSE(_z80->ProcessInterrupts(false, _intStart, _intEnd));
 }
 
+/// INT pulse vs a handler shorter than the pulse (EI; RET: 13 T acknowledge
+/// + 14 T). A ULA/Pentagon pulse is fixed-length, so the handler is taken
+/// again while the pulse lasts - as on the real machine. ZX-Evo (ATM3 model)
+/// ends the pulse at the acknowledge (baseconf zint.v: IORQ+M1), so it is
+/// taken once per pulse however long the turbo-scaled window, and again at
+/// the next pulse.
+static int CountIntsInOnePulse(const char* model, int& acceptedAfterPulse)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
+    EXPECT_NE(emulator, nullptr);
+    if (!emulator)
+        return -1;
+    Z80* z80 = emulator->GetContext()->pCore->GetZ80();
+    Memory* memory = emulator->GetContext()->pMemory;
+
+    // IM2 handler at $9000: EI; RET. Table entry at $BEFF (I = BE, open bus FF)
+    memory->DirectWriteToZ80Memory(0xBEFF, 0x00);
+    memory->DirectWriteToZ80Memory(0xBF00, 0x90);
+    memory->DirectWriteToZ80Memory(0x9000, 0xFB);
+    memory->DirectWriteToZ80Memory(0x9001, 0xC9);
+    for (uint16_t a = 0x8000; a < 0x8100; a++)
+        memory->DirectWriteToZ80Memory(a, 0x00);  // NOPs to return to
+
+    z80->im = 2;
+    z80->i = 0xBE;
+    z80->iff1 = z80->iff2 = 1;
+    z80->sp = 0xA000;
+    z80->pc = 0x8000;
+    z80->boundary = Z80_BOUNDARY_NONE;
+    z80->int_pending = false;
+    z80->int_acked_in_pulse = 0;
+
+    // A 128 T pulse window (a 32 T pulse at 4x turbo), driven step by step
+    constexpr unsigned kStart = 1000, kEnd = 1128;
+    z80->t = kStart + 1;
+    int accepted = 0;
+    while (z80->t < kEnd)
+    {
+        if (z80->ProcessInterrupts(false, kStart, kEnd))
+            accepted++;
+        else
+            z80->Z80Step();
+    }
+
+    // Past the pulse, then the next pulse
+    z80->t = kEnd + 100;
+    z80->ProcessInterrupts(false, kStart, kEnd);
+    z80->t = kStart + 1 + 71680;  // same window positions, next frame's pulse
+    const unsigned nextStart = kStart + 71680, nextEnd = kEnd + 71680;
+    acceptedAfterPulse = 0;
+    while (z80->t < nextEnd && acceptedAfterPulse == 0)
+    {
+        if (z80->ProcessInterrupts(false, nextStart, nextEnd))
+            acceptedAfterPulse++;
+        else
+            z80->Z80Step();
+    }
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+    return accepted;
+}
+
+TEST(IntPulse_Test, ZxEvoAcknowledgeEndsThePulse)
+{
+    int next = 0;
+    EXPECT_EQ(CountIntsInOnePulse("ATM3", next), 1) << "ZX-Evo: one INT per pulse, the acknowledge ends it";
+    EXPECT_EQ(next, 1) << "the next pulse is taken again";
+}
+
+TEST(IntPulse_Test, FixedLengthPulseRetakesAShortHandler)
+{
+    int next = 0;
+    EXPECT_GT(CountIntsInOnePulse("PENTAGON", next), 1) << "fixed-length pulse: EI;RET is taken again while it lasts";
+    EXPECT_EQ(next, 1);
+}
+
 /// endregion </From int_acceptance_test.cpp>
 
 /// region <From int_pending_wrap_test.cpp>

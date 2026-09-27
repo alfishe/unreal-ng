@@ -238,11 +238,13 @@ class CpuState:
     halted: int
     memptr: int
     q: int
+    boundary: int            # Z80BoundaryEnum (0 = none) - offset 35
     eipos: int
     haltpos: int
     nmi_in_progress: int
     int_pending: int
     int_gate: int
+    int_acked_in_pulse: int  # INT pulse already acknowledged - offset 43
     halt_cycle: int
 
 
@@ -764,11 +766,11 @@ def parse_cpu(r: _Reader) -> CpuState:
     #   31    : PADDING (align memptr u16 to 2-byte boundary)
     #   32-33 : memptr u16
     #   34    : q u8
-    #   35    : PADDING (align eipos u16)
-    #   36-37 : eipos u16
+    #   35    : boundary u8 (instruction-boundary state; older files: 0)
+    #   36-37 : eipos u16 (legacy, unused since boundary)
     #   38-39 : haltpos u16
     #   40-42 : nmi_in_progress, int_pending, int_gate u8
-    #   43    : PADDING (align halt_cycle u32 to 4-byte boundary)
+    #   43    : int_acked_in_pulse u8 (older files: 0)
     #   44-47 : halt_cycle u32
     pc = r.u16(); sp = r.u16()
     af = r.u16(); bc = r.u16(); de = r.u16(); hl = r.u16()
@@ -779,21 +781,22 @@ def parse_cpu(r: _Reader) -> CpuState:
     r.u8()  # reserved0: explicit filler before memptr (offset 31)
     memptr = r.u16()
     q = r.u8()
-    r.u8()  # reserved1: explicit filler before eipos (offset 35)
+    boundary = r.u8()
     eipos = r.u16()
     haltpos = r.u16()
     nmi_in_progress = r.u8()
     int_pending = r.u8()
     int_gate = r.u8()
-    r.u8()  # reserved2: explicit filler before halt_cycle (offset 43)
+    int_acked_in_pulse = r.u8()
     halt_cycle = r.u32()
     return CpuState(
         pc=pc, sp=sp, af=af, bc=bc, de=de, hl=hl, ix=ix, iy=iy,
         alt_af=alt_af, alt_bc=alt_bc, alt_de=alt_de, alt_hl=alt_hl,
         i=i, r_low=r_low, r_hi=r_hi, iff1=iff1, iff2=iff2, im=im,
-        halted=halted, memptr=memptr, q=q, eipos=eipos, haltpos=haltpos,
-        nmi_in_progress=nmi_in_progress, int_pending=int_pending,
-        int_gate=int_gate, halt_cycle=halt_cycle,
+        halted=halted, memptr=memptr, q=q, boundary=boundary, eipos=eipos,
+        haltpos=haltpos, nmi_in_progress=nmi_in_progress,
+        int_pending=int_pending, int_gate=int_gate,
+        int_acked_in_pulse=int_acked_in_pulse, halt_cycle=halt_cycle,
     )
 
 

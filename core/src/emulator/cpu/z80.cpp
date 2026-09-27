@@ -128,6 +128,7 @@ void Z80::Reset()
     // Emulation state
     last_branch = 0x0000;  // Address of last branch (in Z80 address space)
     int_pending = false;   // No interrupts pending
+    int_acked_in_pulse = 0;
     int_gate = true;       // Allow external interrupts
     nmi_in_progress = false;  // Clear NMI flag
     _nmi_pending_count = 0;   // No NMI requested
@@ -550,8 +551,9 @@ void Z80::BeginFrame()
 
     haltpos = 0;
 
-    // INT interrupt handling lasts for more than 1 frame
-    if (_intWraps)
+    // INT interrupt handling lasts for more than 1 frame (unless the pulse was
+    // already acknowledged on a machine that clears INT at the acknowledge)
+    if (_intWraps && !int_acked_in_pulse)
         int_pending = true;
 }
 
@@ -1037,7 +1039,18 @@ bool Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
     // which shifts interrupt-locked raster effects by one T-state.
     // Note: HALT quantizes INT detection to 4T boundaries; fine 2-pixel adjustments
     // are handled in ScreenZX::SetBorderColor. See: docs/timing/pentagon-border-timing.md
-    if (!int_occurred && cpu.t > int_start)
+    // A pulse the CPU already acknowledged stays down on machines whose INT
+    // is cleared by the acknowledge (see HandleINT); once the pulse window is
+    // over the flag re-arms for the next one
+    if (cpu.int_acked_in_pulse)
+    {
+        const bool inPulse = _intWraps ? (cpu.t > int_start || cpu.t < int_end)
+                                       : (cpu.t > int_start && cpu.t < int_end);
+        if (!inPulse)
+            cpu.int_acked_in_pulse = 0;
+    }
+
+    if (!int_occurred && cpu.t > int_start && !cpu.int_acked_in_pulse)
     {
         int_occurred = true;
         cpu.int_pending = true;
@@ -1070,6 +1083,16 @@ void Z80::HandleNMI(ROMModeEnum mode)
     (void)mode;
 
     [[maybe_unused]] Z80& cpu = *this;
+}
+
+/// Machines whose INT pulse ends at the acknowledge (IORQ with M1 low)
+/// instead of lasting its full length. ZX-Evo (ATM3 model): the baseconf
+/// zint.v generator ends int_n on the counter OR at the acknowledge. A plain
+/// Pentagon/ULA pulse is fixed-length: an EI;RET handler shorter than the
+/// pulse is taken twice there, on the real machine too.
+bool Z80::IntClearedByAcknowledge() const
+{
+    return _context->config.mem_model == MM_ATM3;
 }
 
 void Z80::HandleINT(uint8_t vector)
@@ -1165,6 +1188,11 @@ void Z80::HandleINT(uint8_t vector)
     cpu.iff1 = 0;
     cpu.iff2 = 0;
     cpu.int_pending = false;
+
+    // Where the acknowledge ends the pulse, INT stays down for the rest of
+    // this pulse window (ProcessInterrupts re-arms after it)
+    if (IntClearedByAcknowledge())
+        cpu.int_acked_in_pulse = 1;
 
     /// region <TSConf>
 

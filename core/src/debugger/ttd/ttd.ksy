@@ -330,14 +330,15 @@ types:
       - id: q
         type: u1
         doc: Undocumented Q register (affects CCF/SCF flag behavior).
-      - id: reserved1
+      - id: boundary
         type: u1
         doc: |
-          Explicit filler aligning eipos (u2) after the single q u8
-          (offset 35). Always zero.
+          Instruction-boundary state (Z80BoundaryEnum: 0 none, 1/2 pending
+          DD/FD prefix, 3 INT shadow, 4 LD A,I/R quirk, 5 NMI just
+          acknowledged), in the former filler at offset 35. Older files: 0.
       - id: eipos
         type: u2
-        doc: EI instruction position (post-EI interrupt latency).
+        doc: Legacy EI position; unused since boundary.
       - id: haltpos
         type: u2
         doc: HALT instruction position.
@@ -349,11 +350,12 @@ types:
       - id: int_gate
         type: u1
         doc: External interrupts gate (1 = enabled).
-      - id: reserved2
+      - id: int_acked_in_pulse
         type: u1
         doc: |
-          Explicit filler aligning halt_cycle (u4) to a 4-byte boundary
-          after 3 u8 fields (offset 43). Always zero.
+          The current INT pulse was acknowledged (machines whose INT ends at
+          the acknowledge, e.g. ZX-Evo); in the former filler at offset 43.
+          Older files: 0.
       - id: halt_cycle
         type: u4
         doc: Cycle at which HALT became active.

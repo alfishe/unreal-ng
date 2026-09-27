@@ -96,6 +96,7 @@ MachineStateSnapshot CaptureSnapshot(const Z80State& cpu,
     s.q = cpu.q;
     s.nmi_in_progress = cpu.nmi_in_progress ? 1 : 0;
     s.boundary = cpu.boundary;
+    s.int_acked_in_pulse = cpu.int_acked_in_pulse;
 
     // ---- Standard Spectrum 128K port latches ----
     s.p7FFD = state.p7FFD;

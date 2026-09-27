@@ -66,6 +66,7 @@ TTDCpuState CaptureCpuState(const Z80State& src)
     dst.nmi_in_progress = src.nmi_in_progress ? 1 : 0;
     dst.int_pending = src.int_pending ? 1 : 0;
     dst.int_gate = src.int_gate ? 1 : 0;
+    dst.int_acked_in_pulse = src.int_acked_in_pulse;
     dst.halt_cycle = src.halt_cycle;
 
     return dst;
@@ -111,6 +112,7 @@ void RestoreCpuState(const TTDCpuState& src, Z80State* dst)
     dst->nmi_in_progress = src.nmi_in_progress != 0;
     dst->int_pending = src.int_pending != 0;
     dst->int_gate = src.int_gate != 0;
+    dst->int_acked_in_pulse = src.int_acked_in_pulse;
     dst->halt_cycle = src.halt_cycle;
 
     // Deliberately NOT touched (host-side; preserved by caller):

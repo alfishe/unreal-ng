@@ -86,6 +86,7 @@ struct MachineStateSnapshot
     uint8_t  q = 0;             // Q register — affects undocumented CCF/SCF flag behavior
     uint8_t  nmi_in_progress = 0;
     uint8_t  boundary = 0;      // Z80BoundaryEnum - decides the next INT/NMI acceptance
+    uint8_t  int_acked_in_pulse = 0;  // INT pulse already acknowledged (ack-cleared INT machines)
 
     // ---- Standard Spectrum 128K port latches ----
     uint8_t p7FFD = 0;          // 128K banking / screen select / ROM select
