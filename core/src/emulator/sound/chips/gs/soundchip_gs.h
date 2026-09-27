@@ -233,7 +233,8 @@ private:
     void gsOut(uint16_t port, uint8_t value);
 
     // Memory subsystem
-    void applyBanking();               // rebuild _bankR/_bankW from _mpag
+    void applyBanking();              // rebuild _bankR/_bankW from _mpag
+    void applyPort0A();               // status bit 7 <- NOT MPAG bit 0
     uint8_t readMem(uint16_t addr);    // includes DAC fetch trigger
     void writeMem(uint16_t addr, uint8_t value);
     void dacFetch(uint16_t addr, uint8_t value); // (addr & 0xE000) == 0x6000 window

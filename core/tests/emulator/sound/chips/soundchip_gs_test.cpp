@@ -421,6 +421,33 @@ TEST_F(SoundChip_GeneralSound_Test, PageSwitch_ROMtoRAM)
         << "write behind MPAG=1 must land in RAM";
 }
 
+TEST_F(SoundChip_GeneralSound_Test, Port0A_SetsDataBitToInverseOfPageBit0)
+{
+    // GS_PORTS.TXT: "port A sets status bit D7 not equal to bit D0 of port 0".
+    // MPAG 3 (bit 0 = 1) -> bit 7 = 0; then MPAG 2 (bit 0 = 0) -> bit 7 = 1.
+    // A HALT between the two lets the host sample the first result
+    const uint8_t program[] = {
+        0x3E, 0x03, 0xD3, 0x00,  // LD A,3 : OUT (#00),A
+        0xD3, 0x03,              // OUT (#03),A - reply sets bit 7 first
+        0xDB, 0x0A,              // IN A,(#0A) - bit 7 <- NOT 1 = 0
+        0x76                     // HALT
+    };
+    chip->loadROM(writeRom("gs-port0a.rom", program, sizeof(program)));
+    runOneFrame();
+    EXPECT_EQ(chip->getStatusRaw() & 0x80, 0x00) << "MPAG bit 0 = 1 must clear status bit 7";
+
+    const uint8_t program2[] = {
+        0x3E, 0x02, 0xD3, 0x00,  // LD A,2 : OUT (#00),A
+        0xDB, 0x02,              // IN A,(#02) - clears bit 7 first
+        0xD3, 0x0A,              // OUT (#0A),A - bit 7 <- NOT 0 = 1
+        0x76                     // HALT
+    };
+    chip->loadROM(writeRom("gs-port0a-2.rom", program2, sizeof(program2)));
+    chip->resetCard();
+    runOneFrame();
+    EXPECT_EQ(chip->getStatusRaw() & 0x80, 0x80) << "MPAG bit 0 = 0 must set status bit 7";
+}
+
 TEST_F(SoundChip_GeneralSound_Test, FixedWindow_AliasesUpperHalfOfPage1)
 {
     // GS schematic: 0x4000-0x7FFF selects RAM chip 1 with A14=1, the same

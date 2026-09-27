@@ -836,7 +836,7 @@ uint8_t SoundChip_GeneralSound::gsIn(uint16_t port)
         case 0x04: return _mb.status; // FLAGS
         case 0x05: _mb.status &= 0xFE; return 0xFF; // RSCOM: clear bit0
         // gspage in the original is rol8(MPAG,1), so (gspage<<7)&0x80 == raw MPAG bit7
-        case 0x0A: _mb.status = (_mb.status & 0x7F) | (_mpag & 0x80); return 0xFF;
+        case 0x0A: applyPort0A(); return 0xFF;
         case 0x0B: _mb.status = (_mb.status & 0xFE) | ((_channelVol[0] >> 5) & 1); return 0xFF;
         default: return 0xFF; // NGS ports (P2) and unmapped read open bus
     }
@@ -866,13 +866,21 @@ void SoundChip_GeneralSound::gsOut(uint16_t port, uint8_t value)
             emitSample(); // level change - emit at the current position
             return;
         }
-        case 0x0A: _mb.status = (_mb.status & 0x7F) | (_mpag & 0x80); return;
+        case 0x0A: applyPort0A(); return;
         case 0x0B: _mb.status = (_mb.status & 0xFE) | ((_channelVol[0] >> 5) & 1); return;
         default: return;
     }
 }
 
 /// endregion </GS-side ports>
+
+/// Port 0x0A (read or write): status bit 7 <- NOT bit 0 of the page register.
+/// GS port document (GS_PORTS.TXT): "port A sets status bit D7 not equal to
+/// bit D0 of port 0"; Xpeccy gs.c agrees. Neither firmware uses the port.
+void SoundChip_GeneralSound::applyPort0A()
+{
+    _mb.status = static_cast<uint8_t>((_mb.status & 0x7F) | ((~_mpag & 0x01) << 7));
+}
 
 /// region <Memory subsystem>
 

@@ -86,13 +86,13 @@ Cross-reference these sibling designs for established patterns:
 |:-----|:----|:---------|
 | 0x00 | W | Memory page select (MPAG) — see §2.3 |
 | 0x01 | R | Read command from host |
-| 0x02 | R/W | Clear bit 7 of status (read returns 0xFF) |
+| 0x02 | R | Data from host; clears bit 7 of status |
 | 0x03 | R/W | Write data to host / set bit 7 (read sets bit 7, returns 0xFF) |
 | 0x04 | R | Read status register |
 | 0x05 | R/W | Clear bit 0 of status (read returns 0xFF) |
 | 0x06–0x09 | W | Volume registers (channels 1–4, 6-bit) |
-| 0x0A | W | Copy page bit 0 to status bit 7 |
-| 0x0B | W | Copy volume1 bit 5 to status bit 0 |
+| 0x0A | R/W | Status bit 7 ← NOT page bit 0 (GS_PORTS.TXT) |
+| 0x0B | R/W | Status bit 0 ← bit 5 of volume 1 (port 6) |
 
 > **NGS-only ports (P2, out of scope):** 0x0F (GSCFG0), 0x10 (MPAGEX), 0x16–0x19 (ch 5–8), 0x1B–0x1F (DMA).
 

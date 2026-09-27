@@ -463,6 +463,22 @@ passes on both mappings because the firmware finds the alias itself). The TTD
 corpus was re-recorded. Firmware behaviour is unchanged apart from which page
 it holds back.
 
+### BUG-11 (Minor, FIXED): port 0x0A copied MPAG bit 7 instead of NOT bit 0
+
+**Symptom** (2026-09-27, found while checking NeoGS port documentation): the
+card-side port `0x0A` set status bit 7 from MPAG bit 7.
+
+**Evidence**: the original GS port document (`materials/neogs/GS_PORTS.TXT`,
+CP866): "port A sets status bit D7 not equal to bit D0 of port 0". Xpeccy
+(`gs.c`) does the same. Neither the GS nor the NeoGS firmware uses the port,
+so playback was not affected.
+
+**Fix**: `SoundChip_GeneralSound::applyPort0A()`, used by the read and the
+write handler: status bit 7 ← NOT MPAG bit 0.
+
+**Verification**: `Port0A_SetsDataBitToInverseOfPageBit0` (fails on the old
+code for MPAG 2).
+
 ## 7. Non-Bugs (verified correct — do not "fix")
 
 - **`data_pending=true` after COM31**: `OUT (OUTRG)` (`gsOut` case `0x03`) sets
