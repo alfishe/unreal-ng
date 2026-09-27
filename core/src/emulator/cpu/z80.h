@@ -391,7 +391,9 @@ public:
     /// region <Z80 lifecycle>
 public:
     uint8_t m1_cycle();
-    void RecordInstructionStart(uint16_t addr);  // m1_pc + instruction-start hooks (once per instruction)
+    void RecordInstructionStart(uint16_t addr);  // m1_pc + instruction-start observers (once per instruction)
+    bool InstructionStartObserved() const;       // any observer armed (trace hook, TTD coverage/probe)
+    void NotifyInstructionStart();               // run the observers for the instruction at m1_pc
     uint8_t in(uint16_t port);
     void out(uint16_t port, uint8_t val);
     void retn();

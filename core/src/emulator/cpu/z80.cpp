@@ -173,7 +173,9 @@ void Z80::Reset()
 /// TR-DOS ROM session paging, debugger breakpoints, analyzer step events and
 /// the ROM traps (fast tape/disk loading, disk autostart). Returns true when
 /// a trap consumed the instruction (it must not execute).
-bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
+// Forced inline: this runs before every instruction, and as an out-of-line
+// call it cost ~1 ns per Z80Step (+11% on BM_Z80_DecodeOverhead_NOP).
+__forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
 {
     [[maybe_unused]] Z80& cpu = *this;
     [[maybe_unused]] const CONFIG& config = _context->config;
@@ -358,11 +360,15 @@ void Z80::Z80Step(bool skipBreakpoints)
 
     // Boundary state describes the boundary BEFORE this step (it already
     // decided INT/NMI acceptance in ProcessInterrupts); this step's own
-    // instruction sets a new one (EI, RETN/RETI, LD A,I/R, redundant prefix)
+    // instruction sets a new one (EI, RETN/RETI, LD A,I/R, redundant prefix).
+    // Usually there is none: the common path pays one load and one test
     const uint8_t entryBoundary = cpu.boundary;
-    cpu.boundary = Z80_BOUNDARY_NONE;
-    const bool prefixPending =
-        entryBoundary == Z80_BOUNDARY_PREFIX_DD || entryBoundary == Z80_BOUNDARY_PREFIX_FD;
+    bool prefixPending = false;
+    if (entryBoundary != Z80_BOUNDARY_NONE) [[unlikely]]
+    {
+        cpu.boundary = Z80_BOUNDARY_NONE;
+        prefixPending = entryBoundary == Z80_BOUNDARY_PREFIX_DD || entryBoundary == Z80_BOUNDARY_PREFIX_FD;
+    }
 
     // A pending prefix continues an instruction whose start (first prefix
     // byte) already went through the instruction-start work in the previous
@@ -653,6 +659,12 @@ void Z80::Z80FrameCycle()
 
 /// region <Z80 lifecycle>
 
+/// True while any instruction-start observer is armed
+__forceinline bool Z80::InstructionStartObserved() const
+{
+    return m1TraceHook || _context->ttdCoverageActive || _context->ttdProbe.IsArmed();
+}
+
 uint8_t Z80::m1_cycle()
 {
     /// region <Overriding submodule for module logger>
@@ -670,8 +682,14 @@ uint8_t Z80::m1_cycle()
     // only the M1 that starts an instruction runs the instruction-start work.
     // Prefix handlers set a non-zero prefix BEFORE fetching the next byte, so
     // the M1s inside an instruction (after CB/ED/DD/FD) do not run it
+    // The fast path stays inline (one store and one observer test); the
+    // observers run out of line only while one is armed
     if (prefix == 0x0000)
-        RecordInstructionStart(cpu.pc);
+    {
+        m1_pc = cpu.pc;
+        if (InstructionStartObserved())
+            NotifyInstructionStart();
+    }
 
     // Z80 CPU M1 cycle logic
     r_low = ((r_low + 1) & 0x7f) | (r_low & 0x80);  // Keep memory refresh register ticking
@@ -690,14 +708,22 @@ uint8_t Z80::m1_cycle()
 
 /// Instruction-start bookkeeping: m1_pc (the address every access of the
 /// instruction is attributed to - memory tracker, TTD write journal and
-/// probes, calltrace), the M1 trace hook (TTD per-frame instruction capture),
-/// execution coverage and the TTD execute probe. Runs once per instruction:
-/// from m1_cycle for the first byte, and from ddfd_prefixes for a prefix that
-/// turned out to start an instruction of its own (after a redundant one).
+/// probes, calltrace) and the start observers (NotifyInstructionStart). Runs
+/// once per instruction: inline in m1_cycle for the first byte, and from
+/// ddfd_prefixes for a prefix that turned out to start an instruction of its
+/// own (after a redundant one).
 void Z80::RecordInstructionStart(uint16_t addr)
 {
     m1_pc = addr;
+    if (InstructionStartObserved())
+        NotifyInstructionStart();
+}
 
+/// Instruction-start observers, for the instruction starting at m1_pc: the
+/// M1 trace hook (TTD per-frame instruction capture), execution coverage and
+/// the TTD execute probe
+void Z80::NotifyInstructionStart()
+{
     if (m1TraceHook)
         m1TraceHook(m1_pc);
 
