@@ -265,8 +265,13 @@ struct GSDebugAccess
     virtual void poke(uint16_t, uint8_t) = 0;
     virtual uint8_t* romData(); virtual uint8_t* ramData(); virtual size_t ramSize() const = 0;
     virtual uint8_t mpag() const = 0;
-    virtual uint64_t cardCycles() const = 0;          // totalGsCycles()
+    virtual uint64_t cardTime() const = 0;            // in the card's own unit; GS: totalGsCycles()
+    virtual double unitsPerSecond() const = 0;        // GS 12e6 (one cycle); NeoGS 120e6 (base tick)
     virtual void setDebugHooks(GSDebugHooks*) = 0;    // §4; nullptr = off
+    // NeoGS additions (neogs-tdd.md §7.2); GS answers from its fixed map
+    virtual uint8_t pageRegister(int window) const;   // page byte of window 0-3
+    virtual bool windowIsFlash(int window) const;     // ROM mode shows flash in windows 0/2/3
+    virtual uint8_t* flashData();                     // NeoGS 512 KB flash; GS: nullptr
 };
 virtual GSDebugAccess* debugAccess() { return nullptr; }   // GeneralSoundCard
 ```
@@ -592,8 +597,10 @@ difference is the **gap** in S2, and it is shown.
   debug path only.
 - **Shown moment.** When the card is the target that stopped, the moment
   shown is the card's time converted to main T:
-  `tShown = frameStartZx + (cardCycles - frameStartGs) / gsCyclesPerZxTact`.
+  `tShown = frameStartZx + (cardTime - frameStartCard) / unitsPerZxTact`.
   This is the inverse of `flush`'s formula, so conversion is exact both ways.
+  Each card uses its own unit (GS: 12 MHz cycles, NeoGS: 120 MHz base ticks,
+  `neogs-tdd.md` §5.2), so the formula holds across NeoGS clock changes.
 - **Progress.** Elapsed = `tShown - instrStartT`. Total = the opcode's T from
   `Z80Disassembler::instructionTiming`, decoded at `m1_pc`. For a conditional
   instruction whose condition is not yet decided, both totals are shown
@@ -626,9 +633,12 @@ difference is the **gap** in S2, and it is shown.
 - `flush` already reads `gsCyclesPerZxTact()` at each call, so a ratio change
   applies from the next flush. `AudioTstate` removes hardware turbo, and host
   speed cancels out.
-- For NeoGS 12 ↔ 24 MHz, the card target re-bases at the change: frame bases
-  are recomputed at the switch cycle, as `handleFrameStart` does per frame.
-  The inverse conversion (§5.4) uses the same bases.
+- NeoGS switches its clock between 10, 12, 20 and 24 MHz. No re-basing is
+  needed: the shared card runner counts **base ticks** at 120 MHz, and every
+  card clock is a whole number of ticks per cycle (`neogs-tdd.md` §5.2). A
+  clock change only changes the tick cost of the following instructions. The
+  inverse conversion (§5.4) works in ticks and divides by the tick cost in
+  effect at that point.
 
 ### 5.6 Determinism check (S8)
 
@@ -686,7 +696,11 @@ const GSFirmwareProfile* FindGSFirmwareProfile(const std::string& sha256);
   - The 16K page digests identify a ROM that has been re-paired from pages
     of known versions, and a page shown in the memory view.
   - The GS and NeoGS ROM digests are also added to the known-ROM table in
-    `ROM` (`rom.cpp`), so every place that shows ROM titles names them.
+    `ROM` (`rom.cpp`), so every place that shows ROM titles names them. That
+    table covers host ROMs only today; card images never pass through it. The
+    NeoGS card keeps its own digest table (`neogsflashimages.h`,
+    `neogs-tdd.md` §4.1), and the `rom.cpp` entries are generated from it and
+    from the GS list, not maintained twice.
 - **From files (later).** The same structure is read from
   `data/firmware/gs/<id>.json`, selected by SHA-256. Built-in tables remain
   as the fallback. The file format is decided when this is implemented.
@@ -706,7 +720,7 @@ byte-for-byte, except v1.05b, which R1 adds as a ROM built from sources.
 ```mermaid
 flowchart LR
     SRC["GS sources<br/>materials/gs/gs-firmware<br/>(1997 code + patches)"] -->|"sjasmplus"| REF["reference build v1.05b<br/>labels + bytes per label"]
-    NSRC["NeoGS sources<br/>NedoPC SVN ngs /z80/"] -->|"sjasmplus"| NREF["reference build NeoGS<br/>labels + bytes per label"]
+    NSRC["NeoGS sources<br/>NedoPC SVN ngs /z80/"] -->|"AS (asl), built from source"| NREF["reference build NeoGS<br/>labels + bytes per label"]
     REF --> MARK["mark-up on binary:<br/>place each label where<br/>its routine's bytes are"]
     NREF --> MARK
     BINS["data/rom/gs104.rom<br/>gs105a.rom, gs105b.rom<br/>neogs ROM"] --> MARK

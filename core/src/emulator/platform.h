@@ -427,7 +427,7 @@ enum class GSTypeKind : uint8_t
 	NGS
 };
 
-/// NeoGS MP3 decode path ([NGS] MP3Support, neogs-tdd.md §3.2):
+/// NeoGS MP3 decode path ([NGS] MP3Support, neogs-tdd.md §5.6):
 /// None = feature off, Software = host-side decode feeding the DAC stream,
 /// Stub (default) = API surface present but silent. P2 placeholder: Stub
 /// and Software behave identically until the NeoGS implementation lands.
@@ -701,7 +701,7 @@ struct CONFIG
 	unsigned gs_ramsize;
 	char gs_rom_path[FILENAME_MAX];
 
-	// NeoGS integration placeholders (neogs-tdd.md §3.2): [NGS] section keys
+	// NeoGS integration placeholders (neogs-tdd.md §6): [NGS] section keys
 	// parsed up front, consumed by no card until the P2 implementation lands
 	char ngs_sd_card_path[FILENAME_MAX];
 	NGSMP3SupportKind ngsMP3SupportKind = NGSMP3SupportKind::Stub;

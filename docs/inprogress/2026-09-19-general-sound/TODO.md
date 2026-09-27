@@ -13,7 +13,7 @@ Sound card implementations for ZX Spectrum emulation:
 | [`gs-tdd.md`](gs-tdd.md) | P0 | Round 2 review fixes applied |
 | [`gs-card-interface.md`](gs-card-interface.md) | — | Phase 0 design snapshot for the card-personalities work (interface contract, LW interpreter design); superseded by the as-built TDD |
 | [`gs-card-personalities-tdd.md`](gs-card-personalities-tdd.md) | P0 | As-built record: `GeneralSoundCard` interface, `SoundChip_GSLightweight` card + `gsmodplayer`, runtime switching, replay algorithm (§7.3), TTD contracts (§5.5); phases 0-4 gated, phase 5 tests 18/18 |
-| [`neogs-tdd.md`](neogs-tdd.md) | P2 | Round 2 review fixes applied |
+| [`neogs-tdd.md`](neogs-tdd.md) | P2 | Rewritten 2026-09-27; review round 4 applied (FPGA, firmware, peripherals, codebase); ready for phase 0 |
 | [`verification-findings-and-bugs.md`](verification-findings-and-bugs.md) | — | Playback chain verified against firmware sources; 6 bugs found, BUG-4 (DRC windup), BUG-5 (37.5 kHz interrupt pulse-loss — the steady-tone pitch float) and BUG-6 (NeoGS RAM default bled into the classic card — scorpion-family boot race, stock 128 KB card restored) fixed + tested (2026-09-20); GS enabled on atm3/atm710 — decoder arms + configs + regression tests (§5.1); BUG-10..16 (real-content playback correctness) + render-quality pass (2026-09-22) |
 | [`diagnostics-gaps-proposal.md`](diagnostics-gaps-proposal.md) | — | WebAPI/MCP/CLI/Lua/Python triage gaps found while debugging BUG-10..16 (§1-§5: PROPOSAL, not implemented), a concrete wiring plan for those gaps (§6), and the TTD-specific angle (§7): BUG-17 (TTD use-after-free on GS personality switch, §7.1) IMPLEMENTED + tested 2026-09-22; the TTD restore-report visibility gap (§7.2) is still PROPOSAL |
 | [`materials/README.md`](materials/README.md) | — | Materials index |
@@ -142,17 +142,70 @@ Sound card implementations for ZX Spectrum emulation:
 - [ ] Docs: update command-interface.md - still marks `state audio gs` as
       "🔮 Planned" (line ~2103); stale, not yet corrected
 
-### NeoGS (P2)
+### NeoGS (P2) - design review round 4 applied 2026-09-27, ready for phase 0
 
-- [ ] Extend SoundChip_GeneralSound
-- [ ] GSCFG0 register
-- [ ] MPAGEX paging
-- [ ] 8-channel mixing
-- [ ] DMA controller
-- [ ] SD card SPI emulation
-- [ ] VS1001 emulation with **minimp3**
-- [ ] Config `[NGS]` section
-- [ ] Compatibility tests
+Plan: [`neogs-tdd.md`](neogs-tdd.md) §9. Each phase ends at its "done when"
+gate; tests are listed in §8.
+
+**Phase 0 - shared parts, classic card bit-identical**
+- [ ] Capture the baseline first: card RAM hash, DAC stream, port trace over
+      the GS scenarios; GS benchmark numbers
+- [ ] `GSCardRunner<Card>` template (`chips/gs/gscardrunner.h`): catch-up
+      loop, event queue, stalls (block INT/NMI), per-card time unit; the card
+      keeps its own bus trampolines
+- [ ] `GSAudioOut` (blip pair) used by LLE and LW
+- [ ] `GSModuleReplay` moved out of `SoundChip_GeneralSound`;
+      `isReadyForCommands()` on the interface
+- [ ] Move `GS_CLOCK_HZ` / `GS_CYCLES_PER_INT` out of `generalsoundcard.h`
+- [ ] Shared `ToString(GSCardImplementation)` and personality parser; all
+      surfaces use them; channel loops use `channelCount()`
+- [ ] Gate: GS tests unchanged, baseline identical, TTD fixture corpus loads,
+      benchmark within 2%
+
+**Phase 1 - NeoGS core**
+- [ ] `[NGS]` keys (§6); `gs_ramsize` → `ngsRamKB`, BUG-6 guard kept
+- [ ] Replace the "P2 placeholder" code comments (`ttdserializable.h:56`,
+      `config.cpp:432`, `platform.h:418`, `soundmanager.cpp:130, 1399`,
+      `generalsoundcard.h:12`) and the stale test comment
+      (`soundchip_gs_test.cpp:759-770`)
+- [ ] Ship `data/rom/neogs/full_ngs.rom` + `tools/neogs/pack_flash.py`
+      (CI byte check) + THIRD_PARTY_NOTICES row; `neogsflashimages.h`
+- [ ] `NeoGSMemory` (PG0-3, MPAG/MPAGEX, NOROM/RAMRO/EXPAG, flash reads)
+- [ ] `NeoGSInterrupts` (24 MHz phase, TIM_FREQ incl. extra tick, INTENA/
+      INTREQ, priority, vectors)
+- [ ] `NeoGSSound` (8 latches, modes, INV7B, alternating L/R, 24 MHz blip)
+- [ ] `SoundChip_NeoGS`: ports §3.3/§3.4, reset rules, port `#80`, LED
+- [ ] `Boot=loader` / `Boot=direct`; creation from config in SoundManager
+- [ ] Our 8-channel / PAN4CH / INV7B host test program (`testdata/neogs/`)
+- [ ] Gate: module plays on Pentagon; `test_ngs` detect/version/pages
+
+**Phase 2 - SD and flash programming**
+- [ ] `emulator/io/sdcard/SdCardSpi` (shared with TS-Conf, Z-Controller)
+- [ ] `NeoGSSpi` (byte times, inclusive boundary, restart, SCTRL/SSTAT)
+- [ ] `emulator/io/flash/Flash29F040B` programming + `FlashWrite` modes
+- [ ] Gate: SD boot FAT16/FAT32/no-MBR; flasher in `session`; `test_emu_ngs`
+
+**Phase 3 - MP3 and DMA**
+- [ ] Vendor minimp3; `Vs10xxDecoder` (chip types, resets, frame parser,
+      PCM queue); MP3 audio source at stream rate
+- [ ] SD and MP3 DMA modules (21-bit address, stalls, INTREQ)
+- [ ] Gate: Neo Player Light and `npl_044_dma` play from SD
+
+**Phase 4 - switching, automation, debugger, TTD refusal**
+- [ ] NGS as switch source/target; `gs_lightweight` ignored while NGS fitted;
+      registry label updated on switch
+- [ ] CLI/WebAPI/MCP/Lua/Python + `command-interface.md` + OpenAPI;
+      WebAPI `?ram=1` through `debugAccess()`
+- [ ] `TTDCanRecord` veto; switch-to-NGS refused while recording; GS-slot
+      guard; move `ttdmodelstatecontract_test` off id 12
+- [ ] `neogs` debugger target
+
+**Phase 5 - ZX-DMA and fpgaD**
+- [ ] Host `Z80` memory-interface swap, `isRomAt0000()`, wait states
+- [ ] `Fpga=D` tables; v1.08 images boot
+
+**Phase 6 - NeoGS TTD (after TTD v2 memory regions, step V1)**
+- [ ] RAM/flash/SD overlay as v2 regions; exact replay over 300 frames
 
 ### Documentation Updates (2026-09-19)
 

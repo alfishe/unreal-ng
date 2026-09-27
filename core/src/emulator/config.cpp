@@ -503,7 +503,7 @@ bool Config::ParseConfig(IniFile& inimanager)
 	}
 #endif
 #ifdef MOD_GSZ80
-	// NeoGS placeholders (neogs-tdd.md §3.2): RAM size in KB, SD card image
+	// NeoGS placeholders (neogs-tdd.md §6): RAM size in KB, SD card image
 	// and the MP3 decode path, all consumed by no card until the P2
 	// implementation lands. SDCARD is the original UnrealSpeccy key, kept as
 	// an alias so existing configs load. The GS Z80 card has its own fixed
