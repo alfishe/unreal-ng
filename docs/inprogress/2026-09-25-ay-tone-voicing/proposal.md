@@ -2,7 +2,7 @@
 
 **Origin:** analysis from an earlier agent session (2026-09-25), originally in Russian. Translated
 here and expanded with references, commit IDs and independent checks.
-**Status:** input to the design; the review and the final design are in
+**Status:** implemented 2026-09-27 (phases 1, 2, 4; `tv` pending). Input to the design; the review, the final design and the implementation record are in
 [ay-tone-voicing-tdd.md](ay-tone-voicing-tdd.md).
 
 How to read this file:
@@ -199,7 +199,7 @@ and one enum value. No code path changes.
 | ID | UI label | Curve | Status | Purpose |
 |:--|:--|:--|:--|:--|
 | `flat` | Flat (like real hardware line out) | none; exact bypass, output bit-identical to master | v1 | Accurate output, analysis, people who want the thumps |
-| `classic` | Classic (softer bass, as in earlier versions) | HPF1 64.2 Hz + peak 106.9 Hz / +3.06 dB / Q 1.0 | v1, **default** | The `4c49fb6` balance (§4) |
+| `classic` | Classic (softer bass) | HPF1 64.2 Hz + peak 106.9 Hz / +3.06 dB / Q 1.0 | v1, **default** | The `4c49fb6` balance (§4) |
 | `tv` | TV speaker | starting point for listening: HPF2 ~130 Hz Q 0.7 + LPF2 ~6 kHz Q 0.7 | phase 3, hidden | How the music sounded on a TV set |
 
 Reference fits that are **not** profiles: HPF1 55 Hz (1.24 dB mean error, no hump) and HPF2
@@ -280,7 +280,7 @@ never reads QSettings; frontends apply their saved value through the same setter
 | Store | Key | Written by | Read by |
 |:--|:--|:--|:--|
 | `unreal.ini` (per machine config) | `[SOUND] AYVoicing=classic` | hand-edited only | `config.cpp` → `config.sound.ayVoicing` → `SoundManager` constructor |
-| Qt: `QSettings(IniFormat, UserScope, "Unreal", "Unreal-NG")` | `Sound/AYVoicing` | audio settings widget | `MainWindow` on instance creation |
+| Qt: `QSettings(IniFormat, UserScope, "Unreal", "Unreal-NG")` | `Sound/ay_voicing` | audio settings widget | `MainWindow` on instance creation |
 
 - Unknown values in any store: log a warning and use the default. The same rule as `[SOUND] CoreRate`.
 - Shipped `unreal.ini` files do **not** get the key; the built-in default covers them. That also
@@ -291,8 +291,8 @@ never reads QSettings; frontends apply their saved value through the same setter
 Today `AYPunch`, `AYRoom` and `BeeperPunch` are set only from the Qt widget. They are neither
 persisted nor automatable, and they are written from the GUI thread without synchronisation. The
 extended proposal groups them with voicing in one value type, `SoundCharacterSettings` (TDD
-§5.2). All four then get the same frame-boundary handoff, the same QSettings keys (`Sound/AYPunch`,
-`Sound/AYRoom`, `Sound/BeeperPunch`) and the same automation settings (`ay_punch`, `ay_room`,
+§5.2). All four then get the same frame-boundary handoff, the same QSettings keys (`Sound/ay_punch`,
+`Sound/ay_room`, `Sound/beeper_punch`) and the same automation settings (`ay_punch`, `ay_room`,
 `beeper_punch`). Voicing does not depend on this step.
 
 ## 10. Feature gates
@@ -324,7 +324,7 @@ Punch/Room controls:
 
 ```
 ┌ AY / TurboSound ─────────────────────────────────────────────┐
-│ Bass voicing: [ Classic (softer bass, as in earlier versions) ▾ ] │
+│ EQ profile:   [ Classic (softer bass) ▾ ] │
 │               ( Flat (like real hardware line out)             ) │
 │ [x] Punch        ⓘ Punch was tuned for Classic voicing   (only shown with Flat) │
 │ Room: [ Off ▾ ]                                               │
@@ -334,7 +334,7 @@ Punch/Room controls:
 | Behaviour | Rule |
 |:--|:--|
 | Enabled state | always enabled while sound is on. **Not** greyed out when Sound HQ is off (punch/room still are) |
-| On change | `pSoundManager->setAYVoicing(p)` and write `Sound/AYVoicing` |
+| On change | `pSoundManager->setAYVoicing(p)` and write `Sound/ay_voicing` |
 | On widget refresh (`loadSettings`) | read `getAYVoicing()` from the bound instance, so a value set via WebAPI shows up |
 | Instance created by the GUI | apply the saved preference before the first audio frame |
 | Instance adopted (created via WebAPI/MCP) | **don't overwrite**; show its current value. The creator owns the setting |

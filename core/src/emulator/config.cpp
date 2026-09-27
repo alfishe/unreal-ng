@@ -403,6 +403,28 @@ bool Config::ParseConfig(IniFile& inimanager)
 	// FM loudness trim in dB relative to the hardware-derived default (0 = default)
 	config.sound.tsfmFmTrimDb = inimanager.GetDoubleValue(sound, "TSFM_FmTrimDb", 0.0);
 
+	// AY / SSG tone voicing (FilterVoicing profile ID): headphones (default:
+	// classic bass + soft highs), classic (the pre-45812176 bass balance),
+	// flat (hardware line out), warm (softer bass and highs), tv (TV
+	// speaker) or small_speaker; alias
+	// legacy = classic. Hidden (untuned) profiles are rejected like unknown
+	// values: warn and keep the default. A missing key resets to the default
+	// even when the struct holds another value from a previous parse
+	{
+		config.sound.ayVoicing = FilterVoicing::DEFAULT_PRESET;
+		line[0] = '\0';
+		CopyStringValue(inimanager.GetValue(sound, "AYVoicing", nullptr), line, sizeof line);
+		if (line[0] != '\0')
+		{
+			FilterVoicing::Preset preset = FilterVoicing::DEFAULT_PRESET;
+			if (FilterVoicing::parsePreset(line, preset))
+				config.sound.ayVoicing = preset;
+			else
+				MLOGWARNING("Config: unsupported [SOUND] AYVoicing='%s', using %s", line,
+				            FilterVoicing::presetId(FilterVoicing::DEFAULT_PRESET));
+		}
+	}
+
 	// General Sound emulation kind ([SOUND] GSType, GS design §5.1):
 	// Z80 = LLE coprocessor card, LW/LIGHT = lightweight in-tree mod player
 	// (docs/inprogress/2026-09-19-general-sound), BASS = legacy

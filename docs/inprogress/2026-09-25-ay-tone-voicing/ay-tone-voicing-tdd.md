@@ -1,6 +1,6 @@
 # AY Tone Voicing — Technical Design
 
-**Status:** design reviewed twice, ready for phase 1 implementation and testing (see §13) · **Date:** 2026-09-25 · **Verified against:** `af072f83`
+**Status:** implemented 2026-09-27 - phases 1, 2 and 4 done, phase 3 (`tv` curve) open; see §14 for what landed and where it differs from this design. Reviewed three times (§13) · **Date:** 2026-09-25 · **Verified against:** `af072f83`
 **Scope:** AY-3-8910 / YM2149 output, including the SSG half of TurboSound FM (TSFM)
 **Related:** `45812176` (the AY DC-filter replacement that caused this), `4c49fb6` (the reference sound),
 [TSFM design](../2026-09-10-turbosound-fm/tsfm-tdd.md), [multirate plan](../2026-08-17-audio-sync/multirate-core-implementation-plan.md)
@@ -177,7 +177,10 @@ Curve table (`Tv` stays `Flat`-equivalent and hidden until phase 3):
 |:--|--:|--:|--:|--:|
 | `flat` | — (bypass) | — | — | — |
 | `classic` | 64.2 Hz | 106.9 Hz | +3.06 dB | 1.0 |
-| `tv` | TBD (phase 3); listening starting point HPF2 ~130 Hz Q 0.7 + LPF2 ~6 kHz | | | |
+| `tv` | Visible since 2026-09-27 with the listening starting point: HPF2 130 Hz Q 0.7071 + LPF2 6 kHz Q 0.7071. The low-pass is magnitude-matched (Vicanek 2016), not bilinear: an RBJ 6 kHz low-pass would cut 15 kHz ~8 dB more at 44.1 kHz than at 192 kHz; the matched one stays within 0.3 dB of the analog curve at every core rate | | | |
+| `headphones` | Added 2026-09-27: HPF1 64.2 Hz + peak 106.9 Hz / +3.06 dB / Q 1.0 (Classic bass) + LPF2 10 kHz Q 0.5 (critically damped, magnitude-matched) | | | |
+| `small_speaker` | Added 2026-09-27: HPF2 250 Hz Q 0.7071 + peak 1.5 kHz / +3 dB / Q 1.0 + LPF2 4.5 kHz Q 0.7071 (magnitude-matched) | | | |
+| `warm` | Added 2026-09-27, between Headphones and TV speaker: HPF2 90 Hz Q 0.6 + LPF2 8 kHz Q 0.5 (critically damped, magnitude-matched). Since 2026-09-27 the built-in default is `headphones` (`FilterVoicing::DEFAULT_PRESET`), no longer `classic` | | | |
 
 Coefficients (bilinear transform; with f ≪ fs no pre-warping is needed, and the RBJ peak formula
 is exact anyway):
@@ -429,7 +432,8 @@ every automation module, so each module gets one more branch next to it.
 ### 7.3 Lua / Python
 
 Add `ay_voicing` wherever `audio_rate` is handled in `lua_emulator.h` / `python_emulator.h`
-(string get/set).
+(string get/set). *Implemented as `get_sound_character()` / `set_sound_character(name, value)`
+covering all four settings (§14).*
 
 ### 7.4 Recipe and docs
 
@@ -445,7 +449,7 @@ Add `ay_voicing` wherever `audio_rate` is handled in `lua_emulator.h` / `python_
 **UI** (`unreal-qt/src/debugger/widgets/audiosettingswidget.cpp`, AY group, above *Punch*):
 
 ```
-Bass voicing:  [ Classic (softer bass, as in earlier versions) ▾ ]
+EQ profile:    [ Classic (softer bass) ▾ ]
                [ Flat (like real hardware line out)              ]
 ```
 
@@ -463,8 +467,8 @@ Bass voicing:  [ Classic (softer bass, as in earlier versions) ▾ ]
   WebAPI.
 
 **Persistence:** `QSettings(IniFormat, UserScope, "Unreal", "Unreal-NG")`, the same store `mainwindow.cpp`
-already uses. Key `Sound/AYVoicing` (string ID). Phase 2 adds `Sound/AYPunch`, `Sound/AYRoom`,
-`Sound/BeeperPunch`.
+already uses. Keys `Sound/ay_voicing`, `Sound/ay_punch`, `Sound/ay_room`, `Sound/beeper_punch`
+(the setting names; values are the automation text IDs, §14).
 
 **When it is applied (phase 2 prerequisite: origin flag):**
 
@@ -538,8 +542,8 @@ ROM boot).
 
 | Test | File | Pins |
 |:--|:--|:--|
-| `VoicingRunsInLQ` | `core/tests/emulator/sound/ay_voicing_test.cpp` | HQ off, Classic: chip buffer after `handleFrameEnd` ≠ Flat output; HQ toggle does not change the voiced bass level (G3) |
-| `VoicingNotResetOnHQReturn` | same | HQ on→off→on with a steady tone: a test-only `SoundManager::ayVoicingStateForTest(chip)` shows non-zero filter state carried across the HQ return (not zeroed, unlike the chains). An audio-level comparison is not used, because the HQ switch changes the decimator output itself (FIR vs boxcar, stale-stage flush from `ec66d3bc`), so a "continuous run" reference does not exist |
+| `VoicingRunsInLQ` | `core/tests/emulator/sound/soundmanager_test.cpp` | HQ off, Classic: chip buffer after `handleFrameEnd` ≠ Flat output; HQ toggle does not change the voiced bass level (G3) |
+| `VoicingNotResetOnHQReturn` | same | HQ on→off→on with a steady tone: `SoundManager::getAYVoicingStage(chip)` (filter state, history count) shows non-zero filter state carried across the HQ return (not zeroed, unlike the chains). An audio-level comparison is not used, because the HQ switch changes the decimator output itself (FIR vs boxcar, stale-stage flush from `ec66d3bc`), so a "continuous run" reference does not exist |
 | `PresetSwitchIsClickFree` | same | G5, two checks on a steady AY tone switched Flat→Classic→Flat. (a) **HF energy:** energy above 8 kHz in the switch frame ≤ the mean of the two neighbouring frames + 1 dB; a click is broadband and shows up there, while square-wave edges are the same in every frame. (b) **Reference:** the whole switch frame within ±2 LSB of an offline ideal crossfade between two filters that ran continuously. This passes only with the §4.4 two-frame pre-roll (simulated: < 0.01 LSB). A bare `reset()` gives ~525 LSB, and one frame ~1.3 LSB, which is marginal. (c) Same as (b) with history invalidated (first frame after `reset()`): no assertion on (b); only checks that nothing crashes and the frame is finite. "Max sample delta" was dropped: on a square wave the edges already give the maximum delta, so it can't detect a click |
 | `SetFromOtherThreadAppliesAtFrameBoundary` | same | set from a second thread while frames run; the active preset changes only between frames. Race-freedom holds by construction (the only shared state is one `std::atomic<uint8_t>`); the repo has no TSan build, so none is claimed |
 | `PreRollHistoryInvalidatedOnRateChange` | same | after `applyCoreRate()` the next switch skips pre-roll (no samples at the old rate reach the new filter) |
@@ -598,7 +602,7 @@ the AGENTS.md WebAPI verification sequence.
 | Automation | `core/automation/webapi/src/api/settings_api.cpp`, `openapi_settings.inc`, `openapi_schemas.inc`, `core/automation/cli/src/commands/cli-processor-settings.cpp`, `core/automation/lua/src/emulator/lua_emulator.h`, `core/automation/python/src/emulator/python_emulator.h` |
 | Qt | `unreal-qt/src/debugger/widgets/audiosettingswidget.h/.cpp`, `unreal-qt/src/mainwindow.h/.cpp` (`EmulatorOrigin` parameter on `adoptEmulator`, 4 call sites; apply-on-create) |
 | Videowall | none (uses the active emulator's config file, §8.2) |
-| Tests | `core/tests/common/filtervoicing_test.cpp`, `core/tests/emulator/sound/ay_voicing_test.cpp`, config + WebAPI settings tests; `flat` pins in audited tests where needed (§9.3) |
+| Tests | `core/tests/common/filtervoicing_test.cpp`, `core/tests/emulator/sound/soundmanager_test.cpp`, config + WebAPI settings tests; `flat` pins in audited tests where needed (§9.3) |
 | Bench | `core/benchmarks/…/filtervoicing_benchmark.cpp` |
 | Docs | this folder; recording docs (DSD native capture is always flat); later `docs/emulator/design/audio/ay-tone-voicing.md`, `.recipe/` audio line |
 
@@ -664,3 +668,63 @@ Checked and fine: the mixer reads per-chip buffers in **both** HQ and LQ (`sound
 `AY1_All`/`AY2_All` → `getChipBuffer`), so voicing on them reaches the output in both modes. The
 WebAPI `setSetting` body is `{"value": ...}`, matching §7.1. `tsfm_volume_replay_test` is
 device-level (`device->handleFrameEnd()`), confirming it is unaffected.
+
+## 14. Implementation (2026-09-27)
+
+Implemented on top of `b1a0ab4c` (117 commits after the review baseline `af072f83`; the sound
+path changes in between - TurboSound=None slot, tests leaving AY/TS/TSFM out by default, unified
+frame lifecycle - did not affect the design). Permanent documentation:
+[docs/emulator/design/audio/ay-tone-voicing.md](../../emulator/design/audio/ay-tone-voicing.md).
+
+### What landed
+
+| Area | Files |
+|:--|:--|
+| DSP | `core/src/common/sound/filters/filtervoicing.h` (profile table + biquad cascade), `voicingstage.h/.cpp` (requests, two-frame pre-roll, crossfade) |
+| Core wiring | `soundmanager.h/.cpp`: `_ayVoicing0/1` before the chains in HQ and LQ; thread-safe `setAYVoicing` / `setAYPunch` / `setAYRoomMode` / `setBeeperPunch` applied at the frame boundary; history dropped on sound off, turbo without audio, rate change; `getAYVoicingStage(chip)` for tests |
+| Config | `platform.h` `config.sound.ayVoicing`, `config.cpp` `[SOUND] AYVoicing` |
+| Room IDs | `audio_character_chain.h/.cpp`: `roomModeId` / `parseRoomMode` |
+| Shared automation parser | `core/src/emulator/sound/soundcharactersettings.h/.cpp` |
+| Automation | WebAPI `settings_api.cpp` + OpenAPI `.inc`; CLI `cli-processor-settings.cpp`; Lua `get_sound_character` / `set_sound_character`; Python same names |
+| DSD | `dsd_encoder.h/.cpp`: `SetVoicingPreset`, applied to the native tap at 218.75 kHz, latched at `Start()` |
+| Qt | `mainwindow.h/.cpp`: `EmulatorOrigin` on `adoptEmulator` (4 call sites); `emulator/soundcharacterpreferences.h/.cpp` (QSettings save / apply); `audiosettingswidget.h/.cpp`: EQ profile combo, punch hint, thread-safe setters, persistence |
+| Videowall | none (uses the active emulator's config) |
+| Tests | `filtervoicing_test`, `voicingstage_test`, `audio_character_chain_test`, `soundmanager_test`, `soundcharactersettings_test`, `config_test` (+2), `dsd_native_test` (+1); `device_mixer_test` and `soundhq_chain_bypass_test` pin `flat` |
+| Bench | `core/benchmarks/emulator/sound/filtervoicing_benchmark.cpp` |
+| Recipe | `.recipe/peripherals/turbosound.md` |
+
+### Differences from this design (and why)
+
+| Design | Implemented | Why |
+|:--|:--|:--|
+| Pre-roll history and crossfade inside `SoundManager` | Separate `VoicingStage` class | The switch logic is pure DSP; as its own class it is tested deterministically without an emulator, and `SoundManager` only wires it |
+| `SoundCharacterSettings` value struct (§5.2) | Individual thread-safe setters/getters on `SoundManager` + a shared text parser `SoundCharacterSettings` for all automation surfaces | One parser guarantees identical names, values and errors on CLI, WebAPI, Lua, Python and MCP. Requests are edge-triggered, so direct chain edits (`getAYChain()` + `syncAYChainSettings()`, used by older tests) are not reverted |
+| QSettings keys `Sound/AYVoicing`, ... | `Sound/ay_voicing`, `Sound/ay_punch`, `Sound/ay_room`, `Sound/beeper_punch` | Keys equal the setting names and values equal the automation IDs, so the saved preference goes through the same parser |
+| Lua/Python `ay_voicing` next to `audio_rate` | `get_sound_character()` / `set_sound_character(name, value)` | Four settings through one pair of functions instead of eight |
+| DSD: document "always flat" (phase 1), optional tap voicing (phase 2) | Encoder-side voicing in `DSDEncoder` native mode, latched at `Start()` | Consumer side: no change to the render loops. Note: `SetNativeTap` has no production caller yet, so native DSD capture is not reachable from the app today |
+| Test file `ay_voicing_test.cpp` | `soundmanager_test.cpp`, `voicingstage_test.cpp`, `soundcharactersettings_test.cpp`, `audio_character_chain_test.cpp` | Test files are named after the file under test |
+| `ClassicTracksLegacyFilterDC` via spectra | Real filters' gains measured at each harmonic, summed per band | Same numbers as the FFT analysis (0.97 / 1.29 / 0.23 dB above 200 Hz, ≤ 0.62 below), runs in 7 ms |
+| Audit risk R8 (voicing active in every test) | Mostly moot | Since `08863884` the test runner leaves the TurboSound slot empty unless a test opts in with `SoundCardScope`; only two opt-in files needed `flat` |
+| Room combo selected by enum index | Selected by item data; values set elsewhere added as an extra item | Pre-existing bug: the combo holds a subset of room levels, so index ≠ mode above −15 dB |
+
+### Verification
+
+- Build (`ninja -C cmake-build-agent-release`, all targets incl. unreal-qt, videowall, WebAPI,
+  Lua, MCP): no compiler warnings. Only pre-existing linker warnings about Homebrew
+  OpenSSL / c-ares being built for a newer macOS.
+- `core-tests` (4 shards): 3660 passed, 0 failed. New tests: 11 + 7 + 2 + 11 + 5 + 2 + 1.
+- Test sensitivity: with the pre-roll disabled, `VoicingStage_Test.SwitchMatchesIdealCrossfade`
+  fails (the HF-energy click test alone does not catch a cold start - it is the weaker check).
+- Benchmarks: steady frame 10.3 µs at 48 kHz / 41 µs at 192 kHz per chip; switch frame 21 / 87 µs.
+- Live WebAPI (unreal-qt, AGENTS.md sequence): `settings` audio group lists all four; get/put
+  round-trip; JSON bools accepted; `legacy` → classic; `tv` and bad room → 400 + `allowed`;
+  `openapi.json` lists the settings; MCP `invoke_api` PUT works; Lua
+  `set_sound_character` / `get_sound_character` work.
+- Not verified by ear: the A/B listening against a `d90421bb` build is still to do.
+
+### Open
+
+- Phase 3: `tv` profile - tune by listening, then set `visible = true` in the profile table.
+- A/B listening check vs `d90421bb` (phase 1 exit criterion in §10).
+- R1: punch with `flat` may pump on volume-step thumps - listen, then decide on voicing-aware
+  punch presets.

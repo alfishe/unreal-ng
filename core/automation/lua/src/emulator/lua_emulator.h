@@ -13,6 +13,7 @@
 #include <tapeaudio/tapeaudiorenderer.h>
 #include <emulator/cpu/z80.h>
 #include <emulator/video/screen.h>
+#include <emulator/sound/soundcharactersettings.h>
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/chips/soundchip_ay8910.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
@@ -3774,6 +3775,42 @@ public:
             result["pin"] = sound->getCoreRatePin();  // 0 = auto
             result["core_rate"] = static_cast<uint64_t>(sound->getCoreRate());
             result["target_rate"] = static_cast<uint64_t>(sound->getTargetCoreRate());
+            return result;
+        });
+
+        // Sound character (same source as CLI 'setting ay_voicing|ay_punch|
+        // ay_room|beeper_punch' and WebAPI PUT settings/<name>): runtime only,
+        // applied at the next frame boundary. get_sound_character() returns
+        // all four as text; set_sound_character(name, value) returns
+        // {ok=true, value=...} or {ok=false, error=...}
+        lua.set_function("get_sound_character", [this]() -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) { result["error"] = "no emulator"; return result; }
+            auto* context = emulator->GetContext();
+            if (!context || !context->pSoundManager) { result["error"] = "sound manager not available"; return result; }
+            for (const SoundCharacterSettings::Descriptor& d : SoundCharacterSettings::Descriptors())
+                result[d.name] = SoundCharacterSettings::Get(*context->pSoundManager, d.name);
+            return result;
+        });
+
+        lua.set_function("set_sound_character", [this](const std::string& name, const std::string& value) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            result["ok"] = false;
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) { result["error"] = "no emulator"; return result; }
+            auto* context = emulator->GetContext();
+            if (!context || !context->pSoundManager) { result["error"] = "sound manager not available"; return result; }
+            std::string error;
+            if (!SoundCharacterSettings::Set(*context->pSoundManager, name, value, error))
+            {
+                result["error"] = error;
+                return result;
+            }
+            result["ok"] = true;
+            result["value"] = SoundCharacterSettings::Get(*context->pSoundManager, name);
             return result;
         });
 

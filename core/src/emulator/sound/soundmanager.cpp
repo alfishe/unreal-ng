@@ -175,13 +175,13 @@ SoundManager::SoundManager(EmulatorContext* context)
     _ayChain0.setChipType(AudioCharacterChain::ChipType::AY);
     _ayChain0.setPunchPreset(AudioCharacterChain::PunchPreset::AY);
     _ayChain0.setPunchEnabled(true);
-    _ayChain0.setRoomMode(AudioCharacterChain::RoomMode::Off);
+    _ayChain0.setRoomMode(DEFAULT_AY_ROOM);
 
     _ayChain1.setup(_coreRate);
     _ayChain1.setChipType(AudioCharacterChain::ChipType::AY);
     _ayChain1.setPunchPreset(AudioCharacterChain::PunchPreset::AY);
     _ayChain1.setPunchEnabled(true);
-    _ayChain1.setRoomMode(AudioCharacterChain::RoomMode::Off);
+    _ayChain1.setRoomMode(DEFAULT_AY_ROOM);
 
     // FM-only chains (TSFM, §7.2): both stages off - the hardware-derived
     // gain staging (§7.1) must reach the mix untouched
@@ -203,6 +203,13 @@ SoundManager::SoundManager(EmulatorContext* context)
     _beeperChain.setPunchPreset(AudioCharacterChain::PunchPreset::Beeper);
     _beeperChain.setPunchEnabled(false);
     _beeperChain.setRoomMode(AudioCharacterChain::RoomMode::Off);
+
+    // AY / SSG tone voicing: the configured profile ([SOUND] AYVoicing,
+    // default headphones) from the first frame, no crossfade
+    _ayVoicing0.setup(static_cast<double>(_coreRate));
+    _ayVoicing1.setup(static_cast<double>(_coreRate));
+    _ayVoicing0.setPresetImmediate(_context->config.sound.ayVoicing);
+    _ayVoicing1.setPresetImmediate(_context->config.sound.ayVoicing);
 
     // Master limiter designs itself for the resolved core rate (5.2)
     _limiter.Configure(static_cast<double>(_coreRate));
@@ -263,6 +270,10 @@ void SoundManager::reset()
     std::fill(_outBuffer, _outBuffer + AUDIO_BUFFER_SAMPLES_PER_FRAME, 0);
     std::fill(_mixBus, _mixBus + AUDIO_BUFFER_SAMPLES_PER_FRAME, 0.0f);
     _limiter.Reset();
+
+    // Voicing: clear filter state and pre-roll history (the profile stays)
+    _ayVoicing0.reset();
+    _ayVoicing1.reset();
 
     // Restart the exact sample accumulator (machine change / hard reset /
     // snapshot load all route through reset())
@@ -418,6 +429,61 @@ void SoundManager::syncAYChainSettings()
     _ayChain1.setPunchPreset(_ayChain0.getPunchPreset());
     _ayChain1.setPunchEnabled(_ayChain0.isPunchEnabled());
     _ayChain1.setRoomMode(_ayChain0.getRoomMode());
+
+    // The chains were edited directly: make the requested / applied state
+    // match, so the frame-boundary handoff does not revert the edit
+    _appliedAYPunch = _ayChain0.isPunchEnabled();
+    _appliedAYRoom = static_cast<uint8_t>(_ayChain0.getRoomMode());
+    _requestedAYPunch.store(_appliedAYPunch, std::memory_order_release);
+    _requestedAYRoom.store(_appliedAYRoom, std::memory_order_release);
+}
+
+void SoundManager::setAYVoicing(FilterVoicing::Preset preset)
+{
+    _ayVoicing0.request(preset);
+    _ayVoicing1.request(preset);
+}
+
+void SoundManager::setAYPunch(bool enabled)
+{
+    _requestedAYPunch.store(enabled, std::memory_order_release);
+}
+
+void SoundManager::setAYRoomMode(AudioCharacterChain::RoomMode mode)
+{
+    _requestedAYRoom.store(static_cast<uint8_t>(mode), std::memory_order_release);
+}
+
+void SoundManager::setBeeperPunch(bool enabled)
+{
+    _requestedBeeperPunch.store(enabled, std::memory_order_release);
+}
+
+void SoundManager::applyCharacterRequests()
+{
+    const bool ayPunch = _requestedAYPunch.load(std::memory_order_acquire);
+    if (ayPunch != _appliedAYPunch)
+    {
+        _ayChain0.setPunchEnabled(ayPunch);
+        _ayChain1.setPunchEnabled(ayPunch);
+        _appliedAYPunch = ayPunch;
+    }
+
+    const uint8_t ayRoom = _requestedAYRoom.load(std::memory_order_acquire);
+    if (ayRoom != _appliedAYRoom)
+    {
+        const auto mode = static_cast<AudioCharacterChain::RoomMode>(ayRoom);
+        _ayChain0.setRoomMode(mode);
+        _ayChain1.setRoomMode(mode);
+        _appliedAYRoom = ayRoom;
+    }
+
+    const bool beeperPunch = _requestedBeeperPunch.load(std::memory_order_acquire);
+    if (beeperPunch != _appliedBeeperPunch)
+    {
+        _beeperChain.setPunchEnabled(beeperPunch);
+        _appliedBeeperPunch = beeperPunch;
+    }
 }
 
 // Legacy volume API delegates to registry
@@ -502,6 +568,12 @@ void SoundManager::applyCoreRate(size_t rate)
     _fmChain0.setup(rate);
     _fmChain1.setup(rate);
     _limiter.Configure(static_cast<double>(rate));
+
+    // Voicing: coefficients for the new rate. Unlike the chains the filter
+    // state is KEPT (a few low-frequency samples, still valid - clearing them
+    // would pass a step); the pre-roll history holds old-rate samples and is dropped
+    _ayVoicing0.setup(static_cast<double>(rate));
+    _ayVoicing1.setup(static_cast<double>(rate));
 
     // Restart the exact sample accumulator - its residue is in old-rate units
     _sampleAccumulator = 0;
@@ -671,6 +743,9 @@ void SoundManager::handleFrameEnd()
     const CONFIG& frameConfig = _context->config;
     if (frameConfig.turbo_mode && !frameConfig.turbo_mode_audio)
     {
+        // A gap in the voiced stream: the pre-roll history no longer precedes the next frame
+        _ayVoicing0.invalidateHistory();
+        _ayVoicing1.invalidateHistory();
         if (_gs)
             _gs->handleFrameEnd(0);
 #ifdef UNREALNG_HAVE_OPL4
@@ -757,6 +832,26 @@ void SoundManager::handleFrameEnd()
         _beeperChain.reset();
     }
     _chainsBypassed = !chainsActive;
+
+    // Punch / room changes requested since the last frame (GUI, automation)
+    applyCharacterRequests();
+
+    // AY / SSG tone voicing: before the chains, in HQ and LQ alike (the chip
+    // buffers reach the mixer in both modes). FM buffers are not voiced.
+    // Sound off is a gap: nothing is voiced and the pre-roll history is dropped
+    if (_turboSound && !soundOff)
+    {
+        const int chips = _turboSound->getChipCount();
+        if (int16_t* chip0Buf = _turboSound->getChipBuffer(0))
+            _ayVoicing0.process(chip0Buf, samplesThisFrame);
+        if (int16_t* chip1Buf = chips > 1 ? _turboSound->getChipBuffer(1) : nullptr)
+            _ayVoicing1.process(chip1Buf, samplesThisFrame);
+    }
+    else
+    {
+        _ayVoicing0.invalidateHistory();
+        _ayVoicing1.invalidateHistory();
+    }
 
     // AY chain: gentler punch (square waves already have harmonics)
     // Room uses no LP to preserve brightness

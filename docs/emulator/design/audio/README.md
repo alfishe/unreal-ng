@@ -14,6 +14,10 @@ The Unreal-NG audio subsystem uses [miniaudio](https://miniaud.io/) as a cross-p
   [Audio Sources UX](../recording/audio-sources-ux.md).
 - **[Audio Sync Relay Thread](audio-sync-relay-thread.md)** — audio/video
   synchronization architecture.
+- **[AY Tone Voicing](ay-tone-voicing.md)** — the tonal balance profiles of
+  the AY / SSG output (Headphones by default, Classic, Flat, Warm, TV speaker,
+  Small speaker), click-free runtime switching, the `ay_voicing`
+  (and punch / room) settings on every automation surface and in the GUI.
 
 ## macOS Debug Build: Core Audio HAL Overload Warnings
 

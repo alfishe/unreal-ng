@@ -1,5 +1,6 @@
 /// @file config_test.cpp
-/// @brief [SOUND] TurboSound / TSFM_FmTrimDb parsing (TSFM design §3.1, plan P3).
+/// @brief [SOUND] TurboSound / TSFM_FmTrimDb / DecimatorQuality / AYVoicing parsing
+/// (TSFM design §3.1, plan P3; AY tone voicing design §5.1).
 ///
 /// The key selects which device occupies the TurboSound slot (legacy two-AY
 /// pair vs TSFM); unknown values fall back to AY with a warning, a missing
@@ -139,6 +140,37 @@ TEST_F(Config_Test, DecimatorQualityDefaultsToReference)
     EXPECT_FALSE(_context->config.sound.decimatorHighFidelity);
     ASSERT_TRUE(LoadSoundKeys("DecimatorQuality=ultra\n"));
     EXPECT_FALSE(_context->config.sound.decimatorHighFidelity);
+}
+
+TEST_F(Config_Test, AYVoicingParsed)
+{
+    // [SOUND] AYVoicing: profile IDs and the legacy alias, case-insensitive
+    ASSERT_TRUE(LoadSoundKeys("AYVoicing=flat\n"));
+    EXPECT_EQ(_context->config.sound.ayVoicing, FilterVoicing::Preset::Flat);
+    ASSERT_TRUE(LoadSoundKeys("AYVoicing=Classic\n"));
+    EXPECT_EQ(_context->config.sound.ayVoicing, FilterVoicing::Preset::Classic);
+    ASSERT_TRUE(LoadSoundKeys("AYVoicing=legacy\n"));
+    EXPECT_EQ(_context->config.sound.ayVoicing, FilterVoicing::Preset::Classic) << "legacy is an alias of classic";
+    ASSERT_TRUE(LoadSoundKeys("AYVoicing=tv\n"));
+    EXPECT_EQ(_context->config.sound.ayVoicing, FilterVoicing::Preset::Tv);
+    ASSERT_TRUE(LoadSoundKeys("AYVoicing=warm\n"));
+    EXPECT_EQ(_context->config.sound.ayVoicing, FilterVoicing::Preset::Warm);
+    ASSERT_TRUE(LoadSoundKeys("AYVoicing=headphones\n"));
+    EXPECT_EQ(_context->config.sound.ayVoicing, FilterVoicing::Preset::Headphones);
+    ASSERT_TRUE(LoadSoundKeys("AYVoicing=Small_Speaker\n"));
+    EXPECT_EQ(_context->config.sound.ayVoicing, FilterVoicing::Preset::SmallSpeaker);
+}
+
+TEST_F(Config_Test, AYVoicingDefaultsToSoftHighs)
+{
+    // Missing key resets a stale value; unknown profile IDs warn and keep the
+    // default, which is the soft-highs headphones profile
+    ASSERT_EQ(FilterVoicing::DEFAULT_PRESET, FilterVoicing::Preset::Headphones);
+    ASSERT_TRUE(LoadSoundKeys("AYVoicing=flat\n"));
+    ASSERT_TRUE(LoadSoundKeys("TurboSound=AY\n"));
+    EXPECT_EQ(_context->config.sound.ayVoicing, FilterVoicing::Preset::Headphones);
+    ASSERT_TRUE(LoadSoundKeys("AYVoicing=loud\n"));
+    EXPECT_EQ(_context->config.sound.ayVoicing, FilterVoicing::Preset::Headphones);
 }
 
 TEST_F(Config_Test, ShippedConfigsProduceExpectedTurboSoundKind)

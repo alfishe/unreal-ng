@@ -1,6 +1,8 @@
 #include "audio_character_chain.h"
 
+#include <cctype>
 #include <cmath>
+#include <string>
 
 /// region <Constructors / Destructors>
 
@@ -112,6 +114,46 @@ const char* AudioCharacterChain::roomModeName(RoomMode mode)
         case RoomMode::Room_1dB:  return "Room -1dB";
         default: return "?";
     }
+}
+
+const char* AudioCharacterChain::roomModeId(RoomMode mode)
+{
+    switch (mode)
+    {
+        case RoomMode::Off:       return "off";
+        case RoomMode::Room_15dB: return "15db";
+        case RoomMode::Room_14dB: return "14db";
+        case RoomMode::Room_13dB: return "13db";
+        case RoomMode::Room_12dB: return "12db";
+        case RoomMode::Room_9dB:  return "9db";
+        case RoomMode::Room_6dB:  return "6db";
+        case RoomMode::Room_3dB:  return "3db";
+        case RoomMode::Room_2dB:  return "2db";
+        case RoomMode::Room_1dB:  return "1db";
+        default: return "off";
+    }
+}
+
+bool AudioCharacterChain::parseRoomMode(std::string_view text, RoomMode& out)
+{
+    std::string id;
+    for (char c : text)
+        id.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    if (!id.empty() && id[0] == '-')
+        id.erase(0, 1);
+    if (!id.empty() && id.find("db") == std::string::npos && id != "off")
+        id += "db";
+
+    for (int i = 0; i < static_cast<int>(RoomMode::COUNT); i++)
+    {
+        const auto mode = static_cast<RoomMode>(i);
+        if (id == roomModeId(mode))
+        {
+            out = mode;
+            return true;
+        }
+    }
+    return false;
 }
 
 void AudioCharacterChain::setRoomMode(RoomMode mode)

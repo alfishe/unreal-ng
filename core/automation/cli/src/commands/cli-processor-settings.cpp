@@ -6,6 +6,7 @@
 #include <emulator/emulatormanager.h>
 #include <emulator/platform.h>
 #include <emulator/sound/audio.h>
+#include <emulator/sound/soundcharactersettings.h>
 #include <emulator/sound/soundmanager.h>
 
 #include <iostream>
@@ -13,6 +14,24 @@
 #include <thread>
 
 #include "cli-processor.h"
+
+namespace
+{
+/// Sound-character rows of the settings listing (ay_voicing, ay_punch,
+/// ay_room, beeper_punch) - one source for every automation surface
+void AppendSoundCharacterSettings(std::stringstream& ss, EmulatorContext* context)
+{
+    if (!context->pSoundManager)
+        return;
+    for (const SoundCharacterSettings::Descriptor& d : SoundCharacterSettings::Descriptors())
+    {
+        std::string label = std::string("  ") + d.name;
+        label.resize(16, ' ');
+        ss << label << "= " << SoundCharacterSettings::Get(*context->pSoundManager, d.name) << "  (" << d.description
+           << ")" << CLIProcessor::NEWLINE;
+    }
+}
+}  // namespace
 
 // HandleSetting - lines 3137-3388
 void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector<std::string>& args)
@@ -87,6 +106,7 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
             ss << "unavailable";
         }
         ss << "  (Core audio rate: 44100..192000 or auto = follow device/config)" << NEWLINE;
+        AppendSoundCharacterSettings(ss, context);
         ss << NEWLINE;
 
         ss << "Use: setting <name> <value>  to change a setting" << NEWLINE;
@@ -149,6 +169,7 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
             ss << "unavailable";
         }
         ss << "  (Core audio rate: 44100..192000 or auto = follow device/config)" << NEWLINE;
+        AppendSoundCharacterSettings(ss, context);
         ss << NEWLINE;
 
         ss << "Use: setting <name> <value>  to change a setting" << NEWLINE;
@@ -217,6 +238,23 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
             ss << "Description: Core audio rate pin (44100, 48000, 88200, 96000, 176400, 192000 or auto)" << NEWLINE;
             ss << "Runtime only - not saved to the ini. auto follows the priority chain:" << NEWLINE;
             ss << "device rate > [SOUND] CoreRate > 44100" << NEWLINE;
+        }
+        else if (const SoundCharacterSettings::Descriptor* d = SoundCharacterSettings::Find(settingName))
+        {
+            if (context->pSoundManager)
+            {
+                ss << d->name << " = " << SoundCharacterSettings::Get(*context->pSoundManager, d->name) << NEWLINE;
+                std::string allowed;
+                for (const std::string& v : SoundCharacterSettings::AllowedValues(d->name))
+                    allowed += (allowed.empty() ? "" : ", ") + v;
+                ss << "Values: " << allowed << NEWLINE;
+            }
+            else
+            {
+                ss << d->name << " = unavailable (sound manager not initialized)" << NEWLINE;
+            }
+            ss << "Description: " << d->description << NEWLINE;
+            ss << "Applied at the next frame boundary; runtime only - not saved to the ini" << NEWLINE;
         }
         else
         {
@@ -306,6 +344,28 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
                 ss << "Error: Invalid value '" << value
                    << "'. Use 44100, 48000, 88200, 96000, 176400, 192000 or auto" << NEWLINE;
             }
+        }
+        session.SendResponse(ss.str());
+        return;
+    }
+
+    if (SoundCharacterSettings::Find(settingName))
+    {
+        SoundManager* soundManager = context->pSoundManager;
+        if (!soundManager)
+        {
+            session.SendResponse(std::string("Error: Sound manager not available for this emulator") + NEWLINE);
+            return;
+        }
+        std::string error;
+        if (SoundCharacterSettings::Set(*soundManager, settingName, value, error))
+        {
+            ss << "Setting changed: " << settingName << " = " << SoundCharacterSettings::Get(*soundManager, settingName)
+               << " (applied at the next frame boundary)" << NEWLINE;
+        }
+        else
+        {
+            ss << "Error: " << error << NEWLINE;
         }
         session.SendResponse(ss.str());
         return;

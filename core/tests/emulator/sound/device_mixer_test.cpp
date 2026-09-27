@@ -15,6 +15,9 @@ protected:
     void SetUp() override
     {
         ctx = new EmulatorContext(LoggerLevel::LogError);
+        // Mixer arithmetic is the subject: no AY tone voicing in front of it
+        // (a high-pass turns the constant test levels into decaying ones)
+        ctx->config.sound.ayVoicing = FilterVoicing::Preset::Flat;
         sm = new SoundManager(ctx);
         sm->reset();
 

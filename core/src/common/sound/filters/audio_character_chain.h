@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <algorithm>
+#include <string_view>
 
 /// @brief Chip-agnostic audio character chain for post-processing
 ///
@@ -124,6 +125,11 @@ public:
     void setRoomMode(RoomMode mode);
     RoomMode getRoomMode() const { return _roomMode; }
     static const char* roomModeName(RoomMode mode);
+    /// Stable machine-readable ID ("off", "15db" ... "1db") for settings,
+    /// automation and persistence
+    static const char* roomModeId(RoomMode mode);
+    /// Parse a room ID: "off", "15db", "-15db", "15" or "-15" (case-insensitive)
+    static bool parseRoomMode(std::string_view text, RoomMode& out);
     /// endregion </Room Configuration>
 
     /// region <Processing>

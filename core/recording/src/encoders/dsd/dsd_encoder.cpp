@@ -64,6 +64,9 @@ bool DSDEncoder::Start(const std::string& filename, const EncoderConfig& config)
         _nativeConverter->SetInputGain(_inputGainDb);
         _nativeConverter->SetPunchEnabled(_punchEnabled);
         _nativeConverter->SetPunchAmount(_punchAmount);
+
+        // The tap is upstream of SoundManager's voicing: apply it here
+        _nativeVoicing = FilterVoicing(static_cast<double>(_nativeSampleRate), _voicingPreset);
     }
     else
     {
@@ -150,6 +153,7 @@ void DSDEncoder::nativeWorkerMain()
 
     auto convertAndWrite = [this, &frames, &dsdData](size_t frameCount) {
         dsdData.clear();
+        _nativeVoicing.processFloat(frames.data(), frameCount);
         _nativeConverter->Process(frames.data(), frameCount, dsdData);
 
         if (!dsdData.empty() && !_writer->Write(dsdData))

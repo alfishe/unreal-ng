@@ -14,6 +14,7 @@
 #include <tapeaudio/tapeaudioimporter.h>
 #include <tapeaudio/tapeaudiorenderer.h>
 #include <emulator/video/screen.h>
+#include <emulator/sound/soundcharactersettings.h>
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/chips/soundchip_ay8910.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
@@ -3694,6 +3695,35 @@ namespace PythonBindings
             d["target_rate"] = static_cast<uint64_t>(sound->getTargetCoreRate());
             return d;
         }, "Core audio rate state: pin (0 = auto), effective core_rate, target_rate")
+
+        // Sound character (same source as CLI 'setting ay_voicing|ay_punch|
+        // ay_room|beeper_punch', WebAPI PUT settings/<name> and Lua
+        // set_sound_character): runtime only, applied at the next frame boundary
+        .def("get_sound_character", [](Emulator& self) -> py::dict {
+            py::dict d;
+            auto* context = self.GetContext();
+            if (!context || !context->pSoundManager) { d["error"] = "sound manager not available"; return d; }
+            for (const SoundCharacterSettings::Descriptor& desc : SoundCharacterSettings::Descriptors())
+                d[desc.name] = SoundCharacterSettings::Get(*context->pSoundManager, desc.name);
+            return d;
+        }, "Sound character settings as text: ay_voicing, ay_punch, ay_room, beeper_punch")
+
+        .def("set_sound_character", [](Emulator& self, const std::string& name, const std::string& value) -> py::dict {
+            py::dict d;
+            d["ok"] = false;
+            auto* context = self.GetContext();
+            if (!context || !context->pSoundManager) { d["error"] = "sound manager not available"; return d; }
+            std::string error;
+            if (!SoundCharacterSettings::Set(*context->pSoundManager, name, value, error))
+            {
+                d["error"] = error;
+                return d;
+            }
+            d["ok"] = true;
+            d["value"] = SoundCharacterSettings::Get(*context->pSoundManager, name);
+            return d;
+        }, py::arg("name"), py::arg("value"),
+           "Set ay_voicing (headphones|classic|flat|warm|tv|small_speaker), ay_punch (on|off), ay_room (off|15db..1db) or beeper_punch (on|off)")
 
         .def("audio_capture_status", [](Emulator& self) -> py::dict {
             py::dict d;

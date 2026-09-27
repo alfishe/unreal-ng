@@ -58,6 +58,13 @@ class MainWindow;
 }
 QT_END_NAMESPACE
 
+/// Where an emulator instance adopted by the main window came from
+enum class EmulatorOrigin
+{
+    CreatedByGui,  ///< This window created it (startup, model switch): user preferences apply
+    Adopted        ///< Created elsewhere (WebAPI / MCP / CLI), picked up by the GUI: left as it is
+};
+
 class MainWindow : public QMainWindow, public Observer
 {
     Q_OBJECT
@@ -210,7 +217,10 @@ private:
     /// (UI-triggered, automation-triggered, or selection-changed) must go through here.
     /// Handles: binding, audio, screen, debugger, menu, and UI state.
     /// @param emulator The emulator to adopt
-    void adoptEmulator(std::shared_ptr<Emulator> emulator);
+    /// @param origin CreatedByGui when this window created the instance - only
+    ///        then are the user's saved sound preferences applied; an instance
+    ///        created through automation keeps its own values (Adopted)
+    void adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigin origin);
 
     /// @brief Unbind from the currently adopted emulator without destroying it.
     /// Used when switching to a different emulator - old emulator keeps running headless.

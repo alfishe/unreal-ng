@@ -51,7 +51,8 @@
     schemas["SettingsResponse"]["properties"]["settings"]["description"] =
         "Grouped settings: io_acceleration (fast_tape, turbo_tape, fast_disk), "
         "disk_interface (trdos_present, trdos_traps), audio (audio_rate - pinned rate "
-        "or \"auto\" - and core_rate_hz, the live core rate)";
+        "or \"auto\" - core_rate_hz, the live core rate, and the sound character: ay_voicing "
+        "(headphones | classic | flat | warm | tv | small_speaker), ay_punch (bool), ay_room (off | 15db ... 1db), beeper_punch (bool))";
 
     // Feature Management schemas
     schemas["FeaturesResponse"]["type"] = "object";

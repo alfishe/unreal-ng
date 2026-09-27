@@ -5,6 +5,7 @@
 #include "pcm_to_dsd_converter.h"
 #include "native_dsd_converter.h"
 #include "dsf_writer.h"
+#include "common/sound/filters/filtervoicing.h"
 
 #include <atomic>
 #include <memory>
@@ -54,6 +55,13 @@ public:
         _nativeTap = std::move(tap);
         _nativeSampleRate = nativeSampleRate;
     }
+
+    /// AY / SSG tone voicing for the native tap (FilterVoicing profile). The
+    /// tap is taken upstream of SoundManager's voicing stage, so native mode
+    /// applies it here, at the native rate, to keep "what you hear is what you
+    /// record". Latched at Start() - one recording keeps one voicing. PCM mode
+    /// ignores it: the mixed PCM stream is already voiced. Default Flat
+    void SetVoicingPreset(FilterVoicing::Preset preset) { _voicingPreset = preset; }
 
     /// endregion </Configuration>
 
@@ -110,6 +118,8 @@ private:
     std::shared_ptr<NativeAudioTap> _nativeTap;
     uint32_t _nativeSampleRate = 0;
     std::unique_ptr<NativeDSDConverter> _nativeConverter;
+    FilterVoicing::Preset _voicingPreset = FilterVoicing::Preset::Flat;
+    FilterVoicing _nativeVoicing;  // worker thread only (created in Start)
     std::thread _nativeWorker;
     std::atomic<bool> _workerStop{false};
 

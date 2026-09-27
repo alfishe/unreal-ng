@@ -625,3 +625,47 @@ TEST_F(DSFWriterTest, HeaderSampleRateAndSize)
 }
 
 /// endregion </DSFWriter>
+
+TEST_F(DSDEncoderE2ETest, NativeModeAppliesVoicing)
+{
+    // The native tap is taken upstream of SoundManager's AY voicing stage, so
+    // the encoder voices it itself (latched at Start). A 30 Hz tone - Classic
+    // is ~-7 dB there - must encode differently under Classic than under
+    // Flat. The converter has no dither, so the same profile twice encodes
+    // bit-identically: the difference is the voicing and nothing else
+    auto encode = [this](FilterVoicing::Preset preset, const std::string& name) {
+        const std::string path = (_tempDir / name).string();
+        auto tap = std::make_shared<NativeAudioTap>();
+
+        DSDEncoder encoder;
+        encoder.SetDSDRate(DSDRate::DSD64);
+        encoder.SetNativeTap(tap, NATIVE_RATE);
+        encoder.SetVoicingPreset(preset);
+
+        EncoderConfig config;
+        config.audioSampleRate = 44100;
+        config.audioChannels = 2;
+        EXPECT_TRUE(encoder.Start(path, config)) << encoder.GetLastError();
+
+        // 40 ms fits the tap ring (~300 ms): pushed at once, drained by Stop()
+        constexpr size_t FRAMES = NATIVE_RATE / 25;
+        for (size_t i = 0; i < FRAMES; i++)
+        {
+            const float s = 0.6f * static_cast<float>(std::sin(2.0 * M_PI * 30.0 * i / NATIVE_RATE));
+            tap->push(s, s);
+        }
+        EXPECT_EQ(tap->overruns(), 0u);
+        encoder.Stop();
+
+        std::ifstream f(path, std::ios::binary);
+        return std::vector<uint8_t>((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    };
+
+    const std::vector<uint8_t> flatA = encode(FilterVoicing::Preset::Flat, "voicing-flat-a.dsf");
+    const std::vector<uint8_t> flatB = encode(FilterVoicing::Preset::Flat, "voicing-flat-b.dsf");
+    const std::vector<uint8_t> classic = encode(FilterVoicing::Preset::Classic, "voicing-classic.dsf");
+
+    ASSERT_GT(flatA.size(), 92u) << "no DSF written";
+    EXPECT_EQ(flatA, flatB) << "same input, same profile: the encoder must be deterministic";
+    EXPECT_NE(flatA, classic) << "Classic voicing must reach the native DSD stream";
+}

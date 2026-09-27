@@ -40,6 +40,9 @@ protected:
         ASSERT_NE(_emulator, nullptr) << "Failed to create emulator";
         _context = _emulator->GetContext();
         _context->config.frame = PENTAGON_FRAME;
+        // The punch / room chains are the subject: AY tone voicing (which runs
+        // in HQ and LQ alike) would change the buffers in the bypassed frames
+        _context->config.sound.ayVoicing = FilterVoicing::Preset::Flat;
     }
 
     void TearDown() override

@@ -10,6 +10,7 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/sound/audio.h>
+#include <emulator/sound/soundcharactersettings.h>
 #include <emulator/sound/soundmanager.h>
 #include <json/json.h>
 
@@ -23,6 +24,26 @@ namespace v1
 
 // Helper function declared in emulator_api.cpp
 extern void addCorsHeaders(HttpResponsePtr& resp);
+
+namespace
+{
+/// Sound-character setting value as JSON: on/off settings as bool, the rest as text
+Json::Value SoundCharacterJson(const SoundManager& sound, const SoundCharacterSettings::Descriptor& d)
+{
+    const std::string value = SoundCharacterSettings::Get(sound, d.name);
+    if (d.isBool)
+        return Json::Value(value == "on");
+    return Json::Value(value);
+}
+
+Json::Value AllowedJson(const std::string& name)
+{
+    Json::Value allowed(Json::arrayValue);
+    for (const std::string& v : SoundCharacterSettings::AllowedValues(name))
+        allowed.append(v);
+    return allowed;
+}
+}  // namespace
 
 /// @brief GET /api/v1/emulator/{id}/settings
 /// @brief Get all settings for an emulator
@@ -86,6 +107,13 @@ void EmulatorAPI::getSettings(const HttpRequestPtr& req, std::function<void(cons
     const uint32_t pin = soundManager ? soundManager->getCoreRatePin() : 0;
     audio["audio_rate"] = pin ? Json::Value(pin) : Json::Value(std::string("auto"));
     audio["core_rate_hz"] = static_cast<unsigned>(soundManager ? soundManager->getCoreRate() : 44100u);
+    // Sound character (ay_voicing, ay_punch, ay_room, beeper_punch) - the same
+    // source the CLI 'setting' and Lua/Python get_sound_character serve
+    if (soundManager)
+    {
+        for (const SoundCharacterSettings::Descriptor& d : SoundCharacterSettings::Descriptors())
+            audio[d.name] = SoundCharacterJson(*soundManager, d);
+    }
     settings["audio"] = audio;
 
     ret["emulator_id"] = id;
@@ -134,7 +162,16 @@ void EmulatorAPI::getSetting(const HttpRequestPtr& req, std::function<void(const
     CONFIG& config = context->config;
     Json::Value ret;
 
-    if (name == "fast_tape")
+    const SoundCharacterSettings::Descriptor* soundSetting = SoundCharacterSettings::Find(name);
+    if (soundSetting && context->pSoundManager)
+    {
+        ret["name"] = soundSetting->name;
+        ret["value"] = SoundCharacterJson(*context->pSoundManager, *soundSetting);
+        ret["allowed"] = AllowedJson(soundSetting->name);
+        ret["description"] = std::string(soundSetting->description) +
+                             ". Applied at the next frame boundary; runtime only, never written to the ini";
+    }
+    else if (name == "fast_tape")
     {
         FeatureManager* featureManager = context->pFeatureManager;
         ret["name"] = "fast_tape";
@@ -243,6 +280,66 @@ void EmulatorAPI::setSetting(const HttpRequestPtr& req, std::function<void(const
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    // Sound character settings (ay_voicing, ay_punch, ay_room, beeper_punch):
+    // one parser for every automation surface (SoundCharacterSettings). The
+    // value may be a string or, for the on/off ones, a JSON bool
+    if (const SoundCharacterSettings::Descriptor* soundSetting = SoundCharacterSettings::Find(name))
+    {
+        SoundManager* soundManager = context->pSoundManager;
+        auto badRequest = [&](const std::string& message) {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = message;
+            error["allowed"] = AllowedJson(soundSetting->name);
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+        };
+        if (!soundManager)
+        {
+            Json::Value error;
+            error["error"] = "Internal Error";
+            error["message"] = "Sound manager not available for this emulator";
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+
+        const Json::Value value = (*json)["value"];
+        std::string text;
+        if (value.isBool())
+            text = value.asBool() ? "on" : "off";
+        else if (value.isString())
+            text = value.asString();
+        else
+        {
+            badRequest(std::string("Invalid ") + soundSetting->name + " value: expected a string" +
+                       (soundSetting->isBool ? " or a bool" : ""));
+            return;
+        }
+
+        std::string errorMessage;
+        if (!SoundCharacterSettings::Set(*soundManager, soundSetting->name, text, errorMessage))
+        {
+            badRequest(errorMessage);
+            return;
+        }
+
+        Json::Value ret;
+        ret["name"] = soundSetting->name;
+        ret["value"] = SoundCharacterJson(*soundManager, *soundSetting);
+        ret["message"] = std::string(soundSetting->name) + " set (applied at the next frame boundary)";
+        ret["emulator_id"] = id;
+
+        auto resp = HttpResponse::newHttpJsonResponse(ret);
         addCorsHeaders(resp);
         callback(resp);
         return;

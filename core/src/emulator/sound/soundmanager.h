@@ -7,6 +7,7 @@
 #include "common/sound/audiofilehelper.h"
 #include "common/sound/filters/filter_interpolate.h"
 #include "common/sound/filters/audio_character_chain.h"
+#include "common/sound/filters/voicingstage.h"
 #include "emulator/sound/audio.h"
 #include "common/sound/filters/masterlimiter.h"
 #include "common/sound/filters/resampler_drc.h"
@@ -115,6 +116,34 @@ protected:
     // gain staging is hardware-derived and must reach the mix untouched
     AudioCharacterChain _fmChain0;
     AudioCharacterChain _fmChain1;
+
+    // AY / SSG tone voicing (FilterVoicing), one stage per TurboSound chip
+    // buffer. Runs BEFORE the character chains and, unlike them, in HQ and
+    // LQ alike: it sets the tonal balance, so toggling HQ or leaving turbo
+    // must not change the bass. Not reset when HQ returns (its state ran
+    // through the LQ frames). FM buffers are never voiced.
+    // Design: docs/inprogress/2026-09-25-ay-tone-voicing/ay-tone-voicing-tdd.md
+    VoicingStage _ayVoicing0{MAX_SAMPLES_PER_FRAME};
+    VoicingStage _ayVoicing1{MAX_SAMPLES_PER_FRAME};
+
+    /// Built-in AY headphone crossfeed (ay_room) for a new sound stack: -9 dB,
+    /// a clear reduction of the hard ABC / ACB panning on headphones. Sound HQ
+    /// only; the FM and beeper chains keep room off
+    static constexpr AudioCharacterChain::RoomMode DEFAULT_AY_ROOM = AudioCharacterChain::RoomMode::Room_9dB;
+
+    // Character-chain settings requested from any thread (GUI, automation)
+    // and the last request the emulation thread applied. A request is applied
+    // at the next frame boundary and only when it CHANGED, so code that edits
+    // a chain directly (getAYChain(), tests) is not overridden every frame
+    std::atomic<bool> _requestedAYPunch{true};
+    std::atomic<uint8_t> _requestedAYRoom{static_cast<uint8_t>(DEFAULT_AY_ROOM)};
+    std::atomic<bool> _requestedBeeperPunch{false};
+    bool _appliedAYPunch = true;
+    uint8_t _appliedAYRoom = static_cast<uint8_t>(DEFAULT_AY_ROOM);
+    bool _appliedBeeperPunch = false;
+
+    /// Frame boundary (emulation thread): push changed punch / room requests into the chains
+    void applyCharacterRequests();
 
     // DRC resampler stage between the mixed CORE_RATE stream and the device
     // callback (audio-sync design, Fix 2). Unity bypass by default. The
@@ -364,6 +393,42 @@ public:
 
     // Apply AY chain settings to both chips
     void syncAYChainSettings();
+
+    /// region <Sound character settings (thread-safe, applied at the next frame boundary)>
+    /// AY / SSG tone voicing profile (both chips). Any thread; the stream
+    /// switches click-free at the next frame boundary (VoicingStage)
+    void setAYVoicing(FilterVoicing::Preset preset);
+    /// The REQUESTED profile - a read right after a write shows the new value
+    FilterVoicing::Preset getAYVoicing() const
+    {
+        return _ayVoicing0.requested();
+    }
+    /// The profile chip 0 runs right now (tests, diagnostics)
+    FilterVoicing::Preset getActiveAYVoicing() const
+    {
+        return _ayVoicing0.active();
+    }
+    const VoicingStage& getAYVoicingStage(int chip) const
+    {
+        return chip == 1 ? _ayVoicing1 : _ayVoicing0;
+    }
+
+    void setAYPunch(bool enabled);
+    bool getAYPunch() const
+    {
+        return _requestedAYPunch.load(std::memory_order_acquire);
+    }
+    void setAYRoomMode(AudioCharacterChain::RoomMode mode);
+    AudioCharacterChain::RoomMode getAYRoomMode() const
+    {
+        return static_cast<AudioCharacterChain::RoomMode>(_requestedAYRoom.load(std::memory_order_acquire));
+    }
+    void setBeeperPunch(bool enabled);
+    bool getBeeperPunch() const
+    {
+        return _requestedBeeperPunch.load(std::memory_order_acquire);
+    }
+    /// endregion </Sound character settings>
 
     // Device registry API
     const std::vector<AudioDeviceInfo>& devices() const { return _devices; }

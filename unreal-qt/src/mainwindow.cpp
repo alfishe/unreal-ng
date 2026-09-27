@@ -40,6 +40,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "emulator/filemanager.h"
+#include "emulator/soundcharacterpreferences.h"
 #include "emulator/io/keyboard/keyboard.h"
 #include "emulator/notifications.h"
 #include "emulator/ports/portdecoder.h"
@@ -1283,7 +1284,7 @@ void MainWindow::toggleEmulatorStartStop()
             // Adopt the emulator using central adoption flow
             // This handles: audio, screen, binding, debugger, menu, UI state
             // NOTE: This sets _emulator - do not set it before calling this!
-            adoptEmulator(newEmulator);
+            adoptEmulator(newEmulator, EmulatorOrigin::CreatedByGui);
 
             // Start in async own thread - use EmulatorManager for lifecycle
             std::string emulatorId = newEmulator->GetId();
@@ -2857,7 +2858,7 @@ void MainWindow::handleMachineModelChangeRequested(const QString& modelSpec)
     }
 
     // Adopt the new emulator (already initialized by CreateEmulatorWithModelAndRAM)
-    adoptEmulator(newEmulator);
+    adoptEmulator(newEmulator, EmulatorOrigin::CreatedByGui);
     qDebug() << "handleMachineModelChangeRequested: adoptEmulator completed";
 
     // Start the new emulator asynchronously (Start() blocks, StartAsync() returns immediately)
@@ -3488,7 +3489,7 @@ void MainWindow::handleEmulatorSelectionChanged(int id, Message* message)
                 QMetaObject::invokeMethod(
                     this,
                     [this, newEmulator]() {
-                        adoptEmulator(newEmulator);
+                        adoptEmulator(newEmulator, EmulatorOrigin::Adopted);
                         qDebug() << "MainWindow: Adopted emulator from CLI selection"
                                  << QString::fromStdString(newEmulator->GetId());
                     },
@@ -3657,7 +3658,7 @@ void MainWindow::bindEmulatorAudio(std::shared_ptr<Emulator> emulator)
     qDebug() << "MainWindow::bindEmulatorAudio() - Only this emulator will have audio/video callbacks active";
 }
 
-void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator)
+void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigin origin)
 {
     if (!emulator)
     {
@@ -3683,6 +3684,16 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator)
 
     // Store reference
     _emulator = emulator;
+
+    // 0. The user's saved sound character (voicing, punch, room) - only on
+    // instances this window created, before audio is bound (so before the
+    // first audible frame). Adopted instances keep their creator's values
+    if (origin == EmulatorOrigin::CreatedByGui)
+    {
+        EmulatorContext* soundContext = _emulator->GetContext();
+        if (soundContext && soundContext->pSoundManager)
+            SoundCharacterPreferences::ApplySaved(*soundContext->pSoundManager);
+    }
 
     // === BINDING SEQUENCE (single canonical order) ===
     // 1. Audio binding
@@ -4136,7 +4147,7 @@ void MainWindow::tryAdoptRemainingEmulator()
                  << QString::fromStdString(latestRunningEmulator->GetId());
 
         // Use central adoption flow
-        adoptEmulator(latestRunningEmulator);
+        adoptEmulator(latestRunningEmulator, EmulatorOrigin::Adopted);
 
         qDebug() << "MainWindow: Successfully adopted latest running emulator"
                  << QString::fromStdString(latestRunningEmulator->GetId());

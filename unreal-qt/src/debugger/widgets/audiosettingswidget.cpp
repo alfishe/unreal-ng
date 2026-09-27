@@ -10,6 +10,7 @@
 #include "emulator/sound/covox.h"
 #include "emulator/sound/chips/soundchip_turbosound.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
+#include "emulator/soundcharacterpreferences.h"
 
 AudioSettingsWidget::AudioSettingsWidget(EmulatorContext* context, QWidget* parent)
     : QWidget(parent), _context(context)
@@ -155,6 +156,25 @@ void AudioSettingsWidget::createUI()
     stereoRow->addWidget(_chipModelCombo);
     ayLayout->addLayout(stereoRow);
 
+    // EQ profile (voicing): the tonal balance of the AY / SSG output. Not an HQ
+    // effect - it runs with the FIR filter off too, so it stays enabled
+    auto* voicingRow = new QHBoxLayout();
+    voicingRow->addWidget(new QLabel("EQ profile:", this));
+    _ayVoicingCombo = new QComboBox(this);
+    FilterVoicing::forEachVisible([this](const FilterVoicing::Profile& profile) {
+        _ayVoicingCombo->addItem(QString::fromUtf8(profile.label), QString::fromUtf8(profile.id));
+    });
+    _ayVoicingCombo->setToolTip(
+        "Real AY boards send very low bass and the thump of volume changes\n"
+        "straight to the output. Classic trims them; Flat is the hardware line out;\n"
+        "TV speaker also drops the deep bass and softens the highs, like a TV set;\n"
+        "Headphones (default) keeps Classic bass and softens the harsh square-wave highs;\n"
+        "Warm sits between Headphones and TV speaker: softer bass and softer highs;\n"
+        "Small speaker sounds like a clone's built-in speaker or a cheap amplifier.\n"
+        "Recordings use the same setting.");
+    voicingRow->addWidget(_ayVoicingCombo, 1);
+    ayLayout->addLayout(voicingRow);
+
     // DSP options row
     auto* dspRow = new QHBoxLayout();
     _firCheckbox = new QCheckBox("FIR Filter", this);
@@ -176,6 +196,11 @@ void AudioSettingsWidget::createUI()
     _ayRoomCombo->setToolTip("Crossfeed for headphones");
     dspRow->addWidget(_ayRoomCombo);
     ayLayout->addLayout(dspRow);
+
+    _punchVoicingHint = new QLabel("Punch was tuned for Classic voicing", this);
+    _punchVoicingHint->setStyleSheet("color: gray; font-size: 11px;");
+    _punchVoicingHint->setVisible(false);
+    ayLayout->addWidget(_punchVoicingHint);
 
     // TSFM FM trim row (hidden until the device has FM channels): ±12 dB in
     // 0.5 dB steps around the hardware-derived 0.30 gain default (§7.1)
@@ -389,6 +414,8 @@ void AudioSettingsWidget::connectSignals()
     connect(_chipModelCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &AudioSettingsWidget::onChipModelChanged);
     connect(_firCheckbox, &QCheckBox::checkStateChanged, this, &AudioSettingsWidget::onFirChanged);
+    connect(_ayVoicingCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &AudioSettingsWidget::onAYVoicingChanged);
     connect(_ayPunchCheckbox, &QCheckBox::checkStateChanged, this, &AudioSettingsWidget::onAYPunchChanged);
     connect(_ayRoomCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &AudioSettingsWidget::onAYRoomModeChanged);
@@ -438,6 +465,7 @@ void AudioSettingsWidget::disconnectSignals()
     disconnect(_stereoModeCombo, nullptr, this, nullptr);
     disconnect(_chipModelCombo, nullptr, this, nullptr);
     disconnect(_firCheckbox, nullptr, this, nullptr);
+    disconnect(_ayVoicingCombo, nullptr, this, nullptr);
     disconnect(_ayPunchCheckbox, nullptr, this, nullptr);
     disconnect(_ayRoomCombo, nullptr, this, nullptr);
     disconnect(_fmTrimSlider, nullptr, this, nullptr);
@@ -547,12 +575,29 @@ void AudioSettingsWidget::refreshFromContext()
             }
         }
 
-        // AY chain settings
-        _ayPunchCheckbox->setChecked(sm->getAYChain().isPunchEnabled());
-        _ayRoomCombo->setCurrentIndex(static_cast<int>(sm->getAYChain().getRoomMode()));
+        // Sound character: the instance's requested values (a change made
+        // through automation shows up here too)
+        const int voicingIndex =
+            _ayVoicingCombo->findData(QString::fromUtf8(FilterVoicing::presetId(sm->getAYVoicing())));
+        if (voicingIndex >= 0)
+            _ayVoicingCombo->setCurrentIndex(voicingIndex);
+        _ayPunchCheckbox->setChecked(sm->getAYPunch());
+
+        // The combo offers a subset of the room levels: select by value (the
+        // item data is the RoomMode), and show a level set elsewhere as an extra item
+        const int roomValue = static_cast<int>(sm->getAYRoomMode());
+        int roomIndex = _ayRoomCombo->findData(roomValue);
+        if (roomIndex < 0)
+        {
+            const QString name = QString::fromUtf8(AudioCharacterChain::roomModeId(sm->getAYRoomMode()));
+            _ayRoomCombo->addItem("-" + name.left(name.size() - 2) + "dB", roomValue);
+            roomIndex = _ayRoomCombo->count() - 1;
+        }
+        _ayRoomCombo->setCurrentIndex(roomIndex);
 
         // Beeper settings
-        _beeperPunchCheckbox->setChecked(sm->getBeeperChain().isPunchEnabled());
+        _beeperPunchCheckbox->setChecked(sm->getBeeperPunch());
+        updatePunchVoicingHint();
 
         // FIR filter
         if (_context->pFeatureManager)
@@ -684,12 +729,30 @@ void AudioSettingsWidget::onChipModelChanged(int index)
     }
 }
 
+void AudioSettingsWidget::onAYVoicingChanged(int index)
+{
+    if (!_context || !_context->pSoundManager || index < 0)
+        return;
+
+    const std::string id = _ayVoicingCombo->itemData(index).toString().toStdString();
+    FilterVoicing::Preset preset = FilterVoicing::Preset::Classic;
+    if (!FilterVoicing::parsePreset(id, preset))
+        return;
+
+    // Thread-safe request: the audio switches click-free at the next frame
+    _context->pSoundManager->setAYVoicing(preset);
+    SoundCharacterPreferences::Save("ay_voicing", id);
+    updatePunchVoicingHint();
+}
+
 void AudioSettingsWidget::onAYPunchChanged(int state)
 {
     if (_context && _context->pSoundManager)
     {
-        _context->pSoundManager->getAYChain().setPunchEnabled(state == Qt::Checked);
-        _context->pSoundManager->syncAYChainSettings();
+        const bool enabled = state == Qt::Checked;
+        _context->pSoundManager->setAYPunch(enabled);
+        SoundCharacterPreferences::Save("ay_punch", enabled ? "on" : "off");
+        updatePunchVoicingHint();
     }
 }
 
@@ -697,10 +760,19 @@ void AudioSettingsWidget::onAYRoomModeChanged(int index)
 {
     if (_context && _context->pSoundManager)
     {
-        auto mode = static_cast<AudioCharacterChain::RoomMode>(_ayRoomCombo->currentData().toInt());
-        _context->pSoundManager->getAYChain().setRoomMode(mode);
-        _context->pSoundManager->syncAYChainSettings();
+        auto mode = static_cast<AudioCharacterChain::RoomMode>(_ayRoomCombo->itemData(index).toInt());
+        _context->pSoundManager->setAYRoomMode(mode);
+        SoundCharacterPreferences::Save("ay_room", AudioCharacterChain::roomModeId(mode));
     }
+}
+
+void AudioSettingsWidget::updatePunchVoicingHint()
+{
+    // Informational only: the punch presets were tuned by ear on the Classic
+    // balance; with Flat the punch envelope also follows the volume-step thumps
+    const bool flat = _ayVoicingCombo->currentData().toString() == QString::fromUtf8(
+                                                                       FilterVoicing::presetId(FilterVoicing::Preset::Flat));
+    _punchVoicingHint->setVisible(flat && _ayPunchCheckbox->isChecked());
 }
 
 void AudioSettingsWidget::onFirChanged(int state)
@@ -757,7 +829,11 @@ void AudioSettingsWidget::onChannelVolumeChanged(int value)
 void AudioSettingsWidget::onBeeperPunchChanged(int state)
 {
     if (_context && _context->pSoundManager)
-        _context->pSoundManager->getBeeperChain().setPunchEnabled(state == Qt::Checked);
+    {
+        const bool enabled = state == Qt::Checked;
+        _context->pSoundManager->setBeeperPunch(enabled);
+        SoundCharacterPreferences::Save("beeper_punch", enabled ? "on" : "off");
+    }
 }
 
 // ============ Covox slots ============

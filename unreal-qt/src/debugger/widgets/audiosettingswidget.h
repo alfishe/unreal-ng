@@ -48,6 +48,7 @@ private slots:
     void onSourceVolumeChanged(int value);
 
     // AY controls
+    void onAYVoicingChanged(int index);
     void onAYPunchChanged(int state);
     void onAYRoomModeChanged(int index);
     void onFirChanged(int state);
@@ -78,6 +79,7 @@ private:
     void disconnectSignals();
     void updateSoloIndicator();
     void updateDeviceInfo();
+    void updatePunchVoicingHint();
     QString buildDeviceDetailText() const;  // Full breakdown for the (i) popup
 
     EmulatorContext* _context = nullptr;
@@ -101,7 +103,9 @@ private:
     // device is the TSFM board (the Sources list and chip labels follow)
     QGroupBox* _ayGroup = nullptr;
     QCheckBox* _firCheckbox = nullptr;
+    QComboBox* _ayVoicingCombo = nullptr;  // EQ profile (FilterVoicing voicing): HQ and LQ alike
     QCheckBox* _ayPunchCheckbox = nullptr;
+    QLabel* _punchVoicingHint = nullptr;   // "Punch was tuned for Classic voicing" (Flat + punch)
     QComboBox* _ayRoomCombo = nullptr;
     QComboBox* _stereoModeCombo = nullptr;
     QComboBox* _chipModelCombo = nullptr;

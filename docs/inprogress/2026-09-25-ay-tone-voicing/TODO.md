@@ -1,6 +1,6 @@
 # TODO — AY tone voicing
 
-**Status:** design reviewed three times against `af072f83` (TDD §13), ready for phase 1 implementation and testing; nothing implemented yet.
+**Status:** implemented 2026-09-27 (phases 1, 2, 4); phase 3 and the listening checks remain. What landed and how it was verified: TDD §14. Permanent doc: [docs/emulator/design/audio/ay-tone-voicing.md](../../emulator/design/audio/ay-tone-voicing.md).
 
 Adds a switchable voicing stage for AY/SSG output (`flat` = hardware, `classic` = the `4c49fb6`
 bass balance), because the 5 Hz coupling high-pass from `45812176` made the bass much heavier.
@@ -8,7 +8,11 @@ The original proposal (translated, with commit references) is [proposal.md](prop
 
 Remaining:
 
-- [ ] Phase 1 — `FilterVoicing` + `SoundManager` wiring (two-frame pre-roll + crossfade), `[SOUND] AYVoicing`, tests incl. full audit list, benchmark, DSD-is-flat note, A/B listening vs `d90421bb`
-- [ ] Phase 2 — WebAPI/CLI/Lua/Python `ay_voicing`, Qt `EmulatorOrigin` + combo + QSettings, optional DSD-tap voicing (videowall: no changes, uses the active emulator's config) (+ optional punch/room persistence)
-- [ ] Phase 3 — `tv` curve by listening
-- [ ] Phase 4 — permanent doc, recipe line, flip to `DONE.md`
+- [x] Phase 1 — `FilterVoicing` + `SoundManager` wiring (two-frame pre-roll + crossfade), `[SOUND] AYVoicing`, tests incl. full audit list, benchmark, DSD-is-flat note
+- [x] Phase 2 — WebAPI/CLI/Lua/Python `ay_voicing`, Qt `EmulatorOrigin` + combo + QSettings, optional DSD-tap voicing (videowall: no changes, uses the active emulator's config) (+ optional punch/room persistence)
+- [ ] Phase 3 — `tv` curve by listening. Started 2026-09-27: `tv` is visible with the design starting point (HPF2 130 Hz + LPF2 6 kHz, Q 0.7071, magnitude-matched low-pass so the curve is the same at every core rate 44.1–192 kHz; `FilterVoicing_Test.TvMatchesDesignCurveAtEveryCoreRate`). Remaining: the listening pass, then adjust the row in `filtervoicing.h`
+- [ ] Headphones (`headphones`: Classic bass + critically damped 10 kHz low-pass) and Small speaker (`small_speaker`: HPF2 250 Hz + 1.5 kHz +3 dB peak + LPF2 4.5 kHz) added 2026-09-27 at the user's request, visible, same curve at every core rate (`FilterVoicing_Test.EveryPresetMatchesDesignCurveAtEveryCoreRate`). Remaining: the listening pass for both, together with `tv`
+- [ ] Warm (`warm`: HPF2 90 Hz Q 0.6 + critically damped LPF2 8 kHz, between Headphones and TV speaker) added 2026-09-27; **Headphones is the built-in default** since 2026-09-27 (`FilterVoicing::DEFAULT_PRESET`, was Classic). Profiles listed in UI order: flat, classic, headphones, warm, tv, small_speaker. Remaining: listening pass
+- [x] Defaults since 2026-09-27: `ay_room` = `9db` (`SoundManager::DEFAULT_AY_ROOM`, was off); the Qt label is "EQ profile" (was "Bass voicing")
+- [x] Phase 4 — permanent doc, recipe line (the folder flips to `DONE.md` once phase 3 lands)
+- [ ] A/B listening vs a `d90421bb` build (bass-heavy tune, volume-envelope "barrels", TSFM); decide R1 (punch with `flat`)

@@ -2,6 +2,7 @@
 #include "stdafx.h"
 
 #include "sysdefs.h"
+#include "common/sound/filters/filtervoicing.h"
 #include "emulator/platforms/tsconf/tsconf.h"
 
 #define EMUL_DEBUG
@@ -580,6 +581,14 @@ struct CONFIG
 		/// rate, Kaiser beta 5, ~56 dB stopband), true = HighFidelity (192
 		/// taps, beta 9, ~90 dB). Read at sound-stack construction
 		bool decimatorHighFidelity = false;
+
+		/// AY / SSG tone voicing ([SOUND] AYVoicing = headphones (default) |
+		/// classic | flat | warm | tv | small_speaker; alias
+		/// legacy = classic): the fixed EQ after the chip model, before punch
+		/// (FilterVoicing, docs/inprogress/2026-09-25-ay-tone-voicing). The
+		/// default for a new sound stack; runtime changes (GUI, automation)
+		/// go through SoundManager::setAYVoicing and are not written back
+		FilterVoicing::Preset ayVoicing = FilterVoicing::DEFAULT_PRESET;
 
 		int covoxFB, covoxDD, sd, saa1099, moonsound;
 		int beeper_vol, micout_vol, micin_vol, ay_vol, aydig_vol, saa1099_vol;
