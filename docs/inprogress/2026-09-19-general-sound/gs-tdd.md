@@ -40,7 +40,7 @@ Cross-reference these sibling designs for established patterns:
 
 ```
 0x0000–0x3FFF  ROM page 0 (or RAM0 when NOROM bit set)
-0x4000–0x7FFF  RAM page 3 (fixed, DAC sample buffers)
+0x4000–0x7FFF  RAM page 1 (fixed = upper half of MPAG 1; DAC sample buffers)
 0x8000–0xBFFF  ROM/RAM page N (switchable via port 0x00)
 0xC000–0xFFFF  ROM/RAM page M (switchable via port 0x00 or 0x10)
 ```

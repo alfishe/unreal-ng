@@ -160,7 +160,7 @@ int bufferPeak(SoundChip_GeneralSound& chip)
         peak = std::max(peak, std::abs(static_cast<int>(samples[i])));
     return peak;
 }
-// Patch one byte of the fixed window (window 1 = RAM page 3) via the TTD
+// Patch one byte of the fixed window (window 1 = RAM page FIXED_WINDOW_RAM_PAGE) via the TTD
 // state blob - used after the COM13 jump, where the firmware dispatcher is
 // gone and COM16 can no longer write memory
 void patchFixedRam(SoundChip_GeneralSound& chip, uint16_t addr, uint8_t value)
@@ -168,7 +168,7 @@ void patchFixedRam(SoundChip_GeneralSound& chip, uint16_t addr, uint8_t value)
     std::vector<uint8_t> blob(chip.TTDStateSize());
     chip.TTDSaveState(blob.data());
     const size_t ramOffset = chip.TTDStateSize() - chip.getRamSizeKB() * 1024;
-    blob[ramOffset + 3 * SoundChip_GeneralSound::PAGE_SIZE + (addr - 0x4000)] = value;
+    blob[ramOffset + SoundChip_GeneralSound::FIXED_WINDOW_RAM_PAGE * SoundChip_GeneralSound::PAGE_SIZE + (addr - 0x4000)] = value;
     chip.TTDLoadState(blob.data());
 }
 
@@ -179,7 +179,7 @@ uint8_t readFixedRam(SoundChip_GeneralSound& chip, uint16_t addr)
     std::vector<uint8_t> blob(chip.TTDStateSize());
     chip.TTDSaveState(blob.data());
     const size_t ramOffset = chip.TTDStateSize() - chip.getRamSizeKB() * 1024;
-    return blob[ramOffset + 3 * SoundChip_GeneralSound::PAGE_SIZE + (addr - 0x4000)];
+    return blob[ramOffset + SoundChip_GeneralSound::FIXED_WINDOW_RAM_PAGE * SoundChip_GeneralSound::PAGE_SIZE + (addr - 0x4000)];
 }
 } // namespace
 
@@ -215,6 +215,32 @@ TEST(SoundChip_GeneralSound_BootDiag, 2_HighCommandRoundTrip)
         const int pages = h.readGsByte(1000);
         printf("COM23 NUMPG with %3zu KB RAM: %d\n", ramKB, pages);
         EXPECT_GT(pages, 0) << ramKB << " KB: RAM detection replied nothing";
+    }
+}
+
+TEST(SoundChip_GeneralSound_BootDiag, 2b_TotalAndFreeRamReport)
+{
+    // COM20 total RAM / COM21 free RAM, 3 bytes each (L, M, H). Programming
+    // guide v1.03: "Static RAM 128k, 112k available for modules and samples":
+    // the 16 KB behind the fixed window 0x4000-0x7FFF is the one the probe
+    // finds aliased and holds back. The firmware finds the alias itself, so
+    // this report does not tell which page aliases (FixedWindow_* does)
+    static const size_t kSizes[] = {128, 256, 512};
+    for (size_t ramKB : kSizes)
+    {
+        GSHarness h(ramKB);
+        ASSERT_TRUE(bootToPost(h)) << ramKB << " KB: POST never completed";
+        int value[2] = {};
+        const uint8_t cmds[2] = {0x20, 0x21};
+        for (int c = 0; c < 2; c++)
+        {
+            ASSERT_TRUE(h.sendCommandWait(cmds[c])) << ramKB << " KB: no ack";
+            for (int b = 0; b < 3; b++)
+                value[c] |= h.readGsByte(1000) << (8 * b);
+        }
+        const int expected = static_cast<int>((ramKB - 16) * 1024);
+        EXPECT_EQ(value[0], expected) << ramKB << " KB: total RAM for modules and samples";
+        EXPECT_EQ(value[1], expected) << ramKB << " KB: nothing loaded yet, all of it free";
     }
 }
 

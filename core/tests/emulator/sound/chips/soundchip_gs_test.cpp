@@ -225,7 +225,7 @@ TEST_F(SoundChip_GeneralSound_Test, CommandLatch_PacedCommandsDispatchInOrder)
     // instruction timing; back-to-back writes with zero elapsed ZX time
     // overwrite the latch, same as Unreal/ZXMAK2)
     const uint8_t program[] = {
-        0x21, 0x00, 0x40,                    // LD HL,#4000 (window 1, fixed RAM page 3)
+        0x21, 0x00, 0x40,                    // LD HL,#4000 (window 1, fixed RAM page)
         0xDB, 0x04, 0xE6, 0x01, 0x28, 0xFA,  // loop: IN A,(FLAGS); AND 1; JR Z,loop
         0xDB, 0x01,                          // IN A,(COMRG) - reads the latch
         0x77,                                // LD (HL),A - record the command
@@ -244,10 +244,11 @@ TEST_F(SoundChip_GeneralSound_Test, CommandLatch_PacedCommandsDispatchInOrder)
     runOneFrame();
     ASSERT_EQ(chip->getStatusRaw() & 0x01, 0) << "stub never acked the second command";
 
-    // Window 1 (0x4000) is RAM page 3 - the last page of the TTD RAM image
+    // Window 1 (0x4000) is RAM page FIXED_WINDOW_RAM_PAGE of the TTD RAM image
     auto recorded = [this](size_t i) {
         const std::vector<uint8_t> blob = saveState();
-        return blob[chip->TTDStateSize() - 512 * 1024 + 3 * SoundChip_GeneralSound::PAGE_SIZE + i];
+        return blob[chip->TTDStateSize() - 512 * 1024 +
+                    SoundChip_GeneralSound::FIXED_WINDOW_RAM_PAGE * SoundChip_GeneralSound::PAGE_SIZE + i];
     };
     EXPECT_EQ(recorded(0), 0x30) << "first command was lost";
     EXPECT_EQ(recorded(1), 0xD1) << "second command was lost";
@@ -418,6 +419,44 @@ TEST_F(SoundChip_GeneralSound_Test, PageSwitch_ROMtoRAM)
     ASSERT_EQ(blob.size(), SoundChip_GeneralSound::TTD_FIXED_STATE_SIZE + 512 * 1024);
     EXPECT_EQ(blob[SoundChip_GeneralSound::TTD_FIXED_STATE_SIZE], 0x5A)
         << "write behind MPAG=1 must land in RAM";
+}
+
+TEST_F(SoundChip_GeneralSound_Test, FixedWindow_AliasesUpperHalfOfPage1)
+{
+    // GS schematic: 0x4000-0x7FFF selects RAM chip 1 with A14=1, the same
+    // cells MPAG 1 shows at 0xC000-0xFFFF. The firmware RAM probe depends on
+    // it (INIT_L.a80 writes each page's number to 0xFFFF, reads 0x7FFF back).
+    // Checked through the card CPU only, so it holds whatever the storage
+    // layout: results go to 0x4010.. (fixed window) and are read back by the
+    // host through the TTD RAM image at the fixed page
+    const uint8_t program[] = {
+        0x3E, 0x11, 0x32, 0x00, 0x40,  // LD A,#11 : LD (#4000),A
+        0x3E, 0x01, 0xD3, 0x00,        // LD A,1 : OUT (#00),A - MPAG 1
+        0x3A, 0x00, 0xC0,              // LD A,(#C000) - alias of #4000
+        0x32, 0x10, 0x40,              // LD (#4010),A
+        0x3E, 0x22, 0x32, 0x01, 0xC0,  // LD A,#22 : LD (#C001),A - write through the alias
+        0x3A, 0x01, 0x40,              // LD A,(#4001)
+        0x32, 0x11, 0x40,              // LD (#4011),A
+        0x3E, 0x44, 0x32, 0x00, 0x80,  // LD A,#44 : LD (#8000),A - lower half of page 1
+        0x3A, 0x00, 0x40,              // LD A,(#4000) - must still be #11
+        0x32, 0x12, 0x40,              // LD (#4012),A
+        0x3E, 0x02, 0xD3, 0x00,        // LD A,2 : OUT (#00),A - MPAG 2
+        0x3E, 0x33, 0x32, 0x02, 0xC0,  // LD A,#33 : LD (#C002),A - upper half of page 2
+        0x3A, 0x02, 0x40,              // LD A,(#4002) - must not see #33
+        0x32, 0x13, 0x40,              // LD (#4013),A
+        0x76                           // HALT
+    };
+    chip->loadROM(writeRom("gs-fixedwindow.rom", program, sizeof(program)));
+    runOneFrame();
+    ASSERT_EQ(chip->getMPAG(), 2);
+
+    const std::vector<uint8_t> blob = saveState();
+    const size_t fixed = SoundChip_GeneralSound::TTD_FIXED_STATE_SIZE +
+                         SoundChip_GeneralSound::FIXED_WINDOW_RAM_PAGE * SoundChip_GeneralSound::PAGE_SIZE;
+    EXPECT_EQ(blob[fixed + 0x10], 0x11) << "MPAG 1 #C000 must read what was written at #4000";
+    EXPECT_EQ(blob[fixed + 0x11], 0x22) << "a write at MPAG 1 #C001 must appear at #4001";
+    EXPECT_EQ(blob[fixed + 0x12], 0x11) << "MPAG 1 #8000 (lower half) must not alias #4000";
+    EXPECT_NE(blob[fixed + 0x13], 0x33) << "MPAG 2 #C000 must not alias the fixed window";
 }
 
 /// endregion </GS-side ports via real firmware execution>

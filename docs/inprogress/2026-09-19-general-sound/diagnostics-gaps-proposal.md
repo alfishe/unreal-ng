@@ -84,7 +84,7 @@ Z80's `registers` block in `inspect_state`, so nothing new to learn.
 
 ### 1.3 Banked RAM access is a single fixed window
 
-`?ram=1` on `/state/audio/gs` dumps exactly the fixed window (RAM page 3,
+`?ram=1` on `/state/audio/gs` dumps exactly the fixed window (RAM page 1, the upper half of MPAG 1,
 `0x4000-0x7FFF`) where firmware variables live - genuinely useful, and I used
 it. But an uploaded module's actual sample data and pattern data live in the
 **banked** windows (2 and 3, selected by MPAG) once the firmware has parsed

@@ -878,12 +878,13 @@ void SoundChip_GeneralSound::gsOut(uint16_t port, uint8_t value)
 
 void SoundChip_GeneralSound::applyBanking()
 {
-    // Window 0: ROM page 0 (writes discarded); window 1: RAM page 3, fixed
-    // (the DAC sample buffers 0x6000-0x7FFF live in its upper half)
+    // Window 0: ROM page 0 (writes discarded); window 1: fixed RAM page
+    // FIXED_WINDOW_RAM_PAGE = upper half of MPAG 1 (the DAC sample buffers
+    // 0x6000-0x7FFF live in its upper half)
     _bankR[0] = _rom.data();
     _bankW[0] = nullptr;
-    _bankR[1] = _ram.data() + 3 * PAGE_SIZE;
-    _bankW[1] = _ram.data() + 3 * PAGE_SIZE;
+    _bankR[1] = _ram.data() + FIXED_WINDOW_RAM_PAGE * PAGE_SIZE;
+    _bankW[1] = _ram.data() + FIXED_WINDOW_RAM_PAGE * PAGE_SIZE;
 
     if (_mpag == 0)
     {

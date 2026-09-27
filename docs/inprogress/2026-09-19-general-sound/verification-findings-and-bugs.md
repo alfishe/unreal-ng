@@ -37,7 +37,7 @@ what the emulator must (and does) reproduce.
 ### 2.1 The chain: GEN → QUANTUM → QTPLAY → interrupt handler
 
 1. **GEN** (`GEN_L.a80`) — the per-channel resampler. It **writes** mixed sample quanta into the
-   DAC window (RAM page 3, `#6000-#7FFF`) with plain `LD (DE),A / INC E` stores
+   DAC window (fixed RAM window, `#6000-#7FFF`) with plain `LD (DE),A / INC E` stores
    (`DE = high DAC0 + QTFREE + CHRDN : SGENOFF`). Silence tail is padded with `#80`.
    **Writes are plain RAM stores — they are NOT DAC events.**
 2. **QUANTUM** (`QUANTUM.a80`) — builds a 4-byte slot descriptor per quantum in `QTMAP`
@@ -431,6 +431,37 @@ effect loop — vibrato composes `sine*depth/128` onto the current period for th
 **Verification**: GS test suite green; live NEARTHGS re-run on LW — user-confirmed
 "sound with good quality appeared" (2026-09-21). The personalities TDD §5.3 originally
 documented "rendered per quantum" as design — corrected to per tick.
+
+### BUG-10 (Major, FIXED): the fixed window 0x4000-0x7FFF showed the wrong RAM page
+
+**Symptom** (2026-09-27, found while designing the GS debugger's page model):
+sources disagreed on which RAM the fixed window shows, and the emulator matched
+none of the plausible ones. It mapped 16 KB RAM page 3 (`_ram + 3*PAGE_SIZE`),
+the upper half of **MPAG 2**.
+
+**Evidence** for the upper half of **MPAG 1**:
+- Original schematic (GeneralSound v1.0 `GS_GENER.TXT`): the window decoder
+  (ИД7 on A14/A15) sends its `0x4000` output, and the page decoder (ИД7 on page
+  bits 0-2) sends page 1, through diodes to the same chip select RAM1. Each
+  62256 (32 KB) takes CPU A0-A14, so A14=1 picks the chip's upper half.
+- Firmware RAM probe (`INIT_L.a80:50-81`): writes each page's number to
+  `#FFFF` and reads `#7FFF` back, i.e. it expects the window to alias the
+  upper half of a page and keeps that page out of module storage.
+- NeoGS FPGA (`memmap.v`: window 1 = page 3, MPAG v = pages 2v/2v+1) and Unreal
+  Speccy (`gsz80.cpp`, same numbering) agree.
+- The GS port doc ("first 16Kb of the first RAM page") and Xpeccy (lower half
+  of MPAG 1) disagree, but a lower-half alias would escape the firmware probe
+  and let module data overwrite the firmware variables.
+
+**Fix**: `SoundChip_GeneralSound::FIXED_WINDOW_RAM_PAGE = 1` used by
+`applyBanking`, the WebAPI `?ram=1` dump and the tests.
+
+**Verification**: new `FixedWindow_AliasesUpperHalfOfPage1` checks the alias
+through the card CPU (fails on the old mapping), and `2b_TotalAndFreeRamReport`
+checks the firmware's COM20/COM21 against the guide (112 KB of 128 KB; it
+passes on both mappings because the firmware finds the alias itself). The TTD
+corpus was re-recorded. Firmware behaviour is unchanged apart from which page
+it holds back.
 
 ## 7. Non-Bugs (verified correct — do not "fix")
 

@@ -562,7 +562,7 @@ void EmulatorAPI::getStateAudioGS(const HttpRequestPtr& req, std::function<void(
     }
     ret["cpu"] = cpu;
 
-    // ?ram=1 - read-only dump of the fixed RAM window (0x4000-0x7FFF, RAM page 3),
+    // ?ram=1 - read-only dump of the fixed RAM window (0x4000-0x7FFF, the upper half of MPAG 1),
     // where the firmware keeps its runtime variables (NUMPG #4080 .. MTSTAT #4151).
     // Dumped through the public TTD serializer; purely diagnostic, no state
     // changes. LLE-only: the lightweight card has no firmware RAM window.
@@ -570,7 +570,8 @@ void EmulatorAPI::getStateAudioGS(const HttpRequestPtr& req, std::function<void(
     {
         std::vector<uint8_t> blob(gs->TTDStateSize());
         gs->TTDSaveState(blob.data());
-        const size_t windowOffset = blob.size() - gs->getRamSizeKB() * 1024 + 3 * SoundChip_GeneralSound::PAGE_SIZE;
+        const size_t windowOffset = blob.size() - gs->getRamSizeKB() * 1024 +
+                                    SoundChip_GeneralSound::FIXED_WINDOW_RAM_PAGE * SoundChip_GeneralSound::PAGE_SIZE;
 
         static const char kHexDigits[] = "0123456789abcdef";
         std::string windowHex(SoundChip_GeneralSound::PAGE_SIZE * 2, '0');

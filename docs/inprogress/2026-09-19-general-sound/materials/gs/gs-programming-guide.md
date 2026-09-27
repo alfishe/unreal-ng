@@ -161,7 +161,7 @@ ReadData:
 
 ```
 #0000-#3FFF  ROM page 0 (or RAM0 when NOROM set)
-#4000-#7FFF  RAM page 3 (fixed, DAC buffers)
+#4000-#7FFF  RAM page 1 (fixed = upper half of MPAG 1, DAC buffers)
 #8000-#BFFF  ROM/RAM page N (switchable)
 #C000-#FFFF  ROM/RAM page M (switchable)
 ```

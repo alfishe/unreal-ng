@@ -61,6 +61,14 @@ public:
     static constexpr size_t ROM_SIZE = 0x8000;  // 32 KB (2 x 16 KB pages)
     static constexpr size_t PAGE_SIZE = 0x4000; // 16 KB bank granularity
     static constexpr size_t RAM_PAIR_SIZE = 2 * PAGE_SIZE; // MPAG pair granularity
+    /// 16 KB RAM page (index into _ram) behind the fixed window 0x4000-0x7FFF:
+    /// the upper half of RAM chip 1, i.e. the same cells as 0xC000-0xFFFF
+    /// under MPAG 1. GS schematic (GeneralSound v1.0 GS_GENER.TXT): the window
+    /// decoder's 0x4000 output and the page decoder's page-1 output both drive
+    /// chip select RAM1 through diodes, and every 32 KB chip takes CPU A0-A14,
+    /// so A14=1 picks its upper half. The firmware RAM probe relies on this
+    /// alias (INIT_L.a80: writes each page's number to 0xFFFF, reads 0x7FFF).
+    static constexpr size_t FIXED_WINDOW_RAM_PAGE = 1;
     static constexpr size_t RAM_SIZE_STANDARD_KB = 128; // stock card; 256/512 KB were expansions
 
     explicit SoundChip_GeneralSound(EmulatorContext* context, size_t ramKB, size_t sampleRate = 44100);
