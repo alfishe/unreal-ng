@@ -24,7 +24,7 @@ Sound card implementations for ZX Spectrum emulation:
 
 - [x] **C1:** LLE Z80 only, HLE/BASS out of scope
 - [x] **C2:** Lazy flush on port access, not bulk frame-end
-- [x] **C3:** Use z80ex from [github.com/alfishe/z80ex](https://github.com/alfishe/z80ex)
+- [x] **C3:** Use z80ex from [github.com/alfishe/z80ex](https://github.com/alfishe/z80ex) (superseded 2026-09-27: the coprocessor now runs on unreal-z80, see below)
 - [x] **C4:** TTDSerializable interface (ttdserializable.h signatures)
 - [x] **C5:** Use existing `[SOUND] GSType/GSReset/gs_vol` keys
 
@@ -38,7 +38,7 @@ Sound card implementations for ZX Spectrum emulation:
 
 - [x] **CR-1:** TTD API corrected to real ttdserializable.h signatures
 - [x] **CR-2:** Automation uses `_context->pSoundManager->getGeneralSound()`
-- [x] **CR-3:** z80ex from [github.com/alfishe/z80ex](https://github.com/alfishe/z80ex)
+- [x] **CR-3:** z80ex from [github.com/alfishe/z80ex](https://github.com/alfishe/z80ex) (superseded 2026-09-27)
 - [x] **CR-4:** MPAG ROM/RAM rule — V==0→ROM, V≥1→RAM pair (firmware/Xpeccy)
 - [x] **CR-5:** NeoGS port numbers corrected from ports.v (0x11-0x15)
 
@@ -101,6 +101,16 @@ Sound card implementations for ZX Spectrum emulation:
       `SoundChip_GSLightweight` (LW, `soundchip_gslw.h/.cpp` + `gsmodplayer.h/.cpp`)
       behind the shared `GeneralSoundCard` interface (§7.3 personalities work)
 - [x] Embed z80ex lightweight Z80 core (LLE coprocessor)
+- [x] Replace z80ex with unreal-z80 0.4.0 (`core/src/3rdparty/unreal-z80/`, MIT) (2026-09-27):
+      exact TTD state at any instruction boundary (`Z80CpuRegisters` incl. the
+      boundary state - closes TTD v2 migration gap G6), real-silicon interrupt
+      rules (NMI after EI accepted, INT refused right after a RETN/RETI that set
+      IFF1, no back-to-back NMI), atomic prefix chains; z80ex's GPL-2.0-only
+      license was incompatible with GPL v3. Lockstep diff on gs105a: identical T
+      and registers for 15.7M (commands) and 23.1M (module playback, up to the
+      NMI) instructions; only X/Y flags after block ops, SCF/CCF, BIT differ
+      (z80ex behind silicon). GS pipeline ~11% faster. `getCPUReg` takes the
+      card's own `GSCpuRegister` (full register file incl. shadows and MEMPTR)
 - [x] Implement host port handlers (#B3, #BB, #33)
 - [x] Implement internal port handlers (0x00–0x0B)
 - [x] MPAG page encoding (rotated, masked)

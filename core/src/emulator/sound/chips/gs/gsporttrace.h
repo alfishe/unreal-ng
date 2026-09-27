@@ -60,9 +60,9 @@ struct GSTraceEvent
 /// dacFetches/lastDacFetchGsCycle prove it is actually producing audio data.
 struct GSActivityCounters
 {
-    uint64_t cpuSteps = 0;             // z80ex_step() calls that returned > 0 t-states
-    uint64_t interruptsAccepted = 0;   // z80ex_int() acceptances (37.5 kHz periodic)
-    uint64_t nmisAccepted = 0;         // z80ex_nmi() acceptances (#33 bit6)
+    uint64_t cpuSteps = 0;             // Z80CpuStep() calls: instructions (a redundant DD/FD prefix is its own)
+    uint64_t interruptsAccepted = 0;   // Z80CpuInt() acceptances (37.5 kHz periodic)
+    uint64_t nmisAccepted = 0;         // Z80CpuNmi() acceptances (#33 bit6)
 
     // 37.5 kHz interrupt accounting (GS pitch-stability triage): the DAC
     // sample clock IS the interrupt clock - the firmware ISR performs

@@ -1578,9 +1578,9 @@ namespace PythonBindings
 
                 py::dict cpu;
                 cpu["coprocessor"] = gs->hasCoprocessor();
-                cpu["pc"] = gs->getCPUReg(regPC);
-                cpu["sp"] = gs->getCPUReg(regSP);
-                cpu["af"] = gs->getCPUReg(regAF);
+                cpu["pc"] = gs->getCPUReg(GSCpuRegister::PC);
+                cpu["sp"] = gs->getCPUReg(GSCpuRegister::SP);
+                cpu["af"] = gs->getCPUReg(GSCpuRegister::AF);
                 cpu["halted"] = gs->isCPUHalted();
                 d["cpu"] = cpu;
                 return d;
@@ -1694,7 +1694,7 @@ namespace PythonBindings
                 d["last_dac_fetch_frame"] = c.lastDacFetchFrame;
                 d["trace_capturing"] = gs->isPortTraceCapturing();
                 d["trace_event_count"] = gs->getPortTraceEventCount();
-                d["pc"] = gs->getCPUReg(regPC);
+                d["pc"] = gs->getCPUReg(GSCpuRegister::PC);
                 d["halted"] = gs->isCPUHalted();
                 return d;
             }, "GS activity counters: CPU steps, interrupts/NMIs accepted + period/coalesce accounting, DAC fetches, volume writes, host mailbox traffic + FIFO drops")

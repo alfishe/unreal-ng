@@ -99,9 +99,12 @@ Before the merge (on the branch):
 - [ ] **Move GS RAM to a TTD memory region** (V1 API); the blob keeps only the
   95-byte fixed part. Move the lightweight card's upload store to a region as
   well, so its blob size stops changing.
-- [ ] Add the z80ex fields missing from the GS blob (`noint_once`,
-  `reset_PV_on_int`, `int_vector_req`; perf review G6) — the blob's reserved
-  bytes hold them without a layout change.
+- [x] ~~Add the z80ex fields missing from the GS blob (`noint_once`,
+  `reset_PV_on_int`, `int_vector_req`; perf review G6)~~ — resolved on
+  2026-09-27 by replacing z80ex with unreal-z80: the blob's Z80 block (bytes
+  24..58, same size) stores `Z80CpuRegisters`, whose boundary state covers the
+  EI/RETN shadow, a pending prefix and the LD A,I/R quirk, plus the NMI flag.
+  Fixtures re-recorded.
 - [ ] Review the GS clock derivation (`soundchip_gs.cpp:253`,
   `soundchip_gslw.cpp:1026`): it still uses the rounded `frame_duration_us`
   that `ec66d3bc` replaced with exact T-state counting in the mixer.

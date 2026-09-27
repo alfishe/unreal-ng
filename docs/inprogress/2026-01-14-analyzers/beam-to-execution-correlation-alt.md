@@ -1062,5 +1062,5 @@ The ring buffer is designed for single-producer (emulator thread) and single-con
 
 ### Source Files
 - [screenzx.h](../../../core/src/emulator/video/zx/screenzx.h) — TstateCoordLUT
-- [z80ex/typedefs.h](../../../core/src/3rdparty/z80ex/typedefs.h) — Z80 tstate field
+- z80ex/typedefs.h — Z80 tstate field (z80ex was removed from the tree on 2026-09-27)
 - [memoryaccesstracker.h](../../../core/src/emulator/memory/memoryaccesstracker.h) — Tracking hooks

@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-#include "3rdparty/z80ex/z80ex.h"
+#include "3rdparty/unreal-z80/z80cpu.h"
 #include "emulator/sound/audio.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/sound/chips/gs/gsmailbox.h"
@@ -17,8 +17,8 @@
 class EmulatorContext;
 struct blip_t;
 
-/// General Sound (GS) expansion card - LLE model with a dedicated Z80ex
-/// coprocessor (design: docs/inprogress/2026-09-19-general-sound/gs-tdd.md).
+/// General Sound (GS) expansion card - LLE model with a dedicated Z80
+/// coprocessor (unreal-z80 library, core/src/3rdparty/unreal-z80) (design: docs/inprogress/2026-09-19-general-sound/gs-tdd.md).
 ///
 /// Hardware: Z80 @ 12 MHz, 32 KB ROM, 128-512 KB RAM, 4 x 8-bit DAC channels
 /// with 6-bit volume each, 37.5 kHz periodic interrupt (every 320 cycles).
@@ -120,8 +120,8 @@ public:
     bool isROMLoaded() const override { return _romLoaded; }
     size_t getRamSizeKB() const override { return _ram.size() / 1024; }
     bool hadAudioActivityLastFrame() const override { return _wasActive; }
-    bool isCPUHalted() const override { return _cpu && z80ex_doing_halt(_cpu) != 0; }
-    uint16_t getCPUReg(Z80_REG_T reg) const override { return _cpu ? z80ex_get_reg(_cpu, reg) : 0; }
+    bool isCPUHalted() const override { return _cpu && Z80CpuHalted(_cpu) != 0; }
+    uint16_t getCPUReg(GSCpuRegister reg) const override;
 
     // Coprocessor capability: this is the LLE personality
     bool hasCoprocessor() const override { return true; }
@@ -180,9 +180,8 @@ public:
     /// region <TTDSerializable interface (P1.5 - parent TDD 6.4)>
     ///
     /// Machine state: mailbox + banking + volume/DAC latches + timing counters
-    /// + the full Z80 register file + the RAM array. Layout (little-endian,
-    /// fixed-width, field-by-field - the z80ex context struct is not portable
-    /// across platforms because of its unsigned long member):
+    /// + the full Z80 state + the RAM array. Layout (little-endian,
+    /// fixed-width, field-by-field):
     ///   [ 0.. 3] status, dataFromHost, dataToHost, commandFromHost (latches)
     ///   [ 4]    mpag
     ///   [ 5.. 8] channelVol[4]
@@ -191,9 +190,11 @@ public:
     ///   [21..22] intQuantum (int16)
     ///   [23]    nmiPending (bit0) | intPending (bit1); bits 2/3 reserved
     ///            (queue-era pending flags, always 0)
-    ///   [24..58] Z80: af bc de hl af2 bc2 de2 hl2 ix iy sp pc memptr (13x2),
-    ///            i (1), r (2), r7 (1), iff1 iff2 (2), im (1), halted (1),
-    ///            prefix (1)
+    ///   [24..58] Z80 (Z80CpuRegisters): af bc de hl af2 bc2 de2 hl2 ix iy sp
+    ///            pc memptr (13x2), i, r (with R7), q, boundary
+    ///            (Z80CpuBoundary: EI shadow, pending prefix, ...), iff1, iff2,
+    ///            im, halted, nmiInProgress (1 each) - everything the next
+    ///            instruction and the next INT/NMI acceptance depend on
     ///   [59..76] reserved (queue-era slots, always 0)
     ///   [77..80] GS cycles since the frame start (u32)
     ///   [81..84] ZX tacts at the frame start (u32, AudioTstate domain)
@@ -212,12 +213,12 @@ public:
     static constexpr size_t TTD_FIXED_STATE_SIZE = 95;
 
 private:
-    // z80ex callbacks (user_data = this)
-    static Z80EX_BYTE gsMemRead(Z80EX_CONTEXT* cpu, Z80EX_WORD addr, int m1State, void* userData);
-    static void gsMemWrite(Z80EX_CONTEXT* cpu, Z80EX_WORD addr, Z80EX_BYTE value, void* userData);
-    static Z80EX_BYTE gsPortRead(Z80EX_CONTEXT* cpu, Z80EX_WORD port, void* userData);
-    static void gsPortWrite(Z80EX_CONTEXT* cpu, Z80EX_WORD port, Z80EX_BYTE value, void* userData);
-    static Z80EX_BYTE gsIntRead(Z80EX_CONTEXT* cpu, void* userData);
+    // Z80 bus callbacks (userData = this)
+    static uint8_t gsMemRead(Z80CPU* cpu, uint16_t addr, int m1State, void* userData);
+    static void gsMemWrite(Z80CPU* cpu, uint16_t addr, uint8_t value, void* userData);
+    static uint8_t gsPortRead(Z80CPU* cpu, uint16_t port, void* userData);
+    static void gsPortWrite(Z80CPU* cpu, uint16_t port, uint8_t value, void* userData);
+    static uint8_t gsIntRead(Z80CPU* cpu, void* userData);
 
     // GS-side port handlers (ports 0x00-0x0B)
     uint8_t gsIn(uint16_t port);
@@ -256,8 +257,9 @@ private:
 
     EmulatorContext* _context;
 
-    // Dedicated GS Z80 (z80ex - never the main emulator CPU, design §4.3)
-    Z80EX_CONTEXT* _cpu = nullptr;
+    // Dedicated GS Z80 (unreal-z80 library, callback bus - never the main
+    // emulator CPU, design §4.3)
+    Z80CPU* _cpu = nullptr;
     std::vector<uint8_t> _rom;   // 32 KB firmware
     std::vector<uint8_t> _ram;   // 128-512 KB (stock 128 KB unless expanded via ctor)
     bool _romLoaded = false;

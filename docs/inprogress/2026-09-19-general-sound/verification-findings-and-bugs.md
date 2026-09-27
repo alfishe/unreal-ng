@@ -1,5 +1,10 @@
 # General Sound: Playback Verification Findings and Bugs
 
+> **Note (2026-09-27):** the GS coprocessor now runs on unreal-z80 instead of
+> z80ex. The `z80ex_step()` / `z80ex_int()` calls named below are
+> `Z80CpuStep()` / `Z80CpuInt()` in today's code; the findings and fixes are
+> unchanged.
+
 - **Date**: 2026-09-20
 - **Scope**: Verification of the full General Sound (GS) playback chain in unreal-ng against
   the actual GS firmware sources; root-cause analysis of the reported symptom

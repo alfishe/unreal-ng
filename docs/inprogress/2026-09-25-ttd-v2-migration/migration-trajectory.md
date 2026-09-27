@@ -131,9 +131,10 @@ long frames, so a seek replays at most one interval. Skipped otherwise.
 ### Merge `generalsound` (M)
 
 Checklist §3.2. The one TTD change on the branch: GS RAM and the lightweight
-upload store become regions (V1 API), and the missing z80ex fields
-(`noint_once`, `reset_PV_on_int`, `int_vector_req`; perf review G6) go into the
-GS blob. Fixtures re-recorded (they now include a GS card).
+upload store become regions (V1 API). The missing z80ex fields (perf review
+G6) are resolved: since 2026-09-27 the GS coprocessor runs on unreal-z80 and
+the blob carries its complete boundary state. Fixtures re-recorded (they now
+include a GS card).
 
 ### Finish and merge `moonsound` (L, mostly on the branch)
 
@@ -239,7 +240,7 @@ and where this plan handles them:
 | F2 | Turning debug mode / TTD off mid-recording corrupts history | V4 (FR-17) |
 | F3 | Enabling the `timetravel` feature disables fast tape / disk loading | V0 (FR-18) |
 | G6 | GS RAM copied and compressed into every checkpoint | GS merge (region) |
-| G6 (gap) | z80ex `noint_once`, `reset_PV_on_int`, `int_vector_req` not in the GS blob | GS merge checklist |
+| G6 (gap) | z80ex `noint_once`, `reset_PV_on_int`, `int_vector_req` not in the GS blob | **resolved 2026-09-27** (unreal-z80: `Z80CpuRegisters` boundary state in the blob) |
 | M7 | MoonSound wave SRAM not captured | MoonSound merge (region) |
 
 ## 5. What each step changes for users

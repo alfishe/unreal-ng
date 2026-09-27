@@ -710,7 +710,7 @@ TEST(FrameSpanAnalysis, DetectsInterruptOnlyCode) {
 - [screenzx.h](../../../core/src/emulator/video/zx/screenzx.h) - TstateCoordLUT, beam methods
 - [screen.h](../../../core/src/emulator/video/screen.h) - RasterState, RasterDescriptor
 - [platform.h](../../../core/src/emulator/platform.h) - EmulatorState.t_states
-- [z80ex/typedefs.h](../../../core/src/3rdparty/z80ex/typedefs.h) - Z80 tstate field
+- z80ex/typedefs.h - Z80 tstate field (z80ex was removed from the tree on 2026-09-27)
 - [memoryaccesstracker.h](../../../core/src/emulator/memory/memoryaccesstracker.h) - Tracking hooks
 - [calltrace.h](../../../core/src/emulator/memory/calltrace.h) - Z80ControlFlowEvent
 

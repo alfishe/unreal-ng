@@ -1929,9 +1929,9 @@ public:
 
             sol::table cpu = lua_view.create_table();
             cpu["coprocessor"] = gs->hasCoprocessor();
-            cpu["pc"] = gs->getCPUReg(regPC);
-            cpu["sp"] = gs->getCPUReg(regSP);
-            cpu["af"] = gs->getCPUReg(regAF);
+            cpu["pc"] = gs->getCPUReg(GSCpuRegister::PC);
+            cpu["sp"] = gs->getCPUReg(GSCpuRegister::SP);
+            cpu["af"] = gs->getCPUReg(GSCpuRegister::AF);
             cpu["halted"] = gs->isCPUHalted();
             t["cpu"] = cpu;
             return t;
@@ -2065,7 +2065,7 @@ public:
             t["last_dac_fetch_frame"] = static_cast<double>(c.lastDacFetchFrame);
             t["trace_capturing"] = gs->isPortTraceCapturing();
             t["trace_event_count"] = static_cast<double>(gs->getPortTraceEventCount());
-            t["pc"] = gs->getCPUReg(regPC);
+            t["pc"] = gs->getCPUReg(GSCpuRegister::PC);
             t["halted"] = gs->isCPUHalted();
             return t;
         });

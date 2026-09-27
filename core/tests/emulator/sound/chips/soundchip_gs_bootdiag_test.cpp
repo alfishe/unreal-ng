@@ -65,7 +65,7 @@ struct GSHarness
     {
         const auto& c = chip->getActivityCounters();
         printf("%-22s PC=0x%04x I=0x%02x SP=0x%04x mpag=%u halted=%d steps=%llu int=%llu dac=%llu vol=%llu\n",
-               tag, chip->getCPUReg(regPC), chip->getCPUReg(regI), chip->getCPUReg(regSP),
+               tag, chip->getCPUReg(GSCpuRegister::PC), chip->getCPUReg(GSCpuRegister::I), chip->getCPUReg(GSCpuRegister::SP),
                chip->getMPAG(), (int)chip->isCPUHalted(), (unsigned long long)c.cpuSteps,
                (unsigned long long)c.interruptsAccepted, (unsigned long long)c.dacFetches,
                (unsigned long long)c.volumeLatchWrites);
@@ -191,9 +191,9 @@ TEST(SoundChip_GeneralSound_BootDiag, 1_PostCompletes)
 
     h.dump("POST done");
     // I must point at the ROM IM2 vector table (0x1700, INTTAB)
-    EXPECT_EQ(h.chip->getCPUReg(regI), 0x17);
+    EXPECT_EQ(h.chip->getCPUReg(GSCpuRegister::I), 0x17);
     // COMINT_ poll loop lives in the low ROM
-    EXPECT_LT(h.chip->getCPUReg(regPC), 0x2000);
+    EXPECT_LT(h.chip->getCPUReg(GSCpuRegister::PC), 0x2000);
     EXPECT_FALSE(h.chip->isCPUHalted());
 }
 
@@ -309,9 +309,9 @@ TEST(SoundChip_GeneralSound_BootDiag, 4_InterruptPathDacFetch)
     }
     h.dump("after jump+10f");
 
-    EXPECT_EQ(h.chip->getCPUReg(regI), 0x17) << "stub never ran (I unchanged)";
+    EXPECT_EQ(h.chip->getCPUReg(GSCpuRegister::I), 0x17) << "stub never ran (I unchanged)";
     // The stub self-loop is the JR instruction itself (#500B: JR #500B)
-    EXPECT_EQ(h.chip->getCPUReg(regPC), 0x500B) << "stub self-loop not observed";
+    EXPECT_EQ(h.chip->getCPUReg(GSCpuRegister::PC), 0x500B) << "stub self-loop not observed";
 
     const uint64_t interrupts = h.chip->getActivityCounters().interruptsAccepted;
     const uint64_t dacFetches = h.chip->getActivityCounters().dacFetches;

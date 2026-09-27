@@ -7,7 +7,7 @@ key (new instance required, no runtime switch):
 | Mode | Where | What |
 |:--|:--|:--|
 | `BASS` | `master` (default) | legacy HLE mode |
-| `Z80` | `generalsound` branch (default on GS-capable clones) | full LLE: Z80ex copro @ 12 MHz, ROM + RAM, DACs, interrupt |
+| `Z80` | `generalsound` branch (default on GS-capable clones) | full LLE: Z80 copro (unreal-z80) @ 12 MHz, ROM + RAM, DACs, interrupt |
 | `NONE` | Sinclairs (branch) | card absent |
 
 Ground truth: `core/src/emulator/sound/chips/soundchip_gs.h`

@@ -3,7 +3,7 @@
 // The chip is a coprocessor subsystem, so protocol behaviour is driven two
 // ways: directly through the ZX-side host ports / automation actions, and
 // through real firmware execution - a tiny hand-assembled program is burned
-// into a scratch ROM so the internal z80ex drives the GS-side ports
+// into a scratch ROM so the internal Z80 (unreal-z80) drives the GS-side ports
 // (#00 MPAG, #06-#09 volume latches) exactly like production firmware.
 
 #include <gtest/gtest.h>
@@ -197,11 +197,11 @@ TEST_F(SoundChip_GeneralSound_Test, Port33_Bit7ResetsCardButKeepsLatches)
     runOneFrame();
     ASSERT_TRUE(chip->isCPUHalted());
     ASSERT_EQ(chip->getChannelVolume(0), 0x3F);
-    ASSERT_NE(chip->getCPUReg(regPC), 0);
+    ASSERT_NE(chip->getCPUReg(GSCpuRegister::PC), 0);
 
     chip->portDeviceOutMethod(SoundChip_GeneralSound::PORT_CONTROL, 0x80);
 
-    EXPECT_EQ(chip->getCPUReg(regPC), 0) << "#33 bit7 restarts the coprocessor";
+    EXPECT_EQ(chip->getCPUReg(GSCpuRegister::PC), 0) << "#33 bit7 restarts the coprocessor";
     EXPECT_EQ(chip->getChannelVolume(0), 0x3F) << "volume latches are external flip-flops - they survive";
 }
 
@@ -487,7 +487,7 @@ TEST_F(SoundChip_GeneralSound_Test, FullReset_ClearsVolumeLatches)
 
     EXPECT_EQ(chip->getChannelVolume(0), 0);
     EXPECT_EQ(chip->getChannelSample(0), 0x80) << "DAC midpoints return to silence";
-    EXPECT_EQ(chip->getCPUReg(regPC), 0);
+    EXPECT_EQ(chip->getCPUReg(GSCpuRegister::PC), 0);
 }
 
 /// endregion </Reset semantics>
@@ -527,8 +527,65 @@ TEST_F(SoundChip_GeneralSound_Test, TTDSerialize_RoundTrip)
     EXPECT_EQ(chipB.getCommandFromHost(), 0x77);
     EXPECT_EQ(chipB.getDataFromHost(), 0x33);
     EXPECT_EQ(chipB.getMPAG(), 1);
-    EXPECT_EQ(chipB.getCPUReg(regPC), chip->getCPUReg(regPC));
+    EXPECT_EQ(chipB.getCPUReg(GSCpuRegister::PC), chip->getCPUReg(GSCpuRegister::PC));
     EXPECT_EQ(chipB.isCPUHalted(), chip->isCPUHalted());
+}
+
+/// getCPUReg exposes the full register file, and every selector reads the
+/// same value the TTD blob serializes at its documented offset (the two paths
+/// are independent: selector mapping vs Z80CpuGetRegisters + byte layout)
+TEST_F(SoundChip_GeneralSound_Test, CpuRegisterIntrospection_MatchesTtdLayout)
+{
+    const uint8_t program[] = {
+        0x31, 0x00, 0x5F,              // LD SP,0x5F00 (RAM page 0)
+        0x3E, 0x9B, 0xED, 0x47,        // LD A,0x9B; LD I,A
+        0xED, 0x5E,                    // IM 2
+        0x01, 0x34, 0x12, 0xC5, 0xF1,  // AF = 0x1234 (PUSH BC; POP AF)
+        0x01, 0x45, 0x23,              // BC = 0x2345
+        0x11, 0x56, 0x34,              // DE = 0x3456
+        0x21, 0x67, 0x45,              // HL = 0x4567
+        0x08, 0xD9,                    // EX AF,AF'; EXX - the above become the shadows
+        0x01, 0xBC, 0x9A, 0xC5, 0xF1,  // AF = 0x9ABC
+        0x01, 0xCD, 0xAB,              // BC = 0xABCD
+        0x11, 0xDE, 0xBC,              // DE = 0xBCDE
+        0x21, 0xEF, 0xCD,              // HL = 0xCDEF
+        0xDD, 0x21, 0x89, 0x67,        // IX = 0x6789
+        0xFD, 0x21, 0x9A, 0x78,        // IY = 0x789A
+        0x76                           // HALT (interrupts stay disabled)
+    };
+    chip->loadROM(writeRom("gs-regs.rom", program, sizeof(program)));
+    runOneFrame();
+    ASSERT_TRUE(chip->isCPUHalted());
+
+    struct Expect
+    {
+        GSCpuRegister reg;
+        int value;   // -1: not a constant of the program (checked against the blob only)
+        size_t off;  // offset inside the blob's Z80 block (fixed state byte 24)
+        bool word;
+    };
+    const Expect expects[] = {
+        {GSCpuRegister::AF, 0x9ABC, 0, true},     {GSCpuRegister::BC, 0xABCD, 2, true},
+        {GSCpuRegister::DE, 0xBCDE, 4, true},     {GSCpuRegister::HL, 0xCDEF, 6, true},
+        {GSCpuRegister::AFAlt, 0x1234, 8, true},  {GSCpuRegister::BCAlt, 0x2345, 10, true},
+        {GSCpuRegister::DEAlt, 0x3456, 12, true}, {GSCpuRegister::HLAlt, 0x4567, 14, true},
+        {GSCpuRegister::IX, 0x6789, 16, true},    {GSCpuRegister::IY, 0x789A, 18, true},
+        {GSCpuRegister::SP, 0x5F00, 20, true},    {GSCpuRegister::PC, -1, 22, true},
+        {GSCpuRegister::MEMPTR, -1, 24, true},    {GSCpuRegister::I, 0x9B, 26, false},
+        {GSCpuRegister::R, -1, 27, false},        {GSCpuRegister::IFF1, 0, 30, false},
+        {GSCpuRegister::IFF2, 0, 31, false},      {GSCpuRegister::IM, 2, 32, false},
+    };
+    const std::vector<uint8_t> blob = saveState();
+    const uint8_t* z80 = &blob[24];
+    for (const Expect& e : expects)
+    {
+        const uint16_t fromBlob = e.word ? static_cast<uint16_t>(z80[e.off] | (z80[e.off + 1] << 8)) : z80[e.off];
+        const uint16_t fromGetter = chip->getCPUReg(e.reg);
+        EXPECT_EQ(fromGetter, fromBlob) << "selector " << int(e.reg) << " vs blob offset " << e.off;
+        if (e.value >= 0)
+            EXPECT_EQ(fromGetter, e.value) << "selector " << int(e.reg);
+    }
+    EXPECT_EQ(z80[33], 1) << "halted byte";
 }
 
 TEST_F(SoundChip_GeneralSound_Test, TTDStateChanged_DetectsVolume)

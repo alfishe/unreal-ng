@@ -91,7 +91,7 @@ TEST(SoundChip_GeneralSound_PortTrace, InterruptAcceptedAfterEI)
     const auto& counters = chip->getActivityCounters();
     printf("InterruptAcceptedAfterEI: interrupts=%llu cpuSteps=%llu\n",
            (unsigned long long)counters.interruptsAccepted, (unsigned long long)counters.cpuSteps);
-    EXPECT_GT(counters.interruptsAccepted, 0u) << "z80ex_int() acceptance mechanism itself must work when IFF1=1";
+    EXPECT_GT(counters.interruptsAccepted, 0u) << "Z80CpuInt() acceptance mechanism itself must work when IFF1=1";
 }
 
 TEST(SoundChip_GeneralSound_PortTrace, RecordsEventsOnlyWhileCapturing)
@@ -150,7 +150,7 @@ TEST(SoundChip_GeneralSound_PortTrace, RealRomProducesDacActivity)
     printf("RealRom(idle,50 frames): cpuSteps=%llu interrupts=%llu dacFetches=%llu volWrites=%llu PC=0x%04x halted=%d\n",
            (unsigned long long)counters.cpuSteps, (unsigned long long)counters.interruptsAccepted,
            (unsigned long long)counters.dacFetches, (unsigned long long)counters.volumeLatchWrites,
-           chip->getCPUReg(regPC), (int)chip->isCPUHalted());
+           chip->getCPUReg(GSCpuRegister::PC), (int)chip->isCPUHalted());
 
     EXPECT_GT(counters.cpuSteps, 0u) << "real firmware must execute";
     EXPECT_FALSE(chip->isCPUHalted()) << "idle firmware polls the mailbox, it does not HALT";

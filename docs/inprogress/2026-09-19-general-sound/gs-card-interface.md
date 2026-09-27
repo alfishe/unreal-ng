@@ -27,7 +27,7 @@ input). Parent materials: `gs-tdd.md`,
 
 | Capability | LLE (`SoundChip_GeneralSound`) | LW (`SoundChip_GSLightweight`) | NeoGS (reserved, P2) |
 |:--|:--|:--|:--|
-| Second Z80 + firmware | yes (z80ex + gs105a.rom) | no | FPGA model (neogs-tdd.md) |
+| Second Z80 + firmware | yes (unreal-z80 + gs105a.rom; z80ex until 2026-09-27) | no | FPGA model (neogs-tdd.md) |
 | Module engine | firmware QUANTUM/QTPLAY | in-tree ProTracker player | firmware + SD/MP3 |
 | Mailbox protocol | exact (FIFOs, split bit7) | exact (shared `GSForwardMailbox`) | expected shared |
 | Reply bytes | firmware-true | bit-exact vs LLE (probe-captured) | TBD |
@@ -87,7 +87,7 @@ public:
     virtual bool hasCoprocessor() const = 0;
     virtual GSCardImplementation implementation() const = 0;
     virtual bool isCPUHalted() const { return false; }
-    virtual uint16_t getCPUReg(Z80_REG_T) const { return 0; }
+    virtual uint16_t getCPUReg(GSCpuRegister) const { return 0; }
 
     // diagnostics (identical data model on every personality)
     virtual const GSActivityCounters& getActivityCounters() const = 0;
@@ -97,10 +97,10 @@ public:
 ```
 
 Notes:
-- `getCPUReg(Z80_REG_T)` on the interface forces `z80ex.h` into every
-  consumer; acceptable - `soundchip_gs.h` already does, and `gsporttrace.h`
-  (included for counters) sits below it. Callers that never touch the CPU
-  still include the header transitively via `soundmanager.h`.
+- `getCPUReg(GSCpuRegister)` takes the card's own selector enum
+  (`generalsoundcard.h`: the full register file incl. shadows and MEMPTR), so
+  no Z80 core header reaches the interface's consumers. (Until 2026-09-27 it
+  took z80ex's `Z80_REG_T`, which dragged `z80ex.h` into every consumer.)
 - Automation verbose views gate on `hasCoprocessor()` and print
   `(no coprocessor - lightweight)` instead of registers.
 - `SoundChip_GeneralSound` keeps its exact class name (tests, TTD ids,
@@ -280,5 +280,5 @@ way to cross-validate; target < 3 s each).
 - Effect coverage parity with the firmware player is best-effort; uncommon
   effect mismatches surface in cross-validation RMS drift, not crashes.
 - NeoGS interface fit is asserted by design only (no P2 work here).
-- `getCPUReg` on the interface drags `z80ex.h` into LW includes - accepted
-  (single translation-unit cost, keeps automation type-simple).
+- ~~`getCPUReg` on the interface drags `z80ex.h` into LW includes~~ - resolved
+  2026-09-27 (`GSCpuRegister`).

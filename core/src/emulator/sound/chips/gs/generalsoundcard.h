@@ -23,7 +23,6 @@
 #include <string>
 #include <vector>
 
-#include "3rdparty/z80ex/z80ex.h" // Z80_REG_T (coprocessor introspection)
 #include "common/modulelogger.h" // PlatformModulesEnum (shared submodule id)
 #include "emulator/ports/portdecoder.h"
 #include "debugger/ttd/ttdserializable.h"
@@ -37,6 +36,15 @@ enum class GSCardImplementation : uint8_t
     LLE, // SoundChip_GeneralSound (Z80 + firmware)
     LW,  // SoundChip_GSLightweight (in-tree mod player)
     NGS  // NeoGS (reserved, P2)
+};
+
+
+/// Coprocessor register selector for the introspection API (automation, HUD,
+/// tests): the full register file. Independent of the Z80 core the LLE card
+/// runs on. R includes bit 7; MEMPTR is the undocumented WZ register.
+enum class GSCpuRegister : uint8_t
+{
+    AF, BC, DE, HL, AFAlt, BCAlt, DEAlt, HLAlt, IX, IY, SP, PC, I, R, IM, IFF1, IFF2, MEMPTR
 };
 
 class GeneralSoundCard : public PortDevice, public ttd::TTDSerializable
@@ -148,7 +156,7 @@ public:
     virtual bool hasCoprocessor() const = 0;
     virtual GSCardImplementation implementation() const = 0;
     virtual bool isCPUHalted() const { return false; }
-    virtual uint16_t getCPUReg(Z80_REG_T) const { return 0; }
+    virtual uint16_t getCPUReg(GSCpuRegister) const { return 0; }
 
     /// region <Diagnostics: activity counters + port/DAC trace>
     /// Cheap always-on counters - the first thing to check when triaging

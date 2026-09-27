@@ -1287,7 +1287,7 @@ GeneralSoundCard* SoundManager::createGeneralSoundCard(GSTypeKind kind) const
     {
         case GSTypeKind::Z80:
         {
-            // LLE: second z80ex coprocessor + gs105a firmware. The ROM is
+            // LLE: second Z80 (unreal-z80) coprocessor + gs105a firmware. The ROM is
             // optional - loadROM warns and runs zeroed when missing, so a
             // config error never blocks the machine
             auto* card = new SoundChip_GeneralSound(_context, _context->config.sound.gsRamKB, _coreRate);

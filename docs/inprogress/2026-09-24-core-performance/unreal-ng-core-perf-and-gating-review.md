@@ -243,7 +243,7 @@ Today every device invents its own flags:
 
 **Advance, for `n = floor((target - now) / 51) - 1` whole iterations:**
 - total cycles += 51·n;
-- `r` += 6·n (7-bit R semantics as z80ex keeps them; the TTD blob stores 16 bits);
+- `r` += 6·n (7-bit refresh counter, bit 7 kept; with unreal-z80 set it through `Z80CpuSetReg(Z80CpuRegR)` - the TTD blob stores one byte since 2026-09-27);
 - `cpuSteps` += 6·n;
 - normalise the INT quantum by looping `while (_intQuantum >= 320)`:
   - `_gsCyclesAbs += 320`;
@@ -263,6 +263,11 @@ Today every device invents its own flags:
 - **To verify:** that the firmware returns to DI with PROCESS=0 after playback stops. `QTFAULT` returns without `EI` (`INTTST.a80:160-166`), which suggests it does.
 
 **G2: inline IFF guard before `z80ex_int`** (`[gs]:318`).
+
+> **2026-09-27:** the GS core is now unreal-z80. The equivalent guard is
+> `if (_intPending && Z80CpuIntPossible(_cpu)) { int t = Z80CpuInt(_cpu); ... }`
+> - bit-exact, since `Z80CpuInt` refuses exactly when `Z80CpuIntPossible` is 0
+> (IFF1 clear, INT shadow, pending prefix). The z80ex form below is historical.
 
 ```cpp
 if (_intPending && _cpu->iff1 && !_cpu->noint_once && !_cpu->prefix) { int t = z80ex_int(_cpu); ... }
@@ -296,7 +301,7 @@ if (_intPending && _cpu->iff1 && !_cpu->noint_once && !_cpu->prefix) { int t = z
 **G7: cleanups.**
 - `traceEvent` does two acquire loads per GS port access or DAC fetch (`gsporttrace.h:151-154`). Replace them with a plain bool refreshed at frame start.
 - The comment at `gsporttrace.h:23` says trace is gated by FeatureManager `porttrace_gs`, but no such feature is registered in `featuremanager.cpp`.
-- Serialisation gap: the z80ex `noint_once`, `reset_PV_on_int` and `int_vector_req` are not in the TTD blob. That only matters if a frame boundary lands right after `EI`. The reserved bytes `[59..94]` (`[gs]:1052`, `:1104`) can hold them without a layout change.
+- ~~Serialisation gap: the z80ex `noint_once`, `reset_PV_on_int` and `int_vector_req` are not in the TTD blob.~~ Resolved 2026-09-27 (unreal-z80 boundary state in the blob). That only matters if a frame boundary lands right after `EI`. The reserved bytes `[59..94]` (`[gs]:1052`, `:1104`) can hold them without a layout change.
 
 **GS lightweight personality.** `soundchip_gslw.cpp[gs]:1060-1098` is already cheap when idle: `serviceQuantum` returns early when `!_player.isPlaying()`. Only G5 applies to it.
 

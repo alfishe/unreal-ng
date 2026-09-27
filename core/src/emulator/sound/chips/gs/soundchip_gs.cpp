@@ -7,7 +7,6 @@
 
 #include "3rdparty/blip_buf/blip_buf.h"
 #include "3rdparty/message-center/messagecenter.h"
-#include "3rdparty/z80ex/typedefs.h" // full Z80EX_CONTEXT layout for TTD field access
 #include "common/filehelper.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/cpu/z80.h"
@@ -43,11 +42,10 @@ SoundChip_GeneralSound::SoundChip_GeneralSound(EmulatorContext* context, size_t 
 
     // Dedicated coprocessor wired to the static trampolines below - never the
     // main emulator Z80 (design §4.3: context hardwiring, debug traps)
-    _cpu = z80ex_create(&SoundChip_GeneralSound::gsMemRead, this,
-                        &SoundChip_GeneralSound::gsMemWrite, this,
-                        &SoundChip_GeneralSound::gsPortRead, this,
-                        &SoundChip_GeneralSound::gsPortWrite, this,
-                        &SoundChip_GeneralSound::gsIntRead, this);
+    _cpu = Z80CpuCreate();
+    Z80CpuSetMemoryBus(_cpu, &SoundChip_GeneralSound::gsMemRead, this, &SoundChip_GeneralSound::gsMemWrite, this);
+    Z80CpuSetPortBus(_cpu, &SoundChip_GeneralSound::gsPortRead, this, &SoundChip_GeneralSound::gsPortWrite, this);
+    Z80CpuSetIntVectorFn(_cpu, &SoundChip_GeneralSound::gsIntRead, this);
 
     reset();
 }
@@ -56,7 +54,7 @@ SoundChip_GeneralSound::~SoundChip_GeneralSound()
 {
     if (_cpu)
     {
-        z80ex_destroy(_cpu);
+        Z80CpuDestroy(_cpu);
         _cpu = nullptr;
     }
     blip_delete(_blipL);
@@ -117,7 +115,7 @@ void SoundChip_GeneralSound::reset()
 void SoundChip_GeneralSound::resetCard()
 {
     if (_cpu)
-        z80ex_reset(_cpu);
+        Z80CpuReset(_cpu);
 
     _mpag = 0;
     applyBanking();
@@ -295,10 +293,12 @@ void SoundChip_GeneralSound::runTo(int64_t target)
     while (totalGsCycles() < target)
     {
         // NMI from #33 bit6: latched, delivered at the first instruction
-        // boundary (z80ex refuses it mid-prefix - fall through and step)
+        // boundary that takes it (the core refuses one while a prefix chain
+        // is pending and right after another NMI acknowledge - fall through
+        // and step, the latch stays)
         if (_nmiPending)
         {
-            int t = z80ex_nmi(_cpu);
+            int t = Z80CpuNmi(_cpu);
             if (t > 0)
             {
                 _nmiPending = false;
@@ -317,7 +317,7 @@ void SoundChip_GeneralSound::runTo(int64_t target)
         // in pitch - root cause of the 2026-09-20 drift investigation
         if (_intPending)
         {
-            int t = z80ex_int(_cpu);
+            int t = Z80CpuInt(_cpu);
             if (t > 0)
             {
                 _intPending = false;
@@ -345,7 +345,7 @@ void SoundChip_GeneralSound::runTo(int64_t target)
             continue;
         }
 
-        int t = z80ex_step(_cpu);
+        int t = Z80CpuStep(_cpu);
         if (t <= 0)
             break; // Defensive: a stuck core must not hang the emulator
         _intQuantum = static_cast<int16_t>(_intQuantum + t);
@@ -371,7 +371,7 @@ void SoundChip_GeneralSound::traceEvent(GSTraceSide side, uint16_t port, uint8_t
     event.timestamp = totalGsCycles();
     event.frameNumber = currentFrameNumber();
     event.port = port;
-    event.pc = getCPUReg(regPC);
+    event.pc = getCPUReg(GSCpuRegister::PC);
     event.value = value;
     event.channel = channel;
     event.side = side;
@@ -939,41 +939,69 @@ void SoundChip_GeneralSound::dacFetch(uint16_t addr, uint8_t value)
 
 /// endregion </Memory subsystem>
 
-/// region <z80ex callbacks>
+/// region <Z80 bus callbacks>
 
-Z80EX_BYTE SoundChip_GeneralSound::gsMemRead(Z80EX_CONTEXT* /*cpu*/, Z80EX_WORD addr, int /*m1State*/, void* userData)
+uint8_t SoundChip_GeneralSound::gsMemRead(Z80CPU* /*cpu*/, uint16_t addr, int /*m1State*/, void* userData)
 {
     return static_cast<SoundChip_GeneralSound*>(userData)->readMem(addr);
 }
 
-void SoundChip_GeneralSound::gsMemWrite(Z80EX_CONTEXT* /*cpu*/, Z80EX_WORD addr, Z80EX_BYTE value, void* userData)
+void SoundChip_GeneralSound::gsMemWrite(Z80CPU* /*cpu*/, uint16_t addr, uint8_t value, void* userData)
 {
     static_cast<SoundChip_GeneralSound*>(userData)->writeMem(addr, value);
 }
 
-Z80EX_BYTE SoundChip_GeneralSound::gsPortRead(Z80EX_CONTEXT* /*cpu*/, Z80EX_WORD port, void* userData)
+uint8_t SoundChip_GeneralSound::gsPortRead(Z80CPU* /*cpu*/, uint16_t port, void* userData)
 {
     return static_cast<SoundChip_GeneralSound*>(userData)->gsIn(port);
 }
 
-void SoundChip_GeneralSound::gsPortWrite(Z80EX_CONTEXT* /*cpu*/, Z80EX_WORD port, Z80EX_BYTE value, void* userData)
+void SoundChip_GeneralSound::gsPortWrite(Z80CPU* /*cpu*/, uint16_t port, uint8_t value, void* userData)
 {
     static_cast<SoundChip_GeneralSound*>(userData)->gsOut(port, value);
 }
 
-Z80EX_BYTE SoundChip_GeneralSound::gsIntRead(Z80EX_CONTEXT* /*cpu*/, void* /*userData*/)
+uint8_t SoundChip_GeneralSound::gsIntRead(Z80CPU* /*cpu*/, void* /*userData*/)
 {
     return 0xFF; // IM2 vector: nothing drives the GS data bus during INTA
 }
 
-/// endregion </z80ex callbacks>
+uint16_t SoundChip_GeneralSound::getCPUReg(GSCpuRegister reg) const
+{
+    if (!_cpu)
+        return 0;
+    switch (reg)
+    {
+        case GSCpuRegister::AF: return Z80CpuGetReg(_cpu, Z80CpuRegAf);
+        case GSCpuRegister::BC: return Z80CpuGetReg(_cpu, Z80CpuRegBc);
+        case GSCpuRegister::DE: return Z80CpuGetReg(_cpu, Z80CpuRegDe);
+        case GSCpuRegister::HL: return Z80CpuGetReg(_cpu, Z80CpuRegHl);
+        case GSCpuRegister::AFAlt: return Z80CpuGetReg(_cpu, Z80CpuRegAfAlt);
+        case GSCpuRegister::BCAlt: return Z80CpuGetReg(_cpu, Z80CpuRegBcAlt);
+        case GSCpuRegister::DEAlt: return Z80CpuGetReg(_cpu, Z80CpuRegDeAlt);
+        case GSCpuRegister::HLAlt: return Z80CpuGetReg(_cpu, Z80CpuRegHlAlt);
+        case GSCpuRegister::IX: return Z80CpuGetReg(_cpu, Z80CpuRegIx);
+        case GSCpuRegister::IY: return Z80CpuGetReg(_cpu, Z80CpuRegIy);
+        case GSCpuRegister::SP: return Z80CpuGetReg(_cpu, Z80CpuRegSp);
+        case GSCpuRegister::PC: return Z80CpuGetReg(_cpu, Z80CpuRegPc);
+        case GSCpuRegister::I: return Z80CpuGetReg(_cpu, Z80CpuRegI);
+        case GSCpuRegister::R: return Z80CpuGetReg(_cpu, Z80CpuRegR);
+        case GSCpuRegister::IM: return Z80CpuGetReg(_cpu, Z80CpuRegIm);
+        case GSCpuRegister::IFF1: return Z80CpuGetReg(_cpu, Z80CpuRegIff1);
+        case GSCpuRegister::IFF2: return Z80CpuGetReg(_cpu, Z80CpuRegIff2);
+        case GSCpuRegister::MEMPTR: return Z80CpuGetReg(_cpu, Z80CpuRegMemptr);
+    }
+    return 0;
+}
+
+/// endregion </Z80 bus callbacks>
 
 /// region <TTDSerializable (P1.5 - parent TDD 6.4)>
 
 namespace
 {
 // Little-endian fixed-width helpers: the blob must be portable across
-// platforms and the z80ex context itself is not (unsigned long member)
+// platforms, so every field is written byte by byte
 void gsTtdWrite16(uint8_t* dst, uint16_t value)
 {
     dst[0] = static_cast<uint8_t>(value);
@@ -1030,28 +1058,35 @@ void SoundChip_GeneralSound::serializeFixedState(uint8_t* dst) const
     // authoritative now, the slots stay reserved for layout compatibility
     dst[23] = static_cast<uint8_t>((_nmiPending ? 1 : 0) | (_intPending ? 2 : 0));
 
+    // The complete CPU state at an instruction boundary: registers plus the
+    // boundary state (EI shadow, a pending prefix after a redundant one, the
+    // LD A,I/R quirk, a just-taken NMI) and the NMI session flag - a restore
+    // anywhere continues exactly like the original (Z80CpuRegisters contract)
+    Z80CpuRegisters regs{};
+    Z80CpuGetRegisters(_cpu, &regs);
     uint8_t* z80 = &dst[24];
-    gsTtdWrite16(z80 + 0, _cpu->af.w);
-    gsTtdWrite16(z80 + 2, _cpu->bc.w);
-    gsTtdWrite16(z80 + 4, _cpu->de.w);
-    gsTtdWrite16(z80 + 6, _cpu->hl.w);
-    gsTtdWrite16(z80 + 8, _cpu->af_.w);
-    gsTtdWrite16(z80 + 10, _cpu->bc_.w);
-    gsTtdWrite16(z80 + 12, _cpu->de_.w);
-    gsTtdWrite16(z80 + 14, _cpu->hl_.w);
-    gsTtdWrite16(z80 + 16, _cpu->ix.w);
-    gsTtdWrite16(z80 + 18, _cpu->iy.w);
-    gsTtdWrite16(z80 + 20, _cpu->sp.w);
-    gsTtdWrite16(z80 + 22, _cpu->pc.w);
-    gsTtdWrite16(z80 + 24, _cpu->memptr.w); // not exposed by the z80ex reg API
-    z80[26] = _cpu->i;
-    gsTtdWrite16(z80 + 27, _cpu->r);
-    z80[29] = _cpu->r7;
-    z80[30] = _cpu->iff1;
-    z80[31] = _cpu->iff2;
-    z80[32] = static_cast<uint8_t>(_cpu->im);
-    z80[33] = _cpu->halted ? 1 : 0;
-    z80[34] = _cpu->prefix; // runTo can legally stop right after a prefix byte
+    gsTtdWrite16(z80 + 0, regs.af);
+    gsTtdWrite16(z80 + 2, regs.bc);
+    gsTtdWrite16(z80 + 4, regs.de);
+    gsTtdWrite16(z80 + 6, regs.hl);
+    gsTtdWrite16(z80 + 8, regs.afAlt);
+    gsTtdWrite16(z80 + 10, regs.bcAlt);
+    gsTtdWrite16(z80 + 12, regs.deAlt);
+    gsTtdWrite16(z80 + 14, regs.hlAlt);
+    gsTtdWrite16(z80 + 16, regs.ix);
+    gsTtdWrite16(z80 + 18, regs.iy);
+    gsTtdWrite16(z80 + 20, regs.sp);
+    gsTtdWrite16(z80 + 22, regs.pc);
+    gsTtdWrite16(z80 + 24, regs.memptr);
+    z80[26] = regs.i;
+    z80[27] = regs.r;  // with R7
+    z80[28] = regs.q;
+    z80[29] = regs.boundary;
+    z80[30] = regs.iff1;
+    z80[31] = regs.iff2;
+    z80[32] = regs.im;
+    z80[33] = regs.halted;
+    z80[34] = regs.nmiInProgress;
 
     // dst[59..94]: queue-era slots, reserved (zero) for layout compatibility
     std::fill_n(&dst[59], 36, static_cast<uint8_t>(0));
@@ -1092,27 +1127,30 @@ void SoundChip_GeneralSound::TTDLoadState(const uint8_t* src)
     // bits 2/3: queue-era pending flags, ignored - _mb.status is authoritative
 
     const uint8_t* z80 = &src[24];
-    _cpu->af.w = gsTtdRead16(z80 + 0);
-    _cpu->bc.w = gsTtdRead16(z80 + 2);
-    _cpu->de.w = gsTtdRead16(z80 + 4);
-    _cpu->hl.w = gsTtdRead16(z80 + 6);
-    _cpu->af_.w = gsTtdRead16(z80 + 8);
-    _cpu->bc_.w = gsTtdRead16(z80 + 10);
-    _cpu->de_.w = gsTtdRead16(z80 + 12);
-    _cpu->hl_.w = gsTtdRead16(z80 + 14);
-    _cpu->ix.w = gsTtdRead16(z80 + 16);
-    _cpu->iy.w = gsTtdRead16(z80 + 18);
-    _cpu->sp.w = gsTtdRead16(z80 + 20);
-    _cpu->pc.w = gsTtdRead16(z80 + 22);
-    _cpu->memptr.w = gsTtdRead16(z80 + 24);
-    _cpu->i = z80[26];
-    _cpu->r = gsTtdRead16(z80 + 27);
-    _cpu->r7 = z80[29];
-    _cpu->iff1 = z80[30];
-    _cpu->iff2 = z80[31];
-    _cpu->im = static_cast<IM_MODE>(z80[32] & 3);
-    _cpu->halted = z80[33] ? 1 : 0;
-    _cpu->prefix = z80[34];
+    Z80CpuRegisters regs{};
+    regs.af = gsTtdRead16(z80 + 0);
+    regs.bc = gsTtdRead16(z80 + 2);
+    regs.de = gsTtdRead16(z80 + 4);
+    regs.hl = gsTtdRead16(z80 + 6);
+    regs.afAlt = gsTtdRead16(z80 + 8);
+    regs.bcAlt = gsTtdRead16(z80 + 10);
+    regs.deAlt = gsTtdRead16(z80 + 12);
+    regs.hlAlt = gsTtdRead16(z80 + 14);
+    regs.ix = gsTtdRead16(z80 + 16);
+    regs.iy = gsTtdRead16(z80 + 18);
+    regs.sp = gsTtdRead16(z80 + 20);
+    regs.pc = gsTtdRead16(z80 + 22);
+    regs.memptr = gsTtdRead16(z80 + 24);
+    regs.i = z80[26];
+    regs.r = z80[27];
+    regs.q = z80[28];
+    regs.boundary = z80[29];
+    regs.iff1 = z80[30];
+    regs.iff2 = z80[31];
+    regs.im = z80[32];
+    regs.halted = z80[33];
+    regs.nmiInProgress = z80[34];
+    Z80CpuSetRegisters(_cpu, &regs);
 
     // src[59..94]: queue-era slots, ignored
 

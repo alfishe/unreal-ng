@@ -551,9 +551,9 @@ void EmulatorAPI::getStateAudioGS(const HttpRequestPtr& req, std::function<void(
     Json::Value cpu;
     if (gs->hasCoprocessor())
     {
-        cpu["pc"] = gs->getCPUReg(regPC);
-        cpu["sp"] = gs->getCPUReg(regSP);
-        cpu["af"] = gs->getCPUReg(regAF);
+        cpu["pc"] = gs->getCPUReg(GSCpuRegister::PC);
+        cpu["sp"] = gs->getCPUReg(GSCpuRegister::SP);
+        cpu["af"] = gs->getCPUReg(GSCpuRegister::AF);
         cpu["halted"] = gs->isCPUHalted();
     }
     else
@@ -948,7 +948,7 @@ void EmulatorAPI::getStateAudioGSPortTrace(const HttpRequestPtr& req, std::funct
     Json::Value cpu;
     if (gs->hasCoprocessor())
     {
-        cpu["pc"] = gs->getCPUReg(regPC);
+        cpu["pc"] = gs->getCPUReg(GSCpuRegister::PC);
         cpu["halted"] = gs->isCPUHalted();
     }
     ret["cpu"] = cpu;

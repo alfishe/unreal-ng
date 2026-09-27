@@ -16,7 +16,7 @@ Hard blockers (must fix before adding LICENSE):
 | # | Item | Path | Problem |
 |---|------|------|---------|
 | B1 | **Microsoft Consolas font** | `data/fonts/consolas.ttf` (loaded by `unreal-qt/src/main.cpp:23`) | Proprietary Microsoft font; its EULA does not permit redistribution. Cannot ship in any public repo, GPL or not. Replace with an OFL font. |
-| B2 | **z80ex disassembler** | `core/src/3rdparty/z80ex/` | Headers say `Released under GNU GPL v2` (no "or later"). GPL-2.0-only is incompatible with GPL-3.0. Currently **dead code** (not compiled — `core/src/CMakeLists.txt` globs `*.cpp` only, these are `.c`; zero `#include` references). Delete the directory. |
+| B2 | **z80ex disassembler** | `core/src/3rdparty/z80ex/` | Headers say `Released under GNU GPL v2` (no "or later"). GPL-2.0-only is incompatible with GPL-3.0. Currently **dead code** (not compiled — `core/src/CMakeLists.txt` globs `*.cpp` only, these are `.c`; zero `#include` references). Delete the directory. **Resolved 2026-09-27**: the General Sound merge had since compiled it (`z80ex.cpp`) as the GS coprocessor core; it was replaced by unreal-z80 (MIT) and the directory removed. |
 | B3 | **Unicode ConvertUTF** | `core/src/3rdparty/simpleini/convertutf.{c,h}` | Old Unicode Inc. notice with a field-of-use restriction ("in the creation of products supporting the Unicode Standard") — treated as non-free/GPL-incompatible by Debian. Also **dead code** (`.c` not globbed, only pulled in by simpleini under `SI_CONVERT_GENERIC`, which is not defined). Delete both files. **Resolved 2026-09-17**: the whole simpleini directory was removed; INI parsing is own code now (`core/src/common/inifile.{h,cpp}`). |
 
 Provenance question (P1): the CPU core, `platform.h`, `z80asm.cpp`, HDD/ATA code, WD1793 and sound-render code are ports of **UnrealSpeccy 0.3x (SMT / Alone Coder / deathsoft)** and still carry their inline comments. The repo contains **no statement of the original UnrealSpeccy license**. See section 1.2 — this must be resolved (verify upstream `unreal_e.txt`; if GPL-2.0-or-later or GPL-3 it's fine; if GPL-2.0-only or "freeware", get written permission).
@@ -110,6 +110,7 @@ Legend for "Linkage": static = compiled into the core/app binaries; header-only;
 | simpleini | `core/src/3rdparty/simpleini/simpleini.h` | 4.17 (`simpleini.h:8`) | **MIT** — `simpleini.h:170-175` | header-only (3 own files) | Compatible — **removed 2026-09-17**, replaced by own `IniFile` (`core/src/common/inifile.{h,cpp}`) |
 | ConvertUTF | `core/src/3rdparty/simpleini/convertutf.{c,h}` | 2001-2004 | **Unicode Inc. legacy notice** with field-of-use clause (`convertutf.h:1-21`) | **not compiled**, not included | **INCOMPATIBLE (B3)** — **deleted 2026-09-17** (whole simpleini directory removed) |
 | tinywav | `core/src/3rdparty/tinywav/` | 2015-2022 | **ISC** — `LICENSE` (Martin Roth) | static (3 own files) | Compatible |
+| unreal-z80 (added 2026-09-27) | `core/src/3rdparty/unreal-z80/` | 0.4.0 @ 0001920 | **MIT** — `LICENSE` (Ilia Sharin) | static (General Sound coprocessor core) | Compatible |
 | simple-fft | `core/src/3rdparty/simple-fft/` | 2013-2020 | **MIT** — `LICENSE.md` (Dmitry Ivanov) | header-only (1 own file); its own CMake mentions FFTW/OpenMP only for its unit tests, which are not built | Compatible |
 | CLI11 | `core/src/3rdparty/cli11/CLI11.hpp` and duplicate `core/automation/cli/lib/cli11/CLI11.hpp` | 2.5.0 (`CLI11.hpp:1`) | **BSD-3-Clause** — header lines 8-30 (University of Cincinnati / Henry Schreiner) | header-only | Compatible (two identical copies — dedupe) |
 | message-center | `core/src/3rdparty/message-center/` | — | **No notice** (believed owner's own code) | static, 49 own files | Compatible once notice added |
@@ -139,7 +140,7 @@ Legend for "Linkage": static = compiled into the core/app binaries; header-only;
 
 | Component | Path | Version | License (evidence) | Use | Verdict |
 |-----------|------|---------|--------------------|-----|---------|
-| **z80ex** (disassembler tables) | `core/src/3rdparty/z80ex/` | 0.16.x era | **GPL-2.0 (no "or later")** — `z80ex.h:7`, `z80ex_dasm.c:7`, `z80ex_common.h:7`, `typedefs.h:7`, `z80ex_dasm.h:7`: "Released under GNU GPL v2"; also "contains some code from the FUSE project" (FUSE is GPL-2.0-or-later) | **not compiled** (`.c` files, glob is `*.cpp`), zero includes | **INCOMPATIBLE as written (B2)** — remove. If the owner ever wants it back, confirm with the z80ex author (Pigmaker57/boo_boo) that "v2" means "v2 or later". |
+| ~~**z80ex** (disassembler tables)~~ removed 2026-09-27 | `core/src/3rdparty/z80ex/` | 0.16.x era | **GPL-2.0 (no "or later")** — `z80ex.h:7`, `z80ex_dasm.c:7`, `z80ex_common.h:7`, `typedefs.h:7`, `z80ex_dasm.h:7`: "Released under GNU GPL v2"; also "contains some code from the FUSE project" (FUSE is GPL-2.0-or-later) | **not compiled** (`.c` files, glob is `*.cpp`), zero includes | **INCOMPATIBLE as written (B2)** — remove. If the owner ever wants it back, confirm with the z80ex author (Pigmaker57/boo_boo) that "v2" means "v2 or later". |
 | nlohmann/json | `core/src/3rdparty/json/single_include/nlohmann/json.hpp` | 3.12.0 (`json.hpp:3`, SPDX `MIT` at line 7) | **MIT** (SPDX in header) | header-only; **no includes found** in own code | Compatible; unused — remove or keep with notice |
 | rapidyaml (+ c4core) | `core/src/3rdparty/rapidyaml/ryml_all.hpp` | ryml 0.9.0 / c4core 0.2.6 (`ryml_all.hpp:21332,203`) | **MIT** — `LICENSE.txt` (Joao Paulo Magalhaes) | header-only; only `core/tests/3rdparty/rapidyaml_test.cpp` | Compatible (test-only) |
 | vcd-writer | `core/src/3rdparty/vcd-writer/` | port of PyVCD | **MIT** — `LICENSE` (Kirill Golikov) | `.cpp` files are compiled by the glob but nothing includes the headers | Compatible; unused |
@@ -224,7 +225,7 @@ Option B (cleaner for a public repo): move the commercial games (Dizzy X, Green 
 
 ### 5.1 Blockers (must fix before LICENSE is added)
 1. **`data/fonts/consolas.ttf`** — Microsoft proprietary; remove and replace with an SIL OFL 1.1 font (JetBrains Mono, Cascadia Code, Fira Mono, DejaVu Sans Mono, Inconsolata). Update `unreal-qt/src/main.cpp:23-56` and the stylesheet font-family lists (`speedcontrolwidget.cpp:43,106`).
-2. **`core/src/3rdparty/z80ex/`** — GPL-2.0 (no "or later") and dead code; delete.
+2. **`core/src/3rdparty/z80ex/`** — GPL-2.0 (no "or later") and dead code; delete. **Resolved 2026-09-27** — removed; the GS coprocessor (which had started compiling it) runs on unreal-z80 (MIT).
 3. **`core/src/3rdparty/simpleini/convertutf.{c,h}`** — non-free Unicode notice and dead code; delete. **Resolved 2026-09-17** — the whole simpleini directory was removed (replaced by own `IniFile`), resolving this together with the simpleini dependency itself.
 4. **UnrealSpeccy origin license (P1)** — verify and record; obtain permission if it is GPL-2.0-only or unlicensed. This is the only item that could genuinely prevent GPL-3.
 
@@ -274,7 +275,8 @@ Recommend **GPL-3.0-or-later**.
 | rapidyaml/c4core | 0.9.0/0.2.6 | MIT | test | compatible |
 | vcd-writer | — | MIT | unused | compatible |
 | libwave | 2020 | MIT | unused | compatible |
-| z80ex | 0.16 | GPL-2.0 (no or-later) | dead | **INCOMPATIBLE — delete** |
+| z80ex | 0.16 | GPL-2.0 (no or-later) | removed 2026-09-27 | ~~INCOMPATIBLE — delete~~ resolved |
+| unreal-z80 | 0.4.0 @ 0001920 | MIT | static (GS coprocessor) | compatible |
 | message-center | — | none (owner's) | static | add notice |
 | gif.h (Tangora) | — | public domain | static | compatible |
 | nvEncodeAPI.h | 2024 | MIT (runtime DLL proprietary, dlopen'd) | header/dynamic | compatible |

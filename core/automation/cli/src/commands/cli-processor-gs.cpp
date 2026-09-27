@@ -88,10 +88,10 @@ void CLIProcessor::HandleStateAudioGS(const ClientSession& session, EmulatorCont
     }
     else if (verbose)
     {
-        ss << "Coprocessor (Z80ex):" << NEWLINE;
-        ss << "  PC: 0x" << std::hex << std::setw(4) << gs->getCPUReg(regPC) << NEWLINE;
-        ss << "  SP: 0x" << std::hex << std::setw(4) << gs->getCPUReg(regSP) << NEWLINE;
-        ss << "  AF: 0x" << std::hex << std::setw(4) << gs->getCPUReg(regAF) << NEWLINE;
+        ss << "Coprocessor (Z80):" << NEWLINE;
+        ss << "  PC: 0x" << std::hex << std::setw(4) << gs->getCPUReg(GSCpuRegister::PC) << NEWLINE;
+        ss << "  SP: 0x" << std::hex << std::setw(4) << gs->getCPUReg(GSCpuRegister::SP) << NEWLINE;
+        ss << "  AF: 0x" << std::hex << std::setw(4) << gs->getCPUReg(GSCpuRegister::AF) << NEWLINE;
         ss << std::dec;
         ss << "  Halted: " << (gs->isCPUHalted() ? "Yes" : "No") << NEWLINE;
         ss << NEWLINE;
@@ -183,7 +183,7 @@ void CLIProcessor::HandleGSPortTrace(const ClientSession& session, const std::ve
            << " (produced " << gs->getPortTraceTotalProduced() << ", evicted " << gs->getPortTraceTotalEvicted() << ")"
            << NEWLINE;
         if (gs->hasCoprocessor())
-            ss << "PC=0x" << std::hex << std::setw(4) << std::setfill('0') << gs->getCPUReg(regPC)
+            ss << "PC=0x" << std::hex << std::setw(4) << std::setfill('0') << gs->getCPUReg(GSCpuRegister::PC)
                << " halted=" << std::dec << (gs->isCPUHalted() ? "yes" : "no") << NEWLINE;
         else
             ss << "PC=- (lightweight personality, no coprocessor)" << NEWLINE;

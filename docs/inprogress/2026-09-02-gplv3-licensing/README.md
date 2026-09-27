@@ -25,7 +25,7 @@ and "-or-later" matches the licensing of UnrealSpeccyP, ZX Diagnostics and Z80 X
 | # | Item | Action |
 |---|------|--------|
 | B1 | `data/fonts/consolas.ttf` (Microsoft Consolas, proprietary, loaded by `unreal-qt/src/main.cpp`) | replace with an OFL font (JetBrains Mono / Cascadia Code / Fira Mono / DejaVu Sans Mono), update `main.cpp` and `speedcontrolwidget.cpp` |
-| B2 | `core/src/3rdparty/z80ex/` — GPL-2.0-only, not compiled, no includes | delete |
+| B2 | **Resolved 2026-09-27**: `core/src/3rdparty/z80ex/` (GPL-2.0-only; compiled since the General Sound merge as the GS coprocessor core) was removed - the GS coprocessor now runs on unreal-z80 (MIT, `core/src/3rdparty/unreal-z80/`), listed in `THIRD_PARTY_NOTICES.md` | done |
 | B3 | **Resolved 2026-09-17**: the whole `core/src/3rdparty/simpleini/` directory was removed; INI parsing replaced by own `IniFile` (`core/src/common/inifile.{h,cpp}`, GPL-3, bug-compatible with the shipped parser incl. its local inline-comment patch). This also removed the MIT simpleini header, not just its convertutf.{c,h} companion | done |
 | P1 | Original UnrealSpeccy 0.3x license not recorded anywhere in the tree | locate `unreal_e.txt` / license text from a 0.37–0.38 source archive; if GPL-2.0-or-later or GPL-3: quote it in the notices; if GPL-2.0-only or "freeware": obtain written permission from the original authors |
 

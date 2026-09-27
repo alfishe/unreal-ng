@@ -24,7 +24,7 @@ missing counter that rewrite left behind is proposal item §1.5.
 
 `inspect_state`'s `disasm` aspect (WebAPI `GET /{id}/disasm`) disassembles
 the **main** ZX Spectrum Z80. There is no equivalent for the GS card's own
-Z80 (z80ex, `SoundChip_GeneralSound::_cpu`). When I needed to understand why
+Z80 (`SoundChip_GeneralSound::_cpu`; z80ex at the time of writing, unreal-z80 since 2026-09-27). When I needed to understand why
 the coprocessor was stuck at a specific PC (an earlier investigation this
 session: PC parked at `0x0C32` inside a `IN A,(FLAGS) / AND B / JR Z,loop`
 polling loop, `interrupts_accepted` frozen at 0), the only path available was:
@@ -39,7 +39,7 @@ polling loop, `interrupts_accepted` frozen at 0), the only path available was:
 
 That is a completely manual process that exists ONLY because there is no
 `GET /{id}/state/audio/gs/disasm?address=..&count=..` (or an `inspect_state`
-aspect like `audio_gs_disasm`) reading through `gs->getCPUReg(regPC)` /
+aspect like `audio_gs_disasm`) reading through `gs->getCPUReg(GSCpuRegister::PC)` /
 GS memory instead of the main Z80's. The disassembler itself
 (`debugger/disassembler/z80disasm.h`) is chip-agnostic - it takes a memory
 reader callback, and `GeneralSoundCard` already has the read primitives
@@ -56,16 +56,17 @@ other device aspects already do for a not-fitted card.
 
 ### 1.2 GS coprocessor register exposure is PC/SP/AF/halted only
 
-`z80ex_get_reg` (via `GeneralSoundCard::getCPUReg(Z80_REG_T)`) can already
-return the full register file - `regBC/regDE/regHL` and their shadows,
-`regIX/regIY`, `regI/regR/regR7`, `regIM`, `regIFF1/regIFF2` - the enum is
-right there in `z80ex.h`. `getStateAudioGS` (state_audio_api.cpp) only reads
-four of them:
+`GeneralSoundCard::getCPUReg(GSCpuRegister)` can already return the full
+register file - `BC/DE/HL` and their shadows (`AFAlt`...`HLAlt`), `IX/IY`,
+`I/R` (R with bit 7), `IM`, `IFF1/IFF2` and `MEMPTR` - the enum is in
+`generalsoundcard.h` (until 2026-09-27 this went through z80ex's
+`z80ex_get_reg` and `Z80_REG_T`). `getStateAudioGS` (state_audio_api.cpp) only
+reads four of them:
 
 ```cpp
-cpu["pc"] = gs->getCPUReg(regPC);
-cpu["sp"] = gs->getCPUReg(regSP);
-cpu["af"] = gs->getCPUReg(regAF);
+cpu["pc"] = gs->getCPUReg(GSCpuRegister::PC);
+cpu["sp"] = gs->getCPUReg(GSCpuRegister::SP);
+cpu["af"] = gs->getCPUReg(GSCpuRegister::AF);
 cpu["halted"] = gs->isCPUHalted();
 ```
 

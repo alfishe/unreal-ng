@@ -54,7 +54,7 @@ shipped gs105a ROM).
 
 | Capability | LLE (`SoundChip_GeneralSound`) | LW (`SoundChip_GSLightweight`) | NeoGS (reserved, P2) |
 |:--|:--|:--|:--|
-| Second Z80 + firmware | yes (z80ex + gs105a.rom) | no | FPGA model (neogs-tdd.md) |
+| Second Z80 + firmware | yes (unreal-z80 + gs105a.rom; z80ex until 2026-09-27) | no | FPGA model (neogs-tdd.md) |
 | Module engine | firmware QUANTUM/QTPLAY | in-tree ProTracker player (`gsmodplayer.h`) | firmware + SD/MP3 |
 | Mailbox protocol | exact (FIFOs, split bit7) | exact (shared `GSForwardMailbox`) | expected shared |
 | Reply bytes | firmware-true | bit-exact vs LLE (fidelity test) | TBD |
@@ -84,7 +84,7 @@ shipped gs105a ROM).
 PortDevice, ttd::TTDSerializable
         |
 GeneralSoundCard                      (chips/generalsoundcard.h)
-   |-- SoundChip_GeneralSound          (LLE: z80ex + firmware, PeripheralId 5)
+   |-- SoundChip_GeneralSound          (LLE: unreal-z80 + firmware, PeripheralId 5)
    |-- SoundChip_GSLightweight         (LW: interpreter + player, PeripheralId 10)
    '-- (NeoGS: reserved slot)
 
@@ -215,7 +215,7 @@ There is no instruction timing; the interpreter runs at protocol events:
   activity, exactly like the firmware's COMINT poll between interrupts.
 - `flush()`/`runTo()` are the LLE's lazy-sync timing math (12 MHz GS domain,
   host-speed-multiplier stretching, sub-quantum remainder carry) with the
-  z80ex step replaced by the interpreter bookkeeping.
+  CPU step replaced by the interpreter bookkeeping.
 
 ### 4.3 Reply engine
 
@@ -662,5 +662,5 @@ endpoint reports why) - config audit is the verification surface there.
 - Finetune is approximated (1/8-semitone steps vs the firmware's 16-step
   table) - tolerance domain.
 - NeoGS interface fit is asserted by design only (no P2 work here).
-- `getCPUReg` on the interface drags `z80ex.h` into LW includes - accepted
-  (keeps automation type-simple).
+- ~~`getCPUReg` on the interface drags `z80ex.h` into LW includes~~ - resolved
+  2026-09-27: the interface takes the card's own `GSCpuRegister`.

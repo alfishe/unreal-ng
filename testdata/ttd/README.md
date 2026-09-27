@@ -130,6 +130,12 @@ but a flipped byte that still decodes is not.
 
 ## Status
 
+Re-recorded 2026-09-27 (all five) after the General Sound coprocessor moved
+from z80ex to unreal-z80: the GS device blob (id 5) keeps its size, but its
+Z80 block now carries the library's register set (R as one byte, Q, the
+instruction-boundary state and the NMI session flag instead of z80ex's
+16-bit R, R7 and prefix bytes).
+
 Re-recorded 2026-09-26 again (all five) after the instruction-start fix: for
 CB/DD/FD/DDCB instructions the write journal's writer PC (`m1_pc`) is now the
 instruction's first byte, not its second. Checkpoints are unaffected.

@@ -317,6 +317,17 @@ Benefits:
 - No risk of breaking main CPU optimizations
 - z80ex from [github.com/alfishe/z80ex](https://github.com/alfishe/z80ex)
 
+> **Update 2026-09-27.** Implemented with z80ex first; the coprocessor now runs
+> on unreal-z80 0.4.0 (`core/src/3rdparty/unreal-z80/`, MIT), callback bus. Why: the TTD blob stores the
+> complete CPU state at any instruction boundary (`Z80CpuRegisters`, including
+> the EI/RETN interrupt shadow, a pending prefix and the NMI state - z80ex
+> exposed none of it), real-silicon interrupt rules, and z80ex's
+> GPL-2.0-only license was incompatible with GPL v3. A lockstep diff on the
+> gs105a firmware matched T and every register instruction for instruction
+> (only the undocumented X/Y flags after block ops, SCF/CCF and BIT differ,
+> where z80ex is behind silicon). The code sketches in this document keep their
+> original z80ex names.
+
 ### 4.4 Class Design
 
 ```cpp
@@ -673,7 +684,9 @@ struct GSState {
 ### 8.3 Full State (includes Z80 + RAM)
 
 TTDStateSize() returns:
-- Z80 registers: ~26 bytes (from z80ex state)
+- Z80 state: 35 bytes - `Z80CpuRegisters`: the registers, R with bit 7, Q,
+  the instruction-boundary state and the NMI session flag (fixed-state bytes
+  24..58; the z80ex context fields until 2026-09-27)
 - Communication state: 21 bytes (GSState above)
 - RAM: 128–512 KB (original GS); TTDPeripheralRegistry compresses the blob
 
