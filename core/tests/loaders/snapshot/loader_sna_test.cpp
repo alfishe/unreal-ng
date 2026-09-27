@@ -548,6 +548,43 @@ TEST_F(LoaderSNA_Test, saveAndLoadRoundtrip48k)
     EXPECT_EQ(z80.hl, 0x9ABC) << "Register HL should be restored";
 }
 
+/// Byte 19 bit 2 is IFF2; a load restores IFF1 = IFF2 from it (the format's
+/// resume is a RETN). Every IFF combination at save time must come back as a
+/// matching pair - a DI snapshot must not load as "inside an NMI handler"
+/// (IFF1=0, IFF2=1), which let its first RETN/RETI enable interrupts
+TEST_F(LoaderSNA_Test, loadRestoresIff1AndIff2FromByte19)
+{
+    Z80& z80 = *_context->pCore->GetZ80();
+    struct Case
+    {
+        uint8_t iff1, iff2;  // at save time
+        uint8_t expected;    // IFF1 and IFF2 after load
+    };
+    for (const Case& c : {Case{0, 0, 0}, Case{1, 1, 1}, Case{0, 1, 1}})
+    {
+        z80.pc = 0x8000;
+        z80.sp = 0xFF00;
+        z80.im = 1;
+        z80.iff1 = c.iff1;
+        z80.iff2 = c.iff2;
+
+        ScopedTestFile tempPath(TestPathHelper::GetUniqueTestScratchPath("test_iff.sna"));
+        {
+            LoaderSNACUT saver(_context, tempPath);
+            ASSERT_TRUE(saver.save());
+        }
+
+        z80.iff1 = 1 - c.expected;  // make a stale value visible
+        z80.iff2 = 1 - c.expected;
+        {
+            LoaderSNACUT loader(_context, tempPath);
+            ASSERT_TRUE(loader.load());
+        }
+        EXPECT_EQ(z80.iff1, c.expected) << "saved IFF1=" << int(c.iff1) << " IFF2=" << int(c.iff2);
+        EXPECT_EQ(z80.iff2, c.expected) << "saved IFF1=" << int(c.iff1) << " IFF2=" << int(c.iff2);
+    }
+}
+
 // File size sanity tests - prevent oversized snapshots (e.g. 4MB extended memory)
 TEST_F(LoaderSNA_Test, save48kFileSizeExact)
 {

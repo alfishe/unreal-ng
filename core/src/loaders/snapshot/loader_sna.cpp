@@ -473,8 +473,13 @@ bool LoaderSNA::applySnapshotFromStaging()
         z80.r_low = _header.r;
         z80.r_hi = _header.r & 0x80u;
         z80.im = _header.imod & 0x03u;
-        z80.iff1 = (_header.flag19 & 0b00000'0100u) >> 2;
-        z80.iff2 = 1;
+        // Byte 19 bit 2 is IFF2. The format was born as an NMI-taken image
+        // resumed by RETN, which copies IFF2 into IFF1, so both flip-flops
+        // come from the one bit (libspectrum/FUSE do the same). Forcing IFF2
+        // to 1 left a DI snapshot in the "inside an NMI handler" state
+        // (IFF1=0, IFF2=1): its first RETN/RETI would enable interrupts
+        z80.iff2 = (_header.flag19 & 0b00000'0100u) >> 2;
+        z80.iff1 = z80.iff2;
 
         // Initialize undocumented registers (not stored in SNA format)
         z80.memptr = 0;
