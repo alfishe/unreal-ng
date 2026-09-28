@@ -190,7 +190,9 @@
         "'gs-module-dump.mod'; 404 when no upload has completed yet). NeoGS only (409 otherwise): sd_insert "
         "(needs 'path' to a raw SD image), sd_eject, flash_save (saves the reprogrammed flash); carried out on the "
         "machine thread at the next instruction boundary ('status': 'queued' while the emulator runs, 'done' "
-        "otherwise); sd_insert/sd_eject are refused while TTD records (the configuration is fixed for a recording).";
+        "otherwise); sd_insert/sd_eject are refused while TTD records (the configuration is fixed for a recording). "
+        "stereo_mode ('mode': separated | gs | mono) sets how the NeoGS DAC channels reach the two sides: separated as on "
+        "the board, gs a 50% cross-feed like the classic GS, mono; kept by the emulator and applied at the next frame.";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["required"] = true;
@@ -231,6 +233,16 @@
                                                                ["properties"]["action"]["enum"].append("sd_eject");
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
                                                                ["properties"]["action"]["enum"].append("flash_save");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["action"]["enum"].append("stereo_mode");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["mode"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["mode"]["enum"].append("separated");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["mode"]["enum"].append("gs");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["mode"]["enum"].append("mono");
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
                                                                ["properties"]["action"]["enum"].append("dump_module");
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]

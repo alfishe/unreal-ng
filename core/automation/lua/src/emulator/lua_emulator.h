@@ -1947,6 +1947,17 @@ public:
         lua.set_function("gs_flash_save", [this]() -> bool {
             return _emulator && NeoGSMediaAccepted(NeoGSRequestFlashSave(_emulator->GetContext()));
         });
+        // NeoGS stereo mode: "separated" (as on the board), "gs" (50% cross-feed
+        // like the classic GS) or "mono"; applied at the next frame. False on
+        // an unknown name
+        lua.set_function("gs_stereo_mode", [this](const std::string& mode) -> bool {
+            NeoGSConfig::StereoMode parsed = NeoGSConfig::StereoMode::Separated;
+            SoundManager* sm = _emulator && _emulator->GetContext() ? _emulator->GetContext()->pSoundManager : nullptr;
+            if (!sm || !neogsParseStereoMode(mode, parsed))
+                return false;
+            sm->setNeoGSStereoMode(parsed);
+            return true;
+        });
 
         // Host-port stimuli step the card's Z80, so they go through the live-input
         // path: applied on the machine's thread at an instruction boundary and

@@ -98,7 +98,8 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"create", "list", "list_models", "server", "status", "start", "stop", "pause", "resume", "reset", "destroy",
                                "gs_reset", "gs_reset_card", "gs_nmi", "gs_send_command", "gs_send_data", "gs_read_status", "gs_read_data",
-                               "gs_switch_personality", "gs_dump_module", "gs_sd_insert", "gs_sd_eject", "gs_flash_save"})
+                               "gs_switch_personality", "gs_dump_module", "gs_sd_insert", "gs_sd_eject", "gs_flash_save",
+                               "gs_stereo_mode"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
@@ -113,7 +114,8 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "'gs_switch_personality' swaps the GS-slot card at the next frame boundary (needs 'personality': "
         "'z80'|'lle', 'lw'|'lightweight' or 'ngs'|'neogs'); NeoGS only: 'gs_sd_insert' (needs 'path' to a raw "
         "image), 'gs_sd_eject', 'gs_flash_save' (applied at the next instruction boundary; insert/eject are "
-        "refused while TTD records); 'gs_dump_module' writes the last completed COM30..D2 module "
+        "refused while TTD records), 'gs_stereo_mode' (needs 'mode': 'separated' as on the board, 'gs' 50% "
+        "cross-feed like the classic GS, or 'mono'; applied at the next frame); 'gs_dump_module' writes the last completed COM30..D2 module "
         "upload to a file (optional 'path', defaults to 'gs-module-dump.mod').";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
@@ -131,6 +133,13 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["personality"]["description"] =
         "Required by gs_switch_personality: 'z80'|'lle' for the Z80 coprocessor card, 'ngs'|'neogs' for NeoGS, 'lw'|'lightweight' for the "
         "in-tree mod-player card";
+    schema["properties"]["mode"]["type"] = "string";
+    schema["properties"]["mode"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* mode : {"separated", "gs", "mono"})
+        schema["properties"]["mode"]["enum"].append(mode);
+    schema["properties"]["mode"]["description"] =
+        "Required by gs_stereo_mode (NeoGS): how the DAC channels reach the two sides - 'separated' (as on the board), "
+        "'gs' (50% cross-feed like the classic GS) or 'mono'";
     schema["properties"]["path"]["type"] = "string";
     schema["properties"]["path"]["description"] =
         "File path: optional for gs_dump_module (defaults to 'gs-module-dump.mod' in the server's working directory), "
@@ -142,7 +151,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "Manage Unreal-NG emulator instances: create, list, switch models, start/stop/pause/resume/reset/destroy. "
         "Multi-instance: target identifies the machine; 'auto' reuses the single instance or creates a default 128k one. "
         "Also drives the General Sound card (gs_reset/gs_reset_card/gs_nmi/gs_send_command/gs_send_data/"
-        "gs_read_status/gs_read_data/gs_switch_personality/gs_dump_module; NeoGS: gs_sd_insert/gs_sd_eject/gs_flash_save).",
+        "gs_read_status/gs_read_data/gs_switch_personality/gs_dump_module; NeoGS: gs_sd_insert/gs_sd_eject/gs_flash_save/gs_stereo_mode).",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             std::string action = args["action"].asString();
@@ -240,7 +249,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                          action == "gs_send_command" || action == "gs_send_data" ||
                          action == "gs_read_status" || action == "gs_read_data" ||
                          action == "gs_switch_personality" || action == "gs_dump_module" || action == "gs_sd_insert" ||
-                         action == "gs_sd_eject" || action == "gs_flash_save")
+                         action == "gs_sd_eject" || action == "gs_flash_save" || action == "gs_stereo_mode")
                 {
                     // GS card control (GS design §11.3): forwards to the same
                     // /control/audio/gs endpoint the WebAPI serves - the "gs_"
@@ -274,6 +283,15 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                     {
                         done(ToolResult::Error("Action 'gs_sd_insert' requires 'path' (an SD card image)"));
                         return;
+                    }
+                    else if (action == "gs_stereo_mode")
+                    {
+                        if (!args.isMember("mode") || !args["mode"].isString())
+                        {
+                            done(ToolResult::Error("Action 'gs_stereo_mode' requires 'mode' (separated, gs or mono)"));
+                            return;
+                        }
+                        body["mode"] = args["mode"].asString();
                     }
                     caller.Call("POST", Endpoint(id, "/control/audio/gs"), &body, [action, done](int status, Json::Value response) {
                         if (status >= 200 && status < 300)

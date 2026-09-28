@@ -476,6 +476,39 @@ TEST(SoundChip_NeoGS, OutputIsAcCoupled)
     EXPECT_NEAR(c.chip->dacLevel(false), 8001.0, 160.0);
 }
 
+/// The stereo mode (a listening choice): channel 1 alone, on the left.
+/// Separated: the right side stays silent (as on the board); GS: the right
+/// side at half the left (the classic GS's 50% cross-feed); mono: both equal.
+/// Measured on the first frame's step, which passes the output coupling
+TEST(SoundChip_NeoGS, StereoModeSeparatedCrossfeedMono)
+{
+    struct Case
+    {
+        NeoGSConfig::StereoMode mode;
+        double rightOverLeft;
+    } cases[] = {{NeoGSConfig::StereoMode::Separated, 0.0}, {NeoGSConfig::StereoMode::GS, 0.5}, {NeoGSConfig::StereoMode::Mono, 1.0}};
+    for (const Case& k : cases)
+    {
+        Card c;
+        c.chip->setStereoMode(k.mode);
+        Asm p;
+        p.di().out(0x06, 63).load(0x6000).jrSelf();
+        c.boot(p);
+        c.chip->poke(0x6000, 0xFF);
+        c.runFrames(1);
+        int left = 0, right = 0;
+        for (int i = 0; i < SAMPLES_PER_FRAME; i++)
+        {
+            left = std::max(left, std::abs(static_cast<int>(c.chip->getBuffer()[2 * i])));
+            right = std::max(right, std::abs(static_cast<int>(c.chip->getBuffer()[2 * i + 1])));
+        }
+        ASSERT_GT(left, 2000) << neogsStereoModeName(k.mode);
+        EXPECT_NEAR(static_cast<double>(right) / left, k.rightOverLeft, 0.03) << neogsStereoModeName(k.mode);
+        EXPECT_NEAR(c.chip->dacLevel(false), 8001.0, 160.0) << "the DAC level itself is the board's";
+        EXPECT_EQ(c.chip->dacLevel(true), 0);
+    }
+}
+
 TEST(SoundChip_NeoGS, OpcodeFetchesInTheWindowLatchToo)
 {
     Card c;

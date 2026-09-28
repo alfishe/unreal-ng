@@ -1610,6 +1610,14 @@ namespace PythonBindings
             .def("gs_flash_save", [](Emulator& self) -> bool {
                 return NeoGSMediaAccepted(NeoGSRequestFlashSave(self.GetContext()));
             }, "NeoGS: save the reprogrammed flash (loaded in place of the shipped image with [NGS] FlashWrite=persist)")
+            .def("gs_stereo_mode", [](Emulator& self, const std::string& mode) -> bool {
+                NeoGSConfig::StereoMode parsed = NeoGSConfig::StereoMode::Separated;
+                SoundManager* sm = self.GetContext() ? self.GetContext()->pSoundManager : nullptr;
+                if (!sm || !neogsParseStereoMode(mode, parsed))
+                    return false;
+                sm->setNeoGSStereoMode(parsed);
+                return true;
+            }, "NeoGS: 'separated' (as on the board), 'gs' (50% cross-feed like the classic GS) or 'mono'; applied at the next frame", py::arg("mode"))
             .def("gs_reset", [](Emulator& self) {
                 return SubmitGSInput(self, ttd::TTDInputKind::GSReset);
             }, "Full power-on reset of the General Sound card (live input; True when submitted)")

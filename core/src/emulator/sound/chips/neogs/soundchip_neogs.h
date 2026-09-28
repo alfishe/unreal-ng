@@ -180,6 +180,8 @@ public:
     /// output before the line output's coupling capacitors (a held level
     /// shows here; getBuffer() passes only its changes)
     int32_t dacLevel(bool right) const { return right ? _outR : _outL; }
+    void setStereoMode(NeoGSConfig::StereoMode mode) override { _stereoMode = mode; }
+    NeoGSConfig::StereoMode stereoMode() const { return _stereoMode; }
     uint8_t pageRegister(int window) const { return _mem.page(window); }
     bool windowIsFlash(int window) const { return _mem.isFlash(window); }
     bool ledOn() const { return (_led & 1) == 0; } // #01 d0: 0 = on
@@ -414,8 +416,9 @@ private:
     FilterDCBlocker _couplingL;
     FilterDCBlocker _couplingR;
     bool _synthesisSuppressed = false;
-    int32_t _outL = 0;
+    int32_t _outL = 0; // each side as the board's DAC gets it
     int32_t _outR = 0;
+    NeoGSConfig::StereoMode _stereoMode = NeoGSConfig::StereoMode::Separated; // listening choice, not state
     bool _frameHadActivity = false;
     uint32_t _sdWriteMarkerFrame = UINT32_MAX; // last frame with an SD-write TTD marker
     bool _wasActive = false;

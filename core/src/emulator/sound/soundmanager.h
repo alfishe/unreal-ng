@@ -108,6 +108,9 @@ protected:
     // GSTypeKind value otherwise)
     std::atomic<uint8_t> _pendingGSSwitch{0xFF};
 
+    // NeoGS stereo mode, set from any thread, applied at frame start
+    std::atomic<uint8_t> _neoGSStereoMode{0};
+
     // What the GS slot holds now, for other threads (generalSoundSlot())
     mutable std::mutex _gsSlotMutex;
     GeneralSoundSlot _gsSlot;
@@ -401,6 +404,14 @@ public:
     /// Refresh generalSoundSlot() from the card: emulation thread, after the
     /// card or its media changed
     void publishGeneralSoundSlot();
+    /// NeoGS stereo mode (separated / GS cross-feed / mono): any thread; the
+    /// fitted NeoGS takes it at the next frame boundary, and a card fitted
+    /// later starts with it. Initialised from [NGS] StereoMode
+    void setNeoGSStereoMode(NeoGSConfig::StereoMode mode) { _neoGSStereoMode.store(static_cast<uint8_t>(mode), std::memory_order_relaxed); }
+    NeoGSConfig::StereoMode neoGSStereoMode() const
+    {
+        return static_cast<NeoGSConfig::StereoMode>(_neoGSStereoMode.load(std::memory_order_relaxed));
+    }
     /// A requestGeneralSoundCardSwitch() waits for the next frame boundary
     bool generalSoundSwitchPending() const { return _pendingGSSwitch.load(std::memory_order_acquire) != 0xFF; }
 #ifdef UNREALNG_HAVE_OPL4

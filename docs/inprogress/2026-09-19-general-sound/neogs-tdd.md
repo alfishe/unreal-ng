@@ -471,6 +471,17 @@ section on the right):
   (1 / (2 pi x 390 x 22 nF)). Not modelled: it affects only the top of the
   audio band.
 
+**The listening choice** (`[NGS] StereoMode`, added 2026-09-28): hard stereo
+is faithful but unusual to listen to, so the emulator offers three modes for
+the DAC channels - `separated` (the default, as on the board), `gs` (the
+classic GS's cross-feed: L = 2/3 left + 1/3 right, so one side alone gives the
+other half its level and both sides full stay full) and `mono` (both sides
+the average). The MP3 decoder keeps its own stereo; `dacLevel()` still shows
+the board's per-side levels. It is kept by `SoundManager`
+(`setNeoGSStereoMode`, any thread), taken by the card at the next frame and
+kept across card switches; automation: `stereo_mode` / `gs_stereo_mode`;
+Audio Settings: "Stereo" in the NeoGS section.
+
 Worked example: a module plays a note on MOD channel 1 only (the firmware
 puts it on DAC channel 1). On the classic card the left side carries it at
 full level and the right side at 47%. On NeoGS the left side carries it and
@@ -1323,6 +1334,7 @@ FlashWrite=session             ; session | persist | off
 Volume=8000                    ; output gain, same scale as [SOUND] GSVol
 ZxDmaWatch=selected            ; selected | always (neogs-zxdma-design.md §5.4)
 ZxDmaWatchFrames=5             ; watch window after ZX-DMA activity, frames
+StereoMode=separated           ; separated | gs (50% cross-feed) | mono - a listening choice (§3.6)
 ```
 
 **Parsing** (`config.cpp:505-530`):
@@ -1532,8 +1544,8 @@ earlier):
 | Surface | Additions |
 |---|---|
 | CLI `gs` | `gs switch_personality ngs`; `gs neogs` (config, pages, clock, LED, SD, decoder, DMA); `gs sd insert <image>` / `gs sd eject`; `gs flash save` |
-| WebAPI | `/state/audio/gs` gains a `neogs` object with the same fields; `/control/audio/gs` accepts `personality: "ngs"`, `sd_insert`, `sd_eject`, `flash_save` (answer `status`: `done`, or `queued` while the loop runs; 409 without NeoGS, during a TTD recording (insert/eject) or a replay) |
-| MCP | the one `gs` tool: its `action` enum and personality values gain `ngs`, `sd_insert`, `sd_eject`, `flash_save` |
+| WebAPI | `/state/audio/gs` gains a `neogs` object with the same fields; `/control/audio/gs` accepts `personality: "ngs"`, `sd_insert`, `sd_eject`, `flash_save`, `stereo_mode` (`mode`; state: `neogs.stereo_mode`) (answer `status`: `done`, or `queued` while the loop runs; 409 without NeoGS, during a TTD recording (insert/eject) or a replay) |
+| MCP | the one `gs` tool: its `action` enum and personality values gain `ngs`, `sd_insert`, `sd_eject`, `flash_save`; `gs_stereo_mode` (`mode`: separated / gs / mono) |
 | Lua / Python | `implementation` label and switch targets extended; `neogs()` state table |
 | Docs | `command-interface.md` and the OpenAPI file, in the same change |
 | GUI: Audio Settings | "General Sound slot" section, shown when a card is fitted: the card (classic, lightweight player, NeoGS; switched at the next frame), and for NeoGS the SD card (image name, Insert..., Eject; refused while TTD records). The mixer's Sources list names the card "NeoGS" and adds "NeoGS MP3". The widget reads `SoundManager::generalSoundSlot()`, a copy refreshed on the emulation thread whenever the card or its SD card changes, and polls it with the meters, so changes made through automation show up too |

@@ -235,6 +235,7 @@ TEST_F(Config_Test, ShippedConfigsCarryTheFullNeoGSSection)
         EXPECT_EQ(ngs.volume, 8000u) << name;
         EXPECT_EQ(ngs.zxDmaWatch, NeoGSConfig::ZxDmaWatch::Selected) << name;
         EXPECT_EQ(ngs.zxDmaWatchFrames, 5u) << name;
+        EXPECT_EQ(ngs.stereoMode, NeoGSConfig::StereoMode::Separated) << name;
     }
 }
 
@@ -245,6 +246,11 @@ TEST_F(Config_Test, NeoGSMp3DecoderDefaultsToSoftware)
     EXPECT_EQ(_context->config.ngs.mp3Support, NGSMP3SupportKind::Software);
     ASSERT_TRUE(LoadSoundKeys("GSType=NGS\n[NGS]\nMP3Support=stub\n"));
     EXPECT_EQ(_context->config.ngs.mp3Support, NGSMP3SupportKind::Stub);
+    EXPECT_EQ(_context->config.ngs.stereoMode, NeoGSConfig::StereoMode::Separated) << "the default: as on the board";
+    ASSERT_TRUE(LoadSoundKeys("GSType=NGS\n[NGS]\nStereoMode=gs\n"));
+    EXPECT_EQ(_context->config.ngs.stereoMode, NeoGSConfig::StereoMode::GS);
+    ASSERT_TRUE(LoadSoundKeys("GSType=NGS\n[NGS]\nStereoMode=mono\n"));
+    EXPECT_EQ(_context->config.ngs.stereoMode, NeoGSConfig::StereoMode::Mono);
 }
 
 TEST_F(Config_Test, ShippedConfigsFitNeoGS)

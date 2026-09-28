@@ -468,6 +468,11 @@ struct NeoGSConfig
 	ZxDmaWatch zxDmaWatch = ZxDmaWatch::Selected;
 	unsigned zxDmaWatchFrames = 5;
 	unsigned volume = 8000;                                 // same 0-8192 scale as [SOUND] GSVol
+	/// How the DAC channels reach the two sides (a listening choice, not
+	/// hardware): Separated = as on the board (hard left/right), GS = 50%
+	/// cross-feed like the classic GS board, Mono = both sides the same
+	enum class StereoMode : uint8_t { Separated, GS, Mono };
+	StereoMode stereoMode = StereoMode::Separated;
 };
 
 struct zxkeymap;

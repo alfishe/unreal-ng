@@ -97,6 +97,31 @@ inline bool gsParsePersonality(std::string name, GSTypeKind& out)
     return true;
 }
 
+/// NeoGS stereo mode names on every surface: separated | gs | mono
+inline const char* neogsStereoModeName(NeoGSConfig::StereoMode mode)
+{
+    switch (mode)
+    {
+        case NeoGSConfig::StereoMode::GS: return "gs";
+        case NeoGSConfig::StereoMode::Mono: return "mono";
+        default: return "separated";
+    }
+}
+
+inline bool neogsParseStereoMode(std::string name, NeoGSConfig::StereoMode& out)
+{
+    std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (name == "separated" || name == "hard" || name == "native")
+        out = NeoGSConfig::StereoMode::Separated;
+    else if (name == "gs" || name == "crossfeed" || name == "legacy")
+        out = NeoGSConfig::StereoMode::GS;
+    else if (name == "mono")
+        out = NeoGSConfig::StereoMode::Mono;
+    else
+        return false;
+    return true;
+}
+
 /// For error messages
 constexpr const char* GS_PERSONALITY_NAMES = "z80, lle, lw, lightweight, ngs or neogs";
 
@@ -228,6 +253,10 @@ public:
     /// MP3 decoder), same format; nullptr when the card has none
     virtual int16_t* getAuxBuffer() { return nullptr; }
     virtual bool hadAuxAudioActivityLastFrame() const { return false; }
+    /// NeoGS: how the DAC channels reach the two sides (Separated / GS 50%
+    /// cross-feed / Mono); other cards ignore it. Emulation thread (applied
+    /// by SoundManager at the frame boundary)
+    virtual void setStereoMode(NeoGSConfig::StereoMode mode) { (void)mode; }
     /// NeoGS: the card's own DMA (SD card, MP3 decoder) moved data during the
     /// last frame (HUD activity; no sound needed - software may use the card
     /// as an accelerator)

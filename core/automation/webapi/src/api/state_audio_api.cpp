@@ -569,6 +569,7 @@ void EmulatorAPI::getStateAudioGS(const HttpRequestPtr& req, std::function<void(
     if (gs->neogsState(ngs))
     {
         Json::Value n;
+        n["stereo_mode"] = neogsStereoModeName(soundManager->neoGSStereoMode());
         n["flash"] = ngs.flashTitle;
         n["flash_modified"] = ngs.flashModified;
         n["gscfg0"] = ngs.gscfg0;
@@ -671,8 +672,9 @@ void EmulatorAPI::getStateAudioGS(const HttpRequestPtr& req, std::function<void(
 
 /// @brief POST /api/v1/emulator/{id}/control/audio/gs
 /// @param body {"action": "reset|reset_card|nmi|send_command|send_data|read_status|read_data|switch_personality|
-///                         dump_module|sd_insert|sd_eject|flash_save",
+///                         dump_module|sd_insert|sd_eject|flash_save|stereo_mode",
 ///              "value": 0..255 (byte actions), "personality": "z80|lle|lw|lightweight|ngs|neogs" (switch_personality),
+///              "mode": "separated|gs|mono" (stereo_mode, NeoGS),
 ///              "path": image or file path (sd_insert, dump_module)}
 /// Actions mirror the host-port semantics (GS design §10.1). The writes,
 /// resets and NMI are live input: applied on the machine's thread at the next
@@ -775,6 +777,25 @@ void EmulatorAPI::postControlAudioGS(const HttpRequestPtr& req, std::function<vo
         return;
     }
 
+    // stereo_mode (NeoGS) takes a mode name
+    NeoGSConfig::StereoMode stereoMode = NeoGSConfig::StereoMode::Separated;
+    if (action == "stereo_mode")
+    {
+        const std::string mode = json->get("mode", "").asString();
+        if (!neogsParseStereoMode(mode, stereoMode))
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "Action 'stereo_mode' requires 'mode': separated, gs or mono (got '" + mode + "')";
+
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+    }
+
     // switch_personality selects the target with a string instead of a byte
     GSTypeKind personalityKind = GSTypeKind::NONE;
     if (action == "switch_personality")
@@ -854,6 +875,15 @@ void EmulatorAPI::postControlAudioGS(const HttpRequestPtr& req, std::function<vo
     {
         // Peek: status bit 7 is left set, the card is not stepped
         ret["value"] = gs->getDataToHost();
+    }
+    else if (action == "stereo_mode")
+    {
+        // A listening choice kept by the SoundManager: NeoGS takes it at the
+        // next frame boundary, and a NeoGS fitted later starts with it
+        soundManager->setNeoGSStereoMode(stereoMode);
+        ret["mode"] = neogsStereoModeName(stereoMode);
+        ret["applies_to"] = "NeoGS DAC channels (separated = as on the board, gs = 50% cross-feed like the classic GS, mono)";
+        ret["neogs_fitted"] = gs->implementation() == GSCardImplementation::NGS;
     }
     else if (action == "switch_personality")
     {
@@ -977,7 +1007,7 @@ void EmulatorAPI::postControlAudioGS(const HttpRequestPtr& req, std::function<vo
         error["message"] =
             "Unknown action '" + action +
             "' (expected reset, reset_card, nmi, send_command, send_data, read_status, read_data, switch_personality, "
-            "dump_module, sd_insert, sd_eject or flash_save)";
+            "dump_module, sd_insert, sd_eject, flash_save or stereo_mode)";
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k400BadRequest);

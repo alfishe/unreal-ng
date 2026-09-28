@@ -70,6 +70,7 @@ private slots:
     void onGSCardChanged(int index);
     void onNeoGSInsertSd();
     void onNeoGSEjectSd();
+    void onNeoGSStereoModeChanged(int index);
 
     // Covox controls
     void onCovoxDCRemovalChanged(int state);
@@ -144,6 +145,8 @@ private:
     QLabel* _neoGSSdLabel = nullptr;
     QPushButton* _neoGSInsertButton = nullptr;
     QPushButton* _neoGSEjectButton = nullptr;
+    QWidget* _neoGSStereoRow = nullptr;         // NeoGS only
+    QComboBox* _neoGSStereoCombo = nullptr;     // separated / GS cross-feed / mono
     QLabel* _gsStatusLabel = nullptr;           // switching / refused
     GeneralSoundSlot _shownGSSlot;              // what the section shows
 

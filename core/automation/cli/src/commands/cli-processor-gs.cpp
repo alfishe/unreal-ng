@@ -319,6 +319,8 @@ std::optional<uint8_t> parseByteArg(const std::string& text)
 ///   gs dump_module [path]             - write the last COM30..D2 upload
 ///   gs sd_insert <image> / sd_eject   - NeoGS SD card slot
 ///   gs flash_save                     - NeoGS: save the reprogrammed flash
+///   gs stereo_mode <separated|gs|mono> - NeoGS: DAC channels as on the board,
+///                                       with the classic GS's 50% cross-feed, or mono
 void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std::string>& args)
 {
     auto emulator = GetSelectedEmulator(session);
@@ -340,7 +342,7 @@ void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std:
     static const char* kUsage =
         "Usage: gs <reset|reset_card|nmi|send_command <byte>|send_data <byte>|"
         "read_status|read_data|switch_personality <z80|lle|lw|lightweight|ngs|neogs>|dump_module [path]|"
-        "sd_insert <image>|sd_eject|flash_save>";
+        "sd_insert <image>|sd_eject|flash_save|stereo_mode <separated|gs|mono>>";
 
     if (args.empty())
     {
@@ -466,6 +468,19 @@ void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std:
             ss << "NeoGS: " << sub << " " << NeoGSMediaResultText(result) << "." << NEWLINE;
         else
             ss << "Error: " << sub << ": " << NeoGSMediaResultText(result) << "." << NEWLINE;
+    }
+    else if (sub == "stereo_mode")
+    {
+        NeoGSConfig::StereoMode mode = NeoGSConfig::StereoMode::Separated;
+        if (args.size() < 2)
+            ss << "NeoGS stereo mode: " << neogsStereoModeName(soundManager->neoGSStereoMode()) << NEWLINE;
+        else if (!neogsParseStereoMode(args[1], mode))
+            ss << "Error: stereo_mode: expected separated, gs or mono (got '" << args[1] << "')." << NEWLINE;
+        else
+        {
+            soundManager->setNeoGSStereoMode(mode);
+            ss << "NeoGS stereo mode: " << neogsStereoModeName(mode) << " (applied at the next frame)." << NEWLINE;
+        }
     }
     else
     {

@@ -587,6 +587,9 @@ bool Config::ParseConfig(IniFile& inimanager)
 		ngsConfig.zxDmaWatch = choice("ZxDmaWatch", "selected", {"selected", "always"}) == 1 ? NeoGSConfig::ZxDmaWatch::Always
 		                                                                                     : NeoGSConfig::ZxDmaWatch::Selected;
 		ngsConfig.zxDmaWatchFrames = static_cast<unsigned>(std::clamp<long>(inimanager.GetLongValue(ngs, "ZxDmaWatchFrames", 5), 1, 3000));
+		static constexpr NeoGSConfig::StereoMode stereoModes[] = {NeoGSConfig::StereoMode::Separated, NeoGSConfig::StereoMode::GS,
+		                                                          NeoGSConfig::StereoMode::Mono};
+		ngsConfig.stereoMode = stereoModes[choice("StereoMode", "separated", {"separated", "gs", "mono"})];
 	}
 #endif
 	// Anti-alias decimator tier: Reference (default) | HighFidelity. Unknown

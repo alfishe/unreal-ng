@@ -205,7 +205,9 @@ Plan: [`neogs-tdd.md`](neogs-tdd.md) §9; as built, findings and open items:
 - [x] Shipped configs list every `[NGS]` key with its default; `MP3Support` defaults to `software`
 - [x] Every shipped model fits NeoGS (`GSType=NGS`)
 - [x] Audio Settings: "General Sound slot" section (card switch; NeoGS SD insert/eject) over `SoundManager::generalSoundSlot()`
-- [x] HUD: the GS nudge names the card ("GS", "NeoGS", "NeoGS MP3", "NeoGS+MP3")
+- [x] HUD: the GS nudge names the card ("GS", "NeoGS", "NeoGS MP3", "NeoGS+MP3"); "NeoGS DMA" and "NeoGS <->" show data movement without sound
+- [x] `[NGS] StereoMode` separated / gs (50% cross-feed) / mono - config, Audio Settings, CLI/WebAPI/MCP/Lua/Python
+- [ ] GS-slot stats for all three cards (neogs-automation-design.md)
 
 ### Documentation Updates (2026-09-19)
 

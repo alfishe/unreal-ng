@@ -56,6 +56,8 @@ SoundManager::SoundManager(EmulatorContext* context)
     _context = context;
     _logger = context->pModuleLogger;
 
+    _neoGSStereoMode.store(static_cast<uint8_t>(context->config.ngs.stereoMode), std::memory_order_relaxed);
+
     _coreRate = targetCoreRate();
     if (_coreRate != CORE_SAMPLING_RATE)
     {
@@ -634,6 +636,8 @@ void SoundManager::handleFrameStart()
     const uint8_t pendingGS = _pendingGSSwitch.exchange(0xFF, std::memory_order_acq_rel);
     if (pendingGS != 0xFF)
         switchGeneralSoundCard(static_cast<GSTypeKind>(pendingGS));
+    if (_gs)
+        _gs->setStereoMode(neoGSStereoMode()); // NeoGS listening choice; the others ignore it
 
     // Turbo mode without audio: no synthesis at all this frame. Decided once here so
     // the per-step and per-edge paths only test a cached bool. Recording keeps the

@@ -66,6 +66,7 @@ SoundChip_NeoGS::SoundChip_NeoGS(EmulatorContext* context, const NeoGSConfig& co
 {
     _logger = _context ? _context->pModuleLogger : nullptr;
     _mb.counters = &_activityCounters;
+    _stereoMode = _config.stereoMode;
     _couplingL.configure(static_cast<double>(sampleRate), OUTPUT_HIGHPASS_HZ);
     _couplingR.configure(static_cast<double>(sampleRate), OUTPUT_HIGHPASS_HZ);
     _flash.setWritable(_config.flashWrite != NeoGSConfig::WriteMode::Off);
@@ -627,7 +628,21 @@ void SoundChip_NeoGS::dacSideEvent(int64_t crystal)
         return;
     const int64_t eventTicks = crystalToTicks(crystal);
     const int64_t position = eventTicks / TICKS_PER_CRYSTAL - _frameStartTicks / TICKS_PER_CRYSTAL;
-    if (_audio.set(position, blipFrameLength(), _outL, _outR, !_synthesisSuppressed))
+    // The listening choice: as on the board, the classic GS's 50% cross-feed
+    // (the opposite side at half level, scaled so both sides full stays full)
+    // or mono
+    int32_t left = _outL;
+    int32_t right_ = _outR;
+    if (_stereoMode == NeoGSConfig::StereoMode::GS)
+    {
+        left = (2 * _outL + _outR) / 3;
+        right_ = (2 * _outR + _outL) / 3;
+    }
+    else if (_stereoMode == NeoGSConfig::StereoMode::Mono)
+    {
+        left = right_ = (_outL + _outR) / 2;
+    }
+    if (_audio.set(position, blipFrameLength(), left, right_, !_synthesisSuppressed))
         _frameHadActivity = true;
 }
 

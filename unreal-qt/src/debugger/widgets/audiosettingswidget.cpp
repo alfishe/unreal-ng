@@ -307,6 +307,19 @@ void AudioSettingsWidget::createUI()
     sdRow->addWidget(_neoGSEjectButton);
     gsLayout->addWidget(_neoGSControls);
 
+    _neoGSStereoRow = new QWidget(_gsGroup);
+    auto* neoGSStereoLayout = new QHBoxLayout(_neoGSStereoRow);
+    neoGSStereoLayout->setContentsMargins(0, 0, 0, 0);
+    neoGSStereoLayout->addWidget(new QLabel("Stereo:", _neoGSStereoRow));
+    _neoGSStereoCombo = new QComboBox(_neoGSStereoRow);
+    _neoGSStereoCombo->addItem("Separated (as on the board)", static_cast<int>(NeoGSConfig::StereoMode::Separated));
+    _neoGSStereoCombo->addItem("Legacy GS (50% cross-feed)", static_cast<int>(NeoGSConfig::StereoMode::GS));
+    _neoGSStereoCombo->addItem("Mono", static_cast<int>(NeoGSConfig::StereoMode::Mono));
+    _neoGSStereoCombo->setToolTip("How the NeoGS DAC channels reach the two sides. The board keeps them hard left/right; "
+                                  "the classic GS board cross-feeds the other side at half level. The MP3 decoder keeps its own stereo");
+    neoGSStereoLayout->addWidget(_neoGSStereoCombo, 1);
+    gsLayout->addWidget(_neoGSStereoRow);
+
     _gsStatusLabel = new QLabel(_gsGroup);
     _gsStatusLabel->setWordWrap(true);
     _gsStatusLabel->setStyleSheet("color: gray;");
@@ -486,6 +499,7 @@ void AudioSettingsWidget::connectSignals()
     connect(_gsCardCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AudioSettingsWidget::onGSCardChanged);
     connect(_neoGSInsertButton, &QPushButton::clicked, this, &AudioSettingsWidget::onNeoGSInsertSd);
     connect(_neoGSEjectButton, &QPushButton::clicked, this, &AudioSettingsWidget::onNeoGSEjectSd);
+    connect(_neoGSStereoCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AudioSettingsWidget::onNeoGSStereoModeChanged);
 
     // Covox
     connect(_covoxDCRemovalCheckbox, &QCheckBox::checkStateChanged, this, &AudioSettingsWidget::onCovoxDCRemovalChanged);
@@ -530,6 +544,7 @@ void AudioSettingsWidget::disconnectSignals()
     disconnect(_gsCardCombo, nullptr, this, nullptr);
     disconnect(_neoGSInsertButton, nullptr, this, nullptr);
     disconnect(_neoGSEjectButton, nullptr, this, nullptr);
+    disconnect(_neoGSStereoCombo, nullptr, this, nullptr);
     disconnect(_covoxDCRemovalCheckbox, nullptr, this, nullptr);
     for (int i = 0; i < 4; i++)
     {
@@ -1077,6 +1092,14 @@ void AudioSettingsWidget::updateGSSection(const GeneralSoundSlot& slot)
         _gsCardCombo->setCurrentIndex(index);
 
     _neoGSControls->setVisible(neoGS);
+    _neoGSStereoRow->setVisible(neoGS);
+    if (neoGS && _context && _context->pSoundManager)
+    {
+        const QSignalBlocker stereoBlocker(_neoGSStereoCombo);
+        const int stereoIndex = _neoGSStereoCombo->findData(static_cast<int>(_context->pSoundManager->neoGSStereoMode()));
+        if (stereoIndex >= 0)
+            _neoGSStereoCombo->setCurrentIndex(stereoIndex);
+    }
     if (slot.sdCardImage.empty())
     {
         _neoGSSdLabel->setText("(empty)");
@@ -1134,4 +1157,12 @@ void AudioSettingsWidget::onNeoGSEjectSd()
     const NeoGSMediaResult result = NeoGSRequestSdEject(_context);
     _gsStatusLabel->setText(NeoGSMediaAccepted(result) ? QString() : QString("SD card: %1").arg(NeoGSMediaResultText(result)));
     _gsStatusLabel->setVisible(!NeoGSMediaAccepted(result));
+}
+
+void AudioSettingsWidget::onNeoGSStereoModeChanged(int index)
+{
+    if (!_context || !_context->pSoundManager)
+        return;
+    // Kept by the SoundManager (any thread), taken by the card at the next frame
+    _context->pSoundManager->setNeoGSStereoMode(static_cast<NeoGSConfig::StereoMode>(_neoGSStereoCombo->itemData(index).toInt()));
 }

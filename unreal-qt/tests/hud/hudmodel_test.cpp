@@ -9,6 +9,7 @@
 #include <emulator/notifications.h>
 #include <emulator/platform.h>
 
+#include <algorithm>
 #include <chrono>
 #include <thread>
 #include "_helpers/testtiminghelper.h"
@@ -223,14 +224,20 @@ TEST_F(HudModel_Test, FeatureGatingZeroCostWhenDisabled)
     auto snap = model.snapshot();
     EXPECT_TRUE(snap->elements.empty());
 
-    // New notifications rejected while off
-    std::string id = model.notify(req);
-    EXPECT_TRUE(id.empty());
-    EXPECT_TRUE(model.snapshot()->elements.empty());
+    // Shadow state (since the HUD Settings dialog, 4925c00e): events are still
+    // tracked while off, only the snapshot hides them
+    HudToastRequest later;
+    later.title = "While off";
+    std::string id = model.notify(later);
+    EXPECT_FALSE(id.empty()) << "tracked while off";
+    EXPECT_TRUE(model.snapshot()->elements.empty()) << "but not shown";
 
-    // Turn feature back on
+    // Turn feature back on: the tracked state shows at once
     model.onFeatureChanged(true);
     EXPECT_TRUE(model.isEnabled());
+    auto shown = model.snapshot();
+    EXPECT_TRUE(std::any_of(shown->elements.begin(), shown->elements.end(),
+                            [](const HudElement& e) { return e.title == "While off"; }));
 }
 
 // --- MessageCenter Event Mapping Tests ---

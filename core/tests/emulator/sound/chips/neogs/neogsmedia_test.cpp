@@ -242,3 +242,20 @@ TEST_F(NeoGSMedia_Test, SwitchRequestedWhileRunningRenamesTheMixerSource)
     EXPECT_TRUE(mp3);
     _emulator->Stop();
 }
+
+/// The NeoGS stereo mode is kept by the SoundManager (set from any thread):
+/// the fitted card takes it at the next frame, and a card fitted later starts
+/// with it
+TEST_F(NeoGSMedia_Test, StereoModeReachesTheCardAndSurvivesASwitch)
+{
+    fitNeoGS();
+    EXPECT_EQ(card()->stereoMode(), NeoGSConfig::StereoMode::Separated);
+    _ctx->pSoundManager->setNeoGSStereoMode(NeoGSConfig::StereoMode::GS);
+    _emulator->RunNFrames(1);
+    EXPECT_EQ(card()->stereoMode(), NeoGSConfig::StereoMode::GS);
+
+    ASSERT_TRUE(_ctx->pSoundManager->switchGeneralSoundCard(GSTypeKind::LW));
+    ASSERT_TRUE(_ctx->pSoundManager->switchGeneralSoundCard(GSTypeKind::NGS));
+    _emulator->RunNFrames(1);
+    EXPECT_EQ(card()->stereoMode(), NeoGSConfig::StereoMode::GS);
+}
