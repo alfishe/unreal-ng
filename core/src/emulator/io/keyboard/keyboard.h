@@ -312,6 +312,11 @@ public:
     /// endregion </Keyboard control>
 
     /// region <Helper methods>
+public:
+    /// The matrix key an extended key presses besides its shift (LEFT -> 5,
+    /// '"' -> P); a plain key is its own matrix key. Shifts map to themselves.
+    ZXKeysEnum GetMatrixKey(ZXKeysEnum key) { return getExtendedKeyBase(key); }
+
 protected:
     bool isExtendedKey(ZXKeysEnum key);
     ZXKeysEnum getExtendedKeyBase(ZXKeysEnum key);

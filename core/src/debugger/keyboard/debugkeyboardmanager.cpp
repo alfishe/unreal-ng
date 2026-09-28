@@ -67,6 +67,13 @@ bool DebugKeyboardManager::ApplyKey(ZXKeysEnum key, bool pressed)
     if (key == ZXKEY_NONE || !_keyboard)
         return false;
 
+    if (!pressed)
+    {
+        const ZXKeysEnum matrixKey = _keyboard->GetMatrixKey(key);
+        if (matrixKey != ZXKEY_NONE && matrixKey != ZXKEY_CAPS_SHIFT && matrixKey != ZXKEY_SYM_SHIFT)
+            _lastReleaseFrame[matrixKey] = _frameIndex;
+    }
+
     if (_context && _context->pTimeTravelManager)
     {
         ttd::TTDInputEvent ev;
@@ -259,23 +266,9 @@ void DebugKeyboardManager::TapCombo(const std::vector<std::string>& keyNames, ui
 
 void DebugKeyboardManager::ExecuteSequence(const KeyboardSequence& sequence)
 {
-    std::lock_guard<std::recursive_mutex> lock(_sequenceMutex);
-
-    // Clear any existing pending events
-    AbortSequence();
-    
-    // Queue all events
-    _currentSequenceName = sequence.name;
-    for (const auto& event : sequence.events)
-    {
-        _eventQueue.push(event);
-    }
-    
-    // Start processing immediately if not already running
-    if (_frameCountdown == 0 && !_inTapHoldPhase)
-    {
-        ProcessNextEvent();
-    }
+    // Appends like QueueSequence: dropping pending input here made a `type`
+    // silently cancel a `tap` sent just before it
+    QueueSequence(sequence);
 }
 
 bool DebugKeyboardManager::ExecuteNamedSequence(const std::string& name)
@@ -685,6 +678,8 @@ void DebugKeyboardManager::OnFrame()
 {
     std::lock_guard<std::recursive_mutex> lock(_sequenceMutex);
 
+    _frameIndex++;
+
     // Decrement countdown if active
     if (_frameCountdown > 0)
     {
@@ -907,10 +902,40 @@ void DebugKeyboardManager::ProcessNextEvent()
         return;
     }
     
+    // A key pressed again too soon after its release is not entered again by
+    // the ROM: hold the event until the key has been released long enough
+    const uint16_t wait = FramesUntilKeysReleasedLongEnough(_eventQueue.front());
+    if (wait > 0)
+    {
+        _frameCountdown = wait;
+        return;
+    }
+
     KeyboardSequenceEvent event = _eventQueue.front();
     _eventQueue.pop();
     
     ExecuteEvent(event);
+}
+
+uint16_t DebugKeyboardManager::FramesUntilKeysReleasedLongEnough(const KeyboardSequenceEvent& event) const
+{
+    using Action = KeyboardSequenceEvent::Action;
+    if (!_keyboard || (event.action != Action::PRESS && event.action != Action::TAP &&
+                       event.action != Action::COMBO_PRESS && event.action != Action::COMBO_TAP))
+        return 0;
+
+    uint64_t wait = 0;
+    for (ZXKeysEnum key : event.keys)
+    {
+        const auto it = _lastReleaseFrame.find(_keyboard->GetMatrixKey(key));
+        if (it == _lastReleaseFrame.end())
+            continue;
+
+        const uint64_t readyAt = it->second + REPRESS_RELEASED_FRAMES;
+        if (readyAt > _frameIndex)
+            wait = std::max(wait, readyAt - _frameIndex);
+    }
+    return static_cast<uint16_t>(wait);
 }
 
 void DebugKeyboardManager::ExecuteEvent(const KeyboardSequenceEvent& event)

@@ -78,6 +78,16 @@ public:
     
     /// Default wait between sequence events (frames)
     static constexpr uint16_t DEFAULT_WAIT_FRAMES = 2;
+
+    /// Frames a key must stay released before the ROM takes a press of the
+    /// same key as a new key. The 48K ROM KEYBOARD routine (also run by the
+    /// 128K, +3 and TR-DOS editors) keeps a released key in its KSTATE slot
+    /// for 5 interrupts; a press seen while the slot still holds it is the
+    /// held key repeating, and the character is not entered again. The 5th
+    /// interrupt frees the slot and takes the new press, so 4 released frames
+    /// is the exact minimum (measured: 3 loses the key on every editor of
+    /// DebugKeyboardManagerRomEditor_Test); 5 keeps one frame of margin.
+    static constexpr uint16_t REPRESS_RELEASED_FRAMES = 5;
     
     /// endregion </Constants>
     
@@ -100,6 +110,11 @@ private:
     
     /// Whether we're in the "hold" phase of a tap (waiting to release)
     bool _inTapHoldPhase = false;
+
+    /// Frames processed by OnFrame, and the frame each matrix key was last
+    /// released on (shifts excluded: the ROM does not keep them in KSTATE)
+    uint64_t _frameIndex = 0;
+    std::map<ZXKeysEnum, uint64_t> _lastReleaseFrame;
     
     /// Sequence currently being executed
     std::optional<std::string> _currentSequenceName;
@@ -172,7 +187,9 @@ public:
     
     /// region <Sequence Operations>
 public:
-    /// Execute a sequence of events with timing
+    /// Execute a sequence of events with timing. Appended after anything
+    /// already queued, like QueueSequence: calls made one after another are
+    /// typed one after another (use AbortSequence to drop pending input)
     /// @param sequence Sequence to execute
     void ExecuteSequence(const KeyboardSequence& sequence);
     
@@ -288,6 +305,10 @@ private:
     
     /// Process the next event from queue
     void ProcessNextEvent();
+
+    /// Frames to wait before `event` can press its keys so the ROM sees each
+    /// repeated key as a new press (REPRESS_RELEASED_FRAMES); 0 if none
+    uint16_t FramesUntilKeysReleasedLongEnough(const KeyboardSequenceEvent& event) const;
     
     /// Execute a single event immediately
     void ExecuteEvent(const KeyboardSequenceEvent& event);
