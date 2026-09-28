@@ -508,6 +508,13 @@ void TimeTravelManager::UpdateFeatureCache()
 
     const bool ttdEnabled = fm->isEnabled(Features::kTimeTravel);
 
+    // Writes stop reaching the journal when TTD or debug mode goes off during
+    // a recording, so it no longer holds the whole session. Only while
+    // Recording: nothing is journaled when Idle or Detached, and StopRecording
+    // and step-over switch debug mode back in exactly those states.
+    if (_state == TTDSessionState::Recording && (!ttdEnabled || !fm->isEnabled(Features::kDebugMode)))
+        _journalGapless = false;
+
     // Pre-allocate write journal when TTD is enabled (async, non-blocking).
     // This way allocation completes before StartRecording() is called.
     if (ttdEnabled && _enableWriteJournal && !_writeJournal)
