@@ -1367,6 +1367,27 @@ private:
     /// @param targetTInFrame T-state offset within the frame to stop at.
     void ReplayWithinFrame(uint64_t targetFrame, uint32_t targetTInFrame);
 
+    /// @brief PROTOTYPE (perf validation only, see PLAN): replace the static
+    /// checkpoint-memory decode with a raster-accurate picture for a
+    /// frame-aligned seek/step.
+    ///
+    /// A checkpoint captures CPU/memory state at its frame's *start* (the
+    /// previous instruction's overshoot past the boundary — see
+    /// RestoreCheckpoint), so ResyncScreenCaches' static RenderOnlyMainScreen
+    /// shows memory as it stood BEFORE this frame's own code ran: border
+    /// stripes, multicolor, and screen-bank flips this frame draws are torn
+    /// or missing (see docs/inprogress/2026-09-27-zxdlss-gigascreen &
+    /// scratch/zxdlss/across_the_edge_full.ttd, checkpoints 2045/2049/...).
+    ///
+    /// Replays exactly the frame's own T-states once (same range
+    /// BuildFrameCache uses) so the normal per-instruction
+    /// Screen::UpdateScreen() path (MainLoop::OnCPUStep, mainloop.cpp:563)
+    /// paints an accurate picture, then discards every side effect of that
+    /// throwaway replay (CPU/RAM/peripherals) except the resulting
+    /// framebuffer — the target checkpoint must already be restored
+    /// (RestoreCheckpointForReplay) before calling this.
+    void RenderFrameAccurate();
+
     // -----------------------------------------------------------------------
     // Phase 4 reverse execution: M1 enumeration helper (private).
     // -----------------------------------------------------------------------
