@@ -44,6 +44,7 @@ enum class Verdict
     Hang,      ///< the ROM loader still waits for a signal: the tape did not feed it
     Rom,       ///< in a ROM (BASIC editor, report) with no reaction to keys
     Dead,      ///< the screen does not react to keys, outside the ROM
+    Needs128K, ///< the release has no 48K data: on a 48K it waits for a block the tape does not hold
 };
 
 const char* VerdictName(Verdict verdict)
@@ -54,6 +55,7 @@ const char* VerdictName(Verdict verdict)
         case Verdict::Hang: return "hang";
         case Verdict::Rom: return "ROM";
         case Verdict::Dead: return "dead";
+        case Verdict::Needs128K: return "128K-only";
     }
     return "?";
 }
@@ -89,6 +91,15 @@ std::vector<SweepCase> Cases()
         }
     }
     return cases;
+}
+
+/// Releases that carry 128K data only. ALEX_S (O4, 2026-09-28): after its menu the program checks for 128K
+/// memory; on a 128K it calls LD-BYTES for flag #FF, 33792 bytes at #61A8, then the screen (#1B00 at
+/// #4000); on a 48K it asks for flag #13, 23737 bytes at #7D3C, and the tape holds no #13 block (its flags
+/// are #00 #FF #FF #FF #FF). A real 48K waits the same way
+bool Needs128K(const SweepCase& c)
+{
+    return c.model == "48K" && c.tape.find("DIZZY_X_ALEX_S") != std::string::npos;
 }
 
 /// Must not hang: the plan's requirement and the control tape
@@ -211,7 +222,9 @@ TEST_P(TapeLoadingSweep_Test, LoadsAndRuns)
     const bool reacts = HashScreen() != before;
 
     Verdict verdict = Verdict::Ok;
-    if (loaderWaiting)
+    if (Needs128K(c))
+        verdict = Verdict::Needs128K;
+    else if (loaderWaiting)
         verdict = Verdict::Hang;
     else if (!reacts)
         verdict = InRom() ? Verdict::Rom : Verdict::Dead;

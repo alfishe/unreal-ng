@@ -54,13 +54,19 @@ The single-cause hypothesis below was only partly right:
   HACKER_SHURIK) were games waiting for a key at a prompt. The sweep never pressed one.
 - **Open, not explained by B1–B4:** O1 KID__DR crashes on Pentagon (all modes); O2 TIMOFEY falls
   back to BASIC on 48K (all modes); O3 HACKER_SHURIK hangs on Pentagon with fast loading off.
-- **O4 (sweep 2026-09-28, also on `a3e23d6f` before P2/P3):** ALEX_S on 48K with fast loading on,
-  once its "1-cheat 2-normal" menu is answered: the program calls LD-BYTES twice with the same
-  IX = #7D3C / DE = #5CB9 (block 3 plays as signal, 33794 bytes, then block 4 is read as the retry),
-  and at the end of the tape the ROM loader waits for a block that is not there. The first read of
-  block 3 did not satisfy the program. The investigation's probe never got past this menu, so the
-  path is new, not a regression. With signal loading the menu was not answered at the right moment
-  in the sweep, so it is not yet known whether the signal path has the same problem.
+- ~~**O4** ALEX_S hangs on 48K with fast loading on~~ — closed 2026-09-28, not an emulator fault: the
+  release carries 128K data only. After its "1-cheat 2-normal" menu the program checks for 128K memory
+  and calls LD-BYTES with different parameters per machine (registers at the call):
+
+  | Machine | flag (A') | length (DE) | address (IX) | outcome |
+  |:--|:--|:--|:--|:--|
+  | Pentagon | #FF | #8400 = 33792 | #61A8 | block 3 loads whole, then the screen (#1B00 at #4000); the game runs |
+  | 48K | #13 | #5CB9 = 23737 | #7D3C | waits for a flag #13 block |
+
+  The tape's five blocks carry flags #00 #FF #FF #FF #FF: there is no #13 block, so LD-BYTES rejects
+  every block by its flag, the tape ends and the program waits, as a real 48K would. Same on
+  `a3e23d6f` and after P2/P3; the investigation's 48K runs (back to BASIC) agree. The sweep reports the
+  48K cases of this tape as `128K-only` instead of `hang`.
 
 ## Plan (from the investigation, §9)
 

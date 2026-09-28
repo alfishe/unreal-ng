@@ -3,7 +3,7 @@
 **Date:** 2026-09-27
 **Tracks:** PLAN #5 ([TODO.md](TODO.md))
 **Status:** P1 and P4 implemented in `ac200bb8` (2026-09-27); P2, P3 (with the B4 restart fix) and the
-sweep done 2026-09-28 (see [TODO.md](TODO.md)); O1-O4 open
+sweep done 2026-09-28 (see [TODO.md](TODO.md)); O1-O3 open, O4 closed (ALEX_S is a 128K-only release)
 (see [TODO.md](TODO.md))
 **Code under discussion:** `core/src/emulator/io/tape/tape.cpp` at `47c40db2`
 
