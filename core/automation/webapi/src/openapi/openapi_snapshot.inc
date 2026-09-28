@@ -30,6 +30,8 @@
     paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["responses"]["404"]["description"] = "Emulator not found";
     paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["responses"]["413"]["description"] =
         "File too large (max 4 MB)";
+    paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["responses"]["409"]["description"] =
+        "A TTD recording is running; the message says why the action would destroy it. Stop the recording first.";
 
     // POST /api/v1/emulator/{id}/snapshot/save - Save snapshot file
     paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["summary"] = "Save snapshot file";

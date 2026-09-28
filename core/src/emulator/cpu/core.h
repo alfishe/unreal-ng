@@ -73,6 +73,7 @@ protected:
     VideoControl* _video = nullptr;
     Screen* _screen = nullptr;
     UlaContention* _ulaContention = nullptr;
+    bool _contentionSwitch = true;  // 'contention' feature (SetContentionSwitch)
 
     ROMModeEnum _mode = ROMModeEnum::RM_NOCHANGE;
     /// endregion </Fields>
@@ -111,8 +112,31 @@ public:
 
     // Configuration methods
 public:
-    void UseFastMemoryInterface();
-    void UseDebugMemoryInterface();
+    /// The one place that decides which memory interface the CPU runs on: Fast or Debug by the debugger
+    /// (Z80::isDebugMode), plain or contended by whether the machine's video contention is in effect
+    /// (UlaContention::IsContentionEnabled), and with it the I/O contention rule (Z80::ioContention).
+    /// Called whenever an input changes (debug mode, video mode / model via Screen::InitRaster) and at
+    /// every frame start; cheap (a few loads and stores)
+    void SelectMemoryInterface();
+
+    /// The 'contention' feature (FeatureManager::onFeatureChanged): off runs a contended machine uncontended.
+    /// Re-selects the interface
+    void SetContentionSwitch(bool on)
+    {
+        _contentionSwitch = on;
+        SelectMemoryInterface();
+    }
+    bool IsContentionSwitchOn() const { return _contentionSwitch; }
+
+    /// Contention in effect: the machine has a rule and the switch is on
+    bool IsContentionEffective() const;
+
+    /// Whether the CPU waits for the video logic on accesses to a 16K slot (0-3) right now: contention in
+    /// effect and a contended page mapped there. The one answer every memory map reports
+    bool IsSlotContended(uint8_t slot) const;
+
+    /// Name of the selected memory interface: "fast", "debug", "fast_contended", "debug_contended"
+    const char* GetMemoryInterfaceName() const;
 
     // Z80 Core-related methods
 public:

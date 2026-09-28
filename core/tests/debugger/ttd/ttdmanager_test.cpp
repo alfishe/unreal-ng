@@ -22,6 +22,7 @@
 #include "debugger/ttd/ttddirtytracker.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdcodecpagestore.h"
+#include "debugger/ttd/ttdexternalevents.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -862,6 +863,28 @@ TEST_F(TimeTravelManagerRecordingLock_Test, ShortcutsStayOffWhileReplayingAStopp
     EXPECT_TRUE(_fm->isEnabled(Features::kFastDisk));
 }
 
+/// Contention changes timing in both directions: a timeline replays only with the setting it was recorded with
+TEST_F(TimeTravelManagerRecordingLock_Test, ContentionSwitchIsFixedForTheTimeline)
+{
+    ASSERT_TRUE(_fm->isEnabled(Features::kContention));
+    ASSERT_TRUE(_ttd->StartRecording());
+    EXPECT_FALSE(_fm->setFeature(Features::kContention, false)) << "recording";
+    EXPECT_TRUE(_fm->isEnabled(Features::kContention));
+    EXPECT_TRUE(_fm->setFeature(Features::kContention, true)) << "setting the current value is not a change";
+    RunFrames(3);
+    _ttd->StopRecording();
+
+    ASSERT_TRUE(_ttd->SeekTo(ttd::TTDTimePoint{1, 0}));
+    ASSERT_EQ(_ttd->GetState(), ttd::TTDSessionState::Detached);
+    EXPECT_FALSE(_fm->setFeature(Features::kContention, false)) << "positioned in history";
+    EXPECT_TRUE(_core->IsContentionSwitchOn());
+
+    _ttd->InvalidateSession("test");
+    EXPECT_TRUE(_fm->setFeature(Features::kContention, false));
+    EXPECT_FALSE(_core->IsContentionSwitchOn());
+    EXPECT_TRUE(_fm->setFeature(Features::kContention, true));
+}
+
 TEST_F(TimeTravelManagerRecordingLock_Test, EnablingTheTimeTravelFeatureAloneLocksNothing)
 {
     // The feature only arms the capture machinery; the lock belongs to a recording
@@ -1080,4 +1103,304 @@ TEST_F(TimeTravelManagerRecordingLock_Test, FeatureListShowsTheStateInEffect)
     EXPECT_FALSE(_fm->setFeature(Features::kTurboMode, true));
     EXPECT_TRUE(_fm->hasFeature(Features::kTurboMode));
     EXPECT_FALSE(_fm->hasFeature("nosuchfeature"));
+}
+
+// ===========================================================================
+// Search window (TD-8): what part of history a backward search examined, and
+// reverse-continue honoring a barrier on the coverage-index path
+// ===========================================================================
+
+class TimeTravelManagerSearchWindow_Test : public TimeTravelManagerRecordingLock_Test
+{
+protected:
+    static constexpr uint16_t kCounter = 0x9000;  // 16-bit countdown
+    static constexpr uint16_t kTarget = 0x8100;   // subroutine called while the countdown runs
+    static constexpr uint16_t kStore = 0x8008;    // LD (#9000),HL - the write to the counter
+
+    /// loop: LD HL,(#9000) / LD A,H / OR L / JR Z,loop / DEC HL / LD (#9000),HL /
+    ///       CALL #8100 / JR loop;   #8100: RET.   Interrupts off.
+    /// The target runs `calls` times, then never again.
+    void InstallCountdown(uint16_t calls)
+    {
+        Memory* memory = _emulator->GetContext()->pMemory;
+        const uint8_t loop[] = {0x2A, 0x00, 0x90, 0x7C, 0xB5, 0x28, 0xF9, 0x2B,
+                                0x22, 0x00, 0x90, 0xCD, 0x00, 0x81, 0x18, 0xF0};
+        for (uint16_t i = 0; i < sizeof(loop); ++i)
+            memory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), loop[i]);
+        memory->DirectWriteToZ80Memory(kTarget, 0xC9);
+        memory->DirectWriteToZ80Memory(kCounter, static_cast<uint8_t>(calls));
+        memory->DirectWriteToZ80Memory(kCounter + 1, static_cast<uint8_t>(calls >> 8));
+        Z80State* z80 = _emulator->GetZ80State();
+        z80->pc = 0x8000;
+        z80->sp = 0xBF00;
+        z80->iff1 = z80->iff2 = 0;
+    }
+
+    uint16_t Counter() const
+    {
+        Memory* memory = _emulator->GetContext()->pMemory;
+        return static_cast<uint16_t>(memory->DirectReadFromZ80Memory(kCounter) |
+                                     (memory->DirectReadFromZ80Memory(kCounter + 1) << 8));
+    }
+
+    /// Record: the countdown runs out during the third frame, a marker is placed
+    /// right after the last call in that same frame, then three quiet frames.
+    /// @return the marker position
+    ttd::TTDTimePoint RecordCountdownThenMarker(bool marker = true)
+    {
+        InstallCountdown(2000);  // ~780 calls a frame: runs out in the third frame
+        EXPECT_TRUE(_ttd->StartRecording());
+        RunFrames(2);
+        while (Counter() != 0)
+            _emulator->RunTStates(100, /*skipBreakpoints=*/true);
+        const ttd::TTDTimePoint at = _ttd->CurrentPosition();
+        EXPECT_GT(at.tInFrame, 1000u) << "precondition: the last call and the marker share a frame";
+        if (marker)
+            _ttd->RecordExternalEvent(ttd::TTDExternalEventKind::Other, "search-window barrier");
+        RunFrames(3);
+        _ttd->StopRecording();
+        return at;
+    }
+};
+
+/// A candidate frame the barrier keeps from replaying must stop the scan: the
+/// index says the target ran there, and that run is later than any earlier
+/// frame's. Skipping it answered with an older call.
+TEST_F(TimeTravelManagerSearchWindow_Test, ReverseContinueStopsAtABarrierInACandidateFrame)
+{
+    _ttd->SetEnableCoverageIndex(true);
+    const ttd::TTDTimePoint marker = RecordCountdownThenMarker();
+
+    const auto r = _ttd->ReverseContinue({kTarget});
+    EXPECT_FALSE(r.matched) << "answered with a call from frame " << r.arrivedAt.frame
+                            << ", older than the calls in the barrier frame " << marker.frame;
+    EXPECT_STREQ(r.blockingMarker.reason, "search-window barrier");
+    ASSERT_TRUE(r.window.searched);
+    EXPECT_EQ(r.window.from.frame, marker.frame);
+    EXPECT_EQ(r.window.from.tInFrame, r.blockingMarker.time.tInFrame);
+}
+
+/// Same session, coverage index off: the plain scan already stopped at the
+/// barrier; the window says where.
+TEST_F(TimeTravelManagerSearchWindow_Test, ReverseContinueWithoutIndexReportsTheBarrierWindow)
+{
+    _ttd->SetEnableCoverageIndex(false);
+    const ttd::TTDTimePoint marker = RecordCountdownThenMarker();
+
+    const auto r = _ttd->ReverseContinue({kTarget});
+    EXPECT_FALSE(r.matched);
+    EXPECT_STREQ(r.blockingMarker.reason, "search-window barrier");
+    ASSERT_TRUE(r.window.searched);
+    EXPECT_EQ(r.window.from.frame, marker.frame);
+    EXPECT_EQ(r.window.to.frame, _ttd->SessionEndPosition().frame);
+}
+
+TEST_F(TimeTravelManagerSearchWindow_Test, ReverseContinueMatchWindowEndsAtTheMatch)
+{
+    _ttd->SetEnableCoverageIndex(true);
+    const ttd::TTDTimePoint lastCall = RecordCountdownThenMarker(/*marker=*/false);
+    const ttd::TTDTimePoint end = _ttd->SessionEndPosition();
+
+    const auto r = _ttd->ReverseContinue({kTarget});
+    ASSERT_TRUE(r.matched);
+    EXPECT_EQ(r.arrivedAt.frame, lastCall.frame);
+    ASSERT_TRUE(r.window.searched);
+    EXPECT_EQ(r.window.from.frame, r.arrivedAt.frame);
+    EXPECT_EQ(r.window.from.tInFrame, r.arrivedAt.tInFrame);
+    EXPECT_EQ(r.window.to.frame, end.frame);
+}
+
+/// Journal path: a match ends the window at the match; a final "no match"
+/// covers the whole session (the journal ignores markers - it is ground truth).
+TEST_F(TimeTravelManagerSearchWindow_Test, FindLastJournalWindow)
+{
+    _ttd->SetEnableWriteJournal(true);
+    RecordCountdownThenMarker();
+    const ttd::TTDTimePoint start = _ttd->GetCheckpoint(0)->time;
+
+    ttd::TTDSearchQuery q;
+    q.addrFrom = q.addrTo = kCounter;
+    q.access = ttd::TTDAccessType::Write;
+    ttd::TTDExternalEvent blocked;
+    ttd::TTDSearchWindow window;
+    const auto hit = _ttd->FindLastAccess(q, &blocked, &window);
+    ASSERT_TRUE(hit.has_value());
+    ASSERT_TRUE(window.searched);
+    EXPECT_EQ(window.from.frame, hit->time.frame);
+    EXPECT_EQ(window.from.tInFrame, hit->time.tInFrame);
+
+    q.addrFrom = q.addrTo = 0xA123;  // never written
+    window = {};
+    EXPECT_FALSE(_ttd->FindLastAccess(q, &blocked, &window).has_value());
+    ASSERT_TRUE(window.searched);
+    EXPECT_EQ(window.from.frame, start.frame) << "a final journal 'no match' covers the whole session";
+    EXPECT_EQ(window.from.tInFrame, start.tInFrame);
+}
+
+/// Replay path (no journal): the scan stops at the barrier and says so.
+TEST_F(TimeTravelManagerSearchWindow_Test, FindLastReplayWindowStopsAtTheBarrier)
+{
+    _ttd->SetEnableWriteJournal(false);
+    const ttd::TTDTimePoint marker = RecordCountdownThenMarker();
+
+    ttd::TTDSearchQuery q;
+    q.addrFrom = q.addrTo = kCounter;
+    q.access = ttd::TTDAccessType::Write;
+    ttd::TTDExternalEvent blocked;
+    ttd::TTDSearchWindow window;
+    EXPECT_FALSE(_ttd->FindLastAccess(q, &blocked, &window).has_value());
+    EXPECT_STREQ(blocked.reason, "search-window barrier");
+    ASSERT_TRUE(window.searched);
+    EXPECT_EQ(window.from.frame, marker.frame);
+    EXPECT_EQ(window.from.tInFrame, blocked.time.tInFrame);
+    EXPECT_EQ(window.to.frame, _ttd->SessionEndPosition().frame);
+}
+
+TEST_F(TimeTravelManagerSearchWindow_Test, RefusedSearchHasNoWindow)
+{
+    ttd::TTDSearchQuery q;
+    q.addrFrom = q.addrTo = kCounter;
+    ttd::TTDSearchWindow window;
+    EXPECT_FALSE(_ttd->FindLastAccess(q, nullptr, &window).has_value());  // no history
+    EXPECT_FALSE(window.searched);
+    EXPECT_FALSE(_ttd->ReverseContinue({kTarget}).window.searched);
+}
+
+// ===========================================================================
+// Write-journal completeness in the session status, with where and why it
+// stopped covering the session; the idle journal freed when switched off
+// ===========================================================================
+
+class TimeTravelManagerJournalStatus_Test : public TimeTravelManagerJournal_Test
+{
+};
+
+TEST_F(TimeTravelManagerJournalStatus_Test, CompleteWhileEveryWriteIsJournaled)
+{
+    _ttd->SetEnableWriteJournal(true);
+    InstallWritingProgram();
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(2);
+    EXPECT_TRUE(_ttd->GetSessionInfo().writeJournalComplete);
+    _ttd->StopRecording();
+
+    const ttd::TTDSessionInfo info = _ttd->GetSessionInfo();
+    EXPECT_TRUE(info.writeJournalComplete) << "a stop keeps a complete journal complete";
+    EXPECT_FALSE(info.writeJournalWrapped);
+    EXPECT_TRUE(info.journalGapReason.empty());
+}
+
+/// A running recording refuses the switch (B9), so the journal stays complete
+TEST_F(TimeTravelManagerJournalStatus_Test, RefusedSwitchDuringARecordingKeepsItComplete)
+{
+    _ttd->SetEnableWriteJournal(true);
+    InstallWritingProgram();
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(1);
+    EXPECT_FALSE(_ttd->SetEnableWriteJournal(false)) << "precondition: a recording keeps its journal mode";
+    RunFrames(1);
+    _ttd->StopRecording();
+    EXPECT_TRUE(_ttd->GetSessionInfo().writeJournalComplete);
+}
+
+/// On a stopped session with history the switch is allowed - and leaves a gap
+TEST_F(TimeTravelManagerJournalStatus_Test, JournalSwitchedOnAStoppedSessionReportsWhereAndWhy)
+{
+    _ttd->SetEnableWriteJournal(true);
+    InstallWritingProgram();
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(2);
+    _ttd->StopRecording();
+    const ttd::TTDTimePoint at = _ttd->CurrentPosition();
+    ASSERT_TRUE(_ttd->SetEnableWriteJournal(false));
+
+    const ttd::TTDSessionInfo info = _ttd->GetSessionInfo();
+    EXPECT_FALSE(info.writeJournalComplete);
+    EXPECT_NE(info.journalGapReason.find("write journal"), std::string::npos) << info.journalGapReason;
+    ASSERT_TRUE(info.journalGapHasPosition);
+    EXPECT_EQ(info.journalGapAt.frame, at.frame);
+    EXPECT_EQ(info.journalGapAt.tInFrame, at.tInFrame);
+}
+
+/// The machine ran a few instructions between the stop and a live resume:
+/// those writes are in no journal
+TEST_F(TimeTravelManagerJournalStatus_Test, RunBetweenStopAndLiveResumeReportsWhy)
+{
+    _ttd->SetEnableWriteJournal(true);
+    InstallWritingProgram();
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(2);
+    _ttd->StopRecording();
+    _emulator->RunTStates(200, /*skipBreakpoints=*/true);  // same frame: a live resume stays possible
+    ASSERT_TRUE(_ttd->ResumeRecordingLive());
+    RunFrames(1);
+    _ttd->StopRecording();
+
+    const ttd::TTDSessionInfo info = _ttd->GetSessionInfo();
+    EXPECT_FALSE(info.writeJournalComplete);
+    EXPECT_NE(info.journalGapReason.find("unrecorded"), std::string::npos) << info.journalGapReason;
+    EXPECT_TRUE(info.journalGapHasPosition);
+}
+
+TEST_F(TimeTravelManagerJournalStatus_Test, RecordedWithoutAJournalIsIncompleteFromTheStart)
+{
+    _ttd->SetEnableWriteJournal(false);
+    InstallWritingProgram();
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(1);
+    _ttd->StopRecording();
+
+    const ttd::TTDSessionInfo info = _ttd->GetSessionInfo();
+    EXPECT_FALSE(info.writeJournalComplete);
+    EXPECT_NE(info.journalGapReason.find("without"), std::string::npos) << info.journalGapReason;
+}
+
+TEST_F(TimeTravelManagerJournalStatus_Test, LoadCarriesCompletenessFromTheFile)
+{
+    _ttd->SetEnableWriteJournal(true);
+    InstallWritingProgram();
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(2);
+    _ttd->StopRecording();
+    std::stringstream complete;
+    std::string err;
+    ASSERT_TRUE(_ttd->SerializeSession(complete, err)) << err;
+
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(1);
+    _ttd->StopRecording();
+    _emulator->RunTStates(200, /*skipBreakpoints=*/true);  // unjournaled writes
+    ASSERT_TRUE(_ttd->ResumeRecordingLive());
+    RunFrames(1);
+    _ttd->StopRecording();
+    std::stringstream partial;
+    ASSERT_TRUE(_ttd->SerializeSession(partial, err)) << err;
+
+    complete.seekg(0);
+    ASSERT_TRUE(_ttd->DeserializeSession(complete, err)) << err;
+    EXPECT_TRUE(_ttd->GetSessionInfo().writeJournalComplete);
+
+    partial.seekg(0);
+    ASSERT_TRUE(_ttd->DeserializeSession(partial, err)) << err;
+    const ttd::TTDSessionInfo info = _ttd->GetSessionInfo();
+    EXPECT_FALSE(info.writeJournalComplete);
+    EXPECT_FALSE(info.journalGapReason.empty()) << "a loaded incomplete journal still says why";
+}
+
+/// Switching journaling off with no session frees the 64 MB the feature
+/// pre-allocated; with a retained session the journal still answers for it.
+TEST_F(TimeTravelManagerJournalStatus_Test, SwitchingOffWithNoSessionFreesTheJournal)
+{
+    ASSERT_TRUE(_fm->setFeature(Features::kTimeTravel, true));
+    ASSERT_NE(_ttd->GetWriteJournal(), nullptr) << "precondition: the feature pre-allocates the journal";
+    _ttd->SetEnableWriteJournal(false);
+    EXPECT_EQ(_ttd->GetWriteJournal(), nullptr) << "an idle, disabled journal still holds its 64 MB";
+
+    _ttd->SetEnableWriteJournal(true);
+    InstallWritingProgram();
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(1);
+    _ttd->StopRecording();
+    _ttd->SetEnableWriteJournal(false);
+    EXPECT_NE(_ttd->GetWriteJournal(), nullptr) << "the retained session's journal was freed";
 }

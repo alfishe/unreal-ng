@@ -17,6 +17,9 @@
 #include "emulator/sound/soundmanager.h"
 #include "emulator/memory/memory.h"
 #include "emulator/config.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
+#include "emulator/video/ulacontention.h"
 #include "emulator/video/screen.h"
 
 namespace
@@ -764,6 +767,8 @@ StateNode Screen(EmulatorContext* context, bool verbose)
         return Unavailable("Screen not available");
 
     const ScreenState s = context->pScreen->DescribeScreenState();
+    // In effect: the model's rule and the 'contention' switch (DeviceState::Contention has the details)
+    const bool contention = s.contention && (!context->pCore || context->pCore->IsContentionSwitchOn());
     StateNode ret = StateNode::Object();
     ret["available"] = true;
     ret["model"] = Config::GetModelFullName(s.model);
@@ -774,7 +779,7 @@ StateNode Screen(EmulatorContext* context, bool verbose)
     ret["active_screen"] = int(s.activeScreen);
     ret["active_ram_page"] = int(s.activeRamPage);
     ret["active_ram_pages"] = PagesArray(s.activeRamPages);
-    ret["contention"] = s.contention;
+    ret["contention"] = contention;
     ret["flash_inverted"] = s.flashInverted;
     if (!verbose)
         return ret;
@@ -788,7 +793,7 @@ StateNode Screen(EmulatorContext* context, bool verbose)
         n["attributes"] = "0x1800-0x1AFF (768 bytes)";
         n["z80_access"] = Z80Access(memory, page);
         n["ula_display"] = displayed;
-        n["contention"] = s.contention ? "active" : "none";
+        n["contention"] = contention ? "active" : "none";
         return n;
     };
 
@@ -899,6 +904,85 @@ StateNode ScreenFlash(EmulatorContext* context)
     ret["flash_cycle_total"] = 32;
     ret["toggle_interval_frames"] = 16;
     ret["toggle_interval_seconds"] = 16.0 * context->config.frame_duration_us / 1e6;
+    return ret;
+}
+
+namespace
+{
+StateNode CountersNode(const ContentionCounters& c)
+{
+    static const char* const kinds[CONTENTION_KINDS] = { "fetch", "read", "write", "io" };
+    StateNode n = StateNode::Object();
+    uint64_t accesses = 0;
+    uint64_t waitT = 0;
+    for (int k = 0; k < CONTENTION_KINDS; k++)
+    {
+        StateNode kind = StateNode::Object();
+        kind["accesses"] = c.accesses[k];
+        kind["wait_t"] = c.waitT[k];
+        n[kinds[k]] = kind;
+        accesses += c.accesses[k];
+        waitT += c.waitT[k];
+    }
+    n["accesses"] = accesses;
+    n["wait_t"] = waitT;
+    return n;
+}
+}  // namespace
+
+StateNode Contention(EmulatorContext* context)
+{
+    UlaContention* ula = context ? context->pUlaContention : nullptr;
+    Core* core = context ? context->pCore : nullptr;
+    if (!ula || !core || !core->GetZ80())
+        return Unavailable("Contention component not available");
+
+    const ContentionRule rule = ula->GetRule();
+    const bool effective = core->IsContentionEffective();
+    Z80* z80 = core->GetZ80();
+
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["rule"] = ContentionRuleName(rule);
+    ret["applicable"] = rule != ContentionRule::None;
+    ret["switch"] = core->IsContentionSwitchOn() ? "on" : "off";
+    ret["effective"] = effective;
+    ret["memory_interface"] = core->GetMemoryInterfaceName();
+    ret["io_rule"] = z80->ioContention ? ContentionRuleName(rule) : "none";
+
+    // The slots the CPU would wait on (none while contention is not in effect)
+    Memory* memory = context->pMemory;
+    StateNode slots = StateNode::Array();
+    for (uint8_t slot = 0; slot < 4; slot++)
+    {
+        StateNode n = StateNode::Object();
+        char range[24];
+        snprintf(range, sizeof range, "0x%04X-0x%04X", slot * 0x4000, slot * 0x4000 + 0x3FFF);
+        n["slot"] = int(slot);
+        n["range"] = range;
+        n["mapping"] = memory ? memory->GetCurrentBankName(slot) : std::string("unknown");
+        n["contended"] = core->IsSlotContended(slot);
+        slots.push(n);
+    }
+    ret["slots"] = slots;
+
+    if (rule == ContentionRule::GateArray)
+        ret["floating_bus_latch"] = Hex8(ula->GetLatchedByte());
+
+    // Counted only by the debug interfaces
+    if (z80->isDebugMode)
+    {
+        StateNode stats = StateNode::Object();
+        stats["current_frame"] = CountersNode(ula->GetStatisticsCurrentFrame());
+        stats["last_frame"] = CountersNode(ula->GetStatisticsLastFrame());
+        stats["total"] = CountersNode(ula->GetStatisticsTotal());
+        ret["statistics"] = stats;
+    }
+    else
+    {
+        ret["statistics"] = "debug mode off (counted only while the debugger is on)";
+    }
+
     return ret;
 }
 

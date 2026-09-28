@@ -39,11 +39,18 @@ public:
     void reset() override;
     void DecodePortOut(uint16_t port, uint8_t value, uint16_t pc) override;
     uint8_t DecodePortIn(uint16_t port, uint16_t pc) override;
+    /// With the extension enabled (#EFF7 bit 2 = 0) bit 5 is the 6th page bit,
+    /// not the lock (Born Dead #10): the lock only latches while it is disabled
+    bool IsPagingLocked() const override
+    {
+        return (_state->pEFF7 & 0x04) && (_state->p7FFD & PORT_7FFD_LOCK);
+    }
     /// endregion </Interface methods>
 
 protected:
     void switchRAMPage(uint8_t value) override;
     void Port_7FFD_Out(uint16_t port, uint8_t value, uint16_t pc);
+
     bool IsPort_EFF7(uint16_t port);
     void Port_EFF7_Out(uint16_t port, uint8_t value, uint16_t pc);
 

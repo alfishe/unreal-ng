@@ -156,13 +156,12 @@ void PortDecoder_Pentagon1024::Port_7FFD_Out(uint16_t port, uint8_t value, uint1
     EmulatorState& state = _context->emulatorState;
     Memory& memory = *_context->pMemory;
 
-    uint8_t screenNumber = (value & 0b0000'1000) >> 3;  // Bit 3: 0 = Normal (Bank 5), 1 = Shadow (Bank 7)
+    // Locked only while the extension is disabled (IsPagingLocked): the whole
+    // write is ignored, screen bit included
+    if (IsPagingLocked())
+        return;
 
-    // When extended memory is enabled, bit 5 is a page bit, not the lock.
-    // Per Born Dead #10: "bit 5 (the 48K lock) is free on machines with the extension:
-    // the lock only latches while the extension is disabled (#EFF7 bit 2 = 1)"
-    bool extendedMemoryPresent = (state.pEFF7 & 0x04) == 0;
-    bool isPagingDisabled = !extendedMemoryPresent && (value & 0b0010'0000);
+    uint8_t screenNumber = (value & 0b0000'1000) >> 3;  // Bit 3: 0 = Normal (Bank 5), 1 = Shadow (Bank 7)
 
     // Capture previous screen selection before p7FFD is updated
     uint8_t prevScreenNumber = (_state->p7FFD & 0b00001000) >> 3;
@@ -170,13 +169,8 @@ void PortDecoder_Pentagon1024::Port_7FFD_Out(uint16_t port, uint8_t value, uint1
     // Cache port value - must happen before UpdateZ80Banks()
     state.p7FFD = value;
 
-    if (!_7FFD_Locked)
-    {
-        switchRAMPage(value);
-        memory.UpdateZ80Banks();
-
-        _7FFD_Locked = isPagingDisabled;
-    }
+    switchRAMPage(value);
+    memory.UpdateZ80Banks();
 
     // Detect if screen switch requested
     if (prevScreenNumber != screenNumber && _screen != nullptr)

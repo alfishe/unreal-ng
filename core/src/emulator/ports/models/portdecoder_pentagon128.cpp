@@ -13,7 +13,6 @@
 
 PortDecoder_Pentagon128::PortDecoder_Pentagon128(EmulatorContext* context) : PortDecoder(context)
 {
-    _7FFD_Locked = false;
     
     // Initialize screen pointer from context
     if (_context != nullptr)
@@ -61,7 +60,6 @@ void PortDecoder_Pentagon128::reset()
     memory.SetRAMPageToBank3(0);
 
     // Reset memory paging lock latch
-    _7FFD_Locked = false;
 
     // Explicitly force screen to SCREEN_NORMAL before port update
     // This is necessary because Port_7FFD_Out has an optimization that skips screen switching
@@ -322,7 +320,7 @@ void PortDecoder_Pentagon128::SetRAMPage(uint8_t page)
 
     uint8_t portValue = _state->p7FFD & 0b1111'1000;
     portValue = portValue | page;
-    _state->p7FFD = page;
+    _state->p7FFD = portValue;  // keeps screen, ROM and the lock bit
 }
 
 void PortDecoder_Pentagon128::SetROMPage(uint8_t page)
@@ -553,32 +551,28 @@ void PortDecoder_Pentagon128::Port_7FFD_Out(uint16_t port, uint8_t value, uint16
     EmulatorState& state = _context->emulatorState;
     Memory& memory = *_context->pMemory;
 
+    // Locked (bit 5 of the accepted value): the whole write is ignored until
+    // reset, screen bit included, and the latch keeps the locking value
+    if (IsPagingLocked())
+        return;
+
     uint8_t screenNumber = (value & 0b0000'1000) >> 3;  // Bit 3: 0 = Normal (Bank 5), 1 = Shadow (Bank 7)
-    bool isPagingDisabled = value & 0b0010'0000;        // Bit 5: 0 = none, 1 = blocked
 
     // Capture previous screen selection before p7FFD is updated below
     uint8_t prevScreenNumber = (_state->p7FFD & 0b00001000) >> 3;
 
     // Cache out port value in state. Must happen before UpdateZ80Banks(): the bank
-    // update reads p7FFD to select the ROM/RAM pages. Cached even when locked
-    // (writes to a locked port update the cache but never remap pages)
+    // update reads p7FFD to select the ROM/RAM pages
     state.p7FFD = value;
 
-    // Disabling latch is kept until reset
-    if (!_7FFD_Locked)
-    {
-        switchRAMPage(value);   // Separate virtual method is used to unify 128k and 512k behavior
+    switchRAMPage(value);   // Separate virtual method is used to unify 128k and 512k behavior
 
-        // Bank0 mapping is CF_TRDOS-aware (matches the original set_banks()): while a
-        // TR-DOS session is active the DOS/SYS ROM stays mapped - bit 4 only selects
-        // between them. The regular Pentagon 128K/48K ROM pair (pages 2/3) is mapped
-        // only when no TR-DOS session is active. UpdateZ80Banks() also re-arms the
-        // CF_SETDOSROM / CF_LEAVEDOS* session flags consumed by the Z80Step paging trap
-        memory.UpdateZ80Banks();
-
-        _7FFD_Locked = isPagingDisabled;
-    }
-    // When locked, writes to 7FFD are ignored (no else branch needed)
+    // Bank0 mapping is CF_TRDOS-aware (matches the original set_banks()): while a
+    // TR-DOS session is active the DOS/SYS ROM stays mapped - bit 4 only selects
+    // between them. The regular Pentagon 128K/48K ROM pair (pages 2/3) is mapped
+    // only when no TR-DOS session is active. UpdateZ80Banks() also re-arms the
+    // CF_SETDOSROM / CF_LEAVEDOS* session flags consumed by the Z80Step paging trap
+    memory.UpdateZ80Banks();
 
     // Detect if screen switch requested. Do not switch screen if state not changed
     if (prevScreenNumber != screenNumber && _screen != nullptr)
@@ -600,6 +594,13 @@ void PortDecoder_Pentagon128::Port_7FFD_Out(uint16_t port, uint8_t value, uint16
     }
 
     /// endregion </Debug logging>
+}
+
+void PortDecoder_Pentagon128::UpdateModelMemoryBanks()
+{
+    // p7FFD always holds the accepted value (a locked port ignores writes),
+    // so it describes the mapping, locked or not
+    switchRAMPage(_context->emulatorState.p7FFD);
 }
 
 /// Pentagon 128k RAM page switching. Uses only 8 pages [0..7] via port #7FFD bits [0..2]

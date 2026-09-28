@@ -50,6 +50,13 @@ StateNode Screen(EmulatorContext* context, bool verbose);
 StateNode ScreenMode(EmulatorContext* context);
 StateNode ScreenFlash(EmulatorContext* context);
 
+/// Video memory contention (`Contention()`): the machine's rule (none / ula48 / ula128 / gatearray), whether
+/// it applies, the 'contention' switch and whether contention is in effect, the selected memory interface,
+/// the I/O rule, per slot its mapping and whether the CPU waits there, the +2A/+3 floating-bus latch, and -
+/// while the debugger is on - contended accesses and wait T-states per kind (fetch / read / write / io) for
+/// the current frame, the last frame and in total.
+StateNode Contention(EmulatorContext* context);
+
 /// Human-readable rendering (CLI): "key: value" lines, nested by indentation,
 /// arrays as "[index]" blocks
 std::string ToText(const StateNode& node, int indent = 0);

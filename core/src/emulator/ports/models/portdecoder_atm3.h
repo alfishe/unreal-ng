@@ -175,6 +175,12 @@ public:
 
     /// region <Port detection>
 public:
+    /// BaseConf: the 7FFD lock bit only counts while EFF7 bit 2 (lockmem) holds
+    /// the memory manager in 128K mode; in P1024 mode bits 5..7 extend the page
+    bool IsPagingLocked() const override
+    {
+        return (_state->pEFF7 & ATM_EFF7_LOCKMEM) && (_state->p7FFD & PORT_7FFD_LOCK);
+    }
     bool IsPort_FF77(uint16_t port);  // Partial decode for ATM3
     bool IsPort_37F7(uint16_t port);  // 4MB memory manager
     bool IsPort_BF(uint16_t port);    // ATM3 control
@@ -208,6 +214,7 @@ protected:
     // 7FFD lock honored only while EFF7 bit 2 (lockmem) keeps the manager in
     // 128K mode (xpeccy evoOut7FFD)
     void Port_7FFD_Out(uint16_t port, uint8_t value, uint16_t pc) override;
+
 
     // EFF7 z-bits (bit 0 / bit 5) fold into the video mode decode on ATM3
     // (xpeccy evoOutEFF7 -> evoSetVideoMode): re-run raster detection on change

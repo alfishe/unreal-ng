@@ -617,6 +617,25 @@ bool Emulator::SetSpeedMultiplier(uint8_t multiplier)
     return _core->SetSpeedMultiplier(multiplier);
 }
 
+std::string Emulator::RecordingGuard(ttd::TTDGuardedAction action) const
+{
+    ttd::TimeTravelManager* ttd = _context ? _context->pTimeTravelManager : nullptr;
+    return ttd ? ttd->RecordingGuard(action) : std::string();
+}
+
+/// Refuse an action that would drop or corrupt the recording in progress
+/// (logged; copied to `error` when the caller takes one)
+static bool RecordingAllows(const Emulator& emulator, ttd::TTDGuardedAction action, std::string* error = nullptr)
+{
+    const std::string reason = emulator.RecordingGuard(action);
+    if (reason.empty())
+        return true;
+    if (error)
+        *error = reason;
+    LOGWARNING("%s", reason.c_str());
+    return false;
+}
+
 void Emulator::EditMemoryFromTool(const char* source, const std::function<void()>& edit)
 {
     ttd::TimeTravelManager* ttd = _context ? _context->pTimeTravelManager : nullptr;
@@ -1404,7 +1423,9 @@ bool Emulator::LoadSnapshot(const std::string& path)
     }
 
     // TTD v1 (P1.6): snapshot load teleports full machine state (parent TDD §4.2).
-    // Drop the session before the loader runs.
+    // Refused while recording; otherwise drop the session before the loader runs.
+    if (!RecordingAllows(*this, ttd::TTDGuardedAction::LoadSnapshot))
+        return false;
     if (_context && _context->pTimeTravelManager)
         _context->pTimeTravelManager->InvalidateSession("snapshot-load");
 
@@ -1629,7 +1650,9 @@ bool Emulator::LoadTape(const std::string& path)
 
     // TTD v1 (P1.6): tape insertion is a session-invalidating event in v1
     // (parent TDD §4.2 + §5 row 3 — tape *insertion/start/stop* commands
-    // invalidate; only playback position is checkpointed).
+    // invalidate; only playback position is checkpointed). Refused while recording.
+    if (!RecordingAllows(*this, ttd::TTDGuardedAction::LoadTape))
+        return false;
     if (_context && _context->pTimeTravelManager)
         _context->pTimeTravelManager->InvalidateSession("tape-load");
 
@@ -1709,13 +1732,16 @@ bool Emulator::CreateBlankDisk(uint8_t drive, BlankDiskFormat format, uint8_t cy
     if (sides != 1 && sides != 2)
         return fail("sides must be 1 or 2");
 
+    // TTD: a new medium changes what the FDC reads, like a disk swap. Refused while recording.
+    if (!RecordingAllows(*this, ttd::TTDGuardedAction::CreateDisk, error))
+        return false;
+
     auto image = plus3 ? std::make_unique<DiskImage>(cylinders, sides, DiskImage::TrackFormatSpec::plus3())
                        : std::make_unique<DiskImage>(cylinders, sides);
     MediaSource blank;
     blank.type = MediaSourceType::Blank;
     auto medium = std::make_unique<Medium>(blank, AccessMode::Session, BlankDiskFormatName(format), std::move(image));
 
-    // TTD: a new medium changes what the FDC reads, like a disk swap
     if (_context->pTimeTravelManager)
         _context->pTimeTravelManager->InvalidateSession("disk-create");
 
@@ -1725,7 +1751,6 @@ bool Emulator::CreateBlankDisk(uint8_t drive, BlankDiskFormat format, uint8_t cy
         Pause();
     InsertOptions options;
     options.immediate = true;
-    options.endRecording = true;
     const MediaResult inserted = _context->pMediaManager->Insert(slotId, std::move(medium), options);
     if (wasRunning)
         Resume();
@@ -1778,7 +1803,10 @@ bool Emulator::LoadDisk(const std::string& path, uint8_t drive, std::string* err
     }
 
     // TTD v1 (P1.6): disk image swap teleports FDC + media state
-    // (parent TDD §4.2 + §12.2). Drop the session before the loader runs.
+    // (parent TDD §4.2 + §12.2). Refused while recording; otherwise drop the
+    // session before the loader runs.
+    if (!RecordingAllows(*this, ttd::TTDGuardedAction::LoadDisk, error))
+        return false;
     if (_context->pTimeTravelManager)
         _context->pTimeTravelManager->InvalidateSession("disk-load");
 
@@ -1789,7 +1817,6 @@ bool Emulator::LoadDisk(const std::string& path, uint8_t drive, std::string* err
     source.path = resolvedPath;
     InsertOptions options;
     options.immediate = true;
-    options.endRecording = true;
 
     const bool wasRunning = !IsPaused();
     if (wasRunning)
@@ -1827,10 +1854,10 @@ bool Emulator::EjectDisk(uint8_t drive, bool force, std::string* error)
     if (!_context || !_context->pMediaManager || !_context->pMediaManager->HasSlot(slotId))
         return fail(std::string("drive ") + static_cast<char>('A' + drive) + " is not present on this machine");
 
-    // A medium leaving is a media set change: it ends a TTD recording, like a load
+    // A medium leaving is a media set change: refused while a TTD recording
+    // runs (the manager answers "recording"), like a load
     EjectOptions options;
     options.force = force;
-    options.endRecording = true;
 
     const bool wasRunning = !IsPaused();
     if (wasRunning)
@@ -2653,6 +2680,10 @@ void Emulator::StepOut()
 /// \param path File path to ROM file
 bool Emulator::LoadROM(std::string path)
 {
+    // Checked before pausing: a refusal leaves the machine as it was
+    if (!RecordingAllows(*this, ttd::TTDGuardedAction::LoadRom))
+        return false;
+
     Pause();
 
     // TTD v1 (P1.6): ROM reload changes immutable code/data backing every
@@ -2671,19 +2702,17 @@ bool Emulator::LoadROM(std::string path)
 void Emulator::DebugOn()
 {
     // Switch to slow but instrumented memory interface
-    _core->UseDebugMemoryInterface();
-
     _isDebug = true;
     _z80->isDebugMode = true;
+    _core->SelectMemoryInterface();
 }
 
 void Emulator::DebugOff()
 {
     // Switch to fast memory interface
-    _core->UseFastMemoryInterface();
-
     _isDebug = false;
     _z80->isDebugMode = false;
+    _core->SelectMemoryInterface();
 }
 
 // region <Video mode>

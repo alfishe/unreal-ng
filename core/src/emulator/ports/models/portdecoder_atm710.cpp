@@ -32,7 +32,6 @@ PortDecoder_ATM710::~PortDecoder_ATM710()
 
 void PortDecoder_ATM710::reset()
 {
-    _7FFD_Locked = false;
 
     _state->p7FFD = 0x00;
     _state->pEFF7 = 0x00;
@@ -475,17 +474,11 @@ bool PortDecoder_ATM710::IsPaletteWriteEnabled()
 
 void PortDecoder_ATM710::Port_7FFD_Out([[maybe_unused]] uint16_t port, uint8_t value, [[maybe_unused]] uint16_t pc)
 {
-    // If paging is locked, ignore writes
-    if (_7FFD_Locked)
+    // If paging is locked, ignore writes (the lock is bit 5 of the accepted value)
+    if (IsPagingLocked())
     {
         MLOGWARNING("Port_7FFD_Out: Paging locked, ignoring write of 0x%02X", value);
         return;
-    }
-
-    // Check lock bit
-    if (value & PORT_7FFD_LOCK)
-    {
-        _7FFD_Locked = true;
     }
 
     Apply7FFDWrite(port, value, pc);

@@ -362,9 +362,11 @@ struct Z80State : public Z80Registers, public Z80DecodedOperation
     uint32_t trpc[40];
 
     // Memory interfacing
-    const MemoryInterface* FastMemIf;  // Fast memory interface (max performance)
-    const MemoryInterface* DbgMemIf;   // Debug memory interface (supports memory access breakpoints)
-    const MemoryInterface* MemIf;      // Currently selected memory interface (Fast|Debug)
+    const MemoryInterface* FastMemIf;           // Fast memory interface (max performance)
+    const MemoryInterface* DbgMemIf;            // Debug memory interface (supports memory access breakpoints)
+    const MemoryInterface* FastContendedMemIf;  // Fast + video memory contention (Memory::MemoryReadContended)
+    const MemoryInterface* DbgContendedMemIf;   // Debug + video memory contention
+    const MemoryInterface* MemIf;               // Currently selected one (Core::SelectMemoryInterface)
 };
 
 /// endregion </Structures>
@@ -421,6 +423,18 @@ public:
     // Memory access dispatching methods
     uint8_t rd(uint16_t addr, bool isExecution = false);
     void wd(uint16_t addr, uint8_t val);
+
+    /// Contention wait states inserted by the contended memory interfaces (Memory::MemoryReadContended):
+    /// the same counter step as the CPU's own cycles
+    inline void InsertWaitStates(uint8_t cycles) { tt += cycles * rate; }
+
+    /// T-state at which the memory access in progress started: rd / wd have already charged its 3 T
+    inline uint32_t AccessStartT() const { return (tt - 3u * rate) >> 8; }
+
+    /// I/O contention rule for in / out: the machine's contention component while its ULA contends port
+    /// accesses (48K / 128K / +2), null otherwise (no contention, +2A / +3 gate array). Set by
+    /// Core::SelectMemoryInterface together with MemIf
+    UlaContention* ioContention = nullptr;
 
     /// Test-only bus trace hook (null in production - a single empty-function
     /// check per bus access when unset). Fired at the access point of each bus

@@ -34,7 +34,9 @@ Z80::Z80(EmulatorContext* context) : Z80State{}
     // Initialize memory access interfaces
     FastMemIf = Memory::GetFastMemoryInterface();
     DbgMemIf = Memory::GetDebugMemoryInterface();
-    MemIf = FastMemIf;  // Use fast memory access interface by default
+    FastContendedMemIf = Memory::GetFastContendedMemoryInterface();
+    DbgContendedMemIf = Memory::GetDebugContendedMemoryInterface();
+    MemIf = FastMemIf;  // Use fast memory access interface by default (Core::SelectMemoryInterface decides)
 
     // Ensure register memory and unions do not contain garbage
     Z80State::tt = 0;
@@ -106,6 +108,11 @@ Z80::~Z80()
         delete DbgMemIf;
         DbgMemIf = nullptr;
     }
+
+    delete FastContendedMemIf;
+    FastContendedMemIf = nullptr;
+    delete DbgContendedMemIf;
+    DbgContendedMemIf = nullptr;
 
     if (_opcodeProfiler)
     {
@@ -789,25 +796,11 @@ void Z80::NotifyInstructionStart()
 /// \return
 uint8_t Z80::rd(uint16_t addr, bool isExecution)
 {
-    // ULA memory contention: accessing contended memory (0x4000-0x7FFF; on
-    // 128K also 0xC000+ with an odd page mapped, on the +2A/+3 pages 4-7 in
-    // any slot) during screen rendering stalls the CPU.
-    UlaContention* ula = _context->pUlaContention;
-    const bool contended = !isExecution && ula && ula->IsAddressContended(addr);
-    if (contended)
-    {
-        uint8_t delay = ula->GetContentionDelay();
-        if (delay > 0)
-            IncrementCPUCyclesCounter(delay);
-    }
-
+    // Video memory contention, where the machine has it, is part of the selected interface
+    // (Memory::MemoryReadContended): it waits before the access, with these 3 T already counted
     IncrementCPUCyclesCounter(3);
 
     uint8_t value = (_memory->*MemIf->MemoryRead)(addr, isExecution);
-
-    // The +2A/+3 gate array keeps a contended access's byte for its floating bus
-    if (contended)
-        ula->LatchContendedByte(value);
 
     if (busTraceHook)
         busTraceHook('R', addr, value);
@@ -821,17 +814,7 @@ uint8_t Z80::rd(uint16_t addr, bool isExecution)
 /// \param val
 void Z80::wd(uint16_t addr, uint8_t val)
 {
-    // ULA memory contention (see rd)
-    UlaContention* ula = _context->pUlaContention;
-    const bool contended = ula && ula->IsAddressContended(addr);
-    if (contended)
-    {
-        uint8_t delay = ula->GetContentionDelay();
-        if (delay > 0)
-            IncrementCPUCyclesCounter(delay);
-        ula->LatchContendedByte(val);
-    }
-
+    // Video memory contention: see rd (Memory::MemoryWriteContended)
     IncrementCPUCyclesCounter(3);
 
     (_memory->*MemIf->MemoryWrite)(addr, val);
@@ -845,14 +828,14 @@ uint8_t Z80::in(uint16_t port)
     // ULA IO contention: accessing contended ports during screen rendering
     // on ZX-48K/128K delays the CPU by the contention pattern.
     // This is critical for accurate timing of raster-sync effects.
+    // ioContention is null on machines without it (Core::SelectMemoryInterface)
+    if (ioContention)
     {
-        UlaContention* ula = _context->pUlaContention;
-        if (ula)
-        {
-            uint8_t delay = ula->GetIOContentionDelay(port);
-            if (delay > 0)
-                IncrementCPUCyclesCounter(delay);
-        }
+        uint8_t delay = ioContention->GetIOContentionDelay(port);
+        if (delay > 0)
+            IncrementCPUCyclesCounter(delay);
+        if (isDebugMode)
+            ioContention->CountAccess(CONTENTION_IO, delay);
     }
 
     PortDecoder& portDecoder = *_context->pPortDecoder;
@@ -910,15 +893,14 @@ void Z80::out(uint16_t port, uint8_t val)
     // ULA IO contention: accessing contended ports during screen rendering
     // on ZX-48K/128K delays the CPU by the contention pattern.
     // This must be applied BEFORE the port write so that SetBorderColor()
-    // sees the correct (delayed) t-state.
+    // sees the correct (delayed) t-state. ioContention: see in()
+    if (ioContention)
     {
-        UlaContention* ula = _context->pUlaContention;
-        if (ula)
-        {
-            uint8_t delay = ula->GetIOContentionDelay(port);
-            if (delay > 0)
-                IncrementCPUCyclesCounter(delay);
-        }
+        uint8_t delay = ioContention->GetIOContentionDelay(port);
+        if (delay > 0)
+            IncrementCPUCyclesCounter(delay);
+        if (isDebugMode)
+            ioContention->CountAccess(CONTENTION_IO, delay);
     }
 
     PortDecoder& portDecoder = *_context->pPortDecoder;

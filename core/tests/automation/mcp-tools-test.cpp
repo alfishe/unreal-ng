@@ -702,6 +702,44 @@ TEST_F(McpTools_Test, InspectState_DeviceAspects_FetchOverviewAndChips)
     EXPECT_NE(result.text.find("A: /tmp/disk.trd track 3 motor on"), std::string::npos) << result.text;
 }
 
+TEST_F(McpTools_Test, InspectState_ContentionAspect)
+{
+    Json::Value contention;
+    contention["available"] = true;
+    contention["rule"] = "ula48";
+    contention["applicable"] = true;
+    contention["switch"] = "on";
+    contention["effective"] = true;
+    contention["memory_interface"] = "debug_contended";
+    contention["io_rule"] = "ula48";
+    contention["slots"] = Json::Value(Json::arrayValue);
+    for (int slot = 0; slot < 4; slot++)
+    {
+        Json::Value n;
+        n["slot"] = slot;
+        n["contended"] = slot == 1;
+        contention["slots"].append(n);
+    }
+    contention["statistics"]["last_frame"]["accesses"] = 1200;
+    contention["statistics"]["last_frame"]["wait_t"] = 3400;
+    _caller->routes["GET /api/v1/emulator/emu-1/state/contention"] = {200, contention};
+
+    Json::Value args;
+    Json::Value aspects(Json::arrayValue);
+    aspects.append("contention");
+    args["aspects"] = aspects;
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/state/contention"));
+    ASSERT_TRUE(result.structured.isMember("contention"));
+    EXPECT_EQ(result.structured["contention"]["rule"].asString(), "ula48");
+    EXPECT_NE(result.text.find("[contention] rule ula48, switch on, in effect, interface debug_contended, io ula48, slots - C - -"),
+              std::string::npos)
+        << result.text;
+    EXPECT_NE(result.text.find("last frame 1200 contended accesses, 3400 T waited"), std::string::npos) << result.text;
+}
+
 TEST_F(McpTools_Test, InspectState_DeviceAspect_UnavailableIsReportedNotFatal)
 {
     Json::Value err;
@@ -1436,6 +1474,54 @@ TEST_F(McpTools_Test, TimeTravel_FindLast_BlockedReportsMarker)
 
     ASSERT_FALSE(result.isError) << result.text;
     EXPECT_NE(result.text.find("replay barrier disk_write"), std::string::npos) << result.text;
+}
+
+/// TD-8: the summary names the part of history the search examined
+TEST_F(McpTools_Test, TimeTravel_FindLast_ReportsTheSearchWindow)
+{
+    Json::Value reply;
+    reply["found"] = false;
+    reply["blocked"] = true;
+    reply["marker_frame"] = 30;
+    reply["marker_tinframe"] = 1200;
+    reply["marker_kind"] = "disk_write";
+    reply["marker_reason"] = "Write Sector";
+    reply["covered_from"] = 30;
+    reply["covered_from_tinframe"] = 1200;
+    reply["covered_to"] = 90;
+    reply["covered_to_tinframe"] = 0;
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/find-last"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "find_last";
+    args["addr"] = 23296;
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("Searched frame 30 t=1200 .. frame 90."), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, TimeTravel_ReverseContinue_NoMatchReportsTheSearchWindowNotFrameZero)
+{
+    Json::Value reply;
+    reply["matched"] = false;
+    reply["pc"] = 65535;
+    reply["frame"] = 0;
+    reply["tinframe"] = 0;
+    reply["covered_from"] = 1;
+    reply["covered_from_tinframe"] = 0;
+    reply["covered_to"] = 40;
+    reply["covered_to_tinframe"] = 500;
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/reverse-continue"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "reverse_continue";
+    args["pcs"].append(0x8100);
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_EQ(result.text.find("stopped at frame 0"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("No PC match. Searched frame 1 .. frame 40 t=500."), std::string::npos) << result.text;
 }
 
 TEST_F(McpTools_Test, TimeTravel_FindLast_NoCriterion_RejectsBeforeAnyCall)

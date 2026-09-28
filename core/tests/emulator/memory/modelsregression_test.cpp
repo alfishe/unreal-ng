@@ -185,10 +185,12 @@ namespace
         writes.push_back({0x7FFD, 0xE0});
         writes.push_back({0x7FFD, 0x30});
         // Disable the extension: banking falls back to 3-bit and the cached
-        // #7FFD value is re-applied (RAM32 -> RAM0), bit 5 becomes the lock
+        // #7FFD value is re-applied (RAM32 -> RAM0), bit 5 becomes the lock.
+        // The lock is combinational (UnrealSpeccy io.cpp, MiSTer page_disable):
+        // the latched #30 carries bit 5, so the port is locked from here on
         writes.push_back({0xEFF7, 0x04});
+        // Both must be ignored
         writes.push_back({0x7FFD, 0x23});
-        // Must be ignored - the lock latched with the extension off
         writes.push_back({0x7FFD, 0x00});
         return writes;
     }
@@ -538,7 +540,8 @@ static const std::vector<ModelsRegressionRow> kGoldenRows_Pentagon1024 = {
     // Pentagon1024 - extension enabled after reset (#EFF7 bit 2 = 0): #7FFD
     // bits [0:2] + bit 5 (pb5) + bits [6:7] (pb3/pb4) form the 6-bit page
     // index and bit 5 is NOT the lock; after #EFF7 bit 2 = 1 the decoder falls
-    // back to 3-bit banking and bit 5 latches the lock again
+    // back to 3-bit banking and bit 5 is the lock again: the #30 already in the
+    // latch locks the port at once, so the later writes are ignored
     {"Pentagon1024", 0, 0x0000, 0x00, "R128", "RAM5", "RAM2", "RAM0"},
     {"Pentagon1024", 1, 0x7FFD, 0x00, "R128", "RAM5", "RAM2", "RAM0"},
     {"Pentagon1024", 2, 0x7FFD, 0x01, "R128", "RAM5", "RAM2", "RAM1"},
@@ -556,8 +559,8 @@ static const std::vector<ModelsRegressionRow> kGoldenRows_Pentagon1024 = {
     {"Pentagon1024", 14, 0x7FFD, 0xE0, "R128", "RAM5", "RAM2", "RAM56"},
     {"Pentagon1024", 15, 0x7FFD, 0x30, "R48", "RAM5", "RAM2", "RAM32"},
     {"Pentagon1024", 16, 0xEFF7, 0x04, "R48", "RAM5", "RAM2", "RAM0"},
-    {"Pentagon1024", 17, 0x7FFD, 0x23, "R128", "RAM5", "RAM2", "RAM3"},
-    {"Pentagon1024", 18, 0x7FFD, 0x00, "R128", "RAM5", "RAM2", "RAM3"},
+    {"Pentagon1024", 17, 0x7FFD, 0x23, "R48", "RAM5", "RAM2", "RAM0"},
+    {"Pentagon1024", 18, 0x7FFD, 0x00, "R48", "RAM5", "RAM2", "RAM0"},
 };
 
 static const std::vector<ModelsRegressionRow> kGoldenRows_Profi = {

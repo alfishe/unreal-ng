@@ -29,7 +29,9 @@ program; it supersedes `../2026-08-26-automation-gaps/`. Last status sync in
    state (GS DeviceState placeholder → PLAN #19).
 7. **P3-1..P3-3** — per-machine resources, triage recipes, ROM catalog.
 8. TTD coverage gaps G-1..G-10 remainder: TD-3 phase 2 (`POST /memory/dump` +
-   `TempFileTracker` → PLAN #4), TD-5 timeline, TD-7, TD-8.
+   `TempFileTracker` → PLAN #4), TD-5 timeline, TD-7, TD-8 (code half -
+   search-window reporting - done 2026-09-28, PLAN #25 retired; the recipe
+   half remains).
 
 ## Pointers
 - Cumulative plan: [`../PLAN.md`](../PLAN.md) — item #4 (T1) lives here; #1 and #2 are retired.

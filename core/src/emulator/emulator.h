@@ -28,6 +28,11 @@
 
 class BreakpointManager;
 
+namespace ttd
+{
+enum class TTDGuardedAction : uint8_t;  // debugger/ttd/timetravelmanager.h
+}
+
 /// region <Types>
 
 enum EmulatorStateEnum : uint8_t
@@ -179,6 +184,11 @@ public:
     void SetSpeed(BaseFrequency_t speed);
     bool SetSpeedMultiplier(uint8_t multiplier);
 
+    /// @brief Why a recording-destructive action is refused right now (empty when
+    /// allowed) - TimeTravelManager::RecordingGuard. The loaders below refuse with
+    /// it themselves; surfaces ask first to report the reason.
+    std::string RecordingGuard(ttd::TTDGuardedAction action) const;
+
     /// @brief Run a guest-memory edit made by a tool (a script, a debugger
     /// surface) so a TTD recording stays consistent: the edit is recorded as a
     /// debugger-edit marker (replay cannot reproduce it) and, from any thread but
@@ -266,7 +276,7 @@ public:
     /// @param force Eject even when the disk has unsaved writes (they are lost); without it a
     ///              dirty disk stays in and `error` says so
     /// @param error When non-null and the call fails, receives a human-readable reason
-    /// An empty drive is not an error. Like LoadDisk, it ends a running TTD recording
+    /// An empty drive is not an error. Like LoadDisk, it is refused while a TTD recording runs
     bool EjectDisk(uint8_t drive, bool force = false, std::string* error = nullptr);
 
     /// Layout of a blank disk from CreateBlankDisk()

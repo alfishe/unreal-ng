@@ -805,7 +805,7 @@ TEST_F(TTD_ExternalEvents_Seek_Test, NullOutResult_MarkerBarrier_StillReturnsFal
 
 TEST_F(TTD_ExternalEvents_Seek_Test, StepBackFrame_FrameAligned_NotAffectedByMarkers)
 {
-    // StepBackFrame composes SeekTo with (frame-1, tInFrame). The frame-
+    // StepBackFrame composes SeekTo with (frame-1, 0). The frame-
     // aligned seek (tInFrame=0 case) never hits the barrier check, so a
     // marker in the middle of a frame does not interfere with frame-aligned
     // navigation.

@@ -16,6 +16,8 @@ Fixtures with a known license:
 | Z80 XCF Flavor (`testdata/loaders/sna/z80-xcf-flavor.sna`) | see `docs/inprogress/2026-01-18-z80-hidden-flags/` | GPL-3.0-or-later |
 | FUSE Z80 test vectors (`testdata/z80/fuse/`) | FUSE project | GPL-2.0-or-later |
 | ZX Diagnostics (`data/testrom/zx-diagnostics.rom`) | Brendan Alford | GPL-3.0 |
+| Timing Test v0.3 (`testdata/contention/rak-timing-test/`, source and tape) | Patrik Rak, after Jan Bobrowski's zxtests | GPL (stated in `timing.bas`, no version: any GPL version) |
+| ZX Spectrum Timing Tests 48K v1.0 (`testdata/loaders/sna/Timing_Tests-48k_v1.0.sna`) | Richard and Tim Butler | none stated (test material) |
 
 Everything else (commercial games such as Dizzy X and Green Beret, demo-scene productions such as EyeAche,
 Satisfaction, Insult, Echology, Across the Edge, 7th Reality, the TR-DOS / FDI / UDI disk images, the TurboSound FM

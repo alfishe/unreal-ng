@@ -225,7 +225,7 @@ void EmulatorAPI::setFeature(const HttpRequestPtr& req, std::function<void(const
         // Known but refused: TTD holds it off (recording, or replaying history)
         Json::Value error;
         error["error"] = "Conflict";
-        error["message"] = "Cannot enable '" + name + "' while TTD recording is active or history is being replayed";
+        error["message"] = featureManager->refusalReason(name, enabled);
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k409Conflict);
         addCorsHeaders(resp);

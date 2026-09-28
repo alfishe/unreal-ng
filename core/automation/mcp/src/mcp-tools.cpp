@@ -781,9 +781,24 @@ std::string FormatTtdStatus(const Json::Value& status)
         }
     }
     out << ", write journal " << (status["write_journal_enabled"].asBool() ? "on" : "off");
+    if (status.isMember("write_journal_gap"))
+    {
+        // The journal misses writes of this session: write/io find-last replays
+        const Json::Value& gap = status["write_journal_gap"];
+        out << " (incomplete: " << gap["reason"].asString();
+        if (gap.isMember("frame"))
+        {
+            out << " at frame " << gap["frame"].asUInt64();
+        }
+        out << "; write searches replay)";
+    }
     if (status["bookmark_count"].asUInt64() > 0)
     {
         out << ", " << status["bookmark_count"].asUInt64() << " bookmark(s)";
+    }
+    if (status["last_drop_reason"].isString())
+    {
+        out << ", last session dropped: " << status["last_drop_reason"].asString();
     }
     if (status["loaded_from_file"].asBool())
     {
@@ -813,7 +828,7 @@ void RegisterInspectState(ToolRegistry& registry)
     Json::Value allowed(Json::arrayValue);
     for (const char* aspect : {"machine", "registers", "memory", "memory_map", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "video",
                                "screen", "screen_flash", "screen_ocr", "screen_image", "screen_digest", "timing", "rom", "audio_ay", "audio_fm", "audio_gs", "fdc", "mouse",
-                               "ttd"})
+                               "ttd", "contention"})
     {
         allowed.append(aspect);
     }
@@ -865,7 +880,8 @@ void RegisterInspectState(ToolRegistry& registry)
         "memory layout, displayed RAM pages, #EFF7/#DFFD/#FF77), screen state (screen: active screen and RAM pages, per-screen "
         "Z80 mapping, #7FFD, contention), FLASH timing (screen_flash), screen OCR text, screen image metadata, screen digest hash, raster timing, "
         "ROM signatures, AY/SSG chips (audio_ay), TurboSound FM YM2203 halves (audio_fm), General Sound card (audio_gs), Beta Disk WD1793 (fdc), "
-        "Kempston mouse + port routing (mouse), time-travel session state and position (ttd). Combine aspects to reduce round-trips.",
+        "Kempston mouse + port routing (mouse), time-travel session state and position (ttd), memory contention: rule, switch, "
+        "interface, contended slots, per-kind waits while debugging (contention). Combine aspects to reduce round-trips.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn& progress) {
             // Collect aspects
@@ -887,11 +903,11 @@ void RegisterInspectState(ToolRegistry& registry)
                 if (aspect != "machine" && aspect != "registers" && aspect != "memory" && aspect != "memory_map" && aspect != "disasm" && aspect != "stack" &&
                     aspect != "breakpoints" && aspect != "memory_banks" && aspect != "paging" && aspect != "ports" && aspect != "video" &&
                     aspect != "screen" && aspect != "screen_flash" && aspect != "screen_ocr" && aspect != "screen_image" && aspect != "screen_digest" && aspect != "timing" && aspect != "rom" && aspect != "audio_ay" &&
-                    aspect != "audio_fm" && aspect != "audio_gs" && aspect != "fdc" && aspect != "mouse" && aspect != "ttd")
+                    aspect != "audio_fm" && aspect != "audio_gs" && aspect != "fdc" && aspect != "mouse" && aspect != "ttd" && aspect != "contention")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, audio_gs, fdc, mouse, ttd"));
+                                            "screen, screen_flash, screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, audio_gs, fdc, mouse, ttd, contention"));
                     return;
                 }
             }
@@ -1120,6 +1136,17 @@ void RegisterInspectState(ToolRegistry& registry)
                                 });
                             });
                         }
+                        else if (aspect == "contention")
+                        {
+                            // Core DeviceState::Contention via the WebAPI
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, "/state/contention"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
                         else if (aspect == "mouse")
                         {
                             // /mouse/status: fitment + counters + the routing answer (fitted vs
@@ -1311,6 +1338,26 @@ void RegisterInspectState(ToolRegistry& registry)
                             else if (aspect == "screen_digest" && value.isMember("digest"))
                             {
                                 out << "\n[screen_digest] " << value["digest"].asString();
+                            }
+                            else if (aspect == "contention")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[contention] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[contention] rule " << value["rule"].asString() << ", switch " << value["switch"].asString()
+                                        << (value["effective"].asBool() ? ", in effect" : ", not in effect") << ", interface "
+                                        << value["memory_interface"].asString() << ", io " << value["io_rule"].asString() << ", slots";
+                                    const Json::Value& slots = value["slots"];
+                                    for (Json::ArrayIndex i = 0; i < slots.size(); ++i)
+                                        out << " " << (slots[i]["contended"].asBool() ? "C" : "-");
+                                    if (value["statistics"].isObject())
+                                    {
+                                        const Json::Value& last = value["statistics"]["last_frame"];
+                                        out << "; last frame " << last["accesses"].asUInt64() << " contended accesses, "
+                                            << last["wait_t"].asUInt64() << " T waited";
+                                    }
+                                }
                             }
                             else if (aspect == "fdc")
                             {
@@ -1901,6 +1948,17 @@ std::string FormatMarker(const Json::Value& marker)
            FormatTimePoint(marker["frame"], marker["tinframe"]);
 }
 
+/// TD-8: " Searched frame A .. frame B." from covered_from/covered_to, or "" when absent.
+std::string FormatSearchWindow(const Json::Value& b)
+{
+    if (!b.isMember("covered_from"))
+    {
+        return {};
+    }
+    return " Searched " + FormatTimePoint(b["covered_from"], b["covered_from_tinframe"]) + " .. " +
+           FormatTimePoint(b["covered_to"], b["covered_to_tinframe"]) + ".";
+}
+
 /// Like ForwardCall, but the text summary is built from the 2xx body. A 2xx
 /// body with "ok": false (dump) is a failure. A 409 (a history operation
 /// while recording) gets the MCP-side remedy appended.
@@ -2303,12 +2361,12 @@ void RegisterTimeTravel(ToolRegistry& registry)
                     CallAndSummarize("POST", Endpoint(id, "/ttd/reverse-continue"), body.get(), caller, [](const Json::Value& b) {
                         std::string text = b["matched"].asBool()
                                                ? "Hit PC " + Hex16(b["pc"].asUInt()) + " at " + FormatTimePoint(b["frame"], b["tinframe"])
-                                               : "No PC match; stopped at " + FormatTimePoint(b["frame"], b["tinframe"]);
+                                               : std::string("No PC match");
                         if (b.isMember("blocked_by_marker"))
                         {
                             text += " - blocked by marker " + FormatMarker(b["blocked_by_marker"]);
                         }
-                        return text;
+                        return text + "." + FormatSearchWindow(b);
                     }, done);
                 }
                 else if (action == "find_last")
@@ -2322,7 +2380,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
                             {
                                 text += ", RAM page " + std::to_string(b["phys_page"].asUInt());
                             }
-                            return text + ". Seek to that frame/tinframe to inspect the machine there.";
+                            return text + "." + FormatSearchWindow(b) + " Seek to that frame/tinframe to inspect the machine there.";
                         }
                         if (b["blocked"].asBool())
                         {
@@ -2332,9 +2390,9 @@ void RegisterTimeTravel(ToolRegistry& registry)
                             marker["kind"] = b["marker_kind"];
                             marker["reason"] = b["marker_reason"];
                             return "Not found after the replay barrier " + FormatMarker(marker) +
-                                   "; the search cannot look past it";
+                                   "; the search cannot look past it." + FormatSearchWindow(b);
                         }
-                        return std::string("Not found in the recorded history");
+                        return "Not found in the recorded history." + FormatSearchWindow(b);
                     }, done);
                 }
                 else if (action == "resume")

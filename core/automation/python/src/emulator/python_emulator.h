@@ -591,8 +591,12 @@ namespace PythonBindings
             }, "Get feature state")
             .def("feature_set", [](Emulator& self, const std::string& name, bool enabled) -> bool {
                 FeatureManager* fm = self.GetFeatureManager();
-                return fm ? fm->setFeature(name, enabled) : false;
-            }, "Set feature state")
+                if (!fm) return false;
+                if (fm->setFeature(name, enabled)) return true;
+                if (fm->hasFeature(name))
+                    throw std::runtime_error(fm->refusalReason(name, enabled));  // TTD holds it: why
+                return false;  // unknown feature
+            }, "Set feature state (RuntimeError when TTD holds the feature; False for an unknown one)")
             .def("feature_list", [](Emulator& self) -> py::dict {
                 py::dict features;
                 FeatureManager* fm = self.GetFeatureManager();
@@ -627,6 +631,8 @@ namespace PythonBindings
                 Emulator::BlankDiskFormat parsed = Emulator::BlankDiskFormat::Auto;
                 if (drive < 0 || drive > 3 || !Emulator::ParseBlankDiskFormat(format, parsed)) return false;
                 if (cylinders < 0 || cylinders > 255 || sides < 0 || sides > 255) return false;
+                if (std::string refusal = self.RecordingGuard(ttd::TTDGuardedAction::CreateDisk); !refusal.empty())
+                    throw std::runtime_error(refusal);  // TTD is recording: RuntimeError with the reason
                 return self.CreateBlankDisk(static_cast<uint8_t>(drive), parsed, static_cast<uint8_t>(cylinders),
                                             static_cast<uint8_t>(sides));
             }, "Create blank disk (format: auto = plus3 on a +3, unformatted elsewhere; 0 = the format's geometry)",
@@ -714,7 +720,11 @@ namespace PythonBindings
             }, "Run until next interrupt", py::arg("skip_breakpoints") = true)
 
             // Tape operations
-            .def("tape_load", &Emulator::LoadTape, "Load tape file", py::arg("path"))
+            .def("tape_load", [](Emulator& self, const std::string& path) -> bool {
+                if (std::string refusal = self.RecordingGuard(ttd::TTDGuardedAction::LoadTape); !refusal.empty())
+                    throw std::runtime_error(refusal);  // TTD is recording: RuntimeError with the reason
+                return self.LoadTape(path);
+            }, "Load tape file (RuntimeError while TTD records)", py::arg("path"))
             .def("tape_is_inserted", [](Emulator& self) -> bool {
                 auto* ctx = self.GetContext();
                 return ctx && ctx->pTape && !ctx->coreState.tapeFilePath.empty();
@@ -969,7 +979,11 @@ namespace PythonBindings
                py::arg("source"), py::arg("output"), py::arg("hysteresis") = py::none())
             
             // Snapshot operations
-            .def("snapshot_load", &Emulator::LoadSnapshot, "Load snapshot file", py::arg("path"))
+            .def("snapshot_load", [](Emulator& self, const std::string& path) -> bool {
+                if (std::string refusal = self.RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot); !refusal.empty())
+                    throw std::runtime_error(refusal);  // TTD is recording: RuntimeError with the reason
+                return self.LoadSnapshot(path);
+            }, "Load snapshot file (RuntimeError while TTD records)", py::arg("path"))
             .def("snapshot_save", &Emulator::SaveSnapshot, "Save snapshot file", py::arg("path"))
             
             // Breakpoint management
@@ -1509,6 +1523,9 @@ namespace PythonBindings
             .def("fdc_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Fdc(self.GetContext()));
             }, "Beta Disk WD1793 state report: registers, status bits, FSM, signals, drives")
+            .def("contention_state", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::Contention(self.GetContext()));
+            }, "Memory contention report: rule, switch, interface, contended slots, per-kind waits while debugging")
 
             // General Sound card (GS design §11.6). All actions mirror the
             // host-port semantics - each flushes the coprocessor to the
@@ -2415,7 +2432,22 @@ namespace PythonBindings
                 info["coverage_index_frames"]    = py::cast(si.coverageIndexFrames);
                 info["coverage_index_bytes"]     = py::cast(si.coverageIndexBytes);
                 info["write_journal_enabled"]    = py::cast(si.writeJournalEnabled);
+                info["write_journal_complete"]   = py::cast(si.writeJournalComplete);
+                info["write_journal_wrapped"]    = py::cast(si.writeJournalWrapped);
+                if (!si.journalGapReason.empty())
+                {
+                    py::dict gap;
+                    gap["reason"] = si.journalGapReason;
+                    if (si.journalGapHasPosition)
+                    {
+                        gap["frame"]    = py::cast(si.journalGapAt.frame);
+                        gap["tinframe"] = py::cast(si.journalGapAt.tInFrame);
+                    }
+                    info["write_journal_gap"] = gap;
+                }
                 info["bookmark_count"]           = py::cast(static_cast<uint64_t>(si.bookmarkCount));
+                info["last_drop_reason"]         = si.lastDropReason.empty() ? py::object(py::none())
+                                                                             : py::object(py::cast(si.lastDropReason));
                 info["ttd_available"]            = true;
                 return info;
             }, "Get TTD session status")
@@ -2441,9 +2473,11 @@ namespace PythonBindings
 
             .def("ttd_set_journal_enabled", [](Emulator& self, bool enabled) {
                 auto* ctx = self.GetContext();
-                if (ctx && ctx->pTimeTravelManager)
-                    ctx->pTimeTravelManager->SetEnableWriteJournal(enabled);
-            }, "Choose whether the next recording keeps a write journal", py::arg("enabled"))
+                if (ctx && ctx->pTimeTravelManager && !ctx->pTimeTravelManager->SetEnableWriteJournal(enabled))
+                    throw std::runtime_error(
+                        ctx->pTimeTravelManager->RecordingGuard(ttd::TTDGuardedAction::ChangeWriteJournal));
+            }, "Choose whether the next recording keeps a write journal (RuntimeError while recording)",
+               py::arg("enabled"))
 
             .def("ttd_get_journal_enabled", [](Emulator& self) -> bool {
                 auto* ctx = self.GetContext();
@@ -2458,9 +2492,13 @@ namespace PythonBindings
 
             .def("ttd_invalidate", [](Emulator& self, const std::string& reason) {
                 auto* ctx = self.GetContext();
-                if (ctx && ctx->pTimeTravelManager)
-                    ctx->pTimeTravelManager->InvalidateSession(reason.c_str());
-            }, "Drop all TTD history", py::arg("reason") = "python invalidate")
+                if (!ctx || !ctx->pTimeTravelManager)
+                    return;
+                if (std::string refusal = ctx->pTimeTravelManager->RecordingGuard(ttd::TTDGuardedAction::Invalidate);
+                    !refusal.empty())
+                    throw std::runtime_error(refusal);  // recording: stop it first
+                ctx->pTimeTravelManager->InvalidateSession(reason.c_str());
+            }, "Drop all TTD history (RuntimeError while recording)", py::arg("reason") = "python invalidate")
 
             .def("ttd_seek", [](Emulator& self, uint64_t frame, uint32_t tInFrame) -> py::dict {
                 py::dict result;
@@ -2772,7 +2810,8 @@ namespace PythonBindings
                 }
 
                 ttd::TTDExternalEvent marker{};
-                auto result = ctx->pTimeTravelManager->FindLastAccess(q, &marker);
+                ttd::TTDSearchWindow window;
+                auto result = ctx->pTimeTravelManager->FindLastAccess(q, &marker, &window);
                 if (!result)
                 {
                     if (marker.reason[0] == '\0')
@@ -2785,6 +2824,14 @@ namespace PythonBindings
                     blocked["marker_tinframe"] = py::cast(marker.time.tInFrame);
                     blocked["marker_kind"]     = ttd::TTDExternalEventKindToString(marker.kind);
                     blocked["marker_reason"]   = std::string(marker.reason);
+                    // TD-8: the part of history the search examined
+                    if (window.searched)
+                    {
+                        blocked["covered_from"]          = py::cast(window.from.frame);
+                        blocked["covered_from_tinframe"] = py::cast(window.from.tInFrame);
+                        blocked["covered_to"]            = py::cast(window.to.frame);
+                        blocked["covered_to_tinframe"]   = py::cast(window.to.tInFrame);
+                    }
                     return blocked;
                 }
 
@@ -2798,6 +2845,14 @@ namespace PythonBindings
                 r["phys_page"] = result->physPage == ttd::kPhysPageNone ? py::object(py::none())
                                                                          : py::object(py::cast(result->physPage));
                 r["access"]    = ttd::TTDAccessTypeToString(result->access);
+                // TD-8: the part of history the search examined
+                if (window.searched)
+                {
+                    r["covered_from"]          = py::cast(window.from.frame);
+                    r["covered_from_tinframe"] = py::cast(window.from.tInFrame);
+                    r["covered_to"]            = py::cast(window.to.frame);
+                    r["covered_to_tinframe"]   = py::cast(window.to.tInFrame);
+                }
                 return r;
             }, "Reverse search: find last access at address or within address/PC range",
                py::arg("addr") = py::none(),
@@ -2860,6 +2915,14 @@ namespace PythonBindings
                     m["frame"]    = py::cast(r.blockingMarker.time.frame);
                     m["tinframe"] = py::cast(r.blockingMarker.time.tInFrame);
                     d["blocked_by_marker"] = m;
+                }
+                // TD-8: the part of history the search examined
+                if (r.window.searched)
+                {
+                    d["covered_from"]          = py::cast(r.window.from.frame);
+                    d["covered_from_tinframe"] = py::cast(r.window.from.tInFrame);
+                    d["covered_to"]            = py::cast(r.window.to.frame);
+                    d["covered_to_tinframe"]   = py::cast(r.window.to.tInFrame);
                 }
                 return d;
             }, "Run backward until any PC matches; returns dict or None",
@@ -3420,11 +3483,13 @@ namespace PythonBindings
                     bank["type"] = "RAM";
                     switch (i) {
                         case 0: bank["page"] = static_cast<int>(memory.GetRAMPageForBank0()); break;
-                        case 1: bank["page"] = static_cast<int>(memory.GetRAMPageForBank1()); bank["contended"] = true; break;
+                        case 1: bank["page"] = static_cast<int>(memory.GetRAMPageForBank1()); break;
                         case 2: bank["page"] = static_cast<int>(memory.GetRAMPageForBank2()); break;
                         case 3: bank["page"] = static_cast<int>(memory.GetRAMPageForBank3()); break;
                     }
                 }
+                // The CPU waits for the video logic there (Core::IsSlotContended)
+                bank["contended"] = context->pCore && context->pCore->IsSlotContended(static_cast<uint8_t>(i));
                 banks.append(bank);
             }
             d["banks"] = banks;

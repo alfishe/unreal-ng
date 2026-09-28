@@ -291,7 +291,8 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
             }
             else
             {
-                ss << "Error: Cannot enable turbo mode (FeatureManager not available or TTD recording active)" << NEWLINE;
+                ss << "Error: " << (featureManager ? featureManager->refusalReason(Features::kTurboMode, true)
+                                                   : std::string("FeatureManager not available")) << NEWLINE;
             }
         }
         else
@@ -414,7 +415,8 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
         }
         else
         {
-            ss << "Error: Cannot enable fast_tape while TTD recording is active or history is being replayed" << NEWLINE;
+            ss << "Error: " << (featureManager ? featureManager->refusalReason(Features::kFastTape, boolValue)
+                                               : std::string("FeatureManager not available")) << NEWLINE;
         }
     }
     else if (settingName == "turbo_tape")
@@ -426,7 +428,8 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
         }
         else
         {
-            ss << "Error: Cannot enable turbo_tape while TTD recording is active or history is being replayed" << NEWLINE;
+            ss << "Error: " << (featureManager ? featureManager->refusalReason(Features::kTurboTape, boolValue)
+                                               : std::string("FeatureManager not available")) << NEWLINE;
         }
     }
     else if (settingName == "fast_disk")
@@ -439,7 +442,8 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
         }
         else
         {
-            ss << "Error: Cannot change fast_disk (FeatureManager not available or TTD recording active)" << NEWLINE;
+            ss << "Error: " << (featureManager ? featureManager->refusalReason(Features::kFastDisk, boolValue)
+                                               : std::string("FeatureManager not available")) << NEWLINE;
         }
     }
     else if (settingName == "trdos_present")
@@ -544,8 +548,7 @@ void CLIProcessor::HandleFeature(const ClientSession& session, const std::vector
             }
             else if (featureManager->hasFeature(featureName))
             {
-                out << "Error: cannot enable '" << featureName
-                    << "' while TTD recording is active or history is being replayed." << NEWLINE;
+                out << "Error: " << featureManager->refusalReason(featureName, true) << NEWLINE;
                 session.SendResponse(out.str());
                 return;
             }
@@ -569,6 +572,12 @@ void CLIProcessor::HandleFeature(const ClientSession& session, const std::vector
             if (featureManager->setFeature(featureName, false))
             {
                 out << "Feature '" << featureName << "' disabled." << NEWLINE;
+                session.SendResponse(out.str());
+                return;
+            }
+            else if (featureManager->hasFeature(featureName))
+            {
+                out << "Error: " << featureManager->refusalReason(featureName, false) << NEWLINE;
                 session.SendResponse(out.str());
                 return;
             }

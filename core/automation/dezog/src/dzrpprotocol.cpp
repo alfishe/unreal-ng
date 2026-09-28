@@ -9,7 +9,9 @@ std::optional<Command> Protocol::parseCommand(const uint8_t* data, size_t len)
         return std::nullopt;
 
     Command cmd;
-    cmd.seqNo = data[0] & 0x0F;
+    // DeZog numbers commands 1..255 (0 is reserved for notifications) and
+    // compares the whole response byte, so the seqNo is echoed as-is
+    cmd.seqNo = data[0];
     cmd.cmdId = static_cast<CommandId>(data[1]);
 
     if (len > 2)

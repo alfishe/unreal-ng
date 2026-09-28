@@ -715,7 +715,7 @@ void PortDecoder_ATM3::Port_7FFD_Out([[maybe_unused]] uint16_t port, uint8_t val
     // 7FFD stays writable - bits 5..7 then extend the RAM page number, so a
     // sticky latch would brick the machine after the first P1024 lock write
     // (xpeccy pentevo.c evoOut7FFD: `if ((pEFF7 & 4) && (p7FFD & 0x20)) return;`)
-    if ((_state->pEFF7 & ATM_EFF7_LOCKMEM) && (_state->p7FFD & PORT_7FFD_LOCK))
+    if (IsPagingLocked())
     {
         MLOGWARNING("Port_7FFD_Out(ATM3): Paging locked (EFF7 lockmem + 7FFD.5), ignoring write of 0x%02X", value);
         return;

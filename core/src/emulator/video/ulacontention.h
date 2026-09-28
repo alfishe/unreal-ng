@@ -10,7 +10,7 @@ class EmulatorContext;
 /// Source: https://faqwiki.zxnet.co.uk/wiki/Contended_memory
 static const uint8_t contentionPattern[8] = {6, 5, 4, 3, 2, 1, 0, 0};
 
-/// +2A/+3 gate array pattern: the same cells, the waits one step earlier (MAME, ZXMAK2, BizHawk, ZX-M8XXX,
+/// +2A/+3 gate array pattern (over a 129 T window, see ComputeContentionDelay): the same cells, the waits one step earlier (MAME, ZXMAK2, BizHawk, ZX-M8XXX,
 /// Spectral, xpeccy-plus, zxsp, jnext all agree on the shape; the first wait falls on the 128K's first
 /// contended T in four of them, which is what is modelled)
 static const uint8_t gateArrayContentionPattern[8] = {1, 0, 7, 6, 5, 4, 3, 2};
@@ -38,6 +38,35 @@ enum UlaFetchType : uint8_t
     ULA_DISCRETE_LOGIC = 1   // Pentagon / Scorpion / Soviet clones
 };
 
+/// The machine's contention rule (UlaContention::GetRule): which video logic makes the CPU wait
+enum class ContentionRule : uint8_t
+{
+    None,       // no contention (Pentagon, Scorpion, Profi, ATM and the other clones; TS-Config)
+    Ula48,      // Ferranti ULA, 48K: 6,5,4,3,2,1,0,0 on page 5; I/O contention on even ports
+    Ula128,     // Ferranti ULA, 128K / +2: the same pattern on odd pages; 128K I/O rules
+    GateArray,  // Amstrad gate array, +2A / +3: 1,0,7,6,5,4,3,2 on pages 4-7 in any slot; no I/O contention
+};
+
+const char* ContentionRuleName(ContentionRule rule);
+
+/// Kinds of bus cycles the contention statistics count (the unreal-z80 wait-hook vocabulary, reduced to what
+/// the core distinguishes): bytes read at PC (opcode, prefixes, operands), data reads, data writes, ports
+enum ContentionAccessKind : uint8_t
+{
+    CONTENTION_FETCH = 0,
+    CONTENTION_READ,
+    CONTENTION_WRITE,
+    CONTENTION_IO,
+    CONTENTION_KINDS
+};
+
+/// Contended accesses and the wait T-states they cost, per kind
+struct ContentionCounters
+{
+    uint64_t accesses[CONTENTION_KINDS] = {};
+    uint64_t waitT[CONTENTION_KINDS] = {};
+};
+
 /// Compact snapshot of raster timing needed by the contention engine.
 /// Pushed by Screen::SetVideoMode() whenever video mode changes.
 struct ContentionRaster
@@ -58,8 +87,8 @@ struct ContentionRaster
 ///   - IO port contention (C:1 / C:3 patterns)
 ///   - Floating bus (video byte on undecoded port reads)
 ///
-/// Fast bypass: when contention is disabled (Pentagon, Scorpion, etc.),
-/// GetContentionDelay() and GetIOContentionDelay() return 0 in a single branch.
+/// Machines without contention never ask: Core::SelectMemoryInterface gives them the plain memory
+/// interfaces and no I/O contention rule, so neither memory nor port accesses reach this component.
 /// GetFloatingBus() still executes — many models without contention still
 /// expose video bytes on undecoded port reads (e.g. Pentagon port #FF).
 ///
@@ -91,16 +120,66 @@ public:
     void SetGateArray(bool gateArray) { _gateArray = gateArray; }
     bool IsGateArray() const { return _gateArray; }
 
+    /// The machine's rule, from the flags above (None while contention is disabled for the model)
+    ContentionRule GetRule() const
+    {
+        if (!_contentionEnabled)
+            return ContentionRule::None;
+        if (_gateArray)
+            return ContentionRule::GateArray;
+        return _raster.tstatesPerLine >= 228 ? ContentionRule::Ula128 : ContentionRule::Ula48;
+    }
+
+    /// Last byte of a contended memory access (+2A/+3 floating bus between screen fetches)
+    uint8_t GetLatchedByte() const { return _lastContendedByte; }
+
+    // ── Statistics (debugger only) ───────────────────────────
+    // Counted by the debug contended memory interface and by in / out while the debugger is on; the fast
+    // interfaces never touch them. Every access to a contended slot or port counts, with its wait (0 outside
+    // the screen fetch window)
+
+    void CountAccess(ContentionAccessKind kind, uint8_t wait)
+    {
+        _statsFrame.accesses[kind]++;
+        _statsFrame.waitT[kind] += wait;
+        _statsTotal.accesses[kind]++;
+        _statsTotal.waitT[kind] += wait;
+    }
+
+    /// Frame boundary (Core::CPUFrameCycle while the debugger is on): the current frame's counters become
+    /// the last frame's
+    void OnFrameStart()
+    {
+        _statsLastFrame = _statsFrame;
+        _statsFrame = ContentionCounters{};
+    }
+
+    void ResetStatistics()
+    {
+        _statsFrame = ContentionCounters{};
+        _statsLastFrame = ContentionCounters{};
+        _statsTotal = ContentionCounters{};
+    }
+
+    const ContentionCounters& GetStatisticsCurrentFrame() const { return _statsFrame; }
+    const ContentionCounters& GetStatisticsLastFrame() const { return _statsLastFrame; }
+    const ContentionCounters& GetStatisticsTotal() const { return _statsTotal; }
+
     /// Whether a RAM page is contended on this machine: odd pages behind the 128K ULA (1/3/5/7; on the
     /// 48K the only mapped odd page is 5), pages 4-7 behind the gate array
     bool IsRamPageContended(uint16_t page) const { return _gateArray ? page >= 4 : (page & 1) != 0; }
 
     // ── Core API (hot path) ──────────────────────────────────
 
-    /// Memory contention delay for a contended VRAM access (0x4000-0x7FFF).
+    /// Memory contention delay for a contended VRAM access (0x4000-0x7FFF) starting at the CPU's current T.
     /// Returns 0 when contention is disabled or outside paper area.
     /// Not inline because it accesses Z80 members.
     uint8_t GetContentionDelay() const;
+
+    /// Wait of a memory access to contended RAM that starts at T-state `t` (0 outside the fetch window).
+    /// The contended memory interfaces call it for every access to a contended slot
+    /// (Memory::MemoryReadContended); they are selected only while contention is enabled
+    uint8_t DelayAt(uint32_t t) const { return ComputeContentionDelay(t); }
 
     /// Is this Z80 address in contended memory on the current model?
     /// 48K/128K: the slots holding an odd RAM page (page 5 at 0x4000, and 0xC000 when page 1/3/5/7 is
@@ -108,9 +187,9 @@ public:
     /// in the all-RAM layouts #0000 included.
     /// Always false when contention is disabled (Pentagon etc.).
     ///
-    /// HOT PATH: called from Z80::rd()/wd() on every memory access. Fully inline, one flag per slot
-    /// cached by Memory (UpdateSlotContention) whenever a slot is mapped - a cold path hit only on
-    /// paging port writes. Pentagon exits on the first branch.
+    /// Diagnostics and tests; the contended memory interfaces test the slot flag alone (IsSlotContended),
+    /// since they run only while contention is enabled. One flag per slot, cached by Memory
+    /// (UpdateSlotContention) whenever a slot is mapped - a cold path hit only on paging port writes.
     inline bool IsAddressContended(uint16_t addr) const
     {
         return _contentionEnabled && _slotContended[addr >> 14];
@@ -123,7 +202,8 @@ public:
     bool IsSlotContended(uint8_t slot) const { return _slotContended[slot & 0x03]; }
 
     /// +2A/+3: the gate array keeps the last byte of a contended memory access on its bus; the floating
-    /// bus shows it between screen fetches. Called from Z80::rd / wd on contended accesses only
+    /// bus shows it between screen fetches. Called by the contended memory interfaces on contended accesses
+    /// only - opcode fetches included
     inline void LatchContendedByte(uint8_t value) { _lastContendedByte = value; }
 
     /// Raster timing snapshot (test/diagnostic access)
@@ -188,4 +268,8 @@ private:
     UlaFetchType _fetchType = ULA_FERRANTI;
 
     ContentionRaster _raster;
+
+    ContentionCounters _statsFrame;
+    ContentionCounters _statsLastFrame;
+    ContentionCounters _statsTotal;
 };

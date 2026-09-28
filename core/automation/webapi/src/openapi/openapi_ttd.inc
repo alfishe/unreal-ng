@@ -113,6 +113,8 @@
          ["$ref"] = "#/components/schemas/TTDInvalidateResponse";
     paths["/api/v1/emulator/{id}/ttd/invalidate"]["post"]["responses"]["404"]["description"] =
         "Emulator instance not found";
+    paths["/api/v1/emulator/{id}/ttd/invalidate"]["post"]["responses"]["409"]["description"] =
+        "A recording is running: stop it first, then discard the session";
     paths["/api/v1/emulator/{id}/ttd/invalidate"]["post"]["responses"]["501"]["description"] =
         "TTD engine not available in this build";
 

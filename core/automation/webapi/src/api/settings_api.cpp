@@ -536,8 +536,8 @@ void EmulatorAPI::setSetting(const HttpRequestPtr& req, std::function<void(const
         {
             Json::Value error;
             error["error"] = "Conflict";
-            error["message"] = std::string("Cannot enable ") + shortcut->name +
-                               " while TTD recording is active or history is being replayed";
+            error["message"] = featureManager ? featureManager->refusalReason(shortcut->feature, boolValue)
+                                              : std::string("FeatureManager not available");
             auto resp = HttpResponse::newHttpJsonResponse(error);
             resp->setStatusCode(HttpStatusCode::k409Conflict);
             addCorsHeaders(resp);
@@ -561,7 +561,8 @@ void EmulatorAPI::setSetting(const HttpRequestPtr& req, std::function<void(const
         {
             Json::Value error;
             error["error"] = "Conflict";
-            error["message"] = "Cannot enable turbo mode while TTD recording is active";
+            error["message"] = featureManager ? featureManager->refusalReason(Features::kTurboMode, true)
+                                              : std::string("FeatureManager not available");
 
             auto resp = HttpResponse::newHttpJsonResponse(error);
             resp->setStatusCode(HttpStatusCode::k409Conflict);

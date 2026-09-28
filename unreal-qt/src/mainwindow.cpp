@@ -68,9 +68,20 @@
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
 #include "ui_mainwindow.h"
+#include "debugger/ttd/timetravelmanager.h"
 
 namespace
 {
+// B9: the core refuses actions that would destroy a TTD recording; tell the user why instead of failing silently
+bool RefusedWhileRecording(QWidget* parent, const Emulator& emulator, ttd::TTDGuardedAction action)
+{
+    const std::string refusal = emulator.RecordingGuard(action);
+    if (refusal.empty())
+        return false;
+    QMessageBox::warning(parent, QObject::tr("TTD Recording Active"), QString::fromStdString(refusal));
+    return true;
+}
+
 // Convert std::vector<std::string> to QStringList
 QStringList toQStringList(const std::vector<std::string>& v)
 {
@@ -249,6 +260,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::turboTapeToggled, this, &MainWindow::handleTurboTapeToggled);
     connect(_menuManager, &MenuManager::fastDiskToggled, this, &MainWindow::handleFastDiskToggled);
     connect(_menuManager, &MenuManager::autostartDisksToggled, this, &MainWindow::handleAutostartDisksToggled);
+    connect(_menuManager, &MenuManager::contentionToggled, this, &MainWindow::handleContentionToggled);
     _menuManager->setAutostartDisksChecked(_autostartDisks);
     connect(_menuManager, &MenuManager::stepInRequested, this, &MainWindow::handleStepIn);
     connect(_menuManager, &MenuManager::stepOverRequested, this, &MainWindow::handleStepOver);
@@ -1940,6 +1952,8 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly)
             qWarning() << "ROM loading not implemented:" << filePath;
             break;
         case FileSnapshot:
+            if (_emulator && RefusedWhileRecording(this, *_emulator, ttd::TTDGuardedAction::LoadSnapshot))
+                break;
             if (_emulator)
             {
                 bool result = _emulator->LoadSnapshot(file);
@@ -1955,6 +1969,8 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly)
             }
             break;
         case FileTape:
+            if (_emulator && RefusedWhileRecording(this, *_emulator, ttd::TTDGuardedAction::LoadTape))
+                break;
             if (_emulator)
             {
                 bool result = _emulator->LoadTape(file);
@@ -1967,6 +1983,8 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly)
             }
             break;
         case FileDisk:
+            if (_emulator && RefusedWhileRecording(this, *_emulator, ttd::TTDGuardedAction::LoadDisk))
+                break;
             if (_emulator)
             {
                 // Quick reset into TR-DOS only while the machine is running; paused or stopped machines just mount
@@ -2513,6 +2531,18 @@ void MainWindow::handleFastDiskToggled(bool enabled)
     }
 }
 
+void MainWindow::handleContentionToggled(bool enabled)
+{
+    if (_emulator)
+    {
+        EmulatorContext* context = _emulator->GetContext();
+        FeatureManager* featureManager = context ? context->pFeatureManager : nullptr;
+        if (featureManager && !featureManager->setFeature(Features::kContention, enabled))
+            qDebug() << "Memory contention switch refused (TTD timeline bound)";
+    }
+    _menuManager->updateMenuStates(_emulator);  // the menu shows what the core kept
+}
+
 void MainWindow::handleAutostartDisksToggled(bool enabled)
 {
     _autostartDisks = enabled;
@@ -2596,6 +2626,8 @@ void MainWindow::handleImportAudioTapeRequested()
     // rides the same LoadTape path as File → Open Tape
     TapeImportAudioDialog dialog(this);
     connect(&dialog, &TapeImportAudioDialog::insertRequested, this, [this](const QString& path) {
+        if (_emulator && RefusedWhileRecording(this, *_emulator, ttd::TTDGuardedAction::LoadTape))
+            return;
         if (_emulator)
         {
             if (!_emulator->LoadTape(path.toStdString()))

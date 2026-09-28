@@ -10,7 +10,7 @@
 ///   - SeekTo precondition violations (Idle, empty timeline, target out
 ///     of bounds)
 ///   - SeekTo state transitions (Recording → Detached, Detached → Detached)
-///   - StepBackFrame / StepForwardFrame composition
+///   - StepBackFrame / StepForwardFrame land on frame boundaries
 ///   - CurrentPosition / SessionEndPosition helpers
 ///   - Round-trip: SeekTo an earlier point, hash the machine state, seek
 ///     back to the same point later, verify the hash matches
@@ -417,27 +417,24 @@ TEST_F(TTD_Seek_Test, StepBackFrame_AtFrame0_Fails)
         << "Cannot step back past frame 0";
 }
 
-TEST_F(TTD_Seek_Test, StepBackFrame_PreservesTInFrame)
+TEST_F(TTD_Seek_Test, StepBackFrame_LandsOnFrameBoundary)
 {
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(3);
     _ttd->StopRecording();
 
-    // Seek to (2, 100) — sets current t-in-frame to ≈100 (RunTStates may
-    // overshoot by the last instruction length; accept ±32).
+    // Start inside frame 2; a frame step is positioning by frame number
+    // (design 2026-09-28-ttd-positioning-and-display §3), so it lands on the
+    // boundary of frame 1 - the CPU at that checkpoint's instruction
+    // overshoot, not at the old intra-frame offset.
     ASSERT_TRUE(_ttd->SeekTo({2, 100}));
     Z80* z80 = _context->pCore->GetZ80();
     ASSERT_NE(z80, nullptr);
-    const uint32_t tAfterSeek = z80->t;
-    EXPECT_NEAR(static_cast<int>(tAfterSeek), 100, 32);
 
     EXPECT_TRUE(_ttd->StepBackFrame());
-    EXPECT_EQ(_ttd->CurrentPosition().frame,    1u);
-
-    // The intra-frame position should be preserved (within the same
-    // instruction-overshoot tolerance).
-    EXPECT_NEAR(static_cast<int>(z80->t), 100, 32)
-        << "StepBackFrame must preserve the intra-frame position";
+    EXPECT_EQ(_ttd->CurrentPosition().frame, 1u);
+    EXPECT_LT(static_cast<int>(z80->t), 32)
+        << "StepBackFrame must land on the frame boundary";
 }
 
 TEST_F(TTD_Seek_Test, StepForwardFrame_AtLastFrame_Fails)
@@ -468,13 +465,13 @@ TEST_F(TTD_Seek_Test, StepForwardFrame_FromDetached_Succeeds)
     EXPECT_EQ(_ttd->CurrentPosition().frame, 2u);
 }
 
-TEST_F(TTD_Seek_Test, StepForwardFrame_PreservesTInFrame)
+TEST_F(TTD_Seek_Test, StepForwardFrame_LandsOnFrameBoundary)
 {
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(3);
     _ttd->StopRecording();
 
-    // Seek to (0, 50)
+    // Start inside frame 0; the step lands on the boundary of frame 1.
     ASSERT_TRUE(_ttd->SeekTo({0, 50}));
 
     EXPECT_TRUE(_ttd->StepForwardFrame());
@@ -482,8 +479,8 @@ TEST_F(TTD_Seek_Test, StepForwardFrame_PreservesTInFrame)
 
     Z80* z80 = _context->pCore->GetZ80();
     ASSERT_NE(z80, nullptr);
-    EXPECT_NEAR(static_cast<int>(z80->t), 50, 32)
-        << "StepForwardFrame must preserve the intra-frame position";
+    EXPECT_LT(static_cast<int>(z80->t), 32)
+        << "StepForwardFrame must land on the frame boundary";
 }
 
 TEST_F(TTD_Seek_Test, StepBackFrame_Idle_Fails)

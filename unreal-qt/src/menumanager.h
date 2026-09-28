@@ -106,6 +106,7 @@ signals:
     // Machine control signals
     void fastDiskToggled(bool enabled);
     void autostartDisksToggled(bool enabled);
+    void contentionToggled(bool enabled);
 
     // Speed control signals
     void speedMultiplierChanged(int multiplier);
@@ -246,6 +247,7 @@ private:
     QAction* _turboTapeAction;
     QAction* _fastDiskAction = nullptr;
     QAction* _autostartDisksAction = nullptr;
+    QAction* _contentionAction = nullptr;
 
     // Debug Menu Actions
     QAction* _stepInAction;

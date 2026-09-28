@@ -27,6 +27,8 @@
     paths["/api/v1/emulator/{id}/tape/load"]["post"]["responses"]["400"]["description"] = "Invalid path or file format";
     paths["/api/v1/emulator/{id}/tape/load"]["post"]["responses"]["404"]["description"] = "Emulator not found";
     paths["/api/v1/emulator/{id}/tape/load"]["post"]["responses"]["413"]["description"] = "File too large (max 1 MB)";
+    paths["/api/v1/emulator/{id}/tape/load"]["post"]["responses"]["409"]["description"] =
+        "A TTD recording is running; the message says why the action would destroy it. Stop the recording first.";
 
     paths["/api/v1/emulator/{id}/tape/eject"]["post"]["summary"] = "Eject tape";
     paths["/api/v1/emulator/{id}/tape/eject"]["post"]["tags"].append("Tape Control");
@@ -212,6 +214,8 @@
          ["format"] = "binary";
     paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["responses"]["200"]["description"] =
         "Disk inserted successfully";
+    paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["responses"]["409"]["description"] =
+        "A TTD recording is running; the message says why the action would destroy it. Stop the recording first.";
     paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["responses"]["400"]["description"] =
         "Invalid path, file format, or drive parameter";
     paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["responses"]["413"]["description"] =
@@ -251,6 +255,8 @@
          ["properties"]["sides"]["description"] = "Number of sides (1 or 2; default: 2 unformatted, 1 plus3)";
     paths["/api/v1/emulator/{id}/disk/{drive}/create"]["post"]["responses"]["200"]["description"] =
         "Blank disk created and inserted";
+    paths["/api/v1/emulator/{id}/disk/{drive}/create"]["post"]["responses"]["409"]["description"] =
+        "A TTD recording is running; the message says why the action would destroy it. Stop the recording first.";
     paths["/api/v1/emulator/{id}/disk/{drive}/create"]["post"]["responses"]["400"]["description"] =
         "Invalid drive, format or geometry parameters";
 

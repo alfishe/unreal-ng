@@ -43,7 +43,7 @@ flowchart LR
 ```
 
 Both PLAN #40 V0 items TSConf depended on are done: the unique `PeripheralId`
-table (P1 appends id 13 to it) and the page-255 sentinel fix (`3a6eabc6`), so
+table (P1 appends id 15 to it - 13 and 14 are the +3's) and the page-255 sentinel fix (`3a6eabc6`), so
 vdos's RAM page 0xFF is fully tracked by TTD. V1
 and #42 are only needed by P7; P0-P6 can proceed without them. P4 and P5 are
 independent after P3.
@@ -62,7 +62,10 @@ shared machine-infrastructure row #60, before TSConf starts (PLAN rationale 6:
 infrastructure → existing machines migrated → TSConf → Sprinter). The M1 hook
 (INF-4) already exists on master (#55 E3). When phase 0 starts, these rows only
 confirm the landed pieces meet the asserts below; the rest of phase 0 (INF-5 to
-INF-10) stays here.
+INF-10) stays here. INF-4 adapts to the landed hook: `IMachineM1Hook::
+BeforeMachineM1/OnMachineM1(address)` - the opcode comes from a debug read,
+not a hook argument. INF-5 (the ungated per-step hook) is not part of #60
+and is still TSConf's own phase-0 work.
 
 | ID | Test first (file) | Asserts | Drives |
 |:--|:--|:--|:--|
@@ -75,7 +78,7 @@ INF-10) stays here.
 | INF-7 | existing suites + `tsconfisolation_test` green | move `ts`/`cram`/`sfile`/`tsline`/budget/`clut`/`r_ts` out of shared structs; delete the `z80.cpp:1197-1210` block and the undefined `ts_*_int` declarations; remove `state.ts` reads from `DrawZX`/`DrawBorder`/`DrawScreenBorder`; ROM loader dispatch; all existing video goldens unchanged | §3.3 |
 | INF-8 | `config_test` (model lookup) | `"TSCONF"` and `"tsl"` resolve to `MM_TSL`; unknown names still fail | D3 alias |
 | INF-9 | `config_test` (timing) | `MM_TSL`: 224 T/line, 320 lines, 71680 T/frame, `frame_duration_us == 20480` | §3.17 |
-| INF-10 | TTD contract test | `PeripheralId::TsConfPaging == 13`, `ttd.ksy` enum matches | §3.13 step 1 (appends to the unique PeripheralId table) |
+| INF-10 | TTD contract test | `PeripheralId::TsConfPaging == 15`, `ttd.ksy` enum matches | §3.13 step 1 (appends to the unique PeripheralId table) |
 
 Exit: all INF tests green; the full suite and the benchmark gate unchanged;
 `TSL` still not creatable.
@@ -115,7 +118,7 @@ offset 0 of every page), helpers `Out(port, v)`, `In(port)`, `Peek(addr)`,
 | CCH-1 | cache hit semantics: `CACHE_CONFIG=0x04` (W2), read 0x8000 (fills), DMA-free RAM change via debug poke to the physical page, read 0x8000 → **old** value; CPU write 0x8000 → invalidates, next read → new value (hs §2.5) |
 | CCH-2 | `SYS_CONFIG` bit 2 → `CACHE_CONFIG = 0x0F`; any later `SYS_CONFIG` write with bit 2 = 0 → 0x00 |
 | MRG-1 | `modelsregression_test.cpp` row for `MM_TSL` |
-| TTD-1 | `TTDTsConfState` round-trip of the phase-1 state (registers, 7FFD/lock, FMAPS stash, cache, CRAM, SFILE): capture → mutate → restore → byte-identical; contract test declares id 13 |
+| TTD-1 | `TTDTsConfState` round-trip of the phase-1 state (registers, 7FFD/lock, FMAPS stash, cache, CRAM, SFILE): capture → mutate → restore → byte-identical; contract test declares id 15 |
 | ROM-1 | loader: 512 KB `zxevo.rom` and 64 KB `ts-bios.rom` both load; 64 KB pads pages 4-31 with 0xFF; < 64 KB rejected |
 | BOOT-0 | real ROM smoke (skip if `data/rom/zxevo.rom` absent): after reset, W0 page 0 bytes at 0x0B05 read "TS-BIOS" (hs §2.2 evidence) |
 
@@ -210,21 +213,35 @@ clears (with a frame cap).
 
 ## Phase 6 — Storage and snapshots · L
 
+> **2026-09-28, the unified media manager (PLAN #58):** the SD card is the
+> media manager's `sd.zc` slot ([integration-tsconf-sd.md](../2026-09-28-storage-manager/integration-tsconf-sd.md)).
+> Already built and tested by #58 M1 (branch `media-manager`): `SdCardSpi` over
+> `IBlockDevice` (SD-0, BLK-1), host folders as FAT16 / FAT32 volumes
+> (`HostFolderFat`, checked by the independent `FatVolumeReader`; VFAT-1…3 run
+> against it with `fs=fat32` for the xpeccy layout), CP866 / CP1251 short
+> names, `[MEDIA] sd.zc = <image or folder>` plus the legacy `[ZC]` keys.
+> API-1 is the media verbs of [media-control-design.md](../2026-09-28-storage-manager/media-control-design.md)
+> (#58 M4: one `MediaControl` layer for the GUI, WebAPI + OpenAPI, CLI, MCP,
+> Lua, Python), not a TSConf `/sd` API. TSConf's own work here: register the
+> `sd.zc` slot in its decoder (as `PortDecoder_ATM3::EvoSdSlot`), the DMA SPI
+> path, card-detect / WP through `EvoAvr`, SLOT-1 and BOOT-3.
+
 | ID | Asserts |
 |:--|:--|
 | SPI-1 | `#57` write sends the byte; `#57` read returns the previous exchange's response and sends 0xFF; `#77` read = 0x00; CS bit 1 active-low (hs §8.1) |
 | SD-0 | `SdCardSpi` is present on master (NeoGS merged) or lifted unchanged from the `neogs` branch with its own suite (CMD0 → R1 0x01, CMD8 echo 0x1AA, ACMD41 → 0x00, CMD58 CCS, CMD17 token 0xFE + 512 B, write modes, CMD59) — no TSConf changes to the protocol |
 | BLK-1 | `sdcardspi_test.cpp`: the `ISdBlockStore` extraction leaves every NeoGS SD test green; a memory-backed store serves CMD17/CMD24 |
-| VFAT-1 | `VirtualFatBlockStore` (`virtualfatblockstore_test.cpp`): MBR signature 0x55AA at 510, partition type 0x0C starting LBA 2048; boot sector geometry (2 FATs, 8 sectors/cluster) |
-| VFAT-2 | a host folder with `readme.txt` + long-name file → a FAT reader (test helper) lists the LFN and the cp866 8.3 alias; file bytes match; writes rejected |
+| VFAT-1 | `HostFolderFat` with `fs=fat32` (#58 M1, `hostfolderfat_test.cpp`): MBR signature 0x55AA at 510, partition type 0x0C starting LBA 2048; boot sector geometry |
+| VFAT-2 | a host folder with `readme.txt` + long-name file → `FatVolumeReader` lists the LFN and the cp866 8.3 alias; file bytes match; guest writes go to the session layer, the folder is unchanged (#58 M1) |
 | VFAT-3 | equivalence: same file set via `mkfs.fat` image (fixture checked into `testdata/`) → identical directory listing and file bytes (not identical sectors) |
+| SLOT-1 | TSConf registers `sd.zc` with the media manager (tags `block sd zcontroller primary`); `[MEDIA] sd.zc` and a folder insert attach before the first reset; a ZX-Evo → TSConf model switch keeps the card (#58 M5) |
 | BETA-1 | VG93 ports answer only in DOS or with `FDD_VIRT[7]`; `#9F` never; joystick `#1F` only outside DOS (hs §8.2, §9) |
 | VDOS-1 | drive B virtual (`FDD_VIRT=0x02`), system reg selects B, `IN (#1F)` in DOS → next M1 W0 = RAM 0xFF writable; `IN (#3F)` inside vdos → exit immediately; `OUT (#FF)` inside vdos only changes drive bits |
 | VDOS-2 | CMOS reachable inside vdos, not from TR-DOS ROM (hs §9) |
 | SPG-1 | uncompressed SPG v1.0 fixture: PC/SP/IFF1/clock/page3 applied, blocks placed |
 | SPG-2 | MegaLZ and Hrust blocks decode (fixtures generated with the ancestor's packers or taken from MAME's `tsconf.xml` set) |
 | SPG-3 | v1.1 (version 0x11) accepted |
-| API-1 | WebAPI/MCP/CLI/Lua/Python SD media: mount image, mount folder, eject, status — same `SdCardState` everywhere (parity contract test) |
+| API-1 | the media verbs on every surface (#58 M4, [media-control-design.md](../2026-09-28-storage-manager/media-control-design.md)): `media insert sd <image or folder>`, `eject`, `info` — nothing TSConf-specific; the #58 conformance test covers TSConf's slot |
 | BOOT-3 | TS-BIOS boots a FatFS folder (fixture with a small `.spg` or `.trd`) to its file browser (characterize, then assert) |
 
 ## Phase 7 — Sound, debugger, automation, corpus · M

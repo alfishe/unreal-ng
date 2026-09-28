@@ -609,6 +609,10 @@ void Screen::SetVideoMode(VideoModeEnum mode)
         _context->pUlaContention->SetGateArray(model == MM_PLUS3 || model == MM_PLUS2A);
         if (_context->pMemory)
             _context->pMemory->RefreshSlotContention();
+
+        // The CPU's memory interface follows the contention rule (plain or contended, same Fast/Debug)
+        if (_context->pCore)
+            _context->pCore->SelectMemoryInterface();
     }
 
     // Allocate framebuffer

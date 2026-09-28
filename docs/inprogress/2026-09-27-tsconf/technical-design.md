@@ -100,7 +100,7 @@ Reserved but not built in any firmware (keep encodings reserved, no v1 work):
 | Programmable INT controller | a new machine interrupt-source interface in the Z80 core (§3.4) |
 | FMAPS writes | a new memory-write intercept (§3.5) |
 | vdos "flip at next M1" | a new instruction-start hook (§3.6) |
-| Machine latches + CRAM/SFILE + mid-transfer DMA | TTD serializer id 13 + corpus fixture (§3.13) |
+| Machine latches + CRAM/SFILE + mid-transfer DMA | TTD serializer id 15 + corpus fixture (§3.13) |
 | SD card primary storage | shared `SdCardSpi` (with NeoGS) + vFAT backing + media API on all automation frontends (§3.11) |
 | 48.828 Hz raster | already supported by per-model frame timing; verify recording FPS tag (§3.17) |
 
@@ -481,6 +481,13 @@ offset; the 4 MB RAM is contiguous, so 16C/256C spans need no stitching.
 
 ## 3.6 New infrastructure: instruction-start hook
 
+> **2026-09-28: already on master** (#55 E3): `IMachineM1Hook` with
+> `BeforeMachineM1(address)` (before the opcode read - where vdos's page
+> switch at the next M1 belongs) and `OnMachineM1(address)` (after it),
+> installed through `Z80::machineM1Hook`. It passes the address only: the
+> auto-lock opcode latch reads the fetched byte with a side-effect-free debug
+> read. The `CF_MACHINEM1` flag design below is superseded by it.
+
 DOS switching today is flag-driven in `Z80::RunInstructionStartHooks`
 (`z80.cpp:178-236`): `CF_SETDOSROM` on `pch == 0x3D`; leave-DOS is
 `CF_LEAVEDOSADR` (≥ 0x4000) only for Pentagon/Profi (`memory.cpp:898-900`),
@@ -563,6 +570,10 @@ converts the finished line buffers + graphics into framebuffer pixels.
 
 ## 3.9 Video
 
+> **2026-09-28, PLAN #60(e):** the renderer is chosen as a `Screen` subclass
+> per model family instead; build `ScreenTsConf` on that mechanism once #60(e)
+> lands. The helper route below is the fallback if #60(e) slips.
+
 - **Selection**: `ScreenZX` owns helper renderers allocated lazily
   (`ScreenAtm/ScreenProfi/ScreenAlco`, `video/zx/screenzx.cpp:749-768`). Add
   `ScreenTsConf` the same way (`video/tsconf/screentsconf.{h,cpp}` — the
@@ -591,6 +602,10 @@ converts the finished line buffers + graphics into framebuffer pixels.
 
 ## 3.10 CPU clock
 
+> **2026-09-28, PLAN #60(b):** `hw_turbo_shift` is being replaced by a linear
+> `hw_turbo_ratio` (1-8) everywhere, the TTD checkpoint included; TSConf then
+> sets ratio {1, 2, 4, 4} for `zclk` 0-3. Read `hw_turbo_shift` below as that.
+
 `hw_turbo_shift` from `SYS_CONFIG` via `ApplyHardwareTurboNow()` (immediate,
 rescales `t`); audio/video descale via `hw_turbo_shift_applied`
 (`platform.h:949-980`). No new infrastructure. The raster (and so the engine's
@@ -601,6 +616,8 @@ cache-miss waits.
 ## 3.11 Storage
 
 > **Sync with ATM3 (2026-09-27, [tdd-storage-sd-ide-cd.md](../2026-09-15-atm-baseconf-highres-ports/tdd-storage-sd-ide-cd.md) §1):** `TsConfSpi` below becomes the shared `ZControllerSpi` (ATM3 has the same `#57`/`#77` behavior) plus the TSConf DMA path; `ISdBlockStore` is the IDE design's `IBlockDevice`, `VirtualFatBlockStore` is its `HostFolderFat`, and the SD session write mode reuses `SessionWriteMap` (so a folder SD is writable for the session, exportable). The Gluk extension (hardware-spec §9) is the shared `EvoAvr` ([tdd-evo-control-and-avr.md](../2026-09-15-atm-baseconf-highres-ports/tdd-evo-control-and-avr.md) §6). Whichever machine lands first builds these.
+
+> **2026-09-28, the unified media manager (PLAN #58) supersedes the SD parts below**: the card is the manager's `sd.zc` slot ([integration-tsconf-sd.md](../2026-09-28-storage-manager/integration-tsconf-sd.md)); `VirtualFatBlockStore` is `HostFolderFat` (M1, FAT16 default, FAT32 for the xpeccy layout); the config is `[MEDIA] sd.zc` with the legacy `[ZC]` keys read by `MediaConfig` (`CONFIG::zc` is gone); the "Media API on all frontends" bullet is the media verbs of [media-control-design.md](../2026-09-28-storage-manager/media-control-design.md) (M4). TSConf keeps: the slot registration in its decoder, the DMA SPI path, card-detect / WP through `EvoAvr`.
 
 > **2026-09-28: built by ZX-Evo E5** ([e5-sd-card.md](../2026-09-15-atm-baseconf-highres-ports/e5-sd-card.md)): `SdCardSpi` is on master over `IBlockDevice` (`io/storage`: `RawImage`, `MemoryDisk`, `SessionWriteMap`), and `ZControllerSpi` (`io/spi/zcontrollerspi.{h,cpp}`) is the `#77`/`#57` glue. TSConf wires them in its decoder and adds the DMA SPI path; `[ZC] SDCardImage`/`SDWrite`/`SDWriteProtect` are parsed into `CONFIG::zc`. The bullets below predate this.
 
@@ -650,8 +667,9 @@ opt-in in the ts-conf ini (currently `NONE`, line 361), ROM line present
 
 ## 3.13 TTD
 
-1. **`PeripheralId::TsConfPaging = 13`** (10 MoonSound, 11 GS-LW, 12 NeoGS
-   reserved — `ttdserializable.h:54-56`); update `ttd.ksy:471-472` and
+1. **`PeripheralId::TsConfPaging = 15`** (10 MoonSound, 11 GS-LW, 12 NeoGS
+   reserved, 13 `Plus3Paging`, 14 `Upd765` — `ttdserializable.h`; re-check the
+   next free id when phase 1 starts); update `ttd.ksy` and
    `ttdmodelstatecontract_test.cpp` in the same change (PLAN #40 V0 rule).
 2. **`TTDTsConfState`** (`debugger/ttd/tsconf/`): blob = `TsConfState`
    serialized **field by field** (little-endian, versioned): registers and

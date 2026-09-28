@@ -382,12 +382,16 @@ void CLIProcessor::HandlePaging(const ClientSession& session, const std::vector<
     {
         ss << "RAM p" << (int)memory.GetRAMPageForBank0();
     }
-    ss << NEWLINE;
+    // Contended: the CPU waits for the video logic there (Core::IsSlotContended)
+    auto contended = [context](uint8_t slot) {
+        return (context->pCore && context->pCore->IsSlotContended(slot)) ? "  (contended)" : "";
+    };
+    ss << contended(0) << NEWLINE;
 
     // Banks 1-3
-    ss << "  #1  0x4000-0x7FFF  RAM p" << (int)memory.GetRAMPageForBank1() << "  (contended, Screen 0)" << NEWLINE;
-    ss << "  #2  0x8000-0xBFFF  RAM p" << (int)memory.GetRAMPageForBank2() << NEWLINE;
-    ss << "  #3  0xC000-0xFFFF  RAM p" << (int)memory.GetRAMPageForBank3() << NEWLINE;
+    ss << "  #1  0x4000-0x7FFF  RAM p" << (int)memory.GetRAMPageForBank1() << contended(1) << "  [Screen 0]" << NEWLINE;
+    ss << "  #2  0x8000-0xBFFF  RAM p" << (int)memory.GetRAMPageForBank2() << contended(2) << NEWLINE;
+    ss << "  #3  0xC000-0xFFFF  RAM p" << (int)memory.GetRAMPageForBank3() << contended(3) << NEWLINE;
 
     session.SendResponse(ss.str());
 }

@@ -465,6 +465,12 @@
             "Advisory annotations — unlike external-event markers they never "
             "halt a seek.";
 
+    schemas["TTDStatusResponse"]["properties"]["last_drop_reason"]["type"] = "string";
+    schemas["TTDStatusResponse"]["properties"]["last_drop_reason"]["nullable"] = true;
+    schemas["TTDStatusResponse"]["properties"]["last_drop_reason"]["description"] =
+            "What dropped the last history (e.g. snapshot-load, disk-load, rom-reload, an invalidate reason, "
+            "ZX-Evo SD card activity); null until a history is dropped";
+
     schemas["TTDStatusResponse"]["properties"]["session_heap_bytes"]["type"] = "integer";
     schemas["TTDStatusResponse"]["properties"]["session_heap_bytes"]["format"] = "uint64";
     schemas["TTDStatusResponse"]["properties"]["session_heap_bytes"]["description"] =
@@ -483,6 +489,21 @@
     schemas["TTDStatusResponse"]["properties"]["write_journal_enabled"]["description"] =
         "True when the write journal is active (for FindLast / reverse debugging). "
         "Set via enable_write_journal on /ttd/start; false in 'gaming' mode.";
+    schemas["TTDStatusResponse"]["properties"]["write_journal_complete"]["type"] = "boolean";
+    schemas["TTDStatusResponse"]["properties"]["write_journal_complete"]["description"] =
+        "True while the journal holds every write/port write of the session, so write/io find-last answers from it; "
+        "false when it was off at the start or switched (journal, debug mode, time travel) during the session - "
+        "those searches then replay history";
+    schemas["TTDStatusResponse"]["properties"]["write_journal_wrapped"]["type"] = "boolean";
+    schemas["TTDStatusResponse"]["properties"]["write_journal_wrapped"]["description"] =
+        "True when the journal ring dropped its oldest records: a 'no match' from it falls back to replay";
+    schemas["TTDStatusResponse"]["properties"]["write_journal_gap"]["type"] = "object";
+    schemas["TTDStatusResponse"]["properties"]["write_journal_gap"]["description"] =
+        "Present when the journal does not cover the session: reason, and frame/tinframe where it stopped "
+        "(absent for a loaded file)";
+    schemas["TTDStatusResponse"]["properties"]["write_journal_gap"]["properties"]["reason"]["type"] = "string";
+    schemas["TTDStatusResponse"]["properties"]["write_journal_gap"]["properties"]["frame"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["write_journal_gap"]["properties"]["tinframe"]["type"] = "integer";
 
     // ---------------------------------------------------------------------
     // POST /ttd/start response
@@ -850,6 +871,17 @@
     schemas["TTDFindLastResponse"]["properties"]["marker_tinframe"]["format"] = "uint32";
     schemas["TTDFindLastResponse"]["properties"]["marker_kind"]["type"] = "string";
     schemas["TTDFindLastResponse"]["properties"]["marker_reason"]["type"] = "string";
+    schemas["TTDFindLastResponse"]["properties"]["covered_from"]["type"] = "integer";
+    schemas["TTDFindLastResponse"]["properties"]["covered_from"]["format"] = "uint64";
+    schemas["TTDFindLastResponse"]["properties"]["covered_from"]["description"] =
+        "Frame where the backward search ended: the match, a replay barrier, or the session start. Every instant in [covered_from, covered_to] was searched; nothing before covered_from was. Absent when the search was refused";
+    schemas["TTDFindLastResponse"]["properties"]["covered_from_tinframe"]["type"] = "integer";
+    schemas["TTDFindLastResponse"]["properties"]["covered_from_tinframe"]["format"] = "uint32";
+    schemas["TTDFindLastResponse"]["properties"]["covered_to"]["type"] = "integer";
+    schemas["TTDFindLastResponse"]["properties"]["covered_to"]["format"] = "uint64";
+    schemas["TTDFindLastResponse"]["properties"]["covered_to"]["description"] = "Frame the search started from (its upper bound)";
+    schemas["TTDFindLastResponse"]["properties"]["covered_to_tinframe"]["type"] = "integer";
+    schemas["TTDFindLastResponse"]["properties"]["covered_to_tinframe"]["format"] = "uint32";
 
     // POST /ttd/step-instruction
     schemas["TTDStepInstructionRequest"]["type"] = "object";
@@ -924,3 +956,14 @@
     schemas["TTDReverseContinueResponse"]["properties"]["tinframe"]["format"] = "uint32";
     schemas["TTDReverseContinueResponse"]["properties"]["blocked_by_marker"]["$ref"] =
         "#/components/schemas/TTDMarker";
+    schemas["TTDReverseContinueResponse"]["properties"]["covered_from"]["type"] = "integer";
+    schemas["TTDReverseContinueResponse"]["properties"]["covered_from"]["format"] = "uint64";
+    schemas["TTDReverseContinueResponse"]["properties"]["covered_from"]["description"] =
+        "Frame where the backward search ended: the match, a replay barrier, or the session start. Every instant in [covered_from, covered_to] was searched; nothing before covered_from was. Absent when the search was refused";
+    schemas["TTDReverseContinueResponse"]["properties"]["covered_from_tinframe"]["type"] = "integer";
+    schemas["TTDReverseContinueResponse"]["properties"]["covered_from_tinframe"]["format"] = "uint32";
+    schemas["TTDReverseContinueResponse"]["properties"]["covered_to"]["type"] = "integer";
+    schemas["TTDReverseContinueResponse"]["properties"]["covered_to"]["format"] = "uint64";
+    schemas["TTDReverseContinueResponse"]["properties"]["covered_to"]["description"] = "Frame the search started from (its upper bound)";
+    schemas["TTDReverseContinueResponse"]["properties"]["covered_to_tinframe"]["type"] = "integer";
+    schemas["TTDReverseContinueResponse"]["properties"]["covered_to_tinframe"]["format"] = "uint32";
