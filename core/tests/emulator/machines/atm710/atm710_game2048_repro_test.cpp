@@ -526,7 +526,7 @@ void ATM710Game2048Repro_Test::RunScenario(bool forensic)
             // currently maps it - the packed-stream delivery under scrutiny
             if (type == 'W' && page0Writes.size() < 200000)
             {
-                uint8_t physPage = memory->GetPhysPageForZ80Address((uint16_t)(port & 0xC000));
+                ttd::PhysPage physPage = memory->GetPhysPageForZ80Address((uint16_t)(port & 0xC000));
                 if (physPage == 0)
                 {
                     page0Writes.push_back({currentFrame, port, cpu->m1_pc, value});
@@ -637,9 +637,9 @@ void ATM710Game2048Repro_Test::RunScenario(bool forensic)
             if (type == 'R' && port >= 0x4000 && port < 0x8000 && readProbeCount < 20 &&
                 cpu->m1_pc >= 0xE0C0 && cpu->m1_pc < 0xE170)
             {
-                uint8_t cachePage = memory->GetPhysPageForZ80Address(0x4000);
+                ttd::PhysPage cachePage = memory->GetPhysPageForZ80Address(0x4000);
                 uint16_t off = port & 0x3FFF;
-                uint8_t expect = (cachePage != 0xFF) ? memory->RAMPageAddress(cachePage)[off] : 0xEE;
+                uint8_t expect = (cachePage != ttd::kPhysPageNone) ? memory->RAMPageAddress(cachePage)[off] : 0xEE;
                 std::cout << "[RPROBE] f" << currentFrame << " cpu read #" << Hex(port, 4) << "=" << Hex(value)
                           << " @pc=" << Hex(cpu->m1_pc, 4)
                           << " | cacheW1=" << (int)cachePage
@@ -650,9 +650,9 @@ void ATM710Game2048Repro_Test::RunScenario(bool forensic)
             // Live verification of w3 opcode fetches vs the page-15 content
             if (type == 'R' && port >= 0xE000 && port < 0xE200 && port == cpu->m1_pc && fetchProbeCount < 12)
             {
-                uint8_t cachePage3 = memory->GetPhysPageForZ80Address(0xC000);
+                ttd::PhysPage cachePage3 = memory->GetPhysPageForZ80Address(0xC000);
                 uint16_t off3 = port & 0x3FFF;
-                uint8_t expect3 = (cachePage3 != 0xFF) ? memory->RAMPageAddress(cachePage3)[off3] : 0xEE;
+                uint8_t expect3 = (cachePage3 != ttd::kPhysPageNone) ? memory->RAMPageAddress(cachePage3)[off3] : 0xEE;
                 std::cout << "[FPROBE] f" << currentFrame << " fetch #" << Hex(port, 4) << "=" << Hex(value)
                           << " | cacheW3=" << (int)cachePage3
                           << " pageByte=" << Hex(expect3)
@@ -664,8 +664,8 @@ void ATM710Game2048Repro_Test::RunScenario(bool forensic)
             // the page diverge mid-game)
             if (type == 'R' && port >= 0xE0C0 && port < 0xE170 && port == cpu->m1_pc && depFetchProbe < 48)
             {
-                uint8_t cp = memory->GetPhysPageForZ80Address(0xC000);
-                uint8_t exp = (cp != 0xFF) ? memory->RAMPageAddress(cp)[port & 0x3FFF] : 0xEE;
+                ttd::PhysPage cp = memory->GetPhysPageForZ80Address(0xC000);
+                uint8_t exp = (cp != ttd::kPhysPageNone) ? memory->RAMPageAddress(cp)[port & 0x3FFF] : 0xEE;
                 std::cout << "[DFPROBE] f" << currentFrame << " fetch #" << Hex(port, 4) << "=" << Hex(value)
                           << " page" << (int)cp << "Byte=" << Hex(exp)
                           << (exp != value ? "  <<< DIVERGENT" : "") << "\n";

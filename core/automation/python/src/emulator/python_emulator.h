@@ -2803,7 +2803,10 @@ namespace PythonBindings
                 // Bank-aware search: pins the query to one physical RAM page.
                 if (!physPageObj.is_none())
                 {
-                    q.physPage = static_cast<uint8_t>(physPageObj.cast<int>());
+                    const int page = physPageObj.cast<int>();
+                    if (page < 0 || page > ttd::kPhysPageMax)
+                        throw py::value_error("phys_page expects 0..255");
+                    q.physPage = static_cast<ttd::PhysPage>(page);
                     q.hasPhysPageFilter = true;
                 }
 
@@ -2824,7 +2827,9 @@ namespace PythonBindings
                 r["tinframe"]  = py::cast(result->time.tInFrame);
                 r["pc"]        = py::cast(result->pc);
                 r["value"]     = py::cast(result->value);
-                r["phys_page"] = py::cast(result->physPage);
+                // None = the access had no RAM page (ROM, cache, I/O)
+                r["phys_page"] = result->physPage == ttd::kPhysPageNone ? py::object(py::none())
+                                                                         : py::object(py::cast(result->physPage));
                 r["access"]    = ttd::TTDAccessTypeToString(result->access);
                 return r;
             }, "Reverse search: find last access at address or within address/PC range",
@@ -2895,8 +2900,14 @@ namespace PythonBindings
                 }
                 ttd::TTDCoverageKind kind = ttd::TTDCoverageKind::Executed;
                 ttd::TTDCoverageKindFromString(kindStr, kind);
-                std::optional<uint8_t> physPage;
-                if (!pageObj.is_none()) physPage = static_cast<uint8_t>(pageObj.cast<uint32_t>());
+                std::optional<ttd::PhysPage> physPage;
+                if (!pageObj.is_none())
+                {
+                    const int page = pageObj.cast<int>();
+                    if (page < 0 || page > ttd::kPhysPageMax)
+                        throw py::value_error("phys_page expects 0..255");
+                    physPage = static_cast<ttd::PhysPage>(page);
+                }
 
                 auto res = ctx->pTimeTravelManager->QueryCoverageProbe(frame, kind, addrFrom, addrTo, physPage);
                 d["frame"] = res.frame;
@@ -2924,8 +2935,14 @@ namespace PythonBindings
                 uint64_t toFrame = toFrameObj.is_none() ? mgr->GetSessionInfo().currentEndFrame : toFrameObj.cast<uint64_t>();
                 ttd::TTDCoverageKind kind = ttd::TTDCoverageKind::Executed;
                 ttd::TTDCoverageKindFromString(kindStr, kind);
-                std::optional<uint8_t> physPage;
-                if (!pageObj.is_none()) physPage = static_cast<uint8_t>(pageObj.cast<uint32_t>());
+                std::optional<ttd::PhysPage> physPage;
+                if (!pageObj.is_none())
+                {
+                    const int page = pageObj.cast<int>();
+                    if (page < 0 || page > ttd::kPhysPageMax)
+                        throw py::value_error("phys_page expects 0..255");
+                    physPage = static_cast<ttd::PhysPage>(page);
+                }
 
                 auto res = mgr->QueryCoverageScan(fromFrame, toFrame, kind, addrFrom, addrTo, physPage, limit);
                 d["kind"] = ttd::TTDCoverageKindToString(res.kind);

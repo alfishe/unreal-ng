@@ -65,7 +65,15 @@ tests that would catch regressions.
 - **Step 0 of the merge strategy**: the `PeripheralId` table and the
   notification enum ([branch-merge-strategy.md](branch-merge-strategy.md) §2).
 - **Capture gap**: RAM page 255 on 4 MB machines (widen the page cache
-  sentinel).
+  sentinel). **Done 2026-09-27**: `ttd::PhysPage` (16 bit, `kPhysPageNone =
+  0xFFFF`, `ttdphyspage.h`) in Memory's bank cache, probe, queries and
+  coverage; coverage "no page" bucket moved to page field 256 (section v2, v1
+  sections skipped → replay); `phys_page` input validated 0..255 and "no
+  page" reported as null on all automation surfaces. The same work found and
+  fixed a second cache defect: `SetROMPageToBank` / `DefaultBanksFor48k` left
+  the cache stale on RAM→ROM switches (ATM/Profi/Scorpion), so ROM accesses
+  were filed under the previous RAM page. Tests: `ttdpage255_test.cpp` (ATM3),
+  `BankPageCacheAgreesWithTheMappedBank` across 7 models.
 - **Suspected bugs, each first reproduced by a test**: stale `_prevPageCache`
   after resume (B1), stale write journal after load (B2), empty-journal find-last
   (B3), non-atomic failed load (B5), unbounded sizes in the journal/coverage
@@ -80,7 +88,7 @@ tests that would catch regressions.
   error vs zero-fill on mismatch) waits for the investigation
   ([integrity-and-versioning.md](integrity-and-versioning.md)).
 - **Tests**: `TTD_Corpus_Test` compares RAM too, and gets a resume-then-compare
-  case; a test for page 255; the generic state-completeness test
+  case; a test for page 255 (done 2026-09-27); the generic state-completeness test
   ([requirements.md](requirements.md) FR-3).
 - **Comments**: remove the stale ones listed in current-state §10.
 

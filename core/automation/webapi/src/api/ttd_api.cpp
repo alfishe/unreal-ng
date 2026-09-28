@@ -1069,7 +1069,18 @@ void EmulatorAPI::findLastTTD(const HttpRequestPtr& req,
     // rarely the page the caller meant.
     if (json->isMember("phys_page"))
     {
-        q.physPage = static_cast<uint8_t>((*json)["phys_page"].asUInt());
+        const Json::Value& page = (*json)["phys_page"];
+        if (!page.isUInt() || page.asUInt() > ttd::kPhysPageMax)
+        {
+            Json::Value err;
+            err["error"] = "Invalid phys_page (expected 0..255)";
+            auto resp = HttpResponse::newHttpJsonResponse(err);
+            resp->setStatusCode(k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        q.physPage = static_cast<ttd::PhysPage>(page.asUInt());
         q.hasPhysPageFilter = true;
     }
 
@@ -1100,7 +1111,9 @@ void EmulatorAPI::findLastTTD(const HttpRequestPtr& req,
         ret["tinframe"]   = Json::UInt(result->time.tInFrame);
         ret["pc"]         = Json::UInt(result->pc);
         ret["value"]      = Json::UInt(result->value);
-        ret["phys_page"]  = Json::UInt(result->physPage);
+        // null = the access had no RAM page (ROM, cache, I/O)
+        ret["phys_page"]  = result->physPage == ttd::kPhysPageNone ? Json::Value(Json::nullValue)
+                                                                   : Json::Value(Json::UInt(result->physPage));
         ret["access"]     = ttd::TTDAccessTypeToString(result->access);
     }
     else if (marker.reason[0] != '\0')
@@ -1427,18 +1440,18 @@ void EmulatorAPI::getTTDCoverageProbe(const HttpRequestPtr& req,
         return;
     }
 
-    std::optional<uint8_t> physPage;
+    std::optional<ttd::PhysPage> physPage;
     uint16_t pageVal = 0;
     if (!pageStr.empty())
     {
-        if (!ParseUint16Param(pageStr, pageVal) || pageVal > 255)
+        if (!ParseUint16Param(pageStr, pageVal) || pageVal > ttd::kPhysPageMax)
         {
             auto resp = CoverageBadRequest("Invalid phys_page: '" + pageStr + "' (expected 0..255)");
             addCorsHeaders(resp);
             callback(resp);
             return;
         }
-        physPage = static_cast<uint8_t>(pageVal);
+        physPage = static_cast<ttd::PhysPage>(pageVal);
     }
 
     Json::Value ret;
@@ -1553,18 +1566,18 @@ void EmulatorAPI::getTTDCoverageScan(const HttpRequestPtr& req,
         return;
     }
 
-    std::optional<uint8_t> physPage;
+    std::optional<ttd::PhysPage> physPage;
     uint16_t pageVal = 0;
     if (!pageStr.empty())
     {
-        if (!ParseUint16Param(pageStr, pageVal) || pageVal > 255)
+        if (!ParseUint16Param(pageStr, pageVal) || pageVal > ttd::kPhysPageMax)
         {
             auto resp = CoverageBadRequest("Invalid phys_page: '" + pageStr + "' (expected 0..255)");
             addCorsHeaders(resp);
             callback(resp);
             return;
         }
-        physPage = static_cast<uint8_t>(pageVal);
+        physPage = static_cast<ttd::PhysPage>(pageVal);
     }
 
     size_t limit = 200;

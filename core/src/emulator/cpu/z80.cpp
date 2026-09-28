@@ -756,7 +756,7 @@ void Z80::NotifyInstructionStart()
         // breakpoint can distinguish "PC 0xC000 in page 3" from the same
         // address reached with a different page banked in. Code executing
         // from ROM reports kPhysPageNone.
-        const uint8_t execPhysPage = _memory->GetPhysPageForZ80Address(m1_pc);
+        const ttd::PhysPage execPhysPage = _memory->GetPhysPageForZ80Address(m1_pc);
         if (_context->ttdProbe.Matches(m1_pc, ttd::TTDAccessType::Execute, 0, m1_pc, execPhysPage))
         {
             const auto& st = _context->emulatorState;

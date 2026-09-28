@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "ttdcheckpoint.h"  // TTDTimePoint
+#include "ttdphyspage.h"   // PhysPage, kPhysPageNone
 
 namespace ttd {
 
@@ -48,12 +49,9 @@ enum class TTDAccessType : uint8_t
 const char* TTDAccessTypeToString(TTDAccessType k);
 TTDAccessType TTDAccessTypeFromString(const char* s);
 
-/// @brief "This access has no physical RAM page" sentinel.
-///
-/// Matches Memory's convention for _bank_ram_page_cache: 0xFF means the bank
-/// holds ROM or cache rather than RAM. Reused here so an I/O access or a ROM
-/// fetch can say "no page" without inventing page 0, which is a real page.
-constexpr uint8_t kPhysPageNone = 0xFF;
+// kPhysPageNone ("this access has no physical RAM page": ROM, cache, I/O)
+// lives in ttdphyspage.h, shared with Memory's per-bank page cache. It is
+// outside 0..255, so RAM page 255 of a 4 MB machine is an ordinary page.
 
 /// @brief Reverse-search query (parent TDD §9.4 — "Conditional Variants").
 ///
@@ -82,7 +80,7 @@ struct TTDSearchQuery
     ///
     /// Ignored for Io accesses, where a port number has no page.
     bool     hasPhysPageFilter = false;
-    uint8_t  physPage = 0;             ///< Valid iff hasPhysPageFilter
+    PhysPage physPage = 0;             ///< Valid iff hasPhysPageFilter (0..255, or kPhysPageNone = ROM/no page)
 
     /// Only matches at-or-before this globalT (absolute t-state). Default
     /// "no upper bound" is UINT64_MAX — caller typically substitutes the
@@ -96,7 +94,7 @@ struct TTDSearchResult
     TTDTimePoint time;
     uint16_t     pc = 0;
     uint8_t      value = 0;
-    uint8_t      physPage = 0;
+    PhysPage     physPage = kPhysPageNone;  ///< kPhysPageNone for ROM/cache/I/O
     TTDAccessType access = TTDAccessType::Write;
 };
 
@@ -119,7 +117,7 @@ struct TTDM1Record
 {
     uint64_t globalT = 0;    ///< Absolute t-state since session start
     uint16_t pc      = 0;    ///< PC at the M1 cycle (opcode byte address)
-    uint16_t physPage = kPhysPageNone;  ///< Physical RAM page behind pc, or kPhysPageNone
+    PhysPage physPage = kPhysPageNone;  ///< Physical RAM page behind pc, or kPhysPageNone
 };
 
 /// @brief Lightweight access probe, armed during reverse-search replay.
@@ -157,7 +155,7 @@ public:
     /// @param physPage Physical RAM page behind `addr`, or kPhysPageNone when
     ///                 the access has no page (I/O ports, ROM/cache banks).
     inline bool Matches(uint16_t addr, TTDAccessType kind, uint8_t value, uint16_t pc,
-                        uint8_t physPage = kPhysPageNone) const
+                        PhysPage physPage = kPhysPageNone) const
     {
         if (!IsArmed())
             return false;
@@ -181,7 +179,7 @@ public:
     /// on the caller side (the probe doesn't reach into EmulatorContext —
     /// keeps it dependency-free).
     inline void RecordHit(const TTDTimePoint& t, uint16_t pc, uint8_t value,
-                          uint8_t physPage, TTDAccessType kind)
+                          PhysPage physPage, TTDAccessType kind)
     {
         _hits.push_back(TTDSearchResult{t, pc, value, physPage, kind});
     }

@@ -822,6 +822,9 @@
     schemas["TTDFindLastResponse"]["properties"]["value"]["format"] = "uint8";
     schemas["TTDFindLastResponse"]["properties"]["phys_page"]["type"] = "integer";
     schemas["TTDFindLastResponse"]["properties"]["phys_page"]["format"] = "uint16";
+    schemas["TTDFindLastResponse"]["properties"]["phys_page"]["nullable"] = true;
+    schemas["TTDFindLastResponse"]["properties"]["phys_page"]["description"] =
+        "Physical RAM page 0..255 of the access; null when it had no RAM page (ROM, cache, I/O)";
     schemas["TTDFindLastResponse"]["properties"]["access"]["type"] = "string";
     schemas["TTDFindLastResponse"]["properties"]["blocked"]["type"] = "boolean";
     schemas["TTDFindLastResponse"]["properties"]["marker_frame"]["type"] = "integer";

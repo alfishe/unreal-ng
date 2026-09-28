@@ -343,3 +343,27 @@ TEST(TTDAccessProbe_Test, AccessTypeFromString_DefaultFallback)
     EXPECT_EQ(TTDAccessTypeFromString("unknown"), TTDAccessType::Write);
     EXPECT_EQ(TTDAccessTypeFromString(nullptr), TTDAccessType::Write);
 }
+
+// ===========================================================================
+// Page filter: RAM page 255 is a page, not "no page" (PLAN #40 V0)
+// ===========================================================================
+
+TEST(TTDAccessProbe_Test, Matches_PageFilter_Page255IsNotNoPage)
+{
+    TTDAccessProbe probe;
+    TTDSearchQuery q;
+    q.access = TTDAccessType::Write;
+    q.hasPhysPageFilter = true;
+    q.physPage = 255;
+    probe.Arm(q);
+
+    EXPECT_TRUE(probe.Matches(0xC000, TTDAccessType::Write, 0, 0, 255));
+    EXPECT_FALSE(probe.Matches(0xC000, TTDAccessType::Write, 0, 0, ttd::kPhysPageNone))
+        << "an access without a RAM page matched a page-255 filter";
+    EXPECT_FALSE(probe.Matches(0xC000, TTDAccessType::Write, 0, 0, 254));
+
+    q.physPage = ttd::kPhysPageNone;  // "ROM / no page"
+    probe.Arm(q);
+    EXPECT_TRUE(probe.Matches(0x0038, TTDAccessType::Write, 0, 0, ttd::kPhysPageNone));
+    EXPECT_FALSE(probe.Matches(0xC038, TTDAccessType::Write, 0, 0, 255));
+}

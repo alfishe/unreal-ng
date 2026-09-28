@@ -771,7 +771,13 @@ void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorConte
         {
             // Bank-aware search: pins the query to one physical RAM page so a
             // banked address does not answer with another page's write.
-            q.physPage = static_cast<uint8_t>(std::stoul(args[++i], nullptr, 0));
+            const unsigned long page = std::stoul(args[++i], nullptr, 0);
+            if (page > ttd::kPhysPageMax)
+            {
+                session.SendResponse(std::string("Error: --phys-page expects 0..255") + NEWLINE);
+                return;
+            }
+            q.physPage = static_cast<ttd::PhysPage>(page);
             q.hasPhysPageFilter = true;
         }
         else if (tok == "--before-frame" && i + 1 < args.size())
@@ -815,7 +821,11 @@ void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorConte
         ss << "  PC:       0x" << std::hex << std::uppercase << std::setfill('0')
            << std::setw(4) << result->pc << NEWLINE;
         ss << "  Value:    0x" << std::setw(2) << static_cast<int>(result->value) << NEWLINE;
-        ss << "  PhysPage: " << std::dec << static_cast<int>(result->physPage) << NEWLINE;
+        ss << "  PhysPage: " << std::dec;
+        if (result->physPage == ttd::kPhysPageNone)
+            ss << "none (ROM / no RAM page)" << NEWLINE;
+        else
+            ss << result->physPage << NEWLINE;
         ss << "  Access:   " << ttd::TTDAccessTypeToString(result->access) << NEWLINE;
         session.SendResponse(ss.str());
     }
@@ -1003,7 +1013,7 @@ void CLIProcessor::HandleTTDCoverage(const ClientSession& session, EmulatorConte
     bool hasFrameParam = false;
     uint16_t addrFrom = 0;
     uint16_t addrTo = 0xFFFF;
-    std::optional<uint8_t> physPage;
+    std::optional<ttd::PhysPage> physPage;
     size_t limit = (sub == "summary") ? 100 : 200;
     uint64_t bucketSize = 0;
 
@@ -1042,7 +1052,12 @@ void CLIProcessor::HandleTTDCoverage(const ClientSession& session, EmulatorConte
         else if ((a == "--page" || a == "--phys-page" || a == "-p") && i + 1 < args.size())
         {
             unsigned long p = std::stoul(args[++i], nullptr, 0);
-            if (p <= 255) physPage = static_cast<uint8_t>(p);
+            if (p > ttd::kPhysPageMax)
+            {
+                session.SendResponse(std::string("Error: --phys-page expects 0..255") + NEWLINE);
+                return;
+            }
+            physPage = static_cast<ttd::PhysPage>(p);
         }
         else if ((a == "--limit" || a == "-l") && i + 1 < args.size())
         {

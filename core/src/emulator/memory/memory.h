@@ -1,4 +1,5 @@
 #pragma once
+#include "debugger/ttd/ttdphyspage.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
 #include "stdafx.h"
@@ -74,6 +75,11 @@ struct MemoryInterface
 
 /// endregion </Structures>
 
+// Every real RAM page must be representable, and the "no page" sentinel must
+// be none of them.
+static_assert(MAX_RAM_PAGES - 1 <= ttd::kPhysPageMax, "RAM page ceiling exceeds ttd::PhysPage range");
+static_assert(ttd::kPhysPageNone >= MAX_RAM_PAGES, "kPhysPageNone collides with a real RAM page");
+
 class Memory
 {
     friend class PortDecoder;  // Allow PortDecoder to access _memoryAccessTracker
@@ -116,9 +122,11 @@ protected:
 
     /// Cached RAM page numbers per bank for TTD hot path optimization.
     /// Updated only when bank mapping changes (SetRAMPageToBank*).
-    /// Value is 0xFF when bank is not RAM (ROM/Cache mode).
+    /// Value is ttd::kPhysPageNone when bank is not RAM (ROM/Cache mode) - a
+    /// value outside 0..255, so RAM page 255 of a 4 MB machine stays a page.
     /// Avoids expensive GetRAMPageForBank() pointer arithmetic on every write.
-    uint8_t _bank_ram_page_cache[4] = {0xFF, 0xFF, 0xFF, 0xFF};
+    ttd::PhysPage _bank_ram_page_cache[4] = {ttd::kPhysPageNone, ttd::kPhysPageNone,
+                                             ttd::kPhysPageNone, ttd::kPhysPageNone};
 
     // Memory access tracker
     MemoryAccessTracker* _memoryAccessTracker = nullptr;  // Flexible memory access tracking system
@@ -206,9 +214,9 @@ public:
     uint8_t* base_sys_rom;
 
     /// @brief Physical RAM page currently mapped behind a Z80 address.
-    /// Returns 0xFF (ttd::kPhysPageNone) when that bank holds ROM or cache.
+    /// Returns ttd::kPhysPageNone when that bank holds ROM or cache.
     /// Cheap: reads the per-bank cache maintained by SetRAMPageToBank*.
-    inline uint8_t GetPhysPageForZ80Address(uint16_t addr) const
+    inline ttd::PhysPage GetPhysPageForZ80Address(uint16_t addr) const
     {
         return _bank_ram_page_cache[(addr >> 14) & 0b11];
     }

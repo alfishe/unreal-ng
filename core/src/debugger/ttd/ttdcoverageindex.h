@@ -29,10 +29,11 @@
 /// -----------------------------------
 /// A flat bitmap over the Z80 address space compresses to a similar size, but
 /// its SCRATCH buffer is the problem: keys here are physical (page, offset)
-/// pairs, and on a 4 MB machine that space is 22 bits wide, so a flat bitmap
-/// needs 512 KB per frame and has to be cleared every frame — on its own more
+/// pairs, and on a 4 MB machine that space is 23 bits wide (256 pages plus the
+/// "no page" bucket), so a flat bitmap needs 1 MB per frame and has to be
+/// cleared every frame — on its own more
 /// expensive than the entire 117 µs/frame capture. A sorted sparse set costs the
-/// same ~47-124 bytes whether keys are 16 or 22 bits, because its cost follows
+/// same ~47-124 bytes whether keys are 16 or 23 bits, because its cost follows
 /// set cardinality, and cardinality does not depend on installed RAM. A 4 MB
 /// clone indexes for the same price as a 128K machine.
 ///
@@ -48,6 +49,8 @@
 #include <iosfwd>
 #include <vector>
 
+#include "ttdphyspage.h"
+
 namespace ttd
 {
 
@@ -61,18 +64,31 @@ enum class TTDCoverageKind : uint8_t
     Count    = 3
 };
 
-/// @brief Physical address key: page number and offset within the page.
+/// @brief Physical address key: page field and offset within the page.
 ///
-/// Packed as (page << 14) | offset, which is 22 bits for the 256-page maximum.
-/// Accesses with no physical page (I/O, ROM) are not indexed — see
-/// kNoPhysPage handling in the recorder.
+/// Packed as (pageField << 14) | offset. The page field is the RAM page
+/// 0..255, or kCoverageNoPageField (256) for accesses with no RAM page - ROM
+/// and cache - which all share that one bucket (an over-approximation: extra
+/// replays, never a lost answer). 23 bits in total.
+///
+/// The bucket used to be page field 0xFF, i.e. the same key as RAM page 255
+/// of a 4 MB machine, so ROM fetches answered page-255 queries and the other
+/// way round. Sections written that way (version 1) are not loaded.
 using TTDCoverageKey = uint32_t;
 
-/// @brief Build a coverage key from a physical page and Z80 address.
-inline TTDCoverageKey MakeCoverageKey(uint8_t physPage, uint16_t z80Address)
+/// Page field of the shared "no RAM page" bucket (outside 0..255)
+constexpr uint32_t kCoverageNoPageField = 0x100;
+
+/// @brief The key's page field for a physical page (kPhysPageNone -> bucket).
+inline uint32_t CoveragePageField(PhysPage physPage)
 {
-    return (static_cast<TTDCoverageKey>(physPage) << 14) |
-           (static_cast<TTDCoverageKey>(z80Address) & 0x3FFFu);
+    return physPage == kPhysPageNone ? kCoverageNoPageField : (static_cast<uint32_t>(physPage) & 0xFFu);
+}
+
+/// @brief Build a coverage key from a physical page and Z80 address.
+inline TTDCoverageKey MakeCoverageKey(PhysPage physPage, uint16_t z80Address)
+{
+    return (CoveragePageField(physPage) << 14) | (static_cast<TTDCoverageKey>(z80Address) & 0x3FFFu);
 }
 
 /// @brief Per-frame coverage sets for one session.
@@ -130,7 +146,7 @@ public:
 
         const TTDCoverageKey masked = key & (kKeySpace - 1);
 
-        // L1-resident front filter. The authoritative structure is a 512 KB
+        // L1-resident front filter. The authoritative structure is a 1 MB
         // membership bitmap per kind, and touching it on every instruction
         // fetch costs a cache miss each time — measured at ~175 us/frame, which
         // is more than the whole checkpoint capture. This 16 KB direct-mapped
@@ -190,9 +206,10 @@ public:
     ///                              single non-wrapping offset interval must not
     ///                              use this.
     /// @param hasPage  When false, any physical page matches.
+    /// @param page     RAM page 0..255, or kPhysPageNone for the ROM/no-page bucket.
     bool FrameMayContain(TTDCoverageKind kind, uint64_t frame,
                          uint16_t offsetLow, uint16_t offsetHigh,
-                         bool hasPage, uint8_t page) const;
+                         bool hasPage, PhysPage page) const;
 
     /// @brief Was @p frame within the range this index observed?
     ///
@@ -241,7 +258,7 @@ public:
 
 private:
     static constexpr size_t kKindCount = static_cast<size_t>(TTDCoverageKind::Count);
-    static constexpr size_t kKeySpaceBits = 22;               ///< 256 pages x 16 KB
+    static constexpr size_t kKeySpaceBits = 23;               ///< (256 pages + no-page bucket) x 16 KB
     static constexpr size_t kKeySpace = size_t{1} << kKeySpaceBits;
     static constexpr size_t kSeenWords = kKeySpace / 64;
 
@@ -253,7 +270,7 @@ private:
     /// bucket per kind.
     std::vector<TTDCoverageKey> _pending[kKindCount];
 
-    /// Membership bitmap over the whole 22-bit key space, one per kind, used to
+    /// Membership bitmap over the whole 23-bit key space, one per kind, used to
     /// drop repeat accesses before they reach _pending.
     ///
     /// This is not an optimisation, it is what makes the hot path viable. An
@@ -262,7 +279,7 @@ private:
     /// deduplicating at seal time cost +186 us/frame — almost doubling TTD's
     /// overhead. One load-and-test here drops the repeats at the source.
     ///
-    /// It is allocated once (512 KB per kind) and never bulk-cleared: SealFrame
+    /// It is allocated once (1 MB per kind) and never bulk-cleared: SealFrame
     /// clears exactly the bits listed in _pending, so per-frame work stays
     /// proportional to distinct keys rather than to the size of the address
     /// space. That is also why a 4 MB machine costs the same as a 128K one.

@@ -126,7 +126,7 @@ live model, checkpoint ordering, reserved bytes, checksums.
 
 | Gap | Effect |
 |---|---|
-| **RAM page 255 on 4 MB machines** (u8 page cache uses `0xFF` as "not RAM") | That page is never marked dirty or journaled; changes appear only at the next key frame. Coverage lumps it with ROM |
+| ~~**RAM page 255 on 4 MB machines**~~ — **fixed 2026-09-27** (16-bit `ttd::PhysPage`, sentinel `0xFFFF`) | Was: never marked dirty or journaled; changes appeared only at the next key frame; coverage lumped it with ROM |
 | Keyboard matrix, joystick | Replay starts from the live host keyboard state |
 | Input journal, external-event markers — in the **file** | A loaded session replays inside a frame without the recorded keys and crosses tape/disk barriers silently |
 | Disk and tape image contents | By design: loads invalidate the session; disk writes are barriers (lost on save, see above) |
@@ -182,10 +182,10 @@ Why:
 |---|---|---|
 | B1 | Stale `_prevPageCache` after *Resume recording from here* at or after the last key frame: the first delta is XOR'd against the wrong base → zero-filled or silently old pages | suspected; `TTD_Corpus_Test` replay does not compare RAM, so it would not catch it |
 | B2 | `DeserializeSession` does not clear the write journal: a loaded file without a journal answers find-last from the previous live recording | suspected |
-| B3 | Empty write journal → write/port find-last returns "no match" without falling back to replay (TTM.cpp:3448) | suspected |
+| B3 | Empty write journal → write/port find-last returns "no match" without falling back to replay (TTM.cpp:3448) | **confirmed 2026-09-27**: TTD feature on pre-allocates the journal (`UpdateFeatureCache`), `SetEnableWriteJournal(false)` then leaves it allocated and empty, and `FindLastAccess` trusts it (`oldestInRing <= 1` → "no match"). Found while testing page 255; not fixed yet |
 | B4 | Hardware turbo: journal timestamps and the replay clamp assume `z80.t < frame length` | suspected |
 | B5 | A failed load has already cleared the live session and leaves a partial timeline with page reference counts off by one | read in code |
-| B6 | Page-255 gap (§7) | read in code, confirmed by inspection |
+| B6 | Page-255 gap (§7) | **fixed 2026-09-27**, with the stale-cache-on-ROM-switch defect found alongside it |
 | B7 | `sessionHeapBytes` ("Memory MB" in Qt and WebAPI) excludes page payloads, the 64 MB journal, coverage and caches | read in code |
 | B8 | Python analyzer: does not know flag bit 3 (bookmarks) → reports `trailing_bytes` on files with bookmarks. (The missing CRC comparison and the false "writer stores 0" comments were fixed 2026-09-25: 300/300 payload flips now caught) | read in code |
 | B9 | Turning TTD or debug mode off mid-recording silently corrupts history (perf review F2) | from [core-perf review](../2026-09-24-core-performance/unreal-ng-core-perf-and-gating-review.md) |
