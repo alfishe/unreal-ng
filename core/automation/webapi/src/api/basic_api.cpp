@@ -10,7 +10,7 @@
 #include <emulator/io/keyboard/keyboard.h>
 #include <debugger/analyzers/basic-lang/basicextractor.h>
 #include <debugger/analyzers/basic-lang/basicencoder.h>
-#include "commandtyperjson.h"
+#include "../common/commandtyperjson.h"
 #include <common/stringhelper.h>
 #include <json/json.h>
 #include "automation.h"

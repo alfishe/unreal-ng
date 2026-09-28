@@ -1,8 +1,9 @@
 // WebAPI State Screen Inspection Implementation
 // Extracted from emulator_api.cpp - 2026-01-08
 
-#include "statenode_json.h"
+#include "../common/statenode_json.h"
 #include "emulator/state/devicestate.h"
+#include "../common/jsonnumber.h"
 #include "../emulator_api.h"
 
 #include <drogon/HttpResponse.h>
@@ -376,22 +377,11 @@ void EmulatorAPI::getStateScreenDigest(const HttpRequestPtr& req,
 
     auto parseAddressValue = [](const std::string& value, uint16_t& out) -> bool
     {
-        try
-        {
-            unsigned long parsed;
-            if (value.rfind("0x", 0) == 0 || value.rfind("0X", 0) == 0)
-                parsed = std::stoul(value, nullptr, 16);
-            else
-                parsed = std::stoul(value);
-            if (parsed > 0xFFFF)
-                return false;
-            out = static_cast<uint16_t>(parsed);
-            return true;
-        }
-        catch (...)
-        {
+        uint32_t parsed = 0;
+        if (!ParseJsonUInt(Json::Value(value), 0xFFFF, parsed))
             return false;
-        }
+        out = static_cast<uint16_t>(parsed);
+        return true;
     };
 
     Json::Value ret;

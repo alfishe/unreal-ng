@@ -8,7 +8,7 @@
 #include <emulator/emulatormanager.h>
 #include <debugger/debugmanager.h>
 #include <debugger/keyboard/debugkeyboardmanager.h>
-#include "commandtyperjson.h"
+#include "../common/commandtyperjson.h"
 #include <json/json.h>
 
 using namespace drogon;

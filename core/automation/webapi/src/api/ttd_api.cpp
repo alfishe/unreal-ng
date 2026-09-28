@@ -39,6 +39,7 @@
 #include <sstream>
 
 #include "3rdparty/message-center/messagecenter.h"
+#include "../common/jsonnumber.h"
 #include "../emulator_api.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdexternalevents.h"
@@ -1035,12 +1036,54 @@ void EmulatorAPI::findLastTTD(const HttpRequestPtr& req,
     ttd::TTDSearchQuery q;
     if (hasAddr)
     {
-        q.addrFrom = q.addrTo = static_cast<uint16_t>((*json)["addr"].asUInt());
+        uint32_t parsed = 0;
+        if (!ParseJsonUInt((*json)["addr"], 0xFFFF, parsed))
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "'addr' must be 0..65535 (a number, or a string: decimal, \"0x..\", \"#..\" or \"$..\")";
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        q.addrFrom = q.addrTo = static_cast<uint16_t>(parsed);
     }
     else
     {
-        if (hasAddrFrom) q.addrFrom = static_cast<uint16_t>((*json)["addr_from"].asUInt());
-        if (hasAddrTo) q.addrTo = static_cast<uint16_t>((*json)["addr_to"].asUInt());
+        if (hasAddrFrom)
+        {
+            uint32_t parsed = 0;
+            if (!ParseJsonUInt((*json)["addr_from"], 0xFFFF, parsed))
+            {
+                Json::Value error;
+                error["error"] = "Bad Request";
+                error["message"] = "'addr_from' must be 0..65535 (a number, or a string: decimal, \"0x..\", \"#..\" or \"$..\")";
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k400BadRequest);
+                addCorsHeaders(resp);
+                callback(resp);
+                return;
+            }
+            q.addrFrom = static_cast<uint16_t>(parsed);
+        }
+        if (hasAddrTo)
+        {
+            uint32_t parsed = 0;
+            if (!ParseJsonUInt((*json)["addr_to"], 0xFFFF, parsed))
+            {
+                Json::Value error;
+                error["error"] = "Bad Request";
+                error["message"] = "'addr_to' must be 0..65535 (a number, or a string: decimal, \"0x..\", \"#..\" or \"$..\")";
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k400BadRequest);
+                addCorsHeaders(resp);
+                callback(resp);
+                return;
+            }
+            q.addrTo = static_cast<uint16_t>(parsed);
+        }
     }
 
     if (json->isMember("access"))
@@ -1048,19 +1091,55 @@ void EmulatorAPI::findLastTTD(const HttpRequestPtr& req,
 
     if (json->isMember("value"))
     {
-        q.value = static_cast<uint8_t>((*json)["value"].asUInt());
+        uint32_t parsed = 0;
+        if (!ParseJsonUInt((*json)["value"], 0xFF, parsed))
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "'value' must be 0..255 (a number, or a string: decimal, \"0x..\", \"#..\" or \"$..\")";
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        q.value = static_cast<uint8_t>(parsed);
         q.hasValueFilter = true;
     }
 
     if (json->isMember("pc_from"))
     {
-        q.pcFrom = static_cast<uint16_t>((*json)["pc_from"].asUInt());
+        uint32_t parsed = 0;
+        if (!ParseJsonUInt((*json)["pc_from"], 0xFFFF, parsed))
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "'pc_from' must be 0..65535 (a number, or a string: decimal, \"0x..\", \"#..\" or \"$..\")";
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        q.pcFrom = static_cast<uint16_t>(parsed);
         q.hasPcFilter = true;
     }
 
     if (json->isMember("pc_to"))
     {
-        q.pcTo = static_cast<uint16_t>((*json)["pc_to"].asUInt());
+        uint32_t parsed = 0;
+        if (!ParseJsonUInt((*json)["pc_to"], 0xFFFF, parsed))
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "'pc_to' must be 0..65535 (a number, or a string: decimal, \"0x..\", \"#..\" or \"$..\")";
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        q.pcTo = static_cast<uint16_t>(parsed);
         if (!q.hasPcFilter) q.hasPcFilter = true;
     }
 

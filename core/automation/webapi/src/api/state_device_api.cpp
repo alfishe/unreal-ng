@@ -11,7 +11,7 @@
 #include <json/json.h>
 
 #include "../emulator_api.h"
-#include "statenode_json.h"
+#include "../common/statenode_json.h"
 
 using namespace drogon;
 

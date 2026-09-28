@@ -9,7 +9,7 @@
 #include <json/json.h>
 
 #include "../emulator_api.h"
-#include "upload_helper.h"
+#include "../common/upload_helper.h"
 
 using namespace drogon;
 using namespace api::v1;

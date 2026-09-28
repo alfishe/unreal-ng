@@ -2,6 +2,7 @@
 // Debug endpoints for stepping, breakpoints, and inspection
 // Created 2026-01-21
 
+#include "../common/jsonnumber.h"
 #include "../emulator_api.h"
 
 #include <cstdio>
@@ -316,21 +317,11 @@ void EmulatorAPI::skipUntil(const HttpRequestPtr& req, std::function<void(const 
 
         // Target address: accept "0x8000" / "8000" strings and plain integers
         uint32_t target32 = 0;
-        const Json::Value& pcValue = (*json)["pc"];
-        if (pcValue.isString())
-        {
-            target32 = static_cast<uint32_t>(std::stoul(pcValue.asString(), nullptr, 0));
-        }
-        else if (pcValue.isNumeric())
-        {
-            target32 = pcValue.asUInt();
-        }
-        else
+        if (!ParseJsonUInt((*json)["pc"], 0xFFFFFFFFu, target32))
         {
             Json::Value error;
             error["error"] = "Bad Request";
-            error["message"] = "'pc' must be a hex string or integer";
-
+            error["message"] = "'pc' must be a hex string or integer (a number, or a string: decimal, \"0x..\", \"#..\" or \"$..\")";
             auto resp = HttpResponse::newHttpJsonResponse(error);
             resp->setStatusCode(HttpStatusCode::k400BadRequest);
             addCorsHeaders(resp);
@@ -955,7 +946,18 @@ void EmulatorAPI::addBreakpoint(const HttpRequestPtr& req, std::function<void(co
     }
     
     std::string type = (*json)["type"].asString();
-    uint16_t address = static_cast<uint16_t>((*json)["address"].asUInt());
+    uint32_t address = 0;
+    if (!ParseJsonUInt((*json)["address"], 0xFFFF, address))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "'address' must be 0..65535 (a number, or a string: decimal, \"0x..\", \"#..\" or \"$..\")";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
     
     uint16_t bpId = 0;
     bool success = false;
@@ -1353,7 +1355,18 @@ void EmulatorAPI::setRegister(const HttpRequestPtr& req, std::function<void(cons
         return;
     }
 
-    uint16_t value = static_cast<uint16_t>((*json)["value"].asUInt());
+    uint32_t value = 0;
+    if (!ParseJsonUInt((*json)["value"], 0xFFFF, value))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "'value' must be 0..65535 (a number, or a string: decimal, \"0x..\", \"#..\" or \"$..\")";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
 
     // Use centralized register API
     const Z80::RegisterInfo* regInfo = Z80::FindRegister(name);
@@ -2690,7 +2703,18 @@ void EmulatorAPI::addLabel(const HttpRequestPtr& req, std::function<void(const H
     }
 
     std::string name = (*json)["name"].asString();
-    uint16_t address = static_cast<uint16_t>((*json)["address"].asUInt());
+    uint32_t address = 0;
+    if (!ParseJsonUInt((*json)["address"], 0xFFFF, address))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "'address' must be 0..65535 (a number, or a string: decimal, \"0x..\", \"#..\" or \"$..\")";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
     uint16_t bank = json->isMember("bank") ? static_cast<uint16_t>((*json)["bank"].asUInt()) : UINT16_MAX;
     uint16_t bankOffset = UINT16_MAX;
     std::string type = json->isMember("type") ? (*json)["type"].asString() : "";
@@ -3719,35 +3743,18 @@ void EmulatorAPI::assembleCode(const HttpRequestPtr& req, std::function<void(con
 
     std::string code = (*json)["code"].asString();
 
-    // Address accepts JSON number or string (0x / $ / decimal)
-    uint16_t address = 0;
-    if ((*json)["address"].isString())
+    // Address accepts a JSON number or a string (decimal, 0x.., #.., $..)
+    uint32_t address = 0;
+    if (!ParseJsonUInt((*json)["address"], 0xFFFF, address))
     {
-        std::string addressStr = (*json)["address"].asString();
-        try
-        {
-            if (addressStr.substr(0, 2) == "0x" || addressStr.substr(0, 2) == "0X")
-                address = static_cast<uint16_t>(std::stoul(addressStr.substr(2), nullptr, 16));
-            else if (addressStr[0] == '$')
-                address = static_cast<uint16_t>(std::stoul(addressStr.substr(1), nullptr, 16));
-            else
-                address = static_cast<uint16_t>(std::stoul(addressStr, nullptr, 0));
-        }
-        catch (...)
-        {
-            Json::Value error;
-            error["error"] = "Bad Request";
-            error["message"] = "Invalid address format";
-            auto resp = HttpResponse::newHttpJsonResponse(error);
-            resp->setStatusCode(HttpStatusCode::k400BadRequest);
-            addCorsHeaders(resp);
-            callback(resp);
-            return;
-        }
-    }
-    else
-    {
-        address = static_cast<uint16_t>((*json)["address"].asUInt() & 0xFFFF);
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "'address' must be 0..65535 (a number, or a string: decimal, \"0x..\", \"#..\" or \"$..\")";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
     }
 
     bool write = json->isMember("write") && (*json)["write"].asBool();

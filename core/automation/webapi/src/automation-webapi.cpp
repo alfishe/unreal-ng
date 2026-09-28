@@ -15,7 +15,7 @@
 #include "emulator_websocket.h"  // Triggers auto-registration for WebSocket handlers
 #include "hello_world_api.h"     // Triggers auto-registration for API handlers
 #include "interpreter_api.h"     // Triggers auto-registration for Lua/Python API handlers
-#include "api/upload_helper.h"   // MAX_UPLOAD_BODY_SIZE constant
+#include "common/upload_helper.h"   // MAX_UPLOAD_BODY_SIZE constant
 
 // Socket includes for port availability checking
 #ifdef _WIN32
