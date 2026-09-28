@@ -75,13 +75,56 @@ protected:
     }
 };
 
-/// The core fix: after a switch during an active recording, the registry
-/// must point at the *new* card, not the one just deleted. Checked by
-/// identity, not by behaviour, so this fails deterministically (no reliance
-/// on a heap allocator happening to crash on the stale pointer).
-TEST_F(TTDGeneralSoundSwitch_Test, SwitchDuringRecordingRepointsRegistry)
+/// FR-4: a user recording refuses the switch - no checkpoint could restore
+/// the outgoing card into the other card type. Card, registry and history
+/// stay as they were, and every request path says why.
+TEST_F(TTDGeneralSoundSwitch_Test, SwitchIsRefusedWhileRecording)
 {
-    ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
+    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ASSERT_TRUE(ttd->StartRecording());
+    emulator->RunNFrames(2, /*skipBreakpoints=*/true);
+    const size_t checkpoints = ttd->GetCheckpointCount();
+    GeneralSoundCard* before = sm->getGeneralSound();
+
+    std::string refusal;
+    EXPECT_FALSE(sm->requestGeneralSoundCardSwitch(GSTypeKind::LW, &refusal));
+    EXPECT_EQ(refusal, ttd->RecordingGuard(ttd::TTDGuardedAction::SwitchGsCard));
+    EXPECT_FALSE(refusal.empty());
+    EXPECT_FALSE(sm->switchGeneralSoundCard(GSTypeKind::LW));
+    EXPECT_FALSE(emulator->GetFeatureManager()->setFeature(Features::kGSLightweight, true));
+    EXPECT_EQ(emulator->GetFeatureManager()->refusalReason(Features::kGSLightweight, true), refusal);
+
+    EXPECT_EQ(sm->getGeneralSound(), before);
+    EXPECT_EQ(ttd->GetPeripheralRegistry().GetDevice(before->TTDPeripheralId()),
+              static_cast<ttd::TTDSerializable*>(before));
+    EXPECT_TRUE(ttd->IsRecording());
+    EXPECT_EQ(ttd->GetCheckpointCount(), checkpoints);
+    ttd->StopRecording();
+}
+
+/// A stopped session's history holds the outgoing card's state: the switch
+/// drops it (like a speed change) and says so in the status
+TEST_F(TTDGeneralSoundSwitch_Test, SwitchDropsAStoppedSession)
+{
+    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ASSERT_TRUE(ttd->StartRecording());
+    emulator->RunNFrames(2, /*skipBreakpoints=*/true);
+    ttd->StopRecording();
+    ASSERT_GT(ttd->GetCheckpointCount(), 0u);
+
+    ASSERT_TRUE(sm->switchGeneralSoundCard(GSTypeKind::LW));
+    EXPECT_EQ(ttd->GetCheckpointCount(), 0u);
+    EXPECT_EQ(ttd->GetSessionInfo().lastDropReason, "gs-card-switch");
+}
+
+/// The use-after-free fix: after a switch under a debugger's live history
+/// (allowed - that history is rolling and simply dropped), the registry must
+/// point at the *new* card, not the one just deleted. Checked by identity,
+/// not by behaviour, so this fails deterministically (no reliance on a heap
+/// allocator happening to crash on the stale pointer).
+TEST_F(TTDGeneralSoundSwitch_Test, SwitchUnderLiveHistoryRepointsRegistry)
+{
+    ASSERT_TRUE(context->pTimeTravelManager->BeginDebuggerLiveHistory());
 
     GeneralSoundCard* before = sm->getGeneralSound();
     const ttd::PeripheralId beforeId = before->TTDPeripheralId();
@@ -106,8 +149,9 @@ TEST_F(TTDGeneralSoundSwitch_Test, SwitchDuringRecordingRepointsRegistry)
            "otherwise the next checkpoint saves through a dangling pointer";
     EXPECT_EQ(context->pTimeTravelManager->GetPeripheralRegistry().GetDevice(beforeId), nullptr)
         << "the outgoing personality's slot must be vacated, not left pointing at the freed card";
+    EXPECT_EQ(context->pTimeTravelManager->GetSessionInfo().lastDropReason, "gs-card-switch");
 
-    context->pTimeTravelManager->StopRecording();
+    context->pTimeTravelManager->EndDebuggerLiveHistory();
 }
 
 /// Exercises the actual failure path: a checkpoint captured *after* the
@@ -115,7 +159,7 @@ TEST_F(TTDGeneralSoundSwitch_Test, SwitchDuringRecordingRepointsRegistry)
 /// read through) the deleted one.
 TEST_F(TTDGeneralSoundSwitch_Test, CheckpointAfterSwitchCapturesTheNewCard)
 {
-    ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
+    ASSERT_TRUE(context->pTimeTravelManager->BeginDebuggerLiveHistory());
     ASSERT_TRUE(sm->switchGeneralSoundCard(GSTypeKind::LW));
     GeneralSoundCard* after = sm->getGeneralSound();
     ASSERT_NE(after, nullptr);
@@ -134,7 +178,7 @@ TEST_F(TTDGeneralSoundSwitch_Test, CheckpointAfterSwitchCapturesTheNewCard)
     EXPECT_EQ(restored.size(), after->TTDStateSize())
         << "captured blob must match the NEW (LW) card's state size, not a stale LLE one";
 
-    context->pTimeTravelManager->StopRecording();
+    context->pTimeTravelManager->EndDebuggerLiveHistory();
 }
 
 /// A switch with no recording in progress is the common case (every switch

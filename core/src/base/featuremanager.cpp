@@ -14,6 +14,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/sound/soundmanager.h"
 #ifdef ENABLE_RECORDING
 #include "recordingmanager.h"
 #endif
@@ -286,6 +287,14 @@ std::string FeatureManager::refusalReason(const std::string& idOrAlias, bool ena
         if (!feature)
             return {};
         id = feature->id;
+    }
+
+    // Either direction swaps the fitted General Sound card (FR-4)
+    if (id == Features::kGSLightweight)
+    {
+        ttd::TimeTravelManager* ttd = _context ? _context->pTimeTravelManager : nullptr;
+        const bool gsFitted = _context && _context->pSoundManager && _context->pSoundManager->getGeneralSound();
+        return (ttd && gsFitted) ? ttd->RecordingGuard(ttd::TTDGuardedAction::SwitchGsCard) : std::string();
     }
 
     if (!enabled)

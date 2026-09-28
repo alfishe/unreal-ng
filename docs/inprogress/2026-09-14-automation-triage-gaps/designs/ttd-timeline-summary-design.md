@@ -6,6 +6,15 @@
 **Target Interfaces:** WebAPI, MCP, CLI, Lua, Python  
 **Engine Overhead:** 0% new capture cost (operates purely on pre-existing checkpoint & journal metadata)
 
+> **Correction 2026-09-28 - two data sources below do not exist; revise before implementing.**
+> `TTDCheckpoint::writeJournalOffset` was never populated (and could not work: the 64 MB journal
+> ring wraps and the field is not in a `.ttd`); it has been removed. `ramPages.size()` is one entry
+> per RAM page of the model in every checkpoint, not a dirty-page count. Per-bucket write counts
+> must come from the write journal's records in the bucket's `TimeTravelManager::GlobalT` range
+> (with `write_journal_complete`) or from the coverage index, which changes the O(limit) latency
+> claim in §2.1, §3 and §6; the dirty-page count needs the page refs that changed between
+> consecutive checkpoints. See [ttd-coverage-evaluation.md](../ttd-coverage-evaluation.md).
+
 ---
 
 ## 1. Executive Summary & Problem Statement
@@ -29,10 +38,11 @@ An audit of `TimeTravelManager` (`core/src/debugger/ttd/timetravelmanager.h`) an
    - Identifies I-frames (`KeyFrame`) vs P-frames (`DeltaFrame`).
 3. **Dirty RAM Page Count (`std::vector<TTDPageRef> ramPages`):**
    - `ramPages.size()` gives the count of modified physical 4 KB sub-page slots in frame $F$.
-4. **Write Tick Offset (`uint64_t writeJournalOffset`):**
-   - Monotonically increasing offset into `TTDWriteJournal`.
-   - The write tick count in any range $[F_1, F_2]$ is computed instantly in $\mathcal{O}(1)$ time:
-     $$\text{WriteCount}(F_1, F_2) = \text{checkpoint}[F_2].\text{writeJournalOffset} - \text{checkpoint}[F_1].\text{writeJournalOffset}$$
+4. **Write counts:** *correction 2026-09-28* - `TTDCheckpoint::writeJournalOffset` was never
+   populated (and would wrap with the 64 MB ring and is not saved in a `.ttd`); it was removed.
+   Count writes in $[F_1, F_2]$ from the write journal's records in the `GlobalT` range of the
+   two frames (`TimeTravelManager::GlobalT`), reporting the journal's completeness
+   (`write_journal_complete`), or from the coverage index's distinct written-address count.
 5. **External Event Journal & Markers (`TTDExternalEventJournal`):**
    - Tracks tape edges, disk sector operations, breakpoint hits, and user bookmarks.
 

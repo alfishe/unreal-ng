@@ -314,10 +314,6 @@ struct TTDCheckpoint
     /// One entry per physical RAM page (16 KB) of the active model. Each
     /// entry references 4 codec-store sub-page slots (4 KB each).
     std::vector<TTDPageRef> ramPages;
-
-    // --- Journal offsets (populated by P2 and P4) ---
-    uint64_t inputJournalOffset = 0;
-    uint64_t writeJournalOffset = 0;
 };
 
 // ---------------------------------------------------------------------------

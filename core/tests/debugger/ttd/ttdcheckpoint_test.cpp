@@ -445,8 +445,6 @@ TEST(TTDCheckpointTest, DefaultConstruct_EmptyPeripheralBlobs)
     TTDCheckpoint cp;
     EXPECT_TRUE(cp.peripheralBlobs.empty());
     EXPECT_TRUE(cp.ramPages.empty());
-    EXPECT_EQ(cp.inputJournalOffset, 0u);
-    EXPECT_EQ(cp.writeJournalOffset, 0u);
 }
 
 TEST(TTDCheckpointTest, Composite_RoundTrip)

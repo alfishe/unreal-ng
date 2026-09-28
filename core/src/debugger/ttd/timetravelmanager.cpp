@@ -681,13 +681,11 @@ void TimeTravelManager::ClearJournalGap()
 
 size_t TimeTravelManager::EstimateSessionHeapBytes() const
 {
-    // Page store: count the allocated vector backing. The COW store grows
-    // by one slot per Intern-that-can't-reuse and never shrinks until
-    // Reset, so capacity is the right measure of "what the process is
-    // consuming right now" even though some of those slots are on the
-    // free list. GetCapacityBytes returns _pages.size() which is exactly
-    // the backing vector's byte size.
-    size_t total = _pageStore.GetCapacityBytes();
+    // Page store: slot table plus every compressed payload allocation (the
+    // payloads are separate heap blocks; the slot table alone left out the
+    // pages themselves - B7). Allocated, not live: free-list slots keep
+    // their capacity until reused.
+    size_t total = _pageStore.HeapBytes();
 
     // Per-checkpoint: the struct itself + every vector's allocated backing
     // (capacity, not size — capacity is what's actually on the heap).
@@ -711,6 +709,18 @@ size_t TimeTravelManager::EstimateSessionHeapBytes() const
     // Session-scope dirty-page scratch buffer (reused every frame — counted
     // once because there's only one).
     total += _dirtyScratch.capacity() * sizeof(uint16_t);
+
+    // Write journal (committed ring chunks, not the nominal 64 MB), coverage
+    // index and the decoded-frame cache hold the session's data; without a
+    // session what they keep reserved is not the session's (zero, as before)
+    if (!_timeline.empty())
+    {
+        if (_writeJournal)
+            total += _writeJournal->HeapBytes();
+        total += _coverageIndex.HeapBytes();
+        if (_frameCache)
+            total += _frameCache->Bytes();
+    }
 
     return total;
 }
@@ -755,6 +765,9 @@ std::string TimeTravelManager::RecordingGuard(TTDGuardedAction action) const
         case TTDGuardedAction::ChangeWriteJournal:
             return "Cannot change the write journal mode while TTD is recording: a recording keeps the mode it "
                    "started with. Choose it when starting, or stop the recording first.";
+        case TTDGuardedAction::SwitchGsCard:
+            return "Cannot switch the General Sound card type while TTD is recording: the recorded history holds "
+                   "the current card's state, which the other card type cannot take back. Stop the recording first.";
     }
     return "This action is not allowed while TTD is recording. Stop the recording first.";
 }
@@ -1412,7 +1425,14 @@ void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
     // feed the paging chain (on Scorpion the ProfROM plane and the #1FFD
     // service/RAM0 bits), so rebuilding banks first would page from stale
     // values and then never re-derive.
-    _peripherals.RestoreAll(cp.peripheralBlobs);
+    // A device set that differs from the checkpoint's (FR-4) leaves devices
+    // in the live machine's state; say so instead of restoring silently
+    const TTDRestoreReport devices = _peripherals.RestoreAll(cp.peripheralBlobs);
+    if (!devices.Complete())
+        MLOGWARNING("TimeTravelManager::RestoreCheckpoint — frame %llu: device set differs from the checkpoint "
+                    "(%zu restored, %zu without state, %zu size mismatches, %zu unclaimed)",
+                    static_cast<unsigned long long>(cp.time.frame), devices.restored, devices.missingBlobs,
+                    devices.sizeMismatches, devices.unclaimedBlobs);
 
     // --- Step 2b: Rebuild memory banking from restored port latches ---
     // Memory::UpdateZ80Banks reads the latches we just wrote and rebuilds

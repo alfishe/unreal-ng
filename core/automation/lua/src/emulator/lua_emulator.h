@@ -1963,11 +1963,11 @@ public:
         // requested here, applied at the next frame boundary on the
         // emulation thread - same semantics as the WebAPI switch_personality
         // action and the MCP gs_switch_personality tool action
-        lua.set_function("gs_switch_personality", [this](const std::string& personality) -> bool {
-            if (!effectiveEmulator()) return false;
+        lua.set_function("gs_switch_personality", [this](const std::string& personality) -> std::tuple<bool, std::string> {
+            if (!effectiveEmulator()) return {false, ""};
             auto* ctx = effectiveEmulator()->GetContext();
             SoundManager* sm = ctx ? ctx->pSoundManager : nullptr;
-            if (!sm) return false;
+            if (!sm) return {false, ""};
 
             GSTypeKind target;
             if (personality == "z80" || personality == "lle")
@@ -1975,9 +1975,11 @@ public:
             else if (personality == "lw" || personality == "lightweight")
                 target = GSTypeKind::LW;
             else
-                return false;
+                return {false, ""};
 
-            return sm->requestGeneralSoundCardSwitch(target);
+            std::string refusal;  // a TTD recording refuses the switch (FR-4)
+            const bool requested = sm->requestGeneralSoundCardSwitch(target, &refusal);
+            return {requested, refusal};
         });
 
         // Diagnostics: write the last completed COM30..D2 upload (the raw

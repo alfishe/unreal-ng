@@ -368,7 +368,8 @@ public:
     /// the switch itself runs at the next frame boundary on the emulation
     /// thread (handleFrameStart), the only point where the card may be
     /// deleted/recreated safely
-    bool requestGeneralSoundCardSwitch(GSTypeKind target);
+    /// Refused (false, reason in `error`) while a TTD user recording runs.
+    bool requestGeneralSoundCardSwitch(GSTypeKind target, std::string* error = nullptr);
 #ifdef UNREALNG_HAVE_OPL4
     // MoonSound access
     bool hasMoonSound() const { return _moonsound != nullptr; }

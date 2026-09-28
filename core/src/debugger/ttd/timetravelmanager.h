@@ -128,10 +128,11 @@ struct TTDSessionInfo
     ///
     /// Real counter (not an estimate, not a percentage). Sums every
     /// allocation the session owns:
-    ///   - page store backing (allocated vector capacity × page size)
+    ///   - page store: slot table + every compressed page payload
     ///   - per-checkpoint struct + peripheral blob + page-ref vector
     ///   - input journal + external-event journal backing
     ///   - session-scope dirty-page scratch buffer
+    ///   - write journal (committed ring chunks), coverage index, frame cache
     ///
     /// This is the number to display when a user asks "how much memory is
     /// my recording consuming right now?". Distinct from pageStoreBytes
@@ -215,7 +216,8 @@ enum class TTDGuardedAction : uint8_t
     Invalidate,          ///< discards the session
     DisableTimeTravel,   ///< capture stops mid-session
     DisableDebugMode,    ///< writes stop reaching the history
-    ChangeWriteJournal   ///< a recording keeps the journal mode it started with
+    ChangeWriteJournal,  ///< a recording keeps the journal mode it started with
+    SwitchGsCard         ///< a General Sound personality switch changes the device set (FR-4)
 };
 
 /// @brief String conversion for TTDCoverageKind.

@@ -166,6 +166,11 @@ def cmd_info(args: argparse.Namespace) -> int:
         print("coverage index: flagged but unreadable")
     else:
         print("coverage index: absent (reverse queries fall back to replay)")
+    bookmarks = getattr(dump, "bookmarks", None)
+    if bookmarks:
+        print(f"bookmarks: {len(bookmarks)}")
+        for frame, t_in_frame, label in bookmarks:
+            print(f"  {label!r:<24} frame {frame}, t {t_in_frame}")
     print(f"checkpoints: {h.checkpoint_count}")
     print(f"frame range: {h.session_start_frame} … {h.session_end_frame}")
     print(f"emulator_id: {h.emulator_id!r}")

@@ -1423,6 +1423,22 @@ bool SoundManager::switchGeneralSoundCard(GSTypeKind target)
     if (_gs->implementation() == targetImplementation)
         return true; // already the requested personality
 
+    // FR-4: the switch changes the device set under any TTD history. A user
+    // recording refuses it (the reason is also reported at request time);
+    // a stopped session or a debugger's live history is dropped, since no
+    // checkpoint could restore the outgoing card into the new one
+    if (ttd::TimeTravelManager* ttd = _context->pTimeTravelManager)
+    {
+        const std::string refusal = ttd->RecordingGuard(ttd::TTDGuardedAction::SwitchGsCard);
+        if (!refusal.empty())
+        {
+            LOGWARNING("SoundManager: %s", refusal.c_str());
+            return false;
+        }
+        if (ttd->GetCheckpointCount() > 0)
+            ttd->InvalidateSession("gs-card-switch");
+    }
+
     const char* from = _gs->implementation() == GSCardImplementation::LLE ? "LLE (Z80)" : "lightweight";
     const char* to = targetImplementation == GSCardImplementation::LLE ? "LLE (Z80)" : "lightweight";
 
@@ -1507,10 +1523,25 @@ bool SoundManager::switchGeneralSoundCard(GSTypeKind target)
     return portsRegistered;
 }
 
-bool SoundManager::requestGeneralSoundCardSwitch(GSTypeKind target)
+bool SoundManager::requestGeneralSoundCardSwitch(GSTypeKind target, std::string* error)
 {
     if (target != GSTypeKind::Z80 && target != GSTypeKind::LW)
         return false;
+
+    // A real change while a user recording runs is refused (FR-4, see switchGeneralSoundCard)
+    const GSCardImplementation targetImplementation =
+        target == GSTypeKind::Z80 ? GSCardImplementation::LLE : GSCardImplementation::LW;
+    if (_gs && _gs->implementation() != targetImplementation && _context->pTimeTravelManager)
+    {
+        const std::string refusal =
+            _context->pTimeTravelManager->RecordingGuard(ttd::TTDGuardedAction::SwitchGsCard);
+        if (!refusal.empty())
+        {
+            if (error)
+                *error = refusal;
+            return false;
+        }
+    }
 
     _pendingGSSwitch.store(static_cast<uint8_t>(target), std::memory_order_release);
     return true;
