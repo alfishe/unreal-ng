@@ -1,7 +1,9 @@
 # NeoGS ZX-DMA (phase 5) — technical design
 
 - **Date:** 2026-09-27.
-- **Status:** design, not implemented. Parent design:
+- **Status:** phase 5a (the overlay slot and the selector, §5.2-§5.3) is
+  implemented, with the golden host test, the selection tests and the
+  benchmarks (§10, "5a as built"). 5b-5e are not implemented. Parent design:
   [`neogs-tdd.md`](neogs-tdd.md) (§3.9 hardware, §5.7 first sketch, §9
   phase 5). This document replaces the §5.7 sketch for the ZX module.
 - **Scope:** the NeoGS "ZX" DMA module, which lets the Spectrum read and
@@ -408,16 +410,18 @@ flowchart LR
   UI thread then writes the plain debug interface over it.
   - All writers take one small mutex (`_memIfMutex`) and recompute the
     pointer from both flags inside it.
-  - `Z80::rd`/`wd` read `MemIf` without a lock, as today; a pointer store is
-    atomic on every platform we build for. `MemIf` becomes
-    `std::atomic<const MemoryInterface*>` with relaxed loads, which generate
-    the same instruction as a plain load.
+  - `Z80::rd`/`wd` read `MemIf` without a lock, as today. It stays a plain
+    pointer: `Z80State` is copied by value (TTD captures, tests), which an
+    `std::atomic` member would forbid. An aligned pointer store is atomic on
+    every platform we build for, and every write now goes through the one
+    locked selector.
   - Switches happen at most a few times per transfer, so the mutex costs
     nothing measurable.
 - **The per-frame re-assignment.** `Core::CPUFrameCycle` today writes `MemIf`
-  every frame from `isDebugMode`. It becomes: "if the selector's version
-  differs from the one seen last frame, call `SelectMemoryInterface()`". That
-  is one relaxed atomic load per frame.
+  every frame from `isDebugMode`. It becomes: "if `isDebugMode` differs from
+  the selector's debug flag, call `SetDebugMemoryInterface()`". That is one
+  compare per frame, and it keeps the old behaviour that the frame follows
+  `isDebugMode`.
 - **The switch takes effect on the next access.** A switch made during an
   access (the card installs the overlay while it catches up inside a port
   access, for example) applies from the next memory access. The access in
@@ -1019,6 +1023,31 @@ flowchart LR
 
 5a lands on its own first: it changes the host core for every machine, so it
 must be proven harmless before anything uses it.
+
+**5a as built (2026-09-27).**
+- Code: `emulator/memory/hostbusoverlay.h`; `Memory::MemoryReadOverlay` /
+  `MemoryWriteOverlay` (templates on fast/debug) and
+  `GetOverlayMemoryInterface`; `Z80::OverlayFastMemIf` / `OverlayDbgMemIf`,
+  `Z80::AddWaitStates`; `Core::SetDebugMemoryInterface`,
+  `Core::SetBusOverlay`, `SelectMemoryInterfaceLocked`. `UseFast/Debug-
+  MemoryInterface` remain as one-line wrappers, so the other call sites did
+  not change.
+- `core_golden_test.cpp` was recorded on the code before 5a and passes
+  unchanged after it: 8 models plus a demo, 150 frames each, fast and debug
+  mode (RAM hash, CPU state, T-states). Power-on RAM is `rand()`-filled, so
+  the test seeds `srand`; the Scorpion RTC is frozen. ATM3 is left out: its
+  boot is not deterministic between runs (a pre-existing issue, handled in
+  master); TS-Conf is not creatable with the shipped ROMs.
+- `core_test.cpp`: the plain interfaces on 9 models through every debug
+  switch; the 2 × 2 selection in every order; one overlay at a time; two
+  threads switching 10,000 times each; the window, the normal access first,
+  a ROM write, RAM write-through and wait states, in fast and debug mode.
+- Benchmarks (interleaved A/B against the build before 5a, median of 3):
+  48K, Pentagon and Scorpion in fast and debug mode are within noise
+  (−4.8% … +0.5%). An installed pass-through overlay on #0000-#3FFF costs
+  about 7% of a Pentagon frame in the BASIC idle loop (1,301 → 1,395 µs fast,
+  1,333 → 1,424 µs debug): the price of Watch/Divert, paid only while the
+  ZX module is selected or running.
 
 ## 11. Decisions and open points
 

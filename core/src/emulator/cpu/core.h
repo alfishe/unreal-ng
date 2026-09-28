@@ -1,4 +1,7 @@
 #pragma once
+#include <atomic>
+#include <mutex>
+
 #include "3rdparty/message-center/messagecenter.h"
 #include "emulator/cpu/cputables.h"
 #include "emulator/cpu/z80.h"
@@ -27,6 +30,7 @@ class TapeFastLoad;
 class TapeTurboController;
 class DiskFastLoad;
 class DiskAutostart;
+class HostBusOverlay;
 
 class Core
 {
@@ -73,6 +77,13 @@ protected:
     UlaContention* _ulaContention = nullptr;
 
     ROMModeEnum _mode = ROMModeEnum::RM_NOCHANGE;
+
+    // Memory interface selection (neogs-zxdma-design.md §5.3): Z80::MemIf is
+    // only ever written by SelectMemoryInterface, under this lock, from the
+    // debug flag and the installed bus overlay
+    std::mutex _memIfMutex;
+    std::atomic<bool> _memIfDebug{false};
+    HostBusOverlay* _busOverlay = nullptr;
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -109,8 +120,22 @@ public:
 
     // Configuration methods
 public:
-    void UseFastMemoryInterface();
-    void UseDebugMemoryInterface();
+    void UseFastMemoryInterface();   // SetDebugMemoryInterface(false)
+    void UseDebugMemoryInterface();  // SetDebugMemoryInterface(true)
+
+    /// Fast or debug memory path. Any thread; keeps an installed bus overlay.
+    void SetDebugMemoryInterface(bool debug);
+    bool IsDebugMemoryInterface() const { return _memIfDebug.load(std::memory_order_relaxed); }
+
+    /// Install (or with nullptr remove) the host bus overlay. Only one at a
+    /// time: returns false, and changes nothing, if another is installed.
+    /// Call on the emulation thread or with the emulation paused.
+    bool SetBusOverlay(HostBusOverlay* overlay);
+    HostBusOverlay* GetBusOverlay() const { return _busOverlay; }
+
+private:
+    void SelectMemoryInterfaceLocked();  // Z80::MemIf and Memory's overlay from the two inputs
+public:
 
     // Z80 Core-related methods
 public:

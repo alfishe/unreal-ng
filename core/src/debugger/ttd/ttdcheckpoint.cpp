@@ -116,7 +116,7 @@ void RestoreCpuState(const TTDCpuState& src, Z80State* dst)
     dst->halt_cycle = src.halt_cycle;
 
     // Deliberately NOT touched (host-side; preserved by caller):
-    //   FastMemIf, DbgMemIf, MemIf         — reattached by orchestrator
+    //   FastMemIf, DbgMemIf, Overlay*MemIf, MemIf — reattached by orchestrator
     //   isDebugMode, cycles_to_capture     — debugger session state
     //   trace_curs/top/mode, mem_curs/top/second, pc_trflags — UI cursors
     //   prev_pc, m1_pc, last_branch, nextpc — debug view / prefetch cache

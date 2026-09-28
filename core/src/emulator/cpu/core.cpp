@@ -573,12 +573,53 @@ void Core::Release()
 // Configuration methods
 void Core::UseFastMemoryInterface()
 {
-    _z80->MemIf = _z80->FastMemIf;
+    SetDebugMemoryInterface(false);
 }
 
 void Core::UseDebugMemoryInterface()
 {
-    _z80->MemIf = _z80->DbgMemIf;
+    SetDebugMemoryInterface(true);
+}
+
+void Core::SetDebugMemoryInterface(bool debug)
+{
+    std::lock_guard<std::mutex> lock(_memIfMutex);
+    _memIfDebug.store(debug, std::memory_order_relaxed);
+    SelectMemoryInterfaceLocked();
+}
+
+bool Core::SetBusOverlay(HostBusOverlay* overlay)
+{
+    std::lock_guard<std::mutex> lock(_memIfMutex);
+    if (overlay && _busOverlay && overlay != _busOverlay)
+    {
+        MLOGERROR("Core::SetBusOverlay - another host bus overlay is installed; refused");
+        return false;
+    }
+    _busOverlay = overlay;
+    SelectMemoryInterfaceLocked();
+    return true;
+}
+
+/// With no overlay the plain FastMemIf / DbgMemIf are selected: the very same
+/// interfaces as before overlays existed. Order matters for the overlay
+/// functions, which read Memory's pointer without a lock: it is set before an
+/// overlay interface is selected, and cleared only after a plain one is.
+void Core::SelectMemoryInterfaceLocked()
+{
+    if (!_z80)
+        return;
+    const bool debug = _memIfDebug.load(std::memory_order_relaxed);
+    if (_busOverlay)
+    {
+        _memory->SetBusOverlay(_busOverlay);
+        _z80->MemIf = debug ? _z80->OverlayDbgMemIf : _z80->OverlayFastMemIf;
+    }
+    else
+    {
+        _z80->MemIf = debug ? _z80->DbgMemIf : _z80->FastMemIf;
+        _memory->SetBusOverlay(nullptr);
+    }
 }
 
 void Core::Reset()
@@ -766,19 +807,12 @@ bool Core::IsTurboMode() const
 
 void Core::CPUFrameCycle()
 {
-    // Execute Z80 cycle
-    if (_z80->isDebugMode)
-    {
-        // Use advanced (but slow) memory access interface when Debugger is on
-        UseDebugMemoryInterface();
-        _z80->Z80FrameCycle();
-    }
-    else
-    {
-        // Use fast memory access when no Debugger used
-        UseFastMemoryInterface();
-        _z80->Z80FrameCycle();
-    }
+    // Keep the memory path in step with the debug flag (the slow, instrumented
+    // path while the debugger is on). Only a change goes through the selector,
+    // so the common frame costs one flag compare
+    if (_z80->isDebugMode != _memIfDebug.load(std::memory_order_relaxed))
+        SetDebugMemoryInterface(_z80->isDebugMode);
+    _z80->Z80FrameCycle();
 
     FinishCPUFrame();
 }

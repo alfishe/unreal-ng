@@ -349,9 +349,13 @@ struct Z80State : public Z80Registers, public Z80DecodedOperation
     uint32_t trpc[40];
 
     // Memory interfacing
-    const MemoryInterface* FastMemIf;  // Fast memory interface (max performance)
-    const MemoryInterface* DbgMemIf;   // Debug memory interface (supports memory access breakpoints)
-    const MemoryInterface* MemIf;      // Currently selected memory interface (Fast|Debug)
+    const MemoryInterface* FastMemIf;         // Fast memory interface (max performance)
+    const MemoryInterface* DbgMemIf;          // Debug memory interface (supports memory access breakpoints)
+    const MemoryInterface* OverlayFastMemIf;  // Fast + host bus overlay (only while one is installed)
+    const MemoryInterface* OverlayDbgMemIf;   // Debug + host bus overlay (only while one is installed)
+    /// Currently selected memory interface. Written only by
+    /// Core::SelectMemoryInterface (under its lock); read on every access
+    const MemoryInterface* MemIf;
 };
 
 /// endregion </Structures>
@@ -522,6 +526,11 @@ public:
     void (*callbackM1_Postfetch)();  // Corrected function pointer declaration
 
     void (*callbackCPUCycleFinished)();  // Corrected function pointer declaration
+
+public:
+    /// Stretches the memory cycle in progress by `tStates` (a device's /WAIT).
+    /// Called from a host bus overlay; the plain memory paths never call it.
+    void AddWaitStates(uint32_t tStates) { tt += tStates * rate; }
 
 protected:
     __forceinline void IncrementCPUCyclesCounter(uint8_t cycles);  // Increment cycle counters

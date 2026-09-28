@@ -34,6 +34,8 @@ Z80::Z80(EmulatorContext* context) : Z80State{}
     // Initialize memory access interfaces
     FastMemIf = Memory::GetFastMemoryInterface();
     DbgMemIf = Memory::GetDebugMemoryInterface();
+    OverlayFastMemIf = Memory::GetOverlayMemoryInterface(false);
+    OverlayDbgMemIf = Memory::GetOverlayMemoryInterface(true);
     MemIf = FastMemIf;  // Use fast memory access interface by default
 
     // Ensure register memory and unions do not contain garbage
@@ -106,6 +108,11 @@ Z80::~Z80()
         delete DbgMemIf;
         DbgMemIf = nullptr;
     }
+
+    delete OverlayFastMemIf;
+    OverlayFastMemIf = nullptr;
+    delete OverlayDbgMemIf;
+    OverlayDbgMemIf = nullptr;
 
     if (_opcodeProfiler)
     {

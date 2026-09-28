@@ -17,6 +17,7 @@
 #include "debugger/ttd/ttddirtytracker.h"
 #include "debugger/ttd/timetravelmanager.h"  // Phase 4 — RecordMemoryWrite hot-path call
 #include "emulator/emulator.h"
+#include "emulator/memory/hostbusoverlay.h"
 #include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
@@ -204,6 +205,45 @@ MemoryInterface* Memory::GetDebugMemoryInterface()
     MemoryInterface* result = new MemoryInterface(&Memory::MemoryReadDebug, &Memory::MemoryWriteDebug);
 
     return result;
+}
+
+/// Overlay read: the normal access first, so model overrides (ScorpionMemory's
+/// ProfROM strobes, virtual), the access tracker, TTD coverage and probes and
+/// read breakpoints behave exactly as without an overlay; then the overlay
+/// decides what the CPU gets for an address in its window
+template <bool Debug>
+uint8_t Memory::MemoryReadOverlay(uint16_t addr, bool isExecution)
+{
+    uint8_t normal;
+    if constexpr (Debug)
+        normal = MemoryReadDebug(addr, isExecution);
+    else
+        normal = MemoryReadFast(addr, isExecution);
+    HostBusOverlay* overlay = _busOverlay;
+    if (addr < overlay->windowStart || addr >= overlay->windowEnd)
+        return normal;
+    return overlay->onRead(addr, normal, isExecution, _bank_mode[0] == BANK_ROM);
+}
+
+/// Overlay write: the normal write first (RAM, the ROM trash page, TTD dirty
+/// tracking, write breakpoints), then the overlay
+template <bool Debug>
+void Memory::MemoryWriteOverlay(uint16_t addr, uint8_t value)
+{
+    if constexpr (Debug)
+        MemoryWriteDebug(addr, value);
+    else
+        MemoryWriteFast(addr, value);
+    HostBusOverlay* overlay = _busOverlay;
+    if (addr >= overlay->windowStart && addr < overlay->windowEnd)
+        overlay->onWrite(addr, value, _bank_mode[0] == BANK_ROM);
+}
+
+MemoryInterface* Memory::GetOverlayMemoryInterface(bool debug)
+{
+    if (debug)
+        return new MemoryInterface(&Memory::MemoryReadOverlay<true>, &Memory::MemoryWriteOverlay<true>);
+    return new MemoryInterface(&Memory::MemoryReadOverlay<false>, &Memory::MemoryWriteOverlay<false>);
 }
 
 /// Implementation memory read method

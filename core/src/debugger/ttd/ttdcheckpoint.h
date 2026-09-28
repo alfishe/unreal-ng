@@ -19,7 +19,7 @@
 ///     store itself is item 3 of P1 and lands in ttd_page_store.h.
 ///
 /// Excluded by design (host-side, preserved by caller on restore):
-///   - Z80State::FastMemIf / DbgMemIf / MemIf (pointers)
+///   - Z80State::FastMemIf / DbgMemIf / Overlay*MemIf / MemIf (pointers)
 ///   - Z80State::isDebugMode, trace_curs/top/mode, mem_curs/top/second,
 ///     pc_trflags, prev_pc, m1_pc, last_branch, nextpc
 ///   - Z80State::rate, vm1, outc0, tpi, trpc[] (CPU config, not state)

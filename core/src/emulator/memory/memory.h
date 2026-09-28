@@ -4,6 +4,7 @@
 #include "stdafx.h"
 
 class MemoryAccessTracker;
+class HostBusOverlay;
 class Z80;
 class FeatureManager;
 class ScorpionRomWindow;  // ProfROM quadrant policy - owned by ScorpionMemory only
@@ -127,6 +128,10 @@ protected:
     // Always constructed (fixed ~64 byte cost); MarkDirty is a no-op when
     // the cached _feature_ttd_enabled flag is false.
     ttd::TTDDirtyTracker* _ttdDirtyTracker = nullptr;
+
+    // Host bus overlay (hostbusoverlay.h): set only through Core::SetBusOverlay,
+    // read only by the overlay memory interfaces
+    HostBusOverlay* _busOverlay = nullptr;
 
     // Feature-gate flags
     bool _feature_memorytracking_enabled = false;
@@ -275,6 +280,9 @@ public:
 public:
     static MemoryInterface* GetFastMemoryInterface();
     static MemoryInterface* GetDebugMemoryInterface();
+    /// The fast / debug interface plus the installed bus overlay
+    /// (neogs-zxdma-design.md §5.2); selected only while one is installed
+    static MemoryInterface* GetOverlayMemoryInterface(bool debug);
 
     /// Read pair is virtual: model derivatives whose silicon reacts to bus
     /// cycles themselves (ScorpionMemory - ProfROM plane strobes / magic-
@@ -286,6 +294,17 @@ public:
     virtual uint8_t MemoryReadDebug(uint16_t addr, bool isExecution);
     void MemoryWriteFast(uint16_t addr, uint8_t value);
     void MemoryWriteDebug(uint16_t addr, uint8_t value);
+
+    /// The normal (fast or debug) access, then the bus overlay for addresses
+    /// in its window. Only reachable while an overlay is installed.
+    template <bool Debug>
+    uint8_t MemoryReadOverlay(uint16_t addr, bool isExecution);
+    template <bool Debug>
+    void MemoryWriteOverlay(uint16_t addr, uint8_t value);
+
+    /// Core::SelectMemoryInterface keeps this in step with the Z80's interface
+    void SetBusOverlay(HostBusOverlay* overlay) { _busOverlay = overlay; }
+    HostBusOverlay* GetBusOverlay() const { return _busOverlay; }
 
     /// endregion </Emulation memory interface methods>
 
