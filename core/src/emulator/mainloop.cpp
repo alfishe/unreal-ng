@@ -615,8 +615,15 @@ void MainLoop::OnFrameEnd()
         // display at an arbitrary moment, not a frame boundary). The replay
         // engine restores the correct visible frame itself after
         // ExitReplayMode, so the real present-slot ring must not move here.
+        if (_frameEndHook && !_context->ttdReplayActive)
+            _frameEndHook(true);
+
         if (!_context->ttdReplayActive)
             _context->pScreen->LatchFramebuffer();
+    }
+    else if (_frameEndHook && !_context->ttdReplayActive)
+    {
+        _frameEndHook(false);
     }
 
     // Basic sanity check for context corruption

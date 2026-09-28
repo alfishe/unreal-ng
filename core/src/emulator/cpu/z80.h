@@ -4,6 +4,7 @@
 #include "emulator/cpu/cpulogic.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
+#include "emulator/ports/portinterceptor.h"
 #include "stdafx.h"
 
 // Defined in /emulator/cpu/op_ddcb.cpp - pointers to registers in Z80 state
@@ -463,6 +464,10 @@ public:
     ///   'N' one internal (no-MREQ) T-state, fired at its start with the address on the bus (value 0)
     /// Used by bus-phase timing tests (io_phase_test / bus_phase tests).
     std::function<void(char type, uint16_t addr, uint8_t value)> busTraceHook;
+
+    /// Optional pre-decode port hook (see IPortInterceptor); null on stock
+    /// machines - one pointer check per IN/OUT
+    IPortInterceptor* portInterceptor = nullptr;
 
     /// Test-only instruction-fetch trace hook (null in production - a single
     /// empty-function check per instruction when unset). Fired once per

@@ -140,6 +140,11 @@ void MenuManager::createFileMenu()
     _openDiskAction->setStatusTip(tr("Load a disk image (.trd, .scl, .fdi)"));
     connect(_openDiskAction, &QAction::triggered, this, &MenuManager::openDiskRequested);
 
+    // Open ZX-Poly: a four-CPU ZX-Poly machine from a .zxp snapshot or a multiloader disk
+    _openZXPolyAction = _fileMenu->addAction(tr("Open &ZX-Poly..."));
+    _openZXPolyAction->setStatusTip(tr("Run a ZX-Poly edition (.zxp snapshot or .trd/.scl multiloader disk) on four synchronized machines"));
+    connect(_openZXPolyAction, &QAction::triggered, this, &MenuManager::openZXPolyRequested);
+
     // Import audio → tape image (tape-audio-bridge §7.3): recognize a
     // WAV/FLAC/MP3 recording back into a .tzx/.tap image
     _importAudioTapeAction = _fileMenu->addAction(tr("Import &Audio to Tape..."));

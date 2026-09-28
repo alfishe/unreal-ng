@@ -23,6 +23,7 @@
 #include <QDebug>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QInputDialog>
 #include <QStandardPaths>
 #include <QDir>
 #include <QDateTime>
@@ -242,6 +243,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Connect menu signals to handlers
     connect(_menuManager, &MenuManager::openFileRequested, this, &MainWindow::openFileDialog);
     connect(_menuManager, &MenuManager::openSnapshotRequested, this, &MainWindow::openSnapshotDialog);
+    connect(_menuManager, &MenuManager::openZXPolyRequested, this, &MainWindow::openZXPolyDialog);
     connect(_menuManager, &MenuManager::openTapeRequested, this, &MainWindow::openTapeDialog);
     connect(_menuManager, &MenuManager::openDiskRequested, this, &MainWindow::openDiskDialog);
     connect(_menuManager, &MenuManager::importAudioTapeRequested, this, &MainWindow::handleImportAudioTapeRequested);
@@ -633,6 +635,9 @@ void MainWindow::closeEvent(QCloseEvent* event)
     {
         _screenWrapper->prepareForShutdown();
     }
+
+    // A ZX-Poly group: stop the master's loop and remove the four instances
+    releaseZXPolyGroup();
 
     // Also notify EmulatorManager to block automation requests
     _emulatorManager->PrepareForShutdown();
@@ -1885,6 +1890,98 @@ void MainWindow::openSnapshotDialog()
     }
 }
 
+void MainWindow::openZXPolyDialog()
+{
+    QString filter = tr("ZX-Poly editions (*.zxp *.trd *.scl)") + ";;" + tr("All Files (*)");
+    QString filePath = QFileDialog::getOpenFileName(this, tr("Open ZX-Poly"), _lastDirectory, filter);
+
+    if (!filePath.isEmpty())
+    {
+        startZXPoly(filePath);
+    }
+}
+
+void MainWindow::releaseZXPolyGroup()
+{
+    if (!_zxpolyGroup)
+        return;
+
+    // Stop the master's loop and unhook the group before anything is released
+    _zxpolyGroup->DetachFromMaster();
+    if (_emulator && _emulator == _zxpolyGroup->GetMaster())
+        releaseEmulator();
+    _zxpolyGroup.reset();
+}
+
+void MainWindow::openFromCommandLine(const QString& filePath, const QString& zxpolyModel)
+{
+    const bool isZXPolySnapshot = QFileInfo(filePath).suffix().compare(QStringLiteral("zxp"), Qt::CaseInsensitive) == 0;
+    if (isZXPolySnapshot || !zxpolyModel.isEmpty())
+        startZXPoly(filePath, zxpolyModel);
+    else
+        loadFile(filePath);
+}
+
+void MainWindow::startZXPoly(const QString& filePath, const QString& requestedModel)
+{
+    // Every module of the four is the same stock model
+    QString model = requestedModel;
+    if (model.isEmpty())
+    {
+        const QStringList models = {QStringLiteral("PENTAGON"), QStringLiteral("128k")};
+        bool accepted = false;
+        model = QInputDialog::getItem(this, tr("ZX-Poly"), tr("Machine model of the four CPU modules:"), models, 0,
+                                      false, &accepted);
+        if (!accepted)
+            return;
+    }
+
+    QApplication::processEvents();
+    _switchingModel = true;
+
+    // Release whatever runs now (a previous ZX-Poly group or a single machine)
+    releaseZXPolyGroup();
+    if (_emulator)
+    {
+        if (_emulator->IsRunning())
+        {
+            _emulator->Pause(false);
+            _emulator->Stop();
+        }
+        releaseEmulator();
+    }
+
+    auto group = std::make_unique<ZXPolyGroup>("zxpoly");
+    std::string error;
+    bool loaded = group->Create(model.toStdString(), &error);
+    if (loaded)
+    {
+        const std::string path = filePath.toStdString();
+        const bool isSnapshot = QFileInfo(filePath).suffix().compare(QStringLiteral("zxp"), Qt::CaseInsensitive) == 0;
+        loaded = isSnapshot ? group->LoadZXP(path, &error) : group->BootDisk(path, &error);
+    }
+
+    if (!loaded)
+    {
+        _switchingModel = false;
+        QMessageBox::critical(this, tr("ZX-Poly"),
+                              tr("Cannot start ZX-Poly from %1:\n%2").arg(filePath, QString::fromStdString(error)));
+        return;
+    }
+
+    group->AttachToMaster();
+    std::shared_ptr<Emulator> master = group->GetMaster();
+    _zxpolyGroup = std::move(group);
+
+    adoptEmulator(master, EmulatorOrigin::CreatedByGui);
+    master->StartAsync();
+
+    _lastDirectory = QFileInfo(filePath).absolutePath();
+    _switchingModel = false;
+
+    qInfo() << "MainWindow::startZXPoly() - ZX-Poly running from" << filePath << "on" << model;
+}
+
 void MainWindow::openTapeDialog()
 {
     QStringList exts = toQStringList(Emulator::SupportedTapeExtensions());
@@ -1928,6 +2025,13 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly)
 {
     // Save directory to settings
     saveLastDirectory(filePath);
+
+    // A ZX-Poly snapshot is a four-machine group, not a snapshot of this one
+    if (QFileInfo(filePath).suffix().compare(QStringLiteral("zxp"), Qt::CaseInsensitive) == 0)
+    {
+        startZXPoly(filePath);
+        return;
+    }
 
     // Determine file type
     QString filePathCopy = filePath;
@@ -2866,6 +2970,9 @@ void MainWindow::handleMachineModelChangeRequested(const QString& modelSpec)
     _switchingModel = true;
 
     qInfo() << "MainWindow::handleMachineModelChangeRequested() - Switching to model:" << displayName;
+
+    // A ZX-Poly group goes as a whole
+    releaseZXPolyGroup();
 
     // Pause, stop and release current emulator
     if (_emulator)

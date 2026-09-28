@@ -838,6 +838,19 @@ uint8_t Z80::in(uint16_t port)
             ioContention->CountAccess(CONTENTION_IO, delay);
     }
 
+    // Pre-decode interceptor (ZX-Poly platform ports): a consumed read never
+    // reaches the model decoder, the observer cards or the floating bus
+    if (portInterceptor) [[unlikely]]
+    {
+        uint8_t intercepted = 0xFF;
+        if (portInterceptor->InterceptIn(port, intercepted))
+        {
+            if (busTraceHook)
+                busTraceHook('I', port, intercepted);
+            return intercepted;
+        }
+    }
+
     PortDecoder& portDecoder = *_context->pPortDecoder;
 
     // Full-decode observer tap (raw port, pre-decode): a real bus card that
@@ -901,6 +914,15 @@ void Z80::out(uint16_t port, uint8_t val)
             IncrementCPUCyclesCounter(delay);
         if (isDebugMode)
             ioContention->CountAccess(CONTENTION_IO, delay);
+    }
+
+    // Pre-decode interceptor (ZX-Poly platform ports): a consumed write never
+    // reaches the model decoder or the observer cards
+    if (portInterceptor && portInterceptor->InterceptOut(port, val)) [[unlikely]]
+    {
+        if (busTraceHook)
+            busTraceHook('O', port, val);
+        return;
     }
 
     PortDecoder& portDecoder = *_context->pPortDecoder;

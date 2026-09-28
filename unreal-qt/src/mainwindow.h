@@ -22,6 +22,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorbinding.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/zxpoly/zxpolygroup.h"
 #include "emulator/guiemulatorcontext.h"
 #include "emulator/soundmanager.h"
 #include "logviewer/logwindow.h"
@@ -71,6 +72,10 @@ class MainWindow : public QMainWindow, public Observer
 
 public:
     explicit MainWindow(QWidget* parent = nullptr);
+
+    /// A file named on the command line. zxpolyModel: machine of a ZX-Poly group
+    /// (skips the model question); a .trd/.scl with it boots as a ZX-Poly disk
+    void openFromCommandLine(const QString& filePath, const QString& zxpolyModel);
     virtual ~MainWindow() override;
 
     // Disable object copy
@@ -98,6 +103,8 @@ private slots:
     void handleEmulatorSelectionChanged(int id, Message* message);
     void openFileDialog();
     void openSnapshotDialog();
+    void openZXPolyDialog();
+
     void openTapeDialog();
     void openDiskDialog();
     void openSpecificFile(const QString& filepath);
@@ -312,6 +319,9 @@ private:
     GUIEmulatorContext* _guiContext = nullptr;
     std::shared_ptr<Emulator> _emulator = nullptr;  // TODO: Remove after full binding migration
     uint32_t _lastFrameCount = 0;
+    std::unique_ptr<ZXPolyGroup> _zxpolyGroup;  // Set while a ZX-Poly machine runs; _emulator is its master
+    void startZXPoly(const QString& filePath, const QString& model = QString());
+    void releaseZXPolyGroup();
     bool _switchingModel = false;  // True while model switch is in progress (prevents notification handler interference)
 
     QPoint _lastCursorPos;
