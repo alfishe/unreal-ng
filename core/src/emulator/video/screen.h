@@ -676,6 +676,9 @@ public:
     /// Must be called after AdjustFrameCounters() wraps z80.t to prevent
     /// DrawPeriod from seeing fromTstate > toTstate across the frame boundary
     void ResetPrevTstate() { _prevTstate = 0; }
+    /// Draw cursor save/restore for TTD live-state snapshots taken mid-frame
+    uint32_t GetPrevTstate() const { return _prevTstate; }
+    void SetPrevTstate(uint32_t tstate) { _prevTstate = tstate; }
 
     /// @brief Suspend contingent per-t-state rendering for the current CPU
     /// frame cycle (turbo render decimation - see MainLoop::RunFrame).

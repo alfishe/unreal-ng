@@ -722,7 +722,10 @@ void TimeTravelManager::OnFrameBoundary()
     // safe to call here — it just sets the _isPaused flag, which the
     // MainLoop checks at the top of its next iteration.
     // ------------------------------------------------------------------
-    if (_state == TTDSessionState::Detached && !_timeline.empty())
+    // A throwaway replay (ComposeDisplay, frame-cache builds) crossing the
+    // session end is not execution running into unrecorded territory; it
+    // must leave no auto-pause behind.
+    if (_state == TTDSessionState::Detached && !_timeline.empty() && !_inReplayMode)
     {
         const uint64_t sessionEnd = _timeline.back().time.frame;
         const uint64_t currentFrame = _context->emulatorState.frame_counter;
@@ -1317,14 +1320,15 @@ void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
     // The screen renderer caches derived state (active screen bank from
     // p7FFD, border color from pFE, framebuffer pixels) that the field
     // copies above do NOT update — the restore bypassed the port decoder.
-    // ResyncScreenCaches re-derives all of it (the snapshot loader,
-    // loader_z80.cpp, uses the same pattern for the same reason).
-    ResyncScreenCaches();
+    // ResyncScreenState re-derives it (the snapshot loader, loader_z80.cpp,
+    // uses the same pattern for the same reason). Pixels are not touched:
+    // what a position shows is decided by ComposeDisplay alone.
+    ResyncScreenState();
 
     // t_states and frame_counter were already restored by RestoreChipsetState.
 }
 
-void TimeTravelManager::ResyncScreenCaches()
+void TimeTravelManager::ResyncScreenState()
 {
     if (!_context || !_context->pScreen)
         return;
@@ -1349,14 +1353,17 @@ void TimeTravelManager::ResyncScreenCaches()
     const uint8_t borderColor = _context->emulatorState.pFE & 0b0000'0111;
     _context->pScreen->SetBorderColor(borderColor);
 
-    // 4. InitFrame resets the renderer's frame-local counters; RenderOnlyMainScreen
-    //    rebuilds the screen pixels from restored memory. The render function
-    //    respects the video mode set by InitRaster (256x192 for ZX, 320x200 for ATM16).
-    _context->pScreen->InitFrame();
-    _context->pScreen->RenderOnlyMainScreen();
+    // 4. A checkpoint sits at its frame's start: the beam has drawn nothing of
+    //    this frame yet, so the draw cursor restarts at 0. A stale cursor from
+    //    the previous position makes the first DrawPeriod see from > to and
+    //    skip the start of the frame.
+    _context->pScreen->ResetPrevTstate();
 
-    // 5. Repaint the framebuffer border to match the restored border color.
-    _context->pScreen->FillBorderWithColor(borderColor);
+    // 5. InitFrame resets the renderer's frame-local counters. No pixel
+    //    decode here: a static memory decode is wrong for any frame that
+    //    changes the border, attributes or screen bank mid-frame, and
+    //    ComposeDisplay renders the real picture for user-facing positions.
+    _context->pScreen->InitFrame();
 }
 
 void TimeTravelManager::RestoreRamPages(const std::vector<TTDPageRef>& ramPages)
@@ -1844,10 +1851,15 @@ bool TimeTravelManager::SeekTo(const TTDTimePoint& target, TTDSeekResult* outRes
         return false;
     }
 
-    const bool ok = SeekToInternal(target, outResult);
+    TTDSeekResult localResult;
+    TTDSeekResult& result = outResult ? *outResult : localResult;
+    const bool ok = SeekToInternal(target, &result);
 
-    if (ok)
-        PublishSeekedFrame();
+    // A marker halt still moved the machine, so it is shown too. Positioning
+    // by frame number (tInFrame 0) shows the frame's final picture; any other
+    // point shows what the beam drew up to it (display rule, design §3).
+    if (ok || result.haltReason == TTDSeekHaltReason::ExternalEvent)
+        PresentPosition(ok && target.tInFrame == 0);
 
     return ok;
 }
@@ -2127,40 +2139,6 @@ bool TimeTravelManager::SeekToInternal(const TTDTimePoint& target, TTDSeekResult
 
         ReplayWithinFrame(cp.time.frame, target.tInFrame);
     }
-    else if (!_inReplayMode)
-    {
-        // Frame-aligned target: `cp` IS this frame, but it captures memory
-        // as of the frame's *start* — this frame's own border/multicolor/
-        // bank-flip writes haven't run yet in that snapshot. PROTOTYPE for
-        // perf validation (see PLAN): replay the frame once, accurately, for
-        // display only; CPU/RAM/peripherals stay exactly as `cp` restored.
-        //
-        // Skipped when already nested inside an active replay (e.g.
-        // BuildFrameCache calling SeekToInternal({frame,0}) to position
-        // itself before installing its own M1 capture hook and doing its
-        // own instrumented run): that caller owns the pause/resume and
-        // hook-installation contract for this frame, and a second RunTStates
-        // pass here raced the emulation thread's pause confirmation and
-        // corrupted BuildFrameCache's capture vector from two threads at
-        // once. Nested callers get the plain checkpoint decode instead —
-        // they replay the frame themselves anyway.
-        //
-        // Also skipped when a journaled input event (keyboard/mouse) is due
-        // before this frame ends: injecting it is a one-shot, non-reversible
-        // side effect on live devices that LiveStateSnapshot cannot capture
-        // (the keyboard matrix in particular isn't a registered TTD
-        // peripheral — it's meant to be the *result* of replaying the
-        // journal forward, never a restorable value; see
-        // ttdinputplayback_test.cpp's file header). Delivering the event
-        // twice — once in this throwaway render, again on the real replay
-        // that follows — desyncs the program from what it actually recorded.
-        const TTDTimePoint fromRestored{cp.time.frame, restoredTInFrame};
-        const TTDTimePoint nextInput = _inputJournal.PeekNextEventTimeOnOrAfter(fromRestored);
-        const bool inputDueThisFrame = (nextInput.frame == cp.time.frame) &&
-                                        !(nextInput.frame == 0 && nextInput.tInFrame == 0 && cp.time.frame != 0);
-        if (!inputDueThisFrame)
-            RenderFrameAccurate();
-    }
 
     // ------------------------------------------------------------------
     // Step 4: transition to Detached (TDD §4.2).
@@ -2229,67 +2207,126 @@ void TimeTravelManager::ReplayWithinFrame(uint64_t targetFrame, uint32_t targetT
     ExitReplayMode();
 }
 
-void TimeTravelManager::RenderFrameAccurate()
+void TimeTravelManager::RunToFrameEnd()
 {
-    if (!_context || !_context->pEmulator || !_context->pCore || !_context->pScreen)
-        return;
-
     Z80* z80 = _context->pCore->GetZ80();
-    if (!z80)
-        return;
-
-    // Deliberately a LOCAL snapshot, not the shared _liveSnapshot member:
-    // this function runs nested inside SeekToInternal (itself reachable from
-    // StepForwardFrame/StepBackFrame), and RunTStates below pumps
-    // MessageCenter (NC_EXECUTION_CPU_STEP) — a synchronous subscriber (e.g.
-    // the debugger's disassembly/register views refreshing mid-step) can
-    // reenter GetFrameCache, which also saves/restores through
-    // _liveSnapshot. Sharing the member there corrupted CPU/RAM on restore
-    // at whatever T-state the reentrant call happened to land on — exactly
-    // the "breaks after a few steps, at an arbitrary moment" symptom this
-    // local copy fixes.
-    LiveStateSnapshot local;
-    SaveLiveState(local);
-    EnterReplayMode();
-
-    // Same frame-length computation as BuildFrameCache: `cp` restores the
-    // CPU at this frame's start (the overshoot past the boundary), so the
-    // remainder is exactly one frame's worth of T-states (scaled by the
-    // restored CPU frequency multiplier).
+    // A checkpoint restores the CPU at the frame's overshoot past the
+    // boundary, so the remainder is one frame's worth of T-states (scaled by
+    // the restored CPU frequency multiplier). Crossing the limit runs the
+    // frame-end processing, which completes the frame's picture.
     const uint32_t frameT = _context->config.frame;
     const uint32_t mult = _context->emulatorState.current_z80_frequency_multiplier;
     const uint32_t frameTStates = frameT * (mult ? mult : 1);
     const uint32_t startT = static_cast<uint32_t>(z80->t);
     if (startT < frameTStates)
         _context->pEmulator->RunTStates(frameTStates - startT, /*skipBreakpoints=*/true);
+}
 
-    // Snapshot the accurately-rendered framebuffer before RestoreLiveState's
-    // ResyncScreenCaches() overwrites it with a static decode again. Also
-    // local — same reentrancy hazard as above.
-    std::vector<uint8_t> accurateFrameBuffer;
-    uint32_t* liveBuf = nullptr;
-    size_t liveBufSize = 0;
-    _context->pScreen->GetFramebufferData(&liveBuf, &liveBufSize);
-    if (liveBuf && liveBufSize)
+void TimeTravelManager::ComposeDisplay(bool frameTarget)
+{
+    if (!_context || !_context->pEmulator || !_context->pCore || !_context->pScreen || _timeline.empty())
+        return;
+
+    Z80* z80 = _context->pCore->GetZ80();
+    if (!z80)
+        return;
+
+    const uint64_t frame = _context->emulatorState.frame_counter;
+    const uint32_t tInFrame = static_cast<uint32_t>(z80->t);
+
+    // Last checkpoint at or before `f`; nullptr when `f` precedes the session.
+    auto checkpointAtOrBefore = [this](uint64_t f) -> const TTDCheckpoint* {
+        auto it = std::upper_bound(_timeline.begin(), _timeline.end(), f,
+                                   [](uint64_t value, const TTDCheckpoint& cp) { return value < cp.time.frame; });
+        return it == _timeline.begin() ? nullptr : &*(it - 1);
+    };
+
+    // Deliberately a LOCAL snapshot, not the shared _liveSnapshot member:
+    // RunTStates pumps MessageCenter (NC_EXECUTION_CPU_STEP) and a synchronous
+    // subscriber (debugger views) can reenter GetFrameCache, which saves and
+    // restores through _liveSnapshot.
+    LiveStateSnapshot local;
+    SaveLiveState(local);
+    EnterReplayMode();
+
+    // Replay whole frames from `cp` until frame `f` is the current frame.
+    auto runUntilFrame = [this](uint64_t f) {
+        while (_context->emulatorState.frame_counter < f)
+        {
+            const uint64_t before = _context->emulatorState.frame_counter;
+            RunToFrameEnd();
+            if (_context->emulatorState.frame_counter == before)
+                break;  // no progress - never spin
+        }
+    };
+
+    // Static decode of the restored checkpoint as the base under the beam.
+    // The beam repaints everything from the checkpoint's position onward; the
+    // base only shows where the recording holds no beam history - the part of
+    // the session's first frame before recording started (its baseline is
+    // captured mid-frame). Painting it makes the picture independent of
+    // whatever the framebuffer held before.
+    auto paintStaticBase = [this]() {
+        _context->pScreen->RenderOnlyMainScreen();
+        _context->pScreen->FillBorderWithColor(_context->emulatorState.pFE & 0b0000'0111);
+    };
+
+    if (frameTarget)
     {
-        accurateFrameBuffer.assign(reinterpret_cast<uint8_t*>(liveBuf),
-                                    reinterpret_cast<uint8_t*>(liveBuf) + liveBufSize);
+        // The frame's final picture: its own T-states, start to end.
+        if (const TTDCheckpoint* cp = checkpointAtOrBefore(frame))
+        {
+            RestoreCheckpointForReplay(*cp);
+            paintStaticBase();
+            runUntilFrame(frame);
+            RunToFrameEnd();
+        }
+    }
+    else
+    {
+        // Base: frame f-1's final picture, as a live machine has it when f
+        // starts. The first frame of the session has no predecessor; its base
+        // is the static decode of its checkpoint.
+        const TTDCheckpoint* prev = frame > 0 ? checkpointAtOrBefore(frame - 1) : nullptr;
+        const TTDCheckpoint* cur = checkpointAtOrBefore(frame);
+        if (prev)
+        {
+            RestoreCheckpointForReplay(*prev);
+            paintStaticBase();
+            runUntilFrame(frame);
+        }
+        else if (cur)
+        {
+            RestoreCheckpointForReplay(*cur);
+            paintStaticBase();
+        }
+
+        // Then what the beam draws in frame f up to the position.
+        if (_context->emulatorState.frame_counter == frame && z80->t < tInFrame)
+            _context->pEmulator->RunTStates(tInFrame - static_cast<uint32_t>(z80->t), /*skipBreakpoints=*/true);
+        _context->pScreen->UpdateScreen();
     }
 
-    RestoreLiveState(local);
+    std::vector<uint8_t> composed;
+    uint32_t* fb = nullptr;
+    size_t fbSize = 0;
+    _context->pScreen->GetFramebufferData(&fb, &fbSize);
+    if (fb && fbSize)
+        composed.assign(reinterpret_cast<const uint8_t*>(fb), reinterpret_cast<const uint8_t*>(fb) + fbSize);
+
     ExitReplayMode();
+    RestoreLiveState(local);
 
-    // CPU/RAM/peripherals are back to cp's own state (matches every other
-    // seek/step contract); only the displayed pixels differ from a plain
-    // memory decode.
-    if (!accurateFrameBuffer.empty())
-    {
-        uint32_t* buf = nullptr;
-        size_t size = 0;
-        _context->pScreen->GetFramebufferData(&buf, &size);
-        if (buf && size == accurateFrameBuffer.size())
-            std::memcpy(buf, accurateFrameBuffer.data(), size);
-    }
+    // Machine state is exactly the caller's again; only the pixels change.
+    _context->pScreen->GetFramebufferData(&fb, &fbSize);
+    if (fb && fbSize == composed.size())
+        std::memcpy(fb, composed.data(), fbSize);
+}
+
+void TimeTravelManager::PresentPosition(bool frameTarget)
+{
+    ComposeDisplay(frameTarget);
+    PublishSeekedFrame();
 }
 
 bool TimeTravelManager::StepBackFrame()
@@ -2315,10 +2352,11 @@ bool TimeTravelManager::StepBackFrame()
         return false;
     }
 
-    TTDTimePoint target;
-    target.frame    = current.frame - 1;
-    target.tInFrame = current.tInFrame;
-    return SeekTo(target);
+    // Frame steps are positioning by frame number: land on the frame boundary
+    // and show that frame's final picture. Carrying current.tInFrame (the
+    // previous checkpoint's instruction overshoot) turned a frame step into
+    // an intra-frame seek whose overshoot grew with every step.
+    return SeekTo(TTDTimePoint{current.frame - 1, 0});
 }
 
 bool TimeTravelManager::StepForwardFrame()
@@ -2348,10 +2386,8 @@ bool TimeTravelManager::StepForwardFrame()
         return false;
     }
 
-    TTDTimePoint target;
-    target.frame    = current.frame + 1;
-    target.tInFrame = current.tInFrame;
-    return SeekTo(target);
+    // See StepBackFrame: a frame step lands on the frame boundary.
+    return SeekTo(TTDTimePoint{current.frame + 1, 0});
 }
 
 // ---------------------------------------------------------------------------
@@ -4053,6 +4089,7 @@ bool TimeTravelManager::StepForwardInstruction()
     _context->pEmulator->RunTStates(1, true);
     ExitReplayMode();
 
+    PresentPosition(false);
     return true;
 }
 
@@ -4784,6 +4821,22 @@ void TimeTravelManager::SaveLiveState(LiveStateSnapshot& out)
     out.inputCursor = _inputCursor;
     out.inputPlaybackArmed = _inputPlaybackArmed;
 
+    out.hasKeyboard = _context->pKeyboard != nullptr;
+    if (out.hasKeyboard)
+        out.keyboard = _context->pKeyboard->CaptureInputState();
+
+    out.framebuffer.clear();
+    if (_context->pScreen)
+    {
+        out.screenPrevTstate = _context->pScreen->GetPrevTstate();
+        uint32_t* fb = nullptr;
+        size_t fbSize = 0;
+        _context->pScreen->GetFramebufferData(&fb, &fbSize);
+        if (fb && fbSize)
+            out.framebuffer.assign(reinterpret_cast<const uint8_t*>(fb),
+                                   reinterpret_cast<const uint8_t*>(fb) + fbSize);
+    }
+
     // Full RAM copy (model pages only — e.g. 128 KB on a 128K model). The
     // build replay overwrites live RAM with historic content as it runs, so
     // only a verbatim copy restores the caller's memory exactly.
@@ -4843,7 +4896,24 @@ void TimeTravelManager::RestoreLiveState(const LiveStateSnapshot& snap)
     _inputPlaybackArmed = snap.inputPlaybackArmed;
     UpdateInputWorkFlag();
 
-    ResyncScreenCaches();
+    if (snap.hasKeyboard && _context->pKeyboard)
+        _context->pKeyboard->RestoreInputState(snap.keyboard);
+
+    ResyncScreenState();
+
+    // The snapshot may sit mid-frame: hand back the exact draw cursor, not the
+    // frame-start one ResyncScreenState sets.
+    if (_context->pScreen)
+        _context->pScreen->SetPrevTstate(snap.screenPrevTstate);
+
+    if (!snap.framebuffer.empty() && _context->pScreen)
+    {
+        uint32_t* fb = nullptr;
+        size_t fbSize = 0;
+        _context->pScreen->GetFramebufferData(&fb, &fbSize);
+        if (fb && fbSize == snap.framebuffer.size())
+            std::memcpy(fb, snap.framebuffer.data(), fbSize);
+    }
 }
 
 const TTDFrameCache* TimeTravelManager::GetFrameCache(uint64_t frame)

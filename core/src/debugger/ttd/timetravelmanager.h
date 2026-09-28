@@ -50,6 +50,7 @@
 #include <string>
 
 #include "emulator/platform.h"       // PlatformModulesEnum, MAX_RAM_PAGES
+#include "emulator/io/keyboard/keyboard.h"  // Keyboard::InputState (display sandbox)
 #include "common/modulelogger.h"    // ModuleLogger
 #include "ttdcheckpoint.h"
 #include "ttdexternalevents.h"
@@ -956,11 +957,19 @@ public:
     void SetEnableCoverageIndex(bool enable);
 
 private:
-    /// @brief Make the result of a user-initiated seek visible.
+    /// @brief Make the current position visible: compose its picture
+    /// (ComposeDisplay) and publish it.
     ///
-    /// Flushes the video delay line, publishes the restored frame and posts
-    /// NC_VIDEO_FRAME_REFRESH. Called only from the public SeekTo — internal
-    /// restores during search and reverse execution must not touch the display.
+    /// The single display step of every user-facing navigation (public SeekTo
+    /// and the operations built on it, StepForwardInstruction). Internal
+    /// restores during search, reverse execution and frame-cache builds never
+    /// reach it, so they cannot touch the display.
+    /// @param frameTarget true when the user positioned by frame number
+    void PresentPosition(bool frameTarget);
+
+    /// @brief Flush the video delay line and post NC_VIDEO_FRAME_REFRESH so
+    /// every observer (Qt present queue, WebAPI capture, viewers) sees the
+    /// framebuffer PresentPosition composed.
     void PublishSeekedFrame();
 
 public:
@@ -1371,26 +1380,26 @@ private:
     /// @param targetTInFrame T-state offset within the frame to stop at.
     void ReplayWithinFrame(uint64_t targetFrame, uint32_t targetTInFrame);
 
-    /// @brief PROTOTYPE (perf validation only, see PLAN): replace the static
-    /// checkpoint-memory decode with a raster-accurate picture for a
-    /// frame-aligned seek/step.
+    /// @brief Compose the picture for the current position (display rule,
+    /// docs/inprogress/2026-09-28-ttd-positioning-and-display/design.md §3).
     ///
-    /// A checkpoint captures CPU/memory state at its frame's *start* (the
-    /// previous instruction's overshoot past the boundary — see
-    /// RestoreCheckpoint), so ResyncScreenCaches' static RenderOnlyMainScreen
-    /// shows memory as it stood BEFORE this frame's own code ran: border
-    /// stripes, multicolor, and screen-bank flips this frame draws are torn
-    /// or missing (see docs/inprogress/2026-09-27-zxdlss-gigascreen &
-    /// scratch/zxdlss/across_the_edge_full.ttd, checkpoints 2045/2049/...).
+    /// - Frame target (positioned by frame number): the frame's FINAL
+    ///   picture — its own T-states replayed from its checkpoint to its end.
+    /// - Time target (frame f, T-state T): what the beam rendered from the
+    ///   start of f up to T, over frame f-1's final picture for the part not
+    ///   drawn yet — exactly the framebuffer of a live machine paused there.
     ///
-    /// Replays exactly the frame's own T-states once (same range
-    /// BuildFrameCache uses) so the normal per-instruction
-    /// Screen::UpdateScreen() path (MainLoop::OnCPUStep, mainloop.cpp:563)
-    /// paints an accurate picture, then discards every side effect of that
-    /// throwaway replay (CPU/RAM/peripherals) except the resulting
-    /// framebuffer — the target checkpoint must already be restored
-    /// (RestoreCheckpointForReplay) before calling this.
-    void RenderFrameAccurate();
+    /// Runs in a sandbox: live state (CPU, RAM, peripherals, input cursor,
+    /// keyboard, framebuffer) is saved first and restored afterwards, then
+    /// the composed pixels are written. Machine state is never changed.
+    /// Checkpoint restores themselves never paint (ResyncScreenState), so
+    /// this is the only place that decides what a TTD position shows.
+    void ComposeDisplay(bool frameTarget);
+
+    /// @brief Replay the rest of the current frame up to its end through the
+    /// normal CPU/video pipeline (the frame-end processing runs, so the
+    /// frame's final picture is in the framebuffer). Caller owns replay mode.
+    void RunToFrameEnd();
 
     // -----------------------------------------------------------------------
     // Phase 4 reverse execution: M1 enumeration helper (private).
@@ -1486,6 +1495,14 @@ private:
         std::unordered_map<uint8_t, std::vector<uint8_t>> peripheralBlobs;
         size_t inputCursor = 0;            ///< journal playback cursor (ServiceInput)
         bool   inputPlaybackArmed = false;
+        /// Keyboard matrix + counters: journal playback inside a sandbox
+        /// replay presses/releases keys on the live device.
+        Keyboard::InputState keyboard{};
+        bool   hasKeyboard = false;
+        /// Framebuffer pixels: a sandbox replay renders into the live
+        /// framebuffer; restoring hands the caller's picture back untouched.
+        std::vector<uint8_t> framebuffer;
+        uint32_t screenPrevTstate = 0;     ///< renderer draw cursor (Screen::_prevTstate)
     };
 
     /// Reused across builds; vector capacities are retained, so the sizable
@@ -1501,10 +1518,12 @@ private:
     /// peripherals → screen resync.
     void RestoreLiveState(const LiveStateSnapshot& snap);
 
-    /// @brief Re-derive the screen renderer's cached state (active screen
-    /// bank, border color, framebuffer) from emulatorState after a restore
-    /// that bypassed the port decoder (TDD §8.1 step 2e).
-    void ResyncScreenCaches();
+    /// @brief Re-derive the screen renderer's cached state (video mode,
+    /// active screen bank, border color, frame-local counters) from
+    /// emulatorState after a restore that bypassed the port decoder
+    /// (TDD §8.1 step 2e). Never writes framebuffer pixels — what a position
+    /// shows is decided by ComposeDisplay alone.
+    void ResyncScreenState();
 
     // -----------------------------------------------------------------------
     // State

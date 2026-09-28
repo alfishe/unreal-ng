@@ -606,7 +606,7 @@ void MainLoop::OnFrameEnd()
         // TTD silent-replay suppression (parent TDD §8.2 + Appendix C, same
         // contract as the NC_VIDEO_FRAME_REFRESH gate below): a throwaway
         // replay pass (ReplayWithinFrame / TimeTravelManager::
-        // RenderFrameAccurate) can cross a real frame boundary while
+        // ComposeDisplay) can cross a real frame boundary while
         // ttdReplayActive is set. Latching there advances the present-slot
         // ring (Screen::_presentLatchCounter) for a frame nobody asked to
         // see, desyncing GetDelayedFrame's slot math from the ring's actual

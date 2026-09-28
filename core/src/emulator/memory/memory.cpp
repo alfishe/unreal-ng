@@ -859,8 +859,9 @@ void Memory::UpdateZ80Banks()
     // flags are re-derived below from the current CF_TRDOS / p7FFD state
     state.flags &= ~(CF_DOSPORTS | CF_Z80FBUS | CF_LEAVEDOSRAM | CF_LEAVEDOSADR | CF_SETDOSROM);
 
-    if (config.mem_model == MM_ATM710 || config.mem_model == MM_ATM3 || config.mem_model == MM_PLUS3 ||
-        config.mem_model == MM_PLUS2A)
+    const bool decoderOwnsMemoryManager = config.mem_model == MM_ATM710 || config.mem_model == MM_ATM3 ||
+                                          config.mem_model == MM_PLUS3 || config.mem_model == MM_PLUS2A;
+    if (decoderOwnsMemoryManager)
     {
         // ATM models own their memory manager: the bank computation runs in the
         // port decoder (port of the original set_banks() MM_ATM710 / MM_ATM3
@@ -893,11 +894,14 @@ void Memory::UpdateZ80Banks()
         }
     }
 
-    if (config.mem_model == MM_PROFI && _context->pPortDecoder)
+    if (!decoderOwnsMemoryManager && _context->pPortDecoder)
     {
-        // Profi: ROM slot chosen above (same as the generic model); the RAM windows,
-        // WOROM and CPM (CF_DOSPORTS) are derived from #7FFD/#DFFD by the decoder
-        // (port of the UnrealSpeccy set_banks() MM_PROFI case)
+        // ROM slot chosen above; the RAM windows come from the model's latches,
+        // derived by its decoder: #7FFD on 128K/Pentagon (+#EFF7 on Pentagon
+        // 1024), #7FFD/#DFFD plus WOROM and CPM (CF_DOSPORTS) on Profi (port of
+        // the UnrealSpeccy set_banks() cases). Without it a rebuild after a
+        // restore that bypassed the port write (TTD, snapshots) left #C000 on
+        // whatever page the previous state had mapped.
         _context->pPortDecoder->UpdateModelMemoryBanks();
     }
 
