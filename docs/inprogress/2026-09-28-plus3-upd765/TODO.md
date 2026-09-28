@@ -1,6 +1,6 @@
 # TODO — ZX Spectrum +3 floppy controller (uPD765A)
 
-**Status:** phases 1-3 done (2026-09-28); phase 4 open. PLAN.md row #57.
+**Status:** phases 1-4 done (2026-09-28); the protected-title sweep waits for images. PLAN.md row #57.
 Design: [technical-design.md](technical-design.md).
 
 ## Done
@@ -24,7 +24,16 @@ Design: [technical-design.md](technical-design.md).
   the real ROM (CAT test). The port trace names `#2FFD` / `#3FFD` (+3 only). Recipe:
   `/.recipe/media/insert-disk.md` (+3 section).
 
+- **Phase 4, protections:** READ TRACK (MAME semantics, the consensus of 4 of 6 emulators), SCAN
+  (datasheet: no emulator had it complete), and N >= 4 sectors: reads come from the raw track stream,
+  so a transfer longer than its field reads on round the index (MAME); the DSK loader keeps the dumped
+  length of such a sector in the stream and the save writes it back. Tests: READ TRACK order and
+  over-long reads, an N = 6 sector read of 8192 bytes, SCAN equal / low / high / STP 2, the EDSK
+  load-save-load of an N = 6 sector.
+
 ## Remaining (value order)
-1. **Phase 4, protections:** READ TRACK and SCAN (they take their parameters and answer IC=01 + MA
-   today), N >= 4 sectors (Speedlock +3; the model stores `128 << (N & 3)`), a sweep over the
-   protected-title lists from the reference emulators.
+1. **Protected-title sweep:** run the protections the reference emulators name (Speedlock +3,
+   Alkatraz, Hexagon, Paul Owens, Three Inch Loader) from real EDSK images. Neither the repository nor
+   the reference trees hold any; needs images. No per-title patches: they must load from the image.
+2. **WRITE DATA to an N >= 4 sector** writes only the model's field (`128 << (N & 3)`); protections
+   read such sectors, none is known to write one.

@@ -381,6 +381,8 @@ const char* Upd765StateName(UPD765::UPDSTATE state)
         case UPD765::S_FORMAT_DUE: return "format_due";
         case UPD765::S_FORMAT_END: return "format_end";
         case UPD765::S_RESULT: return "result_pending";
+        case UPD765::S_TRACK_SECTOR: return "read_track_sector";
+        case UPD765::S_SCAN_BYTE: return "scan_byte";
     }
     return "?";
 }
@@ -462,6 +464,8 @@ StateNode Upd765Node(EmulatorContext* context, const UPD765& fdc)
     st["control_mark"] = (s.st2 & UPD765::ST2_CM) != 0;
     st["data_crc_error"] = (s.st2 & UPD765::ST2_DD) != 0;
     st["wrong_cylinder"] = (s.st2 & UPD765::ST2_WC) != 0;
+    st["scan_hit"] = (s.st2 & UPD765::ST2_SH) != 0;
+    st["scan_not_satisfied"] = (s.st2 & UPD765::ST2_SN) != 0;
     ret["status"] = st;
 
     StateNode specify = StateNode::Object();

@@ -123,6 +123,9 @@ public:
         std::vector<uint8_t> sectorCylinders;        // Optional per-sector C override (copy protection)
         std::vector<uint8_t> sectorHeads;            // Optional per-sector H override
         std::vector<uint8_t> idOnly;                 // Optional per-sector flag: 1 => ID field without data field
+        std::vector<uint16_t> sectorDataLengths;     // Optional per-sector data field length in the stream (0 = the
+                                                     // size code's 128 << (N & 3)). Holds a uPD765 N >= 4 sector as
+                                                     // dumped (EDSK stored length); the sector keeps its N
         bool indexMark = false;                      // Write C2 C2 C2 FC (MFM) / FC (FM) at the index
         uint8_t gapIndex = 80;                       // Gap 4a before the index mark (only when indexMark)
         uint8_t gapPostIndex = 50;                   // Gap 1 after the index mark (only when indexMark)
@@ -196,6 +199,13 @@ public:
 
         bool isIdOnly(size_t i) const { return i < idOnly.size() && idOnly[i] != 0; }
 
+        /// Bytes of sector i's data field in the stream
+        size_t dataLengthFor(size_t i) const
+        {
+            if (i < sectorDataLengths.size() && sectorDataLengths[i] != 0) return sectorDataLengths[i];
+            return 128u << (sizeCodeFor(i) & 0x03);
+        }
+
         /// Number of stream bytes one sector occupies with this spec
         size_t bytesPerSector(size_t i) const
         {
@@ -203,7 +213,7 @@ public:
             size_t bytes = gapPreID + syncLength + marks + 7;           // ID field
             if (!isIdOnly(i))
             {
-                bytes += gapPostID + syncLength + marks + 1 + (128u << (sizeCodeFor(i) & 0x03)) + 2;
+                bytes += gapPostID + syncLength + marks + 1 + dataLengthFor(i) + 2;
             }
             bytes += gapPostData;
             return bytes;
@@ -845,7 +855,7 @@ public:
                     fill(spec.gapPostID, spec.gapFill);
                     putSyncAndMarks(spec.dataMark);
                     const size_t damStart = pos - 1;
-                    fill(128u << (sizeCode & 0x03), spec.dataFill);
+                    fill(spec.dataLengthFor(i), spec.dataFill);
                     putCRC(damStart);
                 }
 

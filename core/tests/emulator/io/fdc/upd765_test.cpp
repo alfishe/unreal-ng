@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <vector>
 
 #include "_helpers/romeditortesthelper.h"
@@ -578,7 +579,178 @@ TEST_F(UPD765_Test, WeakBytesReadDifferentlyOnEachPass)
     EXPECT_GT(weakDiffers, 8u);
 }
 
+/// READ TRACK starts at the index hole and reads sector after sector in physical order, whatever the IDs
+/// say: EOT is the count. An ID other than the command's C H R N only sets ND (MAME)
+TEST_F(UPD765_Test, ReadTrackReadsFromTheIndexInPhysicalOrder)
+{
+    InsertPlus3Disk();
+    ASSERT_FALSE(HasFatalFailure());
+    DiskImage::TrackFormatSpec spec = DiskImage::TrackFormatSpec::plus3();
+    spec.sectorNumbers = { 3, 1, 2, 4, 5, 6, 7, 8, 9 };
+    Track0()->formatTrack(0, 0, spec);
+    std::vector<uint8_t> expected;
+    for (uint8_t r : { 3, 1, 2 })
+    {
+        FillSector(r);
+        const std::vector<uint8_t> bytes = SectorBytes(r);
+        expected.insert(expected.end(), bytes.begin(), bytes.end());
+    }
+
+    Command({ UPD765::CMD_READ_TRACK | MFM, 0x00, 0, 0, 1, 2, 3, 0x2A, 0xFF });
+    EXPECT_EQ(Transfer(), expected);
+
+    const std::vector<uint8_t> result = Result();
+    ASSERT_EQ(result.size(), 7u);
+    EXPECT_EQ(result[0], UPD765::ST0_IC_ABNORMAL);
+    EXPECT_TRUE(result[1] & UPD765::ST1_EN) << int(result[1]);
+    EXPECT_TRUE(result[1] & UPD765::ST1_ND) << "the last sector read (2) is not R = 1";
+    EXPECT_EQ(result[2], 0);
+}
+
+/// A transfer longer than the data field reads on through the field's CRC and the gap after it; the CRC
+/// the chip checks then fails. This is what lets READ TRACK (and N >= 4 sectors) see the raw track
+TEST_F(UPD765_Test, ReadTrackWithALargerSizeReadsPastTheField)
+{
+    InsertPlus3Disk();
+    ASSERT_FALSE(HasFatalFailure());
+    FillSector(1);
+
+    Command({ UPD765::CMD_READ_TRACK | MFM, 0x00, 0, 0, 1, 3, 1, 0x2A, 0xFF });
+    const std::vector<uint8_t> bytes = Transfer();
+    ASSERT_EQ(bytes.size(), 1024u);
+    EXPECT_TRUE(std::equal(bytes.begin(), bytes.begin() + 512, SectorBytes(1).begin())) << "the field first";
+    const uint16_t crc = SectorOf(1)->dataCRC();
+    EXPECT_EQ(bytes[512], static_cast<uint8_t>(crc & 0xFF)) << "then the field's CRC as stored";
+    EXPECT_EQ(bytes[514], 0x4E) << "then the gap";
+
+    const std::vector<uint8_t> result = Result();
+    ASSERT_EQ(result.size(), 7u);
+    EXPECT_TRUE(result[1] & UPD765::ST1_DE);
+    EXPECT_TRUE(result[2] & UPD765::ST2_DD);
+    EXPECT_TRUE(result[1] & UPD765::ST1_EN);
+}
+
+/// A sector of size code 6 (8 KB, bigger than a sector slot; Speedlock +3 checks it): READ DATA transfers
+/// 128 << 6 bytes, the dumped field first and then the raw track after it, round the index; the CRC is bad
+TEST_F(UPD765_Test, ReadDataOfAnN6SectorReadsOnThroughTheTrack)
+{
+    InsertPlus3Disk();
+    ASSERT_FALSE(HasFatalFailure());
+    DiskImage::TrackFormatSpec spec = DiskImage::TrackFormatSpec::plus3();
+    spec.sectorNumbers = { 1, 2 };
+    spec.sectorSizeCodes = { 2, 6 };
+    spec.sectorDataLengths = { 0, 0x1800 };
+    spec.trackLength = spec.totalBytes();
+    Track0()->formatTrack(0, 0, spec);
+    DiskImage::Sector* big = SectorOf(2);
+    ASSERT_NE(big, nullptr);
+    for (size_t i = 0; i < 0x1800; i++)
+        Track0()->rawData()[big->dataOffset + i] = static_cast<uint8_t>(i * 13 + 5);
+
+    Command({ READ_DATA, 0x00, 0, 0, 2, 6, 2, 0x2A, 0xFF });
+    const std::vector<uint8_t> bytes = Transfer();
+    ASSERT_EQ(bytes.size(), 8192u);
+    const uint8_t* raw = Track0()->rawData();
+    const size_t size = Track0()->rawSize();
+    for (size_t i = 0; i < bytes.size(); i++)
+        ASSERT_EQ(bytes[i], raw[(big->dataOffset + i) % size]) << "byte " << i;
+
+    const std::vector<uint8_t> result = Result();
+    ASSERT_EQ(result.size(), 7u);
+    EXPECT_EQ(result[0], UPD765::ST0_IC_ABNORMAL);
+    EXPECT_EQ(result[1], UPD765::ST1_DE);
+    EXPECT_EQ(result[2], UPD765::ST2_DD);
+}
+
 /// endregion </READ ID / READ DATA>
+
+/// region <SCAN>
+
+/// SCAN compares what the CPU writes with each sector from R, R + STP, ... up to EOT. The first sector that
+/// meets the condition ends the command normally, SH when every byte was equal; #FF from the CPU matches
+/// anything. No sector up to EOT: SN, and EN as TC is tied low (datasheet; zxsp, Spectral's #FF rule)
+class UPD765Scan_Test : public UPD765_Test
+{
+protected:
+    /// Sectors 1-4 filled with one byte each: 0x10, 0x20, 0x30, 0x40
+    void FillFlat()
+    {
+        for (uint8_t r = 1; r <= 4; r++)
+        {
+            std::vector<uint8_t> bytes(512, static_cast<uint8_t>(r * 0x10));
+            Track0()->writeSectorData(static_cast<uint8_t>(r - 1), bytes.data(), bytes.size());
+        }
+    }
+
+    std::vector<uint8_t> Scan(uint8_t code, uint8_t r, uint8_t eot, uint8_t stp, const std::vector<uint8_t>& perSector)
+    {
+        Command({ static_cast<uint8_t>(code | MFM), 0x00, 0, 0, r, 2, eot, 0x2A, stp });
+        std::vector<uint8_t> source;
+        for (int i = 0; i < 4; i++)
+            source.insert(source.end(), perSector.begin(), perSector.end());
+        EXPECT_TRUE(Transfer(source).empty()) << "SCAN only takes bytes";
+        return Result();
+    }
+};
+
+TEST_F(UPD765Scan_Test, EqualFindsTheSectorAndDontCareBytesMatch)
+{
+    InsertPlus3Disk();
+    ASSERT_FALSE(HasFatalFailure());
+    FillFlat();
+
+    std::vector<uint8_t> cpu(512, 0xFF);
+    cpu[0] = 0x30;  // one byte to compare, the rest "don't care"
+    const std::vector<uint8_t> result = Scan(UPD765::CMD_SCAN_EQUAL, 1, 4, 1, cpu);
+    ASSERT_EQ(result.size(), 7u);
+    EXPECT_EQ(result[0], 0x00) << "a hit ends normally";
+    EXPECT_EQ(result[2], UPD765::ST2_SH);
+    EXPECT_EQ(result[5], 3) << "R is the sector that met the condition";
+}
+
+TEST_F(UPD765Scan_Test, LowOrEqualMetWithoutEqualityIsNoHit)
+{
+    InsertPlus3Disk();
+    ASSERT_FALSE(HasFatalFailure());
+    FillFlat();
+
+    // Sector 1 holds 0x10 <= 0x18 in every byte: met, but not equal
+    const std::vector<uint8_t> result = Scan(UPD765::CMD_SCAN_LOW_OR_EQUAL, 1, 4, 1, std::vector<uint8_t>(512, 0x18));
+    ASSERT_EQ(result.size(), 7u);
+    EXPECT_EQ(result[0], 0x00);
+    EXPECT_EQ(result[2], 0x00) << "neither SH nor SN";
+    EXPECT_EQ(result[5], 1);
+}
+
+TEST_F(UPD765Scan_Test, NothingMetUpToEotIsNotSatisfied)
+{
+    InsertPlus3Disk();
+    ASSERT_FALSE(HasFatalFailure());
+    FillFlat();
+
+    // High or equal 0x50: no sector holds that much
+    const std::vector<uint8_t> result = Scan(UPD765::CMD_SCAN_HIGH_OR_EQUAL, 1, 4, 1, std::vector<uint8_t>(512, 0x50));
+    ASSERT_EQ(result.size(), 7u);
+    EXPECT_EQ(result[0], UPD765::ST0_IC_ABNORMAL);
+    EXPECT_EQ(result[1], UPD765::ST1_EN);
+    EXPECT_EQ(result[2], UPD765::ST2_SN);
+    EXPECT_EQ(result[5], 4);
+}
+
+TEST_F(UPD765Scan_Test, StepTwoSkipsEveryOtherSector)
+{
+    InsertPlus3Disk();
+    ASSERT_FALSE(HasFatalFailure());
+    FillFlat();
+
+    // Sector 2 matches, but STP 2 from R 1 compares sectors 1 and 3 only
+    const std::vector<uint8_t> result = Scan(UPD765::CMD_SCAN_EQUAL, 1, 4, 2, std::vector<uint8_t>(512, 0x20));
+    ASSERT_EQ(result.size(), 7u);
+    EXPECT_EQ(result[2], UPD765::ST2_SN);
+    EXPECT_EQ(result[5], 3) << "the last sector compared";
+}
+
+/// endregion </SCAN>
 
 /// region <WRITE DATA / FORMAT>
 

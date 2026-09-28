@@ -41,6 +41,7 @@ void UPD765::reset()
     _transferSize = 0;
     _sectorIndex = -1;
     _endAfterSector = false;
+    _sectorsRead = 0;
     _formatStart = 0;
     std::memset(_formatIds, 0, sizeof(_formatIds));
 
@@ -147,9 +148,9 @@ const char* UPD765::commandName(uint8_t commandByte)
         case CMD_READ_DELETED_DATA: return "read_deleted_data";
         case CMD_FORMAT_TRACK: return "format_track";
         case CMD_SEEK: return "seek";
-        case 0x11: return "scan_equal";
-        case 0x19: return "scan_low_or_equal";
-        case 0x1D: return "scan_high_or_equal";
+        case CMD_SCAN_EQUAL: return "scan_equal";
+        case CMD_SCAN_LOW_OR_EQUAL: return "scan_low_or_equal";
+        case CMD_SCAN_HIGH_OR_EQUAL: return "scan_high_or_equal";
         default: return "invalid";
     }
 }
@@ -247,7 +248,28 @@ void UPD765::writeData(uint8_t value)
                 break;
             _dataRequested = false;
 
-            if (_state == S_FORMAT_DUE)
+            if (_state == S_SCAN_BYTE)
+            {
+                // The CPU's byte against the disk's: #FF from the CPU matches anything
+                DiskImage::Track* track = currentTrack();
+                DiskImage::Sector* sector = currentSector();
+                if (track != nullptr && sector != nullptr && value != 0xFF)
+                {
+                    const size_t offset = (sector->dataOffset + _byteIndex - 1u) % track->rawSize();
+                    uint8_t disk = track->rawData()[offset];
+                    if (track->hasWeakBits())
+                        FlakySectorEmulator::mutateWeakDataByte(*track, offset, _time, disk);
+                    const uint8_t code = commandCode();
+                    const bool met = (code == CMD_SCAN_EQUAL)          ? disk == value
+                                     : (code == CMD_SCAN_LOW_OR_EQUAL) ? disk <= value
+                                                                       : disk >= value;
+                    if (!met)
+                        _scanSatisfied = false;
+                    if (disk != value)
+                        _scanAllEqual = false;
+                }
+            }
+            else if (_state == S_FORMAT_DUE)
             {
                 if (_byteIndex < sizeof(_formatIds))
                     _formatIds[_byteIndex] = value;
@@ -326,9 +348,9 @@ uint8_t UPD765::commandLengthFor(uint8_t code)
         case CMD_READ_DATA:
         case CMD_WRITE_DELETED_DATA:
         case CMD_READ_DELETED_DATA:
-        case 0x11:  // SCAN EQUAL
-        case 0x19:  // SCAN LOW OR EQUAL
-        case 0x1D:  // SCAN HIGH OR EQUAL
+        case CMD_SCAN_EQUAL:
+        case CMD_SCAN_LOW_OR_EQUAL:
+        case CMD_SCAN_HIGH_OR_EQUAL:
             return 9;
         default:
             return 1;  // Invalid: the first byte is the whole command
@@ -398,6 +420,18 @@ uint64_t UPD765::headLoadTStates() const
     return units * 4u * tstatesPerMs();
 }
 
+uint16_t UPD765::transferLengthFor(uint8_t n, uint16_t fieldSize) const
+{
+    if (n == 0)
+    {
+        // N = 0: DTL bytes of a 128-byte sector
+        const uint8_t dtl = _command[8];
+        return static_cast<uint16_t>((dtl != 0 && dtl < 128) ? dtl : 128);
+    }
+    (void)fieldSize;
+    return static_cast<uint16_t>(128u << std::min<uint8_t>(n, 8));
+}
+
 uint64_t UPD765::stepTStates() const
 {
     // SRT: (16 - SRT) * 2 ms at the 4 MHz FDC clock
@@ -434,6 +468,10 @@ void UPD765::executeCommand()
         case CMD_READ_DELETED_DATA:
         case CMD_WRITE_DATA:
         case CMD_WRITE_DELETED_DATA:
+        case CMD_READ_TRACK:
+        case CMD_SCAN_EQUAL:
+        case CMD_SCAN_LOW_OR_EQUAL:
+        case CMD_SCAN_HIGH_OR_EQUAL:
             commandReadWrite();
             break;
         case CMD_READ_ID:
@@ -443,19 +481,7 @@ void UPD765::executeCommand()
             commandFormatTrack();
             break;
         default:
-            // READ TRACK and SCAN take their parameters but are not implemented yet (design §10 phase 4)
-            if (commandLengthFor(commandCode()) > 1)
-            {
-                MLOGWARNING("UPD765: command %02X not implemented, abnormal termination", _command[0]);
-                _st0 = static_cast<uint8_t>((_command[1] & 0x07) | ST0_IC_ABNORMAL);
-                _st1 = ST1_MA;
-                _st2 = 0;
-                enterDataResult();
-            }
-            else
-            {
-                commandInvalid();
-            }
+            commandInvalid();
             break;
     }
 }
@@ -602,6 +628,14 @@ void UPD765::commandReadWrite()
     fdd->setSide(head() != 0);
 
     _phase = PHASE_EXECUTION;
+    if (code == CMD_READ_TRACK)
+    {
+        // READ TRACK starts at the index hole and reads sector after sector in physical order
+        _sectorsRead = 0;
+        _state = S_TRACK_SECTOR;
+        _eventTime = nextIndexPulse(_time + headLoadTStates());
+        return;
+    }
     _state = S_SEARCH;
     _eventTime = _time + headLoadTStates();
 }
@@ -705,6 +739,12 @@ void UPD765::runState()
         case S_RESULT:
             enterDataResult();
             break;
+        case S_TRACK_SECTOR:
+            trackSector();
+            break;
+        case S_SCAN_BYTE:
+            scanByte();
+            break;
         case S_IDLE:
         default:
             // Nothing scheduled: leave the execution phase rather than spin
@@ -737,7 +777,8 @@ void UPD765::searchSector()
     const uint8_t r = _command[4];
     const uint8_t n = _command[5];
     const uint8_t code = commandCode();
-    const bool read = (code == CMD_READ_DATA || code == CMD_READ_DELETED_DATA);
+    // SCAN finds and checks its sectors like READ DATA (the data mark rules included)
+    const bool read = (code == CMD_READ_DATA || code == CMD_READ_DELETED_DATA || isScan(code));
 
     std::vector<DiskImage::Sector>& sectors = track->sectors();
     const size_t count = sectors.size();
@@ -800,15 +841,11 @@ void UPD765::searchSector()
 
         _sectorIndex = static_cast<int16_t>(index);
         _byteIndex = 0;
-        _transferSize = sector.dataSize;
-        if (n == 0)
-        {
-            // N = 0: DTL bytes of the 128-byte sector
-            const uint8_t dtl = _command[8];
-            _transferSize = static_cast<uint16_t>((dtl != 0 && dtl < sector.dataSize) ? dtl : sector.dataSize);
-        }
+        _transferSize = transferLengthFor(n, sector.dataSize);
 
-        _state = read ? S_READ_BYTE : S_WRITE_BYTE;
+        _scanAllEqual = true;
+        _scanSatisfied = true;
+        _state = isScan(code) ? S_SCAN_BYTE : (read ? S_READ_BYTE : S_WRITE_BYTE);
         _eventTime = dataStart;
         return;
     }
@@ -816,6 +853,128 @@ void UPD765::searchSector()
     _st0 |= ST0_IC_ABNORMAL;
     _st1 |= ST1_ND;
     scheduleResult(giveUp);
+}
+
+/// READ TRACK: the next ID field in physical order is read whatever it says. An ID that differs from the
+/// command's C H R N sets ND, a bad ID CRC sets DE; the data field follows with the command's N (MAME)
+void UPD765::trackSector()
+{
+    const uint64_t start = _eventTime;
+    const bool mfm = (_command[0] & CMD_FLAG_MF) != 0;
+
+    DiskImage::Track* track = currentTrack();
+    if (track == nullptr || track->sectorCount() == 0 ||
+        (track->encoding() == DiskImage::Encoding::MFM) != mfm)
+    {
+        _st0 |= ST0_IC_ABNORMAL;
+        _st1 |= ST1_MA;
+        scheduleResult(nextIndexPulse(start) + rotationTStates());
+        return;
+    }
+
+    const size_t headOffset = headByteOffset(*track, start);
+    DiskImage::Sector* sector = track->nextSector(headOffset);
+    const size_t index = static_cast<size_t>(sector - &track->sectors()[0]);
+    const size_t cell = byteCellTStates(track);
+    const size_t bytesToId = track->bytesUntil(*sector, headOffset);
+    const uint64_t idEnd = start + (bytesToId + ID_FIELD_BYTES) * cell;
+
+    if (!sector->idCrcValid)
+        _st1 |= ST1_DE;
+    const bool matches = sector->cylinder() == _command[2] && sector->head() == _command[3] &&
+                         sector->number() == _command[4] && sector->sizeCode() == _command[5];
+    if (matches)
+        _st1 &= static_cast<uint8_t>(~ST1_ND);
+    else
+        _st1 |= ST1_ND;
+
+    if (!sector->hasData)
+    {
+        _st0 |= ST0_IC_ABNORMAL;
+        _st1 |= ST1_MA;
+        _st2 |= ST2_MD;
+        scheduleResult(idEnd);
+        return;
+    }
+
+    _sectorIndex = static_cast<int16_t>(index);
+    _byteIndex = 0;
+    _transferSize = transferLengthFor(_command[5], sector->dataSize);
+    _state = S_READ_BYTE;
+    _eventTime = start + (bytesToId + (sector->dataOffset - sector->idamOffset)) * cell;
+}
+
+/// SCAN: byte _byteIndex is due from the CPU; the one requested before it must have been given by now
+void UPD765::scanByte()
+{
+    const uint64_t now = _eventTime;
+    DiskImage::Track* track = currentTrack();
+    DiskImage::Sector* sector = currentSector();
+    if (track == nullptr || sector == nullptr || !sector->hasData)
+    {
+        _st0 |= ST0_IC_ABNORMAL;
+        _st1 |= ST1_MA;
+        scheduleResult(now);
+        return;
+    }
+
+    const size_t cell = byteCellTStates(track);
+    if (_dataRequested)
+    {
+        _dataRequested = false;
+        _st0 |= ST0_IC_ABNORMAL;
+        _st1 |= ST1_OR;
+        scheduleResult(now);
+        return;
+    }
+
+    if (_byteIndex < _transferSize)
+    {
+        _dataRequested = true;
+        _byteIndex++;
+        _eventTime = now + cell;
+        return;
+    }
+
+    const size_t rest = (_transferSize < sector->dataSize) ? static_cast<size_t>(sector->dataSize - _transferSize) : 0;
+    const uint64_t end = now + (rest + 2u) * cell;
+    if (!(_transferSize == sector->dataSize && sector->dataCrcValid))
+    {
+        _st0 |= ST0_IC_ABNORMAL;
+        _st1 |= ST1_DE;
+        _st2 |= ST2_DD;
+        scheduleResult(end);
+        return;
+    }
+
+    finishScanSector(end);
+}
+
+/// A sector that met the condition ends SCAN normally (SH when every byte was equal); otherwise the next
+/// sector is R + STP, and at EOT the scan ends not satisfied (SN), with EN as TC is tied low
+void UPD765::finishScanSector(uint64_t time)
+{
+    if (_scanSatisfied)
+    {
+        if (_scanAllEqual)
+            _st2 |= ST2_SH;
+        scheduleResult(time);
+        return;
+    }
+
+    const uint8_t step = (_command[8] == 2) ? 2 : 1;  // STP rides in the DTL byte
+    if (_endAfterSector || _command[4] == _command[6] || _command[4] + step > _command[6])
+    {
+        _st0 |= ST0_IC_ABNORMAL;
+        _st1 |= ST1_EN;
+        _st2 |= ST2_SN;
+        scheduleResult(time);
+        return;
+    }
+
+    _command[4] = static_cast<uint8_t>(_command[4] + step);
+    _state = S_SEARCH;
+    _eventTime = time;
 }
 
 /// Byte _byteIndex arrives; the one before it must have been taken by now
@@ -846,9 +1005,12 @@ void UPD765::readByte()
 
     if (_byteIndex < _transferSize)
     {
-        uint8_t value = sector->data[_byteIndex];
+        // From the stream, not the sector buffer: a transfer longer than the data field (READ TRACK with a
+        // larger N, sectors of N >= 4) reads on through the CRC, the gap and the next fields, round the index
+        const size_t offset = (sector->dataOffset + _byteIndex) % track->rawSize();
+        uint8_t value = track->rawData()[offset];
         if (track->hasWeakBits())
-            FlakySectorEmulator::mutateWeakDataByte(*track, sector->dataOffset + _byteIndex, now, value);
+            FlakySectorEmulator::mutateWeakDataByte(*track, offset, now, value);
 
         _dataRegister = value;
         _dataReady = true;
@@ -857,9 +1019,37 @@ void UPD765::readByte()
         return;
     }
 
-    // Every byte taken: the rest of the data field and its CRC pass under the head
-    const uint64_t end = now + (static_cast<size_t>(sector->dataSize - _transferSize) + 2u) * cell;
-    if (!sector->dataCrcValid)
+    // Every byte taken: the rest of the data field (if the transfer was shorter) and the CRC pass
+    const size_t rest = (_transferSize < sector->dataSize) ? static_cast<size_t>(sector->dataSize - _transferSize) : 0;
+    const uint64_t end = now + (rest + 2u) * cell;
+
+    // The CRC the chip checks follows the bytes it read: it only matches when the transfer is the field.
+    // N = 0 reads DTL bytes but checks the whole 128-byte field
+    const bool wholeField = _transferSize == sector->dataSize || (_command[5] == 0 && sector->dataSize == 128);
+    const bool crcGood = wholeField && sector->dataCrcValid;
+
+    if (commandCode() == CMD_READ_TRACK)
+    {
+        // READ TRACK reports a bad CRC and reads on
+        if (!crcGood)
+        {
+            _st1 |= ST1_DE;
+            _st2 |= ST2_DD;
+        }
+        _sectorsRead++;
+        if (_sectorsRead >= std::max<uint8_t>(_command[6], 1))
+        {
+            _st0 |= ST0_IC_ABNORMAL;
+            _st1 |= ST1_EN;
+            scheduleResult(end);
+            return;
+        }
+        _state = S_TRACK_SECTOR;
+        _eventTime = end;
+        return;
+    }
+
+    if (!crcGood)
     {
         _st0 |= ST0_IC_ABNORMAL;
         _st1 |= ST1_DE;
@@ -1112,7 +1302,8 @@ void UPD765::enterDataResult()
         _st0 &= static_cast<uint8_t>(~ST0_IC);
         _st1 &= static_cast<uint8_t>(~ST1_EN);
     }
-    if (otherError)
+    // READ TRACK reads on past ND / DE and ends at EOT: there the flags are notes, EN stays (MAME)
+    if (otherError && commandCode() != CMD_READ_TRACK)
         _st1 &= static_cast<uint8_t>(~ST1_EN);
 
     const uint8_t bytes[7] = { _st0, _st1, _st2, _command[2], _command[3], _command[4], _command[5] };
@@ -1167,10 +1358,12 @@ struct Upd765TTDState
     uint8_t st1;
     uint8_t st2;
     uint8_t dataRegister;
-    uint8_t flags;  // bit 0 data ready, bit 1 data requested, bit 2 end after sector, bit 3 motor
+    uint8_t flags;  // bit 0 data ready, bit 1 data requested, bit 2 end after sector, bit 3 motor,
+                    // bit 4 scan all equal, bit 5 scan satisfied
     uint8_t stepRateTime;
     uint8_t headLoadTime;
-    uint8_t reserved[13];
+    uint8_t sectorsRead;
+    uint8_t reserved[12];
     uint8_t formatIds[UPD765::MAX_FORMAT_SECTORS * 4];
 };
 #pragma pack(pop)
@@ -1218,9 +1411,11 @@ void UPD765::TTDSaveState(uint8_t* dst) const
     blob.st2 = _st2;
     blob.dataRegister = _dataRegister;
     blob.flags = static_cast<uint8_t>((_dataReady ? 0x01 : 0) | (_dataRequested ? 0x02 : 0) |
-                                      (_endAfterSector ? 0x04 : 0) | (_motorOn ? 0x08 : 0));
+                                      (_endAfterSector ? 0x04 : 0) | (_motorOn ? 0x08 : 0) |
+                                      (_scanAllEqual ? 0x10 : 0) | (_scanSatisfied ? 0x20 : 0));
     blob.stepRateTime = _stepRateTime;
     blob.headLoadTime = _headLoadTime;
+    blob.sectorsRead = _sectorsRead;
     std::memcpy(blob.formatIds, _formatIds, sizeof(blob.formatIds));
 
     std::memcpy(dst, &blob, sizeof(blob));
@@ -1267,8 +1462,11 @@ void UPD765::TTDLoadState(const uint8_t* src)
     _dataReady = (blob.flags & 0x01) != 0;
     _dataRequested = (blob.flags & 0x02) != 0;
     _endAfterSector = (blob.flags & 0x04) != 0;
+    _scanAllEqual = (blob.flags & 0x10) != 0;
+    _scanSatisfied = (blob.flags & 0x20) != 0;
     _stepRateTime = blob.stepRateTime;
     _headLoadTime = blob.headLoadTime;
+    _sectorsRead = blob.sectorsRead;
     std::memcpy(_formatIds, blob.formatIds, sizeof(_formatIds));
 
     // The motor latch comes back with #1FFD; the drives follow it (their own state is in the BetaDisk blob)
