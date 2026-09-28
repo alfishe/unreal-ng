@@ -752,6 +752,58 @@ void RegisterControlExecution(ToolRegistry& registry)
 namespace
 {
 
+/// One-line summary of a GET /ttd/status body (shared by inspect_state's
+/// 'ttd' aspect and time_travel's 'status' action). When a GET /ttd/position
+/// body was merged in as "position", the current frame is named too.
+std::string FormatTtdStatus(const Json::Value& status)
+{
+    if (!status["ttd_available"].asBool())
+    {
+        return "TTD engine not available in this build";
+    }
+    const std::string state = status["state"].asString();
+    const uint64_t checkpoints = status["checkpoint_count"].asUInt64();
+    std::ostringstream out;
+    if (state == "idle" && checkpoints == 0)
+    {
+        out << "idle, no history (action 'start' begins recording)";
+        return out.str();
+    }
+    out << state << ", frames " << status["session_start_frame"].asUInt64() << ".." << status["current_end_frame"].asUInt64()
+        << ", " << checkpoints << " checkpoint(s)";
+    if (status.isMember("position") && status["position"].isMember("current"))
+    {
+        const Json::Value& current = status["position"]["current"];
+        out << ", at frame " << current["frame"].asUInt64();
+        if (current["tinframe"].asUInt() != 0)
+        {
+            out << " t=" << current["tinframe"].asUInt();
+        }
+    }
+    out << ", write journal " << (status["write_journal_enabled"].asBool() ? "on" : "off");
+    if (status["bookmark_count"].asUInt64() > 0)
+    {
+        out << ", " << status["bookmark_count"].asUInt64() << " bookmark(s)";
+    }
+    if (status["loaded_from_file"].asBool())
+    {
+        out << ", loaded from " << status["source_path"].asString();
+    }
+    if (state == "recording")
+    {
+        out << " - speed held at 1x, turbo and fast tape/disk off until stop";
+    }
+    else if (state == "detached")
+    {
+        out << " - positioned in history, emulator paused";
+    }
+    else
+    {
+        out << " - history retained, browse with seek/step";
+    }
+    return out.str();
+}
+
 void RegisterInspectState(ToolRegistry& registry)
 {
     Json::Value schema;
@@ -760,7 +812,8 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["aspects"]["items"]["type"] = "string";
     Json::Value allowed(Json::arrayValue);
     for (const char* aspect : {"machine", "registers", "memory", "memory_map", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "video",
-                               "screen", "screen_flash", "screen_ocr", "screen_image", "screen_digest", "timing", "rom", "audio_ay", "audio_fm", "audio_gs", "fdc", "mouse"})
+                               "screen", "screen_flash", "screen_ocr", "screen_image", "screen_digest", "timing", "rom", "audio_ay", "audio_fm", "audio_gs", "fdc", "mouse",
+                               "ttd"})
     {
         allowed.append(aspect);
     }
@@ -777,7 +830,8 @@ void RegisterInspectState(ToolRegistry& registry)
         "'audio_ay' = every AY/SSG chip fully decoded, 'audio_fm' = TurboSound FM board + both YM2203 FM halves (mode, timers, "
         "channels, operators, envelopes, key-on), 'audio_gs' = General Sound card (mailbox flags, MPAG page, DAC channels, "
         "coprocessor core; reports unavailable when the card is not fitted), 'fdc' = Beta Disk WD1793 registers, status, FSM, drives, 'mouse' = "
-        "Kempston mouse state incl. port routing (fitted vs shadowed).";
+        "Kempston mouse state incl. port routing (fitted vs shadowed), 'ttd' = time-travel session: state "
+        "(idle/recording/detached), recorded frame range, checkpoint count, current position (use the time_travel tool to act on it).";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["address"]["type"] = "integer";
@@ -811,7 +865,7 @@ void RegisterInspectState(ToolRegistry& registry)
         "memory layout, displayed RAM pages, #EFF7/#DFFD/#FF77), screen state (screen: active screen and RAM pages, per-screen "
         "Z80 mapping, #7FFD, contention), FLASH timing (screen_flash), screen OCR text, screen image metadata, screen digest hash, raster timing, "
         "ROM signatures, AY/SSG chips (audio_ay), TurboSound FM YM2203 halves (audio_fm), General Sound card (audio_gs), Beta Disk WD1793 (fdc), "
-        "Kempston mouse + port routing (mouse). Combine aspects to reduce round-trips.",
+        "Kempston mouse + port routing (mouse), time-travel session state and position (ttd). Combine aspects to reduce round-trips.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn& progress) {
             // Collect aspects
@@ -833,11 +887,11 @@ void RegisterInspectState(ToolRegistry& registry)
                 if (aspect != "machine" && aspect != "registers" && aspect != "memory" && aspect != "memory_map" && aspect != "disasm" && aspect != "stack" &&
                     aspect != "breakpoints" && aspect != "memory_banks" && aspect != "paging" && aspect != "ports" && aspect != "video" &&
                     aspect != "screen" && aspect != "screen_flash" && aspect != "screen_ocr" && aspect != "screen_image" && aspect != "screen_digest" && aspect != "timing" && aspect != "rom" && aspect != "audio_ay" &&
-                    aspect != "audio_fm" && aspect != "audio_gs" && aspect != "fdc" && aspect != "mouse")
+                    aspect != "audio_fm" && aspect != "audio_gs" && aspect != "fdc" && aspect != "mouse" && aspect != "ttd")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, audio_gs, fdc, mouse"));
+                                            "screen, screen_flash, screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, audio_gs, fdc, mouse, ttd"));
                     return;
                 }
             }
@@ -1131,6 +1185,34 @@ void RegisterInspectState(ToolRegistry& registry)
                                 });
                             });
                         }
+                        else if (aspect == "ttd")
+                        {
+                            // TTD session: GET /ttd/status, then GET /ttd/position merged
+                            // in as "position" (skipped when the engine is not compiled in)
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, "/ttd/status"), nullptr, [&caller, id, aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status != 200)
+                                    {
+                                        next(true);
+                                        return;
+                                    }
+                                    const bool available = body["ttd_available"].asBool();
+                                    acc[aspect] = std::move(body);
+                                    if (!available)
+                                    {
+                                        next(true);
+                                        return;
+                                    }
+                                    caller.Call("GET", Endpoint(id, "/ttd/position"), nullptr, [aspect, &acc, next](int posStatus, Json::Value position) mutable {
+                                        if (posStatus == 200)
+                                        {
+                                            acc[aspect]["position"] = std::move(position);
+                                        }
+                                        next(true);
+                                    });
+                                });
+                            });
+                        }
                         else if (aspect == "audio_gs")
                         {
                             // GS card state via the WebAPI (GS design §10.1);
@@ -1385,6 +1467,10 @@ void RegisterInspectState(ToolRegistry& registry)
                                                     << " alg " << ch[c]["algorithm"].asUInt() << " " << ch[c]["frequency_hz"].asDouble() << " Hz";
                                     }
                                 }
+                            }
+                            else if (aspect == "ttd")
+                            {
+                                out << "\n[ttd] " << FormatTtdStatus(value);
                             }
                             else if (aspect == "rom" && value.isMember("pages"))
                             {
@@ -1797,31 +1883,163 @@ std::string UrlEncodeSegment(const std::string& text)
     return encoded;
 }
 
+/// Formats a TTD time point ({frame, tinframe}) as "frame F" or "frame F t=T".
+std::string FormatTimePoint(const Json::Value& frame, const Json::Value& tinframe)
+{
+    std::string text = "frame " + std::to_string(frame.asUInt64());
+    if (tinframe.asUInt() != 0)
+    {
+        text += " t=" + std::to_string(tinframe.asUInt());
+    }
+    return text;
+}
+
+/// Formats a replay-barrier marker ({frame, tinframe, kind, reason}).
+std::string FormatMarker(const Json::Value& marker)
+{
+    return marker["kind"].asString() + " '" + marker["reason"].asString() + "' at " +
+           FormatTimePoint(marker["frame"], marker["tinframe"]);
+}
+
+/// Like ForwardCall, but the text summary is built from the 2xx body. A 2xx
+/// body with "ok": false (dump) is a failure. A 409 (a history operation
+/// while recording) gets the MCP-side remedy appended.
+void CallAndSummarize(const std::string& method, const std::string& path, const Json::Value* body, IApiCaller& caller,
+                      std::function<std::string(const Json::Value&)> summarize, ToolCallback done)
+{
+    caller.Call(method, path, body, [summarize, done](int status, Json::Value responseBody) {
+        if (status >= 200 && status < 300 && responseBody.isObject() && responseBody.isMember("ok") &&
+            !responseBody["ok"].asBool())
+        {
+            done(ToolResult::Error("Failed: " + responseBody["error"].asString()));
+            return;
+        }
+        if (status >= 200 && status < 300)
+        {
+            const std::string text = summarize(responseBody);
+            done(ToolResult::Ok(text, std::move(responseBody)));
+            return;
+        }
+        if (status == 0)
+        {
+            done(ToolResult::Error("WebAPI unreachable — is the emulator running with WebAPI enabled (port 8090)?"));
+            return;
+        }
+        std::string text = "WebAPI returned HTTP " + std::to_string(status);
+        const std::string details = DescribeErrorBody(responseBody);
+        if (!details.empty())
+        {
+            text += ": " + details;
+        }
+        if (status == 409 && responseBody["state"].asString() == "recording")
+        {
+            text += " (MCP: call time_travel action 'stop' first)";
+        }
+        done(ToolResult::Error(text));
+    });
+}
+
+/// Copies an optional numeric argument into a request body, accepting an
+/// integer or a "0x.."/"$.."/decimal string. Returns false (and sets error)
+/// when the value is present but not a number.
+bool CopyNumber(const Json::Value& args, const char* field, Json::Value& body, std::string& error)
+{
+    if (!args.isMember(field))
+    {
+        return true;
+    }
+    Json::Value number = NumericOrHex(args[field]);
+    if (number.isNull() || !(number.isUInt() || number.isUInt64()))
+    {
+        error = std::string("'") + field + "' must be a non-negative number (integer, or a \"0x..\" / \"$..\" / decimal string)";
+        return false;
+    }
+    body[field] = number;
+    return true;
+}
+
 void RegisterTimeTravel(ToolRegistry& registry)
 {
     Json::Value schema;
     schema["type"] = "object";
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* action : {"status", "bookmark_add", "bookmark_list", "bookmark_delete", "seek_bookmark",
-                               "coverage_probe", "coverage_scan", "coverage_summary"})
+    for (const char* action : {"status", "start", "stop", "invalidate", "position", "markers", "seek", "step_back_frame",
+                               "step_forward_frame", "step_back_instruction", "step_forward_instruction", "reverse_step",
+                               "reverse_continue", "find_last", "resume", "dump", "load", "bookmark_add", "bookmark_list",
+                               "bookmark_delete", "seek_bookmark", "coverage_probe", "coverage_scan", "coverage_summary"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
     schema["properties"]["action"]["description"] =
-        "'status' reports the TTD session; "
-        "'bookmark_add'/'bookmark_list'/'bookmark_delete'/'seek_bookmark' manage advisory bookmarks; "
-        "'coverage_probe' checks if a frame touched an address range; "
-        "'coverage_scan' lists frames in a range touching an address range; "
-        "'coverage_summary' returns bucketed address activity heatmaps";
+        "Session: 'status' (state, recorded frame range, checkpoints, memory), 'start' (begin recording; optional mode), "
+        "'stop' (end recording, history kept and browsable), 'invalidate' (drop all history), 'position' (current point + "
+        "session end), 'markers' (replay barriers: tape control, disk writes, debugger edits, resets). "
+        "Navigate (needs a stopped session - these return an error while recording): 'seek' (frame + optional tinframe), "
+        "'step_back_frame'/'step_forward_frame', 'step_back_instruction'/'step_forward_instruction', "
+        "'reverse_step' (count instructions OR tstates back), 'reverse_continue' (run backward until PC hits one of pcs), "
+        "'find_last' (latest write/read/execute/io at an address before the current point, or before before_frame). "
+        "'resume' continues recording from the current (or given) point and DISCARDS the history after it. "
+        "Files: 'dump' / 'load' a .ttd session (path on the emulator's machine; load needs the same machine model). "
+        "Bookmarks: 'bookmark_add'/'bookmark_list'/'bookmark_delete'/'seek_bookmark' (advisory labels, never barriers). "
+        "Coverage index: 'coverage_probe' (did frame X touch an address range), 'coverage_scan' (which frames did), "
+        "'coverage_summary' (bucketed activity heatmap).";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["target"]["description"] = "Emulator id, or 'auto' to reuse the single instance";
+    schema["properties"]["mode"]["type"] = "string";
+    schema["properties"]["mode"]["enum"] = Json::Value(Json::arrayValue);
+    schema["properties"]["mode"]["enum"].append("development");
+    schema["properties"]["mode"]["enum"].append("gaming");
+    schema["properties"]["mode"]["description"] =
+        "start: 'development' (default; keeps the write journal, so find_last is fast) or 'gaming' (no write journal, "
+        "less memory; find_last falls back to replay)";
+    schema["properties"]["enable_write_journal"]["type"] = "boolean";
+    schema["properties"]["enable_write_journal"]["description"] = "start: explicit write-journal switch, overrides mode";
+    schema["properties"]["reason"]["type"] = "string";
+    schema["properties"]["reason"]["description"] = "invalidate: free-text reason echoed back and logged";
     schema["properties"]["label"]["type"] = "string";
     schema["properties"]["label"]["description"] =
-        "Bookmark label for bookmark_add / bookmark_delete / seek_bookmark";
+        "Bookmark label for bookmark_add / bookmark_delete / seek_bookmark (non-empty, at most 63 characters)";
     schema["properties"]["frame"]["type"] = "integer";
-    schema["properties"]["frame"]["description"] = "Frame number for bookmark_add or coverage_probe";
+    schema["properties"]["frame"]["description"] =
+        "Frame number: target for seek (required), optional start point for resume, optional position for bookmark_add "
+        "(default: current position), frame to test for coverage_probe";
+    schema["properties"]["tinframe"]["type"] = "integer";
+    schema["properties"]["tinframe"]["default"] = 0;
+    schema["properties"]["tinframe"]["description"] = "T-states within 'frame' for seek / resume / bookmark_add (default 0)";
+    schema["properties"]["count"]["type"] = "integer";
+    schema["properties"]["count"]["description"] = "reverse_step: number of instructions to step back (give count OR tstates)";
+    schema["properties"]["tstates"]["type"] = "integer";
+    schema["properties"]["tstates"]["description"] =
+        "reverse_step: T-states to step back; lands on the nearest instruction start at or before the target";
+    schema["properties"]["pcs"]["type"] = "array";
+    schema["properties"]["pcs"]["items"]["type"] = "string";
+    schema["properties"]["pcs"]["description"] =
+        "reverse_continue: reverse breakpoints - PC addresses as integers or '0x8000' strings (non-empty)";
+    schema["properties"]["path"]["type"] = "string";
+    schema["properties"]["path"]["description"] =
+        "dump / load: .ttd file path, resolved by the emulator process (its machine and working directory)";
+    schema["properties"]["addr"]["type"] = "string";
+    schema["properties"]["addr"]["description"] = "find_last: single Z80 address (integer, '0x5800', '#5800' or '$5800')";
+    schema["properties"]["access"]["type"] = "string";
+    schema["properties"]["access"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* access : {"write", "read", "execute", "io"})
+    {
+        schema["properties"]["access"]["enum"].append(access);
+    }
+    schema["properties"]["access"]["description"] = "find_last: access kind to search for (default 'write')";
+    schema["properties"]["value"]["type"] = "string";
+    schema["properties"]["value"]["description"] = "find_last: only accesses that moved this byte value (0..255)";
+    schema["properties"]["pc_from"]["type"] = "string";
+    schema["properties"]["pc_from"]["description"] = "find_last: only accesses made by code with PC >= pc_from";
+    schema["properties"]["pc_to"]["type"] = "string";
+    schema["properties"]["pc_to"]["description"] = "find_last: only accesses made by code with PC <= pc_to";
+    schema["properties"]["before_frame"]["type"] = "integer";
+    schema["properties"]["before_frame"]["description"] =
+        "find_last: search backward from this frame instead of the current position";
+    schema["properties"]["before_tin"]["type"] = "integer";
+    schema["properties"]["before_tin"]["description"] = "find_last: T-states within before_frame (default 0)";
     schema["properties"]["from_frame"]["type"] = "integer";
     schema["properties"]["from_frame"]["description"] = "Starting frame for coverage_scan / coverage_summary";
     schema["properties"]["to_frame"]["type"] = "integer";
@@ -1829,23 +2047,28 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["kind"]["type"] = "string";
     schema["properties"]["kind"]["description"] = "Coverage kind: 'executed', 'written', or 'read'";
     schema["properties"]["addr_from"]["type"] = "string";
-    schema["properties"]["addr_from"]["description"] = "Start Z80 address for coverage query (e.g. '0xBF00' or 48896)";
+    schema["properties"]["addr_from"]["description"] =
+        "Start Z80 address of a range for find_last or a coverage query (e.g. '0xBF00' or 48896)";
     schema["properties"]["addr_to"]["type"] = "string";
-    schema["properties"]["addr_to"]["description"] = "End Z80 address for coverage query (e.g. '0xBFFF' or 49151)";
+    schema["properties"]["addr_to"]["description"] =
+        "End Z80 address (inclusive) of a range for find_last or a coverage query (e.g. '0xBFFF' or 49151)";
     schema["properties"]["phys_page"]["type"] = "integer";
-    schema["properties"]["phys_page"]["description"] = "Optional physical page index (0..255) for coverage query";
+    schema["properties"]["phys_page"]["description"] =
+        "Optional physical RAM page (0..255) for find_last or a coverage query - picks the bank on paged machines";
     schema["properties"]["limit"]["type"] = "integer";
     schema["properties"]["limit"]["description"] = "Max results for coverage_scan (default 200) or max buckets for coverage_summary (default 100)";
     schema["properties"]["bucket_size"]["type"] = "integer";
     schema["properties"]["bucket_size"]["description"] = "Frames per bucket for coverage_summary (default: auto)";
-    schema["properties"]["tinframe"]["type"] = "integer";
-    schema["properties"]["tinframe"]["default"] = 0;
-    schema["properties"]["tinframe"]["description"] = "Optional T-states within the frame for bookmark_add";
     schema["required"].append("action");
 
     registry.Register(
         "time_travel",
-        "Time-travel debugging (TTD): session status, agent bookmarks, and TTD coverage index queries.",
+        "Time-travel debugging (TTD): record execution, then move backward and forward through it. Typical flow: "
+        "'start' -> run the program (control_execution) -> 'stop' -> 'find_last' / 'reverse_continue' / 'seek' / step "
+        "actions to inspect the past (inspect_state shows the machine at that point) -> 'resume' to continue live from "
+        "there. While recording, the host speed is held at 1x and turbo / fast tape / fast disk are off; loading a "
+        "snapshot, tape or disk, reloading the ROM, or changing speed on a stopped session wipes the history; reset stops "
+        "the recording and keeps it. Also: agent bookmarks and coverage index queries.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             const std::string action = args["action"].asString();
@@ -1860,10 +2083,282 @@ void RegisterTimeTravel(ToolRegistry& registry)
                 }
             }
 
-            auto forward = [&caller, &args, action, done](const std::string& id) {
+            // Request bodies for the session / navigation actions are built and
+            // validated here, before target resolution, so a malformed call
+            // costs no HTTP round-trip
+            auto body = std::make_shared<Json::Value>(Json::objectValue);
+            std::string error;
+            if (action == "start")
+            {
+                if (args.isMember("mode"))
+                {
+                    const std::string mode = args["mode"].asString();
+                    if (mode != "development" && mode != "gaming")
+                    {
+                        done(ToolResult::Error("'mode' must be 'development' or 'gaming'"));
+                        return;
+                    }
+                    (*body)["mode"] = mode;
+                }
+                if (args.isMember("enable_write_journal"))
+                {
+                    (*body)["enable_write_journal"] = args["enable_write_journal"].asBool();
+                }
+            }
+            else if (action == "invalidate")
+            {
+                if (args.isMember("reason"))
+                {
+                    (*body)["reason"] = args["reason"].asString();
+                }
+            }
+            else if (action == "seek")
+            {
+                if (!args.isMember("frame"))
+                {
+                    done(ToolResult::Error("Action 'seek' requires 'frame' (use 'seek_bookmark' to seek by label)"));
+                    return;
+                }
+                if (!CopyNumber(args, "frame", *body, error) || !CopyNumber(args, "tinframe", *body, error))
+                {
+                    done(ToolResult::Error(error));
+                    return;
+                }
+            }
+            else if (action == "resume")
+            {
+                if (!CopyNumber(args, "frame", *body, error) || !CopyNumber(args, "tinframe", *body, error))
+                {
+                    done(ToolResult::Error(error));
+                    return;
+                }
+            }
+            else if (action == "reverse_step")
+            {
+                if (args.isMember("count") == args.isMember("tstates"))
+                {
+                    done(ToolResult::Error("Action 'reverse_step' needs exactly one of 'count' (instructions) or 'tstates'"));
+                    return;
+                }
+                if (!CopyNumber(args, "count", *body, error) || !CopyNumber(args, "tstates", *body, error))
+                {
+                    done(ToolResult::Error(error));
+                    return;
+                }
+            }
+            else if (action == "reverse_continue")
+            {
+                if (!args["pcs"].isArray() || args["pcs"].empty())
+                {
+                    done(ToolResult::Error("Action 'reverse_continue' requires 'pcs': a non-empty array of PC addresses"));
+                    return;
+                }
+                Json::Value pcs(Json::arrayValue);
+                for (const Json::Value& pc : args["pcs"])
+                {
+                    Json::Value number = NumericOrHex(pc);
+                    if (number.isNull() || !number.isUInt() || number.asUInt() > 0xFFFF)
+                    {
+                        done(ToolResult::Error("'pcs' entries must be addresses 0..65535 (integer or '0x....' string)"));
+                        return;
+                    }
+                    pcs.append(number);
+                }
+                (*body)["pcs"] = pcs;
+            }
+            else if (action == "find_last")
+            {
+                if (!args.isMember("addr") && !args.isMember("addr_from") && !args.isMember("addr_to") && !args.isMember("pc_from") &&
+                    !args.isMember("pc_to") && !args.isMember("value"))
+                {
+                    done(ToolResult::Error("Action 'find_last' needs a search criterion: 'addr', 'addr_from'/'addr_to', "
+                                           "'pc_from'/'pc_to' or 'value'"));
+                    return;
+                }
+                // Address / value / PC fields go through verbatim: the WebAPI
+                // parses numbers and "0x.."/"#.."/"$.." strings with range checks
+                for (const char* field : {"addr", "addr_from", "addr_to", "value", "pc_from", "pc_to", "access"})
+                {
+                    if (args.isMember(field))
+                    {
+                        (*body)[field] = args[field];
+                    }
+                }
+                if (!CopyNumber(args, "phys_page", *body, error) || !CopyNumber(args, "before_frame", *body, error) ||
+                    !CopyNumber(args, "before_tin", *body, error))
+                {
+                    done(ToolResult::Error(error));
+                    return;
+                }
+            }
+            else if (action == "dump" || action == "load")
+            {
+                if (args["path"].asString().empty())
+                {
+                    done(ToolResult::Error("Action '" + action + "' requires 'path' (a .ttd file on the emulator's machine)"));
+                    return;
+                }
+                (*body)["path"] = args["path"].asString();
+            }
+
+            auto forward = [&caller, &args, action, body, done](const std::string& id) {
                 if (action == "status")
                 {
-                    ForwardCall("GET", Endpoint(id, "/ttd/status"), nullptr, caller, "TTD status of " + id, done);
+                    CallAndSummarize("GET", Endpoint(id, "/ttd/status"), nullptr, caller,
+                                     [id](const Json::Value& b) { return "TTD on " + id + ": " + FormatTtdStatus(b); }, done);
+                }
+                else if (action == "start")
+                {
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/start"), body.get(), caller, [id](const Json::Value& b) {
+                        std::string text = b["already_active"].asBool() ? "TTD was already recording on " + id
+                                                                        : "TTD recording started on " + id;
+                        text += " (write journal ";
+                        text += b["write_journal_enabled"].asBool() ? "on" : "off";
+                        text += "). Host speed is held at 1x and turbo / fast tape / fast disk are off until 'stop'. "
+                                "Run the program now (control_execution), then 'stop' to browse the history.";
+                        return text;
+                    }, done);
+                }
+                else if (action == "stop")
+                {
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/stop"), nullptr, caller, [id](const Json::Value& b) {
+                        return b["stopped"].asBool() ? "TTD recording stopped on " + id + "; history kept (state " +
+                                                           b["state"].asString() + ") - seek/step/find_last are available now"
+                                                     : "TTD was not recording on " + id + " (state " + b["state"].asString() + ")";
+                    }, done);
+                }
+                else if (action == "invalidate")
+                {
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/invalidate"), body.get(), caller, [id](const Json::Value& b) {
+                        return "TTD history dropped on " + id + " (reason '" + b["reason"].asString() + "')";
+                    }, done);
+                }
+                else if (action == "position")
+                {
+                    CallAndSummarize("GET", Endpoint(id, "/ttd/position"), nullptr, caller, [](const Json::Value& b) {
+                        return "At " + FormatTimePoint(b["current"]["frame"], b["current"]["tinframe"]) + ", session ends at " +
+                               FormatTimePoint(b["session_end"]["frame"], b["session_end"]["tinframe"]) + " (state " +
+                               b["state"].asString() + ")";
+                    }, done);
+                }
+                else if (action == "markers")
+                {
+                    CallAndSummarize("GET", Endpoint(id, "/ttd/markers"), nullptr, caller, [](const Json::Value& b) {
+                        std::ostringstream out;
+                        out << b["count"].asUInt64() << " marker(s)";
+                        const Json::Value& markers = b["markers"];
+                        for (Json::ArrayIndex i = 0; i < markers.size() && i < 32; ++i)
+                        {
+                            out << "\n- " << FormatMarker(markers[i]);
+                        }
+                        if (markers.size() > 32)
+                        {
+                            out << "\n... " << (markers.size() - 32) << " more (see structuredContent)";
+                        }
+                        out << "\n(replay barriers: seek and reverse search stop at them)";
+                        return out.str();
+                    }, done);
+                }
+                else if (action == "seek")
+                {
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/seek"), body.get(), caller, [](const Json::Value& b) {
+                        std::string text = std::string(b["reached"].asBool() ? "Reached " : "Stopped at ") +
+                                           FormatTimePoint(b["arrived_at"]["frame"], b["arrived_at"]["tinframe"]) + " (" +
+                                           b["halt_reason"].asString() + ")";
+                        if (b.isMember("blocking_marker"))
+                        {
+                            text += " - blocked by marker " + FormatMarker(b["blocking_marker"]);
+                        }
+                        return text;
+                    }, done);
+                }
+                else if (action == "step_back_frame" || action == "step_forward_frame")
+                {
+                    const std::string route = action == "step_back_frame" ? "/ttd/step-back" : "/ttd/step-forward";
+                    CallAndSummarize("POST", Endpoint(id, route), nullptr, caller, [](const Json::Value& b) {
+                        return std::string(b["stepped"].asBool() ? "Stepped to " : "Could not step; still at ") +
+                               FormatTimePoint(b["frame"], b["tinframe"]);
+                    }, done);
+                }
+                else if (action == "step_back_instruction" || action == "step_forward_instruction")
+                {
+                    Json::Value stepBody;
+                    stepBody["dir"] = action == "step_back_instruction" ? "back" : "forward";
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/step-instruction"), &stepBody, caller, [](const Json::Value& b) {
+                        return std::string(b["stepped"].asBool() ? "Stepped one instruction " : "Could not step ") +
+                               b["dir"].asString() + ", at " + FormatTimePoint(b["frame"], b["tinframe"]);
+                    }, done);
+                }
+                else if (action == "reverse_step")
+                {
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/reverse-step"), body.get(), caller, [](const Json::Value& b) {
+                        return std::string(b["reached"].asBool() ? "Stepped back to " : "Could not step back fully; at ") +
+                               FormatTimePoint(b["frame"], b["tinframe"]);
+                    }, done);
+                }
+                else if (action == "reverse_continue")
+                {
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/reverse-continue"), body.get(), caller, [](const Json::Value& b) {
+                        std::string text = b["matched"].asBool()
+                                               ? "Hit PC " + Hex16(b["pc"].asUInt()) + " at " + FormatTimePoint(b["frame"], b["tinframe"])
+                                               : "No PC match; stopped at " + FormatTimePoint(b["frame"], b["tinframe"]);
+                        if (b.isMember("blocked_by_marker"))
+                        {
+                            text += " - blocked by marker " + FormatMarker(b["blocked_by_marker"]);
+                        }
+                        return text;
+                    }, done);
+                }
+                else if (action == "find_last")
+                {
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/find-last"), body.get(), caller, [](const Json::Value& b) {
+                        if (b["found"].asBool())
+                        {
+                            std::string text = "Last " + b["access"].asString() + " at " + FormatTimePoint(b["frame"], b["tinframe"]) +
+                                               " by PC " + Hex16(b["pc"].asUInt()) + ", value " + std::to_string(b["value"].asUInt());
+                            if (!b["phys_page"].isNull())
+                            {
+                                text += ", RAM page " + std::to_string(b["phys_page"].asUInt());
+                            }
+                            return text + ". Seek to that frame/tinframe to inspect the machine there.";
+                        }
+                        if (b["blocked"].asBool())
+                        {
+                            Json::Value marker;
+                            marker["frame"] = b["marker_frame"];
+                            marker["tinframe"] = b["marker_tinframe"];
+                            marker["kind"] = b["marker_kind"];
+                            marker["reason"] = b["marker_reason"];
+                            return "Not found after the replay barrier " + FormatMarker(marker) +
+                                   "; the search cannot look past it";
+                        }
+                        return std::string("Not found in the recorded history");
+                    }, done);
+                }
+                else if (action == "resume")
+                {
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/resume"), body.get(), caller, [id](const Json::Value& b) {
+                        return b["resumed"].asBool()
+                                   ? "Recording resumed on " + id + " from " + FormatTimePoint(b["frame"], b["tinframe"]) +
+                                         "; history after that point was discarded and the emulator is running"
+                                   : "Could not resume from " + FormatTimePoint(b["frame"], b["tinframe"]) + " (state " +
+                                         b["state"].asString() + ")";
+                    }, done);
+                }
+                else if (action == "dump")
+                {
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/dump"), body.get(), caller, [](const Json::Value& b) {
+                        return "Session written to " + b["path"].asString() + " (" + std::to_string(b["bytes"].asInt64()) + " bytes)";
+                    }, done);
+                }
+                else if (action == "load")
+                {
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/load"), body.get(), caller, [](const Json::Value& b) {
+                        return "Loaded " + b["path"].asString() + ": frames " + std::to_string(b["session_start_frame"].asUInt64()) +
+                               ".." + std::to_string(b["current_end_frame"].asUInt64()) + ", " +
+                               std::to_string(b["checkpoint_count"].asUInt64()) + " checkpoint(s), state " + b["state"].asString() +
+                               ". Use 'seek' to position the machine inside it.";
+                    }, done);
                 }
                 else if (action == "bookmark_add")
                 {
@@ -2043,7 +2538,8 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
     RegisterTypeInput(*registry);
     RegisterMouseInput(*registry);
 
-    // TD-4 — time_travel (status + agent bookmarks; seed of the full TTD tool)
+    // TD-1 — time_travel: the full TTD surface (session, navigation, reverse
+    // search, .ttd files, TD-4 bookmarks, TD-7 coverage index)
     RegisterTimeTravel(*registry);
 
     // Phase 2 — smart tools

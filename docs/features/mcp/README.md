@@ -108,8 +108,9 @@ progress when the request carries a `_meta.progressToken` (see
 | `emulator_manage` | create/list/status/start/stop/pause/resume/reset/destroy, `list_models` (per-model `creatable` flags), `server` (build fingerprint + `models_creatable`); responses carry machine identity | — |
 | `load_software` | `.sna/.z80` snapshots, `.tap/.tzx` tapes (auto-play), `.trd/.scl/.fdi` disks | — |
 | `control_execution` | run/pause/resume/step/step_n/step_over/step_out, `run_frames`/`run_tstates`/`run_to_interrupt`, breakpoints | — |
-| `inspect_state` | aspect fan-out: machine, registers, memory, disasm, stack, breakpoints, memory_banks, paging (tagged latches + bank table), ports (static port map with semantic tags + live routing), video (video mode report), screen (screen state, verbose), screen_flash (FLASH timing) — screen reports per command-interface.md §6.6, screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, audio_gs, fdc, mouse (device reports, see command-interface.md §3.3) | one notification per aspect |
+| `inspect_state` | aspect fan-out: machine, registers, memory, disasm, stack, breakpoints, memory_banks, paging (tagged latches + bank table), ports (static port map with semantic tags + live routing), video (video mode report), screen (screen state, verbose), screen_flash (FLASH timing) — screen reports per command-interface.md §6.6, screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, audio_gs, fdc, mouse (device reports, see command-interface.md §3.3), ttd (time-travel session: state, recorded range, checkpoints, current position) | one notification per aspect |
 | `type_input` | type (tokenized BASIC entry), tap/press/release, combo, macro, `release_all`, status, `list_keys` | — |
+| `time_travel` | time-travel debugging: record, then seek / step / search backward through the recording; `.ttd` files, bookmarks, coverage index — see [Time-travel debugging](#time-travel-debugging) | — |
 | `manage_symbols` | `load_labels`, list, resolve, `load_listing`, `source_at`, `step_line`, `run_to_line` (sjasmplus `.lst`) | — |
 | `debug_code` | disassemble, assemble (two-pass, labels), `find_bytes`, `trace` (calltrace sessions), `porttrace` | `trace`: per phase (start/run/stop/read) |
 | `analyze_performance` | coverage_* (+gaps), `frame_cost`, profiler suites, `profile_report`, `porttrace` | `profile_report` + `porttrace`: per phase |
@@ -121,6 +122,127 @@ The router pair (`search_api` / `invoke_api`) exposes the entire WebAPI —
 28 endpoint groups, 212 paths — without minting a tool per endpoint. Agents
 discover the surface via `search_api` and fall back to `invoke_api` when a
 smart tool doesn't cover the use case.
+
+## Time-travel debugging
+
+Time-travel debugging (TTD) records the machine while it runs, so that
+afterwards you can move backward through what happened: jump to any recorded
+moment, step back one instruction, or ask "who last wrote to this address?".
+The `time_travel` tool exposes the whole feature; each action is a thin
+wrapper over one WebAPI route under `/api/v1/emulator/{id}/ttd/…`
+([webapi-interface.md](../../emulator/design/control-interfaces/webapi-interface.md)
+has the route reference, the
+[TTD design](../../emulator/design/debugger/time-travel-debug/time-travel-debugging-tdd.md)
+the internals).
+
+### Terms
+
+| Term | Meaning |
+|:--|:--|
+| frame | One video frame of emulated time (about 1/50 s). Frame numbers are the emulator's frame counter. |
+| `tinframe` | T-states (CPU clock ticks) inside a frame. `frame 12 t=500` is a point in time. |
+| checkpoint | A saved machine state taken at a frame boundary while recording. Moving through history restores the nearest checkpoint and replays forward from it. |
+| session state | `idle` (not recording; history may or may not exist), `recording`, `detached` (the machine sits at a point in the recorded past and is paused). |
+| marker | A replay barrier: something the recording cannot reproduce happened here (tape play/stop, a disk sector write, a debugger memory edit, a reset). Seek and backward searches stop at it and say so. |
+| bookmark | Your own label on a point in time. Advisory only, never a barrier. |
+| write journal | A log of every memory write made while recording (on by default). It makes `find_last` for writes instant; without it the search replays history. |
+
+### Actions
+
+| Action | Arguments | What it does |
+|:--|:--|:--|
+| `status` | — | Session state, recorded frame range, checkpoint count, memory use |
+| `start` | `mode`: `development` (default, write journal on) or `gaming` (journal off, less memory); `enable_write_journal` overrides `mode` | Begin recording |
+| `stop` | — | Stop recording; history is kept and can be browsed |
+| `invalidate` | `reason` (optional) | Drop all history |
+| `position` | — | Current point and session end |
+| `markers` | — | List the replay barriers |
+| `seek` | `frame`, `tinframe` (default 0) | Move the machine to that point in the recording |
+| `step_back_frame` / `step_forward_frame` | — | One frame back / forward |
+| `step_back_instruction` / `step_forward_instruction` | — | One instruction back / forward |
+| `reverse_step` | `count` (instructions) **or** `tstates` | Step back several instructions or T-states |
+| `reverse_continue` | `pcs`: list of addresses | Run backward until the CPU was about to execute one of them |
+| `find_last` | `addr` or `addr_from`/`addr_to`; `access` (`write` default, `read`, `execute`, `io`); optional `value`, `pc_from`/`pc_to`, `phys_page`, `before_frame`/`before_tin` | Latest matching access before the current point (or before `before_frame`) |
+| `resume` | `frame`/`tinframe` (optional, default: current point) | Continue recording live from that point; **everything recorded after it is discarded** |
+| `dump` / `load` | `path` | Save / load a `.ttd` session file |
+| `bookmark_add` / `bookmark_list` / `bookmark_delete` / `seek_bookmark` | `label`, optional `frame`/`tinframe` | Named points in time |
+| `coverage_probe` / `coverage_scan` / `coverage_summary` | `frame` or `from_frame`/`to_frame`, `kind`, `addr_from`/`addr_to`, … | Which frames touched which addresses, without replaying |
+
+Addresses may be integers or strings such as `"0x5800"`. Everything that moves
+through history (`seek`, the step actions, `reverse_*`, `find_last`) needs a
+stopped session: while recording the call fails with HTTP 409 and the tool
+tells you to call `stop` first. `find_last` reports where the access happened;
+`seek` to the reported `frame`/`tinframe` to inspect the machine there.
+
+### Session rules
+
+- **Recording runs at real speed.** While a session records (and while the
+  machine sits in the past), the host speed control is held at 1x and 2x-16x
+  is refused, turbo mode is off and cannot be switched on. Fast tape, turbo
+  tape and fast disk loading are also off, both while recording and while a
+  stopped or loaded session is replayed. The previous settings come back when
+  the session returns to `idle`. The emulated machine's own hardware turbo
+  (ATM, Scorpion) is not affected.
+- **These wipe the history:** loading a snapshot, tape or disk (or creating a
+  disk), reloading the ROM, changing the speed on a stopped session that still
+  holds history, and `invalidate`. Load your software *before* `start`.
+- **Reset keeps the history.** A reset (including a disk autostart) stops the
+  recording; the recorded history stays browsable.
+- **Devices TTD cannot follow end the recording.** Using the ZX-Evo SD card
+  while recording ends (and drops) the session at the next frame boundary.
+- **`load`** only restores into a machine of the model the session was
+  recorded on (the error names both models). After a load the session is
+  `idle`: `seek` to position the machine inside it. The path is resolved by
+  the emulator process.
+
+### Worked example: who overwrote the screen attribute?
+
+A game's top-left attribute cell (`0x5800`) turns red and you want the code
+that did it.
+
+```jsonc
+// 1. Load first (a load after start would wipe the recording), then record
+{"name": "load_software",     "arguments": {"path": "/games/game.sna"}}
+{"name": "time_travel",       "arguments": {"action": "start"}}
+{"name": "control_execution", "arguments": {"action": "run_frames", "frames": 500}}
+{"name": "time_travel",       "arguments": {"action": "stop"}}
+// -> "TTD recording stopped on emu-1; history kept (state idle) - seek/step/find_last are available now"
+
+// 2. Ask for the last write to 0x5800
+{"name": "time_travel", "arguments": {"action": "find_last", "addr": "0x5800", "access": "write"}}
+// -> "Last write at frame 431 t=20112 by PC 0x8F3A, value 16, RAM page 5. Seek to that frame/tinframe ..."
+
+// 3. Go there and look at the code
+{"name": "time_travel",   "arguments": {"action": "seek", "frame": 431, "tinframe": 20112}}
+{"name": "inspect_state", "arguments": {"aspects": ["registers", "disasm", "ttd"]}}
+```
+
+Narrow a noisy search with `value` (only writes of that byte), `pc_from` /
+`pc_to` (only code in that range) or `phys_page` (only that RAM bank on a
+128K+ machine).
+
+### Worked example: when was this routine last entered?
+
+```jsonc
+{"name": "time_travel", "arguments": {"action": "reverse_continue", "pcs": ["0xBF00", "0xBF40"]}}
+// -> "Hit PC 0xBF00 at frame 212 t=31000"
+{"name": "time_travel", "arguments": {"action": "step_back_instruction"}}   // the caller's last instruction
+{"name": "time_travel", "arguments": {"action": "resume"}}                  // continue live from here (later history dropped)
+```
+
+If the answer is `"... blocked by marker tape_control 'play' at frame 180"`,
+the search reached a point the recording cannot replay across; everything
+before the marker is out of reach for that search.
+
+### Worked example: keep a session for later
+
+```jsonc
+{"name": "time_travel", "arguments": {"action": "bookmark_add", "label": "depacker done"}}
+{"name": "time_travel", "arguments": {"action": "dump", "path": "/tmp/game.ttd"}}
+// later, on a machine of the same model:
+{"name": "time_travel", "arguments": {"action": "load", "path": "/tmp/game.ttd"}}
+{"name": "time_travel", "arguments": {"action": "seek_bookmark", "label": "depacker done"}}
+```
 
 ## Resources
 
