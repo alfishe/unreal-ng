@@ -82,7 +82,9 @@ protected:
         }
 
         double bestNs = 1e9;
-        for (int trial = 0; trial < 3; ++trial)
+        // Best of up to 10 series: a load burst (a parallel build, other test shards) slows a series down,
+        // a real regression slows every series. The first series within the miss-path budget ends it
+        for (int trial = 0; trial < 10; ++trial)
         {
             auto start = std::chrono::high_resolution_clock::now();
             for (size_t i = 0; i < iterations; ++i)
@@ -97,8 +99,7 @@ protected:
             {
                 bestNs = trialNs;
             }
-            // If trial 0 was clean and under the miss-path threshold, no need for more trials
-            if (trial == 0 && trialNs < MAX_MISS_PATH_NS)
+            if (trialNs < MAX_MISS_PATH_NS)
             {
                 break;
             }

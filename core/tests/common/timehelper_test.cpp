@@ -39,7 +39,9 @@ TEST(TimeHelper_Test, WaitUntilPrecise_WakesOnTime)
     // helper defect is not - so the budget is asserted as "met in at least one
     // of kAttempts independent measurements". "Never early" is checked on every
     // sample of every attempt.
-    constexpr int kAttempts = 5;
+    // 12: on a machine shared with parallel builds (load average ~90 seen) five attempts all landed in
+    // load bursts. A clean run still stops after the first attempt
+    constexpr int kAttempts = 12;
     // The sharded run (test-parallel: 20 emulator shards oversubscribing the
     // cores) has no reliably assertable wall-clock budget at all (single wakes
     // stall 35+ ms), so it enforces only the load-independent invariants.
