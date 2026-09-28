@@ -232,6 +232,10 @@ void EmulatorAPI::getTTDStatus(const HttpRequestPtr& req,
     ret["coverage_index_frames"] = Json::UInt64(info.coverageIndexFrames);
     ret["coverage_index_bytes"]  = Json::UInt64(info.coverageIndexBytes);
     ret["bookmark_count"]       = Json::UInt64(info.bookmarkCount);
+    // Why the last session with history was dropped (null when none was):
+    // tells an agent why its recording is gone, e.g. a device TTD cannot follow
+    ret["last_drop_reason"]     = info.lastDropReason.empty() ? Json::Value(Json::nullValue)
+                                                              : Json::Value(info.lastDropReason);
     ret["write_journal_enabled"]    = info.writeJournalEnabled;
         ret["ttd_available"]            = true;
     }
@@ -427,6 +431,18 @@ void EmulatorAPI::invalidateTTD(const HttpRequestPtr& req,
     if (jsonBody && jsonBody->isMember("reason") && (*jsonBody)["reason"].isString())
     {
         reason = (*jsonBody)["reason"].asString();
+    }
+
+    if (const std::string refusal = mgr->RecordingGuard(ttd::TTDGuardedAction::Invalidate); !refusal.empty())
+    {
+        Json::Value error;
+        error["error"] = "Conflict";
+        error["message"] = refusal;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
     }
 
     mgr->InvalidateSession(reason.c_str());

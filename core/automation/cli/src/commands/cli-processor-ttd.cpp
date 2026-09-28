@@ -237,6 +237,8 @@ void CLIProcessor::HandleTTDStatus(const ClientSession& session, EmulatorContext
            << NEWLINE;
     }
     ss << "  Bookmarks:              " << info.bookmarkCount << " (advisory, never barriers)" << NEWLINE;
+    if (!info.lastDropReason.empty())
+        ss << "  Last session dropped:   " << info.lastDropReason << NEWLINE;
 
     session.SendResponse(ss.str());
 }
@@ -300,6 +302,12 @@ void CLIProcessor::HandleTTDInvalidate(const ClientSession& session, EmulatorCon
     if (args.size() > 1)
     {
         reason = args[1];
+    }
+
+    if (const std::string refusal = mgr->RecordingGuard(ttd::TTDGuardedAction::Invalidate); !refusal.empty())
+    {
+        session.SendResponse("Error: " + refusal + NEWLINE);
+        return;
     }
 
     mgr->InvalidateSession(reason.c_str());

@@ -182,6 +182,28 @@ struct TTDSessionInfo
     /// Advisory bookmarks currently held (TD-4). Zero is a session without
     /// annotations — complete and correct.
     size_t bookmarkCount = 0;
+
+    /// Why the last session with history was dropped (the InvalidateSession
+    /// reason, e.g. a device TTD cannot follow ending a recording); empty
+    /// when none was dropped in this run.
+    std::string lastDropReason;
+};
+
+/// @brief Actions that would end, wipe or corrupt a recording in progress.
+/// While TTD records they are refused (TimeTravelManager::RecordingGuard):
+/// stop the recording first. A machine reset is not one of them - it stops
+/// the recording and keeps the history.
+enum class TTDGuardedAction : uint8_t
+{
+    LoadSnapshot,        ///< replaces the whole machine state
+    LoadTape,            ///< a new medium
+    LoadDisk,            ///< a new medium
+    CreateDisk,          ///< a new medium
+    LoadRom,             ///< the code every checkpoint relies on
+    Invalidate,          ///< discards the session
+    DisableTimeTravel,   ///< capture stops mid-session
+    DisableDebugMode,    ///< writes stop reaching the history
+    ChangeWriteJournal   ///< a recording keeps the journal mode it started with
 };
 
 /// @brief String conversion for TTDCoverageKind.
@@ -305,8 +327,17 @@ public:
 
     /// @brief Drop all captured history and return to Idle.
     /// Called by session-invalidation hooks (Reset / Load* / speed change).
-    /// The reason string is logged but not stored.
+    /// The reason is logged and kept as TTDSessionInfo::lastDropReason.
     void InvalidateSession(const char* reason);
+
+    /// @brief Whether `action` may run now. While a user recording runs, every
+    /// TTDGuardedAction is refused - stop the recording first. A debugger's
+    /// live history (DebuggerLive) is not protected: an outside change drops it
+    /// and the debugger restarts it.
+    /// @return empty when allowed; otherwise the reason, one sentence a user can
+    /// act on. Every automation surface shows it verbatim, and the core paths
+    /// that perform the action refuse with it too.
+    std::string RecordingGuard(TTDGuardedAction action) const;
 
     /// @brief InvalidateSession requested from inside emulation, by a device
     /// whose state TTD cannot follow yet (storage: the SD card, IDE).
@@ -362,14 +393,22 @@ public:
     ///   - Fast reverse-watchpoint queries ("where was X last written?")
     ///   - Best for: debugging, step-back analysis, reverse debugging
     ///
-    /// Must be called before StartRecording() to take effect. Changing it while
-    /// a session holds history leaves a gap in the journal, so reverse queries
-    /// on that session fall back to replay.
-    void SetEnableWriteJournal(bool enable)
+    /// Must be called before StartRecording() to take effect. Refused (false)
+    /// while a user recording runs: it keeps the mode it started with
+    /// (RecordingGuard(ChangeWriteJournal) explains; a debugger's live history
+    /// is not protected). Changing it on a stopped
+    /// session that holds history leaves a gap in the journal, so reverse
+    /// queries on that session fall back to replay.
+    bool SetEnableWriteJournal(bool enable)
     {
-        if (enable != _enableWriteJournal && !_timeline.empty())
+        if (enable == _enableWriteJournal)
+            return true;
+        if (!RecordingGuard(TTDGuardedAction::ChangeWriteJournal).empty())
+            return false;
+        if (!_timeline.empty())
             _journalGapless = false;
         _enableWriteJournal = enable;
+        return true;
     }
     bool GetEnableWriteJournal() const { return _enableWriteJournal; }
 
@@ -1679,6 +1718,8 @@ private:
     /// between a stop and a live resume). Only then may FindLastAccess answer
     /// from it; a loaded file's journal cannot vouch for this and replays.
     bool _journalGapless = false;
+    /// See TTDSessionInfo::lastDropReason
+    std::string _lastDropReason;
     /// Position at StopRecording, to tell whether the machine ran before a live resume
     uint64_t _recordingStoppedAtT = 0;
 

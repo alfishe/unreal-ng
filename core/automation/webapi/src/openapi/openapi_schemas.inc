@@ -465,6 +465,12 @@
             "Advisory annotations — unlike external-event markers they never "
             "halt a seek.";
 
+    schemas["TTDStatusResponse"]["properties"]["last_drop_reason"]["type"] = "string";
+    schemas["TTDStatusResponse"]["properties"]["last_drop_reason"]["nullable"] = true;
+    schemas["TTDStatusResponse"]["properties"]["last_drop_reason"]["description"] =
+            "What dropped the last history (e.g. snapshot-load, disk-load, rom-reload, an invalidate reason, "
+            "ZX-Evo SD card activity); null until a history is dropped";
+
     schemas["TTDStatusResponse"]["properties"]["session_heap_bytes"]["type"] = "integer";
     schemas["TTDStatusResponse"]["properties"]["session_heap_bytes"]["format"] = "uint64";
     schemas["TTDStatusResponse"]["properties"]["session_heap_bytes"]["description"] =

@@ -554,6 +554,12 @@ void TtdWidget::onClearSession()
     if (!context || !context->pTimeTravelManager) return;
     ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
 
+    // B9: clearing while recording would drop the history being recorded
+    if (const std::string refusal = ttd->RecordingGuard(ttd::TTDGuardedAction::Invalidate); !refusal.empty())
+    {
+        QMessageBox::warning(this, tr("TTD Recording Active"), QString::fromStdString(refusal));
+        return;
+    }
     ttd->InvalidateSession("User cleared session in Qt GUI");
     updateTelemetry();
 }

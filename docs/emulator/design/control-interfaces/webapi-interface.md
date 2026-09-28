@@ -1228,7 +1228,7 @@ All TTD endpoints are scoped under `/api/v1/emulator/{id}/ttd/...` (`{id}` is th
 - States are `idle`, `recording`, `detached` (positioned in history, emulator paused).
 - `seek`, `step-back`, `step-forward`, `step-instruction`, `find-last`, `reverse-step` and `reverse-continue` return **409 Conflict** while recording — call `POST /ttd/stop` first.
 - `start` switches the `timetravel` feature on by itself.
-- Snapshot/tape/disk load, disk create, ROM reload, a host speed change on a stopped session and `invalidate` drop the history; a reset stops the recording and keeps it.
+- While recording, snapshot/tape/disk load (and disk autostart), disk create, `invalidate` and switching `timetravel`/`debugmode` off return **409 Conflict** whose `message` says why and to stop the recording first. On a stopped session those loads, ROM reload, a host speed change and `invalidate` drop the history; a reset stops the recording and keeps it. `GET /ttd/status` → `last_drop_reason` names what dropped the last history.
 - While recording (and through `detached`) the host speed is locked to 1x, turbo mode is off, and fast tape / turbo tape / fast disk read as off.
 
 Positions are always a pair `frame` (absolute frame number) + `tinframe` (t-state offset inside the frame).
@@ -1238,7 +1238,7 @@ Positions are always a pair `frame` (absolute frame number) + `tinframe` (t-stat
 | `GET`  | `/ttd/status` | — | See "status response" below. | ✅ Implemented |
 | `POST` | `/ttd/start` | Optional `{"mode": "gaming"\|"development", "enable_write_journal": bool}`. `gaming` = no write journal; `development` (default) = journal on. `enable_write_journal` wins over `mode`. Ignored when already recording. | `started`, `already_active`, `state`, `write_journal_enabled` | ✅ Implemented |
 | `POST` | `/ttd/stop` | — | `stopped` (false if it was not recording), `state` | ✅ Implemented |
-| `POST` | `/ttd/invalidate` | Optional `{"reason": "..."}` (default `"WebAPI invalidate"`) | `invalidated`, `reason`, `state` | ✅ Implemented |
+| `POST` | `/ttd/invalidate` | Optional `{"reason": "..."}` (default `"WebAPI invalidate"`) | `invalidated`, `reason`, `state`. 409 while recording (stop first). | ✅ Implemented |
 | `POST` | `/ttd/seek` | `{"frame": N, "tinframe"?: T}` *or* `{"bookmark": "label"}` | `reached`, `arrived_at {frame, tinframe}`, `halt_reason`, `blocking_marker {frame, tinframe, kind, reason}` (only when `halt_reason` is `external_event`), `state`, `bookmark` (bookmark seeks). 400 without `frame`/`bookmark` or with an empty label; 404 for an unknown bookmark. | ✅ Implemented |
 | `POST` | `/ttd/step-back` | — | `stepped`, `frame`, `tinframe` (one frame back, same position inside the frame) | ✅ Implemented |
 | `POST` | `/ttd/step-forward` | — | `stepped`, `frame`, `tinframe` (one frame forward, inside recorded history) | ✅ Implemented |
@@ -1285,11 +1285,12 @@ There are no `/ttd/clear`, `/ttd/timeline`, `/ttd/step` or `/ttd/resume_from_her
   "write_journal_bytes": 8748300,
   "coverage_index_frames": 300,
   "coverage_index_bytes": 13926,
-  "bookmark_count": 0
+  "bookmark_count": 0,
+  "last_drop_reason": null
 }
 ```
 
-`state` is `idle`, `recording` or `detached`. When the build has no TTD engine the response still comes back with `ttd_available: false`, `state: "idle"` and zero counters. Field meanings: [command-interface.md → Status fields](./command-interface.md#status-fields).
+`state` is `idle`, `recording` or `detached`. `last_drop_reason` is `null` until something drops a history, then names it (e.g. `"snapshot-load"`). When the build has no TTD engine the response still comes back with `ttd_available: false`, `state: "idle"` and zero counters. Field meanings: [command-interface.md → Status fields](./command-interface.md#status-fields).
 
 **`POST /ttd/seek` response shape:**
 

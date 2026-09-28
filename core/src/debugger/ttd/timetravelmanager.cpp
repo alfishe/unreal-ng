@@ -378,6 +378,7 @@ void TimeTravelManager::InvalidateSession(const char* reason)
 
     MLOGINFO("TimeTravelManager::InvalidateSession — reason='%s', dropping %zu checkpoints",
              reason ? reason : "(null)", _timeline.size());
+    _lastDropReason = reason ? reason : "";
 
     for (auto& cp : _timeline)
         ReleaseCheckpointRefs(cp);
@@ -580,6 +581,7 @@ TTDSessionInfo TimeTravelManager::GetSessionInfo() const
                                _coverageIndex.EncodedBytes(TTDCoverageKind::Read);
 
     info.bookmarkCount = _bookmarks.Size();
+    info.lastDropReason = _lastDropReason;
 
     // Phase 5 codec telemetry — useful for the UI / WebAPI status surface
     // to show compression effectiveness at a glance.
@@ -647,6 +649,46 @@ size_t TimeTravelManager::EstimateSessionHeapBytes() const
 // ---------------------------------------------------------------------------
 // Capture (emulator thread)
 // ---------------------------------------------------------------------------
+
+std::string TimeTravelManager::RecordingGuard(TTDGuardedAction action) const
+{
+    // Only a recording the user started is protected. A debugger's live history
+    // (DebuggerLive, DeZog) is a rolling background history: any outside change
+    // drops it and the debugger restarts it on the next resume or step.
+    if (!IsRecording() || IsDebuggerLive())
+        return {};
+
+    switch (action)
+    {
+        case TTDGuardedAction::LoadSnapshot:
+            return "Cannot load a snapshot while TTD is recording: it replaces the whole machine state and would drop "
+                   "the recorded history. Stop the recording first.";
+        case TTDGuardedAction::LoadTape:
+            return "Cannot insert a tape while TTD is recording: a new medium would drop the recorded history. Insert "
+                   "it before starting the recording, or stop the recording first.";
+        case TTDGuardedAction::LoadDisk:
+            return "Cannot insert a disk while TTD is recording: a new medium would drop the recorded history. Insert "
+                   "it before starting the recording, or stop the recording first.";
+        case TTDGuardedAction::CreateDisk:
+            return "Cannot create a disk while TTD is recording: a new medium would drop the recorded history. Create "
+                   "it before starting the recording, or stop the recording first.";
+        case TTDGuardedAction::LoadRom:
+            return "Cannot load a ROM while TTD is recording: the recorded history relies on the current ROM and would "
+                   "be dropped. Stop the recording first.";
+        case TTDGuardedAction::Invalidate:
+            return "Cannot discard the TTD session while it is recording. Stop the recording first, then discard it.";
+        case TTDGuardedAction::DisableTimeTravel:
+            return "Cannot switch the timetravel feature off while TTD is recording: capture would stop mid-session "
+                   "and the recorded history would be corrupt. Stop the recording first.";
+        case TTDGuardedAction::DisableDebugMode:
+            return "Cannot switch debug mode off while TTD is recording: memory writes would stop reaching the "
+                   "recorded history, which would then be corrupt. Stop the recording first.";
+        case TTDGuardedAction::ChangeWriteJournal:
+            return "Cannot change the write journal mode while TTD is recording: a recording keeps the mode it "
+                   "started with. Choose it when starting, or stop the recording first.";
+    }
+    return "This action is not allowed while TTD is recording. Stop the recording first.";
+}
 
 void TimeTravelManager::RequestInvalidation(const char* reason)
 {

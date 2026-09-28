@@ -2532,17 +2532,44 @@ These rules live in the core, so every surface (CLI, WebAPI/MCP, Lua, Python, GD
 
 **Recording blocks browsing.** Seek, step, find-last, step-instruction, reverse-step and reverse-continue do not run while the session is recording — stop first. The WebAPI answers these with HTTP 409 `Conflict`; the core refuses them on every other surface too (the CLI prints the failure, Lua/Python get `reached = false` / `false` / no result).
 
-**What wipes a session** (history dropped, state back to `idle`):
+**A recording protects itself.** While a session is `recording`, anything that would drop or corrupt it is refused, and the refusal says why and what to do (stop the recording first):
+
+| Refused while recording | Why |
+| :--- | :--- |
+| Snapshot load | Replaces the whole machine state. |
+| Tape load, disk load (including disk autostart), disk create | A new medium. Insert it before starting the recording. |
+| ROM load | The recorded history relies on the current ROM. |
+| `ttd invalidate` | Stop the recording first, then discard it. |
+| Switching the `timetravel` or `debugmode` feature off | Capture (or the memory-write path it depends on) would stop mid-session and leave corrupt history. |
+| Changing the write-journal mode (`ttd_set_journal_enabled`, `SetEnableWriteJournal`) | A recording keeps the mode it started with. |
+| Host speed 2x..16x, turbo, fast tape, turbo tape, fast disk | See the acceleration lock below. |
+
+How each surface reports it:
+
+| Surface | Refusal |
+| :--- | :--- |
+| CLI | `Error: <reason>` |
+| WebAPI / MCP | HTTP **409 Conflict** with the reason in `message` (tape import/insert: `inserted: false` plus `insert_error`) |
+| Lua | The guarded functions (`snapshot_load`, `tape_load`, `disk_create`, `feature_set`, `ttd_invalidate`, `ttd_set_journal_enabled`) return `false, reason`; `disk_load` returns `{success = false, message = reason}` |
+| Python | `RuntimeError(reason)` from `snapshot_load`, `tape_load`, `disk_create`, `feature_set`, `ttd_invalidate`, `ttd_set_journal_enabled`; `disk_load` returns `{'success': False, 'message': reason}` |
+| GDB `monitor load` | `Error: <reason>` |
+| Qt UI | A "TTD Recording Active" dialog with the reason |
+
+Only a recording you started (`ttd start`, the TTD panel, the API) is protected. A DeZog session keeps its own rolling live history for reverse debugging; that history is not protected: loading media or a snapshot during a debug session works as before, drops that history (`last_drop_reason` says why), and DeZog starts a fresh one on the next resume or step. If DeZog connects while your recording runs, it takes that recording over as its live history.
+
+**What wipes a stopped session** (history dropped, state back to `idle`):
 
 | Trigger | Notes |
 | :--- | :--- |
 | Snapshot load | RAM and registers replaced wholesale. |
 | Tape load | New media. |
 | Disk load, disk create | New media. |
-| ROM reload | The machine's code changed under the recording. |
+| ROM reload | The machine's code changed under the history. |
 | Host speed multiplier change on a stopped or loaded session | Frame timing is part of the recording. Re-selecting the current speed is not a change, and a refused change (see the acceleration lock below) does not cost the session. |
 | `ttd invalidate` (or WebAPI `POST /ttd/invalidate`, Lua/Python `ttd_invalidate`) | Explicit. |
-| A device TTD cannot follow | Today this is the ZX-Evo / ATM3 Z-Controller SD card: any SD card activity while recording asks for invalidation, and the recording ends (history dropped) at the next frame boundary. |
+| A device TTD cannot follow | Today this is the ZX-Evo / ATM3 Z-Controller SD card. The guest program drives it, so it cannot be refused: any SD card activity while recording ends the recording (history dropped) at the next frame boundary, and `last_drop_reason` in the status says so. |
+
+The status field `last_drop_reason` names what dropped the last history (for example `snapshot-load`, `disk-load`); it is empty (WebAPI/Python: `null`/`None`) until something drops one.
 
 **Reset keeps history.** A machine reset (and the quick reset a disk autostart does) stops a running recording and **keeps** the history, so you can still browse what led up to the reset. A machine sitting in history (`detached`) goes back to `idle` with its history.
 
@@ -2607,8 +2634,7 @@ usually the first thing to check when a session is handed to you.
 | `session_heap_bytes` | Real total heap footprint of the session |
 | `bookmark_count` | Number of agent bookmarks (WebAPI and CLI) |
 | `ttd_available` | False when the build has no TTD engine (WebAPI, Lua, Python) |
-
-There is no `invalidation_reason` field; the reason for an invalidation is written to the emulator log.
+| `last_drop_reason` | What dropped the last history (`snapshot-load`, `tape-load`, `disk-load`, `disk-create`, `rom-reload`, `speed-multiplier-change`, an `invalidate` reason, an SD-card note); empty / `null` when nothing has. The CLI prints it as `Last session dropped:` |
 
 #### Worked Examples
 

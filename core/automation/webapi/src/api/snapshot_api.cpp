@@ -2,6 +2,7 @@
 /// @date 08.01.2026
 /// @brief WebAPI Snapshot control endpoints
 
+#include <debugger/ttd/timetravelmanager.h>
 #include <drogon/HttpResponse.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
@@ -95,6 +96,19 @@ void EmulatorAPI::loadSnapshot(const HttpRequestPtr& req, std::function<void(con
     else
     {
         path = content.path;
+    }
+
+    // TTD refuses this while recording: answer why instead of a bare failure
+    if (const std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot); !refusal.empty())
+    {
+        Json::Value error;
+        error["error"] = "Conflict";
+        error["message"] = refusal;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
     }
 
     bool success = emulator->LoadSnapshot(path);

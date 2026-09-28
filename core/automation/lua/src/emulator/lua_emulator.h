@@ -24,6 +24,7 @@
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/labels/labelmanager.h>
 #include <debugger/ttd/timetravelmanager.h>
+#include <tuple>
 #include <debugger/ttd/ttdexternalevents.h>
 #include <debugger/ttd/ttdprobe.h>
 #include <debugger/analyzers/analyzermanager.h>
@@ -679,11 +680,14 @@ public:
             return fm ? fm->isEnabled(name) : false;
         });
 
-        lua.set_function("feature_set", [this](const std::string& name, bool enabled) -> bool {
+        // ok, reason: the reason says why a known feature was refused (TTD holds it)
+        lua.set_function("feature_set", [this](const std::string& name, bool enabled) -> std::tuple<bool, std::string> {
             Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
+            if (!emulator) return {false, "no emulator"};
             FeatureManager* fm = emulator->GetFeatureManager();
-            return fm ? fm->setFeature(name, enabled) : false;
+            if (!fm) return {false, "FeatureManager not available"};
+            if (fm->setFeature(name, enabled)) return {true, ""};
+            return {false, fm->hasFeature(name) ? fm->refusalReason(name, enabled) : "unknown feature: " + name};
         });
 
         // Disk inspection functions
@@ -758,15 +762,20 @@ public:
         // disk_create(drive [, cylinders [, sides [, format]]]): format auto (plus3 on a +3, unformatted
         // elsewhere), unformatted or plus3; cylinders / sides 0 or left out = the format's geometry
         lua.set_function("disk_create", [this](int drive, sol::optional<int> cyl, sol::optional<int> sides,
-                                               sol::optional<std::string> format) -> bool {
-            if (!effectiveEmulator() || drive < 0 || drive > 3) return false;
+                                               sol::optional<std::string> format) -> std::tuple<bool, std::string> {
+            if (!effectiveEmulator()) return {false, "no emulator"};
+            if (drive < 0 || drive > 3) return {false, "invalid drive (valid range: 0-3)"};
             Emulator::BlankDiskFormat parsed = Emulator::BlankDiskFormat::Auto;
-            if (!Emulator::ParseBlankDiskFormat(format.value_or("auto"), parsed)) return false;
+            if (!Emulator::ParseBlankDiskFormat(format.value_or("auto"), parsed)) return {false, "unknown disk format"};
             const int cylinders = cyl.value_or(0);
             const int numSides = sides.value_or(0);
-            if (cylinders < 0 || cylinders > 255 || numSides < 0 || numSides > 255) return false;
-            return effectiveEmulator()->CreateBlankDisk(static_cast<uint8_t>(drive), parsed, static_cast<uint8_t>(cylinders),
-                                              static_cast<uint8_t>(numSides));
+            if (cylinders < 0 || cylinders > 255 || numSides < 0 || numSides > 255)
+                return {false, "cylinders must be 40 or 80, sides 1 or 2"};
+            std::string error;  // carries the TTD refusal while recording
+            const bool ok = effectiveEmulator()->CreateBlankDisk(static_cast<uint8_t>(drive), parsed,
+                                                                 static_cast<uint8_t>(cylinders),
+                                                                 static_cast<uint8_t>(numSides), &error);
+            return {ok, ok ? std::string() : error};
         });
 
         lua.set_function("disk_list", [this]() -> sol::table {
@@ -850,10 +859,13 @@ public:
         });
 
         // Tape operations
-        lua.set_function("tape_load", [this](const std::string& path) -> bool {
+        // ok, reason: the reason is set when TTD refuses the insert (recording)
+        lua.set_function("tape_load", [this](const std::string& path) -> std::tuple<bool, std::string> {
             Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            return emulator->LoadTape(path);
+            if (!emulator) return {false, "no emulator"};
+            if (std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadTape); !refusal.empty())
+                return {false, refusal};
+            return {emulator->LoadTape(path), ""};
         });
 
         lua.set_function("tape_is_inserted", [this]() -> bool {
@@ -1307,9 +1319,13 @@ public:
         });
 
         // Snapshot operations
-        lua.set_function("snapshot_load", [this](const std::string& path) -> bool {
-            if (!effectiveEmulator()) return false;
-            return effectiveEmulator()->LoadSnapshot(path);
+        // ok, reason: the reason is set when TTD refuses the load (recording)
+        lua.set_function("snapshot_load", [this](const std::string& path) -> std::tuple<bool, std::string> {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return {false, "no emulator"};
+            if (std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot); !refusal.empty())
+                return {false, refusal};
+            return {emulator->LoadSnapshot(path), ""};
         });
 
         lua.set_function("snapshot_save", [this](const std::string& path) -> bool {
@@ -2186,6 +2202,8 @@ public:
             info["coverage_index_bytes"]  = si.coverageIndexBytes;
             info["write_journal_enabled"]    = si.writeJournalEnabled;
             info["bookmark_count"]           = static_cast<uint64_t>(si.bookmarkCount);
+            if (!si.lastDropReason.empty())
+                info["last_drop_reason"]     = si.lastDropReason;  // "" until a history is dropped
             info["ttd_available"]            = true;
             return info;
         });
@@ -2205,12 +2223,14 @@ public:
         });
 
         // ttd_set_journal_enabled(bool) - configure write journal capture
-        lua.set_function("ttd_set_journal_enabled", [this](bool enabled) {
+        // ok, reason: refused while recording (a recording keeps its journal mode)
+        lua.set_function("ttd_set_journal_enabled", [this](bool enabled) -> std::tuple<bool, std::string> {
             Emulator* emulator = effectiveEmulator();
-            if (!emulator) return;
+            if (!emulator) return {false, "no emulator"};
             auto* ctx = emulator->GetContext();
-            if (ctx && ctx->pTimeTravelManager)
-                ctx->pTimeTravelManager->SetEnableWriteJournal(enabled);
+            if (!ctx || !ctx->pTimeTravelManager) return {false, "TTD not available"};
+            if (ctx->pTimeTravelManager->SetEnableWriteJournal(enabled)) return {true, ""};
+            return {false, ctx->pTimeTravelManager->RecordingGuard(ttd::TTDGuardedAction::ChangeWriteJournal)};
         });
 
         lua.set_function("ttd_get_journal_enabled", [this]() -> bool {
@@ -2229,13 +2249,17 @@ public:
                 ctx->pTimeTravelManager->StopRecording();
         });
 
-        lua.set_function("ttd_invalidate", [this](sol::optional<std::string> reason) {
+        // ok, reason: refused while recording (stop the recording first)
+        lua.set_function("ttd_invalidate", [this](sol::optional<std::string> reason) -> std::tuple<bool, std::string> {
             Emulator* emulator = effectiveEmulator();
-            if (!emulator) return;
+            if (!emulator) return {false, "no emulator"};
             auto* ctx = emulator->GetContext();
-            if (ctx && ctx->pTimeTravelManager)
-                ctx->pTimeTravelManager->InvalidateSession(
-                    reason.value_or("lua invalidate").c_str());
+            if (!ctx || !ctx->pTimeTravelManager) return {false, "TTD not available"};
+            if (std::string refusal = ctx->pTimeTravelManager->RecordingGuard(ttd::TTDGuardedAction::Invalidate);
+                !refusal.empty())
+                return {false, refusal};
+            ctx->pTimeTravelManager->InvalidateSession(reason.value_or("lua invalidate").c_str());
+            return {true, ""};
         });
 
         lua.set_function("ttd_seek", [this](uint64_t frame, sol::optional<uint32_t> tInFrameOpt) -> sol::table {

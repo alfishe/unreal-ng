@@ -208,8 +208,9 @@ TEST(TTD_SessionLifecycle_Test, SetSpeedMultiplier_RefusedWhileRecordingInvalida
     emulator.Release();
 }
 
-/// @test LoadTape() invalidates the session (TDD §4.2 + §5 row 3).
-TEST(TTD_SessionLifecycle_Test, LoadTape_InvalidatesActiveSession)
+/// @test LoadTape() is refused while recording (B9: the recording survives);
+///       on a retained, stopped session it still invalidates (TDD §4.2 + §5 row 3).
+TEST(TTD_SessionLifecycle_Test, LoadTape_RefusedWhileRecordingInvalidatesRetainedSession)
 {
     Emulator emulator(LoggerLevel::LogError);
     ASSERT_TRUE(emulator.Init());
@@ -221,11 +222,16 @@ TEST(TTD_SessionLifecycle_Test, LoadTape_InvalidatesActiveSession)
     ExpectSessionState(context->pTimeTravelManager, ttd::TTDSessionState::Recording, 1,
                        "after StartRecording");
 
+    EXPECT_FALSE(emulator.LoadTape(TestPathHelper::GetTestDataPath(kTestTapeRelPath)));
+    ExpectSessionState(context->pTimeTravelManager, ttd::TTDSessionState::Recording, 1,
+                       "after a refused LoadTape");
+
+    context->pTimeTravelManager->StopRecording();
     bool ok = emulator.LoadTape(TestPathHelper::GetTestDataPath(kTestTapeRelPath));
     ASSERT_TRUE(ok) << "Test precondition: LoadTape('" << kTestTapeRelPath << "') must succeed";
 
     ExpectSessionState(context->pTimeTravelManager, ttd::TTDSessionState::Idle, 0,
-                       "after LoadTape");
+                       "after LoadTape on the retained session");
 
     emulator.Stop();
     emulator.Release();
@@ -256,8 +262,9 @@ TEST(TTD_SessionLifecycle_Test, LoadTape_MissingFile_DoesNotInvalidate)
     emulator.Release();
 }
 
-/// @test LoadDisk() invalidates the session (TDD §4.2 + §12.2).
-TEST(TTD_SessionLifecycle_Test, LoadDisk_InvalidatesActiveSession)
+/// @test LoadDisk() is refused while recording (B9: the recording survives);
+///       on a retained, stopped session it still invalidates (TDD §4.2 + §12.2).
+TEST(TTD_SessionLifecycle_Test, LoadDisk_RefusedWhileRecordingInvalidatesRetainedSession)
 {
     Emulator emulator(LoggerLevel::LogError);
     ASSERT_TRUE(emulator.Init());
@@ -269,11 +276,16 @@ TEST(TTD_SessionLifecycle_Test, LoadDisk_InvalidatesActiveSession)
     ExpectSessionState(context->pTimeTravelManager, ttd::TTDSessionState::Recording, 1,
                        "after StartRecording");
 
+    EXPECT_FALSE(emulator.LoadDisk(TestPathHelper::GetTestDataPath(kTestDiskRelPath)));
+    ExpectSessionState(context->pTimeTravelManager, ttd::TTDSessionState::Recording, 1,
+                       "after a refused LoadDisk");
+
+    context->pTimeTravelManager->StopRecording();
     bool ok = emulator.LoadDisk(TestPathHelper::GetTestDataPath(kTestDiskRelPath));
     ASSERT_TRUE(ok) << "Test precondition: LoadDisk('" << kTestDiskRelPath << "') must succeed";
 
     ExpectSessionState(context->pTimeTravelManager, ttd::TTDSessionState::Idle, 0,
-                       "after LoadDisk");
+                       "after LoadDisk on the retained session");
 
     emulator.Stop();
     emulator.Release();
@@ -306,7 +318,8 @@ TEST(TTD_SessionLifecycle_Test, StopRecording_RetainsHistory)
 }
 
 /// @test Re-StartRecording after invalidation works cleanly.
-///       Uses LoadTape() to invalidate (Reset() no longer invalidates).
+///       Uses LoadTape() on the stopped session to invalidate (Reset() no
+///       longer invalidates; a recording refuses LoadTape).
 TEST(TTD_SessionLifecycle_Test, ReStartRecording_AfterInvalidation)
 {
     Emulator emulator(LoggerLevel::LogError);
@@ -319,10 +332,11 @@ TEST(TTD_SessionLifecycle_Test, ReStartRecording_AfterInvalidation)
     EXPECT_EQ(context->pTimeTravelManager->GetSessionInfo().state,
               ttd::TTDSessionState::Recording);
 
+    context->pTimeTravelManager->StopRecording();
     bool ok = emulator.LoadTape(TestPathHelper::GetTestDataPath(kTestTapeRelPath));
     ASSERT_TRUE(ok) << "Test precondition: LoadTape must succeed";
-    EXPECT_EQ(context->pTimeTravelManager->GetSessionInfo().state,
-              ttd::TTDSessionState::Idle);
+    ExpectSessionState(context->pTimeTravelManager, ttd::TTDSessionState::Idle, 0,
+                       "after LoadTape on the stopped session");
 
     // Restart — should succeed and capture a fresh baseline.
     ASSERT_TRUE(context->pTimeTravelManager->StartRecording());

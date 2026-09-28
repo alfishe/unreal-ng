@@ -785,6 +785,10 @@ std::string FormatTtdStatus(const Json::Value& status)
     {
         out << ", " << status["bookmark_count"].asUInt64() << " bookmark(s)";
     }
+    if (status["last_drop_reason"].isString())
+    {
+        out << ", last session dropped: " << status["last_drop_reason"].asString();
+    }
     if (status["loaded_from_file"].asBool())
     {
         out << ", loaded from " << status["source_path"].asString();
