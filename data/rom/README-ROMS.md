@@ -18,6 +18,10 @@ that the emulator works out of the box, on the following basis:
   `zxi1.rom`, `2006.rom`, `xbios135.rom`, `sgen.rom`, `gd.rom`, `gmx.rom`, `1993.rom`, `ZXM-Phoenix_bios.bin`,
   `tk90.rom`, `tk95.rom`): property of the respective clone manufacturers and authors, distributed freely in the
   ZX Spectrum community. ZX Evolution firmware sources are published by TSLabs.
+* **NeoGS flash image** (`neogs/full_ngs.rom`, NeoGS flash v1.11: loader, main ROM and FPGA configuration): built
+  from the NedoPC `ngs` sources (http://nedopc.com/gs/ngs_eng.php), which carry no licence file; treated as MIT
+  like the rest of the NedoPC NeoGS material. The parts it is packed from are in `tools/neogs/parts/`, and
+  `tools/neogs/pack_flash.py` checks the image against them.
 * **Open firmware**: `gdos-pd.rom` (public domain), `opense.rom` (OpenSE BASIC, GPL),
   `data/testrom/zx-diagnostics.rom` (Brendan Alford, GPL-3.0).
 * **YRW801 wave data ROM** (`opl4/yrw801-m-yamaha-1993.rom`, renamed from the archive's

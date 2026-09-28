@@ -45,7 +45,7 @@ void CLIProcessor::HandleStateAudioGS(const ClientSession& session, EmulatorCont
         ss << NEWLINE;
         ss << "The General Sound card is disabled on this machine." << NEWLINE;
         ss << "Enable it with [SOUND] GSType=Z80 (plus [ROM] GSROM pointing at" << NEWLINE;
-        ss << "the 32 KB firmware) and restart the emulator." << NEWLINE;
+        ss << "the 32 KB firmware), LW or NGS (NeoGS, [NGS] Flash) and restart the emulator." << NEWLINE;
 
         session.SendResponse(ss.str());
         return;
@@ -54,9 +54,8 @@ void CLIProcessor::HandleStateAudioGS(const ClientSession& session, EmulatorCont
     const uint8_t status = gs->getStatusRaw();
     const bool verbose = optionArg == "--verbose" || optionArg == "verbose" || optionArg == "-v";
 
-    ss << "Device: " << (gs->hasCoprocessor() ? "General Sound (Z80 coprocessor @ 12 MHz, 4 x 8-bit DAC)"
-                                               : "General Sound (lightweight mod player, 4 x 8-bit DAC)") << NEWLINE;
-    ss << "ROM:    " << (gs->isROMLoaded() ? "Loaded (32 KB)" : "Missing (zero-filled)") << NEWLINE;
+    ss << "Device: " << gs->deviceDescription() << NEWLINE;
+    ss << "ROM:    " << gs->firmwareDescription() << NEWLINE;
     ss << "RAM:    " << gs->getRamSizeKB() << " KB" << NEWLINE;
     ss << "Page:   " << (int)gs->getMPAG() << " (MPAG banking latch)" << NEWLINE;
     ss << NEWLINE;
@@ -74,12 +73,48 @@ void CLIProcessor::HandleStateAudioGS(const ClientSession& session, EmulatorCont
     ss << NEWLINE;
 
     ss << "DAC Channels:" << NEWLINE;
-    for (int i = 0; i < 4; i++)
+    for (int i = 0; i < gs->channelCount(); i++)
     {
         ss << "  Channel " << (i + 1) << ": Sample 0x" << std::hex << std::setw(2) << (int)gs->getChannelSample(i)
            << std::dec << "  Volume " << (int)gs->getChannelVolume(i) << "/63" << NEWLINE;
     }
     ss << NEWLINE;
+
+    NeoGSStateInfo ngs;
+    if (gs->neogsState(ngs))
+    {
+        ss << "NeoGS:" << NEWLINE;
+        ss << "  GSCFG0:  0x" << std::hex << std::setw(2) << std::setfill('0') << (int)ngs.gscfg0 << std::dec
+           << " (" << ((ngs.gscfg0 & 0x01) ? "RAM" : "ROM") << " mode" << ((ngs.gscfg0 & 0x02) ? ", RAMRO" : "")
+           << ((ngs.gscfg0 & 0x04) ? ", 8 channels" : "") << ((ngs.gscfg0 & 0x08) ? ", EXPAG" : "")
+           << ((ngs.gscfg0 & 0x40) ? ", PAN4CH" : "") << ((ngs.gscfg0 & 0x80) ? ", INV7B" : "") << "), "
+           << ngs.clockHz / 1000000 << " MHz" << NEWLINE;
+        ss << "  Pages:   ";
+        for (int w = 0; w < 4; w++)
+            ss << (w ? " " : "") << (ngs.windowFlash[w] ? "F" : "R") << std::hex << std::setw(2) << std::setfill('0')
+               << (int)ngs.pages[w] << std::dec;
+        ss << "  (windows #0000/#4000/#8000/#C000, F = flash, R = RAM)" << NEWLINE;
+        ss << "  Ready:   " << (ngs.readyForCommands ? "main ROM command loop" : "booting / not in the main ROM")
+           << "   LED: " << (ngs.ledOn ? "on" : "off") << NEWLINE;
+        ss << "  INT:     enable 0x" << std::hex << (int)ngs.intEnable << ", request 0x" << (int)ngs.intRequest
+           << std::dec << ", TIM_FREQ " << (int)ngs.timFreq << NEWLINE;
+        ss << "  SD:      ";
+        if (ngs.sdPresent)
+            ss << (ngs.sdSdhc ? "SDHC " : "SDSC ") << ngs.sdSizeBytes / (1024 * 1024) << " MB, " << ngs.sdBlocksRead
+               << " blocks read, " << ngs.sdBlocksWritten << " written  (" << ngs.sdPath << ")" << NEWLINE;
+        else
+            ss << "empty" << NEWLINE;
+        ss << "  MP3:     ";
+        if (ngs.mp3Fitted)
+            ss << ngs.mp3Chip << ", DREQ " << (ngs.mp3Dreq ? 1 : 0) << ", " << ngs.mp3Rate << " Hz x"
+               << ngs.mp3Channels << ", " << ngs.mp3Frames << " frames, " << ngs.mp3DecodeSeconds << " s, FIFO "
+               << ngs.mp3InputFill << " bytes" << NEWLINE;
+        else
+            ss << "no decoder ([NGS] MP3Support=none)" << NEWLINE;
+        ss << "  DMA:     SD " << (ngs.dmaRunning[1] ? "running" : "idle") << " @0x" << std::hex << ngs.dmaAddress[1]
+           << ", MP3 " << (ngs.dmaRunning[2] ? "running" : "idle") << " @0x" << ngs.dmaAddress[2] << std::dec << NEWLINE;
+        ss << NEWLINE;
+    }
 
     if (!gs->hasCoprocessor())
     {
@@ -251,8 +286,10 @@ std::optional<uint8_t> parseByteArg(const std::string& text)
 ///   gs send_data <byte>               - OUT #B3
 ///   gs read_status                    - IN #BB
 ///   gs read_data                      - IN #B3
-///   gs switch_personality <z80|lle|lw|lightweight> - runtime card swap
+///   gs switch_personality <z80|lle|lw|lightweight|ngs|neogs> - runtime card swap
 ///   gs dump_module [path]             - write the last COM30..D2 upload
+///   gs sd_insert <image> / sd_eject   - NeoGS SD card slot
+///   gs flash_save                     - NeoGS: save the reprogrammed flash
 void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std::string>& args)
 {
     auto emulator = GetSelectedEmulator(session);
@@ -267,13 +304,14 @@ void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std:
     GeneralSoundCard* gs = soundManager ? soundManager->getGeneralSound() : nullptr;
     if (!gs)
     {
-        session.SendResponse(std::string("Error: General Sound card is not fitted (set [SOUND] GSType=Z80 or LW).") + NEWLINE);
+        session.SendResponse(std::string("Error: General Sound card is not fitted (set [SOUND] GSType=Z80, LW or NGS).") + NEWLINE);
         return;
     }
 
     static const char* kUsage =
         "Usage: gs <reset|reset_card|nmi|send_command <byte>|send_data <byte>|"
-        "read_status|read_data|switch_personality <z80|lle|lw|lightweight>|dump_module [path]>";
+        "read_status|read_data|switch_personality <z80|lle|lw|lightweight|ngs|neogs>|dump_module [path]|"
+        "sd_insert <image>|sd_eject|flash_save>";
 
     if (args.empty())
     {
@@ -335,7 +373,7 @@ void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std:
     {
         if (args.size() < 2)
         {
-            ss << "Error: 'switch_personality' requires z80, lle, lw or lightweight." << NEWLINE;
+            ss << "Error: 'switch_personality' requires " << GS_PERSONALITY_NAMES << "." << NEWLINE;
         }
         else
         {
@@ -343,13 +381,9 @@ void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std:
             std::transform(target.begin(), target.end(), target.begin(), ::tolower);
 
             GSTypeKind kind;
-            if (target == "z80" || target == "lle")
-                kind = GSTypeKind::Z80;
-            else if (target == "lw" || target == "lightweight")
-                kind = GSTypeKind::LW;
-            else
+            if (!gsParsePersonality(target, kind))
             {
-                ss << "Error: unknown personality '" << args[1] << "' (expected z80, lle, lw or lightweight)." << NEWLINE;
+                ss << "Error: unknown personality '" << args[1] << "' (expected " << GS_PERSONALITY_NAMES << ")." << NEWLINE;
                 session.SendResponse(ss.str());
                 return;
             }
@@ -383,6 +417,36 @@ void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std:
                    << ") -> " << path << NEWLINE;
             }
         }
+    }
+    else if (sub == "sd_insert")
+    {
+        if (args.size() < 2)
+            ss << "Error: 'sd_insert' requires an image path." << NEWLINE;
+        else if (gs->implementation() != GSCardImplementation::NGS)
+            ss << "Error: only the NeoGS card has an SD slot." << NEWLINE;
+        else if (gs->insertSdCard(args[1]))
+            ss << "NeoGS: SD card inserted (" << args[1] << ")." << NEWLINE;
+        else
+            ss << "Error: cannot open SD image '" << args[1] << "'." << NEWLINE;
+    }
+    else if (sub == "sd_eject")
+    {
+        if (gs->implementation() != GSCardImplementation::NGS)
+            ss << "Error: only the NeoGS card has an SD slot." << NEWLINE;
+        else
+        {
+            gs->ejectSdCard();
+            ss << "NeoGS: SD card ejected." << NEWLINE;
+        }
+    }
+    else if (sub == "flash_save")
+    {
+        if (gs->implementation() != GSCardImplementation::NGS)
+            ss << "Error: only the NeoGS card has a flash chip." << NEWLINE;
+        else if (gs->saveFlash())
+            ss << "NeoGS: flash saved; it replaces the shipped image with [NGS] FlashWrite=persist." << NEWLINE;
+        else
+            ss << "Error: the flash could not be saved." << NEWLINE;
     }
     else
     {

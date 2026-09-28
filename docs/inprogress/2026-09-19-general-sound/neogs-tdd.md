@@ -1,11 +1,12 @@
 # NeoGS sound card — technical design
 
 - **Date:** 2026-09-27. This replaces the 2026-09-19 sketch.
-- **Status:** review round 4 applied (2026-09-27): every hardware claim
-  checked against the FPGA Verilog, the firmware sources, the peripheral
-  datasheets and the unreal-ng code. §13 lists what changed. Ready for
-  phase 0. Nothing described here is implemented yet, apart from the
-  placeholders listed in §1.3.
+- **Status:** phases 0-4 and phase 6 on TTD v1 implemented (2026-09-27,
+  branch `neogs`); §14 is the as-built record and lists what differs from
+  this design, the findings and what is still open (phase 5: ZX-DMA and
+  fpgaD; moving the TTD bulk memory to v2 regions). Review
+  round 4 (§13) checked every hardware claim against the FPGA Verilog, the
+  firmware, the datasheets and the unreal-ng code.
 - **Scope:** a full emulation of the NeoGS card. It fits the one General
   Sound slot, so it is **mutually exclusive** with the classic GS card (LLE)
   and the lightweight card (LW). It runs the card's own flash firmware
@@ -1041,6 +1042,9 @@ link to each other.
 **Image.** A raw image file, `[NGS] SDCardImage`:
 - up to 2 GB is presented as SDSC, bigger as SDHC (SDXC sizes too; in SPI
   mode the protocol is the same, and CSD v2 describes them);
+- `[NGS] SDType = auto | sdsc | sdhc` overrides that choice. `sdhc` on a small
+  image lets tests cover block addressing and CCS without a 2 GB fixture;
+  CSD v2 then reports the image's real size;
 - an image whose size is not a multiple of 512 is padded with zeros;
 - detect (SD_DET) = an image is present.
 
@@ -1176,7 +1180,9 @@ music, under 0.5% of one core.
 
   Bursts are stalls (§5.3): 2 card clocks per byte plus the grant overhead.
 - **The ZX module** needs a hook in the **host** memory path, so it comes last
-  (phase 5). It must cost nothing on machines without NeoGS and nothing on a
+  (phase 5). **Superseded by the detailed design
+  [`neogs-zxdma-design.md`](neogs-zxdma-design.md)**; the sketch below is kept
+  for history. It must cost nothing on machines without NeoGS and nothing on a
   NeoGS machine while ZX-DMA is off.
   - **Mechanism.** The host `Z80` already swaps its memory interface between
     `FastMemIf` and `DbgMemIf` (`z80.h:352-354`). A third pair,
@@ -1240,6 +1246,7 @@ RamSize=4096                   ; 2048 | 4096 (KB)
 Boot=loader                    ; loader | direct
 BootDelayMs=0
 SDCardImage=                   ; raw image; empty = no card
+SDType=auto                    ; auto (by size) | sdsc | sdhc
 SDWriteProtect=0               ; only the SSTAT switch bit
 SDWrite=session                ; session | persist | off
 MP3Support=software            ; none | stub | software
@@ -1384,29 +1391,44 @@ earlier):
   - the time counter, frame bases and the 24 MHz phase;
   - page registers, GSCFG0, INTENA / INTREQ / TIM_FREQ;
   - latches and volumes, LED;
-  - SPI masters, SD card protocol state;
+  - SPI masters;
   - decoder registers, input FIFO, frame parser state, PCM queue, play
     position, `mp3dec_t` (§5.6);
   - DMA modules and their FIFOs, active stall, flash state machine;
   - the event queue.
+- **As built, layout 2:** the 256-byte header (the list above minus the
+  devices below), then fixed-size device blocks - `SdCardSpi::saveState`
+  (protocol, command and data buffers, the queued output, up to 2 KB),
+  `Vs10xxDecoder::saveState` (registers, times, the 2 KB input FIFO, the
+  unplayed PCM, `mp3dec_t`), `NeoGSDma::saveState` (registers, phases and
+  times, both 512-byte FIFOs) - then RAM and flash. `TTDHashState` covers the
+  header and the device blocks, without the decoded PCM and minimp3's floats,
+  which may differ between x64 and arm64 (§5.6).
 - **Bulk memory** — RAM (2-4 MB), the flash image and the SD overlay — is
   registered as **TTD v2 memory regions** (`2026-09-25-ttd-v2-migration/
   target-architecture.md` §2.1, which already lists "later NeoGS RAM"). They
   are stored in changed 4 KB pieces.
-- **Until TTD v2 regions exist.** They are planned but not implemented: the
-  v2 migration puts regions (its step V1) after steps 0, V0 and V0b and the
-  profi merge. The v1 format could hold a 4 MB blob (`peripheral_blob.size`
-  is 32-bit, `ttd.ksy:483`), and the classic card already stores its whole
-  RAM in every checkpoint. But 4 MB per checkpoint is 1.2 GB for 300 frames,
-  so this is a **policy** choice, not a format limit: NeoGS does not record
-  in v1. The mechanism is new, because `TTDSerializable` has no such flag
-  today:
-  - `TTDSerializable` gets `virtual bool TTDCanRecord(std::string& why)`,
-    true by default;
-  - `StartRecording` asks every registered peripheral and refuses with the
-    reason ("NeoGS needs TTD memory regions");
-  - `switchGeneralSoundCard` to NGS during an active recording is refused
-    with the same reason. The user stops the recording first.
+- **Until TTD v2 regions exist: full blobs (TTD v1).** Regions are planned
+  but not implemented: the v2 migration puts them (its step V1) after steps
+  0, V0 and V0b and the profi merge. The v1 format holds a 4.5 MB blob
+  (`peripheral_blob.size` is 32-bit, `ttd.ksy:483`), and the classic card
+  already stores its whole RAM in every checkpoint. **Decided (2026-09-27):**
+  NeoGS records in v1 now, with RAM and flash in every checkpoint's blob, and
+  moves to regions together with every other device in the v2 migration.
+  - The blob is compressed like every peripheral blob. Measured: about 55 KB
+    a checkpoint with the firmware booted and idle (the RAM is mostly
+    zeros). A module or MP3 data in the card RAM raises it towards the raw
+    size, up to 4.5 MB a checkpoint.
+  - The recording veto built for the first decision
+    (`TTDSerializable::TTDCanRecord`, asked by `StartRecording`) is removed:
+    nothing else used it. A switch to NGS during a recording is allowed;
+    `UpdatePeripheral` moves the registration.
+- **The SD card's sectors are not in the blob**: an image can be gigabytes,
+  and the session overlay grows without bound. Only the protocol state is.
+  So a card write is a replay barrier: every accepted block calls
+  `SdCardSpi::setWriteListener`'s listener, and the card records a
+  `DiskWrite` external-event marker, at most one a frame. Inserting or
+  ejecting the card records an `Other` marker.
 - **GS-slot guard.** A recording made with one GS personality refuses to load
   into a machine configured with another, with the message "recorded with
   NeoGS, fitted: GS". This mirrors the TurboSound guard
@@ -1463,13 +1485,31 @@ new files up by `GLOB_RECURSE`, after a reconfigure.
 | `soundchip_neogs_test.cpp` | Port table §3.3 incl. `#0A`/`#0B` rules and undefined ports; host `#33` exact decode; card reset restarts at the loader, keeps the mailbox and what §3.4 lists; port `#80` cold restart; LED |
 | `soundchip_neogs_boot_test.cpp` | `Boot=loader` with no SD reaches `COMINT_` with `GSCFG0 = #23` and SCTRL `#0A`; COM23 reports `#7E` (4 MB) and `#3E` (2 MB); `Boot=direct` reaches the same registers and RAM pages 0-1; the handshake with bytes preloaded to both latches before `#33` ← `#80`, then `#1D` answers `#76` |
 | `sdcardspi_test.cpp` | The drivers' init sequence (CMD0, CMD8, CMD55+ACMD41, **CMD59**, CMD16, CMD58) for SDSC and SDHC; CRC off by default; CMD17, CMD18+CMD12, CMD24, CMD25 with `#FC`/`#FD`; overlay vs persist; `SDWrite=off` responses; padding |
-| `soundchip_neogs_sdboot_test.cpp` | Loader finds `NEOGS.ROM` and runs it: FAT16 on SDSC, FAT32 on SDHC, and a card with no partition table |
+| `soundchip_neogs_sdboot_test.cpp` | Loader finds `NEOGS.ROM` and runs it, with the flash main ROM page blanked: FAT16 with MBR, FAT16 without MBR, FAT32 as SDSC and as SDHC (`SDType=sdhc`) |
 | `vs10xx_test.cpp` | Reset values per chip type; hardware and software reset DREQ latencies; VOL kept by software reset; register 2 per chip; AUDATA per chip; HDAT; DREQ with the FIFO; frame parser with ID3v2, junk and the trailing zeros (last frame still played); decoded PCM matches minimp3's reference output on the same build; DECODE_TIME; determinism of the observable state |
 | `neogsdma_test.cpp` | SD block to RAM with token wait, error token, 18-clock pacing, stall length and INTREQ bit 1; address advances by 512; HAD bit 5 ignored; MP3 DMA with per-byte DREQ pacing and INTREQ bit 2; abort by clearing CST; ZX-DMA one-byte read lag, M1 fetches consume bytes, writes to both, wait states |
 | `flash29f040b_test.cpp` | Autoselect ids for both settings; unlock on A10..A0; program clears bits only, 0→1 fails with DQ5 until `F0`; sector and chip erase; DQ7/DQ6 status at any address during busy; the flasher's erase-program sequence from `flasher_ngs.a80` |
-| `soundchip_neogs_ttd_test.cpp` | Phase 4: `StartRecording` refused with NeoGS fitted; switch to NGS refused while recording. Phase 6: save/load round trip at a DMA and SPI midpoint; replay exact over 300 frames of module and MP3 playback; GS-slot guard |
+| `soundchip_neogs_ttd_test.cpp`, `ttdneogs_test.cpp` | Phase 6: save/load round trip in the middle of SD and MP3 DMA transfers; exact replay under the TTD engine from every kind of restore point; SD-write markers; GS-slot guard |
 | `soundchip_gslw_test.cpp` (`GSLightweight_Switch_Test`, extended) | Switch LLE → NGS → LW with the mailbox and module replay; `gs_lightweight` feature ignored while NGS is fitted; the NGS rejection tests at `:1588, :1610` replaced |
 | Benchmarks | Idle and playback cost against the budgets in §5.9; no change for machines without NeoGS |
+
+**Test assets** (`testdata/sound/neogs/`, described in its `SOURCES.md`):
+- `mp3/`: three streams recorded from `eyeache1.sna` (AY music): a 30 s
+  44.1 kHz stereo 128 kbit/s CBR MP3 with no tags (the main stream), an 8 s
+  22.05 kHz mono VBR MPEG-2 file with an ID3v2 tag and a Xing info frame (for
+  the frame parser), and an 8 s Layer II file.
+- SD card images are **not committed**: the tests build them at run time in
+  `scratch/`, sparse, and remove them afterwards
+  (`core/tests/_helpers/fatimagebuilder.h`, `neogstestsdcard.h`). The builder
+  is deterministic: FAT16 with an MBR (8 MB), FAT16 without a partition table
+  (8 MB) and FAT32 with an MBR (36 MB, the FAT32 cluster minimum forces the
+  size; sparse, so it costs only its files on disk). Each holds `NEOGS.ROM`
+  (main ROM v1.11), `NGS_ROM.UPD` and `EYEACHE.MP3`.
+  `tools/neogs/make_sd_image.py` builds the same layout for use outside the
+  tests.
+- The SD boot test proves the ROM came from the card, not from flash: it
+  fills the flash's main ROM page (`#10000`-`#17FFF`) with `#FF` in its copy
+  of the image before booting. SDHC runs use `SDType=sdhc` on the same images.
 
 **Acceptance with host programs** (on an emulated Pentagon). Both `.scl`
 files are present; their contents are MegaLZ-packed, so a check reads the
@@ -1499,10 +1539,10 @@ flowchart LR
     P0["Phase 0<br/>runner template, GSAudioOut,<br/>GSModuleReplay; classic card<br/>bit-identical"] --> P1["Phase 1<br/>NeoGS core: memory, flash read,<br/>ports, interrupts, sound,<br/>loader + main ROM boot"]
     P1 --> P2["Phase 2<br/>SPI + SD card, SD boot,<br/>flash programming"]
     P2 --> P3["Phase 3<br/>MP3 decoder,<br/>SD and MP3 DMA"]
-    P3 --> P4["Phase 4<br/>switching, automation,<br/>debugger target,<br/>TTD refusal"]
+    P3 --> P4["Phase 4<br/>switching, automation,<br/>debugger target,<br/>GS-slot guard"]
     P4 --> P5["Phase 5<br/>ZX-DMA host hook,<br/>fpgaD option"]
-    TTD2["TTD v2 memory regions<br/>(separate project, step V1)"] --> P6["Phase 6<br/>NeoGS TTD recording"]
-    P4 --> P6
+    P4 --> P6["Phase 6<br/>NeoGS TTD recording<br/>(v1 full blobs)"]
+    P6 --> TTD2["TTD v2 memory regions<br/>(separate project, step V1):<br/>RAM and flash as regions"]
 ```
 
 | Phase | Work | Done when |
@@ -1511,9 +1551,9 @@ flowchart LR
 | 1 | Config keys; `SoundChip_NeoGS` with memory, flash reads, ports, interrupts, sound; `Boot=loader` and `direct`; creation from config; shipped image and `pack_flash.py` | A GS module plays through NeoGS on a Pentagon with the real flash image; our 8-channel test program passes; all §8 memory, interrupt, sound, SPI-free port and boot tests pass; `test_ngs` passes detect, version and pages |
 | 2 | `SdCardSpi`, `NeoGSSpi`, `Flash29F040B` programming, port `#80` restart, persistence | The loader boots `NEOGS.ROM` from FAT16 and FAT32 images; the flasher updates the flash in `session` mode and the card restarts into it; `test_emu_ngs` passes; `test_ngs` passes its SD part |
 | 3 | `Vs10xxDecoder` with minimp3, the MP3 audio source, SD and MP3 DMA | Neo Player Light plays an MP3 from the SD image (no DMA); `npl_044_dma` plays one with SD and MP3 DMA; `test_ngs` detects the chip |
-| 4 | Runtime switching to and from NGS, automation surfaces and docs, `neogs` debugger target, the TTD refusal and GS-slot guard | `gs switch_personality ngs` works with module handoff; every surface shows the `neogs` state; the debugger shows the target; recording with NeoGS is refused with a clear message |
+| 4 | Runtime switching to and from NGS, automation surfaces and docs, `neogs` debugger target, the TTD refusal (superseded by phase 6) and GS-slot guard | `gs switch_personality ngs` works with module handoff; every surface shows the `neogs` state; the debugger shows the target; recording with NeoGS is refused with a clear message (until phase 6) |
 | 5 | ZX-DMA host hook; `Fpga=D` | Our ZX-DMA test program transfers a block in both directions; the v1.08 images boot with `Fpga=D` |
-| 6 | NeoGS TTD on v2 memory regions | A NeoGS recording replays exactly over 300 frames of module and MP3 playback |
+| 6 | NeoGS TTD on v1 full blobs (regions later, with the v2 migration) | A NeoGS recording replays exactly from every kind of restore point; a snapshot taken mid SD transfer, mid MP3 DMA and mid decoding continues identically |
 
 ## 10. Worked example: a module on NeoGS
 
@@ -1552,7 +1592,7 @@ flowchart LR
 | 11 | Flash chip | **From the sources:** a 29F040**B** (ST M29F040B fitted, AMD Am29F040B compatible). Default ID ST `20`/`E2`, AMD by setting (§3.8). |
 | 12 | Decoder chip | **Decided:** `Mp3Chip` setting, default `vs1001` (§5.6). |
 | 13 | MP3 audio path | **Decided:** its own audio source at the stream rate, not mixed into the card's 37.5 kHz output (§5.6). |
-| 14 | NeoGS and TTD before TTD v2 regions | **Decided:** recording is refused while NeoGS is fitted (§7.4). Recording with 4 MB blobs per checkpoint would work but cost about 1.2 GB per 300 frames. |
+| 14 | NeoGS and TTD before TTD v2 regions | **Decided (revised 2026-09-27):** NeoGS records on v1 with full blobs (§7.4); every device moves to regions together in the v2 migration. The first decision, to refuse recording, is superseded. |
 | 15 | ZX-DMA host hook | **Decided:** swap the host `Z80` memory interface while ZX-DMA runs (§5.7), not a branch in the memory functions. |
 | 16 | SD card model | **Decided:** one shared `emulator/io/sdcard/SdCardSpi` for NeoGS, TS-Conf and Z-Controller (§5.4). |
 
@@ -1642,4 +1682,106 @@ unreal-ng code. What changed:
 
 **Also updated:** the GS debugger design and requirements (clock set
 10/12/20/24 MHz, no re-basing, AS instead of sjasmplus for NeoGS symbols).
+
+## 14. As built (2026-09-27)
+
+Phases 0-4 are implemented on the `neogs` branch. 3,772 core tests run and
+3,768 pass (the other 4 are the same ones not run on master);
+the NeoGS suites are listed below.
+
+### 14.1 Where the code differs from the design
+
+- **Runner** (§5.3): the next event time lives in the runner
+  (`setNextEvent`), not behind a card call, and the stall check compiles out
+  for cards that cannot stall (`Card::kCanStall`). Both keep the classic
+  card's loop as cheap as before. The DAC-window test moved out of the
+  classic card's `dacFetch` into its inline read path: the extraction had
+  made the compiler stop inlining it, which cost 24% until found. The classic
+  card is now 4-8% *faster* than before phase 0, and its golden fingerprints
+  (audio, trace, TTD state, counters) are bit-identical.
+- **Time base** (§5.2): as designed - the classic card keeps 12 MHz cycles,
+  NeoGS counts 120 MHz ticks, blip runs at the 24 MHz crystal rate.
+- **Card reset in a port callback** (#80 write): applied as a runner event
+  between instructions, never inside a CPU step.
+- **DMA** (§5.7): byte-level SD and MP3 work is batched into events; the SD
+  burst's end-of-transfer effects (CST clear, INTREQ) apply at the burst's
+  start, which the CPU cannot observe because it is stalled for the burst.
+  A CPU access to the SD master during SD DMA is not modelled (the real card
+  corrupts the transfer).
+- **MP3 audio** (§5.6): its own mixer source, `AudioSourceType::GeneralSoundMp3`
+  ("NeoGS MP3"), present only while NeoGS is fitted, fed from the card's
+  auxiliary buffer (`GeneralSoundCard::getAuxBuffer`). Played PCM is
+  resampled once to the host rate per frame (linear, continuous across
+  frames). `[NGS] Mp3Gain` and VOL apply.
+- **SD card images**: FAT16 is typed `#06` at every size, and the generator
+  picks the largest cluster the FAT type allows - Neo Player Light accepts
+  only partition types 1/6/B/C/E.
+- **GS-slot TTD guard** (§7.4): refuses a session whose recorded GS
+  personality differs from the fitted one. An instance with no GS card keeps
+  the missing-blob report instead of a refusal, because the test runner
+  leaves GS cards out and the fixture corpus carries GS state.
+- **Automation**: `NeoGSStateInfo` (a plain struct on the card interface)
+  carries the NeoGS state to every surface, so none of them includes NeoGS
+  headers. WebAPI `?ram=1` reads through `peekCardMemory`, correct on both
+  cards.
+- **Not built**: the `neogs` debugger target - the GS debugger itself is not
+  implemented yet; the card already exposes what it needs (`pageRegister`,
+  `windowIsFlash`, `peek`/`poke`, `flash()`, `cardTicks`).
+
+### 14.2 Findings while testing against the real software
+
+- **`test_ngs` on a 4 MB card reports "Page error: 00"**: the RAMRO quirk of
+  §3.2 (MPAG `#40` maps the protected pages 128/129). On 2 MB it passes. The
+  acceptance test expects exactly that.
+- **`test_emu_ngs` needs an SDHC card of more than 16 GiB**: its driver packs
+  the sector number as {15-8, 7-0, 31-24, 23-16}, so its reads land 32 MB
+  apart from 8 GiB upward. The test uses a sparse 17 GiB image.
+- **The authors' SCL files miss the SCL checksum** (four of six); the fixture
+  copies have it appended.
+- **The flasher's update file is a different build** from the shipped flash
+  image (one loader byte, and the block name "MAIN" instead of "ROM "); the
+  flasher test checks against the update file itself.
+- **IM 0 with the DMA vectors**: unreal-z80 executes every IM 0 interrupt as
+  `RST 38`, which is right for the timer (`#FF`) but not for `#F7`/`#EF`.
+  No NeoGS software uses the DMA interrupts.
+- **Open: Neo Player Light v0.44 (`npl044`, with and without DMA) finds no
+  files** on any of the test images (FAT16 and FAT32, with and without a
+  volume label, small and large files): it reads the MBR, boot sector,
+  directory and FAT correctly, then computes a sector far beyond the card.
+  Neo Player Light v0.60, the loader, `test_emu_ngs` and the flasher all
+  work on the same images. Not yet explained; DMA is covered by the
+  `neogsdma` unit tests instead.
+
+### 14.3 Tests
+
+| File | What it covers |
+|---|---|
+| `soundchip_gs_golden_test.cpp` | Classic card fingerprints pinned across the phase 0 extraction |
+| `neogs/neogsmemory_test.cpp` | Memory map, MPAG/MPAGEX, ROM mode, RAMRO incl. the 4 MB quirk, 2 MB mirror, flash status fallback |
+| `neogs/neogsinterrupts_test.cpp` | Controller encodings, level hold, priority, vectors, timer periods, the TIM_FREQ extra tick |
+| `neogs/neogssound_test.cpp` | Capture decode, sign conventions, the three mixing modes, the §3.6 example |
+| `neogs/neogsspi_test.cpp` | Byte times, inclusive boundary, restart, SCTRL rule, chip selects |
+| `neogs/neogsdma_test.cpp` | SD block with token wait, error token, no timeout + abort, 18-clock pacing, 21-bit address, MP3 burst and DREQ pacing |
+| `neogs/vs10xx_test.cpp` | Resets and latencies, chip versions, register 2, DREQ/FIFO, sample-exact decoding vs minimp3, ID3v2 + Xing + trailing zeros, Layer II, real-time pace, stub |
+| `neogs/soundchip_neogs_test.cpp` | The card through its own Z80: port table, #0A/#0B, mailbox, host #33, card and cold resets, 37.5 kHz at every clock, TIM_FREQ, INTENA, vectors, CPU clock, DAC output in 4/8-channel and INV7B, opcode-fetch capture, TTD round trip |
+| `neogs/soundchip_neogs_boot_test.cpp` | Real flash: loader to COMINT_, COM23 for 2/4 MB, direct boot parity, handshake, #33 reboot, GS module playback, replay waits for the main ROM, flash persistence |
+| `neogs/soundchip_neogs_sdboot_test.cpp` | NEOGS.ROM from FAT16 (MBR, no MBR), FAT32, SDSC and SDHC, with the flash main ROM blanked |
+| `neogs/soundchip_neogs_acceptance_test.cpp` | On an emulated Pentagon: `test_ngs` (2 and 4 MB), the flasher (update from SD, exact sectors), `test_emu_ngs`, Neo Player Light v0.60 playing the MP3 in real time |
+| `io/sdcard/sdcardspi_test.cpp` | SD protocol: init for SDSC/SDHC, CRC rules, illegal commands, CMD17/18/12, writes session/persist/off, padding, the write listener, a state round trip in the middle of a CMD18 stream |
+| `io/flash/flash29f040b_test.cpp` | Autoselect, program, sector/chip erase with window and DQ3, failures, the flasher's sequence, state |
+| `ttd/ttdgeneralsoundswitch_test.cpp` (extended) | NeoGS records with the whole card in the checkpoint blob; switch to NeoGS during a recording repoints the registry; GS-slot session guard |
+| `neogs/soundchip_neogs_ttd_test.cpp` | Blob saved during the SD boot (init, FAT walk, 32 KB load) and during MP3 DMA playback (reset latency, first frames, full FIFO), loaded into a second card: both run on identically - state hash, MP3 output, RAM, flash and devices |
+| `ttd/ttdneogs_test.cpp` | The SD boot under the TTD engine replays exactly from the session start, a per-frame checkpoint and a mid-frame seek; SD writes leave one `DiskWrite` marker a frame |
+| `soundchip_gslw_test.cpp` (extended) | LW -> NeoGS -> LLE switching with module replay; the lightweight feature leaves NeoGS alone |
+| Benchmarks | `BM_GeneralSoundFrame_*` (classic) and `BM_NeoGSFrame_*`: NeoGS 1.8x the classic card idle and 1.75x playing, inside the 2x / 2.5x budgets |
+
+### 14.4 Still open
+
+- Phase 5: the ZX-DMA host hook (a third host memory interface, composed
+  with the fast/debug swap, plus wait states) and the `Fpga=D` option.
+- TTD: RAM and flash move from the v1 blob to v2 memory regions with the
+  v2 migration (§7.4). The SD card's sectors stay outside TTD; writes are
+  replay barriers.
+- The `npl044` finding above.
+- The `neogs` debugger target, with the GS debugger.
 

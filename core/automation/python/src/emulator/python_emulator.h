@@ -1553,9 +1553,8 @@ namespace PythonBindings
 
                 py::dict d;
                 const uint8_t status = gs->getStatusRaw();
-                d["device"] = gs->hasCoprocessor() ? "General Sound (Z80 coprocessor @ 12 MHz, 4 x 8-bit DAC)"
-                                                   : "General Sound (lightweight mod player, 4 x 8-bit DAC)";
-                d["implementation"] = gs->implementation() == GSCardImplementation::LLE ? "lle" : "lightweight";
+                d["device"] = gs->deviceDescription();
+                d["implementation"] = gsImplementationLabel(gs->implementation());
                 d["rom_loaded"] = gs->isROMLoaded();
                 d["ram_kb"] = static_cast<int>(gs->getRamSizeKB());
                 d["status"] = status;
@@ -1569,7 +1568,7 @@ namespace PythonBindings
                 d["page"] = gs->getMPAG();
 
                 py::list channels;
-                for (int i = 0; i < 4; i++) {
+                for (int i = 0; i < gs->channelCount(); i++) {
                     py::dict channel;
                     channel["sample"] = gs->getChannelSample(i);
                     channel["volume"] = gs->getChannelVolume(i);
@@ -1584,8 +1583,59 @@ namespace PythonBindings
                 cpu["af"] = gs->getCPUReg(GSCpuRegister::AF);
                 cpu["halted"] = gs->isCPUHalted();
                 d["cpu"] = cpu;
+
+                NeoGSStateInfo ngs;
+                if (gs->neogsState(ngs))
+                {
+                    py::dict n;
+                    n["flash"] = ngs.flashTitle;
+                    n["flash_modified"] = ngs.flashModified;
+                    n["gscfg0"] = ngs.gscfg0;
+                    n["clock_hz"] = ngs.clockHz;
+                    py::list windows;
+                    for (int w = 0; w < 4; w++)
+                    {
+                        py::dict window;
+                        window["page"] = ngs.pages[w];
+                        window["flash"] = ngs.windowFlash[w];
+                        windows.append(window);
+                    }
+                    n["windows"] = windows;
+                    n["led_on"] = ngs.ledOn;
+                    n["ready"] = ngs.readyForCommands;
+                    n["int_enable"] = ngs.intEnable;
+                    n["int_request"] = ngs.intRequest;
+                    n["tim_freq"] = ngs.timFreq;
+                    n["sd_present"] = ngs.sdPresent;
+                    n["sd_path"] = ngs.sdPath;
+                    n["sd_sdhc"] = ngs.sdSdhc;
+                    n["sd_blocks_read"] = ngs.sdBlocksRead;
+                    n["mp3_fitted"] = ngs.mp3Fitted;
+                    n["mp3_chip"] = std::string(ngs.mp3Chip);
+                    n["mp3_rate"] = ngs.mp3Rate;
+                    n["mp3_frames"] = ngs.mp3Frames;
+                    n["mp3_decode_time_s"] = ngs.mp3DecodeSeconds;
+                    n["dma_sd_running"] = ngs.dmaRunning[1];
+                    n["dma_mp3_running"] = ngs.dmaRunning[2];
+                    d["neogs"] = n;
+                }
                 return d;
-            }, "General Sound state: mailbox flags, FIFO queue depths, MPAG page, DAC channels, coprocessor core")
+            }, "General Sound state: mailbox flags, FIFO queue depths, MPAG page, DAC channels, coprocessor core; 'neogs' on the NeoGS card")
+            .def("gs_sd_insert", [](Emulator& self, const std::string& path) -> bool {
+                auto* ctx = self.GetContext();
+                GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+                return gs && gs->insertSdCard(path);
+            }, "NeoGS: insert an SD card image", py::arg("path"))
+            .def("gs_sd_eject", [](Emulator& self) {
+                auto* ctx = self.GetContext();
+                GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+                if (gs) gs->ejectSdCard();
+            }, "NeoGS: remove the SD card")
+            .def("gs_flash_save", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+                return gs && gs->saveFlash();
+            }, "NeoGS: save the reprogrammed flash (loaded in place of the shipped image with [NGS] FlashWrite=persist)")
             .def("gs_reset", [](Emulator& self) {
                 auto* ctx = self.GetContext();
                 GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
@@ -1633,15 +1683,11 @@ namespace PythonBindings
                 if (!sm) return false;
 
                 GSTypeKind target;
-                if (personality == "z80" || personality == "lle")
-                    target = GSTypeKind::Z80;
-                else if (personality == "lw" || personality == "lightweight")
-                    target = GSTypeKind::LW;
-                else
+                if (!gsParsePersonality(personality, target))
                     return false;
 
                 return sm->requestGeneralSoundCardSwitch(target);
-            }, "Request a GS card personality swap ('z80'/'lle' or 'lw'/'lightweight'), applied at the next frame boundary",
+            }, "Request a GS card personality swap ('z80'/'lle', 'lw'/'lightweight' or 'ngs'/'neogs'), applied at the next frame boundary",
                py::arg("personality"))
             .def("gs_dump_module", [](Emulator& self, const std::string& path) -> py::object {
                 // Diagnostics: write the last completed COM30..D2 upload

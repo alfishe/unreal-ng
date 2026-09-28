@@ -19,6 +19,7 @@
 #include "emulator/sound/audiodeviceinfo.h"
 #include "emulator/sound/chips/gs/soundchip_gs.h"
 #include "emulator/sound/chips/gs/soundchip_gslw.h"
+#include "emulator/sound/chips/neogs/soundchip_neogs.h"
 #include "emulator/platform.h"  // GSTypeKind (personality switching)
 #include "stdafx.h"
 
@@ -349,6 +350,10 @@ public:
     // personality-agnostic: LLE (Z80+firmware) or LW (in-tree mod player) both
     // arrive as GeneralSoundCard (design: docs/inprogress/2026-09-19-general-sound)
     bool hasGeneralSound() const { return _gs != nullptr; }
+    /// Mixer source name of the fitted GS-slot card ("GS" / "NeoGS")
+    std::string generalSoundDeviceName() const;
+    /// Add or remove the "NeoGS MP3" source to match the fitted card
+    void syncGeneralSoundAuxDevice();
     GeneralSoundCard* getGeneralSound() const { return _gs; }
 
     /// Swap the General Sound card's personality at runtime (design:

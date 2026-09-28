@@ -9,7 +9,8 @@
 /// - SoundChip_GeneralSound  - LLE: second Z80 + gs105a firmware (GSType=Z80)
 /// - SoundChip_GSLightweight - HLE: in-tree ProTracker player, no coprocessor
 ///                             (GSType=LW; replaces upstream's BASS path)
-/// - NeoGS                   - reserved (neogs-tdd.md, P2)
+/// - SoundChip_NeoGS         - NeoGS: FPGA card + flash firmware (GSType=NGS,
+///                             neogs-tdd.md)
 ///
 /// SoundManager, the TTD peripheral registry and every automation surface
 /// (CLI/WebAPI/MCP/Lua/Python) talk to this type only. The host-port mailbox
@@ -18,16 +19,20 @@
 /// one just overwrites it, no queueing) are part of the contract and are
 /// shared code (gsmailbox.h).
 
+#include <algorithm>
+#include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
 
 #include "common/modulelogger.h" // PlatformModulesEnum (shared submodule id)
+#include "emulator/platform.h"          // GSTypeKind
 #include "emulator/ports/portdecoder.h"
 #include "debugger/ttd/ttdserializable.h"
 #include "emulator/sound/chips/gs/gsporttrace.h"
 #include "emulator/sound/chips/gs/gsmailbox.h"  // GSForwardMailbox (switch snapshots)
+#include "emulator/sound/chips/gs/gshostclock.h" // GSClassicTiming
 
 /// Which personality is fitted (introspection/switching; GSCardImplementation
 /// names the implementation, GSTypeKind the config input that selected it)
@@ -35,9 +40,106 @@ enum class GSCardImplementation : uint8_t
 {
     LLE, // SoundChip_GeneralSound (Z80 + firmware)
     LW,  // SoundChip_GSLightweight (in-tree mod player)
-    NGS  // NeoGS (reserved, P2)
+    NGS  // SoundChip_NeoGS (neogs-tdd.md)
 };
 
+/// Automation label of a personality: the `implementation` field of the GS
+/// state on every surface ("lle" | "lightweight" | "ngs")
+inline const char* gsImplementationLabel(GSCardImplementation impl)
+{
+    switch (impl)
+    {
+        case GSCardImplementation::LLE: return "lle";
+        case GSCardImplementation::LW: return "lightweight";
+        case GSCardImplementation::NGS: return "ngs";
+    }
+    return "unknown";
+}
+
+/// Short personality name, as accepted by switch_personality and echoed in
+/// its reply ("z80" | "lw" | "ngs")
+inline const char* gsImplementationShortName(GSCardImplementation impl)
+{
+    switch (impl)
+    {
+        case GSCardImplementation::LLE: return "z80";
+        case GSCardImplementation::LW: return "lw";
+        case GSCardImplementation::NGS: return "ngs";
+    }
+    return "unknown";
+}
+
+/// The personality a GSTypeKind selects (NONE and BASS have none: false)
+inline bool gsImplementationOf(GSTypeKind kind, GSCardImplementation& out)
+{
+    switch (kind)
+    {
+        case GSTypeKind::Z80: out = GSCardImplementation::LLE; return true;
+        case GSTypeKind::LW: out = GSCardImplementation::LW; return true;
+        case GSTypeKind::NGS: out = GSCardImplementation::NGS; return true;
+        default: return false;
+    }
+}
+
+/// Personality names accepted on every automation surface (case-insensitive):
+/// z80 | lle, lw | lightweight, ngs | neogs
+inline bool gsParsePersonality(std::string name, GSTypeKind& out)
+{
+    std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (name == "z80" || name == "lle")
+        out = GSTypeKind::Z80;
+    else if (name == "lw" || name == "lightweight")
+        out = GSTypeKind::LW;
+    else if (name == "ngs" || name == "neogs")
+        out = GSTypeKind::NGS;
+    else
+        return false;
+    return true;
+}
+
+/// For error messages
+constexpr const char* GS_PERSONALITY_NAMES = "z80, lle, lw, lightweight, ngs or neogs";
+
+/// NeoGS-only state for automation (CLI/WebAPI/MCP/Lua/Python), so those
+/// layers need no NeoGS headers (neogs-tdd.md §7.5). Plain data, a snapshot.
+struct NeoGSStateInfo
+{
+    // Card
+    std::string flashTitle;
+    bool flashModified = false;
+    uint8_t gscfg0 = 0;
+    uint32_t clockHz = 0;
+    uint8_t pages[4] = {};
+    bool windowFlash[4] = {};
+    uint8_t mpag = 0;
+    bool ledOn = false;
+    bool readyForCommands = false;
+    // Interrupts
+    uint8_t intEnable = 0;
+    uint8_t intRequest = 0;
+    uint8_t timFreq = 0;
+    // SPI / SD card
+    uint8_t sctrl = 0;
+    bool sdPresent = false;
+    std::string sdPath;
+    bool sdSdhc = false;
+    uint64_t sdSizeBytes = 0;
+    uint64_t sdBlocksRead = 0;
+    uint64_t sdBlocksWritten = 0;
+    // MP3 decoder
+    bool mp3Fitted = false;
+    const char* mp3Chip = "";
+    bool mp3Dreq = false;
+    uint32_t mp3Rate = 0;
+    int mp3Channels = 0;
+    uint64_t mp3Frames = 0;
+    uint32_t mp3DecodeSeconds = 0;
+    size_t mp3InputFill = 0;
+    // DMA (0 ZX, 1 SD, 2 MP3)
+    uint8_t dmaSelect = 0;
+    bool dmaRunning[3] = {};
+    uint32_t dmaAddress[3] = {};
+};
 
 /// Coprocessor register selector for the introspection API (automation, HUD,
 /// tests): the full register file. Independent of the Z80 core the LLE card
@@ -63,12 +165,8 @@ public:
     static constexpr uint16_t PORT_COMMAND = 0x00BB; // GSCOM (status on read)
     static constexpr uint16_t PORT_CONTROL = 0x0033; // GSCTR (reset/NMI)
 
-    // Shared clock/geometry constants (fixed on every personality: the card
-    // crystal and the 37.5 kHz interrupt divider are board facts, not
-    // implementation details)
-    static constexpr uint32_t GS_CLOCK_HZ = 12000000;
-    static constexpr uint32_t GS_INT_FREQUENCY_HZ = 37500;
-    static constexpr int GS_CYCLES_PER_INT = static_cast<int>(GS_CLOCK_HZ / GS_INT_FREQUENCY_HZ); // 320
+    // Clock constants are per card: the classic GS and the lightweight player
+    // share GSClassicTiming (gshostclock.h); NeoGS has its own clocks
 
     // PortDevice has no virtual destructor (upstream); the personality base
     // provides one so SoundManager can own cards through this pointer
@@ -111,6 +209,10 @@ public:
 
     // Buffer access for the SoundManager registry (one frame of stereo int16)
     virtual int16_t* getBuffer() = 0;
+    /// A second output with its own analogue path on the board (the NeoGS
+    /// MP3 decoder), same format; nullptr when the card has none
+    virtual int16_t* getAuxBuffer() { return nullptr; }
+    virtual bool hadAuxAudioActivityLastFrame() const { return false; }
 
     /// Live core-rate change (device reroute with CoreRate=auto)
     virtual void setSampleRate(size_t sampleRate) = 0;
@@ -155,7 +257,42 @@ public:
     // zeros/false and automation prints a placeholder instead
     virtual bool hasCoprocessor() const = 0;
     virtual GSCardImplementation implementation() const = 0;
+    /// One-line hardware description for automation ("General Sound (...)")
+    virtual std::string deviceDescription() const = 0;
     virtual bool isCPUHalted() const { return false; }
+
+    /// The card's firmware is past its boot and polls the host mailbox, so a
+    /// command sent now is processed rather than lost (module replay after a
+    /// personality switch waits for this, neogs-tdd.md §7.1). Cards without
+    /// firmware are always ready.
+    virtual bool isReadyForCommands() const { return true; }
+
+    /// DAC channels the card mixes (introspection loops use this, not 4)
+    virtual int channelCount() const { return 4; }
+
+    /// NeoGS extras (other cards: false / no-op)
+    virtual bool neogsState(NeoGSStateInfo& out) const
+    {
+        (void)out;
+        return false;
+    }
+    virtual bool insertSdCard(const std::string& path)
+    {
+        (void)path;
+        return false;
+    }
+    virtual void ejectSdCard() {}
+    /// Card memory as the card CPU sees it now, no side effects (no DAC latch,
+    /// no flash state change). False on cards without a CPU.
+    virtual bool peekCardMemory(uint16_t addr, uint8_t& out) const
+    {
+        (void)addr;
+        out = 0xFF;
+        return false;
+    }
+    virtual bool saveFlash() { return false; }
+    /// Firmware/flash description for automation ("32 KB ROM", "NeoGS flash v1.11")
+    virtual std::string firmwareDescription() const { return isROMLoaded() ? "Loaded (32 KB)" : "Missing (zero-filled)"; }
     virtual uint16_t getCPUReg(GSCpuRegister) const { return 0; }
 
     /// region <Diagnostics: activity counters + port/DAC trace>

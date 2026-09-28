@@ -126,9 +126,9 @@ SoundManager::SoundManager(EmulatorContext* context)
     // General Sound card ([SOUND] GSType, GS design §5.1): personality slot
     // behind the GeneralSoundCard interface (design:
     // docs/inprogress/2026-09-19-general-sound). Z80 = LLE coprocessor
-    // + 4xDAC; LW = in-tree lightweight mod player (no coprocessor); NGS
-    // (NeoGS, neogs-tdd.md) is a P2 placeholder that parses but creates no
-    // device yet. RAM comes from [SOUND] GSRamSize (default 128 KB stock):
+    // + 4xDAC; LW = in-tree lightweight mod player (no coprocessor); NGS =
+    // NeoGS (neogs-tdd.md), configured by its own [NGS] section. The classic
+    // card's RAM comes from [SOUND] GSRamSize (default 128 KB stock):
     // [NGS] RamSize is a NeoGS-only key and must not leak here - its shipped
     // 2048 KB default clamps to 512 KB, which quadruples the firmware POST so
     // fastdisk-booted trainers probe the card mid-POST and read 0xFF instead
@@ -136,7 +136,8 @@ SoundManager::SoundManager(EmulatorContext* context)
     // that race and fell back to no-GS sound, verification BUG-6). The
     // firmware ROM is optional - the chip warns and runs zeroed when
     // missing, so a config error never blocks the machine.
-    if (_context->config.sound.gsTypeKind == GSTypeKind::Z80 || _context->config.sound.gsTypeKind == GSTypeKind::LW)
+    if (_context->config.sound.gsTypeKind == GSTypeKind::Z80 || _context->config.sound.gsTypeKind == GSTypeKind::LW ||
+        _context->config.sound.gsTypeKind == GSTypeKind::NGS)
     {
         GSTypeKind gsKind = _context->config.sound.gsTypeKind;
         if (gsKind == GSTypeKind::Z80 && _context->pFeatureManager
@@ -148,7 +149,8 @@ SoundManager::SoundManager(EmulatorContext* context)
             gsKind = GSTypeKind::LW;
         }
         _gs = createGeneralSoundCard(gsKind);
-        _devices.push_back({AudioSourceType::GeneralSound, "GS", false, false, 1.0f, 0.0f, false});
+        _devices.push_back({AudioSourceType::GeneralSound, generalSoundDeviceName(), false, false, 1.0f, 0.0f, false});
+        syncGeneralSoundAuxDevice();
     }
     // MoonSound (ZXM-MoonSound / YMF278B / OPL4) if the legacy key is set
     // (D1/D2). Two registry sources (D5), legacy volume scale.
@@ -393,6 +395,8 @@ const int16_t* SoundManager::deviceBuffer(AudioSourceType type) const
             return _covox ? _covox->getBuffer() : nullptr;
         case AudioSourceType::GeneralSound:
             return _gs ? _gs->getBuffer() : nullptr;
+        case AudioSourceType::GeneralSoundMp3:
+            return _gs ? _gs->getAuxBuffer() : nullptr;
 #ifdef UNREALNG_HAVE_OPL4
         case AudioSourceType::Moonsound_FM:
             return _moonsound ? _moonsound->getFmBuffer() : nullptr;
@@ -1008,6 +1012,9 @@ void SoundManager::handleFrameEnd()
             case AudioSourceType::GeneralSound:
                 srcBuffer = _gs ? _gs->getBuffer() : nullptr;
                 break;
+            case AudioSourceType::GeneralSoundMp3:
+                srcBuffer = _gs ? _gs->getAuxBuffer() : nullptr;
+                break;
 #ifdef UNREALNG_HAVE_OPL4
             case AudioSourceType::Moonsound_FM:
                 srcBuffer = _moonsound ? _moonsound->getFmBuffer() : nullptr;
@@ -1043,6 +1050,10 @@ void SoundManager::handleFrameEnd()
             // card is actually playing. hadAudioActivityLastFrame() is the
             // signal the HUD nudge is held from (AudioActivityIndicators).
             d.activeRecently = _gs && _gs->hadAudioActivityLastFrame();
+        }
+        else if (d.type == AudioSourceType::GeneralSoundMp3)
+        {
+            d.activeRecently = _gs && _gs->hadAuxAudioActivityLastFrame();
         }
         else if (d.type == AudioSourceType::Beeper)
         {
@@ -1305,7 +1316,14 @@ void SoundManager::UpdateFeatureCache()
         if (gsLightweightOn != _gsLightweightFeatureWasOn)
         {
             _gsLightweightFeatureWasOn = gsLightweightOn;
-            if (gsLightweightOn)
+            // The feature means "lightweight instead of the Z80 card"; it
+            // never replaces a fitted NeoGS (neogs-tdd.md §7.1)
+            const bool neoGSFitted = _gs && _gs->implementation() == GSCardImplementation::NGS;
+            if (neoGSFitted)
+            {
+                // nothing to do
+            }
+            else if (gsLightweightOn)
             {
                 requestGeneralSoundCardSwitch(GSTypeKind::LW);
             }
@@ -1394,20 +1412,45 @@ GeneralSoundCard* SoundManager::createGeneralSoundCard(GSTypeKind kind) const
             // no ROM (loadROM would only warn) - the virtual RAM geometry
             // still comes from [SOUND] GSRamSize for the 20/21/23 queries
             return new SoundChip_GSLightweight(_context, _context->config.sound.gsRamKB, _coreRate);
+        case GSTypeKind::NGS:
+        {
+            // NeoGS: flash image from [NGS] Flash; loadROM cold-boots the card
+            // into its configured boot mode. A missing image warns and leaves
+            // the card fitted but idle
+            auto* card = new SoundChip_NeoGS(_context, _context->config.ngs, _coreRate);
+            card->loadROM(_context->config.ngs.flashPath);
+            return card;
+        }
         default:
-            // BASS folded into LW at config parse; NONE/NGS parse but map to
-            // no device (neogs-tdd.md P2 placeholder)
+            // BASS folded into LW at config parse; NONE maps to no device
             LOGWARNING("SoundManager: GSType %u maps to no creatable personality - no General Sound card",
                        static_cast<unsigned>(kind));
             return nullptr;
     }
 }
 
+void SoundManager::syncGeneralSoundAuxDevice()
+{
+    const bool wanted = _gs && _gs->getAuxBuffer();
+    auto it = std::find_if(_devices.begin(), _devices.end(),
+                           [](const AudioDeviceInfo& d) { return d.type == AudioSourceType::GeneralSoundMp3; });
+    if (wanted && it == _devices.end())
+        _devices.push_back({AudioSourceType::GeneralSoundMp3, "NeoGS MP3", false, false, 1.0f, 0.0f, false});
+    else if (!wanted && it != _devices.end())
+        _devices.erase(it);
+}
+
+std::string SoundManager::generalSoundDeviceName() const
+{
+    return (_gs && _gs->implementation() == GSCardImplementation::NGS) ? "NeoGS" : "GS";
+}
+
 bool SoundManager::switchGeneralSoundCard(GSTypeKind target)
 {
-    if (target != GSTypeKind::Z80 && target != GSTypeKind::LW)
+    GSCardImplementation targetImplementation = GSCardImplementation::LLE;
+    if (!gsImplementationOf(target, targetImplementation))
     {
-        LOGWARNING("SoundManager: personality switch target GSType %u is not switchable (Z80 | LW)",
+        LOGWARNING("SoundManager: personality switch target GSType %u is not switchable (Z80 | LW | NGS)",
                    static_cast<unsigned>(target));
         return false;
     }
@@ -1418,13 +1461,11 @@ bool SoundManager::switchGeneralSoundCard(GSTypeKind target)
         return false;
     }
 
-    const GSCardImplementation targetImplementation =
-        target == GSTypeKind::Z80 ? GSCardImplementation::LLE : GSCardImplementation::LW;
     if (_gs->implementation() == targetImplementation)
         return true; // already the requested personality
 
-    const char* from = _gs->implementation() == GSCardImplementation::LLE ? "LLE (Z80)" : "lightweight";
-    const char* to = targetImplementation == GSCardImplementation::LLE ? "LLE (Z80)" : "lightweight";
+    const char* from = gsImplementationLabel(_gs->implementation());
+    const char* to = gsImplementationLabel(targetImplementation);
 
     // 1. Snapshot the outgoing card: host-visible mailbox, activity counters
     //    and the v1 module handoff payload (only the lightweight card
@@ -1493,6 +1534,15 @@ bool SoundManager::switchGeneralSoundCard(GSTypeKind target)
     if (!portsRegistered)
         LOGWARNING("SoundManager: GS host port re-registration failed after the personality switch");
 
+    // The mixer's source name follows the card ("GS" / "NeoGS"), and the MP3
+    // source exists only while a card with a second output is fitted
+    for (AudioDeviceInfo& device : _devices)
+    {
+        if (device.type == AudioSourceType::GeneralSound)
+            device.name = generalSoundDeviceName();
+    }
+    syncGeneralSoundAuxDevice();
+
     // 5. Module handoff on virgin queues (running BEFORE the mailbox restore
     //    keeps the param/command/stream/D2 ordering pristine), then restore
     //    the host-visible mailbox and fold the counters - triage totals
@@ -1509,7 +1559,8 @@ bool SoundManager::switchGeneralSoundCard(GSTypeKind target)
 
 bool SoundManager::requestGeneralSoundCardSwitch(GSTypeKind target)
 {
-    if (target != GSTypeKind::Z80 && target != GSTypeKind::LW)
+    GSCardImplementation targetImplementation;
+    if (!gsImplementationOf(target, targetImplementation))
         return false;
 
     _pendingGSSwitch.store(static_cast<uint8_t>(target), std::memory_order_release);

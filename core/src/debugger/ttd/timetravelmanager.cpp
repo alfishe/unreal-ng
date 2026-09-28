@@ -38,6 +38,7 @@
 #include "emulator/io/mouse/mouse.h"      // Mouse (Kempston Mouse peripheral + input journal replay)
 #include "emulator/memory/memory.h"      // Memory
 #include "emulator/platform.h"           // EmulatorState, CONFIG, PAGE_SIZE, MAX_RAM_PAGES
+#include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/sound/chips/iturbosounddevice.h"  // ITurboSoundDevice (TurboSound-slot peripheral, design §3.3 / §8.2)
 #include "emulator/video/screen.h"       // Screen, SpectrumScreenEnum (SetActiveScreen / SetBorderColor on restore)
 #include "emulator/sound/covox.h"                        // Covox (peripheral, P1.5)
@@ -3220,6 +3221,51 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
             {
                 err = "TurboSound slot mismatch: session was recorded with a TurboSound-slot device, "
                       "this instance has none - set [SOUND] TurboSound to the recorded kind and restart";
+                return false;
+            }
+        }
+    }
+
+    // General Sound slot guard (neogs-tdd.md §7.4): a session recorded with one
+    // GS-slot personality (classic GS, lightweight player, NeoGS) is refused
+    // on an instance fitted with another - RestoreAll would restore neither,
+    // leaving the live card's state behind silently. The baseline checkpoint
+    // names the personality at the start of the recording; switches inside
+    // the session are replayed by UpdatePeripheral. An instance with no GS
+    // card keeps the missing-blob report (RestoreAll) rather than a refusal.
+    if (!_timeline.empty() && _context && _context->pSoundManager)
+    {
+        if (GeneralSoundCard* liveGs = _context->pSoundManager->getGeneralSound())
+        {
+            static const struct
+            {
+                PeripheralId id;
+                const char* name;
+            } kGsSlot[] = {{PeripheralId::GeneralSound, "GS"},
+                           {PeripheralId::GeneralSoundLightweight, "GS lightweight"},
+                           {PeripheralId::NeoGS, "NeoGS"}};
+            const auto& blobs = _timeline.front().peripheralBlobs;
+            const char* recorded = nullptr;
+            PeripheralId recordedId = PeripheralId::Count;
+            for (const auto& slot : kGsSlot)
+            {
+                if (blobs.find(static_cast<uint8_t>(slot.id)) != blobs.end())
+                {
+                    recorded = slot.name;
+                    recordedId = slot.id;
+                    break;
+                }
+            }
+            if (recorded && recordedId != liveGs->TTDPeripheralId())
+            {
+                const char* fitted = "another card";
+                for (const auto& slot : kGsSlot)
+                {
+                    if (slot.id == liveGs->TTDPeripheralId())
+                        fitted = slot.name;
+                }
+                err = std::string("General Sound slot mismatch: recorded with ") + recorded + ", fitted: " + fitted +
+                      " - set [SOUND] GSType to the recorded card and restart";
                 return false;
             }
         }

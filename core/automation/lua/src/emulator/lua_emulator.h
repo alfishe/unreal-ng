@@ -1904,9 +1904,8 @@ public:
 
             sol::table t = lua_view.create_table();
             const uint8_t status = gs->getStatusRaw();
-            t["device"] = gs->hasCoprocessor() ? "General Sound (Z80 coprocessor @ 12 MHz, 4 x 8-bit DAC)"
-                                               : "General Sound (lightweight mod player, 4 x 8-bit DAC)";
-            t["implementation"] = gs->implementation() == GSCardImplementation::LLE ? "lle" : "lightweight";
+            t["device"] = gs->deviceDescription();
+            t["implementation"] = gsImplementationLabel(gs->implementation());
             t["rom_loaded"] = gs->isROMLoaded();
             t["ram_kb"] = static_cast<int>(gs->getRamSizeKB());
             t["status"] = status;
@@ -1920,7 +1919,7 @@ public:
             t["page"] = gs->getMPAG();
 
             sol::table channels = lua_view.create_table();
-            for (int i = 0; i < 4; i++) {
+            for (int i = 0; i < gs->channelCount(); i++) {
                 sol::table channel = lua_view.create_table();
                 channel["sample"] = gs->getChannelSample(i);
                 channel["volume"] = gs->getChannelVolume(i);
@@ -1935,7 +1934,63 @@ public:
             cpu["af"] = gs->getCPUReg(GSCpuRegister::AF);
             cpu["halted"] = gs->isCPUHalted();
             t["cpu"] = cpu;
+
+            NeoGSStateInfo ngs;
+            if (gs->neogsState(ngs))
+            {
+                sol::table n = lua_view.create_table();
+                n["flash"] = ngs.flashTitle;
+                n["flash_modified"] = ngs.flashModified;
+                n["gscfg0"] = ngs.gscfg0;
+                n["clock_hz"] = ngs.clockHz;
+                sol::table windows = lua_view.create_table();
+                for (int w = 0; w < 4; w++)
+                {
+                    sol::table window = lua_view.create_table();
+                    window["page"] = ngs.pages[w];
+                    window["flash"] = ngs.windowFlash[w];
+                    windows[w + 1] = window;
+                }
+                n["windows"] = windows;
+                n["led_on"] = ngs.ledOn;
+                n["ready"] = ngs.readyForCommands;
+                n["int_enable"] = ngs.intEnable;
+                n["int_request"] = ngs.intRequest;
+                n["tim_freq"] = ngs.timFreq;
+                n["sd_present"] = ngs.sdPresent;
+                n["sd_path"] = ngs.sdPath;
+                n["sd_sdhc"] = ngs.sdSdhc;
+                n["sd_blocks_read"] = static_cast<double>(ngs.sdBlocksRead);
+                n["mp3_fitted"] = ngs.mp3Fitted;
+                n["mp3_chip"] = std::string(ngs.mp3Chip);
+                n["mp3_rate"] = ngs.mp3Rate;
+                n["mp3_frames"] = static_cast<double>(ngs.mp3Frames);
+                n["mp3_decode_time_s"] = ngs.mp3DecodeSeconds;
+                n["dma_sd_running"] = ngs.dmaRunning[1];
+                n["dma_mp3_running"] = ngs.dmaRunning[2];
+                t["neogs"] = n;
+            }
             return t;
+        });
+
+        // NeoGS SD slot and flash (other cards: false / no-op)
+        lua.set_function("gs_sd_insert", [this](const std::string& path) -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+            return gs && gs->insertSdCard(path);
+        });
+        lua.set_function("gs_sd_eject", [this]() {
+            if (!_emulator) return;
+            auto* ctx = _emulator->GetContext();
+            GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+            if (gs) gs->ejectSdCard();
+        });
+        lua.set_function("gs_flash_save", [this]() -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
+            return gs && gs->saveFlash();
         });
 
         lua.set_function("gs_reset", [this]() {
@@ -1999,11 +2054,7 @@ public:
             if (!sm) return false;
 
             GSTypeKind target;
-            if (personality == "z80" || personality == "lle")
-                target = GSTypeKind::Z80;
-            else if (personality == "lw" || personality == "lightweight")
-                target = GSTypeKind::LW;
-            else
+            if (!gsParsePersonality(personality, target))
                 return false;
 
             return sm->requestGeneralSoundCardSwitch(target);

@@ -98,7 +98,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"create", "list", "list_models", "server", "status", "start", "stop", "pause", "resume", "reset", "destroy",
                                "gs_reset", "gs_reset_card", "gs_nmi", "gs_send_command", "gs_send_data", "gs_read_status", "gs_read_data",
-                               "gs_switch_personality", "gs_dump_module"})
+                               "gs_switch_personality", "gs_dump_module", "gs_sd_insert", "gs_sd_eject", "gs_flash_save"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
@@ -109,8 +109,9 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "and models_creatable; 'status' reports one instance's details. 'gs_*' actions drive the General Sound "
         "card over the same /control/audio/gs endpoint the WebAPI serves (gs_reset/gs_reset_card/gs_nmi/"
         "gs_send_command/gs_send_data/gs_read_status/gs_read_data; the byte actions need 'value'); "
-        "'gs_switch_personality' swaps the LLE/LW card at the next frame boundary (needs 'personality': "
-        "'z80'|'lle' or 'lw'|'lightweight'); 'gs_dump_module' writes the last completed COM30..D2 module "
+        "'gs_switch_personality' swaps the GS-slot card at the next frame boundary (needs 'personality': "
+        "'z80'|'lle', 'lw'|'lightweight' or 'ngs'|'neogs'); NeoGS only: 'gs_sd_insert' (needs 'path' to a raw "
+        "image), 'gs_sd_eject', 'gs_flash_save'; 'gs_dump_module' writes the last completed COM30..D2 module "
         "upload to a file (optional 'path', defaults to 'gs-module-dump.mod').";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
@@ -126,11 +127,12 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["value"]["description"] = "Byte value (0-255) required by gs_send_command and gs_send_data";
     schema["properties"]["personality"]["type"] = "string";
     schema["properties"]["personality"]["description"] =
-        "Required by gs_switch_personality: 'z80'|'lle' for the Z80 coprocessor card, 'lw'|'lightweight' for the "
+        "Required by gs_switch_personality: 'z80'|'lle' for the Z80 coprocessor card, 'ngs'|'neogs' for NeoGS, 'lw'|'lightweight' for the "
         "in-tree mod-player card";
     schema["properties"]["path"]["type"] = "string";
     schema["properties"]["path"]["description"] =
-        "Optional file path for gs_dump_module (defaults to 'gs-module-dump.mod' in the server's working directory)";
+        "File path: optional for gs_dump_module (defaults to 'gs-module-dump.mod' in the server's working directory), "
+        "required for gs_sd_insert (the SD card image)";
     schema["required"].append("action");
 
     registry.Register(
@@ -138,7 +140,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "Manage Unreal-NG emulator instances: create, list, switch models, start/stop/pause/resume/reset/destroy. "
         "Multi-instance: target identifies the machine; 'auto' reuses the single instance or creates a default 128k one. "
         "Also drives the General Sound card (gs_reset/gs_reset_card/gs_nmi/gs_send_command/gs_send_data/"
-        "gs_read_status/gs_read_data/gs_switch_personality/gs_dump_module).",
+        "gs_read_status/gs_read_data/gs_switch_personality/gs_dump_module; NeoGS: gs_sd_insert/gs_sd_eject/gs_flash_save).",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             std::string action = args["action"].asString();
@@ -235,7 +237,8 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                 else if (action == "gs_reset" || action == "gs_reset_card" || action == "gs_nmi" ||
                          action == "gs_send_command" || action == "gs_send_data" ||
                          action == "gs_read_status" || action == "gs_read_data" ||
-                         action == "gs_switch_personality" || action == "gs_dump_module")
+                         action == "gs_switch_personality" || action == "gs_dump_module" || action == "gs_sd_insert" ||
+                         action == "gs_sd_eject" || action == "gs_flash_save")
                 {
                     // GS card control (GS design §11.3): forwards to the same
                     // /control/audio/gs endpoint the WebAPI serves - the "gs_"
@@ -255,14 +258,20 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                     {
                         if (!args.isMember("personality") || !args["personality"].isString())
                         {
-                            done(ToolResult::Error("Action '" + action + "' requires 'personality' (z80, lle, lw or lightweight)"));
+                            done(ToolResult::Error("Action '" + action + "' requires 'personality' (z80, lle, lw, lightweight, ngs or neogs)"));
                             return;
                         }
                         body["personality"] = args["personality"].asString();
                     }
-                    else if (action == "gs_dump_module" && args.isMember("path") && args["path"].isString())
+                    else if ((action == "gs_dump_module" || action == "gs_sd_insert") && args.isMember("path") &&
+                             args["path"].isString())
                     {
                         body["path"] = args["path"].asString();
+                    }
+                    else if (action == "gs_sd_insert")
+                    {
+                        done(ToolResult::Error("Action 'gs_sd_insert' requires 'path' (an SD card image)"));
+                        return;
                     }
                     caller.Call("POST", Endpoint(id, "/control/audio/gs"), &body, [action, done](int status, Json::Value response) {
                         if (status >= 200 && status < 300)
@@ -775,7 +784,8 @@ void RegisterInspectState(ToolRegistry& registry)
         "latch bindings and live routing flags, "
         "'audio_ay' = every AY/SSG chip fully decoded, 'audio_fm' = TurboSound FM board + both YM2203 FM halves (mode, timers, "
         "channels, operators, envelopes, key-on), 'audio_gs' = General Sound card (mailbox flags, MPAG page, DAC channels, "
-        "coprocessor core; reports unavailable when the card is not fitted), 'fdc' = Beta Disk WD1793 registers, status, FSM, drives, 'mouse' = "
+        "coprocessor core, and a 'neogs' object with windows, clock, SD card, MP3 decoder and DMA on the NeoGS card; "
+        "reports unavailable when the card is not fitted), 'fdc' = Beta Disk WD1793 registers, status, FSM, drives, 'mouse' = "
         "Kempston mouse state incl. port routing (fitted vs shadowed).";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";

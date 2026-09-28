@@ -178,10 +178,12 @@
         "Drive the GS card the way ZX software does (each action flushes the coprocessor to the current ZX tact "
         "first): reset (full power-on), reset_card (#33 bit7 - CPU/banking/timing, mailbox survives), nmi (#33 "
         "bit6), send_command (OUT #BB), send_data (OUT #B3), read_status (IN #BB, returns the value), read_data "
-        "(IN #B3, clears the data-pending flag and returns the value), switch_personality (runtime LLE <-> "
-        "lightweight card swap - the host mailbox and activity counters survive the handoff; applied at the "
-        "next frame boundary), dump_module (writes the last completed COM30..D2 module upload to a file - "
-        "'path' optional, defaults to 'gs-module-dump.mod'; 404 when no upload has completed yet).";
+        "(IN #B3, clears the data-pending flag and returns the value), switch_personality (runtime swap of the "
+        "GS-slot card: classic GS, lightweight player or NeoGS - the host mailbox and activity counters survive "
+        "the handoff and an uploaded module is replayed; applied at the next frame boundary), dump_module "
+        "(writes the last completed COM30..D2 module upload to a file - 'path' optional, defaults to "
+        "'gs-module-dump.mod'; 404 when no upload has completed yet). NeoGS only (409 otherwise): sd_insert "
+        "(needs 'path' to a raw SD image), sd_eject, flash_save (saves the reprogrammed flash).";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["required"] = true;
@@ -215,6 +217,14 @@
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
                                                                ["properties"]["personality"]["enum"].append("lw");
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["personality"]["enum"].append("ngs");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["action"]["enum"].append("sd_insert");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["action"]["enum"].append("sd_eject");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["action"]["enum"].append("flash_save");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
                                                                ["properties"]["action"]["enum"].append("dump_module");
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
                                                                ["properties"]["path"]["type"] = "string";
@@ -225,6 +235,10 @@
         "Unknown action, invalid value or unknown personality";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["404"]["description"] =
         "Emulator or GS card not found, or (dump_module) no completed module upload captured yet";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["409"]["description"] =
+        "sd_insert / sd_eject / flash_save on a card that is not NeoGS";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["422"]["description"] =
+        "sd_insert: the image cannot be opened; flash_save: the flash could not be saved";
 
     paths["/api/v1/emulator/{id}/state/audio/covox"]["get"]["summary"] = "Get Covox state";
     paths["/api/v1/emulator/{id}/state/audio/covox"]["get"]["tags"].append("Audio State");

@@ -308,6 +308,7 @@ public:
     void InvalidateSession(const char* reason);
 
     inline bool IsRecording() const { return _state == TTDSessionState::Recording; }
+
     inline TTDSessionState GetState() const { return _state; }
     inline TTDRecordMode GetRecordMode() const { return _recordMode; }
     inline bool IsDebuggerLive() const { return _recordMode == TTDRecordMode::DebuggerLive; }
