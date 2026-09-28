@@ -2,9 +2,7 @@
 
 #include "mediaformatregistry.h"
 
-#include <filesystem>
-#include <system_error>
-
+#include "common/filehelper.h"
 #include "emulator/io/storage/rawimage.h"
 #include "emulator/io/storage/readonlyguard.h"
 #include "emulator/io/storage/sessionwritemap.h"
@@ -42,8 +40,7 @@ MediaResult MediaFormatRegistry::Open(const OpenRequest& request, std::unique_pt
                                  std::string(MediaKindName(request.kind)) + " media are not served by the media manager yet");
 
     const MediaSource& source = request.source;
-    std::error_code ec;
-    const bool isFolder = std::filesystem::is_directory(source.path, ec);
+    const bool isFolder = FileHelper::IsFolder(source.path);
 
     if (source.type == MediaSourceType::Folder || isFolder)
     {
@@ -55,7 +52,7 @@ MediaResult MediaFormatRegistry::Open(const OpenRequest& request, std::unique_pt
     if (source.type == MediaSourceType::Blank)
         return MediaResult::Fail(MediaError::NotSupported, "blank block media are created with CreateBlank");
 
-    if (!std::filesystem::exists(source.path, ec))
+    if (!FileHelper::FileExists(source.path))
         return MediaResult::Fail(MediaError::UnreadableSource, "no such file: " + source.path);
 
     std::string error;

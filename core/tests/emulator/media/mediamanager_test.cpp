@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <memory>
 #include <string>
@@ -13,6 +14,7 @@
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
+#include "common/filehelper.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -138,6 +140,39 @@ TEST(MediaManager_Test, InsertFromAnImageFileAndAccessModes)
     ASSERT_TRUE(manager.Eject("sd.test", {/*force*/ true}).Ok());
     manager.UnregisterSlot("sd.test");
     std::remove(path.c_str());
+}
+
+/// Paths are UTF-8 strings everywhere; FileHelper turns them into native paths
+/// (UTF-16 on Windows), so a non-ASCII image name opens on every host
+TEST(MediaManager_Test, NonAsciiImagePathOpens)
+{
+    MediaManager manager(nullptr);
+    FakeBlockSlot slot("sd.test");
+    manager.RegisterSlot(slot);
+
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("карта-диск.img");
+    {
+        std::ofstream out(FileHelper::ToFsPath(path), std::ios::binary | std::ios::trunc);
+        const std::vector<char> sector(512, 0x24);
+        out.write(sector.data(), static_cast<std::streamsize>(sector.size()));
+    }
+    MediaSource source;
+    source.path = path;
+    MediaResult result = manager.Insert("sd.test", source);
+    ASSERT_TRUE(result.Ok()) << result.message;
+    uint8_t sector[512];
+    ASSERT_TRUE(slot.attached->Block()->ReadSector(0, sector));
+    EXPECT_EQ(sector[0], 0x24);
+
+    const std::string exported = TestPathHelper::GetUniqueTestScratchPath("экспорт.img");
+    ASSERT_TRUE(manager.Export("sd.test", exported).Ok());
+    EXPECT_TRUE(FileHelper::FileExists(exported));
+
+    ASSERT_TRUE(manager.Eject("sd.test").Ok());
+    manager.UnregisterSlot("sd.test");
+    std::error_code ec;
+    std::filesystem::remove(FileHelper::ToFsPath(path), ec);
+    std::filesystem::remove(FileHelper::ToFsPath(exported), ec);
 }
 
 TEST(MediaManager_Test, DirtyEjectNeedsForceAndDiscardCleans)

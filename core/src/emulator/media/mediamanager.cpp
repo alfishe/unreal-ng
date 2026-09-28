@@ -7,6 +7,7 @@
 #include <system_error>
 
 #include "common/modulelogger.h"
+#include "common/filehelper.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -127,8 +128,7 @@ MediaResult MediaManager::Insert(const std::string& slotId, const MediaSource& s
         descriptor = it->second.slot->Descriptor();
     }
 
-    std::error_code ec;
-    if ((source.type == MediaSourceType::Folder || std::filesystem::is_directory(source.path, ec)) && !descriptor.acceptsFolder)
+    if ((source.type == MediaSourceType::Folder || FileHelper::IsFolder(source.path)) && !descriptor.acceptsFolder)
         return MediaResult::Fail(MediaError::KindMismatch, "slot '" + slotId + "' does not take a folder");
 
     // File I/O and folder scans happen here, on the caller's thread
@@ -262,8 +262,7 @@ MediaResult MediaManager::Export(const std::string& slotId, const std::string& p
     if (!CanApplyNow())
         return MediaResult::Fail(MediaError::NotSupported, "pause the emulator to export slot '" + slotId + "'");
 
-    std::error_code ec;
-    if (std::filesystem::equivalent(path, state.attached->Source().path, ec))
+    if (FileHelper::AbsolutePath(path, /*resolveSymlinks*/ true) == state.attached->SourceKey())
         return MediaResult::Fail(MediaError::InUse, "the export target is the medium's own source");
 
     std::string error;
@@ -424,7 +423,7 @@ void MediaManager::Retire(std::unique_ptr<Medium> medium)
     if (upload)
     {
         std::error_code ec;
-        std::filesystem::remove(path, ec);
+        std::filesystem::remove(FileHelper::ToFsPath(path), ec);
     }
 }
 

@@ -3,10 +3,9 @@
 #include "medium.h"
 
 #include <atomic>
-#include <filesystem>
 #include <fstream>
-#include <system_error>
 
+#include "common/filehelper.h"
 #include "emulator/io/storage/sessionwritemap.h"
 
 namespace
@@ -19,9 +18,8 @@ namespace
              source.type == MediaSourceType::Upload) &&
             !source.path.empty())
         {
-            std::error_code ec;
-            const std::filesystem::path canonical = std::filesystem::weakly_canonical(source.path, ec);
-            return ec ? source.path : canonical.string();
+            // Absolute, "~" expanded, symlinks resolved: two spellings of one file are one source
+            return FileHelper::AbsolutePath(source.path, /*resolveSymlinks*/ true);
         }
         return "anonymous:" + std::to_string(g_nextAnonymousSource.fetch_add(1));
     }
@@ -61,7 +59,7 @@ std::string Medium::Describe() const
 
 bool ExportBlockDevice(IBlockDevice& device, const std::string& path, std::string* error)
 {
-    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    std::ofstream out(FileHelper::ToFsPath(path), std::ios::binary | std::ios::trunc);
     if (!out)
     {
         if (error)

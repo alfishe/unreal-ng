@@ -121,6 +121,17 @@ endif()
 # C-style tables live in namespace Z80Lib (see 3rdparty/unreal-z80/README.md)
 file (GLOB UNREAL_Z80_FILES ${SOURCE_DIR}/3rdparty/unreal-z80/*.cpp)
 set_source_files_properties(${UNREAL_Z80_FILES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+
+# rapidyaml (single-header YAML / JSON parser): its definitions compile in one
+# translation unit, ryml_impl.cpp. The vendored code is not warning-clean under
+# -Wall -Wextra -Werror and must not be force-fed stdafx.h
+set(RYML_IMPL_CPP ${SOURCE_DIR}/3rdparty/rapidyaml/ryml_impl.cpp)
+set_source_files_properties(${RYML_IMPL_CPP} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+if (MSVC)
+    set_source_files_properties(${RYML_IMPL_CPP} PROPERTIES COMPILE_OPTIONS "/w")
+else()
+    set_source_files_properties(${RYML_IMPL_CPP} PROPERTIES COMPILE_OPTIONS "-w")
+endif()
 message("CPP_FILES:${CPP_FILES}")
 
 set (SOURCES ${CPP_FILES})
