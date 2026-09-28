@@ -145,7 +145,7 @@ the internals).
 | session state | `idle` (not recording; history may or may not exist), `recording`, `detached` (the machine sits at a point in the recorded past and is paused). |
 | marker | A replay barrier: something the recording cannot reproduce happened here (tape play/stop, a disk sector write, a debugger memory edit, a reset). Seek and backward searches stop at it and say so. |
 | bookmark | Your own label on a point in time. Advisory only, never a barrier. |
-| write journal | A log of every memory write made while recording (on by default). It makes `find_last` for writes instant; without it the search replays history. |
+| write journal | A log of every memory write made while recording (on by default). It makes `find_last` for writes instant; without it the search replays history. It is used only when it holds every write of the session (never paused mid-recording); a gap sends the search to replay, which is slower but always right. |
 
 ### Actions
 
