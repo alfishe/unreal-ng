@@ -54,7 +54,9 @@ const Golden kGolden[] = {
     {"PROFSCORP", nullptr, 0xB62AC29F6C8595C8ull, 0xA0ACA621D375DA98ull, 10483200ull},
     {"PROFI", nullptr, 0xE0FAE946751F0EDFull, 0x1E71318A116D0D18ull, 10483200ull},
     {"ATM710", nullptr, 0x8AB82EB6A4994527ull, 0x27AEF4CA26888579ull, 10483200ull},
-    {"ATM3", nullptr, 0xEEBAA107CD12C78Dull, 0xC5306EDC27D3E26Dull, 9574656ull},
+    // ATM3 re-recorded after master's ZX-Evo BaseConf phase E0 (RTL-derived
+    // port decode, c8a5392e) - an intended change of the machine's behaviour
+    {"ATM3", nullptr, 0x43966FF67217C4D7ull, 0xB5B8D322EFD61D9Dull, 9574656ull},
     // TSL (TS-Conf) is not creatable with the shipped ROMs.
 };
 
