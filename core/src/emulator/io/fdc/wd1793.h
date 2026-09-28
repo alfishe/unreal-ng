@@ -859,6 +859,9 @@ public:
 
     void process();
     void ejectDisk();
+    /// A drive's disk was inserted or ejected (FDD callback): drop every
+    /// pointer into the previous image before its owner releases it
+    void onDiskChanged(FDD* drive);
     
     // Observer support for analyzers
     void addObserver(IWD1793Observer* observer);
@@ -1349,6 +1352,9 @@ public:
     using WD1793::_writeTrackLength;
     using WD1793::_currentSector;
     using WD1793::_currentReadTrack;
+    using WD1793::_sectorData;
+    using WD1793::_idamData;
+    using WD1793::_writeTrackTarget;
     using WD1793::_sectorSize;
     using WD1793::_tstatesPerByte;
     using WD1793::_rotationalDelayTStates;

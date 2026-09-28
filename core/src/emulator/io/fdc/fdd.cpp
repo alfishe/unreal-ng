@@ -63,6 +63,8 @@ void FDD::insertDisk(DiskImage* diskImage)
     {
         _diskImage = diskImage;
         _diskInserted = true;
+        if (_diskChanged)
+            _diskChanged(this); // the previous image may be released right after this call
         
         // Notify subscribers about disk insertion with full context
         MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
@@ -93,6 +95,8 @@ void FDD::ejectDisk()
     // The DiskImage is owned and managed by the Emulator/CoreState
     _diskImage = nullptr;
     _diskInserted = false;
+    if (_diskChanged)
+        _diskChanged(this);
     
     // Notify subscribers about disk ejection with full context
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
