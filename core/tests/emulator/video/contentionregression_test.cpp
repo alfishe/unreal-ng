@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "pch.h"
 
+#include <array>
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
@@ -100,51 +101,51 @@ struct Golden
 /// "codePage7" and "allRam1" equal "free" on the ULA / gate array models because opcode fetches are not
 /// contended yet - exactly the rows the M1 rework is expected to change (and only those)
 const std::vector<Golden> kGolden = {
-    { "PENTAGON", "free", 18472, 0xda498385dc3d51b5ull, 0x880629b44eeb32abull },
-    { "PENTAGON", "dataContended", 18472, 0xda498385dc3d51b5ull, 0xf5b66c25513c6a3ull },
-    { "PENTAGON", "codeContended", 18472, 0xda498385dc3d51b5ull, 0x11d5c52f830b6f0bull },
-    { "PENTAGON", "codePage7", 18472, 0xda498385dc3d51b5ull, 0x75fc809ecafbd7ebull },
-    { "48K", "free", 18675, 0xa31a04e8c4376db4ull, 0x880629b44eeb32abull },
-    { "48K", "dataContended", 20962, 0x13971b85e91eb103ull, 0x598fa15f36c6d925ull },
-    { "48K", "codeContended", 18675, 0xa31a04e8c4376db4ull, 0x11d5c52f830b6f0bull },
-    { "128K", "free", 19002, 0x7c4752cc09b9aa21ull, 0x880629b44eeb32abull },
-    { "128K", "dataContended", 21332, 0x76b9bd6bbc8ec6f3ull, 0xb8c10d683cb8468ull },
-    { "128K", "codeContended", 19002, 0x7c4752cc09b9aa21ull, 0x11d5c52f830b6f0bull },
-    { "128K", "codePage7", 19002, 0x7c4752cc09b9aa21ull, 0x75fc809ecafbd7ebull },
-    { "PLUS2", "free", 19002, 0x7c4752cc09b9aa21ull, 0x880629b44eeb32abull },
-    { "PLUS2", "dataContended", 21332, 0x76b9bd6bbc8ec6f3ull, 0x1b2339da81313c65ull },
-    { "PLUS2", "codeContended", 19002, 0x7c4752cc09b9aa21ull, 0x11d5c52f830b6f0bull },
-    { "PLUS2", "codePage7", 19002, 0x7c4752cc09b9aa21ull, 0x75fc809ecafbd7ebull },
-    { "PLUS2A", "free", 18472, 0xda498385dc3d51b5ull, 0x880629b44eeb32abull },
-    { "PLUS2A", "dataContended", 21328, 0xcd35793f95f18839ull, 0xe53a992cea76f706ull },
-    { "PLUS2A", "codeContended", 18472, 0xda498385dc3d51b5ull, 0x11d5c52f830b6f0bull },
-    { "PLUS2A", "codePage7", 18472, 0xda498385dc3d51b5ull, 0x75fc809ecafbd7ebull },
-    { "PLUS2A", "allRam1", 21328, 0xcd35793f95f18839ull, 0xfd98dcf9869702bull },
-    { "PLUS3", "free", 18472, 0xda498385dc3d51b5ull, 0x880629b44eeb32abull },
-    { "PLUS3", "dataContended", 21328, 0xcd35793f95f18839ull, 0x776cc5d5fc5d4789ull },
-    { "PLUS3", "codeContended", 18472, 0xda498385dc3d51b5ull, 0x11d5c52f830b6f0bull },
-    { "PLUS3", "codePage7", 18472, 0xda498385dc3d51b5ull, 0x75fc809ecafbd7ebull },
-    { "PLUS3", "allRam1", 21328, 0xcd35793f95f18839ull, 0xfd98dcf9869702bull },
-    { "ATM710", "free", 18472, 0xda498385dc3d51b5ull, 0xe60c3127f7e36e95ull },
-    { "ATM710", "dataContended", 18472, 0xda498385dc3d51b5ull, 0x60e6c13ad49d20f5ull },
-    { "ATM710", "codeContended", 18472, 0xda498385dc3d51b5ull, 0x28bfd6ca3b38ea4cull },
-    { "ATM710", "codePage7", 18472, 0xda498385dc3d51b5ull, 0x9fdda7fdb0e75f55ull },
-    { "ATM3", "free", 18472, 0xda498385dc3d51b5ull, 0x276205ede0f2e0edull },
-    { "ATM3", "dataContended", 18472, 0xda498385dc3d51b5ull, 0x3a5f99bd2951767ull },
-    { "ATM3", "codeContended", 18472, 0xda498385dc3d51b5ull, 0xd20a28565fd61b38ull },
-    { "ATM3", "codePage7", 18472, 0xda498385dc3d51b5ull, 0xf4d26aaff3ba742dull },
-    { "SCORPION", "free", 18472, 0xda498385dc3d51b5ull, 0x880629b44eeb32abull },
-    { "SCORPION", "dataContended", 18472, 0xda498385dc3d51b5ull, 0xa0b1f41baaa0ac8eull },
-    { "SCORPION", "codeContended", 18472, 0xda498385dc3d51b5ull, 0x11d5c52f830b6f0bull },
-    { "SCORPION", "codePage7", 18472, 0xda498385dc3d51b5ull, 0x75fc809ecafbd7ebull },
-    { "PROFSCORP", "free", 18472, 0xda498385dc3d51b5ull, 0x880629b44eeb32abull },
-    { "PROFSCORP", "dataContended", 18472, 0xda498385dc3d51b5ull, 0xf3624157a73eb1cbull },
-    { "PROFSCORP", "codeContended", 18472, 0xda498385dc3d51b5ull, 0x11d5c52f830b6f0bull },
-    { "PROFSCORP", "codePage7", 18472, 0xda498385dc3d51b5ull, 0x75fc809ecafbd7ebull },
-    { "PROFI", "free", 18472, 0xda498385dc3d51b5ull, 0x880629b44eeb32abull },
-    { "PROFI", "dataContended", 18472, 0xda498385dc3d51b5ull, 0x8b42305a5b2b840ull },
-    { "PROFI", "codeContended", 18472, 0xda498385dc3d51b5ull, 0x11d5c52f830b6f0bull },
-    { "PROFI", "codePage7", 18472, 0xda498385dc3d51b5ull, 0x75fc809ecafbd7ebull },
+    { "PENTAGON", "free", 18472, 0xda498385dc3d51b5ull, 0x9656ea3c0af12b0ull },
+    { "PENTAGON", "dataContended", 18472, 0xda498385dc3d51b5ull, 0x96d5e7201636f1f5ull },
+    { "PENTAGON", "codeContended", 18472, 0xda498385dc3d51b5ull, 0xa082cdbbf9f71b90ull },
+    { "PENTAGON", "codePage7", 18472, 0xda498385dc3d51b5ull, 0xd3fb2cce03135670ull },
+    { "48K", "free", 18675, 0xa31a04e8c4376db4ull, 0x9656ea3c0af12b0ull },
+    { "48K", "dataContended", 20962, 0x13971b85e91eb103ull, 0x96d5e7201636f1f5ull },
+    { "48K", "codeContended", 18675, 0xa31a04e8c4376db4ull, 0xa082cdbbf9f71b90ull },
+    { "128K", "free", 19002, 0x7c4752cc09b9aa21ull, 0x9656ea3c0af12b0ull },
+    { "128K", "dataContended", 21332, 0x76b9bd6bbc8ec6f3ull, 0x96d5e7201636f1f5ull },
+    { "128K", "codeContended", 19002, 0x7c4752cc09b9aa21ull, 0xa082cdbbf9f71b90ull },
+    { "128K", "codePage7", 19002, 0x7c4752cc09b9aa21ull, 0xd3fb2cce03135670ull },
+    { "PLUS2", "free", 19002, 0x7c4752cc09b9aa21ull, 0x9656ea3c0af12b0ull },
+    { "PLUS2", "dataContended", 21332, 0x76b9bd6bbc8ec6f3ull, 0x96d5e7201636f1f5ull },
+    { "PLUS2", "codeContended", 19002, 0x7c4752cc09b9aa21ull, 0xa082cdbbf9f71b90ull },
+    { "PLUS2", "codePage7", 19002, 0x7c4752cc09b9aa21ull, 0xd3fb2cce03135670ull },
+    { "PLUS2A", "free", 18472, 0xda498385dc3d51b5ull, 0x9656ea3c0af12b0ull },
+    { "PLUS2A", "dataContended", 21328, 0xcd35793f95f18839ull, 0x96d5e7201636f1f5ull },
+    { "PLUS2A", "codeContended", 18472, 0xda498385dc3d51b5ull, 0xa082cdbbf9f71b90ull },
+    { "PLUS2A", "codePage7", 18472, 0xda498385dc3d51b5ull, 0xd3fb2cce03135670ull },
+    { "PLUS2A", "allRam1", 21328, 0xcd35793f95f18839ull, 0xd6de33ccfc7d2330ull },
+    { "PLUS3", "free", 18472, 0xda498385dc3d51b5ull, 0x9656ea3c0af12b0ull },
+    { "PLUS3", "dataContended", 21328, 0xcd35793f95f18839ull, 0x96d5e7201636f1f5ull },
+    { "PLUS3", "codeContended", 18472, 0xda498385dc3d51b5ull, 0xa082cdbbf9f71b90ull },
+    { "PLUS3", "codePage7", 18472, 0xda498385dc3d51b5ull, 0xd3fb2cce03135670ull },
+    { "PLUS3", "allRam1", 21328, 0xcd35793f95f18839ull, 0xd6de33ccfc7d2330ull },
+    { "ATM710", "free", 18472, 0xda498385dc3d51b5ull, 0xfdd8f5de856c2a7eull },
+    { "ATM710", "dataContended", 18472, 0xda498385dc3d51b5ull, 0x626b20c80e522358ull },
+    { "ATM710", "codeContended", 18472, 0xda498385dc3d51b5ull, 0x297c8af6be67ca86ull },
+    { "ATM710", "codePage7", 18472, 0xda498385dc3d51b5ull, 0xb23aa361896c573eull },
+    { "ATM3", "free", 18472, 0xda498385dc3d51b5ull, 0xfdd8f5de856c2a7eull },
+    { "ATM3", "dataContended", 18472, 0xda498385dc3d51b5ull, 0x626b20c80e522358ull },
+    { "ATM3", "codeContended", 18472, 0xda498385dc3d51b5ull, 0x297c8af6be67ca86ull },
+    { "ATM3", "codePage7", 18472, 0xda498385dc3d51b5ull, 0xb23aa361896c573eull },
+    { "SCORPION", "free", 18472, 0xda498385dc3d51b5ull, 0x9656ea3c0af12b0ull },
+    { "SCORPION", "dataContended", 18472, 0xda498385dc3d51b5ull, 0x96d5e7201636f1f5ull },
+    { "SCORPION", "codeContended", 18472, 0xda498385dc3d51b5ull, 0xa082cdbbf9f71b90ull },
+    { "SCORPION", "codePage7", 18472, 0xda498385dc3d51b5ull, 0xd3fb2cce03135670ull },
+    { "PROFSCORP", "free", 18472, 0xda498385dc3d51b5ull, 0x9656ea3c0af12b0ull },
+    { "PROFSCORP", "dataContended", 18472, 0xda498385dc3d51b5ull, 0x96d5e7201636f1f5ull },
+    { "PROFSCORP", "codeContended", 18472, 0xda498385dc3d51b5ull, 0xa082cdbbf9f71b90ull },
+    { "PROFSCORP", "codePage7", 18472, 0xda498385dc3d51b5ull, 0xd3fb2cce03135670ull },
+    { "PROFI", "free", 18472, 0xda498385dc3d51b5ull, 0x9656ea3c0af12b0ull },
+    { "PROFI", "dataContended", 18472, 0xda498385dc3d51b5ull, 0x96d5e7201636f1f5ull },
+    { "PROFI", "codeContended", 18472, 0xda498385dc3d51b5ull, 0xa082cdbbf9f71b90ull },
+    { "PROFI", "codePage7", 18472, 0xda498385dc3d51b5ull, 0xd3fb2cce03135670ull },
 };
 
 struct Fnv
@@ -167,6 +168,13 @@ struct Fingerprint
     uint64_t timingHash = 0;
     uint64_t stateHash = 0;
 };
+
+/// Data memory the mix touches (HL / IX / IY, DE, the stack), hashed into the state fingerprint
+constexpr uint16_t kRegionSize = 0x800;
+std::array<uint16_t, 3> HashedRegions(const Scenario& s)
+{
+    return { s.data, static_cast<uint16_t>(s.data + 0x1000), static_cast<uint16_t>(s.stack - 0x10) };
+}
 
 bool HasPaging(const std::string& model) { return model != "48K"; }
 bool HasAllRamLayouts(const std::string& model) { return model == "PLUS2A" || model == "PLUS3"; }
@@ -199,6 +207,12 @@ protected:
             context->pPortDecoder->DecodePortOut(0x7FFD, 0x17, 0x8000);  // page 7 at #C000, 48 BASIC ROM
         if (s.layout == Layout::AllRam1)
             context->pPortDecoder->DecodePortOut(0x1FFD, 0x03, 0x8000);  // pages 4,5,6,7
+
+        // The hashed regions start from a known pattern: RAM keeps whatever earlier emulator instances in the
+        // process left there, which must not leak into the fingerprint
+        for (uint16_t base : HashedRegions(s))
+            for (uint16_t k = 0; k < kRegionSize; k++)
+                memory->DirectWriteToZ80Memory(static_cast<uint16_t>(base + k), static_cast<uint8_t>(k * 7 + (base >> 8)));
 
         for (size_t i = 0; i < sizeof(kProgram); i++)
             memory->DirectWriteToZ80Memory(static_cast<uint16_t>(s.code + i), kProgram[i]);
@@ -238,8 +252,8 @@ protected:
         state.Add(z80->iy, 2);
         state.Add(z80->sp, 2);
         state.Add(z80->pc, 2);
-        for (uint16_t base : { s.data, static_cast<uint16_t>(s.data + 0x1000), static_cast<uint16_t>(s.stack - 0x10) })
-            for (uint16_t k = 0; k < 0x800; k++)
+        for (uint16_t base : HashedRegions(s))
+            for (uint16_t k = 0; k < kRegionSize; k++)
                 state.Add(memory->DirectReadFromZ80Memory(static_cast<uint16_t>(base + k)), 1);
 
         fp.applicable = true;
