@@ -70,11 +70,19 @@ sequenceDiagram
   MB-->>ML: spent T-states (from CPU0)
 ```
 
-- **All four CPUs execute exactly one instruction per board step** — lockstep by
-  construction, at instruction granularity (not cycle interleaving).
-- Consumed T-states are taken from module 0 after each step; per-module INT/NMI
-  pulse *lengths* are counted down independently (`intTiStatesCounter`,
-  `nmiTiStatesCounter`).
+- **Every CPU takes exactly one step per board step**: lockstep by
+  construction, at instruction granularity rather than cycle interleaving.
+  A "step" is one instruction **or a single prefix byte**, plus any INT/NMI
+  acceptance.
+- Rotation by `frameT & 3`: `0,3,2,1` / `1,2,0,3` / `3,0,1,2` / `2,3,1,0`.
+- **Only module 0's T-states advance the frame clock**
+  (`frameTiStatesCounter += modules[0]…getStepTstates()`). A parked slave
+  burns 1 T per step and a running slave its full instruction time, but
+  neither affects the shared clock. The only per-module T counters are the
+  INT/NMI hold counters (`intTiStatesCounter`, `nmiTiStatesCounter`), which
+  count each module's own spent T-states.
+- A local reset triggered by `#3D00` returns early: the modules not yet
+  stepped are skipped, and the frame clock does not advance on that step.
 - Sound, border painting, and raster-blink rendering hook into this loop at
   T-state granularity (beeper level sampled per step; border pixel written at
   the raster phase of the current T).
@@ -111,14 +119,32 @@ latch (including its lock bit) is per-module.
 - **Reset command injection**: after local reset a counter=3 makes the three
   M1 fetches at `#0000` return R1, R2, R3 (then clears them) — the hardware
   boot-block readout emulated exactly.
-- **HALT notification**: falling edge of nHALT per module → motherboard reads
-  that module's R1 → sends INT/NMI to the modules selected by R1 bits 0–3.
-- **INT gating**: frame INT reaches CPU0 only if `#7FFD` bit 7 is clear (when
-  both `#3D00`/`#7FFD` are unlocked); slaves take INT only via local INT or
-  when `#3D00` is unlocked. NMI maskable per module (R1 bit 4).
-- **IO-mapped window**: with `#3D00` D5–D6 = *n* ≠ 0, CPU0's generic port reads
-  address module *n*'s memory at the port address (and pulse INT); writes go
-  there too (and pulse NMI). `COPY2CPU` is a loop of `OUT (n),A` over this window.
+- **HALT notification**: on entry into HALT (only while `#3D00` is
+  unlocked), the motherboard reads the halting module's R1: b7 = NMI, b6 = INT,
+  b3–0 = target modules.
+- **INT gating** (`ZxPolyModule` ~292-302):
+  - Master: while both `#3D00` and `#7FFD` are unlocked, it takes any INT,
+    common or local, only if `#7FFD` bit 7 is clear. Otherwise it always
+    takes INT.
+  - Slaves: take the **common** frame INT only while `#3D00` is **locked**;
+    local INT at any time, except while reading the reset command.
+  - NMI is maskable per module (R1 bit 4).
+- **IO-mapped window**: with `#3D00` D5–D6 = *n* ≠ 0, *all* CPU0 port reads,
+  `IN #3D00` included, address module *n*'s memory at the port address,
+  mapped through n's `#7FFD`, and pulse INT on n. Writes go there too and
+  pulse NMI. The target is not required to be parked. `COPY2CPU` is a loop of
+  `OUT (n),A` over this window; it sets R1 b4 on the target to suppress the
+  NMI flood. Quirk: while module k is mapped, *slave* port reads are routed
+  there too.
+- **Device writes**: R0 bit 4 blocks every OUT except the module's own
+  `#7FFD`, which always lands in that module's latch. Unblocked slave OUTs
+  reach the shared devices (border, beeper, AY). Master OUTs reach devices
+  only while mapped CPU = 0. `#3D00` writes are master-only.
+- **Shared inputs**: `#FE` (keyboard/tape) and Kempston are single devices
+  answering every module. Floating-bus `#FF` is option-gated, common and
+  module-0 only; its address math looks buggy (it reads CPU addresses using
+  screen offsets). `#00FF/#10FF/#20FF/#30FF` are the R0 status registers
+  and never reach the floating bus.
 
 ## 5. Video implementation
 
@@ -129,17 +155,26 @@ latch (including its lock bit) is per-module.
 - **Mode 4** (`fillDataBufferForZxPolyVideoMode`): per pixel
   `index = (cpu3 << 3) | (cpu0 << 2) | (cpu1 << 1) | cpu2` from bit 7 of each
   module's bitmap byte → `PALETTE_ZXPOLY[16]`.
-- **Mode 6**: attribute from module 0; `ink == paper` floods the cell, else
-  mode-4 pixel.
-- **Mode 7**: FLASH clear → each module's pixel drawn with module-0 ink/paper
-  into a 2×2 quadrant block (identical planes ⇒ looks like classic 2× ZX);
-  FLASH set → mode-6 logic.
+- **Mode 6**: attribute from module 0, FLASH honored (blink swaps ink and
+  paper); `ink == paper` floods the cell, else mode-4 pixel.
+- **Mode 7**: module 0's FLASH bit is a *selector*, not a blink. FLASH clear
+  → each module's pixel drawn with module-0 ink and paper into a 2×2
+  quadrant block (identical planes look like classic ZX at 2×). FLASH set →
+  mode-6 logic.
+- Each module's screen page is chosen by its own `#7FFD` bit 3 within its
+  own heap window.
+- `PALETTE_ZXPOLY` is the standard ZX order: `#BE` normal, `#FF` bright;
+  index 8 is black.
 - **Mode 5**: 2×2 quadrants per pixel, each quadrant using **its own module's**
   attribute (true four-screen tiling).
 
-Rendering is beam-chased: the main loop tracks `blinkLineY` and re-renders line
-ranges (`syncUpdateBuffer`, EVEN/ODD interlace) as the raster passes, then
-`copyWorkScreenToOutputScreen` doubles into the output image. Border is painted
+Rendering is **per line**, not per pixel: once the frame clock passes
+`tstatesStartScreen + tstatesPerVideo + y*tstatesPerLine`, the whole
+256-pixel line y is rendered from current RAM (`MainForm` ~1190-1235;
+`syncUpdateBuffer`, EVEN/ODD interlace). A video-mode change re-renders the
+whole screen at once. With the "less resources" option the screen is
+rendered only at repaint time. `copyWorkScreenToOutputScreen` then doubles
+the result into the output image. Border is painted
 incrementally per CPU step through a T-state → raster coordinate table. FLASH
 toggles every 25 frame-INTs (wall-clock flavored).
 
@@ -189,7 +224,7 @@ flowchart LR
 
 | Format | Handling |
 |:--|:--|
-| `.zxp` | Full 4-CPU state: 4× (ports 7FFD+R0–R3, all register pairs, PC/SP) + 8×16K heap pages *per CPU* (512K). Parsed via JBBP grammar `src/jbbp/snapshots/zxp/*.jbbp` |
+| `.zxp` | Full 4-CPU state: 4× (ports 7FFD+R0–R3, all register pairs, PC/SP) + 8×16K heap pages *per CPU* (512K). Parsed via JBBP grammar `src/jbbp/snapshots/zxp/*.jbbp`. Load order: `#3D00` forced to 0, master reset, per-module registers/ports/pages restored, then `#3D00` set from the file. HALT state and INT counters are **not** restored |
 | `.sna`/`.z80`/`.szx` | Loaded into **module 0 only**, board switched to ZX128/ZX48 mode — plain Spectrum behavior (adaptation starts from here) |
 | Spec256 archive | ZIP with `.sna`, `.gfx/.gf0..7/.gfa/.gfb` planes, `.cfg`, `.pal`, `.bNN` backgrounds; planes bit-transposed into `gfxRam` |
 | `.prom` | ZX-Poly ROM image (the Test ROM ships as `zxpolytest.prom` inside the emulator resources) |
@@ -200,8 +235,11 @@ flowchart LR
 `…/video/timings/TimingProfile.java` — per-model T-state math:
 SPECTRUM48 (69888 T/frame, INT 32 T), SPECTRUM128 (70908, INT 36, plus the
 even-M1 rule: one extra T before any M1 starting on an odd T), PENTAGON128
-(71680, no contention). Contention delays `{6,5,4,3,2,1,0,0}` applied at the
-*access* T-state by the executing module's bus callbacks (this placement
+(71680 = 224 × 320, **INT 36 T**, NMI 16 T, INT-to-paper 17988, no
+contention). Note that unreal-ng's `configs/pentagon128k` uses `intlen=32`,
+so a ZX-Poly config needs 36 to match the reference. Contention delays `{6,5,4,3,2,1,0,0}` applied at the
+*access* T-state by the executing module's bus callbacks, using that module's
+own `#7FFD` and the **shared** clock (`frameTiStates + cpu.getStepTstates()`) (this placement
 matters: putting them in the module's IO layer instead delayed slaves and
 double-contended the master — a real bug from the notes file).
 
@@ -212,6 +250,15 @@ double-contended the master — a real bug from the notes file).
   Fuse in contended RAM.
 - Sound LPF advances per CPU step, not per T-state.
 - Default timing profile is PENTAGON128; 48K games need explicit SPECTRUM48.
+- A stop-address match is re-evaluated only on M1 fetches, and WAIT is
+  checked before RESET, so a module that hits its stop address appears
+  permanently stuck.
+- `AsmLoader/zxpoly.i` macro defects:
+  - `SETWAIT13` toggles `#3D00` D1 (reset) instead of D0 (nWAIT).
+  - `SETSTOPADDR` references an undefined `addr`.
+  - `COPY2CPU` cleanup reads an uninitialized `(IX+0)` and never restores
+    the target's R1.
+- The floating-bus address math noted in §4.
 
 These quirks define "reference behavior" for any reimplementation chasing
 bug-for-bug compatibility (see [unreal-ng-port-analysis.md](unreal-ng-port-analysis.md) §Risks).
