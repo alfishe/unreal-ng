@@ -82,6 +82,8 @@ lua->executeScript("macro.lua");
 
 ## API Reference
 
+**Which emulator a function acts on.** Every emulator function (registers, memory, pages, assembler, breakpoints, stepping, features, speed, tape, disk, mouse, TTD, ...) acts on the emulator the interpreter is bound to, or, when the interpreter is not bound to one, on the selected emulator (for example, a script run through the WebAPI interpreter, `POST /api/v1/lua/exec` or `/api/v1/lua/file`). A bound emulator always wins.
+
 ### Global Functions
 
 ```lua
@@ -267,7 +269,27 @@ end
 
 feature_set("fasttape", false)     -- same switch as `setting fast_tape off`
 print(feature_get("turbotape"))    -- true
+feature_set("turbomode", true)     -- turbo mode (same switch as `setting speed unlimited`)
 ```
+
+`feature_list()` and `feature_get()` report the state in effect. Time-travel debugging holds some features off: `turbomode` while a recording runs, and `fasttape`, `turbotape`, `fastdisk` while a recording runs, history is replayed, or the machine sits in history. A held feature reads as `false`, and `feature_set(name, true)` on it returns `false`. The full list of features, aliases and defaults: [command-interface.md §5](./command-interface.md#5-feature-management--configuration).
+
+### Speed and Turbo
+
+Global functions, the same switches as CLI `setting speed` and the WebAPI `speed` setting.
+
+```lua
+set_speed(4)          --> bool  -- host speed multiplier: 1, 2, 4, 8 or 16 (applied at the next frame)
+                                -- false for any other value, and false for 2..16 while TTD records
+get_speed()
+-- --> { multiplier   = 4,      -- the host multiplier set above
+--       effective    = 4,      -- what runs, including the machine's own hardware turbo (ATM, Scorpion)
+--       turbo_mode   = false,  -- the turbomode feature (switch it with feature_set("turbomode", true))
+--       turbo_active = false,  -- the engine runs unthrottled now: turbo mode, or turbo tape warping a load
+--       turbo_audio  = false } -- audio kept on in turbo mode
+```
+
+Changing the speed on a stopped or loaded TTD session drops that session's history (frame timing is part of the recording); re-selecting the current speed changes nothing.
 
 ### Device State Reports
 
@@ -418,6 +440,8 @@ info = memory_info()
 --   z80_banks = {{bank=0, start=0, end=16383, mapping="ROM0"}, ...}
 -- }
 ```
+
+**Writes during a time-travel recording.** While a TTD recording runs, every memory write (`mem_write`, `mem_write_word`, `mem_write_block`), physical page write (`page_write`, `page_write_block`) and assembler write (`assemble` with write on) records a `debugger_edit` marker, a replay barrier, and briefly pauses a running emulator for the edit, so the recording sees the change. A write by Z80 address into a ROM bank leaves the ROM unchanged, as a CPU write would. No marker is written when no recording runs.
 
 ### Breakpoint Manager
 
@@ -633,7 +657,8 @@ Unlike the WebAPI, the Lua functions do not pause the emulator for you: pause it
 **Session lifecycle:**
 
 ```lua
-ttd_start()                  --> bool   -- development mode: write journal on
+ttd_start()                  --> bool   -- keeps the ttd_set_journal_enabled choice (journal on by default)
+ttd_start("development")     --> bool   -- write journal on
 ttd_start("gaming")          --> bool   -- no write journal (smaller)
 ttd_set_journal_enabled(b)             -- choose journal mode for the next start
 ttd_get_journal_enabled()    --> bool
@@ -664,6 +689,7 @@ local status = ttd_status()
 --
 -- Sections
 -- status.write_journal_enabled = true
+-- status.bookmark_count        = 2
 -- status.write_journal_records = 729025
 -- status.write_journal_bytes   = 8748300
 -- status.coverage_index_frames = 300  -- 0 => reverse queries replay instead
@@ -676,7 +702,7 @@ local status = ttd_status()
 -- status.session_heap_bytes       = 1043968
 ```
 
-(`bookmark_count` is not in the Lua table; use `#ttd_bookmarks()`.)
+`source_path` is filled by `ttd_load` (the path it was given).
 
 **Navigation:**
 
@@ -692,8 +718,8 @@ ttd_step_forward()               --> bool  -- one frame forward, inside recorded
 ttd_step_instruction_back()      --> bool
 ttd_step_instruction_forward()   --> bool
 
-ttd_resume()                     --> bool  -- record again from the current position
-ttd_resume(4823, 0)              --> bool  -- ...or from (frame, tinframe); future is discarded
+ttd_resume()                     --> bool  -- record again from the exact current position (frame and tinframe)
+ttd_resume(4823, 0)              --> bool  -- ...or from (frame, tinframe; tinframe defaults to 0); future is discarded
                                             -- fails from idle: seek first
 
 ttd_position()
@@ -709,7 +735,9 @@ ttd_reverse_step_tstates(5000)   --> bool  -- back 5000 t-states (nearest instru
 
 local r = ttd_reverse_continue({0x8000, 0x8010})
 -- --> { matched = true, pc = 0x8000, frame = 4700, tinframe = 812 }
---     frame/tinframe are present only when matched; a blocking marker is not reported here
+--     frame/tinframe are present only when matched.
+--     A replay barrier met on the way adds
+--     blocked_by_marker = {kind, reason, frame, tinframe}  (as the WebAPI does)
 ```
 
 **Reverse search:**
@@ -731,10 +759,13 @@ local r2 = ttd_find_last{
     before_tin = 0,
     phys_page = 5              -- 0..255: one physical RAM page
 }
--- --> { found = false }  or
---     { found = true, frame, tinframe, pc, value, phys_page, access }
+-- --> { found = false }  (no match)  or
+--     { found = true, frame, tinframe, pc, value, phys_page, access }  or
+--     { found = false, blocked = true, marker_frame, marker_tinframe,
+--       marker_kind, marker_reason }  (a replay barrier stopped the search first)
 --     phys_page is absent (nil) for ROM / no RAM page.
---     A search stopped by a marker also returns found = false (no marker details in Lua).
+--     For writes the write journal answers when it holds every write of the session;
+--     otherwise the search replays history (see command-interface.md "When the write journal answers").
 ```
 
 **Markers and bookmarks:**
@@ -742,7 +773,8 @@ local r2 = ttd_find_last{
 ```lua
 for _, m in ipairs(ttd_markers()) do        -- replay barriers
     print(m.frame, m.tinframe, m.kind, m.reason)
-end   -- kind: tape_control | disk_write | debugger_edit | hardware_reset | other
+end   -- kind: tape_control | disk_write | debugger_edit | other
+      -- (hardware_reset is a reserved kind, never written: a reset stops the recording instead)
 
 ttd_bookmark_add("before crash")            -- at the current position
 ttd_bookmark_add("umt entry", 4823, 14982)  -- at (frame, tinframe)
@@ -752,7 +784,8 @@ for _, bm in ipairs(ttd_bookmarks()) do     -- time-sorted
 end
 ttd_bookmark_delete("before crash")        --> bool
 ttd_seek_bookmark("umt entry")
--- --> same table as ttd_seek plus bookmark = "umt entry" (error = "..." for an unknown label)
+-- --> same table as ttd_seek (blocking_marker included when a marker stops it)
+--     plus bookmark = "umt entry" (error = "..." for an unknown label)
 ```
 
 Bookmarks are advisory and never stop a seek; markers do.

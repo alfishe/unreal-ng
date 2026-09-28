@@ -601,6 +601,26 @@ bool Emulator::SetSpeedMultiplier(uint8_t multiplier)
     return _core->SetSpeedMultiplier(multiplier);
 }
 
+void Emulator::EditMemoryFromTool(const char* source, const std::function<void()>& edit)
+{
+    ttd::TimeTravelManager* ttd = _context ? _context->pTimeTravelManager : nullptr;
+    const bool recording = ttd && ttd->IsRecording();
+    const bool onEmulationThread = _mainloop && _mainloop->IsRunThread();
+    const bool park = recording && !onEmulationThread && IsRunning() && !IsPaused();
+    if (park)
+    {
+        Pause(false);
+        WaitForPauseConfirmation(1000);
+    }
+
+    if (recording)
+        ttd->RecordExternalEvent(ttd::TTDExternalEventKind::DebuggerEdit, source);
+    edit();
+
+    if (park)
+        Resume(false);
+}
+
 uint8_t Emulator::GetSpeedMultiplier() const
 {
     return _core ? _core->GetSpeedMultiplier() : 1;

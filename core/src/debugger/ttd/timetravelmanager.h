@@ -549,10 +549,11 @@ public:
     // Input journal (Phase 2 Item 3; parent TDD §5 row #1)
     // -----------------------------------------------------------------------
     //
-    // Captures keyboard matrix mutations with their TTDTimePoint. The seek
-    // engine (Item 4) replays them at the recorded timestamps during
-    // intra-frame replay instead of letting live input through (which is
-    // blocked by the Item 2 suppression).
+    // Captures input device mutations (keyboard, Kempston Mouse, General Sound
+    // host stimuli) with their TTDTimePoint. Playback (ServiceInput) applies
+    // them at the recorded times through ApplyInputEvent (ttdinputapply.h),
+    // the same path live input takes, while live input is refused
+    // (OwnsInput).
     //
     // Capture call sites live in DebugKeyboardManager::PressKey/ReleaseKey,
     // guarded by `IsRecording()` and `!IsReplayActive()`. The journal is
@@ -581,20 +582,8 @@ public:
     /// @brief Journal a whole-matrix keyboard reset (release of every key)
     void RecordKeyboardReset();
 
-    /// @brief Read-only access to the input journal. Used by the seek engine
-    /// (Item 4) and by tests.
+    /// @brief Read-only access to the input journal (playback cursor, tests).
     inline const TTDInputJournal& GetInputJournal() const { return _inputJournal; }
-
-    /// @brief Inject every event scheduled at `now` into the live keyboard.
-    ///
-    /// High-level wrapper around TTDInputJournal::InjectDueEvents — looks
-    /// up the Keyboard pointer from EmulatorContext so the seek engine
-    /// (Item 4) doesn't need to know about peripheral plumbing. Returns 0
-    /// silently if no keyboard is attached.
-    ///
-    /// No-op when replay is not active (defensive — the seek engine should
-    /// already be inside an EnterReplayMode / ExitReplayMode pair).
-    size_t InjectDueInputEvents(const TTDTimePoint& now);
 
     // -----------------------------------------------------------------------
     // Input ownership: live input vs the recorded journal

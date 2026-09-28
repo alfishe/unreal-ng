@@ -331,43 +331,6 @@ TEST_F(DebugMouseManager_Test, HostMessageCenterInput_JournalledWhileRecording)
     EXPECT_EQ(JournalOfKind(TTDInputKind::MouseButtons).size(), 1u);
 }
 
-TEST_F(DebugMouseManager_Test, JournalInject_AppliesMouseKinds)
-{
-    ttd::TTDInputJournal journal;
-    auto make = [](TTDInputKind kind) {
-        ttd::TTDInputEvent ev;
-        ev.time = {3, 500};
-        ev.kind = kind;
-        return ev;
-    };
-    ttd::TTDInputEvent move = make(TTDInputKind::MouseMove);
-    move.dx = -5;
-    move.dy = 9;
-    ttd::TTDInputEvent buttons = make(TTDInputKind::MouseButtons);
-    buttons.buttonMask = 0xFD;
-    ttd::TTDInputEvent wheel = make(TTDInputKind::MouseWheel);
-    wheel.wheelSteps = -1;
-    ttd::TTDInputEvent later = make(TTDInputKind::MouseCounters);
-    later.time = {3, 900};
-    later.dx = 1;
-    later.dy = 2;
-    journal.Record(move);
-    journal.Record(buttons);
-    journal.Record(wheel);
-    journal.Record(later);
-
-    EXPECT_EQ(journal.InjectDueEvents(nullptr, nullptr, {3, 500}), 0u) << "no devices - nothing injected";
-    EXPECT_EQ(journal.InjectDueEvents(_context->pKeyboard, _mouse, {3, 500}), 3u);
-    EXPECT_EQ(_mouse->GetX(), Mouse::RESET_X - 5);
-    EXPECT_EQ(_mouse->GetY(), Mouse::RESET_Y + 9);
-    EXPECT_EQ(_mouse->GetButtons(), 0xFD);
-    EXPECT_EQ(_mouse->GetWheel(), 15);
-
-    EXPECT_EQ(journal.InjectDueEvents(_context->pKeyboard, _mouse, {3, 900}), 1u);
-    EXPECT_EQ(_mouse->GetX(), 1);
-    EXPECT_EQ(_mouse->GetY(), 2);
-}
-
 /// endregion </Replay guard and journal>
 
 /// region <Device: concurrency and TTD state>
@@ -493,16 +456,7 @@ TEST_F(DebugMouseManager_Test, KeyboardReleaseAll_JournalsMatrixReset)
     km->PressKey(ZXKEY_A);
     km->ReleaseAllKeys();
     EXPECT_EQ(JournalOfKind(TTDInputKind::KeyboardReset).size(), 1u);
-
-    // Replaying the reset releases a key pressed from outside the manager too
-    _context->pKeyboard->PressKey(ZXKEY_S);
-    ttd::TTDInputJournal journal;
-    ttd::TTDInputEvent reset;
-    reset.time = {1, 1};
-    reset.kind = TTDInputKind::KeyboardReset;
-    journal.Record(reset);
-    EXPECT_EQ(journal.InjectDueEvents(_context->pKeyboard, nullptr, {1, 1}), 1u);
-    EXPECT_FALSE(KeyDown(0xFDFE, 1));
+    // Applying the reset: TTDInputApply_Test.KeyboardResetReleasesEveryKey
 }
 
 TEST_F(DebugMouseManager_Test, HostKeystrokes_JournalledWhileRecordingAndSuppressedDuringReplay)

@@ -2006,7 +2006,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["action"]["description"] =
         "Session: 'status' (state, recorded frame range, checkpoints, memory), 'start' (begin recording; optional mode), "
         "'stop' (end recording, history kept and browsable), 'invalidate' (drop all history), 'position' (current point + "
-        "session end), 'markers' (replay barriers: tape control, disk writes, debugger edits, resets). "
+        "session end), 'markers' (replay barriers: tape control, disk writes, tool memory edits made while recording; "
+        "the hardware_reset kind is reserved and never written - a reset stops the recording instead). "
         "Navigate (needs a stopped session - these return an error while recording): 'seek' (frame + optional tinframe), "
         "'step_back_frame'/'step_forward_frame', 'step_back_instruction'/'step_forward_instruction', "
         "'reverse_step' (count instructions OR tstates back), 'reverse_continue' (run backward until PC hits one of pcs), "

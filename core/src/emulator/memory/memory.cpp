@@ -1687,6 +1687,20 @@ uint8_t Memory::DirectReadFromZ80Memory(uint16_t address)
 /// Note: Direct access method. Not shown in any traces, memory counters are not incremented
 /// \param address - Z80 space address
 /// \param value - Single byte value to be written by address
+void Memory::ToolWriteToZ80Memory(uint16_t address, uint8_t value)
+{
+    if (_bank_mode[(address >> 14) & 0b11] == BANK_RAM)
+        DirectWriteToZ80Memory(address, value);
+    else
+        MemoryWriteFast(address, value);  // ROM: the write lands where a CPU write would
+}
+
+void Memory::MarkRamPageEdited(uint16_t page)
+{
+    if (_feature_ttd_enabled && _ttdDirtyTracker != nullptr)
+        _ttdDirtyTracker->MarkDirty(page);
+}
+
 void Memory::DirectWriteToZ80Memory(uint16_t address, uint8_t value)
 {
     // Address bits 14 and 15 contain bank number

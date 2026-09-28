@@ -406,14 +406,33 @@ Or use hex string format:
 ```
 > **Note**: `force` is required for ROM writes.
 
+While a time-travel (TTD) recording runs, a memory write (`PUT /memory/{addr}`) and a physical page write (`PUT /memory/{type}/{page}/{offset}`) record a `debugger_edit` marker, a replay barrier, and briefly pause a running emulator for the edit so the recording sees it. No marker is written when no recording runs.
+
 ### Settings Management
 ```
-GET  /api/v1/emulator/{id}/settings            All settings, grouped (io_acceleration, disk_interface, audio)
-GET  /api/v1/emulator/{id}/settings/{name}     One setting value (fast_tape, turbo_tape, fast_disk, trdos_traps, audio_rate, ...)
+GET  /api/v1/emulator/{id}/settings            All settings, grouped (io_acceleration, disk_interface, audio) plus turbo_mode, speed, turbo_active, turbo_audio
+GET  /api/v1/emulator/{id}/settings/{name}     One setting value (fast_tape, turbo_tape, fast_disk, turbo_mode, speed, turbo_audio, turbo_active, trdos_traps, audio_rate, ...)
 PUT  /api/v1/emulator/{id}/settings/{name}     Update a setting (body: {"value": ...})
 ```
 
 Settings are per-instance and runtime-only — nothing is written to the ini.
+
+**Speed and turbo.** The same switches as CLI `setting speed` / `setting turbo_audio` and Lua/Python `set_speed` / `get_speed`:
+
+| Setting | Value | PUT answers |
+| :--- | :--- | :--- |
+| `speed` | Host speed multiplier `1`, `2`, `4`, `8` or `16` (a JSON number, or a decimal or `"0x.."` string). The emulated machine runs N times faster; applied at the next frame. `GET /settings/speed` also lists `allowed`. | 400 for any other value. 409 for anything but `1` while a TTD recording runs. A change on a stopped or loaded TTD session drops that session's history (frame timing is part of the recording); re-selecting the current speed changes nothing. |
+| `turbo_mode` | Bool: run as fast as the host allows (the `turbomode` feature). | 409 for `true` while a TTD recording runs. |
+| `turbo_audio` | Bool: keep generating audio (at a raised pitch) in turbo mode. Off by default. Applied at once if turbo is running. | — |
+| `turbo_active` | Read-only bool: the engine runs unthrottled right now, because of `turbo_mode` or because turbo tape is warping a load. | 400 (read-only; switch turbo with `turbo_mode`). |
+
+```json
+PUT /api/v1/emulator/{id}/settings/speed
+{"value": 4}
+// -> {"name": "speed", "value": 4, "message": "Speed multiplier set to 4x (applied at the next frame)", "emulator_id": "..."}
+```
+
+`fast_tape`, `turbo_tape` and `fast_disk` in `GET /settings` show the state in effect: they read as `false` while TTD holds them off (see Feature Management below).
 
 **audio_rate** controls the core audio sample rate — the rate the DSP stack
 and every capture/recording run at. The value is one of 44100, 48000, 88200,
@@ -440,6 +459,15 @@ PUT /api/v1/emulator/{id}/settings/audio_rate
 
 The live core rate is also visible in `GET /state/audio/channels` →
 `master.sample_rate_hz` (it follows the pin).
+
+### Feature Management
+```
+GET      /api/v1/emulator/{id}/features          Every feature with its state in effect
+GET      /api/v1/emulator/{id}/feature/{name}    One feature (id or alias)
+PUT|POST /api/v1/emulator/{id}/feature/{name}    Enable/disable (body: {"enabled": true})
+```
+
+The features, their aliases and defaults are listed in [command-interface.md §5](./command-interface.md#5-feature-management--configuration). Time-travel debugging holds some features off: `turbomode` while a recording runs, and `fasttape`, `turbotape`, `fastdisk` while a recording runs, history is replayed, or the machine sits in history. A held feature reads as `enabled: false` in both GET routes. Enabling it answers **409 Conflict** (`{"error": "Conflict", "message": "Cannot enable 'turbomode' while TTD recording is active or history is being replayed"}`); an unknown feature answers 404 with `available_features`; a body without `enabled` answers 400. Disabling always succeeds.
 
 ### Breakpoints
 ```
@@ -1216,11 +1244,11 @@ Positions are always a pair `frame` (absolute frame number) + `tinframe` (t-stat
 | `POST` | `/ttd/step-forward` | — | `stepped`, `frame`, `tinframe` (one frame forward, inside recorded history) | ✅ Implemented |
 | `POST` | `/ttd/step-instruction` | Optional `{"dir": "back"\|"forward"\|"fwd"}` (default `back`) | `stepped`, `dir` (`back`/`forward`), `frame`, `tinframe` | ✅ Implemented |
 | `POST` | `/ttd/reverse-step` | Exactly one of `{"count": N}` (instructions) or `{"tstates": T}` (lands on the nearest instruction start at or before the target). 400 for both or neither. | `reached`, `mode` (`count`/`tstates`), `frame`, `tinframe` | ✅ Implemented |
-| `POST` | `/ttd/reverse-continue` | `{"pcs": [A, B, ...]}` — non-empty array of integer addresses | `matched`, `pc`, `frame`, `tinframe`, `blocked_by_marker {kind, reason, frame, tinframe}` (only when a marker stopped it) | ✅ Implemented |
+| `POST` | `/ttd/reverse-continue` | `{"pcs": [A, B, ...]}` — non-empty array of addresses 0..65535: numbers, or strings (decimal, `"0x.."`, `"#.."`, `"$.."`) | `matched`, `pc`, `frame`, `tinframe`, `blocked_by_marker {kind, reason, frame, tinframe}` (only when a marker stopped it) | ✅ Implemented |
 | `POST` | `/ttd/find-last` | See "find-last request" below | `found`; on a hit `frame`, `tinframe`, `pc`, `value`, `phys_page` (`null` for ROM / no RAM page), `access`; when a marker blocked the search `blocked: true`, `marker_frame`, `marker_tinframe`, `marker_kind`, `marker_reason` | ✅ Implemented |
 | `POST` | `/ttd/resume` | Optional `{"frame": N, "tinframe"?: T}`; default is the current position | `resumed`, `frame`, `tinframe`, `state`. Truncates everything after the point and records again; resumes the emulator on success. Fails (`resumed: false`) from `idle` — seek first. | ✅ Implemented |
 | `GET`  | `/ttd/position` | — | `current {frame, tinframe}`, `session_end {frame, tinframe}`, `state` | ✅ Implemented |
-| `GET`  | `/ttd/markers` | — | `count`, `markers[] {frame, tinframe, kind, reason}` — kinds `tape_control`, `disk_write`, `debugger_edit`, `hardware_reset`, `other` | ✅ Implemented |
+| `GET`  | `/ttd/markers` | — | `count`, `markers[] {frame, tinframe, kind, reason}` — kinds `tape_control`, `disk_write`, `debugger_edit` (a tool edit made while recording), `other`; `hardware_reset` is reserved and never written (a reset stops the recording instead) | ✅ Implemented |
 | `GET`  | `/ttd/bookmarks` | — | `count`, `bookmarks[] {frame, tinframe, label}` (time-sorted) | ✅ Implemented |
 | `POST` | `/ttd/bookmarks` | `{"label": "...", "frame"?: N, "tinframe"?: T}` — no `frame` = current position. Label: non-empty, at most 63 characters, unique per session. | **201** with `added`, `label`, `frame`, `tinframe`. 400 for a missing/empty/overlong label; 409 for a duplicate label or a position outside the timeline. | ✅ Implemented |
 | `DELETE` | `/ttd/bookmarks/{label}` | — | `removed`, `label`; 404 for an unknown label | ✅ Implemented |

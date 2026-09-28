@@ -1,7 +1,7 @@
 # Contention test programs: what exists, and a probe suite that runs on the emulated Z80
 
 **Date:** 2026-09-28 · **Status:** research + proposal · **Belongs to:** [design.md](design.md) §8
-(suite H) · PLAN #59.
+(suite H) · PLAN #61.
 
 The host-side suites of the design (A-G) check the emulator from the outside: they read `t` and the bus
 trace. This document covers the other side: Z80 programs that measure contention *from inside the

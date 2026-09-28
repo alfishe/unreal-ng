@@ -4,6 +4,7 @@
 #include <cctype>
 
 #include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttdinputapply.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/mouse/mouse.h"
 
@@ -69,7 +70,9 @@ bool DebugMouseManager::Submit(const ttd::TTDInputEvent& ev, Mouse& mouse)
 {
     if (_context && _context->pTimeTravelManager)
         return _context->pTimeTravelManager->SubmitLiveInput(ev);
-    return ttd::TTDInputJournal::Apply(ev, nullptr, &mouse);
+    ttd::TTDInputDevices devices;
+    devices.mouse = &mouse;
+    return ttd::ApplyInputEvent(ev, devices);
 }
 
 void DebugMouseManager::ApplyMove(Mouse& mouse, int dx, int dy)

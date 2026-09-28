@@ -1,7 +1,7 @@
 # Contended opcode fetches without a cost for machines that have no contention
 
 **Date:** 2026-09-28 · **Status:** phase 1 (1a-1d) implemented (revision 2: reuse analysis, shared wrappers,
-control and diagnostics, test suites) · **Tracks:** PLAN #59; open item 2 of the contention notes ("M1 opcode fetches
+control and diagnostics, test suites) · **Tracks:** PLAN #61; open item 2 of the contention notes ("M1 opcode fetches
 from contended RAM not contended"). Test programs and emulated-side test design:
 [test-programs.md](test-programs.md).
 

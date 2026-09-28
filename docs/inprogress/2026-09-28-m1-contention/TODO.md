@@ -1,6 +1,6 @@
 # TODO — Contended opcode fetches without a cost for machines that have no contention
 
-**Status:** phases 1a (baselines), 1b (bus interfaces, M1 contention) 1c (control and diagnostics) and 1d (test suites) done 2026-09-28 on branch `m1-contention` ([baseline.md](baseline.md)). PLAN.md row #59.
+**Status:** phases 1a (baselines), 1b (bus interfaces, M1 contention) 1c (control and diagnostics) and 1d (test suites) done 2026-09-28 on branch `m1-contention` ([baseline.md](baseline.md)). PLAN.md row #61.
 Design: [design.md](design.md). Test programs and the probe suite: [test-programs.md](test-programs.md).
 
 ## Done
