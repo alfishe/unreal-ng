@@ -2,9 +2,11 @@
 #include <memory>
 
 #include "common/modulelogger.h"
+#include "emulator/video/alco/screenalco.h"
 #include "emulator/video/atm/screenatm.h"
 #include "emulator/video/profi/screenprofi.h"
 #include "emulator/video/screen.h"
+#include "emulator/video/zx/tstatecoordlut.h"
 #include "stdafx.h"
 
 /// ZX Spectrum Screen Layout (Per Frame)
@@ -48,20 +50,7 @@ public:
     /// endregion </Constants>
 
     /// region <LUT Types>
-    /// Pre-computed coordinate lookup for each t-state
-    /// Eliminates runtime division/modulo operations in hot path
-    struct TstateCoordLUT
-    {
-        uint16_t framebufferX;      // Framebuffer X coordinate (UINT16_MAX if invisible)
-        uint16_t framebufferY;      // Framebuffer Y coordinate
-        uint16_t zxX;               // ZX screen X (UINT16_MAX if border/invisible)
-        uint8_t zxY;                // ZX screen Y (255 if border/invisible)
-        uint8_t symbolX;            // Pre-computed x / 8
-        uint8_t pixelXBit;          // Pre-computed x % 8
-        RenderTypeEnum renderType;  // RT_BLANK, RT_BORDER, or RT_SCREEN
-        uint16_t screenOffset;      // Pre-computed _screenLineOffsets[y]
-        uint16_t attrOffset;        // Pre-computed _attrLineOffsets[y]
-    };
+    using TstateCoordLUT = ::TstateCoordLUT;
     /// endregion </LUT Types>
 
     /// region <Fields>
@@ -93,13 +82,16 @@ protected:
     uint8_t _lastLatchSymbolX = 0xFF;  // Track which cell was last latched
     uint8_t _lastLatchZxY = 0xFF;      // Track which line was last latched
 
-    // ATM Turbo 2+/3/710 extended mode renderer - lazily allocated on first
-    // use in Draw(); nullptr for machines that never reach M_ATM16/HR/TX/TL
-    std::unique_ptr<ScreenAtm> _atmScreen;
+    // Family renderers for the non-ZX fetches, allocated on first use; nullptr
+    // for machines that never reach those modes
+    std::unique_ptr<ScreenAtm> _atmScreen;      // M_ATM16/HR/TX/TL
+    std::unique_ptr<ScreenProfi> _profiScreen;  // M_PROFIHR
+    std::unique_ptr<ScreenAlco> _alcoScreen;    // M_P16 / M_PMC
 
-    // Profi hi-res (M_PROFIHR) renderer - lazily allocated on first use in
-    // Draw(); nullptr for machines that never reach M_PROFIHR
-    std::unique_ptr<ScreenProfi> _profiScreen;
+    // Range renderer for the current mode, chosen in SetVideoMode so the
+    // per-T loop carries no mode dispatch
+    using RangeRenderer = void (ScreenZX::*)(uint32_t fromTstate, uint32_t toTstate);
+    RangeRenderer _rangeRenderer = &ScreenZX::DrawRangeNull;
 
     /// endregion </Fields>
 
@@ -114,6 +106,13 @@ protected:
     void CreateTables() override;
     void CreateTimingTable();
     void CreateTstateLUT();  // Pre-compute coordinate LUT for current mode
+
+    void SelectRangeRenderer();
+    void DrawRangeNull(uint32_t fromTstate, uint32_t toTstate);
+    void DrawRangeZX(uint32_t fromTstate, uint32_t toTstate);
+    void DrawRangeAlco(uint32_t fromTstate, uint32_t toTstate);
+    void DrawRangeAtm(uint32_t fromTstate, uint32_t toTstate);
+    void DrawRangeProfi(uint32_t fromTstate, uint32_t toTstate);
 
 public:
     uint16_t CalculateXYScreenAddress(uint8_t x, uint8_t y, uint16_t baseAddress = 0x4000);
@@ -145,10 +144,13 @@ public:
 
     void UpdateScreen() override;
 
-    /// @brief Optimized Draw using pre-computed LUT
-    /// Uses TstateCoordLUT to eliminate runtime division/modulo operations
+    /// @brief Render one T-state in the current mode (same path as DrawRange)
     /// @param tstate T-state timing position
     void Draw(uint32_t tstate) override;
+
+    /// @brief Render [from, to] with the mode's range renderer: one dispatch
+    /// per catch-up, the per-T body inlined in each family's loop
+    void DrawRange(uint32_t fromTstate, uint32_t toTstate) override;
 
     /// @brief Original Draw implementation with runtime coordinate calculation
     /// @deprecated Kept for benchmarking comparison; will be removed after verification
@@ -160,11 +162,6 @@ public:
     /// @deprecated CLEANUP: Remove after Phase 3 verification complete
     /// @param tstate T-state timing position
     void DrawLUT_Ternary(uint32_t tstate);
-
-    /// @brief EFF7 z-mode renderer over the ZX raster (M_P16 AlCo 16c /
-    /// M_PMC hardware multicolor - Pentagon and ZX-Evo BaseConf)
-    /// @param tstate T-state timing position
-    void DrawAlcoMode(uint32_t tstate);
 
     /// region <ScreenHQ=OFF optimizations - Phase 4-5>
     /// These methods batch 8 pixels together, breaking demo multicolor compatibility

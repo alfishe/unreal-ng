@@ -27,11 +27,11 @@
 
 namespace
 {
-/// Build a 53-byte tape-state buffer with known non-trivial field values.
+/// Build a 71-byte tape-state buffer with known non-trivial field values.
 /// Layout must match the cursor-packed format in tape.cpp.
 std::vector<uint8_t> CraftKnownTapeBuffer()
 {
-    std::vector<uint8_t> buf(53, 0);
+    std::vector<uint8_t> buf(71, 0);
     uint8_t* cur = buf.data();
 
     // _tapeStarted = 1
@@ -51,10 +51,16 @@ std::vector<uint8_t> CraftKnownTapeBuffer()
 
     *cur++ = 1;     // _tapeBitState
     *cur++ = 0;     // _lastTapeBit
-    *cur++ = 0x42;  // _initialErrNr
+    *cur++ = 0;     // reserved (was the ERR_NR baseline)
     auto put32 = [](uint8_t*& c, uint32_t v) { std::memcpy(c, &v, 4); c += 4; };
-    put32(cur, 7);   // _framesSinceLastRead
-    put32(cur, 13);  // _earPollsThisFrame
+    put32(cur, 7);   // _framesNotListened
+    put32(cur, 13);  // _listenReadsThisFrame
+    auto put16 = [](uint8_t*& c, uint16_t v) { std::memcpy(c, &v, 2); c += 2; };
+    put16(cur, 9);        // _patternRun
+    put16(cur, 0x8123);   // _patternLastPc
+    put64(cur, 0x0102030405060708ull);  // _patternLastTick
+    for (uint8_t reg : { 0x11, 0x22, 0x33, 0x44, 0x55, 0x66 })
+        *cur++ = reg;     // _patternRegs B, C, D, E, H, L
 
     return buf;
 }
@@ -86,10 +92,10 @@ protected:
     }
 };
 
-TEST_F(TTD_Tape_Serializer_Test, TTDStateSize_IsStable_53Bytes)
+TEST_F(TTD_Tape_Serializer_Test, TTDStateSize_IsStable_71Bytes)
 {
-    EXPECT_EQ(_tapeA->TTDStateSize(), 53u);
-    EXPECT_EQ(_tapeB->TTDStateSize(), 53u);
+    EXPECT_EQ(_tapeA->TTDStateSize(), 71u);
+    EXPECT_EQ(_tapeB->TTDStateSize(), 71u);
 }
 
 TEST_F(TTD_Tape_Serializer_Test, RoundTrip_DefaultState_IsByteIdentical)
@@ -120,6 +126,23 @@ TEST_F(TTD_Tape_Serializer_Test, RoundTrip_KnownPositionFields_Preserved)
 
     EXPECT_EQ(crafted, resaved)
         << "Tape position fields failed load→save identity";
+}
+
+TEST_F(TTD_Tape_Serializer_Test, ReservedByte44_IgnoredOnLoad_SavedAsZero)
+{
+    // Offset 44 held the ERR_NR baseline of the removed ERR_NR stop. A
+    // checkpoint written before the removal carries a live value there: it
+    // must load without effect, and every new save writes 0.
+    std::vector<uint8_t> crafted = CraftKnownTapeBuffer();
+    crafted[44] = 0x42;
+
+    _tapeA->TTDLoadState(crafted.data());
+    std::vector<uint8_t> resaved(_tapeA->TTDStateSize());
+    _tapeA->TTDSaveState(resaved.data());
+
+    EXPECT_EQ(resaved[44], 0u);
+    crafted[44] = 0;
+    EXPECT_EQ(crafted, resaved) << "Every other field must still round-trip";
 }
 
 TEST_F(TTD_Tape_Serializer_Test, RoundTrip_CrossDevice_LoadProducesSameSave)
@@ -197,8 +220,8 @@ TEST(TTD_Tape_ManagerIntegration_Test, CaptureNow_PopulatesTapeStateBlob)
     ASSERT_NE(tapeBlob, cp->peripheralBlobs.end());
     const auto tapeState = ttd::TTDPeripheralRegistry::DecodeBlob(
         static_cast<uint8_t>(ttd::PeripheralId::Tape), tapeBlob->second);
-    EXPECT_EQ(tapeState.size(), 53u)
-        << "tapeState blob must contain the Tape position + signal + watchdog payload (53 bytes)";
+    EXPECT_EQ(tapeState.size(), 71u)
+        << "tapeState blob must contain the Tape position + signal + loader-follow payload (71 bytes)";
 
     emulator.Stop();
     emulator.Release();

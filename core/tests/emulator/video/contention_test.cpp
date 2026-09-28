@@ -20,8 +20,10 @@
 ///   128K: 0x4000-0x7FFF (page 5) + 0xC000-0xFFFF when an odd page (1/3/5/7)
 ///         is mapped into bank 3 via port 7FFD
 /// Machine geometry differs: 48K 224 T/line (69888 T/frame), 128K 228 T/line
-/// (70908 T/frame) - patterns are anchored via the contention engine's own
-/// raster snapshot so the tests track the emulator's raster calibration.
+/// (70908 T/frame). Patterns are anchored on the INT, the physical reference:
+/// the first contended T is INT + 14335 on the 48K and INT + 14361 on the 128K
+/// (classic onset, ZXMAK2), 5 T before the first displayed pixel at +14340 /
+/// +14366 (Xpeccy ULA.48/128, MiSTer ula.sv). The INT fires at intstart + 1.
 
 namespace
 {
@@ -33,6 +35,7 @@ class ContentionTestBase : public ::testing::Test
 {
 protected:
     const char* _modelName = "48K";
+    uint32_t _intToFirstContended = 14335;
 
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
@@ -60,8 +63,12 @@ protected:
             << " (mem_model=" << (int)_context->config.mem_model
             << " videoMode=" << (int)_context->pScreen->GetVideoMode() << ")";
 
+        _firstContendedT = _context->config.intstart + 1 + _intToFirstContended;
+
+        // The same T seen from the raster: 5 T before the renderer's first paper pixel
         const ContentionRaster& raster = _ula->GetRaster();
-        _firstContendedT = raster.screenAreaStart + raster.screenLineAreaStart;
+        ASSERT_EQ(_firstContendedT, raster.screenAreaStart + raster.screenLineAreaStart - 5)
+            << "INT-relative contention onset and the raster disagree";
     }
 
     void TearDown() override
@@ -104,7 +111,11 @@ protected:
 class Contention128K_Test : public ContentionTestBase
 {
 protected:
-    Contention128K_Test() { _modelName = "128K"; }
+    Contention128K_Test()
+    {
+        _modelName = "128K";
+        _intToFirstContended = 14361;
+    }
 };
 
 /// region <ZX-Spectrum 48K>
@@ -114,6 +125,17 @@ TEST_F(Contention48K_Test, MachineGeometry)
     const ContentionRaster& raster = _ula->GetRaster();
     EXPECT_EQ(raster.tstatesPerLine, 224u) << "48K: 224 T-states per line";
     EXPECT_EQ(raster.configFrameDuration, 69888u) << "48K: 224 * 312 lines";
+}
+
+TEST_F(Contention48K_Test, NoContentionOneTBeforeOnsetOrAfterLastCell)
+{
+    const ContentionRaster& raster = _ula->GetRaster();
+    EXPECT_EQ(delayAt(_firstContendedT - 1), 0u) << "INT + 14334 is not contended";
+    EXPECT_EQ(delayAt(_firstContendedT + 127), kPattern[7]) << "last T of the 128 T contended span";
+    EXPECT_EQ(delayAt(_firstContendedT + 120), kPattern[0]) << "last cell starts at +120";
+    EXPECT_EQ(delayAt(_firstContendedT + 128), 0u) << "right border";
+    EXPECT_EQ(delayAt(_firstContendedT + 191 * raster.tstatesPerLine), kPattern[0]) << "last paper line";
+    EXPECT_EQ(delayAt(_firstContendedT + 192 * raster.tstatesPerLine), 0u) << "first bottom-border line";
 }
 
 TEST_F(Contention48K_Test, PatternShape_FirstCell)
@@ -134,7 +156,7 @@ TEST_F(Contention48K_Test, PatternRepeats_AcrossCellsAndLines)
         EXPECT_EQ(delayAt(_firstContendedT + 8 + k), kPattern[k]);
 
     // Line 100 of the paper area
-    uint32_t line100 = raster.screenAreaStart + 100 * raster.tstatesPerLine + raster.screenLineAreaStart;
+    uint32_t line100 = _firstContendedT + 100 * raster.tstatesPerLine;
     for (uint32_t k = 0; k < 8; k++)
         EXPECT_EQ(delayAt(line100 + k), kPattern[k]);
 }

@@ -15,7 +15,7 @@ order is §I in the review doc itself.
   `core/tests/emulator/sound/audioactivityindicators_test.cpp`
   (parameterized AY/FM), confirmed to catch the exact duplicate-post
   regression when the removed call is reintroduced. Full suite green
-  (3299/3299). **Not yet committed** — working tree only as of 2026-09-24.
+  (3299/3299). Committed in `5f965a07` (2026-09-24).
 
 ## Everything else in the review
 

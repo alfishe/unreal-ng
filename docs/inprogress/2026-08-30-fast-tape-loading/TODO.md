@@ -1,3 +1,5 @@
+> Feature r4 (ROM-trap fast loading) is **done** — its summary is kept at the bottom. Restore DONE.md once PLAN #5 is fixed.
+
 # TODO — reopened 2026-09-16: non-standard loader tapes fail deterministically
 
 The feature itself (r4) stays done; this file tracks one open defect found while
@@ -35,7 +37,44 @@ injection, WebAPI `/tape` polling — harness in `scratch/nonstd-loader-repro/`)
   `playing → idle`; `PC=0x70E1` sits inside an LZ-style unpacker
   (`ex af,af'; exx; ret` tail) with a partially drawn loading screen.
 
-## Root-cause hypothesis (high confidence, confirmation pending)
+## Status after the 2026-09-27 investigation
+
+Full write-up: [nonstandard-loader-investigation.md](nonstandard-loader-investigation.md).
+The single-cause hypothesis below was only partly right:
+
+- **B1: confirmed.** The ERR_NR watchdog false-stops on custom-loader writes to `$5C3A`. It broke
+  EMELYANOV (fast loading off, 48K and 128K); elsewhere it fired harmlessly after the data.
+- **B2: confirmed.** The stop consumes the in-flight block. Removing either B1 or B2 fixes
+  EMELYANOV.
+- **B3: new.** The deck does not wait for a busy loader between blocks. SAN-SAN hangs with fast
+  loading off; a 50-frame freeze fixes it.
+- **B4: new, from the code.** The ROM anchor restart after a freeze replays the frozen block from
+  its start.
+- **Correction:** several 2026-09-16 "failures" (SAN-SAN "dead loop at `0x8ABD`", KID__DR,
+  HACKER_SHURIK) were games waiting for a key at a prompt. The sweep never pressed one.
+- **Open, not explained by B1–B4:** O1 KID__DR crashes on Pentagon (all modes); O2 TIMOFEY falls
+  back to BASIC on 48K (all modes); O3 HACKER_SHURIK hangs on Pentagon with fast loading off.
+
+## Plan (from the investigation, §9)
+
+1. ~~P1: remove the ERR_NR stop~~ — done 2026-09-27 (TTD tape-state byte 44 reserved; test
+   `Tape_Test.ErrNrWriteDuringPlaybackKeepsTapeRolling`). Side effect until P4: a BREAK in a ROM
+   load leaves the tape rolling (B6).
+2. P2: no stop consumes a partly played block; update design §9.4/§12.1-8 and the turbo-tape note.
+3. P3: ROM restart after a freeze: trailing silence → next block, mid-data → block start,
+   mid-pilot → pilot start.
+4. P4: the tape moves only while a loader listens (requirement R, 2026-09-27: a load that stops
+   for a key prompt or for beeper/AY music resumes by itself when EAR polling returns). Reads
+   are classified EAR/KEY/OTHER; park at the next pilot after W_gap, freeze after W_block; strict
+   start. Design with diagrams: [loader-follow-design.md](loader-follow-design.md).
+5. Re-run the fixture matrix (probe in `scratch/tape-errnr/`) as a `tools/verification/` script;
+   EMELYANOV and SAN-SAN must pass with fast loading off on both models; tapes with prompts must
+   load with the key pressed after 1 s, 10 s and 60 s.
+6. Close out; split O1–O3 into their own item if they survive.
+
+<details><summary>Original 2026-09-16 hypothesis (kept for history)</summary>
+
+### Root-cause hypothesis (high confidence, confirmation pending)
 
 `Tape::handleFrameEnd` (`core/src/emulator/io/tape/tape.cpp`, ERR_NR watchdog)
 false-fires when a custom loader/unpacker writes the `$5C3A` sysvar area as
@@ -54,7 +93,7 @@ true for ROM-driven reports, false for loader code writing the byte directly.
 Explains: per-tape determinism, failure independent of warp/real speed, machines
 ending alive-but-derailed in RAM code, failures at various block indices.
 
-## Next steps
+### Next steps
 
 1. Confirm empirically: re-run KID__DR at real speed polling `$5C3A` (use
    `size>1` — single-byte raw reads return `{}`) alongside `/tape` state; expect
@@ -67,8 +106,29 @@ ending alive-but-derailed in RAM code, failures at various block indices.
    tight assertions possible); re-test `insult.tap` on 128K.
 4. Update turbo-tape design r2 note (ERR_NR assumption) and this file.
 
+</details>
+
 ## Repro assets
 
-`scratch/nonstd-loader-repro/` — `run.py` (sweep), `watch.py` (transition
+`scratch/nonstd-loader-repro/` (no longer present on 2026-09-27; superseded by `scratch/tape-errnr/`) — `run.py` (sweep), `watch.py` (transition
 timeline + OCR), `ocr.py` (screen decode), `*.timeline.json`, sweep log and
 instance-id files. App running on port 8090 during the session.
+
+---
+
+# DONE — Fast tape loading (ROM traps) (2026-08-30)
+
+**Status:** complete (r4).
+
+## What landed
+- LD-BYTES trap-based instant loading per `design.md` r4: standard ROM loads complete
+  near-instantly, decline matrix for everything else, custom-loader pause/resume
+  lifecycle (insult.tap fix), feature `fasttape` with UI/CLI/WebAPI/MCP toggles
+  (`fast_tape` io-acceleration setting).
+
+## Evidence
+- `core/src/emulator/io/tape/tapefastload.cpp`; `fasttape` feature in `FeatureManager`;
+  `fast_tape` in `/settings` (cited by the 2026-09-14 gap analysis).
+
+## Follow-ups
+- Headerless blocks are served by turbo-tape ([2026-09-04-turbo-tape-loading](../2026-09-04-turbo-tape-loading/), done).

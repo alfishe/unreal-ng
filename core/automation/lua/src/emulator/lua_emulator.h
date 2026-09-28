@@ -3411,58 +3411,29 @@ public:
             const uint32_t tstate = cpu ? static_cast<uint32_t>(cpu->t) : screen->GetCurrentTstate();
             const uint32_t tInFrame = tstate % config.frame;
 
-            const VideoModeEnum mode = screen->GetVideoMode();
-            const RasterDescriptor& rd = screen->rasterDescriptors[mode];
-            const RasterState& rs = screen->GetRasterState();
-
-            const bool rasterValid = rs.tstatesPerLine != 0;
-            const uint32_t tstatesPerLine = rasterValid ? rs.tstatesPerLine : config.t_line;
+            const BeamPosition beam = screen->DescribeBeam(tInFrame);
+            const uint32_t tstatesPerLine = beam.valid ? screen->GetRasterState().tstatesPerLine : config.t_line;
             const uint32_t line = tInFrame / tstatesPerLine;
-            const uint32_t dotInLine = tInFrame % tstatesPerLine;
-
-            std::string vZone = "beyond_raster";
-            if (rasterValid)
-            {
-                if (tInFrame <= rs.blankAreaEnd)
-                    vZone = (line < rd.vSyncLines) ? "vsync" : "vblank";
-                else if (tInFrame <= rs.topBorderAreaEnd)
-                    vZone = "top_border";
-                else if (tInFrame <= rs.screenAreaEnd)
-                    vZone = "screen";
-                else if (tInFrame <= rs.bottomBorderAreaEnd)
-                    vZone = "bottom_border";
-            }
-
-            std::string hZone = "-";
-            if (vZone == "screen")
-            {
-                if (dotInLine <= rs.blankLineAreaEnd)
-                    hZone = "hblank";
-                else if (dotInLine <= rs.leftBorderAreaEnd)
-                    hZone = "left_border";
-                else if (dotInLine <= rs.screenLineAreaEnd)
-                    hZone = "paper";
-                else if (dotInLine <= rs.rightBorderAreaEnd)
-                    hZone = "right_border";
-                else
-                    hZone = "beyond_line";
-            }
-
-            std::string zone = vZone;
-            if (vZone == "screen")
-                zone = (hZone == "paper") ? "paper" : (hZone == "hblank" ? "hblank" : "border");
 
             result["tstate"] = tstate;
             result["tstate_in_frame"] = tInFrame;
             result["frame"] = static_cast<uint64_t>(context->emulatorState.frame_counter);
             result["line"] = line;
-            result["dot_in_line"] = dotInLine;
-            result["beam_x"] = dotInLine * rs.pixelsPerTState;
+            result["dot_in_line"] = tInFrame % tstatesPerLine;
+            result["beam_x"] = beam.beamX;
             result["beam_y"] = line;
-            result["zone"] = zone;
-            result["vertical_zone"] = vZone;
-            result["horizontal_zone"] = hZone;
-            result["in_paper"] = zone == "paper";
+            result["zone"] = std::string(beam.zone);
+            result["vertical_zone"] = std::string(beam.verticalZone);
+            result["horizontal_zone"] = std::string(beam.horizontalZone);
+            result["in_paper"] = beam.inPaper;
+            if (beam.inPaper)
+            {
+                sol::table paper = lua_view.create_table();
+                paper["x"] = beam.paperX;
+                paper["x_end"] = beam.paperXEnd;
+                paper["y"] = beam.paperY;
+                result["paper"] = paper;
+            }
             return result;
         });
 

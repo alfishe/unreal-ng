@@ -22,6 +22,33 @@ void ScreenZX::SetVideoMode(VideoModeEnum mode)
 {
     Screen::SetVideoMode(mode);  // Call base class to update _mode and _rasterState
     CreateTimingTable();         // Regenerate timing tables including LUT
+    SelectRangeRenderer();
+}
+
+void ScreenZX::SelectRangeRenderer()
+{
+    switch (_mode)
+    {
+        case M_NUL:
+            _rangeRenderer = &ScreenZX::DrawRangeNull;
+            break;
+        case M_ATM16:
+        case M_ATMHR:
+        case M_ATMTX:
+        case M_ATMTL:
+            _rangeRenderer = &ScreenZX::DrawRangeAtm;
+            break;
+        case M_PROFIHR:
+            _rangeRenderer = &ScreenZX::DrawRangeProfi;
+            break;
+        case M_P16:
+        case M_PMC:
+            _rangeRenderer = &ScreenZX::DrawRangeAlco;
+            break;
+        default:
+            _rangeRenderer = &ScreenZX::DrawRangeZX;
+            break;
+    }
 }
 
 /// region <Genuine ZX-Spectrum ULA specifics>
@@ -161,22 +188,11 @@ void ScreenZX::CreateTimingTable()
 /// Called from CreateTimingTable() on mode change
 void ScreenZX::CreateTstateLUT()
 {
-    const RasterDescriptor& rd = rasterDescriptors[_mode];
     const uint32_t maxFrameTiming = _rasterState.maxFrameTiming;
 
-    // For M_P384 overscan, use Pentagon timing but render to larger framebuffer
-    // This ensures identical timing while showing more border area
-    // ATM3 AlCo modes (EFF7 z0/z5 -> M_P16/M_PMC): the Pentagon-class
-    // descriptors carry a 320-line / 71680 T frame, but the ZX-Evo BaseConf
-    // sync generator never leaves the ATM 312-line / 69888 T raster (xpeccy
-    // evoSetVideoMode swaps the pixel fetcher only). M_ZX48 is the matching
-    // 312-line descriptor with identical geometry (352x288 frame, 256x192
-    // window at 48,48, 448 px/line).
-    const bool atm3AlcoTiming = (_mode == M_P16 || _mode == M_PMC) &&
-                                _context != nullptr && _context->config.mem_model == MM_ATM3;
-    const RasterDescriptor& timing =
-        (_mode == M_P384) ? rasterDescriptors[M_PENTAGON128K] :
-        atm3AlcoTiming ? rasterDescriptors[M_ZX48] : rd;
+    // M_P384 renders Pentagon timing into a larger framebuffer; ATM3 AlCo modes
+    // keep the ATM 312-line raster (GetTimingDescriptor)
+    const RasterDescriptor& timing = GetTimingDescriptor(_mode);
 
     // For M_P384, we render 16 more lines from vBlank (at top) and 32 more pixels horizontally
     // No framebuffer offset needed - the extra content fills the larger buffer directly
@@ -478,41 +494,37 @@ uint32_t ScreenZX::GetZXSpectrumPixelOptimized(uint8_t x, uint8_t y, uint16_t ba
 /// \return
 bool ScreenZX::TransformTstateToFramebufferCoords(uint32_t tstate, uint16_t* x, uint16_t* y)
 {
-    bool result = false;
     *x = 0;
     *y = 0;
+    if (tstate >= _rasterState.maxFrameTiming || _rasterState.tstatesPerLine == 0)
+        return false;
 
-    // ATM3 AlCo/HWMC keep the 312-line ATM raster, not the Pentagon-class
-    // 320-line one their M_P16/M_PMC ids carry - same override as
-    // SetVideoMode / CreateTstateLUT
-    const bool atm3AlcoTiming = (_mode == M_P16 || _mode == M_PMC) &&
-                                _context != nullptr && _context->config.mem_model == MM_ATM3;
-    const RasterDescriptor& rasterDescriptor =
-        (_mode == M_P384) ? rasterDescriptors[M_PENTAGON128K] :
-        atm3AlcoTiming ? rasterDescriptors[M_ZX48] : rasterDescriptors[_mode];
-    const uint16_t tstatesPerLine = _rasterState.tstatesPerLine;
-    const uint32_t maxFrameTiming = _rasterState.maxFrameTiming;
+    // Vertical: the mode's timing descriptor (P384 = Pentagon, ATM3 AlCo = ATM raster).
+    // Horizontal: borders at 2 px/T around the display window, the window at its own
+    // pixel clock, stored where the mode's framebuffer keeps it (ATM stores the
+    // window only, Profi hires 512 px between 48 px borders).
+    const RasterDescriptor& timing = GetTimingDescriptor(_mode);
+    const RasterDescriptor& storage = rasterDescriptors[_mode];
+    const int line = static_cast<int>(tstate / _rasterState.tstatesPerLine) - (timing.vSyncLines + timing.vBlankLines);
+    const int t = static_cast<int>(tstate % _rasterState.tstatesPerLine);
+    const int paperStart = _rasterState.screenLineAreaStart;
+    const int paperEnd = _rasterState.screenLineAreaEnd + 1;
+    const int dot = _rasterState.pixelsPerTState;
 
-    if (tstate < maxFrameTiming)
-    {
-        // ULA draws 2 pixels per t-state
-        const int framebufferX = (tstate % _rasterState.tstatesPerLine) * _rasterState.pixelsPerTState;
-        // Get raster line and skip invisible lines that are drawn before framebuffer render
-        const int framebufferY = tstate / tstatesPerLine - (rasterDescriptor.vSyncLines + rasterDescriptor.vBlankLines);
+    int column;
+    if (t < paperStart)
+        column = storage.screenOffsetLeft - (paperStart - t) * dot;
+    else if (t < paperEnd)
+        column = storage.screenOffsetLeft + (t - paperStart) * _rasterState.paperDotsPerT;
+    else
+        column = storage.screenOffsetLeft + storage.screenWidth + (t - paperEnd) * dot;
 
-        const uint16_t frameWidth = rasterDescriptor.fullFrameWidth;
-        const uint16_t frameHeight = rasterDescriptor.fullFrameHeight;
+    if (line < 0 || line >= storage.fullFrameHeight || column < 0 || column >= storage.fullFrameWidth)
+        return false;
 
-        if (framebufferY >= 0 && framebufferY < frameHeight && framebufferX < frameWidth)
-        {
-            *x = framebufferX;
-            *y = framebufferY;
-
-            result = true;
-        }
-    }
-
-    return result;
+    *x = static_cast<uint16_t>(column);
+    *y = static_cast<uint16_t>(line);
+    return true;
 }
 
 bool ScreenZX::TransformTstateToZXCoords(uint32_t tstate, uint16_t* zxX, uint16_t* zxY)
@@ -710,125 +722,129 @@ void ScreenZX::UpdateScreen()
 }
 
 /// Render for single t-state (ULA draws 2 pixels per each t-state)
-/// LUT-optimized version - pre-computed coordinates eliminate division/modulo
 /// @param tstate Clock time mark
 void ScreenZX::Draw(uint32_t tstate)
 {
-    if (_mode == M_NUL || tstate >= _rasterState.maxFrameTiming || tstate >= MAX_FRAME_TSTATES)
-    {
+    DrawRange(tstate, tstate);
+}
+
+void ScreenZX::DrawRange(uint32_t fromTstate, uint32_t toTstate)
+{
+    const uint32_t frameEnd = std::min<uint32_t>(_rasterState.maxFrameTiming, MAX_FRAME_TSTATES);
+    if (fromTstate >= frameEnd)
         return;
-    }
-
-    // ATM extended modes use different rendering path. _atmScreen is
-    // allocated lazily on first use - only machines whose detected video
-    // mode actually becomes one of the ATM extended modes ever reach here
-    // (DetectVideoMode only produces these for ATM machine models), so
-    // Pentagon/plain Spectrum machines never allocate one.
-    if (_mode == M_ATM16 || _mode == M_ATMHR || _mode == M_ATMTX || _mode == M_ATMTL)
-    {
-        if (!_atmScreen)
-            _atmScreen = std::make_unique<ScreenAtm>(_context, _memory);
-        _atmScreen->Draw(tstate, _mode, rasterDescriptors[_mode], _framebuffer);
+    if (toTstate >= frameEnd)
+        toTstate = frameEnd - 1;
+    if (fromTstate > toTstate)
         return;
-    }
 
-    // Profi 512x240 hi-res (DFFD.7): own fetch and geometry. _profiScreen is
-    // allocated lazily on first use - only machines whose detected video
-    // mode actually becomes M_PROFIHR ever reach here, so plain
-    // Spectrum/Pentagon/ATM machines never allocate one.
-    if (_mode == M_PROFIHR)
+    (this->*_rangeRenderer)(fromTstate, toTstate);
+}
+
+void ScreenZX::DrawRangeNull(uint32_t fromTstate, uint32_t toTstate)
+{
+    (void)fromTstate;
+    (void)toTstate;
+}
+
+void ScreenZX::DrawRangeAtm(uint32_t fromTstate, uint32_t toTstate)
+{
+    if (!_atmScreen)
+        _atmScreen = std::make_unique<ScreenAtm>(_context, _memory);
+    _atmScreen->DrawRange(fromTstate, toTstate, _mode, rasterDescriptors[_mode], _framebuffer);
+}
+
+void ScreenZX::DrawRangeProfi(uint32_t fromTstate, uint32_t toTstate)
+{
+    if (!_profiScreen)
+        _profiScreen = std::make_unique<ScreenProfi>(_context, _memory);
+    _profiScreen->DrawRange(fromTstate, toTstate, rasterDescriptors[_mode], _framebuffer, _borderColor);
+}
+
+void ScreenZX::DrawRangeAlco(uint32_t fromTstate, uint32_t toTstate)
+{
+    if (!_alcoScreen)
+        _alcoScreen = std::make_unique<ScreenAlco>(_context, _memory);
+    _alcoScreen->DrawRange(fromTstate, toTstate, _mode, _tstateLUT, rasterDescriptors[_mode].fullFrameWidth,
+                           _framebuffer, _vid.flash != 0);
+}
+
+/// Sinclair / Pentagon ULA: one T-state = two pixels via the pre-computed LUT.
+/// Member state is copied to locals for the whole range: stores into the
+/// framebuffer could alias members, which would force a reload on every T.
+void ScreenZX::DrawRangeZX(uint32_t fromTstate, uint32_t toTstate)
+{
+    uint32_t* const fb = reinterpret_cast<uint32_t*>(_framebuffer.memoryBuffer);
+    const size_t fbWidth = rasterDescriptors[_mode].fullFrameWidth;
+    const TstateCoordLUT* const lut = _tstateLUT;
+    const uint8_t* const zxScreen = _activeScreenMemoryOffset;
+    const uint32_t* const inkColors = _rgbaColors;
+    const uint32_t* const paperColors = _rgbaFlashColors;
+    const uint32_t tstatesPerLine = _rasterState.tstatesPerLine;
+    const uint8_t borderStep = _rasterState.borderUpdateTStates;
+    const uint8_t borderPhase = borderStep / 2;
+    const uint8_t borderColor = _borderColor;
+    const uint32_t borderColorRGBA = inkColors[borderColor];
+
+    // ULA latches: pixel + attribute bytes once per 8-pixel cell (HDL
+    // fetch-latch-shift), border color at 4T phase 2 on Ferranti ULAs
+    // (MiSTer hc_next[2:0] == 4), every T on Pentagon-class logic
+    uint8_t pixels = _latchedPixels;
+    uint8_t attributes = _latchedAttributes;
+    uint8_t lastSymbolX = _lastLatchSymbolX;
+    uint8_t lastZxY = _lastLatchZxY;
+    uint32_t latchedBorderRGBA = _latchedBorderColorRGBA;
+    uint8_t latchedBorderIndex = _latchedBorderColorIndex;
+
+    for (uint32_t t = fromTstate; t <= toTstate; ++t)
     {
-        if (!_profiScreen)
-            _profiScreen = std::make_unique<ScreenProfi>(_context, _memory);
-        _profiScreen->Draw(tstate, rasterDescriptors[_mode], _framebuffer, _borderColor);
-        return;
-    }
+        const TstateCoordLUT& e = lut[t];
+        if (e.renderType == RT_BLANK)
+            continue;
 
-    // Pentagon / ZX-Evo BaseConf EFF7 z-modes: same ZX raster and LUT, but a
-    // different plane / attribute fetch (ported from xpeccy vidDrawAlco /
-    // vidDrawHwmc)
-    if (_mode == M_P16 || _mode == M_PMC)
-    {
-        DrawAlcoMode(tstate);
-        return;
-    }
-
-    const TstateCoordLUT& lut = _tstateLUT[tstate];
-
-    // Skip invisible area
-    if (lut.renderType == RT_BLANK)
-    {
-        return;
-    }
-
-    const RasterDescriptor& rasterDescriptor = rasterDescriptors[_mode];
-    uint32_t* framebufferARGB = reinterpret_cast<uint32_t*>(_framebuffer.memoryBuffer);
-    const size_t framebufferOffset = lut.framebufferY * rasterDescriptor.fullFrameWidth + lut.framebufferX;
-
-    if (lut.renderType == RT_SCREEN)
-    {
-        // Attribute latching: the ULA fetches pixel+attr bytes once per
-        // 8-pixel character cell (every 4 t-states). We track which cell
-        // was last latched and only re-read RAM when entering a new cell.
-        // This matches the HDL fetch-latch-shift pipeline.
-        if (lut.symbolX != _lastLatchSymbolX || lut.zxY != _lastLatchZxY)
+        uint32_t* const out = fb + e.framebufferY * fbWidth + e.framebufferX;
+        if (e.renderType == RT_SCREEN)
         {
-            uint8_t* zxScreen = _activeScreenMemoryOffset;
-            _latchedPixels = *(zxScreen + lut.screenOffset + lut.symbolX);
-            _latchedAttributes = *(zxScreen + lut.attrOffset + lut.symbolX);
-            _lastLatchSymbolX = lut.symbolX;
-            _lastLatchZxY = lut.zxY;
-        }
-
-        uint8_t pixels = _latchedPixels;
-        uint8_t attributes = _latchedAttributes;
-        uint32_t colorInk = _rgbaColors[attributes];
-        uint32_t colorPaper = _rgbaFlashColors[attributes];
-
-        // Branch-free first pixel:
-        // 1. Extract pixel bit and shift to bit 7 position
-        // 2. Arithmetic right shift by 7 extends the sign bit to all 32 bits
-        // 3. Result is 0xFFFFFFFF (ink) or 0x00000000 (paper)
-        uint32_t bit0 = (pixels << lut.pixelXBit) & 0x80;
-        uint32_t mask0 = static_cast<uint32_t>(-static_cast<int32_t>(bit0 >> 7));
-        framebufferARGB[framebufferOffset] = (colorInk & mask0) | (colorPaper & ~mask0);
-
-        // Branch-free second pixel
-        uint32_t bit1 = (pixels << (lut.pixelXBit + 1)) & 0x80;
-        uint32_t mask1 = static_cast<uint32_t>(-static_cast<int32_t>(bit1 >> 7));
-        framebufferARGB[framebufferOffset + 1] = (colorInk & mask1) | (colorPaper & ~mask1);
-    }
-    else
-    {
-        // Border color latching: Pentagon updates every t-state (1T),
-        // ZX-48K/128K latches every 4 t-states (at 8-HC boundaries).
-        // We track the latched color index and only re-read when it changes.
-        if (_rasterState.borderUpdateTStates == 1)
-        {
-            // Pentagon: immediate update
-            _latchedBorderColorRGBA = _rgbaColors[_borderColor];
-            _latchedBorderColorIndex = _borderColor;
-        }
-        else if (_borderColor != _latchedBorderColorIndex)
-        {
-            // ZX models: border is latched at 8-HC boundaries.
-            // MiSTer HDL: hc_next[2:0] == 4, meaning the new border register
-            // becomes effective when pixel counter transitions 3→4 (t-state 1→2).
-            // So in t-states, the latch point is at phase offset 2 within each
-            // 4T group: t-states 2, 6, 10, 14, ...
-            uint32_t tInLine = tstate % _rasterState.tstatesPerLine;
-            uint8_t phase = _rasterState.borderUpdateTStates / 2;
-            if (tInLine % _rasterState.borderUpdateTStates == phase)
+            if (e.symbolX != lastSymbolX || e.zxY != lastZxY)
             {
-                _latchedBorderColorRGBA = _rgbaColors[_borderColor];
-                _latchedBorderColorIndex = _borderColor;
+                pixels = zxScreen[e.screenOffset + e.symbolX];
+                attributes = zxScreen[e.attrOffset + e.symbolX];
+                lastSymbolX = e.symbolX;
+                lastZxY = e.zxY;
             }
+
+            const uint32_t ink = inkColors[attributes];
+            const uint32_t paper = paperColors[attributes];
+            // Branch-free: the pixel bit becomes an all-ones / all-zeros mask
+            const uint32_t bit0 = (pixels << e.pixelXBit) & 0x80;
+            const uint32_t mask0 = static_cast<uint32_t>(-static_cast<int32_t>(bit0 >> 7));
+            out[0] = (ink & mask0) | (paper & ~mask0);
+            const uint32_t bit1 = (pixels << (e.pixelXBit + 1)) & 0x80;
+            const uint32_t mask1 = static_cast<uint32_t>(-static_cast<int32_t>(bit1 >> 7));
+            out[1] = (ink & mask1) | (paper & ~mask1);
+            continue;
         }
 
-        // Render border (2 pixels) using latched color
-        framebufferARGB[framebufferOffset] = _latchedBorderColorRGBA;
-        framebufferARGB[framebufferOffset + 1] = _latchedBorderColorRGBA;
+        if (borderStep == 1)
+        {
+            latchedBorderRGBA = borderColorRGBA;
+            latchedBorderIndex = borderColor;
+        }
+        else if (borderColor != latchedBorderIndex && (t % tstatesPerLine) % borderStep == borderPhase)
+        {
+            latchedBorderRGBA = borderColorRGBA;
+            latchedBorderIndex = borderColor;
+        }
+        out[0] = latchedBorderRGBA;
+        out[1] = latchedBorderRGBA;
     }
+
+    _latchedPixels = pixels;
+    _latchedAttributes = attributes;
+    _lastLatchSymbolX = lastSymbolX;
+    _lastLatchZxY = lastZxY;
+    _latchedBorderColorRGBA = latchedBorderRGBA;
+    _latchedBorderColorIndex = latchedBorderIndex;
 }
 
 /// Original Draw implementation (for benchmarking comparison)
@@ -1038,83 +1054,6 @@ void ScreenZX::RenderScreen_Batch8()
 
 /// endregion </ScreenHQ=OFF optimizations>
 
-/// Pentagon / ZX-Evo BaseConf EFF7 z-modes over the ZX raster (256x192 inside
-/// the 352x288 border area). Ported from xpeccy video.c:
-///   M_P16 (EFF7 z0, ATM3 FF77 mode 0x13) = vidDrawAlco - 16-color 256x192.
-///     Four planes at the video page pair {vidPage ^ 1, vidPage} x {+0,
-///     +0x2000}, ZX screen addressing; each byte holds two adjacent pixels
-///     as 4-bit palette indices (left = {b6,b2,b1,b0}, right = {b7,b5,b4,b3}
-///     - the same packing as ATM EGA, but note the pair pages are ^1, not ^4).
-///   M_PMC (EFF7 z5, ATM3 FF77 mode 0x23) = vidDrawHwmc - hardware
-///     multicolor. The bitmap byte AND the attribute byte are both fetched
-///     from the PIXEL address of the video page (xpeccy reads
-///     MADR(vidPage, pixAdr) for both scrbyte and atrbyte - faithful to the
-///     reference). Attr decode: ink = bits 0-2 + bit 6, paper = bits 3-6
-///     (bit 6 brights both), bit 7 = flash - inverts the bitmap on the
-///     16-frame phase (_vid.flash).
-/// Border and all colors go through the #FF 16-cell palette RAM, which
-/// defaults to the standard ZX colors - Pentagon (no #FF port) sees stock
-/// colors (xpeccy vid_zx_palette accepts VID_ALCO / VID_HWMC for presets).
-void ScreenZX::DrawAlcoMode(uint32_t tstate)
-{
-    if (_framebuffer.memoryBuffer == nullptr)
-        return;
-
-    const TstateCoordLUT& lut = _tstateLUT[tstate];
-    if (lut.renderType == RT_BLANK)
-        return;
-
-    EmulatorState& state = _context->emulatorState;
-    const RasterDescriptor& rd = rasterDescriptors[_mode];
-    uint32_t* framebufferARGB = reinterpret_cast<uint32_t*>(_framebuffer.memoryBuffer);
-    const size_t framebufferOffset = lut.framebufferY * rd.fullFrameWidth + lut.framebufferX;
-
-    if (lut.renderType == RT_BORDER)
-    {
-        // 4-bit border pointer into the palette (bright bit from FE A3)
-        const uint32_t borderColor =
-            state.atmPalette[(state.border_attr & 0x07) | ((state.atmBorderBright & 1) << 3)];
-        framebufferARGB[framebufferOffset] = borderColor;
-        framebufferARGB[framebufferOffset + 1] = borderColor;
-        return;
-    }
-
-    // RT_SCREEN: one t-state = one pixel pair (zxX, zxX+1) - the same pair
-    // alignment the generic ULA path relies on (pixelInLine is always even).
-    // Video page from 7FFD bit 3, same convention as the ATM modes.
-    const uint8_t videoPage = (state.p7FFD & 0x08) ? 7 : 5;
-
-    if (_mode == M_P16)
-    {
-        // Byte group j = 8 pixels; plane q holds pixel pair q (pixels 2q,
-        // 2q+1). Planes: q0 = vidPage^1 +0, q1 = vidPage +0, q2 = vidPage^1
-        // +0x2000, q3 = vidPage +0x2000 (xpeccy vidDrawAlco phases 0/2/4/6).
-        const uint32_t j = lut.zxX >> 3;
-        const uint32_t q = (lut.zxX >> 1) & 3;
-        uint8_t* const pageA = _memory->RAMPageAddress(videoPage ^ 1);
-        uint8_t* const pageB = _memory->RAMPageAddress(videoPage);
-        uint8_t* const plane = (q & 1) ? pageB : pageA;
-        const uint8_t bt = plane[((q >> 1) << 13) + lut.screenOffset + j];
-        framebufferARGB[framebufferOffset] = state.atmPalette[(bt & 0x07) | ((bt & 0x40) >> 3)];
-        framebufferARGB[framebufferOffset + 1] = state.atmPalette[((bt & 0x38) >> 3) | ((bt & 0x80) >> 4)];
-        return;
-    }
-
-    // M_PMC: bitmap and attribute both from the pixel-plane byte
-    const uint8_t bt = _memory->RAMPageAddress(videoPage)[lut.screenOffset + lut.symbolX];
-    const uint8_t bitmap = ((bt & 0x80) && _vid.flash) ? static_cast<uint8_t>(bt ^ 0xFF) : bt;
-    const uint32_t ink = state.atmPalette[(bt & 0x07) | ((bt & 0x40) >> 3)];
-    const uint32_t paper = state.atmPalette[(bt & 0x78) >> 3];
-
-    // Branch-free pair selection, same shape as the ULA Draw hot path
-    const uint32_t bit0 = (bitmap << lut.pixelXBit) & 0x80;
-    const uint32_t mask0 = static_cast<uint32_t>(-static_cast<int32_t>(bit0 >> 7));
-    framebufferARGB[framebufferOffset] = (ink & mask0) | (paper & ~mask0);
-    const uint32_t bit1 = (bitmap << (lut.pixelXBit + 1)) & 0x80;
-    const uint32_t mask1 = static_cast<uint32_t>(-static_cast<int32_t>(bit1 >> 7));
-    framebufferARGB[framebufferOffset + 1] = (ink & mask1) | (paper & ~mask1);
-}
-
 // =============================================================================
 // SCREENHQ=OFF FRAME BATCH RENDER
 // =============================================================================
@@ -1133,7 +1072,7 @@ void ScreenZX::RenderFrameBatch()
     // RenderScreen_Batch8 assumes ZX screen geometry and fetch and would
     // paint garbage over the framebuffer. Run the per-t-state renderer
     // across the whole frame instead so ScreenHQ=OFF still produces correct
-    // output (Draw dispatches to _atmScreen->Draw / DrawAlcoMode).
+    // output (DrawRange dispatches to the family renderer).
     if (_mode == M_ATM16 || _mode == M_ATMHR || _mode == M_ATMTX || _mode == M_ATMTL ||
         _mode == M_P16 || _mode == M_PMC || _mode == M_PROFIHR)
     {
@@ -1144,8 +1083,7 @@ void ScreenZX::RenderFrameBatch()
                                                                       : _rasterState.maxFrameTiming;
         if (frameTstates > MAX_FRAME_TSTATES)
             frameTstates = MAX_FRAME_TSTATES;
-        for (uint32_t t = 0; t < frameTstates; ++t)
-            Draw(t);
+        DrawRange(0, frameTstates - 1);
         return;
     }
 

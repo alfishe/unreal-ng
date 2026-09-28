@@ -4,6 +4,8 @@
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/config.h"
+#include "emulator/memory/memory.h"
 #include "emulator/video/screen.h"
 #include "emulator/video/ulacontention.h"
 #include "emulator/video/zx/screenzx.h"
@@ -89,14 +91,17 @@ ASSERT_TRUE(_cpu->Init()) << "Core::Init() failed";
         _screen->SetVideoMode(M_SCORPION);
     }
 
-    /// Calculate the first t-state of paper on a given scanline
+    /// First T of the first paper pixel on a given paper line (renderer origin)
     uint32_t PaperStartOnLine(int line)
     {
-        const RasterDescriptor& rd = _screen->rasterDescriptors[_screen->GetVideoMode()];
-        uint32_t tstatesPerLine = rd.pixelsPerLine / 2;
-        uint32_t screenAreaStart = tstatesPerLine * (rd.vSyncLines + rd.vBlankLines + rd.screenOffsetTop);
-        uint32_t linePrefix = (rd.hSyncPixels + rd.hBlankPixels + rd.screenOffsetLeft) / 2;
-        return screenAreaStart + linePrefix + (uint32_t)line * tstatesPerLine;
+        return _screen->GetPaperStartTstate() + static_cast<uint32_t>(line) * _screen->GetRasterState().tstatesPerLine;
+    }
+
+    /// First contended T on a paper line: 5 T before its first displayed pixel
+    /// (48K: INT + 14335 on line 0, first pixel INT + 14340)
+    uint32_t ContentionStartOnLine(int line)
+    {
+        return PaperStartOnLine(line) - 5;
     }
 };
 
@@ -117,8 +122,8 @@ TEST_F(IOContention_Test, ZX48k_IOContentionForPortFE)
     SetupZX48k();
 
     // Port #FE is contended (A0=0). During paper area, should have contention delay.
-    uint32_t paperStart = PaperStartOnLine(64);
-    _z80->t = paperStart;
+    uint32_t contentionStart = ContentionStartOnLine(64);
+    _z80->t = contentionStart;
 
     // At cell offset 0, contention delay should be 6 (from {6,5,4,3,2,1,0,0} pattern)
     uint8_t delay = _ula->GetIOContentionDelay(0xFE);
@@ -162,12 +167,12 @@ TEST_F(IOContention_Test, ZX48k_IOContentionFollowsULAPattern)
     SetupZX48k();
 
     // The IO contention follows the same {6,5,4,3,2,1,0,0} pattern as memory contention
-    uint32_t paperStart = PaperStartOnLine(64);
+    uint32_t contentionStart = ContentionStartOnLine(64);
     const uint8_t expectedPattern[8] = {6, 5, 4, 3, 2, 1, 0, 0};
 
     for (int i = 0; i < 8; i++)
     {
-        _z80->t = paperStart + i;
+        _z80->t = contentionStart + i;
         uint8_t delay = _ula->GetIOContentionDelay(0xFE);
         EXPECT_EQ(delay, expectedPattern[i])
             << "IO contention pattern mismatch at cell offset " << i;
@@ -178,12 +183,12 @@ TEST_F(IOContention_Test, ZX48k_IOContentionNoDelayAtCellOffset6and7)
 {
     SetupZX48k();
 
-    uint32_t paperStart = PaperStartOnLine(64);
+    uint32_t contentionStart = ContentionStartOnLine(64);
 
-    _z80->t = paperStart + 6;
+    _z80->t = contentionStart + 6;
     EXPECT_EQ(_ula->GetIOContentionDelay(0xFE), 0);
 
-    _z80->t = paperStart + 7;
+    _z80->t = contentionStart + 7;
     EXPECT_EQ(_ula->GetIOContentionDelay(0xFE), 0);
 }
 
@@ -194,8 +199,8 @@ TEST_F(IOContention_Test, ZX128k_IOContentionForPortFE)
     SetupZX128k();
 
     // Port #FE on 128K: A0=0 → contention pattern + 1T extra delay
-    uint32_t paperStart = PaperStartOnLine(64);
-    _z80->t = paperStart;
+    uint32_t contentionStart = ContentionStartOnLine(64);
+    _z80->t = contentionStart;
 
     // At cell offset 0, base contention = 6, +1 for 128K = 7
     uint8_t delay = _ula->GetIOContentionDelay(0xFE);
@@ -243,10 +248,10 @@ TEST_F(IOContention_Test, ZX48k_OutAddsContentionDelayDuringPaper)
 {
     SetupZX48k();
 
-    uint32_t paperStart = PaperStartOnLine(64);
+    uint32_t contentionStart = ContentionStartOnLine(64);
 
-    // Set t-state to paper start (cell offset 0 → delay = 6)
-    _z80->t = paperStart;
+    // First contended T of the line (cell offset 0 → delay = 6)
+    _z80->t = contentionStart;
 
     uint32_t tBefore = _z80->t;
 
@@ -364,6 +369,39 @@ TEST_F(IOContention_Test, Scorpion_OutNoContentionDelay)
 ///
 /// Key difference: discrete logic NEVER returns 0xFF during paper.
 /// ============================================================================
+
+/// ===================== Floating Bus: INT-relative (classic 48K) ====================
+
+TEST_F(IOContention_Test, ZX48k_FloatingBusClassicSequenceFromInt)
+{
+    // Classic 48K floating bus, counted from the INT: 14338 bitmap $4000,
+    // 14339 attribute $5800, 14340 bitmap $4001, 14341 attribute $5801,
+    // 14342..14345 idle ($FF), 14346 bitmap $4002. The INT fires at intstart+1.
+    SetupZX48k();
+    CONFIG& config = _context->config;
+    config.intstart = 0;
+    config.intlen = 0;
+    Config(_context).ApplyModelTimingDefaults(config);
+    const uint32_t intT = config.intstart + 1;
+
+    Memory& memory = *_context->pMemory;
+    memory.DefaultBanksFor48k();
+    memory.DirectWriteToZ80Memory(0x4000, 0x10);
+    memory.DirectWriteToZ80Memory(0x5800, 0x20);
+    memory.DirectWriteToZ80Memory(0x4001, 0x11);
+    memory.DirectWriteToZ80Memory(0x5801, 0x21);
+    memory.DirectWriteToZ80Memory(0x4002, 0x12);
+
+    const struct { uint32_t afterInt; uint8_t value; } expected[] = {
+        {14337, 0xFF}, {14338, 0x10}, {14339, 0x20}, {14340, 0x11}, {14341, 0x21},
+        {14342, 0xFF}, {14345, 0xFF}, {14346, 0x12},
+    };
+    for (const auto& e : expected)
+    {
+        _z80->t = intT + e.afterInt;
+        EXPECT_EQ(_ula->GetFloatingBus(), e.value) << "INT + " << e.afterInt;
+    }
+}
 
 /// ===================== Floating Bus: Outside Paper ====================
 

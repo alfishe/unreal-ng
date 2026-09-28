@@ -11,7 +11,7 @@
 
 /// Scorpion ZS-256 machine timing and raster profile pins (hardware-reference 6):
 /// 312 lines x 224T = 69888T Sinclair-matching frame, INT at the ZX48 position
-/// (intstart 1794, intlen 32), discrete-logic fetch, contention disabled and
+/// (intstart 1815: 14336T INT to first pixel, intlen 32), discrete-logic fetch, contention disabled and
 /// 1T border updates. MM_SCORP and MM_PROFSCORP share the profile.
 class ScorpionRaster_Test : public ::testing::Test
 {
@@ -46,7 +46,7 @@ protected:
         config.mem_model = model;
         config.frame = 69888;
         config.t_line = 224;
-        config.intstart = 1794;
+        config.intstart = 1815;
         config.intlen = 32;
 
         _screen->InitFrame();
@@ -71,7 +71,7 @@ TEST_F(ScorpionRaster_Test, TimingDefaultsScorpion)
 
     EXPECT_EQ(config.frame, 69888u);   // 224 * 312
     EXPECT_EQ(config.t_line, 224u);
-    EXPECT_EQ(config.intstart, 1794u);
+    EXPECT_EQ(config.intstart, 1815u);
     EXPECT_EQ(config.intlen, 32u);
 }
 
@@ -89,7 +89,7 @@ TEST_F(ScorpionRaster_Test, TimingDefaultsProfScorpion)
 
     EXPECT_EQ(config.frame, 69888u);
     EXPECT_EQ(config.t_line, 224u);
-    EXPECT_EQ(config.intstart, 1794u);
+    EXPECT_EQ(config.intstart, 1815u);
     EXPECT_EQ(config.intlen, 32u);
 }
 

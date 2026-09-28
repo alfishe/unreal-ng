@@ -2,9 +2,9 @@
 /// @brief Unit tests for Screen::GetActiveSurfaceRAMPages (P1-3, digest mode=active).
 ///
 /// The helper decides which physical RAM pages the currently displayed video
-/// surface lives on: ATM hardware modes follow the 7FFD-selected bit-plane pair
-/// {videoPage - 4, videoPage} exactly like the DrawATM* renderers, everything
-/// else keeps the classic screen pages (both latched pages on 128K-class
+/// surface lives on: ATM plane modes follow the 7FFD-selected bit-plane pair
+/// {videoPage - 4, videoPage} exactly like ScreenAtm, ATM text-linear and
+/// hardware multicolor read one page, everything else keeps the classic screen pages (both latched pages on 128K-class
 /// machines, page 5 alone otherwise).
 
 #include <gtest/gtest.h>
@@ -55,10 +55,9 @@ TEST(Screen_ActiveSurface_Test, AtmModesFollow7ffdBitplanePair)
     EXPECT_EQ(highBank[1], 7);
 }
 
-TEST(Screen_ActiveSurface_Test, EveryAtmHardwareModeUsesThePairLayout)
+TEST(Screen_ActiveSurface_Test, AtmPlaneModesUseThePairLayout)
 {
-    const VideoModeEnum atmModes[] = {M_ATM16, M_ATMHR, M_ATMTX, M_ATMTL};
-    for (VideoModeEnum mode : atmModes)
+    for (VideoModeEnum mode : {M_ATM16, M_ATMHR, M_ATMTX})
     {
         // p7FFD = 0x10: bit 3 clear -> {1, 5}; bankedZX is irrelevant for ATM modes
         const std::vector<uint16_t> pages = Pages(mode, 0x10, false);
@@ -66,4 +65,18 @@ TEST(Screen_ActiveSurface_Test, EveryAtmHardwareModeUsesThePairLayout)
         EXPECT_EQ(pages[0], 1) << "mode " << static_cast<int>(mode);
         EXPECT_EQ(pages[1], 5) << "mode " << static_cast<int>(mode);
     }
+}
+
+TEST(Screen_ActiveSurface_Test, AtmTextLinearUsesItsDedicatedPage)
+{
+    // ScreenAtm M_ATMTL reads one page: 8 for video page 5, 10 for video page 7
+    EXPECT_EQ(Pages(M_ATMTL, 0x00, true), std::vector<uint16_t>{8});
+    EXPECT_EQ(Pages(M_ATMTL, 0x08, true), std::vector<uint16_t>{10});
+}
+
+TEST(Screen_ActiveSurface_Test, HardwareMulticolorLivesInTheVideoPage)
+{
+    // Bitmap and 8x1 attributes (+0x2000) share the video page (BaseConf addr_phm)
+    EXPECT_EQ(Pages(M_PMC, 0x00, true), std::vector<uint16_t>{5});
+    EXPECT_EQ(Pages(M_PMC, 0x08, true), std::vector<uint16_t>{7});
 }

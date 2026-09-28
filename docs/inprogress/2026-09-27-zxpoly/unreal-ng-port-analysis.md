@@ -3,8 +3,23 @@
 > Decision-support analysis, 2026-09-27. Companions:
 > [zxpoly-platform.md](zxpoly-platform.md) ·
 > [zxpoly-emulator-internals.md](zxpoly-emulator-internals.md) ·
-> [zxpoly-adaptation-pipeline.md](zxpoly-adaptation-pipeline.md).
+> [zxpoly-adaptation-pipeline.md](zxpoly-adaptation-pipeline.md) ·
+> [quad-instance-architecture.md](quad-instance-architecture.md).
 > unreal-ng references are repository-relative.
+>
+> **Update 2026-09-27 (later the same day):** the recommended route is now
+> **four stock Pentagon instances**: master load, replication of the full
+> state (devices included), host input gated to the master and replicated
+> into the slaves at the same T, and per-line screen composition. See
+> [quad-instance-architecture.md](quad-instance-architecture.md). That note
+> supersedes:
+>
+> - §3 (scheduler, Option A/B) and the Phase 0–2 breakdown in §4: replaced by
+>   quad-instance §4–§11;
+> - §8–§9: all answered in quad-instance §12.
+>
+> §5 (value) and §6 (risks) still apply. The text below is kept for the
+> record.
 
 ## 1. TL;DR
 
@@ -22,7 +37,7 @@ Estimates: **~1 week spike**, **~7–9 weeks** to a credible core release
 expansions (adaptation tooling on top of WebAPI/MCP; Spec256 mode).
 
 The value is asymmetric: a **content library nobody else can run natively**
-(7–8 adapted games exist today), a **differentiating "metadata-driven game
+(8 adapted games exist today), a **differentiating "metadata-driven game
 mods" capability** that unreal-ng's automation stack is uniquely positioned to
 deliver better than the original Java tooling, and **core dividends** (rigorous
 multi-CPU infrastructure that hardens the GS precedent).
@@ -82,13 +97,18 @@ capture, `Z80::t` bookkeeping. Two routes:
 | Shape | Legacy `Z80` for module 0; 3 satellites on `unreal-z80` (mirrors the GS wiring) | 4× `unreal-z80`, one promoted as master |
 | Pros | Debugger/TTD/automation keep working for the master unmodified; smallest blast radius; direct GS precedent | Uniform code path; per-CPU symmetrical; `Z80CpuAttachRegisterFile` + bulk save/restore ready for 4× snapshotting |
 | Cons | Two stepping paths to keep in T-lockstep; satellites get only GS-style surfaces | Everything (debugger, TTD, breakpoints) needs a CPU-selector abstraction — touches the widest surface |
-| Semantics risk | None — unreal-z80 is the extracted lineage of the same core, so flag/MEMPTR/timing behavior matches | None |
-| **Recommendation** | **Start here** | Migrate later if multi-CPU debugging becomes a feature |
+| Semantics risk | **High** — two *different* cores must stay T-state identical: the legacy core applies contention through `UlaContention`, unreal-z80 through a wait-state hook, and unreal-z80 has no WAIT pin. Shared lineage and z80test passes do not prove cycle-for-cycle equality under this machine's bus. Any mismatch is an instant desync | Low (one core), but it is not the core the machine models use |
+| **Recommendation** | Superseded by the quad-instance route (four copies of the **same** legacy core) | Fallback only |
 
-Scheduler design (either route): replace `Core::CPUFrameCycle`'s inner loop for
-`MM_ZXPOLY` with a T-state-ordered interleave — maintain four cumulative T
-counters, always step the CPU with the smallest, apply the zxpoly rotation
-(`tiStates & 3`) as tiebreaker to fairly spread bus-order effects. The shared
+Scheduler design: reproduce zxpoly's scheduler rather than inventing a
+T-state-ordered interleave. zxpoly steps every CPU exactly once per board
+step, in the rotation order chosen by `frameT & 3`. The frame clock advances
+**only by module 0's T-states**, and a parked slave burns 1 T per step
+without affecting that clock. A "smallest cumulative T first" interleave
+would behave differently from the reference whenever modules are parked or
+diverged (the loader phase), which breaks golden-frame parity. In the locked
+steady state the two schemes agree, and there no per-instruction interleave
+is needed at all (quad-instance §1). The shared
 frame INT asserts for all four CPUs simultaneously (respecting per-module `#7FFD`
 D7 and R0 INT masking); slaves parked via WAIT burn exactly 1 T per step (unreal-z80
 and zxpoly's core share this WAIT semantic — verify against `z80cpu.h` semantics
@@ -126,23 +146,27 @@ gantt
 
 **Phase 0 — Spike, ~1 week (decision gate).**
 Run the Java emulator, capture golden screens/traces for the Test ROM and 2–3
-adapted games. Stand up 4× `unreal-z80` in a test harness with the 512K heap and
-window mapping; get the Test ROM to its "ZX-POLY allowed" detection. Exit
-criteria: Test ROM memory tests pass on the harness; timing data for the
-scheduler; confirmed WAIT/INT semantics match.
+adapted games. Build the prototype = quad-instance tests T4–T6 (replication,
+lockstep with input gated and replicated from the master, plane divergence →
+colour). Exit criteria: registers, `t` and device state equal at every
+barrier over
+hundreds of frames; the composed mode-4 frame shows colour; throughput
+measured. The Test ROM is out of v1 scope (quad-instance §13).
 
 **Phase 1 — Core platform, ~4–5 weeks.**
 - Model plumbing (3 d): `MEM_MODEL` entry, `Config::mem_model` row,
   `data/configs/zxpoly/unreal.ini`, both factory switches
   (`GetPortDecoderForModel`, `IsModelSupported`).
-- Scheduler (9 d): Option-A interleaving, shared INT with per-module gating,
+- Scheduler (9 d): zxpoly-order stepping (quad-instance: coupled/decoupled regimes), shared INT with per-module gating,
   slave WAIT parking, local-reset broadcast + R1–R3 command injection, halt
   notification.
 - Memory (4 d): per-CPU windows over the arena, per-module `#7FFD` with lock,
   RAM0 overlay rules, TR-DOS ROM auto-switch on `#3Dxx` M1.
 - Ports (5 d): `PortDecoder_ZXPoly` — `#3D00` (all bits incl. lock), module
-  regs with writer-priority rule, IO-mapped window R/W with INT/NMI pulses,
-  `#FF` attribute read, floating bus.
+  regs with writer-priority rule, IO-mapped window R/W with INT/NMI pulses.
+  `#3D00` has A0 = 0, so it must be decoded **before** the base `#FE` decode.
+  The floating bus stays off (option-gated and buggy in the reference;
+  absent on Pentagon).
 - Video (5 d): `ScreenZXPoly` modes 0–7, mode 5 quadrant tiling with per-CPU
   attributes, mode 6/7 masks, palette; border from CPU0's `#FE`.
 - Integration (3 d): turbo, per-CPU contention, frame-boundary hooks.
@@ -168,13 +192,16 @@ Sprite Corrector offers (plus TTD for desync archaeology).
 **Phase 4 — Spec256 mode, ~2–3 weeks (defer).**
 8 gfx cores + `zxpAlignRegs` + leveled logicals + archive loader + 256-color
 palette. Doubles the interesting surface; only after ZXPoly proper is solid.
+Superseded in detail by [2026-09-27-spec256](../2026-09-27-spec256/) (PLAN #54),
+whose render-only Track A does not depend on this program at all; only its
+lockstep-core stage E2 would ride the ZX-Poly scheduler.
 
 **Totals**: core release ≈ **7–9 focused weeks**; with Phase 3 ≈ 9–11; with
 Spec256 too ≈ 12–14. Roughly 3.5–5 K new LOC plus ~0.5–1 K modified.
 
 ## 5. Value assessment
 
-1. **Exclusive content, day one.** Seven–eight adapted games
+1. **Exclusive content, day one.** Eight adapted games
    (Atw2, FlyShark, ZxWord, OFC, Summer Santa, Comando Quatro, Alien 8,
    Buratino) plus the Test ROM exist as `.zxp`/`.trd` today. No other modern
    C++ emulator runs them. That is immediate, demonstrable differentiation for
@@ -206,12 +233,13 @@ Spec256 too ≈ 12–14. Roughly 3.5–5 K new LOC plus ~0.5–1 K modified.
 
 | Risk | Severity | Mitigation |
 |:--|:--|:--|
-| Single-CPU assumptions in debugger/TTD/EmulatorState | High | Option A (master stays legacy `Z80`); satellites serialize GS-style; CPU-selector abstraction only where Phase 3 needs it |
+| Single-CPU assumptions in debugger/TTD/EmulatorState | High → Low with quad-instance | Each module is a full stock instance, so every single-CPU tool works per module unchanged. The only new surface is a group view and a group TTD checkpoint |
+| Two different Z80 cores in T-lockstep (Option A only) | High | Avoided by the quad-instance route (four copies of the same core) |
 | No hardware reference — Java emulator is the spec | Medium | Golden-frame + trace corpus from Phase 0; treat documented quirks (§10 of emulator-internals) as requirements, not bugs |
 | Contention/timing subtleties per CPU (even-M1, access-T placement) | Medium | Reuse `UlaContention` per-CPU at the access T; the zxpoly notes document the failure modes already solved there |
 | Lockstep desyncs *in content* look like emulator bugs | Medium | Port the three divergence triggers early (Phase 2) — they distinguish emulator faults from asset faults |
 | Scope creep via Spec256 | Medium | Explicitly deferred (Phase 4) |
-| Licensing | Low | zxpoly code is GPL-3; we reimplement from documented behavior (clean-room), fixtures like the Test ROM/adapted games are data. Verify against the project's fixture-licensing practice before committing any zxpoly assets |
+| Licensing | None | zxpoly is GPL-3 and unreal-ng is GPL-3 (`LICENSE`): code, the Test ROM and adapted-game fixtures can be used directly with attribution in `THIRD_PARTY_NOTICES.md`. No clean-room constraint |
 | Interest/demand | Low–Med | Content library + novelty is self-demonstrating; spike first, decide after |
 
 ## 7. Recommendation
@@ -225,25 +253,36 @@ demand for the Spec256 catalog.
 
 ## 8. Open questions for the spike
 
-1. Does unreal-z80's WAIT semantics preserve prefix state at exactly 1 T/step
-   (the property STOP-ADDRESS parking depends on)?
-2. Option A interleave: can satellites share `UlaContention` cleanly, or do
-   they need a per-CPU instance?
-3. Where do the four VRAM pointers live for `ScreenZXPoly` — `Memory` page
-   addresses re-derived per frame (per-module `#7FFD` bit 3 can flip
-   shadow screens per CPU)?
+Questions 1–3 were Option A/B questions; they are answered or dropped under
+the quad-instance route:
+
+1. *WAIT at 1 T/step* — moot. A parked instance is simply not stepped while
+   its `t` follows the master, which is what zxpoly's shared clock does.
+   unreal-z80 has no WAIT pin anyway. Stop address is not used by the corpus
+   or the Test ROM.
+2. *Sharing `UlaContention`* — moot. Each instance has its own, and the
+   clocks are identical (quad-instance §6). The default Pentagon profile has
+   no contention.
+3. *VRAM pointers* — each instance captures its own line bytes from its own
+   `#7FFD` D3 page when its raster reaches the line (quad-instance §5).
 4. ZXP fixtures: commit golden frames from the Java emulator into
-   `core/tests/_data/` — licensing check needed (GPL-3 data in test fixtures).
+   `testdata/machines/zxpoly/` (GPL-3 into a GPL-3 project — attribution only).
 5. Does the `#3D00` IO-mapped window need to be visible to TTD port tracing
-   as ordinary port traffic (zxpoly traces it as ports)?
+   as ordinary port traffic (zxpoly traces it as ports)? In the quad design it
+   is an ordinary master port access, so tracing it costs nothing.
+6. Everything else: quad-instance §12 (decisions table).
 
 ## 9. Gaps to cover before this is implementation-ready
 
 Not yet analyzed here — should be covered before/alongside the spike, not elaborated now:
 
-- Whether the current WebAPI/MCP surface can address per-module memory/registers
-  within one emulator instance, since Phase 3's premise depends on it.
-- TTD serialization impact of 4 CPUs (format/version implications), since the
-  value section claims TTD as a beneficiary without costing that change.
-- Where Test ROM / divergence-trigger tests land in `core/tests/` and how a
-  4-CPU boot-to-detection harness meets the project's per-test timing rules.
+- ~~Whether the WebAPI/MCP surface can address per-module memory and
+  registers~~ — resolved by the quad-instance route: each module is an
+  instance with its own ID. What is still needed is a *group* view (which
+  instances form one ZX-Poly machine).
+- ~~TTD serialization impact of 4 CPUs~~ — quad-instance §8: four aligned
+  ordinary sessions, a `PortLogStore` and group seek/branch. There is no new
+  CPU serializer, and only a future single group file touches PLAN #40.
+- ~~Where the tests land and how they meet the timing rules~~ — quad-instance
+  §10 (T1–T12, pure units under 50 ms, boot-bound tests justified and in
+  turbo mode).

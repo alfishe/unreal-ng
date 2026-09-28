@@ -37,17 +37,21 @@ private:
     int _beamY = 0;   // Raster line (0..totalLines-1)
     uint64_t _frameCounter = 0;  // Current frame number
 
-    // Raster geometry (set from RasterDescriptor)
-    int _totalPixelsPerLine = 448;    // Full line width in pixels
+    // Raster geometry in beam dots (2 per T-state) and lines, renderer line origin
+    int _totalPixelsPerLine = 448;    // Full line width
     int _totalLines = 320;            // Total raster lines (VSync + VBlank + visible)
-    int _visibleWidth = 352;          // fullFrameWidth (visible portion)
-    int _visibleHeight = 288;         // fullFrameHeight (visible portion)
-    int _visibleOffsetX = 0;          // HSync+HBlank pixels (visible starts after these)
+    int _visibleWidth = 352;          // left border + display window + right border
+    int _visibleHeight = 288;         // visible lines
+    int _visibleOffsetX = 0;          // visible dots start at the line origin
     int _visibleOffsetY = 0;          // VSync+VBlank lines (visible starts after these)
-    int _paperOffsetX = 48;           // screenOffsetLeft within visible area
-    int _paperOffsetY = 48;           // screenOffsetTop within visible area
-    int _paperWidth = 256;            // screenWidth
-    int _paperHeight = 192;           // screenHeight
+    int _paperOffsetX = 48;           // display window start within the visible area
+    int _paperOffsetY = 48;           // display window top within the visible area
+    int _paperWidth = 256;            // display window width in beam dots
+    int _paperHeight = 192;           // display window height in lines
+
+    // Where the display window sits in the renderer's framebuffer (its own pixels)
+    int _fbPaperOffsetX = 48;
+    int _fbPaperWidth = 256;
 
     uint32_t _currentTstate = 0;
     int _currentLine = 0;

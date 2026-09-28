@@ -209,9 +209,8 @@ struct RasterState
     /// endregion </Vertical timings>
 
     /// region <Horizontal timings>
-
-    uint8_t blankLineAreaStart;
-    uint8_t blankLineAreaEnd;
+    // T-states within a line, renderer origin: T 0 is the first left-border T,
+    // horizontal blank/sync is at the END of the line (ZX: T 176..223)
 
     uint8_t leftBorderAreaStart;
     uint8_t leftBorderAreaEnd;
@@ -221,6 +220,11 @@ struct RasterState
 
     uint8_t rightBorderAreaStart;
     uint8_t rightBorderAreaEnd;
+
+    uint8_t blankLineAreaStart;
+    uint8_t blankLineAreaEnd;
+
+    uint8_t paperDotsPerT = 2;  // pixels drawn per T inside the paper window (4 for 640/512-wide modes)
 
     /// endregion </Horizontal timings>
 
@@ -242,6 +246,33 @@ struct RasterState
     uint8_t fetchType = 0;  // UlaFetchType enum value
 
     /// endregion </Model-specific ULA behavior>
+};
+
+/// Horizontal beam geometry of a video mode, in T-states from the start of
+/// the left border (the renderer's line origin)
+struct LineGeometry
+{
+    uint16_t paperStartT;    // first T of the mode's display window
+    uint16_t paperTCount;    // T-states the display window spans
+    uint16_t visibleTCount;  // left border + window + right border; blanking follows
+    uint8_t paperDotsPerT;   // pixels per T inside the window
+};
+
+/// Beam position described in the active mode's geometry (Screen::DescribeBeam).
+/// Line origin as the renderer: T 0 = first left-border T.
+struct BeamPosition
+{
+    bool valid = false;
+    uint32_t tInFrame = 0;
+    uint32_t line = 0;
+    uint32_t tInLine = 0;
+    uint32_t beamX = 0;                           // dots (2 per T) from the line origin
+    const char* verticalZone = "beyond_raster";   // vsync, vblank, top_border, screen, bottom_border
+    const char* horizontalZone = "-";             // left_border, paper, right_border, hblank (screen rows only)
+    const char* zone = "beyond_raster";           // paper / border / hblank, or the vertical zone
+    bool inVisibleArea = false;
+    bool inPaper = false;
+    uint32_t paperX = 0, paperXEnd = 0, paperY = 0;  // mode pixels under the beam (valid when inPaper)
 };
 
 struct FramebufferDescriptor
@@ -602,6 +633,10 @@ public:
     virtual void DrawPeriod(uint32_t fromTstate, uint32_t toTstate);
     virtual void Draw(uint32_t tstate);
 
+    /// Render the inclusive frame T-state range [from, to]. DrawPeriod calls it
+    /// once per catch-up; renderers override it to loop without per-T dispatch.
+    virtual void DrawRange(uint32_t fromTstate, uint32_t toTstate);
+
     /// @brief Reset the previous t-state tracker used by DrawPeriod
     /// Must be called after AdjustFrameCounters() wraps z80.t to prevent
     /// DrawPeriod from seeing fromTstate > toTstate across the frame boundary
@@ -616,13 +651,10 @@ public:
     /// frame-end batch/latch paths are never affected.
     void SetTurboRenderSkip(bool skip) { _turboRenderSkip = skip; }
 
-    /// @brief Get the t-state at which the first paper pixel starts in a frame
-    /// Uses the same coordinate mapping as TransformTstateToZXCoords:
-    /// pixelX = (tstate % tstatesPerLine) * pixelsPerTState >= screenOffsetLeft
+    /// @brief Frame T-state of the first pixel of the active mode's display window
     uint32_t GetPaperStartTstate() const
     {
-        const RasterDescriptor& rd = rasterDescriptors[_mode];
-        return _rasterState.screenAreaStart + rd.screenOffsetLeft / _rasterState.pixelsPerTState;
+        return _rasterState.screenAreaStart + _rasterState.screenLineAreaStart;
     }
 
     virtual void RenderOnlyMainScreen();
@@ -786,6 +818,17 @@ public:
     /// @param p7FFD Port 7FFD latch value (bit 3 selects the video page on ATM)
     /// @param bankedZX Model exposes a shadow screen (128K-class paging)
     static std::vector<uint16_t> GetActiveSurfaceRAMPages(VideoModeEnum mode, uint8_t p7FFD, bool bankedZX);
+
+    /// Horizontal beam geometry (display window, pixel clock) of a mode.
+    /// timing is the descriptor the mode's timing comes from (SetVideoMode).
+    static LineGeometry GetLineGeometry(VideoModeEnum mode, const RasterDescriptor& timing);
+
+    /// Descriptor the mode's timing comes from (P384 uses Pentagon timing,
+    /// ATM3 AlCo modes keep the ATM 312-line raster)
+    const RasterDescriptor& GetTimingDescriptor(VideoModeEnum mode) const;
+
+    /// Beam position, zones and the mode pixel under the beam for a frame T
+    BeamPosition DescribeBeam(uint32_t tInFrame) const;
 
 
     void DrawNull(uint32_t n);      // Non-existing mode (skip draw)

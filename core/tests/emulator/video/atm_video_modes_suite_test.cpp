@@ -969,7 +969,7 @@ TEST_F(ATMVideoModesSuite_Test, Render_ATM3Alco_FourPlanes_PagePair)
     // LUT geometry: the ZX window starts at beam line 72, tInLine 24; one
     // t-state renders one pixel pair (zxX, zxX+1) at framebuffer (48 + zxX)
     for (uint32_t pair = 0; pair < 4; ++pair)
-        _screen->DrawAlcoMode(72 * 224 + 24 + pair);
+        _screen->Draw(72 * 224 + 24 + pair);
 
     EXPECT_EQ(At(48, 48 + 0), state.atmPalette[7]);
     EXPECT_EQ(At(48, 48 + 1), state.atmPalette[1]);
@@ -981,12 +981,12 @@ TEST_F(ATMVideoModesSuite_Test, Render_ATM3Alco_FourPlanes_PagePair)
     EXPECT_EQ(At(48, 48 + 7), state.atmPalette[3]);
 }
 
-TEST_F(ATMVideoModesSuite_Test, Render_ATM3Hwmc_AttrFromPixelAddress_FlashBit)
+TEST_F(ATMVideoModesSuite_Test, Render_ATM3Hwmc_AttrAtPixelAddressPlus2000_FlashBit)
 {
-    // vidDrawHwmc (xpeccy video.c): the bitmap byte AND the attribute byte
-    // are both fetched from the PIXEL address of the video page (same byte).
-    // Attr decode: ink = bits 0-2 + bit 6, paper = bits 3-6 (bit 6 brights
-    // both), bit 7 = flash - inverts the bitmap on the 16-frame phase
+    // Hardware multicolor: bitmap at the ZX pixel address of the video page,
+    // 8x1 attribute at that address + 0x2000 (BaseConf video_addrgen.v
+    // addr_phm, UnrealSpeccy draw_pmc). Attr decode: ink = bits 0-2 + bit 6,
+    // paper = bits 3-6, bit 7 = flash - inverts the bitmap on the flash phase
     ReinitAs(MM_ATM3);
     auto* pd = _context->pPortDecoder;
 
@@ -1001,21 +1001,29 @@ TEST_F(ATMVideoModesSuite_Test, Render_ATM3Hwmc_AttrFromPixelAddress_FlashBit)
     EmulatorState& state = _context->emulatorState;
     uint8_t* p5 = _memory->RAMPageAddress(5);
 
-    p5[0] = 0x47;  // ink = 7 | 8 = 15, paper = 8; bitmap bits 7,6 = 0, 1
-    _screen->DrawAlcoMode(72 * 224 + 24 + 0);
+    p5[0] = 0x40;       // bitmap: pixel 0 paper, pixel 1 ink
+    p5[0x2000] = 0x47;  // ink = 7 | 8 = 15, paper = 8
+    _screen->Draw(72 * 224 + 24 + 0);
     EXPECT_EQ(At(48, 48), state.atmPalette[8]) << "bit 7 clear -> paper";
     EXPECT_EQ(At(48, 49), state.atmPalette[15]) << "bit 6 set -> ink";
 
+    // Each pixel line has its own attribute: line 1 is pixel offset 0x100
+    p5[0x100] = 0x80;
+    p5[0x2100] = 0x0A;  // ink 2, paper 1
+    _screen->Draw(73 * 224 + 24 + 0);
+    EXPECT_EQ(At(49, 48), state.atmPalette[2]);
+    EXPECT_EQ(At(49, 49), state.atmPalette[1]);
+
     // Bit 7 = flash: on the flash phase the bitmap inverts, attrs untouched
-    p5[0] = 0xC7;  // ink = 15, paper = 8; bitmap 0xC7 -> ~ = 0x38
+    p5[0x2000] = 0xC7;
     _screen->_vid.flash = 1;
-    _screen->DrawAlcoMode(72 * 224 + 24 + 0);
-    EXPECT_EQ(At(48, 48), state.atmPalette[8]);
+    _screen->Draw(72 * 224 + 24 + 0);
+    EXPECT_EQ(At(48, 48), state.atmPalette[15]);
     EXPECT_EQ(At(48, 49), state.atmPalette[8]);
 
     _screen->_vid.flash = 0;
-    _screen->DrawAlcoMode(72 * 224 + 24 + 0);
-    EXPECT_EQ(At(48, 48), state.atmPalette[15]) << "flash off restores the raw bitmap";
+    _screen->Draw(72 * 224 + 24 + 0);
+    EXPECT_EQ(At(48, 48), state.atmPalette[8]) << "flash off restores the raw bitmap";
     EXPECT_EQ(At(48, 49), state.atmPalette[15]);
 }
 

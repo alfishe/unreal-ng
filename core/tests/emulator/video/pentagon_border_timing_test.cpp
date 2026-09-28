@@ -278,7 +278,7 @@ TEST_F(PentagonBorderTiming_Test, Pentagon_FrameTimingConstants)
     // From docs/timing/pentagon-border-timing.md:
     // Pentagon frame = 71680 T-states (224 T/line * 320 lines)
     // Paper starts at line 80, pixel 48 = T 17944
-    // INT should fire at ~71635-71636 for 17989T INT-to-paper distance
+    // INT fires at 71636 (intstart 71635): 17988T INT-to-paper, verified on Across the Edge
 
     SetupPentagonMode(M_PENTAGON128K);
 

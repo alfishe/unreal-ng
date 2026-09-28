@@ -126,3 +126,10 @@ void ScreenProfi::Draw(uint32_t tstate, const RasterDescriptor& rd, FramebufferD
     for (uint32_t k = 0; k < 4; ++k)
         framebufferARGB[rowOffset + x + k] = ((pixels >> (7 - shift - k)) & 1) ? ink : paper;
 }
+
+void ScreenProfi::DrawRange(uint32_t from, uint32_t to, const RasterDescriptor& rd, FramebufferDescriptor& framebuffer,
+                            uint8_t borderColor)
+{
+    for (uint32_t t = from; t <= to; ++t)
+        Draw(t, rd, framebuffer, borderColor);
+}

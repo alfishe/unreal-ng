@@ -383,10 +383,12 @@ TEST_P(DiskAutostart_Models_Test, ExistingBootRuns)
     uint8_t* data = image->getTrack(catalog.FindBoot()->firstTrack)->getDataForSector(catalog.FindBoot()->firstSector);
     std::vector<uint8_t> head(data, data + 8);
 
+    // The boot's first bytes sit at PROG for only a few frames before it moves
+    // on, so check every frame - a coarser step can straddle the window
     bool loaded = false;
-    for (int frames = 0; frames < 1500 && !loaded; frames += 5)
+    for (int frames = 0; frames < 1500 && !loaded; frames++)
     {
-        emulator->RunNFrames(5, true);
+        emulator->RunNFrames(1, true);
         const uint16_t prog = EmulatorTestHelper::ReadSysVar16(emulator, 0x5C53);
         if (prog >= 0x5CC0)
         {

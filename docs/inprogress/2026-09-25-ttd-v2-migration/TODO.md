@@ -1,6 +1,6 @@
 # TODO — TTD v1 → v2 migration
 
-Status: **planning done, nothing implemented.** Plan and rationale in
+Status: **partly implemented** (2026-09-27 re-audit: PeripheralId table unique, Scorpion `#1FFD` `2013b47b`, CRC compare `2d132fc2`, exact restore `8db7841f`; profi/generalsound/moonsound merged — merge steps moot). Remaining = PLAN #40-V0 + #40. Plan and rationale in
 [README.md](README.md) and [migration-trajectory.md](migration-trajectory.md).
 
 Awaiting user decisions (migration-trajectory §6): option B vs A, MoonSound

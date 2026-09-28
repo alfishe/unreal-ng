@@ -27,7 +27,7 @@ The 2-pixel border-ahead-of-paper offset requires 1T precision, which INT timing
 
 ### Two-Part Fix
 
-1. **INT Timing** (`intstart=71635`): Provides the correct 17989T INT-to-paper distance
+1. **INT Timing** (`intstart=71635`): 17988T INT-to-paper distance, verified on *Across the Edge*
 2. **Border Delay** (`ScreenZX::SetBorderColor`): Adds 1T delay for Pentagon-class ULAs
 
 ### INT-to-Paper Distance Calculation
@@ -41,9 +41,12 @@ INT check uses:     cpu.t > int_start (strict greater-than)
 INT fires at:       int_start + 1
 
 Calculation:
-  (71680 - (int_start + 1)) + 17944 = 17989
-  71680 - int_start - 1 + 17944 = 17989
+  (71680 - (int_start + 1)) + 17944 = 17988
   int_start = 71635
+
+Note: the formula for exactly 17989 gives 71634. That was tried on 2026-09-27
+and breaks Across the Edge; 71635 (17988T) is the demo-verified value. The
+reference emulators span 17985 (ZXMAK2) .. 17987 (MiSTer) .. 17989 (UnrealSpeccy).
 ```
 
 ### Border Color Delay
@@ -89,7 +92,7 @@ All Pentagon variants use `M_PENTAGON128K` video mode:
 
 ```ini
 [ULA]
-intstart=71635  ; INT fires at 71636 (>71635), 17989T to paper
+intstart=71635  ; INT fires at 71636 (>71635), 17988T to paper (demo-verified)
 intlen=32       ; INT pulse duration
 ```
 

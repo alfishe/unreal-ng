@@ -14,6 +14,7 @@
 #include "common/stringhelper.h"
 #include "common/video/videoutils.h"
 #include "emulator/video/screendigest.h"
+#include "emulator/video/atm/screenatm.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -474,8 +475,6 @@ void Screen::SetVideoMode(VideoModeEnum mode)
     /// region <Calculate raster values>
 
     /// Note!: all timings are in t-states, although raster descriptor has pixels as UOM. So recalculation is required
-    const RasterDescriptor& rasterDescriptor = rasterDescriptors[_mode];
-
     // For M_P384 overscan mode, use Pentagon timing for all calculations
     // Only the framebuffer size differs - timing must be identical to Pentagon
     // ATM3 AlCo modes (EFF7 z0/z5 -> M_P16/M_PMC): the Pentagon-class
@@ -485,11 +484,7 @@ void Screen::SetVideoMode(VideoModeEnum mode)
     // is the matching 312-line descriptor with identical geometry (352x288
     // frame, 256x192 window at 48,48, 448 px/line) - without the swap the
     // 71680 T maxFrameTiming would trip the config.frame sanity check.
-    const bool atm3AlcoTiming = (mode == M_P16 || mode == M_PMC) &&
-                                _context != nullptr && _context->config.mem_model == MM_ATM3;
-    const RasterDescriptor& timingDescriptor =
-        (_mode == M_P384) ? rasterDescriptors[M_PENTAGON128K] :
-        atm3AlcoTiming ? rasterDescriptors[M_ZX48] : rasterDescriptor;
+    const RasterDescriptor& timingDescriptor = GetTimingDescriptor(_mode);
 
     /// region <Config values>
     _rasterState.configFrameDuration = _context->config.frame;
@@ -534,24 +529,22 @@ void Screen::SetVideoMode(VideoModeEnum mode)
 
     /// region <Horizontal timings>
 
-    _rasterState.blankLineAreaStart = 0;
-    _rasterState.blankLineAreaEnd =
-        ((timingDescriptor.hSyncPixels + timingDescriptor.hBlankPixels) / _rasterState.pixelsPerTState) - 1;
+    // Same line origin as the renderer (CreateTstateLUT, ScreenAtm, ScreenProfi):
+    // T 0 is the first left-border T, horizontal blank/sync closes the line
+    const LineGeometry line = GetLineGeometry(_mode, timingDescriptor);
+    _rasterState.paperDotsPerT = line.paperDotsPerT;
 
-    _rasterState.leftBorderAreaStart = _rasterState.blankLineAreaEnd + 1;
-    _rasterState.leftBorderAreaEnd =
-        _rasterState.leftBorderAreaStart + (timingDescriptor.screenOffsetLeft / _rasterState.pixelsPerTState) - 1;
+    _rasterState.leftBorderAreaStart = 0;
+    _rasterState.leftBorderAreaEnd = static_cast<uint8_t>(line.paperStartT - 1);
 
-    _rasterState.screenLineAreaStart = _rasterState.leftBorderAreaEnd + 1;
-    _rasterState.screenLineAreaEnd =
-        _rasterState.screenLineAreaStart + (timingDescriptor.screenWidth / _rasterState.pixelsPerTState) - 1;
+    _rasterState.screenLineAreaStart = static_cast<uint8_t>(line.paperStartT);
+    _rasterState.screenLineAreaEnd = static_cast<uint8_t>(line.paperStartT + line.paperTCount - 1);
 
-    _rasterState.rightBorderAreaStart = _rasterState.screenLineAreaEnd + 1;
-    _rasterState.rightBorderAreaEnd =
-        _rasterState.rightBorderAreaStart +
-        ((timingDescriptor.fullFrameWidth - timingDescriptor.screenOffsetLeft - timingDescriptor.screenWidth) /
-         _rasterState.pixelsPerTState) -
-        1;
+    _rasterState.rightBorderAreaStart = static_cast<uint8_t>(_rasterState.screenLineAreaEnd + 1);
+    _rasterState.rightBorderAreaEnd = static_cast<uint8_t>(line.visibleTCount - 1);
+
+    _rasterState.blankLineAreaStart = static_cast<uint8_t>(line.visibleTCount);
+    _rasterState.blankLineAreaEnd = static_cast<uint8_t>(_rasterState.tstatesPerLine - 1);
 
     /// endregion </Horizontal timings>
 
@@ -579,10 +572,17 @@ void Screen::SetVideoMode(VideoModeEnum mode)
         case M_ZX48:
         case M_ZX128:
         default:
-            _rasterState.borderUpdateTStates = 4;
-            _rasterState.contentionEnabled = true;
-            _rasterState.fetchType = ULA_FERRANTI;
+        {
+            // Only the Sinclair machines have the Ferranti ULA. Clones showing a
+            // ZX-compatible or extended mode (ATM ZX mode is M_ZX48) keep their
+            // discrete, contention-free video logic.
+            const MEM_MODEL model = _context ? _context->config.mem_model : MM_SPECTRUM48;
+            const bool ferranti = model == MM_SPECTRUM48 || model == MM_SPECTRUM128 || model == MM_PLUS3;
+            _rasterState.borderUpdateTStates = ferranti ? 4 : 1;
+            _rasterState.contentionEnabled = ferranti;
+            _rasterState.fetchType = ferranti ? ULA_FERRANTI : ULA_DISCRETE_LOGIC;
             break;
+        }
     }
     /// endregion </Model-specific ULA behavior>
 
@@ -1068,6 +1068,93 @@ uint16_t Screen::GetDisplayHeight() const
 
 /// endregion </Display viewport>
 
+const RasterDescriptor& Screen::GetTimingDescriptor(VideoModeEnum mode) const
+{
+    const bool atm3AlcoTiming = (mode == M_P16 || mode == M_PMC) &&
+                                _context != nullptr && _context->config.mem_model == MM_ATM3;
+    if (mode == M_P384)
+        return rasterDescriptors[M_PENTAGON128K];
+    return atm3AlcoTiming ? rasterDescriptors[M_ZX48] : rasterDescriptors[mode];
+}
+
+BeamPosition Screen::DescribeBeam(uint32_t tInFrame) const
+{
+    BeamPosition b;
+    const RasterState& rs = _rasterState;
+    if (rs.tstatesPerLine == 0)
+        return b;
+
+    const RasterDescriptor& rd = GetTimingDescriptor(_mode);
+    b.valid = true;
+    b.tInFrame = tInFrame;
+    b.line = tInFrame / rs.tstatesPerLine;
+    b.tInLine = tInFrame % rs.tstatesPerLine;
+    b.beamX = b.tInLine * rs.pixelsPerTState;
+
+    if (tInFrame <= rs.blankAreaEnd)
+        b.verticalZone = (b.line < rd.vSyncLines) ? "vsync" : "vblank";
+    else if (tInFrame <= rs.topBorderAreaEnd)
+        b.verticalZone = "top_border";
+    else if (tInFrame <= rs.screenAreaEnd)
+        b.verticalZone = "screen";
+    else if (tInFrame <= rs.bottomBorderAreaEnd)
+        b.verticalZone = "bottom_border";
+
+    const bool screenRows = std::strcmp(b.verticalZone, "screen") == 0;
+    if (screenRows)
+    {
+        if (b.tInLine <= rs.leftBorderAreaEnd)
+            b.horizontalZone = "left_border";
+        else if (b.tInLine <= rs.screenLineAreaEnd)
+            b.horizontalZone = "paper";
+        else if (b.tInLine <= rs.rightBorderAreaEnd)
+            b.horizontalZone = "right_border";
+        else
+            b.horizontalZone = "hblank";
+    }
+
+    b.inPaper = screenRows && std::strcmp(b.horizontalZone, "paper") == 0;
+    b.zone = !screenRows ? b.verticalZone : (b.inPaper ? "paper" : (std::strcmp(b.horizontalZone, "hblank") == 0 ? "hblank" : "border"));
+    b.inVisibleArea = screenRows && std::strcmp(b.horizontalZone, "hblank") != 0;
+
+    if (b.inPaper)
+    {
+        b.paperX = (b.tInLine - rs.screenLineAreaStart) * rs.paperDotsPerT;
+        b.paperXEnd = b.paperX + rs.paperDotsPerT - 1;
+        b.paperY = (tInFrame - rs.screenAreaStart) / rs.tstatesPerLine;
+    }
+    return b;
+}
+
+LineGeometry Screen::GetLineGeometry(VideoModeEnum mode, const RasterDescriptor& timing)
+{
+    switch (mode)
+    {
+        // ATM window: 16T of beam border each side of the ZX paper, no side
+        // border in the framebuffer (ScreenAtm constants are the source)
+        case M_ATM16:
+        case M_ATMHR:
+        case M_ATMTX:
+        case M_ATMTL:
+            return {static_cast<uint16_t>(ScreenAtm::SCREEN_START_T),
+                    static_cast<uint16_t>(ScreenAtm::SCREEN_END_T - ScreenAtm::SCREEN_START_T),
+                    static_cast<uint16_t>(ScreenAtm::SCREEN_END_T + ScreenAtm::SCREEN_START_T),
+                    static_cast<uint8_t>(mode == M_ATM16 ? 2 : 4)};
+
+        // Profi 512x240: the ZX paper window at 4 px/T, borders at 2 px/T
+        case M_PROFIHR:
+        {
+            const uint16_t start = timing.screenOffsetLeft / 2;
+            const uint16_t count = timing.screenWidth / 4;
+            return {start, count, static_cast<uint16_t>(2 * start + count), 4};
+        }
+
+        default:
+            return {static_cast<uint16_t>(timing.screenOffsetLeft / 2), static_cast<uint16_t>(timing.screenWidth / 2),
+                    static_cast<uint16_t>(timing.fullFrameWidth / 2), 2};
+    }
+}
+
 std::vector<uint16_t> Screen::GetActiveSurfaceRAMPages(VideoModeEnum mode, uint8_t p7FFD, bool bankedZX)
 {
     switch (mode)
@@ -1078,23 +1165,28 @@ std::vector<uint16_t> Screen::GetActiveSurfaceRAMPages(VideoModeEnum mode, uint8
         case M_ATM16:
         case M_ATMHR:
         case M_ATMTX:
-        case M_ATMTL:
         {
             const uint16_t videoPage = (p7FFD & 0x08) ? 7 : 5;
             const uint16_t altPage = static_cast<uint16_t>(videoPage - 4);
             return {altPage, videoPage};
         }
 
-        // Pentagon 16-color (AlCo) and hardware multicolor: bit-planes at
-        // {videoPage ^ 1, videoPage}. Screen 0 = pages {4, 5}, Screen 1 = {6, 7}.
-        // XOR with 1 gives the adjacent page (5^1=4, 7^1=6), unlike ATM's -4.
+        // ZX-Evo text linear: one dedicated page (ScreenAtm M_ATMTL branch)
+        case M_ATMTL:
+            return {static_cast<uint16_t>((p7FFD & 0x08) ? 10 : 8)};
+
+        // Pentagon 16-color (AlCo): bit-planes at {videoPage ^ 1, videoPage}.
+        // Screen 0 = pages {4, 5}, Screen 1 = {6, 7} (5^1=4, 7^1=6, unlike ATM's -4).
         case M_P16:
-        case M_PMC:
         {
             const uint16_t videoPage = (p7FFD & 0x08) ? 7 : 5;
             const uint16_t altPage = videoPage ^ 1;
             return {altPage, videoPage};
         }
+
+        // Hardware multicolor: bitmap and 8x1 attributes (+0x2000) in the video page
+        case M_PMC:
+            return {static_cast<uint16_t>((p7FFD & 0x08) ? 7 : 5)};
 
         // Profi hi-res: bitmap page 4 (6 with 7FFD.3), attribute page 0x38 (0x3A)
         case M_PROFIHR:
@@ -1305,6 +1397,11 @@ void Screen::DrawPeriod(uint32_t fromTstate, uint32_t toTstate)
 
     /// endregion </Sanity checks>
 
+    DrawRange(fromTstate, toTstate);
+}
+
+void Screen::DrawRange(uint32_t fromTstate, uint32_t toTstate)
+{
     for (uint32_t i = fromTstate; i <= toTstate; i++)
     {
         Draw(i);

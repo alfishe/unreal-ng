@@ -197,6 +197,12 @@ struct TapeBlock
 
     size_t totalBitstreamLength = 0;        // How long in t-states current block will be played
     std::vector<uint32_t> edgePulseTimings; // Block data encoded to pulse edge series
+
+    // Shape of edgePulseTimings, filled by the engine's bitstream generator
+    // (loader-follow design §5.4). 0 / false for loader-supplied pulse
+    // trains, whose structure the engine does not know.
+    size_t pilotEdgeCount = 0;              // leading entries that are pilot tone
+    bool trailingPause = false;             // the last entry is the pause after the data
 };
 
 /// endregion </Types>

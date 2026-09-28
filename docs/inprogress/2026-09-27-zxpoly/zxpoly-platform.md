@@ -84,11 +84,11 @@ Master-only; fully lockable (bit 7) so adapted games end their loader by
 
 | Bits | Name | Meaning |
 |:--|:--|:--|
-| D0 | `nWAIT` | 0 → slave CPUs 1–3 held in WAIT (parked, 1 T per step) |
+| D0 | `nWAIT` | active low: 0 → slave CPUs 1–3 held in WAIT (parked, 1 T per step); 1 → slaves run. Reset value of the whole port is 0, so slaves start parked |
 | D1 | local reset | 1 → `/RESET` to all CPU modules only (no other device resets) |
 | D2–D4 | video mode | 0–7, latched by the video controller |
 | D5–D6 | mapped CPU | index of the module whose memory CPU0 sees through its bus window |
-| D7 | lock | freezes all ZX-Poly ports for writing until system RESET; also gates INT-blocking and halt-detection features |
+| D7 | lock | freezes all ZX-Poly ports for writing until system RESET. Also switches INT routing: slaves receive the common frame INT **only while locked**, and halt notification works **only while unlocked** |
 
 Reading `#3D00` returns the *executing* module's identity and state:
 `moduleIndex | ((REG0 & 7) << 5) | 0x10 if this module is the IO-mapped one |
@@ -103,7 +103,7 @@ Each module exposes four 8-bit registers at ports
 | Port (module 0) | Register | Write bits | Read bits |
 |:--|:--|:--|:--|
 | `#00FF` | R0 | D0–2 RAM window base (see §6 of emulator doc), D3 disable memory writes, D4 disable IO writes, D5 local reset, D6 NMI, D7 INT | D0 in HALT, D1 in WAIT, D2–7 packed last-M1 address |
-| `#01FF` | R1 | reset-command byte 1 (see below) | — |
+| `#01FF` | R1 | reset-command byte 1; halt-notification config (b7 NMI, b6 INT, b5 `#7FFD` via window, b4 local NMI off, b3–0 target mask) | — |
 | `#02FF` | R2 | stop-address low / reset-command byte 2 | — |
 | `#03FF` | R3 | stop-address high / reset-command byte 3 | — |
 
@@ -123,10 +123,15 @@ Four mechanisms turn "four computers" into "one poly-computer":
    *replaced by R1, R2, R3*. The standard pattern writes `#C3, lo, hi` there —
    after reset the CPU executes `JP nn` with `nn` chosen per module. This is how
    slaves are aimed at plane-specific code without any ROM support.
-3. **HALT notification.** When a module enters HALT, its R1 selects which
-   modules receive INT or NMI (bits D4–D7 of the `#3D00` block also disable
-   halt-based interrupts). Used to emulate periphery in slave CPUs: a slave
-   parks in HALT and interrupts CPU0 when "its" device has data.
+3. **HALT notification.** When a module *enters* HALT, the **halting
+   module's** R1 decides what happens: b7 sends NMI, b6 sends INT, b3–b0 pick
+   the target CPUs (CPU3..CPU0), b4 disables local NMI for this module, b5
+   routes the master's `#7FFD` writes through the IO window. It works only
+   while `#3D00` is unlocked; `#3D00` itself has no halt bits. R1 is also
+   reset-command byte 1 and is cleared after a local reset, so the halt
+   configuration does not survive one. Intended to emulate periphery in slave
+   CPUs (a slave parks in HALT and interrupts CPU0), but neither the Test ROM
+   nor the adapted corpus uses it.
 4. **IO-mapped memory window.** `#3D00` D5–D6 point CPU0's bus at another
    module's RAM: plain port reads/writes then address that module's memory,
    pulsing INT (read) or NMI (write) on the target. This is the data channel
@@ -194,4 +199,4 @@ run a useful subset of the Spec256 game archive.
 | `zxpoly-sprite-corrector/` | The graphics adaptation editor |
 | `AsmLoader/` | `zxpoly.i` macro API + reference disk/tape loaders |
 | `TestROM/` | Platform test ROM in SjasmPlus source |
-| `adapted/` | Seven adapted games with build scripts |
+| `adapted/` | Eight adapted games (Alien8, Atw2, BuratinoAdventures, ComandoQuatro, FlyShark, OfficialFatherChristmas, SummerSanta2022, ZxWord); Atw2 and ZxWord are full source projects, the rest ship as `.zxp`/`.sze` |

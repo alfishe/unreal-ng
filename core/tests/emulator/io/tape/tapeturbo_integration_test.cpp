@@ -218,15 +218,16 @@ TEST_F(TapeTurbo_Integration_Test, WarpLifecycleWithCustomLoaderTiming)
     EXPECT_FALSE(controller->IsAutoTurboActive());
 
     // Editor keyboard scanning keeps the pause stable — and must never bring
-    // warp back on its own
-    for (int i = 0; i < 70; i++)
+    // warp back on its own. The window also outlasts the ~190-frame DI'd
+    // delay loop, so the command typed next reaches the editor
+    for (int i = 0; i < 250; i++)
         mainLoop->RunFrame();
-    EXPECT_FALSE(context->pTape->IsPlaying()) << "Keyboard scan must not trip the sustained-poll threshold";
+    EXPECT_FALSE(context->pTape->IsPlaying()) << "Keyboard scan must not start the tape";
     EXPECT_FALSE(core->IsTurboMode()) << "No warp while paused, ever";
 
     // The loader's own poll loop resumes the deck — warp comes back with it
     auto poke = BasicEncoder::runCommand(emulator,
-        "POKE 31000,62:POKE 31001,0:POKE 31002,219:POKE 31003,254:POKE 31004,24:POKE 31005,252:RANDOMIZE USR 31000");
+        "POKE 31000,219:POKE 31001,254:POKE 31002,230:POKE 31003,64:POKE 31004,24:POKE 31005,250:RANDOMIZE USR 31000");
     ASSERT_TRUE(poke.success) << poke.message;
     for (int i = 0; i < 15; i++)
         mainLoop->RunFrame();  // Settle ENTER: POKE chain must land first
@@ -297,7 +298,7 @@ TEST_F(TapeTurbo_Integration_Test, WarpServesHeaderlessTailAndEndsAtEndOfTape)
     // Phase 2: a custom consumer polls for the headerless tail — playback
     // starts from the cursor and warp engages (the case the trap cannot serve)
     auto poke = BasicEncoder::runCommand(emulator,
-        "POKE 31000,62:POKE 31001,0:POKE 31002,219:POKE 31003,254:POKE 31004,24:POKE 31005,252:RANDOMIZE USR 31000");
+        "POKE 31000,219:POKE 31001,254:POKE 31002,230:POKE 31003,64:POKE 31004,24:POKE 31005,250:RANDOMIZE USR 31000");
     ASSERT_TRUE(poke.success) << poke.message;
     for (int i = 0; i < 15; i++)
         mainLoop->RunFrame();  // Settle ENTER: POKE chain must land first
@@ -358,7 +359,7 @@ TEST_F(TapeTurbo_Integration_Test, ManualTurboOwnershipUnderLiveMainLoop)
     // The consumer's poll loop (infinite) — starts and re-starts playback all
     // by itself for the whole test from wherever the cursor sits
     auto poke = BasicEncoder::runCommand(emulator,
-        "POKE 31000,62:POKE 31001,0:POKE 31002,219:POKE 31003,254:POKE 31004,24:POKE 31005,252:RANDOMIZE USR 31000");
+        "POKE 31000,219:POKE 31001,254:POKE 31002,230:POKE 31003,64:POKE 31004,24:POKE 31005,250:RANDOMIZE USR 31000");
     ASSERT_TRUE(poke.success) << poke.message;
     for (int i = 0; i < 15; i++)
         mainLoop->RunFrame();

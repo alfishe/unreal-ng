@@ -11,7 +11,7 @@ class Memory;
 /// active renderer, it is owned and driven by ScreenZX (which remains the
 /// single Screen* registered per machine) and only allocated for ATM
 /// machine models.
-class ScreenAtm
+class ScreenAtm final
 {
     /// region <Constructors / Destructors>
 public:
@@ -32,6 +32,10 @@ public:
 public:
     /// Render a single T-state for the current ATM extended video mode
     void Draw(uint32_t tstate, VideoModeEnum mode, const RasterDescriptor& rd, FramebufferDescriptor& framebuffer);
+
+    /// Render the inclusive frame T-state range [from, to]
+    void DrawRange(uint32_t from, uint32_t to, VideoModeEnum mode, const RasterDescriptor& rd,
+                   FramebufferDescriptor& framebuffer);
     /// endregion </Methods>
 
     /// region <Fields>

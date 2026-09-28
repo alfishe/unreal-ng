@@ -2,6 +2,8 @@
 
 #include <benchmark/benchmark.h>
 
+#include <algorithm>
+
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
@@ -616,3 +618,43 @@ static void BM_RenderOnlyMainScreen_Optimized(benchmark::State& state)
 BENCHMARK(BM_RenderOnlyMainScreen_Optimized)->Iterations(100);
 
 /// endregion </RenderOnlyMainScreen Comparison Benchmarks>
+/// @brief Full frame through the production catch-up path (Screen::DrawPeriod in
+/// 12 T steps, about one instruction each), per video mode family. Measures the
+/// per-T dispatch cost together with each family's pixel work.
+static void BM_DrawPeriodFrame(benchmark::State& state)
+{
+    struct ModeCase { MEM_MODEL model; VideoModeEnum mode; uint32_t frame; };
+    static const ModeCase cases[] = {
+        {MM_SPECTRUM48, M_ZX48, 69888},       {MM_PENTAGON, M_PENTAGON128K, 71680},
+        {MM_PENTAGON, M_P16, 71680},          {MM_PENTAGON, M_PMC, 71680},
+        {MM_ATM710, M_ATM16, 69888},          {MM_ATM710, M_ATMHR, 69888},
+        {MM_ATM710, M_ATMTX, 69888},          {MM_PROFI, M_PROFIHR, 69888},
+    };
+    const ModeCase& c = cases[state.range(0)];
+
+    EmulatorContext* context = new EmulatorContext(LoggerLevel::LogError);
+    Core* cpu = new Core(context);
+    (void)cpu->Init();
+    cpu->GetMemory()->DefaultBanksFor48k();
+    context->config.mem_model = c.model;
+    context->config.frame = c.frame;
+
+    ScreenZXCUT* screenzx = new ScreenZXCUT(context);
+    screenzx->SetVideoMode(c.mode);
+    state.SetLabel(Screen::GetVideoModeName(c.mode));
+
+    const uint32_t maxTstates = screenzx->_rasterState.maxFrameTiming;
+    constexpr uint32_t kStep = 12;
+
+    for (auto _ : state)
+    {
+        for (uint32_t from = 0; from + 1 < maxTstates; from += kStep)
+            screenzx->DrawPeriod(from, std::min(from + kStep, maxTstates - 1));
+        benchmark::ClobberMemory();
+    }
+
+    delete screenzx;
+    delete cpu;
+    delete context;
+}
+BENCHMARK(BM_DrawPeriodFrame)->DenseRange(0, 7)->Unit(benchmark::kMicrosecond)->Repetitions(5)->ReportAggregatesOnly(true);

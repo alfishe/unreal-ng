@@ -3457,58 +3457,29 @@ namespace PythonBindings
             const uint32_t tstate = cpu ? static_cast<uint32_t>(cpu->t) : screen->GetCurrentTstate();
             const uint32_t tInFrame = tstate % config.frame;
 
-            const VideoModeEnum mode = screen->GetVideoMode();
-            const RasterDescriptor& rd = screen->rasterDescriptors[mode];
-            const RasterState& rs = screen->GetRasterState();
-
-            const bool rasterValid = rs.tstatesPerLine != 0;
-            const uint32_t tstatesPerLine = rasterValid ? rs.tstatesPerLine : config.t_line;
+            const BeamPosition beam = screen->DescribeBeam(tInFrame);
+            const uint32_t tstatesPerLine = beam.valid ? screen->GetRasterState().tstatesPerLine : config.t_line;
             const uint32_t line = tInFrame / tstatesPerLine;
-            const uint32_t dotInLine = tInFrame % tstatesPerLine;
-
-            std::string vZone = "beyond_raster";
-            if (rasterValid)
-            {
-                if (tInFrame <= rs.blankAreaEnd)
-                    vZone = (line < rd.vSyncLines) ? "vsync" : "vblank";
-                else if (tInFrame <= rs.topBorderAreaEnd)
-                    vZone = "top_border";
-                else if (tInFrame <= rs.screenAreaEnd)
-                    vZone = "screen";
-                else if (tInFrame <= rs.bottomBorderAreaEnd)
-                    vZone = "bottom_border";
-            }
-
-            std::string hZone = "-";
-            if (vZone == "screen")
-            {
-                if (dotInLine <= rs.blankLineAreaEnd)
-                    hZone = "hblank";
-                else if (dotInLine <= rs.leftBorderAreaEnd)
-                    hZone = "left_border";
-                else if (dotInLine <= rs.screenLineAreaEnd)
-                    hZone = "paper";
-                else if (dotInLine <= rs.rightBorderAreaEnd)
-                    hZone = "right_border";
-                else
-                    hZone = "beyond_line";
-            }
-
-            std::string zone = vZone;
-            if (vZone == "screen")
-                zone = (hZone == "paper") ? "paper" : (hZone == "hblank" ? "hblank" : "border");
 
             d["tstate"] = tstate;
             d["tstate_in_frame"] = tInFrame;
             d["frame"] = static_cast<uint64_t>(context->emulatorState.frame_counter);
             d["line"] = line;
-            d["dot_in_line"] = dotInLine;
-            d["beam_x"] = dotInLine * rs.pixelsPerTState;
+            d["dot_in_line"] = tInFrame % tstatesPerLine;
+            d["beam_x"] = beam.beamX;
             d["beam_y"] = line;
-            d["zone"] = zone;
-            d["vertical_zone"] = vZone;
-            d["horizontal_zone"] = hZone;
-            d["in_paper"] = zone == "paper";
+            d["zone"] = std::string(beam.zone);
+            d["vertical_zone"] = std::string(beam.verticalZone);
+            d["horizontal_zone"] = std::string(beam.horizontalZone);
+            d["in_paper"] = beam.inPaper;
+            if (beam.inPaper)
+            {
+                py::dict paper;
+                paper["x"] = beam.paperX;
+                paper["x_end"] = beam.paperXEnd;
+                paper["y"] = beam.paperY;
+                d["paper"] = paper;
+            }
             return d;
         }, "Raster beam position and zone at the current t-state")
 

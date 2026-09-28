@@ -425,47 +425,10 @@ void CLIProcessor::HandleBeam(const ClientSession& session, const std::vector<st
     const uint32_t tInFrame = tstate % config.frame;
 
     const VideoModeEnum mode = screen->GetVideoMode();
-    const RasterDescriptor& rd = screen->rasterDescriptors[mode];
-    const RasterState& rs = screen->GetRasterState();
-
-    const bool rasterValid = rs.tstatesPerLine != 0;
-    const uint32_t tstatesPerLine = rasterValid ? rs.tstatesPerLine : config.t_line;
+    const BeamPosition beam = screen->DescribeBeam(tInFrame);
+    const uint32_t tstatesPerLine = beam.valid ? screen->GetRasterState().tstatesPerLine : config.t_line;
     const uint32_t line = tInFrame / tstatesPerLine;
     const uint32_t dotInLine = tInFrame % tstatesPerLine;
-    const uint32_t beamX = dotInLine * rs.pixelsPerTState;
-
-    // Vertical zone (frame-relative), then horizontal zone inside screen rows
-    std::string vZone = "beyond_raster";
-    if (rasterValid)
-    {
-        if (tInFrame <= rs.blankAreaEnd)
-            vZone = (line < rd.vSyncLines) ? "vsync" : "vblank";
-        else if (tInFrame <= rs.topBorderAreaEnd)
-            vZone = "top_border";
-        else if (tInFrame <= rs.screenAreaEnd)
-            vZone = "screen";
-        else if (tInFrame <= rs.bottomBorderAreaEnd)
-            vZone = "bottom_border";
-    }
-
-    std::string hZone = "-";
-    if (vZone == "screen")
-    {
-        if (dotInLine <= rs.blankLineAreaEnd)
-            hZone = "hblank";
-        else if (dotInLine <= rs.leftBorderAreaEnd)
-            hZone = "left_border";
-        else if (dotInLine <= rs.screenLineAreaEnd)
-            hZone = "paper";
-        else if (dotInLine <= rs.rightBorderAreaEnd)
-            hZone = "right_border";
-        else
-            hZone = "beyond_line";
-    }
-
-    std::string zone = vZone;
-    if (vZone == "screen")
-        zone = (hZone == "paper") ? "paper" : (hZone == "hblank" ? "hblank" : "border");
 
     std::stringstream ss;
     ss << std::dec;
@@ -473,8 +436,10 @@ void CLIProcessor::HandleBeam(const ClientSession& session, const std::vector<st
     ss << "  T-state: " << tstate << " (in frame: " << tInFrame << ")" << NEWLINE;
     ss << "  Frame: " << context->emulatorState.frame_counter << NEWLINE;
     ss << "  Line: " << line << "  Dot: " << dotInLine << NEWLINE;
-    ss << "  Beam X/Y: " << beamX << "/" << line << NEWLINE;
-    ss << "  Zone: " << zone << " (v: " << vZone << ", h: " << hZone << ")" << NEWLINE;
+    ss << "  Beam X/Y: " << beam.beamX << "/" << line << NEWLINE;
+    ss << "  Zone: " << beam.zone << " (v: " << beam.verticalZone << ", h: " << beam.horizontalZone << ")" << NEWLINE;
+    if (beam.inPaper)
+        ss << "  Paper X/Y: " << beam.paperX << ".." << beam.paperXEnd << "/" << beam.paperY << NEWLINE;
     ss << "  Video mode: " << Screen::GetVideoModeName(mode) << NEWLINE;
 
     session.SendResponse(ss.str());

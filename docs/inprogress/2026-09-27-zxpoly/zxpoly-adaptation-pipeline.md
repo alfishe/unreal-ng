@@ -53,7 +53,7 @@ CPU1 odd/even, CPU2 even/odd, CPU3 odd/odd). Tools: pencil, eraser, colorizer
 
 **Export** (`Z80InZXPOutPlugin.writeTo`): writes a `.zxp` snapshot — all four
 CPUs get identical registers; `port3D00 = (videoMode << 2) | 0x80 | 1` (locked,
-slaves WAIT); module 0 ports `(7ffd,0,0,0)`, modules 1–3 `reg0 = 0x10 | (i<<1)`
+nWAIT = 1 → slaves **running**, no reset); module 0 ports `(7ffd,0,0,0)`, modules 1–3 `reg0 = 0x10 | (i<<1)`
 (their IO writes disabled + their heap windows); per-CPU pages built from
 `data.getDataForCPU(cpu)`. Optionally override CPU registers at start.
 
@@ -66,13 +66,18 @@ Snapshots are the demo/prototyping path. The *shippable* path builds a TR-DOS
 disk with a multiloader, using the assembly API in `AsmLoader/zxpoly.i`
 (v1.02, SjasmPlus macros):
 
+(`zxpoly.i` has known defects: `SETWAIT13` toggles the reset bit instead of
+nWAIT, `SETSTOPADDR` references an undefined symbol, and `COPY2CPU` cleanup
+does not restore the target's R1. See
+[zxpoly-emulator-internals.md](zxpoly-emulator-internals.md) §10.)
+
 | Macro / constant | Effect |
 |:--|:--|
 | `SETVIDEOMODE m` | `#3D00` D2–D4 |
 | `SETSTOPADDR cpu,addr` | R2/R3 rendezvous |
 | `SETRESCOMMAND cpu,$C3,lo,hi` | post-reset `JP nn` injection |
 | `SETIOCPU n` | `#3D00` D5–D6 mapped-CPU |
-| `COPY2CPU cpu,addr,len` | stream RAM block through the IO window into another CPU (NMI masked) |
+| `COPY2CPU cpu,addr,len` | stream RAM block through the IO window into another CPU (sets R1 b4 on the target to mask the NMI flood, R1 b5 to route `#7FFD` through the window) |
 | `SOFTRESET_CPU`, `LOCKPOLY`, `DISABLE_IO_WR`, `SETPOLYMAIN flags` | orchestration |
 
 The canonical boot sequence (from `adapted/Atw2/multiloader.asm`,
@@ -85,13 +90,14 @@ flowchart TD
   B --> C["COPY2CPU to CPU3, then CPU2, then CPU1<br/>(each plane file lands in that CPU's window)"]
   C --> D["SAVEREGS (keep A/F/BC/... for the game)"]
   D --> E["DISABLE_IO_WR for CPU1-3<br/>SETRESCOMMAND CPU0-3 = JP RUNCODE"]
-  E --> F["SETPOLYMAIN #93<br/>= lock(1) + local reset(1) + video mode 4"]
+  E --> F["SETPOLYMAIN #93<br/>= lock + mode 4 + local reset + release slaves (nWAIT=1)"]
   F --> G["local reset: all CPUs fetch JP RUNCODE<br/>from R1/R2/R3 at #0000 -> common start"]
   G --> H["RUNCODE: restore #7FFD paging, LOADREGS,<br/>CALL game entry — 4 CPUs in lockstep"]
 ```
 
-`#93` = `1001_0011b`: bit 7 lock, bit 1 local reset, bits 2–4 = `100` = mode 4.
-ZxWord (512×384) uses `#97` (mode 5) instead.
+`#93` = `1001_0011b`: bit 7 lock, bits 2–4 = `100` = mode 4, bit 1 local
+reset, bit 0 nWAIT = 1 (release the slaves). ZxWord (512×384) uses `#97`
+(mode 5) instead.
 
 ## 4. The Test ROM (`TestROM/`)
 
@@ -107,6 +113,17 @@ emulator as the default boot image (`zxpolytest.prom`):
 4. Video demos: mode 4 decompresses four ZX0-packed plane images
    (`TSTIMGR/Y/B/G`) into each CPU's `#4000` via `SET_IOCPU`; mode 5 likewise
    with 512×384 plane sets (`IMG512C0..C3`).
+
+Platform features it exercises:
+
+- module index read from `#3D00`;
+- local reset with `JP` command injection (CPU1–3 via R0 = `$22/$24/$26`,
+  which are also their default heap windows);
+- IO-window writes and reads;
+- RAM0 at `#0000`;
+- halt detection by *polling* R0 bit 0.
+
+It does **not** use stop addresses or halt-notification INT/NMI.
 
 Build pipeline (`TestROM/build`): PNG → `zxsc.jar sliceImage` → four plane
 files → `zx0` compress each → `zasm` assemble → `.prom` resource. This is the
@@ -134,7 +151,7 @@ flowchart LR
   SC -->|ship| P["4 plane files"]
   P --> ML["multiloader.asm<br/>+ zxpoly.i macros"]
   ML --> TRD["TR-DOS image<br/>(make.sh)"]
-  ZXP & TRD --> EMU["zxpoly emulator<br/>divergence triggers:<br/>TRIGGER_DIFF_PC/SP<br/>TRIGGER_DIFF_MEM<br/>TRIGGER_DIFF_EXE"]
+  ZXP & TRD --> EMU["zxpoly emulator<br/>divergence triggers:<br/>TRIGGER_DIFF_MODULESTATES<br/>TRIGGER_DIFF_MEM_ADDR<br/>TRIGGER_DIFF_EXE_CODE"]
   EMU --> |"desync found"| SC
 ```
 

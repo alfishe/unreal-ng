@@ -515,21 +515,21 @@ TEST_F(TapeLoading_Integration_Test, WatchdogPauseFreezesAndSustainedPollResumes
     ASSERT_TRUE(paused) << "Watchdog did not pause playback";
     ASSERT_EQ(cursorAtPause, 2u) << "Pause must freeze MID-BLOCK (cursor = in-flight block), not consume it";
 
-    // Editor keyboard scanning (~8 half-row reads/frame) must never reach the
-    // sustained-poll threshold: playback stays paused, cursor stays frozen.
+    // Editor keyboard scanning is not listening (the reads come from ROM
+    // outside LD-BYTES): playback stays paused, cursor stays frozen.
     // The window must ALSO outlast the delay loop (~190 frames from USR start;
-    // pause lands at ~151): typing is injected via LAST_K and only the editor
-    // input loop consumes it — keystrokes landing while the DI'd loop still
-    // runs are swallowed and corrupt the next command line
-    for (int i = 0; i < 70; i++)
+    // the pause lands after TAPE_BLOCK_HOLD_FRAMES): typing is injected via
+    // LAST_K and only the editor input loop consumes it — keystrokes landing
+    // while the DI'd loop still runs are swallowed and corrupt the next line
+    for (int i = 0; i < 250; i++)
         mainLoop->RunFrame();
-    EXPECT_FALSE(context->pTape->IsPlaying()) << "Keyboard scan must not trip the sustained-poll threshold";
+    EXPECT_FALSE(context->pTape->IsPlaying()) << "Keyboard scan must not start the tape";
     EXPECT_EQ(context->pTape->GetConsumptionCursor(), cursorAtPause) << "Frozen cursor must not drift while paused";
 
-    // The loader's own poll loop (typed, not hand-set): LD A,0 / IN A,($FE) /
-    // JR $-4 at 31000 — polls $00FE thousands of times per frame
+    // The loader's own poll loop (typed, not hand-set): IN A,($FE) / AND #40 /
+    // JR $-6 at 31000 — tests the EAR bit thousands of times per frame
     auto poke = BasicEncoder::runCommand(emulator,
-        "POKE 31000,62:POKE 31001,0:POKE 31002,219:POKE 31003,254:POKE 31004,24:POKE 31005,252:RANDOMIZE USR 31000");
+        "POKE 31000,219:POKE 31001,254:POKE 31002,230:POKE 31003,64:POKE 31004,24:POKE 31005,250:RANDOMIZE USR 31000");
     ASSERT_TRUE(poke.success) << poke.message;
 
     // Settle frames for ENTER: tokenize + parse + POKE chain takes ~7 frames;
@@ -538,10 +538,10 @@ TEST_F(TapeLoading_Integration_Test, WatchdogPauseFreezesAndSustainedPollResumes
     for (int i = 0; i < 15; i++)
         mainLoop->RunFrame();
 
-    EXPECT_EQ(context->pMemory->DirectReadFromZ80Memory(31000), 62)   // LD A,0
+    EXPECT_EQ(context->pMemory->DirectReadFromZ80Memory(31000), 219)  // IN A,($FE)
         << "Poll loop POKEs did not execute — command line corrupted";
-    EXPECT_EQ(context->pMemory->DirectReadFromZ80Memory(31002), 219); // IN A,($FE)
-    EXPECT_EQ(context->pMemory->DirectReadFromZ80Memory(31004), 24);  // JR NZ
+    EXPECT_EQ(context->pMemory->DirectReadFromZ80Memory(31002), 230); // AND #40
+    EXPECT_EQ(context->pMemory->DirectReadFromZ80Memory(31004), 24);  // JR
 
     // Sustained polling resumes within a frame — MID-BLOCK: cursor unmoved
     bool resumed = false;
@@ -597,7 +597,7 @@ TEST_F(TapeLoading_Integration_Test, SustainedPollStartsPlaybackWithoutRomAnchor
 
     // Sanity: typing in the editor (keyboard scanning) never starts playback
     auto poke = BasicEncoder::runCommand(emulator,
-        "POKE 30000,62:POKE 30001,0:POKE 30002,219:POKE 30003,254:POKE 30004,24:POKE 30005,252:RANDOMIZE USR 30000");
+        "POKE 30000,219:POKE 30001,254:POKE 30002,230:POKE 30003,64:POKE 30004,24:POKE 30005,250:RANDOMIZE USR 30000");
     ASSERT_TRUE(poke.success) << poke.message;
     EXPECT_FALSE(context->pTape->IsPlaying()) << "Typing/keyboard scan must not start playback";
 

@@ -1,3 +1,10 @@
+# DONE (reclassified 2026-09-27 re-audit; see [PLAN.md](../PLAN.md) audit log)
+
+Landed in `b4afd9a3` (PLAN #36 retired).
+
+---
+Original TODO notes below (historical).
+
 # TODO: TTD Qt Toolbar Toggle Icon & Control Widget
 
 - [x] Create `timetravel.svg` icon in `unreal-qt/resources/icons/` and update `icons.qrc`.
