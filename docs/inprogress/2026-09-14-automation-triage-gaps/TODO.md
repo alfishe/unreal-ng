@@ -14,9 +14,9 @@ program; it supersedes `../2026-08-26-automation-gaps/`. Last status sync in
   (`372c3840`), TD-4 bookmarks (`f4fdcf74`).
 
 ## Remaining (priority order from recommendations.md)
-1. **P1-1** — mode-aware screen state (`/state/screen` still reports
-   `display_mode: "standard"`; `state_screen_api.cpp:79,215`, re-verified
-   2026-09-16). Unblocks ATM triage. → PLAN #3.
+1. ~~**P1-1** — mode-aware screen state~~ — done in `f0ff08e5`: one
+   `DeviceState::Screen` report on every surface, `/state/screen` no longer
+   returns the literal `"standard"` (PLAN #3 / #42a retired).
 2. **TD-1** — finish first-class TTD in MCP/CLI/Lua/Python (record/replay/
    seek + summaries). → PLAN #2.
 3. **TD-6** — TTD docs truth pass. → PLAN #1.
