@@ -136,6 +136,9 @@ are ready for rollout 2.
 
 ## 7. Next (E5b and later)
 
+E5b is designed as phase M1 of the unified media manager: [technical-design.md](../2026-09-28-storage-manager/technical-design.md), [integration-zxevo-sd.md](../2026-09-28-storage-manager/integration-zxevo-sd.md).
+
+
 | Item | Where |
 |---|---|
 | `HostFolderFat` (a PC folder as the card, S2), shared with IDE R1-6; `SDFolderFs=` | E5b |

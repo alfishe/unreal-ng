@@ -22,4 +22,5 @@ Requirements: [requirements.md](requirements.md).
 - [ ] Integrity and versioning decision written (before V4)
 - [ ] V4: memory budget
 - [ ] V5: container v2 + disk mode (format becomes versioned)
+- [ ] Media (2026-09-28): storage in TTD v2 through the unified media manager (PLAN #58, [technical design](../2026-09-28-storage-manager/technical-design.md)): media identity per session, the journaled session layer (manager phase M7). Requirements: roadmap [§6 ST-1…ST-6](../2026-09-21-roadmap/01-roadmap-and-machine-state.md). TTD v1 stays media-agnostic (port-level recording)
 - [ ] V6: cleanup, TDD truth pass, move folder to DONE

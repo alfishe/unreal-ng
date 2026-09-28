@@ -27,7 +27,7 @@ atm merge `59e37f38`); it was previously the only content of this folder, marked
 - [x] E3 (2026-09-28): board NMI (`#BF`.3, Magic button, M1 breakpoint), NOP entry + RAM `#FF`, 2-M1 exit via `#BE`, ERS Magic Service reachable — [e3-board-nmi.md](e3-board-nmi.md)
 - [x] E4 (2026-09-28): virtual TR-DOS trap (`#13BD` mask, chip deselect, swap to RAM `#FE`, `#BE` exit), legacy latches `#2F-#8F`; ERS RAM disk SAVE/LIST/LOAD on the real ROM — [e4-virtual-trdos.md](e4-virtual-trdos.md). Mounting TRD images needs E5/E6 storage
 - [x] E5 (2026-09-28): SD card for image files. The reusable `SdCardSpi` over `IBlockDevice` + `SessionWriteMap`, `ZControllerSpi`, `[ZC]` keys, AVR register C. ERS SD boot and TRD mount from SD (read + write) on the real ROM. TTD ends a recording on the first SD command — [e5-sd-card.md](e5-sd-card.md)
-- [ ] E5b host folder as the SD card (`HostFolderFat`, shared with IDE R1-6); NedoOS `osatm3sd.$C` from a folder; `IMAGE.MNT` automount
+- [ ] E5b = phase M1 of the unified media manager (PLAN #58, [../2026-09-28-storage-manager/](../2026-09-28-storage-manager/technical-design.md), [integration](../2026-09-28-storage-manager/integration-zxevo-sd.md)): host folder as the SD card (`HostFolderFat`, shared with IDE R1-6); NedoOS `osatm3sd.$C` from a folder; `IMAGE.MNT` automount
 - [ ] E6 NemoIDE (needs shared IDE R1-1) · E7 ATAPI CD (needs IDE R1-7)
 - [ ] E8 `#xBF7` write protect, flash writes, font RAM, 4:4:4 palette, ULA+
 - [ ] E9 (optional) AVR rasters, RS-232
