@@ -1,3 +1,10 @@
+# DONE (reclassified 2026-09-27 re-audit; see [PLAN.md](../PLAN.md) audit log)
+
+All six bugs resolved: #5 ATM16 renders on master (`DrawATM16`, `ScreenAtm`, atm merge `59e37f38`); #3 screen-state remainder → PLAN #42a.
+
+---
+Original TODO notes below (historical).
+
 # TODO — ATM debugging session findings (2026-09-10)
 
 **Status:** partially done — 4 of 6 bugs fixed on master; one tracked as

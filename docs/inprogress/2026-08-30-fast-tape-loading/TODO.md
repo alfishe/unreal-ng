@@ -1,3 +1,5 @@
+> Feature r4 (ROM-trap fast loading) is **done** — its summary is kept at the bottom. Restore DONE.md once PLAN #5 is fixed.
+
 # TODO — reopened 2026-09-16: non-standard loader tapes fail deterministically
 
 The feature itself (r4) stays done; this file tracks one open defect found while
@@ -72,3 +74,22 @@ ending alive-but-derailed in RAM code, failures at various block indices.
 `scratch/nonstd-loader-repro/` — `run.py` (sweep), `watch.py` (transition
 timeline + OCR), `ocr.py` (screen decode), `*.timeline.json`, sweep log and
 instance-id files. App running on port 8090 during the session.
+
+---
+
+# DONE — Fast tape loading (ROM traps) (2026-08-30)
+
+**Status:** complete (r4).
+
+## What landed
+- LD-BYTES trap-based instant loading per `design.md` r4: standard ROM loads complete
+  near-instantly, decline matrix for everything else, custom-loader pause/resume
+  lifecycle (insult.tap fix), feature `fasttape` with UI/CLI/WebAPI/MCP toggles
+  (`fast_tape` io-acceleration setting).
+
+## Evidence
+- `core/src/emulator/io/tape/tapefastload.cpp`; `fasttape` feature in `FeatureManager`;
+  `fast_tape` in `/settings` (cited by the 2026-09-14 gap analysis).
+
+## Follow-ups
+- Headerless blocks are served by turbo-tape ([2026-09-04-turbo-tape-loading](../2026-09-04-turbo-tape-loading/), done).

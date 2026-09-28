@@ -1,3 +1,10 @@
+# DONE (reclassified 2026-09-27 re-audit; see [PLAN.md](../PLAN.md) audit log)
+
+Landed in `0194a50f` (PLAN #21 retired). Remaining SZX `EFF7` chunk → PLAN #53.
+
+---
+Original TODO notes below (historical).
+
 # Status: TODO
 
 ## Overview

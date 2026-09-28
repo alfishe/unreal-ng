@@ -1,3 +1,10 @@
+# DONE (reclassified 2026-09-27 re-audit; see [PLAN.md](../PLAN.md) audit log)
+
+MCP bridge shipped. Open remainder tracked elsewhere: full TTD in MCP → PLAN #2; deferred Phase 3 → PLAN #32.
+
+---
+Original TODO notes below (historical).
+
 # TODO — MCP server automation (2026-08-17)
 
 **Status:** partially done — the MCP bridge shipped and keeps full parity; this

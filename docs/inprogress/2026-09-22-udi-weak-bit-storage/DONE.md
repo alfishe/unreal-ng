@@ -1,3 +1,10 @@
+# DONE (reclassified 2026-09-27 re-audit; see [PLAN.md](../PLAN.md) audit log)
+
+Landed in `27cb6940` (PLAN #35 retired).
+
+---
+Original TODO notes below (historical).
+
 # TODO — UDI weak-bit storage + FSE end-to-end (VORON1)
 
 **Complete (2026-09-23)** — storage, authoring tool, tests and the end-to-end run
