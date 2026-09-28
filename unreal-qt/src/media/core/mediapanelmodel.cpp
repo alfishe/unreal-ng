@@ -33,9 +33,10 @@ namespace
             row.format = Text(medium->find("format"));
             row.access = Text(medium->find("access"));
             row.isDirty = Flag(medium->find("dirty"));
+            row.dirty = Text(medium->find("changes"));  // the core words it, for every surface
             const StateNode* units = medium->find("dirtyUnits");
-            if (row.isDirty && units)
-                row.dirty = std::to_string(units->i) + (row.kind == "floppy" ? " tracks" : " sectors");
+            if (row.isDirty && row.dirty.empty() && units)
+                row.dirty = std::to_string(units->i) + " changed";
         }
         return row;
     }

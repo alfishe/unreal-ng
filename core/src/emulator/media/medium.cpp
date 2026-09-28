@@ -67,6 +67,38 @@ uint64_t Medium::ChangedUnits() const
     return _session ? _session->ChangedSectors() : 0;
 }
 
+namespace
+{
+    std::string Count(size_t n, const char* one, const char* many)
+    {
+        return std::to_string(n) + " " + (n == 1 ? one : many);
+    }
+}  // namespace
+
+std::string Medium::DescribeChanges() const
+{
+    if (_disk)
+    {
+        const DiskImage::DirtySummary d = _disk->dirtySummary();
+        if (d.tracks == 0)
+            return {};
+        std::string detail;
+        const size_t sectorTracks = d.tracks - d.wholeTracks;
+        if (sectorTracks > 0)
+            detail = Count(d.sectors, "sector", "sectors") + (d.tracks > 1 && d.wholeTracks == 0 ? " total" : "");
+        if (d.wholeTracks > 0)
+        {
+            if (sectorTracks == 0)
+                detail = "whole";
+            else
+                detail += ", " + std::to_string(d.wholeTracks) + " whole";
+        }
+        return Count(d.tracks, "track", "tracks") + ": " + detail;
+    }
+    const uint64_t sectors = ChangedUnits();
+    return sectors ? Count(static_cast<size_t>(sectors), "sector", "sectors") : std::string();
+}
+
 uint64_t Medium::ContentId() const
 {
     return _block ? _block->ContentId() : 0;

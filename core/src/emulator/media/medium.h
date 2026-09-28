@@ -74,6 +74,10 @@ public:
     /// How many units (block sectors / floppy tracks) differ from the source
     uint64_t ChangedUnits() const;
     uint64_t ContentId() const;
+    /// The unsaved changes for people: "1 track: 3 sectors", "1 track: whole",
+    /// "5 tracks: 20 sectors total", "48 sectors"; empty when clean.
+    /// Emulation thread, or while the machine is not running
+    std::string DescribeChanges() const;
     std::string Describe() const;
 
     /// Identity of the source for the "one source, one slot" rule: the

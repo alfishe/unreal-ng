@@ -208,6 +208,7 @@ void MediaPanelWindow::rebuildTable()
         {
             auto* item = new QTableWidgetItem(cells[c]);
             item->setToolTip(Q(row.label) + (row.medium.empty() ? QString() : "\n" + Q(row.medium)) +
+                             (row.dirty.empty() ? QString() : tr("\nUnsaved: %1").arg(Q(row.dirty))) +
                              (row.writeProtect ? tr("\nwrite-protected") : QString()));
             if (row.detached)
                 item->setForeground(palette().color(QPalette::Disabled, QPalette::Text));

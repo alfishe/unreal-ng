@@ -119,6 +119,7 @@ std::vector<SlotInfo> MediaManager::Detached() const
         info.format = medium->Format();
         info.access = medium->Access();
         info.changedUnits = medium->ChangedUnits();  // nobody writes to a detached medium
+        info.changes = medium->DescribeChanges();
         info.dirty = info.changedUnits > 0;
         result.push_back(std::move(info));
     }
@@ -318,6 +319,7 @@ MediaResult MediaManager::Save(const std::string& slotId, const SaveOptions& opt
     MediaResult result = SaveMedium(slotId, *medium, state ? state->slot : nullptr, options, outcome);
     if (result.Ok() && state)
         state->changedUnits = 0;
+        state->changes.clear();
     return result;
 }
 
@@ -487,6 +489,7 @@ void MediaManager::ApplySlot(const std::string& slotId, SlotState& state, std::v
         retired.push_back(std::move(state.attached));
         state.ejectRequested = false;
         state.changedUnits = 0;
+        state.changes.clear();
     }
 
     if (state.incoming)
@@ -521,6 +524,8 @@ void MediaManager::ApplySlot(const std::string& slotId, SlotState& state, std::v
         const uint64_t changed = state.attached->ChangedUnits();
         if (state.changedUnits == 0 && changed > 0)
             Post(NC_MEDIA_DIRTY, slotId, state.attached.get());
+        if (changed != state.changedUnits || (changed > 0 && state.attached->Floppy()))
+            state.changes = changed ? state.attached->DescribeChanges() : std::string();
         state.changedUnits = changed;
     }
 }
@@ -563,7 +568,9 @@ SlotInfo MediaManager::Describe(const std::string& slotId, const SlotState& stat
         info.format = state.attached->Format();
         info.access = state.attached->Access();
         // A stopped machine is read live; a running one through the frame's snapshot
-        info.changedUnits = CanApplyNow() ? state.attached->ChangedUnits() : state.changedUnits;
+        const bool live = CanApplyNow();
+        info.changedUnits = live ? state.attached->ChangedUnits() : state.changedUnits;
+        info.changes = live ? state.attached->DescribeChanges() : state.changes;
         info.dirty = info.changedUnits > 0;
     }
     return info;

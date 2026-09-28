@@ -34,7 +34,9 @@ layers of a storage peripheral: [technical-design.md §1.1](../inprogress/2026-0
 
 Every slot reports: id, kind, label, index, aliases, tags, whether it is removable and takes
 folders, the write-protect switch, its state (`empty`, `present`, `pending`, `detached`) and the
-medium (source, format, access, dirty, dirty units).
+medium (source, format, access, dirty, dirty units, and `changes`: the unsaved changes in words —
+`1 track: 3 sectors`, `1 track: whole` for a track rewritten by FORMAT / WRITE TRACK,
+`5 tracks: 20 sectors total`, or `48 sectors` on a card).
 
 ## Naming a slot: selectors
 

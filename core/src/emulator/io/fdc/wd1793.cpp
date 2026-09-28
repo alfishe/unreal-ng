@@ -1288,7 +1288,9 @@ void WD1793::cmdSeek(uint8_t value)
     // for how BUSY is still kept briefly visible even on this immediate-completion path)
     if (_trackRegister == _dataRegister)
     {
-        _selectedDrive->setTrack(_trackRegister);
+        // No step pulses: the head stays where it is. The track register is
+        // the controller's belief, not the head position (TR-DOS relies on
+        // this for 40-track disks in an 80-track drive: TR = n, head = 2n)
         type1CommandVerify();
         return;
     }
@@ -1409,7 +1411,7 @@ void WD1793::cmdReadSector(uint8_t value)
         }
 
         // The head reads whatever lies under it: the drive's physical track (the ID field must then match trackReg)
-        DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(selectedDrive->getTrack(), sideUp);
+        DiskImage::Track* track = selectedDrive->trackUnderHead(sideUp);
         if (!track)
         {
             this->_statusRegister |= WDS_NOTFOUND;
@@ -1536,7 +1538,7 @@ void WD1793::cmdWriteSector(uint8_t value)
         }
 
         // The head reads whatever lies under it: the drive's physical track (the ID field must then match trackReg)
-        DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(selectedDrive->getTrack(), sideUp);
+        DiskImage::Track* track = selectedDrive->trackUnderHead(sideUp);
         if (!track)
         {
             this->_statusRegister |= WDS_NOTFOUND;
@@ -1637,7 +1639,7 @@ void WD1793::cmdReadTrack(uint8_t value)
         return;
     }
 
-    DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(_selectedDrive->getTrack(), _sideUp);
+    DiskImage::Track* track = _selectedDrive->trackUnderHead(_sideUp);
     if (!track)
     {
         _statusRegister |= WDS_NOTFOUND;
@@ -1683,7 +1685,7 @@ void WD1793::cmdReadTrack(uint8_t value)
                            }
 
                            // The head reads whatever lies under it: the drive's physical track (the ID field must then match trackReg)
-        DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(selectedDrive->getTrack(), sideUp);
+        DiskImage::Track* track = selectedDrive->trackUnderHead(sideUp);
                            if (!track)
                            {
                                this->_statusRegister |= WDS_NOTFOUND;
@@ -1735,7 +1737,7 @@ void WD1793::cmdWriteTrack(uint8_t value)
         return;
     }
 
-    DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(_selectedDrive->getTrack(), _sideUp);
+    DiskImage::Track* track = _selectedDrive->trackUnderHead(_sideUp);
     if (!track)
     {
         _statusRegister |= WDS_NOTFOUND;
@@ -1764,7 +1766,7 @@ void WD1793::cmdWriteTrack(uint8_t value)
                             }
 
                             // The head reads whatever lies under it: the drive's physical track (the ID field must then match trackReg)
-        DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(selectedDrive->getTrack(), sideUp);
+        DiskImage::Track* track = selectedDrive->trackUnderHead(sideUp);
                             if (!track)
                             {
                                 this->_statusRegister |= WDS_NOTFOUND;
@@ -2237,7 +2239,7 @@ void WD1793::processStep()
     // SEEK: Check if already at target track (trackRegister == dataRegister)
     if (_lastDecodedCmd == WD_CMD_SEEK && _trackRegister == _dataRegister)
     {
-        _selectedDrive->setTrack(_trackRegister);
+        // Already there: no step pulse, the head does not move
         notifyFDDStateChanged();
         type1CommandVerify();
         return;
@@ -2273,8 +2275,8 @@ void WD1793::processStep()
     }
     else if (_lastDecodedCmd == WD_CMD_SEEK && _dataRegister == _trackRegister)  // SEEK command finished
     {
-        // Apply track change to selected FDD
-        _selectedDrive->setTrack(_trackRegister);
+        // The head moved one position per step pulse above; it is not
+        // re-synced to the track register
 
         // Check if position verification was requested
         type1CommandVerify();
@@ -2366,7 +2368,7 @@ DiskImage::Sector* WD1793::locateSectorForType2(DiskImage::Track* track, uint8_t
 bool WD1793::hasSectorOnCurrentTrack(uint8_t sectorNo)
 {
     DiskImage* diskImage = _selectedDrive ? _selectedDrive->getDiskImage() : nullptr;
-    DiskImage::Track* track = diskImage ? diskImage->getTrackForCylinderAndSide(_selectedDrive->getTrack(), _sideUp) : nullptr;
+    DiskImage::Track* track = diskImage ? _selectedDrive->trackUnderHead(_sideUp) : nullptr;
 
     if (!track)
     {
@@ -2385,7 +2387,7 @@ void WD1793::processSearchID()
     DiskImage* diskImage = _selectedDrive ? _selectedDrive->getDiskImage() : nullptr;
 
     // Use the current FDD track, not WD1793 track register!
-    DiskImage::Track* track = diskImage ? diskImage->getTrackForCylinderAndSide(_selectedDrive->getTrack(), _sideUp ? 1 : 0) : nullptr;
+    DiskImage::Track* track = diskImage ? _selectedDrive->trackUnderHead(_sideUp ? 1 : 0) : nullptr;
 
     DiskImage::Sector* sector = nullptr;
     size_t headPosition = 0;
@@ -2481,7 +2483,7 @@ void WD1793::processReadSector()
 
             // Re-position to new sector
             DiskImage* diskImage = this->_selectedDrive ? this->_selectedDrive->getDiskImage() : nullptr;
-            DiskImage::Track* track = diskImage ? diskImage->getTrackForCylinderAndSide(this->_selectedDrive->getTrack(), this->_sideUp) : nullptr;
+            DiskImage::Track* track = diskImage ? this->_selectedDrive->trackUnderHead(this->_sideUp) : nullptr;
             DiskImage::Sector* sector = track ? this->locateSectorForType2(track, this->_trackRegister, this->_sectorRegister) : nullptr;
 
             if (sector)
@@ -2667,7 +2669,7 @@ void WD1793::processWriteSector()
 
             // Re-position to new sector
             DiskImage* diskImage = this->_selectedDrive ? this->_selectedDrive->getDiskImage() : nullptr;
-            DiskImage::Track* track = diskImage ? diskImage->getTrackForCylinderAndSide(this->_selectedDrive->getTrack(), this->_sideUp) : nullptr;
+            DiskImage::Track* track = diskImage ? this->_selectedDrive->trackUnderHead(this->_sideUp) : nullptr;
             DiskImage::Sector* sector = track ? this->locateSectorForType2(track, this->_trackRegister, this->_sectorRegister) : nullptr;
 
             if (sector)

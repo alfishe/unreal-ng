@@ -733,6 +733,28 @@ TEST_F(UPD765Media_Test, WritesAreBarriersOncePerFrame)
     ttd->StopRecording();
 }
 
+/// The panel's words for what is unsaved: sectors written, and a track the
+/// guest formatted counts as rewritten whole
+TEST_F(UPD765Media_Test, ChangesAreDescribedInTracksAndSectors)
+{
+    ASSERT_FALSE(HasFatalFailure());
+    MediaManager& manager = *_context->pMediaManager;
+    EXPECT_EQ(manager.Info("fdd.a")->changes, "");
+
+    WriteSector(1, 0x11);
+    WriteSector(2, 0x22);
+    WriteSector(3, 0x33);
+    EXPECT_EQ(manager.Info("fdd.a")->changes, "1 track: 3 sectors");
+
+    std::vector<uint8_t> ids;
+    for (uint8_t r = 1; r <= 9; r++)
+        ids.insert(ids.end(), {0, 0, r, 2});
+    Command({UPD765::CMD_FORMAT_TRACK | MFM, 0x00, 2, 9, 0x52, 0xE5});
+    Transfer(ids);
+    Result();
+    EXPECT_EQ(manager.Info("fdd.a")->changes, "1 track: whole") << "FORMAT rewrote the track";
+}
+
 class UPD765Scan_Test : public UPD765_Test
 {
 protected:

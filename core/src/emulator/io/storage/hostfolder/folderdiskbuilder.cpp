@@ -305,6 +305,7 @@ MediaResult FolderDiskBuilder::BuildTrd(EmulatorContext* context, const std::fil
     }
     WriteLabel(*image, CompatibleName(label));
 
+    image->setFortyTrack(cylinders == 40);  // 48 tpi: an 80-track drive steps twice per track
     image->markClean();  // a freshly built disk has nothing to save back
     image->setLoaded(true);
     disk = std::move(image);

@@ -70,7 +70,7 @@ namespace
                     out << " " << slot["medium"]["source"].asString() << " [" << slot["medium"]["format"].asString() << ", "
                         << slot["medium"]["access"].asString();
                     if (slot["medium"]["dirty"].asBool())
-                        out << ", dirty " << slot["medium"]["dirtyUnits"].asUInt64();
+                        out << ", unsaved " << slot["medium"]["changes"].asString();
                     out << "]";
                 }
                 out << "\n";

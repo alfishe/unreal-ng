@@ -995,6 +995,7 @@ protected:
     bool _dirty = false;  // Change tracking - set when any track is modified
     std::vector<Track> _tracks;
     std::string _filePath;  // Source file path (set during load, used for tracking)
+    bool _fortyTrack = false;  // 48 tpi medium (see isFortyTrack)
 
     uint8_t _cylinders;
     uint8_t _sides;
@@ -1039,6 +1040,7 @@ public:
         bool image = false;
         std::string filePath;
         std::vector<std::pair<bool, bool>> tracks;  ///< (sector level, raw track level)
+        std::vector<std::vector<bool>> sectors;     ///< per track, per sector
     };
 
     DirtyState captureDirtyState() const
@@ -1047,7 +1049,13 @@ public:
         state.image = _dirty;
         state.filePath = _filePath;
         for (const Track& track : _tracks)
+        {
             state.tracks.emplace_back(track._dirty, track._rawTrackDirty);
+            std::vector<bool> sectors;
+            for (const Sector& sector : track._sectors)
+                sectors.push_back(sector.dirty);
+            state.sectors.push_back(std::move(sectors));
+        }
         return state;
     }
 
@@ -1059,7 +1067,38 @@ public:
         {
             _tracks[i]._dirty = state.tracks[i].first;
             _tracks[i]._rawTrackDirty = state.tracks[i].second;
+            for (size_t s = 0; s < _tracks[i]._sectors.size() && s < state.sectors[i].size(); s++)
+                _tracks[i]._sectors[s].dirty = state.sectors[i][s];
         }
+    }
+
+    /// What is unsaved, in the units people think in: tracks with changes,
+    /// the sectors written on them, and the tracks rewritten whole (WRITE
+    /// TRACK / FORMAT, where sector counts mean nothing)
+    struct DirtySummary
+    {
+        size_t tracks = 0;
+        size_t sectors = 0;
+        size_t wholeTracks = 0;
+    };
+
+    DirtySummary dirtySummary() const
+    {
+        DirtySummary summary;
+        for (const Track& track : _tracks)
+        {
+            if (!track._dirty && !track._rawTrackDirty)
+                continue;
+            summary.tracks++;
+            if (track._rawTrackDirty)
+            {
+                summary.wholeTracks++;
+                continue;
+            }
+            for (const Sector& sector : track._sectors)
+                summary.sectors += sector.dirty ? 1 : 0;
+        }
+        return summary;
     }
 
     /// Clear dirty flags for disk and all tracks (called after save)
@@ -1076,6 +1115,14 @@ public:
     /// region <Properties>
 public:
     const std::string& getFilePath() const { return _filePath; }
+
+    /// A 40-track (48 tpi) medium: its tracks are twice as far apart as an
+    /// 80-track drive's head positions. Image formats do not record the
+    /// density, so the code that makes a disk from a real image sets it
+    /// (FloppyFormats: at most 42 cylinders; blank and folder-built 40-track
+    /// disks). An image made in memory without it counts as 96 tpi
+    bool isFortyTrack() const { return _fortyTrack; }
+    void setFortyTrack(bool fortyTrack) { _fortyTrack = fortyTrack; }
     void setFilePath(const std::string& path) { _filePath = path; }
     uint8_t getCylinders() { return _cylinders; }
     uint8_t getSides() { return _sides; }

@@ -56,3 +56,6 @@
     schemas["MediaMedium"]["properties"]["dirty"]["type"] = "boolean";
     schemas["MediaMedium"]["properties"]["dirtyUnits"]["type"] = "integer";
     schemas["MediaMedium"]["properties"]["dirtyUnits"]["description"] = "Changed sectors (block) or tracks (floppy)";
+    schemas["MediaMedium"]["properties"]["changes"]["type"] = "string";
+    schemas["MediaMedium"]["properties"]["changes"]["description"] =
+        "The unsaved changes for people: '1 track: 3 sectors', '1 track: whole', '5 tracks: 20 sectors total', '48 sectors'";

@@ -412,6 +412,7 @@ StateNode MediaControl::SlotValue(const SlotInfo& info)
         medium["access"] = AccessModeName(info.access);
         medium["dirty"] = info.dirty;
         medium["dirtyUnits"] = info.changedUnits;
+        medium["changes"] = info.changes;
         slot["medium"] = medium;
     }
     else

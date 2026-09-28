@@ -22,7 +22,7 @@ struct MediaPanelRow
     std::string medium;    ///< source path, empty when the slot is empty
     std::string format;
     std::string access;
-    std::string dirty;     ///< "3 tracks" / "48 sectors" / ""
+    std::string dirty;     ///< the unsaved changes for people: "1 track: 3 sectors", "48 sectors", ""
     bool present = false;
     bool detached = false;
     bool isDirty = false;

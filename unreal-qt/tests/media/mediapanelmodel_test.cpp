@@ -24,7 +24,7 @@ namespace
         return slot;
     }
 
-    StateNode Medium(const char* source, bool dirty, int64_t units)
+    StateNode Medium(const char* source, bool dirty, int64_t units, const char* changes)
     {
         StateNode medium = StateNode::Object();
         medium["source"] = source;
@@ -32,6 +32,7 @@ namespace
         medium["access"] = "session";
         medium["dirty"] = dirty;
         medium["dirtyUnits"] = units;
+        medium["changes"] = changes;
         return medium;
     }
 }  // namespace
@@ -39,10 +40,10 @@ namespace
 TEST(MediaPanelModel_Test, RowsFromAListReply)
 {
     StateNode a = Slot("fdd.a", "A", "floppy", "present");
-    a["medium"] = Medium("games/elite.trd", true, 3);
+    a["medium"] = Medium("games/elite.trd", true, 3, "3 tracks: 20 sectors total");
     StateNode sd = Slot("sd.zc", "sd", "block", "empty");
     StateNode gone = Slot("sd.ngs", "", "block", "detached");
-    gone["medium"] = Medium("cards/ngs.img", true, 12);
+    gone["medium"] = Medium("cards/ngs.img", true, 12, "12 sectors");
 
     StateNode reply = StateNode::Object();
     reply["ok"] = true;
@@ -58,7 +59,7 @@ TEST(MediaPanelModel_Test, RowsFromAListReply)
     EXPECT_EQ(rows[0].alias, "A");
     EXPECT_TRUE(rows[0].present);
     EXPECT_EQ(rows[0].medium, "games/elite.trd");
-    EXPECT_EQ(rows[0].dirty, "3 tracks");
+    EXPECT_EQ(rows[0].dirty, "3 tracks: 20 sectors total") << "the core's words";
     EXPECT_FALSE(rows[1].present);
     EXPECT_EQ(rows[1].dirty, "");
     EXPECT_TRUE(rows[2].detached);

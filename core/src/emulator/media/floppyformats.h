@@ -63,4 +63,8 @@ public:
 
     /// Build a blank disk. `spec` comes back resolved (format, cylinders, sides)
     static MediaResult CreateBlank(bool plus3Machine, BlankFloppySpec& spec, std::unique_ptr<DiskImage>& disk);
+
+private:
+    static MediaResult LoadAny(EmulatorContext* context, const std::string& path, std::unique_ptr<DiskImage>& disk,
+                               std::string& format);
 };

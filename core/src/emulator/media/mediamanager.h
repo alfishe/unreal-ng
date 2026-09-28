@@ -85,6 +85,7 @@ struct SlotInfo
     AccessMode access = AccessMode::Session;
     bool dirty = false;
     uint64_t changedUnits = 0;
+    std::string changes;          ///< the unsaved changes for people ("1 track: 3 sectors")
     bool writeProtect = false;
 };
 
@@ -175,6 +176,7 @@ private:
         uint32_t emptyFramesLeft = 0;      ///< swap delay still to run
         bool writeProtect = false;
         uint64_t changedUnits = 0;         ///< per-frame snapshot of attached->ChangedUnits()
+        std::string changes;               ///< per-frame snapshot of attached->DescribeChanges()
         std::optional<uint32_t> swapDelayMs;  ///< config override of the slot's default
         bool writeMarkedThisFrame = false;    ///< a TTD barrier already recorded this frame
     };

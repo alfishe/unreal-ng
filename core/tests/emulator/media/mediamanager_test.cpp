@@ -492,6 +492,7 @@ TEST(MediaManager_Test, FloppyExportSaveAndDiscard)
     const auto copy = folder.Path() / "copy.trd";
     ASSERT_TRUE(manager.Export("fdd.a", Utf8Path(copy)).Ok());
     EXPECT_TRUE(manager.Info("fdd.a")->dirty) << "an export is a copy, not a save";
+    EXPECT_EQ(manager.Info("fdd.a")->changes, "1 track: 1 sector") << "the sector flags survive the export";
     EXPECT_EQ(manager.Info("fdd.a")->source, source.path) << "the disk still stands for its file";
     EXPECT_NE(Slurp(copy), Slurp(original)) << "the copy carries the write";
 

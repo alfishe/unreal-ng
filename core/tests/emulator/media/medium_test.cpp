@@ -92,3 +92,29 @@ TEST(Medium_Test, ExportWritesEverySectorAsTheGuestSeesIt)
     EXPECT_FALSE(ExportBlockDevice(*medium->Block(), Utf8(folder.Path() / "no-such-folder" / "x.img"), &error));
     EXPECT_FALSE(error.empty());
 }
+
+/// The unsaved changes in words: tracks and sectors on a floppy, sectors on a card
+TEST(Medium_Test, ChangesInWords)
+{
+    MediaSource blank;
+    blank.type = MediaSourceType::Blank;
+    auto disk = std::make_unique<DiskImage>(80, 2);  // TR-DOS layout: 16 x 256 per track
+    DiskImage* image = disk.get();
+    Medium floppy(blank, AccessMode::Session, "trd", std::move(disk));
+    EXPECT_EQ(floppy.DescribeChanges(), "");
+
+    const std::vector<uint8_t> sector(256, 0x42);
+    image->getTrack(5)->writeSectorData(0, sector.data(), sector.size());
+    EXPECT_EQ(floppy.DescribeChanges(), "1 track: 1 sector");
+    image->getTrack(5)->writeSectorData(1, sector.data(), sector.size());
+    image->getTrack(5)->writeSectorData(2, sector.data(), sector.size());
+    EXPECT_EQ(floppy.DescribeChanges(), "1 track: 3 sectors");
+    image->getTrack(9)->writeSectorData(0, sector.data(), sector.size());
+    EXPECT_EQ(floppy.DescribeChanges(), "2 tracks: 4 sectors total");
+
+    auto card = MemoryMedium(AccessMode::Session, 64);
+    const std::vector<uint8_t> block(512, 0x5A);
+    for (uint64_t lba : {3u, 4u, 9u})
+        ASSERT_TRUE(card->Block()->WriteSector(lba, block.data()));
+    EXPECT_EQ(card->DescribeChanges(), "3 sectors");
+}

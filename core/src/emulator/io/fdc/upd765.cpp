@@ -376,7 +376,7 @@ DiskImage::Track* UPD765::currentTrack() const
     if (fdd == nullptr || !fdd->isDiskInserted() || fdd->getDiskImage() == nullptr)
         return nullptr;
 
-    return fdd->getDiskImage()->getTrackForCylinderAndSide(static_cast<uint8_t>(fdd->getTrack()), head());
+    return fdd->trackUnderHead(head());
 }
 
 DiskImage::Sector* UPD765::currentSector() const

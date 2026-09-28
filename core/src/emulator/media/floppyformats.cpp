@@ -172,8 +172,25 @@ std::string FloppyFormats::Probe(const std::string& path)
     return {};
 }
 
+namespace
+{
+    /// A disk image of at most 42 cylinders is a 40-track (48 tpi) medium
+    MediaResult MarkDensity(MediaResult result, std::unique_ptr<DiskImage>& disk)
+    {
+        if (result.Ok() && disk)
+            disk->setFortyTrack(disk->getCylinders() <= 42);
+        return result;
+    }
+}  // namespace
+
 MediaResult FloppyFormats::Load(EmulatorContext* context, const std::string& path, std::unique_ptr<DiskImage>& disk,
                                 std::string& format)
+{
+    return MarkDensity(LoadAny(context, path, disk, format), disk);
+}
+
+MediaResult FloppyFormats::LoadAny(EmulatorContext* context, const std::string& path, std::unique_ptr<DiskImage>& disk,
+                                   std::string& format)
 {
     disk.reset();
     format = Probe(path);
@@ -313,6 +330,7 @@ MediaResult FloppyFormats::CreateBlank(bool plus3Machine, BlankFloppySpec& spec,
 
     disk = plus3 ? std::make_unique<DiskImage>(cylinders, sides, DiskImage::TrackFormatSpec::plus3())
                  : std::make_unique<DiskImage>(cylinders, sides);
+    disk->setFortyTrack(cylinders == 40);
     spec.format = format;
     spec.cylinders = cylinders;
     spec.sides = sides;

@@ -35,7 +35,7 @@ namespace
         std::string text = medium->find("source")->s + "  " + medium->find("format")->s + "  " +
                            medium->find("access")->s;
         if (medium->find("dirty")->b)
-            text += "  dirty " + std::to_string(medium->find("dirtyUnits")->i);
+            text += "  unsaved " + medium->find("changes")->s;
         return text;
     }
 
