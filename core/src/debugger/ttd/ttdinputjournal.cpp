@@ -10,6 +10,7 @@
 
 #include "emulator/io/keyboard/keyboard.h"  // Keyboard, ZXKeysEnum
 #include "emulator/io/mouse/mouse.h"        // Mouse
+#include "emulator/sound/chips/gs/generalsoundcard.h"
 
 namespace ttd {
 
@@ -44,7 +45,8 @@ size_t TTDInputJournal::InjectDueEvents(Keyboard& keyboard, const TTDTimePoint& 
     return InjectDueEvents(&keyboard, nullptr, now);
 }
 
-bool TTDInputJournal::Apply(const TTDInputEvent& ev, Keyboard* keyboard, Mouse* mouse)
+bool TTDInputJournal::Apply(const TTDInputEvent& ev, Keyboard* keyboard, Mouse* mouse,
+                            GeneralSoundCard* generalSound)
 {
     switch (ev.kind)
     {
@@ -92,11 +94,42 @@ bool TTDInputJournal::Apply(const TTDInputEvent& ev, Keyboard* keyboard, Mouse* 
                 return false;
             mouse->SetCounters(static_cast<uint8_t>(ev.dx), static_cast<uint8_t>(ev.dy));
             break;
+
+        case TTDInputKind::GSCommand:
+            if (!generalSound)
+                return false;
+            generalSound->sendCommand(ev.value);
+            break;
+
+        case TTDInputKind::GSData:
+            if (!generalSound)
+                return false;
+            generalSound->sendData(ev.value);
+            break;
+
+        case TTDInputKind::GSNmi:
+            if (!generalSound)
+                return false;
+            generalSound->triggerNMI();
+            break;
+
+        case TTDInputKind::GSResetCard:
+            if (!generalSound)
+                return false;
+            generalSound->resetCard();
+            break;
+
+        case TTDInputKind::GSReset:
+            if (!generalSound)
+                return false;
+            generalSound->reset();
+            break;
     }
     return true;
 }
 
-size_t TTDInputJournal::InjectDueEvents(Keyboard* keyboard, Mouse* mouse, const TTDTimePoint& now)
+size_t TTDInputJournal::InjectDueEvents(Keyboard* keyboard, Mouse* mouse, const TTDTimePoint& now,
+                                        GeneralSoundCard* generalSound)
 {
     size_t injected = 0;
     for (const auto& ev : _events)
@@ -104,7 +137,7 @@ size_t TTDInputJournal::InjectDueEvents(Keyboard* keyboard, Mouse* mouse, const 
         if (!(ev.time == now))
             continue;
 
-        if (Apply(ev, keyboard, mouse))
+        if (Apply(ev, keyboard, mouse, generalSound))
             ++injected;
     }
     return injected;

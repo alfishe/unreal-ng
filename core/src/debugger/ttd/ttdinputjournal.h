@@ -1,8 +1,9 @@
 #pragma once
 
 /// @file ttdinputjournal.h
-/// @brief TTD input event journal — captures keyboard matrix and Kempston Mouse
-///        mutations for deterministic replay.
+/// @brief TTD input event journal — captures keyboard matrix, Kempston Mouse
+///        and automation-driven General Sound host-port mutations for
+///        deterministic replay.
 ///
 /// Per parent TDD §5 row #1 and §5.1:
 ///   "Host key events arrive asynchronously via MessageCenter and mutate the
@@ -39,6 +40,7 @@
 // Forward declarations — full device types pulled in by the .cpp only.
 class Keyboard;
 class Mouse;
+class GeneralSoundCard;
 
 namespace ttd {
 
@@ -76,7 +78,16 @@ enum class TTDInputKind : uint8_t
     MouseButtons,       ///< Kempston Mouse button mask (buttonMask, active-low)
     MouseWheel,         ///< Kempston Mouse wheel notches (wheelSteps)
     MouseCounters,      ///< Kempston Mouse absolute X/Y counter write (dx = x, dy = y)
-    KeyboardReset       ///< whole keyboard matrix released (DebugKeyboardManager::ReleaseAllKeys)
+    KeyboardReset,      ///< whole keyboard matrix released (DebugKeyboardManager::ReleaseAllKeys)
+
+    // General Sound host-side stimuli from automation (the card's own Z80 is
+    // stepped by these calls, so they must run on the machine's thread; a ZX
+    // program's OUT reaches the card through the port decoder instead)
+    GSCommand,          ///< OUT #BB (value)
+    GSData,             ///< OUT #B3 (value)
+    GSNmi,              ///< #33 bit 6: NMI to the card CPU
+    GSResetCard,        ///< #33 bit 7: card reset, host mailbox kept
+    GSReset             ///< full card power-on reset, mailbox included
 };
 
 struct TTDInputEvent
@@ -89,6 +100,7 @@ struct TTDInputEvent
     int16_t      dy = 0;      ///< MouseMove: delta Y; MouseCounters: Y value
     uint8_t      buttonMask = 0xFF;  ///< MouseButtons: active-low mask
     int8_t       wheelSteps = 0;     ///< MouseWheel: notches
+    uint8_t      value = 0;          ///< GSCommand / GSData: the byte written
 };
 
 /// @brief Append-only journal of TTDInputEvents, queryable by TTDTimePoint.
@@ -161,12 +173,14 @@ public:
 
     /// @brief Inject every event with time == `now` into the live input devices.
     /// A null device skips the events of its kind (they are not counted).
-    size_t InjectDueEvents(Keyboard* keyboard, Mouse* mouse, const TTDTimePoint& now);
+    size_t InjectDueEvents(Keyboard* keyboard, Mouse* mouse, const TTDTimePoint& now,
+                           GeneralSoundCard* generalSound = nullptr);
 
     /// @brief Apply one event to the input devices (the single mutation path
     /// shared by replay and live input). Returns false when the event's device
     /// is absent.
-    static bool Apply(const TTDInputEvent& ev, Keyboard* keyboard, Mouse* mouse);
+    static bool Apply(const TTDInputEvent& ev, Keyboard* keyboard, Mouse* mouse,
+                      GeneralSoundCard* generalSound = nullptr);
 
     /// @brief Index of the first event with time >= `t` (Size() when none) -
     /// the replay cursor for a machine positioned at `t`.

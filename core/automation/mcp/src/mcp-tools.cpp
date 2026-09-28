@@ -108,7 +108,8 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "'list_models' enumerates hardware models with creatable flags; 'server' reports the build fingerprint "
         "and models_creatable; 'status' reports one instance's details. 'gs_*' actions drive the General Sound "
         "card over the same /control/audio/gs endpoint the WebAPI serves (gs_reset/gs_reset_card/gs_nmi/"
-        "gs_send_command/gs_send_data/gs_read_status/gs_read_data; the byte actions need 'value'); "
+        "gs_send_command/gs_send_data/gs_read_status/gs_read_data; the byte actions need 'value'; writes, "
+        "resets and NMI apply at the next instruction boundary, reads are side-effect-free peeks); "
         "'gs_switch_personality' swaps the LLE/LW card at the next frame boundary (needs 'personality': "
         "'z80'|'lle' or 'lw'|'lightweight'); 'gs_dump_module' writes the last completed COM30..D2 module "
         "upload to a file (optional 'path', defaults to 'gs-module-dump.mod').";

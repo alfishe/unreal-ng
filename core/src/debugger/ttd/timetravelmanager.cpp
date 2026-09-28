@@ -1394,6 +1394,13 @@ void TimeTravelManager::RecordInputEvent(uint8_t key, bool pressed)
     _inputJournal.Record(ev);
 }
 
+/// The fitted General Sound card, looked up per event: a personality switch
+/// replaces the card object at a frame boundary
+static GeneralSoundCard* InputGeneralSound(EmulatorContext* context)
+{
+    return context->pSoundManager ? context->pSoundManager->getGeneralSound() : nullptr;
+}
+
 /// Current TTDTimePoint for an input mutation happening now (see RecordInputEvent)
 static TTDTimePoint InputEventTimeNow(EmulatorContext* context)
 {
@@ -1479,7 +1486,7 @@ size_t TimeTravelManager::InjectDueInputEvents(const TTDTimePoint& now)
         return 0;
     }
 
-    return _inputJournal.InjectDueEvents(_context->pKeyboard, _context->pMouse, now);
+    return _inputJournal.InjectDueEvents(_context->pKeyboard, _context->pMouse, now, InputGeneralSound(_context));
 }
 
 // ---------------------------------------------------------------------------
@@ -1536,7 +1543,7 @@ void TimeTravelManager::ApplyLiveInput(TTDInputEvent ev)
         ev.time = InputEventTimeNow(_context);
         _inputJournal.Record(ev);
     }
-    TTDInputJournal::Apply(ev, _context->pKeyboard, _context->pMouse);
+    TTDInputJournal::Apply(ev, _context->pKeyboard, _context->pMouse, InputGeneralSound(_context));
 }
 
 void TimeTravelManager::ServiceInput()
@@ -1551,7 +1558,8 @@ void TimeTravelManager::ServiceInput()
         const auto& events = _inputJournal.Events();
         while (_inputCursor < events.size() && !(now < events[_inputCursor].time))
         {
-            TTDInputJournal::Apply(events[_inputCursor], _context->pKeyboard, _context->pMouse);
+            TTDInputJournal::Apply(events[_inputCursor], _context->pKeyboard, _context->pMouse,
+                                   InputGeneralSound(_context));
             ++_inputCursor;
         }
         if (_inputCursor >= events.size())

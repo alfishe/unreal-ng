@@ -1888,54 +1888,47 @@ public:
             return t;
         });
 
-        lua.set_function("gs_reset", [this]() {
-            if (!_emulator) return;
+        // Host-port stimuli step the card's Z80, so they go through the live-input
+        // path: applied on the machine's thread at an instruction boundary and
+        // journaled for TTD replay. Each returns true when submitted; false when
+        // no card is fitted, the byte is out of range or TTD replay owns input
+        auto submitGS = [this](ttd::TTDInputKind kind, int value) -> bool {
+            if (!_emulator || value < 0 || value > 255) return false;
             auto* ctx = _emulator->GetContext();
-            GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
-            if (gs) gs->reset();
-        });
+            if (!ctx || !ctx->pTimeTravelManager) return false;
+            if (!ctx->pSoundManager || !ctx->pSoundManager->getGeneralSound()) return false;
+            ttd::TTDInputEvent ev;
+            ev.kind = kind;
+            ev.value = static_cast<uint8_t>(value);
+            return ctx->pTimeTravelManager->SubmitLiveInput(ev);
+        };
 
-        lua.set_function("gs_reset_card", [this]() {
-            // #33 bit7 semantics: CPU/banking/timing only, mailbox survives
-            if (!_emulator) return;
-            auto* ctx = _emulator->GetContext();
-            GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
-            if (gs) gs->resetCard();
-        });
+        lua.set_function("gs_reset", [submitGS]() { return submitGS(ttd::TTDInputKind::GSReset, 0); });
 
-        lua.set_function("gs_nmi", [this]() {
-            if (!_emulator) return;
-            auto* ctx = _emulator->GetContext();
-            GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
-            if (gs) gs->triggerNMI();
-        });
+        // #33 bit7 semantics: CPU/banking/timing only, mailbox survives
+        lua.set_function("gs_reset_card", [submitGS]() { return submitGS(ttd::TTDInputKind::GSResetCard, 0); });
 
-        lua.set_function("gs_send_command", [this](int byte) {
-            if (!_emulator || byte < 0 || byte > 255) return;
-            auto* ctx = _emulator->GetContext();
-            GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
-            if (gs) gs->sendCommand(static_cast<uint8_t>(byte));
-        });
+        lua.set_function("gs_nmi", [submitGS]() { return submitGS(ttd::TTDInputKind::GSNmi, 0); });
 
-        lua.set_function("gs_send_data", [this](int byte) {
-            if (!_emulator || byte < 0 || byte > 255) return;
-            auto* ctx = _emulator->GetContext();
-            GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
-            if (gs) gs->sendData(static_cast<uint8_t>(byte));
-        });
+        lua.set_function("gs_send_command",
+                         [submitGS](int byte) { return submitGS(ttd::TTDInputKind::GSCommand, byte); });
 
+        lua.set_function("gs_send_data", [submitGS](int byte) { return submitGS(ttd::TTDInputKind::GSData, byte); });
+
+        // Reads are peeks: no host read cycle (read_data leaves status bit 7
+        // set) and the card is not stepped
         lua.set_function("gs_read_data", [this]() -> int {
             if (!_emulator) return -1;
             auto* ctx = _emulator->GetContext();
             GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
-            return gs ? gs->readData() : -1;
+            return gs ? gs->getDataToHost() : -1;
         });
 
         lua.set_function("gs_read_status", [this]() -> int {
             if (!_emulator) return -1;
             auto* ctx = _emulator->GetContext();
             GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
-            return gs ? gs->readStatus() : -1;
+            return gs ? (gs->getStatusRaw() | 0x7E) : -1;
         });
 
         // Runtime personality switch (GS card personalities design §11.3):

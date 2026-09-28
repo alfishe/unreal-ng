@@ -13,6 +13,7 @@
 #include "../emulator_api.h"
 #include "../common/statenode_json.h"
 #include <emulator/state/devicestate.h>
+#include <debugger/ttd/timetravelmanager.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
 
 
@@ -593,15 +594,18 @@ void EmulatorAPI::getStateAudioGS(const HttpRequestPtr& req, std::function<void(
 /// @brief POST /api/v1/emulator/{id}/control/audio/gs
 /// @param body {"action": "reset|reset_card|nmi|send_command|send_data|read_status|read_data|switch_personality",
 ///              "value": 0..255 (byte actions), "personality": "z80|lle|lw|lightweight" (switch_personality)}
-/// Actions mirror the host-port semantics - each flushes the GS coprocessor
-/// to the current ZX tact first (GS design §10.1):
+/// Actions mirror the host-port semantics (GS design §10.1). The writes,
+/// resets and NMI are live input: applied on the machine's thread at the next
+/// instruction boundary, where the card is first flushed to the current ZX
+/// tact (while paused: when execution continues); 409 while TTD replay owns
+/// input. The reads are side-effect-free peeks:
 ///   reset             - full power-on reset (mailbox, volumes and timing too)
 ///   reset_card        - #33 bit7 pulse (CPU/banking/timing only, mailbox survives)
 ///   nmi               - #33 bit6 pulse
 ///   send_command      - OUT #BB semantics (sets the command-pending flag)
 ///   send_data         - OUT #B3 semantics (sets the data-pending flag)
-///   read_status       - IN #BB semantics (returns status | 0x7E)
-///   read_data         - IN #B3 semantics (clears bit7, returns the GS->ZX byte)
+///   read_status       - peek the IN #BB value (status | 0x7E)
+///   read_data         - peek the GS->ZX byte (IN #B3 value; bit7 is not cleared)
 ///   switch_personality - runtime GS card personality swap (gs-card-
 ///                       personalities design): the host mailbox and activity
 ///                       counters survive the handoff; a module captured by
@@ -735,33 +739,49 @@ void EmulatorAPI::postControlAudioGS(const HttpRequestPtr& req, std::function<vo
     ret["status"] = "success";
     ret["action"] = action;
 
-    if (action == "reset")
-    {
-        gs->reset();
-    }
-    else if (action == "reset_card")
-    {
-        gs->resetCard();
-    }
+    // Host-port stimuli step the card's Z80, so they never run on this HTTP
+    // thread: they go through the live-input path - applied on the machine's
+    // thread at the next instruction boundary and journaled for TTD replay
+    ttd::TTDInputKind inputKind = ttd::TTDInputKind::GSReset;
+    const bool isInput = action == "reset" || action == "reset_card" || action == "nmi" ||
+                         action == "send_command" || action == "send_data";
+    if (action == "reset_card")
+        inputKind = ttd::TTDInputKind::GSResetCard;
     else if (action == "nmi")
-    {
-        gs->triggerNMI();
-    }
+        inputKind = ttd::TTDInputKind::GSNmi;
     else if (action == "send_command")
-    {
-        gs->sendCommand(static_cast<uint8_t>(value));
-    }
+        inputKind = ttd::TTDInputKind::GSCommand;
     else if (action == "send_data")
+        inputKind = ttd::TTDInputKind::GSData;
+
+    if (isInput)
     {
-        gs->sendData(static_cast<uint8_t>(value));
+        ttd::TTDInputEvent ev;
+        ev.kind = inputKind;
+        ev.value = static_cast<uint8_t>(value);
+        if (!context->pTimeTravelManager || !context->pTimeTravelManager->SubmitLiveInput(ev))
+        {
+            Json::Value error;
+            error["error"] = "Conflict";
+            error["message"] = "GS input refused: TTD replay owns input";
+
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k409Conflict);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        ret["note"] = "applied at the next instruction boundary";
     }
     else if (action == "read_status")
     {
-        ret["value"] = gs->readStatus();
+        // Peek: no host read cycle, the card is not stepped
+        ret["value"] = gs->getStatusRaw() | 0x7E;
     }
     else if (action == "read_data")
     {
-        ret["value"] = gs->readData();
+        // Peek: status bit 7 is left set, the card is not stepped
+        ret["value"] = gs->getDataToHost();
     }
     else if (action == "switch_personality")
     {
