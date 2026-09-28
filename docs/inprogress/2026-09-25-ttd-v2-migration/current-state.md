@@ -180,11 +180,11 @@ Why:
 
 | # | Issue | Status |
 |---|---|---|
-| B1 | Stale `_prevPageCache` after *Resume recording from here* at or after the last key frame: the first delta is XOR'd against the wrong base → zero-filled or silently old pages | suspected; `TTD_Corpus_Test` replay does not compare RAM, so it would not catch it |
-| B2 | `DeserializeSession` does not clear the write journal: a loaded file without a journal answers find-last from the previous live recording | suspected |
-| B3 | Empty write journal → write/port find-last returns "no match" without falling back to replay (TTM.cpp:3448) | **confirmed 2026-09-27**: TTD feature on pre-allocates the journal (`UpdateFeatureCache`), `SetEnableWriteJournal(false)` then leaves it allocated and empty, and `FindLastAccess` trusts it (`oldestInRing <= 1` → "no match"). Found while testing page 255; not fixed yet |
-| B4 | Hardware turbo: journal timestamps and the replay clamp assume `z80.t < frame length` | suspected |
-| B5 | A failed load has already cleared the live session and leaves a partial timeline with page reference counts off by one | read in code |
+| B1 | Stale `_prevPageCache` after *Resume recording from here*: the first delta was XOR'd against the old session end | **fixed** in `a2d265df` (the delta base cache is invalidated on resume; `ttdresume_test.cpp`) |
+| B2 | `DeserializeSession` kept the previous session's write journal and decoded frame | **fixed** in `a2d265df` (both replaced or cleared on load; `ttddumpformat_test.cpp`) |
+| B3 | Empty or paused write journal answered find-last ("no match" / stale "found") instead of replaying | **fixed** in `a2d265df` + `86813dcb`: the journal answers only while gapless for the session (journaling, TTD and debug mode on throughout the recording); "no match" is final only if the ring evicted nothing; dump header flag bit 4 (`kFlagsWriteJournalComplete`) carries completeness through a file |
+| B4 | Hardware turbo: journal timestamps and the replay clamp assume `z80.t < frame length` | **confirmed 2026-09-28** (still open, planned in V3 "turbo timebase"): an ATM3 BaseConf boot (turbo on) gives journal blocks whose records go backwards in `globalT` (11 of 151 blocks with `lastT < firstT` on master `f25d2e2f`). Visible effect: the same session answered `find-last` differently live and after save/load (the reloaded block directory is rebuilt), e.g. frame 59 t=69820 vs t=69870. Pentagon (no turbo) round-trips byte-identical apart from the capture timestamp |
+| B5 | A failed load cleared the live session and left a partial timeline | **fixed** in `a2d265df` (two-phase load: staged, swapped in only when complete) |
 | B6 | Page-255 gap (§7) | **fixed 2026-09-27**, with the stale-cache-on-ROM-switch defect found alongside it |
 | B7 | `sessionHeapBytes` ("Memory MB" in Qt and WebAPI) excludes page payloads, the 64 MB journal, coverage and caches | read in code |
 | B8 | Python analyzer: does not know flag bit 3 (bookmarks) → reports `trailing_bytes` on files with bookmarks. (The missing CRC comparison and the false "writer stores 0" comments were fixed 2026-09-25: 300/300 payload flips now caught) | read in code |
