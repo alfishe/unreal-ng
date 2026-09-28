@@ -11,6 +11,7 @@
 #include "emulator/memory/memory.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/state/devicestate.h"
+#include "debugger/ttd/timetravelmanager.h"
 #include "base/featuremanager.h"
 #include "emulator/video/screen.h"
 #include "emulator/video/ulacontention.h"
@@ -705,6 +706,26 @@ TEST(MemoryInterfaceSelection_Test, FollowsTheMachineAndTheDebugger)
 
         EmulatorTestHelper::CleanupEmulator(emulator);
     }
+}
+
+/// TTD replay engages the debug path; on a contended machine it must stay contended, or history replays with
+/// other timing than it was recorded with
+TEST(MemoryInterfaceSelection_Test, TtdReplayModeKeepsContention)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("48K", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    context->pScreen->InitFrame();
+    Z80* z80 = context->pCore->GetZ80();
+    ASSERT_NE(context->pTimeTravelManager, nullptr);
+
+    ASSERT_EQ(z80->MemIf, z80->FastContendedMemIf);
+    context->pTimeTravelManager->EnterReplayMode();
+    EXPECT_EQ(z80->MemIf, z80->DbgContendedMemIf);
+    context->pTimeTravelManager->ExitReplayMode();
+    EXPECT_EQ(z80->MemIf, z80->FastContendedMemIf);
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
 /// endregion </Memory interface selection>

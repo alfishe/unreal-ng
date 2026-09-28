@@ -1444,7 +1444,7 @@ void TimeTravelManager::EnterReplayMode()
     {
         _debugModeBeforeReplay = core->GetZ80()->isDebugMode;
         core->GetZ80()->isDebugMode = true;
-        core->UseDebugMemoryInterface();
+        core->SelectMemoryInterface();  // the debug path, contended where the machine is
     }
     if (_memory)
         _memory->UpdateFeatureCache();
@@ -1470,10 +1470,7 @@ void TimeTravelManager::ExitReplayMode()
     if (Core* core = _context->pCore)
     {
         core->GetZ80()->isDebugMode = _debugModeBeforeReplay;
-        if (_debugModeBeforeReplay)
-            core->UseDebugMemoryInterface();
-        else
-            core->UseFastMemoryInterface();
+        core->SelectMemoryInterface();
     }
     if (_memory)
         _memory->UpdateFeatureCache();
