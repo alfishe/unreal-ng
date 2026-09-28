@@ -173,6 +173,11 @@ through history (`seek`, the step actions, `reverse_*`, `find_last`) needs a
 stopped session: while recording the call fails with HTTP 409 and the tool
 tells you to call `stop` first. `find_last` reports where the access happened;
 `seek` to the reported `frame`/`tinframe` to inspect the machine there.
+`find_last` and `reverse_continue` also name the part of history they searched
+(`Searched frame A .. frame B.`): a marker (tape, disk write, edit) can cut a
+search short, and the span shows it. `status` says `write journal on
+(incomplete: <cause> at frame N; write searches replay)` when the journal
+misses writes of the session.
 
 ### Session rules
 
@@ -211,7 +216,7 @@ that did it.
 
 // 2. Ask for the last write to 0x5800
 {"name": "time_travel", "arguments": {"action": "find_last", "addr": "0x5800", "access": "write"}}
-// -> "Last write at frame 431 t=20112 by PC 0x8F3A, value 16, RAM page 5. Seek to that frame/tinframe ..."
+// -> "Last write at frame 431 t=20112 by PC 0x8F3A, value 16, RAM page 5. Searched frame 431 t=20112 .. frame 480. Seek to that frame/tinframe ..."
 
 // 3. Go there and look at the code
 {"name": "time_travel",   "arguments": {"action": "seek", "frame": 431, "tinframe": 20112}}

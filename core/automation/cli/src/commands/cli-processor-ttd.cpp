@@ -34,6 +34,18 @@
 
 /// region <TTD Commands>
 
+
+/// TD-8: the part of history a backward search examined, one line
+static std::string FormatSearchWindow(const ttd::TTDSearchWindow& window)
+{
+    if (!window.searched)
+        return {};
+    std::stringstream ss;
+    ss << "  Searched: frame " << window.from.frame << " t=" << window.from.tInFrame << " .. frame "
+       << window.to.frame << " t=" << window.to.tInFrame << CLIProcessor::NEWLINE;
+    return ss.str();
+}
+
 void CLIProcessor::HandleTTD(const ClientSession& session, const std::vector<std::string>& args)
 {
     auto emulator = GetSelectedEmulator(session);
@@ -226,6 +238,21 @@ void CLIProcessor::HandleTTDStatus(const ClientSession& session, EmulatorContext
        << (info.writeJournalEnabled ? "enabled" : "disabled") << ", "
        << info.writeJournalRecords << " records ("
        << info.writeJournalBytes << " bytes in memory)" << NEWLINE;
+    ss << "  Journal coverage:       ";
+    if (info.writeJournalComplete)
+        ss << "complete" << (info.writeJournalWrapped ? " (ring wrapped: a 'no match' replays)" : "") << NEWLINE;
+    else
+    {
+        ss << "incomplete - write/port find-last replays";
+        if (!info.journalGapReason.empty())
+        {
+            ss << " (" << info.journalGapReason;
+            if (info.journalGapHasPosition)
+                ss << ", at frame " << info.journalGapAt.frame << " t=" << info.journalGapAt.tInFrame;
+            ss << ")";
+        }
+        ss << NEWLINE;
+    }
     if (info.coverageIndexFrames != 0)
     {
         ss << "  Coverage index:         " << info.coverageIndexFrames << " frames ("
@@ -818,7 +845,8 @@ void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorConte
     }
 
     ttd::TTDExternalEvent blockingMarker;
-    auto result = mgr->FindLastAccess(q, &blockingMarker);
+    ttd::TTDSearchWindow window;
+    auto result = mgr->FindLastAccess(q, &blockingMarker, &window);
 
     if (result)
     {
@@ -835,6 +863,7 @@ void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorConte
         else
             ss << result->physPage << NEWLINE;
         ss << "  Access:   " << ttd::TTDAccessTypeToString(result->access) << NEWLINE;
+        ss << FormatSearchWindow(window);
         session.SendResponse(ss.str());
     }
     else if (blockingMarker.reason[0] != '\0')
@@ -845,11 +874,12 @@ void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorConte
            << " tInFrame=" << blockingMarker.time.tInFrame << NEWLINE;
         ss << "  Kind: " << ttd::TTDExternalEventKindToString(blockingMarker.kind) << NEWLINE;
         ss << "  Reason: " << blockingMarker.reason << NEWLINE;
+        ss << FormatSearchWindow(window);
         session.SendResponse(ss.str());
     }
     else
     {
-        session.SendResponse(std::string("TTD: No match found") + NEWLINE);
+        session.SendResponse(std::string("TTD: No match found") + NEWLINE + FormatSearchWindow(window));
     }
 }
 
@@ -993,6 +1023,7 @@ void CLIProcessor::HandleTTDReverseContinue(const ClientSession& session, Emulat
     {
         ss << "TTD: Reverse-continue found no match (reached session start)" << NEWLINE;
     }
+    ss << FormatSearchWindow(result.window);
     session.SendResponse(ss.str());
 }
 

@@ -379,6 +379,16 @@ void TtdWidget::updateTelemetry()
         ? tr(" [Loaded: %1]").arg(QFileInfo(QString::fromStdString(info.sourcePath)).fileName())
         : QString();
 
+    // The journal was expected (enabled) but misses writes of this session:
+    // write searches will replay instead of answering from it. Say so, with
+    // the cause in the tooltip.
+    const bool journalGap = info.writeJournalEnabled && !info.writeJournalComplete && hasHistory;
+    provenanceStr += journalGap ? tr(" | Journal incomplete") : QString();
+    _statusLabel->setToolTip(journalGap
+        ? tr("The write journal does not cover this session (%1): write/port searches replay history.")
+              .arg(QString::fromStdString(info.journalGapReason))
+        : QString());
+
     const bool scrubberWasVisible = _scrubberContainer->isVisible();
 
     if (isRecording)

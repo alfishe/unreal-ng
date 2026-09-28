@@ -2436,6 +2436,19 @@ namespace PythonBindings
                 info["coverage_index_frames"]    = py::cast(si.coverageIndexFrames);
                 info["coverage_index_bytes"]     = py::cast(si.coverageIndexBytes);
                 info["write_journal_enabled"]    = py::cast(si.writeJournalEnabled);
+                info["write_journal_complete"]   = py::cast(si.writeJournalComplete);
+                info["write_journal_wrapped"]    = py::cast(si.writeJournalWrapped);
+                if (!si.journalGapReason.empty())
+                {
+                    py::dict gap;
+                    gap["reason"] = si.journalGapReason;
+                    if (si.journalGapHasPosition)
+                    {
+                        gap["frame"]    = py::cast(si.journalGapAt.frame);
+                        gap["tinframe"] = py::cast(si.journalGapAt.tInFrame);
+                    }
+                    info["write_journal_gap"] = gap;
+                }
                 info["bookmark_count"]           = py::cast(static_cast<uint64_t>(si.bookmarkCount));
                 info["last_drop_reason"]         = si.lastDropReason.empty() ? py::object(py::none())
                                                                              : py::object(py::cast(si.lastDropReason));
@@ -2801,7 +2814,8 @@ namespace PythonBindings
                 }
 
                 ttd::TTDExternalEvent marker{};
-                auto result = ctx->pTimeTravelManager->FindLastAccess(q, &marker);
+                ttd::TTDSearchWindow window;
+                auto result = ctx->pTimeTravelManager->FindLastAccess(q, &marker, &window);
                 if (!result)
                 {
                     if (marker.reason[0] == '\0')
@@ -2814,6 +2828,14 @@ namespace PythonBindings
                     blocked["marker_tinframe"] = py::cast(marker.time.tInFrame);
                     blocked["marker_kind"]     = ttd::TTDExternalEventKindToString(marker.kind);
                     blocked["marker_reason"]   = std::string(marker.reason);
+                    // TD-8: the part of history the search examined
+                    if (window.searched)
+                    {
+                        blocked["covered_from"]          = py::cast(window.from.frame);
+                        blocked["covered_from_tinframe"] = py::cast(window.from.tInFrame);
+                        blocked["covered_to"]            = py::cast(window.to.frame);
+                        blocked["covered_to_tinframe"]   = py::cast(window.to.tInFrame);
+                    }
                     return blocked;
                 }
 
@@ -2827,6 +2849,14 @@ namespace PythonBindings
                 r["phys_page"] = result->physPage == ttd::kPhysPageNone ? py::object(py::none())
                                                                          : py::object(py::cast(result->physPage));
                 r["access"]    = ttd::TTDAccessTypeToString(result->access);
+                // TD-8: the part of history the search examined
+                if (window.searched)
+                {
+                    r["covered_from"]          = py::cast(window.from.frame);
+                    r["covered_from_tinframe"] = py::cast(window.from.tInFrame);
+                    r["covered_to"]            = py::cast(window.to.frame);
+                    r["covered_to_tinframe"]   = py::cast(window.to.tInFrame);
+                }
                 return r;
             }, "Reverse search: find last access at address or within address/PC range",
                py::arg("addr") = py::none(),
@@ -2889,6 +2919,14 @@ namespace PythonBindings
                     m["frame"]    = py::cast(r.blockingMarker.time.frame);
                     m["tinframe"] = py::cast(r.blockingMarker.time.tInFrame);
                     d["blocked_by_marker"] = m;
+                }
+                // TD-8: the part of history the search examined
+                if (r.window.searched)
+                {
+                    d["covered_from"]          = py::cast(r.window.from.frame);
+                    d["covered_from_tinframe"] = py::cast(r.window.from.tInFrame);
+                    d["covered_to"]            = py::cast(r.window.to.frame);
+                    d["covered_to_tinframe"]   = py::cast(r.window.to.tInFrame);
                 }
                 return d;
             }, "Run backward until any PC matches; returns dict or None",

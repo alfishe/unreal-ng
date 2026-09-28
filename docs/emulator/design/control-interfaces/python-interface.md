@@ -754,6 +754,9 @@ status = emu.ttd_status()
 #
 #   # Sections
 #   'write_journal_enabled': True,
+#   'write_journal_complete': True,   # False: write/io find-last replays history
+#   'write_journal_wrapped': False,   # True: a "no match" from the journal replays
+#   # 'write_journal_gap': {'reason': ..., 'frame': ..., 'tinframe': ...}  when incomplete
 #   'bookmark_count': 2,
 #   'write_journal_records': 729025,
 #   'write_journal_bytes': 8748300,   # in memory; on disk it is compressed
@@ -814,6 +817,8 @@ hit = emu.ttd_reverse_continue([0x8000, 0x8010])
 #    'blocked_by_marker': {'kind': ..., 'reason': ..., 'frame': ..., 'tinframe': ...}
 #    (with 'matched': False when the barrier stopped the search before a match).
 #    None only when nothing matched and no marker stopped the search.
+#    Dicts carry 'covered_from', 'covered_from_tinframe', 'covered_to',
+#    'covered_to_tinframe': the searched span (command-interface.md -> Search window).
 ```
 
 **Reverse search:**
@@ -828,7 +833,9 @@ result = emu.ttd_find_last(addr=0x5800, access='write')
 #   'pc': 0x4A21,
 #   'value': 0x07,
 #   'phys_page': 5,          # None for ROM / no RAM page
-#   'access': 'write'
+#   'access': 'write',
+#   'covered_from': 4823, 'covered_from_tinframe': 14982,  # the searched span:
+#   'covered_to': 4900, 'covered_to_tinframe': 0            # it ended at the hit
 # }
 
 # Full filter set (single address or address/PC range search):
@@ -847,7 +854,9 @@ result = emu.ttd_find_last(
 
 # A replay barrier stopped the search before any match:
 # {'found': False, 'blocked': True, 'marker_frame': 4700, 'marker_tinframe': 0,
-#  'marker_kind': 'debugger_edit', 'marker_reason': 'Python memory write'}
+#  'marker_kind': 'debugger_edit', 'marker_reason': 'Python memory write',
+#  'covered_from': 4700, 'covered_from_tinframe': 0, 'covered_to': 4900, 'covered_to_tinframe': 0}
+#  The search covered frame 4700..4900 only: nothing before the marker was examined.
 ```
 
 For writes the write journal answers when it holds every write of the session; otherwise the search replays history (see [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules), "When the write journal answers").

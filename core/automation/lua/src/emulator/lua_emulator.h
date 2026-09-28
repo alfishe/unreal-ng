@@ -2201,6 +2201,19 @@ public:
             info["coverage_index_frames"] = si.coverageIndexFrames;
             info["coverage_index_bytes"]  = si.coverageIndexBytes;
             info["write_journal_enabled"]    = si.writeJournalEnabled;
+            info["write_journal_complete"]   = si.writeJournalComplete;
+            info["write_journal_wrapped"]    = si.writeJournalWrapped;
+            if (!si.journalGapReason.empty())
+            {
+                sol::table gap = lua_view.create_table();
+                gap["reason"] = si.journalGapReason;
+                if (si.journalGapHasPosition)
+                {
+                    gap["frame"]    = si.journalGapAt.frame;
+                    gap["tinframe"] = si.journalGapAt.tInFrame;
+                }
+                info["write_journal_gap"] = gap;
+            }
             info["bookmark_count"]           = static_cast<uint64_t>(si.bookmarkCount);
             if (!si.lastDropReason.empty())
                 info["last_drop_reason"]     = si.lastDropReason;  // "" until a history is dropped
@@ -2637,7 +2650,16 @@ public:
             }
 
             ttd::TTDExternalEvent marker{};
-            auto found = ctx->pTimeTravelManager->FindLastAccess(q, &marker);
+            ttd::TTDSearchWindow window;
+            auto found = ctx->pTimeTravelManager->FindLastAccess(q, &marker, &window);
+            // TD-8: the part of history the search examined
+            if (window.searched)
+            {
+                result["covered_from"]          = window.from.frame;
+                result["covered_from_tinframe"] = window.from.tInFrame;
+                result["covered_to"]            = window.to.frame;
+                result["covered_to_tinframe"]   = window.to.tInFrame;
+            }
             if (!found)
             {
                 result["found"] = false;
@@ -2733,6 +2755,14 @@ public:
                 m["frame"]    = r.blockingMarker.time.frame;
                 m["tinframe"] = r.blockingMarker.time.tInFrame;
                 result["blocked_by_marker"] = m;
+            }
+            // TD-8: the part of history the search examined
+            if (r.window.searched)
+            {
+                result["covered_from"]          = r.window.from.frame;
+                result["covered_from_tinframe"] = r.window.from.tInFrame;
+                result["covered_to"]            = r.window.to.frame;
+                result["covered_to_tinframe"]   = r.window.to.tInFrame;
             }
             return result;
         });

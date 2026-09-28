@@ -694,6 +694,9 @@ local status = ttd_status()
 --
 -- Sections
 -- status.write_journal_enabled = true
+-- status.write_journal_complete = true  -- false: write/io find-last replays history
+-- status.write_journal_wrapped = false  -- true: a "no match" from the journal replays
+-- status.write_journal_gap     = nil    -- when incomplete: {reason, frame, tinframe}
 -- status.bookmark_count        = 2
 -- status.write_journal_records = 729025
 -- status.write_journal_bytes   = 8748300
@@ -745,6 +748,8 @@ local r = ttd_reverse_continue({0x8000, 0x8010})
 --     frame/tinframe are present only when matched.
 --     A replay barrier met on the way adds
 --     blocked_by_marker = {kind, reason, frame, tinframe}  (as the WebAPI does)
+--     covered_from, covered_from_tinframe, covered_to, covered_to_tinframe:
+--     the searched span (command-interface.md -> Search window)
 ```
 
 **Reverse search:**
@@ -771,6 +776,8 @@ local r2 = ttd_find_last{
 --     { found = false, blocked = true, marker_frame, marker_tinframe,
 --       marker_kind, marker_reason }  (a replay barrier stopped the search first)
 --     phys_page is absent (nil) for ROM / no RAM page.
+--     Every answer also carries covered_from / covered_from_tinframe /
+--     covered_to / covered_to_tinframe: the part of history searched.
 --     For writes the write journal answers when it holds every write of the session;
 --     otherwise the search replays history (see command-interface.md "When the write journal answers").
 ```
