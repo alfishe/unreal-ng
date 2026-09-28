@@ -121,15 +121,17 @@ void EmulatorAPI::capturePlaneB(const HttpRequestPtr& req, std::function<void(co
 
     EmulatorContext* context = emulator->GetContext();
     Screen* screen = context ? context->pScreen : nullptr;
-    size_t count = 0;
-    const uint16_t* planeB = screen ? screen->GetPlaneB(&count) : nullptr;
-    if (!planeB)
-        return fail(HttpStatusCode::k409Conflict, "Conflict", "Plane B is off - enable the 'zxdlss' feature");
+    // The latched copy of the presented frame: the live buffer belongs to the
+    // emulation thread, which may be drawing into it (or resizing it) now
+    std::vector<uint16_t> planeB;
+    if (!screen || !screen->CopyPresentedPlaneB(planeB))
+        return fail(HttpStatusCode::k409Conflict, "Conflict",
+                    "Plane B is off - enable the 'zxdlss' feature (takes effect at the next frame)");
 
     const FramebufferDescriptor& fb = screen->GetFramebufferDescriptor();
     auto resp = HttpResponse::newHttpResponse();
     resp->setContentTypeCode(CT_APPLICATION_OCTET_STREAM);
-    resp->setBody(std::string(reinterpret_cast<const char*>(planeB), count * sizeof(uint16_t)));
+    resp->setBody(std::string(reinterpret_cast<const char*>(planeB.data()), planeB.size() * sizeof(uint16_t)));
     resp->addHeader("X-PlaneB-Width", std::to_string(fb.width));
     resp->addHeader("X-PlaneB-Height", std::to_string(fb.height));
     resp->addHeader("X-PlaneB-Format", "u16le: attr[0:7] color[8:11] ink[12] role[13:14] (1 screen, 2 border)");

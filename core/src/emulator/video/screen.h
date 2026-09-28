@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <atomic>
 #include <mutex>
 #include <vector>
 
@@ -712,12 +713,23 @@ public:
     static constexpr uint16_t kPlaneBRoleBorder = 2u << 13;
     static constexpr uint16_t kPlaneBRoleMask = 3u << 13;
 
+    /// Threading: the live buffer belongs to the thread that renders (the
+    /// emulation thread, or a TTD replay while the emulation thread is paused).
+    /// The zxdlss feature can change on any thread, so UpdateFeatureCache only
+    /// records the wanted state; InitFrame applies it at the next frame start
+    /// on the rendering thread. Other threads read plane B through
+    /// CopyPresentedPlaneB, latched with the framebuffer under _presentMutex.
     bool IsPlaneBEnabled() const { return _planeBEnabled; }
     /// Allocates (enabled) or frees (disabled) the buffer; renderers pick their
     /// plane-B variant here, so the disabled path runs exactly the old code.
+    /// Rendering thread only (or with the emulation thread paused).
     virtual void SetPlaneBEnabled(bool enabled);
-    /// @return the live plane B (nullptr when disabled); count = pixels
+    /// @return the live plane B (nullptr when disabled); count = pixels.
+    /// Rendering thread only (or with the emulation thread paused).
     uint16_t* GetPlaneB(size_t* count);
+    /// Any thread: plane B of the frame CopyPresentedFramebuffer serves.
+    /// @return false when plane B is off or nothing is latched yet
+    bool CopyPresentedPlaneB(std::vector<uint16_t>& dst);
     /// endregion </ZX DLSS plane B>
 
     /// @brief Render entire screen at frame end when ScreenHQ=OFF (batch rendering mode)
@@ -748,8 +760,10 @@ protected:
 
     // ZX DLSS plane B (see SetPlaneBEnabled); sized with the framebuffer
     bool _planeBEnabled = false;
+    std::atomic<bool> _planeBWanted{false};     // set by UpdateFeatureCache on any thread
     std::vector<uint16_t> _planeB;
     void ResizePlaneB();
+    void ApplyPlaneBRequest();                  // InitFrame: wanted -> enabled, rendering thread
     /// endregion </Feature cache>
 
     virtual void SaveScreen();
@@ -779,6 +793,10 @@ protected:
     size_t _presentBufferSize = 0;  // Authoritative size for readers; set under _presentMutex
     std::atomic<uint8_t> _presentDelayFrames{2};  // Frames of video delay (0..PRESENT_SLOTS-1)
     std::mutex _presentMutex;
+    // Plane B latched with each present slot (under _presentMutex); empty while
+    // plane B is off, so the feature-off latch copies nothing
+    std::vector<uint16_t> _presentPlaneB[PRESENT_SLOTS];
+    const uint8_t* PresentedSlotLocked(size_t* index) const;  // the slot CopyPresentedFramebuffer serves
 
     // User-forced Pentagon overscan (see SetOverscanForced)
     bool _overscanForced = false;

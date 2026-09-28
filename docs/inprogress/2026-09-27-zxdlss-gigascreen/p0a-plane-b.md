@@ -33,7 +33,7 @@ layout (`Screen::GetPlaneB`):
 ## 3. Zero cost when off
 
 - The buffer is allocated only while the feature is on (`Screen::SetPlaneBEnabled`,
-  driven by `Screen::UpdateFeatureCache`).
+  applied at the next frame start, see §5.1).
 - `DrawRangeZX` is a template with two instantiations; `SelectRangeRenderer`
   picks the plain one when plane B is off, so the disabled path runs exactly
   the previous code - no per-pixel check.
@@ -52,6 +52,20 @@ seek or step, plane B describes exactly the displayed position.
 width × height little-endian `uint16`; geometry in `X-PlaneB-Width` /
 `X-PlaneB-Height`, format in `X-PlaneB-Format`; `409` while the feature is
 off. Documented in `openapi_capture.inc`.
+
+### 5.1 Threads
+
+The live buffer belongs to the thread that renders: the emulation thread, or
+a TTD replay (compose, export) while the emulation thread is paused. Two
+paths used to touch it from other threads:
+
+| Path | Was | Now |
+|---|---|---|
+| `zxdlss` toggled (WebAPI / UI thread) | `UpdateFeatureCache` resized or freed the buffer and swapped the renderer while the emulation thread drew into it | `UpdateFeatureCache` stores the wish in an atomic; `InitFrame` applies it at the next frame start on the rendering thread |
+| `GET capture/planeb` (WebAPI thread, emulator running) | read the live buffer: a torn frame, or freed memory after a toggle | copies the plane B latched with the presented frame (`CopyPresentedPlaneB`, same slot and present delay as `CopyPresentedFramebuffer`, under `_presentMutex`) |
+
+The latch copies 200 KB per frame only while the feature is on; off, it is
+one flag check. No locks on the render path.
 
 ## 6. Measurements (M-series Mac, Release)
 
@@ -83,6 +97,8 @@ per-cell (8-pixel) stores and SIMD for the plane B write (tagged
 | `ScreenZX_Test.PlaneB_PixelsIdenticalOnAndOff` | the picture is bit-identical with plane B on and off |
 | `ScreenZX_Test.PlaneB_DescribesEveryDrawnPixel` | border color changed every 16 T and attributes rewritten mid-frame: every screen pixel's color index and RGBA follow its recorded attribute and ink bit, every border pixel its recorded color; all 49 152 paper pixels described, all 8 border colors recorded |
 | `TTD_Display_Test.SeekByFrame_PlaneBMatchesLive` | after a TTD seek plane B equals the live frame's, border stripes included |
+| `PresentLatch_Test.PlaneB_FeatureToggle_AppliesAtFrameStart` | a toggle neither allocates nor frees on the caller's thread; the next `InitFrame` applies it (fails with the old immediate resize) |
+| `PresentLatch_Test.PlaneB_PresentedCopyFollowsPresentedFrame` | other threads see the latched plane B of the presented frame: not the in-progress render, same present delay as the pixels, none once off |
 
 ## 8. Clip export
 

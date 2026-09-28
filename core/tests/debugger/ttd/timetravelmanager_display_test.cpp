@@ -217,6 +217,7 @@ TEST_F(TTD_Display_Test, FrameCacheBuild_DoesNotChangeDisplay)
 TEST_F(TTD_Display_Test, SeekByFrame_PlaneBMatchesLive)
 {
     _emulator->GetFeatureManager()->setFeature(Features::kZXDLSS, true);
+    _emulator->RunNFrames(1, /*skipBreakpoints=*/true);    // the toggle applies at the next frame start
     ASSERT_TRUE(_screen->IsPlaneBEnabled());
 
     auto planeB = [this]() {

@@ -139,6 +139,10 @@ void Screen::Reset()
 
 void Screen::InitFrame()
 {
+    // A zxdlss toggle from another thread takes effect here, on the thread
+    // that renders, never under a running renderer
+    ApplyPlaneBRequest();
+
     _vid.buf ^= 0x00000001;  // Swap current video buffer
     _vid.t_next = 0;
     _vid.vptr = 0;
@@ -738,10 +742,18 @@ void Screen::UpdateFeatureCache()
     {
         _feature_screenhq_enabled = _context->pFeatureManager->isEnabled(Features::kScreenHQ);
         _feature_hud_enabled = _context->pFeatureManager->isEnabled(Features::kHud);
-        const bool dlss = _context->pFeatureManager->isEnabled(Features::kZXDLSS);
-        if (dlss != _planeBEnabled)
-            SetPlaneBEnabled(dlss);
+        // Called on the thread that changed the feature: record the wish only.
+        // Resizing the buffer or swapping the renderer here raced the emulation
+        // thread drawing into plane B (freed or reallocated under the writer).
+        _planeBWanted.store(_context->pFeatureManager->isEnabled(Features::kZXDLSS), std::memory_order_release);
     }
+}
+
+void Screen::ApplyPlaneBRequest()
+{
+    const bool wanted = _planeBWanted.load(std::memory_order_acquire);
+    if (wanted != _planeBEnabled)
+        SetPlaneBEnabled(wanted);
 }
 
 void Screen::SetPlaneBEnabled(bool enabled)
@@ -768,6 +780,16 @@ uint16_t* Screen::GetPlaneB(size_t* count)
     if (count)
         *count = _planeBEnabled ? _planeB.size() : 0;
     return _planeBEnabled && !_planeB.empty() ? _planeB.data() : nullptr;
+}
+
+bool Screen::CopyPresentedPlaneB(std::vector<uint16_t>& dst)
+{
+    std::lock_guard<std::mutex> lock(_presentMutex);
+    size_t index = 0;
+    if (!PresentedSlotLocked(&index) || _presentPlaneB[index].empty())
+        return false;
+    dst = _presentPlaneB[index];
+    return true;
 }
 
 void Screen::RefreshMemoryPointers()
@@ -955,6 +977,7 @@ void Screen::DeallocateFramebuffer()
         {
             delete[] _presentSlots[i];
             _presentSlots[i] = nullptr;
+            _presentPlaneB[i].clear();
         }
         _presentBufferSize = 0;
         _presentLatchCounter = 0;
@@ -971,8 +994,13 @@ void Screen::LatchFramebuffer()
     std::lock_guard<std::mutex> lock(_presentMutex);
     if (_presentSlots[0] && _presentBufferSize == _framebuffer.memoryBufferSize)
     {
-        uint8_t* slot = _presentSlots[_presentLatchCounter % PRESENT_SLOTS];
-        VideoUtils::CopyFrameBuffer(slot, _framebuffer.memoryBuffer, _presentBufferSize);
+        const size_t index = _presentLatchCounter % PRESENT_SLOTS;
+        VideoUtils::CopyFrameBuffer(_presentSlots[index], _framebuffer.memoryBuffer, _presentBufferSize);
+        // SIMD-CANDIDATE(O-13): 200 KB copy per frame, only while zxdlss is on
+        if (_planeBEnabled)
+            _presentPlaneB[index].assign(_planeB.begin(), _planeB.end());
+        else if (!_presentPlaneB[index].empty())
+            _presentPlaneB[index].clear();
         _presentLatchCounter++;
 
         _lastLatchTimestampUs.store(
@@ -997,6 +1025,10 @@ void Screen::FlushAndPresentFramebuffer()
     // playback resumes the queue refills on its own.
     _presentLatchCounter = 0;
     VideoUtils::CopyFrameBuffer(_presentSlots[0], _framebuffer.memoryBuffer, _presentBufferSize);
+    if (_planeBEnabled)
+        _presentPlaneB[0].assign(_planeB.begin(), _planeB.end());
+    else
+        _presentPlaneB[0].clear();
     _presentLatchCounter = 1;
 
     _lastLatchTimestampUs.store(
@@ -1015,14 +1047,28 @@ bool Screen::CopyPresentedFramebuffer(uint8_t* dst, size_t dstSize)
     // during mode-switch reallocation, and trusting it here could overread
     // a present buffer from the previous video mode
     std::lock_guard<std::mutex> lock(_presentMutex);
-    if (_presentSlots[0] == nullptr || _presentBufferSize == 0 || dstSize < _presentBufferSize)
+    if (dstSize < _presentBufferSize)
         return false;
+    const uint8_t* slot = PresentedSlotLocked(nullptr);
+    if (!slot)
+        return false;
+    VideoUtils::CopyFrameBuffer(dst, slot, _presentBufferSize);
+    return true;
+}
+
+/// The present slot readers are served; caller holds _presentMutex.
+/// @param index receives the slot index (for the matching plane B)
+const uint8_t* Screen::PresentedSlotLocked(size_t* index) const
+{
+    if (_presentSlots[0] == nullptr || _presentBufferSize == 0)
+        return nullptr;
     if (_presentLatchCounter == 0)
     {
         // Nothing latched yet: serve the zeroed slot (black frame) - callers
         // treat a false return as "no present buffer", not "not yet"
-        VideoUtils::CopyFrameBuffer(dst, _presentSlots[0], _presentBufferSize);
-        return true;
+        if (index)
+            *index = 0;
+        return _presentSlots[0];
     }
 
     // A/V sync: present the frame latched _presentDelayFrames ago so video
@@ -1034,9 +1080,10 @@ bool Screen::CopyPresentedFramebuffer(uint8_t* dst, size_t dstSize)
     if (delay > newest)
         delay = newest;
 
-    const uint8_t* slot = _presentSlots[(newest - delay) % PRESENT_SLOTS];
-    VideoUtils::CopyFrameBuffer(dst, slot, _presentBufferSize);
-    return true;
+    const size_t slot = (newest - delay) % PRESENT_SLOTS;
+    if (index)
+        *index = slot;
+    return _presentSlots[slot];
 }
 
 FramebufferDescriptor& Screen::GetFramebufferDescriptor()
