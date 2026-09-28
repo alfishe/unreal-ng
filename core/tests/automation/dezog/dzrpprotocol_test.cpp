@@ -246,23 +246,30 @@ TEST_F(DZRPProtocolTest, ResponseRoundTrip)
     ASSERT_EQ(serialized.size(), 4u + 1u + original.payload.size());
     uint32_t length = Protocol::readU32LE(serialized.data());
     EXPECT_EQ(length, 1u + original.payload.size());  // seqNo + data
-    EXPECT_EQ(serialized[4] & 0x0F, original.seqNo);
+    EXPECT_EQ(serialized[4], original.seqNo);
     EXPECT_EQ(serialized[4] & 0x80, 0);  // not NAK
     for (size_t i = 0; i < original.payload.size(); ++i)
         EXPECT_EQ(serialized[5 + i], original.payload[i]);
 }
 
-// --- Sequence number masking ---
+// --- Sequence numbers ---
 
-TEST_F(DZRPProtocolTest, ParseCommandMasksSeqHighBits)
+TEST_F(DZRPProtocolTest, ParseCommandKeepsTheWholeSeqByte)
 {
-    // A seq byte with high bits set (e.g. NAK bit echoed by a broken peer)
-    // must be masked down to the 4-bit sequence number
-    uint8_t data[] = {0x85, 0x03};
-    auto cmd = Protocol::parseCommand(data, 2);
-    ASSERT_TRUE(cmd.has_value());
-    EXPECT_EQ(cmd->seqNo, 5);
-    EXPECT_EQ(cmd->cmdId, CommandId::CMD_GET_REGISTERS);
+    // DeZog counts seqNo 1..255 and matches the response byte exactly: a
+    // masked seqNo answers command 16 with 0 and DeZog drops the session
+    for (uint8_t seq : {uint8_t{15}, uint8_t{16}, uint8_t{0x85}, uint8_t{255}})
+    {
+        uint8_t data[] = {seq, 0x03};
+        auto cmd = Protocol::parseCommand(data, 2);
+        ASSERT_TRUE(cmd.has_value());
+        EXPECT_EQ(cmd->seqNo, seq);
+        EXPECT_EQ(cmd->cmdId, CommandId::CMD_GET_REGISTERS);
+
+        Response resp;
+        resp.seqNo = cmd->seqNo;
+        EXPECT_EQ(Protocol::serializeResponse(resp)[4], seq);
+    }
 }
 
 // --- Framing limits ---
