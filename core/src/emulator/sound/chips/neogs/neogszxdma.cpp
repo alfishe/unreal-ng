@@ -1,6 +1,9 @@
 #include "neogszxdma.h"
 
 #include <cmath>
+#include <cstring>
+
+#include "common/statebytes.h"
 
 #include "emulator/sound/chips/neogs/neogsdma.h"
 #include "emulator/sound/chips/neogs/neogsmemory.h"
@@ -201,6 +204,7 @@ uint8_t NeoGSZxDma::onRead(uint16_t /*addr*/, uint8_t normal, bool /*isExecution
     _pendingDone = start + clocks(READ_DONE_CLOCKS);
     stallCard(start, _pendingDone);
     _bytesRead++;
+    _host.zxTrace(false, _pendingAddress, result);
     _host.zxReschedule();
     return result;
 }
@@ -221,7 +225,58 @@ void NeoGSZxDma::onWrite(uint16_t /*addr*/, uint8_t value, bool /*romPaged*/)
     _pendingDone = end + clocks(WRITE_GRANT_CLOCKS);
     stallCard(end, _pendingDone);
     _bytesWritten++;
+    _host.zxTrace(true, _pendingAddress, value);
     _host.zxReschedule();
+}
+
+/// endregion
+
+/// region <State snapshot>
+
+// Layout: 0 version, 1 flags (watchOpen), 2 readLatch, 3 pending kind,
+// 4 pendingData, 5 pendingAddress u32, 9 pendingDone, 17 lastDoneAt,
+// 25 watchUntilFrame u32, 29 bytesRead, 37 bytesWritten, 45 bytesDropped,
+// 53 waitTStates, 61 lateStarts, 69 lateStartUnits
+void NeoGSZxDma::saveState(uint8_t* dst) const
+{
+    using namespace statebytes;
+    static_assert(77 <= STATE_SIZE);
+    memset(dst, 0, STATE_SIZE);
+    dst[0] = 1;
+    dst[1] = _watchOpen ? 1 : 0;
+    dst[2] = _readLatch;
+    dst[3] = static_cast<uint8_t>(_pending);
+    dst[4] = _pendingData;
+    put32(dst + 5, _pendingAddress);
+    put64(dst + 9, _pendingDone);
+    put64(dst + 17, _lastDoneAt);
+    put32(dst + 25, _watchUntilFrame);
+    putU64(dst + 29, _bytesRead);
+    putU64(dst + 37, _bytesWritten);
+    putU64(dst + 45, _bytesDropped);
+    putU64(dst + 53, _waitTStates);
+    putU64(dst + 61, _lateStarts);
+    putU64(dst + 69, _lateStartUnits);
+}
+
+void NeoGSZxDma::loadState(const uint8_t* src)
+{
+    using namespace statebytes;
+    _watchOpen = (src[1] & 1) != 0;
+    _readLatch = src[2];
+    _pending = static_cast<Pending>(src[3]);
+    _pendingData = src[4];
+    _pendingAddress = get32(src + 5);
+    _pendingDone = get64(src + 9);
+    _lastDoneAt = get64(src + 17);
+    _watchUntilFrame = get32(src + 25);
+    _bytesRead = getU64(src + 29);
+    _bytesWritten = getU64(src + 37);
+    _bytesDropped = getU64(src + 45);
+    _waitTStates = getU64(src + 53);
+    _lateStarts = getU64(src + 61);
+    _lateStartUnits = getU64(src + 69);
+    updateMode();
 }
 
 /// endregion

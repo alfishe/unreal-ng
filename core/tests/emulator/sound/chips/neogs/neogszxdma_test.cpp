@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <cstring>
 #include <vector>
 
 #include "emulator/io/flash/flash29f040b.h"
@@ -62,6 +63,7 @@ struct ZxHost : NeoGSZxDma::Host
     uint32_t zxFrame() const override { return frame; }
     void zxReschedule() override {}
     void zxLateStart(int64_t units) override { late.push_back(units); }
+    void zxTrace(bool, uint32_t, uint8_t) override {}
 };
 
 struct Fixture
@@ -323,6 +325,61 @@ TEST(NeoGSZxDma, ARunningBurstDelaysTheByteBySlot)
     EXPECT_EQ(f.zx.pending(), NeoGSZxDma::Pending::Read);
     f.zx.run(f.host.hostNow + 1);
     EXPECT_EQ(f.zx.pending(), NeoGSZxDma::Pending::None);
+}
+
+/// endregion
+
+/// region <TTD state>
+
+TEST(NeoGSZxDma, StateSavedMidTransferContinuesIdentically)
+{
+    // A fast host with a byte in flight: the latch, the pending byte, the
+    // watch window and the counters all travel in the snapshot
+    Fixture a;
+    a.host.unitsPerT = 120e6 / 14e6;
+    for (int i = 0; i < 64; i++)
+        a.mem.ram()[0x5000 + i] = static_cast<uint8_t>(0x30 + i);
+    a.startAt(0x5000);
+    a.read(21);
+    a.read(3);
+    a.write(21, 0x99); // the read before it is done by now; this write is pending
+    ASSERT_NE(a.zx.pending(), NeoGSZxDma::Pending::None);
+
+    const size_t waitsBeforeSave = a.host.waits.size();
+    std::vector<uint8_t> dmaState(NeoGSDma::STATE_SIZE), zxState(NeoGSZxDma::STATE_SIZE);
+    a.dma.saveState(dmaState.data());
+    a.zx.saveState(zxState.data());
+
+    Fixture b;
+    b.host.unitsPerT = a.host.unitsPerT;
+    b.host.hostNow = a.host.hostNow;
+    b.host.frame = a.host.frame;
+    memcpy(b.mem.ram(), a.mem.ram(), b.mem.ramSize());
+    b.dma.loadState(dmaState.data());
+    b.zx.loadState(zxState.data());
+    EXPECT_EQ(b.zx.mode(), NeoGSZxDma::Mode::Divert) << "the mode follows the restored registers";
+    EXPECT_TRUE(b.zx.installed()) << "loading installs the overlay";
+    std::vector<uint8_t> again(NeoGSZxDma::STATE_SIZE);
+    b.zx.saveState(again.data());
+    EXPECT_EQ(again, zxState);
+
+    for (Fixture* f : {&a, &b})
+    {
+        f->write(3, 0x77); // waits for the pending write's grant
+        for (int i = 0; i < 6; i++)
+            f->read(i == 0 ? 21 : 4);
+        f->host.hostNow += 10000;
+        f->zx.run(f->host.hostNow);
+    }
+    const std::vector<uint32_t> aWaitsAfter(a.host.waits.begin() + static_cast<std::ptrdiff_t>(waitsBeforeSave), a.host.waits.end());
+    EXPECT_EQ(b.host.waits, aWaitsAfter);
+    EXPECT_FALSE(aWaitsAfter.empty()) << "the continuation must include waits";
+    EXPECT_EQ(b.zx.readLatch(), a.zx.readLatch());
+    EXPECT_EQ(b.zx.bytesRead(), a.zx.bytesRead());
+    EXPECT_EQ(b.zx.bytesWritten(), a.zx.bytesWritten());
+    EXPECT_EQ(b.zx.waitTStates(), a.zx.waitTStates());
+    EXPECT_EQ(b.dma.address(NeoGSDma::ZX), a.dma.address(NeoGSDma::ZX));
+    EXPECT_EQ(0, memcmp(b.mem.ram() + 0x5000, a.mem.ram() + 0x5000, 64));
 }
 
 /// endregion

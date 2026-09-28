@@ -620,6 +620,22 @@ void EmulatorAPI::getStateAudioGS(const HttpRequestPtr& req, std::function<void(
             module["address"] = ngs.dmaAddress[m];
             dma[kModules[m]] = module;
         }
+        // ZX-DMA: the host's view (neogs-zxdma-design.md §7)
+        Json::Value& zx = dma["zx"];
+        zx["mode"] = ngs.zxMode;
+        zx["overlay_installed"] = ngs.zxOverlayInstalled;
+        zx["read_latch"] = ngs.zxReadLatch;
+        zx["pending"] = ngs.zxPending;
+        zx["pending_address"] = ngs.zxPendingAddress;
+        zx["bytes_read"] = static_cast<Json::UInt64>(ngs.zxBytesRead);
+        zx["bytes_written"] = static_cast<Json::UInt64>(ngs.zxBytesWritten);
+        zx["bytes_dropped"] = static_cast<Json::UInt64>(ngs.zxBytesDropped);
+        zx["wait_tstates"] = static_cast<Json::UInt64>(ngs.zxWaitTStates);
+        zx["late_starts"] = static_cast<Json::UInt64>(ngs.zxLateStarts);
+        zx["late_start_ticks"] = static_cast<Json::UInt64>(ngs.zxLateStartUnits);
+        zx["watch_setting"] = ngs.zxWatchSetting;
+        zx["watch_frames"] = ngs.zxWatchFrames;
+        zx["watch_frames_left"] = ngs.zxWatchFramesLeft;
         n["dma"] = dma;
         ret["neogs"] = n;
     }
@@ -973,6 +989,7 @@ const char* gsTraceSideToString(GSTraceSide side)
         case GSTraceSide::GsInternal: return "gs";
         case GSTraceSide::DacFetch: return "dac";
         case GSTraceSide::Interrupt: return "interrupt";
+        case GSTraceSide::ZxDma: return "zxdma";
     }
     return "unknown";
 }
@@ -1072,6 +1089,8 @@ void EmulatorAPI::getStateAudioGSPortTrace(const HttpRequestPtr& req, std::funct
             ev["pc"] = e.pc;
             if (e.side == GSTraceSide::DacFetch)
                 ev["channel"] = e.channel;
+            if (e.side == GSTraceSide::ZxDma)
+                ev["card_address"] = (static_cast<uint32_t>(e.channel) << 16) | e.port;
             if (e.side == GSTraceSide::Interrupt)
                 ev["nmi"] = e.isNmi();
             eventsJson.append(ev);

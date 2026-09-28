@@ -53,6 +53,7 @@ public:
         virtual uint32_t zxFrame() const = 0;                // host frame counter
         virtual void zxReschedule() = 0;                     // our next event changed
         virtual void zxLateStart(int64_t units) = 0;         // a start was seen late (log once)
+        virtual void zxTrace(bool write, uint32_t address, uint8_t value) = 0; // port trace (when capturing)
     };
 
     // Timing, card clocks (neogs-zxdma-design.md §2.4; estimates from the Verilog)
@@ -114,6 +115,14 @@ public:
     uint32_t watchFrames() const { return _watchFrames; }
     /// Frames until the watch window closes; -1 when closed
     int32_t watchFramesLeft() const;
+
+    /// TTD snapshot (NeoGS layout 3): latch, pending byte, watch window and
+    /// the statistics. The mode is not stored - it follows from the module's
+    /// registers (NeoGSDma) and the window; loadState re-selects it and
+    /// installs or removes the overlay accordingly
+    static constexpr size_t STATE_SIZE = 96;
+    void saveState(uint8_t* dst) const;
+    void loadState(const uint8_t* src);
 
 private:
     void updateMode();

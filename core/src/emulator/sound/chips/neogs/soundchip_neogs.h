@@ -223,12 +223,14 @@ public:
 
     /// TTD blob (neogs-tdd.md §7.4, TTD v1: every checkpoint carries it all):
     /// the fixed card state, the SD card's protocol, the decoder, the DMA
-    /// modules, then RAM and flash contents
+    /// modules, ZX-DMA, then RAM and flash contents
     static constexpr size_t TTD_FIXED_STATE_SIZE = 256;
     static constexpr size_t TTD_SD_OFFSET = TTD_FIXED_STATE_SIZE;
     static constexpr size_t TTD_MP3_OFFSET = TTD_SD_OFFSET + SdCardSpi::STATE_SIZE;
     static constexpr size_t TTD_DMA_OFFSET = TTD_MP3_OFFSET + Vs10xxDecoder::STATE_SIZE;
-    static constexpr size_t TTD_DEVICE_STATE_END = TTD_DMA_OFFSET + NeoGSDma::STATE_SIZE;
+    static constexpr size_t TTD_ZX_OFFSET = TTD_DMA_OFFSET + NeoGSDma::STATE_SIZE;
+    static constexpr size_t TTD_DEVICE_STATE_END = TTD_ZX_OFFSET + NeoGSZxDma::STATE_SIZE;
+    static constexpr uint8_t TTD_LAYOUT = 3; // 3: + ZX-DMA (neogs-zxdma-design.md §5.9)
 
 private:
     friend class GSCardRunner<SoundChip_NeoGS>;
@@ -302,6 +304,7 @@ private:
     uint32_t zxFrame() const override { return currentFrameNumber(); }
     void zxReschedule() override { reschedule(); }
     void zxLateStart(int64_t units) override;
+    void zxTrace(bool write, uint32_t address, uint8_t value) override;
 
     // Lazy sync with the host
     void flush();

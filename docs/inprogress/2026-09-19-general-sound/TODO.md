@@ -188,9 +188,9 @@ Plan: [`neogs-tdd.md`](neogs-tdd.md) §9; as built, findings and open items:
 **Phase 5 - ZX-DMA and fpgaD** - designed ([`neogs-zxdma-design.md`](neogs-zxdma-design.md)), not started
 - [x] 5a host bus overlay slot + one memory-interface selector (no user yet), golden host test, selection tests, benchmarks A/B (neogs-zxdma-design.md §10 "5a as built")
 - [x] 5b `NeoGSZxDma` model: Watch/Divert, waits, arbitration, late-start counter (neogs-zxdma-design.md §10 "5b as built")
-- [ ] 5c TTD layout 3, automation, `ZxDmaWatch` setting
-- [ ] 5d GS debugger items (tight mode via the overlay, DMA panel, events, trace)
-- [ ] 5e `Fpga=D`
+- [x] 5c TTD layout 3, automation, port trace side, docs (neogs-zxdma-design.md §10 "5c as built"; the `ZxDmaWatch` settings came with 5b)
+- [ ] 5d GS debugger items (tight mode via the overlay, DMA panel, events, trace) - **deferred until the GS debugger exists** (decided 2026-09-28)
+- [ ] 5e `Fpga=D` - **Decision (2026-09-28): skip.** Kept for reference: only the old 2 MB fpgaD boards (2008-2013) and their v1.08 flash images need it (neogs-tdd.md §3.12); the shipped image and every tested program run on the current FPGA. The config value stays parsed; today it only switches ZX-DMA off
 
 **Phase 6 - NeoGS TTD, v1 full blobs** - done 2026-09-27
 - [x] SD card, decoder and DMA state in the blob (layout 2); state hash without the platform-dependent PCM

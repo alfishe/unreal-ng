@@ -1254,6 +1254,8 @@ Mp3Chip=vs1001                 ; vs1001 | vs1011
 Mp3Gain=1.0
 FlashWrite=session             ; session | persist | off
 Volume=8000                    ; output gain, same scale as [SOUND] GSVol
+ZxDmaWatch=selected            ; selected | always (neogs-zxdma-design.md §5.4)
+ZxDmaWatchFrames=5             ; watch window after ZX-DMA activity, frames
 ```
 
 **Parsing** (`config.cpp:505-530`):
@@ -1396,12 +1398,13 @@ earlier):
     position, `mp3dec_t` (§5.6);
   - DMA modules and their FIFOs, active stall, flash state machine;
   - the event queue.
-- **As built, layout 2:** the 256-byte header (the list above minus the
+- **As built, layout 3:** the 256-byte header (the list above minus the
   devices below), then fixed-size device blocks - `SdCardSpi::saveState`
   (protocol, command and data buffers, the queued output, up to 2 KB),
   `Vs10xxDecoder::saveState` (registers, times, the 2 KB input FIFO, the
   unplayed PCM, `mp3dec_t`), `NeoGSDma::saveState` (registers, phases and
-  times, both 512-byte FIFOs) - then RAM and flash. `TTDHashState` covers the
+  times, both 512-byte FIFOs), `NeoGSZxDma::saveState` (latch, pending byte,
+  watch window, counters; layout 3, phase 5c) - then RAM and flash. `TTDHashState` covers the
   header and the device blocks, without the decoded PCM and minimp3's floats,
   which may differ between x64 and arm64 (§5.6).
 - **Bulk memory** — RAM (2-4 MB), the flash image and the SD overlay — is
@@ -1552,7 +1555,7 @@ flowchart LR
 | 2 | `SdCardSpi`, `NeoGSSpi`, `Flash29F040B` programming, port `#80` restart, persistence | The loader boots `NEOGS.ROM` from FAT16 and FAT32 images; the flasher updates the flash in `session` mode and the card restarts into it; `test_emu_ngs` passes; `test_ngs` passes its SD part |
 | 3 | `Vs10xxDecoder` with minimp3, the MP3 audio source, SD and MP3 DMA | Neo Player Light plays an MP3 from the SD image (no DMA); `npl_044_dma` plays one with SD and MP3 DMA; `test_ngs` detects the chip |
 | 4 | Runtime switching to and from NGS, automation surfaces and docs, `neogs` debugger target, the TTD refusal (superseded by phase 6) and GS-slot guard | `gs switch_personality ngs` works with module handoff; every surface shows the `neogs` state; the debugger shows the target; recording with NeoGS is refused with a clear message (until phase 6) |
-| 5 | ZX-DMA host hook; `Fpga=D` | Our ZX-DMA test program transfers a block in both directions; the v1.08 images boot with `Fpga=D` |
+| 5 | ZX-DMA host hook; `Fpga=D` | Our ZX-DMA test program transfers a block in both directions; the v1.08 images boot with `Fpga=D`. **As built:** ZX-DMA done (phases 5a-5c, [`neogs-zxdma-design.md`](neogs-zxdma-design.md)); `Fpga=D` skipped by decision (2026-09-28), §3.12 kept for reference |
 | 6 | NeoGS TTD on v1 full blobs (regions later, with the v2 migration) | A NeoGS recording replays exactly from every kind of restore point; a snapshot taken mid SD transfer, mid MP3 DMA and mid decoding continues identically |
 
 ## 10. Worked example: a module on NeoGS

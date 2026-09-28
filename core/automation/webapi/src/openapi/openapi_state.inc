@@ -162,8 +162,13 @@
     paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["description"] =
         "General Sound card (dedicated 12 MHz Z80 coprocessor + 4 x 8-bit DAC, requires [SOUND] GSType=Z80): "
         "mailbox status with decoded flags, host command/data bytes, MPAG banking latch, per-channel DAC sample "
-        "and 6-bit volume, firmware/RAM fitment and the coprocessor PC/SP/AF/halted state. 404 when the machine "
-        "has no GS card fitted.";
+        "and 6-bit volume, firmware/RAM fitment and the coprocessor PC/SP/AF/halted state. On NeoGS a 'neogs' "
+        "object adds the card's registers, SD card, MP3 decoder and DMA modules; 'neogs.dma.zx' is the host's "
+        "view of ZX-DMA: mode (off | watch | divert), overlay_installed, read_latch (the byte the next host read "
+        "gets), pending (none | read | write) and pending_address, bytes_read / bytes_written / bytes_dropped, "
+        "wait_tstates, late_starts and late_start_ticks (starts no watch window saw, in 120 MHz card ticks), "
+        "watch_setting (selected | always), watch_frames and watch_frames_left (-1: closed). 404 when the "
+        "machine has no GS card fitted.";
     paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["parameters"][0]["required"] = true;

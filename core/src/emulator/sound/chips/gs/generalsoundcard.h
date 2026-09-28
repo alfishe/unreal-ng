@@ -139,6 +139,21 @@ struct NeoGSStateInfo
     uint8_t dmaSelect = 0;
     bool dmaRunning[3] = {};
     uint32_t dmaAddress[3] = {};
+    // ZX-DMA: the host's view (neogs-zxdma-design.md §7)
+    const char* zxMode = "off";       // off | watch | divert
+    bool zxOverlayInstalled = false;
+    uint8_t zxReadLatch = 0;          // the byte the next host read gets
+    const char* zxPending = "none";   // none | read | write
+    uint32_t zxPendingAddress = 0;
+    uint64_t zxBytesRead = 0;
+    uint64_t zxBytesWritten = 0;
+    uint64_t zxBytesDropped = 0;
+    uint64_t zxWaitTStates = 0;
+    uint64_t zxLateStarts = 0;
+    uint64_t zxLateStartUnits = 0;    // 120 MHz card ticks the late starts were seen after
+    const char* zxWatchSetting = "selected"; // selected | always
+    uint32_t zxWatchFrames = 0;
+    int32_t zxWatchFramesLeft = -1;   // -1: window closed
 };
 
 /// Coprocessor register selector for the introspection API (automation, HUD,

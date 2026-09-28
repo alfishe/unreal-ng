@@ -1,11 +1,13 @@
 # NeoGS ZX-DMA (phase 5) — technical design
 
 - **Date:** 2026-09-27.
-- **Status:** phases 5a (the overlay slot and the selector, §5.2-§5.3) and
-  5b (the ZX module model, §5.4-§5.6) are implemented, with tests and
-  benchmarks (§10, "5a as built", "5b as built"). 5c-5e are not. Parent design:
-  [`neogs-tdd.md`](neogs-tdd.md) (§3.9 hardware, §5.7 first sketch, §9
-  phase 5). This document replaces the §5.7 sketch for the ZX module.
+- **Status:** phases 5a (the overlay slot and the selector, §5.2-§5.3),
+  5b (the ZX module model, §5.4-§5.6) and 5c (TTD, automation, §5.9, §7)
+  are implemented, with tests and benchmarks (§10, "as built"). 5d waits
+  for the GS debugger. 5e (`Fpga=D`): decision - skip (§11, row 10).
+- **Parent design:** [`neogs-tdd.md`](neogs-tdd.md) (§3.9 hardware, §5.7
+  first sketch, §9 phase 5). This document replaces the §5.7 sketch for the
+  ZX module.
 - **Scope:** the NeoGS "ZX" DMA module, which lets the Spectrum read and
   write NeoGS card RAM through its own memory cycles at `#0000`-`#3FFF`. The
   document covers:
@@ -1019,7 +1021,7 @@ flowchart LR
 | 5b | `NeoGSZxDma`, `NeoGSDma` hooks, arbitration, the late-start counter | §8.3 all green, in fast and debug mode |
 | 5c | TTD layout 3, automation fields and commands, the `ZxDmaWatch` setting, docs | §8.2 TTD rows and §8.4 automation green; all §9 benchmarks recorded |
 | 5d | §6 items, delivered inside the GS debugger's phases (tight mode through the overlay in its phase 1; panels and events in its phases 4-6) | the GS debugger's own checks |
-| 5e | `Fpga=D` (`neogs-tdd.md` §3.12) | the v1.08 images boot with `Fpga=D` |
+| 5e | `Fpga=D` (`neogs-tdd.md` §3.12) - **skipped** (§11, row 10) | the v1.08 images boot with `Fpga=D` |
 
 5a lands on its own first: it changes the host core for every machine, so it
 must be proven harmless before anything uses it.
@@ -1073,15 +1075,32 @@ must be proven harmless before anything uses it.
   frames of streaming). Mutation-checked: without the port-access renewal
   the handshake test fails.
 - Found while testing: a card fitted mid-frame runs from the second frame
-  (its first frame base is taken at the next frame start), and
-  `Emulator::RunNFrames` steps the host CPU only - card tests drive
-  `MainLoop::RunFrame`.
+  (its first frame base is taken at the next frame start), so the tests
+  give the card two frames to set up.
 - Benchmarks (Pentagon, NeoGS, µs per frame, fast / debug): mode Off
   1,315 / 1,324; Watch with `always` and the host in BASIC (every ROM access
   catches the card up - the worst case) 1,602 / 1,662; Divert with an endless
   LDIR (3,411 bytes a frame) 1,363 / 1,403. A/B against the build before 5b:
   the host frame without NeoGS and the NeoGS card frame are within noise
   (−5.6% … +1.1%).
+
+**5c as built (2026-09-28).**
+- TTD: `NeoGSZxDma::saveState` / `loadState` (96 bytes: latch, pending byte
+  and its times, watch window, counters) after the DMA block; NeoGS blob
+  layout 3. A load re-selects the mode from the restored registers and
+  installs or removes the overlay. Tests: `neogszxdma_test`
+  (`StateSavedMidTransferContinuesIdentically`, with a byte in flight and
+  waits after the restore) and `ttdneogs_test`
+  (`TTD_NeoGSZxDma_Test`: the host streams in and out while recording; the
+  replay from the session start, a checkpoint and a mid-frame seek reaches
+  the recorded end with the card blob, host RAM and CPU identical).
+  Mutation-checked: without the load the replay differs.
+- Automation: `NeoGSStateInfo` ZX fields; CLI `state audio gs` ZX-DMA line;
+  WebAPI `neogs.dma.zx` (MCP reads it through `gs_state`); Lua / Python
+  `zx_dma_*`; OpenAPI description. The GS port trace gets side `ZxDma`
+  (`zxdma`: card address in port / channel, the host PC). The Python
+  binding is not compiled in the development build
+  (`ENABLE_PYTHON_AUTOMATION=OFF`).
 
 ## 11. Decisions and open points
 
@@ -1096,6 +1115,7 @@ must be proven harmless before anything uses it.
 | 7 | Mixed directions | Follow the Verilog, including dropped bytes. |
 | 8 | Tight mode of the GS debugger | Through the same overlay object (§6.1); proposed here, decided in that design. |
 | 9 | Open | Whether `LW` or the classic card need an overlay other than tight mode: no known case. |
+| 10 | 5e, `Fpga=D` | **Decision (2026-09-28): skip.** Only the old 2 MB fpgaD boards (2008-2013) and their v1.08 flash images need it (fixed windows 0/1, the INT pulse, no DMA - `neogs-tdd.md` §3.12); the shipped image and every tested program run on the current FPGA. The config value stays parsed; with it the ZX module is unavailable, nothing else changes. |
 
 ## 12. References
 

@@ -456,6 +456,24 @@ bool SoundChip_NeoGS::neogsState(NeoGSStateInfo& out) const
         out.dmaRunning[m] = _dma.running(static_cast<NeoGSDma::Module>(m));
         out.dmaAddress[m] = _dma.address(static_cast<NeoGSDma::Module>(m));
     }
+    {
+        static const char* kModes[] = {"off", "watch", "divert"};
+        static const char* kPending[] = {"none", "read", "write"};
+        out.zxMode = kModes[static_cast<int>(_zx.mode())];
+        out.zxOverlayInstalled = _zx.installed();
+        out.zxReadLatch = _zx.readLatch();
+        out.zxPending = kPending[static_cast<int>(_zx.pending())];
+        out.zxPendingAddress = _zx.pendingAddress();
+        out.zxBytesRead = _zx.bytesRead();
+        out.zxBytesWritten = _zx.bytesWritten();
+        out.zxBytesDropped = _zx.bytesDropped();
+        out.zxWaitTStates = _zx.waitTStates();
+        out.zxLateStarts = _zx.lateStarts();
+        out.zxLateStartUnits = _zx.lateStartUnits();
+        out.zxWatchSetting = _zx.watchAlways() ? "always" : "selected";
+        out.zxWatchFrames = _zx.watchFrames();
+        out.zxWatchFramesLeft = _zx.watchFramesLeft();
+    }
     return true;
 }
 
@@ -626,6 +644,22 @@ void SoundChip_NeoGS::zxLateStart(int64_t units)
     MLOGWARNING("NeoGS: ZX-DMA started while not watched; seen %.1f us late (raise [NGS] ZxDmaWatchFrames or set "
                 "ZxDmaWatch=always). Further late starts are counted, not logged.",
                 static_cast<double>(units) / (TICKS_PER_SECOND / 1e6));
+}
+
+void SoundChip_NeoGS::zxTrace(bool write, uint32_t address, uint8_t value)
+{
+    if (!_portTrace.isCapturing())
+        return;
+    GSTraceEvent event;
+    event.timestamp = _runner.now();
+    event.frameNumber = currentFrameNumber();
+    event.port = static_cast<uint16_t>(address);
+    event.channel = static_cast<uint8_t>((address >> 16) & 0x1F);
+    event.pc = (_context && _context->pCore && _context->pCore->GetZ80()) ? _context->pCore->GetZ80()->m1_pc : 0;
+    event.value = value;
+    event.side = GSTraceSide::ZxDma;
+    event.flags = write ? GSTraceFlags::kDirectionOut : 0;
+    _portTrace.record(event);
 }
 
 void SoundChip_NeoGS::flush()
@@ -1104,7 +1138,7 @@ void SoundChip_NeoGS::replayModuleUpload(const std::vector<uint8_t>& bytes, bool
 void SoundChip_NeoGS::serializeFixedState(uint8_t* dst) const
 {
     memset(dst, 0, TTD_FIXED_STATE_SIZE);
-    dst[0] = 2; // layout version
+    dst[0] = TTD_LAYOUT;
     dst[1] = _mb.status;
     dst[2] = _mb.dataFromHost;
     dst[3] = _mb.dataToHost;
@@ -1189,6 +1223,7 @@ void SoundChip_NeoGS::serializeDeviceState(uint8_t* dst, bool machineVisibleOnly
     if (_mp3)
         _mp3->saveState(dst + (TTD_MP3_OFFSET - TTD_SD_OFFSET), machineVisibleOnly);
     _dma.saveState(dst + (TTD_DMA_OFFSET - TTD_SD_OFFSET));
+    _zx.saveState(dst + (TTD_ZX_OFFSET - TTD_SD_OFFSET));
 }
 
 size_t SoundChip_NeoGS::TTDStateSize() const
@@ -1206,7 +1241,7 @@ void SoundChip_NeoGS::TTDSaveState(uint8_t* dst) const
 
 void SoundChip_NeoGS::TTDLoadState(const uint8_t* src)
 {
-    if (src[0] != 2)
+    if (src[0] != TTD_LAYOUT)
     {
         MLOGWARNING("NeoGS: TTD state layout %u is not supported - card state left as is", src[0]);
         return;
@@ -1291,9 +1326,9 @@ void SoundChip_NeoGS::TTDLoadState(const uint8_t* src)
     const uint8_t pages[4] = {src[6], src[7], src[8], src[9]};
     _mem.setPagesRaw(pages, src[10], _gscfg0);
 
-    // ZX-DMA's pending byte and latch join the blob in layout 3 (phase 5c);
-    // until then the mode follows the restored registers
-    _zx.reset();
+    // After the DMA registers: the ZX mode follows from them, and loading
+    // re-selects the host memory interface
+    _zx.loadState(src + TTD_ZX_OFFSET);
 
     _audio.setLevels(_outL, _outR);
     _audio.clear();

@@ -1617,6 +1617,16 @@ namespace PythonBindings
                     n["mp3_decode_time_s"] = ngs.mp3DecodeSeconds;
                     n["dma_sd_running"] = ngs.dmaRunning[1];
                     n["dma_mp3_running"] = ngs.dmaRunning[2];
+                    n["zx_dma_mode"] = std::string(ngs.zxMode);
+                    n["zx_dma_address"] = ngs.dmaAddress[0];
+                    n["zx_dma_read_latch"] = ngs.zxReadLatch;
+                    n["zx_dma_pending"] = std::string(ngs.zxPending);
+                    n["zx_dma_bytes_read"] = (ngs.zxBytesRead);
+                    n["zx_dma_bytes_written"] = (ngs.zxBytesWritten);
+                    n["zx_dma_bytes_dropped"] = (ngs.zxBytesDropped);
+                    n["zx_dma_wait_tstates"] = (ngs.zxWaitTStates);
+                    n["zx_dma_late_starts"] = (ngs.zxLateStarts);
+                    n["zx_dma_watch_frames_left"] = ngs.zxWatchFramesLeft;
                     d["neogs"] = n;
                 }
                 return d;
@@ -1788,12 +1798,14 @@ namespace PythonBindings
                         case GSTraceSide::GsInternal: ev["side"] = "gs"; break;
                         case GSTraceSide::DacFetch: ev["side"] = "dac"; break;
                         case GSTraceSide::Interrupt: ev["side"] = "interrupt"; break;
+                        case GSTraceSide::ZxDma: ev["side"] = "zxdma"; break;
                     }
                     ev["direction"] = e.isOut() ? "out" : "in";
                     ev["port"] = e.port;
                     ev["value"] = e.value;
                     ev["pc"] = e.pc;
                     if (e.side == GSTraceSide::DacFetch) ev["channel"] = e.channel;
+                    if (e.side == GSTraceSide::ZxDma) ev["card_address"] = (static_cast<uint32_t>(e.channel) << 16) | e.port;
                     if (e.side == GSTraceSide::Interrupt) ev["nmi"] = e.isNmi();
                     result.append(ev);
                 }

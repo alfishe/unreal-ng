@@ -24,6 +24,7 @@ const char* GsTraceSideName(GSTraceSide side)
         case GSTraceSide::GsInternal: return "GS";
         case GSTraceSide::DacFetch: return "DAC";
         case GSTraceSide::Interrupt: return "INT";
+        case GSTraceSide::ZxDma: return "ZXDMA";
     }
     return "?";
 }
@@ -113,6 +114,15 @@ void CLIProcessor::HandleStateAudioGS(const ClientSession& session, EmulatorCont
             ss << "no decoder ([NGS] MP3Support=none)" << NEWLINE;
         ss << "  DMA:     SD " << (ngs.dmaRunning[1] ? "running" : "idle") << " @0x" << std::hex << ngs.dmaAddress[1]
            << ", MP3 " << (ngs.dmaRunning[2] ? "running" : "idle") << " @0x" << ngs.dmaAddress[2] << std::dec << NEWLINE;
+        ss << "  ZX-DMA:  " << ngs.zxMode << " @0x" << std::hex << ngs.dmaAddress[0] << ", latch 0x"
+           << static_cast<int>(ngs.zxReadLatch) << std::dec << ", pending " << ngs.zxPending << ", " << ngs.zxBytesRead
+           << " rd / " << ngs.zxBytesWritten << " wr / " << ngs.zxBytesDropped << " dropped, waits " << ngs.zxWaitTStates
+           << " T, late starts " << ngs.zxLateStarts << ", watch " << ngs.zxWatchSetting << " (" << ngs.zxWatchFrames
+           << " frames, ";
+        if (ngs.zxWatchFramesLeft < 0)
+            ss << "closed)" << NEWLINE;
+        else
+            ss << ngs.zxWatchFramesLeft << " left)" << NEWLINE;
         ss << NEWLINE;
     }
 

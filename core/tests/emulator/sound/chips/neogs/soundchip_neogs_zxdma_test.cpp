@@ -91,7 +91,7 @@ protected:
     }
 
     /// One frame through the main loop: host, card and every device, as the
-    /// running emulator does (RunNFrames steps the host CPU only)
+    /// running emulator does
     void frame() { reinterpret_cast<MainLoop_CUT*>(_ctx->pMainLoop)->RunFrame(); }
 
     void TearDown() override
@@ -171,8 +171,33 @@ TEST_P(NeoGSZxDma_Test, HostReadsABlockOfCardRam)
                           0x01, uint8_t(n + 1), uint8_t((n + 1) >> 8),           // LD BC,n+1 (a dummy read first)
                           0xED, 0xB0,                                  // LDIR
                           0x18, 0xFE});                                // JR $
+    _card->startPortTrace();
     runHost(kHostCode + 11);
     const Result r = observe(n + 1);
+
+    // The port trace shows every byte: the card address and what the host got
+    std::vector<GSTraceEvent> dmaEvents;
+    for (const GSTraceEvent& e : _card->getPortTraceEvents())
+        if (e.side == GSTraceSide::ZxDma)
+            dmaEvents.push_back(e);
+    ASSERT_EQ(dmaEvents.size(), n + 1u);
+    EXPECT_EQ((static_cast<uint32_t>(dmaEvents[0].channel) << 16) | dmaEvents[0].port, kCardBase);
+    EXPECT_EQ((static_cast<uint32_t>(dmaEvents[5].channel) << 16) | dmaEvents[5].port, kCardBase + 5);
+    EXPECT_EQ(dmaEvents[5].value, static_cast<uint8_t>(4 * 7 + 3)) << "read 5 returns the byte fetched by read 4";
+    EXPECT_FALSE(dmaEvents[5].isOut());
+    EXPECT_EQ(dmaEvents[5].pc, kHostCode + 9) << "the host PC of the LDIR";
+
+    // What automation shows (CLI / WebAPI / MCP / Lua / Python read this)
+    NeoGSStateInfo info;
+    ASSERT_TRUE(_card->neogsState(info));
+    EXPECT_STREQ(info.zxMode, "divert");
+    EXPECT_TRUE(info.zxOverlayInstalled);
+    EXPECT_EQ(info.dmaAddress[0], kCardBase + n + 1);
+    EXPECT_EQ(info.zxBytesRead, n + 1u);
+    EXPECT_STREQ(info.zxPending, "none");
+    EXPECT_EQ(info.zxReadLatch, static_cast<uint8_t>(n * 7 + 3)) << "the next read gets byte n";
+    EXPECT_STREQ(info.zxWatchSetting, "selected");
+    EXPECT_EQ(info.zxLateStarts, 0u);
 
     EXPECT_EQ(r.hostBuffer[0], 0xFF) << "the first read is the old latch";
     for (int i = 0; i < n; i++)
@@ -386,3 +411,4 @@ TEST(NeoGSZxDma_Determinism, LongStreamAgreesInFastAndDebugMode)
     EXPECT_EQ(tStates[0], tStates[1]);
     EXPECT_EQ(hostHash[0], hostHash[1]);
 }
+
