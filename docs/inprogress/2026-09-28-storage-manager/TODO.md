@@ -21,6 +21,7 @@ ACC-7 passes on the real TR-DOS ROM. M3-M6 and H1-H5 not started. PLAN.md row **
 | [integration-floppy.md](integration-floppy.md) | `fdd.a-d` migration (WD1793, uPD765), folder as a TR-DOS disk |
 | [integration-tape.md](integration-tape.md) | `tape` migration |
 | [integration-automation-gui.md](integration-automation-gui.md) | the `media` verbs on every surface, the Qt media panel |
+| [media-control-design.md](media-control-design.md) | **Draft**: the drive collection (tags, aliases, selectors, auto slot, eject dispositions, detached media), one `MediaControl` layer for the GUI, WebAPI + OpenAPI, CLI, MCP, Lua, Python; replaces the surface part of M4 |
 | [reuse-and-readiness.md](reuse-and-readiness.md) | Review round 2: reuse across BaseConf, TSConf, NeoGS, Scorpion, Profi, ATM2, Next, Sprinter; design changes G1-G12; readiness for M1 |
 | [integration-ttd-snapshots.md](integration-ttd-snapshots.md) | TTD v1 rules (media-agnostic, barriers, recording guard); TTD v2 and UNS through media versions |
 
