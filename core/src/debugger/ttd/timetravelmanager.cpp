@@ -240,6 +240,10 @@ bool TimeTravelManager::StartRecording()
         return false;
     }
 
+    // Engaged before the baseline (past the last refusal above), so the very
+    // first checkpoint already holds the 1x machine; SetState below is then a no-op
+    EngageRecordingLock();
+
     // Capture the baseline checkpoint so the timeline always has at least
     // one entry. This is the only place we pay the full model-RAM copy cost
     // up front (v1 strategy — see the header doc for the v2 fast-path plan).
@@ -247,13 +251,9 @@ bool TimeTravelManager::StartRecording()
     CaptureNow(baseline);
     _timeline.push_back(std::move(baseline));
 
-    _state = TTDSessionState::Recording;
+    SetState(TTDSessionState::Recording);
     DisarmInputPlayback();  // live input again (journaled while recording)
     _context->ttdCoverageActive = _enableCoverageIndex;
-    if (_context->pFeatureManager)
-    {
-        _context->pFeatureManager->onTtdRecordingStarted();
-    }
 
     // This is live capture now, not the file it may have replaced.
     _loadedFromFile   = false;
@@ -281,11 +281,7 @@ void TimeTravelManager::StopRecording()
 
     if (_state != TTDSessionState::Recording)
         return;  // Idempotent
-    _state = TTDSessionState::Idle;
-    if (_context && _context->pFeatureManager)
-    {
-        _context->pFeatureManager->onTtdRecordingStopped();
-    }
+    SetState(TTDSessionState::Idle);
     MLOGINFO("TimeTravelManager::StopRecording — timeline retained with %zu checkpoints",
              _timeline.size());
 
@@ -399,7 +395,7 @@ void TimeTravelManager::InvalidateSession(const char* reason)
     _coverageIndex.Clear();
     if (_context)
         _context->ttdCoverageActive = false;
-    _state = TTDSessionState::Idle;
+    SetState(TTDSessionState::Idle);
 
     // Reset Phase 5 codec state.
     _lastKeyFrameIdx = 0;
@@ -417,6 +413,59 @@ void TimeTravelManager::InvalidateSession(const char* reason)
     // of the captured history's validity contract.
     if (_dirtyTracker)
         _dirtyTracker->ResetSession();
+}
+
+void TimeTravelManager::SetState(TTDSessionState next)
+{
+    _state = next;
+    if (next == TTDSessionState::Recording)
+        EngageRecordingLock();
+    else if (next == TTDSessionState::Idle)
+        ReleaseRecordingLock();
+}
+
+void TimeTravelManager::EngageRecordingLock()
+{
+    if (_recordingLockEngaged || !_context)
+        return;
+    _recordingLockEngaged = true;
+
+    // Host speed control back to 1x, applied now rather than at the next frame
+    // boundary so no recorded T-state runs dilated. Callers have the CPU parked
+    Core* core = _context->pCore;
+    _savedHostSpeedMultiplier = core ? core->GetHostSpeedMultiplier() : 1;
+    if (core && _savedHostSpeedMultiplier != 1)
+    {
+        core->SetSpeedMultiplier(1);
+        // Applies the composed multiplier (host << hardware turbo) mid-frame,
+        // rescaling the raster position; not specific to the hardware strobe
+        core->GetZ80()->ApplyHardwareTurboNow();
+        MLOGINFO("TimeTravelManager — recording lock: host speed %ux -> 1x (restored when the session returns to Idle)",
+                 static_cast<unsigned>(_savedHostSpeedMultiplier));
+    }
+
+    // Turbo mode off, turbo mode / fast tape / turbo tape / fast disk refused
+    if (_context->pFeatureManager)
+        _context->pFeatureManager->onTtdRecordingStarted();
+}
+
+void TimeTravelManager::ReleaseRecordingLock()
+{
+    if (!_recordingLockEngaged || !_context)
+        return;
+    _recordingLockEngaged = false;
+
+    // Lifts the FeatureManager gate first: the speed restore below is checked by it
+    if (_context->pFeatureManager)
+        _context->pFeatureManager->onTtdRecordingStopped();
+
+    if (_context->pCore && _savedHostSpeedMultiplier != 1)
+    {
+        _context->pCore->SetSpeedMultiplier(_savedHostSpeedMultiplier);
+        MLOGINFO("TimeTravelManager — recording lock released: host speed back to %ux",
+                 static_cast<unsigned>(_savedHostSpeedMultiplier));
+    }
+    _savedHostSpeedMultiplier = 1;
 }
 
 void TimeTravelManager::UpdateFeatureCache()
@@ -1622,7 +1671,7 @@ void TimeTravelManager::OnMachineReset()
     {
         // The machine no longer sits on the recorded timeline (which is
         // kept): back to Idle-with-history, live input allowed
-        _state = TTDSessionState::Idle;
+        SetState(TTDSessionState::Idle);
     }
 }
 
@@ -2012,7 +2061,7 @@ bool TimeTravelManager::SeekToInternal(const TTDTimePoint& target, TTDSeekResult
             if (barrier->time.tInFrame > 0)
                 ReplayWithinFrame(cp.time.frame, barrier->time.tInFrame);
 
-            _state = TTDSessionState::Detached;
+            SetState(TTDSessionState::Detached);
 
             if (outResult)
             {
@@ -2064,7 +2113,7 @@ bool TimeTravelManager::SeekToInternal(const TTDTimePoint& target, TTDSeekResult
     // ------------------------------------------------------------------
     // Step 4: transition to Detached (TDD §4.2).
     // ------------------------------------------------------------------
-    _state = TTDSessionState::Detached;
+    SetState(TTDSessionState::Detached);
 
     MLOGINFO("TimeTravelManager::SeekTo — arrived at (frame=%llu,tInFrame=%u), state=Detached",
              static_cast<unsigned long long>(target.frame),
@@ -2353,7 +2402,7 @@ bool TimeTravelManager::ResumeRecordingFrom(const TTDTimePoint& from)
     // checkpoint at frame `from.frame + 1` (the live emulator's frame
     // counter is set by SeekTo).
     // ------------------------------------------------------------------
-    _state = TTDSessionState::Recording;
+    SetState(TTDSessionState::Recording);
     DisarmInputPlayback();  // live input again (journaled while recording)
 
     MLOGINFO("TimeTravelManager::ResumeRecordingFrom — resumed at "
@@ -2441,7 +2490,7 @@ bool TimeTravelManager::ResumeRecordingLive()
         }
     }
 
-    _state = TTDSessionState::Recording;
+    SetState(TTDSessionState::Recording);
     DisarmInputPlayback();  // live input again (journaled while recording)
     _context->ttdCoverageActive = _enableCoverageIndex;
 
@@ -3462,7 +3511,7 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
     // The file does not carry live recording semantics; force Idle. Callers
     // who want to browse the timeline can call RestoreCheckpointForTesting()
     // or SeekTo() to position the emulator at any captured frame.
-    _state = TTDSessionState::Idle;
+    SetState(TTDSessionState::Idle);
 
     MLOGINFO("TimeTravelManager::DeserializeSession — loaded schema v%u: "
              "%u pages, %zu checkpoints (frames %llu..%llu), model_ram_pages=%u, "
@@ -4793,7 +4842,7 @@ const TTDFrameCache* TimeTravelManager::GetFrameCache(uint64_t frame)
     RestoreLiveState(_liveSnapshot);
     ExitReplayMode();
 
-    _state = stateBeforeBuild;
+    SetState(stateBeforeBuild);
 
     if (_frameCache->entries.empty())
     {

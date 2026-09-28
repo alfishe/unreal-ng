@@ -583,15 +583,22 @@ void Emulator::SetSpeed(BaseFrequency_t speed)
     _core->SetCPUClockSpeed(speed);
 }
 
-void Emulator::SetSpeedMultiplier(uint8_t multiplier)
+bool Emulator::SetSpeedMultiplier(uint8_t multiplier)
 {
+    // Re-selecting the current speed is not a change, and a refused one (TTD
+    // recording allows only 1x) must not cost the session either
+    if (_core->GetHostSpeedMultiplier() == multiplier)
+        return true;
+    if (!_core->CanSetSpeedMultiplier(multiplier))
+        return false;
+
     // TTD v1 (P1.6): speed change invalidates the recording because frame
     // timing is part of the determinism contract (parent TDD §4.2 + §5 row 13).
     // Simpler to invalidate than to model; revisit if it proves annoying.
     if (_context && _context->pTimeTravelManager)
         _context->pTimeTravelManager->InvalidateSession("speed-multiplier-change");
 
-    _core->SetSpeedMultiplier(multiplier);
+    return _core->SetSpeedMultiplier(multiplier);
 }
 
 uint8_t Emulator::GetSpeedMultiplier() const

@@ -279,8 +279,17 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
     {
         if (valueLower == "unlimited" || valueLower == "max")
         {
-            emulator->EnableTurboMode(config.turbo_mode_audio);
-            ss << "Setting changed: speed = unlimited (Turbo Mode)" << NEWLINE;
+            // Routed through FeatureManager (not Emulator::EnableTurboMode directly) so
+            // the TTD-recording lock applies: setFeature() refuses to enable turbo mode
+            // while a recording is in progress.
+            if (featureManager && featureManager->setFeature(Features::kTurboMode, true))
+            {
+                ss << "Setting changed: speed = unlimited (Turbo Mode)" << NEWLINE;
+            }
+            else
+            {
+                ss << "Error: Cannot enable turbo mode (FeatureManager not available or TTD recording active)" << NEWLINE;
+            }
         }
         else
         {
@@ -289,9 +298,14 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
                 int m = std::stoi(valueLower);
                 if (m == 1 || m == 2 || m == 4 || m == 8 || m == 16)
                 {
-                    emulator->DisableTurboMode();
-                    emulator->SetSpeedMultiplier(m);
-                    ss << "Setting changed: speed = " << m << "x" << NEWLINE;
+                    if (featureManager)
+                        featureManager->setFeature(Features::kTurboMode, false);
+                    else
+                        emulator->DisableTurboMode();
+                    if (emulator->SetSpeedMultiplier(static_cast<uint8_t>(m)))
+                        ss << "Setting changed: speed = " << m << "x" << NEWLINE;
+                    else
+                        ss << "Error: Cannot set speed " << m << "x while TTD recording is active (only 1x)" << NEWLINE;
                 }
                 else
                 {

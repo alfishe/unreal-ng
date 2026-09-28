@@ -179,7 +179,9 @@ TEST(TTD_SessionLifecycle_Test, Reset_OnIdleSession_IsNoOp)
 }
 
 /// @test SetSpeedMultiplier() invalidates the session.
-TEST(TTD_SessionLifecycle_Test, SetSpeedMultiplier_InvalidatesActiveSession)
+/// @test A speed change is refused while recording (the recording runs at 1x
+///       and survives); on a retained, stopped session it still invalidates.
+TEST(TTD_SessionLifecycle_Test, SetSpeedMultiplier_RefusedWhileRecordingInvalidatesRetainedSession)
 {
     Emulator emulator(LoggerLevel::LogError);
     ASSERT_TRUE(emulator.Init());
@@ -191,10 +193,16 @@ TEST(TTD_SessionLifecycle_Test, SetSpeedMultiplier_InvalidatesActiveSession)
     ExpectSessionState(context->pTimeTravelManager, ttd::TTDSessionState::Recording, 1,
                        "after StartRecording");
 
-    emulator.SetSpeedMultiplier(2);  // Queue 2x — invalidates per TDD §4.2
+    EXPECT_FALSE(emulator.SetSpeedMultiplier(2));
+    ExpectSessionState(context->pTimeTravelManager, ttd::TTDSessionState::Recording, 1,
+                       "after a refused SetSpeedMultiplier");
 
+    context->pTimeTravelManager->StopRecording();
+    ASSERT_GE(context->pTimeTravelManager->GetCheckpointCount(), 1u);
+
+    EXPECT_TRUE(emulator.SetSpeedMultiplier(2));  // Queue 2x — invalidates per TDD §4.2
     ExpectSessionState(context->pTimeTravelManager, ttd::TTDSessionState::Idle, 0,
-                       "after SetSpeedMultiplier");
+                       "after SetSpeedMultiplier on the retained session");
 
     emulator.Stop();
     emulator.Release();

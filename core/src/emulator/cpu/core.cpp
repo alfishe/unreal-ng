@@ -4,6 +4,7 @@
 #include <array>
 #include <cassert>
 
+#include "base/featuremanager.h"
 #include "common/modulelogger.h"
 #include "emulator/io/fdc/diskautostart.h"
 #include "emulator/io/fdc/diskfastload.h"
@@ -700,7 +701,14 @@ uint16_t Core::GetCPUFrequencyMultiplier()
 // Set speed multiplier for emulation (1x, 2x, 4x, 8x, 16x)
 // This scales the number of t-states executed per frame
 //
-void Core::SetSpeedMultiplier(uint8_t multiplier)
+bool Core::CanSetSpeedMultiplier(uint8_t multiplier) const
+{
+    // A TTD recording captures the machine at real speed: only 1x while it is
+    // active (TimeTravelManager forces 1x on entry and restores the setting on exit)
+    return multiplier == 1 || !_context->pFeatureManager || !_context->pFeatureManager->isTtdRecordingActive();
+}
+
+bool Core::SetSpeedMultiplier(uint8_t multiplier)
 {
     // Validate multiplier is one of allowed values (use static list)
     static const std::array<uint8_t, 5> allowedMultipliers = {1, 2, 4, 8, 16};
@@ -708,7 +716,13 @@ void Core::SetSpeedMultiplier(uint8_t multiplier)
     {
         LOGERROR("Core::SetSpeedMultiplier - Speed multiplier must be one of {1,2,4,8,16} (got %d)", multiplier);
         assert(false);
-        return;
+        return false;
+    }
+
+    if (!CanSetSpeedMultiplier(multiplier))
+    {
+        MLOGWARNING("Core::SetSpeedMultiplier - %dx refused: TTD recording is active (only 1x allowed)", multiplier);
+        return false;
     }
 
     // Queue the multiplier change - it will be applied at the start of the next frame
@@ -721,11 +735,17 @@ void Core::SetSpeedMultiplier(uint8_t multiplier)
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     messageCenter.Post(NC_SPEED_CHANGED,
         new SpeedChangedPayload(_context->emulatorId, multiplier, _context->config.turbo_mode));
+    return true;
 }
 
 uint8_t Core::GetSpeedMultiplier() const
 {
     return _state->current_z80_frequency_multiplier;
+}
+
+uint8_t Core::GetHostSpeedMultiplier() const
+{
+    return _state->next_z80_frequency_multiplier;
 }
 
 //

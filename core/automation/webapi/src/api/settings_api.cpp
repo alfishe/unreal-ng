@@ -93,6 +93,10 @@ void EmulatorAPI::getSettings(const HttpRequestPtr& req, std::function<void(cons
     io_accel["fast_disk"] = featureManager && featureManager->isEnabled(Features::kFastDisk);
     settings["io_acceleration"] = io_accel;
 
+    // Turbo (max speed) mode - also FeatureManager-backed, forced off and blocked
+    // from re-enabling while TTD recording is active (same gate as io_acceleration)
+    settings["turbo_mode"] = featureManager && featureManager->isEnabled(Features::kTurboMode);
+
     // Disk Interface settings
     Json::Value disk_if(Json::objectValue);
     disk_if["trdos_present"] = config.trdos_present;
@@ -191,6 +195,13 @@ void EmulatorAPI::getSetting(const HttpRequestPtr& req, std::function<void(const
         ret["name"] = "fast_disk";
         ret["value"] = featureManager && featureManager->isEnabled(Features::kFastDisk);
         ret["description"] = "Fast disk loading (FDC timing compression and TR-DOS ROM traps)";
+    }
+    else if (name == "turbo_mode")
+    {
+        FeatureManager* featureManager = context->pFeatureManager;
+        ret["name"] = "turbo_mode";
+        ret["value"] = featureManager && featureManager->isEnabled(Features::kTurboMode);
+        ret["description"] = "Turbo (max speed) mode. Forced off and blocked from re-enabling while TTD recording is active.";
     }
     else if (name == "trdos_present")
     {
@@ -468,6 +479,29 @@ void EmulatorAPI::setSetting(const HttpRequestPtr& req, std::function<void(const
         ret["name"] = "fast_disk";
         ret["value"] = boolValue;
         ret["message"] = std::string("Fast disk loading is now ") + (boolValue ? "enabled" : "disabled");
+    }
+    else if (name == "turbo_mode")
+    {
+        // Routed through FeatureManager (not Core::EnableTurboMode directly) so the
+        // TTD-recording lock applies: setFeature() refuses to enable turbo mode while
+        // a recording is in progress.
+        FeatureManager* featureManager = context->pFeatureManager;
+        bool applied = featureManager && featureManager->setFeature(Features::kTurboMode, boolValue);
+        if (boolValue && !applied)
+        {
+            Json::Value error;
+            error["error"] = "Conflict";
+            error["message"] = "Cannot enable turbo mode while TTD recording is active";
+
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k409Conflict);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        ret["name"] = "turbo_mode";
+        ret["value"] = boolValue;
+        ret["message"] = std::string("Turbo mode is now ") + (boolValue ? "enabled" : "disabled");
     }
     else if (name == "trdos_present")
     {

@@ -36,6 +36,7 @@ constexpr const char* const kPortTrace = "porttrace";
 constexpr const char* const kFastTape = "fasttape";
 constexpr const char* const kTurboTape = "turbotape";
 constexpr const char* const kFastDisk = "fastdisk";
+constexpr const char* const kTurboMode = "turbomode";
 constexpr const char* const kHud = "hud";
 constexpr const char* const kKempstonMouse = "kempstonmouse";
 constexpr const char* const kGSLightweight = "gs_lightweight";
@@ -57,6 +58,7 @@ constexpr const char* const kPortTraceAlias = "pt";
 constexpr const char* const kFastTapeAlias = "ftape";
 constexpr const char* const kTurboTapeAlias = "ttape";
 constexpr const char* const kFastDiskAlias = "fdisk";
+constexpr const char* const kTurboModeAlias = "turbo";
 constexpr const char* const kHudAlias = "hud";
 constexpr const char* const kKempstonMouseAlias = "kmouse";
 constexpr const char* const kGSLightweightAlias = "gslw";
@@ -89,6 +91,10 @@ constexpr const char* const kTurboTapeDesc =
     "(headerless, custom-timed, pulse streams) still load at warp speed. Warp ends with the read-gap watchdog, end-of-tape or any stop.";
 constexpr const char* const kFastDiskDesc =
     "Fast disk loading: FDC timing compression and TR-DOS ROM read-loop traps for instant floppy disk operations.";
+constexpr const char* const kTurboModeDesc =
+    "Turbo mode: run the whole emulation as fast as possible (max speed, audio muted unless turbo_audio is on). "
+    "Forced off and blocked from re-enabling while TTD recording is active, so the recorded run reflects real "
+    "timing and no code path is skipped by the accelerated loop.";
 constexpr const char* const kHudDesc =
     "On-screen HUD: indicators and messages over the emulator picture. Zero cost when disabled.";
 
@@ -164,6 +170,13 @@ private:
     /// Find a feature by id or alias. Caller must hold _mutex.
     FeatureInfo* findFeature(const std::string& idOrAlias);
     const FeatureInfo* findFeature(const std::string& idOrAlias) const;
+
+    /// @brief Engage/disengage Core turbo mode to match the 'turbomode' feature and
+    /// the current TTD-recording gate. Unlike fasttape/turbotape/fastdisk (which are
+    /// polled lazily and only need isEnabled() masked), nothing polls turbo mode every
+    /// frame, so the engine state has to be pushed here explicitly. Idempotent: only
+    /// calls Core if the actual state disagrees with the desired one.
+    void syncTurboModeWithTtdState();
 
     EmulatorContext* _context;
     std::unordered_map<std::string, FeatureInfo> _features;  // id -> FeatureInfo

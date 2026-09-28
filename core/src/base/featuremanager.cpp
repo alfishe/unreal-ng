@@ -124,8 +124,11 @@ bool FeatureManager::setFeature(const std::string& idOrAlias, bool enabled)
         {
             const std::string& id = feature->id;
 
-            // Block enabling fast-disk / fast-tape / turbo-tape shortcuts during active TTD recording
-            if (enabled && (id == Features::kFastDisk || id == Features::kFastTape || id == Features::kTurboTape))
+            // Block enabling fast-disk / fast-tape / turbo-tape shortcuts, and the general
+            // turbo (max speed) mode, during active TTD recording - a recorded run must
+            // reflect real timing, not an accelerated pass that can skip code paths.
+            if (enabled && (id == Features::kFastDisk || id == Features::kFastTape || id == Features::kTurboTape ||
+                            id == Features::kTurboMode))
             {
                 if (isTtdRecordingActive())
                 {
@@ -294,14 +297,45 @@ bool FeatureManager::isEnabled(const std::string& idOrAlias) const
     if (!feature)
         return false;
 
-    // Shortcuts are overridden to OFF during active TTD recording
-    if (feature->id == Features::kFastDisk || feature->id == Features::kFastTape || feature->id == Features::kTurboTape)
+    // Shortcuts (and the general turbo mode) are overridden to OFF during active TTD recording
+    if (feature->id == Features::kFastDisk || feature->id == Features::kFastTape || feature->id == Features::kTurboTape ||
+        feature->id == Features::kTurboMode)
     {
         if (isTtdRecordingActive())
             return false;
     }
 
     return feature->enabled;
+}
+
+/// @brief Engage/disengage Core turbo mode to match the 'turbomode' feature and the
+/// current TTD-recording gate (see header doc). Idempotent.
+void FeatureManager::syncTurboModeWithTtdState()
+{
+    if (!_context || !_context->pCore)
+        return;
+
+    bool wantsTurbo = false;
+    bool withAudio = _context->config.turbo_mode_audio;
+    {
+        std::lock_guard<std::recursive_mutex> lock(_mutex);
+        const auto* tm = findFeature(Features::kTurboMode);
+        wantsTurbo = tm && tm->enabled;
+    }
+
+    // Recording forces turbo off regardless of the stored desired state; the
+    // desired state itself is left untouched so it can be restored verbatim
+    // once recording stops (same masking approach as isEnabled() above).
+    if (isTtdRecordingActive())
+        wantsTurbo = false;
+
+    if (_context->pCore->IsTurboMode() != wantsTurbo)
+    {
+        if (wantsTurbo)
+            _context->pCore->EnableTurboMode(withAudio);
+        else
+            _context->pCore->DisableTurboMode();
+    }
 }
 
 /// @brief List all features and their metadata.
@@ -439,6 +473,14 @@ void FeatureManager::setDefaults()
                      Features::kFastDiskAlias,
                      Features::kFastDiskDesc,
                      true,  // ON by default - compressed FDC timing and ROM loop traps
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryPerformance});
+
+    registerFeature({Features::kTurboMode,
+                     Features::kTurboModeAlias,
+                     Features::kTurboModeDesc,
+                     false,  // OFF by default - opt-in max-speed run
                      "",
                      {Features::kStateOff, Features::kStateOn},
                      Features::kCategoryPerformance});
@@ -614,6 +656,17 @@ void FeatureManager::onFeatureChanged(const std::string& changedFeatureId)
     if (_context && _context->pPortDecoder)
     {
         _context->pPortDecoder->UpdateFeatureCache();
+    }
+
+    // General turbo (max speed) mode: push the desired state into Core when the
+    // 'turbomode' feature itself changes, or when TTD recording starts/stops
+    // (which changes 'timetravel'). Deliberately NOT run on every feature change:
+    // other code (TapeTurboController) engages/disengages Core turbo directly for
+    // its own reasons, and an unconditional sync here would stomp on that turbo
+    // state every time an unrelated feature is toggled.
+    if (changedFeatureId == Features::kTurboMode || changedFeatureId == Features::kTimeTravel)
+    {
+        syncTurboModeWithTtdState();
     }
 
     if (_dirty)

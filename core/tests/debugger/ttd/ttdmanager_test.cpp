@@ -21,6 +21,7 @@
 #include "debugger/ttd/ttddirtytracker.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdcodecpagestore.h"
+#include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
@@ -679,4 +680,154 @@ TEST_F(TimeTravelManager_Test, InvalidateSession_DropsAllRegistrations)
     _ttd->InvalidateSession("test");
 
     EXPECT_EQ(_ttd->GetPeripheralRegistry().Count(), 0u);
+}
+
+// ===========================================================================
+// Recording acceleration lock: a recording captures the code at real speed,
+// whichever path enters Recording (StartRecording, ResumeRecordingFrom) and
+// until the session returns to Idle (StopRecording, InvalidateSession).
+// Host speed multiplier forced to 1x and turbo mode forced off, both restored
+// on release and refused while the lock is held.
+// ===========================================================================
+
+class TimeTravelManagerRecordingLock_Test : public ::testing::Test
+{
+protected:
+    Emulator* _emulator = nullptr;
+    Core* _core = nullptr;
+    ttd::TimeTravelManager* _ttd = nullptr;
+    FeatureManager* _fm = nullptr;
+
+    void SetUp() override
+    {
+        _emulator = new Emulator(LoggerLevel::LogError);
+        ASSERT_TRUE(_emulator->Init());
+        EmulatorContext* context = _emulator->GetContext();
+        _core = context->pCore;
+        _ttd = context->pTimeTravelManager;
+        _fm = _emulator->GetFeatureManager();
+        ASSERT_NE(_core, nullptr);
+        ASSERT_NE(_ttd, nullptr);
+        ASSERT_NE(_fm, nullptr);
+        // Deliberately NOT pre-enabling 'timetravel': that alone engages the
+        // FeatureManager gate, and these tests set speed/turbo before recording
+    }
+
+    void TearDown() override
+    {
+        if (_emulator)
+        {
+            _emulator->Stop();
+            _emulator->Release();
+            delete _emulator;
+        }
+    }
+
+    void RunFrames(unsigned n)
+    {
+        _emulator->RunNFrames(n, /*skipBreakpoints=*/true);
+    }
+};
+
+TEST_F(TimeTravelManagerRecordingLock_Test, StartRecordingForcesHostSpeedTo1xAndStopRestoresIt)
+{
+    ASSERT_TRUE(_emulator->SetSpeedMultiplier(4));
+    RunFrames(1);
+    ASSERT_EQ(_core->GetSpeedMultiplier(), 4);
+
+    ASSERT_TRUE(_ttd->StartRecording());
+
+    // Applied immediately, not at the next frame: the baseline is already 1x
+    EXPECT_EQ(_core->GetHostSpeedMultiplier(), 1);
+    EXPECT_EQ(_core->GetSpeedMultiplier(), 1);
+
+    _ttd->StopRecording();
+    EXPECT_EQ(_core->GetHostSpeedMultiplier(), 4);
+}
+
+TEST_F(TimeTravelManagerRecordingLock_Test, SpeedChangeWhileRecordingIsRefusedAndKeepsTheSession)
+{
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(2);
+    const size_t checkpoints = _ttd->GetCheckpointCount();
+
+    EXPECT_FALSE(_emulator->SetSpeedMultiplier(4));
+    EXPECT_FALSE(_core->SetSpeedMultiplier(16));  // the direct path the Qt UI used
+    EXPECT_EQ(_core->GetHostSpeedMultiplier(), 1);
+
+    // Re-selecting 1x is a no-op, not a session-invalidating change
+    EXPECT_TRUE(_emulator->SetSpeedMultiplier(1));
+
+    EXPECT_TRUE(_ttd->IsRecording());
+    EXPECT_EQ(_ttd->GetCheckpointCount(), checkpoints);
+}
+
+TEST_F(TimeTravelManagerRecordingLock_Test, TurboModeIsForcedOffRefusedAndRestored)
+{
+    ASSERT_TRUE(_fm->setFeature(Features::kTurboMode, true));
+    ASSERT_TRUE(_core->IsTurboMode());
+
+    ASSERT_TRUE(_ttd->StartRecording());
+    EXPECT_FALSE(_core->IsTurboMode());
+    EXPECT_FALSE(_fm->setFeature(Features::kTurboMode, true));
+    EXPECT_FALSE(_core->IsTurboMode());
+
+    _ttd->StopRecording();
+    EXPECT_TRUE(_core->IsTurboMode());
+}
+
+TEST_F(TimeTravelManagerRecordingLock_Test, ResumeRecordingFromHistoryEngagesTheLock)
+{
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(3);
+    _ttd->StopRecording();
+
+    // Idle-with-history: acceleration is allowed again
+    ASSERT_TRUE(_fm->setFeature(Features::kTurboMode, true));
+    ASSERT_TRUE(_ttd->SeekTo(ttd::TTDTimePoint{1, 0}));
+    ASSERT_EQ(_ttd->GetState(), ttd::TTDSessionState::Detached);
+
+    ASSERT_TRUE(_ttd->ResumeRecordingFrom(_ttd->CurrentPosition()));
+    ASSERT_TRUE(_ttd->IsRecording());
+    EXPECT_FALSE(_core->IsTurboMode());
+    EXPECT_FALSE(_fm->setFeature(Features::kTurboMode, true));
+    EXPECT_FALSE(_emulator->SetSpeedMultiplier(4));
+
+    _ttd->StopRecording();
+    EXPECT_TRUE(_core->IsTurboMode());
+}
+
+TEST_F(TimeTravelManagerRecordingLock_Test, RewindWhileRecordingKeepsTheLock)
+{
+    ASSERT_TRUE(_fm->setFeature(Features::kTurboMode, true));
+    ASSERT_TRUE(_emulator->SetSpeedMultiplier(4));
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(3);
+
+    // Passes through Detached internally; the lock holds until Idle, so no
+    // restored speed/turbo leaks into the history being re-recorded
+    ASSERT_TRUE(_ttd->ResumeRecordingFrom(ttd::TTDTimePoint{1, 0}));
+    ASSERT_TRUE(_ttd->IsRecording());
+    EXPECT_FALSE(_core->IsTurboMode());
+    EXPECT_EQ(_core->GetHostSpeedMultiplier(), 1);
+    EXPECT_FALSE(_emulator->SetSpeedMultiplier(4));
+
+    // The pre-recording settings survive the rewind
+    _ttd->StopRecording();
+    EXPECT_TRUE(_core->IsTurboMode());
+    EXPECT_EQ(_core->GetHostSpeedMultiplier(), 4);
+}
+
+TEST_F(TimeTravelManagerRecordingLock_Test, InvalidatingARecordingReleasesTheLock)
+{
+    ASSERT_TRUE(_fm->setFeature(Features::kTurboMode, true));
+    ASSERT_TRUE(_ttd->StartRecording());
+    ASSERT_FALSE(_core->IsTurboMode());
+
+    _ttd->InvalidateSession("test");
+    ASSERT_EQ(_ttd->GetState(), ttd::TTDSessionState::Idle);
+
+    EXPECT_FALSE(_fm->isTtdRecordingActive());
+    EXPECT_TRUE(_core->IsTurboMode());
+    EXPECT_TRUE(_emulator->SetSpeedMultiplier(4));
 }

@@ -268,9 +268,15 @@ A recording session is the unit of history validity:
 - **Invalidated** (history cleared, new session started) by any event that breaks determinism or teleports state:
   - Snapshot/tape/disk load, `Emulator::Reset()`, ROM reload
   - Manual memory/register edits from the debugger UI *while running* (edits while paused at time T truncate history *after* T instead — the past is still valid)
-  - Speed multiplier change (`next_z80_frequency_multiplier`) — simpler to invalidate than to model; revisit if it proves annoying
+  - Speed multiplier change (`next_z80_frequency_multiplier`) on a retained (stopped) session — simpler to invalidate than to model. While recording the change is refused instead (see the acceleration lock below)
   - Media write-back to mounted disk images (see 12.2 for the staged handling)
 - The session records `sessionStartTime` (TTDTimePoint) and monotonically grows `sessionEndTime` = "now".
+- **Acceleration lock.** A recording must show the code running at real speed. Every way into `Recording` (`StartRecording`, `ResumeRecordingFrom`, `ResumeRecordingLive`) engages the lock, and it is released only when the session returns to `Idle` (stop, invalidation, reset out of `Detached`, file load). While it is held:
+  - the host speed control is forced to 1x before the baseline is captured, and 2x..16x is refused (`Core::SetSpeedMultiplier` returns false). The emulated machine's own hardware turbo (ATM, Scorpion) is guest behavior and is left alone;
+  - turbo mode (`turbomode` feature) is switched off and cannot be switched on;
+  - fast tape, turbo tape and fast disk shortcuts read as off and cannot be switched on.
+
+  The previous speed and turbo settings come back on release. The lock is held through `Detached` as well, since replaying history under a dilated clock or a loader trap would diverge. Every automation surface (Qt UI, CLI, WebAPI/MCP, Lua, Python) goes through these same core checks, and the Qt menu greys the locked items out.
 
 The **current position** may be in the past (after a rewind). The state machine:
 

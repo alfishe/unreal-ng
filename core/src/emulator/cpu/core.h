@@ -126,8 +126,12 @@ public:
     uint16_t GetCPUFrequencyMultiplier();
 
     // Speed multiplier control: 1x (default), 2x, 4x, 8x, 16x
-    void SetSpeedMultiplier(uint8_t multiplier);
+    /// @return false when refused: while TTD is recording only 1x is accepted
+    bool SetSpeedMultiplier(uint8_t multiplier);
+    bool CanSetSpeedMultiplier(uint8_t multiplier) const;
     uint8_t GetSpeedMultiplier() const;
+    /// Host speed control setting (1x..16x) without the emulated hardware turbo
+    uint8_t GetHostSpeedMultiplier() const;
 
     // Turbo/Max speed mode control
     void EnableTurboMode(bool withAudio = false);

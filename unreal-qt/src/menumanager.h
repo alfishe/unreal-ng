@@ -74,6 +74,8 @@ public:
     void handleEmulatorStateChanged(int id, Message* message);
     void handleEmulatorInstanceCreated(int id, Message* message);
     void handleFDDDiskChanged(int id, Message* message);
+    /// NC_FEATURE_CHANGED / NC_SPEED_CHANGED: TTD recording start/stop and speed changes
+    void handleSpeedOrFeatureChanged(int id, Message* message);
 #ifdef ENABLE_RECORDING
     void handleRecordingStateChanged(int id, Message* message);
 #endif

@@ -174,7 +174,7 @@ public:
     // Performance management
     BaseFrequency_t GetSpeed();
     void SetSpeed(BaseFrequency_t speed);
-    void SetSpeedMultiplier(uint8_t multiplier);
+    bool SetSpeedMultiplier(uint8_t multiplier);
     uint8_t GetSpeedMultiplier() const;
     void EnableTurboMode(bool withAudio = false);
     void DisableTurboMode();

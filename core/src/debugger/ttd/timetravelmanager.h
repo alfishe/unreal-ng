@@ -1706,6 +1706,22 @@ private:
     // Toggled flag (true == we turned it ON, so we turn it back OFF on stop).
     bool _toggledDebugModeOn = false;
     bool _toggledTimeTravelOn = false;
+
+    // --- Recording acceleration lock ------------------------------------
+    // A recording must capture the code running at real speed. Entering
+    // Recording (by any path) engages the lock: host speed multiplier forced
+    // to 1x (the emulated hardware turbo is guest behavior and stays), and
+    // FeatureManager masks/blocks turbo mode and the tape/disk shortcuts. It is
+    // held through Detached - replaying history with a trap or a dilated clock
+    // would diverge - and released only when the session returns to Idle.
+
+    /// Every _state write goes through here so no transition bypasses the lock
+    void SetState(TTDSessionState next);
+    void EngageRecordingLock();
+    void ReleaseRecordingLock();
+
+    bool _recordingLockEngaged = false;
+    uint8_t _savedHostSpeedMultiplier = 1;  // restored on release
 };
 
 } // namespace ttd

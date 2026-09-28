@@ -2443,12 +2443,12 @@ void MainWindow::handleSpeedMultiplierChanged(int multiplier)
 {
     if (_emulator)
     {
-        Core* core = _emulator->GetContext()->pCore;
-        if (core)
-        {
-            core->SetSpeedMultiplier(static_cast<uint8_t>(multiplier));
-            qDebug() << "Speed multiplier set to" << multiplier << "x";
-        }
+        // Through Emulator, not Core: it keeps the TTD contract (refused while
+        // recording, invalidates a retained session on a real change)
+        const bool applied = _emulator->SetSpeedMultiplier(static_cast<uint8_t>(multiplier));
+        qDebug() << "Speed multiplier" << multiplier << "x" << (applied ? "set" : "refused (TTD recording)");
+        // A refused click already moved the exclusive check mark
+        updateMenuStates();
     }
 }
 
@@ -2456,20 +2456,18 @@ void MainWindow::handleTurboModeToggled(bool enabled)
 {
     if (_emulator)
     {
-        Core* core = _emulator->GetContext()->pCore;
-        if (core)
+        EmulatorContext* context = _emulator->GetContext();
+        FeatureManager* featureManager = context ? context->pFeatureManager : nullptr;
+        if (featureManager)
         {
-            if (enabled)
-            {
-                core->EnableTurboMode(false);  // No audio in turbo mode
-                qDebug() << "Turbo mode enabled";
-            }
-            else
-            {
-                core->DisableTurboMode();
-                qDebug() << "Turbo mode disabled";
-            }
+            // Routed through FeatureManager (not Core::EnableTurboMode directly) so the
+            // TTD-recording lock applies here the same way it does to fasttape/turbotape/
+            // fastdisk: setFeature() refuses to enable turbo mode while recording is active.
+            const bool applied = featureManager->setFeature(Features::kTurboMode, enabled);
+            qDebug() << "Turbo mode" << (enabled ? "enable" : "disable") << (applied ? "applied" : "refused (TTD recording)");
         }
+        // A refused toggle already flipped the checkable action
+        updateMenuStates();
     }
 }
 
