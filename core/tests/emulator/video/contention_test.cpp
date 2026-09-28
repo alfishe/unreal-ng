@@ -700,6 +700,19 @@ TEST_F(Contention48K_Test, Statistics_CountedOnlyWhileDebugging)
     EXPECT_EQ(_ula->GetStatisticsTotal().accesses[CONTENTION_FETCH], 1u) << "fast interface again: not counted";
 }
 
+/// DD CB d op: the (IX+d) access is a data read, not an instruction byte - it counts as a read
+TEST_F(Contention48K_Test, Statistics_DdcbOperandIsADataRead)
+{
+    _emulator->DebugOn();
+    _ula->ResetStatistics();
+    _z80->ix = 0x4000;
+    runAt(0x8000, { 0xDD, 0xCB, 0x01, 0x46 }, _firstContendedT);  // BIT 0,(IX+1): code uncontended
+    const ContentionCounters& c = _ula->GetStatisticsCurrentFrame();
+    EXPECT_EQ(c.accesses[CONTENTION_READ], 1u);
+    EXPECT_EQ(c.accesses[CONTENTION_FETCH], 0u);
+    _emulator->DebugOff();
+}
+
 TEST_F(Contention128K_Test, Report_OddPageAtC000IsAContendedSlot)
 {
     _memory->SetRAMPageToBank3(7);

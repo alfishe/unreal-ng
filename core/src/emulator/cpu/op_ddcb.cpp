@@ -261,7 +261,7 @@ Z80INLINE void Z80FAST ddfd_prefixes(Z80 *cpu, uint8_t opcode)
         opcode = cpu->rd(cpu->pc++, true);
         cpuidle(cpu->pc - 1, 2);
 
-        uint8_t byte = (logic_ix_opcode[opcode])(cpu, cpu->rd(ptr, true));
+        uint8_t byte = (logic_ix_opcode[opcode])(cpu, cpu->rd(ptr));  // a data read at (IX+d), not an instruction byte
 
         cpuidle(ptr, 1);
 

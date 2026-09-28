@@ -398,7 +398,9 @@ void Z80::Z80Step(bool skipBreakpoints)
 
         if (++cpu.halt_cycle == 4)
         {
-            cpu.r_low += 1;
+            // The refresh counter's 7 bits, bit 7 kept (as m1_cycle). Only on the vm1 HALT model, which nothing
+            // selects today: HALT re-executes its own M1 (op_76)
+            cpu.r_low = ((cpu.r_low + 1) & 0x7F) | (cpu.r_low & 0x80);
             cpu.halt_cycle = 0;
         }
     }
