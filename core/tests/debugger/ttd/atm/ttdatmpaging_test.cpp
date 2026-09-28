@@ -49,7 +49,7 @@ TEST(TtdAtmPagingLayout_Test, BlobIsPaddingFree)
 {
     using ttd::AtmPagingState;
 
-    EXPECT_EQ(sizeof(AtmPagingState), 128u);
+    EXPECT_EQ(sizeof(AtmPagingState), 132u);
     EXPECT_TRUE(std::is_trivially_copyable_v<AtmPagingState>);
     EXPECT_TRUE(std::is_standard_layout_v<AtmPagingState>);
 
@@ -75,6 +75,9 @@ TEST(TtdAtmPagingLayout_Test, BlobIsPaddingFree)
     }
     src.atmBorderBright = 1;
     src.evoFddMask = 0x0A;
+    src.evoAvrExtType = 0x03;
+    src.evoAvrEepromPage = 0x7F;
+    src.evoAvrFlags = 0x05;
 
     *dst = src;
     EXPECT_EQ(std::memcmp(dst, &src, sizeof(AtmPagingState)), 0)
@@ -157,6 +160,7 @@ TEST(TtdAtmPaging_Test, Atm3RoundTripCarriesPaletteBorderAndLiveCmosLatch)
     state.atmBorderBright = 1;
     state.evoFddMask = 0x05;
     atm3->GetCMOS().SetCMOSAddress(0x2E);
+    atm3->GetEvoAvr().SetVolatileState(EvoAvr::kExtBootloaderVersion, 0x42, 0x03);
 
     ttd::TTDAtmPaging serializer(context);
     uint8_t blob[sizeof(ttd::AtmPagingState)] = {};
@@ -170,6 +174,7 @@ TEST(TtdAtmPaging_Test, Atm3RoundTripCarriesPaletteBorderAndLiveCmosLatch)
     state.atmBorderBright = 0;
     state.evoFddMask = 0;
     atm3->GetCMOS().SetCMOSAddress(0x00);
+    atm3->GetEvoAvr().SetVolatileState(0, 0, 0);
 
     serializer.TTDLoadState(blob);
 
@@ -180,6 +185,10 @@ TEST(TtdAtmPaging_Test, Atm3RoundTripCarriesPaletteBorderAndLiveCmosLatch)
     }
     EXPECT_EQ(state.atmBorderBright, 1);
     EXPECT_EQ(state.evoFddMask, 0x05) << "the #13BD virtual-drive mask";
+    EXPECT_EQ(atm3->GetEvoAvr().GetExtensionType(), EvoAvr::kExtBootloaderVersion) << "AVR extension type";
+    EXPECT_EQ(atm3->GetEvoAvr().GetEepromPage(), 0x42);
+    EXPECT_TRUE(atm3->GetEvoAvr().IsEepromMode());
+    EXPECT_TRUE(atm3->GetEvoAvr().IsCapsLed());
     EXPECT_EQ(atm3->GetCMOS().GetCMOSAddress(), 0x2E) << "the live CMOS latch is the decoder's, not EmulatorState::cmos_addr";
 
     EmulatorTestHelper::CleanupEmulator(emulator);

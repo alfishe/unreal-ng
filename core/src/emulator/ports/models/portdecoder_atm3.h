@@ -1,7 +1,7 @@
 #pragma once
 #include "stdafx.h"
 
-#include "emulator/memory/atm/cmos.h"
+#include "emulator/memory/atm/evoavr.h"
 
 #include "portdecoder_atm710.h"
 
@@ -79,9 +79,11 @@ public:
 
     /// region <Fields>
 protected:
-    // DS12885-style RTC/CMOS (BaseConf config storage). Lives with the decoder
-    // so the contents survive Core::Reset() (like a battery-backed CMOS).
-    CMOS _cmos;
+    // The board's AVR behind the Gluk clock ports: MC146818 clock, battery-backed
+    // NVRAM, EEPROM window, version / PS/2 / modes extension window. Lives with
+    // the decoder so the contents survive Core::Reset() (like the real battery)
+    EvoAvr _cmos;
+    bool _nvramLoaded = false;  // [EVO] NvramFile read once, on the first reset
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -100,6 +102,7 @@ public:
     /// CMOS/RTC backing store (verification tests / debug UI - mirrors
     /// PortDecoder_Scorpion256::GetSMUCNvram())
     CMOS& GetCMOS() { return _cmos; }
+    EvoAvr& GetEvoAvr() { return _cmos; }
     /// endregion </Interface methods>
 
     /// region <Port detection>

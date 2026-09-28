@@ -68,8 +68,10 @@ public:
 	void SetCMOSType(CMOSTypeEnum type);
 	void SetCMOSAddress(uint8_t addr);
 	uint8_t GetCMOSAddress() const { return _cmos_addr; }
-	void WriteCMOS(uint8_t val);
-	uint8_t ReadCMOS();
+	// Virtual: EvoAvr (ZX-Evo BaseConf) serves registers A-D and cells
+	// 0x0E-0xFF the way the board's AVR firmware does
+	virtual void WriteCMOS(uint8_t val);
+	virtual uint8_t ReadCMOS();
 
 	/// Serve a frozen instant instead of live host time (tests / replay -
 	/// mirrors SMUCNvram::SetFixedTime, same rationale).

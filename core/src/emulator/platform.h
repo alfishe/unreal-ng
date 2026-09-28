@@ -664,6 +664,9 @@ struct CONFIG
 		// (readback on #xxBD, #13BD virtual-drive mask), 1 = frozen legacy tree
 		// (readback on #xxBE, breakpoint writes on #xxBD)
 		uint8_t evo_legacy_fpga;
+		// ZX-Evo AVR battery-backed NVRAM + EEPROM image ([EVO] NvramFile=);
+		// empty = kept for the session only
+		char evo_nvram_path[FILENAME_MAX];
 	} atm;
 
 	uint8_t use_comp_pal;

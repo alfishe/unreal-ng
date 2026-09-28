@@ -40,12 +40,12 @@ See [gap-analysis.md](gap-analysis.md) §1 for BaseConf, ERS, AVR, Gluk, shadow,
 | D1 | `[EVO] Fpga=trdemu` (default) or `legacy`. `trdemu` = current `base_trdemu` tree: readback on `#xxBD`, breakpoint at `#10BD/#11BD`, `#13BD`, `#BE` write-only, `#BF`.5, 8-bit joystick. `legacy` = frozen `baseconf` tree: readback on `#xxBE`, breakpoint writes `#00BD/#01BD`, RAM-disk latches `#2F-#8F`, 5-bit joystick | The ROM image decides what software expects; both images exist in the wild. One switch, one table (§3.2), no scattered `if`s |
 | D2 | Default ROM becomes the official `zxevo_fe.rom` (current ERS, NEO-DOS in page 29) under `data/rom/zxevo-fe.rom`; `ATM3` config points at it. The current `data/rom/zxevo.rom` stays for `legacy` and for TSConf until TSConf gets its own TS-BIOS image (R-1) | `zxevo_fe.rom` pages 0-3 are an empty custom slot, so TSConf cannot share it. Kebab-case file name per repo rules |
 | D3 | `EvoAvr` replaces `CMOS` for ATM3 and is reused by TSConf; the `CMOS` class stays for whoever else uses it | TSConf hardware-spec §9 describes the same Gluk extension; one implementation |
-| D4 | NVRAM (`0E-EF`) and the 4 KiB EEPROM persist to `[EVO] NvramFile` (default `<user data dir>/zxevo-nvram.bin`); a missing file starts as all `#FF` for NVRAM and a valid "no user keymap" EEPROM. `NvramFile=` (empty) = session only. Tests always use a unique scratch path | Real board keeps these on a battery; the ERS stores every setting there (reset target, boot device, virtual drive, automount). Undefined power-on contents today make tests non-deterministic |
+| D4 | NVRAM (`0E-EF`) and the 4 KiB EEPROM persist to `[EVO] NvramFile`: read once at power-on, written when the machine is destroyed. Empty (the core default) = session only; the GUI default `<AppDataLocation>/zxevo-nvram.bin` is an E10 item, because the core has no user data directory. A missing or truncated file keeps the power-on contents: NVRAM all `#00` (the CMOS base class zero-fills for determinism; with a blank NVRAM the ERS falls back to its defaults), EEPROM all `#FF` (erased: no user keymap). Tests always use a unique scratch path | Real board keeps these on a battery; the ERS stores every setting there (reset target, boot device, virtual drive, automount) |
 | D5 | Clock registers keep the existing live/fixed-time switch (`SetFixedTime`); TTD and tests use fixed time | Determinism |
-| D6 | Version records are configurable: `[EVO] FirmwareVersion="ZXEvo 4M"`, `FirmwareDate=2026-01-07`, `FirmwareRelease=1`, `BootloaderVersion="ZXEvoAVRBoot"`, same date keys. Default = the released firmware found in the source tree | Shows exactly what a stock board shows; users of older firmware can match it |
+| D6 | Version records are the exact 16-byte tags of the released images: firmware from `cfgs/standalone_base_trdemu/trunk/zxevo_fw.bin` offset `0xC670` ("ZXEvo 4M", 07.01.2026, release), bootloader from `avrboot/trunk/avr/zxevo_bl.hex` address `0x1FFF0` ("ZXEvoAVRBoot", 25.05.2019, beta). Configurable strings (`[EVO] FirmwareVersion=` ...) are deferred until someone needs to mimic older firmware | Shows exactly what a stock board shows, CRC bytes included |
 | D7 | NMI entry is modelled as "the CPU executed a `NOP` at `#0066` from the forced bus value, and the next fetch at `#0067` comes from RAM `#FF`": after the Z80's NMI acceptance, the ATM3 M1 hook sees `PC = #0066` with `nmiEntry` set, charges one `NOP` (4 T, R+1), sets `PC = #0067`, `inNmi = 1`, remaps | Observably identical to the RTL (`drive_00` + page switch on that M1's refresh) without an opcode-override path in the Z80 core |
 | D8 | Flash writes use NeoGS's `Flash29F040B` (AMD/JEDEC state machine) over the 512 KB ROM buffer; `[EVO] FlashWrite=session` (default: changes live until the machine is destroyed), `persist` (write back to the ROM file), `off` (writes ignored) | Same model and the same three modes as NeoGS flash and SD writes; `persist` is opt-in because it rewrites a shipped file |
-| D9 | PS/2 bytes enter through the TTD live-input gateway (like `Keyboard::SubmitHostKey`) | The scancode buffer is guest-visible input; replay must see the same bytes at the same T-state |
+| D9 | PS/2 input is carried by the key event itself: one host key event holds both the ZX matrix code and the physical PC key, and is journaled once by the TTD live-input gateway (§6.1). No second event stream, no reserved code ranges | The scancode buffer is guest-visible input; replay must see the same bytes at the same T-state, and the physical key must survive the ZX decomposition (Up must stay Up, not become Caps Shift + 7) |
 | D10 | Raster selection (A-7) is its own later phase; until then ATM3 keeps the 48K raster and `modes_register` reports raster `10` (48K) so the ERS shows what we emulate | Correct reporting now, full feature later |
 
 ## 3. Port map after this work
@@ -186,7 +186,9 @@ palette with mode register bit 0 = on; it applies to the ZX modes only.
 
 ## 6. `EvoAvr`
 
-`core/src/emulator/io/rtc/evoavr.{h,cpp}` (next to `ds12885.h`, `smucnvram`).
+`core/src/emulator/memory/atm/evoavr.{h,cpp}`, derived from the `CMOS` class next to it (the clock
+registers, the fixed-time test mode and the address latch are inherited; `ReadCMOS`/`WriteCMOS`
+are virtual). Implemented in E2a except the PS/2 log (§6.1).
 
 ```cpp
 class EvoAvr
@@ -197,10 +199,9 @@ public:
     void    Write(uint8_t value);
 
     // Host side
-    void    PushPs2Byte(uint8_t b);             // from the input gateway (D9)
+    void    OnPcKey(PcKey key, bool pressed);   // E2b: from the journaled key event (§6.1)
     void    SetModifiers(uint8_t dMask);        // register D bits 6..0
     void    SetSdStatus(bool present, bool wp); // register C bits 3/2, from the SD slot
-    void    SetModes(uint8_t modesRegister);    // VGA / tape-out / caps / raster
     bool    LoadNvram(const std::string& path); // D4
     bool    SaveNvram(const std::string& path) const;
 
@@ -224,12 +225,63 @@ Register behavior (hardware reference §B 1.3-1.6):
 
 Version record (16 bytes): name (12, zero-padded), date word little-endian
 (`day | month << 5 | (year-2000) << 9 | release << 15`), CRC big-endian (a fixed value; nothing on the
-Z80 side checks it). UF is set once per emulated second (T-state clock, not host time).
+Z80 side checks it). UF comes from the CMOS base class: host time in normal runs, never set while
+the clock is frozen (tests, TTD-driven runs); a T-state-driven UF is a later refinement.
 
-PS/2 encoding: a small `Ps2Set2Encoder` maps host key events (a PC key enum carried next to
-`ZXKeysEnum` in the key message; Qt already knows the physical key) to set-2 make/break bytes,
-including `E0` extended keys and the `E1` Pause sequence (which the real AVR does not log). The
-matrix path (`#FE`) is unchanged, so software that reads the ZX keyboard keeps working.
+### 6.1 PS/2 keyboard (phase E2b — deferred, keep this design)
+
+**Why it matters.** The NedoOS ZX-Evo kernel is built with `PS2KBD=1` (`kernel/build_kernel_evo.bat`):
+its ZX-matrix scanner `syskey2.asm` is left out (`KEYSCAN` becomes a stub, `syskrnl.asm:526-538`) and
+`ps2drv.asm` reads only the AVR scancode buffer (`bdospg2.asm:163-166`, `GETKEY` at `syskrnl.asm:814`).
+Without the buffer NedoOS on ZX-Evo has **no keyboard at all**. The ERS "Test PC keyboard" uses it
+too. Plain Spectrum software reads the `#FE` matrix, which is unaffected.
+
+**The trap to avoid.** The host path (`Keyboard::OnKeyPressed`) decomposes extended keys into ZX
+matrix keys *before* the TTD journal (host Up → Caps Shift + 7). Encoding PS/2 from those matrix
+events gives `12 3D` (Shift + 7 = `&` in NedoOS) instead of `E0 75` (Up). The physical key must
+travel with the event. Rejected shortcuts: deriving PS/2 from matrix events; a second, unjournaled
+host-side push into the buffer (breaks TTD replay, and races the emulation thread); smuggling PC keys
+through unused `ZXKeysEnum` codes such as `0xC0+` (overloads one field with two meanings).
+
+**Design.**
+
+```
+Qt QKeyEvent ──► KeyboardEvent { zxKeyCode, pcKey }         (one message, both codes)
+                    │  Keyboard::OnKeyPressed / OnKeyReleased (MessageCenter thread)
+                    ▼
+                 TTDInputEvent { kind = Key, key = zx, pcKey, pressed }   (journaled ONCE)
+                    │  applied on the emulation thread (live or replay), same T-state
+                    ├──► ZX matrix: existing decomposition + press counters (unchanged)
+                    └──► IPs2KeySink::OnPcKey(pcKey, pressed)   (only when a sink is attached)
+                              └─ EvoAvr: Ps2Set2Encoder → 16-byte log; register D modifiers
+```
+
+| Piece | Rule |
+|---|---|
+| `PcKey` enum (`core/src/emulator/io/keyboard/pckey.h`) | physical PC keys, modeled on USB HID usages: letters, digits, F1-F12, Esc, Tab, Caps Lock, both Shifts/Ctrls/Alts, Enter, Backspace, Space, arrows, Ins/Del/Home/End/PgUp/PgDn, punctuation, keypad. `PcKey::None` for events without a physical key (automation typing) |
+| `KeyboardEvent` | gains `pcKey` next to `zxKeyCode`. Qt fills both from the same `QKeyEvent` (`nativeScanCode` / `key()`); keys with no ZX equivalent (F1-F12, Home...) arrive with `zxKeyCode = ZXKEY_NONE` and a valid `pcKey` instead of being dropped |
+| `TTDInputEvent` | gains `pcKey`; **TTD format change**: bump the input-journal version, update `ttd.ksy` and `tools/verification/ttd-analyzer`, re-record the `testdata/ttd/` corpus. Old journals load with `pcKey = None` |
+| Apply point | the single place that applies a journaled key (live and replay) updates the matrix from `key` and calls the sink with `pcKey`. Matrix press counters stay exactly as today |
+| `IPs2KeySink` | `Keyboard::SetPs2Sink(IPs2KeySink*)`; `PortDecoder_ATM3` attaches its `EvoAvr` after construction and detaches in its destructor. Other models attach nothing, so they pay nothing |
+| `Ps2Set2Encoder` | `PcKey` → set-2 make bytes; break = `F0` + make (extended: `E0 F0 xx`); Print Screen and Pause use their multi-byte sequences (the AVR does not log Pause). The table is checked against `avr/baseconf/trunk/src/kbmap.c` (e.g. LShift `12` = Caps Shift, LCtrl `14` = Symbol Shift) |
+| `EvoAvr` log | 16 bytes (`ps2.c:72-178`): a read of a `F0-FF` cell in extension type 2 pops one byte, `0` when empty; a byte that does not fit sets overflow, the next read returns `#FF` and clears the log; writing register C bit 0 = 1 clears it. Register D bits 6..0 track the modifier keys. Protocol bytes (`FA/FE/EE/AA`) are never logged |
+| TTD state | the log (16 bytes, count, overflow) and the modifier mask join the ATM3 blob |
+| Automation | `keyboard/type` and friends send `PcKey` too when the target is ZX-Evo, so scripted typing reaches NedoOS |
+
+**Tests (E2b).**
+
+| ID | Asserts |
+|---|---|
+| PS2-1 | encoder table: `A` → `1C` / `F0 1C`; Up → `E0 75` / `E0 F0 75`; LShift `12`, LCtrl `14`, F1 `05`, Enter `5A`, Backspace `66`, Esc `76` |
+| PS2-2 | log: empty reads `0`; 16 bytes fit; the 17th sets overflow → next read `#FF` → then `0`; register C bit 0 clears |
+| PS2-3 | register D follows modifier make/break |
+| PS2-4 | one host key event → one journal record carrying both codes; replay produces the same log bytes at the same T-state (TTD round trip) |
+| PS2-5 | Up on the host reaches NedoOS as `E0 75`, not Shift + 7 (unit level on the host → sink path) |
+| PS2-6 | models without a sink ignore `pcKey`; the ZX matrix result is identical with and without `pcKey` |
+| NOS-KBD-1 | NedoOS Evo build: typing a shell command works (needs E5 to boot NedoOS) |
+
+**Prerequisite.** Other work is in flight in `ttdinputjournal.*`, `timetravelmanager.*` and
+`ttd.ksy` (2026-09-28); change the journal format only after that lands, so there is one format bump.
 
 ## 7. Configuration
 
@@ -271,7 +323,7 @@ Port-trace decode rules and port-map rows for every port in §3.1.
 ## 10. Tests
 
 Unit tests in `core/tests/emulator/ports/models/portdecoder_atm3_test.cpp` (extend) and
-`core/tests/emulator/io/rtc/evoavr_test.cpp`; real-ROM tests in
+`core/tests/emulator/memory/atm/evoavr_test.cpp`; real-ROM tests in
 `core/tests/emulator/machines/zxevo/` (skip when the ROM is absent; pin the image md5).
 
 | ID | Asserts |
@@ -297,7 +349,7 @@ Unit tests in `core/tests/emulator/ports/models/portdecoder_atm3_test.cpp` (exte
 | ULA-1 | ULA+ register/data round trip, ZX-mode rendering uses the ULA+ palette when enabled |
 | AVR-1 | write 0 to `F0`, read `F0-FF` = firmware record; write 1 → bootloader record; a read never equals the written type |
 | AVR-2 | PS/2: press+release A → `1C`, `F0 1C`; empty → 0; 17 bytes → `#FF` then reset; reg C bit 0 write clears |
-| AVR-3 | reg C: SD present/WP bits follow `SetSdStatus`; UF set once per emulated second, cleared by read; reg D modifiers |
+| AVR-3 | reg C: SD present/WP bits follow `SetSdStatus`; UF cleared by read; reg D modifiers |
 | AVR-4 | EEPROM mode window + page register A; persisted with NVRAM |
 | AVR-5 | NVRAM persists across machine destroy/create via `NvramFile`; missing file → `#FF` fill; empty key → session only |
 | AVR-6 | type 3 `F0` = `modes_register` with raster bits `10` (D10) |

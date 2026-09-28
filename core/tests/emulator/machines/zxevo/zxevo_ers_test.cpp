@@ -21,6 +21,7 @@
 #include <emulator/ports/portdiagrecorder.h>
 #include <gtest/gtest.h>
 
+#include <string>
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
@@ -135,6 +136,35 @@ TEST_F(ZXEvoErs_Test, FpgaSuitabilityProbePassesOnTrdemu)
 
     EXPECT_EQ(FddMaskProbeReadback(recorder->getAll()), 0x0A)
         << "the ERS must read back the %1010 it wrote to #13BD";
+}
+
+/// ERS header "Baseconf:" / "AVR Boot:" (mainmenu/src/call_cmos.a80 GET_VERS_EVO):
+/// the ERS selects extension type 0, then 1, through the clock data port and
+/// reads 16 bytes each. Before the EvoAvr model the cells echoed the type and
+/// the ERS printed "NONE" for both
+TEST_F(ZXEvoErs_Test, ReadsBaseConfAndBootloaderVersionsFromTheAvr)
+{
+    Create();
+    FeatureManager* features = _emulator->GetFeatureManager();
+    ASSERT_TRUE(features->setFeature(Features::kPortTrace, true));
+    PortDiagnosticRecorder* recorder = _context->pPortDecoder->getPortTraceRecorder();
+    ASSERT_NE(recorder, nullptr);
+    for (uint16_t port : {uint16_t(0xBEF7), uint16_t(0xBFF7)})
+    {
+        PortTraceFilterRule rule;
+        rule.rawPort = port;
+        rule.directionOut = false;
+        recorder->addIncludeRule(rule);
+    }
+    recorder->start();
+    ASSERT_TRUE(RunToMainMenu());
+
+    std::string readBytes;
+    for (const PortTraceEvent& event : recorder->getAll())
+        readBytes.push_back(static_cast<char>(event.value));
+
+    EXPECT_NE(readBytes.find("ZXEvo 4M"), std::string::npos) << "BaseConf version never read";
+    EXPECT_NE(readBytes.find("ZXEvoAVRBoot"), std::string::npos) << "AVR bootloader version never read";
 }
 
 // The legacy-FPGA side of the probe (#13BD does not read back there) is pinned

@@ -17,6 +17,11 @@ PortDecoder_ATM3::PortDecoder_ATM3(EmulatorContext* context) : PortDecoder_ATM71
 
 PortDecoder_ATM3::~PortDecoder_ATM3()
 {
+    // Battery-backed state outlives the machine ([EVO] NvramFile)
+    const char* nvramPath = _context->config.atm.evo_nvram_path;
+    if (_nvramLoaded && nvramPath[0] != '\0' && !_cmos.SaveNvram(nvramPath))
+        MLOGWARNING("PortDecoder_ATM3: cannot save the ZX-Evo NVRAM to '%s'", nvramPath);
+
     MLOGDEBUG("PortDecoder_ATM3::~PortDecoder_ATM3()");
 }
 
@@ -38,6 +43,16 @@ void PortDecoder_ATM3::reset()
     // ATM3 (ZX-Evo BaseConf) always has the DS12885-style RTC/CMOS
     // (original Unreal Speccy gates it on conf.cmos, but a real ZX-Evo has it)
     _cmos.SetCMOSType(Dallas);
+
+    // The battery-backed NVRAM and EEPROM come from [EVO] NvramFile once, at
+    // power-on; a Z80 reset does not touch the AVR
+    if (!_nvramLoaded)
+    {
+        _nvramLoaded = true;
+        const char* nvramPath = _context->config.atm.evo_nvram_path;
+        if (nvramPath[0] != '\0' && !_cmos.LoadNvram(nvramPath))
+            MLOGINFO("PortDecoder_ATM3: no ZX-Evo NVRAM at '%s' yet, starting blank", nvramPath);
+    }
 }
 
 /// @brief One BaseConf decode arm per I/O cycle
