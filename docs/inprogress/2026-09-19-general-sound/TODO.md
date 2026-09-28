@@ -202,7 +202,8 @@ Plan: [`neogs-tdd.md`](neogs-tdd.md) §9; as built, findings and open items:
 - [ ] RAM and flash as v2 memory regions (with the TTD v2 migration of every device)
 
 **NeoGS configuration and GUI** - done 2026-09-28
-- [x] Shipped configs list every `[NGS]` key with its default; `GSType` comment updated; `MP3Support` defaults to `software`
+- [x] Shipped configs list every `[NGS]` key with its default; `MP3Support` defaults to `software`
+- [x] Every shipped model fits NeoGS (`GSType=NGS`)
 - [x] Audio Settings: "General Sound slot" section (card switch; NeoGS SD insert/eject) over `SoundManager::generalSoundSlot()`
 - [x] HUD: the GS nudge names the card ("GS", "NeoGS", "NeoGS MP3", "NeoGS+MP3")
 

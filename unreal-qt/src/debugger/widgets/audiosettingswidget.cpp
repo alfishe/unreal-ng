@@ -1020,18 +1020,25 @@ void AudioSettingsWidget::onUpdateMeters()
     updateDeviceInfo();
 
     // The GS slot changes on the emulation thread (a switch, automation):
-    // another card renames the mixer source and adds or drops "NeoGS MP3",
-    // so the whole panel is rebuilt; a new SD card only needs its row
+    // another card renames the mixer source ("GS" / "NeoGS") and adds or
+    // drops "NeoGS MP3", so the panel is rebuilt whenever the card or the
+    // source list itself differs from what is shown; a new SD card only
+    // needs its row
     const GeneralSoundSlot gsSlot = _context->pSoundManager->generalSoundSlot();
-    if (gsSlot.kind != _shownGSSlot.kind)
+    const auto& devices = _context->pSoundManager->devices();
+    bool sourcesChanged = gsSlot.kind != _shownGSSlot.kind || devices.size() != _sourceRows.size();
+    for (size_t i = 0; !sourcesChanged && i < devices.size(); i++)
+    {
+        sourcesChanged = devices[i].type != _sourceRows[i].type ||
+                         _sourceRows[i].nameLabel->text() != QString::fromStdString(devices[i].name);
+    }
+    if (sourcesChanged)
     {
         refreshFromContext();
         return;
     }
     if (gsSlot.sdCardImage != _shownGSSlot.sdCardImage)
         updateGSSection(gsSlot);
-
-    const auto& devices = _context->pSoundManager->devices();
 
     for (auto& row : _sourceRows)
     {

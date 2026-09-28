@@ -15,6 +15,7 @@
 #include <thread>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/gsslot.h"
 #include "_helpers/neogstestsdcard.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
@@ -55,6 +56,8 @@ protected:
         features->setFeature(Features::kDebugMode, true);
         features->setFeature(Features::kTimeTravel, true);
         _ctx->pMemory->UpdateFeatureCache();
+        // The tests start from the classic card and fit NeoGS themselves
+        ASSERT_TRUE(FitGeneralSoundCard(_ctx->pSoundManager, GSTypeKind::Z80));
     }
 
     void TearDown() override
@@ -66,7 +69,7 @@ protected:
     void fitNeoGS()
     {
         strncpy(_ctx->config.ngs.sdCardPath, _image->path().c_str(), sizeof _ctx->config.ngs.sdCardPath - 1);
-        ASSERT_TRUE(_ctx->pSoundManager->switchGeneralSoundCard(GSTypeKind::NGS));
+        ASSERT_TRUE(FitGeneralSoundCard(_ctx->pSoundManager, GSTypeKind::NGS));
         ASSERT_TRUE(card()->sdCardPresent());
     }
 
@@ -205,4 +208,37 @@ TEST_F(NeoGSMedia_Test, SlotCopyFollowsTheCardAndItsSdCard)
     slot = _ctx->pSoundManager->generalSoundSlot();
     EXPECT_EQ(slot.kind, GSTypeKind::LW);
     EXPECT_TRUE(slot.sdCardImage.empty());
+}
+
+/// The GUI's path: a switch requested from another thread while the loop
+/// runs. The mixer source is renamed "NeoGS", "NeoGS MP3" appears, and the
+/// slot copy follows
+TEST_F(NeoGSMedia_Test, SwitchRequestedWhileRunningRenamesTheMixerSource)
+{
+    strncpy(_ctx->config.ngs.sdCardPath, _image->path().c_str(), sizeof _ctx->config.ngs.sdCardPath - 1);
+    SoundManager* sm = _ctx->pSoundManager;
+    auto gsName = [sm]
+    {
+        for (const AudioDeviceInfo& d : sm->devices())
+        {
+            if (d.type == AudioSourceType::GeneralSound)
+                return d.name;
+        }
+        return std::string();
+    };
+    EXPECT_EQ(gsName(), "GS");
+
+    _emulator->StartAsync();
+    ASSERT_TRUE(TestWait::For([this] { return _emulator->GetState() == StateRun; }));
+    ASSERT_TRUE(sm->requestGeneralSoundCardSwitch(GSTypeKind::NGS));
+    ASSERT_TRUE(TestWait::For([sm] { return sm->generalSoundSlot().kind == GSTypeKind::NGS; }));
+    _emulator->Pause();
+    ASSERT_TRUE(_emulator->WaitForPauseConfirmation(2000));
+
+    EXPECT_EQ(gsName(), "NeoGS");
+    bool mp3 = false;
+    for (const AudioDeviceInfo& d : sm->devices())
+        mp3 |= d.type == AudioSourceType::GeneralSoundMp3 && d.name == "NeoGS MP3";
+    EXPECT_TRUE(mp3);
+    _emulator->Stop();
 }

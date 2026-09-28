@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/gsslot.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/neogstestsdcard.h"
 #include "_helpers/testpathhelper.h"
@@ -176,7 +177,7 @@ protected:
         ctx->config.ngs.ramKB = ramKB;
         strncpy(ctx->config.ngs.sdCardPath, sd.c_str(), sizeof ctx->config.ngs.sdCardPath - 1);
         SoundManager* sound = ctx->pSoundManager;
-        return sound && sound->switchGeneralSoundCard(GSTypeKind::NGS) && sound->getGeneralSound() &&
+        return FitGeneralSoundCard(sound, GSTypeKind::NGS) && sound->getGeneralSound() &&
                sound->getGeneralSound()->implementation() == GSCardImplementation::NGS;
     }
 };
@@ -370,7 +371,7 @@ TEST_F(NeoGSAcceptance_Test, NeoPlayerLightPlaysAnMp3FromTheSdCard)
     ASSERT_TRUE(makeSdImage(NeoGSTestSd::Fat16Mbr));
     strncpy(ctx->config.ngs.sdCardPath, _sdImage->path().c_str(), sizeof ctx->config.ngs.sdCardPath - 1);
     ctx->config.ngs.mp3Support = NGSMP3SupportKind::Software;
-    ASSERT_TRUE(ctx->pSoundManager->switchGeneralSoundCard(GSTypeKind::NGS));
+    ASSERT_TRUE(FitGeneralSoundCard(ctx->pSoundManager, GSTypeKind::NGS));
     auto* ngs = dynamic_cast<SoundChip_NeoGS*>(ctx->pSoundManager->getGeneralSound());
     ASSERT_NE(ngs, nullptr);
     ASSERT_NE(ngs->mp3Decoder(), nullptr);
@@ -423,7 +424,7 @@ TEST_F(NeoGSAcceptance_Test, NeoPlayerLight044PlaysAnMp3FromTheSdCard)
     ASSERT_TRUE(makeSdImage(NeoGSTestSd::Fat16Mbr));
     strncpy(ctx->config.ngs.sdCardPath, _sdImage->path().c_str(), sizeof ctx->config.ngs.sdCardPath - 1);
     ctx->config.ngs.mp3Support = NGSMP3SupportKind::Software;
-    ASSERT_TRUE(ctx->pSoundManager->switchGeneralSoundCard(GSTypeKind::NGS));
+    ASSERT_TRUE(FitGeneralSoundCard(ctx->pSoundManager, GSTypeKind::NGS));
     auto* ngs = dynamic_cast<SoundChip_NeoGS*>(ctx->pSoundManager->getGeneralSound());
     ASSERT_NE(ngs, nullptr);
 
@@ -469,7 +470,7 @@ TEST_F(NeoGSAcceptance_Test, NeoPlayerLight044DmaFindsTheFilesAndWaitsInTheSdDma
     ASSERT_TRUE(makeSdImage(NeoGSTestSd::Fat16Mbr));
     strncpy(ctx->config.ngs.sdCardPath, _sdImage->path().c_str(), sizeof ctx->config.ngs.sdCardPath - 1);
     ctx->config.ngs.mp3Support = NGSMP3SupportKind::Software;
-    ASSERT_TRUE(ctx->pSoundManager->switchGeneralSoundCard(GSTypeKind::NGS));
+    ASSERT_TRUE(FitGeneralSoundCard(ctx->pSoundManager, GSTypeKind::NGS));
     auto* ngs = dynamic_cast<SoundChip_NeoGS*>(ctx->pSoundManager->getGeneralSound());
     ASSERT_NE(ngs, nullptr);
 
@@ -564,7 +565,7 @@ protected:
         strncpy(_ctx->config.ngs.sdCardPath, _sdImage->path().c_str(), sizeof _ctx->config.ngs.sdCardPath - 1);
         _ctx->config.ngs.sdType = card.type;
         _ctx->config.ngs.mp3Support = NGSMP3SupportKind::Software;
-        if (!_ctx->pSoundManager->switchGeneralSoundCard(GSTypeKind::NGS))
+        if (!FitGeneralSoundCard(_ctx->pSoundManager, GSTypeKind::NGS))
             return false;
         _card = dynamic_cast<SoundChip_NeoGS*>(_ctx->pSoundManager->getGeneralSound());
         if (!_card || !_emulator->LoadDisk((TestPathHelper::FindProjectRoot() / "testdata/sound/neogs/programs" / player.scl).string(), 0))

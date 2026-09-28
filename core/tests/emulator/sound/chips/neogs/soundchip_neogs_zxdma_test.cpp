@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/gsslot.h"
 #include "_helpers/soundcardscope.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/machinestatehash.h"
@@ -83,7 +84,7 @@ protected:
         ASSERT_NE(_emulator, nullptr);
         _ctx = _emulator->GetContext();
         _z80 = _ctx->pCore->GetZ80();
-        ASSERT_TRUE(_ctx->pSoundManager->switchGeneralSoundCard(GSTypeKind::NGS));
+        ASSERT_TRUE(FitGeneralSoundCard(_ctx->pSoundManager, GSTypeKind::NGS));
         _card = dynamic_cast<SoundChip_NeoGS*>(_ctx->pSoundManager->getGeneralSound());
         ASSERT_NE(_card, nullptr);
         _ctx->pFeatureManager->setFeature(Features::kDebugMode, GetParam());
@@ -320,7 +321,7 @@ TEST(NeoGSZxDma_Determinism, FastAndDebugModeAgree)
         Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON");
         ASSERT_NE(emulator, nullptr);
         EmulatorContext* ctx = emulator->GetContext();
-        ASSERT_TRUE(ctx->pSoundManager->switchGeneralSoundCard(GSTypeKind::NGS));
+        ASSERT_TRUE(FitGeneralSoundCard(ctx->pSoundManager, GSTypeKind::NGS));
         auto* card = dynamic_cast<SoundChip_NeoGS*>(ctx->pSoundManager->getGeneralSound());
         ctx->pFeatureManager->setFeature(Features::kDebugMode, debug != 0);
         ctx->pMemory->UpdateFeatureCache();
@@ -383,7 +384,7 @@ TEST(NeoGSZxDma_Determinism, LongStreamAgreesInFastAndDebugMode)
         Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON");
         ASSERT_NE(emulator, nullptr);
         EmulatorContext* ctx = emulator->GetContext();
-        ASSERT_TRUE(ctx->pSoundManager->switchGeneralSoundCard(GSTypeKind::NGS));
+        ASSERT_TRUE(FitGeneralSoundCard(ctx->pSoundManager, GSTypeKind::NGS));
         auto* card = dynamic_cast<SoundChip_NeoGS*>(ctx->pSoundManager->getGeneralSound());
         ctx->pFeatureManager->setFeature(Features::kDebugMode, debug != 0);
         ctx->pMemory->UpdateFeatureCache();

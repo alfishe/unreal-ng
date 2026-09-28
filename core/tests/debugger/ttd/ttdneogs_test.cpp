@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/gsslot.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/neogstestsdcard.h"
 #include "_helpers/testpathhelper.h"
@@ -75,7 +76,7 @@ protected:
         _sdImage = MakeNeoGSTestSd(NeoGSTestSd::Fat16Mbr);
         ASSERT_TRUE(_sdImage->ok()) << _sdImage->error();
         strncpy(_context->config.ngs.sdCardPath, _sdImage->path().c_str(), sizeof _context->config.ngs.sdCardPath - 1);
-        ASSERT_TRUE(_sm->switchGeneralSoundCard(GSTypeKind::NGS));
+        ASSERT_TRUE(FitGeneralSoundCard(_sm, GSTypeKind::NGS));
     }
 
     void TearDown() override
@@ -221,7 +222,7 @@ protected:
         features->setFeature(Features::kDebugMode, true);
         features->setFeature(Features::kTimeTravel, true);
         _context->pMemory->UpdateFeatureCache();
-        ASSERT_TRUE(_context->pSoundManager->switchGeneralSoundCard(GSTypeKind::NGS));
+        ASSERT_TRUE(FitGeneralSoundCard(_context->pSoundManager, GSTypeKind::NGS));
     }
 
     void TearDown() override

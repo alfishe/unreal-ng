@@ -1277,9 +1277,10 @@ ZxDmaWatchFrames=5             ; watch window after ZX-DMA activity, frames
   decoder shipped in phase 3; changed 2026-09-28): a config without the key
   plays MP3.
 - Every shipped config lists all `[NGS]` keys with their defaults and a
-  one-line explanation (`RamSize` stays `2048`, as shipped before). Their
-  `GSType` is unchanged; its comment names every card (Z80, LW, NGS, BASS,
-  NONE). Each inline comment holds exactly one `;`: `IniFile` strips inline
+  one-line explanation (`RamSize` stays `2048`, as shipped before). Every
+  shipped model fits NeoGS: `GSType=NGS` (decided 2026-09-28; before, Z80 on
+  the GS-capable models and NONE elsewhere); the comment names every card
+  (NGS, Z80, LW, BASS, NONE). `Config_Test.ShippedConfigsFitNeoGS` pins it. Each inline comment holds exactly one `;`: `IniFile` strips inline
   comments with a backward scan, so a second `;` would break the value.
   `Config_Test.ShippedConfigsCarryTheFullNeoGSSection` parses every config.
 

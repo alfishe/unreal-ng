@@ -10,6 +10,7 @@
 
 #include "_helpers/soundcardscope.h"
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/gsslot.h"
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelmanager.h"
@@ -94,6 +95,10 @@ protected:
         features->setFeature(Features::kScreenHQ, true);
         _context->pMemory->UpdateFeatureCache();
         _context->pSoundManager->UpdateFeatureCache();
+        // The corpus was recorded while the shipped PENTAGON config fitted the
+        // classic GS card; the shipped configs now fit NeoGS, and a session
+        // loads only into the card it was recorded with
+        ASSERT_TRUE(FitGeneralSoundCard(_context->pSoundManager, GSTypeKind::Z80));
     }
 
     void TearDown() override

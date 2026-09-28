@@ -7,6 +7,7 @@
 
 #include "_helpers/soundcardscope.h"
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/gsslot.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
@@ -62,7 +63,9 @@ protected:
         ASSERT_NE(context, nullptr);
         sm = context->pSoundManager;
         ASSERT_NE(sm, nullptr);
-        ASSERT_NE(sm->getGeneralSound(), nullptr) << "ATM710 must fit a GS card by default";
+        ASSERT_NE(sm->getGeneralSound(), nullptr) << "ATM710 must fit a GS-slot card by default";
+        // The tests start from the classic card (the shipped config fits NeoGS)
+        ASSERT_TRUE(FitGeneralSoundCard(sm, GSTypeKind::Z80));
 
         FeatureManager* fm = emulator->GetFeatureManager();
         ASSERT_NE(fm, nullptr);
@@ -87,7 +90,7 @@ TEST_F(TTDGeneralSoundSwitch_Test, SwitchDuringRecordingRepointsRegistry)
 
     GeneralSoundCard* before = sm->getGeneralSound();
     const ttd::PeripheralId beforeId = before->TTDPeripheralId();
-    ASSERT_EQ(beforeId, ttd::PeripheralId::GeneralSound) << "ATM710 boots LLE";
+    ASSERT_EQ(beforeId, ttd::PeripheralId::GeneralSound) << "the fixture fits the classic card";
     ASSERT_EQ(context->pTimeTravelManager->GetPeripheralRegistry().GetDevice(beforeId),
               static_cast<ttd::TTDSerializable*>(before))
         << "registry must have picked up the boot-time card at StartRecording";

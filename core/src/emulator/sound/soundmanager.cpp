@@ -149,9 +149,9 @@ SoundManager::SoundManager(EmulatorContext* context)
             gsKind = GSTypeKind::LW;
         }
         _gs = createGeneralSoundCard(gsKind);
-        publishGeneralSoundSlot();
         _devices.push_back({AudioSourceType::GeneralSound, generalSoundDeviceName(), false, false, 1.0f, 0.0f, false});
         syncGeneralSoundAuxDevice();
+        publishGeneralSoundSlot();
     }
     // MoonSound (ZXM-MoonSound / YMF278B / OPL4) if the legacy key is set
     // (D1/D2). Two registry sources (D5), legacy volume scale.
@@ -1508,7 +1508,6 @@ bool SoundManager::switchGeneralSoundCard(GSTypeKind target)
 
     delete _gs;
     _gs = card;
-    publishGeneralSoundSlot();
 
     // 3b. Re-point the TTD peripheral registry at the new card. TTD registers
     //     the GS slot by raw pointer only at StartRecording/session load
@@ -1545,6 +1544,9 @@ bool SoundManager::switchGeneralSoundCard(GSTypeKind target)
             device.name = generalSoundDeviceName();
     }
     syncGeneralSoundAuxDevice();
+    // Last: other threads see the new card only once its mixer sources are
+    // renamed (the GUI rebuilds its source list when the copy changes)
+    publishGeneralSoundSlot();
 
     // 5. Module handoff on virgin queues (running BEFORE the mailbox restore
     //    keeps the param/command/stream/D2 ordering pristine), then restore

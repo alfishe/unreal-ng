@@ -20,6 +20,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
+#include "emulator/sound/soundmanager.h"
 
 class Config_Test : public ::testing::Test
 {
@@ -244,6 +245,74 @@ TEST_F(Config_Test, NeoGSMp3DecoderDefaultsToSoftware)
     EXPECT_EQ(_context->config.ngs.mp3Support, NGSMP3SupportKind::Software);
     ASSERT_TRUE(LoadSoundKeys("GSType=NGS\n[NGS]\nMP3Support=stub\n"));
     EXPECT_EQ(_context->config.ngs.mp3Support, NGSMP3SupportKind::Stub);
+}
+
+TEST_F(Config_Test, ShippedConfigsFitNeoGS)
+{
+    // Every shipped model fits the NeoGS card (the runner leaves GS out
+    // unless a scope keeps it)
+    SoundCardScope gs(TestSound::GeneralSound);
+    size_t checked = 0;
+    for (const auto& entry : fs::directory_iterator(TestPathHelper::FindProjectRoot() / "data" / "configs"))
+    {
+        const fs::path ini = entry.path() / "unreal.ini";
+        if (!fs::exists(ini))
+            continue;
+        Config config(_context);
+        ASSERT_TRUE(config.LoadConfigFile(ini.string())) << ini;
+        EXPECT_EQ(_context->config.sound.gsTypeKind, GSTypeKind::NGS) << entry.path().filename();
+        checked++;
+    }
+    EXPECT_GE(checked, 14u);
+}
+
+TEST_F(Config_Test, EveryShippedConfigFitsNeoGSWithGSTypeNGS)
+{
+    // Each shipped config with only its GSType value changed to NGS: the
+    // parsed config selects NeoGS, and a SoundManager built from it fits the
+    // card under the mixer name "NeoGS" with its MP3 source
+    SoundCardScope gs(TestSound::GeneralSound);
+    for (const auto& entry : fs::directory_iterator(TestPathHelper::FindProjectRoot() / "data" / "configs"))
+    {
+        const fs::path ini = entry.path() / "unreal.ini";
+        if (!fs::exists(ini))
+            continue;
+        const std::string name = entry.path().filename().string();
+
+        std::ifstream in(ini, std::ios::binary);
+        std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        const size_t key = text.find("\nGSType=");
+        ASSERT_NE(key, std::string::npos) << name;
+        const size_t value = key + strlen("\nGSType=");
+        const size_t valueEnd = text.find_first_of(" \t;\r\n", value);
+        text.replace(value, valueEnd - value, "NGS");
+
+        // Written next to the original so relative paths resolve the same way
+        const fs::path copy = entry.path() / "unreal-ngs-test.ini";
+        {
+            std::ofstream out(copy, std::ios::binary);
+            out << text;
+        }
+        Config config(_context);
+        const bool loaded = config.LoadConfigFile(copy.string());
+        fs::remove(copy);
+        ASSERT_TRUE(loaded) << name;
+        EXPECT_EQ(_context->config.sound.gsTypeKind, GSTypeKind::NGS) << name;
+        EXPECT_EQ(_context->config.ngs.mp3Support, NGSMP3SupportKind::Software) << name;
+
+        SoundManager sm(_context);
+        EXPECT_EQ(sm.fittedGeneralSoundKind(), GSTypeKind::NGS) << name;
+        std::string gsName;
+        bool mp3 = false;
+        for (const AudioDeviceInfo& d : sm.devices())
+        {
+            if (d.type == AudioSourceType::GeneralSound)
+                gsName = d.name;
+            mp3 |= d.type == AudioSourceType::GeneralSoundMp3;
+        }
+        EXPECT_EQ(gsName, "NeoGS") << name;
+        EXPECT_TRUE(mp3) << name;
+    }
 }
 
 /// endregion </[NGS] (NeoGS card)>
