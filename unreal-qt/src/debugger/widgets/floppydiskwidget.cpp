@@ -1,8 +1,8 @@
 #include "floppydiskwidget.h"
 
 #undef signals
-#include "../../../core/src/emulator/io/fdc/fdd.h"
-#include "../../../core/src/emulator/io/fdc/wd1793.h"
+#include "emulator/io/fdc/fdd.h"
+#include "emulator/io/fdc/wd1793.h"
 #define signals Q_SIGNALS
 
 #include <QDebug>
