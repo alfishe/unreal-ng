@@ -475,7 +475,8 @@ TEST_F(TTD_InputJournalGS_Test, SubmitLiveInput_AppliesAndJournalsWhileRecording
     EXPECT_EQ(events[0].kind, ttd::TTDInputKind::GSData);
     EXPECT_EQ(events[0].value, 0x42);
     EXPECT_EQ(events[0].time.frame, _context->emulatorState.frame_counter);
-    EXPECT_EQ(events[0].time.tInFrame, _context->pCore->GetZ80()->t);
+    // TTD time: T-states at the model's top clock (B4), not the raw z80.t
+    EXPECT_EQ(events[0].time.tInFrame, _context->emulatorState.TtdTInFrame(_context->pCore->GetZ80()->t));
     _ttd->StopRecording();
 }
 

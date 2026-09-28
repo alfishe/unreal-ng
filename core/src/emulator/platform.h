@@ -1000,6 +1000,30 @@ struct EmulatorState
         return t >> hw_turbo_shift_applied;
     }
 
+    /// TTD time units per base (1x) T-state: the least common multiple of the
+    /// model's hardware CPU clock ratios (1 = no turbo; Scorpion and ATM 7.10
+    /// 2; ZX-Evo 4; ZX Next 8). One unit is a T-state at the model's top
+    /// clock. Set once from the model's port decoder (TtdClockUnits)
+    uint8_t ttd_clock_units;
+
+    /// TTD time units per CPU T-state at the applied clock. The in-frame
+    /// counter z80.t counts CPU T-states at the current clock and is rescaled
+    /// when a hardware turbo switches mid-frame, so the same value can name two
+    /// instants of one frame; t x this factor names the instant uniquely and
+    /// grows monotonically through every switch (B4)
+    uint32_t TtdUnitsPerTState() const
+    {
+        // Hot path (every journaled write): units is a multiple of every ratio
+        // the model selects, and ratios are powers of two, so the division is
+        // an exact shift
+        const uint32_t units = ttd_clock_units ? ttd_clock_units : 1;
+        const uint32_t perT = units >> hw_turbo_shift_applied;
+        return perT ? perT : 1;
+    }
+
+    /// In-frame CPU position `t` (z80.t) in TTD time units
+    uint32_t TtdTInFrame(uint32_t t) const { return t * TtdUnitsPerTState(); }
+
     /// endregion </Runtime CPU parameters
 
 

@@ -244,7 +244,9 @@ A point in time is identified by:
 struct TTDTimePoint
 {
     uint64_t frame;      // EmulatorState::frame_counter value
-    uint32_t tInFrame;   // Z80 t counter within frame [0, config.frame * multiplier)
+    uint32_t tInFrame;   // T-states within the frame at the model's TOP CPU clock,
+                         // [0, config.frame * ttd_clock_units); plain T-states on
+                         // models without a hardware turbo
                          // Granularity: instruction boundary (identical to RunTStates)
 
     bool operator<(const TTDTimePoint& o) const
@@ -256,9 +258,9 @@ struct TTDTimePoint
 
 Notes:
 
-- `config.frame` is t-states per frame (71680 for Pentagon). With the speed multiplier the intra-frame limit is `config.frame * current_z80_frequency_multiplier` — matching the logic already present in `Emulator::RunTStates`.
+- `config.frame` is t-states per frame (71680 for Pentagon). The CPU's own counter `z80.t` counts at the clock running now and is rescaled when a hardware turbo switches mid-frame (the instant is kept, the number changes), so after a switch down it repeats values of the same frame. TTD time therefore counts at the model's top clock: `tInFrame = z80.t * ttd_clock_units / hardware ratio`, where `ttd_clock_units` is the LCM of the model's hardware CPU clock ratios (1 without turbo; Scorpion and ATM 7.10 2; ZX-Evo 4; ZX Next 8). One instant has one value, time only grows, and a frame is always `config.frame * ttd_clock_units` units (B4). Co-processors with their own clock (GS, NeoGS) are outside this unit: their stimuli are journaled at main-CPU time and the card converts.
 - **Granularity is one Z80 instruction**, not one t-state. This is the same resolution as every existing stepping facility and is sufficient: no observable state changes mid-instruction from the debugger's point of view. (ULA beam position within an instruction is derivable from `t`.)
-- The global monotonic key used for indexes is `globalT = frame * tStatesPerFrame + tInFrame` stored as `uint64_t`. At 3.5 MHz this wraps after ~167,000 years.
+- The global monotonic key used for indexes is `globalT = frame * config.frame * ttd_clock_units + tInFrame` (`TimeTravelManager::GlobalT`), stored as `uint64_t`; the write journal packs it in 40 bits, which lasts ~90 h of recording at 1 unit per T-state and ~10 h at 8.
 
 ### 4.2 Recording Session
 

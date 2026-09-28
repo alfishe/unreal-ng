@@ -10,7 +10,7 @@ integrity and versioning mechanism
 Requirements: [requirements.md](requirements.md).
 
 - [ ] Step 0: `PeripheralId` table + notification enum on master
-- [ ] V0: make v1 honest (~~page-255 gap~~ done 2026-09-27, suspected bugs with tests — ~~B1 B2 B3 B5~~ fixed `a2d265df`/`86813dcb`, B4 confirmed (V3), ~~F3 feature-flag side effect~~ done `005771c8`, analyzer fixes)
+- [ ] V0: make v1 honest (~~page-255 gap~~ done 2026-09-27, suspected bugs with tests — ~~B1 B2 B3 B5~~ fixed `a2d265df`/`86813dcb`, ~~B4~~ fixed 2026-09-28 (top-clock TTD time), ~~F3 feature-flag side effect~~ done `005771c8`, analyzer fixes)
 - [ ] V0b: benchmark harness with v1 as first engine (parallel with V0)
 - [ ] Merge `profi`
 - [ ] V1: memory regions, per-piece chain cap, dirty-only cache, COW reference blocks
