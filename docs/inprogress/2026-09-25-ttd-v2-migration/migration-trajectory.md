@@ -113,8 +113,15 @@ tests that would catch regressions.
   4 KB sub-page a checkpoint holds, after each restore and for the 25
   replayed checkpoints; a flipped byte fails it), and gets a resume-then-compare
   case (present since `8db7841f`); a test for page 255 (done 2026-09-27); the generic state-completeness test
-  ([requirements.md](requirements.md) FR-3).
-- **Comments**: remove the stale ones listed in current-state §10.
+  ([requirements.md](requirements.md) FR-3): first version **done 2026-09-28**
+  (`ttdstatecompleteness_test.cpp`, every creatable model, every port in the model's port
+  map). It found B10 (the #7FFD paging lock survived a seek), fixed the same day. Still
+  open: FR-4 (devices attached or detached at runtime) and ports that decode only in a
+  gated state (e.g. Beta-128 outside TR-DOS).
+- **Comments**: remove the stale ones listed in current-state §10 (**done**: re-checked
+  2026-09-28, the listed comments in `timetravelmanager.*`, `ttdserializable.h` and the
+  page store header were already corrected; only the PoC reader `tools/poc/010-ttd-gui`
+  still says the writer stores CRC 0).
 
 Exit: the bit-flip experiment catches every page-payload flip; the new tests
 fail on the old code and pass on the new.
