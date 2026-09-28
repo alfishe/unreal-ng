@@ -781,9 +781,24 @@ std::string FormatTtdStatus(const Json::Value& status)
         }
     }
     out << ", write journal " << (status["write_journal_enabled"].asBool() ? "on" : "off");
+    if (status.isMember("write_journal_gap"))
+    {
+        // The journal misses writes of this session: write/io find-last replays
+        const Json::Value& gap = status["write_journal_gap"];
+        out << " (incomplete: " << gap["reason"].asString();
+        if (gap.isMember("frame"))
+        {
+            out << " at frame " << gap["frame"].asUInt64();
+        }
+        out << "; write searches replay)";
+    }
     if (status["bookmark_count"].asUInt64() > 0)
     {
         out << ", " << status["bookmark_count"].asUInt64() << " bookmark(s)";
+    }
+    if (status["last_drop_reason"].isString())
+    {
+        out << ", last session dropped: " << status["last_drop_reason"].asString();
     }
     if (status["loaded_from_file"].asBool())
     {
@@ -1933,6 +1948,17 @@ std::string FormatMarker(const Json::Value& marker)
            FormatTimePoint(marker["frame"], marker["tinframe"]);
 }
 
+/// TD-8: " Searched frame A .. frame B." from covered_from/covered_to, or "" when absent.
+std::string FormatSearchWindow(const Json::Value& b)
+{
+    if (!b.isMember("covered_from"))
+    {
+        return {};
+    }
+    return " Searched " + FormatTimePoint(b["covered_from"], b["covered_from_tinframe"]) + " .. " +
+           FormatTimePoint(b["covered_to"], b["covered_to_tinframe"]) + ".";
+}
+
 /// Like ForwardCall, but the text summary is built from the 2xx body. A 2xx
 /// body with "ok": false (dump) is a failure. A 409 (a history operation
 /// while recording) gets the MCP-side remedy appended.
@@ -2335,12 +2361,12 @@ void RegisterTimeTravel(ToolRegistry& registry)
                     CallAndSummarize("POST", Endpoint(id, "/ttd/reverse-continue"), body.get(), caller, [](const Json::Value& b) {
                         std::string text = b["matched"].asBool()
                                                ? "Hit PC " + Hex16(b["pc"].asUInt()) + " at " + FormatTimePoint(b["frame"], b["tinframe"])
-                                               : "No PC match; stopped at " + FormatTimePoint(b["frame"], b["tinframe"]);
+                                               : std::string("No PC match");
                         if (b.isMember("blocked_by_marker"))
                         {
                             text += " - blocked by marker " + FormatMarker(b["blocked_by_marker"]);
                         }
-                        return text;
+                        return text + "." + FormatSearchWindow(b);
                     }, done);
                 }
                 else if (action == "find_last")
@@ -2354,7 +2380,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
                             {
                                 text += ", RAM page " + std::to_string(b["phys_page"].asUInt());
                             }
-                            return text + ". Seek to that frame/tinframe to inspect the machine there.";
+                            return text + "." + FormatSearchWindow(b) + " Seek to that frame/tinframe to inspect the machine there.";
                         }
                         if (b["blocked"].asBool())
                         {
@@ -2364,9 +2390,9 @@ void RegisterTimeTravel(ToolRegistry& registry)
                             marker["kind"] = b["marker_kind"];
                             marker["reason"] = b["marker_reason"];
                             return "Not found after the replay barrier " + FormatMarker(marker) +
-                                   "; the search cannot look past it";
+                                   "; the search cannot look past it." + FormatSearchWindow(b);
                         }
-                        return std::string("Not found in the recorded history");
+                        return "Not found in the recorded history." + FormatSearchWindow(b);
                     }, done);
                 }
                 else if (action == "resume")

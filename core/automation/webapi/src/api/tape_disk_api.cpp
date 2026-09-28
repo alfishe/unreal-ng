@@ -4,6 +4,7 @@
 #include "../emulator_api.h"
 #include "../common/upload_helper.h"
 
+#include <debugger/ttd/timetravelmanager.h>
 #include <base/featuremanager.h>
 #include <drogon/HttpResponse.h>
 #include <drogon/utils/Utilities.h>
@@ -265,6 +266,19 @@ void EmulatorAPI::loadTape(const HttpRequestPtr& req,
     else
     {
         path = content.path;
+    }
+
+    // TTD refuses this while recording: answer why instead of a bare failure
+    if (const std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadTape); !refusal.empty())
+    {
+        Json::Value error;
+        error["error"] = "Conflict";
+        error["message"] = refusal;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
     }
 
     bool success = emulator->LoadTape(path);
@@ -1211,8 +1225,15 @@ void EmulatorAPI::importTapeAudio(const HttpRequestPtr& req,
 
     // insert: swap the instance's tape through the same path /tape/load uses
     bool inserted = false;
+    std::string insertRefusal;
     if (insertRequested)
-        inserted = emulator->LoadTape(outputPath);
+    {
+        insertRefusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadTape);
+        if (insertRefusal.empty())
+            inserted = emulator->LoadTape(outputPath);
+        else
+            ret["insert_error"] = insertRefusal;  // saved, but not inserted: TTD is recording
+    }
 
     ret["status"] = "success";
     ret["message"] = "Imported " + std::to_string(imported.blocksRecognized) + " block(s), saved " +
@@ -1317,6 +1338,19 @@ void EmulatorAPI::insertDisk(const HttpRequestPtr& req,
         else if (content.isEmbedded)
             autostart = (req->getHeader("X-Autostart") == "true");
     }
+    // TTD refuses this while recording: answer why instead of a bare failure
+    if (const std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadDisk); !refusal.empty())
+    {
+        Json::Value error;
+        error["error"] = "Conflict";
+        error["message"] = refusal;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
     Emulator::DiskAutostartResult autostartResult;
     std::string loadError;
     bool success;
@@ -1423,6 +1457,19 @@ void EmulatorAPI::createDisk(const HttpRequestPtr& req,
             cylinders = (*json)["cylinders"].asInt();
         if (json->isMember("sides"))
             sides = (*json)["sides"].asInt();
+    }
+
+    // TTD refuses this while recording: answer why instead of a bare failure
+    if (const std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::CreateDisk); !refusal.empty())
+    {
+        Json::Value error;
+        error["error"] = "Conflict";
+        error["message"] = refusal;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
     }
 
     std::string createError;

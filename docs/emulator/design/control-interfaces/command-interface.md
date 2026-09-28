@@ -2476,12 +2476,12 @@ All `ttd` subcommands act on the currently selected emulator instance. Frame num
 | `ttd step-forward` | `ttd forward`, `ttd sf` | — | Step forward one frame inside recorded history (never extends the timeline). | ✅ Implemented |
 | `ttd step-instruction` | `ttd si-back`, `ttd si-forward` | `[back \| forward \| fwd]` | Step one instruction. `step-instruction` alone and `si-back` step back; `step-instruction forward`/`fwd` and `si-forward` step forward. | ✅ Implemented |
 | `ttd reverse-step` | `ttd rs` | `[--count N]` *or* `[--tstates T]` | Step back N instructions (default 1), or back T t-states (lands on the nearest instruction start at or before the target). If both are given, `--tstates` wins. | ✅ Implemented |
-| `ttd reverse-continue` | `ttd rc` | `--pc <A> [--pc <B> ...]` | Run backward until the PC equals any of the given addresses. Reports the hit, a blocking marker, or "no match (reached session start)". | ✅ Implemented |
+| `ttd reverse-continue` | `ttd rc` | `--pc <A> [--pc <B> ...]` | Run backward until the PC equals any of the given addresses. Reports the hit, a blocking marker, or "no match (reached session start)", and the part of history it searched (`Searched: frame … .. frame …`). | ✅ Implemented |
 | `ttd resume` | — | `[frame] [tinframe]` | Resume recording from the current position, or from the given point. Everything recorded after that point is discarded. Needs a session that is `detached` or `recording`; from `idle` (for example straight after `ttd stop`) it fails, so seek first. | ✅ Implemented |
 | `ttd position` | `ttd pos` | — | Current position and session end, each as `(frame, tInFrame)`. | ✅ Implemented |
 | `ttd markers` | `ttd barriers` | — | List external-event markers (replay barriers): index, frame, tInFrame, kind, reason. | ✅ Implemented |
 | `ttd bookmark` | `ttd bookmarks`, `ttd bm` | `[list \| ls]`, `add <label> [frame] [tinframe]` (alias `mark`), `del <label>` (aliases `delete`, `remove`, `rm`) | Agent bookmarks: named positions, advisory only, never replay barriers. `add` without a frame marks the current position. Labels are non-empty, at most 63 characters, unique per session. | ✅ Implemented |
-| `ttd find-last` | `ttd fl` | `[--addr <A>] [--addr-from <F>] [--addr-to <T>] [--access write\|read\|execute\|io] [--value V] [--pc-from <A>] [--pc-to <A>] [--phys-page <P>] [--before-frame <F>] [--before-tin <T>]` | Reverse search: the most recent access that matches, looking back from the current position (or from `--before-frame`/`--before-tin`). Needs at least one of `--addr`, `--addr-from`, `--addr-to`, `--pc-from`, `--pc-to`, `--value`. `--access` defaults to `write`. `--phys-page` (0..255) pins the search to one physical RAM page. Numbers accept `0x` hex. Prints frame, tInFrame, PC, value, physical page (`none` for ROM / no RAM page) and access; or the blocking marker; or `No match found`. | ✅ Implemented |
+| `ttd find-last` | `ttd fl` | `[--addr <A>] [--addr-from <F>] [--addr-to <T>] [--access write\|read\|execute\|io] [--value V] [--pc-from <A>] [--pc-to <A>] [--phys-page <P>] [--before-frame <F>] [--before-tin <T>]` | Reverse search: the most recent access that matches, looking back from the current position (or from `--before-frame`/`--before-tin`). Needs at least one of `--addr`, `--addr-from`, `--addr-to`, `--pc-from`, `--pc-to`, `--value`. `--access` defaults to `write`. `--phys-page` (0..255) pins the search to one physical RAM page. Numbers accept `0x` hex. Prints frame, tInFrame, PC, value, physical page (`none` for ROM / no RAM page) and access; or the blocking marker; or `No match found`; then the part of history it searched (`Searched: frame … .. frame …`). | ✅ Implemented |
 | `ttd dump` | `ttd save` | `<path>` | Write the session to a `.ttd` file (readable by `tools/verification/ttd-analyzer`). Prints the byte count. | ✅ Implemented |
 | `ttd load` | `ttd open` | `<path>` | Load a `.ttd` session for playback. Replaces whatever session is held; afterwards the session is `idle`, so use `ttd seek` to position the emulator. | ✅ Implemented |
 | `ttd coverage` | `ttd cov` | `probe --frame N` / `scan` / `summary`, plus `[--kind executed\|written\|read] [--from-frame F] [--to-frame T] [--addr-from A] [--addr-to B] [--phys-page P] [--limit L] [--bucket-size S]` | Query the coverage index. `probe`: did frame N touch the range? `scan`: which frames in the window touched it (default limit 200). `summary`: activity heatmap per bucket (default limit 100, `--bucket-size 0` = automatic). Address range defaults to the whole 64K; `--to-frame` defaults to the session end. Short forms: `-f`, `-k`, `--from`/`-a`, `--to`/`-b`, `--page`/`-p`, `-l`, `--bucket`. | ✅ Implemented |
@@ -2532,17 +2532,44 @@ These rules live in the core, so every surface (CLI, WebAPI/MCP, Lua, Python, GD
 
 **Recording blocks browsing.** Seek, step, find-last, step-instruction, reverse-step and reverse-continue do not run while the session is recording — stop first. The WebAPI answers these with HTTP 409 `Conflict`; the core refuses them on every other surface too (the CLI prints the failure, Lua/Python get `reached = false` / `false` / no result).
 
-**What wipes a session** (history dropped, state back to `idle`):
+**A recording protects itself.** While a session is `recording`, anything that would drop or corrupt it is refused, and the refusal says why and what to do (stop the recording first):
+
+| Refused while recording | Why |
+| :--- | :--- |
+| Snapshot load | Replaces the whole machine state. |
+| Tape load, disk load (including disk autostart), disk create | A new medium. Insert it before starting the recording. |
+| ROM load | The recorded history relies on the current ROM. |
+| `ttd invalidate` | Stop the recording first, then discard it. |
+| Switching the `timetravel` or `debugmode` feature off | Capture (or the memory-write path it depends on) would stop mid-session and leave corrupt history. |
+| Changing the write-journal mode (`ttd_set_journal_enabled`, `SetEnableWriteJournal`) | A recording keeps the mode it started with. |
+| Host speed 2x..16x, turbo, fast tape, turbo tape, fast disk | See the acceleration lock below. |
+
+How each surface reports it:
+
+| Surface | Refusal |
+| :--- | :--- |
+| CLI | `Error: <reason>` |
+| WebAPI / MCP | HTTP **409 Conflict** with the reason in `message` (tape import/insert: `inserted: false` plus `insert_error`) |
+| Lua | The guarded functions (`snapshot_load`, `tape_load`, `disk_create`, `feature_set`, `ttd_invalidate`, `ttd_set_journal_enabled`) return `false, reason`; `disk_load` returns `{success = false, message = reason}` |
+| Python | `RuntimeError(reason)` from `snapshot_load`, `tape_load`, `disk_create`, `feature_set`, `ttd_invalidate`, `ttd_set_journal_enabled`; `disk_load` returns `{'success': False, 'message': reason}` |
+| GDB `monitor load` | `Error: <reason>` |
+| Qt UI | A "TTD Recording Active" dialog with the reason |
+
+Only a recording you started (`ttd start`, the TTD panel, the API) is protected. A DeZog session keeps its own rolling live history for reverse debugging; that history is not protected: loading media or a snapshot during a debug session works as before, drops that history (`last_drop_reason` says why), and DeZog starts a fresh one on the next resume or step. If DeZog connects while your recording runs, it takes that recording over as its live history.
+
+**What wipes a stopped session** (history dropped, state back to `idle`):
 
 | Trigger | Notes |
 | :--- | :--- |
 | Snapshot load | RAM and registers replaced wholesale. |
 | Tape load | New media. |
 | Disk load, disk create | New media. |
-| ROM reload | The machine's code changed under the recording. |
+| ROM reload | The machine's code changed under the history. |
 | Host speed multiplier change on a stopped or loaded session | Frame timing is part of the recording. Re-selecting the current speed is not a change, and a refused change (see the acceleration lock below) does not cost the session. |
 | `ttd invalidate` (or WebAPI `POST /ttd/invalidate`, Lua/Python `ttd_invalidate`) | Explicit. |
-| A device TTD cannot follow | Today this is the ZX-Evo / ATM3 Z-Controller SD card: any SD card activity while recording asks for invalidation, and the recording ends (history dropped) at the next frame boundary. |
+| A device TTD cannot follow | Today this is the ZX-Evo / ATM3 Z-Controller SD card. The guest program drives it, so it cannot be refused: any SD card activity while recording ends the recording (history dropped) at the next frame boundary, and `last_drop_reason` in the status says so. |
+
+The status field `last_drop_reason` names what dropped the last history (for example `snapshot-load`, `disk-load`); it is empty (WebAPI/Python: `null`/`None`) until something drops one.
 
 **Reset keeps history.** A machine reset (and the quick reset a disk autostart does) stops a running recording and **keeps** the history, so you can still browse what led up to the reset. A machine sitting in history (`detached`) goes back to `idle` with its history.
 
@@ -2558,6 +2585,8 @@ These rules live in the core, so every surface (CLI, WebAPI/MCP, Lua, Python, GD
 
 A seek (and a seek to a bookmark) that meets a marker stops with halt reason `external_event` and reports it (`blocking_marker`); `find-last` reports it as blocked (WebAPI, Lua and Python: `blocked: true` plus `marker_frame`, `marker_tinframe`, `marker_kind`, `marker_reason`); `reverse-continue` reports it (WebAPI, Lua and Python: `blocked_by_marker`). **Bookmarks are advisory and never barriers.**
 
+**Search window.** `find-last` and `reverse-continue` walk back from their start point and end at the match, at a marker they cannot replay across, or at the session start. Every answer names that span, so a search a marker cut short no longer looks like one that covered the whole session: WebAPI, Lua and Python return `covered_from` / `covered_from_tinframe` (where the search ended) and `covered_to` / `covered_to_tinframe` (where it started); the CLI prints `Searched: frame … .. frame …`; the MCP summary says `Searched frame … .. frame ….` Every instant in the span was searched and nothing before it. Python returns these fields only in its result dicts (a hit, or a search a marker stopped); a plain "no match" is still `None` and covered the whole session. A write/port `find-last` answered from a complete journal is not limited by markers (the journal records the writes themselves). `reverse-continue` with the coverage index also stops at a marker that sits in a frame where a breakpoint PC ran - that frame cannot be replayed, and a run there would be later than any older frame's.
+
 **Acceleration lock.** A recording must show the code running at real speed. While recording (and on through `detached`):
 
 - the host speed multiplier is forced to 1x, and 2x..16x is refused;
@@ -2566,7 +2595,7 @@ A seek (and a seek to a bookmark) that meets a marker stops with halt reason `ex
 
 The previous settings come back when the session returns to `idle` (stop, invalidate, a reset out of `detached`, a file load). Fast tape, turbo tape and fast disk also read as off while a stopped or loaded session is replayed (seek, step) and while the machine sits in `detached`, because they change what the guest code does. The machine's own hardware turbo (ATM, Scorpion) is guest behavior and is not touched. Details: [TDD §4.2](../debugger/time-travel-debug/time-travel-debugging-tdd.md#42-recording-session).
 
-**When the write journal answers.** `find-last` for writes and port writes answers from the write journal only when the journal holds every write of the session: journaling was on from the start of the recording and never paused (not switched off, TTD and debug mode not switched off mid-recording) and the ring never overwrote a record. Otherwise it replays the history, which is slower but always right. A saved `.ttd` records this in its header, so a loaded session keeps the fast answer only when its journal was complete; files written before this rule replay.
+**When the write journal answers.** `find-last` for writes and port writes answers from the write journal only when the journal holds every write of the session: journaling was on from the start of the recording and never paused (not switched off, TTD and debug mode not switched off mid-recording) and the ring never overwrote a record. Otherwise it replays the history, which is slower but always right. A saved `.ttd` records this in its header, so a loaded session keeps the fast answer only when its journal was complete; files written before this rule replay. The session status says whether the journal is complete (`write_journal_complete`) and, when it is not, why and where it stopped (`write_journal_gap`); the emulator log warns when a session loses it, and the Qt TTD panel shows `Journal incomplete` (cause in the tooltip). A running recording refuses the switches that would cost it (see "A recording protects itself" above), so a gap comes from recording without the journal, a journal change on a stopped session, the machine running between a stop and a live resume, a loaded file with an incomplete journal, or a debugger's live history. Switching journaling off while no session exists frees the journal's 64 MB.
 
 **Pausing.** The WebAPI pauses the emulator (and waits for the CPU thread to park) before seek, step, find-last and reverse operations, and leaves it paused; `resume` restarts it. From the CLI, pause the emulator yourself before browsing history.
 
@@ -2600,15 +2629,17 @@ usually the first thing to check when a session is handed to you.
 | `state` | `idle` / `recording` / `detached` |
 | `session_start_frame`, `current_end_frame` | Timeline extent |
 | `checkpoint_count` | Frames captured |
-| `write_journal_enabled` | Whether writes are being journaled (WebAPI, Lua, CLI; not in the Python dict) |
+| `write_journal_enabled` | Whether writes are being journaled |
+| `write_journal_complete` | The journal holds every write/port write of the session, so write/io `find-last` answers from it; false when journaling was off at the start or was switched (journal, debug mode, time travel) during the session |
+| `write_journal_wrapped` | The journal ring dropped its oldest records: a "no match" from it is not final and replays (a match is still exact) |
+| `write_journal_gap` | Present when the journal does not cover the session: `reason`, and `frame` / `tinframe` where it stopped (absent for a loaded file). The CLI prints `Journal coverage: complete` or `incomplete - write/port find-last replays (reason, at frame …)` |
 | `write_journal_records`, `write_journal_bytes` | Journal contents and in-memory cost. Normally the largest part of a session; the on-disk section is block-compressed and much smaller |
 | `coverage_index_frames`, `coverage_index_bytes` | Reverse-search index. **Zero frames means reverse search and reverse breakpoints fall back to replaying frames** — correct, but orders of magnitude slower |
 | `page_store_bytes`, `page_store_used_bytes`, `baseline_frames_captured` | COW page store capacity, live bytes and distinct page snapshots |
 | `session_heap_bytes` | Real total heap footprint of the session |
-| `bookmark_count` | Number of agent bookmarks (WebAPI and CLI) |
+| `bookmark_count` | Number of agent bookmarks |
 | `ttd_available` | False when the build has no TTD engine (WebAPI, Lua, Python) |
-
-There is no `invalidation_reason` field; the reason for an invalidation is written to the emulator log.
+| `last_drop_reason` | What dropped the last history (`snapshot-load`, `tape-load`, `disk-load`, `disk-create`, `rom-reload`, `speed-multiplier-change`, an `invalidate` reason, an SD-card note); empty / `null` when nothing has. The CLI prints it as `Last session dropped:` |
 
 #### Worked Examples
 

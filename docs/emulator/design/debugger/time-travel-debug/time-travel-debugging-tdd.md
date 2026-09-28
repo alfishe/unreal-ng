@@ -270,6 +270,7 @@ A recording session is the unit of history validity:
   - Manual memory/register edits from the debugger UI *while running* (edits while paused at time T truncate history *after* T instead — the past is still valid)
   - Speed multiplier change (`next_z80_frequency_multiplier`) on a retained (stopped) session — simpler to invalidate than to model. While recording the change is refused instead (see the acceleration lock below)
   - Media write-back to mounted disk images (see 12.2 for the staged handling)
+- **A running recording refuses the host-side invalidators (B9).** While `Recording`, snapshot/tape/disk load, disk create, ROM load, `InvalidateSession` from a surface, switching `timetravel`/`debugmode` off and changing the write-journal mode are refused; the invalidation list above applies to a stopped (retained) session. `TimeTravelManager::RecordingGuard(TTDGuardedAction)` returns the user-facing reason (empty when allowed); the core entry points (`Emulator::LoadSnapshot/LoadTape/LoadDisk/CreateBlankDisk/LoadROM`, `FeatureManager::setFeature`, `SetEnableWriteJournal`) enforce it, and every surface pre-checks it to report the reason (CLI `Error:`, WebAPI 409, Lua `false, reason`, Python `RuntimeError`, Qt dialog). A reset stays allowed: it stops the recording and keeps the history. Guest-driven invalidators (ZX-Evo SD card) cannot be refused; `TTDSessionInfo::lastDropReason` (`last_drop_reason`) records what dropped the last history. Only a `Session` recording is protected: a `DebuggerLive` history (DeZog) is a rolling debugger history that any outside change drops and the debugger restarts on the next resume/step, as before B9.
 - The session records `sessionStartTime` (TTDTimePoint) and monotonically grows `sessionEndTime` = "now".
 - **Acceleration lock.** A recording must show the code running at real speed. Every way into `Recording` (`StartRecording`, `ResumeRecordingFrom`, `ResumeRecordingLive`) engages the lock, and it is released only when the session returns to `Idle` (stop, invalidation, reset out of `Detached`, file load). While it is held:
   - the host speed control is forced to 1x before the baseline is captured, and 2x..16x is refused (`Core::SetSpeedMultiplier` returns false). The emulated machine's own hardware turbo (ATM, Scorpion) is guest behavior and is left alone;
@@ -290,7 +291,7 @@ stateDiagram-v2
     Recording --> Detached : SeekTo(T < end)<br/>(emulator paused in the past)
     Detached --> Recording : Resume() at T —<br/>history truncated to T,<br/>recording continues from T
     Detached --> Recording : SeekTo(end)<br/>(back to the present)
-    Recording --> Idle : InvalidateSession()<br/>reset / load / config change
+    Recording --> Idle : StopRecording() / reset (history kept)<br/>guest invalidation (SD card)
     Detached --> Idle : InvalidateSession()
 ```
 

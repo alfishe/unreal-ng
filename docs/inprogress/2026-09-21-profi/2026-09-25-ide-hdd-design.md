@@ -807,10 +807,10 @@ Goal: everything UnrealSpeccy / ZXMAK2 / Xpeccy / xpeccy-plus / pico-spec / DOSB
 |---|---|---|---|
 | **R1-1 Disk core** | `ataregisters.h`, `AtaDevice` engine + `AtaDisk`, `AtaChannel`, `IBlockDevice`, `RawImage` (write-through), `MemoryDisk`, POD state; delete the skeleton; `Core` owns the channel | L1 (ATA part) | M |
 | **R1-2 Profi adapter** | `IdeLatch` helpers, `IdeAdapterProfi`, decoder arms, `[HDD]` parsing, `Scheme=PROFI` in the Profi config (CRLF file), `PortTag::StorageIde`; **TTD interim rule** (§10.0) | L2 Profi + collision sweep; R1, R2; L4 rollout-1 cases | S–M |
-| **R1-3 Automation** | CLI / WebAPI / Lua / Python / MCP `hdd` and `cd` verbs, `NC_HDD_STATE_CHANGED` | L7 smoke | S–M |
+| **R1-3 Automation** | ~~CLI / WebAPI / Lua / Python / MCP `hdd` and `cd` verbs~~ **2026-09-28: the media verbs of the unified media manager** (PLAN #58 M4, [media-control-design.md](../2026-09-28-storage-manager/media-control-design.md)): the IDE units register `ide0.*` / `ide1.*` slots (#58 M6) and every surface controls them through `media …`; no `hdd` / `cd` verbs of their own | L7 smoke | S |
 | **R1-4 Other boards** | Nemo (+A8, DivIDE/Evo toggle), SMUC (replaces the Scorpion stub), ATM (+INTRQ bit); per-model scheme validation | L2 per board; R4, R5 (image) | M |
 | **R1-5 Image formats** | HDF, HDI, fixed VHD; Profi geometry auto-detect (§8.3) | L3 | S |
-| **R1-6 Host folders** | `FolderSnapshot`, `FatBuilder`, `HostFolderFat`, `SessionWriteMap`, export to `.img`, `Folder0ReadOnly`; FatFs in the test build | L3 folder cases; R5 (folder) | M–L |
+| **R1-6 Host folders** | **Done by PLAN #58 M1** (2026-09-28, branch `media-manager`, [storage-manager](../2026-09-28-storage-manager/technical-design.md)): `FolderSnapshot`, `HostFolderFat` (FAT16 / FAT32), the session layer, export to `.img`, `ReadOnly` access; the independent `FatVolumeReader` replaces FatFs in the tests. The IDE side only accepts a folder in its slot (`acceptsFolder`) | L3 folder cases; R5 (folder) | — |
 | **R1-7 ATAPI CD-ROM** | `AtapiCdrom` (pico-spec command list), `IsoImage`, `CD0/CD1`, `cd insert/eject` | ATAPI conformance; R7 (if Q9 answered) | M |
 | **R1-8 Tooling + UI** | differential harness (§12.6), fuzz, perf check; Qt HDD/CD menu + activity LED | L6, L7 | S–M |
 

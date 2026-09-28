@@ -4,6 +4,7 @@
 |---|---|
 | **Date** | 2026-09-28 |
 | **Status** | Reviewed; manager phase M3 (after block M1 and floppy M2) |
+| **Layers** | port decoder → port adapter → device → medium, with the slot and the manager beside them: [technical-design.md §1.1](technical-design.md#11-layers-from-the-guests-port-to-the-medium) |
 | **Today** | the medium is `CoreState::tapeFilePath`; `Tape::EnsureImageLoaded` parses lazily; `Emulator::LoadTape` accepts tap/tzx only while `TapeLoaderRegistry` and the GUI offer more; eject copied in four surfaces, no notification (research §3) |
 
 ## 1. What changes for the user

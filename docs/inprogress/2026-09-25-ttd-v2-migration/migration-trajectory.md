@@ -82,12 +82,19 @@ tests that would catch regressions.
 - **Recommended later** (write-journal follow-ups; none blocks V1):
   - *Journal coverage window* (V5) instead of the all-or-nothing "gapless"
     flag.
-  - Report journal completeness in the session status (Qt, WebAPI
-    `/ttd/status`, MCP, CLI, Lua, Python), so a user sees why a search replays.
-  - Warn in the UI/API when journaling, TTD or debug mode is switched off
-    during a recording: it silently degrades every later search to replay.
-  - Free the pre-allocated 64 MB journal when journaling is switched off while
-    no session exists (today only disabling the whole TTD feature frees it).
+  - ~~Report journal completeness in the session status~~ - **done
+    2026-09-28**: `write_journal_complete`, `write_journal_wrapped` and
+    `write_journal_gap {reason, frame, tinframe}` on WebAPI `/ttd/status`,
+    CLI, Lua, Python and the MCP status summary; `TTDSessionInfo` carries them.
+  - ~~Warn in the UI/API when journaling, TTD or debug mode is switched off
+    during a recording~~ - **done 2026-09-28**: B9 (`e175ff42`) now refuses
+    those switches during a user recording; the gaps still possible (recorded
+    without the journal, a change on a stopped session, a run between stop and
+    live resume, a loaded incomplete file, a debugger's live history) get a log
+    warning where they happen and `Journal incomplete` in the Qt TTD panel
+    (cause in the tooltip), besides the status fields.
+  - ~~Free the pre-allocated 64 MB journal when journaling is switched off
+    while no session exists~~ - **done 2026-09-28**.
   - Fix B4 before relying on find-last on turbo machines (ATM3, Profi,
     Scorpion turbo, later TSConf): timestamps from the frame-relative 3.5 MHz
     tact (descaled by `hw_turbo_shift_applied`), a monotonicity assert, and an
@@ -102,11 +109,19 @@ tests that would catch regressions.
   are corrected.) C++ integrity behaviour (eager check at load,
   error vs zero-fill on mismatch) waits for the investigation
   ([integrity-and-versioning.md](integrity-and-versioning.md)).
-- **Tests**: `TTD_Corpus_Test` compares RAM too (open: it compares CPU,
-  chipset and device blobs only), and gets a resume-then-compare case (present
-  since `8db7841f`); a test for page 255 (done 2026-09-27); the generic state-completeness test
-  ([requirements.md](requirements.md) FR-3).
-- **Comments**: remove the stale ones listed in current-state §10.
+- **Tests**: `TTD_Corpus_Test` compares RAM too (**done 2026-09-28**: every
+  4 KB sub-page a checkpoint holds, after each restore and for the 25
+  replayed checkpoints; a flipped byte fails it), and gets a resume-then-compare
+  case (present since `8db7841f`); a test for page 255 (done 2026-09-27); the generic state-completeness test
+  ([requirements.md](requirements.md) FR-3): first version **done 2026-09-28**
+  (`ttdstatecompleteness_test.cpp`, every creatable model, every port in the model's port
+  map). It found B10 (the #7FFD paging lock survived a seek), fixed the same day. Still
+  open: FR-4 (devices attached or detached at runtime) and ports that decode only in a
+  gated state (e.g. Beta-128 outside TR-DOS).
+- **Comments**: remove the stale ones listed in current-state §10 (**done**: re-checked
+  2026-09-28, the listed comments in `timetravelmanager.*`, `ttdserializable.h` and the
+  page store header were already corrected; only the PoC reader `tools/poc/010-ttd-gui`
+  still says the writer stores CRC 0).
 
 Exit: the bit-flip experiment catches every page-payload flip; the new tests
 fail on the old code and pass on the new.

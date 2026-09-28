@@ -24,6 +24,21 @@ clone manufacturers in the mid-90s concluded it was too late for the market.
 The Java emulator in this repository is therefore the *only existing
 implementation* — it is the reference hardware, quirks included.
 
+**History** (from [SpeccyWiki: ZX-Poly](https://speccy.info/ZX-Poly), whose
+text was read in a browser because the site blocks automated fetching, and
+from the zxpoly repository):
+
+| Year | Event |
+|:--|:--|
+| 1994 | Idea by Igor Maznitsa (Raydac), under the original name **ZM-Polyhedron**: four Z80s running the same program in sync, with their 1-bit screen planes combined into 4-bit colour; programs unmodified, only graphics data changed |
+| 1999 | First emulator written to test the idea, and a trial colorization of a fragment of *After The War*. The corpus still has an After The War 1 Sprite Corrector project, `atw1.sze` (never exported), most likely from this line of work |
+| 2007 | New emulator written in Java; the project takes the name **ZX-Poly**. Emulated platform: standard video mode, 16-colours-per-pixel mode, 512×384 mode with 8×8 attributes, four Z80s at 3.5 MHz, 512 KB RAM, 32 KB ROM |
+| 2017–2024 | Adapted games published in the repository: OFC (2017), Buratino (2018), Flying Shark (2019), Alien 8 (2021), Comando Quatro (2024, by its original programmer), Summer Santa 2022 (2024); After The War 2 and ZX-Word as TRD builds |
+
+The complete public corpus (snapshots, TRDs, loader sources, Sprite Corrector
+projects, Test ROM) is in
+[testdata/machines/zxpoly/](../../../testdata/machines/zxpoly/README.md).
+
 ## 2. The enabling theory: deterministic lockstep
 
 The whole platform rests on one theorem the author states as:

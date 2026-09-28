@@ -650,9 +650,14 @@ local status = profilers_status_all()
 
 The TTD functions are **global functions** (like the mouse functions), not methods on the emulator object. They act on the bound emulator, or on the selected one when the script is not bound to an instance. Bindings: `core/automation/lua/src/emulator/lua_emulator.h`. Command semantics and background: [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd).
 
-**Session rules** — read [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules). In short: states are `idle`, `recording`, `detached`; seek/step/find-last/reverse functions do nothing useful while recording (the core refuses them — `ttd_seek` returns `reached = false`, the boolean functions return `false`), so call `ttd_stop()` first; `ttd_start()` switches the `timetravel` feature on by itself; loads, disk create, ROM reload, a host speed change on a stopped session and `ttd_invalidate()` drop the history, while a reset keeps it; while recording, the host speed is locked to 1x and turbo / fast tape / turbo tape / fast disk are off.
+**Session rules** — read [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules). In short: states are `idle`, `recording`, `detached`; seek/step/find-last/reverse functions do nothing useful while recording (the core refuses them — `ttd_seek` returns `reached = false`, the boolean functions return `false`), so call `ttd_stop()` first; `ttd_start()` switches the `timetravel` feature on by itself; while recording, `snapshot_load`, `tape_load`, `disk_create`, `feature_set` (switching `timetravel`/`debugmode` off), `ttd_invalidate` and `ttd_set_journal_enabled` are refused and return `false, reason` (`disk_load`: `success = false` with the reason in `message`); on a stopped session loads, disk create, ROM reload, a host speed change and `ttd_invalidate()` drop the history, while a reset keeps it; while recording, the host speed is locked to 1x and turbo / fast tape / turbo tape / fast disk are off.
 
-Unlike the WebAPI, the Lua functions do not pause the emulator for you: pause it before browsing history. Errors never raise; they come back as `false`, an empty table, or a table with an `error` string. When the build has no TTD engine every function returns `false` / an empty or `error` table.
+```lua
+local ok, reason = snapshot_load("game.sna")
+if not ok then print(reason) end   -- "Cannot load a snapshot while TTD is recording: ... Stop the recording first."
+```
+
+Unlike the WebAPI, the Lua functions do not pause the emulator for you: pause it before browsing history. Errors never raise; they come back as `false` (plus a reason for a TTD refusal), an empty table, or a table with an `error` string. When the build has no TTD engine every function returns `false` / an empty or `error` table.
 
 **Session lifecycle:**
 
@@ -689,6 +694,9 @@ local status = ttd_status()
 --
 -- Sections
 -- status.write_journal_enabled = true
+-- status.write_journal_complete = true  -- false: write/io find-last replays history
+-- status.write_journal_wrapped = false  -- true: a "no match" from the journal replays
+-- status.write_journal_gap     = nil    -- when incomplete: {reason, frame, tinframe}
 -- status.bookmark_count        = 2
 -- status.write_journal_records = 729025
 -- status.write_journal_bytes   = 8748300
@@ -700,6 +708,8 @@ local status = ttd_status()
 -- status.page_store_used_bytes    = 665600
 -- status.baseline_frames_captured = 2159
 -- status.session_heap_bytes       = 1043968
+--
+-- status.last_drop_reason         = "snapshot-load"  -- "" until a history is dropped
 ```
 
 `source_path` is filled by `ttd_load` (the path it was given).
@@ -738,6 +748,8 @@ local r = ttd_reverse_continue({0x8000, 0x8010})
 --     frame/tinframe are present only when matched.
 --     A replay barrier met on the way adds
 --     blocked_by_marker = {kind, reason, frame, tinframe}  (as the WebAPI does)
+--     covered_from, covered_from_tinframe, covered_to, covered_to_tinframe:
+--     the searched span (command-interface.md -> Search window)
 ```
 
 **Reverse search:**
@@ -764,6 +776,8 @@ local r2 = ttd_find_last{
 --     { found = false, blocked = true, marker_frame, marker_tinframe,
 --       marker_kind, marker_reason }  (a replay barrier stopped the search first)
 --     phys_page is absent (nil) for ROM / no RAM page.
+--     Every answer also carries covered_from / covered_from_tinframe /
+--     covered_to / covered_to_tinframe: the part of history searched.
 --     For writes the write journal answers when it holds every write of the session;
 --     otherwise the search replays history (see command-interface.md "When the write journal answers").
 ```

@@ -148,6 +148,18 @@ struct TTDSessionInfo
 
     bool writeJournalEnabled = false;  ///< True if write journal is active (for FindLast)
 
+    /// The journal holds every write/port write of the session since its start,
+    /// so write/io find-last answers from it instead of replaying.
+    bool writeJournalComplete = false;
+    /// The journal ring dropped its oldest records: a "no match" from it is not
+    /// final and falls back to replay (a match is still exact).
+    bool writeJournalWrapped = false;
+    /// Why the journal stopped covering the session; empty while complete.
+    std::string journalGapReason;
+    /// Where it stopped (known for gaps made live; not for a loaded file).
+    bool journalGapHasPosition = false;
+    TTDTimePoint journalGapAt{};
+
     // --- Provenance -------------------------------------------------------
     //
     // "Is this something I just recorded, or something I opened?" is the first
@@ -182,6 +194,28 @@ struct TTDSessionInfo
     /// Advisory bookmarks currently held (TD-4). Zero is a session without
     /// annotations — complete and correct.
     size_t bookmarkCount = 0;
+
+    /// Why the last session with history was dropped (the InvalidateSession
+    /// reason, e.g. a device TTD cannot follow ending a recording); empty
+    /// when none was dropped in this run.
+    std::string lastDropReason;
+};
+
+/// @brief Actions that would end, wipe or corrupt a recording in progress.
+/// While TTD records they are refused (TimeTravelManager::RecordingGuard):
+/// stop the recording first. A machine reset is not one of them - it stops
+/// the recording and keeps the history.
+enum class TTDGuardedAction : uint8_t
+{
+    LoadSnapshot,        ///< replaces the whole machine state
+    LoadTape,            ///< a new medium
+    LoadDisk,            ///< a new medium
+    CreateDisk,          ///< a new medium
+    LoadRom,             ///< the code every checkpoint relies on
+    Invalidate,          ///< discards the session
+    DisableTimeTravel,   ///< capture stops mid-session
+    DisableDebugMode,    ///< writes stop reaching the history
+    ChangeWriteJournal   ///< a recording keeps the journal mode it started with
 };
 
 /// @brief String conversion for TTDCoverageKind.
@@ -305,8 +339,17 @@ public:
 
     /// @brief Drop all captured history and return to Idle.
     /// Called by session-invalidation hooks (Reset / Load* / speed change).
-    /// The reason string is logged but not stored.
+    /// The reason is logged and kept as TTDSessionInfo::lastDropReason.
     void InvalidateSession(const char* reason);
+
+    /// @brief Whether `action` may run now. While a user recording runs, every
+    /// TTDGuardedAction is refused - stop the recording first. A debugger's
+    /// live history (DebuggerLive) is not protected: an outside change drops it
+    /// and the debugger restarts it.
+    /// @return empty when allowed; otherwise the reason, one sentence a user can
+    /// act on. Every automation surface shows it verbatim, and the core paths
+    /// that perform the action refuse with it too.
+    std::string RecordingGuard(TTDGuardedAction action) const;
 
     /// @brief InvalidateSession requested from inside emulation, by a device
     /// whose state TTD cannot follow yet (storage: the SD card, IDE).
@@ -362,15 +405,14 @@ public:
     ///   - Fast reverse-watchpoint queries ("where was X last written?")
     ///   - Best for: debugging, step-back analysis, reverse debugging
     ///
-    /// Must be called before StartRecording() to take effect. Changing it while
-    /// a session holds history leaves a gap in the journal, so reverse queries
-    /// on that session fall back to replay.
-    void SetEnableWriteJournal(bool enable)
-    {
-        if (enable != _enableWriteJournal && !_timeline.empty())
-            _journalGapless = false;
-        _enableWriteJournal = enable;
-    }
+    /// Must be called before StartRecording() to take effect. Refused (false)
+    /// while a user recording runs: it keeps the mode it started with
+    /// (RecordingGuard(ChangeWriteJournal) explains; a debugger's live history
+    /// is not protected). Changing it on a stopped session that holds history
+    /// leaves a gap in the journal (reported in the session status), so reverse
+    /// queries on that session fall back to replay. Switching it off with no
+    /// session frees the pre-allocated journal.
+    bool SetEnableWriteJournal(bool enable);
     bool GetEnableWriteJournal() const { return _enableWriteJournal; }
 
     // -----------------------------------------------------------------------
@@ -1016,12 +1058,14 @@ public:
     /// `query.beforeGlobalT`, or std::nullopt if no match exists in the
     /// recorded history. Honors external-event markers (TDD §5.1): if the
     /// search would cross a marker, returns std::nullopt and (if non-null)
-    /// fills *outBlockingMarker with the barrier.
+    /// fills *outBlockingMarker with the barrier. *outWindow (if non-null)
+    /// receives the part of history the search examined (TD-8).
     ///
     /// Preconditions: emulator paused, state is Recording or Detached.
     std::optional<TTDSearchResult> FindLastAccess(
         const TTDSearchQuery& query,
-        TTDExternalEvent* outBlockingMarker = nullptr);
+        TTDExternalEvent* outBlockingMarker = nullptr,
+        TTDSearchWindow* outWindow = nullptr);
 
     /// @brief Probe coverage for a specific frame and address range (TD-7 §3.1.1).
     TTDCoverageProbeResult QueryCoverageProbe(
@@ -1135,6 +1179,7 @@ public:
         uint16_t       pc        = 0xFFFF;   ///< Valid iff matched.
         TTDTimePoint   arrivedAt{};          ///< Where the emulator landed.
         TTDExternalEvent blockingMarker{};   ///< Set iff a barrier halted the scan.
+        TTDSearchWindow  window{};           ///< Part of history the scan examined (TD-8).
     };
 
     /// @brief Run backward until any PC in `breakpoints` matches.
@@ -1679,6 +1724,17 @@ private:
     /// between a stop and a live resume). Only then may FindLastAccess answer
     /// from it; a loaded file's journal cannot vouch for this and replays.
     bool _journalGapless = false;
+    /// See TTDSessionInfo::lastDropReason
+    std::string _lastDropReason;
+    /// Why and where _journalGapless dropped, for the session status (MarkJournalGap)
+    std::string  _journalGapReason;
+    bool         _journalGapHasPosition = false;
+    TTDTimePoint _journalGapAt{};
+    /// The journal stops covering the session: clear _journalGapless, remember
+    /// why/where, warn once. No-op when it was already incomplete.
+    void MarkJournalGap(const char* reason, bool hasPosition = true);
+    /// No session any more (or a fresh one): forget the previous gap
+    void ClearJournalGap();
     /// Position at StopRecording, to tell whether the machine ran before a live resume
     uint64_t _recordingStoppedAtT = 0;
 

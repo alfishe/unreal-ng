@@ -161,6 +161,11 @@ public:
     bool isEnabled(const std::string& idOrAlias) const;
     /// @brief Whether a feature by this id or alias exists (tells "refused" from "unknown")
     bool hasFeature(const std::string& idOrAlias) const;
+    /// @brief Why setFeature(idOrAlias, enabled) would be refused right now, as one
+    /// sentence a user can act on; empty when it would not be (or the feature is unknown).
+    /// TTD holds features while it records or replays: see isTtdRecordingActive /
+    /// isTtdTimelineBound, and TimeTravelManager::RecordingGuard for the capture flags.
+    std::string refusalReason(const std::string& idOrAlias, bool enabled) const;
     std::vector<FeatureInfo> listFeatures() const;
     void setDefaults();
     void loadFromFile(const std::string& path);

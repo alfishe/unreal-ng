@@ -703,9 +703,16 @@ status = emu.profilers_status_all()
 
 TTD methods live on the `Emulator` object (`emu.ttd_*`). Bindings: `core/automation/python/src/emulator/python_emulator.h`. Command semantics and background: [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd).
 
-**Session rules** — read [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules). In short: states are `idle`, `recording`, `detached`; seek/step/find-last/reverse methods are refused by the core while recording (`ttd_seek` returns `reached: False` with `halt_reason: 'out_of_range'`, the boolean methods return `False`, `ttd_find_last` / `ttd_reverse_continue` return `None`), so call `ttd_stop()` first; `ttd_start()` switches the `timetravel` feature on by itself; loads, disk create, ROM reload, a host speed change on a stopped session and `ttd_invalidate()` drop the history, while a reset keeps it; while recording, the host speed is locked to 1x and turbo / fast tape / turbo tape / fast disk are off.
+**Session rules** — read [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules). In short: states are `idle`, `recording`, `detached`; seek/step/find-last/reverse methods are refused by the core while recording (`ttd_seek` returns `reached: False` with `halt_reason: 'out_of_range'`, the boolean methods return `False`, `ttd_find_last` / `ttd_reverse_continue` return `None`), so call `ttd_stop()` first; `ttd_start()` switches the `timetravel` feature on by itself; while recording, `snapshot_load`, `tape_load`, `disk_create`, `feature_set` (switching `timetravel`/`debugmode` off), `ttd_invalidate` and `ttd_set_journal_enabled` raise `RuntimeError` with the reason (`disk_load` returns `success: False` with the reason in `message`); on a stopped session loads, disk create, ROM reload, a host speed change and `ttd_invalidate()` drop the history, while a reset keeps it; while recording, the host speed is locked to 1x and turbo / fast tape / turbo tape / fast disk are off.
 
-Unlike the WebAPI, these methods do not pause the emulator for you: call `emu.pause()` before browsing history. Failures are reported in the return value (`False`, `None`, or a dict with `error`), not as exceptions — except an out-of-range `phys_page` or an unknown `ttd_start` mode, which raise `ValueError`.
+```python
+try:
+    emu.snapshot_load('game.sna')
+except RuntimeError as refusal:
+    print(refusal)   # Cannot load a snapshot while TTD is recording: ... Stop the recording first.
+```
+
+Unlike the WebAPI, these methods do not pause the emulator for you: call `emu.pause()` before browsing history. Failures are reported in the return value (`False`, `None`, or a dict with `error`), not as exceptions — except an out-of-range `phys_page` or an unknown `ttd_start` mode, which raise `ValueError`, and a refusal to protect a running recording, which raises `RuntimeError`.
 
 **Session lifecycle:**
 
@@ -747,6 +754,9 @@ status = emu.ttd_status()
 #
 #   # Sections
 #   'write_journal_enabled': True,
+#   'write_journal_complete': True,   # False: write/io find-last replays history
+#   'write_journal_wrapped': False,   # True: a "no match" from the journal replays
+#   # 'write_journal_gap': {'reason': ..., 'frame': ..., 'tinframe': ...}  when incomplete
 #   'bookmark_count': 2,
 #   'write_journal_records': 729025,
 #   'write_journal_bytes': 8748300,   # in memory; on disk it is compressed
@@ -758,6 +768,8 @@ status = emu.ttd_status()
 #   'page_store_used_bytes': 665600,
 #   'baseline_frames_captured': 2159,
 #   'session_heap_bytes': 1043968,
+#
+#   'last_drop_reason': 'snapshot-load',   # None until a history is dropped
 # }
 ```
 
@@ -805,6 +817,8 @@ hit = emu.ttd_reverse_continue([0x8000, 0x8010])
 #    'blocked_by_marker': {'kind': ..., 'reason': ..., 'frame': ..., 'tinframe': ...}
 #    (with 'matched': False when the barrier stopped the search before a match).
 #    None only when nothing matched and no marker stopped the search.
+#    Dicts carry 'covered_from', 'covered_from_tinframe', 'covered_to',
+#    'covered_to_tinframe': the searched span (command-interface.md -> Search window).
 ```
 
 **Reverse search:**
@@ -819,7 +833,9 @@ result = emu.ttd_find_last(addr=0x5800, access='write')
 #   'pc': 0x4A21,
 #   'value': 0x07,
 #   'phys_page': 5,          # None for ROM / no RAM page
-#   'access': 'write'
+#   'access': 'write',
+#   'covered_from': 4823, 'covered_from_tinframe': 14982,  # the searched span:
+#   'covered_to': 4900, 'covered_to_tinframe': 0            # it ended at the hit
 # }
 
 # Full filter set (single address or address/PC range search):
@@ -838,7 +854,9 @@ result = emu.ttd_find_last(
 
 # A replay barrier stopped the search before any match:
 # {'found': False, 'blocked': True, 'marker_frame': 4700, 'marker_tinframe': 0,
-#  'marker_kind': 'debugger_edit', 'marker_reason': 'Python memory write'}
+#  'marker_kind': 'debugger_edit', 'marker_reason': 'Python memory write',
+#  'covered_from': 4700, 'covered_from_tinframe': 0, 'covered_to': 4900, 'covered_to_tinframe': 0}
+#  The search covered frame 4700..4900 only: nothing before the marker was examined.
 ```
 
 For writes the write journal answers when it holds every write of the session; otherwise the search replays history (see [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules), "When the write journal answers").

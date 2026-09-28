@@ -188,15 +188,16 @@ Why:
 | B6 | Page-255 gap (§7) | **fixed 2026-09-27**, with the stale-cache-on-ROM-switch defect found alongside it |
 | B7 | `sessionHeapBytes` ("Memory MB" in Qt and WebAPI) excludes page payloads, the 64 MB journal, coverage and caches | read in code |
 | B8 | Python analyzer: does not know flag bit 3 (bookmarks) → reports `trailing_bytes` on files with bookmarks. (The missing CRC comparison and the false "writer stores 0" comments were fixed 2026-09-25: 300/300 payload flips now caught) | read in code |
-| B9 | Turning TTD or debug mode off mid-recording silently corrupts history (perf review F2) | from [core-perf review](../2026-09-24-core-performance/unreal-ng-core-perf-and-gating-review.md) |
+| B9 | Turning TTD or debug mode off mid-recording silently corrupts history (perf review F2) | **fixed** in `e175ff42`: a running recording refuses switching them off (and loads, ROM, invalidate, journal-mode change) with a reason on every surface |
+| B10 | The #7FFD paging lock lived in a decoder-private flag no checkpoint captured: a seek back across a lock left the machine locked (and on 128K/Pentagon/+2 mapped to the locked page); 128K/Pentagon also stored and applied locked writes, unlike the hardware | **fixed 2026-09-28**, found by the FR-3 state-completeness test: a locked port ignores the whole write (UnrealSpeccy, Fuse, Xpeccy, ZXMAK2, MiSTer agree) and the lock is derived from the latches (`PortDecoder::IsPagingLocked`) |
 
-Stale documentation in code (the "CRC always 0 on write" comments were fixed
-2026-09-25; the PoC reader `tools/poc/010-ttd-gui` still carries one): the
-pre-codec format comment block
-(TTM.cpp:2260-2296), `_forceNextKeyFrame` "set by reset/load", "no heap
-allocation" in `ttdserializable.h`, "64 MB budget" in the page store header.
-Dead code: `MaterializedRamCache`, the two journal offsets in `TTDCheckpoint`,
-the `DebuggerEdit`/`HardwareReset` event kinds.
+Stale documentation in code: re-checked 2026-09-28, the pre-codec format
+comment block, `_forceNextKeyFrame` "set by reset/load", "no heap allocation"
+in `ttdserializable.h` and "64 MB budget" in the page store header are all
+corrected; the PoC reader `tools/poc/010-ttd-gui` still says the writer stores
+CRC 0. Dead code: the two journal offsets in `TTDCheckpoint` (in memory only,
+not in the file). `MaterializedRamCache` is gone; `DebuggerEdit` is written
+(tool edits while recording) and `HardwareReset` is a documented reserved kind.
 
 ## 11. Who depends on the current design
 

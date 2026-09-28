@@ -88,6 +88,21 @@ struct TTDSearchQuery
     uint64_t beforeGlobalT = UINT64_MAX;
 };
 
+/// @brief The part of history a backward search examined (TD-8).
+///
+/// A search walks back from `to` and stops at `from`: at the match it
+/// returns, at a replay barrier (external-event marker) it could not cross,
+/// or at the session start when it examined everything. Every instant in
+/// [from, to] was searched; nothing before `from` was. Without this a search
+/// cut short by a barrier looked exactly like one that covered the whole
+/// session.
+struct TTDSearchWindow
+{
+    bool         searched = false;  ///< False when the search was refused (recording, no history)
+    TTDTimePoint from{};            ///< Where the backward search ended
+    TTDTimePoint to{};              ///< Where it started (the query's upper bound)
+};
+
 /// @brief Single search hit returned to the caller.
 struct TTDSearchResult
 {

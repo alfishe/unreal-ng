@@ -232,7 +232,24 @@ void EmulatorAPI::getTTDStatus(const HttpRequestPtr& req,
     ret["coverage_index_frames"] = Json::UInt64(info.coverageIndexFrames);
     ret["coverage_index_bytes"]  = Json::UInt64(info.coverageIndexBytes);
     ret["bookmark_count"]       = Json::UInt64(info.bookmarkCount);
+    // Why the last session with history was dropped (null when none was):
+    // tells an agent why its recording is gone, e.g. a device TTD cannot follow
+    ret["last_drop_reason"]     = info.lastDropReason.empty() ? Json::Value(Json::nullValue)
+                                                              : Json::Value(info.lastDropReason);
     ret["write_journal_enabled"]    = info.writeJournalEnabled;
+    ret["write_journal_complete"]   = info.writeJournalComplete;
+    ret["write_journal_wrapped"]    = info.writeJournalWrapped;
+    if (!info.journalGapReason.empty())
+    {
+        Json::Value gap;
+        gap["reason"] = info.journalGapReason;
+        if (info.journalGapHasPosition)
+        {
+            gap["frame"]    = Json::UInt64(info.journalGapAt.frame);
+            gap["tinframe"] = Json::UInt(info.journalGapAt.tInFrame);
+        }
+        ret["write_journal_gap"] = gap;
+    }
         ret["ttd_available"]            = true;
     }
 
@@ -427,6 +444,18 @@ void EmulatorAPI::invalidateTTD(const HttpRequestPtr& req,
     if (jsonBody && jsonBody->isMember("reason") && (*jsonBody)["reason"].isString())
     {
         reason = (*jsonBody)["reason"].asString();
+    }
+
+    if (const std::string refusal = mgr->RecordingGuard(ttd::TTDGuardedAction::Invalidate); !refusal.empty())
+    {
+        Json::Value error;
+        error["error"] = "Conflict";
+        error["message"] = refusal;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
     }
 
     mgr->InvalidateSession(reason.c_str());
@@ -1003,6 +1032,19 @@ void EmulatorAPI::loadTTD(const HttpRequestPtr& req,
     callback(resp);
 }
 
+/// TD-8: the part of history a backward search examined. It walked back from
+/// covered_to and stopped at covered_from - the match, a replay barrier, or
+/// the session start. Absent when the search was refused.
+static void AddSearchWindow(Json::Value& ret, const ttd::TTDSearchWindow& window)
+{
+    if (!window.searched)
+        return;
+    ret["covered_from"]          = Json::UInt64(window.from.frame);
+    ret["covered_from_tinframe"] = Json::UInt(window.from.tInFrame);
+    ret["covered_to"]            = Json::UInt64(window.to.frame);
+    ret["covered_to_tinframe"]   = Json::UInt(window.to.tInFrame);
+}
+
 /// @brief POST /api/v1/emulator/{id}/ttd/find-last
 void EmulatorAPI::findLastTTD(const HttpRequestPtr& req,
                                 std::function<void(const HttpResponsePtr&)>&& callback,
@@ -1177,7 +1219,8 @@ void EmulatorAPI::findLastTTD(const HttpRequestPtr& req,
     PauseAndConfirm(emulator);
 
     ttd::TTDExternalEvent marker;
-    auto result = mgr->FindLastAccess(q, &marker);
+    ttd::TTDSearchWindow window;
+    auto result = mgr->FindLastAccess(q, &marker, &window);
 
     if (emulator)
         NotifyFrameRefresh(*emulator);
@@ -1208,6 +1251,7 @@ void EmulatorAPI::findLastTTD(const HttpRequestPtr& req,
     {
         ret["found"] = false;
     }
+    AddSearchWindow(ret, window);
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
@@ -1402,6 +1446,7 @@ void EmulatorAPI::reverseContinueTTD(const HttpRequestPtr& req,
         m["tinframe"] = Json::UInt(result.blockingMarker.time.tInFrame);
         ret["blocked_by_marker"] = m;
     }
+    AddSearchWindow(ret, result.window);
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);

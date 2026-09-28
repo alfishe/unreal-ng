@@ -71,9 +71,20 @@
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
 #include "ui_mainwindow.h"
+#include "debugger/ttd/timetravelmanager.h"
 
 namespace
 {
+// B9: the core refuses actions that would destroy a TTD recording; tell the user why instead of failing silently
+bool RefusedWhileRecording(QWidget* parent, const Emulator& emulator, ttd::TTDGuardedAction action)
+{
+    const std::string refusal = emulator.RecordingGuard(action);
+    if (refusal.empty())
+        return false;
+    QMessageBox::warning(parent, QObject::tr("TTD Recording Active"), QString::fromStdString(refusal));
+    return true;
+}
+
 // Convert std::vector<std::string> to QStringList
 QStringList toQStringList(const std::vector<std::string>& v)
 {
@@ -1944,6 +1955,8 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly)
             qWarning() << "ROM loading not implemented:" << filePath;
             break;
         case FileSnapshot:
+            if (_emulator && RefusedWhileRecording(this, *_emulator, ttd::TTDGuardedAction::LoadSnapshot))
+                break;
             if (_emulator)
             {
                 bool result = _emulator->LoadSnapshot(file);
@@ -1959,6 +1972,8 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly)
             }
             break;
         case FileTape:
+            if (_emulator && RefusedWhileRecording(this, *_emulator, ttd::TTDGuardedAction::LoadTape))
+                break;
             if (_emulator)
             {
                 bool result = _emulator->LoadTape(file);
@@ -1971,6 +1986,8 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly)
             }
             break;
         case FileDisk:
+            if (_emulator && RefusedWhileRecording(this, *_emulator, ttd::TTDGuardedAction::LoadDisk))
+                break;
             if (_emulator)
             {
                 // Quick reset into TR-DOS only while the machine is running; paused or stopped machines just mount
@@ -2615,6 +2632,8 @@ void MainWindow::handleImportAudioTapeRequested()
     // rides the same LoadTape path as File → Open Tape
     TapeImportAudioDialog dialog(this);
     connect(&dialog, &TapeImportAudioDialog::insertRequested, this, [this](const QString& path) {
+        if (_emulator && RefusedWhileRecording(this, *_emulator, ttd::TTDGuardedAction::LoadTape))
+            return;
         if (_emulator)
         {
             if (!_emulator->LoadTape(path.toStdString()))

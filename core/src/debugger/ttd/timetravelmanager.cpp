@@ -67,6 +67,15 @@ namespace
 
 namespace ttd {
 
+namespace
+{
+/// Session time point of an absolute t-state (frame length frameT)
+TTDTimePoint TimePointOf(uint64_t globalT, uint32_t frameT)
+{
+    return TTDTimePoint{globalT / frameT, static_cast<uint32_t>(globalT % frameT)};
+}
+}  // namespace
+
 // ---------------------------------------------------------------------------
 // Public helpers
 // ---------------------------------------------------------------------------
@@ -229,7 +238,13 @@ bool TimeTravelManager::StartRecording()
         if (!_writeJournal->IsEmpty())
             _writeJournal->Clear();  // it must hold this session's writes only
     }
+    ClearJournalGap();
     _journalGapless = _enableWriteJournal && _writeJournal != nullptr;
+    if (!_journalGapless)
+    {
+        _journalGapless = true;  // so the gap below is recorded
+        MarkJournalGap("recorded without the write journal");
+    }
 
     _modelRamPages = ResolveModelRamPages();
     if (_modelRamPages == 0 || _modelRamPages > MAX_RAM_PAGES)
@@ -378,6 +393,7 @@ void TimeTravelManager::InvalidateSession(const char* reason)
 
     MLOGINFO("TimeTravelManager::InvalidateSession — reason='%s', dropping %zu checkpoints",
              reason ? reason : "(null)", _timeline.size());
+    _lastDropReason = reason ? reason : "";
 
     for (auto& cp : _timeline)
         ReleaseCheckpointRefs(cp);
@@ -392,6 +408,7 @@ void TimeTravelManager::InvalidateSession(const char* reason)
     if (_writeJournal)
         _writeJournal->Clear();  // Phase 4 — write journal invalidates with the timeline
     _journalGapless = false;
+    ClearJournalGap();
     _modelRamPages = 0;
     _dirtyPageOverflowReported = false;
     _loadedFromFile = false;
@@ -514,7 +531,8 @@ void TimeTravelManager::UpdateFeatureCache()
     // Recording: nothing is journaled when Idle or Detached, and StopRecording
     // and step-over switch debug mode back in exactly those states.
     if (_state == TTDSessionState::Recording && (!ttdEnabled || !fm->isEnabled(Features::kDebugMode)))
-        _journalGapless = false;
+        MarkJournalGap(!ttdEnabled ? "time travel switched off during the recording"
+                                   : "debug mode switched off during the recording");
 
     // Pre-allocate write journal when TTD is enabled (async, non-blocking).
     // This way allocation completes before StartRecording() is called.
@@ -580,6 +598,7 @@ TTDSessionInfo TimeTravelManager::GetSessionInfo() const
                                _coverageIndex.EncodedBytes(TTDCoverageKind::Read);
 
     info.bookmarkCount = _bookmarks.Size();
+    info.lastDropReason = _lastDropReason;
 
     // Phase 5 codec telemetry — useful for the UI / WebAPI status surface
     // to show compression effectiveness at a glance.
@@ -604,8 +623,60 @@ TTDSessionInfo TimeTravelManager::GetSessionInfo() const
     }
 
     info.writeJournalEnabled = _enableWriteJournal && _writeJournal != nullptr;
+    info.writeJournalComplete = _journalGapless && _writeJournal != nullptr;
+    info.writeJournalWrapped = _writeJournal != nullptr && _writeJournal->HasEvictedRecords();
+    info.journalGapReason = _journalGapReason;
+    info.journalGapHasPosition = _journalGapHasPosition;
+    info.journalGapAt = _journalGapAt;
 
     return info;
+}
+
+bool TimeTravelManager::SetEnableWriteJournal(bool enable)
+{
+    if (enable == _enableWriteJournal)
+        return true;
+    if (!RecordingGuard(TTDGuardedAction::ChangeWriteJournal).empty())
+        return false;
+    if (!_timeline.empty())
+        MarkJournalGap(enable ? "write journal switched on during the session"
+                              : "write journal switched off during the session");
+    _enableWriteJournal = enable;
+
+    // Nothing to answer for and nothing to record into: give back the 64 MB
+    // the feature pre-allocated. A retained session keeps its journal.
+    if (!enable && _state == TTDSessionState::Idle && _timeline.empty() && _writeJournal)
+    {
+        _writeJournal->WaitReady();
+        _writeJournal.reset();
+    }
+    return true;
+}
+
+void TimeTravelManager::MarkJournalGap(const char* reason, bool hasPosition)
+{
+    if (!_journalGapless)
+        return;  // already incomplete: keep the first cause
+    _journalGapless = false;
+    _journalGapReason = reason ? reason : "";
+    _journalGapHasPosition = hasPosition && !_timeline.empty();
+    _journalGapAt = _journalGapHasPosition ? CurrentPosition() : TTDTimePoint{};
+    if (_journalGapHasPosition)
+        MLOGWARNING("TimeTravelManager — the write journal no longer covers the session (%s, at frame %llu "
+                    "t=%u): write/port find-last replays instead of answering from it",
+                    _journalGapReason.c_str(), static_cast<unsigned long long>(_journalGapAt.frame),
+                    static_cast<unsigned>(_journalGapAt.tInFrame));
+    else
+        MLOGWARNING("TimeTravelManager — the write journal does not cover the session (%s): "
+                    "write/port find-last replays instead of answering from it",
+                    _journalGapReason.c_str());
+}
+
+void TimeTravelManager::ClearJournalGap()
+{
+    _journalGapReason.clear();
+    _journalGapHasPosition = false;
+    _journalGapAt = TTDTimePoint{};
 }
 
 size_t TimeTravelManager::EstimateSessionHeapBytes() const
@@ -647,6 +718,46 @@ size_t TimeTravelManager::EstimateSessionHeapBytes() const
 // ---------------------------------------------------------------------------
 // Capture (emulator thread)
 // ---------------------------------------------------------------------------
+
+std::string TimeTravelManager::RecordingGuard(TTDGuardedAction action) const
+{
+    // Only a recording the user started is protected. A debugger's live history
+    // (DebuggerLive, DeZog) is a rolling background history: any outside change
+    // drops it and the debugger restarts it on the next resume or step.
+    if (!IsRecording() || IsDebuggerLive())
+        return {};
+
+    switch (action)
+    {
+        case TTDGuardedAction::LoadSnapshot:
+            return "Cannot load a snapshot while TTD is recording: it replaces the whole machine state and would drop "
+                   "the recorded history. Stop the recording first.";
+        case TTDGuardedAction::LoadTape:
+            return "Cannot insert a tape while TTD is recording: a new medium would drop the recorded history. Insert "
+                   "it before starting the recording, or stop the recording first.";
+        case TTDGuardedAction::LoadDisk:
+            return "Cannot insert a disk while TTD is recording: a new medium would drop the recorded history. Insert "
+                   "it before starting the recording, or stop the recording first.";
+        case TTDGuardedAction::CreateDisk:
+            return "Cannot create a disk while TTD is recording: a new medium would drop the recorded history. Create "
+                   "it before starting the recording, or stop the recording first.";
+        case TTDGuardedAction::LoadRom:
+            return "Cannot load a ROM while TTD is recording: the recorded history relies on the current ROM and would "
+                   "be dropped. Stop the recording first.";
+        case TTDGuardedAction::Invalidate:
+            return "Cannot discard the TTD session while it is recording. Stop the recording first, then discard it.";
+        case TTDGuardedAction::DisableTimeTravel:
+            return "Cannot switch the timetravel feature off while TTD is recording: capture would stop mid-session "
+                   "and the recorded history would be corrupt. Stop the recording first.";
+        case TTDGuardedAction::DisableDebugMode:
+            return "Cannot switch debug mode off while TTD is recording: memory writes would stop reaching the "
+                   "recorded history, which would then be corrupt. Stop the recording first.";
+        case TTDGuardedAction::ChangeWriteJournal:
+            return "Cannot change the write journal mode while TTD is recording: a recording keeps the mode it "
+                   "started with. Choose it when starting, or stop the recording first.";
+    }
+    return "This action is not allowed while TTD is recording. Stop the recording first.";
+}
 
 void TimeTravelManager::RequestInvalidation(const char* reason)
 {
@@ -2498,7 +2609,7 @@ bool TimeTravelManager::ResumeRecordingFrom(const TTDTimePoint& from)
     // ------------------------------------------------------------------
     EngageCaptureFeatures();
     if (!_enableWriteJournal)
-        _journalGapless = false;  // the writes from here on are not journaled
+        MarkJournalGap("recording resumed with the write journal off");  // the writes from here on are not journaled
     SetState(TTDSessionState::Recording);
     DisarmInputPlayback();  // live input again (journaled while recording)
 
@@ -2576,8 +2687,10 @@ bool TimeTravelManager::ResumeRecordingLive()
 
     // Instructions executed since the stop (within this frame) wrote nothing
     // to the journal: from here on it cannot vouch for the whole session
-    if (present.frame * _context->config.frame + present.tInFrame != _recordingStoppedAtT || !_enableWriteJournal)
-        _journalGapless = false;
+    if (!_enableWriteJournal)
+        MarkJournalGap("recording resumed with the write journal off");
+    else if (present.frame * _context->config.frame + present.tInFrame != _recordingStoppedAtT)
+        MarkJournalGap("the machine ran unrecorded between the stop and the resume");
 
     SetState(TTDSessionState::Recording);
     DisarmInputPlayback();  // live input again (journaled while recording)
@@ -3578,7 +3691,15 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
     // not answer find-last from the previous live recording's writes
     // The journal answers reverse queries only when the writer vouched that it
     // holds every write of the session (current-state B3); otherwise replay
+    ClearJournalGap();
     _journalGapless = stagedJournal && (flags & ttd::dump::kFlagsWriteJournalComplete) != 0;
+    if (!_journalGapless)
+    {
+        _journalGapless = true;  // so the gap below is recorded
+        MarkJournalGap(stagedJournal ? "the loaded file's write journal is incomplete"
+                                     : "the loaded file has no write journal",
+                       /*hasPosition=*/false);
+    }
     if (stagedJournal)
     {
         _writeJournal = std::move(stagedJournal);
@@ -3783,7 +3904,8 @@ void TimeTravelManager::RecordIoWrite(uint16_t port, uint8_t value, uint16_t m1p
 
 std::optional<TTDSearchResult>
 TimeTravelManager::FindLastAccess(const TTDSearchQuery& q,
-                                  TTDExternalEvent* outBlockingMarker)
+                                  TTDExternalEvent* outBlockingMarker,
+                                  TTDSearchWindow* outWindow)
 {
     // ------------------------------------------------------------------
     // Guards — same shape as SeekTo.
@@ -3819,6 +3941,20 @@ TimeTravelManager::FindLastAccess(const TTDSearchQuery& q,
         const TTDTimePoint now = CurrentPosition();
         beforeGlobalT = static_cast<uint64_t>(now.frame) * frameT + now.tInFrame;
     }
+
+    // TD-8: every answer below also says which part of history it covered -
+    // the search walks back from `to` and ends at the match, at a barrier it
+    // cannot replay across, or at the session start.
+    const TTDTimePoint sessionStart = _timeline.front().time;
+    auto reportWindow = [outWindow](const TTDTimePoint& from, const TTDTimePoint& to)
+    {
+        if (outWindow)
+        {
+            outWindow->searched = true;
+            outWindow->from = from;
+            outWindow->to = to;
+        }
+    };
 
     // ------------------------------------------------------------------
     // Step 2: Journal fast path (Write / Io access types only).
@@ -3857,12 +3993,18 @@ TimeTravelManager::FindLastAccess(const TTDSearchQuery& q,
             result.value   = found->value;
             result.physPage = found->isIo ? kPhysPageNone : PhysPage{found->physPage};
             result.access   = found->isIo ? TTDAccessType::Io : TTDAccessType::Write;
+            reportWindow(result.time, std::min(TimePointOf(beforeGlobalT, frameT), SessionEndPosition()));
             return result;
         }
 
         // No match: final when the ring still holds the session's first write
         if (!_writeJournal->HasEvictedRecords())
+        {
+            // The journal is ground truth for the whole session; markers do
+            // not limit it
+            reportWindow(sessionStart, std::min(TimePointOf(beforeGlobalT, frameT), SessionEndPosition()));
             return std::nullopt;
+        }
 
         // Ring wrapped — older records were lost. Fall through to replay.
         MLOGINFO("TimeTravelManager::FindLastAccess — journal wrapped (oldest=%llu), "
@@ -3904,12 +4046,14 @@ replay_fallback:
     if (upperIt == _timeline.begin())
     {
         // Target precedes the first checkpoint — nothing to scan.
+        reportWindow(targetTime, targetTime);
         return std::nullopt;
     }
     const size_t targetCpIdx = static_cast<size_t>((upperIt - _timeline.begin()) - 1);
 
     TTDSearchResult answer;
     bool found = false;
+    bool blocked = false;
 
     // Walk backward from the target checkpoint to the beginning.
     for (size_t i = targetCpIdx + 1; i-- > 0; )
@@ -3942,6 +4086,8 @@ replay_fallback:
                      i);
             if (outBlockingMarker)
                 *outBlockingMarker = *barrier;
+            reportWindow(barrier->time, targetTime);
+            blocked = true;
             break;  // Can't replay past a marker — stop searching.
         }
 
@@ -3994,7 +4140,13 @@ replay_fallback:
     }
 
     if (!found)
+    {
+        if (!blocked)
+            reportWindow(sessionStart, targetTime);  // examined everything back to the start
         return std::nullopt;
+    }
+
+    reportWindow(answer.time, targetTime);
 
     // Position the emulator at the answer.
     SeekTo(answer.time);
@@ -4495,6 +4647,16 @@ TimeTravelManager::ReverseContinue(const std::vector<uint16_t>& breakpoints)
     const uint64_t nowGlobalT =
         static_cast<uint64_t>(now.frame) * frameT + now.tInFrame;
 
+    // TD-8: the scan walks back from `now` and ends at the match, at a barrier
+    // it cannot replay across, or at the session start.
+    const TTDTimePoint sessionStart = _timeline.front().time;
+    auto reportWindow = [&result, &now](const TTDTimePoint& from)
+    {
+        result.window.searched = true;
+        result.window.from = from;
+        result.window.to = now;
+    };
+
     // ------------------------------------------------------------------
     // Fast path: let the coverage index nominate candidate frames.
     //
@@ -4577,6 +4739,7 @@ TimeTravelManager::ReverseContinue(const std::vector<uint16_t>& breakpoints)
                 result.pc      = hit->pc;
                 result.arrivedAt.frame    = hit->globalT / frameT;
                 result.arrivedAt.tInFrame = static_cast<uint32_t>(hit->globalT % frameT);
+                reportWindow(result.arrivedAt);
                 if (frameBarrier.reason[0] != '\0')
                     result.blockingMarker = frameBarrier;
 
@@ -4585,6 +4748,24 @@ TimeTravelManager::ReverseContinue(const std::vector<uint16_t>& breakpoints)
                     MLOGWARNING("TimeTravelManager::ReverseContinue — SeekTo(arrivedAt) failed");
                     result.matched = false;
                 }
+                return result;
+            }
+
+            if (frameBarrier.reason[0] != '\0')
+            {
+                // The index says a breakpoint PC ran in this frame, but a marker
+                // keeps the frame from being replayed. A run there would be later
+                // than anything an older frame holds, so the scan must stop here
+                // - like the unindexed scan - instead of answering with an older
+                // hit. (Frames the index rules out are skipped even across
+                // markers: the index was captured live, not by replay.)
+                result.blockingMarker = frameBarrier;
+                reportWindow(frameBarrier.time);
+                MLOGINFO("TimeTravelManager::ReverseContinue — barrier at (frame=%llu, tInFrame=%u) "
+                         "blocks candidate frame %llu",
+                         static_cast<unsigned long long>(frameBarrier.time.frame),
+                         static_cast<unsigned>(frameBarrier.time.tInFrame),
+                         static_cast<unsigned long long>(frame));
                 return result;
             }
 
@@ -4619,6 +4800,7 @@ TimeTravelManager::ReverseContinue(const std::vector<uint16_t>& breakpoints)
                 result.pc      = hit->pc;
                 result.arrivedAt.frame    = hit->globalT / frameT;
                 result.arrivedAt.tInFrame = static_cast<uint32_t>(hit->globalT % frameT);
+                reportWindow(result.arrivedAt);
                 if (prefixBarrier.reason[0] != '\0')
                     result.blockingMarker = prefixBarrier;
 
@@ -4629,8 +4811,16 @@ TimeTravelManager::ReverseContinue(const std::vector<uint16_t>& breakpoints)
                 }
                 return result;
             }
+
+            if (prefixBarrier.reason[0] != '\0')
+            {
+                result.blockingMarker = prefixBarrier;
+                reportWindow(prefixBarrier.time);
+                return result;
+            }
         }
 
+            reportWindow(sessionStart);
             MLOGINFO("TimeTravelManager::ReverseContinue — no PC match in the indexed range "
                      "nor in the unindexed prefix");
             return result;
@@ -4660,6 +4850,7 @@ TimeTravelManager::ReverseContinue(const std::vector<uint16_t>& breakpoints)
         });
     if (it == m1s.rend())
     {
+        reportWindow(barrierStorage.reason[0] != '\0' ? barrierStorage.time : sessionStart);
         MLOGINFO("TimeTravelManager::ReverseContinue — no PC match in %zu M1s",
                  m1s.size());
         return result;
@@ -4669,6 +4860,7 @@ TimeTravelManager::ReverseContinue(const std::vector<uint16_t>& breakpoints)
     result.pc         = it->pc;
     result.arrivedAt.frame    = it->globalT / frameT;
     result.arrivedAt.tInFrame = static_cast<uint32_t>(it->globalT % frameT);
+    reportWindow(result.arrivedAt);
 
     if (!SeekTo(result.arrivedAt))
     {

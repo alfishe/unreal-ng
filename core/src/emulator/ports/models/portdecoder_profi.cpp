@@ -34,7 +34,6 @@ namespace
 
 PortDecoder_Profi::PortDecoder_Profi(EmulatorContext* context) : PortDecoder(context)
 {
-    _7FFD_Locked = false;
     _cmos.SetCMOSType(Dallas);
 }
 
@@ -61,7 +60,6 @@ void PortDecoder_Profi::reset()
 
     _screen->SetBorderColor(COLOR_WHITE);
     _screen->SetActiveScreen(SCREEN_NORMAL);
-    _7FFD_Locked = false;
     _covoxWasReachable = false;  // DOS latch is on right after reset (see below): a plain TR-DOS
                                   // session, not NORMAL mode and not CP/M-extended mode either
 
@@ -492,11 +490,10 @@ void PortDecoder_Profi::Port_7FFD(uint8_t value, [[maybe_unused]] uint16_t pc)
 {
     // Lock (bit 5) blocks every bit of the write, including the screen bit,
     // unless DFFD.4 (WOROM) lifts it (UnrealSpeccy io.cpp; all reviewed emulators agree)
-    if ((_state->p7FFD & 0x20) && !(_state->pDFFD & 0x10))
+    if (IsPagingLocked())
         return;
 
     _state->p7FFD = value;
-    _7FFD_Locked = (value & 0x20) != 0;
 
     _screen->SetActiveScreen((value & 0x08) ? SCREEN_SHADOW : SCREEN_NORMAL);
 
