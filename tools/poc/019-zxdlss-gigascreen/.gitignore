@@ -1,0 +1,4 @@
+# Recordings, clips and generated outputs are reproducible and large - never committed
+data/
+out/
+__pycache__/

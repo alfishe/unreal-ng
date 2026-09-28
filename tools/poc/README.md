@@ -62,6 +62,7 @@ NNN-name/
 | 016 | [ios-videocube](016-ios-videocube/) | iOS video cube |
 | 017 | [z80-standalone-cpu](017-z80-standalone-cpu/) | Z80 CPU extracted into a z80ex-style standalone library (full undocumented support, ZEXALL-verified, benchmarked) |
 | 018 | [tui-debuggers](018-tui-debuggers/) | Classic + TSConf debugger TUIs (FTXUI, golden-exact fork band, swappable mock/REST WebAPI backends) |
+| 019 | [zxdlss-gigascreen](019-zxdlss-gigascreen/) | ZX DLSS GigaScreen de-flicker: reference recording (Across the Edge), clip extraction/export from TTD, effect map, quality oracle; Python POC → C++ prototype → integration |
 
 ---
 

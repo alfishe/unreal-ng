@@ -103,7 +103,7 @@ The machine is left positioned and displayed at `to`.
 **Whole *Across the Edge* recording** (frames 25–16595, 16 571 frames):
 105 s in one call (≈ 158 frames/s; one WebAPI round trip per frame took
 ≈ 10 minutes), 93 MB. Verified frame by frame
-(`scratch/zxdlss/verify_clip_v2.py`, to move into the POC):
+(`tools/poc/019-zxdlss-gigascreen/capture/verify_clip_v2.py`):
 
 - plane B explains the picture on every frame: each drawn pixel's color index
   through the ZX palette equals its RGBA, screen colors follow attribute + ink
