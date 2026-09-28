@@ -37,6 +37,24 @@ Medium::Medium(MediaSource source, AccessMode access, std::string format, std::u
     _sourceKey = MakeSourceKey(_source);
 }
 
+Medium::Medium(MediaSource source, AccessMode access, std::string format, std::unique_ptr<DiskImage> disk)
+    : _kind(MediaKind::Floppy),
+      _source(std::move(source)),
+      _access(access),
+      _format(std::move(format)),
+      _disk(std::move(disk))
+{
+    _sourceKey = MakeSourceKey(_source);
+}
+
+void Medium::Rebase(MediaSource source)
+{
+    _source = std::move(source);
+    _sourceKey = MakeSourceKey(_source);
+    if (_disk)
+        _disk->setFilePath(_source.path);
+}
+
 bool Medium::IsDirty() const
 {
     return ChangedUnits() > 0;
@@ -44,6 +62,8 @@ bool Medium::IsDirty() const
 
 uint64_t Medium::ChangedUnits() const
 {
+    if (_disk)
+        return _disk->dirtyTrackCount();
     return _session ? _session->ChangedSectors() : 0;
 }
 
@@ -54,7 +74,12 @@ uint64_t Medium::ContentId() const
 
 std::string Medium::Describe() const
 {
-    return _block ? _block->Describe() : _source.path;
+    if (_block)
+        return _block->Describe();
+    if (_disk)
+        return _format + " disk " + std::to_string(static_cast<int>(_disk->getCylinders())) + "x" +
+               std::to_string(static_cast<int>(_disk->getSides()));
+    return _source.path;
 }
 
 bool ExportBlockDevice(IBlockDevice& device, const std::string& path, std::string* error)

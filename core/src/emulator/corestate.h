@@ -43,11 +43,9 @@ struct CoreState
 
     // region <FDD related>
 
-    // Disk image files mounted
+    // What each drive holds, for display: the media manager's slots (fdd.a-d)
+    // keep it current; the disk images belong to the media manager
     std::string diskFilePaths[4] = {};
-
-    // Disk images loaded
-    DiskImage* diskImages[4] = {};
 
     FDD* diskDrives[4] = {};
 

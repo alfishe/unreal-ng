@@ -53,4 +53,7 @@ public:
     /// The slot's write-protect switch (reported to the guest; never enforced
     /// by the medium - that is AccessMode's job)
     virtual void SetWriteProtectSwitch(bool on) { (void)on; }
+
+    /// The attached medium now stands for another file (a save to a new path)
+    virtual void SourceChanged(Medium& medium) { (void)medium; }
 };

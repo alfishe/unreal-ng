@@ -392,7 +392,7 @@ public:
     std::string kind;     // "block", "floppy", "tape", "optical"
     std::string source;   // source path or description; empty after an eject
     std::string access;   // "readonly", "session", "writethrough"
-    std::string path;     // NC_MEDIA_EXPORTED: the target file
+    std::string path;     // NC_MEDIA_EXPORTED / NC_MEDIA_SAVED: the file written
 
     MediaSlotPayload(const std::string& id, std::string slot, std::string mediaKind, std::string mediaSource,
                      std::string accessMode)

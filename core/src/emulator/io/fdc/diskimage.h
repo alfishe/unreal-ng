@@ -1021,6 +1021,47 @@ public:
         return false;
     }
 
+    /// How many tracks hold unsaved changes
+    size_t dirtyTrackCount() const
+    {
+        size_t count = 0;
+        for (const Track& track : _tracks)
+        {
+            if (track.isDirty()) count++;
+        }
+        return count;
+    }
+
+    /// Every dirty flag of the image, to put back after a write that is not a
+    /// save (an export copies the disk; the format writers mark it clean)
+    struct DirtyState
+    {
+        bool image = false;
+        std::string filePath;
+        std::vector<std::pair<bool, bool>> tracks;  ///< (sector level, raw track level)
+    };
+
+    DirtyState captureDirtyState() const
+    {
+        DirtyState state;
+        state.image = _dirty;
+        state.filePath = _filePath;
+        for (const Track& track : _tracks)
+            state.tracks.emplace_back(track._dirty, track._rawTrackDirty);
+        return state;
+    }
+
+    void restoreDirtyState(const DirtyState& state)
+    {
+        _dirty = state.image;
+        _filePath = state.filePath;
+        for (size_t i = 0; i < _tracks.size() && i < state.tracks.size(); i++)
+        {
+            _tracks[i]._dirty = state.tracks[i].first;
+            _tracks[i]._rawTrackDirty = state.tracks[i].second;
+        }
+    }
+
     /// Clear dirty flags for disk and all tracks (called after save)
     void markClean()
     {

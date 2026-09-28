@@ -14,6 +14,7 @@
 #include "base/featuremanager.h"
 #include "diskfastload.h"
 #include "flakysectoremulator.h"
+#include "floppydriveslot.h"
 #include "debugger/ttd/timetravelmanager.h"  // TimeTravelManager (Item 6 markers)
 #include <cstdio>
 #include <cstring>
@@ -1484,7 +1485,7 @@ void WD1793::cmdWriteSector(uint8_t value)
     //
     // Hooked *after* the WP early-return so the marker only fires when the
     // write actually starts. No-op unless the TTD session is Recording.
-    if (_context && _context->pTimeTravelManager)
+    // The media manager keeps one barrier per drive per frame
     {
         char reason[64];
         std::snprintf(reason, sizeof(reason),
@@ -1492,8 +1493,7 @@ void WD1793::cmdWriteSector(uint8_t value)
                       static_cast<unsigned>(_trackRegister),
                       static_cast<unsigned>(_sectorRegister),
                       static_cast<unsigned>(_sideUp));
-        _context->pTimeTravelManager->RecordExternalEvent(
-            ttd::TTDExternalEventKind::DiskWrite, reason);
+        FloppyDriveSlot::NoteSlotWrite(_context, _drive, reason);
     }
 
     // Decode command bits:
@@ -1648,15 +1648,13 @@ void WD1793::cmdReadTrack(uint8_t value)
     // Phase 2 Item 6 - record a disk-write marker for the format command.
     // Write Track reformats an entire track, which is heavily destructive
     // to replay fidelity.
-    if (_context && _context->pTimeTravelManager)
     {
         char reason[64];
         std::snprintf(reason, sizeof(reason),
                       "Write Track (format) trk=%u side=%u",
                       static_cast<unsigned>(_trackRegister),
                       static_cast<unsigned>(_sideUp));
-        _context->pTimeTravelManager->RecordExternalEvent(
-            ttd::TTDExternalEventKind::DiskWrite, reason);
+        FloppyDriveSlot::NoteSlotWrite(_context, _drive, reason);
     }
 
     if (!track->rawData() || track->rawSize() == 0)

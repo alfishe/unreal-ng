@@ -3,6 +3,8 @@
 #include "mediaformatregistry.h"
 
 #include "common/filehelper.h"
+#include "emulator/io/storage/hostfolder/folderdiskbuilder.h"
+#include "emulator/media/floppyformats.h"
 #include "emulator/io/storage/hostfolder/foldermanifest.h"
 #include "emulator/io/storage/hostfolder/foldersnapshot.h"
 #include "emulator/io/storage/hostfolder/hostfolderfat.h"
@@ -76,10 +78,58 @@ static MediaResult OpenFolderVolume(const OpenRequest& request, std::unique_ptr<
     return result;
 }
 
+/// A floppy: a disk image file, or a folder built into a TR-DOS disk
+static MediaResult OpenFloppy(const OpenRequest& request, std::unique_ptr<Medium>& medium)
+{
+    const MediaSource& source = request.source;
+    MediaSource resolved = source;
+    std::unique_ptr<DiskImage> disk;
+    std::string format;
+    MediaResult result = MediaResult::Success();
+
+    if (source.type == MediaSourceType::Folder || FileHelper::IsFolder(source.path))
+    {
+        if (request.access == AccessMode::WriteThrough)
+            return MediaResult::Fail(MediaError::KindMismatch, "a folder is never written: use session or readonly access");
+        result = FolderDiskBuilder::BuildTrd(request.context, FileHelper::ToFsPath(source.path), disk);
+        resolved.type = MediaSourceType::Folder;
+        format = "folder-trd";
+    }
+    else if (source.type == MediaSourceType::Blank)
+    {
+        return MediaResult::Fail(MediaError::NotSupported, "a blank disk is built by the caller and inserted as a Medium");
+    }
+    else
+    {
+        if (!FileHelper::FileExists(source.path))
+            return MediaResult::Fail(MediaError::UnreadableSource, "file not found: '" + source.path + "'");
+        result = FloppyFormats::Load(request.context, source.path, disk, format);
+        resolved.type = source.type == MediaSourceType::Upload ? MediaSourceType::Upload : MediaSourceType::File;
+        // The disk stands for its file, unless the file is not a disk (Hobeta)
+        if (disk && format != "hobeta")
+            disk->setFilePath(source.path);
+    }
+    if (!result.Ok())
+        return result;
+
+    // A Hobeta file stands for one file, not a disk: it is never written back
+    AccessMode access = request.access;
+    if (format == "hobeta" && access == AccessMode::WriteThrough)
+    {
+        access = AccessMode::Session;
+        result.report.push_back("a Hobeta file is never written back: the disk is kept in memory (session)");
+    }
+    medium = std::make_unique<Medium>(resolved, access, format, std::move(disk));
+    medium->Report() = result.report;
+    return result;
+}
+
 MediaResult MediaFormatRegistry::Open(const OpenRequest& request, std::unique_ptr<Medium>& medium)
 {
     medium.reset();
 
+    if (request.kind == MediaKind::Floppy)
+        return OpenFloppy(request, medium);
     if (request.kind != MediaKind::Block)
         return MediaResult::Fail(MediaError::NotSupported,
                                  std::string(MediaKindName(request.kind)) + " media are not served by the media manager yet");
@@ -118,6 +168,7 @@ std::vector<std::string> MediaFormatRegistry::Extensions(MediaKind kind)
     switch (kind)
     {
         case MediaKind::Block: return {"img", "ima", "hdd", "hd", "bin", "mmc", "sd"};
+        case MediaKind::Floppy: return FloppyFormats::Extensions();
         default: return {};
     }
 }

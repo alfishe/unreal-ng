@@ -71,10 +71,10 @@ TEST(MediaFormatRegistry_Test, FailuresSayWhy)
     request.source.path = TestPathHelper::GetUniqueTestScratchPath("registry-missing.img");
     EXPECT_EQ(MediaFormatRegistry::Open(request, medium).error, MediaError::UnreadableSource);
 
-    request.kind = MediaKind::Floppy;
-    const MediaResult floppy = MediaFormatRegistry::Open(request, medium);
-    EXPECT_EQ(floppy.error, MediaError::NotSupported) << "floppies join in M2";
-    EXPECT_NE(floppy.message.find("floppy"), std::string::npos) << floppy.message;
+    request.kind = MediaKind::Tape;
+    const MediaResult tape = MediaFormatRegistry::Open(request, medium);
+    EXPECT_EQ(tape.error, MediaError::NotSupported) << "tapes join in M3";
+    EXPECT_NE(tape.message.find("tape"), std::string::npos) << tape.message;
 
     request.kind = MediaKind::Block;
     request.source.type = MediaSourceType::Blank;

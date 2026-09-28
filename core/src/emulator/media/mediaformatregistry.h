@@ -3,8 +3,9 @@
 /// @file mediaformatregistry.h
 /// @brief The one place that knows formats (technical design §4): probes a
 /// source for a slot kind and builds the medium, access layer included.
-/// M1 serves block media: raw images, and host folders as FAT16 / FAT32
-/// volumes; floppy and tape formats join in M2 / M3.
+/// Block media: raw images, and host folders as FAT16 / FAT32 volumes (M1).
+/// Floppies: every disk image format (FloppyFormats), and host folders built
+/// into a TR-DOS disk (M2). Tape formats join in M3.
 
 #include <memory>
 #include <optional>
@@ -15,8 +16,11 @@
 #include "emulator/media/medium.h"
 #include "emulator/media/mediatypes.h"
 
+class EmulatorContext;
+
 struct OpenRequest
 {
+    EmulatorContext* context = nullptr;  ///< the machine's settings for format loaders (TR-DOS interleave)
     MediaSource source;
     MediaKind kind = MediaKind::Block;
     AccessMode access = AccessMode::Session;

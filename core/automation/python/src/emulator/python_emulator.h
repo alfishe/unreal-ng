@@ -621,12 +621,8 @@ namespace PythonBindings
             }, "Get disk image path")
             .def("disk_eject", [](Emulator& self, int drive) -> bool {
                 if (drive < 0 || drive > 3) return false;
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->coreState.diskDrives[drive]) return false;
-                ctx->coreState.diskDrives[drive]->ejectDisk();
-                ctx->coreState.diskFilePaths[drive] = "";
-                return true;
-            }, "Eject disk from drive")
+                return self.EjectDisk(static_cast<uint8_t>(drive), /*force*/ true);
+            }, "Eject disk from drive (the disk is freed; unsaved writes are lost)")
             .def("disk_create", [](Emulator& self, int drive, int cylinders, int sides, const std::string& format) -> bool {
                 Emulator::BlankDiskFormat parsed = Emulator::BlankDiskFormat::Auto;
                 if (drive < 0 || drive > 3 || !Emulator::ParseBlankDiskFormat(format, parsed)) return false;

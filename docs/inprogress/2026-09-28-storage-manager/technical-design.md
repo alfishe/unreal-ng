@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-09-28 |
-| **Status** | Reviewed (two rounds, 2026-09-28). **M1 implemented** (2026-09-28); differences from this design: [TODO.md](TODO.md) "M1 as built" |
+| **Status** | Reviewed (two rounds, 2026-09-28). **M1 and M2 implemented** (2026-09-28); differences from this design: [TODO.md](TODO.md) "M1 as built", "M2 as built" |
 | **Requirements** | [requirements.md](requirements.md) (FR-*, NFR-*, ACC-*) |
 | **Research** | [research.md](research.md) |
 | **Media history** | [media-history-design.md](media-history-design.md): immutable source + versioned change layer, file and block views, export, tracking, snapshots and TTD |

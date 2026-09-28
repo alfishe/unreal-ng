@@ -444,3 +444,107 @@ TEST(MediaManager_Test, Fat32FolderVolumeOnRequest)
     EXPECT_EQ(manager.Info("sd.test")->format, "folder-fat32");
     manager.UnregisterSlot("sd.test");
 }
+
+namespace
+{
+    std::string FloppyFixture(const char* relative)
+    {
+        const auto u8 = (TestPathHelper::FindProjectRoot() / relative).u8string();
+        return std::string(u8.begin(), u8.end());
+    }
+
+    std::string Utf8Path(const std::filesystem::path& path)
+    {
+        const auto u8 = path.u8string();
+        return std::string(u8.begin(), u8.end());
+    }
+
+    std::string Slurp(const std::filesystem::path& path)
+    {
+        std::ifstream in(path, std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+
+    /// Change one byte of track 5 the way a controller write does (the track turns dirty)
+    void GuestWrite(DiskImage& disk, uint8_t fill)
+    {
+        const std::vector<uint8_t> sector(256, fill);
+        disk.getTrack(5)->writeSectorData(0, sector.data(), sector.size());
+    }
+}  // namespace
+
+/// Floppies: an export is a copy (the disk keeps its source and its unsaved
+/// writes); a save makes it clean; Discard is not offered for them.
+/// A real machine plus three 640 KB image writes: slower than 50 ms
+TEST(MediaManager_Test, FloppyExportSaveAndDiscard)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    MediaManager& manager = *emulator->GetContext()->pMediaManager;
+    ScratchFolder folder("floppy-export");
+    const auto original = folder.File("game.trd", Slurp(FileHelper::ToFsPath(FloppyFixture("testdata/loaders/trd/EyeAche.trd"))));
+    MediaSource source;
+    source.path = Utf8Path(original);
+    ASSERT_TRUE(manager.Insert("fdd.a", source).Ok());
+    DiskImage& disk = *manager.GetMedium("fdd.a")->Floppy();
+    GuestWrite(disk, 0x5A);
+    ASSERT_TRUE(manager.Info("fdd.a")->dirty);
+
+    const auto copy = folder.Path() / "copy.trd";
+    ASSERT_TRUE(manager.Export("fdd.a", Utf8Path(copy)).Ok());
+    EXPECT_TRUE(manager.Info("fdd.a")->dirty) << "an export is a copy, not a save";
+    EXPECT_EQ(manager.Info("fdd.a")->source, source.path) << "the disk still stands for its file";
+    EXPECT_NE(Slurp(copy), Slurp(original)) << "the copy carries the write";
+
+    EXPECT_EQ(manager.Discard("fdd.a").error, MediaError::NotSupported);
+
+    ASSERT_TRUE(manager.Save("fdd.a").Ok());
+    EXPECT_FALSE(manager.Info("fdd.a")->dirty);
+    EXPECT_EQ(Slurp(copy), Slurp(original)) << "the save wrote the same disk into its own file";
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// Write-through: the disk goes back to its file at the frame boundary after a write.
+/// A real machine plus a 640 KB image write: slower than 50 ms
+TEST(MediaManager_Test, FloppyWriteThroughSavesAtTheFrameBoundary)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    MediaManager& manager = *emulator->GetContext()->pMediaManager;
+    ScratchFolder folder("floppy-writethrough");
+    const auto file = folder.File("game.trd", Slurp(FileHelper::ToFsPath(FloppyFixture("testdata/loaders/trd/EyeAche.trd"))));
+    const std::string before = Slurp(file);
+    MediaSource source;
+    source.path = Utf8Path(file);
+    InsertOptions options;
+    options.access = AccessMode::WriteThrough;
+    ASSERT_TRUE(manager.Insert("fdd.a", source, options).Ok());
+
+    GuestWrite(*manager.GetMedium("fdd.a")->Floppy(), 0x77);
+    manager.ApplyPending();
+    EXPECT_FALSE(manager.Info("fdd.a")->dirty);
+    EXPECT_NE(Slurp(file), before) << "the file has the write";
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// A folder in a floppy drive is a TR-DOS disk built from it; it is never written back
+TEST(MediaManager_Test, FolderInAFloppyDriveIsATrdosDisk)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    MediaManager& manager = *emulator->GetContext()->pMediaManager;
+    ScratchFolder folder("floppy-folder");
+    folder.File("game.bin", std::string(1000, 'g'));
+    MediaSource source;
+    source.path = Utf8Path(folder.Path());
+
+    InsertOptions writeThrough;
+    writeThrough.access = AccessMode::WriteThrough;
+    EXPECT_EQ(manager.Insert("fdd.a", source, writeThrough).error, MediaError::KindMismatch);
+
+    ASSERT_TRUE(manager.Insert("fdd.a", source).Ok());
+    EXPECT_EQ(manager.Info("fdd.a")->format, "folder-trd");
+    GuestWrite(*manager.GetMedium("fdd.a")->Floppy(), 0x11);
+    EXPECT_EQ(manager.Save("fdd.a").error, MediaError::NotSupported) << "no image file of its own: save to a path";
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}

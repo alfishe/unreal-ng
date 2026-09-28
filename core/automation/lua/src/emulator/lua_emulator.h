@@ -703,11 +703,7 @@ public:
 
         lua.set_function("disk_eject", [this](int drive) -> bool {
             if (!effectiveEmulator() || drive < 0 || drive > 3) return false;
-            auto* ctx = effectiveEmulator()->GetContext();
-            if (!ctx || !ctx->coreState.diskDrives[drive]) return false;
-            ctx->coreState.diskDrives[drive]->ejectDisk();
-            ctx->coreState.diskFilePaths[drive] = "";
-            return true;
+            return effectiveEmulator()->EjectDisk(static_cast<uint8_t>(drive), /*force*/ true);
         });
 
         // disk_load(path [, drive=0] [, autostart=false]) - insert a disk image (.trd/.scl/.fdi/.udi/...)

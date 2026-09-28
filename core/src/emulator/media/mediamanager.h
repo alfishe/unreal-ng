@@ -51,6 +51,20 @@ struct EjectOptions
     bool endRecording = false;  ///< end a TTD recording instead of refusing
 };
 
+struct SaveOptions
+{
+    std::string path;           ///< empty: the medium's own image file
+    bool allowRetarget = true;  ///< floppies: save as <stem>.udi when the format cannot hold the disk
+};
+
+/// What a save did
+struct SaveOutcome
+{
+    std::string savedPath;
+    bool retargeted = false;  ///< the requested format refused the disk; it went to savedPath (.udi)
+    std::string note;         ///< why it was retargeted, or the writer's first warning
+};
+
 struct SlotInfo
 {
     SlotDescriptor descriptor;
@@ -94,8 +108,13 @@ public:
     MediaResult Eject(const std::string& slotId, const EjectOptions& options = {});
     /// Drop the medium's session changes
     MediaResult Discard(const std::string& slotId);
-    /// Write the medium's current contents to a new image file
+    /// Write the medium's current contents to a new image file. The medium
+    /// keeps its source and its unsaved changes
     MediaResult Export(const std::string& slotId, const std::string& path);
+    /// Floppies: write the disk to its image file (or to `options.path`, which
+    /// it then stands for) and mark it clean. A disk from a folder, a Hobeta
+    /// file or a blank one needs a path. The emulator must not be running
+    MediaResult Save(const std::string& slotId, const SaveOptions& options = {}, SaveOutcome* outcome = nullptr);
     /// Insert the media a config states, at creation, before the first reset:
     /// no swap delay (firmware may boot from them). Entries for slots this
     /// machine does not have are reported, or ignored when they come from a
@@ -109,8 +128,9 @@ public:
 
     /// A slot's peripheral reports a guest write to its medium (emulation
     /// thread). While TTD records, the first write of each frame is a replay
-    /// barrier: the medium changed, a seek must not cross it silently
-    void NoteWrite(const std::string& slotId);
+    /// barrier: the medium changed, a seek must not cross it silently.
+    /// `detail` (the controller's command) goes into the marker's text
+    void NoteWrite(const std::string& slotId, const char* detail = nullptr);
 
     /// The attached medium (tests, peripherals' diagnostics); nullptr if empty.
     /// Only valid on the emulation thread or while the emulator is not running
@@ -140,7 +160,9 @@ private:
     MediaResult CheckInUse(const std::string& slotId, const Medium& medium) const;
     uint32_t DelayFrames(uint32_t swapDelayMs) const;
     void ApplySlot(const std::string& slotId, SlotState& state, std::vector<std::unique_ptr<Medium>>& retired);
-    void Post(const char* topic, const std::string& slotId, const Medium* medium) const;
+    void Post(const char* topic, const std::string& slotId, const Medium* medium, const std::string& path = {}) const;
+    /// A write-through floppy with new guest writes goes back to its file (emulation thread)
+    void WriteThroughFloppy(const std::string& slotId, SlotState& state);
     /// Destroy a medium that left the machine (a staged upload's file goes too)
     static void Retire(std::unique_ptr<Medium> medium);
 

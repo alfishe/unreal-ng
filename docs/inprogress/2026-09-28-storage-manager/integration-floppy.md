@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-09-28 |
-| **Status** | Reviewed; manager phase M2: migration and folder as a disk image |
+| **Status** | **Implemented** (M2, 2026-09-28); as built: [TODO.md](TODO.md) "M2 as built" |
 | **Today** | research §3: `CoreState::diskImages[4]` / `diskDrives[4]`; `Emulator::LoadDisk` / `SaveDisk` / `CreateBlankDisk`; eject copied in four surfaces |
 
 ## 1. What changes for the user

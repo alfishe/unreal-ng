@@ -108,7 +108,7 @@ TEST_F(EmulatorSaveDisk_Test, Save_Trd_InPlace)
     ScopedTestFile trd(scratchCopy("loaders/trd/EyeAche.trd", "savedisk.trd"));
     ASSERT_TRUE(_emulator->LoadDisk(trd));
 
-    DiskImage* image = _emulator->GetContext()->coreState.diskImages[0];
+    DiskImage* image = _emulator->GetContext()->coreState.diskDrives[0]->getDiskImage();
     ASSERT_NE(image, nullptr);
     uint8_t data[256];
     std::memset(data, 0x5A, sizeof(data));
@@ -136,7 +136,7 @@ TEST_F(EmulatorSaveDisk_Test, Save_Trd_RefusedByGeometry_RetargetsToUdi)
     ASSERT_TRUE(_emulator->LoadDisk(trd));
 
     // A +3 track makes the image unrepresentable in TRD
-    DiskImage* image = _emulator->GetContext()->coreState.diskImages[0];
+    DiskImage* image = _emulator->GetContext()->coreState.diskDrives[0]->getDiskImage();
     image->getTrackForCylinderAndSide(10, 0)->formatTrack(10, 0, DiskImage::TrackFormatSpec::plus3());
 
     // Observe the re-target notification
@@ -212,7 +212,7 @@ TEST_F(EmulatorSaveDisk_Test, Save_As_ByExtension)
     Emulator::DiskSaveResult result = _emulator->SaveDisk(0, udi);
     EXPECT_TRUE(result.saved) << result.reason;
     EXPECT_TRUE(FileHelper::FileExists(udi));
-    EXPECT_EQ(_emulator->GetContext()->coreState.diskImages[0]->getFilePath(), udi);
+    EXPECT_EQ(_emulator->GetContext()->coreState.diskDrives[0]->getDiskImage()->getFilePath(), udi);
 
     result = _emulator->SaveDisk(0, fdi);
     EXPECT_TRUE(result.saved) << result.reason;
@@ -243,7 +243,7 @@ TEST_F(EmulatorSaveDisk_Test, LoadDisk_ByExtension)
         std::string path = TestPathHelper::GetTestDataPath(c.fixture);
         ASSERT_TRUE(_emulator->LoadDisk(path)) << c.fixture;
 
-        DiskImage* image = _emulator->GetContext()->coreState.diskImages[0];
+        DiskImage* image = _emulator->GetContext()->coreState.diskDrives[0]->getDiskImage();
         ASSERT_NE(image, nullptr) << c.fixture;
         EXPECT_EQ(image->getCylinders(), c.cylinders) << c.fixture;
         EXPECT_EQ(image->getSides(), c.sides) << c.fixture;

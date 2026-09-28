@@ -2,7 +2,8 @@
 
 **Status:** requirements, technical design, media history design and integration designs reviewed
 (two rounds, 2026-09-28). **M1 implemented** on branch `media-manager` (2026-09-28): ACC-1…ACC-4 pass
-with real guest code (ERS, TR-DOS, NedoOS). M2-M6 and H1-H5 not started. PLAN.md row **#58**.
+with real guest code (ERS, TR-DOS, NedoOS). **M2 implemented** (2026-09-28): floppies in the manager,
+ACC-7 passes on the real TR-DOS ROM. M3-M6 and H1-H5 not started. PLAN.md row **#58**.
 
 ## Documents
 
@@ -28,7 +29,7 @@ with real guest code (ERS, TR-DOS, NedoOS). M2-M6 and H1-H5 not started. PLAN.md
 - [x] Review round 1 (2026-09-28): decisions folded into the documents
 - [x] Review round 2 (2026-09-28): reuse across machines, readiness; G1-G12 folded in ([reuse-and-readiness.md](reuse-and-readiness.md)); M1 hook points to pin at its start
 - [x] M1 block: core, folder pipeline, `HostFolderFat`, ZX-Evo `sd.zc` (= ZX-Evo E5b): ACC-1…ACC-4 (see "M1 as built" below)
-- [ ] M2 floppy: slots, migration (fixes the eject / save bugs in research §3), folder as a disk image: ACC-7
+- [x] M2 floppy: slots, migration (fixes the eject / save bugs in research §3), folder as a disk image: ACC-7 (see "M2 as built" below)
 - [ ] M3 tape: slot, migration, folder as a tape: ACC-8
 - [ ] M4 automation verbs + Qt media panel: ACC-6
 - [ ] M5 media across model switch: ACC-5
@@ -62,3 +63,27 @@ Tests (one file per source file):
 | Real ROM | `zxevo_ers_test.cpp`: `SdCardBootFromAHostFolder` (ACC-1), `SdCardFolderTrdMountedReadWrittenAndExported` (ACC-2), `NedoOsBootsFromAHostFolder` (ACC-3), `ImageMntAutomountFromAHostFolder` (ACC-4) |
 
 macOS `fsck_msdos` accepts the generated FAT16 and FAT32 volumes, and Finder mounts them.
+
+## M2 as built (2026-09-28)
+
+| Topic | As built |
+|---|---|
+| Ownership | `Medium` owns the `DiskImage`; `CoreState::diskImages[]` is gone. `CoreState::diskFilePaths[]` stays as a display mirror that the slots keep current, until the surfaces read the manager (M4) |
+| Slots | `FloppyDriveSlot` (`core/src/emulator/io/fdc/floppydriveslot.{h,cpp}`): `fdd.a`-`fdd.d` with the WD1793, `fdd.a`/`fdd.b` on the +3 (uPD765). Swap delay 2 s, folders accepted, the write-protect switch and `ReadOnly` both set the drive's write-protect sense. Registered by `Emulator::Init` after `Core` (`FloppyDriveSlots`), unregistered before the drives are deleted |
+| Formats | `FloppyFormats` (`core/src/emulator/media/floppyformats.{h,cpp}`): content first (UDI, FDI, DSK, SCP, HFE, SCL signatures, Hobeta checksum, TR-DOS volume sector, MGT size), the extension only for TRD / MGT / TD0 ties. HFE, SCP and Hobeta are reachable for the first time. Save dispatches by the target's extension and retargets to `<stem>.udi` when TRD / SCL refuse; a Hobeta file is never a target |
+| Emulator API | `LoadDisk`, `CreateBlankDisk`, `SaveDisk` are thin wrappers (pause, manager, resume; no swap delay, as callers expect the disk at once); new `EjectDisk(drive, force)`. The seven copied swap blocks and both extension chains are gone, and with them the SCL unresolved-path bug |
+| Manager | `Save(slot, {path, allowRetarget})`: a save to a new path rebases the medium (`IMediaSlot::SourceChanged`), a disk from a folder, a Hobeta file or a blank disk needs a path. `Export` of a floppy is a copy: dirty flags and file path are restored after the writer (`DiskImage::captureDirtyState`). `WriteThrough` floppies are saved at the frame boundary after a write; a format that refuses falls back to `Session`. `Discard` is not offered for floppies (eject with force, insert again). New topic `NC_MEDIA_SAVED` |
+| Notifications | `NC_FDD_DISK_WRITTEN` is posted by `SaveDisk` with the real drive (the loaders no longer post it with drive 0) |
+| TTD | WD1793 and uPD765 writes go through `MediaManager::NoteWrite` (one barrier per drive per frame, the command in the marker text); the +3 had none before. `LoadDisk` / `CreateBlankDisk` / `EjectDisk` end a recording, as loads did |
+| Surfaces | WebAPI, CLI, Lua and Python eject call `EjectDisk(drive, force = true)`: only the drive asked for, the disk freed (the WebAPI no longer ejects the WD1793's selected drive too). Unsaved writes are still dropped there, as before; the dirty check comes with the M4 media verbs. Qt "Save as UDI / TRD / SCL" go through `SaveDisk` |
+| Folder as a disk | `FolderDiskBuilder` + `DiskTypeMap` (`core/src/emulator/io/storage/hostfolder/folderdiskbuilder.{h,cpp}`), TRD only, on `LoaderHobeta::addFile`. Format name `folder-trd` |
+| One source, one slot | applies to floppies too: the same image in drives A and B is refused unless both are read-only |
+
+Not in M2 (moved or noted):
+- Model switch with a dirty disk: M5 (the transfer and the prompt).
+- Qt picks the drive to save from the WD1793's selected drive, also on the +3; the drive picker comes with the M4 media panel.
+- Raw PC floppy images (720 KB / 1.44 MB, G9): no loader yet; with Profi CP/M / Sprinter.
+- SCL and +3 DSK folder builders: later strategies of the same builder.
+- Seen while testing: on a 40-track single-sided disk the real TR-DOS ROM lists the catalog but cannot load from track 1 (a TRD built by the same code as 80 x 2 loads fine). Probably 40-track media in an 80-track drive; not investigated.
+
+Tests: `floppydriveslot_test.cpp`, `floppyformats_test.cpp`, `folderdiskbuilder_test.cpp` (ACC-7 on the real TR-DOS ROM: manifest order in `LIST`, the file that does not fit is absent, `RUN "boot"`), `mediamanager_test.cpp` (floppy export / save / write-through / folder), `upd765_test.cpp` (`UPD765Media_Test`: +3 writes are barriers once per frame).

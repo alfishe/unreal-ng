@@ -318,7 +318,7 @@ TEST(ScorpionTrdosMount_Test, TrdMountSmoke)
 
     ASSERT_TRUE(emulator->LoadDisk(target)) << "the TRD must mount into drive A";
 
-    DiskImage* image = emulator->GetContext()->coreState.diskImages[0];
+    DiskImage* image = emulator->GetContext()->coreState.diskDrives[0]->getDiskImage();
     ASSERT_NE(image, nullptr);
     EXPECT_EQ(image->getCylinders(), 80);
     EXPECT_EQ(image->getSides(), 2);
