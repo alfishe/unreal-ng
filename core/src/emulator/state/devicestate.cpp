@@ -14,6 +14,9 @@
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/chips/soundchip_turbosoundfm.h"
 #include "emulator/sound/soundmanager.h"
+#include "emulator/memory/memory.h"
+#include "emulator/config.h"
+#include "emulator/video/screen.h"
 
 namespace
 {
@@ -572,6 +575,186 @@ StateNode Fdc(EmulatorContext* context)
         drives.push(drive);
     }
     ret["drives"] = drives;
+    return ret;
+}
+
+namespace
+{
+std::string Hex8(uint8_t v)
+{
+    char buf[8];
+    snprintf(buf, sizeof buf, "0x%02X", v);
+    return buf;
+}
+
+StateNode PagesArray(const std::vector<uint16_t>& pages)
+{
+    StateNode arr = StateNode::Array();
+    for (uint16_t p : pages)
+        arr.push(int(p));
+    return arr;
+}
+
+/// Z80 windows the RAM page is mapped into right now, e.g. "0x4000-0x7FFF"
+std::string Z80Access(Memory* memory, uint16_t page)
+{
+    std::string out;
+    if (memory)
+    {
+        for (uint8_t bank = 0; bank < 4; bank++)
+        {
+            if (memory->GetRAMPageForBank(bank) != page)
+                continue;
+            char buf[24];
+            snprintf(buf, sizeof buf, "%s0x%04X-0x%04X", out.empty() ? "" : ", ", bank * 0x4000, bank * 0x4000 + 0x3FFF);
+            out += buf;
+        }
+    }
+    return out.empty() ? "not mapped" : out;
+}
+}  // namespace
+
+StateNode Screen(EmulatorContext* context, bool verbose)
+{
+    if (!context || !context->pScreen)
+        return Unavailable("Screen not available");
+
+    const ScreenState s = context->pScreen->DescribeScreenState();
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["model"] = Config::GetModelFullName(s.model);
+    ret["video_mode"] = s.videoMode;
+    ret["resolution"] = std::to_string(s.width) + "x" + std::to_string(s.height);
+    ret["border_color"] = int(s.borderColor);
+    ret["shadow_screen_capable"] = s.shadowScreenCapable;
+    ret["active_screen"] = int(s.activeScreen);
+    ret["active_ram_page"] = int(s.activeRamPage);
+    ret["active_ram_pages"] = PagesArray(s.activeRamPages);
+    ret["contention"] = s.contention;
+    ret["flash_inverted"] = s.flashInverted;
+    if (!verbose)
+        return ret;
+
+    Memory* memory = context->pMemory;
+    auto screenNode = [&](const char* name, uint16_t page, bool displayed) {
+        StateNode n = StateNode::Object();
+        n["name"] = name;
+        n["ram_page"] = int(page);
+        n["pixel_data"] = "0x0000-0x17FF (6144 bytes)";
+        n["attributes"] = "0x1800-0x1AFF (768 bytes)";
+        n["z80_access"] = Z80Access(memory, page);
+        n["ula_display"] = displayed;
+        n["contention"] = s.contention ? "active" : "none";
+        return n;
+    };
+
+    if (!s.shadowScreenCapable)
+    {
+        ret["screen"] = screenNode("Single screen", 5, true);
+        return ret;
+    }
+
+    ret["screen_0"] = screenNode("Screen 0 (normal)", 5, s.activeScreen == 0);
+    ret["screen_1"] = screenNode("Screen 1 (shadow)", 7, s.activeScreen == 1);
+
+    StateNode port = StateNode::Object();
+    port["value"] = int(s.p7FFD);
+    port["value_hex"] = Hex8(s.p7FFD);
+    std::string bin;
+    for (int bit = 7; bit >= 0; bit--)
+        bin += ((s.p7FFD >> bit) & 1) ? '1' : '0';
+    port["value_bin"] = bin;
+    port["ram_bank"] = int(s.p7FFD & 0x07);
+    port["shadow_screen"] = (s.p7FFD & 0x08) != 0;
+    port["rom_select"] = (s.p7FFD & 0x10) ? "48K BASIC" : "128K Editor";
+    port["paging_locked"] = (s.p7FFD & 0x20) != 0;
+    ret["port_0x7FFD"] = port;
+    return ret;
+}
+
+StateNode ScreenMode(EmulatorContext* context)
+{
+    if (!context || !context->pScreen)
+        return Unavailable("Screen not available");
+
+    const ScreenState s = context->pScreen->DescribeScreenState();
+    const VideoModeInfo& f = s.format;
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["model"] = Config::GetModelFullName(s.model);
+    ret["video_mode"] = s.videoMode;
+    ret["resolution"] = std::to_string(s.width) + "x" + std::to_string(s.height);
+    ret["color_depth"] = f.colorDepth;
+    ret["colors"] = int(f.colors);
+    if (f.bpp)
+        ret["bpp"] = int(f.bpp);
+    if (f.attributeSize)
+        ret["attribute_size"] = f.attributeSize;
+    if (f.textColumns)
+    {
+        ret["text_columns"] = int(f.textColumns);
+        ret["text_rows"] = int(f.textRows);
+    }
+    if (f.totalBytes)
+    {
+        StateNode mem = StateNode::Object();
+        mem["pixel_data_bytes"] = int(f.pixelDataBytes);
+        if (f.attributeBytes)
+            mem["attribute_bytes"] = int(f.attributeBytes);
+        if (f.planes)
+            mem["planes"] = int(f.planes);
+        mem["total_bytes"] = int(f.totalBytes);
+        ret["memory_layout"] = mem;
+    }
+    ret["active_screen"] = int(s.activeScreen);
+    ret["active_ram_page"] = int(s.activeRamPage);
+    ret["active_ram_pages"] = PagesArray(s.activeRamPages);
+
+    if ((s.model == MM_PENTAGON || s.model == MM_ATM3) && s.pEFF7 != 0)
+    {
+        StateNode eff7 = StateNode::Object();
+        eff7["value"] = int(s.pEFF7);
+        eff7["value_hex"] = Hex8(s.pEFF7);
+        eff7["16col_enabled"] = (s.pEFF7 & EFF7_4BPP) != 0;
+        eff7["512_enabled"] = (s.pEFF7 & EFF7_512) != 0;
+        eff7["hwmc_enabled"] = (s.pEFF7 & EFF7_HWMC) != 0;
+        eff7["384_enabled"] = (s.pEFF7 & EFF7_384) != 0;
+        ret["eff7"] = eff7;
+    }
+    if (s.model == MM_PROFI)
+    {
+        StateNode dffd = StateNode::Object();
+        dffd["value"] = int(s.pDFFD);
+        dffd["value_hex"] = Hex8(s.pDFFD);
+        dffd["video_512x240"] = (s.pDFFD & 0x80) != 0;
+        dffd["scr"] = (s.pDFFD & 0x40) != 0;
+        ret["dffd"] = dffd;
+    }
+    if (s.model == MM_ATM710 || s.model == MM_ATM3 || s.model == MM_ATM450)
+    {
+        StateNode ff77 = StateNode::Object();
+        ff77["value"] = int(s.pFF77);
+        ff77["value_hex"] = Hex8(s.pFF77);
+        ff77["video_mode_bits"] = int(s.pFF77 & 0x07);
+        ret["ff77"] = ff77;
+    }
+    return ret;
+}
+
+StateNode ScreenFlash(EmulatorContext* context)
+{
+    if (!context)
+        return Unavailable("Emulator context not available");
+
+    const uint64_t frame = context->emulatorState.frame_counter;
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["flash_phase"] = (frame & 0x10) ? "inverted" : "normal";
+    ret["frames_until_toggle"] = int(16 - (frame % 16));
+    ret["flash_cycle_position"] = int(frame % 32);
+    ret["flash_cycle_total"] = 32;
+    ret["toggle_interval_frames"] = 16;
+    ret["toggle_interval_seconds"] = 16.0 * context->config.frame_duration_us / 1e6;
     return ret;
 }
 

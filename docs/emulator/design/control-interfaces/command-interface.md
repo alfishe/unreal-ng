@@ -1306,7 +1306,7 @@ Commands to inspect the runtime hardware configuration and peripheral state of t
 | `sysvars` | `state sysvars` | ZX Spectrum system variables (0x5C00-0x5CB5) |
 | `tape` | `state tape` | Tape device status and position |
 | `disk` | `state disk [drive]` | Disk drive status and FDC state |
-| `screen` | `state screen` | Screen configuration and video mode |
+| `screen` | `state screen [verbose\|mode\|flash]` | Screen state, video mode and FLASH ([6.6](#66-screen-configuration)) |
 | `ula` | `state ula` | ULA chip state and timing |
 | `audio` | `state audio` | Audio devices (beeper, AY chip) |
 
@@ -1731,34 +1731,34 @@ All endpoints scoped to emulator instance: `/api/v1/emulator/{id}/disk/...`
 
 #### 6.6 Screen Configuration
 
-Inspect active screen buffer, video mode, and rendering state. Handles 48K single screen, 128K dual screen (switchable via port 0x7FFD), and clone-specific modes.
+Inspect the active screen, the video mode and FLASH. Every machine is covered: 48K single screen,
+the 128K-class shadow screen on every clone (#7FFD bit 3: 128K, +3, Pentagon, Scorpion, ATM,
+Profi), and the extended modes (Pentagon 16-colour / hardware multicolor / 512×192 / overscan,
+ATM 16-colour / 640×200 hires / text, Profi 512×240). The data comes from one core report
+(`DeviceState::Screen` / `ScreenMode` / `ScreenFlash`), so every automation module returns the
+same fields with the same names.
 
 | Command | Aliases | Arguments | Description | Implementation Status |
 | :--- | :--- | :--- | :--- | :--- |
-| `state screen` | | | Show screen configuration (brief mode by default):<br/>• Model name (48K/128K/Pentagon/+3)<br/>• Video mode (Standard, Timex, etc.)<br/>• Active screen number and RAM page (for 128K models)<br/>• Border color<br/>• Hint to use `verbose` for detailed info | ✅ Implemented |
-| `state screen verbose` | | | Show detailed screen configuration:<br/>• **48K**: Screen at RAM page 5, offset 0x0000 (Z80 access: 0x4000-0x7FFF)<br/>• **128K**: Active screen (0 or 1 via port 0x7FFD bit 3), shows both screen locations<br/>  - Screen 0 (normal): ULA reads from RAM page 5, offset 0x0000<br/>  - Screen 1 (shadow): ULA reads from RAM page 7, offset 0x0000 (always, regardless of Z80 mapping)<br/>• Physical RAM page locations (where ULA reads from)<br/>• Z80 address space mapping (where CPU can access screen)<br/>• Port 0x7FFD bit values and decoding<br/>• Contention state<br/>• Full memory layout for both screens | ✅ Implemented |
-| `state screen mode` | | | Show detailed video mode information for current model:<br/>• **Standard Spectrum**: 256×192, 2 colors per 8×8 attribute block<br/>• **Timex/TC2068**: Hi-Res (512×192 mono), Hi-Color (256×192, 8×1 attrs), Dual Screen<br/>• **Pentagon**: GigaScreen (dual-screen interlace), SuperHiRes (512×384 on modified models)<br/>• **SAM Coupé**: Modes 1-4 (256×192 to 256×192×16 colors per pixel)<br/>• **ATM Turbo**: 320×200, 640×200, 16-color modes<br/>• **ZX Next**: Layer 2 (256×192×256 colors), 640×256, Timex compatibility<br/>• **eLeMeNt ZX**: HGFX modes (720×546, 512×384, 256-color)<br/>Shows: resolution, color depth, attribute block size, memory layout, active layers | ✅ Implemented |
-| `state screen flash` | | | Show flash state and counter:<br/>• Flash phase (normal/inverted)<br/>• Flash counter (frames until toggle, 16 frame cycle)<br/>• Frame position in flash cycle<br/>Useful for timing-sensitive flash effects in demos | ✅ Implemented |
+| `state screen` | | `[verbose]` | Screen state: `model`, `video_mode`, `resolution`, `border_color`, `shadow_screen_capable`, `active_screen` (0/1), `active_ram_page` (video page 5/7 selected by #7FFD bit 3), `active_ram_pages` (every RAM page the current mode reads, e.g. `[1, 5]` in ATM hires, `[8]` in ATM text-linear), `contention` (Sinclair ULA contention active), `flash_inverted`.<br/>**verbose** adds `screen_0` / `screen_1` (or `screen` on the 48K): RAM page, pixel/attribute offsets, current Z80 mapping (`z80_access`, e.g. `0xC000-0xFFFF` or `not mapped`), `ula_display`, `contention`; and `port_0x7FFD` decoded (bank, shadow screen, ROM select, paging lock) | ✅ Implemented |
+| `state screen mode` | | | Video mode report: `video_mode`, `resolution`, `color_depth`, `colors`, `bpp`, `attribute_size`, `text_columns`/`text_rows` (text modes), `memory_layout` (`pixel_data_bytes`, `attribute_bytes`, `planes`, `total_bytes`), `active_screen`, `active_ram_page`, `active_ram_pages`, and the machine's video latches: `eff7` (Pentagon / ATM3), `dffd` (Profi), `ff77` (ATM) | ✅ Implemented |
+| `state screen flash` | | | FLASH: `flash_phase` (normal/inverted), `frames_until_toggle`, `flash_cycle_position` (0..31), `flash_cycle_total`, `toggle_interval_frames` (16), `toggle_interval_seconds` (from the machine's frame length) | ✅ Implemented |
 
-**Brief vs Verbose Mode**:
+**Access from every automation module**:
 
-The `state screen` command supports two output modes:
+| Method | CLI | WebAPI | Python | Lua | MCP (`inspect_state`) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| Screen state | `state screen` | `GET /state/screen` | `screen_state()` | `screen_state()` | — |
+| Screen state, verbose | `state screen verbose` | `GET /state/screen?verbose=true` | `screen_state(True)` | `screen_state(true)` | aspect `screen` |
+| Video mode | `state screen mode` | `GET /state/screen/mode` | `screen_mode()` | `screen_mode()` | aspect `video` |
+| FLASH | `state screen flash` | `GET /state/screen/flash` | `screen_flash()` | `screen_flash()` | aspect `screen_flash` |
 
-1. **Brief Mode (Default)**: 
-   - Activated by: `state screen`
-   - Shows: Essential information only (model, video mode, active screen, border color)
-   - Use case: Quick checks, scripting, when you need just the active screen info
-   - Output: 5-6 lines
-
-2. **Verbose Mode**:
-   - Activated by: `state screen verbose`
-   - Shows: Complete details including both screen buffers (for 128K), physical RAM locations, Z80 address mappings, port decoding, contention states
-   - Use case: Deep debugging, understanding dual-screen setups, analyzing memory configurations
-   - Output: 20+ lines with full hardware details
-
-**WebAPI**: Add `?verbose=true` query parameter to get verbose output:
-- Brief: `GET /api/v1/emulator/test/state/screen`
-- Verbose: `GET /api/v1/emulator/test/state/screen?verbose=true`
+WebAPI paths are relative to `/api/v1/emulator/{id}`. Python and Lua also keep the single-value
+getters `screen_get_mode()`, `screen_get_border()`, `screen_get_flash()`, `screen_get_active()`,
+and `screen_video_state()` as the former name of `screen_mode()`. The WebAPI keeps its former
+fields as aliases: `is_128k` (= `shadow_screen_capable`), `display_mode` (= `video_mode`), and in
+`/state/screen/mode` the per-mode flags `eff7_16col`, `eff7_hwmc`, `eff7_512`, `overscan`,
+`profi_hires`.
 
 **128K Screen Switching**:
 

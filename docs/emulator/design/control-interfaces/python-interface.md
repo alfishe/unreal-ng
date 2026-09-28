@@ -112,6 +112,22 @@ class Emulator:
     def fdc_state(self) -> dict:
         """Beta Disk WD1793 report: registers, status_bits, last_command, fsm_state,
         signals (intrq/drq), beta128_register, density, selected_drive, drives[4]"""
+
+    # Screen reports - same fields as every other module (command-interface.md section 6.6)
+    def screen_state(self, verbose: bool = False) -> dict:
+        """model, video_mode, resolution, border_color, shadow_screen_capable, active_screen,
+        active_ram_page, active_ram_pages, contention, flash_inverted; verbose adds
+        screen_0/screen_1 (or screen) with z80_access and port_0x7FFD"""
+
+    def screen_mode(self) -> dict:
+        """Video mode: resolution, color_depth, colors, bpp, attribute_size, text grid,
+        memory_layout, displayed RAM pages, eff7 / dffd / ff77 latches"""
+
+    def screen_flash(self) -> dict:
+        """flash_phase, frames_until_toggle, flash_cycle_position, toggle interval"""
+
+    # Single-value getters: screen_get_mode(), screen_get_border(), screen_get_flash(),
+    # screen_get_active(); screen_video_state() is the former name of screen_mode()
         
     def pause(self):
         """Pause emulation"""

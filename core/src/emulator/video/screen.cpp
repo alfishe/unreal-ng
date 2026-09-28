@@ -1155,6 +1155,87 @@ LineGeometry Screen::GetLineGeometry(VideoModeEnum mode, const RasterDescriptor&
     }
 }
 
+const VideoModeInfo& Screen::GetVideoModeInfo(VideoModeEnum mode)
+{
+    static const VideoModeInfo zx{"2 colors per attribute block", 16, 1, "8x8 pixels", 0, 0, 0, 6144, 768, 6912};
+    static const VideoModeInfo p16{"4 bpp (16 colors per pixel)", 16, 4, "per pixel pair", 0, 0, 4, 24576, 0, 24576};
+    static const VideoModeInfo pmc{"1 bpp bitmap + attribute per 8x1 cell", 16, 1, "8x1 pixels", 0, 0, 0, 6144, 6144, 12288};
+    static const VideoModeInfo phr{"1 bpp (monochrome)", 2, 1, nullptr, 0, 0, 0, 0, 0, 0};
+    static const VideoModeInfo p384{"2 colors per attribute block", 16, 1, "8x8 pixels", 0, 0, 0, 6144, 768, 6912};
+    static const VideoModeInfo profiHr{"1 bpp, per-pixel palette (16 entries)", 16, 1, "8x1 pixels", 0, 0, 0, 0, 0, 0};
+    static const VideoModeInfo atm16{"4 bpp (16 colors per pixel)", 16, 4, "per pixel pair (bit-planar)", 0, 0, 4, 16000, 0, 16000};
+    static const VideoModeInfo atmHr{"1 bpp bitmap + attribute per 8x1 cell", 16, 1, "8x1 pixels", 0, 0, 0, 16000, 16000, 32000};
+    static const VideoModeInfo atmText{"text, 16-color ink/paper per character cell", 16, 0, "8x8 pixels (1 character cell)", 80, 25, 0, 0, 0, 0};
+    static const VideoModeInfo none{"", 0, 0, nullptr, 0, 0, 0, 0, 0, 0};
+
+    switch (mode)
+    {
+        case M_NUL:     return none;
+        case M_P16:     return p16;
+        case M_PMC:     return pmc;
+        case M_PHR:     return phr;
+        case M_P384:    return p384;
+        case M_PROFIHR: return profiHr;
+        case M_ATM16:   return atm16;
+        case M_ATMHR:   return atmHr;
+        case M_ATMTX:
+        case M_ATMTL:   return atmText;
+        // ZX-layout modes; TSConf / GMX / Timex are not emulated yet and report
+        // the ZX format until their renderers define one
+        default:        return zx;
+    }
+}
+
+ScreenState Screen::DescribeScreenState() const
+{
+    ScreenState s;
+    const CONFIG& config = _context->config;
+    const EmulatorState& state = _context->emulatorState;
+
+    s.model = config.mem_model;
+    s.mode = _mode;
+    s.videoMode = GetVideoModeName(_mode);
+    if (_mode < M_MAX)
+    {
+        s.width = rasterDescriptors[_mode].screenWidth;
+        s.height = rasterDescriptors[_mode].screenHeight;
+    }
+    s.format = GetVideoModeInfo(_mode);
+    s.borderColor = _borderColor;
+
+    s.p7FFD = state.p7FFD;
+    s.pEFF7 = state.pEFF7;
+    s.pDFFD = state.pDFFD;
+    s.pFF77 = state.pFF77;
+    s.shadowScreenCapable = HasShadowScreen(s.model);
+    s.activeRamPage = GetVideoRAMPage(s.model, s.p7FFD);
+    s.activeScreen = s.activeRamPage == 7 ? 1 : 0;
+    s.activeRamPages = GetDisplayedRAMPages(_mode, s.model, s.p7FFD);
+
+    s.contention = _rasterState.contentionEnabled;
+    s.flashInverted = (state.frame_counter & 0x10) != 0;
+    s.framesUntilFlashToggle = static_cast<uint8_t>(16 - (state.frame_counter % 16));
+    return s;
+}
+
+std::vector<uint16_t> Screen::GetDisplayedRAMPages(VideoModeEnum mode, MEM_MODEL model, uint8_t p7FFD)
+{
+    const uint8_t effective7FFD = HasShadowScreen(model) ? p7FFD : 0;
+    switch (mode)
+    {
+        case M_ATM16:
+        case M_ATMHR:
+        case M_ATMTX:
+        case M_ATMTL:
+        case M_P16:
+        case M_PMC:
+        case M_PROFIHR:
+            return GetActiveSurfaceRAMPages(mode, effective7FFD, true);
+        default:
+            return {GetVideoRAMPage(model, p7FFD)};
+    }
+}
+
 std::vector<uint16_t> Screen::GetActiveSurfaceRAMPages(VideoModeEnum mode, uint8_t p7FFD, bool bankedZX)
 {
     switch (mode)

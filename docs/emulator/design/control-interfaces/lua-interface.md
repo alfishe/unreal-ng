@@ -281,6 +281,11 @@ ay0 = audio_ay_state(0)     -- one chip: registers, channels[3], envelope, noise
 fm  = audio_fm_state()      -- TurboSound FM: board latches + chips[2] summaries
 fm1 = audio_fm_state(1)     -- one YM2203 FM half: mode, timers, channels[3].operators[4] ...
 fdc = fdc_state()           -- Beta Disk WD1793: registers, status_bits, fsm_state, signals, drives[4]
+scr = screen_state()        -- video_mode, resolution, active_screen, active_ram_page(s), contention, flash_inverted
+scv = screen_state(true)    -- + screen_0/screen_1 (z80_access, ula_display) and port_0x7FFD
+mode = screen_mode()        -- picture format, memory_layout, active_ram_pages, eff7/dffd/ff77
+fl  = screen_flash()        -- flash_phase, frames_until_toggle, flash_cycle_position
+-- screen fields: [command-interface.md §6.6](./command-interface.md#66-screen-configuration); screen_video_state() is the former name of screen_mode()
 
 if not fm1.available then print(fm1.description) end
 for i, ch in ipairs(fm1.channels) do

@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "pch.h"
 
+#include <algorithm>
 #include <string>
 
 #include "_helpers/emulatortesthelper.h"
@@ -11,7 +12,9 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/chips/soundchip_turbosoundfm.h"
 #include "emulator/sound/soundmanager.h"
+#include "emulator/memory/memory.h"
 #include "emulator/state/devicestate.h"
+#include "emulator/video/screen.h"
 
 /// DeviceState reports (FM, AY, FDC): the single source every automation
 /// interface renders. These tests pin the content; the interface tests only
@@ -217,3 +220,134 @@ TEST_F(DeviceState_Test, FdcReportListsControllerAndDrives)
     EXPECT_NE(text.find("fsm_state: S_IDLE"), std::string::npos);
     EXPECT_NE(text.find("drives:"), std::string::npos);
 }
+
+/// region <Screen reports>
+
+namespace
+{
+/// Machine of the given model with its screen re-detected from the latches
+struct ScreenMachine
+{
+    Emulator* emulator = nullptr;
+    EmulatorContext* context = nullptr;
+
+    explicit ScreenMachine(const char* model)
+    {
+        emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
+        if (emulator)
+            context = emulator->GetContext();
+    }
+    ~ScreenMachine()
+    {
+        if (emulator)
+            EmulatorTestHelper::CleanupEmulator(emulator);
+    }
+    void Redetect() { context->pScreen->InitRaster(); }
+};
+
+std::vector<int64_t> Pages(const StateNode& n)
+{
+    std::vector<int64_t> out;
+    for (const StateNode& item : n.items)
+        out.push_back(item.i);
+    return out;
+}
+}  // namespace
+
+TEST(DeviceStateScreen_Test, ShadowScreenOnEveryMachineButThe48K)
+{
+    // #7FFD bit 3 selects the second screen (page 7) on every 128K-class machine,
+    // clones included - the report used to know only 128K / Pentagon / +3
+    const std::pair<const char*, bool> machines[] = {
+        {"48K", false}, {"128K", true}, {"PENTAGON", true}, {"SCORPION", true}, {"ATM710", true}, {"PROFI", true}};
+    for (const auto& [model, capable] : machines)
+    {
+        SCOPED_TRACE(model);
+        ScreenMachine m(model);
+        ASSERT_NE(m.context, nullptr);
+        m.context->emulatorState.p7FFD = 0x08;
+
+        const StateNode r = DeviceState::Screen(m.context, false);
+        EXPECT_EQ(At(r, "shadow_screen_capable").b, capable);
+        EXPECT_EQ(At(r, "active_screen").i, capable ? 1 : 0);
+        EXPECT_EQ(At(r, "active_ram_page").i, capable ? 7 : 5);
+        // Displayed pages depend on the mode (ATM boots into a hires mode: {3, 7}),
+        // but always include the selected video page
+        const std::vector<int64_t> pages = Pages(At(r, "active_ram_pages"));
+        EXPECT_NE(std::find(pages.begin(), pages.end(), capable ? 7 : 5), pages.end());
+    }
+}
+
+TEST(DeviceStateScreen_Test, ContentionOnlyOnSinclairMachines)
+{
+    for (const auto& [model, contended] : {std::pair<const char*, bool>{"48K", true}, {"128K", true}, {"PENTAGON", false}, {"ATM710", false}})
+    {
+        SCOPED_TRACE(model);
+        ScreenMachine m(model);
+        ASSERT_NE(m.context, nullptr);
+        m.Redetect();
+        EXPECT_EQ(At(DeviceState::Screen(m.context, false), "contention").b, contended);
+    }
+}
+
+TEST(DeviceStateScreen_Test, ModeReportFollowsTheActiveMode)
+{
+    {
+        ScreenMachine m("ATM710");
+        ASSERT_NE(m.context, nullptr);
+        m.context->emulatorState.pFF77 = FF77_MC | 0x20;  // hires 640x200, INT gate on
+        m.context->emulatorState.p7FFD = 0x00;
+        m.Redetect();
+        const StateNode r = DeviceState::ScreenMode(m.context);
+        EXPECT_EQ(At(r, "video_mode").s, "ATMHR");
+        EXPECT_EQ(At(r, "resolution").s, "640x200");
+        EXPECT_EQ(At(r, "bpp").i, 1);
+        EXPECT_EQ(At(r, "attribute_size").s, "8x1 pixels");
+        EXPECT_EQ(Pages(At(r, "active_ram_pages")), (std::vector<int64_t>{1, 5})) << "bitmap + attribute planes";
+        EXPECT_EQ(At(At(r, "ff77"), "video_mode_bits").i, FF77_MC);
+    }
+    {
+        ScreenMachine m("PENTAGON");
+        ASSERT_NE(m.context, nullptr);
+        m.context->emulatorState.pEFF7 = EFF7_HWMC;
+        m.Redetect();
+        const StateNode r = DeviceState::ScreenMode(m.context);
+        EXPECT_EQ(At(r, "video_mode").s, "PMC");
+        EXPECT_EQ(At(At(r, "memory_layout"), "attribute_bytes").i, 6144) << "8x1 attributes at pixel + 0x2000";
+        EXPECT_EQ(Pages(At(r, "active_ram_pages")), std::vector<int64_t>{5});
+        EXPECT_TRUE(At(At(r, "eff7"), "hwmc_enabled").b);
+    }
+}
+
+TEST(DeviceStateScreen_Test, VerboseMapsEachScreenIntoZ80Space)
+{
+    ScreenMachine m("128K");
+    ASSERT_NE(m.context, nullptr);
+    m.context->pMemory->SetRAMPageToBank3(7);
+    const StateNode r = DeviceState::Screen(m.context, true);
+    EXPECT_EQ(At(At(r, "screen_0"), "z80_access").s, "0x4000-0x7FFF");
+    EXPECT_EQ(At(At(r, "screen_1"), "z80_access").s, "0xC000-0xFFFF");
+    EXPECT_EQ(At(At(r, "screen_0"), "contention").s, "active");
+    EXPECT_NE(r.find("port_0x7FFD"), nullptr);
+
+    ScreenMachine single("48K");
+    ASSERT_NE(single.context, nullptr);
+    const StateNode s = DeviceState::Screen(single.context, true);
+    EXPECT_NE(s.find("screen"), nullptr);
+    EXPECT_EQ(s.find("screen_1"), nullptr);
+}
+
+TEST(DeviceStateScreen_Test, FlashFollowsTheFrameCounter)
+{
+    ScreenMachine m("PENTAGON");
+    ASSERT_NE(m.context, nullptr);
+    m.context->emulatorState.frame_counter = 0x10 + 3;
+    const StateNode r = DeviceState::ScreenFlash(m.context);
+    EXPECT_EQ(At(r, "flash_phase").s, "inverted");
+    EXPECT_EQ(At(r, "frames_until_toggle").i, 13);
+    EXPECT_EQ(At(r, "flash_cycle_position").i, 19);
+    EXPECT_DOUBLE_EQ(At(r, "toggle_interval_seconds").d, 16 * 20480 / 1e6) << "Pentagon frame is 20480 us";
+    EXPECT_TRUE(At(DeviceState::Screen(m.context, false), "flash_inverted").b);
+}
+
+/// endregion </Screen reports>

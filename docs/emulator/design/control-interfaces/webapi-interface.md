@@ -290,6 +290,9 @@ GET /api/v1/emulator/{id}/calltrace           Call trace history (?limit=N)
 GET /api/v1/emulator/{id}/disasm              Disassemble Z80 code (?address=&count=, default: PC)
 GET /api/v1/emulator/{id}/disasm/page         Disassemble from physical page (?type=&page=&offset=&count=)
 POST /api/v1/emulator/{id}/memory/find        Search Z80 memory for a byte pattern (body: {"pattern_hex": "AF 3C"})
+GET  /api/v1/emulator/{id}/state/screen        Screen state: video mode, resolution, border, shadow screen, active screen + RAM pages, contention, flash (?verbose=true adds per-screen RAM page + Z80 mapping and decoded #7FFD)
+GET  /api/v1/emulator/{id}/state/screen/mode   Video mode: picture format, memory layout, displayed RAM pages, #EFF7/#DFFD/#FF77
+GET  /api/v1/emulator/{id}/state/screen/flash  FLASH phase and timing
 GET  /api/v1/emulator/{id}/state/screen/digest  Stable screen-content digest (range or banks, border folding; ?mode=active follows the displayed surface)
 GET  /api/v1/emulator/{id}/ports             Static port map + live routing flags (which devices answer which ports, under which gates); rows carry semantic `tags` (memory/rom/screen/sound_ay/…) and the `latch` live-value binding (p7FFD, p1FFD, … or null)
 GET  /api/v1/emulator/{id}/state/paging      Unified paging state (P1-2): tagged latch rows with live values + §5.1 decoded bits, 4-bank table with ROM `name`/`role`/`signature` (§5.2 — role≠name is the wrong-ROM signal), `paging_locked`, `trdos_active`; on `PROFI` the `pDFFD` latch decodes to `extended_ram_bank`, `sco`, `worom`, `cpm`, `scr`, `video_512x240` (see [profi-1024.md](../../../hardware/profi-1024.md))
@@ -307,7 +310,11 @@ The three device reports (AY, FM, FDC) are built once in the core
 (`core/src/emulator/state/devicestate.h`) and are byte-for-byte the same
 data the CLI, Lua, Python and MCP return — see
 [command-interface.md §3.3](./command-interface.md#33-device-state-reports-ay--ssg-turbosound-fm-beta-disk-fdc)
-for the field list. Every endpoint also has an active-emulator form without
+for the field list. The three screen reports come from the same core
+(`DeviceState::Screen` / `ScreenMode` / `ScreenFlash`, fields in
+[command-interface.md §6.6](./command-interface.md#66-screen-configuration)); `/state/screen` keeps `is_128k` and `display_mode`, and
+`/state/screen/mode` its per-mode flags (`eff7_16col`, `eff7_hwmc`, `eff7_512`, `overscan`,
+`profi_hires`), as aliases for existing clients. Every endpoint also has an active-emulator form without
 `{id}` (`/api/v1/emulator/state/audio/fm`, `/api/v1/emulator/state/fdc`).
 
 ### Labels & Symbols
