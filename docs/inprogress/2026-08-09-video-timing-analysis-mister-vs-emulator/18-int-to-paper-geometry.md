@@ -150,6 +150,11 @@ Within the spread between "correct" implementations (MiSTer 17981 / ZXMAK2
 - `_rasterState` horizontal areas (blank-at-line-start) vs render mapping
   (blank-at-line-end) should eventually be unified to avoid future confusion.
 
+> [!NOTE]
+> **Arithmetic note (2026-09-27):** with the INT firing at `intstart+1`, `71635` gives 17988T,
+> not 17989T. 71634 (exactly 17989T) was tried and **breaks *Across the Edge***, so 71635
+> stays: 17988T is the demo-verified Pentagon INT-to-paper distance.
+
 ## 7. Verification
 
 - [x] `INTTiming_Test.*` 29/29 with 71635 assertions
