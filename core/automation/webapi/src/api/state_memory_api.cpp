@@ -267,7 +267,6 @@ void EmulatorAPI::getStateMemoryRAM(const HttpRequestPtr& req, std::function<voi
     bank1["type"] = "RAM";
     bank1["page"] = static_cast<int>(memory.GetRAMPageForBank1());
     bank1["read_write"] = "read/write";
-    bank1["contended"] = true;
     bank1["note"] = "Screen 0 location";
     banks["bank1"] = bank1;
 
@@ -276,7 +275,6 @@ void EmulatorAPI::getStateMemoryRAM(const HttpRequestPtr& req, std::function<voi
     bank2["type"] = "RAM";
     bank2["page"] = static_cast<int>(memory.GetRAMPageForBank2());
     bank2["read_write"] = "read/write";
-    bank2["contended"] = false;
     banks["bank2"] = bank2;
 
     Json::Value bank3;
@@ -284,8 +282,12 @@ void EmulatorAPI::getStateMemoryRAM(const HttpRequestPtr& req, std::function<voi
     bank3["type"] = "RAM";
     bank3["page"] = static_cast<int>(memory.GetRAMPageForBank3());
     bank3["read_write"] = "read/write";
-    bank3["contended"] = false;
     banks["bank3"] = bank3;
+
+    // Contended: the CPU waits for the video logic there (Core::IsSlotContended)
+    const char* const bankKeys[4] = { "bank0", "bank1", "bank2", "bank3" };
+    for (uint8_t slot = 0; slot < 4; slot++)
+        banks[bankKeys[slot]]["contended"] = context->pCore && context->pCore->IsSlotContended(slot);
 
     ret["banks"] = banks;
 
@@ -1338,14 +1340,13 @@ void EmulatorAPI::getStatePaging(const HttpRequestPtr& req, std::function<void(c
         banks.append(bank);
     }
 
-    // Bank 1: 0x4000-0x7FFF (always RAM page 5, contended)
+    // Bank 1: 0x4000-0x7FFF (always RAM page 5)
     {
         Json::Value bank;
         bank["bank"] = 1;
         bank["address_range"] = "0x4000-0x7FFF";
         bank["type"] = "RAM";
         bank["page"] = static_cast<int>(memory.GetRAMPageForBank1());
-        bank["contended"] = true;
         bank["note"] = "Screen 0 location";
         banks.append(bank);
     }
@@ -1369,6 +1370,10 @@ void EmulatorAPI::getStatePaging(const HttpRequestPtr& req, std::function<void(c
         bank["page"] = static_cast<int>(memory.GetRAMPageForBank3());
         banks.append(bank);
     }
+
+    // Contended: the CPU waits for the video logic there (Core::IsSlotContended)
+    for (Json::ArrayIndex slot = 0; slot < banks.size(); slot++)
+        banks[slot]["contended"] = context->pCore && context->pCore->IsSlotContended(static_cast<uint8_t>(slot));
 
     ret["banks"] = banks;
 

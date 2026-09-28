@@ -4,6 +4,22 @@
 #include "emulator/video/screen.h"  // for VideoModeEnum / M_ZX128
 #include "emulator/emulatorcontext.h"
 
+const char* ContentionRuleName(ContentionRule rule)
+{
+    switch (rule)
+    {
+        case ContentionRule::Ula48:
+            return "ula48";
+        case ContentionRule::Ula128:
+            return "ula128";
+        case ContentionRule::GateArray:
+            return "gatearray";
+        case ContentionRule::None:
+        default:
+            return "none";
+    }
+}
+
 void UlaContention::SetDependencies(Z80* cpu, Memory* memory, EmulatorContext* context)
 {
     _cpu = cpu;

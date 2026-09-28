@@ -1501,6 +1501,9 @@ namespace PythonBindings
             .def("fdc_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Fdc(self.GetContext()));
             }, "Beta Disk WD1793 state report: registers, status bits, FSM, signals, drives")
+            .def("contention_state", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::Contention(self.GetContext()));
+            }, "Memory contention report: rule, switch, interface, contended slots, per-kind waits while debugging")
 
             // General Sound card (GS design §11.6). All actions mirror the
             // host-port semantics - each flushes the coprocessor to the
@@ -3350,11 +3353,13 @@ namespace PythonBindings
                     bank["type"] = "RAM";
                     switch (i) {
                         case 0: bank["page"] = static_cast<int>(memory.GetRAMPageForBank0()); break;
-                        case 1: bank["page"] = static_cast<int>(memory.GetRAMPageForBank1()); bank["contended"] = true; break;
+                        case 1: bank["page"] = static_cast<int>(memory.GetRAMPageForBank1()); break;
                         case 2: bank["page"] = static_cast<int>(memory.GetRAMPageForBank2()); break;
                         case 3: bank["page"] = static_cast<int>(memory.GetRAMPageForBank3()); break;
                     }
                 }
+                // The CPU waits for the video logic there (Core::IsSlotContended)
+                bank["contended"] = context->pCore && context->pCore->IsSlotContended(static_cast<uint8_t>(i));
                 banks.append(bank);
             }
             d["banks"] = banks;

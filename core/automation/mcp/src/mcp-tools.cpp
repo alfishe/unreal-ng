@@ -760,7 +760,7 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["aspects"]["items"]["type"] = "string";
     Json::Value allowed(Json::arrayValue);
     for (const char* aspect : {"machine", "registers", "memory", "memory_map", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "video",
-                               "screen", "screen_flash", "screen_ocr", "screen_image", "screen_digest", "timing", "rom", "audio_ay", "audio_fm", "audio_gs", "fdc", "mouse"})
+                               "screen", "screen_flash", "screen_ocr", "screen_image", "screen_digest", "timing", "rom", "audio_ay", "audio_fm", "audio_gs", "fdc", "mouse", "contention"})
     {
         allowed.append(aspect);
     }
@@ -811,7 +811,8 @@ void RegisterInspectState(ToolRegistry& registry)
         "memory layout, displayed RAM pages, #EFF7/#DFFD/#FF77), screen state (screen: active screen and RAM pages, per-screen "
         "Z80 mapping, #7FFD, contention), FLASH timing (screen_flash), screen OCR text, screen image metadata, screen digest hash, raster timing, "
         "ROM signatures, AY/SSG chips (audio_ay), TurboSound FM YM2203 halves (audio_fm), General Sound card (audio_gs), Beta Disk WD1793 (fdc), "
-        "Kempston mouse + port routing (mouse). Combine aspects to reduce round-trips.",
+        "Kempston mouse + port routing (mouse), memory contention: rule, switch, interface, contended slots, per-kind waits "
+        "while debugging (contention). Combine aspects to reduce round-trips.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn& progress) {
             // Collect aspects
@@ -833,11 +834,11 @@ void RegisterInspectState(ToolRegistry& registry)
                 if (aspect != "machine" && aspect != "registers" && aspect != "memory" && aspect != "memory_map" && aspect != "disasm" && aspect != "stack" &&
                     aspect != "breakpoints" && aspect != "memory_banks" && aspect != "paging" && aspect != "ports" && aspect != "video" &&
                     aspect != "screen" && aspect != "screen_flash" && aspect != "screen_ocr" && aspect != "screen_image" && aspect != "screen_digest" && aspect != "timing" && aspect != "rom" && aspect != "audio_ay" &&
-                    aspect != "audio_fm" && aspect != "audio_gs" && aspect != "fdc" && aspect != "mouse")
+                    aspect != "audio_fm" && aspect != "audio_gs" && aspect != "fdc" && aspect != "mouse" && aspect != "contention")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, audio_gs, fdc, mouse"));
+                                            "screen, screen_flash, screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, audio_gs, fdc, mouse, contention"));
                     return;
                 }
             }
@@ -1066,6 +1067,17 @@ void RegisterInspectState(ToolRegistry& registry)
                                 });
                             });
                         }
+                        else if (aspect == "contention")
+                        {
+                            // Core DeviceState::Contention via the WebAPI
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, "/state/contention"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
                         else if (aspect == "mouse")
                         {
                             // /mouse/status: fitment + counters + the routing answer (fitted vs
@@ -1229,6 +1241,26 @@ void RegisterInspectState(ToolRegistry& registry)
                             else if (aspect == "screen_digest" && value.isMember("digest"))
                             {
                                 out << "\n[screen_digest] " << value["digest"].asString();
+                            }
+                            else if (aspect == "contention")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[contention] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[contention] rule " << value["rule"].asString() << ", switch " << value["switch"].asString()
+                                        << (value["effective"].asBool() ? ", in effect" : ", not in effect") << ", interface "
+                                        << value["memory_interface"].asString() << ", io " << value["io_rule"].asString() << ", slots";
+                                    const Json::Value& slots = value["slots"];
+                                    for (Json::ArrayIndex i = 0; i < slots.size(); ++i)
+                                        out << " " << (slots[i]["contended"].asBool() ? "C" : "-");
+                                    if (value["statistics"].isObject())
+                                    {
+                                        const Json::Value& last = value["statistics"]["last_frame"];
+                                        out << "; last frame " << last["accesses"].asUInt64() << " contended accesses, "
+                                            << last["wait_t"].asUInt64() << " T waited";
+                                    }
+                                }
                             }
                             else if (aspect == "fdc")
                             {

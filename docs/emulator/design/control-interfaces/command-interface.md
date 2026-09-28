@@ -726,6 +726,7 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | TurboSound FM overview | `state audio fm` | `GET /state/audio/fm` | `audio_fm_state()` | `audio_fm_state()` | `audio_fm` (overview + both chips) |
 | TurboSound FM chip N (0/1) | `state audio fm N` | `GET /state/audio/fm/N` | `audio_fm_state(N)` | `audio_fm_state(N)` | `audio_fm` |
 | Beta Disk WD1793 | `state fdc` | `GET /state/fdc` | `fdc_state()` | `fdc_state()` | `fdc` |
+| Memory contention | `state contention` | `GET /state/contention` | `contention_state()` | `contention_state()` | `contention` |
 | Static port map & routing | `ports` | `GET /ports` | `ports_map()` | `ports_map()` | `ports` |
 | Paging latches + bank table | `paging` | `GET /state/paging` | `paging_state()` | `paging_state()` | `paging` |
 
@@ -769,12 +770,25 @@ index / drq, track0 / lost_data, crc_error, record_not_found, head_loaded
 `drives[4]` (present, inserted, path, track, side, motor_on,
 write_protected, `image` cylinders/sides).
 
+**Memory contention report** (where the CPU waits for the video logic):
+`rule` (`none`, `ula48`, `ula128`, `gatearray`), `applicable` (the machine
+has a rule), `switch` (the `contention` feature, `on` / `off`), `effective`
+(both), `memory_interface` (`fast`, `debug`, `fast_contended`,
+`debug_contended`), `io_rule` (`none` on the +2A / +3 and on machines
+without contention), `slots[4]` (`range`, `mapping`, `contended` - the same
+flag every memory map reports), `floating_bus_latch` on the +2A / +3, and
+`statistics` while debug mode is on: `current_frame`, `last_frame` and
+`total`, each with `fetch` / `read` / `write` / `io` (`accesses`,
+`wait_t`) and their sums. Without debug mode `statistics` is a string
+saying so - the fast interfaces count nothing.
+
 Examples:
 
 ```
 # CLI
 state audio fm 1
 state fdc
+state contention
 
 # WebAPI
 GET /api/v1/emulator/{id}/state/audio/fm/1
@@ -972,7 +986,7 @@ Commands to view and control emulator runtime features for the selected emulator
 | Command | Aliases | Arguments | Description | Implementation Status |
 | :--- | :--- | :--- | :--- | :--- |
 | `feature` | `feature list` | | Display all available features with their current state (on/off). Shows feature name, state, mode, and description in table format. | ✅ Implemented |
-| `feature <name> on` | | `<feature-name> on` | Enable a specific feature by name. Available features:<br/>• `calltrace` - collect call trace information for debugging<br/>• `breakpoints` - enable breakpoint handling<br/>• `memorytracking` - collect memory access counters and statistics<br/>• `debugmode` - master debug mode (enables/disables all debug features)<br/>Changes take effect immediately. | ✅ Implemented |
+| `feature <name> on` | | `<feature-name> on` | Enable a specific feature by name. Available features:<br/>• `calltrace` - collect call trace information for debugging<br/>• `breakpoints` - enable breakpoint handling<br/>• `memorytracking` - collect memory access counters and statistics<br/>• `debugmode` - master debug mode (enables/disables all debug features)<br/>• `contention` (`cont`) - video memory contention on the 48K / 128K / +2 / +2A / +3 (on by default; off runs them uncontended for comparison; fixed while TTD records or replays)<br/>Changes take effect immediately. | ✅ Implemented |
 | `feature <name> off` | | `<feature-name> off` | Disable a specific feature. Useful for improving performance when feature is not needed. | ✅ Implemented |
 | `feature reset` | | | Reset all features to their default state (typically all off). Useful for returning to standard configuration after debugging. | 🔮 Planned |
 

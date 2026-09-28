@@ -51,6 +51,14 @@ inspect_state {"aspects":["fdc"]}
 #     (interface needed)" row above. Could not verify PLUS3's own +3 FDC
 #     response in this environment (creation currently fails there - see
 #     Pitfalls) to confirm it reports a different `controller` string.
+
+inspect_state {"aspects":["contention"]}
+#   → rule ula48 / ula128 / gatearray (+2A/+3), switch, effective,
+#     memory_interface, slots (C = the CPU waits there). With debug mode on,
+#     last-frame waits per kind (fetch / read / write / io).
+#   A/B a timing bug: feature contention off (CLI `feature contention off`,
+#   WebAPI features endpoint) runs the same machine uncontended; refused
+#   while TTD records or replays. PENTAGON reports rule none.
 ```
 
 ### Why keep these around when clones exist
@@ -58,7 +66,9 @@ inspect_state {"aspects":["fdc"]}
 - **Timing/contention reference** — 48K/128K contention and floating-bus
   behavior are the best-documented targets; a bug that reproduces on
   `128k` but not `PENTAGON` (or vice versa) isolates clone-specific
-  decode/timing in one experiment.
+  decode/timing in one experiment. Opcode fetches and every byte read at PC
+  wait too (since the M1 contention rework); the `contention` switch gives
+  the same A/B on one machine.
 - **Software compatibility floor** — anything 48K-clean runs everywhere.
 - **Card policy boundary — branch-dependent, NOT true on `master`**: this
   claim describes a policy that may hold on the `generalsound`/`moonsound`

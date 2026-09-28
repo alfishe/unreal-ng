@@ -252,6 +252,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::turboTapeToggled, this, &MainWindow::handleTurboTapeToggled);
     connect(_menuManager, &MenuManager::fastDiskToggled, this, &MainWindow::handleFastDiskToggled);
     connect(_menuManager, &MenuManager::autostartDisksToggled, this, &MainWindow::handleAutostartDisksToggled);
+    connect(_menuManager, &MenuManager::contentionToggled, this, &MainWindow::handleContentionToggled);
     _menuManager->setAutostartDisksChecked(_autostartDisks);
     connect(_menuManager, &MenuManager::stepInRequested, this, &MainWindow::handleStepIn);
     connect(_menuManager, &MenuManager::stepOverRequested, this, &MainWindow::handleStepOver);
@@ -2517,6 +2518,18 @@ void MainWindow::handleFastDiskToggled(bool enabled)
             qDebug() << "Fast disk loading" << (enabled ? "enabled" : "disabled");
         }
     }
+}
+
+void MainWindow::handleContentionToggled(bool enabled)
+{
+    if (_emulator)
+    {
+        EmulatorContext* context = _emulator->GetContext();
+        FeatureManager* featureManager = context ? context->pFeatureManager : nullptr;
+        if (featureManager && !featureManager->setFeature(Features::kContention, enabled))
+            qDebug() << "Memory contention switch refused (TTD timeline bound)";
+    }
+    _menuManager->updateMenuStates(_emulator);  // the menu shows what the core kept
 }
 
 void MainWindow::handleAutostartDisksToggled(bool enabled)

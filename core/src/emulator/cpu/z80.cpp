@@ -834,6 +834,8 @@ uint8_t Z80::in(uint16_t port)
         uint8_t delay = ioContention->GetIOContentionDelay(port);
         if (delay > 0)
             IncrementCPUCyclesCounter(delay);
+        if (isDebugMode)
+            ioContention->CountAccess(CONTENTION_IO, delay);
     }
 
     PortDecoder& portDecoder = *_context->pPortDecoder;
@@ -897,6 +899,8 @@ void Z80::out(uint16_t port, uint8_t val)
         uint8_t delay = ioContention->GetIOContentionDelay(port);
         if (delay > 0)
             IncrementCPUCyclesCounter(delay);
+        if (isDebugMode)
+            ioContention->CountAccess(CONTENTION_IO, delay);
     }
 
     PortDecoder& portDecoder = *_context->pPortDecoder;

@@ -40,6 +40,7 @@ constexpr const char* const kTurboMode = "turbomode";
 constexpr const char* const kHud = "hud";
 constexpr const char* const kKempstonMouse = "kempstonmouse";
 constexpr const char* const kGSLightweight = "gs_lightweight";
+constexpr const char* const kContention = "contention";
 
 // Feature Aliases
 constexpr const char* const kDebugModeAlias = "dbg";
@@ -62,6 +63,7 @@ constexpr const char* const kTurboModeAlias = "turbo";
 constexpr const char* const kHudAlias = "hud";
 constexpr const char* const kKempstonMouseAlias = "kmouse";
 constexpr const char* const kGSLightweightAlias = "gslw";
+constexpr const char* const kContentionAlias = "cont";
 
 // Feature Descriptions
 constexpr const char* const kDebugModeDesc = "Master debug mode, enables/disables all debug features for performance";
@@ -104,6 +106,11 @@ constexpr const char* const kKempstonMouseDesc =
 constexpr const char* const kGSLightweightDesc =
     "General Sound lightweight personality: fit the in-tree ProTracker player card (no coprocessor firmware needed). Off keeps the "
     "personality from [SOUND] GSType; runtime switching carries the host mailbox across.";
+
+constexpr const char* const kContentionDesc =
+    "Video memory contention on the machines that have it (48K / 128K / +2 ULA, +2A / +3 gate array): the CPU waits "
+    "for the screen fetches. Off runs those machines uncontended, for comparison. No effect on machines without "
+    "contention. Cannot change while the machine is bound to a TTD timeline (it changes timing).";
 
 // Categories
 constexpr const char* const kCategoryDebug = "debug";

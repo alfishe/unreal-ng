@@ -10,6 +10,8 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/state/devicestate.h"
+#include "base/featuremanager.h"
 #include "emulator/video/screen.h"
 #include "emulator/video/ulacontention.h"
 
@@ -528,6 +530,142 @@ TEST(ContentionPentagon_Test, NoContentionAnywhere)
 }
 
 /// endregion </Contrast>
+/// region <Contention switch, statistics and the status report>
+
+namespace
+{
+const StateNode& Member(const StateNode& node, const char* key)
+{
+    static const StateNode missing;
+    const StateNode* found = node.find(key);
+    return found ? *found : missing;
+}
+
+std::string SlotMask(const StateNode& report)
+{
+    std::string mask;
+    for (const StateNode& slot : Member(report, "slots").items)
+        mask += Member(slot, "contended").b ? 'C' : '-';
+    return mask;
+}
+}  // namespace
+
+TEST_F(Contention48K_Test, Switch_OffRunsTheMachineUncontended)
+{
+    FeatureManager* fm = _context->pFeatureManager;
+    ASSERT_NE(fm, nullptr);
+
+    ASSERT_TRUE(fm->setFeature(Features::kContention, false));
+    EXPECT_EQ(_z80->MemIf, _z80->FastMemIf);
+    EXPECT_EQ(_z80->ioContention, nullptr);
+    EXPECT_EQ(runAt(0x4000, { 0x00 }, _firstContendedT), 4u) << "no fetch wait";
+    EXPECT_EQ(runLdAHl(0x4000, _firstContendedT), 7u) << "no data wait";
+
+    StateNode report = DeviceState::Contention(_context);
+    EXPECT_EQ(Member(report, "rule").s, "ula48") << "the machine's rule stays";
+    EXPECT_EQ(Member(report, "switch").s, "off");
+    EXPECT_FALSE(Member(report, "effective").b);
+    EXPECT_EQ(SlotMask(report), "----");
+    EXPECT_FALSE(Member(DeviceState::Screen(_context, false), "contention").b);
+
+    ASSERT_TRUE(fm->setFeature(Features::kContention, true));
+    EXPECT_EQ(_z80->MemIf, _z80->FastContendedMemIf);
+    EXPECT_EQ(runAt(0x4000, { 0x00 }, _firstContendedT), 10u);
+    report = DeviceState::Contention(_context);
+    EXPECT_TRUE(Member(report, "effective").b);
+    EXPECT_EQ(Member(report, "memory_interface").s, "fast_contended");
+    EXPECT_EQ(Member(report, "io_rule").s, "ula48");
+    EXPECT_EQ(SlotMask(report), "-C--");
+}
+
+TEST_F(Contention48K_Test, Statistics_CountedOnlyWhileDebugging)
+{
+    _ula->ResetStatistics();
+    runAt(0x4000, { 0x00 }, _firstContendedT);  // fast interface: not counted
+    EXPECT_EQ(_ula->GetStatisticsTotal().accesses[CONTENTION_FETCH], 0u);
+    EXPECT_EQ(Member(DeviceState::Contention(_context), "statistics").kind, StateNode::Kind::String);
+
+    _emulator->DebugOn();
+    EXPECT_EQ(_z80->MemIf, _z80->DbgContendedMemIf);
+    runAt(0x4000, { 0x00 }, _firstContendedT);  // fetch from contended RAM, cell offset 0: waits 6
+    runLdAHl(0x4000, _firstContendedT);          // fetch at $8000 (not counted), read from $4000 waits 6
+    const ContentionCounters& c = _ula->GetStatisticsCurrentFrame();
+    EXPECT_EQ(c.accesses[CONTENTION_FETCH], 1u);
+    EXPECT_EQ(c.waitT[CONTENTION_FETCH], 6u);
+    EXPECT_EQ(c.accesses[CONTENTION_READ], 1u);
+    EXPECT_EQ(c.waitT[CONTENTION_READ], 6u);
+    EXPECT_EQ(c.accesses[CONTENTION_WRITE], 0u);
+
+    _z80->bc = 0x00FE;
+    runAt(0x8000, { 0xED, 0x78 }, _firstContendedT);  // IN A,(C): an even port, contended
+    EXPECT_EQ(_ula->GetStatisticsCurrentFrame().accesses[CONTENTION_IO], 1u);
+
+    const StateNode report = DeviceState::Contention(_context);
+    const StateNode& current = Member(Member(report, "statistics"), "current_frame");
+    EXPECT_EQ(Member(Member(current, "fetch"), "wait_t").i, 6);
+    EXPECT_EQ(Member(current, "accesses").i, 3);
+
+    _ula->OnFrameStart();
+    EXPECT_EQ(_ula->GetStatisticsLastFrame().accesses[CONTENTION_FETCH], 1u);
+    EXPECT_EQ(_ula->GetStatisticsCurrentFrame().accesses[CONTENTION_FETCH], 0u);
+    EXPECT_EQ(_ula->GetStatisticsTotal().accesses[CONTENTION_FETCH], 1u);
+
+    _emulator->DebugOff();
+    runAt(0x4000, { 0x00 }, _firstContendedT);
+    EXPECT_EQ(_ula->GetStatisticsTotal().accesses[CONTENTION_FETCH], 1u) << "fast interface again: not counted";
+}
+
+TEST_F(Contention128K_Test, Report_OddPageAtC000IsAContendedSlot)
+{
+    _memory->SetRAMPageToBank3(7);
+    StateNode report = DeviceState::Contention(_context);
+    EXPECT_EQ(Member(report, "rule").s, "ula128");
+    EXPECT_EQ(SlotMask(report), "-C-C");
+    EXPECT_TRUE(_context->pCore->IsSlotContended(3));
+
+    _memory->SetRAMPageToBank3(2);
+    EXPECT_EQ(SlotMask(DeviceState::Contention(_context)), "-C--");
+    _memory->SetRAMPageToBank3(0);
+}
+
+TEST_F(ContentionPlus3_Test, Report_GateArrayRuleAndAllRamLayout)
+{
+    StateNode report = DeviceState::Contention(_context);
+    EXPECT_EQ(Member(report, "rule").s, "gatearray");
+    EXPECT_EQ(Member(report, "io_rule").s, "none") << "the gate array does not contend ports";
+    EXPECT_NE(report.find("floating_bus_latch"), nullptr);
+
+    Unlock();
+    Out1FFD(0x03);  // pages 4,5,6,7
+    EXPECT_EQ(SlotMask(DeviceState::Contention(_context)), "CCCC");
+    Out1FFD(0x00);
+}
+
+TEST(ContentionReport_Test, PentagonHasNoRuleAndTheSwitchChangesNothing)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    context->pScreen->InitFrame();
+    Z80* z80 = context->pCore->GetZ80();
+
+    StateNode report = DeviceState::Contention(context);
+    EXPECT_EQ(Member(report, "rule").s, "none");
+    EXPECT_FALSE(Member(report, "applicable").b);
+    EXPECT_FALSE(Member(report, "effective").b);
+    EXPECT_EQ(Member(report, "memory_interface").s, "fast");
+    EXPECT_EQ(SlotMask(report), "----");
+
+    ASSERT_TRUE(context->pFeatureManager->setFeature(Features::kContention, false));
+    EXPECT_EQ(z80->MemIf, z80->FastMemIf);
+    ASSERT_TRUE(context->pFeatureManager->setFeature(Features::kContention, true));
+    EXPECT_EQ(z80->MemIf, z80->FastMemIf) << "no rule: the switch has nothing to turn on";
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// endregion </Contention switch, statistics and the status report>
+
 /// region <Memory interface selection>
 
 /// Core::SelectMemoryInterface: machines with contention run the contended interfaces (and the I/O rule of

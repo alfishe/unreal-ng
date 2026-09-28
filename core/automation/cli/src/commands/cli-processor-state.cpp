@@ -57,6 +57,7 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         ss << "  audio fm       - TurboSound FM overview (board latches, both YM2203 FM halves)" << NEWLINE;
         ss << "  audio fm <N>   - Full FM report of chip N (0/1): mode, timers, channels, operators, envelopes" << NEWLINE;
         ss << "  fdc            - Beta Disk WD1793: registers, status bits, FSM, signals, drives" << NEWLINE;
+        ss << "  contention     - Memory contention: rule, switch, interface, contended slots, statistics" << NEWLINE;
         ss << "  audio beeper   - Beeper state and activity" << NEWLINE;
         ss << "  audio gs       - General Sound device state (--verbose adds coprocessor registers)" << NEWLINE;
         ss << "  audio covox    - Covox DAC state" << NEWLINE;
@@ -77,6 +78,7 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         ss << "  state audio beeper   - Show beeper state" << NEWLINE;
         ss << "  state audio fm 1     - Show the full FM report of TSFM chip 1" << NEWLINE;
         ss << "  state fdc            - Show the Beta Disk controller and drives" << NEWLINE;
+        ss << "  state contention     - Show where the CPU waits for the video logic" << NEWLINE;
         ss << "  state audio channels - Show all audio sources mixer state" << NEWLINE;
 
         ss << "  state audio beeper   - Show beeper state" << NEWLINE;
@@ -173,6 +175,11 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
     else if (subsystem == "fdc" || subsystem == "disk" || subsystem == "wd1793")
     {
         HandleStateFdc(session, context);
+        return;
+    }
+    else if (subsystem == "contention")
+    {
+        HandleStateContention(session, context);
         return;
     }
     else if (subsystem == "audio")
@@ -398,6 +405,11 @@ void CLIProcessor::HandleStateMemoryRAM(const ClientSession& session, EmulatorCo
     ss << "=========================================" << NEWLINE;
     ss << NEWLINE;
 
+    // Contended: the CPU waits for the video logic there (Core::IsSlotContended)
+    auto contended = [context](uint8_t slot) {
+        return (context->pCore && context->pCore->IsSlotContended(slot)) ? ", contended" : "";
+    };
+
     // Bank 0 (might be ROM)
     if (memory.IsBank0ROM())
     {
@@ -405,19 +417,22 @@ void CLIProcessor::HandleStateMemoryRAM(const ClientSession& session, EmulatorCo
     }
     else
     {
-        ss << "Bank 0 (0x0000-0x3FFF): RAM Page " << (int)memory.GetRAMPageForBank0() << " (read/write)" << NEWLINE;
+        ss << "Bank 0 (0x0000-0x3FFF): RAM Page " << (int)memory.GetRAMPageForBank0() << " (read/write" << contended(0)
+           << ")" << NEWLINE;
     }
 
     // Bank 1 (always RAM)
-    ss << "Bank 1 (0x4000-0x7FFF): RAM Page " << (int)memory.GetRAMPageForBank1() << " (read/write, contended)"
+    ss << "Bank 1 (0x4000-0x7FFF): RAM Page " << (int)memory.GetRAMPageForBank1() << " (read/write" << contended(1) << ")"
        << NEWLINE;
     ss << "                        [Screen 0 location]" << NEWLINE;
 
     // Bank 2 (always RAM)
-    ss << "Bank 2 (0x8000-0xBFFF): RAM Page " << (int)memory.GetRAMPageForBank2() << " (read/write)" << NEWLINE;
+    ss << "Bank 2 (0x8000-0xBFFF): RAM Page " << (int)memory.GetRAMPageForBank2() << " (read/write" << contended(2) << ")"
+       << NEWLINE;
 
     // Bank 3 (always RAM, pageable on 128K)
-    ss << "Bank 3 (0xC000-0xFFFF): RAM Page " << (int)memory.GetRAMPageForBank3() << " (read/write)" << NEWLINE;
+    ss << "Bank 3 (0xC000-0xFFFF): RAM Page " << (int)memory.GetRAMPageForBank3() << " (read/write" << contended(3) << ")"
+       << NEWLINE;
 
     if (config.mem_model != MM_SPECTRUM48)
     {
@@ -993,6 +1008,14 @@ void CLIProcessor::HandleStateFdc(const ClientSession& session, EmulatorContext*
     std::stringstream ss;
     ss << "Beta Disk WD1793" << NEWLINE << "================" << NEWLINE;
     ss << DeviceState::ToText(DeviceState::Fdc(context));
+    session.SendResponse(ss.str());
+}
+
+void CLIProcessor::HandleStateContention(const ClientSession& session, EmulatorContext* context)
+{
+    std::stringstream ss;
+    ss << "Memory contention" << NEWLINE << "=================" << NEWLINE;
+    ss << DeviceState::ToText(DeviceState::Contention(context));
     session.SendResponse(ss.str());
 }
 

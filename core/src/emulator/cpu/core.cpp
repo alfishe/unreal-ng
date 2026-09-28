@@ -598,7 +598,7 @@ void Core::SelectMemoryInterface()
     if (!_z80)
         return;
 
-    const bool contended = _ulaContention && _ulaContention->IsContentionEnabled();
+    const bool contended = IsContentionEffective();
     if (_z80->isDebugMode)
         _z80->MemIf = contended ? _z80->DbgContendedMemIf : _z80->DbgMemIf;
     else
@@ -606,6 +606,29 @@ void Core::SelectMemoryInterface()
 
     // The +2A/+3 gate array contends memory cycles only
     _z80->ioContention = (contended && !_ulaContention->IsGateArray()) ? _ulaContention : nullptr;
+}
+
+bool Core::IsContentionEffective() const
+{
+    return _contentionSwitch && _ulaContention && _ulaContention->IsContentionEnabled();
+}
+
+bool Core::IsSlotContended(uint8_t slot) const
+{
+    return IsContentionEffective() && _ulaContention->IsSlotContended(slot);
+}
+
+const char* Core::GetMemoryInterfaceName() const
+{
+    if (!_z80)
+        return "none";
+    if (_z80->MemIf == _z80->DbgContendedMemIf)
+        return "debug_contended";
+    if (_z80->MemIf == _z80->FastContendedMemIf)
+        return "fast_contended";
+    if (_z80->MemIf == _z80->DbgMemIf)
+        return "debug";
+    return "fast";
 }
 
 void Core::Reset()
@@ -816,6 +839,8 @@ void Core::CPUFrameCycle()
 {
     // Debug (instrumented) or fast memory access, contended or not - see SelectMemoryInterface
     SelectMemoryInterface();
+    if (_z80->isDebugMode && _ulaContention)
+        _ulaContention->OnFrameStart();  // contention statistics are per frame (debugger only)
     _z80->Z80FrameCycle();
 
     FinishCPUFrame();

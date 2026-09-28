@@ -16,25 +16,34 @@
 /// Timing: Z80::rd / wd charge the 3 T of the memory cycle before calling the interface, so the wait is
 /// computed for the T-state the access started at (Z80::AccessStartT) and inserted before the plain access:
 /// the byte is read or written at start + wait + 3, exactly where the former check in Z80::rd / wd put it.
+///
+/// Statistics (UlaContention::CountAccess) are compiled into the Debug instantiation only.
 
-template <MemoryReadCallback Plain>
+template <MemoryReadCallback Plain, bool Stats>
 uint8_t Memory::MemoryReadContended(uint16_t addr, bool isExecution)
 {
     if (!_contentionUla->IsSlotContended(static_cast<uint8_t>(addr >> 14)))
         return (this->*Plain)(addr, isExecution);
 
-    _contentionCpu->InsertWaitStates(_contentionUla->DelayAt(_contentionCpu->AccessStartT()));
+    const uint8_t wait = _contentionUla->DelayAt(_contentionCpu->AccessStartT());
+    _contentionCpu->InsertWaitStates(wait);
+    if constexpr (Stats)
+        _contentionUla->CountAccess(isExecution ? CONTENTION_FETCH : CONTENTION_READ, wait);
+
     const uint8_t value = (this->*Plain)(addr, isExecution);
     _contentionUla->LatchContendedByte(value);  // +2A/+3 floating bus: the last contended byte
     return value;
 }
 
-template <MemoryWriteCallback Plain>
+template <MemoryWriteCallback Plain, bool Stats>
 void Memory::MemoryWriteContended(uint16_t addr, uint8_t value)
 {
     if (_contentionUla->IsSlotContended(static_cast<uint8_t>(addr >> 14)))
     {
-        _contentionCpu->InsertWaitStates(_contentionUla->DelayAt(_contentionCpu->AccessStartT()));
+        const uint8_t wait = _contentionUla->DelayAt(_contentionCpu->AccessStartT());
+        _contentionCpu->InsertWaitStates(wait);
+        if constexpr (Stats)
+            _contentionUla->CountAccess(CONTENTION_WRITE, wait);
         _contentionUla->LatchContendedByte(value);
     }
     (this->*Plain)(addr, value);
@@ -42,12 +51,12 @@ void Memory::MemoryWriteContended(uint16_t addr, uint8_t value)
 
 MemoryInterface* Memory::GetFastContendedMemoryInterface()
 {
-    return new MemoryInterface(&Memory::MemoryReadContended<&Memory::MemoryReadFast>,
-                               &Memory::MemoryWriteContended<&Memory::MemoryWriteFast>);
+    return new MemoryInterface(&Memory::MemoryReadContended<&Memory::MemoryReadFast, false>,
+                               &Memory::MemoryWriteContended<&Memory::MemoryWriteFast, false>);
 }
 
 MemoryInterface* Memory::GetDebugContendedMemoryInterface()
 {
-    return new MemoryInterface(&Memory::MemoryReadContended<&Memory::MemoryReadDebug>,
-                               &Memory::MemoryWriteContended<&Memory::MemoryWriteDebug>);
+    return new MemoryInterface(&Memory::MemoryReadContended<&Memory::MemoryReadDebug, true>,
+                               &Memory::MemoryWriteContended<&Memory::MemoryWriteDebug, true>);
 }

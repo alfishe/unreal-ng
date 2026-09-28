@@ -141,6 +141,18 @@ bool FeatureManager::setFeature(const std::string& idOrAlias, bool enabled)
                 }
             }
 
+            // Contention changes the machine's timing in both directions: a timeline recorded with one
+            // setting replays only with the same one
+            if (id == Features::kContention && enabled != feature->enabled && isTtdTimelineBound())
+            {
+                if (_context && _context->pModuleLogger)
+                {
+                    _context->pModuleLogger->Warning(_MODULE, _SUBMODULE,
+                        "Cannot change '%s' while the machine is bound to a TTD timeline", id.c_str());
+                }
+                return false;
+            }
+
             bool wasEnabled = feature->enabled;
             bool valueChanged = (wasEnabled != enabled);
             feature->enabled = enabled;
@@ -472,6 +484,14 @@ void FeatureManager::setDefaults()
                      {Features::kStateOff, Features::kStateOn},
                      Features::kCategoryPerformance});
 
+    registerFeature({Features::kContention,
+                     Features::kContentionAlias,
+                     Features::kContentionDesc,
+                     true,  // ON by default - the machine's hardware timing
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryPerformance});
+
     registerFeature({Features::kGSLightweight,
                      Features::kGSLightweightAlias,
                      Features::kGSLightweightDesc,
@@ -576,8 +596,8 @@ void FeatureManager::onFeatureChanged(const std::string& changedFeatureId)
         }
         _context->pCore->GetZ80()->isDebugMode = debugEnabled;
 
-        // Switch memory interface based on debug mode (and the machine's contention)
-        _context->pCore->SelectMemoryInterface();
+        // Switch memory interface based on debug mode and the machine's contention (with its switch)
+        _context->pCore->SetContentionSwitch(isEnabled(Features::kContention));  // re-selects the interface
 
         // Update Z80 feature cache (opcode profiler etc.)
         _context->pCore->GetZ80()->UpdateFeatureCache();

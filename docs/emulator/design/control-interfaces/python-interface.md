@@ -113,6 +113,11 @@ class Emulator:
         """Beta Disk WD1793 report: registers, status_bits, last_command, fsm_state,
         signals (intrq/drq), beta128_register, density, selected_drive, drives[4]"""
 
+    def contention_state(self) -> dict:
+        """Memory contention report: rule (none/ula48/ula128/gatearray), applicable, switch,
+        effective, memory_interface, io_rule, slots[4] (mapping, contended), the +2A/+3
+        floating_bus_latch, statistics per kind while debug mode is on"""
+
     # Screen reports - same fields as every other module (command-interface.md section 6.6)
     def screen_state(self, verbose: bool = False) -> dict:
         """model, video_mode, resolution, border_color, shadow_screen_capable, active_screen,

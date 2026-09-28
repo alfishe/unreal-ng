@@ -220,6 +220,7 @@ private:
     void HandleStateAudioBeeper(const ClientSession& session, EmulatorContext* context);
     void HandleStateAudioFM(const ClientSession& session, EmulatorContext* context, const std::string& chipArg);
     void HandleStateFdc(const ClientSession& session, EmulatorContext* context);
+    void HandleStateContention(const ClientSession& session, EmulatorContext* context);
     void HandleStateAudioGS(const ClientSession& session, EmulatorContext* context, const std::string& optionArg);
 
     // GS coprocessor triage: activity counters + opt-in port/DAC event trace

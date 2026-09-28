@@ -1,6 +1,6 @@
 # Contended opcode fetches without a cost for machines that have no contention
 
-**Date:** 2026-09-28 · **Status:** phase 1b implemented (revision 2: reuse analysis, shared wrappers,
+**Date:** 2026-09-28 · **Status:** phases 1b and 1c implemented (revision 2: reuse analysis, shared wrappers,
 control and diagnostics, test suites) · **Tracks:** PLAN #59; open item 2 of the contention notes ("M1 opcode fetches
 from contended RAM not contended"). Test programs and emulated-side test design:
 [test-programs.md](test-programs.md).
@@ -241,43 +241,47 @@ otherwise). Pentagon ports then cost one predictable pointer test instead of an 
 accesses are two to three orders of magnitude rarer than memory accesses; the point is one place for the
 rule, not speed.
 
-## 7. Control and diagnostics
+## 7. Control and diagnostics (implemented in phase 1c)
 
 ### 7.1 The switch
 
 A feature in `FeatureManager`, so every surface that lists and sets features gets it with no new code:
-CLI `feature`, WebAPI settings / features, Lua, Python, MCP (`invoke_api`), and the Qt feature menu.
+CLI `feature`, WebAPI `/features`, Lua, Python, MCP (`invoke_api`); the Qt menu has
+**Machine > Memory Contention**.
 
 | Field | Value |
 |:--|:--|
 | id / alias | `contention` / `cont` |
 | default | on |
 | meaning | on = the machine's hardware rule; off = run a contended machine uncontended (A/B comparison, diagnosis) |
-| effective | `on && the machine has a rule` - on the Pentagon and the other clones the switch changes nothing and the status says `not applicable` |
-| gating | refused while a TTD recording runs (same gate as `turbomode`, `FeatureManager::isFeatureEnabled`), because it changes timing (R6) |
-| on change | `onFeatureChanged` → `SelectMemoryInterface()` |
+| effective | `on && the machine has a rule` (`Core::IsContentionEffective`) - on the Pentagon and the other clones the switch changes nothing and the report says `applicable: false` |
+| gating | any change is refused while the machine is bound to a TTD timeline (recording, replay, positioned in history): it changes timing, so a timeline replays only with the setting it was recorded with. The Qt action is disabled in that state |
+| on change | `onFeatureChanged` → `Core::SetContentionSwitch` → `SelectMemoryInterface()` |
 
-### 7.2 The status and the statistics
+### 7.2 The report and the statistics
 
-One function builds the status (`DeviceState`, next to the screen report), and every surface serves the
-same object, as the other device reports do:
+`DeviceState::Contention` builds one report; every surface serves it unchanged:
 
 | Field | Source | Example (128K, page 7 at #C000, debugger on) |
 |:--|:--|:--|
-| `rule` | `UlaContention` | `ula128` (`none`, `ula48`, `ula128`, `gatearray`) |
-| `switch`, `effective` | feature + rule | `on`, `true` |
-| `interface` | `Core` | `debugContended` |
-| `slots` | `IsSlotContended(0..3)` | `[false, true, false, true]` |
-| `ioRule` | selector | `ula128` |
-| `latch` | `_lastContendedByte` (+2A / +3) | - |
-| `stats` (debugger only) | counters in `MemoryReadContended<Debug>` / `MemoryWriteContended<Debug>` | per frame and total: contended accesses by kind (`M1`, `Read`, `Write`, later `Idle`, `PortIn`, `PortOut` - the unreal-z80 vocabulary), wait T-states by kind |
+| `rule`, `applicable` | `UlaContention::GetRule` | `ula128`, `true` (`none`, `ula48`, `ula128`, `gatearray`) |
+| `switch`, `effective` | feature, `Core::IsContentionEffective` | `on`, `true` |
+| `memory_interface` | `Core::GetMemoryInterfaceName` | `debug_contended` |
+| `io_rule` | `Z80::ioContention` | `ula128` |
+| `slots[4]` | `range`, `mapping`, `contended` = `Core::IsSlotContended` | slot 1 and 3 contended |
+| `floating_bus_latch` | +2A / +3 only | - |
+| `statistics` (debugger only) | counters in the Debug instantiation of the wrapper and in `in` / `out` | `current_frame`, `last_frame`, `total`, each per kind `fetch` / `read` / `write` / `io` (`accesses`, `wait_t`) and summed |
 
-Surfaces: CLI `state contention`, WebAPI `GET /api/v1/emulator/{id}/state/contention`, Lua / Python
-`contention_state()`, MCP `inspect_state` aspect `contention`. The memory-map views of every surface read
-their `contended` flags from `slots` instead of the hard-coded values.
+Surfaces: CLI `state contention`, WebAPI `GET /api/v1/emulator/{id}/state/contention` (and the
+active-emulator form), Lua / Python `contention_state()`, MCP `inspect_state` aspect `contention` (with a
+one-line summary). The screen report's `contention` flag is the effective one. Every memory map (CLI
+`state memory`, `paging`, WebAPI memory state and paging, Lua / Python `paging_state`) reads its
+`contended` flags from `Core::IsSlotContended` instead of hard-coding "slot 1".
 
-Gating: without the debugger the status has no `stats` (the fast wrapper has no counters, R1); on a
-machine without a rule it reports `rule: none`, `effective: false` and no slots marked.
+Gating: the fast interfaces carry no counter (the wrapper's statistics are an `if constexpr` of the Debug
+instantiation); without the debugger the report's `statistics` is a string saying so. The fetch kind
+covers every byte read at PC (opcode, prefixes, operands): the memory interface cannot tell M1 from an
+operand read, and phase 2's no-MREQ cycles will add their own kind.
 
 ## 8. Tests
 

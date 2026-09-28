@@ -776,6 +776,17 @@ void MenuManager::createMachineMenu()
     _autostartDisksAction->setCheckable(true);
     _autostartDisksAction->setChecked(true);
     connect(_autostartDisksAction, &QAction::triggered, this, &MenuManager::autostartDisksToggled);
+
+    // Video memory contention (design: docs/inprogress/2026-09-28-m1-contention). Mirrors the
+    // 'contention' feature (synced in updateMenuStates); only the 48K / 128K / +2 / +2A / +3 have it
+    _machineMenu->addSeparator();
+    _contentionAction = _machineMenu->addAction(tr("Memory &Contention"));
+    _contentionAction->setStatusTip(
+        tr("The CPU waits for the screen fetches on the 48K / 128K / +2 / +2A / +3 (no effect on other machines); "
+           "fixed while TTD records or replays"));
+    _contentionAction->setCheckable(true);
+    _contentionAction->setChecked(true);
+    connect(_contentionAction, &QAction::triggered, this, &MenuManager::contentionToggled);
 }
 
 void MenuManager::setAutostartDisksChecked(bool checked)
@@ -1219,6 +1230,13 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
         {
             _hudOverlayAction->setChecked(featureManager && featureManager->isEnabled(Features::kHud));
         }
+
+        // Contention changes timing: fixed for a TTD timeline, like the core refuses (FeatureManager::setFeature)
+        if (_contentionAction)
+        {
+            _contentionAction->setEnabled(!timelineBound);
+            _contentionAction->setChecked(featureManager && featureManager->isEnabled(Features::kContention));
+        }
     }
     else
     {
@@ -1237,6 +1255,10 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
         if (_hudOverlayAction)
         {
             _hudOverlayAction->setChecked(false);
+        }
+        if (_contentionAction)
+        {
+            _contentionAction->setEnabled(false);
         }
     }
 

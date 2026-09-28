@@ -295,9 +295,10 @@ public:
     /// accesses to a contended slot, every MREQ cycle alike (opcode fetch, operand, data). Selected only
     /// while the machine's contention is in effect (Core::SelectMemoryInterface), so machines without
     /// contention never run this code. Defined in memorycontended.cpp
-    template <MemoryReadCallback Plain>
+    /// Stats: count the accesses and waits (UlaContention::CountAccess) - the Debug instantiation only
+    template <MemoryReadCallback Plain, bool Stats>
     uint8_t MemoryReadContended(uint16_t addr, bool isExecution);
-    template <MemoryWriteCallback Plain>
+    template <MemoryWriteCallback Plain, bool Stats>
     void MemoryWriteContended(uint16_t addr, uint8_t value);
 
     /// The CPU and contention component the contended interfaces use (Core::Init)

@@ -1791,6 +1791,10 @@ public:
             EmulatorContext* ctx = _emulator ? _emulator->GetContext() : nullptr;
             return StateNodeToLua(s, DeviceState::Fdc(ctx));
         });
+        lua.set_function("contention_state", [this](sol::this_state s) -> sol::object {
+            EmulatorContext* ctx = _emulator ? _emulator->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::Contention(ctx));
+        });
 
         // Audio state
         lua.set_function("audio_is_muted", [this]() -> bool {
@@ -3309,11 +3313,13 @@ public:
                     bank["type"] = "RAM";
                     switch (i) {
                         case 0: bank["page"] = static_cast<int>(memory.GetRAMPageForBank0()); break;
-                        case 1: bank["page"] = static_cast<int>(memory.GetRAMPageForBank1()); bank["contended"] = true; break;
+                        case 1: bank["page"] = static_cast<int>(memory.GetRAMPageForBank1()); break;
                         case 2: bank["page"] = static_cast<int>(memory.GetRAMPageForBank2()); break;
                         case 3: bank["page"] = static_cast<int>(memory.GetRAMPageForBank3()); break;
                     }
                 }
+                // The CPU waits for the video logic there (Core::IsSlotContended)
+                bank["contended"] = context->pCore && context->pCore->IsSlotContended(static_cast<uint8_t>(i));
                 banks.add(bank);
             }
             result["banks"] = banks;

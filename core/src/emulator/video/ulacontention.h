@@ -38,6 +38,35 @@ enum UlaFetchType : uint8_t
     ULA_DISCRETE_LOGIC = 1   // Pentagon / Scorpion / Soviet clones
 };
 
+/// The machine's contention rule (UlaContention::GetRule): which video logic makes the CPU wait
+enum class ContentionRule : uint8_t
+{
+    None,       // no contention (Pentagon, Scorpion, Profi, ATM and the other clones; TS-Config)
+    Ula48,      // Ferranti ULA, 48K: 6,5,4,3,2,1,0,0 on page 5; I/O contention on even ports
+    Ula128,     // Ferranti ULA, 128K / +2: the same pattern on odd pages; 128K I/O rules
+    GateArray,  // Amstrad gate array, +2A / +3: 1,0,7,6,5,4,3,2 on pages 4-7 in any slot; no I/O contention
+};
+
+const char* ContentionRuleName(ContentionRule rule);
+
+/// Kinds of bus cycles the contention statistics count (the unreal-z80 wait-hook vocabulary, reduced to what
+/// the core distinguishes): bytes read at PC (opcode, prefixes, operands), data reads, data writes, ports
+enum ContentionAccessKind : uint8_t
+{
+    CONTENTION_FETCH = 0,
+    CONTENTION_READ,
+    CONTENTION_WRITE,
+    CONTENTION_IO,
+    CONTENTION_KINDS
+};
+
+/// Contended accesses and the wait T-states they cost, per kind
+struct ContentionCounters
+{
+    uint64_t accesses[CONTENTION_KINDS] = {};
+    uint64_t waitT[CONTENTION_KINDS] = {};
+};
+
 /// Compact snapshot of raster timing needed by the contention engine.
 /// Pushed by Screen::SetVideoMode() whenever video mode changes.
 struct ContentionRaster
@@ -90,6 +119,51 @@ public:
     /// 0000 xxxx xxxx xx01 (see GetGateArrayFloatingBus)
     void SetGateArray(bool gateArray) { _gateArray = gateArray; }
     bool IsGateArray() const { return _gateArray; }
+
+    /// The machine's rule, from the flags above (None while contention is disabled for the model)
+    ContentionRule GetRule() const
+    {
+        if (!_contentionEnabled)
+            return ContentionRule::None;
+        if (_gateArray)
+            return ContentionRule::GateArray;
+        return _raster.tstatesPerLine >= 228 ? ContentionRule::Ula128 : ContentionRule::Ula48;
+    }
+
+    /// Last byte of a contended memory access (+2A/+3 floating bus between screen fetches)
+    uint8_t GetLatchedByte() const { return _lastContendedByte; }
+
+    // ── Statistics (debugger only) ───────────────────────────
+    // Counted by the debug contended memory interface and by in / out while the debugger is on; the fast
+    // interfaces never touch them. Every access to a contended slot or port counts, with its wait (0 outside
+    // the screen fetch window)
+
+    void CountAccess(ContentionAccessKind kind, uint8_t wait)
+    {
+        _statsFrame.accesses[kind]++;
+        _statsFrame.waitT[kind] += wait;
+        _statsTotal.accesses[kind]++;
+        _statsTotal.waitT[kind] += wait;
+    }
+
+    /// Frame boundary (Core::CPUFrameCycle while the debugger is on): the current frame's counters become
+    /// the last frame's
+    void OnFrameStart()
+    {
+        _statsLastFrame = _statsFrame;
+        _statsFrame = ContentionCounters{};
+    }
+
+    void ResetStatistics()
+    {
+        _statsFrame = ContentionCounters{};
+        _statsLastFrame = ContentionCounters{};
+        _statsTotal = ContentionCounters{};
+    }
+
+    const ContentionCounters& GetStatisticsCurrentFrame() const { return _statsFrame; }
+    const ContentionCounters& GetStatisticsLastFrame() const { return _statsLastFrame; }
+    const ContentionCounters& GetStatisticsTotal() const { return _statsTotal; }
 
     /// Whether a RAM page is contended on this machine: odd pages behind the 128K ULA (1/3/5/7; on the
     /// 48K the only mapped odd page is 5), pages 4-7 behind the gate array
@@ -194,4 +268,8 @@ private:
     UlaFetchType _fetchType = ULA_FERRANTI;
 
     ContentionRaster _raster;
+
+    ContentionCounters _statsFrame;
+    ContentionCounters _statsLastFrame;
+    ContentionCounters _statsTotal;
 };

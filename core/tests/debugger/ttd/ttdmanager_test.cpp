@@ -861,6 +861,28 @@ TEST_F(TimeTravelManagerRecordingLock_Test, ShortcutsStayOffWhileReplayingAStopp
     EXPECT_TRUE(_fm->isEnabled(Features::kFastDisk));
 }
 
+/// Contention changes timing in both directions: a timeline replays only with the setting it was recorded with
+TEST_F(TimeTravelManagerRecordingLock_Test, ContentionSwitchIsFixedForTheTimeline)
+{
+    ASSERT_TRUE(_fm->isEnabled(Features::kContention));
+    ASSERT_TRUE(_ttd->StartRecording());
+    EXPECT_FALSE(_fm->setFeature(Features::kContention, false)) << "recording";
+    EXPECT_TRUE(_fm->isEnabled(Features::kContention));
+    EXPECT_TRUE(_fm->setFeature(Features::kContention, true)) << "setting the current value is not a change";
+    RunFrames(3);
+    _ttd->StopRecording();
+
+    ASSERT_TRUE(_ttd->SeekTo(ttd::TTDTimePoint{1, 0}));
+    ASSERT_EQ(_ttd->GetState(), ttd::TTDSessionState::Detached);
+    EXPECT_FALSE(_fm->setFeature(Features::kContention, false)) << "positioned in history";
+    EXPECT_TRUE(_core->IsContentionSwitchOn());
+
+    _ttd->InvalidateSession("test");
+    EXPECT_TRUE(_fm->setFeature(Features::kContention, false));
+    EXPECT_FALSE(_core->IsContentionSwitchOn());
+    EXPECT_TRUE(_fm->setFeature(Features::kContention, true));
+}
+
 TEST_F(TimeTravelManagerRecordingLock_Test, EnablingTheTimeTravelFeatureAloneLocksNothing)
 {
     // The feature only arms the capture machinery; the lock belongs to a recording
