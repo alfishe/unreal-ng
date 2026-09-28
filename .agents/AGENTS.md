@@ -3,11 +3,18 @@
 > **CRITICAL**: NEVER commit changes without explicit user request.
 > - Each commit permission is **one-time only** — no blanket permissions
 > - Steps before any commit:
->   1. Run quality checks:
->      - Build: `ninja -C cmake-build-agent-release` must pass
->      - Tests: `./cmake-build-agent-release/bin/core-tests` must pass
->      - No compiler warnings (zero-warnings policy)
->      - Documentation: verify all cross-references and links are valid
+>   1. Run the checks that match what changed:
+>      - **C++ code in `core/` or a client** (`unreal-qt/`, `unreal-screen-viewer/`,
+>        `unreal-videowall/`, `testclient/`, the automation modules in `core/automation/`):
+>        **mandatory** full build `ninja -C cmake-build-agent-release` with zero compiler
+>        warnings, and `core-tests` must pass (`cmake --build cmake-build-agent-release --target test-parallel`)
+>      - **Documentation only** (`docs/`, `.recipe/`, other `*.md`): no build, no tests. Verify that
+>        cross-references and links resolve and that no machine-specific absolute paths slipped in
+>        (`python3 tools/fix-absolute-paths.py --path <changed files>`, dry run by default)
+>      - **Only `tools/` scripts and utilities**: no full build, no `core-tests`. Run the changed
+>        script or utility itself (its own tests, a dry run, or building just its target)
+>      - **Anything else** (test data, INI configs, CMake-only or CI changes, mixed changes without
+>        C++): the agent picks checks in proportion to the risk and says what it ran and why
 >   2. Report results and wait for explicit "commit" instruction
 
 ## Project Structure (What we have and where)
