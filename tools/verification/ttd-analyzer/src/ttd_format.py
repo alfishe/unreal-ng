@@ -189,6 +189,7 @@ PERIPHERAL_ID_NAMES = {
     10: "MoonSound",
     11: "GeneralSoundLightweight",
     12: "NeoGS",
+    13: "Plus3Paging",
 }
 
 # Mirrors ttd::PeripheralBlobHeader (ttdperipheralregistry.h): peripheralId(u8)

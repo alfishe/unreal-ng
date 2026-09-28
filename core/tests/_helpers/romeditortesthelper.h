@@ -32,7 +32,7 @@ class RomEditorFixture : public ::testing::Test
 public:
     static std::vector<std::string> RomEditors()
     {
-        return { "48K",           "128K-48BASIC",     "128K-128BASIC",     "Plus3-48BASIC",
+        return { "48K",           "128K-48BASIC",     "128K-128BASIC",     "Plus3-48BASIC",     "Plus3-3BASIC",
                  "Pentagon-48BASIC", "Pentagon-128BASIC", "Pentagon-TRDOS",
                  "Scorpion-48BASIC", "Scorpion-128BASIC", "Scorpion-TRDOS" };
     }
@@ -116,7 +116,7 @@ protected:
         _keys = _context->pDebugManager->GetKeyboardManager();
         ASSERT_NE(_keys, nullptr);
 
-        ASSERT_TRUE(RunUntil([&] { return ScreenHas(bootText); }, 250))
+        ASSERT_TRUE(RunUntil([&] { return ScreenHas(bootText); }, 500))
             << model << " never showed '" << bootText << "':\n" << Screen();
     }
 
@@ -149,15 +149,15 @@ protected:
         return done;
     }
 
-    /// From the 128K menu into the 128K editor: "128 BASIC" is the second item
-    /// on the 128K, Pentagon and Scorpion menus
-    void Enter128Editor()
+    /// From the menu into the editor: "128 BASIC" / "+3 BASIC" is the second
+    /// item on the 128K, Pentagon, Scorpion and +3 menus
+    void Enter128Editor(const std::string& banner = "128 BASIC")
     {
         TapUntilTaken(ZXKEY_EXT_DOWN, 0x0A);
         ASSERT_FALSE(HasFatalFailure());
         TapUntilTaken(ZXKEY_ENTER, 0x0D);
         ASSERT_FALSE(HasFatalFailure());
-        ASSERT_TRUE(RunUntil([&] { return ScreenHas("128 BASIC"); }, 50)) << Screen();
+        ASSERT_TRUE(RunUntil([&] { return ScreenHas(banner); }, 100)) << Screen();
     }
 
     /// Boots one editor of the matrix, ready to type
@@ -172,7 +172,26 @@ protected:
         else if (editor == "Pentagon-48BASIC")
             Boot("PENTAGON", RM_SOS, "1982 Sinclair");
         else if (editor == "Scorpion-48BASIC")
-            Boot("SCORPION", RM_SOS, "1982 Sinclair");
+        {
+            // Through the menu ("48 BASIC" is the 4th item), as a person does:
+            // a reset straight into the 48K ROM skips the Scorpion ROM's own
+            // set-up, and its error handler (RST 8 -> #3C98 -> service ROM)
+            // then never returns
+            Boot("SCORPION", RM_128, "48 BASIC");
+            for (int i = 0; i < 3 && !HasFatalFailure(); i++)
+                TapUntilTaken(ZXKEY_EXT_DOWN, 0x0A);
+            if (!HasFatalFailure())
+                TapUntilTaken(ZXKEY_ENTER, 0x0D);
+            if (!HasFatalFailure())
+                ASSERT_TRUE(RunUntil([&] { return ScreenHas("1982 Sinclair"); }, 300)) << Screen();
+        }
+        else if (editor == "Plus3-3BASIC")
+        {
+            // The +3 menu comes up after the RAM disk check (about 300 frames)
+            Boot("PLUS3", RM_128, "48 BASIC");
+            if (!HasFatalFailure())
+                Enter128Editor("+3 BASIC");
+        }
         else if (editor == "Pentagon-TRDOS")
             Boot("PENTAGON", RM_DOS, "A>");
         else if (editor == "Scorpion-TRDOS")

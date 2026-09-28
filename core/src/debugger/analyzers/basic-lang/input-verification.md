@@ -1,7 +1,6 @@
 # Verified command input: watch the ROM, not the clock
 
-**Date:** 2026-09-27 · **Status:** implemented 2026-09-28 (48K, 128K and TR-DOS editors; +3
-editor waits for the +3 paging fix) · **Code:** `romcontrolpoints.*`, `editormonitor.*`,
+**Date:** 2026-09-27 · **Status:** implemented 2026-09-28 (48K, 128K, +3 and TR-DOS editors) · **Code:** `romcontrolpoints.*`, `editormonitor.*`,
 `zxkeydecoder.*`, `commandtyper.*` (this folder); WebAPI `basic/run`, `keyboard/type`
 (`tokenized`); CLI `basic run` / `basic inject`
 
@@ -92,18 +91,22 @@ patched; use `#0053` there.
 
 ### 4.3 +3 editor (ROM0 + ROM1, v4.0 = `plus3.rom`)
 
+The 128K editor moved to new addresses; lines are checked, stored and run by ROM1.
+
 | ROM | Point | Address |
 |:--|:--|:--|
 | 0 | `idle` / `keyTaken` | `#1875` / `#187B` |
-| 0 | `keyAccepted` / `rasp` | `#0709` / `#0794` (the beep; `#0729` is its `CALL NC`) |
+| 0 | `keyAccepted` / `charInserted` | `#0709` / `#09BC` |
+| 0 | `rasp` | `#0794` (the beep; `#0729` is its `CALL NC`) |
 | 0 | `enter` | `#0A0F` |
-| 0 | `syntaxResult` | `#0D9F` (error path `#0DBD`, success beep `#0DB5`) |
-| 1 | `execStart` | `#25C8` |
-| 1 | `report` | `#25CB` |
+| 1 | `syntaxResult` | `#2560` (every line; `#0D9F` in ROM0 is only on the insert path) |
+| 1 | `lineStored` | `#268E` |
+| 1 | `execStart` / `report` | `#25C8` / `#25CB` |
 
-v4.1 (`plus341.rom`) moves these addresses; see §4.5. The +3 menu is not reachable today
-(port `#1FFD` is not implemented, `#7FFD` bit 4 is inverted), so the +3 editor is a separate
-task; its table is ready for it.
+The editor keeps the 128K's bank 7 workspace (`$EC0C` menu item, `$EC0D` flags, `$EC16` edit
+buffer, `$F6EE`/`$F6EF` cursor), so the menu exit and the line clearing are shared. v4.1
+(`plus341.rom`) moves these addresses and is not identified. Verified after the +3 paging fix
+of 2026-09-28 (`#1FFD` implemented, `#7FFD` bit 4 no longer inverted).
 
 ### 4.4 TR-DOS `A>` prompt
 
@@ -149,10 +152,10 @@ checks the recorded points: character taken and inserted, direct command
 (`enter → syntaxResult → [lineAccepted] → execStart → report 0 OK`), numbered line stored and
 not run, syntax error flagged and nothing run, TR-DOS line handed back and dispatched.
 
-Found on the way: on the Scorpion, an error in 48 BASIC goes through RST 8 = `JP #3CFC` →
-`#3C98`, which pages the service ROM, and our Scorpion model never comes back: the machine
-sits in the service monitor with interrupts off. That is a machine-model defect (like the +3
-paging), not an input one; the verifier reports it as "left the editor".
+Scorpion 48 BASIC is entered through its menu ("48 BASIC"), as a person does. A reset straight
+into the 48K ROM skips the Scorpion ROM's own set-up; its error handler (RST 8 = `JP #3CFC` →
+`#3C98` → service ROM) then does not come back. That was a test-setup mistake, not a machine
+defect: through the menu a syntax error shows `?` and the editor carries on.
 
 ## 5. Identifying the target
 
@@ -278,7 +281,7 @@ followed by `LD-BYTES` entry (`#0556`), which proves the command reached the tap
 | 128K main menu shown | `$EC0D` bit 1 | left for 128 BASIC first: cursor to item 1 (`$EC0C`), ENTER, each key verified |
 | Emulator paused / stopped | `TypeAndWait` | `emulator_paused` at once (no frames, no proof) |
 | No outcome in time (API) | `TypeAndWait` deadline | `timed_out`, typing aborted, keys released |
-| Machine leaves the editor after ENTER | no `syntaxResult` / `execStart` / `lineStored` | `no_outcome` (seen on the Scorpion, §4.6) |
+| Machine leaves the editor after ENTER | no `syntaxResult` / `execStart` / `lineStored` | `no_outcome` |
 
 ## 9. Mechanism
 
@@ -308,7 +311,7 @@ followed by `LD-BYTES` entry (`#0556`), which proves the command reached the tap
 
 All frame-driven through `MainLoop::RunFrame` (no emulator thread, no wall clock), except the
 one test of the threaded `TypeAndWait`. Editors: 48K; 128K, Pentagon and Scorpion in 48 BASIC
-and in 128 BASIC; +3 in 48 BASIC; Pentagon and Scorpion at the TR-DOS prompt.
+and in 128 BASIC; +3 in 48 BASIC and in +3 BASIC; Pentagon and Scorpion at the TR-DOS prompt.
 
 | Test | What it proves |
 |:--|:--|
@@ -316,11 +319,11 @@ and in 128 BASIC; +3 in 48 BASIC; Pentagon and Scorpion at the TR-DOS prompt.
 | `ZXKeyDecoder_Test` (3) | 203 presses (K, L, E modes, plain / CAPS / SYMBOL) decode exactly as the ROM does, on the Sinclair and Amstrad 48 BASIC |
 | `EditorMonitor_Test` (36 run, 15 not applicable to the editor) | each point means what the table says, on all 10 editors; nothing recorded while disarmed; debug mode restored |
 | `CommandTyper_Test` (62 run, 38 not applicable to the editor) | `LOAD ""` starts, `PRINT 7` reports 0 OK, repeated characters / quotes / capitals, numbered line stored, syntax error detected, `CODE` through E mode, untypable text refused, running program `busy`, TR-DOS `CAT` recognised with a disk and `trdos_rejected` (26) without |
-| `CommandTyperMenu_Test` (6) | from the 128K / Pentagon / Scorpion menu, also with the highlight moved below |
+| `CommandTyperMenu_Test` (8) | from the 128K / Pentagon / Scorpion / +3 menu, also with the highlight moved below |
 | `CommandTyperThreaded_Test` (1) | `TypeAndWait` on the running emulator thread; paused → `emulator_paused` at once |
 | `DebugKeyboardManagerRomEditor_Test` (20) | repeated keys and back-to-back calls on all 10 editors |
 
-Known gaps: the +3 editor (paging), multi-row 128K lines, an interrupt-driven program that
+Known gaps: multi-row 128K / +3 lines, an interrupt-driven program that
 polls the keyboard (typing then goes to the program, reported as `busy` / `no_effect`).
 
 ## 11. Implementation order
@@ -333,8 +336,6 @@ polls the keyboard (typing then goes to the program, reported as `busy` / `no_ef
    `DebugKeyboardManager::TypeBasicCommand` removed.
 5. ~~Recipes~~ — `.recipe/run/tape-fastload.md`, `manual-trdos-run.md`,
    `media/author-udi-images.md`, `_common/transports.md`.
-6. **+3 editor** once the +3 paging is fixed (`portdecoder_spectrum3.cpp`: `#7FFD` bit 4
-   inverted, `#1FFD` ignored).
-7. **Scorpion**: an error in 48 BASIC goes to the service ROM and never returns (§4.6).
-8. `BasicEncoder::runCommand` / `injectCommand` (memory injection, page-number state
+6. ~~+3 editor~~ — done with the +3 paging fix (2026-09-28).
+7. `BasicEncoder::runCommand` / `injectCommand` (memory injection, page-number state
    detection) are no longer used by the WebAPI or CLI; they remain for older tests.

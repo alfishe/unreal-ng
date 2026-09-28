@@ -68,7 +68,6 @@ inline drogon::HttpStatusCode CommandTyperHttpStatus(const CommandTyper::Result&
         case Failure::TimedOut:
             return drogon::k409Conflict;
         case Failure::UnknownTarget:
-        case Failure::Unsupported:
             return drogon::k400BadRequest;
         default:
             return drogon::k422UnprocessableEntity;

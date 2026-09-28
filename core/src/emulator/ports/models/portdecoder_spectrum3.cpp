@@ -5,6 +5,7 @@
 #include "portdecoder_spectrum3.h"
 
 #include "common/collectionhelper.h"
+#include "debugger/ttd/plus3/ttdplus3paging.h"
 
 /// region <Constructors / Destructors>
 
@@ -23,9 +24,11 @@ PortDecoder_Spectrum3::~PortDecoder_Spectrum3()
 
 void PortDecoder_Spectrum3::reset()
 {
-    // ZX-Spectrum +2A/+2B/+3 ROM pages
-    // 0 - SOS128 <-- Set after reset
-    // 1 - SOS48
+    // ZX-Spectrum +2A/+2B/+3 ROM pages (ROM number = #1FFD bit 2 : #7FFD bit 4)
+    // 0 - editor / menu <-- set after reset
+    // 1 - 128 BASIC syntax
+    // 2 - +3DOS
+    // 3 - 48 BASIC
 
     // Explicitly reset port states to ensure consistent reset behavior
     EmulatorState& state = _context->emulatorState;
@@ -36,24 +39,15 @@ void PortDecoder_Spectrum3::reset()
     state.pFE = 0xFF;       // Reset ULA port (border white, no sound)
     state.border_attr = 0x07;  // Sync border_attr with pFE bits 0-2 (white)
 
-    // Set default 120K memory pages
-    Memory& memory = *_context->pMemory;
-    memory.SetROMPage(0);
-    memory.SetRAMPageToBank1(5);
-    memory.SetRAMPageToBank2(2);
-    memory.SetRAMPageToBank3(0);
+    // Both latches zero: ROM 0 at #0000, RAM 5 / 2 / 0 (UpdateModelMemoryBanks)
+    _7FFD_Locked = false;
+    _context->pMemory->UpdateZ80Banks();
 
     // Set default border color to white
     _screen->SetBorderColor(COLOR_WHITE);
 
-    // Reset memory paging lock latch
-    _7FFD_Locked = false;
-
     // Explicitly force screen to SCREEN_NORMAL
     _screen->SetActiveScreen(SCREEN_NORMAL);
-
-    // Set default memory paging state
-    Port_7FFD(0x00, 0x0000);
 }
 
 uint8_t PortDecoder_Spectrum3::DecodePortIn(uint16_t port, uint16_t pc)
@@ -300,29 +294,29 @@ bool PortDecoder_Spectrum3::IsPort_1FFD(uint16_t port)
 /// endregion <Helper methods>
 
 
-/// Port #7FFD (Memory) handler
-/// \param value
+/// Port #7FFD: RAM page at #C000 (bits 0-2), screen (bit 3), ROM number low
+/// bit (bit 4), paging lock until reset (bit 5)
 void PortDecoder_Spectrum3::Port_7FFD(uint8_t value, uint16_t pc)
 {
     static const uint16_t port = 0x7FFD;
+    EmulatorState& state = _context->emulatorState;
     Memory& memory = *_context->pMemory;
 
-    uint8_t bankRAM = value & 0b00000111;
-    uint8_t screenNumber = (value & 0b00001000) >> 3;  // 0 = Normal (Bank 5), 1 = Shadow (Bank 7)
-    bool isROM0 = value & 0b00010000;
-    bool isPagingDisabled = value & 0b00100000;
+    // Locked: the whole port is ignored until reset. The lock is the latch's
+    // own bit 5, so a reset into 48 BASIC (RM_SOS sets it) and a TTD restore
+    // lock exactly like an OUT does
+    if (state.p7FFD & 0b0010'0000)
+        return;
 
-    // Disabling latch is kept until reset
-    if (!_7FFD_Locked)
-    {
-        memory.SetRAMPageToBank3(bankRAM);
-        memory.SetROMMode(isROM0 ? RM_128 : RM_SOS);
+    const uint8_t prevScreenNumber = (state.p7FFD & 0b0000'1000) >> 3;
+    const uint8_t screenNumber = (value & 0b0000'1000) >> 3;  // 0 = Normal (Bank 5), 1 = Shadow (Bank 7)
 
-        _7FFD_Locked = isPagingDisabled;
-    }
+    state.p7FFD = value;
+    _7FFD_Locked = (value & 0b0010'0000) != 0;
+    memory.UpdateZ80Banks();
 
-    SpectrumScreenEnum screen = screenNumber ? SCREEN_SHADOW : SCREEN_NORMAL;
-    _screen->SetActiveScreen(screen);
+    if (prevScreenNumber != screenNumber)
+        _screen->SetActiveScreen(screenNumber ? SCREEN_SHADOW : SCREEN_NORMAL);
 
     /// region <Debug logging>
 
@@ -336,20 +330,64 @@ void PortDecoder_Spectrum3::Port_7FFD(uint8_t value, uint16_t pc)
     /// endregion </Debug logging>
 }
 
-/// Port #1FFD (Memory) handler
-/// \param value
+/// Port #1FFD: paging mode (bit 0), ROM number high bit or special RAM layout
+/// (bits 1-2), disk motor (bit 3), printer strobe (bit 4)
 void PortDecoder_Spectrum3::Port_1FFD(uint8_t value, uint16_t pc)
 {
-    // Not implemented: p1FFD is never written, so it stays 0 and TTD has
-    // nothing model-specific to capture for this machine.
-    //
-    // WHEN YOU IMPLEMENT THIS: p1FFD becomes live state that
-    // TTDChipsetState does not carry, and a restore would silently lose it.
-    // Declare it from GetTTDModelStateIds() and supply a serializer from
-    // CreateTTDSerializers() (see PortDecoder and portdecoder_scorpion256
-    // for the pattern). TTD refuses to record on a model that declares
-    // state without a serializer, so the declaration cannot be forgotten
-    // once made.
-    (void)value;
     (void)pc;
+    EmulatorState& state = _context->emulatorState;
+
+    // With #7FFD locked the memory bits stay as they are; motor and strobe
+    // still follow the port (MAME specpls3; xpeccy-plus and ZXMAK2 differ)
+    if (state.p7FFD & 0b0010'0000)
+    {
+        state.p1FFD = static_cast<uint8_t>((state.p1FFD & 0b0000'0111) | (value & 0b1111'1000));
+        return;
+    }
+
+    state.p1FFD = value;
+    _context->pMemory->UpdateZ80Banks();
+}
+
+/// Bank layout from #7FFD and #1FFD (Memory::UpdateZ80Banks hands MM_PLUS3 here)
+void PortDecoder_Spectrum3::UpdateModelMemoryBanks()
+{
+    const EmulatorState& state = _context->emulatorState;
+    Memory& memory = *_context->pMemory;
+
+    if (state.p1FFD & 0b0000'0001)
+    {
+        // Special paging: all RAM, one of four layouts picked by bits 1-2
+        static constexpr uint8_t layouts[4][4] = {
+            { 0, 1, 2, 3 },
+            { 4, 5, 6, 7 },
+            { 4, 5, 6, 3 },
+            { 4, 7, 6, 3 },
+        };
+        const uint8_t* layout = layouts[(state.p1FFD >> 1) & 0b11];
+        memory.SetRAMPageToBank0(layout[0]);
+        memory.SetRAMPageToBank1(layout[1]);
+        memory.SetRAMPageToBank2(layout[2]);
+        memory.SetRAMPageToBank3(layout[3]);
+        return;
+    }
+
+    const uint8_t rom = static_cast<uint8_t>(((state.p1FFD >> 1) & 0b10) | ((state.p7FFD >> 4) & 0b01));
+    memory.SetROMPage(rom);
+    memory.SetRAMPageToBank1(5);
+    memory.SetRAMPageToBank2(2);
+    memory.SetRAMPageToBank3(state.p7FFD & 0b0000'0111);
+}
+
+std::vector<ttd::PeripheralId> PortDecoder_Spectrum3::GetTTDModelStateIds() const
+{
+    // #1FFD is +2A/+3-specific: not in the model-agnostic TTDChipsetState
+    return { ttd::PeripheralId::Plus3Paging };
+}
+
+std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Spectrum3::CreateTTDSerializers() const
+{
+    std::vector<std::unique_ptr<ttd::TTDSerializable>> serializers;
+    serializers.push_back(std::make_unique<ttd::TTDPlus3Paging>(_context));
+    return serializers;
 }

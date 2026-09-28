@@ -54,6 +54,7 @@ enum class PeripheralId : uint8_t
     MoonSound  = 10,      // ZXM-MoonSound (YMF278B / OPL4): Tier A chip + host latches
     GeneralSoundLightweight = 11, // GS lightweight personality (in-tree mod player, no coprocessor)
     NeoGS = 12,           // NeoGS FPGA card (neogs-tdd.md - P2 placeholder, reserved id, not registered yet)
+    Plus3Paging = 13,     // +2A/+3 #1FFD latch (ROM high bit, all-RAM modes, motor)
     // Future: SAA1099, GS512, etc.
     Count
 };

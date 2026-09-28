@@ -64,7 +64,7 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/basic/run" \
 | `syntax_error` | The editor rejected the line; nothing ran (HTTP 422) |
 | `busy` | The machine is not waiting for input — a program is running (HTTP 409) |
 | `emulator_paused` | Resume the emulator first: nothing can be typed while it is paused (409) |
-| `unknown_target` / `unsupported_editor` | No editor we know at `#0000` (+3 editor: not yet) (400) |
+| `unknown_target` | No editor we know at `#0000` (a program with its own ROM, +3 v4.1) (400) |
 
 Add `"trace": true` for the cyclogram (every control point the ROM passed).
 

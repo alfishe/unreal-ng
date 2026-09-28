@@ -48,6 +48,13 @@ public:
     bool IsPort_1FFD(uint16_t port);
     /// endregion <Helper methods>
 
+    /// Bank layout from #7FFD and #1FFD, called by Memory::UpdateZ80Banks
+    void UpdateModelMemoryBanks() override;
+
+    /// #1FFD rides a TTD blob of its own (TTDPlus3Paging)
+    std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
+    std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
+
 protected:
     void Port_7FFD(uint8_t value, uint16_t pc);
     void Port_1FFD(uint8_t value, uint16_t pc);

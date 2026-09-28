@@ -31,7 +31,11 @@ protected:
     }
 
     bool IsTrDos() const { return GetParam().find("TRDOS") != std::string::npos; }
-    bool Is128Editor() const { return GetParam().find("128BASIC") != std::string::npos; }
+    /// The 128K and +3 editors: keywords spelled, tokenised at ENTER
+    bool Is128Editor() const
+    {
+        return GetParam().find("128BASIC") != std::string::npos || GetParam() == "Plus3-3BASIC";
+    }
 
     /// Types `key` and waits until the ROM has taken it; returns the code the
     /// ROM stored in LAST_K
@@ -111,10 +115,24 @@ TEST_P(EditorMonitor_Test, CharacterKeyIsTakenAndInserted)
     RunFrames(2);
     ASSERT_EQ(code, '7');
 
-    ExpectSequence({ Point::KeyTaken, Point::KeyAccepted, Point::CharInserted });
-    ASSERT_FALSE(HasFatalFailure());
-    EXPECT_EQ(At(Find(Point::KeyAccepted)).a, '7') << Trace();
-    EXPECT_EQ(At(Find(Point::CharInserted)).a, '7') << Trace();
+    // From the moment the ROM took the `7` (the readiness `0` of BootEditor can
+    // still be finishing on the slower +3 editor)
+    int taken = -1;
+    for (size_t i = 0; i < _monitor->Events().size(); i++)
+    {
+        if (At(static_cast<int>(i)).point == Point::KeyTaken && At(static_cast<int>(i)).lastK == '7')
+        {
+            taken = static_cast<int>(i);
+            break;
+        }
+    }
+    ASSERT_GE(taken, 0) << Trace();
+    const int accepted = Find(Point::KeyAccepted, taken);
+    const int inserted = Find(Point::CharInserted, taken);
+    ASSERT_GE(accepted, 0) << Trace();
+    ASSERT_GE(inserted, accepted) << Trace();
+    EXPECT_EQ(At(accepted).a, '7') << Trace();
+    EXPECT_EQ(At(inserted).a, '7') << Trace();
     EXPECT_EQ(Find(Point::Rasp), -1) << Trace();
 }
 
@@ -175,10 +193,6 @@ TEST_P(EditorMonitor_Test, SyntaxErrorIsDetectedAndNothingRuns)
 {
     if (IsTrDos())
         GTEST_SKIP() << "TR-DOS syntax errors: see TrDosLineGoesToTheDispatcher";
-    if (GetParam() == "Scorpion-48BASIC")
-        GTEST_SKIP() << "Scorpion 48 BASIC: RST 8 (JP #3CFC) pages the service ROM and never returns in our "
-                        "Scorpion model - a machine-model defect, tracked separately; the verifier reports it "
-                        "as 'left the editor'";
 
     BootAndArm();
     ASSERT_FALSE(HasFatalFailure());

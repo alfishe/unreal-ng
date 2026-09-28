@@ -515,8 +515,10 @@ TEST_F(PortDecoder_PortTag_Test, RomPageRolePerModelLayout)
     EXPECT_EQ(rom.GetROMPageRole(3), "48K BASIC ROM");
 
     _context->config.mem_model = MM_PLUS3;
+    EXPECT_EQ(rom.GetROMPageRole(0), "+3 Editor ROM");
+    EXPECT_EQ(rom.GetROMPageRole(1), "+3 128 BASIC Syntax ROM");
     EXPECT_EQ(rom.GetROMPageRole(2), "+3DOS ROM");
-    EXPECT_EQ(rom.GetROMPageRole(3), "48K BASIC ROM (copy)");
+    EXPECT_EQ(rom.GetROMPageRole(3), "48K BASIC ROM");
 
     _context->config.mem_model = MM_SCORP;
     EXPECT_EQ(rom.GetROMPageRole(3), "48K BASIC ROM");

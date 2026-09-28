@@ -103,9 +103,11 @@ const std::vector<PointDef>& All()
         { Point::CharInserted,  RomKind::Plus3Rom0, 0x09BC, { 0x21, 0x0D, 0xEC }, "L09BC" },
         { Point::Rasp,          RomKind::Plus3Rom0, 0x0794, { 0x3A, 0x38, 0x5C }, "L0794" },
         { Point::Enter,         RomKind::Plus3Rom0, 0x0A0F, { 0xCD, 0xB7, 0x0A }, "L0A0F" },
-        { Point::SyntaxResult,  RomKind::Plus3Rom0, 0x0D9F, { 0x3A, 0x3A, 0x5C, 0x3C, 0x20, 0x18 }, "L0D9F" },
-        { Point::LineAccepted,  RomKind::Plus3Rom0, 0x0DB5, { 0xCD, 0xA7, 0x07 }, "L0DB5" },
-        // ...whose lines are checked and run by ROM1
+        // ...whose lines are checked, stored and run by ROM1. #0D9F in ROM0 is
+        // only on the insert path, like #2CD1 on the 128K: the syntax pass of
+        // every line ends at #2560 (the parser's error vector points there too)
+        { Point::SyntaxResult,  RomKind::Plus3Rom1, 0x2560, { 0xFD, 0xCB, 0x00, 0x7E }, "L2560" },
+        { Point::LineStored,    RomKind::Plus3Rom1, 0x268E, { 0xED, 0x43, 0x49, 0x5C }, "L268E" },
         { Point::ExecStart,     RomKind::Plus3Rom1, 0x25C8, { 0xC3, 0x48, 0x10 }, "L25C8" },
         { Point::Report,        RomKind::Plus3Rom1, 0x25CB, { 0xED, 0x7B, 0xB2, 0x5C }, "L25CB" },
 

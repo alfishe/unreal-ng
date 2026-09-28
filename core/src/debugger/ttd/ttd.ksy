@@ -469,7 +469,8 @@ types:
           PeripheralId enum value (see ttdserializable.h): 0 TurboSound, 1 BetaDisk,
           2 Tape, 3 Covox, 4 TSFM, 5 GeneralSound, 6 ScorpionProfROM, 7 KempstonMouse,
           8 AtmPaging, 9 ProfiPaging (Profi 1024: pDFFD latch + 16-entry palette),
-          10 MoonSound, 11 GeneralSoundLightweight, 12 NeoGS (reserved).
+          10 MoonSound, 11 GeneralSoundLightweight, 12 NeoGS (reserved),
+          13 Plus3Paging.
       - id: state
         type: peripheral_blob
 

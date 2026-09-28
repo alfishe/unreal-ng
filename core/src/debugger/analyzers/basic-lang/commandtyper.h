@@ -58,7 +58,6 @@ public:
         InputLocked,    ///< TTD replay owns the keyboard
         KeyboardBusy,   ///< other automation is still typing
         UnknownTarget,  ///< no known editor ROM at #0000
-        Unsupported,    ///< an editor we identify but have not verified (+3)
         Busy,           ///< the editor never became idle: something else runs
         CannotType,     ///< no key gives the needed byte in the editor's mode
         NotTaken,       ///< a held key was never taken by the ROM
