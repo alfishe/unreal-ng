@@ -28,6 +28,14 @@ still open (updated 2026-09-18).
    `emulator/state` yet).
 2. **D2 hardware check** — record a high FM sine on a real ZXM-MoonSound to
    settle whether the HoldDrop reducer (`Authentic`) is real.
+3. **Port-claim unification (design debt)** — master has two "a device claims
+   a port outside the table" mechanisms: self-decoding devices
+   (`RegisterSelfDecodingDevice`, `tryClaimOut/In`, Covox) and MoonSound's
+   full-decode observer (`RegisterFullDecodeLowBytePort`, tapped in
+   `Z80::in/out`). Pick one mechanism or write the precedence rule; also sets the
+   per-IN/OUT cost on every model. See TTD v2
+   [migration-trajectory.md](../2026-09-25-ttd-v2-migration/migration-trajectory.md) §6 item 2.
+4. **TTD Tier B** — wave SRAM as a memory region, with TTD v2 V1 (PLAN #40).
 
 ## Pointers
 - Cumulative plan: [`../PLAN.md`](../PLAN.md) — MoonSound (T2, item #11).

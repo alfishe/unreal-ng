@@ -314,10 +314,21 @@ and where this plan handles them:
 
 ## 6. Open decisions for the user
 
-1. **Option B vs A** (§1). B is recommended; A is acceptable if GS ships with
-   `GSRamSize=128` or GS disabled on Pentagon configs until V1.
-2. **MoonSound port-claim model** (§3.3 of the merge strategy): one mechanism
-   (extend self-decoding devices) vs two with a precedence rule.
+1. ~~**Option B vs A** (§1)~~ — **settled by events (2026-09-28)**: `profi`,
+   `generalsound` and `moonsound` all merged before V1, so the sequence that
+   happened is A. Its known cost is live on master: the GS checkpoint blob
+   carries the whole card RAM (`SoundChip_GeneralSound::TTDStateSize()` = fixed
+   state + `_ram.size()`, up to 512 KB), and MoonSound captures Tier A only
+   (wave SRAM is not in TTD). V1 is now the fix for both, no longer a merge
+   prerequisite.
+2. **MoonSound port-claim model** (§3.3 of the merge strategy) — no longer a
+   merge blocker and **not needed for V1**, but still open as design debt.
+   MoonSound merged with its own mechanism, so master has two: self-decoding
+   devices (`RegisterSelfDecodingDevice`, `PortDevice::tryClaimOut/In`; Covox;
+   tried from the model decoders) and the full-decode observer
+   (`RegisterFullDecodeLowBytePort`, `NotifyFullDecodeIn/Out` called from
+   `Z80::in/out`; MoonSound). Decide: one mechanism, or two with a written
+   precedence rule. Tracked in [MoonSound TODO](../2026-09-13-moonsound/TODO.md).
 3. **Default memory budget and whether disk mode is on by default** (V4/V5):
    needs measurements on ZX-Evo + GS + MoonSound sessions after V1.
 4. **Integrity and versioning mechanism** (before V4 starts): open

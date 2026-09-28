@@ -120,6 +120,11 @@ emulation ~17 s on a 381 KB module (needs chunking); NeoGS not started.
 
 ### 3.3 `moonsound` — finish on the branch, merge last
 
+> **Status 2026-09-28:** merged in `e18f3a29` without the port-claim unification,
+> the TTD Tier B region or automation. Open items below moved to the
+> [MoonSound TODO](../2026-09-13-moonsound/TODO.md) and PLAN #11; the port-claim
+> choice is decision 2 in [migration-trajectory.md](migration-trajectory.md) §6.
+
 MoonSound is the least finished of the three and carries the only
 architectural conflict. Finishing it *on the branch* keeps master shippable and
 lets its TTD be built directly on memory regions.
