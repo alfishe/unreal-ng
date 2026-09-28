@@ -1192,65 +1192,126 @@ POST /api/v1/emulator/{id}/snapshot/load  ✅ Implemented
 
 ### Time-Travel Debugging
 
-All TTD endpoints are scoped under `/api/v1/emulator/{id}/ttd/...`. Full command semantics (request bodies, response envelopes, halt reasons, session invalidation rules) live in [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd).
+All TTD endpoints are scoped under `/api/v1/emulator/{id}/ttd/...` (`{id}` is the emulator UUID or index). Handlers: `core/automation/webapi/src/api/ttd_api.cpp`; OpenAPI schemas: `core/automation/webapi/src/openapi/openapi_ttd.inc` (`TTDStatusResponse`, `TTDSeekRequest`, …). The CLI equivalents and the background are in [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd).
 
-| Method | Path | Body / Query | Description | Status |
+**Read the session rules first:** [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules) (states, 409 while recording, what wipes a session, reset keeps history, markers vs. bookmarks, the acceleration lock). The short version:
+
+- States are `idle`, `recording`, `detached` (positioned in history, emulator paused).
+- `seek`, `step-back`, `step-forward`, `step-instruction`, `find-last`, `reverse-step` and `reverse-continue` return **409 Conflict** while recording — call `POST /ttd/stop` first.
+- `start` switches the `timetravel` feature on by itself.
+- Snapshot/tape/disk load, disk create, ROM reload, a host speed change on a stopped session and `invalidate` drop the history; a reset stops the recording and keeps it.
+- While recording (and through `detached`) the host speed is locked to 1x, turbo mode is off, and fast tape / turbo tape / fast disk read as off.
+
+Positions are always a pair `frame` (absolute frame number) + `tinframe` (t-state offset inside the frame).
+
+| Method | Path | Body / Query | Response fields | Status |
 | :--- | :--- | :--- | :--- | :--- |
-| `GET`  | `/ttd/status` | — | Session origin (`loaded_from_file`, `source_path`, `captured_at_unix_ms`), machine (`model_id`, `model_ram_pages`), frame range, checkpoint count, write-journal size (`write_journal_records`/`_bytes`), coverage-index size (`coverage_index_frames`/`_bytes`) and memory. Schema: `TTDStatusResponse`. Always available regardless of the `timetravel` feature flag. | ✅ Implemented |
-| `POST` | `/ttd/start` | — | Begin recording at the next frame boundary. Returns `202 Accepted` with `{armed: true, anchor_frame: null}` if invoked mid-frame. | 🔮 Phase 1 |
-| `POST` | `/ttd/stop` | — | Stop capturing; retain history. | 🔮 Phase 1 |
-| `POST` | `/ttd/clear` | — | Drop all captured data; live emulator state untouched. | 🔮 Phase 1 |
-| `GET`  | `/ttd/timeline` | `?from=N&to=N&limit=N` | Paginated per-frame summary entries (dirty-page counts, event ticks, bookmark presence) for UI rendering. | 🔮 Phase 3 |
-| `POST` | `/ttd/seek` | `{"frame": N}` *or* `{"tstate": T}` *or* `{"frame": N, "tstate": T}` | Seek to an absolute target point. Emulator must be paused (run-control claim enforced). Returns `{ok, reached_frame, reached_tstate, halt_reason}`. | 🔮 Phase 2 |
-| `POST` | `/ttd/step` | `{"dir": "back"\|"fwd", "unit": "instruction"\|"frame", "count"?: N}` | Relative navigation. Default `count` is 1. | 🔮 Phase 2 |
-| `POST` | `/ttd/find_last` | `{"addr": A, "access": "write"\|"read"\|"execute"\|"out", "value"?: V, "pc_from"?, "pc_to"?, "before"?}` | Reverse search (`FindLastAccess`). Returns `{frame, tstate, pc, value, physpage}` or `null`. | 🔮 Phase 4 |
-| `POST` | `/ttd/resume_from_here` | `{"confirm": true}` | Truncate future at current (detached) position; resume live recording. Confirmation required if truncation would drop > N frames. | 🔮 Phase 2 |
-| `GET`  | `/ttd/bookmarks` | — | List bookmarks. | 🔮 Phase 3 |
-| `POST` | `/ttd/bookmarks` | `{"at": T, "label": "..."}` | Add a bookmark at a recorded time point. | 🔮 Phase 3 |
-| `DELETE` | `/ttd/bookmarks/{id}` | — | Remove a bookmark. | 🔮 Phase 3 |
-| `GET`  | `/ttd/coverage/probe` | `?frame=N&kind=executed\|written\|read&addr_from=A1&addr_to=A2&phys_page=P` | Exact per-frame query: did frame N touch the range? Returns `{touched, index_available, frame, kind, addr_from, addr_to, phys_page}`. Frames outside the covered window return `index_available: false, touched: false`. Returns 400 for missing `frame`, invalid `kind`, `addr_from > addr_to`, `phys_page > 255` or non-numeric values. | ✅ Implemented |
-| `GET`  | `/ttd/coverage/scan` | `?from_frame=F1&to_frame=F2&kind=executed\|written\|read&addr_from=A1&addr_to=A2&phys_page=P&limit=L` | Frames in `[F1, F2]` touching the range (window clamped to coverage). Returns `{frames[], first_match, last_match, matching_frames, scanned_frames, truncated, covered_from, covered_to, index_available}`. Same 400 validation as probe (plus `limit >= 1`). | ✅ Implemented |
-| `GET`  | `/ttd/coverage/summary` | `?from_frame=F1&to_frame=F2&kind=K&bucket_size=B&limit=L` | Activity heatmap: per-bucket distinct executed/written/read address counts. Returns `{bucket_size, bucket_count, buckets[] (frame_start/frame_end/executed_distinct/written_distinct/read_distinct/has_keyframe), covered_from, covered_to, index_available}`. `bucket_size=0` (default) = auto. | ✅ Implemented |
+| `GET`  | `/ttd/status` | — | See "status response" below. | ✅ Implemented |
+| `POST` | `/ttd/start` | Optional `{"mode": "gaming"\|"development", "enable_write_journal": bool}`. `gaming` = no write journal; `development` (default) = journal on. `enable_write_journal` wins over `mode`. Ignored when already recording. | `started`, `already_active`, `state`, `write_journal_enabled` | ✅ Implemented |
+| `POST` | `/ttd/stop` | — | `stopped` (false if it was not recording), `state` | ✅ Implemented |
+| `POST` | `/ttd/invalidate` | Optional `{"reason": "..."}` (default `"WebAPI invalidate"`) | `invalidated`, `reason`, `state` | ✅ Implemented |
+| `POST` | `/ttd/seek` | `{"frame": N, "tinframe"?: T}` *or* `{"bookmark": "label"}` | `reached`, `arrived_at {frame, tinframe}`, `halt_reason`, `blocking_marker {frame, tinframe, kind, reason}` (only when `halt_reason` is `external_event`), `state`, `bookmark` (bookmark seeks). 400 without `frame`/`bookmark` or with an empty label; 404 for an unknown bookmark. | ✅ Implemented |
+| `POST` | `/ttd/step-back` | — | `stepped`, `frame`, `tinframe` (one frame back, same position inside the frame) | ✅ Implemented |
+| `POST` | `/ttd/step-forward` | — | `stepped`, `frame`, `tinframe` (one frame forward, inside recorded history) | ✅ Implemented |
+| `POST` | `/ttd/step-instruction` | Optional `{"dir": "back"\|"forward"\|"fwd"}` (default `back`) | `stepped`, `dir` (`back`/`forward`), `frame`, `tinframe` | ✅ Implemented |
+| `POST` | `/ttd/reverse-step` | Exactly one of `{"count": N}` (instructions) or `{"tstates": T}` (lands on the nearest instruction start at or before the target). 400 for both or neither. | `reached`, `mode` (`count`/`tstates`), `frame`, `tinframe` | ✅ Implemented |
+| `POST` | `/ttd/reverse-continue` | `{"pcs": [A, B, ...]}` — non-empty array of integer addresses | `matched`, `pc`, `frame`, `tinframe`, `blocked_by_marker {kind, reason, frame, tinframe}` (only when a marker stopped it) | ✅ Implemented |
+| `POST` | `/ttd/find-last` | See "find-last request" below | `found`; on a hit `frame`, `tinframe`, `pc`, `value`, `phys_page` (`null` for ROM / no RAM page), `access`; when a marker blocked the search `blocked: true`, `marker_frame`, `marker_tinframe`, `marker_kind`, `marker_reason` | ✅ Implemented |
+| `POST` | `/ttd/resume` | Optional `{"frame": N, "tinframe"?: T}`; default is the current position | `resumed`, `frame`, `tinframe`, `state`. Truncates everything after the point and records again; resumes the emulator on success. Fails (`resumed: false`) from `idle` — seek first. | ✅ Implemented |
+| `GET`  | `/ttd/position` | — | `current {frame, tinframe}`, `session_end {frame, tinframe}`, `state` | ✅ Implemented |
+| `GET`  | `/ttd/markers` | — | `count`, `markers[] {frame, tinframe, kind, reason}` — kinds `tape_control`, `disk_write`, `debugger_edit`, `hardware_reset`, `other` | ✅ Implemented |
+| `GET`  | `/ttd/bookmarks` | — | `count`, `bookmarks[] {frame, tinframe, label}` (time-sorted) | ✅ Implemented |
+| `POST` | `/ttd/bookmarks` | `{"label": "...", "frame"?: N, "tinframe"?: T}` — no `frame` = current position. Label: non-empty, at most 63 characters, unique per session. | **201** with `added`, `label`, `frame`, `tinframe`. 400 for a missing/empty/overlong label; 409 for a duplicate label or a position outside the timeline. | ✅ Implemented |
+| `DELETE` | `/ttd/bookmarks/{label}` | — | `removed`, `label`; 404 for an unknown label | ✅ Implemented |
+| `POST` | `/ttd/dump` | `{"path": "..."}` | `ok`; on success `path`, `bytes`; on failure `error`. 400 without `path`, 500 if the file cannot be opened. | ✅ Implemented |
+| `POST` | `/ttd/load` | `{"path": "..."}` | `ok`, `path`, `checkpoint_count`, `session_start_frame`, `current_end_frame`, `state` (`idle`). 400 without `path` or when the file is refused (`ok: false`, `error` — e.g. a model mismatch naming both model ids); 404 if the file cannot be opened. | ✅ Implemented |
+| `GET`  | `/ttd/coverage/probe` | `?frame=N&kind=executed\|written\|read&addr_from=A1&addr_to=A2&phys_page=P` | `frame`, `kind`, `addr_from`, `addr_to` (as `"0x%04X"` strings), `phys_page` (if given), `touched`, `index_available`. Frames outside the covered window return `index_available: false, touched: false`. 400 for missing `frame`, invalid `kind`, `addr_from > addr_to`, `phys_page > 255` or non-numeric values. | ✅ Implemented |
+| `GET`  | `/ttd/coverage/scan` | `?from_frame=F1&to_frame=F2&kind=…&addr_from=A1&addr_to=A2&phys_page=P&limit=L` (default limit 200) | `kind`, `addr_from`, `addr_to`, `phys_page`, `frames[]`, `first_match`, `last_match`, `matching_frames`, `scanned_frames`, `truncated`, `index_available`, and `covered_from`/`covered_to` when the index is available. Same 400 validation as probe (plus `limit >= 1`). | ✅ Implemented |
+| `GET`  | `/ttd/coverage/summary` | `?from_frame=F1&to_frame=F2&kind=K&bucket_size=B&limit=L` (default limit 100; `bucket_size=0` = automatic) | `from_frame`, `to_frame`, `bucket_size`, `bucket_count`, `buckets[] {frame_start, frame_end, executed_distinct, written_distinct, read_distinct, has_keyframe}`, `index_available`, and `covered_from`/`covered_to` when available | ✅ Implemented |
+
+Query parameters for the coverage routes accept decimal or `0x` hex. `to_frame` defaults to the session end, the address range to the whole 64K, and `kind` to `executed` (probe/scan) or all kinds (summary).
+
+There are no `/ttd/clear`, `/ttd/timeline`, `/ttd/step` or `/ttd/resume_from_here` routes: use `/ttd/invalidate`, `/ttd/step-back` / `/ttd/step-forward` / `/ttd/step-instruction` and `/ttd/resume`.
 
 **`GET /ttd/status` response shape:**
 
 ```json
 {
-  "recording": true,
-  "feature_enabled": true,
-  "position": {"frame": 12345, "tstate": 0},
-  "bounds": {"first_frame": 0, "last_frame": 12345},
-  "memory": {"used_bytes": 222298112, "budget_bytes": 67108864},
-  "budget_exceeded": false,
-  "detached": false,
-  "invalidation_reason": null
+  "state": "idle",
+  "ttd_available": true,
+  "session_start_frame": 98,
+  "current_end_frame": 397,
+  "checkpoint_count": 301,
+  "page_store_bytes": 40960,
+  "page_store_used_bytes": 665600,
+  "baseline_frames_captured": 2159,
+  "session_heap_bytes": 1043968,
+  "loaded_from_file": false,
+  "source_path": "",
+  "captured_at_unix_ms": 0,
+  "model_id": 0,
+  "model_ram_pages": 8,
+  "write_journal_enabled": true,
+  "write_journal_records": 729025,
+  "write_journal_bytes": 8748300,
+  "coverage_index_frames": 300,
+  "coverage_index_bytes": 13926,
+  "bookmark_count": 0
 }
 ```
 
-When `feature_enabled` is `false`, all fields except `recording` (which is `false`) and `feature_enabled` are omitted.
+`state` is `idle`, `recording` or `detached`. When the build has no TTD engine the response still comes back with `ttd_available: false`, `state: "idle"` and zero counters. Field meanings: [command-interface.md → Status fields](./command-interface.md#status-fields).
 
 **`POST /ttd/seek` response shape:**
 
 ```json
 {
-  "ok": true,
-  "reached_frame": 4823,
-  "reached_tstate": 14982,
-  "halt_reason": "target"
+  "reached": false,
+  "arrived_at": {"frame": 4700, "tinframe": 0},
+  "halt_reason": "external_event",
+  "blocking_marker": {"frame": 4700, "tinframe": 1234, "kind": "tape_control", "reason": "tape play"},
+  "state": "detached"
 }
 ```
 
-`halt_reason` is one of `target`, `external_event`, `out_of_range`. See [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd) for the full semantics.
+`halt_reason` is one of `target`, `external_event`, `out_of_range`. The emulator is left paused after a seek; `POST /ttd/resume` resumes it.
 
-**Errors specific to TTD:**
+**find-last request:**
 
-| HTTP | Code | Meaning |
-| :--- | :--- | :--- |
-| 409 | `E_RUN_CONTROL_BUSY` | Another surface holds the run-control claim on this instance. Response includes `holder` (surface label). |
-| 409 | `E_TTD_NOT_RECORDING` | Operation requires an active recording session; none exists. |
-| 400 | `E_TTD_OUT_OF_RANGE` | Target frame/tstate is outside recorded bounds. |
-| 403 | `E_TTD_FEATURE_DISABLED` | `timetravel` feature flag is off; recording/seek/replay refused. `GET /ttd/status` still works. |
-| 410 | `E_TTD_SESSION_INVALIDATED` | Session was invalidated (e.g. by a load/reset); client must `POST /ttd/start` again. Includes `invalidation_reason`. |
+```json
+{
+  "addr": "0x5B00",
+  "access": "write",
+  "value": 7,
+  "pc_from": "#8000", "pc_to": "$8FFF",
+  "phys_page": 5,
+  "before_frame": 4823, "before_tin": 0
+}
+```
+
+| Field | Meaning |
+| :--- | :--- |
+| `addr` | Single address. Or use `addr_from` / `addr_to` for a range (either end may be omitted: 0 / 0xFFFF). |
+| `access` | `write` (default), `read`, `execute`, `io`. An unknown value falls back to `write`. |
+| `value` | Exact byte value, 0..255. |
+| `pc_from`, `pc_to` | Only accesses made by an instruction whose PC is in this range. |
+| `phys_page` | 0..255 (JSON number only). Pins the search to one physical RAM page, so a banked address does not answer with another page's write. |
+| `before_frame`, `before_tin` | Search at or before this point instead of the current position. `before_tin` is only read together with `before_frame`. |
+
+At least one of `addr`, `addr_from`, `addr_to`, `pc_from`, `pc_to`, `value` is required (400 otherwise). `addr`, `addr_from`, `addr_to`, `value`, `pc_from` and `pc_to` may be JSON numbers or strings: decimal, `"0x.."`, `"#.."` or `"$.."`; an out-of-range value is a 400.
+
+**Errors specific to TTD** (all bodies are `{"error": ..., "message": ...}` or `{"error": ...}`):
+
+| HTTP | When |
+| :--- | :--- |
+| 400 | Bad request body or query (missing required field, bad number, bad label, both `count` and `tstates`, empty `pcs`, refused `.ttd` load). |
+| 404 | Unknown emulator id, unknown bookmark label, or `.ttd` file not found on load. |
+| 409 | Seek/step/find-last/reverse-* while recording (`{"error": "Conflict", "message": ..., "state": "recording"}`); duplicate bookmark label or bookmark outside the timeline. |
+| 500 | Emulator context unavailable, or `dump` could not open the output file. |
+| 501 | The build has no TTD engine. |
+| 503 | The emulator is shutting down. |
+
+Everything else is reported in a 200 body: `reached: false`, `stepped: false`, `resumed: false`, `found: false`, `matched: false`.
 
 ## WebSocket Support (Future)
 

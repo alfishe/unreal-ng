@@ -623,20 +623,28 @@ local status = profilers_status_all()
 
 ### Time-Travel Debugging
 
-Mirrors the `emu.*` binding style; identical surface to the Python bindings. Full command semantics (arguments, result envelopes, halt reasons, session invalidation rules) live in [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd). All methods require the `timetravel` feature flag to be ON, except `ttd_status` which always works.
+The TTD functions are **global functions** (like the mouse functions), not methods on the emulator object. They act on the bound emulator, or on the selected one when the script is not bound to an instance. Bindings: `core/automation/lua/src/emulator/lua_emulator.h`. Command semantics and background: [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd).
+
+**Session rules** — read [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules). In short: states are `idle`, `recording`, `detached`; seek/step/find-last/reverse functions do nothing useful while recording (the core refuses them — `ttd_seek` returns `reached = false`, the boolean functions return `false`), so call `ttd_stop()` first; `ttd_start()` switches the `timetravel` feature on by itself; loads, disk create, ROM reload, a host speed change on a stopped session and `ttd_invalidate()` drop the history, while a reset keeps it; while recording, the host speed is locked to 1x and turbo / fast tape / turbo tape / fast disk are off.
+
+Unlike the WebAPI, the Lua functions do not pause the emulator for you: pause it before browsing history. Errors never raise; they come back as `false`, an empty table, or a table with an `error` string. When the build has no TTD engine every function returns `false` / an empty or `error` table.
 
 **Session lifecycle:**
 
 ```lua
-emu.ttd_start()              -- Begin recording at next frame boundary
-emu.ttd_stop()               -- Stop capturing; retain history
-emu.ttd_clear()              -- Drop all captured data; live state untouched
+ttd_start()                  --> bool   -- development mode: write journal on
+ttd_start("gaming")          --> bool   -- no write journal (smaller)
+ttd_set_journal_enabled(b)             -- choose journal mode for the next start
+ttd_get_journal_enabled()    --> bool
+ttd_stop()                             -- stop recording, keep history
+ttd_invalidate([reason])               -- drop all history (default reason "lua invalidate")
 ```
 
-**Status (always available):**
+**Status:**
 
 ```lua
-local status = emu.ttd_status()
+local status = ttd_status()
+-- status.ttd_available         = true
 -- status.state                 = "idle"   -- idle | recording | detached
 --
 -- Provenance: recorded here, or opened from a file?
@@ -646,7 +654,7 @@ local status = emu.ttd_status()
 --
 -- Machine
 -- status.model_id              = 0
--- status.model_ram_pages       = 32   -- BOUND, not a count (48K reports 6)
+-- status.model_ram_pages       = 8    -- BOUND, not a count (48K reports 6)
 --
 -- Timeline
 -- status.session_start_frame   = 98
@@ -661,100 +669,124 @@ local status = emu.ttd_status()
 -- status.coverage_index_bytes  = 13926
 --
 -- Memory
--- status.page_store_bytes      = 40960
--- status.page_store_used_bytes = 665600
--- status.session_heap_bytes    = 1043968
+-- status.page_store_bytes         = 40960
+-- status.page_store_used_bytes    = 665600
+-- status.baseline_frames_captured = 2159
+-- status.session_heap_bytes       = 1043968
 ```
 
-**Navigation (require run-control claim; emulator must be paused):**
+(`bookmark_count` is not in the Lua table; use `#ttd_bookmarks()`.)
+
+**Navigation:**
 
 ```lua
-emu.ttd_seek(4823)                          -- Absolute seek to frame
-emu.ttd_seek(4823, 14982)                   -- Intra-frame target (frame, tstate)
-emu.ttd_seek_tstate(14982)                  -- Or seek by absolute t-state
+ttd_seek(4823)                   -- seek to frame 4823, tinframe 0
+ttd_seek(4823, 14982)            -- seek to (frame, tinframe)
+-- --> { reached = true, arrived_at = {frame = 4823, tinframe = 14982},
+--       halt_reason = "target",          -- "target" | "external_event" | "out_of_range"
+--       blocking_marker = {frame, tinframe, kind, reason} }  -- only for external_event
 
-emu.ttd_step_back()                         -- One instruction back
-emu.ttd_step_back{unit = 'frame', count = 2}  -- Two frames back
-emu.ttd_step_forward()                      -- Forward within recorded history
-emu.ttd_step_forward{unit = 'frame'}
+ttd_step_back()                  --> bool  -- one frame back (same position inside the frame)
+ttd_step_forward()               --> bool  -- one frame forward, inside recorded history
+ttd_step_instruction_back()      --> bool
+ttd_step_instruction_forward()   --> bool
 
-emu.ttd_resume_from_here{confirm = true}    -- Truncate future, resume live
+ttd_resume()                     --> bool  -- record again from the current position
+ttd_resume(4823, 0)              --> bool  -- ...or from (frame, tinframe); future is discarded
+                                            -- fails from idle: seek first
+
+ttd_position()
+-- --> { current = {frame, tinframe}, session_end = {frame, tinframe} }
 ```
 
-Return value for `ttd_seek` / `ttd_step_back` / `ttd_step_forward` (a table):
+**Reverse execution:**
 
 ```lua
--- { ok = true, reached_frame = 4823, reached_tstate = 14982,
---   halt_reason = 'target' }   -- 'target' | 'external_event' | 'out_of_range'
+ttd_reverse_step()               --> bool  -- one instruction back
+ttd_reverse_step(10)             --> bool  -- ten instructions back
+ttd_reverse_step_tstates(5000)   --> bool  -- back 5000 t-states (nearest instruction start)
+
+local r = ttd_reverse_continue({0x8000, 0x8010})
+-- --> { matched = true, pc = 0x8000, frame = 4700, tinframe = 812 }
+--     frame/tinframe are present only when matched; a blocking marker is not reported here
 ```
 
 **Reverse search:**
 
 ```lua
-local r = emu.ttd_find_last(0x5800, 'write')
--- r is nil if no match, otherwise:
--- r.frame, r.tstate, r.pc, r.value, r.physpage
+-- Positional form: addr, access, value, pc_from, pc_to, before_frame, before_tin,
+--                  phys_page, addr_from, addr_to
+local r = ttd_find_last(0x5800, "write")
 
--- Full filter set via a table argument (single address or address/PC range search):
-local r2 = emu.ttd_find_last{
-    addr_from = 0x4000,        -- optional address range start
-    addr_to   = 0x8000,        -- optional address range end
-    access    = 'write',       -- 'write' | 'read' | 'execute' | 'io'
-    value     = 0x07,          -- optional exact value match
-    pc_from   = 0x4000,        -- optional PC range filter
+-- Table form (snake_case or camelCase keys: addr_from/addrFrom, pc_from/pcFrom, phys_page/physPage):
+local r2 = ttd_find_last{
+    addr_from = 0x4000,        -- or addr = 0x5800 for one address
+    addr_to   = 0x8000,
+    access    = "write",       -- "write" (default) | "read" | "execute" | "io"
+    value     = 0x07,
+    pc_from   = 0x4000,        -- pc_to defaults to 0xFFFF
     pc_to     = 0x8000,
-    before_frame = 4823,       -- optional: don't search past this frame
+    before_frame = 4823,       -- search at or before this point (default: current position)
     before_tin = 0,
-    phys_page = 5
+    phys_page = 5              -- 0..255: one physical RAM page
 }
+-- --> { found = false }  or
+--     { found = true, frame, tinframe, pc, value, phys_page, access }
+--     phys_page is absent (nil) for ROM / no RAM page.
+--     A search stopped by a marker also returns found = false (no marker details in Lua).
 ```
 
-**Timeline (for UI rendering / batch analysis):**
+**Markers and bookmarks:**
 
 ```lua
-local entries = emu.ttd_timeline{from_frame = 0, to_frame = 1000, limit = 500}
--- List of { frame = N, dirty_pages = K, events = {...}, bookmarks = {...} }
-```
+for _, m in ipairs(ttd_markers()) do        -- replay barriers
+    print(m.frame, m.tinframe, m.kind, m.reason)
+end   -- kind: tape_control | disk_write | debugger_edit | hardware_reset | other
 
-**Bookmarks:**
-
-```lua
-emu.ttd_bookmark_add{at = 14982, label = 'before crash'}
-emu.ttd_bookmark_remove('bm-3')
-for _, bm in ipairs(emu.ttd_bookmark_list()) do
-    print(bm.frame, bm.label)
+ttd_bookmark_add("before crash")            -- at the current position
+ttd_bookmark_add("umt entry", 4823, 14982)  -- at (frame, tinframe)
+-- --> { added = true, label, frame, tinframe }  or  { added = false, error = "..." }
+for _, bm in ipairs(ttd_bookmarks()) do     -- time-sorted
+    print(bm.frame, bm.tinframe, bm.label)
 end
+ttd_bookmark_delete("before crash")        --> bool
+ttd_seek_bookmark("umt entry")
+-- --> same table as ttd_seek plus bookmark = "umt entry" (error = "..." for an unknown label)
+```
+
+Bookmarks are advisory and never stop a seek; markers do.
+
+**Sessions on disk:**
+
+```lua
+ttd_dump("/tmp/session.ttd")               --> bool
+ttd_load("/tmp/session.ttd")
+-- --> { ok = true, checkpoint_count, session_start_frame, current_end_frame }
+--     or { ok = false, error = "..." }  (e.g. recorded on a different model: both model ids named)
+-- After a load the session is idle: use ttd_seek to position the emulator.
 ```
 
 **Coverage index queries:**
 
 ```lua
-local probe = emu.ttd_coverage_probe{frame = 100, kind = 'executed', addr_from = 0x0038, addr_to = 0x0040}
--- { frame = 100, kind = 'executed', touched = true, index_available = true }
+local probe = ttd_coverage_probe{frame = 100, kind = "executed", addr_from = 0x0038, addr_to = 0x0040}
+-- { frame = 100, kind = "executed", touched = true, index_available = true }
 -- Frames outside the covered window: index_available = false, touched = false
 
-local scan = emu.ttd_coverage_scan{kind = 'executed', addr_from = 0x0038, addr_to = 0x0040, from_frame = 1, to_frame = 200}
--- { frames = {18, 19, 20}, first_match = 18, last_match = 20, matching_frames = 3,
---   scanned_frames = 183, truncated = false, covered_from = 18, covered_to = 197,
---   index_available = true }
+local scan = ttd_coverage_scan{kind = "executed", addr_from = 0x0038, addr_to = 0x0040,
+                               from_frame = 1, to_frame = 200, limit = 200}
+-- { kind = "executed", frames = {18, 19, 20}, first_match = 18, last_match = 20,
+--   matching_frames = 3, scanned_frames = 183, truncated = false,
+--   covered_from = 18, covered_to = 197, index_available = true }
 
-local summary = emu.ttd_coverage_summary{from_frame = 1, to_frame = 500, bucket_size = 50}
+local summary = ttd_coverage_summary{from_frame = 1, to_frame = 500, bucket_size = 50, limit = 100}
 -- { from_frame = 1, to_frame = 500, covered_from = 18, covered_to = 497,
 --   bucket_size = 50, bucket_count = 10, index_available = true,
---   buckets = { {frame_start = 1, frame_end = 50, executed_distinct = 412, ...} } }
+--   buckets = { {frame_start = 1, frame_end = 50, executed_distinct = 412,
+--                written_distinct = ..., read_distinct = ..., has_keyframe = true}, ... } }
 ```
 
-**Errors** (raised as Lua errors; pcall to catch):
-
-| Error message prefix | Meaning |
-| :--- | :--- |
-| `run-control busy:` | Another surface holds the run-control claim. |
-| `ttd not recording:` | Operation requires an active session. |
-| `ttd out of range:` | Target is outside recorded bounds. |
-| `ttd feature disabled:` | `timetravel` feature flag is off. |
-| `ttd session invalidated:` | Session invalidated by load/reset/etc. |
-
-**Implementation status:** Sprint 0 foundations ✅ merged; Phase 1 will land `ttd_status` only; the rest ship in Phase 2 (navigation) and Phase 4 (reverse search).
+`kind` is `executed`, `written` or `read` (an unknown kind falls back to `executed`; `summary` without `kind` counts all three). `to_frame` defaults to the session end; `phys_page` above 255 returns a table with `error`.
 
 ### Analysis, Capture & Assembly
 

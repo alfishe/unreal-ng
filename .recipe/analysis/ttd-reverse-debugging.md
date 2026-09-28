@@ -1,8 +1,11 @@
 # Recipe: TTD Reverse Debugging — find-last, reverse-step, reverse-continue, coverage
 
 Precondition: a recorded session (development mode for the fast journal) that
-is **stopped/detached** — see [ttd-recording.md](ttd-recording.md). All
-endpoints below return `409` while recording is active.
+is **stopped/detached** — see [ttd-recording.md](ttd-recording.md).
+`find-last`, `reverse-step` and `reverse-continue` return `409` while
+recording is active; the coverage queries answer at any time. Session rules
+(states, what wipes history, markers):
+[command-interface.md → TTD Session Rules](../../docs/emulator/design/control-interfaces/command-interface.md#ttd-session-rules).
 
 These are the "answer the question backwards" primitives:
 
@@ -10,10 +13,11 @@ These are the "answer the question backwards" primitives:
 - *What ran just before the crash?* → `reverse-step` / `reverse-continue`
 - *Which frames touched this address range?* → coverage probe/scan/summary
 
-> **How to use the sections:** [MCP](#mcp-preferred) is preferred — `time_travel`
-> covers the coverage queries, `invoke_api` the reverse-travel endpoints. Use
-> [WebAPI](#webapi) only inside host-side Python/bash pipelines or when MCP
-> is unavailable (policy: [_common/transports.md](../_common/transports.md)).
+> **How to use the sections:** [MCP](#mcp-preferred) is preferred — the
+> `time_travel` tool covers find-last, reverse-step/continue and the coverage
+> queries. Use [WebAPI](#webapi) only inside host-side Python/bash pipelines
+> or when MCP is unavailable (policy:
+> [_common/transports.md](../_common/transports.md)).
 
 ## MCP (preferred)
 
@@ -25,11 +29,12 @@ time_travel {"action":"coverage_scan","from_frame":11000,"to_frame":12000,"kind"
              "addr_from":"0x8000","addr_to":"0xBFFF","phys_page":5,"limit":200}
 time_travel {"action":"coverage_summary","kind":"executed"}
 
-# reverse travel via invoke_api (not yet in the time_travel tool):
-invoke_api  {"method":"POST","path":"/api/v1/emulator/{id}/ttd/find-last",
-             "body":{"addr":16384,"access":"write"}}
-invoke_api  {"method":"POST","path":"/api/v1/emulator/{id}/ttd/reverse-step","body":{"count":50}}
-invoke_api  {"method":"POST","path":"/api/v1/emulator/{id}/ttd/reverse-continue","body":{"pcs":[33156]}}
+# reverse travel (session must be stopped/detached):
+time_travel {"action":"find_last","addr":16384,"access":"write"}
+time_travel {"action":"find_last","addr_from":"0x4000","addr_to":"0x57FF","access":"write",
+             "pc_from":"0x8000","pc_to":"0x8FFF","phys_page":5,"before_frame":11800}
+time_travel {"action":"reverse_step","count":50}               # or {"tstates":2000} — exactly one
+time_travel {"action":"reverse_continue","pcs":[33156,"0x82F0"]}
 
 # follow-ups once find-last names a writer PC:
 debug_code  {"action":"disassemble","address":"0x8174","count":12}   # pc-16 window (= /disasm)
@@ -56,22 +61,30 @@ Query fields (combine freely; at least one criterion required):
 | `addr` | exact Z80 address |
 | `addr_from` / `addr_to` | address range (use instead of `addr`) |
 | `access` | `"write"` (default) / `"read"` / `"execute"` / `"io"` |
-| `value` | the byte written/read (writes & reads) |
+| `value` | the byte written/read, 0..255 |
 | `pc_from` / `pc_to` | restrict by the PC that performed the access |
-| `before` | only matches strictly before this frame |
+| `phys_page` | 0..255 (JSON number): only accesses to this physical RAM page |
+| `before_frame` / `before_tin` | search at or before this point instead of the current position (`before_tin` only counts together with `before_frame`) |
+
+At least one of `addr`, `addr_from`, `addr_to`, `pc_from`, `pc_to`, `value`
+is required. Address, value and PC fields may be JSON numbers or strings
+(`"0x4000"`, `"#4000"`, `"$4000"`, `"16384"`).
 
 Result — the most recent match in recorded history:
 
 ```json
 {
   "found": true,
-  "frame": 11782, "tstate": 2941,
-  "addr": 16384, "value": 66, "pc": 33156, "physpage": 5
+  "frame": 11782, "tinframe": 2941,
+  "pc": 33156, "value": 66, "phys_page": 5, "access": "write"
 }
 ```
 
-`found: false` ⇒ nobody touched it in the recorded window (or a replay
-barrier blocked the search — the response tells you which marker).
+`phys_page` is `null` when the access had no RAM page (ROM, I/O).
+`found: false` ⇒ nobody touched it in the recorded window, or a replay
+barrier blocked the search — then the response also carries
+`"blocked": true` and `marker_frame`, `marker_tinframe`, `marker_kind`,
+`marker_reason`.
 
 Classic triage chain: value went bad at address X →
 `find-last {addr:X, access:"write"}` gives the writing `pc` →
@@ -85,14 +98,14 @@ predecessors.
 # Back 1 instruction, 50 instructions, or 2000 t-states (exactly one of the two):
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/reverse-step" \
      -H 'Content-Type: application/json' -d '{"count": 50}' | jq .
-#   → {"reached": true, "frame": 11770, "tinframe": 12345}
+#   → {"reached": true, "mode": "count", "frame": 11770, "tinframe": 12345}
 
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/reverse-step" \
      -H 'Content-Type: application/json' -d '{"tstates": 2000}' | jq .
 ```
 
 `tstates` lands on the nearest instruction boundary ≤ target. Specifying
-both `count` and `tstates` is a 400.
+both `count` and `tstates` (or neither) is a 400.
 
 ### reverse-continue — run backward to a breakpoint
 
@@ -105,7 +118,7 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/reverse-continue" \
 
 Non-empty `pcs` array required; execution rewinds until any PC matches.
 Blocked by replay barriers like any backward travel
-(`blocked_by_marker` in the response).
+(`blocked_by_marker: {kind, reason, frame, tinframe}` in the response).
 
 Loop it from bash for "previous N hits":
 
@@ -153,7 +166,8 @@ curl -s "$BASE/emulator/$EMU_ID/ttd/coverage/summary?kind=executed" \
 3. `find-last` the corrupted address → writer PC.
 4. `reverse-continue {"pcs":[writer]}` → the call site that set it up.
 5. `coverage/scan` the routine's range → which frames to replay.
-6. `seek` to the earliest hit, `resume`, watch it happen again with a
+6. `seek` to the earliest hit, `resume` (this discards the recorded
+   future and records again from there), watch it happen again with a
    breakpoint armed.
 
 Full worked example: [articles/bug-hunt-ttd.md](../articles/bug-hunt-ttd.md).
@@ -164,8 +178,10 @@ Full worked example: [articles/bug-hunt-ttd.md](../articles/bug-hunt-ttd.md).
   replay, orders of magnitude slower on long timelines. Prefer development
   mode when you plan to ask questions.
 - **`find-last` `access:"io"`** matches port writes (value = byte out).
-- **Z80 vs physical addresses**: `find-last` works in Z80 space with a
-  `physpage` in the result; coverage endpoints take either Z80 ranges or an
-  explicit `phys_page`.
-- **Reverse travel across input markers** halts with the marker description —
-  the machine state before an external event cannot be re-derived past it.
+- **Z80 vs physical addresses**: `find-last` works in Z80 space, reports
+  `phys_page` in the result, and takes an optional `phys_page` filter;
+  coverage endpoints likewise take Z80 ranges plus an optional `phys_page`.
+- **Reverse travel across a marker** (tape transport command, WD1793
+  sector/track write, debugger memory edit) halts with the marker
+  description — replay cannot reproduce the event, so it will not cross it.
+  Keyboard/mouse input is journaled and is not a barrier.

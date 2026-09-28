@@ -36,11 +36,11 @@ invoke_api         {"method":"PUT", "path":"/api/v1/emulator/{id}/feature/fastdi
 inspect_state      {"aspects":["fdc"]}                     # BUSY/DRQ/INTRQ, retries — decoded
 
 # crash post-mortem:
-invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/ttd/start","body":{}}
-invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/ttd/stop"}
+time_travel        {"action":"start"}
+time_travel        {"action":"stop"}
 inspect_state      {"aspects":["registers","screen_ocr"]}  # death state + error message on screen
-invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/ttd/find-last","body":{"addr":24576,"access":"execute"}}
-invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/ttd/reverse-continue","body":{"pcs":[24576]}}
+time_travel        {"action":"find_last","addr":"0x6000","access":"execute"}
+time_travel        {"action":"reverse_continue","pcs":["0x6000"]}
 
 # dumping the loader:
 invoke_api         {"method":"GET", "path":"/api/v1/emulator/{id}/memory/read/0x6000",
