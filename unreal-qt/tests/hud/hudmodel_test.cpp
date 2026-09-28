@@ -223,14 +223,15 @@ TEST_F(HudModel_Test, FeatureGatingZeroCostWhenDisabled)
     auto snap = model.snapshot();
     EXPECT_TRUE(snap->elements.empty());
 
-    // New notifications rejected while off
+    // New notifications are still tracked as shadow state while off, just not shown
     std::string id = model.notify(req);
-    EXPECT_TRUE(id.empty());
+    EXPECT_FALSE(id.empty());
     EXPECT_TRUE(model.snapshot()->elements.empty());
 
-    // Turn feature back on
+    // Turn feature back on - shadow state becomes visible again
     model.onFeatureChanged(true);
     EXPECT_TRUE(model.isEnabled());
+    EXPECT_GE(model.snapshot()->elements.size(), 1u);
 }
 
 // --- MessageCenter Event Mapping Tests ---
