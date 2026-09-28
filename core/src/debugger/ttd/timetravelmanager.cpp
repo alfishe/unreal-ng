@@ -161,6 +161,9 @@ bool TimeTravelManager::StartRecording()
     _toggledTimeTravelOn = false;
     if (fm)
     {
+        // Both read up front: enabling 'timetravel' switches the master
+        // 'debugmode' on by itself, which is still ours to switch back off
+        const bool debugModeWasOn = fm->isEnabled(Features::kDebugMode);
         if (!fm->isEnabled(Features::kTimeTravel))
         {
             fm->setFeature(Features::kTimeTravel, true);
@@ -168,9 +171,10 @@ bool TimeTravelManager::StartRecording()
             MLOGINFO("TimeTravelManager::StartRecording — auto-enabled feature '%s' (required for TTD capture)",
                      Features::kTimeTravel);
         }
-        if (!fm->isEnabled(Features::kDebugMode))
+        if (!debugModeWasOn)
         {
-            fm->setFeature(Features::kDebugMode, true);
+            if (!fm->isEnabled(Features::kDebugMode))
+                fm->setFeature(Features::kDebugMode, true);
             _toggledDebugModeOn = true;
             MLOGINFO("TimeTravelManager::StartRecording — auto-enabled feature '%s' (required to route writes through MemoryWriteDebug -> MarkDirty)",
                      Features::kDebugMode);
@@ -180,6 +184,23 @@ bool TimeTravelManager::StartRecording()
     {
         MLOGWARNING("TimeTravelManager::StartRecording — FeatureManager is null; cannot verify debug/ttd flags. Capture will be a no-op if debug memory interface is inactive.");
     }
+
+    // A refusal past this point leaves nothing behind: the flags this call
+    // switched on go back off and the emulator resumes if it was running
+    auto refuse = [&]() {
+        if (fm)
+        {
+            if (_toggledDebugModeOn)
+                fm->setFeature(Features::kDebugMode, false);
+            if (_toggledTimeTravelOn)
+                fm->setFeature(Features::kTimeTravel, false);
+        }
+        _toggledDebugModeOn = false;
+        _toggledTimeTravelOn = false;
+        if (wasRunning && emu)
+            emu->Resume(false);
+        return false;
+    };
 
     // Model-specific serializers belong to the session: rebuild them here so a
     // model switch between sessions cannot leave a stale machine registered.
@@ -193,7 +214,7 @@ bool TimeTravelManager::StartRecording()
         {
             MLOGERROR("TimeTravelManager::StartRecording - refusing to record: %s",
                       registrationError.c_str());
-            return false;
+            return refuse();
         }
     }
 
@@ -234,10 +255,7 @@ bool TimeTravelManager::StartRecording()
         MLOGWARNING("TimeTravelManager::StartRecording — implausible modelRamPages=%u, refusing to start",
                     static_cast<unsigned>(_modelRamPages));
         _modelRamPages = 0;
-        // Restore emulator run state before bailing.
-        if (wasRunning && emu)
-            emu->Resume(false);
-        return false;
+        return refuse();
     }
 
     // Engaged before the baseline (past the last refusal above), so the very
@@ -2478,14 +2496,17 @@ bool TimeTravelManager::ResumeRecordingLive()
     FeatureManager* fm = _context->pFeatureManager;
     if (fm)
     {
+        // Read up front, as in StartRecording: 'timetravel' switches 'debugmode' on by itself
+        const bool debugModeWasOn = fm->isEnabled(Features::kDebugMode);
         if (!fm->isEnabled(Features::kTimeTravel))
         {
             fm->setFeature(Features::kTimeTravel, true);
             _toggledTimeTravelOn = true;
         }
-        if (!fm->isEnabled(Features::kDebugMode))
+        if (!debugModeWasOn)
         {
-            fm->setFeature(Features::kDebugMode, true);
+            if (!fm->isEnabled(Features::kDebugMode))
+                fm->setFeature(Features::kDebugMode, true);
             _toggledDebugModeOn = true;
         }
     }

@@ -160,6 +160,12 @@ public:
     void onTtdRecordingStarted();
     void onTtdRecordingStopped();
     bool isTtdRecordingActive() const;
+    /// @brief True while the machine is bound to a TTD timeline: recording, replaying
+    /// history (seek/step) or positioned in it (Detached). Features that change what
+    /// the guest code does (fasttape, turbotape, fastdisk) are off for all of it, or a
+    /// replay would diverge from what was recorded. Pacing-only acceleration (turbo
+    /// mode, speed) is locked by isTtdRecordingActive() alone.
+    bool isTtdTimelineBound() const;
 
     EmulatorContext* context() const
     {
@@ -183,11 +189,11 @@ private:
     std::unordered_map<std::string, std::string> _aliases;   // alias -> id
     mutable bool _dirty = false;                             // Track if the state changed and save is required
 
-    // Saved shortcut states during TTD recording
+    // TTD recording lock, driven only by TimeTravelManager (onTtdRecordingStarted /
+    // onTtdRecordingStopped) - not by the 'timetravel' feature toggle, which merely
+    // arms the capture machinery. Masking needs no saved states: the stored feature
+    // values are untouched and show through again once the lock is released.
     mutable bool _ttdShortcutOverrideActive = false;
-    mutable bool _savedFastDiskState = true;
-    mutable bool _savedFastTapeState = true;
-    mutable bool _savedTurboTapeState = true;
 
     /// Guards _features/_aliases/_dirty: the WebAPI/HTTP thread mutates them
     /// while the MessageCenter worker reads them (e.g. HudModel feature

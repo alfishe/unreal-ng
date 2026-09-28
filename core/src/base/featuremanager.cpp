@@ -64,10 +64,8 @@ void FeatureManager::clear()
     _dirty = true;
 }
 
-/// @brief Set feature enabled/disabled by id or alias.
-/// @param idOrAlias Unique identifier or alias of the feature
-/// @param enabled Whether to enable or disable the feature
-/// @return true if the feature was found and updated, false if feature not found
+/// @brief True while the TTD recording lock is held (TimeTravelManager engages it
+/// on entering Recording and holds it until the session returns to Idle)
 bool FeatureManager::isTtdRecordingActive() const
 {
     if (_ttdShortcutOverrideActive)
@@ -84,29 +82,29 @@ bool FeatureManager::isTtdRecordingActive() const
     return false;
 }
 
+bool FeatureManager::isTtdTimelineBound() const
+{
+    if (isTtdRecordingActive())
+        return true;
+    if (!_context)
+        return false;
+    if (_context->ttdReplayActive)
+        return true;
+    return _context->pTimeTravelManager &&
+           _context->pTimeTravelManager->GetState() == ttd::TTDSessionState::Detached;
+}
+
 void FeatureManager::onTtdRecordingStarted()
 {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
-    if (!_ttdShortcutOverrideActive)
-    {
-        const auto* fd = findFeature(Features::kFastDisk);
-        if (fd) _savedFastDiskState = fd->enabled;
-        const auto* ft = findFeature(Features::kFastTape);
-        if (ft) _savedFastTapeState = ft->enabled;
-        const auto* tt = findFeature(Features::kTurboTape);
-        if (tt) _savedTurboTapeState = tt->enabled;
-        _ttdShortcutOverrideActive = true;
-    }
+    _ttdShortcutOverrideActive = true;
     onFeatureChanged(Features::kTimeTravel);
 }
 
 void FeatureManager::onTtdRecordingStopped()
 {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
-    if (_ttdShortcutOverrideActive)
-    {
-        _ttdShortcutOverrideActive = false;
-    }
+    _ttdShortcutOverrideActive = false;
     onFeatureChanged(Features::kTimeTravel);
 }
 
@@ -124,53 +122,22 @@ bool FeatureManager::setFeature(const std::string& idOrAlias, bool enabled)
         {
             const std::string& id = feature->id;
 
-            // Block enabling fast-disk / fast-tape / turbo-tape shortcuts, and the general
-            // turbo (max speed) mode, during active TTD recording - a recorded run must
-            // reflect real timing, not an accelerated pass that can skip code paths.
-            if (enabled && (id == Features::kFastDisk || id == Features::kFastTape || id == Features::kTurboTape ||
-                            id == Features::kTurboMode))
+            // Block enabling the fast-disk / fast-tape / turbo-tape shortcuts while the
+            // machine is bound to a TTD timeline (they change what the guest code does,
+            // so a replay would diverge), and turbo mode while recording (a recorded run
+            // must reflect real timing)
+            const bool shortcut = id == Features::kFastDisk || id == Features::kFastTape || id == Features::kTurboTape;
+            if (enabled && (shortcut || id == Features::kTurboMode))
             {
-                if (isTtdRecordingActive())
+                if (shortcut ? isTtdTimelineBound() : isTtdRecordingActive())
                 {
                     if (_context && _context->pModuleLogger)
                     {
                         _context->pModuleLogger->Warning(_MODULE, _SUBMODULE,
-                            "Cannot enable shortcut feature '%s' while Time-Travel Debugging (TTD) recording is active",
+                            "Cannot enable '%s' while the TTD recording lock is held or history is being replayed",
                             id.c_str());
                     }
                     return false;
-                }
-            }
-
-            // Track TTD recording start / stop to save and restore shortcut states
-            if (id == Features::kTimeTravel)
-            {
-                if (enabled && !_ttdShortcutOverrideActive)
-                {
-                    const auto* fd = findFeature(Features::kFastDisk);
-                    if (fd) _savedFastDiskState = fd->enabled;
-                    const auto* ft = findFeature(Features::kFastTape);
-                    if (ft) _savedFastTapeState = ft->enabled;
-                    const auto* tt = findFeature(Features::kTurboTape);
-                    if (tt) _savedTurboTapeState = tt->enabled;
-                    _ttdShortcutOverrideActive = true;
-                    if (_context && _context->pModuleLogger)
-                    {
-                        _context->pModuleLogger->Info(_MODULE, _SUBMODULE,
-                            "TTD recording active: auto-disabling fastdisk, fasttape, and turbotape shortcuts during session.");
-                    }
-                }
-                else if (!enabled && _ttdShortcutOverrideActive)
-                {
-                    _ttdShortcutOverrideActive = false;
-                    if (_context && _context->pModuleLogger)
-                    {
-                        _context->pModuleLogger->Info(_MODULE, _SUBMODULE,
-                            "TTD recording stopped: restoring shortcut states (fastdisk=%s, fasttape=%s, turbotape=%s).",
-                            _savedFastDiskState ? "ON" : "OFF",
-                            _savedFastTapeState ? "ON" : "OFF",
-                            _savedTurboTapeState ? "ON" : "OFF");
-                    }
                 }
             }
 
@@ -297,12 +264,16 @@ bool FeatureManager::isEnabled(const std::string& idOrAlias) const
     if (!feature)
         return false;
 
-    // Shortcuts (and the general turbo mode) are overridden to OFF during active TTD recording
-    if (feature->id == Features::kFastDisk || feature->id == Features::kFastTape || feature->id == Features::kTurboTape ||
-        feature->id == Features::kTurboMode)
+    // Shortcuts read as OFF for the whole timeline binding (recording, replay, Detached);
+    // turbo mode only while recording
+    if (feature->id == Features::kFastDisk || feature->id == Features::kFastTape || feature->id == Features::kTurboTape)
     {
-        if (isTtdRecordingActive())
+        if (isTtdTimelineBound())
             return false;
+    }
+    else if (feature->id == Features::kTurboMode && isTtdRecordingActive())
+    {
+        return false;
     }
 
     return feature->enabled;

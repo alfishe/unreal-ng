@@ -831,3 +831,45 @@ TEST_F(TimeTravelManagerRecordingLock_Test, InvalidatingARecordingReleasesTheLoc
     EXPECT_TRUE(_core->IsTurboMode());
     EXPECT_TRUE(_emulator->SetSpeedMultiplier(4));
 }
+
+TEST_F(TimeTravelManagerRecordingLock_Test, ShortcutsStayOffWhileReplayingAStoppedSession)
+{
+    ASSERT_TRUE(_fm->setFeature(Features::kFastTape, true));
+    ASSERT_TRUE(_fm->setFeature(Features::kFastDisk, true));
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(3);
+    _ttd->StopRecording();
+    ASSERT_TRUE(_fm->isEnabled(Features::kFastTape));  // live again after stop
+
+    // Replay runs under replay mode before the state turns Detached: a trap
+    // firing there would load the tape differently from what was recorded
+    _ttd->EnterReplayMode();
+    EXPECT_FALSE(_fm->isEnabled(Features::kFastTape));
+    _ttd->ExitReplayMode();
+
+    ASSERT_TRUE(_ttd->SeekTo(ttd::TTDTimePoint{1, 0}));
+    ASSERT_EQ(_ttd->GetState(), ttd::TTDSessionState::Detached);
+    EXPECT_FALSE(_fm->isEnabled(Features::kFastTape));
+    EXPECT_FALSE(_fm->isEnabled(Features::kFastDisk));
+    EXPECT_FALSE(_fm->setFeature(Features::kTurboTape, true));
+
+    // Pacing-only turbo does not change the guest's behavior: allowed in history
+    EXPECT_TRUE(_fm->setFeature(Features::kTurboMode, true));
+
+    _ttd->InvalidateSession("test");
+    EXPECT_TRUE(_fm->isEnabled(Features::kFastTape));
+    EXPECT_TRUE(_fm->isEnabled(Features::kFastDisk));
+}
+
+TEST_F(TimeTravelManagerRecordingLock_Test, EnablingTheTimeTravelFeatureAloneLocksNothing)
+{
+    // The feature only arms the capture machinery; the lock belongs to a recording
+    ASSERT_TRUE(_fm->setFeature(Features::kTimeTravel, true));
+
+    EXPECT_FALSE(_fm->isTtdRecordingActive());
+    EXPECT_TRUE(_fm->setFeature(Features::kFastTape, true));
+    EXPECT_TRUE(_fm->isEnabled(Features::kFastTape));
+    EXPECT_TRUE(_fm->setFeature(Features::kTurboMode, true));
+    EXPECT_TRUE(_core->IsTurboMode());
+    EXPECT_TRUE(_emulator->SetSpeedMultiplier(2));
+}

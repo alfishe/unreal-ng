@@ -58,6 +58,9 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
     // plane of the fast-load mechanism) — same switch as 'feature fasttape on|off'
     FeatureManager* featureManager = context->pFeatureManager;
 
+    // The live host speed setting; config.speed_multiplier is only the ini startup value
+    const int hostSpeed = context->pCore ? context->pCore->GetHostSpeedMultiplier() : config.speed_multiplier;
+
     // If no arguments, show all settings (list)
     if (args.empty())
     {
@@ -84,7 +87,7 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
         if (config.turbo_mode)
             ss << "unlimited";
         else
-            ss << (int)config.speed_multiplier << "x";
+            ss << hostSpeed << "x";
         ss << "  (CPU speed multiplier: 1, 2, 4, 8, 16, unlimited)" << NEWLINE;
         ss << "  turbo_audio   = " << (config.turbo_mode_audio ? "on" : "off") << "  (Enable audio in turbo mode)"
            << NEWLINE;
@@ -147,7 +150,7 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
         if (config.turbo_mode)
             ss << "unlimited";
         else
-            ss << (int)config.speed_multiplier << "x";
+            ss << hostSpeed << "x";
         ss << "  (CPU speed multiplier: 1, 2, 4, 8, 16, unlimited)" << NEWLINE;
         ss << "  turbo_audio   = " << (config.turbo_mode_audio ? "on" : "off") << "  (Enable audio in turbo mode)"
            << NEWLINE;
@@ -215,7 +218,7 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
             if (config.turbo_mode)
                 ss << "unlimited" << NEWLINE;
             else
-                ss << (int)config.speed_multiplier << "x" << NEWLINE;
+                ss << hostSpeed << "x" << NEWLINE;
             ss << "Description: Maximum CPU speed multiplier (1, 2, 4, 8, 16, unlimited)" << NEWLINE;
         }
         else if (settingName == "turbo_audio")

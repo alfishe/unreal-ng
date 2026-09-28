@@ -603,7 +603,7 @@ void MenuManager::createRunMenu()
     // Turbo Mode (max speed)
     _turboModeAction = _speedMenu->addAction(tr("Turbo Mode (Max Speed)"));
     _turboModeAction->setShortcut(QKeySequence(Qt::Key_Tab));
-    _turboModeAction->setStatusTip(tr("Hold Tab for maximum speed (no sync)"));
+    _turboModeAction->setStatusTip(tr("Tab toggles maximum speed (no sync); unavailable while TTD is recording"));
     _turboModeAction->setCheckable(true);
     connect(_turboModeAction, &QAction::triggered, this, &MenuManager::turboModeToggled);
 }
@@ -1014,7 +1014,7 @@ void MenuManager::createHelpMenu()
                                  "F2 - 2x (Fast)\n"
                                  "F3 - 4x (Very Fast)\n"
                                  "F4 - 8x (Extreme)\n"
-                                 "Tab - Hold for Turbo Mode\n\n"
+                                 "Tab - Toggle Turbo Mode\n\n"
 
                                  "Debug:\n"
                                  "F8 - Step In\n"
@@ -1178,17 +1178,20 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
         // Core::SetSpeedMultiplier), so the menu never offers what the core rejects
         bool ttdActive = (featureManager && featureManager->isTtdRecordingActive()) ||
                          (context && context->pTimeTravelManager && context->pTimeTravelManager->IsRecording());
+        // Shortcuts change what the guest code does: off while recording AND while
+        // replaying or positioned in history
+        const bool timelineBound = ttdActive || (featureManager && featureManager->isTtdTimelineBound());
 
-        _tapeTrapsAction->setEnabled(!ttdActive);
-        _turboTapeAction->setEnabled(!ttdActive);
+        _tapeTrapsAction->setEnabled(!timelineBound);
+        _turboTapeAction->setEnabled(!timelineBound);
         if (_fastDiskAction)
         {
-            _fastDiskAction->setEnabled(!ttdActive);
-            _fastDiskAction->setChecked(!ttdActive && featureManager && featureManager->isEnabled(Features::kFastDisk));
+            _fastDiskAction->setEnabled(!timelineBound);
+            _fastDiskAction->setChecked(!timelineBound && featureManager && featureManager->isEnabled(Features::kFastDisk));
         }
 
-        _tapeTrapsAction->setChecked(!ttdActive && featureManager && featureManager->isEnabled(Features::kFastTape));
-        _turboTapeAction->setChecked(!ttdActive && featureManager && featureManager->isEnabled(Features::kTurboTape));
+        _tapeTrapsAction->setChecked(!timelineBound && featureManager && featureManager->isEnabled(Features::kFastTape));
+        _turboTapeAction->setChecked(!timelineBound && featureManager && featureManager->isEnabled(Features::kTurboTape));
 
         // Run > Speed: same TTD lock as the tape/disk shortcuts above. Only 1x is
         // offered while recording (the core forced it on record start); the check

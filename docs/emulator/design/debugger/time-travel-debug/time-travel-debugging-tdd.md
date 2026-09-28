@@ -276,7 +276,10 @@ A recording session is the unit of history validity:
   - turbo mode (`turbomode` feature) is switched off and cannot be switched on;
   - fast tape, turbo tape and fast disk shortcuts read as off and cannot be switched on.
 
-  The previous speed and turbo settings come back on release. The lock is held through `Detached` as well, since replaying history under a dilated clock or a loader trap would diverge. Every automation surface (Qt UI, CLI, WebAPI/MCP, Lua, Python) goes through these same core checks, and the Qt menu greys the locked items out.
+  The previous speed and turbo settings come back on release. The lock is held through `Detached` as well, since replaying history under a dilated clock or a loader trap would diverge. Only a recording engages it: switching the `timetravel` feature on merely arms the capture machinery and locks nothing.
+- **Shortcuts stay off for the whole time the machine is bound to history.** Fast tape, turbo tape and fast disk change what the guest code does (a trap skips the ROM loader), so they also read as off while a stopped or loaded session is replayed (seek, step, frame-cache build) or the machine sits in `Detached` - even when no recording lock is held (`FeatureManager::isTtdTimelineBound`). Turbo mode and the speed control only change pacing, not the guest's behavior, so history browsing leaves them alone.
+
+  Every automation surface (Qt UI, CLI, WebAPI/MCP, Lua, Python) goes through these same core checks, and the Qt menu greys the locked items out.
 
 The **current position** may be in the past (after a rewind). The state machine:
 
