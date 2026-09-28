@@ -1,9 +1,9 @@
 # NeoGS ZX-DMA (phase 5) — technical design
 
 - **Date:** 2026-09-27.
-- **Status:** phase 5a (the overlay slot and the selector, §5.2-§5.3) is
-  implemented, with the golden host test, the selection tests and the
-  benchmarks (§10, "5a as built"). 5b-5e are not implemented. Parent design:
+- **Status:** phases 5a (the overlay slot and the selector, §5.2-§5.3) and
+  5b (the ZX module model, §5.4-§5.6) are implemented, with tests and
+  benchmarks (§10, "5a as built", "5b as built"). 5c-5e are not. Parent design:
   [`neogs-tdd.md`](neogs-tdd.md) (§3.9 hardware, §5.7 first sketch, §9
   phase 5). This document replaces the §5.7 sketch for the ZX module.
 - **Scope:** the NeoGS "ZX" DMA module, which lets the Spectrum read and
@@ -1048,6 +1048,40 @@ must be proven harmless before anything uses it.
   about 7% of a Pentagon frame in the BASIC idle loop (1,301 → 1,395 µs fast,
   1,333 → 1,424 µs debug): the price of Watch/Divert, paid only while the
   ZX module is selected or running.
+
+**5b as built (2026-09-28).**
+- Code: `neogs/neogszxdma.h/.cpp` (`NeoGSZxDma`, a `HostBusOverlay` on
+  #0000-#3FFF); `SoundChip_NeoGS` implements its `Host` (catch-up = `flush`,
+  host time and T-state conversion with hardware turbo descaled, `/WAIT`
+  through `Z80::AddWaitStates`, install through `Core::SetBusOverlay`). Hooks:
+  the `#1B` / `#1F` card writes, every host GS port access (`hostPortSync`,
+  also for the automation mailbox calls), the frame end (window expiry), cold
+  boot and FPGA reset, the card destructor (`shutdown`). The pending byte is
+  a card runner event. `NeoGSDma::advanceAddress` became public.
+- Config: `[NGS] ZxDmaWatch = selected | always`, `ZxDmaWatchFrames`
+  (default 5, 1-3000). `Fpga=D` makes the module unavailable.
+- TTD: layout 3 is phase 5c. Until then a restore resets the module's
+  latch and pending byte and takes the mode from the restored registers.
+- Tests: `neogszxdma_test.cpp` (12, fake host: mode rules and the window,
+  the late-start counter, the window bounds, the read lag, RAM-paged reads,
+  writes at the grant, the §5.8 wait of 6 T exactly, dropped bytes, CST
+  abort, the burst slot); `soundchip_neogs_zxdma_test.cpp` (on a Pentagon,
+  card and host programs, fast and debug mode: a 512-byte read, a 256-byte
+  write that leaves the ROM alone, a start after a handshake seen at the
+  first access with the window re-armed by the port command, the leaving
+  paths, the window closing; fast = debug for a mixed transfer and for 30
+  frames of streaming). Mutation-checked: without the port-access renewal
+  the handshake test fails.
+- Found while testing: a card fitted mid-frame runs from the second frame
+  (its first frame base is taken at the next frame start), and
+  `Emulator::RunNFrames` steps the host CPU only - card tests drive
+  `MainLoop::RunFrame`.
+- Benchmarks (Pentagon, NeoGS, µs per frame, fast / debug): mode Off
+  1,315 / 1,324; Watch with `always` and the host in BASIC (every ROM access
+  catches the card up - the worst case) 1,602 / 1,662; Divert with an endless
+  LDIR (3,411 bytes a frame) 1,363 / 1,403. A/B against the build before 5b:
+  the host frame without NeoGS and the NeoGS card frame are within noise
+  (−5.6% … +1.1%).
 
 ## 11. Decisions and open points
 

@@ -79,6 +79,8 @@ public:
     /// Linear address of a module (21 bits in effect)
     uint32_t address(Module m) const;
     bool running(Module m) const { return (_regs[m][3] & 0x80) != 0; }
+    /// Moves a module's address on (22-bit register, 21 bits used)
+    void advanceAddress(Module m, int bytes);
 
     uint8_t (&rawRegisters())[3][4] { return _regs; }
 
@@ -92,7 +94,6 @@ private:
 
     void start(Module m, int64_t now);
     void finish(Module m, bool raiseInterrupt);
-    void advanceAddress(Module m, int bytes);
     void runSd(int64_t now);
     void runMp3(int64_t now);
 

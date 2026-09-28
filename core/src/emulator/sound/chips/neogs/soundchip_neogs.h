@@ -41,6 +41,7 @@
 #include "emulator/sound/chips/neogs/neogsmemory.h"
 #include "emulator/sound/chips/neogs/neogssound.h"
 #include "emulator/sound/chips/neogs/neogsspi.h"
+#include "emulator/sound/chips/neogs/neogszxdma.h"
 #include "emulator/sound/chips/neogs/vs10xx.h"
 
 class EmulatorContext;
@@ -49,7 +50,7 @@ namespace ttd
 enum class TTDExternalEventKind : uint8_t;
 }
 
-class SoundChip_NeoGS : public GeneralSoundCard, private NeoGSDma::Host
+class SoundChip_NeoGS : public GeneralSoundCard, private NeoGSDma::Host, private NeoGSZxDma::Host
 {
     /// region <ModuleLogger definitions for Module/Submodule>
 protected:
@@ -180,6 +181,7 @@ public:
     const NeoGSInterrupts& interrupts() const { return _irq; }
     const NeoGSSpi& spi() const { return _spi; }
     const NeoGSDma& dma() const { return _dma; }
+    const NeoGSZxDma& zxDma() const { return _zx; }
     NeoGSSpi& spi() { return _spi; }
     NeoGSMemory& memory() { return _mem; }
     const NeoGSMemory& memory() const { return _mem; }
@@ -288,8 +290,27 @@ private:
     int64_t dmaUnitsPerCycle() const override { return _ticksPerCycle; }
     void dmaSdByteDone(uint8_t received) override { _spi.state(NeoGSSpi::SD).rx = received; }
 
+    // NeoGSZxDma::Host (neogs-zxdma-design.md §5.5)
+    void zxCatchUp() override { flush(); }
+    bool zxHostNowUnits(int64_t& now) const override;
+    double zxUnitsPerHostT() const override;
+    void zxAddHostWait(uint32_t tStates) override;
+    int64_t zxUnitsPerCycle() const override { return _ticksPerCycle; }
+    void zxStall(int64_t units) override { _runner.stall(units); }
+    int64_t zxStallUntil() const override { return _runner.stallUntil(); }
+    bool zxInstall(bool installed) override;
+    uint32_t zxFrame() const override { return currentFrameNumber(); }
+    void zxReschedule() override { reschedule(); }
+    void zxLateStart(int64_t units) override;
+
     // Lazy sync with the host
     void flush();
+    /// A host GS port access: catch up, and let ZX-DMA renew its watch window
+    void hostPortSync()
+    {
+        flush();
+        _zx.onHostPortAccess();
+    }
     int64_t crystalNow() const { return (_runner.now() - _phaseOrigin) / TICKS_PER_CRYSTAL; }
     int64_t crystalToTicks(int64_t crystal) const { return _phaseOrigin + crystal * TICKS_PER_CRYSTAL; }
 
@@ -325,6 +346,8 @@ private:
     std::unique_ptr<SdCardSpi> _sd;
     std::unique_ptr<Vs10xxDecoder> _mp3; // absent with MP3Support=none
     NeoGSDma _dma;
+    NeoGSZxDma _zx{*this, _dma, _mem};
+    bool _zxLateStartLogged = false;
     GSForwardMailbox _mb;
     GSCardRunner<SoundChip_NeoGS> _runner;
 

@@ -187,7 +187,7 @@ Plan: [`neogs-tdd.md`](neogs-tdd.md) §9; as built, findings and open items:
 
 **Phase 5 - ZX-DMA and fpgaD** - designed ([`neogs-zxdma-design.md`](neogs-zxdma-design.md)), not started
 - [x] 5a host bus overlay slot + one memory-interface selector (no user yet), golden host test, selection tests, benchmarks A/B (neogs-zxdma-design.md §10 "5a as built")
-- [ ] 5b `NeoGSZxDma` model: Watch/Divert, waits, arbitration, late-start counter
+- [x] 5b `NeoGSZxDma` model: Watch/Divert, waits, arbitration, late-start counter (neogs-zxdma-design.md §10 "5b as built")
 - [ ] 5c TTD layout 3, automation, `ZxDmaWatch` setting
 - [ ] 5d GS debugger items (tight mode via the overlay, DMA panel, events, trace)
 - [ ] 5e `Fpga=D`

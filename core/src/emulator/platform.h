@@ -462,6 +462,9 @@ struct NeoGSConfig
 	Mp3Chip mp3Chip = Mp3Chip::VS1001;
 	double mp3Gain = 1.0;
 	WriteMode flashWrite = WriteMode::Session;
+	enum class ZxDmaWatch : uint8_t { Selected, Always };  // neogs-zxdma-design.md §5.4, §5.5.3
+	ZxDmaWatch zxDmaWatch = ZxDmaWatch::Selected;
+	unsigned zxDmaWatchFrames = 5;
 	unsigned volume = 8000;                                 // same 0-8192 scale as [SOUND] GSVol
 };
 

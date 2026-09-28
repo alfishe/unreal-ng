@@ -564,6 +564,9 @@ bool Config::ParseConfig(IniFile& inimanager)
 		ngsConfig.mp3Chip = choice("Mp3Chip", "vs1001", {"vs1001", "vs1011"}) == 1 ? NeoGSConfig::Mp3Chip::VS1011 : NeoGSConfig::Mp3Chip::VS1001;
 		ngsConfig.mp3Gain = std::clamp(inimanager.GetDoubleValue(ngs, "Mp3Gain", 1.0), 0.0, 8.0);
 		ngsConfig.volume = static_cast<unsigned>(std::clamp<long>(inimanager.GetLongValue(ngs, "Volume", 8000), 0, 8192));
+		ngsConfig.zxDmaWatch = choice("ZxDmaWatch", "selected", {"selected", "always"}) == 1 ? NeoGSConfig::ZxDmaWatch::Always
+		                                                                                     : NeoGSConfig::ZxDmaWatch::Selected;
+		ngsConfig.zxDmaWatchFrames = static_cast<unsigned>(std::clamp<long>(inimanager.GetLongValue(ngs, "ZxDmaWatchFrames", 5), 1, 3000));
 	}
 #endif
 	// Anti-alias decimator tier: Reference (default) | HighFidelity. Unknown

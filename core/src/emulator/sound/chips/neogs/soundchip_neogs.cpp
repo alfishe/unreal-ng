@@ -10,6 +10,8 @@
 #include "common/filehelper.h"
 #include "common/statebytes.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/chips/gs/gshostclock.h"
 #include "emulator/sound/chips/neogs/neogsflashimages.h"
@@ -86,6 +88,9 @@ SoundChip_NeoGS::SoundChip_NeoGS(EmulatorContext* context, const NeoGSConfig& co
         _dma.attachMp3(_mp3.get());
     }
     _dma.attachSd(_sd.get());
+    _zx.setAvailable(_config.fpga == NeoGSConfig::Fpga::Current); // fpgaD has no DMA
+    _zx.setWatchFrames(_config.zxDmaWatchFrames);
+    _zx.setWatchAlways(_config.zxDmaWatch == NeoGSConfig::ZxDmaWatch::Always);
     if (_config.sdCardPath[0])
         insertSdCard(_config.sdCardPath);
 
@@ -140,6 +145,9 @@ void SoundChip_NeoGS::markSdWrite()
 
 SoundChip_NeoGS::~SoundChip_NeoGS()
 {
+    // The host must not call into a card that is going away
+    _zx.shutdown();
+
     if (_config.flashWrite == NeoGSConfig::WriteMode::Persist && _flash.modified())
         saveFlash();
 
@@ -214,6 +222,7 @@ void SoundChip_NeoGS::coldBoot()
     _led = 0;
     _dma.reset();
     memset(_dma.rawRegisters(), 0, sizeof _dma.rawRegisters());
+    _zx.reset();
     _irq.reset();
     _spi.reset();
     _sd->select(false);
@@ -257,6 +266,7 @@ void SoundChip_NeoGS::fpgaReset()
         _mp3->setReset(false, _runner.now());
     _led = 0;
     _dma.reset(); // only the run bits reset
+    _zx.reset();
     _nmiPending = false;
     _resetRequest = ResetKind::None;
     _ready = false;
@@ -476,7 +486,7 @@ void SoundChip_NeoGS::scheduleTimer(int64_t tickCrystal)
 
 void SoundChip_NeoGS::reschedule()
 {
-    int64_t next = std::min({_timerStrobeAt, _extraStrobeAt, crystalToTicks(_nextDacCrystal), _dma.nextEvent()});
+    int64_t next = std::min({_timerStrobeAt, _extraStrobeAt, crystalToTicks(_nextDacCrystal), _dma.nextEvent(), _zx.nextEvent()});
     if (_resetRequest != ResetKind::None)
         next = _runner.now();
     _runner.setNextEvent(next);
@@ -523,6 +533,8 @@ void SoundChip_NeoGS::runEvents(int64_t now)
 
     if (now >= _dma.nextEvent())
         _dma.run(now);
+    if (now >= _zx.nextEvent())
+        _zx.run(now);
 
     reschedule();
 }
@@ -580,6 +592,42 @@ void SoundChip_NeoGS::dacCapture(uint16_t addr, uint8_t value)
 
 /// region <Frame lifecycle and host sync>
 
+bool SoundChip_NeoGS::zxHostNowUnits(int64_t& now) const
+{
+    return GSHostClock::targetUnits(_context, TICKS_PER_SECOND, _frameStartZxTacts, _frameStartTicks, now);
+}
+
+double SoundChip_NeoGS::zxUnitsPerHostT() const
+{
+    // Host T-states count at the CPU rate; the ZX tact domain has hardware
+    // turbo descaled (EmulatorState::AudioTstate)
+    const int shift = _context ? _context->emulatorState.hw_turbo_shift_applied : 0;
+    return GSHostClock::unitsPerZxTact(_context, TICKS_PER_SECOND) / static_cast<double>(1 << shift);
+}
+
+void SoundChip_NeoGS::zxAddHostWait(uint32_t tStates)
+{
+    if (_context && _context->pCore && _context->pCore->GetZ80())
+        _context->pCore->GetZ80()->AddWaitStates(tStates);
+}
+
+bool SoundChip_NeoGS::zxInstall(bool installed)
+{
+    if (!_context || !_context->pCore)
+        return false;
+    return _context->pCore->SetBusOverlay(installed ? &_zx : nullptr);
+}
+
+void SoundChip_NeoGS::zxLateStart(int64_t units)
+{
+    if (_zxLateStartLogged)
+        return;
+    _zxLateStartLogged = true;
+    MLOGWARNING("NeoGS: ZX-DMA started while not watched; seen %.1f us late (raise [NGS] ZxDmaWatchFrames or set "
+                "ZxDmaWatch=always). Further late starts are counted, not logged.",
+                static_cast<double>(units) / (TICKS_PER_SECOND / 1e6));
+}
+
 void SoundChip_NeoGS::flush()
 {
     int64_t target = 0;
@@ -602,6 +650,7 @@ void SoundChip_NeoGS::handleFrameEnd(size_t expectedSamples)
         return;
 
     _runner.runTo(_frameStartTicks + _frameTicks);
+    _zx.onFrameEnd();
 
     int samples = expectedSamples > 0
                       ? static_cast<int>(expectedSamples)
@@ -657,13 +706,13 @@ uint8_t SoundChip_NeoGS::portDeviceInMethod(uint16_t port)
     switch (port & 0x00FF)
     {
         case 0xB3: // reply byte; the data bit clears after the cycle
-            flush();
+            hostPortSync();
             _mb.status &= 0x7F;
             _activityCounters.hostDataRead++;
             traceEvent(GSTraceSide::Host, PORT_DATA, _mb.dataToHost, false);
             return _mb.dataToHost;
         case 0xBB: // status: bit 7 data, bit 0 command; bits 6:1 read as 1
-            flush();
+            hostPortSync();
             traceEvent(GSTraceSide::Host, PORT_COMMAND, _mb.status | 0x7E, false);
             return _mb.status | 0x7E;
         default:
@@ -681,27 +730,27 @@ void SoundChip_NeoGS::portDeviceOutMethod(uint16_t port, uint8_t value)
             switch (value & 0xE0)
             {
                 case 0x80:
-                    flush();
+                    hostPortSync();
                     resetCard();
                     return;
                 case 0x40:
-                    flush();
+                    hostPortSync();
                     _nmiPending = true;
                     return;
                 case 0x20:
-                    flush();
+                    hostPortSync();
                     _led ^= 1;
                     return;
                 default:
                     return;
             }
         case 0xB3:
-            flush();
+            hostPortSync();
             traceEvent(GSTraceSide::Host, PORT_DATA, value, true);
             onHostDataWrite(value);
             return;
         case 0xBB:
-            flush();
+            hostPortSync();
             traceEvent(GSTraceSide::Host, PORT_COMMAND, value, true);
             onHostCommandWrite(value);
             return;
@@ -728,32 +777,32 @@ void SoundChip_NeoGS::onHostCommandWrite(uint8_t value)
 
 uint8_t SoundChip_NeoGS::readStatus()
 {
-    flush();
+    hostPortSync();
     return _mb.status | 0x7E;
 }
 
 uint8_t SoundChip_NeoGS::readData()
 {
-    flush();
+    hostPortSync();
     _mb.status &= 0x7F;
     return _mb.dataToHost;
 }
 
 void SoundChip_NeoGS::sendCommand(uint8_t command)
 {
-    flush();
+    hostPortSync();
     onHostCommandWrite(command);
 }
 
 void SoundChip_NeoGS::sendData(uint8_t data)
 {
-    flush();
+    hostPortSync();
     onHostDataWrite(data);
 }
 
 void SoundChip_NeoGS::triggerNMI()
 {
-    flush();
+    hostPortSync();
     _nmiPending = true;
 }
 
@@ -915,6 +964,7 @@ void SoundChip_NeoGS::cardOut(uint16_t port, uint8_t value)
             return;
         case P_DMA_MOD:
             _dma.writeModuleSelect(value);
+            _zx.onModuleSelectWritten();
             return;
         default:
             break;
@@ -940,7 +990,10 @@ void SoundChip_NeoGS::cardOut(uint16_t port, uint8_t value)
     if (p >= P_DMA_HAD && p <= P_DMA_CST)
     {
         _spi.sync(now); // the SD module shares the SD master
+        const bool zxWasRunning = _dma.running(NeoGSDma::ZX);
         _dma.writeRegister(p - P_DMA_HAD, value, now);
+        if (p == P_DMA_CST && _dma.moduleSelect() == 1)
+            _zx.onControlWritten(zxWasRunning, now);
         reschedule();
     }
 }
@@ -1237,6 +1290,10 @@ void SoundChip_NeoGS::TTDLoadState(const uint8_t* src)
 
     const uint8_t pages[4] = {src[6], src[7], src[8], src[9]};
     _mem.setPagesRaw(pages, src[10], _gscfg0);
+
+    // ZX-DMA's pending byte and latch join the blob in layout 3 (phase 5c);
+    // until then the mode follows the restored registers
+    _zx.reset();
 
     _audio.setLevels(_outL, _outR);
     _audio.clear();
