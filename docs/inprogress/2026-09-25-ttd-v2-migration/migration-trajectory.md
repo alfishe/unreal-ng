@@ -102,8 +102,9 @@ tests that would catch regressions.
   are corrected.) C++ integrity behaviour (eager check at load,
   error vs zero-fill on mismatch) waits for the investigation
   ([integrity-and-versioning.md](integrity-and-versioning.md)).
-- **Tests**: `TTD_Corpus_Test` compares RAM too, and gets a resume-then-compare
-  case; a test for page 255 (done 2026-09-27); the generic state-completeness test
+- **Tests**: `TTD_Corpus_Test` compares RAM too (open: it compares CPU,
+  chipset and device blobs only), and gets a resume-then-compare case (present
+  since `8db7841f`); a test for page 255 (done 2026-09-27); the generic state-completeness test
   ([requirements.md](requirements.md) FR-3).
 - **Comments**: remove the stale ones listed in current-state §10.
 
