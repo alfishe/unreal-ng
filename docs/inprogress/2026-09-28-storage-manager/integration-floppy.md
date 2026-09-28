@@ -4,6 +4,7 @@
 |---|---|
 | **Date** | 2026-09-28 |
 | **Status** | **Implemented** (M2, 2026-09-28); as built: [TODO.md](TODO.md) "M2 as built" |
+| **Layers** | port decoder → port adapter → device → medium, with the slot and the manager beside them: [technical-design.md §1.1](technical-design.md#11-layers-from-the-guests-port-to-the-medium) |
 | **Today** | research §3: `CoreState::diskImages[4]` / `diskDrives[4]`; `Emulator::LoadDisk` / `SaveDisk` / `CreateBlankDisk`; eject copied in four surfaces |
 
 ## 1. What changes for the user

@@ -4,6 +4,7 @@
 |---|---|
 | **Date** | 2026-09-28 |
 | **Status** | Reviewed; applies at TSConf phase 6 (PLAN #41) |
+| **Layers** | port decoder → port adapter → device → medium, with the slot and the manager beside them: [technical-design.md §1.1](technical-design.md#11-layers-from-the-guests-port-to-the-medium) |
 | **TSConf design** | [technical-design.md](../2026-09-27-tsconf/technical-design.md) §3.11 (storage) |
 
 ## 1. What the user gets

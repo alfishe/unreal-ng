@@ -224,7 +224,8 @@ clears (with a frame cap).
 > (#58 M4: one `MediaControl` layer for the GUI, WebAPI + OpenAPI, CLI, MCP,
 > Lua, Python), not a TSConf `/sd` API. TSConf's own work here: register the
 > `sd.zc` slot in its decoder (as `PortDecoder_ATM3::EvoSdSlot`), the DMA SPI
-> path, card-detect / WP through `EvoAvr`, SLOT-1 and BOOT-3.
+> path, card-detect / WP through `EvoAvr`, SLOT-1 and BOOT-3 — layers 1 and 2 of
+> the storage stack ([layers](../2026-09-28-storage-manager/technical-design.md#11-layers-from-the-guests-port-to-the-medium)).
 
 | ID | Asserts |
 |:--|:--|

@@ -4,6 +4,7 @@
 |---|---|
 | **Date** | 2026-09-28 |
 | **Status** | Reviewed; applies when a ZX Next machine is built (no PLAN row yet) |
+| **Layers** | port decoder → port adapter → device → medium, with the slot and the manager beside them: [technical-design.md §1.1](technical-design.md#11-layers-from-the-guests-port-to-the-medium) |
 | **Why here now** | the Next is the most demanding SD user: the card holds the whole system. Checking it now proves that the media manager and `HostFolderFat` need no Next-specific changes |
 
 Sources are marked; **[unverified]** marks what no source confirmed.
