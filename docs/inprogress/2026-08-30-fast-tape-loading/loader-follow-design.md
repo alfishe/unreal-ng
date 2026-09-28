@@ -3,8 +3,12 @@
 **Date:** 2026-09-27
 **Tracks:** PLAN #5 ([TODO.md](TODO.md)); proposal P3/P4 of
 [nonstandard-loader-investigation.md](nonstandard-loader-investigation.md) §8
-**Status:** design, before implementation. The thresholds marked *(test)* are chosen by the
-tests in §9.
+**Status:** P4 implemented in `ac200bb8` (2026-09-27): `TapeReadClassifier`
+(`core/src/emulator/io/tape/tapereadclassifier.cpp`), the listening start, the park and the freeze in
+`Tape`. First thresholds: start on 8 listening reads per frame, park after 2 frames in the gap,
+freeze after 50 frames inside a block (`tape.h`). They are to be confirmed by the fixture sweep of §7.
+Verified live with fast loading off: EMELYANOV on 48K (trainer menu held the tape at block 3, then
+the game started), SAN-SAN on 48K and 128K.
 
 ## 1. The rule in one paragraph
 
@@ -101,11 +105,12 @@ full disassembler is not needed.
 ### 4.2 The loader pattern for OTHER reads
 
 Some loaders keep the mask in a register (`AND D`, where D = `#40`), so the tracker says OTHER.
-For these, the read counts as listening when it matches the Fuse pattern:
+For these, the read counts as listening when it matches the Fuse pattern, 10 reads in a row:
 - same PC as the previous `#FE` read;
 - at most 500 T since that read (1000 T while the tape is already playing, the looser test of
   xpeccy-plus);
-- at most one of A, B, C, D, E, H, L changed.
+- exactly one of B, C, D, E, H, L changed. A is left out because it holds the value read, which
+  changes with the signal. "Exactly one" rather than "at most one": a wait loop moves nothing.
 
 A key-wait loop would match this pattern too: same PC, nothing changed. That is why the pattern
 is only asked about OTHER reads, and why the tracker must return KEY for every key-wait form
@@ -324,9 +329,10 @@ failed load. The sweep reports both.
 New fields: `lastListenT`, `listenRun`, `patternRun`, the pattern's last PC, time and registers,
 the deck state (`Idle`/`Playing`/`Parked`/`Frozen`/`Ended`) and the resume point. The tracker
 cache is not saved; it is rebuilt on the next read. The ERR_NR byte at offset 44 goes away (P1).
-The tape state is a fixed 53-byte layout with no version (`tape.cpp:970-986`), so this changes
-the layout. Adding a version byte, or following the TTD v2 device rules of PLAN #40, is a
-decision for implementation step 4.
+The tape state was a fixed 53-byte layout with no version. **Implemented:** the layout grew to 71
+bytes (`_framesNotListened`, `_listenReadsThisFrame`, and the pattern's run, PC, time and
+B..L). A checkpoint of the old size is reported as a size mismatch and not restored; the fixture
+corpus in `testdata/ttd/` was re-recorded.
 
 ## 9. Tests
 
@@ -349,6 +355,11 @@ RAM. Fast loading is off unless stated.
 | T12 | Freeze mid-data, ROM anchor restarts | Same block from its start |
 | T13 | Last block of the tape ends | The loader sees the final edge (xpeccy-plus `529c8201`) |
 | T14 | Fast loading on: standard block, then a custom block after 0.5 s of setup | Custom block loads from its pilot |
+
+Implemented in `ac200bb8`: T1 (`tapereadclassifier_test.cpp`); T2, T3/T5, T6, T8, T9, T10/T11 and
+the §4.2 pattern (`TapeLoaderFollow_Test` in `tape_test.cpp`). Still open: T4 (IM2 AY player
+over a whole load), T7 as a separate negative, T12 (ROM restart after a freeze mid-data), T13
+(final edge), T14 (fast loading hand-over).
 
 Then the fixture sweep of investigation §9 step 5, extended with the key delays of §7.
 

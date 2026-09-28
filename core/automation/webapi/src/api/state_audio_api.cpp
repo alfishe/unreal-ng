@@ -11,7 +11,7 @@
 #include <vector>
 
 #include "../emulator_api.h"
-#include "statenode_json.h"
+#include "../common/statenode_json.h"
 #include <emulator/state/devicestate.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
 

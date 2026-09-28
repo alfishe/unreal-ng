@@ -15,6 +15,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
+#include "emulator/ports/models/portdecoder_atm3.h"
 
 /// @file ttdatmpaging_test.cpp
 /// @brief TTD capture of ATM Turbo 2+ / ATM3 / ZX-Evo state.
@@ -48,7 +49,7 @@ TEST(TtdAtmPagingLayout_Test, BlobIsPaddingFree)
 {
     using ttd::AtmPagingState;
 
-    EXPECT_EQ(sizeof(AtmPagingState), 44u);
+    EXPECT_EQ(sizeof(AtmPagingState), 128u);
     EXPECT_TRUE(std::is_trivially_copyable_v<AtmPagingState>);
     EXPECT_TRUE(std::is_standard_layout_v<AtmPagingState>);
 
@@ -67,6 +68,12 @@ TEST(TtdAtmPagingLayout_Test, BlobIsPaddingFree)
     src.aFB = 0xBC;
     src.atmMemSwapped = 1;
     src.cmos_addr = 0xDE;
+    for (int i = 0; i < 16; ++i)
+    {
+        src.atmPalette[i] = 0x01010101u * static_cast<uint32_t>(i + 1);
+        src.atmPaletteRegs[i] = static_cast<uint8_t>(0xF0 + i);
+    }
+    src.atmBorderBright = 1;
 
     *dst = src;
     EXPECT_EQ(std::memcmp(dst, &src, sizeof(AtmPagingState)), 0)
@@ -126,6 +133,54 @@ TEST(TtdAtmPaging_Test, RoundTripCarriesMemoryMapAndLatches)
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
+/// ZX-Evo BaseConf (ATM3): the #FF palette RAM, the 4th border bit and the
+/// CMOS address latch that lives inside the ATM3 decoder (not the unused
+/// EmulatorState::cmos_addr) must round-trip. Before 2026-09-27 none of them
+/// was captured, so a seek kept the palette of the moment the user sought
+/// from and the next CMOS access went to the wrong register.
+TEST(TtdAtmPaging_Test, Atm3RoundTripCarriesPaletteBorderAndLiveCmosLatch)
+{
+    Emulator* emulator = MakeAtm("ATM3");
+    ASSERT_NE(emulator, nullptr) << "ATM3 could not be created";
+
+    EmulatorContext* context = emulator->GetContext();
+    EmulatorState& state = context->emulatorState;
+    auto* atm3 = dynamic_cast<PortDecoder_ATM3*>(context->pPortDecoder);
+    ASSERT_NE(atm3, nullptr);
+
+    for (int i = 0; i < 16; ++i)
+    {
+        state.atmPalette[i] = 0xFF000000u | static_cast<uint32_t>(i * 0x010203);
+        state.atmPaletteRegs[i] = static_cast<uint8_t>(0x80 | i);
+    }
+    state.atmBorderBright = 1;
+    atm3->GetCMOS().SetCMOSAddress(0x2E);
+
+    ttd::TTDAtmPaging serializer(context);
+    uint8_t blob[sizeof(ttd::AtmPagingState)] = {};
+    serializer.TTDSaveState(blob);
+
+    for (int i = 0; i < 16; ++i)
+    {
+        state.atmPalette[i] = 0;
+        state.atmPaletteRegs[i] = 0;
+    }
+    state.atmBorderBright = 0;
+    atm3->GetCMOS().SetCMOSAddress(0x00);
+
+    serializer.TTDLoadState(blob);
+
+    for (int i = 0; i < 16; ++i)
+    {
+        EXPECT_EQ(state.atmPalette[i], 0xFF000000u | static_cast<uint32_t>(i * 0x010203)) << "atmPalette[" << i << "]";
+        EXPECT_EQ(state.atmPaletteRegs[i], 0x80 | i) << "atmPaletteRegs[" << i << "]";
+    }
+    EXPECT_EQ(state.atmBorderBright, 1);
+    EXPECT_EQ(atm3->GetCMOS().GetCMOSAddress(), 0x2E) << "the live CMOS latch is the decoder's, not EmulatorState::cmos_addr";
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
 /// Every byte the blob carries must move the hash, or a divergence in that
 /// field goes unnoticed by the oracle.
 TEST(TtdAtmPaging_Test, HashRespondsToEveryCarriedField)
@@ -158,6 +213,18 @@ TEST(TtdAtmPaging_Test, HashRespondsToEveryCarriedField)
     state.pBF ^= 0x01;
     EXPECT_NE(serializer.TTDHashState(), base) << "pBF not hashed";
     state.pBF ^= 0x01;
+
+    state.atmPalette[5] ^= 0x00010000u;
+    EXPECT_NE(serializer.TTDHashState(), base) << "atmPalette not hashed";
+    state.atmPalette[5] ^= 0x00010000u;
+
+    state.atmPaletteRegs[9] ^= 0x01;
+    EXPECT_NE(serializer.TTDHashState(), base) << "atmPaletteRegs not hashed";
+    state.atmPaletteRegs[9] ^= 0x01;
+
+    state.atmBorderBright ^= 0x01;
+    EXPECT_NE(serializer.TTDHashState(), base) << "atmBorderBright not hashed";
+    state.atmBorderBright ^= 0x01;
 
     state.aFE ^= 0x01;
     EXPECT_NE(serializer.TTDHashState(), base) << "aFE not hashed";

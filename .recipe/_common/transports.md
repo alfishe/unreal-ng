@@ -90,7 +90,7 @@ Tool catalog (13):
 | `load_software` | snapshots/tapes/disks, `play`, `autostart`, local-file upload |
 | `control_execution` | run/pause/step/step_n/step_over/step_out, run_frames/tstates/to_interrupt, breakpoints |
 | `inspect_state` | aspects: machine, registers, memory, disasm, stack, memory_banks, paging, ports, screen_ocr/image/digest, timing, rom, audio_ay/fm, fdc, mouse |
-| `type_input` | type (tokenized BASIC), tap/press/release, combo, macro, release_all, list_keys |
+| `type_input` | type (`tokenized`: a BASIC line typed into the ROM editor, every key verified, no ENTER; BASIC commands with ENTER and a result: `basic/run` via `invoke_api`), tap/press/release, combo, macro, release_all, list_keys |
 | `mouse_input` | Kempston move/press/click/wheel |
 | `time_travel` | status, bookmark_add/list/delete/seek, coverage_probe/scan/summary |
 | `manage_symbols` | labels + sjasmplus listings, step_line, run_to_line |

@@ -10,6 +10,7 @@
 #include <emulator/io/keyboard/keyboard.h>
 #include <debugger/analyzers/basic-lang/basicextractor.h>
 #include <debugger/analyzers/basic-lang/basicencoder.h>
+#include "../common/commandtyperjson.h"
 #include <common/stringhelper.h>
 #include <json/json.h>
 #include "automation.h"
@@ -59,41 +60,35 @@ void EmulatorAPI::basicRun(const HttpRequestPtr& req,
         return;
     }
     
-    // Get command from JSON body (optional, defaults to "RUN")
+    // Body: {command (default "RUN"), press_enter (default true),
+    //        wait_report (default false), trace (default false), timeout_ms}
     std::string command = "RUN";
+    CommandTyper::Options options;
+    bool trace = false;
+    uint32_t timeoutMs = 30000;
     auto json = req->getJsonObject();
-    if (json && json->isMember("command")) {
-        command = (*json)["command"].asString();
+    if (json) {
+        if (json->isMember("command"))
+            command = (*json)["command"].asString();
+        if (json->isMember("press_enter"))
+            options.pressEnter = (*json)["press_enter"].asBool();
+        if (json->isMember("wait_report"))
+            options.waitForReport = (*json)["wait_report"].asBool();
+        if (json->isMember("trace"))
+            trace = (*json)["trace"].asBool();
+        if (json->isMember("timeout_ms"))
+            timeoutMs = (*json)["timeout_ms"].asUInt();
     }
-    
-    Json::Value ret;
-    
-    // Use new runCommand API - handles menu navigation automatically
-    auto result = BasicEncoder::runCommand(emulator.get(), command);
-    
-    ret["success"] = result.success;
+
+    // Typed through the keyboard matrix and proven step by step on the ROM's
+    // control points (debugger/analyzers/basic-lang/input-verification.md)
+    const CommandTyper::Result result = CommandTyper::TypeAndWait(*emulator, command, options, timeoutMs);
+
+    Json::Value ret = CommandTyperResultToJson(result, trace);
     ret["command"] = command;
-    ret["message"] = result.message;
-    
-    // Include state info
-    switch (result.state) {
-        case BasicEncoder::BasicState::Basic48K:
-            ret["basic_mode"] = "48K";
-            break;
-        case BasicEncoder::BasicState::Basic128K:
-            ret["basic_mode"] = "128K";
-            break;
-        case BasicEncoder::BasicState::TRDOS_Active:
-        case BasicEncoder::BasicState::TRDOS_SOS_Call:
-            ret["basic_mode"] = "trdos";
-            break;
-        default:
-            ret["basic_mode"] = "unknown";
-            break;
-    }
-    
+
     auto resp = HttpResponse::newHttpJsonResponse(ret);
-    resp->setStatusCode(result.success ? HttpStatusCode::k200OK : HttpStatusCode::k400BadRequest);
+    resp->setStatusCode(CommandTyperHttpStatus(result));
     addCorsHeaders(resp);
     callback(resp);
 }

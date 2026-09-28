@@ -1,0 +1,55 @@
+# Line endings: the repository stores text with LF on every platform.
+# Git detects text vs binary; text files are normalized to LF on commit and
+# checked out with LF everywhere (MSVC, Xcode, CMake and Qt all accept LF).
+* text=auto eol=lf
+
+# Windows command scripts must stay CRLF: cmd.exe mis-parses labels/GOTO in LF files
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Visual Studio solution files: VS rewrites them with CRLF
+*.sln text eol=crlf
+
+# Emulator media, firmware and other binary data: never touch the bytes, even
+# when a file happens to look like text to the auto-detector
+*.rom binary
+*.bin binary
+*.trd binary
+*.scl binary
+*.tap binary
+*.tzx binary
+*.csw binary
+*.sna binary
+*.szx binary
+*.z80 binary
+*.spg binary
+*.udi binary
+*.fdi binary
+*.td0 binary
+*.hfe binary
+*.scp binary
+*.img binary
+*.iso binary
+*.hdf binary
+*.hdi binary
+*.vhd binary
+*.ttd binary
+*.rbf binary
+*.wav binary
+*.mp3 binary
+*.ogg binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.icns binary
+*.pdf binary
+*.odt binary
+*.docx binary
+*.xls binary
+*.xlsx binary
+*.zip binary
+*.7z binary
+*.gz binary

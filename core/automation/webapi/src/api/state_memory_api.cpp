@@ -1,6 +1,7 @@
 // WebAPI State Memory Inspection Implementation
 // Extracted from emulator_api.cpp - 2026-01-08
 
+#include "../common/jsonnumber.h"
 #include "../emulator_api.h"
 
 #include <drogon/HttpResponse.h>
@@ -370,6 +371,11 @@ void EmulatorAPI::getStateMemoryROM(const HttpRequestPtr& req,
             totalROMPages = 1;
             break;
     }
+
+    // Machines whose ROM image holds more pages than the four standard slots
+    // (ZX-Evo 512 KB = 32 pages) report what is actually loaded
+    if (rom && rom->GetROMBanksLoaded() > totalROMPages)
+        totalROMPages = rom->GetROMBanksLoaded();
 
     ret["model"] = model;
     ret["total_rom_pages"] = totalROMPages;
@@ -826,8 +832,21 @@ void EmulatorAPI::findMemory(const HttpRequestPtr& req, std::function<void(const
     }
 
     // Range and limits (end inclusive)
-    const unsigned start = body->isMember("start") ? (*body)["start"].asUInt() : 0u;
-    const unsigned end = body->isMember("end") ? (*body)["end"].asUInt() : 65535u;
+    uint32_t start = 0;
+    uint32_t end = 65535;
+    if ((body->isMember("start") && !ParseJsonUInt((*body)["start"], 0xFFFF, start)) ||
+        (body->isMember("end") && !ParseJsonUInt((*body)["end"], 0xFFFF, end)))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "'start' / 'end' must be 0..65535 (a number, or a string: decimal, \"0x..\", \"#..\" or \"$..\")";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
     const unsigned max = body->isMember("max") ? (*body)["max"].asUInt() : 64u;
     const unsigned alignment = body->isMember("alignment") ? (*body)["alignment"].asUInt() : 1u;
 

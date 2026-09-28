@@ -176,6 +176,8 @@ else()
     set(MCP_TESTS_AVAILABLE FALSE)
     # The suites sit flat in tests/automation as mcp-*.cpp
     EXCLUDE_FILES_FROM_DIR_IN_LIST("${TEST_CPP_FILES}" "/automation/mcp-" FALSE OUTVAR TEST_CPP_FILES)
+    # WebAPI helper tests (header-only jsoncpp helpers) share the jsoncpp requirement
+    EXCLUDE_FILES_FROM_DIR_IN_LIST("${TEST_CPP_FILES}" "/automation/webapi/" FALSE OUTVAR TEST_CPP_FILES)
 endif()
 
 set (SOURCES "${CORE_CPP_FILES};${TEST_CPP_FILES};${GOOGLETEST_FILES}")

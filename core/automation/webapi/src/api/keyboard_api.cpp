@@ -8,6 +8,7 @@
 #include <emulator/emulatormanager.h>
 #include <debugger/debugmanager.h>
 #include <debugger/keyboard/debugkeyboardmanager.h>
+#include "../common/commandtyperjson.h"
 #include <json/json.h>
 
 using namespace drogon;
@@ -426,12 +427,26 @@ void EmulatorAPI::keyType(const HttpRequestPtr& req, std::function<void(const Ht
 
     if (tokenized)
     {
-        context->pDebugManager->GetKeyboardManager()->TypeBasicCommand(text, delayFrames);
+        // A BASIC line typed into the editor the way the editor needs it
+        // (keywords as keys in the 48K editor, letters in the 128K editor),
+        // each key proven taken and inserted; ENTER is not pressed
+        // (basic/run does that). delay_frames does not apply: the ROM paces it
+        CommandTyper::Options options;
+        options.pressEnter = false;
+        const CommandTyper::Result result = CommandTyper::TypeAndWait(*emulator, text, options);
+
+        Json::Value ret = CommandTyperResultToJson(result, json->isMember("trace") && (*json)["trace"].asBool());
+        ret["text"] = text;
+        ret["tokenized"] = true;
+
+        auto resp = HttpResponse::newHttpJsonResponse(ret);
+        resp->setStatusCode(CommandTyperHttpStatus(result));
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
     }
-    else
-    {
-        context->pDebugManager->GetKeyboardManager()->TypeText(text, delayFrames);
-    }
+
+    context->pDebugManager->GetKeyboardManager()->TypeText(text, delayFrames);
 
     Json::Value ret;
     ret["success"] = true;
@@ -439,7 +454,7 @@ void EmulatorAPI::keyType(const HttpRequestPtr& req, std::function<void(const Ht
     ret["length"] = static_cast<Json::UInt>(text.length());
     ret["delay_frames"] = delayFrames;
     ret["tokenized"] = tokenized;
-    ret["message"] = tokenized ? "BASIC command queued" : "Text queued for typing";
+    ret["message"] = "Text queued for typing";
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);

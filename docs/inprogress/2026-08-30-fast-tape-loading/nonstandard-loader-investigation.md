@@ -2,7 +2,8 @@
 
 **Date:** 2026-09-27
 **Tracks:** PLAN #5 ([TODO.md](TODO.md))
-**Status:** investigation complete; fix designed in [loader-follow-design.md](loader-follow-design.md), not started
+**Status:** P1 and P4 implemented in `ac200bb8` (2026-09-27); P2, P3 remainder and the sweep open
+(see [TODO.md](TODO.md))
 **Code under discussion:** `core/src/emulator/io/tape/tape.cpp` at `47c40db2`
 
 ## 1. Summary
@@ -342,7 +343,7 @@ off. Not verified by running it.
 - Delete the check in `handleFrameEnd` and the `_initialErrNr` field; see the TTD note in §9 step 1.
 - Warp, the only consumer of this stop, stands down on the read-gap freeze. **Correction
   (2026-09-27, found while implementing P1):** after a BREAK the ROM editor's interrupt keeps
-  scanning the keyboard, and every such read feeds the watchdog today (B6). So until P4 lands, a
+  scanning the keyboard, and every such read fed the watchdog (B6; fixed by P4 in `ac200bb8`). Until P4, a
   BREAK leaves the tape rolling to its end, with warp on if turbo tape is enabled. P4 makes key
   reads "not listening" and closes this.
 - If a faster "ROM gave up" signal is wanted later, key it to the ROM error entry with the 48K ROM
@@ -374,7 +375,7 @@ a block pick, a new image); otherwise the cursor block starts over (xpeccy-plus 
 ("press any key", "INFINITE LIVES Y/N?") or to play beeper or AY music, must work however long
 the pause lasts. Playback resumes by itself as soon as the program polls the EAR bit again.
 
-Today this is broken (**B6**, from the code):
+Before `ac200bb8` this was broken (**B6**, from the code; fixed by P4):
 - While the tape plays, *every* port read resets the read-gap counter (`tape.cpp:531`),
   including a key-wait loop and the ROM's keyboard scan in the 50 Hz interrupt. With interrupts
   on, the freeze never fires, and the tape keeps rolling through the wait.

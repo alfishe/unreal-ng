@@ -1411,71 +1411,19 @@ namespace PythonBindings
                 return ctx->pScreen->GetActiveScreen();
             }, "Get active screen (0=normal, 1=shadow)")
 
-            // Detailed video mode state including Pentagon 16-color mode
-            .def("screen_video_state", [](Emulator& self) -> py::dict {
-                py::dict result;
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pScreen) return result;
-
-                Screen* screen = ctx->pScreen;
-                VideoModeEnum mode = screen->GetVideoMode();
-
-                result["video_mode"] = Screen::GetVideoModeName(mode);
-                result["border_color"] = screen->GetBorderColor();
-                result["active_screen"] = screen->GetActiveScreen();
-
-                // Mode-specific details
-                switch (mode)
-                {
-                    case M_P16:
-                        result["resolution"] = "256x192";
-                        result["bpp"] = 4;
-                        result["colors"] = 16;
-                        result["eff7_16col"] = true;
-                        break;
-                    case M_PMC:
-                        result["resolution"] = "256x192";
-                        result["eff7_hwmc"] = true;
-                        break;
-                    case M_PHR:
-                        result["resolution"] = "512x192";
-                        result["bpp"] = 1;
-                        result["eff7_512"] = true;
-                        break;
-                    case M_PROFIHR:
-                        result["resolution"] = "512x240";
-                        result["bpp"] = 1;
-                        result["colors"] = 16;
-                        result["profi_hires"] = true;
-                        break;
-                    case M_P384:
-                        result["resolution"] = "384x304";
-                        result["overscan"] = true;
-                        break;
-                    default:
-                        result["resolution"] = "256x192";
-                        result["bpp"] = 1;
-                        break;
-                }
-
-                // Pentagon EFF7 state
-                if (ctx->config.mem_model == MM_PENTAGON)
-                {
-                    uint8_t eff7 = ctx->emulatorState.pEFF7;
-                    if (eff7 != 0)
-                    {
-                        py::dict eff7_state;
-                        eff7_state["value"] = static_cast<int>(eff7);
-                        eff7_state["16col_enabled"] = (eff7 & EFF7_4BPP) != 0;
-                        eff7_state["512_enabled"] = (eff7 & EFF7_512) != 0;
-                        eff7_state["hwmc_enabled"] = (eff7 & EFF7_HWMC) != 0;
-                        eff7_state["384_enabled"] = (eff7 & EFF7_384) != 0;
-                        result["eff7"] = eff7_state;
-                    }
-                }
-
-                return result;
-            }, "Get detailed video mode state (mode, resolution, EFF7 flags for Pentagon 16col)")
+            // Screen reports: the same core reports every automation module returns
+            .def("screen_state", [](Emulator& self, bool verbose) -> py::object {
+                return StateNodeToPy(DeviceState::Screen(self.GetContext(), verbose));
+            }, "Screen state: model, video mode, resolution, border, shadow screen, active screen and RAM pages, contention, flash (verbose adds per-screen mapping and #7FFD)", py::arg("verbose") = false)
+            .def("screen_mode", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::ScreenMode(self.GetContext()));
+            }, "Video mode report: picture format, memory layout, displayed RAM pages, video latches")
+            .def("screen_flash", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::ScreenFlash(self.GetContext()));
+            }, "FLASH phase and timing")
+            .def("screen_video_state", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::ScreenMode(self.GetContext()));
+            }, "Former name of screen_mode, kept for existing scripts")
 
             // Capture operations
             .def("capture_ocr", [](Emulator& self) -> std::string {

@@ -1,8 +1,30 @@
 # ATM710 / ATM3 (ZX-Evo BaseConf) Highres Video Modes and Port Differences
 
-Date: 2026-09-15
+Date: 2026-09-15 (video work); 2026-09-27 (BaseConf reconciliation, see below)
 Branch: `atm`
-Status: implemented and covered by tests (see [verification-gaps-and-tests.md](verification-gaps-and-tests.md))
+Status: video work implemented and covered by tests (see [verification-gaps-and-tests.md](verification-gaps-and-tests.md)).
+The machine as a whole is **incomplete**: see [TODO.md](TODO.md).
+
+## 2026-09-27: BaseConf reconciliation (gaps, designs, plan)
+
+A full comparison of our `ATM3` against the BaseConf hardware sources and 9 other emulators. Main
+finding: the released BaseConf FPGA (`fpga/base_trdemu/trunk`) differs from the frozen tree used for
+the 2026-09-15 work (`fpga/baseconf/trunk`): register readback moved to `#xxBD`, and it adds the
+virtual TR-DOS trap that the current Evo Reset Service needs.
+
+| File | Topic |
+|------|-------|
+| [gap-analysis.md](gap-analysis.md) | **Start here.** Every gap with ID, hardware evidence, what other emulators do, severity, size |
+| [implementation-plan.md](implementation-plan.md) | Phases E0-E10, dependencies on the shared IDE, SD and TSConf work, acceptance tests |
+| [e0-decoder-fixes.md](e0-decoder-fixes.md) | Phase E0 done (2026-09-28): the RTL-derived port decode, per-fix hardware/emulator evidence, test run |
+| [tdd-evo-control-and-avr.md](tdd-evo-control-and-avr.md) | Decoder fixes, `#xxBD/#BE/#BF`, NMI, breakpoint, flash, font RAM, `EvoAvr` (clock, NVRAM, PS/2, versions) |
+| [tdd-virtual-trdos.md](tdd-virtual-trdos.md) | The trdemu trap behind the ERS RAM disk and TRD mounting |
+| [tdd-storage-sd-ide-cd.md](tdd-storage-sd-ide-cd.md) | Z-Controller SD, NemoIDE, ATAPI CD on the shared components; cross-machine sync decisions S1-S5 |
+| [baseconf-hardware-reference.md](baseconf-hardware-reference.md) | Evidence: FPGA ports, AVR Gluk/extension protocol, ROM layout, ERS internals, NedoOS usage |
+| [emulator-feature-matrix.md](emulator-feature-matrix.md) | Evidence: zx-evo-unreal, Unreal 0.39 family, Xpeccy/xpeccy-plus, ZXMAK2/kozynax, MAME |
+| [unreal-ng-atm3-audit.md](unreal-ng-atm3-audit.md) | Evidence: what unreal-ng does today, file:line |
+
+## 2026-09-15: hi-res video modes and port differences
 
 This folder documents the port of the ATM Turbo 2+ v7.10 ("ATM710") and ZX
 Evolution BaseConf ("ATM3"/PentEvo) highres screen modes and their port-level
@@ -22,10 +44,10 @@ found between the emulators and the actual hardware.
 
 | Source | Path | Role |
 |--------|------|------|
-| xpeccy-plus (fork) | `/Volumes/TB4-4Tb/Projects/emulators/github/xpeccy-plus/src/libxpeccy/` - `hardware/atm2.c` (ATM710), `hardware/pentevo.c` (ATM3), `video.c` (renderers) | primary emulator reference for this port |
+| xpeccy-plus (fork) | `emulators/github/xpeccy-plus/src/libxpeccy/` - `hardware/atm2.c` (ATM710), `hardware/pentevo.c` (ATM3), `video.c` (renderers) | primary emulator reference for this port |
 | samstyle/Xpeccy (upstream master) | fetched raw `pentevo.c` | confirmed the mode-decode bug is upstream, not a fork regression |
-| pentevo hardware project | `/Volumes/TB4-4Tb/Projects/emulators/github/pentevo/fpga/baseconf/trunk/` - `z80/zports.v`, `video/video_modedecode.v`, `video/video_palframe.v`, `top.v` | **ground truth** (the actual BaseConf FPGA RTL) |
-| original Unreal 0.39.0 | `/Volumes/TB4-4Tb/Projects/emulators/github/pentevo/tools/unreal_fix/0.39.0/original/` | historical check: EFF7 was never wired into ATM3 mode detection in original Unreal |
+| pentevo hardware project | `emulators/github/pentevo/fpga/baseconf/trunk/` - `z80/zports.v`, `video/video_modedecode.v`, `video/video_palframe.v`, `top.v` | **ground truth** (the actual BaseConf FPGA RTL) |
+| original Unreal 0.39.0 | `emulators/github/pentevo/tools/unreal_fix/0.39.0/original/` | historical check: EFF7 was never wired into ATM3 mode detection in original Unreal |
 | unrealspeccy / ZXMAK2 renderers | `other/unrealspeccy` `dxr_atm0/2/6.cpp`, `draw.cpp`; ZXMAK2 `EvoTxtRenderer`, `Atm640Renderer`, `UlaAtm450` | renderer geometry for EGA/HWM/TX/TL |
 | prior raw analysis | [atm-video-crossanalysis.md](atm-video-crossanalysis.md), [../2026-09-10-atm-debugging/](../2026-09-10-atm-debugging/) | earlier investigation notes |
 

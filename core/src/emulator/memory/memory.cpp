@@ -853,8 +853,11 @@ void Memory::SetROMMode(ROMModeEnum mode)
             state.flags &= ~CF_TRDOS;
             state.p7FFD |= 0x10;
 
-            if (config.mem_model == MM_PLUS3)  // Disable paging
-                state.p7FFD |= 0x20;
+            if (config.mem_model == MM_PLUS3)
+            {
+                state.p7FFD |= 0x20;  // Disable paging
+                state.p1FFD |= 0x04;  // ROM 3 (48 BASIC): the ROM number's high bit is in #1FFD
+            }
             break;
         case RM_SYS:
             state.flags |= CF_TRDOS;
@@ -896,10 +899,12 @@ void Memory::UpdateZ80Banks()
     // flags are re-derived below from the current CF_TRDOS / p7FFD state
     state.flags &= ~(CF_DOSPORTS | CF_Z80FBUS | CF_LEAVEDOSRAM | CF_LEAVEDOSADR | CF_SETDOSROM);
 
-    if (config.mem_model == MM_ATM710 || config.mem_model == MM_ATM3)
+    if (config.mem_model == MM_ATM710 || config.mem_model == MM_ATM3 || config.mem_model == MM_PLUS3)
     {
         // ATM models own their memory manager: the bank computation runs in the
         // port decoder (port of the original set_banks() MM_ATM710 / MM_ATM3
+        // branch; the +2A/+3 decoder maps its four ROMs and all-RAM modes from
+        // #7FFD and #1FFD the same way)
         // branch). The session-flags tail below still applies to every model.
         if (_context->pPortDecoder)
             _context->pPortDecoder->UpdateModelMemoryBanks();
@@ -1151,10 +1156,14 @@ void Memory::SetRAMPageToBank3(uint16_t page, bool updatePorts)
     _bank_ram_page_cache[3] = page;  // validated < MAX_RAM_PAGES above
 
     // Update the ULA contention cache: odd RAM pages (1/3/5/7) at 0xC000 are
-    // contended on 128K. Cached here (cold path - port 7FFD writes) so the
-    // per-memory-access IsAddressContended() check stays branch-only.
+    // contended on 128K, pages 4-7 on the +2A/+3. Cached here (cold path -
+    // port 7FFD writes) so the per-memory-access IsAddressContended() check
+    // stays branch-only.
     if (_context && _context->pUlaContention)
-        _context->pUlaContention->SetBank3ContendedPage((page & 1) != 0);
+    {
+        const bool plus3 = _context->config.mem_model == MM_PLUS3;
+        _context->pUlaContention->SetBank3ContendedPage(plus3 ? page >= 4 : (page & 1) != 0);
+    }
 
     if (updatePorts)
         _context->pPortDecoder->SetRAMPage(page);

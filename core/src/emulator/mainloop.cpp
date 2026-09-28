@@ -9,6 +9,7 @@
 #include "common/threadhelper.h"
 #include "common/timehelper.h"
 #include "emulator/sound/soundmanager.h"
+#include "debugger/analyzers/basic-lang/commandtyper.h"
 #include "debugger/analyzers/analyzermanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
@@ -466,6 +467,12 @@ void MainLoop::CompleteFrame()
     if (_context->pDebugManager && _context->pDebugManager->GetKeyboardManager())
     {
         _context->pDebugManager->GetKeyboardManager()->OnFrame();
+    }
+
+    // Verified command input (after the keyboard queue: it holds keys itself)
+    if (_context->pDebugManager && _context->pDebugManager->GetCommandTyper())
+    {
+        _context->pDebugManager->GetCommandTyper()->OnFrame();
     }
 
     // Release timed mouse clicks (automation) at frame boundaries

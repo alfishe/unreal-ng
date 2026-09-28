@@ -34,6 +34,18 @@ StateNode Fm(EmulatorContext* context);
 StateNode FmChip(EmulatorContext* context, int chip);
 StateNode Fdc(EmulatorContext* context);
 
+/// Screen reports (Screen::DescribeScreenState):
+/// - `Screen(verbose)`: model, video mode, resolution, border, shadow screen,
+///   active screen and RAM pages, contention, flash phase; verbose adds each
+///   screen's RAM page and Z80 mapping and the decoded #7FFD latch.
+/// - `ScreenMode()`: the video mode's picture format (colour depth, bpp,
+///   attribute cell, text grid, memory layout), displayed RAM pages and the
+///   machine's video latches (#EFF7, #DFFD, #FF77).
+/// - `ScreenFlash()`: FLASH phase and timing.
+StateNode Screen(EmulatorContext* context, bool verbose);
+StateNode ScreenMode(EmulatorContext* context);
+StateNode ScreenFlash(EmulatorContext* context);
+
 /// Human-readable rendering (CLI): "key: value" lines, nested by indentation,
 /// arrays as "[index]" blocks
 std::string ToText(const StateNode& node, int indent = 0);

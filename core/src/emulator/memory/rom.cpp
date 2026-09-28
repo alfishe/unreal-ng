@@ -163,9 +163,12 @@ bool ROM::LoadROM()
             memory.base_sys_rom = nullptr;
             break;
         case MM_PLUS3:
+            // The +2A/+3 decoder selects all four pages itself (#1FFD bit 2 :
+            // #7FFD bit 4). There is no Beta 128: the DOS / service roles stay
+            // empty so no TR-DOS session can page +3DOS in at #3Dxx
             memory.base_128_rom = memory.ROMPageHostAddress(0);
-            memory.base_sys_rom = memory.ROMPageHostAddress(1);
-            memory.base_dos_rom = memory.ROMPageHostAddress(2);
+            memory.base_sys_rom = nullptr;
+            memory.base_dos_rom = nullptr;
             memory.base_sos_rom = memory.ROMPageHostAddress(3);
             romname = config.plus3_rom_path;
             break;
@@ -642,7 +645,7 @@ std::string ROM::GetROMPageRole(uint8_t page) const
     };
     static const char* PLUS3_ROLES[] =
     {
-        "+3 Editor ROM", "48K BASIC ROM", "+3DOS ROM", "48K BASIC ROM (copy)"
+        "+3 Editor ROM", "+3 128 BASIC Syntax ROM", "+3DOS ROM", "48K BASIC ROM"
     };
 
     // Profi 1024 ROM layout (data/rom/profi.rom): SYS/menu, TR-DOS, 128K + STS monitor, 48K

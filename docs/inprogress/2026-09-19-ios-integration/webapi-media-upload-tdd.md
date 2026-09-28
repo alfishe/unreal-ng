@@ -109,7 +109,7 @@ are written to temp files, causing `req->body()` to return an empty string. We s
 limits in `automation-webapi.cpp`:
 
 ```cpp
-#include "api/upload_helper.h"   // MAX_UPLOAD_BODY_SIZE constant (5 MB)
+#include "common/upload_helper.h"   // MAX_UPLOAD_BODY_SIZE constant (5 MB)
 
 app.setClientMaxBodySize(api::v1::MAX_UPLOAD_BODY_SIZE);
 app.setClientMaxMemoryBodySize(api::v1::MAX_UPLOAD_BODY_SIZE);

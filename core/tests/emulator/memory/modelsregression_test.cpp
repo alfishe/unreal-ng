@@ -119,10 +119,18 @@ namespace
             for (uint8_t value : {0x00, 0x01, 0x04, 0x05})
                 writes.push_back({0x1FFD, value});
         }
-        writes.push_back({0x7FFD, 0x08});
+        // Normal paging again, the four ROMs and the screen bit, then the lock
+        // last (it holds until reset): #7FFD is ignored, the memory bits of
+        // #1FFD are frozen while bit 3 (motor) still follows the port
+        writes.push_back({0x1FFD, 0x00});
         writes.push_back({0x7FFD, 0x10});
-        writes.push_back({0x7FFD, 0x30});
+        writes.push_back({0x1FFD, 0x04});
         writes.push_back({0x7FFD, 0x00});
+        writes.push_back({0x7FFD, 0x08});
+        writes.push_back({0x7FFD, 0x33});
+        writes.push_back({0x7FFD, 0x00});
+        writes.push_back({0x1FFD, 0x00});
+        writes.push_back({0x1FFD, 0x09});
         return writes;
     }
 
@@ -429,52 +437,60 @@ static const std::vector<ModelsRegressionRow> kGoldenRows_Spectrum128 = {
 };
 
 static const std::vector<ModelsRegressionRow> kGoldenRows_Spectrum3 = {
-    // +3
-    {"+3", 0, 0x0000, 0x00, "R48", "RAM5", "RAM2", "RAM0"},
-    {"+3", 1, 0x7FFD, 0x00, "R48", "RAM5", "RAM2", "RAM0"},
-    {"+3", 2, 0x1FFD, 0x00, "R48", "RAM5", "RAM2", "RAM0"},
-    {"+3", 3, 0x1FFD, 0x01, "R48", "RAM5", "RAM2", "RAM0"},
-    {"+3", 4, 0x1FFD, 0x04, "R48", "RAM5", "RAM2", "RAM0"},
-    {"+3", 5, 0x1FFD, 0x05, "R48", "RAM5", "RAM2", "RAM0"},
-    {"+3", 6, 0x7FFD, 0x01, "R48", "RAM5", "RAM2", "RAM1"},
-    {"+3", 7, 0x1FFD, 0x00, "R48", "RAM5", "RAM2", "RAM1"},
-    {"+3", 8, 0x1FFD, 0x01, "R48", "RAM5", "RAM2", "RAM1"},
-    {"+3", 9, 0x1FFD, 0x04, "R48", "RAM5", "RAM2", "RAM1"},
-    {"+3", 10, 0x1FFD, 0x05, "R48", "RAM5", "RAM2", "RAM1"},
-    {"+3", 11, 0x7FFD, 0x02, "R48", "RAM5", "RAM2", "RAM2"},
-    {"+3", 12, 0x1FFD, 0x00, "R48", "RAM5", "RAM2", "RAM2"},
-    {"+3", 13, 0x1FFD, 0x01, "R48", "RAM5", "RAM2", "RAM2"},
-    {"+3", 14, 0x1FFD, 0x04, "R48", "RAM5", "RAM2", "RAM2"},
-    {"+3", 15, 0x1FFD, 0x05, "R48", "RAM5", "RAM2", "RAM2"},
-    {"+3", 16, 0x7FFD, 0x03, "R48", "RAM5", "RAM2", "RAM3"},
-    {"+3", 17, 0x1FFD, 0x00, "R48", "RAM5", "RAM2", "RAM3"},
-    {"+3", 18, 0x1FFD, 0x01, "R48", "RAM5", "RAM2", "RAM3"},
-    {"+3", 19, 0x1FFD, 0x04, "R48", "RAM5", "RAM2", "RAM3"},
-    {"+3", 20, 0x1FFD, 0x05, "R48", "RAM5", "RAM2", "RAM3"},
-    {"+3", 21, 0x7FFD, 0x04, "R48", "RAM5", "RAM2", "RAM4"},
-    {"+3", 22, 0x1FFD, 0x00, "R48", "RAM5", "RAM2", "RAM4"},
-    {"+3", 23, 0x1FFD, 0x01, "R48", "RAM5", "RAM2", "RAM4"},
-    {"+3", 24, 0x1FFD, 0x04, "R48", "RAM5", "RAM2", "RAM4"},
-    {"+3", 25, 0x1FFD, 0x05, "R48", "RAM5", "RAM2", "RAM4"},
-    {"+3", 26, 0x7FFD, 0x05, "R48", "RAM5", "RAM2", "RAM5"},
-    {"+3", 27, 0x1FFD, 0x00, "R48", "RAM5", "RAM2", "RAM5"},
-    {"+3", 28, 0x1FFD, 0x01, "R48", "RAM5", "RAM2", "RAM5"},
-    {"+3", 29, 0x1FFD, 0x04, "R48", "RAM5", "RAM2", "RAM5"},
-    {"+3", 30, 0x1FFD, 0x05, "R48", "RAM5", "RAM2", "RAM5"},
-    {"+3", 31, 0x7FFD, 0x06, "R48", "RAM5", "RAM2", "RAM6"},
-    {"+3", 32, 0x1FFD, 0x00, "R48", "RAM5", "RAM2", "RAM6"},
-    {"+3", 33, 0x1FFD, 0x01, "R48", "RAM5", "RAM2", "RAM6"},
-    {"+3", 34, 0x1FFD, 0x04, "R48", "RAM5", "RAM2", "RAM6"},
-    {"+3", 35, 0x1FFD, 0x05, "R48", "RAM5", "RAM2", "RAM6"},
-    {"+3", 36, 0x7FFD, 0x07, "R48", "RAM5", "RAM2", "RAM7"},
-    {"+3", 37, 0x1FFD, 0x00, "R48", "RAM5", "RAM2", "RAM7"},
-    {"+3", 38, 0x1FFD, 0x01, "R48", "RAM5", "RAM2", "RAM7"},
-    {"+3", 39, 0x1FFD, 0x04, "R48", "RAM5", "RAM2", "RAM7"},
-    {"+3", 40, 0x1FFD, 0x05, "R48", "RAM5", "RAM2", "RAM7"},
-    {"+3", 41, 0x7FFD, 0x08, "R48", "RAM5", "RAM2", "RAM0"},
-    {"+3", 42, 0x7FFD, 0x10, "R128", "RAM5", "RAM2", "RAM0"},
-    {"+3", 43, 0x7FFD, 0x30, "R128", "RAM5", "RAM2", "RAM0"},
-    {"+3", 44, 0x7FFD, 0x00, "R128", "RAM5", "RAM2", "RAM0"},
+    // +2A/+3 (2026-09-28): ROM = #1FFD bit 2 : #7FFD bit 4; #1FFD bit 0 selects
+    // the all-RAM layouts {0,1,2,3} {4,5,6,7} {4,5,6,3} {4,7,6,3}; #7FFD bit 5
+    // locks #7FFD and the memory bits of #1FFD (MAME specpls3). Computed from
+    // that rule, not from the decoder's output
+    {"+3", 0, 0x0000, 0x00, "R128", "RAM5", "RAM2", "RAM0"},
+    {"+3", 1, 0x7FFD, 0x00, "R128", "RAM5", "RAM2", "RAM0"},
+    {"+3", 2, 0x1FFD, 0x00, "R128", "RAM5", "RAM2", "RAM0"},
+    {"+3", 3, 0x1FFD, 0x01, "RAM0", "RAM1", "RAM2", "RAM3"},
+    {"+3", 4, 0x1FFD, 0x04, "DOS", "RAM5", "RAM2", "RAM0"},
+    {"+3", 5, 0x1FFD, 0x05, "RAM4", "RAM5", "RAM6", "RAM3"},
+    {"+3", 6, 0x7FFD, 0x01, "RAM4", "RAM5", "RAM6", "RAM3"},
+    {"+3", 7, 0x1FFD, 0x00, "R128", "RAM5", "RAM2", "RAM1"},
+    {"+3", 8, 0x1FFD, 0x01, "RAM0", "RAM1", "RAM2", "RAM3"},
+    {"+3", 9, 0x1FFD, 0x04, "DOS", "RAM5", "RAM2", "RAM1"},
+    {"+3", 10, 0x1FFD, 0x05, "RAM4", "RAM5", "RAM6", "RAM3"},
+    {"+3", 11, 0x7FFD, 0x02, "RAM4", "RAM5", "RAM6", "RAM3"},
+    {"+3", 12, 0x1FFD, 0x00, "R128", "RAM5", "RAM2", "RAM2"},
+    {"+3", 13, 0x1FFD, 0x01, "RAM0", "RAM1", "RAM2", "RAM3"},
+    {"+3", 14, 0x1FFD, 0x04, "DOS", "RAM5", "RAM2", "RAM2"},
+    {"+3", 15, 0x1FFD, 0x05, "RAM4", "RAM5", "RAM6", "RAM3"},
+    {"+3", 16, 0x7FFD, 0x03, "RAM4", "RAM5", "RAM6", "RAM3"},
+    {"+3", 17, 0x1FFD, 0x00, "R128", "RAM5", "RAM2", "RAM3"},
+    {"+3", 18, 0x1FFD, 0x01, "RAM0", "RAM1", "RAM2", "RAM3"},
+    {"+3", 19, 0x1FFD, 0x04, "DOS", "RAM5", "RAM2", "RAM3"},
+    {"+3", 20, 0x1FFD, 0x05, "RAM4", "RAM5", "RAM6", "RAM3"},
+    {"+3", 21, 0x7FFD, 0x04, "RAM4", "RAM5", "RAM6", "RAM3"},
+    {"+3", 22, 0x1FFD, 0x00, "R128", "RAM5", "RAM2", "RAM4"},
+    {"+3", 23, 0x1FFD, 0x01, "RAM0", "RAM1", "RAM2", "RAM3"},
+    {"+3", 24, 0x1FFD, 0x04, "DOS", "RAM5", "RAM2", "RAM4"},
+    {"+3", 25, 0x1FFD, 0x05, "RAM4", "RAM5", "RAM6", "RAM3"},
+    {"+3", 26, 0x7FFD, 0x05, "RAM4", "RAM5", "RAM6", "RAM3"},
+    {"+3", 27, 0x1FFD, 0x00, "R128", "RAM5", "RAM2", "RAM5"},
+    {"+3", 28, 0x1FFD, 0x01, "RAM0", "RAM1", "RAM2", "RAM3"},
+    {"+3", 29, 0x1FFD, 0x04, "DOS", "RAM5", "RAM2", "RAM5"},
+    {"+3", 30, 0x1FFD, 0x05, "RAM4", "RAM5", "RAM6", "RAM3"},
+    {"+3", 31, 0x7FFD, 0x06, "RAM4", "RAM5", "RAM6", "RAM3"},
+    {"+3", 32, 0x1FFD, 0x00, "R128", "RAM5", "RAM2", "RAM6"},
+    {"+3", 33, 0x1FFD, 0x01, "RAM0", "RAM1", "RAM2", "RAM3"},
+    {"+3", 34, 0x1FFD, 0x04, "DOS", "RAM5", "RAM2", "RAM6"},
+    {"+3", 35, 0x1FFD, 0x05, "RAM4", "RAM5", "RAM6", "RAM3"},
+    {"+3", 36, 0x7FFD, 0x07, "RAM4", "RAM5", "RAM6", "RAM3"},
+    {"+3", 37, 0x1FFD, 0x00, "R128", "RAM5", "RAM2", "RAM7"},
+    {"+3", 38, 0x1FFD, 0x01, "RAM0", "RAM1", "RAM2", "RAM3"},
+    {"+3", 39, 0x1FFD, 0x04, "DOS", "RAM5", "RAM2", "RAM7"},
+    {"+3", 40, 0x1FFD, 0x05, "RAM4", "RAM5", "RAM6", "RAM3"},
+    {"+3", 41, 0x1FFD, 0x00, "R128", "RAM5", "RAM2", "RAM7"},
+    {"+3", 42, 0x7FFD, 0x10, "SRV3", "RAM5", "RAM2", "RAM0"},
+    {"+3", 43, 0x1FFD, 0x04, "R48", "RAM5", "RAM2", "RAM0"},
+    {"+3", 44, 0x7FFD, 0x00, "DOS", "RAM5", "RAM2", "RAM0"},
+    {"+3", 45, 0x7FFD, 0x08, "DOS", "RAM5", "RAM2", "RAM0"},
+    {"+3", 46, 0x7FFD, 0x33, "R48", "RAM5", "RAM2", "RAM3"},
+    {"+3", 47, 0x7FFD, 0x00, "R48", "RAM5", "RAM2", "RAM3"},
+    {"+3", 48, 0x1FFD, 0x00, "R48", "RAM5", "RAM2", "RAM3"},
+    {"+3", 49, 0x1FFD, 0x09, "R48", "RAM5", "RAM2", "RAM3"},
 };
 
 static const std::vector<ModelsRegressionRow> kGoldenRows_Pentagon128 = {

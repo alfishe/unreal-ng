@@ -72,13 +72,13 @@ This is strictly stronger fidelity than the trap: the trap's instant load is *de
 
 For ROM-standard blocks, "finished" is a precise event (the trapped LD-BYTES invocation completes). For an arbitrary loader, "finished" is not a spec'd signal — and this is why the feature does not exist yet. But the tape subsystem already contains three independent, purpose-built completion detectors:
 
-1. **Read-gap watchdog** — `Tape::handleFrameEnd()` increments `_framesSinceLastRead` every frame without a tape-relevant ULA read; at >150 frames (~3 s of *emulated* time) it freezes playback (`pausePlayback()` — deliberately *not* a terminal stop, so a multi-stage loader that pauses reading while it decompresses/bank-switches loses nothing). This exists precisely to detect "the loader exited" (`tape.cpp:728-742`).
+1. **Read-gap watchdog** (2026-09-27: replaced by the loader-follow pause — no listening read for 2 frames in a gap or 50 inside a block; [loader-follow-design.md](../2026-08-30-fast-tape-loading/loader-follow-design.md)) — `Tape::handleFrameEnd()` increments `_framesSinceLastRead` every frame without a tape-relevant ULA read; at >150 frames (~3 s of *emulated* time) it freezes playback (`pausePlayback()` — deliberately *not* a terminal stop, so a multi-stage loader that pauses reading while it decompresses/bank-switches loses nothing). This exists precisely to detect "the loader exited" (`tape.cpp:728-742`).
 2. ~~**ERR_NR change** — ROM reports break/error immediately → `stopPlayback()`.~~ **Removed 2026-09-27** (PLAN #5 P1): custom loaders write ERR_NR as scratch RAM, so the stop fired in the middle of their loads and skipped the block being played ([nonstandard-loader-investigation.md](../2026-08-30-fast-tape-loading/nonstandard-loader-investigation.md) B1).
 3. **Natural end-of-tape** — cursor past the last block → `TapePlaybackState::Ended`.
 
 And the symmetric start-side detector already exists too:
 
-4. **Sustained EAR-polling resume** — `_earPollsThisFrame ≥ 256` (non-joystick ULA reads; the keyboard scan's ~8/frame can never trip it) → `ResumePlaybackAfterPoll()` restarts or un-pauses playback for RAM-resident loaders that never touch the ROM `$0564` anchor (`tape.h:27-34`, `tape.cpp:544-547`). The ROM anchor auto-start (`PC == $0564`, `tape.cpp:593-596`) covers ROM flows.
+4. **Sustained EAR-polling resume** (2026-09-27: replaced by the listening start — 8 reads a frame that test the EAR bit) — `_earPollsThisFrame ≥ 256` (non-joystick ULA reads; the keyboard scan's ~8/frame can never trip it) → `ResumePlaybackAfterPoll()` restarts or un-pauses playback for RAM-resident loaders that never touch the ROM `$0564` anchor (`tape.h:27-34`, `tape.cpp:544-547`). The ROM anchor auto-start (`PC == $0564`, `tape.cpp:593-596`) covers ROM flows.
 
 In other words: **the tape object's state machine already moves through exactly the transitions an auto-turbo controller needs to observe.** Playing (from start / anchor / poll-resume) = "loading is happening"; Paused-by-watchdog / Ended / stopped / ERR_NR = "not loading".
 
@@ -104,11 +104,11 @@ Between stages the loader stops reading EAR while it processes → the gap's fir
 
 ### 4.3 Interactive multi-load ("press key for part 2")
 
-(2026-09-27: not true today, defect B6 — the key-wait loop's reads keep the watchdog fed; fixed by P4 of [loader-follow-design.md](../2026-08-30-fast-tape-loading/loader-follow-design.md).) Loader finishes part 1, prints a prompt, waits for a key. No EAR reads → watchdog pauses tape → turbo off → the machine sits at 50 Hz, screen readable. User presses the key; part 2's loader polls EAR → playback resumes → turbo re-engages. The user never fights a warp-speed prompt.
+(2026-09-27: was not true because of defect B6 — the key-wait loop's reads kept the watchdog fed; fixed in `ac200bb8` by [loader-follow-design.md](../2026-08-30-fast-tape-loading/loader-follow-design.md): key reads are not listening, so the tape parks within 2 frames.) Loader finishes part 1, prints a prompt, waits for a key. No EAR reads → watchdog pauses tape → turbo off → the machine sits at 50 Hz, screen readable. User presses the key; part 2's loader polls EAR → playback resumes → turbo re-engages. The user never fights a warp-speed prompt.
 
 ### 4.4 User aborts / tape ends
 
-- SPACE-break in a ROM flow → ~~ERR_NR changes → `stopPlayback()`~~ (removed 2026-09-27) → the tape pauses once nobody listens to it ([loader-follow-design.md](../2026-08-30-fast-tape-loading/loader-follow-design.md) §5.3, P4) → turbo off.
+- SPACE-break in a ROM flow → ~~ERR_NR changes → `stopPlayback()`~~ (removed 2026-09-27) → the ROM editor only reads keys, so the tape pauses within frames ([loader-follow-design.md](../2026-08-30-fast-tape-loading/loader-follow-design.md) §5.3) → turbo off.
 - Last block consumed → `Ended` → turbo off.
 - Manual Stop/Rewind/Seek/Eject in Tape Manager → state leaves Playing → turbo off.
 

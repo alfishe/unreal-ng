@@ -2,7 +2,7 @@
 // Generated: 2026-01-08
 
 #include "../emulator_api.h"
-#include "upload_helper.h"
+#include "../common/upload_helper.h"
 
 #include <base/featuremanager.h>
 #include <drogon/HttpResponse.h>

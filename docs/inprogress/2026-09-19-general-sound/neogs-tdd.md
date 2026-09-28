@@ -1015,6 +1015,13 @@ and the others reuse it, behind their own port glue. The TS-Conf design's
 shared `SdCardState` automation descriptor is used by NeoGS too. Both designs
 link to each other.
 
+> **2026-09-27 sync (ATM3 storage design,
+> [tdd-storage-sd-ide-cd.md](../2026-09-15-atm-baseconf-highres-ports/tdd-storage-sd-ide-cd.md) §1):**
+> `SdCardSpi` reads and writes through the shared IDE `IBlockDevice` instead of a
+> `FILE*` (raw image, host folder, memory disk), and `WriteMode::Session` uses the
+> shared `SessionWriteMap` decorator instead of a private overlay. The ATM3 and
+> TS-Conf Z-Controller ports share one `ZControllerSpi` glue.
+
 ### 5.5 SD card (`SdCardSpi`)
 
 **Protocol.** SD in SPI mode, versions 1 and 2, SDSC and SDHC.

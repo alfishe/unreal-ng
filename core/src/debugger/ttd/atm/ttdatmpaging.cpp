@@ -2,6 +2,7 @@
 
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
+#include "emulator/ports/models/portdecoder_atm3.h"
 
 #include <cstring>
 
@@ -30,6 +31,15 @@ AtmPagingState TTDAtmPaging::Snapshot() const
     blob.aFB = state.aFB;
     blob.atmMemSwapped = state.atmMemSwapped ? 1 : 0;
     blob.cmos_addr = state.cmos_addr;
+    if (auto* atm3 = dynamic_cast<PortDecoder_ATM3*>(_context->pPortDecoder))
+        blob.cmos_addr = atm3->GetCMOS().GetCMOSAddress();
+
+    for (size_t i = 0; i < 16; ++i)
+    {
+        blob.atmPalette[i] = state.atmPalette[i];
+        blob.atmPaletteRegs[i] = state.atmPaletteRegs[i];
+    }
+    blob.atmBorderBright = state.atmBorderBright;
 
     return blob;
 }
@@ -64,6 +74,15 @@ void TTDAtmPaging::TTDLoadState(const uint8_t* src)
     state.aFB = blob.aFB;
     state.atmMemSwapped = blob.atmMemSwapped != 0;
     state.cmos_addr = blob.cmos_addr;
+    if (auto* atm3 = dynamic_cast<PortDecoder_ATM3*>(_context->pPortDecoder))
+        atm3->GetCMOS().SetCMOSAddress(blob.cmos_addr);
+
+    for (size_t i = 0; i < 16; ++i)
+    {
+        state.atmPalette[i] = blob.atmPalette[i];
+        state.atmPaletteRegs[i] = blob.atmPaletteRegs[i];
+    }
+    state.atmBorderBright = blob.atmBorderBright;
 
     // The caller re-runs the paging decode (Memory::UpdateZ80Banks) after every
     // serializer has loaded, so the restored map takes effect there rather than

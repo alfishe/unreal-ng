@@ -459,69 +459,6 @@ void DebugKeyboardManager::TypeText(const std::string& text, uint16_t charDelayF
     ExecuteSequence(seq);
 }
 
-void DebugKeyboardManager::TypeBasicCommand(const std::string& command, uint16_t charDelayFrames)
-{
-    if (command.empty())
-        return;
-    
-    KeyboardSequence seq;
-    seq.name = "basic_command";
-    
-    // Helper to add a key event with delay
-    // Note: Take by value and use std::move to avoid GCC 13 false positive -Warray-bounds warning
-    // that occurs when copying std::vector<ZXKeysEnum> (enum : uint8_t)
-    auto addKeyWithDelay = [&](std::vector<ZXKeysEnum> keys) {
-        if (keys.size() == 1)
-        {
-            seq.events.push_back({KeyboardSequenceEvent::Action::TAP, std::move(keys), DEFAULT_HOLD_FRAMES});
-        }
-        else
-        {
-            seq.events.push_back({KeyboardSequenceEvent::Action::COMBO_TAP, std::move(keys), DEFAULT_HOLD_FRAMES});
-        }
-        if (charDelayFrames > 0)
-        {
-            seq.events.push_back({KeyboardSequenceEvent::Action::WAIT, {}, charDelayFrames});
-        }
-    };
-    
-    // Process each character
-    // In 48K BASIC:
-    // - First letter at start of line (K-mode) produces keyword token
-    // - After quote, letters are literal (L-mode)
-    // - Quotes switch between K/L modes
-    bool inString = false;
-    
-    for (size_t i = 0; i < command.length(); i++)
-    {
-        char c = command[i];
-        
-        if (c == '"')
-        {
-            // Quote toggles string mode and switches to/from L-mode
-            addKeyWithDelay({ZXKEY_SYM_SHIFT, ZXKEY_P});
-            inString = !inString;
-            continue;
-        }
-        
-        if (c == ' ' && !inString)
-        {
-            // Space outside string (between PRINT and quote)
-            addKeyWithDelay({ZXKEY_SPACE});
-            continue;
-        }
-        
-        // All other characters (including letters) - use CharToKeys for proper mapping
-        std::vector<ZXKeysEnum> keys = CharToKeys(c);
-        if (!keys.empty())
-        {
-            addKeyWithDelay(keys);
-        }
-    }
-    
-    ExecuteSequence(seq);
-}
-
 /// endregion </High-Level Helpers>
 
 
@@ -915,6 +852,15 @@ void DebugKeyboardManager::ProcessNextEvent()
     _eventQueue.pop();
     
     ExecuteEvent(event);
+}
+
+uint64_t DebugKeyboardManager::FramesSinceReleased(ZXKeysEnum key) const
+{
+    std::lock_guard<std::recursive_mutex> lock(_sequenceMutex);
+    if (!_keyboard)
+        return UINT64_MAX;
+    const auto it = _lastReleaseFrame.find(_keyboard->GetMatrixKey(key));
+    return it == _lastReleaseFrame.end() ? UINT64_MAX : _frameIndex - it->second;
 }
 
 uint16_t DebugKeyboardManager::FramesUntilKeysReleasedLongEnough(const KeyboardSequenceEvent& event) const

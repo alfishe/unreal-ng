@@ -235,8 +235,8 @@ set(COMMON_SOURCES
     src/api/state_device_api.cpp
     src/api/tape_disk_api.cpp
     src/api/snapshot_api.cpp
-    src/api/upload_helper.h
-    src/api/upload_helper.cpp
+    src/common/upload_helper.h
+    src/common/upload_helper.cpp
     src/api/interpreter_api.cpp
     src/api/interpreter_api.h
     src/api/basic_api.cpp

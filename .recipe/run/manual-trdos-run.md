@@ -29,9 +29,11 @@ control_execution  {"action":"run_frames","frames":200}
 inspect_state      {"aspects":["registers","screen_ocr","fdc"]}
 ```
 
-`basic/run` and the catalog have no smart tool — they ride `invoke_api`;
-typing is `type_input` (tokenized for BASIC lines, raw for TR-DOS prompt
-commands). The command crib and `.C`-block notes below apply to both
+`basic/run` and the catalog have no smart tool — they ride `invoke_api`.
+Send BASIC lines and TR-DOS prompt commands alike through `basic/run`: the
+`A>` prompt is the 48K editor, where `CAT`, `LIST`, `RUN` are keyword keys
+(raw `type_input` would type `C` as CONTINUE). `type_input` with `tokenized`
+types the same way but without ENTER. The command crib and `.C`-block notes below apply to both
 transports.
 
 ## WebAPI
@@ -72,7 +74,7 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/run_frames" -H 'Content-Type: applicatio
 Verify OCR shows `* TR-DOS Ver 5.04T*` and the `A>` prompt.
 
 Option B — **Via 48K BASIC** (`RANDOMIZE USR 15616`):
-Select `48 BASIC` from the main menu (tap `Down` x3 + `Enter`, or tap `4`), then run `RANDOMIZE USR 15616`. Note: calling `basic/run` from the 128K menu enters `128 BASIC` by default where character strings are not keyword-tokenized.
+Select `48 BASIC` from the main menu (tap `Down` x3 + `Enter`, or tap `4`), then run `RANDOMIZE USR 15616`. Note: `basic/run` called at the 128K menu enters `128 BASIC` and types there.
 
 ### Step 3 — Run the chosen file / boot disk
 
@@ -117,17 +119,20 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/basic/run" \
 
 ## Pitfalls
 
-- **`basic/run` returns `success: false`** with `basic_mode: "trdos"` when
-  you're already inside TR-DOS — that mode expects TR-DOS commands via
-  `keyboard/type`, not BASIC lines. Read `message`; it explains what it saw.
+- **`basic/run` at the `A>` prompt** types the line through the 48K editor
+  TR-DOS uses and reports what TR-DOS did: `outcome: "trdos_command"` once
+  TR-DOS found the command, `failure: "trdos_rejected"` with `err_nr`
+  otherwise. TR-DOS switches the drive on before it looks a command up, so
+  with no disk every command ends in `err_nr` 26 — insert the disk first.
 - **Names with quotes/embedded spaces**: catalog names cannot contain `"`;
   padding spaces must be stripped or TR-DOS won't match the file.
-- **Typing races**: `keyboard/type` queues keystrokes with
-  `delay_frames` (default 2) per key — after long lines, run ~100 frames
-  before assuming failure.
-- **128K editor menu**: fresh `128k`/`PENTAGON` boots into the menu. `basic/run`
-  navigates to `128 BASIC` by default where character strings require keyword tokenization
-  or 48K BASIC mode. On Pentagon machines, selecting option 5 (`TR-DOS` via 4x `Down` + `Enter`)
+- **Typing races**: BASIC lines through `basic/run` or `keyboard/type`
+  with `tokenized: true` are paced by the ROM itself (each key waits until
+  the editor has taken it) and the reply comes when the result is known.
+  Only raw `keyboard/type` still queues keys with `delay_frames` per key.
+- **128K editor menu**: fresh `128k`/`PENTAGON`/`SCORPION` boots into the menu.
+  `basic/run` leaves it for `128 BASIC` (every key verified) and types there;
+  the 128K editor takes keywords spelled out and tokenises them at ENTER. On Pentagon machines, selecting option 5 (`TR-DOS` via 4x `Down` + `Enter`)
   enters `A>` directly; alternatively, select option 4 (`48 BASIC`) before running `RANDOMIZE USR 15616`.
 - **Reset vs page-in**: `RANDOMIZE USR 15616` enters TR-DOS at `$3D00`
   (prompt). `15619` + `REM:` enters at `$3D03` and executes the trailing

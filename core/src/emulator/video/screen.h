@@ -258,6 +258,41 @@ struct LineGeometry
     uint8_t paperDotsPerT;   // pixels per T inside the window
 };
 
+/// Picture format of a video mode (Screen::GetVideoModeInfo). Zero / nullptr
+/// fields do not apply to the mode.
+struct VideoModeInfo
+{
+    const char* colorDepth = "";
+    uint16_t colors = 0;
+    uint8_t bpp = 0;                    // bits per pixel of the bitmap; 0 for text / per-line attribute modes
+    const char* attributeSize = nullptr;
+    uint8_t textColumns = 0;
+    uint8_t textRows = 0;
+    uint8_t planes = 0;
+    uint32_t pixelDataBytes = 0;
+    uint32_t attributeBytes = 0;
+    uint32_t totalBytes = 0;
+};
+
+/// Screen state as every automation module reports it (Screen::DescribeScreenState)
+struct ScreenState
+{
+    MEM_MODEL model = MM_PENTAGON;
+    VideoModeEnum mode = M_NUL;
+    std::string videoMode;               // Screen::GetVideoModeName
+    uint16_t width = 0, height = 0;      // mode picture size
+    VideoModeInfo format;
+    uint8_t borderColor = 0;
+    bool shadowScreenCapable = false;    // 7FFD bit 3 selects a second screen
+    uint8_t activeScreen = 0;            // 0 = normal (page 5), 1 = shadow (page 7)
+    uint16_t activeRamPage = 5;          // video page selected by 7FFD bit 3
+    std::vector<uint16_t> activeRamPages;  // every page the mode reads
+    bool contention = false;             // Sinclair ULA memory contention active
+    bool flashInverted = false;          // FLASH phase (toggles every 16 frames)
+    uint8_t framesUntilFlashToggle = 16;
+    uint8_t p7FFD = 0, pEFF7 = 0, pDFFD = 0, pFF77 = 0;
+};
+
 /// Beam position described in the active mode's geometry (Screen::DescribeBeam).
 /// Line origin as the renderer: T 0 = first left-border T.
 struct BeamPosition
@@ -818,6 +853,27 @@ public:
     /// @param p7FFD Port 7FFD latch value (bit 3 selects the video page on ATM)
     /// @param bankedZX Model exposes a shadow screen (128K-class paging)
     static std::vector<uint16_t> GetActiveSurfaceRAMPages(VideoModeEnum mode, uint8_t p7FFD, bool bankedZX);
+
+    /// Machine has a second (shadow) screen selected by 7FFD bit 3: every
+    /// supported machine except the 48K
+    static bool HasShadowScreen(MEM_MODEL model) { return model != MM_SPECTRUM48; }
+
+    /// RAM page selected as the video page: 7 when 7FFD bit 3 selects the
+    /// shadow screen, 5 otherwise
+    static uint16_t GetVideoRAMPage(MEM_MODEL model, uint8_t p7FFD)
+    {
+        return (HasShadowScreen(model) && (p7FFD & 0x08)) ? 7 : 5;
+    }
+
+    /// RAM pages the current mode reads to form the picture: the video page
+    /// alone for ZX-layout modes, every plane/attribute/text page otherwise
+    static std::vector<uint16_t> GetDisplayedRAMPages(VideoModeEnum mode, MEM_MODEL model, uint8_t p7FFD);
+
+    /// Picture format of a mode (colour depth, bpp, attribute cell, memory layout)
+    static const VideoModeInfo& GetVideoModeInfo(VideoModeEnum mode);
+
+    /// Current screen state - the single source for every automation module
+    ScreenState DescribeScreenState() const;
 
     /// Horizontal beam geometry (display window, pixel clock) of a mode.
     /// timing is the descriptor the mode's timing comes from (SetVideoMode).

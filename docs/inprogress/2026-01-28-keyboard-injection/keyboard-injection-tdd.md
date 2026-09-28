@@ -19,7 +19,7 @@ Design proposal for programmatic keyboard event injection to the emulated ZX Spe
 | **Debounce after combo** | ✅ Complete | 1-frame delay after combo release |
 | **Case handling** | ✅ Complete | Uppercase = CAPS+letter, lowercase = just letter |
 | **TypeText** | ✅ Complete | Type text strings with auto-modifiers |
-| **TypeBasicCommand** | ✅ Complete | K-mode tokenized typing for BASIC commands |
+| ~~TypeBasicCommand~~ | Removed 2026-09-28 | Typed `LOAD` as CAPS+L,O,A,D (`LET OAD` on a 48K). Replaced by `CommandTyper`, see `core/src/debugger/analyzers/basic-lang/input-verification.md` |
 | **WebAPI endpoints** | ✅ Complete | `/keyboard/*` endpoints in `keyboard_api.cpp` |
 | **Macro library** | ✅ Complete | Predefined sequences (e_mode, format, cat, etc.) |
 
