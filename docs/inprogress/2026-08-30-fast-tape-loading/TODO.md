@@ -57,19 +57,24 @@ The single-cause hypothesis below was only partly right:
 
 ## Plan (from the investigation, §9)
 
-1. ~~P1: remove the ERR_NR stop~~ — done 2026-09-27 (TTD tape-state byte 44 reserved; test
-   `Tape_Test.ErrNrWriteDuringPlaybackKeepsTapeRolling`). Side effect until P4: a BREAK in a ROM
-   load leaves the tape rolling (B6).
-2. P2: no stop consumes a partly played block; update design §9.4/§12.1-8 and the turbo-tape note.
-3. P3: ROM restart after a freeze: trailing silence → next block, mid-data → block start,
-   mid-pilot → pilot start.
-4. P4: the tape moves only while a loader listens (requirement R, 2026-09-27: a load that stops
-   for a key prompt or for beeper/AY music resumes by itself when EAR polling returns). Reads
-   are classified EAR/KEY/OTHER; park at the next pilot after W_gap, freeze after W_block; strict
-   start. Design with diagrams: [loader-follow-design.md](loader-follow-design.md).
+1. ~~P1: remove the ERR_NR stop~~ — done in `ac200bb8` (TTD tape-state byte 44 reserved; test
+   `Tape_Test.ErrNrWriteDuringPlaybackKeepsTapeRolling`).
+2. P2: `stopPlayback()` still has the "skip the partly played block" branch, but after P1/P4 no
+   caller reaches it with a block in flight (end of tape, park after the last block and the
+   empty-cursor case all pass a null block). Remove the branch, invert
+   `TapeFastLoad_Test.PartialBlockConsumedOnStop`, update design §9.4/§12.1-8.
+3. P3: mostly delivered by P4 — a park moves the cursor to the next block, a freeze mid-data
+   keeps the cursor on the block so the ROM anchor restarts it from its pilot, a freeze in a
+   pilot rewinds it. Still to do: test T12 (ROM restart after a freeze mid-data) and the
+   "nothing moved since" rule for user actions (design §5.1).
+4. ~~P4: the tape moves only while a loader listens~~ — done in `ac200bb8`
+   ([loader-follow-design.md](loader-follow-design.md)). Requirement R (2026-09-27): a load that
+   stops for a key prompt or for beeper/AY music resumes by itself when EAR polling returns.
+   Verified live: EMELYANOV 48K through the trainer menu, SAN-SAN 48K and 128K, fast loading off.
+   Open tests: T4, T12, T13, T14.
 5. Re-run the fixture matrix (probe in `scratch/tape-errnr/`) as a `tools/verification/` script;
    EMELYANOV and SAN-SAN must pass with fast loading off on both models; tapes with prompts must
-   load with the key pressed after 1 s, 10 s and 60 s.
+   load with the key pressed after 1 s, 10 s and 60 s. Confirm the P4 thresholds from it.
 6. Close out; split O1–O3 into their own item if they survive.
 
 <details><summary>Original 2026-09-16 hypothesis (kept for history)</summary>
