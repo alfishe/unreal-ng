@@ -26,7 +26,10 @@ The tests build their SD cards in `scratch/` when they run, and remove them afte
 - `NEOGS.ROM` — the NeoGS main ROM v1.11 (`tools/neogs/parts/neogs.rom`, 32 KB, identical to `full_ngs.rom` at
   `#10000`), for the loader's SD boot path;
 - `NGS_ROM.UPD` — the NedoPC firmware update file (`tools/neogs/parts/ngs_rom.upd`), for the flasher;
-- `EYEACHE.MP3` — `mp3/eyeache1-44k-128k-cbr.mp3`, for Neo Player Light and the DMA player.
+- `EYEACHE.MP3` — `mp3/eyeache1-44k-128k-cbr.mp3`, for Neo Player Light and the DMA player;
+- `EYE22K.MP3` — `mp3/eyeache1-22k-mono-vbr-id3.mp3`: a second MP3, because Neo Player Light v0.44 hangs on a
+  card with exactly one (its FINDMP3 returns with the wrong memory page when it found fewer than two files; see
+  `docs/inprogress/2026-09-19-general-sound/neogs-tdd.md` §14.2).
 
 | Card | Size | Layout | Covers |
 |---|---|---|---|
@@ -51,7 +54,7 @@ by `core/tests/emulator/sound/chips/neogs/soundchip_neogs_acceptance_test.cpp`.
 | `test_emu_ngs.scl` | `zx/test_emu_ngs/testngs.scl` | Test written for emulators: mailbox echo, 256 SD sector reads through its own card driver |
 | `flasher.scl` | `z80/flasher/flasher.scl` | The flash updater (reads `NGS_ROM.UPD` from the SD card) |
 | `neo_player_light.scl` | `zx/Neo_Player_Light/npl.scl` | Neo Player Light v0.60: MP3 player over SPI (no DMA) |
-| `npl044.scl`, `npl044_dma.scl` | `zx/npl_044/npl044.scl`, `zx/npl_044_dma/npl044.scl` | Neo Player Light v0.44 without and with DMA |
+| `npl044.scl`, `npl044_dma.scl` | `zx/npl_044/npl044.scl`, `zx/npl_044_dma/npl044.scl` | Neo Player Light v0.44 without and with DMA. v0.44 needs two MP3 files on the card; the DMA build cannot play at all (CMD17 commented out before its SD DMA) - both are bugs of the player, neogs-tdd.md §14.2 |
 | `altstd.fnt` | `zx/test_ngs/altstd.fnt` | The programs' 8x8 font (6x8 glyphs in the top six bits), used by the tests to read the screen |
 
 The four SCL files marked below were published without the 4-byte SCL checksum; the copies here have it appended

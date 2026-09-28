@@ -1514,7 +1514,8 @@ new files up by `GLOB_RECURSE`, after a reconfigure.
   is deterministic: FAT16 with an MBR (8 MB), FAT16 without a partition table
   (8 MB) and FAT32 with an MBR (36 MB, the FAT32 cluster minimum forces the
   size; sparse, so it costs only its files on disk). Each holds `NEOGS.ROM`
-  (main ROM v1.11), `NGS_ROM.UPD` and `EYEACHE.MP3`.
+  (main ROM v1.11), `NGS_ROM.UPD`, `EYEACHE.MP3` and a second MP3,
+  `EYE22K.MP3` (Neo Player Light v0.44 needs two, §14.2).
   `tools/neogs/make_sd_image.py` builds the same layout for use outside the
   tests.
 - The SD boot test proves the ROM came from the card, not from flash: it
@@ -1560,7 +1561,7 @@ flowchart LR
 | 0 | `GSCardRunner<Card>`, `GSAudioOut`, `GSModuleReplay` extracted; `GS_CLOCK_HZ`/`GS_CYCLES_PER_INT` moved out of the base interface; shared `ToString`/parser for personalities | All GS tests pass unchanged; RAM hash, DAC stream and port trace identical before/after; TTD fixture corpus loads unchanged; benchmark within 2% |
 | 1 | Config keys; `SoundChip_NeoGS` with memory, flash reads, ports, interrupts, sound; `Boot=loader` and `direct`; creation from config; shipped image and `pack_flash.py` | A GS module plays through NeoGS on a Pentagon with the real flash image; our 8-channel test program passes; all §8 memory, interrupt, sound, SPI-free port and boot tests pass; `test_ngs` passes detect, version and pages |
 | 2 | `SdCardSpi`, `NeoGSSpi`, `Flash29F040B` programming, port `#80` restart, persistence | The loader boots `NEOGS.ROM` from FAT16 and FAT32 images; the flasher updates the flash in `session` mode and the card restarts into it; `test_emu_ngs` passes; `test_ngs` passes its SD part |
-| 3 | `Vs10xxDecoder` with minimp3, the MP3 audio source, SD and MP3 DMA | Neo Player Light plays an MP3 from the SD image (no DMA); `npl_044_dma` plays one with SD and MP3 DMA; `test_ngs` detects the chip |
+| 3 | `Vs10xxDecoder` with minimp3, the MP3 audio source, SD and MP3 DMA | Neo Player Light plays an MP3 from the SD image (no DMA); `npl_044_dma` plays one with SD and MP3 DMA; `test_ngs` detects the chip. **As built:** v0.60 and v0.44 play; `npl_044_dma` cannot play on the board either (its CMD17 is commented out, §14.2), so SD and MP3 DMA are proven by the unit and TTD tests |
 | 4 | Runtime switching to and from NGS, automation surfaces and docs, `neogs` debugger target, the TTD refusal (superseded by phase 6) and GS-slot guard | `gs switch_personality ngs` works with module handoff; every surface shows the `neogs` state; the debugger shows the target; recording with NeoGS is refused with a clear message (until phase 6) |
 | 5 | ZX-DMA host hook; `Fpga=D` | Our ZX-DMA test program transfers a block in both directions; the v1.08 images boot with `Fpga=D`. **As built:** ZX-DMA done (phases 5a-5c, [`neogs-zxdma-design.md`](neogs-zxdma-design.md)); `Fpga=D` skipped by decision (2026-09-28), §3.12 kept for reference |
 | 6 | NeoGS TTD on v1 full blobs (regions later, with the v2 migration) | A NeoGS recording replays exactly from every kind of restore point; a snapshot taken mid SD transfer, mid MP3 DMA and mid decoding continues identically |
@@ -1754,13 +1755,35 @@ the NeoGS suites are listed below.
 - **IM 0 with the DMA vectors**: unreal-z80 executes every IM 0 interrupt as
   `RST 38`, which is right for the timer (`#FF`) but not for `#F7`/`#EF`.
   No NeoGS software uses the DMA interrupts.
-- **Open: Neo Player Light v0.44 (`npl044`, with and without DMA) finds no
-  files** on any of the test images (FAT16 and FAT32, with and without a
-  volume label, small and large files): it reads the MBR, boot sector,
-  directory and FAT correctly, then computes a sector far beyond the card.
-  Neo Player Light v0.60, the loader, `test_emu_ngs` and the flasher all
-  work on the same images. Not yet explained; DMA is covered by the
-  `neogsdma` unit tests instead.
+- **Neo Player Light v0.44 (`npl044`) hangs on a card with exactly one MP3
+  file - a bug of the player, not of the emulation (explained 2026-09-28).**
+  Every test card used to hold one MP3 (`EYEACHE.MP3`). The chain, in the
+  player's card-side code (`zx/npl_044/fat4ngs.a80`):
+  1. `FINDMP3` builds the MP3 list in page `PG4MP3` (MPAG 3) and the
+     directory list in `PG4DIR` (MPAG 5), both at `#8000`. At the end,
+     `FNDMP30` counts the files and, with fewer than two, returns (`RET C`)
+     *before* its `OUT (0),PG4MP3`: page 5 stays mapped.
+  2. `OPENFIL` -> `SET_MP3` reads the file descriptor at `#8000` assuming
+     page 3; it gets the directory list's root record `00 00 00 00`, a null
+     pointer, and copies the "directory cluster" from card address `#0000` -
+     the main ROM copy: `F3 C3 48 01` (`DI : JP #0148`).
+  3. It follows that cluster chain (`#0148C3F3`) through the FAT, computes a
+     sector far past the card and waits for its data token without a
+     timeout: the card hangs, and the host shows "search MP3 files" for ever.
+
+  Found by reading the player's FAT variables (`#4500+`: `TEK_DIR`) and
+  stack in the hung card, then its sources. With two MP3 files the player
+  finds both and plays in real time. The test cards now carry a second MP3
+  (`EYE22K.MP3`, `core/tests/_helpers/neogstestsdcard.h`). Neo Player Light
+  v0.60 has no such bug.
+- **The DMA build of v0.44 (`npl044_dma`) cannot play, on the board too.**
+  Its `LDI_MP3` (`zx/npl_044_dma/sd4ngs.a80`) has the CMD17 call
+  commented out (`;CALL SECM200`, NedoPC commit "added npl044 modified to
+  use sd and mp3 dma") and leaves the card deselected. The SD DMA module
+  sends no command of its own and waits for the data token with no timeout
+  (`dma_sd.v`, §3.9), so on "Play" the card polls `DMA_CST` for ever. Its
+  search works like the SPI build's. SD and MP3 DMA are covered by the
+  `neogsdma` unit tests and the SD boot / MP3 DMA TTD tests instead.
 
 ### 14.3 Tests
 
@@ -1776,7 +1799,7 @@ the NeoGS suites are listed below.
 | `neogs/soundchip_neogs_test.cpp` | The card through its own Z80: port table, #0A/#0B, mailbox, host #33, card and cold resets, 37.5 kHz at every clock, TIM_FREQ, INTENA, vectors, CPU clock, DAC output in 4/8-channel and INV7B, opcode-fetch capture, TTD round trip |
 | `neogs/soundchip_neogs_boot_test.cpp` | Real flash: loader to COMINT_, COM23 for 2/4 MB, direct boot parity, handshake, #33 reboot, GS module playback, replay waits for the main ROM, flash persistence |
 | `neogs/soundchip_neogs_sdboot_test.cpp` | NEOGS.ROM from FAT16 (MBR, no MBR), FAT32, SDSC and SDHC, with the flash main ROM blanked |
-| `neogs/soundchip_neogs_acceptance_test.cpp` | On an emulated Pentagon: `test_ngs` (2 and 4 MB), the flasher (update from SD, exact sectors), `test_emu_ngs`, Neo Player Light v0.60 playing the MP3 in real time |
+| `neogs/soundchip_neogs_acceptance_test.cpp` | On an emulated Pentagon: `test_ngs` (2 and 4 MB), the flasher (update from SD, exact sectors), `test_emu_ngs`, Neo Player Light v0.60 playing the MP3 in real time, Neo Player Light v0.44 finding both MP3 files and playing in real time, and its DMA build finding the files and then waiting in the SD DMA for ever (§14.2) |
 | `io/sdcard/sdcardspi_test.cpp` | SD protocol: init for SDSC/SDHC, CRC rules, illegal commands, CMD17/18/12, writes session/persist/off, padding, the write listener, a state round trip in the middle of a CMD18 stream |
 | `io/flash/flash29f040b_test.cpp` | Autoselect, program, sector/chip erase with window and DQ3, failures, the flasher's sequence, state |
 | `ttd/ttdgeneralsoundswitch_test.cpp` (extended) | NeoGS records with the whole card in the checkpoint blob; switch to NeoGS during a recording repoints the registry; GS-slot session guard |
@@ -1787,11 +1810,11 @@ the NeoGS suites are listed below.
 
 ### 14.4 Still open
 
-- Phase 5: the ZX-DMA host hook (a third host memory interface, composed
-  with the fast/debug swap, plus wait states) and the `Fpga=D` option.
+- Phase 5: ZX-DMA is done (5a-5c, [`neogs-zxdma-design.md`](neogs-zxdma-design.md));
+  5d waits for the GS debugger; `Fpga=D` (5e) is skipped by decision.
 - TTD: RAM and flash move from the v1 blob to v2 memory regions with the
   v2 migration (§7.4). The SD card's sectors stay outside TTD; writes are
   replay barriers.
-- The `npl044` finding above.
 - The `neogs` debugger target, with the GS debugger.
+- `npl044`: explained (§14.2) - nothing left in the emulation.
 

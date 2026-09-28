@@ -406,3 +406,96 @@ TEST_F(NeoGSAcceptance_Test, NeoPlayerLightPlaysAnMp3FromTheSdCard)
     EXPECT_NE(screen.find("Time Play: 00:00:"), std::string::npos) << "DECODE_TIME on screen";
     EXPECT_GT(audibleFrames, 400u) << "the MP3 source carries the audio";
 }
+
+/// Neo Player Light v0.44 (NedoPC ngs/zx/npl_044): the card-side FAT driver
+/// finds the MP3 files, and on "2" streams the first one to the decoder
+/// through the SPI ports. Needs at least two MP3 files on the card: with one,
+/// its FINDMP3 returns with the directory page still mapped, OPENFIL reads a
+/// null file descriptor and follows a garbage cluster chain past the end of
+/// the card - a bug of the player, the same on the board (neogs-tdd.md §14.2)
+TEST_F(NeoGSAcceptance_Test, NeoPlayerLight044PlaysAnMp3FromTheSdCard)
+{
+    _emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON");
+    ASSERT_NE(_emulator, nullptr);
+    EmulatorContext* ctx = _emulator->GetContext();
+    ASSERT_TRUE(makeSdImage(NeoGSTestSd::Fat16Mbr));
+    strncpy(ctx->config.ngs.sdCardPath, _sdImage->path().c_str(), sizeof ctx->config.ngs.sdCardPath - 1);
+    ctx->config.ngs.mp3Support = NGSMP3SupportKind::Software;
+    ASSERT_TRUE(ctx->pSoundManager->switchGeneralSoundCard(GSTypeKind::NGS));
+    auto* ngs = dynamic_cast<SoundChip_NeoGS*>(ctx->pSoundManager->getGeneralSound());
+    ASSERT_NE(ngs, nullptr);
+
+    const auto scl = TestPathHelper::FindProjectRoot() / "testdata/sound/neogs/programs/npl044.scl";
+    ASSERT_TRUE(_emulator->LoadDisk(scl.string(), 0));
+    std::string screen;
+    {
+        TRDOSTestHelper trdos(_emulator, false);
+        trdos.startCommand("RUN \"NPL044\"");
+        Memory* memory = ctx->pMemory;
+        trdos.runUntil([&] { return joined(readScreen32(memory, _font)).find("EYEACHE .MP3") != std::string::npos; },
+                       20ull * 3'500'000ull);
+        screen = joined(readScreen32(memory, _font));
+        EXPECT_NE(screen.find("Found MP3:     2"), std::string::npos) << printable(screen);
+        ctx->pKeyboard->PressKey(ZXKEY_2);
+        trdos.runFrames(5);
+        ctx->pKeyboard->ReleaseKey(ZXKEY_2);
+        trdos.runFrames(5 * 50);
+        screen = joined(readScreen32(memory, _font));
+    }
+
+    SCOPED_TRACE(printable(screen));
+    Vs10xxDecoder* mp3 = ngs->mp3Decoder();
+    EXPECT_EQ(mp3->streamRate(), 44100u);
+    EXPECT_GT(mp3->framesDecoded(), 150u);
+    EXPECT_NEAR(static_cast<double>(mp3->samplesPlayed()) / 44100.0, 5.0, 0.5) << "~5 s in real time";
+    EXPECT_NE(screen.find("44100 Hz"), std::string::npos);
+    EXPECT_NE(screen.find("128 kbps"), std::string::npos);
+    EXPECT_NE(screen.find("Time Play: 00:00:0"), std::string::npos);
+}
+
+/// Neo Player Light v0.44 built for SD and MP3 DMA (ngs/zx/npl_044_dma):
+/// the search works as in the SPI build, but this build cannot play - its
+/// LDI_MP3 has the CMD17 call commented out and leaves the card deselected,
+/// so the SD DMA module clocks #FF for ever waiting for a data token (the
+/// module sends no command itself, dma_sd.v, and has no timeout). The test
+/// pins that the emulation ends in exactly that state
+TEST_F(NeoGSAcceptance_Test, NeoPlayerLight044DmaFindsTheFilesAndWaitsInTheSdDma)
+{
+    _emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON");
+    ASSERT_NE(_emulator, nullptr);
+    EmulatorContext* ctx = _emulator->GetContext();
+    ASSERT_TRUE(makeSdImage(NeoGSTestSd::Fat16Mbr));
+    strncpy(ctx->config.ngs.sdCardPath, _sdImage->path().c_str(), sizeof ctx->config.ngs.sdCardPath - 1);
+    ctx->config.ngs.mp3Support = NGSMP3SupportKind::Software;
+    ASSERT_TRUE(ctx->pSoundManager->switchGeneralSoundCard(GSTypeKind::NGS));
+    auto* ngs = dynamic_cast<SoundChip_NeoGS*>(ctx->pSoundManager->getGeneralSound());
+    ASSERT_NE(ngs, nullptr);
+
+    const auto scl = TestPathHelper::FindProjectRoot() / "testdata/sound/neogs/programs/npl044_dma.scl";
+    ASSERT_TRUE(_emulator->LoadDisk(scl.string(), 0));
+    TRDOSTestHelper trdos(_emulator, false);
+    trdos.startCommand("RUN \"NPL044\"");
+    Memory* memory = ctx->pMemory;
+    trdos.runUntil([&] { return joined(readScreen32(memory, _font)).find("EYEACHE .MP3") != std::string::npos; },
+                   20ull * 3'500'000ull);
+    const std::string screen = joined(readScreen32(memory, _font));
+    EXPECT_NE(screen.find("Found MP3:     2"), std::string::npos) << printable(screen);
+
+    ctx->pKeyboard->PressKey(ZXKEY_2);
+    trdos.runFrames(5);
+    ctx->pKeyboard->ReleaseKey(ZXKEY_2);
+    trdos.runFrames(50);
+    EXPECT_TRUE(ngs->dma().running(NeoGSDma::SD)) << "the SD DMA module waits for a token";
+    EXPECT_EQ(ngs->sdCard()->lastCommand(), 17) << "the last command was the directory read";
+    EXPECT_EQ(ngs->mp3Decoder()->framesDecoded(), 0u);
+    const uint16_t pc = ngs->getCPUReg(GSCpuRegister::PC);
+    const uint8_t loop[] = {0xDB, 0x1F, 0xE6, 0x80, 0x20, 0xFA}; // IN A,(#1F) : AND #80 : JR NZ,$-4
+    bool inLoop = false;
+    for (int back = 0; back <= 4 && !inLoop; back += 2)
+    {
+        inLoop = true;
+        for (int i = 0; i < 6; i++)
+            inLoop = inLoop && ngs->peek(static_cast<uint16_t>(pc - back + i)) == loop[i];
+    }
+    EXPECT_TRUE(inLoop) << "the card CPU polls DMA_CST";
+}

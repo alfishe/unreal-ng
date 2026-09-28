@@ -85,10 +85,11 @@ TEST(FatImageBuilder, NeoGSCardsHoldTheirFilesAndValidLayouts)
         if (spec.mbr)
             EXPECT_EQ(img[450], spec.fat == 32 ? 0x0C : 0x06);
 
-        ASSERT_EQ(spec.files.size(), 3u);
+        ASSERT_EQ(spec.files.size(), 4u);
         EXPECT_EQ(readBack(img, "NEOGS   ROM"), spec.files[0].data);
         EXPECT_EQ(readBack(img, "NGS_ROM UPD"), spec.files[1].data);
         EXPECT_EQ(readBack(img, "EYEACHE MP3"), spec.files[2].data);
+        EXPECT_EQ(readBack(img, "EYE22K  MP3"), spec.files[3].data);
         EXPECT_EQ(spec.files[0].data.size(), 32768u);
     }
 }

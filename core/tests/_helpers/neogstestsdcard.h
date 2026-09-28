@@ -8,7 +8,11 @@
 ///   NGS_ROM.UPD  the NedoPC firmware update (tools/neogs/parts/ngs_rom.upd),
 ///                for the flasher;
 ///   EYEACHE.MP3  testdata/sound/neogs/mp3/eyeache1-44k-128k-cbr.mp3, for the
-///                players.
+///                players;
+///   EYE22K.MP3   testdata/sound/neogs/mp3/eyeache1-22k-mono-vbr-id3.mp3: a
+///                second MP3, because Neo Player Light v0.44 hangs on a card
+///                with exactly one (its FINDMP3 returns with the wrong memory
+///                page when it found fewer than two files, neogs-tdd.md §14.2).
 
 #include <fstream>
 #include <iterator>
@@ -43,6 +47,7 @@ inline FatImageSpec NeoGSTestSdSpec(NeoGSTestSd card)
         {"NEOGS.ROM", NeoGSTestSdReadFile("tools/neogs/parts/neogs.rom")},
         {"NGS_ROM.UPD", NeoGSTestSdReadFile("tools/neogs/parts/ngs_rom.upd")},
         {"EYEACHE.MP3", NeoGSTestSdReadFile("testdata/sound/neogs/mp3/eyeache1-44k-128k-cbr.mp3")},
+        {"EYE22K.MP3", NeoGSTestSdReadFile("testdata/sound/neogs/mp3/eyeache1-22k-mono-vbr-id3.mp3")},
     };
     return spec;
 }
