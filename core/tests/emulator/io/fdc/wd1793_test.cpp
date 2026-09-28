@@ -361,6 +361,60 @@ TEST_F(WD1793_Ports_Test, Beta128_Status_DRQ)
     EXPECT_TRUE(Intrq()) << "Command completion raises INTRQ";
 }
 
+/// A disk inserted while READ SECTOR runs: the loader releases the previous
+/// image right after the insert, so the controller must drop every pointer
+/// into it at once (FDD disk-changed callback). The command then ends as the
+/// chip ends one whose medium went away - NOT READY - and no byte after the
+/// swap comes from the released image. (It crashed in the GUI: a stale track
+/// pointer was read after a disk change.) The status bit NOT READY follows
+/// the drive's READY line, which the new disk raises again, so the check is
+/// that the command stopped
+TEST_F(WD1793_Ports_Test, DiskChangeDuringReadSectorEndsTheCommandWithoutTouchingTheOldImage)
+{
+    _fdc->portDeviceOutMethod(WD1793::PORT_1F, 0x08);  // RESTORE
+    RunUntilNotBusy();
+    ASSERT_FALSE(Busy());
+
+    _fdc->portDeviceOutMethod(WD1793::PORT_5F, 1);     // Sector 1
+    _fdc->portDeviceOutMethod(WD1793::PORT_1F, 0x80);  // READ SECTOR
+    size_t bytesRead = 0;
+    for (uint64_t spent = 0; spent < 4 * Z80_FREQUENCY && bytesRead < 10; spent += 50)
+    {
+        Advance(50);
+        if (Drq())
+        {
+            _fdc->portDeviceInMethod(WD1793::PORT_7F);
+            bytesRead++;
+        }
+    }
+    ASSERT_EQ(bytesRead, 10u);
+    ASSERT_TRUE(Busy());
+
+    // The loader's order: insert the new image, then release the old one
+    auto newDisk = std::make_unique<DiskImage>(MAX_CYLINDERS, MAX_SIDES);
+    newDisk->getTrackForCylinderAndSide(0, 0)->formatTrack(0, 0);
+    _fdc->getDrive()->insertDisk(newDisk.get());
+    _disk = std::move(newDisk); // the old image is freed here
+
+    size_t bytesAfterSwap = 0;
+    for (uint64_t spent = 0; spent < Z80_FREQUENCY && Busy(); spent += 50)
+    {
+        Advance(50);
+        if (Drq())
+        {
+            _fdc->portDeviceInMethod(WD1793::PORT_7F);
+            bytesAfterSwap++;
+        }
+    }
+    EXPECT_FALSE(Busy()) << "the command ends";
+    EXPECT_LE(bytesAfterSwap, 1u) << "at most the byte already latched before the swap, not the rest of the old sector";
+
+    // The controller works on with the new disk
+    _fdc->portDeviceOutMethod(WD1793::PORT_1F, 0x08);  // RESTORE
+    RunUntilNotBusy();
+    EXPECT_FALSE(Busy());
+}
+
 /// endregion </Status bits behavior>
 
 /// region <FDD related>
@@ -2229,6 +2283,83 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Out)
 /// endregion </STEP_OUT>
 
 /// region <READ_SECTOR>
+/// The controller keeps no pointer into a disk image beyond its command:
+/// - a finished READ SECTOR leaves no read track behind (the next command
+///   that reads bytes without a track of its own - READ ADDRESS - used to
+///   look weak bytes up on it, possibly in a released image);
+/// - a disk change drops every pointer into the previous image at once
+///   (FDD disk-changed callback), even in the middle of a command
+TEST_F(WD1793_Test, NoPointerIntoADiskImageOutlivesItsCommandOrADiskChange)
+{
+    _context->pModuleLogger->SetLoggingLevel(LogError);
+    auto disk = std::make_unique<DiskImage>(MAX_CYLINDERS, MAX_SIDES);
+    disk->getTrackForCylinderAndSide(0, 0)->formatTrack(0, 0);
+
+    WD1793CUT fdc(_context);
+    fdc._selectedDrive->insertDisk(disk.get());
+    fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET;
+    fdc._drive = 0;
+
+    const uint8_t readSector = 0b1000'0000;
+    const WD1793CUT::WD_COMMANDS decoded = WD1793CUT::decodeWD93Command(readSector);
+    auto startRead = [&](uint8_t sectorNo) {
+        fdc.reset();
+        fdc._commandRegister = readSector;
+        fdc._lastDecodedCmd = decoded;
+        fdc._trackRegister = 0;
+        fdc._selectedDrive->setTrack(0);
+        fdc._sectorRegister = sectorNo;
+        fdc._sideUp = false;
+        fdc.cmdReadSector(WD1793CUT::getWD93CommandValue(decoded, readSector));
+    };
+    auto run = [&](size_t& clk, const std::function<bool()>& until) {
+        for (size_t end = clk + Z80_FREQUENCY; clk < end && !until(); clk += 10)
+        {
+            fdc._time = clk;
+            fdc.process();
+            if (fdc._drq_out)
+            {
+                (void)fdc.readDataRegister();
+            }
+        }
+    };
+
+    // 1. A complete READ SECTOR: the track is set while reading, gone after
+    size_t clk = 0;
+    startRead(1);
+    run(clk, [&] { return fdc._currentReadTrack != nullptr; });
+    EXPECT_EQ(fdc._currentReadTrack, disk->getTrackForCylinderAndSide(0, 0)) << "the sector's own track while reading";
+    run(clk, [&] { return fdc._state == WD1793::S_IDLE; });
+    ASSERT_EQ(fdc._state, WD1793::S_IDLE);
+    EXPECT_EQ(fdc._currentReadTrack, nullptr) << "no read track after the command";
+
+    // 2. A disk change in the middle of a READ SECTOR
+    startRead(2);
+    run(clk, [&] { return fdc._currentReadTrack != nullptr; });
+    ASSERT_NE(fdc._rawDataBuffer, nullptr);
+    auto newDisk = std::make_unique<DiskImage>(MAX_CYLINDERS, MAX_SIDES);
+    newDisk->getTrackForCylinderAndSide(0, 0)->formatTrack(0, 0);
+    fdc._selectedDrive->insertDisk(newDisk.get());
+    EXPECT_EQ(fdc._currentReadTrack, nullptr);
+    EXPECT_EQ(fdc._rawDataBuffer, nullptr);
+    EXPECT_EQ(fdc._currentSector, nullptr);
+    EXPECT_EQ(fdc._sectorData, nullptr);
+    EXPECT_EQ(fdc._idamData, nullptr);
+    EXPECT_EQ(fdc._writeTrackTarget, nullptr);
+    disk.reset(); // the loader releases the old image
+    run(clk, [&] { return fdc._state == WD1793::S_IDLE; });
+    EXPECT_EQ(fdc._state, WD1793::S_IDLE) << "the command ends without the released image";
+
+    // 3. Eject: the same
+    startRead(3);
+    run(clk, [&] { return fdc._currentReadTrack != nullptr; });
+    fdc._selectedDrive->ejectDisk();
+    EXPECT_EQ(fdc._currentReadTrack, nullptr);
+    EXPECT_EQ(fdc._rawDataBuffer, nullptr);
+    run(clk, [&] { return fdc._state == WD1793::S_IDLE; });
+    EXPECT_EQ(fdc._state, WD1793::S_IDLE);
+}
+
 TEST_F(WD1793_Test, FSM_CMD_Read_Sector_Single)
 {
     static constexpr size_t const READ_SECTOR_TEST_DURATION_SEC = 1;

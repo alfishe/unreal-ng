@@ -89,6 +89,7 @@ WD1793::WD1793(EmulatorContext* context) : PortDecoder(context)
     for (size_t i = 0; i < 4; i++)
     {
         _context->coreState.diskDrives[i] = new FDD(_context);
+        _context->coreState.diskDrives[i]->setDiskChangedCallback([this](FDD* drive) { onDiskChanged(drive); });
     }
 
     /// endregion </Create FDD instances>
@@ -107,7 +108,16 @@ WD1793::~WD1793()
 
     // Note: Disk drives and disk images are owned by Emulator/CoreState
     // They are managed and deleted by the Emulator, not by WD1793
-    // WD1793 only uses them via pointers stored in CoreState
+    // WD1793 only uses them via pointers stored in CoreState. The drives may
+    // outlive this controller: detach the disk-change callbacks
+    if (_context)
+    {
+        for (FDD* drive : _context->coreState.diskDrives)
+        {
+            if (drive)
+                drive->setDiskChangedCallback(nullptr);
+        }
+    }
 }
 
 /// endregion </Constructors / destructors>
@@ -164,6 +174,7 @@ void WD1793::internalReset()
     _idamData = nullptr;
     _sectorData = nullptr;
     _rawDataBuffer = nullptr;
+    _currentReadTrack = nullptr;
     _bytesToRead = 0;
     _bytesToWrite = 0;
     _useDeletedDataMark = false;
@@ -266,6 +277,23 @@ void WD1793::process()
 /// endregion </Methods>
 
 /// region <Helper methods>
+
+void WD1793::onDiskChanged(FDD* drive)
+{
+    // A disk was inserted or ejected. The caller releases the previous image
+    // right after this, so every pointer into it goes now - wherever the
+    // command in progress is. The command then ends on its next step the way
+    // the chip ends one when the medium goes away: the read and write paths
+    // find no buffer and finish with NOT READY
+    if (drive != _selectedDrive)
+        return;
+    _currentSector = nullptr;
+    _currentReadTrack = nullptr;
+    _idamData = nullptr;
+    _sectorData = nullptr;
+    _rawDataBuffer = nullptr;
+    _writeTrackTarget = nullptr;
+}
 
 void WD1793::ejectDisk()
 {
@@ -1580,6 +1608,7 @@ void WD1793::cmdReadAddress(uint8_t value)
     FSMEvent readIDAM(WDSTATE::S_READ_BYTE, [this]() {
         this->_bytesToRead = 6;
         this->_rawDataBuffer = this->_idamData;
+        this->_currentReadTrack = nullptr; // the ID copy is not the raw stream: a weak IDAM is handled when it is searched
     });
     _operationFIFO.push(readIDAM);
 
@@ -2463,6 +2492,7 @@ void WD1793::processReadSector()
                 this->_sectorSize = sector->dataSize;
                 this->_sectorData = sector->data;
                 this->_rawDataBuffer = sector->data;
+                this->_currentReadTrack = track; // the track backing this sector, not the previous command's
                 this->_bytesToRead = sector->dataSize;
                 this->_rotationalDelayTStates = this->rotationalDelayToData(*track, *sector);
             }
@@ -3135,6 +3165,7 @@ void WD1793::processWaitIndex()
 void WD1793::processEndCommand()
 {
     endCommand();
+    _currentReadTrack = nullptr; // no read in progress: never a stale track for the next command
 
     // Notify observers of command completion
     for (auto* obs : _observers)

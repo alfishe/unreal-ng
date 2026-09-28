@@ -1,6 +1,8 @@
 #pragma once
 
 #include <stdafx.h>
+
+#include <functional>
 #include "3rdparty/message-center/messagecenter.h"
 #include "debugger/ttd/ttdserializable.h"  // TTDSerializable (P1.5 — captured via WD1793)
 #include "emulator/notifications.h"
@@ -52,6 +54,9 @@ protected:
     bool _writeProtect = false;
 
     DiskImage* _diskImage = nullptr;    // Pointer to a disk image inserted to this drive
+    // Called on insert / eject, before the previous image can be released:
+    // the controller drops every pointer it holds into that image
+    std::function<void(FDD*)> _diskChanged;
     bool _diskInserted = false;
     uint8_t _track = 0;
     uint8_t _readDataByte = 0;
@@ -137,6 +142,9 @@ public:
 
     void insertDisk(DiskImage* diskImage);
     void ejectDisk();
+    /// The controller that reads this drive: told on every insert / eject,
+    /// before the caller releases the previous image (nullptr to detach)
+    void setDiskChangedCallback(std::function<void(FDD*)> callback) { _diskChanged = std::move(callback); }
     /// endregion </Methods>
 
     /// region <TTDSerializable interface (P1.5 — parent TDD §6.4, §4 row 4)>
