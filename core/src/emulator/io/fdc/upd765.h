@@ -244,6 +244,36 @@ public:
     uint8_t getPresentCylinder(uint8_t unit) const { return _units[unit & 0x03].pcn; }
     /// endregion </Methods>
 
+    /// region <State report>
+public:
+    /// What the controller looks like right now, for the state reports (DeviceState::Fdc). Read-only: no
+    /// deadline is run, so the view is as of the last port access (the CPU sees nothing newer either)
+    struct Snapshot
+    {
+        UPDPHASE phase = PHASE_COMMAND;
+        UPDSTATE state = S_IDLE;
+        uint8_t mainStatus = 0;
+        uint8_t command[MAX_COMMAND_BYTES] = {};
+        uint8_t commandBytes = 0;        // Bytes of the command held (being received or run)
+        uint8_t commandLength = 0;       // Bytes the command takes
+        uint8_t result[MAX_RESULT_BYTES] = {};
+        uint8_t resultLength = 0;
+        uint8_t resultPos = 0;           // Result bytes the CPU has read
+        uint8_t st0 = 0;
+        uint8_t st1 = 0;
+        uint8_t st2 = 0;
+        uint8_t stepRateTime = 0;
+        uint8_t headLoadTime = 0;
+        bool motorOn = false;
+        UnitState units[UNITS];
+    };
+
+    Snapshot getSnapshot() const;
+
+    /// Command name for a command byte (low 5 bits), "invalid" for the codes the chip rejects
+    static const char* commandName(uint8_t commandByte);
+    /// endregion </State report>
+
     /// region <TTDSerializable>
 public:
     size_t TTDStateSize() const override;

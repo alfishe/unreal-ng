@@ -21,7 +21,7 @@ load_software {"path":"scratch/game.trd","autostart":true}   # insert + boot —
 invoke_api   {"method":"GET","path":"/api/v1/emulator/{id}/disk/A/info"}
 invoke_api   {"method":"GET","path":"/api/v1/emulator/{id}/disk/A/catalog"}
 invoke_api   {"method":"POST","path":"/api/v1/emulator/{id}/disk/B/create",
-              "body":{"cylinders":80,"sides":2}}
+              "body":{"format":"auto"}}                      # +3: formatted +3DOS; elsewhere: unformatted 80/2
 invoke_api   {"method":"POST","path":"/api/v1/emulator/{id}/disk/A/eject"}
 ```
 
@@ -130,13 +130,38 @@ curl -s -X POST http://localhost:8092/mcp -H 'Content-Type: application/json' -d
 ```bash
 curl -s -X POST "$BASE/emulator/$EMU_ID/disk/B/create" \
      -H 'Content-Type: application/json' \
-     -d '{"cylinders": 80, "sides": 2}' | jq .
-# → {"success":true,"drive":"B","cylinders":80,"sides":2}
+     -d '{"format": "unformatted", "cylinders": 80, "sides": 2}' | jq .
+# → {"success":true,"drive":"B","format":"unformatted","cylinders":80,"sides":2}
 ```
 
-`cylinders` must be 40 or 80, `sides` 1 or 2 (400/800 KB images). Blank disks
-report `file: "<blank>"` in `/disk/B/info`. Remember to FORMAT them from
-TR-DOS before saving files.
+- `format`: `auto` (the default) is `plus3` on a +3 and `unformatted` elsewhere.
+  `unformatted` has no sectors: FORMAT it from TR-DOS (or +3DOS) before saving.
+  `plus3` is a formatted +3DOS disk (9 x 512-byte sectors per track): SAVE right away.
+- `cylinders` 40 or 80, `sides` 1 or 2; left out, the format's own (80/2
+  unformatted, 40/1 plus3).
+- Blank disks report `file: "<blank>"` in `/disk/B/info`.
+- CLI: `disk create B 80 2 unformatted`; Lua/Python: `disk_create(1, 0, 0, "plus3")`.
+
+### ZX Spectrum +3 (.dsk, +3DOS)
+
+The `PLUS3` model has its own controller (uPD765A) and drives A and B; +3DOS
+reads and writes `.dsk` / Extended DSK images. The `PLUS2A` model is the same
+machine without the controller: no drives (its menu says "Drive M: available").
+
+```text
+emulator_manage {"action":"create","model":"PLUS3"}
+load_software   {"path":"scratch/game.dsk","drive":"A"}            # or disk/A/create for a blank one
+invoke_api      {"method":"POST","path":"/api/v1/emulator/{id}/basic/run","body":{"command":"CAT"}}
+invoke_api      {"method":"POST","path":"/api/v1/emulator/{id}/basic/run","body":{"command":"LOAD \"game\""}}
+inspect_state   {"aspects":["fdc"]}      # [fdc] uPD765A (+3): phase, last command C H R N, ST0, motor, drives
+```
+
+- `basic/run` leaves the menu for `+3 BASIC` by itself and types there; +3DOS
+  commands are ordinary BASIC keywords (`CAT`, `LOAD "name"`, `SAVE "name"`).
+- The `fdc` aspect (`GET /state/fdc`) reports the uPD765A on a +3: phase,
+  main status, the command in hand, ST0-ST2, SPECIFY times, units and drives.
+- Disk access runs at the real speed (the drive spins up, the head steps, the
+  disk turns): give `basic/run` the frames a real +3 would need.
 
 ### Eject
 
@@ -152,7 +177,7 @@ curl -s "$BASE/emulator/$EMU_ID/disk/A/info" | jq '.status'   # → "empty"
   Paths resolve in the emulator process, not the agent's shell; prefer
   absolute paths or the multipart upload.
 - **Non-TR-DOS images** (CP/M, +3 DSK, MGT) mount fine but autostart refuses
-  them (mount-only) and `/catalog` reports `dos_type: "TR-DOS"` only for real
+  them (mount-only; on a +3 use `basic/run` with `LOAD "name"`) and `/catalog` reports `dos_type: "TR-DOS"` only for real
   TRD directories — inspect via `/disk/{drive}/sector/...` instead.
 - **Dirty writes**: disk images opened read-write accumulate changes. Keep
   master images pristine; work on copies under `scratch/`.

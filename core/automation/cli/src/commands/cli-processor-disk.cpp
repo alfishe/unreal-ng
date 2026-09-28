@@ -7,6 +7,7 @@
 #include <emulator/io/fdc/wd1793.h>
 #include <emulator/platform.h>
 
+#include <cctype>
 #include <iomanip>
 #include <sstream>
 
@@ -89,7 +90,7 @@ void CLIProcessor::HandleDisk(const ClientSession& session, const std::vector<st
         ss << "Subcommands:" << NEWLINE;
         ss << "  insert <drive> <file>  - Insert disk image" << NEWLINE;
         ss << "  eject <drive>          - Eject disk" << NEWLINE;
-        ss << "  create <drv> [c] [s]   - Create blank disk (default 80T/2S)" << NEWLINE;
+        ss << "  create <drv> [c] [s] [fmt] - Create blank disk (fmt: auto/unformatted/plus3)" << NEWLINE;
         ss << "  info <drive>           - Show drive status" << NEWLINE;
         ss << "  list                   - List all drives" << NEWLINE;
         ss << "  sector <drv> <c> <s> <n> - Read sector" << NEWLINE;
@@ -667,11 +668,13 @@ void CLIProcessor::HandleDiskCatalog(const ClientSession& session, EmulatorConte
 void CLIProcessor::HandleDiskCreate(const ClientSession& session, std::shared_ptr<Emulator> emulator,
                                     EmulatorContext* context, const std::vector<std::string>& args)
 {
+    (void)context;  // Emulator::CreateBlankDisk checks the drive itself
     if (args.size() < 2)
     {
-        session.SendResponse(
-            std::string("Error: Missing drive parameter") + NEWLINE + "Usage: disk create <drive> [cylinders] [sides]" +
-            NEWLINE + "  cylinders: 40 or 80 (default: 80)" + NEWLINE + "  sides: 1 or 2 (default: 2)" + NEWLINE);
+        session.SendResponse(std::string("Error: Missing drive parameter") + NEWLINE +
+                             "Usage: disk create <drive> [cylinders] [sides] [format]" + NEWLINE +
+                             "  format: auto (plus3 on a +3, unformatted elsewhere), unformatted, plus3" + NEWLINE +
+                             "  cylinders: 40 or 80, sides: 1 or 2 (default: the format's, 80/2 or 40/1)" + NEWLINE);
         return;
     }
 
@@ -684,72 +687,53 @@ void CLIProcessor::HandleDiskCreate(const ClientSession& session, std::shared_pt
         return;
     }
 
-    // Parse optional cylinders (default 80)
-    uint8_t cylinders = 80;
-    if (args.size() >= 3)
+    // Numbers are cylinders, then sides; a word is the format
+    Emulator::BlankDiskFormat format = Emulator::BlankDiskFormat::Auto;
+    std::vector<int> numbers;
+    for (size_t i = 2; i < args.size(); i++)
     {
-        try
+        const std::string& arg = args[i];
+        if (!arg.empty() && std::isdigit(static_cast<unsigned char>(arg[0])))
         {
-            int c = std::stoi(args[2]);
-            if (c == 40 || c == 80)
-                cylinders = static_cast<uint8_t>(c);
-            else
+            try
             {
-                session.SendResponse(std::string("Error: Cylinders must be 40 or 80") + NEWLINE);
+                numbers.push_back(std::stoi(arg));
+            }
+            catch (...)
+            {
+                session.SendResponse(std::string("Error: Invalid number '") + arg + "'" + NEWLINE);
                 return;
             }
         }
-        catch (...)
+        else if (!Emulator::ParseBlankDiskFormat(arg, format))
         {
-            session.SendResponse(std::string("Error: Invalid cylinders value") + NEWLINE);
+            session.SendResponse(std::string("Error: Unknown format '") + arg + "' (auto, unformatted, plus3)" + NEWLINE);
             return;
         }
     }
-
-    // Parse optional sides (default 2)
-    uint8_t sides = 2;
-    if (args.size() >= 4)
+    const int cylinders = numbers.size() > 0 ? numbers[0] : 0;
+    const int sides = numbers.size() > 1 ? numbers[1] : 0;
+    if (numbers.size() > 2 || cylinders < 0 || cylinders > 255 || sides < 0 || sides > 255)
     {
-        try
-        {
-            int s = std::stoi(args[3]);
-            if (s == 1 || s == 2)
-                sides = static_cast<uint8_t>(s);
-            else
-            {
-                session.SendResponse(std::string("Error: Sides must be 1 or 2") + NEWLINE);
-                return;
-            }
-        }
-        catch (...)
-        {
-            session.SendResponse(std::string("Error: Invalid sides value") + NEWLINE);
-            return;
-        }
-    }
-
-    // Validate context
-    if (!context || !context->coreState.diskDrives[drive])
-    {
-        session.SendResponse(std::string("Error: Drive not available") + NEWLINE);
+        session.SendResponse(std::string("Error: Cylinders must be 40 or 80, sides 1 or 2") + NEWLINE);
         return;
     }
 
-    // Create blank disk image
-    DiskImage* diskImage = new DiskImage(cylinders, sides);
-
-    // Insert into drive
-    FDD* fdd = context->coreState.diskDrives[drive];
-    fdd->insertDisk(diskImage);
-
-    // Update path tracking for API queries
-    context->coreState.diskFilePaths[drive] = "<blank>";
+    std::string createError;
+    Emulator::BlankDiskResult created;
+    if (!emulator || !emulator->CreateBlankDisk(drive, format, static_cast<uint8_t>(cylinders),
+                                                static_cast<uint8_t>(sides), &createError, &created))
+    {
+        session.SendResponse(std::string("Error: ") + (emulator ? createError : std::string("No emulator")) + NEWLINE);
+        return;
+    }
 
     std::stringstream ss;
     ss << "Created blank disk in drive " << static_cast<char>('A' + drive) << NEWLINE;
-    ss << "  Cylinders: " << (int)cylinders << NEWLINE;
-    ss << "  Sides: " << (int)sides << NEWLINE;
-    ss << "  Ready for TR-DOS FORMAT" << NEWLINE;
+    ss << "  Format: " << Emulator::BlankDiskFormatName(created.format) << NEWLINE;
+    ss << "  Cylinders: " << (int)created.cylinders << NEWLINE;
+    ss << "  Sides: " << (int)created.sides << NEWLINE;
+    ss << (created.format == Emulator::BlankDiskFormat::Plus3 ? "  Ready for +3DOS" : "  Ready for FORMAT") << NEWLINE;
     session.SendResponse(ss.str());
 }
 

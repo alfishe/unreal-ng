@@ -742,23 +742,18 @@ public:
             return result;
         });
 
-        lua.set_function("disk_create", [this](int drive, sol::optional<int> cyl, sol::optional<int> sides) -> bool {
+        // disk_create(drive [, cylinders [, sides [, format]]]): format auto (plus3 on a +3, unformatted
+        // elsewhere), unformatted or plus3; cylinders / sides 0 or left out = the format's geometry
+        lua.set_function("disk_create", [this](int drive, sol::optional<int> cyl, sol::optional<int> sides,
+                                               sol::optional<std::string> format) -> bool {
             if (!_emulator || drive < 0 || drive > 3) return false;
-            auto* ctx = _emulator->GetContext();
-            if (!ctx || !ctx->coreState.diskDrives[drive]) return false;
-            
-            uint8_t cylinders = cyl.value_or(80);
-            uint8_t numSides = sides.value_or(2);
-            
-            if (cylinders != 40 && cylinders != 80) return false;
-            if (numSides != 1 && numSides != 2) return false;
-            
-            DiskImage* diskImage = new DiskImage(cylinders, numSides);
-            FDD* fdd = ctx->coreState.diskDrives[drive];
-            fdd->insertDisk(diskImage);
-            ctx->coreState.diskFilePaths[drive] = "<blank>";
-            
-            return true;
+            Emulator::BlankDiskFormat parsed = Emulator::BlankDiskFormat::Auto;
+            if (!Emulator::ParseBlankDiskFormat(format.value_or("auto"), parsed)) return false;
+            const int cylinders = cyl.value_or(0);
+            const int numSides = sides.value_or(0);
+            if (cylinders < 0 || cylinders > 255 || numSides < 0 || numSides > 255) return false;
+            return _emulator->CreateBlankDisk(static_cast<uint8_t>(drive), parsed, static_cast<uint8_t>(cylinders),
+                                              static_cast<uint8_t>(numSides));
         });
 
         lua.set_function("disk_list", [this]() -> sol::table {

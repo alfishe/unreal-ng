@@ -566,6 +566,14 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
                                Tags(PortTag::Memory) | PortTag::Rom | PortTag::Screen, PagingLatch::P7FFD});
             entries.push_back({0x1FFD, 0xF002, 0x1000, "Disk motor/strobe + special paging", nullptr,
                                Tags(PortTag::Memory) | PortTag::Rom, PagingLatch::P1FFD});
+            // uPD765A (IsPort_2FFD / IsPort_3FFD): the +3 only, the +2A has no disk controller
+            if (model == MM_PLUS3)
+            {
+                entries.push_back({0x2FFD, 0xF002, 0x2000, "uPD765A main status register", nullptr,
+                                   Tags(PortTag::StorageFdc)});
+                entries.push_back({0x3FFD, 0xF002, 0x3000, "uPD765A data register", nullptr,
+                                   Tags(PortTag::StorageFdc)});
+            }
             break;
         case MM_PROFI:
             // IsPort_7FFD / IsPort_DFFD (PortDecoder_Profi): #7FFD = A15=0 & A1=0,

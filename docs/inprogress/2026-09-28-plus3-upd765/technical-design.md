@@ -1,6 +1,6 @@
 # ZX Spectrum +3 floppy controller (NEC uPD765A): technical design
 
-**Date:** 2026-09-28 · **Status:** phases 1-2 implemented, phases 3-4 open · **Tracks:** the +3 paging fix
+**Date:** 2026-09-28 · **Status:** phases 1-3 implemented, phase 4 open · **Tracks:** the +3 paging fix
 (`eabce7d0`) left the +3 without its disk controller: the menu reads "128 +2A" and no disk works.
 
 ## 1. Goal
@@ -210,6 +210,6 @@ main idle loop and gave up ("the editor is not waiting for a key"). The loops ar
 1. **Core controller** (done): ports, phases, MSR, SPECIFY, SDS, RECALIBRATE, SEEK, SIS, READ ID,
    READ / WRITE (DELETED) DATA, FORMAT, invalid; timing and overrun; drives A/B; TTD; unit tests.
 2. **ROM integration** (done): the +3 menu, CAT, SAVE/LOAD through the command typer.
-3. **Automation:** `state/fdc` and MCP `inspect_state` report the uPD765 on the +3; WebAPI
-   `disk/{drive}/create` with a `plus3` format.
+3. **Automation** (done): `state/fdc` and MCP `inspect_state` report the uPD765 on the +3; blank
+   disks (`plus3` format) from `Emulator::CreateBlankDisk` on every interface; `.dsk` loads end to end.
 4. **Protections:** READ TRACK, SCAN, N ≥ 4 sectors, the Spectral title lists as a sweep.

@@ -1612,6 +1612,91 @@ bool Emulator::LoadTape(const std::string& path)
     return result;
 }
 
+bool Emulator::ParseBlankDiskFormat(const std::string& text, BlankDiskFormat& format)
+{
+    const std::string name = StringHelper::ToLower(text);
+    if (name.empty() || name == "auto")
+        format = BlankDiskFormat::Auto;
+    else if (name == "unformatted" || name == "raw")
+        format = BlankDiskFormat::Unformatted;
+    else if (name == "plus3" || name == "+3" || name == "+3dos")
+        format = BlankDiskFormat::Plus3;
+    else
+        return false;
+    return true;
+}
+
+const char* Emulator::BlankDiskFormatName(BlankDiskFormat format)
+{
+    switch (format)
+    {
+        case BlankDiskFormat::Auto: return "auto";
+        case BlankDiskFormat::Unformatted: return "unformatted";
+        case BlankDiskFormat::Plus3: return "plus3";
+    }
+    return "?";
+}
+
+bool Emulator::CreateBlankDisk(uint8_t drive, BlankDiskFormat format, uint8_t cylinders, uint8_t sides,
+                               std::string* error, BlankDiskResult* resolved)
+{
+    auto fail = [&](const std::string& message) -> bool
+    {
+        if (error)
+            *error = message;
+        MLOGERROR("CreateBlankDisk: %s", message.c_str());
+        return false;
+    };
+
+    // Guard against operations during destruction (thread safety)
+    if (_state == StateDestroying || _isReleased)
+        return fail("emulator is being destroyed");
+
+    if (drive >= 4)
+        return fail("invalid drive index " + std::to_string(static_cast<int>(drive)) + " (valid range: 0-3 / A-D)");
+
+    if (!_context || !_context->coreState.diskDrives[drive])
+        return fail(std::string("drive ") + static_cast<char>('A' + drive) + " is not present on this machine");
+
+    if (format == BlankDiskFormat::Auto)
+        format = (_context->config.mem_model == MM_PLUS3) ? BlankDiskFormat::Plus3 : BlankDiskFormat::Unformatted;
+
+    const bool plus3 = (format == BlankDiskFormat::Plus3);
+    if (cylinders == 0)
+        cylinders = plus3 ? 40 : 80;
+    if (sides == 0)
+        sides = plus3 ? 1 : 2;
+    if (cylinders != 40 && cylinders != 80)
+        return fail("cylinders must be 40 or 80");
+    if (sides != 1 && sides != 2)
+        return fail("sides must be 1 or 2");
+
+    // TTD: a new medium changes what the FDC reads, like a disk swap
+    if (_context->pTimeTravelManager)
+        _context->pTimeTravelManager->InvalidateSession("disk-create");
+
+    DiskImage* image = plus3 ? new DiskImage(cylinders, sides, DiskImage::TrackFormatSpec::plus3())
+                             : new DiskImage(cylinders, sides);
+
+    // Owned like a loaded image: the drive's previous image goes
+    DiskImage* oldImage = _context->coreState.diskImages[drive];
+    _context->coreState.diskImages[drive] = image;
+    _context->coreState.diskDrives[drive]->insertDisk(image);
+    _context->coreState.diskFilePaths[drive] = "<blank>";
+    delete oldImage;
+
+    if (resolved)
+    {
+        resolved->format = format;
+        resolved->cylinders = cylinders;
+        resolved->sides = sides;
+    }
+
+    MLOGINFO("Blank %s disk (%d cylinders, %d sides) inserted into drive %c", BlankDiskFormatName(format),
+             int(cylinders), int(sides), static_cast<char>('A' + drive));
+    return true;
+}
+
 bool Emulator::LoadDisk(const std::string& path, uint8_t drive, std::string* error)
 {
     auto fail = [&](const std::string& message) -> bool

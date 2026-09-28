@@ -1400,59 +1400,53 @@ void EmulatorAPI::createDisk(const HttpRequestPtr& req,
         return;
     }
     
-    // Parse optional parameters from JSON body
-    uint8_t cylinders = 80;
-    uint8_t sides = 2;
-    
+    // Optional body: format ("auto" / "unformatted" / "plus3"), cylinders (40 / 80), sides (1 / 2).
+    // Left out, they take the format's defaults; auto is plus3 on a +3, unformatted elsewhere
+    Emulator::BlankDiskFormat format = Emulator::BlankDiskFormat::Auto;
+    int cylinders = 0;
+    int sides = 0;
     auto json = req->getJsonObject();
-    if (json) {
-        if (json->isMember("cylinders")) {
-            int c = (*json)["cylinders"].asInt();
-            if (c == 40 || c == 80) {
-                cylinders = static_cast<uint8_t>(c);
-            } else {
-                Json::Value error;
-                error["error"] = "Bad Request";
-                error["message"] = "cylinders must be 40 or 80";
-                auto resp = HttpResponse::newHttpJsonResponse(error);
-                resp->setStatusCode(HttpStatusCode::k400BadRequest);
-                addCorsHeaders(resp);
-                callback(resp);
-                return;
-            }
+    if (json)
+    {
+        if (json->isMember("format") && !Emulator::ParseBlankDiskFormat((*json)["format"].asString(), format))
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "format must be auto, unformatted or plus3";
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
         }
-        if (json->isMember("sides")) {
-            int s = (*json)["sides"].asInt();
-            if (s == 1 || s == 2) {
-                sides = static_cast<uint8_t>(s);
-            } else {
-                Json::Value error;
-                error["error"] = "Bad Request";
-                error["message"] = "sides must be 1 or 2";
-                auto resp = HttpResponse::newHttpJsonResponse(error);
-                resp->setStatusCode(HttpStatusCode::k400BadRequest);
-                addCorsHeaders(resp);
-                callback(resp);
-                return;
-            }
-        }
+        if (json->isMember("cylinders"))
+            cylinders = (*json)["cylinders"].asInt();
+        if (json->isMember("sides"))
+            sides = (*json)["sides"].asInt();
     }
-    
-    // Create blank disk image
-    DiskImage* diskImage = new DiskImage(cylinders, sides);
-    
-    // Insert into drive
-    FDD* fdd = context->coreState.diskDrives[driveNum];
-    fdd->insertDisk(diskImage);
-    
-    // Update path tracking for API queries
-    context->coreState.diskFilePaths[driveNum] = "<blank>";
-    
+
+    std::string createError;
+    Emulator::BlankDiskResult created;
+    const bool geometryInRange = cylinders >= 0 && cylinders <= 255 && sides >= 0 && sides <= 255;
+    if (!geometryInRange || !emulator->CreateBlankDisk(driveNum, format, static_cast<uint8_t>(cylinders),
+                                                       static_cast<uint8_t>(sides), &createError, &created))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = geometryInRange ? createError : "cylinders must be 40 or 80, sides 1 or 2";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
     Json::Value ret;
     ret["success"] = true;
     ret["drive"] = drive;
-    ret["cylinders"] = cylinders;
-    ret["sides"] = sides;
+    ret["format"] = Emulator::BlankDiskFormatName(created.format);
+    ret["cylinders"] = created.cylinders;
+    ret["sides"] = created.sides;
     ret["message"] = "Blank disk created and inserted";
     
     auto resp = HttpResponse::newHttpJsonResponse(ret);

@@ -1057,7 +1057,7 @@ void RegisterInspectState(ToolRegistry& registry)
                         }
                         else if (aspect == "fdc")
                         {
-                            // Core DeviceState::Fdc via the WebAPI; 404 = no Beta Disk on this machine
+                            // Core DeviceState::Fdc via the WebAPI (WD1793, or the uPD765A on a +3); 404 = no disk controller
                             steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", Endpoint(id, "/state/fdc"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
@@ -1234,6 +1234,25 @@ void RegisterInspectState(ToolRegistry& registry)
                             {
                                 if (value.isMember("available") && !value["available"].asBool())
                                     out << "\n[fdc] " << value["description"].asString();
+                                else if (value.isMember("phase"))
+                                {
+                                    // +3 uPD765A
+                                    const Json::Value& cmd = value["command"];
+                                    out << "\n[fdc] " << value["controller"].asString() << ": " << value["phase"].asString()
+                                        << " phase, last " << cmd["name"].asString();
+                                    if (cmd.isMember("r"))
+                                        out << " C" << cmd["c"].asInt() << " H" << cmd["h"].asInt() << " R" << cmd["r"].asInt()
+                                            << " N" << cmd["n"].asInt();
+                                    out << ", MSR " << value["main_status"]["value"].asUInt() << ", ST0 "
+                                        << value["status"]["st0"].asUInt() << " (" << value["status"]["interrupt_code"].asString()
+                                        << ")" << (value["motor_on"].asBool() ? ", motor on" : ", motor off");
+                                    const Json::Value& drives = value["drives"];
+                                    for (Json::ArrayIndex i = 0; i < drives.size(); ++i)
+                                        if (drives[i]["present"].asBool() && drives[i]["inserted"].asBool())
+                                            out << "\n  " << drives[i]["letter"].asString() << ": " << drives[i]["path"].asString()
+                                                << " track " << drives[i]["track"].asInt()
+                                                << (drives[i]["write_protected"].asBool() ? " wp" : "");
+                                }
                                 else
                                 {
                                     out << "\n[fdc] " << value["fsm_state"].asString() << ", last " << value["last_command"].asString()

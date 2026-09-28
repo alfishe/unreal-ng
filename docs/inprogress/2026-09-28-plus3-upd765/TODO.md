@@ -1,6 +1,6 @@
 # TODO — ZX Spectrum +3 floppy controller (uPD765A)
 
-**Status:** phases 1-2 done (2026-09-28); phases 3-4 open. PLAN.md row #57.
+**Status:** phases 1-3 done (2026-09-28); phase 4 open. PLAN.md row #57.
 Design: [technical-design.md](technical-design.md).
 
 ## Done
@@ -15,11 +15,16 @@ Design: [technical-design.md](technical-design.md).
 - New models `PLUS2` (grey +2: 128K hardware, `plus2.rom`, its editor in input verification §4.2a) and
   `PLUS2A` (the +3 without the uPD765: menu "128 +2A", "Drive M: available"); all three in the
   unreal-qt Machine menu.
+- **Phase 3, automation:** `DeviceState::Fdc` reports the uPD765A on the +3 (phase, main status, the
+  command in hand with C H R N, ST0-ST2, SPECIFY times, units, drives A/B), so WebAPI `state/fdc`,
+  MCP `inspect_state` `fdc`, CLI, Lua and Python all show it; `UPD765::getSnapshot()` reads without
+  running deadlines. Blank disks come from one core call, `Emulator::CreateBlankDisk` (format `auto`
+  / `unformatted` / `plus3`, owned like a loaded image): the four copies in WebAPI, CLI, Lua and
+  Python each leaked the image and knew only an unformatted disk. `.dsk` through `LoadDisk` reads on
+  the real ROM (CAT test). The port trace names `#2FFD` / `#3FFD` (+3 only). Recipe:
+  `/.recipe/media/insert-disk.md` (+3 section).
 
 ## Remaining (value order)
-1. **Phase 3, automation:** `state/fdc` and MCP `inspect_state` report the uPD765 on the +3 (today
-   they describe the WD1793); `disk/{drive}/create` with a `plus3` format; `.dsk` in `LoadDisk` on
-   the +3 checked end to end; a recipe in `/.recipe/media/`.
-2. **Phase 4, protections:** READ TRACK and SCAN (they take their parameters and answer IC=01 + MA
+1. **Phase 4, protections:** READ TRACK and SCAN (they take their parameters and answer IC=01 + MA
    today), N >= 4 sectors (Speedlock +3; the model stores `128 << (N & 3)`), a sweep over the
    protected-title lists from the reference emulators.

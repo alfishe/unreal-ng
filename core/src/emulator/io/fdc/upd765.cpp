@@ -81,6 +81,81 @@ void UPD765::process()
 
 /// endregion </Methods>
 
+/// region <State report>
+
+UPD765::Snapshot UPD765::getSnapshot() const
+{
+    Snapshot snapshot;
+    snapshot.phase = _phase;
+    snapshot.state = _state;
+
+    // The main status register as the CPU reads it, without running deadlines
+    uint8_t msr = 0;
+    for (uint8_t unitNumber = 0; unitNumber < UNITS; unitNumber++)
+    {
+        if (_units[unitNumber].seekBusy)
+            msr |= static_cast<uint8_t>(MSR_D0B << unitNumber);
+    }
+    if (_phase == PHASE_COMMAND)
+        msr |= static_cast<uint8_t>(MSR_RQM | (_commandLength != 0 ? MSR_CB : 0));
+    else if (_phase == PHASE_EXECUTION)
+        msr |= static_cast<uint8_t>(MSR_CB | MSR_EXM | (_dataReady ? (MSR_RQM | MSR_DIO) : 0) | (_dataRequested ? MSR_RQM : 0));
+    else
+        msr |= MSR_RQM | MSR_DIO | MSR_CB;
+    snapshot.mainStatus = msr;
+
+    std::memcpy(snapshot.command, _command, sizeof(snapshot.command));
+    if (_commandLength != 0)
+    {
+        snapshot.commandBytes = _commandPos;
+        snapshot.commandLength = _commandLength;
+    }
+    else
+    {
+        // Between commands the bytes of the last one stay: report them whole
+        snapshot.commandLength = commandLengthFor(_command[0] & 0x1F);
+        snapshot.commandBytes = snapshot.commandLength;
+    }
+
+    std::memcpy(snapshot.result, _result, sizeof(snapshot.result));
+    snapshot.resultLength = _resultLength;
+    snapshot.resultPos = _resultPos;
+    snapshot.st0 = _st0;
+    snapshot.st1 = _st1;
+    snapshot.st2 = _st2;
+    snapshot.stepRateTime = _stepRateTime;
+    snapshot.headLoadTime = _headLoadTime;
+    snapshot.motorOn = _motorOn;
+    for (size_t i = 0; i < UNITS; i++)
+        snapshot.units[i] = _units[i];
+    return snapshot;
+}
+
+const char* UPD765::commandName(uint8_t commandByte)
+{
+    switch (commandByte & 0x1F)
+    {
+        case CMD_READ_TRACK: return "read_track";
+        case CMD_SPECIFY: return "specify";
+        case CMD_SENSE_DRIVE_STATUS: return "sense_drive_status";
+        case CMD_WRITE_DATA: return "write_data";
+        case CMD_READ_DATA: return "read_data";
+        case CMD_RECALIBRATE: return "recalibrate";
+        case CMD_SENSE_INTERRUPT_STATUS: return "sense_interrupt_status";
+        case CMD_WRITE_DELETED_DATA: return "write_deleted_data";
+        case CMD_READ_ID: return "read_id";
+        case CMD_READ_DELETED_DATA: return "read_deleted_data";
+        case CMD_FORMAT_TRACK: return "format_track";
+        case CMD_SEEK: return "seek";
+        case 0x11: return "scan_equal";
+        case 0x19: return "scan_low_or_equal";
+        case 0x1D: return "scan_high_or_equal";
+        default: return "invalid";
+    }
+}
+
+/// endregion </State report>
+
 /// region <Ports>
 
 uint8_t UPD765::readMainStatus()

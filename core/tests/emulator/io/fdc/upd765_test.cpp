@@ -10,7 +10,7 @@
 #include "emulator/io/fdc/diskimage.h"
 #include "debugger/analyzers/basic-lang/commandtyper.h"
 #include "emulator/io/fdc/fdd.h"
-#include "loaders/disk/loader_dsk.h"
+#include "_helpers/testpathhelper.h"
 
 /// uPD765A (+3 floppy controller) driven directly: the test owns the clock (UPD765CUT) and jumps it from
 /// deadline to deadline, so a whole-track transfer takes a few thousand loop iterations and no emulated frames.
@@ -715,10 +715,10 @@ protected:
         BootEditor("Plus3-3BASIC");
         ASSERT_FALSE(HasFatalFailure());
 
-        // Mounted the way Emulator::LoadDisk does: the emulator owns and frees the image
-        DiskImage* disk = LoaderDSK::createBlankPlus3Image();
-        _context->coreState.diskImages[0] = disk;
-        _context->coreState.diskDrives[0]->insertDisk(disk);
+        // The automation path (WebAPI / CLI / Lua / Python disk create): a formatted +3DOS disk on a +3
+        Emulator::BlankDiskResult created;
+        ASSERT_TRUE(_emulator->CreateBlankDisk(0, Emulator::BlankDiskFormat::Auto, 0, 0, nullptr, &created));
+        ASSERT_EQ(created.format, Emulator::BlankDiskFormat::Plus3);
 
         _typer = _context->pDebugManager->GetCommandTyper();
         ASSERT_NE(_typer, nullptr);
@@ -768,6 +768,29 @@ TEST_F(UPD765Rom_Test, CatOfABlankDisk)
 {
     Ready();
     ASSERT_FALSE(HasFatalFailure());
+
+    const CommandTyper::Result cat = Run("CAT");
+    EXPECT_EQ(cat.outcome, CommandTyper::Outcome::Finished) << Describe(cat) << "\n" << Screen();
+    EXPECT_EQ(cat.errNr, 0xFF) << Describe(cat) << "\n" << Screen();
+    EXPECT_TRUE(ScreenHas("K free")) << Screen();
+}
+
+/// A .dsk image through Emulator::LoadDisk (what the UI, WebAPI and MCP load) reads on the real ROM
+TEST_F(UPD765Rom_Test, DskImageLoadsAndCats)
+{
+    Boot("PLUS3", RM_128, "48 BASIC");
+    ASSERT_FALSE(HasFatalFailure());
+    Enter128Editor("+3 BASIC");
+    ASSERT_FALSE(HasFatalFailure());
+    TapUntilTaken(ZXKEY_0, '0');
+    ASSERT_FALSE(HasFatalFailure());
+
+    std::string error;
+    ASSERT_TRUE(_emulator->LoadDisk(TestPathHelper::GetTestDataPath("loaders/dsk/plus3-blank.dsk"), 0, &error))
+        << error;
+    _typer = _context->pDebugManager->GetCommandTyper();
+    ASSERT_NE(_typer, nullptr);
+    Run("", false);
 
     const CommandTyper::Result cat = Run("CAT");
     EXPECT_EQ(cat.outcome, CommandTyper::Outcome::Finished) << Describe(cat) << "\n" << Screen();

@@ -615,17 +615,14 @@ namespace PythonBindings
                 ctx->coreState.diskFilePaths[drive] = "";
                 return true;
             }, "Eject disk from drive")
-            .def("disk_create", [](Emulator& self, int drive, int cylinders, int sides) -> bool {
-                if (drive < 0 || drive > 3) return false;
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->coreState.diskDrives[drive]) return false;
-                if (cylinders != 40 && cylinders != 80) return false;
-                if (sides != 1 && sides != 2) return false;
-                DiskImage* diskImage = new DiskImage(cylinders, sides);
-                ctx->coreState.diskDrives[drive]->insertDisk(diskImage);
-                ctx->coreState.diskFilePaths[drive] = "<blank>";
-                return true;
-            }, "Create blank disk", py::arg("drive"), py::arg("cylinders") = 80, py::arg("sides") = 2)
+            .def("disk_create", [](Emulator& self, int drive, int cylinders, int sides, const std::string& format) -> bool {
+                Emulator::BlankDiskFormat parsed = Emulator::BlankDiskFormat::Auto;
+                if (drive < 0 || drive > 3 || !Emulator::ParseBlankDiskFormat(format, parsed)) return false;
+                if (cylinders < 0 || cylinders > 255 || sides < 0 || sides > 255) return false;
+                return self.CreateBlankDisk(static_cast<uint8_t>(drive), parsed, static_cast<uint8_t>(cylinders),
+                                            static_cast<uint8_t>(sides));
+            }, "Create blank disk (format: auto = plus3 on a +3, unformatted elsewhere; 0 = the format's geometry)",
+               py::arg("drive"), py::arg("cylinders") = 0, py::arg("sides") = 0, py::arg("format") = "auto")
             .def("disk_load", [](Emulator& self, const std::string& path, int drive, bool autostart) -> py::dict {
                 py::dict result;
                 if (drive < 0 || drive > 3)

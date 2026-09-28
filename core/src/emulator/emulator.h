@@ -250,6 +250,33 @@ public:
     ///               must pass the drive the caller actually asked for.
     bool LoadDisk(const std::string& path, uint8_t drive = 0, std::string* error = nullptr);
 
+    /// Layout of a blank disk from CreateBlankDisk()
+    enum class BlankDiskFormat
+    {
+        Auto,         ///< Plus3 on a +3 (its own controller), Unformatted elsewhere
+        Unformatted,  ///< No sectors: for the machine's own FORMAT command (TR-DOS, +3DOS)
+        Plus3,        ///< +3DOS: 9 x 512-byte sectors per track, formatted (filler #E5)
+    };
+
+    /// Parse "auto" / "unformatted" / "plus3" (case-insensitive); false for anything else
+    static bool ParseBlankDiskFormat(const std::string& text, BlankDiskFormat& format);
+    static const char* BlankDiskFormatName(BlankDiskFormat format);
+
+    /// Create a blank disk and insert it into `drive`, owned like a loaded image (the previous image of
+    /// the drive is released). The drive's path reads "<blank>" until the disk is saved.
+    /// @param cylinders 40 or 80; 0 = the format's default (Unformatted 80, Plus3 40)
+    /// @param sides 1 or 2; 0 = the format's default (Unformatted 2, Plus3 1)
+    /// @param error When non-null and the call fails, receives a human-readable reason
+    /// @param resolved When non-null, receives the format and geometry actually used
+    struct BlankDiskResult
+    {
+        BlankDiskFormat format = BlankDiskFormat::Unformatted;
+        uint8_t cylinders = 0;
+        uint8_t sides = 0;
+    };
+    bool CreateBlankDisk(uint8_t drive, BlankDiskFormat format = BlankDiskFormat::Auto, uint8_t cylinders = 0,
+                         uint8_t sides = 0, std::string* error = nullptr, BlankDiskResult* resolved = nullptr);
+
     /// Outcome of AutostartDisk()
     struct DiskAutostartResult
     {

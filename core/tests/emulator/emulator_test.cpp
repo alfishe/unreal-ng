@@ -6,6 +6,8 @@
 #include "common/modulelogger.h"
 #include "common/timehelper.h"
 #include "emulator/emulator.h"
+#include "emulator/io/fdc/diskimage.h"
+#include "emulator/io/fdc/fdd.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/mainloop.h"
 #include "common/filehelper.h"
@@ -500,3 +502,71 @@ TEST(Emulator_RealtimeScheduling_Test, SelectionDrivesRealtimeFlags)
 
 /// endregion </Realtime scheduling propagation tests>
 
+
+/// region <Blank disks>
+
+/// CreateBlankDisk: the format follows the machine unless asked (+3DOS on a +3, unformatted for the
+/// machine's own FORMAT elsewhere), the image is owned like a loaded one and a second disk replaces it
+TEST(Emulator_BlankDisk_Test, FormatFollowsTheMachine)
+{
+    Emulator* plus3 = EmulatorTestHelper::CreateStandardEmulator("PLUS3", LoggerLevel::LogError);
+    ASSERT_NE(plus3, nullptr);
+    EmulatorContext* context = plus3->GetContext();
+
+    Emulator::BlankDiskResult created;
+    ASSERT_TRUE(plus3->CreateBlankDisk(0, Emulator::BlankDiskFormat::Auto, 0, 0, nullptr, &created));
+    EXPECT_EQ(created.format, Emulator::BlankDiskFormat::Plus3);
+    EXPECT_EQ(created.cylinders, 40);
+    EXPECT_EQ(created.sides, 1);
+
+    DiskImage* image = context->coreState.diskImages[0];
+    ASSERT_NE(image, nullptr) << "owned by the core like a loaded image";
+    EXPECT_EQ(context->coreState.diskDrives[0]->getDiskImage(), image);
+    EXPECT_EQ(context->coreState.diskFilePaths[0], "<blank>");
+    DiskImage::Track* track = image->getTrackForCylinderAndSide(39, 0);
+    ASSERT_NE(track, nullptr);
+    ASSERT_EQ(track->sectorCount(), 9u) << "+3DOS: 9 sectors per track";
+    EXPECT_EQ(track->sectors()[0].dataSize, 512);
+    EXPECT_EQ(track->sectors()[0].data[0], 0xE5);
+
+    // A second disk replaces the first (the first image is released)
+    ASSERT_TRUE(plus3->CreateBlankDisk(0, Emulator::BlankDiskFormat::Unformatted, 80, 2, nullptr, &created));
+    EXPECT_EQ(created.format, Emulator::BlankDiskFormat::Unformatted);
+    EXPECT_NE(context->coreState.diskImages[0], nullptr);
+    EXPECT_EQ(context->coreState.diskImages[0]->getCylinders(), 80);
+    EmulatorTestHelper::CleanupEmulator(plus3);
+
+    Emulator* pentagon = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(pentagon, nullptr);
+    ASSERT_TRUE(pentagon->CreateBlankDisk(1, Emulator::BlankDiskFormat::Auto, 0, 0, nullptr, &created));
+    EXPECT_EQ(created.format, Emulator::BlankDiskFormat::Unformatted);
+    EXPECT_EQ(created.cylinders, 80);
+    EXPECT_EQ(created.sides, 2);
+    EmulatorTestHelper::CleanupEmulator(pentagon);
+}
+
+TEST(Emulator_BlankDisk_Test, RefusesWhatNoDriveTakes)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+
+    std::string error;
+    EXPECT_FALSE(emulator->CreateBlankDisk(4, Emulator::BlankDiskFormat::Auto, 0, 0, &error));
+    EXPECT_NE(error.find("invalid drive"), std::string::npos) << error;
+    EXPECT_FALSE(emulator->CreateBlankDisk(0, Emulator::BlankDiskFormat::Unformatted, 42, 0, &error));
+    EXPECT_NE(error.find("cylinders"), std::string::npos) << error;
+    EXPECT_FALSE(emulator->CreateBlankDisk(0, Emulator::BlankDiskFormat::Plus3, 40, 3, &error));
+    EXPECT_NE(error.find("sides"), std::string::npos) << error;
+    EXPECT_EQ(emulator->GetContext()->coreState.diskImages[0], nullptr) << "nothing inserted on a refusal";
+
+    Emulator::BlankDiskFormat format = Emulator::BlankDiskFormat::Auto;
+    EXPECT_TRUE(Emulator::ParseBlankDiskFormat("PLUS3", format));
+    EXPECT_EQ(format, Emulator::BlankDiskFormat::Plus3);
+    EXPECT_TRUE(Emulator::ParseBlankDiskFormat("unformatted", format));
+    EXPECT_EQ(format, Emulator::BlankDiskFormat::Unformatted);
+    EXPECT_FALSE(Emulator::ParseBlankDiskFormat("trdos", format));
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// endregion </Blank disks>
