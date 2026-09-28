@@ -451,6 +451,63 @@ void EmulatorAPI::invalidateTTD(const HttpRequestPtr& req,
 ///     "halt_reason": "target" | "external_event" | "out_of_range",
 ///     "blocking_marker": { ... }  // present only if halt_reason == external_event
 ///   }
+/// @brief POST /api/v1/emulator/{id}/ttd/export-clip
+/// Body: {"from": frame, "to": frame, "path": "/abs/dir", "chunk": 500 (optional)}.
+/// Writes the range as a lossless clip (final picture, plane B when the zxdlss
+/// feature is on, frame meta) inside the core - one call instead of a seek and a
+/// capture per frame. Synchronous; the emulator is paused for the duration.
+void EmulatorAPI::exportClipTTD(const HttpRequestPtr& req,
+                                std::function<void(const HttpResponsePtr&)>&& callback,
+                                const std::string& id) const
+{
+    std::shared_ptr<Emulator> emulator;
+    auto* mgr = resolveTTD(id, callback, /*requireManager=*/true, &emulator);
+    if (!mgr) return;
+    if (rejectIfRecording(mgr, callback)) return;
+
+    auto jsonBody = req->getJsonObject();
+    if (!jsonBody || !jsonBody->isMember("from") || !jsonBody->isMember("to") || !jsonBody->isMember("path"))
+    {
+        Json::Value error;
+        error["error"]   = "Bad Request";
+        error["message"] = "Required fields: from, to, path (absolute directory)";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    ttd::TimeTravelManager::TTDClipExportOptions options;
+    options.fromFrame = (*jsonBody)["from"].asUInt64();
+    options.toFrame = (*jsonBody)["to"].asUInt64();
+    options.directory = (*jsonBody)["path"].asString();
+    if (jsonBody->isMember("chunk"))
+        options.chunkFrames = (*jsonBody)["chunk"].asUInt();
+
+    PauseAndConfirm(emulator);
+    const auto result = mgr->ExportClip(options);
+    if (emulator)
+        NotifyFrameRefresh(*emulator);
+
+    Json::Value ret;
+    ret["ok"] = result.ok;
+    ret["frames"] = Json::UInt64(result.frames);
+    ret["bytes"] = Json::UInt64(result.bytesWritten);
+    ret["planeb"] = result.planeB;
+    ret["width"] = result.width;
+    ret["height"] = result.height;
+    ret["seconds"] = result.seconds;
+    ret["path"] = options.directory;
+    if (!result.ok)
+        ret["error"] = result.error;
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    if (!result.ok)
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
 void EmulatorAPI::seekTTD(const HttpRequestPtr& req,
                            std::function<void(const HttpResponsePtr&)>&& callback,
                            const std::string& id) const

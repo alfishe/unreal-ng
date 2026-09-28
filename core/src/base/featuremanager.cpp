@@ -431,6 +431,13 @@ void FeatureManager::setDefaults()
                      "",
                      {Features::kStateOff, Features::kStateOn},
                      Features::kCategoryDebug});
+    registerFeature({Features::kZXDLSS,
+                     Features::kZXDLSSAlias,
+                     Features::kZXDLSSDesc,
+                     false,  // OFF by default - analysis data, costs render time when on
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryAnalysis});
     registerFeature({Features::kFastTape,
                      Features::kFastTapeAlias,
                      Features::kFastTapeDesc,

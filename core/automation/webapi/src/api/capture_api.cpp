@@ -6,6 +6,8 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <debugger/analyzers/rom-print/screenocr.h>
+#include <emulator/emulatorcontext.h>
+#include <emulator/video/screen.h>
 #include <emulator/video/screencapture.h>
 #include <json/json.h>
 
@@ -91,6 +93,46 @@ void EmulatorAPI::captureOcr(const HttpRequestPtr& req, std::function<void(const
     ret["text"] = screenText;
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief GET /api/v1/emulator/:id/capture/planeb
+/// @brief ZX DLSS plane B of the current frame as raw binary (application/octet-stream):
+/// width x height little-endian uint16, same layout as the full framebuffer; encoding in
+/// Screen::kPlaneB* (bits 0-7 attribute, 8-11 color index, 12 ink, 13-14 role).
+/// Geometry in X-PlaneB-Width / X-PlaneB-Height. 409 while the zxdlss feature is off.
+void EmulatorAPI::capturePlaneB(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                const std::string& id) const
+{
+    (void)req;
+    auto emulator = EmulatorManager::GetInstance()->GetEmulator(id);
+    auto fail = [&callback](HttpStatusCode code, const std::string& error, const std::string& message) {
+        Json::Value body;
+        body["error"] = error;
+        body["message"] = message;
+        auto resp = HttpResponse::newHttpJsonResponse(body);
+        resp->setStatusCode(code);
+        addCorsHeaders(resp);
+        callback(resp);
+    };
+    if (!emulator)
+        return fail(HttpStatusCode::k404NotFound, "Not Found", "Emulator not found");
+
+    EmulatorContext* context = emulator->GetContext();
+    Screen* screen = context ? context->pScreen : nullptr;
+    size_t count = 0;
+    const uint16_t* planeB = screen ? screen->GetPlaneB(&count) : nullptr;
+    if (!planeB)
+        return fail(HttpStatusCode::k409Conflict, "Conflict", "Plane B is off - enable the 'zxdlss' feature");
+
+    const FramebufferDescriptor& fb = screen->GetFramebufferDescriptor();
+    auto resp = HttpResponse::newHttpResponse();
+    resp->setContentTypeCode(CT_APPLICATION_OCTET_STREAM);
+    resp->setBody(std::string(reinterpret_cast<const char*>(planeB), count * sizeof(uint16_t)));
+    resp->addHeader("X-PlaneB-Width", std::to_string(fb.width));
+    resp->addHeader("X-PlaneB-Height", std::to_string(fb.height));
+    resp->addHeader("X-PlaneB-Format", "u16le: attr[0:7] color[8:11] ink[12] role[13:14] (1 screen, 2 border)");
     addCorsHeaders(resp);
     callback(resp);
 }

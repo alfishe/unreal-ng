@@ -61,6 +61,11 @@ protected:
     uint32_t _rgbaColors[256];       // Colors when no Flash or Flash is in blinking=OFF state
     uint32_t _rgbaFlashColors[256];  // Colors when Flash is in blinking=ON state
 
+    // Plane B values per attribute byte (ZX DLSS): the same ink/paper choice as
+    // _rgbaColors/_rgbaFlashColors, encoded as Screen::kPlaneB* describes
+    uint16_t _planeBInk[256];
+    uint16_t _planeBPaper[256];
+
     RenderTypeEnum _screenLineRenderers[MAX_HEIGHT];  // Cached render types for each line in the screen area (HBlank, HSync,
                                                      // Left Border, Screen, Right Border)
 
@@ -110,6 +115,9 @@ protected:
     void SelectRangeRenderer();
     void DrawRangeNull(uint32_t fromTstate, uint32_t toTstate);
     void DrawRangeZX(uint32_t fromTstate, uint32_t toTstate);
+    void DrawRangeZXPlaneB(uint32_t fromTstate, uint32_t toTstate);
+    template <bool PlaneB>
+    void DrawRangeZXImpl(uint32_t fromTstate, uint32_t toTstate);
     void DrawRangeAlco(uint32_t fromTstate, uint32_t toTstate);
     void DrawRangeAtm(uint32_t fromTstate, uint32_t toTstate);
     void DrawRangeProfi(uint32_t fromTstate, uint32_t toTstate);
@@ -141,6 +149,10 @@ public:
     void SetVideoMode(VideoModeEnum mode) override;
 
     void SetBorderColor(uint8_t color) override;
+
+    /// @brief ZX DLSS plane B on/off: also swaps the ZX range renderer for its
+    /// plane-B variant (no per-pixel check on the disabled path)
+    void SetPlaneBEnabled(bool enabled) override;
 
     void UpdateScreen() override;
 
@@ -235,6 +247,7 @@ public:
     ScreenZXCUT(EmulatorContext* context) : ScreenZX(context) {};
 
 public:
+    using ScreenZX::_borderColor;
     using ScreenZX::_framebuffer;
     using ScreenZX::_mode;
     using ScreenZX::_rasterState;

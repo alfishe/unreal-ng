@@ -738,7 +738,36 @@ void Screen::UpdateFeatureCache()
     {
         _feature_screenhq_enabled = _context->pFeatureManager->isEnabled(Features::kScreenHQ);
         _feature_hud_enabled = _context->pFeatureManager->isEnabled(Features::kHud);
+        const bool dlss = _context->pFeatureManager->isEnabled(Features::kZXDLSS);
+        if (dlss != _planeBEnabled)
+            SetPlaneBEnabled(dlss);
     }
+}
+
+void Screen::SetPlaneBEnabled(bool enabled)
+{
+    _planeBEnabled = enabled;
+    ResizePlaneB();
+}
+
+void Screen::ResizePlaneB()
+{
+    if (_planeBEnabled)
+    {
+        _planeB.assign(static_cast<size_t>(_framebuffer.width) * _framebuffer.height, 0);
+    }
+    else
+    {
+        _planeB.clear();
+        _planeB.shrink_to_fit();
+    }
+}
+
+uint16_t* Screen::GetPlaneB(size_t* count)
+{
+    if (count)
+        *count = _planeBEnabled ? _planeB.size() : 0;
+    return _planeBEnabled && !_planeB.empty() ? _planeB.data() : nullptr;
 }
 
 void Screen::RefreshMemoryPointers()
@@ -875,6 +904,9 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
 
         // Clear the whole framebuffer (opaque black - see ClearFramebufferOpaque)
         ClearFramebufferOpaque(_framebuffer.memoryBuffer, _framebuffer.memoryBufferSize);
+
+        // Plane B follows the framebuffer geometry
+        ResizePlaneB();
 
         // Allocate the matching presentation (latched) buffer.
         // _presentBufferSize is the authoritative size for cross-thread readers

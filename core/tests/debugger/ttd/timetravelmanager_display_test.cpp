@@ -16,6 +16,7 @@
 
 #include <cstdint>
 #include <map>
+#include <set>
 #include <vector>
 
 #include "base/featuremanager.h"
@@ -54,6 +55,7 @@ protected:
         FeatureManager* fm = _emulator->GetFeatureManager();
         fm->setFeature(Features::kDebugMode, true);
         fm->setFeature(Features::kTimeTravel, true);
+        fm->setFeature(Features::kScreenHQ, true);  // per-T rendering: border stripes exist at all
         _memory->UpdateFeatureCache();
 
         // Border stripe generator at 0x8000:
@@ -210,6 +212,38 @@ TEST_F(TTD_Display_Test, FrameCacheBuild_DoesNotChangeDisplay)
     EXPECT_EQ(Framebuffer(), before) << "a search/cache build repainted the display";
     EXPECT_EQ(_ttd->CurrentPosition().frame, posBefore.frame);
     EXPECT_EQ(_ttd->CurrentPosition().tInFrame, posBefore.tInFrame);
+}
+
+TEST_F(TTD_Display_Test, SeekByFrame_PlaneBMatchesLive)
+{
+    _emulator->GetFeatureManager()->setFeature(Features::kZXDLSS, true);
+    ASSERT_TRUE(_screen->IsPlaneBEnabled());
+
+    auto planeB = [this]() {
+        size_t count = 0;
+        const uint16_t* p = _screen->GetPlaneB(&count);
+        return std::vector<uint16_t>(p, p + count);
+    };
+    std::map<uint64_t, std::vector<uint16_t>> live;
+    ASSERT_TRUE(_ttd->StartRecording());
+    for (int i = 0; i < 8; ++i)
+    {
+        _emulator->RunNFrames(1, /*skipBreakpoints=*/true);
+        live[_context->emulatorState.frame_counter - 1] = planeB();
+    }
+    _ttd->StopRecording();
+
+    for (uint64_t f = live.begin()->first + 1; f < live.rbegin()->first; ++f)
+    {
+        ASSERT_TRUE(_ttd->SeekTo({f, 0}));
+        const auto shown = planeB();
+        std::set<uint16_t> borderColors;
+        for (uint16_t v : shown)
+            if ((v & Screen::kPlaneBRoleMask) == Screen::kPlaneBRoleBorder)
+                borderColors.insert((v >> 8) & 0xF);
+        EXPECT_GT(borderColors.size(), 1u) << "frame " << f << ": plane B lost the border stripes";
+        EXPECT_EQ(shown, live.at(f)) << "frame " << f << ": plane B differs from the live frame";
+    }
 }
 
 TEST_F(TTD_Display_Test, SeekByFrame_IndependentOfPreviousPixels)

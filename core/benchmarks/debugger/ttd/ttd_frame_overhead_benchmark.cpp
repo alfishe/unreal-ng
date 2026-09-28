@@ -186,6 +186,30 @@ BENCHMARK_REGISTER_F(FrameBenchmarkFixture, BM_Frame_NoTTD)
     ->Iterations(1000)
     ->Unit(benchmark::kMicrosecond);
 
+/// Full frame, TTD off, ZX DLSS plane B recorded by the renderer - the cost of
+/// the zxdlss feature against BM_Frame_NoTTD
+BENCHMARK_DEFINE_F(FrameBenchmarkFixture, BM_Frame_NoTTD_PlaneB)(benchmark::State& state)
+{
+    if (!mainloop)
+    {
+        state.SkipWithError("MainLoop not initialized");
+        return;
+    }
+
+    DisableTTD();
+    fm->setFeature(Features::kZXDLSS, true);
+
+    for (auto _ : state)
+    {
+        mainloop->RunFramePublic();
+    }
+
+    state.SetItemsProcessed(state.iterations());
+}
+BENCHMARK_REGISTER_F(FrameBenchmarkFixture, BM_Frame_NoTTD_PlaneB)
+    ->Iterations(1000)
+    ->Unit(benchmark::kMicrosecond);
+
 /// Second baseline: debug memory path only, no TTD. The gap to BM_Frame_NoTTD is
 /// the price of kDebugMode; the gap from here to BM_Frame_TTD_Gaming is what TTD
 /// itself adds on top (dirty-page tracking plus the frame-boundary checkpoint).

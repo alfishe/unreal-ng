@@ -2272,6 +2272,10 @@ void TimeTravelManager::ComposeDisplay(bool frameTarget)
     auto paintStaticBase = [this]() {
         _context->pScreen->RenderOnlyMainScreen();
         _context->pScreen->FillBorderWithColor(_context->emulatorState.pFE & 0b0000'0111);
+        // The static decode carries no beam history: plane B says "not drawn"
+        size_t planeBCount = 0;
+        if (uint16_t* planeB = _context->pScreen->GetPlaneB(&planeBCount))
+            std::fill(planeB, planeB + planeBCount, uint16_t{0});
     };
 
     if (frameTarget)
@@ -2317,6 +2321,12 @@ void TimeTravelManager::ComposeDisplay(bool frameTarget)
     if (fb && fbSize)
         composed.assign(reinterpret_cast<const uint8_t*>(fb), reinterpret_cast<const uint8_t*>(fb) + fbSize);
 
+    // Plane B was rendered by the same replay (ZX DLSS), so it is composed too
+    std::vector<uint16_t> composedPlaneB;
+    size_t planeBCount = 0;
+    if (const uint16_t* planeB = _context->pScreen->GetPlaneB(&planeBCount))
+        composedPlaneB.assign(planeB, planeB + planeBCount);
+
     ExitReplayMode();
     RestoreLiveState(local);
 
@@ -2324,6 +2334,11 @@ void TimeTravelManager::ComposeDisplay(bool frameTarget)
     _context->pScreen->GetFramebufferData(&fb, &fbSize);
     if (fb && fbSize == composed.size())
         std::memcpy(fb, composed.data(), fbSize);
+    if (uint16_t* planeB = _context->pScreen->GetPlaneB(&planeBCount))
+    {
+        if (planeBCount == composedPlaneB.size())
+            std::memcpy(planeB, composedPlaneB.data(), planeBCount * sizeof(uint16_t));
+    }
 }
 
 void TimeTravelManager::PresentPosition(bool frameTarget)
@@ -4838,6 +4853,13 @@ void TimeTravelManager::SaveLiveState(LiveStateSnapshot& out)
         if (fb && fbSize)
             out.framebuffer.assign(reinterpret_cast<const uint8_t*>(fb),
                                    reinterpret_cast<const uint8_t*>(fb) + fbSize);
+
+        size_t planeBCount = 0;
+        const uint16_t* planeB = _context->pScreen->GetPlaneB(&planeBCount);
+        if (planeB)
+            out.planeB.assign(planeB, planeB + planeBCount);
+        else
+            out.planeB.clear();
     }
 
     // Full RAM copy (model pages only — e.g. 128 KB on a 128K model). The
@@ -4916,6 +4938,14 @@ void TimeTravelManager::RestoreLiveState(const LiveStateSnapshot& snap)
         _context->pScreen->GetFramebufferData(&fb, &fbSize);
         if (fb && fbSize == snap.framebuffer.size())
             std::memcpy(fb, snap.framebuffer.data(), fbSize);
+    }
+
+    if (!snap.planeB.empty() && _context->pScreen)
+    {
+        size_t planeBCount = 0;
+        uint16_t* planeB = _context->pScreen->GetPlaneB(&planeBCount);
+        if (planeB && planeBCount == snap.planeB.size())
+            std::memcpy(planeB, snap.planeB.data(), planeBCount * sizeof(uint16_t));
     }
 }
 

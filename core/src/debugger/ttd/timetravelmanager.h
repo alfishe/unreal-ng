@@ -769,6 +769,40 @@ public:
     }
 
     // -----------------------------------------------------------------------
+    // Clip export (ZX DLSS reference material; implementation ttdclipexport.cpp)
+    // -----------------------------------------------------------------------
+
+    struct TTDClipExportOptions
+    {
+        uint64_t fromFrame = 0;
+        uint64_t toFrame = 0;
+        std::string directory;      ///< created if missing
+        uint32_t chunkFrames = 500;  ///< frames per zstd chunk
+        int zstdLevel = 3;
+    };
+
+    struct TTDClipExportResult
+    {
+        bool ok = false;
+        std::string error;
+        uint64_t frames = 0;
+        uint64_t bytesWritten = 0;
+        bool planeB = false;  ///< plane B written (feature zxdlss on)
+        uint32_t width = 0;
+        uint32_t height = 0;
+        double seconds = 0.0;
+    };
+
+    /// @brief Write every frame of [fromFrame, toFrame] as its final picture -
+    /// the same picture positioning by frame number shows - into `directory`:
+    /// rgba_NNNN.zst (RGBA8), planeb_NNNN.zst (plane B, when the zxdlss feature
+    /// is on), meta.jsonl (frame, #7FFD, displayed screen, border at the frame's
+    /// start) and clip.json (geometry, encodings). One call instead of one
+    /// seek + capture round trip per frame. Leaves the machine positioned and
+    /// displayed at toFrame. The emulator must be paused; refused while recording.
+    TTDClipExportResult ExportClip(const TTDClipExportOptions& options);
+
+    // -----------------------------------------------------------------------
     // Agent bookmarks (TD-4; ttd-coverage-evaluation.md §TD-4)
     // -----------------------------------------------------------------------
     //
@@ -1502,6 +1536,7 @@ private:
         /// Framebuffer pixels: a sandbox replay renders into the live
         /// framebuffer; restoring hands the caller's picture back untouched.
         std::vector<uint8_t> framebuffer;
+        std::vector<uint16_t> planeB;      ///< ZX DLSS plane B, rendered in the same pass as the pixels
         uint32_t screenPrevTstate = 0;     ///< renderer draw cursor (Screen::_prevTstate)
     };
 

@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include <mutex>
+#include <vector>
 
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
@@ -697,6 +698,28 @@ public:
 
     virtual void RenderOnlyMainScreen();
 
+    /// region <ZX DLSS plane B>
+    /// Per-pixel meaning of the rendered frame (feature zxdlss), written by the
+    /// renderer in the same pass as the RGBA pixel, same size and layout as the
+    /// framebuffer. One uint16 per pixel:
+    ///   bits 0-7   attribute byte the beam used for this pixel (0 on the border)
+    ///   bits 8-11  color index 0..15 (bright * 8 + color)
+    ///   bit  12    ink (1) / paper (0)
+    ///   bits 13-14 role: 0 not drawn, 1 screen, 2 border
+    /// Only the per-T ZX renderer (ScreenHQ) writes it; other modes leave 0.
+    static constexpr uint16_t kPlaneBInk = 1u << 12;
+    static constexpr uint16_t kPlaneBRoleScreen = 1u << 13;
+    static constexpr uint16_t kPlaneBRoleBorder = 2u << 13;
+    static constexpr uint16_t kPlaneBRoleMask = 3u << 13;
+
+    bool IsPlaneBEnabled() const { return _planeBEnabled; }
+    /// Allocates (enabled) or frees (disabled) the buffer; renderers pick their
+    /// plane-B variant here, so the disabled path runs exactly the old code.
+    virtual void SetPlaneBEnabled(bool enabled);
+    /// @return the live plane B (nullptr when disabled); count = pixels
+    uint16_t* GetPlaneB(size_t* count);
+    /// endregion </ZX DLSS plane B>
+
     /// @brief Render entire screen at frame end when ScreenHQ=OFF (batch rendering mode)
     /// Called by MainLoop::OnFrameEnd() instead of per-t-state Draw() calls.
     /// Override in ScreenZX to use RenderScreen_Batch8 for 25x faster rendering.
@@ -722,6 +745,11 @@ public:
 protected:
     // Cached feature flag (updated by UpdateFeatureCache)
     bool _feature_screenhq_enabled = true;  // Default ON for demo compatibility
+
+    // ZX DLSS plane B (see SetPlaneBEnabled); sized with the framebuffer
+    bool _planeBEnabled = false;
+    std::vector<uint16_t> _planeB;
+    void ResizePlaneB();
     /// endregion </Feature cache>
 
     virtual void SaveScreen();

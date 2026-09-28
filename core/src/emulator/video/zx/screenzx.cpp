@@ -46,9 +46,15 @@ void ScreenZX::SelectRangeRenderer()
             _rangeRenderer = &ScreenZX::DrawRangeAlco;
             break;
         default:
-            _rangeRenderer = &ScreenZX::DrawRangeZX;
+            _rangeRenderer = _planeBEnabled ? &ScreenZX::DrawRangeZXPlaneB : &ScreenZX::DrawRangeZX;
             break;
     }
+}
+
+void ScreenZX::SetPlaneBEnabled(bool enabled)
+{
+    Screen::SetPlaneBEnabled(enabled);
+    SelectRangeRenderer();
 }
 
 /// region <Genuine ZX-Spectrum ULA specifics>
@@ -80,6 +86,13 @@ void ScreenZX::CreateTables()
     {
         _rgbaColors[idx] = TransformZXSpectrumColorsToRGBA(idx, true);        // Normal state colors
         _rgbaFlashColors[idx] = TransformZXSpectrumColorsToRGBA(idx, false);  // Flashing state colors
+
+        // Plane B: the same choice, as meaning instead of RGBA
+        const uint16_t bright = (idx & 0b0100'0000) ? 8 : 0;
+        const uint16_t ink = (idx & 0b0000'0111) + bright;
+        const uint16_t paper = ((idx >> 3) & 0b0000'0111) + bright;
+        _planeBInk[idx] = static_cast<uint16_t>(kPlaneBRoleScreen | kPlaneBInk | (ink << 8) | idx);
+        _planeBPaper[idx] = static_cast<uint16_t>(kPlaneBRoleScreen | (paper << 8) | idx);
     }
 
     // Initialize latched border color from palette (default border = 0/black)
@@ -774,7 +787,22 @@ void ScreenZX::DrawRangeAlco(uint32_t fromTstate, uint32_t toTstate)
 /// framebuffer could alias members, which would force a reload on every T.
 void ScreenZX::DrawRangeZX(uint32_t fromTstate, uint32_t toTstate)
 {
+    DrawRangeZXImpl<false>(fromTstate, toTstate);
+}
+
+void ScreenZX::DrawRangeZXPlaneB(uint32_t fromTstate, uint32_t toTstate)
+{
+    DrawRangeZXImpl<true>(fromTstate, toTstate);
+}
+
+/// PlaneB = false is the plain renderer; PlaneB = true also writes what it drew
+/// into plane B, in the same pass (ZX DLSS). Two instantiations, chosen by
+/// SelectRangeRenderer, so the disabled path carries no extra check.
+template <bool PlaneB>
+void ScreenZX::DrawRangeZXImpl(uint32_t fromTstate, uint32_t toTstate)
+{
     uint32_t* const fb = reinterpret_cast<uint32_t*>(_framebuffer.memoryBuffer);
+    uint16_t* const planeB = PlaneB ? _planeB.data() : nullptr;
     const size_t fbWidth = rasterDescriptors[_mode].fullFrameWidth;
     const TstateCoordLUT* const lut = _tstateLUT;
     const uint8_t* const zxScreen = _activeScreenMemoryOffset;
@@ -796,13 +824,18 @@ void ScreenZX::DrawRangeZX(uint32_t fromTstate, uint32_t toTstate)
     uint32_t latchedBorderRGBA = _latchedBorderColorRGBA;
     uint8_t latchedBorderIndex = _latchedBorderColorIndex;
 
+    // Plane B values of the latched cell, looked up once per cell with the latch
+    [[maybe_unused]] uint16_t inkB = PlaneB ? _planeBInk[attributes] : 0;
+    [[maybe_unused]] uint16_t paperB = PlaneB ? _planeBPaper[attributes] : 0;
+
     for (uint32_t t = fromTstate; t <= toTstate; ++t)
     {
         const TstateCoordLUT& e = lut[t];
         if (e.renderType == RT_BLANK)
             continue;
 
-        uint32_t* const out = fb + e.framebufferY * fbWidth + e.framebufferX;
+        const size_t pixel = e.framebufferY * fbWidth + e.framebufferX;
+        uint32_t* const out = fb + pixel;
         if (e.renderType == RT_SCREEN)
         {
             if (e.symbolX != lastSymbolX || e.zxY != lastZxY)
@@ -811,6 +844,11 @@ void ScreenZX::DrawRangeZX(uint32_t fromTstate, uint32_t toTstate)
                 attributes = zxScreen[e.attrOffset + e.symbolX];
                 lastSymbolX = e.symbolX;
                 lastZxY = e.zxY;
+                if constexpr (PlaneB)
+                {
+                    inkB = _planeBInk[attributes];
+                    paperB = _planeBPaper[attributes];
+                }
             }
 
             const uint32_t ink = inkColors[attributes];
@@ -822,6 +860,13 @@ void ScreenZX::DrawRangeZX(uint32_t fromTstate, uint32_t toTstate)
             const uint32_t bit1 = (pixels << (e.pixelXBit + 1)) & 0x80;
             const uint32_t mask1 = static_cast<uint32_t>(-static_cast<int32_t>(bit1 >> 7));
             out[1] = (ink & mask1) | (paper & ~mask1);
+            if constexpr (PlaneB)
+            {
+                // SIMD-CANDIDATE(O-13): same masks as the RGBA write, 16-bit lanes;
+                // a per-cell (8 pixel) store would halve the work
+                planeB[pixel] = static_cast<uint16_t>((inkB & mask0) | (paperB & ~mask0));
+                planeB[pixel + 1] = static_cast<uint16_t>((inkB & mask1) | (paperB & ~mask1));
+            }
             continue;
         }
 
@@ -837,6 +882,12 @@ void ScreenZX::DrawRangeZX(uint32_t fromTstate, uint32_t toTstate)
         }
         out[0] = latchedBorderRGBA;
         out[1] = latchedBorderRGBA;
+        if constexpr (PlaneB)
+        {
+            const uint16_t border = static_cast<uint16_t>(kPlaneBRoleBorder | (latchedBorderIndex << 8));
+            planeB[pixel] = border;
+            planeB[pixel + 1] = border;
+        }
     }
 
     _latchedPixels = pixels;

@@ -111,6 +111,7 @@ public:
     // Screen OCR
     ADD_METHOD_TO(EmulatorAPI::captureOcr, "/api/v1/emulator/{id}/capture/ocr", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::captureScreen, "/api/v1/emulator/{id}/capture/screen", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::capturePlaneB, "/api/v1/emulator/{id}/capture/planeb", drogon::Get);
     // endregion Capture Commands
 
     // region BASIC Control (implementation: api/basic_api.cpp)
@@ -392,6 +393,7 @@ public:
     ADD_METHOD_TO(EmulatorAPI::stopTTD, "/api/v1/emulator/{id}/ttd/stop", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::invalidateTTD, "/api/v1/emulator/{id}/ttd/invalidate", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::seekTTD, "/api/v1/emulator/{id}/ttd/seek", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::exportClipTTD, "/api/v1/emulator/{id}/ttd/export-clip", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::stepBackTTD, "/api/v1/emulator/{id}/ttd/step-back", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::stepForwardTTD, "/api/v1/emulator/{id}/ttd/step-forward", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::resumeTTD, "/api/v1/emulator/{id}/ttd/resume", drogon::Post);
@@ -593,6 +595,8 @@ public:
     void captureOcr(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                     const std::string& id) const;
     void captureScreen(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void capturePlaneB(const drogon::HttpRequestPtr& req,
                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     // endregion Capture Commands Methods
 
@@ -1191,6 +1195,8 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void seekTTD(const drogon::HttpRequestPtr& req,
                  std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void exportClipTTD(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void stepBackTTD(const drogon::HttpRequestPtr& req,
                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void stepForwardTTD(const drogon::HttpRequestPtr& req,
