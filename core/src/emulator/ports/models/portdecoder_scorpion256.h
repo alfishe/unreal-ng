@@ -15,7 +15,6 @@ class PortDecoder_Scorpion256 : public PortDecoder
 {
     /// region <Fields>
 protected:
-    // _7FFD_Locked is now inherited from PortDecoder base class
 
     // SMUC (Scorpion & MOA Universal Controller) stub for the ProfROM boot
     // probes (profrom-smuc-not-found-and-driver-disassembly.md section 8):

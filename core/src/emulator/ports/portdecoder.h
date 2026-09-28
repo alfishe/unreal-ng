@@ -369,12 +369,6 @@ protected:
     SoundManager* _soundManager = nullptr;
     ModuleLogger* _logger = nullptr;
 
-    // Paging lock latch (hardware emulation of port 7FFD bit 5)
-    // When true, subsequent writes to port 7FFD are ignored by the hardware
-    // This is the actual hardware latch, separate from the emulatorState.p7FFD bit 5
-    // which is just a cached copy of the last written value
-    bool _7FFD_Locked = false;
-
     // Set by DecodePortIn/PeripheralPortIn to indicate whether a real hardware device
     // actually responded to the port read. When false, the port is unmapped and the
     // Z80 floating bus logic may apply (prevents floating bus from clobbering
@@ -780,13 +774,20 @@ public:
     bool DispatchSelfDecodingOut(uint16_t rawPort, uint8_t value);
     bool DispatchSelfDecodingIn(uint16_t rawPort, uint8_t& outValue);
     
-    /// Unlock port 7FFD paging for snapshot loading or debug sessions
-    /// Clears both the emulatorState.p7FFD lock bit AND the hardware latch (_7FFD_Locked)
-    /// This ensures subsequent port writes via DecodePortOut() will be accepted
+    /// Unlock port 7FFD paging for snapshot loading or debug sessions: clears the
+    /// p7FFD lock bit, so subsequent port writes via DecodePortOut() are accepted
     void UnlockPaging();
     
     /// Lock port 7FFD paging (for debug sessions only, not used in normal operation)
     void LockPaging();
+
+    /// Whether #7FFD paging is latched off until reset. A locked #7FFD ignores
+    /// every later write, screen bit included, and keeps the value that locked
+    /// it (UnrealSpeccy, Fuse, Xpeccy, ZXMAK2 and the MiSTer RTL agree), so the
+    /// lock is a function of the latches alone: whatever restores them (TTD, a
+    /// snapshot, a reset) restores the lock too. Models whose extension frees
+    /// bit 5 override this.
+    virtual bool IsPagingLocked() const { return _state && (_state->p7FFD & PORT_7FFD_LOCK) != 0; }
 
     /// endregion </Interaction with peripherals>
 
