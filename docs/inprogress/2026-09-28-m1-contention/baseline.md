@@ -1,6 +1,7 @@
-# Baseline before the contention rework (phase 1a)
+# Baseline before the contention rework (phase 1a) and the result of phase 1b
 
-**Date:** 2026-09-28 · **Code:** `e521eb03` (master), branch `m1-contention` · **Belongs to:**
+**Date:** 2026-09-28 · **Code:** baseline `2b6b7d47` / `98e7c3f1` (the fingerprint memory fix), branch
+`m1-contention` · **Belongs to:**
 [design.md](design.md) §8 suite F and §9.
 
 Recorded on the code before any change, so the rework can be checked against it: what must stay
@@ -49,8 +50,11 @@ ATM710 (the CPU kept running the previous mapping and left the program). The tes
 machine's ports, as software does, and asserts that the PC stays inside the program so a wrong placement
 cannot produce a silently meaningless fingerprint.
 
-Determinism: the suite passes under `--gtest_repeat=3 --gtest_shuffle` together with the existing
-contention suites. Runtime about 0.35 s (55 emulator instances; justified in the test's comment).
+Determinism: the first version hashed RAM the mix never writes, which keeps what earlier emulator
+instances in the process left there - the state hashes then depended on test order. The hashed regions
+are now filled with a fixed pattern first, and the baseline was re-recorded on the pre-rework code
+(`98e7c3f1`, passes there in shuffled combined runs). Runtime about 0.35 s (55 emulator instances;
+justified in the test's comment).
 
 ## 2. Performance (§9 gate)
 
@@ -75,7 +79,57 @@ Observation for phase 1b: the same mix costs the 48K about 1.85 times what it co
 (`IN` / `OUT` on `#40FE`: the 48K port decoder and `GetIOContentionDelay`), which §6.4 moves into the
 selector; it is measured again there.
 
-## 3. How to reproduce
+## 3. After phase 1b (bus interfaces, M1 contention)
+
+### 3.1 Fingerprints
+
+Exactly the intended rows changed, and only their timing; every state hash and every other row is
+bit-identical:
+
+| Model | codeContended | codePage7 | allRam1 |
+|:--|--:|--:|--:|
+| 48K | 18675 → 21127 | - | - |
+| 128K, +2 | 19002 → 21521 | 19002 → 21521 | - |
+| +2A, +3 | 18472 → 21323 | 18472 → 21323 | 21328 → 25133 |
+
+The rows keep their former values in a comment in the test. The M1, operand, prefix and selection cases
+are pinned individually in `contention_test.cpp` (`M1_*`, `MemoryInterfaceSelection_Test`).
+
+### 3.2 Performance
+
+The host was under heavy load from other sessions (load average 100-150 on 20 cores), so the numbers
+below are **interleaved A/B runs** of the baseline and the new binary, 3 rounds x 3 repetitions each,
+median of the round medians. Absolute values are higher than in §2; the ratios are what counts.
+
+| Benchmark | Baseline | Phase 1b | Change |
+|:--|--:|--:|--:|
+| Pentagon, code at #8000 | 21.8 µs | 20.7 µs | **-5 %** |
+| Pentagon, code at #6000 | 21.4 µs | 20.9 µs | **-2 %** |
+| 48K, code at #8000 | 38.8 µs | 40.0 µs | +3 % |
+| 48K, code at #6000 (now contended fetches) | 38.3 µs | 44.9 µs | +17 % |
+| +3, code at #8000 | 20.6 µs | 22.2 µs | +8 % |
+| +3, code at #6000 (now contended fetches) | 20.4 µs | 26.2 µs | +28 % |
+| `BM_FrameCostNormal` (48K frame, ROM idle loop) | 1146 µs | 1143 µs | 0 % |
+
+Gate met: the uncontended machine is faster (its per-access contention branch is gone from `rd` / `wd`
+and its per-port contention call from `in` / `out`).
+
+The contended machines pay for two things. The emulation itself: the fetch waits are now computed
+(`UlaContention::DelayAt` for every access to a contended slot, `% tstatesPerLine` and `% 8` each time),
+which is the +17 % / +28 % on the contended-code runs. And the wrapper layer: on the contended interfaces
+an access is two indirect calls (the interface, then the virtual plain read), the +3 % / +8 % on runs that
+touch contended memory rarely.
+
+Ideas backlog (not done; naive first, then measure):
+
+- Call the plain access non-virtually in the contended wrapper (`this->Memory::MemoryReadFast`): the only
+  override (`ScorpionMemory`) belongs to a machine without contention; needs a test that every contended
+  model's memory object is the base `Memory`.
+- A per-line wait table in `UlaContention` (224 / 228 entries) instead of the two modulo operations, or
+  a cached "next contended T" window so accesses outside the paper skip the arithmetic entirely.
+  SIMD-CANDIDATE: none (scalar lookups).
+
+## 4. How to reproduce
 
 ```bash
 cmake -S . -B build-rel -G Ninja -DCMAKE_BUILD_TYPE=Release -DTESTS=ON -DBENCHMARKS=ON

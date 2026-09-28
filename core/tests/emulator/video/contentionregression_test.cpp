@@ -96,10 +96,12 @@ struct Golden
     uint64_t stateHash;
 };
 
-/// Recorded on e521eb03, before the contention rework. Reading guide: on 48K / 128K / +2 "free" is longer
-/// than on the Pentagon only by the I/O contention of the #40FE port accesses; "codeContended",
-/// "codePage7" and "allRam1" equal "free" on the ULA / gate array models because opcode fetches are not
-/// contended yet - exactly the rows the M1 rework is expected to change (and only those)
+/// Recorded on 2b6b7d47, before the contention rework, then updated by the M1 contention rework (rows marked
+/// with their former values). Reading guide: on 48K / 128K / +2 "free" is longer than on the Pentagon only by
+/// the I/O contention of the #40FE port accesses. Before the rework "codeContended", "codePage7" and "allRam1"
+/// equalled "free" on the ULA / gate array models (opcode fetches and operand bytes were not contended); the
+/// rework changed exactly those rows, and only their timing - every state hash and every other row is
+/// unchanged
 const std::vector<Golden> kGolden = {
     { "PENTAGON", "free", 18472, 0xda498385dc3d51b5ull, 0x9656ea3c0af12b0ull },
     { "PENTAGON", "dataContended", 18472, 0xda498385dc3d51b5ull, 0x96d5e7201636f1f5ull },
@@ -107,25 +109,25 @@ const std::vector<Golden> kGolden = {
     { "PENTAGON", "codePage7", 18472, 0xda498385dc3d51b5ull, 0xd3fb2cce03135670ull },
     { "48K", "free", 18675, 0xa31a04e8c4376db4ull, 0x9656ea3c0af12b0ull },
     { "48K", "dataContended", 20962, 0x13971b85e91eb103ull, 0x96d5e7201636f1f5ull },
-    { "48K", "codeContended", 18675, 0xa31a04e8c4376db4ull, 0xa082cdbbf9f71b90ull },
+    { "48K", "codeContended", 21127, 0x1aeb342feb95577eull, 0xa082cdbbf9f71b90ull },  // M1 rework: was 18675, 0xa31a04e8c4376db4ull
     { "128K", "free", 19002, 0x7c4752cc09b9aa21ull, 0x9656ea3c0af12b0ull },
     { "128K", "dataContended", 21332, 0x76b9bd6bbc8ec6f3ull, 0x96d5e7201636f1f5ull },
-    { "128K", "codeContended", 19002, 0x7c4752cc09b9aa21ull, 0xa082cdbbf9f71b90ull },
-    { "128K", "codePage7", 19002, 0x7c4752cc09b9aa21ull, 0xd3fb2cce03135670ull },
+    { "128K", "codeContended", 21521, 0x8e5f22f2de1e8940ull, 0xa082cdbbf9f71b90ull },  // M1 rework: was 19002, 0x7c4752cc09b9aa21ull
+    { "128K", "codePage7", 21521, 0x8e5f22f2de1e8940ull, 0xd3fb2cce03135670ull },  // M1 rework: was 19002, 0x7c4752cc09b9aa21ull
     { "PLUS2", "free", 19002, 0x7c4752cc09b9aa21ull, 0x9656ea3c0af12b0ull },
     { "PLUS2", "dataContended", 21332, 0x76b9bd6bbc8ec6f3ull, 0x96d5e7201636f1f5ull },
-    { "PLUS2", "codeContended", 19002, 0x7c4752cc09b9aa21ull, 0xa082cdbbf9f71b90ull },
-    { "PLUS2", "codePage7", 19002, 0x7c4752cc09b9aa21ull, 0xd3fb2cce03135670ull },
+    { "PLUS2", "codeContended", 21521, 0x8e5f22f2de1e8940ull, 0xa082cdbbf9f71b90ull },  // M1 rework: was 19002, 0x7c4752cc09b9aa21ull
+    { "PLUS2", "codePage7", 21521, 0x8e5f22f2de1e8940ull, 0xd3fb2cce03135670ull },  // M1 rework: was 19002, 0x7c4752cc09b9aa21ull
     { "PLUS2A", "free", 18472, 0xda498385dc3d51b5ull, 0x9656ea3c0af12b0ull },
     { "PLUS2A", "dataContended", 21328, 0xcd35793f95f18839ull, 0x96d5e7201636f1f5ull },
-    { "PLUS2A", "codeContended", 18472, 0xda498385dc3d51b5ull, 0xa082cdbbf9f71b90ull },
-    { "PLUS2A", "codePage7", 18472, 0xda498385dc3d51b5ull, 0xd3fb2cce03135670ull },
-    { "PLUS2A", "allRam1", 21328, 0xcd35793f95f18839ull, 0xd6de33ccfc7d2330ull },
+    { "PLUS2A", "codeContended", 21323, 0x8af80abb538938ccull, 0xa082cdbbf9f71b90ull },  // M1 rework: was 18472, 0xda498385dc3d51b5ull
+    { "PLUS2A", "codePage7", 21323, 0x8af80abb538938ccull, 0xd3fb2cce03135670ull },  // M1 rework: was 18472, 0xda498385dc3d51b5ull
+    { "PLUS2A", "allRam1", 25133, 0x48c07781c7346f7eull, 0xd6de33ccfc7d2330ull },  // M1 rework: was 21328, 0xcd35793f95f18839ull
     { "PLUS3", "free", 18472, 0xda498385dc3d51b5ull, 0x9656ea3c0af12b0ull },
     { "PLUS3", "dataContended", 21328, 0xcd35793f95f18839ull, 0x96d5e7201636f1f5ull },
-    { "PLUS3", "codeContended", 18472, 0xda498385dc3d51b5ull, 0xa082cdbbf9f71b90ull },
-    { "PLUS3", "codePage7", 18472, 0xda498385dc3d51b5ull, 0xd3fb2cce03135670ull },
-    { "PLUS3", "allRam1", 21328, 0xcd35793f95f18839ull, 0xd6de33ccfc7d2330ull },
+    { "PLUS3", "codeContended", 21323, 0x8af80abb538938ccull, 0xa082cdbbf9f71b90ull },  // M1 rework: was 18472, 0xda498385dc3d51b5ull
+    { "PLUS3", "codePage7", 21323, 0x8af80abb538938ccull, 0xd3fb2cce03135670ull },  // M1 rework: was 18472, 0xda498385dc3d51b5ull
+    { "PLUS3", "allRam1", 25133, 0x48c07781c7346f7eull, 0xd6de33ccfc7d2330ull },  // M1 rework: was 21328, 0xcd35793f95f18839ull
     { "ATM710", "free", 18472, 0xda498385dc3d51b5ull, 0xfdd8f5de856c2a7eull },
     { "ATM710", "dataContended", 18472, 0xda498385dc3d51b5ull, 0x626b20c80e522358ull },
     { "ATM710", "codeContended", 18472, 0xda498385dc3d51b5ull, 0x297c8af6be67ca86ull },

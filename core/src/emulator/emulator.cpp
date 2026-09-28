@@ -2999,19 +2999,17 @@ bool Emulator::LoadROM(std::string path)
 void Emulator::DebugOn()
 {
     // Switch to slow but instrumented memory interface
-    _core->UseDebugMemoryInterface();
-
     _isDebug = true;
     _z80->isDebugMode = true;
+    _core->SelectMemoryInterface();
 }
 
 void Emulator::DebugOff()
 {
     // Switch to fast memory interface
-    _core->UseFastMemoryInterface();
-
     _isDebug = false;
     _z80->isDebugMode = false;
+    _core->SelectMemoryInterface();
 }
 
 // region <Video mode>

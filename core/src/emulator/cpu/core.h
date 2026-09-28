@@ -111,8 +111,12 @@ public:
 
     // Configuration methods
 public:
-    void UseFastMemoryInterface();
-    void UseDebugMemoryInterface();
+    /// The one place that decides which memory interface the CPU runs on: Fast or Debug by the debugger
+    /// (Z80::isDebugMode), plain or contended by whether the machine's video contention is in effect
+    /// (UlaContention::IsContentionEnabled), and with it the I/O contention rule (Z80::ioContention).
+    /// Called whenever an input changes (debug mode, video mode / model via Screen::InitRaster) and at
+    /// every frame start; cheap (a few loads and stores)
+    void SelectMemoryInterface();
 
     // Z80 Core-related methods
 public:

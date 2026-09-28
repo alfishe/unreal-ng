@@ -1703,13 +1703,13 @@ private:
     // -----------------------------------------------------------------------
     //
     // StartRecording requires both Features::kDebugMode (so Core uses
-    // UseDebugMemoryInterface, which routes writes through MemoryWriteDebug
+    // SelectMemoryInterface, which routes writes through MemoryWriteDebug
     // where TTDDirtyTracker::MarkDirty is invoked) and Features::kTimeTravel
     // (so Memory's cached _feature_ttd_enabled flag is true).
     //
     // If either is OFF when StartRecording is called, TTD flips it ON via
     // FeatureManager::setFeature (which cascades through onFeatureChanged
-    // -> UseDebugMemoryInterface + Memory::UpdateFeatureCache). StopRecording
+    // -> SelectMemoryInterface + Memory::UpdateFeatureCache). StopRecording
     // restores the prior state, but only for flags we actually toggled —
     // pre-existing user/debugger debug mode is left intact.
     //

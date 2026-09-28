@@ -1,7 +1,7 @@
 # Contended opcode fetches without a cost for machines that have no contention
 
-**Date:** 2026-09-28 · **Status:** proposal (revision 2: reuse analysis, shared wrappers, control and
-diagnostics, test suites) · **Tracks:** PLAN #59; open item 2 of the contention notes ("M1 opcode fetches
+**Date:** 2026-09-28 · **Status:** phase 1b implemented (revision 2: reuse analysis, shared wrappers,
+control and diagnostics, test suites) · **Tracks:** PLAN #59; open item 2 of the contention notes ("M1 opcode fetches
 from contended RAM not contended"). Test programs and emulated-side test design:
 [test-programs.md](test-programs.md).
 
@@ -22,8 +22,10 @@ from contended RAM not contended"). Test programs and emulated-side test design:
 
 On a real 48K, 128K, +2, +2A or +3 the CPU waits on **every** access to contended memory while the
 screen is drawn, the opcode fetch included. In unreal-ng only data reads and writes wait:
-`Z80::rd` skips the check for fetches (`!isExecution`, `core/src/emulator/cpu/z80.cpp`). So code that
-runs from contended memory runs faster than on the real machine:
+`Z80::rd` skips the check for fetches (`!isExecution`, `core/src/emulator/cpu/z80.cpp`). `isExecution` is
+set for every byte read at PC - the opcode, prefixes, immediate operands, displacements and jump
+addresses - so the whole instruction stream is exempt, not only the M1 cycle. So code that runs from
+contended memory runs faster than on the real machine:
 
 - The BASIC area, the system variables and the region right after the screen (#5B00-#7FFF) are
   contended. Loaders, raster effects and small routines often live there.
@@ -108,22 +110,22 @@ whole difference, and it is instantiated over the plain function it wraps:
 template <MemoryReadCallback Plain>
 uint8_t Memory::MemoryReadContended(uint16_t addr, bool isExecution)
 {
-    if (!_ula->IsSlotContended(addr >> 14))           // chosen only when contention is effective
+    if (!_contentionUla->IsSlotContended(static_cast<uint8_t>(addr >> 14)))
         return (this->*Plain)(addr, isExecution);
 
-    _cpu->t += _ula->DelayAt(_cpu->t - 3);            // the access started 3 T ago (rd counted them)
+    _contentionCpu->InsertWaitStates(_contentionUla->DelayAt(_contentionCpu->AccessStartT()));
     const uint8_t value = (this->*Plain)(addr, isExecution);
-    _ula->LatchContendedByte(value);                  // +2A / +3 floating bus; fetches included now
+    _contentionUla->LatchContendedByte(value);  // +2A/+3 floating bus: the last contended byte
     return value;
 }
 
 template <MemoryWriteCallback Plain>
 void Memory::MemoryWriteContended(uint16_t addr, uint8_t value)
 {
-    if (_ula->IsSlotContended(addr >> 14))
+    if (_contentionUla->IsSlotContended(static_cast<uint8_t>(addr >> 14)))
     {
-        _cpu->t += _ula->DelayAt(_cpu->t - 3);
-        _ula->LatchContendedByte(value);
+        _contentionCpu->InsertWaitStates(_contentionUla->DelayAt(_contentionCpu->AccessStartT()));
+        _contentionUla->LatchContendedByte(value);
     }
     (this->*Plain)(addr, value);
 }
@@ -160,8 +162,10 @@ Notes:
 - `&Memory::MemoryReadFast` is a pointer to a virtual function, so `ScorpionMemory`'s override is still
   honored, exactly as through `FastMemIf` today.
 - The wrapper tests the slot flag only: the interface is chosen only when contention is effective, so
-  `_contentionEnabled` needs no second look. `_ula` and `_cpu` are cached in `Memory` when `Core` wires
-  the components (`SetDependencies` time), and on model change.
+  `_contentionEnabled` needs no second look. `_contentionUla` and `_contentionCpu` are cached in `Memory`
+  by `Core::Init` (`Memory::SetContentionDependencies`). `Z80::AccessStartT()` is `(tt - 3 * rate) >> 8`:
+  the start of the access in progress, exact for any CPU rate; `Z80::InsertWaitStates` is the CPU's own
+  cycle step.
 - The debug statistics of §7.2 live in the `Plain = Debug` instantiation only (`if constexpr` on the
   template argument), so `FastContendedMemIf` carries no counter either.
 - `isExecution` no longer excludes anything: the M1 fetch goes through the same function and waits like

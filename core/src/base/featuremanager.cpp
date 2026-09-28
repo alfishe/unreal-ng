@@ -576,15 +576,8 @@ void FeatureManager::onFeatureChanged(const std::string& changedFeatureId)
         }
         _context->pCore->GetZ80()->isDebugMode = debugEnabled;
 
-        // Switch memory interface based on debug mode
-        if (debugEnabled)
-        {
-            _context->pCore->UseDebugMemoryInterface();
-        }
-        else
-        {
-            _context->pCore->UseFastMemoryInterface();
-        }
+        // Switch memory interface based on debug mode (and the machine's contention)
+        _context->pCore->SelectMemoryInterface();
 
         // Update Z80 feature cache (opcode profiler etc.)
         _context->pCore->GetZ80()->UpdateFeatureCache();

@@ -155,7 +155,7 @@ bool TimeTravelManager::StartRecording()
     //     flag is true, so the dirty-tracker call is not skipped.
     // If either is OFF, flip it ON and remember that we did so StopRecording
     // can restore the prior state. setFeature cascades through
-    // FeatureManager::onFeatureChanged -> UseDebugMemoryInterface +
+    // FeatureManager::onFeatureChanged -> SelectMemoryInterface +
     // Memory::UpdateFeatureCache, so the gating cache is coherent before
     // we capture the baseline.
     FeatureManager* fm = _context->pFeatureManager;

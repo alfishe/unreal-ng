@@ -344,7 +344,7 @@ bool Core::Init()
         _z80 = new Z80(_context);
         if (_z80)
         {
-            UseFastMemoryInterface();  // Use fast memory interface by default
+            SelectMemoryInterface();  // Fast until the debugger / contention say otherwise
 
             result = true;
         }
@@ -365,6 +365,7 @@ bool Core::Init()
         {
             _ulaContention->SetDependencies(_z80, _memory, _context);
             _context->pUlaContention = _ulaContention;
+            _memory->SetContentionDependencies(_z80, _ulaContention);
 
             result = true;
         }
@@ -592,14 +593,19 @@ void Core::Release()
 /// endregion </Initialization>
 
 // Configuration methods
-void Core::UseFastMemoryInterface()
+void Core::SelectMemoryInterface()
 {
-    _z80->MemIf = _z80->FastMemIf;
-}
+    if (!_z80)
+        return;
 
-void Core::UseDebugMemoryInterface()
-{
-    _z80->MemIf = _z80->DbgMemIf;
+    const bool contended = _ulaContention && _ulaContention->IsContentionEnabled();
+    if (_z80->isDebugMode)
+        _z80->MemIf = contended ? _z80->DbgContendedMemIf : _z80->DbgMemIf;
+    else
+        _z80->MemIf = contended ? _z80->FastContendedMemIf : _z80->FastMemIf;
+
+    // The +2A/+3 gate array contends memory cycles only
+    _z80->ioContention = (contended && !_ulaContention->IsGateArray()) ? _ulaContention : nullptr;
 }
 
 void Core::Reset()
@@ -808,19 +814,9 @@ bool Core::IsTurboMode() const
 
 void Core::CPUFrameCycle()
 {
-    // Execute Z80 cycle
-    if (_z80->isDebugMode)
-    {
-        // Use advanced (but slow) memory access interface when Debugger is on
-        UseDebugMemoryInterface();
-        _z80->Z80FrameCycle();
-    }
-    else
-    {
-        // Use fast memory access when no Debugger used
-        UseFastMemoryInterface();
-        _z80->Z80FrameCycle();
-    }
+    // Debug (instrumented) or fast memory access, contended or not - see SelectMemoryInterface
+    SelectMemoryInterface();
+    _z80->Z80FrameCycle();
 
     FinishCPUFrame();
 }

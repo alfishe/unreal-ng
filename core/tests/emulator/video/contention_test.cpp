@@ -1,6 +1,8 @@
 #include "stdafx.h"
 #include "pch.h"
 
+#include <initializer_list>
+
 #include "_helpers/emulatortesthelper.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -96,6 +98,23 @@ protected:
         _z80->hl = hl;
         _z80->iff1 = 0;
         _z80->t = dataReadT - 4;  // 4T opcode fetch precedes the data read
+
+        uint32_t t0 = _z80->t;
+        _z80->Z80Step();
+        return _z80->t - t0;
+    }
+
+    /// Execute one instruction placed at `addr` with its opcode fetch (M1) starting at exactly `fetchT`;
+    /// returns its T-states. Code runs where the instruction is placed, so a contended `addr` puts the
+    /// fetch and the operand bytes in contended memory
+    uint32_t runAt(uint16_t addr, std::initializer_list<uint8_t> bytes, uint32_t fetchT)
+    {
+        uint16_t a = addr;
+        for (uint8_t b : bytes)
+            _memory->DirectWriteToZ80Memory(a++, b);
+        _z80->pc = addr;
+        _z80->iff1 = 0;
+        _z80->t = fetchT;
 
         uint32_t t0 = _z80->t;
         _z80->Z80Step();
@@ -211,6 +230,44 @@ TEST_F(Contention48K_Test, AddressContentionMap)
     EXPECT_FALSE(_ula->IsAddressContended(0xC000)) << "48K has no paged bank 3 contention";
 }
 
+/// Opcode fetches (M1) and operand bytes read at PC wait like data accesses (M1 contention rework)
+TEST_F(Contention48K_Test, M1_NopFromContendedRamWaitsThePattern)
+{
+    for (uint32_t k = 0; k < 16; k++)
+        EXPECT_EQ(runAt(0x4000, { 0x00 }, _firstContendedT + k), 4u + kPattern[k % 8]) << "NOP at $4000, cell offset " << k;
+}
+
+TEST_F(Contention48K_Test, M1_NoWaitOutsideContendedRamOrPaper)
+{
+    EXPECT_EQ(runAt(0x8000, { 0x00 }, _firstContendedT), 4u) << "$8000 is not contended";
+    EXPECT_EQ(runAt(0x4000, { 0x00 }, _firstContendedT - 1), 4u) << "1 T before the onset";
+    EXPECT_EQ(runAt(0x4000, { 0x00 }, _firstContendedT + 128), 4u) << "right border";
+    EXPECT_EQ(runAt(0x4000, { 0x00 }, _ula->GetRaster().screenAreaStart - 1000), 4u) << "top border";
+}
+
+TEST_F(Contention48K_Test, M1_OperandBytesAtPcWait)
+{
+    // LD A,n at $4000, fetch at cell offset 0: fetch waits 6, the operand read starts 10 T later (offset 2)
+    // and waits 4
+    EXPECT_EQ(runAt(0x4000, { 0x3E, 0x55 }, _firstContendedT), 7u + 6u + 4u);
+    // Opcode at $7FFF (contended), operand at $8000 (not)
+    EXPECT_EQ(runAt(0x7FFF, { 0x3E, 0x55 }, _firstContendedT), 7u + 6u);
+}
+
+TEST_F(Contention48K_Test, M1_PrefixedOpcodeFetchesWaitTwice)
+{
+    // INC IX (DD 23): the DD fetch waits 6, the 23 fetch starts at offset 2 and waits 4 (its 2 internal
+    // cycles are no-MREQ: not contended in this phase)
+    EXPECT_EQ(runAt(0x4000, { 0xDD, 0x23 }, _firstContendedT), 10u + 6u + 4u);
+}
+
+TEST_F(Contention48K_Test, M1_CodeAndDataInContendedRam)
+{
+    // LD A,(HL) at $4000 with HL = $4000: the fetch waits 6, the data read starts at offset 2 and waits 4
+    _z80->hl = 0x4000;
+    EXPECT_EQ(runAt(0x4000, { 0x7E }, _firstContendedT), 7u + 6u + 4u);
+}
+
 /// endregion </ZX-Spectrum 48K>
 
 /// region <ZX-Spectrum 128K>
@@ -290,6 +347,18 @@ TEST_F(Contention128K_Test, IOContention_128KRules)
     EXPECT_EQ(_ula->GetIOContentionDelay(0x00FE), 1u);
     EXPECT_EQ(_ula->GetIOContentionDelay(0x00FD), 1u);
     EXPECT_EQ(_ula->GetIOContentionDelay(0x00FF), 0u);
+}
+
+TEST_F(Contention128K_Test, M1_FetchFromOddPageAtC000Waits)
+{
+    for (uint32_t k = 0; k < 8; k++)
+        EXPECT_EQ(runAt(0x4000, { 0x00 }, _firstContendedT + k), 4u + kPattern[k]) << "page 5, cell offset " << k;
+
+    _memory->SetRAMPageToBank3(7);
+    EXPECT_EQ(runAt(0xC000, { 0x00 }, _firstContendedT), 4u + 6u) << "page 7 at $C000";
+    _memory->SetRAMPageToBank3(2);
+    EXPECT_EQ(runAt(0xC000, { 0x00 }, _firstContendedT), 4u) << "page 2 at $C000";
+    _memory->SetRAMPageToBank3(0);
 }
 
 /// endregion </ZX-Spectrum 128K>
@@ -405,6 +474,35 @@ TEST_F(ContentionPlus3_Test, FloatingBusOnlyOnPort0FFDWhilePagingIsUnlocked)
     _context->emulatorState.p7FFD &= static_cast<uint8_t>(~0x20);
 }
 
+TEST_F(ContentionPlus3_Test, M1_FetchWaitsTheGateArrayPattern)
+{
+    const uint8_t pattern[8] = { 1, 0, 7, 6, 5, 4, 3, 2 };
+    for (uint32_t k = 0; k < 8; k++)
+        EXPECT_EQ(runAt(0x4000, { 0x00 }, _firstContendedT + k), 4u + pattern[k]) << "cell offset " << k;
+
+    // All-RAM layout 1: page 4 at #0000, code there waits too
+    Unlock();
+    Out1FFD(0x03);
+    EXPECT_EQ(runAt(0x0000, { 0x00 }, _firstContendedT), 4u + 1u) << "page 4 at #0000";
+    Out1FFD(0x00);
+}
+
+TEST_F(ContentionPlus3_Test, M1_FloatingBusLatchSeesOpcodeFetches)
+{
+    _context->config.floatbus = 1;
+    Unlock();
+    const uint32_t border = _ula->GetRaster().screenAreaStart - 1000;  // between screen fetches
+
+    _memory->DirectWriteToZ80Memory(0x5000, 0xAA);
+    runLdAHl(0x5000, _firstContendedT);  // data read: the latch holds #AA
+    _z80->t = border;
+    EXPECT_EQ(_ula->GetGateArrayFloatingBus(0x0FFD), 0xABu);
+
+    runAt(0x4000, { 0x00 }, _firstContendedT);  // opcode fetch from contended RAM: the latch holds #00
+    _z80->t = border;
+    EXPECT_EQ(_ula->GetGateArrayFloatingBus(0x0FFD), 0x01u) << "the fetched opcode, bit 0 forced";
+}
+
 /// endregion </ZX-Spectrum +2A/+3 (Amstrad gate array)>
 
 /// region <Contrast: Pentagon has no contention>
@@ -430,3 +528,46 @@ TEST(ContentionPentagon_Test, NoContentionAnywhere)
 }
 
 /// endregion </Contrast>
+/// region <Memory interface selection>
+
+/// Core::SelectMemoryInterface: machines with contention run the contended interfaces (and the I/O rule of
+/// the Ferranti ULA), all others the plain ones; the debugger swaps Fast for Debug in both
+TEST(MemoryInterfaceSelection_Test, FollowsTheMachineAndTheDebugger)
+{
+    struct Case
+    {
+        const char* model;
+        bool contended;
+        bool ioContended;
+    };
+    const Case cases[] = {
+        { "PENTAGON", false, false }, { "48K", true, true },       { "128K", true, true },
+        { "PLUS2", true, true },      { "PLUS2A", true, false },   { "PLUS3", true, false },
+        { "SCORPION", false, false }, { "PROFSCORP", false, false }, { "PROFI", false, false },
+        { "ATM710", false, false },   { "ATM3", false, false },
+    };
+
+    for (const Case& c : cases)
+    {
+        Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(c.model, LoggerLevel::LogError);
+        ASSERT_NE(emulator, nullptr) << c.model;
+        EmulatorContext* context = emulator->GetContext();
+        context->pScreen->InitFrame();
+        Z80* z80 = context->pCore->GetZ80();
+
+        EXPECT_EQ(z80->MemIf, c.contended ? z80->FastContendedMemIf : z80->FastMemIf) << c.model;
+        EXPECT_EQ(z80->ioContention, c.ioContended ? context->pUlaContention : nullptr) << c.model;
+
+        emulator->DebugOn();
+        EXPECT_EQ(z80->MemIf, c.contended ? z80->DbgContendedMemIf : z80->DbgMemIf) << c.model << " debug on";
+        EXPECT_EQ(z80->ioContention, c.ioContended ? context->pUlaContention : nullptr) << c.model << " debug on";
+
+        emulator->DebugOff();
+        EXPECT_EQ(z80->MemIf, c.contended ? z80->FastContendedMemIf : z80->FastMemIf) << c.model << " debug off";
+
+        EmulatorTestHelper::CleanupEmulator(emulator);
+    }
+}
+
+/// endregion </Memory interface selection>
+
