@@ -29,13 +29,17 @@
 #include "_helpers/neogstestsdcard.h"
 #include "_helpers/testpathhelper.h"
 #include "_helpers/trdostesthelper.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
+#include "emulator/emulatormanager.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/keyboard/keyboard.h"
 #include "emulator/sound/chips/neogs/soundchip_neogs.h"
 #include "emulator/memory/memory.h"
 #include "emulator/sound/audiodeviceinfo.h"
 #include "emulator/sound/soundmanager.h"
+#include "emulator/video/screen.h"
 
 namespace
 {
@@ -683,3 +687,79 @@ INSTANTIATE_TEST_SUITE_P(Players, NeoPlayerLight_Test,
 INSTANTIATE_TEST_SUITE_P(Players, NeoPlayerLightKeys_Test, ::testing::Combine(::testing::Range(0, 2), ::testing::Values(0)), nplName);
 
 /// endregion
+
+/// region <The Link (invdemo, 2009)>
+
+namespace
+{
+/// Frame-to-frame change of the rendered picture
+uint64_t FramebufferHash(Emulator* emulator)
+{
+    const FramebufferDescriptor fb = emulator->GetFramebuffer();
+    uint64_t h = 1469598103934665603ull;
+    for (size_t i = 0; i < fb.memoryBufferSize; i++)
+        h = (h ^ fb.memoryBuffer[i]) * 1099511628211ull;
+    return h;
+}
+} // namespace
+
+/// The Link needs a Pentagon 1024 and a NeoGS (docs/disasm/demo/thelink).
+/// RUN "THELINK" starts the author's ALASM, which assembles the demo from its
+/// sources on the disk and runs it. The ZX sends the card its program and 20
+/// pages of data and effect code through ZX-DMA (writes into the ZX ROM area),
+/// the card switches to 24 MHz with extended paging, and every effect is then
+/// rendered on the card and fetched by the ZX through ZX-DMA reads each frame.
+/// On the classic GS the ZX waits for the card for ever at the first effect.
+///
+/// Checked: the card enters the demo's configuration, the tunnel (demo frames
+/// 896-1778) changes the picture every frame, and the rotator (1792-2674) - a
+/// ZX/GS handshake per frame, a new picture every second frame.
+///
+/// Runtime justification: ~70 emulated seconds (assembly on the ZX, the
+/// 18-second intro, two effects), about 10 s of host time.
+TEST(NeoGSTheLink_Test, DemoAssemblesItselfAndRunsItsCardRenderedEffects)
+{
+    constexpr uint64_t kTStatesPerSecond = 3500000;
+    SoundCardScope sound; // TSFM plays the music, NeoGS renders
+    auto emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModelAndRAM("thelink", "PENTAGON", 1024, LoggerLevel::LogError);
+    ASSERT_TRUE(emulator);
+    EmulatorContext* ctx = emulator->GetContext();
+    ASSERT_TRUE(emulator->LoadDisk((TestPathHelper::FindProjectRoot() / "testdata/machines/pentagon1024sl/TheLink.trd").string(), 0));
+    ASSERT_TRUE(FitGeneralSoundCard(ctx->pSoundManager, GSTypeKind::NGS));
+    auto* card = dynamic_cast<SoundChip_NeoGS*>(ctx->pSoundManager->getGeneralSound());
+    ASSERT_NE(card, nullptr);
+    Z80* z80 = ctx->pCore->GetZ80();
+    auto demoFrame = [z80] { return z80->DirectRead(0xBF02) | (z80->DirectRead(0xBF03) << 8); }; // THELINK.asm: timer=#BF02
+    auto changedFrames = [&](int frames, TRDOSTestHelper& trdos) {
+        int changed = 0;
+        uint64_t previous = FramebufferHash(emulator.get());
+        for (int i = 0; i < frames; i++)
+        {
+            trdos.runFrames(1);
+            const uint64_t h = FramebufferHash(emulator.get());
+            changed += h != previous ? 1 : 0;
+            previous = h;
+        }
+        return changed;
+    };
+
+    {
+        TRDOSTestHelper trdos(emulator.get(), false);
+        trdos.startCommand("RUN \"THELINK\"");
+
+        // The demo's card program: 24 MHz, no ROM, extended paging (GSPROGGO)
+        ASSERT_TRUE(trdos.runUntil([&] { return card->gscfg0() == 0x09; }, 60ull * kTStatesPerSecond, 25))
+            << "the card never received the demo's program";
+
+        ASSERT_TRUE(trdos.runUntil([&] { return demoFrame() >= 1000; }, 40ull * kTStatesPerSecond, 25)) << "no tunnel";
+        EXPECT_GE(changedFrames(100, trdos), 90) << "the tunnel changes the picture every frame";
+
+        ASSERT_TRUE(trdos.runUntil([&] { return demoFrame() >= 1900; }, 30ull * kTStatesPerSecond, 25)) << "no rotator";
+        const int rotator = changedFrames(100, trdos);
+        EXPECT_GE(rotator, 40) << "the rotator: a new picture every second frame";
+        EXPECT_LE(rotator, 60);
+    }
+    EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetId());
+}
+
+/// endregion </The Link (invdemo, 2009)>
