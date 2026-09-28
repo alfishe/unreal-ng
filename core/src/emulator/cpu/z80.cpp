@@ -783,7 +783,7 @@ void Z80::NotifyInstructionStart()
         if (_context->ttdProbe.Matches(m1_pc, ttd::TTDAccessType::Execute, 0, m1_pc, execPhysPage))
         {
             const auto& st = _context->emulatorState;
-            const ttd::TTDTimePoint tp{st.frame_counter, t};
+            const ttd::TTDTimePoint tp{st.frame_counter, st.TtdTInFrame(t)};
             _context->ttdProbe.RecordHit(tp, m1_pc, /*value=*/0, execPhysPage,
                                           ttd::TTDAccessType::Execute);
         }

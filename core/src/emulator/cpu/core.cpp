@@ -408,6 +408,7 @@ bool Core::Init()
             if (_portDecoder)
             {
                 _context->pPortDecoder = _portDecoder;
+                _state->ttd_clock_units = _portDecoder->TtdClockUnits();
 
                 // Prime the porttrace feature cache: the decoder is created after
                 // FeatureManager loaded features.ini, so a persisted porttrace=on

@@ -2607,12 +2607,11 @@ public:
                     q.physPage = static_cast<ttd::PhysPage>(page);
                 }
 
-                const uint32_t frameT = ctx->config.frame;
                 if (tbl["before_frame"].valid())
                 {
                     uint64_t f = tbl["before_frame"].get<uint64_t>();
                     uint32_t tin = tbl["before_tin"].valid() ? tbl["before_tin"].get<uint32_t>() : 0;
-                    q.beforeGlobalT = f * frameT + tin;
+                    q.beforeGlobalT = ctx->pTimeTravelManager->GlobalT({f, tin});
                 }
                 else if (tbl["before"].valid())
                 {
@@ -2644,9 +2643,9 @@ public:
                     q.hasPhysPageFilter = true;
                     q.physPage = static_cast<ttd::PhysPage>(*physPageOpt);
                 }
-                const uint32_t frameT = ctx->config.frame;
                 if (beforeFrameOpt)
-                    q.beforeGlobalT = static_cast<uint64_t>(*beforeFrameOpt) * frameT + beforeTinOpt.value_or(0);
+                    q.beforeGlobalT = ctx->pTimeTravelManager->GlobalT(
+                        {static_cast<uint64_t>(*beforeFrameOpt), beforeTinOpt.value_or(0)});
             }
 
             ttd::TTDExternalEvent marker{};

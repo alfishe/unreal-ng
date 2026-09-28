@@ -46,7 +46,8 @@ namespace ttd {
 struct TTDTimePoint
 {
     uint64_t frame = 0;       ///< Frame index since session start
-    uint32_t tInFrame = 0;    ///< T-states within the frame (0 = frame start)
+    uint32_t tInFrame = 0;    ///< T-states within the frame at the model's top CPU clock
+                              ///< (0 = frame start; TimeTravelManager::TInFrameNow, B4)
 
     bool operator==(const TTDTimePoint& o) const
     { return frame == o.frame && tInFrame == o.tInFrame; }

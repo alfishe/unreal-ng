@@ -276,7 +276,8 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr, bool isExecution)
         if (_context->ttdProbe.Matches(addr, ttd::TTDAccessType::Read, result, pc, readPhysPage))
         {
             const auto& st = _context->emulatorState;
-            const uint16_t tin = _context->pCore ? _context->pCore->GetZ80()->t : 0;
+            // TTD time units (B4); 32-bit - a frame is longer than 65535 T-states
+            const uint32_t tin = _context->pCore ? st.TtdTInFrame(_context->pCore->GetZ80()->t) : 0;
             const ttd::TTDTimePoint tp{st.frame_counter, tin};
             _context->ttdProbe.RecordHit(tp, pc, result, readPhysPage,
                                           ttd::TTDAccessType::Read);
@@ -389,7 +390,8 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
             if (_context->ttdProbe.Matches(addr, ttd::TTDAccessType::Write, value, pc, physPage))
             {
                 const auto& st = _context->emulatorState;
-                const uint16_t tin = core->GetZ80()->t;
+                // TTD time units (B4); 32-bit - a frame is longer than 65535 T-states
+                const uint32_t tin = st.TtdTInFrame(core->GetZ80()->t);
                 const ttd::TTDTimePoint t{st.frame_counter, tin};
                 _context->ttdProbe.RecordHit(t, pc, value, physPage, ttd::TTDAccessType::Write);
             }
