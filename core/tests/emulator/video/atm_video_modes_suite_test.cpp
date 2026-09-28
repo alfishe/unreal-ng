@@ -969,7 +969,7 @@ TEST_F(ATMVideoModesSuite_Test, Render_ATM3Alco_FourPlanes_PagePair)
     // LUT geometry: the ZX window starts at beam line 72, tInLine 24; one
     // t-state renders one pixel pair (zxX, zxX+1) at framebuffer (48 + zxX)
     for (uint32_t pair = 0; pair < 4; ++pair)
-        _screen->DrawAlcoMode(72 * 224 + 24 + pair);
+        _screen->Draw(72 * 224 + 24 + pair);
 
     EXPECT_EQ(At(48, 48 + 0), state.atmPalette[7]);
     EXPECT_EQ(At(48, 48 + 1), state.atmPalette[1]);
@@ -1002,19 +1002,19 @@ TEST_F(ATMVideoModesSuite_Test, Render_ATM3Hwmc_AttrFromPixelAddress_FlashBit)
     uint8_t* p5 = _memory->RAMPageAddress(5);
 
     p5[0] = 0x47;  // ink = 7 | 8 = 15, paper = 8; bitmap bits 7,6 = 0, 1
-    _screen->DrawAlcoMode(72 * 224 + 24 + 0);
+    _screen->Draw(72 * 224 + 24 + 0);
     EXPECT_EQ(At(48, 48), state.atmPalette[8]) << "bit 7 clear -> paper";
     EXPECT_EQ(At(48, 49), state.atmPalette[15]) << "bit 6 set -> ink";
 
     // Bit 7 = flash: on the flash phase the bitmap inverts, attrs untouched
     p5[0] = 0xC7;  // ink = 15, paper = 8; bitmap 0xC7 -> ~ = 0x38
     _screen->_vid.flash = 1;
-    _screen->DrawAlcoMode(72 * 224 + 24 + 0);
+    _screen->Draw(72 * 224 + 24 + 0);
     EXPECT_EQ(At(48, 48), state.atmPalette[8]);
     EXPECT_EQ(At(48, 49), state.atmPalette[8]);
 
     _screen->_vid.flash = 0;
-    _screen->DrawAlcoMode(72 * 224 + 24 + 0);
+    _screen->Draw(72 * 224 + 24 + 0);
     EXPECT_EQ(At(48, 48), state.atmPalette[15]) << "flash off restores the raw bitmap";
     EXPECT_EQ(At(48, 49), state.atmPalette[15]);
 }

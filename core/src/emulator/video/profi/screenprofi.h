@@ -9,7 +9,7 @@ class Memory;
 /// an active renderer, it is owned and driven by ScreenZX (which remains the
 /// single Screen* registered per machine) and only allocated for machines
 /// whose detected video mode actually becomes M_PROFIHR.
-class ScreenProfi
+class ScreenProfi final
 {
     /// region <Constructors / Destructors>
 public:
@@ -28,6 +28,10 @@ public:
     ///        Screen::SetBorderColor uses when it replays the pending T-range
     ///        with the OLD color before latching the new one.
     void Draw(uint32_t tstate, const RasterDescriptor& rd, FramebufferDescriptor& framebuffer, uint8_t borderColor);
+
+    /// Render the inclusive frame T-state range [from, to]
+    void DrawRange(uint32_t from, uint32_t to, const RasterDescriptor& rd, FramebufferDescriptor& framebuffer,
+                   uint8_t borderColor);
     /// endregion </Methods>
 
     /// region <Fields>

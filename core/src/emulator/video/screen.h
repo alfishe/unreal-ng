@@ -602,6 +602,10 @@ public:
     virtual void DrawPeriod(uint32_t fromTstate, uint32_t toTstate);
     virtual void Draw(uint32_t tstate);
 
+    /// Render the inclusive frame T-state range [from, to]. DrawPeriod calls it
+    /// once per catch-up; renderers override it to loop without per-T dispatch.
+    virtual void DrawRange(uint32_t fromTstate, uint32_t toTstate);
+
     /// @brief Reset the previous t-state tracker used by DrawPeriod
     /// Must be called after AdjustFrameCounters() wraps z80.t to prevent
     /// DrawPeriod from seeing fromTstate > toTstate across the frame boundary
@@ -786,6 +790,10 @@ public:
     /// @param p7FFD Port 7FFD latch value (bit 3 selects the video page on ATM)
     /// @param bankedZX Model exposes a shadow screen (128K-class paging)
     static std::vector<uint16_t> GetActiveSurfaceRAMPages(VideoModeEnum mode, uint8_t p7FFD, bool bankedZX);
+
+    /// Descriptor the mode's timing comes from (P384 uses Pentagon timing,
+    /// ATM3 AlCo modes keep the ATM 312-line raster)
+    const RasterDescriptor& GetTimingDescriptor(VideoModeEnum mode) const;
 
 
     void DrawNull(uint32_t n);      // Non-existing mode (skip draw)

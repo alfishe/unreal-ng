@@ -474,7 +474,6 @@ void Screen::SetVideoMode(VideoModeEnum mode)
     /// region <Calculate raster values>
 
     /// Note!: all timings are in t-states, although raster descriptor has pixels as UOM. So recalculation is required
-    const RasterDescriptor& rasterDescriptor = rasterDescriptors[_mode];
 
     // For M_P384 overscan mode, use Pentagon timing for all calculations
     // Only the framebuffer size differs - timing must be identical to Pentagon
@@ -485,11 +484,7 @@ void Screen::SetVideoMode(VideoModeEnum mode)
     // is the matching 312-line descriptor with identical geometry (352x288
     // frame, 256x192 window at 48,48, 448 px/line) - without the swap the
     // 71680 T maxFrameTiming would trip the config.frame sanity check.
-    const bool atm3AlcoTiming = (mode == M_P16 || mode == M_PMC) &&
-                                _context != nullptr && _context->config.mem_model == MM_ATM3;
-    const RasterDescriptor& timingDescriptor =
-        (_mode == M_P384) ? rasterDescriptors[M_PENTAGON128K] :
-        atm3AlcoTiming ? rasterDescriptors[M_ZX48] : rasterDescriptor;
+    const RasterDescriptor& timingDescriptor = GetTimingDescriptor(_mode);
 
     /// region <Config values>
     _rasterState.configFrameDuration = _context->config.frame;
@@ -1068,6 +1063,15 @@ uint16_t Screen::GetDisplayHeight() const
 
 /// endregion </Display viewport>
 
+const RasterDescriptor& Screen::GetTimingDescriptor(VideoModeEnum mode) const
+{
+    const bool atm3AlcoTiming = (mode == M_P16 || mode == M_PMC) &&
+                                _context != nullptr && _context->config.mem_model == MM_ATM3;
+    if (mode == M_P384)
+        return rasterDescriptors[M_PENTAGON128K];
+    return atm3AlcoTiming ? rasterDescriptors[M_ZX48] : rasterDescriptors[mode];
+}
+
 std::vector<uint16_t> Screen::GetActiveSurfaceRAMPages(VideoModeEnum mode, uint8_t p7FFD, bool bankedZX)
 {
     switch (mode)
@@ -1305,6 +1309,11 @@ void Screen::DrawPeriod(uint32_t fromTstate, uint32_t toTstate)
 
     /// endregion </Sanity checks>
 
+    DrawRange(fromTstate, toTstate);
+}
+
+void Screen::DrawRange(uint32_t fromTstate, uint32_t toTstate)
+{
     for (uint32_t i = fromTstate; i <= toTstate; i++)
     {
         Draw(i);

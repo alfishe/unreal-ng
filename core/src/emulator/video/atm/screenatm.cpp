@@ -201,3 +201,10 @@ void ScreenAtm::Draw(uint32_t tstate, VideoModeEnum mode, const RasterDescriptor
             framebufferARGB[rowOffset + col + k] = ((glyph >> (7 - shift - k)) & 1) ? ink : paper;
     }
 }
+
+void ScreenAtm::DrawRange(uint32_t from, uint32_t to, VideoModeEnum mode, const RasterDescriptor& rd,
+                          FramebufferDescriptor& framebuffer)
+{
+    for (uint32_t t = from; t <= to; ++t)
+        Draw(t, mode, rd, framebuffer);
+}
