@@ -117,3 +117,13 @@ TEST(FatImageBuilder, RefusesWhatCannotBeBuilt)
     ScratchFatImage badName("fat-name.img", spec);
     EXPECT_FALSE(badName.ok());
 }
+
+TEST(FatImageBuilder, ReplacingAnImageKeepsTheNewFile)
+{
+    auto image = MakeNeoGSTestSd(NeoGSTestSd::Fat16Mbr);
+    const std::string first = image->path();
+    image = MakeNeoGSTestSd(NeoGSTestSd::Fat16Mbr); // the old one's destructor runs after the new file exists
+    EXPECT_NE(image->path(), first);
+    EXPECT_TRUE(std::filesystem::exists(image->path()));
+    EXPECT_FALSE(std::filesystem::exists(first));
+}

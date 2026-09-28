@@ -177,6 +177,7 @@ Plan: [`neogs-tdd.md`](neogs-tdd.md) §9; as built, findings and open items:
 - [x] SD and MP3 DMA modules
 - [x] Gate: Neo Player Light v0.60 plays the MP3 in real time
 - [x] Neo Player Light v0.44 (`npl044`, `npl044_dma`) "finds no files" - explained 2026-09-28 (neogs-tdd.md §14.2): a player bug with exactly one MP3 on the card (FINDMP3 returns with the directory page mapped); the test cards now carry two MP3 files and v0.44 plays. `npl044_dma` cannot play on the board either (CMD17 commented out before the SD DMA); its search works. Acceptance tests: `NeoPlayerLight044PlaysAnMp3FromTheSdCard`, `NeoPlayerLight044DmaFindsTheFilesAndWaitsInTheSdDma`
+- [x] Player verification (2026-09-28): v0.60 and v0.44 on every card layout (`NeoPlayerLight_Test`, 10 cases), their transport keys (`NeoPlayerLightKeys_Test`), and our own card-side DMA player (`soundchip_neogs_dmaplayer_test`: CMD17 + SD DMA + MP3 DMA, real time)
       on the test images (neogs-tdd.md §14.2)
 
 **Phase 4 - switching, automation, TTD guard**

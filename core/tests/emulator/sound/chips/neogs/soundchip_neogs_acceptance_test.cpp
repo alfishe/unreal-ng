@@ -18,7 +18,9 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
@@ -499,3 +501,184 @@ TEST_F(NeoGSAcceptance_Test, NeoPlayerLight044DmaFindsTheFilesAndWaitsInTheSdDma
     }
     EXPECT_TRUE(inLoop) << "the card CPU polls DMA_CST";
 }
+
+/// region <Neo Player Light across card layouts and controls>
+
+namespace
+{
+struct NplPlayer
+{
+    const char* name;
+    const char* scl;
+    const char* run;
+};
+const NplPlayer kNplPlayers[] = {{"v060", "neo_player_light.scl", "NPL"}, {"v044", "npl044.scl", "NPL044"}};
+
+struct NplCard
+{
+    const char* name;
+    NeoGSTestSd card;
+    NeoGSConfig::SDType type;
+};
+const NplCard kNplCards[] = {
+    {"Fat16Mbr", NeoGSTestSd::Fat16Mbr, NeoGSConfig::SDType::Auto},
+    {"Fat16NoMbr", NeoGSTestSd::Fat16NoMbr, NeoGSConfig::SDType::Auto},
+    {"Fat32Mbr", NeoGSTestSd::Fat32Mbr, NeoGSConfig::SDType::Auto},
+    {"Fat16MbrAsSdhc", NeoGSTestSd::Fat16Mbr, NeoGSConfig::SDType::SDHC},
+    {"Fat32MbrAsSdhc", NeoGSTestSd::Fat32Mbr, NeoGSConfig::SDType::SDHC},
+};
+
+/// A Pentagon with NeoGS, a run-time test card and a Neo Player Light
+/// version started and showing its file list
+class NeoPlayerLight_Test : public ::testing::TestWithParam<std::tuple<int, int>>
+{
+protected:
+    SoundCardScope _gs{TestSound::GeneralSound};
+    std::unique_ptr<ScratchFatImage> _sdImage; // outlives the emulator
+    Emulator* _emulator = nullptr;
+    EmulatorContext* _ctx = nullptr;
+    SoundChip_NeoGS* _card = nullptr;
+    std::unique_ptr<TRDOSTestHelper> _trdos;
+    std::vector<uint8_t> _font;
+
+    void TearDown() override
+    {
+        _trdos.reset();
+        if (_emulator)
+            EmulatorTestHelper::CleanupEmulator(_emulator);
+    }
+
+    std::string screen() const { return joined(readScreen32(_ctx->pMemory, _font)); }
+
+    /// Boot the player on the card; false when it never lists the files
+    bool start(const NplPlayer& player, const NplCard& card)
+    {
+        _font = readFile(TestPathHelper::FindProjectRoot() / "testdata/sound/neogs/programs/altstd.fnt");
+        _emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON");
+        if (!_emulator)
+            return false;
+        _ctx = _emulator->GetContext();
+        _sdImage = MakeNeoGSTestSd(card.card);
+        if (!_sdImage->ok())
+            return false;
+        strncpy(_ctx->config.ngs.sdCardPath, _sdImage->path().c_str(), sizeof _ctx->config.ngs.sdCardPath - 1);
+        _ctx->config.ngs.sdType = card.type;
+        _ctx->config.ngs.mp3Support = NGSMP3SupportKind::Software;
+        if (!_ctx->pSoundManager->switchGeneralSoundCard(GSTypeKind::NGS))
+            return false;
+        _card = dynamic_cast<SoundChip_NeoGS*>(_ctx->pSoundManager->getGeneralSound());
+        if (!_card || !_emulator->LoadDisk((TestPathHelper::FindProjectRoot() / "testdata/sound/neogs/programs" / player.scl).string(), 0))
+            return false;
+        _trdos = std::make_unique<TRDOSTestHelper>(_emulator, false);
+        _trdos->startCommand(std::string("RUN \"") + player.run + "\"");
+        return _trdos->runUntil([&] { return screen().find("EYEACHE .MP3") != std::string::npos; }, 20ull * 3'500'000ull);
+    }
+
+    /// A key as a person presses it (about a quarter of a second). The
+    /// players read the keyboard through the 48K ROM's interrupt scan
+    /// (FLAGS bit 5 / LAST_K), and between keys they wait for the card's
+    /// replies with interrupts off - while a low-bitrate file plays that is
+    /// most of every frame, so a very short press can go unseen, on the board
+    /// as here. 12 frames stays below the ROM's 35-frame auto-repeat delay
+    void key(ZXKeysEnum k)
+    {
+        _ctx->pKeyboard->PressKey(k);
+        _trdos->runFrames(12);
+        _ctx->pKeyboard->ReleaseKey(k);
+        _trdos->runFrames(5);
+    }
+
+    Vs10xxDecoder* mp3() const { return _card->mp3Decoder(); }
+};
+
+std::string nplName(const ::testing::TestParamInfo<std::tuple<int, int>>& info)
+{
+    return std::string(kNplPlayers[std::get<0>(info.param)].name) + "_" + kNplCards[std::get<1>(info.param)].name;
+}
+} // namespace
+
+/// Both versions find the two MP3 files and play the first one in real time
+/// on every card layout: FAT16 with and without a partition table, FAT32,
+/// SDSC (byte addresses) and SDHC (block addresses)
+TEST_P(NeoPlayerLight_Test, FindsTheFilesAndPlaysOnEveryCardLayout)
+{
+    const NplPlayer& player = kNplPlayers[std::get<0>(GetParam())];
+    const NplCard& card = kNplCards[std::get<1>(GetParam())];
+    ASSERT_TRUE(start(player, card)) << printable(_ctx ? screen() : std::string());
+    EXPECT_EQ(_card->sdCard()->isSdhc(), card.type == NeoGSConfig::SDType::SDHC);
+    const std::string list = screen();
+    EXPECT_NE(list.find(std::get<0>(GetParam()) == 0 ? "Found files:     2" : "Found MP3:     2"), std::string::npos) << printable(list);
+
+    key(ZXKEY_2);
+    _trdos->runFrames(50);
+    const uint64_t framesAt = mp3()->framesDecoded();
+    _trdos->runFrames(100); // 2 s of steady playback (Pentagon: 50.0 frames a second)
+    const std::string playing = screen();
+    SCOPED_TRACE(printable(playing));
+    EXPECT_EQ(mp3()->streamRate(), 44100u);
+    EXPECT_EQ(mp3()->streamChannels(), 2);
+    // 44.1 kHz Layer III: 38.28 frames a second
+    const double seconds = 100.0 * _ctx->config.frame_duration_us / 1e6;
+    EXPECT_NEAR(static_cast<double>(mp3()->framesDecoded() - framesAt), 38.28 * seconds, 3.0) << "real-time pace";
+    EXPECT_NE(playing.find("44100 Hz"), std::string::npos);
+    EXPECT_NE(playing.find("128 kbps"), std::string::npos);
+    EXPECT_NE(playing.find("Time Play: 00:00:0"), std::string::npos);
+}
+
+/// The transport keys of both versions: play, pause (the decoder gets no
+/// data), play again (continues), next file (the 22.05 kHz mono VBR file with
+/// an ID3v2 tag), stop (no data), previous file (back to the first)
+class NeoPlayerLightKeys_Test : public NeoPlayerLight_Test
+{
+};
+
+TEST_P(NeoPlayerLightKeys_Test, TransportKeysWork)
+{
+    const NplPlayer& player = kNplPlayers[std::get<0>(GetParam())];
+    ASSERT_TRUE(start(player, kNplCards[0]));
+
+    key(ZXKEY_2);
+    _trdos->runFrames(100);
+    ASSERT_EQ(mp3()->streamRate(), 44100u) << printable(screen());
+    const uint64_t framesPlaying = mp3()->framesDecoded();
+    EXPECT_GT(framesPlaying, 60u);
+
+    key(ZXKEY_3); // pause
+    uint64_t at = mp3()->bytesReceived();
+    _trdos->runFrames(100);
+    EXPECT_EQ(mp3()->bytesReceived(), at) << "paused: no data to the decoder";
+
+    key(ZXKEY_2); // play again: continues
+    _trdos->runFrames(50);
+    EXPECT_GT(mp3()->bytesReceived(), at);
+    EXPECT_NE(screen().find("EYEACHE .MP3"), std::string::npos);
+
+    key(ZXKEY_5); // next file: plays at once
+    _trdos->runFrames(100);
+    std::string now = screen();
+    EXPECT_EQ(mp3()->streamRate(), 22050u) << printable(now);
+    EXPECT_EQ(mp3()->streamChannels(), 1);
+    EXPECT_NE(now.find("EYE22K  .MP3"), std::string::npos) << printable(now);
+    EXPECT_NE(now.find("Play Number:     2"), std::string::npos) << printable(now);
+    EXPECT_NE(now.find("22050 Hz"), std::string::npos) << printable(now);
+
+    key(ZXKEY_4); // stop
+    at = mp3()->bytesReceived();
+    _trdos->runFrames(50);
+    EXPECT_EQ(mp3()->bytesReceived(), at) << "stopped: no data to the decoder";
+
+    key(ZXKEY_1); // previous file
+    key(ZXKEY_2);
+    _trdos->runFrames(100);
+    now = screen();
+    EXPECT_EQ(mp3()->streamRate(), 44100u) << printable(now);
+    EXPECT_NE(now.find("Play Number:     1"), std::string::npos) << printable(now);
+    EXPECT_NE(now.find("EYEACHE .MP3"), std::string::npos) << printable(now);
+}
+
+INSTANTIATE_TEST_SUITE_P(Players, NeoPlayerLight_Test,
+                         ::testing::Combine(::testing::Range(0, 2), ::testing::Range(0, static_cast<int>(std::size(kNplCards)))), nplName);
+// The keys do not depend on the card layout: the FAT16 card
+INSTANTIATE_TEST_SUITE_P(Players, NeoPlayerLightKeys_Test, ::testing::Combine(::testing::Range(0, 2), ::testing::Values(0)), nplName);
+
+/// endregion

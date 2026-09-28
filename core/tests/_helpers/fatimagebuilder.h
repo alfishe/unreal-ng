@@ -350,7 +350,7 @@ class ScratchFatImage
 {
 public:
     ScratchFatImage(const std::string& leafName, const FatImageSpec& spec)
-        : _path(TestPathHelper::GetUniqueTestScratchPath(leafName))
+        : _path(uniquePath(leafName))
     {
         _ok = BuildFatImage(_path, spec, &_layout, &_error);
     }
@@ -368,6 +368,16 @@ public:
     const FatImageLayout& layout() const { return _layout; }
 
 private:
+    /// Unique per instance, not only per process: replacing one image with
+    /// another of the same name must not let the old one's destructor
+    /// delete the new file
+    static std::string uniquePath(const std::string& leafName)
+    {
+        static int counter = 0;
+        const std::filesystem::path leaf(leafName);
+        return TestPathHelper::GetUniqueTestScratchPath(leaf.stem().string() + "_" + std::to_string(++counter) + leaf.extension().string());
+    }
+
     std::string _path;
     bool _ok = false;
     std::string _error;

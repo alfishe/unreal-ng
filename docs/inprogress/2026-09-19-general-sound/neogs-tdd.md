@@ -1782,8 +1782,16 @@ the NeoGS suites are listed below.
   use sd and mp3 dma") and leaves the card deselected. The SD DMA module
   sends no command of its own and waits for the data token with no timeout
   (`dma_sd.v`, §3.9), so on "Play" the card polls `DMA_CST` for ever. Its
-  search works like the SPI build's. SD and MP3 DMA are covered by the
-  `neogsdma` unit tests and the SD boot / MP3 DMA TTD tests instead.
+  search works like the SPI build's. SD and MP3 DMA are covered at program
+  level by our own card-side player instead (`soundchip_neogs_dmaplayer_test`,
+  §14.3), plus the `neogsdma` unit tests and the TTD tests.
+- **Both players read keys through the 48K ROM and wait for the card with
+  interrupts off.** They take a key from the ROM's interrupt scan
+  (FLAGS bit 5 / LAST_K), and between keys they poll the card with DI. While
+  a low-bitrate file plays, the card answers between sectors (40-70 ms), so
+  a very short press can go unseen - on the board as in the emulator. The
+  tests hold a key for 12 frames (below the ROM's 35-frame auto-repeat
+  delay) and release it for 5.
 
 ### 14.3 Tests
 
@@ -1799,7 +1807,8 @@ the NeoGS suites are listed below.
 | `neogs/soundchip_neogs_test.cpp` | The card through its own Z80: port table, #0A/#0B, mailbox, host #33, card and cold resets, 37.5 kHz at every clock, TIM_FREQ, INTENA, vectors, CPU clock, DAC output in 4/8-channel and INV7B, opcode-fetch capture, TTD round trip |
 | `neogs/soundchip_neogs_boot_test.cpp` | Real flash: loader to COMINT_, COM23 for 2/4 MB, direct boot parity, handshake, #33 reboot, GS module playback, replay waits for the main ROM, flash persistence |
 | `neogs/soundchip_neogs_sdboot_test.cpp` | NEOGS.ROM from FAT16 (MBR, no MBR), FAT32, SDSC and SDHC, with the flash main ROM blanked |
-| `neogs/soundchip_neogs_acceptance_test.cpp` | On an emulated Pentagon: `test_ngs` (2 and 4 MB), the flasher (update from SD, exact sectors), `test_emu_ngs`, Neo Player Light v0.60 playing the MP3 in real time, Neo Player Light v0.44 finding both MP3 files and playing in real time, and its DMA build finding the files and then waiting in the SD DMA for ever (§14.2) |
+| `neogs/soundchip_neogs_acceptance_test.cpp` | On an emulated Pentagon: `test_ngs` (2 and 4 MB), the flasher (update from SD, exact sectors), `test_emu_ngs`, Neo Player Light v0.60 playing the MP3 in real time, Neo Player Light v0.44 finding both MP3 files and playing in real time, and its DMA build finding the files and then waiting in the SD DMA for ever (§14.2). `NeoPlayerLight_Test`: v0.60 and v0.44 on every card layout (FAT16 with and without MBR, FAT32; SDSC and SDHC) find both files and play at the real-time pace (38.28 frames a second). `NeoPlayerLightKeys_Test`: play, pause (no data to the decoder), play again, next file (22.05 kHz mono VBR with ID3v2), stop (no data), previous file |
+| `neogs/soundchip_neogs_dmaplayer_test.cpp` | Our own player on the card's Z80: per sector CMD17 and R1 on the SD master, the SD DMA module into RAM #100000, the MP3 DMA module to the decoder; 200 sectors of EYEACHE.MP3: every block read once, the last sector in card RAM byte for byte, every byte to the decoder, paced by DREQ in real time |
 | `io/sdcard/sdcardspi_test.cpp` | SD protocol: init for SDSC/SDHC, CRC rules, illegal commands, CMD17/18/12, writes session/persist/off, padding, the write listener, a state round trip in the middle of a CMD18 stream |
 | `io/flash/flash29f040b_test.cpp` | Autoselect, program, sector/chip erase with window and DQ3, failures, the flasher's sequence, state |
 | `ttd/ttdgeneralsoundswitch_test.cpp` (extended) | NeoGS records with the whole card in the checkpoint blob; switch to NeoGS during a recording repoints the registry; GS-slot session guard |
