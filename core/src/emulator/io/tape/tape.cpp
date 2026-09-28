@@ -93,11 +93,10 @@ void Tape::stopPlayback()
         _context->pTimeTravelManager->RecordExternalEvent(
             ttd::TTDExternalEventKind::TapeControl, "tape stop");
 
-    // Partially played block counts as consumed (design §9.4): advance the
-    // cursor past the in-flight block. A block pointer already null means
-    // playback sat exactly between two blocks — the cursor is already synced.
-    if (_currentTapeBlock != nullptr && _currentTapeBlockIndex != UINT64_MAX)
-        _currentTapeBlockIndex++;
+    // A stop never consumes a partly played block (nonstandard-loader
+    // investigation P2): the cursor stays on it, and the next load reads it
+    // from its pilot. Every caller stops at the end of the tape, with no block
+    // in flight; a stop that is not final is a freeze (pausePlayback()).
 
     _tapeStarted = false;
     _playbackFrozen = false;
@@ -113,9 +112,9 @@ void Tape::pausePlayback()
     // Freeze the head in place: everything positional survives (in-flight
     // block, pulse indices, last EAR level) so ResumePlaybackAfterPoll()
     // continues the bitstream mid-block — un-pausing a real deck. Only the
-    // playback driver stops. Terminal stopPlayback() is deliberately NOT
-    // used here: it consumes the partially heard block, which loses data for
-    // a loader that merely stopped listening while it processes.
+    // playback driver stops. Terminal stopPlayback() is for the end of the
+    // tape: it forgets the pulse position a loader that merely stopped
+    // listening while it processes needs to continue from.
     //
     // Inside a pilot, go back to its first pulse instead (loader-follow
     // design §5.4): a pilot is restartable, and the rest of one can be too
@@ -321,8 +320,15 @@ void Tape::StartPlaybackAtCursor()
         _currentTapeBlockIndex = 0;
 
     // Force (re)generation of the bitstream for the cursor block on the next
-    // handleFrameStart() / getTapeStreamBit() pass.
+    // handleFrameStart() / getTapeStreamBit() pass, from its first pulse. The
+    // pulse position must go too: handleFrameStart() rebuilds the block keeping
+    // it (a TTD restore needs that), so a block frozen mid-data and restarted by
+    // the ROM anchor would continue from the frozen pulse instead of its pilot
+    // (nonstandard-loader investigation B4 / P3, test T12)
     _currentTapeBlock = nullptr;
+    _currentOffsetWithinPulse = 0;
+    _currentPulseIdxInBlock = 0;
+    _currentClockCount = 0;
 
     startTape();
 }

@@ -257,6 +257,36 @@ protected:
         _tape->handleFrameEnd();
     }
 
+    /// The ROM loader's first read of an LD-BYTES call: IN A,(#FE) at #0562, PC on the RRA at #0564
+    void RomAnchorRead()
+    {
+        _context->pMemory->SetROM48k();
+        const uint8_t* rom = _context->pMemory->GetPhysicalAddressForZ80Page(0);
+        ASSERT_EQ(rom[0x0564], 0x1F) << "48 BASIC ROM with LD-BYTES at #0000";
+        _tape->handleFrameStart();
+        _cpu->pc = 0x0564;
+        _tape->handlePortIn(0xFEFE);
+    }
+
+    /// The block under the head once playback runs again, and the pulse it starts from
+    void ExpectPlayingFrom(size_t block, size_t edge)
+    {
+        ASSERT_TRUE(_tape->IsPlaying());
+        _tape->handleFrameStart();
+        ASSERT_NE(_tape->_currentTapeBlock, nullptr);
+        EXPECT_EQ(_tape->_currentTapeBlock->blockIndex, block);
+        EXPECT_EQ(_tape->_currentOffsetWithinPulse, edge);
+    }
+
+    void FreezeInData(size_t edge)
+    {
+        StartAt(edge);
+        for (uint32_t i = 0; i < TAPE_BLOCK_HOLD_FRAMES; i++)
+            Frame(EAR_LOOP_AT, 0);
+        ASSERT_EQ(_tape->GetPlaybackState(), TapePlaybackState::Paused);
+        ASSERT_EQ(_tape->_currentOffsetWithinPulse, edge);
+    }
+
     void RomKeyScanFrame(int count)
     {
         _tape->handleFrameStart();
@@ -361,6 +391,125 @@ TEST_F(TapeLoaderFollow_Test, QuietInsideBlockFreezesAndRewindsOnlyThePilot)
     EXPECT_FALSE(_tape->IsPlaying());
     EXPECT_EQ(_tape->_currentOffsetWithinPulse, pilotEdges + 20) << "Frozen data keeps the exact pulse";
     EXPECT_EQ(_tape->GetConsumptionCursor(), 0u);
+}
+
+// Test T12 (P3): the ROM gave up inside a block's data (BREAK) and LOAD "" calls LD-BYTES again. A fresh
+// LD-BYTES needs a pilot: the frozen block starts over, never from the pulse it froze on
+TEST_F(TapeLoaderFollow_Test, RomRestartAfterFreezeInDataStartsTheBlockOver)
+{
+    StartAt(0);
+    const size_t dataEdge = _tape->_currentTapeBlock->pilotEdgeCount + 20;
+    FreezeInData(dataEdge);
+    ASSERT_FALSE(HasFatalFailure());
+
+    RomAnchorRead();
+    ASSERT_FALSE(HasFatalFailure());
+    ExpectPlayingFrom(0, 0);
+    EXPECT_EQ(_tape->GetConsumptionCursor(), 0u);
+}
+
+// P3: stopped in a block's trailing silence the block was read: the ROM loads the next one
+TEST_F(TapeLoaderFollow_Test, RomLoadAfterParkStartsTheNextBlock)
+{
+    StartAt(0);
+    _tape->_currentOffsetWithinPulse = _tape->_currentTapeBlock->edgePulseTimings.size() - 1;
+    for (uint32_t i = 0; i < TAPE_GAP_HOLD_FRAMES; i++)
+        Frame(KEY_WAIT_AT, 2000);
+    ASSERT_EQ(_tape->GetConsumptionCursor(), 1u);
+
+    RomAnchorRead();
+    ASSERT_FALSE(HasFatalFailure());
+    ExpectPlayingFrom(1, 0);
+}
+
+// P3: frozen in a pilot, the ROM gets the whole pilot again (it needs 256 pulses to lock on)
+TEST_F(TapeLoaderFollow_Test, RomLoadAfterFreezeInPilotStartsThePilot)
+{
+    StartAt(300);
+    for (uint32_t i = 0; i < TAPE_BLOCK_HOLD_FRAMES; i++)
+        Frame(EAR_LOOP_AT, 0);
+    ASSERT_EQ(_tape->GetPlaybackState(), TapePlaybackState::Paused);
+
+    RomAnchorRead();
+    ASSERT_FALSE(HasFatalFailure());
+    ExpectPlayingFrom(0, 0);
+}
+
+// Design §5.1, "nothing moved it since": only a user action moves a frozen position. Picking a block
+// (even the same one) or rewinding drops the frozen pulse: the loader then gets the block from its start
+TEST_F(TapeLoaderFollow_Test, UserActionDropsTheFrozenPulse)
+{
+    StartAt(0);
+    const size_t dataEdge = _tape->_currentTapeBlock->pilotEdgeCount + 20;
+    FreezeInData(dataEdge);
+    ASSERT_FALSE(HasFatalFailure());
+
+    ASSERT_TRUE(_tape->SeekToBlock(0));
+    Frame(EAR_LOOP_AT, TAPE_START_LISTEN_READS);
+    ExpectPlayingFrom(0, 0);
+
+    FreezeInData(dataEdge);
+    ASSERT_FALSE(HasFatalFailure());
+    _tape->RewindToStart();
+    Frame(EAR_LOOP_AT, TAPE_START_LISTEN_READS);
+    ExpectPlayingFrom(0, 0);
+}
+
+// Test T7: a key-wait loop on a parked tape never starts it, however long it waits (5 s here)
+TEST_F(TapeLoaderFollow_Test, KeyWaitOnParkedTapeNeverStarts)
+{
+    StartAt(0);
+    _tape->_currentOffsetWithinPulse = _tape->_currentTapeBlock->edgePulseTimings.size() - 1;
+    for (uint32_t i = 0; i < TAPE_GAP_HOLD_FRAMES; i++)
+        Frame(KEY_WAIT_AT, 2000);
+    ASSERT_EQ(_tape->GetPlaybackState(), TapePlaybackState::Paused);
+
+    for (int i = 0; i < 250; i++)
+        Frame(KEY_WAIT_AT, 2000);
+    EXPECT_FALSE(_tape->IsPlaying());
+    EXPECT_EQ(_tape->GetConsumptionCursor(), 1u);
+    EXPECT_EQ(_tape->_currentTapeBlock, nullptr) << "Parked: the head waits before block 1's pilot";
+}
+
+// Test T13 (xpeccy-plus 529c8201): the end of the tape must not swallow the level change that ends the
+// last pulse. A loader sampling the EAR line through the whole last block sees one change per edge
+TEST_F(TapeLoaderFollow_Test, LastBlockEndsWithItsFinalEdge)
+{
+    const std::vector<uint8_t> block = { 0xFF, 0x5A, 0xA5 ^ 0xFF ^ 0x5A };
+    TzxTapeBuilder builder;
+    builder.AddStandardBlock(0, block);  // no pause: the tape ends on the last data edge
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("tape-final-edge.tzx");
+    ASSERT_TRUE(TzxTapeBuilder::WriteToFile(builder.Bytes(), path));
+    _tape->stopTape();
+    _context->coreState.tapeFilePath = path;
+    ASSERT_TRUE(_tape->EnsureImageLoaded());
+
+    StartAt(0);
+    const std::vector<uint32_t> pulses = _tape->_currentTapeBlock->edgePulseTimings;
+    ASSERT_FALSE(pulses.empty());
+
+    // Sample every 100 T (shorter than any pulse) until the tape ends, and a little after
+    _cpu->pc = static_cast<uint16_t>(EAR_LOOP_AT + 2);
+    _cpu->t = 0;
+    uint64_t now = 1000;
+    _context->emulatorState.t_states = now;
+    int level = _tape->handlePortIn(0xFEFE) & 0x40;
+    size_t changes = 0;
+    uint64_t total = 0;
+    for (uint32_t pulse : pulses)
+        total += pulse;
+    for (uint64_t elapsed = 0; elapsed < total + 5000 && _tape->IsPlaying(); elapsed += 100)
+    {
+        now += 100;
+        _context->emulatorState.t_states = now;
+        const int sample = _tape->handlePortIn(0xFEFE) & 0x40;
+        if (sample != level)
+            changes++;
+        level = sample;
+    }
+
+    EXPECT_FALSE(_tape->IsPlaying()) << "The tape ends after its last pulse";
+    EXPECT_EQ(changes, pulses.size()) << "One level change per edge, the last one included";
 }
 
 // Test T8: a single EAR read per frame (an issue 2/3 check) never starts the tape

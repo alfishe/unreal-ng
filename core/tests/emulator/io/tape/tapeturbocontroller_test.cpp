@@ -95,8 +95,7 @@ std::string TapeTurboController_Test::WriteTAPFile(const std::string& name, cons
 
 void TapeTurboController_Test::MountSingleBlockTape(const std::string& name)
 {
-    // 4 KiB of data plays for ~1200 frames, and a single block means every
-    // stopPlayback() during playback lands on the natural end-of-tape state
+    // 4 KiB of data plays for ~1200 frames; EndOfTape() stands for its natural end
     const std::vector<uint8_t> payload(4096, 0xA5);
     _context->coreState.tapeFilePath = WriteTAPFile(name, { MakeTAPBlock(0xFF, payload) });
 
@@ -154,7 +153,7 @@ TEST_F(TapeTurboController_Test, NoEngageWhilePausedOrEnded)
     // Ended: the natural end-of-tape stop
     _tape->ResumePlaybackFromPause();
     ASSERT_EQ(_tape->GetPlaybackState(), TapePlaybackState::Playing);
-    _tape->stopPlayback();
+    _tape->EndOfTape();
     ASSERT_EQ(_tape->GetPlaybackState(), TapePlaybackState::Ended);
     _controller->handleFrameEnd();
     EXPECT_FALSE(_context->pCore->IsTurboMode());
@@ -212,7 +211,7 @@ TEST_F(TapeTurboController_Test, DisengageOnEndOfTape)
     _controller->handleFrameEnd();
     ASSERT_TRUE(_context->pCore->IsTurboMode());
 
-    _tape->stopPlayback();
+    _tape->EndOfTape();
     ASSERT_EQ(_tape->GetPlaybackState(), TapePlaybackState::Ended);
     _controller->handleFrameEnd();
 
@@ -270,7 +269,7 @@ TEST_F(TapeTurboController_Test, ManualTurboIsNeverTouched)
     EXPECT_FALSE(_controller->IsAutoTurboActive());
 
     // Playback over: the manual warp must survive our disengage transitions
-    _tape->stopPlayback();
+    _tape->EndOfTape();
     ASSERT_EQ(_tape->GetPlaybackState(), TapePlaybackState::Ended);
     _controller->handleFrameEnd();
     EXPECT_TRUE(_context->pCore->IsTurboMode());
@@ -301,7 +300,7 @@ TEST_F(TapeTurboController_Test, ManualDisableDuringPlaybackSuppressesUntilPlayb
     EXPECT_FALSE(_context->pCore->IsTurboMode());
 
     // Playback over: the veto is lifted with the session
-    _tape->stopPlayback();
+    _tape->EndOfTape();
     ASSERT_EQ(_tape->GetPlaybackState(), TapePlaybackState::Ended);
     _controller->handleFrameEnd();
     EXPECT_FALSE(_controller->Suppressed());

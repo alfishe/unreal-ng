@@ -42,9 +42,9 @@ protected:
     /// with the standard little-endian length prefixes. Returns full path.
     static std::string WriteTAPFile(const std::string& name, const std::vector<std::vector<uint8_t>>& blocks);
 
-    /// Mount a single large data-block tape (~1200 frames of signal): one
-    /// image block means a stopPlayback() during playback parks the cursor at
-    /// end-of-tape, i.e. the natural Ended state. Leaves the tape Idle.
+    /// Mount a single large data-block tape (~1200 frames of signal); tests
+    /// reach its natural Ended state with TapeCUT::EndOfTape(). Leaves the
+    /// tape Idle.
     void MountSingleBlockTape(const std::string& name);
 
     /// Start signal playback and bind the in-flight block (StartPlaybackAtCursor
