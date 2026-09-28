@@ -17,9 +17,12 @@ program; it supersedes `../2026-08-26-automation-gaps/`. Last status sync in
 1. ~~**P1-1** — mode-aware screen state~~ — done in `f0ff08e5`: one
    `DeviceState::Screen` report on every surface, `/state/screen` no longer
    returns the literal `"standard"` (PLAN #3 / #42a retired).
-2. **TD-1** — finish first-class TTD in MCP/CLI/Lua/Python (record/replay/
-   seek + summaries). → PLAN #2.
-3. **TD-6** — TTD docs truth pass. → PLAN #1.
+2. ~~**TD-1** — finish first-class TTD in MCP~~ — done in `2d7f6030` /
+   `e6c9f21b` (every TTD route in `time_travel`, `inspect_state` `ttd` aspect,
+   `docs/features/mcp` section); PLAN #2 retired.
+3. ~~**TD-6** — TTD docs truth pass~~ — done in `57947394` / `730487d4`
+   (interface references rebuilt from the code, shared TTD Session Rules);
+   PLAN #1 retired.
 4. **P1-4** — porttrace rules (noise filtering per decode semantics).
 5. **P2-2** — MoonSound automation section (before implementation).
 6. **P2-3** — capabilities discovery endpoint; **P2-4** — GS/Covox device
@@ -29,4 +32,4 @@ program; it supersedes `../2026-08-26-automation-gaps/`. Last status sync in
    `TempFileTracker` → PLAN #4), TD-5 timeline, TD-7, TD-8.
 
 ## Pointers
-- Cumulative plan: [`../PLAN.md`](../PLAN.md) — items #1–#4 (T1) live here.
+- Cumulative plan: [`../PLAN.md`](../PLAN.md) — item #4 (T1) lives here; #1 and #2 are retired.
