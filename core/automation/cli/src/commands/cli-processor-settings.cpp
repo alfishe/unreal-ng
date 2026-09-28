@@ -542,6 +542,13 @@ void CLIProcessor::HandleFeature(const ClientSession& session, const std::vector
                 session.SendResponse(out.str());
                 return;
             }
+            else if (featureManager->hasFeature(featureName))
+            {
+                out << "Error: cannot enable '" << featureName
+                    << "' while TTD recording is active or history is being replayed." << NEWLINE;
+                session.SendResponse(out.str());
+                return;
+            }
             else
             {
                 out << "Error: Unknown feature '" << featureName << "'." << NEWLINE;

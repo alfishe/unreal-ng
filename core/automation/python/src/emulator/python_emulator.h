@@ -393,7 +393,8 @@ namespace PythonBindings
             }, "Read byte from memory")
             .def("mem_write", [](Emulator& self, uint16_t addr, uint8_t value) {
                 Memory* mem = self.GetMemory();
-                if (mem) mem->MemoryWriteFast(addr, value);
+                if (!mem) return;
+                self.EditMemoryFromTool("Python memory write", [&] { mem->ToolWriteToZ80Memory(addr, value); });
             }, "Write byte to memory")
             .def("mem_read_word", [](Emulator& self, uint16_t addr) -> uint16_t {
                 Memory* mem = self.GetMemory();
@@ -403,8 +404,10 @@ namespace PythonBindings
             .def("mem_write_word", [](Emulator& self, uint16_t addr, uint16_t value) {
                 Memory* mem = self.GetMemory();
                 if (!mem) return;
-                mem->MemoryWriteFast(addr, value & 0xFF);
-                mem->MemoryWriteFast(addr + 1, (value >> 8) & 0xFF);
+                self.EditMemoryFromTool("Python memory write", [&] {
+                    mem->ToolWriteToZ80Memory(addr, value & 0xFF);
+                    mem->ToolWriteToZ80Memory(static_cast<uint16_t>(addr + 1), (value >> 8) & 0xFF);
+                });
             }, "Write 16-bit word to memory")
             .def("mem_read_block", [](Emulator& self, uint16_t addr, uint16_t len) -> py::bytes {
                 Memory* mem = self.GetMemory();
@@ -471,9 +474,10 @@ namespace PythonBindings
                 Memory* mem = self.GetMemory();
                 if (!mem) return;
                 std::string bytes = data;
-                for (size_t i = 0; i < bytes.size(); i++) {
-                    mem->MemoryWriteFast((addr + i) & 0xFFFF, static_cast<uint8_t>(bytes[i]));
-                }
+                self.EditMemoryFromTool("Python memory write", [&] {
+                    for (size_t i = 0; i < bytes.size(); i++)
+                        mem->ToolWriteToZ80Memory(static_cast<uint16_t>((addr + i) & 0xFFFF), static_cast<uint8_t>(bytes[i]));
+                });
             }, "Write block of bytes to memory", py::arg("addr"), py::arg("data"))
             
             // Physical page access (ram/rom/cache/misc)
@@ -505,7 +509,11 @@ namespace PythonBindings
                 else if (type == "misc" && page < MAX_MISC_PAGES)
                     pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
                 if (pagePtr && offset >= 0 && offset < PAGE_SIZE) {
-                    pagePtr[offset] = value;
+                    self.EditMemoryFromTool("Python page write", [&] {
+                        pagePtr[offset] = value;
+                        if (type == "ram")
+                            mem->MarkRamPageEdited(static_cast<uint16_t>(page));
+                    });
                 }
             }, "Write byte to physical page", py::arg("type"), py::arg("page"), py::arg("offset"), py::arg("value"))
             .def("page_read_block", [](Emulator& self, const std::string& type, int page, int offset, int len) -> py::bytes {
@@ -545,7 +553,11 @@ namespace PythonBindings
                 // Clamp to page boundary
                 size_t maxLen = PAGE_SIZE - offset;
                 size_t writeLen = std::min(bytes.size(), maxLen);
-                std::memcpy(pagePtr + offset, bytes.data(), writeLen);
+                self.EditMemoryFromTool("Python page write", [&] {
+                    std::memcpy(pagePtr + offset, bytes.data(), writeLen);
+                    if (type == "ram")
+                        mem->MarkRamPageEdited(static_cast<uint16_t>(page));
+                });
             }, "Write block to physical page", py::arg("type"), py::arg("page"), py::arg("offset"), py::arg("data"))
             .def("memory_info", [](Emulator& self) -> py::dict {
                 py::dict info;
@@ -2406,15 +2418,41 @@ namespace PythonBindings
                 info["write_journal_bytes"]      = py::cast(si.writeJournalBytes);
                 info["coverage_index_frames"]    = py::cast(si.coverageIndexFrames);
                 info["coverage_index_bytes"]     = py::cast(si.coverageIndexBytes);
+                info["write_journal_enabled"]    = py::cast(si.writeJournalEnabled);
+                info["bookmark_count"]           = py::cast(static_cast<uint64_t>(si.bookmarkCount));
                 info["ttd_available"]            = true;
                 return info;
             }, "Get TTD session status")
 
-            .def("ttd_start", [](Emulator& self) -> bool {
+            // mode: "development" (write journal on) or "gaming" (off); an explicit
+            // enable_write_journal wins over mode; with neither, the choice made
+            // by ttd_set_journal_enabled stands (journal on by default)
+            .def("ttd_start", [](Emulator& self, py::object modeObj, py::object journalObj) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pTimeTravelManager) return false;
+                if (!modeObj.is_none())
+                {
+                    const std::string mode = modeObj.cast<std::string>();
+                    if (mode != "development" && mode != "gaming")
+                        throw py::value_error("mode must be \"development\" or \"gaming\"");
+                    ctx->pTimeTravelManager->SetEnableWriteJournal(mode == "development");
+                }
+                if (!journalObj.is_none())
+                    ctx->pTimeTravelManager->SetEnableWriteJournal(journalObj.cast<bool>());
                 return ctx->pTimeTravelManager->StartRecording();
-            }, "Start TTD recording")
+            }, "Start TTD recording",
+               py::arg("mode") = py::none(), py::arg("enable_write_journal") = py::none())
+
+            .def("ttd_set_journal_enabled", [](Emulator& self, bool enabled) {
+                auto* ctx = self.GetContext();
+                if (ctx && ctx->pTimeTravelManager)
+                    ctx->pTimeTravelManager->SetEnableWriteJournal(enabled);
+            }, "Choose whether the next recording keeps a write journal", py::arg("enabled"))
+
+            .def("ttd_get_journal_enabled", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                return !ctx || !ctx->pTimeTravelManager || ctx->pTimeTravelManager->GetEnableWriteJournal();
+            }, "Whether recordings keep a write journal")
 
             .def("ttd_stop", [](Emulator& self) {
                 auto* ctx = self.GetContext();
@@ -2483,10 +2521,13 @@ namespace PythonBindings
             .def("ttd_resume", [](Emulator& self, py::object frameObj, uint32_t tInFrame) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pTimeTravelManager) return false;
+                // No frame: resume exactly where the machine stands (as CLI and WebAPI do)
                 ttd::TTDTimePoint from = ctx->pTimeTravelManager->CurrentPosition();
                 if (!frameObj.is_none())
+                {
                     from.frame = frameObj.cast<uint64_t>();
-                from.tInFrame = tInFrame;
+                    from.tInFrame = tInFrame;
+                }
                 return ctx->pTimeTravelManager->ResumeRecordingFrom(from);
             }, "Resume recording from current or specified point",
                py::arg("frame") = py::none(), py::arg("tinframe") = 0)
@@ -2618,6 +2659,15 @@ namespace PythonBindings
                     default: break;
                 }
                 result["halt_reason"] = reasonStr;
+                if (r.haltReason == ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent)
+                {
+                    py::dict marker;
+                    marker["frame"]    = py::cast(r.blockingMarker.time.frame);
+                    marker["tinframe"] = py::cast(r.blockingMarker.time.tInFrame);
+                    marker["kind"]     = ttd::TTDExternalEventKindToString(r.blockingMarker.kind);
+                    marker["reason"]   = std::string(r.blockingMarker.reason);
+                    result["blocking_marker"] = marker;
+                }
                 result["bookmark"]    = label;
                 return result;
             }, "Seek to an agent bookmark by label", py::arg("label"))
@@ -2654,6 +2704,7 @@ namespace PythonBindings
                     return result;
                 }
                 std::string err;
+                ctx->pTimeTravelManager->SetSessionSourcePath(path);
                 if (!ctx->pTimeTravelManager->DeserializeSession(in, err))
                 {
                     result["error"] = err;
@@ -2724,12 +2775,25 @@ namespace PythonBindings
                     q.beforeGlobalT = f * frameT + beforeTin;
                 }
 
-                ttd::TTDExternalEvent marker;
+                ttd::TTDExternalEvent marker{};
                 auto result = ctx->pTimeTravelManager->FindLastAccess(q, &marker);
                 if (!result)
-                    return py::none();
+                {
+                    if (marker.reason[0] == '\0')
+                        return py::none();  // genuinely no match
+                    // A replay barrier stopped the search before any match
+                    py::dict blocked;
+                    blocked["found"]           = false;
+                    blocked["blocked"]         = true;
+                    blocked["marker_frame"]    = py::cast(marker.time.frame);
+                    blocked["marker_tinframe"] = py::cast(marker.time.tInFrame);
+                    blocked["marker_kind"]     = ttd::TTDExternalEventKindToString(marker.kind);
+                    blocked["marker_reason"]   = std::string(marker.reason);
+                    return blocked;
+                }
 
                 py::dict r;
+                r["found"]     = true;
                 r["frame"]     = py::cast(result->time.frame);
                 r["tinframe"]  = py::cast(result->time.tInFrame);
                 r["pc"]        = py::cast(result->pc);
@@ -2784,13 +2848,23 @@ namespace PythonBindings
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pTimeTravelManager) return py::none();
                 auto r = ctx->pTimeTravelManager->ReverseContinue(pcs);
-                if (!r.matched)
+                const bool blocked = r.blockingMarker.reason[0] != '\0';
+                if (!r.matched && !blocked)
                     return py::none();
                 py::dict d;
-                d["matched"]  = true;
+                d["matched"]  = r.matched;
                 d["pc"]       = r.pc;
                 d["frame"]    = r.arrivedAt.frame;
                 d["tinframe"] = r.arrivedAt.tInFrame;
+                if (blocked)
+                {
+                    py::dict m;
+                    m["kind"]     = ttd::TTDExternalEventKindToString(r.blockingMarker.kind);
+                    m["reason"]   = std::string(r.blockingMarker.reason);
+                    m["frame"]    = py::cast(r.blockingMarker.time.frame);
+                    m["tinframe"] = py::cast(r.blockingMarker.time.tInFrame);
+                    d["blocked_by_marker"] = m;
+                }
                 return d;
             }, "Run backward until any PC matches; returns dict or None",
                py::arg("pcs"))
@@ -3619,6 +3693,26 @@ namespace PythonBindings
         // 0 = auto (follow the priority chain: device > [SOUND] CoreRate >
         // 44100). Applied at the next frame boundary; deferred while a
         // recording is in progress. Returns False for unsupported rates.
+        .def("set_speed", [](Emulator& self, int multiplier) -> bool {
+            if (multiplier != 1 && multiplier != 2 && multiplier != 4 && multiplier != 8 && multiplier != 16)
+                throw py::value_error("speed must be 1, 2, 4, 8 or 16");
+            return self.SetSpeedMultiplier(static_cast<uint8_t>(multiplier));
+        }, py::arg("multiplier"),
+           "Host speed multiplier (1, 2, 4, 8, 16); False while TTD records")
+
+        .def("get_speed", [](Emulator& self) -> py::dict {
+            py::dict d;
+            auto* context = self.GetContext();
+            if (!context || !context->pCore) { d["error"] = "core not available"; return d; }
+            FeatureManager* fm = self.GetFeatureManager();
+            d["multiplier"]   = context->pCore->GetHostSpeedMultiplier();
+            d["effective"]    = context->pCore->GetSpeedMultiplier();  // with the machine's hardware turbo
+            d["turbo_mode"]   = fm && fm->isEnabled(Features::kTurboMode);
+            d["turbo_active"] = context->config.turbo_mode;
+            d["turbo_audio"]  = context->config.turbo_mode_audio;
+            return d;
+        }, "Host speed multiplier, effective multiplier and turbo state")
+
         .def("set_audio_rate", [](Emulator& self, int rate) -> bool {
             auto* context = self.GetContext();
             if (!context || !context->pSoundManager) return false;
@@ -3955,9 +4049,11 @@ namespace PythonBindings
                 Memory* memory = self.GetMemory();
                 if (memory)
                 {
-                    uint32_t addr = asmResult.startAddress;
-                    for (uint8_t b : asmResult.bytes)
-                        memory->MemoryWriteFast(static_cast<uint16_t>((addr++) & 0xFFFF), b);
+                    self.EditMemoryFromTool("Python assemble write", [&] {
+                        uint32_t addr = asmResult.startAddress;
+                        for (uint8_t b : asmResult.bytes)
+                            memory->ToolWriteToZ80Memory(static_cast<uint16_t>((addr++) & 0xFFFF), b);
+                    });
                     d["written"] = true;
                 }
             }

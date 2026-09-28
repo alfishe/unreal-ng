@@ -220,6 +220,19 @@ void EmulatorAPI::setFeature(const HttpRequestPtr& req, std::function<void(const
     // Note: For shared memory toggle, Memory::UpdateFeatureCache handles pause/resume internally
     bool success = featureManager->setFeature(name, enabled);
 
+    if (!success && featureManager->hasFeature(name))
+    {
+        // Known but refused: TTD holds it off (recording, or replaying history)
+        Json::Value error;
+        error["error"] = "Conflict";
+        error["message"] = "Cannot enable '" + name + "' while TTD recording is active or history is being replayed";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
     if (!success)
     {
         Json::Value error;

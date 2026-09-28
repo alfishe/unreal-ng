@@ -1342,7 +1342,7 @@ void EmulatorAPI::reverseContinueTTD(const HttpRequestPtr& req,
     if (!json || !json->isMember("pcs") || !(*json)["pcs"].isArray())
     {
         Json::Value err;
-        err["error"] = "Missing or invalid 'pcs' (expected a JSON array of integers)";
+        err["error"] = "Missing or invalid 'pcs' (expected a JSON array of addresses)";
         auto resp = HttpResponse::newHttpJsonResponse(err);
         resp->setStatusCode(k400BadRequest);
         addCorsHeaders(resp);
@@ -1362,10 +1362,24 @@ void EmulatorAPI::reverseContinueTTD(const HttpRequestPtr& req,
         return;
     }
 
+    // Same number forms as find-last's addresses: a number, or a decimal / hex string
     std::vector<uint16_t> bps;
     bps.reserve(pcsArr.size());
     for (Json::ArrayIndex i = 0; i < pcsArr.size(); ++i)
-        bps.push_back(static_cast<uint16_t>(pcsArr[i].asUInt()));
+    {
+        uint32_t pc = 0;
+        if (!ParseJsonUInt(pcsArr[i], 0xFFFF, pc))
+        {
+            Json::Value err;
+            err["error"] = "'pcs' entries must be 0..65535 (a number, or a string: decimal, \"0x..\", \"#..\" or \"$..\")";
+            auto resp = HttpResponse::newHttpJsonResponse(err);
+            resp->setStatusCode(k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        bps.push_back(static_cast<uint16_t>(pc));
+    }
 
     PauseAndConfirm(emulator);
 

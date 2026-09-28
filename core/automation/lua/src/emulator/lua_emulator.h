@@ -428,7 +428,8 @@ public:
         lua.set_function("mem_write", [this](uint16_t addr, uint8_t value) {
             if (!_emulator) return;
             Memory* mem = _emulator->GetMemory();
-            if (mem) mem->MemoryWriteFast(addr, value);
+            if (!mem) return;
+            _emulator->EditMemoryFromTool("Lua memory write", [&] { mem->ToolWriteToZ80Memory(addr, value); });
         });
 
         lua.set_function("mem_read_word", [this](uint16_t addr) -> uint16_t {
@@ -442,8 +443,10 @@ public:
             if (!_emulator) return;
             Memory* mem = _emulator->GetMemory();
             if (!mem) return;
-            mem->MemoryWriteFast(addr, value & 0xFF);
-            mem->MemoryWriteFast(addr + 1, (value >> 8) & 0xFF);
+            _emulator->EditMemoryFromTool("Lua memory write", [&] {
+                mem->ToolWriteToZ80Memory(addr, value & 0xFF);
+                mem->ToolWriteToZ80Memory(static_cast<uint16_t>(addr + 1), (value >> 8) & 0xFF);
+            });
         });
 
         lua.set_function("mem_read_block", [this](uint16_t addr, uint16_t len) -> sol::table {
@@ -522,11 +525,13 @@ public:
             if (!_emulator) return;
             Memory* mem = _emulator->GetMemory();
             if (!mem) return;
-            for (auto& pair : data) {
-                int idx = pair.first.as<int>() - 1;  // Lua tables start at 1
-                uint8_t val = pair.second.as<uint8_t>();
-                mem->MemoryWriteFast((addr + idx) & 0xFFFF, val);
-            }
+            _emulator->EditMemoryFromTool("Lua memory write", [&] {
+                for (auto& pair : data) {
+                    int idx = pair.first.as<int>() - 1;  // Lua tables start at 1
+                    uint8_t val = pair.second.as<uint8_t>();
+                    mem->ToolWriteToZ80Memory(static_cast<uint16_t>((addr + idx) & 0xFFFF), val);
+                }
+            });
         });
 
         // Physical page access (ram/rom/cache/misc)
@@ -561,7 +566,11 @@ public:
             else if (type == "misc" && page < MAX_MISC_PAGES)
                 pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
             if (pagePtr && offset >= 0 && offset < PAGE_SIZE) {
-                pagePtr[offset] = value;
+                _emulator->EditMemoryFromTool("Lua page write", [&] {
+                    pagePtr[offset] = value;
+                    if (type == "ram")
+                        mem->MarkRamPageEdited(static_cast<uint16_t>(page));
+                });
             }
         });
 
@@ -605,13 +614,17 @@ public:
                 pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
             if (!pagePtr || offset < 0 || offset >= PAGE_SIZE) return;
             int maxLen = PAGE_SIZE - offset;
-            int idx = 0;
-            for (auto& pair : data) {
-                if (idx >= maxLen) break;
-                uint8_t val = pair.second.as<uint8_t>();
-                pagePtr[offset + idx] = val;
-                idx++;
-            }
+            _emulator->EditMemoryFromTool("Lua page write", [&] {
+                int idx = 0;
+                for (auto& pair : data) {
+                    if (idx >= maxLen) break;
+                    uint8_t val = pair.second.as<uint8_t>();
+                    pagePtr[offset + idx] = val;
+                    idx++;
+                }
+                if (type == "ram")
+                    mem->MarkRamPageEdited(static_cast<uint16_t>(page));
+            });
         });
 
         lua.set_function("memory_info", [this]() -> sol::table {
@@ -2168,6 +2181,7 @@ public:
             info["coverage_index_frames"] = si.coverageIndexFrames;
             info["coverage_index_bytes"]  = si.coverageIndexBytes;
             info["write_journal_enabled"]    = si.writeJournalEnabled;
+            info["bookmark_count"]           = static_cast<uint64_t>(si.bookmarkCount);
             info["ttd_available"]            = true;
             return info;
         });
@@ -2179,15 +2193,10 @@ public:
             if (!emulator) return false;
             auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager) return false;
-            // Set journal mode before starting
-            bool enableJournal = true;  // default: development mode
+            // A mode overrides the journal choice; without one the choice made
+            // by ttd_set_journal_enabled stands (journal on by default)
             if (modeOpt.has_value())
-            {
-                const std::string& mode = modeOpt.value();
-                if (mode == "gaming")
-                    enableJournal = false;
-            }
-            ctx->pTimeTravelManager->SetEnableWriteJournal(enableJournal);
+                ctx->pTimeTravelManager->SetEnableWriteJournal(modeOpt.value() != "gaming");
             return ctx->pTimeTravelManager->StartRecording();
         });
 
@@ -2290,10 +2299,13 @@ public:
             if (!emulator) return false;
             auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager) return false;
+            // No frame: resume exactly where the machine stands (as CLI and WebAPI do)
             ttd::TTDTimePoint from = ctx->pTimeTravelManager->CurrentPosition();
             if (frameOpt)
+            {
                 from.frame = *frameOpt;
-            from.tInFrame = tInFrameOpt.value_or(0);
+                from.tInFrame = tInFrameOpt.value_or(0);
+            }
             return ctx->pTimeTravelManager->ResumeRecordingFrom(from);
         });
 
@@ -2442,6 +2454,15 @@ public:
                 default: break;
             }
             result["halt_reason"] = reasonStr;
+            if (r.haltReason == ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent)
+            {
+                sol::table marker = lua_view.create_table();
+                marker["frame"]    = r.blockingMarker.time.frame;
+                marker["tinframe"] = r.blockingMarker.time.tInFrame;
+                marker["kind"]     = ttd::TTDExternalEventKindToString(r.blockingMarker.kind);
+                marker["reason"]   = r.blockingMarker.reason;
+                result["blocking_marker"] = marker;
+            }
             result["bookmark"]    = label;
             return result;
         });
@@ -2476,6 +2497,7 @@ public:
             std::ifstream in(path, std::ios::binary);
             if (!in.is_open()) { result["error"] = "cannot open file: " + path; return result; }
             std::string err;
+            ctx->pTimeTravelManager->SetSessionSourcePath(path);
             if (!ctx->pTimeTravelManager->DeserializeSession(in, err))
             {
                 result["error"] = err;
@@ -2586,8 +2608,22 @@ public:
                     q.beforeGlobalT = static_cast<uint64_t>(*beforeFrameOpt) * frameT + beforeTinOpt.value_or(0);
             }
 
-            auto found = ctx->pTimeTravelManager->FindLastAccess(q);
-            if (!found) { result["found"] = false; return result; }
+            ttd::TTDExternalEvent marker{};
+            auto found = ctx->pTimeTravelManager->FindLastAccess(q, &marker);
+            if (!found)
+            {
+                result["found"] = false;
+                if (marker.reason[0] != '\0')
+                {
+                    // A replay barrier stopped the search before any match
+                    result["blocked"]         = true;
+                    result["marker_frame"]    = marker.time.frame;
+                    result["marker_tinframe"] = marker.time.tInFrame;
+                    result["marker_kind"]     = ttd::TTDExternalEventKindToString(marker.kind);
+                    result["marker_reason"]   = marker.reason;
+                }
+                return result;
+            }
             result["found"]    = true;
             result["frame"]    = found->time.frame;
             result["tinframe"]  = found->time.tInFrame;
@@ -2660,6 +2696,15 @@ public:
             {
                 result["frame"]   = r.arrivedAt.frame;
                 result["tinframe"] = r.arrivedAt.tInFrame;
+            }
+            if (r.blockingMarker.reason[0] != '\0')
+            {
+                sol::table m = lua_view.create_table();
+                m["kind"]     = ttd::TTDExternalEventKindToString(r.blockingMarker.kind);
+                m["reason"]   = r.blockingMarker.reason;
+                m["frame"]    = r.blockingMarker.time.frame;
+                m["tinframe"] = r.blockingMarker.time.tInFrame;
+                result["blocked_by_marker"] = m;
             }
             return result;
         });
@@ -3710,6 +3755,32 @@ public:
         // this run - never persisted to the ini; 0 = auto (follow the
         // priority chain: device > [SOUND] CoreRate > 44100). Applied at the
         // next frame boundary; deferred while a recording is in progress.
+        // Host speed multiplier 1/2/4/8/16 (same switch as CLI 'setting speed N'
+        // and WebAPI setting 'speed'). Refused (false) while TTD records.
+        lua.set_function("set_speed", [this](int multiplier) -> bool {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return false;
+            if (multiplier != 1 && multiplier != 2 && multiplier != 4 && multiplier != 8 && multiplier != 16)
+                return false;
+            return emulator->SetSpeedMultiplier(static_cast<uint8_t>(multiplier));
+        });
+
+        lua.set_function("get_speed", [this]() -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) { result["error"] = "no emulator"; return result; }
+            auto* context = emulator->GetContext();
+            if (!context || !context->pCore) { result["error"] = "core not available"; return result; }
+            FeatureManager* fm = emulator->GetFeatureManager();
+            result["multiplier"]   = context->pCore->GetHostSpeedMultiplier();
+            result["effective"]    = context->pCore->GetSpeedMultiplier();  // with the machine's hardware turbo
+            result["turbo_mode"]   = fm && fm->isEnabled(Features::kTurboMode);
+            result["turbo_active"] = context->config.turbo_mode;
+            result["turbo_audio"]  = context->config.turbo_mode_audio;
+            return result;
+        });
+
         lua.set_function("set_audio_rate", [this](int rate) -> bool {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return false;
@@ -4027,9 +4098,11 @@ public:
                 Memory* memory = emulator->GetMemory();
                 if (memory)
                 {
-                    uint32_t addr = asmResult.startAddress;
-                    for (uint8_t b : asmResult.bytes)
-                        memory->MemoryWriteFast(static_cast<uint16_t>((addr++) & 0xFFFF), b);
+                    emulator->EditMemoryFromTool("Lua assemble write", [&] {
+                        uint32_t addr = asmResult.startAddress;
+                        for (uint8_t b : asmResult.bytes)
+                            memory->ToolWriteToZ80Memory(static_cast<uint16_t>((addr++) & 0xFFFF), b);
+                    });
                     result["written"] = true;
                 }
             }
