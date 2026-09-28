@@ -6,7 +6,7 @@
 #include <QLabel>
 #include <QWidget>
 
-#include "../../../core/src/emulator/emulator.h"
+#include "emulator/emulator.h"
 
 class FloppyDiskWidget : public QWidget
 {
