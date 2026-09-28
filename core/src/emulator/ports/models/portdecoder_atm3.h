@@ -64,7 +64,12 @@ public:
         UlaPlus,            ///< #3B
         NemoIde,            ///< #10/#11/#30..#F0/#C8 and the #x8 aliases
         Covox,              ///< #FB write (not a porthit on the board: the DAC also lets ZX-Bus see it)
+        LegacyFddLatch,     ///< legacy FPGA only: #2F/#4F/#6F/#8F in shadow, plain R/W bytes of the RAM-disk DOS
     };
+
+    /// EmulatorState::evoTrdemu bits
+    static constexpr uint8_t kTrdemuIn = 0x01;       ///< RAM page #FE is in window 0
+    static constexpr uint8_t kTrdemuPending = 0x02;  ///< swap in before the next opcode fetch
 
     /// Classify one I/O cycle by the BaseConf decode rules
     PortArm ClassifyPort(uint16_t port, bool isWrite);
@@ -88,6 +93,8 @@ public:
     bool IsDosLeavingBank(uint8_t bank) const override;
     /// M1 refresh: NMI exit countdown after #xxBE, breakpoint compare
     void OnMachineM1(uint16_t address) override;
+    /// Before an opcode fetch: a pending virtual-TR-DOS swap takes effect
+    void BeforeMachineM1(uint16_t address) override;
     /// endregion </Board NMI>
     /// endregion </Types>
 
@@ -167,6 +174,10 @@ protected:
     /// Attach this decoder as the Z80 M1 hook only while it has work there
     /// (NMI exit countdown running or #BF breakpoint enabled)
     void RefreshM1Hook();
+    /// Virtual TR-DOS (zdos.v / zports.v:797-799): for an FDC access in shadow,
+    /// latch the drive number, arm the trap, and report whether the WD1793 is
+    /// deselected (a masked drive's #1F-#7F accesses never reach the chip)
+    bool TrdemuFdcAccess(uint8_t fdcPort, bool isWrite, uint8_t value);
     void BorderOnlyOut(uint16_t port, uint8_t value, uint16_t pc);
     uint8_t DecodeF7In(uint16_t port);
     /// endregion </Port handlers>

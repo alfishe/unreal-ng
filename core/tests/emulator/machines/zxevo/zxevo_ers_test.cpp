@@ -15,6 +15,8 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatorcontext.h>
 #include <emulator/emulatormanager.h>
+#include <debugger/analyzers/rom-print/screenocr.h>
+#include <emulator/io/keyboard/keyboard.h>
 #include <emulator/memory/memory.h>
 #include <emulator/platform.h>
 #include <emulator/ports/models/portdecoder_atm3.h>
@@ -198,3 +200,94 @@ TEST_F(ZXEvoErs_Test, MagicButtonEntersNmiPageAndReachesMagicService)
     _emulator->RunNFrames(5, true);
     EXPECT_EQ(z80->pc, 0x281D) << "stays in its key-wait loop";
 }
+
+/// ERS RAM disk through the virtual-TR-DOS trap (E4), end to end on the real
+/// ROM. With a blank NVRAM the ERS makes drive A its RAM disk (#13BD = %0001,
+/// CMOS #EB bits 1..0 = 0) and NEO-DOS reports "Virtual Drive: A". Every
+/// TR-DOS disk access below runs the unmodified NEO-DOS against the ERS WD1793
+/// emulator in RAM page #FE (rom/page1/dos_fe/dos_fe.a80): the catalog of the
+/// fresh RAM disk, a SAVE, and a LOAD whose bytes must match what was saved.
+/// Real-ROM boot plus keyboard-typed TR-DOS commands: slower than 50 ms by nature
+TEST_F(ZXEvoErs_Test, RamDiskSaveListLoadThroughVirtualTrdos)
+{
+    Create();
+    ASSERT_TRUE(RunToMainMenu());
+    Keyboard* keyboard = _context->pKeyboard;
+    const std::string id = _emulator->GetId();
+
+    auto tap = [&](ZXKeysEnum key) {
+        keyboard->PressKey(key);
+        _emulator->RunNFrames(4, true);
+        keyboard->ReleaseKey(key);
+        _emulator->RunNFrames(4, true);
+    };
+    auto chord = [&](ZXKeysEnum modifier, ZXKeysEnum key) {
+        keyboard->PressKey(modifier);
+        keyboard->PressKey(key);
+        _emulator->RunNFrames(4, true);
+        keyboard->ReleaseKey(key);
+        keyboard->ReleaseKey(modifier);
+        _emulator->RunNFrames(4, true);
+    };
+    auto digits = [&](const char* text) {
+        for (const char* c = text; *c; c++)
+            tap(static_cast<ZXKeysEnum>(ZXKEY_0 + (*c - '0')));
+    };
+    auto screen = [&]() { return ScreenOCR::ocrScreen(id); };
+
+    // "S. TR-DOS" from the ERS menu
+    tap(ZXKEY_S);
+    _emulator->RunNFrames(60, true);
+    ASSERT_NE(screen().find("Virtual Drive: A"), std::string::npos) << screen();
+    EXPECT_EQ(_context->emulatorState.evoFddMask & 0x01, 0x01) << "drive A is emulated by the ERS";
+
+    // LIST: the fresh RAM disk the ERS created
+    tap(ZXKEY_K);
+    tap(ZXKEY_ENTER);
+    _emulator->RunNFrames(60, true);
+    std::string text = screen();
+    EXPECT_NE(text.find("Title: RAMDISKO"), std::string::npos) << text;
+    EXPECT_NE(text.find("Free Sector 2544"), std::string::npos) << text;
+
+    // SAVE "a" CODE 32768,256 of a known pattern
+    for (uint16_t i = 0; i < 256; i++)
+        _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), static_cast<uint8_t>(i * 7 + 3));
+    tap(ZXKEY_S);                              // SAVE
+    chord(ZXKEY_SYM_SHIFT, ZXKEY_P);           // "
+    tap(ZXKEY_A);
+    chord(ZXKEY_SYM_SHIFT, ZXKEY_P);           // "
+    chord(ZXKEY_CAPS_SHIFT, ZXKEY_SYM_SHIFT);  // extended mode
+    tap(ZXKEY_I);                              // CODE
+    digits("32768");
+    chord(ZXKEY_SYM_SHIFT, ZXKEY_N);           // ,
+    digits("256");
+    tap(ZXKEY_ENTER);
+    _emulator->RunNFrames(150, true);
+
+    tap(ZXKEY_K);
+    tap(ZXKEY_ENTER);
+    _emulator->RunNFrames(60, true);
+    text = screen();
+    EXPECT_NE(text.find("1 File(s)"), std::string::npos) << text;
+    EXPECT_NE(text.find("Free Sector 2543"), std::string::npos) << text;
+
+    // LOAD "a" CODE 40960 and compare
+    for (uint16_t i = 0; i < 256; i++)
+        _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0xA000 + i), 0x00);
+    tap(ZXKEY_J);                              // LOAD
+    chord(ZXKEY_SYM_SHIFT, ZXKEY_P);
+    tap(ZXKEY_A);
+    chord(ZXKEY_SYM_SHIFT, ZXKEY_P);
+    chord(ZXKEY_CAPS_SHIFT, ZXKEY_SYM_SHIFT);
+    tap(ZXKEY_I);                              // CODE
+    digits("40960");
+    tap(ZXKEY_ENTER);
+    _emulator->RunNFrames(150, true);
+
+    int mismatches = 0;
+    for (uint16_t i = 0; i < 256; i++)
+        if (_context->pMemory->DirectReadFromZ80Memory(static_cast<uint16_t>(0xA000 + i)) != static_cast<uint8_t>(i * 7 + 3))
+            mismatches++;
+    EXPECT_EQ(mismatches, 0) << "the file read back from the RAM disk must match what was saved";
+}
+

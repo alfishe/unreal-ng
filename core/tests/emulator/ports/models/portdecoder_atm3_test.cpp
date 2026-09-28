@@ -2,6 +2,7 @@
 #include "pch.h"
 
 #include "portdecoder_atm3_test.h"
+#include "debugger/ttd/atm/ttdatmpaging.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/memory/atm/cmos.h"
@@ -1136,3 +1137,271 @@ TEST_F(ZXEvoNmi_Test, DosStaysOnInsideTheNmiPage)
 }
 
 /// endregion </Board NMI>
+
+/// region <Virtual TR-DOS (ZX-Evo plan phase E4)>
+
+/// ZX-Evo "trdemu" (fpga/base_trdemu/trunk/z80/zdos.v, zports.v:797-799): an
+/// FDC access by the TR-DOS ROM for a drive marked in #13BD deselects the
+/// WD1793 and swaps RAM page #FE into #0000-#3FFF for the next opcode fetch;
+/// OUT (#BE) swaps it back at once. Uses the machine's real NEO-DOS (ROM page
+/// 29), whose #1FDD is IN A,(#1F) and #3FEC is INI - addresses the ERS stub
+/// table (rom/page1/dos_fe/dos_fe.a80) is keyed on
+class ZXEvoTrdemu_Test : public ::testing::Test
+{
+protected:
+    std::shared_ptr<Emulator> _emulator;
+    EmulatorContext* _context = nullptr;
+    PortDecoder_ATM3* _decoder = nullptr;
+    Z80* _z80 = nullptr;
+    Memory* _memory = nullptr;
+
+    static constexpr uint8_t kDriveA = 0x3C;  // #FF: drive 0, /RESET high, HLT, side bit, bit 5
+    static constexpr uint8_t kDriveB = 0x3D;  // same, drive 1
+
+    void SetUp() override
+    {
+        _emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel("", "ATM3", LoggerLevel::LogError);
+        ASSERT_TRUE(_emulator);
+        _context = _emulator->GetContext();
+        _decoder = dynamic_cast<PortDecoder_ATM3*>(_context->pPortDecoder);
+        ASSERT_NE(_decoder, nullptr);
+        _z80 = _context->pCore->GetZ80();
+        _memory = _context->pMemory;
+        ASSERT_EQ(_context->config.atm.evo_legacy_fpga, 0);
+
+        // Pager on, CP/M off, palette-write mode off (A14 = 1); window 0 = the
+        // DOS ROM page 29 (NEO-DOS), windows 1-3 = RAM 5 / 2 / 0; TR-DOS active
+        EmulatorState& state = _context->emulatorState;
+        state.aFF77 = PortDecoder_ATM3::ATM_AFF77_PEN | PortDecoder_ATM3::ATM_AFF77_CPM | PortDecoder_ATM3::ATM_AFF77_PEN2;
+        state.pBF = 0;
+        state.p7FFD = 0;
+        state.pEFF7 = PortDecoder_ATM3::ATM_EFF7_LOCKMEM;
+        state.pFFF7[0] = 0x300 | 29;
+        state.pFFF7[1] = 0x200 | 5;
+        state.pFFF7[2] = 0x200 | 2;
+        state.pFFF7[3] = 0x200 | 0;
+        state.flags = CF_TRDOS;
+        _memory->UpdateZ80Banks();
+        ASSERT_TRUE(_decoder->IsManagerEnabled()) << "TR-DOS active = shadow";
+
+        _z80->sp = 0xA000;
+        _z80->iff1 = _z80->iff2 = 0;
+        _z80->halted = 0;
+        _z80->boundary = Z80_BOUNDARY_NONE;
+    }
+
+    void TearDown() override
+    {
+        if (_emulator)
+            EmulatorManager::GetInstance()->RemoveEmulator(_emulator->GetId());
+    }
+
+    uint8_t Trdemu() const { return _context->emulatorState.evoTrdemu; }
+    bool PageFEIn() const
+    {
+        return _memory->GetMemoryBankMode(0) == MemoryBankModeEnum::BANK_RAM && _memory->GetRAMPageForBank0() == 0xFE;
+    }
+    uint8_t* PageFE() { return _memory->RAMPageAddress(0xFE); }
+};
+
+/// TRD-2: a masked drive never reaches the WD1793 on #1F-#7F; #FF still does
+TEST_F(ZXEvoTrdemu_Test, MaskedDriveDeselectsTheChip)
+{
+    EmulatorState& state = _context->emulatorState;
+    state.flags = 0;
+    state.pBF = 0x01;  // shadow through #BF: no DOS, so no trap - only the chip select is under test
+    _memory->UpdateZ80Banks();
+    _decoder->DecodePortOut(0x13BD, 0x02, 0x0000);  // drive B virtual
+
+    _decoder->DecodePortOut(0x00FF, kDriveA, 0x0000);
+    _decoder->DecodePortOut(0x003F, 0x11, 0x0000);
+    EXPECT_EQ(_decoder->DecodePortIn(0x003F, 0x0000), 0x11) << "real drive A: track register";
+
+    _decoder->DecodePortOut(0x00FF, kDriveB, 0x0000);
+    _decoder->DecodePortOut(0x003F, 0x22, 0x0000);  // dropped
+    EXPECT_EQ(_decoder->DecodePortIn(0x003F, 0x0000), 0xFF) << "virtual drive B: the chip is deselected";
+    EXPECT_EQ(_decoder->DecodePortIn(0x00FF, 0x0000) & 0x1F, kDriveB & 0x1F) << "#FF is the FPGA latch and still answers";
+
+    _decoder->DecodePortOut(0x00FF, kDriveA, 0x0000);
+    EXPECT_EQ(_decoder->DecodePortIn(0x003F, 0x0000), 0x11) << "the write to B never reached the chip";
+    EXPECT_EQ(Trdemu(), 0) << "no trap without the DOS signal";
+}
+
+/// TRD-3: OUT (#FF) is judged by the drive being written, not the previous one
+TEST_F(ZXEvoTrdemu_Test, SystemWriteUsesTheNewDriveNumber)
+{
+    _decoder->DecodePortOut(0x13BD, 0x02, 0x0000);
+    _decoder->DecodePortOut(0x00FF, kDriveA, 0x0000);
+    EXPECT_EQ(Trdemu(), 0) << "selecting real drive A does not trap";
+    _decoder->DecodePortOut(0x00FF, kDriveB, 0x0000);
+    EXPECT_EQ(Trdemu(), PortDecoder_ATM3::kTrdemuPending) << "selecting virtual drive B traps";
+    EXPECT_FALSE(PageFEIn()) << "the swap waits for the next opcode fetch";
+}
+
+/// TRD-4: every term of `vg_rdwr && fdd_mask[drive] && dos && romnram && !atm_pen2`
+TEST_F(ZXEvoTrdemu_Test, TrapNeedsEveryCondition)
+{
+    EmulatorState& state = _context->emulatorState;
+    auto trapsOnStatusRead = [&]() {
+        state.evoTrdemu = 0;
+        _decoder->DecodePortIn(0x001F, 0x0000);
+        return (state.evoTrdemu & PortDecoder_ATM3::kTrdemuPending) != 0;
+    };
+
+    _decoder->DecodePortOut(0x13BD, 0x01, 0x0000);  // drive A virtual
+    _decoder->DecodePortOut(0x00FF, kDriveA, 0x0000);
+    ASSERT_TRUE(trapsOnStatusRead()) << "all conditions met";
+
+    _decoder->DecodePortOut(0x13BD, 0x00, 0x0000);
+    EXPECT_FALSE(trapsOnStatusRead()) << "drive not masked";
+    _decoder->DecodePortOut(0x13BD, 0x01, 0x0000);
+
+    state.aFF77 &= ~PortDecoder_ATM3::ATM_AFF77_PEN2;
+    EXPECT_FALSE(trapsOnStatusRead()) << "palette-write mode (#xx77 A14 = 0) blocks the trap";
+    state.aFF77 |= PortDecoder_ATM3::ATM_AFF77_PEN2;
+
+    state.pFFF7[0] = 0x200 | 7;  // window 0 = RAM
+    _memory->UpdateZ80Banks();
+    EXPECT_FALSE(trapsOnStatusRead()) << "only code running from ROM in window 0 traps";
+    state.pFFF7[0] = 0x300 | 29;
+
+    state.flags = 0;
+    state.pBF = 0x01;  // shadow still on, DOS off
+    _memory->UpdateZ80Banks();
+    EXPECT_FALSE(trapsOnStatusRead()) << "the DOS signal is required";
+}
+
+/// TRD-5: the fetch after the trapped IN comes from page #FE at the same PC;
+/// the stub's OUT (#BE),A hands the next fetch back to the ROM at once
+TEST_F(ZXEvoTrdemu_Test, SwapForNextFetchAndImmediateExit)
+{
+    ASSERT_EQ(_memory->ROMPageHostAddress(29)[0x1FDD], 0xDB) << "NEO-DOS #1FDD: IN A,(#1F)";
+    _decoder->DecodePortOut(0x13BD, 0x01, 0x0000);
+    _decoder->DecodePortOut(0x00FF, kDriveA, 0x0000);
+    _context->emulatorState.evoTrdemu = 0;
+
+    PageFE()[0x1FDF] = 0x00;  // NOP              (ROM has #E6 here)
+    PageFE()[0x1FE0] = 0xD3;  // OUT (#BE),A
+    PageFE()[0x1FE1] = 0xBE;
+
+    _z80->pc = 0x1FDD;
+    _z80->Z80Step(true);  // IN A,(#1F) from ROM: trapped
+    EXPECT_EQ(_z80->a, 0xFF) << "nothing drives the bus for a virtual drive";
+    EXPECT_EQ(Trdemu(), PortDecoder_ATM3::kTrdemuPending);
+    EXPECT_FALSE(PageFEIn());
+
+    _z80->Z80Step(true);  // NOP fetched from page #FE
+    EXPECT_EQ(_z80->pc, 0x1FE0);
+    EXPECT_TRUE(PageFEIn());
+    EXPECT_EQ(Trdemu(), PortDecoder_ATM3::kTrdemuIn);
+
+    _z80->Z80Step(true);  // OUT (#BE),A from page #FE
+    EXPECT_EQ(_z80->pc, 0x1FE2);
+    EXPECT_EQ(Trdemu(), 0);
+    EXPECT_EQ(_memory->GetMemoryBankMode(0), MemoryBankModeEnum::BANK_ROM);
+    EXPECT_EQ(_memory->GetROMPage(), 29u) << "back in NEO-DOS right after the OUT";
+    EXPECT_TRUE(_context->emulatorState.flags & CF_TRDOS) << "TR-DOS never left while the stub ran";
+}
+
+/// TRD-6: the trapping INI's own memory write cannot land in page #FE
+/// (zdos.v trdemu_wr_disable) - the swap only happens at the next fetch
+TEST_F(ZXEvoTrdemu_Test, TrappingIniCannotWritePageFE)
+{
+    ASSERT_EQ(_memory->ROMPageHostAddress(29)[0x3FEC], 0xED) << "NEO-DOS #3FEC: INI";
+    _decoder->DecodePortOut(0x13BD, 0x01, 0x0000);
+    _decoder->DecodePortOut(0x00FF, kDriveA, 0x0000);
+    _context->emulatorState.evoTrdemu = 0;
+
+    PageFE()[0x0100] = 0xAA;
+    _z80->pc = 0x3FEC;
+    _z80->b = 0x01;
+    _z80->c = 0x7F;  // data register
+    _z80->hl = 0x0100;
+    _z80->Z80Step(true);
+
+    EXPECT_EQ(PageFE()[0x0100], 0xAA);
+    EXPECT_EQ(Trdemu(), PortDecoder_ATM3::kTrdemuPending);
+}
+
+/// TRD-7: an NMI while page #FE is in shows RAM #FF (`{7'h7F, in_nmi}`); the
+/// NMI's OUT (#BE) leaves the trdemu page in place
+TEST_F(ZXEvoTrdemu_Test, NmiOverTrdemuMapsPageFF)
+{
+    EmulatorState& state = _context->emulatorState;
+    state.evoTrdemu = PortDecoder_ATM3::kTrdemuIn;
+    _memory->UpdateZ80Banks();
+    ASSERT_TRUE(PageFEIn());
+
+    state.evoInNmi = true;
+    _memory->UpdateZ80Banks();
+    EXPECT_EQ(_memory->GetRAMPageForBank0(), 0xFF);
+
+    _decoder->DecodePortOut(0x00BE, 0x00, 0x0000);
+    EXPECT_EQ(Trdemu(), PortDecoder_ATM3::kTrdemuIn) << "inside an NMI #BE only ends the NMI";
+
+    state.evoInNmi = false;
+    state.pBE = 0;
+    _memory->UpdateZ80Banks();
+    EXPECT_TRUE(PageFEIn()) << "back to the trdemu page when the NMI page leaves";
+}
+
+/// TRD-12: a state restore between the trapped access and the swap (TTD seek,
+/// snapshot) must re-arm the swap - the pending flag alone is not enough, the
+/// M1 hook that applies it has to come back too
+TEST_F(ZXEvoTrdemu_Test, RestoreBetweenTrapAndSwapStillSwaps)
+{
+    _decoder->DecodePortOut(0x13BD, 0x01, 0x0000);
+    _decoder->DecodePortOut(0x00FF, kDriveA, 0x0000);
+    _context->emulatorState.evoTrdemu = 0;
+    PageFE()[0x1FDF] = 0x00;  // NOP
+    PageFE()[0x1FE0] = 0xD3;  // OUT (#BE),A
+    PageFE()[0x1FE1] = 0xBE;
+
+    _z80->pc = 0x1FDD;
+    _z80->Z80Step(true);  // trapped IN A,(#1F)
+    ASSERT_EQ(Trdemu(), PortDecoder_ATM3::kTrdemuPending);
+
+    ttd::TTDAtmPaging serializer(_context);
+    uint8_t blob[sizeof(ttd::AtmPagingState)] = {};
+    serializer.TTDSaveState(blob);
+
+    // Run through the stub and out again: trdemu off, M1 hook detached
+    _z80->Z80Step(true);
+    _z80->Z80Step(true);
+    ASSERT_EQ(Trdemu(), 0);
+    ASSERT_EQ(_z80->machineM1Hook, nullptr);
+
+    // Restore the way TimeTravelManager::RestoreCheckpoint does: serializers, then the paging decode
+    serializer.TTDLoadState(blob);
+    _memory->UpdateZ80Banks();
+    _z80->pc = 0x1FDF;
+    EXPECT_EQ(_z80->machineM1Hook, _decoder) << "the restored pending swap needs its M1 hook";
+    EXPECT_FALSE(PageFEIn()) << "the swap waits for the next fetch";
+
+    _z80->Z80Step(true);  // NOP from page #FE, as in the uninterrupted run
+    EXPECT_EQ(_z80->pc, 0x1FE0);
+    EXPECT_TRUE(PageFEIn());
+    _z80->Z80Step(true);  // OUT (#BE),A
+    EXPECT_EQ(Trdemu(), 0);
+    EXPECT_EQ(_memory->GetROMPage(), 29u);
+}
+
+/// TRD-11: the legacy FPGA has four RAM-disk latch bytes instead of the trap
+TEST_F(ZXEvoTrdemu_Test, LegacyFpgaLatchBytes)
+{
+    _context->config.atm.evo_legacy_fpga = 1;
+    for (uint8_t low : {0x2F, 0x4F, 0x6F, 0x8F})
+        _decoder->DecodePortOut(low, static_cast<uint8_t>(low ^ 0x55), 0x0000);
+    for (uint8_t low : {0x2F, 0x4F, 0x6F, 0x8F})
+        EXPECT_EQ(_decoder->DecodePortIn(low, 0x0000), static_cast<uint8_t>(low ^ 0x55)) << std::hex << int(low);
+
+    _decoder->DecodePortOut(0x13BD, 0x0F, 0x0000);  // a breakpoint write there, not a mask
+    _decoder->DecodePortOut(0x00FF, kDriveA, 0x0000);
+    _decoder->DecodePortIn(0x001F, 0x0000);
+    EXPECT_EQ(Trdemu(), 0) << "no trap on the legacy tree";
+
+    _context->config.atm.evo_legacy_fpga = 0;
+    EXPECT_EQ(_decoder->ClassifyPort(0x002F, false), PortDecoder_ATM3::PortArm::ZxBus) << "gone on the current tree";
+}
+
+/// endregion </Virtual TR-DOS>

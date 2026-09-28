@@ -292,6 +292,10 @@ class IMachineM1Hook
 {
 public:
     virtual ~IMachineM1Hook() = default;
+    /// Before the opcode read: board logic that changes what the fetch sees
+    /// (ZX-Evo trdemu swaps its RAM page in for the next fetch)
+    virtual void BeforeMachineM1(uint16_t address) { (void)address; }
+    /// After the opcode read (the refresh edge)
     /// @param address the address the opcode byte was fetched from
     virtual void OnMachineM1(uint16_t address) = 0;
 };
@@ -408,6 +412,7 @@ public:
     void RecordInstructionStart(uint16_t addr);  // m1_pc + instruction-start observers (once per instruction)
     bool InstructionStartObserved() const;       // any observer armed (trace hook, TTD coverage/probe)
     void NotifyInstructionStart();               // run the observers for the instruction at m1_pc
+    void NotifyMachineM1Before(uint16_t address);  // run machineM1Hook before the opcode read
     void NotifyMachineM1(uint16_t address);      // run machineM1Hook (out of line, see m1_cycle)
     uint8_t in(uint16_t port);
     void out(uint16_t port, uint8_t val);

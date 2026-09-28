@@ -1,6 +1,6 @@
 # TODO — ZX-Evo BaseConf (`ATM3`) completion
 
-**Status:** analysis and designs done (2026-09-27); phases E0, E1, E2a, E3 done (2026-09-28); E2b (PS/2 keyboard) deferred. PLAN.md rows **#55**
+**Status:** analysis and designs done (2026-09-27); phases E0, E1, E2a, E3, E4 done (2026-09-28); E2b (PS/2 keyboard) deferred. PLAN.md rows **#55**
 (this program) and **#53** (small ATM gaps; font RAM moved into #55 phase E8).
 
 The 2026-09-15 hi-res video / `#FF` palette / `EFF7` / `7FFD` lock work is **done** (landed with the
@@ -25,7 +25,7 @@ atm merge `59e37f38`); it was previously the only content of this folder, marked
 - [x] E2a (2026-09-28): `EvoAvr` — ERS shows "Baseconf: ZXEvo 4M 07.01.2026" and "AVR Boot: ZXEvoAVRBoot 25.05.2019 beta", registers A-D, EEPROM window, `[EVO] NvramFile` — [e2a-evo-avr.md](e2a-evo-avr.md)
 - [ ] E2b PS/2 keyboard (deferred; NedoOS on ZX-Evo has no keyboard without it). **How to do it:** [tdd-evo-control-and-avr.md](tdd-evo-control-and-avr.md) §6.1 — one key event carries both the ZX code and the physical PC key, journaled once; do it after the in-flight TTD input-journal work lands
 - [x] E3 (2026-09-28): board NMI (`#BF`.3, Magic button, M1 breakpoint), NOP entry + RAM `#FF`, 2-M1 exit via `#BE`, ERS Magic Service reachable — [e3-board-nmi.md](e3-board-nmi.md)
-- [ ] E4 virtual TR-DOS trap (ERS RAM disk and image mounting)
+- [x] E4 (2026-09-28): virtual TR-DOS trap (`#13BD` mask, chip deselect, swap to RAM `#FE`, `#BE` exit), legacy latches `#2F-#8F`; ERS RAM disk SAVE/LIST/LOAD on the real ROM — [e4-virtual-trdos.md](e4-virtual-trdos.md). Mounting TRD images needs E5/E6 storage
 - [ ] E5 SD card (needs `SdCardSpi` on master)
 - [ ] E6 NemoIDE (needs shared IDE R1-1) · E7 ATAPI CD (needs IDE R1-7)
 - [ ] E8 `#xBF7` write protect, flash writes, font RAM, 4:4:4 palette, ULA+

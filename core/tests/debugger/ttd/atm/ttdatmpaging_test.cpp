@@ -49,7 +49,7 @@ TEST(TtdAtmPagingLayout_Test, BlobIsPaddingFree)
 {
     using ttd::AtmPagingState;
 
-    EXPECT_EQ(sizeof(AtmPagingState), 132u);
+    EXPECT_EQ(sizeof(AtmPagingState), 136u);
     EXPECT_TRUE(std::is_trivially_copyable_v<AtmPagingState>);
     EXPECT_TRUE(std::is_standard_layout_v<AtmPagingState>);
 
@@ -81,6 +81,8 @@ TEST(TtdAtmPagingLayout_Test, BlobIsPaddingFree)
     src.evoInNmi = 1;
     src.evoNmiEntry = 1;
     src.nmiAtIntPending = 1;
+    src.evoTrdemu = 0x01;
+    src.evoVgDrive = 0x02;
 
     *dst = src;
     EXPECT_EQ(std::memcmp(dst, &src, sizeof(AtmPagingState)), 0)
@@ -165,6 +167,8 @@ TEST(TtdAtmPaging_Test, Atm3RoundTripCarriesPaletteBorderAndLiveCmosLatch)
     state.evoInNmi = true;
     state.evoNmiEntry = true;
     state.nmiAtIntStartPending = true;
+    state.evoTrdemu = PortDecoder_ATM3::kTrdemuIn;
+    state.evoVgDrive = 3;
     atm3->GetCMOS().SetCMOSAddress(0x2E);
     atm3->GetEvoAvr().SetVolatileState(EvoAvr::kExtBootloaderVersion, 0x42, 0x03);
 
@@ -182,6 +186,8 @@ TEST(TtdAtmPaging_Test, Atm3RoundTripCarriesPaletteBorderAndLiveCmosLatch)
     state.evoInNmi = false;
     state.evoNmiEntry = false;
     state.nmiAtIntStartPending = false;
+    state.evoTrdemu = 0;
+    state.evoVgDrive = 0;
     atm3->GetCMOS().SetCMOSAddress(0x00);
     atm3->GetEvoAvr().SetVolatileState(0, 0, 0);
 
@@ -197,6 +203,8 @@ TEST(TtdAtmPaging_Test, Atm3RoundTripCarriesPaletteBorderAndLiveCmosLatch)
     EXPECT_TRUE(state.evoInNmi) << "board NMI page state";
     EXPECT_TRUE(state.evoNmiEntry);
     EXPECT_TRUE(state.nmiAtIntStartPending);
+    EXPECT_EQ(state.evoTrdemu, PortDecoder_ATM3::kTrdemuIn) << "virtual TR-DOS page state";
+    EXPECT_EQ(state.evoVgDrive, 3);
     EXPECT_EQ(atm3->GetEvoAvr().GetExtensionType(), EvoAvr::kExtBootloaderVersion) << "AVR extension type";
     EXPECT_EQ(atm3->GetEvoAvr().GetEepromPage(), 0x42);
     EXPECT_TRUE(atm3->GetEvoAvr().IsEepromMode());

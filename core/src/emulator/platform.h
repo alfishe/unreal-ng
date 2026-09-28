@@ -1077,6 +1077,10 @@ struct EmulatorState
 	};
 	uint8_t pBE, pBF;
 	uint8_t evoFddMask;  // ZX-Evo #13BD: bit n = drive n emulated in software (trdemu FPGA only)
+	// ZX-Evo virtual TR-DOS (zdos.v): bit 0 = RAM page #FE swapped into #0000-#3FFF,
+	// bit 1 = swap due before the next opcode fetch; evoVgDrive = drive from the last OUT (#FF)
+	uint8_t evoTrdemu;
+	uint8_t evoVgDrive;
 
 	uint8_t flags = 0x00; // Stores execution flags
 	uint8_t border_attr;

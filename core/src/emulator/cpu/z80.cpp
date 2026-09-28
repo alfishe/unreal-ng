@@ -670,6 +670,11 @@ __forceinline bool Z80::InstructionStartObserved() const
     return m1TraceHook || _context->ttdCoverageActive || _context->ttdProbe.IsArmed();
 }
 
+void Z80::NotifyMachineM1Before(uint16_t address)
+{
+    machineM1Hook->BeforeMachineM1(address);
+}
+
 void Z80::NotifyMachineM1(uint16_t address)
 {
     machineM1Hook->OnMachineM1(address);
@@ -703,6 +708,11 @@ uint8_t Z80::m1_cycle()
 
     // Z80 CPU M1 cycle logic
     r_low = ((r_low + 1) & 0x7f) | (r_low & 0x80);  // Keep memory refresh register ticking
+
+    // Board logic that decides what this fetch sees (ZX-Evo trdemu page swap)
+    if (machineM1Hook) [[unlikely]]
+        NotifyMachineM1Before(cpu.pc);
+
     opcode = rd(cpu.pc, true);  // Initiate memory read cycle and Keep opcode copy for trace / debug purposes
 
     // Board logic clocked by the M1 refresh (ZX-Evo NMI exit / breakpoint).

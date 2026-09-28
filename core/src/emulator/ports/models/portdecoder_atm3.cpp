@@ -48,6 +48,8 @@ void PortDecoder_ATM3::reset()
     _state->evoInNmi = false;
     _state->evoNmiEntry = false;
     _state->nmiAtIntStartPending = false;
+    _state->evoTrdemu = 0;     // zdos.v: in_trdemu resets to 0
+    _state->evoVgDrive = 0;
     RefreshM1Hook();
 
     // ATM3 (ZX-Evo BaseConf) always has the DS12885-style RTC/CMOS
@@ -116,6 +118,13 @@ PortDecoder_ATM3::PortArm PortDecoder_ATM3::ClassifyPort(uint16_t port, bool isW
         case 0xFB:
             // The Covox DAC latch is write-only and not a porthit: reads stay on the ZX-Bus
             return isWrite ? PortArm::Covox : PortArm::ZxBus;
+        case 0x2F:
+        case 0x4F:
+        case 0x6F:
+        case 0x8F:
+            // Legacy FPGA: four shadow R/W bytes for the patched-DOS RAM disk
+            // (baseconf zports.v:186-189); the current tree removed them
+            return (shadow && IsLegacyFpga()) ? PortArm::LegacyFddLatch : PortArm::ZxBus;
         default:
             break;
     }
@@ -174,7 +183,14 @@ uint8_t PortDecoder_ATM3::DecodePortIn(uint16_t port, uint16_t pc)
             result = 0xFF;
             break;
         case PortArm::Fdc:
-            result = PeripheralPortIn(static_cast<uint16_t>(port & 0x00FF));
+        {
+            const uint8_t fdcPort = static_cast<uint8_t>(port & 0x00FF);
+            // A drive emulated in software leaves the chip deselected: nothing drives the bus
+            result = TrdemuFdcAccess(fdcPort, /*isWrite*/ false, 0) ? 0xFF : PeripheralPortIn(fdcPort);
+            break;
+        }
+        case PortArm::LegacyFddLatch:
+            result = _state->wd_shadow[((port & 0x00FF) >> 5) - 1];
             break;
         case PortArm::Joystick:
             // Kempston joystick outside shadow; no joystick model is attached, so
@@ -287,7 +303,8 @@ void PortDecoder_ATM3::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
             const uint16_t fdcPort = static_cast<uint16_t>(port & 0x00FF);
             if (fdcPort == 0x00FF)
                 fdcValue &= 0b1011'1111;
-            PeripheralPortOut(fdcPort, fdcValue);
+            if (!TrdemuFdcAccess(static_cast<uint8_t>(fdcPort), /*isWrite*/ true, value))
+                PeripheralPortOut(fdcPort, fdcValue);
 
             // The #FF write also strobes the palette latch while #xx77 A14 was 0
             // (atm_palwr = vg_wrFF & atm_pen2, zports.v:911-917)
@@ -297,6 +314,9 @@ void PortDecoder_ATM3::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
         }
         case PortArm::EvoConfig:
             Port_BF_Out(port, value, pc);
+            break;
+        case PortArm::LegacyFddLatch:
+            _state->wd_shadow[((port & 0x00FF) >> 5) - 1] = value;
             break;
         case PortArm::EvoExit:
             Port_BE_Out(port, value, pc);
@@ -558,6 +578,14 @@ void PortDecoder_ATM3::Port_BE_Out([[maybe_unused]] uint16_t port, [[maybe_unuse
     {
         _state->pBE = 2;
         RefreshM1Hook();
+    }
+    else if (_state->evoTrdemu & kTrdemuIn)
+    {
+        // Virtual TR-DOS exit: immediate (zdos.v `clr_nmi && !in_nmi`), so the
+        // fetch right after this OUT already comes from the TR-DOS ROM
+        _state->evoTrdemu &= static_cast<uint8_t>(~kTrdemuIn);
+        if (_memory)
+            _memory->UpdateZ80Banks();
     }
 
     MLOGDEBUG("Port_BE_Out: NMI exit armed=%d", _state->pBE != 0);
@@ -823,12 +851,58 @@ void PortDecoder_ATM3::RefreshM1Hook()
     if (!_context->pCore || !_context->pCore->GetZ80())
         return;
 
-    const bool needed = _state->pBE > 0 || (_state->pBF & 0x10);
+    const bool needed = _state->pBE > 0 || (_state->pBF & 0x10) || (_state->evoTrdemu & kTrdemuPending);
     Z80* z80 = _context->pCore->GetZ80();
     if (needed)
         z80->machineM1Hook = this;
     else if (z80->machineM1Hook == this)
         z80->machineM1Hook = nullptr;
+}
+
+void PortDecoder_ATM3::BeforeMachineM1([[maybe_unused]] uint16_t address)
+{
+    // zdos.v: in_trdemu is set by the trapped access and seen by the very next
+    // opcode fetch. The trapping instruction itself still ran with the ROM in
+    // window 0, so its own memory writes (INI...) could not reach page #FE -
+    // the RTL's trdemu_wr_disable window
+    if (_state->evoTrdemu & kTrdemuPending)
+    {
+        _state->evoTrdemu = static_cast<uint8_t>((_state->evoTrdemu & ~kTrdemuPending) | kTrdemuIn);
+        if (_memory)
+            _memory->UpdateZ80Banks();
+        RefreshM1Hook();
+    }
+}
+
+bool PortDecoder_ATM3::TrdemuFdcAccess(uint8_t fdcPort, bool isWrite, uint8_t value)
+{
+    if (IsLegacyFpga())
+        return false;  // the legacy tree has no drive mask
+
+    // The drive number the FPGA compares: for OUT (#FF) the value being written
+    // (vg_rdwr_fclk is registered after the write), otherwise the latched one
+    const bool systemWrite = isWrite && fdcPort == 0xFF;
+    const uint8_t drive = systemWrite ? static_cast<uint8_t>(value & 0x03) : _state->evoVgDrive;
+    if (systemWrite)
+        _state->evoVgDrive = drive;
+
+    const bool masked = (_state->evoFddMask >> drive) & 0x01;
+    if (!masked)
+        return false;
+
+    // Trap (zdos.v:61): TR-DOS executing from ROM in window 0, palette-write
+    // mode off (#xx77 A14 = 1 -> atm_pen2 = 0); the FDC arm already implies shadow
+    const bool dos = (_state->flags & CF_TRDOS) != 0;
+    const bool romInWindow0 = _memory && _memory->GetMemoryBankMode(0) == MemoryBankModeEnum::BANK_ROM;
+    const bool paletteWriteOff = (_state->aFF77 & ATM_AFF77_PEN2) != 0;
+    if (dos && romInWindow0 && paletteWriteOff)
+    {
+        _state->evoTrdemu |= kTrdemuPending;
+        RefreshM1Hook();
+    }
+
+    // #FF is the FPGA's own latch and always answers; #1F-#7F would select the chip
+    return fdcPort != 0xFF;
 }
 
 /// endregion </Board NMI>
@@ -907,9 +981,10 @@ void PortDecoder_ATM3::updateMemoryBanks()
         }
     }
 
-    // Window 0 overrides
-    if (_state->evoInNmi)
-        _memory->SetRAMPageToBank0(0xFF & ramMask);
+    // Window 0 overrides: NMI RAM #FF, virtual-TR-DOS RAM #FE (#FF when both,
+    // atm_pager.v `page <= {7'h7F, in_nmi}`)
+    if (_state->evoInNmi || (_state->evoTrdemu & kTrdemuIn))
+        _memory->SetRAMPageToBank0((_state->evoInNmi ? 0xFF : 0xFE) & ramMask);
     else if (_state->pEFF7 & ATM_EFF7_ROCACHE)
         _memory->SetRAMPageToBank0(0);
 

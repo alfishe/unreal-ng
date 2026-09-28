@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-09-27 |
-| **Status** | Design, ready for review. Nothing implemented |
+| **Status** | Implemented in phase E4 (2026-09-28): [e4-virtual-trdos.md](e4-virtual-trdos.md). "As built" notes at the end of §3 |
 | **Closes** | gaps **ST-5**, **ST-6**, **P-2** (FDC gating) of [gap-analysis.md](gap-analysis.md); user items "RAM disk" and "mount TR-DOS from file / SD / HDD" |
 | **Depends on** | [tdd-evo-control-and-avr.md](tdd-evo-control-and-avr.md) (`#xxBD`, `#xxBE`, NMI, FPGA variant, M1 hook); for images on SD/HDD: [tdd-storage-sd-ide-cd.md](tdd-storage-sd-ide-cd.md) |
 | **Hardware source** | [baseconf-hardware-reference.md](baseconf-hardware-reference.md) §A.8 (FPGA), §C 3 (ERS software) |
@@ -84,6 +84,18 @@ Rules:
 9. **Legacy variant only:** `#2F/#4F/#6F/#8F` are four plain read/write bytes in shadow (BC
    `zports.v:186-189`).
 
+**As built (E4, 2026-09-28).** Differences from the rules above:
+
+- Rules 2-3: `OUT (#FF)` always reaches the WD1793 model, because in the emulator the model owns the `#FF`
+  latch (drive, side, HLT, reset) and answers the `#FF` read. Selecting a drive starts no operation, so
+  this is invisible to software. No separate `ffLow` field was needed.
+- Rule 4: "window 0 ROM" is the **effective** window (the pager output `romnram` in `zdos.v:61`),
+  not the programmed one. So ERS code that touches the FDC from the NMI page or from page `#FE` never
+  re-traps. TRD-7 therefore covers "NMI on top of trdemu", not "trap inside NMI".
+- Rule 5: the swap happens in `IMachineM1Hook::BeforeMachineM1`, a pre-fetch callback added next to
+  E3's post-fetch `OnMachineM1`. The hook is attached only while a swap is pending.
+- State: `EmulatorState::evoTrdemu` (bit 0 in, bit 1 pending) and `evoVgDrive`, in the TTD blob.
+
 ## 4. Code placement
 
 | File | Change |
@@ -101,6 +113,10 @@ File: `core/tests/emulator/ports/models/portdecoder_atm3_trdemu_test.cpp` (unit,
 and `core/tests/emulator/machines/zxevo/zxevo_trdemu_test.cpp` (real ROM, skips if
 `zxevo_fe.rom` is absent).
 
+As built, the unit tests are the `ZXEvoTrdemu_Test` fixture in `portdecoder_atm3_test.cpp` and the
+real-ROM test is in `zxevo_ers_test.cpp`; the mapping to the IDs below is in
+[e4-virtual-trdos.md](e4-virtual-trdos.md) §3.
+
 | ID | Asserts |
 |---|---|
 | TRD-1 | `#13BD` reads back D3..D0; upper bits 0; reset clears it; absent (`#FF`) with `Fpga=legacy` |
@@ -109,7 +125,7 @@ and `core/tests/emulator/machines/zxevo/zxevo_trdemu_test.cpp` (real ROM, skips 
 | TRD-4 | trigger needs every term: remove shadow / DOS / ROM-in-window-0 / palette-write-off / mask bit one at a time → no swap |
 | TRD-5 | after a trapped `IN A,(#1F)` at `#1FDD`, the next fetch at `#1FDF` reads page `#FE`; `OUT (#BE),A` placed at `X` makes the fetch at `X+2` come from ROM |
 | TRD-6 | trapped `INI` with HL in `#0000-#3FFF`: RAM page `#FE` is unchanged afterwards (D4) |
-| TRD-7 | trap during NMI maps `#FF`, not `#FE`; `OUT (#BE)` inside NMI does not clear trdemu |
+| TRD-7 | NMI on top of trdemu maps `#FF`, not `#FE`; `OUT (#BE)` inside NMI does not clear trdemu |
 | TRD-8 | executing the stub in page `#FE` keeps `CF_TRDOS` set; returning to ROM `#3Dxx` code continues in TR-DOS (D5) |
 | TRD-9 | `#FF` read = `{INTRQ,DRQ,1,side,HRDY,RES,drive}` for masked and unmasked drives |
 | TRD-10 | outside shadow: `IN (#1F)` = joystick byte, `IN (#3F)` = `#FF`, WD1793 untouched (P-2) |
