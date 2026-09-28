@@ -3687,12 +3687,6 @@ namespace PythonBindings
             return d;
         }, "Arm a buffered stereo capture", py::arg("seconds") = 1.0)
 
-        // Core audio rate control (same switch as CLI 'setting audio_rate',
-        // WebAPI PUT settings/audio_rate and Lua set_audio_rate). Pin the
-        // rate (44100..192000) for this run - never persisted to the ini;
-        // 0 = auto (follow the priority chain: device > [SOUND] CoreRate >
-        // 44100). Applied at the next frame boundary; deferred while a
-        // recording is in progress. Returns False for unsupported rates.
         .def("set_speed", [](Emulator& self, int multiplier) -> bool {
             if (multiplier != 1 && multiplier != 2 && multiplier != 4 && multiplier != 8 && multiplier != 16)
                 throw py::value_error("speed must be 1, 2, 4, 8 or 16");
@@ -3713,6 +3707,12 @@ namespace PythonBindings
             return d;
         }, "Host speed multiplier, effective multiplier and turbo state")
 
+        // Core audio rate control (same switch as CLI 'setting audio_rate',
+        // WebAPI PUT settings/audio_rate and Lua set_audio_rate). Pin the
+        // rate (44100..192000) for this run - never persisted to the ini;
+        // 0 = auto (follow the priority chain: device > [SOUND] CoreRate >
+        // 44100). Applied at the next frame boundary; deferred while a
+        // recording is in progress. Returns False for unsupported rates.
         .def("set_audio_rate", [](Emulator& self, int rate) -> bool {
             auto* context = self.GetContext();
             if (!context || !context->pSoundManager) return false;

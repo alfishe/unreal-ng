@@ -516,41 +516,39 @@ void EmulatorAPI::setSetting(const HttpRequestPtr& req, std::function<void(const
     CONFIG& config = context->config;
     Json::Value ret;
 
-    if (name == "fast_tape")
-    {
-        // Same switch as the generic feature API ('fasttape') — keeps the
-        // settings endpoint and the feature endpoint in lockstep
-        FeatureManager* featureManager = context->pFeatureManager;
-        if (featureManager)
-        {
-            featureManager->setFeature(Features::kFastTape, boolValue);
-        }
-        ret["name"] = "fast_tape";
-        ret["value"] = boolValue;
-        ret["message"] = std::string("Fast tape loading is now ") + (boolValue ? "enabled" : "disabled");
-    }
-    else if (name == "turbo_tape")
-    {
-        FeatureManager* featureManager = context->pFeatureManager;
-        if (featureManager)
-        {
-            featureManager->setFeature(Features::kTurboTape, boolValue);
-        }
-        ret["name"] = "turbo_tape";
-        ret["value"] = boolValue;
-        ret["message"] = std::string("Turbo tape loading is now ") + (boolValue ? "enabled" : "disabled");
-    }
-    else if (name == "fast_disk")
+    // fast_tape / turbo_tape / fast_disk are the runtime features behind the
+    // feature API; TTD holds them off while recording or replaying history
+    struct ShortcutSetting { const char* name; const char* feature; const char* label; };
+    static const ShortcutSetting kShortcuts[] = {
+        {"fast_tape", Features::kFastTape, "Fast tape loading"},
+        {"turbo_tape", Features::kTurboTape, "Turbo tape loading"},
+        {"fast_disk", Features::kFastDisk, "Fast disk loading"},
+    };
+    const ShortcutSetting* shortcut = nullptr;
+    for (const ShortcutSetting& candidate : kShortcuts)
+        if (name == candidate.name)
+            shortcut = &candidate;
+
+    if (shortcut)
     {
         FeatureManager* featureManager = context->pFeatureManager;
-        if (featureManager)
+        if (!featureManager || !featureManager->setFeature(shortcut->feature, boolValue))
         {
-            featureManager->setFeature(Features::kFastDisk, boolValue);
+            Json::Value error;
+            error["error"] = "Conflict";
+            error["message"] = std::string("Cannot enable ") + shortcut->name +
+                               " while TTD recording is active or history is being replayed";
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k409Conflict);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
         }
-        config.wd93_nodelay = boolValue;
-        ret["name"] = "fast_disk";
+        if (name == "fast_disk")
+            config.wd93_nodelay = boolValue;
+        ret["name"] = shortcut->name;
         ret["value"] = boolValue;
-        ret["message"] = std::string("Fast disk loading is now ") + (boolValue ? "enabled" : "disabled");
+        ret["message"] = std::string(shortcut->label) + " is now " + (boolValue ? "enabled" : "disabled");
     }
     else if (name == "turbo_mode")
     {
