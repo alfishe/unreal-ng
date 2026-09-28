@@ -4,6 +4,7 @@
 |---|---|
 | **Date** | 2026-09-28 |
 | **Status** | Reviewed; applies when the `neogs` branch merges (PLAN #45) |
+| **Layers** | port decoder → port adapter → device → medium, with the slot and the manager beside them: [technical-design.md §1.1](technical-design.md#11-layers-from-the-guests-port-to-the-medium) |
 | **Today (branch)** | `SoundChip_NeoGS` owns `std::unique_ptr<SdCardSpi> _sd` and opens `[NGS] SDCardImage` with `open(path, mode, type)` after resolving the path against the executable; `insertSdCard` / `ejectSdCard` refuse while TTD records; card writes mark a replay barrier (`markSdWrite`) |
 | **Master** | `[NGS] SDCardImage` is parsed into `ngs_sd_card_path` and used by nothing |
 

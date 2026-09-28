@@ -330,6 +330,10 @@ flowchart LR
     MC --> MR
 ```
 
+Where this sits among the storage layers (port decoder → port adapter → device → medium, with
+the slot and the manager on the control path): [technical-design.md §1.1](technical-design.md#11-layers-from-the-guests-port-to-the-medium).
+`MediaControl` is the top of the control path; it never touches ports or devices.
+
 - **`MediaControl`** (`core/src/emulator/media/mediacontrol.{h,cpp}`): the only place with the
   verbs of §3.4. Input: `MediaRequest {verb, selector, source, options (string map)}`; output:
   `MediaReply {result, slot, slots / detached / formats, revision}`. It parses and validates the

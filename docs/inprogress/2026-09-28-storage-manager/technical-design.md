@@ -76,6 +76,82 @@ flowchart TB
     Manager -- "NC_MEDIA_*" --> GUI
 ```
 
+### 1.1 Layers: from the guest's port to the medium
+
+Every storage peripheral is built from the same four layers. Only the lowest one is specific to a
+machine; the higher a layer, the more machines share it. Two paths cross them:
+
+- **the data path** (solid arrows): a guest `IN` / `OUT` goes down through the layers to the
+  medium's contents, sector by sector, on the emulation thread, with no lock and no manager call;
+- **the control path** (dashed arrows): insert, eject, save and export come from a surface,
+  through `MediaControl` and the `MediaManager`, into the peripheral's **slot**, which plugs the
+  medium into layer 3. The layers report back through the slot: a guest write
+  (`NoteWrite`, the TTD barrier) and signals such as card-detect.
+
+```mermaid
+flowchart TB
+    Z80["Guest Z80: IN / OUT"]
+
+    subgraph L1["1 · Machine port decoder (platform-specific)"]
+        D1["PortDecoder_ATM3 (ZX-Evo)<br/>TSConf decoder · NeoGS GS-side ports<br/>Beta 128 interface · +3 decoder · IDE boards"]
+    end
+    subgraph L2["2 · Port adapter (bus glue, shared by machines)"]
+        A1["ZControllerSpi (#77 / #57)<br/>TSConf DMA to SPI<br/>IDE latch / adapter (M6)<br/>WD1793 / uPD765 register ports"]
+    end
+    subgraph L3["3 · Device protocol (shared by every machine with it)"]
+        C1["SdCardSpi (SD commands, SDSC / SDHC)<br/>AtaDisk / AtapiCdrom (M6)<br/>WD1793 · uPD765 + FDD mechanics<br/>tape player"]
+    end
+    subgraph L4["4 · Medium contents (owned by the MediaManager)"]
+        M1["IBlockDevice stack:<br/>SessionWriteMap | ReadOnlyGuard<br/>→ RawImage | HostFolderFat | MemoryDisk"]
+        M2["DiskImage (floppy)"]
+        M3["tape image (M3)"]
+    end
+
+    Z80 --> D1 --> A1 --> C1
+    C1 -- "ReadSector / WriteSector" --> M1
+    C1 -- "tracks / sectors" --> M2
+    C1 -- "pulses" --> M3
+
+    subgraph CTRL["Control"]
+        SURF["Surfaces: Qt, WebAPI, CLI,<br/>MCP, Lua, Python, config"]
+        MC["MediaControl (selectors, options,<br/>dispositions, results)"]
+        MM["MediaManager (slots, queue,<br/>registry, rules)"]
+        SLOT["Slot (IMediaSlot)<br/>owned by layer 1 or 3:<br/>EvoSdSlot, FloppyDriveSlot, ..."]
+    end
+    SURF -.-> MC -.-> MM
+    MM -. "owns" .-> M1
+    MM -. "owns" .-> M2
+    MM -. "owns" .-> M3
+    MM -. "Attach / Detach<br/>(frame boundary)" .-> SLOT
+    SLOT -. "attach(medium)" .-> C1
+    SLOT -. "NoteWrite (TTD barrier)<br/>card-detect, WP" .-> MM
+```
+
+| Layer | Knows | Does not know | Example classes |
+|---|---|---|---|
+| 1 · Machine port decoder | which port numbers the machine decodes, shadow / DOS rules, what else sits on the bus | the SD / ATA / floppy protocol | `PortDecoder_ATM3`, the TSConf decoder, `PortDecoder_Pentagon128` (Beta ports), the +3 decoder |
+| 2 · Port adapter | how a port write becomes a device operation: the SPI byte exchange and chip select, a DMA burst, the IDE high-byte latch, the controller's register file | the machine; the medium | `ZControllerSpi`, TSConf DMA SPI path, IDE adapters (M6) |
+| 3 · Device protocol | the device's commands and state (`CMD17`, ATA `READ SECTORS`, WD1793 `WRITE TRACK`), timing, its TTD blob | ports; formats; paths; where the medium came from | `SdCardSpi`, `AtaDisk`, `WD1793`, `UPD765` + `FDD` |
+| 4 · Medium contents | sectors / tracks / pulses, and whether writes are allowed (access mode) | the device reading it | `IBlockDevice` stack, `DiskImage`, tape image |
+| Slot | how to plug a medium into its device and which signals to raise | formats (the registry built the medium) | `PortDecoder_ATM3::EvoSdSlot`, `FloppyDriveSlot` |
+| `MediaManager` | slots, media, the queue, the rules (in-use, dirty, recording), the registry | ports and protocols | — |
+
+The same chain for each peripheral:
+
+| Peripheral | 1 · Decoder | 2 · Adapter | 3 · Device | 4 · Medium | Slot |
+|---|---|---|---|---|---|
+| ZX-Evo SD | `PortDecoder_ATM3` | `ZControllerSpi` | `SdCardSpi` | block stack | `sd.zc` (`EvoSdSlot`) |
+| TSConf SD | TSConf decoder | `ZControllerSpi` + DMA path | `SdCardSpi` | block stack | `sd.zc`, `sd.zc2` |
+| NeoGS SD | GS-side ports | NeoGS SPI glue | `SdCardSpi` | block stack | `sd.ngs` |
+| Beta 128 floppy | the model's decoder | WD1793 register ports | `WD1793` + `FDD` | `DiskImage` | `fdd.a`-`fdd.d` (`FloppyDriveSlot`) |
+| +3 floppy | +3 decoder | uPD765 ports | `UPD765` + `FDD` | `DiskImage` | `fdd.a`, `fdd.b` |
+| IDE / CD (M6) | board decoder (Nemo, SMUC, ATM, Profi) | IDE adapter | `AtaDisk`, `AtapiCdrom` | block stack / ISO | `ide0.master` … |
+| Tape (M3) | port `#FE` | — | tape player | tape image | `tape` |
+
+A new machine therefore writes layer 1 (and a layer 2 adapter only when its bus glue is new); a new
+storage device writes layer 3 once for every machine; a new format or folder builder is layer 4;
+and no surface changes for any of them.
+
 Rules taken from WinUAE (research §1.1) and the problems found here (research §3):
 
 | # | Rule |

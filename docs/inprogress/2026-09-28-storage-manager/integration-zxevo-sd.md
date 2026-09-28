@@ -4,6 +4,7 @@
 |---|---|
 | **Date** | 2026-09-28 |
 | **Status** | Reviewed; phase M1 |
+| **Layers** | port decoder → port adapter → device → medium, with the slot and the manager beside them: [technical-design.md §1.1](technical-design.md#11-layers-from-the-guests-port-to-the-medium) |
 | **Today** | E5 ([e5-sd-card.md](../2026-09-15-atm-baseconf-highres-ports/e5-sd-card.md)): `PortDecoder_ATM3` owns `SdCardSpi` + `ZControllerSpi`; `InsertSdCard(path | medium)`; `[ZC]` read at power-on; image files only |
 | **Target** | the first slot of the [MediaManager](technical-design.md); a PC folder as the card |
 
