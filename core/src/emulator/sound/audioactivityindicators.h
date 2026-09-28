@@ -35,8 +35,10 @@ public:
     /// NC_AUDIO_ACTIVITY: every frame while a nudge is held (the HUD keeps a
     /// short TTL in case frames stop, e.g. pause), once more when it ends
     /// (@p neoGSFitted: the GS slot holds a NeoGS card, so its DAC sound
-    /// posts NeoGS instead of GeneralSound)
-    void endFrame(const unreal::UUID& emulatorId, const std::vector<AudioDeviceInfo>& devices, bool neoGSFitted);
+    /// posts NeoGS instead of GeneralSound; @p neoGSDma / @p neoGSTransfer:
+    /// the card's DMA / ZX-DMA moved data this frame - held like sound)
+    void endFrame(const unreal::UUID& emulatorId, const std::vector<AudioDeviceInfo>& devices, bool neoGSFitted,
+                  bool neoGSDma = false, bool neoGSTransfer = false);
 
     /// Forget all activity (reset)
     void reset();
@@ -49,8 +51,10 @@ public:
 
 private:
     static constexpr int SOURCE_TYPES = static_cast<int>(AudioSourceType::Custom) + 1;
-    static constexpr int HUD_SOURCES = 11;  // AudioSource values (checked in the .cpp)
+    static constexpr int HUD_SOURCES = 13;  // AudioSource values (checked in the .cpp)
 
     int _framesSinceSound[SOURCE_TYPES];
+    int _framesSinceNeoGSDma;
+    int _framesSinceNeoGSTransfer;
     bool _posted[HUD_SOURCES];  // HUD nudge on, as last posted
 };

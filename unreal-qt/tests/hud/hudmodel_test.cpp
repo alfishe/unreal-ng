@@ -1340,3 +1340,26 @@ TEST_F(HudModel_Test, EventMapping_AudioActivity_GsSlotNamesTheCard)
     post(AudioSource::NeoGSMp3, false);
     EXPECT_TRUE(WaitForCondition([&] { return gsValue().empty(); }));
 }
+
+TEST_F(HudModel_Test, EventMapping_AudioActivity_NeoGSDmaAndTransfers)
+{
+    // NeoGS moving data (no sound needed): two nudges of their own
+    HudModel model(nullptr);
+    model.onFeatureChanged(true);
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+    auto value = [&](const char* id) -> std::string {
+        for (const auto& e : model.snapshot()->elements)
+        {
+            if (e.id == id)
+                return e.value;
+        }
+        return "";
+    };
+
+    mc.Post(NC_AUDIO_ACTIVITY, new AudioActivityPayload(_id, AudioSource::NeoGSDma, true));
+    mc.Post(NC_AUDIO_ACTIVITY, new AudioActivityPayload(_id, AudioSource::NeoGSTransfer, true));
+    EXPECT_TRUE(WaitForCondition([&] { return value("ind/ngsdma") == "NeoGS DMA" && value("ind/ngszx") == "NeoGS <->"; }));
+    mc.Post(NC_AUDIO_ACTIVITY, new AudioActivityPayload(_id, AudioSource::NeoGSTransfer, false));
+    EXPECT_TRUE(WaitForCondition([&] { return value("ind/ngszx").empty(); }));
+    EXPECT_EQ(value("ind/ngsdma"), "NeoGS DMA");
+}

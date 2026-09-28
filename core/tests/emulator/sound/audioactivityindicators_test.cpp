@@ -437,3 +437,34 @@ TEST(AudioActivityIndicators_Test, GsSlotPostsTheFittedCard)
     for (Observer* o : {static_cast<Observer*>(&gs), static_cast<Observer*>(&neoGS), static_cast<Observer*>(&mp3)})
         mc.RemoveObserver(NC_AUDIO_ACTIVITY, o, cb);
 }
+
+/// NeoGS data movement (not sound): the card's DMA and ZX-DMA post their own
+/// sources, held for a second like sound, whatever the mixer sources do
+TEST(AudioActivityIndicators_Test, NeoGSDmaAndTransfersAreHeldLikeSound)
+{
+    const unreal::UUID id = unreal::UUID::Generate();
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+    AudioActivityOnOffCounter dma(id, AudioSource::NeoGSDma);
+    AudioActivityOnOffCounter transfer(id, AudioSource::NeoGSTransfer);
+    ObserverCallbackMethod cb = static_cast<ObserverCallbackMethod>(&AudioActivityOnOffCounter::onEvent);
+    mc.AddObserver(NC_AUDIO_ACTIVITY, &dma, cb);
+    mc.AddObserver(NC_AUDIO_ACTIVITY, &transfer, cb);
+
+    const std::vector<AudioDeviceInfo> silent;
+    AudioActivityIndicators indicators;
+    indicators.endFrame(id, silent, true, false, true);
+    EXPECT_TRUE(TestWait::ForExactly(transfer.on, 1));
+    for (int i = 0; i < AudioActivityIndicators::HOLD_FRAMES - 2; i++)
+        indicators.endFrame(id, silent, true, false, false);
+    EXPECT_EQ(transfer.off.load(), 0) << "held for a second";
+    indicators.endFrame(id, silent, true, false, false);
+    indicators.endFrame(id, silent, true, false, false);
+    EXPECT_TRUE(TestWait::ForExactly(transfer.off, 1));
+    EXPECT_EQ(dma.on.load(), 0);
+
+    indicators.endFrame(id, silent, true, true, false);
+    EXPECT_TRUE(TestWait::ForExactly(dma.on, 1));
+
+    mc.RemoveObserver(NC_AUDIO_ACTIVITY, &dma, cb);
+    mc.RemoveObserver(NC_AUDIO_ACTIVITY, &transfer, cb);
+}

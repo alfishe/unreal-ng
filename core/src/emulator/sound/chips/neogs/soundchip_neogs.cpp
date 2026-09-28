@@ -730,6 +730,12 @@ void SoundChip_NeoGS::handleFrameEnd(size_t expectedSamples)
         _buffer[2 * i + 1] = static_cast<int16_t>(std::clamp(std::lround(_couplingR.filter(_buffer[2 * i + 1])), -32768L, 32767L));
     }
     _wasActive = _frameHadActivity;
+    const uint64_t dmaBytes = _dma.bytesMoved();
+    const uint64_t zxDmaBytes = _zx.bytesRead() + _zx.bytesWritten();
+    _dmaWasActive = dmaBytes != _dmaBytesSeen;
+    _zxDmaWasActive = zxDmaBytes != _zxDmaBytesSeen;
+    _dmaBytesSeen = dmaBytes;
+    _zxDmaBytesSeen = zxDmaBytes;
 
     if (_mp3)
     {

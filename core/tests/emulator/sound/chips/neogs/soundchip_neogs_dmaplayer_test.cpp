@@ -231,8 +231,14 @@ TEST(SoundChip_NeoGS_DmaPlayer, PlaysAnMp3FromTheSdCardThroughBothDmaModules)
 
     const uint64_t blocksBefore = card.chip->sdCard()->blocksRead();
     int frames = 0;
+    int dmaFrames = 0;
     for (; frames < 1000 && card.chip->peek(kDoneVar) != 0xAA; frames++)
+    {
         card.frame();
+        dmaFrames += card.chip->hadDmaActivityLastFrame() ? 1 : 0;
+    }
+    EXPECT_GT(dmaFrames, frames / 2) << "the HUD's 'NeoGS DMA': the DMA modules move data in most frames";
+    EXPECT_FALSE(card.chip->hadHostTransferActivityLastFrame()) << "no ZX-DMA in this program";
     for (int i = 0; i < 25; i++) // the last sector drains to the decoder
         card.frame();
 

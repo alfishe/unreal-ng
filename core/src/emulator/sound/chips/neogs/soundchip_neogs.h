@@ -103,6 +103,8 @@ public:
     int16_t* getBuffer() override { return _buffer; }
     int16_t* getAuxBuffer() override { return _mp3 ? _mp3Buffer : nullptr; }
     bool hadAuxAudioActivityLastFrame() const override { return _mp3WasActive; }
+    bool hadDmaActivityLastFrame() const override { return _dmaWasActive; }
+    bool hadHostTransferActivityLastFrame() const override { return _zxDmaWasActive; }
     void setSampleRate(size_t sampleRate) override;
     void setSynthesisSuppressed(bool suppressed) override;
     bool isSynthesisSuppressed() const override { return _synthesisSuppressed; }
@@ -420,6 +422,12 @@ private:
     AudioFrameDescriptor _mp3Descriptor;
     int16_t* const _mp3Buffer = reinterpret_cast<int16_t*>(_mp3Descriptor.memoryBuffer);
     bool _mp3WasActive = false;
+    // Per-frame DMA activity for the HUD: the card's own DMA (SD, MP3) and
+    // ZX-DMA (host <-> card), from the byte counters at the previous frame end
+    bool _dmaWasActive = false;
+    bool _zxDmaWasActive = false;
+    uint64_t _dmaBytesSeen = 0;
+    uint64_t _zxDmaBytesSeen = 0;
 
     GSUploadCapture _upload;
     GSActivityCounters _activityCounters;

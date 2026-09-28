@@ -25,6 +25,7 @@ namespace HudCategory
     constexpr const char* AudioFM = "audio-fm";
     constexpr const char* AudioGeneralSound = "audio-generalsound";
     constexpr const char* AudioMoonSound = "audio-moonsound";
+    constexpr const char* AudioNeoGSDma = "audio-neogs-dma";
     constexpr const char* RecordingVideo = "recording-video";
     constexpr const char* RecordingAudio = "recording-audio";
     constexpr const char* EmulatorState = "emulator-state";
@@ -52,6 +53,8 @@ namespace HudCategory
             case AudioSource::MoonPCM:    return AudioMoonSound;
             case AudioSource::NeoGS:      return AudioGeneralSound;  // The GS slot's cards share one category
             case AudioSource::NeoGSMp3:   return AudioGeneralSound;
+            case AudioSource::NeoGSDma:   return AudioNeoGSDma;  // Data movement, not sound: its own switch
+            case AudioSource::NeoGSTransfer: return AudioNeoGSDma;
             default: return nullptr;
         }
     }
@@ -1461,6 +1464,12 @@ void HudModel::onAudioActivity(int, Message* message)
             break;
         case AudioSource::GeneralSound:
             key = "gs"; label = "GS"; icon = "generalsound";
+            break;
+        case AudioSource::NeoGSDma:
+            key = "ngsdma"; label = "NeoGS DMA"; icon = "generalsound";  // SD card / MP3 decoder DMA
+            break;
+        case AudioSource::NeoGSTransfer:
+            key = "ngszx"; label = "NeoGS <->"; icon = "generalsound";   // ZX-DMA: ZX <-> card
             break;
         default:
             return;

@@ -75,6 +75,8 @@ public:
     int64_t nextEvent() const;
     /// Do all module work due at `now`
     void run(int64_t now);
+    /// Bytes the SD and MP3 modules have moved so far (statistics, not state)
+    uint64_t bytesMoved() const { return _bytesMoved; }
     /// The card clock changed at `now`: the modules count card clocks, so the
     /// time left to their next step is rescaled from the old clock to the new
     void onClockChange(int64_t now, int64_t oldUnitsPerCycle, int64_t newUnitsPerCycle);
@@ -117,4 +119,5 @@ private:
     int64_t _mp3At = kNever;
     uint8_t _mp3Buffer[BLOCK] = {};
     int _mp3Sent = 0;
+    uint64_t _bytesMoved = 0; // statistics for the UI (HUD activity), not machine state
 };

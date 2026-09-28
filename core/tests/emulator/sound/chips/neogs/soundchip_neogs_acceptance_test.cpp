@@ -753,6 +753,7 @@ TEST(NeoGSTheLink_Test, DemoAssemblesItselfAndRunsItsCardRenderedEffects)
 
         ASSERT_TRUE(trdos.runUntil([&] { return demoFrame() >= 1000; }, 40ull * kTStatesPerSecond, 25)) << "no tunnel";
         EXPECT_GE(changedFrames(100, trdos), 90) << "the tunnel changes the picture every frame";
+        EXPECT_TRUE(card->hadHostTransferActivityLastFrame()) << "the HUD's 'NeoGS <->': ZX-DMA every frame, no sound";
 
         ASSERT_TRUE(trdos.runUntil([&] { return demoFrame() >= 1900; }, 30ull * kTStatesPerSecond, 25)) << "no rotator";
         const int rotator = changedFrames(100, trdos);

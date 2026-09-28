@@ -228,6 +228,12 @@ public:
     /// MP3 decoder), same format; nullptr when the card has none
     virtual int16_t* getAuxBuffer() { return nullptr; }
     virtual bool hadAuxAudioActivityLastFrame() const { return false; }
+    /// NeoGS: the card's own DMA (SD card, MP3 decoder) moved data during the
+    /// last frame (HUD activity; no sound needed - software may use the card
+    /// as an accelerator)
+    virtual bool hadDmaActivityLastFrame() const { return false; }
+    /// NeoGS: ZX-DMA moved data between the ZX and the card during the last frame
+    virtual bool hadHostTransferActivityLastFrame() const { return false; }
 
     /// Live core-rate change (device reroute with CoreRate=auto)
     virtual void setSampleRate(size_t sampleRate) = 0;

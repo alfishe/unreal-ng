@@ -1100,7 +1100,8 @@ void SoundManager::handleFrameEnd()
     // HUD audio nudges: the LEDs just computed, held for a second - one
     // measurement, so every nudge agrees with its LED
     _activityIndicators.endFrame(_context->emulatorId, _devices,
-                                 _gs && _gs->implementation() == GSCardImplementation::NGS);
+                                 _gs && _gs->implementation() == GSCardImplementation::NGS,
+                                 _gs && _gs->hadDmaActivityLastFrame(), _gs && _gs->hadHostTransferActivityLastFrame());
 
     if (_wideMix)
     {

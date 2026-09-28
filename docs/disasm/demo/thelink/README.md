@@ -14,7 +14,10 @@ the ZX fetches the pictures from it through NeoGS ZX-DMA.
 
 Left to right, top row: the intro picture ("medieval", with the FM music),
 tunnel, rotator (the logo), rotating bars; bottom row: multi-bars, hedgehog
-(the dragon), "baba" (girl and mill), textured face.
+(the dragon), "baba" (girl and mill), textured face. Multi-bars is an
+80-frame (1.6 s) transition: it cuts the rotating-bars picture into bars and
+clears them to black before the hedgehog; its frame is the first one, before
+the first cut.
 
 ## 1. Files
 

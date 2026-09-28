@@ -195,6 +195,7 @@ void NeoGSDma::runSd(int64_t now)
         for (int i = 0; i < BLOCK; i++)
             _mem.ram()[(base + static_cast<uint32_t>(i)) % _mem.ramSize()] = _sdBuffer[i];
         advanceAddress(SD, BLOCK);
+        _bytesMoved += BLOCK;
         const int64_t burst = static_cast<int64_t>(BLOCK * BURST_CLOCKS_PER_BYTE + GRANT_OVERHEAD_CLOCKS) * _host.dmaUnitsPerCycle();
         _host.dmaStall(burst);
         // Done at the end of the burst
@@ -225,6 +226,7 @@ void NeoGSDma::runMp3(int64_t now)
             continue;
         }
         _mp3->sdi()->exchange(_mp3Buffer[_mp3Sent++]);
+        _bytesMoved++;
         t += byteTime;
     }
     if (_mp3Sent >= BLOCK)
