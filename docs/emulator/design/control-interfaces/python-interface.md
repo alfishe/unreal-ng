@@ -231,6 +231,27 @@ emu.tape_import("recording.wav", "imported.tap", 0.25)
 
 Playback `state` is one of `"idle"`, `"playing"`, `"paused"`, `"ended"` — identical strings across CLI, WebAPI, Lua and Python.
 
+### Media (every slot)
+
+Floppy drives, the SD card and every other slot through one set of methods — the same verbs,
+slot names, options and errors as the WebAPI, CLI, MCP and Lua. Full reference:
+[docs/features/media.md](../../../features/media.md).
+
+```python
+emu.media_list()                                         # slots + detached media
+emu.media_insert("A", "/games/elite-1.trd")              # slot: fdd.a, A, a:, floppy:0, tag:...; "auto"
+emu.media_insert("sd", "/home/me/zx/sdcard", fs="fat32")
+emu.media_swap("A", "/games/elite-2.trd", save=True)     # a dirty disk needs save / export / discard
+emu.media_eject("B", export="/tmp/b.trd")
+emu.media_eject("B", discard=True, async_=True)          # "async" is a Python keyword
+emu.media_info("sd"); emu.media_formats(kind="floppy"); emu.media_save("A"); emu.media_export("sd", "/tmp/card.img")
+emu.media_discard("A"); emu.media_rescan("sd"); emu.media_create("B"); emu.media_protect("A", True)
+emu.media(verb, slot, path, **options)                   # any verb
+```
+
+Each returns the result dict: `ok`, `error`, `message`, `slot`, `pending`, `revision`, `report`
+and the verb's fields. Errors are results (`ok: False`), not exceptions.
+
 ### Disk Operations
 
 `Emulator` methods for the four floppy drives (0-3 / A-D), mirroring the CLI `disk` commands and the WebAPI `/disk/{drive}/*` endpoints.

@@ -140,7 +140,7 @@ TEST(MediaManager_Test, InsertFromAnImageFileAndAccessModes)
     missing.path = path + ".missing";
     EXPECT_EQ(manager.Insert("sd.test", missing).error, MediaError::UnreadableSource);
 
-    ASSERT_TRUE(manager.Eject("sd.test", {/*force*/ true}).Ok());
+    ASSERT_TRUE(manager.Eject("sd.test", {Disposition::Discard}).Ok());
     manager.UnregisterSlot("sd.test");
     std::remove(path.c_str());
 }
@@ -329,7 +329,7 @@ TEST(MediaManager_Test, ExportWritesTheGuestView)
     manager.SetApplyNowProbe([&running] { return !running; });
     EXPECT_EQ(manager.Export("sd.test", path).error, MediaError::NotSupported) << "a running machine is paused first";
     manager.SetApplyNowProbe(nullptr);
-    ASSERT_TRUE(manager.Eject("sd.test", {/*force*/ true}).Ok());
+    ASSERT_TRUE(manager.Eject("sd.test", {Disposition::Discard}).Ok());
     manager.UnregisterSlot("sd.test");
     std::remove(path.c_str());
 }
@@ -423,7 +423,7 @@ TEST(MediaManager_Test, FolderBecomesAFatVolumeAndStaysUntouched)
 
     exported.reset();
     std::remove(image.c_str());
-    ASSERT_TRUE(manager.Eject("sd.test", {/*force*/ true}).Ok());
+    ASSERT_TRUE(manager.Eject("sd.test", {Disposition::Discard}).Ok());
     manager.UnregisterSlot("sd.test");
 }
 
@@ -474,7 +474,7 @@ namespace
 }  // namespace
 
 /// Floppies: an export is a copy (the disk keeps its source and its unsaved
-/// writes); a save makes it clean; Discard is not offered for them.
+/// writes); a save makes it clean; a discard opens the source again.
 /// A real machine plus three 640 KB image writes: slower than 50 ms
 TEST(MediaManager_Test, FloppyExportSaveAndDiscard)
 {
@@ -486,8 +486,7 @@ TEST(MediaManager_Test, FloppyExportSaveAndDiscard)
     MediaSource source;
     source.path = Utf8Path(original);
     ASSERT_TRUE(manager.Insert("fdd.a", source).Ok());
-    DiskImage& disk = *manager.GetMedium("fdd.a")->Floppy();
-    GuestWrite(disk, 0x5A);
+    GuestWrite(*manager.GetMedium("fdd.a")->Floppy(), 0x5A);
     ASSERT_TRUE(manager.Info("fdd.a")->dirty);
 
     const auto copy = folder.Path() / "copy.trd";
@@ -496,11 +495,15 @@ TEST(MediaManager_Test, FloppyExportSaveAndDiscard)
     EXPECT_EQ(manager.Info("fdd.a")->source, source.path) << "the disk still stands for its file";
     EXPECT_NE(Slurp(copy), Slurp(original)) << "the copy carries the write";
 
-    EXPECT_EQ(manager.Discard("fdd.a").error, MediaError::NotSupported);
+    ASSERT_TRUE(manager.Discard("fdd.a").Ok());
+    EXPECT_FALSE(manager.Info("fdd.a")->dirty) << "the source, opened again";
+    const std::string before = Slurp(original);
 
+    GuestWrite(*manager.GetMedium("fdd.a")->Floppy(), 0x5A);
     ASSERT_TRUE(manager.Save("fdd.a").Ok());
     EXPECT_FALSE(manager.Info("fdd.a")->dirty);
-    EXPECT_EQ(Slurp(copy), Slurp(original)) << "the save wrote the same disk into its own file";
+    EXPECT_NE(Slurp(original), before) << "the save wrote into its own file";
+    EXPECT_EQ(Slurp(copy), Slurp(original)) << "the same write as the export carried";
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
 

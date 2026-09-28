@@ -75,6 +75,7 @@ static MediaResult OpenFolderVolume(const OpenRequest& request, std::unique_ptr<
     medium = MediaFormatRegistry::WrapBlock(resolved, request.access,
                                             request.fs == FatType::Fat32 ? "folder-fat32" : "folder-fat16", std::move(volume));
     medium->Report() = result.report;
+    medium->SetOptions({request.fs, request.codePage, request.freeBytes});
     return result;
 }
 
@@ -121,6 +122,7 @@ static MediaResult OpenFloppy(const OpenRequest& request, std::unique_ptr<Medium
     }
     medium = std::make_unique<Medium>(resolved, access, format, std::move(disk));
     medium->Report() = result.report;
+    medium->SetOptions({request.fs, request.codePage, request.freeBytes});
     return result;
 }
 

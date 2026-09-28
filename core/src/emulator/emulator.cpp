@@ -1719,25 +1719,22 @@ bool Emulator::CreateBlankDisk(uint8_t drive, BlankDiskFormat format, uint8_t cy
     if (!_context || !_context->pMediaManager || !_context->pMediaManager->HasSlot(slotId))
         return fail(std::string("drive ") + static_cast<char>('A' + drive) + " is not present on this machine");
 
-    if (format == BlankDiskFormat::Auto)
-        format = (_context->config.mem_model == MM_PLUS3) ? BlankDiskFormat::Plus3 : BlankDiskFormat::Unformatted;
-
-    const bool plus3 = (format == BlankDiskFormat::Plus3);
-    if (cylinders == 0)
-        cylinders = plus3 ? 40 : 80;
-    if (sides == 0)
-        sides = plus3 ? 1 : 2;
-    if (cylinders != 40 && cylinders != 80)
-        return fail("cylinders must be 40 or 80");
-    if (sides != 1 && sides != 2)
-        return fail("sides must be 1 or 2");
+    BlankFloppySpec spec;
+    spec.format = BlankDiskFormatName(format);
+    spec.cylinders = cylinders;
+    spec.sides = sides;
+    std::unique_ptr<DiskImage> image;
+    const MediaResult built = FloppyFormats::CreateBlank(_context->config.mem_model == MM_PLUS3, spec, image);
+    if (!built.Ok())
+        return fail(built.message);
+    ParseBlankDiskFormat(spec.format, format);
+    cylinders = spec.cylinders;
+    sides = spec.sides;
 
     // TTD: a new medium changes what the FDC reads, like a disk swap. Refused while recording.
     if (!RecordingAllows(*this, ttd::TTDGuardedAction::CreateDisk, error))
         return false;
 
-    auto image = plus3 ? std::make_unique<DiskImage>(cylinders, sides, DiskImage::TrackFormatSpec::plus3())
-                       : std::make_unique<DiskImage>(cylinders, sides);
     MediaSource blank;
     blank.type = MediaSourceType::Blank;
     auto medium = std::make_unique<Medium>(blank, AccessMode::Session, BlankDiskFormatName(format), std::move(image));
@@ -1751,6 +1748,7 @@ bool Emulator::CreateBlankDisk(uint8_t drive, BlankDiskFormat format, uint8_t cy
         Pause();
     InsertOptions options;
     options.immediate = true;
+    options.disposition = Disposition::Discard;  // a load always replaced the disk, writes and all
     const MediaResult inserted = _context->pMediaManager->Insert(slotId, std::move(medium), options);
     if (wasRunning)
         Resume();
@@ -1817,6 +1815,7 @@ bool Emulator::LoadDisk(const std::string& path, uint8_t drive, std::string* err
     source.path = resolvedPath;
     InsertOptions options;
     options.immediate = true;
+    options.disposition = Disposition::Discard;  // a load always replaced the disk, writes and all
 
     const bool wasRunning = !IsPaused();
     if (wasRunning)
@@ -1857,7 +1856,7 @@ bool Emulator::EjectDisk(uint8_t drive, bool force, std::string* error)
     // A medium leaving is a media set change: refused while a TTD recording
     // runs (the manager answers "recording"), like a load
     EjectOptions options;
-    options.force = force;
+    options.disposition = force ? Disposition::Discard : Disposition::None;
 
     const bool wasRunning = !IsPaused();
     if (wasRunning)

@@ -154,7 +154,14 @@ tape import <snd> [--target auto|tzx|tap] [--hysteresis X] -o out.tzx|out.tap
 
 disk insert/eject       # Disk control
 disk catalog            # List TR-DOS directory
+
+# Every slot (floppy drives, SD card, ...): see media.md
+media list              # Slots, media, dirty state
+media insert <slot|auto> <path>   # A file or a folder (A, B, sd, fdd.b, ...)
+media swap <slot> <path> --save   # Eject + insert; a dirty disk needs --save/--export/--discard
 ```
+
+Full media reference (all surfaces): [media.md](media.md).
 
 #### Disk Operations
 ```

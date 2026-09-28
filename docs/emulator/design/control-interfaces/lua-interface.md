@@ -157,6 +157,26 @@ local result = tape_import("recording.wav", "imported.tap", 0.25)
 
 Playback `state` is one of `"idle"`, `"playing"`, `"paused"`, `"ended"` — identical strings across CLI, WebAPI, Lua and Python.
 
+### Media (every slot)
+
+Floppy drives, the SD card and every other slot through one set of functions — the same verbs,
+slot names, options and errors as the WebAPI, CLI, MCP and Python. Full reference:
+[docs/features/media.md](../../../features/media.md).
+
+```lua
+media_list()                                            -- slots + detached media
+media_insert("A", "/games/elite-1.trd")                 -- slot: fdd.a, A, a:, floppy:0, tag:...; "auto"
+media_insert("sd", "/home/me/zx/sdcard", {fs = "fat32"})
+media_swap("A", "/games/elite-2.trd", {save = true})    -- a dirty disk needs save / export / discard
+media_eject("B", {export = "/tmp/b.trd"})
+media_info("sd"); media_formats("floppy"); media_save("A"); media_export("sd", "/tmp/card.img")
+media_discard("A"); media_rescan("sd"); media_create("B"); media_protect("A", true)
+media(verb, slot, path, opts)                           -- any verb
+```
+
+Each returns the result table: `ok`, `error`, `message`, `slot`, `pending`, `revision`, `report`
+and the verb's fields (`slots`, `info`, `formats`, ...).
+
 ### Disk Operations
 
 Global functions for the four floppy drives (0-3 / A-D), mirroring the CLI `disk` commands

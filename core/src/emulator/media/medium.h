@@ -7,9 +7,11 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
+#include "common/unicodehelper.h"
 #include "emulator/io/fdc/diskimage.h"
 #include "emulator/io/storage/iblockdevice.h"
 #include "emulator/media/mediatypes.h"
@@ -52,6 +54,17 @@ public:
 
     /// A save wrote the medium to `source` (a file): it now stands for that file
     void Rebase(MediaSource source);
+    /// How a folder medium was built, so it can be built again (rescan, a
+    /// floppy's discard): the options the registry used
+    struct OpenOptions
+    {
+        FatType fs = FatType::Fat16;
+        std::optional<CodePage> codePage;
+        std::optional<uint64_t> freeBytes;
+    };
+    const OpenOptions& Options() const { return _options; }
+    void SetOptions(const OpenOptions& options) { _options = options; }
+
     /// A write-through floppy whose file format refused the guest's writes
     /// falls back to keeping them in memory
     void SetAccess(AccessMode access) { _access = access; }
@@ -81,6 +94,7 @@ private:
     SessionWriteMap* _session = nullptr;
     std::string _sourceKey;
     std::vector<std::string> _report;
+    OpenOptions _options;
 };
 
 /// Write a block device to a raw image file, sector by sector

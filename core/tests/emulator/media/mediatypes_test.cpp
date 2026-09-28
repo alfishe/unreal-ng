@@ -24,3 +24,17 @@ TEST(MediaTypes_Test, AccessModesParseWithLegacySynonyms)
     EXPECT_FALSE(ParseAccessMode("sometimes", mode));
     EXPECT_STREQ(AccessModeName(AccessMode::WriteThrough), "writethrough");
 }
+
+TEST(MediaTypes_Test, NewCodesAndTheirHttpStatus)
+{
+    EXPECT_STREQ(MediaErrorCode(MediaError::AmbiguousSlot), "ambiguous-slot");
+    EXPECT_STREQ(MediaErrorCode(MediaError::BadRequest), "bad-request");
+    EXPECT_EQ(MediaErrorHttpStatus(MediaError::None), 200);
+    EXPECT_EQ(MediaErrorHttpStatus(MediaError::UnknownSlot), 404);
+    EXPECT_EQ(MediaErrorHttpStatus(MediaError::Dirty), 409);
+    EXPECT_EQ(MediaErrorHttpStatus(MediaError::Recording), 409);
+    EXPECT_EQ(MediaErrorHttpStatus(MediaError::InUse), 409);
+    EXPECT_EQ(MediaErrorHttpStatus(MediaError::AmbiguousSlot), 400);
+    EXPECT_EQ(MediaErrorHttpStatus(MediaError::KindMismatch), 400);
+    EXPECT_EQ(MediaErrorHttpStatus(MediaError::NotSupported), 501);
+}

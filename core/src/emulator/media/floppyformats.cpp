@@ -289,3 +289,32 @@ FloppySaveResult FloppyFormats::Save(EmulatorContext* context, DiskImage& disk, 
     }
     return result;
 }
+
+MediaResult FloppyFormats::CreateBlank(bool plus3Machine, BlankFloppySpec& spec, std::unique_ptr<DiskImage>& disk)
+{
+    disk.reset();
+    std::string format = StringHelper::ToLower(spec.format);
+    if (format.empty() || format == "auto")
+        format = plus3Machine ? "plus3" : "unformatted";
+    else if (format == "raw")
+        format = "unformatted";
+    else if (format == "+3" || format == "+3dos")
+        format = "plus3";
+    if (format != "unformatted" && format != "plus3")
+        return MediaResult::Fail(MediaError::BadRequest, "blank format '" + spec.format + "': expected auto, unformatted or plus3");
+
+    const bool plus3 = format == "plus3";
+    const uint8_t cylinders = spec.cylinders ? spec.cylinders : (plus3 ? 40 : 80);
+    const uint8_t sides = spec.sides ? spec.sides : (plus3 ? 1 : 2);
+    if (cylinders != 40 && cylinders != 80)
+        return MediaResult::Fail(MediaError::BadRequest, "cylinders must be 40 or 80");
+    if (sides != 1 && sides != 2)
+        return MediaResult::Fail(MediaError::BadRequest, "sides must be 1 or 2");
+
+    disk = plus3 ? std::make_unique<DiskImage>(cylinders, sides, DiskImage::TrackFormatSpec::plus3())
+                 : std::make_unique<DiskImage>(cylinders, sides);
+    spec.format = format;
+    spec.cylinders = cylinders;
+    spec.sides = sides;
+    return MediaResult::Success();
+}

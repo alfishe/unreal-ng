@@ -2,6 +2,8 @@
 
 #include "mediamanager.h"
 
+#include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <system_error>
@@ -39,6 +41,7 @@ void MediaManager::RegisterSlot(IMediaSlot& slot)
 
     SlotState& state = _slots[id];
     state.slot = &slot;
+    _revision++;
 
     // A card that comes back finds its medium where it left it
     auto parked = _parked.find(id);
@@ -70,6 +73,7 @@ void MediaManager::UnregisterSlot(const std::string& slotId)
         _parked[slotId] = std::move(state.incoming);
     }
     _slots.erase(it);
+    _revision++;
 }
 
 bool MediaManager::HasSlot(const std::string& slotId) const
@@ -87,10 +91,7 @@ std::vector<SlotInfo> MediaManager::List() const
     std::lock_guard<std::recursive_mutex> lock(_mutex);
     std::vector<SlotInfo> result;
     for (const auto& [id, state] : _slots)
-    {
-        if (auto info = Info(id))
-            result.push_back(*info);
-    }
+        result.push_back(Describe(id, state));
     return result;
 }
 
@@ -100,23 +101,28 @@ std::optional<SlotInfo> MediaManager::Info(const std::string& slotId) const
     auto it = _slots.find(slotId);
     if (it == _slots.end())
         return std::nullopt;
+    return Describe(slotId, it->second);
+}
 
-    const SlotState& state = it->second;
-    SlotInfo info;
-    info.descriptor = state.slot->Descriptor();
-    info.present = state.attached != nullptr;
-    info.pending = state.incoming != nullptr || state.ejectRequested || state.discardRequested;
-    info.writeProtect = state.writeProtect;
-    if (state.attached)
+std::vector<SlotInfo> MediaManager::Detached() const
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    std::vector<SlotInfo> result;
+    for (const auto& [id, medium] : _parked)
     {
-        info.source = state.attached->Source().path.empty() ? state.attached->Describe() : state.attached->Source().path;
-        info.format = state.attached->Format();
-        info.access = state.attached->Access();
-        // A stopped machine is read live; a running one through the frame's snapshot
-        info.changedUnits = CanApplyNow() ? state.attached->ChangedUnits() : state.changedUnits;
+        SlotInfo info;
+        info.descriptor.id = id;
+        info.descriptor.kind = medium->Kind();
+        info.tags = {MediaKindName(medium->Kind())};
+        info.detached = true;
+        info.source = medium->Source().path.empty() ? medium->Describe() : medium->Source().path;
+        info.format = medium->Format();
+        info.access = medium->Access();
+        info.changedUnits = medium->ChangedUnits();  // nobody writes to a detached medium
         info.dirty = info.changedUnits > 0;
+        result.push_back(std::move(info));
     }
-    return info;
+    return result;
 }
 
 MediaResult MediaManager::Insert(const std::string& slotId, const MediaSource& source, const InsertOptions& options)
@@ -174,6 +180,12 @@ MediaResult MediaManager::Insert(const std::string& slotId, std::unique_ptr<Medi
         return inUse;
     if (MediaResult recording = CheckRecording(options.endRecording); !recording.Ok())
         return recording;
+    // The medium in the slot leaves: its unsaved writes need a decision
+    if (state.attached && !state.ejectRequested)
+    {
+        if (MediaResult kept = ApplyDisposition(slotId, *state.attached, options.disposition, options.exportPath); !kept.Ok())
+            return kept;
+    }
     MediaResult result = MediaResult::Success();
     result.report = medium->Report();
 
@@ -208,12 +220,13 @@ MediaResult MediaManager::Eject(const std::string& slotId, const EjectOptions& o
     if (!state.attached && !state.incoming)
         return MediaResult::Success();
 
-    const uint64_t changed = CanApplyNow() && state.attached ? state.attached->ChangedUnits() : state.changedUnits;
-    if (changed > 0 && !options.force)
-        return MediaResult::Fail(MediaError::Dirty, "slot '" + slotId + "' has " + std::to_string(changed) +
-                                                        " unsaved changes: export or discard them, or eject with force");
     if (MediaResult recording = CheckRecording(options.endRecording); !recording.Ok())
         return recording;
+    if (state.attached && !state.ejectRequested)
+    {
+        if (MediaResult kept = ApplyDisposition(slotId, *state.attached, options.disposition, options.exportPath); !kept.Ok())
+            return kept;
+    }
 
     if (state.incoming)
         Retire(std::move(state.incoming));
@@ -232,6 +245,17 @@ MediaResult MediaManager::Eject(const std::string& slotId, const EjectOptions& o
 MediaResult MediaManager::Discard(const std::string& slotId)
 {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
+    auto parked = _parked.find(slotId);
+    if (parked != _parked.end() && !_slots.count(slotId))
+    {
+        // A detached medium is dropped with its writes
+        std::unique_ptr<Medium> gone = std::move(parked->second);
+        _parked.erase(parked);
+        Post(NC_MEDIA_EJECTED, slotId, gone.get());
+        Retire(std::move(gone));
+        return MediaResult::Success();
+    }
+
     auto it = _slots.find(slotId);
     if (it == _slots.end())
         return MediaResult::Fail(MediaError::UnknownSlot, "no slot '" + slotId + "' on this machine");
@@ -239,10 +263,28 @@ MediaResult MediaManager::Discard(const std::string& slotId)
         return recording;
 
     SlotState& state = it->second;
-    if (state.attached && state.attached->Floppy())
-        return MediaResult::Fail(MediaError::NotSupported,
-                                 "a floppy keeps its changes in the disk image: eject it with force and insert the source again");
-    if (!state.attached || !state.attached->Session())
+    if (!state.attached)
+        return MediaResult::Success();
+
+    if (state.attached->Floppy())
+    {
+        // The writes live in the disk image itself: open the source again
+        const Medium& disk = *state.attached;
+        if (disk.Source().type != MediaSourceType::File && disk.Source().type != MediaSourceType::Folder)
+            return MediaResult::Fail(MediaError::NotSupported,
+                                     "slot '" + slotId + "' holds a disk without a source to go back to: eject it with discard");
+        MediaSource source = disk.Source();
+        InsertOptions again;
+        again.access = disk.Access();
+        again.fs = disk.Options().fs;
+        again.codePage = disk.Options().codePage;
+        again.freeBytes = disk.Options().freeBytes;
+        again.writeProtect = state.writeProtect;
+        again.immediate = true;
+        again.disposition = Disposition::Discard;
+        return Insert(slotId, source, again);
+    }
+    if (!state.attached->Session())
         return MediaResult::Success();
 
     state.discardRequested = true;
@@ -257,98 +299,95 @@ MediaResult MediaManager::Discard(const std::string& slotId)
 MediaResult MediaManager::Export(const std::string& slotId, const std::string& path)
 {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
-    auto it = _slots.find(slotId);
-    if (it == _slots.end())
-        return MediaResult::Fail(MediaError::UnknownSlot, "no slot '" + slotId + "' on this machine");
-
-    SlotState& state = it->second;
-    if (!state.attached || (!state.attached->Block() && !state.attached->Floppy()))
-        return MediaResult::Fail(MediaError::UnreadableSource, "slot '" + slotId + "' is empty");
-
-    // The guest writes into the medium without a lock; a consistent export of
-    // a running machine needs the versioned change layer (media history H1)
-    if (!CanApplyNow())
-        return MediaResult::Fail(MediaError::NotSupported, "pause the emulator to export slot '" + slotId + "'");
-
-    if (FileHelper::AbsolutePath(path, /*resolveSymlinks*/ true) == state.attached->SourceKey())
-        return MediaResult::Fail(MediaError::InUse, "the export target is the medium's own source");
-
-    if (DiskImage* disk = state.attached->Floppy())
-    {
-        // The format writers mark the disk clean and rename it: an export is a
-        // copy, so both are put back
-        const DiskImage::DirtyState before = disk->captureDirtyState();
-        const FloppySaveResult written = FloppyFormats::Save(_context, *disk, path, /*allowRetarget*/ false);
-        disk->restoreDirtyState(before);
-        if (!written.saved)
-            return MediaResult::Fail(MediaError::IoError, written.reason);
-    }
-    else
-    {
-        std::string error;
-        if (!ExportBlockDevice(*state.attached->Block(), path, &error))
-            return MediaResult::Fail(MediaError::IoError, error);
-    }
-
-    Post(NC_MEDIA_EXPORTED, slotId, state.attached.get(), path);
-    return MediaResult::Success();
+    SlotState* state = nullptr;
+    Medium* medium = FindMedium(slotId, &state);
+    if (!medium)
+        return MediaResult::Fail(_slots.count(slotId) ? MediaError::UnreadableSource : MediaError::UnknownSlot,
+                                 "slot '" + slotId + "' is empty");
+    return ExportMedium(slotId, *medium, path);
 }
 
 MediaResult MediaManager::Save(const std::string& slotId, const SaveOptions& options, SaveOutcome* outcome)
 {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
+    SlotState* state = nullptr;
+    Medium* medium = FindMedium(slotId, &state);
+    if (!medium)
+        return MediaResult::Fail(_slots.count(slotId) ? MediaError::UnreadableSource : MediaError::UnknownSlot,
+                                 "slot '" + slotId + "' is empty");
+    MediaResult result = SaveMedium(slotId, *medium, state ? state->slot : nullptr, options, outcome);
+    if (result.Ok() && state)
+        state->changedUnits = 0;
+    return result;
+}
+
+MediaResult MediaManager::SetWriteProtect(const std::string& slotId, bool on)
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     auto it = _slots.find(slotId);
     if (it == _slots.end())
         return MediaResult::Fail(MediaError::UnknownSlot, "no slot '" + slotId + "' on this machine");
+    it->second.writeProtect = on;
+    if (it->second.attached)
+        it->second.slot->SetWriteProtectSwitch(on);
+    _revision++;
+    return MediaResult::Success();
+}
 
+MediaResult MediaManager::Rescan(const std::string& slotId)
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    auto it = _slots.find(slotId);
+    if (it == _slots.end())
+        return MediaResult::Fail(MediaError::UnknownSlot, "no slot '" + slotId + "' on this machine");
     SlotState& state = it->second;
-    Medium* medium = state.attached.get();
-    if (!medium)
-        return MediaResult::Fail(MediaError::UnreadableSource, "slot '" + slotId + "' is empty");
-    DiskImage* disk = medium->Floppy();
-    if (!disk)
-        return MediaResult::Fail(MediaError::NotSupported,
-                                 "only floppies are saved; export block media to a new image file");
-    if (!CanApplyNow())
-        return MediaResult::Fail(MediaError::NotSupported, "pause the emulator to save slot '" + slotId + "'");
+    if (!state.attached || state.attached->Source().type != MediaSourceType::Folder)
+        return MediaResult::Fail(MediaError::NotSupported, "slot '" + slotId + "' does not hold a folder");
+    const uint64_t changed = CanApplyNow() ? state.attached->ChangedUnits() : state.changedUnits;
+    if (changed > 0)
+        return MediaResult::Fail(MediaError::Dirty, "slot '" + slotId + "' has " + std::to_string(changed) +
+                                                        " unsaved changes: export or discard them before a rescan");
 
-    // Only a disk image file can take the disk back
-    std::string target = options.path;
-    if (target.empty())
+    const Medium& current = *state.attached;
+    MediaSource source = current.Source();
+    InsertOptions again;
+    again.access = current.Access();
+    again.fs = current.Options().fs;
+    again.codePage = current.Options().codePage;
+    again.freeBytes = current.Options().freeBytes;
+    again.writeProtect = state.writeProtect;
+    return Insert(slotId, source, again);
+}
+
+bool MediaManager::WaitApplied(const std::string& slotId, uint32_t timeoutMs)
+{
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+    std::unique_lock<std::recursive_mutex> lock(_mutex);
+    while (true)
     {
-        const bool ownFile = medium->Source().type == MediaSourceType::File && medium->Format() != "hobeta";
-        if (!ownFile || medium->Source().path.empty())
-            return MediaResult::Fail(MediaError::NotSupported,
-                                     "slot '" + slotId + "' holds a disk without an image file of its own: save it to a path");
-        target = medium->Source().path;
+        auto it = _slots.find(slotId);
+        if (it == _slots.end())
+            return true;
+        SlotState& state = it->second;
+        if (!state.incoming && !state.ejectRequested && !state.discardRequested)
+            return true;
+        if (CanApplyNow())
+        {
+            // Nobody runs frames: apply here, the swap delay has nobody to show it to
+            std::vector<std::unique_ptr<Medium>> retired;
+            state.emptyFramesLeft = 0;
+            ApplySlot(slotId, state, retired);
+            for (auto& old : retired)
+                Retire(std::move(old));
+            continue;
+        }
+        if (_applied.wait_until(lock, deadline) == std::cv_status::timeout)
+        {
+            auto again = _slots.find(slotId);
+            return again == _slots.end() ||
+                   (!again->second.incoming && !again->second.ejectRequested && !again->second.discardRequested);
+        }
     }
-
-    const FloppySaveResult written = FloppyFormats::Save(_context, *disk, target, options.allowRetarget);
-    if (!written.saved)
-        return MediaResult::Fail(MediaError::IoError, written.reason);
-
-    disk->markClean();
-    state.changedUnits = 0;
-    if (written.savedPath != medium->Source().path || medium->Source().type != MediaSourceType::File)
-    {
-        MediaSource saved;
-        saved.type = MediaSourceType::File;
-        saved.path = written.savedPath;
-        medium->Rebase(saved);
-        state.slot->SourceChanged(*medium);
-    }
-
-    if (outcome)
-    {
-        outcome->savedPath = written.savedPath;
-        outcome->retargeted = written.retargeted;
-        outcome->note = written.reason;
-    }
-    MediaResult result = MediaResult::Success();
-    if (written.retargeted)
-        result.report.push_back(written.reason + ": saved as '" + written.savedPath + "'");
-    Post(NC_MEDIA_SAVED, slotId, medium, written.savedPath);
-    return result;
 }
 
 std::vector<std::string> MediaManager::ApplyConfiguredMedia(const std::vector<MediaSetEntry>& mediaSet)
@@ -405,6 +444,7 @@ void MediaManager::ApplyPending()
     }
     for (auto& old : retired)
         Retire(std::move(old));
+    _applied.notify_all();
 }
 
 void MediaManager::NoteWrite(const std::string& slotId, const char* detail)
@@ -485,6 +525,177 @@ void MediaManager::ApplySlot(const std::string& slotId, SlotState& state, std::v
     }
 }
 
+SlotInfo MediaManager::Describe(const std::string& slotId, const SlotState& state) const
+{
+    SlotInfo info;
+    info.descriptor = state.slot->Descriptor();
+    const SlotDescriptor& d = info.descriptor;
+
+    // Tags: the kind, what the manager knows, then the peripheral's own
+    info.tags.push_back(MediaKindName(d.kind));
+    if (d.removable)
+        info.tags.push_back("removable");
+    if (d.acceptsFolder)
+        info.tags.push_back("folder");
+    for (const std::string& tag : d.tags)
+    {
+        if (std::find(info.tags.begin(), info.tags.end(), tag) == info.tags.end())
+            info.tags.push_back(tag);
+    }
+
+    // Index: the n-th slot of this kind, in id order (the map is id-ordered)
+    int index = 0;
+    for (const auto& [id, other] : _slots)
+    {
+        if (id == slotId)
+            break;
+        if (other.slot->Descriptor().kind == d.kind)
+            index++;
+    }
+    info.index = index;
+
+    info.present = state.attached != nullptr;
+    info.pending = state.incoming != nullptr || state.ejectRequested || state.discardRequested;
+    info.writeProtect = state.writeProtect;
+    if (state.attached)
+    {
+        info.source = state.attached->Source().path.empty() ? state.attached->Describe() : state.attached->Source().path;
+        info.format = state.attached->Format();
+        info.access = state.attached->Access();
+        // A stopped machine is read live; a running one through the frame's snapshot
+        info.changedUnits = CanApplyNow() ? state.attached->ChangedUnits() : state.changedUnits;
+        info.dirty = info.changedUnits > 0;
+    }
+    return info;
+}
+
+Medium* MediaManager::FindMedium(const std::string& slotId, SlotState** state)
+{
+    *state = nullptr;
+    auto it = _slots.find(slotId);
+    if (it != _slots.end())
+    {
+        *state = &it->second;
+        return it->second.attached.get();
+    }
+    auto parked = _parked.find(slotId);
+    return parked != _parked.end() ? parked->second.get() : nullptr;
+}
+
+MediaResult MediaManager::ApplyDisposition(const std::string& slotId, Medium& medium, Disposition disposition,
+                                           const std::string& exportPath)
+{
+    auto it = _slots.find(slotId);
+    const uint64_t changed = (CanApplyNow() || it == _slots.end()) ? medium.ChangedUnits() : it->second.changedUnits;
+    if (changed == 0)
+        return MediaResult::Success();  // nothing to decide about
+
+    switch (disposition)
+    {
+        case Disposition::None:
+            return MediaResult::Fail(MediaError::Dirty,
+                                     "slot '" + slotId + "' has " + std::to_string(changed) +
+                                         " unsaved changes: say save, export <path> or discard");
+        case Disposition::Discard:
+            return MediaResult::Success();
+        case Disposition::Save:
+        {
+            SaveOptions options;
+            options.allowRetarget = true;
+            return SaveMedium(slotId, medium, it != _slots.end() ? it->second.slot : nullptr, options, nullptr);
+        }
+        case Disposition::Export:
+            if (exportPath.empty())
+                return MediaResult::Fail(MediaError::BadRequest, "export needs a path");
+            return ExportMedium(slotId, medium, exportPath);
+    }
+    return MediaResult::Fail(MediaError::BadRequest, "unknown disposition");
+}
+
+MediaResult MediaManager::ExportMedium(const std::string& slotId, Medium& medium, const std::string& path)
+{
+    // The guest writes into the medium without a lock; a consistent export of
+    // a running machine needs the versioned change layer (media history H1)
+    if (!CanApplyNow())
+        return MediaResult::Fail(MediaError::NotSupported, "pause the emulator to export slot '" + slotId + "'");
+
+    if (FileHelper::AbsolutePath(path, /*resolveSymlinks*/ true) == medium.SourceKey())
+        return MediaResult::Fail(MediaError::InUse, "the export target is the medium's own source");
+
+    if (DiskImage* disk = medium.Floppy())
+    {
+        // The format writers mark the disk clean and rename it: an export is a
+        // copy, so both are put back
+        const DiskImage::DirtyState before = disk->captureDirtyState();
+        const FloppySaveResult written = FloppyFormats::Save(_context, *disk, path, /*allowRetarget*/ false);
+        disk->restoreDirtyState(before);
+        if (!written.saved)
+            return MediaResult::Fail(MediaError::IoError, written.reason);
+    }
+    else if (medium.Block())
+    {
+        std::string error;
+        if (!ExportBlockDevice(*medium.Block(), path, &error))
+            return MediaResult::Fail(MediaError::IoError, error);
+    }
+    else
+    {
+        return MediaResult::Fail(MediaError::NotSupported, "this medium cannot be exported yet");
+    }
+
+    Post(NC_MEDIA_EXPORTED, slotId, &medium, path);
+    return MediaResult::Success();
+}
+
+MediaResult MediaManager::SaveMedium(const std::string& slotId, Medium& medium, IMediaSlot* slot,
+                                     const SaveOptions& options, SaveOutcome* outcome)
+{
+    DiskImage* disk = medium.Floppy();
+    if (!disk)
+        return MediaResult::Fail(MediaError::NotSupported,
+                                 "slot '" + slotId + "': a block medium's source is never written in a session; export it to a new image file");
+    if (!CanApplyNow())
+        return MediaResult::Fail(MediaError::NotSupported, "pause the emulator to save slot '" + slotId + "'");
+
+    // Only a disk image file can take the disk back
+    std::string target = options.path;
+    if (target.empty())
+    {
+        const bool ownFile = medium.Source().type == MediaSourceType::File && medium.Format() != "hobeta";
+        if (!ownFile || medium.Source().path.empty())
+            return MediaResult::Fail(MediaError::NotSupported,
+                                     "slot '" + slotId + "' holds a disk without an image file of its own: export it to a path");
+        target = medium.Source().path;
+    }
+
+    const FloppySaveResult written = FloppyFormats::Save(_context, *disk, target, options.allowRetarget);
+    if (!written.saved)
+        return MediaResult::Fail(MediaError::IoError, written.reason);
+
+    disk->markClean();
+    if (written.savedPath != medium.Source().path || medium.Source().type != MediaSourceType::File)
+    {
+        MediaSource saved;
+        saved.type = MediaSourceType::File;
+        saved.path = written.savedPath;
+        medium.Rebase(saved);
+        if (slot)
+            slot->SourceChanged(medium);
+    }
+
+    if (outcome)
+    {
+        outcome->savedPath = written.savedPath;
+        outcome->retargeted = written.retargeted;
+        outcome->note = written.reason;
+    }
+    MediaResult result = MediaResult::Success();
+    if (written.retargeted)
+        result.report.push_back(written.reason + ": saved as '" + written.savedPath + "'");
+    Post(NC_MEDIA_SAVED, slotId, &medium, written.savedPath);
+    return result;
+}
+
 bool MediaManager::CanApplyNow() const
 {
     if (_applyNowProbe)
@@ -496,12 +707,18 @@ bool MediaManager::CanApplyNow() const
 MediaResult MediaManager::CheckRecording(bool endRecording)
 {
     ttd::TimeTravelManager* ttd = _context ? _context->pTimeTravelManager : nullptr;
-    if (!ttd || !ttd->IsRecording())
+    if (!ttd)
         return MediaResult::Success();
-    if (!endRecording)
-        return MediaResult::Fail(MediaError::Recording,
-                                 "the media set is fixed while a TTD recording runs; end the recording first");
-    ttd->StopRecording();
+    if (ttd->IsRecording())
+    {
+        if (!endRecording)
+            return MediaResult::Fail(MediaError::Recording,
+                                     "the media set is fixed while a TTD recording runs; end the recording first");
+        ttd->StopRecording();
+    }
+    // A kept session was recorded with the old media: its checkpoints no
+    // longer describe this machine (the rule LoadDisk follows)
+    ttd->InvalidateSession("media-change");
     return MediaResult::Success();
 }
 
@@ -570,6 +787,7 @@ void MediaManager::Post(const char* topic, const std::string& slotId, const Medi
         source = medium->Source().path.empty() ? medium->Describe() : medium->Source().path;
         access = AccessModeName(medium->Access());
     }
+    _revision++;  // every notification is a change a polling client must see
     auto* payload = new MediaSlotPayload(emulatorId, slotId, kind, source, access);
     payload->path = path;
     MessageCenter::DefaultMessageCenter().Post(topic, payload, true);

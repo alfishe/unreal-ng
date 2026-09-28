@@ -27,6 +27,16 @@ struct FloppySaveResult
     std::string reason;       ///< why a save was refused, or the first warning of a successful one
 };
 
+/// A blank floppy: "unformatted" (no sectors: for the machine's own FORMAT),
+/// "plus3" (+3DOS: 9 x 512, formatted) or "auto" (plus3 on a +3, else unformatted).
+/// Zero cylinders / sides take the format's default (unformatted 80 x 2, plus3 40 x 1)
+struct BlankFloppySpec
+{
+    std::string format = "auto";
+    uint8_t cylinders = 0;
+    uint8_t sides = 0;
+};
+
 class FloppyFormats
 {
 public:
@@ -50,4 +60,7 @@ public:
     /// only TR-DOS tracks) and `allowRetarget` is set, the image goes to
     /// <path without extension>.udi instead and the original file is left alone
     static FloppySaveResult Save(EmulatorContext* context, DiskImage& disk, const std::string& path, bool allowRetarget);
+
+    /// Build a blank disk. `spec` comes back resolved (format, cylinders, sides)
+    static MediaResult CreateBlank(bool plus3Machine, BlankFloppySpec& spec, std::unique_ptr<DiskImage>& disk);
 };

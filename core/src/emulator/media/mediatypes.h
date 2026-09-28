@@ -57,10 +57,23 @@ enum class MediaError : uint8_t
     NotSupported,      ///< a valid request this build cannot do yet
     DoesNotFit,        ///< the source does not fit the requested medium (FAT16 size, disk capacity)
     IoError,           ///< host I/O failed
+    AmbiguousSlot,     ///< a selector names several slots
+    BadRequest,        ///< an unknown verb or option, a malformed value
+};
+
+/// What an eject (or an insert over a medium) does with unsaved writes
+enum class Disposition : uint8_t
+{
+    None,     ///< refuse a dirty medium ("dirty")
+    Save,     ///< write it into its own file first
+    Export,   ///< write it into a new file first
+    Discard,  ///< drop the writes
 };
 
 /// Stable text codes: "unknown-slot", "kind-mismatch", ...
 const char* MediaErrorCode(MediaError error);
+/// The HTTP status every surface that speaks HTTP uses for an error (200 for None)
+int MediaErrorHttpStatus(MediaError error);
 const char* MediaKindName(MediaKind kind);
 const char* AccessModeName(AccessMode access);
 /// "readonly" | "session" | "writethrough" (case-insensitive); false if unknown

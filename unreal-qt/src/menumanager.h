@@ -42,6 +42,7 @@ public:
     // Sync the Tape Manager check state from the window's own close box
     // (setChecked does not re-emit triggered)
     void setTapeManagerChecked(bool checked);
+    void setMediaPanelChecked(bool checked);
 
     // Sync the Debug -> Debugger Window check state from the window's own show / hide
     // (setChecked does not re-emit triggered)
@@ -127,6 +128,7 @@ signals:
     void debuggerToggled(bool visible);
     void logWindowToggled(bool visible);
     void tapeManagerToggled(bool visible);
+    void mediaPanelToggled(bool visible);
     void fullScreenToggled();
     void scaleRequested(int scale);  // View -> Scale -> Nx
     void overscanModeToggled(bool enabled);
@@ -210,6 +212,7 @@ private:
     QAction* _debuggerAction;
     QAction* _logWindowAction;
     QAction* _tapeManagerAction;
+    QAction* _mediaPanelAction = nullptr;
     QAction* _fullScreenAction;
     QMenu* _scaleMenu = nullptr;
     std::vector<QAction*> _scaleActions;

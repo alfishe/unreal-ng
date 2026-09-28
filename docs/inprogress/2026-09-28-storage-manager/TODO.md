@@ -1,9 +1,10 @@
 # Unified media manager — TODO
 
 **Status:** requirements, technical design, media history design and integration designs reviewed
-(two rounds, 2026-09-28). **M1 implemented** on branch `media-manager` (2026-09-28): ACC-1…ACC-4 pass
-with real guest code (ERS, TR-DOS, NedoOS). **M2 implemented** (2026-09-28): floppies in the manager,
-ACC-7 passes on the real TR-DOS ROM. M3-M6 and H1-H5 not started. PLAN.md row **#58**.
+(two rounds, 2026-09-28). Implemented on branch `media-manager` (2026-09-28): **M1** (block slots, folders as
+FAT volumes; ACC-1…ACC-4 with the ERS, TR-DOS and NedoOS), **M2** (floppies in the manager; ACC-7 on the real
+TR-DOS ROM) and **M4** (the media verbs on every surface and the Qt media panel). M3, M5, M6 and H1-H5 not
+started. PLAN.md row **#58**.
 
 ## Documents
 
@@ -21,7 +22,7 @@ ACC-7 passes on the real TR-DOS ROM. M3-M6 and H1-H5 not started. PLAN.md row **
 | [integration-floppy.md](integration-floppy.md) | `fdd.a-d` migration (WD1793, uPD765), folder as a TR-DOS disk |
 | [integration-tape.md](integration-tape.md) | `tape` migration |
 | [integration-automation-gui.md](integration-automation-gui.md) | the `media` verbs on every surface, the Qt media panel |
-| [media-control-design.md](media-control-design.md) | **Draft**: the drive collection (tags, aliases, selectors, auto slot, eject dispositions, detached media), one `MediaControl` layer for the GUI, WebAPI + OpenAPI, CLI, MCP, Lua, Python; replaces the surface part of M4 |
+| [media-control-design.md](media-control-design.md) | **Implemented** (M4 surfaces): the drive collection (tags, aliases, selectors, auto slot, eject dispositions, detached media), one `MediaControl` layer for the GUI, WebAPI + OpenAPI, CLI, MCP, Lua, Python; replaces the surface part of M4 |
 | [reuse-and-readiness.md](reuse-and-readiness.md) | Review round 2: reuse across BaseConf, TSConf, NeoGS, Scorpion, Profi, ATM2, Next, Sprinter; design changes G1-G12; readiness for M1 |
 | [integration-ttd-snapshots.md](integration-ttd-snapshots.md) | TTD v1 rules (media-agnostic, barriers, recording guard); TTD v2 and UNS through media versions |
 
@@ -31,8 +32,8 @@ ACC-7 passes on the real TR-DOS ROM. M3-M6 and H1-H5 not started. PLAN.md row **
 - [x] Review round 2 (2026-09-28): reuse across machines, readiness; G1-G12 folded in ([reuse-and-readiness.md](reuse-and-readiness.md)); M1 hook points to pin at its start
 - [x] M1 block: core, folder pipeline, `HostFolderFat`, ZX-Evo `sd.zc` (= ZX-Evo E5b): ACC-1…ACC-4 (see "M1 as built" below)
 - [x] M2 floppy: slots, migration (fixes the eject / save bugs in research §3), folder as a disk image: ACC-7 (see "M2 as built" below)
-- [ ] M3 tape: slot, migration, folder as a tape: ACC-8
-- [ ] M4 automation verbs + Qt media panel: ACC-6
+- [x] M4 surfaces (media-control-design.md S1-S7): `MediaControl`, WebAPI `/media` + OpenAPI, CLI `media`, MCP `media`, Lua / Python `media_*`, Qt media panel, docs (`docs/features/media.md`) and recipe (`.recipe/media/use-media-slots.md`); as built: media-control-design.md §7
+- [ ] M3 tape: slot, migration, folder as a tape: ACC-8 (joins the media verbs on every surface without surface work)
 - [ ] M5 media across model switch: ACC-5
 - [ ] M6 IDE / CD slots (with PLAN #13a)
 - [ ] H1-H5 media history: versioned change layer, spill, file views, tracking API, UNS / TTD v2

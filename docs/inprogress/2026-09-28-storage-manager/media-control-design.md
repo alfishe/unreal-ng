@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-09-28 |
-| **Status** | Draft for review (round 1 folded in: no shelf; eject and swap state what happens to unsaved writes). Replaces the surface half of phase M4 ([integration-automation-gui.md](integration-automation-gui.md)) |
+| **Status** | **Implemented** (S1-S7, 2026-09-28, branch `media-manager`); as built: §7. Replaces the surface half of phase M4 ([integration-automation-gui.md](integration-automation-gui.md)). Reference for users: [docs/features/media.md](../../features/media.md) |
 | **Builds on** | M1 (block slots, `sd.zc`) and M2 (floppy slots `fdd.a-d`) as built ([TODO.md](TODO.md)) |
 | **Scope** | How a person or a program sees the machine's drives, picks one, and puts media in and out: the model, the addressing, the operations, and the same behavior on the Qt GUI, WebAPI (+ OpenAPI), CLI, MCP, Lua and Python |
 
@@ -513,6 +513,27 @@ media eject A --end-recording
 | Parked media of a removed add-on are invisible | listed as detached, with save / export / discard |
 
 ---
+
+## 7. As built (2026-09-28)
+
+| Topic | As built | Why |
+|---|---|---|
+| Reply tree | The core's existing `StateNode` (`emulator/state/statenode.h`), not a new value type; `StateNodeToJsonText` (`emulator/state/statenodejson.{h,cpp}`) prints it for the CLI's `--json` and the WebAPI | every surface already converts `StateNode` (Json::Value, sol::table, py::dict) |
+| Core | `MediaControl` (`media/mediacontrol.{h,cpp}`); `SlotDescriptor` tags / aliases / guestName; `Disposition` in `InsertOptions` / `EjectOptions` (replaces `force`); `MediaManager::Detached`, `Revision`, `WaitApplied`, `SetWriteProtect`, `Rescan`; a floppy's `Discard` opens the source again; `MediaErrorHttpStatus`; a media change invalidates a kept TTD session (the `LoadDisk` rule) | §3 |
+| WebAPI | `GET /media`, `GET /media/{slot}` (`/media/formats`), `POST /media/{slot}/{verb}`, multipart upload for insert / swap; `openapi_media.inc` builds the verb and option lists from `MediaControl` at run time | the spec cannot drift from the server |
+| CLI | `media …` with `--option value`, flags, `--json`; `media help` prints the option table from `MediaControl` | |
+| MCP | tool `media`; MCP is a WebAPI client and does not link the core, so it keeps a copy of the action table; `McpSlots_Test` compares it with `MediaControl` | parity by test |
+| Lua | global `media_*` functions acting on the selected emulator (the Lua bindings' style), returning the reply table | |
+| Python | `emu.media_*` methods, options as keywords (`async_` for the keyword `async`), returning the reply dict; errors are results (`ok: False`), not exceptions | one result shape on every surface |
+| Qt | Tools → Media (Ctrl+4), `unreal-qt/src/media/`; GUI requests are async and the table follows `revision`; the disposition dialog; drop a file on a row; the row logic is Qt-free (`media/core/mediapanelmodel`) and tested in `hud-core-tests` | the UI never waits for a swap delay |
+| OpenAPI coverage | 239 / 239 routes; the coverage script reads path literals passed to helpers too; GS port trace documented; five planned profiler paths marked `[Planned]` / `x-planned` | |
+
+Not done, and why:
+- **WebSocket events** (§3.7): the WebAPI WebSocket is a stub for every topic (it echoes; `broadcastEmulatorData` publishes to its own PubSub). Clients poll `revision`; the media events join when the WebSocket gets a real publisher.
+- **`load_software` → `insert auto`**: it also loads snapshots and tapes and uploads local files, which would turn a floppy into an upload (deleted on eject, no save back). It keeps the `/disk` route.
+- **Legacy routes over `MediaControl`** (MC-11): they stay on the `Emulator` wrappers, which sit on the same manager; their answers are unchanged.
+- **Cross-surface conformance test** (MC-N4): `MediaControl` tests, the MCP parity test and live WebAPI / CLI / Lua runs cover it for now; an automated run across the servers needs a WebAPI / CLI harness in `core-tests`.
+- **Qt File menu** "Save Disk" entries still pick the WD1793's selected drive; the panel saves per slot.
 
 ## 6. Conclusions
 

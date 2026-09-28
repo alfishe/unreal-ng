@@ -20,8 +20,31 @@ const char* MediaErrorCode(MediaError error)
         case MediaError::NotSupported: return "not-supported";
         case MediaError::DoesNotFit: return "does-not-fit";
         case MediaError::IoError: return "io-error";
+        case MediaError::AmbiguousSlot: return "ambiguous-slot";
+        case MediaError::BadRequest: return "bad-request";
     }
     return "unknown";
+}
+
+int MediaErrorHttpStatus(MediaError error)
+{
+    switch (error)
+    {
+        case MediaError::None: return 200;
+        case MediaError::UnknownSlot: return 404;
+        case MediaError::Dirty:
+        case MediaError::Recording:
+        case MediaError::InUse: return 409;
+        case MediaError::NotSupported: return 501;
+        case MediaError::IoError: return 500;
+        case MediaError::KindMismatch:
+        case MediaError::UnreadableSource:
+        case MediaError::UnknownFormat:
+        case MediaError::DoesNotFit:
+        case MediaError::AmbiguousSlot:
+        case MediaError::BadRequest: return 400;
+    }
+    return 500;
 }
 
 const char* MediaKindName(MediaKind kind)

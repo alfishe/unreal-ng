@@ -7,6 +7,7 @@
 #include <emulator/memory/memory.h>
 #include <emulator/memory/memorymap.h>  // TD-3 sparse map + hexdump
 #include <emulator/io/fdc/fdd.h>
+#include <emulator/media/mediacontrol.h>
 #include <emulator/io/fdc/diskimage.h>
 #include <emulator/io/tape/tape.h>
 #include <tapeaudio/tapeaudioimporter.h>
@@ -697,6 +698,105 @@ public:
             if (!ctx || !ctx->coreState.diskDrives[drive]) return false;
             return ctx->coreState.diskDrives[drive]->isDiskInserted();
         });
+
+        // region <Media: every slot through MediaControl (media-control-design.md)>
+        // media_list(), media_info(slot), media_formats([kind]),
+        // media_insert(slot, path [, opts]), media_swap(slot, path [, opts]),
+        // media_eject(slot [, opts]), media_save(slot [, path] [, opts]),
+        // media_export(slot, path), media_discard(slot [, opts]),
+        // media_rescan(slot [, opts]), media_create(slot [, opts]),
+        // media_protect(slot, on), and media(verb, slot, path, opts).
+        // slot: fdd.b, B, b:, sd, floppy:1, tag:sd+neogs ("auto" for insert).
+        // opts: {access="readonly", save=true, export="x.trd", discard=true, async=true, ...}.
+        // Each returns the reply table every surface returns: ok, error, message,
+        // slot, pending, revision, report, and the verb's fields (slots, info, ...)
+        auto mediaCall = [this](sol::this_state s, const std::string& verb, const std::string& selector,
+                                const std::string& path, sol::optional<sol::table> opts) -> sol::object {
+            MediaRequest request;
+            request.verb = verb;
+            request.selector = selector;
+            request.path = path;
+            if (opts)
+            {
+                for (const auto& [key, value] : *opts)
+                {
+                    if (!key.is<std::string>())
+                        continue;
+                    std::string text;
+                    if (value.is<bool>())
+                        text = value.as<bool>() ? "true" : "false";
+                    else if (value.get_type() == sol::type::number)
+                    {
+                        const double number = value.as<double>();
+                        text = number == static_cast<double>(static_cast<long long>(number))
+                                   ? std::to_string(static_cast<long long>(number))
+                                   : std::to_string(number);
+                    }
+                    else if (value.is<std::string>())
+                        text = value.as<std::string>();
+                    request.options[key.as<std::string>()] = text;
+                }
+            }
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+            {
+                StateNode none = StateNode::Object();
+                none["ok"] = false;
+                none["error"] = "unknown-emulator";
+                none["message"] = "no emulator selected";
+                return StateNodeToLua(s, none);
+            }
+            return StateNodeToLua(s, MediaControl(emulator->GetContext()).Execute(request).ToValue());
+        };
+        lua.set_function("media", [mediaCall](sol::this_state s, const std::string& verb, sol::optional<std::string> slot,
+                                              sol::optional<std::string> path, sol::optional<sol::table> opts) {
+            return mediaCall(s, verb, slot.value_or(""), path.value_or(""), opts);
+        });
+        lua.set_function("media_list", [mediaCall](sol::this_state s) { return mediaCall(s, "list", "", "", sol::nullopt); });
+        lua.set_function("media_info", [mediaCall](sol::this_state s, const std::string& slot) {
+            return mediaCall(s, "info", slot, "", sol::nullopt);
+        });
+        lua.set_function("media_formats", [mediaCall](sol::this_state s, sol::optional<std::string> kind) {
+            sol::state_view view(s);
+            sol::optional<sol::table> opts;
+            if (kind)
+            {
+                sol::table t = view.create_table();
+                t["kind"] = *kind;
+                opts = t;
+            }
+            return mediaCall(s, "formats", "", "", opts);
+        });
+        for (const char* verb : {"insert", "swap"})
+        {
+            lua.set_function(std::string("media_") + verb,
+                             [mediaCall, verb = std::string(verb)](sol::this_state s, const std::string& slot, const std::string& path,
+                                                                   sol::optional<sol::table> opts) {
+                                 return mediaCall(s, verb, slot, path, opts);
+                             });
+        }
+        for (const char* verb : {"eject", "discard", "rescan", "create"})
+        {
+            lua.set_function(std::string("media_") + verb,
+                             [mediaCall, verb = std::string(verb)](sol::this_state s, const std::string& slot,
+                                                                   sol::optional<sol::table> opts) {
+                                 return mediaCall(s, verb, slot, "", opts);
+                             });
+        }
+        lua.set_function("media_save", [mediaCall](sol::this_state s, const std::string& slot, sol::optional<std::string> path,
+                                                   sol::optional<sol::table> opts) {
+            return mediaCall(s, "save", slot, path.value_or(""), opts);
+        });
+        lua.set_function("media_export", [mediaCall](sol::this_state s, const std::string& slot, const std::string& path) {
+            return mediaCall(s, "export", slot, path, sol::nullopt);
+        });
+        lua.set_function("media_protect", [mediaCall](sol::this_state s, const std::string& slot, bool on) {
+            sol::state_view view(s);
+            sol::table t = view.create_table();
+            t["on"] = on;
+            return mediaCall(s, "protect", slot, "", sol::optional<sol::table>(t));
+        });
+        // endregion <Media>
 
         lua.set_function("disk_get_path", [this](int drive) -> std::string {
             if (!effectiveEmulator() || drive < 0 || drive > 3) return "";

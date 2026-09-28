@@ -17,6 +17,8 @@
 /// machine (dirty, changed units) is a per-frame snapshot taken in
 /// ApplyPending, so automation never reads a medium the guest is writing.
 
+#include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -43,11 +45,16 @@ struct InsertOptions
     bool writeProtect = false;         ///< the slot's write-protect switch
     bool endRecording = false;         ///< end a TTD recording instead of refusing
     bool immediate = false;            ///< no swap delay (media the firmware boots from)
+    /// A dirty medium already in the slot: what happens to its writes
+    Disposition disposition = Disposition::None;
+    std::string exportPath;            ///< Disposition::Export
 };
 
 struct EjectOptions
 {
-    bool force = false;         ///< eject even with unsaved changes
+    /// A dirty medium: what happens to its writes (None refuses with "dirty")
+    Disposition disposition = Disposition::None;
+    std::string exportPath;     ///< Disposition::Export
     bool endRecording = false;  ///< end a TTD recording instead of refusing
 };
 
@@ -68,6 +75,9 @@ struct SaveOutcome
 struct SlotInfo
 {
     SlotDescriptor descriptor;
+    std::vector<std::string> tags;  ///< the descriptor's, plus the kind name, "removable", "folder"
+    int index = -1;               ///< n-th slot of its kind on this machine, in id order
+    bool detached = false;        ///< a medium whose slot went away (descriptor.id is that slot)
     bool present = false;         ///< a medium is attached
     bool pending = false;         ///< an insert or eject is waiting for the emulation thread
     std::string source;           ///< source path or description
@@ -109,12 +119,26 @@ public:
     /// Drop the medium's session changes
     MediaResult Discard(const std::string& slotId);
     /// Write the medium's current contents to a new image file. The medium
-    /// keeps its source and its unsaved changes
+    /// keeps its source and its unsaved changes. Also for a detached medium
     MediaResult Export(const std::string& slotId, const std::string& path);
     /// Floppies: write the disk to its image file (or to `options.path`, which
     /// it then stands for) and mark it clean. A disk from a folder, a Hobeta
     /// file or a blank one needs a path. The emulator must not be running
     MediaResult Save(const std::string& slotId, const SaveOptions& options = {}, SaveOutcome* outcome = nullptr);
+    /// The slot's write-protect switch
+    MediaResult SetWriteProtect(const std::string& slotId, bool on);
+    /// Build a folder medium again from its folder (host files changed).
+    /// Refused while it has unsaved writes
+    MediaResult Rescan(const std::string& slotId);
+    /// Media whose slot went away, keyed by that slot's id (add-on removed)
+    std::vector<SlotInfo> Detached() const;
+    /// Increases with every change of slots, media or dirty state: a polling
+    /// client reloads the list when it moves
+    uint64_t Revision() const { return _revision.load(); }
+    /// Block until the slot has no pending insert / eject, at most `timeoutMs`.
+    /// While the emulator is not running the pending change is applied here.
+    /// True when nothing is pending any more
+    bool WaitApplied(const std::string& slotId, uint32_t timeoutMs);
     /// Insert the media a config states, at creation, before the first reset:
     /// no swap delay (firmware may boot from them). Entries for slots this
     /// machine does not have are reported, or ignored when they come from a
@@ -156,6 +180,15 @@ private:
     };
 
     bool CanApplyNow() const;
+    SlotInfo Describe(const std::string& slotId, const SlotState& state) const;
+    /// A dirty medium leaving its slot (or detached): apply the disposition first
+    MediaResult ApplyDisposition(const std::string& slotId, Medium& medium, Disposition disposition,
+                                 const std::string& exportPath);
+    MediaResult SaveMedium(const std::string& slotId, Medium& medium, IMediaSlot* slot, const SaveOptions& options,
+                           SaveOutcome* outcome);
+    MediaResult ExportMedium(const std::string& slotId, Medium& medium, const std::string& path);
+    /// The medium in a slot, or detached under that id
+    Medium* FindMedium(const std::string& slotId, SlotState** state);
     MediaResult CheckRecording(bool endRecording);
     MediaResult CheckInUse(const std::string& slotId, const Medium& medium) const;
     uint32_t DelayFrames(uint32_t swapDelayMs) const;
@@ -171,4 +204,6 @@ private:
     mutable std::recursive_mutex _mutex;
     std::map<std::string, SlotState> _slots;
     std::map<std::string, std::unique_ptr<Medium>> _parked;
+    mutable std::atomic<uint64_t> _revision{0};  // also moved by Post (const)
+    std::condition_variable_any _applied;  ///< signalled after every ApplyPending
 };

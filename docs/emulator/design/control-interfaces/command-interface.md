@@ -2971,6 +2971,23 @@ key tap enter
 
 Enhanced control over peripheral media devices.
 
+**`media` — every slot (floppy drives, SD card, ...)** — the same verbs, slot names, options and
+errors as the WebAPI, MCP, Lua and Python ([docs/features/media.md](../../../features/media.md)):
+
+| Command | Description |
+| :--- | :--- |
+| `media list` | every slot and the detached media |
+| `media info <slot>` | one slot (`fdd.b`, `B`, `b:`, `sd`, `floppy:1`, `tag:a+b`) |
+| `media formats [--kind floppy]` | accepted formats |
+| `media insert <slot\|auto> <path> [--access readonly\|session\|writethrough] [--fs fat16\|fat32]` | a file or a folder |
+| `media swap <slot> <path> [--save\|--export <path>\|--discard]` | eject + insert |
+| `media eject <slot> [--save\|--export <path>\|--discard]` | a dirty medium needs a disposition |
+| `media save <slot> [path]`, `media export <slot> <path>`, `media discard <slot>` | keep or drop the writes |
+| `media rescan <slot>`, `media create <slot> [--size bytes]`, `media protect <slot> --on true\|false` | |
+| `--async`, `--json` | return at once; print the WebAPI body |
+
+The `disk` commands below keep working for drive-letter scripts.
+
 > [!NOTE]
 > All tape transport, inspection and audio-bridge commands are **implemented** — see [§10. Tape Control Commands](#10-tape-control-commands).
 

@@ -25,6 +25,13 @@ FloppyDriveSlot::FloppyDriveSlot(EmulatorContext* context, uint8_t drive) : _con
     _descriptor.acceptsFolder = true;
     _descriptor.defaultAccess = AccessMode::Session;
     _descriptor.hasWriteProtectSwitch = true;
+
+    // The +3's uPD765 runs +3DOS; the Beta 128 WD1793 runs TR-DOS
+    const bool plus3 = context && context->pUPD765;
+    _descriptor.tags = {plus3 ? "upd765" : "wd1793", plus3 ? "plus3dos" : "trdos"};
+    if (drive == 0)
+        _descriptor.tags.push_back("boot");
+    _descriptor.aliases = {std::string(1, static_cast<char>('A' + drive))};
 }
 
 std::string FloppyDriveSlot::IdFor(uint8_t drive)

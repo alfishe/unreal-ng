@@ -10,6 +10,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "emulator/media/mediatypes.h"
 
@@ -30,6 +31,17 @@ struct SlotDescriptor
     FatType defaultFs = FatType::Fat16;  ///< folder volumes, unless the request says otherwise
     bool hasCardDetect = false;          ///< the slot reports "present" to its peripheral
     bool hasWriteProtectSwitch = false;  ///< the slot reports its switch to its peripheral
+
+    /// What the slot is, where it sits, what it is for: "sd", "zcontroller",
+    /// "primary", "boot", "wd1793", "trdos" ... The manager adds the kind name,
+    /// "removable" and "folder" itself (media-control-design.md §3.2)
+    std::vector<std::string> tags;
+    /// Short names people type: "A" (fdd.a), "sd" (the primary SD slot), "hd".
+    /// Matched case-insensitively; a trailing ':' is ignored ("a:")
+    std::vector<std::string> aliases;
+    /// What the guest OS calls it, when that differs (informative only):
+    /// "E: (NedoOS / ERS, first FAT partition)"
+    std::string guestName;
 };
 
 class IMediaSlot

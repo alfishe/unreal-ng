@@ -512,6 +512,13 @@ void MenuManager::populateCrtProfileMenu()
     }
 }
 
+void MenuManager::setMediaPanelChecked(bool checked)
+{
+    // Sync from the panel's own close box; setChecked never re-emits triggered
+    if (_mediaPanelAction)
+        _mediaPanelAction->setChecked(checked);
+}
+
 void MenuManager::setTapeManagerChecked(bool checked)
 {
     // Sync from the TapeManagerWindow's own close box; setChecked never
@@ -953,6 +960,14 @@ void MenuManager::createToolsMenu()
     _tapeManagerAction->setCheckable(true);
     _tapeManagerAction->setChecked(false);
     connect(_tapeManagerAction, &QAction::triggered, this, &MenuManager::tapeManagerToggled);
+
+    // Media panel: every slot (floppy drives, SD card, ...) through MediaControl
+    _mediaPanelAction = _toolsMenu->addAction(tr("M&edia"));
+    _mediaPanelAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_4));
+    _mediaPanelAction->setStatusTip(tr("Show/hide the media panel: insert, eject, save and export per drive or card slot"));
+    _mediaPanelAction->setCheckable(true);
+    _mediaPanelAction->setChecked(false);
+    connect(_mediaPanelAction, &QAction::triggered, this, &MenuManager::mediaPanelToggled);
 
     _toolsMenu->addSeparator();
 

@@ -5,7 +5,8 @@ catalog without touching TR-DOS.
 
 Supported container formats: `.trd .scl .fdi .udi .dsk .td0 .mgt .img`.
 
-Related: [autostart-disk.md](../run/autostart-disk.md) (boot it too),
+Related: [use-media-slots.md](use-media-slots.md) (every slot, folders, swaps with
+save/export/discard — the `media` tool), [autostart-disk.md](../run/autostart-disk.md) (boot it too),
 [manual-trdos-run.md](../run/manual-trdos-run.md) (choose a file yourself).
 
 > **How to use the sections:** [MCP](#mcp-preferred) is preferred — `load_software`

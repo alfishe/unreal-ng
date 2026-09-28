@@ -958,6 +958,7 @@ bool PortDecoder_ATM3::InsertSdCard(const std::string& path, SdCardSpi::WriteMod
         InsertOptions options;
         options.access = AccessOf(mode);
         options.writeProtect = writeProtect;
+        options.disposition = Disposition::Discard;  // the legacy call always replaced the card
         const MediaResult result = manager->Insert(_sdSlot.Descriptor().id, source, options);
         if (!result.Ok())
             MLOGWARNING("PortDecoder_ATM3: SD card '%s' not inserted: %s", path.c_str(), result.message.c_str());
@@ -977,6 +978,7 @@ bool PortDecoder_ATM3::InsertSdCard(std::unique_ptr<IBlockDevice> media, SdCardS
         source.type = MediaSourceType::Blank;
         InsertOptions options;
         options.writeProtect = writeProtect;
+        options.disposition = Disposition::Discard;
         auto medium = MediaFormatRegistry::WrapBlock(source, AccessOf(mode), "memory", std::move(media));
         return manager->Insert(_sdSlot.Descriptor().id, std::move(medium), options).Ok();
     }
@@ -991,7 +993,7 @@ void PortDecoder_ATM3::EjectSdCard()
     if (MediaManager* manager = _context->pMediaManager)
     {
         EjectOptions options;
-        options.force = true;  // the programmatic eject of tests and automation wrappers
+        options.disposition = Disposition::Discard;  // the programmatic eject of tests and automation wrappers
         manager->Eject(_sdSlot.Descriptor().id, options);
         return;
     }
@@ -1018,6 +1020,9 @@ PortDecoder_ATM3::EvoSdSlot::EvoSdSlot(PortDecoder_ATM3& owner) : _owner(owner)
     _descriptor.defaultFs = FatType::Fat16;
     _descriptor.hasCardDetect = true;          // AVR register C bit 3
     _descriptor.hasWriteProtectSwitch = true;  // AVR register C bit 2
+    _descriptor.tags = {"sd", "zcontroller", "primary", "boot"};
+    _descriptor.aliases = {"sd"};
+    _descriptor.guestName = "E: in the ERS and NedoOS (the card's first FAT partition)";
 }
 
 void PortDecoder_ATM3::EvoSdSlot::Attach(Medium& medium)

@@ -83,6 +83,7 @@ nc localhost 8765
 | `snapshot save <file>` | Save snapshot |
 | `tape load/eject/play/stop` | Tape control |
 | `disk insert/eject/catalog` | Disk control |
+| `media list/info/insert/swap/eject/save/export/discard/rescan/create/protect` | Every slot (floppy drives, SD card, ...): see [docs/features/media.md](../../../docs/features/media.md); `media help` lists the options |
 
 ### Features
 | Command | Description |

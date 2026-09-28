@@ -233,6 +233,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     tapeManagerWindow->setBinding(m_binding);
     _dockingManager->addDockableWindow(tapeManagerWindow, Qt::BottomEdge);
 
+    // Media panel (media-control-design.md §3.9): hidden by default, Tools → Media (Ctrl+4)
+    mediaPanelWindow = new MediaPanelWindow();
+    mediaPanelWindow->setBinding(m_binding);
+    _dockingManager->addDockableWindow(mediaPanelWindow, Qt::BottomEdge);
+
     // Create and configure menu system
     _menuManager = new MenuManager(this, ui->menubar, this);
 
@@ -269,6 +274,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::tapeManagerToggled, this, &MainWindow::handleTapeManagerToggled);
     // Keep the menu check state in sync when the window closes via its own close box
     connect(tapeManagerWindow, &TapeManagerWindow::visibilityChanged, _menuManager, &MenuManager::setTapeManagerChecked);
+    connect(_menuManager, &MenuManager::mediaPanelToggled, this, &MainWindow::handleMediaPanelToggled);
+    connect(mediaPanelWindow, &MediaPanelWindow::visibilityChanged, _menuManager, &MenuManager::setMediaPanelChecked);
     connect(_menuManager, &MenuManager::fullScreenToggled, this, &MainWindow::handleFullScreenShortcut);
     connect(_menuManager, &MenuManager::scaleRequested, this, &MainWindow::handleScaleRequested);
     connect(_menuManager, &MenuManager::screenshotRequested, this, &MainWindow::handleScreenshotRequested);
@@ -508,6 +515,13 @@ MainWindow::~MainWindow()
         delete tapeManagerWindow;
     }
 
+    if (mediaPanelWindow != nullptr)
+    {
+        _dockingManager->removeDockableWindow(mediaPanelWindow);
+        mediaPanelWindow->hide();
+        delete mediaPanelWindow;
+    }
+
     if (_screenWrapper != nullptr)
         delete _screenWrapper;
 
@@ -684,6 +698,13 @@ void MainWindow::closeEvent(QCloseEvent* event)
         tapeManagerWindow->hide();
         delete tapeManagerWindow;
         tapeManagerWindow = nullptr;
+    }
+    if (mediaPanelWindow)
+    {
+        _dockingManager->removeDockableWindow(mediaPanelWindow);
+        mediaPanelWindow->hide();
+        delete mediaPanelWindow;
+        mediaPanelWindow = nullptr;
     }
 
     // Shutdown device screen
@@ -2610,6 +2631,12 @@ void MainWindow::handleLogWindowToggled(bool visible)
     {
         logWindow->setVisible(visible);
     }
+}
+
+void MainWindow::handleMediaPanelToggled(bool visible)
+{
+    if (mediaPanelWindow)
+        mediaPanelWindow->setVisible(visible);
 }
 
 void MainWindow::handleTapeManagerToggled(bool visible)
