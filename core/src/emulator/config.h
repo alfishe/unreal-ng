@@ -49,6 +49,8 @@ private:
 		{ "Pentagon", "PENTAGON",                MM_PENTAGON, 128,  RAM_128 | RAM_512 | RAM_1024 },
         { "ZX-Spectrum 48k", "48K",              MM_SPECTRUM48, 48, RAM_48 },
         { "ZX-Spectrum 128k", "128k",            MM_SPECTRUM128, 128, RAM_128 },
+        { "ZX-Spectrum +2", "PLUS2",             MM_PLUS2, 128,  RAM_128 },
+        { "ZX-Spectrum +2A", "PLUS2A",           MM_PLUS2A, 128, RAM_128 },
         { "ZX-Spectrum +3", "PLUS3",             MM_PLUS3, 128,  RAM_128 },
 		{ "TS-Config", "TSL",                    MM_TSL, 4096, RAM_4096 },
 		{ "ZX-Evo", "ATM3",                      MM_ATM3, 4096, RAM_4096 },

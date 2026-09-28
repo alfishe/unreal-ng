@@ -11,7 +11,10 @@ Design: [technical-design.md](technical-design.md).
   disk; SAVE, LOAD and RUN of a BASIC program through the command typer (turbo mode, 35-310 ms each).
 - Found on the way: the 128K and +3 editors wait in a loop of their own after a report; the
   command typer now knows it (`reportShown`, input-verification.md §4.2/§4.3).
-
+- The +3 (and the new +2 / +2A models) run at 3.5469 MHz like the 128K; `Core` gave them 3.5 MHz.
+- New models `PLUS2` (grey +2: 128K hardware, `plus2.rom`, its editor in input verification §4.2a) and
+  `PLUS2A` (the +3 without the uPD765: menu "128 +2A", "Drive M: available"); all three in the
+  unreal-qt Machine menu.
 
 ## Remaining (value order)
 1. **Phase 3, automation:** `state/fdc` and MCP `inspect_state` report the uPD765 on the +3 (today
@@ -20,5 +23,3 @@ Design: [technical-design.md](technical-design.md).
 2. **Phase 4, protections:** READ TRACK and SCAN (they take their parameters and answer IC=01 + MA
    today), N >= 4 sectors (Speedlock +3; the model stores `128 << (N & 3)`), a sweep over the
    protected-title lists from the reference emulators.
-3. **Model clock:** `Core` gives the +3 3.5 MHz through its `default` case; the real machine runs at
-   3.5469 MHz like the 128K. Affects every +3 timing, not only the disk.

@@ -753,6 +753,17 @@ TEST_F(UPD765Rom_Test, MenuShowsThePlus3)
     EXPECT_TRUE(ScreenHas("Drives A: and M: available")) << Screen();
 }
 
+/// The +2A is the +3 without the controller: same ROM, no uPD765, no drive A
+TEST_F(UPD765Rom_Test, Plus2AMenuHasNoDiskDrive)
+{
+    Boot("PLUS2A", RM_128, "48 BASIC");
+    ASSERT_FALSE(HasFatalFailure());
+
+    EXPECT_EQ(_context->pUPD765, nullptr);
+    EXPECT_TRUE(ScreenHas("128 +2A")) << Screen();
+    EXPECT_TRUE(ScreenHas("Drive M: available")) << Screen();
+}
+
 TEST_F(UPD765Rom_Test, CatOfABlankDisk)
 {
     Ready();

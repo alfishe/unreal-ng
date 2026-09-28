@@ -52,7 +52,7 @@ protected:
     /// The 128K and +3 editors: keywords spelled, tokenised at ENTER
     bool Is128Editor() const
     {
-        return GetParam().find("128BASIC") != std::string::npos || GetParam() == "Plus3-3BASIC";
+        return GetParam().find("128BASIC") != std::string::npos || GetParam().find("-3BASIC") != std::string::npos;
     }
 
     static std::string Describe(const CommandTyper::Result& r)
@@ -272,9 +272,19 @@ TEST(CommandTyperThreaded_Test, TypeAndWaitOnARunningEmulator)
 /// proven, then types. Also from a menu whose highlight was moved below.
 class CommandTyperMenu_Test : public RomEditorFixture, public ::testing::WithParamInterface<std::string>
 {
+protected:
+    ROMControlPoints::RomKind ExpectedEditor() const
+    {
+        if (GetParam() == "PLUS3" || GetParam() == "PLUS2A")
+            return ROMControlPoints::RomKind::Plus3Rom0;
+        if (GetParam() == "PLUS2")
+            return ROMControlPoints::RomKind::Plus2Rom0;
+        return ROMControlPoints::RomKind::Editor128;
+    }
 };
 
-INSTANTIATE_TEST_SUITE_P(Machines, CommandTyperMenu_Test, ::testing::Values("128k", "PENTAGON", "SCORPION", "PLUS3"));
+INSTANTIATE_TEST_SUITE_P(Machines, CommandTyperMenu_Test,
+                         ::testing::Values("128k", "PENTAGON", "SCORPION", "PLUS2", "PLUS2A", "PLUS3"));
 
 TEST_P(CommandTyperMenu_Test, CommandFromTheMainMenu)
 {
@@ -288,7 +298,7 @@ TEST_P(CommandTyperMenu_Test, CommandFromTheMainMenu)
     RunUntil([&] { return typer->GetStatus() == CommandTyper::Status::Done; }, 4000);
     const CommandTyper::Result r = typer->GetResult();
     EXPECT_EQ(r.outcome, Outcome::Finished) << CommandTyper::FailureName(r.failure) << " " << r.message;
-    EXPECT_EQ(r.editor, GetParam() == "PLUS3" ? ROMControlPoints::RomKind::Plus3Rom0 : ROMControlPoints::RomKind::Editor128);
+    EXPECT_EQ(r.editor, ExpectedEditor());
     EXPECT_EQ(r.errNr, 0xFF);
 }
 
@@ -305,5 +315,5 @@ TEST_P(CommandTyperMenu_Test, CommandFromAMenuHighlightedBelow)
     RunUntil([&] { return typer->GetStatus() == CommandTyper::Status::Done; }, 4000);
     const CommandTyper::Result r = typer->GetResult();
     EXPECT_EQ(r.outcome, Outcome::Started) << CommandTyper::FailureName(r.failure) << " " << r.message;
-    EXPECT_EQ(r.editor, GetParam() == "PLUS3" ? ROMControlPoints::RomKind::Plus3Rom0 : ROMControlPoints::RomKind::Editor128);
+    EXPECT_EQ(r.editor, ExpectedEditor());
 }

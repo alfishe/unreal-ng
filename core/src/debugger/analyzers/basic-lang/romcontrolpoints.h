@@ -33,7 +33,8 @@ namespace ROMControlPoints
         Editor128,      ///< Spectrum 128 ROM0 editor (also Pentagon and Scorpion ROM0)
         Plus3Rom0,      ///< +2A/+3 v4.0 ROM0 editor
         Plus3Rom1,      ///< +2A/+3 v4.0 ROM1 syntax checker and command runner
-        TrDos           ///< TR-DOS 5.03 / 5.04T / 5.04TM
+        TrDos,          ///< TR-DOS 5.03 / 5.04T / 5.04TM
+        Plus2Rom0,      ///< +2 (grey, Amstrad) ROM0: the 128K editor, moved
     };
 
     /// Editor events; each ROM defines the subset it has

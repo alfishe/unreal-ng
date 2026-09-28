@@ -66,6 +66,16 @@ TEST_F(ROMControlPoints_Test, SpectrumPlus3)
     ExpectPages("PLUS3", { RomKind::Plus3Rom0, RomKind::Plus3Rom1, RomKind::Unknown, RomKind::Basic48 });
 }
 
+TEST_F(ROMControlPoints_Test, Plus2)
+{
+    ExpectPages("PLUS2", { RomKind::Plus2Rom0, RomKind::Basic48 });
+}
+
+TEST_F(ROMControlPoints_Test, Plus2A)
+{
+    ExpectPages("PLUS2A", { RomKind::Plus3Rom0, RomKind::Plus3Rom1, RomKind::Unknown, RomKind::Basic48 });
+}
+
 TEST_F(ROMControlPoints_Test, Pentagon)
 {
     // Service ROM, TR-DOS, 128K editor (TR-DOS menu entry), 48 BASIC

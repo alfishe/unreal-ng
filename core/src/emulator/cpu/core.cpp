@@ -66,6 +66,10 @@ bool Core::Init()
             baseFrequency = 3'500'000;
             break;
         case MM_SPECTRUM128:
+        case MM_PLUS2:
+        case MM_PLUS2A:
+        case MM_PLUS3:
+            // The Sinclair / Amstrad 128 machines share the 17.7345 MHz / 5 clock
             baseFrequency = 3'546'900;
             break;
         default:

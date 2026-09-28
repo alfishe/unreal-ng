@@ -212,6 +212,8 @@ bool Config::ParseConfig(IniFile& inimanager)
     CopyStringValue(inimanager.GetValue(rom, "48k", nullptr), config.zx48_rom_path, sizeof config.zx48_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "128k", nullptr), config.zx128_rom_path, sizeof config.zx128_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "PLUS3", nullptr), config.plus3_rom_path, sizeof config.plus3_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "PLUS2", nullptr), config.plus2_rom_path, sizeof config.plus2_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "PLUS2A", nullptr), config.plus2a_rom_path, sizeof config.plus2a_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "ATM1", nullptr), config.atm1_rom_path, sizeof config.atm1_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "ATM2", nullptr), config.atm2_rom_path, sizeof config.atm2_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "ATM3", nullptr), config.atm3_rom_path, sizeof config.atm3_rom_path);
@@ -736,6 +738,8 @@ std::string Config::GetConfigFolderForModel(MEM_MODEL model, uint32_t ramSizeKB)
 		case MM_SPECTRUM48:  return "spectrum48";
 		case MM_SPECTRUM128: return "spectrum128";
 		case MM_PLUS3:       return "spectrum3";
+		case MM_PLUS2:       return "spectrum2";
+		case MM_PLUS2A:      return "spectrum2a";
 		case MM_TSL:         return "ts-conf";
 		default:
 			break;
@@ -903,6 +907,8 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
             break;
 
         case MM_SPECTRUM128:
+        case MM_PLUS2:
+        case MM_PLUS2A:
         case MM_PLUS3:
             config.intstart = 1845;
             config.intlen   = 36;   // ZX-128K ULA has 72-HC INT = 36 T-states
@@ -971,6 +977,8 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
                 config.intlen = 32;
                 break;
             case MM_SPECTRUM128:
+            case MM_PLUS2:
+            case MM_PLUS2A:
             case MM_PLUS3:
                 config.frame = 70908;   // 228 * 311
                 config.t_line = 228;

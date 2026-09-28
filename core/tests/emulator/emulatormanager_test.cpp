@@ -517,6 +517,31 @@ TEST_F(EmulatorManager_Test, IsModelCreatableForSupportedMachines)
     const TMemModel* modelPlus3 = Config::FindModelByShortName("PLUS3");
     ASSERT_NE(modelPlus3, nullptr);
     EXPECT_TRUE(Config::IsModelCreatable(*modelPlus3));
+
+    for (const char* shortName : { "PLUS2", "PLUS2A" })
+    {
+        const TMemModel* model = Config::FindModelByShortName(shortName);
+        ASSERT_NE(model, nullptr) << shortName;
+        EXPECT_TRUE(Config::IsModelCreatable(*model)) << shortName;
+    }
+}
+
+/// "PLUS2A" starts with "PLUS2": short names match whole, in any case
+TEST_F(EmulatorManager_Test, ShortNameMatchesTheWholeName)
+{
+    const TMemModel* plus2 = Config::FindModelByShortName("plus2");
+    ASSERT_NE(plus2, nullptr);
+    EXPECT_EQ(plus2->Model, MM_PLUS2);
+
+    const TMemModel* plus2a = Config::FindModelByShortName("PLUS2A");
+    ASSERT_NE(plus2a, nullptr);
+    EXPECT_EQ(plus2a->Model, MM_PLUS2A);
+
+    EXPECT_EQ(Config::FindModelByShortName("PLUS2AB"), nullptr);
+
+    const TMemModel* plus3 = Config::FindModelByShortName("PLUS3");
+    ASSERT_NE(plus3, nullptr);
+    EXPECT_EQ(plus3->Model, MM_PLUS3);
 }
 
 TEST_F(EmulatorManager_Test, IsModelCreatableAgreesWithCreateAttempt)

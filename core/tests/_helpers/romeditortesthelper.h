@@ -33,6 +33,7 @@ public:
     static std::vector<std::string> RomEditors()
     {
         return { "48K",           "128K-48BASIC",     "128K-128BASIC",     "Plus3-48BASIC",     "Plus3-3BASIC",
+                 "Plus2-128BASIC", "Plus2A-3BASIC",
                  "Pentagon-48BASIC", "Pentagon-128BASIC", "Pentagon-TRDOS",
                  "Scorpion-48BASIC", "Scorpion-128BASIC", "Scorpion-TRDOS" };
     }
@@ -186,6 +187,20 @@ protected:
                 TapUntilTaken(ZXKEY_ENTER, 0x0D);
             if (!HasFatalFailure())
                 ASSERT_TRUE(RunUntil([&] { return ScreenHas("1982 Sinclair"); }, 300)) << Screen();
+        }
+        else if (editor == "Plus2-128BASIC")
+        {
+            // The +2's Amstrad ROM: the 128K editor moved, "Tape Tester" added to the menu
+            Boot("PLUS2", RM_128, "48 BASIC");
+            if (!HasFatalFailure())
+                Enter128Editor();
+        }
+        else if (editor == "Plus2A-3BASIC")
+        {
+            // The +3's ROM without a disk controller: it calls itself a +2A
+            Boot("PLUS2A", RM_128, "48 BASIC");
+            if (!HasFatalFailure())
+                Enter128Editor("+3 BASIC");
         }
         else if (editor == "Plus3-3BASIC")
         {

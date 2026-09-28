@@ -3098,6 +3098,7 @@ namespace PythonBindings
             Memory* memory = context->pMemory;
 
             const bool is128K = (config.mem_model == MM_SPECTRUM128 || config.mem_model == MM_PENTAGON ||
+                                 config.mem_model == MM_PLUS2 || config.mem_model == MM_PLUS2A ||
                                  config.mem_model == MM_PLUS3);
 
             // mode: "active" hashes the RAM pages the CURRENT video mode actually

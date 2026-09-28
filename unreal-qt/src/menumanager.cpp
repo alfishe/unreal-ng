@@ -616,6 +616,9 @@ void MenuManager::createMachineMenu()
         MM_PENTAGON,      // Pentagon 128K/512K/1024K
         MM_SPECTRUM48,    // ZX-Spectrum 48K
         MM_SPECTRUM128,   // ZX-Spectrum 128K
+        MM_PLUS2,         // ZX-Spectrum +2 (grey): 128K hardware, Amstrad ROM
+        MM_PLUS2A,        // ZX-Spectrum +2A (black): +3 without the floppy controller
+        MM_PLUS3,         // ZX-Spectrum +3 (uPD765A, design: docs/inprogress/2026-09-28-plus3-upd765)
         MM_ATM710,        // ATM Turbo 2+ v7.10
         MM_ATM3,          // ZX-Evo / ATM3 / PentEvo
         MM_SCORP,         // Scorpion ZS-256 (base ROM bundle; design:

@@ -90,6 +90,22 @@ patched; use `#0053` there.
 | `execStart` | `#031E` | JP to LINE-RUN |
 | `report` | `#0321` | Finished or error report |
 
+### 4.2a +2 editor (Amstrad ROM0, `plus2.rom`)
+
+The 128K editor with a longer menu ("Tape Tester"): the routines from `#25xx` up moved by `#1F`-`#26`
+bytes. Each point was found by the 48 bytes around its 128K address (36-47 equal; the rest are
+moved CALL targets). ROM1 is a 48 BASIC (§4.1).
+
+| Point | Address | 128K |
+|:--|:--|:--|
+| `init` | `#3397` | `#3371` |
+| `idle` / `keyTaken` | `#36A9` / `#36AF` | `#3683` / `#3689` |
+| `reportShown` | `#2602` | `#25E3` |
+| `keyAccepted` / `charInserted` | `#267B` / `#2917` | `#265C` / `#28F1` |
+| `rasp` | `#2706` | `#26E7` |
+| `enter` | `#296A` | `#2944` |
+| `syntaxResult` / `lineStored` / `execStart` / `report` | `#02BA` / `#03F7` / `#031E` / `#0321` | same |
+
 ### 4.3 +3 editor (ROM0 + ROM1, v4.0 = `plus3.rom`)
 
 The 128K editor moved to new addresses; lines are checked, stored and run by ROM1.
@@ -140,7 +156,8 @@ Outcome rule: `found` → the command is TR-DOS's (`trdos_command`); `error` bef
 | Pentagon 48 | as 128K ROM1 but `#006D` = `28` |
 | +3 ROM3 | plus `#1349` = `CD 29 3A`, "1982 Amstrad" at `#153A` |
 | 128K ROM0 | `#0000` = `F3 01 2B 69`, `#3683` = `CB 6E 28 FC CB AE 3A 08 5C` (Pentagon: "TR-DO" at `#2789`) |
-| +3 ROM0 v4.0 | `#0000` = `F3 01 03 6C`, `#1875` = `CB 6E 28 FC` (v4.1: `#187A`) |
+| +2 ROM0 (Amstrad) | `#2672` = `31 FF 5B`, `#36A9` = `CB 6E 28 FC CB AE 3A 08 5C` (`#0000` is the 128K's `F3 01 2B 69`) |
+| +3 ROM0 v4.0 | `#0000` = `F3 01 03 6C`, `#1875` = `CB 6E 28 FC` (v4.1: `#187A`). The +2A runs the same ROM (`plus2a.rom` is byte-identical) |
 | TR-DOS | `#3D00` = `00 18 2E`, `#3D2F` = `00 C9`, version text at `#0363` |
 
 The signature is checked once when a ROM page is first seen and cached by its host pointer;

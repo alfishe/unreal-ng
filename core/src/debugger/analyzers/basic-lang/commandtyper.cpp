@@ -175,9 +175,10 @@ std::optional<std::pair<ZXKeysEnum, uint8_t>> CommandTyper::NextClearKey(bool& f
         return std::make_pair(ZXKEY_EXT_DELETE, CODE_DELETE);
     }
 
-    if (_result.editor == RomKind::Editor128 || _result.editor == RomKind::Plus3Rom0)
+    if (_result.editor == RomKind::Editor128 || _result.editor == RomKind::Plus2Rom0 ||
+        _result.editor == RomKind::Plus3Rom0)
     {
-        // The 128K and +3 editors share the bank 7 workspace layout
+        // The 128K, +2 and +3 editors share the bank 7 workspace layout
         const uint8_t* bank7 = memory.RAMPageAddress(7);
 
         // The main menu reads keys in the same loop as the editor: leave it
