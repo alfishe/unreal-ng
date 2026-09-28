@@ -26,6 +26,8 @@
 
 #include <algorithm>
 #include <cstring>
+#include <fstream>
+#include <iterator>
 #include <map>
 
 namespace
@@ -146,6 +148,7 @@ bool ZXPolyGroup::Create(const std::string& model, std::string* error)
         context->pCore->GetZ80()->portInterceptor = _interceptors[m].get();
     }
 
+    InstallMasterM1Hook();
     ResetPlatformState();
     return true;
 }
@@ -163,6 +166,7 @@ void ZXPolyGroup::Destroy()
             {
                 context->pCore->GetZ80()->portInterceptor = nullptr;
                 context->pCore->GetZ80()->busTraceHook = nullptr;
+                context->pCore->GetZ80()->m1TraceHook = nullptr;
             }
             manager->RemoveEmulator(_instances[m]->GetUUID());
         }
@@ -185,9 +189,9 @@ void ZXPolyGroup::ResetPlatformState()
     {
         _regs[m] = {static_cast<uint8_t>(m << 1), 0, 0, 0};
         _overlay[m].assign(m == 0 ? 0 : OVERLAY_SIZE, -1);
-        _slave7FFD[m] = 0;
     }
     _locked = false;
+    _slavesRunning = false;
     _lockedThisFrame = false;
 }
 
@@ -235,6 +239,51 @@ bool ZXPolyGroup::LoadZXP(const std::string& path, std::string* error)
     for (auto& instance : _instances)
         instance->RestartFrame();
 
+    _lastMasterFrame = GetContext(0)->emulatorState.frame_counter;
+    return true;
+}
+
+bool ZXPolyGroup::LoadPROM(const std::string& path, std::string* error)
+{
+    if (!IsCreated())
+    {
+        if (error)
+            *error = "group not created";
+        return false;
+    }
+
+    std::ifstream file(path, std::ios::binary);
+    std::vector<uint8_t> data((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    if (data.empty() || data.size() > 4 * PAGE_SIZE)
+    {
+        if (error)
+            *error = StringHelper::Format("'%s': a ZX-Poly ROM image is 1 to 65536 bytes", path.c_str());
+        return false;
+    }
+
+    // Up to four 16K parts; module i gets part (i mod parts) as its only ROM,
+    // so every ROM page the model selects holds it (unused tail = #FF)
+    const size_t parts = (data.size() + PAGE_SIZE - 1) / PAGE_SIZE;
+    for (size_t m = 0; m < MODULES; m++)
+    {
+        const size_t part = m % parts;
+        const size_t length = std::min<size_t>(PAGE_SIZE, data.size() - part * PAGE_SIZE);
+        Memory& memory = *GetContext(m)->pMemory;
+        for (uint8_t romPage = 0; romPage < 4; romPage++)
+        {
+            uint8_t* rom = memory.ROMPageHostAddress(romPage);
+            if (rom == nullptr)
+                continue;
+            std::memset(rom, 0xFF, PAGE_SIZE);
+            std::memcpy(rom, data.data() + part * PAGE_SIZE, length);
+        }
+    }
+
+    // Power on: every CPU from #0000, the platform in its reset state
+    for (auto& instance : _instances)
+        instance->Reset();
+    ResetPlatformState();
+    _lastMasterFrame = GetContext(0)->emulatorState.frame_counter;
     return true;
 }
 
@@ -270,6 +319,8 @@ bool ZXPolyGroup::BootDisk(const std::string& path, std::string* error)
         return false;
     }
 
+    ResetSlaveMachines();
+    _lastMasterFrame = GetContext(0)->emulatorState.frame_counter;
     return true;
 }
 
@@ -335,76 +386,75 @@ void ZXPolyGroup::ReplicateFromMaster()
     _locked = true;
 }
 
-uint16_t ZXPolyGroup::ResetCommandTarget(size_t module) const
-{
-    // After a local reset the first three opcode fetches at #0000 return R1,
-    // R2, R3. Every known loader puts JP nn there (#C3, lo, hi)
-    const std::array<uint8_t, 4>& r = _regs[module];
-    return r[1] == 0xC3 ? static_cast<uint16_t>(r[2] | (r[3] << 8)) : 0x0000;
-}
-
 void ZXPolyGroup::PerformLock()
 {
     // Runs inside the master's locking OUT (#3D00), at its IORQ T-state. The
     // rest of that instruction only charges T-states (OUT (C),r and OUT (n),A:
     // 3 T after the port write), so the master's state here is its state
     // after the instruction, less those 3 T - the slaves get them added below.
-    //
-    // Local reset of the master's CPU (memory and devices untouched), then the
-    // injected JP: 10 T-states, one M1 cycle
     constexpr unsigned OUT_TAIL_T = 3;
-    constexpr unsigned INJECTED_JP_T = 10;
-    Z80& cpu = *GetContext(0)->pCore->GetZ80();
     const bool resetRequested = (_port3D00 & MAIN_RESET) != 0;
-    if (resetRequested)
+    const bool slavesWereParked = !_slavesRunning;
+    _slavesRunning = false;
+
+    if (slavesWereParked)
     {
-        cpu.pc = ResetCommandTarget(0);
-        cpu.memptr = cpu.pc;
-        cpu.sp = 0xFFFF;
-        cpu.af = 0xFFFF;
-        cpu.i = 0;
-        cpu.r_low = 1;
-        cpu.r_hi = 0;
-        cpu.im = 0;
-        cpu.iff1 = 0;
-        cpu.iff2 = 0;
-        cpu.halted = 0;
-        cpu.tt += INJECTED_JP_T * cpu.rate;
-    }
+        // Multiloader lock: the slaves waited since reset and hold only what
+        // the IO window streamed into them. Every byte they will use came
+        // through the window, so the master's state plus that overlay is
+        // exactly their state (quad-instance-architecture.md §4.3)
+        std::array<uint8_t, MODULES> own7FFD{};
+        for (size_t m = 1; m < MODULES; m++)
+            own7FFD[m] = GetContext(m)->emulatorState.p7FFD;
 
-    ReplicateFromMaster();
-    _lockedThisFrame = true;
-
-    for (size_t m = 1; m < MODULES; m++)
-    {
-        EmulatorContext* slave = GetContext(m);
-        Z80& slaveCpu = *slave->pCore->GetZ80();
-
-        slaveCpu.tt += OUT_TAIL_T * slaveCpu.rate;
         if (resetRequested)
-        {
-            slaveCpu.pc = ResetCommandTarget(m);
-            slaveCpu.memptr = slaveCpu.pc;
-        }
+            LocalReset(0);    // the master; its reset command JP included
 
-        // The slave's own paging latch (only a window-routed #7FFD write
-        // changes it before the lock)
-        slave->pPortDecoder->UnlockPaging();
-        slave->pPortDecoder->DecodePortOut(0x7FFD, _slave7FFD[m], slaveCpu.pc);
-        slave->emulatorState.p7FFD = _slave7FFD[m];
-        slave->pMemory->UpdateZ80Banks();
+        MountMasterDisksOnSlaves();
+        ReplicateFromMaster();
 
-        // Plane data the loader streamed through the IO window
-        const std::vector<int16_t>& overlay = _overlay[m];
-        for (size_t offset = 0; offset < overlay.size(); offset++)
+        for (size_t m = 1; m < MODULES; m++)
         {
-            if (overlay[offset] >= 0)
+            EmulatorContext* slave = GetContext(m);
+            Z80& slaveCpu = *slave->pCore->GetZ80();
+            slaveCpu.tt += OUT_TAIL_T * slaveCpu.rate;
+            if (resetRequested)
             {
-                uint8_t* page = slave->pMemory->RAMPageAddress(static_cast<uint16_t>(offset / PAGE_SIZE));
-                page[offset % PAGE_SIZE] = static_cast<uint8_t>(overlay[offset]);
+                slaveCpu.pc = ResetCommandTarget(m);
+                slaveCpu.memptr = slaveCpu.pc;
+            }
+
+            // The slave's own paging latch
+            slave->pPortDecoder->UnlockPaging();
+            slave->pPortDecoder->DecodePortOut(0x7FFD, own7FFD[m], slaveCpu.pc);
+            slave->emulatorState.p7FFD = own7FFD[m];
+            slave->pMemory->UpdateZ80Banks();
+
+            // Plane data the loader streamed through the IO window
+            const std::vector<int16_t>& overlay = _overlay[m];
+            for (size_t offset = 0; offset < overlay.size(); offset++)
+            {
+                if (overlay[offset] >= 0)
+                {
+                    uint8_t* page = slave->pMemory->RAMPageAddress(static_cast<uint16_t>(offset / PAGE_SIZE));
+                    page[offset % PAGE_SIZE] = static_cast<uint8_t>(overlay[offset]);
+                }
             }
         }
     }
+    else
+    {
+        // The slaves already ran their own code (MIMD before the lock): they
+        // keep their state; a reset restarts every CPU from its own command
+        if (resetRequested)
+        {
+            for (size_t m = 0; m < MODULES; m++)
+                LocalReset(m);
+        }
+    }
+
+    _locked = true;
+    _lockedThisFrame = true;
 
     // The reset command registers are consumed by the reset
     if (resetRequested)
@@ -412,6 +462,96 @@ void ZXPolyGroup::PerformLock()
         for (auto& regs : _regs)
             regs[1] = regs[2] = regs[3] = 0;
     }
+}
+
+void ZXPolyGroup::LocalReset(size_t module)
+{
+    // A CPU-only reset (memory and devices untouched). The module then fetches
+    // its first three opcode bytes from R1, R2, R3: every known program puts
+    // JP nn there, executed as a 10 T-state instruction
+    constexpr unsigned OUT_TAIL_T = 3;
+    constexpr unsigned INJECTED_JP_T = 10;
+
+    Z80& cpu = *GetContext(module)->pCore->GetZ80();
+    const bool jump = _regs[module][1] == 0xC3;
+    cpu.pc = ResetCommandTarget(module);
+    cpu.memptr = cpu.pc;
+    cpu.sp = 0xFFFF;
+    cpu.af = 0xFFFF;
+    cpu.i = 0;
+    cpu.r_low = jump ? 1 : 0;
+    cpu.r_hi = 0;
+    cpu.im = 0;
+    cpu.iff1 = 0;
+    cpu.iff2 = 0;
+    cpu.halted = 0;
+    cpu.int_pending = false;
+
+    if (module == 0)
+    {
+        // Inside the master's own OUT: the rest of that instruction follows
+        if (jump)
+            cpu.tt += INJECTED_JP_T * cpu.rate;
+    }
+    else
+    {
+        // A slave restarts at the moment of the master's write
+        AlignSlaveClock(module, OUT_TAIL_T + (jump ? INJECTED_JP_T : 0));
+    }
+
+    _regs[module][1] = _regs[module][2] = _regs[module][3] = 0;
+}
+
+void ZXPolyGroup::AlignSlaveClock(size_t module, unsigned extraT)
+{
+    // One frame clock for the machine (zxpoly clocks frames by CPU0 alone): a
+    // slave that starts or restarts takes the master's frame position
+    EmulatorContext* master = GetContext(0);
+    EmulatorContext* slave = GetContext(module);
+    const Z80& masterCpu = *master->pCore->GetZ80();
+    Z80& slaveCpu = *slave->pCore->GetZ80();
+
+    slave->emulatorState.frame_counter = master->emulatorState.frame_counter;
+    slave->emulatorState.t_states = master->emulatorState.t_states;
+    slaveCpu.tt = masterCpu.tt + extraT * slaveCpu.rate;
+}
+
+void ZXPolyGroup::OnMainPortWrite(uint8_t value)
+{
+    // Master only, unlocked (the caller checked)
+    constexpr unsigned OUT_TAIL_T = 3;
+    const bool wasRunning = _slavesRunning;
+    _port3D00 = value;
+
+    if (value & MAIN_LOCK)
+    {
+        PerformLock();
+        return;
+    }
+
+    // D1: local reset of every CPU module (memory and devices untouched)
+    if (value & MAIN_RESET)
+    {
+        for (size_t m = 0; m < MODULES; m++)
+            LocalReset(m);
+    }
+
+    // D0 (nWAIT): the slaves run from the end of this instruction
+    _slavesRunning = (value & MAIN_NWAIT) != 0;
+    if (_slavesRunning && !wasRunning)
+    {
+        for (size_t m = 1; m < MODULES; m++)
+            AlignSlaveClock(m, OUT_TAIL_T);
+    }
+}
+
+uint16_t ZXPolyGroup::ResetCommandTarget(size_t module) const
+{
+    // After a local reset the first three opcode fetches at #0000 return R1,
+    // R2, R3. Every known program puts JP nn there (#C3, lo, hi); three zero
+    // registers are three NOPs from #0000
+    const std::array<uint8_t, 4>& r = _regs[module];
+    return r[1] == 0xC3 ? static_cast<uint16_t>(r[2] | (r[3] << 8)) : 0x0000;
 }
 
 size_t ZXPolyGroup::GetOverlayBytes(size_t module) const
@@ -438,6 +578,18 @@ uint8_t ZXPolyGroup::ModuleIdentity(size_t module) const
                                 ((r0 & 0x08u) ? 0x08u : 0u) | ((r0 & 0x10u) ? 0x04u : 0u));
 }
 
+uint8_t ZXPolyGroup::ModuleStatus(size_t module) const
+{
+    // R0 read: D0 HALT, D1 WAIT, D2-D7 the packed address of the last M1
+    // (zxpoly ZxPolyModule.packAddress: A1, A2, A8, A12, A14, A15)
+    const Z80& cpu = *GetContext(module)->pCore->GetZ80();
+    const uint16_t a = cpu.m1_pc;
+    const uint8_t packed = static_cast<uint8_t>(((a >> 1) & 0x01u) | ((a >> 1) & 0x02u) | ((a >> 6) & 0x04u) |
+                                                ((a >> 9) & 0x08u) | ((a >> 10) & 0x10u) | ((a >> 10) & 0x20u));
+    const bool waiting = module != 0 && !_locked && !_slavesRunning;
+    return static_cast<uint8_t>((cpu.halted ? 0x01u : 0u) | (waiting ? 0x02u : 0u) | (packed << 2));
+}
+
 size_t ZXPolyGroup::WindowOffset(size_t module, uint16_t address) const
 {
     // The target module's own mapping; page 0 is always RAM0 through the window
@@ -447,9 +599,27 @@ size_t ZXPolyGroup::WindowOffset(size_t module, uint16_t address) const
         case 0: page = 0; break;
         case 1: page = 5; break;
         case 2: page = 2; break;
-        default: page = _slave7FFD[module] & 0x07u; break;
+        default: page = GetContext(module)->emulatorState.p7FFD & 0x07u; break;
     }
     return page * PAGE_SIZE + (address & 0x3FFFu);
+}
+
+uint8_t* ZXPolyGroup::ModuleRam(size_t module, uint16_t address) const
+{
+    const size_t offset = WindowOffset(module, address);
+    return GetContext(module)->pMemory->RAMPageAddress(static_cast<uint16_t>(offset / PAGE_SIZE)) +
+           offset % PAGE_SIZE;
+}
+
+bool ZXPolyGroup::OnPort7FFDWrite(size_t module, uint8_t value)
+{
+    // The model pages as usual; on ZX-Poly, while #3D00 is unlocked, #7FFD D6
+    // also puts RAM0 at #0000 in place of the ROM
+    EmulatorContext* context = GetContext(module);
+    context->pPortDecoder->DecodePortOut(0x7FFD, value, context->pCore->GetZ80()->m1_pc);
+    if (!_locked && (context->emulatorState.p7FFD & 0x40u))
+        context->pMemory->SetRAMPageToBank0(0);
+    return true;
 }
 
 bool ZXPolyGroup::OnPortOut(size_t module, uint16_t port, uint8_t value)
@@ -458,11 +628,7 @@ bool ZXPolyGroup::OnPortOut(size_t module, uint16_t port, uint8_t value)
     if (port == PORT_ZXPOLY_MAIN)
     {
         if (module == 0 && !_locked)
-        {
-            _port3D00 = value;
-            if (value & MAIN_LOCK)
-                PerformLock();
-        }
+            OnMainPortWrite(value);
         return true;
     }
 
@@ -474,10 +640,15 @@ bool ZXPolyGroup::OnPortOut(size_t module, uint16_t port, uint8_t value)
         // master itself unless the master's R1 bit 5 routes it through the
         // window too (COPY2CPU sets it, so its copy loop can pass #7FFD)
         if (port == 0x7FFD && (_regs[0][1] & 0x20u) == 0)
-            return false;
-        _overlay[mapped][WindowOffset(mapped, port)] = value;
+            return OnPort7FFDWrite(0, value);
+
+        *ModuleRam(mapped, port) = value;                     // the live slave
+        _overlay[mapped][WindowOffset(mapped, port)] = value; // kept for a later loader lock
         return true;
     }
+
+    if (port == 0x7FFD)
+        return OnPort7FFDWrite(module, value);
 
     size_t target = 0;
     size_t reg = 0;
@@ -487,9 +658,14 @@ bool ZXPolyGroup::OnPortOut(size_t module, uint16_t port, uint8_t value)
         if (IsTRDOSActive(module))
             return false;
 
-        // Writes: unlocked only, and only to a module with index >= writer
+        // Writes: unlocked only, and only to a module with index >= writer.
+        // R0 D5 is a local reset of that module
         if (!_locked && module <= target)
+        {
             _regs[target][reg] = value;
+            if (reg == 0 && (value & 0x20u))
+                LocalReset(target);
+        }
         return true;
     }
 
@@ -499,17 +675,10 @@ bool ZXPolyGroup::OnPortOut(size_t module, uint16_t port, uint8_t value)
 bool ZXPolyGroup::OnPortIn(size_t module, uint16_t port, uint8_t& value)
 {
     const size_t mapped = (_port3D00 >> 5) & 0x03u;
-    const bool window = module == 0 && !_locked && mapped != 0;
-
-    if (window)
+    if (module == 0 && !_locked && mapped != 0)
     {
-        const size_t offset = WindowOffset(mapped, port);
-        const int16_t written = _overlay[mapped][offset];
-        // A parked slave's RAM holds only what the loader wrote; elsewhere the
-        // byte is undefined on the real platform - answer with the master's
-        value = written >= 0 ? static_cast<uint8_t>(written)
-                             : GetContext(0)->pMemory->RAMPageAddress(
-                                   static_cast<uint16_t>(offset / PAGE_SIZE))[offset % PAGE_SIZE];
+        // IO-mapped window: the mapped module's memory at address = port
+        value = *ModuleRam(mapped, port);
         return true;
     }
 
@@ -526,9 +695,7 @@ bool ZXPolyGroup::OnPortIn(size_t module, uint16_t port, uint8_t& value)
         if (IsTRDOSActive(module))
             return false;
 
-        // R0 status: D0 HALT, D1 WAIT. Before the lock the slaves are parked
-        const bool parked = !_locked && target != 0 && (_port3D00 & MAIN_NWAIT) == 0;
-        value = reg == 0 ? static_cast<uint8_t>(parked ? 0x02u : 0x00u) : 0xFFu;
+        value = reg == 0 ? ModuleStatus(target) : 0xFFu;
         return true;
     }
 
@@ -598,10 +765,13 @@ void ZXPolyGroup::EnableInstructionTrace(bool enable)
         _instructions[m].clear();
         if (!enable)
         {
-            cpu->m1TraceHook = nullptr;
+            if (m > 0)
+                cpu->m1TraceHook = nullptr;
             continue;
         }
 
+        if (m == 0)
+            continue;    // the master's hook is the group's own (InstallMasterM1Hook)
         std::vector<uint16_t>* log = &_instructions[m];
         cpu->m1TraceHook = [log](uint16_t pc) { log->push_back(pc); };
     }
@@ -624,17 +794,76 @@ void ZXPolyGroup::RunSlaveToMasterPosition(size_t module)
         return;
 
     _instances[module]->RunUntilCondition([&](const Z80State& state) { return reached(state.t); },
-                                          context->config.frame * 2);
+                                          context->config.frame * 2, false);
+}
+
+void ZXPolyGroup::InstallMasterM1Hook()
+{
+    // Before every master instruction: the instruction trace (debug aid), and
+    // while the slaves run unlocked (their own code, talking to the master
+    // through the platform ports) they catch up with the master instruction
+    // by instruction - the zxpoly board steps all four once per round
+    Z80* master = GetContext(0)->pCore->GetZ80();
+    master->m1TraceHook = [this](uint16_t pc) {
+        if (_instructionTrace)
+            _instructions[0].push_back(pc);
+        if (_slavesRunning)
+            CatchUpSlaves();
+    };
+}
+
+void ZXPolyGroup::CatchUpSlaves()
+{
+    for (size_t m = 1; m < MODULES; m++)
+        RunSlaveToMasterPosition(m);
+}
+
+void ZXPolyGroup::ResetSlaveMachines()
+{
+    // A system reset resets every module: the slaves restart at #0000 and wait
+    for (size_t m = 1; m < MODULES; m++)
+        _instances[m]->Reset();
 }
 
 void ZXPolyGroup::AdvanceSlaves()
 {
-    if (!_locked)
-        return;    // loader phase: the slaves are parked
+    if (!_locked && !_slavesRunning)
+        return;    // unlocked with nWAIT = 0: the slaves are parked
 
     for (size_t m = 1; m < MODULES; m++)
         RunSlaveToMasterPosition(m);
     _lockedThisFrame = false;
+}
+
+void ZXPolyGroup::DetectMasterReset()
+{
+    // A system reset of the master (menu, automation, a disk autostart or a
+    // plain snapshot load all run Core::Reset, which restarts the frame
+    // counter) is a ZX-Poly system RESET: #3D00 = 0, the platform ports
+    // unlock, the slaves park in WAIT and only CPU0 is shown (mode 0), until
+    // a multiloader locks the machine again
+    const uint64_t frame = GetContext(0)->emulatorState.frame_counter;
+    if (frame < _lastMasterFrame)
+    {
+        ResetPlatformState();
+        ResetSlaveMachines();
+    }
+    _lastMasterFrame = frame;
+}
+
+void ZXPolyGroup::MountMasterDisksOnSlaves()
+{
+    // After the lock the slaves run the program too: a program that loads
+    // more from disk must find the same images in their drives
+    for (size_t m = 1; m < MODULES; m++)
+    {
+        for (uint8_t drive = 0; drive < 4; drive++)
+        {
+            const std::string& path = GetContext(0)->coreState.diskFilePaths[drive];
+            if (!path.empty() && GetContext(m)->coreState.diskFilePaths[drive] != path)
+                _instances[m]->LoadDisk(path, drive);
+        }
+    }
 }
 
 void ZXPolyGroup::RunFrame()
@@ -646,6 +875,7 @@ void ZXPolyGroup::RunFrame()
 
     ApplyPendingInput();
     _instances[0]->RunFrame(true);
+    DetectMasterReset();
     AdvanceSlaves();
 }
 
@@ -655,6 +885,9 @@ void ZXPolyGroup::AttachToMaster()
 {
     if (!IsCreated() || _attached)
         return;
+
+    const FramebufferDescriptor& fb = GetContext(0)->pScreen->GetFramebufferDescriptor();
+    ResizeDisplay(fb.width * 2u, fb.height * 2u);
 
     _instances[0]->GetMainLoop()->SetFrameEndHook([this](bool rendered) { OnMasterFrameEnd(rendered); });
 
@@ -691,13 +924,79 @@ void ZXPolyGroup::DetachFromMaster()
 void ZXPolyGroup::OnMasterFrameEnd(bool rendered)
 {
     // On the master's emulation thread, between two of its frames
+    DetectMasterReset();
     AdvanceSlaves();
 
     // Keys queued meanwhile reach all four keyboards before the next frame
     ApplyPendingInput();
 
-    if (rendered && _locked)
+    if (!rendered)
+        return;
+    if (GetVideoMode() != 0)    // mode 0 is the master's own picture
         ComposeIntoMasterFramebuffer();
+    ComposeDisplayFrame();
+}
+
+void ZXPolyGroup::ResizeDisplay(unsigned width, unsigned height)
+{
+    std::lock_guard<std::mutex> lock(_displayMutex);
+    _displayWidth = width;
+    _displayHeight = height;
+    _displayFront.assign(static_cast<size_t>(width) * height, 0xFF000000u);
+    _displayBack.assign(static_cast<size_t>(width) * height, 0xFF000000u);
+}
+
+void ZXPolyGroup::ComposeDisplayFrame()
+{
+    Screen* screen = GetContext(0)->pScreen;
+    const FramebufferDescriptor& fb = screen->GetFramebufferDescriptor();
+    if (fb.memoryBuffer == nullptr)
+        return;
+    if (fb.width * 2u != _displayWidth || fb.height * 2u != _displayHeight)
+        ResizeDisplay(fb.width * 2u, fb.height * 2u);    // the consumer re-attaches on NC_VIDEO_MODE_CHANGED
+
+    // The master's picture (border and, before the lock, everything) at 2x
+    const uint32_t* source = reinterpret_cast<const uint32_t*>(fb.memoryBuffer);
+    const unsigned width = _displayWidth;
+    for (unsigned y = 0; y < fb.height; y++)
+    {
+        const uint32_t* in = source + static_cast<size_t>(y) * fb.width;
+        uint32_t* out0 = _displayBack.data() + static_cast<size_t>(y * 2) * width;
+        uint32_t* out1 = out0 + width;
+        for (unsigned x = 0; x < fb.width; x++)
+        {
+            out0[x * 2] = out0[x * 2 + 1] = in[x];
+            out1[x * 2] = out1[x * 2 + 1] = in[x];
+        }
+    }
+
+    // After the lock: the composed paper at its full 512 x 384
+    const RasterDescriptor& raster = screen->rasterDescriptors[screen->GetVideoMode()];
+    if (GetVideoMode() != 0 && raster.screenWidth == 256 && raster.screenHeight == 192)
+    {
+        std::vector<uint32_t> picture;
+        Compose(picture);
+        for (unsigned y = 0; y < ZXPolyScreenComposer::OUT_HEIGHT; y++)
+        {
+            std::memcpy(_displayBack.data() + static_cast<size_t>(raster.screenOffsetTop * 2 + y) * width +
+                            raster.screenOffsetLeft * 2,
+                        picture.data() + static_cast<size_t>(y) * ZXPolyScreenComposer::OUT_WIDTH,
+                        ZXPolyScreenComposer::OUT_WIDTH * sizeof(uint32_t));
+        }
+    }
+
+    std::lock_guard<std::mutex> lock(_displayMutex);
+    _displayFront.swap(_displayBack);
+}
+
+bool ZXPolyGroup::CopyDisplay(uint8_t* dst, size_t dstSize)
+{
+    std::lock_guard<std::mutex> lock(_displayMutex);
+    const size_t size = _displayFront.size() * sizeof(uint32_t);
+    if (dst == nullptr || dstSize != size || size == 0)
+        return false;
+    std::memcpy(dst, _displayFront.data(), size);
+    return true;
 }
 
 void ZXPolyGroup::ComposeIntoMasterFramebuffer()
@@ -896,10 +1195,7 @@ void ZXPolyGroup::Compose(std::vector<uint32_t>& out) const
     // ZX FLASH period: 16 frames each phase
     const bool flashPhase = ((GetContext(0)->emulatorState.frame_counter >> 4) & 1u) != 0;
 
-    // Before the lock the slaves are parked and hold no picture: the master
-    // is shown as a classic screen whatever the requested mode
-    const uint8_t mode = _locked ? GetVideoMode() : 0;
-    ZXPolyScreenComposer::Compose(vram, mode, flashPhase, palette, out.data());
+    ZXPolyScreenComposer::Compose(vram, GetVideoMode(), flashPhase, palette, out.data());
 }
 
 /// endregion </Video>

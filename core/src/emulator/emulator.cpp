@@ -2745,7 +2745,8 @@ void Emulator::RunUntilInterrupt(bool skipBreakpoints)
     messageCenter.Post(NC_EXECUTION_CPU_STEP);
 }
 
-void Emulator::RunUntilCondition(std::function<bool(const Z80State&)> predicate, unsigned maxTStates)
+void Emulator::RunUntilCondition(std::function<bool(const Z80State&)> predicate, unsigned maxTStates,
+                                 bool notifyDebugger)
 {
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
@@ -2786,8 +2787,11 @@ void Emulator::RunUntilCondition(std::function<bool(const Z80State&)> predicate,
     }
 
     // Notify debugger
-    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    messageCenter.Post(NC_EXECUTION_CPU_STEP);
+    if (notifyDebugger)
+    {
+        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+        messageCenter.Post(NC_EXECUTION_CPU_STEP);
+    }
 }
 
 void Emulator::StepOver()

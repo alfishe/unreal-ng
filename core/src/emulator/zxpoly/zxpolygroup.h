@@ -74,6 +74,11 @@ public:
     /// mode). The group is locked afterwards
     bool LoadZXP(const std::string& path, std::string* error = nullptr);
 
+    /// Loads a ZX-Poly ROM image (.prom: up to four 16K parts, module i gets
+    /// part i mod N as its only ROM) and powers the machine on: every CPU at
+    /// #0000, #3D00 = 0 - the slaves wait until the ROM releases them
+    bool LoadPROM(const std::string& path, std::string* error = nullptr);
+
     /// Mounts a disk image in drive A of every member and boots it on the
     /// master through TR-DOS (loader phase). The ZX-Poly multiloader on the
     /// disk then fills the slaves and locks the machine
@@ -101,6 +106,19 @@ public:
     void AttachToMaster();
     void DetachFromMaster();
     std::shared_ptr<Emulator> GetMaster() const { return _instances[0]; }
+
+    /// Live display frame at double resolution: the master's framebuffer
+    /// (border included) scaled 2x with the composed 512 x 384 paper on top,
+    /// so mode 5 shows its full resolution. Updated at every rendered master
+    /// frame; the master's own framebuffer keeps a 1:1 picture for
+    /// screenshots and recording
+    unsigned GetDisplayWidth() const { return _displayWidth; }
+    unsigned GetDisplayHeight() const { return _displayHeight; }
+    const uint32_t* GetDisplayBuffer() const { return _displayFront.data(); }
+
+    /// Copies the latest display frame (tear-free); false when dstSize does
+    /// not match the current display size
+    bool CopyDisplay(uint8_t* dst, size_t dstSize);
     void RunFrames(unsigned frames);
 
     bool IsLocked() const { return _locked; }
@@ -154,12 +172,19 @@ private:
     std::array<std::array<uint8_t, 4>, MODULES> _regs{};
     bool _locked = false;
     bool _lockedThisFrame = false;   // the slaves start mid-frame, at the lock point
+    uint64_t _lastMasterFrame = 0;   // a smaller frame counter means the master was reset
+    bool _slavesRunning = false;     // unlocked with #3D00 D0 = 1: the slaves execute on their own
     bool _attached = false;
 
     // Loader phase: what the IO window wrote into each slave (-1 = untouched),
-    // indexed by RAM page * 16K + offset, and each slave's own #7FFD latch
+    // indexed by RAM page * 16K + offset
     std::array<std::vector<int16_t>, MODULES> _overlay;
-    std::array<uint8_t, MODULES> _slave7FFD{};
+
+    std::mutex _displayMutex;
+    std::vector<uint32_t> _displayFront;
+    std::vector<uint32_t> _displayBack;
+    unsigned _displayWidth = 0;
+    unsigned _displayHeight = 0;
 
     std::mutex _keysMutex;
     std::vector<std::pair<ZXKeysEnum, bool>> _pendingKeys;
@@ -179,11 +204,24 @@ private:
 
 private:
     void ResetPlatformState();
+    void DetectMasterReset();
+    void MountMasterDisksOnSlaves();
+    void OnMainPortWrite(uint8_t value);
+    void LocalReset(size_t module);
+    void AlignSlaveClock(size_t module, unsigned extraT);
+    void InstallMasterM1Hook();
+    void CatchUpSlaves();
+    void ResetSlaveMachines();
+    uint8_t ModuleStatus(size_t module) const;
+    uint8_t* ModuleRam(size_t module, uint16_t address) const;
+    bool OnPort7FFDWrite(size_t module, uint8_t value);
     void ApplyPendingInput();
     void AdvanceSlaves();
     void RunSlaveToMasterPosition(size_t module);
     void OnMasterFrameEnd(bool rendered);
     void ComposeIntoMasterFramebuffer();
+    void ComposeDisplayFrame();
+    void ResizeDisplay(unsigned width, unsigned height);
     void OnHostKeyPressed(int id, Message* message);
     void OnHostKeyReleased(int id, Message* message);
     void QueueHostKey(Message* message, bool pressed);

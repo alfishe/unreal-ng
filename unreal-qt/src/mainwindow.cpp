@@ -1779,6 +1779,10 @@ void MainWindow::handleVideoModeChanged(int id, Message* message)
             if (!context || !context->pScreen)
                 return;
 
+            // A ZX-Poly master is shown through its group's display frame
+            if (attachScreenToZXPolyDisplay())
+                return;
+
             auto& fb = context->pScreen->GetFramebufferDescriptor();
             _screenWrapper->init(fb.width, fb.height, fb.memoryBuffer);
 
@@ -1892,7 +1896,7 @@ void MainWindow::openSnapshotDialog()
 
 void MainWindow::openZXPolyDialog()
 {
-    QString filter = tr("ZX-Poly editions (*.zxp *.trd *.scl)") + ";;" + tr("All Files (*)");
+    QString filter = tr("ZX-Poly (*.zxp *.prom *.trd *.scl)") + ";;" + tr("All Files (*)");
     QString filePath = QFileDialog::getOpenFileName(this, tr("Open ZX-Poly"), _lastDirectory, filter);
 
     if (!filePath.isEmpty())
@@ -1915,11 +1919,28 @@ void MainWindow::releaseZXPolyGroup()
 
 void MainWindow::openFromCommandLine(const QString& filePath, const QString& zxpolyModel)
 {
-    const bool isZXPolySnapshot = QFileInfo(filePath).suffix().compare(QStringLiteral("zxp"), Qt::CaseInsensitive) == 0;
-    if (isZXPolySnapshot || !zxpolyModel.isEmpty())
+    const QString suffix = QFileInfo(filePath).suffix().toLower();
+    const bool isZXPolyFile = suffix == QStringLiteral("zxp") || suffix == QStringLiteral("prom");
+    if (isZXPolyFile || !zxpolyModel.isEmpty())
         startZXPoly(filePath, zxpolyModel);
     else
         loadFile(filePath);
+}
+
+bool MainWindow::attachScreenToZXPolyDisplay()
+{
+    // The ZX-Poly master's window shows the group's double-resolution display
+    // frame (mode 5 is 512 x 384) instead of the master's own framebuffer
+    if (!_screenWrapper || !_zxpolyGroup || !_emulator || _emulator != _zxpolyGroup->GetMaster())
+        return false;
+
+    ZXPolyGroup* group = _zxpolyGroup.get();
+    _screenWrapper->init(static_cast<uint16_t>(group->GetDisplayWidth()),
+                         static_cast<uint16_t>(group->GetDisplayHeight()),
+                         const_cast<uint32_t*>(group->GetDisplayBuffer()));
+    _screenWrapper->clearDisplayViewport();
+    _screenWrapper->setFrameSource([group](uint8_t* dst, size_t dstSize) { return group->CopyDisplay(dst, dstSize); });
+    return true;
 }
 
 void MainWindow::startZXPoly(const QString& filePath, const QString& requestedModel)
@@ -1957,8 +1978,13 @@ void MainWindow::startZXPoly(const QString& filePath, const QString& requestedMo
     if (loaded)
     {
         const std::string path = filePath.toStdString();
-        const bool isSnapshot = QFileInfo(filePath).suffix().compare(QStringLiteral("zxp"), Qt::CaseInsensitive) == 0;
-        loaded = isSnapshot ? group->LoadZXP(path, &error) : group->BootDisk(path, &error);
+        const QString suffix = QFileInfo(filePath).suffix().toLower();
+        if (suffix == QStringLiteral("zxp"))
+            loaded = group->LoadZXP(path, &error);
+        else if (suffix == QStringLiteral("prom"))
+            loaded = group->LoadPROM(path, &error);    // ZX-Poly ROM image (the Test ROM)
+        else
+            loaded = group->BootDisk(path, &error);
     }
 
     if (!loaded)
@@ -1974,6 +2000,7 @@ void MainWindow::startZXPoly(const QString& filePath, const QString& requestedMo
     _zxpolyGroup = std::move(group);
 
     adoptEmulator(master, EmulatorOrigin::CreatedByGui);
+    attachScreenToZXPolyDisplay();
     master->StartAsync();
 
     _lastDirectory = QFileInfo(filePath).absolutePath();
@@ -2026,8 +2053,9 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly)
     // Save directory to settings
     saveLastDirectory(filePath);
 
-    // A ZX-Poly snapshot is a four-machine group, not a snapshot of this one
-    if (QFileInfo(filePath).suffix().compare(QStringLiteral("zxp"), Qt::CaseInsensitive) == 0)
+    // A ZX-Poly snapshot or ROM image is a four-machine group, not a file for this one
+    const QString zxpolySuffix = QFileInfo(filePath).suffix().toLower();
+    if (zxpolySuffix == QStringLiteral("zxp") || zxpolySuffix == QStringLiteral("prom"))
     {
         startZXPoly(filePath);
         return;

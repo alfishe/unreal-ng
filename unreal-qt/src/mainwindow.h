@@ -322,6 +322,7 @@ private:
     std::unique_ptr<ZXPolyGroup> _zxpolyGroup;  // Set while a ZX-Poly machine runs; _emulator is its master
     void startZXPoly(const QString& filePath, const QString& model = QString());
     void releaseZXPolyGroup();
+    bool attachScreenToZXPolyDisplay();
     bool _switchingModel = false;  // True while model switch is in progress (prevents notification handler interference)
 
     QPoint _lastCursorPos;

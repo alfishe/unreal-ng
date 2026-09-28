@@ -9,6 +9,8 @@
 #include "emulator/notifications.h"
 #include "emulator/zxpoly/zxpolygroup.h"
 #include "emulator/zxpoly/zxpolyscreencomposer.h"
+#include "emulator/video/screen.h"
+#include "debugger/analyzers/rom-print/screenocr.h"
 #include "3rdparty/message-center/messagecenter.h"
 
 #include <cstdlib>
@@ -298,3 +300,82 @@ INSTANTIATE_TEST_SUITE_P(Loaders, ZXPolyGroupDisk_Test,
                                      c = '_';
                              return name;
                          });
+
+/// A system reset of the master is a ZX-Poly system RESET: #3D00 back to 0,
+/// ports unlocked, slaves parked, only CPU0 shown (mode 0). Afterwards the
+/// composed picture is exactly the master's classic screen
+TEST_P(ZXPolyGroupModels_Test, MasterResetReturnsToLoaderPhase)
+{
+    CreateGroup(GetParam());
+    std::string error;
+    ASSERT_TRUE(_group->LoadZXP(TestPathHelper::GetTestDataPath("machines/zxpoly/zxp/Alien8.zxp"), &error)) << error;
+    _group->RunFrames(20);
+    ASSERT_TRUE(_group->IsLocked());
+
+    _group->GetInstance(0)->Reset();
+    _group->RunFrames(5);
+
+    EXPECT_FALSE(_group->IsLocked());
+    EXPECT_EQ(_group->GetVideoMode(), 0);
+    EXPECT_EQ(_group->GetPort3D00(), 0);
+
+    // Mode 0 composes CPU0 alone: slave screens (still the game) must not show
+    std::vector<uint32_t> composed;
+    _group->Compose(composed);
+    std::array<const uint8_t*, 4> masterOnly;
+    masterOnly.fill(_group->GetScreenMemory(0));
+    std::vector<uint32_t> expected(composed.size());
+    uint32_t palette[16];
+    _group->GetContext(0)->pScreen->GetRGBAPalette16(palette);
+    const bool flash = ((_group->GetContext(0)->emulatorState.frame_counter >> 4) & 1u) != 0;
+    ZXPolyScreenComposer::Compose(masterOnly, 0, flash, palette, expected.data());
+    EXPECT_EQ(composed, expected);
+}
+
+/// The ZX-Poly Test ROM (zxpolytest.prom, the platform's own self-test and
+/// demo) - the coupled machine: the slaves are released by #3D00 D0 before any
+/// lock, reset one by one with injected JP commands (R0 D5), run their own
+/// test code, HALT, and report through the IO window; CPU0 resets itself, RAM0
+/// is mapped at #0000. Every check must print OK, then the mode 4 and mode 5
+/// demo pictures are streamed into the slaves. Boot-bound (ROM tests + ZX0
+/// unpacking run for hundreds of frames)
+TEST_P(ZXPolyGroupModels_Test, TestRomPassesAllChecks)
+{
+    CreateGroup(GetParam());
+    std::string error;
+    ASSERT_TRUE(_group->LoadPROM(TestPathHelper::GetTestDataPath("machines/zxpoly/rom/zxpolytest.prom"), &error))
+        << error;
+
+    const std::string master = _group->GetInstance(0)->GetUUID();
+    auto screen = [&]() { return ScreenOCR::ocrScreen(master); };
+
+    unsigned frames = 0;
+    while (screen().find("PRESS ANY KEY") == std::string::npos && frames < 3000)
+    {
+        _group->RunFrame();
+        frames++;
+    }
+    const std::string text = screen();
+    DumpPng(GetParam(), "testrom-checks", frames);
+    ASSERT_NE(text.find("PRESS ANY KEY"), std::string::npos) << "after " << frames << " frames:\n" << text;
+    EXPECT_EQ(text.find("BAD"), std::string::npos) << text;
+    EXPECT_EQ(text.find("NON"), std::string::npos) << text;
+    for (const char* check : {"CPU0", "CPU1", "CPU2", "CPU3", "RAM0"})
+        EXPECT_NE(text.find(check), std::string::npos) << check << " missing:\n" << text;
+
+    // Mode 4 demo: four ZX0-packed planes streamed through the IO window
+    _group->PressKey(ZXKEY_SPACE);
+    _group->RunFrames(5);
+    _group->ReleaseKey(ZXKEY_SPACE);
+    _group->RunFrames(400);
+    EXPECT_EQ(_group->GetVideoMode(), 4);
+    DumpPng(GetParam(), "testrom-mode4", frames);
+
+    // Mode 5 demo (512 x 384)
+    _group->PressKey(ZXKEY_SPACE);
+    _group->RunFrames(5);
+    _group->ReleaseKey(ZXKEY_SPACE);
+    _group->RunFrames(400);
+    EXPECT_EQ(_group->GetVideoMode(), 5);
+    DumpPng(GetParam(), "testrom-mode5", frames);
+}
