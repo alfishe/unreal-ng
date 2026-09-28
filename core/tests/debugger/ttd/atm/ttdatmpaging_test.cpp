@@ -74,6 +74,7 @@ TEST(TtdAtmPagingLayout_Test, BlobIsPaddingFree)
         src.atmPaletteRegs[i] = static_cast<uint8_t>(0xF0 + i);
     }
     src.atmBorderBright = 1;
+    src.evoFddMask = 0x0A;
 
     *dst = src;
     EXPECT_EQ(std::memcmp(dst, &src, sizeof(AtmPagingState)), 0)
@@ -154,6 +155,7 @@ TEST(TtdAtmPaging_Test, Atm3RoundTripCarriesPaletteBorderAndLiveCmosLatch)
         state.atmPaletteRegs[i] = static_cast<uint8_t>(0x80 | i);
     }
     state.atmBorderBright = 1;
+    state.evoFddMask = 0x05;
     atm3->GetCMOS().SetCMOSAddress(0x2E);
 
     ttd::TTDAtmPaging serializer(context);
@@ -166,6 +168,7 @@ TEST(TtdAtmPaging_Test, Atm3RoundTripCarriesPaletteBorderAndLiveCmosLatch)
         state.atmPaletteRegs[i] = 0;
     }
     state.atmBorderBright = 0;
+    state.evoFddMask = 0;
     atm3->GetCMOS().SetCMOSAddress(0x00);
 
     serializer.TTDLoadState(blob);
@@ -176,6 +179,7 @@ TEST(TtdAtmPaging_Test, Atm3RoundTripCarriesPaletteBorderAndLiveCmosLatch)
         EXPECT_EQ(state.atmPaletteRegs[i], 0x80 | i) << "atmPaletteRegs[" << i << "]";
     }
     EXPECT_EQ(state.atmBorderBright, 1);
+    EXPECT_EQ(state.evoFddMask, 0x05) << "the #13BD virtual-drive mask";
     EXPECT_EQ(atm3->GetCMOS().GetCMOSAddress(), 0x2E) << "the live CMOS latch is the decoder's, not EmulatorState::cmos_addr";
 
     EmulatorTestHelper::CleanupEmulator(emulator);
@@ -225,6 +229,10 @@ TEST(TtdAtmPaging_Test, HashRespondsToEveryCarriedField)
     state.atmBorderBright ^= 0x01;
     EXPECT_NE(serializer.TTDHashState(), base) << "atmBorderBright not hashed";
     state.atmBorderBright ^= 0x01;
+
+    state.evoFddMask ^= 0x04;
+    EXPECT_NE(serializer.TTDHashState(), base) << "evoFddMask not hashed";
+    state.evoFddMask ^= 0x04;
 
     state.aFE ^= 0x01;
     EXPECT_NE(serializer.TTDHashState(), base) << "aFE not hashed";

@@ -181,7 +181,7 @@ created by a config flip alone but unreachable from the main CPU. Changes:
 
 ## 6. Bugs Found
 
-### BUG-1 (Critical): WebAPI/MCP GS control races the emulation thread
+### BUG-1 (Critical, FIXED): WebAPI/MCP GS control races the emulation thread
 
 - **Where**: `postControlAudioGS` actions `send_command` / `send_data`
   (`core/automation/webapi/src/api/state_audio_api.cpp`) → `gs->sendCommand()/sendData()` →
@@ -193,17 +193,28 @@ created by a config flip alone but unreachable from the main CPU. Changes:
   derails the coprocessor — observed `PC=#0230` (inside a data table), `MPAG=11`,
   `SP=#8000`. Symptom: "data was pushed but nothing plays" — the exact reported bug,
   on the automation path.
-- **Safe parts**: `reset`/`reset_card`/`nmi` are flag sets (no stepping) and the read-only
-  `GET /state/audio/gs` only risks benign torn reads.
-- **Proposed fix**: queue GS control mutations and apply them on the emulation thread during
-  the frame lifecycle (or serialize the endpoint with the same mutex/run-control the core
-  uses). Read-only state endpoints can stay lock-free.
+- **Not only the byte writes**: `nmi` flushes (steps the card), `reset_card` resets the card
+  CPU and its timing, `reset` also clears the mailbox, and `read_status`/`read_data` flush too
+  (`read_data` also clears status bit 7). Every surface (WebAPI/MCP, CLI, Lua, Python) had the
+  same direct calls. The read-only `GET /state/audio/gs` only risks benign torn reads.
+- **Fix**: the five host stimuli are TTD input events (`TTDInputKind::GSCommand`, `GSData`,
+  `GSNmi`, `GSResetCard`, `GSReset`) submitted through
+  `TimeTravelManager::SubmitLiveInput` - the path keyboard and mouse input already use. They
+  are applied on the machine's thread at the next instruction boundary (while paused: when
+  execution continues), journaled while recording so TTD replays them at the same
+  instruction, and refused while the journal owns input (WebAPI: 409). `read_status` /
+  `read_data` are side-effect-free peeks (`getStatusRaw() | 0x7E`, `getDataToHost()`): no
+  flush, bit 7 is not cleared. Tests: `TTD_InputJournalGS_Test`
+  (`core/tests/debugger/ttd/ttdinputjournal_test.cpp`).
 
-### BUG-2 (Minor): register PUT silently zeroes hex-string values
+### BUG-2 (Minor, FIXED): register PUT silently zeroes hex-string values
 
 `PUT /emulator/{id}/registers/pc` with `{"value": "0x8000"}` → jsoncpp `asUInt()` = 0 →
 PC silently set to 0 (`debug_api.cpp setRegister`). Reproduced: program never ran, PC=0.
 **Fix**: parse hex-prefixed strings or reject non-numeric values with HTTP 400.
+**Fixed** in `5dc64741`: `ParseJsonUInt` (`core/automation/webapi/src/common/jsonnumber.h`)
+accepts decimal, `0x..`, `#..` and `$..` strings, range-checks, and answers 400 otherwise, for
+every numeric address/value field of the debug, TTD, memory-find and screen-digest endpoints.
 
 ### BUG-3 (Minor, unrelated to GS): default build target broken by stale PoC
 
@@ -529,8 +540,8 @@ code for MPAG 2).
 
 ### Remaining open items
 
-- [ ] Implement the BUG-1 fix (serialize GS control with the emulation thread).
-- [ ] Fix BUG-2 (hex-string register values).
+- [x] Implement the BUG-1 fix (GS host stimuli are TTD live input; reads are peeks).
+- [x] Fix BUG-2 (hex-string register values).
 - [ ] Repaired/rebased PoC `011-ttd-v2-capture-analysis` or exclude from default build (BUG-3).
 - [ ] Startup DRC rail-bleed: faster integral unwind (or fill-phase freeze) so the first
       ~0.4 s of audio after a cold start cannot inherit a railed trim (BUG-5 verification

@@ -396,14 +396,15 @@ TEST_F(PortDecoder_ATM3_Test, Port_7FFD_LockOnlyWithEFF7Lockmem)
     EXPECT_EQ(state.p7FFD, 0x00);
 }
 
-TEST_F(PortDecoder_ATM3_Test, PortBE_ReadbackRegisters)
+TEST_F(PortDecoder_ATM3_Test, PortBE_ReadbackRegisters_LegacyFpga)
 {
-    // #BE readback selected by A15..A8 (original io.cpp in(), MM_ATM3):
-    //   0x0B = pEFF7 (xpeccy evoInCfg case 0x0b00)
+    // Legacy BaseConf tree: the Evo registers read on #xxBE, index A12..A8
+    // (fpga/baseconf/trunk zports.v portbemux):
+    //   0x0B = pEFF7
     //   0x0D = the palette cell the 4-bit border points at, bits 2,3 read
-    //        back as 1 (xpeccy case 0x0d00; the FPGA zports.v portbemux 5'hD
-    //        round-trips to exactly (raw & 0xF3) | 0x0C)
+    //        back as 1 (the FPGA round-trips to exactly (raw & 0xF3) | 0x0C)
     //   0x0F = the last #FE border color incl. the A3 bright bit
+    _context->config.atm.evo_legacy_fpga = 1;
     EmulatorState& state = _context->emulatorState;
     state.flags = 0x00;
     state.aFF77 = 0x0000;  // manager open at reset
@@ -415,6 +416,116 @@ TEST_F(PortDecoder_ATM3_Test, PortBE_ReadbackRegisters)
     EXPECT_EQ(_portDecoder->DecodePortIn(0x0BBE, 0x0000), 0x5A) << "#BE.0B = pEFF7";
     EXPECT_EQ(_portDecoder->DecodePortIn(0x0DBE, 0x0000), 0xAD) << "#BE.0D = (0xA5 & 0xF3) | 0x0C";
     EXPECT_EQ(_portDecoder->DecodePortIn(0x0FBE, 0x0000), 0x0C) << "#BE.0F = border | bright << 3";
+    EXPECT_EQ(_portDecoder->DecodePortIn(0x0BBD, 0x0000), 0xFF) << "#xxBD is write-only on the legacy tree";
+    EXPECT_EQ(_portDecoder->DecodePortIn(0x13BE, 0x0000), 0xFF) << "no virtual-drive mask on the legacy tree";
+}
+
+/// Current (trdemu) tree: the same register table moved to #xxBD and #xxBE
+/// became write-only (git 663b8cf2 "removed completely xxBE read ports")
+TEST_F(PortDecoder_ATM3_Test, PortBD_ReadbackRegisters_TrdemuFpga)
+{
+    EmulatorState& state = _context->emulatorState;
+    ASSERT_EQ(_context->config.atm.evo_legacy_fpga, 0) << "trdemu is the default";
+    state.pEFF7 = 0x5A;
+
+    EXPECT_EQ(_portDecoder->DecodePortIn(0x0BBD, 0x0000), 0x5A);
+    EXPECT_EQ(_portDecoder->DecodePortIn(0x0BBE, 0x0000), 0xFF) << "#xxBE has no read path on the current tree";
+    EXPECT_EQ(_portDecoder->DecodePortIn(0xEBBD, 0x0000), 0x5A) << "only A12..A8 select the register";
+}
+
+/// Every index of the table (zports.v portbdmux)
+TEST_F(PortDecoder_ATM3_Test, EvoRegisterTable_AllIndices)
+{
+    EmulatorState& state = _context->emulatorState;
+    state.pFFF7[0] = 0x0305;  // ROM, page 5 from the register
+    state.pFFF7[1] = 0x0240;  // RAM, page 0x40 from the register
+    state.pFFF7[4] = 0x0100;  // ROM with dos7ffd (map 1)
+    state.pFFF7[5] = 0x0003;  // RAM with dos7ffd (map 1)
+    state.pFFF7[2] = 0x0200;
+    state.pFFF7[3] = 0x0200;
+    state.pFFF7[6] = 0x0200;
+    state.pFFF7[7] = 0x0200;
+    state.p7FFD = 0x17;
+    state.pEFF7 = 0x84;
+    state.aFF77 = PortDecoder_ATM3::ATM_AFF77_PEN2 | PortDecoder_ATM3::ATM_AFF77_PEN;  // A14=1, A9=0, A8=1
+    state.pFF77 = 0x0B;                                                                // turbo + mode 3
+    state.flags = CF_TRDOS;
+    state.pBD = 0x1234;
+    state.evoFddMask = 0x06;
+
+    auto rd = [this](uint8_t index) { return _portDecoder->DecodePortIn(static_cast<uint16_t>((index << 8) | 0xBD), 0x0000); };
+
+    EXPECT_EQ(rd(0x00), 0xFA) << "page register reads back as written to #x7F7 (~page)";
+    EXPECT_EQ(rd(0x01), 0xBF);
+    EXPECT_EQ(rd(0x08), 0xEE) << "RAM bits: windows 1,2,3 (map 0) and 5,6,7 (map 1)";
+    EXPECT_EQ(rd(0x09), 0x30) << "dos7ffd bits: map-1 windows 0 and 1";
+    EXPECT_EQ(rd(0x0A), 0x17);
+    EXPECT_EQ(rd(0x0B), 0x84);
+    EXPECT_EQ(rd(0x0C), 0x80 | 0x20 | 0x10 | 0x0B) << "{~pen2=A14, cpm_n=A9, ~pen=A8, DOS, turbo, mode}";
+    EXPECT_EQ(rd(0x10), 0x34);
+    EXPECT_EQ(rd(0x11), 0x12);
+    EXPECT_EQ(rd(0x12), 0x00) << "no window is write-protected (#xBF7 lands in plan E8)";
+    EXPECT_EQ(rd(0x13), 0x06);
+    EXPECT_EQ(rd(0x0E), 0xFF) << "font RAM readback lands in plan E8";
+    EXPECT_EQ(rd(0x14), 0xFF) << "undefined index";
+
+    state.flags = 0;
+    EXPECT_EQ(rd(0x0C) & 0x10, 0x00) << "bit 4 is the live DOS signal, not pFF77 bit 4";
+}
+
+/// Breakpoint address: #10BD / #11BD on the current tree (A12..A9 = 8, byte by
+/// A8, zports.v:504-512); any #xxBD with A8 selecting the byte on the legacy one
+TEST_F(PortDecoder_ATM3_Test, BreakpointAddressWrites_BothTrees)
+{
+    EmulatorState& state = _context->emulatorState;
+
+    state.pBD = 0x0000;
+    _portDecoder->DecodePortOut(0x10BD, 0x34, 0x0000);
+    _portDecoder->DecodePortOut(0x11BD, 0x12, 0x0000);
+    EXPECT_EQ(state.pBD, 0x1234);
+    _portDecoder->DecodePortOut(0x00BD, 0x99, 0x0000);
+    EXPECT_EQ(state.pBD, 0x1234) << "#00BD is not a breakpoint register on the current tree";
+    _portDecoder->DecodePortOut(0xF0BD, 0x56, 0x0000);
+    EXPECT_EQ(state.pBD, 0x1256) << "A15..A13 are not decoded: #F0BD = #10BD";
+
+    _context->config.atm.evo_legacy_fpga = 1;
+    state.pBD = 0x0000;
+    _portDecoder->DecodePortOut(0x00BD, 0x78, 0x0000);
+    _portDecoder->DecodePortOut(0x01BD, 0x56, 0x0000);
+    EXPECT_EQ(state.pBD, 0x5678);
+    _portDecoder->DecodePortOut(0x2ABD, 0x11, 0x0000);  // A8=0: low byte, rest undecoded
+    EXPECT_EQ(state.pBD, 0x5611);
+    EXPECT_EQ(_portDecoder->DecodePortIn(0x10BE, 0x0000), 0x11) << "legacy readback #10BE / #11BE";
+    EXPECT_EQ(_portDecoder->DecodePortIn(0x11BE, 0x0000), 0x56);
+}
+
+/// #13BD virtual-drive mask: 4 bits, read/write, cleared by reset; the legacy
+/// tree has no such register (zports.v:519-525)
+TEST_F(PortDecoder_ATM3_Test, FddMask13BD_ReadWriteResetAndLegacyAbsent)
+{
+    EmulatorState& state = _context->emulatorState;
+
+    _portDecoder->DecodePortOut(0x13BD, 0xFA, 0x0000);
+    EXPECT_EQ(state.evoFddMask, 0x0A);
+    EXPECT_EQ(_portDecoder->DecodePortIn(0x13BD, 0x0000), 0x0A) << "the ERS FPGA check writes %1010 and reads it back";
+
+    _portDecoder->reset();
+    EXPECT_EQ(state.evoFddMask, 0x00);
+
+    _context->config.atm.evo_legacy_fpga = 1;
+    _portDecoder->DecodePortOut(0x13BD, 0x05, 0x0000);  // a breakpoint write on the legacy tree
+    EXPECT_EQ(state.evoFddMask, 0x00);
+}
+
+/// #xxBF reads back only the defined bits: 5..0 (bit 5 = 4:4:4 palette) on
+/// the current tree, 4..0 on the legacy one (zports.v:466-468)
+TEST_F(PortDecoder_ATM3_Test, PortBF_ReadbackMasksUndefinedBits)
+{
+    EmulatorState& state = _context->emulatorState;
+    state.pBF = 0xFF;
+    EXPECT_EQ(_portDecoder->DecodePortIn(0x00BF, 0x0000), 0x3F);
+    _context->config.atm.evo_legacy_fpga = 1;
+    EXPECT_EQ(_portDecoder->DecodePortIn(0x00BF, 0x0000), 0x1F);
 }
 
 /// endregion </ATM palette port #FF tests - exact decode and manager gate>

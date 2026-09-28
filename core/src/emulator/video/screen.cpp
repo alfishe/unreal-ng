@@ -241,6 +241,8 @@ Screen::ModeSelection Screen::DetectVideoMode(MEM_MODEL model) const
         case MM_SPECTRUM48:
             return DetectModeZX48(state);
         case MM_SPECTRUM128:
+        case MM_PLUS2:
+        case MM_PLUS2A:
         case MM_PLUS3:
             return DetectModeZX128(state);
         case MM_PENTAGON:
@@ -577,7 +579,8 @@ void Screen::SetVideoMode(VideoModeEnum mode)
             // ZX-compatible or extended mode (ATM ZX mode is M_ZX48) keep their
             // discrete, contention-free video logic.
             const MEM_MODEL model = _context ? _context->config.mem_model : MM_SPECTRUM48;
-            const bool ferranti = model == MM_SPECTRUM48 || model == MM_SPECTRUM128 || model == MM_PLUS3;
+            const bool ferranti = model == MM_SPECTRUM48 || model == MM_SPECTRUM128 || model == MM_PLUS2 ||
+                                  model == MM_PLUS2A || model == MM_PLUS3;
             _rasterState.borderUpdateTStates = ferranti ? 4 : 1;
             _rasterState.contentionEnabled = ferranti;
             _rasterState.fetchType = ferranti ? ULA_FERRANTI : ULA_DISCRETE_LOGIC;

@@ -46,12 +46,14 @@ public:
     bool IsPort_FE(uint16_t port);
     bool IsPort_7FFD(uint16_t port);
     bool IsPort_1FFD(uint16_t port);
+    bool IsPort_2FFD(uint16_t port);
+    bool IsPort_3FFD(uint16_t port);
     /// endregion <Helper methods>
 
     /// Bank layout from #7FFD and #1FFD, called by Memory::UpdateZ80Banks
     void UpdateModelMemoryBanks() override;
 
-    /// #1FFD rides a TTD blob of its own (TTDPlus3Paging)
+    /// #1FFD and the floppy controller ride TTD blobs of their own (TTDPlus3Paging, TTDPlus3Fdc)
     std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
     std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
 

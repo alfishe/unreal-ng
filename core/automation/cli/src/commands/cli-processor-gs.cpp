@@ -2,6 +2,7 @@
 // Same chip getters the WebAPI /state/audio/gs endpoint serves.
 
 #include <emulator/emulator.h>
+#include <debugger/ttd/timetravelmanager.h>
 #include <emulator/emulatorcontext.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
 #include <emulator/sound/soundmanager.h>
@@ -28,6 +29,21 @@ const char* GsTraceSideName(GSTraceSide side)
     }
     return "?";
 }
+
+// GS host-port stimuli step the card's Z80, so they go through the live-input
+// path: applied on the machine's thread at an instruction boundary and
+// journaled for TTD replay. False while TTD replay owns input
+bool SubmitGSInput(EmulatorContext* context, ttd::TTDInputKind kind, uint8_t value = 0)
+{
+    if (!context->pTimeTravelManager)
+        return false;
+    ttd::TTDInputEvent ev;
+    ev.kind = kind;
+    ev.value = value;
+    return context->pTimeTravelManager->SubmitLiveInput(ev);
+}
+
+const char* const kGSInputRefused = "Error: GS input refused - TTD replay owns input.";
 }  // namespace
 
 void CLIProcessor::HandleStateAudioGS(const ClientSession& session, EmulatorContext* context, const std::string& optionArg)
@@ -294,8 +310,10 @@ std::optional<uint8_t> parseByteArg(const std::string& text)
 ///   gs nmi                            - #33 bit6 pulse
 ///   gs send_command <byte>            - OUT #BB (0-255, decimal or 0x..)
 ///   gs send_data <byte>               - OUT #B3
-///   gs read_status                    - IN #BB
-///   gs read_data                      - IN #B3
+///   gs read_status                    - IN #BB value, peeked (no side effects)
+///   gs read_data                      - IN #B3 value, peeked (bit 7 not cleared)
+/// Writes, resets and NMI are live input: applied on the machine's thread at
+/// the next instruction boundary (while paused: when execution continues)
 ///   gs switch_personality <z80|lle|lw|lightweight|ngs|neogs> - runtime card swap
 ///   gs dump_module [path]             - write the last COM30..D2 upload
 ///   gs sd_insert <image> / sd_eject   - NeoGS SD card slot
@@ -336,18 +354,24 @@ void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std:
 
     if (sub == "reset")
     {
-        gs->reset();
-        ss << "GS: full reset done." << NEWLINE;
+        if (SubmitGSInput(context, ttd::TTDInputKind::GSReset))
+            ss << "GS: full reset submitted." << NEWLINE;
+        else
+            ss << kGSInputRefused << NEWLINE;
     }
     else if (sub == "reset_card")
     {
-        gs->resetCard();
-        ss << "GS: card reset done (mailbox survives)." << NEWLINE;
+        if (SubmitGSInput(context, ttd::TTDInputKind::GSResetCard))
+            ss << "GS: card reset submitted (mailbox survives)." << NEWLINE;
+        else
+            ss << kGSInputRefused << NEWLINE;
     }
     else if (sub == "nmi")
     {
-        gs->triggerNMI();
-        ss << "GS: NMI pulsed." << NEWLINE;
+        if (SubmitGSInput(context, ttd::TTDInputKind::GSNmi))
+            ss << "GS: NMI submitted." << NEWLINE;
+        else
+            ss << kGSInputRefused << NEWLINE;
     }
     else if (sub == "send_command" || sub == "send_data")
     {
@@ -357,12 +381,12 @@ void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std:
         }
         else if (auto byte = parseByteArg(args[1]))
         {
-            if (sub == "send_command")
-                gs->sendCommand(*byte);
+            const auto kind = sub == "send_command" ? ttd::TTDInputKind::GSCommand : ttd::TTDInputKind::GSData;
+            if (SubmitGSInput(context, kind, *byte))
+                ss << "GS: " << sub << "(0x" << std::hex << std::setw(2) << std::setfill('0') << (int)*byte
+                   << std::dec << ") submitted." << NEWLINE;
             else
-                gs->sendData(*byte);
-            ss << "GS: " << sub << "(0x" << std::hex << std::setw(2) << std::setfill('0') << (int)*byte << std::dec
-               << ") done." << NEWLINE;
+                ss << kGSInputRefused << NEWLINE;
         }
         else
         {
@@ -371,12 +395,14 @@ void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std:
     }
     else if (sub == "read_status")
     {
-        const uint8_t value = gs->readStatus();
+        // Peek: no host read cycle, the card is not stepped
+        const uint8_t value = gs->getStatusRaw() | 0x7E;
         ss << "GS status: 0x" << std::hex << std::setw(2) << std::setfill('0') << (int)value << std::dec << NEWLINE;
     }
     else if (sub == "read_data")
     {
-        const uint8_t value = gs->readData();
+        // Peek: the status data bit is left set, the card is not stepped
+        const uint8_t value = gs->getDataToHost();
         ss << "GS data: 0x" << std::hex << std::setw(2) << std::setfill('0') << (int)value << std::dec << NEWLINE;
     }
     else if (sub == "switch_personality")

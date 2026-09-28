@@ -42,6 +42,11 @@ const std::vector<Signature> EDITOR128 = {
     { 0x2653, { 0x31, 0xFF, 0x5B } },
     { 0x3683, { 0xCB, 0x6E, 0x28, 0xFC, 0xCB, 0xAE, 0x3A, 0x08, 0x5C } },
 };
+// The +2's Amstrad ROM0 is the 128K editor with the menu grown (Tape Tester): most routines moved
+const std::vector<Signature> PLUS2ROM0 = {
+    { 0x2672, { 0x31, 0xFF, 0x5B } },
+    { 0x36A9, { 0xCB, 0x6E, 0x28, 0xFC, 0xCB, 0xAE, 0x3A, 0x08, 0x5C } },
+};
 const std::vector<Signature> PLUS3ROM0 = {
     { 0x0000, { 0xF3, 0x01, 0x03, 0x6C } },
     { 0x1875, { 0xCB, 0x6E, 0x28, 0xFC } },
@@ -83,6 +88,8 @@ const std::vector<PointDef>& All()
         { Point::EditorInit,    RomKind::Editor128, 0x3371, { 0xED, 0xB0 }, "L3371" },
         { Point::EditorIdle,    RomKind::Editor128, 0x3683, { 0xCB, 0x6E, 0x28, 0xFC }, "L3683" },
         { Point::KeyTaken,      RomKind::Editor128, 0x3689, { 0x3A, 0x08, 0x5C }, "L3689" },
+        // After a report: its own wait loop, the key clears the report and is then taken at #3689 (as on the +3)
+        { Point::ReportShown,   RomKind::Editor128, 0x25E3, { 0xCB, 0x6E, 0x28, 0xFC }, "L25E3" },
         { Point::KeyAccepted,   RomKind::Editor128, 0x265C, { 0xF5 }, "L265C" },
         { Point::CharInserted,  RomKind::Editor128, 0x28F1, { 0x21, 0x0D, 0xEC }, "L28F1" },
         // The error beep itself, not the CALL NC at #267C: a breakpoint fires on
@@ -96,9 +103,29 @@ const std::vector<PointDef>& All()
         { Point::ExecStart,     RomKind::Editor128, 0x031E, { 0xC3, 0x38, 0x18 }, "L031E" },
         { Point::Report,        RomKind::Editor128, 0x0321, { 0xED, 0x7B, 0xB2, 0x5C }, "L0321" },
 
+        // +2 (Amstrad) ROM0: the 128K editor moved, found by the bytes around each 128K point (36-47 of 48
+        // context bytes equal); the syntax pass, store, run and report kept their 128K addresses
+        { Point::EditorInit,    RomKind::Plus2Rom0, 0x3397, { 0xED, 0xB0 }, "L3397" },
+        { Point::EditorIdle,    RomKind::Plus2Rom0, 0x36A9, { 0xCB, 0x6E, 0x28, 0xFC }, "L36A9" },
+        { Point::KeyTaken,      RomKind::Plus2Rom0, 0x36AF, { 0x3A, 0x08, 0x5C }, "L36AF" },
+        { Point::ReportShown,   RomKind::Plus2Rom0, 0x2602, { 0xCB, 0x6E, 0x28, 0xFC }, "L2602" },
+        { Point::KeyAccepted,   RomKind::Plus2Rom0, 0x267B, { 0xF5 }, "L267B" },
+        { Point::CharInserted,  RomKind::Plus2Rom0, 0x2917, { 0x21, 0x0D, 0xEC }, "L2917" },
+        { Point::Rasp,          RomKind::Plus2Rom0, 0x2706, { 0x3A, 0x38, 0x5C }, "L2706" },
+        { Point::Enter,         RomKind::Plus2Rom0, 0x296A, { 0xCD, 0x12, 0x2A }, "L296A" },
+        { Point::SyntaxResult,  RomKind::Plus2Rom0, 0x02BA, { 0xFD, 0xCB, 0x00, 0x7E }, "L02BA" },
+        { Point::LineStored,    RomKind::Plus2Rom0, 0x03F7, { 0xED, 0x43, 0x49, 0x5C }, "L03F7" },
+        { Point::ExecStart,     RomKind::Plus2Rom0, 0x031E, { 0xC3, 0x57, 0x18 }, "L031E" },
+        { Point::Report,        RomKind::Plus2Rom0, 0x0321, { 0xED, 0x7B, 0xB2, 0x5C }, "L0321" },
+
         // +2A/+3 v4.0 ROM0 editor
         { Point::EditorIdle,    RomKind::Plus3Rom0, 0x1875, { 0xCB, 0x6E, 0x28, 0xFC }, "L1875" },
         { Point::KeyTaken,      RomKind::Plus3Rom0, 0x187B, { 0x3A, 0x08, 0x5C }, "L187B" },
+        // After a report the editor waits in a loop of its own (the same BIT 5,(FLAGS) test at #0693, the 128K's
+        // #25E3 moved). That
+        // loop leaves FLAGS bit 5 set: the key clears the report, the editor redraws with an empty line
+        // (about 30 frames) and #187B then takes the same key as an ordinary one
+        { Point::ReportShown,   RomKind::Plus3Rom0, 0x0693, { 0xCB, 0x6E, 0x28, 0xFC }, "L0693" },
         { Point::KeyAccepted,   RomKind::Plus3Rom0, 0x0709, { 0xF5 }, "L0709" },
         { Point::CharInserted,  RomKind::Plus3Rom0, 0x09BC, { 0x21, 0x0D, 0xEC }, "L09BC" },
         { Point::Rasp,          RomKind::Plus3Rom0, 0x0794, { 0x3A, 0x38, 0x5C }, "L0794" },
@@ -152,6 +179,8 @@ RomKind Identify(const uint8_t* page)
         rom = RomKind::Basic48;
     else if (MatchesAll(page, EDITOR128))
         rom = RomKind::Editor128;
+    else if (MatchesAll(page, PLUS2ROM0))
+        rom = RomKind::Plus2Rom0;
     else if (MatchesAll(page, PLUS3ROM0))
         rom = RomKind::Plus3Rom0;
     else if (MatchesAll(page, PLUS3ROM1))
@@ -172,6 +201,7 @@ const char* RomName(RomKind rom)
     {
         case RomKind::Basic48:   return "48 BASIC";
         case RomKind::Editor128: return "128K editor";
+        case RomKind::Plus2Rom0: return "+2 editor (ROM0)";
         case RomKind::Plus3Rom0: return "+3 editor (ROM0)";
         case RomKind::Plus3Rom1: return "+3 syntax (ROM1)";
         case RomKind::TrDos:     return "TR-DOS";
@@ -185,7 +215,7 @@ const char* PointName(Point point)
         "editorIdle", "keyTaken", "keyAccepted", "charInserted", "editKey", "rasp", "lineFull",
         "enter", "syntaxResult", "lineAccepted", "lineStored", "execStart", "errorRaised", "report",
         "tapeLoader", "editorInit", "trdosPrompt", "trdosLineBack", "trdosDispatch", "trdosError",
-        "trdosSyntaxError", "trdosExecute", "trdosFound",
+        "trdosSyntaxError", "trdosExecute", "trdosFound", "reportShown",
     };
     static_assert(sizeof(names) / sizeof(names[0]) == static_cast<size_t>(Point::Count), "PointName table drift");
     const size_t index = static_cast<size_t>(point);

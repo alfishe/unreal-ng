@@ -1395,6 +1395,13 @@ void TimeTravelManager::RecordInputEvent(uint8_t key, bool pressed)
     _inputJournal.Record(ev);
 }
 
+/// The fitted General Sound card, looked up per event: a personality switch
+/// replaces the card object at a frame boundary
+static GeneralSoundCard* InputGeneralSound(EmulatorContext* context)
+{
+    return context->pSoundManager ? context->pSoundManager->getGeneralSound() : nullptr;
+}
+
 /// Current TTDTimePoint for an input mutation happening now (see RecordInputEvent)
 static TTDTimePoint InputEventTimeNow(EmulatorContext* context)
 {
@@ -1480,7 +1487,7 @@ size_t TimeTravelManager::InjectDueInputEvents(const TTDTimePoint& now)
         return 0;
     }
 
-    return _inputJournal.InjectDueEvents(_context->pKeyboard, _context->pMouse, now);
+    return _inputJournal.InjectDueEvents(_context->pKeyboard, _context->pMouse, now, InputGeneralSound(_context));
 }
 
 // ---------------------------------------------------------------------------
@@ -1537,7 +1544,7 @@ void TimeTravelManager::ApplyLiveInput(TTDInputEvent ev)
         ev.time = InputEventTimeNow(_context);
         _inputJournal.Record(ev);
     }
-    TTDInputJournal::Apply(ev, _context->pKeyboard, _context->pMouse);
+    TTDInputJournal::Apply(ev, _context->pKeyboard, _context->pMouse, InputGeneralSound(_context));
 }
 
 void TimeTravelManager::ServiceInput()
@@ -1552,7 +1559,8 @@ void TimeTravelManager::ServiceInput()
         const auto& events = _inputJournal.Events();
         while (_inputCursor < events.size() && !(now < events[_inputCursor].time))
         {
-            TTDInputJournal::Apply(events[_inputCursor], _context->pKeyboard, _context->pMouse);
+            TTDInputJournal::Apply(events[_inputCursor], _context->pKeyboard, _context->pMouse,
+                                   InputGeneralSound(_context));
             ++_inputCursor;
         }
         if (_inputCursor >= events.size())
@@ -1964,8 +1972,20 @@ bool TimeTravelManager::SeekToInternal(const TTDTimePoint& target, TTDSeekResult
     // ------------------------------------------------------------------
     RestoreCheckpointForReplay(cp);
 
+    // The checkpoint restore leaves z80.t at this frame's overshoot (the
+    // last instruction's spill past the boundary — a handful of T-states,
+    // not 0). StepForwardFrame/StepBackFrame carry that same overshoot
+    // forward as their target's tInFrame (CurrentPosition() reports z80.t),
+    // so "target.tInFrame > 0" is true for every ordinary frame step and
+    // says nothing about whether there's an actual interval left to
+    // replay — compare against the checkpoint's own restored position
+    // instead.
+    const Z80* restoredZ80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    const uint32_t restoredTInFrame = restoredZ80 ? static_cast<uint32_t>(restoredZ80->t) : 0;
+
     // ------------------------------------------------------------------
-    // Step 3: intra-frame silent replay if target.tInFrame > 0.
+    // Step 3: intra-frame silent replay if target.tInFrame is past where
+    // the restore already left the CPU.
     //
     // Phase 2 Item 6 (parent TDD §5.1): check for external-event markers in
     // the replay interval (cp.time, target]. If any marker falls there, the
@@ -1973,11 +1993,11 @@ bool TimeTravelManager::SeekToInternal(const TTDTimePoint& target, TTDSeekResult
     // the marker's nondeterministic effect, so crossing it silently would
     // produce a misleading "this is the state at target" claim.
     //
-    // Frame-aligned targets never trigger this check: with target.tInFrame
-    // == 0, no intra-frame replay runs, and the chosen checkpoint already
-    // reflects any markers at or before that frame boundary.
+    // Frame-aligned targets never trigger this check: with nothing left to
+    // replay, the chosen checkpoint already reflects any markers at or
+    // before that frame boundary.
     // ------------------------------------------------------------------
-    if (target.tInFrame > 0)
+    if (target.tInFrame > restoredTInFrame)
     {
         if (const TTDExternalEvent* barrier = _externalEvents.FirstMarkerInInterval(cp.time, target))
         {
@@ -2006,6 +2026,40 @@ bool TimeTravelManager::SeekToInternal(const TTDTimePoint& target, TTDSeekResult
         }
 
         ReplayWithinFrame(cp.time.frame, target.tInFrame);
+    }
+    else if (!_inReplayMode)
+    {
+        // Frame-aligned target: `cp` IS this frame, but it captures memory
+        // as of the frame's *start* — this frame's own border/multicolor/
+        // bank-flip writes haven't run yet in that snapshot. PROTOTYPE for
+        // perf validation (see PLAN): replay the frame once, accurately, for
+        // display only; CPU/RAM/peripherals stay exactly as `cp` restored.
+        //
+        // Skipped when already nested inside an active replay (e.g.
+        // BuildFrameCache calling SeekToInternal({frame,0}) to position
+        // itself before installing its own M1 capture hook and doing its
+        // own instrumented run): that caller owns the pause/resume and
+        // hook-installation contract for this frame, and a second RunTStates
+        // pass here raced the emulation thread's pause confirmation and
+        // corrupted BuildFrameCache's capture vector from two threads at
+        // once. Nested callers get the plain checkpoint decode instead —
+        // they replay the frame themselves anyway.
+        //
+        // Also skipped when a journaled input event (keyboard/mouse) is due
+        // before this frame ends: injecting it is a one-shot, non-reversible
+        // side effect on live devices that LiveStateSnapshot cannot capture
+        // (the keyboard matrix in particular isn't a registered TTD
+        // peripheral — it's meant to be the *result* of replaying the
+        // journal forward, never a restorable value; see
+        // ttdinputplayback_test.cpp's file header). Delivering the event
+        // twice — once in this throwaway render, again on the real replay
+        // that follows — desyncs the program from what it actually recorded.
+        const TTDTimePoint fromRestored{cp.time.frame, restoredTInFrame};
+        const TTDTimePoint nextInput = _inputJournal.PeekNextEventTimeOnOrAfter(fromRestored);
+        const bool inputDueThisFrame = (nextInput.frame == cp.time.frame) &&
+                                        !(nextInput.frame == 0 && nextInput.tInFrame == 0 && cp.time.frame != 0);
+        if (!inputDueThisFrame)
+            RenderFrameAccurate();
     }
 
     // ------------------------------------------------------------------
@@ -2073,6 +2127,69 @@ void TimeTravelManager::ReplayWithinFrame(uint64_t targetFrame, uint32_t targetT
         _context->pEmulator->RunTStates(targetTInFrame - currentTInFrame, /*skipBreakpoints=*/true);
 
     ExitReplayMode();
+}
+
+void TimeTravelManager::RenderFrameAccurate()
+{
+    if (!_context || !_context->pEmulator || !_context->pCore || !_context->pScreen)
+        return;
+
+    Z80* z80 = _context->pCore->GetZ80();
+    if (!z80)
+        return;
+
+    // Deliberately a LOCAL snapshot, not the shared _liveSnapshot member:
+    // this function runs nested inside SeekToInternal (itself reachable from
+    // StepForwardFrame/StepBackFrame), and RunTStates below pumps
+    // MessageCenter (NC_EXECUTION_CPU_STEP) — a synchronous subscriber (e.g.
+    // the debugger's disassembly/register views refreshing mid-step) can
+    // reenter GetFrameCache, which also saves/restores through
+    // _liveSnapshot. Sharing the member there corrupted CPU/RAM on restore
+    // at whatever T-state the reentrant call happened to land on — exactly
+    // the "breaks after a few steps, at an arbitrary moment" symptom this
+    // local copy fixes.
+    LiveStateSnapshot local;
+    SaveLiveState(local);
+    EnterReplayMode();
+
+    // Same frame-length computation as BuildFrameCache: `cp` restores the
+    // CPU at this frame's start (the overshoot past the boundary), so the
+    // remainder is exactly one frame's worth of T-states (scaled by the
+    // restored CPU frequency multiplier).
+    const uint32_t frameT = _context->config.frame;
+    const uint32_t mult = _context->emulatorState.current_z80_frequency_multiplier;
+    const uint32_t frameTStates = frameT * (mult ? mult : 1);
+    const uint32_t startT = static_cast<uint32_t>(z80->t);
+    if (startT < frameTStates)
+        _context->pEmulator->RunTStates(frameTStates - startT, /*skipBreakpoints=*/true);
+
+    // Snapshot the accurately-rendered framebuffer before RestoreLiveState's
+    // ResyncScreenCaches() overwrites it with a static decode again. Also
+    // local — same reentrancy hazard as above.
+    std::vector<uint8_t> accurateFrameBuffer;
+    uint32_t* liveBuf = nullptr;
+    size_t liveBufSize = 0;
+    _context->pScreen->GetFramebufferData(&liveBuf, &liveBufSize);
+    if (liveBuf && liveBufSize)
+    {
+        accurateFrameBuffer.assign(reinterpret_cast<uint8_t*>(liveBuf),
+                                    reinterpret_cast<uint8_t*>(liveBuf) + liveBufSize);
+    }
+
+    RestoreLiveState(local);
+    ExitReplayMode();
+
+    // CPU/RAM/peripherals are back to cp's own state (matches every other
+    // seek/step contract); only the displayed pixels differ from a plain
+    // memory decode.
+    if (!accurateFrameBuffer.empty())
+    {
+        uint32_t* buf = nullptr;
+        size_t size = 0;
+        _context->pScreen->GetFramebufferData(&buf, &size);
+        if (buf && size == accurateFrameBuffer.size())
+            std::memcpy(buf, accurateFrameBuffer.data(), size);
+    }
 }
 
 bool TimeTravelManager::StepBackFrame()
@@ -4625,8 +4742,12 @@ void TimeTravelManager::RestoreLiveState(const LiveStateSnapshot& snap)
 {
     Z80* z80 = (_context && _context->pCore) ? _context->pCore->GetZ80() : nullptr;
 
-    // Mirror RestoreCheckpoint's ordering (TDD §8.1): CPU, chipset, bank
-    // rebuild, RAM, peripherals, screen resync.
+    // Mirror RestoreCheckpoint's ordering (TDD §8.1): CPU, chipset,
+    // peripherals, bank rebuild, RAM, screen resync. Peripherals MUST
+    // restore before the bank rebuild — model serializers (Scorpion's
+    // #1FFD/ProfROM, ATM paging, ...) restore the latches the paging chain
+    // reads, so rebuilding banks first pages from stale values and never
+    // re-derives (same reasoning as RestoreCheckpoint's step 2a2).
     if (z80)
         RestoreCpuState(snap.cpu, static_cast<Z80State*>(z80));
     RestoreChipsetState(snap.chipset, &_context->emulatorState);
@@ -4635,6 +4756,7 @@ void TimeTravelManager::RestoreLiveState(const LiveStateSnapshot& snap)
         z80->t = snap.z80TInFrame;
         z80->RecomputeFrameTiming();  // geometry follows the restored multiplier
     }
+    _peripherals.RestoreAll(snap.peripheralBlobs);
     if (_memory)
         _memory->UpdateZ80Banks();
 
@@ -4653,7 +4775,6 @@ void TimeTravelManager::RestoreLiveState(const LiveStateSnapshot& snap)
         _ramCache.valid = false;
     }
 
-    _peripherals.RestoreAll(snap.peripheralBlobs);
     _inputCursor = snap.inputCursor;
     _inputPlaybackArmed = snap.inputPlaybackArmed;
     UpdateInputWorkFlag();

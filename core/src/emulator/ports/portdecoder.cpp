@@ -63,6 +63,8 @@ bool PortDecoder::IsModelSupported(MEM_MODEL model)
         case MM_SPECTRUM48:
         case MM_PENTAGON:
         case MM_SPECTRUM128:
+        case MM_PLUS2:
+        case MM_PLUS2A:
         case MM_PLUS3:
         case MM_PROFI:
         case MM_SCORP:
@@ -104,9 +106,12 @@ PortDecoder* PortDecoder::GetPortDecoderForModel(MEM_MODEL model, EmulatorContex
             }
             break;
         case MM_SPECTRUM128:
+        case MM_PLUS2:
             result = new PortDecoder_Spectrum128(context);
             break;
         case MM_PLUS3:
+        case MM_PLUS2A:
+            // The +2A is the +3 without the floppy controller (Core creates the uPD765 for MM_PLUS3 only)
             result = new PortDecoder_Spectrum3(context);
             break;
         case MM_PROFI:
@@ -474,6 +479,8 @@ PortTraceSessionInfo PortDecoder::getPortTraceSessionInfo() const
             case MM_SPECTRUM48:  info.modelName = "Spectrum48"; break;
             case MM_SPECTRUM128: info.modelName = "Spectrum128"; break;
             case MM_PLUS3:       info.modelName = "SpectrumPlus3"; break;
+            case MM_PLUS2:       info.modelName = "SpectrumPlus2"; break;
+            case MM_PLUS2A:      info.modelName = "SpectrumPlus2A"; break;
             case MM_PROFI:       info.modelName = "Profi"; break;
             case MM_SCORP:       info.modelName = "Scorpion256"; break;
             case MM_PROFSCORP:   info.modelName = "Scorpion256Prof"; break;
@@ -542,11 +549,13 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
     switch (model)
     {
         case MM_SPECTRUM128:
+        case MM_PLUS2:
             // IsPort_7FFD: A15=0, A2=1, A1=0 (bit 2 qualifier excludes SOUNDRIVE #F1/#F9)
             entries.push_back({0x7FFD, 0x8006, 0x0004, "Memory paging (RAM bank, shadow screen, ROM)", nullptr,
                                Tags(PortTag::Memory) | PortTag::Rom | PortTag::Screen, PagingLatch::P7FFD});
             break;
         case MM_PLUS3:
+        case MM_PLUS2A:
             // IsPort_7FFD / IsPort_1FFD (PortDecoder_Spectrum3)
             entries.push_back({0x7FFD, 0xC002, 0x4000, "Memory paging (RAM bank, shadow screen, ROM)", nullptr,
                                Tags(PortTag::Memory) | PortTag::Rom | PortTag::Screen, PagingLatch::P7FFD});
@@ -653,8 +662,15 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
             entries.push_back({0x001F, 0x00FF, 0x001F, "Kempston joystick", noShadow, Tags(PortTag::Joystick)});
             entries.push_back({0x00BF, 0x00FF, 0x00BF, "Evo config (shadow, flash write, font write, NMI, breakpoint)", nullptr,
                                Tags(PortTag::System)});
-            entries.push_back({0x00BE, 0x00FF, 0x00BE, "Evo NMI exit / legacy readback (A15..A8 index)", nullptr,
-                               Tags(PortTag::System)});
+            const bool legacyFpga = _context->config.atm.evo_legacy_fpga != 0;
+            entries.push_back({0x00BE, 0x00FF, 0x00BE,
+                               legacyFpga ? "Evo NMI exit (write) / register readback (read, A12..A8 index)"
+                                          : "Evo NMI / virtual-drive exit (write only)",
+                               nullptr, Tags(PortTag::System)});
+            entries.push_back({0x00BD, 0x00FF, 0x00BD,
+                               legacyFpga ? "Evo breakpoint address (write, A8 = high byte)"
+                                          : "Evo register readback (A12..A8 index); #10BD/#11BD breakpoint, #13BD virtual-drive mask",
+                               nullptr, Tags(PortTag::System)});
             entries.push_back({0x00FB, 0x00FF, 0x00FB, "Covox (mono #FB)", nullptr, Tags(PortTag::SoundCovox)});
             break;
         }
@@ -966,7 +982,7 @@ std::vector<DecodedLatchField> DecodePagingLatch(PagingLatch latch, uint32_t val
             {
                 boolField("shadow_monitor_paged", (value & 0x02) != 0);
             }
-            else if (model == MM_PLUS3)
+            else if (model == MM_PLUS3 || model == MM_PLUS2A)
             {
                 intField("special_paging", static_cast<int>(value & 0x07));
                 boolField("disk_motor", (value & 0x08) != 0);

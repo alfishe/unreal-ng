@@ -83,6 +83,12 @@ std::string ROM::GetROMFilename()
         case MM_PLUS3:
             result = config.plus3_rom_path;
             break;
+        case MM_PLUS2:
+            result = config.plus2_rom_path;
+            break;
+        case MM_PLUS2A:
+            result = config.plus2a_rom_path;
+            break;
         case MM_PROFI:
             result = config.profi_rom_path;
             break;
@@ -155,14 +161,16 @@ bool ROM::LoadROM()
 	        memory.base_sys_rom = nullptr;
 	        break;
 	    case MM_SPECTRUM128:
+	    case MM_PLUS2:
             memory.base_128_rom = memory.ROMPageHostAddress(0);
             memory.base_sos_rom = memory.ROMPageHostAddress(1);
-            romname = config.zx128_rom_path;
+            romname = (config.mem_model == MM_PLUS2) ? config.plus2_rom_path : config.zx128_rom_path;
 
             memory.base_dos_rom = nullptr;
             memory.base_sys_rom = nullptr;
             break;
         case MM_PLUS3:
+        case MM_PLUS2A:
             // The +2A/+3 decoder selects all four pages itself (#1FFD bit 2 :
             // #7FFD bit 4). There is no Beta 128: the DOS / service roles stay
             // empty so no TR-DOS session can page +3DOS in at #3Dxx
@@ -170,7 +178,7 @@ bool ROM::LoadROM()
             memory.base_sys_rom = nullptr;
             memory.base_dos_rom = nullptr;
             memory.base_sos_rom = memory.ROMPageHostAddress(3);
-            romname = config.plus3_rom_path;
+            romname = (config.mem_model == MM_PLUS2A) ? config.plus2a_rom_path : config.plus3_rom_path;
             break;
 		case MM_PROFI:
 			memory.base_sys_rom = memory.ROMPageHostAddress(0);
@@ -366,7 +374,7 @@ bool ROM::LoadROM()
                     result = false;
                 }
             }
-			else if (config.mem_model == MM_SPECTRUM128)
+			else if (config.mem_model == MM_SPECTRUM128 || config.mem_model == MM_PLUS2)
             {
 			    if (loadedBanks != 2)
                 {
@@ -661,6 +669,7 @@ std::string ROM::GetROMPageRole(uint8_t page) const
         case MM_SPECTRUM48:
             return "48K BASIC ROM";
         case MM_SPECTRUM128:
+        case MM_PLUS2:
             return (page == 0) ? "128K Editor/Menu ROM" : "48K BASIC ROM";
         case MM_PENTAGON:
         case MM_SCORP:
@@ -671,6 +680,7 @@ std::string ROM::GetROMPageRole(uint8_t page) const
             return (page < 4) ? PROFI_ROLES[page]
                               : StringHelper::Format("ROM Page %d", static_cast<int>(page));
         case MM_PLUS3:
+        case MM_PLUS2A:
             return (page < 4) ? PLUS3_ROLES[page]
                               : StringHelper::Format("ROM Page %d", static_cast<int>(page));
         default:

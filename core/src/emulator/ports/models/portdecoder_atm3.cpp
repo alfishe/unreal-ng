@@ -33,6 +33,7 @@ void PortDecoder_ATM3::reset()
     _state->pBDh = 0x00;
     _state->pBE = 0x00;
     _state->pBF = 0x00;
+    _state->evoFddMask = 0x00;  // fdd_mask resets to "all drives real" (zports.v:521-525)
 
     // ATM3 (ZX-Evo BaseConf) always has the DS12885-style RTC/CMOS
     // (original Unreal Speccy gates it on conf.cmos, but a real ZX-Evo has it)
@@ -165,23 +166,28 @@ uint8_t PortDecoder_ATM3::DecodePortIn(uint16_t port, uint16_t pc)
         }
         case PortArm::EvoConfig:
             // The BaseConf service ROM does IN A,(BF) / OR 1 / OUT (BF),A to open
-            // the shadow ports - the read must return the latch, not #FF
-            result = _state->pBF;
+            // the shadow ports - the read must return the latch, not #FF. Only the
+            // defined bits read back: bits 5..0 on the current tree (bit 5 = 4:4:4
+            // palette), bits 4..0 on the legacy one (zports.v:466-468)
+            result = static_cast<uint8_t>(_state->pBF & (IsLegacyFpga() ? 0x1F : 0x3F));
             break;
         case PortArm::EvoExit:
-            // Legacy BaseConf tree readback (#xxBE, A15..A8 index). The current
-            // tree moves it to #xxBD (ZX-Evo plan phase E1)
-            result = Port_BE_In(static_cast<uint8_t>(port >> 8));
+            // The legacy tree reads the Evo registers here; the current tree
+            // removed the #xxBE read ports (git 663b8cf2): write-only exit strobe
+            result = IsLegacyFpga() ? ReadEvoRegister(static_cast<uint8_t>((port >> 8) & 0x1F)) : 0xFF;
+            break;
+        case PortArm::EvoReadback:
+            // #xxBD: the readback port of the current tree; write-only (breakpoint) on the legacy one
+            result = IsLegacyFpga() ? 0xFF : ReadEvoRegister(static_cast<uint8_t>((port >> 8) & 0x1F));
             break;
         case PortArm::BorderAnd7FFD:
         case PortArm::Paging7FFD:
         case PortArm::Atm77:
-        case PortArm::EvoReadback:
         case PortArm::ComPort:
         case PortArm::UlaPlus:
         case PortArm::NemoIde:
             // Mainboard ports whose read side is #FF here: no read mux entry
-            // (#FC/#FD/#77) or a device that is not emulated yet (plan E1/E6/E8/E9)
+            // (#FC/#FD/#77) or a device that is not emulated yet (plan E6/E8/E9)
             result = 0xFF;
             break;
         case PortArm::Covox:
@@ -275,16 +281,18 @@ void PortDecoder_ATM3::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
             // the channel mapping. Other SounDrive addresses do not exist on this board
             DispatchSelfDecodingOut(port, value);
             break;
+        case PortArm::EvoReadback:
+            Port_BD_Out(port, value);
+            break;
         case PortArm::SdConfig:
         case PortArm::SdData:
         case PortArm::Joystick:
         case PortArm::Mouse:
-        case PortArm::EvoReadback:
         case PortArm::ComPort:
         case PortArm::UlaPlus:
         case PortArm::NemoIde:
             // Mainboard ports without an emulated write side yet (ZX-Evo plan
-            // E1/E5/E6/E8/E9); swallowed so they never reach a ZX-Bus device
+            // E5/E6/E8/E9); swallowed so they never reach a ZX-Bus device
             break;
         case PortArm::ZxBus:
         default:
@@ -517,51 +525,94 @@ void PortDecoder_ATM3::Port_BE_Out([[maybe_unused]] uint16_t port, [[maybe_unuse
     MLOGDEBUG("Port_BE_Out: pBE=2");
 }
 
-uint8_t PortDecoder_ATM3::Port_BE_In(uint8_t portHi)
+bool PortDecoder_ATM3::IsLegacyFpga() const
 {
-    // Port #xBE readback, selected by A15..A8 (original io.cpp in(), MM_ATM3)
-    if ((portHi & ~7) == 0)
+    return _context->config.atm.evo_legacy_fpga != 0;
+}
+
+/// @brief Evo readback register (index = A12..A8)
+/// @details Same table on both FPGA trees (current portbdmux, legacy portbemux),
+///          only the port differs. Index #13 (virtual-drive mask) exists on the
+///          current tree only; undefined indices float (#FF here).
+uint8_t PortDecoder_ATM3::ReadEvoRegister(uint8_t index)
+{
+    index &= 0x1F;
+
+    if (index < 0x08)
     {
-        // Non-inverted RAM page number of window register 0-7
-        return (_state->pFFF7[portHi & 7] & 0xFF) ^ 0xFF;
+        // Window register page as written to #x7F7 (the board reads back ~page,
+        // top.v `.pages(~{...})`; the register stores the page non-inverted)
+        return static_cast<uint8_t>((_state->pFFF7[index] & 0xFF) ^ 0xFF);
     }
 
-    switch (portHi)
+    switch (index)
     {
-        case 0x08:  // ram/rom flags: bit i = window i bit 8, inverted
+        case 0x08:  // ramnrom: bit i = window i is RAM (map 0 in bits 0-3, map 1 in 4-7)
         {
-            uint8_t ramRomMask = 0;
+            uint8_t romMask = 0;
             for (unsigned i = 0; i < 8; i++)
-                ramRomMask |= ((_state->pFFF7[i] >> 8) & 1) << i;
-            return ~ramRomMask;
+                romMask |= static_cast<uint8_t>(((_state->pFFF7[i] >> 8) & 1) << i);
+            return static_cast<uint8_t>(~romMask);
         }
-        case 0x09:  // dos7ffd: bit i = window i bit 9, inverted
+        case 0x09:  // dos7ffd: bit i = window i takes page bits from #7FFD / DOS
         {
-            uint8_t dosMask = 0;
+            uint8_t fixedMask = 0;
             for (unsigned i = 0; i < 8; i++)
-                dosMask |= ((_state->pFFF7[i] >> 9) & 1) << i;
-            return ~dosMask;
+                fixedMask |= static_cast<uint8_t>(((_state->pFFF7[i] >> 9) & 1) << i);
+            return static_cast<uint8_t>(~fixedMask);
         }
-        case 0x0A:  // p7FFD
+        case 0x0A:  // last #7FFD write
             return _state->p7FFD;
-        case 0x0C:  // FF77 state: aFF77 bits 14/9/8 + pFF77 low nibble
-            return ((_state->aFF77 >> 14) << 7) | ((_state->aFF77 >> 9) << 6) |
-                   ((_state->aFF77 >> 8) << 5) | (_state->pFF77 & 0xF);
-        case 0x0D:  // palette cell the 4-bit border color points at, in the
-                    // raw #FF write format - bits 2,3 read back as 1 (xpeccy
-                    // evoInCfg case 0x0d00: `(regPal[brdcol & 0x0f] & 0xf3) | 0x0c`)
+        case 0x0B:  // last #EFF7 write
+            return _state->pEFF7;
+        case 0x0C:  // #xx77 state: {~pen2 = A14, cpm_n = A9, ~pen = A8, DOS, turbo, video mode}
+            return static_cast<uint8_t>(((_state->aFF77 & ATM_AFF77_PEN2) ? 0x80 : 0x00) |
+                                        ((_state->aFF77 & ATM_AFF77_CPM) ? 0x40 : 0x00) |
+                                        ((_state->aFF77 & ATM_AFF77_PEN) ? 0x20 : 0x00) |
+                                        ((_state->flags & CF_TRDOS) ? 0x10 : 0x00) |
+                                        (_state->pFF77 & 0x0F));
+        case 0x0D:  // palette entry of the border cell in the #FF write format,
+                    // bits 3:2 read back as 1 (xpeccy evoInCfg; RTL round trip
+                    // `{g,r,b,G,1,1,R,B}` of the displayed color)
         {
             const uint8_t cell = static_cast<uint8_t>((_state->border_attr & 0x07) | ((_state->atmBorderBright & 1) << 3));
             return static_cast<uint8_t>((_state->atmPaletteRegs[cell] & 0xF3) | 0x0C);
         }
-        case 0x0F:  // last border color written through #FE, incl. the bright
-                    // bit from A3 (xpeccy evoInCfg case 0x0f00: nextbrd & 0x0f)
+        case 0x0F:  // border color incl. the bright half (0..15)
             return static_cast<uint8_t>((_state->border_attr & 0x07) | ((_state->atmBorderBright & 1) << 3));
-        case 0x0B:  // pEFF7 readback (xpeccy evoInCfg case 0x0b00)
-            return _state->pEFF7;
-        default:    // 0x0E (font byte the text mode is showing) and unmapped - open bus
+        case 0x10:  // breakpoint address low / high
+            return _state->pBDl;
+        case 0x11:
+            return _state->pBDh;
+        case 0x12:  // #xBF7 write-protect bits: per-window write protect is not emulated yet (plan E8)
+            return 0x00;
+        case 0x13:  // virtual-drive mask, current tree only
+            return IsLegacyFpga() ? 0xFF : static_cast<uint8_t>(_state->evoFddMask & 0x0F);
+        case 0x0E:  // font byte under the beam: font RAM is not emulated yet (plan E8)
+        default:
             return 0xFF;
     }
+}
+
+/// @brief #xxBD writes
+/// @details Current tree: #10BD / #11BD breakpoint address low / high (decode
+///          A12..A9 = 8, byte by A8), #13BD virtual-drive mask (zports.v:504-525).
+///          Legacy tree: any #xxBD, A8 picks the breakpoint byte (baseconf zports.v:473-487).
+void PortDecoder_ATM3::Port_BD_Out(uint16_t port, uint8_t value)
+{
+    const uint8_t index = static_cast<uint8_t>((port >> 8) & 0x1F);
+
+    if (IsLegacyFpga() || (index >> 1) == (0x10 >> 1))
+    {
+        if (port & 0x0100)
+            _state->pBDh = value;
+        else
+            _state->pBDl = value;
+        return;
+    }
+
+    if (index == 0x13)
+        _state->evoFddMask = static_cast<uint8_t>(value & 0x0F);
 }
 
 void PortDecoder_ATM3::Port_7FFD_Out([[maybe_unused]] uint16_t port, uint8_t value, [[maybe_unused]] uint16_t pc)

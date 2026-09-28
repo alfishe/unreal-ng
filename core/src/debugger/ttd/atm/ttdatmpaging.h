@@ -50,11 +50,12 @@ struct AtmPagingState
     uint8_t  cmos_addr;         ///< DS12885 address latch
     uint8_t  atmPaletteRegs[16];///< raw #FF palette bytes (ATM3 #BE.0D readback)
     uint8_t  atmBorderBright;   ///< 4th border bit (~A3 of the last border write)
-    uint8_t  reserved[3];       ///< explicit tail padding, always 0
+    uint8_t  evoFddMask;        ///< ZX-Evo #13BD virtual-drive mask
+    uint8_t  reserved[2];       ///< explicit tail padding, always 0
 };
 
 static_assert(sizeof(AtmPagingState) == 128, "AtmPagingState layout changed");
-static_assert(offsetof(AtmPagingState, reserved) + 3 == sizeof(AtmPagingState),
+static_assert(offsetof(AtmPagingState, reserved) + 2 == sizeof(AtmPagingState),
               "AtmPagingState has implicit trailing padding");
 
 /// @brief TTDSerializable implementation for ATM paging state.

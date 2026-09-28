@@ -125,6 +125,21 @@ bool Config::LoadConfigFile(const std::string& filename)
 	return result;
 }
 
+bool Config::ParseEvoFpgaVariant(const char* value)
+{
+	if (value == nullptr || value[0] == '\0')
+		return false;
+
+	const size_t length = strlen(value);
+	if (length == strlen("legacy") && StringHelper::CompareCaseInsensitive(value, "legacy", length) == 0)
+		return true;
+	if (length == strlen("trdemu") && StringHelper::CompareCaseInsensitive(value, "trdemu", length) == 0)
+		return false;
+
+	LOGWARNING("Config: unknown [EVO] Fpga='%s' - using the current trdemu BaseConf", value);
+	return false;
+}
+
 bool Config::ParseConfig(IniFile& inimanager)
 {
 	bool result = false;
@@ -198,9 +213,14 @@ bool Config::ParseConfig(IniFile& inimanager)
     CopyStringValue(inimanager.GetValue(rom, "48k", nullptr), config.zx48_rom_path, sizeof config.zx48_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "128k", nullptr), config.zx128_rom_path, sizeof config.zx128_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "PLUS3", nullptr), config.plus3_rom_path, sizeof config.plus3_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "PLUS2", nullptr), config.plus2_rom_path, sizeof config.plus2_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "PLUS2A", nullptr), config.plus2a_rom_path, sizeof config.plus2a_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "ATM1", nullptr), config.atm1_rom_path, sizeof config.atm1_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "ATM2", nullptr), config.atm2_rom_path, sizeof config.atm2_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "ATM3", nullptr), config.atm3_rom_path, sizeof config.atm3_rom_path);
+
+	// EVO section (ZX-Evo BaseConf): FPGA variant the ROM image expects
+	config.atm.evo_legacy_fpga = ParseEvoFpgaVariant(inimanager.GetValue("EVO", "Fpga", nullptr)) ? 1 : 0;
     CopyStringValue(inimanager.GetValue(rom, "SCORP", nullptr), config.scorp_rom_path, sizeof config.scorp_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "PROFROM", nullptr), config.prof_rom_path, sizeof config.prof_rom_path);
     // The shipped spectrum3 unreal.ini carries "rom\\scorp_prof401.ROM:0" - without
@@ -757,6 +777,8 @@ std::string Config::GetConfigFolderForModel(MEM_MODEL model, uint32_t ramSizeKB)
 		case MM_SPECTRUM48:  return "spectrum48";
 		case MM_SPECTRUM128: return "spectrum128";
 		case MM_PLUS3:       return "spectrum3";
+		case MM_PLUS2:       return "spectrum2";
+		case MM_PLUS2A:      return "spectrum2a";
 		case MM_TSL:         return "ts-conf";
 		default:
 			break;
@@ -924,6 +946,8 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
             break;
 
         case MM_SPECTRUM128:
+        case MM_PLUS2:
+        case MM_PLUS2A:
         case MM_PLUS3:
             config.intstart = 1845;
             config.intlen   = 36;   // ZX-128K ULA has 72-HC INT = 36 T-states
@@ -992,6 +1016,8 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
                 config.intlen = 32;
                 break;
             case MM_SPECTRUM128:
+            case MM_PLUS2:
+            case MM_PLUS2A:
             case MM_PLUS3:
                 config.frame = 70908;   // 228 * 311
                 config.t_line = 228;

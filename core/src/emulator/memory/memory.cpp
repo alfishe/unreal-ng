@@ -853,7 +853,7 @@ void Memory::SetROMMode(ROMModeEnum mode)
             state.flags &= ~CF_TRDOS;
             state.p7FFD |= 0x10;
 
-            if (config.mem_model == MM_PLUS3)
+            if (config.mem_model == MM_PLUS3 || config.mem_model == MM_PLUS2A)
             {
                 state.p7FFD |= 0x20;  // Disable paging
                 state.p1FFD |= 0x04;  // ROM 3 (48 BASIC): the ROM number's high bit is in #1FFD
@@ -899,7 +899,8 @@ void Memory::UpdateZ80Banks()
     // flags are re-derived below from the current CF_TRDOS / p7FFD state
     state.flags &= ~(CF_DOSPORTS | CF_Z80FBUS | CF_LEAVEDOSRAM | CF_LEAVEDOSADR | CF_SETDOSROM);
 
-    if (config.mem_model == MM_ATM710 || config.mem_model == MM_ATM3 || config.mem_model == MM_PLUS3)
+    if (config.mem_model == MM_ATM710 || config.mem_model == MM_ATM3 || config.mem_model == MM_PLUS3 ||
+        config.mem_model == MM_PLUS2A)
     {
         // ATM models own their memory manager: the bank computation runs in the
         // port decoder (port of the original set_banks() MM_ATM710 / MM_ATM3
@@ -1161,7 +1162,7 @@ void Memory::SetRAMPageToBank3(uint16_t page, bool updatePorts)
     // stays branch-only.
     if (_context && _context->pUlaContention)
     {
-        const bool plus3 = _context->config.mem_model == MM_PLUS3;
+        const bool plus3 = _context->config.mem_model == MM_PLUS3 || _context->config.mem_model == MM_PLUS2A;
         _context->pUlaContention->SetBank3ContendedPage(plus3 ? page >= 4 : (page & 1) != 0);
     }
 

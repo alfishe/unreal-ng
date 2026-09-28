@@ -14,10 +14,14 @@ that the emulator works out of the box, on the following basis:
   Technology Research Ltd (no longer trading). Distributed with emulators by long-standing custom; no formal permission exists.
 * **Pentagon, Scorpion, KAY, ATM, Profi, ZX Evolution / TS-Conf, General Sound and other clone firmware**
   (`pentagon*.rom`, `glukpen*.rom`, `scorp*.rom`, `kay1024*.rom`, `atm*.rom`, `glukatm.rom`, `profi.rom`,
-  `zxevo.rom`, `ts-bios*.rom`, `gs*.rom`, `bootGS.rom`, `lsy256.rom`, `qu7v42.rom`, `qc_3_05.rom`, `madrom.rom`,
+  `zxevo.rom`, `zxevo-fe.rom`, `ts-bios*.rom`, `gs*.rom`, `bootGS.rom`, `lsy256.rom`, `qu7v42.rom`, `qc_3_05.rom`, `madrom.rom`,
   `zxi1.rom`, `2006.rom`, `xbios135.rom`, `sgen.rom`, `gd.rom`, `gmx.rom`, `1993.rom`, `ZXM-Phoenix_bios.bin`,
   `tk90.rom`, `tk95.rom`): property of the respective clone manufacturers and authors, distributed freely in the
   ZX Spectrum community. ZX Evolution firmware sources are published by TSLabs.
+  `zxevo-fe.rom` is the official NedoPC BaseConf image `rom/zxevo_fe.rom` of the pentevo repository
+  (md5 `6e2900206aea5505cddc89963914a300`: EVO Reset Service 0.60.05 FE, NEO-DOS in page 29, the image
+  the released `base_trdemu` FPGA expects); `zxevo.rom` is an older custom image (TR-DOS 5.04T in pages
+  0-3, earlier ERS) kept for the legacy BaseConf FPGA and TS-Conf.
 * **NeoGS flash image** (`neogs/full_ngs.rom`, NeoGS flash v1.11: loader, main ROM and FPGA configuration): built
   from the NedoPC `ngs` sources (http://nedopc.com/gs/ngs_eng.php), which carry no licence file; treated as MIT
   like the rest of the NedoPC NeoGS material. The parts it is packed from are in `tools/neogs/parts/`, and

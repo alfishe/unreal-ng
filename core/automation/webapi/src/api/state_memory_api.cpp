@@ -355,9 +355,11 @@ void EmulatorAPI::getStateMemoryROM(const HttpRequestPtr& req,
     switch (config.mem_model)
     {
         case MM_SPECTRUM128:
+        case MM_PLUS2:
             totalROMPages = 2;
             break;
         case MM_PENTAGON:
+        case MM_PLUS2A:
         case MM_PLUS3:
         case MM_SCORP:
         case MM_PROFSCORP:

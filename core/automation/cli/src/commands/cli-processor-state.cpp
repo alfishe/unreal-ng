@@ -325,13 +325,16 @@ void CLIProcessor::HandleStateMemory(const ClientSession& session, EmulatorConte
     std::string romMode = "Unknown";
     if (config.mem_model == MM_SPECTRUM48)
         romMode = "48K BASIC";
-    else if (config.mem_model == MM_SPECTRUM128)
+    else if (config.mem_model == MM_SPECTRUM128 || config.mem_model == MM_PLUS2)
         romMode = (memory.GetROMPage() == 0) ? "128K Editor" : "48K BASIC";
     else if (config.mem_model == MM_PENTAGON)
         romMode =
             (memory.GetROMPage() == 2) ? "128K Editor" : (memory.GetROMPage() == 3 ? "48K BASIC" : "Service/TR-DOS");
-    else if (config.mem_model == MM_PLUS3)
-        romMode = (memory.GetROMPage() == 0) ? "128K Editor" : "48K BASIC";
+    else if (config.mem_model == MM_PLUS3 || config.mem_model == MM_PLUS2A)
+        romMode = (memory.GetROMPage() == 0)   ? "+3 Editor"
+                  : (memory.GetROMPage() == 1) ? "128 BASIC Syntax"
+                  : (memory.GetROMPage() == 2) ? "+3DOS"
+                                               : "48K BASIC";
     else if (config.mem_model == MM_PROFI)
         romMode = (memory.GetROMPage() == 0)   ? "SYS/Menu"
                   : (memory.GetROMPage() == 1) ? "TR-DOS"
@@ -457,9 +460,11 @@ void CLIProcessor::HandleStateMemoryROM(const ClientSession& session, EmulatorCo
     switch (config.mem_model)
     {
         case MM_SPECTRUM128:
+        case MM_PLUS2:
             totalROMPages = 2;
             break;
         case MM_PENTAGON:
+        case MM_PLUS2A:
         case MM_PLUS3:
         case MM_SCORP:
         case MM_PROFSCORP:
@@ -492,7 +497,7 @@ void CLIProcessor::HandleStateMemoryROM(const ClientSession& session, EmulatorCo
     {
         ss << "  Page 0: 48K BASIC ROM" << NEWLINE;
     }
-    else if (config.mem_model == MM_SPECTRUM128)
+    else if (config.mem_model == MM_SPECTRUM128 || config.mem_model == MM_PLUS2)
     {
         ss << "  Page 0: 128K Editor/Menu ROM " << ((memory.GetROMPage() == 0) ? "[ACTIVE]" : "") << NEWLINE;
         ss << "  Page 1: 48K BASIC ROM " << ((memory.GetROMPage() == 1) ? "[ACTIVE]" : "") << NEWLINE;
@@ -511,12 +516,12 @@ void CLIProcessor::HandleStateMemoryROM(const ClientSession& session, EmulatorCo
         ss << "  Page 2: 128K Editor + STS Monitor ROM " << ((memory.GetROMPage() == 2) ? "[ACTIVE]" : "") << NEWLINE;
         ss << "  Page 3: 48K BASIC ROM " << ((memory.GetROMPage() == 3) ? "[ACTIVE]" : "") << NEWLINE;
     }
-    else if (config.mem_model == MM_PLUS3)
+    else if (config.mem_model == MM_PLUS3 || config.mem_model == MM_PLUS2A)
     {
         ss << "  Page 0: +3 Editor ROM " << ((memory.GetROMPage() == 0) ? "[ACTIVE]" : "") << NEWLINE;
-        ss << "  Page 1: 48K BASIC ROM " << ((memory.GetROMPage() == 1) ? "[ACTIVE]" : "") << NEWLINE;
+        ss << "  Page 1: 128 BASIC Syntax ROM " << ((memory.GetROMPage() == 1) ? "[ACTIVE]" : "") << NEWLINE;
         ss << "  Page 2: +3DOS ROM " << ((memory.GetROMPage() == 2) ? "[ACTIVE]" : "") << NEWLINE;
-        ss << "  Page 3: 48K BASIC (copy) ROM " << ((memory.GetROMPage() == 3) ? "[ACTIVE]" : "") << NEWLINE;
+        ss << "  Page 3: 48K BASIC ROM " << ((memory.GetROMPage() == 3) ? "[ACTIVE]" : "") << NEWLINE;
     }
 
     ss << NEWLINE;

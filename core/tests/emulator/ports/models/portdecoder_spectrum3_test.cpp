@@ -8,6 +8,8 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/io/fdc/fdd.h"
+#include "emulator/io/fdc/upd765.h"
 #include "emulator/memory/memory.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/ulacontention.h"
@@ -41,6 +43,7 @@ protected:
     }
 
     void Out(uint16_t port, uint8_t value) { _context->pPortDecoder->DecodePortOut(port, value, 0x8000); }
+    uint8_t In(uint16_t port) { return _context->pPortDecoder->DecodePortIn(port, 0x8000); }
     uint16_t RomPage() const { return _context->pMemory->GetROMPage(); }
 };
 
@@ -109,10 +112,55 @@ TEST_F(Spectrum3Paging_Test, Port1FFDRidesItsOwnTtdBlob)
     serializer.TTDLoadState(blob.data());
     EXPECT_EQ(_context->emulatorState.p1FFD, 0x05);
 
-    // The decoder declares the latch, so recording on a +3 must be allowed
+    // The decoder declares the latch and the floppy controller, so recording on a +3 must be allowed
     const std::vector<ttd::PeripheralId> ids = _context->pPortDecoder->GetTTDModelStateIds();
-    ASSERT_EQ(ids.size(), 1u);
+    ASSERT_EQ(ids.size(), 2u);
     EXPECT_EQ(ids[0], ttd::PeripheralId::Plus3Paging);
+    EXPECT_EQ(ids[1], ttd::PeripheralId::Upd765);
     ASSERT_NE(_context->pTimeTravelManager, nullptr);
     EXPECT_TRUE(_context->pTimeTravelManager->StartRecording());
+}
+
+TEST_F(Spectrum3Paging_Test, FloppyControllerAnswersOn2FFDAnd3FFD)
+{
+    Create(RM_128);
+    ASSERT_FALSE(HasFatalFailure());
+    ASSERT_NE(_context->pUPD765, nullptr);
+
+    // Idle: ready for a command byte
+    EXPECT_EQ(In(0x2FFD), UPD765::MSR_RQM);
+
+    // SENSE INTERRUPT STATUS with nothing pending: one result byte #80
+    Out(0x3FFD, UPD765::CMD_SENSE_INTERRUPT_STATUS);
+    EXPECT_EQ(In(0x2FFD), UPD765::MSR_RQM | UPD765::MSR_DIO | UPD765::MSR_CB);
+    EXPECT_EQ(In(0x3FFD), 0x80);
+    EXPECT_EQ(In(0x2FFD), UPD765::MSR_RQM);
+}
+
+TEST_F(Spectrum3Paging_Test, Port1FFDBit3SwitchesTheDriveMotors)
+{
+    Create(RM_128);
+    ASSERT_FALSE(HasFatalFailure());
+    FDD* driveA = _context->coreState.diskDrives[0];
+    ASSERT_NE(driveA, nullptr);
+
+    Out(0x1FFD, 0x08);
+    EXPECT_TRUE(_context->pUPD765->getMotor());
+    EXPECT_TRUE(driveA->getMotor());
+    EXPECT_EQ(RomPage(), 0);  // Bit 3 is not a paging bit
+
+    Out(0x1FFD, 0x00);
+    EXPECT_FALSE(driveA->getMotor());
+}
+
+TEST_F(Spectrum3Paging_Test, OnlyThePlus3HasTheFloppyController)
+{
+    Create(RM_128);
+    ASSERT_FALSE(HasFatalFailure());
+    EXPECT_NE(_context->pUPD765, nullptr);
+
+    std::shared_ptr<Emulator> other = EmulatorManager::GetInstance()->CreateEmulatorWithModel("128k", "128k", LoggerLevel::LogError);
+    ASSERT_TRUE(other);
+    EXPECT_EQ(other->GetContext()->pUPD765, nullptr);
+    EmulatorManager::GetInstance()->RemoveEmulator(other->GetUUID());
 }

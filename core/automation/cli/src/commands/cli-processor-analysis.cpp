@@ -104,7 +104,8 @@ void CLIProcessor::HandleDigest(const ClientSession& session, const std::vector<
     Memory* memory = context->pMemory;
 
     const bool is128K =
-        (config.mem_model == MM_SPECTRUM128 || config.mem_model == MM_PENTAGON || config.mem_model == MM_PLUS3);
+        (config.mem_model == MM_SPECTRUM128 || config.mem_model == MM_PENTAGON || config.mem_model == MM_PLUS2 ||
+         config.mem_model == MM_PLUS2A || config.mem_model == MM_PLUS3);
 
     // Arguments: explicit Z80 range ("digest <start> <end>"), bank list, border toggle
     uint16_t rangeStart = 0;

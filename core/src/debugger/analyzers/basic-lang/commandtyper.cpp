@@ -154,6 +154,11 @@ std::optional<std::pair<ZXKeysEnum, uint8_t>> CommandTyper::NextClearKey(bool& f
     failed = false;
     Memory& memory = *_context->pMemory;
 
+    // The 128K / +3 editor with a report up still holds the old line in its buffer, but the key that clears the
+    // report redraws an empty one and is then taken as an ordinary key: nothing to clear
+    if (_reportShown)
+        return std::nullopt;
+
     if (_result.editor == RomKind::Basic48)
     {
         // 48K editor: E_LINE .. #0D is the line, K_CUR the cursor in it
@@ -170,9 +175,10 @@ std::optional<std::pair<ZXKeysEnum, uint8_t>> CommandTyper::NextClearKey(bool& f
         return std::make_pair(ZXKEY_EXT_DELETE, CODE_DELETE);
     }
 
-    if (_result.editor == RomKind::Editor128 || _result.editor == RomKind::Plus3Rom0)
+    if (_result.editor == RomKind::Editor128 || _result.editor == RomKind::Plus2Rom0 ||
+        _result.editor == RomKind::Plus3Rom0)
     {
-        // The 128K and +3 editors share the bank 7 workspace layout
+        // The 128K, +2 and +3 editors share the bank 7 workspace layout
         const uint8_t* bank7 = memory.RAMPageAddress(7);
 
         // The main menu reads keys in the same loop as the editor: leave it
@@ -317,8 +323,9 @@ bool CommandTyper::ConsumeEvents()
         switch (_step)
         {
             case Step::WaitIdle:
-                if (e.point == Point::EditorIdle)
+                if (e.point == Point::EditorIdle || e.point == Point::ReportShown)
                 {
+                    _reportShown = (e.point == Point::ReportShown);
                     if (_result.editor == RomKind::Unknown)
                     {
                         _result.editor = e.rom;
@@ -544,6 +551,7 @@ void CommandTyper::Step_()
         _clearing = true;
         _clearKeys = 0;
         _sawIdle = false;
+        _reportShown = false;
         _startFrame = _context->emulatorState.frame_counter;
         _step = Step::WaitIdle;
         _stepFrames = 0;

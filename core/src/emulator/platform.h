@@ -307,8 +307,8 @@ enum MEM_MODEL : uint8_t
 {
 	MM_PENTAGON = 0,    	// Pentagon 128/256/512/1024K
 	MM_SPECTRUM48,          // Spectrum 48K
-	MM_SPECTRUM128,         // Spectrum 128K/+2A
-    MM_PLUS3,   			// ZX Spectrum +2B/+3
+	MM_SPECTRUM128,         // Spectrum 128K
+    MM_PLUS3,   			// ZX Spectrum +3 (uPD765A floppy controller)
 	MM_TSL,		    		// TSConf
 	MM_ATM3,    			// ATM Turbo 3.0
 	MM_ATM710,  			// ATM Turbo 7.1.0
@@ -322,6 +322,8 @@ enum MEM_MODEL : uint8_t
 	MM_LSY256,  			// LSY256
 	MM_PHOENIX,             // Phoenix
 	MM_NEXT,                // ZX Next
+	MM_PLUS2,               // ZX Spectrum +2 (grey): 128K hardware, Amstrad ROM
+	MM_PLUS2A,              // ZX Spectrum +2A (black): +3 hardware without the floppy controller
 	N_MM_MODELS             // <End of enumeration>
 };
 
@@ -688,6 +690,10 @@ struct CONFIG
 		uint8_t mem_swap;
 		uint8_t xt_kbd;
 		uint8_t reserved1;
+		// ZX-Evo BaseConf FPGA variant ([EVO] Fpga=): 0 = current "trdemu" tree
+		// (readback on #xxBD, #13BD virtual-drive mask), 1 = frozen legacy tree
+		// (readback on #xxBE, breakpoint writes on #xxBD)
+		uint8_t evo_legacy_fpga;
 	} atm;
 
 	uint8_t use_comp_pal;
@@ -713,6 +719,8 @@ struct CONFIG
     char zx48_rom_path[FILENAME_MAX];
 	char zx128_rom_path[FILENAME_MAX];
     char plus3_rom_path[FILENAME_MAX];
+    char plus2_rom_path[FILENAME_MAX];
+    char plus2a_rom_path[FILENAME_MAX];
 	char pent_rom_path[FILENAME_MAX];
 	char atm1_rom_path[FILENAME_MAX];
 	char atm2_rom_path[FILENAME_MAX];
@@ -1084,6 +1092,7 @@ struct EmulatorState
 		};
 	};
 	uint8_t pBE, pBF;
+	uint8_t evoFddMask;  // ZX-Evo #13BD: bit n = drive n emulated in software (trdemu FPGA only)
 
 	uint8_t flags = 0x00; // Stores execution flags
 	uint8_t border_attr;

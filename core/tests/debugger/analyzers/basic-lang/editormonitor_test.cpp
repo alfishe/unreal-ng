@@ -34,7 +34,7 @@ protected:
     /// The 128K and +3 editors: keywords spelled, tokenised at ENTER
     bool Is128Editor() const
     {
-        return GetParam().find("128BASIC") != std::string::npos || GetParam() == "Plus3-3BASIC";
+        return GetParam().find("128BASIC") != std::string::npos || GetParam().find("-3BASIC") != std::string::npos;
     }
 
     /// Types `key` and waits until the ROM has taken it; returns the code the

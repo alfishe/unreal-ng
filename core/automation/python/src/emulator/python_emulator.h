@@ -128,6 +128,24 @@ namespace PythonBindings
         bool _wasRunning;
     };
 
+    /// General Sound host-port stimulus. These step the card's Z80, so they go
+    /// through the live-input path: applied on the machine's thread at an
+    /// instruction boundary and journaled for TTD replay. True when submitted;
+    /// false when no card is fitted, the byte is out of range or TTD replay
+    /// owns input
+    inline bool SubmitGSInput(Emulator& self, ttd::TTDInputKind kind, int value = 0)
+    {
+        auto* ctx = self.GetContext();
+        if (!ctx || !ctx->pTimeTravelManager || value < 0 || value > 255)
+            return false;
+        if (!ctx->pSoundManager || !ctx->pSoundManager->getGeneralSound())
+            return false;
+        ttd::TTDInputEvent ev;
+        ev.kind = kind;
+        ev.value = static_cast<uint8_t>(value);
+        return ctx->pTimeTravelManager->SubmitLiveInput(ev);
+    }
+
     /// region <Kempston Mouse helpers (automation-interfaces §4.6)>
 
     /// Manager of the emulator, or RuntimeError when there is none
@@ -1595,41 +1613,31 @@ namespace PythonBindings
                 return gs && gs->saveFlash();
             }, "NeoGS: save the reprogrammed flash (loaded in place of the shipped image with [NGS] FlashWrite=persist)")
             .def("gs_reset", [](Emulator& self) {
-                auto* ctx = self.GetContext();
-                GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
-                if (gs) gs->reset();
-            }, "Full power-on reset of the General Sound card")
+                return SubmitGSInput(self, ttd::TTDInputKind::GSReset);
+            }, "Full power-on reset of the General Sound card (live input; True when submitted)")
             .def("gs_reset_card", [](Emulator& self) {
                 // #33 bit7 semantics: CPU/banking/timing only, mailbox survives
-                auto* ctx = self.GetContext();
-                GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
-                if (gs) gs->resetCard();
-            }, "#33 bit7 card reset (CPU/banking/timing only)")
+                return SubmitGSInput(self, ttd::TTDInputKind::GSResetCard);
+            }, "#33 bit7 card reset (CPU/banking/timing only; live input; True when submitted)")
             .def("gs_nmi", [](Emulator& self) {
-                auto* ctx = self.GetContext();
-                GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
-                if (gs) gs->triggerNMI();
-            }, "Pulse the #33 bit6 NMI line")
+                return SubmitGSInput(self, ttd::TTDInputKind::GSNmi);
+            }, "Pulse the #33 bit6 NMI line (live input; True when submitted)")
             .def("gs_send_command", [](Emulator& self, int byte) {
-                auto* ctx = self.GetContext();
-                GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
-                if (gs && byte >= 0 && byte <= 255) gs->sendCommand(static_cast<uint8_t>(byte));
-            }, "Send command byte to GS (OUT #BB semantics)", py::arg("byte"))
+                return SubmitGSInput(self, ttd::TTDInputKind::GSCommand, byte);
+            }, "Send command byte to GS (OUT #BB semantics; live input; True when submitted)", py::arg("byte"))
             .def("gs_send_data", [](Emulator& self, int byte) {
-                auto* ctx = self.GetContext();
-                GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
-                if (gs && byte >= 0 && byte <= 255) gs->sendData(static_cast<uint8_t>(byte));
-            }, "Send data byte to GS (OUT #B3 semantics)", py::arg("byte"))
+                return SubmitGSInput(self, ttd::TTDInputKind::GSData, byte);
+            }, "Send data byte to GS (OUT #B3 semantics; live input; True when submitted)", py::arg("byte"))
             .def("gs_read_data", [](Emulator& self) -> int {
                 auto* ctx = self.GetContext();
                 GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
-                return gs ? gs->readData() : -1;
-            }, "Read data byte from GS (IN #B3 semantics)")
+                return gs ? gs->getDataToHost() : -1;
+            }, "Peek the GS data-to-host byte (IN #B3 value; status bit 7 is not cleared)")
             .def("gs_read_status", [](Emulator& self) -> int {
                 auto* ctx = self.GetContext();
                 GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
-                return gs ? gs->readStatus() : -1;
-            }, "Read GS status register (IN #BB semantics)")
+                return gs ? (gs->getStatusRaw() | 0x7E) : -1;
+            }, "Peek the GS status register (IN #BB value)")
             .def("gs_switch_personality", [](Emulator& self, const std::string& personality) -> bool {
                 // Runtime personality switch (GS card personalities design
                 // §11.3): requested here, applied at the next frame boundary
@@ -3148,6 +3156,7 @@ namespace PythonBindings
             Memory* memory = context->pMemory;
 
             const bool is128K = (config.mem_model == MM_SPECTRUM128 || config.mem_model == MM_PENTAGON ||
+                                 config.mem_model == MM_PLUS2 || config.mem_model == MM_PLUS2A ||
                                  config.mem_model == MM_PLUS3);
 
             // mode: "active" hashes the RAM pages the CURRENT video mode actually

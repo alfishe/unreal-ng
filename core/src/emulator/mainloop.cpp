@@ -602,7 +602,21 @@ void MainLoop::OnFrameEnd()
         // Latch the completed frame into the presentation buffer (tear-free copy
         // for GUI display and capture). Must happen after rendering is finished
         // for both batch and per-t-state (ScreenHQ) modes.
-        _context->pScreen->LatchFramebuffer();
+        //
+        // TTD silent-replay suppression (parent TDD §8.2 + Appendix C, same
+        // contract as the NC_VIDEO_FRAME_REFRESH gate below): a throwaway
+        // replay pass (ReplayWithinFrame / TimeTravelManager::
+        // RenderFrameAccurate) can cross a real frame boundary while
+        // ttdReplayActive is set. Latching there advances the present-slot
+        // ring (Screen::_presentLatchCounter) for a frame nobody asked to
+        // see, desyncing GetDelayedFrame's slot math from the ring's actual
+        // contents — after enough replay-only latches the delayed read lands
+        // on a slot that was never written this session (garbled/blank
+        // display at an arbitrary moment, not a frame boundary). The replay
+        // engine restores the correct visible frame itself after
+        // ExitReplayMode, so the real present-slot ring must not move here.
+        if (!_context->ttdReplayActive)
+            _context->pScreen->LatchFramebuffer();
     }
 
     // Basic sanity check for context corruption

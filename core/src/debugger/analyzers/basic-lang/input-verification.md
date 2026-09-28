@@ -79,6 +79,7 @@ patched; use `#0053` there.
 |:--|:--|:--|
 | `init` | `#3371` | Editor/tokeniser set-up (LDIR); keys pressed now are lost |
 | `idle` | `#3683` | Waiting for a key (spin on FLAGS bit 5, needs EI) |
+| `reportShown` | `#25E3` | A report is on screen: the same spin, but in a loop of its own. It leaves FLAGS bit 5 set, so the key that clears the report is taken again at `#3689` once the editor has redrawn an empty line |
 | `keyTaken` | `#3689` | A = LAST_K |
 | `keyAccepted` | `#265C` | A = accepted code |
 | `charInserted` | `#28F1` | Character key handled (the 128K editor keeps letters) |
@@ -89,6 +90,22 @@ patched; use `#0053` there.
 | `execStart` | `#031E` | JP to LINE-RUN |
 | `report` | `#0321` | Finished or error report |
 
+### 4.2a +2 editor (Amstrad ROM0, `plus2.rom`)
+
+The 128K editor with a longer menu ("Tape Tester"): the routines from `#25xx` up moved by `#1F`-`#26`
+bytes. Each point was found by the 48 bytes around its 128K address (36-47 equal; the rest are
+moved CALL targets). ROM1 is a 48 BASIC (§4.1).
+
+| Point | Address | 128K |
+|:--|:--|:--|
+| `init` | `#3397` | `#3371` |
+| `idle` / `keyTaken` | `#36A9` / `#36AF` | `#3683` / `#3689` |
+| `reportShown` | `#2602` | `#25E3` |
+| `keyAccepted` / `charInserted` | `#267B` / `#2917` | `#265C` / `#28F1` |
+| `rasp` | `#2706` | `#26E7` |
+| `enter` | `#296A` | `#2944` |
+| `syntaxResult` / `lineStored` / `execStart` / `report` | `#02BA` / `#03F7` / `#031E` / `#0321` | same |
+
 ### 4.3 +3 editor (ROM0 + ROM1, v4.0 = `plus3.rom`)
 
 The 128K editor moved to new addresses; lines are checked, stored and run by ROM1.
@@ -96,6 +113,7 @@ The 128K editor moved to new addresses; lines are checked, stored and run by ROM
 | ROM | Point | Address |
 |:--|:--|:--|
 | 0 | `idle` / `keyTaken` | `#1875` / `#187B` |
+| 0 | `reportShown` | `#0693` (the 128K's `#25E3`; the redraw after the key takes about 30 frames) |
 | 0 | `keyAccepted` / `charInserted` | `#0709` / `#09BC` |
 | 0 | `rasp` | `#0794` (the beep; `#0729` is its `CALL NC`) |
 | 0 | `enter` | `#0A0F` |
@@ -138,7 +156,8 @@ Outcome rule: `found` → the command is TR-DOS's (`trdos_command`); `error` bef
 | Pentagon 48 | as 128K ROM1 but `#006D` = `28` |
 | +3 ROM3 | plus `#1349` = `CD 29 3A`, "1982 Amstrad" at `#153A` |
 | 128K ROM0 | `#0000` = `F3 01 2B 69`, `#3683` = `CB 6E 28 FC CB AE 3A 08 5C` (Pentagon: "TR-DO" at `#2789`) |
-| +3 ROM0 v4.0 | `#0000` = `F3 01 03 6C`, `#1875` = `CB 6E 28 FC` (v4.1: `#187A`) |
+| +2 ROM0 (Amstrad) | `#2672` = `31 FF 5B`, `#36A9` = `CB 6E 28 FC CB AE 3A 08 5C` (`#0000` is the 128K's `F3 01 2B 69`) |
+| +3 ROM0 v4.0 | `#0000` = `F3 01 03 6C`, `#1875` = `CB 6E 28 FC` (v4.1: `#187A`). The +2A runs the same ROM (`plus2a.rom` is byte-identical) |
 | TR-DOS | `#3D00` = `00 18 2E`, `#3D2F` = `00 C9`, version text at `#0363` |
 
 The signature is checked once when a ROM page is first seen and cached by its host pointer;
@@ -278,6 +297,7 @@ followed by `LD-BYTES` entry (`#0556`), which proves the command reached the tap
 | TTD replay owns input | `TimeTravelManager::OwnsInput` | `input_locked` |
 | Other keys still queued | `DebugKeyboardManager::IsSequenceRunning` | `keyboard_busy` |
 | Text already on the edit line | 48K: E_LINE / K_CUR; 128K: cursor row of the edit buffer | cleared with verified cursor-right / DELETE; a multi-row 128K line: `line_not_empty` |
+| A report on screen (128K, +3) | `reportShown` instead of `idle` | nothing cleared: the buffer still shows the old line, but the key that clears the report redraws an empty one and is then taken as the first key |
 | 128K main menu shown | `$EC0D` bit 1 | left for 128 BASIC first: cursor to item 1 (`$EC0C`), ENTER, each key verified |
 | Emulator paused / stopped | `TypeAndWait` | `emulator_paused` at once (no frames, no proof) |
 | No outcome in time (API) | `TypeAndWait` deadline | `timed_out`, typing aborted, keys released |

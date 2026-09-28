@@ -67,6 +67,14 @@ public:
 
     /// Classify one I/O cycle by the BaseConf decode rules
     PortArm ClassifyPort(uint16_t port, bool isWrite);
+
+    /// FPGA variant the ROM image expects ([EVO] Fpga=): the frozen legacy
+    /// tree reads the Evo registers on #xxBE, the current "trdemu" tree on #xxBD
+    bool IsLegacyFpga() const;
+
+    /// Evo readback register selected by A12..A8 of #xxBD (trdemu) / #xxBE (legacy):
+    /// fpga/base_trdemu/trunk/z80/zports.v portbdmux, fpga/baseconf/trunk portbemux
+    uint8_t ReadEvoRegister(uint8_t index);
     /// endregion </Types>
 
     /// region <Fields>
@@ -124,7 +132,7 @@ protected:
     void Port_37F7_Out(uint16_t port, uint8_t value, uint16_t pc);
     void Port_BF_Out(uint16_t port, uint8_t value, uint16_t pc);
     void Port_BE_Out(uint16_t port, uint8_t value, uint16_t pc);
-    uint8_t Port_BE_In(uint8_t portHi);  // selected by A15..A8 of port #xBE
+    void Port_BD_Out(uint16_t port, uint8_t value);
 
     // 7FFD lock honored only while EFF7 bit 2 (lockmem) keeps the manager in
     // 128K mode (xpeccy evoOut7FFD)

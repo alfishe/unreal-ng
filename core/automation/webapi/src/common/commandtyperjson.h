@@ -22,8 +22,10 @@ inline Json::Value CommandTyperResultToJson(const CommandTyper::Result& result, 
     json["editor"] = ROMControlPoints::RomName(result.editor);
     json["basic_mode"] = result.trdos ? "trdos"
                          : result.editor == RomKind::Basic48   ? "48K"
-                         : result.editor == RomKind::Editor128 ? "128K"
-                                                               : "unknown";
+                         : (result.editor == RomKind::Editor128 || result.editor == RomKind::Plus2Rom0 ||
+                            result.editor == RomKind::Plus3Rom0)
+                             ? "128K"
+                             : "unknown";
     json["err_nr"] = result.errNr;
     json["report"] = static_cast<uint8_t>(result.errNr + 1);
     json["bytes_typed"] = static_cast<Json::UInt64>(result.bytesTyped);

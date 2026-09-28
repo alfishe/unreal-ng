@@ -5,7 +5,9 @@
 #include "portdecoder_spectrum3.h"
 
 #include "common/collectionhelper.h"
+#include "debugger/ttd/plus3/ttdplus3fdc.h"
 #include "debugger/ttd/plus3/ttdplus3paging.h"
+#include "emulator/io/fdc/upd765.h"
 
 /// region <Constructors / Destructors>
 
@@ -96,6 +98,21 @@ uint8_t PortDecoder_Spectrum3::DecodePortIn(uint16_t port, uint16_t pc)
         result = PeripheralPortIn(0xBFFD);
         disp.decodedPort = 0xBFFD;
     }
+    // uPD765A: #2FFD main status, #3FFD data
+    else if (_context->pUPD765 != nullptr && IsPort_2FFD(port))
+    {
+        result = _context->pUPD765->readMainStatus();
+        _lastPortDecoded = true;
+        disp.decodedPort = 0x2FFD;
+        disp.wasHandledInline = true;
+    }
+    else if (_context->pUPD765 != nullptr && IsPort_3FFD(port))
+    {
+        result = _context->pUPD765->readData();
+        _lastPortDecoded = true;
+        disp.decodedPort = 0x3FFD;
+        disp.wasHandledInline = true;
+    }
     else if (IsPort_FE(port))
     {
         // Call default implementation
@@ -180,6 +197,15 @@ void PortDecoder_Spectrum3::DecodePortOut(uint16_t port, uint8_t value, uint16_t
     {
         Port_1FFD(value, pc);
         disp.decodedPort = 0x1FFD;
+        disp.wasDecoded = true;
+        disp.wasHandledInline = true;
+    }
+
+    // uPD765A data register (#2FFD, the status register, is read-only)
+    if (_context->pUPD765 != nullptr && IsPort_3FFD(port))
+    {
+        _context->pUPD765->writeData(value);
+        disp.decodedPort = 0x3FFD;
         disp.wasDecoded = true;
         disp.wasHandledInline = true;
     }
@@ -291,6 +317,36 @@ bool PortDecoder_Spectrum3::IsPort_1FFD(uint16_t port)
 
     return result;
 }
+
+bool PortDecoder_Spectrum3::IsPort_2FFD(uint16_t port)
+{
+    //    ZX Spectrum +3: uPD765A main status register (read)
+    //    Match pattern: 0010xxxx xxxxxx0x
+    //    Full pattern:  00101111 11111101
+    static const uint16_t port_2FFD_full    = 0b0010'1111'1111'1101;
+    static const uint16_t port_2FFD_mask    = 0b1111'0000'0000'0010;
+    static const uint16_t port_2FFD_match   = 0b0010'0000'0000'0000;
+
+    // Compile-time check
+    static_assert((port_2FFD_full & port_2FFD_mask) == port_2FFD_match && "Mask pattern incorrect");
+
+    return (port & port_2FFD_mask) == port_2FFD_match;
+}
+
+bool PortDecoder_Spectrum3::IsPort_3FFD(uint16_t port)
+{
+    //    ZX Spectrum +3: uPD765A data register (read / write)
+    //    Match pattern: 0011xxxx xxxxxx0x
+    //    Full pattern:  00111111 11111101
+    static const uint16_t port_3FFD_full    = 0b0011'1111'1111'1101;
+    static const uint16_t port_3FFD_mask    = 0b1111'0000'0000'0010;
+    static const uint16_t port_3FFD_match   = 0b0011'0000'0000'0000;
+
+    // Compile-time check
+    static_assert((port_3FFD_full & port_3FFD_mask) == port_3FFD_match && "Mask pattern incorrect");
+
+    return (port & port_3FFD_mask) == port_3FFD_match;
+}
 /// endregion <Helper methods>
 
 
@@ -337,6 +393,10 @@ void PortDecoder_Spectrum3::Port_1FFD(uint8_t value, uint16_t pc)
     (void)pc;
     EmulatorState& state = _context->emulatorState;
 
+    // Bit 3 switches the motor of both drives, locked or not
+    if (_context->pUPD765 != nullptr)
+        _context->pUPD765->setMotor((value & 0b0000'1000) != 0);
+
     // With #7FFD locked the memory bits stay as they are; motor and strobe
     // still follow the port (MAME specpls3; xpeccy-plus and ZXMAK2 differ)
     if (state.p7FFD & 0b0010'0000)
@@ -382,6 +442,8 @@ void PortDecoder_Spectrum3::UpdateModelMemoryBanks()
 std::vector<ttd::PeripheralId> PortDecoder_Spectrum3::GetTTDModelStateIds() const
 {
     // #1FFD is +2A/+3-specific: not in the model-agnostic TTDChipsetState
+    if (_context->pUPD765 != nullptr)
+        return { ttd::PeripheralId::Plus3Paging, ttd::PeripheralId::Upd765 };
     return { ttd::PeripheralId::Plus3Paging };
 }
 
@@ -389,5 +451,7 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Spectrum3::Create
 {
     std::vector<std::unique_ptr<ttd::TTDSerializable>> serializers;
     serializers.push_back(std::make_unique<ttd::TTDPlus3Paging>(_context));
+    if (_context->pUPD765 != nullptr)
+        serializers.push_back(std::make_unique<ttd::TTDPlus3Fdc>(_context));
     return serializers;
 }
