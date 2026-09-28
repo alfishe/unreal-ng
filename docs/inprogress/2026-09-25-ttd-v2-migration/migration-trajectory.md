@@ -77,7 +77,21 @@ tests that would catch regressions.
 - **Suspected bugs, each first reproduced by a test**: stale `_prevPageCache`
   after resume (B1), stale write journal after load (B2), empty-journal find-last
   (B3), non-atomic failed load (B5), unbounded sizes in the journal/coverage
-  loaders.
+  loaders. **Done** in `a2d265df` + `86813dcb` (current-state §10). B4 (turbo
+  timestamps) was confirmed on the way and stays planned in V3.
+- **Recommended later** (write-journal follow-ups; none blocks V1):
+  - *Journal coverage window* (V5) instead of the all-or-nothing "gapless"
+    flag.
+  - Report journal completeness in the session status (Qt, WebAPI
+    `/ttd/status`, MCP, CLI, Lua, Python), so a user sees why a search replays.
+  - Warn in the UI/API when journaling, TTD or debug mode is switched off
+    during a recording: it silently degrades every later search to replay.
+  - Free the pre-allocated 64 MB journal when journaling is switched off while
+    no session exists (today only disabling the whole TTD feature frees it).
+  - Fix B4 before relying on find-last on turbo machines (ATM3, Profi,
+    Scorpion turbo, later TSConf): timestamps from the frame-relative 3.5 MHz
+    tact (descaled by `hw_turbo_shift_applied`), a monotonicity assert, and an
+    ATM3 live-vs-reloaded find-last test.
 - **Feature-flag side effect** (perf review F3): enabling the `timetravel`
   feature without recording disables fast tape / fast disk; move the override to
   recording start ([requirements.md](requirements.md) FR-18). **Done** in `005771c8`: only a
@@ -205,6 +219,20 @@ frames fail with a clear message.
 - `ttd.ksy` and the Python analyzer rewritten for chunks (unknown streams
   skipped per the decided rules), `validate` checks exactly what the C++ reader
   checks and decodes every stream.
+- **Write-journal coverage window** (recommended with the format cut). The
+  journal records the `globalT` intervals it was actually writing - from
+  recording start or journal switch-on to switch-off, plus the lower edge left
+  by ring wrap-around - and the file stores them instead of the single
+  "complete" flag (dump flag bit 4). find-last then:
+  - answers from the journal inside a covered interval (hit, or a trusted "no
+    match" for that part of the query);
+  - replays only the uncovered parts (before switch-on, after switch-off, older
+    than the wrapped ring edge);
+  - so switching journaling back on mid-session is useful again, and a wrapped
+    ring no longer forces a full replay of the whole history.
+  Keep the V0 journal tests (`ttdmanager_test.cpp` TimeTravelManagerJournal,
+  `ttdwritejournale2e_test.cpp`, `ttddumpformat_test.cpp`) and add on/off/on
+  and ring-wrap cases.
 - Fixtures re-recorded; `testdata/ttd/README.md` updated.
 - **From here on the format is versioned** under the decided compatibility
   rules; no more "amend in place".

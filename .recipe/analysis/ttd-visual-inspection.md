@@ -27,10 +27,11 @@ memory-corruption-hunt variant of this same idea, `find-last` +
 for "let me just look around" rather than "who wrote this address."
 
 > **How to use the sections:** [MCP](#mcp-preferred) is preferred —
-> `time_travel` bookmarks, `inspect_state` and `capture_media` cover
-> inspection, `invoke_api` the TTD transport. Use [WebAPI](#webapi) only
-> inside host-side Python/bash pipelines or when MCP is unavailable
-> (policy: [_common/transports.md](../_common/transports.md)).
+> `time_travel` records and moves through history, `inspect_state` and
+> `capture_media` inspect the chosen point (`invoke_api` only for raw
+> memory reads). Use [WebAPI](#webapi) only inside host-side Python/bash
+> pipelines or when MCP is unavailable (policy:
+> [_common/transports.md](../_common/transports.md)).
 
 ## MCP (preferred)
 
@@ -38,23 +39,23 @@ for "let me just look around" rather than "who wrote this address."
 # 1. record through the section you care about
 emulator_manage    {"action":"create","model":"ATM710","ram_size":1024}
 load_software      {"path":"scratch/demo.trd","autostart":true}
-invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/ttd/start","body":{}}
+time_travel        {"action":"start"}
 control_execution  {"action":"run_frames","frames":2000}   # or resume+poll until the symptom
-invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/ttd/stop"}   # -> "detached", now scrubbable
+time_travel        {"action":"stop"}                       # -> "idle" with history, now scrubbable
 
 # 2. bookmark anything worth returning to by name
 time_travel        {"action":"bookmark_add","label":"glitch"}
 
 # 3. seek to an exact frame (absolute, or by bookmark) and inspect it
-invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/ttd/seek","body":{"frame":3520}}
-inspect_state      {"aspects":["registers","video","screen_ocr"]}
+time_travel        {"action":"seek","frame":3520}         # or {"action":"seek_bookmark","label":"glitch"}
+inspect_state      {"aspects":["registers","video","screen_ocr","ttd"]}
 capture_media      {"action":"screenshot","mode":"full","format":"png",
                    "filename":"scratch/frame-3520.png"}   # server-side save: ../media/agent-screenshot-view.md
 
 # 4. step one frame/instruction at a time around that point
-invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/ttd/step-back"}
-invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/ttd/step-forward"}
-invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/ttd/step-instruction","body":{"dir":"back"}}
+time_travel        {"action":"step_back_frame"}
+time_travel        {"action":"step_forward_frame"}
+time_travel        {"action":"step_back_instruction"}
 
 # 5. dump memory at this exact frame for byte-level checks
 invoke_api         {"method":"GET","path":"/api/v1/emulator/{id}/memory/read/0xC000",
@@ -102,6 +103,12 @@ curl -s "$BASE/emulator/$EMU_ID/memory/read/0xC000?length=256&format=full" | jq 
 
 - `ttd/seek`/`step-*` while `state: "recording"` → `409`. Call `ttd/stop`
   first (history is retained, not discarded).
+- Load the software **before** `ttd/start`: a snapshot, tape or disk load
+  (and disk create, ROM reload) wipes the recorded history. A reset does
+  not — it stops the recording and keeps it.
+- While recording, the host speed is held at 1x and turbo / fast tape /
+  fast disk are off, so a recording plays at real speed. See
+  [command-interface.md → TTD Session Rules](../../docs/emulator/design/control-interfaces/command-interface.md#ttd-session-rules).
 - Development mode (`{}`, the default on `ttd/start`) costs ~64MB
   journal + page store for a long capture — fine for "record a few
   thousand frames to inspect a glitch," not for hours-long sessions.

@@ -128,14 +128,17 @@ types:
           bookmarks section follows the coverage index (TD-4 agent
           bookmarks: u32 count, then per bookmark u64 frame, u32 tInFrame,
           u8 label_len, label bytes — labels are unique, non-empty and at
-          most 63 chars).
+          most 63 chars). Bit 4 = the write journal holds every write
+          of the session (journaling never paused, the ring never
+          overwrote a record): only then may a reader answer write/port
+          reverse queries from it instead of replaying.
 
           The flag-gated trailing sections (write journal, coverage index,
           bookmarks) are not yet modeled in this schema's top-level seq;
           the C++ writer/reader pair (TimeTravelManager::SerializeSession /
           DeserializeSession) is authoritative for their layouts, and a
           reader that stops after `checkpoints` gets a complete session
-          minus those accelerators/annotations. Bits 4-15 reserved
+          minus those accelerators/annotations. Bits 5-15 reserved
           (must be 0).
       - id: model_id
         type: u1

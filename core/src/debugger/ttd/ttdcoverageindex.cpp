@@ -561,11 +561,16 @@ bool TTDCoverageIndex::Deserialize(std::istream& in)
                 return false;
             }
 
-            b.compressed.assign(compSize, 0);
-            if (compSize != 0)
+            // Sizes come from the file: a block spans at most kFramesPerBlock
+            // frames, the payload is read as it arrives, and the raw size must be
+            // the one the zstd frame declares - so a corrupt field can neither
+            // request gigabytes here nor at the block's first decompression
+            if (b.frameCount == 0 || b.frameCount > kFramesPerBlock || b.rawSize < b.frameCount ||
+                !codec::ReadExact(in, compSize, b.compressed) ||
+                codec::DeclaredContentSize(b.compressed) != b.rawSize)
             {
-                in.read(reinterpret_cast<char*>(b.compressed.data()), compSize);
-                if (!in) { Clear(); return false; }
+                Clear();
+                return false;
             }
 
             _rawBytes[k] += b.rawSize;
