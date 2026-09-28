@@ -143,7 +143,7 @@ the internals).
 | `tinframe` | T-states (CPU clock ticks) inside a frame. `frame 12 t=500` is a point in time. |
 | checkpoint | A saved machine state taken at a frame boundary while recording. Moving through history restores the nearest checkpoint and replays forward from it. |
 | session state | `idle` (not recording; history may or may not exist), `recording`, `detached` (the machine sits at a point in the recorded past and is paused). |
-| marker | A replay barrier: something the recording cannot reproduce happened here (tape play/stop, a disk sector write, a debugger memory edit, a reset). Seek and backward searches stop at it and say so. |
+| marker | A replay barrier: something the recording cannot reproduce happened here (tape play/stop, a disk sector write, a memory edit made by a tool while recording). A reset writes no marker: it stops the recording instead (the `hardware_reset` kind is reserved and never written). Seek and backward searches stop at a marker and say so. |
 | bookmark | Your own label on a point in time. Advisory only, never a barrier. |
 | write journal | A log of every memory write made while recording (on by default). It makes `find_last` for writes instant; without it the search replays history. It is used only when it holds every write of the session (never paused mid-recording); a gap sends the search to replay, which is slower but always right. |
 
@@ -182,7 +182,8 @@ tells you to call `stop` first. `find_last` reports where the access happened;
   tape and fast disk loading are also off, both while recording and while a
   stopped or loaded session is replayed. The previous settings come back when
   the session returns to `idle`. The emulated machine's own hardware turbo
-  (ATM, Scorpion) is not affected.
+  (ATM, Scorpion) is not affected. Feature lists show a held feature as off,
+  and switching it on answers HTTP 409.
 - **These wipe the history:** loading a snapshot, tape or disk (or creating a
   disk), reloading the ROM, changing the speed on a stopped session that still
   holds history, and `invalidate`. Load your software *before* `start`.
