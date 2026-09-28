@@ -192,6 +192,7 @@ PERIPHERAL_ID_NAMES = {
     12: "NeoGS",
     13: "Plus3Paging",
     14: "Upd765",
+    15: "EvoSdCard",
 }
 
 # Mirrors ttd::PeripheralBlobHeader (ttdperipheralregistry.h): peripheralId(u8)
