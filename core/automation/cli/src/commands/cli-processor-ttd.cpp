@@ -818,20 +818,19 @@ void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorConte
         else if (tok == "--before-frame" && i + 1 < args.size())
         {
             uint64_t f = std::stoull(args[++i]);
-            // Will be combined with before-tin below; store frame in upper bits
-            const uint32_t frameT = context->config.frame;
+            // Combined with --before-tin in either order (TTD time: GlobalT)
+            const uint32_t frameSpan = mgr->FrameSpan();
             uint32_t tin = 0;
-            // If before-tin was already set, preserve it
             if (q.beforeGlobalT != UINT64_MAX)
-                tin = static_cast<uint32_t>(q.beforeGlobalT % frameT);
-            q.beforeGlobalT = f * frameT + tin;
+                tin = static_cast<uint32_t>(q.beforeGlobalT % frameSpan);
+            q.beforeGlobalT = mgr->GlobalT({f, tin});
         }
         else if (tok == "--before-tin" && i + 1 < args.size())
         {
             uint32_t tin = static_cast<uint32_t>(std::stoul(args[++i]));
-            const uint32_t frameT = context->config.frame;
-            uint64_t frame = (q.beforeGlobalT != UINT64_MAX) ? (q.beforeGlobalT / frameT) : 0;
-            q.beforeGlobalT = frame * frameT + tin;
+            const uint32_t frameSpan = mgr->FrameSpan();
+            uint64_t frame = (q.beforeGlobalT != UINT64_MAX) ? (q.beforeGlobalT / frameSpan) : 0;
+            q.beforeGlobalT = mgr->GlobalT({frame, tin});
         }
     }
 

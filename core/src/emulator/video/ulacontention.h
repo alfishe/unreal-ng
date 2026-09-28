@@ -50,13 +50,15 @@ enum class ContentionRule : uint8_t
 const char* ContentionRuleName(ContentionRule rule);
 
 /// Kinds of bus cycles the contention statistics count (the unreal-z80 wait-hook vocabulary, reduced to what
-/// the core distinguishes): bytes read at PC (opcode, prefixes, operands), data reads, data writes, ports
+/// the core distinguishes): bytes read at PC (opcode, prefixes, operands), data reads, data writes, ports,
+/// internal cycles
 enum ContentionAccessKind : uint8_t
 {
     CONTENTION_FETCH = 0,
     CONTENTION_READ,
     CONTENTION_WRITE,
     CONTENTION_IO,
+    CONTENTION_IDLE,  // internal (no-MREQ) T-states with a contended address on the bus (Ferranti ULA only)
     CONTENTION_KINDS
 };
 

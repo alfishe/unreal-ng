@@ -4,8 +4,11 @@ Standalone Z80 CPU library, used as the coprocessor engine of the General
 Sound (GS) sound card device (`SoundChip_GeneralSound`). It replaced the
 vendored z80ex.
 
-- **Source:** unreal-z80, commit `0001920` (library version 0.4.0,
-  `Z80CpuVersion()`), MIT license - see `LICENSE`.
+- **Source:** unreal-z80, commit `a0433ec` (library version 0.5.0,
+  `Z80CpuVersion()`), MIT license - see `LICENSE`. 0.5.0 reports internal
+  (no-MREQ) T-states to the contention hook (`Z80CpuAccessInternal`) and
+  reads the DDCB operation byte as an operand, not an M1; the General Sound
+  host installs no hook, so its timing is unchanged.
 - **Origin:** extracted from this emulator's own Z80 core
   (`core/src/emulator/cpu`), with the verification the core lacks: the ZEX
   exerciser family and Patrik Rak's z80test pass, a lockstep differential

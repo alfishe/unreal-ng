@@ -2872,12 +2872,8 @@ namespace PythonBindings
                     q.hasPhysPageFilter = true;
                 }
 
-                const uint32_t frameT = ctx->config.frame;
                 if (!beforeFrameObj.is_none())
-                {
-                    uint64_t f = beforeFrameObj.cast<uint64_t>();
-                    q.beforeGlobalT = f * frameT + beforeTin;
-                }
+                    q.beforeGlobalT = ctx->pTimeTravelManager->GlobalT({beforeFrameObj.cast<uint64_t>(), beforeTin});
 
                 ttd::TTDExternalEvent marker{};
                 ttd::TTDSearchWindow window;

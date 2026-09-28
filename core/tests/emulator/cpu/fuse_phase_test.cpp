@@ -99,6 +99,7 @@ protected:
             issues.push_back("total " + std::to_string(total) + " != " + std::to_string(tc.expTotal));
 
         FuseVectors::CompareTrace(_trace, tc, issues);
+        FuseVectors::CompareIdle(_trace, tc, issues);
         FuseVectors::CompareFinalState(_z80, tc, skipAFCompare, issues);
 
         return issues;

@@ -82,6 +82,15 @@ constexpr uint16_t kFlagsHasBookmarks = 0x0008;
 /// journal section, not a section of its own.
 constexpr uint16_t kFlagsWriteJournalComplete = 0x0010;
 
+/// Bit 5 of header.flags — every in-frame position (checkpoints, markers,
+/// input events, bookmarks, journal globalT) counts T-states at the model's
+/// TOP CPU clock (EmulatorState::ttd_clock_units per base T-state; B4). Older
+/// files counted at the clock running at the time, which repeats values
+/// after a mid-frame hardware turbo switch; on models without a hardware
+/// turbo both conventions are the same number, so only turbo models refuse
+/// a file without the bit.
+constexpr uint16_t kFlagsTopClockTime = 0x0020;
+
 // ---------------------------------------------------------------------------
 // Page slot encodings (Encoding enum in TTDCodecPageStore)
 // ---------------------------------------------------------------------------

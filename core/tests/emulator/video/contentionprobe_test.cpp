@@ -130,7 +130,7 @@ private:
 /// Test 1 of the suite (JR; INC BC; LD BC,(nn); LD (nn),BC). Runs the real program to its verdict: about 600
 /// frames of a 48K (the program's own loop counting), well over the 50 ms budget, and the one fast point
 /// of the emulated-side suite in the default run
-TEST(ContentionProbe_Test, ButlerTest1MovesTowardsTheHardware)
+TEST(ContentionProbe_Test, ButlerTest1MatchesTheHardware)
 {
     std::map<bool, ButlerResult> contended;
     for (bool contention : { true, false })
@@ -140,7 +140,8 @@ TEST(ContentionProbe_Test, ButlerTest1MovesTowardsTheHardware)
         ASSERT_TRUE(runner.RunUntilScreenShows("choose test", 2000)) << runner.Screen();
         runner.Type(ZXKEY_1);
         runner.Type(ZXKEY_ENTER);
-        ASSERT_TRUE(runner.RunUntilScreenShows("Press any key", 3000)) << runner.Screen();
+        // "Press any key for next test." after a failure, "All Tests Complete 100% Pass / Press any Key." after a pass
+        ASSERT_TRUE(runner.RunUntilScreenShows("ress any", 3000)) << runner.Screen();
 
         const auto results = ParseButlerScreen(runner.Screen());
         ASSERT_TRUE(results.count({ 1, "Uncontended" }) && results.count({ 1, "Contended" })) << runner.Screen();
@@ -150,11 +151,12 @@ TEST(ContentionProbe_Test, ButlerTest1MovesTowardsTheHardware)
         contended[contention] = results.at({ 1, "Contended" });
     }
 
-    // Hardware: loop 1014. Without contention the contended run is as fast as the uncontended one (1201);
-    // phase 1 (fetch and data waits) brings it to 1036; the rest is the internal cycles of JR and INC BC
+    // Hardware: R=74 loop 1014 SP 23296. Without contention the contended run is as fast as the uncontended
+    // one (1201); phase 1 (fetch and data waits) brought it to 1036, phase 2 (the internal cycles of JR and
+    // INC BC) to the hardware value
     EXPECT_EQ(contended[false].loop, 1201) << "switch off: nothing waits";
-    EXPECT_EQ(contended[true].loop, 1036) << "phase 1 (M1 and data contention); hardware 1014";
-    EXPECT_FALSE(contended[true].pass) << "passes only with phase 2 (internal cycles)";
+    EXPECT_EQ(contended[true].loop, 1014) << "the hardware value";
+    EXPECT_TRUE(contended[true].pass);
 }
 
 /// The whole suite, both switch settings: ~7000 frames per run (about 3 s each) - opt-in with
@@ -187,10 +189,10 @@ TEST_P(ContentionProbeSweep_Test, ButlerFullSuite)
             runner.Type(ZXKEY_ENTER);
             continue;
         }
-        if (screen != previous && screen.find("Press any key") != std::string::npos)
+        for (const auto& [key, result] : ParseButlerScreen(screen))
+            all.emplace(key, result);  // every poll: passing tests do not stop, their lines scroll on
+        if (screen != previous && screen.find("ress any") != std::string::npos)
         {
-            for (const auto& [key, result] : ParseButlerScreen(screen))
-                all.emplace(key, result);
             previous = screen;
             runner.Type(ZXKEY_ENTER);
             lastPress = frame;

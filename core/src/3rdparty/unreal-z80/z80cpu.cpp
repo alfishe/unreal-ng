@@ -15,7 +15,7 @@
 
 const char* Z80CpuVersion(void)
 {
-    return "0.4.0";
+    return "0.5.0";
 }
 
 // Null-bus stubs: an unwired callback is a stub, never a null pointer, so

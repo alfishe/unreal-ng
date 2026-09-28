@@ -299,7 +299,7 @@ void TimeTravelManager::StopRecording()
     if (_context)
     {
         const TTDTimePoint stoppedAt = CurrentPosition();
-        _recordingStoppedAtT = stoppedAt.frame * _context->config.frame + stoppedAt.tInFrame;
+        _recordingStoppedAtT = GlobalT(stoppedAt);
     }
     SetState(TTDSessionState::Idle);
     MLOGINFO("TimeTravelManager::StopRecording — timeline retained with %zu checkpoints",
@@ -1635,7 +1635,7 @@ void TimeTravelManager::RecordInputEvent(uint8_t key, bool pressed)
 
     TTDInputEvent ev;
     ev.time.frame    = st.frame_counter;
-    ev.time.tInFrame = z80 ? z80->t : 0;
+    ev.time.tInFrame = z80 ? st.TtdTInFrame(z80->t) : 0;
     ev.kind          = TTDInputKind::Key;
     ev.key           = key;
     ev.pressed       = pressed;
@@ -1649,7 +1649,7 @@ static TTDTimePoint InputEventTimeNow(EmulatorContext* context)
     const EmulatorState& st = context->emulatorState;
     Z80* z80 = context->pCore ? context->pCore->GetZ80() : nullptr;
     time.frame    = st.frame_counter;
-    time.tInFrame = z80 ? z80->t : 0;
+    time.tInFrame = z80 ? st.TtdTInFrame(z80->t) : 0;
     return time;
 }
 
@@ -1872,7 +1872,7 @@ void TimeTravelManager::RecordExternalEvent(TTDExternalEventKind kind, const cha
 
     TTDExternalEvent ev;
     ev.time.frame    = st.frame_counter;
-    ev.time.tInFrame = z80 ? z80->t : 0;
+    ev.time.tInFrame = z80 ? st.TtdTInFrame(z80->t) : 0;
     ev.kind          = kind;
 
     // Truncate-and-copy the reason string into the inline buffer. strncpy
@@ -1916,9 +1916,40 @@ TTDTimePoint TimeTravelManager::CurrentPosition() const
     // (MainLoop::OnFrameEnd does `t_states += config.frame`), so its modulo
     // is always 0. z80.t is the per-frame counter that AdjustFrameCounters
     // resets at each boundary.
-    Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
-    pos.tInFrame = z80 ? z80->t : 0;
+    pos.tInFrame = TInFrameNow();
     return pos;
+}
+
+uint32_t TimeTravelManager::TInFrameNow() const
+{
+    if (!_context)
+        return 0;
+    const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    return z80 ? _context->emulatorState.TtdTInFrame(z80->t) : 0;
+}
+
+uint32_t TimeTravelManager::FrameSpan() const
+{
+    if (!_context)
+        return 69888;
+    const uint8_t units = _context->emulatorState.ttd_clock_units;
+    return _context->config.frame * (units ? units : 1);
+}
+
+void TimeTravelManager::RunToTInFrame(uint32_t targetTInFrame)
+{
+    if (!_context || !_context->pEmulator)
+        return;
+    const uint64_t frame = _context->emulatorState.frame_counter;
+    for (uint32_t now = TInFrameNow(); _context->emulatorState.frame_counter == frame && now < targetTInFrame;)
+    {
+        const uint32_t perT = _context->emulatorState.TtdUnitsPerTState();
+        _context->pEmulator->RunTStates((targetTInFrame - now + perT - 1) / perT, /*skipBreakpoints=*/true);
+        const uint32_t next = TInFrameNow();
+        if (_context->emulatorState.frame_counter == frame && next <= now)
+            break;  // no progress - never spin
+        now = next;
+    }
 }
 
 TTDTimePoint TimeTravelManager::SessionEndPosition() const
@@ -2282,17 +2313,16 @@ void TimeTravelManager::ReplayWithinFrame(uint64_t targetFrame, uint32_t targetT
         return;
     }
 
-    // Defensive: clamp targetTInFrame to the per-frame budget. If a caller
-    // hands us something larger we'd loop forever inside RunTStates' frame
-    // boundary handler.
-    const uint32_t frameT = _context->config.frame;
-    if (targetTInFrame > frameT)
+    // Defensive: clamp targetTInFrame to the frame (in TTD time units: the
+    // frame at the model's top clock, whatever turbo runs now - B4).
+    const uint32_t frameSpan = FrameSpan();
+    if (targetTInFrame > frameSpan)
     {
         MLOGWARNING("TimeTravelManager::ReplayWithinFrame — targetTInFrame=%u > "
-                    "config.frame=%u, clamping",
+                    "frame span=%u, clamping",
                     static_cast<unsigned>(targetTInFrame),
-                    static_cast<unsigned>(frameT));
-        targetTInFrame = frameT;
+                    static_cast<unsigned>(frameSpan));
+        targetTInFrame = frameSpan;
     }
 
     // ------------------------------------------------------------------
@@ -2309,11 +2339,7 @@ void TimeTravelManager::ReplayWithinFrame(uint64_t targetFrame, uint32_t targetT
     // was recorded at - the same path a Detached forward run uses.
     // ------------------------------------------------------------------
     // The CPU resumes at the checkpoint's overshoot, not at 0
-    const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
-    const uint32_t currentTInFrame = z80 ? static_cast<uint32_t>(z80->t) : 0;
-
-    if (currentTInFrame < targetTInFrame)
-        _context->pEmulator->RunTStates(targetTInFrame - currentTInFrame, /*skipBreakpoints=*/true);
+    RunToTInFrame(targetTInFrame);
 
     ExitReplayMode();
 }
@@ -2343,7 +2369,7 @@ void TimeTravelManager::ComposeDisplay(bool frameTarget)
         return;
 
     const uint64_t frame = _context->emulatorState.frame_counter;
-    const uint32_t tInFrame = static_cast<uint32_t>(z80->t);
+    const uint32_t tInFrame = TInFrameNow();
 
     // Last checkpoint at or before `f`; nullptr when `f` precedes the session.
     auto checkpointAtOrBefore = [this](uint64_t f) -> const TTDCheckpoint* {
@@ -2413,8 +2439,8 @@ void TimeTravelManager::ComposeDisplay(bool frameTarget)
         }
 
         // Then what the beam draws in frame f up to the position.
-        if (_context->emulatorState.frame_counter == frame && z80->t < tInFrame)
-            _context->pEmulator->RunTStates(tInFrame - static_cast<uint32_t>(z80->t), /*skipBreakpoints=*/true);
+        if (_context->emulatorState.frame_counter == frame)
+            RunToTInFrame(tInFrame);
         _context->pScreen->UpdateScreen();
     }
 
@@ -2596,9 +2622,7 @@ bool TimeTravelManager::ResumeRecordingFrom(const TTDTimePoint& from)
     // drop records strictly past it. Records exactly at it are kept.
     if (_writeJournal)
     {
-        const uint32_t frameT = _context ? _context->config.frame : 69888;
-        const uint64_t globalT = cut.frame * frameT + cut.tInFrame;
-        _writeJournal->DropAfter(globalT);
+        _writeJournal->DropAfter(GlobalT(cut));
     }
 
     // ------------------------------------------------------------------
@@ -2689,7 +2713,7 @@ bool TimeTravelManager::ResumeRecordingLive()
     // to the journal: from here on it cannot vouch for the whole session
     if (!_enableWriteJournal)
         MarkJournalGap("recording resumed with the write journal off");
-    else if (present.frame * _context->config.frame + present.tInFrame != _recordingStoppedAtT)
+    else if (GlobalT(present) != _recordingStoppedAtT)
         MarkJournalGap("the machine ran unrecorded between the stop and the resume");
 
     SetState(TTDSessionState::Recording);
@@ -2912,7 +2936,7 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
 
     // Only set journal flag if we actually have journal entries to write
     const bool hasJournalData = _enableWriteJournal && _writeJournal && !_writeJournal->IsEmpty();
-    uint16_t flags = ttd::dump::kFlagsLittleEndian;
+    uint16_t flags = ttd::dump::kFlagsLittleEndian | ttd::dump::kFlagsTopClockTime;
     if (hasJournalData)
         flags |= ttd::dump::kFlagsHasWriteJournal;
     if (hasJournalData && _journalGapless && !_writeJournal->HasEvictedRecords())
@@ -3281,6 +3305,12 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
             err = "model mismatch: file was recorded on model id " + std::to_string(modelId) +
                   ", this emulator is model id " + std::to_string(currentModel) +
                   " - load it into an instance of the recorded model";
+            return false;
+        }
+        if (_context->emulatorState.ttd_clock_units > 1 && (flags & ttd::dump::kFlagsTopClockTime) == 0)
+        {
+            err = "this session was recorded before TTD time counted at the top CPU clock: on a model with a "
+                  "hardware turbo its positions are ambiguous - record it again";
             return false;
         }
     }
@@ -3852,12 +3882,8 @@ void TimeTravelManager::RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint8_t
     if (!_enableWriteJournal)
         return;
 
-    const uint32_t frameT = _context->config.frame;
-    Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
-    const uint32_t tInFrame = z80 ? z80->t : 0;
-
     TTDWriteRecord rec{};
-    rec.globalT  = static_cast<uint64_t>(_context->emulatorState.frame_counter) * frameT + tInFrame;
+    rec.globalT  = GlobalT({_context->emulatorState.frame_counter, TInFrameNow()});
     rec.addr     = addr;
     rec.isIo     = 0;
     rec.m1pc     = m1pc;
@@ -3887,12 +3913,8 @@ void TimeTravelManager::RecordIoWrite(uint16_t port, uint8_t value, uint16_t m1p
     if (!_context || !_writeJournal)
         return;
 
-    const uint32_t frameT = _context->config.frame;
-    Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
-    const uint32_t tInFrame = z80 ? z80->t : 0;
-
     TTDWriteRecord rec{};
-    rec.globalT  = static_cast<uint64_t>(_context->emulatorState.frame_counter) * frameT + tInFrame;
+    rec.globalT  = GlobalT({_context->emulatorState.frame_counter, TInFrameNow()});
     rec.addr     = port;
     rec.isIo     = 1;
     rec.m1pc     = m1pc;
@@ -3929,7 +3951,7 @@ TimeTravelManager::FindLastAccess(const TTDSearchQuery& q,
         return std::nullopt;
     }
 
-    const uint32_t frameT = _context->config.frame;
+    const uint32_t frameT = FrameSpan();  // TTD time units per frame (B4)
 
     // ------------------------------------------------------------------
     // Step 1: resolve beforeGlobalT → absolute t-state coordinate.
@@ -4177,7 +4199,7 @@ bool TimeTravelManager::StepBackInstruction()
     // Find the most recent Execute (M1) access strictly before the current
     // position. That is the previous instruction boundary.
     const TTDTimePoint now = CurrentPosition();
-    const uint32_t frameT = _context->config.frame;
+    const uint32_t frameT = FrameSpan();  // TTD time units per frame (B4)
     const uint64_t nowGlobalT = static_cast<uint64_t>(now.frame) * frameT + now.tInFrame;
 
     // Refuse at position (0, 0) — no prior instruction exists.
@@ -4290,7 +4312,7 @@ TimeTravelManager::EnumerateM1InRange(uint64_t startGlobalT,
         return result;
     }
 
-    const uint32_t frameT = _context->config.frame;
+    const uint32_t frameT = FrameSpan();  // TTD time units per frame (B4)
     const uint64_t sessionEndGlobalT =
         static_cast<uint64_t>(_timeline.back().time.frame) * frameT
         + _timeline.back().time.tInFrame;
@@ -4474,7 +4496,7 @@ bool TimeTravelManager::ReverseStepInstructions(uint32_t n)
 
     // Strategy B: M1 enumeration + index Nth-from-end.
     const TTDTimePoint now = CurrentPosition();
-    const uint32_t frameT  = _context->config.frame;
+    const uint32_t frameT  = FrameSpan();  // TTD time units per frame (B4)
     const uint64_t nowGlobalT =
         static_cast<uint64_t>(now.frame) * frameT + now.tInFrame;
 
@@ -4561,7 +4583,7 @@ bool TimeTravelManager::ReverseStepTStates(uint64_t n)
     }
 
     const TTDTimePoint now = CurrentPosition();
-    const uint32_t frameT  = _context->config.frame;
+    const uint32_t frameT  = FrameSpan();  // TTD time units per frame (B4)
     const uint64_t nowGlobalT =
         static_cast<uint64_t>(now.frame) * frameT + now.tInFrame;
 
@@ -4643,7 +4665,7 @@ TimeTravelManager::ReverseContinue(const std::vector<uint16_t>& breakpoints)
     }
 
     const TTDTimePoint now = CurrentPosition();
-    const uint32_t frameT  = _context->config.frame;
+    const uint32_t frameT  = FrameSpan();  // TTD time units per frame (B4)
     const uint64_t nowGlobalT =
         static_cast<uint64_t>(now.frame) * frameT + now.tInFrame;
 
@@ -4898,7 +4920,7 @@ void TimeTravelManager::CaptureM1(uint16_t pc)
         return;
 
     TTDFrameCacheEntry e;
-    e.tInFrame = z80->t;
+    e.tInFrame = _context->emulatorState.TtdTInFrame(z80->t);
     e.pc  = pc;
     e.sp  = z80->sp;
     e.af  = z80->af;

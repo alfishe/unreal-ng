@@ -129,7 +129,17 @@ Ideas backlog (not done; naive first, then measure):
   a cached "next contended T" window so accesses outside the paper skip the arithmetic entirely.
   SIMD-CANDIDATE: none (scalar lookups).
 
-## 4. How to reproduce
+## 4. Phase 2 (internal cycles)
+
+Fingerprints: only the Ferranti ULA models' rows with contended code or data changed, timing only (48K
+dataContended 20962 -> 20983, codeContended 21127 -> 23580; 128K / +2 codeContended and codePage7 21521 ->
+23527); every state hash, the +2A / +3 and all uncontended machines unchanged.
+
+Performance, interleaved A/B against phase 1 (master `2388eec4`), 6 rounds x 5 repetitions, host load ~10-40:
+Pentagon 19.5-19.6 us vs 19.4-19.5 us (the `Idle` fast path's branch, ~0.5 %, within noise); 48K with code in
+contended RAM ~15 % slower (the internal-cycle waits are now emulated).
+
+## 5. How to reproduce
 
 ```bash
 cmake -S . -B build-rel -G Ninja -DCMAKE_BUILD_TYPE=Release -DTESTS=ON -DBENCHMARKS=ON

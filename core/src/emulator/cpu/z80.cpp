@@ -783,7 +783,7 @@ void Z80::NotifyInstructionStart()
         if (_context->ttdProbe.Matches(m1_pc, ttd::TTDAccessType::Execute, 0, m1_pc, execPhysPage))
         {
             const auto& st = _context->emulatorState;
-            const ttd::TTDTimePoint tp{st.frame_counter, t};
+            const ttd::TTDTimePoint tp{st.frame_counter, st.TtdTInFrame(t)};
             _context->ttdProbe.RecordHit(tp, m1_pc, /*value=*/0, execPhysPage,
                                           ttd::TTDAccessType::Execute);
         }
@@ -914,6 +914,26 @@ void Z80::out(uint16_t port, uint8_t val)
 
     if (busTraceHook)
         busTraceHook('O', port, val);
+}
+
+/// The slow half of Idle: taken only while the ULA contends internal cycles or a bus trace hook listens.
+/// Each T-state is its own check, like FUSE's contend_read_no_mreq(addr, 1)
+void Z80::IdleSlow(uint16_t addr, uint8_t cycles)
+{
+    const bool contended = idleContention && idleContention->IsSlotContended(static_cast<uint8_t>(addr >> 14));
+    for (uint8_t i = 0; i < cycles; i++)
+    {
+        if (busTraceHook)
+            busTraceHook('N', addr, 0);
+        if (contended)
+        {
+            const uint8_t wait = idleContention->DelayAt(t);
+            IncrementCPUCyclesCounter(wait);
+            if (isDebugMode)
+                idleContention->CountAccess(CONTENTION_IDLE, wait);
+        }
+        IncrementCPUCyclesCounter(1);
+    }
 }
 
 void Z80::retn()

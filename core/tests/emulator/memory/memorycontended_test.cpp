@@ -34,6 +34,7 @@
 namespace
 {
 constexpr uint8_t kGateArrayPattern[8] = { 1, 0, 7, 6, 5, 4, 3, 2 };
+constexpr uint8_t kUlaPattern[8] = { 6, 5, 4, 3, 2, 1, 0, 0 };
 constexpr uint32_t kIntToFirstContended = 14361;  // 128K / +2A / +3 contention onset, T after the INT
 constexpr uint32_t kTStatesPerLine = 228;
 constexpr uint32_t kContendedPerLine = 129;  // the gate array's 1 T hold after the last cell (hardware: Rak +3 / +2A)
@@ -120,6 +121,31 @@ protected:
             return 0;
         const uint32_t x = rel % kTStatesPerLine;
         return x < kContendedPerLine ? kGateArrayPattern[x % 8] : 0;
+    }
+
+    /// Independent oracle: the Ferranti ULA's wait for a cycle (memory or internal) starting at `t` - the
+    /// 128K raster, 128 T per line
+    uint8_t OracleUlaWait(uint32_t t) const
+    {
+        if (t < _firstContendedT)
+            return 0;
+        const uint32_t rel = t - _firstContendedT;
+        if (rel / kTStatesPerLine >= kPaperLines)
+            return 0;
+        const uint32_t x = rel % kTStatesPerLine;
+        return x < 128 ? kUlaPattern[x % 8] : 0;
+    }
+
+    /// Synthetic map for the ULA replay: the Ferranti ULA's rule with every slot contended (#0000 included).
+    /// No real machine has it; it lets every FUSE vector put its code and data in contended memory, to test
+    /// where the ULA rule applies (every memory cycle and every internal T-state) over the whole instruction set
+    void UlaEverywhere(bool contended)
+    {
+        UlaContention* ula = _context->pUlaContention;
+        ula->SetGateArray(false);
+        for (uint8_t slot = 0; slot < 4; slot++)
+            ula->SetSlotContended(slot, contended);
+        _context->pCore->SelectMemoryInterface();
     }
 
     /// Run `steps` instructions of a loaded case from T-state t0 (steps = 0: until FUSE's total is reached);
@@ -233,6 +259,82 @@ TEST_F(MemoryContendedFuse_Test, EveryMemoryCycleWaitsTheGateArrayPattern)
 
     EXPECT_EQ(failed, 0) << checked << " runs" << report;
     EXPECT_GT(waited, 0u) << "the contended runs never waited: the layout did not take effect";
+}
+
+/// The Ferranti ULA over the whole instruction set (phase 2): every memory cycle waits at its start and every
+/// internal T-state waits at its own start while its address is contended - the per-instruction addresses are
+/// FusePhase_Test's (checked against FUSE's no-MREQ checkpoints). Vectors with port cycles are left to the
+/// I/O contention rules (phase 3)
+TEST_F(MemoryContendedFuse_Test, EveryCycleWaitsTheUlaPattern)
+{
+    auto cases = FuseVectors::LoadCases();
+    ASSERT_GT(cases.size(), 1000u) << "FUSE vectors not found";
+    Layout(1);  // RAM everywhere; the contention map is set by UlaEverywhere
+
+    int checked = 0;
+    int failed = 0;
+    uint64_t waited = 0;
+    std::string report;
+    for (const auto& [name, tc] : cases)
+    {
+        if (tc.expTotal == 0)
+            continue;
+
+        UlaEverywhere(false);
+        ASSERT_EQ(_z80->idleContention, _context->pUlaContention) << "the ULA rule contends internal cycles";
+        const int steps = Run(tc, _firstContendedT, 0);
+        const std::vector<FuseVectors::BusEvent> reference = _trace;
+        const uint32_t referenceTotal = _z80->t - _t0;
+        bool hasPorts = false;
+        for (const auto& ev : reference)
+            hasPorts |= ev.type == 'I' || ev.type == 'O';
+        if (hasPorts)
+            continue;
+
+        UlaEverywhere(true);
+        for (uint32_t offset : StartOffsets())
+        {
+            const uint32_t t0 = _firstContendedT + offset;
+
+            // Memory events fire at cycle start + 3, after their wait; internal ('N') events at their T-state's
+            // start, before its wait
+            std::vector<FuseVectors::BusEvent> predicted;
+            uint32_t delay = 0;
+            for (FuseVectors::BusEvent ev : reference)
+            {
+                if (ev.type == 'R' || ev.type == 'W')
+                {
+                    delay += OracleUlaWait(t0 + ev.tOffset - 3 + delay);
+                    ev.tOffset += delay;
+                }
+                else
+                {
+                    ev.tOffset += delay;
+                    delay += OracleUlaWait(t0 + ev.tOffset);
+                }
+                predicted.push_back(ev);
+            }
+
+            Run(tc, t0, steps);
+            std::vector<std::string> issues;
+            if (_z80->t - _t0 != referenceTotal + delay)
+                issues.push_back("total " + std::to_string(_z80->t - _t0) + " != " + std::to_string(referenceTotal + delay));
+            FuseVectors::CompareEvents(_trace, predicted, issues);
+            FuseVectors::CompareFinalState(_z80, tc, FuseVectors::SkipAFCases().count(name) > 0, issues);
+            checked++;
+            waited += delay;
+            if (!issues.empty())
+            {
+                failed++;
+                if (report.size() < 4000)
+                    report += "\n[" + name + " +" + std::to_string(offset) + "] " + issues[0];
+            }
+        }
+    }
+
+    EXPECT_EQ(failed, 0) << checked << " runs" << report;
+    EXPECT_GT(checked, 10000) << "most vectors have no port cycles";
+    EXPECT_GT(waited, 0u);
 }
 
 TEST_F(MemoryContendedFuse_Test, SwitchOffRunsTheContendedLayoutUncontended)

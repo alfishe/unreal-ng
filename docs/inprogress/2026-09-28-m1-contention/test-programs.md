@@ -97,8 +97,10 @@ reports "TYPE1 (Early) timings detected". Results with phase 1:
 | Contended tests (1-35) | all fail, but move towards the hardware: test 1 loop 1036 vs 1014 (1201 uncontended), test 2 583 vs 571 (657) | all fail at the uncontended counts |
 
 Every contended group also has internal cycles the 48K ULA contends (phase 2) or port cycles with the
-multi-point pattern (phase 3). Default run: test 1 only (`ButlerTest1MovesTowardsTheHardware`, ~130 ms),
-pinning the phase-1 value 1036; opt-in: all 35 tests in both switch settings (~4 s).
+multi-point pattern (phase 3). **After phase 2** (internal cycles): 68 of 70 pass with contention on - every
+test but 35 (the floating bus, both halves); test 1 contended reads R=74 loop=1014 SP=23296, the hardware
+values. Default run: test 1 only (`ButlerTest1MovesTowardsTheHardware`, ~130 ms),
+pinning the hardware value 1014 since phase 2; opt-in: all 35 tests in both switch settings (~6 s).
 
 **Rak, Timing Test v0.3** (vendored, `testdata/contention/rak-timing-test/`). Each test prints 160 durations,
 one per start T-state; the reference grids are transcribed from the published result screens.

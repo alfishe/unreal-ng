@@ -181,6 +181,9 @@ public:
     {
         return (_state->pEFF7 & ATM_EFF7_LOCKMEM) && (_state->p7FFD & PORT_7FFD_LOCK);
     }
+
+    /// BaseConf clock select: 3.5, 7 or 14 MHz (updateTurboMode)
+    uint8_t TtdClockUnits() const override { return 4; }
     bool IsPort_FF77(uint16_t port);  // Partial decode for ATM3
     bool IsPort_37F7(uint16_t port);  // 4MB memory manager
     bool IsPort_BF(uint16_t port);    // ATM3 control

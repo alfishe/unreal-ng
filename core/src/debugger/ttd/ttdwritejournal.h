@@ -53,7 +53,9 @@ namespace ttd {
 /// the rest of the .ttd format.
 struct TTDWriteRecord
 {
-    uint64_t globalT  : 40;   ///< Absolute t-state since session start (~9 years max)
+    uint64_t globalT  : 40;   ///< TimeTravelManager::GlobalT of the write (T-states at the
+                              ///< model's top clock since frame 0; ~90 h at 1 unit per
+                              ///< T-state, ~10 h at 8)
     uint64_t addr     : 16;   ///< Z80 address (or port number when isIo == 1)
     uint64_t isIo     : 1;    ///< 1 = port OUT, 0 = memory write
     uint64_t pad      : 7;    ///< Reserved (alignment / future flags)

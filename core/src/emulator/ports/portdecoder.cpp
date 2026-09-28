@@ -359,7 +359,8 @@ void PortDecoder::OnPortOutComplete(uint16_t port, uint8_t value, [[maybe_unused
         if (_context->ttdProbe.Matches(port, ttd::TTDAccessType::Io, value, pc))
         {
             const auto& st = _context->emulatorState;
-            const uint16_t tin = _context->pCore ? _context->pCore->GetZ80()->t : 0;
+            // TTD time units (B4); 32-bit - a frame is longer than 65535 T-states
+            const uint32_t tin = _context->pCore ? st.TtdTInFrame(_context->pCore->GetZ80()->t) : 0;
             const ttd::TTDTimePoint tp{st.frame_counter, tin};
             // A port has no RAM page; the journal path reports the same.
             _context->ttdProbe.RecordHit(tp, pc, value, ttd::kPhysPageNone,

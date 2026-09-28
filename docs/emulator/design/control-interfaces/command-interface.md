@@ -2530,6 +2530,16 @@ These rules live in the core, so every surface (CLI, WebAPI/MCP, Lua, Python, GD
 | `recording` | Capturing one checkpoint per frame. |
 | `detached` | The machine sits at a point in history (after a seek or step) and the emulator is paused. `resume` truncates the future and records again from here. |
 
+**Time.** A position is `frame` + `tinframe`. `tinframe` counts T-states at the machine's **top** CPU clock, so it names one instant even when a hardware turbo switches in the middle of a frame:
+
+| Machine | Top clock | `tinframe` per 3.5 MHz T-state |
+| :--- | :--- | :--- |
+| 48K, 128K, +2/+2A/+3, Pentagon, Profi | 3.5 MHz (no hardware turbo) | 1 (plain T-states) |
+| Scorpion ZS-256 Turbo+, ATM Turbo 2+ | 7 MHz | 2 |
+| ZX-Evo (`ATM3`) | 14 MHz | 4 |
+
+Example: on a ZX-Evo a frame is 69888 T-states at 3.5 MHz, so `tinframe` runs 0..279551 whatever clock the program selects; a write 1000 T-states into the frame at 3.5 MHz reports `tinframe` 4000. The same unit applies to every position the TTD API returns or takes (seek, find-last, markers, bookmarks, `before_tin`, reverse-step `tstates`). A `.ttd` recorded before this rule on a turbo machine is refused on load (its positions repeat after a switch down); record it again.
+
 **Recording blocks browsing.** Seek, step, find-last, step-instruction, reverse-step and reverse-continue do not run while the session is recording — stop first. The WebAPI answers these with HTTP 409 `Conflict`; the core refuses them on every other surface too (the CLI prints the failure, Lua/Python get `reached = false` / `false` / no result).
 
 **A recording protects itself.** While a session is `recording`, anything that would drop or corrupt it is refused, and the refusal says why and what to do (stop the recording first):

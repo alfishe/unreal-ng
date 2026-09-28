@@ -611,6 +611,11 @@ public:
     /// Model-specific state this machine carries beyond TTDChipsetState.
     virtual std::vector<ttd::PeripheralId> GetTTDModelStateIds() const { return {}; }
 
+    /// TTD time units per base T-state: the least common multiple of every
+    /// hardware CPU clock ratio the model can select (EmulatorState::
+    /// ttd_clock_units). 1 for models without a hardware turbo
+    virtual uint8_t TtdClockUnits() const { return 1; }
+
     /// Serializers for the ids above. Ownership transfers to the caller.
     /// Every id from GetTTDModelStateIds() must be covered.
     virtual std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const
