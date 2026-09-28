@@ -1,0 +1,310 @@
+# Evo control ports and the AVR (clock, NVRAM, keyboard, versions) — technical design
+
+| | |
+|---|---|
+| **Date** | 2026-09-27 |
+| **Status** | Design, ready for review. Nothing implemented |
+| **Closes** | gaps **P-1…P-7, P-9, P-10**, **C-1…C-9**, **A-1…A-7**, **R-1**, **R-2** of [gap-analysis.md](gap-analysis.md); user item "BaseConf and AVR-boot indication in the ERS" |
+| **Hardware source** | [baseconf-hardware-reference.md](baseconf-hardware-reference.md) §A (FPGA), §B (AVR), §C 2 (ERS) |
+| **Shared with** | TSConf (PLAN #41): M1 hook (TSConf technical-design §3.6), Gluk extension window (TSConf hardware-spec §9), Z-Controller glue ([tdd-storage-sd-ide-cd.md](tdd-storage-sd-ide-cd.md) §3); NeoGS (PLAN #45): `Flash29F040B` |
+
+## 0. Summary
+
+Three pieces of work:
+
+1. **Decoder corrections** in `PortDecoder_ATM3`: full `#FE/#F6/#FC` decode, shadow gating for the FDC,
+   Kempston mouse and joystick, Covox, `#xBF7` write protect, the missing `#EFF7` rules. Each is a
+   few lines with a truth-table test.
+2. **Evo control block**: the `#xxBD` readback/config port (current FPGA) or `#xxBE` (legacy FPGA),
+   the `#xxBE` exit strobe, and every `#xxBF` bit: NMI, breakpoint, flash writes, font RAM, 4:4:4
+   palette. Plus ULA+.
+3. **`EvoAvr`**: one device that replaces the plain `CMOS` array on ATM3. It emulates what the AVR
+   firmware answers on the Gluk ports: the MC146818 clock, battery-backed NVRAM saved to a file,
+   registers A-D with the Evo meanings, and the `F0-FF` extension window (firmware and bootloader
+   versions, PS/2 scancode buffer, modes register, EEPROM window). TSConf uses the same AVR.
+
+## 1. Glossary
+
+See [gap-analysis.md](gap-analysis.md) §1 for BaseConf, ERS, AVR, Gluk, shadow, trdemu.
+
+| Term | Meaning |
+|---|---|
+| **Programmed window type** | What the pager register says a window holds (ROM or RAM). NMI and trdemu temporarily override what is *mapped* without changing this. |
+| **Exit strobe** | A write to `#xxBE`. The value is ignored; the act of writing ends an NMI or a trdemu swap. |
+| **Set-2 scancode** | The byte sequence a PS/2 keyboard sends: one make code per press (`1C` for A), `F0 1C` on release, an `E0` prefix for extended keys. |
+
+## 2. Decisions
+
+| # | Decision | Reason |
+|---|---|---|
+| D1 | `[EVO] Fpga=trdemu` (default) or `legacy`. `trdemu` = current `base_trdemu` tree: readback on `#xxBD`, breakpoint at `#10BD/#11BD`, `#13BD`, `#BE` write-only, `#BF`.5, 8-bit joystick. `legacy` = frozen `baseconf` tree: readback on `#xxBE`, breakpoint writes `#00BD/#01BD`, RAM-disk latches `#2F-#8F`, 5-bit joystick | The ROM image decides what software expects; both images exist in the wild. One switch, one table (§3.2), no scattered `if`s |
+| D2 | Default ROM becomes the official `zxevo_fe.rom` (current ERS, NEO-DOS in page 29) under `data/rom/zxevo-fe.rom`; `ATM3` config points at it. The current `data/rom/zxevo.rom` stays for `legacy` and for TSConf until TSConf gets its own TS-BIOS image (R-1) | `zxevo_fe.rom` pages 0-3 are an empty custom slot, so TSConf cannot share it. Kebab-case file name per repo rules |
+| D3 | `EvoAvr` replaces `CMOS` for ATM3 and is reused by TSConf; the `CMOS` class stays for whoever else uses it | TSConf hardware-spec §9 describes the same Gluk extension; one implementation |
+| D4 | NVRAM (`0E-EF`) and the 4 KiB EEPROM persist to `[EVO] NvramFile` (default `<user data dir>/zxevo-nvram.bin`); a missing file starts as all `#FF` for NVRAM and a valid "no user keymap" EEPROM. `NvramFile=` (empty) = session only. Tests always use a unique scratch path | Real board keeps these on a battery; the ERS stores every setting there (reset target, boot device, virtual drive, automount). Undefined power-on contents today make tests non-deterministic |
+| D5 | Clock registers keep the existing live/fixed-time switch (`SetFixedTime`); TTD and tests use fixed time | Determinism |
+| D6 | Version records are configurable: `[EVO] FirmwareVersion="ZXEvo 4M"`, `FirmwareDate=2026-01-07`, `FirmwareRelease=1`, `BootloaderVersion="ZXEvoAVRBoot"`, same date keys. Default = the released firmware found in the source tree | Shows exactly what a stock board shows; users of older firmware can match it |
+| D7 | NMI entry is modelled as "the CPU executed a `NOP` at `#0066` from the forced bus value, and the next fetch at `#0067` comes from RAM `#FF`": after the Z80's NMI acceptance, the ATM3 M1 hook sees `PC = #0066` with `nmiEntry` set, charges one `NOP` (4 T, R+1), sets `PC = #0067`, `inNmi = 1`, remaps | Observably identical to the RTL (`drive_00` + page switch on that M1's refresh) without an opcode-override path in the Z80 core |
+| D8 | Flash writes use NeoGS's `Flash29F040B` (AMD/JEDEC state machine) over the 512 KB ROM buffer; `[EVO] FlashWrite=session` (default: changes live until the machine is destroyed), `persist` (write back to the ROM file), `off` (writes ignored) | Same model and the same three modes as NeoGS flash and SD writes; `persist` is opt-in because it rewrites a shipped file |
+| D9 | PS/2 bytes enter through the TTD live-input gateway (like `Keyboard::SubmitHostKey`) | The scancode buffer is guest-visible input; replay must see the same bytes at the same T-state |
+| D10 | Raster selection (A-7) is its own later phase; until then ATM3 keeps the 48K raster and `modes_register` reports raster `10` (48K) so the ERS shows what we emulate | Correct reporting now, full feature later |
+
+## 3. Port map after this work
+
+### 3.1 Always / by shadow state
+
+`shadow = CF_TRDOS || #BF.0`. "noshad" = only when shadow is off.
+
+| Port | Dir | When | Behavior | Gap |
+|---|---|---|---|---|
+| `#xxFE` (low byte exact) | R/W | always | keys/tape in; border 0-7, tape out, beeper | P-1 |
+| `#xxF6` | R/W | always | read = `#FE`; write = border 8-15 only (no beeper/tape) | P-1 |
+| `#xxFC` | W | always | border 0-7; if A15 = 0 also a `#7FFD` write | P-1 |
+| `#7FFD` (A15=0, low `#FD`) | W | always | 128K mode (`#EFF7`.2 = 1): pages 0-2, screen 3, map 4, lock 5. 1 MB mode: page = `{D7..D5, D2..D0}`, no lock | P-6 |
+| `#EFF7` (A12=0, low `#F7`, A8=1) | W | **noshad** | stored; bit 3 RAM 0 at `#0000`; bit 7 Gluk enable | P-6 |
+| `#DFF7`/`#BFF7` | W / R/W | noshad **and** `#EFF7`.7 | Gluk address / data → `EvoAvr` | A-* |
+| `#DEF7`/`#BEF7` | W / R/W | shadow (always enabled) | same | A-* |
+| `#xFF7`, `#x7F7`, `#xBF7` | W | shadow | pager, 8-bit RAM page, **write protect** | P-5 |
+| `#xx77` | W | shadow | ATM system port (unchanged) | — |
+| `#xx77` | R/W | noshad | Z-Controller CS (storage design) | ST-1 |
+| `#xx57` | R/W | always | SD data; in shadow with A15 = 1 it is the CS port | ST-1 |
+| `#xx1F` | R | noshad | Kempston joystick, 8 bits (`trdemu`) / 5 bits (`legacy`) | P-2 |
+| `#xxDF` | R | always | Kempston mouse: A8 = 0 buttons + wheel, A8 = 1 & A10 = 0 X, A10 = 1 Y | P-3 |
+| `#xxFB` | W | always | Covox DAC (dispatch to the existing self-decoding `Covox`) | P-4 |
+| `#1F/#3F/#5F/#7F/#FF` | R/W | shadow | WD1793 + system register; trdemu rules | ST-5 |
+| `#xxFF` palette | W | shadow + palette-write mode | unchanged, plus 4:4:4 (§5.4) | C-7 |
+| `#xxBF` | R/W | always | §3.3 | C-3…C-7 |
+| `#xxBE` | W | always | exit strobe (§5) | C-2 |
+| `#xxBD` / `#xxBE` read | R(/W) | always | §3.2 | C-1 |
+| `#BF3B` / `#FF3B` | W / R/W | always | ULA+ register / data | C-8 |
+| NemoIDE `#10…#F0/#11/#C8/#x8` | R/W | always | storage design | ST-2 |
+| `#F8EF…#FFEF` | R/W | always | RS-232: `#FF` until A-6 is done | A-6 |
+
+### 3.2 Readback / config table (one implementation, two port numbers)
+
+`ReadEvoRegister(index)` / `WriteEvoRegister(index, value)`, index = A12..A8. `trdemu`: port `#xxBD`
+read + write. `legacy`: port `#xxBE` read; writes only via `#00BD/#01BD` (breakpoint).
+
+| Index | Read | Write |
+|---|---|---|
+| `00-03` | map 0 window 0-3 page, **inverted** (as written to `#x7F7`) | — |
+| `04-07` | map 1 window 0-3 page, inverted | — |
+| `08` | RAM/ROM bits (bit i = window i map 0, bits 4-7 map 1) | — |
+| `09` | dos7ffd bits, same order | — |
+| `0A` / `0B` | last `#7FFD` / last `#EFF7` (raw) | — |
+| `0C` | `{~pen2, cpm_n, ~pen, DOS, turbo, mode[2:0]}` | — |
+| `0D` | palette entry under the beam, `~{g,r,b,G,1,1,R,B}` | — |
+| `0E` | font byte under the beam (§5.3) | — |
+| `0F` | border (4 bits) | — |
+| `10` / `11` | breakpoint address low / high | same (trdemu); legacy writes at `#00BD/#01BD` |
+| `12` | write-protect bits (`#xBF7`), order as `08` | — |
+| `13` | FDD emulation mask (trdemu only) | same |
+| other | `#FF` | ignored |
+
+### 3.3 `#xxBF` bits
+
+| Bit | Effect | Reset |
+|---|---|---|
+| 0 | shadow ports on | 0 |
+| 1 | flash write enable (§5.2) | 0 |
+| 2 | font RAM write: every memory write also writes `fontRam[A & 0x7FF]` (§5.3) | 0 |
+| 3 | NMI request on the 1 → 0 edge, delivered at the next INT start (§5.1) | 0 |
+| 4 | breakpoint enable (§5.1) | 0 |
+| 5 | 4:4:4 palette (trdemu only) | 0 |
+
+Read returns `{00, b5..b0}` (trdemu) / `{000, b4..b0}` (legacy).
+
+## 4. Reset and clock
+
+Power-on/reset (hardware reference §A.4, §A.11): pager off (all windows ROM 31), DOS forced, mode
+`011`, `#7FFD` = `#EFF7` = `#BF` = 0, **7 MHz** (P-7), NMI/trdemu/breakpoint state cleared, FDD mask 0,
+Z-Controller CS deselected. Pager registers are **not** reset by hardware; we keep today's
+`ApplyBootROMDefaults` values because they are overwritten by the ERS before first use.
+
+## 5. Behaviors
+
+### 5.1 NMI and breakpoint (C-3, C-4, P-8)
+
+State: `nmiPending` (INT-synchronized request), `nmiEntry`, `inNmi`, `nmiExitCount`, `brkAddr`.
+
+1. Sources: `#BF`.3 falling edge and the Magic key (`Emulator::RequestMNI()` extended to ATM3) set
+   `nmiPending`. At the next frame-INT start the decoder raises the Z80 NMI line and sets `nmiEntry`.
+   The breakpoint (M1 at `brkAddr` with `#BF`.4 = 1) raises the NMI immediately and sets `nmiEntry`;
+   it stays armed.
+2. Entry (D7): when the M1 hook sees `nmiEntry && PC == #0066`, it charges a `NOP`, moves PC to
+   `#0067`, sets `inNmi = 1`, clears `nmiEntry`, remaps (window 0 = RAM `#FF`).
+3. Exit: `OUT (#xxBE)` arms the exit; `inNmi` clears after the **next two M1 cycles**, counting
+   prefix fetches (RTL `clr_count`, decremented per refresh, `znmi.v:152-163`). With the usual
+   `OUT (#BE),A : RETN` the two M1s are `ED` and `45`, so `RETN` runs from page `#FF` and the next
+   instruction from the restored map. The M1 hook must therefore see prefix M1s, not only
+   instruction starts (NMI-2 tests both `RETN` and `NOP : RET`).
+4. The existing dead path (`EmulatorState::nmi_in_progress`) is removed; the page rule reads
+   `inNmi` from the decoder.
+
+Hooks used: the M1 hook (TSConf technical-design §3.6, `CF_MACHINEM1`) and a frame-INT-start
+notification (TSConf phase 0 "INT source" hook; a one-line call from the INT generator is enough
+if ATM3 lands first).
+
+### 5.2 Flash writes (C-5, P-5)
+
+Memory writes to a window that is **programmed ROM**, while `#BF`.1 = 1 and the window's write-protect
+bit is 0, go to `Flash29F040B::Write(romOffset, value)`. Reads from ROM windows go through
+`Flash29F040B::Read` while a command is in progress (status polling: toggle bit, DQ7). Chip ID
+`01/A4` (AMD Am29F040B); the ERS uses sector erase only for IDs `#E220`/`#A401`, so this ID
+exercises the fast path. `FlashWrite` modes per D8. Write-protected windows (`#xBF7`) drop writes to
+RAM as well as to flash.
+
+Needs a memory-write intercept for ROM banks (TSConf phase 0 "write intercept" hook).
+
+### 5.3 Font RAM (C-6)
+
+`fontRam[2048]`, initialized from the built-in `ATM_FONT` (the FPGA's power-on content). The
+text-mode renderer reads `fontRam` instead of the constant table. `#BF`.2 = 1: every memory write
+also writes `fontRam[addr & 0x7FF]` (the normal write still happens). `#0EBD` returns the font byte
+the renderer is fetching at the current beam position, `#FF` outside text modes. Folds PLAN #53
+item 2 into this design.
+
+### 5.4 4:4:4 palette (C-7) and ULA+ (C-8)
+
+With `#BF`.5 = 1 a `#FF` palette write takes the low bit of each channel from A15..A8 in the same bit
+layout (`atm_paldatalow`, RTL `zports.v:917`), giving 4 bits per channel. `atmPalette` stores the
+resulting RGB; `atmPaletteRegs` keeps both bytes for `#0DBD`. ULA+ is the standard 64-entry G3R3B2
+palette with mode register bit 0 = on; it applies to the ZX modes only.
+
+### 5.5 Small decoder fixes
+
+| Gap | Rule |
+|---|---|
+| P-1 | exact low-byte decode for `#FE/#F6/#FC` (table §3.1) |
+| P-2 | FDC ports in shadow only; joystick outside |
+| P-3 | route `#xxDF` to `Default_Port_KempstonMouse_In` with the Evo sub-decode |
+| P-4 | call `DispatchSelfDecodingOut/In` from the ATM decoders (fixes ATM710 too) |
+| P-5 | `#xBF7` D0 → per-window write protect in the active map |
+| P-6 | `#EFF7` not writable in shadow; bit 3 RAM 0; 1 MB `#7FFD` page bits; `#EFF7`.7 gates `#DFF7/#BFF7` |
+| P-7 | reset at 7 MHz |
+| P-9 | TTD blob: palette, palette regs, border-bright, the right CMOS latch (now `EvoAvr` state) |
+| P-10 | ROM page count from the loaded image; port-trace model name `ZX-Evo BaseConf`; ATM rows in the port map (PLAN #8) |
+
+## 6. `EvoAvr`
+
+`core/src/emulator/io/rtc/evoavr.{h,cpp}` (next to `ds12885.h`, `smucnvram`).
+
+```cpp
+class EvoAvr
+{
+public:
+    void    SetAddress(uint8_t index);          // #DFF7 / #DEF7
+    uint8_t Read();                             // #BFF7 / #BEF7
+    void    Write(uint8_t value);
+
+    // Host side
+    void    PushPs2Byte(uint8_t b);             // from the input gateway (D9)
+    void    SetModifiers(uint8_t dMask);        // register D bits 6..0
+    void    SetSdStatus(bool present, bool wp); // register C bits 3/2, from the SD slot
+    void    SetModes(uint8_t modesRegister);    // VGA / tape-out / caps / raster
+    bool    LoadNvram(const std::string& path); // D4
+    bool    SaveNvram(const std::string& path) const;
+
+    void    SaveState(EvoAvrState& out) const;  // TTD (POD, static_assert on size)
+    void    LoadState(const EvoAvrState& in);
+};
+```
+
+Register behavior (hardware reference §B 1.3-1.6):
+
+| Cells | Read | Write |
+|---|---|---|
+| `00-09` | time/date, BCD unless B.DM | stored (live clock keeps counting) |
+| `0A` (A) | EEPROM page | EEPROM page |
+| `0B` (B) | `#02 \| (DM << 2)` | keeps bit 2 only |
+| `0C` (C) | `{eepromMode, 0, 0, UF, sdPresent, sdWp, caps, tapeOut}`; read clears UF | bit 7 → EEPROM mode; bit 1 → Caps LED; bit 0 = 1 → clear PS/2 buffer |
+| `0D` (D) | `#80 \| modifiers` | ignored |
+| `0E-EF` | NVRAM | NVRAM (persisted) |
+| `F0-FF`, EEPROM mode | `eeprom[(A << 4) + (index & 15)]` | same (persisted) |
+| `F0-FF`, extension mode | by `extType`: 0 firmware record byte `index-#F0`; 1 bootloader record; 2 pop PS/2 byte (0 empty, `#FF` overflow, reading `#FF` resets); 3 index `F0` = `modes_register`, others `#FF`; other types `#FF` | any value → `extType` (**never stored as data**, so a read never echoes it — this is what the ERS checks) |
+
+Version record (16 bytes): name (12, zero-padded), date word little-endian
+(`day | month << 5 | (year-2000) << 9 | release << 15`), CRC big-endian (a fixed value; nothing on the
+Z80 side checks it). UF is set once per emulated second (T-state clock, not host time).
+
+PS/2 encoding: a small `Ps2Set2Encoder` maps host key events (a PC key enum carried next to
+`ZXKeysEnum` in the key message; Qt already knows the physical key) to set-2 make/break bytes,
+including `E0` extended keys and the `E1` Pause sequence (which the real AVR does not log). The
+matrix path (`#FE`) is unchanged, so software that reads the ZX keyboard keeps working.
+
+## 7. Configuration
+
+```ini
+[EVO]
+Fpga=trdemu                 ; trdemu | legacy (D1)
+NvramFile=                  ; empty = session only; default set by the GUI to the user data dir (D4)
+FlashWrite=session          ; session | persist | off (D8)
+FirmwareVersion=ZXEvo 4M    ; D6
+FirmwareDate=2026-01-07
+FirmwareRelease=1
+BootloaderVersion=ZXEvoAVRBoot
+BootloaderDate=2026-01-07
+Raster=48k                  ; 48k now; pentagon | 128k | 60hz with phase E9 (D10)
+
+[ROM]
+ATM3=rom/zxevo-fe.rom       ; D2
+```
+
+`[ZC]` and `[HDD]` belong to the storage design. `[MISC] CMOS=` becomes a no-op for ATM3 (documented).
+
+## 8. TTD
+
+`AtmPagingState` grows (new blob version, size `static_assert`): `#BD` registers (breakpoint, mask,
+write-protect bits), `#BF` bits, NMI state (`nmiPending/Entry/inNmi/exitCount`), trdemu state
+(virtual TR-DOS design §3), palette and palette regs, border-bright, font RAM (2 KB; TTD v2 region
+once PLAN #40-V1 lands, a blob field until then), flash command state (the flash contents are the ROM
+buffer: a TTD v2 region; until V1 the first flash write invalidates the recording, same rule as
+floppy writes). `EvoAvr` gets its own `PeripheralId` (next free id, appended) with clock, NVRAM,
+EEPROM, extension type, PS/2 buffer. `ttdmodelstatecontract_test` lists both for ATM3.
+
+## 9. Automation
+
+`GET /api/v1/emulator/{id}/state/evo` (and CLI `evo`, Lua/Python, MCP `inspect_state` aspect `evo`):
+FPGA variant, `#BD` table decoded, `#BF` bits, NMI and trdemu state, AVR extension type, PS/2
+buffer fill, NVRAM file. `POST …/evo/nvram` load/save/reset; `POST …/evo/nmi` (Magic button).
+Port-trace decode rules and port-map rows for every port in §3.1.
+
+## 10. Tests
+
+Unit tests in `core/tests/emulator/ports/models/portdecoder_atm3_test.cpp` (extend) and
+`core/tests/emulator/io/rtc/evoavr_test.cpp`; real-ROM tests in
+`core/tests/emulator/machines/zxevo/` (skip when the ROM is absent; pin the image md5).
+
+| ID | Asserts |
+|---|---|
+| DEC-1 | exhaustive sweep: all 65 536 ports × {shadow on/off} × {trdemu, legacy}: each port claimed by at most one arm; `#10…#F0` never reach `#FE` (P-1) |
+| DEC-2 | `#F6` write changes border to 8-15 and leaves beeper/tape unchanged; `#FC` with A15 = 0 writes `#7FFD` |
+| DEC-3 | FDC answers only in shadow; `#1F` outside shadow = joystick (8 bits trdemu, 5 bits legacy) |
+| DEC-4 | mouse `#FADF/#FBDF/#FFDF` incl. wheel nibble; `#FF` with no mouse |
+| DEC-5 | `OUT (#FB),#80` reaches the Covox device on ATM3 and ATM710 |
+| DEC-6 | `#xBF7` protects RAM and ROM windows of the active map only |
+| DEC-7 | `#EFF7`: ignored in shadow; bit 3 maps RAM 0 over the pager; 1 MB mode uses `#7FFD` bits 7-5; bit 7 opens `#DFF7/#BFF7` |
+| DEC-8 | reset → 7 MHz, pager off, `#BD` state cleared |
+| BD-1 | every index of §3.2 in both variants (port number, inverted pages, `12`, `13`) |
+| BD-2 | NedoOS probe: `LD A,4 : IN A,(#BD)` returns the map-1 window-0 ROM value `AND #BF` = the DOS ROM page |
+| NMI-1 | `#BF`.3 1 → 0 edge: NMI taken at the next frame INT, not before; `PC` at handler = `#0067`, R advanced by one extra M1, window 0 = RAM `#FF` |
+| NMI-2 | exit: `OUT (#BE)` then `RETN` runs from page `#FF`, next instruction from the restored map; with `OUT (#BE) : NOP : RET` both `NOP` and `RET` run from `#FF` (two M1s) |
+| NMI-3 | breakpoint: `#10BD/#11BD` = X, `#BF`.4 = 1 → NMI on the M1 at X immediately; again on the next pass |
+| NMI-4 | Magic button API on ATM3 = `#BF`.3 path |
+| FL-1 | `#BF`.1 = 0: ROM writes ignored; = 1: JEDEC program sequence changes the byte; write-protected window: ignored |
+| FL-2 | sector erase + ID read (`01/A4`) + status polling; `FlashWrite=off` ignores; `persist` writes the file (scratch copy) |
+| FNT-1 | `#BF`.2 = 1: a write to `#4000+n` also lands in `fontRam[n & 0x7FF]`; text mode renders the new glyph; `#0EBD` returns the byte under the beam |
+| PAL-1 | `#BF`.5 = 1: 4:4:4 write via A15..A8; `#0DBD` readback |
+| ULA-1 | ULA+ register/data round trip, ZX-mode rendering uses the ULA+ palette when enabled |
+| AVR-1 | write 0 to `F0`, read `F0-FF` = firmware record; write 1 → bootloader record; a read never equals the written type |
+| AVR-2 | PS/2: press+release A → `1C`, `F0 1C`; empty → 0; 17 bytes → `#FF` then reset; reg C bit 0 write clears |
+| AVR-3 | reg C: SD present/WP bits follow `SetSdStatus`; UF set once per emulated second, cleared by read; reg D modifiers |
+| AVR-4 | EEPROM mode window + page register A; persisted with NVRAM |
+| AVR-5 | NVRAM persists across machine destroy/create via `NvramFile`; missing file → `#FF` fill; empty key → session only |
+| AVR-6 | type 3 `F0` = `modes_register` with raster bits `10` (D10) |
+| TTD-E1 | round trip of every new blob field; hash sensitivity; contract test lists `AtmPaging` + `EvoAvr` for ATM3 |
+| **ERS-VER-1** | real ROM: ERS header shows `Baseconf: ZXEvo 4M 07.01.2026` and `AVR Boot: ZXEvoAVRBoot 07.01.2026` (screen text via the OCR/text helper); with `FirmwareRelease=0` the line ends in `beta` |
+| **ERS-VER-2** | real ROM: no "Incorrect FPGA zxevo_fw.bin" with `Fpga=trdemu` |
+| **ERS-CMOS-1** | real ROM: change the reset target in ERS setup, reset the machine → the choice survives (NVRAM); destroy/create with the same `NvramFile` → survives |
+| **ERS-KBD-1** | real ROM: ERS "Test PC keyboard" shows the key pressed through the PS/2 path |
+| **ERS-FLASH-1** | real ROM: ERS "Update custom ROM" with a 64K file from the SD fixture programs pages 0-3; GLUK/ProfROM pages unchanged |
+| **NOS-KBD-1** | NedoOS Evo build: typing in the shell works through the PS/2 buffer (needs the SD phase for booting) |

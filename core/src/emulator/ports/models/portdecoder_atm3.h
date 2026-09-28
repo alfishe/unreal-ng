@@ -15,10 +15,15 @@
 /// - NMI handling maps RAM page 0xFF to window 0
 /// - Additional registers: pBD, pBE, pBF
 /// - CMOS (DS12885-style RTC + NVRAM) shared with the memory manager ports:
-///   data 0xBFF7 / address 0xDFF7 when pBF.0=0 (shaden off),
-///   data 0xBEF7 / address 0xDEF7 when pBF.0=1 (shaden on, DOS ports active)
-/// - Memory manager ports (x7F7 / xx77 / xFF7) only respond while pBF.0=1
-///   (CF_DOSPORTS in original Unreal Speccy) - see io.cpp / memory.cpp
+///   data #BFF7 / address #DFF7 outside shadow (after #EFF7 bit 7),
+///   data #BEF7 / address #DEF7 in shadow
+/// - Shadow = TR-DOS active or #BF bit 0: the FDC, #xx77 and the pager
+///   (#xFF7 / #x7F7) answer only then; #1F is the joystick and #xx77 the
+///   Z-Controller outside it
+///
+/// Decode rules follow the released BaseConf FPGA (pentevo
+/// fpga/base_trdemu/trunk, z80/zports.v): every mainboard port decodes the
+/// full low byte - see ClassifyPort().
 ///
 /// Note: ATM3 = PentEvo = ZX-Evo BaseConf (different names, same platform)
 ///
@@ -26,6 +31,44 @@
 
 class PortDecoder_ATM3 : public PortDecoder_ATM710
 {
+public:
+    static constexpr uint8_t ATM_EFF7_GLUK = 0x80;  // Bit 7: Gluk clock ports on outside shadow
+
+    /// region <Types>
+public:
+    /// Which board function answers an I/O cycle. One value per decode arm of
+    /// the BaseConf FPGA (fpga/base_trdemu/trunk/z80/zports.v porthit list and
+    /// read mux), so every port maps to exactly one arm; `ZxBus` means the
+    /// mainboard does not decode the port and ZX-Bus cards (GS, MoonSound...)
+    /// see the cycle.
+    enum class PortArm : uint8_t
+    {
+        ZxBus = 0,          ///< not a mainboard port
+        KeyboardBorder,     ///< #FE / #F6 (#F6: border colors 8-15, no beeper)
+        BorderAnd7FFD,      ///< #FC write: border + (A15=0) #7FFD; #FC read: #FF
+        Paging7FFD,         ///< #FD with A15=0 (write); read: #FF
+        Ay,                 ///< #FD with A15=1: #FFFD select/read, #BFFD data
+        Eff7Gluk,           ///< #F7 outside the pager: #EFF7 and the Gluk clock ports
+        Pager,              ///< #F7 in shadow with A8=1: #xFF7 / #x7F7 / #xBF7
+        Atm77,              ///< #77 in shadow: ATM system port
+        SdConfig,           ///< #77 outside shadow: Z-Controller chip select
+        SdData,             ///< #57: Z-Controller SPI data
+        Fdc,                ///< #1F/#3F/#5F/#7F/#FF in shadow: WD1793 (+ #FF palette)
+        Joystick,           ///< #1F outside shadow: Kempston joystick
+        Mouse,              ///< #DF: Kempston mouse
+        EvoConfig,          ///< #BF
+        EvoExit,            ///< #BE
+        EvoReadback,        ///< #BD
+        ComPort,            ///< #EF: RS-232 served by the AVR
+        UlaPlus,            ///< #3B
+        NemoIde,            ///< #10/#11/#30..#F0/#C8 and the #x8 aliases
+        Covox,              ///< #FB write (not a porthit on the board: the DAC also lets ZX-Bus see it)
+    };
+
+    /// Classify one I/O cycle by the BaseConf decode rules
+    PortArm ClassifyPort(uint16_t port, bool isWrite);
+    /// endregion </Types>
+
     /// region <Fields>
 protected:
     // DS12885-style RTC/CMOS (BaseConf config storage). Lives with the decoder
@@ -58,7 +101,7 @@ public:
     bool IsPort_BF(uint16_t port);    // ATM3 control
     bool IsManagerEnabled();          // CF_DOSPORTS: pBF.0 (shaden) OR ~cpm (aFF77.9=0)
     bool IsPort_BE(uint16_t port);    // ATM3 status / window readback
-    bool IsPort_FFF7(uint16_t port, uint8_t& windowIndex) override;  // Narrower decode than ATM710 (mask 0x3FFF)
+    bool IsPort_FFF7(uint16_t port, uint8_t& windowIndex) override;  // A11:A10=11, A8=1 (BaseConf pager)
 
     // ATM3 palette write decode is the EXACT #FF port (xpeccy evoPortMap
     // {0x00ff, 0x00ff, 1, ...}), unlike ATM710's 0x9F/0xBF/0xDF/0xFF group
@@ -67,9 +110,10 @@ public:
     // Palette gated by the manager/shaden line (the ATM3 dos-line analog)
     bool IsPaletteWriteEnabled() override;
 
-    // CMOS data port: 0xBFF7 when shaden (pBF.0) off, 0xBEF7 when on
+    // Gluk clock ports: #DFF7 / #BFF7 outside shadow (needs #EFF7 bit 7),
+    // #DEF7 / #BEF7 in shadow (always on); decoded on A8/A13/A14 (zports.v)
+    bool IsGlukEnabled();
     bool IsPort_CMOS_Data(uint16_t port);
-    // CMOS address port: 0xDFF7 when shaden (pBF.0) off, 0xDEF7 when on
     bool IsPort_CMOS_Address(uint16_t port);
     /// endregion </Port detection>
 
@@ -90,6 +134,12 @@ protected:
     // (xpeccy evoOutEFF7 -> evoSetVideoMode): re-run raster detection on change
     void Port_EFF7_Out(uint16_t port, uint8_t value, uint16_t pc) override;
 
-    // updateMemoryBanks(): inherited from PortDecoder_ATM710 (covers ATM3 NMI handling)
+    // BaseConf window mapping (fpga/base_trdemu/trunk/mem/atm_pager.v): the
+    // 1 MB #7FFD page bits, #EFF7 bit 3 RAM page 0 and the NMI page override
+    void updateMemoryBanks() override;
+
+    void DecodeF7Out(uint16_t port, uint8_t value, uint16_t pc);
+    void BorderOnlyOut(uint16_t port, uint8_t value, uint16_t pc);
+    uint8_t DecodeF7In(uint16_t port);
     /// endregion </Port handlers>
 };

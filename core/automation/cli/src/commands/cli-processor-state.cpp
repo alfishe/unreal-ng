@@ -1,7 +1,9 @@
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <emulator/config.h>
 #include <emulator/emulator.h>
+#include <emulator/cpu/core.h>
 #include <emulator/emulatorcontext.h>
+#include <emulator/memory/rom.h>
 #include <emulator/platform.h>
 #include <emulator/video/screen.h>
 
@@ -668,6 +670,12 @@ void CLIProcessor::HandleStateMemoryROM(const ClientSession& session, EmulatorCo
             totalROMPages = 1;
             break;
     }
+
+    // Machines whose ROM image holds more pages than the four standard slots
+    // (ZX-Evo 512 KB = 32 pages) report what is actually loaded
+    if (ROM* loadedRom = context->pCore ? context->pCore->GetROM() : nullptr;
+        loadedRom && loadedRom->GetROMBanksLoaded() > totalROMPages)
+        totalROMPages = loadedRom->GetROMBanksLoaded();
 
     ss << "Model:            " << model << NEWLINE;
     ss << "Total ROM Pages:  " << totalROMPages << NEWLINE;

@@ -4,6 +4,8 @@
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/analyzers/analyzermanager.h"
 #include "debugger/analyzers/audiocapture/audiocaptureanalyzer.h"
+#include "debugger/analyzers/basic-lang/commandtyper.h"
+#include "debugger/analyzers/basic-lang/editormonitor.h"
 #include "debugger/analyzers/aylog/ayloganalyzer.h"
 #include "debugger/analyzers/coverage/coverageanalyzer.h"
 #include "debugger/analyzers/trdos/trdosanalyzer.h"
@@ -26,6 +28,7 @@ DebugManager::DebugManager(EmulatorContext* context)
     // Keyboard injection manager for automation
     _keyboardManager = new DebugKeyboardManager(_context);
     _mouseManager = new DebugMouseManager(_context);
+    _commandTyper = std::make_unique<CommandTyper>(_context);
     
     // Initialize AnalyzerManager after all components are created
     // Pass 'this' because _context->pDebugManager isn't set yet
@@ -37,6 +40,11 @@ DebugManager::DebugManager(EmulatorContext* context)
     _analyzerManager->registerAnalyzer("aylog", std::make_unique<AYLogAnalyzer>(_context));
     _analyzerManager->registerAnalyzer("audiocapture", std::make_unique<AudioCaptureAnalyzer>(_context));
 
+    // Editor control points for verified command input (input-verification.md)
+    auto editorMonitor = std::make_unique<EditorMonitor>(_context);
+    _editorMonitor = editorMonitor.get();
+    _analyzerManager->registerAnalyzer(EditorMonitor::ANALYZER_ID, std::move(editorMonitor));
+
     _disassembler = std::make_unique<Z80Disassembler>(_context);
     _disassembler->SetLogger(_context->pModuleLogger);
 }
@@ -46,7 +54,9 @@ DebugManager::~DebugManager()
     // AnalyzerManager::~AnalyzerManager() deactivates every analyzer, which releases their
     // breakpoints through BreakpointManager - so it must go before _breakpoints is deleted
     // (as a unique_ptr member it would otherwise be destroyed after this body has run).
+    _commandTyper.reset();
     _analyzerManager.reset();
+    _editorMonitor = nullptr;
 
     if (_keyboardManager)
     {

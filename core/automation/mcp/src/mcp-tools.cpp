@@ -1421,7 +1421,9 @@ void RegisterTypeInput(ToolRegistry& registry)
     schema["properties"]["delay_frames"]["description"] = "Inter-key delay for 'type'";
     schema["properties"]["tokenized"]["type"] = "boolean";
     schema["properties"]["tokenized"]["default"] = false;
-    schema["properties"]["tokenized"]["description"] = "Type as tokenized BASIC keywords (cursor-accurate entry)";
+    schema["properties"]["tokenized"]["description"] =
+        "Type a BASIC line into the ROM editor (48K: keywords as keys; 128K: letters), every key verified on the "
+        "ROM's control points; ENTER is not pressed. The reply names what happened (outcome/failure)";
     schema["required"].append("action");
 
     registry.Register(

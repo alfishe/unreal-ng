@@ -67,6 +67,7 @@ public:
 public:
 	void SetCMOSType(CMOSTypeEnum type);
 	void SetCMOSAddress(uint8_t addr);
+	uint8_t GetCMOSAddress() const { return _cmos_addr; }
 	void WriteCMOS(uint8_t val);
 	uint8_t ReadCMOS();
 

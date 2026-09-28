@@ -194,7 +194,7 @@ Sources: UnrealSpeccy `io.cpp`, ZXMAK2 `Hardware/*/Ide*.cs`, Xpeccy `libxpeccy/h
 | **Profi** | `#xx8B/AB/CB/EB` | A10..A8 | port `#06AB` (write only) | separate read/write latches, **mirror roles** (§3.1) | Profi EXT mode | no | shares the decode with RTC `#9F` and floppy `#83` families |
 | **Nemo** (Pentagon) | `#10,#30…#F0`, `#11`, `#C8` | A7..A5 | `#C8` (A4=0, A3=1) = reg 6 | latch port `#11` (A0=1): read `#10`→`#11`; write `#11`→`#10` | DOS ports **off** | no | — |
 | **Nemo-A8** | same, latch `#110` | A7..A5 | `#C8` | latch selected by A8 | DOS ports off | no | — |
-| **Nemo-DivIDE / ZX-Evo** | same as Nemo | A7..A5 | `#C8` only (Evo: other `#x8` alias to CS0) | Nemo latch **or** same-port toggle: `#10` twice = low then high; any other register resets the toggle | always (Evo RTL has no DOS term) | no | Evo: IDE DMA, PIO4 bus timing |
+| **Nemo-DivIDE / ZX-Evo** | same as Nemo | A7..A5 | `#C8` only (Evo: other `#x8` alias to CS0) | Nemo latch **or** same-port toggle: `#10` twice = low then high; any other register resets the toggle. Evo combines both with exact rules (pattern (d), [tdd-storage-sd-ide-cd.md](../2026-09-15-atm-baseconf-highres-ports/tdd-storage-sd-ide-cd.md) §3.2) | always, in and out of shadow (Evo RTL has no DOS term) | no | none in BaseConf (IDE DMA exists only in TS-Conf) |
 | **SMUC** (Scorpion) | `#F8BE…#FFBE`, `#D8BE` | A10..A8 | **bit 7 of `#FFBA`** (a latch bit, not an address bit); then `#FEBE` = reg 6 | latch at `#D8BE` (A13=0); Nemo order | TR-DOS active (shadow ports) | ZXMAK2 only: `#FFBA` D7 | `#FFBA` sys (bit 0 IDE reset, I²C EEPROM), `#DFBA` RTC, `#7FBA` virtual FDD, `#5FBA/#5FBE` version, 8259 stub |
 | **ATM Turbo 2+** | `#xx0F…#xxEF` (`(p & 0x1F) == 0x0F`) | A7..A5 | none known | latch at A8=1 (`#FF0F`); Nemo order | DOS ports on (TR-DOS or ATM3 shadow) | **yes**: `#7FFD`-class read, bit 6 | shares the port with DAC/ADC |
 | **DivIDE** | `#A3…#BF` (`(p & 0xA3) == 0xA3`) | A4..A2 | none | same-port toggle on `#A3` | DOS ports off | no | `#E3` memory paging + automap (separate project) |
@@ -206,7 +206,7 @@ Sources: UnrealSpeccy `io.cpp`, ZXMAK2 `Hardware/*/Ide*.cs`, Xpeccy `libxpeccy/h
 - INTRQ as a *state* (set on completion/DRQ, cleared by a status read, masked by nIEN). Whether and where it becomes visible is adapter business.
 - Hard reset (machine reset line) and soft reset (SRST).
 - Media: block devices and write handling (rollout 1: write-through / session write map; rollout 2: COW layer, commit/discard, TTD/snapshot state).
-- The byte-split helpers. Three latch patterns cover every board: **(a)** fixed latch port (Nemo, Nemo-A8, ATM, SMUC); **(b)** mirror-role latch ports (Profi); **(c)** same-port toggle (Nemo-DivIDE, Evo, DivIDE). These are shared helper classes the adapters use.
+- The byte-split helpers. Three latch patterns cover every board: **(a)** fixed latch port (Nemo, Nemo-A8, ATM, SMUC); **(b)** mirror-role latch ports (Profi); **(c)** same-port toggle (Nemo-DivIDE, DivIDE); **(d)** Evo combined latch (`EvoNemoLatch`: `#11` write arms a Nemo-order word, two `#10` accesses form a divide pair, any other IDE port resets both; RTL truth table in [tdd-storage-sd-ide-cd.md](../2026-09-15-atm-baseconf-highres-ports/tdd-storage-sd-ide-cd.md) §3.2). These are shared helper classes the adapters use.
 
 ### 4.2 What differs per machine → adapter code
 
@@ -250,7 +250,7 @@ core/src/emulator/io/hdd/
   ata/atachannel.{h,cpp}         master/slave bus + reset + INTRQ
   ata/ataregisters.h             register numbers, status/error bits, command codes
   ata/atastate.h                 POD state for TTD/snapshots (static_assert on size)
-  adapters/idelatch.h            the three byte-split helpers (FixedLatch, MirrorLatch, ToggleLatch)
+  adapters/idelatch.h            the byte-split helpers (FixedLatch, MirrorLatch, ToggleLatch, EvoNemoLatch)
   adapters/ideadapter.h          small base: gate hook, trace tagging, Reset()
   adapters/ideadapter_profi.{h,cpp}
   adapters/ideadapter_nemo.{h,cpp}     (Nemo, Nemo-A8, Nemo-DivIDE/Evo via options)
@@ -354,6 +354,8 @@ Word 0 `#045A`; words 1/3/6 default C/H/S; words 10–19 serial `UNREALNG-<hash>
 ## 7. Media layer
 
 ### 7.1 `IBlockDevice`
+
+> **Shared with the SD card (2026-09-27, [tdd-storage-sd-ide-cd.md](../2026-09-15-atm-baseconf-highres-ports/tdd-storage-sd-ide-cd.md) §1 S1-S3):** the SD card model (`SdCardSpi`, NeoGS/TSConf/ATM3) uses this same interface; TSConf's `ISdBlockStore` is this interface, `FileBlockStore` = `RawImage`, `VirtualFatBlockStore` = `HostFolderFat`, and `SessionWriteMap` is a decorator that the SD card's session write mode reuses.
 
 ```cpp
 class IBlockDevice
@@ -740,6 +742,8 @@ These need the ROMs in `testdata/machines/` (currently untracked for Profi; comm
 | **R5** | ZX-Evo / Pentagon + Nemo, NedoOS | boot NedoOS from a FAT image; then from a **host folder** containing the NedoOS system files. Screen-hash or port-trace checkpoint |
 | **R6** | Profi CP/M | if a real Profi HDD CP/M image is found (Q6): boot to the `A>` prompt, `DIR` lists files |
 | **R7** | ZX-Evo / Pentagon + Nemo, NedoOS | CD-ROM on the slave: NedoOS lists the files of a test ISO (depends on Q9: which NedoOS build/driver reads CDs) |
+| **R8** | ZX-Evo, ERS (`zxevo_fe.rom`) | "HDD boot": ERS reads LBA 2, 24 KB to `#6000` and runs it; plus "Mount A:" of a TRD from a FAT partition (ATM3 plan ERS-HDD-1, ERS-MNT-3; [tdd-storage-sd-ide-cd.md](../2026-09-15-atm-baseconf-highres-ports/tdd-storage-sd-ide-cd.md)) |
+| **R9** | ZX-Evo, ERS (`zxevo_fe.rom`) | "CD boot": ATAPI on the slave, ISO 9660, `AUTORUN.ZX` loaded to `#6000` and entered with `A=#B0` (ATM3 plan ERS-CD-1) |
 
 ### 12.6 Layer 6: cross-emulator differential (tooling, not CI)
 
@@ -784,7 +788,7 @@ A small Z80 test program (assembled with the in-repo assembler) runs a fixed IDE
 | Q6 | Source of a real Profi HDD image (CP/M) for R3/R6 | synthetic images only |
 | Q7 | ATM 2+: any CS1 access at all? | none |
 | Q8 | Folder-mode default FAT type for NedoOS/esxDOS | FAT16 < 2 GB |
-| Q9 | Which Spectrum software actually reads CDs (NedoOS driver build, IS-DOS tools, ZX-Evo utilities) for the R7 test | ATAPI tested at conformance level only |
+| Q9 | Which Spectrum software actually reads CDs (NedoOS driver build, IS-DOS tools, ZX-Evo utilities) for the R7 test | **Partly answered (2026-09-27):** the ZX-Evo ERS ROM "CD boot" reads an ATAPI slave (reset `#08`, signature, READ TOC, READ(10), ISO 9660, `AUTORUN.ZX`) — test R9. NedoOS CD reading still open |
 | Q10 | ⚠️ **Rollout 2 investigation**: COW layer design (§7.3) and TTD integration (§10) — granularity, memory ceiling / spill, journal reuse, commit during recording, folder-read determinism, snapshot format, floppy (ST-4) unification | rollout 1 interim rule (§10.0) |
 
 ---

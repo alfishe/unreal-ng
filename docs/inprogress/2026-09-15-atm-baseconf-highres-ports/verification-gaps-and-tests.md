@@ -3,8 +3,15 @@
 ## FPGA cross-verification log
 
 Every port behavior in this port was checked against the BaseConf RTL at
-`/Volumes/TB4-4Tb/Projects/emulators/github/pentevo/fpga/baseconf/trunk/`
+`emulators/github/pentevo/fpga/baseconf/trunk/`
 (the ZX Evolution hardware project itself). Findings:
+
+> **2026-09-27 correction:** `fpga/baseconf/trunk` is the **frozen legacy** BaseConf tree. The
+> released BaseConf is `fpga/base_trdemu/trunk`: readbacks moved from `#xxBE` to `#xxBD` (the
+> `BE.0B/0C/0D/0F` rows below are `#0BBD/#0CBD/#0DBD/#0FBD` there) and `#BF` bit 5 adds a 4:4:4
+> palette. Re-checking these rows against the current tree is gap **P-11** of
+> [gap-analysis.md](gap-analysis.md); the port changes themselves are planned in
+> [tdd-evo-control-and-avr.md](tdd-evo-control-and-avr.md).
 
 | Behavior | RTL evidence | Result |
 |----------|--------------|--------|

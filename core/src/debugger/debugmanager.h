@@ -33,6 +33,11 @@ protected:
 
     // Kempston Mouse injection funnel (automation, host input, TTD journal)
     class DebugMouseManager* _mouseManager = nullptr;
+
+    // ROM editor control points for verified command input (input-verification.md)
+    // Registered with (and owned by) the AnalyzerManager
+    class EditorMonitor* _editorMonitor = nullptr;
+    std::unique_ptr<class CommandTyper> _commandTyper;
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -52,6 +57,8 @@ public:
     AnalyzerManager* GetAnalyzerManager();
     DebugKeyboardManager* GetKeyboardManager();
     DebugMouseManager* GetMouseManager();
+    EditorMonitor* GetEditorMonitor() { return _editorMonitor; }
+    CommandTyper* GetCommandTyper() { return _commandTyper.get(); }
 
     /// endregion </Properties>
 

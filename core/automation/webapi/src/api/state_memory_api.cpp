@@ -371,6 +371,11 @@ void EmulatorAPI::getStateMemoryROM(const HttpRequestPtr& req,
             break;
     }
 
+    // Machines whose ROM image holds more pages than the four standard slots
+    // (ZX-Evo 512 KB = 32 pages) report what is actually loaded
+    if (rom && rom->GetROMBanksLoaded() > totalROMPages)
+        totalROMPages = rom->GetROMBanksLoaded();
+
     ret["model"] = model;
     ret["total_rom_pages"] = totalROMPages;
     ret["active_rom_page"] = static_cast<int>(memory.GetROMPage());

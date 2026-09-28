@@ -489,6 +489,12 @@ TEST_F(ATMVideoModesSuite_Test, PortEFF7_ControlBitsStored_ZBitsTriggerRedetecti
 
     _screen->_vid.mode = M_ATMTX;  // sentinel: only InitRaster rewrites it
 
+    // #EFF7 is written only outside shadow (BaseConf zports.v:716 "EEF7 in
+    // shadow mode is abandoned"): close the gate again - #FF77 latched cpm,
+    // so only shaden and the DOS line are left to clear
+    _context->emulatorState.pBF = 0x00;
+    _context->emulatorState.flags &= ~CF_TRDOS;
+
     // Control-only EFF7 bits (turbo / lockmem / rocache): stored, no redetect
     pd->DecodePortOut(0xEFF7, 0x1C, 0);
     EXPECT_EQ(_context->emulatorState.pEFF7, 0x1C);

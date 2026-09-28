@@ -477,6 +477,8 @@ PortTraceSessionInfo PortDecoder::getPortTraceSessionInfo() const
             case MM_PROFI:       info.modelName = "Profi"; break;
             case MM_SCORP:       info.modelName = "Scorpion256"; break;
             case MM_PROFSCORP:   info.modelName = "Scorpion256Prof"; break;
+            case MM_ATM710:      info.modelName = "ATM710"; break;
+            case MM_ATM3:        info.modelName = "ZXEvoBaseConf"; break;
             default:             info.modelName = "Unknown"; break;
         }
     }
@@ -499,6 +501,9 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
 
     const MEM_MODEL model = _context->config.mem_model;
     const bool scorpion = (model == MM_SCORP || model == MM_PROFSCORP);
+    // ZX-Evo BaseConf decodes every mainboard port on the full low byte
+    // (PortDecoder_ATM3::ClassifyPort, BaseConf zports.v porthit list)
+    const bool evo = (model == MM_ATM3);
 
     // ---- Universal rows: every decoder on master answers these ----
 
@@ -507,16 +512,31 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
     if (scorpion)
         entries.push_back({0x00FE, 0x0023, 0x0022, "Keyboard / Beeper / Border / MIC+EAR", nullptr,
                            Tags(PortTag::Keyboard)});
+    else if (evo)
+    {
+        entries.push_back({0x00FE, 0x00FF, 0x00FE, "Keyboard / Beeper / Border 0-7 / MIC+EAR", nullptr,
+                           Tags(PortTag::Keyboard)});
+        entries.push_back({0x00F6, 0x00FF, 0x00F6, "Keyboard / Border 8-15 (no beeper)", nullptr,
+                           Tags(PortTag::Keyboard) | PortTag::Screen});
+    }
     else
         entries.push_back({0x00FE, 0x0001, 0x0000, "Keyboard / Beeper / Border / MIC+EAR", nullptr,
                            Tags(PortTag::Keyboard)});
 
     // AY register select / data: A15/A14/A1 qualification, mirrors resolve to the
     // canonical ports (PortDecoder_Spectrum48::DecodePortIn and every other model)
-    entries.push_back({0xFFFD, 0xC002, 0xC000, "AY / TurboSound register select (chip select)", nullptr,
-                       Tags(PortTag::SoundAy)});
-    entries.push_back({0xBFFD, 0xC002, 0x8000, "AY / TurboSound data", nullptr,
-                       Tags(PortTag::SoundAy)});
+    if (evo)
+    {
+        entries.push_back({0xFFFD, 0xC0FF, 0xC0FD, "AY register select / read", nullptr, Tags(PortTag::SoundAy)});
+        entries.push_back({0xBFFD, 0xC0FF, 0x80FD, "AY data", nullptr, Tags(PortTag::SoundAy)});
+    }
+    else
+    {
+        entries.push_back({0xFFFD, 0xC002, 0xC000, "AY / TurboSound register select (chip select)", nullptr,
+                           Tags(PortTag::SoundAy)});
+        entries.push_back({0xBFFD, 0xC002, 0x8000, "AY / TurboSound data", nullptr,
+                           Tags(PortTag::SoundAy)});
+    }
 
     // ---- Model-specific paging / system latches ----
     switch (model)
@@ -607,6 +627,37 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
                                    Tags(PortTag::SoundCovox)});
             }
             break;
+        case MM_ATM3:
+        {
+            const char* shadow = "shadow: TR-DOS active or #BF bit 0";
+            const char* noShadow = "outside shadow";
+            entries.push_back({0x7FFD, 0x80FE, 0x00FC, "Memory paging (#FD/#FC, A15=0; 1 MB mode uses bits 7-5)", nullptr,
+                               Tags(PortTag::Memory) | PortTag::Rom | PortTag::Screen, PagingLatch::P7FFD});
+            entries.push_back({0x00FC, 0x00FF, 0x00FC, "Border 0-7 (+ #7FFD when A15=0)", nullptr,
+                               Tags(PortTag::Screen) | PortTag::Memory});
+            entries.push_back({0xEFF7, 0x11FF, 0x01F7, "#EFF7: 16c / 128K lock / RAM0 / turbo off / multicolor / clock enable",
+                               noShadow, Tags(PortTag::Memory) | PortTag::Screen | PortTag::System, PagingLatch::PEFF7});
+            entries.push_back({0xDFF7, 0x21FF, 0x01F7, "Gluk clock address (#DFF7; #DEF7 in shadow)", "#EFF7 bit 7 or shadow",
+                               Tags(PortTag::System)});
+            entries.push_back({0xBFF7, 0x41FF, 0x01F7, "Gluk clock data (#BFF7; #BEF7 in shadow)", "#EFF7 bit 7 or shadow",
+                               Tags(PortTag::System)});
+            entries.push_back({0x3FF7, 0x0DFF, 0x0DF7, "ATM window register (A15:A14 = window)", shadow,
+                               Tags(PortTag::Memory) | PortTag::Rom, PagingLatch::PFFF7Window0});
+            entries.push_back({0x37F7, 0x0DFF, 0x05F7, "4 MB RAM page register (A15:A14 = window)", shadow,
+                               Tags(PortTag::Memory)});
+            entries.push_back({0xFF77, 0x00FF, 0x0077, "ATM system port (video mode, turbo, pager, CP/M, palette write)", shadow,
+                               Tags(PortTag::Memory) | PortTag::Screen | PortTag::System});
+            entries.push_back({0x0077, 0x00FF, 0x0077, "Z-Controller SD chip select (reads #00)", noShadow,
+                               Tags(PortTag::StorageSd)});
+            entries.push_back({0x0057, 0x00FF, 0x0057, "Z-Controller SD data", nullptr, Tags(PortTag::StorageSd)});
+            entries.push_back({0x001F, 0x00FF, 0x001F, "Kempston joystick", noShadow, Tags(PortTag::Joystick)});
+            entries.push_back({0x00BF, 0x00FF, 0x00BF, "Evo config (shadow, flash write, font write, NMI, breakpoint)", nullptr,
+                               Tags(PortTag::System)});
+            entries.push_back({0x00BE, 0x00FF, 0x00BE, "Evo NMI exit / legacy readback (A15..A8 index)", nullptr,
+                               Tags(PortTag::System)});
+            entries.push_back({0x00FB, 0x00FF, 0x00FB, "Covox (mono #FB)", nullptr, Tags(PortTag::SoundCovox)});
+            break;
+        }
         default:
             break;  // MM_SPECTRUM48: no paging / system latches
     }
@@ -620,12 +671,22 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
         const char* mouseGate = scorpion
                                     ? "TR-DOS session / Shadow Monitor beta mirrors"
                                     : "!CF_DOSPORTS (TR-DOS ports accessible) + no registered claim";
-        entries.push_back({0xFADF, 0x023F, 0x021F, "Kempston mouse buttons (+ wheel)", mouseGate,
-                           Tags(PortTag::Mouse)});
-        entries.push_back({0xFBDF, 0x023F, 0x021F, "Kempston mouse X axis", mouseGate,
-                           Tags(PortTag::Mouse)});
-        entries.push_back({0xFFDF, 0x023F, 0x021F, "Kempston mouse Y axis", mouseGate,
-                           Tags(PortTag::Mouse)});
+        if (evo)
+        {
+            // Low byte #DF only, A8 / A10 select, always answering (zkbdmus.v:118-120)
+            entries.push_back({0xFADF, 0x01FF, 0x00DF, "Kempston mouse buttons (+ wheel)", nullptr, Tags(PortTag::Mouse)});
+            entries.push_back({0xFBDF, 0x05FF, 0x01DF, "Kempston mouse X axis", nullptr, Tags(PortTag::Mouse)});
+            entries.push_back({0xFFDF, 0x05FF, 0x05DF, "Kempston mouse Y axis", nullptr, Tags(PortTag::Mouse)});
+        }
+        else
+        {
+            entries.push_back({0xFADF, 0x023F, 0x021F, "Kempston mouse buttons (+ wheel)", mouseGate,
+                               Tags(PortTag::Mouse)});
+            entries.push_back({0xFBDF, 0x023F, 0x021F, "Kempston mouse X axis", mouseGate,
+                               Tags(PortTag::Mouse)});
+            entries.push_back({0xFFDF, 0x023F, 0x021F, "Kempston mouse Y axis", mouseGate,
+                               Tags(PortTag::Mouse)});
+        }
     }
 
     // Beta128 register set while the TR-DOS interface is fitted. On Scorpion the
@@ -636,6 +697,7 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
     {
         const char* betaGate = scorpion ? "CF_TRDOS / Shadow Monitor / magic-button trigger"
                                : (model == MM_PROFI) ? "CF_DOSPORTS (DOS latch or CP/M mode)"
+                               : evo                 ? "shadow: TR-DOS active or #BF bit 0"
                                                      : nullptr;
         // Data registers answer through exact registered device keys (IsBeta128Port /
         // TryBeta128MirrorPort switch on the five low bytes), so the rows are exact

@@ -2,7 +2,9 @@
 #include "portdecoder_atm3.h"
 
 #include "common/modulelogger.h"
+#include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/mouse/mouse.h"
 #include "emulator/memory/memory.h"
 #include "emulator/memory/atm/cmos.h"
 #include "emulator/video/screen.h"
@@ -37,180 +39,264 @@ void PortDecoder_ATM3::reset()
     _cmos.SetCMOSType(Dallas);
 }
 
+/// @brief One BaseConf decode arm per I/O cycle
+/// @details The rules are the FPGA's (fpga/base_trdemu/trunk/z80/zports.v:
+///          porthit list :331-359, read mux :424-482, write strobes :484-545).
+///          Every mainboard port decodes the full low byte; the shadow line
+///          (TR-DOS active or #BF bit 0) swaps the FDC / ATM group in and the
+///          joystick / Z-Controller config / EFF7 group out. Anything not a
+///          mainboard port belongs to the ZX-Bus cards (GS, MoonSound, ...).
+PortDecoder_ATM3::PortArm PortDecoder_ATM3::ClassifyPort(uint16_t port, bool isWrite)
+{
+    const uint8_t low = static_cast<uint8_t>(port & 0x00FF);
+    const bool shadow = IsManagerEnabled();
+
+    switch (low)
+    {
+        case 0xFE:
+        case 0xF6:
+            return PortArm::KeyboardBorder;
+        case 0xFC:
+            return PortArm::BorderAnd7FFD;
+        case 0xFD:
+            return (port & 0x8000) ? PortArm::Ay : PortArm::Paging7FFD;
+        case 0xF7:
+            return (shadow && (port & 0x0100)) ? PortArm::Pager : PortArm::Eff7Gluk;
+        case 0x77:
+            return shadow ? PortArm::Atm77 : PortArm::SdConfig;
+        case 0x57:
+            return PortArm::SdData;
+        case 0x1F:
+            return shadow ? PortArm::Fdc : PortArm::Joystick;
+        case 0x3F:
+        case 0x5F:
+        case 0x7F:
+        case 0xFF:
+            return shadow ? PortArm::Fdc : PortArm::ZxBus;
+        case 0xDF:
+            return PortArm::Mouse;
+        case 0xBF:
+            return PortArm::EvoConfig;
+        case 0xBE:
+            return PortArm::EvoExit;
+        case 0xBD:
+            return PortArm::EvoReadback;
+        case 0xEF:
+            return PortArm::ComPort;
+        case 0x3B:
+            return PortArm::UlaPlus;
+        case 0x11:
+            return PortArm::NemoIde;
+        case 0xFB:
+            // The Covox DAC latch is write-only and not a porthit: reads stay on the ZX-Bus
+            return isWrite ? PortArm::Covox : PortArm::ZxBus;
+        default:
+            break;
+    }
+
+    // NemoIDE task-file ports and their aliases: `IS_NIDE_REGS(x) = (x[2:0]==0) && (x[3]!=x[4])`
+    // (#10, #30 ... #F0 and #08, #28 ... #E8; #C8 is the CS1 control register)
+    if ((low & 0x07) == 0 && ((low >> 3) & 1) != ((low >> 4) & 1))
+        return PortArm::NemoIde;
+
+    return PortArm::ZxBus;
+}
+
 uint8_t PortDecoder_ATM3::DecodePortIn(uint16_t port, uint16_t pc)
 {
     uint8_t result = 0xFF;
     _lastPortDecoded = false;
 
-    // Z-Controller SD interface, data port (any port with low byte 0x57 -
-    // original io.cpp checks `conf.zc && (port & 0xFF) == 0x57` before the
-    // MM_ATM3 block). The ZX-Evo board always carries the ZC; without an SD
-    // image the reference TSdCard::Rd() returns 0xFF ("no card") so the EVO-DOS
-    // SD-boot detection fails cleanly instead of reading floating-bus garbage.
-    // Full SD image emulation is future work.
-    if ((port & 0x00FF) == 0x0057)
+    const PortArm arm = ClassifyPort(port, /*isWrite*/ false);
+
+    // Full-decode low-byte claim override (see portdecoder.h): a registered
+    // ZX-Bus card (e.g. ZXM-MoonSound on #C4-#C7) owns the cycle. The FDC
+    // arm passes its canonical low byte so the Beta-128 session arbitration
+    // (R6) inside the override recognizes it
+    PortDecodeDisposition disp;
+    uint16_t decodedPort = (arm == PortArm::Fdc) ? static_cast<uint16_t>(port & 0x00FF) : port;
+    if (OverrideDecodeForFullDecodeClaim(port, decodedPort, disp, /*isRead*/ true))
     {
+        result = GetCachedFullDecodeInValue(port);
         _lastPortDecoded = true;
-        OnPortInComplete(port, result, pc);
+        OnPortInComplete(port, result, pc, disp);
         return result;
     }
 
-    // Port #xBF - read pBF back (original io.cpp: return comp.pBF).
-    // The BaseConf service ROM does IN A,(BF) / OR 1 / OUT (BF),A to open the
-    // DOS-port gate before any paging - if this read returns 0xFF instead of
-    // pBF, the ROM latches spurious bits (e.g. D3) into pBF.
-    if (IsPort_BF(port))
+    _lastPortDecoded = true;
+    switch (arm)
     {
-        result = _state->pBF;
-        _lastPortDecoded = true;
-        OnPortInComplete(port, result, pc);
-        return result;
+        case PortArm::KeyboardBorder:
+            result = Default_Port_FE_In(port, pc);
+            break;
+        case PortArm::Ay:
+            // #FFFD reads the selected AY register; #BFFD is write-only
+            result = (port & 0x4000) ? PeripheralPortIn(PORT_FFFD) : 0xFF;
+            break;
+        case PortArm::Eff7Gluk:
+        case PortArm::Pager:
+            result = DecodeF7In(port);
+            break;
+        case PortArm::SdConfig:
+            // Z-Controller config read: always "card inserted, writable" (zports.v:449-450).
+            // Real presence / write-protect live in the AVR clock register C
+            result = 0x00;
+            break;
+        case PortArm::SdData:
+            // No SD card model yet: an idle SPI line reads #FF, so the ERS and
+            // NedoOS card probes fail cleanly
+            result = 0xFF;
+            break;
+        case PortArm::Fdc:
+            result = PeripheralPortIn(static_cast<uint16_t>(port & 0x00FF));
+            break;
+        case PortArm::Joystick:
+            // Kempston joystick outside shadow; no joystick model is attached, so
+            // nothing is pressed (same stub as PortDecoder_Scorpion256)
+            result = 0x00;
+            break;
+        case PortArm::Mouse:
+        {
+            // #xxDF: A8=0 buttons + wheel, A8=1 & A10=0 X, A10=1 Y (zkbdmus.v:118-120);
+            // the AVR answers #FF with no mouse. Not DOS-gated on this board
+            const uint8_t reg = (port & 0x0100) ? ((port & 0x0400) ? 2 : 1) : 0;
+            result = (_mouse && _mouse->IsPresent()) ? _mouse->ReadRegister(reg) : 0xFF;
+            break;
+        }
+        case PortArm::EvoConfig:
+            // The BaseConf service ROM does IN A,(BF) / OR 1 / OUT (BF),A to open
+            // the shadow ports - the read must return the latch, not #FF
+            result = _state->pBF;
+            break;
+        case PortArm::EvoExit:
+            // Legacy BaseConf tree readback (#xxBE, A15..A8 index). The current
+            // tree moves it to #xxBD (ZX-Evo plan phase E1)
+            result = Port_BE_In(static_cast<uint8_t>(port >> 8));
+            break;
+        case PortArm::BorderAnd7FFD:
+        case PortArm::Paging7FFD:
+        case PortArm::Atm77:
+        case PortArm::EvoReadback:
+        case PortArm::ComPort:
+        case PortArm::UlaPlus:
+        case PortArm::NemoIde:
+            // Mainboard ports whose read side is #FF here: no read mux entry
+            // (#FC/#FD/#77) or a device that is not emulated yet (plan E1/E6/E8/E9)
+            result = 0xFF;
+            break;
+        case PortArm::Covox:
+        case PortArm::ZxBus:
+        default:
+            _lastPortDecoded = false;
+            // General Sound host ports (GS design §6): #B3/#BB by the low byte with
+            // bit 3 masked, mirrors normalized to the canonical device keys.
+            // PeripheralPortIn marks the port decoded only when a card is fitted
+            if ((port & 0x00F7) == 0x00B3)
+            {
+                const uint16_t gsPort = (port & 0x00FF) == 0x00BB ? 0x00BB : 0x00B3;
+                result = PeripheralPortIn(gsPort);
+            }
+            break;
     }
 
-    // Port #xBE - ATM3 status / window readback (original io.cpp in(), MM_ATM3)
-    if (IsPort_BE(port))
-    {
-        uint8_t portHi = (port >> 8) & 0xFF;
-        result = Port_BE_In(portHi);
-        _lastPortDecoded = true;
-        OnPortInComplete(port, result, pc);
-        return result;
-    }
-
-    // CMOS data port (0xBFF7 with shaden off, 0xBEF7 with shaden on)
-    if (IsPort_CMOS_Data(port))
-    {
-        result = _cmos.ReadCMOS();
-        _lastPortDecoded = true;
-        OnPortInComplete(port, result, pc);
-        return result;
-    }
-
-    // ATM3-specific: EFF7 read returns actual register value
-    if (IsPort_EFF7(port))
-    {
-        result = _state->pEFF7;
-        _lastPortDecoded = true;
-        OnPortInComplete(port, result, pc);
-        return result;
-    }
-
-    // Delegate to base class for other ports
-    return PortDecoder_ATM710::DecodePortIn(port, pc);
+    OnPortInComplete(port, result, pc);
+    return result;
 }
 
 void PortDecoder_ATM3::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
-    // Z-Controller SD data writes: without an SD image the reference
-    // TSdCard::Wr() ignores them - swallow so they do not fall through to the
-    // FDC / floating-bus handlers (original io.cpp returns right after Zc.Wr)
-    if ((port & 0x00FF) == 0x0057)
+    const PortArm arm = ClassifyPort(port, /*isWrite*/ true);
+
+    PortDecodeDisposition disp;
+    uint16_t decodedPort = (arm == PortArm::Fdc) ? static_cast<uint16_t>(port & 0x00FF) : port;
+    if (OverrideDecodeForFullDecodeClaim(port, decodedPort, disp, /*isRead*/ false))
     {
-        OnPortOutComplete(port, value, pc);
+        OnPortOutComplete(port, value, pc, disp);
         return;
     }
 
-    // Port #xBF - ATM3 control (any port with low byte 0xBF, original io.cpp).
-    // Handled unconditionally, before everything else - must not reach the
-    // base class (BDI decode) or the memory manager.
-    if (IsPort_BF(port))
+    switch (arm)
     {
-        Port_BF_Out(port, value, pc);
-        OnPortOutComplete(port, value, pc);
-        return;
-    }
+        case PortArm::KeyboardBorder:
+            if ((port & 0x00FF) == 0x00FE)
+                Default_Port_FE_Out(port, value, pc);
+            else
+                BorderOnlyOut(port, value, pc);  // #F6: border 8-15, beeper untouched (zports.v:944)
 
-    // Port #xBE - NMI exit counter (any port with low byte 0xBE)
-    if (IsPort_BE(port))
-    {
-        Port_BE_Out(port, value, pc);
-        OnPortOutComplete(port, value, pc);
-        return;
-    }
-
-    // Memory manager ports (x7F7 / xx77 / xFF7) only respond while the
-    // DOS-port gate is open. In the original (io.cpp / memory.cpp set_banks)
-    // CF_DOSPORTS is raised by pBF.0 (shaden) OR by CF_TRDOS, which for
-    // ATM3/ATM710 is forced while ~cpm=0 (aFF77 bit 9 clear). At reset
-    // aFF77=0, so the manager is OPEN from the start - the BaseConf service
-    // ROM relies on this: OUT (BC77),02 / OUT (FF77),AB and the initial
-    // window writes all happen BEFORE the shaden bit is set via IN/OUT (BF).
-    //
-    // While the gate is open the CMOS shifts off the xFF7 window addresses:
-    //   0xDFF7 = CMOS address, 0xBFF7 = CMOS data (gate closed)
-    //   0xDEF7 = CMOS address, 0xBEF7 = CMOS data (gate open;
-    //            0xBFF7/0xDFF7 then decode as xFF7 windows 2/3)
-    if (IsManagerEnabled())
-    {
-        // Port #37F7 - 4MB memory manager (ATM3 specific)
-        if (IsPort_37F7(port))
-        {
-            Port_37F7_Out(port, value, pc);
-            OnPortOutComplete(port, value, pc);
-            return;
-        }
-
-        // Port #xx77 - ATM control register (any port with low byte 0x77;
-        // the BaseConf service ROM enables the manager via port 0xBC77)
-        if (IsPort_FF77(port))
-        {
+            // ATM 4-bit border: bit 3 is ~A3, re-latched by every border write
+            // (zports.v:538 `border <= {~a[3], din[2:0]}`) - #FE gives colors 0-7, #F6 8-15
+            _state->atmBorderBright = (port & 0x0008) ? 0 : 1;
+            break;
+        case PortArm::BorderAnd7FFD:
+            // #FC: border strobe (not beeper) and, with A15=0, a #7FFD write
+            // (portfe_wr and portfd_wr both include #FC, zports.v:484,536)
+            BorderOnlyOut(port, value, pc);
+            _state->atmBorderBright = (port & 0x0008) ? 0 : 1;
+            if ((port & 0x8000) == 0)
+                Port_7FFD_Out(port, value, pc);
+            break;
+        case PortArm::Paging7FFD:
+            Port_7FFD_Out(port, value, pc);
+            break;
+        case PortArm::Ay:
+            PeripheralPortOut((port & 0x4000) ? PORT_FFFD : PORT_BFFD, value);
+            break;
+        case PortArm::Eff7Gluk:
+        case PortArm::Pager:
+            DecodeF7Out(port, value, pc);
+            break;
+        case PortArm::Atm77:
             Port_FF77_Out_ATM3(port, value, pc);
-            OnPortOutComplete(port, value, pc);
-            return;
-        }
+            break;
+        case PortArm::Fdc:
+        {
+            // The ZX-Evo, like the ATM-Turbo 2+, keeps the VG93 in double density:
+            // only drive / side / reset / HLT reach the controller from #FF (vg93.v)
+            uint8_t fdcValue = value;
+            const uint16_t fdcPort = static_cast<uint16_t>(port & 0x00FF);
+            if (fdcPort == 0x00FF)
+                fdcValue &= 0b1011'1111;
+            PeripheralPortOut(fdcPort, fdcValue);
 
-        // Port #xFF7 - memory manager window registers
-        uint8_t windowIndex = 0;
-        if (IsPort_FFF7(port, windowIndex))
-        {
-            Port_FFF7_Out(port, value, windowIndex, pc);
-            OnPortOutComplete(port, value, pc);
-            return;
+            // The #FF write also strobes the palette latch while #xx77 A14 was 0
+            // (atm_palwr = vg_wrFF & atm_pen2, zports.v:911-917)
+            if (fdcPort == 0x00FF && IsPaletteWriteEnabled())
+                Port_ATM_Palette_Out(port, value);
+            break;
         }
-
-        // CMOS address / data (shaden on: DEF7 / BEF7)
-        if (IsPort_CMOS_Address(port))
-        {
-            _cmos.SetCMOSAddress(value);
-            OnPortOutComplete(port, value, pc);
-            return;
-        }
-        if (IsPort_CMOS_Data(port))
-        {
-            _cmos.WriteCMOS(value);
-            OnPortOutComplete(port, value, pc);
-            return;
-        }
-    }
-    else
-    {
-        // Manager gate closed - swallow x7F7 / xx77 / xFF7 writes so they do not
-        // fall through to the base ATM710 handlers (original ignores them too)
-        uint8_t windowIndex = 0;
-        if (IsPort_37F7(port) || IsPort_FF77(port) || IsPort_FFF7(port, windowIndex))
-        {
-            MLOGDEBUG("PortDecoder_ATM3: manager write to 0x%04X ignored (gate closed)", port);
-            OnPortOutComplete(port, value, pc);
-            return;
-        }
-
-        // CMOS address / data (shaden off: DFF7 / BFF7)
-        if (IsPort_CMOS_Address(port))
-        {
-            _cmos.SetCMOSAddress(value);
-            OnPortOutComplete(port, value, pc);
-            return;
-        }
-        if (IsPort_CMOS_Data(port))
-        {
-            _cmos.WriteCMOS(value);
-            OnPortOutComplete(port, value, pc);
-            return;
-        }
+        case PortArm::EvoConfig:
+            Port_BF_Out(port, value, pc);
+            break;
+        case PortArm::EvoExit:
+            Port_BE_Out(port, value, pc);
+            break;
+        case PortArm::Covox:
+            // Covox DAC on #FB (zports.v:945); the self-decoding Covox device owns
+            // the channel mapping. Other SounDrive addresses do not exist on this board
+            DispatchSelfDecodingOut(port, value);
+            break;
+        case PortArm::SdConfig:
+        case PortArm::SdData:
+        case PortArm::Joystick:
+        case PortArm::Mouse:
+        case PortArm::EvoReadback:
+        case PortArm::ComPort:
+        case PortArm::UlaPlus:
+        case PortArm::NemoIde:
+            // Mainboard ports without an emulated write side yet (ZX-Evo plan
+            // E1/E5/E6/E8/E9); swallowed so they never reach a ZX-Bus device
+            break;
+        case PortArm::ZxBus:
+        default:
+            // General Sound host ports: #B3/#BB (bit 3 masked) and #33
+            if ((port & 0x00F7) == 0x00B3)
+                PeripheralPortOut((port & 0x00FF) == 0x00BB ? 0x00BB : 0x00B3, value);
+            else if ((port & 0x00FF) == 0x0033)
+                PeripheralPortOut(0x0033, value);
+            break;
     }
 
-    // Delegate to base class for other ports (FE, 7FFD, EFF7, BFFD, FFFD, Beta128...)
-    PortDecoder_ATM710::DecodePortOut(port, value, pc);
+    OnPortOutComplete(port, value, pc);
 }
 
 /// endregion </Interface methods>
@@ -239,16 +325,18 @@ bool PortDecoder_ATM3::IsPort_FF77(uint16_t port)
 
 bool PortDecoder_ATM3::IsPort_37F7(uint16_t port)
 {
-    // Port #37F7 - 4MB memory manager
-    // Full 14-bit decode
-    return (port & 0x3FFF) == 0x37F7;
+    // #x7F7 (8-bit RAM page register): low byte F7, A8=1, A11:A10=01, window by
+    // A15:A14 (atm_pager.v:206-210 `case {za[11],za[10]} 2'b01`)
+    return (port & 0x0DFF) == 0x05F7;
 }
 
 bool PortDecoder_ATM3::IsPort_FFF7(uint16_t port, uint8_t& windowIndex)
 {
-    // ATM3 uses a narrower decode than ATM710: A13:A12 must be set as well
-    // (matches original Unreal Speccy io.cpp: mask 0x3FFF, match 0x3FF7)
-    if ((port & 0x3FFF) != 0x3FF7)
+    // #xFF7 (ATM window register): low byte F7, A8=1, A11:A10=11, window by
+    // A15:A14 (atm_pager.v:200-204). A13:A12 are not decoded - in shadow
+    // #EFF7 / #DFF7 / #BFF7 are window registers too, which is why the Gluk
+    // ports move to the A8=0 aliases #DEF7 / #BEF7 there
+    if ((port & 0x0DFF) != 0x0DF7)
         return false;
 
     windowIndex = (port >> 14) & 0x03;
@@ -261,17 +349,28 @@ bool PortDecoder_ATM3::IsPort_BE(uint16_t port)
     return (port & 0x00FF) == 0x00BE;
 }
 
+bool PortDecoder_ATM3::IsGlukEnabled()
+{
+    // gluclock_on = EFF7 bit 7 || shadow (zports.v:739): in shadow the clock
+    // ports are always reachable, outside only after OUT (#EFF7),#80
+    return IsManagerEnabled() || (_state->pEFF7 & ATM_EFF7_GLUK) != 0;
+}
+
 bool PortDecoder_ATM3::IsPort_CMOS_Data(uint16_t port)
 {
-    // CMOS data: 0xBFF7 with the manager gate closed, 0xBEF7 with it open
-    // (original io.cpp: `port == (0xBFF7 & mask)` with mask = ~0x100 when DOS ports on)
-    return port == (IsManagerEnabled() ? 0xBEF7 : 0xBFF7);
+    // Gluk data: low byte F7, A14=0, A8 = !shadow (#BFF7 outside shadow, #BEF7
+    // in shadow), clock enabled (zports.v:455-460)
+    const bool shadow = IsManagerEnabled();
+    return (port & 0x00FF) == 0x00F7 && (port & 0x4000) == 0 &&
+           ((port & 0x0100) != 0) != shadow && IsGlukEnabled();
 }
 
 bool PortDecoder_ATM3::IsPort_CMOS_Address(uint16_t port)
 {
-    // CMOS address: 0xDFF7 with the manager gate closed, 0xDEF7 with it open
-    return port == (IsManagerEnabled() ? 0xDEF7 : 0xDFF7);
+    // Gluk address: as the data port with A13=0 instead of A14=0 (#DFF7 / #DEF7)
+    const bool shadow = IsManagerEnabled();
+    return (port & 0x00FF) == 0x00F7 && (port & 0x2000) == 0 &&
+           ((port & 0x0100) != 0) != shadow && IsGlukEnabled();
 }
 
 bool PortDecoder_ATM3::IsPort_BF(uint16_t port)
@@ -492,6 +591,10 @@ void PortDecoder_ATM3::Port_EFF7_Out([[maybe_unused]] uint16_t port, uint8_t val
 
     PortDecoder_ATM710::Port_EFF7_Out(port, value, pc);
 
+    // Bit 2 (128K / 1 MB page mode) and bit 3 (RAM 0 at #0000) change the window map
+    if (_memory)
+        _memory->UpdateZ80Banks();
+
     if (((_state->pEFF7 ^ oldVideoBits) & VIDEO_BITS) != 0)
     {
         if (_context->pScreen)
@@ -503,8 +606,142 @@ void PortDecoder_ATM3::Port_EFF7_Out([[maybe_unused]] uint16_t port, uint8_t val
     }
 }
 
-// updateMemoryBanks(): fully inherited from PortDecoder_ATM710 - the base class
-// port of the original set_banks() MM_ATM710/MM_ATM3 branch already covers the
-// ATM3 specifics (register masks and the NMI -> RAM page 0xFF window 0 override)
+/// @brief #F7 writes outside the pager: #EFF7 and the Gluk clock ports
+/// @details zports.v:490-491, 714-750: the group decodes A8 against the shadow
+///          line (A8=1 outside shadow, A8=0 in shadow, so it never collides
+///          with the ATM window registers), then A12/A13/A14 independently:
+///          A12=0 -> #EFF7 (outside shadow only), A13=0 -> clock address,
+///          A14=0 -> clock data. Inside shadow with A8=1 the pager owns the
+///          port: A11:A10 = 11 #xFF7, 01 #x7F7, 10 #xBF7 (write protect)
+void PortDecoder_ATM3::DecodeF7Out(uint16_t port, uint8_t value, uint16_t pc)
+{
+    const bool shadow = IsManagerEnabled();
+    const bool a8 = (port & 0x0100) != 0;
+
+    if (shadow && a8)
+    {
+        uint8_t windowIndex = 0;
+        if (IsPort_FFF7(port, windowIndex))
+            Port_FFF7_Out(port, value, windowIndex, pc);
+        else if (IsPort_37F7(port))
+            Port_37F7_Out(port, value, pc);
+        else
+            MLOGDEBUG("PortDecoder_ATM3: #%04X write-protect / unused pager function ignored", port);
+        return;
+    }
+
+    if (a8 == shadow)
+        return;  // A8=0 outside shadow: no function on this board
+
+    // Clock enable as latched before this cycle (gluclock_on uses the registered EFF7)
+    const bool gluk = IsGlukEnabled();
+
+    if (!shadow && (port & 0x1000) == 0)
+        Port_EFF7_Out(port, value, pc);
+
+    if (gluk && (port & 0x2000) == 0)
+        _cmos.SetCMOSAddress(value);
+    if (gluk && (port & 0x4000) == 0)
+        _cmos.WriteCMOS(value);
+}
+
+/// @brief #F7 reads: only the clock data port drives the bus (zports.v:455-460);
+///        #EFF7 and the ATM window registers are write-only
+uint8_t PortDecoder_ATM3::DecodeF7In(uint16_t port)
+{
+    if (IsPort_CMOS_Data(port))
+        return _cmos.ReadCMOS();
+    return 0xFF;
+}
+
+/// @brief Border strobe without the beeper / tape bits (#F6, #FC)
+/// @details beeper_wr is `loa == #FE` only (zports.v:944): #F6 and #FC set the
+///          border and leave MIC/EAR where the last #FE write put them
+void PortDecoder_ATM3::BorderOnlyOut(uint16_t port, uint8_t value, uint16_t pc)
+{
+    const uint8_t keep = static_cast<uint8_t>(_state->pFE & 0xF8);
+    Default_Port_FE_Out(port, static_cast<uint8_t>((value & 0x07) | keep), pc);
+}
+
+/// @brief BaseConf window mapping (fpga/base_trdemu/trunk/mem/atm_pager.v:114-168)
+/// @details Priority for window 0: pager off (all windows ROM 31) > NMI (RAM
+///          #FF) > #EFF7 bit 3 (RAM page 0) > the page register. A register
+///          whose "dos7ffd" bit is set takes its low page bits from #7FFD:
+///          128K mode (#EFF7 bit 2 = 1) `{reg[7:3], 7FFD[2:0]}`, Pentagon-1024
+///          mode (bit 2 = 0, the reset state) `{reg[7:6], 7FFD[7:5], 7FFD[2:0]}`.
+///          A ROM register with the bit set swaps its page LSB for the DOS signal.
+void PortDecoder_ATM3::updateMemoryBanks()
+{
+    if (!_memory)
+        return;
+
+    const CONFIG& config = _context->config;
+
+    const uint16_t ramPages = config.ramsize ? (config.ramsize / 16) : MAX_RAM_PAGES;
+    const uint8_t ramMask = static_cast<uint8_t>(ramPages - 1);
+
+    const uint8_t romBanks = (_context->pCore && _context->pCore->GetROM()) ? _context->pCore->GetROM()->GetROMBanksLoaded() : 0;
+    const uint8_t romMask = romBanks ? static_cast<uint8_t>(romBanks - 1) : 0;
+
+    // #xx77 A9=0 (cpm_n) forces the DOS signal (zdos.v:68-69)
+    if (!(_state->aFF77 & ATM_AFF77_CPM))
+        _state->flags |= CF_TRDOS;
+    const bool dos = (_state->flags & CF_TRDOS) != 0;
+
+    // #xx77 A8=0: pager off, every window reads the last ROM page
+    if (!(_state->aFF77 & ATM_AFF77_PEN))
+    {
+        for (uint8_t bank = 0; bank < 4; bank++)
+            _memory->SetROMPageToBank(bank, romMask);
+        return;
+    }
+
+    const unsigned regSet = (_state->p7FFD & 0x10) ? 4 : 0;
+    const bool oneMegMode = (_state->pEFF7 & ATM_EFF7_LOCKMEM) == 0;
+    const uint8_t p7FFD = _state->p7FFD;
+
+    for (uint8_t bank = 0; bank < 4; bank++)
+    {
+        const unsigned reg = _state->pFFF7[regSet + bank];
+
+        switch (reg & 0x300)
+        {
+            case 0x000:  // RAM, low page bits from #7FFD
+            {
+                uint16_t page = oneMegMode
+                                    ? static_cast<uint16_t>((reg & 0xC0) | (((p7FFD >> 5) & 0x07) << 3) | (p7FFD & 0x07))
+                                    : static_cast<uint16_t>((reg & 0xF8) | (p7FFD & 0x07));
+                page &= ramMask;
+                if (bank == 0) _memory->SetRAMPageToBank0(page);
+                else if (bank == 1) _memory->SetRAMPageToBank1(page);
+                else if (bank == 2) _memory->SetRAMPageToBank2(page);
+                else _memory->SetRAMPageToBank3(page);
+                break;
+            }
+            case 0x100:  // ROM, page LSB = DOS signal
+                _memory->SetROMPageToBank(bank, static_cast<uint16_t>(((reg & 0xFE) | (dos ? 1 : 0)) & romMask));
+                break;
+            case 0x200:  // RAM, page from the register
+            {
+                const uint16_t page = static_cast<uint16_t>(reg & 0xFF & ramMask);
+                if (bank == 0) _memory->SetRAMPageToBank0(page);
+                else if (bank == 1) _memory->SetRAMPageToBank1(page);
+                else if (bank == 2) _memory->SetRAMPageToBank2(page);
+                else _memory->SetRAMPageToBank3(page);
+                break;
+            }
+            case 0x300:  // ROM, page from the register
+            default:
+                _memory->SetROMPageToBank(bank, static_cast<uint16_t>(reg & 0xFF & romMask));
+                break;
+        }
+    }
+
+    // Window 0 overrides
+    if (_state->nmi_in_progress)
+        _memory->SetRAMPageToBank0(0xFF & ramMask);
+    else if (_state->pEFF7 & ATM_EFF7_ROCACHE)
+        _memory->SetRAMPageToBank0(0);
+}
 
 /// endregion </Port handlers>

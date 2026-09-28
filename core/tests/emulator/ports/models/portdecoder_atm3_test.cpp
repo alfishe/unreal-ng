@@ -2,6 +2,10 @@
 #include "pch.h"
 
 #include "portdecoder_atm3_test.h"
+#include "emulator/memory/atm/cmos.h"
+#include "emulator/io/mouse/mouse.h"
+#include "emulator/emulatormanager.h"
+#include "emulator/emulator.h"
 
 /// region <SetUp / TearDown>
 
@@ -76,15 +80,19 @@ TEST_F(PortDecoder_ATM3_Test, IsPort_FF77_PartialDecode)
 
 TEST_F(PortDecoder_ATM3_Test, IsPort_37F7)
 {
-    // Port: #37F7 (4MB Memory Manager)
-    // Full 14-bit decode: (port & 0x3FFF) == 0x37F7
+    // Port: #x7F7 (4MB Memory Manager): low byte F7, A8=1, A11:A10=01
 
     EXPECT_TRUE(_portDecoder->IsPort_37F7(0x37F7));
     EXPECT_TRUE(_portDecoder->IsPort_37F7(0xB7F7));  // High bits don't matter
     EXPECT_TRUE(_portDecoder->IsPort_37F7(0xF7F7));
 
+    // A13:A12 are not decoded on the board (atm_pager.v:206-210 keys on A11:A10 only)
+    EXPECT_TRUE(_portDecoder->IsPort_37F7(0x17F7));
+    EXPECT_TRUE(_portDecoder->IsPort_37F7(0x07F7));
+
     // Should NOT match
-    EXPECT_FALSE(_portDecoder->IsPort_37F7(0x17F7));
+    EXPECT_FALSE(_portDecoder->IsPort_37F7(0x3FF7)) << "A11:A10=11 is #xFF7";
+    EXPECT_FALSE(_portDecoder->IsPort_37F7(0x36F7)) << "A8=0";
     EXPECT_FALSE(_portDecoder->IsPort_37F7(0x37F6));
     EXPECT_FALSE(_portDecoder->IsPort_37F7(0x37FF));
 }
@@ -162,15 +170,17 @@ TEST_F(PortDecoder_ATM3_Test, ApplyBootROMDefaults_InheritedFromATM710)
 
 /// region <Inheritance tests - verify ATM3 extends ATM710>
 
-TEST_F(PortDecoder_ATM3_Test, InheritsPort_7FFD)
+TEST_F(PortDecoder_ATM3_Test, Port7FFD_FullLowByteDecode)
 {
-    // ATM3 should inherit 7FFD decoding from ATM710
-    static const uint16_t mask_7FFD  = 0b1000'0000'0000'0110;
-    static const uint16_t match_7FFD = 0b0000'0000'0000'0100;
-
-    EXPECT_TRUE(_portDecoder->IsPort_7FFD(0x7FFD));
-    EXPECT_TRUE(_portDecoder->IsPort_7FFD(0x7FF5));  // A2=1, A1=0
-    EXPECT_FALSE(_portDecoder->IsPort_7FFD(0xFFFF));  // A15=1
+    // BaseConf decodes #7FFD as A15=0 with low byte #FD or #FC (zports.v:484,694)
+    // - not the ATM710 A15/A2/A1 partial decode, so #7FF5 is no longer paging
+    using Arm = PortDecoder_ATM3::PortArm;
+    EXPECT_EQ(_portDecoder->ClassifyPort(0x7FFD, true), Arm::Paging7FFD);
+    EXPECT_EQ(_portDecoder->ClassifyPort(0x1FFD, true), Arm::Paging7FFD) << "no #1FFD on BaseConf: an A15=0 alias";
+    EXPECT_EQ(_portDecoder->ClassifyPort(0x7FFC, true), Arm::BorderAnd7FFD);
+    EXPECT_NE(_portDecoder->ClassifyPort(0x7FF5, true), Arm::Paging7FFD);
+    EXPECT_EQ(_portDecoder->ClassifyPort(0xFFFD, true), Arm::Ay);
+    EXPECT_EQ(_portDecoder->ClassifyPort(0xBFFD, true), Arm::Ay);
 }
 
 TEST_F(PortDecoder_ATM3_Test, InheritsPort_EFF7)
@@ -180,29 +190,30 @@ TEST_F(PortDecoder_ATM3_Test, InheritsPort_EFF7)
     EXPECT_FALSE(_portDecoder->IsPort_EFF7(0xEFF6));
 }
 
-TEST_F(PortDecoder_ATM3_Test, IsPort_FFF7_NarrowerDecode)
+TEST_F(PortDecoder_ATM3_Test, IsPort_FFF7_PagerDecode)
 {
-    // ATM3 xFF7 decode is narrower than ATM710: A13:A12 must be set as well
-    // (mask 0x3FFF, match 0x3FF7)
+    // BaseConf pager: low byte F7, A8=1, A11:A10=11, window = A15:A14
+    // (atm_pager.v:200-204). A13:A12 are not decoded; Unreal's 0x3FFF mask
+    // was narrower than the board
     uint8_t windowIndex;
 
     EXPECT_TRUE(_portDecoder->IsPort_FFF7(0x3FF7, windowIndex));
     EXPECT_EQ(windowIndex, 0);
-
     EXPECT_TRUE(_portDecoder->IsPort_FFF7(0x7FF7, windowIndex));
     EXPECT_EQ(windowIndex, 1);
-
     EXPECT_TRUE(_portDecoder->IsPort_FFF7(0xBFF7, windowIndex));
     EXPECT_EQ(windowIndex, 2);
-
     EXPECT_TRUE(_portDecoder->IsPort_FFF7(0xFFF7, windowIndex));
     EXPECT_EQ(windowIndex, 3);
+    EXPECT_TRUE(_portDecoder->IsPort_FFF7(0x0DF7, windowIndex)) << "A13:A12 not decoded";
+    EXPECT_EQ(windowIndex, 0);
+    EXPECT_TRUE(_portDecoder->IsPort_FFF7(0xEFF7, windowIndex)) << "#EFF7 is window 3 in shadow";
+    EXPECT_EQ(windowIndex, 3);
 
-    // Should NOT match: low byte F7 but A13:A12 not both set (these match on ATM710)
-    EXPECT_FALSE(_portDecoder->IsPort_FFF7(0x00F7, windowIndex));
-    EXPECT_FALSE(_portDecoder->IsPort_FFF7(0x17F7, windowIndex));
-    EXPECT_FALSE(_portDecoder->IsPort_FFF7(0x27F7, windowIndex));
-    EXPECT_FALSE(_portDecoder->IsPort_FFF7(0x37F7, windowIndex));  // 37F7 has its own handler
+    EXPECT_FALSE(_portDecoder->IsPort_FFF7(0x00F7, windowIndex)) << "A8=0";
+    EXPECT_FALSE(_portDecoder->IsPort_FFF7(0x37F7, windowIndex)) << "A11:A10=01 is #x7F7";
+    EXPECT_FALSE(_portDecoder->IsPort_FFF7(0x3BF7, windowIndex)) << "A11:A10=10 is #xBF7";
+    EXPECT_FALSE(_portDecoder->IsPort_FFF7(0x3FF6, windowIndex));
 }
 
 /// endregion </Inheritance tests>
@@ -293,9 +304,15 @@ TEST_F(PortDecoder_ATM3_Test, Turbo_FF77Bit3_EFF7Bit4_MultiplierSelect)
     _portDecoder->DecodePortOut(0xFF77, 0x00, 0x0000);
     EXPECT_EQ(state.hw_turbo_shift, 1) << "turbo clear with pEFF7.4 clear is the 7 MHz default";
 
+    // #EFF7 is written only outside shadow (zports.v:716 "EEF7 in shadow mode
+    // is abandoned"): drop shaden and leave CP/M so the DOS line is off too
+    state.pBF = 0x00;
+    state.aFF77 = PortDecoder_ATM3::ATM_AFF77_PEN | PortDecoder_ATM3::ATM_AFF77_CPM;
+    state.flags &= ~CF_TRDOS;
     _portDecoder->DecodePortOut(0xEFF7, 0x10, 0x0000);
     EXPECT_EQ(state.hw_turbo_shift, 0) << "pEFF7.4 locks 3.5 MHz";
 
+    state.pBF = 0x01;
     _portDecoder->DecodePortOut(0xFF77, 0x08, 0x0000);
     EXPECT_EQ(state.hw_turbo_shift, 2) << "pFF77.3 overrides the 3.5 MHz lock";
 
@@ -456,3 +473,325 @@ TEST_F(PortDecoder_ATM3_Test, GSHostPortsReachBaseDecodeThroughOverrides)
 }
 
 /// endregion </General Sound port delegation tests>
+
+/// region <BaseConf decode (ZX-Evo plan phase E0)>
+
+namespace
+{
+    /// The FPGA "porthit" predicate, transcribed from
+    /// pentevo fpga/base_trdemu/trunk/z80/zports.v:331-359: true when the
+    /// mainboard owns the I/O cycle (the ZX-Bus cards never see it)
+    bool RtlPortHit(uint8_t loa, bool shadow)
+    {
+        const bool nideRegs = (loa & 0x07) == 0 && (((loa >> 3) & 1) != ((loa >> 4) & 1));
+        const bool nide = nideRegs || loa == 0x11;
+        return loa == 0xFE || loa == 0xF6 || loa == 0xFD || loa == 0xFC || nide || loa == 0xDF ||
+               ((loa == 0x1F || loa == 0x3F || loa == 0x5F || loa == 0x7F || loa == 0xFF) && shadow) ||
+               (loa == 0x1F && !shadow) || (loa == 0xF7 && !shadow) || (loa == 0x77 && !shadow) || loa == 0x57 ||
+               (loa == 0xF7 && shadow) || (loa == 0x77 && shadow) ||
+               loa == 0xBF || loa == 0xBE || loa == 0xBD || loa == 0xEF || loa == 0x3B;
+    }
+
+    void SetShadow(EmulatorState& state, bool on)
+    {
+        // Shadow = TR-DOS (DOS line) or #BF bit 0. CP/M set (A9=1) keeps the DOS
+        // line from being forced, PEN set keeps the pager on
+        state.aFF77 = PortDecoder_ATM3::ATM_AFF77_PEN | PortDecoder_ATM3::ATM_AFF77_CPM;
+        state.flags &= ~CF_TRDOS;
+        state.pBF = on ? 0x01 : 0x00;
+    }
+}  // namespace
+
+/// DEC-1: every one of the 65 536 ports, in and out of shadow, in both
+/// directions, lands on exactly the arm the FPGA porthit list gives it. The
+/// old ATM710-inherited decode matched #FE on A0 alone, which made every even
+/// port - all NemoIDE ports included - a border/beeper write
+TEST_F(PortDecoder_ATM3_Test, Sweep_EveryPortMatchesFpgaPortHit)
+{
+    using Arm = PortDecoder_ATM3::PortArm;
+    EmulatorState& state = _context->emulatorState;
+
+    for (bool shadow : {false, true})
+    {
+        SetShadow(state, shadow);
+        ASSERT_EQ(_portDecoder->IsManagerEnabled(), shadow);
+
+        for (uint32_t p = 0; p <= 0xFFFF; p++)
+        {
+            const uint16_t port = static_cast<uint16_t>(p);
+            const uint8_t loa = static_cast<uint8_t>(port & 0xFF);
+            for (bool isWrite : {false, true})
+            {
+                const Arm arm = _portDecoder->ClassifyPort(port, isWrite);
+                const bool mainboard = arm != Arm::ZxBus && arm != Arm::Covox;
+                if (mainboard != RtlPortHit(loa, shadow))
+                {
+                    ADD_FAILURE() << "port #" << std::hex << port << (isWrite ? " write" : " read")
+                                  << (shadow ? " in" : " outside") << " shadow: arm " << std::dec
+                                  << static_cast<int>(arm);
+                    return;  // one diagnostic is enough; the sweep would repeat it per alias
+                }
+
+                const bool border = arm == Arm::KeyboardBorder || arm == Arm::BorderAnd7FFD;
+                if (border != (loa == 0xFE || loa == 0xF6 || loa == 0xFC))
+                {
+                    ADD_FAILURE() << "port #" << std::hex << port << " border arm mismatch";
+                    return;
+                }
+            }
+        }
+    }
+}
+
+/// DEC-1b: the ports the next phases wire (NemoIDE, SD, ULA+, RS-232, #BD)
+/// are claimed by the board already, so nothing leaks to border or ZX-Bus
+TEST_F(PortDecoder_ATM3_Test, BoardPortsReservedForLaterPhases)
+{
+    using Arm = PortDecoder_ATM3::PortArm;
+    for (uint16_t port : {0x0010, 0x0011, 0x0030, 0x0050, 0x0070, 0x0090, 0x00B0, 0x00D0, 0x00F0, 0x00C8, 0x0008, 0x00E8})
+        EXPECT_EQ(_portDecoder->ClassifyPort(port, true), Arm::NemoIde) << std::hex << port;
+    for (uint16_t port : {0x0018, 0x0038, 0x0020, 0x00C0})
+        EXPECT_NE(_portDecoder->ClassifyPort(port, true), Arm::NemoIde) << std::hex << port << " is not an IDE register";
+
+    EXPECT_EQ(_portDecoder->ClassifyPort(0x0057, false), Arm::SdData);
+    EXPECT_EQ(_portDecoder->ClassifyPort(0xBF3B, true), Arm::UlaPlus);
+    EXPECT_EQ(_portDecoder->ClassifyPort(0xF8EF, true), Arm::ComPort);
+    EXPECT_EQ(_portDecoder->ClassifyPort(0x13BD, true), Arm::EvoReadback);
+}
+
+/// The FDC answers only in shadow and only on its exact low bytes; outside
+/// shadow #1F is the Kempston joystick (zports.v:342, :444-445)
+TEST_F(PortDecoder_ATM3_Test, Fdc_OnlyInShadow_JoystickOutside)
+{
+    GsPortMockDevice fdc;  // any recording PortDevice will do
+    ASSERT_TRUE(_portDecoder->RegisterPortHandler(0x001F, &fdc, static_cast<PortTagSet>(PortTag::StorageFdc)));
+    EmulatorState& state = _context->emulatorState;
+
+    SetShadow(state, true);
+    fdc.lastPort = 0;
+    EXPECT_EQ(_portDecoder->DecodePortIn(0x001F, 0x0000), static_cast<uint8_t>(0x1F ^ 0xFF));
+    EXPECT_EQ(fdc.lastPort, 0x001F) << "WD1793 status in shadow";
+
+    fdc.lastPort = 0;
+    _portDecoder->DecodePortOut(0x000F, 0x08, 0x0000);
+    EXPECT_EQ(fdc.lastPort, 0) << "#0F is not an FDC port on BaseConf (exact low-byte decode)";
+
+    SetShadow(state, false);
+    fdc.lastPort = 0;
+    EXPECT_EQ(_portDecoder->DecodePortIn(0x001F, 0x0000), 0x00) << "Kempston joystick, nothing pressed";
+    EXPECT_TRUE(_portDecoder->WasLastPortDecoded());
+    _portDecoder->DecodePortOut(0x001F, 0xD0, 0x0000);
+    EXPECT_EQ(fdc.lastPort, 0) << "the WD1793 must not see #1F outside shadow";
+}
+
+/// #EFF7 is written only outside shadow, on any #F7 port with A8=1 and A12=0;
+/// it is write-only (no read mux entry) - zports.v:490-491, :714-720
+TEST_F(PortDecoder_ATM3_Test, Eff7_WrittenOnlyOutsideShadow_WriteOnly)
+{
+    EmulatorState& state = _context->emulatorState;
+
+    SetShadow(state, false);
+    _portDecoder->DecodePortOut(0xEFF7, 0x10, 0x0000);
+    EXPECT_EQ(state.pEFF7, 0x10);
+    _portDecoder->DecodePortOut(0xE1F7, 0x14, 0x0000);
+    EXPECT_EQ(state.pEFF7, 0x14) << "A12=0 alias";
+    EXPECT_EQ(_portDecoder->DecodePortIn(0xEFF7, 0x0000), 0xFF) << "#EFF7 has no read path";
+
+    SetShadow(state, true);
+    state.pFFF7[3] = 0x0000;
+    _portDecoder->DecodePortOut(0xEFF7, 0x00, 0x0000);
+    EXPECT_EQ(state.pEFF7, 0x14) << "in shadow #EFF7 is ignored";
+    EXPECT_EQ(state.pFFF7[3], 0x033F) << "... and reaches pager window 3 instead (value 0 -> ROM, page 0x3F)";
+}
+
+/// The Gluk clock needs #EFF7 bit 7 outside shadow and is always on in shadow,
+/// where it moves to the A8=0 aliases #DEF7 / #BEF7 (zports.v:455-460, :739)
+TEST_F(PortDecoder_ATM3_Test, Gluk_GatedByEff7Bit7OutsideShadow)
+{
+    EmulatorState& state = _context->emulatorState;
+    CMOS& cmos = _portDecoder->GetCMOS();
+    cmos.SetCMOSType(Dallas);
+
+    SetShadow(state, false);
+    state.pEFF7 = 0x00;
+    cmos.SetCMOSAddress(0x20);
+    _portDecoder->DecodePortOut(0xDFF7, 0x30, 0x0000);
+    EXPECT_EQ(cmos.GetCMOSAddress(), 0x20) << "clock ports closed until #EFF7 bit 7";
+    EXPECT_EQ(_portDecoder->DecodePortIn(0xBFF7, 0x0000), 0xFF);
+
+    _portDecoder->DecodePortOut(0xEFF7, 0x80, 0x0000);
+    _portDecoder->DecodePortOut(0xDFF7, 0x30, 0x0000);
+    EXPECT_EQ(cmos.GetCMOSAddress(), 0x30);
+    _portDecoder->DecodePortOut(0xBFF7, 0x5A, 0x0000);
+    EXPECT_EQ(_portDecoder->DecodePortIn(0xBFF7, 0x0000), 0x5A);
+
+    SetShadow(state, true);
+    state.pEFF7 = 0x00;
+    _portDecoder->DecodePortOut(0xDEF7, 0x31, 0x0000);
+    EXPECT_EQ(cmos.GetCMOSAddress(), 0x31) << "#DEF7 in shadow, no #EFF7 bit 7 needed";
+    _portDecoder->DecodePortOut(0xBEF7, 0xA5, 0x0000);
+    EXPECT_EQ(_portDecoder->DecodePortIn(0xBEF7, 0x0000), 0xA5);
+    EXPECT_EQ(_portDecoder->DecodePortIn(0xBFF7, 0x0000), 0xFF) << "#BFF7 has A8=1: in shadow it is not the clock";
+}
+
+/// Pentagon-1024 mode (#EFF7 bit 2 = 0, the reset state) takes page bits 5:3
+/// from #7FFD bits 7:5; 128K mode only bits 2:0 (atm_pager.v:147-156)
+TEST_F(PortDecoder_ATM3_Test, Mapping_7FFDPageBits_1MegVs128KMode)
+{
+    EmulatorState& state = _context->emulatorState;
+    _context->config.ramsize = 4096;
+    SetShadow(state, false);
+    state.p7FFD = 0xE3;          // bits 7:5 = 111, bits 2:0 = 011, map 0
+    state.pFFF7[3] = 0x0040;     // RAM, page bits from #7FFD, register page 0x40
+
+    state.pEFF7 = 0x00;
+    _memory->UpdateZ80Banks();
+    EXPECT_EQ(_memory->GetRAMPageForBank3(), 0x7B) << "{reg[7:6], 7FFD[7:5], 7FFD[2:0]} = 01 111 011";
+
+    state.pEFF7 = PortDecoder_ATM3::ATM_EFF7_LOCKMEM;
+    _memory->UpdateZ80Banks();
+    EXPECT_EQ(_memory->GetRAMPageForBank3(), 0x43) << "{reg[7:3], 7FFD[2:0]} = 01000 011";
+}
+
+/// #EFF7 bit 3 puts RAM page 0 at #0000 over the page register; pager off
+/// (#xx77 A8=0) still wins (atm_pager.v:114-137)
+TEST_F(PortDecoder_ATM3_Test, Mapping_Eff7Bit3_Ram0AtWindow0)
+{
+    EmulatorState& state = _context->emulatorState;
+    _context->config.ramsize = 4096;
+    SetShadow(state, false);
+    state.p7FFD = 0x00;
+    state.pFFF7[0] = 0x0301;  // ROM page 1
+
+    state.pEFF7 = PortDecoder_ATM3::ATM_EFF7_ROCACHE;
+    _memory->UpdateZ80Banks();
+    EXPECT_EQ(_memory->GetMemoryBankMode(0), MemoryBankModeEnum::BANK_RAM);
+    EXPECT_EQ(_memory->GetRAMPageForBank0(), 0);
+
+    state.aFF77 = PortDecoder_ATM3::ATM_AFF77_CPM;  // PEN off
+    _memory->UpdateZ80Banks();
+    EXPECT_EQ(_memory->GetMemoryBankMode(0), MemoryBankModeEnum::BANK_ROM) << "pager off beats #EFF7 bit 3";
+}
+
+/// Z-Controller: #77 reads #00 outside shadow ("card inserted, R/W" -
+/// zports.v:449-450); #57 reads #FF while no SD card model exists
+TEST_F(PortDecoder_ATM3_Test, ZController_ConfigReadsZero_DataIdle)
+{
+    EmulatorState& state = _context->emulatorState;
+    SetShadow(state, false);
+    EXPECT_EQ(_portDecoder->DecodePortIn(0x0077, 0x0000), 0x00);
+    EXPECT_EQ(_portDecoder->DecodePortIn(0x0057, 0x0000), 0xFF);
+    EXPECT_TRUE(_portDecoder->WasLastPortDecoded());
+}
+
+namespace
+{
+    class SelfDecodingMock : public PortDevice
+    {
+    public:
+        uint8_t portDeviceInMethod(uint16_t) override { return 0xFF; }
+        void portDeviceOutMethod(uint16_t, uint8_t) override {}
+        bool tryClaimOut(uint16_t rawPort, uint8_t value) override
+        {
+            lastPort = rawPort;
+            lastValue = value;
+            return true;
+        }
+
+        uint16_t lastPort = 0;
+        uint8_t lastValue = 0;
+    };
+}  // namespace
+
+/// Covox on #FB reaches the self-decoding Covox device (it never did on ATM3:
+/// the ATM decoders did not dispatch self-decoding devices at all)
+TEST_F(PortDecoder_ATM3_Test, Covox_FbReachesSelfDecodingDevice)
+{
+    SelfDecodingMock covox;
+    ASSERT_TRUE(_portDecoder->RegisterSelfDecodingDevice(&covox));
+
+    _portDecoder->DecodePortOut(0x00FB, 0x80, 0x0000);
+    EXPECT_EQ(covox.lastPort, 0x00FB);
+    EXPECT_EQ(covox.lastValue, 0x80);
+
+    covox.lastPort = 0;
+    _portDecoder->DecodePortOut(0x001F, 0x80, 0x0000);  // SounDrive mode-1 address: not on this board
+    EXPECT_EQ(covox.lastPort, 0) << "only #FB exists on BaseConf";
+
+    _portDecoder->UnregisterSelfDecodingDevice(&covox);
+}
+
+/// endregion </BaseConf decode (ZX-Evo plan phase E0)>
+
+/// region <BaseConf full-stack tests (ZX-Evo plan phase E0)>
+
+class PortDecoder_ATM3_Machine_Test : public ::testing::Test
+{
+protected:
+    std::shared_ptr<Emulator> _emulator;
+    EmulatorContext* _context = nullptr;
+    PortDecoder_ATM3* _decoder = nullptr;
+
+    void SetUp() override
+    {
+        _emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel("", "ATM3", LoggerLevel::LogError);
+        ASSERT_TRUE(_emulator);
+        _context = _emulator->GetContext();
+        _decoder = dynamic_cast<PortDecoder_ATM3*>(_context->pPortDecoder);
+        ASSERT_NE(_decoder, nullptr);
+    }
+
+    void TearDown() override
+    {
+        if (_emulator)
+            EmulatorManager::GetInstance()->RemoveEmulator(_emulator->GetId());
+    }
+};
+
+/// The CPU leaves reset at 7 MHz (#EFF7 bit 4 = 0 and #xx77 bit 3 = 0 give
+/// turbo = {0, ~0} = 7 MHz, top.v:401)
+TEST_F(PortDecoder_ATM3_Machine_Test, Reset_Runs7MHz)
+{
+    EXPECT_EQ(_context->emulatorState.hw_turbo_shift, 1);
+}
+
+/// #F6 sets border colors 8-15 and leaves the beeper alone; #FC sets the
+/// border and (A15=0) #7FFD (zports.v:533-538, :944)
+TEST_F(PortDecoder_ATM3_Machine_Test, BorderPortsF6AndFC)
+{
+    EmulatorState& state = _context->emulatorState;
+
+    _decoder->DecodePortOut(0x00FE, 0x10, 0x0000);  // border 0, beeper on
+    ASSERT_EQ(state.pFE & 0x10, 0x10);
+
+    _decoder->DecodePortOut(0x00F6, 0x05, 0x0000);
+    EXPECT_EQ(state.border_attr, 0x05);
+    EXPECT_EQ(state.atmBorderBright, 1) << "#F6 has A3=0: bright border half";
+    EXPECT_EQ(state.pFE & 0x18, 0x10) << "#F6 must not touch beeper / MIC";
+
+    _decoder->DecodePortOut(0x7FFC, 0x03, 0x0000);
+    EXPECT_EQ(state.border_attr, 0x03);
+    EXPECT_EQ(state.atmBorderBright, 0);
+    EXPECT_EQ(state.p7FFD, 0x03) << "#FC with A15=0 also writes #7FFD";
+    EXPECT_EQ(state.pFE & 0x18, 0x10) << "#FC does not drive the beeper";
+}
+
+/// Kempston mouse on #xxDF with the BaseConf sub-decode, not gated by TR-DOS
+/// (zports.v:446-447, zkbdmus.v:118-120)
+TEST_F(PortDecoder_ATM3_Machine_Test, KempstonMouse_Decoded)
+{
+    Mouse* mouse = _context->pMouse;
+    ASSERT_NE(mouse, nullptr);
+    mouse->SetPresent(true);
+    mouse->SetCounters(0x40, 0x6A);
+
+    _context->emulatorState.flags |= CF_TRDOS;  // TR-DOS active: still the mouse on this board
+    EXPECT_EQ(_decoder->DecodePortIn(0xFBDF, 0x0000), 0x40);
+    EXPECT_EQ(_decoder->DecodePortIn(0xFFDF, 0x0000), 0x6A);
+    EXPECT_EQ(_decoder->DecodePortIn(0xFADF, 0x0000) & 0x07, 0x07) << "no buttons pressed (active low)";
+
+    mouse->SetPresent(false);
+    EXPECT_EQ(_decoder->DecodePortIn(0xFBDF, 0x0000), 0xFF) << "no mouse: the AVR answers #FF";
+}
+
+/// endregion </BaseConf full-stack tests (ZX-Evo plan phase E0)>

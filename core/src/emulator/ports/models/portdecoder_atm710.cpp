@@ -740,11 +740,8 @@ void PortDecoder_ATM710::updateMemoryBanks()
         }
     }
 
-    // ATM3: during NMI handling window 0 is forced to the top RAM page
-    if (config.mem_model == MM_ATM3 && _state->nmi_in_progress)
-    {
-        _memory->SetRAMPageToBank0(0xFF);
-    }
+    // PortDecoder_ATM3 overrides this for the BaseConf pager (NMI page, 1 MB
+    // #7FFD bits, #EFF7 RAM 0)
 }
 
 void PortDecoder_ATM710::updateTurboMode()

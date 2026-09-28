@@ -1,6 +1,7 @@
 // CLI Analyzer Commands
 // Extracted from cli-processor.cpp - 2026-01-08
 
+#include "debugger/analyzers/basic-lang/commandtyper.h"
 #include "cli-processor.h"
 
 #include <common/modulelogger.h>
@@ -106,15 +107,18 @@ void CLIProcessor::HandleBasic(const ClientSession& session, const std::vector<s
             command += args[i];
         }
 
-        // Use injectCommand (writes to edit buffer, no execution)
-        auto result = BasicEncoder::injectCommand(emulator.get(), command);
-        
+        // Typed into the editor line through the keyboard, every key proven
+        // on the ROM's control points; ENTER is not pressed
+        CommandTyper::Options options;
+        options.pressEnter = false;
+        const CommandTyper::Result result = CommandTyper::TypeAndWait(*emulator, command, options);
+
         std::stringstream ss;
-        ss << result.message << NEWLINE;
-        if (result.success)
-        {
-            ss << "Press ENTER to execute." << NEWLINE;
-        }
+        if (CommandTyper::Succeeded(result))
+            ss << "Typed " << result.bytesTyped << " byte(s) into the " << ROMControlPoints::RomName(result.editor)
+               << " editor. Press ENTER to execute." << NEWLINE;
+        else
+            ss << "Error: " << CommandTyper::FailureName(result.failure) << ": " << result.message << NEWLINE;
         session.SendResponse(ss.str());
     }
     else if (subcommand == "program")
@@ -232,9 +236,15 @@ void CLIProcessor::HandleBasic(const ClientSession& session, const std::vector<s
             }
         }
 
-        // Use new runCommand API (auto-navigates from menu, injects + executes via ENTER)
-        auto result = BasicEncoder::runCommand(emulator.get(), command);
-        ss << result.message << NEWLINE;
+        // Typed through the keyboard and ENTER pressed; the result is what the
+        // ROM did (debugger/analyzers/basic-lang/input-verification.md)
+        const CommandTyper::Result result = CommandTyper::TypeAndWait(*emulator, command, CommandTyper::Options{});
+        ss << CommandTyper::OutcomeName(result.outcome);
+        if (result.failure != CommandTyper::Failure::None)
+            ss << " (" << CommandTyper::FailureName(result.failure) << ")";
+        if (!result.message.empty())
+            ss << ": " << result.message;
+        ss << NEWLINE;
 
         session.SendResponse(ss.str());
     }

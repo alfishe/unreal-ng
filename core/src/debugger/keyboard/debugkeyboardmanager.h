@@ -241,12 +241,8 @@ public:
     /// @param charDelayFrames Frames between each character
     void TypeText(const std::string& text, uint16_t charDelayFrames = DEFAULT_WAIT_FRAMES);
     
-    /// Type a complete 48K BASIC command with automatic keyword + literal handling
-    /// Format: "PRINT \"hello\"" - first token is keyword, rest is literal
-    /// The first character triggers K-mode keyword, quotes trigger L-mode for literals
-    /// @param command Complete BASIC command (e.g., "PRINT \"hello\"", "10 LET a=5")
-    /// @param charDelayFrames Frames between each character
-    void TypeBasicCommand(const std::string& command, uint16_t charDelayFrames = DEFAULT_WAIT_FRAMES);
+    /// BASIC commands are typed by CommandTyper (debugger/analyzers/basic-lang),
+    /// which knows the editor's mode and proves every key on the ROM
     
     /// endregion </High-Level Helpers>
     
@@ -261,6 +257,12 @@ public:
     /// @return Vector of pressed keys
     std::vector<ZXKeysEnum> GetPressedKeys() const;
     
+    /// Frames since the matrix key behind `key` was last released (shifts map
+    /// to themselves, extended keys to their base key); UINT64_MAX if never.
+    /// A press of the same key is taken as new only after
+    /// REPRESS_RELEASED_FRAMES.
+    uint64_t FramesSinceReleased(ZXKeysEnum key) const;
+
     /// Get raw matrix state (for debugging)
     /// @return Array of 8 bytes representing keyboard matrix
     std::array<uint8_t, 8> GetMatrixState() const;
