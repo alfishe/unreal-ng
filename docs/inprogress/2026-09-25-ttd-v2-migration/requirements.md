@@ -49,8 +49,8 @@ written justification; **MAY** = allowed, not required.
   seek across it restores the device set of the target position, or reports
   that it cannot.
 - **FR-5 (MUST)** Memory regions of any size up to at least 4 MB machine RAM +
-  1 MB device RAM per device, with no per-page-index limitation (fixes the v1
-  page-255 case).
+  1 MB device RAM per device, with no per-page-index limitation (the v1
+  page-255 case itself was fixed in V0, 2026-09-27).
 
 ### 2.2 Restore and seek
 

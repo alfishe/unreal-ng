@@ -100,7 +100,7 @@ bool TTDCoverageIndex::CoveredRange(TTDCoverageKind kind, uint64_t& outFirst,
 
 bool TTDCoverageIndex::FrameMayContain(TTDCoverageKind kind, uint64_t frame,
                                        uint16_t offsetLow, uint16_t offsetHigh,
-                                       bool hasPage, uint8_t page) const
+                                       bool hasPage, PhysPage page) const
 {
     const size_t kindIdx = static_cast<size_t>(kind);
     if (kindIdx >= kKindCount)
@@ -125,7 +125,7 @@ bool TTDCoverageIndex::FrameMayContain(TTDCoverageKind kind, uint64_t frame,
         const uint16_t offset = static_cast<uint16_t>(key & 0x3FFF);
         if (offset < offsetLow || offset > offsetHigh)
             continue;
-        if (hasPage && static_cast<uint8_t>(key >> 14) != page)
+        if (hasPage && (key >> 14) != CoveragePageField(page))
             continue;
         return true;
     }
@@ -451,7 +451,12 @@ namespace
 /// Section marker, so a truncated or misplaced read fails loudly instead of
 /// producing a plausible-looking empty index.
 constexpr uint32_t kCoverageSectionMagic = 0x56435654;  // 'TVCV'
-constexpr uint16_t kCoverageSectionVersion = 1;
+/// Version 2: the "no RAM page" bucket moved from page field 0xFF (which
+/// collided with RAM page 255) to kCoverageNoPageField. Version 1 sections are
+/// parsed so the stream stays aligned, then dropped - their page-255 keys are
+/// ambiguous, and reverse queries fall back to replay instead.
+constexpr uint16_t kCoverageSectionVersion = 2;
+constexpr uint16_t kCoverageSectionVersionV1 = 1;
 
 template <typename T>
 bool WritePod(std::ostream& out, const T& value)
@@ -532,7 +537,8 @@ bool TTDCoverageIndex::Deserialize(std::istream& in)
         return false;
 
     uint16_t version = 0;
-    if (!ReadPod(in, version) || version != kCoverageSectionVersion)
+    if (!ReadPod(in, version) ||
+        (version != kCoverageSectionVersion && version != kCoverageSectionVersionV1))
         return false;
 
     uint16_t kindCount = 0;
@@ -584,6 +590,13 @@ bool TTDCoverageIndex::Deserialize(std::istream& in)
 
             _blocks[k].push_back(std::move(b));
         }
+    }
+
+    if (version == kCoverageSectionVersionV1)
+    {
+        // Consumed, but not usable: see kCoverageSectionVersion.
+        Clear();
+        return false;
     }
 
     return true;

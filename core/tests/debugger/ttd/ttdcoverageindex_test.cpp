@@ -13,7 +13,10 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <cstring>
 #include <set>
+#include <sstream>
+#include <string>
 #include <vector>
 
 #include "debugger/ttd/ttdcoverageindex.h"
@@ -322,4 +325,79 @@ TEST(TTD_CoverageIndex_Test, FilterCollisionsDoNotLoseKeys)
         EXPECT_TRUE(index.FrameTouches(TTDCoverageKind::Read, 9, k))
             << "colliding key 0x" << std::hex << k << " was lost";
     }
+}
+
+// ---------------------------------------------------------------------------
+// The "no RAM page" bucket (PLAN #40 V0)
+// ---------------------------------------------------------------------------
+
+/// ROM/cache accesses share one bucket. It used to be page field 0xFF - the
+/// same key as RAM page 255 of a 4 MB machine.
+TEST(TTD_CoverageIndex_Test, NoPageBucketIsNotRamPage255)
+{
+    EXPECT_NE(MakeCoverageKey(ttd::kPhysPageNone, 0x0038), MakeCoverageKey(255, 0xC038));
+    EXPECT_EQ(MakeCoverageKey(ttd::kPhysPageNone, 0x0038) >> 14, ttd::kCoverageNoPageField);
+    EXPECT_EQ(MakeCoverageKey(255, 0xC038) >> 14, 255u);
+
+    TTDCoverageIndex index;
+    SealFrameWith(index, 1, TTDCoverageKind::Executed, {MakeCoverageKey(ttd::kPhysPageNone, 0x0038)});
+
+    EXPECT_FALSE(index.FrameMayContain(TTDCoverageKind::Executed, 1, 0x0038, 0x0038, true, 255))
+        << "a ROM fetch answered a RAM page 255 query";
+    EXPECT_TRUE(index.FrameMayContain(TTDCoverageKind::Executed, 1, 0x0038, 0x0038, true, ttd::kPhysPageNone));
+    EXPECT_TRUE(index.FrameMayContain(TTDCoverageKind::Executed, 1, 0x0038, 0x0038, false, 0));
+
+    TTDCoverageIndex ram;
+    SealFrameWith(ram, 1, TTDCoverageKind::Executed, {MakeCoverageKey(255, 0xC038)});
+    EXPECT_TRUE(ram.FrameMayContain(TTDCoverageKind::Executed, 1, 0x0038, 0x0038, true, 255));
+    EXPECT_FALSE(ram.FrameMayContain(TTDCoverageKind::Executed, 1, 0x0038, 0x0038, true, ttd::kPhysPageNone))
+        << "a page-255 fetch answered a ROM query";
+}
+
+TEST(TTD_CoverageIndex_Test, NoPageBucketSurvivesSerialization)
+{
+    TTDCoverageIndex index;
+    SealFrameWith(index, 1, TTDCoverageKind::Read,
+                  {MakeCoverageKey(ttd::kPhysPageNone, 0x1000), MakeCoverageKey(255, 0xD000)});
+
+    std::stringstream buf;
+    ASSERT_TRUE(index.Serialize(buf));
+    TTDCoverageIndex loaded;
+    ASSERT_TRUE(loaded.Deserialize(buf));
+
+    EXPECT_TRUE(loaded.FrameTouches(TTDCoverageKind::Read, 1, MakeCoverageKey(ttd::kPhysPageNone, 0x1000)));
+    EXPECT_TRUE(loaded.FrameTouches(TTDCoverageKind::Read, 1, MakeCoverageKey(255, 0xD000)));
+    EXPECT_FALSE(loaded.FrameTouches(TTDCoverageKind::Read, 1, MakeCoverageKey(255, 0xD001)));
+}
+
+/// A version 1 section (page-255 keys ambiguous) is consumed so the stream
+/// stays aligned for the sections after it, then dropped: queries fall back
+/// to replay rather than trust it.
+TEST(TTD_CoverageIndex_Test, Version1SectionIsConsumedButNotLoaded)
+{
+    TTDCoverageIndex index;
+    SealFrameWith(index, 1, TTDCoverageKind::Written, {MakeCoverageKey(3, 0x4000)});
+    SealFrameWith(index, 2, TTDCoverageKind::Written, {MakeCoverageKey(255, 0xC000)});
+
+    std::stringstream section;
+    ASSERT_TRUE(index.Serialize(section));
+    std::string bytes = section.str();
+    ASSERT_GE(bytes.size(), 6u);
+    const uint16_t v1 = 1;
+    std::memcpy(&bytes[4], &v1, sizeof(v1));  // magic (u32), then version (u16)
+
+    const uint32_t trailer = 0xA5A5F00Du;
+    std::stringstream in;
+    in.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    in.write(reinterpret_cast<const char*>(&trailer), sizeof(trailer));
+    in.seekg(0);
+
+    TTDCoverageIndex loaded;
+    EXPECT_FALSE(loaded.Deserialize(in)) << "a v1 section must not be trusted";
+    EXPECT_FALSE(loaded.CoversFrame(TTDCoverageKind::Written, 1)) << "v1 content leaked into the index";
+
+    uint32_t next = 0;
+    in.read(reinterpret_cast<char*>(&next), sizeof(next));
+    ASSERT_TRUE(static_cast<bool>(in));
+    EXPECT_EQ(next, trailer) << "v1 section was not fully consumed; the next section would be misread";
 }

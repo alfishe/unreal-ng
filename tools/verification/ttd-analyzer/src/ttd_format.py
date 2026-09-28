@@ -1048,7 +1048,10 @@ def parse_coverage_section(r: _Reader) -> Optional[CoverageIndexSection]:
         if magic != COVERAGE_SECTION_MAGIC:
             return None
         version = r.u16()
-        if version != 1:
+        # v2 moved the "no RAM page" bucket from page field 0xFF (the same key
+        # as RAM page 255) to 256; the layout is otherwise identical, and the
+        # analyzer only reports sizes, so both parse.
+        if version not in (1, 2):
             return None
         kind_count = r.u16()
     except Exception:

@@ -356,7 +356,8 @@ void PortDecoder::OnPortOutComplete(uint16_t port, uint8_t value, [[maybe_unused
             const auto& st = _context->emulatorState;
             const uint16_t tin = _context->pCore ? _context->pCore->GetZ80()->t : 0;
             const ttd::TTDTimePoint tp{st.frame_counter, tin};
-            _context->ttdProbe.RecordHit(tp, pc, value, /*physPage=*/0,
+            // A port has no RAM page; the journal path reports the same.
+            _context->ttdProbe.RecordHit(tp, pc, value, ttd::kPhysPageNone,
                                           ttd::TTDAccessType::Io);
         }
     }

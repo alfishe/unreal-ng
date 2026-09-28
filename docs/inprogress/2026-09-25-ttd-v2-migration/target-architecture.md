@@ -56,7 +56,7 @@ struct TTDRegionDesc {
 - The owner marks pieces dirty on its own write path (GS: its Z80's memory
   write; MoonSound: the wave-SRAM data port). Machine RAM keeps the existing
   debug-write hook, with page indices widened so page 255 is no longer the
-  "not RAM" sentinel.
+  "not RAM" sentinel (done in V0, 2026-09-27: `ttd::PhysPage`).
 - A region can have a *used size* smaller than its capacity (GS lightweight
   upload store: capacity = largest module allowed, used = uploaded bytes; the
   used size lives in the device blob). This replaces variable-size device

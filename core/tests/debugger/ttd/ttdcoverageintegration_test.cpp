@@ -48,7 +48,7 @@ struct SearchAnswer
     uint32_t tInFrame = 0;
     uint16_t pc = 0;
     uint8_t  value = 0;
-    uint8_t  physPage = 0;
+    ttd::PhysPage physPage = 0;
 
     bool operator==(const SearchAnswer& o) const
     {

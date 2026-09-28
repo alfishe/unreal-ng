@@ -223,7 +223,7 @@ struct TTDCoverageProbeResult
     TTDCoverageKind kind = TTDCoverageKind::Executed;
     uint16_t addrFrom = 0;
     uint16_t addrTo = 0xFFFF;
-    std::optional<uint8_t> physPage;
+    std::optional<PhysPage> physPage;  ///< 0..255, or kPhysPageNone for the ROM/no-page bucket
     bool touched = false;
     bool indexAvailable = false;
 };
@@ -234,7 +234,7 @@ struct TTDCoverageScanResult
     TTDCoverageKind kind = TTDCoverageKind::Executed;
     uint16_t addrFrom = 0;
     uint16_t addrTo = 0xFFFF;
-    std::optional<uint8_t> physPage;
+    std::optional<PhysPage> physPage;  ///< 0..255, or kPhysPageNone for the ROM/no-page bucket
     uint64_t scannedFrames = 0;
     uint64_t matchingFrames = 0;
     std::vector<uint64_t> frames;
@@ -918,7 +918,7 @@ public:
     /// reverse read-watchpoint has nothing to prune with and must replay every
     /// frame. Inline for the same reason as the execute path: reads outnumber
     /// writes roughly 3:1, so the call itself would dominate.
-    inline void RecordReadCoverage(uint8_t physPage, uint16_t addr)
+    inline void RecordReadCoverage(PhysPage physPage, uint16_t addr)
     {
         if (_state != TTDSessionState::Recording)
             return;
@@ -932,7 +932,7 @@ public:
         _coverageIndex.Record(TTDCoverageKind::Read, MakeCoverageKey(physPage, addr));
     }
 
-    inline void RecordExecutedCoverage(uint8_t physPage, uint16_t pc)
+    inline void RecordExecutedCoverage(PhysPage physPage, uint16_t pc)
     {
         // Inline for the same reason TTDCoverageIndex::Record is: this sits on
         // the instruction-fetch path, so the call itself was the cost.
@@ -989,7 +989,7 @@ private:
 public:
 
     void RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint8_t newVal,
-                           uint16_t m1pc, uint8_t physPage);
+                           uint16_t m1pc, PhysPage physPage);
     
     /// @brief Hot-path capture: record a port OUT (used for IO probe).
     ///
@@ -1016,7 +1016,7 @@ public:
         TTDCoverageKind kind,
         uint16_t addrFrom,
         uint16_t addrTo,
-        std::optional<uint8_t> physPage = std::nullopt) const;
+        std::optional<PhysPage> physPage = std::nullopt) const;
 
     /// @brief Scan frames in [fromFrame, toFrame] touching range (TD-7 §3.1.2).
     TTDCoverageScanResult QueryCoverageScan(
@@ -1025,7 +1025,7 @@ public:
         TTDCoverageKind kind,
         uint16_t addrFrom,
         uint16_t addrTo,
-        std::optional<uint8_t> physPage = std::nullopt,
+        std::optional<PhysPage> physPage = std::nullopt,
         size_t limit = 200) const;
 
     /// @brief Activity heatmap over [fromFrame, toFrame] (TD-7 §3.1.3).

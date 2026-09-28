@@ -2558,7 +2558,7 @@ public:
                                                    sol::optional<uint16_t> pcToOpt,
                                                    sol::optional<uint64_t> beforeFrameOpt,
                                                    sol::optional<uint32_t> beforeTinOpt,
-                                                   sol::optional<uint8_t> physPageOpt,
+                                                   sol::optional<uint32_t> physPageOpt,
                                                    sol::optional<uint16_t> addrFromOpt,
                                                    sol::optional<uint16_t> addrToOpt) -> sol::table {
             Emulator* emulator = effectiveEmulator();
@@ -2590,8 +2590,21 @@ public:
                 if (tbl["pc_from"].valid()) { q.hasPcFilter = true; q.pcFrom = tbl["pc_from"].get<uint16_t>(); q.pcTo = tbl["pc_to"].valid() ? tbl["pc_to"].get<uint16_t>() : 0xFFFF; }
                 else if (tbl["pcFrom"].valid()) { q.hasPcFilter = true; q.pcFrom = tbl["pcFrom"].get<uint16_t>(); q.pcTo = tbl["pcTo"].valid() ? tbl["pcTo"].get<uint16_t>() : 0xFFFF; }
 
-                if (tbl["phys_page"].valid()) { q.hasPhysPageFilter = true; q.physPage = tbl["phys_page"].get<uint8_t>(); }
-                else if (tbl["physPage"].valid()) { q.hasPhysPageFilter = true; q.physPage = tbl["physPage"].get<uint8_t>(); }
+                sol::object pageObj = tbl["phys_page"];
+                if (!pageObj.valid())
+                    pageObj = tbl["physPage"];
+                if (pageObj.valid())
+                {
+                    const uint32_t page = pageObj.as<uint32_t>();
+                    if (page > ttd::kPhysPageMax)
+                    {
+                        result["found"] = false;
+                        result["error"] = "phys_page expects 0..255";
+                        return result;
+                    }
+                    q.hasPhysPageFilter = true;
+                    q.physPage = static_cast<ttd::PhysPage>(page);
+                }
 
                 const uint32_t frameT = ctx->config.frame;
                 if (tbl["before_frame"].valid())
@@ -2619,7 +2632,17 @@ public:
                 q.access = ttd::TTDAccessTypeFromString(accessOpt.value_or("write").c_str());
                 if (valueOpt) { q.hasValueFilter = true; q.value = *valueOpt; }
                 if (pcFromOpt) { q.hasPcFilter = true; q.pcFrom = *pcFromOpt; q.pcTo = pcToOpt.value_or(0xFFFF); }
-                if (physPageOpt) { q.hasPhysPageFilter = true; q.physPage = *physPageOpt; }
+                if (physPageOpt)
+                {
+                    if (*physPageOpt > ttd::kPhysPageMax)
+                    {
+                        result["found"] = false;
+                        result["error"] = "phys_page expects 0..255";
+                        return result;
+                    }
+                    q.hasPhysPageFilter = true;
+                    q.physPage = static_cast<ttd::PhysPage>(*physPageOpt);
+                }
                 const uint32_t frameT = ctx->config.frame;
                 if (beforeFrameOpt)
                     q.beforeGlobalT = static_cast<uint64_t>(*beforeFrameOpt) * frameT + beforeTinOpt.value_or(0);
@@ -2632,7 +2655,9 @@ public:
             result["tinframe"]  = found->time.tInFrame;
             result["pc"]        = found->pc;
             result["value"]     = found->value;
-            result["phys_page"] = found->physPage;
+            // nil = the access had no RAM page (ROM, cache, I/O)
+            if (found->physPage != ttd::kPhysPageNone)
+                result["phys_page"] = found->physPage;
             result["access"]    = ttd::TTDAccessTypeToString(found->access);
             return result;
         });
@@ -2723,8 +2748,18 @@ public:
             uint16_t addrTo = 0xFFFF;
             if (argsTable["addr_to"].valid()) addrTo = static_cast<uint16_t>(argsTable.get<uint32_t>("addr_to"));
 
-            std::optional<uint8_t> physPage;
-            if (argsTable["phys_page"].valid()) physPage = static_cast<uint8_t>(argsTable.get<uint32_t>("phys_page"));
+            std::optional<ttd::PhysPage> physPage;
+            if (argsTable["phys_page"].valid())
+            {
+                const uint32_t page = argsTable.get<uint32_t>("phys_page");
+                if (page > ttd::kPhysPageMax)
+                {
+                    result["index_available"] = false;
+                    result["error"] = "phys_page expects 0..255";
+                    return result;
+                }
+                physPage = static_cast<ttd::PhysPage>(page);
+            }
 
             auto res = emulator->GetContext()->pTimeTravelManager->QueryCoverageProbe(frame, kind, addrFrom, addrTo, physPage);
             result["frame"] = res.frame;
@@ -2763,8 +2798,18 @@ public:
             size_t limit = 200;
             if (argsTable["limit"].valid()) limit = static_cast<size_t>(argsTable.get<uint32_t>("limit"));
 
-            std::optional<uint8_t> physPage;
-            if (argsTable["phys_page"].valid()) physPage = static_cast<uint8_t>(argsTable.get<uint32_t>("phys_page"));
+            std::optional<ttd::PhysPage> physPage;
+            if (argsTable["phys_page"].valid())
+            {
+                const uint32_t page = argsTable.get<uint32_t>("phys_page");
+                if (page > ttd::kPhysPageMax)
+                {
+                    result["index_available"] = false;
+                    result["error"] = "phys_page expects 0..255";
+                    return result;
+                }
+                physPage = static_cast<ttd::PhysPage>(page);
+            }
 
             auto res = mgr->QueryCoverageScan(fromFrame, toFrame, kind, addrFrom, addrTo, physPage, limit);
             result["kind"] = ttd::TTDCoverageKindToString(res.kind);

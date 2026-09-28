@@ -146,8 +146,8 @@ Memory::Memory(EmulatorContext* context)
     _bank_mode[2] = BANK_RAM;
     _bank_mode[3] = BANK_RAM;
 
-    // Initialize RAM page cache (0xFF = not RAM)
-    _bank_ram_page_cache[0] = 0xFF;  // Bank 0 is ROM
+    // Initialize RAM page cache (kPhysPageNone = not RAM)
+    _bank_ram_page_cache[0] = ttd::kPhysPageNone;  // Bank 0 is ROM
     _bank_ram_page_cache[1] = 5;     // Default bank 1 = RAM page 5
     _bank_ram_page_cache[2] = 2;     // Default bank 2 = RAM page 2
     _bank_ram_page_cache[3] = 0;     // Default bank 3 = RAM page 0
@@ -272,7 +272,7 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr, bool isExecution)
         // Resolve the bank behind `addr` so a read watchpoint can be scoped to
         // one physical page. Reads used to report page 0 unconditionally, which
         // made every hit on a banked address indistinguishable.
-        const uint8_t readPhysPage = GetPhysPageForZ80Address(addr);
+        const ttd::PhysPage readPhysPage = GetPhysPageForZ80Address(addr);
         if (_context->ttdProbe.Matches(addr, ttd::TTDAccessType::Read, result, pc, readPhysPage))
         {
             const auto& st = _context->emulatorState;
@@ -365,9 +365,9 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
 
     // TTD hot path — single feature gate for all TTD logic.
     // Uses cached RAM page number to avoid expensive GetRAMPageForBank() call.
-    // physPage is 0xFF for ROM/Cache banks (no TTD tracking needed).
-    const uint8_t physPage = _bank_ram_page_cache[bank];
-    if (_feature_ttd_enabled && physPage != 0xFF)
+    // physPage is kPhysPageNone for ROM/Cache banks (no TTD tracking needed).
+    const ttd::PhysPage physPage = _bank_ram_page_cache[bank];
+    if (_feature_ttd_enabled && physPage != ttd::kPhysPageNone)
     {
         // Dirty-page tracking (parent TDD §6.2): single OR into bitmap
         if (_ttdDirtyTracker != nullptr)
@@ -958,7 +958,7 @@ void Memory::SetROMPage(uint16_t page, bool updatePorts)
     _bank_mode[0] = BANK_ROM;
     _bank_read[0] = romBankHostAddress;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;  // Redirect all ROM writes to special memory region
-    _bank_ram_page_cache[0] = 0xFF;  // Invalidate RAM cache for bank 0
+    _bank_ram_page_cache[0] = ttd::kPhysPageNone;  // Invalidate RAM cache for bank 0
 
     // Set property flags (_isPage0ROM48k, _isPage0ROM128k, _isPage0ROMDOS, _isPage0ROMService)
     SetROMPageFlags();
@@ -1002,6 +1002,10 @@ void Memory::SetROMPageToBank(uint8_t bank, uint16_t page)
     _bank_mode[bank] = BANK_ROM;
     _bank_read[bank] = ROMPageHostAddress(static_cast<uint8_t>(page));
     _bank_write[bank] = _memory + TRASH_MEMORY_OFFSET;  // Redirect all ROM writes to special memory region
+    // Not RAM any more. Left stale, time travel would journal the trash-page
+    // writes as writes to the RAM page that was here before and file ROM
+    // accesses under it.
+    _bank_ram_page_cache[bank] = ttd::kPhysPageNone;
 
     // Bank 0 ROM identity flags are consumed by the TR-DOS session logic
     if (bank == 0)
@@ -1029,7 +1033,7 @@ void Memory::SetRAMPageToBank0(uint16_t page, [[maybe_unused]] bool updatePorts)
 
     _bank_mode[0] = BANK_RAM;
     _bank_write[0] = _bank_read[0] = RAMPageAddress(page);
-    _bank_ram_page_cache[0] = static_cast<uint8_t>(page & 0xFF);
+    _bank_ram_page_cache[0] = page;  // validated < MAX_RAM_PAGES above
 }
 
 /// Switch to specified RAM Bank in RAM Page 1
@@ -1053,7 +1057,7 @@ void Memory::SetRAMPageToBank1(uint16_t page)
 
     _bank_mode[1] = BANK_RAM;
     _bank_write[1] = _bank_read[1] = RAMPageAddress(page);
-    _bank_ram_page_cache[1] = static_cast<uint8_t>(page & 0xFF);
+    _bank_ram_page_cache[1] = page;  // validated < MAX_RAM_PAGES above
 }
 
 /// Switch to specified RAM Bank in RAM Page 2
@@ -1077,7 +1081,7 @@ void Memory::SetRAMPageToBank2(uint16_t page)
 
     _bank_mode[2] = BANK_RAM;
     _bank_write[2] = _bank_read[2] = RAMPageAddress(page);
-    _bank_ram_page_cache[2] = static_cast<uint8_t>(page & 0xFF);
+    _bank_ram_page_cache[2] = page;  // validated < MAX_RAM_PAGES above
 }
 
 /// Switch to specified RAM Bank in RAM Page 3
@@ -1100,11 +1104,11 @@ void Memory::SetRAMPageToBank3(uint16_t page, bool updatePorts)
     /// endregion </Sanity check>
 
     // Track previous page for change notification
-    uint8_t prevPage = _bank_ram_page_cache[3];
+    const ttd::PhysPage prevPage = _bank_ram_page_cache[3];
 
     _bank_mode[3] = BANK_RAM;
     _bank_write[3] = _bank_read[3] = RAMPageAddress(page);
-    _bank_ram_page_cache[3] = static_cast<uint8_t>(page & 0xFF);
+    _bank_ram_page_cache[3] = page;  // validated < MAX_RAM_PAGES above
 
     // Update the ULA contention cache: odd RAM pages (1/3/5/7) at 0xC000 are
     // contended on 128K. Cached here (cold path - port 7FFD writes) so the
@@ -1116,7 +1120,7 @@ void Memory::SetRAMPageToBank3(uint16_t page, bool updatePorts)
         _context->pPortDecoder->SetRAMPage(page);
 
     // Record RAM page switch for frame-end notification (zero overhead if HUD disabled)
-    if (prevPage != 0xFF && page != prevPage && _feature_hud_enabled)
+    if (prevPage != ttd::kPhysPageNone && page != prevPage && _feature_hud_enabled)
     {
         _ramSwitchTracker.recordSwitch(static_cast<uint8_t>(page));
     }
@@ -1134,7 +1138,7 @@ uint16_t Memory::GetROMPage()
 
 uint16_t Memory::GetRAMPageForBank0()
 {
-    // Use cache if bank mode is RAM (cache is 0xFF for ROM)
+    // Use cache if bank mode is RAM (cache is kPhysPageNone for ROM)
     return _bank_mode[0] == BANK_RAM ? _bank_ram_page_cache[0] : MEMORY_UNMAPPABLE;
 }
 
@@ -1176,7 +1180,7 @@ uint16_t Memory::GetRAMPageForBank(uint8_t bank)
 {
     bank = bank & 0b0000'0011;
 
-    // Use cache (0xFF = not RAM); return MEMORY_UNMAPPABLE if bank is ROM
+    // Use cache (kPhysPageNone = not RAM); return MEMORY_UNMAPPABLE if bank is ROM
     if (_bank_mode[bank] == BANK_RAM)
     {
         return _bank_ram_page_cache[bank];
@@ -1405,7 +1409,7 @@ void Memory::SetROM48k(bool updatePorts)
     _bank_mode[0] = BANK_ROM;
     _bank_read[0] = base_sos_rom;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;
-    _bank_ram_page_cache[0] = 0xFF;  // Invalidate RAM cache
+    _bank_ram_page_cache[0] = ttd::kPhysPageNone;  // Invalidate RAM cache
 
     // Update ROM page identification flags
     SetROMPageFlags();
@@ -1423,7 +1427,7 @@ void Memory::SetROM128k(bool updatePorts)
     _bank_mode[0] = BANK_ROM;
     _bank_read[0] = base_128_rom;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;
-    _bank_ram_page_cache[0] = 0xFF;  // Invalidate RAM cache
+    _bank_ram_page_cache[0] = ttd::kPhysPageNone;  // Invalidate RAM cache
 
     // Update ROM page identification flags
     SetROMPageFlags();
@@ -1452,7 +1456,7 @@ void Memory::SetROMDOS(bool updatePorts)
     _bank_mode[0] = BANK_ROM;
     _bank_read[0] = base_dos_rom;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;
-    _bank_ram_page_cache[0] = 0xFF;  // Invalidate RAM cache
+    _bank_ram_page_cache[0] = ttd::kPhysPageNone;  // Invalidate RAM cache
 
     // Update ROM page identification flags
     SetROMPageFlags();
@@ -1478,7 +1482,7 @@ void Memory::SetROMSystem(bool updatePorts)
     _bank_mode[0] = BANK_ROM;
     _bank_read[0] = base_sys_rom;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;
-    _bank_ram_page_cache[0] = 0xFF;  // Invalidate RAM cache
+    _bank_ram_page_cache[0] = ttd::kPhysPageNone;  // Invalidate RAM cache
 
     // Update ROM page identification flags
     SetROMPageFlags();
@@ -1715,6 +1719,12 @@ void Memory::DefaultBanksFor48k()
     _bank_mode[1] = MemoryBankModeEnum::BANK_RAM;  // Bank 1 is RAM [0x4000 - 0x7FFF]
     _bank_mode[2] = MemoryBankModeEnum::BANK_RAM;  // Bank 2 is RAM [0x8000 - 0xBFFF]
     _bank_mode[3] = MemoryBankModeEnum::BANK_RAM;  // Bank 3 is RAM [0xC000 - 0xFFFF]
+
+    // Keep the TTD page cache in step with the banks set above
+    _bank_ram_page_cache[0] = ttd::kPhysPageNone;
+    _bank_ram_page_cache[1] = 5;
+    _bank_ram_page_cache[2] = 2;
+    _bank_ram_page_cache[3] = 0;
 }
 
 /// endregion </Helper methods>

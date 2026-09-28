@@ -3440,7 +3440,7 @@ void TimeTravelManager::SetEnableCoverageIndex(bool enable)
 }
 
 void TimeTravelManager::RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint8_t newVal,
-                                          uint16_t m1pc, uint8_t physPage)
+                                          uint16_t m1pc, PhysPage physPage)
 {
     // Per-frame decode-cache capture (during a build replay only): attach the
     // write to the instruction currently being captured. Cheap — a couple of
@@ -3479,7 +3479,9 @@ void TimeTravelManager::RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint8_t
     rec.isIo     = 0;
     rec.m1pc     = m1pc;
     rec.value    = newVal;
-    rec.physPage = physPage;
+    // Journaled writes always have a RAM page (Memory gates on kPhysPageNone),
+    // and RAM pages are 0..255, so the record's byte holds it exactly.
+    rec.physPage = static_cast<uint8_t>(physPage);
     (void)oldVal;  // Not stored in the compact 12-byte record (TDD §9.3)
 
     if (_writeJournal)
@@ -3587,7 +3589,7 @@ TimeTravelManager::FindLastAccess(const TTDSearchQuery& q,
             result.time.tInFrame = static_cast<uint32_t>(found->globalT % frameT);
             result.pc      = found->m1pc;
             result.value   = found->value;
-            result.physPage = found->physPage;
+            result.physPage = found->isIo ? kPhysPageNone : PhysPage{found->physPage};
             result.access   = found->isIo ? TTDAccessType::Io : TTDAccessType::Write;
             return result;
         }
@@ -4688,7 +4690,7 @@ TTDCoverageProbeResult TimeTravelManager::QueryCoverageProbe(
     TTDCoverageKind kind,
     uint16_t addrFrom,
     uint16_t addrTo,
-    std::optional<uint8_t> physPage) const
+    std::optional<PhysPage> physPage) const
 {
     TTDCoverageProbeResult result;
     result.frame = frame;
@@ -4717,7 +4719,7 @@ TTDCoverageProbeResult TimeTravelManager::QueryCoverageProbe(
     }
 
     const bool hasPage = physPage.has_value();
-    const uint8_t page = hasPage ? *physPage : 0;
+    const PhysPage page = hasPage ? *physPage : PhysPage{0};
 
     result.touched = _coverageIndex.FrameMayContain(kind, frame, offsetLow, offsetHigh, hasPage, page);
     return result;
@@ -4729,7 +4731,7 @@ TTDCoverageScanResult TimeTravelManager::QueryCoverageScan(
     TTDCoverageKind kind,
     uint16_t addrFrom,
     uint16_t addrTo,
-    std::optional<uint8_t> physPage,
+    std::optional<PhysPage> physPage,
     size_t limit) const
 {
     TTDCoverageScanResult result;
@@ -4770,7 +4772,7 @@ TTDCoverageScanResult TimeTravelManager::QueryCoverageScan(
     }
 
     const bool hasPage = physPage.has_value();
-    const uint8_t page = hasPage ? *physPage : 0;
+    const PhysPage page = hasPage ? *physPage : PhysPage{0};
 
     for (uint64_t f = startFrame; f <= endFrame; ++f)
     {

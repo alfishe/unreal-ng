@@ -40,7 +40,7 @@ namespace
 /// docs/inprogress/2026-08-20-ttd-reverse-search-index/README.md.
 const std::vector<std::string>& CreatableModels()
 {
-    static const std::vector<std::string> models = {"48K", "128k", "PENTAGON"};
+    static const std::vector<std::string> models = {"48K", "128k", "PENTAGON", "SCORPION", "PROFI", "ATM710", "ATM3"};
     return models;
 }
 
@@ -52,7 +52,7 @@ int HighestBankedRamPage(Memory* memory)
     for (uint32_t bank = 0; bank < 4; ++bank)
     {
         const uint16_t z80Address = static_cast<uint16_t>(bank * 0x4000);
-        const uint8_t page = memory->GetPhysPageForZ80Address(z80Address);
+        const ttd::PhysPage page = memory->GetPhysPageForZ80Address(z80Address);
         if (page != ttd::kPhysPageNone && static_cast<int>(page) > highest)
             highest = static_cast<int>(page);
     }
@@ -98,10 +98,21 @@ protected:
 /// silently drops live memory.
 TEST_P(TTD_ModelPageBounds_Test, BoundCoversEveryBankedPage)
 {
-    ASSERT_TRUE(_ttd->StartRecording());
-
-    const int highest = HighestBankedRamPage(_memory);
+    // ATM machines come out of reset with the memory manager off and all four
+    // windows on ROM; their ROM enables RAM within the first frames.
+    int highest = HighestBankedRamPage(_memory);
+    if (highest < 0)
+    {
+        _emulator->EnableTurboMode();
+        for (int frame = 0; frame < 150 && highest < 0; ++frame)
+        {
+            _emulator->RunNFrames(1, /*skipBreakpoints=*/true);
+            highest = HighestBankedRamPage(_memory);
+        }
+    }
     ASSERT_GE(highest, 0) << "no RAM banked in at all on model " << GetParam();
+
+    ASSERT_TRUE(_ttd->StartRecording());
 
     const uint16_t bound = _ttd->GetModelRamPages();
     EXPECT_GT(bound, static_cast<uint16_t>(highest))
@@ -136,6 +147,57 @@ TEST_P(TTD_ModelPageBounds_Test, CheckpointCarriesOneRefPerPageInBound)
 
     EXPECT_EQ(cp->ramPages.size(), static_cast<size_t>(_ttd->GetModelRamPages()))
         << "checkpoint ref count does not match the captured page range";
+}
+
+/// Every TTD consumer (dirty tracking, write journal, probe, coverage) reads
+/// the physical page of an access from Memory's per-bank page cache, never
+/// from the bank itself. So the cache must be exact on every bank switch
+/// path, for every model: a RAM bank reports the page actually mapped, a ROM
+/// bank reports kPhysPageNone. A stale entry after a RAM->ROM switch made TTD
+/// journal trash-page writes as writes to the old RAM page and file ROM
+/// execution under it.
+TEST_P(TTD_ModelPageBounds_Test, BankPageCacheAgreesWithTheMappedBank)
+{
+    uint8_t* ramBase = _memory->RAMPageAddress(0);
+    ASSERT_NE(ramBase, nullptr);
+
+    auto check = [&](int frame)
+    {
+        for (uint8_t bank = 0; bank < 4; ++bank)
+        {
+            const uint16_t addr = static_cast<uint16_t>(bank * 0x4000);
+            const ttd::PhysPage cached = _memory->GetPhysPageForZ80Address(addr);
+            if (_memory->GetMemoryBankMode(bank) == BANK_RAM)
+            {
+                const ptrdiff_t offset = _memory->MapZ80AddressToPhysicalAddress(addr) - ramBase;
+                ASSERT_GE(offset, 0);
+                const auto mapped = static_cast<ttd::PhysPage>(offset / PAGE_SIZE);
+                ASSERT_EQ(cached, mapped) << GetParam() << " frame " << frame << " bank " << int(bank)
+                                          << ": page cache disagrees with the RAM page mapped";
+            }
+            else
+            {
+                ASSERT_EQ(cached, ttd::kPhysPageNone) << GetParam() << " frame " << frame << " bank " << int(bank)
+                                                      << ": non-RAM bank reports RAM page " << cached;
+            }
+        }
+    };
+
+    // No assertion here looks at pixels; turbo only drops host-side work.
+    _emulator->EnableTurboMode();
+
+    check(0);
+    // Boot long enough for each ROM to rebank (ATM3's BaseConf switches its
+    // memory manager during the first seconds). 40-140 ms per model (ATM3 is
+    // the slow one): the ROMs have to actually run for their paging code to
+    // execute, which is the whole point of the test.
+    for (int frame = 1; frame <= 150; ++frame)
+    {
+        _emulator->RunNFrames(1, /*skipBreakpoints=*/true);
+        check(frame);
+        if (HasFatalFailure())
+            return;
+    }
 }
 
 INSTANTIATE_TEST_SUITE_P(
