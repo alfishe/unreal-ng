@@ -213,21 +213,35 @@ clears (with a frame cap).
 
 ## Phase 6 — Storage and snapshots · L
 
+> **2026-09-28, the unified media manager (PLAN #58):** the SD card is the
+> media manager's `sd.zc` slot ([integration-tsconf-sd.md](../2026-09-28-storage-manager/integration-tsconf-sd.md)).
+> Already built and tested by #58 M1 (branch `media-manager`): `SdCardSpi` over
+> `IBlockDevice` (SD-0, BLK-1), host folders as FAT16 / FAT32 volumes
+> (`HostFolderFat`, checked by the independent `FatVolumeReader`; VFAT-1…3 run
+> against it with `fs=fat32` for the xpeccy layout), CP866 / CP1251 short
+> names, `[MEDIA] sd.zc = <image or folder>` plus the legacy `[ZC]` keys.
+> API-1 is the media verbs of [media-control-design.md](../2026-09-28-storage-manager/media-control-design.md)
+> (#58 M4: one `MediaControl` layer for the GUI, WebAPI + OpenAPI, CLI, MCP,
+> Lua, Python), not a TSConf `/sd` API. TSConf's own work here: register the
+> `sd.zc` slot in its decoder (as `PortDecoder_ATM3::EvoSdSlot`), the DMA SPI
+> path, card-detect / WP through `EvoAvr`, SLOT-1 and BOOT-3.
+
 | ID | Asserts |
 |:--|:--|
 | SPI-1 | `#57` write sends the byte; `#57` read returns the previous exchange's response and sends 0xFF; `#77` read = 0x00; CS bit 1 active-low (hs §8.1) |
 | SD-0 | `SdCardSpi` is present on master (NeoGS merged) or lifted unchanged from the `neogs` branch with its own suite (CMD0 → R1 0x01, CMD8 echo 0x1AA, ACMD41 → 0x00, CMD58 CCS, CMD17 token 0xFE + 512 B, write modes, CMD59) — no TSConf changes to the protocol |
 | BLK-1 | `sdcardspi_test.cpp`: the `ISdBlockStore` extraction leaves every NeoGS SD test green; a memory-backed store serves CMD17/CMD24 |
-| VFAT-1 | `VirtualFatBlockStore` (`virtualfatblockstore_test.cpp`): MBR signature 0x55AA at 510, partition type 0x0C starting LBA 2048; boot sector geometry (2 FATs, 8 sectors/cluster) |
-| VFAT-2 | a host folder with `readme.txt` + long-name file → a FAT reader (test helper) lists the LFN and the cp866 8.3 alias; file bytes match; writes rejected |
+| VFAT-1 | `HostFolderFat` with `fs=fat32` (#58 M1, `hostfolderfat_test.cpp`): MBR signature 0x55AA at 510, partition type 0x0C starting LBA 2048; boot sector geometry |
+| VFAT-2 | a host folder with `readme.txt` + long-name file → `FatVolumeReader` lists the LFN and the cp866 8.3 alias; file bytes match; guest writes go to the session layer, the folder is unchanged (#58 M1) |
 | VFAT-3 | equivalence: same file set via `mkfs.fat` image (fixture checked into `testdata/`) → identical directory listing and file bytes (not identical sectors) |
+| SLOT-1 | TSConf registers `sd.zc` with the media manager (tags `block sd zcontroller primary`); `[MEDIA] sd.zc` and a folder insert attach before the first reset; a ZX-Evo → TSConf model switch keeps the card (#58 M5) |
 | BETA-1 | VG93 ports answer only in DOS or with `FDD_VIRT[7]`; `#9F` never; joystick `#1F` only outside DOS (hs §8.2, §9) |
 | VDOS-1 | drive B virtual (`FDD_VIRT=0x02`), system reg selects B, `IN (#1F)` in DOS → next M1 W0 = RAM 0xFF writable; `IN (#3F)` inside vdos → exit immediately; `OUT (#FF)` inside vdos only changes drive bits |
 | VDOS-2 | CMOS reachable inside vdos, not from TR-DOS ROM (hs §9) |
 | SPG-1 | uncompressed SPG v1.0 fixture: PC/SP/IFF1/clock/page3 applied, blocks placed |
 | SPG-2 | MegaLZ and Hrust blocks decode (fixtures generated with the ancestor's packers or taken from MAME's `tsconf.xml` set) |
 | SPG-3 | v1.1 (version 0x11) accepted |
-| API-1 | WebAPI/MCP/CLI/Lua/Python SD media: mount image, mount folder, eject, status — same `SdCardState` everywhere (parity contract test) |
+| API-1 | the media verbs on every surface (#58 M4, [media-control-design.md](../2026-09-28-storage-manager/media-control-design.md)): `media insert sd <image or folder>`, `eject`, `info` — nothing TSConf-specific; the #58 conformance test covers TSConf's slot |
 | BOOT-3 | TS-BIOS boots a FatFS folder (fixture with a small `.spg` or `.trd`) to its file browser (characterize, then assert) |
 
 ## Phase 7 — Sound, debugger, automation, corpus · M
