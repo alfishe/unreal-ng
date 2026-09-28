@@ -37,7 +37,12 @@ Scope confirmed with the user on 2026-09-27, and how the design honors it:
 - [x] Prerequisite: TTD RAM page 255 (vdos's page) is an ordinary page —
   `3a6eabc6` on master, 2026-09-27 (PLAN #40 V0 item, tested on ATM3)
 - [x] Prerequisite: unique `PeripheralId` table (PLAN #40 V0) — done on master;
-  TSConf appends id 15 (13/14 went to the +3)
+  TSConf appends id 16 (13/14 went to the +3, 15 to `EvoSdCard`, which TSConf
+  reuses for its SD card)
+- [x] Prerequisite: TTD time at the model's top clock (B4, master 2026-09-28):
+  TSConf returns `TtdClockUnits() = 4`
+- [x] Prerequisite: unified media manager M1/M2/M4 merged to master (#58):
+  `HostFolderFat`, slots, `[MEDIA]` config, media verbs on every surface
 - [x] Prerequisite: shared SD card - `SdCardSpi` over `IBlockDevice` and
   `ZControllerSpi` on master (#55 E5, `ed703577`); M1 hook (#55 E3) and
   `EvoAvr` (#55 E2a) on master too
@@ -47,15 +52,13 @@ Scope confirmed with the user on 2026-09-27, and how the design honors it:
 - Implementation phases 0-8 per [implementation-plan.md](implementation-plan.md).
 - Prerequisites: PLAN #60 (interrupt source + write intercept, linear turbo
   ratio, per-family `Screen` subclass, shared CMOS, wait-state hook) before
-  phase 0 per PLAN rationale 6; the unified media manager (#58) before the SD
-  part of phase 6: M1 built `HostFolderFat`, the slot model and the `[MEDIA]`
-  config (branch `media-manager`), and TSConf only registers its `sd.zc` slot
+  phase 0 per PLAN rationale 6; the unified media manager (#58, M1/M2/M4 on master)
+  for the SD part of phase 6: TSConf only registers its `sd.zc` slot
   ([integration-tsconf-sd.md](../2026-09-28-storage-manager/integration-tsconf-sd.md)); control
   from the GUI and every automation surface comes from the media verbs
   ([media-control-design.md](../2026-09-28-storage-manager/media-control-design.md), #58 M4), not
   from a TSConf-specific SD API; the shared IDE (#13a) only if D2 changes; #40 V1 and #42
-  (`IVideoMapper`) before phase 7; B4 (turbo journal timestamps) before
-  relying on TTD find-last at 7/14 MHz.
+  (`IVideoMapper`) before phase 7.
 - Shared with the ATM3 completion program (PLAN #55, [implementation-plan.md](../2026-09-15-atm-baseconf-highres-ports/implementation-plan.md) §2): M1 hook, write intercept, `ZControllerSpi`, SD on `IBlockDevice`, `EvoAvr`; the SD card, host folders (`HostFolderFat`) and media control through the media manager (PLAN #58, [storage-manager](../2026-09-28-storage-manager/technical-design.md)). ATM3 moves to the official `zxevo_fe.rom` (pages 0-3 empty), so TSConf needs its own ROM file with TS-BIOS in pages 0-3.
 - Open user decisions: none blocking. D1-D7 in technical-design §3.2 record the
   defaults taken; revisit D2 (Nemo IDE) together with PLAN #13a.
