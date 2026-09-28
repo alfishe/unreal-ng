@@ -606,6 +606,7 @@ void Core::SelectMemoryInterface()
 
     // The +2A/+3 gate array contends memory cycles only
     _z80->ioContention = (contended && !_ulaContention->IsGateArray()) ? _ulaContention : nullptr;
+    _z80->idleContention = _z80->ioContention;  // the ULA contends internal cycles too, the gate array does not
 }
 
 bool Core::IsContentionEffective() const

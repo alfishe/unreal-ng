@@ -44,7 +44,7 @@ Z80OPCODE opl_06(Z80 *cpu) { // rlc (hl) | M:4 T:15 (4, 4, 4, 3)
    uint8_t t = cpu->rd(cpu->hl);
    cpu->f = rlc_f[t];
 
-   cputact(1);
+   cpuidle(cpu->hl, 1);
 
    cpu->wd(cpu->hl, rol[t]);
 }
@@ -87,7 +87,7 @@ Z80OPCODE opl_0E(Z80 *cpu) { // rrc (hl)  | M:4 T:15 (4, 4, 4, 3)
    uint8_t t = cpu->rd(cpu->hl);
    cpu->f = rrc_f[t];
 
-   cputact(1);
+   cpuidle(cpu->hl, 1);
 
    cpu->wd(cpu->hl, ror[t]);
 }
@@ -153,7 +153,7 @@ Z80OPCODE opl_16(Z80 *cpu) { // rl (hl) | M:4 T:15 (4, 4, 4, 3)
 	   t = (t << 1);
    }
 
-   cputact(1);
+   cpuidle(cpu->hl, 1);
 
    cpu->wd(cpu->hl, t);
 }
@@ -221,7 +221,7 @@ Z80OPCODE opl_1E(Z80 *cpu) { // rr (hl) | M:4 T:15 (4, 4, 4, 3)
 		t = (t >> 1);
 	}
 
-   cputact(1);
+   cpuidle(cpu->hl, 1);
 
    cpu->wd(cpu->hl, t);
 }
@@ -272,7 +272,7 @@ Z80OPCODE opl_26(Z80 *cpu) { // sla (hl) | M:4 T:15 (4, 4, 4, 3)
    cpu->f = rl0[t];
    t = (t << 1);
 
-   cputact(1);
+   cpuidle(cpu->hl, 1);
 
    cpu->wd(cpu->hl, t);
 }
@@ -318,7 +318,7 @@ Z80OPCODE opl_2E(Z80 *cpu) { // sra (hl) | M:4 T:15 (4, 4, 4, 3)
    cpu->f = sra_f[t];
    t = (t >> 1) + (t & 0x80);
 
-   cputact(1);
+   cpuidle(cpu->hl, 1);
 
    cpu->wd(cpu->hl, t);
 }
@@ -363,7 +363,7 @@ Z80OPCODE opl_36(Z80 *cpu) { // sli (hl)
    cpu->f = rl1[t];
    t = (t << 1) + 1;
 
-   cputact(1);
+   cpuidle(cpu->hl, 1);
 
    cpu->wd(cpu->hl, t);
 }
@@ -408,7 +408,7 @@ Z80OPCODE opl_3E(Z80 *cpu) { // srl (hl) | M:4 T:15 (4, 4, 4, 3)
    cpu->f = rr0[value];
     value = (value >> 1);
 
-   cputact(1);
+   cpuidle(cpu->hl, 1);
 
    cpu->wd(cpu->hl, value);
 }
@@ -444,7 +444,7 @@ Z80OPCODE opl_45(Z80 *cpu) { // bit 0,l
 
 Z80OPCODE opl_46(Z80 *cpu) { // bit 0,(hl)
    bitmem(cpu, cpu->rd(cpu->hl), 0);
-   cputact(1);
+   cpuidle(cpu->hl, 1);
 }
 
 Z80OPCODE opl_47(Z80 *cpu) { // bit 0,a
@@ -476,7 +476,7 @@ Z80OPCODE opl_4D(Z80 *cpu) { // bit 1,l
 
 Z80OPCODE opl_4E(Z80 *cpu) { // bit 1,(hl)
    bitmem(cpu, cpu->rd(cpu->hl), 1);
-   cputact(1);
+   cpuidle(cpu->hl, 1);
 }
 
 Z80OPCODE opl_4F(Z80 *cpu) { // bit 1,a
@@ -510,7 +510,7 @@ Z80OPCODE opl_55(Z80 *cpu) { // bit 2,l
 Z80OPCODE opl_56(Z80 *cpu) { // bit 2,(hl)
    bitmem(cpu, cpu->rd(cpu->hl), 2);
 
-   cputact(1);
+   cpuidle(cpu->hl, 1);
 }
 
 Z80OPCODE opl_57(Z80 *cpu) { // bit 2,a
@@ -543,7 +543,7 @@ Z80OPCODE opl_5D(Z80 *cpu) { // bit 3,l
 
 Z80OPCODE opl_5E(Z80 *cpu) { // bit 3,(hl)
    bitmem(cpu, cpu->rd(cpu->hl), 3);
-   cputact(1);
+   cpuidle(cpu->hl, 1);
 }
 
 Z80OPCODE opl_5F(Z80 *cpu) { // bit 3,a
@@ -577,7 +577,7 @@ Z80OPCODE opl_65(Z80 *cpu) { // bit 4,l
 Z80OPCODE opl_66(Z80 *cpu) { // bit 4,(hl)
    bitmem(cpu, cpu->rd(cpu->hl), 4);
 
-   cputact(1);
+   cpuidle(cpu->hl, 1);
 }
 
 Z80OPCODE opl_67(Z80 *cpu) { // bit 4,a
@@ -611,7 +611,7 @@ Z80OPCODE opl_6D(Z80 *cpu) { // bit 5,l
 Z80OPCODE opl_6E(Z80 *cpu) { // bit 5,(hl)
    bitmem(cpu, cpu->rd(cpu->hl), 5);
 
-   cputact(1);
+   cpuidle(cpu->hl, 1);
 }
 
 Z80OPCODE opl_6F(Z80 *cpu) { // bit 5,a
@@ -645,7 +645,7 @@ Z80OPCODE opl_75(Z80 *cpu) { // bit 6,l
 Z80OPCODE opl_76(Z80 *cpu) { // bit 6,(hl)
    bitmem(cpu, cpu->rd(cpu->hl), 6);
 
-   cputact(1);
+   cpuidle(cpu->hl, 1);
 }
 
 Z80OPCODE opl_77(Z80 *cpu) { // bit 6,a
@@ -679,7 +679,7 @@ Z80OPCODE opl_7D(Z80 *cpu) { // bit 7,l
 Z80OPCODE opl_7E(Z80 *cpu) { // bit 7,(hl)
    bitmem(cpu, cpu->rd(cpu->hl), 7);
 
-   cputact(1);
+   cpuidle(cpu->hl, 1);
 }
 
 Z80OPCODE opl_7F(Z80 *cpu) { // bit 7,a
@@ -715,7 +715,7 @@ Z80OPCODE opl_86(Z80 *cpu) { // res 0,(hl) | M:4 T:15 (4, 4, 4, 3)
 
    res(t, 0);
 
-   cputact(1);
+   cpuidle(cpu->hl, 1);
 
    cpu->wd(cpu->hl, t);
 }
@@ -753,7 +753,7 @@ Z80OPCODE opl_8E(Z80 *cpu) { // res 1,(hl) | M:4 T:15 (4, 4, 4, 3)
 
    res(value, 1);
 
-   cputact(1);
+   cpuidle(cpu->hl, 1);
 
    cpu->wd(cpu->hl, value);
 }
@@ -791,7 +791,7 @@ Z80OPCODE opl_96(Z80 *cpu) { // res 2,(hl) | M:4 T:15 (4, 4, 4, 3)
 
    res(t, 2);
 
-   cputact(1);
+   cpuidle(cpu->hl, 1);
 
    cpu->wd(cpu->hl, t);
 }
@@ -829,7 +829,7 @@ Z80OPCODE opl_9E(Z80 *cpu) { // res 3,(hl) | M:4 T:15 (4, 4, 4, 3)
 
    res(t, 3);
 
-   cputact(1);
+   cpuidle(cpu->hl, 1);
 
    cpu->wd(cpu->hl, t);
 }
@@ -867,7 +867,7 @@ Z80OPCODE opl_A6(Z80 *cpu) { // res 4,(hl) | M:4 T:15 (4, 4, 4, 3)
 
    res(value, 4);
 
-   cputact(1);
+   cpuidle(cpu->hl, 1);
 
    cpu->wd(cpu->hl, value);
 }
@@ -905,7 +905,7 @@ Z80OPCODE opl_AE(Z80 *cpu) { // res 5,(hl) | M:4 T:15 (4, 4, 4, 3)
 
    res(value, 5);
 
-   cputact(1);
+   cpuidle(cpu->hl, 1);
 
    cpu->wd(cpu->hl, value);
 }
@@ -943,7 +943,7 @@ Z80OPCODE opl_B6(Z80 *cpu) { // res 6,(hl) | M:4 T:15 (4, 4, 4, 3)
 
    res(t, 6);
 
-   cputact(1);
+   cpuidle(cpu->hl, 1);
 
    cpu->wd(cpu->hl, t);
 }
@@ -981,7 +981,7 @@ Z80OPCODE opl_BE(Z80 *cpu) { // res 7,(hl) | M:4 T:15 (4, 4, 4, 3)
 
    res(value, 7);
 
-   cputact(1);
+   cpuidle(cpu->hl, 1);
 
    cpu->wd(cpu->hl, value);
 }
@@ -1019,7 +1019,7 @@ Z80OPCODE opl_C6(Z80 *cpu) { // set 0,(hl) | M:4 T:15 (4, 4, 4, 3)
 
    op_set(value, 0);
 
-   cputact(1);
+   cpuidle(cpu->hl, 1);
 
    cpu->wd(cpu->hl, value);
 }
@@ -1056,7 +1056,7 @@ Z80OPCODE opl_CE(Z80 *cpu) { // set 1,(hl) | M:4 T:15 (4, 4, 4, 3)
 
    op_set(t, 1);
 
-   cputact(1);
+   cpuidle(cpu->hl, 1);
 
    cpu->wd(cpu->hl, t);
 }
@@ -1094,7 +1094,7 @@ Z80OPCODE opl_D6(Z80 *cpu) { // set 2,(hl) | M:4 T:15 (4, 4, 4, 3)
 
    op_set(value, 2);
 
-   cputact(1);
+   cpuidle(cpu->hl, 1);
 
    cpu->wd(cpu->hl, value);
 }
@@ -1132,7 +1132,7 @@ Z80OPCODE opl_DE(Z80 *cpu) { // set 3,(hl) | M:4 T:15 (4, 4, 4, 3)
 
    op_set(value, 3);
 
-   cputact(1);
+   cpuidle(cpu->hl, 1);
 
    cpu->wd(cpu->hl, value);
 }
@@ -1169,7 +1169,7 @@ Z80OPCODE opl_E6(Z80 *cpu) { // set 4,(hl) | M:4 T:15 (4, 4, 4, 3)
 
    op_set(t, 4);
 
-   cputact(1);
+   cpuidle(cpu->hl, 1);
 
    cpu->wd(cpu->hl, t);
 }
@@ -1207,7 +1207,7 @@ Z80OPCODE opl_EE(Z80 *cpu) { // set 5,(hl) | M:4 T:15 (4, 4, 4, 3)
 
    op_set(t, 5);
 
-   cputact(1);
+   cpuidle(cpu->hl, 1);
 
    cpu->wd(cpu->hl, t);
 }
@@ -1245,7 +1245,7 @@ Z80OPCODE opl_F6(Z80 *cpu) { // set 6,(hl) | M:4 T:15 (4, 4, 4, 3)
 
    op_set(value, 6);
 
-   cputact(1);
+   cpuidle(cpu->hl, 1);
 
    cpu->wd(cpu->hl, value);
 }
@@ -1283,7 +1283,7 @@ Z80OPCODE opl_FE(Z80 *cpu) { // set 7,(hl) | M:4 T:15 (4, 4, 4, 3)
 
    op_set(value, 7);
 
-   cputact(1);
+   cpuidle(cpu->hl, 1);
 
    cpu->wd(cpu->hl, value);
 }

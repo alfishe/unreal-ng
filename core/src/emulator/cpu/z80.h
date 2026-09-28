@@ -431,6 +431,25 @@ public:
     /// T-state at which the memory access in progress started: rd / wd have already charged its 3 T
     inline uint32_t AccessStartT() const { return (tt - 3u * rate) >> 8; }
 
+    /// Internal (no-MREQ) cycles: `cycles` T-states with `addr` on the address bus (HL, PC, SP, IR... per
+    /// instruction). The Ferranti ULA (48K / 128K / +2) contends each of them like the start of a memory
+    /// cycle when `addr` is in a contended slot; the +2A/+3 gate array contends MREQ cycles only. Without
+    /// that rule (and without a bus trace hook) this is the plain cycle count
+    inline void Idle(uint16_t addr, uint8_t cycles)
+    {
+        if (idleContention || busTraceHook) [[unlikely]]
+            IdleSlow(addr, cycles);
+        else
+            tt += cycles * rate;
+    }
+    void IdleSlow(uint16_t addr, uint8_t cycles);  // contention per T-state and the 'N' trace events
+
+    /// The refresh address the CPU puts on the bus in internal cycles after M1 (I in the high byte, R low)
+    inline uint16_t IR() const { return static_cast<uint16_t>((i << 8) | (r_low & 0x7F) | (r_hi & 0x80)); }
+
+    /// The ULA's rule for internal cycles: set with ioContention (the same machines), null otherwise
+    UlaContention* idleContention = nullptr;
+
     /// I/O contention rule for in / out: the machine's contention component while its ULA contends port
     /// accesses (48K / 128K / +2), null otherwise (no contention, +2A / +3 gate array). Set by
     /// Core::SelectMemoryInterface together with MemIf
@@ -440,7 +459,8 @@ public:
     /// check per bus access when unset). Fired at the access point of each bus
     /// event with cpu.t already advanced to it:
     ///   'R' memory read (data latched at T3 of the cycle - rd() charges first)
-    ///   'W' memory write, 'I' port read, 'O' port write (IORQ T-state)
+    ///   'W' memory write, 'I' port read, 'O' port write (IORQ T-state),
+    ///   'N' one internal (no-MREQ) T-state, fired at its start with the address on the bus (value 0)
     /// Used by bus-phase timing tests (io_phase_test / bus_phase tests).
     std::function<void(char type, uint16_t addr, uint8_t value)> busTraceHook;
 

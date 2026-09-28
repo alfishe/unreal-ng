@@ -96,8 +96,9 @@ struct Golden
     uint64_t stateHash;
 };
 
-/// Recorded on 2b6b7d47, before the contention rework, then updated by the M1 contention rework (rows marked
-/// with their former values). Reading guide: on 48K / 128K / +2 "free" is longer than on the Pentagon only by
+/// Recorded on 2b6b7d47, before the contention rework, then updated by the M1 contention rework and by phase 2
+/// (internal-cycle contention on the Ferranti ULA models); the changed rows keep their former values in a comment.
+/// Reading guide: on 48K / 128K / +2 "free" is longer than on the Pentagon only by
 /// the I/O contention of the #40FE port accesses. Before the rework "codeContended", "codePage7" and "allRam1"
 /// equalled "free" on the ULA / gate array models (opcode fetches and operand bytes were not contended); the
 /// rework changed exactly those rows, and only their timing - every state hash and every other row is
@@ -108,16 +109,16 @@ const std::vector<Golden> kGolden = {
     { "PENTAGON", "codeContended", 18472, 0xda498385dc3d51b5ull, 0xa082cdbbf9f71b90ull },
     { "PENTAGON", "codePage7", 18472, 0xda498385dc3d51b5ull, 0xd3fb2cce03135670ull },
     { "48K", "free", 18675, 0xa31a04e8c4376db4ull, 0x9656ea3c0af12b0ull },
-    { "48K", "dataContended", 20962, 0x13971b85e91eb103ull, 0x96d5e7201636f1f5ull },
-    { "48K", "codeContended", 21127, 0x1aeb342feb95577eull, 0xa082cdbbf9f71b90ull },  // M1 rework: was 18675, 0xa31a04e8c4376db4ull
+    { "48K", "dataContended", 20983, 0x814440bc31b64aaull, 0x96d5e7201636f1f5ull },  // phase 2 (internal cycles): was 20962, 0x13971b85e91eb103ull
+    { "48K", "codeContended", 23580, 0xe1579470c3943069ull, 0xa082cdbbf9f71b90ull },  // phase 2 (internal cycles): was 21127, 0x1aeb342feb95577eull
     { "128K", "free", 19002, 0x7c4752cc09b9aa21ull, 0x9656ea3c0af12b0ull },
     { "128K", "dataContended", 21332, 0x76b9bd6bbc8ec6f3ull, 0x96d5e7201636f1f5ull },
-    { "128K", "codeContended", 21521, 0x8e5f22f2de1e8940ull, 0xa082cdbbf9f71b90ull },  // M1 rework: was 19002, 0x7c4752cc09b9aa21ull
-    { "128K", "codePage7", 21521, 0x8e5f22f2de1e8940ull, 0xd3fb2cce03135670ull },  // M1 rework: was 19002, 0x7c4752cc09b9aa21ull
+    { "128K", "codeContended", 23527, 0x19226770f606d2d4ull, 0xa082cdbbf9f71b90ull },  // phase 2 (internal cycles): was 21521, 0x8e5f22f2de1e8940ull
+    { "128K", "codePage7", 23527, 0x19226770f606d2d4ull, 0xd3fb2cce03135670ull },  // phase 2 (internal cycles): was 21521, 0x8e5f22f2de1e8940ull
     { "PLUS2", "free", 19002, 0x7c4752cc09b9aa21ull, 0x9656ea3c0af12b0ull },
     { "PLUS2", "dataContended", 21332, 0x76b9bd6bbc8ec6f3ull, 0x96d5e7201636f1f5ull },
-    { "PLUS2", "codeContended", 21521, 0x8e5f22f2de1e8940ull, 0xa082cdbbf9f71b90ull },  // M1 rework: was 19002, 0x7c4752cc09b9aa21ull
-    { "PLUS2", "codePage7", 21521, 0x8e5f22f2de1e8940ull, 0xd3fb2cce03135670ull },  // M1 rework: was 19002, 0x7c4752cc09b9aa21ull
+    { "PLUS2", "codeContended", 23527, 0x19226770f606d2d4ull, 0xa082cdbbf9f71b90ull },  // phase 2 (internal cycles): was 21521, 0x8e5f22f2de1e8940ull
+    { "PLUS2", "codePage7", 23527, 0x19226770f606d2d4ull, 0xd3fb2cce03135670ull },  // phase 2 (internal cycles): was 21521, 0x8e5f22f2de1e8940ull
     { "PLUS2A", "free", 18472, 0xda498385dc3d51b5ull, 0x9656ea3c0af12b0ull },
     { "PLUS2A", "dataContended", 21328, 0xcd35793f95f18839ull, 0x96d5e7201636f1f5ull },
     { "PLUS2A", "codeContended", 21323, 0x8af80abb538938ccull, 0xa082cdbbf9f71b90ull },  // M1 rework: was 18472, 0xda498385dc3d51b5ull

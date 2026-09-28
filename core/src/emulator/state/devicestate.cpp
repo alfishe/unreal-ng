@@ -911,7 +911,7 @@ namespace
 {
 StateNode CountersNode(const ContentionCounters& c)
 {
-    static const char* const kinds[CONTENTION_KINDS] = { "fetch", "read", "write", "io" };
+    static const char* const kinds[CONTENTION_KINDS] = { "fetch", "read", "write", "io", "idle" };
     StateNode n = StateNode::Object();
     uint64_t accesses = 0;
     uint64_t waitT = 0;

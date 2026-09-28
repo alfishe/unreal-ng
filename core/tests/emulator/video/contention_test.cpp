@@ -264,6 +264,26 @@ TEST_F(Contention48K_Test, M1_PrefixedOpcodeFetchesWaitTwice)
     EXPECT_EQ(runAt(0x4000, { 0xDD, 0x23 }, _firstContendedT), 10u + 6u + 4u);
 }
 
+/// Phase 2: internal (no-MREQ) T-states wait when their address is contended. INC (HL) from #8000 with HL =
+/// #4000, M1 starting 4 T before the first contended T: M1 4 (uncontended) | read at offset 0: 6 + 3 | the
+/// internal T on HL at offset 9 (cell offset 1): 5 + 1 | write at offset 15 (cell offset 7): 0 + 3
+TEST_F(Contention48K_Test, Idle_InternalCycleOnContendedHlWaits)
+{
+    _z80->hl = 0x4000;
+    EXPECT_EQ(runAt(0x8000, { 0x34 }, _firstContendedT - 4), 4u + (6 + 3) + (5 + 1) + (0 + 3));
+    _z80->hl = 0x9000;
+    EXPECT_EQ(runAt(0x8000, { 0x34 }, _firstContendedT - 4), 11u) << "HL uncontended";
+}
+
+/// JR from contended RAM: M1 and the displacement read wait, and so do the 5 internal T-states on the
+/// displacement's address
+TEST_F(Contention48K_Test, Idle_JrInternalCyclesOnTheDisplacementWait)
+{
+    // M1 at offset 0: 6 + 4 | displacement read at offset 10 (cell offset 2): 4 + 3 | 5 internal T from offset
+    // 17 (cell offset 1): 5+1, then at offset 23 (7): 0+1, 24 (0): 6+1, 31 (7): 0+1, 32 (0): 6+1
+    EXPECT_EQ(runAt(0x4000, { 0x18, 0x00 }, _firstContendedT), (6u + 4) + (4 + 3) + (5 + 1) + 1 + (6 + 1) + 1 + (6 + 1));
+}
+
 TEST_F(Contention48K_Test, M1_CodeAndDataInContendedRam)
 {
     // LD A,(HL) at $4000 with HL = $4000: the fetch waits 6, the data read starts at offset 2 and waits 4
@@ -350,6 +370,12 @@ TEST_F(Contention128K_Test, IOContention_128KRules)
     EXPECT_EQ(_ula->GetIOContentionDelay(0x00FE), 1u);
     EXPECT_EQ(_ula->GetIOContentionDelay(0x00FD), 1u);
     EXPECT_EQ(_ula->GetIOContentionDelay(0x00FF), 0u);
+}
+
+TEST_F(Contention128K_Test, Idle_InternalCycleOnContendedHlWaits)
+{
+    _z80->hl = 0x4000;
+    EXPECT_EQ(runAt(0x8000, { 0x34 }, _firstContendedT - 4), 4u + (6 + 3) + (5 + 1) + (0 + 3));
 }
 
 TEST_F(Contention128K_Test, M1_FetchFromOddPageAtC000Waits)
@@ -507,6 +533,15 @@ TEST_F(ContentionPlus3_Test, M1_FetchWaitsTheGateArrayPattern)
     Out1FFD(0x03);
     EXPECT_EQ(runAt(0x0000, { 0x00 }, _firstContendedT), 4u + 1u) << "page 4 at #0000";
     Out1FFD(0x00);
+}
+
+/// The gate array does not contend internal cycles: INC (HL) waits for its read and write only (read at offset 0:
+/// 1 + 3, the internal T at offset 4 free, write at offset 5 (cell offset 5): 4 + 3)
+TEST_F(ContentionPlus3_Test, Idle_InternalCyclesNeverWait)
+{
+    _z80->hl = 0x4000;
+    EXPECT_EQ(runAt(0x8000, { 0x34 }, _firstContendedT - 4), 4u + (1 + 3) + 1 + (4 + 3));
+    EXPECT_EQ(_z80->idleContention, nullptr);
 }
 
 TEST_F(ContentionPlus3_Test, M1_FloatingBusLatchSeesOpcodeFetches)

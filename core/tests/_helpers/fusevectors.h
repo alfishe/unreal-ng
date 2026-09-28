@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstring>
 #include <fstream>
 #include <map>
@@ -381,6 +382,8 @@ inline std::vector<BusEvent> FilterContendOnly(const std::vector<BusEvent>& raw,
     std::vector<BusEvent> filtered;
     for (const BusEvent& ev : raw)
     {
+        if (ev.type == 'N')
+            continue;  // internal cycles: CompareIdle
         bool contendOnly = false;
         if (ev.type == 'R')
         {
@@ -426,5 +429,35 @@ inline void CompareEvents(const std::vector<BusEvent>& got, const std::vector<Bu
 inline void CompareTrace(const std::vector<BusEvent>& raw, const FuseCase& tc, std::vector<std::string>& issues)
 {
     CompareEvents(FilterContendOnly(raw, tc), tc.expectedTrace, issues);
+}
+
+/// FUSE's MC-only checkpoints that are internal (no-MREQ) T-states, in time order: the bare MCs minus the
+/// displacement reads FUSE skips but our core performs (they pair with one of our 'R' events at MC+3)
+inline std::vector<BusEvent> ExpectedIdleCycles(const std::vector<BusEvent>& raw, const FuseCase& tc)
+{
+    std::vector<BusEvent> idle;
+    for (const auto& cycle : tc.contendOnlyCycles)
+    {
+        bool isRead = false;
+        for (const BusEvent& ev : raw)
+            isRead |= ev.type == 'R' && ev.addr == cycle.first && ev.tOffset == cycle.second + 3;
+        if (!isRead)
+            idle.push_back({ 'N', cycle.first, 0, cycle.second });
+    }
+    std::sort(idle.begin(), idle.end(), [](const BusEvent& a, const BusEvent& b) { return a.tOffset < b.tOffset; });
+    return idle;
+}
+
+/// Our internal-cycle events ('N', one per T-state) against FUSE's no-MREQ checkpoints: address and T-state
+inline void CompareIdle(const std::vector<BusEvent>& raw, const FuseCase& tc, std::vector<std::string>& issues)
+{
+    std::vector<BusEvent> got;
+    for (const BusEvent& ev : raw)
+        if (ev.type == 'N')
+            got.push_back(ev);
+    std::vector<std::string> idleIssues;
+    CompareEvents(got, ExpectedIdleCycles(raw, tc), idleIssues);
+    for (const std::string& issue : idleIssues)
+        issues.push_back("idle " + issue);
 }
 }  // namespace FuseVectors

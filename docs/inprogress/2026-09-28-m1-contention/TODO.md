@@ -26,6 +26,14 @@ Design: [design.md](design.md). Test programs and the probe suite: [test-program
   mode picked the plain debug interface (history replayed uncontended) - fixed in `86d414b0`. Status per
   suite: design §8.0.
 
+- **Phase 2 — internal (no-MREQ) cycles** (2026-09-28): `Z80::Idle(addr, n)` replaces the address-less cycle
+  count at every internal cycle (IR, displacement, HL, SP, DE, BC per instruction); the Ferranti ULA contends
+  each T-state, the gate array none. FUSE's no-MREQ checkpoints are now asserted (address and T-state, all
+  1356 vectors) and a ULA replay of every vector passes; MAME and xpeccy-plus use the same per-cycle table
+  (MAME differs only on the stepped DE/HL of three repeat cycles; we follow FUSE and xpeccy-plus). Butler
+  48K: 68 of 70 pass with contention (was 34), test 35 is the floating bus. The DDCB operation byte is now an
+  ordinary read, not an M1 (R +2 as on the hardware). Pentagon cost within noise (~0.5 %).
+
 ## Remaining (value order)
 1. **Phase 1e — emulated-side suite H** (in progress): done - the Butler 48K suite runs to completion (after
    the `.sna` 48K ROM fix) and the Rak Timing Test matrix against the published screens (test-programs §2.5).
@@ -33,10 +41,7 @@ Design: [design.md](design.md). Test programs and the probe suite: [test-program
    emulator surveyed uses 128 - test-programs §2.5). Open: fusetest
    (needs pasmo); the `ctprobe` probe suite (test-programs §3) and its `.tap` / `.trd` exports; the
    cross-emulator consensus table.
-2. **Phase 2:** no-MREQ contention of internal cycles on the 48K / 128K / +2 (`Idle(addr, n)`); then
-   assert FUSE's `MC`-only checkpoints (test-programs §2.4 step 1) and extend the FUSE contended replay to
-   the ULA rule.
-3. **Phase 3:** multi-point I/O contention (C:1 / C:3) in the 48K / 128K port rules; drop the 128K rule's
+2. **Phase 3:** multi-point I/O contention (C:1 / C:3) in the 48K / 128K port rules; drop the 128K rule's
    extra 1 T on even ports (the Rak 128K `IN #00FE` reference has none). Targets: Rak 48K tests 4-5, 128K
    tests 2 and 4.
 
