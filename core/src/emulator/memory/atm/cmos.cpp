@@ -3,23 +3,11 @@
 #include "cmos.h"
 #include "common/timehelper.h"
 
-#include <cstring>
-
 //
 // Constructor for CMOS NVRAM
 //
 CMOS::CMOS()
 {
-	// _cmos and _nvram are plain uint8_t[] with no in-class initializer, so
-	// every instance starts from whatever garbage its backing storage held.
-	// ReadCMOS()'s default case (and Unknown_10/BitFlags) serve _cmos[addr]
-	// straight to the guest, and the BaseConf ROM probes those registers
-	// during boot - garbage bytes made the boot path (and the RAM/CPU state
-	// it settles into) depend on process/instance memory layout instead of
-	// on the frozen clock and seeded RAM fill. SMUCNvram (Scorpion) already
-	// zeroes the same shape of storage for the same reason.
-	memset(_cmos, 0x00, sizeof(_cmos));
-	memset(_nvram, 0x00, sizeof(_nvram));
 }
 
 CMOS::~CMOS()
