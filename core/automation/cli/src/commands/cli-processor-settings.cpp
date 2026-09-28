@@ -414,7 +414,7 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
         }
         else
         {
-            ss << "Error: FeatureManager not available for this emulator" << NEWLINE;
+            ss << "Error: Cannot enable fast_tape while TTD recording is active or history is being replayed" << NEWLINE;
         }
     }
     else if (settingName == "turbo_tape")
@@ -426,7 +426,7 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
         }
         else
         {
-            ss << "Error: FeatureManager not available for this emulator" << NEWLINE;
+            ss << "Error: Cannot enable turbo_tape while TTD recording is active or history is being replayed" << NEWLINE;
         }
     }
     else if (settingName == "fast_disk")
@@ -539,6 +539,13 @@ void CLIProcessor::HandleFeature(const ClientSession& session, const std::vector
             if (featureManager->setFeature(featureName, true))
             {
                 out << "Feature '" << featureName << "' enabled." << NEWLINE;
+                session.SendResponse(out.str());
+                return;
+            }
+            else if (featureManager->hasFeature(featureName))
+            {
+                out << "Error: cannot enable '" << featureName
+                    << "' while TTD recording is active or history is being replayed." << NEWLINE;
                 session.SendResponse(out.str());
                 return;
             }

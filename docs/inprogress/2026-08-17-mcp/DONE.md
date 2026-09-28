@@ -1,6 +1,6 @@
 # DONE (reclassified 2026-09-27 re-audit; see [PLAN.md](../PLAN.md) audit log)
 
-MCP bridge shipped. Open remainder tracked elsewhere: full TTD in MCP → PLAN #2; deferred Phase 3 → PLAN #32.
+MCP bridge shipped. Open remainder tracked elsewhere: full TTD in MCP → done in `2d7f6030` (PLAN #2 retired); deferred Phase 3 → PLAN #32.
 
 ---
 Original TODO notes below (historical).

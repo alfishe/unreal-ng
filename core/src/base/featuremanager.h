@@ -152,6 +152,8 @@ public:
     bool setMode(const std::string& idOrAlias, const std::string& mode);
     std::string getMode(const std::string& idOrAlias) const;
     bool isEnabled(const std::string& idOrAlias) const;
+    /// @brief Whether a feature by this id or alias exists (tells "refused" from "unknown")
+    bool hasFeature(const std::string& idOrAlias) const;
     std::vector<FeatureInfo> listFeatures() const;
     void setDefaults();
     void loadFromFile(const std::string& path);
@@ -173,6 +175,9 @@ public:
     }
 
 private:
+    /// True when TTD currently forces this feature off (see isTtdTimelineBound / isTtdRecordingActive)
+    bool isMaskedByTtd(const std::string& id) const;
+
     /// Find a feature by id or alias. Caller must hold _mutex.
     FeatureInfo* findFeature(const std::string& idOrAlias);
     const FeatureInfo* findFeature(const std::string& idOrAlias) const;

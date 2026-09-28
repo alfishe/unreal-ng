@@ -56,6 +56,14 @@ with agent assistance; for sequencing, not commitments).
 Goal: every generic extension point exists and is proven not to change any
 existing machine.
 
+**Moved to PLAN #60 (2026-09-28).** The interrupt source (INF-1) and the memory
+write intercept with its benchmark gate (INF-2, INF-3) are now built by the
+shared machine-infrastructure row #60, before TSConf starts (PLAN rationale 6:
+infrastructure → existing machines migrated → TSConf → Sprinter). The M1 hook
+(INF-4) already exists on master (#55 E3). When phase 0 starts, these rows only
+confirm the landed pieces meet the asserts below; the rest of phase 0 (INF-5 to
+INF-10) stays here.
+
 | ID | Test first (file) | Asserts | Drives |
 |:--|:--|:--|:--|
 | INF-1 | `cpu/interruptsource_test.cpp` | with a fake `IInterruptSource` registered: INT is taken exactly when `IsIntAsserted(t)` is true and `iff1`; IM2 fetches `(I<<8) \| AcknowledgeInterrupt()`; EI shadow respected; without a source every existing INT test is unchanged | §3.4 interface + `Z80::ProcessInterrupts` branch |

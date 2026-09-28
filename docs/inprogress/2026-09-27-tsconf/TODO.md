@@ -2,6 +2,9 @@
 
 **Status marker:** not started (implementation). Design complete — review
 round 1 applied 2026-09-27; ready for phase 0.
+Starts after the shared infrastructure and the move of the existing machines onto
+it (PLAN rationale 6); the interrupt source and write intercept of phase 0 are
+built by PLAN #60 ([implementation-plan.md](implementation-plan.md) phase 0).
 
 ## Goal
 

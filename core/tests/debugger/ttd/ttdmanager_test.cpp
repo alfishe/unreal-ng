@@ -1009,3 +1009,75 @@ TEST_F(TimeTravelManagerJournal_Test, LoadedIncompleteJournalReplays)
     ASSERT_TRUE(found.has_value());
     EXPECT_GT(found->time.frame, journalEndFrame) << "the loaded session answered from its incomplete journal";
 }
+
+// ===========================================================================
+// Tool edits (scripts, debugger surfaces) during a recording
+// ===========================================================================
+
+TEST_F(TimeTravelManagerRecordingLock_Test, ToolEditWhileRecordingReachesTheHistory)
+{
+    Memory* memory = _emulator->GetContext()->pMemory;
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(1);
+    const uint8_t romByte = memory->DirectReadFromZ80Memory(0x0000);
+
+    _emulator->EditMemoryFromTool("test edit", [&] {
+        memory->ToolWriteToZ80Memory(0xC000, 0x5A);
+        memory->ToolWriteToZ80Memory(0x0000, static_cast<uint8_t>(romByte ^ 0xFF));  // ROM: ignored like a CPU write
+    });
+    RunFrames(1);
+    const size_t afterEdit = _ttd->GetCheckpointCount() - 1;
+    _ttd->StopRecording();
+
+    EXPECT_EQ(memory->DirectReadFromZ80Memory(0x0000), romByte) << "a tool write patched ROM";
+
+    ASSERT_TRUE(_ttd->RestoreCheckpointForTesting(0));
+    ASSERT_TRUE(_ttd->RestoreCheckpointForTesting(afterEdit));
+    EXPECT_EQ(memory->DirectReadFromZ80Memory(0xC000), 0x5A) << "the checkpoint after the edit lost it";
+
+    const auto markers = _ttd->GetExternalEvents().SnapshotEvents();
+    ASSERT_EQ(markers.size(), 1u);
+    EXPECT_EQ(markers.front().kind, ttd::TTDExternalEventKind::DebuggerEdit);
+}
+
+TEST_F(TimeTravelManagerRecordingLock_Test, PhysicalPageEditWhileRecordingReachesTheHistory)
+{
+    Memory* memory = _emulator->GetContext()->pMemory;
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(1);
+
+    // Page 5 is the 128K screen page, mapped at #4000 on every model
+    _emulator->EditMemoryFromTool("test page edit", [&] {
+        memory->RAMPageAddress(5)[0x1234] = 0xA5;
+        memory->MarkRamPageEdited(5);
+    });
+    RunFrames(1);
+    const size_t afterEdit = _ttd->GetCheckpointCount() - 1;
+    _ttd->StopRecording();
+
+    ASSERT_TRUE(_ttd->RestoreCheckpointForTesting(0));
+    ASSERT_TRUE(_ttd->RestoreCheckpointForTesting(afterEdit));
+    EXPECT_EQ(memory->RAMPageAddress(5)[0x1234], 0xA5);
+}
+
+TEST_F(TimeTravelManagerRecordingLock_Test, FeatureListShowsTheStateInEffect)
+{
+    ASSERT_TRUE(_fm->setFeature(Features::kTurboMode, true));
+    ASSERT_TRUE(_ttd->StartRecording());
+
+    bool listed = false;
+    for (const FeatureManager::FeatureInfo& f : _fm->listFeatures())
+    {
+        if (f.id == Features::kTurboMode || f.id == Features::kFastTape)
+        {
+            EXPECT_FALSE(f.enabled) << f.id << " is listed on while TTD holds it off";
+            listed = true;
+        }
+    }
+    EXPECT_TRUE(listed);
+
+    // Refused, not unknown
+    EXPECT_FALSE(_fm->setFeature(Features::kTurboMode, true));
+    EXPECT_TRUE(_fm->hasFeature(Features::kTurboMode));
+    EXPECT_FALSE(_fm->hasFeature("nosuchfeature"));
+}

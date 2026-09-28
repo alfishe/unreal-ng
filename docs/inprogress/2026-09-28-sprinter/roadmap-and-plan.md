@@ -1,0 +1,120 @@
+# Sprinter Sp2000 — roadmap and implementation plan
+
+| | |
+|---|---|
+| **Date** | 2026-09-28 |
+| **Status** | Review round 1 done (2026-09-28, decisions in §5). Nothing started. PLAN row **#59** (T4); its shared prerequisites are row **#60** |
+| **Rule** | Test first. Each phase ends with a green `core-tests` run, zero warnings, its tests passing; nothing is committed without an explicit request |
+| **Inputs** | [goals-and-requirements.md](goals-and-requirements.md) (ACC-*), [technical-design.md](technical-design.md), [test-plan.md](test-plan.md) |
+
+## 1. Phases
+
+```mermaid
+flowchart LR
+    S0["S0 materials, ROM,<br/>disassembly, fixtures"] --> S1["S1 model, memory,<br/>ports, boot to BIOS"]
+    SH["Shared infrastructure (PLAN #60):<br/>clock ratio, CMOS core, wait hook,<br/>per-model Screen, raw PC floppy,<br/>WD1793 rate check, trace codes"] -.-> S1
+    TS["TSConf (PLAN #41) landed:<br/>write intercept,<br/>interrupt source"] -.-> S1
+    S1 --> S2["S2 video"]
+    S1 --> S3a["S3a floppy"]
+    S2 --> S4["S4 DSS + native programs"]
+    S3a --> S4
+    IDE1["IDE R1-1 disk core<br/>(PLAN #13a)"] -.-> S3b["S3b IDE, 2 channels"]
+    S1 --> S3b
+    S3b --> S4
+    MM1["Media manager M1<br/>HostFolderFat (PLAN #58)"] -.-> S4
+    E2B["E2b key event +<br/>Ps2Set2Encoder (PLAN #55)"] -.-> S4
+    S2 --> S5["S5 accelerator"]
+    S2 --> S6["S6 sound, ISA stub"]
+    S4 --> S7["S7 TTD, automation, GUI"]
+    S5 --> S7
+    S6 --> S7
+    V1["TTD V1 regions<br/>(PLAN #40)"] -.-> S7
+```
+
+Dashed arrows are work owned by other PLAN rows. The Sprinter is the **last** machine program
+(§4): every dashed prerequisite is expected to have landed before S1 starts, so the Sprinter
+consumes those pieces and builds none of them. Only S0 is Sprinter-specific work that can run
+earlier.
+
+| Phase | Content | Acceptance / tests | Size | Blocked by |
+|---|---|---|---|---|
+| **S0** | Provisioning: BIOS 3.04 (+3.06) in `data/rom/sprinter/` + README entry (3.04 source: HW-2000 `fw/bios/sp2k-3.04.253.bin`, [materials.md](materials.md) §5); **disassembly of ROM pages 8 and 0 of 3.04**, cross-checked against BIOS-TT `0271ac3`, into `docs/disasm/rom/sprinter/`, symbols into `data/symbols/sprinter/`; the loader traced once to capture the exact bitstream write count (Q4); the PLD (AHDL) sources checked for the accelerator INT-suspend (Q3); DSS 1.62 floppy and DSS 1.60R files in `testdata/machines/sprinter/` + `testdata/NOTICE.md`; add BIOS-TT, Shared_Includes, DSS and the PLD sources to the local emulator corpus; reference captures from MAME (page `#40` after POST, the BIOS logo frame, INT T-states for the three FN_SINC modes, the first 10 000 port accesses of BIOS 3.04 with codes); a small script that decodes a port-table page into the table of HW §4.4 | reference files checked in; decoded table equals HW §4.4; disassembly and symbol files in place | S-M | — (can start now) |
+| **S1** | Uses the landed shared hooks (clock ratio, write intercept, interrupt source, wait hook, CMOS core); `MM_SPRINTER` registration + config; `PortDecoder_Sprinter` (lookup, dispatch, cells, start-up gate, config loader + fast start); the `SprinterPldConfiguration` registry with the Standard module and a stub test module (tdd-ports-memory §6); `SprinterMemory` (bank formula, graphics pages, intercepts, reset page); `SprinterVideoRam` storage (no renderer yet) + INT list; Z84C15 package (SIO status and receive, CTC, PIO, system registers); CMOS on the shared `Ds12887` core + CMOS file; key matrix; the Sprinter wait rule `SprinterWaits` (technical design §4) | T-DCP-*, T-MEM-*, T-CFG-*, T-PLDM-*, T-Z84-*, T-RTC-*; **ACC-1a**: BIOS 3.04 reaches the boot menu (checked by the BIOS text in the text-mode VRAM area and the port-trace milestone "DCP opened") | L | S0; PLAN #60; TSConf (#41) landed |
+| **S2** | `ScreenSprinter` (modes, palettes, border, flash, HOLD, 312/320), `R_736_288`, screenshots, `SprinterVideoMapper`; palette byte order settled | T-VID-*; **ACC-1** (logo golden image), **ACC-2** (setup + CMOS save) | L | S1 |
+| **S3a** | Floppy: WD1793 via codes, DOS M1 hook, `#1F` operand rewrite, density wired to the `rateCheck` and `LoaderRawPcFloppy` from PLAN #60; TR-DOS in Spectrum mode | T-FDD-*; **ACC-3** (DSS from the 1.44 MB floppy, to the prompt), **ACC-6** (Spectrum mode, TR-DOS `LOAD` from a TRD) | M | S1 |
+| **S3b** | IDE: `IdeAdapterSprinter`, two `AtaChannel`s, latch pattern (e); the built FAT16 HDD image fixture | T-IDE-*; **ACC-4** (DSS from an HDD image) | S-M | S1; IDE R1-1 (PLAN #13a) |
+| **S4** | DSS interaction: E2b key event, `Ps2Set2Encoder` → SIO A, keyboard INT, serial mouse → SIO B; the DSS boot profile for folder volumes; native programs | **ACC-5** (DSS from a folder), **ACC-7** (256-color demo), **ACC-8** (Flex Navigator), `DIR` on ACC-3 | M | S2, S3a (S3b for ACC-5); media manager M1 (PLAN #58); E2b (PLAN #55) |
+| **S5** | Accelerator (all modes, timing charge); INT-suspend / RETI-resume as a config option, default off (Q3) | T-ACC-*; part of **ACC-9** | M | S2 |
+| **S6** | Covox-Blaster, AY clock check, Covox; ISA register stub | T-CBL-*; **ACC-9** | S-M | S2 |
+| **S7** | TTD serializers (ids 15-19), VRAM as a TTD region (or interim blob), native snapshot via the TTD key frame; automation (`state/sprinter`, port table endpoints, surfaces, recipe); Qt docks; ATAPI CD (IDE R1-7) and the "empty CD unit on `ide0.slave`" config option (Q5); docs moved to `docs/hardware/`, `DONE.md` | T-TTD-*; **ACC-10**, **ACC-11** | M-L | S4, S5, S6; TTD V1 (PLAN #40) |
+
+Sizes use the repo's scale (S < 1 week, M 1-2 weeks, L 2-4 weeks of focused work).
+
+## 2. What can start now (no dependency)
+
+Only S0 is Sprinter-specific work that can start now. The shared items this design introduced
+(clock ratio, CMOS core and its migrations, wait-state hook, per-model `Screen` selection, raw PC
+floppy loader, WD1793 rate check, port-trace internal codes) moved to PLAN row **#60** and are
+done there, before TSConf.
+
+| Item | Why now |
+|---|---|
+| S0 provisioning and MAME reference captures | cheap; every later phase needs the fixtures |
+| S0 disassembly of BIOS 3.04 pages 8 and 0 (`docs/disasm/rom/sprinter/`, `data/symbols/sprinter/`) | no public 3.04 source exists ([materials.md](materials.md) §5); every BIOS trace in S1 needs the labels |
+| Port-table decode script + reference table | settles HW §4.4 against BIOS 3.04 (the BIOS-TT table is from the 2026 beta) |
+| Loader trace (exact bitstream write count) and the PLD check for the accelerator INT-suspend | inputs for Q4 and Q3 (§5) |
+
+## 3. Dependencies on other PLAN rows
+
+All rows below land **before** the Sprinter starts (§4), so no fallback is planned; the column
+says what the Sprinter would need if one of them slipped.
+
+| Row | What the Sprinter needs from it | Phase | If it slipped |
+|---|---|---|---|
+| #60 shared infrastructure (new) | clock ratio (`hw_turbo_ratio`), `Ds12887` CMOS core + migrations, wait-state hook, per-model `Screen` selection, `LoaderRawPcFloppy`, WD1793 `rateCheck`, port-trace internal codes | S1-S3a | the Sprinter waits: these are prerequisites, not Sprinter work |
+| #41 TSConf | write intercept, interrupt source (with `OnReti()`); also the trigger for #59 | S1 | the Sprinter waits |
+| #13a IDE (rollout 1) | R1-1 disk core (S3b), R1-7 ATAPI (S7) | S3b, S7 | ACC-3 and ACC-6 do not need IDE |
+| #58 media manager | M1 `HostFolderFat` (+ the `BootProfile` hook), M2 floppy slots, M6 IDE slots | S4 | image files through the existing `disk` path and the IDE config keys |
+| #55 ZX-Evo E2b | key event with ZX + PC key, `Ps2Set2Encoder` | S4 | the Sprinter waits |
+| #40 TTD v2 | device memory regions (VRAM) | S7 | whole-array blob with CRC |
+| #42 video debug translation | `IVideoMapper` | S2 (mapper) | mapper later |
+
+## 4. Priority
+
+Owner decision (review round 1): **the Sprinter is the last machine program.** The order is:
+
+1. Finish the shared infrastructure: TTD v2 (#40), video mappers (#42), media manager (#58), the
+   IDE core (#13a), and the generic hooks, including the new row **#60** (clock ratio, CMOS core,
+   wait-state hook, per-model `Screen` selection, raw PC floppy loader, WD1793 rate check,
+   port-trace internal codes) plus the write intercept and the interrupt source.
+2. Migrate BaseConf (ATM3) and the other existing machines onto that infrastructure.
+3. TSConf (#41).
+4. The Sprinter: PLAN row **#59** (T4), trigger "TSConf #41 landed".
+
+S0 (provisioning, disassembly, reference captures) is the only Sprinter-specific work that may run
+earlier. Inside #59 the phases stay ordered so that the floppy DSS boot (ACC-3) and the Spectrum
+mode (ACC-6) come before anything that needs the IDE core or the media manager.
+
+## 5. Review round 1 decisions
+
+Round 1 (2026-09-28) answered the six open questions and added one requirement. Each decision is
+applied in the file named in the last column.
+
+| # | Question | Decision | Applied in |
+|---|---|---|---|
+| Q1 | Default ROM | **3.04** (CRC `1729cb5c`) by default, 3.06 selectable, tests on both. The exact 3.04 image was found in the board repository; the ZXMAK2 `SP_304.BIN` is the same build with 5 different bytes (a board-id variant). No public 3.04 source exists, so S0 disassembles ROM pages 8 and 0 | [materials.md](materials.md) §5 |
+| Q2 | Fast start or full start | **Full start** (the ROM loader streams the bitstream) is the user default; `FastStart=1` is the default for tests; an equivalence test keeps both paths identical | [tdd-ports-memory.md](tdd-ports-memory.md) §6, [tdd-integration.md](tdd-integration.md) §1.1 |
+| Q3 | Accelerator stops on INT and resumes on RETI | implemented in S5 as a **config option, default off** (off = MAME's behavior). S0 checks the PLD (AHDL) sources for whether the standard configuration has it, so the documented default is the right one | [tdd-accel-sound-input.md](tdd-accel-sound-input.md) §1.3 |
+| Q4 | End of the bitstream | count the **real bitstream**: 59 215 bytes × 8 writes (the loader shifts out one bit per write; S0 traces the loader for the exact count), with a watchdog timeout. The configuration is identified by a hash of the first 4 096 writes (MAME-compatible) and a hash of the full stream | [tdd-ports-memory.md](tdd-ports-memory.md) §6 |
+| Q5 | `ide0.slave` default | **empty**. An empty CD unit there becomes a config option once ATAPI exists (S7). A test checks the BIOS device probe in both setups | [tdd-storage.md](tdd-storage.md) §1 |
+| Q6 | Game / DooM / Video configurations | **modular**: an extension point `SprinterPldConfiguration` (a registry of configuration modules). v1 ships the Standard module only; Game, DooM and Video become later modules after their bitstreams are analyzed against MAME (a follow-up task after v1) | [high-level-design.md](high-level-design.md) D2, D11; [tdd-ports-memory.md](tdd-ports-memory.md) §6 |
+
+Shared-infrastructure decisions from the same round:
+
+| Topic | Decision | Applied in |
+|---|---|---|
+| Clock | `hw_turbo_shift` / `hw_turbo_shift_applied` become `hw_turbo_ratio` / `hw_turbo_ratio_applied` (1-8) everywhere. No backward compatibility and no converter (there were no public releases); the TTD checkpoint fields change and the TTD fixture corpus is re-recorded | [technical-design.md](technical-design.md) §3 |
+| Wait states | the per-bank byte is only a "this bank has waits" flag; the cost comes from `SprinterWaits::ExtraClocks(kind, t)` because MAME's rule depends on the clock phase | [technical-design.md](technical-design.md) §4 |
+| CMOS | `Ds12887` becomes the shared MC146818 core, extracted from the ATM3 `CMOS`; ATM3, Profi, SMUC and the ZX-Evo AVR clock migrate onto it in a separate task before the Sprinter | [tdd-storage.md](tdd-storage.md) §4 |
+| Other hooks | accepted as designed: write intercept, interrupt source + `OnReti()`, cache pages 2 → 4, per-model `Screen`, WD1793 rate check, raw PC floppy loader, `BootProfile` in `HostFolderFat`, port trace with internal code | [technical-design.md](technical-design.md) §2 |
+| Sequencing | the Sprinter is the last machine program; PLAN row #59 (T4, trigger TSConf #41 landed); shared pieces in row #60 before TSConf | §4 |

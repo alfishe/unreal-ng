@@ -438,6 +438,15 @@ public:
     // (ttd clear / invalidation hooks, lands in P1 Item 6) can call
     // ResetSession. Tests also reach in to verify the hook is firing.
     inline ttd::TTDDirtyTracker* GetTTDDirtyTracker() { return _ttdDirtyTracker; }
+
+    /// @brief A tool (script) write with the CPU's view of the address: RAM is
+    /// written and reaches TTD like DirectWriteToZ80Memory, ROM stays
+    /// write-protected as it is for a CPU write.
+    void ToolWriteToZ80Memory(uint16_t address, uint8_t value);
+
+    /// @brief Tell TTD a physical RAM page was written behind the CPU's back
+    /// (a tool editing the page directly), so the next checkpoint captures it.
+    void MarkRamPageEdited(uint16_t page);
     /// endregion </TTD dirty tracker access>
     /// endregion </Memory access tracking>
 };

@@ -83,8 +83,11 @@ kept).
 
 While recording (and while the machine sits in `detached`) the
 **acceleration lock** holds: host speed forced to 1x (2x-16x refused),
-turbo mode off, fast tape / turbo tape / fast disk read as off. The
-previous settings come back when the session returns to `idle`. Full
+turbo mode off, fast tape / turbo tape / fast disk read as off (feature
+lists show them off; `PUT /feature/{name} {"enabled": true}` on one answers
+`409`, `PUT /settings/speed` other than 1 and `PUT /settings/turbo_mode true`
+answer `409` too). The previous settings come back when the session returns
+to `idle`. Full
 rules: [command-interface.md → TTD Session Rules](../../docs/emulator/design/control-interfaces/command-interface.md#ttd-session-rules).
 
 ### Watch it record
@@ -150,7 +153,8 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/step-instruction" \
 
 `halt_reason` on seek: `target` (arrived), `external_event` (blocked by a
 replay barrier — tape transport command, WD1793 sector/track write, or a
-debugger memory edit; the response carries `blocking_marker`, and
+memory edit made by a tool (WebAPI, CLI, Lua, Python, DeZog) while
+recording; the response carries `blocking_marker`, and
 `GET /ttd/markers` lists them all), `out_of_range`. Keyboard and mouse input
 are journaled and replayed, so they are not barriers.
 

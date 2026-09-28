@@ -175,6 +175,15 @@ public:
     BaseFrequency_t GetSpeed();
     void SetSpeed(BaseFrequency_t speed);
     bool SetSpeedMultiplier(uint8_t multiplier);
+
+    /// @brief Run a guest-memory edit made by a tool (a script, a debugger
+    /// surface) so a TTD recording stays consistent: the edit is recorded as a
+    /// debugger-edit marker (replay cannot reproduce it) and, from any thread but
+    /// the emulation one, the emulator is parked for it (the dirty-page tracker
+    /// belongs to the emulation thread). Nothing extra happens when not recording.
+    /// The edit must reach TTD itself: Memory::DirectWriteToZ80Memory for the CPU
+    /// view, Memory::MarkRamPageEdited after writing a physical RAM page.
+    void EditMemoryFromTool(const char* source, const std::function<void()>& edit);
     uint8_t GetSpeedMultiplier() const;
     void EnableTurboMode(bool withAudio = false);
     void DisableTurboMode();

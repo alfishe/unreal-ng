@@ -245,7 +245,7 @@ is what gets gated:
   `TTDTimePoint` (`RecordInputEvent`, `SubmitLiveInput`). The group copies
   every applied event of frame k into the slaves' input journals, and the
   slaves apply them through the existing playback path (`ServiceInput`,
-  `InjectDueInputEvents`) at exactly the same T. That is exactly how TTD
+  which applies each due event with `ApplyInputEvent`) at exactly the same T. That is exactly how TTD
   replay already feeds input deterministically.
 - **Tape control** (play, stop, rewind; a TTD external event) is replicated
   the same way: the same command at the same T on every instance.

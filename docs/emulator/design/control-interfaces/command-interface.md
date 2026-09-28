@@ -971,8 +971,8 @@ Commands to view and control emulator runtime features for the selected emulator
 
 | Command | Aliases | Arguments | Description | Implementation Status |
 | :--- | :--- | :--- | :--- | :--- |
-| `feature` | `feature list` | | Display all available features with their current state (on/off). Shows feature name, state, mode, and description in table format. | ✅ Implemented |
-| `feature <name> on` | | `<feature-name> on` | Enable a specific feature by name. Available features:<br/>• `calltrace` - collect call trace information for debugging<br/>• `breakpoints` - enable breakpoint handling<br/>• `memorytracking` - collect memory access counters and statistics<br/>• `debugmode` - master debug mode (enables/disables all debug features)<br/>Changes take effect immediately. | ✅ Implemented |
+| `feature` | `feature list` | | Display all available features with the state in effect (on/off). Shows feature name, state, mode, and description in table format. A feature that time-travel debugging holds off shows as `off`. | ✅ Implemented |
+| `feature <name> on` | | `<feature-name> on` | Enable a specific feature by name or alias (every feature is listed under **Available Features** below). Changes take effect immediately. A feature that time-travel debugging holds off (see below) is refused with `cannot enable ... while TTD recording is active or history is being replayed`. | ✅ Implemented |
 | `feature <name> off` | | `<feature-name> off` | Disable a specific feature. Useful for improving performance when feature is not needed. | ✅ Implemented |
 | `feature reset` | | | Reset all features to their default state (typically all off). Useful for returning to standard configuration after debugging. | 🔮 Planned |
 
@@ -990,18 +990,37 @@ Commands to view and control emulator runtime features for the selected emulator
 
 **Available Features**:
 
-| Feature Name | Default State | Purpose | Performance Impact |
-| :--- | :--- | :--- | :--- |
-| `calltrace` | OFF | Collect call trace information (CALL/RET/RST tracking). Records function calls, return addresses, and call depth for debugging. Maintains circular buffer of recent calls. | Medium (~10-15% CPU overhead) |
-| `breakpoints` | OFF | Enable breakpoint handling. When enabled, the emulator checks for breakpoint hits on every instruction. Required for execution breakpoints, watchpoints, and port breakpoints to work. | Low (~2-5% CPU overhead with <100 breakpoints) |
-| `memorytracking` | OFF | Collect memory access counters and statistics. Records read/write/execute counts per address, identifies hotspots, and tracks access patterns. Required for `memcounters` command. | High (~40-50% CPU overhead, significant memory usage) |
-| `debugmode` | OFF | Master debug mode switch. When enabled, activates all debug features (calltrace, breakpoints, memorytracking). When disabled, deactivates all debug features for maximum performance. Convenient toggle for entering/exiting debug sessions. | High (sum of all enabled debug features) |
-| `sound` | ON | Enable/disable all sound generation. When disabled, skips all audio processing including AY chip emulation and beeper. Essential for headless mode, videowall, and turbo mode where audio is not needed. | Medium (~18% CPU savings when OFF) |
-| `soundhq` | ON | High-quality DSP mode. When enabled, uses 192-tap FIR filters and 8x oversampling for audiophile-grade sound. When disabled, uses direct chip output for faster but lower quality audio. Only affects AY chip output. | Low-Medium (~15% CPU savings when OFF) |
-| `screenhq` | ON | High-quality video mode. When enabled, uses per-t-state rendering for cycle-accurate "racing the beam" multicolor effects in demos. When disabled, uses batch 8-pixel rendering (25x faster) but breaks demo multicolor effects. | Very High (~25x faster screen rendering when OFF) |
-| `recording` | OFF | Enable recording subsystem (video, audio, GIF capture). When enabled, the RecordingManager is active and ready for recording commands. When disabled, all recording API calls early-exit with zero overhead. Heavy functionality - enable explicitly when needed. | Varies (zero when OFF, depends on codec when recording) |
-| `sharedmemory` | OFF | Export emulator memory via POSIX/Windows shared memory for external tool access. Enables real-time memory inspection by debuggers, analyzers, or visualization tools. Memory content preserved during enable/disable transitions. Alias: `shm`. | Low (startup overhead when enabled, minimal runtime impact) |
-| `opcodeprofiler` | OFF | Track Z80 opcode execution statistics and sequential trace. Records execution counts for all 1792 opcode variants (non-prefixed + CB/DD/ED/FD/DDCB/FDCB prefixes) and maintains a 10,000-entry ring buffer of recent executed instructions with PC, flags, and A register for crash forensics. Required for `profiler opcode` commands. | Medium (~12-18% CPU overhead, ~174KB memory) |
+| Feature Name | Alias | Default State | Purpose | Performance Impact |
+| :--- | :--- | :--- | :--- | :--- |
+| `calltrace` | `ct` | OFF | Collect call trace information (CALL/RET/RST tracking). Records function calls, return addresses, and call depth for debugging. Maintains circular buffer of recent calls. | Medium (~10-15% CPU overhead) |
+| `breakpoints` | `bp` | OFF | Enable breakpoint handling. When enabled, the emulator checks for breakpoint hits on every instruction. Required for execution breakpoints, watchpoints, and port breakpoints to work. | Low (~2-5% CPU overhead with <100 breakpoints) |
+| `memorytracking` | `memtrack` | OFF | Collect memory access counters and statistics. Records read/write/execute counts per address, identifies hotspots, and tracks access patterns. Required for `memcounters` command. | High (~40-50% CPU overhead, significant memory usage) |
+| `debugmode` | `dbg` | OFF | Master debug mode switch. When enabled, activates all debug features (calltrace, breakpoints, memorytracking). When disabled, deactivates all debug features for maximum performance. Convenient toggle for entering/exiting debug sessions. | High (sum of all enabled debug features) |
+| `sound` | `snd` | ON | Enable/disable all sound generation. When disabled, skips all audio processing including AY chip emulation and beeper. Essential for headless mode, videowall, and turbo mode where audio is not needed. | Medium (~18% CPU savings when OFF) |
+| `soundhq` | `hq` | ON | High-quality DSP mode. When enabled, uses 192-tap FIR filters and 8x oversampling for audiophile-grade sound. When disabled, uses direct chip output for faster but lower quality audio. Only affects AY chip output. | Low-Medium (~15% CPU savings when OFF) |
+| `screenhq` | `vhq` | ON | High-quality video mode. When enabled, uses per-t-state rendering for cycle-accurate "racing the beam" multicolor effects in demos. When disabled, uses batch 8-pixel rendering (25x faster) but breaks demo multicolor effects. | Very High (~25x faster screen rendering when OFF) |
+| `recording` | `rec` | OFF | Enable recording subsystem (video, audio, GIF capture). When enabled, the RecordingManager is active and ready for recording commands. When disabled, all recording API calls early-exit with zero overhead. Heavy functionality - enable explicitly when needed. | Varies (zero when OFF, depends on codec when recording) |
+| `sharedmemory` | `shm` | OFF | Export emulator memory via POSIX/Windows shared memory for external tool access. Enables real-time memory inspection by debuggers, analyzers, or visualization tools. Memory content preserved during enable/disable transitions. | Low (startup overhead when enabled, minimal runtime impact) |
+| `opcodeprofiler` | `op` | OFF | Track Z80 opcode execution statistics and sequential trace. Records execution counts for all 1792 opcode variants (non-prefixed + CB/DD/ED/FD/DDCB/FDCB prefixes) and maintains a 10,000-entry ring buffer of recent executed instructions with PC, flags, and A register for crash forensics. Required for `profiler opcode` commands. | Medium (~12-18% CPU overhead, ~174KB memory) |
+| `timetravel` | `ttd` | OFF | Record execution history for rewind and reverse debugging (time-travel debug, see the `ttd` commands). | Varies (depends on the recording mode, write journal on or off) |
+| `overscan` | `osc` | OFF | Pentagon overscan mode (384x304): shows the border areas a normal picture hides. Pentagon only; for demo development. | Low (a larger picture to render) |
+| `porttrace` | `pt` | OFF | Port I/O trace: a ring buffer of IN/OUT events for diagnosing peripherals. | Low while on (one ring-buffer entry per IN/OUT) |
+| `fasttape` | `ftape` | ON | Fast tape loading: standard ROM tape loads finish at once through the ROM LD-BYTES trap. Custom loaders fall back to playing the tape signal. Same switch as `setting fast_tape`. | None (saves loading time) |
+| `turbotape` | `ttape` | ON | Turbo tape loading: runs the emulator at warp speed while the tape signal plays, so blocks the trap cannot serve (headerless, custom timing, pulse streams) still load fast. Ends with the read-gap watchdog, the end of the tape, or any stop. Same switch as `setting turbo_tape`. | None (saves loading time) |
+| `fastdisk` | `fdisk` | ON | Fast disk loading: shortens floppy controller timing and traps the TR-DOS ROM read loops, so disk operations finish almost at once. Same switch as `setting fast_disk`. | None (saves loading time) |
+| `turbomode` | `turbo` | OFF | Turbo mode: run the whole emulation as fast as the host allows. Audio is muted unless `setting turbo_audio on`. Same switch as `setting speed unlimited`. | Runs the host as fast as it can while on |
+| `hud` | `hud` | OFF | On-screen HUD: indicators and messages drawn over the emulator picture. | None when off |
+| `kempstonmouse` | `kmouse` | ON | Kempston Mouse on the bus, when the machine config fits one (`[INPUT] Mouse=KEMPSTON`). Off: the mouse ports are not decoded. | None |
+| `gs_lightweight` | `gslw` | OFF | General Sound lightweight personality: fit the built-in ProTracker player card, which needs no coprocessor firmware. Off keeps the personality from `[SOUND] GSType`. | None (a choice of card, not a cost) |
+
+**Features held off by time-travel debugging (TTD).** A recording must show the code running at real speed and replay must run the same code paths, so TTD holds some features off:
+
+| Feature | Held off while |
+| :--- | :--- |
+| `turbomode` | a recording is active |
+| `fasttape`, `turbotape`, `fastdisk` | a recording is active, a stopped or loaded session is being replayed (seek, step), or the machine sits in history (`detached`) |
+
+While a feature is held off, `feature` (and the WebAPI features endpoint, and Lua/Python `feature_list`) shows it as `off`: the list always shows the state in effect, not the stored choice. Switching a held feature on is refused: the CLI prints `Error: cannot enable 'turbomode' while TTD recording is active or history is being replayed.` and the WebAPI answers HTTP 409. The stored choice comes back when the session returns to `idle`. See "Acceleration lock" in the TTD section below.
 
 **Feature Dependencies**:
 
@@ -2311,9 +2330,10 @@ Commands to configure emulator instance behavior and performance characteristics
 | `setting fast_tape <on\|off>` | | `on` or `off` | Enable/disable fast tape loading. When enabled, tape operations execute at maximum speed without audio emulation, significantly reducing loading times. | ✅ Implemented |
 | `setting turbo_tape <on\|off>` | | `on` or `off` | Enable/disable turbo tape loading (feature `turbotape`). While a tape signal plays out, the emulator runs at warp speed — custom loaders included. Composes with `fast_tape`: trapped blocks load instantly, the remaining signal path runs at warp. | ✅ Implemented |
 | `setting audio_rate <value>` | | `<rate>` or `auto` | Pin the core audio sample rate for this run — one of `44100`, `48000`, `88200`, `96000`, `176400`, `192000`, or `auto` to follow the resolution chain (connected device rate > `[SOUND] CoreRate` > 44100). Runtime only, never persisted to the ini. Applied at the next frame boundary; deferred while a recording is in progress. | ✅ Implemented |
-| `setting fast_disk <on\|off>` | | `on` or `off` | Enable/disable fast disk loading. When enabled, FDD operations bypass timing delays for near-instant disk access. | 🔮 Planned |
+| `setting fast_disk <on\|off>` | | `on` or `off` | Enable/disable fast disk loading (feature `fastdisk`, on by default). When enabled, floppy controller timing is shortened and the TR-DOS ROM read loops are trapped, so disk access is almost instant. Refused while TTD holds it off (recording, replaying history, or sitting in history). | ✅ Implemented |
 | `setting turbo_fdc <on\|off>` | | `on` or `off` | Enable/disable turbo FDC mode. Accelerates WD1793 FDC operations for faster disk I/O. | 🔮 Planned |
-| `setting max_cpu_speed <value>` | | `<multiplier>` or `unlimited` | Set maximum CPU speed multiplier. Values: `1` (3.5MHz), `2` (7MHz), `4` (14MHz), `8` (28MHz), `16` (56MHz), or `unlimited`. Affects execution speed for loading and intensive operations. | 🔮 Planned |
+| `setting speed <value>` | `setting max_cpu_speed` | `1`, `2`, `4`, `8`, `16` or `unlimited` (also `max`) | Host speed multiplier: the emulated machine runs N times faster than real time (`1` = normal speed; on a 3.5 MHz machine `2` behaves like 7 MHz, `16` like 56 MHz). Applied at the next frame. A number also switches turbo mode off; `unlimited` switches turbo mode on (feature `turbomode`: run as fast as the host allows). While TTD records only `1` is accepted: other numbers print `Error: Cannot set speed Nx while TTD recording is active (only 1x)`, and `unlimited` is refused too. Changing the speed on a stopped or loaded TTD session drops that session's history (frame timing is part of the recording); re-selecting the current speed changes nothing. | ✅ Implemented |
+| `setting turbo_audio <on\|off>` | | `on` or `off` | Keep generating audio (at a raised pitch) while turbo mode runs. Off (the default) mutes audio in turbo mode. Applied at once if turbo is running. | ✅ Implemented |
 | `setting cpu_frequency <value>` | | `<MHz>` | Set exact CPU frequency in MHz. Alternative to multiplier setting. Valid range: 3.5 - 112.0 MHz. | 🔮 Planned |
 | `setting reset` | | | Reset all settings to default values | 🔮 Planned |
 
@@ -2324,11 +2344,13 @@ Commands to configure emulator instance behavior and performance characteristics
 1. **I/O Acceleration Settings**:
    - `fast_tape`: Bypasses audio emulation and timing for tape operations (feature `fasttape`)
    - `turbo_tape`: Warps emulation speed while a tape signal path plays out, custom loaders included (feature `turbotape`)
-   - `fast_disk`: Accelerates FDD seek times and data transfer
+   - `fast_disk`: Shortens floppy controller timing and traps the TR-DOS ROM read loops (feature `fastdisk`)
    - `turbo_fdc`: Removes WD1793 command delays
 
 2. **CPU Performance Settings**:
-   - `max_cpu_speed`: Controls CPU clock multiplier (relative to 3.5MHz base)
+   - `speed` (alias `max_cpu_speed`): host speed multiplier 1, 2, 4, 8, 16, or `unlimited` (turbo mode)
+   - `turbo_audio`: keep audio on in turbo mode
+   - Only 1x while TTD records; see "Acceleration lock" in the TTD section
    - `cpu_frequency`: Direct frequency control in MHz
    - Affects: instruction timing, video frame timing, audio sample rate
 
@@ -2348,9 +2370,10 @@ Commands to configure emulator instance behavior and performance characteristics
 | :--- | :--- | :--- | :--- | :--- |
 | `fast_tape` | Boolean | `on` | `on`, `off` | Fast tape loading mode (backed by the `fasttape` runtime feature) |
 | `turbo_tape` | Boolean | `on` | `on`, `off` | Turbo tape loading mode (backed by the `turbotape` runtime feature) |
-| `fast_disk` | Boolean | `off` | `on`, `off` | Fast disk access mode |
+| `fast_disk` | Boolean | `on` | `on`, `off` | Fast disk loading (backed by the `fastdisk` runtime feature) |
 | `turbo_fdc` | Boolean | `off` | `on`, `off` | Turbo FDC operations |
-| `max_cpu_speed` | Integer/String | `1` | `1`, `2`, `4`, `8`, `16`, `unlimited` | CPU speed multiplier |
+| `speed` (alias `max_cpu_speed`) | Integer/String | `1` | `1`, `2`, `4`, `8`, `16`, `unlimited` | Host speed multiplier; `unlimited` = turbo mode (feature `turbomode`) |
+| `turbo_audio` | Boolean | `off` | `on`, `off` | Audio stays on in turbo mode |
 | `cpu_frequency` | Float | `3.5` | `3.5` - `112.0` | CPU frequency in MHz |
 | `audio_rate` | Integer/String | `auto` | `44100`, `48000`, `88200`, `96000`, `176400`, `192000`, `auto` | Core audio rate pin (runtime only; `auto` follows device > `[SOUND] CoreRate` > 44100) |
 | `timing_model` | String | `accurate` | `accurate`, `fast`, `compatible` | Timing emulation model |
@@ -2368,13 +2391,13 @@ Commands to configure emulator instance behavior and performance characteristics
 
 2. **Turbo Mode**: Maximum speed for automated testing
    ```
-   setting max_cpu_speed unlimited
-   setting turbo_fdc on
+   setting speed unlimited
+   setting turbo_audio off
    ```
 
 3. **Accurate Emulation**: Precise timing for demos/games
    ```
-   setting max_cpu_speed 1
+   setting speed 1
    setting fast_tape off
    setting fast_disk off
    ```
@@ -2513,11 +2536,11 @@ These rules live in the core, so every surface (CLI, WebAPI/MCP, Lua, Python, GD
 | :--- | :--- |
 | `tape_control` | Tape play/stop/rewind and similar transport commands. |
 | `disk_write` | The WD1793 writes a sector or a track. |
-| `debugger_edit` | Memory written through the CLI or WebAPI, or memory, registers or paging changed through DeZog, while a session exists. |
-| `hardware_reset` | Reserved kind; a reset currently stops the recording instead of writing a marker. |
+| `debugger_edit` | A tool changed the machine behind the CPU's back **while a recording is active**: memory written through the CLI (`memory write`) or the WebAPI (memory writes and physical page writes), memory, page and assembler writes from Lua or Python, or memory, registers or paging changed through DeZog. Nothing is written when no recording runs. |
+| `hardware_reset` | Reserved kind, never written: a reset stops the recording instead (see "Reset keeps history" above). |
 | `other` | Anything else. |
 
-A seek that meets a marker stops with halt reason `external_event` and reports it (`blocking_marker`); `find-last` reports it as blocked (WebAPI: `blocked: true` plus `marker_frame`, `marker_tinframe`, `marker_kind`, `marker_reason`); `reverse-continue` reports it (WebAPI: `blocked_by_marker`). **Bookmarks are advisory and never barriers.**
+A seek (and a seek to a bookmark) that meets a marker stops with halt reason `external_event` and reports it (`blocking_marker`); `find-last` reports it as blocked (WebAPI, Lua and Python: `blocked: true` plus `marker_frame`, `marker_tinframe`, `marker_kind`, `marker_reason`); `reverse-continue` reports it (WebAPI, Lua and Python: `blocked_by_marker`). **Bookmarks are advisory and never barriers.**
 
 **Acceleration lock.** A recording must show the code running at real speed. While recording (and on through `detached`):
 

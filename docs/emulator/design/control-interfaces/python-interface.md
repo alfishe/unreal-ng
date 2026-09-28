@@ -344,7 +344,27 @@ features = emu.feature_list()
 
 emu.feature_set("fasttape", False)     # same switch as `setting fast_tape off`
 print(emu.feature_get("turbotape"))    # True
+emu.feature_set("turbomode", True)     # turbo mode (same switch as `setting speed unlimited`)
 ```
+
+`feature_list()` and `feature_get()` report the state in effect. Time-travel debugging holds some features off: `turbomode` while a recording runs, and `fasttape`, `turbotape`, `fastdisk` while a recording runs, history is replayed, or the machine sits in history. A held feature reads as `False`, and `feature_set(name, True)` on it returns `False`. The full list of features, aliases and defaults: [command-interface.md §5](./command-interface.md#5-feature-management--configuration).
+
+### Speed and Turbo
+
+The same switches as CLI `setting speed` and the WebAPI `speed` setting.
+
+```python
+emu.set_speed(4)      # -> bool; host speed multiplier 1, 2, 4, 8 or 16 (applied at the next frame)
+                      #    False for 2..16 while TTD records; ValueError for any other value
+emu.get_speed()
+# -> {'multiplier': 4,        # the host multiplier set above
+#     'effective': 4,         # what runs, including the machine's own hardware turbo (ATM, Scorpion)
+#     'turbo_mode': False,    # the turbomode feature (switch it with feature_set('turbomode', True))
+#     'turbo_active': False,  # the engine runs unthrottled now: turbo mode, or turbo tape warping a load
+#     'turbo_audio': False}   # audio kept on in turbo mode
+```
+
+Changing the speed on a stopped or loaded TTD session drops that session's history (frame timing is part of the recording); re-selecting the current speed changes nothing.
 
 ### Z80 CPU Class
 
@@ -435,6 +455,8 @@ info = emu.memory_info()
 #   'z80_banks': [{'bank': 0, 'start': 0, 'end': 16383, 'mapping': 'ROM0'}, ...]
 # }
 ```
+
+**Writes during a time-travel recording.** While a TTD recording runs, every memory write (`mem_write`, `mem_write_word`, `mem_write_block`), physical page write (`page_write`, `page_write_block`) and assembler write (`assemble` with write on) records a `debugger_edit` marker, a replay barrier, and briefly pauses a running emulator for the edit, so the recording sees the change. A write by Z80 address into a ROM bank leaves the ROM unchanged, as a CPU write would. No marker is written when no recording runs.
 
 ### BreakpointManager Class
 
@@ -678,18 +700,23 @@ TTD methods live on the `Emulator` object (`emu.ttd_*`). Bindings: `core/automat
 
 **Session rules** — read [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules). In short: states are `idle`, `recording`, `detached`; seek/step/find-last/reverse methods are refused by the core while recording (`ttd_seek` returns `reached: False` with `halt_reason: 'out_of_range'`, the boolean methods return `False`, `ttd_find_last` / `ttd_reverse_continue` return `None`), so call `ttd_stop()` first; `ttd_start()` switches the `timetravel` feature on by itself; loads, disk create, ROM reload, a host speed change on a stopped session and `ttd_invalidate()` drop the history, while a reset keeps it; while recording, the host speed is locked to 1x and turbo / fast tape / turbo tape / fast disk are off.
 
-Unlike the WebAPI, these methods do not pause the emulator for you: call `emu.pause()` before browsing history. Failures are reported in the return value (`False`, `None`, or a dict with `error`), not as exceptions — except an out-of-range `phys_page`, which raises `ValueError`.
+Unlike the WebAPI, these methods do not pause the emulator for you: call `emu.pause()` before browsing history. Failures are reported in the return value (`False`, `None`, or a dict with `error`), not as exceptions — except an out-of-range `phys_page` or an unknown `ttd_start` mode, which raise `ValueError`.
 
 **Session lifecycle:**
 
 ```python
-emu.ttd_start()                  # -> bool; development mode (write journal on)
+emu.ttd_start()                  # -> bool; keeps the ttd_set_journal_enabled choice (journal on by default)
+emu.ttd_start(mode='development')        # write journal on
+emu.ttd_start(mode='gaming')             # no write journal (smaller)
+emu.ttd_start(enable_write_journal=False)  # explicit choice; wins over mode
+emu.ttd_set_journal_enabled(True)        # choose the journal mode for the next start
+emu.ttd_get_journal_enabled()            # -> bool
 emu.ttd_stop()                   # stop recording, keep history
 emu.ttd_invalidate()             # drop all history (reason defaults to 'python invalidate')
 emu.ttd_invalidate(reason='manual')
 ```
 
-`ttd_start()` takes no mode argument; it records with the journal mode currently set (on by default). Gaming mode (no write journal) is available from the CLI (`ttd start --no-journal`), the WebAPI (`{"mode": "gaming"}`) and Lua (`ttd_start("gaming")`).
+`mode` is `'development'` (write journal on) or `'gaming'` (journal off, less memory); any other value raises `ValueError`. `enable_write_journal` wins over `mode`. With neither, `ttd_start()` keeps the choice made by `ttd_set_journal_enabled` (on by default). This matches the CLI (`ttd start --no-journal`), the WebAPI (`{"mode": "gaming"}`) and Lua (`ttd_start("gaming")`).
 
 **Status:**
 
@@ -714,6 +741,8 @@ status = emu.ttd_status()
 #   'checkpoint_count': 301,
 #
 #   # Sections
+#   'write_journal_enabled': True,
+#   'bookmark_count': 2,
 #   'write_journal_records': 729025,
 #   'write_journal_bytes': 8748300,   # in memory; on disk it is compressed
 #   'coverage_index_frames': 300,     # 0 => reverse queries fall back to replay
@@ -727,7 +756,7 @@ status = emu.ttd_status()
 # }
 ```
 
-The Python dict has no `write_journal_enabled` and no `bookmark_count` (use `len(emu.ttd_bookmarks())`).
+`source_path` is filled by `ttd_load` (the path it was given).
 
 `loaded_from_file` is the field to check first when a session is handed to you:
 a loaded recording and a live one are otherwise indistinguishable from the
@@ -750,7 +779,7 @@ emu.ttd_step_forward()                      # -> bool; one frame forward, inside
 emu.ttd_step_instruction_back()             # -> bool
 emu.ttd_step_instruction_forward()          # -> bool
 
-emu.ttd_resume()                            # -> bool; record again from the current position
+emu.ttd_resume()                            # -> bool; record again from the exact current position (frame and tinframe)
 emu.ttd_resume(frame=4823, tinframe=0)      # ...or from a given point; the future is discarded
                                             # fails from idle: seek first
 
@@ -767,15 +796,19 @@ emu.ttd_reverse_step_tstates(tstates=5000)  # back 5000 t-states (nearest instru
 
 hit = emu.ttd_reverse_continue([0x8000, 0x8010])
 # -> {'matched': True, 'pc': 0x8000, 'frame': 4700, 'tinframe': 812}
-#    or None when nothing matched (a blocking marker is not reported here)
+#    A replay barrier met on the way adds
+#    'blocked_by_marker': {'kind': ..., 'reason': ..., 'frame': ..., 'tinframe': ...}
+#    (with 'matched': False when the barrier stopped the search before a match).
+#    None only when nothing matched and no marker stopped the search.
 ```
 
 **Reverse search:**
 
 ```python
 result = emu.ttd_find_last(addr=0x5800, access='write')
-# None if no match (or a marker stopped the search), otherwise:
+# None if no match. On a hit:
 # {
+#   'found': True,
 #   'frame': 4823,
 #   'tinframe': 14982,
 #   'pc': 0x4A21,
@@ -797,14 +830,21 @@ result = emu.ttd_find_last(
     before_tin=0,
     phys_page=5                # 0..255: one physical RAM page (ValueError otherwise)
 )
+
+# A replay barrier stopped the search before any match:
+# {'found': False, 'blocked': True, 'marker_frame': 4700, 'marker_tinframe': 0,
+#  'marker_kind': 'debugger_edit', 'marker_reason': 'Python memory write'}
 ```
+
+For writes the write journal answers when it holds every write of the session; otherwise the search replays history (see [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules), "When the write journal answers").
 
 **Markers and bookmarks:**
 
 ```python
 for m in emu.ttd_markers():                 # replay barriers
     print(m['frame'], m['tinframe'], m['kind'], m['reason'])
-# kind: tape_control | disk_write | debugger_edit | hardware_reset | other
+# kind: tape_control | disk_write | debugger_edit | other
+# (hardware_reset is a reserved kind, never written: a reset stops the recording instead)
 
 emu.ttd_bookmark_add('before crash')                        # at the current position
 emu.ttd_bookmark_add('umt entry', frame=4823, tinframe=14982)
@@ -813,7 +853,7 @@ emu.ttd_bookmark_add('umt entry', frame=4823, tinframe=14982)
 for bm in emu.ttd_bookmarks():              # time-sorted
     print(bm['frame'], bm['tinframe'], bm['label'])
 emu.ttd_bookmark_delete('before crash')     # -> bool
-emu.ttd_seek_bookmark('umt entry')          # same dict as ttd_seek plus 'bookmark'
+emu.ttd_seek_bookmark('umt entry')          # same dict as ttd_seek (blocking_marker included) plus 'bookmark'
                                             # ('error' for an unknown label)
 ```
 

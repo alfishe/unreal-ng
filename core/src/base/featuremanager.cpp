@@ -264,19 +264,24 @@ bool FeatureManager::isEnabled(const std::string& idOrAlias) const
     if (!feature)
         return false;
 
+    return feature->enabled && !isMaskedByTtd(feature->id);
+}
+
+bool FeatureManager::hasFeature(const std::string& idOrAlias) const
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    return findFeature(idOrAlias) != nullptr;
+}
+
+bool FeatureManager::isMaskedByTtd(const std::string& id) const
+{
     // Shortcuts read as OFF for the whole timeline binding (recording, replay, Detached);
     // turbo mode only while recording
-    if (feature->id == Features::kFastDisk || feature->id == Features::kFastTape || feature->id == Features::kTurboTape)
-    {
-        if (isTtdTimelineBound())
-            return false;
-    }
-    else if (feature->id == Features::kTurboMode && isTtdRecordingActive())
-    {
-        return false;
-    }
-
-    return feature->enabled;
+    if (id == Features::kFastDisk || id == Features::kFastTape || id == Features::kTurboTape)
+        return isTtdTimelineBound();
+    if (id == Features::kTurboMode)
+        return isTtdRecordingActive();
+    return false;
 }
 
 /// @brief Engage/disengage Core turbo mode to match the 'turbomode' feature and the
@@ -317,7 +322,10 @@ std::vector<FeatureManager::FeatureInfo> FeatureManager::listFeatures() const
     std::vector<FeatureInfo> out;
     for (const auto& kv : _features)
     {
+        // The state in effect, as isEnabled() reports it (TTD may force a feature off)
         out.push_back(kv.second);
+        if (isMaskedByTtd(kv.second.id))
+            out.back().enabled = false;
     }
 
     return out;

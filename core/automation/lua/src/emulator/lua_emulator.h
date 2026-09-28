@@ -318,50 +318,50 @@ public:
 
         // Register access - requires emulator instance
         lua.set_function("get_pc", [this]() -> uint16_t {
-            if (!_emulator) return 0;
-            Z80State* z80 = _emulator->GetZ80State();
+            if (!effectiveEmulator()) return 0;
+            Z80State* z80 = effectiveEmulator()->GetZ80State();
             return z80 ? z80->pc : 0;
         });
 
         lua.set_function("get_sp", [this]() -> uint16_t {
-            if (!_emulator) return 0;
-            Z80State* z80 = _emulator->GetZ80State();
+            if (!effectiveEmulator()) return 0;
+            Z80State* z80 = effectiveEmulator()->GetZ80State();
             return z80 ? z80->sp : 0;
         });
 
         lua.set_function("get_af", [this]() -> uint16_t {
-            if (!_emulator) return 0;
-            Z80State* z80 = _emulator->GetZ80State();
+            if (!effectiveEmulator()) return 0;
+            Z80State* z80 = effectiveEmulator()->GetZ80State();
             return z80 ? z80->af : 0;
         });
 
         lua.set_function("get_bc", [this]() -> uint16_t {
-            if (!_emulator) return 0;
-            Z80State* z80 = _emulator->GetZ80State();
+            if (!effectiveEmulator()) return 0;
+            Z80State* z80 = effectiveEmulator()->GetZ80State();
             return z80 ? z80->bc : 0;
         });
 
         lua.set_function("get_de", [this]() -> uint16_t {
-            if (!_emulator) return 0;
-            Z80State* z80 = _emulator->GetZ80State();
+            if (!effectiveEmulator()) return 0;
+            Z80State* z80 = effectiveEmulator()->GetZ80State();
             return z80 ? z80->de : 0;
         });
 
         lua.set_function("get_hl", [this]() -> uint16_t {
-            if (!_emulator) return 0;
-            Z80State* z80 = _emulator->GetZ80State();
+            if (!effectiveEmulator()) return 0;
+            Z80State* z80 = effectiveEmulator()->GetZ80State();
             return z80 ? z80->hl : 0;
         });
 
         lua.set_function("get_ix", [this]() -> uint16_t {
-            if (!_emulator) return 0;
-            Z80State* z80 = _emulator->GetZ80State();
+            if (!effectiveEmulator()) return 0;
+            Z80State* z80 = effectiveEmulator()->GetZ80State();
             return z80 ? z80->ix : 0;
         });
 
         lua.set_function("get_iy", [this]() -> uint16_t {
-            if (!_emulator) return 0;
-            Z80State* z80 = _emulator->GetZ80State();
+            if (!effectiveEmulator()) return 0;
+            Z80State* z80 = effectiveEmulator()->GetZ80State();
             return z80 ? z80->iy : 0;
         });
 
@@ -420,37 +420,40 @@ public:
         // Memory access: direct (non-mutating) reads so inspecting memory
         // never drives the ProfROM quadrant machine
         lua.set_function("mem_read", [this](uint16_t addr) -> uint8_t {
-            if (!_emulator) return 0;
-            Memory* mem = _emulator->GetMemory();
+            if (!effectiveEmulator()) return 0;
+            Memory* mem = effectiveEmulator()->GetMemory();
             return mem ? mem->DirectReadFromZ80Memory(addr) : 0;
         });
 
         lua.set_function("mem_write", [this](uint16_t addr, uint8_t value) {
-            if (!_emulator) return;
-            Memory* mem = _emulator->GetMemory();
-            if (mem) mem->MemoryWriteFast(addr, value);
+            if (!effectiveEmulator()) return;
+            Memory* mem = effectiveEmulator()->GetMemory();
+            if (!mem) return;
+            effectiveEmulator()->EditMemoryFromTool("Lua memory write", [&] { mem->ToolWriteToZ80Memory(addr, value); });
         });
 
         lua.set_function("mem_read_word", [this](uint16_t addr) -> uint16_t {
-            if (!_emulator) return 0;
-            Memory* mem = _emulator->GetMemory();
+            if (!effectiveEmulator()) return 0;
+            Memory* mem = effectiveEmulator()->GetMemory();
             if (!mem) return 0;
             return mem->DirectReadFromZ80Memory(addr) | (mem->DirectReadFromZ80Memory(static_cast<uint16_t>(addr + 1)) << 8);
         });
 
         lua.set_function("mem_write_word", [this](uint16_t addr, uint16_t value) {
-            if (!_emulator) return;
-            Memory* mem = _emulator->GetMemory();
+            if (!effectiveEmulator()) return;
+            Memory* mem = effectiveEmulator()->GetMemory();
             if (!mem) return;
-            mem->MemoryWriteFast(addr, value & 0xFF);
-            mem->MemoryWriteFast(addr + 1, (value >> 8) & 0xFF);
+            effectiveEmulator()->EditMemoryFromTool("Lua memory write", [&] {
+                mem->ToolWriteToZ80Memory(addr, value & 0xFF);
+                mem->ToolWriteToZ80Memory(static_cast<uint16_t>(addr + 1), (value >> 8) & 0xFF);
+            });
         });
 
         lua.set_function("mem_read_block", [this](uint16_t addr, uint16_t len) -> sol::table {
             sol::state_view lua_view(*_lua);
             sol::table data = lua_view.create_table();
-            if (!_emulator) return data;
-            Memory* mem = _emulator->GetMemory();
+            if (!effectiveEmulator()) return data;
+            Memory* mem = effectiveEmulator()->GetMemory();
             if (!mem) return data;
             for (uint16_t i = 0; i < len; i++) {
                 data[i + 1] = mem->DirectReadFromZ80Memory(static_cast<uint16_t>(addr + i));
@@ -465,9 +468,9 @@ public:
                                               sol::optional<int> maxBlocksOpt) -> sol::table {
             sol::state_view lua_view(*_lua);
             sol::table result = lua_view.create_table();
-            if (!_emulator) return result;
-            Memory* mem = _emulator->GetMemory();
-            EmulatorContext* ctx = _emulator->GetContext();
+            if (!effectiveEmulator()) return result;
+            Memory* mem = effectiveEmulator()->GetMemory();
+            EmulatorContext* ctx = effectiveEmulator()->GetContext();
             if (!mem || !ctx) return result;
 
             const MemoryMapView view = (viewName && (*viewName == "ram" || *viewName == "pages"))
@@ -507,8 +510,8 @@ public:
 
         // TD-3 compact read format: classic 16B/line hexdump + ASCII sidebar
         lua.set_function("mem_hexdump", [this](uint16_t addr, sol::optional<int> lenOpt) -> std::string {
-            if (!_emulator) return "";
-            Memory* mem = _emulator->GetMemory();
+            if (!effectiveEmulator()) return "";
+            Memory* mem = effectiveEmulator()->GetMemory();
             if (!mem) return "";
             const size_t len = lenOpt ? static_cast<size_t>(*lenOpt) : 64;
             if (len < 1 || len > 4096) return "";
@@ -519,20 +522,22 @@ public:
         });
 
         lua.set_function("mem_write_block", [this](uint16_t addr, sol::table data) {
-            if (!_emulator) return;
-            Memory* mem = _emulator->GetMemory();
+            if (!effectiveEmulator()) return;
+            Memory* mem = effectiveEmulator()->GetMemory();
             if (!mem) return;
-            for (auto& pair : data) {
-                int idx = pair.first.as<int>() - 1;  // Lua tables start at 1
-                uint8_t val = pair.second.as<uint8_t>();
-                mem->MemoryWriteFast((addr + idx) & 0xFFFF, val);
-            }
+            effectiveEmulator()->EditMemoryFromTool("Lua memory write", [&] {
+                for (auto& pair : data) {
+                    int idx = pair.first.as<int>() - 1;  // Lua tables start at 1
+                    uint8_t val = pair.second.as<uint8_t>();
+                    mem->ToolWriteToZ80Memory(static_cast<uint16_t>((addr + idx) & 0xFFFF), val);
+                }
+            });
         });
 
         // Physical page access (ram/rom/cache/misc)
         lua.set_function("page_read", [this](const std::string& type, int page, int offset) -> int {
-            if (!_emulator) return 0;
-            Memory* mem = _emulator->GetMemory();
+            if (!effectiveEmulator()) return 0;
+            Memory* mem = effectiveEmulator()->GetMemory();
             if (!mem) return 0;
             uint8_t* pagePtr = nullptr;
             if (type == "ram" && page < MAX_RAM_PAGES)
@@ -548,8 +553,8 @@ public:
         });
 
         lua.set_function("page_write", [this](const std::string& type, int page, int offset, uint8_t value) {
-            if (!_emulator) return;
-            Memory* mem = _emulator->GetMemory();
+            if (!effectiveEmulator()) return;
+            Memory* mem = effectiveEmulator()->GetMemory();
             if (!mem) return;
             uint8_t* pagePtr = nullptr;
             if (type == "ram" && page < MAX_RAM_PAGES)
@@ -561,15 +566,19 @@ public:
             else if (type == "misc" && page < MAX_MISC_PAGES)
                 pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
             if (pagePtr && offset >= 0 && offset < PAGE_SIZE) {
-                pagePtr[offset] = value;
+                effectiveEmulator()->EditMemoryFromTool("Lua page write", [&] {
+                    pagePtr[offset] = value;
+                    if (type == "ram")
+                        mem->MarkRamPageEdited(static_cast<uint16_t>(page));
+                });
             }
         });
 
         lua.set_function("page_read_block", [this](const std::string& type, int page, int offset, int len) -> sol::table {
             sol::state_view lua_view(*_lua);
             sol::table data = lua_view.create_table();
-            if (!_emulator) return data;
-            Memory* mem = _emulator->GetMemory();
+            if (!effectiveEmulator()) return data;
+            Memory* mem = effectiveEmulator()->GetMemory();
             if (!mem) return data;
             uint8_t* pagePtr = nullptr;
             if (type == "ram" && page < MAX_RAM_PAGES)
@@ -591,8 +600,8 @@ public:
         });
 
         lua.set_function("page_write_block", [this](const std::string& type, int page, int offset, sol::table data) {
-            if (!_emulator) return;
-            Memory* mem = _emulator->GetMemory();
+            if (!effectiveEmulator()) return;
+            Memory* mem = effectiveEmulator()->GetMemory();
             if (!mem) return;
             uint8_t* pagePtr = nullptr;
             if (type == "ram" && page < MAX_RAM_PAGES)
@@ -605,20 +614,24 @@ public:
                 pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
             if (!pagePtr || offset < 0 || offset >= PAGE_SIZE) return;
             int maxLen = PAGE_SIZE - offset;
-            int idx = 0;
-            for (auto& pair : data) {
-                if (idx >= maxLen) break;
-                uint8_t val = pair.second.as<uint8_t>();
-                pagePtr[offset + idx] = val;
-                idx++;
-            }
+            effectiveEmulator()->EditMemoryFromTool("Lua page write", [&] {
+                int idx = 0;
+                for (auto& pair : data) {
+                    if (idx >= maxLen) break;
+                    uint8_t val = pair.second.as<uint8_t>();
+                    pagePtr[offset + idx] = val;
+                    idx++;
+                }
+                if (type == "ram")
+                    mem->MarkRamPageEdited(static_cast<uint16_t>(page));
+            });
         });
 
         lua.set_function("memory_info", [this]() -> sol::table {
             sol::state_view lua_view(*_lua);
             sol::table info = lua_view.create_table();
-            if (!_emulator) return info;
-            Memory* mem = _emulator->GetMemory();
+            if (!effectiveEmulator()) return info;
+            Memory* mem = effectiveEmulator()->GetMemory();
             if (!mem) return info;
             
             sol::table pages = lua_view.create_table();
@@ -675,22 +688,22 @@ public:
 
         // Disk inspection functions
         lua.set_function("disk_is_inserted", [this](int drive) -> bool {
-            if (!_emulator || drive < 0 || drive > 3) return false;
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator() || drive < 0 || drive > 3) return false;
+            auto* ctx = effectiveEmulator()->GetContext();
             if (!ctx || !ctx->coreState.diskDrives[drive]) return false;
             return ctx->coreState.diskDrives[drive]->isDiskInserted();
         });
 
         lua.set_function("disk_get_path", [this](int drive) -> std::string {
-            if (!_emulator || drive < 0 || drive > 3) return "";
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator() || drive < 0 || drive > 3) return "";
+            auto* ctx = effectiveEmulator()->GetContext();
             if (!ctx) return "";
             return ctx->coreState.diskFilePaths[drive];
         });
 
         lua.set_function("disk_eject", [this](int drive) -> bool {
-            if (!_emulator || drive < 0 || drive > 3) return false;
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator() || drive < 0 || drive > 3) return false;
+            auto* ctx = effectiveEmulator()->GetContext();
             if (!ctx || !ctx->coreState.diskDrives[drive]) return false;
             ctx->coreState.diskDrives[drive]->ejectDisk();
             ctx->coreState.diskFilePaths[drive] = "";
@@ -746,21 +759,21 @@ public:
         // elsewhere), unformatted or plus3; cylinders / sides 0 or left out = the format's geometry
         lua.set_function("disk_create", [this](int drive, sol::optional<int> cyl, sol::optional<int> sides,
                                                sol::optional<std::string> format) -> bool {
-            if (!_emulator || drive < 0 || drive > 3) return false;
+            if (!effectiveEmulator() || drive < 0 || drive > 3) return false;
             Emulator::BlankDiskFormat parsed = Emulator::BlankDiskFormat::Auto;
             if (!Emulator::ParseBlankDiskFormat(format.value_or("auto"), parsed)) return false;
             const int cylinders = cyl.value_or(0);
             const int numSides = sides.value_or(0);
             if (cylinders < 0 || cylinders > 255 || numSides < 0 || numSides > 255) return false;
-            return _emulator->CreateBlankDisk(static_cast<uint8_t>(drive), parsed, static_cast<uint8_t>(cylinders),
+            return effectiveEmulator()->CreateBlankDisk(static_cast<uint8_t>(drive), parsed, static_cast<uint8_t>(cylinders),
                                               static_cast<uint8_t>(numSides));
         });
 
         lua.set_function("disk_list", [this]() -> sol::table {
             sol::state_view lua_view(*_lua);
             sol::table drives = lua_view.create_table();
-            if (_emulator) {
-                auto* ctx = _emulator->GetContext();
+            if (effectiveEmulator()) {
+                auto* ctx = effectiveEmulator()->GetContext();
                 if (ctx) {
                     for (int i = 0; i < 4; i++) {
                         sol::table drive = lua_view.create_table();
@@ -778,60 +791,60 @@ public:
 
         // Execution control
         lua.set_function("step", [this](sol::optional<bool> skipBP) {
-            if (!_emulator) return;
-            _emulator->RunSingleCPUCycle(skipBP.value_or(true));
+            if (!effectiveEmulator()) return;
+            effectiveEmulator()->RunSingleCPUCycle(skipBP.value_or(true));
         });
 
         lua.set_function("steps", [this](unsigned count, sol::optional<bool> skipBP) {
-            if (!_emulator) return;
-            _emulator->RunNCPUCycles(count, skipBP.value_or(false));
+            if (!effectiveEmulator()) return;
+            effectiveEmulator()->RunNCPUCycles(count, skipBP.value_or(false));
         });
 
         lua.set_function("stepover", [this]() {
-            if (!_emulator) return;
-            _emulator->StepOver();
+            if (!effectiveEmulator()) return;
+            effectiveEmulator()->StepOver();
         });
 
         // Frame stepping methods
         lua.set_function("run_frame", [this](sol::optional<bool> skipBP) {
-            if (!_emulator) return;
-            _emulator->RunFrame(skipBP.value_or(true));
+            if (!effectiveEmulator()) return;
+            effectiveEmulator()->RunFrame(skipBP.value_or(true));
         });
 
         lua.set_function("run_frames", [this](unsigned count, sol::optional<bool> skipBP) {
-            if (!_emulator) return;
-            _emulator->RunNFrames(count, skipBP.value_or(true));
+            if (!effectiveEmulator()) return;
+            effectiveEmulator()->RunNFrames(count, skipBP.value_or(true));
         });
 
         // Atomic stepping methods
         lua.set_function("run_tstates", [this](unsigned count, sol::optional<bool> skipBP) {
-            if (!_emulator) return;
-            _emulator->RunTStates(count, skipBP.value_or(true));
+            if (!effectiveEmulator()) return;
+            effectiveEmulator()->RunTStates(count, skipBP.value_or(true));
         });
 
         lua.set_function("run_to_scanline", [this](unsigned scanline, sol::optional<bool> skipBP) {
-            if (!_emulator) return;
-            _emulator->RunUntilScanline(scanline, skipBP.value_or(true));
+            if (!effectiveEmulator()) return;
+            effectiveEmulator()->RunUntilScanline(scanline, skipBP.value_or(true));
         });
 
         lua.set_function("run_scanlines", [this](unsigned count, sol::optional<bool> skipBP) {
-            if (!_emulator) return;
-            _emulator->RunNScanlines(count, skipBP.value_or(true));
+            if (!effectiveEmulator()) return;
+            effectiveEmulator()->RunNScanlines(count, skipBP.value_or(true));
         });
 
         lua.set_function("run_to_pixel", [this](sol::optional<bool> skipBP) {
-            if (!_emulator) return;
-            _emulator->RunUntilNextScreenPixel(skipBP.value_or(true));
+            if (!effectiveEmulator()) return;
+            effectiveEmulator()->RunUntilNextScreenPixel(skipBP.value_or(true));
         });
 
         lua.set_function("run_to_interrupt", [this](sol::optional<bool> skipBP) {
-            if (!_emulator) return;
-            _emulator->RunUntilInterrupt(skipBP.value_or(true));
+            if (!effectiveEmulator()) return;
+            effectiveEmulator()->RunUntilInterrupt(skipBP.value_or(true));
         });
 
         lua.set_function("run_until_condition", [this](sol::function predicate, sol::optional<unsigned> maxTStates) {
-            if (!_emulator) return;
-            _emulator->RunUntilCondition([&predicate](const Z80State& state) -> bool {
+            if (!effectiveEmulator()) return;
+            effectiveEmulator()->RunUntilCondition([&predicate](const Z80State& state) -> bool {
                 return predicate(state.pc, state.af, state.bc, state.de, state.hl).get<bool>();
             }, maxTStates.value_or(0));
         });
@@ -1295,99 +1308,99 @@ public:
 
         // Snapshot operations
         lua.set_function("snapshot_load", [this](const std::string& path) -> bool {
-            if (!_emulator) return false;
-            return _emulator->LoadSnapshot(path);
+            if (!effectiveEmulator()) return false;
+            return effectiveEmulator()->LoadSnapshot(path);
         });
 
         lua.set_function("snapshot_save", [this](const std::string& path) -> bool {
-            if (!_emulator) return false;
-            return _emulator->SaveSnapshot(path);
+            if (!effectiveEmulator()) return false;
+            return effectiveEmulator()->SaveSnapshot(path);
         });
 
         // Breakpoint management
         lua.set_function("bp", [this](uint16_t addr) -> int {
-            if (!_emulator) return -1;
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator()) return -1;
+            auto* ctx = effectiveEmulator()->GetContext();
             if (!ctx || !ctx->pDebugManager) return -1;
             BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
             return bpm ? static_cast<int>(bpm->AddExecutionBreakpoint(addr)) : -1;
         });
 
         lua.set_function("bp_read", [this](uint16_t addr) -> int {
-            if (!_emulator) return -1;
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator()) return -1;
+            auto* ctx = effectiveEmulator()->GetContext();
             if (!ctx || !ctx->pDebugManager) return -1;
             BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
             return bpm ? static_cast<int>(bpm->AddMemReadBreakpoint(addr)) : -1;
         });
 
         lua.set_function("bp_write", [this](uint16_t addr) -> int {
-            if (!_emulator) return -1;
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator()) return -1;
+            auto* ctx = effectiveEmulator()->GetContext();
             if (!ctx || !ctx->pDebugManager) return -1;
             BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
             return bpm ? static_cast<int>(bpm->AddMemWriteBreakpoint(addr)) : -1;
         });
 
         lua.set_function("bp_port_in", [this](uint16_t port) -> int {
-            if (!_emulator) return -1;
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator()) return -1;
+            auto* ctx = effectiveEmulator()->GetContext();
             if (!ctx || !ctx->pDebugManager) return -1;
             BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
             return bpm ? static_cast<int>(bpm->AddPortInBreakpoint(port)) : -1;
         });
 
         lua.set_function("bp_port_out", [this](uint16_t port) -> int {
-            if (!_emulator) return -1;
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator()) return -1;
+            auto* ctx = effectiveEmulator()->GetContext();
             if (!ctx || !ctx->pDebugManager) return -1;
             BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
             return bpm ? static_cast<int>(bpm->AddPortOutBreakpoint(port)) : -1;
         });
 
         lua.set_function("bp_remove", [this](uint16_t id) -> bool {
-            if (!_emulator) return false;
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator()) return false;
+            auto* ctx = effectiveEmulator()->GetContext();
             if (!ctx || !ctx->pDebugManager) return false;
             BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
             return bpm ? bpm->RemoveBreakpointByID(id) : false;
         });
 
         lua.set_function("bp_clear", [this]() {
-            if (!_emulator) return;
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator()) return;
+            auto* ctx = effectiveEmulator()->GetContext();
             if (!ctx || !ctx->pDebugManager) return;
             BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
             if (bpm) bpm->ClearBreakpoints();
         });
 
         lua.set_function("bp_enable", [this](uint16_t id) -> bool {
-            if (!_emulator) return false;
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator()) return false;
+            auto* ctx = effectiveEmulator()->GetContext();
             if (!ctx || !ctx->pDebugManager) return false;
             BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
             return bpm ? bpm->ActivateBreakpoint(id) : false;
         });
 
         lua.set_function("bp_disable", [this](uint16_t id) -> bool {
-            if (!_emulator) return false;
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator()) return false;
+            auto* ctx = effectiveEmulator()->GetContext();
             if (!ctx || !ctx->pDebugManager) return false;
             BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
             return bpm ? bpm->DeactivateBreakpoint(id) : false;
         });
 
         lua.set_function("bp_count", [this]() -> size_t {
-            if (!_emulator) return 0;
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator()) return 0;
+            auto* ctx = effectiveEmulator()->GetContext();
             if (!ctx || !ctx->pDebugManager) return 0;
             BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
             return bpm ? bpm->GetBreakpointsCount() : 0;
         });
 
         lua.set_function("bp_list", [this]() -> std::string {
-            if (!_emulator) return "";
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator()) return "";
+            auto* ctx = effectiveEmulator()->GetContext();
             if (!ctx || !ctx->pDebugManager) return "";
             BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
             return bpm ? bpm->GetBreakpointListAsString() : "";
@@ -1396,11 +1409,11 @@ public:
         lua.set_function("bp_status", [this]() -> sol::table {
             sol::state_view lua_view(*_lua);
             sol::table result = lua_view.create_table();
-            if (!_emulator) {
+            if (!effectiveEmulator()) {
                 result["valid"] = false;
                 return result;
             }
-            auto* ctx = _emulator->GetContext();
+            auto* ctx = effectiveEmulator()->GetContext();
             if (!ctx || !ctx->pDebugManager) {
                 result["valid"] = false;
                 return result;
@@ -1425,8 +1438,8 @@ public:
         });
 
         lua.set_function("bp_clear_last", [this]() {
-            if (!_emulator) return;
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator()) return;
+            auto* ctx = effectiveEmulator()->GetContext();
             if (ctx && ctx->pDebugManager) {
                 BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
                 if (bpm) bpm->ClearLastTriggeredBreakpoint();
@@ -1730,49 +1743,49 @@ public:
 
         // Screen state
         lua.set_function("screen_get_mode", [this]() -> std::string {
-            if (!_emulator) return "";
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator()) return "";
+            auto* ctx = effectiveEmulator()->GetContext();
             if (!ctx || !ctx->pScreen) return "";
             return Screen::GetVideoModeName(ctx->pScreen->GetVideoMode());
         });
 
         lua.set_function("screen_get_border", [this]() -> int {
-            if (!_emulator) return 0;
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator()) return 0;
+            auto* ctx = effectiveEmulator()->GetContext();
             if (!ctx || !ctx->pScreen) return 0;
             return ctx->pScreen->GetBorderColor();
         });
 
         lua.set_function("screen_get_flash", [this]() -> int {
-            if (!_emulator) return 0;
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator()) return 0;
+            auto* ctx = effectiveEmulator()->GetContext();
             if (!ctx || !ctx->pScreen) return 0;
             return ctx->pScreen->_vid.flash;
         });
 
         lua.set_function("screen_get_active", [this]() -> int {
-            if (!_emulator) return 0;
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator()) return 0;
+            auto* ctx = effectiveEmulator()->GetContext();
             if (!ctx || !ctx->pScreen) return 0;
             return ctx->pScreen->GetActiveScreen();
         });
 
         // Screen reports: the same core reports every automation module returns
         lua.set_function("screen_state", [this](sol::this_state s, sol::optional<bool> verbose) -> sol::object {
-            EmulatorContext* ctx = _emulator ? _emulator->GetContext() : nullptr;
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, DeviceState::Screen(ctx, verbose.value_or(false)));
         });
         lua.set_function("screen_mode", [this](sol::this_state s) -> sol::object {
-            EmulatorContext* ctx = _emulator ? _emulator->GetContext() : nullptr;
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, DeviceState::ScreenMode(ctx));
         });
         lua.set_function("screen_flash", [this](sol::this_state s) -> sol::object {
-            EmulatorContext* ctx = _emulator ? _emulator->GetContext() : nullptr;
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, DeviceState::ScreenFlash(ctx));
         });
         // Former name of screen_mode, kept for existing scripts
         lua.set_function("screen_video_state", [this](sol::this_state s) -> sol::object {
-            EmulatorContext* ctx = _emulator ? _emulator->GetContext() : nullptr;
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, DeviceState::ScreenMode(ctx));
         });
 
@@ -1780,29 +1793,29 @@ public:
         // Python, CLI and MCP return). Optional chip index -> the chip's
         // full report, no index -> the overview
         lua.set_function("audio_ay_state", [this](sol::this_state s, sol::optional<int> chip) -> sol::object {
-            EmulatorContext* ctx = _emulator ? _emulator->GetContext() : nullptr;
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, chip ? DeviceState::AyChip(ctx, *chip) : DeviceState::Ay(ctx));
         });
         lua.set_function("audio_fm_state", [this](sol::this_state s, sol::optional<int> chip) -> sol::object {
-            EmulatorContext* ctx = _emulator ? _emulator->GetContext() : nullptr;
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, chip ? DeviceState::FmChip(ctx, *chip) : DeviceState::Fm(ctx));
         });
         lua.set_function("fdc_state", [this](sol::this_state s) -> sol::object {
-            EmulatorContext* ctx = _emulator ? _emulator->GetContext() : nullptr;
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, DeviceState::Fdc(ctx));
         });
 
         // Audio state
         lua.set_function("audio_is_muted", [this]() -> bool {
-            if (!_emulator) return true;
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator()) return true;
+            auto* ctx = effectiveEmulator()->GetContext();
             if (!ctx || !ctx->pSoundManager) return true;
             return ctx->pSoundManager->isMuted();
         });
 
         lua.set_function("audio_ay_read", [this](int chip, int reg) -> int {
-            if (!_emulator) return 0;
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator()) return 0;
+            auto* ctx = effectiveEmulator()->GetContext();
             if (!ctx || !ctx->pSoundManager) return 0;
             auto* ay = ctx->pSoundManager->getAYChip(chip);
             if (!ay || reg < 0 || reg > 15) return 0;
@@ -1812,8 +1825,8 @@ public:
         lua.set_function("audio_ay_registers", [this](sol::optional<int> chip) -> sol::table {
             sol::state_view lua_view(*_lua);
             sol::table regs = lua_view.create_table();
-            if (!_emulator) return regs;
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator()) return regs;
+            auto* ctx = effectiveEmulator()->GetContext();
             if (!ctx || !ctx->pSoundManager) return regs;
             auto* ay = ctx->pSoundManager->getAYChip(chip.value_or(0));
             if (!ay) return regs;
@@ -1825,8 +1838,8 @@ public:
         });
 
         lua.set_function("audio_ay_count", [this]() -> int {
-            if (!_emulator) return 0;
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator()) return 0;
+            auto* ctx = effectiveEmulator()->GetContext();
             if (!ctx || !ctx->pSoundManager) return 0;
             return ctx->pSoundManager->getAYChipCount();
         });
@@ -1835,15 +1848,15 @@ public:
         // host-port semantics - each flushes the coprocessor to the current
         // ZX tact first. No-ops / nil when the card is not fitted.
         lua.set_function("gs_enabled", [this]() -> bool {
-            if (!_emulator) return false;
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator()) return false;
+            auto* ctx = effectiveEmulator()->GetContext();
             return ctx && ctx->pSoundManager && ctx->pSoundManager->getGeneralSound() != nullptr;
         });
 
         lua.set_function("gs_state", [this]() -> sol::object {
             sol::state_view lua_view(*_lua);
-            if (!_emulator) return sol::make_object(lua_view, sol::lua_nil);
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator()) return sol::make_object(lua_view, sol::lua_nil);
+            auto* ctx = effectiveEmulator()->GetContext();
             GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
             if (!gs) return sol::make_object(lua_view, sol::lua_nil);
 
@@ -1888,8 +1901,8 @@ public:
         // journaled for TTD replay. Each returns true when submitted; false when
         // no card is fitted, the byte is out of range or TTD replay owns input
         auto submitGS = [this](ttd::TTDInputKind kind, int value) -> bool {
-            if (!_emulator || value < 0 || value > 255) return false;
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator() || value < 0 || value > 255) return false;
+            auto* ctx = effectiveEmulator()->GetContext();
             if (!ctx || !ctx->pTimeTravelManager) return false;
             if (!ctx->pSoundManager || !ctx->pSoundManager->getGeneralSound()) return false;
             ttd::TTDInputEvent ev;
@@ -1913,15 +1926,15 @@ public:
         // Reads are peeks: no host read cycle (read_data leaves status bit 7
         // set) and the card is not stepped
         lua.set_function("gs_read_data", [this]() -> int {
-            if (!_emulator) return -1;
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator()) return -1;
+            auto* ctx = effectiveEmulator()->GetContext();
             GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
             return gs ? gs->getDataToHost() : -1;
         });
 
         lua.set_function("gs_read_status", [this]() -> int {
-            if (!_emulator) return -1;
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator()) return -1;
+            auto* ctx = effectiveEmulator()->GetContext();
             GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
             return gs ? (gs->getStatusRaw() | 0x7E) : -1;
         });
@@ -1931,8 +1944,8 @@ public:
         // emulation thread - same semantics as the WebAPI switch_personality
         // action and the MCP gs_switch_personality tool action
         lua.set_function("gs_switch_personality", [this](const std::string& personality) -> bool {
-            if (!_emulator) return false;
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator()) return false;
+            auto* ctx = effectiveEmulator()->GetContext();
             SoundManager* sm = ctx ? ctx->pSoundManager : nullptr;
             if (!sm) return false;
 
@@ -1952,8 +1965,8 @@ public:
         // dump_module serves via the WebAPI/MCP
         lua.set_function("gs_dump_module", [this](sol::optional<std::string> path) -> sol::object {
             sol::state_view lua_view(*_lua);
-            if (!_emulator) return sol::make_object(lua_view, sol::lua_nil);
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator()) return sol::make_object(lua_view, sol::lua_nil);
+            auto* ctx = effectiveEmulator()->GetContext();
             GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
             if (!gs) return sol::make_object(lua_view, sol::lua_nil);
 
@@ -1981,8 +1994,8 @@ public:
         // MCP / Python (see gsporttrace.h).
         lua.set_function("gs_counters", [this]() -> sol::object {
             sol::state_view lua_view(*_lua);
-            if (!_emulator) return sol::make_object(lua_view, sol::lua_nil);
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator()) return sol::make_object(lua_view, sol::lua_nil);
+            auto* ctx = effectiveEmulator()->GetContext();
             GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
             if (!gs) return sol::make_object(lua_view, sol::lua_nil);
 
@@ -2010,40 +2023,40 @@ public:
         });
 
         lua.set_function("gs_porttrace_start", [this]() {
-            if (!_emulator) return;
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator()) return;
+            auto* ctx = effectiveEmulator()->GetContext();
             GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
             if (gs) gs->startPortTrace();
         });
         lua.set_function("gs_porttrace_stop", [this]() {
-            if (!_emulator) return;
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator()) return;
+            auto* ctx = effectiveEmulator()->GetContext();
             GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
             if (gs) gs->stopPortTrace();
         });
         lua.set_function("gs_porttrace_pause", [this]() {
-            if (!_emulator) return;
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator()) return;
+            auto* ctx = effectiveEmulator()->GetContext();
             GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
             if (gs) gs->pausePortTrace();
         });
         lua.set_function("gs_porttrace_resume", [this]() {
-            if (!_emulator) return;
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator()) return;
+            auto* ctx = effectiveEmulator()->GetContext();
             GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
             if (gs) gs->resumePortTrace();
         });
         lua.set_function("gs_porttrace_clear", [this]() {
-            if (!_emulator) return;
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator()) return;
+            auto* ctx = effectiveEmulator()->GetContext();
             GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
             if (gs) gs->clearPortTrace();
         });
 
         lua.set_function("gs_porttrace_events", [this](sol::optional<int> count) -> sol::object {
             sol::state_view lua_view(*_lua);
-            if (!_emulator) return sol::make_object(lua_view, sol::lua_nil);
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator()) return sol::make_object(lua_view, sol::lua_nil);
+            auto* ctx = effectiveEmulator()->GetContext();
             GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
             if (!gs) return sol::make_object(lua_view, sol::lua_nil);
 
@@ -2077,8 +2090,8 @@ public:
         lua.set_function("disk_info", [this](int drive) -> sol::table {
             sol::state_view lua_view(*_lua);
             sol::table info = lua_view.create_table();
-            if (!_emulator || drive < 0 || drive > 3) return info;
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator() || drive < 0 || drive > 3) return info;
+            auto* ctx = effectiveEmulator()->GetContext();
             if (!ctx) return info;
             FDD* fdd = ctx->coreState.diskDrives[drive];
             if (!fdd) return info;
@@ -2098,8 +2111,8 @@ public:
         lua.set_function("disk_read_sector", [this](int drive, int cyl, int side, int sector) -> sol::table {
             sol::state_view lua_view(*_lua);
             sol::table data = lua_view.create_table();
-            if (!_emulator || drive < 0 || drive > 3) return data;
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator() || drive < 0 || drive > 3) return data;
+            auto* ctx = effectiveEmulator()->GetContext();
             if (!ctx) return data;
             FDD* fdd = ctx->coreState.diskDrives[drive];
             if (!fdd) return data;
@@ -2116,8 +2129,8 @@ public:
         });
 
         lua.set_function("disk_read_sector_hex", [this](int drive, int trackNo, int sector) -> std::string {
-            if (!_emulator || drive < 0 || drive > 3) return "";
-            auto* ctx = _emulator->GetContext();
+            if (!effectiveEmulator() || drive < 0 || drive > 3) return "";
+            auto* ctx = effectiveEmulator()->GetContext();
             if (!ctx) return "";
             FDD* fdd = ctx->coreState.diskDrives[drive];
             if (!fdd) return "";
@@ -2168,6 +2181,7 @@ public:
             info["coverage_index_frames"] = si.coverageIndexFrames;
             info["coverage_index_bytes"]  = si.coverageIndexBytes;
             info["write_journal_enabled"]    = si.writeJournalEnabled;
+            info["bookmark_count"]           = static_cast<uint64_t>(si.bookmarkCount);
             info["ttd_available"]            = true;
             return info;
         });
@@ -2179,15 +2193,10 @@ public:
             if (!emulator) return false;
             auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager) return false;
-            // Set journal mode before starting
-            bool enableJournal = true;  // default: development mode
+            // A mode overrides the journal choice; without one the choice made
+            // by ttd_set_journal_enabled stands (journal on by default)
             if (modeOpt.has_value())
-            {
-                const std::string& mode = modeOpt.value();
-                if (mode == "gaming")
-                    enableJournal = false;
-            }
-            ctx->pTimeTravelManager->SetEnableWriteJournal(enableJournal);
+                ctx->pTimeTravelManager->SetEnableWriteJournal(modeOpt.value() != "gaming");
             return ctx->pTimeTravelManager->StartRecording();
         });
 
@@ -2290,10 +2299,13 @@ public:
             if (!emulator) return false;
             auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pTimeTravelManager) return false;
+            // No frame: resume exactly where the machine stands (as CLI and WebAPI do)
             ttd::TTDTimePoint from = ctx->pTimeTravelManager->CurrentPosition();
             if (frameOpt)
+            {
                 from.frame = *frameOpt;
-            from.tInFrame = tInFrameOpt.value_or(0);
+                from.tInFrame = tInFrameOpt.value_or(0);
+            }
             return ctx->pTimeTravelManager->ResumeRecordingFrom(from);
         });
 
@@ -2442,6 +2454,15 @@ public:
                 default: break;
             }
             result["halt_reason"] = reasonStr;
+            if (r.haltReason == ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent)
+            {
+                sol::table marker = lua_view.create_table();
+                marker["frame"]    = r.blockingMarker.time.frame;
+                marker["tinframe"] = r.blockingMarker.time.tInFrame;
+                marker["kind"]     = ttd::TTDExternalEventKindToString(r.blockingMarker.kind);
+                marker["reason"]   = r.blockingMarker.reason;
+                result["blocking_marker"] = marker;
+            }
             result["bookmark"]    = label;
             return result;
         });
@@ -2476,6 +2497,7 @@ public:
             std::ifstream in(path, std::ios::binary);
             if (!in.is_open()) { result["error"] = "cannot open file: " + path; return result; }
             std::string err;
+            ctx->pTimeTravelManager->SetSessionSourcePath(path);
             if (!ctx->pTimeTravelManager->DeserializeSession(in, err))
             {
                 result["error"] = err;
@@ -2586,8 +2608,22 @@ public:
                     q.beforeGlobalT = static_cast<uint64_t>(*beforeFrameOpt) * frameT + beforeTinOpt.value_or(0);
             }
 
-            auto found = ctx->pTimeTravelManager->FindLastAccess(q);
-            if (!found) { result["found"] = false; return result; }
+            ttd::TTDExternalEvent marker{};
+            auto found = ctx->pTimeTravelManager->FindLastAccess(q, &marker);
+            if (!found)
+            {
+                result["found"] = false;
+                if (marker.reason[0] != '\0')
+                {
+                    // A replay barrier stopped the search before any match
+                    result["blocked"]         = true;
+                    result["marker_frame"]    = marker.time.frame;
+                    result["marker_tinframe"] = marker.time.tInFrame;
+                    result["marker_kind"]     = ttd::TTDExternalEventKindToString(marker.kind);
+                    result["marker_reason"]   = marker.reason;
+                }
+                return result;
+            }
             result["found"]    = true;
             result["frame"]    = found->time.frame;
             result["tinframe"]  = found->time.tInFrame;
@@ -2660,6 +2696,15 @@ public:
             {
                 result["frame"]   = r.arrivedAt.frame;
                 result["tinframe"] = r.arrivedAt.tInFrame;
+            }
+            if (r.blockingMarker.reason[0] != '\0')
+            {
+                sol::table m = lua_view.create_table();
+                m["kind"]     = ttd::TTDExternalEventKindToString(r.blockingMarker.kind);
+                m["reason"]   = r.blockingMarker.reason;
+                m["frame"]    = r.blockingMarker.time.frame;
+                m["tinframe"] = r.blockingMarker.time.tInFrame;
+                result["blocked_by_marker"] = m;
             }
             return result;
         });
@@ -3710,6 +3755,32 @@ public:
         // this run - never persisted to the ini; 0 = auto (follow the
         // priority chain: device > [SOUND] CoreRate > 44100). Applied at the
         // next frame boundary; deferred while a recording is in progress.
+        // Host speed multiplier 1/2/4/8/16 (same switch as CLI 'setting speed N'
+        // and WebAPI setting 'speed'). Refused (false) while TTD records.
+        lua.set_function("set_speed", [this](int multiplier) -> bool {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return false;
+            if (multiplier != 1 && multiplier != 2 && multiplier != 4 && multiplier != 8 && multiplier != 16)
+                return false;
+            return emulator->SetSpeedMultiplier(static_cast<uint8_t>(multiplier));
+        });
+
+        lua.set_function("get_speed", [this]() -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) { result["error"] = "no emulator"; return result; }
+            auto* context = emulator->GetContext();
+            if (!context || !context->pCore) { result["error"] = "core not available"; return result; }
+            FeatureManager* fm = emulator->GetFeatureManager();
+            result["multiplier"]   = context->pCore->GetHostSpeedMultiplier();
+            result["effective"]    = context->pCore->GetSpeedMultiplier();  // with the machine's hardware turbo
+            result["turbo_mode"]   = fm && fm->isEnabled(Features::kTurboMode);
+            result["turbo_active"] = context->config.turbo_mode;
+            result["turbo_audio"]  = context->config.turbo_mode_audio;
+            return result;
+        });
+
         lua.set_function("set_audio_rate", [this](int rate) -> bool {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return false;
@@ -4027,9 +4098,11 @@ public:
                 Memory* memory = emulator->GetMemory();
                 if (memory)
                 {
-                    uint32_t addr = asmResult.startAddress;
-                    for (uint8_t b : asmResult.bytes)
-                        memory->MemoryWriteFast(static_cast<uint16_t>((addr++) & 0xFFFF), b);
+                    emulator->EditMemoryFromTool("Lua assemble write", [&] {
+                        uint32_t addr = asmResult.startAddress;
+                        for (uint8_t b : asmResult.bytes)
+                            memory->ToolWriteToZ80Memory(static_cast<uint16_t>((addr++) & 0xFFFF), b);
+                    });
                     result["written"] = true;
                 }
             }

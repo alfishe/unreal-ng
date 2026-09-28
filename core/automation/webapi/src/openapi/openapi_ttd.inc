@@ -262,8 +262,9 @@
         "Returns every external-event marker recorded in this session. "
         "Each marker is a replay barrier: a SeekTo whose target lies on "
         "or after a marker will halt at the marker rather than crossing "
-        "it. Markers cover TapeControl, DiskWrite, DebuggerEdit, "
-        "HardwareReset, and Other (per ttd::TTDExternalEventKind).";
+        "it. Kinds: tape_control, disk_write, debugger_edit (a tool edit made "
+        "while recording), other. hardware_reset is a reserved kind that is "
+        "never written: a reset stops the recording instead.";
     paths["/api/v1/emulator/{id}/ttd/markers"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/ttd/markers"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/ttd/markers"]["get"]["parameters"][0]["required"] = true;
@@ -453,7 +454,7 @@
     paths["/api/v1/emulator/{id}/ttd/find-last"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
          ["$ref"] = "#/components/schemas/TTDFindLastResponse";
     paths["/api/v1/emulator/{id}/ttd/find-last"]["post"]["responses"]["400"]["description"] =
-        "Missing search criteria in request body";
+        "Missing search criteria, a bad number, or phys_page outside 0..255";
     paths["/api/v1/emulator/{id}/ttd/find-last"]["post"]["responses"]["404"]["description"] =
         "Emulator instance not found";
     paths["/api/v1/emulator/{id}/ttd/find-last"]["post"]["responses"]["501"]["description"] =
@@ -531,7 +532,9 @@
         "the supplied list. Equivalent to 'reverse-continue' in WinDbg TTD. "
         "Response carries matched=true with the matched PC and arrival time "
         "point; matched=false when no PC in the list was visited. A blocking "
-        "external-event marker may also short-circuit the scan.";
+        "external-event marker may also short-circuit the scan; the response then "
+        "carries blocked_by_marker {kind, reason, frame, tinframe}. pcs entries "
+        "may be numbers or strings (decimal, \"0x..\", \"#..\", \"$..\").";
     paths["/api/v1/emulator/{id}/ttd/reverse-continue"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/ttd/reverse-continue"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/ttd/reverse-continue"]["post"]["parameters"][0]["required"] = true;
@@ -546,7 +549,7 @@
     paths["/api/v1/emulator/{id}/ttd/reverse-continue"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
          ["$ref"] = "#/components/schemas/TTDReverseContinueResponse";
     paths["/api/v1/emulator/{id}/ttd/reverse-continue"]["post"]["responses"]["400"]["description"] =
-        "Missing or empty 'pcs' array";
+        "Missing or empty 'pcs' array, or an entry outside 0..65535";
     paths["/api/v1/emulator/{id}/ttd/reverse-continue"]["post"]["responses"]["404"]["description"] =
         "Emulator instance not found";
     paths["/api/v1/emulator/{id}/ttd/reverse-continue"]["post"]["responses"]["501"]["description"] =

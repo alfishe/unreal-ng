@@ -1125,11 +1125,16 @@ void EmulatorAPI::writePage(const HttpRequestPtr& req, std::function<void(const 
 
     Json::Value& data = (*body)["data"];
     size_t bytesWritten = 0;
-    for (Json::ArrayIndex i = 0; i < data.size() && (offset + i) < PAGE_SIZE; i++)
-    {
-        pagePtr[offset + i] = static_cast<uint8_t>(data[i].asUInt());
-        bytesWritten++;
-    }
+    // A page edit behind the CPU's back: TTD must see it like any other tool write
+    emulator->EditMemoryFromTool("WebAPI page write", [&] {
+        for (Json::ArrayIndex i = 0; i < data.size() && (offset + i) < PAGE_SIZE; i++)
+        {
+            pagePtr[offset + i] = static_cast<uint8_t>(data[i].asUInt());
+            bytesWritten++;
+        }
+        if (isRAM)
+            memory->MarkRamPageEdited(page);
+    });
 
     Json::Value ret;
     ret["success"] = true;
