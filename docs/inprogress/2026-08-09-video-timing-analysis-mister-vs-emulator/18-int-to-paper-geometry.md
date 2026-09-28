@@ -151,6 +151,16 @@ Within the spread between "correct" implementations (MiSTer 17981 / ZXMAK2
   (blank-at-line-end) should eventually be unified to avoid future confusion.
 
 > [!NOTE]
+> **Resolved 2026-09-27** (see [video-debug-translation design](../2026-09-27-video-debug-translation/design.md) §10):
+> - `_rasterState` horizontal zones now use the renderer origin (border first, blank last);
+>   contention, floating bus and all beam APIs follow it.
+> - 48K / 128K / +3 / Scorpion `intstart` recalibrated on INT-to-first-pixel by consensus of
+>   Xpeccy layouts, MiSTer `ula.sv` (+6T pipeline) and ZXMAK2: 48K 14340T (`intstart` 1811),
+>   128K/+3 14366T (1845), Scorpion 14336T (1815). Contention onset stays at the classic
+>   INT+14335 / INT+14361 (5T before the displayed pixel); the floating bus now gives the
+>   classic INT+14338 first bitmap byte.
+
+> [!NOTE]
 > **Arithmetic note (2026-09-27):** with the INT firing at `intstart+1`, `71635` gives 17988T,
 > not 17989T. 71634 (exactly 17989T) was tried and **breaks *Across the Edge***, so 71635
 > stays: 17988T is the demo-verified Pentagon INT-to-paper distance.
