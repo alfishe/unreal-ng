@@ -1005,7 +1005,15 @@ struct EmulatorState
 	bool video_memory_changed;  // [Debug mode only] Indicates if video memory was changed
 	/// endregion </Access flags>
 
-	bool nmi_in_progress = false;
+	// ZX-Evo board NMI (znmi.v): evoInNmi = RAM page #FF forced into #0000-#3FFF;
+	// evoNmiEntry = the next NMI the Z80 accepts is the board's own (NOP at #0066,
+	// page switch); nmiAtIntStartPending = a board NMI waits for the frame INT
+	// (read by Z80::ProcessInterrupts, false on every other model). Packed into
+	// the one byte of the former nmi_in_progress flag, so EmulatorState keeps
+	// its layout
+	bool evoInNmi : 1 = false;
+	bool evoNmiEntry : 1 = false;
+	bool nmiAtIntStartPending : 1 = false;
 	
 	TSPORTS_t ts;
 	

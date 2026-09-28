@@ -476,6 +476,22 @@ public:
     /// use the generic Memory::UpdateZ80Banks() mapping instead.
     virtual void UpdateModelMemoryBanks() {}
 
+    /// region <Board NMI hooks>
+    /// Machine NMI ("magic") button. Returns true when the board generates the
+    /// NMI itself (ZX-Evo: synchronized to the next frame INT); false means a
+    /// plain /NMI pulse, which the caller requests right away
+    virtual bool RequestBoardNmi() { return false; }
+    /// A board NMI queued for the frame INT is due (Z80::ProcessInterrupts).
+    /// Return false to drop it (ZX-Evo: its NMI page is still mapped in)
+    virtual bool OnFrameIntStartNmi() { return true; }
+    /// The Z80 accepted an NMI (PC = #0066). Return true when the board forces
+    /// a NOP onto the bus for the #0066 fetch; the Z80 then continues at #0067
+    virtual bool OnNmiAccepted() { return false; }
+    /// Whether executing from Z80 bank `bank` closes a TR-DOS session
+    /// (CF_LEAVEDOSRAM). Default: the bank currently maps RAM
+    virtual bool IsDosLeavingBank(uint8_t bank) const;
+    /// endregion </Board NMI hooks>
+
     virtual bool IsFEPort(uint16_t port);
 
     /// Returns true if the last DecodePortIn call was handled by a real hardware device.

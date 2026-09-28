@@ -223,9 +223,12 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
     }
     else if (state.flags & CF_LEAVEDOSRAM)
     {
-        // Execution code from RAM address - disables TR-DOS ROM
+        // Execution code from RAM address - disables TR-DOS ROM. The model
+        // decides what "RAM" means: by default the bank's current mapping; the
+        // ZX-Evo looks at the programmed window type, so its NMI page (RAM over
+        // a ROM window) keeps the DOS signal on
         uint8_t bank = (cpu.pc >> 14) & 3;
-        if (memory.GetMemoryBankMode(bank) == MemoryBankModeEnum::BANK_RAM)
+        if (_context->pPortDecoder->IsDosLeavingBank(bank))
         {
             state.flags &= ~CF_TRDOS;
 
@@ -667,6 +670,11 @@ __forceinline bool Z80::InstructionStartObserved() const
     return m1TraceHook || _context->ttdCoverageActive || _context->ttdProbe.IsArmed();
 }
 
+void Z80::NotifyMachineM1(uint16_t address)
+{
+    machineM1Hook->OnMachineM1(address);
+}
+
 uint8_t Z80::m1_cycle()
 {
     /// region <Overriding submodule for module logger>
@@ -696,6 +704,11 @@ uint8_t Z80::m1_cycle()
     // Z80 CPU M1 cycle logic
     r_low = ((r_low + 1) & 0x7f) | (r_low & 0x80);  // Keep memory refresh register ticking
     opcode = rd(cpu.pc, true);  // Initiate memory read cycle and Keep opcode copy for trace / debug purposes
+
+    // Board logic clocked by the M1 refresh (ZX-Evo NMI exit / breakpoint).
+    // Out of line like NotifyInstructionStart: the hot path is one pointer test
+    if (machineM1Hook) [[unlikely]]
+        NotifyMachineM1(cpu.pc);
 
     // Point PC to next byte
     cpu.pc++;
@@ -987,6 +1000,23 @@ bool Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
     // (pending prefix), and right after an NMI acknowledge - the chip takes
     // no second NMI response without an instruction between (Sainz de
     // Baranda 2022, Visual Z80). The EI shadow does not block NMI.
+    // A board NMI that waits for the frame INT (ZX-Evo znmi.v: pending_nmi is
+    // released at int_start) reaches the /NMI pin at the first boundary inside
+    // the INT pulse - also while halted, since this runs at every boundary.
+    // The board may still veto it (ZX-Evo: no new NMI while its NMI page is in)
+    EmulatorState& machineState = _context->emulatorState;
+    if (machineState.nmiAtIntStartPending)
+    {
+        const bool inPulse = _intWraps ? (cpu.t > int_start || cpu.t < int_end)
+                                       : (cpu.t > int_start && cpu.t < int_end);
+        if (inPulse)
+        {
+            machineState.nmiAtIntStartPending = false;
+            if (_context->pPortDecoder == nullptr || _context->pPortDecoder->OnFrameIntStartNmi())
+                _nmi_pending_count = 1;
+        }
+    }
+
     if (_nmi_pending_count > 0 && !prefixPending && cpu.boundary != Z80_BOUNDARY_NMI_ACK)
     {
         _nmi_pending_count = 0;
@@ -1024,6 +1054,17 @@ bool Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
         cpu.iff1 = 0;
         cpu.int_pending = false;
         cpu.boundary = Z80_BOUNDARY_NMI_ACK;
+
+        // A board that owns this NMI may drive #00 (NOP) onto the bus for the
+        // #0066 fetch and page its handler RAM in at that fetch's refresh
+        // (ZX-Evo znmi.v drive_00 / in_nmi): the CPU spends one M1 on the forced
+        // NOP and continues at #0067 from the board's page
+        if (_context->pPortDecoder != nullptr && _context->pPortDecoder->OnNmiAccepted())
+        {
+            cpu.r_low = ((cpu.r_low + 1) & 0x7f) | (cpu.r_low & 0x80);
+            IncrementCPUCyclesCounter(4);
+            cpu.pc = 0x0067;
+        }
 
         video.memcyc_lcmd = 0;  // new command, start accumulate number of busy memcycles
 

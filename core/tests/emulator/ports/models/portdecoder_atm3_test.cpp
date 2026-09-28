@@ -2,6 +2,8 @@
 #include "pch.h"
 
 #include "portdecoder_atm3_test.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/memory/atm/cmos.h"
 #include "emulator/io/mouse/mouse.h"
 #include "emulator/emulatormanager.h"
@@ -268,7 +270,7 @@ TEST_F(PortDecoder_ATM3_Test, NMI_ForcesTopRAMPageAtWindow0)
     // RM_DOS defaults latch cpm (aFF77.9): open the memory-manager gate via
     // shaden so the window write reaches the decoder (original io.cpp CF_DOSPORTS)
     state.pBF = 0x01;
-    state.nmi_in_progress = true;
+    state.evoInNmi = true;
     state.p7FFD = 0x00;
     _portDecoder->DecodePortOut(0x3FF7, 0x7F, 0x0000);  // Any manager write re-runs the mapping
 
@@ -906,3 +908,231 @@ TEST_F(PortDecoder_ATM3_Machine_Test, KempstonMouse_Decoded)
 }
 
 /// endregion </BaseConf full-stack tests (ZX-Evo plan phase E0)>
+
+/// region <Board NMI (ZX-Evo plan phase E3)>
+
+/// ZX-Evo board NMI (fpga/base_trdemu/trunk/z80/znmi.v, zbreak.v): sources
+/// #BF bit 3 (1 -> 0 edge) and the Magic button - both released at the next
+/// frame INT - and the M1 breakpoint (immediate); entry forces NOP at #0066 and
+/// maps RAM page #FF into #0000-#3FFF; OUT (#BE) leaves after two more M1s
+class ZXEvoNmi_Test : public ::testing::Test
+{
+protected:
+    std::shared_ptr<Emulator> _emulator;
+    EmulatorContext* _context = nullptr;
+    PortDecoder_ATM3* _decoder = nullptr;
+    Z80* _z80 = nullptr;
+    Memory* _memory = nullptr;
+    unsigned _intStart = 0;
+    unsigned _intEnd = 0;
+
+    static constexpr uint16_t kReturnPc = 0x8123;  // interrupted code (window 2)
+    static constexpr uint16_t kStack = 0xA000;
+
+    void SetUp() override
+    {
+        _emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel("", "ATM3", LoggerLevel::LogError);
+        ASSERT_TRUE(_emulator);
+        _context = _emulator->GetContext();
+        _decoder = dynamic_cast<PortDecoder_ATM3*>(_context->pPortDecoder);
+        ASSERT_NE(_decoder, nullptr);
+        _z80 = _context->pCore->GetZ80();
+        _memory = _context->pMemory;
+        _intStart = _context->config.intstart;
+        _intEnd = _context->config.intstart + _context->config.intlen;
+
+        // Pager on, CP/M off (no forced DOS), shadow off; window 0 = ROM page 28
+        // (BASIC48), windows 1-3 = RAM 5 / 2 / 0 - map 0
+        EmulatorState& state = _context->emulatorState;
+        state.aFF77 = PortDecoder_ATM3::ATM_AFF77_PEN | PortDecoder_ATM3::ATM_AFF77_CPM;
+        state.flags = 0;
+        state.pBF = 0;
+        state.p7FFD = 0;
+        state.pEFF7 = PortDecoder_ATM3::ATM_EFF7_LOCKMEM;
+        state.pFFF7[0] = 0x300 | 28;
+        state.pFFF7[1] = 0x200 | 5;
+        state.pFFF7[2] = 0x200 | 2;
+        state.pFFF7[3] = 0x200 | 0;
+        _memory->UpdateZ80Banks();
+
+        _z80->pc = kReturnPc;
+        _z80->sp = kStack;
+        _z80->iff1 = _z80->iff2 = 0;
+        _z80->halted = 0;
+        _z80->boundary = Z80_BOUNDARY_NONE;
+    }
+
+    void TearDown() override
+    {
+        if (_emulator)
+            EmulatorManager::GetInstance()->RemoveEmulator(_emulator->GetId());
+    }
+
+    /// Handler bytes at #0067 of the NMI page (RAM #FF)
+    void InstallHandler(std::initializer_list<uint8_t> code)
+    {
+        uint8_t* page = _memory->RAMPageAddress(0xFF);
+        ASSERT_NE(page, nullptr);
+        uint16_t offset = 0x0067;
+        for (uint8_t byte : code)
+            page[offset++] = byte;
+    }
+
+    /// Offer the CPU a boundary at t; returns true when an NMI was accepted
+    bool BoundaryAt(unsigned t)
+    {
+        _z80->t = t;
+        _z80->boundary = Z80_BOUNDARY_NONE;
+        const uint16_t pcBefore = _z80->pc;
+        const bool handled = _z80->ProcessInterrupts(true, _intStart, _intEnd);
+        return handled && _z80->pc != pcBefore && (_z80->pc == 0x0066 || _z80->pc == 0x0067);
+    }
+
+    bool NmiPageIn() const
+    {
+        return _memory->GetMemoryBankMode(0) == MemoryBankModeEnum::BANK_RAM && _memory->GetRAMPageForBank0() == 0xFF;
+    }
+};
+
+/// NMI-1: a #BF bit-3 1 -> 0 edge waits for the frame INT, then enters at
+/// #0067 (the board fed NOP to the #0066 fetch) with RAM #FF in window 0
+TEST_F(ZXEvoNmi_Test, BfEdgeNmiWaitsForIntThenEntersPageFF)
+{
+    _decoder->DecodePortOut(0x00BF, 0x08, 0x0000);
+    _decoder->DecodePortOut(0x00BF, 0x00, 0x0000);
+    ASSERT_TRUE(_context->emulatorState.nmiAtIntStartPending);
+
+    EXPECT_FALSE(BoundaryAt(_intEnd + 100)) << "not before the frame INT";
+
+    const uint8_t r0 = _z80->r_low;
+    const unsigned t0 = _intStart + 2;
+    ASSERT_TRUE(BoundaryAt(t0));
+    EXPECT_EQ(_z80->pc, 0x0067) << "the forced NOP at #0066 has run";
+    EXPECT_EQ(_z80->t - t0, 11u + 4u) << "acknowledge (11T) + forced NOP M1 (4T)";
+    EXPECT_EQ(static_cast<uint8_t>((_z80->r_low - r0) & 0x7F), 2) << "two refresh cycles: acknowledge + NOP";
+    EXPECT_TRUE(NmiPageIn());
+    EXPECT_TRUE(_context->emulatorState.evoInNmi);
+    EXPECT_EQ(_z80->DirectRead(kStack - 1), kReturnPc >> 8);
+    EXPECT_EQ(_z80->DirectRead(kStack - 2), kReturnPc & 0xFF);
+}
+
+/// NMI-2: OUT (#BE),A : RETN - RETN still runs from the NMI page (it is the
+/// second M1 after the write), returns through the restored map
+TEST_F(ZXEvoNmi_Test, ExitAfterTwoM1sRetnRunsFromPageFF)
+{
+    InstallHandler({0xD3, 0xBE, 0xED, 0x45});  // OUT (#BE),A : RETN
+    ASSERT_NE(_memory->ROMPageHostAddress(28)[0x0069], 0xED) << "ROM must not hold RETN at #0069";
+
+    _decoder->RequestBoardNmi();
+    ASSERT_TRUE(BoundaryAt(_intStart + 2));
+
+    _z80->Z80Step(true);  // OUT (#BE),A
+    EXPECT_TRUE(NmiPageIn()) << "still in after the write";
+    _z80->Z80Step(true);  // RETN (two M1s: ED, 45)
+    EXPECT_EQ(_z80->pc, kReturnPc) << "RETN fetched from the NMI page";
+    EXPECT_FALSE(_context->emulatorState.evoInNmi);
+    EXPECT_EQ(_memory->GetMemoryBankMode(0), MemoryBankModeEnum::BANK_ROM);
+    EXPECT_EQ(_memory->GetROMPage(), 28u);
+}
+
+/// NMI-2b: the two M1s are counted, not instructions: OUT (#BE) : NOP : RET
+/// runs both NOP and RET from the NMI page
+TEST_F(ZXEvoNmi_Test, ExitCountsM1sNotInstructions)
+{
+    InstallHandler({0xD3, 0xBE, 0x00, 0xC9});  // OUT (#BE),A : NOP : RET
+    _decoder->RequestBoardNmi();
+    ASSERT_TRUE(BoundaryAt(_intStart + 2));
+
+    _z80->Z80Step(true);  // OUT
+    _z80->Z80Step(true);  // NOP (M1 #1)
+    EXPECT_TRUE(NmiPageIn());
+    _z80->Z80Step(true);  // RET (M1 #2: fetched from #FF, page leaves at its refresh)
+    EXPECT_EQ(_z80->pc, kReturnPc);
+    EXPECT_FALSE(_context->emulatorState.evoInNmi);
+}
+
+/// NMI-3: the M1 breakpoint fires immediately (no INT wait) on every pass
+TEST_F(ZXEvoNmi_Test, BreakpointNmiIsImmediateAndStaysArmed)
+{
+    InstallHandler({0xD3, 0xBE, 0xED, 0x45});
+    uint8_t* code = _memory->RAMPageAddress(2);  // window 2 = #8000
+    code[0x0123] = 0x00;                          // NOP at kReturnPc
+    code[0x0124] = 0x18;                          // JR -3 -> back to #8123
+    code[0x0125] = 0xFD;
+
+    _decoder->DecodePortOut(0x10BD, kReturnPc & 0xFF, 0x0000);
+    _decoder->DecodePortOut(0x11BD, kReturnPc >> 8, 0x0000);
+    _decoder->DecodePortOut(0x00BF, 0x10, 0x0000);  // breakpoint enable
+
+    for (int pass = 0; pass < 2; pass++)
+    {
+        _z80->t = _intEnd + 200;  // far from the frame INT
+        _z80->Z80Step(true);      // NOP at the breakpoint address: M1 compare
+        EXPECT_TRUE(BoundaryAt(_intEnd + 210)) << "pass " << pass << ": immediate NMI";
+        EXPECT_TRUE(NmiPageIn());
+        _z80->Z80Step(true);  // OUT (#BE)
+        _z80->Z80Step(true);  // RETN -> #8124
+        EXPECT_EQ(_z80->pc, 0x8124);
+        _z80->Z80Step(true);  // JR back to the breakpoint
+        ASSERT_EQ(_z80->pc, kReturnPc);
+    }
+}
+
+/// NMI-4: the Magic button on ZX-Evo is the board's INT-synchronized NMI
+TEST_F(ZXEvoNmi_Test, MagicButtonIsIntSynchronized)
+{
+    _emulator->RequestMNI();
+    EXPECT_FALSE(BoundaryAt(_intEnd + 100)) << "the AVR NMI waits for the frame INT";
+    ASSERT_TRUE(BoundaryAt(_intStart + 2));
+    EXPECT_EQ(_z80->pc, 0x0067);
+    EXPECT_TRUE(NmiPageIn());
+}
+
+/// NMI-5: no nested board NMI while the NMI page is in (nmi_start && !in_nmi)
+TEST_F(ZXEvoNmi_Test, NoNestedBoardNmi)
+{
+    _decoder->RequestBoardNmi();
+    ASSERT_TRUE(BoundaryAt(_intStart + 2));
+    _z80->pc = 0x0067;
+
+    _decoder->RequestBoardNmi();
+    EXPECT_FALSE(BoundaryAt(_intStart + 4)) << "vetoed while in the NMI page";
+    EXPECT_FALSE(_context->emulatorState.nmiAtIntStartPending) << "the request is consumed, not kept";
+}
+
+/// NMI-6: an /NMI that did not come from the board is a plain Z80 NMI: #0066
+/// of whatever is mapped, no page switch
+TEST_F(ZXEvoNmi_Test, PlainNmiDoesNotSwitchPages)
+{
+    _z80->RequestNonMaskedInterrupt();
+    ASSERT_TRUE(BoundaryAt(_intEnd + 100));
+    EXPECT_EQ(_z80->pc, 0x0066);
+    EXPECT_FALSE(NmiPageIn());
+    EXPECT_EQ(_memory->GetROMPage(), 28u);
+}
+
+/// DOS-1: executing the NMI handler (RAM #FF over a window programmed as ROM)
+/// keeps the DOS signal on; a window programmed as RAM closes it (atm_pager.v ram_exec_stb)
+TEST_F(ZXEvoNmi_Test, DosStaysOnInsideTheNmiPage)
+{
+    InstallHandler({0x00, 0x00});  // NOP : NOP
+    EmulatorState& state = _context->emulatorState;
+    state.flags |= CF_TRDOS;
+    _memory->UpdateZ80Banks();
+    ASSERT_TRUE(state.flags & CF_LEAVEDOSRAM);
+
+    _decoder->RequestBoardNmi();
+    ASSERT_TRUE(BoundaryAt(_intStart + 2));
+    _z80->Z80Step(true);
+    EXPECT_TRUE(state.flags & CF_TRDOS) << "the programmed window 0 is ROM: DOS stays on";
+
+    state.pFFF7[0] = 0x200 | 7;  // now program window 0 as RAM
+    state.evoInNmi = false;
+    _memory->UpdateZ80Banks();
+    _z80->pc = 0x0000;
+    _memory->RAMPageAddress(7)[0] = 0x00;
+    _z80->Z80Step(true);
+    EXPECT_FALSE(state.flags & CF_TRDOS) << "execution from a window programmed as RAM closes DOS";
+}
+
+/// endregion </Board NMI>

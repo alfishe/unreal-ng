@@ -171,3 +171,30 @@ TEST_F(ZXEvoErs_Test, ReadsBaseConfAndBootloaderVersionsFromTheAvr)
 // at unit level: PortDecoder_ATM3_Test.FddMask13BD_ReadWriteResetAndLegacyAbsent.
 // The FE image on the legacy FPGA stops before the probe in this emulator;
 // whether real hardware gets that far is not verified, so no test asserts it.
+
+/// Magic button on the ERS main menu (E3): the board NMI enters RAM page #FF,
+/// the ERS NMI handler leaves it through #xxBE and lands in its "MAGIC
+/// Service" (RST8 service ROM page 23), which waits for a key in an EI : HALT
+/// loop at #281B (the byte after the HALT is #281D, where the CPU parks)
+TEST_F(ZXEvoErs_Test, MagicButtonEntersNmiPageAndReachesMagicService)
+{
+    Create();
+    ASSERT_TRUE(RunToMainMenu());
+
+    _emulator->RequestMNI();
+    _emulator->RunNFrames(1, true);
+    EXPECT_TRUE(_context->emulatorState.evoInNmi) << "the board NMI must map RAM #FF";
+
+    Memory* memory = _context->pMemory;
+    Z80* z80 = _context->pCore->GetZ80();
+    EmulatorTestHelper::RunUntil(
+        _emulator.get(),
+        [&] { return !_context->emulatorState.evoInNmi && memory->IsBank0ROM() && memory->GetROMPage() == 23u && z80->pc == 0x281D; },
+        60, 1);
+    EXPECT_FALSE(_context->emulatorState.evoInNmi) << "the ERS handler left the NMI page (#xxBE exit)";
+    ASSERT_TRUE(memory->IsBank0ROM());
+    EXPECT_EQ(memory->GetROMPage(), 23u) << "MAGIC Service code page";
+    EXPECT_EQ(z80->pc, 0x281D) << "key-wait loop";
+    _emulator->RunNFrames(5, true);
+    EXPECT_EQ(z80->pc, 0x281D) << "stays in its key-wait loop";
+}

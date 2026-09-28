@@ -935,7 +935,11 @@ void Emulator::RequestMNI()
         }
     }
 
-    _core->GetZ80()->RequestNonMaskedInterrupt();
+    // Boards that generate the NMI themselves (ZX-Evo: the AVR's PrintScreen
+    // NMI waits for the next frame INT) take the request; everyone else gets
+    // the plain /NMI pulse
+    if (_context->pPortDecoder == nullptr || !_context->pPortDecoder->RequestBoardNmi())
+        _core->GetZ80()->RequestNonMaskedInterrupt();
 
     if (wasRunning)
         Resume(false);

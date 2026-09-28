@@ -1,6 +1,7 @@
 #pragma once
 #include "stdafx.h"
 
+#include "emulator/cpu/z80.h"
 #include "emulator/memory/atm/evoavr.h"
 
 #include "portdecoder_atm710.h"
@@ -29,7 +30,7 @@
 ///
 /// See: Unreal Speccy io.cpp, memory.cpp, atm.cpp
 
-class PortDecoder_ATM3 : public PortDecoder_ATM710
+class PortDecoder_ATM3 : public PortDecoder_ATM710, public IMachineM1Hook
 {
 public:
     static constexpr uint8_t ATM_EFF7_GLUK = 0x80;  // Bit 7: Gluk clock ports on outside shadow
@@ -75,6 +76,19 @@ public:
     /// Evo readback register selected by A12..A8 of #xxBD (trdemu) / #xxBE (legacy):
     /// fpga/base_trdemu/trunk/z80/zports.v portbdmux, fpga/baseconf/trunk portbemux
     uint8_t ReadEvoRegister(uint8_t index);
+
+    /// region <Board NMI (fpga/base_trdemu/trunk/z80/znmi.v, zbreak.v)>
+    /// Magic button (the AVR's PrintScreen NMI): released at the next frame INT
+    bool RequestBoardNmi() override;
+    bool OnFrameIntStartNmi() override;
+    /// Z80 accepted an NMI: a board NMI forces NOP at #0066 and pages RAM #FF in
+    bool OnNmiAccepted() override;
+    /// DOS closes on execution from a window PROGRAMMED as RAM (atm_pager.v
+    /// ram_exec_stb), not from the NMI / RAM-0 overrides mapped over a ROM window
+    bool IsDosLeavingBank(uint8_t bank) const override;
+    /// M1 refresh: NMI exit countdown after #xxBE, breakpoint compare
+    void OnMachineM1(uint16_t address) override;
+    /// endregion </Board NMI>
     /// endregion </Types>
 
     /// region <Fields>
@@ -150,6 +164,9 @@ protected:
     void updateMemoryBanks() override;
 
     void DecodeF7Out(uint16_t port, uint8_t value, uint16_t pc);
+    /// Attach this decoder as the Z80 M1 hook only while it has work there
+    /// (NMI exit countdown running or #BF breakpoint enabled)
+    void RefreshM1Hook();
     void BorderOnlyOut(uint16_t port, uint8_t value, uint16_t pc);
     uint8_t DecodeF7In(uint16_t port);
     /// endregion </Port handlers>

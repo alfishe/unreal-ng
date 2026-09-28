@@ -140,9 +140,18 @@ State: `nmiPending` (INT-synchronized request), `nmiEntry`, `inNmi`, `nmiExitCou
 4. The existing dead path (`EmulatorState::nmi_in_progress`) is removed; the page rule reads
    `inNmi` from the decoder.
 
-Hooks used: the M1 hook (TSConf technical-design §3.6, `CF_MACHINEM1`) and a frame-INT-start
-notification (TSConf phase 0 "INT source" hook; a one-line call from the INT generator is enough
-if ATM3 lands first).
+**As built (E3, 2026-09-28).** Generic hooks, empty for every other model:
+
+| Hook | Where | Used for |
+|---|---|---|
+| `Z80::machineM1Hook` (`IMachineM1Hook::OnMachineM1(address)`) | called on **every** M1, prefix fetches included, right after the opcode read (the refresh edge the RTL acts on); out of line, one pointer test per M1 when unset | NMI exit countdown (`pBE`), breakpoint compare. The decoder attaches itself only while it has work there (`RefreshM1Hook`) and re-attaches after any state restore. This is the M1 hook TSConf phase 0 asked for (TSConf technical-design §3.6): reuse it rather than adding `CF_MACHINEM1` (all eight `CF_*` bits are taken) |
+| `EmulatorState::nmiAtIntStartPending` + `PortDecoder::OnFrameIntStartNmi()` | checked in `Z80::ProcessInterrupts` at every boundary, also while halted; promoted to the /NMI pin inside the frame INT pulse; the board may veto it | `#BF` bit 3 edge and the Magic button |
+| `PortDecoder::OnNmiAccepted()` | right after the Z80 NMI acknowledge | a board NMI: the Z80 charges the forced NOP (4 T, R + 1) and continues at `#0067`; the decoder maps RAM `#FF` |
+| `PortDecoder::RequestBoardNmi()` | `Emulator::RequestMNI` | the Magic button goes to the board instead of a raw /NMI pulse |
+| `PortDecoder::IsDosLeavingBank(bank)` | `CF_LEAVEDOSRAM` in the instruction-start hooks | ZX-Evo: the programmed window type decides, so the NMI page (and later the trdemu page) keep DOS on |
+
+State: `EmulatorState::evoInNmi / evoNmiEntry / nmiAtIntStartPending` (one byte), `pBE` = M1s left
+until the NMI page leaves; all three plus `pBE` are in the TTD `AtmPaging` blob.
 
 ### 5.2 Flash writes (C-5, P-5)
 

@@ -17,6 +17,9 @@ PortDecoder_ATM3::PortDecoder_ATM3(EmulatorContext* context) : PortDecoder_ATM71
 
 PortDecoder_ATM3::~PortDecoder_ATM3()
 {
+    if (_context->pCore && _context->pCore->GetZ80() && _context->pCore->GetZ80()->machineM1Hook == this)
+        _context->pCore->GetZ80()->machineM1Hook = nullptr;
+
     // Battery-backed state outlives the machine ([EVO] NvramFile)
     const char* nvramPath = _context->config.atm.evo_nvram_path;
     if (_nvramLoaded && nvramPath[0] != '\0' && !_cmos.SaveNvram(nvramPath))
@@ -39,6 +42,13 @@ void PortDecoder_ATM3::reset()
     _state->pBE = 0x00;
     _state->pBF = 0x00;
     _state->evoFddMask = 0x00;  // fdd_mask resets to "all drives real" (zports.v:521-525)
+
+    // znmi.v: reset clears pending_nmi, in_nmi, in_nmi_2 (pBE doubles as the
+    // NMI exit M1 countdown, 0 = idle)
+    _state->evoInNmi = false;
+    _state->evoNmiEntry = false;
+    _state->nmiAtIntStartPending = false;
+    RefreshM1Hook();
 
     // ATM3 (ZX-Evo BaseConf) always has the DS12885-style RTC/CMOS
     // (original Unreal Speccy gates it on conf.cmos, but a real ZX-Evo has it)
@@ -517,10 +527,15 @@ void PortDecoder_ATM3::Port_37F7_Out(uint16_t port, uint8_t value, [[maybe_unuse
 
 void PortDecoder_ATM3::Port_BF_Out([[maybe_unused]] uint16_t port, uint8_t value, [[maybe_unused]] uint16_t pc)
 {
-    // Bit 3: 1->0 edge requests NMI (original io.cpp). NMI serving is not
-    // wired in this core yet (see Z80::ProcessInterrupts), so only pBF is
-    // latched here.
+    // Bit 3: a 1->0 edge requests a board NMI, released at the next frame INT
+    // (znmi.v set_nmi_now -> pending_nmi -> nmi_start at int_start)
+    const bool nmiEdge = (_state->pBF & 0x08) && !(value & 0x08);
     _state->pBF = value;
+    if (nmiEdge)
+        RequestBoardNmi();
+
+    // Bit 4 enables the M1 breakpoint (zbreak.v)
+    RefreshM1Hook();
 
     // Bit 0: shaden (shadow DOS ports mode) - gates the memory manager and
     // CMOS address decode in DecodePortOut/DecodePortIn.
@@ -534,10 +549,18 @@ void PortDecoder_ATM3::Port_BF_Out([[maybe_unused]] uint16_t port, uint8_t value
 void PortDecoder_ATM3::Port_BE_Out([[maybe_unused]] uint16_t port, [[maybe_unused]] uint8_t value,
                                    [[maybe_unused]] uint16_t pc)
 {
-    // NMI exit counter - every write resets it to 2 (original io.cpp)
-    _state->pBE = 2;
+    // NMI exit (znmi.v clr_nmi): the NMI page leaves #0000-#3FFF right after
+    // the refresh of the second M1 that follows this write - with the usual
+    // OUT (#BE),A : RETN that is the RETN's second opcode byte, so RETN runs
+    // from the NMI page and returns through the restored map. pBE counts those
+    // M1s down (0 = idle)
+    if (_state->evoInNmi)
+    {
+        _state->pBE = 2;
+        RefreshM1Hook();
+    }
 
-    MLOGDEBUG("Port_BE_Out: pBE=2");
+    MLOGDEBUG("Port_BE_Out: NMI exit armed=%d", _state->pBE != 0);
 }
 
 bool PortDecoder_ATM3::IsLegacyFpga() const
@@ -729,6 +752,87 @@ void PortDecoder_ATM3::BorderOnlyOut(uint16_t port, uint8_t value, uint16_t pc)
     Default_Port_FE_Out(port, static_cast<uint8_t>((value & 0x07) | keep), pc);
 }
 
+/// region <Board NMI>
+
+bool PortDecoder_ATM3::RequestBoardNmi()
+{
+    // pending_nmi: released at the next frame INT (Z80::ProcessInterrupts),
+    // where OnFrameIntStartNmi() still vetoes it while the NMI page is in
+    _state->nmiAtIntStartPending = true;
+    return true;
+}
+
+bool PortDecoder_ATM3::OnFrameIntStartNmi()
+{
+    // nmi_count only starts on `nmi_start && !in_nmi`: no nested board NMI
+    if (_state->evoInNmi)
+        return false;
+
+    _state->evoNmiEntry = true;
+    return true;
+}
+
+bool PortDecoder_ATM3::OnNmiAccepted()
+{
+    // Only the board's own NMIs page RAM #FF in (in_nmi_2); an /NMI from
+    // elsewhere is a plain Z80 NMI at #0066 of whatever is mapped
+    if (!_state->evoNmiEntry)
+        return false;
+
+    _state->evoNmiEntry = false;
+    _state->evoInNmi = true;
+    if (_memory)
+        _memory->UpdateZ80Banks();
+    return true;
+}
+
+bool PortDecoder_ATM3::IsDosLeavingBank(uint8_t bank) const
+{
+    // Pager off: every window is ROM 31
+    if (!(_state->aFF77 & ATM_AFF77_PEN))
+        return false;
+
+    const unsigned regSet = (_state->p7FFD & 0x10) ? 4 : 0;
+    return (_state->pFFF7[regSet + (bank & 3)] & 0x100) == 0;  // bit 8 = programmed ROM
+}
+
+void PortDecoder_ATM3::OnMachineM1(uint16_t address)
+{
+    // NMI exit countdown (znmi.v clr_count / pending_clr)
+    if (_state->pBE > 0 && --_state->pBE == 0)
+    {
+        _state->evoInNmi = false;
+        if (_memory)
+            _memory->UpdateZ80Banks();
+    }
+
+    // M1 breakpoint (zbreak.v): an immediate NMI, not synchronized to INT,
+    // and like every board NMI only while the NMI page is out
+    if ((_state->pBF & 0x10) && address == _state->pBD && !_state->evoInNmi)
+    {
+        _state->evoNmiEntry = true;
+        if (_context->pCore && _context->pCore->GetZ80())
+            _context->pCore->GetZ80()->RequestNonMaskedInterrupt();
+    }
+
+    RefreshM1Hook();
+}
+
+void PortDecoder_ATM3::RefreshM1Hook()
+{
+    if (!_context->pCore || !_context->pCore->GetZ80())
+        return;
+
+    const bool needed = _state->pBE > 0 || (_state->pBF & 0x10);
+    Z80* z80 = _context->pCore->GetZ80();
+    if (needed)
+        z80->machineM1Hook = this;
+    else if (z80->machineM1Hook == this)
+        z80->machineM1Hook = nullptr;
+}
+
+/// endregion </Board NMI>
+
 /// @brief BaseConf window mapping (fpga/base_trdemu/trunk/mem/atm_pager.v:114-168)
 /// @details Priority for window 0: pager off (all windows ROM 31) > NMI (RAM
 ///          #FF) > #EFF7 bit 3 (RAM page 0) > the page register. A register
@@ -804,10 +908,14 @@ void PortDecoder_ATM3::updateMemoryBanks()
     }
 
     // Window 0 overrides
-    if (_state->nmi_in_progress)
+    if (_state->evoInNmi)
         _memory->SetRAMPageToBank0(0xFF & ramMask);
     else if (_state->pEFF7 & ATM_EFF7_ROCACHE)
         _memory->SetRAMPageToBank0(0);
+
+    // Every state restore (TTD seek, snapshot) re-runs the decode: re-attach
+    // the M1 hook the restored NMI / breakpoint state needs
+    RefreshM1Hook();
 }
 
 /// endregion </Port handlers>

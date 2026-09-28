@@ -54,11 +54,13 @@ struct AtmPagingState
     uint8_t  evoAvrExtType;     ///< ZX-Evo AVR extension type (cells 0xF0-0xFF)
     uint8_t  evoAvrEepromPage;  ///< ZX-Evo AVR register A (EEPROM page)
     uint8_t  evoAvrFlags;       ///< ZX-Evo AVR: bit 0 EEPROM mode, bit 1 Caps LED, bit 2 tape-out
-    uint8_t  reserved[3];       ///< explicit tail padding, always 0
+    uint8_t  evoInNmi;          ///< ZX-Evo NMI page (RAM #FF) mapped into #0000-#3FFF
+    uint8_t  evoNmiEntry;       ///< ZX-Evo: the next accepted NMI is the board's own
+    uint8_t  nmiAtIntPending;   ///< board NMI waiting for the frame INT
 };
 
 static_assert(sizeof(AtmPagingState) == 132, "AtmPagingState layout changed");
-static_assert(offsetof(AtmPagingState, reserved) + 3 == sizeof(AtmPagingState),
+static_assert(offsetof(AtmPagingState, nmiAtIntPending) + 1 == sizeof(AtmPagingState),
               "AtmPagingState has implicit trailing padding");
 
 /// @brief TTDSerializable implementation for ATM paging state.

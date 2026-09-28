@@ -51,12 +51,14 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
+#include "loaders/benchmark_path_helper.h"
 
 namespace
 {
 
-// Path to action.sna for realistic workload
-static const char* ACTION_SNA = "testdata/loaders/sna/action.sna";
+// Realistic workload. Required: without it the frame benchmarks would measure an
+// idle ROM and report numbers that look valid (see RequireTestDataFile)
+static const char* ACTION_SNA_RELATIVE = "loaders/sna/action.sna";
 
 class FrameBenchmarkFixture : public benchmark::Fixture
 {
@@ -70,13 +72,11 @@ public:
 
     void SetUp(const benchmark::State&) override
     {
+        static const std::string actionSna = BenchmarkPathHelper::RequireTestDataFile(ACTION_SNA_RELATIVE);
+
         emulator = new Emulator(LoggerLevel::LogError);
         if (!emulator->Init())
-        {
-            delete emulator;
-            emulator = nullptr;
-            return;
-        }
+            BenchmarkPathHelper::FailSetup("Emulator::Init failed");
 
         context = emulator->GetContext();
         ttd = context->pTimeTravelManager;
@@ -84,7 +84,8 @@ public:
         fm = emulator->GetFeatureManager();
 
         // Load action.sna for realistic workload
-        emulator->LoadSnapshot(ACTION_SNA);
+        if (!emulator->LoadSnapshot(actionSna))
+            BenchmarkPathHelper::FailSetup("cannot load " + actionSna);
 
         // Create CUT wrapper for MainLoop to access RunFrame directly
         mainloop = new MainLoopCUT(context);

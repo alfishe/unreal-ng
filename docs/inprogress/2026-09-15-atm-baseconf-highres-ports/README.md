@@ -18,6 +18,7 @@ virtual TR-DOS trap that the current Evo Reset Service needs.
 | [implementation-plan.md](implementation-plan.md) | Phases E0-E10, dependencies on the shared IDE, SD and TSConf work, acceptance tests |
 | [e0-decoder-fixes.md](e0-decoder-fixes.md) | Phase E0 done (2026-09-28): the RTL-derived port decode, per-fix hardware/emulator evidence, test run |
 | [e1-fpga-variant-and-rom.md](e1-fpga-variant-and-rom.md) | Phase E1 done (2026-09-28): FPGA variant switch, `#xxBD` register table, official ROM image and its measured boot |
+| [e3-board-nmi.md](e3-board-nmi.md) | Phase E3 done (2026-09-28): board NMI, Magic button, breakpoint, the generic Z80 M1 hook; the frame benchmark data fix |
 | [e2a-evo-avr.md](e2a-evo-avr.md) | Phase E2a done (2026-09-28): `EvoAvr` — version window, registers A-D, EEPROM, NVRAM file. PS/2 keyboard (E2b) deferred, design in the TDD §6.1 |
 | [tdd-evo-control-and-avr.md](tdd-evo-control-and-avr.md) | Decoder fixes, `#xxBD/#BE/#BF`, NMI, breakpoint, flash, font RAM, `EvoAvr` (clock, NVRAM, PS/2, versions) |
 | [tdd-virtual-trdos.md](tdd-virtual-trdos.md) | The trdemu trap behind the ERS RAM disk and TRD mounting |

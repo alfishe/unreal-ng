@@ -78,6 +78,9 @@ TEST(TtdAtmPagingLayout_Test, BlobIsPaddingFree)
     src.evoAvrExtType = 0x03;
     src.evoAvrEepromPage = 0x7F;
     src.evoAvrFlags = 0x05;
+    src.evoInNmi = 1;
+    src.evoNmiEntry = 1;
+    src.nmiAtIntPending = 1;
 
     *dst = src;
     EXPECT_EQ(std::memcmp(dst, &src, sizeof(AtmPagingState)), 0)
@@ -159,6 +162,9 @@ TEST(TtdAtmPaging_Test, Atm3RoundTripCarriesPaletteBorderAndLiveCmosLatch)
     }
     state.atmBorderBright = 1;
     state.evoFddMask = 0x05;
+    state.evoInNmi = true;
+    state.evoNmiEntry = true;
+    state.nmiAtIntStartPending = true;
     atm3->GetCMOS().SetCMOSAddress(0x2E);
     atm3->GetEvoAvr().SetVolatileState(EvoAvr::kExtBootloaderVersion, 0x42, 0x03);
 
@@ -173,6 +179,9 @@ TEST(TtdAtmPaging_Test, Atm3RoundTripCarriesPaletteBorderAndLiveCmosLatch)
     }
     state.atmBorderBright = 0;
     state.evoFddMask = 0;
+    state.evoInNmi = false;
+    state.evoNmiEntry = false;
+    state.nmiAtIntStartPending = false;
     atm3->GetCMOS().SetCMOSAddress(0x00);
     atm3->GetEvoAvr().SetVolatileState(0, 0, 0);
 
@@ -185,6 +194,9 @@ TEST(TtdAtmPaging_Test, Atm3RoundTripCarriesPaletteBorderAndLiveCmosLatch)
     }
     EXPECT_EQ(state.atmBorderBright, 1);
     EXPECT_EQ(state.evoFddMask, 0x05) << "the #13BD virtual-drive mask";
+    EXPECT_TRUE(state.evoInNmi) << "board NMI page state";
+    EXPECT_TRUE(state.evoNmiEntry);
+    EXPECT_TRUE(state.nmiAtIntStartPending);
     EXPECT_EQ(atm3->GetEvoAvr().GetExtensionType(), EvoAvr::kExtBootloaderVersion) << "AVR extension type";
     EXPECT_EQ(atm3->GetEvoAvr().GetEepromPage(), 0x42);
     EXPECT_TRUE(atm3->GetEvoAvr().IsEepromMode());
@@ -242,6 +254,10 @@ TEST(TtdAtmPaging_Test, HashRespondsToEveryCarriedField)
     state.evoFddMask ^= 0x04;
     EXPECT_NE(serializer.TTDHashState(), base) << "evoFddMask not hashed";
     state.evoFddMask ^= 0x04;
+
+    state.evoInNmi = !state.evoInNmi;
+    EXPECT_NE(serializer.TTDHashState(), base) << "evoInNmi not hashed";
+    state.evoInNmi = !state.evoInNmi;
 
     state.aFE ^= 0x01;
     EXPECT_NE(serializer.TTDHashState(), base) << "aFE not hashed";

@@ -464,6 +464,11 @@ void PortDecoder::RecordPortTrace(bool isOut, uint16_t rawPort, uint8_t value, u
     _portTrace->record(event);
 }
 
+bool PortDecoder::IsDosLeavingBank(uint8_t bank) const
+{
+    return _memory != nullptr && _memory->GetMemoryBankMode(bank) == MemoryBankModeEnum::BANK_RAM;
+}
+
 PortTraceSessionInfo PortDecoder::getPortTraceSessionInfo() const
 {
     PortTraceSessionInfo info;
