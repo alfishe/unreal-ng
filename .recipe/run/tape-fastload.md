@@ -16,7 +16,7 @@ Model: whatever the program wants (`48K` for classic titles).
 ```text
 load_software      {"path":"scratch/game.tap","play":true}   # mount + start playback in one shot
 invoke_api        {"method":"GET","path":"/api/v1/emulator/{id}/tape"}   # fast_load plan + block estimate
-type_input         {"action":"type","text":"LOAD \"\"","tokenized":true}
+invoke_api        {"method":"POST","path":"/api/v1/emulator/{id}/basic/run","body":{"command":"LOAD \"\""}}
 invoke_api        {"method":"POST","path":"/api/v1/emulator/{id}/tape/seek","body":{"block":17}}
 inspect_state     {"aspects":["screen_ocr","screen_digest"]}   # loaded? intro rendering?
 ```
@@ -42,24 +42,42 @@ second regardless of the on-screen clock. Otherwise budget real time
 
 ### Step 2 — Enter the loading command
 
-`basic/run` handles the 48K/128K editor differences (menu navigation
-included):
+`basic/run` types the command through the keyboard the way the editor on
+screen needs it (48K editor: `LOAD` is the J key; 128K editor: letters),
+proves every key on the ROM's control points, presses ENTER and answers with
+what the ROM did
+([input-verification.md](../../core/src/debugger/analyzers/basic-lang/input-verification.md)).
+From the 128K / Pentagon / Scorpion main menu it first enters `128 BASIC`.
 
 ```bash
 curl -s -X POST "$BASE/emulator/$EMU_ID/basic/run" \
      -H 'Content-Type: application/json' \
-     -d '{"command": "LOAD \"\""}' | jq '{success, basic_mode}'
+     -d '{"command": "LOAD \"\""}' | jq '{success, outcome, failure, message, editor}'
+# → {"success": true, "outcome": "started", "editor": "48 BASIC", ...}
 ```
 
-Raw-keystroke alternative:
+| `outcome` / `failure` | Meaning |
+|:--|:--|
+| `started` | The command runs (for `LOAD ""` the tape loader now waits for the tape) |
+| `finished` | With `"wait_report": true`: it ended; `report` / `err_nr` say how |
+| `stored` | The line had a number and went into the program |
+| `syntax_error` | The editor rejected the line; nothing ran (HTTP 422) |
+| `busy` | The machine is not waiting for input — a program is running (HTTP 409) |
+| `emulator_paused` | Resume the emulator first: nothing can be typed while it is paused (409) |
+| `unknown_target` / `unsupported_editor` | No editor we know at `#0000` (+3 editor: not yet) (400) |
+
+Add `"trace": true` for the cyclogram (every control point the ROM passed).
+
+Without typing at all, on a 128K / Pentagon / Scorpion in its main menu: mount
+the tape and press ENTER — "Tape Loader" is the first menu item.
 
 ```bash
-curl -s -X POST "$BASE/emulator/$EMU_ID/keyboard/type" \
-     -H 'Content-Type: application/json' \
-     -d '{"text": "LOAD \"\"", "tokenized": true}' | jq .
+curl -s -X POST "$BASE/emulator/$EMU_ID/keyboard/tap" -H 'Content-Type: application/json' -d '{"key":"enter"}'
 ```
 
-MCP: `type_input` `{"action":"type","text":"LOAD \"\""}`.
+MCP: `invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/basic/run","body":{"command":"LOAD \"\""}}`.
+`type_input {"action":"type","text":"LOAD \"\"","tokenized":true}` types the same line, verified, but
+does not press ENTER. Never plain `type` for BASIC keywords: it types letters (`LET OAD "` on a 48K).
 
 ### Step 3 — Start the tape
 
@@ -132,5 +150,6 @@ loader's `IN FE`/edge-detect loop or capture it with
   instantly — verify by screen content (digest/OCR), not by tape state.
 - **48K vs 128K versions**: some tapes ship two variants; the wrong one
   loads garbage. Prefer explicit `.tap` files per machine type.
-- **LOAD "" on a 128K in the menu**: `basic/run` navigates the menu; raw
-  typing must press `B` first.
+- **LOAD "" on a 128K in the menu**: `basic/run` leaves the menu for
+  `128 BASIC` itself, every key verified; or mount the tape and press ENTER
+  on "Tape Loader".

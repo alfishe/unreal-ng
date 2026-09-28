@@ -32,7 +32,7 @@ invoke_api         {"method":"GET","path":"/api/v1/emulator/{id}/disk/A/track/40
                     #   → track_size + clock_bitmap_base64 in structuredContent
 invoke_api         {"method":"GET","path":"/api/v1/emulator/{id}/disk/A/sector/40/0/1/raw"}
 control_execution  {"action":"run_frames","frames":600}          # Path C: let the formatter write tracks
-type_input         {"action":"type","text":"RANDOMIZE USR 60000","tokenized":true}
+invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/basic/run","body":{"command":"RANDOMIZE USR 60000"}}
 inspect_state      {"aspects":["screen_ocr"]}                      # formatter done? menu says so
 ```
 
