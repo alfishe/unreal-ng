@@ -48,7 +48,6 @@ protected:
 
     CommandTyper::Result Run(const std::string& command) { return Run(command, Options(true)); }
 
-    bool IsTrDos() const { return GetParam().find("TRDOS") != std::string::npos; }
     /// The 128K and +3 editors: keywords spelled, tokenised at ENTER
     bool Is128Editor() const
     {
@@ -73,13 +72,25 @@ protected:
     }
 };
 
-INSTANTIATE_TEST_SUITE_P(Editors, CommandTyper_Test, ::testing::ValuesIn(RomEditorFixture::RomEditors()),
+/// Each test runs on the editors it applies to, none is skipped: BASIC commands on every editor that runs
+/// BASIC, single-key keywords on the 48K editor, disk commands at the TR-DOS prompt
+class CommandTyperKeyword_Test : public CommandTyper_Test
+{
+};
+
+class CommandTyperTrDos_Test : public CommandTyper_Test
+{
+};
+
+INSTANTIATE_TEST_SUITE_P(Editors, CommandTyper_Test, ::testing::ValuesIn(RomEditorFixture::BasicEditors()),
+                         RomEditorFixture::ParamName);
+INSTANTIATE_TEST_SUITE_P(Editors, CommandTyperKeyword_Test, ::testing::ValuesIn(RomEditorFixture::KeywordEditors()),
+                         RomEditorFixture::ParamName);
+INSTANTIATE_TEST_SUITE_P(Editors, CommandTyperTrDos_Test, ::testing::ValuesIn(RomEditorFixture::TrDosEditors()),
                          RomEditorFixture::ParamName);
 
 TEST_P(CommandTyper_Test, LoadStartsTheTapeLoader)
 {
-    if (IsTrDos())
-        GTEST_SKIP() << "TR-DOS LOAD is a disk command";
     Ready();
     ASSERT_FALSE(HasFatalFailure());
 
@@ -90,8 +101,6 @@ TEST_P(CommandTyper_Test, LoadStartsTheTapeLoader)
 
 TEST_P(CommandTyper_Test, DirectCommandFinishesWithZeroOk)
 {
-    if (IsTrDos())
-        GTEST_SKIP() << "TR-DOS: see TrDosCommand";
     Ready();
     ASSERT_FALSE(HasFatalFailure());
 
@@ -106,8 +115,6 @@ TEST_P(CommandTyper_Test, DirectCommandFinishesWithZeroOk)
 /// report is also the first key of the next line (ReportShown)
 TEST_P(CommandTyper_Test, CommandAfterAReport)
 {
-    if (IsTrDos())
-        GTEST_SKIP() << "TR-DOS: see TrDosCommand";
     Ready();
     ASSERT_FALSE(HasFatalFailure());
 
@@ -123,8 +130,6 @@ TEST_P(CommandTyper_Test, CommandAfterAReport)
 
 TEST_P(CommandTyper_Test, RepeatedCharactersQuotesAndCapitals)
 {
-    if (IsTrDos())
-        GTEST_SKIP() << "TR-DOS: see TrDosCommand";
     Ready();
     ASSERT_FALSE(HasFatalFailure());
 
@@ -137,8 +142,6 @@ TEST_P(CommandTyper_Test, RepeatedCharactersQuotesAndCapitals)
 
 TEST_P(CommandTyper_Test, NumberedLineIsStored)
 {
-    if (IsTrDos())
-        GTEST_SKIP() << "TR-DOS has no program lines";
     Ready();
     ASSERT_FALSE(HasFatalFailure());
 
@@ -148,8 +151,6 @@ TEST_P(CommandTyper_Test, NumberedLineIsStored)
 
 TEST_P(CommandTyper_Test, SyntaxErrorIsReportedAndNothingRuns)
 {
-    if (IsTrDos())
-        GTEST_SKIP() << "TR-DOS: see TrDosCommand";
     Ready();
     ASSERT_FALSE(HasFatalFailure());
 
@@ -158,10 +159,8 @@ TEST_P(CommandTyper_Test, SyntaxErrorIsReportedAndNothingRuns)
     EXPECT_NE(r.errNr, 0xFF) << Describe(r);
 }
 
-TEST_P(CommandTyper_Test, KeywordThroughExtendedMode)
+TEST_P(CommandTyperKeyword_Test, KeywordThroughExtendedMode)
 {
-    if (IsTrDos() || Is128Editor())
-        GTEST_SKIP() << "48K editor keywords only (the 128K editor spells them)";
     Ready();
     ASSERT_FALSE(HasFatalFailure());
 
@@ -172,10 +171,8 @@ TEST_P(CommandTyper_Test, KeywordThroughExtendedMode)
     EXPECT_TRUE(ScreenHas("65")) << Screen();
 }
 
-TEST_P(CommandTyper_Test, UntypableTextIsRefused)
+TEST_P(CommandTyperKeyword_Test, UntypableTextIsRefused)
 {
-    if (IsTrDos() || Is128Editor())
-        GTEST_SKIP() << "the 48K editor's K mode";
     Ready();
     ASSERT_FALSE(HasFatalFailure());
 
@@ -188,8 +185,6 @@ TEST_P(CommandTyper_Test, UntypableTextIsRefused)
 
 TEST_P(CommandTyper_Test, RunningProgramIsBusy)
 {
-    if (IsTrDos())
-        GTEST_SKIP() << "TR-DOS has no program lines";
     Ready();
     ASSERT_FALSE(HasFatalFailure());
 
@@ -204,10 +199,8 @@ TEST_P(CommandTyper_Test, RunningProgramIsBusy)
     EXPECT_EQ(r.bytesTyped, 0u);
 }
 
-TEST_P(CommandTyper_Test, TrDosCommandIsRecognised)
+TEST_P(CommandTyperTrDos_Test, TrDosCommandIsRecognised)
 {
-    if (!IsTrDos())
-        GTEST_SKIP() << "TR-DOS only";
     Ready();
     ASSERT_FALSE(HasFatalFailure());
     ASSERT_TRUE(_emulator->LoadDisk(TestPathHelper::GetTestDataPath("loaders/trd/zx-format8.trd"), 0));
@@ -217,12 +210,25 @@ TEST_P(CommandTyper_Test, TrDosCommandIsRecognised)
     EXPECT_TRUE(r.trdos) << Describe(r);
 }
 
+// A second command after TR-DOS reported an error for the first: the prompt takes it like the first
+TEST_P(CommandTyperTrDos_Test, CommandAfterARejection)
+{
+    Ready();
+    ASSERT_FALSE(HasFatalFailure());
+
+    const CommandTyper::Result first = Run("CAT");
+    ASSERT_EQ(first.failure, Failure::TrDosRejected) << Describe(first);
+
+    ASSERT_TRUE(_emulator->LoadDisk(TestPathHelper::GetTestDataPath("loaders/trd/zx-format8.trd"), 0));
+    const CommandTyper::Result second = Run("CAT");
+    EXPECT_EQ(second.outcome, Outcome::TrDosCommand) << Describe(second);
+    EXPECT_TRUE(second.trdos) << Describe(second);
+}
+
 // No disk: TR-DOS activates the drive before it looks the command up, and the
 // failure is reported with TR-DOS's error code rather than as success
-TEST_P(CommandTyper_Test, TrDosWithoutDiskIsRejected)
+TEST_P(CommandTyperTrDos_Test, TrDosWithoutDiskIsRejected)
 {
-    if (!IsTrDos())
-        GTEST_SKIP() << "TR-DOS only";
     Ready();
     ASSERT_FALSE(HasFatalFailure());
 

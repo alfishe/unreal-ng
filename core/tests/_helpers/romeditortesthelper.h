@@ -38,6 +38,43 @@ public:
                  "Scorpion-48BASIC", "Scorpion-128BASIC", "Scorpion-TRDOS" };
     }
 
+    /// The editors that run BASIC (every editor but the TR-DOS prompt)
+    static std::vector<std::string> BasicEditors()
+    {
+        std::vector<std::string> editors;
+        for (const std::string& editor : RomEditors())
+        {
+            if (editor.find("TRDOS") == std::string::npos)
+                editors.push_back(editor);
+        }
+        return editors;
+    }
+
+    /// The TR-DOS A> prompt (the 48K editor, the line goes to TR-DOS)
+    static std::vector<std::string> TrDosEditors()
+    {
+        std::vector<std::string> editors;
+        for (const std::string& editor : RomEditors())
+        {
+            if (editor.find("TRDOS") != std::string::npos)
+                editors.push_back(editor);
+        }
+        return editors;
+    }
+
+    /// The 48K editor running BASIC: keywords are single keys (K and E modes). The 128K, +2 and +3
+    /// editors spell them out and tokenise at ENTER
+    static std::vector<std::string> KeywordEditors()
+    {
+        std::vector<std::string> editors;
+        for (const std::string& editor : BasicEditors())
+        {
+            if (editor.find("128BASIC") == std::string::npos && editor.find("-3BASIC") == std::string::npos)
+                editors.push_back(editor);
+        }
+        return editors;
+    }
+
     /// gtest parameter name: '-' is not allowed
     static std::string ParamName(const ::testing::TestParamInfo<std::string>& info)
     {
