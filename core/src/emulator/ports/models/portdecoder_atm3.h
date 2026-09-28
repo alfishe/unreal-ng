@@ -7,6 +7,7 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/io/sdcard/sdcardspi.h"
 #include "emulator/io/spi/zcontrollerspi.h"
+#include "emulator/media/mediaslot.h"
 #include "emulator/memory/atm/evoavr.h"
 
 #include "portdecoder_atm710.h"
@@ -105,15 +106,21 @@ public:
     /// endregion </Board NMI>
 
     /// region <SD card (Z-Controller, tdd-storage-sd-ide-cd.md §2)>
-    /// The card in the slot and the Z80-side controller. [ZC] SDCardImage is
-    /// inserted at power-on (the first reset); a Z80 reset keeps the card and
-    /// its session writes, like pressing reset on the board
+    /// The card is the media manager's slot "sd.zc" (storage-manager
+    /// integration-zxevo-sd.md): the manager owns the medium and applies the
+    /// config ([MEDIA] sd.zc, legacy [ZC]) before the first reset. A Z80
+    /// reset keeps the card and its session writes, like the board's reset
     SdCardSpi& GetSdCard() { return _sdCard; }
     ZControllerSpi& GetZController() { return _zc; }
-    /// Insert an image file / any medium; the AVR reports the card present
+    /// Insert an image file / any medium through the media manager (directly
+    /// when the context has none: bare decoder unit tests)
     bool InsertSdCard(const std::string& path, SdCardSpi::WriteMode mode, bool writeProtect = false);
     bool InsertSdCard(std::unique_ptr<IBlockDevice> media, SdCardSpi::WriteMode mode, bool writeProtect = false);
     void EjectSdCard();
+
+    /// ATM paging + the SD card's protocol state
+    std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
+    std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
     /// endregion </SD card>
     /// endregion </Types>
 
@@ -126,9 +133,24 @@ protected:
     bool _nvramLoaded = false;  // [EVO] NvramFile read once, on the first reset
 
     // Z-Controller SD slot: the card outlives Core::Reset() like the NVRAM
+    class EvoSdSlot : public IMediaSlot
+    {
+    public:
+        explicit EvoSdSlot(PortDecoder_ATM3& owner);
+        const SlotDescriptor& Descriptor() const override { return _descriptor; }
+        void Attach(Medium& medium) override;
+        void Detach() override;
+        bool IsBusy() const override;
+        void SetWriteProtectSwitch(bool on) override;
+
+    private:
+        PortDecoder_ATM3& _owner;
+        SlotDescriptor _descriptor;
+    };
+
     SdCardSpi _sdCard;
     ZControllerSpi _zc;
-    bool _sdConfigApplied = false;  // [ZC] SDCardImage inserted once, on the first reset
+    EvoSdSlot _sdSlot{*this};
     bool _sdWriteProtect = false;   // the slot's write-protect switch
     /// endregion </Fields>
 

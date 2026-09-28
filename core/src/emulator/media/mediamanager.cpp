@@ -181,7 +181,7 @@ MediaResult MediaManager::Insert(const std::string& slotId, std::unique_ptr<Medi
     state.writeProtect = options.writeProtect;
     if (state.attached)
         state.ejectRequested = true;
-    state.emptyFramesLeft = (state.attached && !options.immediate) ? DelayFrames(descriptor) : 0;
+    state.emptyFramesLeft = (state.attached && !options.immediate) ? DelayFrames(state.swapDelayMs.value_or(descriptor.swapDelayMs)) : 0;
 
     if (CanApplyNow())
     {
@@ -275,6 +275,48 @@ MediaResult MediaManager::Export(const std::string& slotId, const std::string& p
     return MediaResult::Success();
 }
 
+std::vector<std::string> MediaManager::ApplyConfiguredMedia(const std::vector<MediaSetEntry>& mediaSet)
+{
+    std::vector<std::string> problems;
+    for (const MediaSetEntry& entry : mediaSet)
+    {
+        if (!HasSlot(entry.slotId))
+        {
+            if (!entry.legacy)
+                problems.push_back("[MEDIA] " + entry.slotId + ": this machine has no such slot");
+            continue;
+        }
+        {
+            std::lock_guard<std::recursive_mutex> lock(_mutex);
+            SlotState& state = _slots[entry.slotId];
+            if (entry.swapDelayMs)
+                state.swapDelayMs = entry.swapDelayMs;
+            if (entry.writeProtect)
+            {
+                state.writeProtect = *entry.writeProtect;
+                if (state.attached)
+                    state.slot->SetWriteProtectSwitch(state.writeProtect);
+            }
+        }
+        if (entry.source.path.empty())
+            continue;
+
+        InsertOptions options;
+        options.access = entry.access;
+        options.fs = entry.fs;
+        options.codePage = entry.codePage;
+        options.freeBytes = entry.freeBytes;
+        options.writeProtect = entry.writeProtect.value_or(false);
+        options.immediate = true;
+        const MediaResult result = Insert(entry.slotId, entry.source, options);
+        if (!result.Ok())
+            problems.push_back(entry.slotId + ": " + result.message);
+        for (const std::string& line : result.report)
+            problems.push_back(entry.slotId + ": " + line);
+    }
+    return problems;
+}
+
 /// endregion </Operations>
 
 void MediaManager::ApplyPending()
@@ -289,6 +331,22 @@ void MediaManager::ApplyPending()
         Retire(std::move(old));
 }
 
+void MediaManager::NoteWrite(const std::string& slotId)
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    auto it = _slots.find(slotId);
+    if (it == _slots.end() || it->second.writeMarkedThisFrame)
+        return;
+    it->second.writeMarkedThisFrame = true;
+
+    ttd::TimeTravelManager* ttd = _context ? _context->pTimeTravelManager : nullptr;
+    if (ttd && ttd->IsRecording())
+    {
+        const std::string reason = "Media write " + slotId;
+        ttd->RecordExternalEvent(ttd::TTDExternalEventKind::DiskWrite, reason.c_str());
+    }
+}
+
 Medium* MediaManager::GetMedium(const std::string& slotId)
 {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
@@ -300,6 +358,8 @@ Medium* MediaManager::GetMedium(const std::string& slotId)
 
 void MediaManager::ApplySlot(const std::string& slotId, SlotState& state, std::vector<std::unique_ptr<Medium>>& retired)
 {
+    state.writeMarkedThisFrame = false;  // a new frame: the next write marks again
+
     if (state.ejectRequested)
     {
         if (state.slot->IsBusy())
@@ -387,12 +447,12 @@ MediaResult MediaManager::CheckInUse(const std::string& slotId, const Medium& me
     return MediaResult::Success();
 }
 
-uint32_t MediaManager::DelayFrames(const SlotDescriptor& descriptor) const
+uint32_t MediaManager::DelayFrames(uint32_t swapDelayMs) const
 {
-    if (descriptor.swapDelayMs == 0)
+    if (swapDelayMs == 0)
         return 0;
     const uint64_t frameUs = (_context && _context->config.frame_duration_us) ? _context->config.frame_duration_us : 20000;
-    return static_cast<uint32_t>((static_cast<uint64_t>(descriptor.swapDelayMs) * 1000 + frameUs - 1) / frameUs);
+    return static_cast<uint32_t>((static_cast<uint64_t>(swapDelayMs) * 1000 + frameUs - 1) / frameUs);
 }
 
 void MediaManager::Post(const char* topic, const std::string& slotId, const Medium* medium) const

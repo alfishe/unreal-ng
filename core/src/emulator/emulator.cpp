@@ -361,6 +361,15 @@ bool Emulator::Init()
     /// endregion </Sanity checks>
 
 
+    // Configured media go in before the first reset: firmware may boot from them
+    if (result && _context->pMediaManager && _config)
+    {
+        for (const std::string& line : _config->GetMediaReport())
+            MLOGWARNING("Emulator::Init - media config: %s", line.c_str());
+        for (const std::string& line : _context->pMediaManager->ApplyConfiguredMedia(_config->GetMediaSet()))
+            MLOGWARNING("Emulator::Init - media: %s", line.c_str());
+    }
+
     // Reset CPU and set-up all ports / ROM and RAM pages
     if (result)
     {

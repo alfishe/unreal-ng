@@ -3,6 +3,9 @@
 
 #include "portdecoder_atm3_test.h"
 #include "debugger/ttd/atm/ttdatmpaging.h"
+#include "debugger/ttd/atm/ttdevosdcard.h"
+#include "emulator/media/mediaformatregistry.h"
+#include "emulator/media/mediamanager.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "_helpers/emulatortesthelper.h"
 #include "base/featuremanager.h"
@@ -934,38 +937,103 @@ TEST_F(PortDecoder_ATM3_Test, ZController_ResetKeepsTheCardAndDeselects)
     EXPECT_EQ(back[0], 0x99) << "session writes survive a Z80 reset";
 }
 
-/// ST-TTD-1 (SD part): the first SD command while TTD records ends the
-/// recording at the frame boundary; an idle card in the slot does not
-TEST(ZXEvoSdCardTtd_Test, FirstSdCommandEndsTheRecording)
+namespace
+{
+    /// Write one block through the ports (CMD24, data token, 512 bytes, CRC,
+    /// data response, busy); returns the data response
+    uint8_t SdWriteBlock(PortDecoder_ATM3* decoder, uint32_t address, uint8_t fill)
+    {
+        if (SdCommand(decoder, 0x0057, 24, address) != 0x00)
+            return 0xFF;
+        decoder->DecodePortOut(0x0057, 0xFF, 0);
+        decoder->DecodePortOut(0x0057, 0xFE, 0);
+        for (int i = 0; i < 512; i++)
+            decoder->DecodePortOut(0x0057, fill, 0);
+        decoder->DecodePortOut(0x0057, 0xFF, 0);
+        decoder->DecodePortOut(0x0057, 0xFF, 0);
+        uint8_t response = 0xFF;
+        for (int i = 0; i < 16 && response == 0xFF; i++)
+            response = decoder->DecodePortIn(0x0057, 0);
+        for (int i = 0; i < 200 && decoder->DecodePortIn(0x0057, 0) != 0xFF; i++)
+        {
+        }
+        return static_cast<uint8_t>(response & 0x1F);
+    }
+}  // namespace
+
+/// ST-TTD-1 under the media manager's rule (storage-manager
+/// integration-ttd-snapshots.md §2): the card's protocol state is in the
+/// EvoSdCard blob, SD commands do not end a recording, the media set is fixed
+/// while recording, and a guest write is a replay barrier, once per frame
+TEST(ZXEvoSdCardTtd_Test, SdCardUnderTheCommonTtdRule)
 {
     Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("ATM3", LoggerLevel::LogError);
     ASSERT_NE(emulator, nullptr);
     EmulatorContext* context = emulator->GetContext();
     auto* decoder = dynamic_cast<PortDecoder_ATM3*>(context->pPortDecoder);
     ASSERT_NE(decoder, nullptr);
+    ASSERT_NE(context->pMediaManager, nullptr);
+    EXPECT_TRUE(context->pMediaManager->HasSlot("sd.zc")) << "the ZX-Evo registers its SD slot";
     ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
-    ASSERT_NE(ttd, nullptr);
     emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
 
-    ASSERT_TRUE(decoder->InsertSdCard(PatternDisk(16), SdCardSpi::WriteMode::Session));
+    ASSERT_TRUE(decoder->InsertSdCard(PatternDisk(64), SdCardSpi::WriteMode::Session));
     ASSERT_TRUE(ttd->StartRecording());
-    ttd->OnFrameBoundary();
-    EXPECT_TRUE(ttd->IsRecording()) << "a card that is only inserted is not activity";
+    EXPECT_TRUE(ttd->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::EvoSdCard)) << "the card's state is recorded";
 
     SetShadow(context->emulatorState, false);
-    decoder->DecodePortOut(0x0077, 0x00, 0);  // select
-    for (int i = 0; i < 10; i++)
-        decoder->DecodePortOut(0x0057, 0xFF, 0);  // clocks without a command
-    EXPECT_FALSE(ttd->IsInvalidationPending());
-
-    EXPECT_EQ(SdCommand(decoder, 0x0057, 0, 0, 0x95), 0x01);
-    EXPECT_TRUE(ttd->IsInvalidationPending());
-    EXPECT_TRUE(ttd->IsRecording()) << "never from inside the port handler";
-
+    decoder->DecodePortOut(0x0077, 0x00, 0);
+    ASSERT_TRUE(SdInit(decoder, 0x0057));
     ttd->OnFrameBoundary();
-    EXPECT_FALSE(ttd->IsRecording());
-    EXPECT_FALSE(ttd->IsInvalidationPending());
-    EXPECT_EQ(ttd->GetCheckpointCount(), 0u) << "history dropped";
+    EXPECT_TRUE(ttd->IsRecording()) << "commands no longer end a recording";
+
+    MediaSource blank;
+    blank.type = MediaSourceType::Blank;
+    auto another = MediaFormatRegistry::WrapBlock(blank, AccessMode::Session, "memory", PatternDisk(8));
+    EXPECT_EQ(context->pMediaManager->Insert("sd.zc", std::move(another)).error, MediaError::Recording)
+        << "the media set is fixed while recording";
+
+    const size_t before = ttd->GetExternalEvents().Size();
+    EXPECT_EQ(SdWriteBlock(decoder, 3 * 512, 0x11), 0x05);
+    EXPECT_EQ(SdWriteBlock(decoder, 4 * 512, 0x22), 0x05);
+    EXPECT_EQ(ttd->GetExternalEvents().Size(), before + 1) << "one barrier per frame, not per write";
+    context->pMediaManager->ApplyPending();  // the frame ends
+    EXPECT_EQ(SdWriteBlock(decoder, 5 * 512, 0x33), 0x05);
+    EXPECT_EQ(ttd->GetExternalEvents().Size(), before + 2);
+    EXPECT_TRUE(ttd->IsRecording());
+
+    ttd->StopRecording();
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// The EvoSdCard blob restores the controller and the card mid-transfer:
+/// the byte stream continues exactly as it would have
+TEST(ZXEvoSdCardTtd_Test, BlobRoundTripMidMultiBlockRead)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("ATM3", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    auto* decoder = dynamic_cast<PortDecoder_ATM3*>(context->pPortDecoder);
+    ASSERT_TRUE(decoder->InsertSdCard(PatternDisk(64), SdCardSpi::WriteMode::Session));
+    SetShadow(context->emulatorState, false);
+    decoder->DecodePortOut(0x0077, 0x00, 0);
+    ASSERT_TRUE(SdInit(decoder, 0x0057));
+    ASSERT_EQ(SdCommand(decoder, 0x0057, 18, 2 * 512), 0x00);
+    for (int i = 0; i < 100; i++)
+        decoder->DecodePortIn(0x0057, 0);
+
+    ttd::TTDEvoSdCard serializer(*decoder);
+    std::vector<uint8_t> blob(serializer.TTDStateSize());
+    serializer.TTDSaveState(blob.data());
+    const uint64_t hash = serializer.TTDHashState();
+    std::vector<uint8_t> expected;
+    for (int i = 0; i < 700; i++)
+        expected.push_back(decoder->DecodePortIn(0x0057, 0));
+
+    serializer.TTDLoadState(blob.data());
+    EXPECT_EQ(serializer.TTDHashState(), hash);
+    for (int i = 0; i < 700; i++)
+        ASSERT_EQ(decoder->DecodePortIn(0x0057, 0), expected[static_cast<size_t>(i)]) << "byte " << i;
 
     EmulatorTestHelper::CleanupEmulator(emulator);
 }

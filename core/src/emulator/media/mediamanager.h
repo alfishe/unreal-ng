@@ -26,6 +26,7 @@
 #include <string>
 #include <vector>
 
+#include "emulator/media/mediaconfig.h"
 #include "emulator/media/mediaformatregistry.h"
 #include "emulator/media/mediaslot.h"
 #include "emulator/media/medium.h"
@@ -95,11 +96,21 @@ public:
     MediaResult Discard(const std::string& slotId);
     /// Write the medium's current contents to a new image file
     MediaResult Export(const std::string& slotId, const std::string& path);
+    /// Insert the media a config states, at creation, before the first reset:
+    /// no swap delay (firmware may boot from them). Entries for slots this
+    /// machine does not have are reported, or ignored when they come from a
+    /// legacy section. Returns the problems met
+    std::vector<std::string> ApplyConfiguredMedia(const std::vector<MediaSetEntry>& mediaSet);
     /// endregion </Operations>
 
     /// Emulation thread, once per frame (and from the operations themselves
     /// while the emulator is not running)
     void ApplyPending();
+
+    /// A slot's peripheral reports a guest write to its medium (emulation
+    /// thread). While TTD records, the first write of each frame is a replay
+    /// barrier: the medium changed, a seek must not cross it silently
+    void NoteWrite(const std::string& slotId);
 
     /// The attached medium (tests, peripherals' diagnostics); nullptr if empty.
     /// Only valid on the emulation thread or while the emulator is not running
@@ -120,12 +131,14 @@ private:
         uint32_t emptyFramesLeft = 0;      ///< swap delay still to run
         bool writeProtect = false;
         uint64_t changedUnits = 0;         ///< per-frame snapshot of attached->ChangedUnits()
+        std::optional<uint32_t> swapDelayMs;  ///< config override of the slot's default
+        bool writeMarkedThisFrame = false;    ///< a TTD barrier already recorded this frame
     };
 
     bool CanApplyNow() const;
     MediaResult CheckRecording(bool endRecording);
     MediaResult CheckInUse(const std::string& slotId, const Medium& medium) const;
-    uint32_t DelayFrames(const SlotDescriptor& descriptor) const;
+    uint32_t DelayFrames(uint32_t swapDelayMs) const;
     void ApplySlot(const std::string& slotId, SlotState& state, std::vector<std::unique_ptr<Medium>>& retired);
     void Post(const char* topic, const std::string& slotId, const Medium* medium) const;
     /// Destroy a medium that left the machine (a staged upload's file goes too)

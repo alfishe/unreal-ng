@@ -139,23 +139,6 @@ bool Config::ParseEvoFpgaVariant(const char* value)
 	return false;
 }
 
-uint8_t Config::ParseSdWriteMode(const char* value)
-{
-	if (value == nullptr || value[0] == '\0')
-		return 0;
-
-	const size_t length = strlen(value);
-	if (length == strlen("session") && StringHelper::CompareCaseInsensitive(value, "session", length) == 0)
-		return 0;
-	if (length == strlen("persist") && StringHelper::CompareCaseInsensitive(value, "persist", length) == 0)
-		return 1;
-	if (length == strlen("off") && StringHelper::CompareCaseInsensitive(value, "off", length) == 0)
-		return 2;
-
-	LOGWARNING("Config: unknown [ZC] SDWrite='%s' - keeping writes for the session only", value);
-	return 0;
-}
-
 bool Config::ParseConfig(IniFile& inimanager)
 {
 	bool result = false;
@@ -240,14 +223,7 @@ bool Config::ParseConfig(IniFile& inimanager)
 	config.atm.evo_nvram_path[0] = '\0';  // a config without the key must not inherit a previous path
 	CopyStringValue(inimanager.GetValue("EVO", "NvramFile", nullptr), config.atm.evo_nvram_path, sizeof config.atm.evo_nvram_path);
 
-	// ZC section: the Z-Controller SD card slot. SDCARD is the UnrealSpeccy key,
-	// kept as an alias; SDDelay (UnrealSpeccy latency) is accepted and ignored
-	config.zc.sd_image_path[0] = '\0';
-	CopyStringValue(inimanager.GetValue("ZC", "SDCardImage", nullptr), config.zc.sd_image_path, sizeof config.zc.sd_image_path);
-	if (!config.zc.sd_image_path[0])
-		CopyStringValue(inimanager.GetValue("ZC", "SDCARD", nullptr), config.zc.sd_image_path, sizeof config.zc.sd_image_path);
-	config.zc.sd_write_mode = ParseSdWriteMode(inimanager.GetValue("ZC", "SDWrite", nullptr));
-	config.zc.sd_write_protect = inimanager.GetLongValue("ZC", "SDWriteProtect", 0) != 0 ? 1 : 0;
+	// [ZC] (the Z-Controller SD card) is read by MediaConfig with the rest of the media set
     CopyStringValue(inimanager.GetValue(rom, "SCORP", nullptr), config.scorp_rom_path, sizeof config.scorp_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "PROFROM", nullptr), config.prof_rom_path, sizeof config.prof_rom_path);
     // The shipped spectrum3 unreal.ini carries "rom\\scorp_prof401.ROM:0" - without
@@ -595,6 +571,18 @@ bool Config::ParseConfig(IniFile& inimanager)
 	{
 		long delay = inimanager.GetLongValue(video, "AVSyncDelayFrames", -1);  // "auto" parses as 0 - use -1 default
 		config.videoPresentDelayFrames = (delay >= -1 && delay <= 3) ? (int)delay : -1;
+	}
+
+	// Media set: [MEDIA] + legacy keys; relative paths are relative to the config file
+	{
+		std::string configFolder;
+		if (!_configFilePath.empty())
+		{
+			const auto parent = FileHelper::ToFsPath(_configFilePath).parent_path().u8string();
+			configFolder.assign(parent.begin(), parent.end());
+		}
+		_mediaReport.clear();
+		_mediaSet = MediaConfig::FromIni(inimanager, configFolder, &_mediaReport);
 	}
 
 	// Emulated model
