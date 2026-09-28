@@ -73,7 +73,7 @@ This is strictly stronger fidelity than the trap: the trap's instant load is *de
 For ROM-standard blocks, "finished" is a precise event (the trapped LD-BYTES invocation completes). For an arbitrary loader, "finished" is not a spec'd signal — and this is why the feature does not exist yet. But the tape subsystem already contains three independent, purpose-built completion detectors:
 
 1. **Read-gap watchdog** — `Tape::handleFrameEnd()` increments `_framesSinceLastRead` every frame without a tape-relevant ULA read; at >150 frames (~3 s of *emulated* time) it freezes playback (`pausePlayback()` — deliberately *not* a terminal stop, so a multi-stage loader that pauses reading while it decompresses/bank-switches loses nothing). This exists precisely to detect "the loader exited" (`tape.cpp:728-742`).
-2. **ERR_NR change** — ROM reports break/error immediately → `stopPlayback()` (`tape.cpp:718-726`). Covers SPACE-break aborts in ROM flows.
+2. ~~**ERR_NR change** — ROM reports break/error immediately → `stopPlayback()`.~~ **Removed 2026-09-27** (PLAN #5 P1): custom loaders write ERR_NR as scratch RAM, so the stop fired in the middle of their loads and skipped the block being played ([nonstandard-loader-investigation.md](../2026-08-30-fast-tape-loading/nonstandard-loader-investigation.md) B1).
 3. **Natural end-of-tape** — cursor past the last block → `TapePlaybackState::Ended`.
 
 And the symmetric start-side detector already exists too:
@@ -104,11 +104,11 @@ Between stages the loader stops reading EAR while it processes → the gap's fir
 
 ### 4.3 Interactive multi-load ("press key for part 2")
 
-Loader finishes part 1, prints a prompt, waits for a key. No EAR reads → watchdog pauses tape → turbo off → the machine sits at 50 Hz, screen readable. User presses the key; part 2's loader polls EAR → playback resumes → turbo re-engages. The user never fights a warp-speed prompt.
+(2026-09-27: not true today, defect B6 — the key-wait loop's reads keep the watchdog fed; fixed by P4 of [loader-follow-design.md](../2026-08-30-fast-tape-loading/loader-follow-design.md).) Loader finishes part 1, prints a prompt, waits for a key. No EAR reads → watchdog pauses tape → turbo off → the machine sits at 50 Hz, screen readable. User presses the key; part 2's loader polls EAR → playback resumes → turbo re-engages. The user never fights a warp-speed prompt.
 
 ### 4.4 User aborts / tape ends
 
-- SPACE-break in a ROM flow → ERR_NR changes → `stopPlayback()` → turbo off.
+- SPACE-break in a ROM flow → ~~ERR_NR changes → `stopPlayback()`~~ (removed 2026-09-27) → the tape pauses once nobody listens to it ([loader-follow-design.md](../2026-08-30-fast-tape-loading/loader-follow-design.md) §5.3, P4) → turbo off.
 - Last block consumed → `Ended` → turbo off.
 - Manual Stop/Rewind/Seek/Eject in Tape Manager → state leaves Playing → turbo off.
 
@@ -158,7 +158,7 @@ Transition matrix (all latencies ≤ 1 emulated frame ≈ 1.3 ms wall at warp / 
 |---|--------------------|-------|--------|
 | E1 | `GetPlaybackState() == Playing` (any origin: user Play, `$0564` anchor, poll-resume) | feature on, no manual turbo, not suppressed | `Core::EnableTurboMode(false)`; `_autoTurboActive = true` |
 | E2 | Playing → `Paused` (watchdog freeze) | `_autoTurboActive` | `Core::DisableTurboMode()`; clear flag |
-| E3 | → `Ended` / `Idle` (stop, eject, ERR_NR stop, image change) | `_autoTurboActive` | same as E2 |
+| E3 | → `Ended` / `Idle` (stop, eject, image change; the ERR_NR stop is removed) | `_autoTurboActive` | same as E2 |
 | E4 | feature toggled off mid-flight | `_autoTurboActive` | same as E2, immediate |
 | E5 | user enables manual turbo any time | — | controller stands down without disabling (manual owns; clear `_autoTurboActive`) |
 | E6 | user disables manual turbo during a Playing session | — | set `_suppressedThisSession` — the user just rejected warp; no auto re-engage until playback leaves Playing |
@@ -266,7 +266,7 @@ Two poll-bursts separated by a read gap >150 frames (poll-resume cycle): assert 
 
 **Facts sharpened while testing (refine §3.2, worth keeping):**
 
-- The ERR_NR completion detector fires only on *error* reports: the ROM stores report code − 1, so a successful `0 OK` leaves ERR_NR at $FF — unchanged from the value captured at playback start. A successful ROM load keeps the tape rolling (watchdog/editor scan territory), exactly like a custom loader.
+- (2026-09-27: the ERR_NR detector is removed, see §3.2 item 2; kept for history.) The ERR_NR completion detector fires only on *error* reports: the ROM stores report code − 1, so a successful `0 OK` leaves ERR_NR at $FF — unchanged from the value captured at playback start. A successful ROM load keeps the tape rolling (watchdog/editor scan territory), exactly like a custom loader.
 - Test-authoring corollary that cost an afternoon of mystery: a Program header with autostart `0x0000` (not `$8000`) makes the ROM auto-RUN line 0 after loading → error report → ERR_NR stop consumes the in-flight block → `Ended` one frame before `ProgramLoaded` observably turns true. Synthetic TAP headers must use `$8000` (the sibling fast-load suite's convention).
 - OQ-4 stays open: the *feature* is now observable everywhere, but a live `turboActive` runtime field (and UI badge) is still future work — the live gate proved warp indirectly via wall-clock ratio.
 - Out-of-scope bug found during the live gate (pre-existing, separate fix): WebAPI `POST keyboard/type` with `tokenized:true` produces `LET OAD …` on 48K — keyword tokenization does not account for the editor's K-cursor key semantics; raw `keyboard/tap`/`combo` (e.g. `j` = LOAD, `sym_shift`+`p` = quote) works correctly.

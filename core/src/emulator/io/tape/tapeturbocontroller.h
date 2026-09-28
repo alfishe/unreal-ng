@@ -14,7 +14,7 @@ class ModuleLogger;
 /// playback is Running (user Play, the $0564 ROM anchor or the sustained
 /// EAR-polling resume started it), it engages the emulator's turbo mode so the
 /// real loader decodes at warp speed; when playback leaves Running — read-gap
-/// watchdog freeze, natural end-of-tape, ERR_NR stop, manual stop/eject — it
+/// watchdog freeze, natural end-of-tape, manual stop/eject — it
 /// stands back down to normal speed. Machine timing per frame is untouched by
 /// turbo mode, so a warp load is byte- and frame-identical to a real-speed
 /// load (design §3.1); this controller only decides *when* the wall-clock

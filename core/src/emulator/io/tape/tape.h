@@ -4,7 +4,8 @@
 
 #include "debugger/ttd/ttdserializable.h"  // TTDSerializable (P1.5 peripheral serializer)
 #include "emulator/io/tape/tapetypes.h"      // tape vocabulary types (design §5.1a leaf header)
-#include "emulator/io/tape/tapecatalog.h"    // TapeFastLoadPlan (§5.8) — leaf, no cycle
+#include "emulator/io/tape/tapecatalog.h"
+#include "emulator/io/tape/tapereadclassifier.h"    // TapeFastLoadPlan (§5.8) — leaf, no cycle
 #include "emulator/platform.h"
 #include "common/sound/filters/filter_dc.h"
 #include "common/sound/filters/filter_lpf.h"
@@ -24,14 +25,26 @@ constexpr uint16_t ZERO_ENCODE_HALF_PERIOD = 855;       // Zeroes encoded as two
 constexpr uint16_t ONE_ENCODE_HALF_PERIOD = 1710;       // One encoded as two 1710 t-states half-periods
 constexpr uint16_t TAPE_PAUSE_BETWEEN_BLOCKS = 1000;    // 1000ms
 
-// Sustained EAR-polling resume threshold (reads per frame). A loader's
-// pilot/data poll loop reads the ULA port ~1000+ times per frame; the ROM
-// keyboard scan reads the 8 half-row ports ~8 times per frame. 256 sits
-// safely between the two, so a RAM-resident custom loader resumes paused
-// playback within one frame of polling, while keyboard and menu activity
-// can never reach it. Tight game loops polling the two Sinclair-joystick
-// rows are excluded by port — see Tape::IsJoystickPollPort.
-constexpr uint16_t TAPE_EAR_POLL_RESUME_THRESHOLD = 256;
+// The tape follows the loader (loader-follow design §5): it moves only while
+// a program listens to it. Every read of the port is classified by the code
+// after the IN (TapeReadClassifier); keyboard reads never count.
+//
+// Start: this many listening reads within one frame. A loader's edge loop
+// makes about 1000 per frame, so this takes ~0.15 ms of a 2 s pilot, while a
+// one-off EAR test (issue 2/3 detection) never starts the tape.
+constexpr uint16_t TAPE_START_LISTEN_READS = 8;
+// Reads of code the tracker cannot follow count as listening after this many
+// in a row from the same IN with exactly one counter register moving (Fuse).
+constexpr uint16_t TAPE_PATTERN_RUN = 10;
+constexpr uint32_t TAPE_PATTERN_GAP_STOPPED = 500;   // T-states between pattern reads, tape stopped
+constexpr uint32_t TAPE_PATTERN_GAP_PLAYING = 1000;  // looser while playing: a wrong stop costs a load
+// Pause: whole frames without a single listening read. In the silence after a
+// block the tape parks at the next pilot, which costs nothing; inside a block
+// a false freeze shifts the data, so it waits longer. A frame always contains
+// listening while a load runs, even with an interrupt playing music or
+// scanning keys, so one frame is the floor.
+constexpr uint32_t TAPE_GAP_HOLD_FRAMES = 2;
+constexpr uint32_t TAPE_BLOCK_HOLD_FRAMES = 50;
 
 /// endregion </Constants>
 
@@ -182,13 +195,26 @@ protected:
     bool _lastTapeBit = false;          // Last tape bit state for band-limited step edge detection
     bool _tapeBitState = false;         // Digital signal output level of current tape pulse
 
-    uint8_t _initialErrNr = 0;          // ERR_NR value when tape started (to detect change)
-    uint32_t _framesSinceLastRead = 0;  // Frames since last tape IN read (to detect loader exit)
+    // Loader-follow state (design §5). Whole frames without a listening read,
+    // and listening reads since the current frame started (reset every
+    // handleFrameStart()).
+    uint32_t _framesNotListened = 0;
+    uint32_t _listenReadsThisFrame = 0;
 
-    // Non-keyboard-row ULA port reads since the current frame started. Drives
-    // the sustained EAR-polling resume (loader-agnostic signal auto-start);
-    // reset every handleFrameStart().
-    uint32_t _earPollsThisFrame = 0;
+    // Loader pattern for reads the classifier returns Other for (§4.2): run
+    // length, and the PC, time and B,C,D,E,H,L of the previous such read.
+    uint16_t _patternRun = 0;
+    uint16_t _patternLastPc = 0;
+    uint64_t _patternLastTick = 0;
+    uint8_t _patternRegs[6] = {};
+
+    // Classification cache: a loader reads from the same IN thousands of times
+    // per frame, so the tracker runs once per PC per frame. Not saved for TTD;
+    // rebuilt on the next read.
+    bool _classifiedValid = false;
+    uint16_t _classifiedPc = 0;
+    uint64_t _classifiedFrame = 0;
+    TapeReadKind _classifiedKind = TapeReadKind::Other;
 
     /// endregion </Fields>
 
@@ -318,13 +344,17 @@ public:
 protected:
     bool getTapeStreamBit(uint64_t clockCount);
 
-    /// Whether the port's high byte selects one of the two Sinclair-joystick
-    /// rows ($EF = stick 1 / $F7 = stick 2). Games poll those in tight loops,
-    /// so they must not accumulate toward the sustained-polling resume
-    /// threshold. Keyboard half-row scans never reach the threshold by count
-    /// (~8 reads/frame), and loaders deliberately polling other rows (e.g.
-    /// $7FFE — the space row, combined EAR + abort-key read) stay counted.
-    static bool IsJoystickPollPort(uint16_t port);
+    /// What the code that just read the port does with the value (design
+    /// §4.1, §4.3). Reads from ROM count only inside the ROM's own LD-BYTES.
+    TapeReadKind ClassifyPortRead();
+
+    /// Whether this read is a loader listening: an EAR read, or an Other read
+    /// that continues the loader pattern of design §4.2.
+    bool IsListeningRead(TapeReadKind kind, uint64_t clockCount);
+
+    /// Stop in the silence after a block, at the start of the next block's
+    /// pilot: the next listening read starts that block from its first pulse.
+    void ParkAtNextBlock();
 
     bool generateBitstreamForStandardBlock(TapeBlock& tapeBlock);
 

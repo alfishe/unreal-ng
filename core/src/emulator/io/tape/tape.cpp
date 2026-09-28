@@ -7,7 +7,6 @@
 #include "emulator/io/tape/tapecatalog.h"
 #include "emulator/io/tape/tapepulsegen.h"
 #include "emulator/sound/soundmanager.h"
-#include "emulator/spectrumconstants.h"
 #include "loaders/tape/loader_tape.h"
 #include "stdafx.h"
 #include <cstring>
@@ -47,9 +46,8 @@ void Tape::startTape()
     _tapeStarted = true;
     _muteEAR = true;
     _lastTapeBit = false;
-    _framesSinceLastRead = 0;
-    _initialErrNr = _context->pMemory->DirectReadFromZ80Memory(SystemVariables48k::ERR_NR);
-    MLOGINFO("Tape started, initial ERR_NR=0x%02X", _initialErrNr);
+    _framesNotListened = 0;
+    MLOGINFO("Tape started");
 }
 
 void Tape::stopTape()
@@ -118,6 +116,15 @@ void Tape::pausePlayback()
     // playback driver stops. Terminal stopPlayback() is deliberately NOT
     // used here: it consumes the partially heard block, which loses data for
     // a loader that merely stopped listening while it processes.
+    //
+    // Inside a pilot, go back to its first pulse instead (loader-follow
+    // design §5.4): a pilot is restartable, and the rest of one can be too
+    // short for the ROM (256 pulses to lock on) or for a loader that times it.
+    if (_currentTapeBlock != nullptr && _currentOffsetWithinPulse < _currentTapeBlock->pilotEdgeCount)
+    {
+        _currentOffsetWithinPulse = 0;
+        _currentPulseIdxInBlock = 0;
+    }
 
     // Same replay fencing as stopPlayback(): a pause boundary is still a
     // wall-clock-driven playback boundary for SeekTo.
@@ -125,7 +132,7 @@ void Tape::pausePlayback()
         _context->pTimeTravelManager->RecordExternalEvent(
             ttd::TTDExternalEventKind::TapeControl, "tape pause");
 
-    MLOGINFO("Tape paused at block %zu, pulse %zu (read-gap watchdog)",
+    MLOGINFO("Tape paused at block %zu, pulse %zu (no loader listening)",
              GetConsumptionCursor(), _currentOffsetWithinPulse);
 
     _tapeStarted = false;
@@ -170,8 +177,7 @@ void Tape::ResumePlaybackAfterPoll()
     _playbackFrozen = false;
     _tapeStarted = true;
     _muteEAR = true;
-    _framesSinceLastRead = 0;
-    _initialErrNr = _context->pMemory->DirectReadFromZ80Memory(SystemVariables48k::ERR_NR);
+    _framesNotListened = 0;
 
     MLOGINFO("Tape resumed at block %zu, pulse %zu (sustained EAR polling)",
              _currentTapeBlockIndex, _currentOffsetWithinPulse);
@@ -465,8 +471,7 @@ void Tape::ResumePlaybackFromPause()
     // the bitstream continues mid-block without a spurious edge
     _tapeStarted = true;
     _muteEAR = true;
-    _framesSinceLastRead = 0;
-    _initialErrNr = _context->pMemory->DirectReadFromZ80Memory(SystemVariables48k::ERR_NR);
+    _framesNotListened = 0;
 
     MLOGINFO("Tape resumed at block %zu, pulse %zu (manual)",
              _currentTapeBlockIndex, _currentOffsetWithinPulse);
@@ -510,7 +515,7 @@ void Tape::reset()
 
 /// region <Port events>
 
-uint8_t Tape::handlePortIn(uint16_t port)
+uint8_t Tape::handlePortIn([[maybe_unused]] uint16_t port)
 {
     uint8_t result = 0;
 
@@ -525,41 +530,35 @@ uint8_t Tape::handlePortIn(uint16_t port)
     [[maybe_unused]] uint8_t speedMultiplier = _context->emulatorState.current_z80_frequency_multiplier;
     [[maybe_unused]] uint32_t scaledTState = tState * speedMultiplier;
 
+    // Use monotonic counter for tape timing (t_states + t)
+    const uint64_t clockCount = _context->emulatorState.t_states + cpu.t;
+
+    // Is a loader listening? Keyboard, joystick and menu reads never count,
+    // however often they come (loader-follow design §4)
+    const bool listening = IsListeningRead(ClassifyPortRead(), clockCount);
+    if (listening)
+        _listenReadsThisFrame++;
+
     if (_tapeStarted)
     {
-        // Reset frame counter - loader is actively reading
-        _framesSinceLastRead = 0;
-
-        // Use monotonic counter for tape timing (t_states + t)
-        uint64_t clockCount = _context->emulatorState.t_states + cpu.t;
-
         bool tapeBit = getTapeStreamBit(clockCount);
         result = (uint8_t)tapeBit << 6;
     }
     else
     {
-        /// region <Sustained EAR-polling resume>
+        /// region <Start when a loader listens>
 
-        // A loader polling EAR from RAM (custom loaders never reach the ROM
-        // $0562/$0564 anchor below) — or re-polling after the read-gap
-        // watchdog paused playback mid-tape. Sinclair-joystick polls never
-        // accumulate; keyboard scans never reach the threshold by count; a
-        // loader's tight poll loop (any port, incl. combined EAR+key rows
-        // like $7FFE) crosses the threshold within a single frame.
-        if (!IsJoystickPollPort(port))
+        // Any loader, in ROM or RAM, parked or frozen by the pause below or
+        // never started: once it listens, the tape moves (design §5.2).
+        // ResumePlaybackAfterPoll() picks the resume point (§5.4).
+        if (listening && _listenReadsThisFrame == TAPE_START_LISTEN_READS)
         {
-            _earPollsThisFrame++;
-
-            if (_earPollsThisFrame == TAPE_EAR_POLL_RESUME_THRESHOLD)
-            {
-                // Load the image if needed (idempotent, path-keyed) and take
-                // up playback — frozen position, else the consumption cursor
-                if (EnsureImageLoaded())
-                    ResumePlaybackAfterPoll();
-            }
+            // Load the image if needed (idempotent, path-keyed)
+            if (EnsureImageLoaded())
+                ResumePlaybackAfterPoll();
         }
 
-        /// endregion </Sustained EAR-polling resume>
+        /// endregion </Start when a loader listens>
 
         /// region <Idle EAR level>
 
@@ -594,7 +593,7 @@ uint8_t Tape::handlePortIn(uint16_t port)
             // load" — the previous hardcoded dev-tree demo file is gone.
             //
             // Frame-accurate instant path; RAM-resident loaders use the
-            // sustained-polling resume above instead.
+            // listening start above instead.
             if (EnsureImageLoaded())
                 StartPlaybackAtCursor();
         }
@@ -618,8 +617,8 @@ void Tape::handlePortOut([[maybe_unused]] uint8_t value)
 /// If we have previous tape block played, then we can generate bitstream for the next block
 void Tape::handleFrameStart()
 {
-    // Sustained-polling counter is per-frame
-    _earPollsThisFrame = 0;
+    // Listening reads are counted per frame
+    _listenReadsThisFrame = 0;
 
     // Use monotonic counter for tape timing (t_states + t)
     uint64_t clockCount = _context->emulatorState.t_states + _context->pCore->GetZ80()->t;
@@ -706,28 +705,29 @@ void Tape::handleFrameEnd()
     if (!_tapeStarted)
         return;
 
-    // Check ERR_NR - ROM sets error code on break/error (immediate detection)
-    // System variables are in RAM at same addresses regardless of which ROM is paged
-    uint8_t errNr = _context->pMemory->DirectReadFromZ80Memory(SystemVariables48k::ERR_NR);
-    if (errNr != _initialErrNr)
+    // No system variable decides anything here. ERR_NR ($5C3A) is ordinary
+    // RAM that custom loaders use as scratch, so watching it stopped the tape
+    // in the middle of their loads (nonstandard-loader investigation B1).
+
+    // The tape moves only while a loader listens (loader-follow design §5.3)
+    if (_listenReadsThisFrame > 0)
+        _framesNotListened = 0;
+    else
+        _framesNotListened++;
+
+    // In the silence after a block's data the loader has read the block:
+    // wait at the next block's pilot, so a loader that is busy, waiting for a
+    // key or playing music gets that pilot from its start whenever it listens
+    // again. Inside a block, freeze in place (pausePlayback() rewinds a pilot).
+    const bool inTrailingPause = _currentTapeBlock != nullptr && _currentTapeBlock->trailingPause &&
+                                 !_currentTapeBlock->edgePulseTimings.empty() &&
+                                 _currentOffsetWithinPulse + 1 == _currentTapeBlock->edgePulseTimings.size();
+
+    if (inTrailingPause && _framesNotListened >= TAPE_GAP_HOLD_FRAMES)
     {
-        MLOGINFO("Tape stopped: ERR_NR changed from 0x%02X to 0x%02X", _initialErrNr, errNr);
-        stopPlayback();
-        return;
+        ParkAtNextBlock();
     }
-
-    // Track frames since last tape read (backup detection for load complete)
-    // 128K mode has longer gaps between reads due to ROM switching
-    _framesSinceLastRead++;
-
-    // ~3 seconds without reads. A terminal stop would consume the partially
-    // heard block — lethal for a multi-stage loader that merely paused
-    // reading while processing (decompression, bank setup). Freeze instead;
-    // the sustained-polling resume (handlePortIn) un-pauses it mid-block the
-    // moment the loader polls EAR again. ROM flows that genuinely finished
-    // (back in the editor) stay paused silently — cursor and image survive
-    // exactly as with the previous stop semantics.
-    if (_framesSinceLastRead > 150)
+    else if (!inTrailingPause && _framesNotListened >= TAPE_BLOCK_HOLD_FRAMES)
     {
         pausePlayback();
     }
@@ -737,24 +737,110 @@ void Tape::handleFrameEnd()
 
 /// region <Helper methods>
 
-bool Tape::IsJoystickPollPort(uint16_t port)
+TapeReadKind Tape::ClassifyPortRead()
 {
-    // The two Sinclair-joystick row selectors (stick 1 = $EFFE, stick 2 =
-    // $F7FE). Games poll these in tight loops during menus and
-    // gameplay; bit 6 still carries EAR (merged by the port decoder), but
-    // such reads must never accumulate toward the loader-polling resume
-    // threshold. All other ports count: loaders deliberately poll keyboard
-    // rows too (e.g. $7FFE — space row, combined EAR + abort-key reads),
-    // and the ROM keyboard scan's ~8 reads/frame can never reach the
-    // threshold on its own.
-    switch (port >> 8)
+    Z80& cpu = *_context->pCore->GetZ80();
+    Memory& memory = *_context->pMemory;
+    const uint16_t pc = cpu.pc;
+
+    // Code in ROM (design §4.3): only the ROM's own LD-BYTES listens. Every
+    // other ROM read is the keyboard scan, BREAK-KEY (TR-DOS calls it over and
+    // over while it works the disk) or firmware, and never moves the tape.
+    if (pc < 0x4000 && memory.IsBank0ROM())
     {
-        case 0xEF:
-        case 0xF7:
-            return true;
-        default:
-            return false;
+        const uint8_t* romBank = memory.GetPhysicalAddressForZ80Page(0);
+        const bool ldBytes = pc >= 0x0556 && pc <= 0x0605 && romBank != nullptr && romBank[0x0564] == 0x1F;
+        return ldBytes ? TapeReadKind::Ear : TapeReadKind::Key;
     }
+
+    const uint64_t frame = _context->emulatorState.frame_counter;
+    if (_classifiedValid && _classifiedPc == pc && _classifiedFrame == frame)
+        return _classifiedKind;
+
+    auto readByte = [](void* context, uint16_t address) -> uint8_t {
+        return static_cast<Memory*>(context)->DirectReadFromZ80Memory(address);
+    };
+
+    _classifiedKind = TapeReadClassifier::Classify(readByte, &memory, pc);
+    _classifiedPc = pc;
+    _classifiedFrame = frame;
+    _classifiedValid = true;
+
+    return _classifiedKind;
+}
+
+bool Tape::IsListeningRead(TapeReadKind kind, uint64_t clockCount)
+{
+    if (kind == TapeReadKind::Ear)
+        return true;
+
+    if (kind == TapeReadKind::Key)
+    {
+        _patternRun = 0;
+        return false;
+    }
+
+    // Other (design §4.2): an edge loop reads from the same IN a few hundred
+    // T apart and moves one counter. A is left out, it holds the value read.
+    // A wait loop that moves nothing never matches.
+    Z80& cpu = *_context->pCore->GetZ80();
+    const uint8_t regs[6] = { cpu.b, cpu.c, cpu.d, cpu.e, cpu.h, cpu.l };
+
+    int moved = 0;
+    for (int i = 0; i < 6; i++)
+    {
+        if (regs[i] != _patternRegs[i])
+            moved++;
+    }
+
+    const uint64_t limit = _tapeStarted ? TAPE_PATTERN_GAP_PLAYING : TAPE_PATTERN_GAP_STOPPED;
+    const bool continues = cpu.pc == _patternLastPc && clockCount >= _patternLastTick &&
+                           clockCount - _patternLastTick <= limit && moved == 1;
+
+    if (continues)
+    {
+        if (_patternRun < UINT16_MAX)
+            _patternRun++;
+    }
+    else
+    {
+        _patternRun = 0;
+    }
+
+    _patternLastPc = cpu.pc;
+    _patternLastTick = clockCount;
+    std::memcpy(_patternRegs, regs, sizeof(_patternRegs));
+
+    return _patternRun >= TAPE_PATTERN_RUN;
+}
+
+void Tape::ParkAtNextBlock()
+{
+    // Same replay fencing as pausePlayback()
+    if (_context && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->RecordExternalEvent(
+            ttd::TTDExternalEventKind::TapeControl, "tape park");
+
+    _currentTapeBlockIndex++;
+    _currentTapeBlock = nullptr;
+    _currentOffsetWithinPulse = 0;
+    _currentPulseIdxInBlock = 0;
+
+    if (_currentTapeBlockIndex >= _tapeBlocks.size())
+    {
+        // The pause after the last block: this is the end of the tape
+        stopPlayback();
+        return;
+    }
+
+    MLOGINFO("Tape parked at block %zu (no loader listening)", _currentTapeBlockIndex);
+
+    // Paused with no block in flight: the next start plays the cursor block
+    // from its first pulse (ResumePlaybackAfterPoll -> StartPlaybackAtCursor)
+    _tapeStarted = false;
+    _muteEAR = false;
+    _playbackFrozen = true;
+    _currentClockCount = 0;
 }
 
 bool Tape::getTapeStreamBit(uint64_t clockCount)
@@ -912,6 +998,9 @@ size_t Tape::generateBitstream(TapeBlock& tapeBlock, uint32_t pilotHalfPeriod_tS
 
     size_t result = static_cast<size_t>(signalTotal);
 
+    tapeBlock.pilotEdgeCount = signalTotal > 0 ? pilotLength_pulses : 0;
+    tapeBlock.trailingPause = pause_ms > 0;
+
     if (pause_ms)
     {
         // Pause doesn't require any encoding, just a time mark after the delay
@@ -979,14 +1068,19 @@ bool Tape::getPilotSample(size_t clockCount)
 //   34       8    _currentClockCount
 //   42       1    _tapeBitState (EAR level the CPU reads on port #FE bit 6)
 //   43       1    _lastTapeBit (edge detection of the band-limited EAR step)
-//   44       1    _initialErrNr (loader-exit detection baseline)
-//   45       4    _framesSinceLastRead (read-gap watchdog countdown)
-//   49       4    _earPollsThisFrame (sustained EAR-polling resume counter)
+//   44       1    reserved, written as 0 and ignored on load (was the
+//                 ERR_NR baseline of the removed ERR_NR stop)
+//   45       4    _framesNotListened (frames without a listening read)
+//   49       4    _listenReadsThisFrame (listening reads this frame)
+//   53       2    _patternRun (loader pattern run length)
+//   55       2    _patternLastPc
+//   57       8    _patternLastTick
+//   65       6    _patternRegs (B, C, D, E, H, L at the last pattern read)
 //   ------  ---
-//   53 bytes total
+//   71 bytes total
 //
-// The last five decide what the program reads and when the watchdogs pause,
-// stop or resume playback: left out, a restore kept their live values and a
+// Bytes 42-43 and 45-70 decide what the program reads and when the tape
+// pauses, parks or starts: left out, a restore kept their live values and a
 // replay diverged from the recording as soon as the tape was involved.
 //
 // size_t is serialized as uint64_t (the position indices never approach 2^63;
@@ -995,16 +1089,18 @@ bool Tape::getPilotSample(size_t clockCount)
 namespace
 {
 inline void put_u8 (uint8_t*& cur, uint8_t v)   { *cur++ = v; }
+inline void put_u16(uint8_t*& cur, uint16_t v) { std::memcpy(cur, &v, 2); cur += 2; }
 inline void put_u32(uint8_t*& cur, uint32_t v) { std::memcpy(cur, &v, 4); cur += 4; }
 inline void put_u64(uint8_t*& cur, uint64_t v) { std::memcpy(cur, &v, 8); cur += 8; }
 
 inline uint8_t  get_u8 (const uint8_t*& cur)   { return *cur++; }
+inline uint16_t get_u16(const uint8_t*& cur)   { uint16_t v; std::memcpy(&v, cur, 2); cur += 2; return v; }
 inline uint32_t get_u32(const uint8_t*& cur)   { uint32_t v; std::memcpy(&v, cur, 4); cur += 4; return v; }
 inline uint64_t get_u64(const uint8_t*& cur)   { uint64_t v; std::memcpy(&v, cur, 8); cur += 8; return v; }
 } // anonymous namespace
 
-static constexpr size_t kTapeStateSize = 2 + 5 * 8 + 3 + 2 * 4;  // = 53
-static_assert(kTapeStateSize == 53, "Tape state size drift");
+static constexpr size_t kTapeStateSize = 2 + 5 * 8 + 3 + 2 * 4 + 2 + 2 + 8 + 6;  // = 71
+static_assert(kTapeStateSize == 71, "Tape state size drift");
 
 size_t Tape::TTDStateSize() const
 {
@@ -1023,9 +1119,14 @@ void Tape::TTDSaveState(uint8_t* dst) const
     put_u64(cur, _currentClockCount);
     put_u8 (cur, _tapeBitState ? 1 : 0);
     put_u8 (cur, _lastTapeBit ? 1 : 0);
-    put_u8 (cur, _initialErrNr);
-    put_u32(cur, _framesSinceLastRead);
-    put_u32(cur, _earPollsThisFrame);
+    put_u8 (cur, 0);  // reserved
+    put_u32(cur, _framesNotListened);
+    put_u32(cur, _listenReadsThisFrame);
+    put_u16(cur, _patternRun);
+    put_u16(cur, _patternLastPc);
+    put_u64(cur, _patternLastTick);
+    std::memcpy(cur, _patternRegs, sizeof(_patternRegs));
+    cur += sizeof(_patternRegs);
 }
 
 void Tape::TTDLoadState(const uint8_t* src)
@@ -1040,9 +1141,17 @@ void Tape::TTDLoadState(const uint8_t* src)
     _currentClockCount        = get_u64(cur);
     _tapeBitState             = (get_u8(cur) != 0);
     _lastTapeBit              = (get_u8(cur) != 0);
-    _initialErrNr             = get_u8(cur);
-    _framesSinceLastRead      = get_u32(cur);
-    _earPollsThisFrame        = get_u32(cur);
+    get_u8(cur);  // reserved
+    _framesNotListened        = get_u32(cur);
+    _listenReadsThisFrame     = get_u32(cur);
+    _patternRun               = get_u16(cur);
+    _patternLastPc            = get_u16(cur);
+    _patternLastTick          = get_u64(cur);
+    std::memcpy(_patternRegs, cur, sizeof(_patternRegs));
+    cur += sizeof(_patternRegs);
+
+    // The classification cache is derived from memory; rebuild it on the next read
+    _classifiedValid = false;
 
     // Recompute the derived _currentTapeBlock pointer from the restored index.
     // Tape content (_tapeBlocks) is invariant within a session — it is NOT
