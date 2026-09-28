@@ -14,6 +14,7 @@
 #include "common/stringhelper.h"
 #include "common/video/videoutils.h"
 #include "emulator/video/screendigest.h"
+#include "emulator/video/atm/screenatm.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -474,7 +475,6 @@ void Screen::SetVideoMode(VideoModeEnum mode)
     /// region <Calculate raster values>
 
     /// Note!: all timings are in t-states, although raster descriptor has pixels as UOM. So recalculation is required
-
     // For M_P384 overscan mode, use Pentagon timing for all calculations
     // Only the framebuffer size differs - timing must be identical to Pentagon
     // ATM3 AlCo modes (EFF7 z0/z5 -> M_P16/M_PMC): the Pentagon-class
@@ -529,24 +529,22 @@ void Screen::SetVideoMode(VideoModeEnum mode)
 
     /// region <Horizontal timings>
 
-    _rasterState.blankLineAreaStart = 0;
-    _rasterState.blankLineAreaEnd =
-        ((timingDescriptor.hSyncPixels + timingDescriptor.hBlankPixels) / _rasterState.pixelsPerTState) - 1;
+    // Same line origin as the renderer (CreateTstateLUT, ScreenAtm, ScreenProfi):
+    // T 0 is the first left-border T, horizontal blank/sync closes the line
+    const LineGeometry line = GetLineGeometry(_mode, timingDescriptor);
+    _rasterState.paperDotsPerT = line.paperDotsPerT;
 
-    _rasterState.leftBorderAreaStart = _rasterState.blankLineAreaEnd + 1;
-    _rasterState.leftBorderAreaEnd =
-        _rasterState.leftBorderAreaStart + (timingDescriptor.screenOffsetLeft / _rasterState.pixelsPerTState) - 1;
+    _rasterState.leftBorderAreaStart = 0;
+    _rasterState.leftBorderAreaEnd = static_cast<uint8_t>(line.paperStartT - 1);
 
-    _rasterState.screenLineAreaStart = _rasterState.leftBorderAreaEnd + 1;
-    _rasterState.screenLineAreaEnd =
-        _rasterState.screenLineAreaStart + (timingDescriptor.screenWidth / _rasterState.pixelsPerTState) - 1;
+    _rasterState.screenLineAreaStart = static_cast<uint8_t>(line.paperStartT);
+    _rasterState.screenLineAreaEnd = static_cast<uint8_t>(line.paperStartT + line.paperTCount - 1);
 
-    _rasterState.rightBorderAreaStart = _rasterState.screenLineAreaEnd + 1;
-    _rasterState.rightBorderAreaEnd =
-        _rasterState.rightBorderAreaStart +
-        ((timingDescriptor.fullFrameWidth - timingDescriptor.screenOffsetLeft - timingDescriptor.screenWidth) /
-         _rasterState.pixelsPerTState) -
-        1;
+    _rasterState.rightBorderAreaStart = static_cast<uint8_t>(_rasterState.screenLineAreaEnd + 1);
+    _rasterState.rightBorderAreaEnd = static_cast<uint8_t>(line.visibleTCount - 1);
+
+    _rasterState.blankLineAreaStart = static_cast<uint8_t>(line.visibleTCount);
+    _rasterState.blankLineAreaEnd = static_cast<uint8_t>(_rasterState.tstatesPerLine - 1);
 
     /// endregion </Horizontal timings>
 
@@ -574,10 +572,17 @@ void Screen::SetVideoMode(VideoModeEnum mode)
         case M_ZX48:
         case M_ZX128:
         default:
-            _rasterState.borderUpdateTStates = 4;
-            _rasterState.contentionEnabled = true;
-            _rasterState.fetchType = ULA_FERRANTI;
+        {
+            // Only the Sinclair machines have the Ferranti ULA. Clones showing a
+            // ZX-compatible or extended mode (ATM ZX mode is M_ZX48) keep their
+            // discrete, contention-free video logic.
+            const MEM_MODEL model = _context ? _context->config.mem_model : MM_SPECTRUM48;
+            const bool ferranti = model == MM_SPECTRUM48 || model == MM_SPECTRUM128 || model == MM_PLUS3;
+            _rasterState.borderUpdateTStates = ferranti ? 4 : 1;
+            _rasterState.contentionEnabled = ferranti;
+            _rasterState.fetchType = ferranti ? ULA_FERRANTI : ULA_DISCRETE_LOGIC;
             break;
+        }
     }
     /// endregion </Model-specific ULA behavior>
 
@@ -1070,6 +1075,84 @@ const RasterDescriptor& Screen::GetTimingDescriptor(VideoModeEnum mode) const
     if (mode == M_P384)
         return rasterDescriptors[M_PENTAGON128K];
     return atm3AlcoTiming ? rasterDescriptors[M_ZX48] : rasterDescriptors[mode];
+}
+
+BeamPosition Screen::DescribeBeam(uint32_t tInFrame) const
+{
+    BeamPosition b;
+    const RasterState& rs = _rasterState;
+    if (rs.tstatesPerLine == 0)
+        return b;
+
+    const RasterDescriptor& rd = GetTimingDescriptor(_mode);
+    b.valid = true;
+    b.tInFrame = tInFrame;
+    b.line = tInFrame / rs.tstatesPerLine;
+    b.tInLine = tInFrame % rs.tstatesPerLine;
+    b.beamX = b.tInLine * rs.pixelsPerTState;
+
+    if (tInFrame <= rs.blankAreaEnd)
+        b.verticalZone = (b.line < rd.vSyncLines) ? "vsync" : "vblank";
+    else if (tInFrame <= rs.topBorderAreaEnd)
+        b.verticalZone = "top_border";
+    else if (tInFrame <= rs.screenAreaEnd)
+        b.verticalZone = "screen";
+    else if (tInFrame <= rs.bottomBorderAreaEnd)
+        b.verticalZone = "bottom_border";
+
+    const bool screenRows = std::strcmp(b.verticalZone, "screen") == 0;
+    if (screenRows)
+    {
+        if (b.tInLine <= rs.leftBorderAreaEnd)
+            b.horizontalZone = "left_border";
+        else if (b.tInLine <= rs.screenLineAreaEnd)
+            b.horizontalZone = "paper";
+        else if (b.tInLine <= rs.rightBorderAreaEnd)
+            b.horizontalZone = "right_border";
+        else
+            b.horizontalZone = "hblank";
+    }
+
+    b.inPaper = screenRows && std::strcmp(b.horizontalZone, "paper") == 0;
+    b.zone = !screenRows ? b.verticalZone : (b.inPaper ? "paper" : (std::strcmp(b.horizontalZone, "hblank") == 0 ? "hblank" : "border"));
+    b.inVisibleArea = screenRows && std::strcmp(b.horizontalZone, "hblank") != 0;
+
+    if (b.inPaper)
+    {
+        b.paperX = (b.tInLine - rs.screenLineAreaStart) * rs.paperDotsPerT;
+        b.paperXEnd = b.paperX + rs.paperDotsPerT - 1;
+        b.paperY = (tInFrame - rs.screenAreaStart) / rs.tstatesPerLine;
+    }
+    return b;
+}
+
+LineGeometry Screen::GetLineGeometry(VideoModeEnum mode, const RasterDescriptor& timing)
+{
+    switch (mode)
+    {
+        // ATM window: 16T of beam border each side of the ZX paper, no side
+        // border in the framebuffer (ScreenAtm constants are the source)
+        case M_ATM16:
+        case M_ATMHR:
+        case M_ATMTX:
+        case M_ATMTL:
+            return {static_cast<uint16_t>(ScreenAtm::SCREEN_START_T),
+                    static_cast<uint16_t>(ScreenAtm::SCREEN_END_T - ScreenAtm::SCREEN_START_T),
+                    static_cast<uint16_t>(ScreenAtm::SCREEN_END_T + ScreenAtm::SCREEN_START_T),
+                    static_cast<uint8_t>(mode == M_ATM16 ? 2 : 4)};
+
+        // Profi 512x240: the ZX paper window at 4 px/T, borders at 2 px/T
+        case M_PROFIHR:
+        {
+            const uint16_t start = timing.screenOffsetLeft / 2;
+            const uint16_t count = timing.screenWidth / 4;
+            return {start, count, static_cast<uint16_t>(2 * start + count), 4};
+        }
+
+        default:
+            return {static_cast<uint16_t>(timing.screenOffsetLeft / 2), static_cast<uint16_t>(timing.screenWidth / 2),
+                    static_cast<uint16_t>(timing.fullFrameWidth / 2), 2};
+    }
 }
 
 std::vector<uint16_t> Screen::GetActiveSurfaceRAMPages(VideoModeEnum mode, uint8_t p7FFD, bool bankedZX)

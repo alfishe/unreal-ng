@@ -155,241 +155,33 @@ TEST_F(ScreenZX_Test, TransformZXSpectrumColorsToRGBA)
 
 TEST_F(ScreenZX_Test, CreateTimingTable)
 {
-    char message[256];
-
-    /// region <ZX-Spectrum 48k>
-
-    // Genuine ZX-Spectrum 48k
-    // t-states per line: 224
-    //
-    _screenzx->SetVideoMode(M_ZX48);
-    _screenzx->CreateTimingTable();
-
-    // Check line duration
-    if (_screenzx->_rasterState.tstatesPerLine != 224)
+    // Per-line render table in the renderer's line origin: left border, paper,
+    // right border, then horizontal blank/sync closing the line. It must agree
+    // with the per-T LUT the renderer draws with on a paper line.
+    struct Case { VideoModeEnum mode; uint16_t tstatesPerLine; };
+    for (const Case c : {Case{M_ZX48, 224}, Case{M_ZX128, 228}, Case{M_PENTAGON128K, 224}})
     {
-        snprintf(message, sizeof message, "ZX-Spectrum 48k has 224 t-states per line. Found: %d",
-                 _screenzx->_rasterState.tstatesPerLine);
-        FAIL() << message << std::endl;
-    }
+        SCOPED_TRACE(Screen::GetVideoModeName(c.mode));
+        _screenzx->SetVideoMode(c.mode);
+        _screenzx->CreateTimingTable();
+        ASSERT_EQ(_screenzx->_rasterState.tstatesPerLine, c.tstatesPerLine);
 
-    RenderTypeEnum type = RT_BLANK;
-    for (int i = 0; i <= 255; i++)
-    {
-        type = _screenzx->_screenLineRenderers[i];
-
-        // hBlank + hSync
-        if (i >= 0 && i <= 47)
+        for (int i = 0; i <= 255; i++)
         {
-            if (type != RT_BLANK)
-            {
-                snprintf(message, sizeof message, "line offset (t-states): %d, expected type: %s, found: %s", i,
-                         Screen::GetRenderTypeName(RT_BLANK).c_str(), Screen::GetRenderTypeName(type).c_str());
-                FAIL() << message << std::endl;
-            }
-        }
+            RenderTypeEnum expected = RT_BLANK;
+            if (i <= 23 || (i >= 152 && i <= 175))
+                expected = RT_BORDER;
+            else if (i <= 151)
+                expected = RT_SCREEN;
+            EXPECT_EQ(_screenzx->_screenLineRenderers[i], expected) << "line offset (t-states): " << i;
 
-        // Left border
-        if (i >= 48 && i <= 71)
-        {
-            if (type != RT_BORDER)
+            if (i < c.tstatesPerLine)
             {
-                snprintf(message, sizeof message, "line offset (t-states): %d, expected type: %s, found: %s", i,
-                         Screen::GetRenderTypeName(RT_BORDER).c_str(), Screen::GetRenderTypeName(type).c_str());
-                FAIL() << message << std::endl;
-            }
-        }
-
-        // Screen area
-        if (i >= 72 && i <= 199)
-        {
-            if (type != RT_SCREEN)
-            {
-                snprintf(message, sizeof message, "line offset (t-states): %d, expected type: %s, found: %s", i,
-                         Screen::GetRenderTypeName(RT_SCREEN).c_str(), Screen::GetRenderTypeName(type).c_str());
-                FAIL() << message << std::endl;
-            }
-        }
-
-        // Right border
-        if (i >= 200 && i <= 223)
-        {
-            if (type != RT_BORDER)
-            {
-                snprintf(message, sizeof message, "line offset (t-states): %d, expected type: %s, found: %s", i,
-                         Screen::GetRenderTypeName(RT_BORDER).c_str(), Screen::GetRenderTypeName(type).c_str());
-                FAIL() << message << std::endl;
-            }
-        }
-
-        // Ensure unused part of lookup table is blank
-        if (i >= 224)
-        {
-            if (type != RT_BLANK)
-            {
-                snprintf(message, sizeof message, "line offset (t-states): %d, expected type: %s, found: %s", i,
-                         Screen::GetRenderTypeName(RT_BLANK).c_str(), Screen::GetRenderTypeName(type).c_str());
-                FAIL() << message << std::endl;
+                const uint32_t t = _screenzx->_rasterState.screenAreaStart + i;
+                EXPECT_EQ(_screenzx->_tstateLUT[t].renderType, expected) << "LUT disagrees at line offset " << i;
             }
         }
     }
-
-    /// endregion </ZX-Spectrum 48k>
-
-    /// region <ZX-Spectrum 128k>
-
-    // Genuine ZX-Spectrum 128k
-    // t-states per line: 228
-    //
-    _screenzx->SetVideoMode(M_ZX128);
-    _screenzx->CreateTimingTable();
-
-    // Check line duration
-    if (_screenzx->_rasterState.tstatesPerLine != 228)
-    {
-        snprintf(message, sizeof message, "ZX-Spectrum 128k has 228 t-states per line. Found: %d",
-                 _screenzx->_rasterState.tstatesPerLine);
-        FAIL() << message << std::endl;
-    }
-
-    type = RT_BLANK;
-    for (int i = 0; i <= 255; i++)
-    {
-        type = _screenzx->_screenLineRenderers[i];
-
-        // hBlank + hSync
-        if (i >= 0 && i <= 47)
-        {
-            if (type != RT_BLANK)
-            {
-                snprintf(message, sizeof message, "line offset (t-states): %d, expected type: %s, found: %s", i,
-                         Screen::GetRenderTypeName(RT_BLANK).c_str(), Screen::GetRenderTypeName(type).c_str());
-                FAIL() << message << std::endl;
-            }
-        }
-
-        // Left border
-        if (i >= 48 && i <= 71)
-        {
-            if (type != RT_BORDER)
-            {
-                snprintf(message, sizeof message, "line offset (t-states): %d, expected type: %s, found: %s", i,
-                         Screen::GetRenderTypeName(RT_BORDER).c_str(), Screen::GetRenderTypeName(type).c_str());
-                FAIL() << message << std::endl;
-            }
-        }
-
-        // Screen area
-        if (i >= 72 && i <= 199)
-        {
-            if (type != RT_SCREEN)
-            {
-                snprintf(message, sizeof message, "line offset (t-states): %d, expected type: %s, found: %s", i,
-                         Screen::GetRenderTypeName(RT_SCREEN).c_str(), Screen::GetRenderTypeName(type).c_str());
-                FAIL() << message << std::endl;
-            }
-        }
-
-        // Right border
-        if (i >= 200 && i <= 223)
-        {
-            if (type != RT_BORDER)
-            {
-                snprintf(message, sizeof message, "line offset (t-states): %d, expected type: %s, found: %s", i,
-                         Screen::GetRenderTypeName(RT_BORDER).c_str(), Screen::GetRenderTypeName(type).c_str());
-                FAIL() << message << std::endl;
-            }
-        }
-
-        // Ensure unused part of lookup table is blank
-        if (i >= 224)
-        {
-            if (type != RT_BLANK)
-            {
-                snprintf(message, sizeof message, "line offset (t-states): %d, expected type: %s, found: %s", i,
-                         Screen::GetRenderTypeName(RT_BLANK).c_str(), Screen::GetRenderTypeName(type).c_str());
-                FAIL() << message << std::endl;
-            }
-        }
-    }
-
-    /// endregion </ZX-Spectrum 128k>
-
-    /// region <Pentagon>
-
-    _screenzx->SetVideoMode(M_PENTAGON128K);
-    _screenzx->CreateTimingTable();
-
-    // Check line duration
-    if (_screenzx->_rasterState.tstatesPerLine != 224)
-    {
-        snprintf(message, sizeof message, "Pentagon has 224 t-states per line. Found: %d",
-                 _screenzx->_rasterState.tstatesPerLine);
-        FAIL() << message << std::endl;
-    }
-
-    type = RT_BLANK;
-    for (int i = 0; i <= 255; i++)
-    {
-        type = _screenzx->_screenLineRenderers[i];
-
-        // hBlank + hSync
-        if (i >= 0 && i <= 47)
-        {
-            if (type != RT_BLANK)
-            {
-                snprintf(message, sizeof message, "line offset (t-states): %d, expected type: %s, found: %s", i,
-                         Screen::GetRenderTypeName(RT_BLANK).c_str(), Screen::GetRenderTypeName(type).c_str());
-                FAIL() << message << std::endl;
-            }
-        }
-
-        // Left border
-        if (i >= 48 && i <= 71)
-        {
-            if (type != RT_BORDER)
-            {
-                snprintf(message, sizeof message, "line offset (t-states): %d, expected type: %s, found: %s", i,
-                         Screen::GetRenderTypeName(RT_BORDER).c_str(), Screen::GetRenderTypeName(type).c_str());
-                FAIL() << message << std::endl;
-            }
-        }
-
-        // Screen area
-        if (i >= 72 && i <= 199)
-        {
-            if (type != RT_SCREEN)
-            {
-                snprintf(message, sizeof message, "line offset (t-states): %d, expected type: %s, found: %s", i,
-                         Screen::GetRenderTypeName(RT_SCREEN).c_str(), Screen::GetRenderTypeName(type).c_str());
-                FAIL() << message << std::endl;
-            }
-        }
-
-        // Right border
-        if (i >= 200 && i <= 223)
-        {
-            if (type != RT_BORDER)
-            {
-                snprintf(message, sizeof message, "line offset (t-states): %d, expected type: %s, found: %s", i,
-                         Screen::GetRenderTypeName(RT_BORDER).c_str(), Screen::GetRenderTypeName(type).c_str());
-                FAIL() << message << std::endl;
-            }
-        }
-
-        // Ensure unused part of lookup table is blank
-        if (i >= 224)
-        {
-            if (type != RT_BLANK)
-            {
-                snprintf(message, sizeof message, "line offset (t-states): %d, expected type: %s, found: %s", i,
-                         Screen::GetRenderTypeName(RT_BLANK).c_str(), Screen::GetRenderTypeName(type).c_str());
-                FAIL() << message << std::endl;
-            }
-        }
-    }
-
-    /// endregion </Pentagon>
 }
 
 /// endregion </ULA tables creation tests>
@@ -1121,4 +913,42 @@ TEST_F(ScreenZX_Test, Pentagon_OverscanSymmetricViewport_HasEqualSideBorders)
     const int rightBorder = (rd.fullFrameWidth - vp.cropRight) - 1 - maxX;
     EXPECT_EQ(leftBorder, 48);
     EXPECT_EQ(rightBorder, leftBorder) << "SYMMETRIC_HORIZONTAL must crop the overscan to equal side borders";
+}
+
+/// @brief Beam -> framebuffer mapping follows where each mode stores its window:
+/// ZX keeps borders 1:1, ATM stores only the 320/640 x 200 window (plus top and
+/// bottom border rows), Profi hires puts 512 px at 4 px/T between 48 px borders.
+TEST_F(ScreenZX_Test, TransformTstateToFramebufferCoords_ModeWindows)
+{
+    auto T = [](uint32_t line, uint32_t tInLine) { return line * 224 + tInLine; };
+    uint16_t x = 0, y = 0;
+
+    _context->config.frame = 69888;
+    _context->config.mem_model = MM_SPECTRUM48;
+    _screenzx->SetVideoMode(M_ZX48);
+    ASSERT_TRUE(_screenzx->TransformTstateToFramebufferCoords(T(72, 24), &x, &y));
+    EXPECT_EQ(x, 48);
+    EXPECT_EQ(y, 48);
+
+    _context->config.mem_model = MM_ATM710;
+    _screenzx->SetVideoMode(M_ATM16);
+    ASSERT_TRUE(_screenzx->TransformTstateToFramebufferCoords(T(68, 8), &x, &y));
+    EXPECT_EQ(x, 0);
+    EXPECT_EQ(y, 44);
+    EXPECT_FALSE(_screenzx->TransformTstateToFramebufferCoords(T(68, 7), &x, &y)) << "no side border stored";
+    EXPECT_FALSE(_screenzx->TransformTstateToFramebufferCoords(T(68, 168), &x, &y));
+
+    _screenzx->SetVideoMode(M_ATMHR);
+    ASSERT_TRUE(_screenzx->TransformTstateToFramebufferCoords(T(68, 9), &x, &y));
+    EXPECT_EQ(x, 4) << "4 px per T in hires";
+
+    _context->config.mem_model = MM_PROFI;
+    _screenzx->SetVideoMode(M_PROFIHR);
+    ASSERT_TRUE(_screenzx->TransformTstateToFramebufferCoords(T(48, 23), &x, &y));
+    EXPECT_EQ(x, 46) << "left border at 2 px/T";
+    EXPECT_EQ(y, 24);
+    ASSERT_TRUE(_screenzx->TransformTstateToFramebufferCoords(T(48, 25), &x, &y));
+    EXPECT_EQ(x, 52) << "paper at 4 px/T";
+    ASSERT_TRUE(_screenzx->TransformTstateToFramebufferCoords(T(48, 152), &x, &y));
+    EXPECT_EQ(x, 560) << "right border starts after 48 + 512";
 }

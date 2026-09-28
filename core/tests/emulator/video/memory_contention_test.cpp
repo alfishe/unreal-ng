@@ -77,18 +77,11 @@ ASSERT_TRUE(_cpu->Init()) << "Core::Init() failed";
         _screen->SetVideoMode(M_PENTAGON128K);
     }
 
-    /// Calculate the first t-state of paper on a given scanline
-    /// screenAreaStart includes vSync + vBlank + screenOffsetTop (top border)
-    /// Paper within line starts after hSync + hBlank + leftBorder prefix
-    uint32_t PaperStartOnLine(int line)
+    /// First contended T on a paper line: 5 T before the renderer's first
+    /// displayed pixel of that line (48K line 0: INT + 14335, pixel INT + 14340)
+    uint32_t ContentionStartOnLine(int line)
     {
-        const RasterDescriptor& rd = _screen->rasterDescriptors[_screen->GetVideoMode()];
-        uint32_t tstatesPerLine = rd.pixelsPerLine / 2;
-        // screenAreaStart = vsync + vblank + top border
-        uint32_t screenAreaStart = tstatesPerLine * (rd.vSyncLines + rd.vBlankLines + rd.screenOffsetTop);
-        // Paper prefix within each line: hSync + hBlank + left border
-        uint32_t linePrefix = (rd.hSyncPixels + rd.hBlankPixels + rd.screenOffsetLeft) / 2;
-        return screenAreaStart + linePrefix + (uint32_t)line * tstatesPerLine;
+        return _screen->GetPaperStartTstate() - 5 + static_cast<uint32_t>(line) * _screen->GetRasterState().tstatesPerLine;
     }
 };
 
@@ -112,8 +105,8 @@ TEST_F(MemoryContention_Test, ZX48k_ContentionEnabled)
     SetupZX48k();
 
     // Verify contention is enabled for ZX-48K by checking a t-state in the paper area
-    uint32_t paperStart = PaperStartOnLine(0);
-    _z80->t = paperStart;
+    uint32_t contentionStart = ContentionStartOnLine(0);
+    _z80->t = contentionStart;
     uint8_t delay = _ula->GetContentionDelay();
 
     // At offset 0 in the cell, delay should be 6 (the maximum)
@@ -124,8 +117,8 @@ TEST_F(MemoryContention_Test, ZX128k_ContentionEnabled)
 {
     SetupZX128k();
 
-    uint32_t paperStart = PaperStartOnLine(0);
-    _z80->t = paperStart;
+    uint32_t contentionStart = ContentionStartOnLine(0);
+    _z80->t = contentionStart;
     uint8_t delay = _ula->GetContentionDelay();
 
     EXPECT_EQ(delay, 6);
@@ -141,11 +134,11 @@ TEST_F(MemoryContention_Test, ZX48k_ContentionPatternMatchesULA)
     // repeating every 8 t-states within the paper area
     static const uint8_t expectedPattern[8] = {6, 5, 4, 3, 2, 1, 0, 0};
 
-    uint32_t paperStart = PaperStartOnLine(10);  // Line 10
+    uint32_t contentionStart = ContentionStartOnLine(10);  // Line 10
 
     for (int i = 0; i < 8; i++)
     {
-        _z80->t = paperStart + i;
+        _z80->t = contentionStart + i;
         uint8_t delay = _ula->GetContentionDelay();
         EXPECT_EQ(delay, expectedPattern[i])
             << "Contention pattern mismatch at cell offset " << i;
@@ -159,14 +152,14 @@ TEST_F(MemoryContention_Test, ZX48k_ContentionPatternRepeats)
     // Pattern should repeat every 8 t-states
     static const uint8_t expectedPattern[8] = {6, 5, 4, 3, 2, 1, 0, 0};
 
-    uint32_t paperStart = PaperStartOnLine(5);
+    uint32_t contentionStart = ContentionStartOnLine(5);
 
     // Check pattern at offsets 0-7, then 8-15, then 16-23
     for (int cell = 0; cell < 3; cell++)
     {
         for (int i = 0; i < 8; i++)
         {
-            _z80->t = paperStart + cell * 8 + i;
+            _z80->t = contentionStart + cell * 8 + i;
             uint8_t delay = _ula->GetContentionDelay();
             EXPECT_EQ(delay, expectedPattern[i])
                 << "Pattern repeat failure at cell " << cell << " offset " << i;
@@ -179,12 +172,12 @@ TEST_F(MemoryContention_Test, ZX48k_ContentionNoDelayAtCellOffset6and7)
     SetupZX48k();
 
     // The last 2 t-states of each 8-t-state cell have zero delay
-    uint32_t paperStart = PaperStartOnLine(50);
+    uint32_t contentionStart = ContentionStartOnLine(50);
 
-    _z80->t = paperStart + 6;
+    _z80->t = contentionStart + 6;
     EXPECT_EQ(_ula->GetContentionDelay(), 0);
 
-    _z80->t = paperStart + 7;
+    _z80->t = contentionStart + 7;
     EXPECT_EQ(_ula->GetContentionDelay(), 0);
 }
 
@@ -220,8 +213,8 @@ TEST_F(MemoryContention_Test, ZX48k_NoContentionInLeftBorder)
     SetupZX48k();
 
     // Access during screen area but in left border (before paper starts)
-    uint32_t paperStart = PaperStartOnLine(10);
-    _z80->t = paperStart - 1;  // Just before paper
+    uint32_t contentionStart = ContentionStartOnLine(10);
+    _z80->t = contentionStart - 1;  // Just before the first contended T
 
     EXPECT_EQ(_ula->GetContentionDelay(), 0);
 }
@@ -234,10 +227,10 @@ TEST_F(MemoryContention_Test, ZX48k_NoContentionInRightBorder)
     const RasterDescriptor& rd = _screen->rasterDescriptors[_screen->GetVideoMode()];
     uint32_t paperWidthTStates = rd.screenWidth / 2;  // 256 / 2 = 128 t-states
 
-    uint32_t paperStart = PaperStartOnLine(10);
-    uint32_t paperEnd = paperStart + paperWidthTStates;
+    uint32_t contentionStart = ContentionStartOnLine(10);
+    uint32_t contentionEnd = contentionStart + paperWidthTStates;
 
-    _z80->t = paperEnd;
+    _z80->t = contentionEnd;
     EXPECT_EQ(_ula->GetContentionDelay(), 0);
 }
 
@@ -274,10 +267,10 @@ TEST_F(MemoryContention_Test, ZX48k_ContentionConsistentAcrossLines)
 
     for (int line = 0; line < 192; line += 32)  // Sample lines
     {
-        uint32_t paperStart = PaperStartOnLine(line);
+        uint32_t contentionStart = ContentionStartOnLine(line);
         for (int i = 0; i < 8; i++)
         {
-            _z80->t = paperStart + i;
+            _z80->t = contentionStart + i;
             EXPECT_EQ(_ula->GetContentionDelay(), expectedPattern[i])
                 << "Line " << line << " offset " << i;
         }
@@ -293,8 +286,8 @@ TEST_F(MemoryContention_Test, ZX48k_rdAddsContentionDelay)
     // Set up default memory banks for 48K
     _cpu->GetMemory()->DefaultBanksFor48k();
 
-    uint32_t paperStart = PaperStartOnLine(10);
-    _z80->t = paperStart;  // Cell offset 0, contention = 6
+    uint32_t contentionStart = ContentionStartOnLine(10);
+    _z80->t = contentionStart;  // Cell offset 0, contention = 6
 
     uint32_t tBefore = _z80->t;
 
@@ -313,8 +306,8 @@ TEST_F(MemoryContention_Test, ZX48k_rdNoContentionForExecutionFetch)
 
     _cpu->GetMemory()->DefaultBanksFor48k();
 
-    uint32_t paperStart = PaperStartOnLine(10);
-    _z80->t = paperStart;
+    uint32_t contentionStart = ContentionStartOnLine(10);
+    _z80->t = contentionStart;
 
     uint32_t tBefore = _z80->t;
 
@@ -335,8 +328,8 @@ TEST_F(MemoryContention_Test, ZX48k_rdNoContentionForUncontendedAddress)
 
     _cpu->GetMemory()->DefaultBanksFor48k();
 
-    uint32_t paperStart = PaperStartOnLine(10);
-    _z80->t = paperStart;
+    uint32_t contentionStart = ContentionStartOnLine(10);
+    _z80->t = contentionStart;
 
     uint32_t tBefore = _z80->t;
 
@@ -377,8 +370,8 @@ TEST_F(MemoryContention_Test, ZX48k_wdAddsContentionDelay)
 
     _cpu->GetMemory()->DefaultBanksFor48k();
 
-    uint32_t paperStart = PaperStartOnLine(20);
-    _z80->t = paperStart + 1;  // Cell offset 1, contention = 5
+    uint32_t contentionStart = ContentionStartOnLine(20);
+    _z80->t = contentionStart + 1;  // Cell offset 1, contention = 5
 
     uint32_t tBefore = _z80->t;
 
@@ -398,8 +391,8 @@ TEST_F(MemoryContention_Test, ZX48k_wdNoContentionForUncontendedAddress)
 
     _cpu->GetMemory()->DefaultBanksFor48k();
 
-    uint32_t paperStart = PaperStartOnLine(20);
-    _z80->t = paperStart;
+    uint32_t contentionStart = ContentionStartOnLine(20);
+    _z80->t = contentionStart;
 
     uint32_t tBefore = _z80->t;
 
@@ -456,8 +449,8 @@ TEST_F(MemoryContention_Test, ZX48k_rdContentionAt0x4000Boundary)
 
     _cpu->GetMemory()->DefaultBanksFor48k();
 
-    uint32_t paperStart = PaperStartOnLine(10);
-    _z80->t = paperStart;
+    uint32_t contentionStart = ContentionStartOnLine(10);
+    _z80->t = contentionStart;
 
     // 0x4000 is the first contended address
     uint32_t tBefore = _z80->t;
@@ -471,8 +464,8 @@ TEST_F(MemoryContention_Test, ZX48k_rdContentionAt0x7FFFBoundary)
 
     _cpu->GetMemory()->DefaultBanksFor48k();
 
-    uint32_t paperStart = PaperStartOnLine(10);
-    _z80->t = paperStart;
+    uint32_t contentionStart = ContentionStartOnLine(10);
+    _z80->t = contentionStart;
 
     // 0x7FFF is the last contended address
     uint32_t tBefore = _z80->t;
@@ -486,8 +479,8 @@ TEST_F(MemoryContention_Test, ZX48k_rdNoContentionAt0x3FFF)
 
     _cpu->GetMemory()->DefaultBanksFor48k();
 
-    uint32_t paperStart = PaperStartOnLine(10);
-    _z80->t = paperStart;
+    uint32_t contentionStart = ContentionStartOnLine(10);
+    _z80->t = contentionStart;
 
     // 0x3FFF is below contended range
     uint32_t tBefore = _z80->t;
@@ -501,8 +494,8 @@ TEST_F(MemoryContention_Test, ZX48k_rdNoContentionAt0x8000)
 
     _cpu->GetMemory()->DefaultBanksFor48k();
 
-    uint32_t paperStart = PaperStartOnLine(10);
-    _z80->t = paperStart;
+    uint32_t contentionStart = ContentionStartOnLine(10);
+    _z80->t = contentionStart;
 
     // 0x8000 is above contended range
     uint32_t tBefore = _z80->t;

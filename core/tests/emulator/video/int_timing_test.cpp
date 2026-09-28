@@ -49,7 +49,7 @@ ASSERT_TRUE(_cpu->Init()) << "Core::Init() failed";
             case MM_SPECTRUM48:
                 config.frame = 69888;
                 config.t_line = 224;
-                config.intstart = 1794;
+                config.intstart = 1811;
                 config.intlen = 32;
                 _screen->SetVideoMode(M_ZX48);
                 break;
@@ -57,7 +57,7 @@ ASSERT_TRUE(_cpu->Init()) << "Core::Init() failed";
             case MM_PLUS3:
                 config.frame = 70908;
                 config.t_line = 228;
-                config.intstart = 2056;
+                config.intstart = 1845;
                 config.intlen = 36;
                 _screen->SetVideoMode(M_ZX128);
                 break;
@@ -141,7 +141,7 @@ TEST_F(INTTiming_Test, ZX48k_INTStartCorrect)
 {
     SetupModel(MM_SPECTRUM48);
     CONFIG& config = _context->config;
-    EXPECT_EQ(config.intstart, 1794u);
+    EXPECT_EQ(config.intstart, 1811u);
 }
 
 TEST_F(INTTiming_Test, ZX48k_INTLengthCorrect)
@@ -175,7 +175,7 @@ TEST_F(INTTiming_Test, ZX128k_INTStartCorrect)
 {
     SetupModel(MM_SPECTRUM128);
     CONFIG& config = _context->config;
-    EXPECT_EQ(config.intstart, 2056u);
+    EXPECT_EQ(config.intstart, 1845u);
 }
 
 TEST_F(INTTiming_Test, ZX128k_INTLengthCorrect)
@@ -201,7 +201,7 @@ TEST_F(INTTiming_Test, Plus3_SameAsZX128k_INT)
     SetupModel(MM_PLUS3);
     CONFIG& config = _context->config;
     // ZX +3 uses same ULA timing as ZX-128K
-    EXPECT_EQ(config.intstart, 2056u);
+    EXPECT_EQ(config.intstart, 1845u);
     EXPECT_EQ(config.intlen, 36u);
 }
 
@@ -224,36 +224,41 @@ TEST_F(INTTiming_Test, Pentagon_INTStartMatchesFormula)
     EXPECT_EQ(expected, 71619u);
 }
 
-TEST_F(INTTiming_Test, ZX48k_INTStartMatchesFormula)
+/// INT -> first rendered paper pixel, the physically meaningful quantity every
+/// model's intstart is calibrated on. Goes through the production defaults and
+/// the production raster (GetPaperStartTstate), so a raster or origin change
+/// that moves the picture relative to the INT fails here.
+TEST_F(INTTiming_Test, INTToFirstPixel_MatchesReferencePerModel)
 {
-    SetupModel(MM_SPECTRUM48);
+    struct Case { MEM_MODEL model; uint32_t frame; uint32_t line; VideoModeEnum mode; uint32_t intToPaper; const char* source; };
+    const Case cases[] = {
+        // Consensus of Xpeccy layouts, MiSTer ula.sv (+6T output pipeline) and
+        // ZXMAK2 (ZXMAK2 alone places the 48K/128K pixel 4T earlier)
+        {MM_SPECTRUM48,  69888, 224, M_ZX48,         14340, "Xpeccy ULA.48, MiSTer"},
+        {MM_SPECTRUM128, 70908, 228, M_ZX128,        14366, "Xpeccy ULA.128, MiSTer"},
+        {MM_PLUS3,       70908, 228, M_ZX128,        14366, "MiSTer (+3 shares the 128K ULA timing)"},
+        {MM_SCORP,       69888, 224, M_SCORPION,     14336, "Xpeccy ULA.Scorpion, ZXMAK2"},
+        // Pentagon: 71635 -> 17988T is verified on "Across the Edge"; 71634 (17989T,
+        // the UnrealSpeccy figure) breaks it. References span 17985..17989
+        {MM_PENTAGON,    71680, 224, M_PENTAGON128K, 17988, "Pentagon, demo-verified"},
+        {MM_PROFI,       69888, 224, M_PROFI,        12580, "UnrealSpeccy PRESET.PROFI"},
+        {MM_ATM710,      69888, 224, M_ZX48,         14395, "UnrealSpeccy PRESET.ATM1_2_3.5MHz"},
+    };
+    for (const Case& c : cases)
+    {
+        SCOPED_TRACE(c.source);
+        CONFIG& config = _context->config;
+        config.mem_model = c.model;
+        config.frame = c.frame;
+        config.t_line = c.line;
+        config.intstart = 0;
+        config.intlen = 0;
+        Config(_context).ApplyModelTimingDefaults(config);
+        _screen->SetVideoMode(c.mode);
 
-    // ZX-48K: vc=248, hc=4
-    // paperStartLine = 8 + 16 + 48 = 72
-    // emulatorLine = (248 + 72) mod 312 = 320 mod 312 = 8
-    // intstart = 8 * 224 + 4/2 = 1792 + 2 = 1794
-    uint32_t paperStartLine = 72;
-    uint32_t totalLines = 312;
-    uint32_t emulatorLine = (248 + paperStartLine) % totalLines;
-    uint32_t expected = emulatorLine * 224 + 4 / 2;
-
-    EXPECT_EQ(expected, 1794u);
-}
-
-TEST_F(INTTiming_Test, ZX128k_INTStartMatchesFormula)
-{
-    SetupModel(MM_SPECTRUM128);
-
-    // ZX-128K: vc=248, hc=8
-    // paperStartLine = 8 + 16 + 48 = 72
-    // emulatorLine = (248 + 72) mod 311 = 320 mod 311 = 9
-    // intstart = 9 * 228 + 8/2 = 2052 + 4 = 2056
-    uint32_t paperStartLine = 72;
-    uint32_t totalLines = 311;
-    uint32_t emulatorLine = (248 + paperStartLine) % totalLines;
-    uint32_t expected = emulatorLine * 228 + 8 / 2;
-
-    EXPECT_EQ(expected, 2056u);
+        const uint32_t intFiresAt = config.intstart + 1;  // Pentagon fires at the end of the previous frame
+        EXPECT_EQ((_screen->GetPaperStartTstate() + config.frame - intFiresAt) % config.frame, c.intToPaper);
+    }
 }
 
 /// =========== Cross-model consistency tests ===========
@@ -346,7 +351,7 @@ TEST_F(INTTiming_Test, ApplyDefaults_ZX48k)
     Config configHelper(_context);
     configHelper.ApplyModelTimingDefaults(config);
 
-    EXPECT_EQ(config.intstart, 1794u);
+    EXPECT_EQ(config.intstart, 1811u);
     EXPECT_EQ(config.intlen, 32u);
 }
 
@@ -360,7 +365,7 @@ TEST_F(INTTiming_Test, ApplyDefaults_ZX128k)
     Config configHelper(_context);
     configHelper.ApplyModelTimingDefaults(config);
 
-    EXPECT_EQ(config.intstart, 2056u);
+    EXPECT_EQ(config.intstart, 1845u);
     EXPECT_EQ(config.intlen, 36u);
 }
 
@@ -375,7 +380,7 @@ TEST_F(INTTiming_Test, ApplyDefaults_Plus3)
     configHelper.ApplyModelTimingDefaults(config);
 
     // Plus3 uses same ULA timing as ZX-128K
-    EXPECT_EQ(config.intstart, 2056u);
+    EXPECT_EQ(config.intstart, 1845u);
     EXPECT_EQ(config.intlen, 36u);
 }
 

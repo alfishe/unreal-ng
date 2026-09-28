@@ -494,41 +494,37 @@ uint32_t ScreenZX::GetZXSpectrumPixelOptimized(uint8_t x, uint8_t y, uint16_t ba
 /// \return
 bool ScreenZX::TransformTstateToFramebufferCoords(uint32_t tstate, uint16_t* x, uint16_t* y)
 {
-    bool result = false;
     *x = 0;
     *y = 0;
+    if (tstate >= _rasterState.maxFrameTiming || _rasterState.tstatesPerLine == 0)
+        return false;
 
-    // ATM3 AlCo/HWMC keep the 312-line ATM raster, not the Pentagon-class
-    // 320-line one their M_P16/M_PMC ids carry - same override as
-    // SetVideoMode / CreateTstateLUT
-    const bool atm3AlcoTiming = (_mode == M_P16 || _mode == M_PMC) &&
-                                _context != nullptr && _context->config.mem_model == MM_ATM3;
-    const RasterDescriptor& rasterDescriptor =
-        (_mode == M_P384) ? rasterDescriptors[M_PENTAGON128K] :
-        atm3AlcoTiming ? rasterDescriptors[M_ZX48] : rasterDescriptors[_mode];
-    const uint16_t tstatesPerLine = _rasterState.tstatesPerLine;
-    const uint32_t maxFrameTiming = _rasterState.maxFrameTiming;
+    // Vertical: the mode's timing descriptor (P384 = Pentagon, ATM3 AlCo = ATM raster).
+    // Horizontal: borders at 2 px/T around the display window, the window at its own
+    // pixel clock, stored where the mode's framebuffer keeps it (ATM stores the
+    // window only, Profi hires 512 px between 48 px borders).
+    const RasterDescriptor& timing = GetTimingDescriptor(_mode);
+    const RasterDescriptor& storage = rasterDescriptors[_mode];
+    const int line = static_cast<int>(tstate / _rasterState.tstatesPerLine) - (timing.vSyncLines + timing.vBlankLines);
+    const int t = static_cast<int>(tstate % _rasterState.tstatesPerLine);
+    const int paperStart = _rasterState.screenLineAreaStart;
+    const int paperEnd = _rasterState.screenLineAreaEnd + 1;
+    const int dot = _rasterState.pixelsPerTState;
 
-    if (tstate < maxFrameTiming)
-    {
-        // ULA draws 2 pixels per t-state
-        const int framebufferX = (tstate % _rasterState.tstatesPerLine) * _rasterState.pixelsPerTState;
-        // Get raster line and skip invisible lines that are drawn before framebuffer render
-        const int framebufferY = tstate / tstatesPerLine - (rasterDescriptor.vSyncLines + rasterDescriptor.vBlankLines);
+    int column;
+    if (t < paperStart)
+        column = storage.screenOffsetLeft - (paperStart - t) * dot;
+    else if (t < paperEnd)
+        column = storage.screenOffsetLeft + (t - paperStart) * _rasterState.paperDotsPerT;
+    else
+        column = storage.screenOffsetLeft + storage.screenWidth + (t - paperEnd) * dot;
 
-        const uint16_t frameWidth = rasterDescriptor.fullFrameWidth;
-        const uint16_t frameHeight = rasterDescriptor.fullFrameHeight;
+    if (line < 0 || line >= storage.fullFrameHeight || column < 0 || column >= storage.fullFrameWidth)
+        return false;
 
-        if (framebufferY >= 0 && framebufferY < frameHeight && framebufferX < frameWidth)
-        {
-            *x = framebufferX;
-            *y = framebufferY;
-
-            result = true;
-        }
-    }
-
-    return result;
+    *x = static_cast<uint16_t>(column);
+    *y = static_cast<uint16_t>(line);
+    return true;
 }
 
 bool ScreenZX::TransformTstateToZXCoords(uint32_t tstate, uint16_t* zxX, uint16_t* zxY)

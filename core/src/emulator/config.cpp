@@ -859,14 +859,15 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
     unsigned userIntlen   = config.intlen;
 
     // Apply hardware-accurate defaults per model.
-    // Values derived from MiSTer HDL ula.sv INT generation logic:
-    //   Pentagon: INT at vc=239, hc=326; converted to our raster geometry (see doc 18):
-    //     paper first pixel at T=17944 (line 80 + 24T, see ScreenZX::CreateTstateLUT),
-    //     INT fires at intstart+1, so 71635 gives (71680 - 71636) + 17944 = 17988T INT-to-paper,
-    //     verified on "Across the Edge" (71634 = 17989T, the UnrealSpeccy figure, breaks it);
-    //     references span 17985 (ZXMAK2) .. 17987 (MiSTer) .. 17989 (UnrealSpeccy)
-    //   ZX-48K:   INT at vc=248, hc=4   → emulator t-state 1794  (2.6% through frame)
-    //   ZX-128K:  INT at vc=248, hc=8   → emulator t-state 2056  (2.9% through frame)
+    // Every model is calibrated on the same invariant: the distance from the INT
+    // (fires at intstart+1) to the first paper pixel of the renderer's raster
+    // (T 24 of the first paper line, see ScreenZX::CreateTstateLUT):
+    //   Pentagon: 71635 -> 17988T, verified on "Across the Edge" (71634 = 17989T breaks it);
+    //             references span 17985 (ZXMAK2) .. 17987 (MiSTer) .. 17989 (UnrealSpeccy)
+    //   ZX-48K:   14340T (Xpeccy ULA.48, MiSTer ula.sv + 6T output pipeline; ZXMAK2 14336)
+    //             -> 16152 - 14340 - 1 = 1811
+    //   ZX-128K:  14366T (Xpeccy ULA.128, MiSTer ula.sv + 6T; ZXMAK2 14362) -> 16212 - 14366 - 1 = 1845
+    //   Scorpion: 14336T (Xpeccy ULA.Scorpion, ZXMAK2 UlaScorpion; UnrealSpeccy 14344) -> 1815
     switch (config.mem_model)
     {
         case MM_PENTAGON:
@@ -879,24 +880,24 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
             break;
 
         case MM_SPECTRUM48:
-            config.intstart = 1794;
+            config.intstart = 1811;
             config.intlen   = 32;
             break;
 
         case MM_SPECTRUM128:
         case MM_PLUS3:
-            config.intstart = 2056;
+            config.intstart = 1845;
             config.intlen   = 36;   // ZX-128K ULA has 72-HC INT = 36 T-states
             break;
 
         case MM_SCORP:
         case MM_PROFSCORP:
             // Scorpion ZS-256: Sinclair-matching 312 x 224T frame, INT at the ZX48
-            // position (hardware-reference 6). No Scorpion INI ships today, so frame/
-            // t_line values read from another model's INI must not leak in.
+            // position (hardware-reference 6; Xpeccy and ZXMAK2: 14336T to paper).
+            // Frame/t_line values read from another model's INI must not leak in.
             config.frame    = 69888;   // 224 * 312
             config.t_line   = 224;
-            config.intstart = 1794;
+            config.intstart = 1815;
             config.intlen   = 32;
             break;
 
@@ -948,14 +949,14 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
             case MM_SPECTRUM48:
                 config.frame = 69888;   // 224 * 312
                 config.t_line = 224;
-                config.intstart = 1794;
+                config.intstart = 1811;
                 config.intlen = 32;
                 break;
             case MM_SPECTRUM128:
             case MM_PLUS3:
                 config.frame = 70908;   // 228 * 311
                 config.t_line = 228;
-                config.intstart = 2056;
+                config.intstart = 1845;
                 config.intlen = 36;
                 break;
             case MM_PENTAGON:
@@ -966,7 +967,7 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
             case MM_PROFSCORP:
                 config.frame = 69888;   // 224 * 312
                 config.t_line = 224;
-                config.intstart = 1794;
+                config.intstart = 1815;
                 config.intlen = 32;
                 break;
             case MM_PROFI:

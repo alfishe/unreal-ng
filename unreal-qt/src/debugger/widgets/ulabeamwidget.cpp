@@ -55,21 +55,29 @@ void ULABeamWidget::refresh()
     if (config.t_line == 0 || config.frame == 0)
         return;
 
-    // Read raster geometry from the screen's descriptor
+    // Geometry in beam dots from the raster state (the renderer's line origin),
+    // so the display window is where the mode really draws it (ATM 320/640 x 200,
+    // Profi 512 x 240), not where the framebuffer happens to store it
     Screen* screen = _emulator->GetContext()->pScreen;
     VideoModeEnum mode = screen->GetVideoMode();
     const RasterDescriptor& rd = screen->rasterDescriptors[mode];
+    const RasterDescriptor& timing = screen->GetTimingDescriptor(mode);
+    const RasterState& rs = screen->GetRasterState();
+    if (rs.tstatesPerLine == 0)
+        return;
 
-    _totalPixelsPerLine = rd.pixelsPerLine;
-    _totalLines = rd.vSyncLines + rd.vBlankLines + rd.fullFrameHeight;
-    _visibleWidth = rd.fullFrameWidth;
-    _visibleHeight = rd.fullFrameHeight;
-    _visibleOffsetX = 0;  // Visible pixels start at pixel 0 in the line
-    _visibleOffsetY = rd.vSyncLines + rd.vBlankLines;
-    _paperOffsetX = rd.screenOffsetLeft;
-    _paperOffsetY = rd.screenOffsetTop;
-    _paperWidth = rd.screenWidth;
-    _paperHeight = rd.screenHeight;
+    _totalPixelsPerLine = timing.pixelsPerLine;
+    _totalLines = timing.vSyncLines + timing.vBlankLines + timing.fullFrameHeight;
+    _visibleWidth = (mode == M_P384) ? rd.fullFrameWidth : (rs.rightBorderAreaEnd + 1) * rs.pixelsPerTState;
+    _visibleHeight = timing.fullFrameHeight;
+    _visibleOffsetX = 0;
+    _visibleOffsetY = timing.vSyncLines + timing.vBlankLines;
+    _paperOffsetX = rs.screenLineAreaStart * rs.pixelsPerTState;
+    _paperOffsetY = timing.screenOffsetTop;
+    _paperWidth = (rs.screenLineAreaEnd - rs.screenLineAreaStart + 1) * rs.pixelsPerTState;
+    _paperHeight = timing.screenHeight;
+    _fbPaperOffsetX = rd.screenOffsetLeft;
+    _fbPaperWidth = rd.screenWidth;
 
     Z80* cpu = _emulator->GetContext()->pCore->GetZ80();
     if (cpu)
@@ -275,13 +283,33 @@ void ULABeamWidget::updateScreenImage()
     if (_screenImage.width() != imgWidth || _screenImage.height() != imgHeight)
         _screenImage = QImage(imgWidth, imgHeight, QImage::Format_RGB32);
 
+    // Beam dot -> framebuffer column: borders map 1:1 around the display
+    // window, the window scales its own pixels onto its beam dots; columns the
+    // framebuffer does not store (ATM keeps no side border) stay blank
+    auto fbColumn = [this, &fb](int x) -> int {
+        int col;
+        if (x < _paperOffsetX)
+            col = _fbPaperOffsetX - (_paperOffsetX - x);
+        else if (x < _paperOffsetX + _paperWidth)
+            col = _fbPaperOffsetX + (x - _paperOffsetX) * _fbPaperWidth / _paperWidth;
+        else
+            col = _fbPaperOffsetX + _fbPaperWidth + (x - _paperOffsetX - _paperWidth);
+        return (col >= 0 && col < fb.width) ? col : -1;
+    };
+
     uint32_t* src = reinterpret_cast<uint32_t*>(fb.memoryBuffer);
-    for (int y = 0; y < imgHeight && y < fb.height; y++)
+    for (int y = 0; y < imgHeight; y++)
     {
         QRgb* destLine = reinterpret_cast<QRgb*>(_screenImage.scanLine(y));
-        for (int x = 0; x < imgWidth && x < fb.width; x++)
+        for (int x = 0; x < imgWidth; x++)
         {
-            uint32_t pixel = src[y * fb.width + x];
+            const int col = fbColumn(x);
+            if (y >= fb.height || col < 0)
+            {
+                destLine[x] = qRgb(96, 96, 96);
+                continue;
+            }
+            uint32_t pixel = src[y * fb.width + col];
             int r = (pixel >> 16) & 0xFF;
             int g = (pixel >> 8) & 0xFF;
             int b = pixel & 0xFF;

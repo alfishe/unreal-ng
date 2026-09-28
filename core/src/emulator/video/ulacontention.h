@@ -147,6 +147,11 @@ private:
 
     // ── State ────────────────────────────────────────────────
 
+    /// Contention starts this many T before the first paper pixel is displayed:
+    /// 48K INT + 14335 vs 14340, 128K INT + 14361 vs 14366 (classic contention
+    /// onset; display per Xpeccy ULA.48/128 and MiSTer ula.sv)
+    static constexpr uint32_t kContentionLeadT = 5;
+
     Z80* _cpu = nullptr;
     Memory* _memory = nullptr;
     EmulatorContext* _context = nullptr;

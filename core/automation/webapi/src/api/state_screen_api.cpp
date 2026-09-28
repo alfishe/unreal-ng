@@ -523,55 +523,17 @@ void EmulatorAPI::getBeamPosition(const HttpRequestPtr& req, std::function<void(
 
     const VideoModeEnum mode = screen->GetVideoMode();
     const RasterDescriptor& rd = screen->rasterDescriptors[mode];
+    const RasterDescriptor& timingRd = screen->GetTimingDescriptor(mode);
     const RasterState& rs = screen->GetRasterState();
 
     // Canonical raster boundaries when the raster state has been calculated;
     // plain config division otherwise (mode not yet set up)
     const bool rasterValid = rs.tstatesPerLine != 0;
     const uint32_t tstatesPerLine = rasterValid ? rs.tstatesPerLine : config.t_line;
-    const uint32_t totalLines = rd.vSyncLines + rd.vBlankLines + rd.fullFrameHeight;
+    const uint32_t totalLines = timingRd.vSyncLines + timingRd.vBlankLines + timingRd.fullFrameHeight;
 
-    const uint32_t line = tInFrame / tstatesPerLine;
-    const uint32_t dotInLine = tInFrame % tstatesPerLine;
-    const uint32_t beamX = dotInLine * rs.pixelsPerTState;  // Absolute raster pixel within the line
-
-    // Vertical zone — frame-relative t-state ranges (Screen::InitRaster math)
-    std::string vZone = "beyond_raster";
-    if (rasterValid)
-    {
-        if (tInFrame <= rs.blankAreaEnd)
-            vZone = (line < rd.vSyncLines) ? "vsync" : "vblank";
-        else if (tInFrame <= rs.topBorderAreaEnd)
-            vZone = "top_border";
-        else if (tInFrame <= rs.screenAreaEnd)
-            vZone = "screen";
-        else if (tInFrame <= rs.bottomBorderAreaEnd)
-            vZone = "bottom_border";
-    }
-
-    // Horizontal zone — line-relative t-state ranges, meaningful in screen rows only
-    std::string hZone = "-";
-    if (vZone == "screen")
-    {
-        if (dotInLine <= rs.blankLineAreaEnd)
-            hZone = "hblank";
-        else if (dotInLine <= rs.leftBorderAreaEnd)
-            hZone = "left_border";
-        else if (dotInLine <= rs.screenLineAreaEnd)
-            hZone = "paper";
-        else if (dotInLine <= rs.rightBorderAreaEnd)
-            hZone = "right_border";
-        else
-            hZone = "beyond_line";
-    }
-
-    // Combined agent-facing zone: paper / border / hblank / vsync / vblank / ...
-    std::string zone = vZone;
-    if (vZone == "screen")
-        zone = (hZone == "paper") ? "paper" : (hZone == "hblank" ? "hblank" : "border");
-
-    const bool inPaper = zone == "paper";
-    const bool inVisible = vZone == "screen" && hZone != "hblank" && hZone != "beyond_line";
+    // Zones and paper position in the active mode's geometry (renderer line origin)
+    const BeamPosition beam = screen->DescribeBeam(tInFrame);
 
     std::string model = Config::GetModelFullName(config.mem_model);
 
@@ -581,22 +543,24 @@ void EmulatorAPI::getBeamPosition(const HttpRequestPtr& req, std::function<void(
     ret["tstate"] = tstate;
     ret["tstate_in_frame"] = tInFrame;
     ret["frame"] = static_cast<Json::UInt64>(context->emulatorState.frame_counter);
-    ret["line"] = line;
-    ret["dot_in_line"] = dotInLine;
-    ret["beam_x"] = beamX;
-    ret["beam_y"] = line;
-    ret["zone"] = zone;
-    ret["vertical_zone"] = vZone;
-    ret["horizontal_zone"] = hZone;
-    ret["in_visible_area"] = inVisible;
-    ret["in_paper"] = inPaper;
+    ret["line"] = tInFrame / tstatesPerLine;
+    ret["dot_in_line"] = tInFrame % tstatesPerLine;
+    ret["beam_x"] = beam.beamX;
+    ret["beam_y"] = tInFrame / tstatesPerLine;
+    ret["zone"] = beam.zone;
+    ret["vertical_zone"] = beam.verticalZone;
+    ret["horizontal_zone"] = beam.horizontalZone;
+    ret["in_visible_area"] = beam.inVisibleArea;
+    ret["in_paper"] = beam.inPaper;
 
-    if (inPaper)
+    if (beam.inPaper)
     {
-        // Position relative to the paper area (256x192 for standard modes)
+        // Mode pixels under the beam (320x200, 640x200, 512x240, 256x192...);
+        // one T covers x..x_end
         Json::Value paper;
-        paper["x"] = (dotInLine - rs.screenLineAreaStart) * rs.pixelsPerTState;
-        paper["y"] = line - (rd.vSyncLines + rd.vBlankLines + rd.screenOffsetTop);
+        paper["x"] = beam.paperX;
+        paper["x_end"] = beam.paperXEnd;
+        paper["y"] = beam.paperY;
         ret["paper"] = paper;
     }
 
@@ -620,11 +584,14 @@ void EmulatorAPI::getBeamPosition(const HttpRequestPtr& req, std::function<void(
     raster["screen_height"] = rd.screenHeight;
     raster["screen_offset_left"] = rd.screenOffsetLeft;
     raster["screen_offset_top"] = rd.screenOffsetTop;
-    raster["pixels_per_line"] = rd.pixelsPerLine;
-    raster["h_sync_pixels"] = rd.hSyncPixels;
-    raster["h_blank_pixels"] = rd.hBlankPixels;
-    raster["v_sync_lines"] = rd.vSyncLines;
-    raster["v_blank_lines"] = rd.vBlankLines;
+    raster["pixels_per_line"] = timingRd.pixelsPerLine;
+    raster["h_sync_pixels"] = timingRd.hSyncPixels;
+    raster["h_blank_pixels"] = timingRd.hBlankPixels;
+    raster["v_sync_lines"] = timingRd.vSyncLines;
+    raster["v_blank_lines"] = timingRd.vBlankLines;
+    raster["paper_start_t"] = rs.screenLineAreaStart;
+    raster["paper_end_t"] = rs.screenLineAreaEnd;
+    raster["paper_dots_per_t"] = rs.paperDotsPerT;
     raster["total_lines"] = totalLines;
     ret["raster"] = raster;
 

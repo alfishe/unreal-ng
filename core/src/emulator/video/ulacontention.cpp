@@ -36,9 +36,10 @@ uint8_t UlaContention::ComputeContentionDelay(uint32_t t) const
     // tInLine normalizes the absolute CPU 't' time to the current line's horizontal position.
     uint32_t tInLine = (t - _raster.screenAreaStart) % _raster.tstatesPerLine;
 
-    // Within the scanline, contention only occurs when the ULA is actively fetching video data.
-    // If the beam is in the horizontal blanking or left/right border, there is no contention.
-    if (tInLine < _raster.screenLineAreaStart || tInLine > _raster.screenLineAreaEnd)
+    // Contention runs for 128 T, starting kContentionLeadT before the first
+    // displayed pixel: 48K first contended T = INT + 14335, pixel at INT + 14340.
+    const uint32_t contentionStart = _raster.screenLineAreaStart - kContentionLeadT;
+    if (tInLine < contentionStart || tInLine > _raster.screenLineAreaEnd - kContentionLeadT)
         return 0;
 
     // The ULA fetches memory in 8-pixel character blocks, taking 4 T-states per fetch.
@@ -46,7 +47,7 @@ uint8_t UlaContention::ComputeContentionDelay(uint32_t t) const
     // if it tries to access contended memory during these fetches.
     // The delay depends precisely on which T-state within the 8-T-state cell the CPU access falls into.
     // offsetInCell (0..7) maps directly to the contentionPattern array (e.g., 6, 5, 4, 3, 2, 1, 0, 0).
-    uint32_t offsetInCell = (tInLine - _raster.screenLineAreaStart) % 8;
+    uint32_t offsetInCell = (tInLine - contentionStart) % 8;
     return contentionPattern[offsetInCell];
 }
 
