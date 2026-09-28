@@ -111,6 +111,20 @@ void Keyboard::Reset()
     _keyboardPressedKeys.clear();
 }
 
+Keyboard::InputState Keyboard::CaptureInputState() const
+{
+    InputState state;
+    memcpy(state.matrix, _keyboardMatrixState, sizeof(state.matrix));
+    state.pressedKeys = _keyboardPressedKeys;
+    return state;
+}
+
+void Keyboard::RestoreInputState(const InputState& state)
+{
+    memcpy(_keyboardMatrixState, state.matrix, sizeof(_keyboardMatrixState));
+    _keyboardPressedKeys = state.pressedKeys;
+}
+
 /// Register key press in keyboard matrix state
 /// @param key ZX Spectrum key pressed
 void Keyboard::PressKey(ZXKeysEnum key)

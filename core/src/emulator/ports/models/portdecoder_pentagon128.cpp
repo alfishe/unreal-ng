@@ -602,6 +602,14 @@ void PortDecoder_Pentagon128::Port_7FFD_Out(uint16_t port, uint8_t value, uint16
     /// endregion </Debug logging>
 }
 
+void PortDecoder_Pentagon128::UpdateModelMemoryBanks()
+{
+    // A locked #7FFD ignores writes on the machine, but p7FFD still caches them
+    // (see Port_7FFD_Out), so it only describes the mapping while unlocked
+    if (!_7FFD_Locked)
+        switchRAMPage(_context->emulatorState.p7FFD);
+}
+
 /// Pentagon 128k RAM page switching. Uses only 8 pages [0..7] via port #7FFD bits [0..2]
 void PortDecoder_Pentagon128::switchRAMPage(uint8_t value)
 {

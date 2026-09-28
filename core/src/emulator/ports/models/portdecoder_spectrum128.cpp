@@ -328,6 +328,12 @@ bool PortDecoder_Spectrum128::IsPort_FFFD(uint16_t port)
 
 /// region <Port handlers>
 
+void PortDecoder_Spectrum128::UpdateModelMemoryBanks()
+{
+    if (!_7FFD_Locked)
+        _context->pMemory->SetRAMPageToBank3(_context->emulatorState.p7FFD & 0b00000111);
+}
+
 /// Port #7FFD (Memory) handler
 /// \param value
 void PortDecoder_Spectrum128::Port_7FFD_Out(uint16_t port, uint8_t value, uint16_t pc)

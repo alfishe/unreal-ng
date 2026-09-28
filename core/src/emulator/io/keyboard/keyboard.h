@@ -304,7 +304,18 @@ public:
 
     /// region <Keyboard control>
 public:
+    /// Matrix + pressed-key counters. Not a TTD peripheral (the journal
+    /// replays input forward); captured only so a throwaway TTD display
+    /// render can hand the live keyboard back untouched.
+    struct InputState
+    {
+        uint8_t matrix[8];
+        std::map<ZXKeysEnum, uint8_t> pressedKeys;
+    };
+
     void Reset();
+    InputState CaptureInputState() const;
+    void RestoreInputState(const InputState& state);
     void PressKey(ZXKeysEnum key);
     void ReleaseKey(ZXKeysEnum key);
     void TypeSymbol(char symbol);
