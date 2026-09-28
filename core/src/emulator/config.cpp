@@ -910,10 +910,16 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
 
         case MM_SPECTRUM128:
         case MM_PLUS2:
-        case MM_PLUS2A:
-        case MM_PLUS3:
             config.intstart = 1845;
             config.intlen   = 36;   // ZX-128K ULA has 72-HC INT = 36 T-states
+            break;
+
+        case MM_PLUS2A:
+        case MM_PLUS3:
+            // The gate array keeps the 128K frame and INT position; its INT is 32 T (ZXMAK2 UlaPlus3,
+            // BizHawk ZX128Plus2a; ZX-M8XXX says 36)
+            config.intstart = 1845;
+            config.intlen   = 32;
             break;
 
         case MM_SCORP:
@@ -985,7 +991,7 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
                 config.frame = 70908;   // 228 * 311
                 config.t_line = 228;
                 config.intstart = 1845;
-                config.intlen = 36;
+                config.intlen = (config.mem_model == MM_PLUS3 || config.mem_model == MM_PLUS2A) ? 32 : 36;
                 break;
             case MM_PENTAGON:
                 config.frame = 71680;   // 224 * 320

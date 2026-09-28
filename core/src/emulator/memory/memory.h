@@ -351,6 +351,10 @@ public:
     void LoadContentToMemory(uint8_t* contentBuffer, size_t size, uint16_t z80address);
     void LoadRAMPageData(uint8_t page, uint8_t* fromBuffer, size_t bufferSize);
     void SetROMPageFlags();
+
+    /// Contention cache of a slot / of all four (after the machine's contention rule changed)
+    void UpdateSlotContention(uint8_t slot);
+    void RefreshSlotContention();
     void RecordROMPageSwitch();
     /// endregion </Service methods>
 

@@ -7,6 +7,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
+#include "emulator/ports/portdecoder.h"
 #include "emulator/video/screen.h"
 #include "emulator/video/ulacontention.h"
 
@@ -292,6 +293,119 @@ TEST_F(Contention128K_Test, IOContention_128KRules)
 }
 
 /// endregion </ZX-Spectrum 128K>
+
+/// region <ZX-Spectrum +2A/+3 (Amstrad gate array)>
+
+/// The +2A/+3 gate array keeps the 128K frame and contention onset but has its own rules (consensus of
+/// MAME, ZXMAK2, BizHawk, ZX-M8XXX, Spectral, xpeccy-plus, zxsp, jnext): the 1,0,7,6,5,4,3,2 pattern,
+/// RAM pages 4-7 contended in any slot, no I/O contention, and a floating bus only on #0FFD-type ports
+class ContentionPlus3_Test : public ContentionTestBase
+{
+protected:
+    ContentionPlus3_Test()
+    {
+        _modelName = "PLUS3";
+        _intToFirstContended = 14361;
+    }
+
+    void Out1FFD(uint8_t value) { _context->pPortDecoder->DecodePortOut(0x1FFD, value, 0x8000); }
+
+    /// The standard machine boots into 48 BASIC, which locks #7FFD paging (and with it the #1FFD layouts
+    /// and the floating bus): unlock it the way a reset into the menu leaves it
+    void Unlock() { _context->emulatorState.p7FFD &= static_cast<uint8_t>(~0x20); }
+};
+
+TEST_F(ContentionPlus3_Test, GateArrayPatternFromTheSameOnset)
+{
+    ASSERT_TRUE(_ula->IsGateArray());
+    const uint8_t pattern[8] = { 1, 0, 7, 6, 5, 4, 3, 2 };
+    for (uint32_t k = 0; k < 16; k++)
+        EXPECT_EQ(delayAt(_firstContendedT + k), pattern[k % 8]) << "cell offset " << k;
+    EXPECT_EQ(delayAt(_firstContendedT - 1), 0u);
+    EXPECT_EQ(runLdAHl(0x4000, _firstContendedT), 8u) << "LD A,(HL) from $4000 at offset 0: 7 + 1";
+    EXPECT_EQ(runLdAHl(0x4000, _firstContendedT + 2), 14u) << "at offset 2: 7 + 7";
+}
+
+TEST_F(ContentionPlus3_Test, PagesFourToSevenInAnySlot)
+{
+    for (uint16_t page : { 4, 5, 6, 7 })
+    {
+        _memory->SetRAMPageToBank3(page);
+        EXPECT_TRUE(_ula->IsAddressContended(0xC000)) << "page " << page;
+    }
+    for (uint16_t page : { 0, 1, 2, 3 })
+    {
+        _memory->SetRAMPageToBank3(page);
+        EXPECT_FALSE(_ula->IsAddressContended(0xC000)) << "page " << page << " (odd pages are a 128K rule)";
+    }
+
+    // All-RAM layout 0 = pages 0,1,2,3: nothing contended, #4000 included
+    Unlock();
+    Out1FFD(0x01);
+    for (uint16_t addr : { 0x0000, 0x4000, 0x8000, 0xC000 })
+        EXPECT_FALSE(_ula->IsAddressContended(addr)) << std::hex << addr;
+
+    // All-RAM layout 1 = pages 4,5,6,7: every slot contended, #0000 included
+    Out1FFD(0x03);
+    for (uint16_t addr : { 0x0000, 0x4000, 0x8000, 0xC000 })
+        EXPECT_TRUE(_ula->IsAddressContended(addr)) << std::hex << addr;
+    EXPECT_EQ(runLdAHl(0x0000, _firstContendedT), 8u) << "page 4 at #0000 is contended";
+
+    // Back to ROM at #0000: ROM is never contended
+    Out1FFD(0x00);
+    EXPECT_FALSE(_ula->IsAddressContended(0x0000));
+    EXPECT_TRUE(_ula->IsAddressContended(0x4000)) << "page 5";
+}
+
+TEST_F(ContentionPlus3_Test, NoIoContention)
+{
+    for (uint32_t k = 0; k < 8; k++)
+    {
+        _z80->t = _firstContendedT + k;
+        EXPECT_EQ(_ula->GetIOContentionDelay(0x00FE), 0u) << "offset " << k;
+        EXPECT_EQ(_ula->GetIOContentionDelay(0x00FD), 0u);
+        EXPECT_EQ(_ula->GetIOContentionDelay(0x7FFD), 0u);
+    }
+}
+
+TEST_F(ContentionPlus3_Test, FloatingBusOnlyOnPort0FFDWhilePagingIsUnlocked)
+{
+    _context->config.floatbus = 1;
+    Unlock();
+    for (uint16_t a = 0x4000; a < 0x5800; a++)
+        _memory->DirectWriteToZ80Memory(a, 0x40);  // bitmap
+    for (uint16_t a = 0x5800; a < 0x5B00; a++)
+        _memory->DirectWriteToZ80Memory(a, 0x38);  // attributes
+
+    // During the first paper cells the fetched bytes appear with bit 0 set
+    bool sawBitmap = false;
+    bool sawAttribute = false;
+    for (uint32_t k = 0; k < 16; k++)
+    {
+        _z80->t = _firstContendedT + k;
+        const uint8_t value = _ula->GetGateArrayFloatingBus(0x0FFD);
+        sawBitmap |= value == 0x41;
+        sawAttribute |= value == 0x39;
+        EXPECT_EQ(_ula->GetGateArrayFloatingBus(0x00FF), 0xFF) << "not a 0000 xxxx xxxx xx01 port";
+        EXPECT_EQ(_ula->GetGateArrayFloatingBus(0x1FFD), 0xFF) << "not a 0000 xxxx xxxx xx01 port";
+    }
+    EXPECT_TRUE(sawBitmap);
+    EXPECT_TRUE(sawAttribute);
+
+    // Between fetches (the border): the byte of the last contended access, here a real LD A,(HL)
+    _memory->DirectWriteToZ80Memory(0x4000, 0x80);
+    const uint32_t border = _ula->GetRaster().screenAreaStart - 1000;
+    runLdAHl(0x4000, border);
+    _z80->t = border;
+    EXPECT_EQ(_ula->GetGateArrayFloatingBus(0x0FFD), 0x81);
+
+    // Paging locked: the gate array stops driving the bus
+    _context->emulatorState.p7FFD |= 0x20;
+    EXPECT_EQ(_ula->GetGateArrayFloatingBus(0x0FFD), 0xFF);
+    _context->emulatorState.p7FFD &= static_cast<uint8_t>(~0x20);
+}
+
+/// endregion </ZX-Spectrum +2A/+3 (Amstrad gate array)>
 
 /// region <Contrast: Pentagon has no contention>
 

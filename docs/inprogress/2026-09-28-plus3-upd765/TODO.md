@@ -31,6 +31,13 @@ Design: [technical-design.md](technical-design.md).
   over-long reads, an N = 6 sector read of 8192 bytes, SCAN equal / low / high / STP 2, the EDSK
   load-save-load of an N = 6 sector.
 
+- **+2A/+3 timing (gate array, not the 128K ULA)**, by the consensus of MAME, ZXMAK2, BizHawk, ZX-M8XXX,
+  Spectral, xpeccy-plus, zxsp and jnext: contention pattern 1,0,7,6,5,4,3,2 from the 128K onset,
+  RAM pages 4-7 contended in any slot (the all-RAM layouts included; `UlaContention` keeps one flag per
+  slot, filled by `Memory`), no I/O contention, a floating bus only on #0FFD-type ports while paging is
+  unlocked (fetched byte, else the last contended byte, bit 0 set), INT 32 T. Tests:
+  `ContentionPlus3_Test`, `INTTiming_Test`.
+
 ## Remaining (value order)
 1. **Protected-title sweep:** run the protections the reference emulators name (Speedlock +3,
    Alkatraz, Hexagon, Paul Owens, Three Inch Loader) from real EDSK images. Neither the repository nor

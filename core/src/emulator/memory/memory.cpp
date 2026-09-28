@@ -965,6 +965,7 @@ void Memory::SetROMPage(uint16_t page, bool updatePorts)
     _bank_read[0] = romBankHostAddress;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;  // Redirect all ROM writes to special memory region
     _bank_ram_page_cache[0] = ttd::kPhysPageNone;  // Invalidate RAM cache for bank 0
+    UpdateSlotContention(0);
 
     // Set property flags (_isPage0ROM48k, _isPage0ROM128k, _isPage0ROMDOS, _isPage0ROMService)
     SetROMPageFlags();
@@ -1012,6 +1013,7 @@ void Memory::SetROMPageToBank(uint8_t bank, uint16_t page)
     // writes as writes to the RAM page that was here before and file ROM
     // accesses under it.
     _bank_ram_page_cache[bank] = ttd::kPhysPageNone;
+    UpdateSlotContention(bank);
 
     // Bank 0 ROM identity flags are consumed by the TR-DOS session logic
     if (bank == 0)
@@ -1040,6 +1042,7 @@ void Memory::SetRAMPageToBank0(uint16_t page, [[maybe_unused]] bool updatePorts)
     _bank_mode[0] = BANK_RAM;
     _bank_write[0] = _bank_read[0] = RAMPageAddress(page);
     _bank_ram_page_cache[0] = page;  // validated < MAX_RAM_PAGES above
+    UpdateSlotContention(0);
 }
 
 /// Switch to specified RAM Bank in RAM Page 1
@@ -1064,6 +1067,7 @@ void Memory::SetRAMPageToBank1(uint16_t page)
     _bank_mode[1] = BANK_RAM;
     _bank_write[1] = _bank_read[1] = RAMPageAddress(page);
     _bank_ram_page_cache[1] = page;  // validated < MAX_RAM_PAGES above
+    UpdateSlotContention(1);
 }
 
 /// Switch to specified RAM Bank in RAM Page 2
@@ -1088,6 +1092,7 @@ void Memory::SetRAMPageToBank2(uint16_t page)
     _bank_mode[2] = BANK_RAM;
     _bank_write[2] = _bank_read[2] = RAMPageAddress(page);
     _bank_ram_page_cache[2] = page;  // validated < MAX_RAM_PAGES above
+    UpdateSlotContention(2);
 }
 
 /// Switch to specified RAM Bank in RAM Page 3
@@ -1116,15 +1121,7 @@ void Memory::SetRAMPageToBank3(uint16_t page, bool updatePorts)
     _bank_write[3] = _bank_read[3] = RAMPageAddress(page);
     _bank_ram_page_cache[3] = page;  // validated < MAX_RAM_PAGES above
 
-    // Update the ULA contention cache: odd RAM pages (1/3/5/7) at 0xC000 are
-    // contended on 128K, pages 4-7 on the +2A/+3. Cached here (cold path -
-    // port 7FFD writes) so the per-memory-access IsAddressContended() check
-    // stays branch-only.
-    if (_context && _context->pUlaContention)
-    {
-        const bool plus3 = _context->config.mem_model == MM_PLUS3 || _context->config.mem_model == MM_PLUS2A;
-        _context->pUlaContention->SetBank3ContendedPage(plus3 ? page >= 4 : (page & 1) != 0);
-    }
+    UpdateSlotContention(3);
 
     if (updatePorts)
         _context->pPortDecoder->SetRAMPage(page);
@@ -1420,6 +1417,7 @@ void Memory::SetROM48k(bool updatePorts)
     _bank_read[0] = base_sos_rom;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;
     _bank_ram_page_cache[0] = ttd::kPhysPageNone;  // Invalidate RAM cache
+    UpdateSlotContention(0);
 
     // Update ROM page identification flags
     SetROMPageFlags();
@@ -1438,6 +1436,7 @@ void Memory::SetROM128k(bool updatePorts)
     _bank_read[0] = base_128_rom;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;
     _bank_ram_page_cache[0] = ttd::kPhysPageNone;  // Invalidate RAM cache
+    UpdateSlotContention(0);
 
     // Update ROM page identification flags
     SetROMPageFlags();
@@ -1467,6 +1466,7 @@ void Memory::SetROMDOS(bool updatePorts)
     _bank_read[0] = base_dos_rom;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;
     _bank_ram_page_cache[0] = ttd::kPhysPageNone;  // Invalidate RAM cache
+    UpdateSlotContention(0);
 
     // Update ROM page identification flags
     SetROMPageFlags();
@@ -1493,6 +1493,7 @@ void Memory::SetROMSystem(bool updatePorts)
     _bank_read[0] = base_sys_rom;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;
     _bank_ram_page_cache[0] = ttd::kPhysPageNone;  // Invalidate RAM cache
+    UpdateSlotContention(0);
 
     // Update ROM page identification flags
     SetROMPageFlags();
@@ -1560,6 +1561,25 @@ void Memory::LoadRAMPageData(uint8_t page, uint8_t* fromBuffer, size_t bufferSiz
 
 /// Set _isPage0ROM48k, _isPage0ROM128k, _isPage0ROMDOS, _isPage0ROMService flags accordingly
 /// for current bank mapped to Page0
+/// Contention cache of one slot (UlaContention::IsAddressContended reads it on every access): ROM is never
+/// contended, a RAM page per the machine's rule (odd pages behind the 128K ULA, pages 4-7 behind the +2A/+3
+/// gate array). Cold path: runs when a slot is mapped
+void Memory::UpdateSlotContention(uint8_t slot)
+{
+    UlaContention* ula = _context ? _context->pUlaContention : nullptr;
+    if (ula == nullptr || slot > 3)
+        return;
+
+    const bool ram = _bank_mode[slot] == BANK_RAM && _bank_ram_page_cache[slot] != ttd::kPhysPageNone;
+    ula->SetSlotContended(slot, ram && ula->IsRamPageContended(static_cast<uint16_t>(_bank_ram_page_cache[slot])));
+}
+
+void Memory::RefreshSlotContention()
+{
+    for (uint8_t slot = 0; slot < 4; slot++)
+        UpdateSlotContention(slot);
+}
+
 void Memory::SetROMPageFlags()
 {
     // User lookup array
@@ -1735,6 +1755,7 @@ void Memory::DefaultBanksFor48k()
     _bank_ram_page_cache[1] = 5;
     _bank_ram_page_cache[2] = 2;
     _bank_ram_page_cache[3] = 0;
+    RefreshSlotContention();
 }
 
 /// endregion </Helper methods>

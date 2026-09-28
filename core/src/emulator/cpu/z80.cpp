@@ -790,22 +790,24 @@ void Z80::NotifyInstructionStart()
 uint8_t Z80::rd(uint16_t addr, bool isExecution)
 {
     // ULA memory contention: accessing contended memory (0x4000-0x7FFF; on
-    // 128K also 0xC000+ with an odd page mapped) during screen rendering on
-    // ZX-48K/128K stalls the CPU.
-    if (!isExecution)
+    // 128K also 0xC000+ with an odd page mapped, on the +2A/+3 pages 4-7 in
+    // any slot) during screen rendering stalls the CPU.
+    UlaContention* ula = _context->pUlaContention;
+    const bool contended = !isExecution && ula && ula->IsAddressContended(addr);
+    if (contended)
     {
-        UlaContention* ula = _context->pUlaContention;
-        if (ula && ula->IsAddressContended(addr))
-        {
-            uint8_t delay = ula->GetContentionDelay();
-            if (delay > 0)
-                IncrementCPUCyclesCounter(delay);
-        }
+        uint8_t delay = ula->GetContentionDelay();
+        if (delay > 0)
+            IncrementCPUCyclesCounter(delay);
     }
 
     IncrementCPUCyclesCounter(3);
 
     uint8_t value = (_memory->*MemIf->MemoryRead)(addr, isExecution);
+
+    // The +2A/+3 gate array keeps a contended access's byte for its floating bus
+    if (contended)
+        ula->LatchContendedByte(value);
 
     if (busTraceHook)
         busTraceHook('R', addr, value);
@@ -819,17 +821,15 @@ uint8_t Z80::rd(uint16_t addr, bool isExecution)
 /// \param val
 void Z80::wd(uint16_t addr, uint8_t val)
 {
-    // ULA memory contention: accessing contended memory (0x4000-0x7FFF; on
-    // 128K also 0xC000+ with an odd page mapped) during screen rendering on
-    // ZX-48K/128K stalls the CPU.
+    // ULA memory contention (see rd)
+    UlaContention* ula = _context->pUlaContention;
+    const bool contended = ula && ula->IsAddressContended(addr);
+    if (contended)
     {
-        UlaContention* ula = _context->pUlaContention;
-        if (ula && ula->IsAddressContended(addr))
-        {
-            uint8_t delay = ula->GetContentionDelay();
-            if (delay > 0)
-                IncrementCPUCyclesCounter(delay);
-        }
+        uint8_t delay = ula->GetContentionDelay();
+        if (delay > 0)
+            IncrementCPUCyclesCounter(delay);
+        ula->LatchContendedByte(val);
     }
 
     IncrementCPUCyclesCounter(3);
@@ -895,7 +895,8 @@ uint8_t Z80::in(uint16_t port)
         UlaContention* ula = _context->pUlaContention;
         if (ula)
         {
-            uint8_t floatVal = ula->GetFloatingBus();
+            // The +2A/+3 gate array drives only #0FFD-type ports (GetGateArrayFloatingBus)
+            uint8_t floatVal = ula->IsGateArray() ? ula->GetGateArrayFloatingBus(port) : ula->GetFloatingBus();
             if (floatVal != 0xFF)
                 result = floatVal;
         }

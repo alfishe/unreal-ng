@@ -48,12 +48,13 @@ uint8_t UlaContention::ComputeContentionDelay(uint32_t t) const
     // The delay depends precisely on which T-state within the 8-T-state cell the CPU access falls into.
     // offsetInCell (0..7) maps directly to the contentionPattern array (e.g., 6, 5, 4, 3, 2, 1, 0, 0).
     uint32_t offsetInCell = (tInLine - contentionStart) % 8;
-    return contentionPattern[offsetInCell];
+    return _gateArray ? gateArrayContentionPattern[offsetInCell] : contentionPattern[offsetInCell];
 }
 
 uint8_t UlaContention::GetIOContentionDelay(uint16_t port) const
 {
-    if (!_contentionEnabled)
+    // The +2A/+3 gate array contends memory cycles only, never I/O (#FE included)
+    if (!_contentionEnabled || _gateArray)
         return 0;
 
     uint32_t t = _cpu->t % _raster.configFrameDuration;
@@ -93,6 +94,32 @@ uint8_t UlaContention::GetIOContentionDelay(uint16_t port) const
 }
 
 uint8_t UlaContention::GetFloatingBus() const
+{
+    // Floating bus: the byte the video logic fetches right now, #FF between fetches and in the border
+    // (fetch timing per architecture in FetchedByte)
+    if (_context && _context->config.floatbus == 0)
+        return 0xFF;
+
+    uint8_t value = 0xFF;
+    return FetchedByte(value) ? value : 0xFF;
+}
+
+uint8_t UlaContention::GetGateArrayFloatingBus(uint16_t port) const
+{
+    if (_context && _context->config.floatbus == 0)
+        return 0xFF;
+    if ((port & 0xF003) != 0x0001)
+        return 0xFF;
+    if (_context && (_context->emulatorState.p7FFD & 0x20))
+        return 0xFF;  // paging locked: the gate array stops driving the bus
+
+    uint8_t value = 0xFF;
+    if (!FetchedByte(value))
+        value = _lastContendedByte;
+    return static_cast<uint8_t>(value | 0x01);
+}
+
+bool UlaContention::FetchedByte(uint8_t& value) const
 {
     // ──────────────────────────────────────────────────────────────────────────
     // Floating Bus — what VRAM byte is on the shared data bus right now?
@@ -171,12 +198,10 @@ uint8_t UlaContention::GetFloatingBus() const
     // ──────────────────────────────────────────────────────────────────────────
 
     // User can explicitly disable floating bus (e.g. FloatBus=0 for some configs).
-    if (_context && _context->config.floatbus == 0)
-        return 0xFF;
 
     uint32_t y, cellIndex;
     if (!LocateFloatingBusCell(y, cellIndex))
-        return 0xFF;
+        return false;
 
     // T-states into the paper area (both architectures derive their fetch
     // phase from it; recomputed here to keep LocateFloatingBusCell minimal)
@@ -193,7 +218,7 @@ uint8_t UlaContention::GetFloatingBus() const
         // Only phases 2-5 have VRAM data; phases 0-1 and 6-7 are 0xFF (shift).
         uint32_t phase8 = tInPaper % 8;
         if (phase8 < 2 || phase8 > 5)
-            return 0xFF;
+            return false;
         // Even phases (2,4) → pixel byte; odd phases (3,5) → attribute byte
         isAttribute = (phase8 & 1) != 0;
     }
@@ -208,7 +233,8 @@ uint8_t UlaContention::GetFloatingBus() const
 
     if (isAttribute)
     {
-        return _memory->DirectReadFromZ80Memory(AttributeCellAddress(y, cellIndex));
+        value = _memory->DirectReadFromZ80Memory(AttributeCellAddress(y, cellIndex));
+        return true;
     }
     else
     {
@@ -228,7 +254,8 @@ uint8_t UlaContention::GetFloatingBus() const
             | ((y & 0x07) << 8)
             | ((y & 0x38) << 2)
             | cellIndex;
-        return _memory->DirectReadFromZ80Memory(pixelAddr);
+        value = _memory->DirectReadFromZ80Memory(pixelAddr);
+        return true;
     }
 }
 

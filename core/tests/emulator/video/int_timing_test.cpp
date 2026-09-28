@@ -58,7 +58,7 @@ ASSERT_TRUE(_cpu->Init()) << "Core::Init() failed";
                 config.frame = 70908;
                 config.t_line = 228;
                 config.intstart = 1845;
-                config.intlen = 36;
+                config.intlen = (model == MM_PLUS3) ? 32 : 36;  // the +2A/+3 gate array's INT is 32 T
                 _screen->SetVideoMode(M_ZX128);
                 break;
             default:
@@ -196,13 +196,13 @@ TEST_F(INTTiming_Test, ZX128k_FrameSizeCorrect)
     EXPECT_EQ(config.frame / config.t_line, 311u);
 }
 
-TEST_F(INTTiming_Test, Plus3_SameAsZX128k_INT)
+TEST_F(INTTiming_Test, Plus3_128kINTPositionShorterPulse)
 {
     SetupModel(MM_PLUS3);
     CONFIG& config = _context->config;
-    // ZX +3 uses same ULA timing as ZX-128K
+    // The +2A/+3 gate array fires INT where the 128K ULA does, for 32 T instead of 36
     EXPECT_EQ(config.intstart, 1845u);
-    EXPECT_EQ(config.intlen, 36u);
+    EXPECT_EQ(config.intlen, 32u);
 }
 
 /// =========== INT Position Calculation Formula Tests ===========
@@ -379,9 +379,10 @@ TEST_F(INTTiming_Test, ApplyDefaults_Plus3)
     Config configHelper(_context);
     configHelper.ApplyModelTimingDefaults(config);
 
-    // Plus3 uses same ULA timing as ZX-128K
+    // The +2A/+3 gate array keeps the 128K frame and INT position, its INT is 32 T (ZXMAK2 UlaPlus3,
+    // BizHawk ZX128Plus2a; the 128K ULA's is 36)
     EXPECT_EQ(config.intstart, 1845u);
-    EXPECT_EQ(config.intlen, 36u);
+    EXPECT_EQ(config.intlen, 32u);
 }
 
 /// =========== ATM Turbo 2+ / ATM3 frame and INT ===========
