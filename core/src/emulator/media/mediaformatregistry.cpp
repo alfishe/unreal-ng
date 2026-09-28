@@ -95,7 +95,7 @@ MediaResult MediaFormatRegistry::Open(const OpenRequest& request, std::unique_pt
     }
 
     if (source.type == MediaSourceType::Blank)
-        return MediaResult::Fail(MediaError::NotSupported, "blank block media are created with CreateBlank");
+        return MediaResult::Fail(MediaError::NotSupported, "a blank block medium is built by the caller and inserted as a Medium (WrapBlock)");
 
     if (!FileHelper::FileExists(source.path))
         return MediaResult::Fail(MediaError::UnreadableSource, "no such file: " + source.path);

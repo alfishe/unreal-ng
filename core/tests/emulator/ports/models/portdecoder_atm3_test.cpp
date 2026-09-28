@@ -3,11 +3,13 @@
 
 #include "portdecoder_atm3_test.h"
 #include "debugger/ttd/atm/ttdatmpaging.h"
-#include "debugger/ttd/atm/ttdevosdcard.h"
 #include "emulator/media/mediaformatregistry.h"
 #include "emulator/media/mediamanager.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/testpathhelper.h"
+#include "_helpers/zcsdtesthelper.h"
+#include "common/filehelper.h"
 #include "base/featuremanager.h"
 #include "emulator/io/storage/memorydisk.h"
 #include "emulator/cpu/core.h"
@@ -812,47 +814,10 @@ TEST_F(PortDecoder_ATM3_Test, ZController_ConfigReadsZero_DataIdle)
     EXPECT_EQ(_portDecoder->ClassifyPort(0x0077, false), Arm::Atm77);
 }
 
-namespace
-{
-    /// Send one SD command through a port pair and return R1 (IN twice per
-    /// byte: the first clocks it in, the second returns it)
-    uint8_t SdCommand(PortDecoder_ATM3* decoder, uint16_t dataPort, uint8_t index, uint32_t arg, uint8_t crc = 0xFF)
-    {
-        decoder->DecodePortOut(dataPort, static_cast<uint8_t>(0x40 | index), 0);
-        for (int shift = 24; shift >= 0; shift -= 8)
-            decoder->DecodePortOut(dataPort, static_cast<uint8_t>(arg >> shift), 0);
-        decoder->DecodePortOut(dataPort, crc, 0);
-        decoder->DecodePortIn(dataPort, 0);  // the CRC exchange's byte (NCR)
-        for (int i = 0; i < 16; i++)
-        {
-            const uint8_t r = decoder->DecodePortIn(dataPort, 0);
-            if (r != 0xFF)
-                return r;
-        }
-        return 0xFF;
-    }
-
-    bool SdInit(PortDecoder_ATM3* decoder, uint16_t dataPort)
-    {
-        if (SdCommand(decoder, dataPort, 0, 0, 0x95) != 0x01)
-            return false;
-        for (int tries = 0; tries < 20; tries++)
-        {
-            SdCommand(decoder, dataPort, 55, 0);
-            if (SdCommand(decoder, dataPort, 41, 0x40000000) == 0x00)
-                return true;
-        }
-        return false;
-    }
-
-    std::unique_ptr<MemoryDisk> PatternDisk(uint64_t sectors)
-    {
-        auto disk = std::make_unique<MemoryDisk>(sectors);
-        for (uint64_t i = 0; i < sectors * 512; i++)
-            disk->Data()[i] = static_cast<uint8_t>(i / 512 + i % 7);
-        return disk;
-    }
-}  // namespace
+using zcsdtest::PatternDisk;
+using zcsdtest::SdCommand;
+using zcsdtest::SdInit;
+using zcsdtest::SdWriteBlock;
 
 /// ZC-2 on the machine: the whole SD protocol through #77 / #57 outside
 /// shadow - init, then READ_SINGLE_BLOCK of sector 5
@@ -937,30 +902,6 @@ TEST_F(PortDecoder_ATM3_Test, ZController_ResetKeepsTheCardAndDeselects)
     EXPECT_EQ(back[0], 0x99) << "session writes survive a Z80 reset";
 }
 
-namespace
-{
-    /// Write one block through the ports (CMD24, data token, 512 bytes, CRC,
-    /// data response, busy); returns the data response
-    uint8_t SdWriteBlock(PortDecoder_ATM3* decoder, uint32_t address, uint8_t fill)
-    {
-        if (SdCommand(decoder, 0x0057, 24, address) != 0x00)
-            return 0xFF;
-        decoder->DecodePortOut(0x0057, 0xFF, 0);
-        decoder->DecodePortOut(0x0057, 0xFE, 0);
-        for (int i = 0; i < 512; i++)
-            decoder->DecodePortOut(0x0057, fill, 0);
-        decoder->DecodePortOut(0x0057, 0xFF, 0);
-        decoder->DecodePortOut(0x0057, 0xFF, 0);
-        uint8_t response = 0xFF;
-        for (int i = 0; i < 16 && response == 0xFF; i++)
-            response = decoder->DecodePortIn(0x0057, 0);
-        for (int i = 0; i < 200 && decoder->DecodePortIn(0x0057, 0) != 0xFF; i++)
-        {
-        }
-        return static_cast<uint8_t>(response & 0x1F);
-    }
-}  // namespace
-
 /// ST-TTD-1 under the media manager's rule (storage-manager
 /// integration-ttd-snapshots.md §2): the card's protocol state is in the
 /// EvoSdCard blob, SD commands do not end a recording, the media set is fixed
@@ -1006,35 +947,105 @@ TEST(ZXEvoSdCardTtd_Test, SdCardUnderTheCommonTtdRule)
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
-/// The EvoSdCard blob restores the controller and the card mid-transfer:
-/// the byte stream continues exactly as it would have
-TEST(ZXEvoSdCardTtd_Test, BlobRoundTripMidMultiBlockRead)
+/// Review round 2, G10: a sparse 4 GiB image through the manager is an SDHC
+/// card (block addressing) that reads its first and its last sector,
+/// without the image ever being loaded whole
+TEST(ZXEvoSdSlot_Test, LargeSparseImage)
+{
+    constexpr uint64_t kSize = 4ull * 1024 * 1024 * 1024;
+    constexpr uint32_t kLastLba = static_cast<uint32_t>(kSize / 512 - 1);
+    const std::string image = TestPathHelper::GetUniqueTestScratchPath("zxevo-sparse-4g.img");
+    const std::filesystem::path imagePath = FileHelper::ToFsPath(image);
+    {
+        std::ofstream create(imagePath, std::ios::binary);
+        create.write("HEAD", 4);
+    }
+    // Only extended, never written past the head: NTFS would zero-fill up to a late write
+    std::filesystem::resize_file(imagePath, kSize);
+
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("ATM3", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    auto* decoder = dynamic_cast<PortDecoder_ATM3*>(context->pPortDecoder);
+    ASSERT_NE(decoder, nullptr);
+    MediaSource source;
+    source.path = image;
+    InsertOptions options;
+    options.access = AccessMode::ReadOnly;
+    const MediaResult inserted = context->pMediaManager->Insert("sd.zc", source, options);
+    ASSERT_TRUE(inserted.Ok()) << inserted.message;
+    EXPECT_TRUE(decoder->GetSdCard().isSdhc());
+
+    SetShadow(context->emulatorState, false);
+    decoder->DecodePortOut(0x0077, 0x00, 0);
+    ASSERT_TRUE(SdInit(decoder, 0x0057));
+    auto readBlock = [decoder](uint32_t lba, std::vector<uint8_t>& data) {
+        if (SdCommand(decoder, 0x0057, 17, lba) != 0x00)  // SDHC: the argument is the block number
+            return false;
+        bool token = false;
+        for (int i = 0; i < 64 && !token; i++)
+            token = decoder->DecodePortIn(0x0057, 0) == 0xFE;
+        data.resize(512);
+        for (auto& b : data)
+            b = decoder->DecodePortIn(0x0057, 0);
+        for (int i = 0; i < 2; i++)
+            decoder->DecodePortIn(0x0057, 0);  // CRC
+        return token;
+    };
+    std::vector<uint8_t> data;
+    ASSERT_TRUE(readBlock(0, data));
+    EXPECT_EQ(std::string(data.begin(), data.begin() + 4), "HEAD");
+    ASSERT_TRUE(readBlock(kLastLba, data)) << "the last block of 4 GiB";
+    EXPECT_EQ(std::count(data.begin(), data.end(), 0), 512);
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+    std::error_code ec;
+    std::filesystem::remove(imagePath, ec);
+}
+
+/// A swap on a running machine: the old card leaves at the next frame
+/// boundary and AVR register C (the card-detect bit the ERS polls) reads
+/// "no card" for the slot's swap delay before the new card shows up
+TEST(ZXEvoSdSlot_Test, SwapDelaySeenInCardDetect)
 {
     Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("ATM3", LoggerLevel::LogError);
     ASSERT_NE(emulator, nullptr);
     EmulatorContext* context = emulator->GetContext();
     auto* decoder = dynamic_cast<PortDecoder_ATM3*>(context->pPortDecoder);
-    ASSERT_TRUE(decoder->InsertSdCard(PatternDisk(64), SdCardSpi::WriteMode::Session));
-    SetShadow(context->emulatorState, false);
-    decoder->DecodePortOut(0x0077, 0x00, 0);
-    ASSERT_TRUE(SdInit(decoder, 0x0057));
-    ASSERT_EQ(SdCommand(decoder, 0x0057, 18, 2 * 512), 0x00);
-    for (int i = 0; i < 100; i++)
-        decoder->DecodePortIn(0x0057, 0);
+    ASSERT_NE(decoder, nullptr);
+    MediaManager& manager = *context->pMediaManager;
+    EvoAvr& avr = decoder->GetEvoAvr();
+    avr.SetFixedTime(1767268830);
+    auto cardPresent = [&avr]() {
+        avr.SetCMOSAddress(0x0C);
+        return (avr.ReadCMOS() & 0x08) != 0;
+    };
+    MediaSource blank;
+    blank.type = MediaSourceType::Blank;
 
-    ttd::TTDEvoSdCard serializer(*decoder);
-    std::vector<uint8_t> blob(serializer.TTDStateSize());
-    serializer.TTDSaveState(blob.data());
-    const uint64_t hash = serializer.TTDHashState();
-    std::vector<uint8_t> expected;
-    for (int i = 0; i < 700; i++)
-        expected.push_back(decoder->DecodePortIn(0x0057, 0));
+    ASSERT_TRUE(manager.Insert("sd.zc", MediaFormatRegistry::WrapBlock(blank, AccessMode::Session, "memory", PatternDisk(16))).Ok());
+    ASSERT_TRUE(cardPresent());
 
-    serializer.TTDLoadState(blob.data());
-    EXPECT_EQ(serializer.TTDHashState(), hash);
-    for (int i = 0; i < 700; i++)
-        ASSERT_EQ(decoder->DecodePortIn(0x0057, 0), expected[static_cast<size_t>(i)]) << "byte " << i;
+    bool running = true;
+    manager.SetApplyNowProbe([&running] { return !running; });
+    ASSERT_TRUE(manager.Insert("sd.zc", MediaFormatRegistry::WrapBlock(blank, AccessMode::Session, "memory", PatternDisk(32))).Ok());
+    EXPECT_TRUE(cardPresent()) << "queued: nothing changes before the frame boundary";
 
+    int emptyBoundaries = 0;
+    for (int boundary = 0; boundary < 60; boundary++)
+    {
+        manager.ApplyPending();
+        if (cardPresent())
+            break;
+        emptyBoundaries++;
+    }
+    // 500 ms at ~20 ms per frame: about 25 boundaries without a card
+    EXPECT_GE(emptyBoundaries, 20) << "the ERS must see the card leave";
+    EXPECT_LE(emptyBoundaries, 30);
+    ASSERT_TRUE(cardPresent()) << "the new card arrives";
+    EXPECT_EQ(decoder->GetSdCard().sizeBytes(), 32u * 512);
+
+    manager.SetApplyNowProbe(nullptr);
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
 

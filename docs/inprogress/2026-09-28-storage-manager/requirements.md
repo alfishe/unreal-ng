@@ -117,7 +117,7 @@ without repacking an image.
 | NFR-4 | **Cross-platform**: `std::filesystem` only; no OS-specific code outside `src/platform/<os>/` |
 | NFR-5 | **Thread safety**: surfaces never touch peripheral state directly; one request queue per emulator |
 | NFR-6 | **No hot-path cost**: sector reads from the peripheral are a virtual call; nothing on the Z80 instruction path |
-| NFR-7 | **Testability**: every layer testable without an emulator; the folder volume checked by an independent FAT reader (ChaN FatFs in the test build) and by real guest ROMs |
+| NFR-7 | **Testability**: every layer testable without an emulator; the folder volume checked by an independent FAT reader (our own `FatVolumeReader`, no third-party code) and by real guest ROMs |
 
 ## 6. Out of scope
 
@@ -132,7 +132,7 @@ without repacking an image.
 |---|---|
 | ACC-1 | ZX-Evo ERS "5. SDcard boot" from a **folder** holding `SD_BOOT.$C` |
 | ACC-2 | ZX-Evo ERS "Mount B:" of a TRD in a **folder** SD; TR-DOS lists and saves; the export contains the save; the folder is unchanged |
-| ACC-3 | NedoOS `osatm3sd.$C` boots from a folder SD to its shell |
+| ACC-3 | NedoOS (`sd_boot.$C`, the ZX-Evo build) boots from a folder SD to its shell |
 | ACC-4 | ZX-Evo `IMAGE.MNT` automount from a folder SD |
 | ACC-5 | Model switch Pentagon → ZX-Evo keeps floppy A; the SD folder follows to a model with the same slot; unsaved floppy writes prompt |
 | ACC-6 | Every automation surface inserts and ejects a floppy, a tape and an SD folder by slot id; the WebAPI eject of drive B never touches drive A |

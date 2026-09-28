@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-09-28 |
-| **Status** | Reviewed (two rounds, 2026-09-28), ready for M1. Nothing implemented beyond the E5 storage seam (`io/storage`) |
+| **Status** | Reviewed (two rounds, 2026-09-28). **M1 implemented** (2026-09-28); differences from this design: [TODO.md](TODO.md) "M1 as built" |
 | **Requirements** | [requirements.md](requirements.md) (FR-*, NFR-*, ACC-*) |
 | **Research** | [research.md](research.md) |
 | **Media history** | [media-history-design.md](media-history-design.md): immutable source + versioned change layer, file and block views, export, tracking, snapshots and TTD |
@@ -398,7 +398,7 @@ LRU of 8 open host handles serves the read, and bytes past the snapshotted size 
 |---|---|---|
 | Partitioning | MBR, one partition at LBA 2048; `Superfloppy` option (no MBR) | xpeccy-plus, SD cards as shipped; ChaN FatFs and the ERS handle MBRs best |
 | FAT type | **FAT16 by default for every slot**; FAT32 by parameter when the medium is created (`fs=fat32`: config `<slot>.fs`, `media insert --fs`). If the folder does not fit FAT16 (2 GiB with 32 KiB clusters) the insert fails with an error that names `fs=fat32`; it never switches silently | FAT16 is read by every target driver (ERS, NedoOS, NeoGS, Next, Sprinter DSS); FAT32 when asked |
-| Cluster size | FAT16: the count stays well inside 4 085 … 65 524. FAT32: 4 KiB, and **always ≥ 65 526 clusters**: the layout shrinks the cluster or grows the volume. ChaN FatFs decides the type by cluster count, and `tbblue.fw` (ZX Next) uses it: 65 525 or fewer is FAT16, 4 085 or fewer FAT12 (gitlab.com/thesmog358/tbblue `src/firmware/app/src/ff/ff.c:3144-3146`), so a FAT32-shaped volume below the minimum is rejected (`jnext/src/core/fat32_image.h:8-17`). Likewise a FAT16 volume has ≥ 4 086 clusters | formatter tables; the FatFs oracle test checks every generated size |
+| Cluster size | FAT16: the count stays well inside 4 085 … 65 524. FAT32: 4 KiB, and **always ≥ 65 526 clusters**: the layout shrinks the cluster or grows the volume. ChaN FatFs decides the type by cluster count, and `tbblue.fw` (ZX Next) uses it: 65 525 or fewer is FAT16, 4 085 or fewer FAT12 (gitlab.com/thesmog358/tbblue `src/firmware/app/src/ff/ff.c:3144-3146`), so a FAT32-shaped volume below the minimum is rejected (`jnext/src/core/fat32_image.h:8-17`). Likewise a FAT16 volume has ≥ 4 086 clusters | formatter tables; the oracle test checks every generated size |
 | Per-slot default | FAT16 for every slot; a slot may declare another default if its firmware requires one. None does: the ZX Next firmware and NextZXOS read FAT16 and FAT32 ([integration-next.md](integration-next.md)), Sprinter's DSS reads FAT12 / FAT16 only | the parameter always overrides |
 | Volume size | files + `FolderFree=` (default 256 MiB), rounded to 1 MiB, then raised to the FAT type's minimum; data is never stored, so size costs nothing | room for guest writes; card capacity reported through CSD / IDENTIFY |
 | Order | within a directory: subdirectories first, then files, each byte-wise UTF-8 sorted. Clusters: every directory (breadth-first), then every file (directories in the same order) | deterministic on every host (NFR-1); directories stay together at the start |
@@ -539,11 +539,10 @@ core/src/emulator/io/storage/
   readonlyguard.h               new
   hostfolder/foldersnapshot.{h,cpp}
   hostfolder/fatnamemapper.{h,cpp}
-  hostfolder/fatlayout.{h,cpp}
-  hostfolder/hostfolderfat.{h,cpp}
+  hostfolder/hostfolderfat.{h,cpp}   the layout is computed in Build (no separate FatLayout)
+  fat/fatvolumereader.{h,cpp}   independent FAT12/16/32 reader: the test oracle, later the H3 file view
 core/tests/emulator/media/…     mediamanager_test.cpp, mediaformatregistry_test.cpp, mediaconfig_test.cpp
 core/tests/emulator/io/storage/hostfolder/…  one *_test.cpp per source file
-core/tests/3rdparty/fatfs/      ChaN FatFs (read-only build) as the independent oracle
 ```
 
 `EmulatorContext::pMediaManager` is created before the peripherals and destroyed after them, so a
@@ -555,8 +554,8 @@ peripheral can register in its constructor and unregister in its destructor.
 |---|---|
 | Name mapper | table-driven: ASCII, lossy, case-only, Cyrillic → CP866, collisions `~1…~9`, `~10`, tail never stacked, LFN checksum |
 | Layout | FAT type thresholds and cluster counts; region table covers every LBA exactly once; the same snapshot gives the same bytes; empty folder; a 0-byte file; > 512 entries in one directory; depth |
-| Folder volume | an **independent FAT reader** (ChaN FatFs, read-only build) mounts the volume: same tree, names, sizes, contents, timestamps, for FAT16 and FAT32 |
-| Session over folder | writes read back; the folder unchanged (tree hash); export → FatFs reads the new file; rescan refused while dirty |
+| Folder volume | an **independent FAT reader** (`FatVolumeReader`, written from the specification, no third-party code) mounts the volume: same tree, names, sizes, contents, timestamps, for FAT16 and FAT32 |
+| Session over folder | writes read back; the folder unchanged (tree hash); export → the independent reader finds the new file; rescan refused while dirty |
 | Manager | register / unregister; insert kinds and access rules; queue applied on `ApplyPending`; swap delay; `IsBusy` retry; errors; media set transfer keeps session writes; notifications fire once |
 | Registry | content before extension (`.img` floppy vs block); one extension list per kind; unknown format → error naming the kinds tried |
 | Config | `[MEDIA]` keys, legacy mapping, relative paths |
@@ -581,7 +580,7 @@ flowchart LR
 
 | Phase | Content | Acceptance | Size |
 |---|---|---|---|
-| **M1** | `MediaManager` core (slots, queue, results, notifications), `ReadOnlyGuard`, registry (block), the folder pipeline (`FolderSnapshot`, `ServiceFileFilter`, `FolderManifest`) and `HostFolderFat` (FAT16 default, FAT32 by parameter), FatFs oracle, `[MEDIA]` + `[ZC]`, ZX-Evo `sd.zc`; the TTD common rule for `sd.zc` | ACC-1…ACC-4 | L |
+| **M1** | `MediaManager` core (slots, queue, results, notifications), `ReadOnlyGuard`, registry (block), the folder pipeline (`FolderSnapshot`, `ServiceFileFilter`, `FolderManifest`) and `HostFolderFat` (FAT16 default, FAT32 by parameter), `FatVolumeReader` oracle, `[MEDIA]` + `[ZC]`, ZX-Evo `sd.zc`; the TTD common rule for `sd.zc` | ACC-1…ACC-4 | L |
 | **M2** | floppy slots (WD1793 A-D, uPD765 A-B); `LoadDisk` / `SaveDisk` / eject / create move into the manager and the registry; the listed bugs fixed; `FolderDiskBuilder` (TRD: one folder, only files that fit, compatible names, manifest order) | ACC-7 | M |
 | **M3** | tape slot; `TapeLoaderRegistry` folded into the registry; eject / notifications; `FolderTapeBuilder` (TZX from a folder, capacity one side of a C90 cassette) | ACC-8 | M |
 | **M4** | `media` verbs on WebAPI / CLI / MCP / Lua / Python; Qt media panel; drag-and-drop by the registry; recent media | ACC-6 | M |
@@ -589,6 +588,6 @@ flowchart LR
 | **M6** | IDE master / slave and CD slots (with IDE rollout 1) | IDE acceptance | S (manager side) |
 | **H1** | `MediaChangeLayer`: versions, COW reference tables, truncation, labels, on the shared `PieceStore` (extracted from the TTD page store) | [media-history-design.md](media-history-design.md) §9 | M |
 | **H2** | spill to disk, budgets, crash recovery | §9 | M |
-| **H3** | file views (FAT via FatFs, TR-DOS, tape blocks), change sets between versions, folder export at a version | §9 | M |
+| **H3** | file views (FAT via `FatVolumeReader`, TR-DOS, tape blocks), change sets between versions, folder export at a version | §9 | M |
 | **H4** | tracking verbs (`versions`, `changes`, `read-block`, `read-file`, `history`, `diff`, `bookmark`, `revert`) on every surface | §6 | S–M |
 | **H5** | UNS media section and TTD v2 version references (with PLAN #40) | §7 | S (media side) |
