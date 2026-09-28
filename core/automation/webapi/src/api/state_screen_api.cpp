@@ -261,8 +261,8 @@ void EmulatorAPI::getStateScreenMode(const HttpRequestPtr& req, std::function<vo
             {
                 Json::Value memory;
                 memory["pixel_data_bytes"] = 6144;
-                memory["attribute_bytes"] = 768;
-                memory["total_bytes"] = 6912;
+                memory["attribute_bytes"] = 6144;  // 8x1 cells at pixel address + 0x2000
+                memory["total_bytes"] = 12288;
                 ret["memory_layout"] = memory;
             }
             break;

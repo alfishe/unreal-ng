@@ -1082,23 +1082,28 @@ std::vector<uint16_t> Screen::GetActiveSurfaceRAMPages(VideoModeEnum mode, uint8
         case M_ATM16:
         case M_ATMHR:
         case M_ATMTX:
-        case M_ATMTL:
         {
             const uint16_t videoPage = (p7FFD & 0x08) ? 7 : 5;
             const uint16_t altPage = static_cast<uint16_t>(videoPage - 4);
             return {altPage, videoPage};
         }
 
-        // Pentagon 16-color (AlCo) and hardware multicolor: bit-planes at
-        // {videoPage ^ 1, videoPage}. Screen 0 = pages {4, 5}, Screen 1 = {6, 7}.
-        // XOR with 1 gives the adjacent page (5^1=4, 7^1=6), unlike ATM's -4.
+        // ZX-Evo text linear: one dedicated page (ScreenAtm M_ATMTL branch)
+        case M_ATMTL:
+            return {static_cast<uint16_t>((p7FFD & 0x08) ? 10 : 8)};
+
+        // Pentagon 16-color (AlCo): bit-planes at {videoPage ^ 1, videoPage}.
+        // Screen 0 = pages {4, 5}, Screen 1 = {6, 7} (5^1=4, 7^1=6, unlike ATM's -4).
         case M_P16:
-        case M_PMC:
         {
             const uint16_t videoPage = (p7FFD & 0x08) ? 7 : 5;
             const uint16_t altPage = videoPage ^ 1;
             return {altPage, videoPage};
         }
+
+        // Hardware multicolor: bitmap and 8x1 attributes (+0x2000) in the video page
+        case M_PMC:
+            return {static_cast<uint16_t>((p7FFD & 0x08) ? 7 : 5)};
 
         // Profi hi-res: bitmap page 4 (6 with 7FFD.3), attribute page 0x38 (0x3A)
         case M_PROFIHR:

@@ -12,10 +12,10 @@ ScreenAlco::ScreenAlco(EmulatorContext* context, Memory* memory) : _context(cont
 ///     +0x2000}, ZX screen addressing; each byte holds two adjacent pixels as
 ///     4-bit palette indices (left = {b6,b2,b1,b0}, right = {b7,b5,b4,b3} - the
 ///     same packing as ATM EGA, but the pair pages are ^1, not ^4).
-///   M_PMC: vidDrawHwmc - the bitmap byte AND the attribute byte are both
-///     fetched from the PIXEL address of the video page. Attr decode: ink =
-///     bits 0-2 + bit 6, paper = bits 3-6 (bit 6 brights both), bit 7 = flash -
-///     inverts the bitmap on the flash phase.
+///   M_PMC: bitmap at the ZX pixel address of the video page, one attribute per
+///     8x1 cell at that address + 0x2000 (addr_phm; UnrealSpeccy draw_pmc).
+///     Attr decode: ink = bits 0-2 + bit 6, paper = bits 3-6 (bit 6 brights
+///     both), bit 7 = flash - inverts the bitmap on the flash phase.
 /// Border and all colors go through the #FF 16-cell palette RAM, which defaults
 /// to the standard ZX colors - Pentagon (no #FF port) sees stock colors.
 void ScreenAlco::DrawRange(uint32_t from, uint32_t to, VideoModeEnum mode, const TstateCoordLUT* lut,
@@ -62,8 +62,10 @@ void ScreenAlco::DrawRange(uint32_t from, uint32_t to, VideoModeEnum mode, const
             continue;
         }
 
-        const uint8_t attr = pageVideo[e.screenOffset + e.symbolX];
-        const uint8_t bitmap = ((attr & 0x80) && flash) ? static_cast<uint8_t>(attr ^ 0xFF) : attr;
+        const uint32_t pixelOffset = e.screenOffset + e.symbolX;
+        const uint8_t pix = pageVideo[pixelOffset];
+        const uint8_t attr = pageVideo[pixelOffset + 0x2000];
+        const uint8_t bitmap = ((attr & 0x80) && flash) ? static_cast<uint8_t>(pix ^ 0xFF) : pix;
         const uint32_t ink = palette[(attr & 0x07) | ((attr & 0x40) >> 3)];
         const uint32_t paper = palette[(attr & 0x78) >> 3];
 
