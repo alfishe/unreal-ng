@@ -66,6 +66,8 @@ SoundChip_NeoGS::SoundChip_NeoGS(EmulatorContext* context, const NeoGSConfig& co
 {
     _logger = _context ? _context->pModuleLogger : nullptr;
     _mb.counters = &_activityCounters;
+    _couplingL.configure(static_cast<double>(sampleRate), OUTPUT_HIGHPASS_HZ);
+    _couplingR.configure(static_cast<double>(sampleRate), OUTPUT_HIGHPASS_HZ);
     _flash.setWritable(_config.flashWrite != NeoGSConfig::WriteMode::Off);
 
     _cpu = Z80CpuCreate();
@@ -191,6 +193,8 @@ void SoundChip_NeoGS::setSampleRate(size_t sampleRate)
 {
     _sampleRate = sampleRate;
     _audio.setRates(static_cast<double>(TICKS_PER_SECOND / TICKS_PER_CRYSTAL), _sampleRate);
+    _couplingL.configure(static_cast<double>(_sampleRate), OUTPUT_HIGHPASS_HZ);
+    _couplingR.configure(static_cast<double>(_sampleRate), OUTPUT_HIGHPASS_HZ);
 }
 
 void SoundChip_NeoGS::setSynthesisSuppressed(bool suppressed)
@@ -711,6 +715,11 @@ void SoundChip_NeoGS::handleFrameEnd(size_t expectedSamples)
                       ? static_cast<int>(expectedSamples)
                       : static_cast<int>(std::llround(static_cast<double>(_frameTicks) * static_cast<double>(_sampleRate) / TICKS_PER_SECOND));
     _audio.endFrame(blipFrameLength(), samples, _buffer);
+    for (int i = 0; i < samples; i++)
+    {
+        _buffer[2 * i] = static_cast<int16_t>(std::clamp(std::lround(_couplingL.filter(_buffer[2 * i])), -32768L, 32767L));
+        _buffer[2 * i + 1] = static_cast<int16_t>(std::clamp(std::lround(_couplingR.filter(_buffer[2 * i + 1])), -32768L, 32767L));
+    }
     _wasActive = _frameHadActivity;
 
     if (_mp3)

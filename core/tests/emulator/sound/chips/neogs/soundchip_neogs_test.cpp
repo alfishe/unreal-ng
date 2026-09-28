@@ -7,6 +7,8 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+
 #include <cstdlib>
 #include <initializer_list>
 #include <memory>
@@ -389,21 +391,13 @@ TEST(SoundChip_NeoGS, CpuClockFollowsGscfg0)
 
 namespace
 {
-/// Average of the last quarter of a frame's samples (blip has settled; its DC
-/// leak droops a held level by ~1% over a few frames, as on the classic card)
+/// The mixer's held level per side (before the output coupling, which passes
+/// no held level - see OutputIsAcCoupled)
 void settledLevels(const SoundChip_NeoGS& chip, SoundChip_NeoGS& mutableChip, double& left, double& right)
 {
-    (void)chip;
-    const int16_t* buffer = mutableChip.getBuffer();
-    left = right = 0;
-    const int from = SAMPLES_PER_FRAME * 3 / 4;
-    for (int i = from; i < SAMPLES_PER_FRAME; i++)
-    {
-        left += buffer[2 * i];
-        right += buffer[2 * i + 1];
-    }
-    left /= SAMPLES_PER_FRAME - from;
-    right /= SAMPLES_PER_FRAME - from;
+    (void)mutableChip;
+    left = chip.dacLevel(false);
+    right = chip.dacLevel(true);
 }
 } // namespace
 
@@ -453,6 +447,33 @@ TEST(SoundChip_NeoGS, Inv7bReinterpretsLatchedBytes)
     double l, r;
     settledLevels(*c.chip, *c.chip, l, r);
     EXPECT_NEAR(l, 2.0 * -128.0 * 63.0 / 2.0, 160.0) << "#80 is -128 in two's complement";
+}
+
+/// The line output is AC-coupled: a channel held off centre (an idle channel
+/// keeps whatever the boot's memory test last read through #6000-#7FFF) moves
+/// the output once and decays, it leaves no standing offset. Before the
+/// coupling was modelled, the two sides sat thousands of units off centre
+TEST(SoundChip_NeoGS, OutputIsAcCoupled)
+{
+    Card c;
+    Asm p;
+    p.di().out(0x06, 63).load(0x6000).jrSelf();
+    c.boot(p);
+    c.chip->poke(0x6000, 0xFF);
+    c.runFrames(1);
+    EXPECT_NEAR(c.chip->dacLevel(false), 8001.0, 160.0) << "the DAC holds the level";
+    int peak = 0;
+    for (int i = 0; i < SAMPLES_PER_FRAME; i++)
+        peak = std::max(peak, static_cast<int>(c.chip->getBuffer()[2 * i]));
+    EXPECT_GT(peak, 4000) << "the step passes the coupling";
+
+    c.runFrames(25); // 0.5 s: 16 time constants at 5 Hz
+    double mean = 0;
+    for (int i = 0; i < SAMPLES_PER_FRAME; i++)
+        mean += c.chip->getBuffer()[2 * i];
+    mean /= SAMPLES_PER_FRAME;
+    EXPECT_NEAR(mean, 0.0, 20.0) << "no standing offset (it was thousands)";
+    EXPECT_NEAR(c.chip->dacLevel(false), 8001.0, 160.0);
 }
 
 TEST(SoundChip_NeoGS, OpcodeFetchesInTheWindowLatchToo)

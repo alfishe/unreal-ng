@@ -417,6 +417,16 @@ or 534 cycles, alternating so that three periods take exactly 1,600 cycles.
     (`timer.v:33-47`, `sound_dac.v:58-70`). The emulator derives both from
     the one 24 MHz phase counter (§3.5), as two events 1,600 ticks apart.
 - **Hard stereo.** The classic GS emulation cross-feeds 50%; NeoGS doesn't.
+- **AC-coupled output** (added 2026-09-28). The board's line output goes
+  through coupling capacitors, so it passes no DC. The DAC channels do carry
+  DC: the firmware touches only the channels that play, and an idle channel
+  keeps, at full volume, whatever the boot's memory test last read through
+  `#6000-#7FFF` (with the v1.11 main ROM: `#2C`, `#2C`, `#02` on channels
+  2-4). Before the coupling was modelled, the output sat about -6,000 (L)
+  and -13,000 (R) off centre and jumped when a channel started or stopped.
+  The emulator applies a one-pole 5 Hz high-pass per side on the output
+  buffer (`FilterDCBlocker`, as for the AY). `dacLevel()` still shows the
+  held DAC level before the coupling.
 - **Worked example, 4-channel mode.** Channel 1 holds `#FF` (+127) at volume
   63, channel 2 holds `#80` (0). Then L = 2 × (127·63 + 0) = 16,002, just
   under half of full scale.

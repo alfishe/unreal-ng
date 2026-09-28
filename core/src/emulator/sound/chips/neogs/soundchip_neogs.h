@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "3rdparty/unreal-z80/z80cpu.h"
+#include "common/sound/filters/filterdcblocker.h"
 #include "common/modulelogger.h"
 #include "emulator/io/flash/flash29f040b.h"
 #include "emulator/io/sdcard/sdcardspi.h"
@@ -173,6 +174,10 @@ public:
 
     /// region <NeoGS introspection (automation, debugger, tests)>
     uint8_t gscfg0() const { return _gscfg0; }
+    /// The DAC's level on one side now, scaled by [NGS] Volume: the mixer's
+    /// output before the line output's coupling capacitors (a held level
+    /// shows here; getBuffer() passes only its changes)
+    int32_t dacLevel(bool right) const { return right ? _outR : _outL; }
     uint8_t pageRegister(int window) const { return _mem.page(window); }
     bool windowIsFlash(int window) const { return _mem.isFlash(window); }
     bool ledOn() const { return (_led & 1) == 0; } // #01 d0: 0 = on
@@ -392,6 +397,15 @@ private:
     AudioFrameDescriptor _audioDescriptor;
     int16_t* const _buffer = reinterpret_cast<int16_t*>(_audioDescriptor.memoryBuffer);
     GSAudioOut _audio;
+    /// The line output's coupling capacitors (one per side): the board passes
+    /// no DC. The DAC channels do carry DC - a channel the firmware leaves
+    /// idle keeps, at full volume, whatever the boot's memory test last read
+    /// through #6000-#7FFF (neogs-tdd.md §3.6). Without the coupling the two
+    /// sides sat thousands of units off centre, by different amounts, and
+    /// jumped whenever a channel started or stopped. 5 Hz, as for the AY
+    static constexpr double OUTPUT_HIGHPASS_HZ = 5.0;
+    FilterDCBlocker _couplingL;
+    FilterDCBlocker _couplingR;
     bool _synthesisSuppressed = false;
     int32_t _outL = 0;
     int32_t _outR = 0;
