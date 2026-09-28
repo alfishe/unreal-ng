@@ -202,7 +202,8 @@ public:
 
     /// SD card slot: insert an image (settings from [NGS]), eject, inspect
     bool insertSdCard(const std::string& path) override;
-    void ejectSdCard() override;
+    bool ejectSdCard() override;
+    std::string sdCardImage() const override { return sdCardPresent() ? _sd->path() : std::string(); }
     bool neogsState(NeoGSStateInfo& out) const override;
     bool peekCardMemory(uint16_t addr, uint8_t& out) const override
     {
@@ -332,6 +333,8 @@ private:
     void traceEvent(GSTraceSide side, uint16_t port, uint8_t value, bool isOut, uint8_t channel = 0, uint8_t extraFlags = 0);
     uint32_t currentFrameNumber() const;
     void markReplayBarrier(ttd::TTDExternalEventKind kind, const char* reason);
+    bool ttdRecording() const;
+    bool openSdImage(const std::string& path); // no TTD guard: the configured card at construction
     void markSdWrite();
     void serializeFixedState(uint8_t* dst) const;
     void serializeDeviceState(uint8_t* dst, bool machineVisibleOnly) const;

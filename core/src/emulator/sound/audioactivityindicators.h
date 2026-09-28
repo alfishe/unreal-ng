@@ -21,7 +21,8 @@
 /// reaches a source buffer, so it lights neither.
 ///
 /// Mixer sources map onto HUD sources: AY 1 alone -> AY, AY 2 -> TurboSound
-/// (single-AY playback only uses chip 0), FM 1/FM 2 -> FM, the rest 1:1.
+/// (single-AY playback only uses chip 0), FM 1/FM 2 -> FM, GS -> GeneralSound
+/// or NeoGS by the card fitted, NeoGS MP3 -> NeoGSMp3, the rest 1:1.
 class AudioActivityIndicators
 {
 public:
@@ -33,7 +34,9 @@ public:
     /// Account one mixed frame from the sources' LEDs and post
     /// NC_AUDIO_ACTIVITY: every frame while a nudge is held (the HUD keeps a
     /// short TTL in case frames stop, e.g. pause), once more when it ends
-    void endFrame(const unreal::UUID& emulatorId, const std::vector<AudioDeviceInfo>& devices);
+    /// (@p neoGSFitted: the GS slot holds a NeoGS card, so its DAC sound
+    /// posts NeoGS instead of GeneralSound)
+    void endFrame(const unreal::UUID& emulatorId, const std::vector<AudioDeviceInfo>& devices, bool neoGSFitted);
 
     /// Forget all activity (reset)
     void reset();
@@ -46,7 +49,7 @@ public:
 
 private:
     static constexpr int SOURCE_TYPES = static_cast<int>(AudioSourceType::Custom) + 1;
-    static constexpr int HUD_SOURCES = 9;  // AudioSource values (checked in the .cpp)
+    static constexpr int HUD_SOURCES = 11;  // AudioSource values (checked in the .cpp)
 
     int _framesSinceSound[SOURCE_TYPES];
     bool _posted[HUD_SOURCES];  // HUD nudge on, as last posted

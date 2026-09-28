@@ -460,7 +460,7 @@ struct NeoGSConfig
 	SDType sdType = SDType::Auto;
 	bool sdWriteProtect = false;                            // SSTAT switch bit only
 	WriteMode sdWrite = WriteMode::Session;
-	NGSMP3SupportKind mp3Support = NGSMP3SupportKind::Stub;
+	NGSMP3SupportKind mp3Support = NGSMP3SupportKind::Software;
 	Mp3Chip mp3Chip = Mp3Chip::VS1001;
 	double mp3Gain = 1.0;
 	WriteMode flashWrite = WriteMode::Session;

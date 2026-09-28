@@ -1305,3 +1305,38 @@ TEST_F(HudModel_Test, ExecState_ResetBlocksExecuteTransition)
 
 
 
+
+TEST_F(HudModel_Test, EventMapping_AudioActivity_GsSlotNamesTheCard)
+{
+    // One "gs" nudge for the GS slot: "GS" for the classic card; for NeoGS
+    // the DAC and MP3 decoder streams combine like MoonSound's two parts
+    HudModel model(nullptr);
+    model.onFeatureChanged(true);
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+
+    auto gsValue = [&]() -> std::string {
+        for (const auto& e : model.snapshot()->elements)
+        {
+            if (e.id == "ind/gs")
+                return e.value;
+        }
+        return "";
+    };
+    auto post = [&](AudioSource source, bool active) {
+        mc.Post(NC_AUDIO_ACTIVITY, new AudioActivityPayload(_id, source, active));
+    };
+
+    post(AudioSource::GeneralSound, true);
+    EXPECT_TRUE(WaitForCondition([&] { return gsValue() == "GS"; }));
+    post(AudioSource::GeneralSound, false);
+    EXPECT_TRUE(WaitForCondition([&] { return gsValue().empty(); }));
+
+    post(AudioSource::NeoGS, true);
+    EXPECT_TRUE(WaitForCondition([&] { return gsValue() == "NeoGS"; }));
+    post(AudioSource::NeoGSMp3, true);
+    EXPECT_TRUE(WaitForCondition([&] { return gsValue() == "NeoGS+MP3"; }));
+    post(AudioSource::NeoGS, false);
+    EXPECT_TRUE(WaitForCondition([&] { return gsValue() == "NeoGS MP3"; }));
+    post(AudioSource::NeoGSMp3, false);
+    EXPECT_TRUE(WaitForCondition([&] { return gsValue().empty(); }));
+}

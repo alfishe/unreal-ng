@@ -3,6 +3,8 @@
 #include <cmath>
 
 #include <QCursor>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QToolTip>
 #include "base/featuremanager.h"
 #include "emulator/emulatorcontext.h"
@@ -10,6 +12,7 @@
 #include "emulator/sound/covox.h"
 #include "emulator/sound/chips/soundchip_turbosound.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
+#include "emulator/sound/chips/neogs/neogsmedia.h"
 #include "emulator/soundcharacterpreferences.h"
 
 AudioSettingsWidget::AudioSettingsWidget(EmulatorContext* context, QWidget* parent)
@@ -274,6 +277,45 @@ void AudioSettingsWidget::createUI()
     beeperLayout->addStretch();
     layout->addWidget(_beeperGroup);
 
+    // ============ General Sound slot section (shown only when a card is fitted) ============
+    _gsGroup = new QGroupBox("General Sound slot", this);
+    auto* gsLayout = new QVBoxLayout(_gsGroup);
+
+    auto* cardRow = new QHBoxLayout();
+    cardRow->addWidget(new QLabel("Card:", _gsGroup));
+    _gsCardCombo = new QComboBox(_gsGroup);
+    _gsCardCombo->addItem("General Sound (classic)", static_cast<int>(GSTypeKind::Z80));
+    _gsCardCombo->addItem("General Sound (lightweight player)", static_cast<int>(GSTypeKind::LW));
+    _gsCardCombo->addItem("NeoGS", static_cast<int>(GSTypeKind::NGS));
+    _gsCardCombo->setToolTip("The card in the GS slot. Switched at the next frame; "
+                             "the host mailbox survives and an uploaded module is replayed");
+    cardRow->addWidget(_gsCardCombo, 1);
+    gsLayout->addLayout(cardRow);
+
+    _neoGSControls = new QWidget(_gsGroup);
+    auto* sdRow = new QHBoxLayout(_neoGSControls);
+    sdRow->setContentsMargins(0, 0, 0, 0);
+    sdRow->addWidget(new QLabel("SD card:", _neoGSControls));
+    _neoGSSdLabel = new QLabel(_neoGSControls);
+    _neoGSSdLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    sdRow->addWidget(_neoGSSdLabel, 1);
+    _neoGSInsertButton = new QPushButton("Insert...", _neoGSControls);
+    _neoGSInsertButton->setToolTip("Insert a raw SD card image (FAT16 / FAT32). Refused while TTD records");
+    sdRow->addWidget(_neoGSInsertButton);
+    _neoGSEjectButton = new QPushButton("Eject", _neoGSControls);
+    _neoGSEjectButton->setToolTip("Remove the SD card. Refused while TTD records");
+    sdRow->addWidget(_neoGSEjectButton);
+    gsLayout->addWidget(_neoGSControls);
+
+    _gsStatusLabel = new QLabel(_gsGroup);
+    _gsStatusLabel->setWordWrap(true);
+    _gsStatusLabel->setStyleSheet("color: gray;");
+    _gsStatusLabel->setVisible(false);
+    gsLayout->addWidget(_gsStatusLabel);
+
+    _gsGroup->setVisible(false);  // Hidden until we know a GS card is fitted
+    layout->addWidget(_gsGroup);
+
     // ============ SOUNDRIVE/COVOX section (shown only when present) ============
     _covoxGroup = new QGroupBox("SOUNDRIVE / COVOX (4x 8-bit DAC)", this);
     auto* covoxLayout = new QVBoxLayout(_covoxGroup);
@@ -440,6 +482,11 @@ void AudioSettingsWidget::connectSignals()
     // Beeper
     connect(_beeperPunchCheckbox, &QCheckBox::checkStateChanged, this, &AudioSettingsWidget::onBeeperPunchChanged);
 
+    // General Sound slot
+    connect(_gsCardCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AudioSettingsWidget::onGSCardChanged);
+    connect(_neoGSInsertButton, &QPushButton::clicked, this, &AudioSettingsWidget::onNeoGSInsertSd);
+    connect(_neoGSEjectButton, &QPushButton::clicked, this, &AudioSettingsWidget::onNeoGSEjectSd);
+
     // Covox
     connect(_covoxDCRemovalCheckbox, &QCheckBox::checkStateChanged, this, &AudioSettingsWidget::onCovoxDCRemovalChanged);
     for (int i = 0; i < 4; i++)
@@ -480,6 +527,9 @@ void AudioSettingsWidget::disconnectSignals()
     }
 
     disconnect(_beeperPunchCheckbox, nullptr, this, nullptr);
+    disconnect(_gsCardCombo, nullptr, this, nullptr);
+    disconnect(_neoGSInsertButton, nullptr, this, nullptr);
+    disconnect(_neoGSEjectButton, nullptr, this, nullptr);
     disconnect(_covoxDCRemovalCheckbox, nullptr, this, nullptr);
     for (int i = 0; i < 4; i++)
     {
@@ -604,6 +654,10 @@ void AudioSettingsWidget::refreshFromContext()
         {
             _firCheckbox->setChecked(_context->pFeatureManager->isEnabled(Features::kSoundHQ));
         }
+
+        // General Sound slot section
+        _gsStatusLabel->setVisible(false);
+        updateGSSection(sm->generalSoundSlot());
 
         // SOUNDRIVE/Covox section
         bool hasCovox = sm->hasCovox();
@@ -965,6 +1019,18 @@ void AudioSettingsWidget::onUpdateMeters()
 
     updateDeviceInfo();
 
+    // The GS slot changes on the emulation thread (a switch, automation):
+    // another card renames the mixer source and adds or drops "NeoGS MP3",
+    // so the whole panel is rebuilt; a new SD card only needs its row
+    const GeneralSoundSlot gsSlot = _context->pSoundManager->generalSoundSlot();
+    if (gsSlot.kind != _shownGSSlot.kind)
+    {
+        refreshFromContext();
+        return;
+    }
+    if (gsSlot.sdCardImage != _shownGSSlot.sdCardImage)
+        updateGSSection(gsSlot);
+
     const auto& devices = _context->pSoundManager->devices();
 
     for (auto& row : _sourceRows)
@@ -983,4 +1049,82 @@ void AudioSettingsWidget::onUpdateMeters()
             }
         }
     }
+}
+
+// ============ General Sound slot ============
+
+void AudioSettingsWidget::updateGSSection(const GeneralSoundSlot& slot)
+{
+    _shownGSSlot = slot;
+    const bool fitted = slot.kind != GSTypeKind::NONE;
+    _gsGroup->setVisible(fitted);
+    if (!fitted)
+        return;
+
+    const bool neoGS = slot.kind == GSTypeKind::NGS;
+    _gsGroup->setTitle(neoGS ? "General Sound slot: NeoGS" : "General Sound slot");
+
+    const QSignalBlocker blocker(_gsCardCombo);
+    const int index = _gsCardCombo->findData(static_cast<int>(slot.kind));
+    if (index >= 0)
+        _gsCardCombo->setCurrentIndex(index);
+
+    _neoGSControls->setVisible(neoGS);
+    if (slot.sdCardImage.empty())
+    {
+        _neoGSSdLabel->setText("(empty)");
+        _neoGSSdLabel->setToolTip(QString());
+    }
+    else
+    {
+        const QString path = QString::fromStdString(slot.sdCardImage);
+        _neoGSSdLabel->setText(QFileInfo(path).fileName());
+        _neoGSSdLabel->setToolTip(path);
+    }
+    _neoGSEjectButton->setEnabled(!slot.sdCardImage.empty());
+}
+
+void AudioSettingsWidget::onGSCardChanged(int index)
+{
+    if (!_context || !_context->pSoundManager)
+        return;
+
+    const auto target = static_cast<GSTypeKind>(_gsCardCombo->itemData(index).toInt());
+    if (target == _shownGSSlot.kind)
+        return;
+    if (_context->pSoundManager->requestGeneralSoundCardSwitch(target))
+    {
+        // Applied at the next frame boundary; the meter poll shows the new card
+        _gsStatusLabel->setText("Switching at the next frame (while paused: when execution continues)");
+        _gsStatusLabel->setVisible(true);
+    }
+}
+
+void AudioSettingsWidget::onNeoGSInsertSd()
+{
+    if (!_context)
+        return;
+
+    const QString startDir = _shownGSSlot.sdCardImage.empty()
+                                 ? QString()
+                                 : QFileInfo(QString::fromStdString(_shownGSSlot.sdCardImage)).absolutePath();
+    const QString path = QFileDialog::getOpenFileName(this, "Insert SD card image", startDir,
+                                                      "SD card images (*.img *.ima *.bin *.hdf);;All files (*)");
+    if (path.isEmpty())
+        return;
+
+    // Checked here, carried out on the emulation thread; the meter poll shows the result
+    const NeoGSMediaResult result = NeoGSRequestSdInsert(_context, path.toStdString());
+    _gsStatusLabel->setText(NeoGSMediaAccepted(result) ? QString() : QString("SD card: %1").arg(NeoGSMediaResultText(result)));
+    _gsStatusLabel->setVisible(!NeoGSMediaAccepted(result));
+}
+
+void AudioSettingsWidget::onNeoGSEjectSd()
+{
+    if (!_context)
+        return;
+
+    const NeoGSMediaResult result = NeoGSRequestSdEject(_context);
+    _gsStatusLabel->setText(NeoGSMediaAccepted(result) ? QString() : QString("SD card: %1").arg(NeoGSMediaResultText(result)));
+    _gsStatusLabel->setVisible(!NeoGSMediaAccepted(result));
 }

@@ -291,12 +291,18 @@ public:
         (void)out;
         return false;
     }
+    /// SD slot: false when refused (no slot, the image cannot be opened, or
+    /// a TTD recording runs - the machine's configuration is fixed while
+    /// recording). Call on the machine's thread: automation goes through
+    /// neogsmedia.h, which hands the request over
     virtual bool insertSdCard(const std::string& path)
     {
         (void)path;
         return false;
     }
-    virtual void ejectSdCard() {}
+    virtual bool ejectSdCard() { return false; }
+    /// The inserted SD card image, empty when the slot is empty or absent
+    virtual std::string sdCardImage() const { return {}; }
     /// Card memory as the card CPU sees it now, no side effects (no DAC latch,
     /// no flash state change). False on cards without a CPU.
     virtual bool peekCardMemory(uint16_t addr, uint8_t& out) const

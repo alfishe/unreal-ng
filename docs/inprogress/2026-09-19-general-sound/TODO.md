@@ -196,9 +196,15 @@ Plan: [`neogs-tdd.md`](neogs-tdd.md) §9; as built, findings and open items:
 **Phase 6 - NeoGS TTD, v1 full blobs** - done 2026-09-27
 - [x] SD card, decoder and DMA state in the blob (layout 2); state hash without the platform-dependent PCM
 - [x] Recording allowed; switch to NGS during a recording allowed
-- [x] SD writes and card insert/eject are TTD replay barriers (markers)
+- [x] SD writes are TTD replay barriers (`DiskWrite` markers)
+- [x] Card insert/eject refused while TTD records (configuration fixed for a recording; decided 2026-09-28); media requests from automation run on the machine thread (`neogsmedia.h`, `SubmitMachineTask`, `neogsmedia_test.cpp`)
 - [x] Snapshot-continuation tests (SD boot, MP3 DMA) and engine replay test (`ttdneogs_test.cpp`)
 - [ ] RAM and flash as v2 memory regions (with the TTD v2 migration of every device)
+
+**NeoGS configuration and GUI** - done 2026-09-28
+- [x] Shipped configs list every `[NGS]` key with its default; `GSType` comment updated; `MP3Support` defaults to `software`
+- [x] Audio Settings: "General Sound slot" section (card switch; NeoGS SD insert/eject) over `SoundManager::generalSoundSlot()`
+- [x] HUD: the GS nudge names the card ("GS", "NeoGS", "NeoGS MP3", "NeoGS+MP3")
 
 ### Documentation Updates (2026-09-19)
 

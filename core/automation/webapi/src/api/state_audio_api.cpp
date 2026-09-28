@@ -15,6 +15,7 @@
 #include <emulator/state/devicestate.h>
 #include <debugger/ttd/timetravelmanager.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
+#include <emulator/sound/chips/neogs/neogsmedia.h>
 
 
 using namespace drogon;
@@ -940,43 +941,34 @@ void EmulatorAPI::postControlAudioGS(const HttpRequestPtr& req, std::function<vo
     }
     else if (action == "sd_insert" || action == "sd_eject" || action == "flash_save")
     {
-        if (gs->implementation() != GSCardImplementation::NGS)
-        {
-            Json::Value error;
-            error["error"] = "Conflict";
-            error["message"] = "Action '" + action + "' needs the NeoGS card (GSType=NGS)";
-            auto resp = HttpResponse::newHttpJsonResponse(error);
-            resp->setStatusCode(HttpStatusCode::k409Conflict);
-            addCorsHeaders(resp);
-            callback(resp);
-            return;
-        }
-        bool ok = true;
+        // Checked here, carried out on the machine's thread (neogsmedia.h);
+        // insert / eject are refused while a TTD recording runs
+        NeoGSMediaResult result;
         if (action == "sd_insert")
         {
             const std::string path = json->get("path", "").asString();
-            ok = !path.empty() && gs->insertSdCard(path);
+            result = NeoGSRequestSdInsert(context, path);
             ret["path"] = path;
         }
         else if (action == "sd_eject")
-        {
-            gs->ejectSdCard();
-        }
+            result = NeoGSRequestSdEject(context);
         else
+            result = NeoGSRequestFlashSave(context);
+
+        if (!NeoGSMediaAccepted(result))
         {
-            ok = gs->saveFlash();
-        }
-        if (!ok)
-        {
+            const bool conflict = result == NeoGSMediaResult::NoNeoGS || result == NeoGSMediaResult::TtdRecording ||
+                                  result == NeoGSMediaResult::ReplayOwnsInput;
             Json::Value error;
-            error["error"] = "Unprocessable";
-            error["message"] = action == "sd_insert" ? "Cannot open the SD image (needs a 'path')" : "The flash could not be saved";
+            error["error"] = conflict ? "Conflict" : "Unprocessable";
+            error["message"] = "Action '" + action + "': " + NeoGSMediaResultText(result);
             auto resp = HttpResponse::newHttpJsonResponse(error);
-            resp->setStatusCode(HttpStatusCode::k422UnprocessableEntity);
+            resp->setStatusCode(conflict ? HttpStatusCode::k409Conflict : HttpStatusCode::k422UnprocessableEntity);
             addCorsHeaders(resp);
             callback(resp);
             return;
         }
+        ret["status"] = result == NeoGSMediaResult::Queued ? "queued" : "done";
     }
     else
     {

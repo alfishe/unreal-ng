@@ -43,6 +43,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -606,6 +607,15 @@ public:
     /// not running, the caller is the only thread) it is applied at once.
     /// `ev.time` is ignored: the time is stamped when the event is applied.
     bool SubmitLiveInput(const TTDInputEvent& ev);
+
+    /// @brief Run `task` on the machine's thread - for automation actions that
+    /// touch a device the executing thread may be using (a NeoGS SD card
+    /// insert / eject, a flash save). Same delivery as SubmitLiveInput: queued
+    /// for the next instruction boundary while the emulator loop runs (while
+    /// paused: when execution continues), run at once otherwise. Not
+    /// journaled: a task is not replayable input. Refused while OwnsInput().
+    enum class MachineTaskResult : uint8_t { RanNow, Queued, Refused };
+    MachineTaskResult SubmitMachineTask(std::function<void()> task);
 
     /// @brief Executing thread, before every instruction (Z80::StepInstruction;
     /// cheap gate: EmulatorContext::ttdInputWork): play due journal events,
@@ -1624,9 +1634,11 @@ private:
     size_t _inputCursor = 0;
     bool _inputPlaybackArmed = false;
 
-    /// Live input waiting for the machine's thread (SubmitLiveInput)
+    /// Live input and machine tasks waiting for the machine's thread
+    /// (SubmitLiveInput, SubmitMachineTask)
     std::mutex _pendingInputMutex;
     std::vector<TTDInputEvent> _pendingInput;
+    std::vector<std::function<void()>> _pendingTasks;
 
     /// Position the playback cursor at the restored machine time (events
     /// journaled at exactly that time are applied by the next instruction)

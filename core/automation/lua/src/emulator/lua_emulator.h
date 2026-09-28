@@ -14,6 +14,7 @@
 #include <emulator/cpu/z80.h>
 #include <emulator/video/screen.h>
 #include <emulator/sound/soundcharactersettings.h>
+#include <emulator/sound/chips/neogs/neogsmedia.h>
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/chips/soundchip_ay8910.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
@@ -1934,23 +1935,17 @@ public:
         });
 
         // NeoGS SD slot and flash (other cards: false / no-op)
+        // NeoGS media: checked here, carried out on the machine's thread
+        // (neogsmedia.h); true when accepted. Insert / eject are refused while
+        // a TTD recording runs
         lua.set_function("gs_sd_insert", [this](const std::string& path) -> bool {
-            if (!_emulator) return false;
-            auto* ctx = _emulator->GetContext();
-            GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
-            return gs && gs->insertSdCard(path);
+            return _emulator && NeoGSMediaAccepted(NeoGSRequestSdInsert(_emulator->GetContext(), path));
         });
-        lua.set_function("gs_sd_eject", [this]() {
-            if (!_emulator) return;
-            auto* ctx = _emulator->GetContext();
-            GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
-            if (gs) gs->ejectSdCard();
+        lua.set_function("gs_sd_eject", [this]() -> bool {
+            return _emulator && NeoGSMediaAccepted(NeoGSRequestSdEject(_emulator->GetContext()));
         });
         lua.set_function("gs_flash_save", [this]() -> bool {
-            if (!_emulator) return false;
-            auto* ctx = _emulator->GetContext();
-            GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
-            return gs && gs->saveFlash();
+            return _emulator && NeoGSMediaAccepted(NeoGSRequestFlashSave(_emulator->GetContext()));
         });
 
         // Host-port stimuli step the card's Z80, so they go through the live-input

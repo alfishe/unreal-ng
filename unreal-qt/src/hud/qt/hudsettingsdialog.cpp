@@ -48,7 +48,7 @@ std::vector<HudCategoryDescriptor> g_categories = {
      QObject::tr("Show when FM synthesis (YM2203 FM part) is active"),
      QObject::tr("Audio"), true},  // Default on
     {HudNotificationCategory::AudioGeneralSound, QObject::tr("General Sound Activity"),
-     QObject::tr("Show when the General Sound card is actually producing sound"),
+     QObject::tr("Show when the General Sound or NeoGS card is actually producing sound (NeoGS: DAC channels and MP3 decoder)"),
      QObject::tr("Audio"), true},  // Default on
     {HudNotificationCategory::AudioMoonSound, QObject::tr("MoonSound Activity"),
      QObject::tr("Show when MoonSound (OPL4) synthesis is active - 'Moon FM' (FM only), 'Moon PCM' (wave only) or 'Moonsound' (both)"),

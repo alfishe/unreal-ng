@@ -15,6 +15,7 @@
 #include <tapeaudio/tapeaudiorenderer.h>
 #include <emulator/video/screen.h>
 #include <emulator/sound/soundcharactersettings.h>
+#include <emulator/sound/chips/neogs/neogsmedia.h>
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/chips/soundchip_ay8910.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
@@ -1597,20 +1598,17 @@ namespace PythonBindings
                 }
                 return d;
             }, "General Sound state: mailbox flags, FIFO queue depths, MPAG page, DAC channels, coprocessor core; 'neogs' on the NeoGS card")
+            // NeoGS media: checked here, carried out on the machine's thread
+            // (neogsmedia.h); true when accepted. Insert / eject are refused
+            // while a TTD recording runs
             .def("gs_sd_insert", [](Emulator& self, const std::string& path) -> bool {
-                auto* ctx = self.GetContext();
-                GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
-                return gs && gs->insertSdCard(path);
-            }, "NeoGS: insert an SD card image", py::arg("path"))
-            .def("gs_sd_eject", [](Emulator& self) {
-                auto* ctx = self.GetContext();
-                GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
-                if (gs) gs->ejectSdCard();
-            }, "NeoGS: remove the SD card")
+                return NeoGSMediaAccepted(NeoGSRequestSdInsert(self.GetContext(), path));
+            }, "NeoGS: insert an SD card image (refused while a TTD recording runs)", py::arg("path"))
+            .def("gs_sd_eject", [](Emulator& self) -> bool {
+                return NeoGSMediaAccepted(NeoGSRequestSdEject(self.GetContext()));
+            }, "NeoGS: remove the SD card (refused while a TTD recording runs)")
             .def("gs_flash_save", [](Emulator& self) -> bool {
-                auto* ctx = self.GetContext();
-                GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
-                return gs && gs->saveFlash();
+                return NeoGSMediaAccepted(NeoGSRequestFlashSave(self.GetContext()));
             }, "NeoGS: save the reprogrammed flash (loaded in place of the shipped image with [NGS] FlashWrite=persist)")
             .def("gs_reset", [](Emulator& self) {
                 return SubmitGSInput(self, ttd::TTDInputKind::GSReset);

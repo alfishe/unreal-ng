@@ -5,6 +5,7 @@
 #include <debugger/ttd/timetravelmanager.h>
 #include <emulator/emulatorcontext.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
+#include <emulator/sound/chips/neogs/neogsmedia.h>
 #include <emulator/sound/soundmanager.h>
 
 #include <algorithm>
@@ -454,35 +455,17 @@ void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std:
             }
         }
     }
-    else if (sub == "sd_insert")
+    else if (sub == "sd_insert" || sub == "sd_eject" || sub == "flash_save")
     {
-        if (args.size() < 2)
-            ss << "Error: 'sd_insert' requires an image path." << NEWLINE;
-        else if (gs->implementation() != GSCardImplementation::NGS)
-            ss << "Error: only the NeoGS card has an SD slot." << NEWLINE;
-        else if (gs->insertSdCard(args[1]))
-            ss << "NeoGS: SD card inserted (" << args[1] << ")." << NEWLINE;
+        // Checked here, carried out on the machine's thread (neogsmedia.h);
+        // insert / eject are refused while a TTD recording runs
+        const NeoGSMediaResult result = sub == "sd_insert" ? NeoGSRequestSdInsert(context, args.size() > 1 ? args[1] : std::string())
+                                        : sub == "sd_eject" ? NeoGSRequestSdEject(context)
+                                                            : NeoGSRequestFlashSave(context);
+        if (NeoGSMediaAccepted(result))
+            ss << "NeoGS: " << sub << " " << NeoGSMediaResultText(result) << "." << NEWLINE;
         else
-            ss << "Error: cannot open SD image '" << args[1] << "'." << NEWLINE;
-    }
-    else if (sub == "sd_eject")
-    {
-        if (gs->implementation() != GSCardImplementation::NGS)
-            ss << "Error: only the NeoGS card has an SD slot." << NEWLINE;
-        else
-        {
-            gs->ejectSdCard();
-            ss << "NeoGS: SD card ejected." << NEWLINE;
-        }
-    }
-    else if (sub == "flash_save")
-    {
-        if (gs->implementation() != GSCardImplementation::NGS)
-            ss << "Error: only the NeoGS card has a flash chip." << NEWLINE;
-        else if (gs->saveFlash())
-            ss << "NeoGS: flash saved; it replaces the shipped image with [NGS] FlashWrite=persist." << NEWLINE;
-        else
-            ss << "Error: the flash could not be saved." << NEWLINE;
+            ss << "Error: " << sub << ": " << NeoGSMediaResultText(result) << "." << NEWLINE;
     }
     else
     {

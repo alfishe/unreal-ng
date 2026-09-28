@@ -188,7 +188,9 @@
         "the handoff and an uploaded module is replayed; applied at the next frame boundary), dump_module "
         "(writes the last completed COM30..D2 module upload to a file - 'path' optional, defaults to "
         "'gs-module-dump.mod'; 404 when no upload has completed yet). NeoGS only (409 otherwise): sd_insert "
-        "(needs 'path' to a raw SD image), sd_eject, flash_save (saves the reprogrammed flash).";
+        "(needs 'path' to a raw SD image), sd_eject, flash_save (saves the reprogrammed flash); carried out on the "
+        "machine thread at the next instruction boundary ('status': 'queued' while the emulator runs, 'done' "
+        "otherwise); sd_insert/sd_eject are refused while TTD records (the configuration is fixed for a recording).";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["required"] = true;
@@ -241,7 +243,8 @@
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["404"]["description"] =
         "Emulator or GS card not found, or (dump_module) no completed module upload captured yet";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["409"]["description"] =
-        "sd_insert / sd_eject / flash_save on a card that is not NeoGS";
+        "sd_insert / sd_eject / flash_save on a card that is not NeoGS, sd_insert / sd_eject while TTD records, "
+        "or any of them while a TTD replay owns the machine";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["422"]["description"] =
         "sd_insert: the image cannot be opened; flash_save: the flash could not be saved";
 

@@ -112,7 +112,8 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "resets and NMI apply at the next instruction boundary, reads are side-effect-free peeks); "
         "'gs_switch_personality' swaps the GS-slot card at the next frame boundary (needs 'personality': "
         "'z80'|'lle', 'lw'|'lightweight' or 'ngs'|'neogs'); NeoGS only: 'gs_sd_insert' (needs 'path' to a raw "
-        "image), 'gs_sd_eject', 'gs_flash_save'; 'gs_dump_module' writes the last completed COM30..D2 module "
+        "image), 'gs_sd_eject', 'gs_flash_save' (applied at the next instruction boundary; insert/eject are "
+        "refused while TTD records); 'gs_dump_module' writes the last completed COM30..D2 module "
         "upload to a file (optional 'path', defaults to 'gs-module-dump.mod').";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";

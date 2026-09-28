@@ -1,5 +1,5 @@
 /// @file config_test.cpp
-/// @brief [SOUND] TurboSound / TSFM_FmTrimDb / DecimatorQuality / AYVoicing parsing
+/// @brief [SOUND] TurboSound / TSFM_FmTrimDb / DecimatorQuality / AYVoicing and [NGS] parsing
 /// (TSFM design §3.1, plan P3; AY tone voicing design §5.1).
 ///
 /// The key selects which device occupies the TurboSound slot (legacy two-AY
@@ -199,6 +199,54 @@ TEST_F(Config_Test, ShippedConfigsProduceExpectedTurboSoundKind)
         EXPECT_EQ(_context->config.sound.turboSoundKind, kind) << folder;
     }
 }
+
+/// region <[NGS] (NeoGS card)>
+
+TEST_F(Config_Test, ShippedConfigsCarryTheFullNeoGSSection)
+{
+    // Every shipped ini lists each [NGS] key with its documented value
+    // (neogs-tdd.md §6). Parsing them all catches a comment that breaks a
+    // value (a second ';' survives IniFile's inline-comment strip) - such a
+    // key would fall back silently or warn
+    for (const auto& entry : fs::directory_iterator(TestPathHelper::FindProjectRoot() / "data" / "configs"))
+    {
+        const fs::path ini = entry.path() / "unreal.ini";
+        if (!fs::exists(ini))
+            continue;
+        Config config(_context);
+        ASSERT_TRUE(config.LoadConfigFile(ini.string())) << ini;
+        const NeoGSConfig& ngs = _context->config.ngs;
+        const std::string name = entry.path().filename().string();
+        EXPECT_STREQ(ngs.flashPath, "rom/neogs/full_ngs.rom") << name;
+        EXPECT_EQ(ngs.flashId, NeoGSConfig::FlashId::ST) << name;
+        EXPECT_EQ(ngs.fpga, NeoGSConfig::Fpga::Current) << name;
+        EXPECT_EQ(ngs.ramKB, 2048u) << name;
+        EXPECT_EQ(ngs.boot, NeoGSConfig::Boot::Loader) << name;
+        EXPECT_EQ(ngs.bootDelayMs, 0u) << name;
+        EXPECT_STREQ(ngs.sdCardPath, "") << name;
+        EXPECT_EQ(ngs.sdType, NeoGSConfig::SDType::Auto) << name;
+        EXPECT_FALSE(ngs.sdWriteProtect) << name;
+        EXPECT_EQ(ngs.sdWrite, NeoGSConfig::WriteMode::Session) << name;
+        EXPECT_EQ(ngs.mp3Support, NGSMP3SupportKind::Software) << name;
+        EXPECT_EQ(ngs.mp3Chip, NeoGSConfig::Mp3Chip::VS1001) << name;
+        EXPECT_DOUBLE_EQ(ngs.mp3Gain, 1.0) << name;
+        EXPECT_EQ(ngs.flashWrite, NeoGSConfig::WriteMode::Session) << name;
+        EXPECT_EQ(ngs.volume, 8000u) << name;
+        EXPECT_EQ(ngs.zxDmaWatch, NeoGSConfig::ZxDmaWatch::Selected) << name;
+        EXPECT_EQ(ngs.zxDmaWatchFrames, 5u) << name;
+    }
+}
+
+TEST_F(Config_Test, NeoGSMp3DecoderDefaultsToSoftware)
+{
+    // A config without an [NGS] section: the card decodes and plays MP3
+    ASSERT_TRUE(LoadSoundKeys("GSType=NGS\n"));
+    EXPECT_EQ(_context->config.ngs.mp3Support, NGSMP3SupportKind::Software);
+    ASSERT_TRUE(LoadSoundKeys("GSType=NGS\n[NGS]\nMP3Support=stub\n"));
+    EXPECT_EQ(_context->config.ngs.mp3Support, NGSMP3SupportKind::Stub);
+}
+
+/// endregion </[NGS] (NeoGS card)>
 
 /// region <[EVO] Fpga (ZX-Evo BaseConf FPGA variant)>
 

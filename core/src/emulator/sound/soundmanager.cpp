@@ -149,6 +149,7 @@ SoundManager::SoundManager(EmulatorContext* context)
             gsKind = GSTypeKind::LW;
         }
         _gs = createGeneralSoundCard(gsKind);
+        publishGeneralSoundSlot();
         _devices.push_back({AudioSourceType::GeneralSound, generalSoundDeviceName(), false, false, 1.0f, 0.0f, false});
         syncGeneralSoundAuxDevice();
     }
@@ -1098,7 +1099,8 @@ void SoundManager::handleFrameEnd()
 
     // HUD audio nudges: the LEDs just computed, held for a second - one
     // measurement, so every nudge agrees with its LED
-    _activityIndicators.endFrame(_context->emulatorId, _devices);
+    _activityIndicators.endFrame(_context->emulatorId, _devices,
+                                 _gs && _gs->implementation() == GSCardImplementation::NGS);
 
     if (_wideMix)
     {
@@ -1506,6 +1508,7 @@ bool SoundManager::switchGeneralSoundCard(GSTypeKind target)
 
     delete _gs;
     _gs = card;
+    publishGeneralSoundSlot();
 
     // 3b. Re-point the TTD peripheral registry at the new card. TTD registers
     //     the GS slot by raw pointer only at StartRecording/session load
@@ -1555,6 +1558,23 @@ bool SoundManager::switchGeneralSoundCard(GSTypeKind target)
     LOGINFO("SoundManager: General Sound personality switched %s -> %s%s", from, to,
             hadModule ? " (module upload replayed)" : "");
     return portsRegistered;
+}
+
+void SoundManager::publishGeneralSoundSlot()
+{
+    GeneralSoundSlot slot;
+    if (_gs)
+    {
+        switch (_gs->implementation())
+        {
+            case GSCardImplementation::LLE: slot.kind = GSTypeKind::Z80; break;
+            case GSCardImplementation::LW: slot.kind = GSTypeKind::LW; break;
+            case GSCardImplementation::NGS: slot.kind = GSTypeKind::NGS; break;
+        }
+        slot.sdCardImage = _gs->sdCardImage();
+    }
+    std::lock_guard<std::mutex> lock(_gsSlotMutex);
+    _gsSlot = std::move(slot);
 }
 
 bool SoundManager::requestGeneralSoundCardSwitch(GSTypeKind target)

@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -25,6 +26,13 @@
 
 class EmulatorContext;
 class SoundChip_Moonsound;
+
+/// The GS slot as other threads see it (SoundManager::generalSoundSlot)
+struct GeneralSoundSlot
+{
+    GSTypeKind kind = GSTypeKind::NONE;
+    std::string sdCardImage; // NeoGS: the inserted SD image, empty = none
+};
 
 class SoundManager
 {
@@ -99,6 +107,10 @@ protected:
     // frame boundary on the emulation thread. 0xFF = none pending (a
     // GSTypeKind value otherwise)
     std::atomic<uint8_t> _pendingGSSwitch{0xFF};
+
+    // What the GS slot holds now, for other threads (generalSoundSlot())
+    mutable std::mutex _gsSlotMutex;
+    GeneralSoundSlot _gsSlot;
 
     // Last gs_lightweight feature state seen by UpdateFeatureCache. The
     // feature drives a personality switch only on an actual TRANSITION
@@ -365,7 +377,7 @@ public:
     /// slot and device registry entry are shared - no audio rerouting.
     /// Must run on the emulation thread (same ownership as the frame
     /// lifecycle); no-op (true) when the requested personality is already
-    /// fitted. GSTypeKind::NONE/NGS map to no card - rejected.
+    /// fitted. GSTypeKind::NONE/BASS select no card - rejected.
     bool switchGeneralSoundCard(GSTypeKind target);
 
     /// Thread-safe variant for cross-thread callers (WebAPI actions, the
@@ -374,6 +386,23 @@ public:
     /// thread (handleFrameStart), the only point where the card may be
     /// deleted/recreated safely
     bool requestGeneralSoundCardSwitch(GSTypeKind target);
+
+    /// What the GS slot holds now, safe to read from any thread (the GUI,
+    /// automation): the card - Z80 (classic), LW, NGS or NONE - and, on
+    /// NeoGS, the SD card image (empty: no card). The card itself may be
+    /// replaced or changed only on the emulation thread, so other threads
+    /// read this copy instead of the card
+    GeneralSoundSlot generalSoundSlot() const
+    {
+        std::lock_guard<std::mutex> lock(_gsSlotMutex);
+        return _gsSlot;
+    }
+    GSTypeKind fittedGeneralSoundKind() const { return generalSoundSlot().kind; }
+    /// Refresh generalSoundSlot() from the card: emulation thread, after the
+    /// card or its media changed
+    void publishGeneralSoundSlot();
+    /// A requestGeneralSoundCardSwitch() waits for the next frame boundary
+    bool generalSoundSwitchPending() const { return _pendingGSSwitch.load(std::memory_order_acquire) != 0xFF; }
 #ifdef UNREALNG_HAVE_OPL4
     // MoonSound access
     bool hasMoonSound() const { return _moonsound != nullptr; }

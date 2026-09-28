@@ -4,9 +4,10 @@
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
 
-static_assert(static_cast<int>(AudioSource::MoonPCM) + 1 == 9, "HUD_SOURCES must cover every AudioSource");
+static_assert(static_cast<int>(AudioSource::NeoGSMp3) + 1 == 11, "HUD_SOURCES must cover every AudioSource");
 
-void AudioActivityIndicators::endFrame(const unreal::UUID& emulatorId, const std::vector<AudioDeviceInfo>& devices)
+void AudioActivityIndicators::endFrame(const unreal::UUID& emulatorId, const std::vector<AudioDeviceInfo>& devices,
+                                       bool neoGSFitted)
 {
     for (const AudioDeviceInfo& d : devices)
     {
@@ -23,7 +24,8 @@ void AudioActivityIndicators::endFrame(const unreal::UUID& emulatorId, const std
     on[static_cast<int>(AudioSource::AY)] = held(AudioSourceType::AY1_All) && !held(AudioSourceType::AY2_All);
     on[static_cast<int>(AudioSource::TurboSound)] = held(AudioSourceType::AY2_All);
     on[static_cast<int>(AudioSource::FM)] = held(AudioSourceType::FM1) || held(AudioSourceType::FM2);
-    on[static_cast<int>(AudioSource::GeneralSound)] = held(AudioSourceType::GeneralSound);
+    on[static_cast<int>(neoGSFitted ? AudioSource::NeoGS : AudioSource::GeneralSound)] = held(AudioSourceType::GeneralSound);
+    on[static_cast<int>(AudioSource::NeoGSMp3)] = held(AudioSourceType::GeneralSoundMp3);
     on[static_cast<int>(AudioSource::MoonFM)] = held(AudioSourceType::Moonsound_FM);
     on[static_cast<int>(AudioSource::MoonPCM)] = held(AudioSourceType::Moonsound_PCM);
 

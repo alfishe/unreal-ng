@@ -92,12 +92,29 @@ SoundChip_NeoGS::SoundChip_NeoGS(EmulatorContext* context, const NeoGSConfig& co
     _zx.setWatchFrames(_config.zxDmaWatchFrames);
     _zx.setWatchAlways(_config.zxDmaWatch == NeoGSConfig::ZxDmaWatch::Always);
     if (_config.sdCardPath[0])
-        insertSdCard(_config.sdCardPath);
+        openSdImage(_config.sdCardPath);
 
     coldBoot();
 }
 
+bool SoundChip_NeoGS::ttdRecording() const
+{
+    return _context && _context->pTimeTravelManager && _context->pTimeTravelManager->IsRecording();
+}
+
 bool SoundChip_NeoGS::insertSdCard(const std::string& path)
+{
+    // The machine's configuration is fixed while a TTD recording runs: the
+    // card's media are fixed data for the recording's whole length
+    if (ttdRecording())
+    {
+        MLOGWARNING("NeoGS: SD card insert refused - a TTD recording is running");
+        return false;
+    }
+    return openSdImage(path);
+}
+
+bool SoundChip_NeoGS::openSdImage(const std::string& path)
 {
     const SdCardSpi::WriteMode mode = _config.sdWrite == NeoGSConfig::WriteMode::Persist ? SdCardSpi::WriteMode::Persist
                                     : _config.sdWrite == NeoGSConfig::WriteMode::Off     ? SdCardSpi::WriteMode::Off
@@ -114,14 +131,18 @@ bool SoundChip_NeoGS::insertSdCard(const std::string& path)
         return false;
     }
     _sd->select((_spi.sctrlRaw() & NeoGSSpi::SCTRL_SD_NCS) == 0);
-    markReplayBarrier(ttd::TTDExternalEventKind::Other, "NeoGS SD card inserted");
     return true;
 }
 
-void SoundChip_NeoGS::ejectSdCard()
+bool SoundChip_NeoGS::ejectSdCard()
 {
+    if (ttdRecording())
+    {
+        MLOGWARNING("NeoGS: SD card eject refused - a TTD recording is running");
+        return false;
+    }
     _sd->close();
-    markReplayBarrier(ttd::TTDExternalEventKind::Other, "NeoGS SD card ejected");
+    return true;
 }
 
 void SoundChip_NeoGS::markReplayBarrier(ttd::TTDExternalEventKind kind, const char* reason)

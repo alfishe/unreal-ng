@@ -1273,12 +1273,15 @@ ZxDmaWatchFrames=5             ; watch window after ZX-DMA activity, frames
 - `ngs_sd_card_path` keeps `SDCARD` as an alias.
 - The new keys get fields next to the existing ones (`platform.h:699-707`,
   inside `#ifdef MOD_GSZ80`).
-- The code default of `MP3Support` stays `stub` until phase 3 ships the
-  decoder, then becomes `software`.
-- Shipped configs already have an `[NGS]` section with only `RamSize=2048`.
-  They gain the new keys with their defaults. Their `GSType` is unchanged, and
-  the "NGS (placeholder)" comment on `GSType` in every ini is updated.
-- `pentagon128k/unreal.ini` is CRLF, so it is edited byte-preserving.
+- The code default of `MP3Support` is `software` (it was `stub` until the
+  decoder shipped in phase 3; changed 2026-09-28): a config without the key
+  plays MP3.
+- Every shipped config lists all `[NGS]` keys with their defaults and a
+  one-line explanation (`RamSize` stays `2048`, as shipped before). Their
+  `GSType` is unchanged; its comment names every card (Z80, LW, NGS, BASS,
+  NONE). Each inline comment holds exactly one `;`: `IniFile` strips inline
+  comments with a backward scan, so a second `;` would break the value.
+  `Config_Test.ShippedConfigsCarryTheFullNeoGSSection` parses every config.
 
 ## 7. Integration
 
@@ -1437,8 +1440,24 @@ earlier):
   and the session overlay grows without bound. Only the protocol state is.
   So a card write is a replay barrier: every accepted block calls
   `SdCardSpi::setWriteListener`'s listener, and the card records a
-  `DiskWrite` external-event marker, at most one a frame. Inserting or
-  ejecting the card records an `Other` marker.
+  `DiskWrite` external-event marker, at most one a frame.
+- **The configuration is fixed while a recording runs** (decided 2026-09-28).
+  The SD card is external media: its contents are fixed data for the whole
+  recording, and TTD records only how the card answers on its ports. So
+  inserting or ejecting the card is refused while TTD records - the card
+  itself refuses (`insertSdCard` / `ejectSdCard` return false with a
+  warning), and the automation surfaces report it before they ask. A flash
+  save changes nothing in the machine and is allowed.
+- **Media requests run on the machine's thread.** Automation (CLI, WebAPI,
+  MCP, Lua, Python) calls `neogsmedia.h`: `NeoGSRequestSdInsert`,
+  `NeoGSRequestSdEject`, `NeoGSRequestFlashSave`. They check on the
+  caller's thread (NeoGS fitted, not recording, the image exists) and hand
+  the action to `TimeTravelManager::SubmitMachineTask`. While the emulator
+  loop runs on another thread the task is queued and the loop runs it at the
+  next instruction boundary (the live-input path: `ttdInputWork`,
+  `ServiceInput`); otherwise it runs at once. So the card is never changed
+  while its CPU reads the SD card. Tasks are not journaled (they are not
+  replayable input) and are refused while a replay owns the machine.
 - **GS-slot guard.** A recording made with one GS personality refuses to load
   into a machine configured with another, with the message "recorded with
   NeoGS, fitted: GS". This mirrors the TurboSound guard
@@ -1452,10 +1471,12 @@ earlier):
 | Surface | Additions |
 |---|---|
 | CLI `gs` | `gs switch_personality ngs`; `gs neogs` (config, pages, clock, LED, SD, decoder, DMA); `gs sd insert <image>` / `gs sd eject`; `gs flash save` |
-| WebAPI | `/state/audio/gs` gains a `neogs` object with the same fields; `/control/audio/gs` accepts `personality: "ngs"`, `sd_insert`, `sd_eject`, `flash_save` |
+| WebAPI | `/state/audio/gs` gains a `neogs` object with the same fields; `/control/audio/gs` accepts `personality: "ngs"`, `sd_insert`, `sd_eject`, `flash_save` (answer `status`: `done`, or `queued` while the loop runs; 409 without NeoGS, during a TTD recording (insert/eject) or a replay) |
 | MCP | the one `gs` tool: its `action` enum and personality values gain `ngs`, `sd_insert`, `sd_eject`, `flash_save` |
 | Lua / Python | `implementation` label and switch targets extended; `neogs()` state table |
 | Docs | `command-interface.md` and the OpenAPI file, in the same change |
+| GUI: Audio Settings | "General Sound slot" section, shown when a card is fitted: the card (classic, lightweight player, NeoGS; switched at the next frame), and for NeoGS the SD card (image name, Insert..., Eject; refused while TTD records). The mixer's Sources list names the card "NeoGS" and adds "NeoGS MP3". The widget reads `SoundManager::generalSoundSlot()`, a copy refreshed on the emulation thread whenever the card or its SD card changes, and polls it with the meters, so changes made through automation show up too |
+| GUI: HUD | The GS slot's activity nudge names the card: "GS" for the classic and lightweight cards; for NeoGS the DAC and MP3 decoder streams (`AudioSource::NeoGS`, `AudioSource::NeoGSMp3`) combine into "NeoGS", "NeoGS MP3" or "NeoGS+MP3", like MoonSound's two parts |
 
 The SD media fields follow the shared `SdCardState` descriptor (§5.4).
 
@@ -1814,6 +1835,7 @@ the NeoGS suites are listed below.
 | `ttd/ttdgeneralsoundswitch_test.cpp` (extended) | NeoGS records with the whole card in the checkpoint blob; switch to NeoGS during a recording repoints the registry; GS-slot session guard |
 | `neogs/soundchip_neogs_ttd_test.cpp` | Blob saved during the SD boot (init, FAT walk, 32 KB load) and during MP3 DMA playback (reset latency, first frames, full FIFO), loaded into a second card: both run on identically - state hash, MP3 output, RAM, flash and devices |
 | `ttd/ttdneogs_test.cpp` | The SD boot under the TTD engine replays exactly from the session start, a per-frame checkpoint and a mid-frame seek; SD writes leave one `DiskWrite` marker a frame |
+| `neogs/neogsmedia_test.cpp` | Media requests: NeoGS required; carried out at once with the loop stopped, queued and carried out by the loop while it runs on its own thread; insert/eject refused during a TTD recording (by the card too), flash save allowed; refused during a replay; 200 eject/insert requests from another thread while the card boots from the SD card |
 | `soundchip_gslw_test.cpp` (extended) | LW -> NeoGS -> LLE switching with module replay; the lightweight feature leaves NeoGS alone |
 | Benchmarks | `BM_GeneralSoundFrame_*` (classic) and `BM_NeoGSFrame_*`: NeoGS 1.8x the classic card idle and 1.75x playing, inside the 2x / 2.5x budgets |
 
@@ -1823,7 +1845,7 @@ the NeoGS suites are listed below.
   5d waits for the GS debugger; `Fpga=D` (5e) is skipped by decision.
 - TTD: RAM and flash move from the v1 blob to v2 memory regions with the
   v2 migration (§7.4). The SD card's sectors stay outside TTD; writes are
-  replay barriers.
+  replay barriers; insert/eject are refused while recording.
 - The `neogs` debugger target, with the GS debugger.
 - `npl044`: explained (§14.2) - nothing left in the emulation.
 

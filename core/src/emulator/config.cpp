@@ -580,7 +580,7 @@ bool Config::ParseConfig(IniFile& inimanager)
 		ngsConfig.flashWrite = writeModes[choice("FlashWrite", "session", {"session", "persist", "off"})];
 
 		static constexpr NGSMP3SupportKind mp3Kinds[] = {NGSMP3SupportKind::None, NGSMP3SupportKind::Stub, NGSMP3SupportKind::Software};
-		ngsConfig.mp3Support = mp3Kinds[choice("MP3Support", "stub", {"none", "stub", "software"})];
+		ngsConfig.mp3Support = mp3Kinds[choice("MP3Support", "software", {"none", "stub", "software"})];
 		ngsConfig.mp3Chip = choice("Mp3Chip", "vs1001", {"vs1001", "vs1011"}) == 1 ? NeoGSConfig::Mp3Chip::VS1011 : NeoGSConfig::Mp3Chip::VS1001;
 		ngsConfig.mp3Gain = std::clamp(inimanager.GetDoubleValue(ngs, "Mp3Gain", 1.0), 0.0, 8.0);
 		ngsConfig.volume = static_cast<unsigned>(std::clamp<long>(inimanager.GetLongValue(ngs, "Volume", 8000), 0, 8192));

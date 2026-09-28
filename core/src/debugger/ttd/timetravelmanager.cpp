@@ -1536,6 +1536,28 @@ bool TimeTravelManager::SubmitLiveInput(const TTDInputEvent& ev)
     return true;
 }
 
+TimeTravelManager::MachineTaskResult TimeTravelManager::SubmitMachineTask(std::function<void()> task)
+{
+    if (!_context || !task || OwnsInput())
+        return MachineTaskResult::Refused;
+
+    // The same hand-off as SubmitLiveInput
+    const bool loopRunning = _context->pEmulator && _context->pEmulator->IsRunning();
+    const bool onLoopThread = _context->pMainLoop && _context->pMainLoop->IsRunThread();
+    if (loopRunning && !onLoopThread)
+    {
+        {
+            std::lock_guard<std::mutex> lock(_pendingInputMutex);
+            _pendingTasks.push_back(std::move(task));
+        }
+        _context->ttdInputWork.store(true, std::memory_order_release);
+        return MachineTaskResult::Queued;
+    }
+
+    task();
+    return MachineTaskResult::RanNow;
+}
+
 void TimeTravelManager::ApplyLiveInput(TTDInputEvent ev)
 {
     // Journal BEFORE applying: the entry's time point is the moment of mutation
@@ -1580,6 +1602,19 @@ void TimeTravelManager::ServiceInput()
             ApplyLiveInput(ev);
     }
 
+    // 3. Machine tasks queued by other threads (SubmitMachineTask), dropped
+    //    like live input when the journal took over while they waited
+    std::vector<std::function<void()>> tasks;
+    {
+        std::lock_guard<std::mutex> lock(_pendingInputMutex);
+        tasks.swap(_pendingTasks);
+    }
+    if (!tasks.empty() && !OwnsInput())
+    {
+        for (auto& task : tasks)
+            task();
+    }
+
     UpdateInputWorkFlag();
 }
 
@@ -1591,7 +1626,7 @@ void TimeTravelManager::UpdateInputWorkFlag()
     bool pending;
     {
         std::lock_guard<std::mutex> lock(_pendingInputMutex);
-        pending = !_pendingInput.empty();
+        pending = !_pendingInput.empty() || !_pendingTasks.empty();
     }
     _context->ttdInputWork.store(_inputPlaybackArmed || pending, std::memory_order_release);
 }

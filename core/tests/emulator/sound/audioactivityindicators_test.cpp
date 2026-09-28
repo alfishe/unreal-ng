@@ -400,3 +400,40 @@ TEST_P(AudioActivityNotification_Test, Pause_EndsLedsAndNudgesAtOnce)
 
     mc.RemoveObserver(NC_AUDIO_ACTIVITY, obsPtr, cb);
 }
+
+/// The GS slot's sound posts as the card fitted: GeneralSound for the
+/// classic / lightweight card, NeoGS for NeoGS (the HUD names the card), and
+/// the NeoGS MP3 decoder as its own NeoGSMp3 source
+TEST(AudioActivityIndicators_Test, GsSlotPostsTheFittedCard)
+{
+    const unreal::UUID id = unreal::UUID::Generate();
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+    AudioActivityOnOffCounter gs(id, AudioSource::GeneralSound);
+    AudioActivityOnOffCounter neoGS(id, AudioSource::NeoGS);
+    AudioActivityOnOffCounter mp3(id, AudioSource::NeoGSMp3);
+    ObserverCallbackMethod cb = static_cast<ObserverCallbackMethod>(&AudioActivityOnOffCounter::onEvent);
+    for (Observer* o : {static_cast<Observer*>(&gs), static_cast<Observer*>(&neoGS), static_cast<Observer*>(&mp3)})
+        mc.AddObserver(NC_AUDIO_ACTIVITY, o, cb);
+
+    std::vector<AudioDeviceInfo> devices(2);
+    devices[0].type = AudioSourceType::GeneralSound;
+    devices[1].type = AudioSourceType::GeneralSoundMp3;
+
+    AudioActivityIndicators classic;
+    devices[0].activeRecently = true;
+    classic.endFrame(id, devices, false);
+    EXPECT_TRUE(TestWait::ForExactly(gs.on, 1));
+
+    AudioActivityIndicators neo;
+    neo.endFrame(id, devices, true);
+    EXPECT_TRUE(TestWait::ForExactly(neoGS.on, 1));
+    devices[0].activeRecently = false;
+    devices[1].activeRecently = true;
+    neo.endFrame(id, devices, true);
+    EXPECT_TRUE(TestWait::ForExactly(mp3.on, 1));
+    EXPECT_TRUE(TestWait::ForExactly(neoGS.on, 2)) << "the DAC is still held (one second)";
+    EXPECT_EQ(gs.on.load(), 1) << "NeoGS sound never posts as the classic card";
+
+    for (Observer* o : {static_cast<Observer*>(&gs), static_cast<Observer*>(&neoGS), static_cast<Observer*>(&mp3)})
+        mc.RemoveObserver(NC_AUDIO_ACTIVITY, o, cb);
+}
