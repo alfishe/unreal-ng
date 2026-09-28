@@ -34,6 +34,8 @@
 #include "debugger/ttd/ttddumpformat.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdcodecpagestore.h"
+#include "debugger/ttd/timetravelframecache.h"
+#include "debugger/ttd/ttdwritejournal.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -418,4 +420,140 @@ TEST_F(TTD_Dump_Format_Test, DISABLED_WriteFixtureFile_ForPythonConformance)
     f.close();
 
     GTEST_SUCCEED() << "wrote .ttd fixture to " << path;
+}
+
+// ===========================================================================
+// Loading replaces the whole session, or nothing (current-state B2, B5)
+// ===========================================================================
+
+namespace
+{
+/// DI; loop: INC A; LD (#C000),A; OUT (#FE),A; JP loop
+void InstallWritingProgram(Emulator* emulator, Memory* memory)
+{
+    const uint8_t program[] = {0xF3, 0x3C, 0x32, 0x00, 0xC0, 0xD3, 0xFE, 0xC3, 0x01, 0x80};
+    for (uint16_t i = 0; i < sizeof(program); ++i)
+        memory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), program[i]);
+    emulator->GetZ80State()->pc = 0x8000;
+    emulator->GetZ80State()->sp = 0xFF00;
+}
+
+bool IsProgramPc(uint16_t pc)
+{
+    return pc >= 0x8000 && pc <= 0x8009;
+}
+
+std::string SerializeToBytes(ttd::TimeTravelManager* ttd)
+{
+    std::ostringstream out(std::ios::binary);
+    std::string err;
+    EXPECT_TRUE(ttd->SerializeSession(out, err)) << err;
+    return out.str();
+}
+
+bool LoadFromBytes(ttd::TimeTravelManager* ttd, const std::string& bytes, std::string& err)
+{
+    std::istringstream in(bytes, std::ios::binary);
+    return ttd->DeserializeSession(in, err);
+}
+}  // namespace
+
+/// A file without a write journal must not answer find-last from the writes of
+/// the session it replaced (B2).
+TEST_F(TTD_Dump_Format_Test, Load_WithoutJournal_DropsThePreviousSessionsWrites)
+{
+    EnableTTD();
+
+    // Session A: RAM changed by direct pokes only, so its file carries no journal
+    ASSERT_TRUE(_ttd->StartRecording());
+    ASSERT_NO_FATAL_FAILURE(ScribbleRamPage(_memory, 0, 0x11));
+    _ttd->OnFrameBoundary();
+    _ttd->StopRecording();
+    const ttd::TTDWriteJournal* journal = _ttd->GetWriteJournal();
+    ASSERT_TRUE(journal == nullptr || journal->IsEmpty());
+    const std::string fileA = SerializeToBytes(_ttd);
+
+    // Session B: executed code journals its writes
+    _ttd->SetEnableWriteJournal(true);
+    InstallWritingProgram(_emulator, _memory);
+    ASSERT_TRUE(_ttd->StartRecording());
+    _emulator->RunNFrames(2, /*skipBreakpoints=*/true);
+    _ttd->StopRecording();
+    journal = _ttd->GetWriteJournal();
+    ASSERT_NE(journal, nullptr);
+    ASSERT_GT(journal->Size(), 0u);
+
+    std::string err;
+    ASSERT_TRUE(LoadFromBytes(_ttd, fileA, err)) << err;
+    journal = _ttd->GetWriteJournal();
+    EXPECT_TRUE(journal == nullptr || journal->IsEmpty())
+        << journal->Size() << " write records of the replaced session survived the load";
+}
+
+/// A frame decoded while browsing the old session must not be served for the
+/// same frame number of the loaded one (B2). The file comes from another run,
+/// so its frame numbers overlap the current session's - the normal case.
+TEST_F(TTD_Dump_Format_Test, Load_DropsThePreviousSessionsDecodedFrame)
+{
+    // Session A in a separate instance: whatever the ROM does, never the test program
+    std::string fileA;
+    {
+        Emulator other(LoggerLevel::LogError);
+        ASSERT_TRUE(other.Init());
+        ttd::TimeTravelManager* otherTtd = other.GetContext()->pTimeTravelManager;
+        ASSERT_TRUE(otherTtd->StartRecording());
+        other.RunNFrames(6, /*skipBreakpoints=*/true);
+        otherTtd->StopRecording();
+        fileA = SerializeToBytes(otherTtd);
+        other.Stop();
+        other.Release();
+    }
+
+    // Session B here: the test program; browsing a frame decodes and caches it
+    EnableTTD();
+    InstallWritingProgram(_emulator, _memory);
+    ASSERT_TRUE(_ttd->StartRecording());
+    _emulator->RunNFrames(3, /*skipBreakpoints=*/true);
+    _ttd->StopRecording();
+    const uint64_t frame = _ttd->SessionEndPosition().frame - 1;
+    const ttd::TTDFrameCache* cache = _ttd->GetFrameCache(frame);
+    ASSERT_NE(cache, nullptr);
+    ASSERT_FALSE(cache->entries.empty());
+    ASSERT_TRUE(IsProgramPc(cache->entries.front().pc));
+
+    std::string err;
+    ASSERT_TRUE(LoadFromBytes(_ttd, fileA, err)) << err;
+    ASSERT_LE(frame, _ttd->SessionEndPosition().frame) << "the loaded session must cover the frame";
+    cache = _ttd->GetFrameCache(frame);
+    ASSERT_NE(cache, nullptr);
+    for (const ttd::TTDFrameCacheEntry& entry : cache->entries)
+        ASSERT_FALSE(IsProgramPc(entry.pc)) << "frame " << frame << " still shows the replaced session";
+}
+
+/// A file that fails to load - here cut short at many points - leaves the
+/// current session exactly as it was (B5).
+TEST_F(TTD_Dump_Format_Test, FailedLoad_KeepsTheCurrentSession)
+{
+    EnableTTD();
+    ASSERT_TRUE(_ttd->StartRecording());
+    for (uint8_t i = 0; i < 3; ++i)
+    {
+        ASSERT_NO_FATAL_FAILURE(ScribbleRamPage(_memory, i, static_cast<uint8_t>(0x10 * (i + 1))));
+        _ttd->OnFrameBoundary();
+    }
+    _ttd->StopRecording();
+    const auto before = CaptureDigest();
+    const std::string file = SerializeToBytes(_ttd);
+
+    for (size_t cut = 16; cut < file.size(); cut += file.size() / 7)
+    {
+        std::string err;
+        ASSERT_FALSE(LoadFromBytes(_ttd, file.substr(0, cut), err)) << "a file cut at byte " << cut << " loaded";
+
+        const auto after = CaptureDigest();
+        ASSERT_EQ(after.checkpointCount, before.checkpointCount) << "after a load failing at byte " << cut;
+        ASSERT_EQ(after.checkpointFrames, before.checkpointFrames);
+        ASSERT_EQ(after.pageStoreUsedSlots, before.pageStoreUsedSlots);
+        ASSERT_EQ(after.ramPagesPerCheckpoint, before.ramPagesPerCheckpoint);
+    }
 }

@@ -13,6 +13,7 @@
 
 #include <chrono>
 #include <cstring>
+#include <sstream>
 #include <thread>
 
 #include "base/featuremanager.h"
@@ -872,4 +873,139 @@ TEST_F(TimeTravelManagerRecordingLock_Test, EnablingTheTimeTravelFeatureAloneLoc
     EXPECT_TRUE(_fm->setFeature(Features::kTurboMode, true));
     EXPECT_TRUE(_core->IsTurboMode());
     EXPECT_TRUE(_emulator->SetSpeedMultiplier(2));
+}
+
+// ===========================================================================
+// Write journal authority: find-last may answer from the journal only when it
+// took every write since the session start (current-state B3)
+// ===========================================================================
+
+class TimeTravelManagerJournal_Test : public TimeTravelManagerRecordingLock_Test
+{
+protected:
+    /// DI; loop: INC A; LD (#C000),A; OUT (#FE),A; JP loop
+    void InstallWritingProgram()
+    {
+        Memory* memory = _emulator->GetContext()->pMemory;
+        const uint8_t program[] = {0xF3, 0x3C, 0x32, 0x00, 0xC0, 0xD3, 0xFE, 0xC3, 0x01, 0x80};
+        for (uint16_t i = 0; i < sizeof(program); ++i)
+            memory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), program[i]);
+        _emulator->GetZ80State()->pc = 0x8000;
+        _emulator->GetZ80State()->sp = 0xFF00;
+    }
+
+    static ttd::TTDSearchQuery LastWriteToC000()
+    {
+        ttd::TTDSearchQuery q;
+        q.addrFrom = 0xC000;
+        q.addrTo = 0xC000;
+        q.access = ttd::TTDAccessType::Write;
+        return q;
+    }
+};
+
+TEST_F(TimeTravelManagerJournal_Test, FindLastWithoutAJournalReplays)
+{
+    // The feature pre-allocates a journal that then stays empty
+    ASSERT_TRUE(_fm->setFeature(Features::kTimeTravel, true));
+    _ttd->SetEnableWriteJournal(false);
+    InstallWritingProgram();
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(3);
+    _ttd->StopRecording();
+
+    const auto found = _ttd->FindLastAccess(LastWriteToC000());
+    ASSERT_TRUE(found.has_value()) << "an empty journal answered \"no match\" instead of replaying";
+    EXPECT_GE(found->pc, 0x8000);
+    EXPECT_LE(found->pc, 0x8009);
+}
+
+TEST_F(TimeTravelManagerJournal_Test, FindLastAfterTheJournalWasSwitchedOffReplays)
+{
+    _ttd->SetEnableWriteJournal(true);
+    InstallWritingProgram();
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(2);
+    const uint64_t journalEndFrame = _ttd->CurrentPosition().frame;
+    _ttd->SetEnableWriteJournal(false);  // the writes of the next frames are not journaled
+    RunFrames(2);
+    _ttd->StopRecording();
+
+    // The program writes #C000 every few T-states, so the last write is in the
+    // last recorded frame - not in the journal's last one
+    const auto found = _ttd->FindLastAccess(LastWriteToC000());
+    ASSERT_TRUE(found.has_value());
+    EXPECT_GT(found->time.frame, journalEndFrame)
+        << "the answer came from the journal, which stopped before the last writes";
+}
+
+/// With debug mode switched back off by a stop, replay-based queries still
+/// observe accesses: the replay engages the debug memory path itself.
+TEST_F(TimeTravelManagerJournal_Test, ReplayAfterAStopSeesWritesWithDebugModeOff)
+{
+    _ttd->SetEnableWriteJournal(false);  // force the replay path
+    InstallWritingProgram();
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(3);
+    _ttd->StopRecording();
+    ASSERT_FALSE(_fm->isEnabled(Features::kDebugMode)) << "precondition: the stop restored debug mode";
+
+    const auto found = _ttd->FindLastAccess(LastWriteToC000());
+    EXPECT_TRUE(found.has_value()) << "replay did not observe the program's writes";
+}
+
+/// "Resume recording from here" after a stop captures a correct history: the
+/// capture flags a stop switched off come back on, so the frames recorded
+/// after the resume restore the RAM they were captured from.
+TEST_F(TimeTravelManagerJournal_Test, ResumeAfterAStopRecordsACorrectHistory)
+{
+    InstallWritingProgram();
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(6);
+    _ttd->StopRecording();
+
+    ASSERT_TRUE(_ttd->SeekTo(ttd::TTDTimePoint{3, 0}));
+    ASSERT_TRUE(_ttd->ResumeRecordingFrom(_ttd->CurrentPosition()));
+    const size_t firstNew = _ttd->GetCheckpointCount();
+    RunFrames(4);
+    _ttd->StopRecording();
+    ASSERT_GT(_ttd->GetCheckpointCount(), firstNew);
+
+    Memory* memory = _emulator->GetContext()->pMemory;
+    for (size_t idx = firstNew; idx < _ttd->GetCheckpointCount(); ++idx)
+    {
+        ASSERT_TRUE(_ttd->RestoreCheckpointForTesting(idx));
+        const Z80State* cpu = _emulator->GetZ80State();
+        if (cpu->pc < 0x8001 || cpu->pc > 0x8007)
+            continue;
+        const uint8_t expected = static_cast<uint8_t>(cpu->pc == 0x8002 ? cpu->a - 1 : cpu->a);
+        EXPECT_EQ(memory->DirectReadFromZ80Memory(0xC000), expected) << "checkpoint " << idx;
+    }
+}
+
+/// A file records whether its journal is complete: one with a gap is answered
+/// by replay after the load too, not by the journal it carries.
+TEST_F(TimeTravelManagerJournal_Test, LoadedIncompleteJournalReplays)
+{
+    _ttd->SetEnableWriteJournal(true);
+    InstallWritingProgram();
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(2);
+    const uint64_t journalEndFrame = _ttd->CurrentPosition().frame;
+    _ttd->SetEnableWriteJournal(false);
+    RunFrames(2);
+    _ttd->StopRecording();
+
+    // The journal is written to a file only while journaling is on
+    _ttd->SetEnableWriteJournal(true);
+    std::stringstream file(std::ios::in | std::ios::out | std::ios::binary);
+    std::string err;
+    ASSERT_TRUE(_ttd->SerializeSession(file, err)) << err;
+    ASSERT_TRUE(_ttd->DeserializeSession(file, err)) << err;
+    ASSERT_NE(_ttd->GetWriteJournal(), nullptr);
+    ASSERT_FALSE(_ttd->GetWriteJournal()->IsEmpty()) << "precondition: the file carries a journal";
+
+    const auto found = _ttd->FindLastAccess(LastWriteToC000());
+    ASSERT_TRUE(found.has_value());
+    EXPECT_GT(found->time.frame, journalEndFrame) << "the loaded session answered from its incomplete journal";
 }

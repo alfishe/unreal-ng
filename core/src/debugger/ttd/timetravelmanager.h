@@ -361,8 +361,15 @@ public:
     ///   - Fast reverse-watchpoint queries ("where was X last written?")
     ///   - Best for: debugging, step-back analysis, reverse debugging
     ///
-    /// Must be called before StartRecording() to take effect.
-    void SetEnableWriteJournal(bool enable) { _enableWriteJournal = enable; }
+    /// Must be called before StartRecording() to take effect. Changing it while
+    /// a session holds history leaves a gap in the journal, so reverse queries
+    /// on that session fall back to replay.
+    void SetEnableWriteJournal(bool enable)
+    {
+        if (enable != _enableWriteJournal && !_timeline.empty())
+            _journalGapless = false;
+        _enableWriteJournal = enable;
+    }
     bool GetEnableWriteJournal() const { return _enableWriteJournal; }
 
     // -----------------------------------------------------------------------
@@ -1555,24 +1562,10 @@ private:
     uint64_t _lastKeyFrameIdx = 0;
 
     /// Force the next OnFrameBoundary capture to be an I-frame regardless
-    /// of the periodic interval. Set by Reset / Load / debugger-edit hooks
-    /// (anything that introduces non-deterministic state the codec can't
-    /// reconstruct from deltas).
+    /// of the periodic interval. Set when the session is replaced
+    /// (InvalidateSession, a file load) so the next capture anchors a fresh
+    /// key frame.
     bool _forceNextKeyFrame = true;
-
-    /// Materialized-RAM cache: when restoring P-frames in sequence, we
-    /// keep the most-recent fully-reconstructed RAM image here so the next
-    /// restore can walk only the *new* deltas from the cached anchor
-    /// instead of decompressing the full delta chain back to the I-frame.
-    ///
-    /// Invalidation: any write to live RAM (capture path, live run)
-    /// invalidates this. Only valid while _state == Detached.
-    struct MaterializedRamCache {
-        bool        valid = false;
-        uint64_t    frame = 0;      ///< Frame index that this cache represents
-        std::vector<uint8_t> ram;   ///< _modelRamPages × PAGE_SIZE bytes
-    };
-    MaterializedRamCache _ramCache;
 
     /// Exclusive page-index bound for the active model (set at StartRecording).
     /// Pages in [0, _modelRamPages) are captured; pages in [_modelRamPages,
@@ -1673,6 +1666,14 @@ private:
     /// Set via SetEnableWriteJournal() before StartRecording().
     bool _enableWriteJournal = true;
 
+    /// True while the journal holds every write of the session since its start
+    /// (journaling on at StartRecording, never switched, no unrecorded run
+    /// between a stop and a live resume). Only then may FindLastAccess answer
+    /// from it; a loaded file's journal cannot vouch for this and replays.
+    bool _journalGapless = false;
+    /// Position at StopRecording, to tell whether the machine ran before a live resume
+    uint64_t _recordingStoppedAtT = 0;
+
     // -----------------------------------------------------------------------
     // Replay-mode state (Phase 2 Item 2; parent TDD §8.2)
     // -----------------------------------------------------------------------
@@ -1684,6 +1685,8 @@ private:
     /// SoundManager mute state as it was before EnterReplayMode forced it
     /// true. Restored by ExitReplayMode. Only meaningful while `_inReplayMode`.
     bool _soundMuteBeforeReplay = false;
+    /// Z80 debug mode before replay engaged the debug memory path (restored on exit)
+    bool _debugModeBeforeReplay = false;
 
     // -----------------------------------------------------------------------
     // Auto-pause at session end (Detached state)
@@ -1727,6 +1730,11 @@ private:
 
     /// Every _state write goes through here so no transition bypasses the lock
     void SetState(TTDSessionState next);
+    /// Capture needs 'timetravel' (Memory's TTD gate) and 'debugmode' (the
+    /// debug write path that marks pages dirty): switch on whichever is off and
+    /// remember it for StopRecording. Every way into Recording calls it; the
+    /// CPU must be parked (the debugmode switch swaps the memory interface).
+    void EngageCaptureFeatures();
     void EngageRecordingLock();
     void ReleaseRecordingLock();
 

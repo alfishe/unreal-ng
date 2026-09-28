@@ -80,7 +80,8 @@ tests that would catch regressions.
   loaders.
 - **Feature-flag side effect** (perf review F3): enabling the `timetravel`
   feature without recording disables fast tape / fast disk; move the override to
-  recording start ([requirements.md](requirements.md) FR-18).
+  recording start ([requirements.md](requirements.md) FR-18). **Done** in `005771c8`: only a
+  recording engages the lock, and it holds through replay and Detached.
 - **Analyzer fixes**: Python knows flag bit 3 (bookmarks). (Done 2026-09-25:
   the analyzer compares the stored piece CRC, and the false "the C++ writer
   stores 0" comments in `ttd_format.py`, `ttd.ksy` and `timetravelmanager.cpp`

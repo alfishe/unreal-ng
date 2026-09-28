@@ -11,6 +11,8 @@
 ///   - type_input → /keyboard/type body
 ///   - mouse_input move/status routing, click pre-move sequencing, missing-arg rejects
 ///   - Phase-2 tools spot checks (assemble, frame_cost, labels, screen digest)
+///   - time_travel: every TTD action's route + body, pre-call validation,
+///     summaries (barriers, 409-while-recording remedy); inspect_state 'ttd'
 ///   - TargetResolver: 0 instances auto-creates, 1 uses it, >1 refuses
 ///   - dual content shape for a forwarded result
 
@@ -1157,6 +1159,407 @@ TEST_F(McpTools_Test, TimeTravel_SeekBookmark_PostsBookmarkField)
     ASSERT_NE(call, nullptr);
     EXPECT_EQ(call->body["bookmark"].asString(), "umt entry");
     EXPECT_FALSE(call->body.isMember("frame"));
+}
+
+// ===========================================================================
+// time_travel (TD-1 — full TTD surface)
+// ===========================================================================
+
+TEST_F(McpTools_Test, TimeTravel_Status_SummarizesSession)
+{
+    Json::Value status;
+    status["ttd_available"] = true;
+    status["state"] = "recording";
+    status["session_start_frame"] = 10;
+    status["current_end_frame"] = 70;
+    status["checkpoint_count"] = 61;
+    status["write_journal_enabled"] = true;
+    _caller->routes["GET /api/v1/emulator/emu-1/ttd/status"] = {200, status};
+
+    Json::Value args;
+    args["action"] = "status";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("recording, frames 10..70, 61 checkpoint(s)"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("1x"), std::string::npos) << "the recording speed lock is part of the summary: " << result.text;
+    EXPECT_EQ(result.structured["checkpoint_count"].asUInt(), 61u);
+}
+
+TEST_F(McpTools_Test, TimeTravel_Start_PostsModeAndReportsJournal)
+{
+    Json::Value reply;
+    reply["started"] = true;
+    reply["already_active"] = false;
+    reply["state"] = "recording";
+    reply["write_journal_enabled"] = false;
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/start"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "start";
+    args["mode"] = "gaming";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/start");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["mode"].asString(), "gaming");
+    EXPECT_FALSE(call->body.isMember("enable_write_journal"));
+    EXPECT_NE(result.text.find("recording started"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("write journal off"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, TimeTravel_Start_BadMode_RejectsBeforeAnyCall)
+{
+    Json::Value args;
+    args["action"] = "start";
+    args["mode"] = "turbo";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    EXPECT_TRUE(result.isError);
+    EXPECT_TRUE(_caller->calls.empty());
+}
+
+TEST_F(McpTools_Test, TimeTravel_StopInvalidatePositionMarkers_HitTheirRoutes)
+{
+    struct Case
+    {
+        const char* action;
+        const char* method;
+        const char* path;
+    };
+    const Case cases[] = {
+        {"stop", "POST", "/api/v1/emulator/emu-1/ttd/stop"},
+        {"invalidate", "POST", "/api/v1/emulator/emu-1/ttd/invalidate"},
+        {"position", "GET", "/api/v1/emulator/emu-1/ttd/position"},
+        {"markers", "GET", "/api/v1/emulator/emu-1/ttd/markers"},
+        {"step_back_frame", "POST", "/api/v1/emulator/emu-1/ttd/step-back"},
+        {"step_forward_frame", "POST", "/api/v1/emulator/emu-1/ttd/step-forward"},
+    };
+    for (const Case& c : cases)
+    {
+        _caller->calls.clear();
+        Json::Value args;
+        args["action"] = c.action;
+        mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+        EXPECT_FALSE(result.isError) << c.action << ": " << result.text;
+        EXPECT_TRUE(_caller->Saw(c.method, c.path)) << c.action;
+    }
+}
+
+TEST_F(McpTools_Test, TimeTravel_Seek_PostsFrameAndReportsBarrier)
+{
+    Json::Value reply;
+    reply["reached"] = false;
+    reply["arrived_at"]["frame"] = 40;
+    reply["arrived_at"]["tinframe"] = 0;
+    reply["halt_reason"] = "external_event";
+    reply["blocking_marker"]["frame"] = 41;
+    reply["blocking_marker"]["tinframe"] = 100;
+    reply["blocking_marker"]["kind"] = "tape_control";
+    reply["blocking_marker"]["reason"] = "play";
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/seek"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "seek";
+    args["frame"] = 50;
+    args["tinframe"] = 1234;
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/seek");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["frame"].asUInt(), 50u);
+    EXPECT_EQ(call->body["tinframe"].asUInt(), 1234u);
+    EXPECT_NE(result.text.find("Stopped at frame 40 (external_event)"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("tape_control 'play' at frame 41 t=100"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, TimeTravel_Seek_MissingFrame_RejectsBeforeAnyCall)
+{
+    Json::Value args;
+    args["action"] = "seek";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    EXPECT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("frame"), std::string::npos);
+    EXPECT_TRUE(_caller->calls.empty());
+}
+
+TEST_F(McpTools_Test, TimeTravel_Seek_WhileRecording_ExplainsStopFirst)
+{
+    Json::Value conflict;
+    conflict["error"] = "Conflict";
+    conflict["message"] = "Cannot scrub while recording is active";
+    conflict["state"] = "recording";
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/seek"] = {409, conflict};
+
+    Json::Value args;
+    args["action"] = "seek";
+    args["frame"] = 5;
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    EXPECT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("HTTP 409"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("action 'stop'"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, TimeTravel_StepInstruction_SendsDirection)
+{
+    Json::Value args;
+    args["action"] = "step_back_instruction";
+    mcp::ToolResult back = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(back.isError) << back.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/step-instruction");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["dir"].asString(), "back");
+
+    args["action"] = "step_forward_instruction";
+    mcp::ToolResult forward = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(forward.isError) << forward.text;
+    call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/step-instruction");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["dir"].asString(), "forward");
+}
+
+TEST_F(McpTools_Test, TimeTravel_ReverseStep_NeedsExactlyOneUnit)
+{
+    Json::Value both;
+    both["action"] = "reverse_step";
+    both["count"] = 3;
+    both["tstates"] = 100;
+    EXPECT_TRUE(RunTool(*_registry, "time_travel", both, *_caller).isError);
+
+    Json::Value neither;
+    neither["action"] = "reverse_step";
+    EXPECT_TRUE(RunTool(*_registry, "time_travel", neither, *_caller).isError);
+    EXPECT_TRUE(_caller->calls.empty());
+
+    Json::Value count;
+    count["action"] = "reverse_step";
+    count["count"] = 3;
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", count, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/reverse-step");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["count"].asUInt(), 3u);
+    EXPECT_FALSE(call->body.isMember("tstates"));
+}
+
+TEST_F(McpTools_Test, TimeTravel_ReverseContinue_ConvertsHexPcs)
+{
+    Json::Value reply;
+    reply["matched"] = true;
+    reply["pc"] = 0x8000;
+    reply["frame"] = 12;
+    reply["tinframe"] = 500;
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/reverse-continue"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "reverse_continue";
+    args["pcs"].append("0x8000");
+    args["pcs"].append(4660);
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/reverse-continue");
+    ASSERT_NE(call, nullptr);
+    ASSERT_EQ(call->body["pcs"].size(), 2u);
+    EXPECT_EQ(call->body["pcs"][0].asUInt(), 0x8000u);
+    EXPECT_EQ(call->body["pcs"][1].asUInt(), 4660u);
+    EXPECT_NE(result.text.find("Hit PC"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("frame 12 t=500"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, TimeTravel_ReverseContinue_BadPc_RejectsBeforeAnyCall)
+{
+    Json::Value empty;
+    empty["action"] = "reverse_continue";
+    empty["pcs"] = Json::Value(Json::arrayValue);
+    EXPECT_TRUE(RunTool(*_registry, "time_travel", empty, *_caller).isError);
+
+    Json::Value junk;
+    junk["action"] = "reverse_continue";
+    junk["pcs"].append("start");
+    EXPECT_TRUE(RunTool(*_registry, "time_travel", junk, *_caller).isError);
+    EXPECT_TRUE(_caller->calls.empty());
+}
+
+TEST_F(McpTools_Test, TimeTravel_FindLast_ForwardsQueryAndReportsHit)
+{
+    Json::Value reply;
+    reply["found"] = true;
+    reply["frame"] = 7;
+    reply["tinframe"] = 3000;
+    reply["pc"] = 0xBF10;
+    reply["value"] = 66;
+    reply["phys_page"] = 5;
+    reply["access"] = "write";
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/find-last"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "find_last";
+    args["addr"] = "0x5800";
+    args["access"] = "write";
+    args["phys_page"] = 5;
+    args["before_frame"] = 20;
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/find-last");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["addr"].asString(), "0x5800");  // the WebAPI parses hex strings itself
+    EXPECT_EQ(call->body["access"].asString(), "write");
+    EXPECT_EQ(call->body["phys_page"].asUInt(), 5u);
+    EXPECT_EQ(call->body["before_frame"].asUInt(), 20u);
+    EXPECT_NE(result.text.find("Last write at frame 7 t=3000 by PC"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("RAM page 5"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, TimeTravel_FindLast_BlockedReportsMarker)
+{
+    Json::Value reply;
+    reply["found"] = false;
+    reply["blocked"] = true;
+    reply["marker_frame"] = 30;
+    reply["marker_tinframe"] = 0;
+    reply["marker_kind"] = "disk_write";
+    reply["marker_reason"] = "Write Sector trk=1 sec=2 side=0";
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/find-last"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "find_last";
+    args["addr_from"] = 16384;
+    args["addr_to"] = 23295;
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("replay barrier disk_write"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, TimeTravel_FindLast_NoCriterion_RejectsBeforeAnyCall)
+{
+    Json::Value args;
+    args["action"] = "find_last";
+    args["access"] = "write";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    EXPECT_TRUE(result.isError);
+    EXPECT_TRUE(_caller->calls.empty());
+}
+
+TEST_F(McpTools_Test, TimeTravel_Resume_PostsOptionalStartPoint)
+{
+    Json::Value args;
+    args["action"] = "resume";
+    mcp::ToolResult here = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(here.isError) << here.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/resume");
+    ASSERT_NE(call, nullptr);
+    EXPECT_FALSE(call->body.isMember("frame"));  // resume from the current position
+
+    args["frame"] = 25;
+    mcp::ToolResult there = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(there.isError) << there.text;
+    call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/resume");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["frame"].asUInt(), 25u);
+}
+
+TEST_F(McpTools_Test, TimeTravel_DumpAndLoad_PostPath)
+{
+    Json::Value dumped;
+    dumped["ok"] = true;
+    dumped["path"] = "/tmp/s.ttd";
+    dumped["bytes"] = 4096;
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/dump"] = {200, dumped};
+
+    Json::Value args;
+    args["action"] = "dump";
+    args["path"] = "/tmp/s.ttd";
+    mcp::ToolResult dump = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(dump.isError) << dump.text;
+    EXPECT_NE(dump.text.find("4096 bytes"), std::string::npos) << dump.text;
+
+    args["action"] = "load";
+    mcp::ToolResult load = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(load.isError) << load.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/load");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["path"].asString(), "/tmp/s.ttd");
+}
+
+TEST_F(McpTools_Test, TimeTravel_DumpFailure_IsError)
+{
+    // The dump route answers 200 with ok:false when serialization fails
+    Json::Value failed;
+    failed["ok"] = false;
+    failed["error"] = "no session";
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/dump"] = {200, failed};
+
+    Json::Value args;
+    args["action"] = "dump";
+    args["path"] = "/tmp/s.ttd";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    EXPECT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("no session"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, TimeTravel_DumpWithoutPath_RejectsBeforeAnyCall)
+{
+    Json::Value args;
+    args["action"] = "dump";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    EXPECT_TRUE(result.isError);
+    EXPECT_TRUE(_caller->calls.empty());
+}
+
+TEST_F(McpTools_Test, InspectState_TtdAspect_FetchesStatusAndPosition)
+{
+    Json::Value status;
+    status["ttd_available"] = true;
+    status["state"] = "detached";
+    status["session_start_frame"] = 0;
+    status["current_end_frame"] = 120;
+    status["checkpoint_count"] = 121;
+    _caller->routes["GET /api/v1/emulator/emu-1/ttd/status"] = {200, status};
+    Json::Value position;
+    position["current"]["frame"] = 42;
+    position["current"]["tinframe"] = 0;
+    position["session_end"]["frame"] = 120;
+    position["session_end"]["tinframe"] = 0;
+    position["state"] = "detached";
+    _caller->routes["GET /api/v1/emulator/emu-1/ttd/position"] = {200, position};
+
+    Json::Value args;
+    args["aspects"].append("ttd");
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    ASSERT_TRUE(result.structured.isMember("ttd"));
+    EXPECT_EQ(result.structured["ttd"]["checkpoint_count"].asUInt(), 121u);
+    EXPECT_EQ(result.structured["ttd"]["position"]["current"]["frame"].asUInt(), 42u);
+    EXPECT_NE(result.text.find("[ttd] detached, frames 0..120, 121 checkpoint(s), at frame 42"), std::string::npos)
+        << result.text;
+}
+
+TEST_F(McpTools_Test, InspectState_TtdAspect_EngineMissing_SkipsPosition)
+{
+    Json::Value status;
+    status["ttd_available"] = false;
+    status["state"] = "idle";
+    _caller->routes["GET /api/v1/emulator/emu-1/ttd/status"] = {200, status};
+
+    Json::Value args;
+    args["aspects"].append("ttd");
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_FALSE(_caller->Saw("GET", "/api/v1/emulator/emu-1/ttd/position"));
+    EXPECT_NE(result.text.find("not available"), std::string::npos) << result.text;
 }
 
 TEST_F(McpTools_Test, TimeTravel_UnknownAction_Errors)

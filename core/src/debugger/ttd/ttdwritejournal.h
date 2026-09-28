@@ -181,6 +181,10 @@ public:
     /// @brief True iff Size() == 0.
     inline bool IsEmpty() const { return _seqHead == _seqTail; }
 
+    /// @brief True once the ring has overwritten its oldest records: writes
+    /// older than OldestGlobalT() are then no longer in the journal.
+    inline bool HasEvictedRecords() const { return _seqTail != 0; }
+
     /// @brief Read-only access to the sequence cursors and to a live record by
     /// its sequence number, SeqTail() <= seq < SeqHead() (for tests and for
     /// the analyzer tool — not used by the engine itself).

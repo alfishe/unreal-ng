@@ -89,10 +89,10 @@ Tool catalog (13):
 | `emulator_manage` | create/list/status/start/stop/pause/resume/reset/destroy, `list_models`, `server` |
 | `load_software` | snapshots/tapes/disks, `play`, `autostart`, local-file upload |
 | `control_execution` | run/pause/step/step_n/step_over/step_out, run_frames/tstates/to_interrupt, breakpoints |
-| `inspect_state` | aspects: machine, registers, memory, disasm, stack, memory_banks, paging, ports, screen_ocr/image/digest, timing, rom, audio_ay/fm, fdc, mouse |
+| `inspect_state` | aspects: machine, registers, memory, disasm, stack, memory_banks, paging, ports, screen_ocr/image/digest, timing, rom, audio_ay/fm, fdc, mouse, ttd (TTD status + position) |
 | `type_input` | type (`tokenized`: a BASIC line typed into the ROM editor, every key verified, no ENTER; BASIC commands with ENTER and a result: `basic/run` via `invoke_api`), tap/press/release, combo, macro, release_all, list_keys |
 | `mouse_input` | Kempston move/press/click/wheel |
-| `time_travel` | status, bookmark_add/list/delete/seek, coverage_probe/scan/summary |
+| `time_travel` | status, start/stop/invalidate, position, markers, seek, step_back/forward_frame, step_back/forward_instruction, reverse_step, reverse_continue, find_last, resume, dump/load, bookmark_add/list/delete, seek_bookmark, coverage_probe/scan/summary |
 | `manage_symbols` | labels + sjasmplus listings, step_line, run_to_line |
 | `debug_code` | disassemble, assemble, find_bytes, trace (calltrace) |
 | `analyze_performance` | coverage_*, frame_cost, profiler suites, porttrace |

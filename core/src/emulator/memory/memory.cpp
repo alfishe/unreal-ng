@@ -1866,7 +1866,9 @@ void Memory::UpdateFeatureCache()
         bool debugMode = fm->isEnabled(Features::kDebugMode);
         _feature_memorytracking_enabled = debugMode && fm->isEnabled(Features::kMemoryTracking);
         _feature_breakpoints_enabled = debugMode && fm->isEnabled(Features::kBreakpoints);
-        _feature_ttd_enabled = debugMode && fm->isEnabled(Features::kTimeTravel);
+        // A TTD replay observes accesses whatever the user's debug mode: it
+        // engages the debug path for its own duration (EnterReplayMode)
+        _feature_ttd_enabled = (debugMode && fm->isEnabled(Features::kTimeTravel)) || _context->ttdReplayActive;
         _feature_hud_enabled = fm->isEnabled(Features::kHud);
 
         // Handle sharedmemory feature - can be toggled at runtime
