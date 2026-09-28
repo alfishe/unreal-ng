@@ -22,6 +22,7 @@ class Mouse;
 class MainLoop;
 class Memory;
 class WD1793;
+class UPD765;
 class PortDecoder;
 class Screen;
 class UlaContention;
@@ -103,6 +104,9 @@ public:
 
     // BDI - Beta Disk Interface controller instance
     WD1793* pBetaDisk = nullptr;
+
+    // ZX Spectrum +3 floppy controller (NEC uPD765A); nullptr on every other model
+    UPD765* pUPD765 = nullptr;
 
     // Fast disk loading trap instance
     DiskFastLoad* pDiskFastLoad = nullptr;

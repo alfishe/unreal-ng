@@ -102,6 +102,25 @@ TEST_P(CommandTyper_Test, DirectCommandFinishesWithZeroOk)
     EXPECT_TRUE(ScreenHas("7")) << Screen();
 }
 
+/// The editor after a report: the 128K and +3 editors wait in a loop of their own and the key that clears the
+/// report is also the first key of the next line (ReportShown)
+TEST_P(CommandTyper_Test, CommandAfterAReport)
+{
+    if (IsTrDos())
+        GTEST_SKIP() << "TR-DOS: see TrDosCommand";
+    Ready();
+    ASSERT_FALSE(HasFatalFailure());
+
+    const CommandTyper::Result first = Run("PRINT 7", Options(true, true));
+    ASSERT_EQ(first.outcome, Outcome::Finished) << Describe(first);
+
+    const CommandTyper::Result second = Run("PRINT 5*5", Options(true, true));
+    EXPECT_EQ(second.outcome, Outcome::Finished) << Describe(second);
+    EXPECT_EQ(second.errNr, 0xFF) << Describe(second);
+    RunFrames(2);
+    EXPECT_TRUE(ScreenHas("25")) << Screen();
+}
+
 TEST_P(CommandTyper_Test, RepeatedCharactersQuotesAndCapitals)
 {
     if (IsTrDos())

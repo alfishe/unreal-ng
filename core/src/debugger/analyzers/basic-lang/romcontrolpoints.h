@@ -62,6 +62,7 @@ namespace ROMControlPoints
         TrDosSyntaxError, ///< TR-DOS syntax error message
         TrDosExecute,     ///< a TR-DOS command handler runs (execute pass)
         TrDosFound,       ///< the line's first byte matched a TR-DOS command
+        ReportShown,      ///< a report is up: the next key clears it, then goes into an empty line (128K, +3)
         Count
     };
 

@@ -112,6 +112,8 @@ protected:
         _emulator->Reset();
         _context->pFeatureManager->setFeature(Features::kScreenHQ, false);
         _context->pFeatureManager->setFeature(Features::kSoundHQ, false);
+        // Mutes audio and decimates rendering: nothing here listens or looks at pixels (OCR reads video RAM)
+        _emulator->EnableTurboMode();
         _loop = reinterpret_cast<MainLoop_CUT*>(_context->pMainLoop);
         _keys = _context->pDebugManager->GetKeyboardManager();
         ASSERT_NE(_keys, nullptr);

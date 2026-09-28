@@ -481,8 +481,9 @@ public:
         /// Marks track as dirty due to raw MFM write - called by WD1793 WRITE_TRACK
         void markRawTrackDirty();
 
-        // Grant WD1793 friend access for WRITE_TRACK / WRITE_SECTOR
+        // Grant the controllers friend access for WRITE_TRACK / WRITE_SECTOR / FORMAT TRACK / WRITE DATA
         friend class WD1793;
+        friend class UPD765;
 
     public:
         /// Check if track has been modified (sector or raw level)

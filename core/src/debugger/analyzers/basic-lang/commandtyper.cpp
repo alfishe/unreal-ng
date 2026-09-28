@@ -154,6 +154,11 @@ std::optional<std::pair<ZXKeysEnum, uint8_t>> CommandTyper::NextClearKey(bool& f
     failed = false;
     Memory& memory = *_context->pMemory;
 
+    // The 128K / +3 editor with a report up still holds the old line in its buffer, but the key that clears the
+    // report redraws an empty one and is then taken as an ordinary key: nothing to clear
+    if (_reportShown)
+        return std::nullopt;
+
     if (_result.editor == RomKind::Basic48)
     {
         // 48K editor: E_LINE .. #0D is the line, K_CUR the cursor in it
@@ -317,8 +322,9 @@ bool CommandTyper::ConsumeEvents()
         switch (_step)
         {
             case Step::WaitIdle:
-                if (e.point == Point::EditorIdle)
+                if (e.point == Point::EditorIdle || e.point == Point::ReportShown)
                 {
+                    _reportShown = (e.point == Point::ReportShown);
                     if (_result.editor == RomKind::Unknown)
                     {
                         _result.editor = e.rom;
@@ -544,6 +550,7 @@ void CommandTyper::Step_()
         _clearing = true;
         _clearKeys = 0;
         _sawIdle = false;
+        _reportShown = false;
         _startFrame = _context->emulatorState.frame_counter;
         _step = Step::WaitIdle;
         _stepFrames = 0;

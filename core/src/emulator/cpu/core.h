@@ -23,6 +23,7 @@ class MessageCenter;
 class Z80;
 class PortDecoder;
 class WD1793;
+class UPD765;
 class TapeFastLoad;
 class TapeTurboController;
 class DiskFastLoad;
@@ -61,6 +62,7 @@ protected:
     TapeTurboController* _tapeTurboController = nullptr;
     // VG93* _betaDisk = nullptr;
     WD1793* _betaDisk = nullptr;
+    UPD765* _upd765 = nullptr;  // +3 only
     DiskFastLoad* _diskFastLoad = nullptr;
     DiskAutostart* _diskAutostart = nullptr;
     SoundManager* _sound = nullptr;

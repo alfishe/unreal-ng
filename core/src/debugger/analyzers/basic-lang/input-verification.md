@@ -79,6 +79,7 @@ patched; use `#0053` there.
 |:--|:--|:--|
 | `init` | `#3371` | Editor/tokeniser set-up (LDIR); keys pressed now are lost |
 | `idle` | `#3683` | Waiting for a key (spin on FLAGS bit 5, needs EI) |
+| `reportShown` | `#25E3` | A report is on screen: the same spin, but in a loop of its own. It leaves FLAGS bit 5 set, so the key that clears the report is taken again at `#3689` once the editor has redrawn an empty line |
 | `keyTaken` | `#3689` | A = LAST_K |
 | `keyAccepted` | `#265C` | A = accepted code |
 | `charInserted` | `#28F1` | Character key handled (the 128K editor keeps letters) |
@@ -96,6 +97,7 @@ The 128K editor moved to new addresses; lines are checked, stored and run by ROM
 | ROM | Point | Address |
 |:--|:--|:--|
 | 0 | `idle` / `keyTaken` | `#1875` / `#187B` |
+| 0 | `reportShown` | `#0693` (the 128K's `#25E3`; the redraw after the key takes about 30 frames) |
 | 0 | `keyAccepted` / `charInserted` | `#0709` / `#09BC` |
 | 0 | `rasp` | `#0794` (the beep; `#0729` is its `CALL NC`) |
 | 0 | `enter` | `#0A0F` |
@@ -278,6 +280,7 @@ followed by `LD-BYTES` entry (`#0556`), which proves the command reached the tap
 | TTD replay owns input | `TimeTravelManager::OwnsInput` | `input_locked` |
 | Other keys still queued | `DebugKeyboardManager::IsSequenceRunning` | `keyboard_busy` |
 | Text already on the edit line | 48K: E_LINE / K_CUR; 128K: cursor row of the edit buffer | cleared with verified cursor-right / DELETE; a multi-row 128K line: `line_not_empty` |
+| A report on screen (128K, +3) | `reportShown` instead of `idle` | nothing cleared: the buffer still shows the old line, but the key that clears the report redraws an empty one and is then taken as the first key |
 | 128K main menu shown | `$EC0D` bit 1 | left for 128 BASIC first: cursor to item 1 (`$EC0C`), ENTER, each key verified |
 | Emulator paused / stopped | `TypeAndWait` | `emulator_paused` at once (no frames, no proof) |
 | No outcome in time (API) | `TypeAndWait` deadline | `timed_out`, typing aborted, keys released |

@@ -55,6 +55,7 @@ enum class PeripheralId : uint8_t
     GeneralSoundLightweight = 11, // GS lightweight personality (in-tree mod player, no coprocessor)
     NeoGS = 12,           // NeoGS FPGA card (neogs-tdd.md - P2 placeholder, reserved id, not registered yet)
     Plus3Paging = 13,     // +2A/+3 #1FFD latch (ROM high bit, all-RAM modes, motor)
+    Upd765 = 14,          // +3 uPD765A floppy controller (drives ride the BetaDisk blob)
     // Future: SAA1099, GS512, etc.
     Count
 };

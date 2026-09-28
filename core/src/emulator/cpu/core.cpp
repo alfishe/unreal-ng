@@ -7,6 +7,7 @@
 #include "common/modulelogger.h"
 #include "emulator/io/fdc/diskautostart.h"
 #include "emulator/io/fdc/diskfastload.h"
+#include "emulator/io/fdc/upd765.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/tape/tapefastload.h"
 #include "emulator/io/tape/tapeturbocontroller.h"
@@ -231,6 +232,17 @@ bool Core::Init()
     }
 
     /// endregion </BetaDisk128 Interface>
+
+    /// region <+3 floppy controller>
+
+    // The uPD765A drives the FDDs the WD1793 created (coreState.diskDrives), so it comes after it
+    if (result && _context->config.mem_model == MM_PLUS3)
+    {
+        _upd765 = new UPD765(_context);
+        _context->pUPD765 = _upd765;
+    }
+
+    /// endregion </+3 floppy controller>
 
     /// region <Fast disk loading>
 
@@ -468,6 +480,10 @@ void Core::Release()
         _hdd = nullptr;
     }
 
+    _context->pUPD765 = nullptr;
+    delete _upd765;
+    _upd765 = nullptr;
+
     _context->pBetaDisk = nullptr;
     if (_betaDisk != nullptr)
     {
@@ -613,6 +629,8 @@ void Core::Reset(ROMModeEnum mode)
     _screen->Reset();            // Reset all video subsystem
     _tape->reset();              // Reset tape loader state
     _betaDisk->reset();          // BetaDisk floppy controller
+    if (_upd765)
+        _upd765->reset();        // +3 floppy controller
     _hdd->Reset();               // Reset IDE controller
     _portDecoder->reset();       // Reset peripheral port decoder (sets model-specific port defaults)
 
