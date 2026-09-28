@@ -11,8 +11,10 @@
 /// is fixed and known at compile time.
 ///
 /// Design constraints (TDD §6.4):
-///   - No heap allocation in TTDSaveState (runs every frame on the emulator
-///     thread). Callers reserve a buffer of TTDStateSize() bytes up front.
+///   - TTDSaveState writes into a caller-provided buffer of TTDStateSize()
+///     bytes and must not allocate itself (it runs every frame on the emulator
+///     thread). The registry around it does allocate per checkpoint: the blob
+///     vectors and the compression of each payload.
 ///   - Per-payload versioning is not used. Session-level schema versioning
 ///     is handled by SerializeSession/DeserializeSession (ttddumpformat.h).
 ///   - The blob format is the implementer's choice (typically a memcpy of

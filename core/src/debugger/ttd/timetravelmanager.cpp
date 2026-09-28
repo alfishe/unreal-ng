@@ -161,31 +161,7 @@ bool TimeTravelManager::StartRecording()
     FeatureManager* fm = _context->pFeatureManager;
     _toggledDebugModeOn = false;
     _toggledTimeTravelOn = false;
-    if (fm)
-    {
-        // Both read up front: enabling 'timetravel' switches the master
-        // 'debugmode' on by itself, which is still ours to switch back off
-        const bool debugModeWasOn = fm->isEnabled(Features::kDebugMode);
-        if (!fm->isEnabled(Features::kTimeTravel))
-        {
-            fm->setFeature(Features::kTimeTravel, true);
-            _toggledTimeTravelOn = true;
-            MLOGINFO("TimeTravelManager::StartRecording — auto-enabled feature '%s' (required for TTD capture)",
-                     Features::kTimeTravel);
-        }
-        if (!debugModeWasOn)
-        {
-            if (!fm->isEnabled(Features::kDebugMode))
-                fm->setFeature(Features::kDebugMode, true);
-            _toggledDebugModeOn = true;
-            MLOGINFO("TimeTravelManager::StartRecording — auto-enabled feature '%s' (required to route writes through MemoryWriteDebug -> MarkDirty)",
-                     Features::kDebugMode);
-        }
-    }
-    else
-    {
-        MLOGWARNING("TimeTravelManager::StartRecording — FeatureManager is null; cannot verify debug/ttd flags. Capture will be a no-op if debug memory interface is inactive.");
-    }
+    EngageCaptureFeatures();
 
     // A refusal past this point leaves nothing behind: the flags this call
     // switched on go back off and the emulator resumes if it was running
@@ -249,7 +225,10 @@ bool TimeTravelManager::StartRecording()
     if (_writeJournal)
     {
         _writeJournal->WaitReady();
+        if (!_writeJournal->IsEmpty())
+            _writeJournal->Clear();  // it must hold this session's writes only
     }
+    _journalGapless = _enableWriteJournal && _writeJournal != nullptr;
 
     _modelRamPages = ResolveModelRamPages();
     if (_modelRamPages == 0 || _modelRamPages > MAX_RAM_PAGES)
@@ -301,6 +280,11 @@ void TimeTravelManager::StopRecording()
 
     if (_state != TTDSessionState::Recording)
         return;  // Idempotent
+    if (_context)
+    {
+        const TTDTimePoint stoppedAt = CurrentPosition();
+        _recordingStoppedAtT = stoppedAt.frame * _context->config.frame + stoppedAt.tInFrame;
+    }
     SetState(TTDSessionState::Idle);
     MLOGINFO("TimeTravelManager::StopRecording — timeline retained with %zu checkpoints",
              _timeline.size());
@@ -406,6 +390,7 @@ void TimeTravelManager::InvalidateSession(const char* reason)
     _bookmarks.Clear();  // TD-4 — bookmarks invalidate with the timeline
     if (_writeJournal)
         _writeJournal->Clear();  // Phase 4 — write journal invalidates with the timeline
+    _journalGapless = false;
     _modelRamPages = 0;
     _dirtyPageOverflowReported = false;
     _loadedFromFile = false;
@@ -420,9 +405,6 @@ void TimeTravelManager::InvalidateSession(const char* reason)
     // Reset Phase 5 codec state.
     _lastKeyFrameIdx = 0;
     _forceNextKeyFrame = true;
-    _ramCache.valid = false;
-    _ramCache.ram.clear();
-    _ramCache.frame = 0;
 
     // Clear previous-page cache (only allocated during active recording)
     _prevPageCache.clear();
@@ -433,6 +415,36 @@ void TimeTravelManager::InvalidateSession(const char* reason)
     // of the captured history's validity contract.
     if (_dirtyTracker)
         _dirtyTracker->ResetSession();
+}
+
+void TimeTravelManager::EngageCaptureFeatures()
+{
+    FeatureManager* fm = _context ? _context->pFeatureManager : nullptr;
+    if (!fm)
+    {
+        MLOGWARNING("TimeTravelManager — FeatureManager is null; cannot verify debug/ttd flags. Capture will be a "
+                    "no-op if debug memory interface is inactive.");
+        return;
+    }
+
+    // Both read up front: enabling 'timetravel' switches the master
+    // 'debugmode' on by itself, which is still ours to switch back off
+    const bool debugModeWasOn = fm->isEnabled(Features::kDebugMode);
+    if (!fm->isEnabled(Features::kTimeTravel))
+    {
+        fm->setFeature(Features::kTimeTravel, true);
+        _toggledTimeTravelOn = true;
+        MLOGINFO("TimeTravelManager — auto-enabled feature '%s' (required for TTD capture)", Features::kTimeTravel);
+    }
+    if (!debugModeWasOn)
+    {
+        if (!fm->isEnabled(Features::kDebugMode))
+            fm->setFeature(Features::kDebugMode, true);
+        _toggledDebugModeOn = true;
+        MLOGINFO("TimeTravelManager — auto-enabled feature '%s' (required to route writes through MemoryWriteDebug -> "
+                 "MarkDirty)",
+                 Features::kDebugMode);
+    }
 }
 
 void TimeTravelManager::SetState(TTDSessionState next)
@@ -798,9 +810,6 @@ void TimeTravelManager::CaptureNow(TTDCheckpoint& out)
 
         UpdateRamPages(_dirtyScratch, prev.ramPages, out.ramPages, isKeyFrame);
     }
-
-    // Invalidate the materialized-RAM cache — live RAM is changing under us.
-    _ramCache.valid = false;
 
     // Update previous-page cache for next frame's XOR delta computation.
     // This caches current RAM content so we can compute XOR deltas without
@@ -1419,6 +1428,20 @@ void TimeTravelManager::EnterReplayMode()
     _context->ttdReplayActive = true;
     _inReplayMode = true;
 
+    // The replay observers - the access probe, the frame-cache capture, the
+    // dirty marks a mid-frame resume needs - live on the debug memory path.
+    // The user's debug mode may have that path switched off (a recording
+    // switches it back off on stop), so engage it for the replay only; the
+    // feature settings stay untouched.
+    if (Core* core = _context->pCore)
+    {
+        _debugModeBeforeReplay = core->GetZ80()->isDebugMode;
+        core->GetZ80()->isDebugMode = true;
+        core->UseDebugMemoryInterface();
+    }
+    if (_memory)
+        _memory->UpdateFeatureCache();
+
     MLOGINFO("TimeTravelManager::EnterReplayMode — replay mode engaged (sound mute saved=%d)",
              static_cast<int>(_soundMuteBeforeReplay));
 }
@@ -1436,6 +1459,17 @@ void TimeTravelManager::ExitReplayMode()
 
     _context->ttdReplayActive = false;
     _inReplayMode = false;
+
+    if (Core* core = _context->pCore)
+    {
+        core->GetZ80()->isDebugMode = _debugModeBeforeReplay;
+        if (_debugModeBeforeReplay)
+            core->UseDebugMemoryInterface();
+        else
+            core->UseFastMemoryInterface();
+    }
+    if (_memory)
+        _memory->UpdateFeatureCache();
 
     // Restore the saved mute state. If the user had muted audio before the
     // seek, they want it muted after; if not, the existing unmute() path is
@@ -2416,6 +2450,11 @@ bool TimeTravelManager::ResumeRecordingFrom(const TTDTimePoint& from)
     // ------------------------------------------------------------------
     TruncateTimelineAfter(from);
 
+    // The delta base cache mirrors the RAM of the old session end, not of the
+    // checkpoint the timeline now ends at: the next delta must be computed
+    // against that checkpoint's decoded slots instead (the capture refills the cache)
+    _prevPageCacheValid = false;
+
     // ------------------------------------------------------------------
     // Step 3: truncate input journal after the resume point. Events exactly
     // at it are kept (they happened at the resume point, not after it). The
@@ -2442,8 +2481,12 @@ bool TimeTravelManager::ResumeRecordingFrom(const TTDTimePoint& from)
     // ------------------------------------------------------------------
     // Step 4: return to Recording. Next OnFrameBoundary will append a fresh
     // checkpoint at frame `from.frame + 1` (the live emulator's frame
-    // counter is set by SeekTo).
+    // counter is set by SeekTo). A stop may have switched the capture flags
+    // back off; the machine is parked at `from` after the seek.
     // ------------------------------------------------------------------
+    EngageCaptureFeatures();
+    if (!_enableWriteJournal)
+        _journalGapless = false;  // the writes from here on are not journaled
     SetState(TTDSessionState::Recording);
     DisarmInputPlayback();  // live input again (journaled while recording)
 
@@ -2517,23 +2560,12 @@ bool TimeTravelManager::ResumeRecordingLive()
         emu->WaitForPauseConfirmation(1000);
     }
 
-    FeatureManager* fm = _context->pFeatureManager;
-    if (fm)
-    {
-        // Read up front, as in StartRecording: 'timetravel' switches 'debugmode' on by itself
-        const bool debugModeWasOn = fm->isEnabled(Features::kDebugMode);
-        if (!fm->isEnabled(Features::kTimeTravel))
-        {
-            fm->setFeature(Features::kTimeTravel, true);
-            _toggledTimeTravelOn = true;
-        }
-        if (!debugModeWasOn)
-        {
-            if (!fm->isEnabled(Features::kDebugMode))
-                fm->setFeature(Features::kDebugMode, true);
-            _toggledDebugModeOn = true;
-        }
-    }
+    EngageCaptureFeatures();
+
+    // Instructions executed since the stop (within this frame) wrote nothing
+    // to the journal: from here on it cannot vouch for the whole session
+    if (present.frame * _context->config.frame + present.tInFrame != _recordingStoppedAtT || !_enableWriteJournal)
+        _journalGapless = false;
 
     SetState(TTDSessionState::Recording);
     DisarmInputPlayback();  // live input again (journaled while recording)
@@ -2601,37 +2633,13 @@ void TimeTravelManager::TruncateTimelineAfter(const TTDTimePoint& from)
 //   - the Python analyzer in tools/verification/ttd-analyzer/
 //   - any third-party tool that generates a parser from ttd.ksy
 //
-// Format (see core/src/debugger/ttd/ttd.ksy for the canonical schema):
-//
-//   header:
-//     magic               (4 bytes: 'T' 'T' 'D' 'D')
-//     schema_version      (u16)
-//     flags               (u16, bit 0 = little-endian)
-//     model_id            (u8)
-//     model_ram_pages     (u8)
-//     cpu_state_size      (u16)
-//     chipset_state_size  (u16)
-//     rom_signature       (u64)
-//     captured_at_unix_ms (u64)
-//     emulator_id_len     (u8)
-//     emulator_id         (emulator_id_len bytes, UTF-8)
-//     session_state       (u8)
-//     session_start_frame (u64)
-//     session_end_frame   (u64)
-//     page_store_count    (u32)
-//     checkpoint_count    (u32)
-//     reserved            (8 bytes, zero)
-//
-//   page_store:           page_store_count slots, each 16384 bytes raw
-//
-//   checkpoints:          checkpoint_count records, each:
-//     frame               (u64)
-//     global_t            (u64)
-//     cpu_state           (raw TTDCpuState, cpu_state_size bytes)
-//     chipset_state       (raw TTDChipsetState, chipset_state_size bytes)
-//     ram_page_refs       (model_ram_pages × u32)
-//     peripheral_blob_count (u16)
-//     per blob: peripheral_id (u8), size (u32), bytes (variable)
+// Layout: core/src/debugger/ttd/ttd.ksy is the canonical schema and
+// ttddumpformat.h holds the constants. A header, the codec page store (each
+// slot: encoding, refcount, prev slot, CRC32C, zstd payload), the checkpoints
+// (time, frame kind, key-frame anchor, CPU and chipset state, one slot ref per
+// 4 KB sub-page, peripheral blobs), then the optional write journal, coverage
+// index and bookmark sections flagged in the header. Kept out of this comment
+// on purpose: a second copy of the layout went stale once already.
 //
 // We serialize only the live page-store slots (refcount > 0). The original
 // slot indices are remapped to a compact [0..N) range via a map; checkpoints'
@@ -2782,6 +2790,8 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
     uint16_t flags = ttd::dump::kFlagsLittleEndian;
     if (hasJournalData)
         flags |= ttd::dump::kFlagsHasWriteJournal;
+    if (hasJournalData && _journalGapless && !_writeJournal->HasEvictedRecords())
+        flags |= ttd::dump::kFlagsWriteJournalComplete;
 
     // The coverage index is written whenever there is one. It is derived data,
     // so a reader that skips it still gets a correct session — just one whose
@@ -3191,18 +3201,16 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
     in.read(reserved, 8);
     if (!in) { err = "stream read failed (reserved)"; return false; }
 
-    // --- Clear existing state ---
-    // The file completely replaces the current session. Release all page
-    // refs held by the existing timeline before resetting the store.
-    for (auto& cp : _timeline)
-        ReleaseCheckpointRefs(cp);
-    _timeline.clear();
-    _pageStore.Reset();
-    _inputJournal.Clear();
-    DisarmInputPlayback();
-    _externalEvents.Clear();
-    _bookmarks.Clear();  // TD-4 — the file's own bookmarks load below (if any)
-    _dirtyScratch.clear();
+    // --- Staging ---
+    // The file replaces the current session only once it has been read in
+    // full. Everything below parses into these staging objects, so a file
+    // that fails anywhere (truncated, corrupt, refused) leaves the current
+    // session exactly as it was; the commit at the end cannot fail.
+    TTDCodecPageStore stagedStore;
+    std::vector<TTDCheckpoint> stagedTimeline;
+    std::unique_ptr<TTDWriteJournal> stagedJournal;
+    TTDCoverageIndex stagedCoverage;
+    TTDBookmarkJournal stagedBookmarks;
 
     // The loaded session restores model-specific state through these, so they
     // must exist before the first SeekTo — the file may have been recorded on
@@ -3215,15 +3223,6 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
             return false;
         }
     }
-    _modelRamPages = modelRamPages;
-
-    // Coverage from any previous recording describes a different timeline
-    // entirely; letting it survive would make reverse search prune frames of
-    // the newly loaded session using another session's data. Clear first, then
-    // load this file's own index if it carries one.
-    _coverageIndex.Clear();
-    if (_context)
-        _context->ttdCoverageActive = false;
 
     // --- Read page store (v2 codec format) ---
     //
@@ -3291,7 +3290,7 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
             return false;
         }
 
-        uint32_t newIdx = _pageStore.InternDirect(encoding, prevSlot, crc, payload);
+        uint32_t newIdx = stagedStore.InternDirect(encoding, prevSlot, crc, payload);
 
         if (newIdx != i)
         {
@@ -3307,7 +3306,7 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
     // so a slot referenced by this checkpoint is live in the store. We AddRef
     // for every reference; the Intern's initial refcount=1 is corrected by a
     // single Release per slot after the checkpoint loop.
-    _timeline.reserve(checkpointCount);
+    // No reserve from the header's count: a corrupt count must not allocate
     for (uint32_t i = 0; i < checkpointCount; ++i)
     {
         TTDCheckpoint cp;
@@ -3324,8 +3323,8 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
         if (!ReadPod(in, cp.cpu, err)) return false;
         if (!ReadPod(in, cp.chipset, err)) return false;
 
-        cp.ramPages.resize(_modelRamPages);
-        for (uint16_t p = 0; p < _modelRamPages; ++p)
+        cp.ramPages.resize(modelRamPages);
+        for (uint16_t p = 0; p < modelRamPages; ++p)
         {
             for (uint32_t s = 0; s < ttd::dump::kSubPagesPerEmuPage; ++s)
             {
@@ -3342,7 +3341,7 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
                     // refcount=1; we'll subtract that initial 1 once after the
                     // checkpoint loop. Net: refcount == number of references
                     // across the deserialized timeline.
-                    _pageStore.AddRef(ref);
+                    stagedStore.AddRef(ref);
                 }
                 else
                 {
@@ -3377,7 +3376,7 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
             }
         }
 
-        _timeline.push_back(std::move(cp));
+        stagedTimeline.push_back(std::move(cp));
     }
 
     // Correct the Intern's initial refcount=1 for each live slot. After all
@@ -3386,7 +3385,7 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
     // so the page store's bookkeeping matches what a fresh in-memory capture
     // of the same content would produce.
     for (uint32_t i = 0; i < pageStoreCount; ++i)
-        _pageStore.Release(i);
+        stagedStore.Release(i);
 
     // TurboSound-slot session-kind guard (TSFM design §8.2), following the
     // model-id check's philosophy: a session recorded with the other slot
@@ -3396,15 +3395,15 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
     // with no trail back to this decision. The baseline checkpoint's blob
     // map speaks for the whole session: one device occupies the slot for the
     // instance's lifetime (design §3.1 - no runtime switching).
-    if (!_timeline.empty() && _context && _context->pSoundManager)
+    if (!stagedTimeline.empty() && _context && _context->pSoundManager)
     {
         if (ITurboSoundDevice* slotDevice = _context->pSoundManager->getTurboSound())
         {
-            if (!TurboSoundSessionKindMatches(_timeline.front().peripheralBlobs, *slotDevice))
+            if (!TurboSoundSessionKindMatches(stagedTimeline.front().peripheralBlobs, *slotDevice))
             {
                 const uint8_t legacyId = static_cast<uint8_t>(PeripheralId::TurboSound);
                 const uint8_t sessionId =
-                    _timeline.front().peripheralBlobs.find(legacyId) != _timeline.front().peripheralBlobs.end()
+                    stagedTimeline.front().peripheralBlobs.find(legacyId) != stagedTimeline.front().peripheralBlobs.end()
                         ? legacyId
                         : static_cast<uint8_t>(PeripheralId::TSFM);
                 const uint8_t liveId = static_cast<uint8_t>(slotDevice->TTDPeripheralId());
@@ -3423,7 +3422,7 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
             // blob: the recording machine answered the AY ports, this one
             // leaves them on the floating bus - a replay would diverge on the
             // first AY read. Refused for the same reason as a kind mismatch.
-            const auto& blobs = _timeline.front().peripheralBlobs;
+            const auto& blobs = stagedTimeline.front().peripheralBlobs;
             const bool sessionHasSlot =
                 blobs.find(static_cast<uint8_t>(PeripheralId::TurboSound)) != blobs.end() ||
                 blobs.find(static_cast<uint8_t>(PeripheralId::TSFM)) != blobs.end();
@@ -3439,16 +3438,13 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
     // --- Read journal section (v3 additive, TDD §9.3) ---
     if (hasJournal)
     {
-        // Allocate journal if needed (may have been cleared).
-        // Use sync allocation for deserialization - we need it immediately.
-        if (!_writeJournal)
-            _writeJournal = std::make_unique<TTDWriteJournal>(64u * 1024 * 1024, false);
-        else
-            _writeJournal->WaitReady();  // Ensure any prior async alloc completes
+        // Its own ring (sync allocation - needed immediately): the live one
+        // keeps the current session's records until the commit
+        stagedJournal = std::make_unique<TTDWriteJournal>(64u * 1024 * 1024, false);
 
         uint64_t journalCount = 0;
         if (!ReadPod(in, journalCount, err)) return false;
-        if (!_writeJournal->Deserialize(in, journalCount))
+        if (!stagedJournal->Deserialize(in, journalCount))
         {
             err = "stream read failed (write journal section)";
             return false;
@@ -3462,9 +3458,9 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
     // silently drops search results.
     if (flags & ttd::dump::kFlagsHasCoverageIndex)
     {
-        if (!_coverageIndex.Deserialize(in))
+        if (!stagedCoverage.Deserialize(in))
         {
-            _coverageIndex.Clear();
+            stagedCoverage.Clear();
             MLOGWARNING("TimeTravelManager::DeserializeSession — coverage index section "
                         "could not be read; reverse queries will fall back to replay");
         }
@@ -3525,7 +3521,7 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
             bookmark.time.frame    = frame;
             bookmark.time.tInFrame = tInFrame;
             bookmark.label         = std::move(label);
-            if (!_bookmarks.Add(bookmark))
+            if (!stagedBookmarks.Add(bookmark))
             {
                 // Add only rejects a duplicate label here (length was
                 // validated above) — a file carrying two bookmarks with the
@@ -3539,12 +3535,55 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
 
         if (!bookmarksOk)
         {
-            _bookmarks.Clear();
+            stagedBookmarks.Clear();
             MLOGWARNING("TimeTravelManager::DeserializeSession — bookmarks section "
                         "could not be read (%s); session loads without bookmarks",
                         err.c_str());
         }
     }
+
+    // --- Commit ---
+    // Nothing below can fail. The old session's slots go with its store, so
+    // its checkpoints need no per-slot release.
+    _timeline      = std::move(stagedTimeline);
+    _pageStore     = std::move(stagedStore);
+    _modelRamPages = modelRamPages;
+    _inputJournal.Clear();
+    DisarmInputPlayback();
+    _externalEvents.Clear();
+    _bookmarks.Clear();
+    for (const TTDBookmark& bookmark : stagedBookmarks.Snapshot())
+        _bookmarks.Add(bookmark);
+    _dirtyScratch.clear();
+
+    // Coverage from a previous recording describes a different timeline; it
+    // would let reverse search prune this session's frames with foreign data
+    _coverageIndex = std::move(stagedCoverage);
+    if (_context)
+        _context->ttdCoverageActive = false;
+
+    // Same for the write journal (current-state B2): a file without one must
+    // not answer find-last from the previous live recording's writes
+    // The journal answers reverse queries only when the writer vouched that it
+    // holds every write of the session (current-state B3); otherwise replay
+    _journalGapless = stagedJournal && (flags & ttd::dump::kFlagsWriteJournalComplete) != 0;
+    if (stagedJournal)
+    {
+        _writeJournal = std::move(stagedJournal);
+    }
+    else if (_writeJournal)
+    {
+        _writeJournal->WaitReady();
+        _writeJournal->Clear();
+    }
+
+    // Anything derived from the old session: the decoded frame, the delta
+    // base for a later resume, the key-frame anchor and the ever-dirty set
+    ClearFrameCache();
+    _prevPageCacheValid = false;
+    _forceNextKeyFrame = true;
+    if (_dirtyTracker)
+        _dirtyTracker->ResetSession();
 
     // Remember where this came from, so status can distinguish a loaded
     // recording from one captured in this process.
@@ -3787,11 +3826,15 @@ TimeTravelManager::FindLastAccess(const TTDSearchQuery& q,
             return true;
         };
 
-        if (!_writeJournal)
-            goto replay_fallback;  // Journal not allocated
+        // Only a journal that took every write since the session start can
+        // answer: with a gap, a later matching write may be missing (a wrong
+        // "found") and an earlier one certainly may (a wrong "no match").
+        // An empty journal of a session recorded without one is the common
+        // case (current-state B3).
+        if (!_writeJournal || !_journalGapless)
+            goto replay_fallback;
 
         auto found = _writeJournal->FindLast(beforeGlobalT, pred);
-        const uint64_t oldestInRing = _writeJournal->OldestGlobalT();
 
         if (found)
         {
@@ -3805,15 +3848,14 @@ TimeTravelManager::FindLastAccess(const TTDSearchQuery& q,
             return result;
         }
 
-        // No match in journal. If the ring covers the full history (never
-        // wrapped past the target), there is genuinely no match.
-        if (oldestInRing <= 1)
+        // No match: final when the ring still holds the session's first write
+        if (!_writeJournal->HasEvictedRecords())
             return std::nullopt;
 
         // Ring wrapped — older records were lost. Fall through to replay.
         MLOGINFO("TimeTravelManager::FindLastAccess — journal wrapped (oldest=%llu), "
                  "falling back to replay",
-                 static_cast<unsigned long long>(oldestInRing));
+                 static_cast<unsigned long long>(_writeJournal->OldestGlobalT()));
     }
 
     // ------------------------------------------------------------------
@@ -4819,8 +4861,6 @@ void TimeTravelManager::RestoreLiveState(const LiveStateSnapshot& snap)
             if (pageData)
                 std::memcpy(pageData, &snap.ram[static_cast<size_t>(p) * pageBytes], pageBytes);
         }
-        // Live RAM was rewritten behind the materialized-RAM cache.
-        _ramCache.valid = false;
     }
 
     _inputCursor = snap.inputCursor;

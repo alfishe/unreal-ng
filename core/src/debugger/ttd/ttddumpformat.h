@@ -74,6 +74,14 @@ constexpr uint16_t kFlagsHasCoverageIndex = 0x0004;
 /// their absence costs nothing but the convenience of label-based return.
 constexpr uint16_t kFlagsHasBookmarks = 0x0008;
 
+/// Bit 4 of header.flags — set when the write journal holds every write of the
+/// session: journaling ran from the recording start without a pause and the
+/// ring never overwrote a record. Only then may a reader answer write/port
+/// reverse queries from the journal; without the bit (older files included)
+/// it falls back to replay, which is always correct. An attribute of the
+/// journal section, not a section of its own.
+constexpr uint16_t kFlagsWriteJournalComplete = 0x0010;
+
 // ---------------------------------------------------------------------------
 // Page slot encodings (Encoding enum in TTDCodecPageStore)
 // ---------------------------------------------------------------------------

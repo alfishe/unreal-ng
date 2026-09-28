@@ -8,6 +8,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cstring>
 #include <sstream>
 #include <vector>
 
@@ -572,4 +573,46 @@ TEST(TTDWriteJournal_Compression_Test, SectionIsMuchSmallerThanRawRecords)
     EXPECT_GT(ratio, 5.0)
         << "journal section compressed only " << ratio << "x ("
         << raw << " -> " << stored << " bytes); the columnar layout is not working";
+}
+
+// ===========================================================================
+// Corrupt section sizes
+// ===========================================================================
+
+/// Sizes read from a file are checked before anything is allocated: a flipped
+/// block count or payload size fails the load instead of requesting gigabytes.
+TEST(TTDWriteJournal_Test, CorruptSectionSizesAreRefusedBeforeAllocating)
+{
+    TTDWriteJournal source(/*ringBytes=*/64 * 1024);
+    for (uint64_t t = 1; t <= 10; ++t)
+        source.Append(MakeRec(t * 100, static_cast<uint16_t>(0x4000 + t), static_cast<uint8_t>(t)));
+    std::ostringstream out(std::ios::binary);
+    ASSERT_TRUE(source.Serialize(out));
+    // Serialize leads with the record count, which the session loader reads
+    // itself before handing the rest to Deserialize
+    const std::string good = out.str().substr(sizeof(uint64_t));
+
+    // Layout: magic u32, block count u32, then block directory entries of
+    // first/last globalT u64, record count u32, compressed size u32, raw size u32
+    constexpr size_t kBlockCountAt = 4;
+    constexpr size_t kRecordCountAt = 8 + 16;
+    constexpr size_t kCompressedSizeAt = kRecordCountAt + 4;
+    constexpr size_t kRawSizeAt = kCompressedSizeAt + 4;
+
+    auto load = [&](const std::string& bytes) {
+        std::istringstream in(bytes, std::ios::binary);
+        TTDWriteJournal loaded(/*ringBytes=*/64 * 1024);
+        return loaded.Deserialize(in, source.Size());
+    };
+    auto patched = [&](size_t at, uint32_t value) {
+        std::string bytes = good;
+        std::memcpy(&bytes[at], &value, sizeof(value));
+        return bytes;
+    };
+
+    ASSERT_TRUE(load(good));
+    EXPECT_FALSE(load(patched(kBlockCountAt, 0xFFFFFFFFu)));
+    EXPECT_FALSE(load(patched(kRecordCountAt, 0)));
+    EXPECT_FALSE(load(patched(kCompressedSizeAt, 0xFFFFFFFFu)));
+    EXPECT_FALSE(load(patched(kRawSizeAt, 0xFFFFFFFFu)));
 }

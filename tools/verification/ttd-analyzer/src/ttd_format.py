@@ -75,6 +75,7 @@ SCHEMA_VERSION = 1
 MAX_SUPPORTED_SCHEMA_VERSION = SCHEMA_VERSION
 FLAGS_LITTLE_ENDIAN = 0x0001
 FLAGS_HAS_WRITE_JOURNAL = 0x0002  # write journal section present
+FLAGS_WRITE_JOURNAL_COMPLETE = 0x0010  # the journal holds every write of the session
 
 # Write journal section. Records are stored as zstd-compressed columnar blocks
 # rather than verbatim: the journal is by far the largest thing in a .ttd (89%

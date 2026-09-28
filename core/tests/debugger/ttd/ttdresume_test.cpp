@@ -485,3 +485,47 @@ TEST_F(TTD_Resume_Test, AfterStop_StillResumable)
     // History should be untouched (Resume was a no-op).
     EXPECT_EQ(_ttd->GetCheckpointCount(), 4u);
 }
+
+// ===========================================================================
+// B1: the delta base after a resume
+// ===========================================================================
+
+/// @test Checkpoints captured after "resume recording from here" restore the RAM
+///       they were captured from. The first delta frame after a resume must be
+///       computed against the resumed-at checkpoint, not against the RAM of the
+///       old session end (current-state B1: stale _prevPageCache).
+///
+/// The truth is independent of the RAM chain under test: the program keeps
+/// #C000 equal to A (A-1 between INC and LD), and a checkpoint stores the CPU
+/// registers verbatim.
+TEST_F(TTD_Resume_Test, CheckpointsAfterResumeRestoreTheirRam)
+{
+    // DI; loop: INC A; LD (#C000),A; OUT (#FE),A; JP loop - #C000 changes every frame
+    const uint8_t program[] = {0xF3, 0x3C, 0x32, 0x00, 0xC0, 0xD3, 0xFE, 0xC3, 0x01, 0x80};
+    for (uint16_t i = 0; i < sizeof(program); ++i)
+        _memory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), program[i]);
+    _emulator->GetZ80State()->pc = 0x8000;
+    _emulator->GetZ80State()->sp = 0xFF00;
+
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(6);
+
+    // Past the only key frame (frame 0; interval 50): what follows are deltas
+    ASSERT_TRUE(_ttd->ResumeRecordingFrom(ttd::TTDTimePoint{3, 0}));
+    const size_t firstNew = _ttd->GetCheckpointCount();
+    RunFrames(4);
+    _ttd->StopRecording();
+    ASSERT_GT(_ttd->GetCheckpointCount(), firstNew);
+
+    for (size_t idx = 0; idx < _ttd->GetCheckpointCount(); ++idx)
+    {
+        ASSERT_TRUE(_ttd->RestoreCheckpointForTesting(idx));
+        const Z80State* cpu = _emulator->GetZ80State();
+        if (cpu->pc < 0x8001 || cpu->pc > 0x8007)
+            continue;  // baseline: the program has not started yet
+        const uint8_t expected = static_cast<uint8_t>(cpu->pc == 0x8002 ? cpu->a - 1 : cpu->a);
+        EXPECT_EQ(_memory->DirectReadFromZ80Memory(0xC000), expected)
+            << "checkpoint " << idx << (idx >= firstNew ? " (after the resume)" : "") << ", PC #" << std::hex
+            << cpu->pc;
+    }
+}
