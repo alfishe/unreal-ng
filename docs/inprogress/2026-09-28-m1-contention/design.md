@@ -1,6 +1,6 @@
 # Contended opcode fetches without a cost for machines that have no contention
 
-**Date:** 2026-09-28 · **Status:** phases 1b and 1c implemented (revision 2: reuse analysis, shared wrappers,
+**Date:** 2026-09-28 · **Status:** phase 1 (1a-1d) implemented (revision 2: reuse analysis, shared wrappers,
 control and diagnostics, test suites) · **Tracks:** PLAN #59; open item 2 of the contention notes ("M1 opcode fetches
 from contended RAM not contended"). Test programs and emulated-side test design:
 [test-programs.md](test-programs.md).
@@ -302,6 +302,19 @@ emulated Z80 (the "probe" suite that also runs on real hardware) are designed in
 | **F. `ContentionRegression_Test`** (`contentionregression_test.cpp`) | Did any model change where it must not? | Parameterized over every creatable model (`GET /api/v1/emulator/models`): frame length in T unchanged; a fixed timing program run from #8000 and from #4000 for N instructions, total T compared to a **golden fingerprint recorded before the change** (committed with the tests): the uncontended machines and every #8000 run must match exactly; only the contended machines' #4000 run may differ, and by the oracle only. Data-access golden traces (code in uncontended RAM, data in contended RAM) on 48K / 128K / +3, recorded before the change: identical after it (R3). |
 | **G. `ContentionStatus_Test`** (`devicestate_test.cpp`) | Is the diagnostic truthful on every surface? | Status per model and layout (128K page 7 at #C000 → slot 3 contended; Pentagon → none; +3 all-RAM layout 1 → all four slots). The memory maps' `contended` flags equal `slots`. CLI, WebAPI, Lua and Python return the same object (the existing parity pattern of the automation tests). |
 | **H. `ContentionProbe_Test`** (`contentionprobe_test.cpp`) | Do the emulated-side probe programs report the reference results on every platform? | The probe suite of [test-programs.md](test-programs.md) run on every creatable model; results read from its result table in RAM and compared with the committed per-model expectations. |
+
+### 8.0 What phase 1 implemented
+
+| Suite | Where | Status |
+|:--|:--|:--|
+| A | `contention_test.cpp`: `Contention48K_Test.M1_*`, `Contention128K_Test.M1_*`, `ContentionPlus3_Test.M1_*` | done: pattern at every cell offset, operands, prefixes, code + data, page 7, +3 layout 1, floating-bus latch |
+| B | `memorycontended_test.cpp`: `MemoryContendedFuse_Test` | done for the gate array: all 1356 FUSE vectors x 9 start T-states (12204 runs) in the +3 all-RAM layout 1 against the independent oracle - every event time, the total and the final state; layout 0 and the switch off reproduce FUSE exactly. A mutation that exempts bytes read at PC fails 11988 of the runs. The ULA replay needs phase 2 (the ULA also contends internal cycles) |
+| C | `ContentionNegative_Test.ClonesNeverWait`, `ContentionReport_Test`, `Contention48K_Test.Switch_*`, `MemoryContendedFuse_Test.NothingWaitsInUncontendedPages` | done |
+| D | `MemoryInterfaceSelection_Test`: models x debugger, debugger x switch (with the frame-start re-selection), TTD replay mode | done |
+| E | `MemoryContendedDebugPath_Test.TtdReplaysCodeInContendedRamBitExact` (frame starts from checkpoints and mid-frame re-execution in replay mode), `Contention48K_Test.Statistics_*` | done; a mutation of the replay-mode selection fails it |
+| F | `contentionregression_test.cpp` | done (phase 1a) |
+| G | `Contention*_Test.Report_*`, `McpTools_Test.InspectState_ContentionAspect` | done: one core report, every surface renders it |
+| H | emulated-side probes | phase 1e |
 
 ### 8.1 Existing tests
 

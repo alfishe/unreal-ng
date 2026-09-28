@@ -72,7 +72,7 @@ Iraq on the +2A) are *unverified* except Sidewize.
 
 | Step | Action | Covers |
 |:--|:--|:--|
-| 1 | Assert the FUSE `MC`-only checkpoints in `fuse_phase_test.cpp` instead of dropping them, and add the contended replay of design suite B (every `MC` gets the oracle wait) | where M1 / data / internal cycles are checked, every opcode; phase 1 now, phase 2 for free |
+| 1 | The contended replay of design suite B - done in phase 1d for the gate array (`memorycontended_test.cpp`). Asserting FUSE's `MC`-only checkpoints needs the core to report internal cycles, which is phase 2's `Idle` bus function; it lands there, with the ULA replay | where M1 / data / internal cycles are checked, every opcode |
 | 2 | Run the Butler 48K snapshot already in the tree to completion and read its failure text | 48K M1 + data |
 | 3 | Vendor **Rak Timing Test v0.3** and **fusetest** (both GPL, sources available) under `testdata/contention/`, run them in suite H | 48K, 128K / +2, +2A / +3, Pentagon; M1, `IN` patterns, banked pages, floating bus |
 | 4 | Keep the Woodmass / azesmbog programs as screen-compare references for phase 2 / 3 and the +2A / +3 floating bus | visual cross-check |

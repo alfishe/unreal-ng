@@ -530,6 +530,36 @@ TEST(ContentionPentagon_Test, NoContentionAnywhere)
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
+/// Machines without contention never wait: code and data in #4000-#7FFF across a paper line
+TEST(ContentionNegative_Test, ClonesNeverWait)
+{
+    for (const char* model : { "PENTAGON", "SCORPION", "PROFSCORP", "PROFI", "ATM710", "ATM3" })
+    {
+        Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
+        ASSERT_NE(emulator, nullptr) << model;
+        EmulatorContext* context = emulator->GetContext();
+        context->pScreen->InitFrame();
+        Z80* z80 = context->pCore->GetZ80();
+        Memory* memory = context->pMemory;
+        memory->DirectWriteToZ80Memory(0x6000, 0x00);  // NOP
+        memory->DirectWriteToZ80Memory(0x6001, 0x7E);  // LD A,(HL)
+
+        const uint32_t start = context->config.intstart + 1 + 20000;  // mid-paper on every raster
+        for (uint32_t k = 0; k < 16; k++)
+        {
+            z80->iff1 = 0;
+            z80->pc = 0x6000;
+            z80->hl = 0x4000;
+            z80->t = start + k;
+            z80->Z80Step();
+            EXPECT_EQ(z80->t, start + k + 4) << model << " NOP, offset " << k;
+            z80->Z80Step();
+            EXPECT_EQ(z80->t, start + k + 11) << model << " LD A,(HL), offset " << k;
+        }
+        EmulatorTestHelper::CleanupEmulator(emulator);
+    }
+}
+
 /// endregion </Contrast>
 /// region <Contention switch, statistics and the status report>
 
@@ -706,6 +736,44 @@ TEST(MemoryInterfaceSelection_Test, FollowsTheMachineAndTheDebugger)
 
         EmulatorTestHelper::CleanupEmulator(emulator);
     }
+}
+
+/// The debugger and the 'contention' switch are independent inputs: all four combinations on a contended model
+TEST(MemoryInterfaceSelection_Test, DebuggerAndSwitchCombinations)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("128K", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    context->pScreen->InitFrame();
+    Z80* z80 = context->pCore->GetZ80();
+    FeatureManager* fm = context->pFeatureManager;
+
+    struct Step
+    {
+        bool debug;
+        bool contention;
+        const MemoryInterface* Z80::*expected;
+    };
+    const Step steps[] = {
+        { false, true, &Z80::FastContendedMemIf }, { true, true, &Z80::DbgContendedMemIf },
+        { true, false, &Z80::DbgMemIf },           { false, false, &Z80::FastMemIf },
+        { false, true, &Z80::FastContendedMemIf }, { true, false, &Z80::DbgMemIf },
+        { true, true, &Z80::DbgContendedMemIf },   { false, false, &Z80::FastMemIf },
+    };
+    for (const Step& step : steps)
+    {
+        ASSERT_TRUE(fm->setFeature(Features::kContention, step.contention));
+        if (step.debug)
+            emulator->DebugOn();
+        else
+            emulator->DebugOff();
+        context->pCore->CPUFrameCycle();  // the frame start re-selects too: nothing may drift
+        EXPECT_EQ(z80->MemIf, z80->*step.expected) << "debug " << step.debug << ", contention " << step.contention;
+        EXPECT_EQ(z80->ioContention, step.contention ? context->pUlaContention : nullptr);
+    }
+
+    fm->setFeature(Features::kContention, true);
+    EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
 /// TTD replay engages the debug path; on a contended machine it must stay contended, or history replays with
