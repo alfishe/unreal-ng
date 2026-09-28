@@ -61,6 +61,7 @@ Portions Copyright (C) SMT, Alone Coder, deathsoft. The license of the original 
 | FastLZ 0.5.0 | `tools/poc/01-ttd-compression/cpp/vendored/fastlz/` | MIT |
 | python-cmake-buildsystem, cmake-python-build | `core/automation/python/3rdparty/` | Apache-2.0 (unused) |
 | Z80 test suites: ZEXALL (GPL-2.0-or-later), z80test by Patrik Rak (MIT), z80bltst (MIT), Z80 XCF Flavor (GPL-3.0-or-later), FUSE test vectors (GPL-2.0-or-later) | `data/testsoft/`, `core/tests/z80/`, `testdata/z80/` | as listed |
+| Timing Test v0.3 by Patrik Rak (contention / I/O timing, GPL) | `testdata/contention/rak-timing-test/` | GPL |
 
 ## Not covered by the GPL
 

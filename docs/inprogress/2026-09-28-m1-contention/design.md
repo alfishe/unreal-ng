@@ -314,7 +314,7 @@ emulated Z80 (the "probe" suite that also runs on real hardware) are designed in
 | E | `MemoryContendedDebugPath_Test.TtdReplaysCodeInContendedRamBitExact` (frame starts from checkpoints and mid-frame re-execution in replay mode), `Contention48K_Test.Statistics_*` | done; a mutation of the replay-mode selection fails it |
 | F | `contentionregression_test.cpp` | done (phase 1a) |
 | G | `Contention*_Test.Report_*`, `McpTools_Test.InspectState_ContentionAspect` | done: one core report, every surface renders it |
-| H | emulated-side probes | phase 1e |
+| H | `contentionprobe_test.cpp`: Butler 48K suite, Rak Timing Test matrix ([test-programs.md](test-programs.md) §2.5) | in progress (phase 1e): the 48K / 128K / +3 contended NOP match the hardware reference (the +3 after the 129 T gate array window fix); `ctprobe` not written yet |
 
 ### 8.1 Existing tests
 

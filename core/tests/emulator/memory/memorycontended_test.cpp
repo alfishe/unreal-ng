@@ -36,11 +36,11 @@ namespace
 constexpr uint8_t kGateArrayPattern[8] = { 1, 0, 7, 6, 5, 4, 3, 2 };
 constexpr uint32_t kIntToFirstContended = 14361;  // 128K / +2A / +3 contention onset, T after the INT
 constexpr uint32_t kTStatesPerLine = 228;
-constexpr uint32_t kContendedPerLine = 128;
+constexpr uint32_t kContendedPerLine = 129;  // the gate array's 1 T hold after the last cell (hardware: Rak +3 / +2A)
 constexpr uint32_t kPaperLines = 192;
 
 /// Cycle-start T-states tried: every cell offset at the start of paper line 0, and a start 6 T before the
-/// end of line 3's contended span so multi-access opcodes cross into the uncontended border
+/// end of line 3's contended span so multi-access opcodes cross the closing 1 T hold into the border
 const std::vector<uint32_t>& StartOffsets()
 {
     static const std::vector<uint32_t> offsets = { 0, 1, 2, 3, 4, 5, 6, 7, 3 * kTStatesPerLine + kContendedPerLine - 6 };

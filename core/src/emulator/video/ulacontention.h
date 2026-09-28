@@ -10,7 +10,7 @@ class EmulatorContext;
 /// Source: https://faqwiki.zxnet.co.uk/wiki/Contended_memory
 static const uint8_t contentionPattern[8] = {6, 5, 4, 3, 2, 1, 0, 0};
 
-/// +2A/+3 gate array pattern: the same cells, the waits one step earlier (MAME, ZXMAK2, BizHawk, ZX-M8XXX,
+/// +2A/+3 gate array pattern (over a 129 T window, see ComputeContentionDelay): the same cells, the waits one step earlier (MAME, ZXMAK2, BizHawk, ZX-M8XXX,
 /// Spectral, xpeccy-plus, zxsp, jnext all agree on the shape; the first wait falls on the 128K's first
 /// contended T in four of them, which is what is modelled)
 static const uint8_t gateArrayContentionPattern[8] = {1, 0, 7, 6, 5, 4, 3, 2};

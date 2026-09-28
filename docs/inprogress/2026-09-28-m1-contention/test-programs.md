@@ -81,6 +81,55 @@ The probe suite of section 3 fills what these do not: every placement and layout
 +2A / +3 all-RAM layouts), the prefix and `DDCB` cases, the negative cases on the Scorpion, Profi and
 ATM, and one machine-readable result table for all of them.
 
+### 2.5 What phase 1e runs today
+
+`core/tests/emulator/video/contentionprobe_test.cpp`; the long runs are opt-in with `UNREAL_TIMING_SUITES=1`,
+like the tape sweep.
+
+**Butler, Timing Tests 48K v1.0** (in the tree). Needed a loader fix first: a 48K `.sna` on the 48K model
+selected ROM page 3 - empty on a one-ROM machine - so the program ran into `RST 38` and never started
+(`LoaderSNA::applySnapshotFromStaging` now maps the model's 48K BASIC ROM; `LoaderSNA48KRom_Test`). The program
+reports "TYPE1 (Early) timings detected". Results with phase 1:
+
+| | Contention on | Contention off |
+|:--|:--|:--|
+| Uncontended tests (1-35) | 34 pass (35, the floating-bus test, fails) | 30 pass (the port tests 22, 32-34 fail: the switch removes I/O contention too) |
+| Contended tests (1-35) | all fail, but move towards the hardware: test 1 loop 1036 vs 1014 (1201 uncontended), test 2 583 vs 571 (657) | all fail at the uncontended counts |
+
+Every contended group also has internal cycles the 48K ULA contends (phase 2) or port cycles with the
+multi-point pattern (phase 3). Default run: test 1 only (`ButlerTest1MovesTowardsTheHardware`, ~130 ms),
+pinning the phase-1 value 1036; opt-in: all 35 tests in both switch settings (~4 s).
+
+**Rak, Timing Test v0.3** (vendored, `testdata/contention/rak-timing-test/`). Each test prints 160 durations,
+one per start T-state; the reference grids are transcribed from the published result screens.
+
+| Model | Matches the reference | Differs today |
+|:--|:--|:--|
+| 48K early | 0 contended NOP, 2 `IN #00FE`, 3 `#00FF`, 6 `#FFFE`, 7 `#FFFF` | 4 `#7FFE`, 5 `#7FFF`: multi-point I/O contention (phase 3) |
+| 128K early | 0 contended NOP, 8 page RET | 2 `#00FE`: the 128K I/O rule adds 1 T to every even port, the reference has no such T (phase 3); 4 `#7FFE`: multi-point (phase 3) |
+| +3 | 0 contended NOP (after the window fix below), 4 `#7FFE` (no I/O contention), 8 page RET | - |
+
+**Found with it: the +2A/+3 gate array window is 129 T, not 128.** The +3 contended NOP differed in its last
+row only: offset 128 after the first contended T still waits 1 T (NOP = 5). The references disagree:
+
+| Source | Window | Offset 128 |
+|:--|:--|:--|
+| Fuse, MAME, BizHawk (ZXHawk), ZXMAK2, ZEsarUX, Xpeccy | 128 T (the Ferranti ULA's, reused) | 0 |
+| Rak Timing Test v0.3 on a real +3 (photo, 2023) and a real +2A (photo, 2025), redcode wiki "Timing-Test", "Results on real hardware" | 129 T | 1 |
+| The published expected screen (zxe.io) | 129 T | 1 |
+
+None of the emulators cites +3-specific evidence for the end of the window; two independent machines agree
+with each other and with the expected screen, so the model follows the hardware: the gate array's pattern opens
+with a 1 T hold before the first fetch cell and closes with one after the last (`UlaContention::
+ComputeContentionDelay`; `ContentionPlus3_Test.WindowEndsOneTAfterTheLastCell`; the FUSE replay's oracle uses
+129 T). The 128K Ferranti ULA reference ends at 128 T, as modelled.
+
+Default run: the 48K contended NOP (`ContendedNop48KMatchesTheHardware`, ~1 s: ROM boot + tape) - the
+end-to-end check of M1 contention against a hardware reference. Opt-in: the 14-case matrix; a case listed as
+differing must still differ, so the phase that fixes it fails the test and moves it to the matching list.
+
+Not done: fusetest (source only, needs pasmo or a prebuilt tape), the Butler 128K suite (`.szx`).
+
 ## 3. The probe suite (`ctprobe`)
 
 ### 3.1 How a probe measures one fragment

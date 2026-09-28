@@ -398,6 +398,25 @@ TEST_F(ContentionPlus3_Test, GateArrayPatternFromTheSameOnset)
     EXPECT_EQ(runLdAHl(0x4000, _firstContendedT + 2), 14u) << "at offset 2: 7 + 7";
 }
 
+/// The gate array's window is 129 T: after the last fetch cell (offsets 120-127: 1,0,7,6,5,4,3,2 from 120)
+/// offset 128 still holds the CPU 1 T, offset 129 is free - on every paper line, the last one included. The
+/// Ferranti ULA ends after 128 T (Contention48K_Test.NoContentionOneTBeforeOnsetOrAfterLastCell). Evidence:
+/// Rak's Timing Test v0.3 contended NOP photographed on a real +3 and a real +2A (last row 7,6,5,4,4)
+TEST_F(ContentionPlus3_Test, WindowEndsOneTAfterTheLastCell)
+{
+    const ContentionRaster& raster = _ula->GetRaster();
+    for (uint32_t line : { 0u, 100u, 191u })
+    {
+        const uint32_t start = _firstContendedT + line * raster.tstatesPerLine;
+        EXPECT_EQ(delayAt(start + 126), 3u) << "line " << line;
+        EXPECT_EQ(delayAt(start + 127), 2u) << "line " << line;
+        EXPECT_EQ(delayAt(start + 128), 1u) << "line " << line << ": the closing 1 T hold";
+        EXPECT_EQ(delayAt(start + 129), 0u) << "line " << line;
+    }
+    EXPECT_EQ(delayAt(_firstContendedT + 192 * raster.tstatesPerLine + 128), 0u) << "below the paper";
+    EXPECT_EQ(runAt(0x4000, { 0x00 }, _firstContendedT + 128), 5u) << "NOP at offset 128: 4 + 1";
+}
+
 TEST_F(ContentionPlus3_Test, PagesFourToSevenInAnySlot)
 {
     for (uint16_t page : { 4, 5, 6, 7 })

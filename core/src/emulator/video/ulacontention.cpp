@@ -54,8 +54,13 @@ uint8_t UlaContention::ComputeContentionDelay(uint32_t t) const
 
     // Contention runs for 128 T, starting kContentionLeadT before the first
     // displayed pixel: 48K first contended T = INT + 14335, pixel at INT + 14340.
+    // The +2A/+3 gate array holds the CPU one T longer: its pattern opens with a 1 T hold before the first
+    // fetch cell and closes with the same 1 T hold after the last one, so offset 128 still waits 1 (Rak's
+    // Timing Test v0.3 "contended NOP" on a real +3 and a real +2A; every emulator surveyed - Fuse, MAME,
+    // BizHawk, ZXMAK2, ZEsarUX, Xpeccy - reuses the ULA's 128 T without +3-specific evidence)
     const uint32_t contentionStart = _raster.screenLineAreaStart - kContentionLeadT;
-    if (tInLine < contentionStart || tInLine > _raster.screenLineAreaEnd - kContentionLeadT)
+    const uint32_t contentionLast = _raster.screenLineAreaEnd - kContentionLeadT + (_gateArray ? 1 : 0);
+    if (tInLine < contentionStart || tInLine > contentionLast)
         return 0;
 
     // The ULA fetches memory in 8-pixel character blocks, taking 4 T-states per fetch.
