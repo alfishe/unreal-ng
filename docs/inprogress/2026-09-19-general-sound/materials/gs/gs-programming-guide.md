@@ -202,6 +202,13 @@ Reading from these addresses automatically outputs the byte to the corresponding
 - Channels 1, 4 → Left
 - Channels 2, 3 → Right
 
+> **Note (2026-09-28):** the board does not match this table. The schematic
+> (`gs-firmware/sch/gs_sch_fixed.png`) sums channels 1+2 into one output
+> op-amp and 3+4 into the other, with about 47% analogue cross-feed between
+> the sides - see gs-tdd.md, "The board does cross-feed". The firmware
+> itself places MOD channels on the DAC channels so that MOD 1 and 4 end up
+> left, MOD 2 and 3 right (Amiga panning).
+
 ### 5.3 Volume Calculation
 
 ```

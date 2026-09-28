@@ -417,6 +417,7 @@ or 534 cycles, alternating so that three periods take exactly 1,600 cycles.
     (`timer.v:33-47`, `sound_dac.v:58-70`). The emulator derives both from
     the one 24 MHz phase counter (§3.5), as two events 1,600 ticks apart.
 - **Hard stereo.** The classic GS emulation cross-feeds 50%; NeoGS doesn't.
+  Both follow their boards; see "Analogue output stage" below.
 - **AC-coupled output** (added 2026-09-28). The board's line output goes
   through coupling capacitors, so it passes no DC. The DAC channels do carry
   DC: the firmware touches only the channels that play, and an idle channel
@@ -430,6 +431,51 @@ or 534 cycles, alternating so that three periods take exactly 1,600 cycles.
 - **Worked example, 4-channel mode.** Channel 1 holds `#FF` (+127) at volume
   63, channel 2 holds `#80` (0). Then L = 2 × (127·63 + 0) = 16,002, just
   under half of full scale.
+
+#### Analogue output stage: NeoGS vs the classic card (checked 2026-09-28)
+
+The two cards sound different in stereo, and both schematics say so.
+
+**Classic GS** (`materials/gs/gs-firmware/sch/gs_sch_fixed.png`, output
+section on the right):
+
+- Each channel is a multiplying DAC pair: a 572PA1 sets the volume, a second
+  572PA1 multiplies the sample by it and outputs a current.
+- Channels 1 and 2 sum into one op-amp (D37:1), channels 3 and 4 into
+  another (D37:4). This confirms the 1,2 -> left, 3,4 -> right mapping that
+  every emulator uses (the programming guide's 1,4 / 2,3 table does not
+  match the board).
+- Two output op-amps, D37:2 (LEFT) and D37:3 (RIGHT), each invert their
+  pair with gain 1 (22K / 22K). Each one's non-inverting input takes the
+  *other* side's output through a 22K / 6K8 divider (R24/R21, R27/R22):
+  6.8 / (6.8 + 22) = 0.236, times the stage's non-inverting gain of 2 =
+  0.47.
+- So the board cross-feeds: L = a + 0.47 R, R = b + 0.47 L, where a is
+  channels 1+2 and b is channels 3+4. Solved: L = 1.29 a + 0.61 b. The
+  opposite pair is heard at 0.61 / 1.29 = 47% of the level of the own pair.
+- Unreal's `(l + r/2) / 2` (50%, `soundchip_gs.cpp` `computeStereo`) is a
+  model of this network, not a taste choice.
+
+**NeoGS** (`materials/neogs/NGS_b_scheme.pdf`, revision B, top right):
+
+- The FPGA mixes digitally and sends each side to a TDA1543 serial DAC.
+  Its two current outputs go to two separate current-to-voltage stages,
+  DA6:1 (left) and DA6:2 (right), NE5532, each with 390 ohm || 22 nF
+  feedback. There is no path between the sides: hard stereo.
+- Each side then goes through a 10 uF coupling capacitor (C52, C53) and
+  100 ohm (R61, R64) to the jack. The coupling is modelled (5 Hz high-pass,
+  the AC-coupled output above).
+- The MP3 decoder's outputs join the same two nodes through 1 kohm and
+  100 uF (R59/C8, R60/C15), again per side.
+- The 390 ohm || 22 nF feedback is also a low-pass at about 18.5 kHz
+  (1 / (2 pi x 390 x 22 nF)). Not modelled: it affects only the top of the
+  audio band.
+
+Worked example: a module plays a note on MOD channel 1 only (the firmware
+puts it on DAC channel 1). On the classic card the left side carries it at
+full level and the right side at 47%. On NeoGS the left side carries it and
+the right side is silent. Measured in the emulator (RMS of one note): classic
+3,727 left / 1,863 right, NeoGS 3,785 left / 3 right.
 
 ### 3.7 SPI, SD card and MP3 decoder
 
@@ -1490,6 +1536,24 @@ earlier):
 | GUI: HUD | The GS slot's activity nudge names the card: "GS" for the classic and lightweight cards; for NeoGS the DAC and MP3 decoder streams (`AudioSource::NeoGS`, `AudioSource::NeoGSMp3`) combine into "NeoGS", "NeoGS MP3" or "NeoGS+MP3", like MoonSound's two parts |
 
 The SD media fields follow the shared `SdCardState` descriptor (§5.4).
+
+**Inserting an SD card** - every way there is:
+
+| Where | How | When |
+|---|---|---|
+| Config | `[NGS] SDCardImage=<raw image>` (alias `SDCARD`) | The card is in the slot when the machine starts |
+| GUI | Audio Settings, section "General Sound slot: NeoGS": Insert... / Eject | Any time |
+| CLI | `gs sd insert <image>` / `gs sd eject` | Any time |
+| WebAPI | `POST /api/v1/emulator/{id}/control/audio/gs` with `{"action": "sd_insert", "path": "<image>"}` or `{"action": "sd_eject"}` | Any time |
+| MCP | the GS actions `gs_sd_insert` (`path`) / `gs_sd_eject` | Any time |
+| Lua / Python | `gs_sd_insert(path)` / `gs_sd_eject()` | Any time |
+
+"Any time" has two exceptions: while TTD records (the machine's
+configuration is fixed for the recording) and while a TTD replay owns the
+machine; both refuse with a message. A relative path is looked up from the
+current folder, then from the emulator's folder. The image is a raw card
+image (FAT16 or FAT32, with or without an MBR); writes follow
+`[NGS] SDWrite`. There is no main-menu item (as for disks and tapes) yet.
 
 ### 7.6 Debugger
 
