@@ -137,6 +137,8 @@ MediaResult MediaManager::Insert(const std::string& slotId, const MediaSource& s
     request.kind = descriptor.kind;
     request.access = options.access.value_or(descriptor.defaultAccess);
     request.fs = options.fs.value_or(descriptor.defaultFs);
+    request.codePage = options.codePage;
+    request.freeBytes = options.freeBytes;
 
     std::unique_ptr<Medium> medium;
     MediaResult opened = MediaFormatRegistry::Open(request, medium);

@@ -3,6 +3,9 @@
 #include "mediaformatregistry.h"
 
 #include "common/filehelper.h"
+#include "emulator/io/storage/hostfolder/foldermanifest.h"
+#include "emulator/io/storage/hostfolder/foldersnapshot.h"
+#include "emulator/io/storage/hostfolder/hostfolderfat.h"
 #include "emulator/io/storage/rawimage.h"
 #include "emulator/io/storage/readonlyguard.h"
 #include "emulator/io/storage/sessionwritemap.h"
@@ -31,6 +34,48 @@ std::unique_ptr<Medium> MediaFormatRegistry::WrapBlock(MediaSource source, Acces
     return std::make_unique<Medium>(std::move(source), access, std::move(format), std::move(stack), session);
 }
 
+/// A host folder as a FAT volume: manifest, snapshot, volume, access layer
+static MediaResult OpenFolderVolume(const OpenRequest& request, std::unique_ptr<Medium>& medium)
+{
+    const MediaSource& source = request.source;
+    const std::filesystem::path folder = FileHelper::ToFsPath(source.path);
+    MediaResult result = MediaResult::Success();
+
+    const FolderManifest manifest = FolderManifest::Load(folder);
+    result.report.insert(result.report.end(), manifest.report.begin(), manifest.report.end());
+
+    FolderScanOptions scan;
+    scan.excludePatterns = manifest.exclude;
+    FolderSnapshot snapshot;
+    std::string error;
+    if (!FolderSnapshot::Scan(folder, scan, snapshot, &error))
+        return MediaResult::Fail(MediaError::UnreadableSource, error);
+    for (const SkippedEntry& skipped : snapshot.Skipped())
+        result.report.push_back(skipped.path + ": skipped, " + skipped.reason);
+
+    FatVolumeOptions options;
+    options.fs = request.fs;
+    options.codePage = request.codePage.value_or(manifest.codePage.value_or(CodePage::Cp866));
+    if (manifest.label)
+        options.label = *manifest.label;
+    if (request.freeBytes)
+        options.freeBytes = *request.freeBytes;
+
+    std::vector<std::string> buildReport;
+    auto volume = HostFolderFat::Build(snapshot, options, &error, &buildReport);
+    if (!volume)
+        return MediaResult::Fail(MediaError::DoesNotFit, error);
+    for (const std::string& line : buildReport)
+        result.report.push_back(line + ": skipped");
+
+    MediaSource resolved = source;
+    resolved.type = MediaSourceType::Folder;
+    medium = MediaFormatRegistry::WrapBlock(resolved, request.access,
+                                            request.fs == FatType::Fat32 ? "folder-fat32" : "folder-fat16", std::move(volume));
+    medium->Report() = result.report;
+    return result;
+}
+
 MediaResult MediaFormatRegistry::Open(const OpenRequest& request, std::unique_ptr<Medium>& medium)
 {
     medium.reset();
@@ -46,7 +91,7 @@ MediaResult MediaFormatRegistry::Open(const OpenRequest& request, std::unique_pt
     {
         if (request.access == AccessMode::WriteThrough)
             return MediaResult::Fail(MediaError::KindMismatch, "a folder is never written: use session or readonly access");
-        return MediaResult::Fail(MediaError::NotSupported, "folder volumes are not available yet: " + source.path);
+        return OpenFolderVolume(request, medium);
     }
 
     if (source.type == MediaSourceType::Blank)

@@ -3,13 +3,15 @@
 /// @file mediaformatregistry.h
 /// @brief The one place that knows formats (technical design §4): probes a
 /// source for a slot kind and builds the medium, access layer included.
-/// M1 serves block media (raw images; host folders arrive with the folder
-/// pipeline); floppy and tape formats join in M2 / M3.
+/// M1 serves block media: raw images, and host folders as FAT16 / FAT32
+/// volumes; floppy and tape formats join in M2 / M3.
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
+#include "common/unicodehelper.h"
 #include "emulator/media/medium.h"
 #include "emulator/media/mediatypes.h"
 
@@ -19,6 +21,8 @@ struct OpenRequest
     MediaKind kind = MediaKind::Block;
     AccessMode access = AccessMode::Session;
     FatType fs = FatType::Fat16;
+    std::optional<CodePage> codePage;  ///< folder volumes: explicit > the folder's manifest > CP866
+    std::optional<uint64_t> freeBytes; ///< folder volumes: room for guest writes (default 256 MiB)
 };
 
 class MediaFormatRegistry

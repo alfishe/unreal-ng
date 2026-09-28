@@ -9,6 +9,7 @@
 ///
 /// ```yaml
 /// label: MY GAMES
+/// codepage: cp866
 /// order: [boot.$B, game.$C]
 /// exclude: [notes.txt, "*.psd"]
 /// files:
@@ -24,6 +25,8 @@
 #include <string>
 #include <vector>
 
+#include "common/unicodehelper.h"
+
 struct ManifestFileOverride
 {
     std::optional<std::string> name;   ///< the name on the medium
@@ -35,6 +38,7 @@ struct ManifestFileOverride
 struct FolderManifest
 {
     std::optional<std::string> label;
+    std::optional<CodePage> codePage;                     ///< short names: cp866 | cp1251
     std::vector<std::string> order;                       ///< these names first, in this order
     std::vector<std::string> exclude;                     ///< wildcards on names
     std::map<std::string, ManifestFileOverride> files;    ///< keyed by host file name

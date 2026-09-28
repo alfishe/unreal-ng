@@ -18,6 +18,7 @@ const char* MediaErrorCode(MediaError error)
         case MediaError::Recording: return "recording";
         case MediaError::InUse: return "in-use";
         case MediaError::NotSupported: return "not-supported";
+        case MediaError::DoesNotFit: return "does-not-fit";
         case MediaError::IoError: return "io-error";
     }
     return "unknown";

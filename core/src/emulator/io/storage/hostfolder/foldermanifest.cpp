@@ -63,6 +63,15 @@ namespace
                 const std::string key = Text(child.key());
                 if (key == "label")
                     _m.label = String(child, key);
+                else if (key == "codepage")
+                {
+                    CodePage page = CodePage::Cp866;
+                    const auto text = String(child, key);
+                    if (text && UnicodeHelper::ParseCodePage(*text, page))
+                        _m.codePage = page;
+                    else if (text)
+                        Report(key, "expected cp866 or cp1251, got '" + *text + "'");
+                }
                 else if (key == "order")
                     _m.order = StringList(child, key);
                 else if (key == "exclude")

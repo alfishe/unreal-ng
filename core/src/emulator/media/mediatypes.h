@@ -55,6 +55,7 @@ enum class MediaError : uint8_t
     Recording,         ///< refused while TTD records; retry with endRecording
     InUse,             ///< the same source is in another slot
     NotSupported,      ///< a valid request this build cannot do yet
+    DoesNotFit,        ///< the source does not fit the requested medium (FAT16 size, disk capacity)
     IoError,           ///< host I/O failed
 };
 

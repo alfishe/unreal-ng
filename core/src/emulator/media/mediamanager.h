@@ -37,6 +37,8 @@ struct InsertOptions
 {
     std::optional<AccessMode> access;  ///< the slot's default when not set
     std::optional<FatType> fs;         ///< folder volumes; the slot's default when not set
+    std::optional<CodePage> codePage;  ///< folder volumes' short names; the folder's manifest, else CP866
+    std::optional<uint64_t> freeBytes; ///< folder volumes: room for guest writes (default 256 MiB)
     bool writeProtect = false;         ///< the slot's write-protect switch
     bool endRecording = false;         ///< end a TTD recording instead of refusing
     bool immediate = false;            ///< no swap delay (media the firmware boots from)

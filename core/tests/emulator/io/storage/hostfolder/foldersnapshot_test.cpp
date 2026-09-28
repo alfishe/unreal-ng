@@ -10,44 +10,13 @@
 #include <string>
 #include <system_error>
 
-#include "_helpers/testpathhelper.h"
-#include "common/filehelper.h"
+#include "_helpers/scratchfolder.h"
 #include "emulator/io/storage/hostfolder/foldersnapshot.h"
 
 namespace fs = std::filesystem;
 
 namespace
 {
-    /// A scratch folder removed when the test ends
-    class ScratchFolder
-    {
-    public:
-        explicit ScratchFolder(const char* name) : _path(TestPathHelper::GetUniqueTestScratchPath(name))
-        {
-            fs::remove_all(_path);
-            fs::create_directories(_path);
-        }
-        ~ScratchFolder()
-        {
-            std::error_code ec;
-            fs::remove_all(_path, ec);
-        }
-        const fs::path& Path() const { return _path; }
-
-        void File(const std::string& relative, const std::string& contents, int64_t mtimeUtc = 1767268800)
-        {
-            const fs::path path = _path / FileHelper::ToFsPath(relative);
-            fs::create_directories(path.parent_path());
-            std::ofstream(path, std::ios::binary) << contents;
-            const auto sys = std::chrono::sys_seconds(std::chrono::seconds(mtimeUtc));
-            fs::last_write_time(path, std::chrono::file_clock::from_sys(sys));
-        }
-        void Folder(const std::string& relative) { fs::create_directories(_path / FileHelper::ToFsPath(relative)); }
-
-    private:
-        fs::path _path;
-    };
-
     bool WasSkipped(const FolderSnapshot& snapshot, const std::string& path, const std::string& reasonPart)
     {
         return std::any_of(snapshot.Skipped().begin(), snapshot.Skipped().end(), [&](const SkippedEntry& s) {

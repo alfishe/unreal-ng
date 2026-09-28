@@ -12,13 +12,16 @@
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/scratchfolder.h"
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
 #include "common/filehelper.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/storage/fat/fatvolumereader.h"
 #include "emulator/io/storage/memorydisk.h"
+#include "emulator/io/storage/rawimage.h"
 #include "emulator/io/storage/sessionwritemap.h"
 #include "emulator/media/mediaformatregistry.h"
 #include "emulator/media/mediamanager.h"
@@ -356,4 +359,88 @@ TEST(MediaManager_Test, RecordingRefusesChangesUnlessAskedToEndIt)
 
     manager.UnregisterSlot("sd.test");
     EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// A host folder in a block slot: a FAT volume under a session layer; the
+/// folder never changes; the export carries the guest's writes (technical design §5-§6)
+TEST(MediaManager_Test, FolderBecomesAFatVolumeAndStaysUntouched)
+{
+    ScratchFolder folder("media-folder");
+    folder.File("SD_BOOT.$C", "boot code");
+    folder.File("games/Игра.trd", std::string(3000, 'g'));
+    folder.File(".DS_Store", "service");
+    folder.File(".unreal-media.yaml", "label: MY CARD\ncodepage: cp1251\n");
+
+    MediaManager manager(nullptr);
+    FakeBlockSlot slot("sd.test");
+    manager.RegisterSlot(slot);
+    MediaSource source;
+    const auto u8 = folder.Path().u8string();
+    source.path = std::string(u8.begin(), u8.end());
+    InsertOptions small;
+    small.freeBytes = 1024 * 1024;  // the export below writes the whole volume
+    const MediaResult inserted = manager.Insert("sd.test", source, small);
+    ASSERT_TRUE(inserted.Ok()) << inserted.message;
+    EXPECT_EQ(manager.Info("sd.test")->format, "folder-fat16");
+    bool reportedService = false;
+    for (const std::string& line : inserted.report)
+        reportedService = reportedService || line.find(".DS_Store: skipped, service (macos)") != std::string::npos;
+    EXPECT_TRUE(reportedService) << "skipped entries are reported";
+
+    // The guest's view: an independent FAT reader over the slot's block device
+    Medium* medium = slot.attached;
+    ASSERT_NE(medium, nullptr);
+    FatVolumeReader reader;
+    std::string error;
+    ASSERT_TRUE(reader.Open(*medium->Block(), CodePage::Cp1251, &error)) << error;
+    EXPECT_EQ(reader.Label(), "MY CARD") << "the manifest's label";
+    std::vector<FatDirEntryInfo> games;
+    ASSERT_TRUE(reader.List("/games", games));
+    ASSERT_EQ(games.size(), 1u);
+    EXPECT_EQ(games[0].shortName, "ИГРА.TRD") << "the manifest's code page for short names";
+
+    // A guest write lands in the session layer; the folder stays as it was
+    const std::vector<uint8_t> junk(512, 0xEE);
+    ASSERT_TRUE(medium->Block()->WriteSector(medium->Block()->SectorCount() - 1, junk.data()));
+    manager.ApplyPending();
+    EXPECT_TRUE(manager.Info("sd.test")->dirty);
+    std::ifstream boot(folder.Path() / "SD_BOOT.$C");
+    EXPECT_EQ(std::string((std::istreambuf_iterator<char>(boot)), std::istreambuf_iterator<char>()), "boot code");
+
+    // Export: the guest's view as an image, readable by the independent reader
+    const std::string image = TestPathHelper::GetUniqueTestScratchPath("folder-export.img");
+    ASSERT_TRUE(manager.Export("sd.test", image).Ok());
+    auto exported = RawImage::Open(image, RawImage::Access::ReadOnly);
+    ASSERT_NE(exported, nullptr);
+    FatVolumeReader again;
+    ASSERT_TRUE(again.Open(*exported, CodePage::Cp1251));
+    std::vector<uint8_t> data;
+    ASSERT_TRUE(again.ReadFile("/games/Игра.trd", data));
+    EXPECT_EQ(data.size(), 3000u);
+    uint8_t last[512];
+    ASSERT_TRUE(exported->ReadSector(exported->SectorCount() - 1, last));
+    EXPECT_EQ(last[0], 0xEE) << "the export carries the guest's write";
+
+    exported.reset();
+    std::remove(image.c_str());
+    ASSERT_TRUE(manager.Eject("sd.test", {/*force*/ true}).Ok());
+    manager.UnregisterSlot("sd.test");
+}
+
+TEST(MediaManager_Test, Fat32FolderVolumeOnRequest)
+{
+    ScratchFolder folder("media-folder-fat32");
+    folder.File("a.bin", "a");
+    MediaManager manager(nullptr);
+    FakeBlockSlot slot("sd.test");
+    manager.RegisterSlot(slot);
+    MediaSource source;
+    const auto u8 = folder.Path().u8string();
+    source.path = std::string(u8.begin(), u8.end());
+
+    InsertOptions fat32;
+    fat32.fs = FatType::Fat32;
+    ASSERT_TRUE(manager.Insert("sd.test", source, fat32).Ok());
+    EXPECT_EQ(manager.Info("sd.test")->format, "folder-fat32");
+    manager.UnregisterSlot("sd.test");
 }
