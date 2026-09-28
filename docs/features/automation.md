@@ -677,6 +677,6 @@ clients — see [MCP Server](mcp/README.md) and its
 ---
 
 ## See Also
-- [Debugging](debugging.md) - Breakpoint details
+- [Breakpoints & Watchpoints](../emulator/design/control-interfaces/command-interface.md#4-breakpoints--watchpoints) - Breakpoint details
 - [ECI Command Surface](../emulator/design/control-interfaces/) - Full specification
 - [MCP Server](mcp/README.md) - LLM-native smart tools over Streamable HTTP + stdio bridge
