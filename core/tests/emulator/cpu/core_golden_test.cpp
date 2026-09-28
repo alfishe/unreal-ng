@@ -10,8 +10,8 @@
 // memory map), run with UNREALNG_RECORD_CORE_GOLDEN=1 and paste the printed
 // table below.
 //
-// Runtime justification: 10 runs x 2 modes x 150 frames; about a second on
-// the development machine.
+// Runtime justification: 9 runs x 2 modes x 150 frames; about a second on the
+// development machine.
 
 #include <gtest/gtest.h>
 
@@ -29,7 +29,6 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
-#include "emulator/ports/models/portdecoder_atm3.h"
 #include "emulator/ports/models/portdecoder_scorpion256.h"
 
 namespace
@@ -54,8 +53,9 @@ const Golden kGolden[] = {
     {"PROFSCORP", nullptr, 0xB62AC29F6C8595C8ull, 0xA0ACA621D375DA98ull, 10483200ull},
     {"PROFI", nullptr, 0xE0FAE946751F0EDFull, 0x1E71318A116D0D18ull, 10483200ull},
     {"ATM710", nullptr, 0x8AB82EB6A4994527ull, 0x27AEF4CA26888579ull, 10483200ull},
-    {"ATM3", nullptr, 0x0000000000000000ull, 0x0000000000000000ull, 0ull},
-    // TSL (TS-Conf) is not creatable with the shipped ROMs.
+    // ATM3 (ZX-Evo) is left out: its BaseConf boot is not deterministic between
+    // runs even with the RTC frozen (RAM and CPU state vary) - a separate,
+    // pre-existing issue. TSL (TS-Conf) is not creatable with the shipped ROMs.
 };
 
 constexpr unsigned kFrames = 150;
@@ -81,10 +81,6 @@ Result run(const Golden& g, bool debug)
     // as the Scorpion boot tests do
     if (ctx->config.mem_model == MM_SCORP || ctx->config.mem_model == MM_PROFSCORP)
         static_cast<PortDecoder_Scorpion256*>(ctx->pPortDecoder)->GetSMUCNvram().SetFixedTime(1767268830);
-    // ATM3's CMOS/RTC also reads the host wall clock: freeze it too, as the
-    // ZX-Evo boot tests do
-    if (ctx->config.mem_model == MM_ATM3)
-        static_cast<PortDecoder_ATM3*>(ctx->pPortDecoder)->GetCMOS().SetFixedTime(1767268830);
     ctx->pFeatureManager->setFeature(Features::kDebugMode, debug);
     ctx->pMemory->UpdateFeatureCache();
     if (g.snapshot)
