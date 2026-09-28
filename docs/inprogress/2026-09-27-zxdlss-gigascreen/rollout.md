@@ -67,7 +67,32 @@ and P5 alongside P1–P3).
 
 ---
 
-## 3. Phase details
+## 3. Work order (agreed 2026-09-27)
+
+**Main track (A):**
+1. Reference material: full Across the Edge TTD, effect map by frame ranges.
+2. P0a plane B + raw frame + `capture/screen/raw`, `capture/planeb`.
+3. P0e Temporal Effects Manager skeleton, `blend` port with parity test.
+4. P0b clip format, TTD clip extractor, synthetic generator.
+5. P1 minimal slice: in-memory store, coalescing, JSON export.
+6. P2 analyzer observe-only (scalar) → **M1**.
+7. P3 composer + built-in mixers + goldens → **M2**.
+8. P4 SIMD / threads / GPU by `SIMD-CANDIDATE` tags.
+
+**Parallel track (B):** P0c `MachineSnapshot` + completeness tests → P0d
+context role and sinks → P5 look-ahead → P6 → **M3** (+ P7 Game Mode).
+
+**Later track (C):** T0 expression evaluator (can start any time) → T1 → T2 →
+T3 → T4 → P8/P9 → **M4**.
+
+| Milestone | Meaning |
+|---|---|
+| M1 | analyzer on Across the Edge with a class report — validates the model |
+| M2 | smart blending visible in GUI and recordings (experimental) |
+| M3 | no warm-up at effect start; Game Mode run-ahead |
+| M4 | recognized demos play from packs without runtime analysis |
+
+## 4. Phase details
 
 | Phase | Delivers | Feature flag (features.ini) | Default | Exit criteria |
 |---|---|---|---|---|
@@ -94,7 +119,7 @@ and P5 alongside P1–P3).
 
 ---
 
-## 4. Rollout rules
+## 5. Rollout rules
 
 - **Observe before acting.** Each analysis feature ships first in observe-only
   mode (collects metadata, shows overlays, never changes the picture). The
@@ -114,7 +139,7 @@ and P5 alongside P1–P3).
 
 ---
 
-## 5. Where the code goes (proposed)
+## 6. Where the code goes (proposed)
 
 | Component | Location |
 |---|---|
