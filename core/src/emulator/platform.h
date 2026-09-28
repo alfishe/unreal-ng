@@ -658,6 +658,10 @@ struct CONFIG
 		uint8_t mem_swap;
 		uint8_t xt_kbd;
 		uint8_t reserved1;
+		// ZX-Evo BaseConf FPGA variant ([EVO] Fpga=): 0 = current "trdemu" tree
+		// (readback on #xxBD, #13BD virtual-drive mask), 1 = frozen legacy tree
+		// (readback on #xxBE, breakpoint writes on #xxBD)
+		uint8_t evo_legacy_fpga;
 	} atm;
 
 	uint8_t use_comp_pal;
@@ -1057,6 +1061,7 @@ struct EmulatorState
 		};
 	};
 	uint8_t pBE, pBF;
+	uint8_t evoFddMask;  // ZX-Evo #13BD: bit n = drive n emulated in software (trdemu FPGA only)
 
 	uint8_t flags = 0x00; // Stores execution flags
 	uint8_t border_attr;

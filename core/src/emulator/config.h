@@ -131,6 +131,10 @@ public:
 	 */
 	static std::string GetModelFullName(MEM_MODEL model);
 
+	/// [EVO] Fpga= value -> true for the frozen legacy BaseConf tree ("legacy"),
+	/// false for the current "trdemu" tree (also for a missing or unknown value)
+	static bool ParseEvoFpgaVariant(const char* value);
+
 	/**
 	 * @brief Map a model (+ optional RAM size) to its config folder under configs/
 	 * @param model Machine model

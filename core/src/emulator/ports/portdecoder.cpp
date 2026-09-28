@@ -653,8 +653,15 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
             entries.push_back({0x001F, 0x00FF, 0x001F, "Kempston joystick", noShadow, Tags(PortTag::Joystick)});
             entries.push_back({0x00BF, 0x00FF, 0x00BF, "Evo config (shadow, flash write, font write, NMI, breakpoint)", nullptr,
                                Tags(PortTag::System)});
-            entries.push_back({0x00BE, 0x00FF, 0x00BE, "Evo NMI exit / legacy readback (A15..A8 index)", nullptr,
-                               Tags(PortTag::System)});
+            const bool legacyFpga = _context->config.atm.evo_legacy_fpga != 0;
+            entries.push_back({0x00BE, 0x00FF, 0x00BE,
+                               legacyFpga ? "Evo NMI exit (write) / register readback (read, A12..A8 index)"
+                                          : "Evo NMI / virtual-drive exit (write only)",
+                               nullptr, Tags(PortTag::System)});
+            entries.push_back({0x00BD, 0x00FF, 0x00BD,
+                               legacyFpga ? "Evo breakpoint address (write, A8 = high byte)"
+                                          : "Evo register readback (A12..A8 index); #10BD/#11BD breakpoint, #13BD virtual-drive mask",
+                               nullptr, Tags(PortTag::System)});
             entries.push_back({0x00FB, 0x00FF, 0x00FB, "Covox (mono #FB)", nullptr, Tags(PortTag::SoundCovox)});
             break;
         }

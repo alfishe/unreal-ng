@@ -50,10 +50,21 @@ inspect_state {"aspects":["registers","video","fdc"]}
 - `#FFF7` — **memory manager**: four window registers (window chosen by
   A15:A14), so ATM code can remap all four 16K windows, not just 0 and 1.
 - `#EFF7` — extended control (3.5 MHz turbo request, ROCACHE).
-- `ATM3` differences: partial `#FF77` decode (any port with low byte `0x77`,
-  e.g. `#BC77`), an exact `#FF`-only FDC decode (no `#9F/#BF/#DF` aliases),
-  and **CMOS** at data `#BFF7` / address `#DFF7` (or `#BEF7`/`#DEF7` when
-  the `shaden` latch bit 0 is on — the DOS ports then take `#BFF7`).
+- `ATM3` (ZX-Evo BaseConf) differences — every mainboard port decodes the
+  full low byte (BaseConf FPGA rules, `PortDecoder_ATM3::ClassifyPort`):
+  - **shadow** = TR-DOS active or `#BF` bit 0. The FDC (`#1F/#3F/#5F/#7F/#FF`),
+    `#xx77` and the pager (`#xFF7`, `#x7F7`) answer only in shadow; outside it
+    `#1F` is the Kempston joystick and `#xx77` the Z-Controller chip select.
+  - **CMOS** (Gluk clock): data `#BFF7` / address `#DFF7` outside shadow, but
+    only after `OUT (#EFF7),#80`; `#BEF7` / `#DEF7` in shadow (always on).
+    `#EFF7` itself is ignored in shadow and cannot be read.
+  - **Evo registers**: read on `#xxBD` (index = A12..A8: pages, `#7FFD`,
+    `#EFF7`, `#xx77` state, border, breakpoint, `#13BD` virtual-drive mask);
+    `#xxBE` is a write-only exit strobe. `[EVO] Fpga=legacy` switches to the
+    old tree (readback on `#xxBE`) for the older `rom/zxevo.rom` image.
+  - **ROM**: the shipped image is the official `rom/zxevo-fe.rom`; its EVO
+    Reset Service idles in the main menu at PC `#6117` about 60 frames after
+    reset.
 - **Video:** multiple hardware video modes beyond 128K standard — read the
   live one via `inspect_state {"aspects":["video"]}` or
   `GET /state/screen/mode`; turbo shows up as `speed_multiplier` in the

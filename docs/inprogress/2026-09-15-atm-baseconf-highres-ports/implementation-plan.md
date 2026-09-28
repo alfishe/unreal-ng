@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-09-27 |
-| **Status** | In progress: E0 done (2026-09-28). PLAN.md row **#55** |
+| **Status** | In progress: E0 and E1 done (2026-09-28). PLAN.md row **#55** |
 | **Inputs** | [gap-analysis.md](gap-analysis.md) (what is missing), three designs: [tdd-evo-control-and-avr.md](tdd-evo-control-and-avr.md) (**CA**), [tdd-virtual-trdos.md](tdd-virtual-trdos.md) (**VT**), [tdd-storage-sd-ide-cd.md](tdd-storage-sd-ide-cd.md) (**ST**) |
 | **Rule** | Test first. Each phase ends with a green `core-tests` run, zero warnings, and the phase's test IDs passing. Nothing is committed without an explicit request |
 
@@ -36,7 +36,7 @@ exactly as the owning design specifies (the M1 hook, `HostFolderFat`), so nothin
 | Phase | Content | Gaps closed | Tests (design IDs) | Size | Blocked by |
 |---|---|---|---|---|---|
 | **E0** ✅ 2026-09-28 ([e0-decoder-fixes.md](e0-decoder-fixes.md)) | Decoder fixes: exact `#FE/#F6/#FC`; FDC shadow gating + Kempston joystick; Kempston mouse; Covox dispatch (ATM3; ATM710 unchanged); ~~`#xBF7` write protect~~ (moved to E8); `#EFF7` rules (no write in shadow, bit 3 RAM 0, 1 MB `#7FFD` bits, bit 7 Gluk gate); reset at 7 MHz; TTD palette/border/CMOS-latch fields; ROM page count; port-trace name + port-map rows | P-1…P-7, P-9, P-10 | CA DEC-1…DEC-8; CA TTD-E1 (palette part) | M | — |
-| **E1** | `[EVO] Fpga=trdemu\|legacy`; one `#BD`/`#BE` register table with inverted pages and indices `10-13`; `#BE` exit strobe plumbing; `#BF` read layout; official ROM image `data/rom/zxevo-fe.rom` + `ATM3=` default (TSConf keeps the current image, D2); existing real-ROM boot tests re-baselined on the new image | C-1, C-2 (plumbing), C-9, R-1 | CA BD-1, BD-2; boot tests | S–M | E0 |
+| **E1** ✅ 2026-09-28 ([e1-fpga-variant-and-rom.md](e1-fpga-variant-and-rom.md)) | `[EVO] Fpga=trdemu\|legacy`; one `#BD`/`#BE` register table with inverted pages and indices `10-13`; `#BE` exit strobe plumbing; `#BF` read layout; official ROM image `data/rom/zxevo-fe.rom` + `ATM3=` default (TSConf keeps the current image, D2); existing real-ROM boot tests re-baselined on the new image | C-1, C-2 (plumbing), C-9, R-1 | CA BD-1, BD-2; boot tests | S–M | E0 |
 | **E2** | `EvoAvr`: clock, registers A-D, NVRAM file, EEPROM window, extension window (versions, PS/2 buffer, modes); `Ps2Set2Encoder` + key path through the TTD input gateway; `[EVO]` version keys | A-1…A-5, R-2 (EVO part) | CA AVR-1…AVR-6; **ERS-VER-1** (this is the "BaseConf / AVR Boot" indication), ERS-CMOS-1, ERS-KBD-1 | M | E0 (E1 for ERS-VER-2) |
 | **E3** | NMI (INT-synchronized request, `NOP` entry, page `#FF`, 2-M1 exit), breakpoint, Magic button on ATM3; remove the dead `nmi_in_progress` path. Builds or reuses the M1 hook (TSConf technical-design §3.6) | C-3, C-4, P-8 | CA NMI-1…NMI-4 | M | E1; M1 hook |
 | **E4** | Virtual TR-DOS trap (`#13BD`, suppression, swap, exit, `#FF` read, programmed-type DOS rule); legacy latches `#2F-#8F` | ST-5, ST-6 | VT TRD-1…TRD-12; **ERS-RD-1, ERS-RD-2** (RAM disk), ERS-FPGA-1 | M | E1, E3 |

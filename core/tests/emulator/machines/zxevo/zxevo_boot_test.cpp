@@ -1,4 +1,7 @@
-// ZX-Evo (ATM3, 512K BaseConf zxevo.rom) boot regression tests.
+// ZX-Evo (ATM3) boot regression tests on the LEGACY image: the older custom
+// rom/zxevo.rom (TR-DOS 5.04T in pages 0-3, earlier ERS) with [EVO] Fpga=legacy.
+// The shipped default is the official zxevo-fe.rom on the current (trdemu)
+// BaseConf - see zxevo_ers_test.cpp for that pair.
 //
 // Guards three fixes without which the machine never reached the interactive
 // EVO Reset Service shell (it either booted the TSConf ROM0 half with a
@@ -28,10 +31,14 @@
 #include <emulator/emulatormanager.h>
 #include <emulator/io/keyboard/keyboard.h>
 #include <emulator/memory/memory.h>
+#include <emulator/cpu/core.h>
 #include <emulator/cpu/z80.h>
+#include <emulator/memory/rom.h>
 #include <emulator/platform.h>
 #include <emulator/ports/models/portdecoder_atm3.h>
 #include <gtest/gtest.h>
+
+#include <cstring>
 
 #include "_helpers/emulatortesthelper.h"
 #include "pch.h"
@@ -76,6 +83,15 @@ protected:
         EXPECT_NE(emulator, nullptr);
         if (!emulator)
             return emulator;
+
+        // The steady states below belong to the legacy image and the legacy
+        // FPGA it was built for (Evo registers read on #xxBE)
+        EmulatorContext* legacyContext = emulator->GetContext();
+        std::strncpy(legacyContext->config.atm3_rom_path, "rom/zxevo.rom", sizeof(legacyContext->config.atm3_rom_path) - 1);
+        legacyContext->config.atm3_rom_path[sizeof(legacyContext->config.atm3_rom_path) - 1] = '\0';
+        legacyContext->config.atm.evo_legacy_fpga = 1;
+        EXPECT_TRUE(legacyContext->pCore->GetROM()->LoadROM());
+        emulator->Reset();
 
         // Deterministic RTC, same freeze as the Scorpion turbo-detect and SMUC
         // probes: CMOS::ReadCMOS() used to keep its clock state in function-

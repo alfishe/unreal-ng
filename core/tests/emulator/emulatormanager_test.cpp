@@ -9,6 +9,7 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <cstring>
 #include <condition_variable>
 #include <cstring>
 #include <mutex>
@@ -86,13 +87,14 @@ TEST_F(EmulatorManager_Test, CreateEmulatorWithId)
 /// @brief ZX-Evo (MM_ATM3) must boot the BaseConf ROM set, not TSConf.
 ///
 /// Regression: the atm3 model config once carried a ROMSET section mapping
-/// the slots to low pages of zxevo.rom, which put TSConf's TS-BIOS (page 0)
+/// the slots to low pages of the image, which put TSConf's TS-BIOS (page 0)
 /// into the sys slot - the machine booted TSConf firmware on BaseConf
 /// hardware and hung in ZX screen mode with a red border. Correct behavior
 /// (reference unrealspeccy config.cpp, non-ROMSET ATM branch): the whole
-/// 512K image loads raw and the standard set comes from the LAST 4 pages
-/// (sos=28, dos=29 EVO-DOS, 128=30 128_low, sys=31 service ROM), keeping
-/// the FFF7-paged extra ROMs (RAM disk / SD / MAGIC Service, pages 24..27).
+/// 512K image loads raw and the standard set comes from the LAST 4 pages.
+/// The shipped image is the official BaseConf zxevo_fe.rom (pentevo
+/// build_full.bat): sos=28 BASIC48, dos=29 NEO-DOS, 128=30, sys=31 EVO Reset
+/// Service, with the FFF7-paged ERS service pages 22..26 behind them.
 TEST_F(EmulatorManager_Test, CreateZXEvo_BootsBaseConfRomSet)
 {
     // "ZX-Evo" is the FullName; the lookup key is the short name "ATM3"
@@ -103,6 +105,7 @@ TEST_F(EmulatorManager_Test, CreateZXEvo_BootsBaseConfRomSet)
     ASSERT_NE(context, nullptr);
     ASSERT_EQ(context->config.mem_model, MM_ATM3);
     EXPECT_FALSE(context->config.use_romset) << "atm3 config must not use ROMSET";
+    EXPECT_EQ(context->config.atm.evo_legacy_fpga, 0) << "zxevo-fe.rom needs the current (trdemu) BaseConf";
 
     Memory* memory = context->pMemory;
     ASSERT_NE(memory, nullptr);
@@ -113,30 +116,25 @@ TEST_F(EmulatorManager_Test, CreateZXEvo_BootsBaseConfRomSet)
     EXPECT_EQ(memory->base_128_rom, memory->ROMPageHostAddress(30));
     EXPECT_EQ(memory->base_sys_rom, memory->ROMPageHostAddress(31));
 
-    // dos = EVO-DOS (the ZX-Evo's own DOS ROM), not TR-DOS
-    bool evoDos = false;
-    for (size_t i = 0; i + 7 <= PAGE_SIZE; ++i)
-        if (memcmp(memory->base_dos_rom + i, "EVO-DOS", 7) == 0)
-        {
-            evoDos = true;
-            break;
-        }
-    EXPECT_TRUE(evoDos) << "dos slot must be EVO-DOS, not TR-DOS";
+    auto pageContains = [memory](uint16_t page, const char* text) {
+        const uint8_t* data = memory->ROMPageHostAddress(page);
+        const size_t length = strlen(text);
+        for (size_t i = 0; i + length <= PAGE_SIZE; ++i)
+            if (memcmp(data + i, text, length) == 0)
+                return true;
+        return false;
+    };
 
-    // sys must NOT be TSConf TS-BIOS (page 0 of the same image)
+    // dos = NEO-DOS, the TR-DOS 5.03-family ROM the ERS virtual-drive code is built against
+    EXPECT_TRUE(pageContains(29, "NEO-DOS")) << "dos slot must be NEO-DOS";
+
+    // sys must NOT be the custom-ROM slot (page 0 of the same image)
     EXPECT_NE(memcmp(memory->base_sys_rom, memory->ROMPageHostAddress(0), PAGE_SIZE / 16), 0)
-        << "sys slot must be the BaseConf service ROM, not TS-BIOS";
+        << "sys slot must be the EVO Reset Service, not the custom-ROM slot";
 
-    // Whole image loaded: the FFF7-paged extra service ROMs must be present
-    bool magic = false;
-    const uint8_t* page26 = memory->ROMPageHostAddress(26);
-    for (size_t i = 0; i + 13 <= PAGE_SIZE; ++i)
-        if (memcmp(page26 + i, "MAGIC Service", 13) == 0)
-        {
-            magic = true;
-            break;
-        }
-    EXPECT_TRUE(magic) << "extra ROM pages 24..27 must be loaded (ROMSET loads only 4 banks)";
+    // Whole image loaded: the FFF7-paged ERS service pages must be present
+    EXPECT_TRUE(pageContains(22, "EVO Magic Service")) << "ERS RST8 service pages must be loaded (ROMSET loads only 4 banks)";
+    EXPECT_TRUE(pageContains(24, "MAGIC Service"));
 }
 
 /// @brief Tests the full lifecycle of an emulator instance: create, start, pause, resume, stop, remove.

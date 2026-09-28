@@ -124,6 +124,21 @@ bool Config::LoadConfigFile(const std::string& filename)
 	return result;
 }
 
+bool Config::ParseEvoFpgaVariant(const char* value)
+{
+	if (value == nullptr || value[0] == '\0')
+		return false;
+
+	const size_t length = strlen(value);
+	if (length == strlen("legacy") && StringHelper::CompareCaseInsensitive(value, "legacy", length) == 0)
+		return true;
+	if (length == strlen("trdemu") && StringHelper::CompareCaseInsensitive(value, "trdemu", length) == 0)
+		return false;
+
+	LOGWARNING("Config: unknown [EVO] Fpga='%s' - using the current trdemu BaseConf", value);
+	return false;
+}
+
 bool Config::ParseConfig(IniFile& inimanager)
 {
 	bool result = false;
@@ -200,6 +215,9 @@ bool Config::ParseConfig(IniFile& inimanager)
     CopyStringValue(inimanager.GetValue(rom, "ATM1", nullptr), config.atm1_rom_path, sizeof config.atm1_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "ATM2", nullptr), config.atm2_rom_path, sizeof config.atm2_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "ATM3", nullptr), config.atm3_rom_path, sizeof config.atm3_rom_path);
+
+	// EVO section (ZX-Evo BaseConf): FPGA variant the ROM image expects
+	config.atm.evo_legacy_fpga = ParseEvoFpgaVariant(inimanager.GetValue("EVO", "Fpga", nullptr)) ? 1 : 0;
     CopyStringValue(inimanager.GetValue(rom, "SCORP", nullptr), config.scorp_rom_path, sizeof config.scorp_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "PROFROM", nullptr), config.prof_rom_path, sizeof config.prof_rom_path);
     // The shipped spectrum3 unreal.ini carries "rom\\scorp_prof401.ROM:0" - without

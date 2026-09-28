@@ -40,6 +40,7 @@ AtmPagingState TTDAtmPaging::Snapshot() const
         blob.atmPaletteRegs[i] = state.atmPaletteRegs[i];
     }
     blob.atmBorderBright = state.atmBorderBright;
+    blob.evoFddMask = state.evoFddMask;
 
     return blob;
 }
@@ -83,6 +84,7 @@ void TTDAtmPaging::TTDLoadState(const uint8_t* src)
         state.atmPaletteRegs[i] = blob.atmPaletteRegs[i];
     }
     state.atmBorderBright = blob.atmBorderBright;
+    state.evoFddMask = blob.evoFddMask;
 
     // The caller re-runs the paging decode (Memory::UpdateZ80Banks) after every
     // serializer has loaded, so the restored map takes effect there rather than

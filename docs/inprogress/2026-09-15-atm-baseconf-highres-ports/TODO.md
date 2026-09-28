@@ -1,6 +1,6 @@
 # TODO — ZX-Evo BaseConf (`ATM3`) completion
 
-**Status:** analysis and designs done (2026-09-27); phase E0 done (2026-09-28). PLAN.md rows **#55**
+**Status:** analysis and designs done (2026-09-27); phases E0 and E1 done (2026-09-28). PLAN.md rows **#55**
 (this program) and **#53** (small ATM gaps; font RAM moved into #55 phase E8).
 
 The 2026-09-15 hi-res video / `#FF` palette / `EFF7` / `7FFD` lock work is **done** (landed with the
@@ -21,7 +21,7 @@ atm merge `59e37f38`); it was previously the only content of this folder, marked
 ## Remaining (phases of the plan)
 
 - [x] E0 decoder fixes (2026-09-28): `#FE` exact decode, FDC gating, mouse/joystick, Covox, `#EFF7` rules, 1 MB `#7FFD` bits, `#EFF7` RAM 0, 7 MHz reset test, TTD palette/CMOS-latch fields, ROM page count, port map — [e0-decoder-fixes.md](e0-decoder-fixes.md). `#xBF7` write protect moved to E8
-- [ ] E1 FPGA variant switch, `#xxBD` table, official `zxevo_fe.rom`
+- [x] E1 (2026-09-28): `[EVO] Fpga=trdemu|legacy`, `#xxBD` register table, official `zxevo-fe.rom` booting to the ERS menu, `#13BD` probe passing — [e1-fpga-variant-and-rom.md](e1-fpga-variant-and-rom.md)
 - [ ] E2 `EvoAvr` (ERS "Baseconf:" / "AVR Boot:" versions, PS/2 buffer, NVRAM file)
 - [ ] E3 NMI + breakpoint (M1 hook shared with TSConf)
 - [ ] E4 virtual TR-DOS trap (ERS RAM disk and image mounting)

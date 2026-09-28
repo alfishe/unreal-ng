@@ -9,6 +9,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdio>
 #include <fstream>
 #include <string>
 #include <unordered_map>
@@ -198,3 +199,44 @@ TEST_F(Config_Test, ShippedConfigsProduceExpectedTurboSoundKind)
         EXPECT_EQ(_context->config.sound.turboSoundKind, kind) << folder;
     }
 }
+
+/// region <[EVO] Fpga (ZX-Evo BaseConf FPGA variant)>
+
+TEST(ConfigEvoFpga_Test, ParsesVariantNamesCaseInsensitive)
+{
+    EXPECT_TRUE(Config::ParseEvoFpgaVariant("legacy"));
+    EXPECT_TRUE(Config::ParseEvoFpgaVariant("LEGACY"));
+    EXPECT_FALSE(Config::ParseEvoFpgaVariant("trdemu"));
+    EXPECT_FALSE(Config::ParseEvoFpgaVariant("TrDemu"));
+}
+
+TEST(ConfigEvoFpga_Test, MissingOrUnknownMeansCurrentTrdemu)
+{
+    EXPECT_FALSE(Config::ParseEvoFpgaVariant(nullptr));
+    EXPECT_FALSE(Config::ParseEvoFpgaVariant(""));
+    EXPECT_FALSE(Config::ParseEvoFpgaVariant("legacyX")) << "prefix match must not select legacy";
+    EXPECT_FALSE(Config::ParseEvoFpgaVariant("baseconf"));
+}
+
+TEST_F(Config_Test, EvoFpgaKeyReachesConfig)
+{
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("evo_fpga_config_test.ini");
+    {
+        std::ofstream file(path, std::ios::binary);
+        file << "[EVO]\nFpga=legacy\n";
+    }
+    Config config(_context);
+    ASSERT_TRUE(config.LoadConfigFile(path));
+    EXPECT_EQ(_context->config.atm.evo_legacy_fpga, 1);
+
+    {
+        std::ofstream file(path, std::ios::binary | std::ios::trunc);
+        file << "[MISC]\nRamSize=128\n";
+    }
+    ASSERT_TRUE(config.LoadConfigFile(path));
+    EXPECT_EQ(_context->config.atm.evo_legacy_fpga, 0) << "a config without [EVO] selects the current tree";
+
+    std::remove(path.c_str());
+}
+
+/// endregion </[EVO] Fpga>

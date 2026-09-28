@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-09-27 |
-| **Status** | Analysis complete. **E0 done 2026-09-28** ([e0-decoder-fixes.md](e0-decoder-fixes.md)): P-1…P-4, P-6, P-7, P-9, P-10 closed; P-5 moved to E8. Plan: [implementation-plan.md](implementation-plan.md) |
+| **Status** | Analysis complete. **E0 done 2026-09-28** ([e0-decoder-fixes.md](e0-decoder-fixes.md)): P-1…P-4, P-6, P-7, P-9, P-10 closed; P-5 moved to E8. **E1 done 2026-09-28** ([e1-fpga-variant-and-rom.md](e1-fpga-variant-and-rom.md)): C-1, C-9, R-1 closed, C-2 plumbing in place. Plan: [implementation-plan.md](implementation-plan.md) |
 | **Machine** | `MM_ATM3`, short name `ATM3` (ZX Evolution / PentEvo running the NedoPC **Base Configuration**) |
 | **Baseline** | `master` @ `95fce44d` |
 | **Evidence** | [baseconf-hardware-reference.md](baseconf-hardware-reference.md) (FPGA, AVR firmware, ROM; what the board does) · [emulator-feature-matrix.md](emulator-feature-matrix.md) (what 9 other emulators do) · [unreal-ng-atm3-audit.md](unreal-ng-atm3-audit.md) (what we do, with file:line) |
