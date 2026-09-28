@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-09-28 |
-| **Status** | Draft for review (round 1 folded in: no shelf; eject and swap state what happens to unsaved writes). Replaces the surface half of phase M4 ([integration-automation-gui.md](integration-automation-gui.md)) |
+| **Status** | **Implemented** (S1-S7, 2026-09-28, branch `media-manager`); as built: §7. Replaces the surface half of phase M4 ([integration-automation-gui.md](integration-automation-gui.md)). Reference for users: [docs/features/media.md](../../features/media.md) |
 | **Builds on** | M1 (block slots, `sd.zc`) and M2 (floppy slots `fdd.a-d`) as built ([TODO.md](TODO.md)) |
 | **Scope** | How a person or a program sees the machine's drives, picks one, and puts media in and out: the model, the addressing, the operations, and the same behavior on the Qt GUI, WebAPI (+ OpenAPI), CLI, MCP, Lua and Python |
 
@@ -57,7 +57,7 @@ carrying media over a model switch (M5, reuses the detached state defined here);
 |---|---|
 | MC-1 | `list` returns every slot of the machine with: id, kind, label, tags, aliases, removable, the medium (source, format, access), state (empty / present / pending swap), dirty units, write-protect, activity; and the detached media, if any |
 | MC-2 | A slot is named on every surface by a **selector**: id (`fdd.b`), alias (`B`, `b:`, `tape`, `sd`, `hd`, `cd`), kind and index (`floppy:1`), or tag query (`tag:sd+neogs`). A selector that matches no slot or several slots is an error that lists the candidates |
-| MC-3 | `insert` takes a selector or `auto`, a source (file, folder, upload) and options (`access`, `fs`, `codepage`, `free`, `format`, `wp`, `end_recording`, `wait`), plus a disposition for a dirty medium already in the slot. `auto` picks the slot from the source's kind (§3.5) |
+| MC-3 | `insert` takes a selector or `auto`, a source (file, folder, upload) and options (`access`, `fs`, `codepage`, `free`, `format`, `wp`, `end_recording`, `async`), plus a disposition for a dirty medium already in the slot. `auto` picks the slot from the source's kind (§3.5) |
 | MC-4 | `eject` takes a selector and, for a dirty medium, a disposition: `save`, `export <path>` or `discard`. A clean medium just leaves. A dirty one without a disposition is refused with `dirty`, and the message names the three choices. It never touches another slot |
 | MC-5 | `swap` is eject + insert in one call (multi-disk software): `swap A disk2.trd --save` |
 | MC-6 | `save`, `export`, `discard`, `rescan`, `create` (blank), `protect` (the write-protect switch) per slot, with the rules of the technical design (§5) |
@@ -74,7 +74,7 @@ carrying media over a model switch (M5, reuses the detached state defined here);
 |---|---|
 | MC-N1 | **One implementation of the rules.** Selector resolution, option parsing, defaults, result building and error codes live in core (`MediaControl`, §3.8). A surface only converts its input to a `MediaRequest` and the `MediaReply` to its output format |
 | MC-N2 | **Stable names.** Slot ids, aliases, tags, option names and error codes are part of the public API; changing one is a breaking change |
-| MC-N3 | **Thread safety.** Surfaces call from their own threads; the media manager's queue applies changes at the frame boundary (technical design §3). `wait: true` blocks the caller until applied, with a timeout |
+| MC-N3 | **Thread safety.** Surfaces call from their own threads; the media manager's queue applies changes at the frame boundary (technical design §3). Operations are **synchronous** by default: the call returns when the change is applied (bounded by a timeout); `async: true` returns as soon as the request is queued, with `pending: true` |
 | MC-N4 | **Checked parity.** A conformance test drives the same scripted scenario through the core layer, the WebAPI, the CLI, Lua and Python, and compares the replies field by field. An OpenAPI coverage test fails when a `media` route is not in the spec |
 | MC-N5 | **No surprises for people.** Letters mean what users expect on the machine at hand (TR-DOS drives A-D, +3 drives A-B); a letter that the machine does not have is an error, never a silent fallback to A |
 
@@ -232,7 +232,7 @@ field, Python keyword):
 | `export` | path — disposition: write into a new file | — |
 | `discard` | bool — disposition: drop the writes | — |
 | `end_recording` | bool | false: refused while TTD records |
-| `wait` | bool | false: returns when queued; true: returns when applied (timeout 5 s) |
+| `async` | bool | false (**sync**): returns when the change is applied — the medium is in the slot, the swap delay included (timeout 5 s, then `pending: true`); true (**async**): returns when queued, with `pending: true`, and `media.inserted` / `media.ejected` follow. While the emulator is paused or stopped both apply at once |
 | `immediate` | bool | false: the slot's swap delay applies while running |
 
 At most one of `save`, `export`, `discard`; each is ignored for a clean medium. `save` on a medium
@@ -359,8 +359,8 @@ sequenceDiagram
     participant MC as MediaControl
     participant M as MediaManager
     participant E as Emulation thread
-    C->>W: POST /media/B/swap {path: "disk2.trd", save: true, wait: true}
-    W->>MC: MediaRequest{swap, "B", path, {save, wait}}
+    C->>W: POST /media/B/swap {path: "disk2.trd", save: true}
+    W->>MC: MediaRequest{swap, "B", path, {save}} (sync)
     MC->>MC: resolve "B" → fdd.b; parse options
     MC->>M: Eject("fdd.b", {save}) + Insert("fdd.b", source)
     M->>M: disk 1 dirty → saved into disk1.trd
@@ -421,7 +421,7 @@ media swap A "Elite (disk 1).trd" --discard    # disk 2 wrote nothing worth keep
 ### 4.2 An SD card from a host folder on ZX-Evo, from a script
 
 ```python
-emu.media_insert("sd", "~/zx/sdcard/", fs="fat16", access="session", wait=True)
+emu.media_insert("sd", "~/zx/sdcard/", fs="fat16", access="session")   # sync: the card is in on return
 info = emu.media_info("sd")
 print(info["slot"], info["medium"]["format"], info["report"])
 # sd.zc folder-fat16 ['.DS_Store: skipped, service (macos)']
@@ -497,7 +497,7 @@ media eject A --end-recording
 |---|---|
 | A larger public API to keep stable | names fixed in §3.2-§3.4; a golden-reply test per verb |
 | A save that fails half-way through a swap | the disposition runs before anything leaves the slot; a failed save or export returns the error and leaves the slot as it was |
-| `wait: true` blocking a WebAPI worker while the emulator is paused | when not running, the manager applies at once (no wait); with running emulation the wait is bounded (5 s) and returns `pending` on timeout |
+| A sync call blocking a WebAPI worker | when not running, the manager applies at once (nothing to wait for); with running emulation the wait is bounded (5 s: the longest swap delay plus margin) and returns `pending: true` on timeout; clients that must not block use `async: true` |
 | Legacy wrappers changing responses | wrapper tests assert the old JSON bodies byte for byte (MC-11) |
 | Surfaces forgetting a new verb | the conformance test enumerates `MediaControl`'s verbs and fails on a surface without them |
 
@@ -513,6 +513,27 @@ media eject A --end-recording
 | Parked media of a removed add-on are invisible | listed as detached, with save / export / discard |
 
 ---
+
+## 7. As built (2026-09-28)
+
+| Topic | As built | Why |
+|---|---|---|
+| Reply tree | The core's existing `StateNode` (`emulator/state/statenode.h`), not a new value type; `StateNodeToJsonText` (`emulator/state/statenodejson.{h,cpp}`) prints it for the CLI's `--json` and the WebAPI | every surface already converts `StateNode` (Json::Value, sol::table, py::dict) |
+| Core | `MediaControl` (`media/mediacontrol.{h,cpp}`); `SlotDescriptor` tags / aliases / guestName; `Disposition` in `InsertOptions` / `EjectOptions` (replaces `force`); `MediaManager::Detached`, `Revision`, `WaitApplied`, `SetWriteProtect`, `Rescan`; a floppy's `Discard` opens the source again; `MediaErrorHttpStatus`; a media change invalidates a kept TTD session (the `LoadDisk` rule) | §3 |
+| WebAPI | `GET /media`, `GET /media/{slot}` (`/media/formats`), `POST /media/{slot}/{verb}`, multipart upload for insert / swap; `openapi_media.inc` builds the verb and option lists from `MediaControl` at run time | the spec cannot drift from the server |
+| CLI | `media …` with `--option value`, flags, `--json`; `media help` prints the option table from `MediaControl` | |
+| MCP | tool `media`; MCP is a WebAPI client and does not link the core, so it keeps a copy of the action table; `McpSlots_Test` compares it with `MediaControl` | parity by test |
+| Lua | global `media_*` functions acting on the selected emulator (the Lua bindings' style), returning the reply table | |
+| Python | `emu.media_*` methods, options as keywords (`async_` for the keyword `async`), returning the reply dict; errors are results (`ok: False`), not exceptions | one result shape on every surface |
+| Qt | Tools → Media (Ctrl+4), `unreal-qt/src/media/`; GUI requests are async and the table follows `revision`; the disposition dialog; drop a file on a row; the row logic is Qt-free (`media/core/mediapanelmodel`) and tested in `hud-core-tests` | the UI never waits for a swap delay |
+| OpenAPI coverage | 239 / 239 routes; the coverage script reads path literals passed to helpers too; GS port trace documented; five planned profiler paths marked `[Planned]` / `x-planned` | |
+
+Not done, and why:
+- **WebSocket events** (§3.7): the WebAPI WebSocket is a stub for every topic (it echoes; `broadcastEmulatorData` publishes to its own PubSub). Clients poll `revision`; the media events join when the WebSocket gets a real publisher.
+- **`load_software` → `insert auto`**: it also loads snapshots and tapes and uploads local files, which would turn a floppy into an upload (deleted on eject, no save back). It keeps the `/disk` route.
+- **Legacy routes over `MediaControl`** (MC-11): they stay on the `Emulator` wrappers, which sit on the same manager; their answers are unchanged.
+- **Cross-surface conformance test** (MC-N4): `MediaControl` tests, the MCP parity test and live WebAPI / CLI / Lua runs cover it for now; an automated run across the servers needs a WebAPI / CLI harness in `core-tests`.
+- **Qt File menu** "Save Disk" entries still pick the WD1793's selected drive; the panel saves per slot.
 
 ## 6. Conclusions
 
@@ -546,7 +567,9 @@ media eject A --end-recording
 | S7 | Docs and recipes (§6 item 5), conformance test across surfaces | docs link check, conformance test |
 | then M3 | tape slot + `FolderTapeBuilder`: appears on every surface through S1-S7 without surface work | ACC-8 via CLI and WebAPI |
 
-### 6.2 Open point for review
+### 6.2 Decided in review
 
-`wait`: default `false` (proposed; scripts opt in) or `true` for the CLI, where a person expects
-the drive to be ready when the prompt returns?
+- No shelf; eject and swap carry a disposition (`save`, `export`, `discard`) — round 1.
+- Operations are **sync by default on every surface** (the call returns when the medium is in or
+  out of the slot); `async: true` returns at once with `pending: true`. The legacy calls
+  (`LoadDisk`, `/disk/{drive}/insert`) stay immediate as today (they park the emulator) — round 1.

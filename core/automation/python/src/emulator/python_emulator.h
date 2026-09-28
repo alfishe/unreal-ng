@@ -3,6 +3,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <emulator/emulator.h>
+#include <emulator/media/mediacontrol.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/memory/memory.h>
 #include <emulator/memory/memoryaccesstracker.h>
@@ -94,6 +95,33 @@ inline pybind11::object StateNodeToPy(const StateNode& node)
         }
         default: return py::none();
     }
+}
+
+/// One media verb through MediaControl (media-control-design.md): the options
+/// come as keyword arguments, the reply is the dict every surface returns
+/// (ok, error, message, slot, pending, revision, report and the verb's fields)
+inline pybind11::object MediaCallPy(Emulator& self, const std::string& verb, const std::string& slot,
+                                    const std::string& path, const pybind11::kwargs& options)
+{
+    namespace py = pybind11;
+    MediaRequest request;
+    request.verb = verb;
+    request.selector = slot;
+    request.path = path;
+    for (const auto& item : options)
+    {
+        std::string name = py::str(item.first);
+        if (name == "async_")
+            name = "async";  // "async" is a Python keyword: media_eject("A", async_=True)
+        const py::handle value = item.second;
+        if (py::isinstance<py::bool_>(value))
+            request.options[name] = value.cast<bool>() ? "true" : "false";
+        else if (value.is_none())
+            request.options[name] = "";
+        else
+            request.options[name] = py::str(value);
+    }
+    return StateNodeToPy(MediaControl(self.GetContext()).Execute(request).ToValue());
 }
 
 namespace PythonBindings
@@ -625,12 +653,50 @@ namespace PythonBindings
             }, "Get disk image path")
             .def("disk_eject", [](Emulator& self, int drive) -> bool {
                 if (drive < 0 || drive > 3) return false;
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->coreState.diskDrives[drive]) return false;
-                ctx->coreState.diskDrives[drive]->ejectDisk();
-                ctx->coreState.diskFilePaths[drive] = "";
-                return true;
-            }, "Eject disk from drive")
+                return self.EjectDisk(static_cast<uint8_t>(drive), /*force*/ true);
+            }, "Eject disk from drive (the disk is freed; unsaved writes are lost)")
+            // Media: every slot through MediaControl. slot: fdd.b, "B", "b:", "sd", "floppy:1",
+            // "tag:sd+neogs" ("auto" for insert); options as keywords (access="readonly", save=True,
+            // export="x.trd", discard=True, async_=True - "async" is a Python keyword)
+            .def("media", [](Emulator& self, const std::string& verb, const std::string& slot, const std::string& path,
+                             const py::kwargs& options) { return MediaCallPy(self, verb, slot, path, options); },
+                 py::arg("verb"), py::arg("slot") = "", py::arg("path") = "",
+                 "Any media verb: list, info, formats, insert, swap, eject, save, export, discard, rescan, create, protect")
+            .def("media_list", [](Emulator& self) { return MediaCallPy(self, "list", "", "", py::kwargs()); },
+                 "Every media slot and the detached media")
+            .def("media_info", [](Emulator& self, const std::string& slot) { return MediaCallPy(self, "info", slot, "", py::kwargs()); },
+                 py::arg("slot"), "One slot and its medium")
+            .def("media_formats", [](Emulator& self, const py::kwargs& options) { return MediaCallPy(self, "formats", "", "", options); },
+                 "Accepted formats per kind (kind='floppy' to filter)")
+            .def("media_insert", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
+                     return MediaCallPy(self, "insert", slot, path, options);
+                 }, py::arg("slot"), py::arg("path"), "Insert a file or a folder ('auto' picks the slot)")
+            .def("media_swap", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
+                     return MediaCallPy(self, "swap", slot, path, options);
+                 }, py::arg("slot"), py::arg("path"), "Eject + insert in one step (save=True / export=path / discard=True for a dirty medium)")
+            .def("media_eject", [](Emulator& self, const std::string& slot, const py::kwargs& options) {
+                     return MediaCallPy(self, "eject", slot, "", options);
+                 }, py::arg("slot"), "Take the medium out (save=True / export=path / discard=True for a dirty medium)")
+            .def("media_save", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
+                     return MediaCallPy(self, "save", slot, path, options);
+                 }, py::arg("slot"), py::arg("path") = "", "Floppies: write the disk back (or to path)")
+            .def("media_export", [](Emulator& self, const std::string& slot, const std::string& path) {
+                     return MediaCallPy(self, "export", slot, path, py::kwargs());
+                 }, py::arg("slot"), py::arg("path"), "A copy of the medium as it is now")
+            .def("media_discard", [](Emulator& self, const std::string& slot, const py::kwargs& options) {
+                     return MediaCallPy(self, "discard", slot, "", options);
+                 }, py::arg("slot"), "Drop the unsaved writes")
+            .def("media_rescan", [](Emulator& self, const std::string& slot, const py::kwargs& options) {
+                     return MediaCallPy(self, "rescan", slot, "", options);
+                 }, py::arg("slot"), "Build a folder medium again from its folder")
+            .def("media_create", [](Emulator& self, const std::string& slot, const py::kwargs& options) {
+                     return MediaCallPy(self, "create", slot, "", options);
+                 }, py::arg("slot"), "A blank floppy (format, cylinders, sides) or card (size)")
+            .def("media_protect", [](Emulator& self, const std::string& slot, bool on) {
+                     py::kwargs options;
+                     options["on"] = on;
+                     return MediaCallPy(self, "protect", slot, "", options);
+                 }, py::arg("slot"), py::arg("on"), "The slot's write-protect switch")
             .def("disk_create", [](Emulator& self, int drive, int cylinders, int sides, const std::string& format) -> bool {
                 Emulator::BlankDiskFormat parsed = Emulator::BlankDiskFormat::Auto;
                 if (drive < 0 || drive > 3 || !Emulator::ParseBlankDiskFormat(format, parsed)) return false;
@@ -1622,8 +1688,13 @@ namespace PythonBindings
                 else
                     return false;
 
-                return sm->requestGeneralSoundCardSwitch(target);
-            }, "Request a GS card personality swap ('z80'/'lle' or 'lw'/'lightweight'), applied at the next frame boundary",
+                std::string refusal;
+                const bool requested = sm->requestGeneralSoundCardSwitch(target, &refusal);
+                if (!requested && !refusal.empty())
+                    throw std::runtime_error(refusal);  // a TTD recording refuses the switch (FR-4)
+                return requested;
+            }, "Request a GS card personality swap ('z80'/'lle' or 'lw'/'lightweight'), applied at the next frame "
+               "boundary (RuntimeError while TTD records)",
                py::arg("personality"))
             .def("gs_dump_module", [](Emulator& self, const std::string& path) -> py::object {
                 // Diagnostics: write the last completed COM30..D2 upload

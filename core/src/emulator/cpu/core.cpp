@@ -245,6 +245,14 @@ bool Core::Init()
     {
         _upd765 = new UPD765(_context);
         _context->pUPD765 = _upd765;
+
+        // The +3's 3" drives are 40-track mechanics (48 tpi): a +3 disk's
+        // cylinder n is head position n, and the head stops at cylinder 42
+        for (FDD* drive : {_context->coreState.diskDrives[0], _context->coreState.diskDrives[1]})
+        {
+            if (drive)
+                drive->setDriveCylinders(40);
+        }
     }
 
     /// endregion </+3 floppy controller>

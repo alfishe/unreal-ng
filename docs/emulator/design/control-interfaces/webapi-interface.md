@@ -1228,7 +1228,7 @@ All TTD endpoints are scoped under `/api/v1/emulator/{id}/ttd/...` (`{id}` is th
 - States are `idle`, `recording`, `detached` (positioned in history, emulator paused).
 - `seek`, `step-back`, `step-forward`, `step-instruction`, `find-last`, `reverse-step` and `reverse-continue` return **409 Conflict** while recording — call `POST /ttd/stop` first.
 - `start` switches the `timetravel` feature on by itself.
-- While recording, snapshot/tape/disk load (and disk autostart), disk create, `invalidate` and switching `timetravel`/`debugmode` off return **409 Conflict** whose `message` says why and to stop the recording first. On a stopped session those loads, ROM reload, a host speed change and `invalidate` drop the history; a reset stops the recording and keeps it. `GET /ttd/status` → `last_drop_reason` names what dropped the last history.
+- While recording, snapshot/tape/disk load (and disk autostart), disk create, `invalidate`, switching `timetravel`/`debugmode` off and a GS `switch_personality` return **409 Conflict** whose `message` says why and to stop the recording first. On a stopped session those loads, ROM reload, a host speed change and `invalidate` drop the history; a reset stops the recording and keeps it. `GET /ttd/status` → `last_drop_reason` names what dropped the last history.
 - While recording (and through `detached`) the host speed is locked to 1x, turbo mode is off, and fast tape / turbo tape / fast disk read as off.
 
 Positions are always a pair `frame` (absolute frame number) + `tinframe` (offset inside the frame in T-states at the machine's top CPU clock: plain T-states on machines without a hardware turbo; ×2 on Scorpion/ATM Turbo 2+, ×4 on ZX-Evo - see [command-interface.md → Time](./command-interface.md#ttd-session-rules)).

@@ -299,6 +299,10 @@ private:
     void HandleTapeRender(const ClientSession& session, const std::vector<std::string>& args);
     void HandleTapeImport(const ClientSession& session, const std::vector<std::string>& args);
 
+    // Media command handlers (every slot through MediaControl)
+    void HandleMedia(const ClientSession& session, const std::vector<std::string>& args);
+    void ShowMediaHelp(const ClientSession& session);
+
     // Disk control command handlers
     void HandleDisk(const ClientSession& session, const std::vector<std::string>& args);
     void ShowDiskHelp(const ClientSession& session);

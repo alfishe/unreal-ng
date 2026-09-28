@@ -58,6 +58,7 @@ enum class PeripheralId : uint8_t
     NeoGS = 12,           // NeoGS FPGA card (neogs-tdd.md - P2 placeholder, reserved id, not registered yet)
     Plus3Paging = 13,     // +2A/+3 #1FFD latch (ROM high bit, all-RAM modes, motor)
     Upd765 = 14,          // +3 uPD765A floppy controller (drives ride the BetaDisk blob)
+    EvoSdCard = 15,       // ZX-Evo Z-Controller + SD card protocol state (not the card's sectors: storage-manager TTD rule)
     // Future: SAA1099, GS512, etc.
     Count
 };

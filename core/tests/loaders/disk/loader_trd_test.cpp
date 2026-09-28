@@ -324,3 +324,26 @@ TEST_F(LoaderTRD_Test, Format)
 }
 
 /// endregion </Tests>
+
+/// The geometry of a .TRD file comes from its TR-DOS disk type when the file
+/// fits in it (a TRD may end after its last used track); else double-sided
+TEST_F(LoaderTRD_Test, GeometryFromTheDiskType)
+{
+    auto geometry = [](size_t size, uint8_t type) {
+        std::vector<uint8_t> file(size, 0);
+        if (size > 0x8E3)
+            file[0x8E3] = type;
+        uint8_t cylinders = 0;
+        uint8_t sides = 0;
+        LoaderTRD::geometryForFile(file.data(), file.size(), cylinders, sides);
+        return std::make_pair(static_cast<int>(cylinders), static_cast<int>(sides));
+    };
+    EXPECT_EQ(geometry(40 * 4096, 0x19), std::make_pair(40, 1)) << "SS40";
+    EXPECT_EQ(geometry(80 * 4096, 0x18), std::make_pair(80, 1)) << "SS80";
+    EXPECT_EQ(geometry(80 * 4096, 0x17), std::make_pair(40, 2)) << "DS40";
+    EXPECT_EQ(geometry(100 * 1024, 0x16), std::make_pair(80, 2)) << "a DS80 file cut after its last used track";
+    EXPECT_EQ(geometry(655360, 0x16), std::make_pair(80, 2));
+    EXPECT_EQ(geometry(655360, 0x19), std::make_pair(80, 2)) << "a type the file does not fit in is ignored";
+    EXPECT_EQ(geometry(327680, 0x00), std::make_pair(40, 2)) << "no type: 320 KiB is DS40, as before";
+    EXPECT_EQ(geometry(100 * 1024, 0x00), std::make_pair(80, 2)) << "no type: DS80";
+}

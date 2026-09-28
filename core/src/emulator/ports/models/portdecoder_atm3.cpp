@@ -2,7 +2,10 @@
 #include "portdecoder_atm3.h"
 
 #include "common/modulelogger.h"
+#include "debugger/ttd/atm/ttdevosdcard.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "emulator/media/mediaformatregistry.h"
+#include "emulator/media/mediamanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/mouse/mouse.h"
@@ -16,17 +19,22 @@ PortDecoder_ATM3::PortDecoder_ATM3(EmulatorContext* context) : PortDecoder_ATM71
 {
     _zc.SetDevice(&_sdCard);
 
-    // Storage is not in the TTD checkpoints yet (rollout-1 rule of the IDE
-    // design §10.0, tdd-storage-sd-ide-cd.md §5): the first card command of
-    // a recording ends it at the frame boundary, never a silently wrong replay
-    _sdCard.setCommandListener([this](uint8_t) {
-        if (_context->pTimeTravelManager && _context->pTimeTravelManager->IsRecording())
-            _context->pTimeTravelManager->RequestInvalidation("SD card activity: storage is not covered by TTD yet");
+    // TTD: the card's protocol state is in the EvoSdCard blob; a guest write
+    // changes the medium, so it is a replay barrier (the media manager's rule)
+    _sdCard.setWriteListener([this](uint64_t) {
+        if (_context->pMediaManager)
+            _context->pMediaManager->NoteWrite(_sdSlot.Descriptor().id);
     });
+
+    if (_context->pMediaManager)
+        _context->pMediaManager->RegisterSlot(_sdSlot);
 }
 
 PortDecoder_ATM3::~PortDecoder_ATM3()
 {
+    if (_context->pMediaManager)
+        _context->pMediaManager->UnregisterSlot(_sdSlot.Descriptor().id);
+
     if (_context->pCore && _context->pCore->GetZ80() && _context->pCore->GetZ80()->machineM1Hook == this)
         _context->pCore->GetZ80()->machineM1Hook = nullptr;
 
@@ -76,19 +84,10 @@ void PortDecoder_ATM3::reset()
             MLOGINFO("PortDecoder_ATM3: no ZX-Evo NVRAM at '%s' yet, starting blank", nvramPath);
     }
 
-    // The card and its session writes survive a Z80 reset; [ZC] is read once,
-    // at power-on. The controller itself resets (spihub.v: /CS high)
+    // The card and its session writes survive a Z80 reset (the media manager
+    // inserted the configured card before the first one). The controller
+    // itself resets (spihub.v: /CS high)
     _zc.Reset();
-    if (!_sdConfigApplied)
-    {
-        _sdConfigApplied = true;
-        const auto& zc = _context->config.zc;
-        const auto mode = zc.sd_write_mode == 1   ? SdCardSpi::WriteMode::Persist
-                          : zc.sd_write_mode == 2 ? SdCardSpi::WriteMode::Off
-                                                  : SdCardSpi::WriteMode::Session;
-        if (zc.sd_image_path[0] != '\0' && !InsertSdCard(zc.sd_image_path, mode, zc.sd_write_protect != 0))
-            MLOGWARNING("PortDecoder_ATM3: cannot insert the SD card image '%s' ([ZC] SDCardImage)", zc.sd_image_path);
-    }
 }
 
 /// @brief One BaseConf decode arm per I/O cycle
@@ -937,8 +936,34 @@ bool PortDecoder_ATM3::TrdemuFdcAccess(uint8_t fdcPort, bool isWrite, uint8_t va
 
 /// region <SD card>
 
+namespace
+{
+    AccessMode AccessOf(SdCardSpi::WriteMode mode)
+    {
+        switch (mode)
+        {
+            case SdCardSpi::WriteMode::Persist: return AccessMode::WriteThrough;
+            case SdCardSpi::WriteMode::Off: return AccessMode::ReadOnly;
+            default: return AccessMode::Session;
+        }
+    }
+}  // namespace
+
 bool PortDecoder_ATM3::InsertSdCard(const std::string& path, SdCardSpi::WriteMode mode, bool writeProtect)
 {
+    if (MediaManager* manager = _context->pMediaManager)
+    {
+        MediaSource source;
+        source.path = path;
+        InsertOptions options;
+        options.access = AccessOf(mode);
+        options.writeProtect = writeProtect;
+        options.disposition = Disposition::Discard;  // the legacy call always replaced the card
+        const MediaResult result = manager->Insert(_sdSlot.Descriptor().id, source, options);
+        if (!result.Ok())
+            MLOGWARNING("PortDecoder_ATM3: SD card '%s' not inserted: %s", path.c_str(), result.message.c_str());
+        return result.Ok();
+    }
     const bool inserted = _sdCard.open(path, mode);
     _sdWriteProtect = writeProtect;
     UpdateSdStatus();
@@ -947,6 +972,16 @@ bool PortDecoder_ATM3::InsertSdCard(const std::string& path, SdCardSpi::WriteMod
 
 bool PortDecoder_ATM3::InsertSdCard(std::unique_ptr<IBlockDevice> media, SdCardSpi::WriteMode mode, bool writeProtect)
 {
+    if (MediaManager* manager = _context->pMediaManager)
+    {
+        MediaSource source;
+        source.type = MediaSourceType::Blank;
+        InsertOptions options;
+        options.writeProtect = writeProtect;
+        options.disposition = Disposition::Discard;
+        auto medium = MediaFormatRegistry::WrapBlock(source, AccessOf(mode), "memory", std::move(media));
+        return manager->Insert(_sdSlot.Descriptor().id, std::move(medium), options).Ok();
+    }
     const bool inserted = _sdCard.insert(std::move(media), mode);
     _sdWriteProtect = writeProtect;
     UpdateSdStatus();
@@ -955,6 +990,13 @@ bool PortDecoder_ATM3::InsertSdCard(std::unique_ptr<IBlockDevice> media, SdCardS
 
 void PortDecoder_ATM3::EjectSdCard()
 {
+    if (MediaManager* manager = _context->pMediaManager)
+    {
+        EjectOptions options;
+        options.disposition = Disposition::Discard;  // the programmatic eject of tests and automation wrappers
+        manager->Eject(_sdSlot.Descriptor().id, options);
+        return;
+    }
     _sdCard.close();
     UpdateSdStatus();
 }
@@ -964,6 +1006,63 @@ void PortDecoder_ATM3::UpdateSdStatus()
     // AVR register C: b3 card present, b2 write-protected (rtc.c reads the
     // slot's detect and WP switches)
     _cmos.SetSdStatus(_sdCard.present(), _sdCard.present() && _sdWriteProtect);
+}
+
+PortDecoder_ATM3::EvoSdSlot::EvoSdSlot(PortDecoder_ATM3& owner) : _owner(owner)
+{
+    _descriptor.id = "sd.zc";
+    _descriptor.kind = MediaKind::Block;
+    _descriptor.label = "SD card (Z-Controller)";
+    _descriptor.removable = true;
+    _descriptor.swapDelayMs = 500;  // the ERS and NedoOS poll the card and re-initialize it
+    _descriptor.acceptsFolder = true;
+    _descriptor.defaultAccess = AccessMode::Session;
+    _descriptor.defaultFs = FatType::Fat16;
+    _descriptor.hasCardDetect = true;          // AVR register C bit 3
+    _descriptor.hasWriteProtectSwitch = true;  // AVR register C bit 2
+    _descriptor.tags = {"sd", "zcontroller", "primary", "boot"};
+    _descriptor.aliases = {"sd"};
+    _descriptor.guestName = "E: in the ERS and NedoOS (the card's first FAT partition)";
+}
+
+void PortDecoder_ATM3::EvoSdSlot::Attach(Medium& medium)
+{
+    _owner._sdCard.attach(*medium.Block());
+    _owner._sdCard.select(_owner._zc.IsSelected());
+    _owner.UpdateSdStatus();
+}
+
+void PortDecoder_ATM3::EvoSdSlot::Detach()
+{
+    _owner._sdCard.detach();
+    _owner.UpdateSdStatus();
+}
+
+bool PortDecoder_ATM3::EvoSdSlot::IsBusy() const
+{
+    return _owner._sdCard.busy();
+}
+
+void PortDecoder_ATM3::EvoSdSlot::SetWriteProtectSwitch(bool on)
+{
+    _owner._sdWriteProtect = on;
+    _owner.UpdateSdStatus();
+}
+
+std::vector<ttd::PeripheralId> PortDecoder_ATM3::GetTTDModelStateIds() const
+{
+    std::vector<ttd::PeripheralId> ids = PortDecoder_ATM710::GetTTDModelStateIds();
+    ids.push_back(ttd::PeripheralId::EvoSdCard);
+    return ids;
+}
+
+std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_ATM3::CreateTTDSerializers() const
+{
+    auto serializers = PortDecoder_ATM710::CreateTTDSerializers();
+    // The serializer reads and restores the live card; the decoder outlives
+    // every TTD session (the manager goes before the core)
+    serializers.push_back(std::make_unique<ttd::TTDEvoSdCard>(const_cast<PortDecoder_ATM3&>(*this)));
+    return serializers;
 }
 
 /// endregion </SD card>

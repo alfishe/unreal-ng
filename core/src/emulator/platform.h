@@ -56,6 +56,11 @@ constexpr char const* NC_FEATURE_CHANGED = "FEATURE_CHANGED";                   
 constexpr char const* NC_SPEED_CHANGED = "SPEED_CHANGED";                       // Speed multiplier or turbo mode changed (payload: SpeedChangedPayload). Posted from Core after state is committed.
 constexpr char const* NC_DISK_AUTOSTART = "DISK_AUTOSTART";                       // TR-DOS disk autostart outcome or refusal (payload: DiskAutostartPayload). Posted from Emulator::AutostartDisk.
 constexpr char const* NC_FILE_LOADED = "FILE_LOADED";                           // Snapshot / tape / disk file loaded or load failed (payload: FileLoadedPayload). Posted from Emulator after the loader returns.
+constexpr char const* NC_MEDIA_INSERTED = "MEDIA_INSERTED";                     // A medium was attached to a slot (payload: MediaSlotPayload). Posted from MediaManager on the thread that applied it
+constexpr char const* NC_MEDIA_EJECTED = "MEDIA_EJECTED";                       // A medium was detached from a slot (payload: MediaSlotPayload)
+constexpr char const* NC_MEDIA_DIRTY = "MEDIA_DIRTY";                           // A medium got its first unsaved change (payload: MediaSlotPayload); not repeated per write
+constexpr char const* NC_MEDIA_EXPORTED = "MEDIA_EXPORTED";                     // A medium was exported to a file (payload: MediaSlotPayload, _path = target)
+constexpr char const* NC_MEDIA_SAVED = "MEDIA_SAVED";                           // A medium was saved; it now stands for that file (payload: MediaSlotPayload, path = the file)
 constexpr char const* NC_RECORDING_STATE = "RECORDING_STATE";                   // Recording started or stopped (payload: RecordingStatePayload). Posted from RecordingManager.
 constexpr char const* NC_MEMORY_PAGE_CHANGED = "MEMORY_PAGE_CHANGED";           // RAM bank mapping changed (payload: MemoryPagePayload). Posted by Memory on bank switch.
 constexpr char const* NC_ROM_PAGE_CHANGED = "ROM_PAGE_CHANGED";                 // ROM selection changed (payload: ROMPagePayload). Posted by Memory on ROM switch.
@@ -668,19 +673,6 @@ struct CONFIG
 		// empty = kept for the session only
 		char evo_nvram_path[FILENAME_MAX];
 	} atm;
-
-	// Z-Controller SD card slot (ZX-Evo; [ZC] section)
-	struct
-	{
-		// Image file in the slot (SDCardImage=, alias SDCARD); empty = no card
-		char sd_image_path[FILENAME_MAX];
-		// Where guest writes go (SDWrite=): 0 session (kept in memory, the
-		// file untouched), 1 persist (written to the file), 2 off (refused)
-		uint8_t sd_write_mode;
-		// Slot write-protect switch (SDWriteProtect=): reported to software
-		// (ZX-Evo AVR register C bit 2), the card itself does not enforce it
-		uint8_t sd_write_protect;
-	} zc;
 
 	uint8_t use_comp_pal;
 	unsigned pal, num_pals;      // selected palette and total number of pals

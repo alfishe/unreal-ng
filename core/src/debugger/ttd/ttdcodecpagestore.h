@@ -187,6 +187,10 @@ public:
     /// Used by telemetry to compute compression ratio.
     size_t GetLivePayloadBytes() const;
 
+    /// Heap the store holds: slot table, every slot's payload allocation
+    /// (live or on the free list), free list and decode scratch
+    size_t HeapBytes() const;
+
     /// Compression ratio: averageRawBytes / averageCompressedBytes.
     /// Returns 1.0 if no live slots; otherwise kPageSize / mean(payload).
     double GetCompressionRatio() const;

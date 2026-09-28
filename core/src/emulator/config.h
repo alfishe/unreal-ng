@@ -1,4 +1,5 @@
 #pragma once
+#include "emulator/media/mediaconfig.h"
 #include "stdafx.h"
 
 #include "common/inifile.h"
@@ -71,6 +72,10 @@ protected:
 	EmulatorContext* _context;
     std::string _configFilePath;
 
+    // [MEDIA] and the legacy media keys of the loaded config (media manager)
+    std::vector<MediaSetEntry> _mediaSet;
+    std::vector<std::string> _mediaReport;
+
 public:
 	static const char* GetDefaultConfig();
 
@@ -91,6 +96,11 @@ public:
 	/// Load a config from an explicit .ini file path (custom config override)
 	[[nodiscard]] bool LoadConfigFile(const std::string& filename);
 	[[nodiscard]] bool ParseConfig(IniFile& inimanager);
+
+	/// The media set the config states ([MEDIA] + legacy keys), paths resolved
+	/// against the config file's folder; problems in it are in the report
+	const std::vector<MediaSetEntry>& GetMediaSet() const { return _mediaSet; }
+	const std::vector<std::string>& GetMediaReport() const { return _mediaReport; }
 
 	/// Process-wide hook called for every config that loaded and validated
 	/// successfully (model resolved, model timing defaults applied) - the last
@@ -136,9 +146,6 @@ public:
 	/// [EVO] Fpga= value -> true for the frozen legacy BaseConf tree ("legacy"),
 	/// false for the current "trdemu" tree (also for a missing or unknown value)
 	static bool ParseEvoFpgaVariant(const char* value);
-
-	/// [ZC] SDWrite= value -> 0 session (also missing / unknown), 1 persist, 2 off
-	static uint8_t ParseSdWriteMode(const char* value);
 
 	/**
 	 * @brief Map a model (+ optional RAM size) to its config folder under configs/

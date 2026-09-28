@@ -575,3 +575,17 @@ TEST_F(IniFile_Test, ExtremelyLongLineViaLoadFileDoesNotCrash)
 }
 
 /// endregion </Extreme sizes: politely decline, no crash, keep parsing>
+
+/// Sections whose keys are data ([MEDIA] keyed by slot id) are read as a list
+TEST_F(IniFile_Test, SectionEntriesInFirstSeenOrder)
+{
+    IniFile ini;
+    ini.LoadData("[MEDIA]\nsd.zc = ~/zx/sd/ ; a folder\nsd.zc.access = session\nfdd.a = games/elite.trd\n[OTHER]\nx = 1\n");
+    const auto entries = ini.GetSectionEntries("media");
+    ASSERT_EQ(entries.size(), 3u) << "case-insensitive section lookup";
+    EXPECT_EQ(entries[0].first, "sd.zc");
+    EXPECT_EQ(entries[0].second, "~/zx/sd/") << "inline comment stripped";
+    EXPECT_EQ(entries[1].first, "sd.zc.access");
+    EXPECT_EQ(entries[2].second, "games/elite.trd");
+    EXPECT_TRUE(ini.GetSectionEntries("NOPE").empty());
+}

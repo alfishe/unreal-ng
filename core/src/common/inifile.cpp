@@ -265,6 +265,18 @@ std::vector<std::string> IniFile::GetAllSections() const
     return result;
 }
 
+std::vector<std::pair<std::string, std::string>> IniFile::GetSectionEntries(const char* section) const
+{
+    std::vector<std::pair<std::string, std::string>> result;
+    if (const Section* found = FindSection(section))
+    {
+        result.reserve(found->entries.size());
+        for (const Entry& entry : found->entries)
+            result.emplace_back(entry.key, entry.value);
+    }
+    return result;
+}
+
 /// endregion </Lookup>
 
 /// region <Mutation>

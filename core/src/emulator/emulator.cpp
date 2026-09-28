@@ -1,12 +1,8 @@
 #include "emulator.h"
 
-#include <loaders/disk/loader_scl.h>
-#include <loaders/disk/loader_dsk.h>
-#include <loaders/disk/loader_mgt.h>
-#include <loaders/disk/loader_td0.h>
-#include <loaders/disk/loader_fdi.h>
-#include <loaders/disk/loader_udi.h>
-#include <loaders/disk/loader_trd.h>
+#include "emulator/io/fdc/floppydriveslot.h"
+#include "emulator/media/floppyformats.h"
+#include "emulator/media/mediamanager.h"
 #include <loaders/snapshot/loader_z80.h>
 
 #include <chrono>
@@ -25,6 +21,7 @@
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/notifications.h"
+#include "emulator/media/mediamanager.h"
 #include "emulator/io/fdc/diskautostart.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/memory/scorpion/scorpionromwindow.h"
@@ -170,6 +167,10 @@ bool Emulator::Init()
     {
         result = false;
 
+        // Peripherals register their media slots while Core initializes
+        if (_context->pMediaManager == nullptr)
+            _context->pMediaManager = new MediaManager(_context);
+
         _core = new Core(_context);
         if (_core && _core->Init())
         {
@@ -179,6 +180,9 @@ bool Emulator::Init()
 
             _z80 = _core->GetZ80();
             _memory = _core->GetMemory();
+
+            // The drives exist and the disk controllers are known: floppy slots register now
+            _floppySlots = new FloppyDriveSlots(_context);
 
             result = true;
         }
@@ -356,6 +360,15 @@ bool Emulator::Init()
     /// endregion </Sanity checks>
 
 
+    // Configured media go in before the first reset: firmware may boot from them
+    if (result && _context->pMediaManager && _config)
+    {
+        for (const std::string& line : _config->GetMediaReport())
+            MLOGWARNING("Emulator::Init - media config: %s", line.c_str());
+        for (const std::string& line : _context->pMediaManager->ApplyConfiguredMedia(_config->GetMediaSet()))
+            MLOGWARNING("Emulator::Init - media: %s", line.c_str());
+    }
+
     // Reset CPU and set-up all ports / ROM and RAM pages
     if (result)
     {
@@ -470,24 +483,20 @@ void Emulator::ReleaseNoGuard()
     // HDD/CD
     // Tape
     // Floppy
+    // The slots detach their disks before the drives go; the media manager
+    // (deleted after Core) owns and frees the disk images
+    delete _floppySlots;
+    _floppySlots = nullptr;
+
     for (size_t i = 0; i < 4; i++)
     {
         FDD* diskDrive = _context->coreState.diskDrives[i];
-        DiskImage* diskImage = _context->coreState.diskImages[i];
-
         if (diskDrive != nullptr)
         {
             diskDrive->ejectDisk();
             delete diskDrive;
 
             _context->coreState.diskDrives[i] = nullptr;
-        }
-
-        if (diskImage)
-        {
-            delete diskImage;
-
-            _context->coreState.diskImages[i] = nullptr;
         }
     }
 
@@ -499,6 +508,13 @@ void Emulator::ReleaseNoGuard()
     {
         delete _core;
         _core = nullptr;
+    }
+
+    // After Core: its peripherals have unregistered their slots
+    if (_context->pMediaManager != nullptr)
+    {
+        delete _context->pMediaManager;
+        _context->pMediaManager = nullptr;
     }
 
     // Release Config
@@ -787,7 +803,8 @@ Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, u
             NC_DISK_AUTOSTART, new DiskAutostartPayload(_context->emulatorId, text, started, error));
     };
 
-    DiskImage* image = _context->coreState.diskImages[0];
+    FDD* driveA = _context->coreState.diskDrives[0];
+    DiskImage* image = driveA ? driveA->getDiskImage() : nullptr;
     DiskAutostart* autostart = _context->pDiskAutostart;
     if (image == nullptr || autostart == nullptr)
     {
@@ -1698,37 +1715,45 @@ bool Emulator::CreateBlankDisk(uint8_t drive, BlankDiskFormat format, uint8_t cy
     if (drive >= 4)
         return fail("invalid drive index " + std::to_string(static_cast<int>(drive)) + " (valid range: 0-3 / A-D)");
 
-    if (!_context || !_context->coreState.diskDrives[drive])
+    const std::string slotId = FloppyDriveSlot::IdFor(drive);
+    if (!_context || !_context->pMediaManager || !_context->pMediaManager->HasSlot(slotId))
         return fail(std::string("drive ") + static_cast<char>('A' + drive) + " is not present on this machine");
 
-    if (format == BlankDiskFormat::Auto)
-        format = (_context->config.mem_model == MM_PLUS3) ? BlankDiskFormat::Plus3 : BlankDiskFormat::Unformatted;
-
-    const bool plus3 = (format == BlankDiskFormat::Plus3);
-    if (cylinders == 0)
-        cylinders = plus3 ? 40 : 80;
-    if (sides == 0)
-        sides = plus3 ? 1 : 2;
-    if (cylinders != 40 && cylinders != 80)
-        return fail("cylinders must be 40 or 80");
-    if (sides != 1 && sides != 2)
-        return fail("sides must be 1 or 2");
+    BlankFloppySpec spec;
+    spec.format = BlankDiskFormatName(format);
+    spec.cylinders = cylinders;
+    spec.sides = sides;
+    std::unique_ptr<DiskImage> image;
+    const MediaResult built = FloppyFormats::CreateBlank(_context->config.mem_model == MM_PLUS3, spec, image);
+    if (!built.Ok())
+        return fail(built.message);
+    ParseBlankDiskFormat(spec.format, format);
+    cylinders = spec.cylinders;
+    sides = spec.sides;
 
     // TTD: a new medium changes what the FDC reads, like a disk swap. Refused while recording.
     if (!RecordingAllows(*this, ttd::TTDGuardedAction::CreateDisk, error))
         return false;
+
+    MediaSource blank;
+    blank.type = MediaSourceType::Blank;
+    auto medium = std::make_unique<Medium>(blank, AccessMode::Session, BlankDiskFormatName(format), std::move(image));
+
     if (_context->pTimeTravelManager)
         _context->pTimeTravelManager->InvalidateSession("disk-create");
 
-    DiskImage* image = plus3 ? new DiskImage(cylinders, sides, DiskImage::TrackFormatSpec::plus3())
-                             : new DiskImage(cylinders, sides);
-
-    // Owned like a loaded image: the drive's previous image goes
-    DiskImage* oldImage = _context->coreState.diskImages[drive];
-    _context->coreState.diskImages[drive] = image;
-    _context->coreState.diskDrives[drive]->insertDisk(image);
-    _context->coreState.diskFilePaths[drive] = "<blank>";
-    delete oldImage;
+    // The swap happens with the emulator thread parked, at once (no swap delay)
+    const bool wasRunning = !IsPaused();
+    if (wasRunning)
+        Pause();
+    InsertOptions options;
+    options.immediate = true;
+    options.disposition = Disposition::Discard;  // a load always replaced the disk, writes and all
+    const MediaResult inserted = _context->pMediaManager->Insert(slotId, std::move(medium), options);
+    if (wasRunning)
+        Resume();
+    if (!inserted.Ok())
+        return fail(inserted.message);
 
     if (resolved)
     {
@@ -1747,387 +1772,102 @@ bool Emulator::LoadDisk(const std::string& path, uint8_t drive, std::string* err
     auto fail = [&](const std::string& message) -> bool
     {
         if (error)
-        {
             *error = message;
-        }
         MLOGERROR("LoadDisk: %s", message.c_str());
         return false;
     };
 
     // Guard against operations during destruction (thread safety)
     if (_state == StateDestroying || _isReleased)
-    {
         return fail("emulator is being destroyed");
-    }
 
     if (drive >= 4)
-    {
-        return fail("invalid drive index " + std::to_string(static_cast<int>(drive)) +
-                    " (valid range: 0-3 / A-D)");
-    }
+        return fail("invalid drive index " + std::to_string(static_cast<int>(drive)) + " (valid range: 0-3 / A-D)");
 
-    if (!_context || !_context->coreState.diskDrives[drive])
-    {
-        return fail(std::string("drive ") + static_cast<char>('A' + drive) +
-                    " is not present on this machine");
-    }
-
-    bool result = false;
+    const std::string slotId = FloppyDriveSlot::IdFor(drive);
+    if (!_context || !_context->pMediaManager || !_context->pMediaManager->HasSlot(slotId))
+        return fail(std::string("drive ") + static_cast<char>('A' + drive) + " is not present on this machine");
 
     MLOGEMPTY();
-    MLOGINFO("Loading disk image from file: '%s' into drive %c", path.c_str(), static_cast<char>('A' + drive));
+    MLOGINFO("Loading disk image from '%s' into drive %c", path.c_str(), static_cast<char>('A' + drive));
 
-    // Validate and resolve path
-    std::string resolvedPath = FileHelper::AbsolutePath(path);
-
-    // Check file exists
-    if (!FileHelper::FileExists(resolvedPath))
+    const std::string resolvedPath = FileHelper::AbsolutePath(path);
+    const bool folder = FileHelper::IsFolder(resolvedPath);
+    if (!folder && !FileHelper::FileExists(resolvedPath))
     {
-        std::string message = "file not found: '" + path + "'";
-        if (error)
-        {
-            *error = message;
-        }
-        MLOGERROR("LoadDisk() - File not found: '%s'", path.c_str());
-        if (_context)
-        {
-            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            messageCenter.Post(NC_FILE_LOADED,
-                new FileLoadedPayload(_context->emulatorId, "disk", resolvedPath, false));
-        }
-        return false;
+        MessageCenter::DefaultMessageCenter().Post(NC_FILE_LOADED,
+                                                   new FileLoadedPayload(_context->emulatorId, "disk", resolvedPath, false));
+        return fail("file not found: '" + path + "'");
     }
-
-    // Validate extension
-    std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(resolvedPath));
 
     // TTD v1 (P1.6): disk image swap teleports FDC + media state
     // (parent TDD §4.2 + §12.2). Refused while recording; otherwise drop the
     // session before the loader runs.
     if (!RecordingAllows(*this, ttd::TTDGuardedAction::LoadDisk, error))
         return false;
-    if (_context && _context->pTimeTravelManager)
+    if (_context->pTimeTravelManager)
         _context->pTimeTravelManager->InvalidateSession("disk-load");
 
-    // Pause emulator while swapping disk image to prevent data race with emulator thread
-    bool wasRunning = false;
-    if (!IsPaused())
-    {
-        Pause();
-        wasRunning = true;
-    }
+    // The format registry probes and loads; the swap happens with the emulator
+    // thread parked, at once (no swap delay: the caller expects the disk in)
+    MediaSource source;
+    source.type = folder ? MediaSourceType::Folder : MediaSourceType::File;
+    source.path = resolvedPath;
+    InsertOptions options;
+    options.immediate = true;
+    options.disposition = Disposition::Discard;  // a load always replaced the disk, writes and all
 
-    if (ext == "trd")
-    {
-        LoaderTRD loaderTrd(_context, resolvedPath);
-        if (loaderTrd.loadImage())
-        {
-            /// region <Mount new disk image and release previous>
-            DiskImage* oldImage = _context->coreState.diskImages[drive];
-            DiskImage* diskImage = loaderTrd.getImage();
-            _context->coreState.diskImages[drive] = diskImage;
-
-            if (_context->coreState.diskDrives[drive])
-            {
-                _context->coreState.diskDrives[drive]->insertDisk(diskImage);
-            }
-            
-            // Store file path for API queries and for "Save" back to the same file
-            _context->coreState.diskFilePaths[drive] = resolvedPath;
-            diskImage->setFilePath(resolvedPath);
-
-            if (oldImage != nullptr)
-            {
-                delete oldImage;
-            }
-            /// endregion </Mount new disk image and release previous>
-            
-            result = true;  // Successfully loaded TRD disk
-        }
-        else if (error)
-        {
-            *error = loaderTrd.lastWarnings().empty() ? "failed to load TRD image" : loaderTrd.lastWarnings().back();
-        }
-    }
-
-    if (ext == "scl")
-    {
-        LoaderSCL loader(_context, path);
-        if (loader.loadImage())
-        {
-            /// region <Mount new disk image and release previous>
-            DiskImage* oldImage = _context->coreState.diskImages[drive];
-            DiskImage* diskImage = loader.getImage();
-            _context->coreState.diskImages[drive] = diskImage;
-
-            if (_context->coreState.diskDrives[drive])
-            {
-                _context->coreState.diskDrives[drive]->insertDisk(diskImage);
-            }
-            
-            // Store file path for API queries and for "Save" back to the same file
-            _context->coreState.diskFilePaths[drive] = resolvedPath;
-            diskImage->setFilePath(resolvedPath);
-
-            if (oldImage != nullptr)
-            {
-                delete oldImage;
-            }
-            /// endregion </Mount new disk image and release previous>
-            
-            result = true;  // Successfully loaded SCL disk
-        }
-        else if (error)
-        {
-            *error = loader.lastWarnings().empty() ? "failed to load SCL image" : loader.lastWarnings().back();
-        }
-    }
-
-    if (ext == "udi")
-    {
-        LoaderUDI loader(_context, resolvedPath);
-        if (loader.loadImage())
-        {
-            for (const std::string& warning : loader.lastWarnings())
-            {
-                MLOGWARNING("LoadDisk(UDI): %s", warning.c_str());
-            }
-
-            /// region <Mount new disk image and release previous>
-            DiskImage* oldImage = _context->coreState.diskImages[drive];
-            DiskImage* diskImage = loader.getImage();
-            _context->coreState.diskImages[drive] = diskImage;
-
-            if (_context->coreState.diskDrives[drive])
-            {
-                _context->coreState.diskDrives[drive]->insertDisk(diskImage);
-            }
-            
-            // Store file path for API queries and for "Save" back to the same file
-            _context->coreState.diskFilePaths[drive] = resolvedPath;
-            diskImage->setFilePath(resolvedPath);
-
-            if (oldImage != nullptr)
-            {
-                delete oldImage;
-            }
-            /// endregion </Mount new disk image and release previous>
-            
-            result = true;  // Successfully loaded UDI disk
-        }
-        else
-        {
-            for (const std::string& warning : loader.lastWarnings())
-            {
-                MLOGERROR("LoadDisk(UDI): %s", warning.c_str());
-            }
-            if (error)
-            {
-                *error = loader.lastWarnings().empty() ? "failed to load UDI image" : loader.lastWarnings().back();
-            }
-        }
-    }
-
-    if (ext == "fdi")
-    {
-        LoaderFDI loader(_context, resolvedPath);
-        if (loader.loadImage())
-        {
-            for (const std::string& warning : loader.lastWarnings())
-            {
-                MLOGWARNING("LoadDisk(FDI): %s", warning.c_str());
-            }
-
-            /// region <Mount new disk image and release previous>
-            DiskImage* oldImage = _context->coreState.diskImages[drive];
-            DiskImage* diskImage = loader.getImage();
-            _context->coreState.diskImages[drive] = diskImage;
-
-            if (_context->coreState.diskDrives[drive])
-            {
-                _context->coreState.diskDrives[drive]->insertDisk(diskImage);
-            }
-            
-            // Store file path for API queries and for "Save" back to the same file
-            _context->coreState.diskFilePaths[drive] = resolvedPath;
-            diskImage->setFilePath(resolvedPath);
-
-            if (oldImage != nullptr)
-            {
-                delete oldImage;
-            }
-            /// endregion </Mount new disk image and release previous>
-            
-            result = true;  // Successfully loaded FDI disk
-        }
-        else
-        {
-            for (const std::string& warning : loader.lastWarnings())
-            {
-                MLOGERROR("LoadDisk(FDI): %s", warning.c_str());
-            }
-            if (error)
-            {
-                *error = loader.lastWarnings().empty() ? "failed to load FDI image" : loader.lastWarnings().back();
-            }
-        }
-    }
-
-    if (ext == "dsk")
-    {
-        LoaderDSK loader(_context, resolvedPath);
-        if (loader.loadImage())
-        {
-            for (const std::string& warning : loader.lastWarnings())
-            {
-                MLOGWARNING("LoadDisk(DSK): %s", warning.c_str());
-            }
-
-            /// region <Mount new disk image and release previous>
-            DiskImage* oldImage = _context->coreState.diskImages[drive];
-            DiskImage* diskImage = loader.getImage();
-            _context->coreState.diskImages[drive] = diskImage;
-
-            if (_context->coreState.diskDrives[drive])
-            {
-                _context->coreState.diskDrives[drive]->insertDisk(diskImage);
-            }
-            
-            // Store file path for API queries and for "Save" back to the same file
-            _context->coreState.diskFilePaths[drive] = resolvedPath;
-            diskImage->setFilePath(resolvedPath);
-
-            if (oldImage != nullptr)
-            {
-                delete oldImage;
-            }
-            /// endregion </Mount new disk image and release previous>
-            
-            result = true;  // Successfully loaded DSK disk
-        }
-        else
-        {
-            for (const std::string& warning : loader.lastWarnings())
-            {
-                MLOGERROR("LoadDisk(DSK): %s", warning.c_str());
-            }
-            if (error)
-            {
-                *error = loader.lastWarnings().empty() ? "failed to load DSK image" : loader.lastWarnings().back();
-            }
-        }
-    }
-
-    if (ext == "td0")
-    {
-        LoaderTD0 loader(_context, resolvedPath);
-        if (loader.loadImage())
-        {
-            for (const std::string& warning : loader.lastWarnings())
-            {
-                MLOGWARNING("LoadDisk(TD0): %s", warning.c_str());
-            }
-
-            /// region <Mount new disk image and release previous>
-            DiskImage* oldImage = _context->coreState.diskImages[drive];
-            DiskImage* diskImage = loader.getImage();
-            _context->coreState.diskImages[drive] = diskImage;
-
-            if (_context->coreState.diskDrives[drive])
-            {
-                _context->coreState.diskDrives[drive]->insertDisk(diskImage);
-            }
-            
-            // Store file path for API queries and for "Save" back to the same file
-            _context->coreState.diskFilePaths[drive] = resolvedPath;
-            diskImage->setFilePath(resolvedPath);
-
-            if (oldImage != nullptr)
-            {
-                delete oldImage;
-            }
-            /// endregion </Mount new disk image and release previous>
-            
-            result = true;  // Successfully loaded TD0 disk
-        }
-        else
-        {
-            for (const std::string& warning : loader.lastWarnings())
-            {
-                MLOGERROR("LoadDisk(TD0): %s", warning.c_str());
-            }
-            if (error)
-            {
-                *error = loader.lastWarnings().empty() ? "failed to load TD0 image" : loader.lastWarnings().back();
-            }
-        }
-    }
-
-    if (ext == "mgt" || ext == "img")
-    {
-        LoaderMGT loader(_context, resolvedPath);
-        if (loader.loadImage())
-        {
-            for (const std::string& warning : loader.lastWarnings())
-            {
-                MLOGWARNING("LoadDisk(MGT): %s", warning.c_str());
-            }
-
-            /// region <Mount new disk image and release previous>
-            DiskImage* oldImage = _context->coreState.diskImages[drive];
-            DiskImage* diskImage = loader.getImage();
-            _context->coreState.diskImages[drive] = diskImage;
-
-            if (_context->coreState.diskDrives[drive])
-            {
-                _context->coreState.diskDrives[drive]->insertDisk(diskImage);
-            }
-            
-            // Store file path for API queries and for "Save" back to the same file
-            _context->coreState.diskFilePaths[drive] = resolvedPath;
-            diskImage->setFilePath(resolvedPath);
-
-            if (oldImage != nullptr)
-            {
-                delete oldImage;
-            }
-            /// endregion </Mount new disk image and release previous>
-            
-            result = true;  // Successfully loaded MGT/IMG disk
-        }
-        else
-        {
-            for (const std::string& warning : loader.lastWarnings())
-            {
-                MLOGERROR("LoadDisk(MGT): %s", warning.c_str());
-            }
-            if (error)
-            {
-                *error = loader.lastWarnings().empty() ? "failed to load MGT image" : loader.lastWarnings().back();
-            }
-        }
-    }
-
-    if (!result && error && error->empty() && ext != "trd" && ext != "scl" && ext != "udi" && ext != "fdi" &&
-        ext != "dsk" && ext != "td0" && ext != "mgt" && ext != "img")
-    {
-        *error = "unsupported disk image extension '." + ext + "' (supported: .trd .scl .fdi .udi .dsk .td0 .mgt .img)";
-        MLOGERROR("LoadDisk: %s", error->c_str());
-    }
-
+    const bool wasRunning = !IsPaused();
     if (wasRunning)
-    {
+        Pause();
+    const MediaResult inserted = _context->pMediaManager->Insert(slotId, source, options);
+    if (wasRunning)
         Resume();
-    }
 
-    if (_context)
+    for (const std::string& line : inserted.report)
+        MLOGWARNING("LoadDisk: %s", line.c_str());
+
+    MessageCenter::DefaultMessageCenter().Post(NC_FILE_LOADED,
+                                               new FileLoadedPayload(_context->emulatorId, "disk", resolvedPath, inserted.Ok()));
+    if (!inserted.Ok())
+        return fail(inserted.message);
+    return true;
+}
+
+bool Emulator::EjectDisk(uint8_t drive, bool force, std::string* error)
+{
+    auto fail = [&](const std::string& message) -> bool
     {
-        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-        messageCenter.Post(NC_FILE_LOADED,
-            new FileLoadedPayload(_context->emulatorId, "disk", resolvedPath, result));
-    }
+        if (error)
+            *error = message;
+        MLOGERROR("EjectDisk: %s", message.c_str());
+        return false;
+    };
 
-    return result;
+    if (_state == StateDestroying || _isReleased)
+        return fail("emulator is being destroyed");
+    if (drive >= 4)
+        return fail("invalid drive index " + std::to_string(static_cast<int>(drive)) + " (valid range: 0-3 / A-D)");
+
+    const std::string slotId = FloppyDriveSlot::IdFor(drive);
+    if (!_context || !_context->pMediaManager || !_context->pMediaManager->HasSlot(slotId))
+        return fail(std::string("drive ") + static_cast<char>('A' + drive) + " is not present on this machine");
+
+    // A medium leaving is a media set change: refused while a TTD recording
+    // runs (the manager answers "recording"), like a load
+    EjectOptions options;
+    options.disposition = force ? Disposition::Discard : Disposition::None;
+
+    const bool wasRunning = !IsPaused();
+    if (wasRunning)
+        Pause();
+    const MediaResult ejected = _context->pMediaManager->Eject(slotId, options);
+    if (wasRunning)
+        Resume();
+
+    if (!ejected.Ok())
+        return fail(ejected.message);
+    return true;
 }
 
 std::vector<std::string> Emulator::SupportedSnapshotExtensions()
@@ -2142,154 +1882,64 @@ std::vector<std::string> Emulator::SupportedTapeExtensions()
 
 std::vector<std::string> Emulator::SupportedDiskExtensions()
 {
-    return {"trd", "scl", "fdi", "udi", "dsk", "td0", "mgt", "img"};
+    return FloppyFormats::Extensions();
 }
 
 Emulator::DiskSaveResult Emulator::SaveDisk(uint8_t drive, const std::string& path, bool allowRetarget)
 {
     DiskSaveResult result;
 
-    if (drive >= 4 || !_context)
+    if (drive >= 4 || !_context || !_context->pMediaManager)
     {
         result.reason = "Invalid drive";
         return result;
     }
 
-    FDD* fdd = _context->coreState.diskDrives[drive];
-    DiskImage* diskImage = fdd ? fdd->getDiskImage() : nullptr;
-    if (!diskImage)
+    const std::string slotId = FloppyDriveSlot::IdFor(drive);
+    MediaManager& manager = *_context->pMediaManager;
+    const std::optional<SlotInfo> info = manager.Info(slotId);
+    if (!info)
+    {
+        result.reason = "Invalid drive";
+        return result;
+    }
+    if (!info->present)
     {
         result.reason = "No disk image in the drive";
         return result;
     }
 
-    std::string target = path.empty() ? diskImage->getFilePath() : path;
-    if (target.empty())
+    // The format writers walk the image with the emulator thread parked
+    const bool wasRunning = !IsPaused();
+    if (wasRunning)
+        Pause();
+    SaveOptions options;
+    options.path = path;
+    options.allowRetarget = allowRetarget;
+    SaveOutcome outcome;
+    const MediaResult saved = manager.Save(slotId, options, &outcome);
+    if (wasRunning)
+        Resume();
+
+    if (!saved.Ok())
     {
-        target = _context->coreState.diskFilePaths[drive];
-    }
-    if (target.empty())
-    {
-        result.reason = "No file path for the disk image (use Save As)";
+        result.reason = saved.message;
+        MLOGERROR("SaveDisk: %s", result.reason.c_str());
         return result;
     }
 
-    // Pause emulator while the loaders walk the image
-    bool wasRunning = false;
-    if (!IsPaused())
-    {
-        Pause();
-        wasRunning = true;
-    }
+    result.saved = true;
+    result.retargeted = outcome.retargeted;
+    result.savedPath = outcome.savedPath;
+    result.reason = outcome.note;
 
-    std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(target));
-    std::vector<std::string> warnings;
-    bool saved = false;
-
-    if (ext == "udi")
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    if (outcome.retargeted)
     {
-        LoaderUDI loader(_context, target);
-        loader.setImage(diskImage);
-        saved = loader.writeImage();
-        warnings = loader.lastWarnings();
+        MLOGWARNING("SaveDisk: %s - saved losslessly as '%s'", outcome.note.c_str(), outcome.savedPath.c_str());
+        messageCenter.Post(NC_FDD_DISK_SAVE_RETARGETED, new FDDDiskPayload(GetId(), drive, outcome.savedPath, outcome.note), true);
     }
-    else if (ext == "fdi")
-    {
-        LoaderFDI loader(_context, target);
-        loader.setImage(diskImage);
-        saved = loader.writeImage();
-        warnings = loader.lastWarnings();
-    }
-    else if (ext == "dsk")
-    {
-        LoaderDSK loader(_context, target);
-        loader.setImage(diskImage);
-        saved = loader.writeImage();
-        warnings = loader.lastWarnings();
-    }
-    else if (ext == "td0")
-    {
-        LoaderTD0 loader(_context, target);
-        loader.setImage(diskImage);
-        saved = loader.writeImage();
-        warnings = loader.lastWarnings();
-    }
-    else if (ext == "mgt" || ext == "img")
-    {
-        LoaderMGT loader(_context, target);
-        loader.setImage(diskImage);
-        saved = loader.writeImage();
-        warnings = loader.lastWarnings();
-    }
-    else if (ext == "scl")
-    {
-        LoaderSCL loader(_context, target);
-        loader.setImage(diskImage);
-        saved = loader.writeImage();
-        warnings = loader.lastWarnings();
-    }
-    else
-    {
-        LoaderTRD loader(_context, target);
-        loader.setImage(diskImage);
-        saved = loader.writeImage();
-        warnings = loader.lastWarnings();
-    }
-
-    if (saved)
-    {
-        result.saved = true;
-        result.savedPath = target;
-        if (!warnings.empty()) result.reason = warnings[0];
-        _context->coreState.diskFilePaths[drive] = target;
-    }
-    else if (allowRetarget && ext != "udi")
-    {
-        // Strict format refused (non TR-DOS geometry on some track): keep the original untouched, save as UDI
-        std::string reason = warnings.empty() ? "the image no longer fits the original format" : warnings[0];
-        std::string udiPath = target;
-        size_t dot = udiPath.find_last_of('.');
-        size_t slash = udiPath.find_last_of("/\\");
-        if (dot != std::string::npos && (slash == std::string::npos || dot > slash))
-        {
-            udiPath.erase(dot);
-        }
-        udiPath += ".udi";
-
-        LoaderUDI udi(_context, udiPath);
-        udi.setImage(diskImage);
-        if (udi.writeImage())
-        {
-            result.saved = true;
-            result.retargeted = true;
-            result.savedPath = udiPath;
-            result.reason = reason;
-            _context->coreState.diskFilePaths[drive] = udiPath;
-
-            MLOGWARNING("SaveDisk: %s - saved losslessly as '%s'", reason.c_str(), udiPath.c_str());
-            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            messageCenter.Post(NC_FDD_DISK_SAVE_RETARGETED, new FDDDiskPayload(GetId(), drive, udiPath, reason), true);
-        }
-        else
-        {
-            result.reason = udi.lastWarnings().empty() ? reason : udi.lastWarnings()[0];
-        }
-    }
-    else
-    {
-        result.reason = warnings.empty() ? "Save failed" : warnings[0];
-    }
-
-    if (!result.saved)
-    {
-        MLOGERROR("SaveDisk: %s", result.reason.c_str());
-    }
-
-    if (wasRunning)
-    {
-        Resume();
-    }
-
+    messageCenter.Post(NC_FDD_DISK_WRITTEN, new FDDDiskPayload(GetId(), drive, outcome.savedPath), true);
     return result;
 }
 

@@ -788,9 +788,23 @@ void EmulatorAPI::postControlAudioGS(const HttpRequestPtr& req, std::function<vo
         // HTTP thread: request the frame-boundary switch (the synchronous
         // switchGeneralSoundCard deletes/recreates the card and belongs to
         // the emulation thread)
+        std::string refusal;
+        const bool requested = soundManager->requestGeneralSoundCardSwitch(personalityKind, &refusal);
+        if (!requested && !refusal.empty())
+        {
+            // A TTD recording refuses the switch (FR-4): say why
+            Json::Value error;
+            error["error"] = "Conflict";
+            error["message"] = refusal;
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k409Conflict);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
         ret["personality"] = personalityKind == GSTypeKind::LW ? "lw" : "z80";
         ret["current"] = gs->implementation() == GSCardImplementation::LLE ? "z80" : "lw";
-        ret["requested"] = soundManager->requestGeneralSoundCardSwitch(personalityKind);
+        ret["requested"] = requested;
         ret["note"] = "applied at the next frame boundary";
     }
     else if (action == "dump_module")

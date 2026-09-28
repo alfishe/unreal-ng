@@ -63,10 +63,7 @@
 #include "emulator/io/fdc/wd1793.h"
 
 #define signals Q_SIGNALS
-#include "loaders/disk/loader_scl.h"
-#include "loaders/disk/loader_trd.h"
 #include "loaders/disk/loader_fdi.h"
-#include "loaders/disk/loader_udi.h"
 #include "tape/tapeimportaudiodialog.h"  // tape-audio-bridge §7.3
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
@@ -236,6 +233,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     tapeManagerWindow->setBinding(m_binding);
     _dockingManager->addDockableWindow(tapeManagerWindow, Qt::BottomEdge);
 
+    // Media panel (media-control-design.md §3.9): hidden by default, Tools → Media (Ctrl+4)
+    mediaPanelWindow = new MediaPanelWindow();
+    mediaPanelWindow->setBinding(m_binding);
+    _dockingManager->addDockableWindow(mediaPanelWindow, Qt::BottomEdge);
+
     // Create and configure menu system
     _menuManager = new MenuManager(this, ui->menubar, this);
 
@@ -272,6 +274,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::tapeManagerToggled, this, &MainWindow::handleTapeManagerToggled);
     // Keep the menu check state in sync when the window closes via its own close box
     connect(tapeManagerWindow, &TapeManagerWindow::visibilityChanged, _menuManager, &MenuManager::setTapeManagerChecked);
+    connect(_menuManager, &MenuManager::mediaPanelToggled, this, &MainWindow::handleMediaPanelToggled);
+    connect(mediaPanelWindow, &MediaPanelWindow::visibilityChanged, _menuManager, &MenuManager::setMediaPanelChecked);
     connect(_menuManager, &MenuManager::fullScreenToggled, this, &MainWindow::handleFullScreenShortcut);
     connect(_menuManager, &MenuManager::scaleRequested, this, &MainWindow::handleScaleRequested);
     connect(_menuManager, &MenuManager::screenshotRequested, this, &MainWindow::handleScreenshotRequested);
@@ -511,6 +515,13 @@ MainWindow::~MainWindow()
         delete tapeManagerWindow;
     }
 
+    if (mediaPanelWindow != nullptr)
+    {
+        _dockingManager->removeDockableWindow(mediaPanelWindow);
+        mediaPanelWindow->hide();
+        delete mediaPanelWindow;
+    }
+
     if (_screenWrapper != nullptr)
         delete _screenWrapper;
 
@@ -687,6 +698,13 @@ void MainWindow::closeEvent(QCloseEvent* event)
         tapeManagerWindow->hide();
         delete tapeManagerWindow;
         tapeManagerWindow = nullptr;
+    }
+    if (mediaPanelWindow)
+    {
+        _dockingManager->removeDockableWindow(mediaPanelWindow);
+        mediaPanelWindow->hide();
+        delete mediaPanelWindow;
+        mediaPanelWindow = nullptr;
     }
 
     // Shutdown device screen
@@ -2214,16 +2232,15 @@ void MainWindow::saveDiskAsUDIDialog()
     QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
     settings.setValue("LastSaveDirectory", _lastSaveDirectory);
 
-    std::string file = filePath.toStdString();
-    LoaderUDI loader(context, file);
-    loader.setImage(diskImage);
-    if (loader.writeImage())
+    // Through the media manager: the drive's disk now stands for this file
+    Emulator::DiskSaveResult result = _emulator->SaveDisk(drive->getDriveId(), filePath.toStdString(), false);
+    if (result.saved)
     {
         qDebug() << "Disk saved as UDI successfully:" << filePath;
     }
     else
     {
-        QString detail = loader.lastWarnings().empty() ? QString() : "\n" + QString::fromStdString(loader.lastWarnings()[0]);
+        QString detail = result.reason.empty() ? QString() : "\n" + QString::fromStdString(result.reason);
         QMessageBox::warning(this, tr("Save Failed"), tr("Failed to save disk to:\n%1%2").arg(filePath, detail));
     }
 }
@@ -2281,20 +2298,19 @@ void MainWindow::saveDiskAsTRDDialog()
         QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
         settings.setValue("LastSaveDirectory", _lastSaveDirectory);
 
-        // Save using TRD format
-        std::string file = filePath.toStdString();
-        LoaderTRD loader(context, file);
-        loader.setImage(diskImage);
-        bool result = loader.writeImage();
+        // Through the media manager: the drive's disk now stands for this file.
+        // No UDI retarget: the user asked for TRD; a refusal says why
+        Emulator::DiskSaveResult result = _emulator->SaveDisk(drive->getDriveId(), filePath.toStdString(), false);
 
-        if (result)
+        if (result.saved)
         {
             qDebug() << "Disk saved as TRD successfully:" << filePath;
         }
         else
         {
             qDebug() << "Failed to save disk as TRD:" << filePath;
-            QMessageBox::warning(this, tr("Save Failed"), tr("Failed to save disk to:\n%1").arg(filePath));
+            QString detail = result.reason.empty() ? QString() : "\n" + QString::fromStdString(result.reason);
+            QMessageBox::warning(this, tr("Save Failed"), tr("Failed to save disk to:\n%1%2").arg(filePath, detail));
         }
     }
 }
@@ -2353,20 +2369,19 @@ void MainWindow::saveDiskAsSCLDialog()
         QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
         settings.setValue("LastSaveDirectory", _lastSaveDirectory);
 
-        // Save using SCL format
-        std::string file = filePath.toStdString();
-        LoaderSCL loader(context, file);
-        loader.setImage(diskImage);
-        bool result = loader.writeImage();
+        // Through the media manager: the drive's disk now stands for this file.
+        // No UDI retarget: the user asked for SCL; a refusal says why
+        Emulator::DiskSaveResult result = _emulator->SaveDisk(drive->getDriveId(), filePath.toStdString(), false);
 
-        if (result)
+        if (result.saved)
         {
             qDebug() << "Disk saved as SCL successfully:" << filePath;
         }
         else
         {
             qDebug() << "Failed to save disk as SCL:" << filePath;
-            QMessageBox::warning(this, tr("Save Failed"), tr("Failed to save disk to:\n%1").arg(filePath));
+            QString detail = result.reason.empty() ? QString() : "\n" + QString::fromStdString(result.reason);
+            QMessageBox::warning(this, tr("Save Failed"), tr("Failed to save disk to:\n%1%2").arg(filePath, detail));
         }
     }
 }
@@ -2616,6 +2631,12 @@ void MainWindow::handleLogWindowToggled(bool visible)
     {
         logWindow->setVisible(visible);
     }
+}
+
+void MainWindow::handleMediaPanelToggled(bool visible)
+{
+    if (mediaPanelWindow)
+        mediaPanelWindow->setVisible(visible);
 }
 
 void MainWindow::handleTapeManagerToggled(bool visible)

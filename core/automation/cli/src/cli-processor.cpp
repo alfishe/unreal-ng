@@ -192,6 +192,9 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         // Disk control commands
                         {"disk", &CLIProcessor::HandleDisk},
 
+                        // Media: every slot (floppy, SD, later tape / IDE / CD)
+                        {"media", &CLIProcessor::HandleMedia},
+
 
                         // Memory aliases
                         {"mem", &CLIProcessor::HandleMemory},
@@ -656,6 +659,12 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  analyzer disable <name>- Deactivate an analyzer" << NEWLINE;
     oss << "  analyzer status [name] - Show analyzer status" << NEWLINE;
     oss << "  analyzer <name> events - Get captured events" << NEWLINE;
+    oss << NEWLINE;
+    oss << "Media Commands (every slot: floppy drives, SD card, ...):" << NEWLINE;
+    oss << "  media list             - Every slot, its medium and state" << NEWLINE;
+    oss << "  media insert <slot|auto> <path> - Insert a file or folder (A, B, sd, fdd.b, ...)" << NEWLINE;
+    oss << "  media eject <slot> [--save|--export <path>|--discard]" << NEWLINE;
+    oss << "  media help             - All verbs and options" << NEWLINE;
     oss << NEWLINE;
     oss << "Disk Inspection:" << NEWLINE;
     oss << "  disk list              - List all disk drives and status" << NEWLINE;

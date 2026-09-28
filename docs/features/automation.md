@@ -154,7 +154,14 @@ tape import <snd> [--target auto|tzx|tap] [--hysteresis X] -o out.tzx|out.tap
 
 disk insert/eject       # Disk control
 disk catalog            # List TR-DOS directory
+
+# Every slot (floppy drives, SD card, ...): see media.md
+media list              # Slots, media, dirty state
+media insert <slot|auto> <path>   # A file or a folder (A, B, sd, fdd.b, ...)
+media swap <slot> <path> --save   # Eject + insert; a dirty disk needs --save/--export/--discard
 ```
+
+Full media reference (all surfaces): [media.md](media.md).
 
 #### Disk Operations
 ```
@@ -670,6 +677,6 @@ clients — see [MCP Server](mcp/README.md) and its
 ---
 
 ## See Also
-- [Debugging](debugging.md) - Breakpoint details
+- [Breakpoints & Watchpoints](../emulator/design/control-interfaces/command-interface.md#4-breakpoints--watchpoints) - Breakpoint details
 - [ECI Command Surface](../emulator/design/control-interfaces/) - Full specification
 - [MCP Server](mcp/README.md) - LLM-native smart tools over Streamable HTTP + stdio bridge

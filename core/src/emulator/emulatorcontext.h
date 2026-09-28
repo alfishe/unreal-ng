@@ -37,6 +37,7 @@ class RecordingManager;
 class DebugManager;
 class Z80Disassembler;
 class FeatureManager;
+class MediaManager;
 
 // TTD manager lives in the ttd namespace - forward-declare so the context
 // can hold a pointer without pulling the full TTD headers into every consumer.
@@ -166,6 +167,11 @@ public:
     // Time-travel debugging manager (owned by Emulator, lives across the
     // lifetime of the context). May be null on minimal builds without TTD.
     ttd::TimeTravelManager* pTimeTravelManager = nullptr;
+
+    // Media manager: every storage slot and the media in them (owned by
+    // Emulator; created before Core so peripherals can register their slots,
+    // destroyed after Core so they can unregister)
+    MediaManager* pMediaManager = nullptr;
 
     // TTD silent-replay mode flag (parent TDD 8.2 + Appendix C).
     //

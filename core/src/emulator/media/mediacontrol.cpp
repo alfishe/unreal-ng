@@ -1,0 +1,837 @@
+#include "stdafx.h"
+
+#include "mediacontrol.h"
+
+#include <algorithm>
+#include <cctype>
+#include <limits>
+#include <set>
+
+#include "common/filehelper.h"
+#include "emulator/emulator.h"
+#include "emulator/emulatorcontext.h"
+#include "emulator/io/storage/memorydisk.h"
+#include "emulator/media/floppyformats.h"
+#include "emulator/media/mediaformatregistry.h"
+#include "emulator/state/statenodejson.h"
+
+namespace
+{
+    StateNode Strings(const std::vector<std::string>& items)
+    {
+        StateNode array = StateNode::Array();
+        for (const std::string& item : items)
+            array.push(item);
+        return array;
+    }
+
+    std::string Lower(std::string text)
+    {
+        std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return text;
+    }
+
+    std::string Trim(const std::string& text)
+    {
+        const size_t first = text.find_first_not_of(" \t");
+        if (first == std::string::npos)
+            return {};
+        return text.substr(first, text.find_last_not_of(" \t") - first + 1);
+    }
+
+    MediaReply Fail(MediaError error, const std::string& message)
+    {
+        MediaReply reply;
+        reply.result = MediaResult::Fail(error, message);
+        return reply;
+    }
+
+    bool ParseBool(const std::string& text, bool& value)
+    {
+        const std::string v = Lower(Trim(text));
+        if (v.empty() || v == "1" || v == "true" || v == "yes" || v == "on")
+            value = true;
+        else if (v == "0" || v == "false" || v == "no" || v == "off")
+            value = false;
+        else
+            return false;
+        return true;
+    }
+
+    bool ParseUnsigned(const std::string& text, uint64_t& value)
+    {
+        const std::string v = Trim(text);
+        if (v.empty() || !std::all_of(v.begin(), v.end(), [](unsigned char c) { return std::isdigit(c); }))
+            return false;
+        try
+        {
+            value = std::stoull(v);
+        }
+        catch (const std::exception&)
+        {
+            return false;
+        }
+        return true;
+    }
+
+    using Options = std::map<std::string, std::string>;
+
+    /// A flag's value; false when absent. Malformed values fail
+    MediaResult Flag(const Options& options, const char* name, bool& value)
+    {
+        value = false;
+        auto it = options.find(name);
+        if (it == options.end())
+            return MediaResult::Success();
+        if (!ParseBool(it->second, value))
+            return MediaResult::Fail(MediaError::BadRequest,
+                                     std::string("option '") + name + "': expected true or false, got '" + it->second + "'");
+        return MediaResult::Success();
+    }
+
+    const std::vector<std::string> kInsertOptions = {"access", "format", "fs", "codepage", "free", "wp", "kind",
+                                                     "save", "export", "discard", "end_recording", "async", "immediate"};
+
+    /// The parked emulator: a save or export reads the medium while the guest
+    /// cannot write to it (the same thing SaveDisk does)
+    class ParkedEmulator
+    {
+    public:
+        explicit ParkedEmulator(EmulatorContext* context) : _emulator(context ? context->pEmulator : nullptr)
+        {
+            if (_emulator && _emulator->IsRunning() && !_emulator->IsPaused())
+            {
+                _emulator->Pause(false);
+                _emulator->WaitForPauseConfirmation(1000);
+                _parked = true;
+            }
+        }
+        ~ParkedEmulator()
+        {
+            if (_parked)
+                _emulator->Resume(false);
+        }
+        ParkedEmulator(const ParkedEmulator&) = delete;
+        ParkedEmulator& operator=(const ParkedEmulator&) = delete;
+
+    private:
+        Emulator* _emulator = nullptr;
+        bool _parked = false;
+    };
+
+    std::string SlotList(const MediaManager& manager)
+    {
+        std::string list;
+        for (const SlotInfo& info : manager.List())
+        {
+            list += (list.empty() ? "" : ", ") + info.descriptor.id;
+            if (!info.descriptor.aliases.empty())
+            {
+                list += " (";
+                for (size_t i = 0; i < info.descriptor.aliases.size(); i++)
+                    list += (i ? ", " : "") + info.descriptor.aliases[i];
+                list += ")";
+            }
+        }
+        return list.empty() ? "none" : list;
+    }
+
+    bool ParseKind(const std::string& text, MediaKind& kind)
+    {
+        const std::string k = Lower(text);
+        if (k == "floppy")
+            kind = MediaKind::Floppy;
+        else if (k == "tape")
+            kind = MediaKind::Tape;
+        else if (k == "block")
+            kind = MediaKind::Block;
+        else if (k == "optical")
+            kind = MediaKind::Optical;
+        else
+            return false;
+        return true;
+    }
+}  // namespace
+
+/// region <MediaReply>
+
+StateNode MediaReply::ToValue() const
+{
+    StateNode value = StateNode::Object();
+    value["ok"] = result.Ok();
+    if (!result.Ok())
+    {
+        value["error"] = MediaErrorCode(result.error);
+        value["message"] = result.message;
+    }
+    if (!slot.empty())
+        value["slot"] = slot;
+    value["pending"] = pending;
+    value["revision"] = revision;
+    value["report"] = Strings(result.report);
+    for (const auto& [key, field] : body.members)
+        value[key] = field;
+    return value;
+}
+
+std::string MediaReply::ToJson() const
+{
+    return StateNodeToJsonText(ToValue());
+}
+
+/// endregion </MediaReply>
+
+MediaControl::MediaControl(EmulatorContext* context)
+    : _context(context), _manager(context ? context->pMediaManager : nullptr)
+{
+}
+
+const std::vector<std::string>& MediaControl::Verbs()
+{
+    static const std::vector<std::string> verbs = {"list", "info", "formats", "insert", "eject", "swap", "save",
+                                                   "export", "discard", "rescan", "create", "protect"};
+    return verbs;
+}
+
+const std::vector<std::string>& MediaControl::OptionsFor(const std::string& verb)
+{
+    static const std::map<std::string, std::vector<std::string>> options = {
+        {"list", {}},
+        {"info", {}},
+        {"formats", {"kind"}},
+        {"insert", kInsertOptions},
+        {"swap", kInsertOptions},
+        {"eject", {"save", "export", "discard", "end_recording", "async"}},
+        {"save", {"retarget"}},
+        {"export", {}},
+        {"discard", {"async"}},
+        {"rescan", {"async"}},
+        {"create", {"format", "cylinders", "sides", "size", "save", "export", "discard", "end_recording", "async"}},
+        {"protect", {"on"}},
+    };
+    static const std::vector<std::string> none;
+    auto it = options.find(verb);
+    return it == options.end() ? none : it->second;
+}
+
+MediaReply MediaControl::Execute(const MediaRequest& request)
+{
+    if (!_manager)
+        return Fail(MediaError::NotSupported, "this emulator has no media manager");
+    MediaReply reply = Run(request);
+    reply.revision = _manager->Revision();  // on failures too: the client's view stays current
+    return reply;
+}
+
+MediaReply MediaControl::Run(const MediaRequest& request)
+{
+
+    const std::string verb = Lower(Trim(request.verb));
+    const auto& verbs = Verbs();
+    if (std::find(verbs.begin(), verbs.end(), verb) == verbs.end())
+    {
+        std::string known;
+        for (const std::string& v : verbs)
+            known += (known.empty() ? "" : ", ") + v;
+        return Fail(MediaError::BadRequest, "unknown media verb '" + request.verb + "' (verbs: " + known + ")");
+    }
+
+    // Every option name is checked, so a typo fails the same way on every surface
+    const auto& allowed = OptionsFor(verb);
+    for (const auto& [name, value] : request.options)
+    {
+        if (std::find(allowed.begin(), allowed.end(), name) == allowed.end())
+        {
+            std::string list;
+            for (const std::string& a : allowed)
+                list += (list.empty() ? "" : ", ") + a;
+            return Fail(MediaError::BadRequest, "unknown option '" + name + "' for " + verb +
+                                                    (list.empty() ? " (it takes none)" : " (options: " + list + ")"));
+        }
+    }
+
+    MediaReply reply;
+    if (verb == "list")
+        reply = List();
+    else if (verb == "info")
+        reply = Info(request);
+    else if (verb == "formats")
+        reply = Formats(request);
+    else if (verb == "insert")
+        reply = Insert(request, false);
+    else if (verb == "swap")
+        reply = Insert(request, true);
+    else if (verb == "eject")
+        reply = Eject(request);
+    else if (verb == "save")
+        reply = Save(request);
+    else if (verb == "export")
+        reply = Export(request);
+    else if (verb == "discard")
+        reply = Discard(request);
+    else if (verb == "rescan")
+        reply = Rescan(request);
+    else if (verb == "create")
+        reply = Create(request);
+    else
+        reply = Protect(request);
+    return reply;
+}
+
+/// region <Selectors>
+
+MediaResult MediaControl::ResolveSelector(const MediaManager& manager, const std::string& selector, std::string& slotId,
+                                          bool allowDetached)
+{
+    std::string text = Lower(Trim(selector));
+    if (text.size() > 1 && text.back() == ':')
+        text.pop_back();  // "a:" is drive A
+    if (text.empty())
+        return MediaResult::Fail(MediaError::BadRequest, "name a slot (" + SlotList(manager) + ")");
+
+    const std::vector<SlotInfo> slots = manager.List();
+
+    // 1. The id
+    for (const SlotInfo& info : slots)
+    {
+        if (Lower(info.descriptor.id) == text)
+        {
+            slotId = info.descriptor.id;
+            return MediaResult::Success();
+        }
+    }
+    // 2. An alias
+    for (const SlotInfo& info : slots)
+    {
+        for (const std::string& alias : info.descriptor.aliases)
+        {
+            if (Lower(alias) == text)
+            {
+                slotId = info.descriptor.id;
+                return MediaResult::Success();
+            }
+        }
+    }
+    // 3. kind:index
+    const size_t colon = text.find(':');
+    MediaKind kind;
+    uint64_t index = 0;
+    if (colon != std::string::npos && ParseKind(text.substr(0, colon), kind) && ParseUnsigned(text.substr(colon + 1), index))
+    {
+        for (const SlotInfo& info : slots)
+        {
+            if (info.descriptor.kind == kind && info.index == static_cast<int>(index))
+            {
+                slotId = info.descriptor.id;
+                return MediaResult::Success();
+            }
+        }
+    }
+    // 4. tag:a+b - every tag must be there, and one slot must match
+    if (text.rfind("tag:", 0) == 0)
+    {
+        std::vector<std::string> wanted;
+        std::string rest = text.substr(4);
+        size_t start = 0;
+        while (start <= rest.size())
+        {
+            const size_t plus = rest.find('+', start);
+            const std::string tag = rest.substr(start, plus == std::string::npos ? std::string::npos : plus - start);
+            if (!tag.empty())
+                wanted.push_back(tag);
+            if (plus == std::string::npos)
+                break;
+            start = plus + 1;
+        }
+        std::vector<std::string> matches;
+        for (const SlotInfo& info : slots)
+        {
+            const bool all = std::all_of(wanted.begin(), wanted.end(), [&info](const std::string& tag) {
+                return std::find(info.tags.begin(), info.tags.end(), tag) != info.tags.end();
+            });
+            if (all && !wanted.empty())
+                matches.push_back(info.descriptor.id);
+        }
+        if (matches.size() == 1)
+        {
+            slotId = matches.front();
+            return MediaResult::Success();
+        }
+        if (matches.size() > 1)
+        {
+            std::string list;
+            for (const std::string& m : matches)
+                list += (list.empty() ? "" : ", ") + m;
+            return MediaResult::Fail(MediaError::AmbiguousSlot, selector + " matches " + list + ": name one");
+        }
+    }
+    // A detached medium's former slot
+    if (allowDetached)
+    {
+        for (const SlotInfo& info : manager.Detached())
+        {
+            if (Lower(info.descriptor.id) == text)
+            {
+                slotId = info.descriptor.id;
+                return MediaResult::Success();
+            }
+        }
+    }
+    return MediaResult::Fail(MediaError::UnknownSlot,
+                             "no slot '" + Trim(selector) + "' on this machine (slots: " + SlotList(manager) + ")");
+}
+
+/// endregion </Selectors>
+
+StateNode MediaControl::SlotValue(const SlotInfo& info)
+{
+    const SlotDescriptor& d = info.descriptor;
+    StateNode slot = StateNode::Object();
+    slot["id"] = d.id;
+    slot["kind"] = MediaKindName(d.kind);
+    if (!info.detached)
+    {
+        slot["label"] = d.label;
+        slot["index"] = info.index;
+        slot["aliases"] = Strings(d.aliases);
+        slot["removable"] = d.removable;
+        slot["acceptsFolder"] = d.acceptsFolder;
+        slot["writeProtect"] = info.writeProtect;
+        if (!d.guestName.empty())
+            slot["guestName"] = d.guestName;
+    }
+    slot["tags"] = Strings(info.tags);
+    slot["detached"] = info.detached;
+    slot["state"] = info.detached ? "detached" : info.pending ? "pending" : info.present ? "present" : "empty";
+
+    if (info.present || info.detached)
+    {
+        StateNode medium = StateNode::Object();
+        medium["source"] = info.source;
+        medium["format"] = info.format;
+        medium["access"] = AccessModeName(info.access);
+        medium["dirty"] = info.dirty;
+        medium["dirtyUnits"] = info.changedUnits;
+        medium["changes"] = info.changes;
+        slot["medium"] = medium;
+    }
+    else
+    {
+        slot["medium"] = StateNode();
+    }
+    return slot;
+}
+
+/// region <Verbs>
+
+MediaReply MediaControl::List()
+{
+    MediaReply reply;
+    StateNode slots = StateNode::Array();
+    for (const SlotInfo& info : _manager->List())
+        slots.push(SlotValue(info));
+    StateNode detached = StateNode::Array();
+    for (const SlotInfo& info : _manager->Detached())
+        detached.push(SlotValue(info));
+    reply.body["slots"] = slots;
+    reply.body["detached"] = detached;
+    return reply;
+}
+
+MediaReply MediaControl::Info(const MediaRequest& request)
+{
+    MediaReply reply;
+    reply.result = ResolveSelector(*_manager, request.selector, reply.slot, /*allowDetached*/ true);
+    if (!reply.result.Ok())
+        return reply;
+
+    if (auto info = _manager->Info(reply.slot))
+    {
+        reply.body["info"] = SlotValue(*info);
+        reply.pending = info->pending;
+        if (Medium* medium = _manager->GetMedium(reply.slot))
+            reply.result.report = medium->Report();  // skipped folder entries, format notes
+        return reply;
+    }
+    for (const SlotInfo& info : _manager->Detached())
+    {
+        if (info.descriptor.id == reply.slot)
+            reply.body["info"] = SlotValue(info);
+    }
+    return reply;
+}
+
+MediaReply MediaControl::Formats(const MediaRequest& request)
+{
+    MediaReply reply;
+    StateNode formats = StateNode::Object();
+    auto it = request.options.find("kind");
+    std::vector<MediaKind> kinds = {MediaKind::Floppy, MediaKind::Tape, MediaKind::Block, MediaKind::Optical};
+    if (it != request.options.end())
+    {
+        MediaKind kind;
+        if (!ParseKind(it->second, kind))
+            return Fail(MediaError::BadRequest, "kind '" + it->second + "': expected floppy, tape, block or optical");
+        kinds = {kind};
+    }
+    for (MediaKind kind : kinds)
+        formats[MediaKindName(kind)] = Strings(MediaFormatRegistry::Extensions(kind));
+    reply.body["formats"] = formats;
+    return reply;
+}
+
+MediaResult MediaControl::ChooseSlot(const std::string& path, const Options& options, std::string& slotId)
+{
+    const std::vector<SlotInfo> slots = _manager->List();
+    auto hasKind = [&slots](MediaKind kind) {
+        return std::any_of(slots.begin(), slots.end(), [kind](const SlotInfo& s) { return s.descriptor.kind == kind; });
+    };
+
+    MediaKind kind = MediaKind::Block;
+    if (auto hint = options.find("kind"); hint != options.end())
+    {
+        if (!ParseKind(hint->second, kind))
+            return MediaResult::Fail(MediaError::BadRequest, "kind '" + hint->second + "': expected floppy, tape, block or optical");
+    }
+    else if (FileHelper::IsFolder(path))
+    {
+        kind = hasKind(MediaKind::Floppy) ? MediaKind::Floppy : MediaKind::Block;
+    }
+    else if (!FloppyFormats::Probe(path).empty())
+    {
+        kind = MediaKind::Floppy;
+    }
+    else
+    {
+        const std::string ext = Lower(FileHelper::GetFileExtension(path));
+        const auto block = MediaFormatRegistry::Extensions(MediaKind::Block);
+        if (std::find(block.begin(), block.end(), ext) == block.end())
+            return MediaResult::Fail(MediaError::UnknownFormat,
+                                     "'" + path + "' is no medium this emulator knows: name the slot, or say kind=floppy|block");
+    }
+
+    // The first empty slot of that kind; else the default one: the slot
+    // tagged "primary", else the first of the kind
+    const SlotInfo* fallback = nullptr;
+    for (const SlotInfo& info : slots)
+    {
+        if (info.descriptor.kind != kind)
+            continue;
+        if (!info.present && !info.pending)
+        {
+            slotId = info.descriptor.id;
+            return MediaResult::Success();
+        }
+        const bool primary = std::find(info.tags.begin(), info.tags.end(), "primary") != info.tags.end();
+        if (!fallback || primary)
+            fallback = fallback && !primary ? fallback : &info;
+    }
+    if (!fallback)
+        return MediaResult::Fail(MediaError::KindMismatch,
+                                 std::string("no slot on this machine takes ") + MediaKindName(kind) + " media");
+    slotId = fallback->descriptor.id;
+    return MediaResult::Success();
+}
+
+MediaResult MediaControl::ApplyDisposition(const std::string& slotId, const Options& options, Disposition& remaining)
+{
+    remaining = Disposition::None;
+    bool save = false;
+    bool discard = false;
+    if (MediaResult r = Flag(options, "save", save); !r.Ok())
+        return r;
+    if (MediaResult r = Flag(options, "discard", discard); !r.Ok())
+        return r;
+    auto exportIt = options.find("export");
+    const bool exportTo = exportIt != options.end();
+    if (static_cast<int>(save) + static_cast<int>(discard) + static_cast<int>(exportTo) > 1)
+        return MediaResult::Fail(MediaError::BadRequest, "say one of save, export or discard");
+    if (exportTo && Trim(exportIt->second).empty())
+        return MediaResult::Fail(MediaError::BadRequest, "export needs a path");
+
+    const auto info = _manager->Info(slotId);
+    if (!info || !info->present || !info->dirty)
+        return MediaResult::Success();  // nothing to decide about
+
+    if (discard)
+    {
+        remaining = Disposition::Discard;
+        return MediaResult::Success();
+    }
+    if (save || exportTo)
+    {
+        // Written with the guest parked; the slot then holds a clean medium (save)
+        // or a copy exists (export), so the swap itself may drop the writes
+        ParkedEmulator parked(_context);
+        const MediaResult written = save ? _manager->Save(slotId) : _manager->Export(slotId, Trim(exportIt->second));
+        if (!written.Ok())
+            return written;
+        remaining = Disposition::Discard;
+    }
+    return MediaResult::Success();
+}
+
+void MediaControl::Finish(MediaReply& reply, const Options& options)
+{
+    if (!reply.result.Ok())
+        return;
+    bool async = false;
+    if (MediaResult r = Flag(options, "async", async); !r.Ok())
+    {
+        reply.result = r;
+        return;
+    }
+    if (async)
+    {
+        const auto info = _manager->Info(reply.slot);
+        reply.pending = info && info->pending;
+        return;
+    }
+    reply.pending = !_manager->WaitApplied(reply.slot, kSyncTimeoutMs);
+}
+
+MediaReply MediaControl::Insert(const MediaRequest& request, bool swap)
+{
+    MediaReply reply;
+    const std::string path = Trim(request.path);
+    if (path.empty())
+        return Fail(MediaError::BadRequest, std::string(swap ? "swap" : "insert") + " needs a path (a file or a folder)");
+
+    if (!swap && Lower(Trim(request.selector)) == "auto")
+        reply.result = ChooseSlot(path, request.options, reply.slot);
+    else
+        reply.result = ResolveSelector(*_manager, request.selector, reply.slot);
+    if (!reply.result.Ok())
+        return reply;
+
+    // Options
+    InsertOptions options;
+    const Options& o = request.options;
+    if (auto it = o.find("access"); it != o.end())
+    {
+        AccessMode access;
+        if (!ParseAccessMode(Trim(it->second), access))
+            return Fail(MediaError::BadRequest, "access '" + it->second + "': expected readonly, session or writethrough");
+        options.access = access;
+    }
+    if (auto it = o.find("fs"); it != o.end())
+    {
+        const std::string fs = Lower(Trim(it->second));
+        if (fs != "fat16" && fs != "fat32")
+            return Fail(MediaError::BadRequest, "fs '" + it->second + "': expected fat16 or fat32");
+        options.fs = fs == "fat32" ? FatType::Fat32 : FatType::Fat16;
+    }
+    if (auto it = o.find("codepage"); it != o.end())
+    {
+        CodePage page;
+        if (!UnicodeHelper::ParseCodePage(Trim(it->second), page))
+            return Fail(MediaError::BadRequest, "codepage '" + it->second + "': expected cp866 or cp1251");
+        options.codePage = page;
+    }
+    if (auto it = o.find("free"); it != o.end())
+    {
+        uint64_t bytes = 0;
+        if (!ParseUnsigned(it->second, bytes))
+            return Fail(MediaError::BadRequest, "free '" + it->second + "': expected a number of bytes");
+        options.freeBytes = bytes;
+    }
+    bool flag = false;
+    if (MediaResult r = Flag(o, "wp", flag); !r.Ok())
+        return Fail(r.error, r.message);
+    options.writeProtect = flag;
+    if (MediaResult r = Flag(o, "end_recording", flag); !r.Ok())
+        return Fail(r.error, r.message);
+    options.endRecording = flag;
+    if (MediaResult r = Flag(o, "immediate", flag); !r.Ok())
+        return Fail(r.error, r.message);
+    options.immediate = flag;
+
+    MediaSource source;
+    source.path = path;
+    source.type = request.upload ? MediaSourceType::Upload
+                                 : FileHelper::IsFolder(path) ? MediaSourceType::Folder : MediaSourceType::File;
+    if (auto it = o.find("format"); it != o.end())
+        source.formatHint = Lower(Trim(it->second));
+
+    if (MediaResult r = ApplyDisposition(reply.slot, o, options.disposition); !r.Ok())
+    {
+        reply.result = r;
+        return reply;
+    }
+    reply.result = _manager->Insert(reply.slot, source, options);
+    Finish(reply, o);
+    return reply;
+}
+
+MediaReply MediaControl::Eject(const MediaRequest& request)
+{
+    MediaReply reply;
+    reply.result = ResolveSelector(*_manager, request.selector, reply.slot);
+    if (!reply.result.Ok())
+        return reply;
+
+    EjectOptions options;
+    bool end = false;
+    if (MediaResult r = Flag(request.options, "end_recording", end); !r.Ok())
+        return Fail(r.error, r.message);
+    options.endRecording = end;
+    if (MediaResult r = ApplyDisposition(reply.slot, request.options, options.disposition); !r.Ok())
+    {
+        reply.result = r;
+        return reply;
+    }
+    reply.result = _manager->Eject(reply.slot, options);
+    Finish(reply, request.options);
+    return reply;
+}
+
+MediaReply MediaControl::Save(const MediaRequest& request)
+{
+    MediaReply reply;
+    reply.result = ResolveSelector(*_manager, request.selector, reply.slot, /*allowDetached*/ true);
+    if (!reply.result.Ok())
+        return reply;
+
+    SaveOptions options;
+    options.path = Trim(request.path);
+    auto it = request.options.find("retarget");
+    if (it != request.options.end() && !ParseBool(it->second, options.allowRetarget))
+        return Fail(MediaError::BadRequest, "retarget '" + it->second + "': expected true or false");
+
+    SaveOutcome outcome;
+    {
+        ParkedEmulator parked(_context);
+        reply.result = _manager->Save(reply.slot, options, &outcome);
+    }
+    if (reply.result.Ok())
+    {
+        reply.body["savedPath"] = outcome.savedPath;
+        reply.body["retargeted"] = outcome.retargeted;
+    }
+    return reply;
+}
+
+MediaReply MediaControl::Export(const MediaRequest& request)
+{
+    MediaReply reply;
+    reply.result = ResolveSelector(*_manager, request.selector, reply.slot, /*allowDetached*/ true);
+    if (!reply.result.Ok())
+        return reply;
+    const std::string path = Trim(request.path);
+    if (path.empty())
+        return Fail(MediaError::BadRequest, "export needs a path");
+
+    ParkedEmulator parked(_context);
+    reply.result = _manager->Export(reply.slot, path);
+    if (reply.result.Ok())
+        reply.body["exportedPath"] = path;
+    return reply;
+}
+
+MediaReply MediaControl::Discard(const MediaRequest& request)
+{
+    MediaReply reply;
+    reply.result = ResolveSelector(*_manager, request.selector, reply.slot, /*allowDetached*/ true);
+    if (!reply.result.Ok())
+        return reply;
+    reply.result = _manager->Discard(reply.slot);
+    Finish(reply, request.options);
+    return reply;
+}
+
+MediaReply MediaControl::Rescan(const MediaRequest& request)
+{
+    MediaReply reply;
+    reply.result = ResolveSelector(*_manager, request.selector, reply.slot);
+    if (!reply.result.Ok())
+        return reply;
+    reply.result = _manager->Rescan(reply.slot);
+    Finish(reply, request.options);
+    return reply;
+}
+
+MediaReply MediaControl::Create(const MediaRequest& request)
+{
+    MediaReply reply;
+    reply.result = ResolveSelector(*_manager, request.selector, reply.slot);
+    if (!reply.result.Ok())
+        return reply;
+    const auto info = _manager->Info(reply.slot);
+    const Options& o = request.options;
+
+    MediaSource blank;
+    blank.type = MediaSourceType::Blank;
+    std::unique_ptr<Medium> medium;
+    if (info->descriptor.kind == MediaKind::Floppy)
+    {
+        BlankFloppySpec spec;
+        if (auto it = o.find("format"); it != o.end())
+            spec.format = Trim(it->second);
+        uint64_t number = 0;
+        if (auto it = o.find("cylinders"); it != o.end())
+        {
+            if (!ParseUnsigned(it->second, number) || number > 255)
+                return Fail(MediaError::BadRequest, "cylinders '" + it->second + "': expected 40 or 80");
+            spec.cylinders = static_cast<uint8_t>(number);
+        }
+        if (auto it = o.find("sides"); it != o.end())
+        {
+            if (!ParseUnsigned(it->second, number) || number > 255)
+                return Fail(MediaError::BadRequest, "sides '" + it->second + "': expected 1 or 2");
+            spec.sides = static_cast<uint8_t>(number);
+        }
+        std::unique_ptr<DiskImage> disk;
+        const bool plus3 = _context && _context->config.mem_model == MM_PLUS3;
+        if (MediaResult built = FloppyFormats::CreateBlank(plus3, spec, disk); !built.Ok())
+            return Fail(built.error, built.message);
+        medium = std::make_unique<Medium>(blank, AccessMode::Session, spec.format, std::move(disk));
+        reply.body["format"] = spec.format;
+        reply.body["cylinders"] = static_cast<int>(spec.cylinders);
+        reply.body["sides"] = static_cast<int>(spec.sides);
+    }
+    else if (info->descriptor.kind == MediaKind::Block)
+    {
+        // A blank card / disk lives in memory: keep it to what memory holds
+        constexpr uint64_t kMaxBlankBytes = 2ull * 1024 * 1024 * 1024;
+        uint64_t bytes = 0;
+        auto it = o.find("size");
+        if (it == o.end() || !ParseUnsigned(it->second, bytes) || bytes == 0 || bytes % 512 != 0 || bytes > kMaxBlankBytes)
+            return Fail(MediaError::BadRequest, "create on a block slot needs size: bytes, a multiple of 512, up to 2 GiB");
+        medium = MediaFormatRegistry::WrapBlock(blank, AccessMode::Session, "blank", std::make_unique<MemoryDisk>(bytes / 512));
+        reply.body["size"] = bytes;
+    }
+    else
+    {
+        return Fail(MediaError::NotSupported, std::string("no blank ") + MediaKindName(info->descriptor.kind) + " media yet");
+    }
+
+    InsertOptions options;
+    bool end = false;
+    if (MediaResult r = Flag(o, "end_recording", end); !r.Ok())
+        return Fail(r.error, r.message);
+    options.endRecording = end;
+    if (MediaResult r = ApplyDisposition(reply.slot, o, options.disposition); !r.Ok())
+    {
+        reply.result = r;
+        return reply;
+    }
+    reply.result = _manager->Insert(reply.slot, std::move(medium), options);
+    Finish(reply, o);
+    return reply;
+}
+
+MediaReply MediaControl::Protect(const MediaRequest& request)
+{
+    MediaReply reply;
+    reply.result = ResolveSelector(*_manager, request.selector, reply.slot);
+    if (!reply.result.Ok())
+        return reply;
+    bool on = true;
+    if (auto it = request.options.find("on"); it != request.options.end() && !ParseBool(it->second, on))
+        return Fail(MediaError::BadRequest, "on '" + it->second + "': expected true or false");
+    reply.result = _manager->SetWriteProtect(reply.slot, on);
+    reply.body["writeProtect"] = on;
+    return reply;
+}
+
+/// endregion </Verbs>

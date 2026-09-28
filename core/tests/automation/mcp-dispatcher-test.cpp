@@ -222,18 +222,18 @@ TEST_F(McpDispatcher_Test, UnknownMethod_IsMethodNotFound)
 // tools/list and tools/call
 // ===========================================================================
 
-TEST_F(McpDispatcher_Test, ToolsList_ContainsAllThirteenTools)
+TEST_F(McpDispatcher_Test, ToolsList_ContainsAllFourteenTools)
 {
     Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/list"));
 
     const Json::Value& tools = response["result"]["tools"];
     ASSERT_TRUE(tools.isArray());
-    EXPECT_EQ(tools.size(), 13u);
+    EXPECT_EQ(tools.size(), 14u);
 
     const char* expected[] = {"emulator_manage",  "load_software",     "control_execution", "inspect_state",
                               "type_input",       "mouse_input",       "time_travel",       "manage_symbols",
                               "debug_code",       "analyze_performance", "capture_media",  "search_api",
-                              "invoke_api"};
+                              "invoke_api",       "media"};
     for (const char* name : expected)
     {
         bool found = false;

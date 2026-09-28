@@ -63,9 +63,17 @@ public:
     /// writes to it (a read-only medium then answers every write with a
     /// write error)
     bool insert(std::unique_ptr<IBlockDevice> media, WriteMode mode = WriteMode::Session, Type type = Type::Auto);
+    /// Insert a medium someone else owns (the MediaManager). Writes go to it
+    /// as they are; its access layer (session map, read-only guard) decides
+    /// what happens to them. The owner keeps it alive until detach / close
+    bool attach(IBlockDevice& medium, Type type = Type::Auto);
+    /// Remove an attached medium (same as close)
+    void detach() { close(); }
     /// Remove the card (detect switch open)
     void close();
-    bool present() const { return _media != nullptr; }
+    bool present() const { return _device != nullptr; }
+    /// A block write is being received: a swap now would lose it
+    bool busy() const { return _mode == Mode::ReceiveData; }
     const std::string& path() const { return _path; }
     bool isSdhc() const { return _sdhc; }
     uint64_t sizeBytes() const { return _blocks * BLOCK; }
@@ -105,7 +113,7 @@ public:
     bool writeBlock(uint64_t block, const uint8_t* data);
 
     /// The medium the card reads (the SessionWriteMap in Session mode), or nullptr
-    IBlockDevice* media() { return _media.get(); }
+    IBlockDevice* media() { return _device; }
     /// The session changes (Session mode only): count, discard, export
     SessionWriteMap* sessionWrites() { return _session; }
 
@@ -120,6 +128,7 @@ private:
     };
 
     void onCommand();
+    void ApplyType(Type type);
     void respondR1(uint8_t r1);
     void queueBlock(uint64_t block);
     void finishWrite();
@@ -130,8 +139,10 @@ private:
     static uint8_t crc7(const uint8_t* data, size_t length);
     static uint16_t crc16(const uint8_t* data, size_t length);
 
-    // Medium
+    // Medium: _device is what the card reads and writes; _media owns it when
+    // the card was given the medium (open / insert), empty when attached
     std::unique_ptr<IBlockDevice> _media;
+    IBlockDevice* _device = nullptr;
     SessionWriteMap* _session = nullptr; // _media itself in Session mode
     std::string _path;
     uint64_t _blocks = 0;

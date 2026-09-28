@@ -214,6 +214,7 @@ if (NOT TARGET ${PROJECT_NAME})
             ${ROOT_DIR}/core/automation/mcp/src/mcp-symbols.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-analysis.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-media.cpp
+            ${ROOT_DIR}/core/automation/mcp/src/mcp-slots.cpp
             ${ROOT_DIR}/core/automation/mcp/src/target-resolver.cpp
         )
         target_include_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/core/automation/mcp/src)

@@ -1,5 +1,7 @@
 #include "loader_trd.h"
 
+#include <algorithm>
+
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
 #include "emulator/emulator.h"
@@ -34,11 +36,13 @@ bool LoaderTRD::loadImage()
 
             if (FileHelper::ReadFileToBuffer(_filepath, buffer.data(), fileSize))
             {
-                size_t cylinders = getTrackNoFromImageSize(fileSize);
+                uint8_t cylinders = 0;
+                uint8_t sides = 0;
+                geometryForFile(buffer.data(), fileSize, cylinders, sides);
                 if (cylinders < MAX_CYLINDERS)
                 {
                     // Allocate disk image with required characteristics
-                    _diskImage = new DiskImage(cylinders, TRD_SIDES);
+                    _diskImage = new DiskImage(cylinders, sides);
 
                     // Perform low level format since .TRD files do not store any low-level information (gaps, clock sync marks ets)
                     format(_diskImage);
@@ -151,16 +155,6 @@ bool LoaderTRD::writeImage(const std::string& path)
             // Mark disk as clean after successful save
             _diskImage->markClean();
             
-            // Emit notification that disk was saved
-            if (_context && _context->pEmulator)
-            {
-                std::string emulatorId = _context->pEmulator->GetId();
-                // Note: We don't know which drive this disk is in from the loader context
-                // Use drive 0 as default - the receiver can check all drives if needed
-                MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-                messageCenter.Post(NC_FDD_DISK_WRITTEN, 
-                    new FDDDiskPayload(emulatorId, 0, path), true);
-            }
             
             // Update stored file path
             _diskImage->setFilePath(path);
@@ -606,11 +600,40 @@ uint8_t LoaderTRD::getTrackNoFromImageSize(size_t filesize)
     return result;
 }
 
+void LoaderTRD::geometryForFile(const uint8_t* buffer, size_t fileSize, uint8_t& cylinders, uint8_t& sides)
+{
+    constexpr size_t kDiskTypeOffset = TRD_VOLUME_SECTOR * TRD_SECTOR_SIZE + 0xE3;
+    if (buffer && fileSize > kDiskTypeOffset)
+    {
+        switch (buffer[kDiskTypeOffset])
+        {
+            case DS_80: cylinders = 80; sides = 2; break;
+            case DS_40: cylinders = 40; sides = 2; break;
+            case SS_80: cylinders = 80; sides = 1; break;
+            case SS_40: cylinders = 40; sides = 1; break;
+            default: cylinders = 0; sides = 0; break;
+        }
+        if (cylinders && fileSize <= static_cast<size_t>(cylinders) * sides * TRD_TRACK_SIZE)
+            return;
+    }
+
+    // No TR-DOS type the file fits: the classic double-sided layout
+    sides = 2;
+    const size_t full = (fileSize + TRD_FULL_TRACK_SIZE - 1) / TRD_FULL_TRACK_SIZE;
+    cylinders = static_cast<uint8_t>(std::min<size_t>(full, 255));
+    if (fileSize != 40 * TRD_FULL_TRACK_SIZE && cylinders < 80)
+        cylinders = 80;
+}
+
 bool LoaderTRD::transferSectorData(DiskImage* diskImage, uint8_t* buffer, size_t fileSize)
 {
     bool result = false;
-    uint8_t cylinders = getTrackNoFromImageSize(fileSize);
-    uint8_t tracks = cylinders * 2;
+    const uint8_t cylinders = diskImage ? diskImage->getCylinders() : 0;
+    // TRD stores logical tracks in order (cylinder-major, side-minor), the
+    // same order as DiskImage::getTrack; a short file fills the first tracks
+    const size_t fileTracks = (fileSize + TRD_TRACK_SIZE - 1) / TRD_TRACK_SIZE;
+    const uint8_t tracks = static_cast<uint8_t>(
+        std::min<size_t>(fileTracks, diskImage ? static_cast<size_t>(cylinders) * diskImage->getSides() : 0));
 
     /// region <Sanity checks>
     if (diskImage == nullptr || buffer == nullptr || fileSize == 0)
@@ -632,6 +655,8 @@ bool LoaderTRD::transferSectorData(DiskImage* diskImage, uint8_t* buffer, size_t
         for (uint8_t sectorNo = 0; sectorNo < TRD_SECTORS_PER_TRACK; sectorNo++)
         {
             size_t offset = trackNo * TRD_TRACK_SIZE + sectorNo * TRD_SECTOR_SIZE;
+            if (offset + TRD_SECTOR_SIZE > fileSize)
+                break;  // the file ends inside this track
             uint8_t* srcSector = buffer + offset;
 
             // Sectors are addressed by their ID number (sectorNo + 1), independent of the physical interleave

@@ -552,6 +552,24 @@ TEST_F(TimeTravelManager_Test, SessionHeapBytes_NonZero_AfterStartRecording)
     EXPECT_GE(info.sessionHeapBytes, info.pageStoreBytes);
 }
 
+TEST_F(TimeTravelManager_Test, SessionHeapBytes_CountsPagePayloadsAndTheJournal)
+{
+    // B7: the page payloads are separate heap blocks from the slot table, and
+    // the write journal commits ring chunks as the session writes; both are
+    // the session's memory
+    EnableTTD();
+    ASSERT_TRUE(_ttd->StartRecording());
+    _emulator->RunNFrames(3, /*skipBreakpoints=*/true);
+
+    const auto info = _ttd->GetSessionInfo();
+    const size_t payloads = _ttd->GetPageStore().GetLivePayloadBytes();
+    const size_t journal = _ttd->GetWriteJournal() ? _ttd->GetWriteJournal()->HeapBytes() : 0;
+    ASSERT_GT(payloads, 0u);
+    ASSERT_GT(journal, 0u);
+    EXPECT_GE(info.sessionHeapBytes, _ttd->GetPageStore().GetCapacityBytes() + payloads + journal);
+    _ttd->StopRecording();
+}
+
 TEST_F(TimeTravelManager_Test, SessionHeapBytes_GrowsWith_CheckpointCount)
 {
     EnableTTD();

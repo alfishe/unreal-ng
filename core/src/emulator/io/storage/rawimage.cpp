@@ -2,6 +2,8 @@
 
 #include "rawimage.h"
 
+#include "common/filehelper.h"
+
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
@@ -35,17 +37,19 @@ std::unique_ptr<RawImage> RawImage::Open(const std::string& path, Access access,
         return nullptr;
     };
 
+    // Paths are UTF-8 strings; FileHelper builds the native path (UTF-16 on Windows)
+    const std::filesystem::path fsPath = FileHelper::ToFsPath(path);
     std::error_code ec;
-    if (!std::filesystem::is_regular_file(path, ec))
+    if (!std::filesystem::is_regular_file(fsPath, ec))
         return fail("not a regular file: " + path);
-    const uint64_t size = std::filesystem::file_size(path, ec);
+    const uint64_t size = std::filesystem::file_size(fsPath, ec);
     if (ec)
         return fail("cannot read the size of " + path);
 
     std::ios::openmode mode = std::ios::binary | std::ios::in;
     if (access == Access::ReadWrite)
         mode |= std::ios::out;
-    std::fstream file(path, mode);
+    std::fstream file(fsPath, mode);
     if (!file)
         return fail(access == Access::ReadWrite ? "cannot open for writing: " + path : "cannot open: " + path);
 
