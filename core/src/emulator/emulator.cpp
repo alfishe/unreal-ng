@@ -25,6 +25,7 @@
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/notifications.h"
+#include "emulator/media/mediamanager.h"
 #include "emulator/io/fdc/diskautostart.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/memory/scorpion/scorpionromwindow.h"
@@ -169,6 +170,10 @@ bool Emulator::Init()
     if (result)
     {
         result = false;
+
+        // Peripherals register their media slots while Core initializes
+        if (_context->pMediaManager == nullptr)
+            _context->pMediaManager = new MediaManager(_context);
 
         _core = new Core(_context);
         if (_core && _core->Init())
@@ -499,6 +504,13 @@ void Emulator::ReleaseNoGuard()
     {
         delete _core;
         _core = nullptr;
+    }
+
+    // After Core: its peripherals have unregistered their slots
+    if (_context->pMediaManager != nullptr)
+    {
+        delete _context->pMediaManager;
+        _context->pMediaManager = nullptr;
     }
 
     // Release Config
