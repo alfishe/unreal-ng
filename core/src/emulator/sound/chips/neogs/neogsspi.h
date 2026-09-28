@@ -68,6 +68,10 @@ public:
     /// Start a byte on a master. `unitsPerCycle` is the card clock at the start.
     void start(Master master, uint8_t tx, int64_t now, int64_t unitsPerCycle);
 
+    /// The card clock changed at `now`: a byte in flight counts card clocks,
+    /// so its remaining time is rescaled from the old clock to the new
+    void onClockChange(int64_t now, int64_t oldUnitsPerCycle, int64_t newUnitsPerCycle);
+
     /// Last received byte (after sync)
     uint8_t received(Master master) const { return _m[master].rx; }
     bool busy(Master master, int64_t now) const { return _m[master].end > now; }

@@ -968,7 +968,11 @@ stay bit-identical.
 
 **A GSCFG0 clock change** takes effect from the next instruction: the runner
 reads the tick cost after each instruction, so the instruction that wrote
-GSCFG0 is charged at the old rate.
+GSCFG0 is charged at the old rate. SPI bytes and DMA steps count card clocks
+too, so at the change (`applyClockChange`, reached from `onStep` only when
+the clock differs) the time left to a byte in flight and to the next SD/MP3
+DMA step is rescaled from the old clock to the new one (added 2026-09-28;
+before, a block the SD DMA was receiving finished at the old clock).
 
 **The 24 MHz phase.** NeoGS keeps one counter of crystal clocks (tick / 5),
 cleared only by a cold boot. The timer and the DAC both derive from it
@@ -1910,6 +1914,7 @@ the NeoGS suites are listed below.
 | `ttd/ttdgeneralsoundswitch_test.cpp` (extended) | NeoGS records with the whole card in the checkpoint blob; switch to NeoGS during a recording repoints the registry; GS-slot session guard |
 | `neogs/soundchip_neogs_ttd_test.cpp` | Blob saved during the SD boot (init, FAT walk, 32 KB load) and during MP3 DMA playback (reset latency, first frames, full FIFO), loaded into a second card: both run on identically - state hash, MP3 output, RAM, flash and devices |
 | `ttd/ttdneogs_test.cpp` | The SD boot under the TTD engine replays exactly from the session start, a per-frame checkpoint and a mid-frame seek; SD writes leave one `DiskWrite` marker a frame |
+| `neogs/soundchip_neogs_clocks_test.cpp` | Every card clock (24/12/20/10 MHz) and switches between them: 500 frames of card time against host frames with no drift; the new clock from the next instruction (all 12 pairs); the 37.5 kHz timer exact while an interrupt handler changes the clock every tick; SPI bytes and SD DMA blocks cost the same card clocks at every clock, and a change inside a byte or a block splits it exactly; ZX-DMA waits follow the card clock; a running Pentagon exchanges 256 command/data pairs correctly at every clock and host speed x1/x2/x4, and while the card changes clock after every reply; the host's wait for a fixed amount of card work scales with the card clock |
 | `neogs/neogsmedia_test.cpp` | Media requests: NeoGS required; carried out at once with the loop stopped, queued and carried out by the loop while it runs on its own thread; insert/eject refused during a TTD recording (by the card too), flash save allowed; refused during a replay; 200 eject/insert requests from another thread while the card boots from the SD card |
 | `soundchip_gslw_test.cpp` (extended) | LW -> NeoGS -> LLE switching with module replay; the lightweight feature leaves NeoGS alone |
 | Benchmarks | `BM_GeneralSoundFrame_*` (classic) and `BM_NeoGSFrame_*`: NeoGS 1.8x the classic card idle and 1.75x playing, inside the 2x / 2.5x budgets |

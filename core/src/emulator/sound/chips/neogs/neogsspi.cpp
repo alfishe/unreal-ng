@@ -71,6 +71,19 @@ void NeoGSSpi::start(Master master, uint8_t tx, int64_t now, int64_t unitsPerCyc
     m.end = now + static_cast<int64_t>(byteClocks(master)) * unitsPerCycle;
 }
 
+void NeoGSSpi::onClockChange(int64_t now, int64_t oldUnitsPerCycle, int64_t newUnitsPerCycle)
+{
+    if (oldUnitsPerCycle <= 0)
+        return;
+    for (MasterState& m : _m)
+    {
+        if (!m.pending || m.end <= now)
+            continue;
+        const int64_t clocks = (m.end - now + oldUnitsPerCycle - 1) / oldUnitsPerCycle;
+        m.end = now + clocks * newUnitsPerCycle;
+    }
+}
+
 void NeoGSSpi::applySelects(uint8_t oldSctrl)
 {
     const uint8_t changed = static_cast<uint8_t>(oldSctrl ^ _sctrl);

@@ -75,6 +75,9 @@ public:
     int64_t nextEvent() const;
     /// Do all module work due at `now`
     void run(int64_t now);
+    /// The card clock changed at `now`: the modules count card clocks, so the
+    /// time left to their next step is rescaled from the old clock to the new
+    void onClockChange(int64_t now, int64_t oldUnitsPerCycle, int64_t newUnitsPerCycle);
 
     /// Linear address of a module (21 bits in effect)
     uint32_t address(Module m) const;

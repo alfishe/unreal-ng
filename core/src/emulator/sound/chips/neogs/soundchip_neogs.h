@@ -254,8 +254,13 @@ private:
     void onStep()
     {
         _activityCounters.cpuSteps++;
-        _ticksPerCycle = _nextTicksPerCycle; // a GSCFG0 clock change applies from the next instruction
+        // A GSCFG0 clock change applies from the next instruction
+        if (_nextTicksPerCycle != _ticksPerCycle)
+            applyClockChange();
     }
+    /// The card clock changes now: SPI bytes in flight and DMA steps count
+    /// card clocks, so their remaining time follows the new clock
+    void applyClockChange();
     void reschedule();
     void scheduleTimer(int64_t tickCrystal);
 

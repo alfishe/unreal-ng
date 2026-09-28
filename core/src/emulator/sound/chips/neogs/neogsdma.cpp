@@ -136,6 +136,26 @@ void NeoGSDma::run(int64_t now)
         runMp3(now);
 }
 
+namespace
+{
+/// Time left until `at`, counted in card clocks of the old rate, in the new rate
+void rescaleToClock(int64_t& at, int64_t now, int64_t oldUnits, int64_t newUnits)
+{
+    if (at == NeoGSDma::kNever || at <= now || oldUnits <= 0)
+        return;
+    const int64_t clocks = (at - now + oldUnits - 1) / oldUnits;
+    at = now + clocks * newUnits;
+}
+} // namespace
+
+void NeoGSDma::onClockChange(int64_t now, int64_t oldUnitsPerCycle, int64_t newUnitsPerCycle)
+{
+    if (_sdPhase != Phase::Idle)
+        rescaleToClock(_sdAt, now, oldUnitsPerCycle, newUnitsPerCycle);
+    if (_mp3Phase != Phase::Idle)
+        rescaleToClock(_mp3At, now, oldUnitsPerCycle, newUnitsPerCycle);
+}
+
 void NeoGSDma::runSd(int64_t now)
 {
     const int64_t byteTime = static_cast<int64_t>(SD_BYTE_CLOCKS) * _host.dmaUnitsPerCycle();

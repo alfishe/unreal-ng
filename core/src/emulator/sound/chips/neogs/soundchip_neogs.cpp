@@ -345,6 +345,15 @@ void SoundChip_NeoGS::writeGscfg0(uint8_t value)
         _mainRomStartTicks = _runner.now();
 }
 
+void SoundChip_NeoGS::applyClockChange()
+{
+    const int64_t now = _runner.now();
+    _spi.onClockChange(now, _ticksPerCycle, _nextTicksPerCycle);
+    _dma.onClockChange(now, _ticksPerCycle, _nextTicksPerCycle);
+    _ticksPerCycle = _nextTicksPerCycle;
+    reschedule();
+}
+
 void SoundChip_NeoGS::writeSctrl(uint8_t value)
 {
     const int64_t now = _runner.now();
