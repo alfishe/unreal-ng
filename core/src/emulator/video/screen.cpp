@@ -213,8 +213,8 @@ void Screen::InitRaster()
         // 1. Frame duration from config must be at least the raster-defined frame
         // duration. Deliberately NOT skipped when configFrameDuration == 0: that
         // is the unconfigured case this check exists to catch. SetVideoMode
-        // hands the value straight to UlaContention, where GetIOContentionDelay
-        // and its two siblings compute `t % configFrameDuration` - zero is a
+        // hands the value straight to UlaContention, where the floating-bus
+        // lookups compute `t % configFrameDuration` - zero is a
         // modulo by zero on any model whose contention is enabled, and the
         // Scorpion cases that used to trip this only escaped it in Release
         // because M_SCORPION happens to disable contention. A context that

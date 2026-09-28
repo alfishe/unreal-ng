@@ -213,15 +213,28 @@ TEST_F(Contention48K_Test, MemoryAccess_ContendedVsUncontended)
 
 TEST_F(Contention48K_Test, IOContention_EvenVsOddPorts)
 {
-    // In paper, cell offset 0
-    _z80->t = _firstContendedT;
-    EXPECT_EQ(_ula->GetIOContentionDelay(0x00FE), 6u) << "48K even port (A0=0): pattern delay";
-    EXPECT_EQ(_ula->GetIOContentionDelay(0x00FF), 0u) << "48K odd port (A0=1): no delay";
-    EXPECT_EQ(_ula->GetIOContentionDelay(0x00FD), 0u) << "48K odd port (A0=1, A1=0): no delay";
+    // In paper, cell offset 0: the C:3 checkpoint of a ULA port, nothing for odd ports with an uncontended
+    // high byte
+    EXPECT_EQ(_ula->IoWaitAfterIorq(0x00FE, _firstContendedT), 6u) << "48K even port (A0=0): pattern delay";
+    EXPECT_EQ(_ula->IoWaitAfterIorq(0x00FF, _firstContendedT), 0u) << "48K odd port (A0=1): no delay";
+    EXPECT_EQ(_ula->IoWaitAfterIorq(0x00FD, _firstContendedT), 0u) << "48K odd port (A0=1, A1=0): no delay";
 
     // Outside paper: no IO contention on 48K
-    _z80->t = _ula->GetRaster().screenAreaStart - 1000;
-    EXPECT_EQ(_ula->GetIOContentionDelay(0x00FE), 0u);
+    EXPECT_EQ(_ula->IoWaitAfterIorq(0x00FE, _ula->GetRaster().screenAreaStart - 1000), 0u);
+}
+
+/// IN A,(C) end to end, all four patterns: code at #8000, M1 + M1 before the I/O cycle, which starts at the
+/// first contended T (cell offset 0)
+TEST_F(Contention48K_Test, IOContention_FourPatternsEndToEnd)
+{
+    auto inAC = [this](uint16_t bc) {
+        _z80->bc = bc;
+        return runAt(0x8000, { 0xED, 0x78 }, _firstContendedT - 8);
+    };
+    EXPECT_EQ(inAC(0x00FF), 12u) << "N:4";
+    EXPECT_EQ(inAC(0x00FE), 12u + 5) << "N:1, C:3: IORQ at cell offset 1 waits 5";
+    EXPECT_EQ(inAC(0x40FE), 12u + 6) << "C:1, C:3: 6 at offset 0, IORQ at offset 7 waits 0";
+    EXPECT_EQ(inAC(0x40FF), 12u + 12) << "C:1 x4: 6, then offsets 7 (0), 0 (6), 7 (0)";
 }
 
 TEST_F(Contention48K_Test, AddressContentionMap)
@@ -356,20 +369,26 @@ TEST_F(Contention128K_Test, Bank3_OddPagesContended)
 
 TEST_F(Contention128K_Test, IOContention_128KRules)
 {
-    // In paper, cell offset 0. 128K rules (Contended_I/O):
-    //   A0=0:        pattern delay + 1T
-    //   A0=1, A1=0:  1T
-    //   A0=1, A1=1:  no delay
-    _z80->t = _firstContendedT;
-    EXPECT_EQ(_ula->GetIOContentionDelay(0x00FE), 7u) << "128K even port: pattern + 1";
-    EXPECT_EQ(_ula->GetIOContentionDelay(0x00FD), 1u) << "128K A0=1, A1=0: 1T";
-    EXPECT_EQ(_ula->GetIOContentionDelay(0x00FF), 0u) << "128K A0=1, A1=1: no delay";
+    // The 128K follows the 48K's four patterns (Rak's Timing Test on 128K hardware: no extra T on even
+    // ports, nothing outside the paper). In paper, cell offset 0:
+    EXPECT_EQ(_ula->IoWaitAfterIorq(0x00FE, _firstContendedT), 6u) << "even port: the pattern at IORQ";
+    EXPECT_EQ(_ula->IoWaitAfterIorq(0x00FD, _firstContendedT), 0u) << "odd port, uncontended high byte";
+    EXPECT_EQ(_ula->IoWaitAfterIorq(0x00FF, _firstContendedT), 0u);
 
-    // Outside paper: even ports keep the +1, odd A1=0 keeps 1T
-    _z80->t = _ula->GetRaster().screenAreaStart - 1000;
-    EXPECT_EQ(_ula->GetIOContentionDelay(0x00FE), 1u);
-    EXPECT_EQ(_ula->GetIOContentionDelay(0x00FD), 1u);
-    EXPECT_EQ(_ula->GetIOContentionDelay(0x00FF), 0u);
+    const uint32_t border = _ula->GetRaster().screenAreaStart - 1000;
+    EXPECT_EQ(_ula->IoWaitAfterIorq(0x00FE, border), 0u);
+    EXPECT_EQ(_ula->IoWaitAfterIorq(0x00FD, border), 0u);
+}
+
+/// The high byte is read as a memory address against the current mapping: #C0FF waits like a contended
+/// high byte while an odd page is at #C000
+TEST_F(Contention128K_Test, IOContention_HighByteFollowsTheMapping)
+{
+    _memory->SetRAMPageToBank3(7);
+    EXPECT_EQ(_ula->IoWaitBeforeIorq(0xC0FF, _firstContendedT), 6u) << "page 7 at #C000: C:1";
+    _memory->SetRAMPageToBank3(2);
+    EXPECT_EQ(_ula->IoWaitBeforeIorq(0xC0FF, _firstContendedT), 0u) << "page 2: N:1";
+    _memory->SetRAMPageToBank3(0);
 }
 
 TEST_F(Contention128K_Test, Idle_InternalCycleOnContendedHlWaits)
@@ -478,10 +497,11 @@ TEST_F(ContentionPlus3_Test, NoIoContention)
 {
     for (uint32_t k = 0; k < 8; k++)
     {
-        _z80->t = _firstContendedT + k;
-        EXPECT_EQ(_ula->GetIOContentionDelay(0x00FE), 0u) << "offset " << k;
-        EXPECT_EQ(_ula->GetIOContentionDelay(0x00FD), 0u);
-        EXPECT_EQ(_ula->GetIOContentionDelay(0x7FFD), 0u);
+        for (uint16_t port : { uint16_t(0x00FE), uint16_t(0x00FD), uint16_t(0x7FFD), uint16_t(0x40FF) })
+        {
+            EXPECT_EQ(_ula->IoWaitBeforeIorq(port, _firstContendedT + k), 0u) << "offset " << k;
+            EXPECT_EQ(_ula->IoWaitAfterIorq(port, _firstContendedT + k), 0u) << "offset " << k;
+        }
     }
 }
 
@@ -579,7 +599,8 @@ TEST(ContentionPentagon_Test, NoContentionAnywhere)
     Z80* z80 = emulator->GetContext()->pCore->GetZ80();
     z80->t = 20000;  // Mid-paper on Pentagon
     EXPECT_EQ(ula->GetContentionDelay(), 0u);
-    EXPECT_EQ(ula->GetIOContentionDelay(0x00FE), 0u);
+    EXPECT_EQ(ula->IoWaitAfterIorq(0x00FE, 20000), 0u);
+    EXPECT_EQ(ula->IoWaitBeforeIorq(0x40FE, 20000), 0u);
 
     EmulatorTestHelper::CleanupEmulator(emulator);
 }

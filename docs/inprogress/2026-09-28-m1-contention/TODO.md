@@ -1,6 +1,6 @@
 # TODO — Contended opcode fetches without a cost for machines that have no contention
 
-**Status:** phases 1a (baselines), 1b (bus interfaces, M1 contention) 1c (control and diagnostics) and 1d (test suites) done 2026-09-28 on branch `m1-contention` ([baseline.md](baseline.md)). PLAN.md row #61.
+**Status:** phases 1a (baselines), 1b (bus interfaces, M1 contention) 1c (control and diagnostics), 1d (test suites), phase 2 (internal cycles) and phase 3 (multi-point I/O) done 2026-09-28 on branch `m1-contention` ([baseline.md](baseline.md)). PLAN.md row #61.
 Design: [design.md](design.md). Test programs and the probe suite: [test-programs.md](test-programs.md).
 
 ## Done
@@ -34,6 +34,12 @@ Design: [design.md](design.md). Test programs and the probe suite: [test-program
   48K: 68 of 70 pass with contention (was 34), test 35 is the floating bus. The DDCB operation byte is now an
   ordinary read, not an M1 (R +2 as on the hardware). Pentagon cost within noise (~0.5 %).
 
+- **Phase 3 — multi-point I/O contention** (2026-09-28): the four "Contended I/O" patterns (N:4, N:1 C:3,
+  C:1 C:3, C:1 x4) on the Ferranti ULA, the high byte read against the current mapping (an odd page at
+  #C000 on the 128K counts); the 128K rule's extra T on every even port is gone. `UlaContention::
+  IoWaitBeforeIorq` / `IoWaitAfterIorq` from `Z80::in` / `out`. Rak's Timing Test: all 15 reference screens
+  match (48K / 128K / +3); the FUSE ULA replay now covers every vector, port cycles included.
+
 ## Remaining (value order)
 1. **Phase 1e — emulated-side suite H** (in progress): done - the Butler 48K suite runs to completion (after
    the `.sna` 48K ROM fix) and the Rak Timing Test matrix against the published screens (test-programs §2.5).
@@ -41,8 +47,5 @@ Design: [design.md](design.md). Test programs and the probe suite: [test-program
    emulator surveyed uses 128 - test-programs §2.5). Open: fusetest
    (needs pasmo); the `ctprobe` probe suite (test-programs §3) and its `.tap` / `.trd` exports; the
    cross-emulator consensus table.
-2. **Phase 3:** multi-point I/O contention (C:1 / C:3) in the 48K / 128K port rules; drop the 128K rule's
-   extra 1 T on even ports (the Rak 128K `IN #00FE` reference has none). Targets: Rak 48K tests 4-5, 128K
-   tests 2 and 4.
 
 Ideas backlog (performance of the contended machines): [baseline.md](baseline.md) §3.2.

@@ -105,11 +105,14 @@ pinning the hardware value 1014 since phase 2; opt-in: all 35 tests in both swit
 **Rak, Timing Test v0.3** (vendored, `testdata/contention/rak-timing-test/`). Each test prints 160 durations,
 one per start T-state; the reference grids are transcribed from the published result screens.
 
-| Model | Matches the reference | Differs today |
-|:--|:--|:--|
-| 48K early | 0 contended NOP, 2 `IN #00FE`, 3 `#00FF`, 6 `#FFFE`, 7 `#FFFF` | 4 `#7FFE`, 5 `#7FFF`: multi-point I/O contention (phase 3) |
-| 128K early | 0 contended NOP, 8 page RET | 2 `#00FE`: the 128K I/O rule adds 1 T to every even port, the reference has no such T (phase 3); 4 `#7FFE`: multi-point (phase 3) |
-| +3 | 0 contended NOP (after the window fix below), 4 `#7FFE` (no I/O contention), 8 page RET | - |
+| Model | Matches the reference |
+|:--|:--|
+| 48K early | 0 contended NOP, 2 `IN #00FE`, 3 `#00FF`, 4 `#7FFE`, 5 `#7FFF`, 6 `#FFFE`, 7 `#FFFF` |
+| 128K early | 0 contended NOP, 2 `#00FE`, 4 `#7FFE`, 5 `#7FFF`, 8 page RET |
+| +3 | 0 contended NOP, 4 `#7FFE` (no I/O contention), 8 page RET |
+
+Before phase 3 the 48K `#7FFE` / `#7FFF` and 128K `#00FE` / `#7FFE` differed (single-point I/O contention,
+and an extra T on every 128K even port); the matrix pinned them as known differences until they flipped.
 
 **Found with it: the +2A/+3 gate array window is 129 T, not 128.** The +3 contended NOP differed in its last
 row only: offset 128 after the first contended T still waits 1 T (NOP = 5). The references disagree:

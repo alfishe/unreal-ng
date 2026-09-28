@@ -211,9 +211,26 @@ public:
     /// Raster timing snapshot (test/diagnostic access)
     const ContentionRaster& GetRaster() const { return _raster; }
 
-    /// IO port contention delay. Follows the Contended_I/O rules
-    /// (different for 48K vs 128K).
-    uint8_t GetIOContentionDelay(uint16_t port) const;
+    /// I/O contention of the Ferranti ULA (48K / 128K / +2), the four patterns of the "Contended I/O" rules
+    /// (faqwiki; FUSE, MAME):
+    ///
+    ///   high byte in contended memory | ULA port (A0 = 0) | the 4 T I/O cycle
+    ///   no                            | no                | N:4
+    ///   no                            | yes               | N:1, C:3
+    ///   yes                           | yes               | C:1, C:3
+    ///   yes                           | no                | C:1, C:1, C:1, C:1
+    ///
+    /// "High byte in contended memory" is the port address read as a memory address against the current
+    /// mapping (the slot flags: page 5 at #4000, on the 128K also an odd page at #C000). C:n = the ULA's wait
+    /// at that T, then n T. The +2A/+3 gate array and the machines without contention: none (0).
+    ///
+    /// IoWaitBeforeIorq: the wait at the cycle's first T (`cycleStartT`), before IORQ (C:1 or N:1).
+    uint8_t IoWaitBeforeIorq(uint16_t port, uint32_t cycleStartT) const;
+
+    /// IoWaitAfterIorq: the waits of the rest of the cycle from the IORQ T (`iorqT`, after the first wait):
+    /// C:3 on a ULA port, three C:1 checkpoints when only the high byte is contended, none otherwise. The
+    /// cycle's own 3 T are the caller's; the returned value is the waits alone
+    uint8_t IoWaitAfterIorq(uint16_t port, uint32_t iorqT) const;
 
     /// Floating bus: returns the VRAM byte the ULA is currently fetching.
     /// Returns 0xFF outside the paper area. Note: this works even when

@@ -827,17 +827,14 @@ void Z80::wd(uint16_t addr, uint8_t val)
 
 uint8_t Z80::in(uint16_t port)
 {
-    // ULA IO contention: accessing contended ports during screen rendering
-    // on ZX-48K/128K delays the CPU by the contention pattern.
-    // This is critical for accurate timing of raster-sync effects.
-    // ioContention is null on machines without it (Core::SelectMemoryInterface)
+    // ULA I/O contention (48K / 128K / +2), first part: the wait at the cycle's first T, before IORQ. The
+    // handler has already counted that T (IORQ is at T2), so the cycle started 1 T ago. ioContention is
+    // null on machines without it (Core::SelectMemoryInterface)
+    uint8_t ioWait = 0;
     if (ioContention)
     {
-        uint8_t delay = ioContention->GetIOContentionDelay(port);
-        if (delay > 0)
-            IncrementCPUCyclesCounter(delay);
-        if (isDebugMode)
-            ioContention->CountAccess(CONTENTION_IO, delay);
+        ioWait = ioContention->IoWaitBeforeIorq(port, (tt - rate) >> 8);
+        IncrementCPUCyclesCounter(ioWait);
     }
 
     PortDecoder& portDecoder = *_context->pPortDecoder;
@@ -887,22 +884,27 @@ uint8_t Z80::in(uint16_t port)
         }
     }
 
+    // Second part: the waits after IORQ (C:3, or C:1 x3), before the handler's remaining 3 T
+    if (ioContention)
+    {
+        const uint8_t after = ioContention->IoWaitAfterIorq(port, t);
+        IncrementCPUCyclesCounter(after);
+        if (isDebugMode)
+            ioContention->CountAccess(CONTENTION_IO, static_cast<uint8_t>(ioWait + after));
+    }
+
     return result;
 }
 
 void Z80::out(uint16_t port, uint8_t val)
 {
-    // ULA IO contention: accessing contended ports during screen rendering
-    // on ZX-48K/128K delays the CPU by the contention pattern.
-    // This must be applied BEFORE the port write so that SetBorderColor()
-    // sees the correct (delayed) t-state. ioContention: see in()
+    // ULA I/O contention, as in in(): the wait before IORQ goes before the port write, so the device (the
+    // border latch) sees the delayed T; the waits after IORQ follow the write
+    uint8_t ioWait = 0;
     if (ioContention)
     {
-        uint8_t delay = ioContention->GetIOContentionDelay(port);
-        if (delay > 0)
-            IncrementCPUCyclesCounter(delay);
-        if (isDebugMode)
-            ioContention->CountAccess(CONTENTION_IO, delay);
+        ioWait = ioContention->IoWaitBeforeIorq(port, (tt - rate) >> 8);
+        IncrementCPUCyclesCounter(ioWait);
     }
 
     PortDecoder& portDecoder = *_context->pPortDecoder;
@@ -916,6 +918,14 @@ void Z80::out(uint16_t port, uint8_t val)
 
     if (busTraceHook)
         busTraceHook('O', port, val);
+
+    if (ioContention)
+    {
+        const uint8_t after = ioContention->IoWaitAfterIorq(port, t);
+        IncrementCPUCyclesCounter(after);
+        if (isDebugMode)
+            ioContention->CountAccess(CONTENTION_IO, static_cast<uint8_t>(ioWait + after));
+    }
 }
 
 /// The slow half of Idle: taken only while the ULA contends internal cycles or a bus trace hook listens.

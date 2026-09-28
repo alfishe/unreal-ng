@@ -72,46 +72,39 @@ uint8_t UlaContention::ComputeContentionDelay(uint32_t t) const
     return _gateArray ? gateArrayContentionPattern[offsetInCell] : contentionPattern[offsetInCell];
 }
 
-uint8_t UlaContention::GetIOContentionDelay(uint16_t port) const
+uint8_t UlaContention::IoWaitBeforeIorq(uint16_t port, uint32_t cycleStartT) const
 {
-    // The +2A/+3 gate array contends memory cycles only, never I/O (#FE included)
+    // The +2A/+3 gate array contends memory cycles only, never I/O
+    if (!_contentionEnabled || _gateArray)
+        return 0;
+    // C:1 when the high byte addresses contended memory, N:1 otherwise
+    return _slotContended[port >> 14] ? ComputeContentionDelay(cycleStartT) : 0;
+}
+
+uint8_t UlaContention::IoWaitAfterIorq(uint16_t port, uint32_t iorqT) const
+{
     if (!_contentionEnabled || _gateArray)
         return 0;
 
-    uint32_t t = _cpu->t % _raster.configFrameDuration;
-
-    uint8_t delay = ComputeContentionDelay(t);
-
-    // IO contention rules (https://faqwiki.zxnet.co.uk/wiki/Contended_I/O):
-    //
-    // ZX-48K:
-    //   A0=0 (even port): contention pattern delay
-    //   A0=1 (odd port): no delay
-    //
-    // ZX-128K/+2/+3:
-    //   A0=0 (even port): contention pattern delay + 1T extra
-    //   A0=1, A1=0:       1T delay
-    //   A0=1, A1=1:       no delay
-
+    // ULA port (A0 = 0): C:3 - one wait at the IORQ T, then the cycle's 3 T
     if ((port & 0x0001) == 0)
+        return ComputeContentionDelay(iorqT);
+
+    // Only the high byte contended: C:1, C:1, C:1 - a wait before each of the remaining T-states
+    if (_slotContended[port >> 14])
     {
-        // Even port (A0=0) — contended on both 48K and 128K
-        // 128K gets +1T extra for all even ports
-        // (Screen pushes the model flag via UpdateRaster; we detect 128K
-        //  by checking tstatesPerLine since 128K has 228 vs 48K's 224)
-        if (_raster.tstatesPerLine >= 228)
-            delay++;
-    }
-    else
-    {
-        // Odd port (A0=1)
-        if (_raster.tstatesPerLine >= 228 && (port & 0x0002) == 0)
-            delay = 1;  // 128K: 1T delay for A0=1, A1=0
-        else
-            delay = 0;
+        uint32_t t = iorqT;
+        uint32_t waits = 0;
+        for (int i = 0; i < 3; i++)
+        {
+            const uint8_t w = ComputeContentionDelay(t);
+            waits += w;
+            t += w + 1;
+        }
+        return static_cast<uint8_t>(waits);
     }
 
-    return delay;
+    return 0;  // N:4 (or N:1 before IORQ, then N:3)
 }
 
 uint8_t UlaContention::GetFloatingBus() const

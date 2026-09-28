@@ -252,7 +252,7 @@ TEST_F(MemoryContendedFuse_Test, EveryMemoryCycleWaitsTheGateArrayPattern)
             {
                 failed++;
                 if (report.size() < 4000)
-                    report += "\n[" + name + " +" + std::to_string(offset) + "] " + issues[0];
+                    { report += "\n[" + name + " +" + std::to_string(offset) + "]"; for (auto& is : issues) report += " " + is + ";"; }
             }
         }
     }
@@ -263,8 +263,8 @@ TEST_F(MemoryContendedFuse_Test, EveryMemoryCycleWaitsTheGateArrayPattern)
 
 /// The Ferranti ULA over the whole instruction set (phase 2): every memory cycle waits at its start and every
 /// internal T-state waits at its own start while its address is contended - the per-instruction addresses are
-/// FusePhase_Test's (checked against FUSE's no-MREQ checkpoints). Vectors with port cycles are left to the
-/// I/O contention rules (phase 3)
+/// FusePhase_Test's (checked against FUSE's no-MREQ checkpoints). Port cycles follow the "Contended I/O"
+/// patterns: every high byte is contended on this map, so C:1, C:3 on even ports and C:1 x4 on odd ones
 TEST_F(MemoryContendedFuse_Test, EveryCycleWaitsTheUlaPattern)
 {
     auto cases = FuseVectors::LoadCases();
@@ -280,24 +280,22 @@ TEST_F(MemoryContendedFuse_Test, EveryCycleWaitsTheUlaPattern)
         if (tc.expTotal == 0)
             continue;
 
-        UlaEverywhere(false);
-        ASSERT_EQ(_z80->idleContention, _context->pUlaContention) << "the ULA rule contends internal cycles";
+        // Reference: nothing contended at all - the switch off (a ULA port's C:3 does not depend on the map)
+        ASSERT_TRUE(_context->pFeatureManager->setFeature(Features::kContention, false));
         const int steps = Run(tc, _firstContendedT, 0);
         const std::vector<FuseVectors::BusEvent> reference = _trace;
         const uint32_t referenceTotal = _z80->t - _t0;
-        bool hasPorts = false;
-        for (const auto& ev : reference)
-            hasPorts |= ev.type == 'I' || ev.type == 'O';
-        if (hasPorts)
-            continue;
 
+        ASSERT_TRUE(_context->pFeatureManager->setFeature(Features::kContention, true));
         UlaEverywhere(true);
+        ASSERT_EQ(_z80->idleContention, _context->pUlaContention) << "the ULA rule contends internal cycles";
         for (uint32_t offset : StartOffsets())
         {
             const uint32_t t0 = _firstContendedT + offset;
 
             // Memory events fire at cycle start + 3, after their wait; internal ('N') events at their T-state's
-            // start, before its wait
+            // start, before its wait; port events at IORQ (cycle start + 1 + the C:1 wait), the rest of the
+            // cycle's waits after them
             std::vector<FuseVectors::BusEvent> predicted;
             uint32_t delay = 0;
             for (FuseVectors::BusEvent ev : reference)
@@ -306,6 +304,19 @@ TEST_F(MemoryContendedFuse_Test, EveryCycleWaitsTheUlaPattern)
                 {
                     delay += OracleUlaWait(t0 + ev.tOffset - 3 + delay);
                     ev.tOffset += delay;
+                }
+                else if (ev.type == 'I' || ev.type == 'O')
+                {
+                    delay += OracleUlaWait(t0 + ev.tOffset - 1 + delay);  // C:1 at the cycle's first T
+                    ev.tOffset += delay;
+                    uint32_t t = t0 + ev.tOffset;  // IORQ
+                    const int checkpoints = (ev.addr & 1) == 0 ? 1 : 3;  // C:3 / C:1, C:1, C:1
+                    for (int i = 0; i < checkpoints; i++)
+                    {
+                        const uint8_t w = OracleUlaWait(t);
+                        delay += w;
+                        t += w + 1;
+                    }
                 }
                 else
                 {
@@ -327,13 +338,13 @@ TEST_F(MemoryContendedFuse_Test, EveryCycleWaitsTheUlaPattern)
             {
                 failed++;
                 if (report.size() < 4000)
-                    report += "\n[" + name + " +" + std::to_string(offset) + "] " + issues[0];
+                    { report += "\n[" + name + " +" + std::to_string(offset) + "]"; for (auto& is : issues) report += " " + is + ";"; }
             }
         }
     }
 
     EXPECT_EQ(failed, 0) << checked << " runs" << report;
-    EXPECT_GT(checked, 10000) << "most vectors have no port cycles";
+    EXPECT_EQ(checked, 1356 * static_cast<int>(StartOffsets().size())) << "every vector, port cycles included";
     EXPECT_GT(waited, 0u);
 }
 
