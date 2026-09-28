@@ -240,6 +240,8 @@ Sources: UnrealSpeccy `io.cpp`, ZXMAK2 `Hardware/*/Ide*.cs`, Xpeccy `libxpeccy/h
 
 **Ownership.** `Core` owns one `AtaChannel` (it replaces the current `HDD` object, same place: `core.cpp:309`). The media survive a model switch only if the new model has an IDE scheme; otherwise they are detached. Each `PortDecoder_<Model>` owns its adapter and gets the channel from the context, the same way `PortDecoder_Profi` owns `ProfiCMOS _cmos` today. Models without IDE never touch the channel.
 
+> **2026-09-28 ([ZX-Evo E5](../2026-09-15-atm-baseconf-highres-ports/e5-sd-card.md)):** the `storage/` part below is shared with the SD card and lives in `core/src/emulator/io/storage/`. Built so far: `iblockdevice.h`, `rawimage`, `memorydisk`, `sessionwritemap` (with tests). IDE adds its formats and `hostfolder/` there.
+
 **File layout** (replaces the current `io/hdd/` contents):
 
 ```

@@ -602,6 +602,8 @@ cache-miss waits.
 
 > **Sync with ATM3 (2026-09-27, [tdd-storage-sd-ide-cd.md](../2026-09-15-atm-baseconf-highres-ports/tdd-storage-sd-ide-cd.md) §1):** `TsConfSpi` below becomes the shared `ZControllerSpi` (ATM3 has the same `#57`/`#77` behavior) plus the TSConf DMA path; `ISdBlockStore` is the IDE design's `IBlockDevice`, `VirtualFatBlockStore` is its `HostFolderFat`, and the SD session write mode reuses `SessionWriteMap` (so a folder SD is writable for the session, exportable). The Gluk extension (hardware-spec §9) is the shared `EvoAvr` ([tdd-evo-control-and-avr.md](../2026-09-15-atm-baseconf-highres-ports/tdd-evo-control-and-avr.md) §6). Whichever machine lands first builds these.
 
+> **2026-09-28: built by ZX-Evo E5** ([e5-sd-card.md](../2026-09-15-atm-baseconf-highres-ports/e5-sd-card.md)): `SdCardSpi` is on master over `IBlockDevice` (`io/storage`: `RawImage`, `MemoryDisk`, `SessionWriteMap`), and `ZControllerSpi` (`io/spi/zcontrollerspi.{h,cpp}`) is the `#77`/`#57` glue. TSConf wires them in its decoder and adds the DMA SPI path; `[ZC] SDCardImage`/`SDWrite`/`SDWriteProtect` are parsed into `CONFIG::zc`. The bullets below predate this.
+
 - **SD card**: `SdCardSpi : SpiDevice` (`emulator/io/sdcard/sdcardspi.{h,cpp}`,
   `emulator/io/spi/spidevice.h`) is the shared card model of
   [neogs-tdd.md](../2026-09-19-general-sound/neogs-tdd.md) §5.4-§5.5. **It

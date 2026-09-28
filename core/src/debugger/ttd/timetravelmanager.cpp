@@ -124,6 +124,8 @@ bool TimeTravelManager::StartRecording()
     // Fresh session — clear any stale auto-pause signal from a previous
     // Detached window.
     _autoPauseRequested.store(false, std::memory_order_release);
+    // ...and a stale invalidation request from the previous session
+    _pendingInvalidation.store(nullptr, std::memory_order_release);
 
     if (!_context || !_memory || !_dirtyTracker)
     {
@@ -626,10 +628,32 @@ size_t TimeTravelManager::EstimateSessionHeapBytes() const
 // Capture (emulator thread)
 // ---------------------------------------------------------------------------
 
+void TimeTravelManager::RequestInvalidation(const char* reason)
+{
+    if (_state != TTDSessionState::Recording)
+        return;
+    const char* expected = nullptr;
+    if (_pendingInvalidation.compare_exchange_strong(expected, reason ? reason : "(unspecified)",
+                                                     std::memory_order_acq_rel))
+        MLOGINFO("TimeTravelManager::RequestInvalidation — '%s' (applied at the frame boundary)",
+                 reason ? reason : "(unspecified)");
+}
+
 void TimeTravelManager::OnFrameBoundary()
 {
     if (!_context)
         return;
+
+    // A device TTD cannot follow was used during the frame that just ended:
+    // its checkpoint would not be restorable, so the session ends here
+    if (const char* reason = _pendingInvalidation.exchange(nullptr, std::memory_order_acq_rel))
+    {
+        if (_state == TTDSessionState::Recording)
+        {
+            InvalidateSession(reason);
+            return;
+        }
+    }
 
     // ------------------------------------------------------------------
     // Recording: append a checkpoint for the just-completed frame.

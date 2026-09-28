@@ -1020,6 +1020,8 @@ link to each other.
 > `FILE*` (raw image, host folder, memory disk), and `WriteMode::Session` uses the
 > shared `SessionWriteMap` decorator instead of a private overlay. The ATM3 and
 > TS-Conf Z-Controller ports share one `ZControllerSpi` glue.
+>
+> **2026-09-28: done on master** by ZX-Evo E5 ([e5-sd-card.md](../2026-09-15-atm-baseconf-highres-ports/e5-sd-card.md) §2). When `neogs` merges, take master's `sdcardspi.{h,cpp}` (a superset of the branch API, same state blob); `spidevice.h`, `statebytes.h` and `fatimagebuilder.h` are identical.
 
 ### 5.5 SD card (`SdCardSpi`)
 

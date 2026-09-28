@@ -200,6 +200,24 @@ TEST_F(Config_Test, ShippedConfigsProduceExpectedTurboSoundKind)
     }
 }
 
+/// region <[ZC] SDWrite (Z-Controller SD card write mode)>
+
+TEST(ConfigZcSdWrite_Test, ParsesModesCaseInsensitive)
+{
+    EXPECT_EQ(Config::ParseSdWriteMode("session"), 0);
+    EXPECT_EQ(Config::ParseSdWriteMode("Persist"), 1);
+    EXPECT_EQ(Config::ParseSdWriteMode("OFF"), 2);
+}
+
+TEST(ConfigZcSdWrite_Test, MissingOrUnknownMeansSession)
+{
+    EXPECT_EQ(Config::ParseSdWriteMode(nullptr), 0);
+    EXPECT_EQ(Config::ParseSdWriteMode(""), 0);
+    EXPECT_EQ(Config::ParseSdWriteMode("always"), 0);
+}
+
+/// endregion </[ZC] SDWrite>
+
 /// region <[EVO] Fpga (ZX-Evo BaseConf FPGA variant)>
 
 TEST(ConfigEvoFpga_Test, ParsesVariantNamesCaseInsensitive)

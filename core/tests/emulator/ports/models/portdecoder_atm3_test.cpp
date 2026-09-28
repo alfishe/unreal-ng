@@ -3,6 +3,10 @@
 
 #include "portdecoder_atm3_test.h"
 #include "debugger/ttd/atm/ttdatmpaging.h"
+#include "debugger/ttd/timetravelmanager.h"
+#include "_helpers/emulatortesthelper.h"
+#include "base/featuremanager.h"
+#include "emulator/io/storage/memorydisk.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/memory/atm/cmos.h"
@@ -787,8 +791,9 @@ TEST_F(PortDecoder_ATM3_Test, Mapping_Eff7Bit3_Ram0AtWindow0)
     EXPECT_EQ(_memory->GetMemoryBankMode(0), MemoryBankModeEnum::BANK_ROM) << "pager off beats #EFF7 bit 3";
 }
 
-/// Z-Controller: #77 reads #00 outside shadow ("card inserted, R/W" -
-/// zports.v:449-450); #57 reads #FF while no SD card model exists
+/// ZC-1: #77 reads #00 outside shadow ("card inserted, R/W" - zports.v:449-450,
+/// real presence is in AVR register C); with no card #57 reads #FF (MISO
+/// pulled up). In shadow #77 is the ATM system port, not the SD card
 TEST_F(PortDecoder_ATM3_Test, ZController_ConfigReadsZero_DataIdle)
 {
     EmulatorState& state = _context->emulatorState;
@@ -796,6 +801,173 @@ TEST_F(PortDecoder_ATM3_Test, ZController_ConfigReadsZero_DataIdle)
     EXPECT_EQ(_portDecoder->DecodePortIn(0x0077, 0x0000), 0x00);
     EXPECT_EQ(_portDecoder->DecodePortIn(0x0057, 0x0000), 0xFF);
     EXPECT_TRUE(_portDecoder->WasLastPortDecoded());
+
+    using Arm = PortDecoder_ATM3::PortArm;
+    EXPECT_EQ(_portDecoder->ClassifyPort(0x0077, true), Arm::SdConfig);
+    SetShadow(state, true);
+    EXPECT_EQ(_portDecoder->ClassifyPort(0x0077, true), Arm::Atm77);
+    EXPECT_EQ(_portDecoder->ClassifyPort(0x0077, false), Arm::Atm77);
+}
+
+namespace
+{
+    /// Send one SD command through a port pair and return R1 (IN twice per
+    /// byte: the first clocks it in, the second returns it)
+    uint8_t SdCommand(PortDecoder_ATM3* decoder, uint16_t dataPort, uint8_t index, uint32_t arg, uint8_t crc = 0xFF)
+    {
+        decoder->DecodePortOut(dataPort, static_cast<uint8_t>(0x40 | index), 0);
+        for (int shift = 24; shift >= 0; shift -= 8)
+            decoder->DecodePortOut(dataPort, static_cast<uint8_t>(arg >> shift), 0);
+        decoder->DecodePortOut(dataPort, crc, 0);
+        decoder->DecodePortIn(dataPort, 0);  // the CRC exchange's byte (NCR)
+        for (int i = 0; i < 16; i++)
+        {
+            const uint8_t r = decoder->DecodePortIn(dataPort, 0);
+            if (r != 0xFF)
+                return r;
+        }
+        return 0xFF;
+    }
+
+    bool SdInit(PortDecoder_ATM3* decoder, uint16_t dataPort)
+    {
+        if (SdCommand(decoder, dataPort, 0, 0, 0x95) != 0x01)
+            return false;
+        for (int tries = 0; tries < 20; tries++)
+        {
+            SdCommand(decoder, dataPort, 55, 0);
+            if (SdCommand(decoder, dataPort, 41, 0x40000000) == 0x00)
+                return true;
+        }
+        return false;
+    }
+
+    std::unique_ptr<MemoryDisk> PatternDisk(uint64_t sectors)
+    {
+        auto disk = std::make_unique<MemoryDisk>(sectors);
+        for (uint64_t i = 0; i < sectors * 512; i++)
+            disk->Data()[i] = static_cast<uint8_t>(i / 512 + i % 7);
+        return disk;
+    }
+}  // namespace
+
+/// ZC-2 on the machine: the whole SD protocol through #77 / #57 outside
+/// shadow - init, then READ_SINGLE_BLOCK of sector 5
+TEST_F(PortDecoder_ATM3_Test, ZController_ReadsASectorThroughThePorts)
+{
+    EmulatorState& state = _context->emulatorState;
+    SetShadow(state, false);
+    ASSERT_TRUE(_portDecoder->InsertSdCard(PatternDisk(64), SdCardSpi::WriteMode::Session));
+
+    EXPECT_EQ(SdCommand(_portDecoder, 0x0057, 0, 0, 0x95), 0xFF) << "deselected card: no answer";
+    _portDecoder->DecodePortOut(0x0077, 0x01, 0);  // D1 = 0: select
+    ASSERT_TRUE(SdInit(_portDecoder, 0x0057));
+    ASSERT_EQ(SdCommand(_portDecoder, 0x0057, 17, 5 * 512), 0x00);
+
+    int token = -1;
+    for (int i = 0; i < 64 && token < 0; i++)
+        if (_portDecoder->DecodePortIn(0x0057, 0) == 0xFE)
+            token = i;
+    ASSERT_GE(token, 0) << "data token";
+    std::vector<uint8_t> data(512);
+    for (auto& b : data)
+        b = _portDecoder->DecodePortIn(0x0057, 0);
+    for (size_t i : {size_t{0}, size_t{1}, size_t{300}, size_t{511}})
+        EXPECT_EQ(data[i], static_cast<uint8_t>(5 + (5 * 512 + i) % 7)) << "byte " << i;
+}
+
+/// ZC-3: in shadow, #57 with A15 = 1 is the chip select (#8057, NedoOS) and
+/// #57 with A15 = 0 the data port (zports.v:812-816)
+TEST_F(PortDecoder_ATM3_Test, ZController_ShadowChipSelectOn8057)
+{
+    EmulatorState& state = _context->emulatorState;
+    SetShadow(state, true);
+    ASSERT_TRUE(_portDecoder->InsertSdCard(PatternDisk(16), SdCardSpi::WriteMode::Session));
+
+    using Arm = PortDecoder_ATM3::PortArm;
+    EXPECT_EQ(_portDecoder->ClassifyPort(0x8057, true), Arm::SdConfig);
+    EXPECT_EQ(_portDecoder->ClassifyPort(0x0057, true), Arm::SdData);
+    EXPECT_EQ(_portDecoder->ClassifyPort(0x8057, false), Arm::SdData) << "reads are always data";
+
+    _portDecoder->DecodePortOut(0x8057, 0x01, 0);
+    EXPECT_TRUE(_portDecoder->GetZController().IsSelected());
+    EXPECT_EQ(SdCommand(_portDecoder, 0x0057, 0, 0, 0x95), 0x01) << "CMD0 through #0057 in shadow";
+    _portDecoder->DecodePortOut(0x8057, 0x02, 0);
+    EXPECT_FALSE(_portDecoder->GetZController().IsSelected());
+}
+
+/// ZC-4: AVR register C bit 3 = card present, bit 2 = the slot's write-protect switch
+TEST_F(PortDecoder_ATM3_Test, ZController_CardStatusInAvrRegisterC)
+{
+    EvoAvr& avr = _portDecoder->GetEvoAvr();
+    avr.SetFixedTime(1767268830);  // no update-ended flag in the read
+    auto registerC = [&avr]() {
+        avr.SetCMOSAddress(0x0C);
+        return static_cast<uint8_t>(avr.ReadCMOS() & 0x0C);
+    };
+
+    EXPECT_EQ(registerC(), 0x00) << "empty slot";
+    ASSERT_TRUE(_portDecoder->InsertSdCard(PatternDisk(16), SdCardSpi::WriteMode::Session, /*writeProtect*/ true));
+    EXPECT_EQ(registerC(), 0x0C);
+    ASSERT_TRUE(_portDecoder->InsertSdCard(PatternDisk(16), SdCardSpi::WriteMode::Session));
+    EXPECT_EQ(registerC(), 0x08);
+    _portDecoder->EjectSdCard();
+    EXPECT_EQ(registerC(), 0x00);
+}
+
+/// [ZC] SDCardImage goes in at power-on; a Z80 reset keeps the card and its
+/// session writes but deselects it
+TEST_F(PortDecoder_ATM3_Test, ZController_ResetKeepsTheCardAndDeselects)
+{
+    ASSERT_TRUE(_portDecoder->InsertSdCard(PatternDisk(16), SdCardSpi::WriteMode::Session));
+    const std::vector<uint8_t> block(512, 0x99);
+    ASSERT_TRUE(_portDecoder->GetSdCard().writeBlock(3, block.data()));
+    SetShadow(_context->emulatorState, false);
+    _portDecoder->DecodePortOut(0x0077, 0x00, 0);
+    ASSERT_TRUE(_portDecoder->GetZController().IsSelected());
+
+    _portDecoder->reset();
+    EXPECT_TRUE(_portDecoder->GetSdCard().present());
+    EXPECT_FALSE(_portDecoder->GetZController().IsSelected());
+    uint8_t back[512];
+    ASSERT_TRUE(_portDecoder->GetSdCard().readBlock(3, back));
+    EXPECT_EQ(back[0], 0x99) << "session writes survive a Z80 reset";
+}
+
+/// ST-TTD-1 (SD part): the first SD command while TTD records ends the
+/// recording at the frame boundary; an idle card in the slot does not
+TEST(ZXEvoSdCardTtd_Test, FirstSdCommandEndsTheRecording)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("ATM3", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    auto* decoder = dynamic_cast<PortDecoder_ATM3*>(context->pPortDecoder);
+    ASSERT_NE(decoder, nullptr);
+    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ASSERT_NE(ttd, nullptr);
+    emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
+
+    ASSERT_TRUE(decoder->InsertSdCard(PatternDisk(16), SdCardSpi::WriteMode::Session));
+    ASSERT_TRUE(ttd->StartRecording());
+    ttd->OnFrameBoundary();
+    EXPECT_TRUE(ttd->IsRecording()) << "a card that is only inserted is not activity";
+
+    SetShadow(context->emulatorState, false);
+    decoder->DecodePortOut(0x0077, 0x00, 0);  // select
+    for (int i = 0; i < 10; i++)
+        decoder->DecodePortOut(0x0057, 0xFF, 0);  // clocks without a command
+    EXPECT_FALSE(ttd->IsInvalidationPending());
+
+    EXPECT_EQ(SdCommand(decoder, 0x0057, 0, 0, 0x95), 0x01);
+    EXPECT_TRUE(ttd->IsInvalidationPending());
+    EXPECT_TRUE(ttd->IsRecording()) << "never from inside the port handler";
+
+    ttd->OnFrameBoundary();
+    EXPECT_FALSE(ttd->IsRecording());
+    EXPECT_FALSE(ttd->IsInvalidationPending());
+    EXPECT_EQ(ttd->GetCheckpointCount(), 0u) << "history dropped";
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
 namespace

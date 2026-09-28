@@ -137,6 +137,9 @@ public:
 	/// false for the current "trdemu" tree (also for a missing or unknown value)
 	static bool ParseEvoFpgaVariant(const char* value);
 
+	/// [ZC] SDWrite= value -> 0 session (also missing / unknown), 1 persist, 2 off
+	static uint8_t ParseSdWriteMode(const char* value);
+
 	/**
 	 * @brief Map a model (+ optional RAM size) to its config folder under configs/
 	 * @param model Machine model

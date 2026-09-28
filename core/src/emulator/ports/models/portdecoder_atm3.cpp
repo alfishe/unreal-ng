@@ -2,6 +2,7 @@
 #include "portdecoder_atm3.h"
 
 #include "common/modulelogger.h"
+#include "debugger/ttd/timetravelmanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/mouse/mouse.h"
@@ -13,6 +14,15 @@
 
 PortDecoder_ATM3::PortDecoder_ATM3(EmulatorContext* context) : PortDecoder_ATM710(context)
 {
+    _zc.SetDevice(&_sdCard);
+
+    // Storage is not in the TTD checkpoints yet (rollout-1 rule of the IDE
+    // design §10.0, tdd-storage-sd-ide-cd.md §5): the first card command of
+    // a recording ends it at the frame boundary, never a silently wrong replay
+    _sdCard.setCommandListener([this](uint8_t) {
+        if (_context->pTimeTravelManager && _context->pTimeTravelManager->IsRecording())
+            _context->pTimeTravelManager->RequestInvalidation("SD card activity: storage is not covered by TTD yet");
+    });
 }
 
 PortDecoder_ATM3::~PortDecoder_ATM3()
@@ -65,6 +75,20 @@ void PortDecoder_ATM3::reset()
         if (nvramPath[0] != '\0' && !_cmos.LoadNvram(nvramPath))
             MLOGINFO("PortDecoder_ATM3: no ZX-Evo NVRAM at '%s' yet, starting blank", nvramPath);
     }
+
+    // The card and its session writes survive a Z80 reset; [ZC] is read once,
+    // at power-on. The controller itself resets (spihub.v: /CS high)
+    _zc.Reset();
+    if (!_sdConfigApplied)
+    {
+        _sdConfigApplied = true;
+        const auto& zc = _context->config.zc;
+        const auto mode = zc.sd_write_mode == 1   ? SdCardSpi::WriteMode::Persist
+                          : zc.sd_write_mode == 2 ? SdCardSpi::WriteMode::Off
+                                                  : SdCardSpi::WriteMode::Session;
+        if (zc.sd_image_path[0] != '\0' && !InsertSdCard(zc.sd_image_path, mode, zc.sd_write_protect != 0))
+            MLOGWARNING("PortDecoder_ATM3: cannot insert the SD card image '%s' ([ZC] SDCardImage)", zc.sd_image_path);
+    }
 }
 
 /// @brief One BaseConf decode arm per I/O cycle
@@ -93,7 +117,9 @@ PortDecoder_ATM3::PortArm PortDecoder_ATM3::ClassifyPort(uint16_t port, bool isW
         case 0x77:
             return shadow ? PortArm::Atm77 : PortArm::SdConfig;
         case 0x57:
-            return PortArm::SdData;
+            // In shadow a write with A15 = 1 is the chip select (#8057, what
+            // NedoOS uses); reads are always data (zports.v:812-818)
+            return (isWrite && shadow && (port & 0x8000)) ? PortArm::SdConfig : PortArm::SdData;
         case 0x1F:
             return shadow ? PortArm::Fdc : PortArm::Joystick;
         case 0x3F:
@@ -178,9 +204,7 @@ uint8_t PortDecoder_ATM3::DecodePortIn(uint16_t port, uint16_t pc)
             result = 0x00;
             break;
         case PortArm::SdData:
-            // No SD card model yet: an idle SPI line reads #FF, so the ERS and
-            // NedoOS card probes fail cleanly
-            result = 0xFF;
+            result = _zc.ReadData();
             break;
         case PortArm::Fdc:
         {
@@ -330,7 +354,11 @@ void PortDecoder_ATM3::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
             Port_BD_Out(port, value);
             break;
         case PortArm::SdConfig:
+            _zc.WriteConfig(value);
+            break;
         case PortArm::SdData:
+            _zc.WriteData(value);
+            break;
         case PortArm::Joystick:
         case PortArm::Mouse:
         case PortArm::ComPort:
@@ -906,6 +934,39 @@ bool PortDecoder_ATM3::TrdemuFdcAccess(uint8_t fdcPort, bool isWrite, uint8_t va
 }
 
 /// endregion </Board NMI>
+
+/// region <SD card>
+
+bool PortDecoder_ATM3::InsertSdCard(const std::string& path, SdCardSpi::WriteMode mode, bool writeProtect)
+{
+    const bool inserted = _sdCard.open(path, mode);
+    _sdWriteProtect = writeProtect;
+    UpdateSdStatus();
+    return inserted;
+}
+
+bool PortDecoder_ATM3::InsertSdCard(std::unique_ptr<IBlockDevice> media, SdCardSpi::WriteMode mode, bool writeProtect)
+{
+    const bool inserted = _sdCard.insert(std::move(media), mode);
+    _sdWriteProtect = writeProtect;
+    UpdateSdStatus();
+    return inserted;
+}
+
+void PortDecoder_ATM3::EjectSdCard()
+{
+    _sdCard.close();
+    UpdateSdStatus();
+}
+
+void PortDecoder_ATM3::UpdateSdStatus()
+{
+    // AVR register C: b3 card present, b2 write-protected (rtc.c reads the
+    // slot's detect and WP switches)
+    _cmos.SetSdStatus(_sdCard.present(), _sdCard.present() && _sdWriteProtect);
+}
+
+/// endregion </SD card>
 
 /// @brief BaseConf window mapping (fpga/base_trdemu/trunk/mem/atm_pager.v:114-168)
 /// @details Priority for window 0: pager off (all windows ROM 31) > NMI (RAM

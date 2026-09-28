@@ -669,6 +669,19 @@ struct CONFIG
 		char evo_nvram_path[FILENAME_MAX];
 	} atm;
 
+	// Z-Controller SD card slot (ZX-Evo; [ZC] section)
+	struct
+	{
+		// Image file in the slot (SDCardImage=, alias SDCARD); empty = no card
+		char sd_image_path[FILENAME_MAX];
+		// Where guest writes go (SDWrite=): 0 session (kept in memory, the
+		// file untouched), 1 persist (written to the file), 2 off (refused)
+		uint8_t sd_write_mode;
+		// Slot write-protect switch (SDWriteProtect=): reported to software
+		// (ZX-Evo AVR register C bit 2), the card itself does not enforce it
+		uint8_t sd_write_protect;
+	} zc;
+
 	uint8_t use_comp_pal;
 	unsigned pal, num_pals;      // selected palette and total number of pals
 	unsigned minres;             // min. screen x-resolution
@@ -722,9 +735,6 @@ struct CONFIG
 #ifdef MOD_MONITOR
 	char sos_labels_path[FILENAME_MAX];
 #endif
-
-	uint8_t zc;
-	char zc_sd_card_path[FILENAME_MAX];
 
 	char atariset[64]; // preset for atari
 	char keymap_name[64]; // name of ZX keys map

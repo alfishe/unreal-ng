@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-09-27 |
-| **Status** | Design, ready for review. Nothing implemented |
+| **Status** | SD card for image files implemented in phase E5 (2026-09-28): [e5-sd-card.md](e5-sd-card.md), "As built" in §2.5. Host folders (S2), NemoIDE and ATAPI not yet |
 | **Closes** | gaps **ST-1…ST-4**, the storage parts of **R-2**, **T-1**, **T-2** of [gap-analysis.md](gap-analysis.md); user items "IDE HDD (image, folder)", "CD ATAPI", and the SD/HDD sources for "mount TR-DOS from SD/HDD" |
 | **Builds on (does not repeat)** | the shared IDE design [2026-09-25-ide-hdd-design.md](../2026-09-21-profi/2026-09-25-ide-hdd-design.md) (ATA core, adapters, media, ATAPI, TTD interim rule, automation); the SD card model of [neogs-tdd.md](../2026-09-19-general-sound/neogs-tdd.md) §5.4-§5.5; TSConf storage [technical-design.md](../2026-09-27-tsconf/technical-design.md) §3.11 and plan phase 6 |
 | **Hardware source** | [baseconf-hardware-reference.md](baseconf-hardware-reference.md) §A.9 (IDE), §A.13 (SD), §C 3.3 and §C 4 (ERS devices and boot) |
@@ -91,6 +91,24 @@ SDFolderFs=FAT32          ; FAT32 | FAT16 (folder volumes only)
 
 The ERS and NedoOS find the card by protocol (CMD0/CMD8/ACMD41), not by `#77`. The AVR register C
 bits tell the ERS whether to show "SD card lost"; `EvoAvr::SetSdStatus` is driven by the slot.
+
+### 2.5 As built (E5, 2026-09-28)
+
+- The shared storage seam lives in `core/src/emulator/io/storage/` (not `io/hdd/storage/` as the IDE
+  design's file list says): `IBlockDevice`, `RawImage`, `MemoryDisk`, `SessionWriteMap`. IDE rollout 1
+  builds its image formats and `HostFolderFat` next to them.
+- `SdCardSpi` keeps the `neogs` API (`open(path, mode, type)`, state blob, listeners) and adds
+  `insert(std::unique_ptr<IBlockDevice>, mode, type)`, `media()`, `sessionWrites()`,
+  `setCommandListener()`. `open()` = `RawImage` (read-only unless Persist) + `insert()`.
+- `PortDecoder_ATM3` owns the card and the `ZControllerSpi` (like `EvoAvr`): they survive
+  `Core::Reset()`. `[ZC] SDCardImage` is inserted once, at power-on; a Z80 reset only deselects.
+  API: `InsertSdCard(path | medium, mode, writeProtect)`, `EjectSdCard()`, `GetSdCard()`.
+- `SDWriteProtect` is reported in AVR register C only; the card does not enforce it (a real SD card
+  ignores the slot switch too). `SDWrite=off` refuses writes.
+- `SDFolderFs` and folder paths wait for `HostFolderFat` (E5b). A folder in `SDCardImage` is refused
+  with a warning.
+- TTD (§5): the first SD command while recording calls `TimeTravelManager::RequestInvalidation`,
+  applied at the next frame boundary.
 
 ## 3. NemoIDE hard disk (ST-2, ST-3)
 

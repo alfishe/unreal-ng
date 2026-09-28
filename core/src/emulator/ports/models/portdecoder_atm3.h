@@ -1,7 +1,12 @@
 #pragma once
 #include "stdafx.h"
 
+#include <memory>
+#include <string>
+
 #include "emulator/cpu/z80.h"
+#include "emulator/io/sdcard/sdcardspi.h"
+#include "emulator/io/spi/zcontrollerspi.h"
 #include "emulator/memory/atm/evoavr.h"
 
 #include "portdecoder_atm710.h"
@@ -18,6 +23,8 @@
 /// - CMOS (DS12885-style RTC + NVRAM) shared with the memory manager ports:
 ///   data #BFF7 / address #DFF7 outside shadow (after #EFF7 bit 7),
 ///   data #BEF7 / address #DEF7 in shadow
+/// - Z-Controller SD card (#77 chip select, #57 data; in shadow #57 with
+///   A15 = 1 is the chip select): ZControllerSpi + SdCardSpi, [ZC] section
 /// - Shadow = TR-DOS active or #BF bit 0: the FDC, #xx77 and the pager
 ///   (#xFF7 / #x7F7) answer only then; #1F is the joystick and #xx77 the
 ///   Z-Controller outside it
@@ -96,6 +103,18 @@ public:
     /// Before an opcode fetch: a pending virtual-TR-DOS swap takes effect
     void BeforeMachineM1(uint16_t address) override;
     /// endregion </Board NMI>
+
+    /// region <SD card (Z-Controller, tdd-storage-sd-ide-cd.md §2)>
+    /// The card in the slot and the Z80-side controller. [ZC] SDCardImage is
+    /// inserted at power-on (the first reset); a Z80 reset keeps the card and
+    /// its session writes, like pressing reset on the board
+    SdCardSpi& GetSdCard() { return _sdCard; }
+    ZControllerSpi& GetZController() { return _zc; }
+    /// Insert an image file / any medium; the AVR reports the card present
+    bool InsertSdCard(const std::string& path, SdCardSpi::WriteMode mode, bool writeProtect = false);
+    bool InsertSdCard(std::unique_ptr<IBlockDevice> media, SdCardSpi::WriteMode mode, bool writeProtect = false);
+    void EjectSdCard();
+    /// endregion </SD card>
     /// endregion </Types>
 
     /// region <Fields>
@@ -105,6 +124,12 @@ protected:
     // the decoder so the contents survive Core::Reset() (like the real battery)
     EvoAvr _cmos;
     bool _nvramLoaded = false;  // [EVO] NvramFile read once, on the first reset
+
+    // Z-Controller SD slot: the card outlives Core::Reset() like the NVRAM
+    SdCardSpi _sdCard;
+    ZControllerSpi _zc;
+    bool _sdConfigApplied = false;  // [ZC] SDCardImage inserted once, on the first reset
+    bool _sdWriteProtect = false;   // the slot's write-protect switch
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -179,6 +204,8 @@ protected:
     /// deselected (a masked drive's #1F-#7F accesses never reach the chip)
     bool TrdemuFdcAccess(uint8_t fdcPort, bool isWrite, uint8_t value);
     void BorderOnlyOut(uint16_t port, uint8_t value, uint16_t pc);
+    /// Card presence and the slot's write-protect switch into AVR register C
+    void UpdateSdStatus();
     uint8_t DecodeF7In(uint16_t port);
     /// endregion </Port handlers>
 };

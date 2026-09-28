@@ -307,6 +307,14 @@ public:
     /// The reason string is logged but not stored.
     void InvalidateSession(const char* reason);
 
+    /// @brief InvalidateSession requested from inside emulation, by a device
+    /// whose state TTD cannot follow yet (storage: the SD card, IDE).
+    /// Applied at the next OnFrameBoundary, before that frame's checkpoint is
+    /// captured, on the frame thread - never from inside a port handler.
+    /// No-op unless Recording. `reason` must outlive the call (a literal).
+    void RequestInvalidation(const char* reason);
+    inline bool IsInvalidationPending() const { return _pendingInvalidation.load(std::memory_order_acquire) != nullptr; }
+
     inline bool IsRecording() const { return _state == TTDSessionState::Recording; }
     inline TTDSessionState GetState() const { return _state; }
     inline TTDRecordMode GetRecordMode() const { return _recordMode; }
@@ -1687,6 +1695,8 @@ private:
     /// the emulator thread while callers (tests, UI) typically read from
     /// the control thread.
     std::atomic<bool> _autoPauseRequested{false};
+    // RequestInvalidation reason, consumed by OnFrameBoundary (nullptr = none)
+    std::atomic<const char*> _pendingInvalidation{nullptr};
 
     // -----------------------------------------------------------------------
     // Feature-flag stewardship
