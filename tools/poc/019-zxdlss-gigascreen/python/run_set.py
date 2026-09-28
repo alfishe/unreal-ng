@@ -25,14 +25,18 @@ ap.add_argument("--clip", required=True)
 ap.add_argument("--out", default="out/v1")
 ap.add_argument("--only", nargs="*")
 ap.add_argument("--alg", default="v2")
+ap.add_argument("--clip-v2", action="store_true", help="core-exported clip with plane B")
 ap.add_argument("--still", type=int, default=120, help="also save this frame of each video as PNG")
 args = ap.parse_args()
 here = os.path.dirname(__file__)
 for name, a, b in CLIPS:
     if args.only and name not in args.only:
         continue
-    subprocess.run([sys.executable, os.path.join(here, "run.py"), "--clip", args.clip, "--from", str(a), "--to", str(b),
-                    "--name", name, "--out", args.out, "--alg", args.alg], check=True, stdout=subprocess.DEVNULL)
+    cmd = [sys.executable, os.path.join(here, "run.py"), "--clip", args.clip, "--from", str(a), "--to", str(b),
+           "--name", name, "--out", args.out, "--alg", args.alg]
+    if args.clip_v2:
+        cmd.append("--clip-v2")
+    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL)
     m = json.load(open(os.path.join(args.out, f"{name}.json")))
     subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", os.path.join(args.out, f"{name}.mp4"),
                     "-vf", f"select=eq(n\\,{args.still})", "-vframes", "1", os.path.join(args.out, f"{name}_f{args.still}.png")])

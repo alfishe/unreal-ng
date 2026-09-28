@@ -14,6 +14,11 @@ can only estimate. Per pixel, on palette indices:
   periodic       strict period P in 2..5 over [t-W, t+W]  (C1/C2)
   irregular      <= 3 distinct values, >= 70 % of steps A,B,A, value changes
                  on >= 50 % of steps                       (C3, phase slips)
+  local          strict A,B,A,B,A over any 5-frame window containing t: flickering
+                 background just before or after a sprite covers it (a ball
+                 crossing a GigaScreen stripe; the full-window rules call the
+                 whole crossing steady and so never counted the raw silhouette
+                 a ball left behind)
   steady         anything else -> must be shown raw
 GigaScreen whose two phases are offset copies has no single velocity (the
 shift flips every frame), so it is not "motion".
@@ -81,13 +86,23 @@ class Oracle:
         return plane[(yy - dy) % h, (xx - dx) % w]
 
     def _motion(self, seq, step):
-        """Pixels whose change t-step -> t -> t+step is one velocity (not zero)."""
+        """Pixels whose change is one constant velocity v != 0: the tile's shift
+        t-step -> t equals its shift t -> t+step, and the pixel matches both.
+        GigaScreen whose phases are offset copies also matches t-1 and t+1 under
+        a shift, but the shift flips sign every frame (-d, +d) - not a velocity.
+        (Matching only against t-1 and t+1 labelled such pictures as motion.)"""
         cur, prev, nxt = seq[W], seq[W - step], seq[W + step]
-        dy, dx = self._tile_shift(cur, prev)
-        moving = (dy != 0) | (dx != 0)
+        dy, dx = self._tile_shift(cur, prev)       # cur(x) = prev(x - v1)
+        dy2, dx2 = self._tile_shift(nxt, cur)      # nxt(x) = cur(x - v2)
+        consistent = (dy == dy2) & (dx == dx2) & ((dy != 0) | (dx != 0))
         back = cur == self._sample(prev, dy, dx)
         fwd = cur == self._sample(nxt, -dy, -dx)
-        return moving & back & fwd & (cur != prev)
+        # A pixel back at its value every 2 * step frames is flicker to the eye at
+        # 50 Hz, even when a shift "explains" it: A,B,A,B of a texture shifted by
+        # half its period each frame is the same frames as GigaScreen (seen on
+        # Hip-Hop King: 2-line textures matched a consistent 2-line shift)
+        progresses = cur != seq[W - 2 * step]
+        return consistent & back & fwd & progresses & (cur != prev)
 
     def at(self, i):
         """-> (flicker, moving_flicker, oracle RGB) for clip frame i, or None at the clip edges."""
@@ -108,7 +123,15 @@ class Oracle:
         for k in range(1, n):
             distinct += np.all(seq[:k] != seq[k], axis=0)
         irregular = (period == 0) & ~const & (distinct <= 3) & (alt >= 0.7) & (chg >= 0.5)
-        flicker = ((period > 0) | irregular) & ~motion & ~moving_flicker
+        def alternates(a):
+            return (seq[a] == seq[a + 2]) & (seq[a + 2] == seq[a + 4]) & (seq[a + 1] == seq[a + 3]) & (seq[a] != seq[a + 1])
+        # any 5-frame window that contains t: a 7-frame strobe burst A,B,A,B,A,B,A
+        # is flicker in its middle too (only [t-4, t] and [t, t+4] missed it)
+        wins = [alternates(W - 4 + s) for s in range(5)]
+        before = wins[0] | wins[1] | wins[2] | wins[3]    # windows reaching t-1: pair t with t-1
+        after = wins[4]
+        local = (before | after) & (period == 0) & ~irregular & ~const
+        flicker = ((period > 0) | irregular | local) & ~motion & ~moving_flicker
 
         # oracle mix: strict period -> the P frames ending at t; irregular -> whole window
         acc = np.zeros(seq.shape[1:] + (3,))
@@ -120,6 +143,9 @@ class Oracle:
         if irregular.any():
             for j in range(n):
                 acc[irregular] += self.lin[seq[j][irregular]] / n
+        if local.any():
+            other = np.where(before, seq[W - 1], seq[W + 1])
+            acc[local] += (self.lin[seq[W][local]] + self.lin[other[local]]) / 2
         return flicker, moving_flicker, np.round(linear_to_srgb(acc)).astype(np.uint8)
 
 
