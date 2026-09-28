@@ -1979,7 +1979,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "'step_back_frame'/'step_forward_frame', 'step_back_instruction'/'step_forward_instruction', "
         "'reverse_step' (count instructions OR tstates back), 'reverse_continue' (run backward until PC hits one of pcs), "
         "'find_last' (latest write/read/execute/io at an address before the current point, or before before_frame). "
-        "'resume' continues recording from the current (or given) point and DISCARDS the history after it. "
+        "'resume' continues recording from the current (or given) point and DISCARDS the history after it; it needs the "
+        "machine positioned in history (seek or step first - it fails right after 'stop'). "
         "Files: 'dump' / 'load' a .ttd session (path on the emulator's machine; load needs the same machine model). "
         "Bookmarks: 'bookmark_add'/'bookmark_list'/'bookmark_delete'/'seek_bookmark' (advisory labels, never barriers). "
         "Coverage index: 'coverage_probe' (did frame X touch an address range), 'coverage_scan' (which frames did), "
@@ -2003,7 +2004,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "Bookmark label for bookmark_add / bookmark_delete / seek_bookmark (non-empty, at most 63 characters)";
     schema["properties"]["frame"]["type"] = "integer";
     schema["properties"]["frame"]["description"] =
-        "Frame number: target for seek (required), optional start point for resume, optional position for bookmark_add "
+        "Frame number: target for seek (required), optional start point for resume (default: the current point), optional position for bookmark_add "
         "(default: current position), frame to test for coverage_probe";
     schema["properties"]["tinframe"]["type"] = "integer";
     schema["properties"]["tinframe"]["default"] = 0;
@@ -2342,7 +2343,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                    ? "Recording resumed on " + id + " from " + FormatTimePoint(b["frame"], b["tinframe"]) +
                                          "; history after that point was discarded and the emulator is running"
                                    : "Could not resume from " + FormatTimePoint(b["frame"], b["tinframe"]) + " (state " +
-                                         b["state"].asString() + ")";
+                                         b["state"].asString() + "); resume needs the machine positioned in history - " +
+                                         "seek or step there first";
                     }, done);
                 }
                 else if (action == "dump")
