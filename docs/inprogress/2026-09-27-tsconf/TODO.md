@@ -37,13 +37,20 @@ Scope confirmed with the user on 2026-09-27, and how the design honors it:
 - [x] Prerequisite: TTD RAM page 255 (vdos's page) is an ordinary page —
   `3a6eabc6` on master, 2026-09-27 (PLAN #40 V0 item, tested on ATM3)
 - [x] Prerequisite: unique `PeripheralId` table (PLAN #40 V0) — done on master;
-  TSConf appends id 13
+  TSConf appends id 15 (13/14 went to the +3)
+- [x] Prerequisite: shared SD card - `SdCardSpi` over `IBlockDevice` and
+  `ZControllerSpi` on master (#55 E5, `ed703577`); M1 hook (#55 E3) and
+  `EvoAvr` (#55 E2a) on master too
 
 ## Remaining
 
 - Implementation phases 0-8 per [implementation-plan.md](implementation-plan.md).
-- Prerequisites: #40 V1 and #42 (`IVideoMapper`) before phase 7; the NeoGS
-  `SdCardSpi` merge (or lift) before phase 6.
+- Prerequisites: PLAN #60 (interrupt source + write intercept, linear turbo
+  ratio, per-family `Screen` subclass, shared CMOS, wait-state hook) before
+  phase 0 per PLAN rationale 6; `HostFolderFat` (#58 M1) before the SD-folder
+  part of phase 6; the shared IDE (#13a) only if D2 changes; #40 V1 and #42
+  (`IVideoMapper`) before phase 7; B4 (turbo journal timestamps) before
+  relying on TTD find-last at 7/14 MHz.
 - Shared with the ATM3 completion program (PLAN #55, [implementation-plan.md](../2026-09-15-atm-baseconf-highres-ports/implementation-plan.md) §2): M1 hook, write intercept, `ZControllerSpi`, `HostFolderFat`, SD on `IBlockDevice`, `EvoAvr`. ATM3 moves to the official `zxevo_fe.rom` (pages 0-3 empty), so TSConf needs its own ROM file with TS-BIOS in pages 0-3.
 - Open user decisions: none blocking. D1-D7 in technical-design §3.2 record the
   defaults taken; revisit D2 (Nemo IDE) together with PLAN #13a.

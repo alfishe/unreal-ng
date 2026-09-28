@@ -43,7 +43,7 @@ flowchart LR
 ```
 
 Both PLAN #40 V0 items TSConf depended on are done: the unique `PeripheralId`
-table (P1 appends id 13 to it) and the page-255 sentinel fix (`3a6eabc6`), so
+table (P1 appends id 15 to it - 13 and 14 are the +3's) and the page-255 sentinel fix (`3a6eabc6`), so
 vdos's RAM page 0xFF is fully tracked by TTD. V1
 and #42 are only needed by P7; P0-P6 can proceed without them. P4 and P5 are
 independent after P3.
@@ -62,7 +62,10 @@ shared machine-infrastructure row #60, before TSConf starts (PLAN rationale 6:
 infrastructure → existing machines migrated → TSConf → Sprinter). The M1 hook
 (INF-4) already exists on master (#55 E3). When phase 0 starts, these rows only
 confirm the landed pieces meet the asserts below; the rest of phase 0 (INF-5 to
-INF-10) stays here.
+INF-10) stays here. INF-4 adapts to the landed hook: `IMachineM1Hook::
+BeforeMachineM1/OnMachineM1(address)` - the opcode comes from a debug read,
+not a hook argument. INF-5 (the ungated per-step hook) is not part of #60
+and is still TSConf's own phase-0 work.
 
 | ID | Test first (file) | Asserts | Drives |
 |:--|:--|:--|:--|
@@ -75,7 +78,7 @@ INF-10) stays here.
 | INF-7 | existing suites + `tsconfisolation_test` green | move `ts`/`cram`/`sfile`/`tsline`/budget/`clut`/`r_ts` out of shared structs; delete the `z80.cpp:1197-1210` block and the undefined `ts_*_int` declarations; remove `state.ts` reads from `DrawZX`/`DrawBorder`/`DrawScreenBorder`; ROM loader dispatch; all existing video goldens unchanged | §3.3 |
 | INF-8 | `config_test` (model lookup) | `"TSCONF"` and `"tsl"` resolve to `MM_TSL`; unknown names still fail | D3 alias |
 | INF-9 | `config_test` (timing) | `MM_TSL`: 224 T/line, 320 lines, 71680 T/frame, `frame_duration_us == 20480` | §3.17 |
-| INF-10 | TTD contract test | `PeripheralId::TsConfPaging == 13`, `ttd.ksy` enum matches | §3.13 step 1 (appends to the unique PeripheralId table) |
+| INF-10 | TTD contract test | `PeripheralId::TsConfPaging == 15`, `ttd.ksy` enum matches | §3.13 step 1 (appends to the unique PeripheralId table) |
 
 Exit: all INF tests green; the full suite and the benchmark gate unchanged;
 `TSL` still not creatable.
@@ -115,7 +118,7 @@ offset 0 of every page), helpers `Out(port, v)`, `In(port)`, `Peek(addr)`,
 | CCH-1 | cache hit semantics: `CACHE_CONFIG=0x04` (W2), read 0x8000 (fills), DMA-free RAM change via debug poke to the physical page, read 0x8000 → **old** value; CPU write 0x8000 → invalidates, next read → new value (hs §2.5) |
 | CCH-2 | `SYS_CONFIG` bit 2 → `CACHE_CONFIG = 0x0F`; any later `SYS_CONFIG` write with bit 2 = 0 → 0x00 |
 | MRG-1 | `modelsregression_test.cpp` row for `MM_TSL` |
-| TTD-1 | `TTDTsConfState` round-trip of the phase-1 state (registers, 7FFD/lock, FMAPS stash, cache, CRAM, SFILE): capture → mutate → restore → byte-identical; contract test declares id 13 |
+| TTD-1 | `TTDTsConfState` round-trip of the phase-1 state (registers, 7FFD/lock, FMAPS stash, cache, CRAM, SFILE): capture → mutate → restore → byte-identical; contract test declares id 15 |
 | ROM-1 | loader: 512 KB `zxevo.rom` and 64 KB `ts-bios.rom` both load; 64 KB pads pages 4-31 with 0xFF; < 64 KB rejected |
 | BOOT-0 | real ROM smoke (skip if `data/rom/zxevo.rom` absent): after reset, W0 page 0 bytes at 0x0B05 read "TS-BIOS" (hs §2.2 evidence) |
 
