@@ -23,7 +23,7 @@ Portions Copyright (C) SMT, Alone Coder, deathsoft. The license of the original 
 | miniaudio 0.11.21 | `core/src/3rdparty/miniaudio/` | Public domain / MIT-0 | header |
 | blip_buf (C++ port of Shay Green's blip_buf 1.1.0) | `core/src/3rdparty/blip_buf/` | LGPL-2.1-or-later | static |
 | ymfm @ 81aec25c (with local TTD patch and the CSM key-on fix ported from Furnace, see `PATCHES.md` there) | `core/src/3rdparty/ymfm/` | BSD-3-Clause | static |
-| unreal-z80 0.4.0 @ 0001920 (General Sound coprocessor core; see `README.md` there) | `core/src/3rdparty/unreal-z80/` | MIT | static |
+| unreal-z80 0.5.0 @ a0433ec (General Sound coprocessor core; see `README.md` there) | `core/src/3rdparty/unreal-z80/` | MIT | static |
 | lodepng 20200306 | `core/src/3rdparty/lodepng/` | zlib | static |
 | digestpp | `core/src/3rdparty/digestpp/` | Public domain | header |
 | tinywav | `core/src/3rdparty/tinywav/` | ISC | static |

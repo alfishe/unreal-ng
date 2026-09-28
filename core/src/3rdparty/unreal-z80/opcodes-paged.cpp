@@ -182,11 +182,31 @@ static Z80INLINE void Z80HaltT(Z80Regs*& rf, Z80CPU* cpu, int& tact)
     tact += 4;
 }
 
+// Internal (no-MREQ) T-states with addr on the address bus (cpuidle): the
+// plain count without a contention hook; with one, one Z80CpuAccessInternal
+// call per T-state at its start, its waits inserted before that T.
+static Z80INLINE void Z80IdleT(Z80Regs*& rf, Z80CPU* cpu, uint16_t addr, int n, int& tact)
+{
+    if (__builtin_expect(cpu->contend == nullptr, 1))
+    {
+        tact += n;
+        return;
+    }
+    for (int i = 0; i < n; i++)
+    {
+        tact += Z80ContendSlow(cpu, addr, Z80CpuAccessInternal, tact);
+        tact += 1;
+    }
+    rf = cpu->regs;  // reloaded after the out-of-line hook (see Z80ContendRT)
+}
+
+
 #define Z80Rd(...) Z80RdT(rf, __VA_ARGS__, tact_)
 #define Z80Wd(cpu, addr, val) Z80WdT(rf, cpu, addr, val, tact_)
 #define Z80M1(cpu) Z80M1T(rf, cpu, tact_)
 #define Z80Pin(cpu, port) Z80PinT(rf, cpu, port, tact_)
 #define Z80Pout(cpu, port, val) Z80PoutT(rf, cpu, port, val, tact_)
+#define cpuidle(addr, n) Z80IdleT(rf, cpu, static_cast<uint16_t>(addr), (n), tact_)
 
 #include "z80cpu-opcodes.inc"
 #include "opcodes-base.inc"

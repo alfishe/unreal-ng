@@ -47,7 +47,7 @@ Z80OPCODE opl_06(Z80CPU *cpu, int tact0, Z80Regs *rf) { // rlc (hl) | M:4 T:15 (
    uint8_t t = Z80Rd(cpu, rf->hl);
    rf->f = rlc_f[t];
 
-   cputact(1);
+   cpuidle(rf->hl, 1);
 
    Z80Wd(cpu, rf->hl, rol[t]);
    Z80_RETURN_Q(0x28, tact_);
@@ -99,7 +99,7 @@ Z80OPCODE opl_0E(Z80CPU *cpu, int tact0, Z80Regs *rf) { // rrc (hl)  | M:4 T:15 
    uint8_t t = Z80Rd(cpu, rf->hl);
    rf->f = rrc_f[t];
 
-   cputact(1);
+   cpuidle(rf->hl, 1);
 
    Z80Wd(cpu, rf->hl, ror[t]);
    Z80_RETURN_Q(0x28, tact_);
@@ -174,7 +174,7 @@ Z80OPCODE opl_16(Z80CPU *cpu, int tact0, Z80Regs *rf) { // rl (hl) | M:4 T:15 (4
 	   t = (t << 1);
    }
 
-   cputact(1);
+   cpuidle(rf->hl, 1);
 
    Z80Wd(cpu, rf->hl, t);
    Z80_RETURN_Q(0x28, tact_);
@@ -251,7 +251,7 @@ Z80OPCODE opl_1E(Z80CPU *cpu, int tact0, Z80Regs *rf) { // rr (hl) | M:4 T:15 (4
 		t = (t >> 1);
 	}
 
-   cputact(1);
+   cpuidle(rf->hl, 1);
 
    Z80Wd(cpu, rf->hl, t);
 	Z80_RETURN_Q(0x28, tact_);
@@ -311,7 +311,7 @@ Z80OPCODE opl_26(Z80CPU *cpu, int tact0, Z80Regs *rf) { // sla (hl) | M:4 T:15 (
    rf->f = rl0[t];
    t = (t << 1);
 
-   cputact(1);
+   cpuidle(rf->hl, 1);
 
    Z80Wd(cpu, rf->hl, t);
    Z80_RETURN_Q(0x28, tact_);
@@ -366,7 +366,7 @@ Z80OPCODE opl_2E(Z80CPU *cpu, int tact0, Z80Regs *rf) { // sra (hl) | M:4 T:15 (
    rf->f = sra_f[t];
    t = (t >> 1) + (t & 0x80);
 
-   cputact(1);
+   cpuidle(rf->hl, 1);
 
    Z80Wd(cpu, rf->hl, t);
    Z80_RETURN_Q(0x28, tact_);
@@ -420,7 +420,7 @@ Z80OPCODE opl_36(Z80CPU *cpu, int tact0, Z80Regs *rf) { // sli (hl)
    rf->f = rl1[t];
    t = (t << 1) + 1;
 
-   cputact(1);
+   cpuidle(rf->hl, 1);
 
    Z80Wd(cpu, rf->hl, t);
    Z80_RETURN_Q(0x28, tact_);
@@ -474,7 +474,7 @@ Z80OPCODE opl_3E(Z80CPU *cpu, int tact0, Z80Regs *rf) { // srl (hl) | M:4 T:15 (
    rf->f = rr0[value];
     value = (value >> 1);
 
-   cputact(1);
+   cpuidle(rf->hl, 1);
 
    Z80Wd(cpu, rf->hl, value);
    Z80_RETURN_Q(0x28, tact_);
@@ -519,7 +519,7 @@ Z80OPCODE opl_45(Z80CPU *cpu, int tact0, Z80Regs *rf) { // bit 0,l
 Z80OPCODE opl_46(Z80CPU *cpu, int tact0, Z80Regs *rf) { // bit 0,(hl)
    Z80_T_BEGIN(cpu);
    bitmem(rf, Z80Rd(cpu, rf->hl), 0);
-   cputact(1);
+   cpuidle(rf->hl, 1);
    Z80_RETURN_Q(0x28, tact_);
 }
 
@@ -560,7 +560,7 @@ Z80OPCODE opl_4D(Z80CPU *cpu, int tact0, Z80Regs *rf) { // bit 1,l
 Z80OPCODE opl_4E(Z80CPU *cpu, int tact0, Z80Regs *rf) { // bit 1,(hl)
    Z80_T_BEGIN(cpu);
    bitmem(rf, Z80Rd(cpu, rf->hl), 1);
-   cputact(1);
+   cpuidle(rf->hl, 1);
    Z80_RETURN_Q(0x28, tact_);
 }
 
@@ -603,7 +603,7 @@ Z80OPCODE opl_56(Z80CPU *cpu, int tact0, Z80Regs *rf) { // bit 2,(hl)
    Z80_T_BEGIN(cpu);
    bitmem(rf, Z80Rd(cpu, rf->hl), 2);
 
-   cputact(1);
+   cpuidle(rf->hl, 1);
    Z80_RETURN_Q(0x28, tact_);
 }
 
@@ -645,7 +645,7 @@ Z80OPCODE opl_5D(Z80CPU *cpu, int tact0, Z80Regs *rf) { // bit 3,l
 Z80OPCODE opl_5E(Z80CPU *cpu, int tact0, Z80Regs *rf) { // bit 3,(hl)
    Z80_T_BEGIN(cpu);
    bitmem(rf, Z80Rd(cpu, rf->hl), 3);
-   cputact(1);
+   cpuidle(rf->hl, 1);
    Z80_RETURN_Q(0x28, tact_);
 }
 
@@ -688,7 +688,7 @@ Z80OPCODE opl_66(Z80CPU *cpu, int tact0, Z80Regs *rf) { // bit 4,(hl)
    Z80_T_BEGIN(cpu);
    bitmem(rf, Z80Rd(cpu, rf->hl), 4);
 
-   cputact(1);
+   cpuidle(rf->hl, 1);
    Z80_RETURN_Q(0x28, tact_);
 }
 
@@ -731,7 +731,7 @@ Z80OPCODE opl_6E(Z80CPU *cpu, int tact0, Z80Regs *rf) { // bit 5,(hl)
    Z80_T_BEGIN(cpu);
    bitmem(rf, Z80Rd(cpu, rf->hl), 5);
 
-   cputact(1);
+   cpuidle(rf->hl, 1);
    Z80_RETURN_Q(0x28, tact_);
 }
 
@@ -774,7 +774,7 @@ Z80OPCODE opl_76(Z80CPU *cpu, int tact0, Z80Regs *rf) { // bit 6,(hl)
    Z80_T_BEGIN(cpu);
    bitmem(rf, Z80Rd(cpu, rf->hl), 6);
 
-   cputact(1);
+   cpuidle(rf->hl, 1);
    Z80_RETURN_Q(0x28, tact_);
 }
 
@@ -817,7 +817,7 @@ Z80OPCODE opl_7E(Z80CPU *cpu, int tact0, Z80Regs *rf) { // bit 7,(hl)
    Z80_T_BEGIN(cpu);
    bitmem(rf, Z80Rd(cpu, rf->hl), 7);
 
-   cputact(1);
+   cpuidle(rf->hl, 1);
    Z80_RETURN_Q(0x28, tact_);
 }
 
@@ -862,7 +862,7 @@ Z80OPCODE opl_86(Z80CPU *cpu, int tact0, Z80Regs *rf) { // res 0,(hl) | M:4 T:15
 
    res(t, 0);
 
-   cputact(1);
+   cpuidle(rf->hl, 1);
 
    Z80Wd(cpu, rf->hl, t);
    Z80_RETURN_Q(0, tact_);
@@ -909,7 +909,7 @@ Z80OPCODE opl_8E(Z80CPU *cpu, int tact0, Z80Regs *rf) { // res 1,(hl) | M:4 T:15
 
    res(value, 1);
 
-   cputact(1);
+   cpuidle(rf->hl, 1);
 
    Z80Wd(cpu, rf->hl, value);
    Z80_RETURN_Q(0, tact_);
@@ -956,7 +956,7 @@ Z80OPCODE opl_96(Z80CPU *cpu, int tact0, Z80Regs *rf) { // res 2,(hl) | M:4 T:15
 
    res(t, 2);
 
-   cputact(1);
+   cpuidle(rf->hl, 1);
 
    Z80Wd(cpu, rf->hl, t);
    Z80_RETURN_Q(0, tact_);
@@ -1003,7 +1003,7 @@ Z80OPCODE opl_9E(Z80CPU *cpu, int tact0, Z80Regs *rf) { // res 3,(hl) | M:4 T:15
 
    res(t, 3);
 
-   cputact(1);
+   cpuidle(rf->hl, 1);
 
    Z80Wd(cpu, rf->hl, t);
    Z80_RETURN_Q(0, tact_);
@@ -1050,7 +1050,7 @@ Z80OPCODE opl_A6(Z80CPU *cpu, int tact0, Z80Regs *rf) { // res 4,(hl) | M:4 T:15
 
    res(value, 4);
 
-   cputact(1);
+   cpuidle(rf->hl, 1);
 
    Z80Wd(cpu, rf->hl, value);
    Z80_RETURN_Q(0, tact_);
@@ -1097,7 +1097,7 @@ Z80OPCODE opl_AE(Z80CPU *cpu, int tact0, Z80Regs *rf) { // res 5,(hl) | M:4 T:15
 
    res(value, 5);
 
-   cputact(1);
+   cpuidle(rf->hl, 1);
 
    Z80Wd(cpu, rf->hl, value);
    Z80_RETURN_Q(0, tact_);
@@ -1144,7 +1144,7 @@ Z80OPCODE opl_B6(Z80CPU *cpu, int tact0, Z80Regs *rf) { // res 6,(hl) | M:4 T:15
 
    res(t, 6);
 
-   cputact(1);
+   cpuidle(rf->hl, 1);
 
    Z80Wd(cpu, rf->hl, t);
    Z80_RETURN_Q(0, tact_);
@@ -1191,7 +1191,7 @@ Z80OPCODE opl_BE(Z80CPU *cpu, int tact0, Z80Regs *rf) { // res 7,(hl) | M:4 T:15
 
    res(value, 7);
 
-   cputact(1);
+   cpuidle(rf->hl, 1);
 
    Z80Wd(cpu, rf->hl, value);
    Z80_RETURN_Q(0, tact_);
@@ -1238,7 +1238,7 @@ Z80OPCODE opl_C6(Z80CPU *cpu, int tact0, Z80Regs *rf) { // set 0,(hl) | M:4 T:15
 
    op_set(value, 0);
 
-   cputact(1);
+   cpuidle(rf->hl, 1);
 
    Z80Wd(cpu, rf->hl, value);
    Z80_RETURN_Q(0, tact_);
@@ -1284,7 +1284,7 @@ Z80OPCODE opl_CE(Z80CPU *cpu, int tact0, Z80Regs *rf) { // set 1,(hl) | M:4 T:15
 
    op_set(t, 1);
 
-   cputact(1);
+   cpuidle(rf->hl, 1);
 
    Z80Wd(cpu, rf->hl, t);
    Z80_RETURN_Q(0, tact_);
@@ -1331,7 +1331,7 @@ Z80OPCODE opl_D6(Z80CPU *cpu, int tact0, Z80Regs *rf) { // set 2,(hl) | M:4 T:15
 
    op_set(value, 2);
 
-   cputact(1);
+   cpuidle(rf->hl, 1);
 
    Z80Wd(cpu, rf->hl, value);
    Z80_RETURN_Q(0, tact_);
@@ -1378,7 +1378,7 @@ Z80OPCODE opl_DE(Z80CPU *cpu, int tact0, Z80Regs *rf) { // set 3,(hl) | M:4 T:15
 
    op_set(value, 3);
 
-   cputact(1);
+   cpuidle(rf->hl, 1);
 
    Z80Wd(cpu, rf->hl, value);
    Z80_RETURN_Q(0, tact_);
@@ -1424,7 +1424,7 @@ Z80OPCODE opl_E6(Z80CPU *cpu, int tact0, Z80Regs *rf) { // set 4,(hl) | M:4 T:15
 
    op_set(t, 4);
 
-   cputact(1);
+   cpuidle(rf->hl, 1);
 
    Z80Wd(cpu, rf->hl, t);
    Z80_RETURN_Q(0, tact_);
@@ -1471,7 +1471,7 @@ Z80OPCODE opl_EE(Z80CPU *cpu, int tact0, Z80Regs *rf) { // set 5,(hl) | M:4 T:15
 
    op_set(t, 5);
 
-   cputact(1);
+   cpuidle(rf->hl, 1);
 
    Z80Wd(cpu, rf->hl, t);
    Z80_RETURN_Q(0, tact_);
@@ -1518,7 +1518,7 @@ Z80OPCODE opl_F6(Z80CPU *cpu, int tact0, Z80Regs *rf) { // set 6,(hl) | M:4 T:15
 
    op_set(value, 6);
 
-   cputact(1);
+   cpuidle(rf->hl, 1);
 
    Z80Wd(cpu, rf->hl, value);
    Z80_RETURN_Q(0, tact_);
@@ -1565,7 +1565,7 @@ Z80OPCODE opl_FE(Z80CPU *cpu, int tact0, Z80Regs *rf) { // set 7,(hl) | M:4 T:15
 
    op_set(value, 7);
 
-   cputact(1);
+   cpuidle(rf->hl, 1);
 
    Z80Wd(cpu, rf->hl, value);
    Z80_RETURN_Q(0, tact_);

@@ -70,7 +70,12 @@ typedef enum
     Z80CpuAccessPortIn,    // port read, fired BEFORE IORQ (T = IO cycle start)
     Z80CpuAccessPortOut,   // port write, fired BEFORE IORQ (T = IO cycle start)
     Z80CpuAccessPortInPost,   // port read, fired AFTER the port callback (T = IORQ T)
-    Z80CpuAccessPortOutPost   // port write, fired AFTER the port callback (T = IORQ T)
+    Z80CpuAccessPortOutPost,  // port write, fired AFTER the port callback (T = IORQ T)
+    Z80CpuAccessInternal      // one internal (no-MREQ) T-state with addr on the
+                              // address bus: IR after M1 (INC rr, ADD HL,rr,
+                              // PUSH ...), the displacement (JR, (IX+d)), HL
+                              // (INC (HL), RLD), SP, DE / HL / BC (block
+                              // repeats) - fired once per T-state, at its start
 } Z80CpuAccessKind;
 
 // Wait-state (memory/IO contention) hook. Called at the first T-state of
@@ -81,6 +86,11 @@ typedef enum
 // waits + cycle offset (3 T for memory, +1 = IORQ for ports). Port cycles
 // fire twice: the *Post kinds run after the port callback with T at IORQ
 // and their waits extend the cycle (ULA-style "C:1, C:3" patterns).
+// Internal (no-MREQ) T-states fire as Z80CpuAccessInternal, one call per
+// T-state with its start as the current T; the waits go before that T (the
+// Ferranti ULA of the 48K/128K contends them, the +2A/+3 gate array does not:
+// return 0 for them there). The per-instruction addresses and counts are
+// FUSE's (checked against its no-MREQ checkpoints).
 // Return 0 for uncontended accesses. The interrupt acknowledge sequences
 // report their memory cycles too: the two stack pushes of Z80CpuInt/
 // Z80CpuNmi as Z80CpuAccessWrite and the IM2 vector-table reads as
@@ -122,7 +132,7 @@ typedef enum
     Z80CpuRegCount
 } Z80CpuReg;
 
-// Library version string, e.g. "0.4.0".
+// Library version string, e.g. "0.5.0".
 const char* Z80CpuVersion(void);
 
 // Lifecycle. The CPU starts in the post-reset state with no bus wired:
