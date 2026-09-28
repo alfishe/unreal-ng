@@ -106,7 +106,7 @@ tests that would catch regressions.
   feature without recording disables fast tape / fast disk; move the override to
   recording start ([requirements.md](requirements.md) FR-18). **Done** in `005771c8`: only a
   recording engages the lock, and it holds through replay and Detached.
-- **Analyzer fixes**: Python knows flag bit 3 (bookmarks). (Done 2026-09-25:
+- **Analyzer fixes**: Python knows flag bit 3 (bookmarks) (done 2026-09-28). (Done 2026-09-25:
   the analyzer compares the stored piece CRC, and the false "the C++ writer
   stores 0" comments in `ttd_format.py`, `ttd.ksy` and `timetravelmanager.cpp`
   are corrected.) C++ integrity behaviour (eager check at load,
@@ -118,9 +118,12 @@ tests that would catch regressions.
   case (present since `8db7841f`); a test for page 255 (done 2026-09-27); the generic state-completeness test
   ([requirements.md](requirements.md) FR-3): first version **done 2026-09-28**
   (`ttdstatecompleteness_test.cpp`, every creatable model, every port in the model's port
-  map). It found B10 (the #7FFD paging lock survived a seek), fixed the same day. Still
-  open: FR-4 (devices attached or detached at runtime) and ports that decode only in a
-  gated state (e.g. Beta-128 outside TR-DOS).
+  map). It found B10 (the #7FFD paging lock survived a seek), fixed the same day. Also
+  done 2026-09-28: a second pass with TR-DOS paged in (the Beta-128 rows decode and
+  must be restored) and FR-4: the one runtime device change, the General Sound card
+  type switch, is refused during a user recording and drops a stopped session or a
+  debugger's live history (`gs-card-switch`); a seek whose device set differs from
+  the checkpoint logs it instead of restoring silently.
 - **Comments**: remove the stale ones listed in current-state §10 (**done**: re-checked
   2026-09-28, the listed comments in `timetravelmanager.*`, `ttdserializable.h` and the
   page store header were already corrected; only the PoC reader `tools/poc/010-ttd-gui`

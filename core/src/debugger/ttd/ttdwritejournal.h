@@ -180,6 +180,11 @@ public:
     /// @brief Ring capacity in records (NOT bytes).
     inline size_t Capacity() const { return _ring.size(); }
 
+    /// @brief Heap the journal holds: the committed part of the ring (it
+    /// commits chunks on first write, so a short session holds far less than
+    /// Capacity() records).
+    inline size_t HeapBytes() const { return _ring.HeapBytes(); }
+
     /// @brief True iff Size() == 0.
     inline bool IsEmpty() const { return _seqHead == _seqTail; }
 
@@ -222,6 +227,16 @@ private:
         }
 
         size_t size() const { return _capacity; }
+
+        /// Heap actually committed: the chunk table plus every chunk written so far
+        size_t HeapBytes() const
+        {
+            size_t total = _chunks.capacity() * sizeof(_chunks[0]);
+            for (const auto& chunk : _chunks)
+                if (chunk)
+                    total += (_chunkMask + 1) * sizeof(TTDWriteRecord);
+            return total;
+        }
 
         /// Writable slot: commits (zero-initialized) its chunk on first use
         TTDWriteRecord& operator[](size_t idx)

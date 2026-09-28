@@ -10,9 +10,9 @@
 /// every registered device. A latch the checkpoint does not capture keeps the
 /// written value across the seek and fails here, naming the port.
 ///
-/// Limits of this first version: ports are written in the machine's state at
-/// the later checkpoint, so a gated row (e.g. Beta-128 outside TR-DOS) may not
-/// decode; devices attached or detached at runtime (FR-4) are not covered.
+/// Ports are written twice: in the machine's state at the later checkpoint,
+/// and with TR-DOS paged in there, where the rows gated on the DOS ports
+/// (Beta-128) decode.
 /// Over the 50 ms budget (~0.1 s per model): a machine is created and records
 /// per model; the per-port diagnosis runs only when the state differs.
 
@@ -172,15 +172,32 @@ protected:
     {
         if (!_ttd->SeekTo(_later))
             return "seek to the later checkpoint failed";
+        if (_inTrDos && !EnterTrDos())
+            return "TR-DOS did not open its ports";
         for (const PortMapEntry& row : ports)
             _context->pPortDecoder->DecodePortOut(row.port, value, 0);
         if (!_ttd->SeekTo(_reference))
             return "seek back to the reference checkpoint failed";
         return Difference(Capture(), reference, *_context->pMemory);
     }
+
+    /// Write the ports inside a TR-DOS session: the Beta-128 rows (and any
+    /// other row gated on the DOS ports) decode only there
+    bool _inTrDos = false;
+
+    /// Page TR-DOS in the way the ROM trap does; false when the model has no
+    /// TR-DOS (no DOS ports opened)
+    bool EnterTrDos()
+    {
+        _context->emulatorState.flags |= CF_TRDOS;
+        _context->pMemory->UpdateZ80Banks();
+        return (_context->emulatorState.flags & CF_DOSPORTS) != 0;
+    }
+
+    void ExpectEveryPortRestored();
 };
 
-TEST_P(TTD_StateCompleteness_Test, SeekRestoresEveryPortWrittenState)
+void TTD_StateCompleteness_Test::ExpectEveryPortRestored()
 {
     ASSERT_TRUE(_ttd->SeekTo(_reference));
     const MachineState reference = Capture();
@@ -206,9 +223,39 @@ TEST_P(TTD_StateCompleteness_Test, SeekRestoresEveryPortWrittenState)
                 culprits << "\n  #" << std::hex << row.port << std::dec << " (" << row.device << ") = #" << std::hex
                          << int(value) << std::dec << ": " << one;
         }
-        ADD_FAILURE() << GetParam() << ": a seek did not restore " << missed << culprits.str();
+        ADD_FAILURE() << GetParam() << (_inTrDos ? " (TR-DOS)" : "") << ": a seek did not restore " << missed
+                      << culprits.str();
         return;
     }
+}
+
+TEST_P(TTD_StateCompleteness_Test, SeekRestoresEveryPortWrittenState)
+{
+    ExpectEveryPortRestored();
+}
+
+/// The same with TR-DOS paged in at the later checkpoint: the Beta-128 FDC
+/// and system register decode, and the DOS session flags themselves must
+/// come back too
+TEST_P(TTD_StateCompleteness_Test, SeekRestoresEveryPortWrittenStateInTrDos)
+{
+    ASSERT_TRUE(_ttd->SeekTo(_later));
+    if (!EnterTrDos())
+        GTEST_SKIP() << GetParam() << " has no TR-DOS";
+
+    // The pass is only worth something if the FDC rows reach the controller
+    std::vector<PortMapEntry> fdcRows;
+    for (const PortMapEntry& row : _ports)
+        if (std::string(row.device).rfind("Beta128", 0) == 0)  // tagged Storage, not StorageFdc
+            fdcRows.push_back(row);
+    ASSERT_FALSE(fdcRows.empty()) << GetParam() << ": TR-DOS machine without Beta-128 rows in its port map";
+    const MachineState beforeWrites = Capture();
+    for (const PortMapEntry& row : fdcRows)
+        _context->pPortDecoder->DecodePortOut(row.port, 0x5A, 0);
+    EXPECT_NE(Capture().devices, beforeWrites.devices) << "Beta-128 writes in TR-DOS changed no device state";
+
+    _inTrDos = true;
+    ExpectEveryPortRestored();
 }
 
 INSTANTIATE_TEST_SUITE_P(CreatableModels, TTD_StateCompleteness_Test,

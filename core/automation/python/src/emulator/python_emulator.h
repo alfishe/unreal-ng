@@ -1688,8 +1688,13 @@ namespace PythonBindings
                 else
                     return false;
 
-                return sm->requestGeneralSoundCardSwitch(target);
-            }, "Request a GS card personality swap ('z80'/'lle' or 'lw'/'lightweight'), applied at the next frame boundary",
+                std::string refusal;
+                const bool requested = sm->requestGeneralSoundCardSwitch(target, &refusal);
+                if (!requested && !refusal.empty())
+                    throw std::runtime_error(refusal);  // a TTD recording refuses the switch (FR-4)
+                return requested;
+            }, "Request a GS card personality swap ('z80'/'lle' or 'lw'/'lightweight'), applied at the next frame "
+               "boundary (RuntimeError while TTD records)",
                py::arg("personality"))
             .def("gs_dump_module", [](Emulator& self, const std::string& path) -> py::object {
                 // Diagnostics: write the last completed COM30..D2 upload
