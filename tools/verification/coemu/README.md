@@ -39,6 +39,7 @@ tools/verification/coemu/xpeccy-plus/run.sh 48k      # one emulator
 | `mame/` | MAME | headless (`-video none`), a Lua script types the loader and dumps memory; ROM sets built from unreal-ng's ROMs by CRC | `MAME_BIN`, then `mame` on `PATH`; `MAME_ROMPATH` for ROMs |
 | `fuse/` | FUSE | builds a copy with a small end-of-frame hook (dump and exit) and the null UI; its own autoload | `FUSE_DIR` (a FUSE source tree) or `FUSE_BIN` (a patched binary) |
 | `zesarux/` | ZEsarUX | headless (`--vo null`), one instance per machine; memory read over its ZRCP remote protocol | `ZESARUX_BIN`, then `zesarux` on `PATH` |
+| `skoolkit/` | SkoolKit (Z80 contention simulator, 48K and 128K only) | loads the tape with SkoolKit's simulated `LOAD ""`, runs its contention simulator until `DONE` | `SKOOLKIT_PYTHON`, then `python3`, then the interpreter of `tap2sna.py` on `PATH` (`pip install skoolkit`) |
 | `zxmak2/` | ZXMAK2 | compiles its engine, unmodified, for .NET into a command-line runner; its stock machines from `machines.config` | `ZXMAK2_DIR` (a ZXMAK2 checkout) or `ZXMAK2_BIN` (a built `zxmak2-harness.dll`); needs `dotnet` |
 
 Each folder has its own README with what it needs and how it loads the program.
