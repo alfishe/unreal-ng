@@ -1,7 +1,7 @@
 # Unified media manager — TODO
 
 **Status:** requirements, technical design, media history design and integration designs reviewed
-(two rounds, 2026-09-28). Implemented on branch `media-manager` (2026-09-28): **M1** (block slots, folders as
+(two rounds, 2026-09-28). Implemented (branch `media-manager`, merged to master 2026-09-28): **M1** (block slots, folders as
 FAT volumes; ACC-1…ACC-4 with the ERS, TR-DOS and NedoOS), **M2** (floppies in the manager; ACC-7 on the real
 TR-DOS ROM) and **M4** (the media verbs on every surface and the Qt media panel). M3, M5, M6 and H1-H5 not
 started. PLAN.md row **#58**.

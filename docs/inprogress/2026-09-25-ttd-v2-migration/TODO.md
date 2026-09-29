@@ -12,7 +12,7 @@ the MoonSound port-claim model is design debt tracked in the
 [MoonSound TODO](../2026-09-13-moonsound/TODO.md), not a V1 prerequisite.
 Requirements: [requirements.md](requirements.md).
 
-- [ ] Step 0: `PeripheralId` table + notification enum on master
+- [x] Step 0: `PeripheralId` table + notification enum on master - **done** (checked 2026-09-28): ids 5 GS, 9 ProfiPaging, 10 MoonSound, 11 GS-LW, 12 NeoGS in `ttdserializable.h`, `ttd.ksy` and the analyzer (later ids 13-15 appended the same way); audio-activity enum GS = 6, MoonFM = 7, MoonPCM = 8 in `notifications.h`; the branch fast-forward is moot (profi, generalsound, moonsound merged)
 - [x] V0: make v1 honest - **done 2026-09-28** (B7-B10, FR-3 with TR-DOS, FR-4, analyzer bookmarks; ~~page-255 gap~~ done 2026-09-27, suspected bugs with tests — ~~B1 B2 B3 B5~~ fixed `a2d265df`/`86813dcb`, ~~B4~~ fixed 2026-09-28 (top-clock TTD time), ~~F3 feature-flag side effect~~ done `005771c8`, analyzer fixes)
 - [ ] V0b: benchmark harness with v1 as first engine (parallel with V0)
 - [x] Merge `profi` (merged; moot for this plan)
