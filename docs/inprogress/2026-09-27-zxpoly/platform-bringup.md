@@ -28,9 +28,10 @@
 13. [Step 10: polish](#13-step-10-polish)
 14. [Bug catalogue](#14-bug-catalogue)
 15. [What was hard and what we learned](#15-what-was-hard-and-what-we-learned)
-16. [Result in numbers](#16-result-in-numbers)
-17. [Session log: commits](#17-session-log-commits)
-18. [Time accounting](#18-time-accounting)
+16. [Driving the running emulator: WebAPI, CLI, MCP](#16-driving-the-running-emulator-webapi-cli-mcp)
+17. [Result in numbers](#17-result-in-numbers)
+18. [Session log: commits](#18-session-log-commits)
+19. [Time accounting](#19-time-accounting)
 
 ## 1. The platform in one page
 
@@ -648,7 +649,118 @@ Not bugs, but questions that looked like bugs:
   some stripes appeared"). After the rewind it was not investigated. It
   should be reproduced before calling the video path finished.
 
-## 16. Result in numbers
+## 16. Driving the running emulator: WebAPI, CLI, MCP
+
+Two tools checked the work:
+
+- **Unit tests** proved exactness: bit-identical states, mutation checks.
+- **The running application**, driven by script, checked the integration:
+  the real frame loop, the real UI thread, requests from other threads.
+
+This section is about the second one.
+
+### What was used, and how often
+
+| Channel | Use | Count |
+|:--|:--|--:|
+| unreal-qt launched from the worktree build | on separate ports (`UNREAL_WEBAPI_PORT`, `UNREAL_CLI_PORT`), next to the owner's own instance on 8090, which was never touched | ~25 launches |
+| WebAPI (`curl`) | create and remove ZX-Poly machines, change turbo and host speed, poll the group and TTD status | ~600 requests in 20 scripted checks |
+| CLI (socket) | `zxpoly start`/`status`, `ttd status`/`start` | a few sessions |
+| MCP tools | — | **0** |
+
+The live checks came in five clusters:
+
+| When | What was checked |
+|:--|:--|
+| 09-28 18:37–19:09 | The window after each step (Alien 8, Buratino, the Test ROM): launches only; the owner looked at the picture |
+| 09-28 20:13–20:27 | The new surfaces: WebAPI start/status/delete of a ZX-Poly machine, CLI `zxpoly start`/`status` |
+| 09-28 21:03–21:19 | Named configurations: listed, created by name, `ram_size` refused |
+| 09-28 23:57–01:15 | Pipelining, the status race, host speed ×1…×16: the bulk, about 500 requests |
+| 09-29 11:05 | The TTD refusal: 409 on the ZX-Poly machine, an ordinary 128K still records, the CLI prints the reason |
+
+**MCP was not used, although the unreal-ng MCP server was connected.** It
+talks to the WebAPI on the default port 8090. That port belonged to the
+owner's own running emulator, which the project rules say not to touch. The
+test build therefore ran on other ports, and the WebAPI was called directly.
+MCP adds nothing here that the WebAPI lacks; its tools forward to the same
+endpoints.
+
+The wall time spent inside these calls was about 6 minutes, plus the
+rebuilds before them. A typical check is one command that:
+
+1. launches the build;
+2. loads a title;
+3. changes a setting;
+4. polls the status 10–20 times;
+5. prints a count, such as `diverged 5/20`;
+6. closes the application.
+
+### What it found
+
+| Finding | How the WebAPI/CLI showed it | Could a test alone have found it? |
+|:--|:--|:--|
+| False divergence in the group status in turbo (bug 14) | 20 status polls: `diverged 5/20`. The same script against the build before pipelining gave 5/20 too, which proved the bug was not new — in one minute | No: the bug is a race with a second thread, which a headless test does not have |
+| Host speed ×2 broke the machine (bug 15) | `PUT settings/speed 2`, then the first status: `PC master=#AA6A slave=#AA5B` | A test was written afterwards; nothing had exercised the host speed before |
+| The speed race at ×4/×8 (bug 17) | Polling showed 9 of 10 diverged at ×8, still diverged after ×1. Four versions of the same script separated the causes in about 5 minutes: with and without polling, with and without tracing, the check on the master thread against the WebAPI answer | Only after the cause was known: the test reproduces the window on purpose |
+| Pipelining really engages in the application | `pipelined_slaves` true in turbo, false at normal speed | Tests prove equivalence, not that the application takes the path |
+| The fixes hold | Two rounds ×2 → ×8 → ×4 → ×16 → ×1 plus turbo: 0 divergences in 110 polls | — |
+| The TTD refusal reaches the user | WebAPI 409 with the reason; CLI `Not available:`; an ordinary 128K in the same application still records | Surfaces are thin; this checks the wiring end to end |
+
+### What it would have cost without it
+
+These are estimates, from how long the manual way takes in this project.
+A manual round trip is:
+
+1. rebuild;
+2. the owner opens the file in the UI;
+3. the owner changes speed or turbo in the menus;
+4. the owner watches and describes what they see;
+5. the agent reads the description.
+
+That takes about 10–15 minutes and needs the owner at the machine.
+
+| Work | With WebAPI/CLI | Manually |
+|:--|:--|:--|
+| 20 live check scenarios | ~6 min of calls, no owner time | ~20 round trips × 10–15 min ≈ 3.5–5 h of owner and agent time |
+| The speed-race diagnosis | 4 scripted experiments, ~5 min | Each experiment a rebuild with a debug flag and an owner session: ~1 h. The "with and without polling" experiment has no manual equivalent |
+| Status statistics (`5/20`, `9/10`, `0/110`) | read directly | not observable: the UI does not show the lockstep state; a person sees a glitch or no glitch |
+| Proving bug 14 is not new | one run against the old build | an old build installed side by side and driven by hand, ~20 min |
+
+**Estimated saving: 4–5 hours**, which is about half of the whole active
+time (≈ 8.5 h, [§19](#19-time-accounting)).
+
+Two of the bugs would probably not have been found at all by hand:
+
+- **The status race (bug 14)** lives in the status report itself, which a
+  person does not read.
+- **The speed race (bug 17)** looks like an occasional picture glitch at
+  high speed. A person would likely have reported it as "sometimes
+  broken", without a way to count it.
+
+### What did not work, and what to do better
+
+- **The picture was never checked by the agent.** Three times the report
+  said "I did not see the window": the terminal has no screen-recording
+  permission. The WebAPI has `GET /capture/screen`, and the recipe
+  [media/agent-screenshot-view.md](../../../.recipe/media/agent-screenshot-view.md)
+  describes exactly this. It was not used. A captured frame would have let
+  the agent check each step itself, and triage the owner's report of a black
+  border with stray character cells (§15) instead of leaving it open.
+- **The automation surface had its own bug.** The first status polls
+  reported divergences that were not there (bug 14). It was found *because*
+  the status was used heavily, and fixed.
+- **Debug data read from another thread is not trustworthy.** With the
+  instruction trace on, the WebAPI status also compared per-frame trace logs
+  that the master was still writing, and reported nonsense. The trustworthy
+  numbers came from a check on the master's thread.
+- **The sandbox blocked the first WebAPI connection** to an alternate port:
+  eight probes and a minute to see that the listener was fine and the
+  sandbox was not.
+- **MCP would need a port option** to drive a second instance next to the
+  owner's. With one, the same checks could run through MCP tools, which
+  also summarize the output.
+
+## 17. Result in numbers
 
 | Item | Count |
 |:--|:--|
@@ -660,7 +772,7 @@ Not bugs, but questions that looked like bugs:
 | Content in lockstep | the whole public corpus, on 4×128K and 4×Pentagon; the Test ROM's 8 checks |
 | Full test suite at the last merge | 4779 tests, 0 failures, no compiler warnings |
 
-## 17. Session log: commits
+## 18. Session log: commits
 
 Local time (UTC−4). All commits by Ilia Sharin with the assistant.
 
@@ -684,7 +796,7 @@ Local time (UTC−4). All commits by Ilia Sharin with the assistant.
 
 Every push went to both remotes (GitHub and the internal GitLab).
 
-## 18. Time accounting
+## 19. Time accounting
 
 **How it was measured.** From the session transcript's timestamps. Each tool
 call counts until the next event and is assigned to a category by its phase
