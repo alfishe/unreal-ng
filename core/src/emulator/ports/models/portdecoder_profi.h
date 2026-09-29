@@ -42,6 +42,7 @@ public:
 
     /// The clock chip (tests, debug UI; every RTC machine has GetRtc())
     Ds12887& GetRtc() { return _rtc; }
+    RtcBinding GetRtcBinding() override;
     /// endregion </Interface methods>
 
     /// region <Helper methods>

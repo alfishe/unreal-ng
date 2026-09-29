@@ -83,8 +83,35 @@ uint8_t EvoAvr::ReadRegister(uint8_t index)
     }
 }
 
+/// What a guest read would return, without clearing the update-ended flag
+uint8_t EvoAvr::PeekRegister(uint8_t index) const
+{
+    if (index >= kExtensionFirst)
+    {
+        if (_eepromMode)
+            return _eeprom[(static_cast<size_t>(_eepromPage) << 4) + (index & 0x0F)];
+        return ReadExtension(index);
+    }
+
+    switch (index)
+    {
+        case kRegA:
+            return _eepromPage;
+        case kRegB:
+            return GetCell(kRegB);
+        case kRegC:
+            return static_cast<uint8_t>((_eepromMode ? 0x80 : 0) | (Ds12887::PeekRegister(kRegC) & kCUpdateEnded) |
+                                        (_sdPresent ? 0x08 : 0) | (_sdWriteProtected ? 0x04 : 0) |
+                                        (_capsLed ? 0x02 : 0) | (_tapeOutMode ? 0x01 : 0));
+        case kRegD:
+            return static_cast<uint8_t>(0x80 | (_modifiers & 0x7F));
+        default:
+            return Ds12887::PeekRegister(index);
+    }
+}
+
 /// Extension window read (version.c:13-45)
-uint8_t EvoAvr::ReadExtension(uint8_t index)
+uint8_t EvoAvr::ReadExtension(uint8_t index) const
 {
     const size_t offset = index - kExtensionFirst;
 

@@ -79,6 +79,7 @@ public:
     SMUCNvram& GetSMUCNvram() { return _smucNvram; }
     /// The clock chip (tests, debug UI; every RTC machine has GetRtc())
     Ds12887& GetRtc() { return _smucNvram.GetRtc(); }
+    RtcBinding GetRtcBinding() override;
 
     /// SMUC board presence (absent by default - see _smucEnabled)
     void SetSmucEnabled(bool enabled) { _smucEnabled = enabled; }

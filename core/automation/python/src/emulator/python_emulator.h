@@ -63,6 +63,7 @@
 #include <thread>
 #include <debugger/ttd/ttdexternalevents.h>
 #include "../../../automation.h"
+#include <emulator/io/rtc/rtcaccess.h>
 #include <emulator/state/devicestate.h>
 #include "../bindings/python_porttrace.h"
 
@@ -1631,6 +1632,30 @@ namespace PythonBindings
             .def("ide_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Ide(self.GetContext()));
             }, "IDE board: scheme, latches, both units (task file, command, CD sense); available=False without one")
+            .def("rtc_state", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::Rtc(self.GetContext()));
+            }, "CMOS clock: part, ports, NVRAM file, time base, time, registers A-D, alarms, cell dump; available=False without one")
+            .def("rtc_read", [](Emulator& self, unsigned start, unsigned count) -> py::bytes {
+                std::vector<uint8_t> bytes;
+                std::string error;
+                if (!RtcAccess::Read(self.GetContext(), start, count, bytes, error))
+                    throw py::value_error(error);
+                return py::bytes(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+            }, py::arg("start"), py::arg("count") = 1,
+               "Read CMOS cells as the guest reads them (no side effects); returns bytes")
+            .def("rtc_write", [](Emulator& self, unsigned start, const std::vector<int>& values) {
+                std::vector<uint8_t> bytes;
+                for (int v : values)
+                {
+                    if (v < 0 || v > 255)
+                        throw py::value_error("Every value must be 0-255");
+                    bytes.push_back(static_cast<uint8_t>(v));
+                }
+                std::string error;
+                if (!RtcAccess::Write(self.GetContext(), start, bytes, "Python rtc_write", error))
+                    throw py::value_error(error);
+            }, py::arg("start"), py::arg("values"),
+               "Write CMOS cells like a guest write (time registers set the clock); values: list of ints 0-255 (list(b) for bytes)")
             .def("fdc_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Fdc(self.GetContext()));
             }, "Beta Disk WD1793 state report: registers, status bits, FSM, signals, drives")

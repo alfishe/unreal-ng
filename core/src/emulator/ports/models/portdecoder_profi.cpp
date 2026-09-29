@@ -404,6 +404,15 @@ void PortDecoder_Profi::UpdateModelMemoryBanks()
         _state->flags |= CF_DOSPORTS;
 }
 
+PortDecoder::RtcBinding PortDecoder_Profi::GetRtcBinding()
+{
+    RtcBinding binding;
+    binding.chip = &_rtc;
+    binding.ports = "#BF / #FF address, #9F / #DF data, extended mode only (CP/M + ROM14)";
+    binding.nvramFile = _context->config.profi_nvram_path;
+    return binding;
+}
+
 std::vector<ttd::PeripheralId> PortDecoder_Profi::GetTTDModelStateIds() const
 {
     return {ttd::PeripheralId::ProfiPaging, ttd::PeripheralId::Ds12887};

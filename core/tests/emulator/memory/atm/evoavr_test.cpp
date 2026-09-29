@@ -220,3 +220,19 @@ TEST(EvoAvr_Test, MachineSavesNvramOnShutdown)
 
     std::remove(path.c_str());
 }
+
+/// The AVR ignores SET, so the ERS / BaseConf set the date one field at a time
+/// and each field must read back as written (was: day 31 of a 30-day month
+/// folded into the 1st of the next month before the month was written)
+TEST(EvoAvr_Test, DateSetFieldByFieldWithoutSet)
+{
+    EvoAvr avr;
+    avr.SetFixedTime(1759140000);  // 2025-09-29, a 30-day month on every host zone
+    Write(avr, 0x0B, 0x80);        // SET: ignored by the AVR
+    Write(avr, 0x07, 0x31);
+    Write(avr, 0x08, 0x12);
+    Write(avr, 0x09, 0x99);
+    EXPECT_EQ(Read(avr, 0x07), 0x31);
+    EXPECT_EQ(Read(avr, 0x08), 0x12);
+    EXPECT_EQ(Read(avr, 0x09), 0x99);
+}
