@@ -110,6 +110,35 @@ written justification; **MAY** = allowed, not required.
   before `OnFrameBoundary`); v2 makes it an explicit, tested rule so a refactor
   of the frame-end sequence cannot break it.
 
+### 2.5 Replay isolation
+
+TTD v1 records every IN result of the main CPU (port-read journal, branch
+`ttd-o1-journals`, [ttd-port-read-journal.md](../../emulator/design/debugger/time-travel-debug/ttd-port-read-journal.md)):
+on the classic machines a replay already feeds the CPU recorded data and needs
+no media file or host device. Two parts of a fully sealed replay are v2 work:
+
+- **FR-20 (MUST)** **No writes outside the session while replaying.** While
+  recorded history is re-executed (a seek, a reverse query, running forward
+  through the past), no device writes to anything outside the emulated machine:
+  disk images, SD and HDD images, the media manager's session write maps and
+  write-through, flash persistence (NeoGS flash, Profi / ZX-Evo stores), CMOS
+  and RTC stores. Writes the replayed program makes still reach the devices'
+  in-machine state (their buffers, their registers), and the device's own
+  output is logged as a fact; the host-side medium is never touched. One gate,
+  keyed by the replay state (`EmulatorContext::ttdReplayActive` and the
+  re-execution of the past), in the media layer (block devices, disk images,
+  the session write map, flash persist) - not a flag each controller checks
+  on its own. A test replays history that writes a disk and proves the image
+  file and the session write map unchanged.
+- **FR-21 (MUST)** **Isolation beyond IN.** Configurations whose outside world
+  reaches memory or the CPU without an IN are journaled at the same boundary:
+  DMA transfers into RAM (TSConf, ZX Next, NeoGS ZX-DMA - its host memory reads
+  are served by the card), and an interrupt vector supplied by a device rather
+  than the floating bus (to be checked for TSConf and Sprinter: the current
+  classic clones do not drive IM2 vectors from outside). Until then the port-read
+  journal is off on these configurations and the session reports why
+  (`port_journal_off_reason`).
+
 ## 3. Performance requirements
 
 All numbers on the reference host class (Apple Silicon or equivalent x86-64,
@@ -287,7 +316,7 @@ folder's `DONE.md`:
 | V1 memory regions, cost ∝ change | FR-5, PR-3, PR-4, part of PR-9/PR-10 |
 | GS / MoonSound / Profi merges | FR-1, FR-2, FR-4 for those devices |
 | V2 device state | FR-2, FR-4, FR-7, FR-19, PR-10 |
-| V3 determinism inputs | FR-10 (journals, fingerprint), FR-14 |
+| V3 determinism inputs | FR-10 (journals, fingerprint), FR-14, FR-20, FR-21 |
 | V4 memory budget | FR-15, FR-16, FR-17 |
 | V5 container + disk mode | FR-11, FR-12, FR-13, PR-8, PR-12, QR-2, QR-5 |
 | V6 cleanup | QR-9, acceptance |
