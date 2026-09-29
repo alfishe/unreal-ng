@@ -440,8 +440,10 @@ MediaResult MediaManager::Save(const std::string& slotId, const SaveOptions& opt
                                  "slot '" + slotId + "' is empty");
     MediaResult result = SaveMedium(slotId, *medium, state ? state->slot : nullptr, options, outcome);
     if (result.Ok() && state)
+    {
         state->changedUnits = 0;
         state->changes.clear();
+    }
     return result;
 }
 
