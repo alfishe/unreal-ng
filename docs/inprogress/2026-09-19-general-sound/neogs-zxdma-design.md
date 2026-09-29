@@ -372,17 +372,24 @@ Scorpion's ProfROM switch decodes the address, not the ROM's output.
 Breakpoints and the access tracker keep seeing every access. The cost is one
 wasted table lookup per diverted access, only while ZX-DMA runs.
 
-**One slot, not a chain.** Only one device can own the host bus window at a
-time. `Core::SetBusOverlay` refuses a second overlay with a logged error. The
-NeoGS card is the only user; the GS debugger's tight mode (§6.1) goes
-through the same NeoGS overlay object, not a second one.
+**~~One slot, not a chain.~~ Superseded 2026-09-29 (PLAN #60(a)): a chain.**
+TSConf's FM window became the second user (a write-only overlay, TSConf
+technical-design §3.5), and a TSConf can carry a NeoGS card, so two devices
+own windows at the same time. `Core::SetBusOverlay` is replaced by
+`AddBusOverlay` / `RemoveBusOverlay` / `ClearBusOverlays`: up to four,
+called in install order; one alone is still called directly, two or more go
+through `HostBusOverlayChain`. `HostBusOverlay::observesReads = false` marks a
+write-only overlay. The card now installs with `AddBusOverlay(this)` and
+removes with `RemoveBusOverlay(this)`; the rest of this section is unchanged.
+The GS debugger's tight mode (§6.1) still goes through the same NeoGS overlay
+object, not a second one.
 
 ### 5.3 One selector for the memory interface
 
 ```cpp
 // core.h
 void SetDebugMemoryInterface(bool debug);    // replaces UseFast/UseDebugMemoryInterface
-void SetBusOverlay(HostBusOverlay* overlay); // nullptr removes it
+void SetBusOverlay(HostBusOverlay* overlay); // nullptr removes it (2026-09-29: AddBusOverlay / RemoveBusOverlay, §5.2)
 void SelectMemoryInterface();                // MemIf = table[debug][overlay != nullptr]
 ```
 

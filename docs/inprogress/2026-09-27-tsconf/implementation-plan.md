@@ -57,24 +57,28 @@ with agent assistance; for sequencing, not commitments).
 Goal: every generic extension point exists and is proven not to change any
 existing machine.
 
-**Moved to PLAN #60 (2026-09-28).** The interrupt source (INF-1) and the memory
-write intercept with its benchmark gate (INF-2, INF-3) are now built by the
-shared machine-infrastructure row #60, before TSConf starts (PLAN rationale 6:
-infrastructure → existing machines migrated → TSConf → Sprinter). The M1 hook
-(INF-4) already exists on master (#55 E3). When phase 0 starts, these rows only
-confirm the landed pieces meet the asserts below; the rest of phase 0 (INF-5 to
-INF-10) stays here. INF-4 adapts to the landed hook: `IMachineM1Hook::
-BeforeMachineM1/OnMachineM1(address)` - the opcode comes from a debug read,
-not a hook argument. INF-5 (the ungated per-step hook) is not part of #60
-and is still TSConf's own phase-0 work.
+**Built on branch `tsconf-infra` (2026-09-29): INF-1, INF-2, INF-5; INF-3 holds by construction, its A/B benchmark is open**
+(PLAN #60(a) plus INF-5). The M1 hook (INF-4) was already on master (#55 E3).
+What changed from the v1.0 plan:
+- INF-2: the write intercept is a **write-only host bus overlay**
+  (technical-design §3.5 item 2), not a per-bank flag in the plain write path;
+  several overlays can be installed at once (`Core::AddBusOverlay`).
+- INF-3: no gate is needed on the plain path (it is untouched: the overlay
+  interfaces are selected only while an overlay is installed); the existing
+  `hostbusoverlay_benchmark.cpp` covers the overlay path.
+- INF-1: `IInterruptSource` has no `OnFrameStart`; the rollover comes through
+  `IMachineStepHook::OnMachineFrameRollover`. It has `OnReti()` (Sprinter).
+- INF-4: `IMachineM1Hook::BeforeMachineM1/OnMachineM1(address)` - the opcode
+  comes from a debug read, not a hook argument.
+The rest of phase 0 (INF-6 to INF-10) stays here.
 
 | ID | Test first (file) | Asserts | Drives |
 |:--|:--|:--|:--|
-| INF-1 | `cpu/interruptsource_test.cpp` | with a fake `IInterruptSource` registered: INT is taken exactly when `IsIntAsserted(t)` is true and `iff1`; IM2 fetches `(I<<8) \| AcknowledgeInterrupt()`; EI shadow respected; without a source every existing INT test is unchanged | §3.4 interface + `Z80::ProcessInterrupts` branch |
-| INF-2 | `memory/memory_test.cpp` (new cases) | flag clear → no callback; flag set on bank 1 → `OnInterceptedWrite(0x4123, v)` called **after** the byte is stored (RAM holds `v`); `MemoryWriteDebug` path too | §3.5 intercept |
-| INF-3 | benchmark `BM_MemoryWriteFast` (existing or new in `core/benchmarks`) | ≤ 1 % regression vs. master on the 128K path | gate for INF-2 |
+| INF-1 ✅ | `cpu/int_test.cpp` (`InterruptSource_Test`) | with a fake `IInterruptSource` registered: INT is taken exactly when `IsIntAsserted(t)` is true and `iff1`; IM2 fetches `(I<<8) \| AcknowledgeInterrupt()`; EI shadow and prefix respected; RETI (and mirrors) call `OnReti`, RETN does not; without a source every existing INT test is unchanged | §3.4 interface + `Z80::ProcessInterrupts` branch |
+| INF-2 ✅ | `cpu/core_test.cpp` | a write-only overlay sees writes in its window **after** the byte is stored and never a read, in fast and debug mode; two overlays chain in install order; one alone is called directly; at most 4 | §3.5 intercept |
+| INF-3 (A/B open) | `core/benchmarks/emulator/memory/hostbusoverlay_benchmark.cpp` | plain path untouched by construction (no overlay → the same `FastMemIf` / `DbgMemIf`, `core_test` `EveryModelUsesThePlainInterfacesInEveryDebugState`); the new per-step cost is one pointer test in `ProcessInterrupts` and one in `OnCPUStep` (A/B frame benchmark vs master still to run on a quiet machine: the host load was ~100 on 2026-09-29) | gate for INF-2 / INF-1 / INF-5 |
 | INF-4 | `cpu/z80_test.cpp` (new cases) | with `CF_MACHINEM1` set and a fake hook: `OnM1(pc, opcode)` called once per instruction with the right opcode (incl. prefixed: once per M1 cycle — ED xx gives two calls); not called when flag clear | §3.6 |
-| INF-5 | `mainloop_test.cpp` (new) | a registered `IMachineStepHook` runs on every CPU step **also when `_renderThisFrame` is false** (turbo decimation) | §3.8, `MainLoop::OnCPUStep` |
+| INF-5 ✅ | `cpu/z80_test.cpp` (`MachineStepHook_Test`) | a registered `IMachineStepHook` runs after every CPU step with the reached `t`, **also when `_renderThisFrame` is false** (turbo decimation), and gets `OnMachineFrameRollover(frame)` once per frame | §3.8, `Z80::OnCPUStep`, `Core::AdjustFrameCounters` |
 | INF-6 | `tsconfisolation_test.cpp` | scan of `core/src` finds no forbidden token outside the allowlist (§3.3) — **expected red** until INF-7 lands | enforcement |
 | INF-7 | existing suites + `tsconfisolation_test` green | move `ts`/`cram`/`sfile`/`tsline`/budget/`clut`/`r_ts` out of shared structs; delete the `z80.cpp:1197-1210` block and the undefined `ts_*_int` declarations; remove `state.ts` reads from `DrawZX`/`DrawBorder`/`DrawScreenBorder`; ROM loader dispatch; all existing video goldens unchanged | §3.3 |
 | INF-8 | `config_test` (model lookup) | `"TSCONF"` and `"tsl"` resolve to `MM_TSL`; unknown names still fail | D3 alias |

@@ -1,4 +1,4 @@
-// Memory-interface selection and the host bus overlay slot
+// Memory-interface selection and the host bus overlays
 // (neogs-zxdma-design.md §5.2-§5.3, §8.1-§8.2).
 //
 // Guards two promises:
@@ -7,7 +7,9 @@
 //     every way of switching debug mode (the zero-cost promise);
 //   - with an overlay, the right one of the four interfaces is selected in
 //     every combination, the normal access still happens first, and switching
-//     is safe from two threads.
+//     is safe from two threads;
+//   - several overlays (a machine's bus logic and a card's) are chained in
+//     install order; one alone is called directly.
 
 #include <gtest/gtest.h>
 
@@ -75,7 +77,7 @@ protected:
     void TearDown() override
     {
         if (_core)
-            _core->SetBusOverlay(nullptr);
+            _core->ClearBusOverlays();
         if (_emulator)
             EmulatorTestHelper::CleanupEmulator(_emulator);
     }
@@ -171,7 +173,7 @@ TEST_F(Core_Test, OverlaySelectionFollowsBothInputsInEveryOrder)
     };
 
     expect(false, false, "start");
-    ASSERT_TRUE(_core->SetBusOverlay(&overlay));
+    ASSERT_TRUE(_core->AddBusOverlay(&overlay));
     expect(false, true, "installed, fast");
     setDebug(true);
     expect(true, true, "installed, debug on");
@@ -183,25 +185,117 @@ TEST_F(Core_Test, OverlaySelectionFollowsBothInputsInEveryOrder)
     expect(false, true, "frames keep the overlay (fast)");
     _emulator->DebugOn();
     expect(true, true, "DebugOn keeps the overlay");
-    _core->SetBusOverlay(nullptr);
+    _core->RemoveBusOverlay(&overlay);
     expect(true, false, "removed in debug mode");
     _emulator->DebugOff();
     expect(false, false, "debug off again");
-    ASSERT_TRUE(_core->SetBusOverlay(&overlay));
-    ASSERT_TRUE(_core->SetBusOverlay(&overlay)) << "installing the same overlay again is a no-op";
+    ASSERT_TRUE(_core->AddBusOverlay(&overlay));
+    ASSERT_TRUE(_core->AddBusOverlay(&overlay)) << "installing the same overlay again is a no-op";
     expect(false, true, "reinstalled");
 }
 
-TEST_F(Core_Test, OnlyOneOverlayAtATime)
+TEST_F(Core_Test, TwoOverlaysAreChainedInInstallOrder)
 {
     create();
     FakeOverlay a, b;
-    ASSERT_TRUE(_core->SetBusOverlay(&a));
-    EXPECT_FALSE(_core->SetBusOverlay(&b));
-    EXPECT_EQ(_core->GetBusOverlay(), &a);
-    EXPECT_EQ(_ctx->pMemory->GetBusOverlay(), &a);
-    ASSERT_TRUE(_core->SetBusOverlay(nullptr));
-    EXPECT_TRUE(_core->SetBusOverlay(&b));
+    a.windowEnd = 0x4000;
+    a.replacement = 0x11;
+    b.windowStart = 0x2000;
+    b.windowEnd = 0x6000;
+    b.replacement = 0x22;
+
+    ASSERT_TRUE(_core->AddBusOverlay(&a));
+    EXPECT_EQ(_ctx->pMemory->GetBusOverlay(), &a) << "one overlay is called directly";
+    ASSERT_TRUE(_core->AddBusOverlay(&b));
+    EXPECT_EQ(_core->GetBusOverlayCount(), 2u);
+    EXPECT_NE(_ctx->pMemory->GetBusOverlay(), &a) << "two go through the chain";
+    EXPECT_EQ(_z80->MemIf, _z80->OverlayFastMemIf);
+
+    _z80->DirectWrite(0x5000, 0x33);
+    runProgram({
+        0x3A, 0x00, 0x10, // LD A,(#1000)  only a
+        0x32, 0x00, 0xA0, // LD (#A000),A
+        0x3A, 0x00, 0x30, // LD A,(#3000)  a, then b
+        0x32, 0x01, 0xA0, // LD (#A001),A
+        0x3A, 0x00, 0x50, // LD A,(#5000)  only b
+        0x32, 0x02, 0xA0, // LD (#A002),A
+        0x3E, 0x77,       // LD A,#77
+        0x32, 0x00, 0x30, // LD (#3000),A  both see the write
+    });
+    EXPECT_EQ(_z80->DirectRead(0xA000), 0x11);
+    EXPECT_EQ(_z80->DirectRead(0xA001), 0x22) << "b decides last";
+    EXPECT_EQ(_z80->DirectRead(0xA002), 0x22);
+    ASSERT_EQ(b.reads.size(), 2u);
+    EXPECT_EQ(b.normals[0], 0x11) << "b got a's result as the normal byte";
+    EXPECT_EQ(b.normals[1], 0x33);
+    ASSERT_EQ(a.writes.size(), 1u);
+    ASSERT_EQ(b.writes.size(), 1u);
+    EXPECT_EQ(a.written[0], 0x77);
+    EXPECT_EQ(b.written[0], 0x77);
+
+    // A member moves its window while installed: the chain follows
+    b.windowStart = 0x7000;
+    b.windowEnd = 0x7001;
+    runProgram({0x3A, 0x00, 0x50}); // LD A,(#5000)
+    EXPECT_EQ(b.reads.size(), 2u) << "#5000 left b's window";
+
+    _core->RemoveBusOverlay(&a);
+    EXPECT_EQ(_ctx->pMemory->GetBusOverlay(), &b) << "back to a direct call";
+    _core->RemoveBusOverlay(&a);
+    EXPECT_EQ(_core->GetBusOverlayCount(), 1u) << "removing one not installed is a no-op";
+    _core->RemoveBusOverlay(&b);
+    EXPECT_EQ(_ctx->pMemory->GetBusOverlay(), nullptr);
+    EXPECT_TRUE(isPlain(false));
+}
+
+/// A write-only overlay (a memory write intercept: TSConf's FM window) sees
+/// the writes in its window after the store and never a read; in a chain it
+/// keeps that property while its partner still sees reads
+TEST_F(Core_Test, WriteOnlyOverlaySeesWritesNeverReads)
+{
+    create();
+    FakeOverlay intercept;
+    intercept.observesReads = false;
+    intercept.windowStart = 0xC000;
+    intercept.windowEnd = 0xD000;
+    ASSERT_TRUE(_core->AddBusOverlay(&intercept));
+    for (bool debug : {false, true})
+    {
+        setDebug(debug);
+        runProgram({
+            0x3E, 0x5C,       // LD A,#5C
+            0x32, 0x10, 0xC0, // LD (#C010),A  in the window
+            0x32, 0x10, 0xD0, // LD (#D010),A  outside
+            0x3A, 0x10, 0xC0, // LD A,(#C010)  a read in the window
+        });
+    }
+    EXPECT_TRUE(intercept.reads.empty()) << "onRead is never called";
+    ASSERT_EQ(intercept.writes.size(), 2u);
+    EXPECT_EQ(intercept.writes[0], 0xC010);
+    EXPECT_EQ(intercept.written[0], 0x5C);
+    EXPECT_EQ(_z80->DirectRead(0xC010), 0x5C) << "the store happened: the intercept runs after it";
+
+    FakeOverlay reader;
+    reader.windowStart = 0xC000;
+    reader.windowEnd = 0xD000;
+    reader.replace = false;
+    ASSERT_TRUE(_core->AddBusOverlay(&reader));
+    runProgram({0x3A, 0x10, 0xC0}); // LD A,(#C010)
+    EXPECT_EQ(reader.reads.size(), 1u) << "the chain still reads for its reading member";
+    EXPECT_TRUE(intercept.reads.empty());
+}
+
+TEST_F(Core_Test, OverlayCountIsBounded)
+{
+    create();
+    FakeOverlay overlays[HostBusOverlayChain::kMaxOverlays + 1];
+    for (size_t i = 0; i < HostBusOverlayChain::kMaxOverlays; i++)
+        ASSERT_TRUE(_core->AddBusOverlay(&overlays[i]));
+    EXPECT_FALSE(_core->AddBusOverlay(&overlays[HostBusOverlayChain::kMaxOverlays]));
+    EXPECT_EQ(_core->GetBusOverlayCount(), HostBusOverlayChain::kMaxOverlays);
+    EXPECT_FALSE(_core->IsBusOverlayInstalled(&overlays[HostBusOverlayChain::kMaxOverlays]));
+    _core->ClearBusOverlays();
+    EXPECT_TRUE(isPlain(false));
 }
 
 TEST_F(Core_Test, SwitchingFromTwoThreadsNeverLeavesAWrongInterface)
@@ -222,7 +316,12 @@ TEST_F(Core_Test, SwitchingFromTwoThreadsNeverLeavesAWrongInterface)
         });
     go.store(true);
     for (int i = 0; i < 10000; i++)
-        _core->SetBusOverlay((i & 1) ? nullptr : &overlay);
+    {
+        if (i & 1)
+            _core->RemoveBusOverlay(&overlay);
+        else
+            _core->AddBusOverlay(&overlay);
+    }
     ui.join();
 
     // Last operations: debug = true (i = 9999), overlay removed (i = 9999)
@@ -245,7 +344,7 @@ TEST_F(Core_Test, OverlayOnAContendedMachineKeepsTheContention)
     overlay.windowEnd = 0x8000;
     overlay.replace = false;
 
-    ASSERT_TRUE(_core->SetBusOverlay(&overlay));
+    ASSERT_TRUE(_core->AddBusOverlay(&overlay));
     EXPECT_EQ(_z80->MemIf, _z80->OverlayFastContendedMemIf);
     EXPECT_STREQ(_core->GetMemoryInterfaceName(), "fast_contended_overlay");
     setDebug(true);
@@ -277,7 +376,7 @@ TEST_F(Core_Test, OverlayOnAContendedMachineKeepsTheContention)
     };
     const uint32_t withOverlay = timed();
     EXPECT_GE(overlay.reads.size(), 64u);
-    _core->SetBusOverlay(nullptr);
+    _core->RemoveBusOverlay(&overlay);
     EXPECT_EQ(_z80->MemIf, _z80->FastContendedMemIf);
     const uint32_t without = timed();
     EXPECT_EQ(withOverlay, without) << "the contention wait is kept under the overlay";
@@ -300,7 +399,7 @@ TEST_F(Core_Test, OverlaySeesItsWindowAfterTheNormalAccessInFastAndDebugMode)
         const uint8_t romByte = _z80->DirectRead(0x0000);
         const uint8_t romAt1234 = _z80->DirectRead(0x1234);
         _z80->DirectWrite(0x9000, 0x11);
-        ASSERT_TRUE(_core->SetBusOverlay(&overlay));
+        ASSERT_TRUE(_core->AddBusOverlay(&overlay));
 
         runProgram({
             0x3A, 0x00, 0x00, // LD A,(#0000)   in the window: replaced
@@ -310,7 +409,7 @@ TEST_F(Core_Test, OverlaySeesItsWindowAfterTheNormalAccessInFastAndDebugMode)
             0x3E, 0x77,       // LD A,#77
             0x32, 0x34, 0x12, // LD (#1234),A   ROM write in the window
         });
-        _core->SetBusOverlay(nullptr);
+        _core->RemoveBusOverlay(&overlay);
 
         EXPECT_EQ(_z80->DirectRead(0xA000), 0x5A) << "the overlay's byte reached the CPU";
         EXPECT_EQ(_z80->DirectRead(0xA001), 0x11) << "outside the window: untouched";
@@ -332,7 +431,7 @@ TEST_F(Core_Test, OverlayWriteToRamStillReachesRam)
     overlay.windowStart = 0x8000;
     overlay.windowEnd = 0x10000;
     overlay.replace = false;
-    ASSERT_TRUE(_core->SetBusOverlay(&overlay));
+    ASSERT_TRUE(_core->AddBusOverlay(&overlay));
     for (bool debug : {false, true})
     {
         setDebug(debug);
@@ -355,7 +454,7 @@ TEST_F(Core_Test, OverlayWaitStatesLengthenTheInstruction)
     overlay.windowEnd = 0x4000;
     overlay.waitPerRead = 5;
     overlay.z80 = _z80;
-    ASSERT_TRUE(_core->SetBusOverlay(&overlay));
+    ASSERT_TRUE(_core->AddBusOverlay(&overlay));
     const uint32_t before = _z80->t;
     runProgram(program);
     EXPECT_EQ(_z80->t - before, plainDelta + 5);

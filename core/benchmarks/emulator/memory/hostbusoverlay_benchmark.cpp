@@ -56,13 +56,13 @@ static void RunHostFrame(benchmark::State& state, const char* model, bool debug,
 
     PassThroughOverlay passThrough;
     if (overlay)
-        context->pCore->SetBusOverlay(&passThrough);
+        context->pCore->AddBusOverlay(&passThrough);
 
     for (auto _ : state)
         mainLoop->RunFramePublic();
 
     if (overlay)
-        context->pCore->SetBusOverlay(nullptr);
+        context->pCore->RemoveBusOverlay(&passThrough);
     state.SetLabel(std::string(model) + (debug ? " debug" : " fast") + (overlay ? " + pass-through overlay" : ""));
     state.SetItemsProcessed(state.iterations());
     manager->RemoveEmulator(emulator->GetUUID());

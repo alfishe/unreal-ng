@@ -29,7 +29,8 @@ capture/restore and all automation frontends** (WebAPI/MCP/CLI/Lua/Python).
 - unreal-ng carries an unfinished, non-isolated skeleton of the ancestor's port
   (state struct, a never-instantiated renderer, placeholder video modes, ROM
   config). The creatability gate is the missing port decoder; the real work is
-  four generic extension points plus the engines.
+  the engines - the four generic extension points (interrupt source, write
+  intercept as a host bus overlay, M1 hook, per-step hook) are built.
 - The ROM image is already in the repo: `data/rom/zxevo.rom` pages 0-3 are
   TS-BIOS / TR-DOS 5.04T / 128 / 48 (the same file serves ATM3 from pages 28-31).
 - The shared SD card model (`SdCardSpi`) already exists on the NeoGS branch.
