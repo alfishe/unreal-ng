@@ -72,6 +72,28 @@ struct SaveOutcome
     std::string note;         ///< why it was retargeted, or the writer's first warning
 };
 
+/// The media of one machine on their way to another (a model switch,
+/// technical-design.md §8): live media, session writes included
+struct MediaTransfer
+{
+    struct Entry
+    {
+        std::string slotId;
+        std::unique_ptr<Medium> medium;
+        bool writeProtect = false;  ///< the slot's switch
+    };
+    std::vector<Entry> entries;
+};
+
+/// Where the media of a transfer went
+struct MediaTransferReport
+{
+    std::vector<std::string> attached;  ///< slot ids: in the same slot on the new machine
+    std::vector<std::string> detached;  ///< no such slot, unsaved writes: kept as detached media
+    std::vector<std::string> closed;    ///< no such slot, nothing unsaved: closed
+    std::vector<std::string> lines;     ///< the same for people
+};
+
 struct SlotInfo
 {
     SlotDescriptor descriptor;
@@ -148,6 +170,15 @@ public:
     /// legacy section. Returns the problems met. The set is kept for slots
     /// registered later (see RegisterSlot)
     std::vector<std::string> ApplyConfiguredMedia(const std::vector<MediaSetEntry>& mediaSet);
+
+    /// A model switch, old machine: every medium leaves its slot (pending
+    /// changes applied first) and the detached ones leave too, writes and all.
+    /// The emulator must not be running
+    MediaTransfer TakeMediaSet();
+    /// A model switch, new machine: each medium goes into the slot with the
+    /// same id and kind, replacing what the config put there. One with no such
+    /// slot is kept detached when it has unsaved writes, else closed
+    MediaTransferReport AdoptMediaSet(MediaTransfer transfer);
     /// endregion </Operations>
 
     /// Emulation thread, once per frame (and from the operations themselves

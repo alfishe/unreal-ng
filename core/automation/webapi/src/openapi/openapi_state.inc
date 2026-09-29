@@ -170,7 +170,8 @@
     paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["summary"] = "Get General Sound state";
     paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["tags"].append("Audio State");
     paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["description"] =
-        "General Sound card (dedicated 12 MHz Z80 coprocessor + 4 x 8-bit DAC, requires [SOUND] GSType=Z80): "
+        "General Sound card (classic GS, lightweight or NeoGS; [SOUND] GSType=Z80, LW or NGS). One report for every "
+        "interface (DeviceState::Gs; CLI state audio gs, Lua/Python gs_state, MCP audio_gs): device, implementation, "
         "mailbox status with decoded flags, host command/data bytes, MPAG banking latch, per-channel DAC sample "
         "and 6-bit volume, firmware/RAM fitment and the coprocessor PC/SP/AF/halted state. On NeoGS a 'neogs' "
         "object adds the card's registers, SD card, MP3 decoder and DMA modules; 'neogs.dma.zx' is the host's "
@@ -183,6 +184,12 @@
     paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["parameters"][1]["name"] = "ram";
+    paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["parameters"][1]["in"] = "query";
+    paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["parameters"][1]["required"] = false;
+    paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["parameters"][1]["description"] =
+        "1: add fixed_window_hex, the card CPU's #4000-#7FFF window (peeked, no side effects)";
     paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["responses"]["200"]["description"] = "GS state";
     paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["responses"]["404"]["description"] =
         "Emulator or GS card not found";
@@ -271,13 +278,21 @@
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["422"]["description"] =
         "sd_insert: the image cannot be opened; flash_save: the flash could not be saved";
 
-    paths["/api/v1/emulator/{id}/state/audio/covox"]["get"]["summary"] = "Get Covox state";
+    paths["/api/v1/emulator/{id}/state/audio/covox"]["get"]["summary"] = "Get Covox / SoundDrive state";
     paths["/api/v1/emulator/{id}/state/audio/covox"]["get"]["tags"].append("Audio State");
+    paths["/api/v1/emulator/{id}/state/audio/covox"]["get"]["description"] =
+        "Covox or SoundDrive DAC. One report for every interface (DeviceState::Covox; CLI state audio covox, "
+        "Lua/Python audio_covox_state, MCP audio_covox): fitment (mono #FB or quad SoundDrive), the ports this "
+        "model's decoder routes to it (from its port map: port, mask, match, decode, gate), shared_with_beta128 "
+        "(Beta-128 registers a DAC row also decodes, with shared_port_rule), the four DAC latches with mute state, "
+        "the last left/right amplitude, sound_last_frame, dc_removal and synthesis_suppressed.";
     paths["/api/v1/emulator/{id}/state/audio/covox"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/state/audio/covox"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/state/audio/covox"]["get"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/state/audio/covox"]["get"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/state/audio/covox"]["get"]["responses"]["200"]["description"] = "Covox state";
+    paths["/api/v1/emulator/{id}/state/audio/covox"]["get"]["responses"]["404"]["description"] =
+        "Emulator not found, or no Covox fitted ([SOUND] CovoxFB / SD)";
 
     paths["/api/v1/emulator/{id}/state/audio/channels"]["get"]["summary"] = "Get audio channels overview";
     paths["/api/v1/emulator/{id}/state/audio/channels"]["get"]["tags"].append("Audio State");

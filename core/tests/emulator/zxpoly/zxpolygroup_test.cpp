@@ -9,6 +9,7 @@
 #include "emulator/notifications.h"
 #include "emulator/zxpoly/zxpolygroup.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/media/modelswitch.h"
 #include <algorithm>
 #include <cstring>
 #include "emulator/memory/memory.h"
@@ -852,6 +853,42 @@ TEST_F(ZXPolyGroup_Test, ConfigurationsCreateTheGroupByName)
     std::string error;
     EXPECT_FALSE(manager->CreateEmulatorWithModelAndRAM("", "ZXPOLY-128K", 256, LoggerLevel::LogError, &error));
     EXPECT_NE(error.find("ZX-Poly"), std::string::npos) << error;
+}
+
+/// A model switch (ModelSwitch: every surface's switch path) into a
+/// configuration builds the group; switching away from its master removes
+/// the whole group, hidden slaves included
+TEST_F(ZXPolyGroup_Test, ModelSwitchEntersAndLeavesAConfiguration)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    std::string error;
+    std::shared_ptr<Emulator> plain = manager->CreateEmulatorWithModel("", "PENTAGON", LoggerLevel::LogError, &error);
+    ASSERT_TRUE(plain) << error;
+
+    ModelSwitchRequest request;
+    request.emulatorId = plain->GetId();
+    request.model = "ZXPOLY-128K";
+    plain.reset();
+    ModelSwitchResult switched = ModelSwitch::Run(request);
+    ASSERT_TRUE(switched.result.Ok()) << switched.result.message;
+    ZXPolyGroup* group = manager->GetZXPolyGroup(switched.emulator->GetId());
+    ASSERT_NE(group, nullptr);
+    EXPECT_EQ(group->GetMaster(), switched.emulator);
+    EXPECT_EQ(group->GetContext(1)->config.mem_model, MM_SPECTRUM128);
+    const ZXPolyGroup::Status status = group->GetStatus();
+
+    request.emulatorId = switched.emulator->GetId();
+    request.model = "48K";
+    switched.emulator.reset();
+    switched = ModelSwitch::Run(request);
+    ASSERT_TRUE(switched.result.Ok()) << switched.result.message;
+    EXPECT_EQ(manager->GetZXPolyGroup(switched.emulator->GetId()), nullptr);
+    for (const std::string& id : status.memberIds)
+        EXPECT_FALSE(manager->GetEmulator(id)) << id << " outlived its group";
+
+    const std::string id = switched.emulator->GetId();
+    switched.emulator.reset();
+    EXPECT_TRUE(manager->RemoveEmulator(id));
 }
 
 /// A 48K group runs the synchronized quad (replicated 48K software), but the

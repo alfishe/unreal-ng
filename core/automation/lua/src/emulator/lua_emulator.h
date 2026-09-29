@@ -2019,92 +2019,15 @@ public:
             return ctx && ctx->pSoundManager && ctx->pSoundManager->getGeneralSound() != nullptr;
         });
 
-        lua.set_function("gs_state", [this]() -> sol::object {
-            sol::state_view lua_view(*_lua);
-            if (!effectiveEmulator()) return sol::make_object(lua_view, sol::lua_nil);
-            auto* ctx = effectiveEmulator()->GetContext();
-            GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
-            if (!gs) return sol::make_object(lua_view, sol::lua_nil);
-
-            sol::table t = lua_view.create_table();
-            const uint8_t status = gs->getStatusRaw();
-            t["device"] = gs->deviceDescription();
-            t["implementation"] = gsImplementationLabel(gs->implementation());
-            t["rom_loaded"] = gs->isROMLoaded();
-            t["ram_kb"] = static_cast<int>(gs->getRamSizeKB());
-            t["status"] = status;
-            t["command_pending"] = (status & 0x01) != 0;
-            t["data_pending"] = (status & 0x80) != 0;
-            t["command_queue_count"] = static_cast<double>(gs->getCommandQueueCount());
-            t["data_queue_count"] = static_cast<double>(gs->getDataQueueCount());
-            t["command_from_host"] = gs->getCommandFromHost();
-            t["data_from_host"] = gs->getDataFromHost();
-            t["data_to_host"] = gs->getDataToHost();
-            t["page"] = gs->getMPAG();
-
-            sol::table channels = lua_view.create_table();
-            for (int i = 0; i < gs->channelCount(); i++) {
-                sol::table channel = lua_view.create_table();
-                channel["sample"] = gs->getChannelSample(i);
-                channel["volume"] = gs->getChannelVolume(i);
-                channels[i + 1] = channel;  // Lua tables start at 1
-            }
-            t["channels"] = channels;
-
-            sol::table cpu = lua_view.create_table();
-            cpu["coprocessor"] = gs->hasCoprocessor();
-            cpu["pc"] = gs->getCPUReg(GSCpuRegister::PC);
-            cpu["sp"] = gs->getCPUReg(GSCpuRegister::SP);
-            cpu["af"] = gs->getCPUReg(GSCpuRegister::AF);
-            cpu["halted"] = gs->isCPUHalted();
-            t["cpu"] = cpu;
-
-            NeoGSStateInfo ngs;
-            if (gs->neogsState(ngs))
-            {
-                sol::table n = lua_view.create_table();
-                n["flash"] = ngs.flashTitle;
-                n["flash_modified"] = ngs.flashModified;
-                n["gscfg0"] = ngs.gscfg0;
-                n["clock_hz"] = ngs.clockHz;
-                sol::table windows = lua_view.create_table();
-                for (int w = 0; w < 4; w++)
-                {
-                    sol::table window = lua_view.create_table();
-                    window["page"] = ngs.pages[w];
-                    window["flash"] = ngs.windowFlash[w];
-                    windows[w + 1] = window;
-                }
-                n["windows"] = windows;
-                n["led_on"] = ngs.ledOn;
-                n["ready"] = ngs.readyForCommands;
-                n["int_enable"] = ngs.intEnable;
-                n["int_request"] = ngs.intRequest;
-                n["tim_freq"] = ngs.timFreq;
-                n["sd_present"] = ngs.sdPresent;
-                n["sd_path"] = ngs.sdPath;
-                n["sd_sdhc"] = ngs.sdSdhc;
-                n["sd_blocks_read"] = static_cast<double>(ngs.sdBlocksRead);
-                n["mp3_fitted"] = ngs.mp3Fitted;
-                n["mp3_chip"] = std::string(ngs.mp3Chip);
-                n["mp3_rate"] = ngs.mp3Rate;
-                n["mp3_frames"] = static_cast<double>(ngs.mp3Frames);
-                n["mp3_decode_time_s"] = ngs.mp3DecodeSeconds;
-                n["dma_sd_running"] = ngs.dmaRunning[1];
-                n["dma_mp3_running"] = ngs.dmaRunning[2];
-                n["zx_dma_mode"] = std::string(ngs.zxMode);
-                n["zx_dma_address"] = ngs.dmaAddress[0];
-                n["zx_dma_read_latch"] = ngs.zxReadLatch;
-                n["zx_dma_pending"] = std::string(ngs.zxPending);
-                n["zx_dma_bytes_read"] = static_cast<double>(ngs.zxBytesRead);
-                n["zx_dma_bytes_written"] = static_cast<double>(ngs.zxBytesWritten);
-                n["zx_dma_bytes_dropped"] = static_cast<double>(ngs.zxBytesDropped);
-                n["zx_dma_wait_tstates"] = static_cast<double>(ngs.zxWaitTStates);
-                n["zx_dma_late_starts"] = static_cast<double>(ngs.zxLateStarts);
-                n["zx_dma_watch_frames_left"] = ngs.zxWatchFramesLeft;
-                t["neogs"] = n;
-            }
-            return t;
+        // One report for every interface (DeviceState::Gs); `available = false`
+        // with a description when no card is fitted
+        lua.set_function("gs_state", [this](sol::this_state s) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::Gs(ctx));
+        });
+        lua.set_function("audio_covox_state", [this](sol::this_state s) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::Covox(ctx));
         });
 
         // NeoGS SD slot and flash (other cards: false / no-op)

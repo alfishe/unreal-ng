@@ -595,3 +595,53 @@ TEST(MediaManager_Test, FolderInAFloppyDriveIsATrdosDisk)
     EXPECT_EQ(manager.Save("fdd.a").error, MediaError::NotSupported) << "no image file of its own: save to a path";
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
+
+/// A model switch moves the live media (technical design §8): each into the
+/// slot with the same id, replacing what the new machine had there; a dirty one
+/// without a slot is kept detached, a clean one closed
+TEST(MediaManager_Test, AMediaSetMovesToAnotherManager)
+{
+    MediaManager from(nullptr);
+    FakeBlockSlot fromA("sd.a"), fromB("sd.b"), fromC("sd.c");
+    from.RegisterSlot(fromA);
+    from.RegisterSlot(fromB);
+    from.RegisterSlot(fromC);
+    ASSERT_TRUE(from.Insert("sd.a", MemoryMedium(8)).Ok());
+    ASSERT_TRUE(from.Insert("sd.b", MemoryMedium(8)).Ok());
+    ASSERT_TRUE(from.Insert("sd.c", MemoryMedium(8)).Ok());
+    ASSERT_TRUE(from.SetWriteProtect("sd.a", true).Ok());
+    const std::vector<uint8_t> data(512, 0x77);
+    ASSERT_TRUE(from.GetMedium("sd.a")->Block()->WriteSector(1, data.data()));
+    ASSERT_TRUE(from.GetMedium("sd.b")->Block()->WriteSector(2, data.data()));
+    const Medium* a = from.GetMedium("sd.a");
+
+    MediaTransfer transfer = from.TakeMediaSet();
+    EXPECT_EQ(transfer.entries.size(), 3u);
+    EXPECT_EQ(fromA.attached, nullptr) << "the old slots are empty";
+    EXPECT_FALSE(from.Info("sd.a")->present);
+
+    MediaManager to(nullptr);
+    FakeBlockSlot toA("sd.a");
+    to.RegisterSlot(toA);
+    ASSERT_TRUE(to.Insert("sd.a", MemoryMedium(4)).Ok());  // what the new machine's config put there
+
+    const MediaTransferReport report = to.AdoptMediaSet(std::move(transfer));
+    EXPECT_EQ(report.attached, std::vector<std::string>{"sd.a"});
+    EXPECT_EQ(report.detached, std::vector<std::string>{"sd.b"});
+    EXPECT_EQ(report.closed, std::vector<std::string>{"sd.c"});
+    EXPECT_EQ(report.lines.size(), 3u);
+
+    EXPECT_EQ(to.GetMedium("sd.a"), a) << "the same live medium";
+    EXPECT_EQ(toA.attached, a);
+    const auto info = to.Info("sd.a");
+    EXPECT_TRUE(info->dirty);
+    EXPECT_TRUE(info->writeProtect) << "the slot's switch came along";
+    ASSERT_EQ(to.Detached().size(), 1u);
+    EXPECT_EQ(to.Detached()[0].descriptor.id, "sd.b");
+    EXPECT_EQ(to.Detached()[0].changes, "1 sector");
+
+    to.UnregisterSlot("sd.a");
+    from.UnregisterSlot("sd.a");
+    from.UnregisterSlot("sd.b");
+    from.UnregisterSlot("sd.c");
+}

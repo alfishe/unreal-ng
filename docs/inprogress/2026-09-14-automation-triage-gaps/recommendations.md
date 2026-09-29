@@ -372,6 +372,8 @@ call without reading `data/configs` from disk.
 
 ### P2-4. GS/Covox DeviceState reports
 
+> ✅ **DONE (2026-09-28)** - `DeviceState::Gs()` / `Covox()`, every surface (PLAN #20).
+
 Closes D-3 (placeholders). When those devices get core attention: replace the
 `not_implemented` stubs with real `DeviceState` reports (state_audio_api.cpp:474-499)
 and add MCP aspects. Low urgency — do opportunistically with core work.

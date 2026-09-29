@@ -9,6 +9,7 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/zxpoly/zxpolygroup.h>
+#include <emulator/media/modelswitch.h>
 #include <emulator/platform.h>
 #include <json/json.h>
 
@@ -1054,71 +1055,71 @@ void EmulatorAPI::switchModel(const HttpRequestPtr& req, std::function<void(cons
         return;
     }
 
+    // What happens to unsaved writes on media the new model has no slot for
+    StrandedMedia stranded = StrandedMedia::Refuse;
+    if (body->isMember("stranded") && !ModelSwitch::ParseStranded((*body)["stranded"].asString(), stranded))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "stranded '" + (*body)["stranded"].asString() + "': expected refuse, save, discard or keep";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
     try
     {
-        // Stop the current emulator
-        auto currentEmulator = manager->GetEmulator(id);
-        if (currentEmulator && currentEmulator->IsRunning())
-        {
-            currentEmulator->Stop();
-        }
+        // The media follow the switch (docs/features/media.md, "Model switch")
+        ModelSwitchRequest request;
+        request.emulatorId = id;
+        request.model = modelName;
+        request.ramKb = ramSize;
+        request.stranded = stranded;
+        const ModelSwitchResult switched = ModelSwitch::Run(request);
 
-        // Store symbolic ID if any
-        std::string symbolicId;
-        if (currentEmulator)
-        {
-            symbolicId = currentEmulator->GetSymbolicId();
-        }
+        auto mediaJson = [&switched]() {
+            Json::Value media;
+            media["attached"] = Json::arrayValue;
+            media["detached"] = Json::arrayValue;
+            media["closed"] = Json::arrayValue;
+            for (const std::string& slot : switched.media.attached)
+                media["attached"].append(slot);
+            for (const std::string& slot : switched.media.detached)
+                media["detached"].append(slot);
+            for (const std::string& slot : switched.media.closed)
+                media["closed"].append(slot);
+            return media;
+        };
 
-        // Remove the old emulator
-        manager->RemoveEmulator(id);
-
-        // Create a new emulator with the requested model
-        std::shared_ptr<Emulator> newEmulator;
-        std::string createError;
-        if (ramSize > 0)
-        {
-            newEmulator = manager->CreateEmulatorWithModelAndRAM(symbolicId, modelName, ramSize,
-                                                                 LoggerLevel::LogWarning, &createError);
-        }
-        else
-        {
-            newEmulator = manager->CreateEmulatorWithModel(symbolicId, modelName, LoggerLevel::LogWarning, &createError);
-        }
-
-        if (!newEmulator)
+        if (!switched.result.Ok())
         {
             Json::Value error;
-            error["error"] = "Failed to create emulator";
-            error["message"] = !createError.empty()
-                                   ? createError
-                                   : ("Could not create emulator with model '" + modelName + "'");
+            error["error"] = switched.result.error == MediaError::Dirty ? "Conflict" : "Failed to switch model";
+            error["code"] = MediaErrorCode(switched.result.error);
+            error["message"] = switched.result.message;
             error["requested_model"] = modelName;
-            error["available_models_endpoint"] = "/api/v1/emulator/models";
+            error["stranded"] = Json::arrayValue;
+            for (const SlotInfo& info : switched.stranded)
+            {
+                Json::Value medium;
+                medium["slot"] = info.descriptor.id;
+                medium["source"] = info.source;
+                medium["changes"] = info.changes;
+                error["stranded"].append(medium);
+            }
 
             auto resp = HttpResponse::newHttpJsonResponse(error);
-            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            resp->setStatusCode(switched.result.error == MediaError::Dirty ? HttpStatusCode::k409Conflict
+                                                                            : HttpStatusCode::k400BadRequest);
             addCorsHeaders(resp);
             callback(resp);
             return;
         }
 
-        // Initialize and start the new emulator
-        bool initSuccess = newEmulator->Init();
-        if (!initSuccess)
-        {
-            Json::Value error;
-            error["error"] = "Initialization failed";
-            error["message"] = "Emulator created but failed to initialize";
-            error["new_emulator_id"] = newEmulator->GetId();
-
-            auto resp = HttpResponse::newHttpJsonResponse(error);
-            resp->setStatusCode(HttpStatusCode::k500InternalServerError);
-            addCorsHeaders(resp);
-            callback(resp);
-            return;
-        }
-
+        std::shared_ptr<Emulator> newEmulator = switched.emulator;
         newEmulator->Start();
 
         Json::Value ret;
@@ -1127,6 +1128,7 @@ void EmulatorAPI::switchModel(const HttpRequestPtr& req, std::function<void(cons
         ret["old_emulator_id"] = id;
         ret["new_emulator_id"] = newEmulator->GetId();
         ret["state"] = stateToString(newEmulator->GetState());
+        ret["media"] = mediaJson();
         AddIdentityFields(ret, *newEmulator);
 
         auto resp = HttpResponse::newHttpJsonResponse(ret);

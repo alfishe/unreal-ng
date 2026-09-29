@@ -575,8 +575,9 @@ The live medium objects move between the two managers, session writes included, 
 re-read from disk and nothing is lost. The same **parking** handles add-on cards (NeoGS, SMUC, a
 Z-Controller add-on, divMMC): a card that is removed unregisters its slot, the manager parks the
 medium, and it is offered back when the slot returns. A medium whose slot id does not exist on the new model is
-kept in the transfer until the user decides: it is re-offered on the next switch, or dropped when
-the GUI closes, after a prompt if it is dirty.
+closed when it has nothing unsaved; with unsaved writes the switch is refused unless the request
+says save, discard or keep, and a kept one is a detached medium of the new machine. As built:
+`ModelSwitch` ([TODO.md](TODO.md), "M5 as built"); user reference [media.md](../../features/media.md#model-switch).
 
 ## 9. Notifications, activity, TTD
 

@@ -186,6 +186,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"remove", &CLIProcessor::HandleStop},  // Alias for stop (stop also removes the instance)
                         {"models", &CLIProcessor::HandleModels},
                         {"zxpoly", &CLIProcessor::HandleZXPoly},
+                        {"model", &CLIProcessor::HandleModel},
 
                         // Tape control commands
                         {"tape", &CLIProcessor::HandleTape},

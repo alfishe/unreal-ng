@@ -119,6 +119,15 @@ class Emulator:
         (mode, timers, channels[3] with operators[4]: registers, pitch, envelope_state,
         attenuation_db, key_on). available=False with a description without TSFM"""
 
+    def gs_state(self) -> dict:
+        """General Sound / NeoGS report (the WebAPI /state/audio/gs tree): device, mailbox,
+        MPAG page, DAC channels, card CPU, and on NeoGS a 'neogs' dict (windows, SD, MP3, DMA,
+        ZX-DMA). available=False with a description when no card is fitted"""
+
+    def audio_covox_state(self) -> dict:
+        """Covox / SoundDrive report: fitment, the ports this model decodes, shared_with_beta128,
+        the four DAC latches. available=False when no Covox is fitted"""
+
     def fdc_state(self) -> dict:
         """Beta Disk WD1793 report: registers, status_bits, last_command, fsm_state,
         signals (intrq/drq), beta128_register, density, selected_drive, drives[4]"""
