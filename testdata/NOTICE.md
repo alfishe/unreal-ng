@@ -17,6 +17,7 @@ Fixtures with a known license:
 | FUSE Z80 test vectors (`testdata/z80/fuse/`) | FUSE project | GPL-2.0-or-later |
 | ZX Diagnostics (`data/testrom/zx-diagnostics.rom`) | Brendan Alford | GPL-3.0 |
 | Timing Test v0.3 (`testdata/contention/rak-timing-test/`, source and tape) | Patrik Rak, after Jan Bobrowski's zxtests | GPL (stated in `timing.bas`, no version: any GPL version) |
+| ctprobe (`testdata/contention/ctprobe/`): `engine.asm` is the Timing Test's measuring engine ported to the in-tree assembler, `ctprobe.asm` the project's case table and driver | engine: Jan Bobrowski, Patrik Rak; driver and cases: unreal-ng | engine GPL (as the Timing Test); the probe as a whole is GPL |
 | ZX Spectrum Timing Tests 48K v1.0 (`testdata/loaders/sna/Timing_Tests-48k_v1.0.sna`) | Richard and Tim Butler | none stated (test material) |
 
 Everything else (commercial games such as Dizzy X and Green Beret, demo-scene productions such as EyeAche,

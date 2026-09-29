@@ -60,8 +60,9 @@ Design: [design.md](design.md). Test programs and the probe suite: [test-program
 1. **Phase 1e — emulated-side suite H** (in progress): done - the Butler 48K suite runs to completion (after
    the `.sna` 48K ROM fix) and the Rak Timing Test matrix against the published screens (test-programs §2.5).
    Fixed on the way: the +2A/+3 gate array window is 129 T (real-hardware photos of the Rak test; every
-   emulator surveyed uses 128 - test-programs §2.5). Open: fusetest
-   (needs pasmo); the `ctprobe` probe suite (test-programs §3) and its `.tap` / `.trd` exports; the
-   cross-emulator consensus table.
+   emulator surveyed uses 128 - test-programs §2.5). The `ctprobe` probe suite v1 runs (test-programs
+   §3.7): 29 cases match an independent oracle on the 48K, 128K, +3, Pentagon and Scorpion. Open: the rest of
+   the ctprobe case list (§3.7), its on-screen output and `.tap` / `.trd` exports; fusetest (needs pasmo);
+   the cross-emulator consensus table.
 
 Ideas backlog (performance of the contended machines): [baseline.md](baseline.md) §3.2.

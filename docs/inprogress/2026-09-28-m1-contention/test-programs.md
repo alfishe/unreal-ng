@@ -140,7 +140,15 @@ Not done: fusetest (source only, needs pasmo or a prebuilt tape), the Butler 128
 
 ## 3. The probe suite (`ctprobe`)
 
+**Status (2026-09-28): v1 runs** - `testdata/contention/ctprobe/`, host suite `ctprobe_test.cpp`. 29 cases
+(21 on the 48K, which has no paging) match the oracle to the T-state on the 48K, 128K, +3, Pentagon and
+Scorpion. See 3.7 for what v1 does differently from the plan below and what is still open.
+
 ### 3.1 How a probe measures one fragment
+
+> **Superseded by the engine in 3.7.** The scheme below has a flaw: `HALT` wakes on a 4 T boundary of its
+> own NOP stream, so the wake-up phase is only known to 4 T and carries over from the previous run. That
+> phase depends on the length of the fragment just measured, so the calibration run does not cancel it.
 
 ```mermaid
 sequenceDiagram
@@ -280,6 +288,56 @@ The same `.tap` / `.trd` run in FUSE, ZXMAK2, Xpeccy, ZEsarUX and SpecEmu gives,
 measured T-states. Following the project's rule for hardware facts, the expected values used by suite H
 are the consensus of those runs and the published tables, and any case where the references disagree is
 listed with each reference's value rather than silently picking one.
+
+### 3.7 v1 as built
+
+**Engine.** Instead of the HALT-plus-pad sync, the probe uses the measuring engine of Rak's Timing Test
+(Bobrowski's zxtests): `CODETIME` calls a fragment at an exact frame T-state and returns its duration with
+1 T resolution. It is ported to the in-tree assembler and assembles byte for byte identical to the original
+tape's code, so its real-hardware calibration carries over. Its T is one more than the INT-relative count
+used here and in FUSE (Rak's 48K grid shows the first wait at 14336, the 48K's first contended T being
+14335); the driver adds that 1.
+
+**Driver.** A table of 14-byte records gives, for each case:
+- id and the capabilities it needs (`#7FFD` paging, `#1FFD` layouts);
+- the page at `#C000`, where the fragment goes, and the fragment;
+- the first T as an offset from the contention onset, and how many consecutive T-states to time.
+
+The driver places the fragment and a `RET` after it, maps the page and times each T-state. The engine
+subtracts the RET's 10 T but not its wait, so the oracle models that RET's fetch as well. The onset comes
+from the frame length (69888: 14335, else 14361), or the host sets it.
+
+**Oracle** (`ctprobe_test.cpp`). The oracle is independent of the emulator: the pattern tables (ULA
+6,5,4,3,2,1,0,0 over 128 T; gate array 1,0,7,6,5,4,3,2 plus the 129th T), the raster, and each fragment's
+bus cycles from FUSE's per-instruction tables. Those cycles are: M1, reads and writes, internal T-states
+on the address they show (contended on the Ferranti ULA only), and FUSE's four I/O patterns.
+
+**Cases (v1):**
+
+| Group | Cases |
+|:--|:--|
+| M1 | M1-01..08 |
+| Data | D-01..03 |
+| Internal cycles | N-01, N-02, N-04 (IR on the bus with I = #40) |
+| Ports | P-01 (`IN` on #00FE / #40FE / #00FF / #40FF, `OUT` on #40FE) |
+
+**Host notes:**
+- The 48 BASIC boot locks `#7FFD` on the +3, so the host unlocks it.
+- The Scorpion's ROM leaves the CPU at 7 MHz. That doubles the INT pulse in CPU T-states past the
+  engine's handler, so the host selects 3.5 MHz with `IN #1FFD`, as a real Scorpion would need.
+
+The default run has the 48K contended NOP only (~150 ms with the ROM boot). The full matrix is opt-in with
+`UNREAL_TIMING_SUITES=1` (~1.3 s per machine).
+
+Found on the way: `Z80TextAssembler` rejected `SBC HL,rr` (it emitted the bytes, then fell into the 8-bit
+check); fixed, with a test for the 16-bit arithmetic forms.
+
+**Open:**
+- M1-09: the +3 all-RAM layouts. The engine's own slot `#8000` is contended there, and `#0038` is RAM.
+- M1-10 (`HALT`), D-04 / D-05, N-03 / N-05 / N-06.
+- P-02 / P-03: the floating-bus values, not durations; the driver stores durations only.
+- X-02 .. X-04.
+- On-screen results, detecting the capabilities on the machine itself, and the `.tap` / `.trd` export.
 
 ## 4. How the pieces fit
 
