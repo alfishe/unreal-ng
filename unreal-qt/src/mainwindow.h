@@ -319,7 +319,6 @@ private:
     GUIEmulatorContext* _guiContext = nullptr;
     std::shared_ptr<Emulator> _emulator = nullptr;  // TODO: Remove after full binding migration
     uint32_t _lastFrameCount = 0;
-    std::unique_ptr<ZXPolyGroup> _zxpolyGroup;  // Set while a ZX-Poly machine runs; _emulator is its master
     void startZXPoly(const QString& filePath, const QString& model = QString());
     void releaseZXPolyGroup();
     bool attachScreenToZXPolyDisplay();

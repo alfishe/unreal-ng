@@ -391,6 +391,11 @@ protected:
 
 protected:
     int _nmi_pending_count = 0;
+
+    // Local INT (RaiseLocalInt): active until this frame / T-state
+    bool _localIntArmed = false;
+    uint64_t _localIntEndFrame = 0;
+    uint32_t _localIntEndT = 0;
     
     // Opcode profiling
     OpcodeProfiler* _opcodeProfiler = nullptr;
@@ -565,6 +570,22 @@ public:
 public:
     void RequestMaskedInterrupt();
     void RequestNonMaskedInterrupt();
+
+    /// Hold /INT low for lengthT T-states from now, independently of the ULA
+    /// frame pulse (a board-level interrupt line: ZX-Poly local INT)
+    void RaiseLocalInt(unsigned lengthT);
+
+    /// Drop pending NMI / local INT requests (a board-level CPU reset)
+    void ClearInterruptRequests()
+    {
+        _nmi_pending_count = 0;
+        _localIntArmed = false;
+        int_pending = false;
+    }
+
+    /// Mask the ULA frame INT for this CPU (a ZX-Poly slave before the lock
+    /// does not see the common frame INT). Local INT is not affected
+    bool frameIntMasked = false;
     bool IntClearedByAcknowledge() const;  // machine's INT pulse ends at the acknowledge
     bool ProcessInterrupts(bool int_occured,  // Take care about incoming interrupts
                            unsigned int_start, unsigned int_end);  // Returns true if INT was handled (skip Z80Step)

@@ -1907,14 +1907,13 @@ void MainWindow::openZXPolyDialog()
 
 void MainWindow::releaseZXPolyGroup()
 {
-    if (!_zxpolyGroup)
+    // A ZX-Poly machine goes as a whole: removing its master (EmulatorManager)
+    // unhooks the group and removes the three slaves with it
+    if (!_emulator)
         return;
-
-    // Stop the master's loop and unhook the group before anything is released
-    _zxpolyGroup->DetachFromMaster();
-    if (_emulator && _emulator == _zxpolyGroup->GetMaster())
+    ZXPolyGroup* group = _emulatorManager->GetZXPolyGroup(_emulator->GetId());
+    if (group && group->GetMaster() == _emulator)
         releaseEmulator();
-    _zxpolyGroup.reset();
 }
 
 void MainWindow::openFromCommandLine(const QString& filePath, const QString& zxpolyModel)
@@ -1931,10 +1930,12 @@ bool MainWindow::attachScreenToZXPolyDisplay()
 {
     // The ZX-Poly master's window shows the group's double-resolution display
     // frame (mode 5 is 512 x 384) instead of the master's own framebuffer
-    if (!_screenWrapper || !_zxpolyGroup || !_emulator || _emulator != _zxpolyGroup->GetMaster())
+    if (!_screenWrapper || !_emulator)
+        return false;
+    ZXPolyGroup* group = _emulatorManager->GetZXPolyGroup(_emulator->GetId());
+    if (!group || group->GetMaster() != _emulator)
         return false;
 
-    ZXPolyGroup* group = _zxpolyGroup.get();
     _screenWrapper->init(static_cast<uint16_t>(group->GetDisplayWidth()),
                          static_cast<uint16_t>(group->GetDisplayHeight()),
                          const_cast<uint32_t*>(group->GetDisplayBuffer()));
@@ -1972,32 +1973,16 @@ void MainWindow::startZXPoly(const QString& filePath, const QString& requestedMo
         releaseEmulator();
     }
 
-    auto group = std::make_unique<ZXPolyGroup>("zxpoly");
     std::string error;
-    bool loaded = group->Create(model.toStdString(), &error);
-    if (loaded)
-    {
-        const std::string path = filePath.toStdString();
-        const QString suffix = QFileInfo(filePath).suffix().toLower();
-        if (suffix == QStringLiteral("zxp"))
-            loaded = group->LoadZXP(path, &error);
-        else if (suffix == QStringLiteral("prom"))
-            loaded = group->LoadPROM(path, &error);    // ZX-Poly ROM image (the Test ROM)
-        else
-            loaded = group->BootDisk(path, &error);
-    }
-
-    if (!loaded)
+    std::shared_ptr<Emulator> master =
+        _emulatorManager->CreateZXPolyMachine("", model.toStdString(), filePath.toStdString(), &error);
+    if (!master)
     {
         _switchingModel = false;
         QMessageBox::critical(this, tr("ZX-Poly"),
                               tr("Cannot start ZX-Poly from %1:\n%2").arg(filePath, QString::fromStdString(error)));
         return;
     }
-
-    group->AttachToMaster();
-    std::shared_ptr<Emulator> master = group->GetMaster();
-    _zxpolyGroup = std::move(group);
 
     adoptEmulator(master, EmulatorOrigin::CreatedByGui);
     attachScreenToZXPolyDisplay();
@@ -3916,6 +3901,10 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
                 }
                 return true;
             });
+
+            // A ZX-Poly master (started here or through automation) shows its
+            // group's double-resolution display frame instead
+            attachScreenToZXPolyDisplay();
         }
         catch (const std::exception& e)
         {

@@ -22,4 +22,15 @@ public:
 
     /// Return true to consume the write (the model decoder does not see it)
     virtual bool InterceptOut(uint16_t port, uint8_t value) = 0;
+
+    /// The final value of a read that was not consumed, after the model
+    /// decoder, observer cards and the floating bus. fromFloatingBus: the
+    /// value is the video byte on the bus (48K/128K/+3 undecoded ports); the
+    /// interceptor may replace it (a ZX-Poly slave takes the master's)
+    virtual void OnInResult(uint16_t port, uint8_t& value, bool fromFloatingBus)
+    {
+        (void)port;
+        (void)value;
+        (void)fromFloatingBus;
+    }
 };

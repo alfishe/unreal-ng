@@ -2,12 +2,16 @@
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "emulator/io/keyboard/keyboard.h"
+#include "emulator/zxpoly/zxpolyscreencomposer.h"
 
 #include <array>
+#include <bitset>
+#include <map>
 #include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -84,6 +88,11 @@ public:
     /// disk then fills the slaves and locks the machine
     bool BootDisk(const std::string& path, std::string* error = nullptr);
 
+    /// Loads the machine's media by extension: .zxp snapshot, .prom ROM image,
+    /// anything else as a disk image booted through TR-DOS. An empty path
+    /// leaves the machine as created (the master runs its ROM, slaves wait)
+    bool LoadMedia(const std::string& path, std::string* error = nullptr);
+
     /// Copies the master's machine state into every slave: CPU registers,
     /// frame position, interrupt state, all RAM pages, paging latches, TR-DOS
     /// session. Plane data is applied on top by the caller afterwards. Locks
@@ -123,6 +132,14 @@ public:
 
     bool IsLocked() const { return _locked; }
 
+    /// Locked machine: after the master's frame the three slaves run their
+    /// frame on worker threads at the same time (they share nothing while
+    /// locked). Used only while every slave's device writes are disabled
+    /// (R0 D4), so no two slaves drive the master's devices concurrently.
+    /// On by default; the results are identical either way
+    void SetParallelSlaves(bool parallel) { _parallelSlaves = parallel; }
+    bool IsParallelSlaves() const { return _parallelSlaves; }
+
     /// Compares every slave with the master (locked phase only): port reads
     /// of the last frame (when the check is enabled), then the control state -
     /// PC, SP, I, IM, IFF1, HALT, T-state position, paging. Data registers are
@@ -144,6 +161,40 @@ public:
     void SetVideoMode(uint8_t mode);
     uint8_t GetPort3D00() const { return _port3D00; }
 
+    /// Group TTD (quad-instance-architecture.md §8): four ordinary sessions
+    /// started at the same frame, so TTD frame N is the same machine frame on
+    /// every module. Group input is journaled into each module's session; the
+    /// platform state (#3D00, R0-R3, lock) is kept per frame beside them
+    bool StartRecording(std::string* error = nullptr);
+    void StopRecording();
+    bool IsRecording() const { return _recording; }
+
+    /// TTD frame the group is at (session-relative; the master's position)
+    uint64_t GetRecordedPosition() const;
+
+    /// Seek every module to the start of TTD frame `frame` and restore the
+    /// platform state of that moment. Recording pauses (the history stays;
+    /// ResumeRecording continues from here); a live master is left paused
+    bool SeekToFrame(uint64_t frame, std::string* error = nullptr);
+
+    /// Continue recording from the current position: the recorded future
+    /// (every module's and the platform history) is dropped - a new branch
+    bool ResumeRecording(std::string* error = nullptr);
+
+    /// The group as automation reports it (one source for every surface)
+    struct Status
+    {
+        std::array<std::string, MODULES> memberIds;   // [0] = the master
+        bool locked = false;
+        bool slavesRunning = false;
+        bool parallelSlaves = false;
+        uint8_t port3D00 = 0;
+        uint8_t videoMode = 0;
+        std::array<std::array<uint8_t, 4>, MODULES> registers{};
+        Divergence divergence;
+    };
+    Status GetStatus() const;
+
     /// Module register R0..R3 as last written
     uint8_t GetModuleRegister(size_t module, size_t reg) const { return _regs[module][reg]; }
 
@@ -155,12 +206,13 @@ public:
     const uint8_t* GetScreenMemory(size_t module) const;
 
     /// Composes the current picture (512 x 384, framebuffer pixel format)
-    void Compose(std::vector<uint32_t>& out) const;
+    void Compose(std::vector<uint32_t>& out);
 
     /// Platform port access from a member's CPU (ZXPolyPortInterceptor).
     /// Return true when the access is consumed
     bool OnPortIn(size_t module, uint16_t port, uint8_t& value);
     bool OnPortOut(size_t module, uint16_t port, uint8_t value);
+    void OnPortInResult(size_t module, uint16_t port, uint8_t& value, bool fromFloatingBus);
 
 private:
     std::string _prefix;
@@ -174,6 +226,13 @@ private:
     bool _lockedThisFrame = false;   // the slaves start mid-frame, at the lock point
     uint64_t _lastMasterFrame = 0;   // a smaller frame counter means the master was reset
     bool _slavesRunning = false;     // unlocked with #3D00 D0 = 1: the slaves execute on their own
+    bool _parallelSlaves = true;
+    std::array<bool, MODULES> _stopWait{};    // WAIT from the stop address (R2/R3)
+    std::array<bool, MODULES> _wasHalted{};   // HALT edge for halt notification
+
+    // Floating-bus reads of the master by (frame << 32 | T): the slaves take
+    // the master's value - one video memory decides, as on the real board
+    std::unordered_map<uint64_t, uint8_t> _masterFloatingBus;
     bool _attached = false;
 
     // Loader phase: what the IO window wrote into each slave (-1 = untouched),
@@ -186,8 +245,17 @@ private:
     unsigned _displayWidth = 0;
     unsigned _displayHeight = 0;
 
+    // Host input queued for the next frame boundary (keys and the Kempston
+    // mouse), applied to all four members at once
+    struct InputOp
+    {
+        enum Kind : uint8_t { KeyDown, KeyUp, MouseMove, MouseButtons, MouseWheel } kind;
+        ZXKeysEnum key = ZXKEY_NONE;
+        int a = 0;
+        int b = 0;
+    };
     std::mutex _keysMutex;
-    std::vector<std::pair<ZXKeysEnum, bool>> _pendingKeys;
+    std::vector<InputOp> _pendingInput;
 
     struct PortRead
     {
@@ -202,11 +270,44 @@ private:
     bool _instructionTrace = false;
     std::array<std::vector<uint16_t>, MODULES> _instructions;
 
+    // Per-line video capture (zxpoly renders a line once the beam passed it):
+    // each module copies a paper line from its own screen page when its T
+    // passes the end of that line's fetch. Two frames: filling / completed
+    struct LineCapture
+    {
+        std::array<ZXPolyScreenComposer::Lines, 2> lines{};
+        std::array<uint64_t, 2> frame{~0ull, ~0ull};
+        std::array<std::bitset<192>, 2> captured;
+        std::array<unsigned, 2> nextLine{};
+        uint64_t currentFrame = ~0ull;
+    };
+    std::array<LineCapture, MODULES> _capture;
+
+    // Group TTD: the platform state at the start of every recorded frame
+    struct PlatformSnapshot
+    {
+        uint8_t port3D00 = 0;
+        std::array<std::array<uint8_t, 4>, MODULES> regs{};
+        bool locked = false;
+        bool slavesRunning = false;
+        std::array<bool, MODULES> stopWait{};
+        std::array<bool, MODULES> wasHalted{};
+    };
+    bool _recording = false;
+    std::map<uint64_t, PlatformSnapshot> _platformHistory;
+    void SnapshotPlatform();
+
 private:
     void ResetPlatformState();
     void DetectMasterReset();
     void MountMasterDisksOnSlaves();
     void OnMainPortWrite(uint8_t value);
+    void CopyMasterState();
+    void UpdateIntGates();
+    void RaiseModuleInt(size_t module);
+    void RaiseModuleNmi(size_t module);
+    void OnModuleHalted(size_t module);
+    uint16_t StopAddress(size_t module) const;
     void LocalReset(size_t module);
     void AlignSlaveClock(size_t module, unsigned extraT);
     void InstallMasterM1Hook();
@@ -214,6 +315,11 @@ private:
     void ResetSlaveMachines();
     uint8_t ModuleStatus(size_t module) const;
     uint8_t* ModuleRam(size_t module, uint16_t address) const;
+    void InstallSlaveM1Hooks();
+    void CaptureLines(size_t module);
+    void CopyScreenLine(size_t module, unsigned line, ZXPolyScreenComposer::Lines& lines) const;
+    void FillMissingLines(size_t module, size_t slot);
+    const ZXPolyScreenComposer::Lines* CapturedFrame(size_t module, uint64_t frame);
     bool OnPort7FFDWrite(size_t module, uint8_t value);
     void ApplyPendingInput();
     void AdvanceSlaves();
@@ -225,6 +331,8 @@ private:
     void OnHostKeyPressed(int id, Message* message);
     void OnHostKeyReleased(int id, Message* message);
     void QueueHostKey(Message* message, bool pressed);
+    void OnHostMouse(int id, Message* message);
+    void QueueInput(const InputOp& op);
     void PerformLock();
     uint16_t ResetCommandTarget(size_t module) const;
     size_t WindowOffset(size_t module, uint16_t address) const;

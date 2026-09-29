@@ -30,6 +30,20 @@ public:
     static constexpr unsigned OUT_WIDTH = 512;
     static constexpr unsigned OUT_HEIGHT = 384;
 
+    /// One module's picture as the video logic fetched it, line by line:
+    /// per paper line 32 bitmap bytes then the 32 attribute bytes in effect
+    /// on that line (so per-line attribute changes are kept)
+    static constexpr size_t LINE_BYTES = 64;
+    static constexpr size_t LINES_BYTES = 192 * LINE_BYTES;
+    using Lines = std::array<uint8_t, LINES_BYTES>;
+
+    /// The lines of a screen as it is in memory (every line from one moment)
+    static void LinesFromScreen(const uint8_t* screen, Lines& lines);
+
+    /// Compose from per-line captures (the beam-accurate path)
+    static void ComposeLines(const std::array<const Lines*, MODULES>& lines, uint8_t mode, bool flashPhase,
+                             const uint32_t* palette, uint32_t* out);
+
     /// @param vram       per module, the 6912-byte screen (bitmap + attributes)
     /// @param mode       ZX-Poly video mode 0..7 (#3D00 D2-D4)
     /// @param flashPhase true while FLASH cells show inverted

@@ -15,6 +15,7 @@
 #include "emulator/video/screen.h"
 #include "emulator/zxpoly/zxpolyportinterceptor.h"
 #include "emulator/zxpoly/zxpolyscreencomposer.h"
+#include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdserializable.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/mouse/mouse.h"
@@ -27,6 +28,7 @@
 #include <algorithm>
 #include <cstring>
 #include <fstream>
+#include <future>
 #include <iterator>
 #include <map>
 
@@ -114,7 +116,8 @@ bool ZXPolyGroup::Create(const std::string& model, std::string* error)
     for (size_t m = 0; m < MODULES; m++)
     {
         std::string createError;
-        const std::string id = StringHelper::Format("%s-%zu", _prefix.c_str(), m);
+        // The master carries the group's name; the slaves are named after it
+        const std::string id = m == 0 ? _prefix : StringHelper::Format("%s-cpu%zu", _prefix.c_str(), m);
         _instances[m] = manager->CreateEmulatorWithModel(id, model, LoggerLevel::LogError, &createError);
         if (!_instances[m])
         {
@@ -131,17 +134,22 @@ bool ZXPolyGroup::Create(const std::string& model, std::string* error)
         EmulatorContext* context = GetContext(m);
 
         // Only the master is heard and shown: slaves skip audio and their own
-        // RGBA rendering (turbo mode; the composer reads their video RAM)
+        // RGBA rendering (turbo mode; the composer reads their video RAM),
+        // and are not listed as machines of their own
         if (m > 0)
         {
+            _instances[m]->SetHiddenGroupMember(true);
             _instances[m]->EnableTurboMode();
             if (context->pSoundManager)
                 context->pSoundManager->mute();
         }
 
-        // Keys reach the members only through the group (frame-boundary aligned)
+        // Keys and the mouse reach the members only through the group
+        // (frame-boundary aligned)
         if (context->pKeyboard)
             context->pKeyboard->SetHostInputGated(true);
+        if (context->pMouse)
+            context->pMouse->SetHostInputGated(true);
 
         // The ZX-Poly platform ports sit in front of the model's port decoder
         _interceptors[m] = std::make_unique<ZXPolyPortInterceptor>(*this, m);
@@ -149,6 +157,7 @@ bool ZXPolyGroup::Create(const std::string& model, std::string* error)
     }
 
     InstallMasterM1Hook();
+    InstallSlaveM1Hooks();
     ResetPlatformState();
     return true;
 }
@@ -189,9 +198,12 @@ void ZXPolyGroup::ResetPlatformState()
     {
         _regs[m] = {static_cast<uint8_t>(m << 1), 0, 0, 0};
         _overlay[m].assign(m == 0 ? 0 : OVERLAY_SIZE, -1);
+        _stopWait[m] = false;
+        _wasHalted[m] = false;
     }
     _locked = false;
     _slavesRunning = false;
+    UpdateIntGates();
     _lockedThisFrame = false;
 }
 
@@ -233,6 +245,7 @@ bool ZXPolyGroup::LoadZXP(const std::string& path, std::string* error)
     for (size_t m = 0; m < MODULES; m++)
         _regs[m] = snapshot.modules[m].reg;
     _locked = true;
+    UpdateIntGates();
 
     // The loader replaced every instance's state: start the frame again from
     // it, as Emulator::LoadSnapshot does
@@ -241,6 +254,38 @@ bool ZXPolyGroup::LoadZXP(const std::string& path, std::string* error)
 
     _lastMasterFrame = GetContext(0)->emulatorState.frame_counter;
     return true;
+}
+
+bool ZXPolyGroup::LoadMedia(const std::string& path, std::string* error)
+{
+    if (path.empty())
+        return true;
+
+    std::string extension;
+    const size_t dot = path.find_last_of('.');
+    if (dot != std::string::npos)
+        extension = StringHelper::ToLower(path.substr(dot + 1));
+
+    if (extension == "zxp")
+        return LoadZXP(path, error);
+    if (extension == "prom")
+        return LoadPROM(path, error);
+    return BootDisk(path, error);
+}
+
+ZXPolyGroup::Status ZXPolyGroup::GetStatus() const
+{
+    Status status;
+    for (size_t m = 0; m < MODULES; m++)
+        status.memberIds[m] = _instances[m] ? _instances[m]->GetId() : std::string();
+    status.locked = _locked;
+    status.slavesRunning = _slavesRunning;
+    status.parallelSlaves = _parallelSlaves;
+    status.port3D00 = _port3D00;
+    status.videoMode = GetVideoMode();
+    status.registers = _regs;
+    status.divergence = CheckLockstep();
+    return status;
 }
 
 bool ZXPolyGroup::LoadPROM(const std::string& path, std::string* error)
@@ -324,7 +369,7 @@ bool ZXPolyGroup::BootDisk(const std::string& path, std::string* error)
     return true;
 }
 
-void ZXPolyGroup::ReplicateFromMaster()
+void ZXPolyGroup::CopyMasterState()
 {
     EmulatorContext* master = GetContext(0);
     Z80& masterCpu = *master->pCore->GetZ80();
@@ -383,7 +428,17 @@ void ZXPolyGroup::ReplicateFromMaster()
         slave->pMemory->UpdateZ80Banks();
     }
 
+}
+
+void ZXPolyGroup::ReplicateFromMaster()
+{
+    // A stock program mirrored into the slaves: they get no IO writes of
+    // their own (R0 D4), as a ZX-Poly edition's loader sets for its slaves
+    CopyMasterState();
+    for (size_t m = 1; m < MODULES; m++)
+        _regs[m][0] |= 0x10;
     _locked = true;
+    UpdateIntGates();
 }
 
 void ZXPolyGroup::PerformLock()
@@ -411,7 +466,7 @@ void ZXPolyGroup::PerformLock()
             LocalReset(0);    // the master; its reset command JP included
 
         MountMasterDisksOnSlaves();
-        ReplicateFromMaster();
+        CopyMasterState();
 
         for (size_t m = 1; m < MODULES; m++)
         {
@@ -455,6 +510,7 @@ void ZXPolyGroup::PerformLock()
 
     _locked = true;
     _lockedThisFrame = true;
+    UpdateIntGates();
 
     // The reset command registers are consumed by the reset
     if (resetRequested)
@@ -485,7 +541,9 @@ void ZXPolyGroup::LocalReset(size_t module)
     cpu.iff1 = 0;
     cpu.iff2 = 0;
     cpu.halted = 0;
-    cpu.int_pending = false;
+    cpu.ClearInterruptRequests();
+    _stopWait[module] = false;
+    _wasHalted[module] = false;
 
     if (module == 0)
     {
@@ -554,6 +612,65 @@ uint16_t ZXPolyGroup::ResetCommandTarget(size_t module) const
     return r[1] == 0xC3 ? static_cast<uint16_t>(r[2] | (r[3] << 8)) : 0x0000;
 }
 
+void ZXPolyGroup::UpdateIntGates()
+{
+    // Common frame INT: the slaves see it only while the machine is locked;
+    // the master, while #3D00 and #7FFD are unlocked, only with #7FFD D7 = 0
+    // (a 128K-class latch - on bigger Pentagons D7 is a memory bit)
+    if (!IsCreated())
+        return;
+
+    const EmulatorContext* master = GetContext(0);
+    const uint8_t p7FFD = master->emulatorState.p7FFD;
+    const bool latchIsPlain128 = master->config.ramsize <= 128;
+    GetContext(0)->pCore->GetZ80()->frameIntMasked =
+        !_locked && latchIsPlain128 && (p7FFD & 0x20u) == 0 && (p7FFD & 0x80u) != 0;
+    for (size_t m = 1; m < MODULES; m++)
+        GetContext(m)->pCore->GetZ80()->frameIntMasked = !_locked;
+}
+
+void ZXPolyGroup::RaiseModuleInt(size_t module)
+{
+    // A local INT pulse, as long as the frame INT
+    Z80& cpu = *GetContext(module)->pCore->GetZ80();
+    cpu.RaiseLocalInt(GetContext(module)->config.intlen);
+}
+
+void ZXPolyGroup::RaiseModuleNmi(size_t module)
+{
+    // R1 D4 of the target masks local NMIs (COPY2CPU sets it: every byte it
+    // streams would pulse one). A module in WAIT misses the pulse: it lasts
+    // 16 T of the module's own clock, which WAIT does not advance through an
+    // instruction boundary (zxpoly; the Test ROM streams its CPU test into a
+    // waiting CPU1 with NMI unmasked and relies on it)
+    const bool waiting = _stopWait[module] || (module != 0 && !_locked && !_slavesRunning);
+    if (!waiting && (_regs[module][1] & 0x10u) == 0)
+        GetContext(module)->pCore->GetZ80()->RequestNonMaskedInterrupt();
+}
+
+void ZXPolyGroup::OnModuleHalted(size_t module)
+{
+    // Halt notification (unlocked only): the halting module's R1 selects the
+    // targets (D0-D3 = CPU0-CPU3) and the signal (D6 INT, D7 NMI)
+    const uint8_t r1 = _regs[module][1];
+    for (size_t target = 0; target < MODULES; target++)
+    {
+        if ((r1 & (1u << target)) == 0)
+            continue;
+        if (r1 & 0x40u)
+            RaiseModuleInt(target);
+        if (r1 & 0x80u)
+            RaiseModuleNmi(target);
+    }
+}
+
+uint16_t ZXPolyGroup::StopAddress(size_t module) const
+{
+    // R2/R3. Zero disables it: zxpoly would stop any M1 at #0000 (an RST 0
+    // after a reset cleared the registers) - no program relies on that
+    return static_cast<uint16_t>(_regs[module][2] | (_regs[module][3] << 8));
+}
+
 size_t ZXPolyGroup::GetOverlayBytes(size_t module) const
 {
     return static_cast<size_t>(
@@ -586,7 +703,7 @@ uint8_t ZXPolyGroup::ModuleStatus(size_t module) const
     const uint16_t a = cpu.m1_pc;
     const uint8_t packed = static_cast<uint8_t>(((a >> 1) & 0x01u) | ((a >> 1) & 0x02u) | ((a >> 6) & 0x04u) |
                                                 ((a >> 9) & 0x08u) | ((a >> 10) & 0x10u) | ((a >> 10) & 0x20u));
-    const bool waiting = module != 0 && !_locked && !_slavesRunning;
+    const bool waiting = _stopWait[module] || (module != 0 && !_locked && !_slavesRunning);
     return static_cast<uint8_t>((cpu.halted ? 0x01u : 0u) | (waiting ? 0x02u : 0u) | (packed << 2));
 }
 
@@ -619,6 +736,8 @@ bool ZXPolyGroup::OnPort7FFDWrite(size_t module, uint8_t value)
     context->pPortDecoder->DecodePortOut(0x7FFD, value, context->pCore->GetZ80()->m1_pc);
     if (!_locked && (context->emulatorState.p7FFD & 0x40u))
         context->pMemory->SetRAMPageToBank0(0);
+    if (module == 0)
+        UpdateIntGates();    // #7FFD D7 gates the master's INT while unlocked
     return true;
 }
 
@@ -644,6 +763,7 @@ bool ZXPolyGroup::OnPortOut(size_t module, uint16_t port, uint8_t value)
 
         *ModuleRam(mapped, port) = value;                     // the live slave
         _overlay[mapped][WindowOffset(mapped, port)] = value; // kept for a later loader lock
+        RaiseModuleNmi(mapped);                               // unless its R1 D4 masks it
         return true;
     }
 
@@ -663,10 +783,32 @@ bool ZXPolyGroup::OnPortOut(size_t module, uint16_t port, uint8_t value)
         if (!_locked && module <= target)
         {
             _regs[target][reg] = value;
-            if (reg == 0 && (value & 0x20u))
-                LocalReset(target);
+            if (reg == 0)
+            {
+                if (value & 0x20u)
+                    LocalReset(target);
+                if (value & 0x40u)
+                    RaiseModuleNmi(target);
+                if (value & 0x80u)
+                    RaiseModuleInt(target);
+            }
+            else if (_stopWait[target] && GetContext(target)->pCore->GetZ80()->pc != StopAddress(target))
+            {
+                // A new stop address releases a module waiting at the old one
+                _stopWait[target] = false;
+                if (target != 0)
+                    AlignSlaveClock(target, 3);
+            }
         }
         return true;
+    }
+
+    // A slave's device writes reach the shared devices unless its R0 D4
+    // disables them (every ZX-Poly edition sets it for the slaves)
+    if (module != 0 && (_regs[module][0] & 0x10u) == 0)
+    {
+        EmulatorContext* master = GetContext(0);
+        master->pPortDecoder->DecodePortOut(port, value, GetContext(module)->pCore->GetZ80()->m1_pc);
     }
 
     return false;
@@ -675,10 +817,13 @@ bool ZXPolyGroup::OnPortOut(size_t module, uint16_t port, uint8_t value)
 bool ZXPolyGroup::OnPortIn(size_t module, uint16_t port, uint8_t& value)
 {
     const size_t mapped = (_port3D00 >> 5) & 0x03u;
-    if (module == 0 && !_locked && mapped != 0)
+    if (!_locked && mapped != 0 && module != mapped)
     {
-        // IO-mapped window: the mapped module's memory at address = port
+        // IO-mapped window: the mapped module's memory at address = port,
+        // with an INT to it. Any other module's reads go there too (zxpoly
+        // ZxPolyModule.readIo); only the master's writes do
         value = *ModuleRam(mapped, port);
+        RaiseModuleInt(mapped);
         return true;
     }
 
@@ -702,37 +847,95 @@ bool ZXPolyGroup::OnPortIn(size_t module, uint16_t port, uint8_t& value)
     return false;
 }
 
+void ZXPolyGroup::OnPortInResult(size_t module, uint16_t port, uint8_t& value, bool fromFloatingBus)
+{
+    (void)port;
+    if (!fromFloatingBus)
+        return;
+
+    // The floating bus carries the byte the video logic fetches. On ZX-Poly
+    // that is CPU0's video memory (zxpoly Motherboard, module 0 only); a slave
+    // fetching from its own plane would read a different byte and branch
+    // differently (floating-bus-synced games)
+    const EmulatorContext* context = GetContext(module);
+    const uint64_t key = (context->emulatorState.frame_counter << 32) | context->pCore->GetZ80()->t;
+    if (module == 0)
+    {
+        if (_locked || _slavesRunning)    // parked slaves read nothing
+            _masterFloatingBus[key] = value;
+        return;
+    }
+
+    const auto found = _masterFloatingBus.find(key);
+    if (found != _masterFloatingBus.end())
+        value = found->second;
+}
+
 /// endregion </Platform ports>
 
 /// region <Execution>
 
-void ZXPolyGroup::PressKey(ZXKeysEnum key)
+void ZXPolyGroup::QueueInput(const InputOp& op)
 {
     std::lock_guard<std::mutex> lock(_keysMutex);
-    _pendingKeys.emplace_back(key, true);
+    _pendingInput.push_back(op);
+}
+
+void ZXPolyGroup::PressKey(ZXKeysEnum key)
+{
+    QueueInput({InputOp::KeyDown, key, 0, 0});
 }
 
 void ZXPolyGroup::ReleaseKey(ZXKeysEnum key)
 {
-    std::lock_guard<std::mutex> lock(_keysMutex);
-    _pendingKeys.emplace_back(key, false);
+    QueueInput({InputOp::KeyUp, key, 0, 0});
 }
 
 void ZXPolyGroup::ApplyPendingInput()
 {
     std::lock_guard<std::mutex> lock(_keysMutex);
-    for (const auto& [key, pressed] : _pendingKeys)
+    for (const InputOp& op : _pendingInput)
     {
         for (size_t m = 0; m < MODULES; m++)
         {
-            Keyboard* keyboard = GetContext(m)->pKeyboard;
-            if (pressed)
-                keyboard->PressKey(key);
-            else
-                keyboard->ReleaseKey(key);
+            EmulatorContext* context = GetContext(m);
+
+            // Journal it in the module's TTD session first (the contract of
+            // TimeTravelManager::RecordInputEvent: before applying), so a
+            // replay feeds every module the same input at the same T
+            ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+            if (ttd && ttd->IsRecording() && !ttd->IsReplayActive())
+            {
+                switch (op.kind)
+                {
+                    case InputOp::KeyDown: ttd->RecordInputEvent(op.key, true); break;
+                    case InputOp::KeyUp: ttd->RecordInputEvent(op.key, false); break;
+                    case InputOp::MouseMove: ttd->RecordMouseMove(op.a, op.b); break;
+                    case InputOp::MouseButtons: ttd->RecordMouseButtons(static_cast<uint8_t>(op.a)); break;
+                    case InputOp::MouseWheel: ttd->RecordMouseWheel(op.a); break;
+                }
+            }
+
+            switch (op.kind)
+            {
+                case InputOp::KeyDown: context->pKeyboard->PressKey(op.key); break;
+                case InputOp::KeyUp: context->pKeyboard->ReleaseKey(op.key); break;
+                case InputOp::MouseMove:
+                    if (context->pMouse)
+                        context->pMouse->Move(op.a, op.b);
+                    break;
+                case InputOp::MouseButtons:
+                    if (context->pMouse)
+                        context->pMouse->SetButtons(static_cast<uint8_t>(op.a));
+                    break;
+                case InputOp::MouseWheel:
+                    if (context->pMouse)
+                        context->pMouse->SetWheel(op.a);
+                    break;
+            }
         }
     }
-    _pendingKeys.clear();
+    _pendingInput.clear();
 }
 
 void ZXPolyGroup::EnablePortReadCheck(bool enable)
@@ -758,23 +961,11 @@ void ZXPolyGroup::EnablePortReadCheck(bool enable)
 
 void ZXPolyGroup::EnableInstructionTrace(bool enable)
 {
+    // The per-instruction hooks are the group's own (InstallMasterM1Hook,
+    // InstallSlaveM1Hooks); they log while this is on
     _instructionTrace = enable;
-    for (size_t m = 0; m < MODULES; m++)
-    {
-        Z80* cpu = GetContext(m)->pCore->GetZ80();
-        _instructions[m].clear();
-        if (!enable)
-        {
-            if (m > 0)
-                cpu->m1TraceHook = nullptr;
-            continue;
-        }
-
-        if (m == 0)
-            continue;    // the master's hook is the group's own (InstallMasterM1Hook)
-        std::vector<uint16_t>* log = &_instructions[m];
-        cpu->m1TraceHook = [log](uint16_t pc) { log->push_back(pc); };
-    }
+    for (auto& log : _instructions)
+        log.clear();
 }
 
 void ZXPolyGroup::RunSlaveToMasterPosition(size_t module)
@@ -790,11 +981,28 @@ void ZXPolyGroup::RunSlaveToMasterPosition(size_t module)
         const uint64_t frame = context->emulatorState.frame_counter;
         return frame > masterFrame || (frame == masterFrame && t >= masterT);
     };
-    if (reached(context->pCore->GetZ80()->t))
+    if (_stopWait[module] || reached(context->pCore->GetZ80()->t))
         return;
 
-    _instances[module]->RunUntilCondition([&](const Z80State& state) { return reached(state.t); },
-                                          context->config.frame * 2, false);
+    const bool unlocked = !_locked;
+    const uint16_t stop = StopAddress(module);
+    _instances[module]->RunUntilCondition(
+        [&](const Z80State& state) {
+            if (unlocked)
+            {
+                // Halt notification on the HALT edge; a stop address parks
+                if (state.halted && !_wasHalted[module])
+                    OnModuleHalted(module);
+                _wasHalted[module] = state.halted != 0;
+                if (stop != 0 && state.pc == stop)
+                {
+                    _stopWait[module] = true;
+                    return true;
+                }
+            }
+            return reached(state.t);
+        },
+        context->config.frame * 2, false);
 }
 
 void ZXPolyGroup::InstallMasterM1Hook()
@@ -804,12 +1012,103 @@ void ZXPolyGroup::InstallMasterM1Hook()
     // through the platform ports) they catch up with the master instruction
     // by instruction - the zxpoly board steps all four once per round
     Z80* master = GetContext(0)->pCore->GetZ80();
-    master->m1TraceHook = [this](uint16_t pc) {
+    master->m1TraceHook = [this, master](uint16_t pc) {
         if (_instructionTrace)
             _instructions[0].push_back(pc);
+        CaptureLines(0);
+        if (!_locked)
+        {
+            if (master->halted && !_wasHalted[0])
+                OnModuleHalted(0);
+            _wasHalted[0] = master->halted != 0;
+        }
         if (_slavesRunning)
             CatchUpSlaves();
     };
+}
+
+void ZXPolyGroup::InstallSlaveM1Hooks()
+{
+    for (size_t m = 1; m < MODULES; m++)
+    {
+        Z80* cpu = GetContext(m)->pCore->GetZ80();
+        cpu->m1TraceHook = [this, m](uint16_t pc) {
+            if (_instructionTrace)
+                _instructions[m].push_back(pc);
+            CaptureLines(m);
+        };
+    }
+}
+
+void ZXPolyGroup::CopyScreenLine(size_t module, unsigned line, ZXPolyScreenComposer::Lines& lines) const
+{
+    const uint8_t* screen = GetScreenMemory(module);
+    uint8_t* out = lines.data() + line * ZXPolyScreenComposer::LINE_BYTES;
+    std::memcpy(out, screen + ZXPolyScreenComposer::BitmapOffset(0, line), 32);
+    std::memcpy(out + 32, screen + ZXPolyScreenComposer::AttributeOffset(0, line), 32);
+}
+
+void ZXPolyGroup::FillMissingLines(size_t module, size_t slot)
+{
+    // Lines no instruction boundary passed (a CPU in HALT, whose video memory
+    // does not change meanwhile) are taken from the screen as it is now
+    LineCapture& capture = _capture[module];
+    if (capture.captured[slot].all())
+        return;
+    for (unsigned line = 0; line < 192; line++)
+    {
+        if (!capture.captured[slot][line])
+        {
+            CopyScreenLine(module, line, capture.lines[slot]);
+            capture.captured[slot].set(line);
+        }
+    }
+}
+
+void ZXPolyGroup::CaptureLines(size_t module)
+{
+    EmulatorContext* context = GetContext(module);
+    Screen* screen = context->pScreen;
+    const RasterDescriptor& raster = screen->rasterDescriptors[screen->GetVideoMode()];
+    if (raster.screenWidth != 256 || raster.screenHeight != 192)
+        return;    // not a ZX-classic paper area
+
+    LineCapture& capture = _capture[module];
+    const uint64_t frame = context->emulatorState.frame_counter;
+    if (frame != capture.currentFrame)
+    {
+        // A new frame: complete the previous one, start filling this one
+        if (capture.currentFrame != ~0ull)
+            FillMissingLines(module, capture.currentFrame & 1u);
+        capture.currentFrame = frame;
+        const size_t slot = frame & 1u;
+        capture.frame[slot] = frame;
+        capture.captured[slot].reset();
+        capture.nextLine[slot] = 0;
+    }
+
+    const size_t slot = frame & 1u;
+    const uint32_t t = context->pCore->GetZ80()->t;
+    const uint32_t paperStart = screen->GetPaperStartTstate();
+    const uint32_t perLine = screen->GetTstatesPerLine();
+    constexpr uint32_t PAPER_FETCH_T = 128;    // 256 pixels at 2 per T
+    unsigned& next = capture.nextLine[slot];
+    while (next < 192 && t >= paperStart + next * perLine + PAPER_FETCH_T)
+    {
+        CopyScreenLine(module, next, capture.lines[slot]);
+        capture.captured[slot].set(next);
+        next++;
+    }
+}
+
+const ZXPolyScreenComposer::Lines* ZXPolyGroup::CapturedFrame(size_t module, uint64_t frame)
+{
+    LineCapture& capture = _capture[module];
+    const size_t slot = frame & 1u;
+    if (capture.frame[slot] != frame)
+        return nullptr;
+    FillMissingLines(module, slot);
+    return &capture.lines[slot];
 }
 
 void ZXPolyGroup::CatchUpSlaves()
@@ -830,9 +1129,32 @@ void ZXPolyGroup::AdvanceSlaves()
     if (!_locked && !_slavesRunning)
         return;    // unlocked with nWAIT = 0: the slaves are parked
 
-    for (size_t m = 1; m < MODULES; m++)
-        RunSlaveToMasterPosition(m);
+    // Locked, with every slave's device writes disabled: the slaves share
+    // nothing (registers frozen, the master idle, its floating-bus log only
+    // read), so they run their frame at the same time
+    bool parallel = _parallelSlaves && _locked;
+    for (size_t m = 1; m < MODULES && parallel; m++)
+        parallel = (_regs[m][0] & 0x10u) != 0;
+
+    if (parallel)
+    {
+        std::array<std::future<void>, MODULES> done;
+        for (size_t m = 1; m < MODULES; m++)
+            done[m] = std::async(std::launch::async, [this, m]() { RunSlaveToMasterPosition(m); });
+        for (size_t m = 1; m < MODULES; m++)
+            done[m].get();
+    }
+    else
+    {
+        for (size_t m = 1; m < MODULES; m++)
+            RunSlaveToMasterPosition(m);
+    }
     _lockedThisFrame = false;
+
+    // The slaves are at the master's position: older floating-bus reads are done
+    const uint64_t frame = GetContext(0)->emulatorState.frame_counter;
+    for (auto it = _masterFloatingBus.begin(); it != _masterFloatingBus.end();)
+        it = (it->first >> 32) + 1 < frame ? _masterFloatingBus.erase(it) : std::next(it);
 }
 
 void ZXPolyGroup::DetectMasterReset()
@@ -873,11 +1195,155 @@ void ZXPolyGroup::RunFrame()
     for (auto& log : _instructions)
         log.clear();
 
+    // One machine frame: the master runs to the frame boundary. (Emulator::RunFrame
+    // is the debugger's frame step - it returns to an anchored T position that a
+    // TTD seek re-anchors, so replayed frames would not end where recorded ones did)
     ApplyPendingInput();
-    _instances[0]->RunFrame(true);
+    EmulatorContext* master = GetContext(0);
+    const uint64_t startFrame = master->emulatorState.frame_counter;
+    _instances[0]->RunUntilCondition(
+        [master, startFrame](const Z80State&) { return master->emulatorState.frame_counter != startFrame; }, 0,
+        false);
     DetectMasterReset();
     AdvanceSlaves();
+    SnapshotPlatform();
 }
+
+/// region <Group TTD>
+
+bool ZXPolyGroup::StartRecording(std::string* error)
+{
+    for (size_t m = 0; m < MODULES; m++)
+    {
+        ttd::TimeTravelManager* ttd = GetContext(m)->pTimeTravelManager;
+        if (ttd == nullptr || !ttd->StartRecording())
+        {
+            if (error)
+                *error = StringHelper::Format("module %zu: TTD recording could not start", m);
+            for (size_t started = 0; started < m; started++)
+                GetContext(started)->pTimeTravelManager->StopRecording();
+            return false;
+        }
+    }
+    _recording = true;
+    _platformHistory.clear();
+    SnapshotPlatform();
+    return true;
+}
+
+void ZXPolyGroup::StopRecording()
+{
+    for (size_t m = 0; m < MODULES; m++)
+    {
+        if (ttd::TimeTravelManager* ttd = GetContext(m)->pTimeTravelManager)
+            ttd->StopRecording();
+    }
+    _recording = false;
+}
+
+uint64_t ZXPolyGroup::GetRecordedPosition() const
+{
+    const ttd::TimeTravelManager* ttd = GetContext(0)->pTimeTravelManager;
+    return ttd ? ttd->CurrentPosition().frame : 0;
+}
+
+void ZXPolyGroup::SnapshotPlatform()
+{
+    if (!_recording)
+        return;
+    PlatformSnapshot& snapshot = _platformHistory[GetRecordedPosition()];
+    snapshot.port3D00 = _port3D00;
+    snapshot.regs = _regs;
+    snapshot.locked = _locked;
+    snapshot.slavesRunning = _slavesRunning;
+    snapshot.stopWait = _stopWait;
+    snapshot.wasHalted = _wasHalted;
+}
+
+bool ZXPolyGroup::SeekToFrame(uint64_t frame, std::string* error)
+{
+    if (!_recording)
+    {
+        if (error)
+            *error = "the group is not recording";
+        return false;
+    }
+
+    // A live master is paused first (its loop is where the slaves run)
+    Emulator& master = *_instances[0];
+    if (master.IsRunning() && !master.IsPaused())
+    {
+        master.Pause();
+        master.GetMainLoop()->WaitForPauseConfirmation(500);
+    }
+
+    // TTD seeks only a stopped session (history kept; ResumeRecording picks it
+    // up again). Frame-aligned targets restore a checkpoint without replaying
+    // anything, so no module executes (and no group hook fires) during the seek
+    for (size_t m = 0; m < MODULES; m++)
+    {
+        ttd::TimeTravelManager* session = GetContext(m)->pTimeTravelManager;
+        if (session->IsRecording())
+            session->StopRecording();
+        if (!session->SeekTo(ttd::TTDTimePoint{frame, 0}))
+        {
+            if (error)
+                *error = StringHelper::Format("module %zu: TTD cannot seek to frame %llu", m,
+                                              static_cast<unsigned long long>(frame));
+            return false;
+        }
+    }
+
+    // The platform as it was at the start of that frame
+    auto it = _platformHistory.upper_bound(frame);
+    if (it != _platformHistory.begin())
+    {
+        const PlatformSnapshot& snapshot = std::prev(it)->second;
+        _port3D00 = snapshot.port3D00;
+        _regs = snapshot.regs;
+        _locked = snapshot.locked;
+        _slavesRunning = snapshot.slavesRunning;
+        _stopWait = snapshot.stopWait;
+        _wasHalted = snapshot.wasHalted;
+    }
+    _lockedThisFrame = false;
+    UpdateIntGates();
+
+    // Derived per-frame state starts over from the restored frame
+    _masterFloatingBus.clear();
+    for (LineCapture& capture : _capture)
+        capture = LineCapture{};
+    {
+        std::lock_guard<std::mutex> lock(_keysMutex);
+        _pendingInput.clear();
+    }
+    _lastMasterFrame = GetContext(0)->emulatorState.frame_counter;    // not a reset
+    return true;
+}
+
+bool ZXPolyGroup::ResumeRecording(std::string* error)
+{
+    if (!_recording)
+    {
+        if (error)
+            *error = "the group is not recording";
+        return false;
+    }
+    for (size_t m = 0; m < MODULES; m++)
+    {
+        ttd::TimeTravelManager* ttd = GetContext(m)->pTimeTravelManager;
+        if (!ttd->ResumeRecordingFrom(ttd->CurrentPosition()))
+        {
+            if (error)
+                *error = StringHelper::Format("module %zu: TTD cannot resume recording", m);
+            return false;
+        }
+    }
+    _platformHistory.erase(_platformHistory.upper_bound(GetRecordedPosition()), _platformHistory.end());
+    return true;
+}
+
+/// endregion </Group TTD>
 
 /// region <Live mode>
 
@@ -897,6 +1363,8 @@ void ZXPolyGroup::AttachToMaster()
                               static_cast<ObserverCallbackMethod>(&ZXPolyGroup::OnHostKeyPressed));
     messageCenter.AddObserver(MC_KEY_RELEASED, observer,
                               static_cast<ObserverCallbackMethod>(&ZXPolyGroup::OnHostKeyReleased));
+    for (const char* topic : {MC_MOUSE_MOVE, MC_MOUSE_BUTTON, MC_MOUSE_WHEEL})
+        messageCenter.AddObserver(topic, observer, static_cast<ObserverCallbackMethod>(&ZXPolyGroup::OnHostMouse));
     _attached = true;
 }
 
@@ -911,6 +1379,8 @@ void ZXPolyGroup::DetachFromMaster()
                                  static_cast<ObserverCallbackMethod>(&ZXPolyGroup::OnHostKeyPressed));
     messageCenter.RemoveObserver(MC_KEY_RELEASED, observer,
                                  static_cast<ObserverCallbackMethod>(&ZXPolyGroup::OnHostKeyReleased));
+    for (const char* topic : {MC_MOUSE_MOVE, MC_MOUSE_BUTTON, MC_MOUSE_WHEEL})
+        messageCenter.RemoveObserver(topic, observer, static_cast<ObserverCallbackMethod>(&ZXPolyGroup::OnHostMouse));
 
     if (_instances[0])
     {
@@ -926,6 +1396,7 @@ void ZXPolyGroup::OnMasterFrameEnd(bool rendered)
     // On the master's emulation thread, between two of its frames
     DetectMasterReset();
     AdvanceSlaves();
+    SnapshotPlatform();
 
     // Keys queued meanwhile reach all four keyboards before the next frame
     ApplyPendingInput();
@@ -1056,6 +1527,27 @@ void ZXPolyGroup::QueueHostKey(Message* message, bool pressed)
         ReleaseKey(static_cast<ZXKeysEnum>(event->zxKeyCode));
 }
 
+void ZXPolyGroup::OnHostMouse(int id, Message* message)
+{
+    (void)id;
+    if (message == nullptr || message->obj == nullptr || !_instances[0])
+        return;
+
+    const MouseEvent* event = dynamic_cast<const MouseEvent*>(message->obj);
+    if (event == nullptr)
+        return;
+    if (!event->targetId.empty() && event->targetId != _instances[0]->GetId())
+        return;
+
+    switch (event->kind)
+    {
+        case MouseEventKind::Move: QueueInput({InputOp::MouseMove, ZXKEY_NONE, event->dx, event->dy}); break;
+        case MouseEventKind::Buttons: QueueInput({InputOp::MouseButtons, ZXKEY_NONE, event->buttonMask, 0}); break;
+        case MouseEventKind::Wheel: QueueInput({InputOp::MouseWheel, ZXKEY_NONE, event->wheelSteps, 0}); break;
+        default: break;
+    }
+}
+
 /// endregion </Live mode>
 
 void ZXPolyGroup::RunFrames(unsigned frames)
@@ -1181,13 +1673,25 @@ const uint8_t* ZXPolyGroup::GetScreenMemory(size_t module) const
     return context->pMemory->RAMPageAddress(page);
 }
 
-void ZXPolyGroup::Compose(std::vector<uint32_t>& out) const
+void ZXPolyGroup::Compose(std::vector<uint32_t>& out)
 {
     out.resize(static_cast<size_t>(ZXPolyScreenComposer::OUT_WIDTH) * ZXPolyScreenComposer::OUT_HEIGHT);
 
-    std::array<const uint8_t*, ZXPolyScreenComposer::MODULES> vram{};
+    // The last completed frame, line by line as each module's video logic
+    // fetched it; a module that did not run it (parked) is shown as its
+    // screen is now
+    const uint64_t frame = GetContext(0)->emulatorState.frame_counter - 1;
+    std::array<ZXPolyScreenComposer::Lines, MODULES> fromScreen;
+    std::array<const ZXPolyScreenComposer::Lines*, MODULES> lines{};
     for (size_t m = 0; m < MODULES; m++)
-        vram[m] = GetScreenMemory(m);
+    {
+        lines[m] = CapturedFrame(m, frame);
+        if (lines[m] == nullptr)
+        {
+            ZXPolyScreenComposer::LinesFromScreen(GetScreenMemory(m), fromScreen[m]);
+            lines[m] = &fromScreen[m];
+        }
+    }
 
     uint32_t palette[16];
     GetContext(0)->pScreen->GetRGBAPalette16(palette);
@@ -1195,7 +1699,7 @@ void ZXPolyGroup::Compose(std::vector<uint32_t>& out) const
     // ZX FLASH period: 16 frames each phase
     const bool flashPhase = ((GetContext(0)->emulatorState.frame_counter >> 4) & 1u) != 0;
 
-    ZXPolyScreenComposer::Compose(vram, GetVideoMode(), flashPhase, palette, out.data());
+    ZXPolyScreenComposer::ComposeLines(lines, GetVideoMode(), flashPhase, palette, out.data());
 }
 
 /// endregion </Video>

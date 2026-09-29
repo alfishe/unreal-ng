@@ -61,6 +61,14 @@ print(string.format("PC = 0x%04X", cpu:get_pc()))
 ### Machine Identity and Lifecycle
 The Lua bindings operate on the existing emulator instance (`get_emulator()`); they do not expose model-selecting instance creation or model switching. For lifecycle operations with strict model validation (`creatable` flags, reason-carrying failures) use the WebAPI (`POST /api/v1/emulator/create`, `GET /api/v1/emulator/models`) or the CLI (`create`/`start <model>`). Machine identity of the current instance is observable through state endpoints (e.g. TTD status reports `model_id`/`model_ram_pages`).
 
+**ZX-Poly** (four synchronized instances of one model, through the same
+`EmulatorManager::CreateZXPolyMachine` every surface uses):
+```lua
+local id, err = zxpoly_start("PENTAGON", "/path/to/Alien8.zxp")  -- model and file optional; id = the master
+local status = zxpoly_status(id)   -- nil if not a ZX-Poly machine
+print(status.locked, status.video_mode, status.diverged, status.modules[2].registers[1])
+```
+
 ### Running Scripts
 
 #### From Command Line

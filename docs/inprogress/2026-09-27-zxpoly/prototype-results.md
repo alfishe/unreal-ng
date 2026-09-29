@@ -107,23 +107,84 @@ Environment switches for the tests:
 - **Host keys** arrive through the group (MessageCenter observer, filtered
   by the master's id). Every member's keyboard is gated.
 
-## 5. Not done yet
+## 5. Full platform compatibility
 
-- **Floating bus on 128K/+3:** master-authoritative substitution (§3.2 of
-  [model-agnostic-sync-layer.md](model-agnostic-sync-layer.md)). No title in
-  the corpus needed it.
-- **Pipelined / threaded frame scheduling:** everything runs sequentially.
-- **Mode 5 (512×384) in the GUI:** shown at 256×192, one sample per
-  2×2 block (CPU0's quadrant). It needs a double-size framebuffer; the
-  test PNGs are full size.
-- **Integration:** WebAPI/MCP and the video wall are not wired yet, and
-  group members are not yet hidden from instance lists.
-- **Per-line VRAM capture:** composition reads VRAM at frame end, which is
-  the same as zxpoly's "less resources" mode.
-- **TTD:** no group sessions or group seek.
-- **Mouse and joystick:** they need the host-input gate too.
-- **Disk writes on slaves:** they go to their own mounted image, which is
-  not yet an in-memory copy.
-- **TR-DOS on 4×128K:** the loader path was only exercised on Pentagon.
-- **`core-benchmarks`:** before/after numbers for the `Z80::in/out` pointer
-  check are still to be taken.
+Everything the zxpoly board does is now emulated. Each item is covered by a
+test that fails when the mechanism is turned off (mutation-checked):
+
+| Mechanism | How | Test |
+|:--|:--|:--|
+| System reset | a reset of the master: `#3D00` = 0, ports unlocked, slaves reset to `#0000` and waiting, mode 0 | `MasterResetReturnsToLoaderPhase` |
+| Coupled machine (unlocked, `#3D00` D0 = 1) | slaves run their own code, caught up after every master instruction | `TestRomPassesAllChecks` |
+| Local reset | R0 D5 / `#3D00` D1, per module, with the injected `JP`, pending interrupts dropped | Test ROM (CPU0 resets itself, CPU1–3 by R0 = `$22…$26`) |
+| R0 status | HALT, WAIT (parked or stop address), packed last-M1 address | Test ROM CPU0 check |
+| IO window | reads and writes live slave RAM; a read sends the target an INT, a write an NMI (unless the target's R1 D4); any module's reads go through the window (zxpoly `readIo`) | `WindowWriteSendsNmiUnlessR1MasksIt` |
+| NMI to a waiting module | dropped: the 16 T pulse expires while the module waits (the Test ROM relies on this) | Test ROM |
+| Common frame INT | slaves see it only while locked; the master, while `#3D00` and `#7FFD` are unlocked, only with `#7FFD` D7 = 0 (128K-class latch) | `SlaveMissesFrameIntBeforeLockAndTakesLocalInt`, `HaltNotificationWakesTheMasterWhoseFrameIntIsGated` |
+| Local INT | R0 D7, window reads, halt notification: a 36 T pulse (`Z80::RaiseLocalInt`) | same |
+| Halt notification | the HALT edge of a module, unlocked only: its R1 D0–D3 targets, D6 INT, D7 NMI | `HaltNotificationWakesTheMasterWhoseFrameIntIsGated` |
+| Stop address | R2/R3 park a slave at that PC; a new address releases it; zero disables it (zxpoly would stop at any `#0000`, which no program relies on) | `StopAddressParksASlaveUntilMoved` |
+| Slave device writes | reach the machine's devices unless R0 D4 (every edition sets it); `#7FFD` always pages the module itself | `SlaveDeviceWritesReachTheMachineUnlessDisabled` |
+| RAM0 at `#0000` | `#7FFD` D6 while unlocked | Test ROM RAM0→ROM |
+| Floating bus | the master's value for every module (one video memory drives the bus), 128K and Pentagon (`FloatBus=1`) | `FloatingBusValueComesFromTheMaster` |
+| Per-line picture | every module captures a paper line when its beam passed it (zxpoly renders per line); the composer works on those lines | `PictureFollowsTheBeamLineByLine` |
+| Test ROM | `.prom` loading; all 8 checks OK, mode 4 and mode 5 demos, 4×128K and 4×Pentagon | `TestRomPassesAllChecks` |
+
+Infrastructure:
+
+- **Group members hidden:** the slaves are left out of instance listings,
+  index lookup and "most recent" selection, but stay reachable by ID
+  (`SlavesAreHiddenFromInstanceListings`).
+- **Mouse:** the Kempston mouse is gated like the keyboard; moves, buttons
+  and wheel reach all four at the frame boundary. There is no host joystick
+  device in unreal-ng, so nothing to gate there.
+- **Disk writes:** they stay in each machine's in-memory image; only an
+  explicit `SaveDisk`, on the visible master, writes a file.
+- **Machines without TR-DOS:** a stock 128K has no TR-DOS ROM, so a
+  multiloader disk is refused with a message (`DiskBootNeedsAModelWithTRDOS`).
+  ZX-Poly TRDs run on Pentagon, zxpoly's own default.
+
+## 6. Group time travel
+
+The four TTD sessions run as one timeline (QI §8):
+
+- **Start:** `StartRecording` starts all four sessions at the same frame, so
+  TTD frame N is the same machine frame on every module.
+- **Input:** the group's key and mouse operations are journaled into every
+  session at the frame boundary where they are applied.
+- **Platform state:** `#3D00`, R0–R3, the lock and the wait flags are
+  snapshotted once per frame beside the sessions.
+- **Seek:** `SeekToFrame(n)` pauses the sessions (their history stays),
+  restores all four to the start of frame *n* and puts the platform state of
+  that frame back. A live master is paused first.
+- **Resume:** `ResumeRecording` continues from there. It cuts the history
+  after that frame, so new input starts a new branch.
+
+Test: `GroupTimeTravelSeeksAndReplays` records 120 frames of Summer Santa
+with keys. It then:
+
+1. seeks back to frame 60 and checks the state matches the recording;
+2. replays 30 frames with the same keys and checks every frame is identical;
+3. branches from frame 65 with other keys and checks lockstep for 45 frames.
+
+**Finding:** a group frame must end at the frame boundary. `Emulator::RunFrame`
+is the debugger's frame step: it returns to a remembered T position, and a
+TTD seek resets that position. Replayed frames then ran one instruction
+longer than the recorded ones. The group now runs the master with
+`RunUntilCondition` until the frame counter moves.
+
+Surfaces: WebAPI (`start` with `zxpoly`, `GET /{id}/zxpoly`), MCP
+(`zxpoly` on create, `zxpoly_status`), CLI, Python and Lua; see
+[.recipe/machines/zxpoly.md](../../../.recipe/machines/zxpoly.md). The group
+timeline is a core API for now. The per-instance TTD tools see each module
+alone.
+
+## 7. Not done yet
+
+- **Pipelined frame scheduling:** once locked, the three slaves catch up in
+  parallel at every frame end (on by default, `SetParallelSlaves`). The
+  master still waits for them before its next frame; overlapping the slaves
+  with the master's next frame is not done.
+- **Group TTD on the automation surfaces:** seek and resume of the whole group
+  through WebAPI/MCP `time_travel`.
+- **Video wall:** ZX-Poly machines as tiles.

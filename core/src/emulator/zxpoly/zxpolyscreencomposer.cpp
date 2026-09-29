@@ -2,6 +2,8 @@
 
 #include "zxpolyscreencomposer.h"
 
+#include <cstring>
+
 namespace
 {
     constexpr unsigned WIDTH = ZXPolyScreenComposer::OUT_WIDTH;
@@ -41,8 +43,30 @@ namespace
     }
 }
 
+void ZXPolyScreenComposer::LinesFromScreen(const uint8_t* screen, Lines& lines)
+{
+    for (unsigned y = 0; y < 192; y++)
+    {
+        std::memcpy(lines.data() + y * LINE_BYTES, screen + BitmapOffset(0, y), 32);
+        std::memcpy(lines.data() + y * LINE_BYTES + 32, screen + AttributeOffset(0, y), 32);
+    }
+}
+
 void ZXPolyScreenComposer::Compose(const std::array<const uint8_t*, MODULES>& vram, uint8_t mode, bool flashPhase,
                                    const uint32_t* palette, uint32_t* out)
+{
+    std::array<Lines, MODULES> lines;
+    std::array<const Lines*, MODULES> pointers{};
+    for (size_t m = 0; m < MODULES; m++)
+    {
+        LinesFromScreen(vram[m], lines[m]);
+        pointers[m] = &lines[m];
+    }
+    ComposeLines(pointers, mode, flashPhase, palette, out);
+}
+
+void ZXPolyScreenComposer::ComposeLines(const std::array<const Lines*, MODULES>& lines, uint8_t mode,
+                                        bool flashPhase, const uint32_t* palette, uint32_t* out)
 {
     mode &= 0x07u;
 
@@ -50,13 +74,13 @@ void ZXPolyScreenComposer::Compose(const std::array<const uint8_t*, MODULES>& vr
     {
         for (unsigned x = 0; x < 256; x++)
         {
-            const size_t bitmap = BitmapOffset(x, y);
-            const size_t attribute = AttributeOffset(x, y);
+            const size_t bitmap = y * LINE_BYTES + (x >> 3);
+            const size_t attribute = bitmap + 32;
             const uint8_t mask = static_cast<uint8_t>(0x80u >> (x & 7u));
 
             bool bit[MODULES];
             for (size_t m = 0; m < MODULES; m++)
-                bit[m] = (vram[m][bitmap] & mask) != 0;
+                bit[m] = ((*lines[m])[bitmap] & mask) != 0;
 
             const uint8_t polyIndex = static_cast<uint8_t>((bit[3] ? 0x08u : 0u) | (bit[0] ? 0x04u : 0u) |
                                                            (bit[1] ? 0x02u : 0u) | (bit[2] ? 0x01u : 0u));
@@ -68,7 +92,7 @@ void ZXPolyScreenComposer::Compose(const std::array<const uint8_t*, MODULES>& vr
                 case 2:
                 case 3:
                 {
-                    const uint8_t attr = vram[mode][attribute];
+                    const uint8_t attr = (*lines[mode])[attribute];
                     const uint8_t index = bit[mode] ? InkIndex(attr, flashPhase) : PaperIndex(attr, flashPhase);
                     Put2x2(out, x, y, palette[index]);
                     break;
@@ -83,7 +107,7 @@ void ZXPolyScreenComposer::Compose(const std::array<const uint8_t*, MODULES>& vr
                     uint32_t c[MODULES];
                     for (size_t m = 0; m < MODULES; m++)
                     {
-                        const uint8_t attr = vram[m][attribute];
+                        const uint8_t attr = (*lines[m])[attribute];
                         c[m] = palette[bit[m] ? InkIndex(attr, flashPhase) : PaperIndex(attr, flashPhase)];
                     }
                     PutQuad(out, x, y, c[0], c[1], c[2], c[3]);
@@ -92,7 +116,7 @@ void ZXPolyScreenComposer::Compose(const std::array<const uint8_t*, MODULES>& vr
 
                 case 6:
                 {
-                    const uint8_t attr = vram[0][attribute];
+                    const uint8_t attr = (*lines[0])[attribute];
                     const uint8_t ink = InkIndex(attr, flashPhase);
                     const uint8_t paper = PaperIndex(attr, flashPhase);
                     Put2x2(out, x, y, palette[ink == paper ? ink : polyIndex]);
@@ -102,7 +126,7 @@ void ZXPolyScreenComposer::Compose(const std::array<const uint8_t*, MODULES>& vr
                 case 7:
                 default:
                 {
-                    const uint8_t attr = vram[0][attribute];
+                    const uint8_t attr = (*lines[0])[attribute];
                     const uint8_t ink = InkIndex(attr, false);
                     const uint8_t paper = PaperIndex(attr, false);
                     if ((attr & 0x80u) == 0)

@@ -101,6 +101,7 @@ protected:
     DebugManager* _debugManager = nullptr;
     BreakpointManager* _breakpointManager = nullptr;
     FeatureManager* _featureManager = nullptr;  // Feature toggle manager
+    std::atomic<bool> _hiddenGroupMember{false};  // see SetHiddenGroupMember
 
     // Control flow
     volatile bool _stopRequested = false;
@@ -161,6 +162,12 @@ public:
 
     [[nodiscard]] bool Init();
     void Release();
+
+    /// A hidden member of a multi-instance machine (a ZX-Poly slave): left out
+    /// of instance listings, index lookup and "most recent" selection, but
+    /// still addressable by its ID (debugger, WebAPI)
+    void SetHiddenGroupMember(bool hidden) { _hiddenGroupMember = hidden; }
+    bool IsHiddenGroupMember() const { return _hiddenGroupMember; }
 
     // Timestamp helpers
     void UpdateLastActivity();

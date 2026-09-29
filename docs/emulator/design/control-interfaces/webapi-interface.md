@@ -232,6 +232,46 @@ Content-Type: application/json
 }
 ```
 
+
+### 5b. ZX-Poly machine
+**Endpoints**: `POST /api/v1/emulator/start` with `zxpoly`, `GET /api/v1/emulator/{id}/zxpoly`
+**Description**: A ZX-Poly machine is four synchronized instances of one
+model (default `PENTAGON`). Module 0, the master, is the machine every
+endpoint addresses and the id returned. Modules 1-3 are hidden members: they
+are not listed, but are reachable by id. Deleting the master removes all four.
+Recipe: [.recipe/machines/zxpoly.md](../../../../.recipe/machines/zxpoly.md).
+
+```bash
+curl -X POST http://localhost:8090/api/v1/emulator/start \
+  -H "Content-Type: application/json" \
+  -d '{"model": "PENTAGON", "zxpoly": {"file": "/path/to/Alien8.zxp"}}'
+```
+
+The `zxpoly` field takes one of two forms:
+
+- `true`: the bare machine;
+- `{"file": path}`: a `.zxp` snapshot, a `.prom` ZX-Poly ROM image (the Test
+  ROM), or a multiloader disk (`.trd`/`.scl`, which needs a model with
+  TR-DOS).
+
+The 201 response carries the group status under `zxpoly`. Every member's
+`GET /api/v1/emulator/{id}` carries `"zxpoly": {"module", "master_id",
+"locked", "video_mode"}`.
+
+`GET /api/v1/emulator/{id}/zxpoly` (any member id):
+```json
+{
+  "master_id": "e5dad078-...", "locked": true, "slaves_running": false, "parallel_slaves": true,
+  "port_3d00": 157, "video_mode": 7,
+  "modules": [ {"module": 0, "id": "e5dad078-...", "registers": [0, 0, 0, 0]},
+               {"module": 1, "id": "f67691a2-...", "registers": [18, 0, 0, 0]}, "..." ],
+  "divergence": {"diverged": false}
+}
+```
+`divergence` compares each slave's control state (PC, SP, I, IM, IFF1, HALT,
+T-state, `#7FFD`) with the master's. A 404 means no such instance, or it is
+not a ZX-Poly machine.
+
 ### 5b. Switch Model (validate-first)
 **Endpoint**: `POST /api/v1/emulator/{id}/model` (body `{"model": "...", "ram_size": N}`)  
 **Description**: The request is validated BEFORE the current instance is stopped/removed: an unknown model, unsupported RAM or non-creatable model returns `400` and the current emulator keeps running untouched. A successful switch stops the old instance, creates and starts a new one (different ID) and returns the machine identity block for the new instance.

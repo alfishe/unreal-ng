@@ -58,6 +58,9 @@ public:
 
     // Switch machine model (stops current emulator, creates new one with different model)
     ADD_METHOD_TO(EmulatorAPI::switchModel, "/api/v1/emulator/{id}/model", drogon::Post);
+
+    // ZX-Poly group status (four synchronized modules; any member id)
+    ADD_METHOD_TO(EmulatorAPI::getZXPolyStatus, "/api/v1/emulator/{id}/zxpoly", drogon::Get);
     // endregion Lifecycle Management
 
     // region Tape/Disk/Snapshot Control (implementation: api/tape_disk_api.cpp and api/snapshot_api.cpp)
@@ -475,6 +478,10 @@ public:
     // Get emulator details
     void getEmulator(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                      const std::string& id) const;
+
+    /// GET /api/v1/emulator/{id}/zxpoly - the ZX-Poly group the instance belongs to
+    void getZXPolyStatus(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
 
     // Remove an emulator
     void removeEmulator(const drogon::HttpRequestPtr& req,

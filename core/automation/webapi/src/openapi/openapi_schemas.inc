@@ -15,6 +15,14 @@
     schemas["EmulatorInfo"]["properties"]["is_paused"]["type"] = "boolean";
     schemas["EmulatorInfo"]["properties"]["is_debug"]["type"] = "boolean";
     // Machine identity block (P0-1): every lifecycle response carries it
+    // ZX-Poly block: present only when the instance is a module of a ZX-Poly group
+    schemas["EmulatorInfo"]["properties"]["zxpoly"]["type"] = "object";
+    schemas["EmulatorInfo"]["properties"]["zxpoly"]["description"] =
+        "Present on a ZX-Poly machine: module 0 is the master (the visible machine), 1-3 hidden slaves";
+    schemas["EmulatorInfo"]["properties"]["zxpoly"]["properties"]["module"]["type"] = "integer";
+    schemas["EmulatorInfo"]["properties"]["zxpoly"]["properties"]["master_id"]["type"] = "string";
+    schemas["EmulatorInfo"]["properties"]["zxpoly"]["properties"]["locked"]["type"] = "boolean";
+    schemas["EmulatorInfo"]["properties"]["zxpoly"]["properties"]["video_mode"]["type"] = "integer";
     schemas["EmulatorInfo"]["properties"]["model"]["type"] = "string";
     schemas["EmulatorInfo"]["properties"]["model"]["description"] = "Model short name (e.g. 'PENTAGON', '48K')";
     schemas["EmulatorInfo"]["properties"]["model_full_name"]["type"] = "string";

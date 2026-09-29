@@ -16,6 +16,7 @@ public:
 
     bool InterceptIn(uint16_t port, uint8_t& value) override;
     bool InterceptOut(uint16_t port, uint8_t value) override;
+    void OnInResult(uint16_t port, uint8_t& value, bool fromFloatingBus) override;
 
 private:
     ZXPolyGroup& _group;

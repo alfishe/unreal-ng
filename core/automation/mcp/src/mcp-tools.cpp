@@ -96,7 +96,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["type"] = "object";
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* action : {"create", "list", "list_models", "server", "status", "start", "stop", "pause", "resume", "reset", "destroy",
+    for (const char* action : {"create", "list", "list_models", "server", "status", "zxpoly_status", "start", "stop", "pause", "resume", "reset", "destroy",
                                "gs_reset", "gs_reset_card", "gs_nmi", "gs_send_command", "gs_send_data", "gs_read_status", "gs_read_data",
                                "gs_switch_personality", "gs_dump_module"})
     {
@@ -106,7 +106,11 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "Lifecycle operation. 'create' makes a new running instance (fails with a reason on models this build "
         "cannot create — no silent fallback); 'list' shows all instances with their machine identity; "
         "'list_models' enumerates hardware models with creatable flags; 'server' reports the build fingerprint "
-        "and models_creatable; 'status' reports one instance's details. 'gs_*' actions drive the General Sound "
+        "and models_creatable; 'status' reports one instance's details. 'create' with 'zxpoly': true starts a "
+        "ZX-Poly machine (four synchronized instances of 'model', default PENTAGON; optional 'zxpoly_file': a "
+        ".zxp snapshot, a .prom ROM image or a multiloader disk); the returned id is its master, the slaves are "
+        "hidden members. 'zxpoly_status' reports a ZX-Poly machine's modules, platform registers, lock, video "
+        "mode and lockstep check. 'gs_*' actions drive the General Sound "
         "card over the same /control/audio/gs endpoint the WebAPI serves (gs_reset/gs_reset_card/gs_nmi/"
         "gs_send_command/gs_send_data/gs_read_status/gs_read_data; the byte actions need 'value'; writes, "
         "resets and NMI apply at the next instruction boundary, reads are side-effect-free peeks); "
@@ -123,6 +127,13 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "build-dependent — check the 'creatable' flags before assuming a machine exists)";
     schema["properties"]["ram_size"]["type"] = "integer";
     schema["properties"]["ram_size"]["description"] = "Optional RAM size in KB for 'create' (e.g. 128, 256, 512)";
+    schema["properties"]["zxpoly"]["type"] = "boolean";
+    schema["properties"]["zxpoly"]["description"] =
+        "For 'create': start a ZX-Poly machine (four synchronized instances of 'model'; default PENTAGON)";
+    schema["properties"]["zxpoly_file"]["type"] = "string";
+    schema["properties"]["zxpoly_file"]["description"] =
+        "For 'create' with zxpoly: host path of a .zxp snapshot, a .prom ZX-Poly ROM image (Test ROM) or a "
+        "multiloader disk (.trd/.scl; needs a model with TR-DOS)";
     schema["properties"]["value"]["type"] = "integer";
     schema["properties"]["value"]["description"] = "Byte value (0-255) required by gs_send_command and gs_send_data";
     schema["properties"]["personality"]["type"] = "string";
@@ -183,9 +194,17 @@ void RegisterEmulatorManage(ToolRegistry& registry)
             if (action == "create")
             {
                 Json::Value body;
-                body["model"] = args.isMember("model") && args["model"].isString() && !args["model"].asString().empty()
-                                    ? args["model"].asString()
-                                    : TargetResolver::kDefaultAutoCreateModel;
+                const bool zxpoly = args.isMember("zxpoly") && args["zxpoly"].asBool();
+                const bool hasModel = args.isMember("model") && args["model"].isString() && !args["model"].asString().empty();
+                body["model"] = hasModel ? args["model"].asString()
+                                         : std::string(zxpoly ? "PENTAGON" : TargetResolver::kDefaultAutoCreateModel);
+                if (zxpoly)
+                {
+                    // Same request the WebAPI documents: {"zxpoly": {"file": ...}}
+                    body["zxpoly"] = Json::Value(Json::objectValue);
+                    if (args.isMember("zxpoly_file") && args["zxpoly_file"].isString())
+                        body["zxpoly"]["file"] = args["zxpoly_file"].asString();
+                }
                 if (args.isMember("ram_size") && args["ram_size"].asUInt() > 0)
                 {
                     body["ram_size"] = args["ram_size"].asUInt();
@@ -208,6 +227,10 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                 if (action == "status")
                 {
                     ForwardCall("GET", Endpoint(id), nullptr, caller, "Status of " + id, done);
+                }
+                else if (action == "zxpoly_status")
+                {
+                    ForwardCall("GET", Endpoint(id, "/zxpoly"), nullptr, caller, "ZX-Poly status of " + id, done);
                 }
                 else if (action == "start")
                 {

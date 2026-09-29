@@ -563,7 +563,7 @@ void Z80::BeginFrame()
 
     // INT interrupt handling lasts for more than 1 frame (unless the pulse was
     // already acknowledged on a machine that clears INT at the acknowledge)
-    if (_intWraps && !int_acked_in_pulse)
+    if (_intWraps && !int_acked_in_pulse && !frameIntMasked)
         int_pending = true;
 }
 
@@ -886,6 +886,7 @@ uint8_t Z80::in(uint16_t port)
     // must NOT get the floating bus override even if they return 0xFF.
     // Full-decode observer cards are real hardware too - a handled observer
     // port always has a driver on the bus, floating bus must not apply.
+    bool fromFloatingBus = false;
     if (!portDecoder.WasLastPortDecoded() && (port & 0x0001) && !fullDecodeHandled)
     {
         UlaContention* ula = _context->pUlaContention;
@@ -894,9 +895,15 @@ uint8_t Z80::in(uint16_t port)
             // The +2A/+3 gate array drives only #0FFD-type ports (GetGateArrayFloatingBus)
             uint8_t floatVal = ula->IsGateArray() ? ula->GetGateArrayFloatingBus(port) : ula->GetFloatingBus();
             if (floatVal != 0xFF)
+            {
                 result = floatVal;
+                fromFloatingBus = true;
+            }
         }
     }
+
+    if (portInterceptor) [[unlikely]]
+        portInterceptor->OnInResult(port, result, fromFloatingBus);
 
     return result;
 }
@@ -987,6 +994,23 @@ void Z80::DirectWrite(uint16_t addr, uint8_t val)
 {
     uint8_t* remap_addr = _context->pMemory->MapZ80AddressToPhysicalAddress(addr);
     *remap_addr = val;
+}
+
+void Z80::RaiseLocalInt(unsigned lengthT)
+{
+    // End position in (frame, T): the frame counter advances and t is rebased
+    // by the frame length at every frame boundary
+    const uint32_t frameLength = _frameLimit != 0 ? _frameLimit : _context->config.frame;
+    uint64_t endFrame = _context->emulatorState.frame_counter;
+    uint32_t endT = t + lengthT;
+    while (frameLength != 0 && endT >= frameLength)
+    {
+        endT -= frameLength;
+        endFrame++;
+    }
+    _localIntEndFrame = endFrame;
+    _localIntEndT = endT;
+    _localIntArmed = true;
 }
 
 /// Simulate Z80 INT pin signal raising
@@ -1126,7 +1150,7 @@ bool Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
             cpu.int_acked_in_pulse = 0;
     }
 
-    if (!int_occurred && cpu.t > int_start && !cpu.int_acked_in_pulse)
+    if (!int_occurred && cpu.t > int_start && !cpu.int_acked_in_pulse && !frameIntMasked)
     {
         int_occurred = true;
         cpu.int_pending = true;
@@ -1134,6 +1158,16 @@ bool Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
 
     if (cpu.int_pending && (cpu.t >= int_end))
         cpu.int_pending = false;
+
+    // Board-level local INT (RaiseLocalInt): held for its own length
+    if (_localIntArmed) [[unlikely]]
+    {
+        const uint64_t frame = machineState.frame_counter;
+        if (frame < _localIntEndFrame || (frame == _localIntEndFrame && cpu.t < _localIntEndT))
+            cpu.int_pending = true;
+        else
+            _localIntArmed = false;
+    }
 
     video.memcyc_lcmd = 0;  // new command, start accumulate number of busy memcycles
 

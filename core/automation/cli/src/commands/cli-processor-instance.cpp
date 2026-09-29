@@ -1,6 +1,8 @@
 // CLI Instance Management Commands
 // Extracted from cli-processor.cpp - 2026-01-08
 
+#include <iomanip>
+#include "emulator/zxpoly/zxpolygroup.h"
 #include <emulator/buildinfo.h>
 #include <emulator/config.h>
 #include <emulator/emulator.h>
@@ -1068,5 +1070,74 @@ void CLIProcessor::HandleModels(const ClientSession& session, const std::vector<
     }
     
     ss << NEWLINE << "Use 'start <model>' to create emulator with specific model.";
+    session.SendResponse(ss.str());
+}
+/// zxpoly start <model> [file] | zxpoly status [id|index]
+/// ZX-Poly machines through the same EmulatorManager entry points the WebAPI,
+/// MCP, Lua, Python and the Qt UI use (CreateZXPolyMachine, GetZXPolyGroup)
+void CLIProcessor::HandleZXPoly(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto* manager = EmulatorManager::GetInstance();
+    const std::string sub = args.empty() ? std::string("status") : args[0];
+    std::stringstream ss;
+
+    if (sub == "start")
+    {
+        const std::string model = args.size() > 1 ? args[1] : std::string("PENTAGON");
+        const std::string file = args.size() > 2 ? args[2] : std::string();
+        std::string error;
+        auto master = manager->CreateZXPolyMachine("", model, file, &error);
+        if (!master)
+        {
+            ss << "Error: cannot start ZX-Poly on " << model << ": " << error << NEWLINE;
+            session.SendResponse(ss.str());
+            return;
+        }
+        const bool started = manager->StartEmulatorAsync(master->GetId());
+        manager->SetSelectedEmulatorId(master->GetId());
+        ss << (started ? "Started" : "Created") << " ZX-Poly machine: " << master->GetId() << NEWLINE;
+        ss << "Model: 4 x " << model << (file.empty() ? std::string() : ", media: " + file) << NEWLINE;
+        session.SendResponse(ss.str());
+        return;
+    }
+
+    if (sub != "status")
+    {
+        ss << "Usage: zxpoly start <model> [file] | zxpoly status [id|index]" << NEWLINE;
+        session.SendResponse(ss.str());
+        return;
+    }
+
+    const std::vector<std::string> rest(args.begin() + (args.empty() ? 0 : 1), args.end());
+    std::string resolveError;
+    auto emulator = ResolveEmulator(session, rest, resolveError);
+    ZXPolyGroup* group = emulator ? manager->GetZXPolyGroup(emulator->GetId()) : nullptr;
+    if (!group)
+    {
+        ss << "Error: " << (emulator ? std::string("the emulator is not a ZX-Poly machine") : resolveError) << NEWLINE;
+        session.SendResponse(ss.str());
+        return;
+    }
+
+    const ZXPolyGroup::Status status = group->GetStatus();
+    ss << "ZX-Poly machine " << status.memberIds[0] << NEWLINE;
+    ss << "  #3D00: #" << std::hex << std::uppercase << std::setw(2) << std::setfill('0')
+       << static_cast<int>(status.port3D00) << std::dec << "  locked: " << (status.locked ? "yes" : "no")
+       << "  video mode: " << static_cast<int>(status.videoMode)
+       << "  slaves: " << (status.locked ? "running (locked)" : (status.slavesRunning ? "running" : "waiting"))
+       << NEWLINE;
+    for (size_t m = 0; m < ZXPolyGroup::MODULES; m++)
+    {
+        ss << "  CPU" << m << " " << status.memberIds[m] << "  R0-R3:";
+        for (uint8_t value : status.registers[m])
+            ss << " #" << std::hex << std::uppercase << std::setw(2) << std::setfill('0') << static_cast<int>(value)
+               << std::dec;
+        ss << NEWLINE;
+    }
+    ss << "  lockstep: "
+       << (status.divergence.diverged
+               ? "CPU" + std::to_string(status.divergence.module) + " diverged: " + status.divergence.what
+               : std::string("ok"))
+       << NEWLINE;
     session.SendResponse(ss.str());
 }
