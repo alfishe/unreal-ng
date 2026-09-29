@@ -40,6 +40,8 @@ SHOW:    db 1           ; print the report
 DONE:    db 0           ; 1 when finished
 FAILS:   dw 0           ; values that differ from the expected table
 TOOFAST: db 0           ; 1: the CPU runs faster than 3.5 MHz, nothing was measured
+EVENM1:  db 0           ; 1: opcode fetches from RAM start on even T-states only (the Scorpion's "Even M1"),
+                        ; nothing was measured: the engine's delays need single T-state steps
 
 ; ---- current case (a copy of its record) ----
 
@@ -80,6 +82,8 @@ BADEXP:    db 0
 MAIN:
         call TurboOff
         jp z,TooFast
+        call IsEvenM1
+        jp nz,EvenM1
         call INSTINT
         call FRAMETIME
 
@@ -255,19 +259,29 @@ SkipCase:
 TooFast:
         ld a,1
         ld (TOOFAST),a
+        ld hl,TxTooFast
+        jr NotMeasured
+
+; Opcode fetches wait for an even T-state: the engine cannot place code at every T-state
+EvenM1:
+        ld a,1
+        ld (EVENM1),a
+        ld hl,TxEvenM1
+NotMeasured:
         ld a,(SHOW)
         or a
-        jr z,TooFastDone
+        jr z,NotMeasuredDone
+        push hl
         call #0D6B              ; CLS
         ld a,2
         call #1601              ; CHAN-OPEN: the upper screen
         ld hl,TxTitle
         call PrintStr
-        ld hl,TxTooFast
+        pop hl
         call PrintStr
         ld a,2                  ; red border
         out (#FE),a
-TooFastDone:
+NotMeasuredDone:
         ld a,1
         ld (DONE),a
         ld bc,#FFFF
@@ -310,6 +324,29 @@ IsFast:                         ; Z if FRAMES did not move in 80000 T
         cp (hl)
         ret
 TurboFrames: db 0
+
+; NZ if opcode fetches from RAM wait for an even T-state (the Scorpion's "Even M1": a fetch that would start on
+; an odd T-state waits one). After a HALT the loop below runs 65931 T, less than any frame with the interrupt
+; routine; with the waits its 7 T loads and 13 T DJNZ each take one more, 73236 T, longer than any frame, and
+; the next interrupt moves FRAMES. HL points at #8000, uncontended on every machine.
+; To drop the check: remove this routine, its call in MAIN, EvenM1, EVENM1 and TxEvenM1.
+IsEvenM1:
+        ei
+        halt
+        ld a,(#5C78)            ; FRAMES
+        ld (TurboFrames),a
+        ld hl,#8000
+        ld bc,134*256+10        ; 134 rounds, then 9 x 256
+EvenM1Loop:
+        ld a,(hl)               ; 7
+        ld a,(hl)               ; 7
+        djnz EvenM1Loop         ; 13
+        dec c
+        jr nz,EvenM1Loop
+        ld a,(#5C78)
+        ld hl,TurboFrames
+        cp (hl)
+        ret
 
 ; Z if the frame is 69888 T
 IsFrame48:
@@ -841,6 +878,7 @@ TxLayouts: db ", +3 layouts ", 0
 TxYes:     db "yes", 0
 TxNo:      db "no", 0
 TxTime:    db "Takes about 3 min at 3.5 MHz", 0
+TxEvenM1:  db "Opcode fetches wait for even", 13, "T-states (Scorpion Even M1).", 13, "This version cannot time code", 13, "on it: nothing was measured.", 13, 0
 TxTooFast: db "The CPU runs faster than 3.5 MHz.", 13, "Switch the machine to 3.5 MHz", 13, "(turbo off) and run it again.", 13, 0
 TxOk:      db " OK", 0
 TxBadT:    db " BAD T", 0

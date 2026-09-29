@@ -102,6 +102,7 @@ coemu_compare() {
 	case $rc in
 		0) coemu_result "$1" ok "$summary" ;;
 		1) coemu_result "$1" wrong "$summary" ;;
+		3) coemu_result "$1" skipped "$summary" ;;
 		*) coemu_result "$1" error "$summary" ;;
 	esac
 }

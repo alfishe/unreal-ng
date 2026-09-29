@@ -27,7 +27,7 @@ tools/verification/coemu/xpeccy-plus/run.sh 48k      # one emulator
 | `ok` | The program ran to the end and every value is as expected |
 | `wrong` | The program ran to the end and some values differ; see `out/<emulator>/<machine>.compare.txt` |
 | `error` | The program did not finish (timeout, build failure, a crash); see `out/<emulator>/<machine>.log` |
-| `skipped` | The emulator is not installed, or has no such machine, or its runner does not do that machine yet |
+| `skipped` | The emulator is not installed, or has no such machine, or its runner does not do that machine yet, or the program found it cannot measure on this machine (the contention probe on a Scorpion with Even M1) |
 
 ## Emulators
 
@@ -89,7 +89,7 @@ reports a machine it does not do as `skipped`, with the reason. Source
    Keep the emulator's stock settings for that machine, and write any setting you had to choose in the
    README.
 4. **Report each machine**: `coemu_compare <machine>` after a dump (it runs `$PROGRAM_COMPARE` and records
-   `ok` or `wrong`), or `coemu_result <machine> error|skipped "<why>"`.
+   `ok`, `wrong`, or `skipped` when the program says it could not measure), or `coemu_result <machine> error|skipped "<why>"`.
 5. `coemu_finish` exits with **0** if every machine that ran is `ok`, **1** if any is `wrong`, **2** if any
    is `error`. **3** (from `coemu_not_found`) means the emulator was not found.
 
@@ -105,4 +105,4 @@ A program can be run here if it:
 - loads from a `.tap` (and a `.trd` for TR-DOS machines) and runs by itself;
 - sets a byte labeled `DONE` to 1 when it has finished, and keeps its results between `START` and `PROBEEND`;
 - comes with a `.sym` (`NAME equ #ADDR` per line) and a `<name>-compare.py dump.bin sym` that exits 0 (all
-  as expected), 1 (differences) or 2 (bad dump), and prints a one-line summary last.
+  as expected), 1 (differences), 2 (bad dump) or 3 (the program could not measure on this machine), and prints a one-line summary last.
