@@ -502,6 +502,6 @@ expected_events = ['TRDOS_ENTRY', 'COMMAND_START', 'YOUR_EVENT']
 
 ## See Also
 
-- [Testing Summary](../../docs/inprogress/2026-01-21-trdos-analyzer/testing-summary.md)
-- [Quick Reference](../../docs/inprogress/2026-01-21-trdos-analyzer/quick-reference.md)
-- [WebAPI Documentation](../../docs/analysis/capture/high-level-disk-operations.md#section-21-webapi-testing)
+- [Testing Summary](../../../../docs/inprogress/2026-01-21-trdos-analyzer/testing-summary.md)
+- [Quick Reference](../../../../docs/inprogress/2026-01-21-trdos-analyzer/quick-reference.md)
+- [WebAPI Documentation](../../../../docs/analysis/capture/high-level-disk-operations.md#section-21-webapi-testing)

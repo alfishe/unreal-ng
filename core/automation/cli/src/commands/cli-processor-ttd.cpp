@@ -131,6 +131,10 @@ void CLIProcessor::HandleTTD(const ClientSession& session, const std::vector<std
     {
         HandleTTDFindLast(session, context, args);
     }
+    else if (subcommand == "port-events" || subcommand == "pe")
+    {
+        HandleTTDPortEvents(session, context, args);
+    }
     else if (subcommand == "step-instruction" ||
              subcommand == "si-back"    ||
              subcommand == "si-forward")
@@ -191,6 +195,16 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "    [--access write|read|execute|io]  (default: write)" << NEWLINE;
     ss << "    [--value V] [--pc-from X] [--pc-to Y]" << NEWLINE;
     ss << "    [--before-frame F] [--before-tin T]" << NEWLINE;
+    ss << "  ttd port-events <event> [arg] [option=value ...]   (alias: pe)" << NEWLINE;
+    ss << "                                   When did the program ... - from the port journals, no replay:" << NEWLINE;
+    ss << "    key [KEY]       saw a key down (KEY: a, enter, space, caps, symbol...; none: any key)" << NEWLINE;
+    ss << "    ear             saw the tape (EAR) signal change" << NEWLINE;
+    ss << "    ay-read [R]  ay-write [R]  ay-select [R]   AY accesses (R: register 0..15)" << NEWLINE;
+    ss << "    border  beeper  OUT #FE changed the border color / beeper bit" << NEWLINE;
+    ss << "    in  out         every IN / OUT, narrowed by port=, port_mask=, value=, value_mask=" << NEWLINE;
+    ss << "    options: limit=N newest=true from=F[:T] to=F[:T] match=any|equals|any-clear|any-set" << NEWLINE;
+    ss << "             trigger=every|rising|change stream_mask=M ay_register=R" << NEWLINE;
+    ss << "             file=<path.ttd>  search a saved session without loading it" << NEWLINE;
     ss << "  ttd step-instruction <back|fwd>  Step one instruction (aliases: si-back, si-forward)" << NEWLINE;
     ss << NEWLINE;
     ss << "Phase 4 — Reverse Execution:" << NEWLINE;
@@ -264,6 +278,21 @@ void CLIProcessor::HandleTTDStatus(const ClientSession& session, EmulatorContext
            << NEWLINE;
     }
     ss << "  Bookmarks:              " << info.bookmarkCount << " (advisory, never barriers)" << NEWLINE;
+    ss << "  Input events:           " << info.inputEventCount << NEWLINE;
+    ss << "  Replay barriers:        " << info.externalEventCount << NEWLINE;
+    if (!info.inputHistoryComplete)
+        ss << "  Input history:          incomplete (the file predates saved input: in-frame replay may "
+              "differ from the recording)"
+           << NEWLINE;
+    if (info.portJournalActive)
+        ss << "  Port journals:          " << info.portReadCount << " IN, " << info.portWriteCount << " OUT ("
+           << info.portJournalBytes << " bytes), replay isolated from media and host devices" << NEWLINE;
+    else if (!info.portJournalOffReason.empty())
+        ss << "  Port journals:          off - " << info.portJournalOffReason << NEWLINE;
+    if (info.portReplayValueMismatches != 0 || info.portReplayDivergences != 0)
+        ss << "  Replay mismatches:      " << info.portReplayValueMismatches
+           << " device answer(s) (the CPU got the recorded values), " << info.portReplayDivergences
+           << " divergence(s)" << NEWLINE;
     if (!info.lastDropReason.empty())
         ss << "  Last session dropped:   " << info.lastDropReason << NEWLINE;
     if (!info.unavailableReason.empty())
@@ -749,6 +778,78 @@ void CLIProcessor::HandleTTDLoad(const ClientSession& session, EmulatorContext* 
        << info.checkpointCount << " checkpoints, frames "
        << info.sessionStartFrame << ".." << info.currentEndFrame << ")" << NEWLINE
        << "     Session is idle - use 'ttd seek' to position the emulator." << NEWLINE;
+    session.SendResponse(ss.str());
+}
+
+void CLIProcessor::HandleTTDPortEvents(const ClientSession& session, EmulatorContext* context,
+                                        const std::vector<std::string>& args)
+{
+    ttd::TimeTravelManager* mgr = context->pTimeTravelManager;
+    if (!mgr)
+    {
+        session.SendResponse(std::string("Error: TTD engine not available") + NEWLINE);
+        return;
+    }
+    if (args.size() < 2)
+    {
+        session.SendResponse(std::string("Usage: ttd port-events <event> [arg] [option=value ...]  (ttd help)") +
+                             NEWLINE);
+        return;
+    }
+
+    // args[1] is the event; an argument without '=' after it is the event's
+    // argument (a key name, an AY register); the rest are options
+    size_t next = 2;
+    std::string arg;
+    if (args.size() > 2 && args[2].find('=') == std::string::npos)
+        arg = args[next++];
+
+    ttd::TTDPortQuery q;
+    std::string err;
+    if (!ttd::BuildPortEventQuery(args[1], arg, q, err))
+    {
+        session.SendResponse("Error: " + err + NEWLINE);
+        return;
+    }
+    std::string file;  // file=<path>: search a .ttd on disk without loading it
+    for (; next < args.size(); ++next)
+    {
+        const size_t eq = args[next].find('=');
+        if (eq != std::string::npos && args[next].substr(0, eq) == "file")
+        {
+            file = args[next].substr(eq + 1);
+            continue;
+        }
+        if (eq == std::string::npos ||
+            !ttd::ApplyPortQueryOption(q, args[next].substr(0, eq), args[next].substr(eq + 1), err))
+        {
+            session.SendResponse("Error: " + (eq == std::string::npos ? "expected option=value, got '" + args[next] + "'"
+                                                                       : err) +
+                                 NEWLINE);
+            return;
+        }
+    }
+
+    const ttd::TTDPortSearchResult result = file.empty() ? mgr->SearchPortEvents(q) : mgr->SearchPortEventsInFile(file, q);
+    if (!result.ok)
+    {
+        session.SendResponse("Error: " + result.error + NEWLINE);
+        return;
+    }
+
+    std::stringstream ss;
+    ss << result.hits.size() << " hit(s)" << (result.truncated ? " (more than the limit)" : "") << ", "
+       << result.scanned << (q.direction == ttd::TTDPortJournal::Direction::Read ? " IN" : " OUT")
+       << " record(s) scanned" << NEWLINE;
+    for (const ttd::TTDPortHit& h : result.hits)
+    {
+        ss << "  frame " << h.record.frame << " t " << h.record.tInFrame << "  PC #" << std::hex << std::uppercase
+           << std::setw(4) << std::setfill('0') << h.record.pc << "  port #" << std::setw(4) << h.record.port
+           << "  value #" << std::setw(2) << static_cast<unsigned>(h.record.value) << std::dec << std::setfill(' ');
+        if (h.ayRegister >= 0)
+            ss << "  R" << h.ayRegister;
+        ss << NEWLINE;
+    }
     session.SendResponse(ss.str());
 }
 

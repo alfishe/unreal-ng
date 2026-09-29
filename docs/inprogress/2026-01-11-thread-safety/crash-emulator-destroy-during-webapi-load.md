@@ -42,9 +42,9 @@ The `Emulator` object is being destroyed on the main thread while the WebAPI thr
 
 | Component | File | Issue |
 |-----------|------|-------|
-| EmulatorManager | [core/src/emulator/emulatormanager.cpp](../../core/src/emulator/emulatormanager.cpp) | `RemoveEmulator()` doesn't wait for pending operations |
-| EmulatorAPI | [core/automation/webapi/src/api/snapshot_api.cpp](../../core/automation/webapi/src/api/snapshot_api.cpp) | `loadSnapshot()` doesn't check if emulator is being destroyed |
-| Emulator | [core/src/emulator/emulator.cpp](../../core/src/emulator/emulator.cpp) | No lifecycle state tracking |
+| EmulatorManager | [core/src/emulator/emulatormanager.cpp](../../../core/src/emulator/emulatormanager.cpp) | `RemoveEmulator()` doesn't wait for pending operations |
+| EmulatorAPI | [core/automation/webapi/src/api/snapshot_api.cpp](../../../core/automation/webapi/src/api/snapshot_api.cpp) | `loadSnapshot()` doesn't check if emulator is being destroyed |
+| Emulator | [core/src/emulator/emulator.cpp](../../../core/src/emulator/emulator.cpp) | No lifecycle state tracking |
 
 ## Proposed Fixes
 

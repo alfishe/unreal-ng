@@ -606,6 +606,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  state screen verbose         - Show screen configuration (detailed)" << NEWLINE;
     oss << "  state screen mode            - Show video mode details" << NEWLINE;
     oss << "  state screen flash           - Show flash state and counter" << NEWLINE;
+    oss << "  state screen attributes      - Show decoded per-cell ink/paper/bright/flash" << NEWLINE;
     oss << "  state audio gs [--verbose]   - General Sound card state" << NEWLINE;
     oss << NEWLINE;
     oss << "CMOS clock (ATM3 / ZX-Evo, Profi, Scorpion with SMUC):" << NEWLINE;

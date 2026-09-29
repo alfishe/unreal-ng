@@ -1,6 +1,6 @@
 # SNA Snapshot Save Implementation
 
-Implement [.sna](core/tests/build-standalone/bin/testdata/loaders/sna/s4b-1.sna) snapshot saving with TDD approach, automation integration, and Qt UI.
+Implement [.sna](../../../testdata/loaders/sna/s4b-1.sna) snapshot saving with TDD approach, automation integration, and Qt UI.
 
 ## User Review Required
 
@@ -49,7 +49,7 @@ bool SaveSnapshot(const std::string& path);
 
 Implement `SaveSnapshot()`:
 - Pause emulator
-- Detect format from extension ([.sna](core/tests/build-standalone/bin/testdata/loaders/sna/s4b-1.sna) → LoaderSNA)
+- Detect format from extension ([.sna](../../../testdata/loaders/sna/s4b-1.sna) → LoaderSNA)
 - Create loader, call `save()`
 - Resume emulator
 - Return success/failure
@@ -122,7 +122,7 @@ Add `save_snapshot(path, force=False)` method to `PythonBindings::registerEmulat
 
 ### Lua Bindings
 
-#### [MODIFY] [lua_emulator.cpp](core/automation/lua/src/emulator/lua_emulator.cpp)
+#### [MODIFY] lua_emulator.cpp
 
 Add `save_snapshot(path, force)` method to Lua emulator type
 
@@ -145,13 +145,13 @@ Add `save_snapshot(path, force)` method to Lua emulator type
 
 - Convert "Save Snapshot..." to submenu with ".sna" and ".z80" options
 - `.z80` option disabled (placeholder for future)
-- Connect [.sna](core/tests/build-standalone/bin/testdata/loaders/sna/s4b-1.sna) action to new slot `saveSnapshotSna()`
+- Connect [.sna](../../../testdata/loaders/sna/s4b-1.sna) action to new slot `saveSnapshotSna()`
 
 #### [NEW] Save Snapshot Dialog Logic (in mainwindow.cpp or menumanager.cpp)
 
 Implement:
 - `saveSnapshotSna()` slot
-- Use `QFileDialog::getSaveFileName()` with [.sna](core/tests/build-standalone/bin/testdata/loaders/sna/s4b-1.sna) filter
+- Use `QFileDialog::getSaveFileName()` with [.sna](../../../testdata/loaders/sna/s4b-1.sna) filter
 - Load/save last directory from `QSettings`
 - Check file existence, show overwrite confirmation via `QMessageBox::question()`
 - Call `emulator->SaveSnapshot(path)`

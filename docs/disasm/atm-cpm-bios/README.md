@@ -205,4 +205,4 @@ python3 auditblocks.py ../atm710-cpm-p3.asm
 ## References
 
 - [ATM CP/M BIOS Documentation](http://atmturbo.nedopc.com/inf/bios_cpm.htm)
-- [Local translated copy](/Volumes/TB4-4Tb/Projects/Knowledge/zx/04_operating_systems/atm_cpm_bios.md)
+- English translation in the speccy knowledge base: `04_operating_systems/atm_cpm_bios.md`

@@ -829,6 +829,11 @@ protected:
             << "\n" << Screen();
 
         std::printf("[ctprobe %s] frames to DONE: %d\n", m.editor, frames);
+        // The Scorpion aligns opcode fetches from RAM to even T-states (Even M1): the probe says so and stops
+        const bool evenM1 = _context->config.even_M1 != 0;
+        ASSERT_EQ(Peek(_probe.Sym("EVENM1")), evenM1 ? 1 : 0) << "the probe's Even M1 check\n" << Screen();
+        if (evenM1)
+            return;
         EXPECT_EQ(Peek(_probe.Sym("CLASS")), static_cast<uint8_t>(m.rule)) << "the probe's class detection";
         EXPECT_EQ(PeekW(_probe.Sym("ONSET")), m.onset) << "the probe's frame-length detection";
         EXPECT_EQ(Peek(_probe.Sym("CAPS")), m.caps) << "the probe's paging detection";
@@ -909,6 +914,8 @@ TEST_P(CtProbeSweep_Test, EveryCaseMatchesTheOracle)
     const Machine& m = GetParam();
     RunProbe(m, 0);
     ASSERT_FALSE(HasFatalFailure());
+    if (_context->config.even_M1)
+        GTEST_SKIP() << "Even M1: the probe reports it cannot time code on this machine (checked in RunProbe)";
     for (const CaseResult& r : _results)
     {
         const bool match = r.measured == r.expected;
@@ -964,7 +971,14 @@ TEST_P(CtProbeLoad_Test, ReportsAllValuesAsExpected)
         ASSERT_TRUE(typer->Request(command, CommandTyper::Options{})) << command;
         ASSERT_TRUE(RunUntil([&] { return typer->GetStatus() == CommandTyper::Status::Done; }, 4000)) << command;
     }
-    ASSERT_TRUE(RunUntil([&] { return ScreenHas("AS EXPECTED") || ScreenHas("VALUES WRONG"); }, 30000)) << Screen();
+    ASSERT_TRUE(RunUntil([&] { return ScreenHas("AS EXPECTED") || ScreenHas("VALUES WRONG") || ScreenHas("measured."); },
+                         30000))
+        << Screen();
+    if (_context->config.even_M1)  // the Scorpion's Even M1: the probe cannot time code there and says so
+    {
+        EXPECT_TRUE(ScreenHas("Even M1")) << Screen();
+        return;
+    }
     EXPECT_TRUE(ScreenHas("ALL VALUES AS EXPECTED")) << Screen();
     EXPECT_TRUE(ScreenHas(l.paging)) << Screen();
 }

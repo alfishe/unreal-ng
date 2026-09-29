@@ -18,6 +18,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/mainloop.h"
 #include "emulator/memory/memory.h"
+#include "emulator/ports/portdecoder.h"
 
 #include <set>
 #include <utility>
@@ -108,6 +109,91 @@ TEST_F(InstructionStart_Test, OncePerInstructionAtItsFirstByte)
     // Each recorded start is a state TTD can seek to: a step boundary
     for (const auto& [pc, t] : starts)
         EXPECT_TRUE(boundaries.count(t)) << "start at " << std::hex << pc << " recorded mid-step (t=" << std::dec << t << ")";
+}
+
+/// Scorpion "Even M1" (docs/inprogress/2026-09-28-m1-contention/contention-by-machine.md section 6): an opcode
+/// fetch from RAM that would start on an odd T-state waits one T-state; fetches from ROM, turbo mode and the
+/// other machines do not
+class EvenM1_Test : public ::testing::Test
+{
+protected:
+    Emulator* _emulator = nullptr;
+    EmulatorContext* _context = nullptr;
+    Z80* _z80 = nullptr;
+    Memory* _memory = nullptr;
+
+    void Create(const char* model)
+    {
+        _emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
+        ASSERT_NE(_emulator, nullptr) << model;
+        _context = _emulator->GetContext();
+        _z80 = _context->pCore->GetZ80();
+        _memory = _context->pMemory;
+    }
+
+    void TearDown() override
+    {
+        if (_emulator)
+            EmulatorTestHelper::CleanupEmulator(_emulator);
+    }
+
+    /// T-states one instruction takes when its fetch starts at `t` (a NOP placed at `pc` unless `place` is false)
+    uint32_t StepAt(uint16_t pc, uint32_t t, bool place = true)
+    {
+        if (place)
+            _memory->DirectWriteToZ80Memory(pc, 0x00);
+        _z80->pc = pc;
+        _z80->iff1 = 0;
+        _z80->t = t;
+        _z80->Z80Step();
+        return _z80->t - t;
+    }
+};
+
+TEST_F(EvenM1_Test, ScorpionRamFetchOnAnOddTWaitsOne)
+{
+    Create("SCORPION");
+    ASSERT_TRUE(_context->config.even_M1);
+    EXPECT_EQ(StepAt(0x8000, 20000), 4u) << "even T: no wait";
+    EXPECT_EQ(StepAt(0x8000, 20001), 5u) << "odd T: one wait";
+    EXPECT_EQ(StepAt(0x4000, 20001), 5u) << "any RAM address";
+}
+
+TEST_F(EvenM1_Test, ScorpionRomFetchNeverWaits)
+{
+    Create("SCORPION");
+    ASSERT_TRUE(_memory->IsBank0ROM());
+    const uint8_t opcode = _memory->DirectReadFromZ80Memory(0x0000);
+    ASSERT_EQ(opcode, 0xF3) << "the ROM starts with DI (4 T)";
+    EXPECT_EQ(StepAt(0x0000, 20001, false), 4u) << "ROM: no wait on an odd T";
+}
+
+TEST_F(EvenM1_Test, ScorpionRamAtZeroWaits)
+{
+    Create("SCORPION");
+    _context->pPortDecoder->DecodePortOut(0x1FFD, 0x01, 0x8000);  // RAM page 0 at #0000
+    ASSERT_FALSE(_memory->IsBank0ROM());
+    EXPECT_EQ(StepAt(0x0000, 20001), 5u) << "RAM select, not the address";
+}
+
+TEST_F(EvenM1_Test, ScorpionTurboHasNoEvenM1)
+{
+    Create("SCORPION");
+    _context->emulatorState.hw_turbo_shift = 1;
+    EXPECT_EQ(StepAt(0x8000, 20001), 4u) << "the Even M1 terms are gated off in turbo";
+    _context->emulatorState.hw_turbo_shift = 0;
+}
+
+TEST_F(EvenM1_Test, OtherMachinesNeverAlign)
+{
+    for (const char* model : { "PENTAGON", "48K" })
+    {
+        Create(model);
+        EXPECT_FALSE(_context->config.even_M1) << model;
+        EXPECT_EQ(StepAt(0x8000, 20001), 4u) << model;
+        EmulatorTestHelper::CleanupEmulator(_emulator);
+        _emulator = nullptr;
+    }
 }
 
 /// region <Machine step hook (IMachineStepHook, TSConf INF-5)>

@@ -136,6 +136,6 @@ bool GifWriteFrameZX(GifWriter*, const uint8_t* image, uint32_t w, uint32_t h, u
 
 ## See Also
 
-- [Encoder Architecture](../encoder-architecture.md)
+- [Encoder Architecture](encoder-architecture.md)
 - [Recording System](../recording-system.md)
-- [SIMD Optimization Opportunities](../../../inprogress/2026-01-10-performance-optimizations/gap-8-gif-encoder-simd-optimizations.md)
+- [SIMD Optimization Opportunities](../../../../inprogress/2026-01-10-performance-optimizations/gap-8-gif-encoder-simd-optimizations.md)

@@ -45,6 +45,9 @@ def main():
     if 'TOOFAST' in sym and peek(sym['TOOFAST']):
         print('The CPU ran faster than 3.5 MHz, so nothing was measured: switch the machine to 3.5 MHz')
         return 2
+    if 'EVENM1' in sym and peek(sym['EVENM1']):
+        print('Opcode fetches wait for even T-states (the Scorpion\'s Even M1), nothing was measured')
+        return 3
 
     names = ['ULA 48K', 'ULA 128K', 'gate array', 'no contention', 'no contention, attr bus']
     cls = peek(sym['CLASS'])

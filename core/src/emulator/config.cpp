@@ -1102,6 +1102,9 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
     // model. INI-driven runs (per-model config dirs) pass false and are untouched.
     if (canonicalGeometry)
     {
+        // The Scorpion boards' Even M1 wait (z80.cpp) is part of the model, like its frame: only there
+        config.even_M1 = (config.mem_model == MM_SCORP || config.mem_model == MM_PROFSCORP) ? 1 : 0;
+
         switch (config.mem_model)
         {
             case MM_SPECTRUM48:

@@ -1353,7 +1353,7 @@ Commands to inspect the runtime hardware configuration and peripheral state of t
 | `sysvars` | `state sysvars` | ZX Spectrum system variables (0x5C00-0x5CB5) |
 | `tape` | `state tape` | Tape device status and position |
 | `disk` | `state disk [drive]` | Disk drive status and FDC state |
-| `screen` | `state screen [verbose\|mode\|flash]` | Screen state, video mode and FLASH ([6.6](#66-screen-configuration)) |
+| `screen` | `state screen [verbose\|mode\|flash\|attributes]` | Screen state, video mode, FLASH and decoded attributes ([6.6](#66-screen-configuration)) |
 | `ula` | `state ula` | ULA chip state and timing |
 | `audio` | `state audio` | Audio devices (beeper, AY chip) |
 
@@ -1789,7 +1789,32 @@ same fields with the same names.
 | :--- | :--- | :--- | :--- | :--- |
 | `state screen` | | `[verbose]` | Screen state: `model`, `video_mode`, `resolution`, `border_color`, `shadow_screen_capable`, `active_screen` (0/1), `active_ram_page` (video page 5/7 selected by #7FFD bit 3), `active_ram_pages` (every RAM page the current mode reads, e.g. `[1, 5]` in ATM hires, `[8]` in ATM text-linear), `contention` (Sinclair ULA contention active), `flash_inverted`.<br/>**verbose** adds `screen_0` / `screen_1` (or `screen` on the 48K): RAM page, pixel/attribute offsets, current Z80 mapping (`z80_access`, e.g. `0xC000-0xFFFF` or `not mapped`), `ula_display`, `contention`; and `port_0x7FFD` decoded (bank, shadow screen, ROM select, paging lock) | ✅ Implemented |
 | `state screen mode` | | | Video mode report: `video_mode`, `resolution`, `color_depth`, `colors`, `bpp`, `attribute_size`, `text_columns`/`text_rows` (text modes), `memory_layout` (`pixel_data_bytes`, `attribute_bytes`, `planes`, `total_bytes`), `active_screen`, `active_ram_page`, `active_ram_pages`, and the machine's video latches: `eff7` (Pentagon / ATM3), `dffd` (Profi), `ff77` (ATM) | ✅ Implemented |
+| `state screen attributes` | | `[screen]` | Per-cell ink/paper/bright/flash decoded from the classic ZX attribute memory layout (offset 0x1800 within a RAM page), read directly off the RAM page (not the Z80 bank mapping): `model`, `cols` (32), `rows` (24), `screens` (array of `{screen, ram_page, cells}`, see JSON shape below). `screen` selects which page: omitted reads both screens when the model is shadow-capable else just the one; `0` forces page 5; `1` forces page 7 (shadow-capable models only) | ✅ Implemented |
 | `state screen flash` | | | FLASH: `flash_phase` (normal/inverted), `frames_until_toggle`, `flash_cycle_position` (0..31), `flash_cycle_total`, `toggle_interval_frames` (16), `toggle_interval_seconds` (from the machine's frame length) | ✅ Implemented |
+
+**`state screen attributes` JSON shape** (canonical — every automation module returns exactly this):
+
+```json
+{
+  "available": true,
+  "model": "Pentagon 128K",
+  "cols": 32,
+  "rows": 24,
+  "screens": [
+    {
+      "screen": 0,
+      "ram_page": 5,
+      "cells": [
+        { "ink": 0, "paper": 7, "bright": false, "flash": false }
+      ]
+    }
+  ]
+}
+```
+
+`cells` has 768 entries, row-major (`index = row * 32 + col`). `ink`/`paper` are 0-7 (bits 0-2 /
+3-5 of the attribute byte), `bright`/`flash` are booleans (bits 6/7). `screens` holds one entry
+per screen read (both screens by default on shadow-capable models, else just the one).
 
 **Access from every automation module**:
 
@@ -1799,6 +1824,7 @@ same fields with the same names.
 | Screen state, verbose | `state screen verbose` | `GET /state/screen?verbose=true` | `screen_state(True)` | `screen_state(true)` | aspect `screen` |
 | Video mode | `state screen mode` | `GET /state/screen/mode` | `screen_mode()` | `screen_mode()` | aspect `video` |
 | FLASH | `state screen flash` | `GET /state/screen/flash` | `screen_flash()` | `screen_flash()` | aspect `screen_flash` |
+| Decoded attributes | `state screen attributes` | `GET /state/screen/attributes` | `screen_attributes()` | `screen_attributes()` | aspect `screen_attributes` |
 
 WebAPI paths are relative to `/api/v1/emulator/{id}`. Python and Lua also keep the single-value
 getters `screen_get_mode()`, `screen_get_border()`, `screen_get_flash()`, `screen_get_active()`,
@@ -2498,6 +2524,7 @@ All `ttd` subcommands act on the currently selected emulator instance. Frame num
 | `ttd markers` | `ttd barriers` | — | List external-event markers (replay barriers): index, frame, tInFrame, kind, reason. | ✅ Implemented |
 | `ttd bookmark` | `ttd bookmarks`, `ttd bm` | `[list \| ls]`, `add <label> [frame] [tinframe]` (alias `mark`), `del <label>` (aliases `delete`, `remove`, `rm`) | Agent bookmarks: named positions, advisory only, never replay barriers. `add` without a frame marks the current position. Labels are non-empty, at most 63 characters, unique per session. | ✅ Implemented |
 | `ttd find-last` | `ttd fl` | `[--addr <A>] [--addr-from <F>] [--addr-to <T>] [--access write\|read\|execute\|io] [--value V] [--pc-from <A>] [--pc-to <A>] [--phys-page <P>] [--before-frame <F>] [--before-tin <T>]` | Reverse search: the most recent access that matches, looking back from the current position (or from `--before-frame`/`--before-tin`). Needs at least one of `--addr`, `--addr-from`, `--addr-to`, `--pc-from`, `--pc-to`, `--value`. `--access` defaults to `write`. `--phys-page` (0..255) pins the search to one physical RAM page. Numbers accept `0x` hex. Prints frame, tInFrame, PC, value, physical page (`none` for ROM / no RAM page) and access; or the blocking marker; or `No match found`; then the part of history it searched (`Searched: frame … .. frame …`). | ✅ Implemented |
+| `ttd port-events` | `ttd pe` | `<event> [arg] [option=value ...]` | "When did the program ...": searches the port journals (every IN and OUT with its time and PC) - no replay, works on a loaded file. Events: `key [KEY]`, `ear`, `ay-read [R]`, `ay-write [R]`, `ay-select [R]`, `border`, `beeper`, `in`, `out`. Options: `limit=N`, `newest=true`, `from=F[:T]`, `to=F[:T]`, `port=`, `port_mask=`, `value=`, `value_mask=`, `match=any\|equals\|any-clear\|any-set`, `trigger=every\|rising\|change`, `stream_mask=M`, `ay_register=R`, `file=<path.ttd>` (search a saved session without loading it). Prints each hit: frame, T-state, PC, port, value (and the AY register). See "Port events" below. | ✅ Implemented |
 | `ttd dump` | `ttd save` | `<path>` | Write the session to a `.ttd` file (readable by `tools/verification/ttd-analyzer`). Prints the byte count. | ✅ Implemented |
 | `ttd load` | `ttd open` | `<path>` | Load a `.ttd` session for playback. Replaces whatever session is held; afterwards the session is `idle`, so use `ttd seek` to position the emulator. | ✅ Implemented |
 | `ttd coverage` | `ttd cov` | `probe --frame N` / `scan` / `summary`, plus `[--kind executed\|written\|read] [--from-frame F] [--to-frame T] [--addr-from A] [--addr-to B] [--phys-page P] [--limit L] [--bucket-size S]` | Query the coverage index. `probe`: did frame N touch the range? `scan`: which frames in the window touched it (default limit 200). `summary`: activity heatmap per bucket (default limit 100, `--bucket-size 0` = automatic). Address range defaults to the whole 64K; `--to-frame` defaults to the session end. Short forms: `-f`, `-k`, `--from`/`-a`, `--to`/`-b`, `--page`/`-p`, `-l`, `--bucket`. | ✅ Implemented |
@@ -2625,6 +2652,65 @@ The previous settings come back when the session returns to `idle` (stop, invali
 
 **When the write journal answers.** `find-last` for writes and port writes answers from the write journal only when the journal holds every write of the session: journaling was on from the start of the recording and never paused (not switched off, TTD and debug mode not switched off mid-recording) and the ring never overwrote a record. Otherwise it replays the history, which is slower but always right. A saved `.ttd` records this in its header, so a loaded session keeps the fast answer only when its journal was complete; files written before this rule replay. The session status says whether the journal is complete (`write_journal_complete`) and, when it is not, why and where it stopped (`write_journal_gap`); the emulator log warns when a session loses it, and the Qt TTD panel shows `Journal incomplete` (cause in the tooltip). A running recording refuses the switches that would cost it (see "A recording protects itself" above), so a gap comes from recording without the journal, a journal change on a stopped session, the machine running between a stop and a live resume, a loaded file with an incomplete journal, or a debugger's live history. Switching journaling off while no session exists frees the journal's 64 MB.
 
+**Port events: "when did the program ...".** A session on a classic machine records every IN result and every OUT of the main CPU with its time and the address of the instruction (the port journals, [ttd-port-read-journal.md](../debugger/time-travel-debug/ttd-port-read-journal.md)). `port-events` searches them. Nothing is replayed, so it is instant and answers the same on a loaded `.ttd` file. It is refused while a recording is running (pause or stop it) and on sessions without the journals (TSConf, ZX Next, NeoGS in the GS slot, a file without them) - the error says which.
+
+| Event | Finds | Argument |
+|---|---|---|
+| `key` | the first read that shows a key down, once per press (holding the key does not repeat it) | a key name (`a`, `enter`, `space`, `caps`, `symbol`...). A named key counts only in reads of its half-row alone: a read of all rows at once shows A, Q, 1, 0, P, ENTER, SPACE and CAPS SHIFT as the same bit, so the program could not tell them apart. No name: any key in any keyboard read |
+| `ear` | every change of the tape bit (EAR, port #FE bit 6) the program saw | - |
+| `ay-read` | IN from #FFFD (reading an AY register) | an AY register 0..15 |
+| `ay-write` | OUT to #BFFD (writing an AY register) | an AY register 0..15 |
+| `ay-select` | OUT to #FFFD (selecting a register; TurboSound chip selects included) | a register: only selections of it |
+| `border` | OUT #FE that changed the border color | - |
+| `beeper` | OUT #FE that changed the beeper bit | - |
+| `in`, `out` | every IN / OUT - narrow with `port`, `port_mask`, `value`, `value_mask` | - |
+
+The AY register a read or write went to is followed through the OUT journal: the last #FFFD write before it. AY ports use the 128K decoding (A15, A14, A1).
+
+`trigger=rising` reports an access whose value test passes when the previous access to the same port did not (a key going down); `trigger=change` one whose masked value differs from the previous access to the same port (a signal edge). Comparing per port keeps a program that polls several half-rows or chips in turn from triggering itself.
+
+Worked examples - real recordings, reproducible: the fixtures in `testdata/ttd/port-journals/` (recorded by `tools/verification/ttd-analyzer/scripts/record_port_journal_fixtures.py`; the outputs below are theirs).
+
+Dizzy X, while 8, 0, 5, Q and SPACE were pressed - when did the game notice SPACE, and where in its code:
+
+```
+ttd port-events key space
+1 hit(s), 7905 IN record(s) scanned
+  frame 430 t 7824  PC #72B2  port #7FFE  value #FE
+```
+
+`#72B2` is the game's keyboard routine; `ttd seek 430 7824` shows the machine at that read. `ttd port-events key p` finds nothing - and `ttd port-events in limit=10` shows why: the game reads the half-rows `#BFFE`, `#EFFE`, `#7FFE`, `#FEFE`, `#F7FE`, `#FBFE` but never `#DFFE`, so P and O are not its controls.
+
+The same session - the AY mixer (register 7) as the music player writes it:
+
+```
+ttd port-events ay-write 7 limit=3
+3 hit(s) (more than the limit), 103 OUT record(s) scanned
+  frame 50 t 9202  PC #D86E  port #BEFD  value #18  R7
+  frame 51 t 6203  PC #D86E  port #BEFD  value #18  R7
+  frame 52 t 6114  PC #D86E  port #BEFD  value #18  R7
+```
+
+A 128K loading Green Beret from tape - the tape edges the ROM loader saw (`#05F1` is `IN A,(#FE)` in the ROM's LD-SAMPLE) and the border stripes it drew (`#0601`):
+
+```
+ttd port-events ear limit=3
+3 hit(s) (more than the limit), 106 IN record(s) scanned
+  frame 155 t 40902  PC #05F1  port #7FFE  value #BF
+  frame 204 t 63309  PC #05F1  port #7FFE  value #FF
+  frame 204 t 65134  PC #05F1  port #7FFE  value #BF
+ttd port-events border limit=2
+2 hit(s) (more than the limit), 312 OUT record(s) scanned
+  frame 155 t 40966  PC #0601  port #0DFE  value #0D
+  frame 204 t 63373  PC #0601  port #0AFE  value #0A
+```
+
+**Searching a saved file.** `file=<path.ttd>` searches a session on disk without loading it: the file is read and checked like a load, but the instance keeps its own session (even a recording in progress) and the file's machine model and ROM do not matter. The same parameter is `file` in the WebAPI and MCP, `options.file` in Lua and `file=` in Python. The offline analyzer answers the same questions from the file: `tools/verification/ttd-analyzer/run.sh search session.ttd key space` (`--json` for the WebAPI response shape).
+
+**Streams.** `rising` and `change` compare an access with the previous one of the same stream. For `key` a stream is one port address (one half-row); for `ear`, `border` and `beeper` it is the ULA's port whatever the high byte (`stream_mask=0x0001`), because the ULA decodes A0 alone - Dizzy X writes the beeper through `OUT (C)` alternating `#10FE` and `#00FE`, and those are one port. Raw queries may set `stream_mask` themselves.
+
+Hits carry the frame and T-state of the access (the T-state counts at the machine's top clock, like every TTD position) - seek there to see the machine at that moment.
+
 **Pausing.** The WebAPI pauses the emulator (and waits for the CPU thread to park) before seek, step, find-last and reverse operations, and leaves it paused; `resume` restarts it. From the CLI, pause the emulator yourself before browsing history.
 
 #### Status fields
@@ -2666,6 +2752,12 @@ usually the first thing to check when a session is handed to you.
 | `page_store_bytes`, `page_store_used_bytes`, `baseline_frames_captured` | COW page store capacity, live bytes and distinct page snapshots |
 | `session_heap_bytes` | Real total heap footprint of the session |
 | `bookmark_count` | Number of agent bookmarks |
+| `input_event_count`, `external_event_count` | Replay inputs of the session: input events (keyboard, Kempston Mouse, General Sound host stimuli) and external-event markers (replay barriers). Both are saved in the `.ttd` file |
+| `input_history_complete` | False only for a session loaded from a file written before inputs and markers were saved: replay inside a frame runs without the recorded input |
+| `port_journal_active` | The session holds every IN result and OUT of its history (port journals): replay feeds the CPU the recorded values and needs no media file or host device - a session replays exactly even with its tape or disk image missing or replaced - and `port-events` can search them. False on TSConf, ZX Next and with NeoGS in the GS slot (their DMA reaches memory without IN), and for a file without the journals |
+| `port_journal_off_reason` | Why the journal is off (the configuration, a recording resumed after the machine ran unrecorded, a file without it); empty / `null` while it is on |
+| `port_read_count`, `port_write_count`, `port_journal_bytes` | IN results and OUTs recorded, and both journals' compressed size in a `.ttd` file |
+| `port_replay_value_mismatches`, `port_replay_divergences` | Replayed reads whose live device answered differently (a changed or missing medium - the CPU got the recorded value), and replayed INs / OUTs at another time, from another instruction, to another port, or OUTs of another value (execution itself left the recording; expected 0). The CLI prints them as `Replay mismatches:` when non-zero |
 | `ttd_available` | False when the build has no TTD engine (WebAPI, Lua, Python) |
 | `unavailable_reason` | Why time travel is not available for this machine at all, e.g. a member of a ZX-Poly machine; empty / `null` when it is available. Recording and loading a `.ttd` file are refused with it (WebAPI: `/ttd/start` answers 409). The CLI prints it as `Not available:` |
 | `last_drop_reason` | What dropped the last history (`snapshot-load`, `tape-load`, `disk-load`, `disk-create`, `rom-reload`, `speed-multiplier-change`, an `invalidate` reason, an SD-card note); empty / `null` when nothing has. The CLI prints it as `Last session dropped:` |

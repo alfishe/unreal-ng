@@ -55,6 +55,22 @@ TTDCoverageIndex::TTDCoverageIndex()
 
 void TTDCoverageIndex::SealFrame(uint64_t frame)
 {
+    if (frame == _holeToSeal)
+    {
+        // The partial frame of a mid-frame resume: its set would be missing
+        // the accesses before the resume point. No entry; the next frame
+        // starts a new block, and the gap marks this one as not covered
+        _holeToSeal = UINT64_MAX;
+        for (size_t k = 0; k < kKindCount; ++k)
+        {
+            DiscardPending(k);
+            CloseOpenBlock(k);
+            if (_hasCoverage[k] && frame > _lastCoveredFrame[k])
+                _holes[k].push_back(frame);
+        }
+        return;
+    }
+
     for (size_t k = 0; k < kKindCount; ++k)
     {
         // Record that this frame was watched BEFORE encoding. A frame that
@@ -83,7 +99,146 @@ bool TTDCoverageIndex::CoversFrame(TTDCoverageKind kind, uint64_t frame) const
     if (kindIdx >= kKindCount || !_hasCoverage[kindIdx])
         return false;
 
-    return frame >= _firstCoveredFrame[kindIdx] && frame <= _lastCoveredFrame[kindIdx];
+    return frame >= _firstCoveredFrame[kindIdx] && frame <= _lastCoveredFrame[kindIdx] && !IsHole(kindIdx, frame);
+}
+
+bool TTDCoverageIndex::IsHole(size_t kindIdx, uint64_t frame) const
+{
+    const std::vector<uint64_t>& holes = _holes[kindIdx];
+    return std::binary_search(holes.begin(), holes.end(), frame);
+}
+
+void TTDCoverageIndex::DiscardPending(size_t kindIdx)
+{
+    std::vector<uint64_t>& seen = _seen[kindIdx];
+    for (TTDCoverageKey key : _pending[kindIdx])
+    {
+        const TTDCoverageKey masked = key & (kKeySpace - 1);
+        seen[masked >> 6] &= ~(uint64_t{1} << (masked & 63));
+    }
+    _pending[kindIdx].clear();
+    std::fill(std::begin(_recent[kindIdx]), std::end(_recent[kindIdx]), TTDCoverageKey{0});
+}
+
+size_t TTDCoverageIndex::RawPrefixBytes(const std::vector<uint8_t>& raw, uint32_t frames)
+{
+    size_t pos = 0;
+    for (uint32_t f = 0; f < frames && pos < raw.size(); ++f)
+    {
+        const uint32_t count = ReadVarint(raw.data(), pos);
+        for (uint32_t i = 0; i < count; ++i)
+            (void)ReadVarint(raw.data(), pos);
+    }
+    return pos;
+}
+
+void TTDCoverageIndex::DropFramesFrom(uint64_t frame, bool partialFirstFrame)
+{
+    // The query cache may hold a block that is about to change
+    _blockCache.clear();
+    _blockCacheKind = SIZE_MAX;
+    _blockCacheIndex = UINT32_MAX;
+    _blockFrameOffsets.clear();
+    _blockFrameCounts.clear();
+
+    for (size_t k = 0; k < kKindCount; ++k)
+    {
+        // The frame under accumulation belongs to the discarded future
+        DiscardPending(k);
+
+        std::vector<uint64_t>& holes = _holes[k];
+        holes.erase(std::lower_bound(holes.begin(), holes.end(), frame), holes.end());
+
+        if (!_hasCoverage[k])
+            continue;
+        if (frame <= _firstCoveredFrame[k])
+        {
+            // Nothing before the cut was indexed for this kind
+            _blocks[k].clear();
+            _openBlock[k].clear();
+            _openBlockFrames[k] = 0;
+            _openBlockBaseFrame[k] = 0;
+            _compressedBytes[k] = 0;
+            _rawBytes[k] = 0;
+            _hasCoverage[k] = false;
+            _firstCoveredFrame[k] = 0;
+            _lastCoveredFrame[k] = 0;
+            holes.clear();
+            continue;
+        }
+
+        // The block still being filled
+        if (_openBlockFrames[k] > 0)
+        {
+            const uint64_t base = _openBlockBaseFrame[k];
+            if (base >= frame)
+            {
+                _openBlock[k].clear();
+                _openBlockFrames[k] = 0;
+            }
+            else if (base + _openBlockFrames[k] > frame)
+            {
+                const uint32_t keep = static_cast<uint32_t>(frame - base);
+                _openBlock[k].resize(RawPrefixBytes(_openBlock[k], keep));
+                _openBlockFrames[k] = keep;
+            }
+        }
+
+        // Sealed blocks: whole ones past the cut go, a straddling one is cut
+        std::vector<Block>& blocks = _blocks[k];
+        while (!blocks.empty() && blocks.back().baseFrame >= frame)
+        {
+            _rawBytes[k] -= blocks.back().rawSize;
+            _compressedBytes[k] -= blocks.back().compressed.size();
+            blocks.pop_back();
+        }
+        if (!blocks.empty())
+        {
+            Block& b = blocks.back();
+            if (b.baseFrame + b.frameCount > frame)
+            {
+                std::vector<uint8_t> raw(b.rawSize);
+                if (!codec::Decompress(b.compressed, b.rawSize, raw.data()))
+                {
+                    // Cannot cut it: forget it, and the frames it held are
+                    // no longer covered
+                    _rawBytes[k] -= b.rawSize;
+                    _compressedBytes[k] -= b.compressed.size();
+                    const uint64_t lost = b.baseFrame;
+                    blocks.pop_back();
+                    if (lost <= _firstCoveredFrame[k])
+                    {
+                        _hasCoverage[k] = false;
+                        continue;
+                    }
+                    frame = lost;
+                }
+                else
+                {
+                    const uint32_t keep = static_cast<uint32_t>(frame - b.baseFrame);
+                    raw.resize(RawPrefixBytes(raw, keep));
+                    _rawBytes[k] -= b.rawSize;
+                    _compressedBytes[k] -= b.compressed.size();
+                    b.compressed = codec::Compress(raw.data(), raw.size());
+                    b.rawSize = static_cast<uint32_t>(raw.size());
+                    b.frameCount = keep;
+                    _rawBytes[k] += b.rawSize;
+                    _compressedBytes[k] += b.compressed.size();
+                }
+            }
+        }
+
+        if (_lastCoveredFrame[k] >= frame)
+            _lastCoveredFrame[k] = frame - 1;
+
+        // The next frame must start a fresh open block after the kept frames:
+        // close a kept partial open block so a later hole or seal cannot
+        // append out of order
+        if (partialFirstFrame)
+            CloseOpenBlock(k);
+    }
+
+    _holeToSeal = partialFirstFrame ? frame : UINT64_MAX;
 }
 
 bool TTDCoverageIndex::CoveredRange(TTDCoverageKind kind, uint64_t& outFirst,
@@ -160,6 +315,14 @@ void TTDCoverageIndex::EncodePending(size_t kindIdx, uint64_t frame)
     std::sort(pending.begin(), pending.end());
 
     std::vector<uint8_t>& pool = _openBlock[kindIdx];
+
+    // A query may have cached a copy of the open block; it is about to grow,
+    // and a stale copy would answer "not touched" for the frames appended now
+    if (_blockCacheKind == kindIdx && _blockCacheIndex >= _blocks[kindIdx].size())
+    {
+        _blockCacheKind = SIZE_MAX;
+        _blockCacheIndex = UINT32_MAX;
+    }
 
     if (_openBlockFrames[kindIdx] == 0)
         _openBlockBaseFrame[kindIdx] = frame;
@@ -328,6 +491,7 @@ void TTDCoverageIndex::Clear()
         _hasCoverage[k] = false;
         _firstCoveredFrame[k] = 0;
         _lastCoveredFrame[k] = 0;
+        _holes[k].clear();
 
     }
 }
@@ -346,6 +510,9 @@ bool TTDCoverageIndex::FindLastFrameTouching(TTDCoverageKind kind, TTDCoverageKe
 
     for (uint64_t frame = start + 1; frame-- > _firstCoveredFrame[kindIdx];)
     {
+        // A hole holds no data: the index cannot say it did not touch the key
+        if (IsHole(kindIdx, frame))
+            return false;
         if (FrameTouches(kind, frame, key))
         {
             outFrame = frame;
@@ -602,6 +769,18 @@ bool TTDCoverageIndex::Deserialize(std::istream& in)
         // Consumed, but not usable: see kCoverageSectionVersion.
         Clear();
         return false;
+    }
+
+    // Holes (DropFramesFrom) are the gaps between consecutive blocks
+    for (size_t k = 0; k < kKindCount; ++k)
+    {
+        const std::vector<Block>& blocks = _blocks[k];
+        for (size_t i = 1; i < blocks.size(); ++i)
+        {
+            const uint64_t prevEnd = blocks[i - 1].baseFrame + blocks[i - 1].frameCount;
+            for (uint64_t f = prevEnd; f < blocks[i].baseFrame; ++f)
+                _holes[k].push_back(f);
+        }
     }
 
     return true;

@@ -161,7 +161,7 @@ recordingManager->StartRecording("clip.gif", "gif", "");  // Or "clip.webp", "li
 
 Documentation for emulation speed control and turbo mode:
 
-- **[Speed Control](speed-control.md)** ⚡
+- **[Speed Control](../core/speed-control.md)** ⚡
   - CPU frequency multiplication
   - Turbo/max speed mode
   - Audio/video synchronization
@@ -171,7 +171,7 @@ Documentation for emulation speed control and turbo mode:
 
 Documentation for snapshot loading/saving:
 
-- **[Snapshots](snapshots/)** 💾
+- **[Snapshots](../snapshots/)** 💾
   - SNA format
   - Z80 format
   - SZX format (planned)
@@ -180,7 +180,7 @@ Documentation for snapshot loading/saving:
 
 Documentation for UI architecture:
 
-- **[UI Design](ui/)** 🖥️
+- **[UI Design](../ui/)** 🖥️
   - Main window layout
   - Menu system
   - Debugger interface
@@ -190,7 +190,7 @@ Documentation for UI architecture:
 
 Documentation for controlling the emulator:
 
-- **[Control Interfaces](control-interfaces/)** 🎮
+- **[Control Interfaces](../control-interfaces/)** 🎮
   - REST API (async CLI)
   - Qt GUI integration
   - Script automation

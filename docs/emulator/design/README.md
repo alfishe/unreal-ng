@@ -8,7 +8,7 @@ Comprehensive documentation for the video and audio recording subsystem:
 
 ### Core Documents
 
-1. **[Recording System Architecture](recording-system.md)** 📹🎵
+1. **[Recording System Architecture](recording/recording-system.md)** 📹🎵
    - Overview of recording capabilities
    - Recording modes (single-track, multi-track, channel-split, audio-only)
    - Audio source enumeration (master mix, individual devices, AY channels)
@@ -16,7 +16,7 @@ Comprehensive documentation for the video and audio recording subsystem:
    - Performance considerations
    - **Start here for an overview**
 
-2. **[Audio Routing](audio-routing.md)** 🎵
+2. **[Audio Routing](recording/audio-routing.md)** 🎵
    - Audio device hierarchy and data flow
    - Sample generation, mixing, and capture pipeline
    - Buffer management and access patterns
@@ -24,7 +24,7 @@ Comprehensive documentation for the video and audio recording subsystem:
    - Implementation phases and testing strategy
    - **Read this for audio architecture details**
 
-3. **[Video & Audio Encoding](video-audio-encoding.md)** 🎬
+3. **[Video & Audio Encoding](recording/video-audio-encoding.md)** 🎬
    - FFmpeg/libav integration details
    - Video encoder initialization and frame encoding
    - Audio encoder setup (single-track and multi-track)
@@ -129,11 +129,18 @@ recordingManager->StartRecording("clip.gif", "gif", "");  // Or "clip.webp", "li
 
 Documentation for emulation speed control and turbo mode:
 
-- **[Speed Control](speed-control.md)** ⚡
+- **[Speed Control](core/speed-control.md)** ⚡
   - CPU frequency multiplication
   - Turbo/max speed mode
   - Audio/video synchronization
   - Recording in turbo mode
+
+## CPU and Memory Timing
+
+- **[Memory Contention and Even M1](core/memory-contention.md)** ⏱️
+  - How the CPU and the video share memory on each machine
+  - Why ROM can be read at any T-state and RAM cannot (Scorpion Even M1)
+  - Which machines contend, and how unreal-ng models it
 
 ## Snapshot System
 
@@ -149,7 +156,7 @@ Documentation for snapshot loading/saving:
 Documentation for UI architecture:
 
 - **[UI Design](ui/)** 🖥️
-  - [Recording UI](ui/recording-ui.md) - Recording dialog, presets, status widget
+  - [Recording UI](ui/recording-ui-design.md) - Recording dialog, presets, status widget
   - Main window layout
   - Menu system
   - Debugger interface

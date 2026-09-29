@@ -8,6 +8,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttdportjournal.h"
 #include "emulator/cpu/op_noprefix.h"
 #include "emulator/cpu/opcode_profiler.h"
 #include "emulator/emulator.h"
@@ -436,9 +437,17 @@ void Z80::Z80Step(bool skipBreakpoints)
         }
         else
         {
-            // Some counter correction for <???>
-            if (cpu.pch & temporary.evenM1_C0)
-                cpu.tt += (cpu.tt & cpu.rate);
+            // Scorpion "Even M1" (config EvenM1): the CPU's DRAM slot is tied to one phase of the video counter,
+            // and an opcode fetch - which samples the bus half a T-state earlier than a data read - only fits it
+            // on an even T-state. The board's WAIT logic stretches an opcode fetch from RAM that would start on
+            // an odd T-state by one T-state (SC15.1 EPLD equations: M1 & RAM select & phase, normal mode only).
+            // Fetches from ROM, data accesses, I/O and the interrupt acknowledge never wait. RAM select, not the
+            // address: RAM paged in at #0000 counts. Only the instruction's first M1 is checked: every prefix M1
+            // is 4 T, so a later M1 inherits the parity. docs/inprogress/2026-09-28-m1-contention/
+            // contention-by-machine.md section 6
+            if (config.even_M1 && (cpu.tt & cpu.rate) && state.hw_turbo_shift == 0 &&
+                (cpu.pch >= 0x40 || !memory.IsBank0ROM())) [[unlikely]]
+                cpu.tt += cpu.rate;
 
             // Preserve previous PC register state
             cpu.prev_pc = m1_pc;
@@ -839,6 +848,27 @@ void Z80::wd(uint16_t addr, uint8_t val)
 
 uint8_t Z80::in(uint16_t port)
 {
+    // TTD port journal: while a session records, every IN result is appended
+    // with its time and PC; while one replays, the CPU gets the recorded value
+    // instead of the live device's answer, so the replay depends on nothing
+    // outside the session - media files, host devices
+    // (ttd-port-read-journal.md). The devices still see the read and its side
+    // effects. Time and PC are taken at the start of the I/O cycle
+    if (ttd::TTDPortJournal* journal = _context->ttdPortReads) [[unlikely]]
+    {
+        const EmulatorState& st = _context->emulatorState;
+        const uint64_t frame = st.frame_counter;
+        const uint32_t tInFrame = st.TtdTInFrame(t);
+        const uint16_t pc = m1_pc;
+        return journal->OnRead(port, inFromBus(port), frame, tInFrame, pc);
+    }
+    return inFromBus(port);
+}
+
+/// The read as the bus answers it: interceptor, model decoder, observer cards,
+/// floating bus, I/O contention
+uint8_t Z80::inFromBus(uint16_t port)
+{
     // ULA I/O contention (48K / 128K / +2), first part: the wait at the cycle's first T, before IORQ. The
     // handler has already counted that T (IORQ is at T2), so the cycle started 1 T ago. ioContention is
     // null on machines without it (Core::SelectMemoryInterface)
@@ -926,6 +956,13 @@ uint8_t Z80::in(uint16_t port)
 
 void Z80::out(uint16_t port, uint8_t val)
 {
+    // TTD port journal: every OUT is logged as a fact of the machine's output
+    // while a session records, and checked against the record while it
+    // replays (ttd-port-read-journal.md)
+    if (ttd::TTDPortJournal* journal = _context->ttdPortWrites) [[unlikely]]
+        journal->OnWrite(port, val, _context->emulatorState.frame_counter, _context->emulatorState.TtdTInFrame(t),
+                         m1_pc);
+
     // ULA I/O contention, as in in(): the wait before IORQ goes before the port write, so the device (the
     // border latch) sees the delayed T; the waits after IORQ follow the write
     uint8_t ioWait = 0;

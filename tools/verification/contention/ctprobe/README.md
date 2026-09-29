@@ -34,6 +34,15 @@ The program needs the CPU at 3.5 MHz. A Scorpion's turbo is switched off by the 
 machines (ATM Turbo, ZX-Evo) it stops and says so: "The CPU runs faster than 3.5 MHz. Switch the machine to
 3.5 MHz (turbo off) and run it again."
 
+**The Scorpion: not measured.** A real Scorpion (and unreal-ng's since 2026-09-29) makes every opcode fetch
+from RAM start on an even clock tick: a fetch that would start on an odd tick waits one ("Even M1", from its
+circuit). The measuring engine needs waits of every length, odd ones included, so it cannot work there. The
+program checks for it first: after a screen interrupt it runs a loop that takes 65931 ticks, which ends
+within the frame; with Even M1 the same loop takes 73236 ticks and runs past the next interrupt. If so, it
+prints "Opcode fetches wait for even T-states (Scorpion Even M1) ... nothing was measured", with a red
+border, and the harness reports the machine as `skipped`. An emulator that ends its Scorpion run with "all
+as expected" does not model Even M1.
+
 A full run takes **about 3 minutes** at the normal 3.5 MHz speed. An emulator's fast or turbo mode is fine: the
 program measures CPU clock ticks, not seconds.
 
@@ -248,14 +257,14 @@ Run by the [co-emulation harness](../../coemu/README.md), with each emulator's s
 
 | Emulator | 48K | 128K | +2 | +2A / +3 | Pentagon | Scorpion |
 |:--|:--|:--|:--|:--|:--|:--|
-| unreal-ng | all as expected | all as expected | all as expected | all as expected | all as expected | all as expected |
+| unreal-ng | all as expected | all as expected | all as expected | all as expected | all as expected | not measured: Even M1 (all as expected before Even M1 was added) |
 | xpeccy-plus 7a96d8da | all as expected | P-05 only: a port whose high byte points at an odd page at `#C000` does not wait | as the 128K | the gate array's waits come 2 ticks late; the extra tick at the end of each line is missing | all as expected | does not finish: its stock `scrp.wait` adds a tick to odd-length instructions, which the measuring engine does not survive |
 | FUSE 1.6.0 | all as expected | all as expected | all as expected | the extra tick at the end of each line is missing (1 value) | all as expected | - |
 | MAME 0.289 | all as expected | everything 2 ticks late | as the 128K | the waits 4 ticks late; port accesses wait, which the gate array does not do | all as expected | the machine resets during the frame measurement (not yet explained) |
 | ZEsarUX 13.0 | floating bus (P-02) only | floating bus (P-02) only | floating bus (P-02) only | the waits 4 ticks late; internal ticks wait, which the gate array does not do | all as expected | - |
 
-unreal-ng also runs it on the Scorpion with ProfROM, the ATM Turbo 2+, the ZX-Evo and the Profi: all as
-expected; xpeccy-plus on its ATM Turbo 2+, ZX-Evo and Profi, and MAME on its Scorpion with ProfROM: all as
+unreal-ng also runs it on the ATM Turbo 2+, the ZX-Evo and the Profi: all as expected (the Scorpion with
+ProfROM: not measured, Even M1); xpeccy-plus on its ATM Turbo 2+, ZX-Evo and Profi, and MAME on its Scorpion with ProfROM: all as
 expected. MAME's ATM Turbo boots at 7 MHz (the probe stops and asks for 3.5 MHz).
 
 On P-05 the emulators disagree: FUSE and unreal-ng contend such a port, xpeccy-plus does not. A real 128K

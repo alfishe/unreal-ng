@@ -11,7 +11,7 @@ Implemented dynamic grid layout calculation and Screen HQ keyboard toggle for th
 
 ### 1. TileLayoutManager Centralization
 
-**File**: [unreal-videowall/src/videowall/TileLayoutManager.h](../../unreal-videowall/src/videowall/TileLayoutManager.h)
+**File**: [unreal-videowall/src/videowall/TileLayoutManager.h](../../../unreal-videowall/src/videowall/TileLayoutManager.h)
 
 Changed from hardcoded grid constants to dynamic calculation:
 
@@ -34,21 +34,21 @@ static GridLayout getFullscreenLayout(int screenWidth, int screenHeight)
 
 ### 2. EmulatorTile Updates
 
-**File**: [unreal-videowall/src/videowall/EmulatorTile.h](../../unreal-videowall/src/videowall/EmulatorTile.h)
+**File**: [unreal-videowall/src/videowall/EmulatorTile.h](../../../unreal-videowall/src/videowall/EmulatorTile.h)
 
 - Removed local `TILE_WIDTH`/`TILE_HEIGHT` constants
 - Now includes `TileLayoutManager.h` for global values
 
 ### 3. TileGrid Updates
 
-**File**: [unreal-videowall/src/videowall/TileGrid.cpp](../../unreal-videowall/src/videowall/TileGrid.cpp)
+**File**: [unreal-videowall/src/videowall/TileGrid.cpp](../../../unreal-videowall/src/videowall/TileGrid.cpp)
 
 - Uses `TileLayoutManager::TILE_WIDTH`/`TILE_HEIGHT` for tile positioning
 - Layout automatically adapts to any screen size
 
 ### 4. VideoWallWindow Updates
 
-**File**: [unreal-videowall/src/videowall/VideoWallWindow.cpp](../../unreal-videowall/src/videowall/VideoWallWindow.cpp)
+**File**: [unreal-videowall/src/videowall/VideoWallWindow.cpp](../../../unreal-videowall/src/videowall/VideoWallWindow.cpp)
 
 **Screen HQ Toggle (Cmd+S)**:
 ```cpp
@@ -84,7 +84,7 @@ void VideoWallWindow::setupUI()
 
 ### 5. Python Test Script Updates
 
-**File**: [tools/verification/videowall/src/test_load_pattern_snapshots.py](../../tools/verification/videowall/src/test_load_pattern_snapshots.py)
+**File**: [tools/verification/videowall/src/test_load_pattern_snapshots.py](../../../tools/verification/videowall/src/test_load_pattern_snapshots.py)
 
 - Dynamic grid dimension calculation
 - Pause → Load → Resume synchronization pattern

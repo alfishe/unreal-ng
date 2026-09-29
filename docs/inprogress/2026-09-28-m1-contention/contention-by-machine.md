@@ -1,7 +1,8 @@
 # Which machines slow the CPU down, and why: contention by circuit design
 
 **Date:** 2026-09-29 · **Belongs to:** [design.md](design.md) (PLAN #61) · **Question:** "Does the Scorpion
-have contention at all? Which machines should have it, by their circuit design?"
+have contention at all? Which machines should have it, by their circuit design?" · **Stable summary:**
+[memory-contention.md](../../emulator/design/core/memory-contention.md)
 
 ## 1. Short answer
 
@@ -18,7 +19,7 @@ have contention at all? Which machines should have it, by their circuit design?"
   memory slot, and more often during the paper area. This is the only case where a Scorpion slows down
   because of the screen.
 - **unreal-ng today:** contention only on the five Sinclair models (correct). The Scorpion's Even M1 is
-  configured (`EvenM1=1`) but **never applied**: the field the CPU tests is never set (§12).
+  applied to opcode fetches from RAM since 2026-09-29 (§12); before that it was configured but never set.
 
 ## 2. Terms
 
@@ -349,36 +350,38 @@ the next DRAM cycle (`z80/zmem.v:132-208`). Unreal Speccy's TS-Conf models the m
 | 128K, +2 | `ula128` | - | matches |
 | +2A, +3 | `gatearray`, MREQ only, 129 T window | - | matches |
 | Pentagon (128 / 512) | `none` | - | matches |
-| **Scorpion, ProfScorp** | `none` | **Even M1 configured but not applied** | memory: matches. Even M1: missing |
+| **Scorpion, ProfScorp** | `none` | Even M1 on opcode fetches from RAM, normal mode (since 2026-09-29) | matches the SC15.1 equations; turbo slot waits not modeled |
 | Profi | `none` | - | matches the original Profi. Karabas-Pro's "classic" mode is not modeled, and does not need to be |
 | ATM710 | `none` | turbo modeled as a clock rate only | matches at 3.5 / 7 MHz |
 | ATM3 (ZX-Evo BaseConf) | `none` | 14 MHz waits not modeled; the optional 48K / 128K raster contention not modeled | matches the default Pentagon raster |
 | TS-Conf (`data/configs/ts-conf`) | `none` | `tsconf.h:245` has a `cache_miss` field; the 14 MHz wait is not applied | matches at 3.5 / 7 MHz |
 
-**The Even M1 path in detail.**
+**The Even M1 path in detail** (implemented 2026-09-29; before that the Scorpion ran without it).
 
-- `data/configs/scorpion/unreal.ini:116` and `data/configs/profscorp/unreal.ini:116` set `EvenM1=1`.
-  `core/src/emulator/config.cpp:268` reads it into `config.even_M1`.
-- The CPU tests a different field: `core/src/emulator/cpu/z80.cpp:440-441`
+- `data/configs/scorpion/unreal.ini:116` and `data/configs/profscorp/unreal.ini:116` set `EvenM1=1`, but the
+  flag is a property of the board, so `core/src/emulator/config.cpp` sets `config.even_M1` from the memory
+  model (Scorpion and ProfScorp on, every other model off), as it does for the frame geometry.
+- The CPU applies it in `Z80Step` (`core/src/emulator/cpu/z80.cpp`), before the first M1 of an instruction:
 
   ```cpp
-  if (cpu.pch & temporary.evenM1_C0)
-      cpu.tt += (cpu.tt & cpu.rate);
+  if (config.even_M1 && (cpu.tt & cpu.rate) && state.hw_turbo_shift == 0 &&
+      (cpu.pch >= 0x40 || !memory.IsBank0ROM())) [[unlikely]]
+      cpu.tt += cpu.rate;
   ```
 
-  `temporary.evenM1_C0` (`core/src/emulator/platform.h:788`, "C0 for scorpion, 00 for pentagon") is only
-  zero-initialized (`emulatorcontext.cpp:17`). Nothing copies `even_M1` into it; Unreal Speccy did that in
-  `draw.cpp` (`temp.evenM1_C0 = conf.even_M1 ? 0xC0 : 0x00`), which was not ported. **So the Scorpion runs
-  without Even M1 today.**
-- If it were set, the mask `0xC0` against the high byte of PC means "PC ≥ #4000" (A15 or A14 set), not "PC ≥
-  #C000". That is the ZXMAK2 rule. The adjustment `tt += tt & rate` adds one CPU T-state when `tt` is odd
-  at the current rate, so it also works at 7 MHz. On the real Turbo+ board, though, turbo uses the slot waits
-  of §6.5 instead.
-- Differences from the circuit: the decision should follow "fetch from RAM" (the slot's mapping), not the
-  address, so RAM at #0000 (`#1FFD` bit 0) is included and ROM is not. The check happens before the whole
-  `m1_cycle`, for the first M1 only; prefixed instructions' second M1 is already even, so this is enough for
-  `DD` / `FD` / `CB` / `ED`. Interrupt acknowledge does not wait. The `HALT` loop fetches from RAM when the
-  `HALT` is in RAM, and each of its 4 T fetches stays even.
+  That is the circuit's rule: a fetch from RAM (RAM at `#0000` through `#1FFD` bit 0 included, ROM not)
+  that would start on an odd T-state waits one; normal mode only (turbo uses the slot waits of §6.5, not
+  modeled). The prefixed instructions' second M1 is already even, so one check covers `DD` / `FD` / `CB` /
+  `ED`. Interrupt acknowledge does not wait. The `HALT` loop fetches from RAM when the `HALT` is in RAM, and
+  each of its 4 T fetches stays even.
+- Unreal Speccy's `temp.evenM1_C0` (a mask on PC's high byte, `0xC0` = "PC >= #4000", the ZXMAK2 rule) was
+  never set in unreal-ng and is gone.
+- Tests: `EvenM1_Test` in `core/tests/emulator/cpu/z80_test.cpp` (RAM fetch on an odd T waits, ROM never,
+  RAM at `#0000` waits, turbo does not, other machines never); `ContentionNegative_Test.ClonesNeverWait`
+  adds the alignment to its expected times.
+- The contention probe (`tools/verification/contention/ctprobe`) cannot time code on such a machine: its
+  engine needs delays of every length, and Even M1 rounds them to even T-states. It detects Even M1 before
+  the engine runs and reports "not measured".
 - A natural home in the new design is the bus interface selector of [design.md](design.md) §6: a Scorpion
   interface whose fetch wrapper adds `tt & rate` when the slot holds RAM. Machines without it keep paying
   nothing (R1).

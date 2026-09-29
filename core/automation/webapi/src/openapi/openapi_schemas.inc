@@ -475,6 +475,58 @@
             "Advisory annotations — unlike external-event markers they never "
             "halt a seek.";
 
+    schemas["TTDStatusResponse"]["properties"]["input_event_count"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["input_event_count"]["format"] = "uint64";
+    schemas["TTDStatusResponse"]["properties"]["input_event_count"]["description"] =
+            "Input events of the session (keyboard, Kempston Mouse, General Sound "
+            "host stimuli) that replay applies at their recorded times. Saved in "
+            "the .ttd file.";
+    schemas["TTDStatusResponse"]["properties"]["external_event_count"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["external_event_count"]["format"] = "uint64";
+    schemas["TTDStatusResponse"]["properties"]["external_event_count"]["description"] =
+            "External-event markers (tape control, disk and media writes, debugger "
+            "edits, resets): replay barriers a seek stops at. Saved in the .ttd file.";
+    schemas["TTDStatusResponse"]["properties"]["input_history_complete"]["type"] = "boolean";
+    schemas["TTDStatusResponse"]["properties"]["input_history_complete"]["description"] =
+            "False only for a session loaded from a file written before input and "
+            "external events were saved: replay inside a frame runs without the "
+            "recorded input and may differ from the recording. Checkpoint restores "
+            "stay exact.";
+    schemas["TTDStatusResponse"]["properties"]["port_journal_active"]["type"] = "boolean";
+    schemas["TTDStatusResponse"]["properties"]["port_journal_active"]["description"] =
+            "True when the session holds every IN result of its history (port-read "
+            "journal): replay feeds the CPU the recorded values and needs no media "
+            "file or host device. False on configurations the first version does not "
+            "isolate (TSConf, ZX Next, NeoGS) and for files without the journal.";
+    schemas["TTDStatusResponse"]["properties"]["port_journal_off_reason"]["type"] = "string";
+    schemas["TTDStatusResponse"]["properties"]["port_journal_off_reason"]["nullable"] = true;
+    schemas["TTDStatusResponse"]["properties"]["port_journal_off_reason"]["description"] =
+            "Why the port-read journal is off for this session; null while it is active "
+            "or no session exists.";
+    schemas["TTDStatusResponse"]["properties"]["port_read_count"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["port_read_count"]["format"] = "uint64";
+    schemas["TTDStatusResponse"]["properties"]["port_read_count"]["description"] =
+            "IN results recorded in the port-read journal.";
+    schemas["TTDStatusResponse"]["properties"]["port_journal_bytes"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["port_journal_bytes"]["format"] = "uint64";
+    schemas["TTDStatusResponse"]["properties"]["port_journal_bytes"]["description"] =
+            "Size of both port journals (IN and OUT) in a .ttd file (compressed).";
+    schemas["TTDStatusResponse"]["properties"]["port_replay_value_mismatches"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["port_replay_value_mismatches"]["format"] = "uint64";
+    schemas["TTDStatusResponse"]["properties"]["port_replay_value_mismatches"]["description"] =
+            "Replayed reads whose live device answer differed from the recording (a "
+            "changed or missing medium, a host device); the CPU got the recorded value.";
+    schemas["TTDStatusResponse"]["properties"]["port_replay_divergences"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["port_replay_divergences"]["format"] = "uint64";
+    schemas["TTDStatusResponse"]["properties"]["port_replay_divergences"]["description"] =
+            "Replayed INs and OUTs at another time, from another instruction or to "
+            "another port, and OUTs of another value: execution itself left the "
+            "recording. Expected to stay 0.";
+    schemas["TTDStatusResponse"]["properties"]["port_write_count"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["port_write_count"]["format"] = "uint64";
+    schemas["TTDStatusResponse"]["properties"]["port_write_count"]["description"] =
+            "OUTs recorded in the port-write journal.";
+
     schemas["TTDStatusResponse"]["properties"]["last_drop_reason"]["type"] = "string";
     schemas["TTDStatusResponse"]["properties"]["last_drop_reason"]["nullable"] = true;
     schemas["TTDStatusResponse"]["properties"]["last_drop_reason"]["description"] =
@@ -819,6 +871,83 @@
     schemas["TTDLoadResponse"]["properties"]["current_end_frame"]["format"] = "uint64";
     schemas["TTDLoadResponse"]["properties"]["state"]["type"] = "string";
     schemas["TTDLoadResponse"]["properties"]["error"]["type"] = "string";
+
+    // POST /ttd/port-events
+    schemas["TTDPortEventsRequest"]["type"] = "object";
+    schemas["TTDPortEventsRequest"]["required"].append("event");
+    schemas["TTDPortEventsRequest"]["properties"]["event"]["type"] = "string";
+    for (const char* e : {"key", "ear", "ay-read", "ay-write", "ay-select", "border", "beeper", "in", "out"})
+        schemas["TTDPortEventsRequest"]["properties"]["event"]["enum"].append(e);
+    schemas["TTDPortEventsRequest"]["properties"]["event"]["description"] =
+        "key: the program saw a key down (once per press); ear: it saw the tape (EAR) bit change; "
+        "ay-read / ay-write: IN from #FFFD / OUT to #BFFD; ay-select: OUT to #FFFD; border / beeper: "
+        "OUT #FE changed the border color / beeper bit; in / out: every IN / OUT (narrow with the filters)";
+    schemas["TTDPortEventsRequest"]["properties"]["arg"]["type"] = "string";
+    schemas["TTDPortEventsRequest"]["properties"]["arg"]["description"] =
+        "key: a matrix key name ('a', 'enter', 'space', 'caps', 'symbol'...; none = any key); "
+        "ay-read / ay-write / ay-select: an AY register 0..15";
+    schemas["TTDPortEventsRequest"]["properties"]["limit"]["type"] = "integer";
+    schemas["TTDPortEventsRequest"]["properties"]["limit"]["description"] = "Hits to return, 1..1000000 (default 100)";
+    schemas["TTDPortEventsRequest"]["properties"]["newest"]["type"] = "boolean";
+    schemas["TTDPortEventsRequest"]["properties"]["newest"]["description"] = "The last hits, newest first, instead of the first ones";
+    schemas["TTDPortEventsRequest"]["properties"]["from"]["type"] = "string";
+    schemas["TTDPortEventsRequest"]["properties"]["from"]["description"] = "Window start: a frame, or 'frame:tinframe'";
+    schemas["TTDPortEventsRequest"]["properties"]["to"]["type"] = "string";
+    schemas["TTDPortEventsRequest"]["properties"]["to"]["description"] = "Window end (inclusive): a frame, or 'frame:tinframe'";
+    schemas["TTDPortEventsRequest"]["properties"]["port"]["type"] = "string";
+    schemas["TTDPortEventsRequest"]["properties"]["port"]["description"] = "Port filter: (port & port_mask) == port; port alone: an exact port";
+    schemas["TTDPortEventsRequest"]["properties"]["port_mask"]["type"] = "string";
+    schemas["TTDPortEventsRequest"]["properties"]["value"]["type"] = "string";
+    schemas["TTDPortEventsRequest"]["properties"]["value"]["description"] = "Value filter: (value & value_mask) == value (sets match=equals)";
+    schemas["TTDPortEventsRequest"]["properties"]["value_mask"]["type"] = "string";
+    schemas["TTDPortEventsRequest"]["properties"]["match"]["type"] = "string";
+    for (const char* m : {"any", "equals", "any-clear", "any-set"})
+        schemas["TTDPortEventsRequest"]["properties"]["match"]["enum"].append(m);
+    schemas["TTDPortEventsRequest"]["properties"]["trigger"]["type"] = "string";
+    for (const char* t : {"every", "rising", "change"})
+        schemas["TTDPortEventsRequest"]["properties"]["trigger"]["enum"].append(t);
+    schemas["TTDPortEventsRequest"]["properties"]["trigger"]["description"] =
+        "every: each matching access; rising: the value test passes and did not at the previous access "
+        "of the same port; change: the masked value differs from the previous access of the same port";
+    schemas["TTDPortEventsRequest"]["properties"]["stream_mask"]["type"] = "string";
+    schemas["TTDPortEventsRequest"]["properties"]["stream_mask"]["description"] =
+        "Address bits that separate streams for rising / change: 0xFFFF = every port address "
+        "(keyboard half-rows, the default for raw queries); 0x0001 = the ULA's port whatever "
+        "the high byte (what ear, border and beeper use)";
+    schemas["TTDPortEventsRequest"]["properties"]["ay_register"]["type"] = "integer";
+    schemas["TTDPortEventsRequest"]["properties"]["ay_register"]["description"] = "Only accesses while this AY register (0..15) is selected";
+    schemas["TTDPortEventsRequest"]["properties"]["file"]["type"] = "string";
+    schemas["TTDPortEventsRequest"]["properties"]["file"]["description"] =
+        "A .ttd file on the emulator's machine to search instead of the current session. It is read and "
+        "checked like a load but not loaded: the session is untouched, and it works while recording. "
+        "400 when the file cannot be read or has no port journals";
+
+    schemas["TTDPortEventHit"]["type"] = "object";
+    schemas["TTDPortEventHit"]["properties"]["index"]["type"] = "integer";
+    schemas["TTDPortEventHit"]["properties"]["index"]["description"] = "Position in the IN or OUT journal";
+    schemas["TTDPortEventHit"]["properties"]["frame"]["type"] = "integer";
+    schemas["TTDPortEventHit"]["properties"]["tinframe"]["type"] = "integer";
+    schemas["TTDPortEventHit"]["properties"]["tinframe"]["description"] = "T-state in the frame at the model's top clock (TTD time)";
+    schemas["TTDPortEventHit"]["properties"]["port"]["type"] = "integer";
+    schemas["TTDPortEventHit"]["properties"]["value"]["type"] = "integer";
+    schemas["TTDPortEventHit"]["properties"]["value"]["description"] = "The value read (as the CPU got it) or written";
+    schemas["TTDPortEventHit"]["properties"]["pc"]["type"] = "integer";
+    schemas["TTDPortEventHit"]["properties"]["pc"]["description"] = "Address of the IN / OUT instruction";
+    schemas["TTDPortEventHit"]["properties"]["ay_register"]["type"] = "integer";
+    schemas["TTDPortEventHit"]["properties"]["ay_register"]["description"] = "AY register selected at the access (AY queries only)";
+
+    schemas["TTDPortEventsResponse"]["type"] = "object";
+    schemas["TTDPortEventsResponse"]["properties"]["event"]["type"] = "string";
+    schemas["TTDPortEventsResponse"]["properties"]["direction"]["type"] = "string";
+    schemas["TTDPortEventsResponse"]["properties"]["direction"]["enum"].append("in");
+    schemas["TTDPortEventsResponse"]["properties"]["direction"]["enum"].append("out");
+    schemas["TTDPortEventsResponse"]["properties"]["count"]["type"] = "integer";
+    schemas["TTDPortEventsResponse"]["properties"]["truncated"]["type"] = "boolean";
+    schemas["TTDPortEventsResponse"]["properties"]["truncated"]["description"] = "More hits than 'limit'";
+    schemas["TTDPortEventsResponse"]["properties"]["scanned"]["type"] = "integer";
+    schemas["TTDPortEventsResponse"]["properties"]["scanned"]["description"] = "Journal records examined";
+    schemas["TTDPortEventsResponse"]["properties"]["hits"]["type"] = "array";
+    schemas["TTDPortEventsResponse"]["properties"]["hits"]["items"]["$ref"] = "#/components/schemas/TTDPortEventHit";
 
     // POST /ttd/find-last
     schemas["TTDFindLastRequest"]["type"] = "object";

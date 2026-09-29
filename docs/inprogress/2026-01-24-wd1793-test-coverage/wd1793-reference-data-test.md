@@ -20,7 +20,7 @@ Use [MFMGenerator](../../../core/src/emulator/io/fdc/mfm_parser.h#235-278) class
 
 ## Proposed Changes
 
-### [NEW] [core/tests/emulator/io/fdc/wd1793_reference_data_test.cpp](core/tests/emulator/io/fdc/wd1793_reference_data_test.cpp)
+### [NEW] core/tests/emulator/io/fdc/wd1793_reference_data_test.cpp
 
 New test file containing:
 

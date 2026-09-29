@@ -388,7 +388,7 @@ void SoundManager::GenerateAudio()
 
 ### RecordingManager Feature Guard
 
-**File:** [`recordingmanager.cpp`](../../../../core/src/emulator/recording/recordingmanager.cpp)
+**File:** [`recordingmanager.cpp`](../../../../core/recording/src/recordingmanager.cpp)
 
 ```cpp
 // Feature flag check (default: OFF)

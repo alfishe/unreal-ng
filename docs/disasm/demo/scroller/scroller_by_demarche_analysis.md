@@ -12,7 +12,7 @@
 > when booted without the editor hooks (direct TR-DOS / 48K BASIC path).
 >
 > Current analysis, evidence chain and regression tests:
-> [`docs/disasm/demo/scroller/`](demo/scroller/) (`README.md`, `REVERSING.md`,
+> [`docs/disasm/demo/scroller/`](./) (`README.md`, `REVERSING.md`,
 > `TRIAGE.md`, `trd_mlz.py`). Kept below for investigation history.
 
 ## Overview

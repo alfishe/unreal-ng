@@ -827,6 +827,16 @@ status = emu.ttd_status()
 #   'write_journal_bytes': 8748300,   # in memory; on disk it is compressed
 #   'coverage_index_frames': 300,     # 0 => reverse queries fall back to replay
 #   'coverage_index_bytes': 13926,
+#   'input_event_count': 10,
+#   'external_event_count': 0,
+#   'input_history_complete': True,
+#   'port_journal_active': True,      # replay needs no media or host device
+#   'port_journal_off_reason': None,  # e.g. 'NeoGS: ...' when off
+#   'port_read_count': 8225,
+#   'port_write_count': 15520,
+#   'port_journal_bytes': 9234,
+#   'port_replay_value_mismatches': 0,  # > 0: a device answered otherwise on replay
+#   'port_replay_divergences': 0,     # > 0: execution left the recording
 #
 #   # Memory
 #   'page_store_bytes': 40960,
@@ -924,6 +934,28 @@ result = emu.ttd_find_last(
 #  'covered_from': 4700, 'covered_from_tinframe': 0, 'covered_to': 4900, 'covered_to_tinframe': 0}
 #  The search covered frame 4700..4900 only: nothing before the marker was examined.
 ```
+
+**When did the program ... (port events):** `ttd_port_events(event, arg=None, **options)` searches the port journals - every IN and OUT with its time and PC - without replay. Events, arguments and options: [command-interface.md → Port events](./command-interface.md).
+
+Output below is from the recorded fixture `testdata/ttd/port-journals/dizzyx.ttd` (Dizzy X):
+
+```python
+r = emu.ttd_port_events('key', 'space')        # when the game saw SPACE pressed
+# {'ok': True, 'direction': 'in', 'count': 1, 'truncated': False, 'scanned': 7905,
+#  'hits': [{'index': 6082, 'frame': 430, 'tinframe': 7824, 'port': 0x7FFE, 'value': 0xFE, 'pc': 0x72B2}]}
+
+w = emu.ttd_port_events('ay-write', 7, **{'from': 200, 'to': '260:0', 'limit': 100})
+# 60 hits, one a frame: the mixer written from PC 0xC176, 'ay_register': 7
+
+f = emu.ttd_port_events('key', '5', file='testdata/ttd/port-journals/dizzyx.ttd')
+# a saved session, searched without loading it
+
+edges = emu.ttd_port_events('ear', limit=100000)['hits']        # every tape edge the loader saw
+if not r['ok']:
+    print(r['error'])     # no journals, recording running, bad option
+```
+
+`from` is a Python keyword: pass it through a dict (`**{'from': 200}`).
 
 For writes the write journal answers when it holds every write of the session; otherwise the search replays history (see [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules), "When the write journal answers").
 

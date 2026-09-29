@@ -787,7 +787,6 @@ struct TEMP
 	unsigned border_add, border_and;   // for scorpion 4T border update
 	uint8_t *base, *base_2;  // pointers to Spectrum screen memory
 	uint8_t rom_mask, ram_mask;
-	uint8_t evenM1_C0; // C0 for scorpion, 00 for pentagon
 	uint8_t hi15; // 0 - 16bit color, 1 - 15bit color, 2 - YUY2 colorspace
 	unsigned snd_frame_samples;  // samples / frame
 	unsigned snd_frame_ticks;    // sound ticks / frame

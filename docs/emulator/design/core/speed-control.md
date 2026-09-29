@@ -460,8 +460,5 @@ TEST(SpeedControl, TurboMode)
 ## References
 
 - [Original Unreal Speccy](https://github.com/djdron/UnrealSpeccyP) - Speed control via `conf.intfq`
-- [SPEED_MULTIPLIER_IMPLEMENTATION.md](../../SPEED_MULTIPLIER_IMPLEMENTATION.md) - Detailed implementation guide
-- [SPEED_MULTIPLIER_USAGE_EXAMPLES.md](../../SPEED_MULTIPLIER_USAGE_EXAMPLES.md) - Usage examples
-- [Audio System](sound-system.md) - Audio generation and synchronization
-- [Main Loop](mainloop.md) - Frame execution and timing
+- [Speed control design notes](../../../inprogress/2026-02-07-speed-control/SPEED-CONTROL.md) - Original design and UI mockups
 

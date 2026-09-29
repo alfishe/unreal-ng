@@ -156,6 +156,11 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
                 HandleStateScreenFlash(session, context);
                 return;
             }
+            else if (subcommand == "attributes")
+            {
+                HandleStateScreenAttributes(session, context);
+                return;
+            }
             else if (subcommand == "verbose")
             {
                 // Show verbose screen information
@@ -165,7 +170,7 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
             else
             {
                 session.SendResponse(std::string("Error: Unknown subcommand '") + args[1] + "'" + NEWLINE +
-                                     "Available: mode, flash, verbose" + NEWLINE);
+                                     "Available: mode, flash, attributes, verbose" + NEWLINE);
                 return;
             }
         }
@@ -336,6 +341,14 @@ void CLIProcessor::HandleStateScreenFlash(const ClientSession& session, Emulator
     std::stringstream ss;
     ss << "Screen Flash" << NEWLINE << "============" << NEWLINE;
     ss << DeviceState::ToText(DeviceState::ScreenFlash(context));
+    session.SendResponse(ss.str());
+}
+
+void CLIProcessor::HandleStateScreenAttributes(const ClientSession& session, EmulatorContext* context)
+{
+    std::stringstream ss;
+    ss << "Screen Attributes" << NEWLINE << "=================" << NEWLINE;
+    ss << DeviceState::ToText(DeviceState::ScreenAttributes(context));
     session.SendResponse(ss.str());
 }
 

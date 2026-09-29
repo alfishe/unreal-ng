@@ -164,6 +164,7 @@ the internals).
 | `reverse_step` | `count` (instructions) **or** `tstates` | Step back several instructions or T-states |
 | `reverse_continue` | `pcs`: list of addresses | Run backward until the CPU was about to execute one of them |
 | `find_last` | `addr` or `addr_from`/`addr_to`; `access` (`write` default, `read`, `execute`, `io`); optional `value`, `pc_from`/`pc_to`, `phys_page`, `before_frame`/`before_tin` | Latest matching access before the current point (or before `before_frame`) |
+| `port_events` | `event` (`key`, `ear`, `ay-read`, `ay-write`, `ay-select`, `border`, `beeper`, `in`, `out`); optional `event_arg` (a key name or an AY register), `limit`, `newest`, `from_frame`/`to_frame`, `port`/`port_mask`, `value`/`value_mask`, `match`, `trigger`, `ay_register`, `file` (a saved `.ttd` searched without loading it) | "When did the program ...": every matching IN/OUT with frame, tinframe, PC, port, value - from the port journals, no replay (needs a stopped or paused recording) |
 | `resume` | `frame`/`tinframe` (optional, default: current point) | Continue recording live from that point; **everything recorded after it is discarded**. Needs the machine positioned in history (`seek` or a step first); right after `stop` it fails |
 | `dump` / `load` | `path` | Save / load a `.ttd` session file |
 | `bookmark_add` / `bookmark_list` / `bookmark_delete` / `seek_bookmark` | `label`, optional `frame`/`tinframe` | Named points in time |

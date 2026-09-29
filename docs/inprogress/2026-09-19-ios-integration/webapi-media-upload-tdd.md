@@ -2,7 +2,7 @@
 
 **Status:** Implemented  
 **Date:** 2026-09-19  
-**Related docs:** [iOS Host Design](ios-host-design.md) §7, [OpenAPI Maintenance](../../../OPENAPI_MAINTENANCE.md)
+**Related docs:** [iOS Host Design](ios-host-design.md) §7, [OpenAPI Maintenance](../../../core/automation/webapi/OPENAPI_MAINTENANCE.md)
 
 ## Summary
 

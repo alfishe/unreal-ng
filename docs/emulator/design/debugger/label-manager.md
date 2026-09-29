@@ -752,8 +752,8 @@ Acceptable for desktop debugging scenarios.
 ## Related Documentation
 
 - [Automation Interface](../../../features/automation.md) - CLI/WebAPI/Lua/Python overview
-- [Breakpoint Manager](./breakpoints.md) - Breakpoint system (if exists)
-- [Z80 Disassembler](./disassembler.md) - Disassembly engine (if exists)
+- Breakpoint Manager - Breakpoint system (if exists)
+- Z80 Disassembler - Disassembly engine (if exists)
 
 ## Related Tasks
 

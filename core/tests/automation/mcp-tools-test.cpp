@@ -1485,6 +1485,60 @@ TEST_F(McpTools_Test, TimeTravel_FindLast_ForwardsQueryAndReportsHit)
     EXPECT_NE(result.text.find("RAM page 5"), std::string::npos) << result.text;
 }
 
+/// port_events: "when did the program ..." - the event, its argument and the
+/// options reach POST /ttd/port-events (from_frame/to_frame as from/to), and
+/// the summary lists each hit with its time, PC, port, value and AY register
+TEST_F(McpTools_Test, TimeTravel_PortEvents_ForwardsTheQueryAndListsTheHits)
+{
+    Json::Value reply;
+    reply["event"] = "ay-write";
+    reply["direction"] = "out";
+    reply["count"] = 1;
+    reply["truncated"] = false;
+    reply["scanned"] = 42;
+    Json::Value hit;
+    hit["index"] = 5;
+    hit["frame"] = 120;
+    hit["tinframe"] = 3500;
+    hit["port"] = 0xBFFD;
+    hit["value"] = 0x38;
+    hit["pc"] = 0x800C;
+    hit["ay_register"] = 7;
+    reply["hits"].append(hit);
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/port-events"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "port_events";
+    args["event"] = "ay-write";
+    args["event_arg"] = "7";
+    args["from_frame"] = 100;
+    args["limit"] = 10;
+    args["newest"] = true;
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/port-events");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["event"].asString(), "ay-write");
+    EXPECT_EQ(call->body["arg"].asString(), "7");
+    EXPECT_EQ(call->body["from"].asUInt(), 100u);
+    EXPECT_EQ(call->body["limit"].asUInt(), 10u);
+    EXPECT_TRUE(call->body["newest"].asBool());
+    EXPECT_NE(result.text.find("1 hit(s) among 42 out record(s)"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("frame 120 t=3500"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("(R7)"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, TimeTravel_PortEvents_NeedsAnEvent)
+{
+    Json::Value args;
+    args["action"] = "port_events";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("requires 'event'"), std::string::npos) << result.text;
+    EXPECT_EQ(_caller->Last("POST", "/api/v1/emulator/emu-1/ttd/port-events"), nullptr);
+}
+
 TEST_F(McpTools_Test, TimeTravel_FindLast_BlockedReportsMarker)
 {
     Json::Value reply;

@@ -25,6 +25,14 @@ Subcommands
 ``heatmap FILE -o out.png``
     Render a one-pixel-per-checkpoint-wide heatmap of dirty pages.
 
+``search FILE EVENT [ARG] [NAME=VALUE ...] [--json]``
+    "When did the program ...": search the port journals (every IN and OUT
+    with its time and PC) - the same events, options and answers as the
+    emulator's ``ttd port-events``. Events: key [KEY], ear, ay-read [R],
+    ay-write [R], ay-select [R], border, beeper, in, out. Options: limit,
+    newest, from, to, port, port_mask, value, value_mask, match, trigger,
+    stream_mask, ay_register. ``--json`` prints the WebAPI response shape.
+
 Examples
 --------
     #!/bin/sh
@@ -34,6 +42,8 @@ Examples
     ./run.sh report testdata/ttd/active_demo.ttd -o report.md
     ./run.sh render testdata/ttd/active_demo.ttd --frame 100 -o cp100.png
     ./run.sh heatmap testdata/ttd/active_demo.ttd -o heatmap.png
+    ./run.sh search session.ttd key space
+    ./run.sh search session.ttd ay-write 7 limit=5 --json
 
 Exit codes
 ----------
@@ -42,6 +52,7 @@ Exit codes
 * 2 — file could not be parsed (bad magic, truncated, unsupported schema).
 * 3 — bad CLI arguments.
 * 4 — I/O error (could not write output file).
+* 5 — the search cannot answer (no port journals in the file, bad event or option).
 """
 
 from __future__ import annotations
@@ -55,6 +66,7 @@ from . import __version__
 from .anomaly_detector import detect_anomalies
 from .framebuffer_renderer import RenderError, render_checkpoint, render_dirty_heatmap
 from .integrity_check import check_integrity
+from .port_search import PortQueryError, search_dump
 from .timeline_report import generate_markdown_report, ReportOptions
 from .ttd_format import (
     ENCODING_FULL,
@@ -171,6 +183,13 @@ def cmd_info(args: argparse.Namespace) -> int:
         print(f"bookmarks: {len(bookmarks)}")
         for frame, t_in_frame, label in bookmarks:
             print(f"  {label!r:<24} frame {frame}, t {t_in_frame}")
+    if dump.port_reads is not None:
+        pr, pw = dump.port_reads, dump.port_writes
+        print(f"port journals: {len(pr):,} IN, {len(pw):,} OUT "
+              f"({_format_size(pr.section_bytes + pw.section_bytes)} on disk) - "
+              f"'search' answers 'when did the program ...'")
+    else:
+        print("port journals: absent (replay reads the live devices; no 'search')")
     print(f"checkpoints: {h.checkpoint_count}")
     print(f"frame range: {h.session_start_frame} … {h.session_end_frame}")
     print(f"emulator_id: {h.emulator_id!r}")
@@ -405,6 +424,41 @@ def cmd_heatmap(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_search(args: argparse.Namespace) -> int:
+    dump = _parse_dump_or_die(args.file)
+    # EVENT [ARG] then NAME=VALUE options, as the emulator's CLI takes them
+    rest = list(args.rest)
+    arg = rest.pop(0) if rest and "=" not in rest[0] else None
+    options = {}
+    for item in rest:
+        name, eq, value = item.partition("=")
+        if not eq:
+            print(f"error: expected option=value, got '{item}'", file=sys.stderr)
+            return 3
+        options[name] = value
+    try:
+        result = search_dump(dump, args.event, arg, **options)
+    except PortQueryError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 5
+    if args.json:
+        import json
+        print(json.dumps({"event": args.event, "direction": result.direction, "count": len(result.hits),
+                          "truncated": result.truncated, "scanned": result.scanned,
+                          "hits": [h.as_dict() for h in result.hits]}, indent=1))
+        return 0
+    print(f"{len(result.hits)} hit(s){' (more than the limit)' if result.truncated else ''}, "
+          f"{result.scanned} {result.direction.upper()} record(s) scanned")
+    for h in result.hits:
+        r = h.record
+        line = (f"  frame {r.frame} t {r.t_in_frame}  PC #{r.pc:04X}  port #{r.port:04X}  "
+                f"value #{r.value:02X}")
+        if h.ay_register >= 0:
+            line += f"  R{h.ay_register}"
+        print(line)
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------
@@ -486,6 +540,16 @@ def _build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--format", choices=("auto", "png", "ppm"), default="auto",
                     help="Output format (auto: by extension)")
     sp.set_defaults(func=cmd_heatmap)
+
+    # search
+    sp = sub.add_parser("search",
+                        help="When did the program ...: search the port journals.")
+    sp.add_argument("file", help="Path to .ttd file")
+    sp.add_argument("event", help="key, ear, ay-read, ay-write, ay-select, border, beeper, in, out")
+    sp.add_argument("rest", nargs="*", metavar="[ARG] [NAME=VALUE]",
+                    help="the event's argument (a key name, an AY register), then options")
+    sp.add_argument("--json", action="store_true", help="print the WebAPI response shape")
+    sp.set_defaults(func=cmd_search)
 
     return p
 

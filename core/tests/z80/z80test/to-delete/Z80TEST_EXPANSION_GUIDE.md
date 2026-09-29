@@ -411,5 +411,5 @@ python3 compare_scf_ccf.py /tmp/scf_ccf_flags.bin
 
 ## Related Documentation
 
-- [Z80 Undocumented Behavior](../../docs/z80/undocumented.md)
-- [Q Register Technical Specification](../../docs/z80/q_register.md)
+- Z80 Undocumented Behavior
+- Q Register Technical Specification
