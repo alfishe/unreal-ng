@@ -818,6 +818,65 @@ TEST_F(ZXPolyGroup_Test, ManagerCreatesDescribesAndRemovesAGroup)
     EXPECT_FALSE(error.empty());
 }
 
+/// The named configurations resolve case-insensitively to their base models,
+/// and creating one by name through the ordinary create-by-model path (every
+/// automation surface ends there) builds the whole group
+TEST_F(ZXPolyGroup_Test, ConfigurationsCreateTheGroupByName)
+{
+    ASSERT_EQ(ZXPolyGroup::Configurations().size(), 3u);
+    const std::vector<std::pair<std::string, MEM_MODEL>> expected = {
+        {"ZXPOLY-48K", MM_SPECTRUM48}, {"zxpoly-128k", MM_SPECTRUM128}, {"ZXPoly-Pentagon", MM_PENTAGON}};
+    EXPECT_EQ(ZXPolyGroup::FindConfiguration("PENTAGON"), nullptr);
+
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    for (const auto& [name, model] : expected)
+    {
+        ASSERT_NE(ZXPolyGroup::FindConfiguration(name), nullptr) << name;
+
+        std::string error;
+        std::shared_ptr<Emulator> master = manager->CreateEmulatorWithModel("", name, LoggerLevel::LogError, &error);
+        ASSERT_TRUE(master) << name << ": " << error;
+        ZXPolyGroup* group = manager->GetZXPolyGroup(master->GetId());
+        ASSERT_NE(group, nullptr) << name;
+        EXPECT_EQ(group->GetMaster(), master) << name;
+        for (size_t m = 0; m < ZXPolyGroup::MODULES; m++)
+            EXPECT_EQ(group->GetContext(m)->config.mem_model, model) << name << " module " << m;
+        EXPECT_TRUE(EmulatorManager::GetMachineIdentity(*master).ZXPoly) << name;
+
+        const std::string masterId = master->GetId();
+        master.reset();
+        EXPECT_TRUE(manager->RemoveEmulator(masterId)) << name;
+    }
+
+    // A configuration fixes its RAM: an explicit size is refused, not ignored
+    std::string error;
+    EXPECT_FALSE(manager->CreateEmulatorWithModelAndRAM("", "ZXPOLY-128K", 256, LoggerLevel::LogError, &error));
+    EXPECT_NE(error.find("ZX-Poly"), std::string::npos) << error;
+}
+
+/// A 48K group runs the synchronized quad (replicated 48K software), but the
+/// ZX-Poly editions page through #7FFD: .zxp and the ZX-Poly ROM are refused
+/// with the reason instead of running into a diverged machine
+TEST_F(ZXPolyGroup_Test, FortyEightKGroupRunsReplicatedSoftwareButRefusesEditions)
+{
+    CreateGroup("ZXPOLY-48K");
+    ASSERT_EQ(_group->GetContext(0)->config.mem_model, MM_SPECTRUM48);
+
+    std::string error;
+    EXPECT_FALSE(_group->LoadZXP(TestPathHelper::GetTestDataPath("machines/zxpoly/zxp/Alien8.zxp"), &error));
+    EXPECT_NE(error.find("128K"), std::string::npos) << error;
+    error.clear();
+    EXPECT_FALSE(_group->LoadPROM(TestPathHelper::GetTestDataPath("machines/zxpoly/rom/zxpolytest.prom"), &error));
+    EXPECT_NE(error.find("128K"), std::string::npos) << error;
+    EXPECT_FALSE(_group->IsLocked());
+
+    // Replicated 48K state stays one machine
+    _group->RunFrame();
+    _group->ReplicateFromMaster();
+    ZXPolyGroup::Divergence divergence;
+    EXPECT_EQ(RunInLockstep(50, divergence), 50u) << divergence.what;
+}
+
 /// Group TTD: four sessions started together, group input journaled in each,
 /// the platform state kept per frame. A seek back restores all four modules to
 /// the recorded frame; continuing with the same input reproduces the recorded

@@ -188,6 +188,21 @@ void EmulatorAPI::getModels(const HttpRequestPtr& req, std::function<void(const 
             modelsArray.append(modelInfo);
         }
 
+        // ZX-Poly configurations: four synchronized instances of a base model,
+        // created by name like any model
+        for (const ZXPolyGroup::Configuration& configuration : ZXPolyGroup::Configurations())
+        {
+            const TMemModel* base = Config::FindModelByShortName(configuration.baseModel);
+            Json::Value modelInfo;
+            modelInfo["name"] = std::string(configuration.name);
+            modelInfo["full_name"] = std::string(configuration.title);
+            modelInfo["zxpoly"] = true;
+            modelInfo["base_model"] = std::string(configuration.baseModel);
+            modelInfo["default_ram_kb"] = base ? base->defaultRAM : 0;
+            modelInfo["creatable"] = base != nullptr && Config::IsModelCreatable(*base);
+            modelsArray.append(modelInfo);
+        }
+
         ret["models"] = modelsArray;
         ret["count"] = static_cast<Json::UInt>(modelsArray.size());
 
@@ -255,6 +270,12 @@ void EmulatorAPI::status(const HttpRequestPtr& req, std::function<void(const Htt
         {
             creatableModels.append(std::string(model.ShortName));
         }
+    }
+    for (const ZXPolyGroup::Configuration& configuration : ZXPolyGroup::Configurations())
+    {
+        const TMemModel* base = Config::FindModelByShortName(configuration.baseModel);
+        if (base != nullptr && Config::IsModelCreatable(*base))
+            creatableModels.append(std::string(configuration.name));
     }
     ret["models_creatable"] = creatableModels;
 

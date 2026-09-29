@@ -1069,6 +1069,17 @@ void CLIProcessor::HandleModels(const ClientSession& session, const std::vector<
         ss << NEWLINE;
     }
     
+    // ZX-Poly configurations: four synchronized instances of a base model
+    ss << NEWLINE << "ZX-Poly configurations:" << NEWLINE;
+    for (const ZXPolyGroup::Configuration& configuration : ZXPolyGroup::Configurations())
+    {
+        ss << "  " << configuration.name << " - " << configuration.title << " (4x " << configuration.baseModel << ")";
+        const TMemModel* base = Config::FindModelByShortName(configuration.baseModel);
+        if (base == nullptr || !Config::IsModelCreatable(*base))
+            ss << " (not creatable on this build)";
+        ss << NEWLINE;
+    }
+
     ss << NEWLINE << "Use 'start <model>' to create emulator with specific model.";
     session.SendResponse(ss.str());
 }

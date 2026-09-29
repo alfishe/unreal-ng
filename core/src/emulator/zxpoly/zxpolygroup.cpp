@@ -108,8 +108,34 @@ ZXPolyGroup::~ZXPolyGroup()
 
 /// region <Lifecycle>
 
-bool ZXPolyGroup::Create(const std::string& model, std::string* error)
+const std::vector<ZXPolyGroup::Configuration>& ZXPolyGroup::Configurations()
 {
+    // 48K runs the synchronized quad and replicated 48K software; ZX-Poly
+    // editions (.zxp, the Test ROM, multiloader disks) need a 128K-class model
+    static const std::vector<Configuration> configurations = {
+        {"ZXPOLY-48K", "ZXPoly-48k", "48K"},
+        {"ZXPOLY-128K", "ZXPoly-128k", "128K"},
+        {"ZXPOLY-PENTAGON", "ZXPoly-Pentagon", "PENTAGON"},
+    };
+    return configurations;
+}
+
+const ZXPolyGroup::Configuration* ZXPolyGroup::FindConfiguration(const std::string& name)
+{
+    const std::string upper = StringHelper::ToUpper(name);
+    for (const Configuration& configuration : Configurations())
+    {
+        if (upper == configuration.name)
+            return &configuration;
+    }
+    return nullptr;
+}
+
+bool ZXPolyGroup::Create(const std::string& modelOrConfiguration, std::string* error)
+{
+    const Configuration* configuration = FindConfiguration(modelOrConfiguration);
+    const std::string model = configuration ? configuration->baseModel : modelOrConfiguration;
+
     Destroy();
 
     EmulatorManager* manager = EmulatorManager::GetInstance();
@@ -219,6 +245,8 @@ bool ZXPolyGroup::LoadZXP(const std::string& path, std::string* error)
             *error = "group not created";
         return false;
     }
+    if (!HasPaging128(error))
+        return false;
 
     LoaderZXP loader(GetContext(0)->pModuleLogger, path);
     if (!loader.Parse())
@@ -254,6 +282,18 @@ bool ZXPolyGroup::LoadZXP(const std::string& path, std::string* error)
 
     _lastMasterFrame = GetContext(0)->emulatorState.frame_counter;
     return true;
+}
+
+bool ZXPolyGroup::HasPaging128(std::string* error) const
+{
+    // The ZX-Poly board is 128K-class: editions page through #7FFD, and the
+    // heap window addresses the modules' 128K pages
+    if (GetContext(0)->config.mem_model != MM_SPECTRUM48)
+        return true;
+    if (error)
+        *error = "ZX-Poly editions need a 128K-class model (128K, Pentagon); a 48K group runs replicated 48K "
+                 "software only";
+    return false;
 }
 
 bool ZXPolyGroup::LoadMedia(const std::string& path, std::string* error)
@@ -296,6 +336,8 @@ bool ZXPolyGroup::LoadPROM(const std::string& path, std::string* error)
             *error = "group not created";
         return false;
     }
+    if (!HasPaging128(error))
+        return false;
 
     std::ifstream file(path, std::ios::binary);
     std::vector<uint8_t> data((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());

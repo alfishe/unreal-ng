@@ -202,6 +202,11 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithId(const std::strin
 
 std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModel(const std::string& symbolicId, const std::string& modelName, LoggerLevel level, std::string* outError)
 {
+    // A ZX-Poly configuration name creates the whole group; checked before the
+    // lock, since the group creates its members through this method
+    if (ZXPolyGroup::FindConfiguration(modelName))
+        return CreateZXPolyMachine(symbolicId, modelName, "", outError);
+
     std::lock_guard<std::mutex> lock(_emulatorsMutex);
 
     // Create a new emulator instance
@@ -290,6 +295,13 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModel(const std::st
 
 std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModelAndRAM(const std::string& symbolicId, const std::string& modelName, uint32_t ramSize, LoggerLevel level, std::string* outError)
 {
+    // A ZX-Poly configuration fixes its modules' memory (the base model's default)
+    if (ZXPolyGroup::FindConfiguration(modelName))
+    {
+        SetCreateError(outError, "'" + modelName + "' is a ZX-Poly configuration: its RAM size is fixed, omit ram_size");
+        return nullptr;
+    }
+
     std::lock_guard<std::mutex> lock(_emulatorsMutex);
 
     // Create a new emulator instance

@@ -12,6 +12,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/platform.h"
+#include "emulator/zxpoly/zxpolygroup.h"
 #include "emulator/notifications.h"
 #include "recordingmanager.h"
 // Avoid Qt 'signals' and 'slots' macro conflicts with core struct members
@@ -731,6 +732,30 @@ void MenuManager::createMachineMenu()
         }
     }
 
+    // ZX-Poly configurations: four synchronized instances of a base model,
+    // started as the bare machine (File -> Open ZX-Poly... loads an edition)
+    _machineMenu->addSeparator();
+    for (const ZXPolyGroup::Configuration& configuration : ZXPolyGroup::Configurations())
+    {
+        const TMemModel* base = Config::FindModelByShortName(configuration.baseModel);
+        if (base == nullptr || !Config::IsModelCreatable(*base))
+            continue;
+
+        const QString name = QString::fromUtf8(configuration.name);
+        QAction* action = _machineMenu->addAction(QString::fromUtf8(configuration.title));
+        action->setCheckable(true);
+        action->setData(name);
+        action->setStatusTip(tr("Switch to ZX-Poly: four synchronized %1 machines")
+                                 .arg(QString::fromUtf8(base->FullName)));
+        _machineModelGroup->addAction(action);
+        _zxpolyConfigurationActions.push_back(action);
+
+        connect(action, &QAction::triggered, this, [this, name]() {
+            if (_currentModelShortName != name)
+                emit zxpolyConfigurationRequested(name);
+        });
+    }
+
     // Set default selection (first entry)
     if (!_machineModelActions.empty())
     {
@@ -821,6 +846,23 @@ void MenuManager::updateMachineModelSelection(std::shared_ptr<Emulator> activeEm
 
     MEM_MODEL currentModel = ctx->config.mem_model;
     uint32_t currentRam = ctx->config.ramsize;
+
+    // A ZX-Poly master: the configuration of its base model
+    if (EmulatorManager::GetMachineIdentity(*activeEmulator).ZXPoly)
+    {
+        for (QAction* action : _zxpolyConfigurationActions)
+        {
+            const ZXPolyGroup::Configuration* configuration =
+                ZXPolyGroup::FindConfiguration(action->data().toString().toStdString());
+            const TMemModel* base = configuration ? Config::FindModelByShortName(configuration->baseModel) : nullptr;
+            if (base != nullptr && base->Model == currentModel)
+            {
+                action->setChecked(true);
+                _currentModelShortName = action->data().toString();
+                return;
+            }
+        }
+    }
 
     // Find and check the matching action (format: "MODEL:RAM")
     for (QAction* action : _machineModelActions)

@@ -75,10 +75,12 @@ The Python bindings do not expose model-selecting instance creation: `ue.Emulato
 **ZX-Poly** (four synchronized instances of one model, through the same
 `EmulatorManager::CreateZXPolyMachine` every surface uses):
 ```python
-id = zxpoly_start("PENTAGON", "/path/to/Alien8.zxp")   # raises RuntimeError with the reason on failure
+id = zxpoly_start("ZXPOLY-PENTAGON", "/path/to/Alien8.zxp")   # raises RuntimeError with the reason on failure
 status = zxpoly_status(id)                              # dict; None if not a ZX-Poly machine
 status["locked"], status["video_mode"], status["diverged"], status["modules"][1]["registers"]
 ```
+The model is a configuration name (`ZXPOLY-48K`, `ZXPOLY-128K`,
+`ZXPOLY-PENTAGON`) or a base model such as `PENTAGON`.
 
 ## API Reference
 

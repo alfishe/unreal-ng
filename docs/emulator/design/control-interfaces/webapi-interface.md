@@ -247,6 +247,24 @@ curl -X POST http://localhost:8090/api/v1/emulator/start \
   -d '{"model": "PENTAGON", "zxpoly": {"file": "/path/to/Alien8.zxp"}}'
 ```
 
+The same machine also starts by name, like any model. There are three
+configurations; `GET /api/v1/emulator/models` lists them with `"zxpoly":
+true` and `base_model`:
+
+| Configuration | Modules | Runs |
+|:--|:--|:--|
+| `ZXPOLY-48K` | 4 × 48K | replicated 48K software; ZX-Poly editions are refused (they need 128K paging) |
+| `ZXPOLY-128K` | 4 × 128K | `.zxp`, the Test ROM |
+| `ZXPOLY-PENTAGON` | 4 × Pentagon | everything, including multiloader disks (TR-DOS) |
+
+```bash
+curl -X POST http://localhost:8090/api/v1/emulator/start \
+  -H "Content-Type: application/json" -d '{"model": "ZXPOLY-128K"}'
+```
+
+A configuration fixes the RAM size, so `ram_size` with a configuration name
+returns 400.
+
 The `zxpoly` field takes one of two forms:
 
 - `true`: the bare machine;

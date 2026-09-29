@@ -157,6 +157,7 @@ private slots:
     void handleOverscanModeToggled(bool enabled);
     void handleViewportChanged(int presetIndex);
     void handleMachineModelChangeRequested(const QString& modelShortName);
+    void handleZXPolyConfigurationRequested(const QString& configurationName);
 
     // Toolbar (transport) handlers
     void handleStartOrResumeRequested();
@@ -322,6 +323,8 @@ private:
     GUIEmulatorContext* _guiContext = nullptr;
     std::shared_ptr<Emulator> _emulator = nullptr;  // TODO: Remove after full binding migration
     uint32_t _lastFrameCount = 0;
+    /// model: a ZX-Poly configuration name or a base model; empty asks. An empty
+    /// filePath starts the bare machine
     void startZXPoly(const QString& filePath, const QString& model = QString());
     void releaseZXPolyGroup();
     bool attachScreenToZXPolyDisplay();

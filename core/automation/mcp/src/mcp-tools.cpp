@@ -129,7 +129,9 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["model"]["description"] =
         "Hardware model short name for 'create' — e.g. 48K, 128k, PLUS3, TSL, ATM3, ATM710, ATM450, PROFI, "
         "SCORPION, PROFSCORP, GMX, KAY, QUORUM, LSY256, PHOENIX (see list_models; creatability is "
-        "build-dependent — check the 'creatable' flags before assuming a machine exists)";
+        "build-dependent — check the 'creatable' flags before assuming a machine exists). ZX-Poly "
+        "configurations ZXPOLY-48K, ZXPOLY-128K, ZXPOLY-PENTAGON create the four-instance machine by name "
+        "(same as 'zxpoly': true with the base model)";
     schema["properties"]["ram_size"]["type"] = "integer";
     schema["properties"]["ram_size"]["description"] = "Optional RAM size in KB for 'create' (e.g. 128, 256, 512)";
     schema["properties"]["zxpoly"]["type"] = "boolean";

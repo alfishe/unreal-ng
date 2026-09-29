@@ -173,7 +173,10 @@ ZX-Poly machine fa3b65e0-...
   lockstep: ok
 ```
 `zxpoly start <model> [file]` takes a `.zxp`, a `.prom` or a multiloader
-disk. `zxpoly status [id|index]` works for any member of the group.
+disk. `<model>` is a configuration name (`ZXPOLY-48K`, `ZXPOLY-128K`,
+`ZXPOLY-PENTAGON`) or a base model. `start ZXPOLY-128K` (the ordinary
+command) starts the bare machine, and `models` lists the configurations.
+`zxpoly status [id|index]` works for any member of the group.
 
 The CLI server listens on port 8765. `UNREAL_CLI_PORT` moves it, just as
 `UNREAL_WEBAPI_PORT` moves the WebAPI's 8090, so a second instance can run

@@ -13,8 +13,18 @@ unreal-ng builds it from **four stock instances of one model**:
 - **Modules 1–3, the slaves**, are hidden members: they are left out of
   instance listings but stay reachable by their own ID.
 
-Pentagon is the default model (zxpoly's own); any creatable model works. A
-multiloader disk needs a model with TR-DOS.
+Three named configurations create it by name wherever a model name is
+accepted (WebAPI/MCP `model`, CLI `start`, Lua/Python `zxpoly_start`, the Qt
+**Machine** menu):
+
+| Configuration | Modules | Runs |
+|:--|:--|:--|
+| `ZXPOLY-48K` | 4 × 48K | replicated 48K software only; `.zxp` and `.prom` are refused (they need 128K paging), and there is no TR-DOS |
+| `ZXPOLY-128K` | 4 × 128K | `.zxp`, the Test ROM |
+| `ZXPOLY-PENTAGON` | 4 × Pentagon | everything, including multiloader disks (TR-DOS) |
+
+Pentagon is the default (zxpoly's own). A base model name (`PENTAGON`,
+`128k`) with the `zxpoly` option works as well.
 
 Design and ground truth:
 [docs/inprogress/2026-09-27-zxpoly/](../../docs/inprogress/2026-09-27-zxpoly/)
@@ -37,7 +47,9 @@ which holds 7 `.zxp` snapshots, 2 multiloader TRDs and the Test ROM (`.prom`).
 
 ```text
 emulator_manage {"action":"create","zxpoly":true,"zxpoly_file":"/path/to/Alien8.zxp"}
-#   → the master's id; model defaults to PENTAGON ("model":"128k" etc. to change)
+#   → the master's id; model defaults to PENTAGON ("model":"ZXPOLY-128K" etc. to change)
+emulator_manage {"action":"create","model":"ZXPOLY-128K"}   # the bare machine by name
+emulator_manage {"action":"list_models"}                    # configurations carry "zxpoly": true
 
 emulator_manage {"action":"zxpoly_status"}
 #   → modules (ids, platform registers R0-R3), #3D00, locked, video_mode,
@@ -60,24 +72,28 @@ curl -s $B/$ID | jq .zxpoly          # {module:0, master_id, locked, video_mode}
 curl -s -X DELETE $B/$ID             # removes all four
 ```
 
-`"zxpoly": true` starts the bare machine.
+`"zxpoly": true`, or `{"model":"ZXPOLY-PENTAGON"}` alone, starts the bare
+machine. A configuration name with `ram_size` returns 400 (the RAM size is
+fixed).
 
 ## CLI
 
 ```text
-zxpoly start PENTAGON /path/to/zxpolytest.prom
+zxpoly start ZXPOLY-PENTAGON /path/to/zxpolytest.prom
+start ZXPOLY-48K          # the bare machine, like any model
+models                    # lists the configurations
 zxpoly status
 ```
 
 ## Lua / Python
 
 ```lua
-local id = zxpoly_start("PENTAGON", "/path/to/Alien8.zxp")
+local id = zxpoly_start("ZXPOLY-PENTAGON", "/path/to/Alien8.zxp")
 local status = zxpoly_status(id)   -- status.locked, status.video_mode, status.modules[1].registers
 ```
 
 ```python
-id = zxpoly_start("PENTAGON", "/path/to/Alien8.zxp")
+id = zxpoly_start("ZXPOLY-PENTAGON", "/path/to/Alien8.zxp")
 status = zxpoly_status(id)          # dict, None if not a ZX-Poly machine
 ```
 

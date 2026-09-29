@@ -63,8 +63,24 @@ public:
     ZXPolyGroup(const ZXPolyGroup&) = delete;
     ZXPolyGroup& operator=(const ZXPolyGroup&) = delete;
 
-    /// Creates the four instances of `model` (any creatable model name).
-    /// Slave audio is muted; host key input is gated on every member
+    /// A named ZX-Poly machine configuration: four synchronized instances of
+    /// one base model. Every surface that creates a machine by model name
+    /// accepts these names (EmulatorManager resolves them), and the model
+    /// listings show them
+    struct Configuration
+    {
+        const char* name;       ///< ZXPOLY-48K, ZXPOLY-128K, ZXPOLY-PENTAGON
+        const char* title;      ///< menu and listing text
+        const char* baseModel;  ///< the model of every module
+    };
+    static const std::vector<Configuration>& Configurations();
+
+    /// The configuration called `name` (case-insensitive), nullptr otherwise
+    static const Configuration* FindConfiguration(const std::string& name);
+
+    /// Creates the four instances of `model`: a configuration name or any
+    /// creatable model name. Slave audio is muted; host key input is gated
+    /// on every member
     bool Create(const std::string& model, std::string* error = nullptr);
 
     /// Removes the instances from the emulator manager
@@ -75,12 +91,13 @@ public:
     EmulatorContext* GetContext(size_t module) const;
 
     /// Loads a .zxp: module i into instance i, then applies #3D00 (video
-    /// mode). The group is locked afterwards
+    /// mode). The group is locked afterwards. Needs a 128K-class model
     bool LoadZXP(const std::string& path, std::string* error = nullptr);
 
     /// Loads a ZX-Poly ROM image (.prom: up to four 16K parts, module i gets
     /// part i mod N as its only ROM) and powers the machine on: every CPU at
-    /// #0000, #3D00 = 0 - the slaves wait until the ROM releases them
+    /// #0000, #3D00 = 0 - the slaves wait until the ROM releases them. Needs
+    /// a 128K-class model
     bool LoadPROM(const std::string& path, std::string* error = nullptr);
 
     /// Mounts a disk image in drive A of every member and boots it on the
@@ -215,6 +232,9 @@ public:
     void OnPortInResult(size_t module, uint16_t port, uint8_t& value, bool fromFloatingBus);
 
 private:
+    /// False (with the reason) on a 48K base: ZX-Poly editions page through #7FFD
+    bool HasPaging128(std::string* error) const;
+
     std::string _prefix;
     std::array<std::shared_ptr<Emulator>, MODULES> _instances{};
     std::array<std::unique_ptr<ZXPolyPortInterceptor>, MODULES> _interceptors{};

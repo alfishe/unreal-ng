@@ -39,7 +39,8 @@
     paths["/api/v1/emulator/status"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
          ["models_creatable"]["items"]["type"] = "string";
     paths["/api/v1/emulator/status"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
-         ["models_creatable"]["description"] = "Model short names a create request can succeed with";
+         ["models_creatable"]["description"] =
+        "Model short names a create request can succeed with, ZX-Poly configuration names included";
 
     // GET /api/v1/emulator/models
     paths["/api/v1/emulator/models"]["get"]["summary"] = "Get available emulator models";
@@ -73,6 +74,15 @@
     paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
          ["models"]["items"]["properties"]["creatable"]["description"] =
         "Whether a create request for this model is expected to succeed on this build";
+    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["models"]["items"]["properties"]["zxpoly"]["type"] = "boolean";
+    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["models"]["items"]["properties"]["zxpoly"]["description"] =
+        "Present on ZX-Poly configurations (ZXPOLY-48K, ZXPOLY-128K, ZXPOLY-PENTAGON): creating one by name "
+        "starts four synchronized instances of base_model and returns the master. They carry no id and no "
+        "available_ram_sizes_kb (the RAM size is fixed)";
+    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["models"]["items"]["properties"]["base_model"]["type"] = "string";
 
     // GET /api/v1/emulator/{id}
     paths["/api/v1/emulator/{id}"]["get"]["summary"] = "Get emulator details";
@@ -106,12 +116,17 @@
     paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
          ["model"]["type"] = "string";
     paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["model"]["description"] =
+        "Model short name (see /api/v1/emulator/models). A ZX-Poly configuration name (ZXPOLY-48K, ZXPOLY-128K, "
+        "ZXPOLY-PENTAGON) starts the bare ZX-Poly machine; combine it with `zxpoly` to load a file";
+    paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
          ["ram_size"]["type"] = "integer";
     {
         Json::Value& zxpoly = paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]
                                    ["schema"]["properties"]["zxpoly"];
         zxpoly["description"] =
-            "Start a ZX-Poly machine: four synchronized instances of `model` (default PENTAGON). true for the bare "
+            "Start a ZX-Poly machine: four synchronized instances of `model` (a base model or a ZX-Poly "
+            "configuration name; default PENTAGON). true for the bare "
             "machine, or {\"file\": path} with a .zxp snapshot, a .prom ZX-Poly ROM image (the Test ROM) or a "
             "multiloader disk (.trd/.scl, needs a model with TR-DOS). The returned id is the master - the machine "
             "every endpoint addresses; the three slaves are hidden members. The response carries the group status "

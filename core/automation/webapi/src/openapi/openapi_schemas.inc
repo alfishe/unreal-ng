@@ -49,7 +49,9 @@
     schemas["CreateEmulatorRequest"]["type"] = "object";
     schemas["CreateEmulatorRequest"]["properties"]["model"]["type"] = "string";
     schemas["CreateEmulatorRequest"]["properties"]["model"]["description"] =
-        "Model short name; a model that cannot be created on this build fails with 400 (no fallback)";
+        "Model short name; a model that cannot be created on this build fails with 400 (no fallback). A ZX-Poly "
+        "configuration name (ZXPOLY-48K, ZXPOLY-128K, ZXPOLY-PENTAGON) creates the four-instance machine and "
+        "returns its master";
 
     // Settings Management schemas
     schemas["SettingsResponse"]["type"] = "object";

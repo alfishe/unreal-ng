@@ -64,10 +64,12 @@ The Lua bindings operate on the existing emulator instance (`get_emulator()`); t
 **ZX-Poly** (four synchronized instances of one model, through the same
 `EmulatorManager::CreateZXPolyMachine` every surface uses):
 ```lua
-local id, err = zxpoly_start("PENTAGON", "/path/to/Alien8.zxp")  -- model and file optional; id = the master
+local id, err = zxpoly_start("ZXPOLY-PENTAGON", "/path/to/Alien8.zxp")  -- model and file optional; id = the master
 local status = zxpoly_status(id)   -- nil if not a ZX-Poly machine
 print(status.locked, status.video_mode, status.diverged, status.modules[2].registers[1])
 ```
+The model is a configuration name (`ZXPOLY-48K`, `ZXPOLY-128K`,
+`ZXPOLY-PENTAGON`) or a base model such as `PENTAGON`.
 
 ### Running Scripts
 

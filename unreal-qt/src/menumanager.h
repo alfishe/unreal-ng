@@ -137,6 +137,7 @@ signals:
 
     // Machine signals
     void machineModelChangeRequested(const QString& modelShortName);
+    void zxpolyConfigurationRequested(const QString& configurationName);  // Machine -> ZXPoly-48k / 128k / Pentagon
     void tapeTrapsToggled(bool enabled);
     void turboTapeToggled(bool enabled);
     void mniRequested();  // Machine -> MNI: NMI + service monitor (plain NMI on other models)
@@ -246,6 +247,7 @@ private:
     // Machine Menu Actions
     QActionGroup* _machineModelGroup;
     std::vector<QAction*> _machineModelActions;
+    std::vector<QAction*> _zxpolyConfigurationActions;  // data: the configuration name (ZXPolyGroup::Configurations)
     QString _currentModelShortName;
     QAction* _tapeTrapsAction;
     QAction* _mniAction;

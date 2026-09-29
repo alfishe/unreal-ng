@@ -89,10 +89,12 @@ Environment switches for the tests:
 ## 4. Live in unreal-qt
 
 - **Opening a ZX-Poly machine:**
-  - File → **Open ZX-Poly…** (`.zxp`, `.trd`, `.scl`), then pick the model
-    (PENTAGON or 128k);
+  - **Machine** → **ZXPoly-48k / ZXPoly-128k / ZXPoly-Pentagon**: the bare
+    machine of that configuration (the menu shows which one is running);
+  - File → **Open ZX-Poly…** (`.zxp`, `.trd`, `.scl`), then pick the
+    configuration (the 128K-class ones: an edition needs 128K paging);
   - drag and drop a `.zxp` onto the window;
-  - from the command line: `unreal-qt [--zxpoly-model <model>] <file>`.
+  - from the command line: `unreal-qt [--zxpoly-model <configuration>] <file>`.
     A `.trd` with `--zxpoly-model` boots as a ZX-Poly disk.
 - **How it runs:** the master is an ordinary instance adopted by the window,
   with its own loop, pacing, sound, debugger and recording. The group hooks
@@ -144,7 +146,30 @@ Infrastructure:
   multiloader disk is refused with a message (`DiskBootNeedsAModelWithTRDOS`).
   ZX-Poly TRDs run on Pentagon, zxpoly's own default.
 
-## 6. Group time travel
+## 6. Configurations
+
+`ZXPolyGroup::Configurations()` is the one table of named configurations:
+`ZXPOLY-48K`, `ZXPOLY-128K` and `ZXPOLY-PENTAGON`, each four instances of one
+base model.
+
+- **Creating one:** `EmulatorManager::CreateEmulatorWithModel` resolves a
+  configuration name before anything else and creates the whole group. Every
+  surface creates machines through that call, so all of them take the names:
+  WebAPI and MCP `model`, the CLI `create`/`start`, Lua/Python
+  `zxpoly_start`, the Qt menu.
+- **Listing:** the model listings (WebAPI `/models` and `/status`, MCP
+  `list_models`, CLI `models`) show the configurations.
+- **RAM:** a configuration fixes the RAM size, so a request with `ram_size`
+  is refused.
+- **48K:** a 48K group runs the synchronized quad and replicated 48K
+  software. ZX-Poly editions page through `#7FFD`: the Test ROM reports
+  "Check ZX-128 ... BAD", and a `.zxp` diverges. So `.zxp` and `.prom` are
+  refused on 48K with the reason. There is no TR-DOS either.
+
+Tests: `ConfigurationsCreateTheGroupByName`,
+`FortyEightKGroupRunsReplicatedSoftwareButRefusesEditions`.
+
+## 7. Group time travel
 
 The four TTD sessions run as one timeline (QI §8):
 
@@ -179,7 +204,7 @@ Surfaces: WebAPI (`start` with `zxpoly`, `GET /{id}/zxpoly`), MCP
 timeline is a core API for now. The per-instance TTD tools see each module
 alone.
 
-## 7. Not done yet
+## 8. Not done yet
 
 - **Pipelined frame scheduling:** once locked, the three slaves catch up in
   parallel at every frame end (on by default, `SetParallelSlaves`). The

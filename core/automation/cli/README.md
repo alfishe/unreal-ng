@@ -22,7 +22,7 @@ nc localhost 8765
 | `select <uuid>` | Set active instance |
 | `status` | Show all instances status |
 | `models` | List supported models |
-| `zxpoly start <model> [file]` | Start a ZX-Poly machine: four synchronized instances (`file`: `.zxp`, `.prom` or multiloader disk) |
+| `zxpoly start <model> [file]` | Start a ZX-Poly machine: four synchronized instances (`model`: `ZXPOLY-48K`, `ZXPOLY-128K`, `ZXPOLY-PENTAGON` or a base model; `file`: `.zxp`, `.prom` or multiloader disk) |
 | `zxpoly status [id]` | ZX-Poly group status: modules, R0-R3, `#3D00`, lock, video mode, lockstep check |
 
 ### Execution Control

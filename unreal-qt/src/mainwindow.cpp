@@ -288,6 +288,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::overscanModeToggled, this, &MainWindow::handleOverscanModeToggled);
     connect(_menuManager, &MenuManager::viewportChanged, this, &MainWindow::handleViewportChanged);
     connect(_menuManager, &MenuManager::machineModelChangeRequested, this, &MainWindow::handleMachineModelChangeRequested);
+    connect(_menuManager, &MenuManager::zxpolyConfigurationRequested, this,
+            &MainWindow::handleZXPolyConfigurationRequested);
 #ifdef ENABLE_RECORDING
     connect(_menuManager, &MenuManager::videoRecordingRequested, this, &MainWindow::handleVideoRecordingRequested);
     connect(_menuManager, &MenuManager::quickRecordRequested, this, &MainWindow::handleQuickRecord);
@@ -1964,16 +1966,27 @@ bool MainWindow::attachScreenToZXPolyDisplay()
 
 void MainWindow::startZXPoly(const QString& filePath, const QString& requestedModel)
 {
-    // Every module of the four is the same stock model
+    // Every module of the four is the same stock model: pick a configuration.
+    // An edition (.zxp, .prom, multiloader disk) needs a 128K-class one
     QString model = requestedModel;
     if (model.isEmpty())
     {
-        const QStringList models = {QStringLiteral("PENTAGON"), QStringLiteral("128k")};
+        QStringList titles;
+        QStringList names;
+        for (const ZXPolyGroup::Configuration& configuration : ZXPolyGroup::Configurations())
+        {
+            if (!filePath.isEmpty() && std::string(configuration.baseModel) == "48K")
+                continue;
+            titles << QString::fromUtf8(configuration.title);
+            names << QString::fromUtf8(configuration.name);
+        }
+        const int pentagon = static_cast<int>(names.indexOf(QStringLiteral("ZXPOLY-PENTAGON")));
         bool accepted = false;
-        model = QInputDialog::getItem(this, tr("ZX-Poly"), tr("Machine model of the four CPU modules:"), models, 0,
-                                      false, &accepted);
+        const QString title = QInputDialog::getItem(this, tr("ZX-Poly"), tr("Machine configuration:"), titles,
+                                                    pentagon >= 0 ? pentagon : 0, false, &accepted);
         if (!accepted)
             return;
+        model = names.value(titles.indexOf(title));
     }
 
     QApplication::processEvents();
@@ -1997,8 +2010,12 @@ void MainWindow::startZXPoly(const QString& filePath, const QString& requestedMo
     if (!master)
     {
         _switchingModel = false;
+        const QString reason = QString::fromStdString(error);
         QMessageBox::critical(this, tr("ZX-Poly"),
-                              tr("Cannot start ZX-Poly from %1:\n%2").arg(filePath, QString::fromStdString(error)));
+                              filePath.isEmpty() ? tr("Cannot start ZX-Poly %1:\n%2").arg(model, reason)
+                                                 : tr("Cannot start ZX-Poly from %1:\n%2").arg(filePath, reason));
+        if (_menuManager)
+            _menuManager->updateMachineModelSelection(_emulator);
         return;
     }
 
@@ -2006,10 +2023,34 @@ void MainWindow::startZXPoly(const QString& filePath, const QString& requestedMo
     attachScreenToZXPolyDisplay();
     master->StartAsync();
 
-    _lastDirectory = QFileInfo(filePath).absolutePath();
+    if (!filePath.isEmpty())
+        _lastDirectory = QFileInfo(filePath).absolutePath();
     _switchingModel = false;
 
     qInfo() << "MainWindow::startZXPoly() - ZX-Poly running from" << filePath << "on" << model;
+}
+
+void MainWindow::handleZXPolyConfigurationRequested(const QString& configurationName)
+{
+    const ZXPolyGroup::Configuration* configuration = ZXPolyGroup::FindConfiguration(configurationName.toStdString());
+    if (configuration == nullptr)
+        return;
+
+    const QString title = QString::fromUtf8(configuration->title);
+    const QMessageBox::StandardButton reply = QMessageBox::question(
+        this, tr("Switch Machine Model"),
+        tr("Switch to %1?\n\nThis will stop and destroy the current emulator instance.\nAny unsaved state will be lost.")
+            .arg(title),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (reply != QMessageBox::Yes)
+    {
+        if (_menuManager)
+            _menuManager->updateMachineModelSelection(_emulator);
+        return;
+    }
+
+    // The bare machine: the master runs its ROM, the slaves wait
+    startZXPoly(QString(), configurationName);
 }
 
 void MainWindow::openTapeDialog()

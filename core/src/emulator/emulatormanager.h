@@ -119,7 +119,9 @@ public:
 
     /// @brief Create a new emulator instance with a specific model configuration
     /// @param symbolicId Optional symbolic identifier for the emulator
-    /// @param modelName Name of the model to create (e.g., "PENTAGON", "48K", "128K")
+    /// @param modelName Name of the model to create (e.g., "PENTAGON", "48K", "128K"), or a ZX-Poly
+    ///        configuration (ZXPolyGroup::Configurations: "ZXPOLY-128K"...) - that creates the whole
+    ///        group and returns its master (CreateZXPolyMachine without media)
     /// @param level Logging level for the emulator (note: automation-created instances automatically disable all modular logging)
     /// @param outError Optional; when non-null it receives a human-readable failure reason
     ///        (unknown model, model not supported by this build, init failure) on nullptr return
@@ -159,7 +161,8 @@ public:
     static MachineIdentity GetMachineIdentity(Emulator& emulator);
 
     /// Create a ZX-Poly machine: four instances of one model, synchronized
-    /// (ZXPolyGroup). mediaPath: a .zxp snapshot, a .prom ROM image or a
+    /// (ZXPolyGroup). modelName: a configuration name (ZXPOLY-48K,
+    /// ZXPOLY-128K, ZXPOLY-PENTAGON) or any creatable model. mediaPath: a .zxp snapshot, a .prom ROM image or a
     /// multiloader disk (empty: the bare machine). Returns the master - the
     /// instance every surface addresses; the slaves are hidden members.
     /// The machine is created, not started. Removing the master removes the
