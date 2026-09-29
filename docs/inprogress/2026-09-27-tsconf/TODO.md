@@ -50,8 +50,9 @@ Scope confirmed with the user on 2026-09-27, and how the design honors it:
 ## Remaining
 
 - Implementation phases 0-8 per [implementation-plan.md](implementation-plan.md).
-- Prerequisites: PLAN #60 (interrupt source + write intercept, linear turbo
-  ratio, per-family `Screen` subclass, shared CMOS, wait-state hook) before
+- Prerequisites: PLAN #60 (interrupt source + write intercept, per-family
+  `Screen` subclass, shared CMOS, wait-state hook; the linear turbo ratio is
+  postponed - only the Sprinter needs it, TSConf uses `hw_turbo_shift`) before
   phase 0 per PLAN rationale 6; the unified media manager (#58, M1/M2/M4 on master)
   for the SD part of phase 6: TSConf only registers its `sd.zc` slot
   ([integration-tsconf-sd.md](../2026-09-28-storage-manager/integration-tsconf-sd.md)); control
