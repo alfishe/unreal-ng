@@ -287,7 +287,7 @@ settings. Exit = technical-design §3.19 checklist.
 
 | ID | Asserts |
 |:--|:--|
-| TIM-1 | 14 MHz cache-miss waits per `zmem.v:153-172` tables (M1 +3..+6 fclk, read +2..+5) — measured with a timing loop vs. the table |
+| TIM-1 | 14 MHz cache-miss waits per `zmem.v:153-172` tables (M1 +3..+6 fclk, read +2..+5) — measured with a timing loop vs. the table. Built on the shared `MemoryWaitOverlay` (PLAN #60(d)): `ExtraClocks(kind, addr, startClock)` asks `TsConfMemory`'s cache whether the access misses; installed only while `zclk` = 14 MHz and a bank is uncached |
 | TIM-2 | 14 MHz external I/O (AY, VG93) stall = 8 fclk per access |
 | TIM-3 | DMA per-word costs per hs §6.2 (copy 2, BLT 3, fill 1, CRAM/SFILE ~2, SPI ~8 slots) replacing ancestor units; DMA-12 re-baselined deliberately |
 | TIM-4 | CPU stall at full video bandwidth (8/8 block) at 3.5/7 MHz |

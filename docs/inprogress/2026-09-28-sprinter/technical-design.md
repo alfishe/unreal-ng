@@ -33,7 +33,7 @@ loader, WD1793 rate check, port-trace internal codes) form PLAN row #60, done be
 | **Interrupt source** `IInterruptSource` + `OnReti()`; engine step hook `IMachineStepHook` | **built** (PLAN #60(a) + TSConf INF-5, 2026-09-29; `Z80::interruptSource`, `Z80::machineStepHook`) | INT position from the mode table; keyboard and Covox-Blaster interrupts (all vector `#FF`); RETI for the Z84C15 daisy chain and the accelerator re-arm | TSConf technical design §3.4, §3.8 |
 | **Memory subclass** selected in the `Core` factory | pattern exists (`ScorpionMemory`, `core/src/emulator/memory/memory.h:313`) | `SprinterMemory`: bank computation, graphics-page reads | TSConf `TsConfMemory` §3.5 |
 | **Clock ratio** (new) | decided (review round 1); PLAN #60(b), **postponed to the Sprinter program** (2026-09-28): no other machine needs it | 21 MHz = 6 × 3.5 MHz | §3 below |
-| **Wait-state hook** (new) | decided (review round 1); PLAN #60 | turbo memory and port waits | §4 below |
+| **Wait-state hook** | **built** (PLAN #60(d), 2026-09-29): `MemoryWaitOverlay` (`core/src/emulator/memory/memorywaitoverlay.h`) - per-slot flags + `ExtraClocks(kind, addr, startClock)`, a host bus overlay so machines without waits pay nothing; port waits: the decoder calls `Z80::AddWaitStates` | turbo memory and port waits | §4 below |
 | **CMOS core** `Ds12887` (new) | decided (review round 1); PLAN #60, with the migrations of the existing clocks | Sprinter CMOS | [tdd-storage.md](tdd-storage.md) §4 |
 
 ## 3. Clock ratio (new, shared)
@@ -80,6 +80,14 @@ number cannot hold it. Decision (review round 1): the per-bank byte is only a fl
 waits", computed when banks change. When the flag is set, the cost comes from one function,
 `SprinterWaits::ExtraClocks(kind, t)`. Machines without turbo never set the flag and pay nothing
 per access.
+
+> **Built as `MemoryWaitOverlay` (PLAN #60(d), 2026-09-29):** the per-slot
+> flag is `SetSlotWaits`, the function is the overlay's `ExtraClocks(kind,
+> addr, startClock)`; `startClock` = `Z80::AccessStartClock()`, the CPU clock
+> the access started at (at the current rate), which is the `t` of the rule
+> below. The wait lands after the byte transfer (the overlay runs after the
+> normal access); the instruction length and the phase are exact. Port waits:
+> `PortDecoder_Sprinter` adds them with `Z80::AddWaitStates`.
 
 v1 rule (MAME, `sprinter.cpp:1720-1731`): in turbo, a RAM access costs
 `((6 − (t mod 6)) mod 6) + 6 − 3` extra CPU clocks (21 MHz clocks, `t` = the CPU clock count); a

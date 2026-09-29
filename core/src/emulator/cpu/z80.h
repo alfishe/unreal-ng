@@ -490,6 +490,11 @@ public:
     /// T-state at which the memory access in progress started: rd / wd have already charged its 3 T
     inline uint32_t AccessStartT() const { return (tt - 3u * rate) >> 8; }
 
+    /// The same moment in CPU clocks at the current clock rate (turbo counts
+    /// each of its faster clocks): what a phase-dependent wait rule needs
+    /// (MemoryWaitOverlay::ExtraClocks)
+    inline uint32_t AccessStartClock() const { return rate ? tt / rate - 3u : 0; }
+
     /// Internal (no-MREQ) cycles: `cycles` T-states with `addr` on the address bus (HL, PC, SP, IR... per
     /// instruction). The Ferranti ULA (48K / 128K / +2) contends each of them like the start of a memory
     /// cycle when `addr` is in a contended slot; the +2A/+3 gate array contends MREQ cycles only. Without

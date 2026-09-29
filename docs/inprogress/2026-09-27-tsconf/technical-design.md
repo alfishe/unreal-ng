@@ -626,15 +626,21 @@ converts the finished line buffers + graphics into framebuffer pixels.
 
 ## 3.9 Video
 
-> **2026-09-28, PLAN #60(e):** the renderer is chosen as a `Screen` subclass
-> per model family instead; build `ScreenTsConf` on that mechanism once #60(e)
-> lands. The helper route below is the fallback if #60(e) slips.
+> **Built (PLAN #60(e), branch `tsconf-infra-2`, 2026-09-29)** — shared code:
+>
+> | Where | Change | Why |
+> |:--|:--|:--|
+> | `video/videocontroller.{h,cpp}` | `GetScreenForMode(mode)` → `CreateScreen(model)`: the renderer is a `Screen` subclass chosen by model family (`MM_TSL` → `ScreenTSConf`, every other model → `ScreenZX`); every screen starts in `M_ZX48` | a family whose video is not "a ZX screen with extra modes" (TS-Conf, the Sprinter) owns its renderer instead of adding branches to `ScreenZX` |
+> | `cpu/core.cpp` | builds the screen with `CreateScreen(config.mem_model)` | the one creation point |
+> | `video/tsconf/screentsconf.{h,cpp}` | `ScreenTSConf : ScreenZX` (constructor only); the never-instantiated skeleton that read the shared `state.ts` is deleted | the selection path is live; phase 3 adds the TS modes here |
+>
+> Tests: `core/tests/emulator/video/videocontroller_test.cpp`.
 
-- **Selection**: `ScreenZX` owns helper renderers allocated lazily
-  (`ScreenAtm/ScreenProfi/ScreenAlco`, `video/zx/screenzx.cpp:749-768`). Add
-  `ScreenTsConf` the same way (`video/tsconf/screentsconf.{h,cpp}` — the
-  existing skeleton is refactored into this helper; it no longer derives from
-  `Screen`) and a `DrawRangeTsConf` selected in `ScreenZX::SetVideoMode`.
+- **Selection**: `VideoController::CreateScreen` builds `ScreenTSConf` for
+  `MM_TSL`. It derives from `ScreenZX`, so TS-Conf's ZX mode is the ZX
+  renderer unchanged; phase 3 overrides the mode switch (`SetVideoMode` /
+  the range renderer) for 16C, 256C, TXT and the TSU layers. (The v1.0 fallback
+  - a `ScreenZX` helper like `ScreenAtm` - is dropped.)
   `Screen::DetectVideoMode` (`screen.cpp:235-265`) gets an `MM_TSL` case that
   asks the TSConf state accessor (not `state.ts`) for the mode.
 - **Geometry**: one descriptor for all TS modes: visible 360×288 dots (dots
@@ -724,8 +730,8 @@ cache-miss waits.
     TSConf decoder only (other IDE boards use the Z80's own strobes and have
     no stall). With 1, every real IDE bus cycle from the CPU (CS0/CS1 ports;
     not #11, not a #10 served from the latch) adds 1 / 2 / 3 T at 3.5 / 7 /
-    14 MHz through `Z80::AddWaitStates` (or the #60(d) wait-state hook once
-    it exists). `IdeAdapter::In/Out` report whether the access reached the
+    14 MHz through `Z80::AddWaitStates` (port waits need no shared hook:
+    PLAN #60(d), `memorywaitoverlay.h`). `IdeAdapter::In/Out` report whether the access reached the
     drive (a flag in the adapter, read by the decoder), so the rule lives in
     one place. The stall is a pure function of the access, so it needs no
     TTD state.
@@ -901,7 +907,9 @@ corrections:
   source (§3.4), memory write intercept + `TsConfMemory` (§3.5),
   instruction-start hook (§3.6), ungated per-step engine hook (§3.8).
 - Video: `ScreenTsConf` becomes a `ScreenZX` helper (not a
-  `GetScreenForMode` case); one 720×288 descriptor (not 720×576);
+  `GetScreenForMode` case) - superseded 2026-09-29 by PLAN #60(e): a
+  `ScreenTSConf : ScreenZX` subclass picked by `VideoController::CreateScreen`
+  (§3.9); one 720×288 descriptor (not 720×576);
   placeholder descriptor rows/stub callbacks already exist.
 - Turbo via `hw_turbo_shift` + `ApplyHardwareTurboNow` (immediate), not the
   host speed queue.

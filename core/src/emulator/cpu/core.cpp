@@ -383,9 +383,8 @@ bool Core::Init()
     {
         result = false;
 
-        // Create Video controller
-        VideoModeEnum mode = M_ZX48;  // Make ZX the default video mode on start
-        _screen = VideoController::GetScreenForMode(mode, _context);
+        // The renderer of the model's family (VideoController::CreateScreen), in M_ZX48 at start
+        _screen = VideoController::CreateScreen(_config->mem_model, _context);
         if (_screen)
         {
             _context->pScreen = _screen;

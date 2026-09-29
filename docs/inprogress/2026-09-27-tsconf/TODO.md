@@ -65,12 +65,18 @@ Scope confirmed with the user on 2026-09-27, and how the design honors it:
   plus INF-5 (`IMachineStepHook`, ungated per-step engine hook) - branch
   `tsconf-infra` (2026-09-29); technical-design §3.4, §3.5 item 2, §3.8
 
+- [x] Prerequisite: PLAN #60(d) memory wait states (`MemoryWaitOverlay`, for
+  phase 8's 14 MHz cache-miss waits; port waits stay in the decoder) and
+  #60(e) the `Screen` subclass per model family (`VideoController::CreateScreen`
+  builds `ScreenTSConf : ScreenZX` for `MM_TSL`) - branch `tsconf-infra-2`
+  (2026-09-29); technical-design §3.9
+
 ## Remaining
 
 - Implementation phases 0-8 per [implementation-plan.md](implementation-plan.md).
-- Prerequisites: PLAN #60 (per-family `Screen` subclass, wait-state hook; the linear turbo ratio is
-  postponed - only the Sprinter needs it, TSConf uses `hw_turbo_shift`) before
-  phase 0 per PLAN rationale 6; the unified media manager (#58, M1/M2/M4 on master)
+- Prerequisites: PLAN #60 (built except (f), the raw PC floppy loader, which
+  TSConf does not need; the linear turbo ratio (b) is postponed - only the
+  Sprinter needs it, TSConf uses `hw_turbo_shift`); the unified media manager (#58, M1/M2/M4 on master)
   for the SD part of phase 6: TSConf only registers its `sd.zc` slot
   ([integration-tsconf-sd.md](../2026-09-28-storage-manager/integration-tsconf-sd.md)); control
   from the GUI and every automation surface comes from the media verbs
