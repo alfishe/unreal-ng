@@ -58,8 +58,6 @@ Screen::Screen(EmulatorContext* context)
     _vid.flash = 0;
     _vid.line = 0;
     _vid.line_pos = 0;
-    _vid.ts_pos = 0;
-    _vid.memcyc_lcmd = 0;
 
     // Initialize the 256-entry programmable palette with ZX 16-color defaults.
     // Framebuffer format is RGBA8888 (LE uint32 = 0xAABBGGRR) - values MUST be
@@ -68,7 +66,6 @@ Screen::Screen(EmulatorContext* context)
     // ATM extended modes render through the programmable palette held in
     // EmulatorState.atmPalette (port #FF writes; defaults equal this ZX table,
     // see InitAtmPalette), so they stay reprogrammable exactly like hardware.
-    // clut remains the 256-entry hook for the TS-class ULP palette ports.
     static const uint32_t defaultPalette[16] = {
         0xFF000000,  // 0: Black
         0xFFC72200,  // 1: Blue
@@ -92,9 +89,6 @@ Screen::Screen(EmulatorContext* context)
 
     // Initialize memory counters
     InitMemoryCounters();
-
-    // Initialize TS line buffers
-    memset(_vid.tsline, 0, sizeof(_vid.tsline));
 
     // Initialize remaining members
     _borderColor = 0;
@@ -143,11 +137,10 @@ void Screen::InitFrame()
     _vid.t_next = 0;
     _vid.vptr = 0;
     _vid.yctr = 0;
-    _vid.ygctr = _state->ts.g_yoffs - 1;
+    _vid.ygctr = UINT32_MAX;  // one before line 0: the graphics line counter advances first
     _vid.line = 0;      // Reset current render line
     _vid.line_pos = 0;  // Reset current render line position
 
-    _state->ts.g_yoffs_updated = 0;
     _vid.flash = _state->frame_counter & 0x10;  // Flash attribute changes each 16 frames
 
     InitRaster();
@@ -325,8 +318,8 @@ Screen::ModeSelection Screen::DetectModePentagon(const EmulatorState& state) con
 // timing. The ATM ULA preset is 69888 T/frame @ 224 T/line (reference
 // unreal.ini PRESET.ATM1_2_3.5MHz), matching ApplyModelTimingDefaults;
 // M_ZX128's authentic 70908/228 timing would exceed the ATM config frame and
-// trip the SetVideoMode sanity check. Screen bank selection is mode-agnostic
-// (state.ts.vpage), so the 128K shadow screen still works.
+// trip the SetVideoMode sanity check. Screen bank selection is mode-agnostic,
+// so the 128K shadow screen still works.
 
 // ATM 1 (ATM-TURBO v4.50): extended modes via aFE bits 5-6
 Screen::ModeSelection Screen::DetectModeATM1(const EmulatorState& state) const
@@ -448,16 +441,6 @@ Screen::ModeSelection Screen::DetectModeLegacy(const EmulatorState& /*state*/) c
 
 void Screen::InitMemoryCounters()
 {
-    // Initialize all memory cycle counters to zero
-    for (int i = 0; i < 320; i++)
-    {
-        _vid.memvidcyc[i] = 0;
-        _vid.memcpucyc[i] = 0;
-        _vid.memtsscyc[i] = 0;
-        _vid.memtstcyc[i] = 0;
-        _vid.memdmacyc[i] = 0;
-    }
-
     // Reset video memory changed flag if state is available
     if (_state)
     {
@@ -1375,27 +1358,6 @@ std::string Screen::GetVideoModeName(VideoModeEnum mode)
     return result;
 }
 
-void Screen::DrawScreenBorder(uint32_t n)
-{
-    [[maybe_unused]] Z80& cpu = *_cpu;
-    EmulatorState& state = _context->emulatorState;
-    [[maybe_unused]] CONFIG& config = _context->config;
-    VideoControl& video = _context->pScreen->_vid;
-
-    video.t_next += n;
-    uint32_t vptr = video.vptr;
-
-    for (; n > 0; n--)
-    {
-        uint32_t pixelColorRGBA = video.clut[state.ts.border];
-        vbuf[video.buf][vptr] = vbuf[video.buf][vptr + 1] = vbuf[video.buf][vptr + 2] = vbuf[video.buf][vptr + 3] =
-            pixelColorRGBA;
-        vptr += 4;
-    }
-
-    video.vptr = vptr;
-}
-
 /// Replay ULA render for the whole period since last call (same as prev. CPU command complete)
 /// \param fromTstate
 /// \param toTstate
@@ -1518,101 +1480,6 @@ void Screen::DrawNull(uint32_t n)
 }
 
 // Genuine Sinclair ZX Spectrum
-void Screen::DrawZX(uint32_t n)
-{
-    static uint32_t palette[2][8] = {{
-                                         // Brightness OFF
-                                         0x00000000,  // Black
-                                         0x000022C7,  // Blue
-                                         0x00D62816,  // Red
-                                         0x00D433C7,  // Magenta
-                                         0x0000C525,  // Green,
-                                         0x0000C7C9,  // Cyan
-                                         0x00CCC82A,  // Yellow
-                                         0x00CACACA   // White
-                                     },
-                                     {
-                                         // Brightness ON
-                                         0x00000000,  // Black
-                                         0x00002BFB,  // Blue
-                                         0x00FF331C,  // Red
-                                         0x00FF40FC,  // Magenta
-                                         0x0000F92F,  // Green
-                                         0x0000FBFE,  // Cyan
-                                         0x00FFFC36,  // Yellow
-                                         0x00FFFFFF   // White
-                                     }};
-
-    EmulatorState& state = _context->emulatorState;
-    CONFIG& config = _context->config;
-    VideoControl& video = _vid;
-
-    if (n > sizeof vbuf[0])
-    {
-        MLOGERROR("Standard ZX-Spectrum cannot have more than %d video lines", sizeof vbuf[0]);
-        return;
-    }
-
-    uint32_t g =
-        ((video.ygctr & 0x07) << 8) + ((video.ygctr & 0x38) << 2) + ((video.ygctr & 0xC0) << 5) + (video.xctr & 0x1F);
-    uint32_t a = ((video.ygctr & 0xF8) << 2) + (video.xctr & 0x1F) + 0x1800;
-    uint8_t* zx_screen_mem = _system->GetMemory()->RAMPageAddress(state.ts.vpage);
-    uint32_t vptr = video.vptr;
-    uint16_t vcyc = video.memvidcyc[video.line];
-    uint8_t upmod = config.ulaplus;
-    [[maybe_unused]] uint8_t tsgpal = state.ts.gpal << 4;
-
-    for (int i = n; i > 0; i -= 4, video.t_next += 4, video.xctr++, g++, a++)
-    {
-        uint32_t color_paper, color_ink;
-        uint8_t pixel =
-            zx_screen_mem[g];  // Line of 8 pixels from ZX-Spectrum screen memory (Encoded as bits in single byte)
-        uint8_t attrib = zx_screen_mem[a];  // Color attributes for the whole 8x8 character block
-
-        vcyc++;
-        video.memcyc_lcmd++;
-
-        if ((upmod != UPLS_NONE) && state.ulaplus_mode)
-        {
-            // Decode color information as ULA+
-            uint32_t psel = (attrib & 0xC0) >> 2;
-            uint32_t ink = state.ulaplus_cram[psel + (attrib & 7)];
-            uint32_t paper = state.ulaplus_cram[psel + ((attrib >> 3) & 7) + 8];
-
-            color_paper = cr[(paper & 0x1C) >> 2] | cg[(paper & 0xE0) >> 5] | cb[upmod][paper & 0x03];
-            color_ink = cr[(ink & 0x1C) >> 2] | cg[(ink & 0xE0) >> 5] | cb[upmod][ink & 0x03];
-        }
-        else
-        {
-            // Decode color information as standard ULA
-            // Bit 7 - Flash, Bit 6 - Brightness, Bits 5-3 - Paper color, Bits 2-0 - Ink color
-            if ((attrib & 0x80) && (state.frame_counter & 0x10))  // Flash attribute for the 8x8 block
-                pixel ^= 0xFF;                                    // Invert every N frames
-
-            uint8_t brightness = (attrib & 0x40) >> 3;  // BRIGHTNESS attribute
-            uint8_t paper = (attrib >> 3) & 0x07;       // Color for 'PAPER'
-            uint8_t ink = attrib & 0x07;                // Color for 'INK'
-
-            color_paper = palette[brightness][paper];  // Resolve PAPER color to RGB
-            color_ink = palette[brightness][ink];      // Resolve INK color to RGB
-        }
-
-        // Write RGBA 1x8 (scaled to 2x16) line to framebuffer
-        vbuf[video.buf][vptr] = vbuf[video.buf][vptr + 1] = ((pixel << 1) & 0x100) ? color_ink : color_paper;
-        vbuf[video.buf][vptr + 2] = vbuf[video.buf][vptr + 3] = ((pixel << 2) & 0x100) ? color_ink : color_paper;
-        vbuf[video.buf][vptr + 4] = vbuf[video.buf][vptr + 5] = ((pixel << 3) & 0x100) ? color_ink : color_paper;
-        vbuf[video.buf][vptr + 6] = vbuf[video.buf][vptr + 7] = ((pixel << 4) & 0x100) ? color_ink : color_paper;
-        vbuf[video.buf][vptr + 8] = vbuf[video.buf][vptr + 9] = ((pixel << 5) & 0x100) ? color_ink : color_paper;
-        vbuf[video.buf][vptr + 10] = vbuf[video.buf][vptr + 11] = ((pixel << 6) & 0x100) ? color_ink : color_paper;
-        vbuf[video.buf][vptr + 12] = vbuf[video.buf][vptr + 13] = ((pixel << 7) & 0x100) ? color_ink : color_paper;
-        vbuf[video.buf][vptr + 14] = vbuf[video.buf][vptr + 15] = ((pixel << 8) & 0x100) ? color_ink : color_paper;
-        vptr += 16;
-    }
-
-    video.vptr = vptr;
-    video.memvidcyc[video.line] = vcyc;
-}
-
 void Screen::DrawPMC(uint32_t n)
 {
     (void)n;
@@ -1634,21 +1501,6 @@ void Screen::DrawPHR(uint32_t n)
 }
 
 void Screen::DrawTimex(uint32_t n)
-{
-    (void)n;
-}
-
-void Screen::DrawTS16(uint32_t n)
-{
-    (void)n;
-}
-
-void Screen::DrawTS256(uint32_t n)
-{
-    (void)n;
-}
-
-void Screen::DrawTSText(uint32_t n)
 {
     (void)n;
 }
@@ -2000,25 +1852,6 @@ void Screen::DrawATM3Text(uint32_t n)
 void Screen::DrawGMX(uint32_t n)
 {
     (void)n;
-}
-
-void Screen::DrawBorder(uint32_t n)
-{
-    [[maybe_unused]] EmulatorState& state = _context->emulatorState;
-    [[maybe_unused]] const CONFIG& config = _context->config;
-    [[maybe_unused]] VideoControl& video = _context->pScreen->_vid;
-
-    video.t_next += n;
-    uint32_t vptr = video.vptr;
-
-    for (; n > 0; n--)
-    {
-        uint32_t p = video.clut[state.ts.border];
-        vbuf[video.buf][vptr] = vbuf[video.buf][vptr + 1] = vbuf[video.buf][vptr + 2] = vbuf[video.buf][vptr + 3] = p;
-        vptr += 4;
-    }
-
-    video.vptr = vptr;
 }
 
 /// region <Helper methods

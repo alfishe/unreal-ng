@@ -21,8 +21,6 @@ class Z80;
 #define VID_WIDTH 448   // Full-screen width for standard ZX-Spectrum
 #define VID_HEIGHT 320  // Full-screen height in pixels (same as in scan lines)
 
-#define MEM_CYCLES (VID_TACTS * 2)
-
 /// endregion </Constants>
 
 /// region <Enumerations>
@@ -115,12 +113,11 @@ struct RASTER
     uint32_t d_brd;  // first lower border line
     uint32_t l_brd;  // first pixel tact
     uint32_t r_brd;  // first right border tact
-    uint32_t r_ts;   // tact on which call TS engine draw
 };
 
 struct VideoControl
 {
-    uint32_t clut[256];       // TS palette LUT in truecolor
+    uint32_t clut[256];       // palette LUT in truecolor: ZX defaults in 0-15 (read by the ATM drawers and their tests)
     RASTER raster;            // raster parameters
     VideoModeEnum mode;       // renderer mode
     VideoModeEnum mode_next;  // renderer mode, delayed to the start of the line
@@ -133,15 +130,6 @@ struct VideoControl
     uint32_t flash;           // flash counter
     uint16_t line;            // current rendered line
     uint16_t line_pos;        // current rendered position in line
-
-    uint16_t ts_pos;          // current rendered position in tsline
-    uint8_t tsline[2][512];   // TS buffers (indexed colors)
-    uint16_t memvidcyc[320];  // Memory cycles used in every video line by video
-    uint16_t memcpucyc[320];  // Memory cycles used in every video line by CPU
-    uint16_t memtsscyc[320];  // Memory cycles used in every video line by TS sprites
-    uint16_t memtstcyc[320];  // Memory cycles used in every video line by TS tiles
-    uint16_t memdmacyc[320];  // Memory cycles used in every video line by DMA
-    uint16_t memcyc_lcmd;     // Memory cycles used in last command
 };
 
 ///
@@ -442,13 +430,13 @@ public:
 
     // Video raster mode descriptors
     const RASTER raster[R_MAX] = {
-        {R_256_192, 80, 272, 70, 70 + 128, 198},  // Genuine ZX-Spectrum screen
-        //{ R_256_192, 80, 272, 58, 186, 198 },
-        {R_320_200, 76, 276, 54, 214, 214},
-        {R_320_240, 56, 296, 54, 214, 214},
-        {R_360_288, 32, 320, 44, 224, 0},
-        {R_384_304, 16, 320, 32, 224, 0},
-        {R_512_240, 56, 296, 70, 198, 0},
+        {R_256_192, 80, 272, 70, 70 + 128},  // Genuine ZX-Spectrum screen
+        //{ R_256_192, 80, 272, 58, 186 },
+        {R_320_200, 76, 276, 54, 214},
+        {R_320_240, 56, 296, 54, 214},
+        {R_360_288, 32, 320, 44, 224},
+        {R_384_304, 16, 320, 32, 224},
+        {R_512_240, 56, 296, 70, 198},
     };
 
     /// Raster descriptors for each video mode
@@ -564,24 +552,24 @@ bool _turboRenderSkip = false;  // Turbo render decimation: set only for the CPU
 
     DrawCallback _drawCallbacks[M_MAX] = {
         &Screen::DrawNull,      // M_NUL
-        &Screen::DrawZX,        // M_ZX48
-        &Screen::DrawZX,        // M_ZX128 (same rendering as ZX48)
-        &Screen::DrawZX,        // M_PENTAGON128K (same rendering as ZX48)
+        &Screen::DrawNull,      // M_ZX48 - drawn by ScreenZX
+        &Screen::DrawNull,      // M_ZX128
+        &Screen::DrawNull,      // M_PENTAGON128K
         &Screen::DrawPMC,       // M_PMC
         &Screen::DrawP16,       // M_P16
         &Screen::DrawP384,      // M_P384
         &Screen::DrawPHR,       // M_PHR
         &Screen::DrawTimex,     // M_TIMEX
-        &Screen::DrawTS16,      // M_TS16
-        &Screen::DrawTS256,     // M_TS256
-        &Screen::DrawTSText,    // M_TSTX
+        &Screen::DrawNull,      // M_TS16 - TSConf modes are ScreenTSConf's (PLAN #41 phase 3)
+        &Screen::DrawNull,      // M_TS256
+        &Screen::DrawNull,      // M_TSTX
         &Screen::DrawATM16,     // M_ATM16
         &Screen::DrawATMHiRes,  // M_ATMHR
         &Screen::DrawATM2Text,  // M_ATMTX
         &Screen::DrawATM3Text,  // M_ATMTL
         &Screen::DrawNull,      // M_PROFI - own renderer is ScreenZX (M_PROFI) / ScreenProfi (M_PROFIHR), never this obsolete table
         &Screen::DrawGMX,       // M_GMX
-        &Screen::DrawBorder     // M_BRD
+        &Screen::DrawNull       // M_BRD
     };
 
 public:
@@ -837,8 +825,6 @@ public:
 
     /// endregion </Framebuffer related>
 
-    void DrawScreenBorder(uint32_t n);
-
     // Draw helpers
 public:
     static std::string GetVideoModeName(VideoModeEnum mode);
@@ -891,21 +877,16 @@ public:
 
 
     void DrawNull(uint32_t n);      // Non-existing mode (skip draw)
-    void DrawZX(uint32_t n);        // Authentic Sinclair ZX Spectrum
     void DrawPMC(uint32_t n);       // Pentagon Multicolor
     void DrawP16(uint32_t n);       // Pentagon 16c
     void DrawP384(uint32_t n);      // Pentagon 384x304
     void DrawPHR(uint32_t n);       // Pentagon HiRes
     void DrawTimex(uint32_t n);     // Timex
-    void DrawTS16(uint32_t n);      // TS 16c
-    void DrawTS256(uint32_t n);     // TS 256c
-    void DrawTSText(uint32_t n);    // TS Text
     void DrawATM16(uint32_t n);     // ATM 16c
     void DrawATMHiRes(uint32_t n);  // ATM HiRes
     void DrawATM2Text(uint32_t n);  // ATM Text
     void DrawATM3Text(uint32_t n);  // ATM Text linear
     void DrawGMX(uint32_t n);       // GMX
-    void DrawBorder(uint32_t n);    // Border only
 
     /// region <Helper methods
 public:
