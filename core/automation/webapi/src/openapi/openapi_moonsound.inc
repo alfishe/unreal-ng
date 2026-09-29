@@ -19,12 +19,17 @@
     paths["/api/v1/emulator/{id}/state/audio/moonsound/{part}"]["get"]["summary"] = "Get the MoonSound FM or PCM half";
     paths["/api/v1/emulator/{id}/state/audio/moonsound/{part}"]["get"]["tags"].append("Audio State");
     paths["/api/v1/emulator/{id}/state/audio/moonsound/{part}"]["get"]["description"] =
-        "part=fm: status, timers[2] (count, load, enabled, masked, flag), four_op_connections, channels[18] "
-        "(channel, bank, fnum, block, frequency_hz, key_on, feedback, connection, output_left/right, peak) and "
-        "registers_bank0_hex / registers_bank1_hex. part=pcm: wave_enabled, memory_address, slots[24] (slot, wave, "
-        "octave, fnum, playback_rate_hz, key_on, total_level, pan, damp, sample_bits, start, loop, end, position, "
-        "envelope {phase, attenuation, attenuation_max, ar, d1r, d2r, rr, rc}, lfo, vibrato, am, peak) and "
-        "registers_hex.";
+        "part=fm: status, timers[2] (count, load, enabled, masked, flag), four_op_connections, rhythm, "
+        "tremolo_depth_db, vibrato_depth_cents, note_select, channels[18] (channel, bank, fnum, block, frequency_hz, "
+        "key_on, feedback, connection, output_left/right, four_op, four_op_role, algorithm, rhythm_part, sounding, peak, "
+        "operators[2] {slot, register_offset, mult, multiplier, ksr, tremolo, vibrato, sustaining, ksl, "
+        "ksl_db_per_octave, tl, total_level_db, ar, dr, sl, sustain_level_db, rr, waveform, waveform_name, key_on, "
+        "envelope {phase, attenuation, attenuation_max}, sounding}) and registers_bank0_hex / registers_bank1_hex. "
+        "part=pcm: wave_enabled, memory_address, slots[24] (slot, wave, octave, fnum, playback_rate_hz, key_on, "
+        "total_level, total_level_db, level_direct, pan, pan_attenuation {left_db, right_db; null = off}, damp, "
+        "sample_bits, start, loop, end, position, sample_address, memory (rom | ram), envelope {phase, attenuation, "
+        "attenuation_max, ar, d1r, d2r, rr, rc, decay_level, decay_level_db}, lfo, lfo_hz, lfo_active, vibrato, am, "
+        "sounding, peak) and registers_hex.";
     paths["/api/v1/emulator/{id}/state/audio/moonsound/{part}"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/state/audio/moonsound/{part}"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/state/audio/moonsound/{part}"]["get"]["parameters"][0]["required"] = true;

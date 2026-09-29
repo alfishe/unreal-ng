@@ -958,6 +958,57 @@ const char* PcmPhaseName(opl4::Opl4::PcmEnvelopePhase phase)
     return "off";
 }
 
+const char* FmPhaseName(opl4::Opl4::FmEnvelopePhase phase)
+{
+    switch (phase)
+    {
+        case opl4::Opl4::FmEnvelopePhase::Attack: return "attack";
+        case opl4::Opl4::FmEnvelopePhase::Decay: return "decay";
+        case opl4::Opl4::FmEnvelopePhase::Sustain: return "sustain";
+        case opl4::Opl4::FmEnvelopePhase::Release: return "release";
+        case opl4::Opl4::FmEnvelopePhase::Off: return "off";
+    }
+    return "off";
+}
+
+/// One OPL3 operator, decoded (register fields plus the live envelope)
+StateNode FmOperatorNode(const opl4::Opl4::FmView& fm, int slot)
+{
+    static const double kMultFactor[16] = {0.5, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 12, 12, 15, 15};
+    static const double kKslDbPerOctave[4] = {0.0, 3.0, 1.5, 6.0};  // register values 0..3
+    static const char* kWaveforms[8] = {"sine",     "half_sine",       "abs_sine",   "pulse_sine",
+                                        "sine_even", "abs_sine_even", "square",     "derived_square"};
+    const opl4::Opl4::FmOperatorView& op = fm.operators[size_t(slot)];
+    StateNode n = StateNode::Object();
+    n["slot"] = slot;
+    n["register_offset"] = slot % 22;  // operator registers 0x20/0x40/0x60/0x80/0xE0 + offset
+    n["mult"] = int(op.mult);
+    n["multiplier"] = kMultFactor[op.mult & 0x0F];
+    n["ksr"] = op.ksr;
+    n["tremolo"] = op.am;
+    n["vibrato"] = op.vib;
+    n["sustaining"] = op.egt;
+    n["ksl"] = int(op.kslRegister);
+    n["ksl_db_per_octave"] = kKslDbPerOctave[op.kslRegister & 0x03];
+    n["tl"] = int(op.tl);
+    n["total_level_db"] = -0.75 * op.tl + 0.0;  // + 0.0: no "-0.0" for level 0
+    n["ar"] = int(op.ar);
+    n["dr"] = int(op.dr);
+    n["sl"] = int(op.sl);
+    n["sustain_level_db"] = op.sl == 15 ? -93 : -3 * int(op.sl);
+    n["rr"] = int(op.rr);
+    n["waveform"] = int(op.ws);
+    n["waveform_name"] = kWaveforms[op.ws & 0x07];
+    n["key_on"] = op.keyOn;
+    StateNode env = StateNode::Object();
+    env["phase"] = FmPhaseName(op.phase);
+    env["attenuation"] = int(op.attenuation);
+    env["attenuation_max"] = opl4::Opl4::kFmMaxAttenuation;
+    n["envelope"] = env;
+    n["sounding"] = op.phase != opl4::Opl4::FmEnvelopePhase::Off && op.attenuation < opl4::Opl4::kFmMaxAttenuation;
+    return n;
+}
+
 bool FmKeyOn(const opl4::Opl4::FmView& fm, int ch)
 {
     const int base = (ch / 9) * 256;
@@ -1046,6 +1097,10 @@ StateNode MoonSoundFm(EmulatorContext* context)
     }
     ret["timers"] = timers;
     ret["four_op_connections"] = int(fm.regs[0x104]);  // bank 1 reg 0x04: 4-op pairs
+    ret["rhythm"] = fm.rhythm;
+    ret["tremolo_depth_db"] = (fm.regs[0xBD] & 0x80) ? 4.8 : 1.0;   // DAM
+    ret["vibrato_depth_cents"] = (fm.regs[0xBD] & 0x40) ? 14 : 7;   // DVB
+    ret["note_select"] = (fm.regs[0x08] & 0x40) != 0;               // NTS
 
     const double fmRate = double(opl4::kMasterClockHz) / double(opl4::kFmDivider);
     StateNode channels = StateNode::Array();
@@ -1069,6 +1124,34 @@ StateNode MoonSoundFm(EmulatorContext* context)
         n["connection"] = c0 & 0x01;
         n["output_left"] = (fm.route[size_t(ch)] & 0x10) != 0;
         n["output_right"] = (fm.route[size_t(ch)] & 0x20) != 0;
+
+        // 4-op pairs: channels 0-2 with 3-5 in each bank; the first carries the
+        // algorithm (its CNT and the partner's), the second is its lower half
+        const opl4::Opl4::FmChannelView& view = fm.channels[size_t(ch)];
+        const bool pairFirst = view.fourOp && c < 3;
+        n["four_op"] = view.fourOp;
+        if (view.fourOp)
+            n["four_op_role"] = pairFirst ? "first" : "second";
+        if (pairFirst)
+        {
+            static const char* kAlgorithms[4] = {"fm_fm", "am_fm", "fm_am", "am_am"};
+            const int partnerConn = fm.channels[size_t(ch + 3)].connection & 1;
+            n["algorithm"] = kAlgorithms[(view.connection & 1) | (partnerConn << 1)];
+        }
+        else if (!view.fourOp)
+        {
+            n["algorithm"] = (view.connection & 1) ? "additive" : "fm";
+        }
+        if (fm.rhythm && ch >= 6 && ch <= 8)
+        {
+            static const char* kParts[3] = {"bass_drum", "hi_hat_snare", "tom_cymbal"};
+            n["rhythm_part"] = kParts[ch - 6];
+        }
+        StateNode operators = StateNode::Array();
+        operators.push(FmOperatorNode(fm, view.op1));
+        operators.push(FmOperatorNode(fm, view.op2));
+        n["operators"] = operators;
+        n["sounding"] = operators.items[0].find("sounding")->b || operators.items[1].find("sounding")->b;
         n["peak"] = double(chip.ChannelPeak(opl4::ChannelId{opl4::ChannelGroup::Fm, uint8_t(ch)}));
         channels.push(n);
     }
@@ -1092,6 +1175,8 @@ StateNode MoonSoundPcm(EmulatorContext* context)
     ret["available"] = true;
     ret["wave_enabled"] = chip.New2Mode();  // NEW2 gates wave register writes
     ret["memory_address"] = uint64_t(pcm.memAddress);
+    const uint32_t romEnd = ms->waveMemory().RomEnd();
+    auto panDb = [](uint16_t att) -> StateNode { return att >= 1020 ? StateNode() : StateNode(-3.0 * att / 32.0 + 0.0); };
     StateNode slots = StateNode::Array();
     for (size_t i = 0; i < pcm.slots.size(); i++)
     {
@@ -1105,13 +1190,24 @@ StateNode MoonSoundPcm(EmulatorContext* context)
             std::round(44100.0 * std::ldexp(1.0, s.octave) * (1024.0 + s.fnum) / 1024.0 * 100.0) / 100.0;
         n["key_on"] = s.keyOn;
         n["total_level"] = int(s.totalLevel);
+        const uint8_t tlReg = pcm.regs[0x50 + i];
+        n["total_level_db"] = -0.375 * (tlReg >> 1) + 0.0;  // 7-bit TL, 0.375 dB/step
+        n["level_direct"] = (tlReg & 0x01) != 0;
         n["pan"] = int(s.pan);
+        StateNode pan = StateNode::Object();
+        pan["left_db"] = panDb(s.panLeft);    // null: that side is off
+        pan["right_db"] = panDb(s.panRight);
+        n["pan_attenuation"] = pan;
         n["damp"] = s.damp;
         n["sample_bits"] = s.bits == 0 ? 8 : (s.bits == 1 ? 12 : 16);
         n["start"] = uint64_t(s.start);
         n["loop"] = int(s.loop);
         n["end"] = int(0x10000 - s.endComplement);
         n["position"] = int(s.position);
+        // Byte address of the current sample (12-bit samples pack two in three bytes)
+        const uint32_t offset = s.bits == 0 ? s.position : (s.bits == 1 ? (s.position * 3u) / 2u : s.position * 2u);
+        n["sample_address"] = uint64_t((s.start + offset) & 0x3FFFFF);
+        n["memory"] = s.start < romEnd ? "rom" : "ram";
         StateNode env = StateNode::Object();
         env["phase"] = PcmPhaseName(s.phase);
         env["attenuation"] = int(s.attenuation);
@@ -1121,10 +1217,18 @@ StateNode MoonSoundPcm(EmulatorContext* context)
         env["d2r"] = int(s.d2r);
         env["rr"] = int(s.rr);
         env["rc"] = int(s.rc);
+        // D1L: register group 7 (0xB0 + slot) bits 7:4, 3 dB/step, 15 = -93 dB
+        const int dl = pcm.regs[0xB0 + i] >> 4;
+        env["decay_level"] = dl;
+        env["decay_level_db"] = dl == 15 ? -93 : -3 * dl;
         n["envelope"] = env;
         n["lfo"] = int(s.lfo);
+        n["lfo_hz"] = opl4::Opl4::kPcmLfoHz[s.lfo & 0x07];
+        n["lfo_active"] = s.lfoActive;
         n["vibrato"] = int(s.vib);
         n["am"] = int(s.am);
+        n["sounding"] = s.phase != opl4::Opl4::PcmEnvelopePhase::Off &&
+                        s.attenuation < opl4::Opl4::kPcmMaxAttenuation;
         n["peak"] = double(chip.ChannelPeak(opl4::ChannelId{opl4::ChannelGroup::Pcm, uint8_t(i)}));
         slots.push(n);
     }

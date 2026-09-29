@@ -18,6 +18,7 @@
 #include "common/mixtables.h"
 #include "fm/fmbus.h"
 #include "fm/fmsynthopl4.h"
+#include "fm/fmtables.h"
 #include "pcm/pcmsynthopl4.h"
 #include "opl4render.h"
 #include "opl4/wavememory.h"
@@ -128,6 +129,9 @@ Opl4::~Opl4()
 }
 
 static_assert(Opl4::kPcmMaxAttenuation == kMaxAttIndex, "public attenuation range follows the engine");
+static_assert(Opl4::kFmMaxAttenuation == kFmMaxAttIndex, "public FM attenuation range follows the engine");
+static_assert(kLfoSteps[0] == LfoStepFor(Opl4::kPcmLfoHz[0]) && kLfoSteps[7] == LfoStepFor(Opl4::kPcmLfoHz[7]),
+              "public LFO speeds follow the engine table");
 
 void Opl4::PeekFm(FmView& out) const
 {
@@ -143,6 +147,44 @@ void Opl4::PeekFm(FmView& out) const
     }
     for (int ch = 0; ch < FmBus::kChannelCount; ch++)
         out.route[static_cast<size_t>(ch)] = bus.Route(ch);
+
+    const Opl4Fm& fm = *_fm;
+    out.rhythm = fm.Rhythm();
+    for (size_t ch = 0; ch < out.channels.size(); ch++)
+    {
+        const FmChannel& c = fm.Channels()[ch];
+        out.channels[ch] = FmChannelView{c.op1, c.op2, c.fourOp, c.conn};
+    }
+    for (size_t slot = 0; slot < out.operators.size(); slot++)
+    {
+        const FmOperator& op = fm.Operators()[slot];
+        FmOperatorView& v = out.operators[slot];
+        v.fnum = op.fnum;
+        v.block = op.block;
+        v.mult = op.mult;
+        v.tl = op.tl;
+        v.ar = op.ar;
+        v.dr = op.dr;
+        v.sl = op.sl;
+        v.rr = op.rr;
+        v.ws = op.ws;
+        v.ksr = op.ksr;
+        v.am = op.am;
+        v.vib = op.vib;
+        v.egt = op.egt;
+        const size_t bank = slot / 22;
+        v.kslRegister = static_cast<uint8_t>(out.regs[bank * 256 + 0x40 + slot % 22] >> 6);
+        v.keyOn = op.keyOn;
+        v.attenuation = op.envVol;
+        switch (op.egState)
+        {
+            case kFmEgRel: v.phase = FmEnvelopePhase::Release; break;
+            case kFmEgDec: v.phase = FmEnvelopePhase::Decay; break;
+            case kFmEgSus: v.phase = FmEnvelopePhase::Sustain; break;
+            case kFmEgAtt: v.phase = FmEnvelopePhase::Attack; break;
+            default: v.phase = FmEnvelopePhase::Off; break;
+        }
+    }
 }
 
 void Opl4::PeekPcm(PcmView& out) const
@@ -180,9 +222,13 @@ void Opl4::PeekPcm(PcmView& out) const
         v.d2r = s.d2r;
         v.rr = s.rr;
         v.rc = s.rc;
+        v.decayLevel = static_cast<int16_t>(s.dl);
         v.lfo = s.lfo;
         v.vib = s.vib;
         v.am = s.am;
+        v.lfoActive = s.lfoActive;
+        v.panLeft = kPanTable[s.pan & 0x0F].left;
+        v.panRight = kPanTable[s.pan & 0x0F].right;
     }
 }
 

@@ -123,14 +123,48 @@ public:
         bool enabled = false;
         bool masked = false;
     };
+    enum class FmEnvelopePhase : uint8_t
+    {
+        Off,
+        Release,
+        Decay,
+        Sustain,
+        Attack
+    };
+    /// One operator slot (22 per bank, addressed like the silicon: slot =
+    /// bank * 22 + register offset; offsets 6/7/14/15 hold no operator)
+    struct FmOperatorView
+    {
+        uint16_t fnum = 0;
+        uint8_t block = 0;
+        uint8_t mult = 0;                  // MULT register value 0..15
+        uint8_t tl = 0;                    // total level, 6-bit (0.75 dB/step)
+        uint8_t ar = 0, dr = 0, sl = 0, rr = 0;
+        uint8_t ws = 0;                    // waveform 0..7
+        bool ksr = false, am = false, vib = false, egt = false;
+        uint8_t kslRegister = 0;           // KSL as written (register 0x40 bits 7:6)
+        bool keyOn = false;
+        int16_t attenuation = 0;           // envelope attenuation index, 0 .. kFmMaxAttenuation
+        FmEnvelopePhase phase = FmEnvelopePhase::Off;
+    };
+    struct FmChannelView
+    {
+        uint8_t op1 = 0, op2 = 0;          // operator slots
+        bool fourOp = false;               // part of a 4-op pair
+        uint8_t connection = 0;            // C0 bit 0
+    };
+    static constexpr int kFmMaxAttenuation = 0x3FF;
     struct FmView
     {
         std::array<uint8_t, 512> regs{};   // bank 0 at 0x000, bank 1 at 0x100
         uint8_t status = 0;
         bool newMode = false;              // NEW  (bank-1 reg 0x05 bit 0)
         bool new2 = false;                 // NEW2 (bank-1 reg 0x05 bit 1)
+        bool rhythm = false;               // bank-0 reg 0xBD bit 5
         FmTimerView timers[2];
         std::array<uint8_t, 18> route{};   // per channel C0 output bits (0x30 outside NEW)
+        std::array<FmChannelView, 18> channels{};
+        std::array<FmOperatorView, 44> operators{};
     };
     enum class PcmEnvelopePhase : uint8_t
     {
@@ -157,8 +191,13 @@ public:
         int16_t attenuation = 0;           // envelope attenuation index, 0 .. kPcmMaxAttenuation
         PcmEnvelopePhase phase = PcmEnvelopePhase::Off;
         uint8_t ar = 0, d1r = 0, d2r = 0, rr = 0, rc = 0;
+        int16_t decayLevel = 0;            // D1 level as an attenuation index
         uint8_t lfo = 0, vib = 0, am = 0;
+        bool lfoActive = false;
+        uint16_t panLeft = 0, panRight = 0; // pan attenuation, 32 per 3 dB, 1020 = off
     };
+    /// PCM LFO speeds 0..7 in Hz (the engine's own table)
+    static constexpr double kPcmLfoHz[8] = {0.168, 2.019, 3.196, 4.206, 5.215, 5.888, 6.224, 7.066};
     static constexpr int kPcmMaxAttenuation = 0x280;
     struct PcmView
     {

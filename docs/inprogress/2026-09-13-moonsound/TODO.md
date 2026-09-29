@@ -28,7 +28,9 @@ still open (updated 2026-09-18).
    surface (WebAPI `/state/audio/moonsound[/fm|/pcm]`, CLI `state audio
    moonsound`, Lua/Python `audio_moonsound_state`, MCP `audio_moonsound`,
    `audio_opl4_fm`, `audio_opl4_pcm`), read through libopl4's side-effect-free
-   `Opl4::PeekFm/PeekPcm`. Left: control (enable + mixer gain) through the
+   `Opl4::PeekFm/PeekPcm`; at the TSFM report's depth (every FM operator
+   decoded with its live envelope, PCM levels / pan / D1L in dB, LFO in Hz,
+   the current sample address). Left: control (enable + mixer gain) through the
    P2-3 settings surface, and MoonSound rows in the static port map.
 2. **D2 hardware check** — record a high FM sine on a real ZXM-MoonSound to
    settle whether the HoldDrop reducer (`Authentic`) is real.

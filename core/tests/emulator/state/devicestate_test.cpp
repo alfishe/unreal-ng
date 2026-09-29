@@ -561,10 +561,19 @@ TEST(DeviceStateMoonSound_Test, ReportsFollowTheGuestWrites)
     };
 
     fm(0x00C6, 0x05, 0x03);                 // bank 1 reg 5: NEW + NEW2 (OPL4 mode, wave enabled)
+    fm(0x00C4, 0x20, 0x41);                 // channel 0 operator 1 (slot 0): VIB, MULT 1
+    fm(0x00C4, 0x40, 0x50);                 // KSL register 1 (3 dB/oct), TL 16 (-12 dB)
+    fm(0x00C4, 0x60, 0xF2);                 // AR 15, DR 2
+    fm(0x00C4, 0x80, 0x21);                 // SL 2 (-6 dB), RR 1
+    fm(0x00C4, 0xE0, 0x03);                 // waveform 3 (pulse sine)
     fm(0x00C4, 0xA0, 0x44);                 // channel 0 F-number low
     fm(0x00C4, 0xB0, 0x20 | (4 << 2) | 1);  // key on, block 4, F-number bits 8-9 = 1
-    wave(0x08, 0x10);                        // slot 0 wave number 16
-    wave(0x68, 0x80);                        // slot 0 key on
+    wave(0x50, (0x10 << 1) | 1);             // slot 0 TL 16 (-6 dB), level direct
+    wave(0x08, 0x10);                        // slot 0 wave number 16 (its tone header reloads groups 5..9)
+    wave(0xB0, 0x50);                        // slot 0 D1L 5 (-15 dB), after the header
+    wave(0x68, 0x83);                        // slot 0 key on, pan 3 (left -9 dB)
+    // The chip applies a key-on at its next clock: run a frame, as the machine does
+    emulator->RunNFrames(1, /*skipBreakpoints=*/true);
 
     const StateNode overview = DeviceState::MoonSound(context);
     ASSERT_TRUE(overview.find("available")->b);
@@ -581,6 +590,19 @@ TEST(DeviceStateMoonSound_Test, ReportsFollowTheGuestWrites)
     EXPECT_EQ(ch0.find("block")->i, 4);
     EXPECT_GT(ch0.find("frequency_hz")->d, 0.0);
     EXPECT_EQ(fmReport.find("channels")->items.size(), 18u);
+    EXPECT_EQ(ch0.find("algorithm")->s, "fm");
+    ASSERT_EQ(ch0.find("operators")->items.size(), 2u);
+    const StateNode& op1 = ch0.find("operators")->items[0];
+    EXPECT_EQ(op1.find("slot")->i, 0);
+    EXPECT_TRUE(op1.find("vibrato")->b);
+    EXPECT_EQ(op1.find("multiplier")->d, 1.0);
+    EXPECT_EQ(op1.find("ksl_db_per_octave")->d, 3.0);
+    EXPECT_EQ(op1.find("total_level_db")->d, -12.0);
+    EXPECT_EQ(op1.find("ar")->i, 15);
+    EXPECT_EQ(op1.find("sustain_level_db")->i, -6);
+    EXPECT_EQ(op1.find("waveform_name")->s, "pulse_sine");
+    EXPECT_TRUE(op1.find("key_on")->b);
+    EXPECT_NE(op1.find("envelope")->find("phase")->s, "off");
     EXPECT_EQ(fmReport.find("registers_bank0_hex")->s.size(), 512u);
 
     const StateNode pcmReport = DeviceState::MoonSoundPcm(context);
@@ -590,6 +612,13 @@ TEST(DeviceStateMoonSound_Test, ReportsFollowTheGuestWrites)
     EXPECT_TRUE(slot0.find("key_on")->b);
     EXPECT_EQ(slot0.find("wave")->i, 16);
     EXPECT_NE(slot0.find("envelope")->find("phase")->s, "off");
+    EXPECT_EQ(slot0.find("total_level_db")->d, -6.0);
+    EXPECT_TRUE(slot0.find("level_direct")->b);
+    EXPECT_EQ(slot0.find("pan")->i, 3);
+    EXPECT_EQ(slot0.find("pan_attenuation")->find("left_db")->d, -9.0);
+    EXPECT_EQ(slot0.find("pan_attenuation")->find("right_db")->d, 0.0);
+    EXPECT_EQ(slot0.find("envelope")->find("decay_level_db")->i, -15);
+    EXPECT_EQ(slot0.find("memory")->s, "rom");
     EXPECT_FALSE(pcmReport.find("slots")->items[1].find("key_on")->b);
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
