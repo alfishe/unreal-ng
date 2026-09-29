@@ -23,6 +23,14 @@ public:
     {
         std::unique_lock lock(_mutex);
 
+        // A released buffer (reset(0)) keeps nothing
+        if (_capacity == 0)
+        {
+            _totalProduced++;
+            _totalEvicted++;
+            return;
+        }
+
         if (_count == _capacity)
         {
             // Buffer full: overwrite the oldest slot (at _head) and advance _head.
@@ -105,6 +113,21 @@ public:
         return result;
     }
 
+    /// Re-size in place and restart every counter (thread-safe). The object
+    /// stays where it is, so a reader or writer on another thread never sees
+    /// it replaced; capacity 0 releases the storage
+    void reset(size_t capacity)
+    {
+        std::unique_lock lock(_mutex);
+        std::vector<T> fresh(capacity);
+        _buffer.swap(fresh);
+        _capacity = capacity;
+        _head = 0;
+        _count = 0;
+        _totalProduced = 0;
+        _totalEvicted = 0;
+    }
+
     /// Clear all events (thread-safe)
     void clear()
     {
@@ -124,6 +147,7 @@ public:
 
     size_t capacity() const
     {
+        std::shared_lock lock(_mutex);
         return _capacity;
     }
 

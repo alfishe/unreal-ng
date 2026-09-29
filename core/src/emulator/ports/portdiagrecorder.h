@@ -279,6 +279,11 @@ public:
     {
     }
 
+    /// Stop capture and free the ring storage; the recorder itself stays valid
+    /// (the emulator thread and automation handlers may hold a pointer to it).
+    /// The next start() allocates the configured capacity again
+    void releaseBuffer();
+
     /// region <Session control>
     void start();    // Arm capture; clears the buffer
     void stop();     // Disarm capture; data preserved
@@ -295,8 +300,8 @@ public:
     /// region <Configuration (only while stopped)>
     bool setCapacity(size_t events);                    // false if capturing/paused or events == 0
     bool setOverflowMode(PortTraceOverflowMode mode);   // false if capturing/paused
-    size_t capacity() const { return _capacity; }
-    PortTraceOverflowMode overflowMode() const { return _overflowMode; }
+    size_t capacity() const { return _capacity.load(std::memory_order_relaxed); }
+    PortTraceOverflowMode overflowMode() const { return _overflowMode.load(std::memory_order_relaxed); }
     /// endregion </Configuration>
 
     /// region <Filtering (safe to call while capturing)>
@@ -367,9 +372,13 @@ private:
     std::atomic<bool> _autoStopped{false};
     std::atomic<uint64_t> _totalFiltered{0};
 
-    size_t _capacity = kDefaultCapacity;
-    PortTraceOverflowMode _overflowMode = PortTraceOverflowMode::Ring;
-    std::unique_ptr<RingBuffer<PortTraceEvent>> _events;
+    // Read by automation threads while another thread configures: atomic
+    std::atomic<size_t> _capacity{kDefaultCapacity};
+    std::atomic<PortTraceOverflowMode> _overflowMode{PortTraceOverflowMode::Ring};
+    // Allocated once and never replaced: start() / setCapacity() / releaseBuffer()
+    // re-size it in place, because the emulator thread pushes into it and
+    // automation threads read it concurrently (replacing it was a use-after-free)
+    const std::unique_ptr<RingBuffer<PortTraceEvent>> _events;
 
     // Filter: replaced wholesale under unique_lock, read under shared_lock in record().
     // Deliberately a plain shared_mutex (not atomic<shared_ptr>) — portable and honest;

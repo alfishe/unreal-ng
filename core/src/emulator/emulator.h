@@ -437,6 +437,10 @@ public:
     // Identity and state methods
     const std::string& GetId() const;
     EmulatorStateEnum GetState();
+
+    /// Release() has run: the context and every subsystem are gone. A holder
+    /// of a shared_ptr (a UI binding) must not call into the instance any more
+    bool IsReleased() const { return _isReleased; }
     void SetState(EmulatorStateEnum state);
 
     // Status methods

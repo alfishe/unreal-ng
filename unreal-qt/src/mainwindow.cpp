@@ -3579,6 +3579,12 @@ void MainWindow::handleEmulatorInstanceDestroyed(int id, Message* message)
         {
             std::string destroyedId = payload->_payloadText;
 
+            // Remember the removal for adoptions still queued for this instance
+            {
+                std::lock_guard<std::mutex> lock(_destroyedEmulatorIdsMutex);
+                _destroyedEmulatorIds.insert(destroyedId);
+            }
+
             // Check if this was our active emulator
             bool wasOurEmulator = (_emulator && _emulator->GetId() == destroyedId);
 
@@ -3912,11 +3918,36 @@ void MainWindow::bindEmulatorAudio(std::shared_ptr<Emulator> emulator)
     qDebug() << "MainWindow::bindEmulatorAudio() - Only this emulator will have audio/video callbacks active";
 }
 
+/// An instance the manager removed (or is removing): released, announced as
+/// destroyed, or no longer registered. Binding the UI to it would leave every
+/// widget and the next unbind calling into a context that is gone
+bool MainWindow::isEmulatorGone(const std::shared_ptr<Emulator>& emulator)
+{
+    if (!emulator || emulator->IsReleased())
+        return true;
+    {
+        std::lock_guard<std::mutex> lock(_destroyedEmulatorIdsMutex);
+        if (_destroyedEmulatorIds.count(emulator->GetId()))
+            return true;
+    }
+    return _emulatorManager && !_emulatorManager->GetEmulator(emulator->GetId());
+}
+
 void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigin origin)
 {
     if (!emulator)
     {
         qWarning() << "MainWindow::adoptEmulator() - Called with null emulator";
+        return;
+    }
+
+    // An adoption queued (selection change, creation) before the instance was
+    // removed can run after the removal: refuse it rather than bind a released
+    // instance
+    if (isEmulatorGone(emulator))
+    {
+        qDebug() << "MainWindow::adoptEmulator() - Emulator" << QString::fromStdString(emulator->GetId())
+                 << "was removed before the adoption ran; skipping";
         return;
     }
 
@@ -4140,8 +4171,9 @@ void MainWindow::unbindFromEmulator()
     // 6. Per-emulator event subscriptions
     unsubscribeFromPerEmulatorEvents();
 
-    // 7. Audio cleanup
-    _emulator->ClearAudioCallback();
+    // 7. Audio cleanup (a released instance has none left)
+    if (!_emulator->IsReleased())
+        _emulator->ClearAudioCallback();
 
     // 8. Clear reference (does NOT destroy emulator)
     _emulator = nullptr;
