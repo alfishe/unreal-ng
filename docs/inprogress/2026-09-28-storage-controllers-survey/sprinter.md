@@ -4,7 +4,7 @@
 |---|---|
 | **Date** | 2026-09-28 |
 | **Machine** | Peters Plus Sprinter Sp2000 (PLAN #59, the last machine program) |
-| **Full design** | [tdd-storage.md](../2026-09-28-sprinter/tdd-storage.md) §1, §3, §5; [hardware-reference.md](../2026-09-28-sprinter/hardware-reference.md) §9. This page only measures it against the IDE core as built on `ide-atapi` |
+| **Full design** | [tdd-storage.md](../2026-09-28-sprinter/tdd-storage.md) §1, §3, §5; [hardware-reference.md](../2026-09-28-sprinter/hardware-reference.md) §9. This page only measures it against the IDE core as built on `ide-atapi` (on master since `f5fc5f05`) |
 | **Effort (storage part)** | **M** (about 1-1.5 weeks), after the Sprinter machine exists |
 
 ## 1. Hardware in one table
@@ -34,7 +34,7 @@ A8 = 1 (the latch). Sector bytes arrive low, high, low, high, without the BIOS e
 
 ## 2. What unreal-ng has vs the gap
 
-| Piece | On `ide-atapi` today | Gap for the Sprinter |
+| Piece | On master today (IDE rollout 1) | Gap for the Sprinter |
 |---|---|---|
 | Disk, ATAPI CD, formats, slots, TTD blob | `AtaDisk`, `AtapiCdrom`, `AtaChannel`, `IdeUnitSlot`, `HddImageFormats`, TTD id 17 | none for one channel |
 | Second channel | `IdeController` owns **one** `AtaChannel` and two slots (`ide0.master`, `ide0.slave`) | **new**: an array of up to two channels, slots `ide1.master` / `ide1.slave`, the TTD blob grows to hold both channels and the channel latch |

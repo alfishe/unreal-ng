@@ -528,9 +528,13 @@ branch and is reused (technical-design §3.11).
 
 Built in the standard `quartus` build (ports per [V] `zports.v:256-274,766-861`,
 DMA codes 0x3/0xB); TS-BIOS lists IDE Nemo/SMUC boot devices. **v1 decision
-(D2):** defer with the shared IDE core (PLAN #13a); decoder answers 0xFF.
-That core is on master since 2026-09-28 (`f5fc5f05`, `IdeAdapter` Nemo Evo
-scheme), so D2 is reopened (technical-design §3.2).
+(D2), resolved 2026-09-29:** the same NemoIDE with the nemo-divide latch
+triggers as BaseConf ([V] `zports.v:256-273,336-341,766-783`), so TSConf uses
+the shared `IdeAdapter` scheme `NEMO-DIVIDE` as is (on master since `f5fc5f05`).
+DMA 0x3/0xB move one whole 16-bit word from / to the data register (CS0
+register 0), past the Z80 half-word latches, which keep their state ([V]
+`dma.v:98,441-445`; in `ide.v` the DMA request overrides the Z80 address and
+chip selects); with no board a DMA read gets #FFFF (technical-design §3.2).
 
 ## 9. Other peripherals
 

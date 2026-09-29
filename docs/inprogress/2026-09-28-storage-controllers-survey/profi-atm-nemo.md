@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Date** | 2026-09-28 |
-| **Designs** | [IDE design](../2026-09-21-profi/2026-09-25-ide-hdd-design.md) §3 (Profi), §4 (all boards side by side), §9 (Profi pseudocode); implementation plan `docs/inprogress/2026-09-28-ide-atapi/implementation-plan.md` on `ide-atapi` (D1-D9, §5 as built) |
-| **State** | all five boards are decoded by one `IdeAdapter` on `ide-atapi` (uncommitted); none on master |
+| **Designs** | [IDE design](../2026-09-21-profi/2026-09-25-ide-hdd-design.md) §3 (Profi), §4 (all boards side by side), §9 (Profi pseudocode); implementation plan `docs/inprogress/2026-09-28-ide-atapi/implementation-plan.md` (D1-D9, §5 as built) |
+| **State** | all five boards are decoded by one `IdeAdapter`, on master since 2026-09-29 (`f5fc5f05`) |
 | **Effort left** | **S** each: merge, the tests below that do not exist yet, config polish |
 
 These boards are all "8-bit Z80 bus to a 16-bit IDE drive" adapters. They differ in only three
@@ -67,7 +67,7 @@ register, A7..A5 = 7) the drive raises INTRQ when the sector is ready. `IN A,(#7
 
 ## 3. unreal-ng now vs gap
 
-| Piece | On `ide-atapi` | Gap |
+| Piece | On master (IDE rollout 1) | Gap |
 |---|---|---|
 | Decode and latches | `IdeAdapter` (`core/src/emulator/io/ide/ideadapter.{h,cpp}`): `ProfiIn/Out`, `NemoIn/Out` (A0 or A8 latch), `EvoIn/Out`, `AtmIn/Out` + `AtmIntrqBit`, `SmucIn/Out`; POD `IdeAdapterState` | none |
 | Gate | `IdeAdapter::Gate { dosPorts, profiExt }` from the base `PortDecoder` (`IdeGate()`), IDE decoded before the model's rules (UnrealSpeccy `io.cpp` order) | none |
@@ -97,6 +97,6 @@ register, A7..A5 = 7) the drive raises INTRQ when the sector is ready. `IN A,(#7
 
 ## 6. Order
 
-1. Land `ide-atapi` on master (closes #13a IDE, #55 E6/E7, #58 M6).
+1. ~~Land `ide-atapi` on master (closes #13a IDE, #55 E6/E7, #58 M6).~~ Done: `f5fc5f05`, merged in `c69486ab`.
 2. Add ATM-HDD-1 and NEMO-HDD-1 (fixtures from NedoOS / Gluk ROMs).
 3. SMUC per the sibling survey.

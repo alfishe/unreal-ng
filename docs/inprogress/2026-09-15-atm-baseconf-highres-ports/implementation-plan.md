@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-09-27 |
-| **Status** | In progress: E0, E1, E2a, E3, E4, E5 (image files) done (2026-09-28); E2b (PS/2 keyboard) deferred. PLAN.md row **#55** |
+| **Status** | In progress: E0, E1, E2a, E3, E4, E5 (image files) done (2026-09-28); E6, E7 done on master (`f5fc5f05`); E2b (PS/2 keyboard) deferred. PLAN.md row **#55** |
 | **Inputs** | [gap-analysis.md](gap-analysis.md) (what is missing), three designs: [tdd-evo-control-and-avr.md](tdd-evo-control-and-avr.md) (**CA**), [tdd-virtual-trdos.md](tdd-virtual-trdos.md) (**VT**), [tdd-storage-sd-ide-cd.md](tdd-storage-sd-ide-cd.md) (**ST**) |
 | **Rule** | Test first. Each phase ends with a green `core-tests` run, zero warnings, and the phase's test IDs passing. Nothing is committed without an explicit request |
 
@@ -42,8 +42,8 @@ exactly as the owning design specifies (the M1 hook, `HostFolderFat`), so nothin
 | **E3** ✅ 2026-09-28 ([e3-board-nmi.md](e3-board-nmi.md)) | NMI (INT-synchronized request, `NOP` entry, page `#FF`, 2-M1 exit), breakpoint, Magic button on ATM3; the dead `nmi_in_progress` path removed. Built the generic `Z80::machineM1Hook` (reusable by TSConf §3.6) | C-3, C-4, P-8 | CA NMI-1…NMI-4 | M | E1; M1 hook |
 | **E4** ✅ 2026-09-28 ([e4-virtual-trdos.md](e4-virtual-trdos.md)) | Virtual TR-DOS trap (`#13BD`, suppression, swap, exit, `#FF` read, programmed-type DOS rule); legacy latches `#2F-#8F` | ST-5, ST-6 | VT TRD-1…TRD-12; **ERS-RD-1, ERS-RD-2** (RAM disk), ERS-FPGA-1 | M | E1, E3 |
 | **E5** ✅ 2026-09-28 for image files ([e5-sd-card.md](e5-sd-card.md)); **E5b** host folders = [media manager](../2026-09-28-storage-manager/technical-design.md) M1 | SD card: `ZControllerSpi` (shared with TSConf), `SdCardSpi` over `IBlockDevice`, `SessionWriteMap`, `[ZC]` keys, AVR register C wiring; then `HostFolderFat` for SD if not yet built | ST-1, S1–S4 | ST ZC-1…ZC-5; **ERS-SD-1/2**, **ERS-MNT-1/2** (mount TRD from SD, with E4), NOS-SD-1, NOS-KBD-1 | M (+L if `HostFolderFat` lands here) | E2; `SdCardSpi` on master |
-| **E6** | NemoIDE: `IdeAdapterNemo` Evo options + `EvoNemoLatch`; `[HDD]` on ATM3; images and folders from IDE rollout 1 | ST-2, ST-3, S5 | ST NIDE-1…NIDE-5, ST-TTD-1; **ERS-HDD-1**, **ERS-MNT-3** (mount TRD from HDD), NOS-HDD-1 | S–M | E0; IDE R1-1 (R1-5/R1-6 for formats/folders) |
-| **E7** | ATAPI CD on the NemoIDE slave | ST-4 | **ERS-CD-1** | S | E6; IDE R1-7 |
+| **E6** ✅ 2026-09-28, on master (`f5fc5f05`) | NemoIDE: `IdeAdapterNemo` Evo options + `EvoNemoLatch`; `[HDD]` on ATM3; images and folders from IDE rollout 1 | ST-2, ST-3, S5 | ST NIDE-1…NIDE-5, ST-TTD-1; **ERS-HDD-1**, **ERS-MNT-3** (mount TRD from HDD), NOS-HDD-1 | S–M | E0; IDE R1-1 (R1-5/R1-6 for formats/folders) |
+| **E7** ✅ 2026-09-28, on master (`f5fc5f05`) | ATAPI CD on the NemoIDE slave | ST-4 | **ERS-CD-1** | S | E6; IDE R1-7 |
 | **E8** | `#xBF7` per-window write protect (P-5, moved from E0: needs a `Memory` write-protect path that keeps the TTD journal honest); flash writes (`Flash29F040B` from NeoGS, `FlashWrite` modes), font RAM (+ `#0EBD`; closes PLAN #53 item 2), 4:4:4 palette, ULA+ | C-5…C-8 | CA FL-1, FL-2, FNT-1, PAL-1, ULA-1; ERS-FLASH-1 | M | E1; memory-write intercept (TSConf P0) |
 | **E9** *(optional)* | AVR raster selection (Pentagon / 60 Hz / 48K / 128K), INT position per raster, contention only at 3.5 MHz in 48K/128K rasters; RS-232 `#xxEF` | A-6, A-7 | new: RST-1…RST-4 (frame length and INT tact per raster; contention on/off by clock); `modes_register` reports the chosen raster | M | E2 |
 | **E10** | Surfaces and acceptance: `evo` state endpoint + CLI/Lua/Python/MCP; SD/HDD/CD verbs on ATM3; TTD blobs (`AtmPaging` v-next, `EvoAvr` id); storage interim invalidation; `.recipe/machines/atm.md`; MCP `unreal://machine/zx-evo` (PLAN #14); docs moved to `docs/` | T-1…T-3 | CA TTD-E1; ST ST-TTD-1; VT TRD-12; automation smoke per surface | M | runs alongside E2-E7 |

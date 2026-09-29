@@ -76,7 +76,7 @@ from the images in unreal-ng's `data/rom/`.
   `git merge-base --is-ancestor`)
 - Nemo IDE **is** built in the standard `quartus` firmware (and TS-BIOS offers
   IDE boot); Xpeccy implements it too. Deferred in unreal-ng until the shared IDE
-  core exists (technical-design D2)
+  core exists (technical-design D2; resolved 2026-09-29: scheme `NEMO-DIVIDE`)
 - MAME's Beta map (`.mirror(0xff00)`, `0x9F`) and 7FFD decode (`port & 0x8002`)
   are loose decodes, not hardware; MAME's zclk 3 = 28 MHz and 10-bit DMA_NUM
   are bugs (hardware-spec §12)

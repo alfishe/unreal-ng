@@ -1,8 +1,8 @@
 # TODO: storage controllers survey
 
 **Status:** survey written 2026-09-28 (research only, no code). Not yet reviewed by the owner and
-tracked as [PLAN.md](../PLAN.md) row #63. The IDE part it measures against lives on branch `ide-atapi`
-(uncommitted as of 2026-09-28).
+tracked as [PLAN.md](../PLAN.md) row #63. The IDE part it measures against was on branch `ide-atapi`
+(uncommitted as of 2026-09-28); it is on master since 2026-09-29 (`f5fc5f05`).
 
 ## Done
 

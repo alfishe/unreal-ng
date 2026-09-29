@@ -25,7 +25,7 @@ what create requests accept). `ram_size` is validated against the model's
 | `ATM3` | ZX-Evo (ATM Turbo 3) | 4096 | creatable |
 | `SCORPION` | ZS Scorpion | 256, 1024 | creatable |
 | `PROFSCORP` | ZS Scorpion + PROF ROM | 256, 1024 | creatable |
-| `PROFI` | Profi | 1024 | creatable; IDE not yet implemented (see [machines/profi.md](../machines/profi.md)) |
+| `PROFI` | Profi | 1024 | creatable; IDE hard disks on `ide0.master` / `ide0.slave` (see [machines/profi.md](../machines/profi.md)) |
 | `TSL`, `ATM450`, `GMX`, `KAY`, `QUORUM`, `LSY256`, `PHOENIX`, `NEXT` | various | — | no factory port decoder → HTTP 400 + reason, never a silent 48K fallback |
 
 The runtime list is **authoritative over this table** — builds and branches

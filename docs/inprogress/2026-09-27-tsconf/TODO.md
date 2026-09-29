@@ -51,8 +51,17 @@ Scope confirmed with the user on 2026-09-27, and how the design honors it:
   CMOS is reused as is; TSConf adds only the `#EFF7`/DOS/vdos gating
 - [x] Shared IDE core on master (PLAN #13a / media manager M6, `f5fc5f05`):
   `IdeAdapter` with the Nemo (A8, Evo) scheme, `[HDD]` config, TTD
-  `AtaChannel` = 17, every surface; ATM3 already uses it. D2 lost its reason
-  (see Remaining)
+  `AtaChannel` = 17, every surface; ATM3 already uses it
+- [x] D2 resolved (2026-09-29): TSConf uses the ZX-Evo scheme `NEMO-DIVIDE` as
+  is (same NemoIDE and nemo-divide latch triggers as BaseConf,
+  `zports.v:256-273, 336-341, 766-783`); `data/configs/ts-conf/unreal.ini` has
+  `[HDD] Scheme=NEMO-DIVIDE` (no CD drive); `IdeController::SchemeFits` accepts
+  it for `MM_TSL`. For DMA devices #3 (IDE to RAM) and #B (RAM to IDE) the shared
+  `IdeAdapter` has `DmaReadWord()` / `DmaWriteWord(uint16_t)`: one whole word
+  from / to the data register, past the Z80 half-word latches (`dma.v:98,
+  441-445`); no board reads #FFFF. Tests
+  `IdeAdapter_Test.DmaMovesWholeWordsPastTheLatches`,
+  `IdeAdapter_Test.DmaWithoutABoardReadsAFloatingBus`
 
 ## Remaining
 
@@ -69,7 +78,7 @@ Scope confirmed with the user on 2026-09-27, and how the design honors it:
   (`IVideoMapper`) before phase 7.
 - Shared with the ATM3 completion program (PLAN #55, [implementation-plan.md](../2026-09-15-atm-baseconf-highres-ports/implementation-plan.md) §2): M1 hook, write intercept, `ZControllerSpi`, SD on `IBlockDevice`, `EvoAvr`; the SD card, host folders (`HostFolderFat`) and media control through the media manager (PLAN #58, [storage-manager](../2026-09-28-storage-manager/technical-design.md)). ATM3 moves to the official `zxevo_fe.rom` (pages 0-3 empty), so TSConf needs its own ROM file with TS-BIOS in pages 0-3.
 - Open user decisions: none blocking. D1-D7 in technical-design §3.2 record the
-  defaults taken. **D2 (Nemo IDE deferred) is reopened**: the shared IDE core
-  it waited for is on master (`f5fc5f05`), so enabling it costs the decoder's
-  `TryIdePortIn/Out` calls, `[HDD] Scheme=NEMO` in the config, the DMA IDE
-  codes 0x3/0xB and the IDE tests - decide before phase 6.
+  defaults taken. **D2 is resolved** (see Progress); left for phase 6, once the
+  TSConf decoder exists: call `TryIdePortIn/Out` first in the decoder (as every
+  other model decoder does) and have the DMA engine call
+  `GetIdeAdapter().DmaReadWord/DmaWriteWord` for devices 0x3 / 0xB, plus a test.

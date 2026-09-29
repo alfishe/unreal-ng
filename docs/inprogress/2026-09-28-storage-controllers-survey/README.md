@@ -5,14 +5,14 @@
 | **Date** | 2026-09-28 |
 | **Status** | survey (research only, no code); see [TODO.md](TODO.md) |
 | **Question** | Which mass-storage controllers do ZX machines and add-ons use, what does unreal-ng have for each, what is missing, and what does each gap cost? |
-| **Measured against** | master (media manager M1-M5, `SdCardSpi`, `ZControllerSpi`, `HostFolderFat`, NeoGS SD) and branch `ide-atapi` (uncommitted as of today: the ATA disk core, ATAPI CD, one `IdeAdapter` for NEMO / NEMO-A8 / NEMO-DIVIDE / ATM / SMUC / PROFI / DIVIDE, `IdeController`, `IdeUnitSlot`, image formats; plan `docs/inprogress/2026-09-28-ide-atapi/implementation-plan.md` on that branch) |
+| **Measured against** | master (media manager M1-M5, `SdCardSpi`, `ZControllerSpi`, `HostFolderFat`, NeoGS SD) and IDE rollout 1 (branch `ide-atapi`, uncommitted at survey time, on master since 2026-09-29, `f5fc5f05`: the ATA disk core, ATAPI CD, one `IdeAdapter` for NEMO / NEMO-A8 / NEMO-DIVIDE / ATM / SMUC / PROFI / DIVIDE, `IdeController`, `IdeUnitSlot`, image formats; plan `docs/inprogress/2026-09-28-ide-atapi/implementation-plan.md`) |
 | **Related** | [IDE design](../2026-09-21-profi/2026-09-25-ide-hdd-design.md), [storage manager](../2026-09-28-storage-manager/reuse-and-readiness.md), [ZX-Evo storage](../2026-09-15-atm-baseconf-highres-ports/tdd-storage-sd-ide-cd.md), [TSConf](../2026-09-27-tsconf/technical-design.md) §3.11, [Sprinter storage](../2026-09-28-sprinter/tdd-storage.md); SMUC in depth: sibling survey `2026-09-28-scorpion-smuc/` (written in parallel) |
 
 ## 1. The short answer
 
-- **Built** (master or `ide-atapi`): every Russian-clone IDE board (Profi, ATM Turbo 2+, Nemo,
+- **Built** (master): every Russian-clone IDE board (Profi, ATM Turbo 2+, Nemo,
   Nemo-A8, ZX-Evo NemoIDE, SMUC), ATAPI CD-ROM, the ZX-Evo Z-Controller SD card, the NeoGS SD card.
-  What is left there is merging `ide-atapi` and a few real-firmware tests.
+  What is left there is a few real-firmware tests (`ide-atapi` is on master, `f5fc5f05`).
 - **Cheap next wins** (days): TSConf SD and IDE (inside the TSConf program), the **+3e over a
   Z-Controller SD card** (every part exists; only the +3 decoder's add-on arm is new).
 - **The one big gap**: **DivIDE / DivMMC and esxDOS**, the most widespread Spectrum storage today.
@@ -30,18 +30,18 @@ Effort: **S** = up to ~3 days, **M** = 1-2 weeks, **L** = 3+ weeks, **XL** = a m
 
 | Controller | Machines | Kind | Status | Effort left | Depends on | File |
 |---|---|---|---|---|---|---|
-| Profi IDE | `PROFI` | IDE, mirror latches, EXT gate | built (`ide-atapi`); SYS ROM boot test | **S** | `ide-atapi` merge | [profi-atm-nemo.md](profi-atm-nemo.md) |
-| ATM Turbo 2+ IDE | `ATM710` | IDE, INTRQ in the `#7FFD`-class read | built (`ide-atapi`) | **S** (real-firmware test) | merge | [profi-atm-nemo.md](profi-atm-nemo.md) |
-| Nemo / Nemo-A8 | `PENTAGON` (128, 512), any non-Profi | IDE | built (`ide-atapi`) | **S** (real-firmware test) | merge | [profi-atm-nemo.md](profi-atm-nemo.md) |
-| SMUC | `SCORPION`, `PROFSCORP` | IDE | adapter built; add-on, off by default | see sibling | merge | sibling `2026-09-28-scorpion-smuc/` |
-| ZX-Evo NemoIDE + ATAPI | `ATM3` | IDE + CD | built (`ide-atapi`), ERS HDD / CD boot on the real ROM | done | merge | [zxevo-baseconf-tsconf.md](zxevo-baseconf-tsconf.md) |
+| Profi IDE | `PROFI` | IDE, mirror latches, EXT gate | **master**; SYS ROM boot test | **S** | - | [profi-atm-nemo.md](profi-atm-nemo.md) |
+| ATM Turbo 2+ IDE | `ATM710` | IDE, INTRQ in the `#7FFD`-class read | **master** | **S** (real-firmware test) | - | [profi-atm-nemo.md](profi-atm-nemo.md) |
+| Nemo / Nemo-A8 | `PENTAGON` (128, 512), any non-Profi | IDE | **master** | **S** (real-firmware test) | - | [profi-atm-nemo.md](profi-atm-nemo.md) |
+| SMUC | `SCORPION`, `PROFSCORP` | IDE | adapter on master; add-on, off by default | see sibling | - | sibling `2026-09-28-scorpion-smuc/` |
+| ZX-Evo NemoIDE + ATAPI | `ATM3` | IDE + CD | **master**, ERS HDD / CD boot on the real ROM | done | - | [zxevo-baseconf-tsconf.md](zxevo-baseconf-tsconf.md) |
 | ZX-Evo Z-Controller SD | `ATM3` | SD over SPI | **master** | done | - | [zxevo-baseconf-tsconf.md](zxevo-baseconf-tsconf.md) |
 | TSConf SD + DMA | `TSL` (not creatable) | SD, DMA `#2`/`#A` | parts on master | **S** | PLAN #41 | [zxevo-baseconf-tsconf.md](zxevo-baseconf-tsconf.md) |
-| TSConf NemoIDE + DMA | `TSL` | IDE, DMA `#3`/`#B` | adapter reusable | **S** + **S** | #41, merge | [zxevo-baseconf-tsconf.md](zxevo-baseconf-tsconf.md) |
+| TSConf NemoIDE + DMA | `TSL` | IDE, DMA `#3`/`#B` | scheme `NEMO-DIVIDE` set in the `ts-conf` config, DMA word API (`IdeAdapter::DmaReadWord` / `DmaWriteWord`) ready | **S** (decoder + DMA hook-ups) | #41 phase 6 | [zxevo-baseconf-tsconf.md](zxevo-baseconf-tsconf.md) |
 | NeoGS SD | NeoGS card, any host | SD (card side) | **master** | done | - | [neogs-sd.md](neogs-sd.md) |
 | Paging + automap framework | cross-cutting | memory | none | **M-L** | M1 hook (master) | [divide-divmmc-esxdos.md](divide-divmmc-esxdos.md) §5 |
 | DivMMC | 48K, 128K, +2, +2A/+3, Pentagon | SD + paging | none | **S** after the framework | framework, `SpiPort` | [divide-divmmc-esxdos.md](divide-divmmc-esxdos.md) |
-| DivIDE | same | IDE + paging | IDE ports only (`IDE_DIVIDE`) | **S** after the framework | framework, merge | [divide-divmmc-esxdos.md](divide-divmmc-esxdos.md) |
+| DivIDE | same | IDE + paging | IDE ports only (`IDE_DIVIDE`) | **S** after the framework | framework | [divide-divmmc-esxdos.md](divide-divmmc-esxdos.md) |
 | esxDOS | DivIDE / DivMMC hosts | firmware | none | **S** (fixtures, tests) | DivMMC | [divide-divmmc-esxdos.md](divide-divmmc-esxdos.md) §3 |
 | ZX Next SD x2 | Next (no model) | SD + DivMMC variant | slot names reserved | **S-M** (machine: **XL**) | Next machine, DivMMC | [zx-next.md](zx-next.md) |
 | +3e over Z-Controller SD | `PLUS3`, `PLUS2A` | SD | all parts exist | **S** | Z-Controller add-on arm | [plus3e-cf.md](plus3e-cf.md) |
@@ -56,7 +56,7 @@ Effort: **S** = up to ~3 days, **M** = 1-2 weeks, **L** = 3+ weeks, **XL** = a m
 
 ```mermaid
 flowchart LR
-    A["1. Merge ide-atapi<br/>+ ATM / Nemo firmware tests (S)"] --> B["2. SMUC<br/>(sibling survey)"]
+    A["1. ide-atapi merged (done)<br/>+ ATM / Nemo firmware tests (S)"] --> B["2. SMUC<br/>(sibling survey)"]
     A --> C["3. +3e over Z-Controller (S)<br/>first Z-Controller add-on"]
     C --> D["4. SpiPort + 8 KB windows<br/>+ DivPaging (M-L)"]
     D --> E["5. DivMMC + esxDOS (S)"]
@@ -69,7 +69,7 @@ flowchart LR
 
 Why this order:
 
-1. **`ide-atapi` first**: six boards and the CD are already written; everything IDE below reuses them.
+1. **`ide-atapi` first** (done: on master, `f5fc5f05`): six boards and the CD are written; everything IDE below reuses them.
 2. **+3e over Z-Controller before DivMMC**: it proves "a Z-Controller as an add-on on a machine
    other than the ZX-Evo" (storage-manager G3) with no new device code, and gives the +3 hard-disk
    support in days.
@@ -82,7 +82,7 @@ Why this order:
 
 | Piece | What | Used by | State |
 |---|---|---|---|
-| ATA disk core | `AtaDevice`, `AtaDisk`, `AtapiCdrom`, `AtaChannel` (16-bit data interface; adapters split words) | every IDE board | `ide-atapi` |
+| ATA disk core | `AtaDevice`, `AtaDisk`, `AtapiCdrom`, `AtaChannel` (16-bit data interface; adapters split words) | every IDE board | master |
 | **8-bit transfer mode** | SET FEATURES `#01` / `#81` in the data engine | ZXCF, simple 8-bit IDE | **new (S)** |
 | **Multi-channel IDE** | `IdeController` with up to two `AtaChannel`s, slots `ide1.*` | Sprinter | **new (S)** |
 | SD card | `SdCardSpi` over `IBlockDevice`, SDSC / SDHC | Z-Controller, NeoGS, TSConf, DivMMC, Next, +3e | master |
@@ -122,10 +122,10 @@ Why this order:
    (`plus3en40mmc.rom` in the Karabas tree only), the Sprinter BIOS (`SP_304.BIN` in ZXMAK2), NextZXOS
    (download only). No `.hdf` / `.mmc` image exists anywhere locally; folders through
    `HostFolderFat` stand in.
-5. ~~The `IDE_DIVIDE` decode on `ide-atapi` is too wide~~ - fixed there on 2026-09-28: it is now
+5. ~~The `IDE_DIVIDE` decode on `ide-atapi` is too wide~~ - fixed on 2026-09-28 (on master, `f5fc5f05`): it is now
    `(low & #E3) = #A3`, so `#E3`, `#E7` and `#EB` stay free for the DivIDE / DivMMC paging
    ([divide-divmmc-esxdos.md](divide-divmmc-esxdos.md) §2.1).
-6. **`ide-atapi` is uncommitted**: every IDE row depends on it landing.
+6. ~~**`ide-atapi` is uncommitted**: every IDE row depends on it landing.~~ - landed: on master since 2026-09-29 (`f5fc5f05`).
 7. **Board RAM under TTD before #40-V1** means whole-RAM blobs per snapshot (the NeoGS precedent);
    acceptable for 32-128 KB, costly for 512 KB-1 MB boards.
 

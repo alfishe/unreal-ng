@@ -103,7 +103,7 @@ A4 and A3 are not decoded. As one mask:
 | ZXMAK2 | `mask = 0xB8E7` | yes (`IdeSmuc.cs:67-81`) |
 | Unreal / Unreal-nedopc | family `(port & 0x18A3) == 0x18A2`, then sub-device `(port & 0xA044)`: together A15, A13, A12, A11, A7, A6, A5, A2, A1, A0 | yes (`io.cpp:840-866`) |
 | Xpeccy | family `0x18A3`, then an **exact 16-bit** port compare for the sub-devices and `(port & 0xF8FF) == 0xF8BE` for the IDE window | stricter (`hdd.c:719-731`, `733-761`) |
-| unreal-ng (`ide-atapi`) | family `0x18FB` / `0x18BA` (the whole low byte) plus `(port & 0xA044)` | stricter: also decodes A4 and A3 (see [current-state-and-gaps.md](current-state-and-gaps.md) G2) |
+| unreal-ng (master, IDE rollout 1) | family `0x18FB` / `0x18BA` (the whole low byte) plus `(port & 0xA044)` | stricter: also decodes A4 and A3 (see [current-state-and-gaps.md](current-state-and-gaps.md) G2) |
 
 **Consensus: mask `#B8E7`.** Worked example: `#FEFE` (keyboard row Caps-V) & `#B8E7` = `#B8E6`. The
 eight sub-device matches are `#18A2` + one of `#0000`, `#0004`, `#2000`, `#2004`, `#8000`, `#8004`,
@@ -211,7 +211,7 @@ drive stays in reset.
 If 1 meant "reset", point 1 would hold the drive in reset forever on real hardware. **Answer: D0
 = 0 asserts the reset (MAME).** Unreal's and ZXMAK2's "1 resets" happens to work in those
 emulators only because their reset is instantaneous: they reset the drive on every one of those
-writes. unreal-ng inherited the Unreal polarity and switched to D0 = 0 on branch `ide-atapi`
+writes. unreal-ng inherited the Unreal polarity and switched to D0 = 0 in IDE rollout 1 (on master, `f5fc5f05`)
 (G3 in [current-state-and-gaps.md](current-state-and-gaps.md)).
 
 How to model it: MAME resets the ATA bus on **each write with D0 = 0** (`smuc.cpp:49-52`) and does

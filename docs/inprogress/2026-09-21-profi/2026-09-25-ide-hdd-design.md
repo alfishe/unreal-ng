@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | **Rollout 1 implemented** 2026-09-28 (branch `ide-atapi`): [implementation-plan.md](../2026-09-28-ide-atapi/implementation-plan.md). Where they differ, the plan's decisions D1-D9 win: the media manager owns the media (§6.1), the automation is the `media` verbs plus `state ide` (§8.2), TTD is a blob + write barriers (§10.0), one adapter class for every board (§5) |
+| **Status** | **Rollout 1 implemented** 2026-09-28, on master (`f5fc5f05`): [implementation-plan.md](../2026-09-28-ide-atapi/implementation-plan.md). Where they differ, the plan's decisions D1-D9 win: the media manager owns the media (§6.1), the automation is the `media` verbs plus `state ide` (§8.2), TTD is a blob + write barriers (§10.0), one adapter class for every board (§5) |
 | **Date** | 2026-09-25 |
 | **Branch** | `profi` (baseline `f4e35ee6`) |
 | **Closes** | Reconciliation gaps **G1** (Profi IDE) and **T3** (IDE state in TTD), [2026-09-25-profi-reconciliation.md](2026-09-25-profi-reconciliation.md) §4; roadmap items **ST-1..ST-3, ST-5** ([01-roadmap-and-machine-state.md](../2026-09-21-roadmap/01-roadmap-and-machine-state.md) §6) |

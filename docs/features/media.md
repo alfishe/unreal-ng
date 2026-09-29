@@ -148,7 +148,7 @@ the machine's config, `[HDD] Scheme`:
 | Scheme | Board | Shipped on |
 |---|---|---|
 | `PROFI` | Profi IDE (answers in the Profi's EXT mode) | Profi |
-| `NEMO-DIVIDE` | ZX-Evo NemoIDE | ZX-Evo |
+| `NEMO-DIVIDE` | ZX-Evo NemoIDE | ZX-Evo; TSConf config (the model is not creatable yet) |
 | `ATM` | ATM Turbo 2+ IDE (with the TR-DOS ports) | ATM Turbo 2+ |
 | `NEMO`, `NEMO-A8` | Nemo IDE card (with the TR-DOS ports off) | Pentagon |
 | `SMUC` | Scorpion SMUC card (with the TR-DOS ports) | none: set it on Scorpion / ProfScorp |

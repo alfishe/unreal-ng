@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-09-28 |
-| **Starts from** | branch `ide-atapi` (IDE rollout 1) merged to `master` |
+| **Starts from** | branch `ide-atapi` (IDE rollout 1) merged to `master` - met: on master since `f5fc5f05` (merge `c69486ab`) |
 | **Inputs** | [hardware-reference.md](hardware-reference.md) (consensus), [current-state-and-gaps.md](current-state-and-gaps.md) (G1-G13), [software-and-boot.md](software-and-boot.md) (levels L0-L5, images T0-T3) |
 | **Related plans** | PLAN #13a (IDE), #58 (media manager), #60(c) (one shared CMOS chip `Ds12887` with an NVRAM file, TTD and a frozen clock for tests) |
 

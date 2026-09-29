@@ -21,7 +21,7 @@
 Xpeccy does the same: its IDE is one global choice (Nemo, Nemo-A8, Nemo-Evo, SMUC, ATM, Profi;
 `Xpeccy/src/xgui/options/setupwin.cpp:327-332`).
 
-**unreal-ng consequence.** `IdeController::SchemeFits` (on `ide-atapi`) already lets NEMO, NEMO-A8,
+**unreal-ng consequence.** `IdeController::SchemeFits` (on master) already lets NEMO, NEMO-A8,
 NEMO-DIVIDE and DIVIDE sit on any non-Profi model. When these clones become creatable (each needs a
 port decoder first), their configs pick a scheme and nothing storage-specific is built. **Effort:
 none** beyond the config line. Test: the 65 536-port collision sweep of `idecontroller_test` for the
