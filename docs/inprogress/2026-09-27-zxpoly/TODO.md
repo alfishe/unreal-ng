@@ -69,6 +69,12 @@ architecture:
     journals) + group seek/branch.
   - Includes the test plan T1–T12 (tests first), the decisions table, effort
     (~6–7 wk) and the deferred coupled machine (Test ROM/MIMD only).
+- [prototype-results.md](prototype-results.md) — the implementation as built:
+  what runs, every platform mechanism with its test, frame scheduling,
+  measurements, what is deferred.
+- [platform-bringup.md](platform-bringup.md) — the bring-up retrospective:
+  every step from the brief to the polish, the bug catalogue, lessons, the
+  commit log and the time accounting.
 
 ## Test corpus
 
