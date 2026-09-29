@@ -140,7 +140,7 @@ Not done: fusetest (source only, needs pasmo or a prebuilt tape), the Butler 128
 
 ## 3. The probe suite (`ctprobe`)
 
-**Status (2026-09-28): v2.** `testdata/contention/ctprobe/`, host suite `ctprobe_test.cpp`.
+**Status (2026-09-28): v2.** [`tools/verification/contention/ctprobe/`](../../../tools/verification/contention/ctprobe/README.md), host suite `ctprobe_test.cpp`.
 - 40 cases match the oracle to the T-state on the 48K, 128K, +3, Pentagon and Scorpion.
 - The reference files `ctprobe.tap` and `ctprobe.trd` run standalone and print a report. Loaded the way a user
   does, they report every value as expected on all five machines.
@@ -275,7 +275,7 @@ offsets it is measured; "all" means offsets 0-7 of one cell plus one cell of ano
 
 | Package | For | How |
 |:--|:--|:--|
-| Source (`testdata/contention/ctprobe/*.asm`) | everything | assembled by the in-tree `Z80TextAssembler` (ORG, EQU, DB / DW / DS) at test time: no external assembler, no committed binaries to drift from the source |
+| Source (`tools/verification/contention/ctprobe/*.asm`) | everything | assembled by the in-tree `Z80TextAssembler` (ORG, EQU, DB / DW / DS) at test time; the committed `.tap` / `.trd` / `.sym` are checked against the source by a test |
 | Host test (suite H) | unreal-ng, every creatable model | the test assembles the probe, writes it into RAM, sets `PC`, runs in turbo mode until the `DONE` flag, reads the result table, compares with the rule's expectations |
 | `.tap` with a BASIC loader | 48K, 128K, +2, +2A, +3, clones with a tape port | written by a tool script from the assembled bytes, for real hardware and other emulators |
 | `.trd` | Pentagon, Scorpion, ATM, Profi | the same bytes as a TR-DOS `CODE` file with a BASIC loader |

@@ -97,6 +97,19 @@ Independent framing audit of `.tap` dumps: walks every block (u16 length + body,
 
 ---
 
+### Memory Contention Probe
+
+`contention/ctprobe/` is a ZX Spectrum program (`.tap` / `.trd`) that measures, to a single clock tick, how the
+machine slows the CPU down when it touches screen memory, and prints `OK` / `BAD` per check against the real
+hardware's behavior. It runs on unreal-ng, other emulators and real machines.
+
+*   **Use-case:** checking contention timing of unreal-ng or another emulator on the 48K, 128K, +2A/+3,
+    Pentagon and Scorpion.
+*   **Usage:** load `ctprobe.tap` / `ctprobe.trd` on the machine, or `make test` / `make xpeccy-plus`; see
+    [contention/ctprobe/README.md](contention/ctprobe/README.md).
+
+---
+
 ## Compatibility
 All scripts are designed to be cross-platform and have been tested on:
 *   **macOS** (using `hdiutil` and `sysctl`)

@@ -24,7 +24,7 @@
 #include "emulator/memory/memory.h"
 #include "emulator/ports/portdecoder.h"
 
-/// ctprobe (testdata/contention/ctprobe; design docs/inprogress/2026-09-28-m1-contention/test-programs.md §3):
+/// ctprobe (tools/verification/contention/ctprobe; design docs/inprogress/2026-09-28-m1-contention/test-programs.md §3):
 /// the emulated-side contention probe. The program times code fragments at exact frame T-states with the
 /// Bobrowski / Rak engine, compares them with expected tables and prints a report. This suite
 /// - builds the probe: assembles it with the in-tree assembler and fills its expected tables from an oracle that
@@ -487,6 +487,14 @@ std::vector<uint8_t> Expected(Rule rule, const CaseRecord& r, const SymbolFn& sy
     return values;
 }
 
+/// The probe's folder: tools/verification/contention/ctprobe
+std::string ProbePath(const std::string& file)
+{
+    return (TestPathHelper::FindProjectRoot() / "tools" / "verification" / "contention" / "ctprobe" / file)
+        .make_preferred()
+        .string();
+}
+
 std::string ReadText(const std::string& path)
 {
     std::ifstream f(path);
@@ -522,8 +530,8 @@ Probe BuildProbe()
 {
     Probe p;
     Z80TextAssembler assembler;
-    p.asmResult = assembler.Assemble(ReadText(TestPathHelper::GetTestDataPath("contention/ctprobe/ctprobe.asm")) + "\n" +
-                                         ReadText(TestPathHelper::GetTestDataPath("contention/ctprobe/engine.asm")),
+    p.asmResult = assembler.Assemble(ReadText(ProbePath("ctprobe.asm")) + "\n" +
+                                         ReadText(ProbePath("engine.asm")),
                                      40000);
     if (!p.asmResult.ok)
     {
@@ -789,11 +797,11 @@ TEST(CtProbeFiles_Test, CommittedFilesMatchTheSource)
 {
     const Probe p = BuildProbe();
     ASSERT_FALSE(p.bytes.empty());
-    EXPECT_TRUE(ReadBinary(TestPathHelper::GetTestDataPath("contention/ctprobe/ctprobe.tap")) == BuildTap(p))
+    EXPECT_TRUE(ReadBinary(ProbePath("ctprobe.tap")) == BuildTap(p))
         << "rebuild with UNREAL_CTPROBE_EXPORT=1";
-    EXPECT_TRUE(ReadBinary(TestPathHelper::GetTestDataPath("contention/ctprobe/ctprobe.trd")) == BuildTrd(p))
+    EXPECT_TRUE(ReadBinary(ProbePath("ctprobe.trd")) == BuildTrd(p))
         << "rebuild with UNREAL_CTPROBE_EXPORT=1";
-    EXPECT_TRUE(ReadBinary(TestPathHelper::GetTestDataPath("contention/ctprobe/ctprobe.sym")) == BuildSym(p))
+    EXPECT_TRUE(ReadBinary(ProbePath("ctprobe.sym")) == BuildSym(p))
         << "rebuild with UNREAL_CTPROBE_EXPORT=1";
 }
 
@@ -809,7 +817,7 @@ TEST(CtProbeFiles_Test, Export)
                                                                               { "ctprobe.sym", BuildSym(p) } };
     for (const auto& [file, data] : files)
     {
-        std::ofstream out(TestPathHelper::GetTestDataPath("contention/ctprobe/" + file), std::ios::binary);
+        std::ofstream out(ProbePath(file), std::ios::binary);
         out.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
         ASSERT_TRUE(out.good()) << file;
     }
@@ -868,7 +876,7 @@ TEST_P(CtProbeLoad_Test, ReportsAllValuesAsExpected)
     BootEditor(l.editor);
     ASSERT_FALSE(HasFatalFailure());
     _context->pFeatureManager->setFeature(Features::kFastTape, true);
-    const std::string path = TestPathHelper::GetTestDataPath(std::string("contention/ctprobe/") + l.file);
+    const std::string path = ProbePath(l.file);
     if (std::string(l.file).find(".tap") != std::string::npos)
         ASSERT_TRUE(_emulator->LoadTape(path));
     else

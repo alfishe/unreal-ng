@@ -188,7 +188,7 @@ test they appear on screen only as that first one; see the next section for gett
 1. **Check the machine settings first.** Many emulators have "early" / "late" ULA timing, a machine subtype, or
    an option that switches contention off. The expected values are for the "early" timing of the 48K and 128K
    (the common one). Pick the right machine: a 128K is not a +2A.
-2. **Run Patrik Rak's Timing Test** (`../rak-timing-test/timing.tap`, test `0`, "contended NOP"). Its pictures
+2. **Run Patrik Rak's Timing Test** (`testdata/contention/rak-timing-test/timing.tap` in the unreal-ng tree, test `0`, "contended NOP"). Its pictures
    were photographed on real machines. On a 48K with early timing the row `14328` must read
    `4 4 4 4 4 4 4 4` and the row `14336` must start with `10`. If the emulator shows `10` at the end of row
    `14328` instead, it runs one tick off relative to the interrupt, and most ctprobe checks fail for that one
@@ -263,10 +263,22 @@ code, byte for byte, as in Rak's test, whose results were photographed on real 4
 | `ctprobe-compare.py` | Reads a memory dump of a finished run and prints every check that differs, with the whole row of values |
 | `ctprobe.asm` | The program: machine detection, the checks, the output |
 | `engine.asm` | The measuring engine (Bobrowski / Rak, GPL) |
+| `Makefile` | Rebuild the files, run the checks, compare a dump, run the probe on xpeccy-plus |
+| `emulators/xpeccy-plus/` | Runs the probe on xpeccy-plus's emulation core without its GUI and dumps the result ([README](emulators/xpeccy-plus/README.md)) |
 
-The `.tap`, `.trd` and `.sym` are built from the two `.asm` files by the unreal-ng test suite, which also fills
-in the expected tables: `UNREAL_CTPROBE_EXPORT=1 ./core-tests --gtest_filter=CtProbeFiles_Test.Export`.
-The test `CtProbeFiles_Test.CommittedFilesMatchTheSource` fails if they get out of step with the source.
+```
+make files                                  # rebuild ctprobe.tap / .trd / .sym
+make check                                  # the files match the sources; one quick 48K run
+make test                                   # every check on every machine in unreal-ng, and the files loaded as a user does
+make compare DUMP=out.bin                   # compare a memory dump with the expected values
+make xpeccy-plus XPECCY_DIR=<checkout>      # the same run on xpeccy-plus
+```
+
+The `.tap`, `.trd` and `.sym` are built from the two `.asm` files by unreal-ng's test suite
+(`core/tests/emulator/video/ctprobe_test.cpp`), which has the assembler and the oracle that fills in the
+expected values. `BUILD` points the Makefile at an unreal-ng build directory configured with `-DTESTS=ON`
+(default: `cmake-build-agent-release` at the tree's root). A test fails when the committed files get out of
+step with the source.
 
 For programs that run the probe themselves: the settings at the start of the code (`ONSET`, `CLASS`, `CAPS`,
 `DEF7FFD`, `DEF1FFD`, `ONLY`, `SHOW`; see `ctprobe.asm`) can be set before starting at `HOSTENTRY`. `DONE`
