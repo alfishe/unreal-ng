@@ -4,7 +4,7 @@
 |---|---|
 | **Date** | 2026-09-28 |
 | **Machines** | any 48K / 128K / +2 / +2A / +3 / Pentagon-class machine with the add-on; built into Karabas-Pro (a Profi clone) and, in its own form, the ZX Next ([zx-next.md](zx-next.md)) |
-| **unreal-ng now** | only the DivIDE **IDE ports** (`[HDD] Scheme=DIVIDE`, `IdeAdapter::DivideIn/Out` on `ide-atapi`). No `#E3` register, no DivIDE memory, no automap, no DivMMC SPI ports. So esxDOS cannot run |
+| **unreal-ng now** | only the DivIDE **IDE ports** (`[HDD] Scheme=DIVIDE`, `IdeAdapter::DivideIn/Out`, on master since `f5fc5f05`). No `#E3` register, no DivIDE memory, no automap, no DivMMC SPI ports. So esxDOS cannot run |
 | **Effort** | **L** in total: M-L for the shared paging + automap framework (8K granularity in `#0000-#3FFF`), then **S** for DivIDE, **S** for DivMMC, **S** for the esxDOS fixtures and tests |
 
 ## 1. What these interfaces are (plain words)
@@ -42,7 +42,7 @@ MAME / jnext (the Next variant, [zx-next.md](zx-next.md)), UnrealSpeccy (IDE por
 Decode masks differ: Unreal `(port & #A3) = #A3`, pico-spec `(low & #E3) = #A3`, zxsp the full
 `%101r rr11`. **The Unreal mask is too wide**: `#E3` also matches it and lands on register 0 (data),
 `#E7` on register 1, `#EB` on register 2. So an `OUT (#E3)` would feed the IDE data toggle. The
-consensus is A6 = 0: `(low & #E3) = #A3`. Branch `ide-atapi` uses it since 2026-09-28
+consensus is A6 = 0: `(low & #E3) = #A3`. unreal-ng uses it since 2026-09-28 (on master, `f5fc5f05`)
 (`IdeAdapter_Test.DividePagingPortsAreNotIde`).
 
 **Data toggle (all three references agree).**
@@ -142,7 +142,7 @@ only, through `enNxtmmc.rom`). UnrealSpeccy, Xpeccy, Spectral, ZXMAK2: no.
 | Piece | Have | Need |
 |---|---|---|
 | DivIDE IDE ports | `IdeAdapter::DivideIn/Out` (`IDE_DIVIDE`), gated "TR-DOS ports off" (the UnrealSpeccy rule) (1) narrow the decode to `(low & #E3) = #A3`: today's `(port & #A3) = #A3` (the UnrealSpeccy mask) catches `#E3`, `#E7`, `#EB` as IDE registers 0-2; (2) reset the toggle on a write to `#E3` and on any other register access in **both** directions (today a register read resets only the read toggle, a write only the write toggle) |
-| IDE disk, slots, formats | shared core on `ide-atapi`; `.hdf` (RS-IDE) is the common DivIDE image format and is supported | none |
+| IDE disk, slots, formats | shared core on master; `.hdf` (RS-IDE) is the common DivIDE image format and is supported | none |
 | SD card | `SdCardSpi` (master), `HostFolderFat` (FAT16 default, FAT32 with the cluster minimum) | a slot `sd.divmmc` (the storage manager's naming rule already reserves it, [reuse-and-readiness.md](../2026-09-28-storage-manager/reuse-and-readiness.md) G1) |
 | SPI port | `ZControllerSpi` (select on D1, read = previous byte + new exchange) | generalize to a `SpiPort` with a configurable select mask (DivMMC bit 0 / bit 1, Next bits 0-7) or add a `DivMmcSpi` twin; either way ~50 lines |
 | `#E3` + memory | **nothing**. `Memory` maps in 16 KB windows (`_bank_read[4]`); DivIDE needs two 8 KB halves of window 0 from a foreign memory | see §5 |

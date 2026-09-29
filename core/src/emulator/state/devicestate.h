@@ -96,9 +96,20 @@ StateNode MoonSoundPcm(EmulatorContext* context);
 ///   attribute cell, text grid, memory layout), displayed RAM pages and the
 ///   machine's video latches (#EFF7, #DFFD, #FF77).
 /// - `ScreenFlash()`: FLASH phase and timing.
+/// - `ScreenAttributes(screen)`: per-cell ink/paper/bright/flash decoded from
+///   the classic ZX attribute memory layout (offset 0x1800 within a RAM
+///   page, 32x24 cells), read directly off the RAM page (not the Z80 bank
+///   mapping). `screen` selects which page: -1 (default) both screens when
+///   the model is shadow-capable, else just the one; 0 forces page 5; 1
+///   forces page 7 (only valid when shadow-capable). Shape: `available`,
+///   `cols` (32), `rows` (24), and `screens`: an array of
+///   `{screen, ram_page, cells}` where `cells` is a row-major array of 768
+///   `{ink, paper, bright, flash}` objects (bits 0-2 ink, 3-5 paper, 6
+///   bright, 7 flash).
 StateNode Screen(EmulatorContext* context, bool verbose);
 StateNode ScreenMode(EmulatorContext* context);
 StateNode ScreenFlash(EmulatorContext* context);
+StateNode ScreenAttributes(EmulatorContext* context, int screen = -1);
 
 /// Video memory contention (`Contention()`): the machine's rule (none / ula48 / ula128 / gatearray), whether
 /// it applies, the 'contention' switch and whether contention is in effect, the selected memory interface,

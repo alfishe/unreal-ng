@@ -24,7 +24,7 @@ passes through:
 | Input gating | `Keyboard::OnKeyPressed` target-ID filter + `IsHostInputSuppressed()` | yes; mouse/joystick need the same gate |
 | Input replication | TTD input journal (`TTDTimePoint`, `ServiceInput`) | yes |
 | Port interception (ZX-Poly ports, floating bus) | **one choke point for all models**: `Z80::in()` / `Z80::out()` in `core/src/emulator/cpu/z80.cpp`, which call the model's `DecodePortIn/Out` and compute the floating bus | yes, with one hook (§4.1) |
-| VRAM line capture | `ScreenZX`, the base screen every model's ZX-classic mode renders through (`VideoController::GetScreenForMode`) | yes for ZX-classic video; other video families need their own capture (§5) |
+| VRAM line capture | `ScreenZX`, the base screen every model's ZX-classic mode renders through (`VideoController::CreateScreen`) | yes for ZX-classic video; other video families need their own capture (§5) |
 | Frame driving | `Emulator::RunFrame`, and the master's `MainLoop::OnFrameEnd()` | yes |
 | TTD sessions, group seek | per instance | yes |
 

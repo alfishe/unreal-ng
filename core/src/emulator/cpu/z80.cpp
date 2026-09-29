@@ -8,6 +8,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttdportjournal.h"
 #include "emulator/cpu/op_noprefix.h"
 #include "emulator/cpu/opcode_profiler.h"
 #include "emulator/emulator.h"
@@ -847,6 +848,27 @@ void Z80::wd(uint16_t addr, uint8_t val)
 
 uint8_t Z80::in(uint16_t port)
 {
+    // TTD port journal: while a session records, every IN result is appended
+    // with its time and PC; while one replays, the CPU gets the recorded value
+    // instead of the live device's answer, so the replay depends on nothing
+    // outside the session - media files, host devices
+    // (ttd-port-read-journal.md). The devices still see the read and its side
+    // effects. Time and PC are taken at the start of the I/O cycle
+    if (ttd::TTDPortJournal* journal = _context->ttdPortReads) [[unlikely]]
+    {
+        const EmulatorState& st = _context->emulatorState;
+        const uint64_t frame = st.frame_counter;
+        const uint32_t tInFrame = st.TtdTInFrame(t);
+        const uint16_t pc = m1_pc;
+        return journal->OnRead(port, inFromBus(port), frame, tInFrame, pc);
+    }
+    return inFromBus(port);
+}
+
+/// The read as the bus answers it: interceptor, model decoder, observer cards,
+/// floating bus, I/O contention
+uint8_t Z80::inFromBus(uint16_t port)
+{
     // ULA I/O contention (48K / 128K / +2), first part: the wait at the cycle's first T, before IORQ. The
     // handler has already counted that T (IORQ is at T2), so the cycle started 1 T ago. ioContention is
     // null on machines without it (Core::SelectMemoryInterface)
@@ -934,6 +956,13 @@ uint8_t Z80::in(uint16_t port)
 
 void Z80::out(uint16_t port, uint8_t val)
 {
+    // TTD port journal: every OUT is logged as a fact of the machine's output
+    // while a session records, and checked against the record while it
+    // replays (ttd-port-read-journal.md)
+    if (ttd::TTDPortJournal* journal = _context->ttdPortWrites) [[unlikely]]
+        journal->OnWrite(port, val, _context->emulatorState.frame_counter, _context->emulatorState.TtdTInFrame(t),
+                         m1_pc);
+
     // ULA I/O contention, as in in(): the wait before IORQ goes before the port write, so the device (the
     // border latch) sees the delayed T; the waits after IORQ follow the write
     uint8_t ioWait = 0;
@@ -1163,6 +1192,19 @@ bool Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
         return true;  // NMI accepted: skip Z80Step this iteration
     }
 
+    // A machine that owns its INT logic decides the pin alone (IInterruptSource)
+    if (interruptSource) [[unlikely]]
+    {
+        cpu.int_pending = interruptSource->IsIntAsserted(cpu.t);
+        video.memcyc_lcmd = 0;
+        if (cpu.int_pending && cpu.iff1 && cpu.boundary != Z80_BOUNDARY_INT_SHADOW && !prefixPending)
+        {
+            HandleINT(interruptSource->AcknowledgeInterrupt(cpu.t));
+            return true;
+        }
+        return false;
+    }
+
     // Generate INT
     // TODO: move INT forming logic to Screen class since in reality it's formed by ULA / frame counters
     // Strict sampling (cpu.t > int_start): the ULA registers the INT signal one clock
@@ -1356,6 +1398,11 @@ void Z80::HandleINT(uint8_t vector)
 void Z80::OnCPUStep()
 {
     // Q register update is now handled in Z80Step() based on flag changes
+
+    // The machine engine first (IMachineStepHook): the screen and the sound
+    // below then see the state this step produced
+    if (machineStepHook) [[unlikely]]
+        machineStepHook->OnMachineStep(t);
 
     // MainLoop will dispatch the call to all peripherals
     _context->pMainLoop->OnCPUStep();

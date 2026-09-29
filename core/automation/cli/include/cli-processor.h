@@ -212,6 +212,7 @@ private:
     void HandleStateScreenVerbose(const ClientSession& session, EmulatorContext* context);
     void HandleStateScreenMode(const ClientSession& session, EmulatorContext* context);
     void HandleStateScreenFlash(const ClientSession& session, EmulatorContext* context);
+    void HandleStateScreenAttributes(const ClientSession& session, EmulatorContext* context);
 
     // Audio state handlers
     void HandleStateAudio(const ClientSession& session, EmulatorContext* context);
@@ -366,6 +367,8 @@ private:
                        const std::vector<std::string>& args);
     void HandleTTDFindLast(const ClientSession& session, EmulatorContext* context,
                            const std::vector<std::string>& args);
+    void HandleTTDPortEvents(const ClientSession& session, EmulatorContext* context,
+                             const std::vector<std::string>& args);
     void HandleTTDStepInstruction(const ClientSession& session, EmulatorContext* context,
                                    const std::vector<std::string>& args);
     void HandleTTDReverseStep(const ClientSession& session, EmulatorContext* context,

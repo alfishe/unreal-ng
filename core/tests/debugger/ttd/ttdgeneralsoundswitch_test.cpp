@@ -197,9 +197,10 @@ TEST_F(TTDGeneralSoundSwitch_Test, SwitchWithoutRecordingIsUnaffected)
     EXPECT_EQ(context->pTimeTravelManager->GetState(), ttd::TTDSessionState::Idle);
 }
 
-/// NeoGS records on TTD v1: every checkpoint carries the whole card - RAM
-/// and flash included (neogs-tdd.md §7.4)
-TEST_F(TTDGeneralSoundSwitch_Test, NeoGSRecordsWithTheWholeCardInEveryCheckpoint)
+/// NeoGS records on TTD v1: every checkpoint carries the card's registers and
+/// device state, never its RAM or flash - large memories are not snapshotted
+/// in v1, they wait for TTD v2 memory regions (neogs-tdd.md §7.4)
+TEST_F(TTDGeneralSoundSwitch_Test, NeoGSCheckpointsLeaveTheCardMemoryOut)
 {
     ASSERT_TRUE(sm->switchGeneralSoundCard(GSTypeKind::NGS));
     ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
@@ -211,7 +212,8 @@ TEST_F(TTDGeneralSoundSwitch_Test, NeoGSRecordsWithTheWholeCardInEveryCheckpoint
     ASSERT_NE(blobs.find(id), blobs.end());
     const auto restored = ttd::TTDPeripheralRegistry::DecodeBlob(id, blobs[id]);
     EXPECT_EQ(restored.size(), card->TTDStateSize());
-    EXPECT_GT(restored.size(), card->getRamSizeKB() * 1024 + 512u * 1024) << "RAM and flash";
+    EXPECT_LT(restored.size(), 64u * 1024) << "registers and devices only - no RAM, no flash";
+    EXPECT_GE(card->getRamSizeKB(), 2048u);
     context->pTimeTravelManager->StopRecording();
 }
 

@@ -5,7 +5,7 @@
 | **Date** | 2026-09-28 |
 | **Machines** | ZX-Evo with the BaseConf FPGA (model `ATM3`, creatable) and with TSConf (model `TSL`, not creatable yet, PLAN #41) |
 | **Designs** | [tdd-storage-sd-ide-cd.md](../2026-09-15-atm-baseconf-highres-ports/tdd-storage-sd-ide-cd.md) (SD §2, NemoIDE §3, ATAPI §4); [baseconf-hardware-reference.md](../2026-09-15-atm-baseconf-highres-ports/baseconf-hardware-reference.md) §A.9, §A.13; TSConf [hardware-spec.md](../2026-09-27-tsconf/hardware-spec.md) §6.2, §8.1, §8.3 and [technical-design.md](../2026-09-27-tsconf/technical-design.md) §3.11; [integration-zxevo-sd.md](../2026-09-28-storage-manager/integration-zxevo-sd.md), [integration-tsconf-sd.md](../2026-09-28-storage-manager/integration-tsconf-sd.md) |
-| **Effort** | BaseConf: **done** (SD on master, NemoIDE + ATAPI on `ide-atapi`). TSConf SD: **S** inside TSConf phase 6. TSConf IDE: **S** (ports) + **S** (DMA codes `#3`/`#B`) |
+| **Effort** | BaseConf: **done** (SD and NemoIDE + ATAPI on master). TSConf SD: **S** inside TSConf phase 6. TSConf IDE: scheme `NEMO-DIVIDE` set and the DMA word API ready (2026-09-29); left **S** (decoder `TryIdePortIn/Out` + DMA codes `#3`/`#B` hook-up) |
 
 ## 1. BaseConf
 
@@ -30,12 +30,14 @@ word) gives the same bytes.
 | Piece | Where | State |
 |---|---|---|
 | SD card | `SdCardSpi` + `ZControllerSpi` + slot `sd.zc` (card detect, WP switch, folder via `HostFolderFat`) | **master** (E5, E5b = media manager M1). ERS boots `SD_BOOT.$C`; NedoOS boots from an image and from a folder |
-| NemoIDE | `IdeAdapter` scheme `NEMO-DIVIDE` (`EvoIn` / `EvoOut`), slots `ide0.master` / `ide0.slave` | **`ide-atapi`** (uncommitted). ERS "HDD boot" and "CD boot" on the real ROM (`zxevo_ers_test`) |
-| ATAPI CD | `AtapiCdrom` + ISO format, a CD unit by `CD1=1` or an `.iso` | **`ide-atapi`** |
-| TTD | `EvoSdCard = 15` (Z-Controller + card protocol), `AtaChannel = 17`; guest writes are barriers | master / `ide-atapi` |
+| NemoIDE | `IdeAdapter` scheme `NEMO-DIVIDE` (`EvoIn` / `EvoOut`), slots `ide0.master` / `ide0.slave` | **master** (`f5fc5f05`). ERS "HDD boot" and "CD boot" on the real ROM (`zxevo_ers_test`) |
+| ATAPI CD | `AtapiCdrom` + ISO format, a CD unit by `CD1=1` or an `.iso` | **master** (`f5fc5f05`) |
+| TTD | `EvoSdCard = 15` (Z-Controller + card protocol), `AtaChannel = 17`; guest writes are barriers | master |
 
-Gap: none for the hardware. Open items belong to other rows: the shipped config has no CD unit
-by design (an empty ATAPI drive changes the ERS boot); NedoOS from a Nemo HDD image (NOS-HDD-1)
+Gap: none for the hardware. Open items belong to other rows: the shipped config first had no CD
+unit (an empty ATAPI drive changes the ERS boot); since `087b9ec7` it ships
+the CD drive on the IDE slave (`CD1=1`), and the ERS "D. CD boot" reports no medium and retries
+until a disc is inserted (`ZXEvoErs_Test.CdBootSeesTheDiscEjectedAndInsertedAgain`); NedoOS from a Nemo HDD image (NOS-HDD-1)
 is a test still to add.
 
 ## 2. TSConf
@@ -61,7 +63,7 @@ byte first. The CPU then reads the two CRC bytes itself.
 | Piece | Reusable as is | New |
 |---|---|---|
 | SD | `ZControllerSpi`, `SdCardSpi`, slot `sd.zc` (same id as BaseConf, so a model switch keeps the card), `HostFolderFat` (the TSConf design's `VirtualFatBlockStore`), `EvoAvr` card-detect / WP | the TSConf decoder arm for `#57`/`#77` (the ATM3 one without the shadow `#8057` rule; `#77` read must stay `#00`, the FPGA value, `zx-evo-tsconf .../z80/zports.v:460-465`), the DMA `#2`/`#A` path: a loop over `ZControllerSpi::WriteData` / `ReadData` inside `TsConfDma`, budgeted in DRAM slots |
-| IDE | `IdeAdapter` scheme `NEMO-DIVIDE` unchanged (same RTL family) | the scheme accepted for `TSL` in `IdeController::SchemeFits` (today it allows any non-Profi model, so only the shipped `ts-conf` config changes from `NONE`); DMA `#3`/`#B` calling `AtaChannel::ReadData` / `WriteData` per word, paced by DRQ |
+| IDE | `IdeAdapter` scheme `NEMO-DIVIDE` unchanged (same RTL family) | done 2026-09-29: `IdeController::SchemeFits(IDE_NEMO_DIVIDE, MM_TSL)` is true (tested) and the shipped `ts-conf` config has `[HDD] Scheme=NEMO-DIVIDE`; `IdeAdapter::DmaReadWord` / `DmaWriteWord` move one whole word from / to the data register past the Z80 latches. Left: the decoder calls `TryIdePortIn/Out` first, and DMA `#3`/`#B` call `GetIdeAdapter().DmaReadWord/DmaWriteWord` per word, paced by DRQ |
 | TTD | `EvoSdCard`, `AtaChannel` blobs | DMA state is TSConf's own blob (id 16); a DMA write to the card or disk is a barrier through the same `NoteWrite` |
 
 ### 2.3 Software to test with
@@ -85,4 +87,4 @@ byte first. The CPU then reads the two CRC bytes itself.
 ### 2.5 Order
 
 TSConf phases up to the decoder (PLAN #41) → SD arm (hours) → DMA SPI (with the DMA engine) →
-NemoIDE arm (hours, once `ide-atapi` is on master) → DMA IDE.
+NemoIDE arm (hours; `ide-atapi` is on master, scheme and DMA word API ready) → DMA IDE.

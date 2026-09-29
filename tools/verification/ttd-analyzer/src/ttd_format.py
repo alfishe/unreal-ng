@@ -78,6 +78,21 @@ FLAGS_HAS_WRITE_JOURNAL = 0x0002  # write journal section present
 FLAGS_HAS_BOOKMARKS = 0x0008  # advisory bookmarks section follows the coverage index
 FLAGS_WRITE_JOURNAL_COMPLETE = 0x0010  # the journal holds every write of the session
 FLAGS_TOP_CLOCK_TIME = 0x0020  # tInFrame / globalT count T-states at the model's top CPU clock (B4)
+# Replay inputs (always written by current writers; a file without them
+# predates saved input and replays inside a frame without the recorded input)
+FLAGS_HAS_INPUT_JOURNAL = 0x0040  # input events (keyboard, mouse, GS host stimuli)
+FLAGS_HAS_EXTERNAL_EVENTS = 0x0080  # replay barriers (tape, disk, debugger edits, resets)
+# Every IN result and OUT of the session with its time and PC, and each
+# checkpoint's position in both (ttd-port-read-journal.md): with them a replay
+# needs no media or host device, and "when did the program ..." is a scan
+FLAGS_HAS_PORT_JOURNALS = 0x0100
+PORT_JOURNAL_BLOCK_RECORDS = 32768
+
+# TTDInputKind / TTDExternalEventKind names (ttdinputjournal.h, ttdexternalevents.h)
+INPUT_KIND_NAMES = ["Key", "MouseMove", "MouseButtons", "MouseWheel", "MouseCounters",
+                    "KeyboardReset", "GSCommand", "GSData", "GSNmi", "GSResetCard", "GSReset"]
+EXTERNAL_EVENT_KIND_NAMES = {0: "TapeControl", 1: "DiskWrite", 2: "DebuggerEdit",
+                             3: "HardwareReset", 255: "Other"}
 
 # Write journal section. Records are stored as zstd-compressed columnar blocks
 # rather than verbatim: the journal is by far the largest thing in a .ttd (89%
@@ -453,6 +468,63 @@ class CoverageIndexSection:
 
 
 @dataclass
+class InputEvent:
+    """One input event (TTDInputEvent): applied by replay at its time."""
+    frame: int
+    t_in_frame: int
+    kind: int
+    key: int
+    pressed: bool
+    dx: int
+    dy: int
+    button_mask: int
+    wheel_steps: int
+    value: int
+
+    @property
+    def kind_name(self) -> str:
+        return INPUT_KIND_NAMES[self.kind] if self.kind < len(INPUT_KIND_NAMES) else f"kind{self.kind}"
+
+
+@dataclass
+class PortRecord:
+    """One IN or OUT: its time, the instruction's PC, the port and the value."""
+    frame: int
+    t_in_frame: int
+    port: int
+    pc: int
+    value: int
+
+
+@dataclass
+class PortJournal:
+    """One port journal (flag bit 8): IN results or OUTs in execution order.
+
+    ``records[i]`` is the i-th access of the session; ``cursors[c]`` is
+    checkpoint c's position (accesses before it happened before the checkpoint).
+    """
+    records: List[PortRecord]
+    cursors: List[int]
+    section_bytes: int = 0  # the journal's bytes in the file
+
+    def __len__(self) -> int:
+        return len(self.records)
+
+
+@dataclass
+class ExternalEvent:
+    """One replay barrier (TTDExternalEvent)."""
+    frame: int
+    t_in_frame: int
+    kind: int
+    reason: str
+
+    @property
+    def kind_name(self) -> str:
+        return EXTERNAL_EVENT_KIND_NAMES.get(self.kind, f"kind{self.kind}")
+
+
+@dataclass
 class TtdDump:
     """The fully-parsed .ttd file in memory.
 
@@ -467,6 +539,14 @@ class TtdDump:
     coverage: Optional[CoverageIndexSection] = None
     # Agent bookmarks (flag bit 3): (frame, t_in_frame, label), time-sorted as written
     bookmarks: Optional[List[tuple]] = None
+    # Replay inputs (flag bits 6 and 7). None = the file predates the section
+    # (the session's input history is incomplete); [] = saved, and empty
+    input_events: Optional[List["InputEvent"]] = None
+    external_events: Optional[List["ExternalEvent"]] = None
+    # Port journals (flag bit 8); None = the session has none (replay reads
+    # the live devices)
+    port_reads: Optional[PortJournal] = None
+    port_writes: Optional[PortJournal] = None
     # Bytes after the last section this parser knows about (should be 0)
     trailing_bytes: int = 0
     # Lazily-decompressed sub-page cache. Keyed by slot index; populated on
@@ -838,9 +918,9 @@ def parse_chipset(r: _Reader) -> ChipsetState:
 
 def parse_blob(r: _Reader) -> bytes:
     size = r.u32()
-    if size > (1 << 20):  # 1 MB sanity cap
+    if size > (16 << 20):  # kMaxPeripheralBlobBytes (ttddumpformat.h)
         raise TtdFormatError(
-            f"implausible peripheral blob size {size} (>1 MB)"
+            f"implausible peripheral blob size {size} (>16 MiB)"
         )
     return r.take(size)
 
@@ -1046,9 +1126,137 @@ def parse_bytes(data: bytes) -> TtdDump:
     if header.flags & FLAGS_HAS_BOOKMARKS:
         bookmarks = parse_bookmarks_section(r)
 
+    # Replay inputs: required data, so a damaged section raises
+    input_events = None
+    if header.flags & FLAGS_HAS_INPUT_JOURNAL:
+        input_events = parse_input_journal_section(r)
+
+    external_events = None
+    if header.flags & FLAGS_HAS_EXTERNAL_EVENTS:
+        external_events = parse_external_event_section(r)
+
+    port_reads = port_writes = None
+    if header.flags & FLAGS_HAS_PORT_JOURNALS:
+        port_reads = parse_port_journal(r, len(checkpoints), "port-read journal")
+        port_writes = parse_port_journal(r, len(checkpoints), "port-write journal")
+
     return TtdDump(header=header, slots=slots, checkpoints=checkpoints,
                    journal=journal, coverage=coverage, bookmarks=bookmarks,
-                   trailing_bytes=r.remaining)
+                   input_events=input_events, external_events=external_events,
+                   port_reads=port_reads, port_writes=port_writes, trailing_bytes=r.remaining)
+
+
+def parse_port_journal(r: _Reader, checkpoint_count: int, name: str) -> PortJournal:
+    """Parse one port journal of the flag-bit-8 section.
+
+    Layout (TTDPortJournal::Serialize): u64 record_count, u32 block_records,
+    u32 block_count, then per block u32 records, u64 base_frame, u32 crc32c (of
+    the raw block), u32 compressed_size, zstd payload. The raw block is five
+    columns: u16 ports, u8 values, u16 PCs, u32 frame deltas, u32 T-states
+    (absolute for the first record and when the frame changed, else the step).
+    Then u32 cursor_count and a u64 per checkpoint.
+    """
+    start = r.pos
+    count = r.u64()
+    block_records = r.u32()
+    block_count = r.u32()
+    if block_records != PORT_JOURNAL_BLOCK_RECORDS:
+        raise TtdFormatError(f"{name}: unsupported block size {block_records}")
+    if block_count != (count + block_records - 1) // block_records:
+        raise TtdFormatError(f"{name}: {block_count} blocks cannot hold {count} records")
+    records: List[PortRecord] = []
+    previous = (0, 0)
+    for i in range(block_count):
+        n = r.u32()
+        base_frame = r.u64()
+        crc = r.u32()
+        size = r.u32()
+        last = i + 1 == block_count
+        if n == 0 or n > block_records or (not last and n != block_records):
+            raise TtdFormatError(f"{name}: block {i} claims {n} records")
+        raw = _decompress_zstd(r.take(size), n * 13)
+        if crc32c(raw) != crc:
+            raise TtdFormatError(f"{name}: block {i} fails its CRC")
+        ports = struct.unpack_from(f"<{n}H", raw, 0)
+        values = raw[2 * n:3 * n]
+        pcs = struct.unpack_from(f"<{n}H", raw, 3 * n)
+        frame_deltas = struct.unpack_from(f"<{n}I", raw, 5 * n)
+        times = struct.unpack_from(f"<{n}I", raw, 9 * n)
+        if frame_deltas[0] != 0:
+            raise TtdFormatError(f"{name}: block {i} does not start at its base frame")
+        frame, t = base_frame, 0
+        for k in range(n):
+            frame += frame_deltas[k]
+            t = times[k] if (k == 0 or frame_deltas[k] != 0) else (t + times[k]) & 0xFFFFFFFF
+            if (frame, t) < previous:
+                raise TtdFormatError(f"{name}: record {len(records)} is earlier than the one before it")
+            previous = (frame, t)
+            records.append(PortRecord(frame, t, ports[k], pcs[k], values[k]))
+    if len(records) != count:
+        raise TtdFormatError(f"{name}: blocks hold {len(records)} records, the header claims {count}")
+    cursor_count = r.u32()
+    if cursor_count != checkpoint_count:
+        raise TtdFormatError(f"{name}: {cursor_count} cursors for {checkpoint_count} checkpoints")
+    cursors = [r.u64() for _ in range(cursor_count)]
+    for i, c in enumerate(cursors):
+        if c > count or (i > 0 and c < cursors[i - 1]):
+            raise TtdFormatError(f"{name}: cursor {i} is out of order or past the end")
+    return PortJournal(records=records, cursors=cursors, section_bytes=r.pos - start)
+
+
+def parse_input_journal_section(r: _Reader) -> List[InputEvent]:
+    """Parse the input-journal section (flag bit 6).
+
+    Layout (TimeTravelManager::SerializeSession, ttddumpformat.h): u32 count,
+    then per event u64 frame, u32 t_in_frame, u8 kind, u8 key, u8 pressed,
+    i16 dx, i16 dy, u8 button_mask, i8 wheel_steps, u8 value (21 bytes).
+    """
+    count = r.u32()
+    if count > (1 << 24):
+        raise TtdFormatError(f"implausible input event count {count}")
+    events: List[InputEvent] = []
+    for i in range(count):
+        frame = r.u64()
+        t_in_frame = r.u32()
+        kind, key, pressed = r.u8(), r.u8(), r.u8()
+        dx, dy = struct.unpack("<hh", r.take(4))
+        button_mask = r.u8()
+        wheel_steps = struct.unpack("<b", r.take(1))[0]
+        value = r.u8()
+        if kind >= len(INPUT_KIND_NAMES):
+            raise TtdFormatError(f"input event {i}: unknown kind {kind}")
+        if pressed > 1:
+            raise TtdFormatError(f"input event {i}: invalid pressed byte {pressed}")
+        ev = InputEvent(frame, t_in_frame, kind, key, pressed == 1, dx, dy, button_mask, wheel_steps, value)
+        if events and (ev.frame, ev.t_in_frame) < (events[-1].frame, events[-1].t_in_frame):
+            raise TtdFormatError(f"input event {i} is earlier than the one before it")
+        events.append(ev)
+    return events
+
+
+def parse_external_event_section(r: _Reader) -> List[ExternalEvent]:
+    """Parse the external-event section (flag bit 7).
+
+    Layout: u32 count, then per marker u64 frame, u32 t_in_frame, u8 kind,
+    u8 reason_len (0..63), reason bytes. Unknown kinds are kept.
+    """
+    count = r.u32()
+    if count > (1 << 20):
+        raise TtdFormatError(f"implausible external event count {count}")
+    events: List[ExternalEvent] = []
+    for i in range(count):
+        frame = r.u64()
+        t_in_frame = r.u32()
+        kind = r.u8()
+        reason_len = r.u8()
+        if reason_len > 63:
+            raise TtdFormatError(f"external event {i}: implausible reason length {reason_len}")
+        reason = r.take(reason_len).decode("utf-8", errors="replace")
+        ev = ExternalEvent(frame, t_in_frame, kind, reason)
+        if events and (ev.frame, ev.t_in_frame) < (events[-1].frame, events[-1].t_in_frame):
+            raise TtdFormatError(f"external event {i} is earlier than the one before it")
+        events.append(ev)
+    return events
 
 
 def parse_bookmarks_section(r: _Reader) -> List[tuple]:

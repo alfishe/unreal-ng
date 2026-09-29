@@ -87,6 +87,9 @@ public:
     /// caller sets wasDecoded
     static PortDecodeDisposition TraceDisposition(PortArm arm, uint16_t port, bool isWrite);
 
+    /// Internal port codes for the trace: every PortArm with its name
+    std::vector<PortTraceCodeName> GetPortTraceCodeTable() const override;
+
     /// FPGA variant the ROM image expects ([EVO] Fpga=): the frozen legacy
     /// tree reads the Evo registers on #xxBE, the current "trdemu" tree on #xxBD
     bool IsLegacyFpga() const;

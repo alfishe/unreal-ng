@@ -179,6 +179,17 @@ public:
     /// @brief Drop everything. Called when the session is invalidated.
     void Clear();
 
+    /// @brief Forget frames @p frame and later: a resume from the past
+    /// discards that future, and a stale "this frame never touched X" would
+    /// make reverse search skip a frame of the new history.
+    ///
+    /// Frames before @p frame stay indexed. With @p partialFirstFrame the
+    /// resume point lies inside @p frame: the recording collects only the
+    /// part after it, so that frame is sealed as a hole (not covered; queries
+    /// replay it) instead of an incomplete set that would prove false
+    /// absences.
+    void DropFramesFrom(uint64_t frame, bool partialFirstFrame);
+
     /// @brief Most recent frame at or before @p beforeFrame whose @p kind set
     ///        contains @p key, or nullopt when no frame does.
     ///
@@ -302,6 +313,22 @@ private:
     uint64_t _firstCoveredFrame[kKindCount] = {};
     uint64_t _lastCoveredFrame[kKindCount] = {};
     bool     _hasCoverage[kKindCount] = {};
+
+    /// Frames inside the covered range that hold no data (the partial frame of
+    /// a mid-frame resume, DropFramesFrom). Ascending; rebuilt on load from the
+    /// gaps between blocks, so the file format needs no field for them.
+    std::vector<uint64_t> _holes[kKindCount];
+
+    /// The next SealFrame for this frame records a hole instead of a set
+    uint64_t _holeToSeal = UINT64_MAX;
+
+    bool IsHole(size_t kindIdx, uint64_t frame) const;
+
+    /// Byte length of the first @p frames frames of a raw block
+    static size_t RawPrefixBytes(const std::vector<uint8_t>& raw, uint32_t frames);
+
+    /// Forget the frame under accumulation (its keys and repeat filters)
+    void DiscardPending(size_t kindIdx);
 
     /// Compressed blocks, in ascending frame order.
     std::vector<Block> _blocks[kKindCount];

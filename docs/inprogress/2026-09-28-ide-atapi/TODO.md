@@ -1,6 +1,6 @@
 # IDE + ATAPI — TODO
 
-**Status:** rollout 1 implemented 2026-09-28 on branch `ide-atapi` (P1-P7). Plan and as built:
+**Status:** rollout 1 implemented 2026-09-28 (P1-P7), on master (`f5fc5f05`, merged in `c69486ab`). Plan and as built:
 [implementation-plan.md](implementation-plan.md).
 PLAN.md rows **#58** (M6) and **#13a** (Profi IDE).
 
@@ -15,9 +15,12 @@ PLAN.md rows **#58** (M6) and **#13a** (Profi IDE).
 Follow-ups (not in rollout 1):
 - [ ] NedoOS from a Nemo / NemoIDE hard disk image and from a folder (R5): needs a NedoOS HDD image or an HDD-booting build
 - [ ] NedoOS reading a CD (R7): which NedoOS build and driver (IDE design Q9)
+- [x] ZX-Evo ships its CD drive on the slave (`CD1=1`); the ERS sees the disc ejected (NOT READY / medium not present, retries) and inserted again (UNIT ATTENTION, then boots): `ZXEvoErs_Test.CdBootSeesTheDiscEjectedAndInsertedAgain`
 - [x] TTD fixture corpus re-recorded with the IDE board (2026-09-28; the analyzer knows id 17)
 - [x] Profi geometry from the `ProfiHiDD` header (LBA 256: 16 x 16, LBA 1008: 16 x 63), else 16 x 16 (IDE design §8.3); `profi_hdd_test` runs without `CHS0`
 - [x] Adapter fuzzing: seeded random traffic on every scheme (`IdeAdapter_Test.RandomPortTrafficIsSafe`); the cross-emulator differential harness (IDE design §12.6) stays open
 - [x] A unit's drive from the media verbs and the Qt panel: `device=cdrom|disk` on insert / swap (`IdeController::SetUnitKind`)
+- [x] TSConf scheme: `data/configs/ts-conf/unreal.ini` ships `[HDD] Scheme=NEMO-DIVIDE` (the TSConf FPGA has the same NemoIDE as BaseConf; no CD drive); `IdeController::SchemeFits(IDE_NEMO_DIVIDE, MM_TSL)` is tested
+- [x] TSConf DMA devices #3 (IDE to RAM) / #B (RAM to IDE): `IdeAdapter::DmaReadWord()` / `DmaWriteWord(uint16_t)` move one whole word from / to the data register past the Z80 half-word latches: the Z80 read / write pairs stay (their triggers move only on Z80 port accesses, `zports.v:784-808`), and a DMA read loads the read latch with the word's high byte, as every IDE bus cycle loads `iderdreg` (`zports.v:849-854`); no board reads #FFFF (`IdeAdapter_Test.DmaMovesWholeWordsPastTheLatches`, `IdeAdapter_Test.DmaWithoutABoardReadsAFloatingBus`)
 - [ ] DivIDE paging and automap (the adapter decodes its IDE ports only)
-- [ ] TSConf IDE (PLAN #41 phase 6, [technical-design §3.11](../2026-09-27-tsconf/technical-design.md#311-storage)): scheme `NEMO-DIVIDE` as is, plus `IdeAdapter::DmaReadWord` / `DmaWriteWord` for its IDE DMA and a "reached the drive" flag for its optional CPU stall (`[HDD] IdeStall`)
+- [ ] TSConf IDE (PLAN #41 phase 6, [technical-design §3.11](../2026-09-27-tsconf/technical-design.md#311-storage)): `TryIdePortIn/Out` in the TSConf decoder, DMA #3 / #B calling the `DmaReadWord` / `DmaWriteWord` above, a "reached the drive" flag for its optional CPU stall (`[HDD] IdeStall`)

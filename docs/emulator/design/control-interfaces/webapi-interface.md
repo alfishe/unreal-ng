@@ -1319,6 +1319,7 @@ Positions are always a pair `frame` (absolute frame number) + `tinframe` (offset
 | `POST` | `/ttd/reverse-step` | Exactly one of `{"count": N}` (instructions) or `{"tstates": T}` (lands on the nearest instruction start at or before the target). 400 for both or neither. | `reached`, `mode` (`count`/`tstates`), `frame`, `tinframe` | ✅ Implemented |
 | `POST` | `/ttd/reverse-continue` | `{"pcs": [A, B, ...]}` — non-empty array of addresses 0..65535: numbers, or strings (decimal, `"0x.."`, `"#.."`, `"$.."`) | `matched`, `pc`, `frame`, `tinframe`, `blocked_by_marker {kind, reason, frame, tinframe}` (only when a marker stopped it), `covered_from`, `covered_from_tinframe`, `covered_to`, `covered_to_tinframe` (the searched span; see [Search window](./command-interface.md#ttd-session-rules)) | ✅ Implemented |
 | `POST` | `/ttd/find-last` | See "find-last request" below | `found`; on a hit `frame`, `tinframe`, `pc`, `value`, `phys_page` (`null` for ROM / no RAM page), `access`; when a marker blocked the search `blocked: true`, `marker_frame`, `marker_tinframe`, `marker_kind`, `marker_reason`; always (unless refused) `covered_from`, `covered_from_tinframe`, `covered_to`, `covered_to_tinframe` - the searched span | ✅ Implemented |
+| `POST` | `/ttd/port-events` | `{"event": "key", "arg": "space", ...options}` | "When did the program ...": `event`, `direction` (`in`/`out`), `count`, `truncated`, `scanned`, `hits` (`index`, `frame`, `tinframe`, `port`, `value`, `pc`, `ay_register` for AY queries). 409 without port journals or while a recording runs. See "port-events request" below | ✅ Implemented |
 | `POST` | `/ttd/resume` | Optional `{"frame": N, "tinframe"?: T}`; default is the current position | `resumed`, `frame`, `tinframe`, `state`. Truncates everything after the point and records again; resumes the emulator on success. Fails (`resumed: false`) from `idle` — seek first. | ✅ Implemented |
 | `GET`  | `/ttd/position` | — | `current {frame, tinframe}`, `session_end {frame, tinframe}`, `state` | ✅ Implemented |
 | `GET`  | `/ttd/markers` | — | `count`, `markers[] {frame, tinframe, kind, reason}` — kinds `tape_control`, `disk_write`, `debugger_edit` (a tool edit made while recording), `other`; `hardware_reset` is reserved and never written (a reset stops the recording instead) | ✅ Implemented |
@@ -1362,6 +1363,16 @@ There are no `/ttd/clear`, `/ttd/timeline`, `/ttd/step` or `/ttd/resume_from_her
   "coverage_index_frames": 300,
   "coverage_index_bytes": 13926,
   "bookmark_count": 0,
+  "input_event_count": 10,
+  "external_event_count": 0,
+  "input_history_complete": true,
+  "port_journal_active": true,
+  "port_journal_off_reason": null,
+  "port_read_count": 8225,
+  "port_write_count": 15520,
+  "port_journal_bytes": 9234,
+  "port_replay_value_mismatches": 0,
+  "port_replay_divergences": 0,
   "last_drop_reason": null,
   "unavailable_reason": null
 }
@@ -1382,6 +1393,24 @@ There are no `/ttd/clear`, `/ttd/timeline`, `/ttd/step` or `/ttd/resume_from_her
 ```
 
 `halt_reason` is one of `target`, `external_event`, `out_of_range`. The emulator is left paused after a seek; `POST /ttd/resume` resumes it.
+
+**port-events request:** searches the port journals (every IN and OUT with its time and PC) - no replay, works on a loaded file. Events, arguments and options: [command-interface.md → Port events](./command-interface.md).
+
+Real answers from the recorded fixture `testdata/ttd/port-journals/dizzyx.ttd` (Dizzy X; the full set is its `expected.json`):
+
+```json
+{"event": "ay-write", "arg": "7", "limit": 2}
+```
+
+```json
+{
+  "event": "ay-write", "direction": "out", "count": 2, "truncated": true, "scanned": 73,
+  "hits": [{"index": 12, "frame": 50, "tinframe": 9202, "port": 48893, "value": 24, "pc": 55406, "ay_register": 7},
+           {"index": 42, "frame": 51, "tinframe": 6203, "port": 48893, "value": 24, "pc": 55406, "ay_register": 7}]
+}
+```
+
+Other options: `newest` (true: the last hits), `to`, `port`, `port_mask`, `value`, `value_mask`, `match` (`any`, `equals`, `any-clear`, `any-set`), `trigger` (`every`, `rising`, `change`), `stream_mask`, `ay_register`, and `file` - a `.ttd` path on the emulator's machine to search instead of the current session, without loading it (400 when it cannot be read or has no journals). Numbers may be JSON numbers or strings (`"0x7FFE"`, `"#7FFE"`, `"$7FFE"`); `from`/`to` are a frame or `"frame:tinframe"`.
 
 **find-last request:**
 

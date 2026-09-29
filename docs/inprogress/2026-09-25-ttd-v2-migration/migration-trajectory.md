@@ -210,7 +210,19 @@ test; a deliberately corrupted blob produces a degraded result on every surface.
 - Input journal and external-event markers saved and loaded.
 - `HardwareReset` / `DebuggerEdit` markers actually emitted.
 - RTC/CMOS reads served from an emulated clock recorded in the session (Profi
-  RTC, ATM CMOS).
+  RTC, ATM CMOS). On the classic machines the port-read journal already hands
+  a replay the recorded clock reads; the emulated clock is still needed so a
+  live run is reproducible and the value is not the host's.
+- Replay write gate (requirements FR-20): while history is re-executed, no
+  device writes to a medium outside the session - disk, SD and HDD images, the
+  session write map, write-through, flash and CMOS persistence. One gate in the
+  media layer, keyed by the replay state; a test proves an image unchanged after
+  replaying writes to it.
+- Isolation beyond IN (FR-21): journal DMA transfers into RAM (TSConf, ZX
+  Next, NeoGS ZX-DMA) and device-supplied interrupt vectors (check TSConf and
+  Sprinter; the classic clones do not drive IM2 vectors) at the same CPU-input
+  boundary as the port-read journal, which is off on those configurations until
+  then.
 - ~~Turbo timebase: journal timestamps and the replay clamp correct when
   `z80.t` exceeds the nominal frame (B4)~~ - done in V0 (2026-09-28).
 

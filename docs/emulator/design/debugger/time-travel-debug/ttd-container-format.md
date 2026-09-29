@@ -63,9 +63,15 @@ Properties worth naming, because the proposal below is judged against them:
 * **The file is written whole.** There is no append path, so a long recording
   cannot be flushed incrementally, and adding a stream to an existing file means
   rewriting it.
-* **Not everything in a session is persisted.** The input journal and external
-  event markers live in memory only. The coverage index *is* persisted now, as
-  a third flag-gated section — which is the pattern this design generalises.
+* **Every replay input is persisted now** (2026-09-29, O-1 of
+  ttd-offline-analysis). The input journal and the external-event markers are
+  flag-gated sections (header bits 6 and 7), written after the bookmarks. The
+  writer always writes them, empty or not, so a file without them is known to
+  predate them: it loads, and the session reports its input history
+  incomplete. Before that they lived in memory only, and a loaded session
+  replayed inside frames without the recorded input. The coverage index is
+  persisted the same way, as a flag-gated section — the pattern this design
+  generalises.
 * **There is no session identity.** `emulator_id` is a symbolic instance name and
   `captured_at_unix_ms` is a timestamp; neither identifies *this recording*, so
   nothing outside the file can be bound to it.
@@ -80,8 +86,9 @@ these streams are shaped. They do not share a natural frame size.
 | Checkpoints | 1 per emulated frame | 50/s | ~1.5 KB/frame | I-frame every 50, deltas between |
 | Page store | 4 KB sub-page slot | on write | content-addressed | Referenced *by* checkpoints, not time-ordered |
 | Write journal | 2048-record block | ~114 000/s | 0.8–3.5 B/record | zstd columnar blocks; ring holds 47 s in memory |
-| Input journal | keyboard event | sparse | trivial | Not persisted today |
-| External events | marker | sparse | trivial | Not persisted today |
+| Input journal | input event (key, mouse, GS host stimulus) | sparse | 21 B/event, uncompressed | Flag bit 6, after the bookmarks; always written |
+| External events | marker | sparse | 14 B + reason (≤ 63 B) | Flag bit 7, after the input journal; always written |
+| Port journals (IN, OUT) | access: time, PC, port, value; 32768-record zstd block of five columns | up to ~140 000/s; 74 000/s loading from tape | ~2.7 KB/s loading from tape | Flag bit 8, after the external events; every IN and OUT of the session, so replay needs no media and "when did the program ..." needs no replay ([ttd-port-read-journal.md](ttd-port-read-journal.md)) |
 | Coverage / executed | 64-frame block | 50/s | ~17 B/frame | Flag bit 2, written after the journal |
 | Coverage / written | 64-frame block | 50/s | ~5 B/frame | Same section |
 | Coverage / read | 64-frame block | 50/s | ~23 B/frame | Same section |

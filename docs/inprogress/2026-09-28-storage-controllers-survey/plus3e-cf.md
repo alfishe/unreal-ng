@@ -52,7 +52,7 @@ reads garbage.
 
 ## 3. unreal-ng now vs gap
 
-| Piece | Have (`ide-atapi` unless noted) | Need |
+| Piece | Have (master, IDE rollout 1, unless noted) | Need |
 |---|---|---|
 | Disk, formats, slots, TTD | `AtaDisk`, `IdeUnitSlot`, `HddImageFormats` incl. HDF "halved" | none |
 | 8-bit transfer mode | `AtaDisk` accepts SET FEATURES but ignores the feature code (`atadisk.cpp:291`) | **new**: features `#01` / `#81` (8-bit on / off) in `AtaDevice`'s data engine: one byte per data-register access |

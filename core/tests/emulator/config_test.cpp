@@ -401,7 +401,7 @@ TEST_F(Config_Test, ShippedConfigsFitTheirIdeBoard)
         {"profi", IDE_PROFI},         {"atm3", IDE_NEMO_DIVIDE},  {"atm710", IDE_ATM},
         {"pentagon128k", IDE_NEMO},   {"pentagon512k", IDE_NEMO}, {"scorpion", IDE_NONE},
         {"profscorp", IDE_NONE},      {"spectrum48", IDE_NONE},   {"spectrum128", IDE_NONE},
-        {"spectrum3", IDE_NONE},      {"ts-conf", IDE_NONE},
+        {"spectrum3", IDE_NONE},      {"ts-conf", IDE_NEMO_DIVIDE},
     };
     for (const auto& [folder, scheme] : expected)
     {
@@ -410,7 +410,9 @@ TEST_F(Config_Test, ShippedConfigsFitTheirIdeBoard)
         Config config(_context);
         ASSERT_TRUE(config.LoadConfigFile(ini.string())) << ini;
         EXPECT_EQ(_context->config.ide_scheme, scheme) << folder;
-        EXPECT_EQ(_context->config.ide[1].cd, 0) << folder << ": no machine ships a CD drive";
+        // Only ZX-Evo ships a CD drive: the slave, where the ERS "D. CD boot" looks for it
+        EXPECT_EQ(_context->config.ide[1].cd, folder == "atm3" ? 1 : 0) << folder;
+        EXPECT_EQ(_context->config.ide[0].cd, 0) << folder << ": the master is a hard disk";
     }
 }
 

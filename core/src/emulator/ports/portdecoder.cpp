@@ -258,7 +258,7 @@ uint8_t PortDecoder::DecodePortIn(uint16_t addr, [[maybe_unused]] uint16_t pc)
     // Port trace: this legacy path bypasses OnPortInComplete, so a Ghost-Byte double
     // read through it would otherwise be invisible. Record with viaLegacyBasePath
     // so both reads of a ghost pair are visible and distinguishable (use case 4.1)
-    if (_portTraceFeatureCache) [[unlikely]]
+    if (_portTraceFeatureCache.load(std::memory_order_relaxed)) [[unlikely]]
     {
         PortDecodeDisposition disp;
         disp.decodedPort = addr;  // Legacy path performs no decoding: identity
@@ -308,7 +308,7 @@ void PortDecoder::OnPortInComplete(uint16_t port, uint8_t result, [[maybe_unused
     }
 
     // 3. Port trace capture (runtime feature "porttrace"; single cached-bool test when off)
-    if (_portTraceFeatureCache) [[unlikely]]
+    if (_portTraceFeatureCache.load(std::memory_order_relaxed)) [[unlikely]]
     {
         RecordPortTrace(/*isOut=*/false, port, result, pc, disp);
     }
@@ -359,7 +359,7 @@ void PortDecoder::DecodePortOut(uint16_t addr, [[maybe_unused]] uint8_t value, [
     }
 
     // Port trace: legacy path bypasses OnPortOutComplete — see DecodePortIn note
-    if (_portTraceFeatureCache) [[unlikely]]
+    if (_portTraceFeatureCache.load(std::memory_order_relaxed)) [[unlikely]]
     {
         PortDecodeDisposition disp;
         disp.decodedPort = addr;  // Legacy path performs no decoding: identity
@@ -427,7 +427,7 @@ void PortDecoder::OnPortOutComplete(uint16_t port, uint8_t value, [[maybe_unused
     }
 
     // 4. Port trace capture (runtime feature "porttrace"; single cached-bool test when off)
-    if (_portTraceFeatureCache) [[unlikely]]
+    if (_portTraceFeatureCache.load(std::memory_order_relaxed)) [[unlikely]]
     {
         RecordPortTrace(/*isOut=*/true, port, value, pc, disp);
     }
@@ -442,21 +442,29 @@ void PortDecoder::UpdateFeatureCache()
     FeatureManager* fm = _context ? _context->pFeatureManager : nullptr;
     bool enabled = fm && fm->isEnabled(Features::kPortTrace);
 
+    // Feature changes arrive on several threads (UI, WebAPI, CLI, scripts), and
+    // every change of any feature lands here: serialize the lifecycle
+    std::lock_guard<std::mutex> lock(_portTraceLifecycleMutex);
+
     if (enabled && !_portTrace)
     {
-        // Feature turned on: instantiate the recorder lazily (buffer memory is
-        // allocated only now, never while the feature is off)
+        // First switch-on: instantiate the recorder lazily (buffer memory is
+        // allocated only now, never while the feature has never been on)
         _portTrace = std::make_unique<PortDiagnosticRecorder>();
+    }
+    if (enabled && !_portTraceFeatureCache.load(std::memory_order_relaxed))
+    {
         _activitySummary.reset(static_cast<uint32_t>(_state->frame_counter));
     }
-    else if (!enabled && _portTrace)
+    else if (!enabled && _portTrace && _portTraceFeatureCache.load(std::memory_order_relaxed))
     {
-        // Feature turned off: stop capture and release the buffer memory
-        _portTrace->stop();
-        _portTrace.reset();
+        // Switch-off: stop capture and free the buffer memory. The recorder
+        // object stays - other threads may hold a pointer to it
+        _portTrace->releaseBuffer();
     }
 
-    _portTraceFeatureCache = enabled;
+    // Release: a thread that sees the flag set also sees the recorder
+    _portTraceFeatureCache.store(enabled, std::memory_order_release);
 }
 
 /// Build and push exactly one PortTraceEvent per Z80 I/O operation.
@@ -469,7 +477,7 @@ void PortDecoder::RecordPortTrace(bool isOut, uint16_t rawPort, uint8_t value, u
     // Frame-scoped counters update even without an active capture session
     _activitySummary.onEvent(frame, isOut, disp);
 
-    if (!_portTrace || !_portTrace->isCapturing())
+    if (!_portTraceFeatureCache.load(std::memory_order_acquire) || !_portTrace || !_portTrace->isCapturing())
         return;
 
     PortTraceEvent event;
@@ -484,6 +492,7 @@ void PortDecoder::RecordPortTrace(bool isOut, uint16_t rawPort, uint8_t value, u
     event.pc = pc;
     event.value = value;
     event.decodeRuleIndex = disp.decodeRuleIndex;
+    event.internalCode = disp.internalCode;
     event.deviceId = disp.device != PortDeviceId::None ? disp.device
                                                         : PortDiagnosticRecorder::ResolveDeviceId(disp.decodedPort);
 
@@ -561,6 +570,7 @@ PortTraceSessionInfo PortDecoder::getPortTraceSessionInfo() const
     }
 
     info.decodeRules = getPortTraceDecodeRules();
+    info.codes = GetPortTraceCodeTable();
 
     return info;
 }

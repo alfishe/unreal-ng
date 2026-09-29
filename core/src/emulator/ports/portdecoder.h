@@ -2,7 +2,9 @@
 #include "stdafx.h"
 
 #include <array>
+#include <atomic>
 #include <memory>
+#include <mutex>
 #include <set>
 #include <string>
 #include <vector>
@@ -432,14 +434,21 @@ protected:
 
     /// region <Port trace (runtime feature "porttrace")>
 
-    // Cached FeatureManager state (kPortTrace). Written only from the control path
-    // (UpdateFeatureCache), read on the emulator thread in the I/O hooks. When false
-    // the hooks cost a single bool test + never-taken branch and _portTrace is null.
-    bool _portTraceFeatureCache = false;
+    // Cached FeatureManager state (kPortTrace). Written from the control path
+    // (UpdateFeatureCache, any thread) with release, read on the emulator thread
+    // in the I/O hooks - a relaxed load there (a plain load on x86 and ARM64),
+    // acquire before the recorder is touched. When false the hooks cost one
+    // test + a never-taken branch.
+    std::atomic<bool> _portTraceFeatureCache{false};
 
-    // Recorder instance; allocated lazily when the porttrace feature turns on,
-    // released (buffer memory freed) when it turns off
+    // Recorder instance: created once, when the porttrace feature first turns on,
+    // and kept until the decoder goes. Turning the feature off stops capture and
+    // frees the buffer memory (PortDiagnosticRecorder::releaseBuffer) but never
+    // deletes the object: the emulator thread and automation handlers hold
+    // pointers to it, and feature changes arrive on any thread (deleting and
+    // re-creating it here was a use-after-free found by ASan)
     std::unique_ptr<PortDiagnosticRecorder> _portTrace;
+    std::mutex _portTraceLifecycleMutex;  // UpdateFeatureCache runs on several threads
 
     // Frame-scoped rolling counters (debugger status panel); updated only while
     // the porttrace feature is on
@@ -541,7 +550,11 @@ public:
     void UpdateFeatureCache();
 
     /// Recorder access for transports/tests. nullptr while the feature is off.
-    PortDiagnosticRecorder* getPortTraceRecorder() { return _portTrace.get(); }
+    /// Once returned the pointer stays valid for the decoder's lifetime
+    PortDiagnosticRecorder* getPortTraceRecorder()
+    {
+        return _portTraceFeatureCache.load(std::memory_order_acquire) ? _portTrace.get() : nullptr;
+    }
 
     /// Frame-scoped I/O counters (valid while the porttrace feature is on)
     const PortActivitySummary& getActivitySummary() const { return _activitySummary; }
@@ -549,6 +562,13 @@ public:
     /// Model decode table for self-describing trace exports. If-chain decoders
     /// have no mask/match table and return an empty vector (the default).
     virtual std::vector<PortTraceDecodeRule> getPortTraceDecodeRules() const { return {}; }
+
+    /// Internal port codes this decoder resolves addresses to, with their names
+    /// (PLAN #60(g)): a table-driven decoder maps the address to a code first
+    /// (ZX-Evo: the BaseConf decode arm; Sprinter / TSConf: the port-table code),
+    /// and the trace records the code so an access stays readable when the map
+    /// changes. Empty for decoders without codes
+    virtual std::vector<PortTraceCodeName> GetPortTraceCodeTable() const { return {}; }
 
     /// Static port map for introspection ("which devices respond to which ports
     /// on this machine"). Single per-model switch over config.mem_model, mirroring

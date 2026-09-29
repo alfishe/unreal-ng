@@ -389,7 +389,10 @@ TEST_F(TTD_InputJournal_Capture_Test, InvalidateSession_ClearsJournal)
 class TTD_InputJournalGS_Test : public ::testing::Test
 {
 protected:
-    // Keep the General Sound card the ATM710 config fits (GSType=Z80)
+    // Keep the General Sound card the ATM710 config fits. The shipped config
+    // fits NeoGS (GSType=NGS); SetUp switches the slot to the classic card:
+    // NeoGS card memory is not in TTD v1 checkpoints, so its replay after a
+    // seek waits for TTD v2 memory regions
     SoundCardScope _soundCards{TestSound::GeneralSound};
 
     Emulator* _emulator = nullptr;
@@ -404,6 +407,8 @@ protected:
         _ttd = _context->pTimeTravelManager;
         ASSERT_NE(_ttd, nullptr);
         ASSERT_NE(Card(), nullptr) << "ATM710 must fit a GS card by default";
+        ASSERT_TRUE(_context->pSoundManager->switchGeneralSoundCard(GSTypeKind::Z80));
+        ASSERT_EQ(Card()->implementation(), GSCardImplementation::LLE);
         FeatureManager* features = _emulator->GetFeatureManager();
         features->setFeature(Features::kDebugMode, true);
         features->setFeature(Features::kTimeTravel, true);

@@ -1,14 +1,14 @@
-# SMUC in unreal-ng today (branch `ide-atapi`) and the gaps
+# SMUC in unreal-ng today (master, IDE rollout 1) and the gaps
 
 | | |
 |---|---|
 | **Date** | 2026-09-28 |
-| **Code state** | branch `ide-atapi` (IDE rollout 1, P1-P7 done, not yet on `master`). The code below exists only on that branch, so it is named, not linked |
+| **Code state** | IDE rollout 1 (P1-P7), analyzed on branch `ide-atapi`; on `master` since `f5fc5f05` (merge `c69486ab`). The code below is named, not linked |
 | **Hardware facts** | [hardware-reference.md](hardware-reference.md) (the consensus this page is compared against) |
 
 ## 1. Where the SMUC code lives
 
-| Piece | File (`ide-atapi`) | What it does |
+| Piece | File (master) | What it does |
 |---|---|---|
 | Port decode and sub-devices | `core/src/emulator/ports/models/portdecoder_scorpion256.{h,cpp}`: `IsPort_SMUC` (cpp 714-746), `ReadSMUCPort` (926-978), `WriteSMUCPort` (980-1022), the IN / OUT arms (220, 437) | the whole `#xxBA` / `#xxBE` family, before the `#FE` arm |
 | Presence | same header: `_smucEnabled` (default `false`), `SetSmucEnabled`, `IsSmucFitted()` = `_smucEnabled` or `[HDD] Scheme=SMUC` | "is the card on the bus" |
@@ -27,8 +27,8 @@
 | The ProfROM boot with the card fitted: the NVRAM checksum, the first-boot format path (`#0D6F` writes `#61` at EEPROM address 0), the four "not found" lines gone from the boot panel | `ScorpionSMUC_Test.ProfRomBootDrivesSmucProbes`; analysis in [profrom-smuc-not-found-and-driver-disassembly.md](../2026-09-07-scorpion-zs256-clone/profrom-smuc-not-found-and-driver-disassembly.md) §8.1 |
 | The keyboard is not shadowed by the SMUC decode | `ScorpionSMUC_Test.KeyboardRowsAreNotShadowedBySmuc` (regression of 2026-09-10, same doc §8.3) |
 | **IDE through the real disk core** (IDE design R4): with `Scheme=SMUC` and an image in `ide0.master`, the ProfROM sends IDENTIFY DEVICE (`#EC`) to `#FFBE`, gets the data, and goes on to READ SECTORS (`#20`) with no ABRT | `ScorpionSMUC_Test.ProfRomIdentifiesTheDiskThroughTheDiskCore` |
-| The IDE slots, image formats (raw, HDF, HDI, VHD, ISO), host folders as FAT volumes, write-through, the media verbs on every surface, the HDD LED | shared with every IDE board (the IDE implementation plan §5 on `ide-atapi`; [integration-ide-cd.md](../2026-09-28-storage-manager/integration-ide-cd.md)) |
-| TTD of the IDE channel: `PeripheralId::AtaChannel = 17` holds both units and the adapter latches; guest writes are replay barriers | shared (`debugger/ttd/ide/ttdatachannel.*` on `ide-atapi`) |
+| The IDE slots, image formats (raw, HDF, HDI, VHD, ISO), host folders as FAT volumes, write-through, the media verbs on every surface, the HDD LED | shared with every IDE board (the IDE implementation plan §5, on master; [integration-ide-cd.md](../2026-09-28-storage-manager/integration-ide-cd.md)) |
+| TTD of the IDE channel: `PeripheralId::AtaChannel = 17` holds both units and the adapter latches; guest writes are replay barriers | shared (`debugger/ttd/ide/ttdatachannel.*` on master) |
 | The `state ide` report, with the scheme and the units | shared |
 
 ## 3. What is stubbed or missing
@@ -37,7 +37,7 @@
 |---|---|---|
 | TR-DOS gating | not gated: the card answers in any ROM | gated by the TR-DOS ports (hardware-reference §4). The `state ide` report already *says* "TR-DOS ports on" for SMUC, but the decoder does not enforce it |
 | Decode mask | whole low byte + A15 / A13 / A12 / A11 (`#B8FF`) | `#B8E7` (A4, A3 not decoded) |
-| `#FFBA` D0 reset | **fixed on `ide-atapi` (2026-09-28)**: a write with D0 = 0 resets the IDE units, as MAME and the ProfROM do (`ScorpionSMUC_Test.IdeResetIsBitZeroLow`) | D0 = **0** resets (hardware-reference §5.6) |
+| `#FFBA` D0 reset | **fixed 2026-09-28, on master (`f5fc5f05`)**: a write with D0 = 0 resets the IDE units, as MAME and the ProfROM do (`ScorpionSMUC_Test.IdeResetIsBitZeroLow`) | D0 = **0** resets (hardware-reference §5.6) |
 | `#FFBA` read D7 (INTRQ) | always 1 | INTRQ of the selected unit is the likely hardware behavior (open question Q2); `IdeAdapter::AtmIntrqBit()` already computes it for ATM |
 | `#7FBA` read | `latch | #3F` (D3 always 1) | `latch | #37` |
 | 8259 | `#7EBE` / `#7FBE` read `#57`, writes ignored | same (consensus: absent). The ProfROM probe then reports no 8259. Only needed if the "PIC fitted" variant is wanted (phase S8) |
@@ -60,8 +60,8 @@ Two separate decisions, both still valid:
    The extra ~200 frames (~4 s) are the bit-banged I²C: the checksum pass over 254 NVRAM bytes,
    the first-boot format and the config save. Without persistence this cost is paid on every
    boot.
-2. **`Scheme=NONE` in `data/configs/scorpion` and `profscorp`** (IDE implementation plan §2.1 on
-   `ide-atapi`): SMUC is an add-on card, the base ZS-256 has none (scope decision 1 of the
+2. **`Scheme=NONE` in `data/configs/scorpion` and `profscorp`** (IDE implementation plan §2.1, on
+   master): SMUC is an add-on card, the base ZS-256 has none (scope decision 1 of the
    [Scorpion clone project](../2026-09-07-scorpion-zs256-clone/README.md)), and the shipped boot
    and its tests are pinned without it. MAME ships the Scorpion with empty ZX-BUS slots and
    UnrealSpeccy ships `SMUC=0`, so this matches the references.
@@ -78,7 +78,7 @@ absent keeps them unchanged.
 |---|---|---|---|
 | G1 | No TR-DOS gating | S | S1 |
 | G2 | Decode mask narrower than the hardware (A4, A3) | S | S1 |
-| G3 | ~~IDE reset polarity inverted~~ - fixed on `ide-atapi` (D0 = 0 resets); also fixed there: `#D8BE` stays the latch while `#FFBA` D7 is set (MAME, Xpeccy) | - | done |
+| G3 | ~~IDE reset polarity inverted~~ - fixed on master, `f5fc5f05` (D0 = 0 resets); also fixed there: `#D8BE` stays the latch while `#FFBA` D7 is set (MAME, Xpeccy) | - | done |
 | G4 | `#FFBA` D7 does not carry INTRQ | S | S2 |
 | G5 | `#7FBA` reads D3 as constant 1 | S | S2 |
 | G6 | Two presence flags, `[MISC] SMUC` not parsed, PROFSCORP and SCORPION decode differently when absent, stale `_smucIdeRegs` stub | S | S3 |

@@ -32,10 +32,10 @@ unchanged, what it extends, and what is new.
 |---|---|---|---|---|
 | CPU clock multiplier | `hw_turbo_shift` / `hw_turbo_shift_applied` = log2, so 2× / 4× only (`platform.h:960-980`, `z80.cpp:602`; TTD checkpoint `ttdcheckpoint.h:190`) | replaced everywhere by `hw_turbo_ratio` / `hw_turbo_ratio_applied` 1-8 (21 MHz = ×6); no converter, TTD fixtures re-recorded; PLAN #60 | ATM710, ATM3, Scorpion (ratio 2/4) | technical design §3 |
 | Wait states | ULA contention only (`memory.h:356`, `video/ulacontention.h:66`) | per-bank "has waits" flag; the cost from `SprinterWaits::ExtraClocks(kind, t)` (phase-dependent); PLAN #60 | ATM3 E9 rasters (contention by clock) | technical design §4 |
-| Memory write path | non-virtual, "no model reacts to writes" (`memory.h:286-296`) | per-bank write intercept flag + virtual `OnInterceptedWrite` | TSConf P0 (FM window), ATM3 E8 (per-window write protect) | TSConf technical design §3.5 |
-| Interrupts | fixed `intstart/intlen` window, vector always `#FF` (`z80.cpp:992`, `:1124`) | `IInterruptSource` (+ optional `OnReti()` for the Z84C15 daisy chain) | TSConf P0 | TSConf technical design §3.4; [tdd-accel-sound-input.md](tdd-accel-sound-input.md) §5.1 |
+| Memory write path | non-virtual, "no model reacts to writes" (`memory.h:286-296`) | a write-only `HostBusOverlay` (built, PLAN #60(a); zero cost while not installed, several overlays chained) | TSConf P0 (FM window), ATM3 E8 (flash writes) | TSConf technical design §3.5 item 2 |
+| Interrupts | fixed `intstart/intlen` window, vector always `#FF` | `IInterruptSource` with `OnReti()` for the Z84C15 daisy chain (built, PLAN #60(a)) | TSConf P0 | TSConf technical design §3.4; [tdd-accel-sound-input.md](tdd-accel-sound-input.md) §5.1 |
 | Cache pages | `MAX_CACHE_PAGES = 2`, cache not emulated (`memory.cpp:788-793`, `:924`) | 4 pages, mapped by `SprinterMemory` | Pentagon cache (`#FB/#7B`), if ever | [tdd-ports-memory.md](tdd-ports-memory.md) §5.1 |
-| Screen selection | only `ScreenZX` instantiated (`videocontroller.cpp:9-31`) | a `Screen` subclass per model family (PLAN #60); `R_736_288` raster; for the Sprinter the renderer comes from the PLD configuration module | TSConf (`ScreenTSConf` exists, not instantiated) | [tdd-video.md](tdd-video.md) §1-2 |
+| Screen selection | only `ScreenZX` instantiated (`videocontroller.cpp:9-31`) | a `Screen` subclass per model family (PLAN #60(e), built: `VideoController::CreateScreen`); `R_736_288` raster; for the Sprinter the renderer comes from the PLD configuration module | TSConf (`ScreenTSConf` exists, not instantiated) | [tdd-video.md](tdd-video.md) §1-2 |
 | WD1793 | no data-rate notion (`wd1793.h:944-957`) | `rateCheck` option: DD/HD rate vs medium density | +3 / Profi PC formats | [tdd-storage.md](tdd-storage.md) §2.3 |
 | Disk loaders | no raw PC `.img` (`.img` = MGT only, `loader_mgt.cpp:33-34`) | `LoaderRawPcFloppy` 720 KB / 1.44 MB, registered by size | Profi CP/M, +3 (storage manager G9) | [tdd-storage.md](tdd-storage.md) §2.4 |
 | IDE core (planned, PLAN #13a) | `io/hdd/hdd.*` is a stub (`hdd.cpp`, 20 lines) | **two** `AtaChannel`s per `Core`; latch pattern (e) `A8HalfLatch` | — | IDE design §5; [tdd-storage.md](tdd-storage.md) §3.1 |
@@ -43,7 +43,7 @@ unchanged, what it extends, and what is new.
 | RTC | **built (PLAN #60(c), 2026-09-28)**: `Ds12887` (`io/rtc/ds12887.*`) is the shared MC146818 core (clock, NVRAM, file, fixed time, TTD id 18); `EvoAvr`, Profi and the SMUC run on it | the Sprinter wires its ports, a 128-cell chip with century `#32`, and `[SPRINTER] CmosFile=` | ATM3, Profi, SMUC, ZX-Evo already on it | [tdd-storage.md](tdd-storage.md) §4 |
 | Keyboard | no PS/2/AT path (E2b deferred) | the E2b event (ZX + PC key) + `Ps2Set2Encoder` | ZX-Evo E2b (PLAN #55) | [tdd-accel-sound-input.md](tdd-accel-sound-input.md) §3 |
 | Automation per-model switches | `state_memory_api.cpp:175`, `cli-processor-state.cpp:338`… | Sprinter rows | — | [tdd-integration.md](tdd-integration.md) §3 |
-| Port trace records | address + value | + internal code and its name (PLAN #60) | any table-driven decoder | D10 |
+| Port trace records | **built (PLAN #60(g), 2026-09-29)**: address + value + internal code and its name | the Sprinter fills `internalCode` from its port table | ZX-Evo decode arms already use it | D10 |
 
 ## 3. New from scratch
 

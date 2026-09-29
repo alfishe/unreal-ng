@@ -80,6 +80,12 @@ constexpr uint8_t kBdiFallback = 0xFE;  // Resolved by the BDI #1F/#3F/#5F/#7F f
 constexpr uint8_t kNoTable     = 0xFD;  // Model has no mask/match table (if-chain decoder)
 }  // namespace PortTraceRule
 
+/// Internal port code sentinel (PortTraceEvent::internalCode)
+namespace PortTraceCode
+{
+constexpr uint16_t kNone = 0xFFFF;  // The decoder has no internal code for this access
+}  // namespace PortTraceCode
+
 /// One structured record per Z80 I/O operation. 24 bytes.
 /// Authoritative layout: docs/.../use-cases.md
 struct PortTraceEvent
@@ -93,14 +99,20 @@ struct PortTraceEvent
     uint8_t  decodeRuleIndex = PortTraceRule::kNoMatch;  // Which decode rule fired (see PortTraceRule)
     PortDeviceId deviceId = PortDeviceId::None;          // Which peripheral this belongs to
     uint8_t  flags = 0;           // PortTraceFlags bitfield
+    uint16_t internalCode = PortTraceCode::kNone;  // The decoder's internal code for the access (PLAN #60(g)):
+                                                   // what the address means under the current port map
+                                                   // (ZX-Evo: the BaseConf decode arm; later the Sprinter
+                                                   // and TSConf port-table codes). Names: the session's code table
 
     bool operator==(const PortTraceEvent& other) const
     {
         return timestamp == other.timestamp && frameNumber == other.frameNumber &&
                rawPort == other.rawPort && decodedPort == other.decodedPort && pc == other.pc &&
                value == other.value && decodeRuleIndex == other.decodeRuleIndex &&
-               deviceId == other.deviceId && flags == other.flags;
+               deviceId == other.deviceId && flags == other.flags && internalCode == other.internalCode;
     }
+
+    bool hasInternalCode() const { return internalCode != PortTraceCode::kNone; }
 
     bool isOut() const           { return flags & PortTraceFlags::kDirectionOut; }
     bool wasDecoded() const      { return flags & PortTraceFlags::kWasDecoded; }
@@ -133,6 +145,8 @@ struct PortDecodeDisposition
     PortDeviceId device = PortDeviceId::None;  // Explicit attribution when the decoded port alone is
                                                // ambiguous (ATM ports, palette on #xxFF); None = derive
                                                // from decodedPort (ResolveDeviceId)
+    uint16_t internalCode = PortTraceCode::kNone;  // Table-driven decoders: the internal code the address
+                                                   // resolved to (PortDecoder::GetPortTraceCodeTable)
 };
 
 /// Ring buffer behavior when full
@@ -161,6 +175,7 @@ struct PortTraceFilterRule
     std::optional<std::pair<uint16_t, uint16_t>> pcRange;    // inclusive [lo, hi]
     std::optional<std::pair<uint8_t, uint8_t>> valueRange;   // inclusive [lo, hi]
     bool unmappedOnly = false;                               // Match only decodedPort == 0
+    std::optional<uint16_t> internalCode;                    // The decoder's internal port code
 
     bool matches(const PortTraceEvent& event) const;
 };
@@ -195,6 +210,14 @@ struct PortTraceDecodeRule
     uint16_t port = 0;
 };
 
+/// One internal port code and its name, exported into trace headers so saved
+/// traces name their codes without the decoder at hand
+struct PortTraceCodeName
+{
+    uint16_t code = 0;
+    std::string name;
+};
+
 /// Session metadata written into every exported trace. Assembled by
 /// PortDecoder::getPortTraceSessionInfo() (the recorder itself has no
 /// knowledge of the emulator context).
@@ -204,6 +227,16 @@ struct PortTraceSessionInfo
     std::string modelName;                      // "Pentagon", "Spectrum128", ...
     uint32_t tStatesPerFrame = 0;               // Timing base for absolute timestamps
     std::vector<PortTraceDecodeRule> decodeRules;  // Model decode table (empty for if-chain decoders)
+    std::vector<PortTraceCodeName> codes;          // Internal port codes (empty when the decoder has none)
+
+    /// Name of an internal code, "" when unknown or kNone
+    std::string CodeName(uint16_t code) const
+    {
+        for (const auto& entry : codes)
+            if (entry.code == code)
+                return entry.name;
+        return {};
+    }
 };
 
 /// Frame-scoped rolling counters for quick diagnostics without the full ring
@@ -246,6 +279,11 @@ public:
     {
     }
 
+    /// Stop capture and free the ring storage; the recorder itself stays valid
+    /// (the emulator thread and automation handlers may hold a pointer to it).
+    /// The next start() allocates the configured capacity again
+    void releaseBuffer();
+
     /// region <Session control>
     void start();    // Arm capture; clears the buffer
     void stop();     // Disarm capture; data preserved
@@ -262,8 +300,8 @@ public:
     /// region <Configuration (only while stopped)>
     bool setCapacity(size_t events);                    // false if capturing/paused or events == 0
     bool setOverflowMode(PortTraceOverflowMode mode);   // false if capturing/paused
-    size_t capacity() const { return _capacity; }
-    PortTraceOverflowMode overflowMode() const { return _overflowMode; }
+    size_t capacity() const { return _capacity.load(std::memory_order_relaxed); }
+    PortTraceOverflowMode overflowMode() const { return _overflowMode.load(std::memory_order_relaxed); }
     /// endregion </Configuration>
 
     /// region <Filtering (safe to call while capturing)>
@@ -334,9 +372,13 @@ private:
     std::atomic<bool> _autoStopped{false};
     std::atomic<uint64_t> _totalFiltered{0};
 
-    size_t _capacity = kDefaultCapacity;
-    PortTraceOverflowMode _overflowMode = PortTraceOverflowMode::Ring;
-    std::unique_ptr<RingBuffer<PortTraceEvent>> _events;
+    // Read by automation threads while another thread configures: atomic
+    std::atomic<size_t> _capacity{kDefaultCapacity};
+    std::atomic<PortTraceOverflowMode> _overflowMode{PortTraceOverflowMode::Ring};
+    // Allocated once and never replaced: start() / setCapacity() / releaseBuffer()
+    // re-size it in place, because the emulator thread pushes into it and
+    // automation threads read it concurrently (replacing it was a use-after-free)
+    const std::unique_ptr<RingBuffer<PortTraceEvent>> _events;
 
     // Filter: replaced wholesale under unique_lock, read under shared_lock in record().
     // Deliberately a plain shared_mutex (not atomic<shared_ptr>) — portable and honest;

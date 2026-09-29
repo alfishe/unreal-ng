@@ -38,6 +38,22 @@ uint8_t IdeAdapter::ReadDataLow()
     return static_cast<uint8_t>(word & 0xFF);
 }
 
+uint16_t IdeAdapter::DmaReadWord()
+{
+    AtaChannel* channel = Channel();
+    if (!channel)
+        return 0xFFFF;
+    const uint16_t word = channel->ReadData();
+    _s.readLatch = static_cast<uint8_t>(word >> 8);
+    return word;
+}
+
+void IdeAdapter::DmaWriteWord(uint16_t word)
+{
+    if (AtaChannel* channel = Channel())
+        channel->WriteData(word);
+}
+
 void IdeAdapter::ResetUnits()
 {
     if (AtaChannel* channel = Channel())

@@ -3,7 +3,10 @@
 // A card is saved mid-transfer and the blob loaded into a second card; both
 // then run on and must stay identical: the SD card's protocol, the decoder's
 // FIFO and minimp3 state, the DMA modules' phase and FIFOs all travel in the
-// blob. The replay through the TTD engine itself is in
+// blob. The card RAM and the flash are not in the blob (large memories are not
+// snapshotted in TTD v1 - they wait for TTD v2 memory regions): the test copies
+// them itself, standing in for those regions, so the blob is checked for
+// everything else. The replay through the TTD engine itself is in
 // debugger/ttd/ttdneogs_test.cpp.
 //
 // Runtime justification: the loader reads 32 KB over SPI, and a decoder needs
@@ -56,11 +59,30 @@ struct Card
         chip->TTDSaveState(blob.data());
         return blob;
     }
+
+    /// Card RAM and flash: the large memories the blob leaves out
+    std::vector<uint8_t> memories() const
+    {
+        const NeoGSMemory& mem = chip->memory();
+        std::vector<uint8_t> out(mem.ram(), mem.ram() + mem.ramSize());
+        const uint8_t* flash = chip->flash().data();
+        out.insert(out.end(), flash, flash + Flash29F040B::SIZE);
+        return out;
+    }
+
+    /// Stand-in for the TTD v2 memory regions: copies another card's memories
+    void copyMemoriesFrom(Card& other)
+    {
+        memcpy(chip->memory().ram(), other.chip->memory().ram(), chip->memory().ramSize());
+        memcpy(chip->flash().data(), other.chip->flash().data(), Flash29F040B::SIZE);
+    }
 };
 
 /// Runs `a` and a copy made from its blob side by side
 void expectContinuesIdentically(Card& a, Card& b, int frames, const std::string& from)
 {
+    ASSERT_LT(a.save().size(), a.chip->getRamSizeKB() * 1024) << from << ": the blob must leave the card memory out (TTD v1)";
+    b.copyMemoriesFrom(a);
     b.chip->TTDLoadState(a.save().data());
     ASSERT_EQ(b.chip->TTDHashState(), a.chip->TTDHashState()) << from;
     ASSERT_EQ(b.save(), a.save()) << from << ": the loaded blob saves back unchanged";
@@ -71,7 +93,8 @@ void expectContinuesIdentically(Card& a, Card& b, int frames, const std::string&
         ASSERT_EQ(b.chip->TTDHashState(), a.chip->TTDHashState()) << from << ", frame " << i;
         ASSERT_EQ(audioB, audioA) << from << ", frame " << i << ": MP3 output";
     }
-    EXPECT_EQ(b.save(), a.save()) << from << ": RAM, flash and devices at the end";
+    EXPECT_EQ(b.save(), a.save()) << from << ": devices at the end";
+    EXPECT_TRUE(b.memories() == a.memories()) << from << ": RAM and flash at the end";
 }
 } // namespace
 

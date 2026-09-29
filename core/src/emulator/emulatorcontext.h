@@ -42,7 +42,7 @@ class MediaManager;
 
 // TTD manager lives in the ttd namespace - forward-declare so the context
 // can hold a pointer without pulling the full TTD headers into every consumer.
-namespace ttd { class TimeTravelManager; class TTDAccessProbe; }
+namespace ttd { class TimeTravelManager; class TTDAccessProbe; class TTDPortJournal; }
 
 #include "debugger/ttd/ttdprobe.h"  // inline member - needs full definition
 
@@ -198,6 +198,13 @@ public:
     /// armed or live input is queued (TimeTravelManager::ServiceInput). One
     /// relaxed load per instruction when idle
     std::atomic<bool> ttdInputWork{false};
+
+    /// TTD port journals while a session records or replays them, else null:
+    /// Z80::in hands every IN result to ttdPortReads (recorded, or replaced by
+    /// the recorded value on replay), Z80::out every OUT to ttdPortWrites
+    /// (recorded, or checked). One predictable branch per IN / OUT when null
+    ttd::TTDPortJournal* ttdPortReads = nullptr;
+    ttd::TTDPortJournal* ttdPortWrites = nullptr;
 
     // Phase 4 - reverse-search access probe (parent TDD 9.2). Inline
     // instance: every hot-path call site (MemoryWriteDebug, MemoryReadDebug,

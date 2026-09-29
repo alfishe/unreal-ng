@@ -4,7 +4,7 @@
 |---|---|
 | **Date** | 2026-09-28 |
 | **Question** | What does it take to integrate the Scorpion **SMUC** card fully and make the Scorpion ZS-256 (and the Scorpion with ProfROM) work with it? |
-| **Code state analyzed** | branch `ide-atapi` (IDE rollout 1: the ATA disk core, ATAPI, slots, image formats, IDE TTD), not yet on `master` |
+| **Code state analyzed** | branch `ide-atapi` (IDE rollout 1: the ATA disk core, ATAPI, slots, image formats, IDE TTD), on `master` since `f5fc5f05` |
 | **Status** | analysis and plan; nothing implemented. See [TODO.md](TODO.md) |
 
 ## Answer in short
@@ -34,7 +34,7 @@ The shipped Scorpion configs keep the card **not fitted**, as MAME and UnrealSpe
 | File | Content |
 |---|---|
 | [hardware-reference.md](hardware-reference.md) | **What SMUC is.** Sub-devices, the full port map with decode masks, TR-DOS gating, every `#FFBA` and `#7FBA` bit, the 8259, version registers, the IDE window; UnrealSpeccy / Xpeccy / MAME / ZXMAK2 / ports guide / ProfROM firmware tabulated with the consensus; Q3 answered |
-| [current-state-and-gaps.md](current-state-and-gaps.md) | What unreal-ng has on `ide-atapi`, what works, what is stubbed, why the card is absent by default, the gap list G1-G13 |
+| [current-state-and-gaps.md](current-state-and-gaps.md) | What unreal-ng has on master (IDE rollout 1), what works, what is stubbed, why the card is absent by default, the gap list G1-G13 |
 | [software-and-boot.md](software-and-boot.md) | Which software uses the card, how the ProfROM boot changes with it, what is on the disk (partition types, SMFS, FAT), test images, levels of "works" |
 | [integration-plan.md](integration-plan.md) | Phases S1-S8 with files, tests, TTD, automation / Qt, the default decision, risks, open questions, effort and verdict |
 | [TODO.md](TODO.md) | Status marker |

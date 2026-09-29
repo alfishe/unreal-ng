@@ -1567,6 +1567,9 @@ namespace PythonBindings
             .def("screen_flash", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::ScreenFlash(self.GetContext()));
             }, "FLASH phase and timing")
+            .def("screen_attributes", [](Emulator& self, int screen) -> py::object {
+                return StateNodeToPy(DeviceState::ScreenAttributes(self.GetContext(), screen));
+            }, "Per-cell ink/paper/bright/flash decoded from screen attribute memory", py::arg("screen") = -1)
             .def("screen_video_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::ScreenMode(self.GetContext()));
             }, "Former name of screen_mode, kept for existing scripts")
@@ -2584,6 +2587,18 @@ namespace PythonBindings
                     info["write_journal_gap"] = gap;
                 }
                 info["bookmark_count"]           = py::cast(static_cast<uint64_t>(si.bookmarkCount));
+                info["input_event_count"]        = py::cast(static_cast<uint64_t>(si.inputEventCount));
+                info["external_event_count"]     = py::cast(static_cast<uint64_t>(si.externalEventCount));
+                info["input_history_complete"]   = py::cast(si.inputHistoryComplete);
+                info["port_journal_active"]      = py::cast(si.portJournalActive);
+                info["port_journal_off_reason"]  = si.portJournalOffReason.empty()
+                                                       ? py::object(py::none())
+                                                       : py::object(py::cast(si.portJournalOffReason));
+                info["port_read_count"]          = py::cast(si.portReadCount);
+                info["port_write_count"]         = py::cast(si.portWriteCount);
+                info["port_journal_bytes"]       = py::cast(static_cast<uint64_t>(si.portJournalBytes));
+                info["port_replay_value_mismatches"] = py::cast(si.portReplayValueMismatches);
+                info["port_replay_divergences"]  = py::cast(si.portReplayDivergences);
                 info["last_drop_reason"]         = si.lastDropReason.empty() ? py::object(py::none())
                                                                              : py::object(py::cast(si.lastDropReason));
                 info["unavailable_reason"]       = si.unavailableReason.empty() ? py::object(py::none())
@@ -2891,6 +2906,78 @@ namespace PythonBindings
                 result["current_end_frame"] = info.currentEndFrame;
                 return result;
             }, "Load a .ttd session for playback (seek to position the emulator)", py::arg("path"))
+
+            .def("ttd_port_events", [](Emulator& self, const std::string& event, py::object argObj,
+                                        py::kwargs options) -> py::dict {
+                py::dict result;
+                result["ok"] = false;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pTimeTravelManager)
+                {
+                    result["error"] = "TTD engine not available";
+                    return result;
+                }
+                auto text = [](const py::handle& o) -> std::string {
+                    if (py::isinstance<py::bool_>(o))
+                        return o.cast<bool>() ? "true" : "false";
+                    return py::str(o).cast<std::string>();
+                };
+                ttd::TTDPortQuery q;
+                std::string err;
+                if (!ttd::BuildPortEventQuery(event, argObj.is_none() ? std::string() : text(argObj), q, err))
+                {
+                    result["error"] = err;
+                    return result;
+                }
+                std::string file;  // file=: a .ttd on disk, searched without loading it
+                for (const auto& [key, value] : options)
+                {
+                    const std::string name = py::str(key).cast<std::string>();
+                    if (name == "file")
+                    {
+                        file = text(value);
+                        continue;
+                    }
+                    if (!ttd::ApplyPortQueryOption(q, name, text(value), err))
+                    {
+                        result["error"] = err;
+                        return result;
+                    }
+                }
+                const ttd::TTDPortSearchResult found = file.empty()
+                                                           ? ctx->pTimeTravelManager->SearchPortEvents(q)
+                                                           : ctx->pTimeTravelManager->SearchPortEventsInFile(file, q);
+                if (!found.ok)
+                {
+                    result["error"] = found.error;
+                    return result;
+                }
+                result["ok"] = true;
+                result["direction"] = ttd::PortDirectionName(q.direction);
+                result["count"] = py::cast(static_cast<uint64_t>(found.hits.size()));
+                result["truncated"] = found.truncated;
+                result["scanned"] = py::cast(found.scanned);
+                py::list hits;
+                for (const ttd::TTDPortHit& h : found.hits)
+                {
+                    py::dict hit;
+                    hit["index"] = py::cast(h.index);
+                    hit["frame"] = py::cast(h.record.frame);
+                    hit["tinframe"] = py::cast(h.record.tInFrame);
+                    hit["port"] = py::cast(h.record.port);
+                    hit["value"] = py::cast(h.record.value);
+                    hit["pc"] = py::cast(h.record.pc);
+                    if (h.ayRegister >= 0)
+                        hit["ay_register"] = py::cast(h.ayRegister);
+                    hits.append(hit);
+                }
+                result["hits"] = hits;
+                return result;
+            }, "When did the program ...: search the port journals for an event (key, ear, ay-read, ay-write, "
+               "ay-select, border, beeper, in, out) with an optional argument (a key name, an AY register) and "
+               "options (limit, newest, from, to, port, port_mask, value, value_mask, match, trigger, ay_register; "
+               "file= searches a .ttd on disk without loading it)",
+               py::arg("event"), py::arg("arg") = py::none())
 
             .def("ttd_find_last", [](Emulator& self, py::object addrObj,
                                       const std::string& access,

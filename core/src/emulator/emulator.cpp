@@ -776,6 +776,10 @@ const AudioDeviceDescriptor* Emulator::GetAudioDeviceDescriptor() const
 
 void Emulator::ClearAudioCallback()
 {
+    // A released instance has no context and no audio path left to clear
+    if (!_context)
+        return;
+
     // Use memory_order_release to ensure the nullptr writes are visible to the emulator thread
     _context->pAudioManagerObj.store(nullptr, std::memory_order_release);
     _context->pAudioCallback.store(nullptr, std::memory_order_release);

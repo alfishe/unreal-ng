@@ -1,32 +1,17 @@
 #include "stdafx.h"
 
-#include "common/logger.h"
-
 #include "videocontroller.h"
-#include "common/collectionhelper.h"
-#include "common/stringhelper.h"
 
-Screen* VideoController::GetScreenForMode(VideoModeEnum mode, EmulatorContext* context)
+#include "emulator/video/tsconf/screentsconf.h"
+#include "emulator/video/zx/screenzx.h"
+
+Screen* VideoController::CreateScreen(MEM_MODEL model, EmulatorContext* context)
 {
-    Screen* result = nullptr;
-
-    // Create a new video mode screen instance
-    switch (mode)
+    switch (model)
     {
-        case M_NUL:
-            break;
-        case M_ZX48:
-        case M_ZX128:
-            result = new ScreenZX(context);
-            break;
+        case MM_TSL:
+            return new ScreenTSConf(context);
         default:
-            {
-                std::string error = StringHelper::Format("Unknown video mode: %d", mode);
-                LOGERROR(error.c_str());
-                throw std::logic_error(error);
-            }
-            break;
+            return new ScreenZX(context);
     }
-
-    return result;
 }

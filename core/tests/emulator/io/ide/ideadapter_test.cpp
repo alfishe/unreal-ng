@@ -430,3 +430,50 @@ TEST(IdeAdapter_Test, DividePagingPortsAreNotIde)
     EXPECT_TRUE(b.Claims(0x00A3, Dos(false)));
     EXPECT_TRUE(b.Claims(0x00BF, Dos(false)));
 }
+
+/// TSConf DMA (devices #3 / #B) moves whole words through the data register on
+/// the ZX-Evo board: a sector read and written in 256 words, the same bytes as
+/// the Z80 path; the Z80 read / write pairs stay, the read latch holds the high
+/// byte of the last word the DMA read (zports.v:849-854)
+TEST(IdeAdapter_Test, DmaMovesWholeWordsPastTheLatches)
+{
+    Board b(IDE_NEMO_DIVIDE, MM_ATM3);
+    b.on = Dos(false);
+    for (size_t i = 0; i < 512; i++)
+        b.disk.Data()[9 * 512 + i] = static_cast<uint8_t>(i * 7);
+
+    // The Z80 reads the low byte of word 0 (its high byte waits in the latch),
+    // then the DMA takes words 1..255: the pairs stay as they were
+    StartRead([&](uint8_t reg, uint8_t v) { b.Out(A7A5(reg, 0x10), v, b.on); });
+    EXPECT_EQ(b.In(0x10, b.on), 0x00);
+    const IdeAdapterState latches = b.adapter->State();
+    EXPECT_EQ(latches.readLatch, 7);
+    for (size_t i = 1; i < 256; i++)
+    {
+        const uint16_t expected = static_cast<uint16_t>(static_cast<uint8_t>(2 * i * 7) | (static_cast<uint8_t>((2 * i + 1) * 7) << 8));
+        ASSERT_EQ(b.adapter->DmaReadWord(), expected) << "word " << i << ": the image stores low, then high";
+    }
+    EXPECT_FALSE(b.Master().State().status & Status::DRQ) << "the sector is done after 256 words";
+    EXPECT_TRUE(b.Master().State().intrq);
+    IdeAdapterState expected = latches;
+    expected.readLatch = static_cast<uint8_t>(511 * 7);
+    EXPECT_EQ(std::memcmp(&b.adapter->State(), &expected, sizeof(expected)), 0)
+        << "DMA keeps the Z80 pairs; the read latch holds the last DMA word's high byte";
+
+    StartWrite([&](uint8_t reg, uint8_t v) { b.Out(A7A5(reg, 0x10), v, b.on); });
+    for (uint16_t i = 0; i < 256; i++)
+        b.adapter->DmaWriteWord(static_cast<uint16_t>(0xAB00 | i));
+    EXPECT_FALSE(b.Master().State().status & Status::DRQ);
+    EXPECT_EQ(b.disk.Data()[5 * 512 + 0], 0x00);
+    EXPECT_EQ(b.disk.Data()[5 * 512 + 1], 0xAB);
+    EXPECT_EQ(b.disk.Data()[5 * 512 + 510], 0xFF);
+    EXPECT_EQ(b.disk.Data()[5 * 512 + 511], 0xAB) << "a DMA word lands as OUT (#11),high : OUT (#10),low would";
+}
+
+TEST(IdeAdapter_Test, DmaWithoutABoardReadsAFloatingBus)
+{
+    EmulatorContext context(LoggerLevel::LogError);
+    IdeAdapter adapter(&context);
+    EXPECT_EQ(adapter.DmaReadWord(), 0xFFFF);
+    adapter.DmaWriteWord(0x1234);  // goes nowhere, does not crash
+}

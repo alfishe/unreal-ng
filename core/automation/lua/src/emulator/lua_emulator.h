@@ -1948,6 +1948,11 @@ public:
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, DeviceState::ScreenFlash(ctx));
         });
+        // Per-cell ink/paper/bright/flash decoded from screen attribute memory
+        lua.set_function("screen_attributes", [this](sol::this_state s, sol::optional<int> screen) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::ScreenAttributes(ctx, screen.value_or(-1)));
+        });
         // Former name of screen_mode, kept for existing scripts
         lua.set_function("screen_video_state", [this](sol::this_state s) -> sol::object {
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
@@ -2416,6 +2421,17 @@ public:
                 info["write_journal_gap"] = gap;
             }
             info["bookmark_count"]           = static_cast<uint64_t>(si.bookmarkCount);
+            info["input_event_count"]        = static_cast<uint64_t>(si.inputEventCount);
+            info["external_event_count"]     = static_cast<uint64_t>(si.externalEventCount);
+            info["input_history_complete"]   = si.inputHistoryComplete;
+            info["port_journal_active"]      = si.portJournalActive;
+            if (!si.portJournalOffReason.empty())
+                info["port_journal_off_reason"] = si.portJournalOffReason;
+            info["port_read_count"]          = si.portReadCount;
+            info["port_write_count"]         = si.portWriteCount;
+            info["port_journal_bytes"]       = static_cast<uint64_t>(si.portJournalBytes);
+            info["port_replay_value_mismatches"] = si.portReplayValueMismatches;
+            info["port_replay_divergences"]  = si.portReplayDivergences;
             if (!si.lastDropReason.empty())
                 info["last_drop_reason"]     = si.lastDropReason;  // "" until a history is dropped
             if (!si.unavailableReason.empty())
@@ -2752,6 +2768,89 @@ public:
             result["checkpoint_count"] = static_cast<uint64_t>(info.checkpointCount);
             result["session_start_frame"] = info.sessionStartFrame;
             result["current_end_frame"] = info.currentEndFrame;
+            return result;
+        });
+
+        // "When did the program ...": ttd_port_events(event, [arg], [options])
+        // over the session's port journals (ttdportsearch.h). event: "key",
+        // "ear", "ay-read", "ay-write", "ay-select", "border", "beeper", "in",
+        // "out"; arg: a key name or an AY register; options: a table of
+        // ttd::ApplyPortQueryOption names (limit, newest, from, to, port,
+        // port_mask, value, value_mask, match, trigger, ay_register; file = a
+        // .ttd path searched without loading it)
+        lua.set_function("ttd_port_events", [this](const std::string& event, sol::object argObj,
+                                                     sol::object optionsObj) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            result["ok"] = false;
+            Emulator* emulator = effectiveEmulator();
+            auto* ctx = emulator ? emulator->GetContext() : nullptr;
+            if (!ctx || !ctx->pTimeTravelManager)
+            {
+                result["error"] = "TTD engine not available";
+                return result;
+            }
+            auto text = [](const sol::object& o) -> std::string {
+                if (o.is<bool>())
+                    return o.as<bool>() ? "true" : "false";
+                if (o.is<double>())
+                    return std::to_string(static_cast<long long>(o.as<double>()));
+                return o.is<std::string>() ? o.as<std::string>() : std::string();
+            };
+            ttd::TTDPortQuery q;
+            std::string err;
+            const std::string arg = (argObj.valid() && argObj.get_type() != sol::type::lua_nil) ? text(argObj) : "";
+            if (!ttd::BuildPortEventQuery(event, arg, q, err))
+            {
+                result["error"] = err;
+                return result;
+            }
+            std::string file;  // options.file: a .ttd on disk, searched without loading it
+            if (optionsObj.is<sol::table>())
+            {
+                for (const auto& [key, value] : optionsObj.as<sol::table>())
+                {
+                    if (key.as<std::string>() == "file")
+                    {
+                        file = text(value);
+                        continue;
+                    }
+                    if (!ttd::ApplyPortQueryOption(q, key.as<std::string>(), text(value), err))
+                    {
+                        result["error"] = err;
+                        return result;
+                    }
+                }
+            }
+            const ttd::TTDPortSearchResult found = file.empty()
+                                                       ? ctx->pTimeTravelManager->SearchPortEvents(q)
+                                                       : ctx->pTimeTravelManager->SearchPortEventsInFile(file, q);
+            if (!found.ok)
+            {
+                result["error"] = found.error;
+                return result;
+            }
+            result["ok"] = true;
+            result["direction"] = ttd::PortDirectionName(q.direction);
+            result["count"] = static_cast<uint64_t>(found.hits.size());
+            result["truncated"] = found.truncated;
+            result["scanned"] = found.scanned;
+            sol::table hits = lua_view.create_table();
+            int i = 1;
+            for (const ttd::TTDPortHit& h : found.hits)
+            {
+                sol::table hit = lua_view.create_table();
+                hit["index"] = h.index;
+                hit["frame"] = h.record.frame;
+                hit["tinframe"] = h.record.tInFrame;
+                hit["port"] = h.record.port;
+                hit["value"] = h.record.value;
+                hit["pc"] = h.record.pc;
+                if (h.ayRegister >= 0)
+                    hit["ay_register"] = h.ayRegister;
+                hits[i++] = hit;
+            }
+            result["hits"] = hits;
             return result;
         });
 

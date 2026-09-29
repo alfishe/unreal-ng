@@ -383,9 +383,8 @@ bool Core::Init()
     {
         result = false;
 
-        // Create Video controller
-        VideoModeEnum mode = M_ZX48;  // Make ZX the default video mode on start
-        _screen = VideoController::GetScreenForMode(mode, _context);
+        // The renderer of the model's family (VideoController::CreateScreen), in M_ZX48 at start
+        _screen = VideoController::CreateScreen(_config->mem_model, _context);
         if (_screen)
         {
             _context->pScreen = _screen;
@@ -633,19 +632,83 @@ void Core::SelectMemoryInterface()
     _z80->idleContention = _z80->ioContention;  // the ULA contends internal cycles too, the gate array does not
 }
 
-bool Core::SetBusOverlay(HostBusOverlay* overlay)
+bool Core::AddBusOverlay(HostBusOverlay* overlay)
 {
+    if (!overlay)
+        return false;
     {
         std::lock_guard<std::mutex> lock(_memIfMutex);
-        if (overlay && _busOverlay && overlay != _busOverlay)
+        for (size_t i = 0; i < _busOverlayCount; i++)
         {
-            MLOGERROR("Core::SetBusOverlay - another host bus overlay is installed; refused");
+            if (_busOverlays[i] == overlay)
+                return true;
+        }
+        if (_busOverlayCount == HostBusOverlayChain::kMaxOverlays)
+        {
+            MLOGERROR("Core::AddBusOverlay - %zu host bus overlays are installed already; refused", _busOverlayCount);
             return false;
         }
-        _busOverlay = overlay;
+        _busOverlays[_busOverlayCount++] = overlay;
+        UpdateEffectiveBusOverlay();
     }
     SelectMemoryInterface();
     return true;
+}
+
+void Core::RemoveBusOverlay(HostBusOverlay* overlay)
+{
+    {
+        std::lock_guard<std::mutex> lock(_memIfMutex);
+        size_t kept = 0;
+        for (size_t i = 0; i < _busOverlayCount; i++)
+        {
+            if (_busOverlays[i] != overlay)
+                _busOverlays[kept++] = _busOverlays[i];
+        }
+        if (kept == _busOverlayCount)
+            return;
+        for (size_t i = kept; i < _busOverlayCount; i++)
+            _busOverlays[i] = nullptr;
+        _busOverlayCount = kept;
+        UpdateEffectiveBusOverlay();
+    }
+    SelectMemoryInterface();
+}
+
+void Core::ClearBusOverlays()
+{
+    {
+        std::lock_guard<std::mutex> lock(_memIfMutex);
+        for (auto& overlay : _busOverlays)
+            overlay = nullptr;
+        _busOverlayCount = 0;
+        UpdateEffectiveBusOverlay();
+    }
+    SelectMemoryInterface();
+}
+
+bool Core::IsBusOverlayInstalled(const HostBusOverlay* overlay) const
+{
+    for (size_t i = 0; i < _busOverlayCount; i++)
+    {
+        if (_busOverlays[i] == overlay)
+            return true;
+    }
+    return false;
+}
+
+/// Under _memIfMutex. One overlay is called directly (no chain cost); two or
+/// more go through the chain. SelectMemoryInterface then hands the result to
+/// Memory
+void Core::UpdateEffectiveBusOverlay()
+{
+    _busOverlayChain.Assign(_busOverlays, _busOverlayCount);
+    if (_busOverlayCount == 0)
+        _busOverlay = nullptr;
+    else if (_busOverlayCount == 1)
+        _busOverlay = _busOverlays[0];
+    else
+        _busOverlay = &_busOverlayChain;
 }
 
 bool Core::IsContentionEffective() const
@@ -920,6 +983,10 @@ void Core::AdjustFrameCounters()
 
     // Re-adjust Core frame t-state counter and interrupt position
     _z80->t -= scaledFrame;
+
+    // The machine engine rebases its frame-relative positions (IMachineStepHook)
+    if (_z80->machineStepHook) [[unlikely]]
+        _z80->machineStepHook->OnMachineFrameRollover(scaledFrame);
 
     // Drop any stale INT request latched near the frame edge. The ULA INT line
     // is only asserted inside [intstart, intstart+intlen); ProcessInterrupts

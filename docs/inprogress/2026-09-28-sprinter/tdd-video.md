@@ -16,8 +16,8 @@
 | `SprinterIntSource : IInterruptSource` | `core/src/emulator/video/sprinter/sprinterintsource.{h,cpp}` | INT times from the mode table; also merges the keyboard and Covox-Blaster requests |
 | `SprinterVideoMapper : IVideoMapper` | `core/src/emulator/video/sprinter/` | beam ↔ square ↔ source address, for the debugger (PLAN #42) |
 
-`ScreenSprinter` is a real `Screen` subclass chosen by `VideoController::GetScreenForMode`
-(`core/src/emulator/video/videocontroller.cpp:9-31`) for `MM_SPRINTER`, not a helper inside
+`ScreenSprinter` is a real `Screen` subclass chosen by `VideoController::CreateScreen`
+(built by PLAN #60(e), 2026-09-29: one `case MM_SPRINTER` next to `MM_TSL`) for `MM_SPRINTER`, not a helper inside
 `ScreenZX`: Sprinter modes are per square and cannot be expressed as a single `VideoModeEnum`.
 The per-model `Screen` selection itself is shared infrastructure (PLAN #60), in place before the
 Sprinter starts.

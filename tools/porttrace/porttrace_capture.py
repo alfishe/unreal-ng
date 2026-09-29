@@ -159,7 +159,7 @@ def resolve_emulator(api: WebApi, wanted: str) -> str:
 
 
 def parse_rule(spec: str) -> dict:
-    """'port=FFFD,direction=out,pc=3D00-3FFF,unmapped' -> WebAPI rule object."""
+    """'port=FFFD,direction=out,pc=3D00-3FFF,unmapped,code=Eff7Gluk' -> WebAPI rule object."""
     rule = {}
     for part in spec.split(","):
         part = part.strip()
@@ -183,8 +183,15 @@ def parse_rule(spec: str) -> dict:
         elif key == "pc":
             lo, hi = value.split("-")
             rule["pc"] = [f"0x{int(lo, 16):04X}", f"0x{int(hi, 16):04X}"]
+        elif key == "code":
+            # Internal port code: 0x.. / #.. hex, anything else a name the WebAPI
+            # resolves against status 'codes' ("Fdc" is a name, not 0xFDC)
+            if value.lower().startswith(("0x", "#")):
+                rule["code"] = f"0x{int(value.lstrip('#'), 16):04X}"
+            else:
+                rule["code"] = value
         else:
-            raise ValueError(f"Unknown rule key '{key}' (port/raw/device/direction/pc/unmapped)")
+            raise ValueError(f"Unknown rule key '{key}' (port/raw/device/direction/pc/code/unmapped)")
     return rule
 
 
