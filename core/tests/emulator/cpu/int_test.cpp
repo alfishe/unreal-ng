@@ -406,6 +406,154 @@ TEST(IntPulse_Test, FixedLengthPulseRetakesAShortHandler)
 
 /// endregion </From int_acceptance_test.cpp>
 
+/// region <Machine interrupt source (IInterruptSource, PLAN #60(a))>
+
+/// A machine that owns its INT logic (TSConf, Sprinter) registers an
+/// IInterruptSource: the pin is what the source says, the acknowledge takes
+/// the source's bus byte as the IM2 vector, and RETI is reported to it. The
+/// CPU keeps IFF1, the EI shadow and the prefix rule. Without a source every
+/// IntAcceptance_Test above is the unchanged path.
+namespace
+{
+struct FakeInterruptSource : IInterruptSource
+{
+    uint32_t assertFrom = 0;
+    uint32_t assertTo = 0;  // asserted for t in [assertFrom, assertTo)
+    uint8_t vector = 0xFB;
+    int acks = 0;
+    int retis = 0;
+    uint32_t lastAckT = 0;
+
+    bool IsIntAsserted(uint32_t t) override { return t >= assertFrom && t < assertTo; }
+    uint8_t AcknowledgeInterrupt(uint32_t t) override
+    {
+        acks++;
+        lastAckT = t;
+        assertTo = 0;  // the served source clears
+        return vector;
+    }
+    void OnReti() override { retis++; }
+};
+} // namespace
+
+class InterruptSource_Test : public IntAcceptance_Test
+{
+protected:
+    FakeInterruptSource _source;
+
+    void SetUp() override
+    {
+        IntAcceptance_Test::SetUp();
+        _z80->interruptSource = &_source;
+    }
+
+    void TearDown() override
+    {
+        if (_z80)
+            _z80->interruptSource = nullptr;
+        IntAcceptance_Test::TearDown();
+    }
+
+    bool offerAt(uint32_t t)
+    {
+        _z80->t = t;
+        return _z80->ProcessInterrupts(false, _intStart, _intEnd);
+    }
+};
+
+TEST_F(InterruptSource_Test, TheSourceAloneDecidesThePin)
+{
+    _z80->im = 1;
+    _z80->iff1 = _z80->iff2 = 1;
+    _z80->pc = 0x8000;
+    _z80->sp = 0xA000;
+
+    // Inside the ULA window, source quiet: no INT
+    EXPECT_FALSE(offerAt(_intStart + 2));
+    EXPECT_FALSE(_z80->int_pending);
+    EXPECT_EQ(_source.acks, 0);
+
+    // Far from the ULA window, source asserted: INT
+    _source.assertFrom = 30000;
+    _source.assertTo = 30100;
+    EXPECT_TRUE(offerAt(30050));
+    EXPECT_EQ(_source.acks, 1);
+    EXPECT_EQ(_source.lastAckT, 30050u) << "acknowledged at the boundary, before the 13 T";
+    EXPECT_EQ(_z80->pc, 0x0038u);
+    EXPECT_EQ(_z80->t, 30050u + 13u);
+}
+
+TEST_F(InterruptSource_Test, Im2TakesTheSourcesVector)
+{
+    _z80->im = 2;
+    _z80->iff1 = _z80->iff2 = 1;
+    _z80->i = 0xBE;
+    _z80->pc = 0x8000;
+    _z80->sp = 0xA000;
+    _memory->DirectWriteToZ80Memory(0xBEFB, 0x34);  // I*256 + #FB: handler #C234
+    _memory->DirectWriteToZ80Memory(0xBEFC, 0xC2);
+    _source.assertTo = 0x10000;
+
+    ASSERT_TRUE(offerAt(1000));
+    EXPECT_EQ(_z80->pc, 0xC234u) << "vector #FB from the source, not the open-bus #FF";
+    EXPECT_EQ(_z80->t, 1000u + 19u);
+}
+
+TEST_F(InterruptSource_Test, TheCpuRulesStillApply)
+{
+    _z80->im = 1;
+    _z80->pc = 0x8000;
+    _z80->sp = 0xA000;
+    _source.assertTo = 0x10000;
+
+    _z80->iff1 = 0;
+    EXPECT_FALSE(offerAt(100)) << "DI";
+    EXPECT_TRUE(_z80->int_pending) << "the pin is still reported";
+
+    _z80->iff1 = _z80->iff2 = 1;
+    _z80->boundary = Z80_BOUNDARY_INT_SHADOW;
+    EXPECT_FALSE(offerAt(100)) << "EI shadow";
+    _z80->boundary = Z80_BOUNDARY_PREFIX_DD;
+    EXPECT_FALSE(offerAt(100)) << "inside a prefixed instruction";
+    EXPECT_EQ(_source.acks, 0) << "no acknowledge while refused";
+
+    _z80->boundary = Z80_BOUNDARY_NONE;
+    EXPECT_TRUE(offerAt(100));
+}
+
+TEST_F(InterruptSource_Test, RetiAndItsMirrorsReachTheSourceRetnDoesNot)
+{
+    for (uint8_t op : {0x4D, 0x5D, 0x6D, 0x7D, 0x45, 0x55})
+    {
+        const int before = _source.retis;
+        _z80->iff1 = _z80->iff2 = 1;
+        _z80->sp = 0xA000;
+        _memory->DirectWriteToZ80Memory(0xA000, 0x00);
+        _memory->DirectWriteToZ80Memory(0xA001, 0x90);
+        load(0x8000, {0xED, op});
+        _z80->pc = 0x8000;
+        _z80->Z80Step();
+        const bool reti = (op & 0x08) != 0;  // ED 4D/5D/6D/7D; ED 45/55 are RETN
+        EXPECT_EQ(_source.retis - before, reti ? 1 : 0) << "ED " << std::hex << int(op);
+        EXPECT_EQ(_z80->pc, 0x9000u);
+    }
+}
+
+TEST_F(InterruptSource_Test, WithoutASourceRetiIsAPlainReturn)
+{
+    _z80->interruptSource = nullptr;
+    _z80->sp = 0xA000;
+    _memory->DirectWriteToZ80Memory(0xA000, 0x00);
+    _memory->DirectWriteToZ80Memory(0xA001, 0x90);
+    load(0x8000, {0xED, 0x4D});
+    _z80->pc = 0x8000;
+    _z80->Z80Step();
+    EXPECT_EQ(_z80->pc, 0x9000u);
+    EXPECT_EQ(_source.retis, 0);
+}
+
+/// endregion </Machine interrupt source>
+
 /// region <From int_pending_wrap_test.cpp>
 
 /// Regression tests for the stale INT latch across frame wrap.

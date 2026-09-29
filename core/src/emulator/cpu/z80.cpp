@@ -1155,6 +1155,19 @@ bool Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
         return true;  // NMI accepted: skip Z80Step this iteration
     }
 
+    // A machine that owns its INT logic decides the pin alone (IInterruptSource)
+    if (interruptSource) [[unlikely]]
+    {
+        cpu.int_pending = interruptSource->IsIntAsserted(cpu.t);
+        video.memcyc_lcmd = 0;
+        if (cpu.int_pending && cpu.iff1 && cpu.boundary != Z80_BOUNDARY_INT_SHADOW && !prefixPending)
+        {
+            HandleINT(interruptSource->AcknowledgeInterrupt(cpu.t));
+            return true;
+        }
+        return false;
+    }
+
     // Generate INT
     // TODO: move INT forming logic to Screen class since in reality it's formed by ULA / frame counters
     // Strict sampling (cpu.t > int_start): the ULA registers the INT signal one clock
@@ -1348,6 +1361,11 @@ void Z80::HandleINT(uint8_t vector)
 void Z80::OnCPUStep()
 {
     // Q register update is now handled in Z80Step() based on flag changes
+
+    // The machine engine first (IMachineStepHook): the screen and the sound
+    // below then see the state this step produced
+    if (machineStepHook) [[unlikely]]
+        machineStepHook->OnMachineStep(t);
 
     // MainLoop will dispatch the call to all peripherals
     _context->pMainLoop->OnCPUStep();

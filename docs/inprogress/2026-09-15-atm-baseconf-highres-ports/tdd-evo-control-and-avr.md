@@ -162,7 +162,7 @@ bit is 0, go to `Flash29F040B::Write(romOffset, value)`. Reads from ROM windows 
 exercises the fast path. `FlashWrite` modes per D8. Write-protected windows (`#xBF7`) drop writes to
 RAM as well as to flash.
 
-Needs a memory-write intercept for ROM banks (TSConf phase 0 "write intercept" hook).
+Needs a memory-write intercept for ROM banks: a write-only `HostBusOverlay` (built by PLAN #60(a), 2026-09-29; TSConf technical-design §3.5 item 2), installed while `#BF`.1 = 1; write-protected windows drop the RAM store through the trash page.
 
 ### 5.3 Font RAM (C-6)
 
