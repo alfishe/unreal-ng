@@ -146,6 +146,9 @@ public:
 	/// [EVO] Fpga= value -> true for the frozen legacy BaseConf tree ("legacy"),
 	/// false for the current "trdemu" tree (also for a missing or unknown value)
 	static bool ParseEvoFpgaVariant(const char* value);
+	/// [HDD] Scheme: NONE / ATM / NEMO / NEMO-A8 / NEMO-DIVIDE / SMUC / PROFI / DIVIDE (any case); false when unknown
+	static bool ParseIdeScheme(const char* value, IDE_SCHEME& scheme);
+	static const char* IdeSchemeName(IDE_SCHEME scheme);
 
 	/**
 	 * @brief Map a model (+ optional RAM size) to its config folder under configs/

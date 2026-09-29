@@ -279,7 +279,8 @@ The 201 response carries the group status under `zxpoly`. Every member's
 `GET /api/v1/emulator/{id}/zxpoly` (any member id):
 ```json
 {
-  "master_id": "e5dad078-...", "locked": true, "slaves_running": false, "parallel_slaves": true,
+  "master_id": "e5dad078-...", "locked": true, "slaves_running": false,
+  "parallel_slaves": true, "pipelined_slaves": false,
   "port_3d00": 157, "video_mode": 7,
   "modules": [ {"module": 0, "id": "e5dad078-...", "registers": [0, 0, 0, 0]},
                {"module": 1, "id": "f67691a2-...", "registers": [18, 0, 0, 0]}, "..." ],
@@ -287,7 +288,11 @@ The 201 response carries the group status under `zxpoly`. Every member's
 }
 ```
 `divergence` compares each slave's control state (PC, SP, I, IM, IFF1, HALT,
-T-state, `#7FFD`) with the master's. A 404 means no such instance, or it is
+T-state, `#7FFD`) with the master's at the last frame boundary, where all
+four stand at the same position. `parallel_slaves`: the locked slaves run
+their frame at the same time. `pipelined_slaves`: the last frame boundary
+left them running into the master's next frame (unlimited speed only). The
+state at every frame boundary is the same in every schedule. A 404 means no such instance, or it is
 not a ZX-Poly machine.
 
 ### 5b. Switch Model (validate-first)
@@ -368,6 +373,7 @@ GET  /api/v1/emulator/{id}/state/audio/moonsound        MoonSound OPL4 overview:
 GET  /api/v1/emulator/{id}/state/audio/moonsound/{part} part=fm: 18 FM channels, timers, register banks; part=pcm: 24 wavetable slots, envelopes
 GET  /api/v1/emulator/{id}/state/audio/channels  Audio mixer overview: per-device levels + master (muted, sample_rate_hz = live core rate, channels, bit depth)
 GET  /api/v1/emulator/{id}/state/fdc           Beta Disk WD1793: registers, status bits, FSM, signals, drives (404 without Beta Disk)
+GET  /api/v1/emulator/{id}/state/ide           IDE board: scheme, latches, both units' task file and command, CD sense (404 without a board)
 GET  /api/v1/emulator/{id}/state/contention    Memory contention: rule, switch, effective, interface, I/O rule, contended slots, per-kind waits (debug mode)
 ```
 
@@ -1353,11 +1359,12 @@ There are no `/ttd/clear`, `/ttd/timeline`, `/ttd/step` or `/ttd/resume_from_her
   "coverage_index_frames": 300,
   "coverage_index_bytes": 13926,
   "bookmark_count": 0,
-  "last_drop_reason": null
+  "last_drop_reason": null,
+  "unavailable_reason": null
 }
 ```
 
-`state` is `idle`, `recording` or `detached`. `last_drop_reason` is `null` until something drops a history, then names it (e.g. `"snapshot-load"`). When the build has no TTD engine the response still comes back with `ttd_available: false`, `state: "idle"` and zero counters. Field meanings: [command-interface.md → Status fields](./command-interface.md#status-fields).
+`state` is `idle`, `recording` or `detached`. `last_drop_reason` is `null` until something drops a history, then names it (e.g. `"snapshot-load"`). `unavailable_reason` is `null` unless time travel is not available for this machine at all (a ZX-Poly member); then `/ttd/start` answers **409 Conflict** with it as `message`. When the build has no TTD engine the response still comes back with `ttd_available: false`, `state: "idle"` and zero counters. Field meanings: [command-interface.md → Status fields](./command-interface.md#status-fields).
 
 **`POST /ttd/seek` response shape:**
 

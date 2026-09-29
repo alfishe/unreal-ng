@@ -103,9 +103,9 @@ in [testdata/machines/zxpoly/](../../../testdata/machines/zxpoly/README.md):
 - Out of scope for v1: the Test ROM's per-CPU tests and MIMD software, which
   need the coupled machine of quad-instance §13.
 - Deferred, low priority (possible later): time travel for ZX-Poly machines
-  (the group timeline exists in the core only; the per-instance TTD commands are not blocked and act on the master alone) and
+  (the group timeline exists in the core only; every member refuses the per-instance TTD commands with the reason) and
   ZX-Poly tiles in the video wall; the risks are in
-  [prototype-results.md §8](prototype-results.md#8-not-done-yet).
+  [prototype-results.md §9](prototype-results.md#9-not-done-yet).
 
 ## Trigger for next step
 

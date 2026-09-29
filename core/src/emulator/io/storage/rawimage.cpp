@@ -31,6 +31,11 @@ namespace
 
 std::unique_ptr<RawImage> RawImage::Open(const std::string& path, Access access, std::string* error)
 {
+    return Open(path, access, Layout{}, error);
+}
+
+std::unique_ptr<RawImage> RawImage::Open(const std::string& path, Access access, const Layout& layout, std::string* error)
+{
     auto fail = [error](const std::string& reason) -> std::unique_ptr<RawImage> {
         if (error)
             *error = reason;
@@ -53,14 +58,20 @@ std::unique_ptr<RawImage> RawImage::Open(const std::string& path, Access access,
     if (!file)
         return fail(access == Access::ReadWrite ? "cannot open for writing: " + path : "cannot open: " + path);
 
-    return std::unique_ptr<RawImage>(new RawImage(path, access, std::move(file), size));
+    if (layout.dataOffset > size || (layout.dataBytes && layout.dataOffset + layout.dataBytes > size))
+        return fail("the image header points beyond the end of " + path);
+
+    return std::unique_ptr<RawImage>(new RawImage(path, access, std::move(file), size, layout));
 }
 
-RawImage::RawImage(std::string path, Access access, std::fstream file, uint64_t sizeBytes)
-    : _path(std::move(path)), _access(access), _file(std::move(file)), _sizeBytes(sizeBytes)
+RawImage::RawImage(std::string path, Access access, std::fstream file, uint64_t sizeBytes, const Layout& layout)
+    : _path(std::move(path)), _access(access), _file(std::move(file)), _layout(layout)
 {
-    _sectors = (_sizeBytes + kSectorSize - 1) / kSectorSize;
-    _contentId = HashIdentity(_path, _sizeBytes);
+    // _sizeBytes: the disk's bytes as stored (the region after the header)
+    _fixedSize = layout.dataBytes != 0 || layout.halved;
+    _sizeBytes = layout.dataBytes ? layout.dataBytes : sizeBytes - layout.dataOffset;
+    _sectors = (_sizeBytes + StoredSectorBytes() - 1) / StoredSectorBytes();
+    _contentId = HashIdentity(_path, sizeBytes);
 }
 
 RawImage::~RawImage()
@@ -74,14 +85,22 @@ bool RawImage::ReadSector(uint64_t lba, uint8_t* dst)
         return false;
 
     std::memset(dst, 0, kSectorSize);
-    const uint64_t offset = lba * kSectorSize;
-    const uint64_t available = std::min<uint64_t>(kSectorSize, _sizeBytes - offset);
+    const uint32_t stored = StoredSectorBytes();
+    const uint64_t offset = lba * stored;
+    const uint64_t available = std::min<uint64_t>(stored, _sizeBytes - offset);
 
+    uint8_t low[kSectorSize / 2];
+    uint8_t* target = _layout.halved ? low : dst;
     _file.clear();
-    _file.seekg(static_cast<std::streamoff>(offset));
-    _file.read(reinterpret_cast<char*>(dst), static_cast<std::streamsize>(available));
+    _file.seekg(static_cast<std::streamoff>(_layout.dataOffset + offset));
+    _file.read(reinterpret_cast<char*>(target), static_cast<std::streamsize>(available));
     const bool ok = static_cast<uint64_t>(_file.gcount()) == available;
     _file.clear();
+    if (_layout.halved)
+    {
+        for (uint64_t i = 0; i < available; i++)
+            dst[i * 2] = low[i];  // the high byte of each word was never stored
+    }
     return ok;
 }
 
@@ -90,15 +109,28 @@ bool RawImage::WriteSector(uint64_t lba, const uint8_t* src)
     if (_access != Access::ReadWrite || lba >= _sectors)
         return false;
 
+    const uint32_t stored = StoredSectorBytes();
+    uint8_t low[kSectorSize / 2];
+    const uint8_t* source = src;
+    if (_layout.halved)
+    {
+        for (uint32_t i = 0; i < stored; i++)
+            low[i] = src[i * 2];
+        source = low;
+    }
+    const uint64_t offset = lba * stored;
+    const uint64_t length = _fixedSize ? std::min<uint64_t>(stored, _sizeBytes - offset) : stored;
+
     _file.clear();
-    _file.seekp(static_cast<std::streamoff>(lba * kSectorSize));
-    _file.write(reinterpret_cast<const char*>(src), static_cast<std::streamsize>(kSectorSize));
+    _file.seekp(static_cast<std::streamoff>(_layout.dataOffset + offset));
+    _file.write(reinterpret_cast<const char*>(source), static_cast<std::streamsize>(length));
     _file.flush();
     const bool ok = static_cast<bool>(_file);
     _file.clear();
 
     // A write to the padded last sector made the file whole
-    _sizeBytes = std::max<uint64_t>(_sizeBytes, (lba + 1) * kSectorSize);
+    if (!_fixedSize)
+        _sizeBytes = std::max<uint64_t>(_sizeBytes, (lba + 1) * stored);
     return ok;
 }
 

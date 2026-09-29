@@ -57,6 +57,7 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         ss << "  audio fm       - TurboSound FM overview (board latches, both YM2203 FM halves)" << NEWLINE;
         ss << "  audio fm <N>   - Full FM report of chip N (0/1): mode, timers, channels, operators, envelopes" << NEWLINE;
         ss << "  fdc            - Beta Disk WD1793: registers, status bits, FSM, signals, drives" << NEWLINE;
+        ss << "  ide            - IDE board: scheme, latches, both units' task file, command, CD sense" << NEWLINE;
         ss << "  contention     - Memory contention: rule, switch, interface, contended slots, statistics" << NEWLINE;
         ss << "  audio beeper   - Beeper state and activity" << NEWLINE;
         ss << "  audio gs       - General Sound device state (--verbose adds coprocessor registers)" << NEWLINE;
@@ -78,6 +79,7 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         ss << "  state audio beeper   - Show beeper state" << NEWLINE;
         ss << "  state audio fm 1     - Show the full FM report of TSFM chip 1" << NEWLINE;
         ss << "  state fdc            - Show the Beta Disk controller and drives" << NEWLINE;
+        ss << "  state ide            - Show the IDE board and its units" << NEWLINE;
         ss << "  state contention     - Show where the CPU waits for the video logic" << NEWLINE;
         ss << "  state audio channels - Show all audio sources mixer state" << NEWLINE;
 
@@ -175,6 +177,13 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
     else if (subsystem == "fdc" || subsystem == "disk" || subsystem == "wd1793")
     {
         HandleStateFdc(session, context);
+        return;
+    }
+    else if (subsystem == "ide" || subsystem == "hdd" || subsystem == "cdrom")
+    {
+        std::stringstream ide;
+        ide << "IDE board" << NEWLINE << "=========" << NEWLINE << DeviceState::ToText(DeviceState::Ide(context));
+        session.SendResponse(ide.str());
         return;
     }
     else if (subsystem == "contention")

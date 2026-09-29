@@ -266,6 +266,8 @@ void CLIProcessor::HandleTTDStatus(const ClientSession& session, EmulatorContext
     ss << "  Bookmarks:              " << info.bookmarkCount << " (advisory, never barriers)" << NEWLINE;
     if (!info.lastDropReason.empty())
         ss << "  Last session dropped:   " << info.lastDropReason << NEWLINE;
+    if (!info.unavailableReason.empty())
+        ss << "  Not available:          " << info.unavailableReason << NEWLINE;
 
     session.SendResponse(ss.str());
 }
@@ -302,7 +304,9 @@ void CLIProcessor::HandleTTDStart(const ClientSession& session, EmulatorContext*
     }
     else
     {
-        session.SendResponse(std::string("TTD: Failed to start recording") + NEWLINE);
+        const std::string& reason = mgr->GetUnavailableReason();
+        session.SendResponse(std::string("TTD: Failed to start recording") + (reason.empty() ? "" : ": " + reason) +
+                             NEWLINE);
     }
 }
 

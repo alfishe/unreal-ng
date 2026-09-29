@@ -5,6 +5,7 @@
 #include "emulator/zxpoly/zxpolyscreencomposer.h"
 
 #include <array>
+#include <atomic>
 #include <bitset>
 #include <map>
 #include <cstdint>
@@ -18,6 +19,7 @@
 class Emulator;
 class EmulatorContext;
 class ZXPolyPortInterceptor;
+class ZXPolyWorkers;
 struct ZXPSnapshot;
 
 /// A ZX-Poly machine built from four stock emulator instances of one model
@@ -38,11 +40,16 @@ struct ZXPSnapshot;
 ///
 /// Two ways to drive it:
 ///  - RunFrame(): the caller's thread steps all four, one frame at a time (the
-///    "sequential" pipeline, the reference mode for tests);
+///    reference mode for tests); RunFrames() the same for several frames;
 ///  - AttachToMaster(): the master runs as a normal instance (its own loop,
 ///    pacing, sound, the GUI adopts it); at the end of each of its frames the
 ///    group runs the slaves' frame and composes the picture into the master's
 ///    framebuffer. Host keys sent to the master are queued by the group.
+///
+/// Locked, the slaves run on worker threads, in parallel with each other; at
+/// unlimited speed also in parallel with the master's next frame
+/// (SetPipelinedSlaves). The state at every frame boundary is the same in
+/// every schedule.
 class ZXPolyGroup : public Observer
 {
 public:
@@ -123,7 +130,8 @@ public:
     void ReleaseKey(ZXKeysEnum key);
 
     /// Runs one frame: in the loader phase the master alone (the locking #3D00
-    /// write replicates at that instruction), in the locked phase all four
+    /// write replicates at that instruction), in the locked phase all four.
+    /// All four are at the frame boundary when it returns
     void RunFrame();
 
     /// Live mode: hook the group into the master's own frame loop (see the
@@ -145,6 +153,10 @@ public:
     /// Copies the latest display frame (tear-free); false when dstSize does
     /// not match the current display size
     bool CopyDisplay(uint8_t* dst, size_t dstSize);
+
+    /// Runs `frames` frames as RunFrame does; at unlimited speed the slaves'
+    /// frames overlap the master's next ones (SetPipelinedSlaves). All four
+    /// are at the last frame boundary when it returns
     void RunFrames(unsigned frames);
 
     bool IsLocked() const { return _locked; }
@@ -154,13 +166,36 @@ public:
     /// locked). Used only while every slave's device writes are disabled
     /// (R0 D4), so no two slaves drive the master's devices concurrently.
     /// On by default; the results are identical either way
-    void SetParallelSlaves(bool parallel) { _parallelSlaves = parallel; }
+    void SetParallelSlaves(bool parallel);
     bool IsParallelSlaves() const { return _parallelSlaves; }
+
+    /// Unlimited speed (the master in turbo mode): the slaves run their frame
+    /// while the master already runs the next one, and the group waits for
+    /// them one frame boundary later - or at once when something needs them
+    /// (a shown picture, a master read of a slave's R0, status, loading).
+    /// Every module then has the same state at every frame boundary as with
+    /// the slaves run at once. Needs the parallel conditions (locked, every
+    /// slave's device writes disabled). At normal speed the slaves always
+    /// finish before the master goes on, so the picture has no delay.
+    /// On by default
+    void SetPipelinedSlaves(bool pipelined);
+    bool IsPipelinedSlaves() const { return _pipelinedSlaves; }
+
+    /// True while the last frame boundary left the slaves running
+    bool IsPipelining() const { return _pipelining; }
+
+    /// Returns once the slaves have reached the last frame boundary (they may
+    /// still be running after a pipelined boundary). Every group method that
+    /// reads or changes the slaves calls it first; call it before inspecting
+    /// a slave directly while the master runs at unlimited speed
+    void WaitForSlaves() const;
 
     /// Compares every slave with the master (locked phase only): port reads
     /// of the last frame (when the check is enabled), then the control state -
-    /// PC, SP, I, IM, IFF1, HALT, T-state position, paging. Data registers are
-    /// not compared: they legitimately hold plane-specific graphics bytes
+    /// PC, SP, I, IM, IFF1, HALT, T-state position, paging - at the last frame
+    /// boundary, where all four stand at the same position (a live master is
+    /// already inside its next frame). Data registers are not compared: they
+    /// legitimately hold plane-specific graphics bytes
     Divergence CheckLockstep() const;
 
     /// Debug aid: record every IN of every instance per frame and report the
@@ -205,6 +240,7 @@ public:
         bool locked = false;
         bool slavesRunning = false;
         bool parallelSlaves = false;
+        bool pipelinedSlaves = false;   // the last frame boundary left the slaves running (unlimited speed)
         uint8_t port3D00 = 0;
         uint8_t videoMode = 0;
         std::array<std::array<uint8_t, 4>, MODULES> registers{};
@@ -247,12 +283,40 @@ private:
     uint64_t _lastMasterFrame = 0;   // a smaller frame counter means the master was reset
     bool _slavesRunning = false;     // unlocked with #3D00 D0 = 1: the slaves execute on their own
     bool _parallelSlaves = true;
+    bool _pipelinedSlaves = true;
+    std::atomic<bool> _pipelining{false};    // the last boundary left the slaves running
+    uint8_t _masterStatusAtBoundary = 0;     // the master's R0 status where the slaves run to
+    std::unique_ptr<ZXPolyWorkers> _workers; // one thread per slave
+
+    // Lockstep is checked at frame boundaries, the one moment all four stand
+    // at the same position (a live master may be anywhere in its next frame):
+    // the master's control state there, and each slave's comparison with it
+    // once the slave has arrived (empty: in step)
+    struct ControlState
+    {
+        uint16_t pc = 0;
+        uint16_t sp = 0;
+        uint8_t i = 0;
+        uint8_t im = 0;
+        uint8_t iff1 = 0;
+        uint8_t halted = 0;
+        uint32_t t = 0;
+        uint8_t p7FFD = 0;
+    };
+    ControlState ReadControlState(size_t module) const;
+    static std::string CompareControlState(const ControlState& master, const ControlState& slave);
+    ControlState _masterAtBoundary;
+    mutable std::mutex _lockstepMutex;
+    std::array<std::string, MODULES> _boundaryDivergence;
+    std::atomic<bool> _boundaryChecked{false};    // false until a boundary after a load / replication
     std::array<bool, MODULES> _stopWait{};    // WAIT from the stop address (R2/R3)
     std::array<bool, MODULES> _wasHalted{};   // HALT edge for halt notification
 
     // Floating-bus reads of the master by (frame << 32 | T): the slaves take
     // the master's value - one video memory decides, as on the real board
+    // (the master adds while pipelined slaves read)
     std::unordered_map<uint64_t, uint8_t> _masterFloatingBus;
+    std::mutex _floatingBusMutex;
     bool _attached = false;
 
     // Loader phase: what the IO window wrote into each slave (-1 = untouched),
@@ -269,13 +333,15 @@ private:
     // mouse), applied to all four members at once
     struct InputOp
     {
-        enum Kind : uint8_t { KeyDown, KeyUp, MouseMove, MouseButtons, MouseWheel } kind;
+        enum Kind : uint8_t { KeyDown, KeyUp, MouseMove, MouseButtons, MouseWheel, Speed } kind;
         ZXKeysEnum key = ZXKEY_NONE;
         int a = 0;
         int b = 0;
     };
     std::mutex _keysMutex;
     std::vector<InputOp> _pendingInput;
+    std::vector<InputOp> TakePendingInput();
+    void ApplyInput(size_t module, const std::vector<InputOp>& input);
 
     struct PortRead
     {
@@ -341,9 +407,13 @@ private:
     void FillMissingLines(size_t module, size_t slot);
     const ZXPolyScreenComposer::Lines* CapturedFrame(size_t module, uint64_t frame);
     bool OnPort7FFDWrite(size_t module, uint8_t value);
-    void ApplyPendingInput();
-    void AdvanceSlaves();
+    void AtFrameBoundary(bool pictureNeeded, bool mayOverlap);
+    void AdvanceSlaves(const std::vector<InputOp>& input, bool mayOverlap);
+    bool CanRunSlavesInParallel() const;
+    bool CanOverlapSlaves() const;
+    void PruneFloatingBus();
     void RunSlaveToMasterPosition(size_t module);
+    void RunSlaveToPosition(size_t module, uint64_t frame, uint32_t t);
     void OnMasterFrameEnd(bool rendered);
     void ComposeIntoMasterFramebuffer();
     void ComposeDisplayFrame();

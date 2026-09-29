@@ -78,6 +78,7 @@ The Python bindings do not expose model-selecting instance creation: `ue.Emulato
 id = zxpoly_start("ZXPOLY-PENTAGON", "/path/to/Alien8.zxp")   # raises RuntimeError with the reason on failure
 status = zxpoly_status(id)                              # dict; None if not a ZX-Poly machine
 status["locked"], status["video_mode"], status["diverged"], status["modules"][1]["registers"]
+status["parallel_slaves"], status["pipelined_slaves"]      # how the slaves are scheduled
 ```
 The model is a configuration name (`ZXPOLY-48K`, `ZXPOLY-128K`,
 `ZXPOLY-PENTAGON`) or a base model such as `PENTAGON`.
@@ -127,6 +128,11 @@ class Emulator:
     def audio_covox_state(self) -> dict:
         """Covox / SoundDrive report: fitment, the ports this model decodes, shared_with_beta128,
         the four DAC latches. available=False when no Covox is fitted"""
+
+    def ide_state(self) -> dict:
+        """IDE board report: scheme, gate, adapter latches, selected unit, intrq,
+        units[2] (kind, slot, medium, translation, task_file with decoded bits,
+        command, atapi sense on a CD drive). available=False without a board"""
 
     def audio_moonsound_state(self, part: str = "") -> dict:
         """MoonSound (OPL4) report: overview (part=''), the FM half (part='fm': 18 channels,
@@ -815,6 +821,7 @@ status = emu.ttd_status()
 #   'session_heap_bytes': 1043968,
 #
 #   'last_drop_reason': 'snapshot-load',   # None until a history is dropped
+#   'unavailable_reason': None,            # set when this machine has no time travel (a ZX-Poly member)
 # }
 ```
 

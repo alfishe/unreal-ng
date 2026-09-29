@@ -330,6 +330,8 @@ public:
             out["master_id"] = status.memberIds[0];
             out["locked"] = status.locked;
             out["slaves_running"] = status.slavesRunning;
+            out["parallel_slaves"] = status.parallelSlaves;
+            out["pipelined_slaves"] = status.pipelinedSlaves;
             out["port_3d00"] = status.port3D00;
             out["video_mode"] = status.videoMode;
             sol::table modules = view.create_table();
@@ -1962,6 +1964,12 @@ public:
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, chip ? DeviceState::FmChip(ctx, *chip) : DeviceState::Fm(ctx));
         });
+        lua.set_function("ide_state", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::Ide(emulator->GetContext()));
+        });
+
         lua.set_function("fdc_state", [this](sol::this_state s) -> sol::object {
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, DeviceState::Fdc(ctx));
@@ -2365,6 +2373,8 @@ public:
             info["bookmark_count"]           = static_cast<uint64_t>(si.bookmarkCount);
             if (!si.lastDropReason.empty())
                 info["last_drop_reason"]     = si.lastDropReason;  // "" until a history is dropped
+            if (!si.unavailableReason.empty())
+                info["unavailable_reason"]   = si.unavailableReason;  // e.g. a ZX-Poly member
             info["ttd_available"]            = true;
             return info;
         });

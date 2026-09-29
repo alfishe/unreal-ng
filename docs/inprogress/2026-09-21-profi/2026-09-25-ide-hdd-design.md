@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Design / draft for review |
+| **Status** | **Rollout 1 implemented** 2026-09-28 (branch `ide-atapi`): [implementation-plan.md](../2026-09-28-ide-atapi/implementation-plan.md). Where they differ, the plan's decisions D1-D9 win: the media manager owns the media (§6.1), the automation is the `media` verbs plus `state ide` (§8.2), TTD is a blob + write barriers (§10.0), one adapter class for every board (§5) |
 | **Date** | 2026-09-25 |
 | **Branch** | `profi` (baseline `f4e35ee6`) |
 | **Closes** | Reconciliation gaps **G1** (Profi IDE) and **T3** (IDE state in TTD), [2026-09-25-profi-reconciliation.md](2026-09-25-profi-reconciliation.md) §4; roadmap items **ST-1..ST-3, ST-5** ([01-roadmap-and-machine-state.md](../2026-09-21-roadmap/01-roadmap-and-machine-state.md) §6) |
@@ -784,7 +784,7 @@ A small Z80 test program (assembled with the in-repo assembler) runs a fixed IDE
 |---|---|---|
 | Q1 | `#06AB` read on real Profi: `#FF` (RTL) or alternate status (pico-spec)? | `#FF` |
 | Q2 | Karabas EXT variant (DOS ∧ ¬ROM14) as a whole-decoder switch: needed for Karabas BIOS HDD self-test | not implemented (§3.2) |
-| Q3 | SMUC IDE reset polarity (`#FFBA` bit 0: Unreal/ZXMAK2 = 1 resets, MAME = 0 resets) and version-register values (four emulators, four answers) | Unreal, matching the existing SMUC stub |
+| Q3 | SMUC IDE reset polarity (`#FFBA` bit 0: Unreal/ZXMAK2 = 1 resets, MAME = 0 resets) and version-register values (four emulators, four answers) | **Answered 2026-09-28** from ProfROM 4.01 (docs/inprogress/2026-09-28-scorpion-smuc, hardware reference §5.6): D0 = 0 resets; the firmware keeps D0 = 1 and pulses it low. Implemented on `ide-atapi`. Version registers: still open |
 | Q4 | Profi disk geometry conventions: confirm 16/16 (original SYS ROM) vs 16/63 (Karabas) and the `ProfiHiDD` header offset/layout against a real image | configurable; auto-detect behind a flag |
 | Q5 | Which SYS ROM menu path reaches `#28CE` (for an end-to-end "press key → boots from HDD" test) | R1 enters `#28CE` directly |
 | Q6 | Source of a real Profi HDD image (CP/M) for R3/R6 | synthetic images only |

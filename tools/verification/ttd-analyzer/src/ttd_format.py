@@ -195,6 +195,8 @@ PERIPHERAL_ID_NAMES = {
     13: "Plus3Paging",
     14: "Upd765",
     15: "EvoSdCard",
+    # 16: reserved for TSConf (PLAN #41)
+    17: "AtaChannel",
 }
 
 # Mirrors ttd::PeripheralBlobHeader (ttdperipheralregistry.h): peripheralId(u8)

@@ -101,6 +101,7 @@ state audio ay          AY/SSG overview           state audio ay 0    one chip d
 state audio fm          TurboSound FM overview    state audio fm 1    one YM2203 FM half in full
 state audio channels    Mixer overview: per-device levels + master (mute, live core sample rate)
 state fdc               Beta Disk WD1793 (aliases: state disk, state wd1793)
+state ide               IDE board: scheme, latches, both units, CD sense (aliases: state hdd, state cdrom)
 state contention        Memory contention: rule, switch, interface, contended slots, waits while debugging
 state screen            Screen state: video mode, active screen + RAM pages, contention, flash
 state screen verbose    + per-screen RAM page and Z80 mapping, decoded #7FFD
@@ -176,7 +177,10 @@ ZX-Poly machine fa3b65e0-...
 disk. `<model>` is a configuration name (`ZXPOLY-48K`, `ZXPOLY-128K`,
 `ZXPOLY-PENTAGON`) or a base model. `start ZXPOLY-128K` (the ordinary
 command) starts the bare machine, and `models` lists the configurations.
-`zxpoly status [id|index]` works for any member of the group.
+`zxpoly status [id|index]` works for any member of the group. A locked
+machine also shows its `schedule`: `parallel` (the slaves run their frame
+at the same time), `pipelined` (at unlimited speed, also overlapping the
+master's next frame) or `sequential`.
 
 The CLI server listens on port 8765. `UNREAL_CLI_PORT` moves it, just as
 `UNREAL_WEBAPI_PORT` moves the WebAPI's 8090, so a second instance can run

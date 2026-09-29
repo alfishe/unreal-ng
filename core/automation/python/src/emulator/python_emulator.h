@@ -297,6 +297,8 @@ namespace PythonBindings
             out["master_id"] = status.memberIds[0];
             out["locked"] = status.locked;
             out["slaves_running"] = status.slavesRunning;
+            out["parallel_slaves"] = status.parallelSlaves;
+            out["pipelined_slaves"] = status.pipelinedSlaves;
             out["port_3d00"] = status.port3D00;
             out["video_mode"] = status.videoMode;
             py::list modules;
@@ -1626,6 +1628,9 @@ namespace PythonBindings
             .def("audio_fm_state", [](Emulator& self, int chip) -> py::object {
                 return StateNodeToPy(chip < 0 ? DeviceState::Fm(self.GetContext()) : DeviceState::FmChip(self.GetContext(), chip));
             }, "TurboSound FM state report: board + chip summary (chip=-1) or one YM2203 FM half in full", py::arg("chip") = -1)
+            .def("ide_state", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::Ide(self.GetContext()));
+            }, "IDE board: scheme, latches, both units (task file, command, CD sense); available=False without one")
             .def("fdc_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Fdc(self.GetContext()));
             }, "Beta Disk WD1793 state report: registers, status bits, FSM, signals, drives")
@@ -2556,6 +2561,8 @@ namespace PythonBindings
                 info["bookmark_count"]           = py::cast(static_cast<uint64_t>(si.bookmarkCount));
                 info["last_drop_reason"]         = si.lastDropReason.empty() ? py::object(py::none())
                                                                              : py::object(py::cast(si.lastDropReason));
+                info["unavailable_reason"]       = si.unavailableReason.empty() ? py::object(py::none())
+                                                                                : py::object(py::cast(si.unavailableReason));
                 info["ttd_available"]            = true;
                 return info;
             }, "Get TTD session status")

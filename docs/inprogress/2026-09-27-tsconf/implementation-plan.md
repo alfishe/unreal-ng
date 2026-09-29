@@ -206,10 +206,11 @@ clears (with a frame cap).
 | DMA-8 | busy: `IN #27AF` bit 7 = 1 while running, 0 after; DMA INT (vector 0xFB) once at completion when `INT_MASK[2]` |
 | DMA-9 | `DMA_CTRL` write while busy → relaunch from reloaded counters, **no INT** for the aborted run |
 | DMA-10 | address register write while busy modifies the live counter; `DMA_LEN` write applies at the next block |
-| DMA-11 | undefined code (0x0, 0x5, 0x8, 0xE, 0xF, 0x3 without IDE) → busy forever, no INT; next `DMA_CTRL` recovers |
+| DMA-11 | undefined code (0x0, 0x5, 0x8, 0xE, 0xF; 0x3/0xB with `[HDD] Scheme=NONE`) → busy forever, no INT; next `DMA_CTRL` recovers |
 | DMA-12 | pacing: a 256-word copy with video in 256C takes more lines than with NOGFX (budget model, ancestor units); identical when frames are decimated |
 | DMA-13 | DMA does not invalidate the CPU cache (CCH-1 with DMA as the writer) |
 | DMA-14 | SPI 0x2 with a scripted `SdCardSpi` stub: 512-byte sector = LEN 0xFF, NUM 0; little-endian word assembly; 0xFF transmitted on reads |
+| DMA-15 | IDE 0x3 with a memory disk on `ide0.master` after READ SECTORS: `LEN 0xFF, NUM 0` moves 256 words = the sector, low byte at the even address; 0xB writes a sector back (WRITE SECTORS) byte-identical; after 0x3, `IN #11` = high byte of the last word (hs §8.3); an empty unit reads #FFFF and completes |
 | TTD-4 | capture mid-transfer (half the words done), restore, continue → destination bytes and completion tact identical |
 
 ## Phase 6 — Storage and snapshots · L
@@ -227,6 +228,15 @@ clears (with a frame cap).
 > `sd.zc` slot in its decoder (as `PortDecoder_ATM3::EvoSdSlot`), the DMA SPI
 > path, card-detect / WP through `EvoAvr`, SLOT-1 and BOOT-3 — layers 1 and 2 of
 > the storage stack ([layers](../2026-09-28-storage-manager/technical-design.md#11-layers-from-the-guests-port-to-the-medium)).
+>
+> **2026-09-29, Nemo IDE (D2 decided: emulated; hardware-spec §8.3,
+> technical-design §3.11).** On the shared IDE core (`f5fc5f05`). TSConf's own
+> work: `TryIdePortIn/Out` first in its decoder, `[HDD] Scheme=NEMO-DIVIDE`
+> and `IdeStall=0` in the ts-conf ini, `PeripheralId::AtaChannel` (17) in its
+> TTD ids, and three small additions to the shared `IdeAdapter`
+> (`DmaReadWord`, `DmaWriteWord`, a "this access reached the drive" flag) with
+> their own `ideadapter_test.cpp` cases. DMA-15 (phase 5) needs the two DMA
+> methods; do them first in this phase or move them into phase 5.
 
 | ID | Asserts |
 |:--|:--|
@@ -244,6 +254,12 @@ clears (with a frame cap).
 | SPG-2 | MegaLZ and Hrust blocks decode (fixtures generated with the ancestor's packers or taken from MAME's `tsconf.xml` set) |
 | SPG-3 | v1.1 (version 0x11) accepted |
 | API-1 | the media verbs on every surface (#58 M4, [media-control-design.md](../2026-09-28-storage-manager/media-control-design.md)): `media insert sd <image or folder>`, `eject`, `info` — nothing TSConf-specific; the #58 conformance test covers TSConf's slot |
+| IDE-1 | decode: `IN #F0` (status), `#C8` (alternate status), `#11` answer from the IDE board in DOS, outside DOS and inside vdos, at every clock; `#1F`/`#3F` stay Beta-128 / joystick; with `Scheme=NONE` all read 0xFF (hs §8.3) |
+| IDE-2 | Nemo order: `OUT #11,#AB : OUT #10,#CD` writes #ABCD (image bytes `CD AB`); `IN #10` then `IN #11` read a word low, high |
+| IDE-3 | DivIDE order: `OUT #10,lo : OUT #10,hi` and two `IN #10`; an access to another IDE port between the halves restarts the pair |
+| IDE-4 | stall off (`IdeStall=0`, default): `IN A,(#F0)` costs the same T-states as `IN A,(#FE)`; on: +1 / +2 / +3 T at 3.5 / 7 / 14 MHz; `IN #11` and the latched second `IN #10` add nothing |
+| IDE-5 | TTD: capture between the two halves of a Nemo write and mid-sector, restore → identical bytes on the unit and identical latch state (shared `AtaChannel` blob 17) |
+| BOOT-4 | TS-BIOS lists and boots a small IDE image on `ide0.master` (characterize, then assert; skip without the fixture) |
 | BOOT-3 | TS-BIOS boots a FatFS folder (fixture with a small `.spg` or `.trd`) to its file browser (characterize, then assert) |
 
 ## Phase 7 — Sound, debugger, automation, corpus · M
@@ -282,9 +298,9 @@ settings. Exit = technical-design §3.19 checklist.
 | hs §3 | DEC-1, REG-1..2, RST-1..2, VID-4 |
 | hs §4 | ENG-2..3, VID-*, GFX-*, TSU-* |
 | hs §5 | INT-1..8 |
-| hs §6 | DMA-1..14, TIM-3 |
+| hs §6 | DMA-1..15, TIM-3 |
 | hs §7 | SND-1..3 |
-| hs §8 | SPI-1, SD-*, VFAT-*, BETA-1, VDOS-1..2 |
+| hs §8 | SPI-1, SD-*, VFAT-*, BETA-1, VDOS-1..2, IDE-1..5, DMA-15, BOOT-4 |
 | hs §9 | BETA-1, VDOS-2 |
 | hs §10 | RST-*, ROM-1, BOOT-*, SPG-* |
 | hs §11 | CLK-1..2, INT-7, TIM-* |

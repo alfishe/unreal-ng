@@ -6,7 +6,6 @@
 #include "emulator/cpu/cputables.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
-#include "emulator/io/hdd/hdd.h"
 #include "emulator/io/keyboard/keyboard.h"
 #include "emulator/io/mouse/mouse.h"
 #include "emulator/memory/memory.h"
@@ -27,6 +26,7 @@ class Z80;
 class PortDecoder;
 class WD1793;
 class UPD765;
+class IdeController;
 class TapeFastLoad;
 class TapeTurboController;
 class DiskFastLoad;
@@ -73,7 +73,7 @@ protected:
 #ifdef ENABLE_RECORDING
     RecordingManager* _recordingManager = nullptr;
 #endif
-    HDD* _hdd = nullptr;
+    IdeController* _ide = nullptr;
     VideoControl* _video = nullptr;
     Screen* _screen = nullptr;
     UlaContention* _ulaContention = nullptr;
@@ -99,6 +99,13 @@ public:
     [[nodiscard]] bool Init();
     void Release();
     /// endregion </Initialization>
+
+    /// region <Peripherals>
+    /// Build the IDE board again from the current config ([HDD] Scheme, CDn):
+    /// media of units that come back are attached again, the others park.
+    /// The emulator must not be running
+    void RefitIde();
+    /// endregion </Peripherals>
 
     /// region <Properties>
     Z80* GetZ80()

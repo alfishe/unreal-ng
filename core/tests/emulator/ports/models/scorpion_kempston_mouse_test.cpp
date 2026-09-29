@@ -46,7 +46,7 @@ std::shared_ptr<Emulator> CreateProfScorp()
         return nullptr;
 
     // Deterministic RTC: live host time shifts the ProfROM boot timeline
-    static_cast<PortDecoder_Scorpion256*>(emulator->GetContext()->pPortDecoder)->GetSMUCNvram().SetFixedTime(1767268830);
+    static_cast<PortDecoder_Scorpion256*>(emulator->GetContext()->pPortDecoder)->GetRtc().SetFixedTime(1767268830);
 
     // Host-side fast-forward only (no emulated-state effect)
     emulator->EnableTurboMode();

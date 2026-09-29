@@ -732,13 +732,14 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | MoonSound overview | `state audio moonsound` | `GET /state/audio/moonsound` | `audio_moonsound_state()` | `audio_moonsound_state()` | `audio_moonsound` |
 | MoonSound FM / PCM half | `state audio moonsound fm\|pcm` | `GET /state/audio/moonsound/fm\|pcm` | `audio_moonsound_state("fm"\|"pcm")` | `audio_moonsound_state(part="fm"\|"pcm")` | `audio_opl4_fm`, `audio_opl4_pcm` |
 | Beta Disk WD1793 | `state fdc` | `GET /state/fdc` | `fdc_state()` | `fdc_state()` | `fdc` |
+| IDE board (disks, CD-ROM) | `state ide` | `GET /state/ide` | `ide_state()` | `ide_state()` | `ide` |
 | Memory contention | `state contention` | `GET /state/contention` | `contention_state()` | `contention_state()` | `contention` |
 | Static port map & routing | `ports` | `GET /ports` | `ports_map()` | `ports_map()` | `ports` |
 | Paging latches + bank table | `paging` | `GET /state/paging` | `paging_state()` | `paging_state()` | `paging` |
 
 Every report carries `available` (false with a `description` when the
 device is not on this machine — e.g. `audio/fm` on a plain TurboSound
-configuration, `fdc` on a machine without Beta Disk, `gs` without a GS card).
+configuration, `fdc` on a machine without Beta Disk, `ide` without an IDE board, `gs` without a GS card).
 WebAPI answers 404 in that case; Lua/Python return the same object (`gs_state()`
 used to return nil - it now returns this object too); the MCP aspect reports it
 in the summary instead of failing the call. Field lists for GS and Covox: the
@@ -2660,6 +2661,7 @@ usually the first thing to check when a session is handed to you.
 | `session_heap_bytes` | Real total heap footprint of the session |
 | `bookmark_count` | Number of agent bookmarks |
 | `ttd_available` | False when the build has no TTD engine (WebAPI, Lua, Python) |
+| `unavailable_reason` | Why time travel is not available for this machine at all, e.g. a member of a ZX-Poly machine; empty / `null` when it is available. Recording and loading a `.ttd` file are refused with it (WebAPI: `/ttd/start` answers 409). The CLI prints it as `Not available:` |
 | `last_drop_reason` | What dropped the last history (`snapshot-load`, `tape-load`, `disk-load`, `disk-create`, `rom-reload`, `speed-multiplier-change`, an `invalidate` reason, an SD-card note); empty / `null` when nothing has. The CLI prints it as `Last session dropped:` |
 
 #### Worked Examples

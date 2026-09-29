@@ -107,6 +107,8 @@ protected:
     BreakpointManager* _breakpointManager = nullptr;
     FeatureManager* _featureManager = nullptr;  // Feature toggle manager
     std::atomic<bool> _hiddenGroupMember{false};  // see SetHiddenGroupMember
+    std::mutex _speedInterceptorMutex;
+    std::function<bool(uint8_t)> _speedInterceptor;  // see SetSpeedChangeInterceptor
 
     // Control flow
     volatile bool _stopRequested = false;
@@ -192,6 +194,14 @@ public:
     BaseFrequency_t GetSpeed();
     void SetSpeed(BaseFrequency_t speed);
     bool SetSpeedMultiplier(uint8_t multiplier);
+
+    /// A group that runs this instance in lockstep with others (the ZX-Poly
+    /// master) takes host speed changes itself: SetSpeedMultiplier hands the
+    /// validated multiplier to `interceptor`, which queues it for the next frame
+    /// boundary, where the group gives it to every member at once. Without it
+    /// a change written from another thread could reach the master one frame
+    /// before the slaves. An empty function removes it
+    void SetSpeedChangeInterceptor(std::function<bool(uint8_t)> interceptor);
 
     /// @brief Why a recording-destructive action is refused right now (empty when
     /// allowed) - TimeTravelManager::RecordingGuard. The loaders below refuse with
