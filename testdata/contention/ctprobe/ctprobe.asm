@@ -1,7 +1,8 @@
 ; ctprobe - contention probe (docs/inprogress/2026-09-28-m1-contention/test-programs.md, section 3)
 ;
 ; Times code fragments at exact frame T-states with the Bobrowski / Rak measuring engine (engine.asm, appended
-; after this file) and compares the durations with the expected values for the machine's contention class.
+; after this file) and compares the durations with the expected values for the machine's contention class,
+; printing one line per case as it goes (the ROM's print routines, as ZEXALL does).
 ; Each case places a fragment at an address, maps a page if it needs one, and times it at COUNT consecutive
 ; T-states from ONSET + OFFSET. A duration is the fragment's plus whatever the RET placed after it waits (the
 ; engine subtracts the RET's 10 T).
@@ -131,6 +132,9 @@ FindRet:
         jr FindRet
 FoundRet:
         ld (ROMRET),hl
+        ld hl,0
+        ld (FAILS),hl
+        call Header
 
         ld hl,CASES
 CaseLoop:
@@ -142,7 +146,7 @@ CaseLoop:
         ld bc,RECLEN
         ldir
         call CaseRuns
-        jp nz,NextCase
+        jp nz,SkipCase
 
         ld a,(CURFLAGS)         ; the first screen cells hold a known pattern (the floating-bus case)
         and 16
@@ -223,6 +227,14 @@ CaseDone:
         call Out7FFD
 Restored:
         ei
+        ld hl,(CASEPTR)         ; the record again (the loop counted CURCOUNT down), the verdict, its line
+        ld de,CUR
+        ld bc,RECLEN
+        ldir
+        ld hl,0
+        ld (FIRSTBAD),hl
+        call CaseVerdict
+        call PrintCase
 
 NextCase:
         ld hl,(CASEPTR)
@@ -230,11 +242,12 @@ NextCase:
         add hl,de
         jp CaseLoop
 
+SkipCase:
+        call PrintSkip
+        jr NextCase
+
 Finish:
-        call Compare
-        ld a,(SHOW)
-        or a
-        call nz,Report
+        call PrintSummary
         ld a,1
         ld (DONE),a
         ld bc,(FAILS)
@@ -428,30 +441,10 @@ FillLoop:
         djnz FillLoop
         ret
 
-; ---- compare and report ----
+; ---- verdict and output ----
 
-; FAILS = wrong values of the cases that ran; each case's verdict is printed by Report from CaseVerdict
-Compare:
-        ld hl,0
-        ld (FAILS),hl
-        ld (FIRSTBAD),hl
-        ld hl,CASES
-CmpLoop:
-        ld (CASEPTR),hl
-        ld a,(hl)
-        or a
-        ret z
-        ld de,CUR
-        ld bc,RECLEN
-        ldir
-        call CaseRuns
-        call z,CaseVerdict
-        ld hl,(CASEPTR)
-        ld de,RECLEN
-        add hl,de
-        jr CmpLoop
-
-; CASEBAD = wrong values of the current case (which ran); FAILS and FIRSTBAD updated
+; CASEBAD = wrong values of the current case (which ran); FAILS counts them, BADT / BADGOT / BADEXP hold the
+; first one (FIRSTBAD = 0 on entry)
 CaseVerdict:
         xor a
         ld (CASEBAD),a
@@ -514,13 +507,110 @@ VerdictNext:
         djnz VerdictLoop
         ret
 
-; the report: machine, settings, one verdict per case (-- = not run here), the first wrong value, the total
-Report:
-        call LoadFont
-        call Cls
-        ld hl,0
-        ld (CURSOR),hl
+; The output goes through the ROM's own print routines (channel 2, RST #10), as ZEXALL's does: the lines
+; scroll up (SCR_CT is kept at #FF, so the ROM never stops to ask "scroll?"). The 48 BASIC ROM is paged in
+; for it when another one is (from 128 / +3 BASIC), BANK_M / BANK678 with it.
+
+RomOn:
+        xor a
+        ld (ROMSWAPPED),a
+        call HasFont48
+        ret z
+        ld a,1
+        ld (ROMSWAPPED),a
+        ld a,(DEF7FFD)
+        or #10
+        call Out7FFD
+        ld a,(CLASS)
+        cp 2
+        ret nz
+        ld a,(DEF1FFD)
+        or #04
+        jr Out1FFD
+RomOff:
+        ld a,(ROMSWAPPED)
+        or a
+        ret z
+        ld a,(DEF7FFD)
+        call Out7FFD
+        ld a,(CLASS)
+        cp 2
+        ret nz
+        ld a,(DEF1FFD)
+; #1FFD = A, and BANK678 with it
+Out1FFD:
+        ld (#5B67),a
+        ld bc,#1FFD
+        out (c),a
+        ret
+ROMSWAPPED: db 0
+
+; zero-terminated string at HL
+PrintStr:
+        ld a,(hl)
+        or a
+        ret z
+        push hl
+        rst #10
+        pop hl
+        inc hl
+        jr PrintStr
+
+; B characters at HL
+PrintN:
+        ld a,(hl)
+        push hl
+        push bc
+        rst #10
+        pop bc
+        pop hl
+        inc hl
+        djnz PrintN
+        ret
+
+NewLine:
+        ld a,#FF
+        ld (#5C8C),a            ; SCR_CT
+        ld a,13
+        rst #10
+        ret
+
+; HL in decimal (STACK-BC, PRINT-FP)
+PrintNum:
+        ld b,h
+        ld c,l
+        call #2D2B
+        jp #2DE3
+
+; A = 0: "no", else "yes"
+PrintYesNo:
+        or a
+        ld hl,TxYes
+        jr nz,PrintStr
+        ld hl,TxNo
+        jr PrintStr
+
+; the heading: clear the screen, the machine as detected, the run time
+Header:
+        ld a,(SHOW)
+        or a
+        ret z
+        call RomOn
+        call #0D6B              ; CLS (it leaves channel K, the lower screen, open)
+        ld a,2
+        call #1601              ; CHAN-OPEN: the upper screen
         ld hl,TxTitle
+        call PrintStr
+        call PrintMachine
+        ld hl,TxTime
+        call PrintStr
+        call NewLine
+        call NewLine
+        jp RomOff
+
+; "Machine: ...", frame and onset, paging (in the heading and again above the total)
+PrintMachine:
+        ld hl,TxMachine
         call PrintStr
         ld a,(CLASS)
         add a,a
@@ -533,17 +623,21 @@ Report:
         ld h,(hl)
         ld l,a
         call PrintStr
-        ld hl,#0100
-        ld (CURSOR),hl
+        call NewLine
         ld hl,TxFrame
         call PrintStr
-        call PrintFrame
+        ld bc,(FRAMET)          ; the length: FRAMET + 32768, up to 17 bits
+        call #2D2B
+        ld bc,32768
+        call #2D2B
+        rst #28                 ; calculator: addition, end
+        db #0F, #38
+        call #2DE3
         ld hl,TxOnset
         call PrintStr
         ld hl,(ONSET)
-        call PrintDec
-        ld hl,#0200
-        ld (CURSOR),hl
+        call PrintNum
+        call NewLine
         ld hl,TxPaging
         call PrintStr
         ld a,(CAPS)
@@ -554,323 +648,112 @@ Report:
         ld a,(CAPS)
         and 2
         call PrintYesNo
+        call NewLine
+        ret
 
-        ld hl,#0400             ; the cases, three per row
-        ld (CURSOR),hl
-        ld hl,CASES
-RepLoop:
-        ld (CASEPTR),hl
-        ld a,(hl)
+; the current case's line: its name, then OK or its first wrong value
+PrintCase:
+        ld a,(SHOW)
         or a
-        jr z,RepTail
-        ld de,CUR
-        ld bc,RECLEN
-        ldir
+        ret z
+        call RomOn
         ld hl,CURNAME
         ld b,5
         call PrintN
-        ld a,' '
-        call PrintChar
-        call CaseRuns
-        ld hl,TxSkip
-        jr nz,RepVerdict
-        call CaseVerdictQuiet
+        ld a,(CASEBAD)
+        or a
+        jr nz,CaseBadLine
         ld hl,TxOk
-        jr z,RepVerdict
-        ld hl,TxBad
-RepVerdict:
         call PrintStr
-        ld a,(CURSOR)           ; three to a row
-        cp 30
-        jr c,RepNext
-        ld hl,(CURSOR)
-        inc h
-        ld l,0
-        ld (CURSOR),hl
-RepNext:
-        ld hl,(CASEPTR)
-        ld de,RECLEN
-        add hl,de
-        jr RepLoop
-
-RepTail:
-        ld hl,#1400
-        ld (CURSOR),hl
-        ld hl,(FIRSTBAD)
-        ld a,h
-        or l
-        jr z,RepTotal
-        ld de,CURNAME-CUR
-        add hl,de
-        push hl
-        ld hl,TxFirst
-        call PrintStr
-        pop hl
-        ld b,5
-        call PrintN
-        ld hl,TxAtT
+        jr CaseLineEnd
+CaseBadLine:
+        ld hl,TxBadT
         call PrintStr
         ld hl,(BADT)
-        call PrintDec
+        call PrintNum
         ld hl,TxGot
         call PrintStr
         ld a,(BADGOT)
         ld l,a
         ld h,0
-        call PrintDec
+        call PrintNum
         ld hl,TxExp
         call PrintStr
         ld a,(BADEXP)
         ld l,a
         ld h,0
-        call PrintDec
-RepTotal:
-        ld hl,#1500
-        ld (CURSOR),hl
+        call PrintNum
+CaseLineEnd:
+        call NewLine
+        jp RomOff
+
+; a case that does not run on this machine (the ONLY filter prints nothing)
+PrintSkip:
+        ld a,(SHOW)
+        or a
+        ret z
+        ld a,(ONLY)
+        or a
+        ret nz
+        call RomOn
+        ld hl,CURNAME
+        ld b,5
+        call PrintN
+        ld hl,TxSkip
+        call PrintStr
+        call NewLine
+        jp RomOff
+
+; the total, and the border: green all as expected, red otherwise
+PrintSummary:
+        ld a,(SHOW)
+        or a
+        ret z
+        call RomOn
+        call NewLine
+        call PrintMachine
         ld hl,(FAILS)
         ld a,h
         or l
-        jr nz,RepFails
+        jr nz,SummaryBad
         ld hl,TxAllOk
         call PrintStr
-        ld a,4                  ; green border
+        call NewLine
+        ld a,4
         out (#FE),a
-        ret
-RepFails:
-        call PrintDec
+        jp RomOff
+SummaryBad:
+        call PrintNum
         ld hl,TxWrong
         call PrintStr
-        ld a,2                  ; red border
+        call NewLine
+        ld a,2
         out (#FE),a
-        ret
+        jp RomOff
 
-; Z if the current case has no wrong value (CaseVerdict without touching FAILS / FIRSTBAD)
-CaseVerdictQuiet:
-        ld hl,(FAILS)
-        push hl
-        ld hl,(FIRSTBAD)
-        push hl
-        ld hl,(BADT)
-        push hl
-        ld a,(BADGOT)
-        ld h,a
-        ld a,(BADEXP)
-        ld l,a
-        push hl
-        call CaseVerdict
-        pop hl
-        ld a,l
-        ld (BADEXP),a
-        ld a,h
-        ld (BADGOT),a
-        pop hl
-        ld (BADT),hl
-        pop hl
-        ld (FIRSTBAD),hl
-        pop hl
-        ld (FAILS),hl
-        ld a,(CASEBAD)
-        or a
-        ret
-
-PrintYesNo:
-        ld hl,TxYes
-        jr nz,PrintStr
-        ld hl,TxNo
-; zero-terminated string at HL
-PrintStr:
-        ld a,(hl)
-        or a
-        ret z
-        call PrintChar
-        inc hl
-        jr PrintStr
-
-; B characters at HL
-PrintN:
-        ld a,(hl)
-        call PrintChar
-        inc hl
-        djnz PrintN
-        ret
-
-; the frame length, FRAMET + 32768: up to 17 bits
-PrintFrame:
-        ld hl,(FRAMET)
-        ld de,32768
-        add hl,de
-        ld c,0
-        jr nc,FrameLow
-        inc c                   ; C:HL = the length
-FrameLow:
-        ld b,'0'
-        ld de,10000
-TenThousands:
-        or a
-        sbc hl,de
-        jr nc,TenMore
-        ld a,c
-        or a
-        jr z,TenDone
-        dec c
-TenMore:
-        inc b
-        jr TenThousands
-TenDone:
-        add hl,de
-        ld a,b
-        call PrintChar
-        ld b,1                  ; zeros from here on are digits
-        jr PrintDec1000
-
-; HL in decimal, no leading zeros
-PrintDec:
-        ld b,0                  ; digits printed
-        ld de,-10000
-        call PrintDigit
-PrintDec1000:
-        ld de,-1000
-        call PrintDigit
-        ld de,-100
-        call PrintDigit
-        ld de,-10
-        call PrintDigit
-        ld a,l
-        add a,'0'
-        jr PrintChar
-PrintDigit:
-        ld a,'0'-1
-DigitLoop:
-        inc a
-        add hl,de
-        jr c,DigitLoop
-        sbc hl,de
-        cp '0'
-        jr nz,DigitOut
-        inc b
-        dec b
-        ret z                   ; a leading zero
-DigitOut:
-        inc b
-        jr PrintChar
-
-; character A at CURSOR (row, column), which moves on; FONT holds the ROM font's 96 characters
-PrintChar:
-        push hl
-        push de
-        push bc
-        sub 32
-        ld l,a
-        ld h,0
-        add hl,hl
-        add hl,hl
-        add hl,hl
-        ld de,FONT
-        add hl,de
-        ex de,hl                ; DE glyph
-        ld bc,(CURSOR)          ; B row, C column
-        ld a,b
-        and #18
-        or #40
-        ld h,a
-        ld a,b
-        and 7
-        rrca
-        rrca
-        rrca
-        or c
-        ld l,a
-        ld b,8
-GlyphLoop:
-        ld a,(de)
-        ld (hl),a
-        inc de
-        inc h
-        djnz GlyphLoop
-        ld hl,(CURSOR)
-        inc l
-        ld a,l
-        cp 32
-        jr c,CursorSet
-        ld l,0
-        inc h
-CursorSet:
-        ld (CURSOR),hl
-        pop bc
-        pop de
-        pop hl
-        ret
-
-CURSOR: dw 0            ; L column, H row
-
-Cls:
-        ld hl,#4000
-        ld de,#4001
-        ld bc,#1800
-        ld (hl),0
-        ldir
-        ld (hl),#38
-        ld bc,#02FF
-        ldir
-        ret
-
-; FONT = the 48 BASIC ROM's font (#3D00), with that ROM paged in for the copy if another one is
-LoadFont:
-        di
-        call HasFont48
-        jr z,CopyFont
-        ld a,(DEF7FFD)
-        or #10
-        ld bc,#7FFD
-        out (c),a
-        ld a,(CLASS)
-        cp 2
-        jr nz,CopyFont
-        ld a,(DEF1FFD)
-        or #04
-        ld bc,#1FFD
-        out (c),a
-CopyFont:
-        ld hl,#3D00
-        ld de,FONT
-        ld bc,768
-        ldir
-        ld a,(DEF7FFD)
-        ld bc,#7FFD
-        out (c),a
-        ld a,(CLASS)
-        cp 2
-        jr nz,FontDone
-        ld a,(DEF1FFD)
-        ld bc,#1FFD
-        out (c),a
-FontDone:
-        ei
-        ret
-
-TxTitle:   db "CTPROBE 1  ", 0
-TxFrame:   db "FRAME ", 0
-TxOnset:   db "  ONSET ", 0
-TxPaging:  db "PAGING ", 0
-TxLayouts: db "  +3 LAYOUTS ", 0
-TxYes:     db "YES", 0
-TxNo:      db "NO", 0
-TxOk:      db "OK  ", 0
-TxBad:     db "BAD ", 0
-TxSkip:    db "--  ", 0
-TxFirst:   db "BAD ", 0
-TxAtT:     db " T", 0
-TxGot:     db " GOT ", 0
-TxExp:     db " EXP ", 0
+TxTitle:   db "ctprobe 1 - contention probe", 13, 0
+TxMachine: db "Machine: ", 0
+TxFrame:   db "Frame ", 0
+TxOnset:   db ", onset ", 0
+TxPaging:  db "Paging ", 0
+TxLayouts: db ", +3 layouts ", 0
+TxYes:     db "yes", 0
+TxNo:      db "no", 0
+TxTime:    db "Takes about 3 min at 3.5 MHz", 0
+TxOk:      db " OK", 0
+TxBadT:    db " BAD T", 0
+TxGot:     db " got ", 0
+TxExp:     db " exp ", 0
+TxSkip:    db " skipped as N/A", 0
 TxAllOk:   db "ALL VALUES AS EXPECTED", 0
 TxWrong:   db " VALUES WRONG", 0
 ClassNames:
         dw TxUla48, TxUla128, TxGate, TxNone, TxScorpion
 TxUla48:   db "ULA 48K", 0
 TxUla128:  db "ULA 128K", 0
-TxGate:    db "GATE ARRAY", 0
-TxNone:    db "NO CONTENTION", 0
-TxScorpion: db "NO CONTENTION, ATTR BUS", 0
+TxGate:    db "gate array", 0
+TxNone:    db "no contention", 0
+TxScorpion: db "no contention, attr bus", 0
 
 ; ---- cases ----
 ; id, flags, page at #C000 (#FF = leave), mirror page (#FF = none), target (0 = FRAGBUF), fragment, length,
@@ -1370,5 +1253,4 @@ R60:       ds 8
 RESULTSEND:
 
 EXPECTED:  ds 5*(RESULTSEND-RESULTS)     ; per CLASS, laid out as RESULTS (filled by the generator)
-FONT:      ds 768
 PROBEEND:
