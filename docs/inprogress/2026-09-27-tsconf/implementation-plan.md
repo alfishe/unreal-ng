@@ -57,7 +57,7 @@ with agent assistance; for sequencing, not commitments).
 Goal: every generic extension point exists and is proven not to change any
 existing machine.
 
-**Built on branch `tsconf-infra` (2026-09-29): INF-1, INF-2, INF-5; INF-3 holds by construction, its A/B benchmark is open**
+**Built on branch `tsconf-infra` (2026-09-29): INF-1, INF-2, INF-5; INF-3 measured (A/B, within noise after the per-step gate)**
 (PLAN #60(a) plus INF-5). The M1 hook (INF-4) was already on master (#55 E3).
 What changed from the v1.0 plan:
 - INF-2: the write intercept is a **write-only host bus overlay**
@@ -76,7 +76,7 @@ The rest of phase 0 (INF-6 to INF-10) stays here.
 |:--|:--|:--|:--|
 | INF-1 ✅ | `cpu/int_test.cpp` (`InterruptSource_Test`) | with a fake `IInterruptSource` registered: INT is taken exactly when `IsIntAsserted(t)` is true and `iff1`; IM2 fetches `(I<<8) \| AcknowledgeInterrupt()`; EI shadow and prefix respected; RETI (and mirrors) call `OnReti`, RETN does not; without a source every existing INT test is unchanged | §3.4 interface + `Z80::ProcessInterrupts` branch |
 | INF-2 ✅ | `cpu/core_test.cpp` | a write-only overlay sees writes in its window **after** the byte is stored and never a read, in fast and debug mode; two overlays chain in install order; one alone is called directly; at most 4 | §3.5 intercept |
-| INF-3 (A/B open) | `core/benchmarks/emulator/memory/hostbusoverlay_benchmark.cpp` | plain path untouched by construction (no overlay → the same `FastMemIf` / `DbgMemIf`, `core_test` `EveryModelUsesThePlainInterfacesInEveryDebugState`); the new per-step cost is one pointer test in `ProcessInterrupts` and one in `OnCPUStep` (A/B frame benchmark vs master still to run on a quiet machine: the host load was ~100 on 2026-09-29) | gate for INF-2 / INF-1 / INF-5 |
+| INF-3 ✅ | `core/benchmarks/emulator/memory/hostbusoverlay_benchmark.cpp` (`BM_HostFrame_*`) | A/B done 2026-09-29 ([performance-guidelines.md](../../guidelines/performance-guidelines.md) §5): the first version's two per-instruction tests cost 0-1 %; after moving them behind the per-step gate `EmulatorContext::stepWork` the classic machines are within noise of the code without the feature (−0.8 … +0.2 %) | gate for INF-1 / INF-2 / INF-5 |
 | INF-4 | `cpu/z80_test.cpp` (new cases) | with `CF_MACHINEM1` set and a fake hook: `OnM1(pc, opcode)` called once per instruction with the right opcode (incl. prefixed: once per M1 cycle — ED xx gives two calls); not called when flag clear | §3.6 |
 | INF-5 ✅ | `cpu/z80_test.cpp` (`MachineStepHook_Test`) | a registered `IMachineStepHook` runs after every CPU step with the reached `t`, **also when `_renderThisFrame` is false** (turbo decimation), and gets `OnMachineFrameRollover(frame)` once per frame | §3.8, `Z80::OnCPUStep`, `Core::AdjustFrameCounters` |
 | INF-6 | `tsconfisolation_test.cpp` | scan of `core/src` finds no forbidden token outside the allowlist (§3.3) — **expected red** until INF-7 lands | enforcement |

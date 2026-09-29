@@ -242,13 +242,13 @@ protected:
         _emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
         ASSERT_NE(_emulator, nullptr);
         _z80 = _emulator->GetContext()->pCore->GetZ80();
-        _z80->machineStepHook = &_hook;
+        _z80->SetMachineStepHook(&_hook);
     }
 
     void TearDown() override
     {
         if (_z80)
-            _z80->machineStepHook = nullptr;
+            _z80->SetMachineStepHook(nullptr);
         if (_emulator)
         {
             EmulatorTestHelper::CleanupEmulator(_emulator);
@@ -305,3 +305,51 @@ TEST_F(MachineStepHook_Test, RolloverFollowsTheFrameCounterRebase)
 }
 
 /// endregion </Machine step hook>
+
+/// region <Per-step work gate (EmulatorContext::stepWork)>
+
+/// Every rare per-step job shares one gate, so a machine that uses none pays
+/// one load and one branch per instruction for all of them together; each
+/// setter owns exactly its bit
+namespace
+{
+struct IdleSource : IInterruptSource
+{
+    bool IsIntAsserted(uint32_t) override { return false; }
+    uint8_t AcknowledgeInterrupt(uint32_t) override { return 0xFF; }
+};
+} // namespace
+
+TEST_F(MachineStepHook_Test, TheGateIsZeroOnAClassicMachineAndEachSetterOwnsItsBit)
+{
+    EmulatorContext* context = _emulator->GetContext();
+    _z80->SetMachineStepHook(nullptr);
+    EXPECT_EQ(context->stepWork.load(), 0u) << "a classic machine runs the plain step";
+
+    IdleSource source;
+    _z80->SetInterruptSource(&source);
+    _z80->SetMachineStepHook(&_hook);
+    context->SetStepWork(EmulatorContext::kStepWorkTtdInput, true);
+    EXPECT_EQ(context->stepWork.load(), EmulatorContext::kStepWorkTtdInput | EmulatorContext::kStepWorkInterruptSource |
+                                            EmulatorContext::kStepWorkMachineStep);
+
+    context->SetStepWork(EmulatorContext::kStepWorkTtdInput, false);
+    EXPECT_TRUE(context->HasStepWork(EmulatorContext::kStepWorkInterruptSource)) << "TTD clears only its own bit";
+    EXPECT_TRUE(context->HasStepWork(EmulatorContext::kStepWorkMachineStep));
+
+    _z80->SetInterruptSource(nullptr);
+    EXPECT_EQ(context->stepWork.load(), EmulatorContext::kStepWorkMachineStep);
+    _z80->SetMachineStepHook(nullptr);
+    EXPECT_EQ(context->stepWork.load(), 0u);
+}
+
+TEST_F(MachineStepHook_Test, WithoutItsBitTheHookIsNotCalled)
+{
+    // The gate is the only switch: the hook runs through StepInstructionWithWork
+    _emulator->GetContext()->SetStepWork(EmulatorContext::kStepWorkMachineStep, false);
+    for (int i = 0; i < 10; i++)
+        _z80->StepInstruction(true);
+    EXPECT_EQ(_hook.steps, 0u);
+}
+
+/// endregion </Per-step work gate>

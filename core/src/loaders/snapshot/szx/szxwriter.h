@@ -4,7 +4,8 @@
 /// @brief Serializes an szx::Stage as SZX 1.5 (design §9). Standard blocks
 /// get their exact sizes (Fuse requires Z80R = 37, SPCR = 8, AY = 18 bytes);
 /// a RAM page is stored compressed only when that is smaller, as libspectrum
-/// does. Block order: CRTR, Z80R, SPCR, RAMP pages, AY, B128.
+/// does. Block order: CRTR, Z80R, SPCR, RAMP pages, AY, B128, BDSK,
+/// +3, DSK, TAPE, GS, GSRP, COVX, KEYB, AMXM.
 
 #include <cstdint>
 #include <vector>

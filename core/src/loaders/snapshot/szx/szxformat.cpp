@@ -2,6 +2,8 @@
 
 #include <sstream>
 
+#include "emulator/config.h"
+
 #include "3rdparty/miniz/miniz.h"
 
 namespace szx
@@ -42,6 +44,19 @@ bool MachineFor(uint8_t id, Machine& machine, std::string& error)
             error = "unknown machine id " + std::to_string(id);
             return false;
     }
+}
+
+std::string DescribeModel(MEM_MODEL model, uint32_t ramKb)
+{
+    const TMemModel* entry = Config::FindModelByEnum(model);
+    if (!entry)
+        return "model " + std::to_string(static_cast<int>(model));
+    std::string name = entry->FullName;
+    // The RAM size only where the model comes in several (AvailRAMs ORs the
+    // RAM_* values, which are sizes, not bit flags)
+    if (entry->AvailRAMs != entry->defaultRAM)
+        name += " " + std::to_string(ramKb) + "K";
+    return name;
 }
 
 std::optional<uint8_t> IdFor(MEM_MODEL model, uint32_t ramKb)
@@ -155,6 +170,35 @@ bool Inflate(const uint8_t* data, size_t size, size_t expected, std::vector<uint
     const bool ok = status == MZ_STREAM_END && stream.avail_out == 0;
     mz_inflateEnd(&stream);
     return ok;
+}
+
+bool InflateBounded(const uint8_t* data, size_t size, size_t limit, std::vector<uint8_t>& out)
+{
+    out.clear();
+    mz_stream stream{};
+    if (mz_inflateInit(&stream) != MZ_OK)
+        return false;
+    stream.next_in = data;
+    stream.avail_in = static_cast<unsigned int>(size);
+    uint8_t chunk[16384];
+    int status = MZ_OK;
+    while (status == MZ_OK)
+    {
+        stream.next_out = chunk;
+        stream.avail_out = sizeof(chunk);
+        status = mz_inflate(&stream, MZ_NO_FLUSH);
+        const size_t produced = sizeof(chunk) - stream.avail_out;
+        if (out.size() + produced > limit)
+        {
+            status = MZ_DATA_ERROR;
+            break;
+        }
+        out.insert(out.end(), chunk, chunk + produced);
+        if (status == MZ_BUF_ERROR && stream.avail_in == 0)
+            break;
+    }
+    mz_inflateEnd(&stream);
+    return status == MZ_STREAM_END;
 }
 
 std::vector<uint8_t> Deflate(const uint8_t* data, size_t size)

@@ -123,7 +123,12 @@ Ids 8, 9, 11, 12 (Timex, SE): refused with a clear message.
 ## 5. Block coverage
 
 R = read, W = write. **Full** = lossless for what the block stores;
-**Partial** = what the block can express.
+**Partial** = what the block can express. **As built (2026-09-29):** every
+row below that maps to hardware we emulate is implemented both ways; KEYB
+Issue 2, JOY, DRUM and the AMX mouse are read and reported (no such hardware
+here); NeoGS answers a GS block with "needs the classic GS". Linked media are
+always inserted with Session access (R6, simplified: nothing is ever written
+to a linked file, so any path is safe to open).
 
 | Block | unreal-ng component | R | W | Notes |
 |---|---|---|---|---|

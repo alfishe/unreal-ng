@@ -1857,7 +1857,7 @@ bool TimeTravelManager::SubmitLiveInput(const TTDInputEvent& ev)
             std::lock_guard<std::mutex> lock(_pendingInputMutex);
             _pendingInput.push_back(ev);
         }
-        _context->ttdInputWork.store(true, std::memory_order_release);
+        _context->SetStepWork(EmulatorContext::kStepWorkTtdInput, true);
         return true;
     }
 
@@ -1879,7 +1879,7 @@ TimeTravelManager::MachineTaskResult TimeTravelManager::SubmitMachineTask(std::f
             std::lock_guard<std::mutex> lock(_pendingInputMutex);
             _pendingTasks.push_back(std::move(task));
         }
-        _context->ttdInputWork.store(true, std::memory_order_release);
+        _context->SetStepWork(EmulatorContext::kStepWorkTtdInput, true);
         return MachineTaskResult::Queued;
     }
 
@@ -1956,7 +1956,7 @@ void TimeTravelManager::UpdateInputWorkFlag()
         std::lock_guard<std::mutex> lock(_pendingInputMutex);
         pending = !_pendingInput.empty() || !_pendingTasks.empty();
     }
-    _context->ttdInputWork.store(_inputPlaybackArmed || pending, std::memory_order_release);
+    _context->SetStepWork(EmulatorContext::kStepWorkTtdInput, _inputPlaybackArmed || pending);
 }
 
 void TimeTravelManager::ArmInputPlayback()
@@ -2046,11 +2046,11 @@ const char* TimeTravelManager::PortJournalUnsupportedReason() const
     // (TTD v2 FR-21). The classic machines leave it to the floating bus
     if (const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr)
     {
-        if (z80->interruptSource)
+        if (z80->GetInterruptSource())
             return "the machine's interrupt source supplies the IM2 vector, which the first version does not record";
         // A model engine stepped with the CPU (IMachineStepHook: TSConf's DMA
         // and TSU) changes what the program sees without an IN
-        if (z80->machineStepHook)
+        if (z80->GetMachineStepHook())
             return "a machine engine stepped with the CPU (DMA) changes memory without IN (not isolated by the "
                    "first version)";
     }

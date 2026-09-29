@@ -29,6 +29,13 @@ private:
     static bool ParseRamPage(const uint8_t* body, uint32_t size, szx::Stage& stage, std::string& error);
     static bool ParseAy(const uint8_t* body, uint32_t size, szx::Stage& stage, std::string& error);
     static bool ParseBeta128(const uint8_t* body, uint32_t size, szx::Stage& stage, std::string& error);
+    static bool ParseBetaDisk(const uint8_t* body, uint32_t size, szx::Stage& stage, std::string& error);
+    static bool ParseDskFile(const uint8_t* body, uint32_t size, szx::Stage& stage, std::string& error);
+    static bool ParseTape(const uint8_t* body, uint32_t size, szx::Stage& stage, std::string& error);
+    static bool ParseGs(const uint8_t* body, uint32_t size, szx::Stage& stage, std::string& error);
+    static bool ParseGsRamPage(const uint8_t* body, uint32_t size, szx::Stage& stage, std::string& error);
+    /// A fixed-size block shorter than its minimum: false with `error`
+    static bool Short(uint32_t size, size_t minimum, const char* name, std::string& error);
     /// libspectrum up to 0.5.0 wrote A and F (and A', F') swapped
     static bool IsSwappedAfCreator(const szx::Creator& creator);
 };

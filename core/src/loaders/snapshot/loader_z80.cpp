@@ -200,6 +200,13 @@ bool LoaderZ80::saveV3FromStaging()
     header.p7FFD = _port7FFD;
     header.pFFFD = _portFFFD;
 
+    // A 48K-mode snapshot of a machine that has an AY carries the AY state; byte 37 bit 2 says so, otherwise
+    // readers (this loader included) ignore the AY bytes of a 48K snapshot
+    if (_memoryMode == Z80_48K && _context->config.mem_model != MM_SPECTRUM48)
+    {
+        header.r2 |= 0b0000'0100;
+    }
+
     // AY registers - get from sound manager
     if (_context->pSoundManager != nullptr)
     {
@@ -504,6 +511,9 @@ void LoaderZ80::commitFromStage()
                                                (_borderColor & 0b0000'0111));
         borderState.border_attr = static_cast<uint8_t>(_borderColor & 0b0000'0111);
 
+        // AY registers: core.Reset() above cleared the chip, so the snapshot's
+        // registers go in after it
+        commitPeripheralState();
 
         /// endregion </Apply port configuration>
 
@@ -729,6 +739,7 @@ bool LoaderZ80::loadZ80v2()
         // Retrieve ports configuration
         _port7FFD = headerV2.p7FFD;
         _portFFFD = headerV2.pFFFD;
+        stagePeripheralState(headerV2);
 
         // Remember border color
         _borderColor = (headerV1.flags & 0b0000'1110) >> 1;
@@ -855,6 +866,7 @@ bool LoaderZ80::loadZ80v3()
         // Retrieve ports configuration
         _port7FFD = headerV3.p7FFD;
         _portFFFD = headerV3.pFFFD;
+        stagePeripheralState(headerV3);
 
         // Remember border color
         _borderColor = (headerV1.flags & 0b0000'1110) >> 1;
@@ -1116,9 +1128,41 @@ Z80Registers LoaderZ80::getZ80Registers(const Z80Header_v1& header, uint16_t pc)
     return result;
 }
 
-void LoaderZ80::applyPeripheralState(const Z80Header_v2& header)
+/// @brief Stage the AY registers of a v2 / v3 snapshot
+/// @details Bytes 38-54 hold the selected AY register and the 16 AY registers. They describe the machine's AY
+///          on 128K-class models, and on 48K only when byte 37 bit 2 ("AY sound in use, even on 48K
+///          machines") is set; otherwise they are not state and stay unused
+void LoaderZ80::stagePeripheralState(const Z80Header_v2& header)
 {
-    (void)header;
+    constexpr uint8_t Z80_FLAGS2_AY_IN_USE = 0b0000'0100;
+
+    const bool ayState = (_memoryMode != Z80_48K) || (header.r2 & Z80_FLAGS2_AY_IN_USE) != 0;
+    _hasAyRegisters = ayState;
+    if (ayState)
+    {
+        memcpy(_ayRegisters, header.ay, sizeof(_ayRegisters));
+    }
+}
+
+/// @brief Write the staged AY registers into the machine's first AY chip
+/// @details Called after core.Reset(). The registers go through the chip's logic-level interface (the same one
+///          the saver reads back from), then the selected register is restored. On a TurboSound machine this is
+///          chip 0, the chip the reset leaves selected
+void LoaderZ80::commitPeripheralState()
+{
+    if (!_hasAyRegisters || _context->pSoundManager == nullptr)
+        return;
+
+    SoundChip_AY8910* psg = _context->pSoundManager->getAYChip(0);
+    if (psg == nullptr)
+        return;
+
+    for (uint8_t reg = 0; reg < 16; reg++)
+    {
+        psg->writeRegister(reg, _ayRegisters[reg]);
+    }
+
+    psg->setRegister(_portFFFD & 0x0F);
 }
 
 /// @brief Compress memory page using Z80 RLE compression

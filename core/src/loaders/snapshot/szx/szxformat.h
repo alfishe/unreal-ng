@@ -36,6 +36,17 @@ constexpr uint32_t kSpecRegs = BlockId('S', 'P', 'C', 'R');
 constexpr uint32_t kRamPage = BlockId('R', 'A', 'M', 'P');
 constexpr uint32_t kAy = BlockId('A', 'Y', '\0', '\0');
 constexpr uint32_t kBeta128 = BlockId('B', '1', '2', '8');
+constexpr uint32_t kBetaDisk = BlockId('B', 'D', 'S', 'K');
+constexpr uint32_t kKeyboard = BlockId('K', 'E', 'Y', 'B');
+constexpr uint32_t kJoystick = BlockId('J', 'O', 'Y', '\0');
+constexpr uint32_t kMouse = BlockId('A', 'M', 'X', 'M');
+constexpr uint32_t kPlus3 = BlockId('+', '3', '\0', '\0');
+constexpr uint32_t kDskFile = BlockId('D', 'S', 'K', '\0');
+constexpr uint32_t kTape = BlockId('T', 'A', 'P', 'E');
+constexpr uint32_t kGs = BlockId('G', 'S', '\0', '\0');
+constexpr uint32_t kGsRamPage = BlockId('G', 'S', 'R', 'P');
+constexpr uint32_t kCovox = BlockId('C', 'O', 'V', 'X');
+constexpr uint32_t kSpecDrum = BlockId('D', 'R', 'U', 'M');
 
 constexpr uint8_t kVersionMajor = 1;
 constexpr uint8_t kVersionMinor = 5;
@@ -62,6 +73,33 @@ constexpr uint32_t kBetaPaged = 0x04;
 constexpr uint32_t kBetaAutoboot = 0x08;
 constexpr uint32_t kBetaSeekLower = 0x10;
 constexpr size_t kBeta128Size = 10;  ///< without a custom ROM
+/// BDSK dwFlags, chDiskType
+constexpr uint32_t kDiskEmbedded = 0x01;
+constexpr uint32_t kDiskCompressed = 0x02;
+constexpr uint32_t kDiskWriteProtect = 0x04;
+enum BetaDiskType : uint8_t
+{
+    DiskTrd = 0,
+    DiskScl = 1,
+    DiskFdi = 2,
+    DiskUdi = 3
+};
+/// TAPE wFlags
+constexpr uint16_t kTapeEmbedded = 0x01;
+constexpr uint16_t kTapeCompressed = 0x02;
+/// KEYB
+constexpr uint32_t kKeyboardIssue2 = 0x01;
+constexpr uint8_t kKeyboardJoystickNone = 8;
+/// AMXM chType
+constexpr uint8_t kMouseNone = 0;
+constexpr uint8_t kMouseAmx = 1;
+constexpr uint8_t kMouseKempston = 2;
+/// GS chFlags (the Z80 flags plus ROM flags)
+constexpr uint8_t kGsCustomRom = 0x40;
+constexpr size_t kGsSize = 46;  ///< without a custom ROM
+constexpr size_t kGsPageSize = 32768;
+/// Largest embedded disk or tape image we inflate (no decompression bombs)
+constexpr size_t kMaxEmbeddedImage = 16 * 1024 * 1024;
 
 /// Machine ids of the header
 enum MachineId : uint8_t
@@ -95,7 +133,9 @@ struct Machine
 
 /// False for ids we do not emulate (Timex, SE, unknown)
 bool MachineFor(uint8_t id, Machine& machine, std::string& error);
-/// The id a model is written as; nullopt: no SZX id ([design §11])
+/// "Pentagon 512K", "ZX-Spectrum 48k", "ZS Scorpion 256K": a model for messages
+std::string DescribeModel(MEM_MODEL model, uint32_t ramKb);
+/// The id a model is written as; nullopt: no SZX id (design §11)
 std::optional<uint8_t> IdFor(MEM_MODEL model, uint32_t ramKb);
 /// The RAM pages a machine id stores, in file order
 std::vector<uint8_t> PagesOf(uint8_t id);
@@ -147,6 +187,64 @@ struct Beta128
     uint8_t status = 0;
 };
 
+/// BDSK: a Beta 128 drive and its disk, linked or embedded
+struct BetaDisk
+{
+    uint32_t flags = 0;
+    uint8_t drive = 0;
+    uint8_t cylinder = 0;
+    uint8_t type = DiskTrd;
+    std::string fileName;         ///< linked
+    std::vector<uint8_t> image;   ///< embedded, inflated
+};
+
+/// +3 and DSK: the uPD765 drives; images are always links
+struct Plus3
+{
+    uint8_t drives = 2;
+    uint8_t motorOn = 0;
+};
+struct DskFile
+{
+    uint16_t flags = 0;
+    uint8_t drive = 0;
+    std::string fileName;
+};
+
+/// TAPE: the recorder's image, linked or embedded, and the head block
+struct Tape
+{
+    uint16_t block = 0;
+    uint16_t flags = 0;
+    std::string extension;       ///< of an embedded image ("tzx", "tap")
+    std::string fileName;        ///< linked
+    std::vector<uint8_t> image;  ///< embedded, inflated
+};
+
+/// GS: the General Sound card's CPU and latches (its RAM in gsPages)
+struct GeneralSound
+{
+    uint8_t model = 0;       ///< 0 = 128 KB, 1 = 512 KB
+    uint8_t upperPage = 0;   ///< the page at #8000-#FFFF (port #00; 0 = ROM)
+    std::array<uint8_t, 4> volume{};
+    std::array<uint8_t, 4> output{};
+    uint8_t flags = 0;       ///< kSuppressInts | kHalted | kGsCustomRom
+    Z80Regs cpu;             ///< registers; cyclesStart / hold as in Z80R
+};
+
+struct Keyboard
+{
+    uint32_t flags = 0;
+    uint8_t joystick = kKeyboardJoystickNone;
+};
+
+struct Mouse
+{
+    uint8_t type = kMouseNone;
+    std::array<uint8_t, 3> ctrlA{};
+    std::array<uint8_t, 3> ctrlB{};
+};
+
 struct Ay
 {
     uint8_t flags = 0;
@@ -192,6 +290,19 @@ struct Stage
     std::map<uint8_t, std::vector<uint8_t>> pages;  ///< page number -> 16384 bytes
     std::optional<Ay> ay;
     std::optional<Beta128> beta;
+    std::vector<BetaDisk> betaDisks;
+    std::optional<Plus3> plus3;
+    std::vector<DskFile> dskFiles;
+    std::optional<Tape> tape;
+    std::optional<GeneralSound> gs;
+    std::map<uint8_t, std::vector<uint8_t>> gsPages;  ///< 32 KB GS RAM pages
+    std::optional<Keyboard> keyboard;
+    std::optional<std::array<uint8_t, 2>> joysticks;   ///< JOY player 1, 2
+    std::optional<Mouse> mouse;
+    std::optional<uint8_t> covox;
+    std::optional<int8_t> specDrum;
+    /// The file's folder: linked media are looked up there first
+    std::string folder;
     /// Blocks found and not taken into the stage: id text, size
     std::vector<std::pair<std::string, uint32_t>> otherBlocks;
     std::vector<std::string> warnings;
@@ -203,6 +314,8 @@ std::string BlockName(uint32_t id);
 /// zlib stream (RFC 1950) to exactly `expected` bytes; false on any error,
 /// including output that would exceed `expected` (no decompression bombs)
 bool Inflate(const uint8_t* data, size_t size, size_t expected, std::vector<uint8_t>& out);
+/// zlib stream of unknown length, at most `limit` bytes out
+bool InflateBounded(const uint8_t* data, size_t size, size_t limit, std::vector<uint8_t>& out);
 /// zlib stream at the best compression
 std::vector<uint8_t> Deflate(const uint8_t* data, size_t size);
 

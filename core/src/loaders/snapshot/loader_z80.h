@@ -173,6 +173,8 @@ protected:
     uint8_t _port7FFD = 0x00;
     uint8_t _portFFFD = 0x00;
     uint8_t _borderColor = 0x00;
+    uint8_t _ayRegisters[16] = {};
+    bool _hasAyRegisters = false;
     /// endregion </Fields>
 
     /// region <Constructors / destructors>
@@ -206,7 +208,8 @@ protected:
     Z80Registers getZ80Registers(const Z80Header_v1& header, uint16_t pc);
     Z80MemoryMode getMemoryModeV2(uint8_t model);
     Z80MemoryMode getMemoryModeV3(uint8_t model);
-    void applyPeripheralState(const Z80Header_v2& header);
+    void stagePeripheralState(const Z80Header_v2& header);
+    void commitPeripheralState();
     bool validateHeaderSanity(Z80SnapshotVersion version);
 
     // Compression is used when Z80Header_v1.flags1:Bit 5 is set
