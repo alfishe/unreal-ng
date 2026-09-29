@@ -174,7 +174,7 @@ bool LoaderZ80::saveV3FromStaging()
     header.reg_HL = _z80Registers.hl;
     header.reg_SP = _z80Registers.sp;
     header.reg_I = _z80Registers.i;
-    header.reg_R = _z80Registers.r_low | (_z80Registers.r_hi & 0x80);
+    header.reg_R = _z80Registers.r_low & 0x7F;  // bits 0-6; R bit 7 goes into flags bit 0 (the .z80 layout)
 
     // Flags byte: bit 0 = R bit 7, bits 1-3 = border, bit 5 = compression
     header.flags = (_z80Registers.r_hi >> 7) | ((_borderColor & 0x07) << 1) | 0x20;  // 0x20 = compressed

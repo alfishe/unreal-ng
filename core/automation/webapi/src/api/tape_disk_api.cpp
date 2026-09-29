@@ -281,11 +281,12 @@ void EmulatorAPI::loadTape(const HttpRequestPtr& req,
         return;
     }
 
-    bool success = emulator->LoadTape(path);
+    std::string reason;
+    bool success = emulator->LoadTape(path, &reason);
 
     Json::Value ret;
     ret["status"] = success ? "success" : "error";
-    ret["message"] = success ? "Tape loaded successfully" : "Failed to load tape (check logs for details)";
+    ret["message"] = success ? "Tape loaded successfully" : "Failed to load tape: " + reason;
     ret["path"] = path;
     if (content.isEmbedded) ret["uploaded"] = true;
     
@@ -328,18 +329,19 @@ void EmulatorAPI::ejectTape(const HttpRequestPtr& req,
         return;
     }
     
-    // Thread-safe eject
-    bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
-    if (wasRunning) {
-        emulator->Pause();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    
-    context->pTape->stopTape();
-    context->coreState.tapeFilePath.clear();
-    
-    if (wasRunning) {
-        emulator->Resume();
+    // The tape slot of the media manager (pauses the emulator itself);
+    // refused while a TTD recording runs
+    std::string reason;
+    if (!emulator->EjectTape(&reason)) {
+        Json::Value error;
+        error["error"] = "Conflict";
+        error["message"] = reason;
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
     }
     
     Json::Value ret;
@@ -1550,23 +1552,19 @@ void EmulatorAPI::ejectDisk(const HttpRequestPtr& req,
         return;
     }
     
-    // Thread-safe eject
-    bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
-    if (wasRunning) {
-        emulator->Pause();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    
-    if (context->pBetaDisk) {
-        context->pBetaDisk->ejectDisk();
-    }
-    if (context->coreState.diskDrives[driveNum]) {
-        context->coreState.diskDrives[driveNum]->ejectDisk();
-    }
-    context->coreState.diskFilePaths[driveNum].clear();
-    
-    if (wasRunning) {
-        emulator->Resume();
+    // Only the drive asked for; the disk is freed. Unsaved writes are dropped,
+    // as this endpoint always did (the media verbs of M4 add the dirty check)
+    std::string ejectError;
+    if (!emulator->EjectDisk(driveNum, /*force*/ true, &ejectError)) {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = ejectError;
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
     }
     
     Json::Value ret;

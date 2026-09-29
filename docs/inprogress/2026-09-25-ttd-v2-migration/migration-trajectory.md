@@ -63,7 +63,9 @@ Fix what is wrong today, so the later steps build on a correct base and have
 tests that would catch regressions.
 
 - **Step 0 of the merge strategy**: the `PeripheralId` table and the
-  notification enum ([branch-merge-strategy.md](branch-merge-strategy.md) §2).
+  notification enum ([branch-merge-strategy.md](branch-merge-strategy.md) §2). **Done** (checked 2026-09-28):
+  the id table and the audio-activity enum are on master; the three branches
+  are merged.
 - **Capture gap**: RAM page 255 on 4 MB machines (widen the page cache
   sentinel). **Done 2026-09-27**: `ttd::PhysPage` (16 bit, `kPhysPageNone =
   0xFFFF`, `ttdphyspage.h`) in Memory's bank cache, probe, queries and
@@ -95,15 +97,18 @@ tests that would catch regressions.
     (cause in the tooltip), besides the status fields.
   - ~~Free the pre-allocated 64 MB journal when journaling is switched off
     while no session exists~~ - **done 2026-09-28**.
-  - Fix B4 before relying on find-last on turbo machines (ATM3, Profi,
-    Scorpion turbo, later TSConf): timestamps from the frame-relative 3.5 MHz
-    tact (descaled by `hw_turbo_shift_applied`), a monotonicity assert, and an
-    ATM3 live-vs-reloaded find-last test.
+  - ~~Fix B4 before relying on find-last on turbo machines~~ - **done
+    2026-09-28**, with a finer unit than the 3.5 MHz tact proposed here (which
+    puts several 8x instructions on one position): positions count T-states
+    at the model's top clock (L = LCM of its clock ratios: Scorpion/ATM 7.10 2,
+    ZX-Evo 4, ZX Next 8), exact and monotonic through a switch; plain T-states
+    on models without turbo. Co-processors (GS, NeoGS) keep their own clocks
+    and are not part of L. 40-bit globalT at L=8 lasts ~10 h of recording.
 - **Feature-flag side effect** (perf review F3): enabling the `timetravel`
   feature without recording disables fast tape / fast disk; move the override to
   recording start ([requirements.md](requirements.md) FR-18). **Done** in `005771c8`: only a
   recording engages the lock, and it holds through replay and Detached.
-- **Analyzer fixes**: Python knows flag bit 3 (bookmarks). (Done 2026-09-25:
+- **Analyzer fixes**: Python knows flag bit 3 (bookmarks) (done 2026-09-28). (Done 2026-09-25:
   the analyzer compares the stored piece CRC, and the false "the C++ writer
   stores 0" comments in `ttd_format.py`, `ttd.ksy` and `timetravelmanager.cpp`
   are corrected.) C++ integrity behaviour (eager check at load,
@@ -115,9 +120,12 @@ tests that would catch regressions.
   case (present since `8db7841f`); a test for page 255 (done 2026-09-27); the generic state-completeness test
   ([requirements.md](requirements.md) FR-3): first version **done 2026-09-28**
   (`ttdstatecompleteness_test.cpp`, every creatable model, every port in the model's port
-  map). It found B10 (the #7FFD paging lock survived a seek), fixed the same day. Still
-  open: FR-4 (devices attached or detached at runtime) and ports that decode only in a
-  gated state (e.g. Beta-128 outside TR-DOS).
+  map). It found B10 (the #7FFD paging lock survived a seek), fixed the same day. Also
+  done 2026-09-28: a second pass with TR-DOS paged in (the Beta-128 rows decode and
+  must be restored) and FR-4: the one runtime device change, the General Sound card
+  type switch, is refused during a user recording and drops a stopped session or a
+  debugger's live history (`gs-card-switch`); a seek whose device set differs from
+  the checkpoint logs it instead of restoring silently.
 - **Comments**: remove the stale ones listed in current-state §10 (**done**: re-checked
   2026-09-28, the listed comments in `timetravelmanager.*`, `ttdserializable.h` and the
   page store header were already corrected; only the PoC reader `tools/poc/010-ttd-gui`
@@ -203,8 +211,8 @@ test; a deliberately corrupted blob produces a degraded result on every surface.
 - `HardwareReset` / `DebuggerEdit` markers actually emitted.
 - RTC/CMOS reads served from an emulated clock recorded in the session (Profi
   RTC, ATM CMOS).
-- Turbo timebase: journal timestamps and the replay clamp correct when
-  `z80.t` exceeds the nominal frame (B4).
+- ~~Turbo timebase: journal timestamps and the replay clamp correct when
+  `z80.t` exceeds the nominal frame (B4)~~ - done in V0 (2026-09-28).
 
 Exit: a loaded session replays inside a frame with the recorded input; a
 session loaded into a different audio rate reports it.
@@ -311,10 +319,21 @@ and where this plan handles them:
 
 ## 6. Open decisions for the user
 
-1. **Option B vs A** (§1). B is recommended; A is acceptable if GS ships with
-   `GSRamSize=128` or GS disabled on Pentagon configs until V1.
-2. **MoonSound port-claim model** (§3.3 of the merge strategy): one mechanism
-   (extend self-decoding devices) vs two with a precedence rule.
+1. ~~**Option B vs A** (§1)~~ — **settled by events (2026-09-28)**: `profi`,
+   `generalsound` and `moonsound` all merged before V1, so the sequence that
+   happened is A. Its known cost is live on master: the GS checkpoint blob
+   carries the whole card RAM (`SoundChip_GeneralSound::TTDStateSize()` = fixed
+   state + `_ram.size()`, up to 512 KB), and MoonSound captures Tier A only
+   (wave SRAM is not in TTD). V1 is now the fix for both, no longer a merge
+   prerequisite.
+2. **MoonSound port-claim model** (§3.3 of the merge strategy) — no longer a
+   merge blocker and **not needed for V1**, but still open as design debt.
+   MoonSound merged with its own mechanism, so master has two: self-decoding
+   devices (`RegisterSelfDecodingDevice`, `PortDevice::tryClaimOut/In`; Covox;
+   tried from the model decoders) and the full-decode observer
+   (`RegisterFullDecodeLowBytePort`, `NotifyFullDecodeIn/Out` called from
+   `Z80::in/out`; MoonSound). Decide: one mechanism, or two with a written
+   precedence rule. Tracked in [MoonSound TODO](../2026-09-13-moonsound/TODO.md).
 3. **Default memory budget and whether disk mode is on by default** (V4/V5):
    needs measurements on ZX-Evo + GS + MoonSound sessions after V1.
 4. **Integrity and versioning mechanism** (before V4 starts): open

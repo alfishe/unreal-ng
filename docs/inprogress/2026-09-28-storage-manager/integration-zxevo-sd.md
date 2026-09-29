@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-09-28 |
-| **Status** | Reviewed; phase M1 |
+| **Status** | **Implemented** (M1, 2026-09-28); as built: [TODO.md](TODO.md) "M1 as built" |
 | **Layers** | port decoder → port adapter → device → medium, with the slot and the manager beside them: [technical-design.md §1.1](technical-design.md#11-layers-from-the-guests-port-to-the-medium) |
 | **Today** | E5 ([e5-sd-card.md](../2026-09-15-atm-baseconf-highres-ports/e5-sd-card.md)): `PortDecoder_ATM3` owns `SdCardSpi` + `ZControllerSpi`; `InsertSdCard(path | medium)`; `[ZC]` read at power-on; image files only |
 | **Target** | the first slot of the [MediaManager](technical-design.md); a PC folder as the card |
@@ -18,7 +18,7 @@ sd.zc = ~/zx/evo-sd/       ; a folder: SD_BOOT.$C, games/*.trd, NedoOS bin/ ini/
 Then, on the unmodified ZX-Evo firmware:
 - ERS "5. SDcard boot" runs `SD_BOOT.$C` (ACC-1).
 - "F. File browse → Mount B:" mounts `games/elite.trd`, and TR-DOS reads it and saves to it (ACC-2).
-- NedoOS `osatm3sd.$C` boots to its shell (ACC-3).
+- NedoOS `sd_boot.$C` (the ZX-Evo build) boots to its shell (ACC-3). `osatm3sd.$C` needs NemoIDE (E6).
 - `IMAGE.MNT` automounts (ACC-4).
 
 The folder on the PC never changes. "Export" writes the card as the guest now sees it to an `.img`.
@@ -75,10 +75,10 @@ and NedoOS mostly read, so recordings stay usable across whole SD boots.
 | Test | Proves |
 |---|---|
 | E5 tests unchanged, through the wrappers | nothing regressed |
-| `ZXEvoErs_Test.SdCardBootFromAFolder` | ACC-1: `SD_BOOT.$C` in a scratch folder |
-| `ZXEvoErs_Test.SdCardFolderTrdMountReadWrite` | ACC-2: the E5 mount test with a folder; the folder's tree hash is unchanged afterwards; the exported image contains the save |
-| `ZXEvoNedoOs_Test.BootsFromAFolderSd` | ACC-3: `osatm3sd.$C` + the NedoOS release tree in a folder reach the shell (screen text) |
-| `ZXEvoErs_Test.ImageMntAutomount` | ACC-4 |
-| `ZXEvoSdSlot_Test.*` | attach / detach / busy retry / swap delay seen by the ERS ("SD card lost" then back) |
+| `ZXEvoErs_Test.SdCardBootFromAHostFolder` | ACC-1: `SD_BOOT.$C` in a scratch folder |
+| `ZXEvoErs_Test.SdCardFolderTrdMountedReadWrittenAndExported` | ACC-2: the E5 mount test with a folder; the host TRD is unchanged afterwards; the exported image contains the save |
+| `ZXEvoErs_Test.NedoOsBootsFromAHostFolder` | ACC-3: `sd_boot.$C`, `term.com`, `cmd.com` and a marker `autoexec.bat` (`testdata/machines/zxevo/nedoos/sdcard/`) reach the shell: the prompt `M:/bin>` and the marker in RAM |
+| `ZXEvoErs_Test.ImageMntAutomountFromAHostFolder` | ACC-4 |
+| `ZXEvoSdSlot_Test.SwapDelaySeenInCardDetect` | a swap on a running machine: AVR register C reads "no card" for the swap delay, then the new card (busy retry: `MediaManager_Test.BusySlotWaitsForTheNextFrame`) |
 | `ZXEvoSdSlot_Test.LargeSparseImage` | a sparse 4 GB image: SDHC, reads at the last sector, no whole-file load (review round 2, G10) |
-| `ZXEvoSdSlot_Test.SameImageInSdAndHddRefused` | the shipped `wc.img` case: the second slot gets `in-use` (G5) |
+| `ZXEvoSdSlot_Test.SameImageInSdAndHddRefused` | the shipped `wc.img` case: the second slot gets `in-use` (G5). **Moved to M6** (no IDE slot on ZX-Evo yet); the rule itself: `MediaManager_Test.OneSourceInOneSlotUnlessBothReadOnly` |

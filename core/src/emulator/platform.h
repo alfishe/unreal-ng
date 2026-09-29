@@ -56,6 +56,11 @@ constexpr char const* NC_FEATURE_CHANGED = "FEATURE_CHANGED";                   
 constexpr char const* NC_SPEED_CHANGED = "SPEED_CHANGED";                       // Speed multiplier or turbo mode changed (payload: SpeedChangedPayload). Posted from Core after state is committed.
 constexpr char const* NC_DISK_AUTOSTART = "DISK_AUTOSTART";                       // TR-DOS disk autostart outcome or refusal (payload: DiskAutostartPayload). Posted from Emulator::AutostartDisk.
 constexpr char const* NC_FILE_LOADED = "FILE_LOADED";                           // Snapshot / tape / disk file loaded or load failed (payload: FileLoadedPayload). Posted from Emulator after the loader returns.
+constexpr char const* NC_MEDIA_INSERTED = "MEDIA_INSERTED";                     // A medium was attached to a slot (payload: MediaSlotPayload). Posted from MediaManager on the thread that applied it
+constexpr char const* NC_MEDIA_EJECTED = "MEDIA_EJECTED";                       // A medium was detached from a slot (payload: MediaSlotPayload)
+constexpr char const* NC_MEDIA_DIRTY = "MEDIA_DIRTY";                           // A medium got its first unsaved change (payload: MediaSlotPayload); not repeated per write
+constexpr char const* NC_MEDIA_EXPORTED = "MEDIA_EXPORTED";                     // A medium was exported to a file (payload: MediaSlotPayload, _path = target)
+constexpr char const* NC_MEDIA_SAVED = "MEDIA_SAVED";                           // A medium was saved; it now stands for that file (payload: MediaSlotPayload, path = the file)
 constexpr char const* NC_RECORDING_STATE = "RECORDING_STATE";                   // Recording started or stopped (payload: RecordingStatePayload). Posted from RecordingManager.
 constexpr char const* NC_MEMORY_PAGE_CHANGED = "MEMORY_PAGE_CHANGED";           // RAM bank mapping changed (payload: MemoryPagePayload). Posted by Memory on bank switch.
 constexpr char const* NC_ROM_PAGE_CHANGED = "ROM_PAGE_CHANGED";                 // ROM selection changed (payload: ROMPagePayload). Posted by Memory on ROM switch.
@@ -418,7 +423,7 @@ enum class TurboSoundKind : uint8_t
 /// replacement, design: docs/inprogress/2026-09-19-general-sound),
 /// BASS = legacy UnrealSpeccy HLE mode (deprecated alias of LW at parse
 /// time - no BASS library is linked in this tree), NGS = NeoGS FPGA card
-/// (neogs-tdd.md - P2 placeholder, parsed but no device is created yet),
+/// (SoundChip_NeoGS, neogs-tdd.md),
 /// NONE (default) = no GS card fitted.
 /// Read once at config load; a change needs a new emulator instance.
 enum class GSTypeKind : uint8_t
@@ -430,15 +435,50 @@ enum class GSTypeKind : uint8_t
 	NGS
 };
 
-/// NeoGS MP3 decode path ([NGS] MP3Support, neogs-tdd.md §5.6):
-/// None = feature off, Software = host-side decode feeding the DAC stream,
-/// Stub (default) = API surface present but silent. P2 placeholder: Stub
-/// and Software behave identically until the NeoGS implementation lands.
+/// NeoGS MP3 decoder chip ([NGS] MP3Support, neogs-tdd.md §5.6):
+/// None = no decoder fitted (DREQ reads 0, SCI reads #FFFF - players that
+/// poll DREQ wait forever, as on a board without the chip), Stub = the chip
+/// answers (DREQ 1, version bits) but plays silence, Software = full decoding.
 enum class NGSMP3SupportKind : uint8_t
 {
 	None,
 	Stub,
 	Software
+};
+
+/// NeoGS card settings ([NGS] section, neogs-tdd.md §6)
+struct NeoGSConfig
+{
+	enum class Fpga : uint8_t { Current, D };               // board revision (§3.12)
+	enum class Boot : uint8_t { Loader, Direct };           // §4.2
+	enum class WriteMode : uint8_t { Session, Persist, Off }; // SD card and flash writes
+	enum class SDType : uint8_t { Auto, SDSC, SDHC };        // §5.5
+	enum class Mp3Chip : uint8_t { VS1001, VS1011 };         // §5.6
+	enum class FlashId : uint8_t { ST, AMD };                // §3.8: 20/E2 or 01/A4
+
+	char flashPath[FILENAME_MAX] = "rom/neogs/full_ngs.rom";
+	FlashId flashId = FlashId::ST;
+	Fpga fpga = Fpga::Current;
+	unsigned ramKB = 4096;                                  // 2048 | 4096
+	Boot boot = Boot::Loader;
+	unsigned bootDelayMs = 0;
+	char sdCardPath[FILENAME_MAX] = {};                     // bare contexts only; a machine's card is the media manager's slot sd.ngs
+	SDType sdType = SDType::Auto;
+	bool sdWriteProtect = false;                            // SSTAT switch bit only
+	WriteMode sdWrite = WriteMode::Session;
+	NGSMP3SupportKind mp3Support = NGSMP3SupportKind::Software;
+	Mp3Chip mp3Chip = Mp3Chip::VS1001;
+	double mp3Gain = 1.0;
+	WriteMode flashWrite = WriteMode::Session;
+	enum class ZxDmaWatch : uint8_t { Selected, Always };  // neogs-zxdma-design.md §5.4, §5.5.3
+	ZxDmaWatch zxDmaWatch = ZxDmaWatch::Selected;
+	unsigned zxDmaWatchFrames = 5;
+	unsigned volume = 8000;                                 // same 0-8192 scale as [SOUND] GSVol
+	/// How the DAC channels reach the two sides (a listening choice, not
+	/// hardware): Separated = as on the board (hard left/right), GS = 50%
+	/// cross-feed like the classic GS board, Mono = both sides the same
+	enum class StereoMode : uint8_t { Separated, GS, Mono };
+	StereoMode stereoMode = StereoMode::Separated;
 };
 
 struct zxkeymap;
@@ -670,19 +710,6 @@ struct CONFIG
 		char evo_nvram_path[FILENAME_MAX];
 	} atm;
 
-	// Z-Controller SD card slot (ZX-Evo; [ZC] section)
-	struct
-	{
-		// Image file in the slot (SDCardImage=, alias SDCARD); empty = no card
-		char sd_image_path[FILENAME_MAX];
-		// Where guest writes go (SDWrite=): 0 session (kept in memory, the
-		// file untouched), 1 persist (written to the file), 2 off (refused)
-		uint8_t sd_write_mode;
-		// Slot write-protect switch (SDWriteProtect=): reported to software
-		// (ZX-Evo AVR register C bit 2), the card itself does not enforce it
-		uint8_t sd_write_protect;
-	} zc;
-
 	uint8_t use_comp_pal;
 	unsigned pal, num_pals;      // selected palette and total number of pals
 	unsigned minres;             // min. screen x-resolution
@@ -723,13 +750,10 @@ struct CONFIG
 	char phoenix_rom_path[FILENAME_MAX];
 
 #ifdef MOD_GSZ80
-	unsigned gs_ramsize;
 	char gs_rom_path[FILENAME_MAX];
 
-	// NeoGS integration placeholders (neogs-tdd.md §6): [NGS] section keys
-	// parsed up front, consumed by no card until the P2 implementation lands
-	char ngs_sd_card_path[FILENAME_MAX];
-	NGSMP3SupportKind ngsMP3SupportKind = NGSMP3SupportKind::Stub;
+	// NeoGS card ([NGS] section, neogs-tdd.md §6)
+	NeoGSConfig ngs;
 #endif
 
 
@@ -1000,6 +1024,30 @@ struct EmulatorState
     {
         return t >> hw_turbo_shift_applied;
     }
+
+    /// TTD time units per base (1x) T-state: the least common multiple of the
+    /// model's hardware CPU clock ratios (1 = no turbo; Scorpion and ATM 7.10
+    /// 2; ZX-Evo 4; ZX Next 8). One unit is a T-state at the model's top
+    /// clock. Set once from the model's port decoder (TtdClockUnits)
+    uint8_t ttd_clock_units;
+
+    /// TTD time units per CPU T-state at the applied clock. The in-frame
+    /// counter z80.t counts CPU T-states at the current clock and is rescaled
+    /// when a hardware turbo switches mid-frame, so the same value can name two
+    /// instants of one frame; t x this factor names the instant uniquely and
+    /// grows monotonically through every switch (B4)
+    uint32_t TtdUnitsPerTState() const
+    {
+        // Hot path (every journaled write): units is a multiple of every ratio
+        // the model selects, and ratios are powers of two, so the division is
+        // an exact shift
+        const uint32_t units = ttd_clock_units ? ttd_clock_units : 1;
+        const uint32_t perT = units >> hw_turbo_shift_applied;
+        return perT ? perT : 1;
+    }
+
+    /// In-frame CPU position `t` (z80.t) in TTD time units
+    uint32_t TtdTInFrame(uint32_t t) const { return t * TtdUnitsPerTState(); }
 
     /// endregion </Runtime CPU parameters
 

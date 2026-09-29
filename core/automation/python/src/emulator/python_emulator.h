@@ -4,6 +4,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <emulator/emulator.h>
+#include <emulator/media/mediacontrol.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/memory/memory.h>
 #include <emulator/memory/memoryaccesstracker.h>
@@ -16,6 +17,7 @@
 #include <tapeaudio/tapeaudiorenderer.h>
 #include <emulator/video/screen.h>
 #include <emulator/sound/soundcharactersettings.h>
+#include <emulator/sound/chips/neogs/neogsmedia.h>
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/chips/soundchip_ay8910.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
@@ -95,6 +97,33 @@ inline pybind11::object StateNodeToPy(const StateNode& node)
         }
         default: return py::none();
     }
+}
+
+/// One media verb through MediaControl (media-control-design.md): the options
+/// come as keyword arguments, the reply is the dict every surface returns
+/// (ok, error, message, slot, pending, revision, report and the verb's fields)
+inline pybind11::object MediaCallPy(Emulator& self, const std::string& verb, const std::string& slot,
+                                    const std::string& path, const pybind11::kwargs& options)
+{
+    namespace py = pybind11;
+    MediaRequest request;
+    request.verb = verb;
+    request.selector = slot;
+    request.path = path;
+    for (const auto& item : options)
+    {
+        std::string name = py::str(item.first);
+        if (name == "async_")
+            name = "async";  // "async" is a Python keyword: media_eject("A", async_=True)
+        const py::handle value = item.second;
+        if (py::isinstance<py::bool_>(value))
+            request.options[name] = value.cast<bool>() ? "true" : "false";
+        else if (value.is_none())
+            request.options[name] = "";
+        else
+            request.options[name] = py::str(value);
+    }
+    return StateNodeToPy(MediaControl(self.GetContext()).Execute(request).ToValue());
 }
 
 namespace PythonBindings
@@ -666,12 +695,50 @@ namespace PythonBindings
             }, "Get disk image path")
             .def("disk_eject", [](Emulator& self, int drive) -> bool {
                 if (drive < 0 || drive > 3) return false;
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->coreState.diskDrives[drive]) return false;
-                ctx->coreState.diskDrives[drive]->ejectDisk();
-                ctx->coreState.diskFilePaths[drive] = "";
-                return true;
-            }, "Eject disk from drive")
+                return self.EjectDisk(static_cast<uint8_t>(drive), /*force*/ true);
+            }, "Eject disk from drive (the disk is freed; unsaved writes are lost)")
+            // Media: every slot through MediaControl. slot: fdd.b, "B", "b:", "sd", "floppy:1",
+            // "tag:sd+neogs" ("auto" for insert); options as keywords (access="readonly", save=True,
+            // export="x.trd", discard=True, async_=True - "async" is a Python keyword)
+            .def("media", [](Emulator& self, const std::string& verb, const std::string& slot, const std::string& path,
+                             const py::kwargs& options) { return MediaCallPy(self, verb, slot, path, options); },
+                 py::arg("verb"), py::arg("slot") = "", py::arg("path") = "",
+                 "Any media verb: list, info, formats, insert, swap, eject, save, export, discard, rescan, create, protect")
+            .def("media_list", [](Emulator& self) { return MediaCallPy(self, "list", "", "", py::kwargs()); },
+                 "Every media slot and the detached media")
+            .def("media_info", [](Emulator& self, const std::string& slot) { return MediaCallPy(self, "info", slot, "", py::kwargs()); },
+                 py::arg("slot"), "One slot and its medium")
+            .def("media_formats", [](Emulator& self, const py::kwargs& options) { return MediaCallPy(self, "formats", "", "", options); },
+                 "Accepted formats per kind (kind='floppy' to filter)")
+            .def("media_insert", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
+                     return MediaCallPy(self, "insert", slot, path, options);
+                 }, py::arg("slot"), py::arg("path"), "Insert a file or a folder ('auto' picks the slot)")
+            .def("media_swap", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
+                     return MediaCallPy(self, "swap", slot, path, options);
+                 }, py::arg("slot"), py::arg("path"), "Eject + insert in one step (save=True / export=path / discard=True for a dirty medium)")
+            .def("media_eject", [](Emulator& self, const std::string& slot, const py::kwargs& options) {
+                     return MediaCallPy(self, "eject", slot, "", options);
+                 }, py::arg("slot"), "Take the medium out (save=True / export=path / discard=True for a dirty medium)")
+            .def("media_save", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
+                     return MediaCallPy(self, "save", slot, path, options);
+                 }, py::arg("slot"), py::arg("path") = "", "Floppies: write the disk back (or to path)")
+            .def("media_export", [](Emulator& self, const std::string& slot, const std::string& path) {
+                     return MediaCallPy(self, "export", slot, path, py::kwargs());
+                 }, py::arg("slot"), py::arg("path"), "A copy of the medium as it is now")
+            .def("media_discard", [](Emulator& self, const std::string& slot, const py::kwargs& options) {
+                     return MediaCallPy(self, "discard", slot, "", options);
+                 }, py::arg("slot"), "Drop the unsaved writes")
+            .def("media_rescan", [](Emulator& self, const std::string& slot, const py::kwargs& options) {
+                     return MediaCallPy(self, "rescan", slot, "", options);
+                 }, py::arg("slot"), "Build a folder medium again from its folder")
+            .def("media_create", [](Emulator& self, const std::string& slot, const py::kwargs& options) {
+                     return MediaCallPy(self, "create", slot, "", options);
+                 }, py::arg("slot"), "A blank floppy (format, cylinders, sides) or card (size)")
+            .def("media_protect", [](Emulator& self, const std::string& slot, bool on) {
+                     py::kwargs options;
+                     options["on"] = on;
+                     return MediaCallPy(self, "protect", slot, "", options);
+                 }, py::arg("slot"), py::arg("on"), "The slot's write-protect switch")
             .def("disk_create", [](Emulator& self, int drive, int cylinders, int sides, const std::string& format) -> bool {
                 Emulator::BlankDiskFormat parsed = Emulator::BlankDiskFormat::Auto;
                 if (drive < 0 || drive > 3 || !Emulator::ParseBlankDiskFormat(format, parsed)) return false;
@@ -816,14 +883,8 @@ namespace PythonBindings
                 return true;
             }, "Rewind tape to beginning (image kept)")
             .def("tape_eject", [](Emulator& self) -> bool {
-                auto* ctx = self.GetContext();
-                if (ctx && ctx->pTape) {
-                    ctx->pTape->reset();
-                    ctx->coreState.tapeFilePath = "";
-                    return true;
-                }
-                return false;
-            }, "Eject tape")
+                return self.EjectTape();
+            }, "Eject tape (the media manager's tape slot)")
             .def("tape_pause", [](Emulator& self) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pTape) return false;
@@ -1586,9 +1647,8 @@ namespace PythonBindings
 
                 py::dict d;
                 const uint8_t status = gs->getStatusRaw();
-                d["device"] = gs->hasCoprocessor() ? "General Sound (Z80 coprocessor @ 12 MHz, 4 x 8-bit DAC)"
-                                                   : "General Sound (lightweight mod player, 4 x 8-bit DAC)";
-                d["implementation"] = gs->implementation() == GSCardImplementation::LLE ? "lle" : "lightweight";
+                d["device"] = gs->deviceDescription();
+                d["implementation"] = gsImplementationLabel(gs->implementation());
                 d["rom_loaded"] = gs->isROMLoaded();
                 d["ram_kb"] = static_cast<int>(gs->getRamSizeKB());
                 d["status"] = status;
@@ -1602,7 +1662,7 @@ namespace PythonBindings
                 d["page"] = gs->getMPAG();
 
                 py::list channels;
-                for (int i = 0; i < 4; i++) {
+                for (int i = 0; i < gs->channelCount(); i++) {
                     py::dict channel;
                     channel["sample"] = gs->getChannelSample(i);
                     channel["volume"] = gs->getChannelVolume(i);
@@ -1617,8 +1677,74 @@ namespace PythonBindings
                 cpu["af"] = gs->getCPUReg(GSCpuRegister::AF);
                 cpu["halted"] = gs->isCPUHalted();
                 d["cpu"] = cpu;
+
+                NeoGSStateInfo ngs;
+                if (gs->neogsState(ngs))
+                {
+                    py::dict n;
+                    n["flash"] = ngs.flashTitle;
+                    n["flash_modified"] = ngs.flashModified;
+                    n["gscfg0"] = ngs.gscfg0;
+                    n["clock_hz"] = ngs.clockHz;
+                    py::list windows;
+                    for (int w = 0; w < 4; w++)
+                    {
+                        py::dict window;
+                        window["page"] = ngs.pages[w];
+                        window["flash"] = ngs.windowFlash[w];
+                        windows.append(window);
+                    }
+                    n["windows"] = windows;
+                    n["led_on"] = ngs.ledOn;
+                    n["ready"] = ngs.readyForCommands;
+                    n["int_enable"] = ngs.intEnable;
+                    n["int_request"] = ngs.intRequest;
+                    n["tim_freq"] = ngs.timFreq;
+                    n["sd_present"] = ngs.sdPresent;
+                    n["sd_path"] = ngs.sdPath;
+                    n["sd_sdhc"] = ngs.sdSdhc;
+                    n["sd_blocks_read"] = ngs.sdBlocksRead;
+                    n["mp3_fitted"] = ngs.mp3Fitted;
+                    n["mp3_chip"] = std::string(ngs.mp3Chip);
+                    n["mp3_rate"] = ngs.mp3Rate;
+                    n["mp3_frames"] = ngs.mp3Frames;
+                    n["mp3_decode_time_s"] = ngs.mp3DecodeSeconds;
+                    n["dma_sd_running"] = ngs.dmaRunning[1];
+                    n["dma_mp3_running"] = ngs.dmaRunning[2];
+                    n["zx_dma_mode"] = std::string(ngs.zxMode);
+                    n["zx_dma_address"] = ngs.dmaAddress[0];
+                    n["zx_dma_read_latch"] = ngs.zxReadLatch;
+                    n["zx_dma_pending"] = std::string(ngs.zxPending);
+                    n["zx_dma_bytes_read"] = (ngs.zxBytesRead);
+                    n["zx_dma_bytes_written"] = (ngs.zxBytesWritten);
+                    n["zx_dma_bytes_dropped"] = (ngs.zxBytesDropped);
+                    n["zx_dma_wait_tstates"] = (ngs.zxWaitTStates);
+                    n["zx_dma_late_starts"] = (ngs.zxLateStarts);
+                    n["zx_dma_watch_frames_left"] = ngs.zxWatchFramesLeft;
+                    d["neogs"] = n;
+                }
                 return d;
-            }, "General Sound state: mailbox flags, FIFO queue depths, MPAG page, DAC channels, coprocessor core")
+            }, "General Sound state: mailbox flags, FIFO queue depths, MPAG page, DAC channels, coprocessor core; 'neogs' on the NeoGS card")
+            // NeoGS media: checked here, carried out on the machine's thread
+            // (neogsmedia.h); true when accepted. Insert / eject are refused
+            // while a TTD recording runs
+            .def("gs_sd_insert", [](Emulator& self, const std::string& path) -> bool {
+                return NeoGSMediaAccepted(NeoGSRequestSdInsert(self.GetContext(), path));
+            }, "NeoGS: insert an SD card image (refused while a TTD recording runs)", py::arg("path"))
+            .def("gs_sd_eject", [](Emulator& self) -> bool {
+                return NeoGSMediaAccepted(NeoGSRequestSdEject(self.GetContext()));
+            }, "NeoGS: remove the SD card (refused while a TTD recording runs)")
+            .def("gs_flash_save", [](Emulator& self) -> bool {
+                return NeoGSMediaAccepted(NeoGSRequestFlashSave(self.GetContext()));
+            }, "NeoGS: save the reprogrammed flash (loaded in place of the shipped image with [NGS] FlashWrite=persist)")
+            .def("gs_stereo_mode", [](Emulator& self, const std::string& mode) -> bool {
+                NeoGSConfig::StereoMode parsed = NeoGSConfig::StereoMode::Separated;
+                SoundManager* sm = self.GetContext() ? self.GetContext()->pSoundManager : nullptr;
+                if (!sm || !neogsParseStereoMode(mode, parsed))
+                    return false;
+                sm->setNeoGSStereoMode(parsed);
+                return true;
+            }, "NeoGS: 'separated' (as on the board), 'gs' (50% cross-feed like the classic GS) or 'mono'; applied at the next frame", py::arg("mode"))
             .def("gs_reset", [](Emulator& self) {
                 return SubmitGSInput(self, ttd::TTDInputKind::GSReset);
             }, "Full power-on reset of the General Sound card (live input; True when submitted)")
@@ -1656,15 +1782,16 @@ namespace PythonBindings
                 if (!sm) return false;
 
                 GSTypeKind target;
-                if (personality == "z80" || personality == "lle")
-                    target = GSTypeKind::Z80;
-                else if (personality == "lw" || personality == "lightweight")
-                    target = GSTypeKind::LW;
-                else
+                if (!gsParsePersonality(personality, target))
                     return false;
 
-                return sm->requestGeneralSoundCardSwitch(target);
-            }, "Request a GS card personality swap ('z80'/'lle' or 'lw'/'lightweight'), applied at the next frame boundary",
+                std::string refusal;
+                const bool requested = sm->requestGeneralSoundCardSwitch(target, &refusal);
+                if (!requested && !refusal.empty())
+                    throw std::runtime_error(refusal);  // a TTD recording refuses the switch (FR-4)
+                return requested;
+            }, "Request a GS card personality swap ('z80'/'lle', 'lw'/'lightweight' or 'ngs'/'neogs'), applied at the next "
+               "frame boundary (RuntimeError while TTD records)",
                py::arg("personality"))
             .def("gs_dump_module", [](Emulator& self, const std::string& path) -> py::object {
                 // Diagnostics: write the last completed COM30..D2 upload
@@ -1765,12 +1892,14 @@ namespace PythonBindings
                         case GSTraceSide::GsInternal: ev["side"] = "gs"; break;
                         case GSTraceSide::DacFetch: ev["side"] = "dac"; break;
                         case GSTraceSide::Interrupt: ev["side"] = "interrupt"; break;
+                        case GSTraceSide::ZxDma: ev["side"] = "zxdma"; break;
                     }
                     ev["direction"] = e.isOut() ? "out" : "in";
                     ev["port"] = e.port;
                     ev["value"] = e.value;
                     ev["pc"] = e.pc;
                     if (e.side == GSTraceSide::DacFetch) ev["channel"] = e.channel;
+                    if (e.side == GSTraceSide::ZxDma) ev["card_address"] = (static_cast<uint32_t>(e.channel) << 16) | e.port;
                     if (e.side == GSTraceSide::Interrupt) ev["nmi"] = e.isNmi();
                     result.append(ev);
                 }
@@ -2847,12 +2976,8 @@ namespace PythonBindings
                     q.hasPhysPageFilter = true;
                 }
 
-                const uint32_t frameT = ctx->config.frame;
                 if (!beforeFrameObj.is_none())
-                {
-                    uint64_t f = beforeFrameObj.cast<uint64_t>();
-                    q.beforeGlobalT = f * frameT + beforeTin;
-                }
+                    q.beforeGlobalT = ctx->pTimeTravelManager->GlobalT({beforeFrameObj.cast<uint64_t>(), beforeTin});
 
                 ttd::TTDExternalEvent marker{};
                 ttd::TTDSearchWindow window;

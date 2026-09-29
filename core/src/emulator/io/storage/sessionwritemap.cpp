@@ -2,6 +2,8 @@
 
 #include "sessionwritemap.h"
 
+#include "common/filehelper.h"
+
 #include <cstring>
 #include <fstream>
 
@@ -60,7 +62,7 @@ uint64_t SessionWriteMap::ContentId() const
 
 bool SessionWriteMap::ExportTo(const std::string& path, std::string* error)
 {
-    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    std::ofstream out(FileHelper::ToFsPath(path), std::ios::binary | std::ios::trunc);
     if (!out)
     {
         if (error)

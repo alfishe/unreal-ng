@@ -105,6 +105,12 @@ uint8_t PortDecoder_Spectrum48::DecodePortIn(uint16_t port, uint16_t pc)
         disp.decodedPort = port;
         disp.wasHandledInline = true;
     }
+    else if (IsBeta128Port(port) && !(_context->emulatorState.flags & CF_TRDOS))
+    {
+        // Beta 128 FDC ports answer only while the TR-DOS ROM is paged in (as in the Pentagon decoder):
+        // outside TR-DOS the port stays undecoded and Z80::in() serves the floating bus
+        disp.wasBeta128Gated = true;
+    }
     else
     {
         result = PeripheralPortIn(port);

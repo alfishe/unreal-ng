@@ -107,6 +107,31 @@ protected:
         return _z80->t - t0;
     }
 
+    /// IN A,(#FF) from uncontended code with its I/O cycle starting at `ioCycleStart` (after the 4 T fetch and
+    /// the 3 T operand read); the first paper cells hold distinct bytes: bitmap #10+n, attributes #80+n
+    uint8_t runInFF(uint32_t ioCycleStart)
+    {
+        _context->config.floatbus = 1;
+        for (uint16_t n = 0; n < 32; n++)
+        {
+            _memory->DirectWriteToZ80Memory(0x4000 + n, static_cast<uint8_t>(0x10 + n));
+            _memory->DirectWriteToZ80Memory(0x5800 + n, static_cast<uint8_t>(0x80 + n));
+        }
+        _z80->a = 0;
+        runAt(0x8000, { 0xDB, 0xFF }, ioCycleStart - 7);
+        return _z80->a;
+    }
+
+    /// Floating bus around the first paper cells (consensus of FUSE, Zero, ZXMAK2, MAME, pico-spec; confirmed
+    /// by the Butler 48K floating-bus tests 36/37): an I/O cycle starting on the contention onset reads the
+    /// bitmap byte, then the attribute, the next pair, and #FF for the 4 T the ULA does not fetch
+    void expectFloatingBusFromTheOnset()
+    {
+        const uint8_t expected[10] = { 0xFF, 0x10, 0x80, 0x11, 0x81, 0xFF, 0xFF, 0xFF, 0xFF, 0x12 };
+        for (uint32_t k = 0; k < 10; k++)
+            EXPECT_EQ(runInFF(_firstContendedT - 1 + k), expected[k]) << "I/O cycle at onset " << int(k) - 1;
+    }
+
     /// Execute one instruction placed at `addr` with its opcode fetch (M1) starting at exactly `fetchT`;
     /// returns its T-states. Code runs where the instruction is placed, so a contended `addr` puts the
     /// fetch and the operand bytes in contended memory
@@ -213,15 +238,28 @@ TEST_F(Contention48K_Test, MemoryAccess_ContendedVsUncontended)
 
 TEST_F(Contention48K_Test, IOContention_EvenVsOddPorts)
 {
-    // In paper, cell offset 0
-    _z80->t = _firstContendedT;
-    EXPECT_EQ(_ula->GetIOContentionDelay(0x00FE), 6u) << "48K even port (A0=0): pattern delay";
-    EXPECT_EQ(_ula->GetIOContentionDelay(0x00FF), 0u) << "48K odd port (A0=1): no delay";
-    EXPECT_EQ(_ula->GetIOContentionDelay(0x00FD), 0u) << "48K odd port (A0=1, A1=0): no delay";
+    // In paper, cell offset 0: the C:3 checkpoint of a ULA port, nothing for odd ports with an uncontended
+    // high byte
+    EXPECT_EQ(_ula->IoWaitAfterIorq(0x00FE, _firstContendedT), 6u) << "48K even port (A0=0): pattern delay";
+    EXPECT_EQ(_ula->IoWaitAfterIorq(0x00FF, _firstContendedT), 0u) << "48K odd port (A0=1): no delay";
+    EXPECT_EQ(_ula->IoWaitAfterIorq(0x00FD, _firstContendedT), 0u) << "48K odd port (A0=1, A1=0): no delay";
 
     // Outside paper: no IO contention on 48K
-    _z80->t = _ula->GetRaster().screenAreaStart - 1000;
-    EXPECT_EQ(_ula->GetIOContentionDelay(0x00FE), 0u);
+    EXPECT_EQ(_ula->IoWaitAfterIorq(0x00FE, _ula->GetRaster().screenAreaStart - 1000), 0u);
+}
+
+/// IN A,(C) end to end, all four patterns: code at #8000, M1 + M1 before the I/O cycle, which starts at the
+/// first contended T (cell offset 0)
+TEST_F(Contention48K_Test, IOContention_FourPatternsEndToEnd)
+{
+    auto inAC = [this](uint16_t bc) {
+        _z80->bc = bc;
+        return runAt(0x8000, { 0xED, 0x78 }, _firstContendedT - 8);
+    };
+    EXPECT_EQ(inAC(0x00FF), 12u) << "N:4";
+    EXPECT_EQ(inAC(0x00FE), 12u + 5) << "N:1, C:3: IORQ at cell offset 1 waits 5";
+    EXPECT_EQ(inAC(0x40FE), 12u + 6) << "C:1, C:3: 6 at offset 0, IORQ at offset 7 waits 0";
+    EXPECT_EQ(inAC(0x40FF), 12u + 12) << "C:1 x4: 6, then offsets 7 (0), 0 (6), 7 (0)";
 }
 
 TEST_F(Contention48K_Test, AddressContentionMap)
@@ -356,20 +394,26 @@ TEST_F(Contention128K_Test, Bank3_OddPagesContended)
 
 TEST_F(Contention128K_Test, IOContention_128KRules)
 {
-    // In paper, cell offset 0. 128K rules (Contended_I/O):
-    //   A0=0:        pattern delay + 1T
-    //   A0=1, A1=0:  1T
-    //   A0=1, A1=1:  no delay
-    _z80->t = _firstContendedT;
-    EXPECT_EQ(_ula->GetIOContentionDelay(0x00FE), 7u) << "128K even port: pattern + 1";
-    EXPECT_EQ(_ula->GetIOContentionDelay(0x00FD), 1u) << "128K A0=1, A1=0: 1T";
-    EXPECT_EQ(_ula->GetIOContentionDelay(0x00FF), 0u) << "128K A0=1, A1=1: no delay";
+    // The 128K follows the 48K's four patterns (Rak's Timing Test on 128K hardware: no extra T on even
+    // ports, nothing outside the paper). In paper, cell offset 0:
+    EXPECT_EQ(_ula->IoWaitAfterIorq(0x00FE, _firstContendedT), 6u) << "even port: the pattern at IORQ";
+    EXPECT_EQ(_ula->IoWaitAfterIorq(0x00FD, _firstContendedT), 0u) << "odd port, uncontended high byte";
+    EXPECT_EQ(_ula->IoWaitAfterIorq(0x00FF, _firstContendedT), 0u);
 
-    // Outside paper: even ports keep the +1, odd A1=0 keeps 1T
-    _z80->t = _ula->GetRaster().screenAreaStart - 1000;
-    EXPECT_EQ(_ula->GetIOContentionDelay(0x00FE), 1u);
-    EXPECT_EQ(_ula->GetIOContentionDelay(0x00FD), 1u);
-    EXPECT_EQ(_ula->GetIOContentionDelay(0x00FF), 0u);
+    const uint32_t border = _ula->GetRaster().screenAreaStart - 1000;
+    EXPECT_EQ(_ula->IoWaitAfterIorq(0x00FE, border), 0u);
+    EXPECT_EQ(_ula->IoWaitAfterIorq(0x00FD, border), 0u);
+}
+
+/// The high byte is read as a memory address against the current mapping: #C0FF waits like a contended
+/// high byte while an odd page is at #C000
+TEST_F(Contention128K_Test, IOContention_HighByteFollowsTheMapping)
+{
+    _memory->SetRAMPageToBank3(7);
+    EXPECT_EQ(_ula->IoWaitBeforeIorq(0xC0FF, _firstContendedT), 6u) << "page 7 at #C000: C:1";
+    _memory->SetRAMPageToBank3(2);
+    EXPECT_EQ(_ula->IoWaitBeforeIorq(0xC0FF, _firstContendedT), 0u) << "page 2: N:1";
+    _memory->SetRAMPageToBank3(0);
 }
 
 TEST_F(Contention128K_Test, Idle_InternalCycleOnContendedHlWaits)
@@ -478,10 +522,11 @@ TEST_F(ContentionPlus3_Test, NoIoContention)
 {
     for (uint32_t k = 0; k < 8; k++)
     {
-        _z80->t = _firstContendedT + k;
-        EXPECT_EQ(_ula->GetIOContentionDelay(0x00FE), 0u) << "offset " << k;
-        EXPECT_EQ(_ula->GetIOContentionDelay(0x00FD), 0u);
-        EXPECT_EQ(_ula->GetIOContentionDelay(0x7FFD), 0u);
+        for (uint16_t port : { uint16_t(0x00FE), uint16_t(0x00FD), uint16_t(0x7FFD), uint16_t(0x40FF) })
+        {
+            EXPECT_EQ(_ula->IoWaitBeforeIorq(port, _firstContendedT + k), 0u) << "offset " << k;
+            EXPECT_EQ(_ula->IoWaitAfterIorq(port, _firstContendedT + k), 0u) << "offset " << k;
+        }
     }
 }
 
@@ -579,7 +624,8 @@ TEST(ContentionPentagon_Test, NoContentionAnywhere)
     Z80* z80 = emulator->GetContext()->pCore->GetZ80();
     z80->t = 20000;  // Mid-paper on Pentagon
     EXPECT_EQ(ula->GetContentionDelay(), 0u);
-    EXPECT_EQ(ula->GetIOContentionDelay(0x00FE), 0u);
+    EXPECT_EQ(ula->IoWaitAfterIorq(0x00FE, 20000), 0u);
+    EXPECT_EQ(ula->IoWaitBeforeIorq(0x40FE, 20000), 0u);
 
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
@@ -698,6 +744,19 @@ TEST_F(Contention48K_Test, Statistics_CountedOnlyWhileDebugging)
     _emulator->DebugOff();
     runAt(0x4000, { 0x00 }, _firstContendedT);
     EXPECT_EQ(_ula->GetStatisticsTotal().accesses[CONTENTION_FETCH], 1u) << "fast interface again: not counted";
+}
+
+/// DD CB d op: the (IX+d) access is a data read, not an instruction byte - it counts as a read
+TEST_F(Contention48K_Test, Statistics_DdcbOperandIsADataRead)
+{
+    _emulator->DebugOn();
+    _ula->ResetStatistics();
+    _z80->ix = 0x4000;
+    runAt(0x8000, { 0xDD, 0xCB, 0x01, 0x46 }, _firstContendedT);  // BIT 0,(IX+1): code uncontended
+    const ContentionCounters& c = _ula->GetStatisticsCurrentFrame();
+    EXPECT_EQ(c.accesses[CONTENTION_READ], 1u);
+    EXPECT_EQ(c.accesses[CONTENTION_FETCH], 0u);
+    _emulator->DebugOff();
 }
 
 TEST_F(Contention128K_Test, Report_OddPageAtC000IsAContendedSlot)
@@ -852,3 +911,26 @@ TEST(MemoryInterfaceSelection_Test, TtdReplayModeKeepsContention)
 
 /// endregion </Memory interface selection>
 
+
+
+TEST_F(Contention48K_Test, FloatingBus_BitmapFromAnIoCycleOnTheOnset)
+{
+    expectFloatingBusFromTheOnset();
+}
+
+TEST_F(Contention128K_Test, FloatingBus_BitmapFromAnIoCycleOnTheOnset)
+{
+    expectFloatingBusFromTheOnset();
+}
+
+/// The Beta 128 answers #1F/#3F/#5F/#7F/#FF only while TR-DOS is paged in; outside it #FF is the floating bus
+TEST_F(Contention48K_Test, FloatingBus_BetaDiskPortsOnlyInTrDos)
+{
+    EXPECT_EQ(runInFF(_firstContendedT), 0x10) << "TR-DOS off: the ULA's byte";
+    EXPECT_FALSE(_context->pPortDecoder->WasLastPortDecoded());
+
+    _context->emulatorState.flags |= CF_TRDOS;
+    _context->pPortDecoder->DecodePortIn(0x00FF, 0x3D00);
+    EXPECT_TRUE(_context->pPortDecoder->WasLastPortDecoded()) << "TR-DOS on: the disk interface drives #FF";
+    _context->emulatorState.flags &= ~CF_TRDOS;
+}

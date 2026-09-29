@@ -22,6 +22,10 @@ that the emulator works out of the box, on the following basis:
   (md5 `6e2900206aea5505cddc89963914a300`: EVO Reset Service 0.60.05 FE, NEO-DOS in page 29, the image
   the released `base_trdemu` FPGA expects); `zxevo.rom` is an older custom image (TR-DOS 5.04T in pages
   0-3, earlier ERS) kept for the legacy BaseConf FPGA and TS-Conf.
+* **NeoGS flash image** (`neogs/full_ngs.rom`, NeoGS flash v1.11: loader, main ROM and FPGA configuration): built
+  from the NedoPC `ngs` sources (http://nedopc.com/gs/ngs_eng.php), which carry no licence file; treated as MIT
+  like the rest of the NedoPC NeoGS material. The parts it is packed from are in `tools/neogs/parts/`, and
+  `tools/neogs/pack_flash.py` checks the image against them.
 * **Open firmware**: `gdos-pd.rom` (public domain), `opense.rom` (OpenSE BASIC, GPL),
   `data/testrom/zx-diagnostics.rom` (Brendan Alford, GPL-3.0).
 * **YRW801 wave data ROM** (`opl4/yrw801-m-yamaha-1993.rom`, renamed from the archive's

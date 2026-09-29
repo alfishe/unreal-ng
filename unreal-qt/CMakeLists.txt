@@ -651,6 +651,9 @@ if (TESTS)
     file(GLOB_RECURSE HUD_TEST_SOURCES
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/hud/*.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/hud/core/*.cpp"
+        # The media panel's Qt-free model (src/media/core) is tested here too
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/media/*.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/media/core/*.cpp"
     )
     add_executable(hud-core-tests ${HUD_TEST_SOURCES})
     set_target_properties(hud-core-tests PROPERTIES
@@ -661,6 +664,7 @@ if (TESTS)
         CXX_STANDARD_REQUIRED ON
     )
     target_include_directories(hud-core-tests PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/hud/core"
         "${ROOT_DIR}/core/src"
         "${ROOT_DIR}/core/src/common"

@@ -12,6 +12,11 @@
 #include "debugger/analyzers/basic-lang/commandtyper.h"
 #include "emulator/io/fdc/fdd.h"
 #include "_helpers/testpathhelper.h"
+#include "_helpers/emulatortesthelper.h"
+#include "base/featuremanager.h"
+#include "debugger/ttd/timetravelmanager.h"
+#include "emulator/emulator.h"
+#include "emulator/media/mediamanager.h"
 
 /// uPD765A (+3 floppy controller) driven directly: the test owns the clock (UPD765CUT) and jumps it from
 /// deadline to deadline, so a whole-track transfer takes a few thousand loop iterations and no emulated frames.
@@ -669,6 +674,87 @@ TEST_F(UPD765_Test, ReadDataOfAnN6SectorReadsOnThroughTheTrack)
 /// SCAN compares what the CPU writes with each sector from R, R + STP, ... up to EOT. The first sector that
 /// meets the condition ends the command normally, SH when every byte was equal; #FF from the CPU matches
 /// anything. No sector up to EOT: SN, and EN as TC is tied low (datasheet; zxsp, Spectral's #FF rule)
+/// The +3's disk writes under the media manager: the disk is the manager's
+/// medium, and a write is a TTD replay barrier, once per drive per frame
+/// (the common rule; before M2 the uPD765 wrote with no barrier at all).
+/// The controller under test runs on a real +3's context
+class UPD765Media_Test : public UPD765_Test
+{
+protected:
+    Emulator* _emulator = nullptr;
+
+    void SetUp() override
+    {
+        _emulator = EmulatorTestHelper::CreateStandardEmulator("PLUS3", LoggerLevel::LogError);
+        ASSERT_NE(_emulator, nullptr);
+        _context = _emulator->GetContext();
+        _emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
+        ASSERT_TRUE(_emulator->CreateBlankDisk(0));  // +3DOS layout: 9 x 512
+        _disk = _context->coreState.diskDrives[0]->getDiskImage();
+        _fdc = new UPD765CUT(_context);
+        _fdc->_time = 1000;
+        _fdc->setMotor(true);
+        DrainInterrupts();
+    }
+
+    void TearDown() override
+    {
+        delete _fdc;
+        _fdc = nullptr;
+        _disk = nullptr;  // the media manager's
+        EmulatorTestHelper::CleanupEmulator(_emulator);
+    }
+
+    void WriteSector(uint8_t r, uint8_t fill)
+    {
+        Command({ WRITE_DATA, 0x00, 0, 0, r, 2, r, 0x2A, 0xFF });
+        Transfer(std::vector<uint8_t>(512, fill));
+        Result();
+    }
+};
+
+TEST_F(UPD765Media_Test, WritesAreBarriersOncePerFrame)
+{
+    ASSERT_FALSE(HasFatalFailure());
+    MediaManager& manager = *_context->pMediaManager;
+    ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+    ASSERT_TRUE(ttd->StartRecording());
+    const size_t before = ttd->GetExternalEvents().Size();
+
+    WriteSector(1, 0x11);
+    WriteSector(2, 0x22);
+    EXPECT_EQ(ttd->GetExternalEvents().Size(), before + 1) << "one barrier per frame, not per sector";
+    EXPECT_TRUE(manager.Info("fdd.a")->dirty) << "the manager sees the +3's write";
+
+    manager.ApplyPending();  // the frame ends
+    WriteSector(3, 0x33);
+    EXPECT_EQ(ttd->GetExternalEvents().Size(), before + 2);
+    EXPECT_TRUE(ttd->IsRecording()) << "a guest write never ends the recording";
+    ttd->StopRecording();
+}
+
+/// The panel's words for what is unsaved: sectors written, and a track the
+/// guest formatted counts as rewritten whole
+TEST_F(UPD765Media_Test, ChangesAreDescribedInTracksAndSectors)
+{
+    ASSERT_FALSE(HasFatalFailure());
+    MediaManager& manager = *_context->pMediaManager;
+    EXPECT_EQ(manager.Info("fdd.a")->changes, "");
+
+    WriteSector(1, 0x11);
+    WriteSector(2, 0x22);
+    WriteSector(3, 0x33);
+    EXPECT_EQ(manager.Info("fdd.a")->changes, "1 track: 3 sectors");
+
+    std::vector<uint8_t> ids;
+    for (uint8_t r = 1; r <= 9; r++)
+        ids.insert(ids.end(), {0, 0, r, 2});
+    Command({UPD765::CMD_FORMAT_TRACK | MFM, 0x00, 2, 9, 0x52, 0xE5});
+    Transfer(ids);
+    Result();
+    EXPECT_EQ(manager.Info("fdd.a")->changes, "1 track: whole") << "FORMAT rewrote the track";
+}
+
 class UPD765Scan_Test : public UPD765_Test
 {
 protected:
@@ -980,7 +1066,7 @@ TEST_F(UPD765Rom_Test, SaveThenLoadRoundTrip)
     const CommandTyper::Result save = Run("SAVE \"prog\"");
     ASSERT_EQ(save.outcome, CommandTyper::Outcome::Finished) << Describe(save) << "\n" << Screen();
     ASSERT_EQ(save.errNr, 0xFF) << Describe(save) << "\n" << Screen();
-    EXPECT_TRUE(_context->coreState.diskImages[0]->isDirty());
+    EXPECT_TRUE(_context->coreState.diskDrives[0]->getDiskImage()->isDirty());
 
     // Another program in memory (NEW would leave for the menu on this ROM)
     const CommandTyper::Result edit = Run("10 PRINT 1111");

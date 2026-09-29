@@ -71,7 +71,7 @@ says what the Sprinter would need if one of them slipped.
 
 | Row | What the Sprinter needs from it | Phase | If it slipped |
 |---|---|---|---|
-| #60 shared infrastructure (new) | clock ratio (`hw_turbo_ratio`), `Ds12887` CMOS core + migrations, wait-state hook, per-model `Screen` selection, `LoaderRawPcFloppy`, WD1793 `rateCheck`, port-trace internal codes | S1-S3a | the Sprinter waits: these are prerequisites, not Sprinter work |
+| #60 shared infrastructure (new) | clock ratio (`hw_turbo_ratio`; postponed from #60 to the start of this program - only the Sprinter needs it), `Ds12887` CMOS core + migrations, wait-state hook, per-model `Screen` selection, `LoaderRawPcFloppy`, WD1793 `rateCheck`, port-trace internal codes | S1-S3a | the Sprinter waits: these are prerequisites, not Sprinter work |
 | #41 TSConf | write intercept, interrupt source (with `OnReti()`); also the trigger for #59 | S1 | the Sprinter waits |
 | #13a IDE (rollout 1) | R1-1 disk core (S3b), R1-7 ATAPI (S7) | S3b, S7 | ACC-3 and ACC-6 do not need IDE |
 | #58 media manager | M1 `HostFolderFat` (+ the `BootProfile` hook), M2 floppy slots, M6 IDE slots | S4 | image files through the existing `disk` path and the IDE config keys |

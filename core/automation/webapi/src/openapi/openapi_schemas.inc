@@ -483,10 +483,12 @@
     schemas["TTDStatusResponse"]["properties"]["session_heap_bytes"]["format"] = "uint64";
     schemas["TTDStatusResponse"]["properties"]["session_heap_bytes"]["description"] =
             "Real heap footprint of the recorded session in bytes. Sums every "
-            "allocation the session owns: page store backing vector, "
-            "per-checkpoint metadata (CPU/chipset snapshot + page-ref vector + "
-            "peripheral blobs), input journal, external-event journal, and "
-            "session-scope dirty-page scratch. This is the number to display "
+            "allocation the session owns: page store (slot table and every "
+            "compressed page payload), per-checkpoint metadata (CPU/chipset "
+            "snapshot + page-ref vector + peripheral blobs), input journal, "
+            "external-event journal, dirty-page scratch, the write journal's "
+            "committed ring chunks, the coverage index and the decoded-frame "
+            "cache. This is the number to display "
             "for 'session size' — distinct from page_store_bytes (just the "
             "page-store vector) and page_store_used_bytes (live slots only, "
             "always ~100% of capacity because the COW store auto-grows).";

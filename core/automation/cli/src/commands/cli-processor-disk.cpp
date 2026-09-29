@@ -208,21 +208,12 @@ void CLIProcessor::HandleDiskEject(const ClientSession& session, std::shared_ptr
         return;
     }
 
-    // Thread-safe: Pause emulator if running
-    bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
-    if (wasRunning)
+    // The media manager frees the disk; unsaved writes are dropped as before
+    std::string error;
+    if (!emulator->EjectDisk(drive, /*force*/ true, &error))
     {
-        emulator->Pause();
-        sleep_ms(10);  // Give emulator time to pause
-    }
-
-    // Eject disk and clear filepath
-    context->coreState.diskDrives[drive]->ejectDisk();
-    context->coreState.diskFilePaths[drive].clear();
-
-    if (wasRunning)
-    {
-        emulator->Resume();
+        session.SendResponse(std::string("Error: ") + error + NEWLINE);
+        return;
     }
 
     session.SendResponse(std::string("Disk ejected from drive ") + static_cast<char>('A' + drive) + NEWLINE);

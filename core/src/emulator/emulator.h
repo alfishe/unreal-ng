@@ -56,6 +56,9 @@ inline const char* getEmulatorStateName(EmulatorStateEnum value)
 
 /// endregion </Types>
 
+class FloppyDriveSlots;
+class TapeSlot;
+
 class Emulator
 {
     /// region <ModuleLogger definitions for Module/Submodule>
@@ -95,6 +98,8 @@ protected:
 
     Config* _config = nullptr;
     Core* _core = nullptr;
+    FloppyDriveSlots* _floppySlots = nullptr;  // fdd.a-d registered with the media manager while the drives exist
+    TapeSlot* _tapeSlot = nullptr;             // "tape", registered while the deck exists
     Z80* _z80 = nullptr;
     Memory* _memory = nullptr;
     MainLoop* _mainloop = nullptr;
@@ -265,7 +270,13 @@ public:
     // File format operations
     bool LoadSnapshot(const std::string& path);
     bool SaveSnapshot(const std::string& path);
-    bool LoadTape(const std::string& path);
+    /// A tape file (any TapeLoaderRegistry format) or a folder into the tape
+    /// slot, at once; the deck stops and plays the new tape from its start
+    bool LoadTape(const std::string& path, std::string* error = nullptr);
+    /// The tape out of the deck. Refused while a TTD recording runs
+    bool EjectTape(std::string* error = nullptr);
+    /// `ext` (no dot, any case) is a format a tape loader reads
+    static bool IsTapeExtension(const std::string& ext);
     /// @param drive Target floppy drive, 0-3 (A-D). Must name a drive this machine actually has;
     ///               anything else is a hard failure (see `error`), never a silent fallback to A.
     /// @param error When non-null and the call fails, receives a human-readable reason
@@ -275,6 +286,13 @@ public:
     ///               limitation of this method; every other caller (WebAPI, CLI, MCP, Lua, Python)
     ///               must pass the drive the caller actually asked for.
     bool LoadDisk(const std::string& path, uint8_t drive = 0, std::string* error = nullptr);
+
+    /// Take the disk out of `drive` (0-3, A-D) and free it; the other drives are untouched.
+    /// @param force Eject even when the disk has unsaved writes (they are lost); without it a
+    ///              dirty disk stays in and `error` says so
+    /// @param error When non-null and the call fails, receives a human-readable reason
+    /// An empty drive is not an error. Like LoadDisk, it is refused while a TTD recording runs
+    bool EjectDisk(uint8_t drive, bool force = false, std::string* error = nullptr);
 
     /// Layout of a blank disk from CreateBlankDisk()
     enum class BlankDiskFormat
@@ -329,8 +347,9 @@ public:
     };
 
     /// Save the disk image in drive `drive` (0..3).
-    /// @param path   Target file; empty = the image's own file path. The extension selects the format
-    ///               (trd, scl, fdi, udi; anything else = trd).
+    /// @param path   Target file; empty = the image's own file path (a disk from a folder, a Hobeta file or a
+    ///               blank disk has none). The extension selects the format (trd, scl, fdi, udi, dsk, td0,
+    ///               mgt / img, hfe, scp; anything else = trd); the disk then stands for that file.
     /// @param allowRetarget  When the selected format refuses the image (TRD / SCL hold only 16 x 256-byte
     ///               TR-DOS tracks, FDI drops FM / non-nominal tracks with a warning but does not refuse),
     ///               save losslessly to `<path without extension>.udi` instead, keep the original file untouched

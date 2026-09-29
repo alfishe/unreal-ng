@@ -131,7 +131,11 @@ types:
           most 63 chars). Bit 4 = the write journal holds every write
           of the session (journaling never paused, the ring never
           overwrote a record): only then may a reader answer write/port
-          reverse queries from it instead of replaying.
+          reverse queries from it instead of replaying. Bit 5 = every
+          in-frame position (tInFrame, journal globalT) counts T-states at
+          the model's top CPU clock (B4); without it a model with a hardware
+          turbo is refused, because its positions counted at the clock
+          running then and repeat after a mid-frame switch down.
 
           The flag-gated trailing sections (write journal, coverage index,
           bookmarks) are not yet modeled in this schema's top-level seq;
@@ -472,8 +476,9 @@ types:
           PeripheralId enum value (see ttdserializable.h): 0 TurboSound, 1 BetaDisk,
           2 Tape, 3 Covox, 4 TSFM, 5 GeneralSound, 6 ScorpionProfROM, 7 KempstonMouse,
           8 AtmPaging, 9 ProfiPaging (Profi 1024: pDFFD latch + 16-entry palette),
-          10 MoonSound, 11 GeneralSoundLightweight, 12 NeoGS (reserved),
-          13 Plus3Paging, 14 Upd765 (+3 floppy controller).
+          10 MoonSound, 11 GeneralSoundLightweight, 12 NeoGS (card state; RAM and flash in the blob until v2 regions),
+          13 Plus3Paging, 14 Upd765 (+3 floppy controller),
+          15 EvoSdCard (ZX-Evo Z-Controller + SD card protocol state).
       - id: state
         type: peripheral_blob
 

@@ -137,8 +137,8 @@ open <file>             # Auto-detect and load file
 snapshot save <file>    # Save snapshot (.sna/.z80)
 snapshot info           # Current snapshot status
 # Tape transport (see command-interface.md §10 for the full tables)
-tape load <file>        # Load tape image (.tap/.tzx/.csw)
-tape eject              # Eject: stop playback, drop image and catalog
+tape load <file>        # Load a tape (.tap/.tzx/.spc/.sta/.ltp/.zxt) or a folder built into a tape
+tape eject              # Eject: the tape leaves the tape slot (refused while TTD records)
 tape play               # Start at cursor; resume in place when paused
 tape pause              # Freeze mid-block; next play resumes there
 tape stop               # Terminal stop (invalidates the image)
@@ -154,7 +154,14 @@ tape import <snd> [--target auto|tzx|tap] [--hysteresis X] -o out.tzx|out.tap
 
 disk insert/eject       # Disk control
 disk catalog            # List TR-DOS directory
+
+# Every slot (floppy drives, SD card, ...): see media.md
+media list              # Slots, media, dirty state
+media insert <slot|auto> <path>   # A file or a folder (A, B, sd, fdd.b, ...)
+media swap <slot> <path> --save   # Eject + insert; a dirty disk needs --save/--export/--discard
 ```
+
+Full media reference (all surfaces): [media.md](media.md).
 
 #### Disk Operations
 ```
@@ -327,7 +334,7 @@ Full parity with the CLI `tape` commands, the Lua `tape_*` functions and the Pyt
 | Method | Endpoint | Description |
 |:-------|:---------|:------------|
 | POST | `/api/v1/emulator/{id}/tape/load` | Load tape image (body `path`) |
-| POST | `/api/v1/emulator/{id}/tape/eject` | Eject: drop image and catalog |
+| POST | `/api/v1/emulator/{id}/tape/eject` | Eject: the tape leaves the tape slot (409 while TTD records) |
 | POST | `/api/v1/emulator/{id}/tape/play` | Start / resume in place |
 | POST | `/api/v1/emulator/{id}/tape/pause` | Freeze mid-block |
 | POST | `/api/v1/emulator/{id}/tape/stop` | Terminal stop |
@@ -670,6 +677,6 @@ clients — see [MCP Server](mcp/README.md) and its
 ---
 
 ## See Also
-- [Debugging](debugging.md) - Breakpoint details
+- [Breakpoints & Watchpoints](../emulator/design/control-interfaces/command-interface.md#4-breakpoints--watchpoints) - Breakpoint details
 - [ECI Command Surface](../emulator/design/control-interfaces/) - Full specification
 - [MCP Server](mcp/README.md) - LLM-native smart tools over Streamable HTTP + stdio bridge

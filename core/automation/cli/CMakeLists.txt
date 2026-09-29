@@ -23,6 +23,7 @@ set(SOURCES
     src/commands/cli-processor-settings.cpp
     src/commands/cli-processor-tape.cpp
     src/commands/cli-processor-disk.cpp
+    src/commands/cli-processor-media.cpp
     src/commands/cli-processor-snapshot.cpp
     src/commands/cli-processor-state.cpp
     src/commands/cli-processor-gs.cpp

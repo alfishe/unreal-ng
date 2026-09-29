@@ -172,8 +172,13 @@
     paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["description"] =
         "General Sound card (dedicated 12 MHz Z80 coprocessor + 4 x 8-bit DAC, requires [SOUND] GSType=Z80): "
         "mailbox status with decoded flags, host command/data bytes, MPAG banking latch, per-channel DAC sample "
-        "and 6-bit volume, firmware/RAM fitment and the coprocessor PC/SP/AF/halted state. 404 when the machine "
-        "has no GS card fitted.";
+        "and 6-bit volume, firmware/RAM fitment and the coprocessor PC/SP/AF/halted state. On NeoGS a 'neogs' "
+        "object adds the card's registers, SD card, MP3 decoder and DMA modules; 'neogs.dma.zx' is the host's "
+        "view of ZX-DMA: mode (off | watch | divert), overlay_installed, read_latch (the byte the next host read "
+        "gets), pending (none | read | write) and pending_address, bytes_read / bytes_written / bytes_dropped, "
+        "wait_tstates, late_starts and late_start_ticks (starts no watch window saw, in 120 MHz card ticks), "
+        "watch_setting (selected | always), watch_frames and watch_frames_left (-1: closed). 404 when the "
+        "machine has no GS card fitted.";
     paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/state/audio/gs"]["get"]["parameters"][0]["required"] = true;
@@ -188,10 +193,16 @@
         "Drive the GS card the way ZX software does (each action flushes the coprocessor to the current ZX tact "
         "first): reset (full power-on), reset_card (#33 bit7 - CPU/banking/timing, mailbox survives), nmi (#33 "
         "bit6), send_command (OUT #BB), send_data (OUT #B3), read_status (IN #BB, returns the value), read_data "
-        "(IN #B3, clears the data-pending flag and returns the value), switch_personality (runtime LLE <-> "
-        "lightweight card swap - the host mailbox and activity counters survive the handoff; applied at the "
-        "next frame boundary), dump_module (writes the last completed COM30..D2 module upload to a file - "
-        "'path' optional, defaults to 'gs-module-dump.mod'; 404 when no upload has completed yet).";
+        "(IN #B3, clears the data-pending flag and returns the value), switch_personality (runtime swap of the "
+        "GS-slot card: classic GS, lightweight player or NeoGS - the host mailbox and activity counters survive "
+        "the handoff and an uploaded module is replayed; applied at the next frame boundary), dump_module "
+        "(writes the last completed COM30..D2 module upload to a file - 'path' optional, defaults to "
+        "'gs-module-dump.mod'; 404 when no upload has completed yet). NeoGS only (409 otherwise): sd_insert "
+        "(needs 'path' to a raw SD image), sd_eject, flash_save (saves the reprogrammed flash); carried out on the "
+        "machine thread at the next instruction boundary ('status': 'queued' while the emulator runs, 'done' "
+        "otherwise); sd_insert/sd_eject are refused while TTD records (the configuration is fixed for a recording). "
+        "stereo_mode ('mode': separated | gs | mono) sets how the NeoGS DAC channels reach the two sides: separated as on "
+        "the board, gs a 50% cross-feed like the classic GS, mono; kept by the emulator and applied at the next frame.";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["required"] = true;
@@ -225,6 +236,24 @@
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
                                                                ["properties"]["personality"]["enum"].append("lw");
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["personality"]["enum"].append("ngs");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["action"]["enum"].append("sd_insert");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["action"]["enum"].append("sd_eject");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["action"]["enum"].append("flash_save");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["action"]["enum"].append("stereo_mode");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["mode"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["mode"]["enum"].append("separated");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["mode"]["enum"].append("gs");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["mode"]["enum"].append("mono");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
                                                                ["properties"]["action"]["enum"].append("dump_module");
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
                                                                ["properties"]["path"]["type"] = "string";
@@ -235,6 +264,12 @@
         "Unknown action, invalid value or unknown personality";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["404"]["description"] =
         "Emulator or GS card not found, or (dump_module) no completed module upload captured yet";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["409"]["description"] =
+        "sd_insert / sd_eject / flash_save on a card that is not NeoGS, sd_insert / sd_eject while TTD records, "
+        "switch_personality while a TTD recording runs (the message says why: stop the recording first), "
+        "or any of them while a TTD replay owns the machine";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["422"]["description"] =
+        "sd_insert: the image cannot be opened; flash_save: the flash could not be saved";
 
     paths["/api/v1/emulator/{id}/state/audio/covox"]["get"]["summary"] = "Get Covox state";
     paths["/api/v1/emulator/{id}/state/audio/covox"]["get"]["tags"].append("Audio State");

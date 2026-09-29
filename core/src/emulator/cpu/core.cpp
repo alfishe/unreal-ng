@@ -245,6 +245,14 @@ bool Core::Init()
     {
         _upd765 = new UPD765(_context);
         _context->pUPD765 = _upd765;
+
+        // The +3's 3" drives are 40-track mechanics (48 tpi): a +3 disk's
+        // cylinder n is head position n, and the head stops at cylinder 42
+        for (FDD* drive : {_context->coreState.diskDrives[0], _context->coreState.diskDrives[1]})
+        {
+            if (drive)
+                drive->setDriveCylinders(40);
+        }
     }
 
     /// endregion </+3 floppy controller>
@@ -408,6 +416,7 @@ bool Core::Init()
             if (_portDecoder)
             {
                 _context->pPortDecoder = _portDecoder;
+                _state->ttd_clock_units = _portDecoder->TtdClockUnits();
 
                 // Prime the porttrace feature cache: the decoder is created after
                 // FeatureManager loaded features.ini, so a persisted porttrace=on
@@ -593,20 +602,55 @@ void Core::Release()
 /// endregion </Initialization>
 
 // Configuration methods
+/// Three independent inputs (core.h): debug, contention in effect, the host
+/// bus overlay. With neither contention nor an overlay the plain FastMemIf /
+/// DbgMemIf are selected - the very same interfaces as before either
+/// existed. Order matters for the overlay functions, which read Memory's
+/// overlay pointer without a lock: it is set before an overlay interface is
+/// selected, and cleared only after a plain one is.
 void Core::SelectMemoryInterface()
 {
     if (!_z80)
         return;
 
+    std::lock_guard<std::mutex> lock(_memIfMutex);
+    const bool debug = _z80->isDebugMode;
     const bool contended = IsContentionEffective();
-    if (_z80->isDebugMode)
-        _z80->MemIf = contended ? _z80->DbgContendedMemIf : _z80->DbgMemIf;
+    if (_busOverlay)
+    {
+        _memory->SetBusOverlay(_busOverlay);
+        if (debug)
+            _z80->MemIf = contended ? _z80->OverlayDbgContendedMemIf : _z80->OverlayDbgMemIf;
+        else
+            _z80->MemIf = contended ? _z80->OverlayFastContendedMemIf : _z80->OverlayFastMemIf;
+    }
     else
-        _z80->MemIf = contended ? _z80->FastContendedMemIf : _z80->FastMemIf;
+    {
+        if (debug)
+            _z80->MemIf = contended ? _z80->DbgContendedMemIf : _z80->DbgMemIf;
+        else
+            _z80->MemIf = contended ? _z80->FastContendedMemIf : _z80->FastMemIf;
+        _memory->SetBusOverlay(nullptr);
+    }
 
     // The +2A/+3 gate array contends memory cycles only
     _z80->ioContention = (contended && !_ulaContention->IsGateArray()) ? _ulaContention : nullptr;
     _z80->idleContention = _z80->ioContention;  // the ULA contends internal cycles too, the gate array does not
+}
+
+bool Core::SetBusOverlay(HostBusOverlay* overlay)
+{
+    {
+        std::lock_guard<std::mutex> lock(_memIfMutex);
+        if (overlay && _busOverlay && overlay != _busOverlay)
+        {
+            MLOGERROR("Core::SetBusOverlay - another host bus overlay is installed; refused");
+            return false;
+        }
+        _busOverlay = overlay;
+    }
+    SelectMemoryInterface();
+    return true;
 }
 
 bool Core::IsContentionEffective() const
@@ -623,11 +667,20 @@ const char* Core::GetMemoryInterfaceName() const
 {
     if (!_z80)
         return "none";
-    if (_z80->MemIf == _z80->DbgContendedMemIf)
+    const MemoryInterface* m = _z80->MemIf;
+    if (m == _z80->OverlayDbgContendedMemIf)
+        return "debug_contended_overlay";
+    if (m == _z80->OverlayFastContendedMemIf)
+        return "fast_contended_overlay";
+    if (m == _z80->OverlayDbgMemIf)
+        return "debug_overlay";
+    if (m == _z80->OverlayFastMemIf)
+        return "fast_overlay";
+    if (m == _z80->DbgContendedMemIf)
         return "debug_contended";
-    if (_z80->MemIf == _z80->FastContendedMemIf)
+    if (m == _z80->FastContendedMemIf)
         return "fast_contended";
-    if (_z80->MemIf == _z80->DbgMemIf)
+    if (m == _z80->DbgMemIf)
         return "debug";
     return "fast";
 }
@@ -838,7 +891,8 @@ bool Core::IsTurboMode() const
 
 void Core::CPUFrameCycle()
 {
-    // Debug (instrumented) or fast memory access, contended or not - see SelectMemoryInterface
+    // Debug (instrumented) or fast memory access, contended or not, with the
+    // bus overlay or not - see SelectMemoryInterface
     SelectMemoryInterface();
     if (_z80->isDebugMode && _ulaContention)
         _ulaContention->OnFrameStart();  // contention statistics are per frame (debugger only)

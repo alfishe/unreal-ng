@@ -1207,12 +1207,11 @@ void EmulatorAPI::findLastTTD(const HttpRequestPtr& req,
 
     if (emulator)
     {
-        const uint32_t frameT = emulator->GetContext()->config.frame;
         if (json->isMember("before_frame"))
         {
             uint64_t f = (*json)["before_frame"].asUInt64();
             uint32_t tin = json->isMember("before_tin") ? (*json)["before_tin"].asUInt() : 0;
-            q.beforeGlobalT = f * frameT + tin;
+            q.beforeGlobalT = mgr->GlobalT({f, tin});
         }
     }
 

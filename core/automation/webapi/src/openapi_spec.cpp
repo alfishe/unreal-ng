@@ -7,6 +7,8 @@
 
 #include "emulator_api.h"
 
+#include <emulator/media/mediacontrol.h>
+
 using namespace drogon;
 using namespace api::v1;
 
@@ -70,6 +72,10 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     tagDiskCtrl["name"] = "Disk Control";
     tagDiskCtrl["description"] = "Disk image management";
     tags.append(tagDiskCtrl);
+    Json::Value tagMedia;
+    tagMedia["name"] = "Media";
+    tagMedia["description"] = "Every media slot of the machine: insert, eject, swap, save, export (media-control-design.md)";
+    tags.append(tagMedia);
     Json::Value tagDiskInsp;
     tagDiskInsp["name"] = "Disk Inspection";
     tagDiskInsp["description"] = "Low-level disk data inspection";
@@ -149,6 +155,7 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
 #include "openapi/openapi_interpreter.inc"
 #include "openapi/openapi_lifecycle.inc"
 #include "openapi/openapi_tape_disk.inc"
+#include "openapi/openapi_media.inc"
 #include "openapi/openapi_snapshot.inc"
 #include "openapi/openapi_capture.inc"
 #include "openapi/openapi_basic.inc"
@@ -157,6 +164,7 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
 #include "openapi/openapi_settings.inc"
 #include "openapi/openapi_features.inc"
 #include "openapi/openapi_state.inc"
+#include "openapi/openapi_gsporttrace.inc"
 #include "openapi/openapi_ports.inc"
 #include "openapi/openapi_analyzers.inc"
 #include "openapi/openapi_analysis.inc"
@@ -175,6 +183,7 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     Json::Value schemas;
 
 #include "openapi/openapi_schemas.inc"
+#include "openapi/openapi_media_schemas.inc"
 
     spec["components"]["schemas"] = schemas;
 

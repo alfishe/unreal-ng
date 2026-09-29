@@ -1,5 +1,5 @@
 /// @file config_test.cpp
-/// @brief [SOUND] TurboSound / TSFM_FmTrimDb / DecimatorQuality / AYVoicing parsing
+/// @brief [SOUND] TurboSound / TSFM_FmTrimDb / DecimatorQuality / AYVoicing and [NGS] parsing
 /// (TSFM design §3.1, plan P3; AY tone voicing design §5.1).
 ///
 /// The key selects which device occupies the TurboSound slot (legacy two-AY
@@ -20,6 +20,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
+#include "emulator/sound/soundmanager.h"
 
 class Config_Test : public ::testing::Test
 {
@@ -200,23 +201,127 @@ TEST_F(Config_Test, ShippedConfigsProduceExpectedTurboSoundKind)
     }
 }
 
-/// region <[ZC] SDWrite (Z-Controller SD card write mode)>
+/// region <[NGS] (NeoGS card)>
 
-TEST(ConfigZcSdWrite_Test, ParsesModesCaseInsensitive)
+TEST_F(Config_Test, ShippedConfigsCarryTheFullNeoGSSection)
 {
-    EXPECT_EQ(Config::ParseSdWriteMode("session"), 0);
-    EXPECT_EQ(Config::ParseSdWriteMode("Persist"), 1);
-    EXPECT_EQ(Config::ParseSdWriteMode("OFF"), 2);
+    // Every shipped ini lists each [NGS] key with its documented value
+    // (neogs-tdd.md §6). Parsing them all catches a comment that breaks a
+    // value (a second ';' survives IniFile's inline-comment strip) - such a
+    // key would fall back silently or warn
+    for (const auto& entry : fs::directory_iterator(TestPathHelper::FindProjectRoot() / "data" / "configs"))
+    {
+        const fs::path ini = entry.path() / "unreal.ini";
+        if (!fs::exists(ini))
+            continue;
+        Config config(_context);
+        ASSERT_TRUE(config.LoadConfigFile(ini.string())) << ini;
+        const NeoGSConfig& ngs = _context->config.ngs;
+        const std::string name = entry.path().filename().string();
+        EXPECT_STREQ(ngs.flashPath, "rom/neogs/full_ngs.rom") << name;
+        EXPECT_EQ(ngs.flashId, NeoGSConfig::FlashId::ST) << name;
+        EXPECT_EQ(ngs.fpga, NeoGSConfig::Fpga::Current) << name;
+        EXPECT_EQ(ngs.ramKB, 2048u) << name;
+        EXPECT_EQ(ngs.boot, NeoGSConfig::Boot::Loader) << name;
+        EXPECT_EQ(ngs.bootDelayMs, 0u) << name;
+        EXPECT_STREQ(ngs.sdCardPath, "") << name;
+        EXPECT_EQ(ngs.sdType, NeoGSConfig::SDType::Auto) << name;
+        EXPECT_FALSE(ngs.sdWriteProtect) << name;
+        EXPECT_EQ(ngs.sdWrite, NeoGSConfig::WriteMode::Session) << name;
+        EXPECT_EQ(ngs.mp3Support, NGSMP3SupportKind::Software) << name;
+        EXPECT_EQ(ngs.mp3Chip, NeoGSConfig::Mp3Chip::VS1001) << name;
+        EXPECT_DOUBLE_EQ(ngs.mp3Gain, 1.0) << name;
+        EXPECT_EQ(ngs.flashWrite, NeoGSConfig::WriteMode::Session) << name;
+        EXPECT_EQ(ngs.volume, 8000u) << name;
+        EXPECT_EQ(ngs.zxDmaWatch, NeoGSConfig::ZxDmaWatch::Selected) << name;
+        EXPECT_EQ(ngs.zxDmaWatchFrames, 5u) << name;
+        EXPECT_EQ(ngs.stereoMode, NeoGSConfig::StereoMode::Separated) << name;
+    }
 }
 
-TEST(ConfigZcSdWrite_Test, MissingOrUnknownMeansSession)
+TEST_F(Config_Test, NeoGSMp3DecoderDefaultsToSoftware)
 {
-    EXPECT_EQ(Config::ParseSdWriteMode(nullptr), 0);
-    EXPECT_EQ(Config::ParseSdWriteMode(""), 0);
-    EXPECT_EQ(Config::ParseSdWriteMode("always"), 0);
+    // A config without an [NGS] section: the card decodes and plays MP3
+    ASSERT_TRUE(LoadSoundKeys("GSType=NGS\n"));
+    EXPECT_EQ(_context->config.ngs.mp3Support, NGSMP3SupportKind::Software);
+    ASSERT_TRUE(LoadSoundKeys("GSType=NGS\n[NGS]\nMP3Support=stub\n"));
+    EXPECT_EQ(_context->config.ngs.mp3Support, NGSMP3SupportKind::Stub);
+    EXPECT_EQ(_context->config.ngs.stereoMode, NeoGSConfig::StereoMode::Separated) << "the default: as on the board";
+    ASSERT_TRUE(LoadSoundKeys("GSType=NGS\n[NGS]\nStereoMode=gs\n"));
+    EXPECT_EQ(_context->config.ngs.stereoMode, NeoGSConfig::StereoMode::GS);
+    ASSERT_TRUE(LoadSoundKeys("GSType=NGS\n[NGS]\nStereoMode=mono\n"));
+    EXPECT_EQ(_context->config.ngs.stereoMode, NeoGSConfig::StereoMode::Mono);
 }
 
-/// endregion </[ZC] SDWrite>
+TEST_F(Config_Test, ShippedConfigsFitNeoGS)
+{
+    // Every shipped model fits the NeoGS card (the runner leaves GS out
+    // unless a scope keeps it)
+    SoundCardScope gs(TestSound::GeneralSound);
+    size_t checked = 0;
+    for (const auto& entry : fs::directory_iterator(TestPathHelper::FindProjectRoot() / "data" / "configs"))
+    {
+        const fs::path ini = entry.path() / "unreal.ini";
+        if (!fs::exists(ini))
+            continue;
+        Config config(_context);
+        ASSERT_TRUE(config.LoadConfigFile(ini.string())) << ini;
+        EXPECT_EQ(_context->config.sound.gsTypeKind, GSTypeKind::NGS) << entry.path().filename();
+        checked++;
+    }
+    EXPECT_GE(checked, 14u);
+}
+
+TEST_F(Config_Test, EveryShippedConfigFitsNeoGSWithGSTypeNGS)
+{
+    // Each shipped config with only its GSType value changed to NGS: the
+    // parsed config selects NeoGS, and a SoundManager built from it fits the
+    // card under the mixer name "NeoGS" with its MP3 source
+    SoundCardScope gs(TestSound::GeneralSound);
+    for (const auto& entry : fs::directory_iterator(TestPathHelper::FindProjectRoot() / "data" / "configs"))
+    {
+        const fs::path ini = entry.path() / "unreal.ini";
+        if (!fs::exists(ini))
+            continue;
+        const std::string name = entry.path().filename().string();
+
+        std::ifstream in(ini, std::ios::binary);
+        std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        const size_t key = text.find("\nGSType=");
+        ASSERT_NE(key, std::string::npos) << name;
+        const size_t value = key + strlen("\nGSType=");
+        const size_t valueEnd = text.find_first_of(" \t;\r\n", value);
+        text.replace(value, valueEnd - value, "NGS");
+
+        // Written next to the original so relative paths resolve the same way
+        const fs::path copy = entry.path() / "unreal-ngs-test.ini";
+        {
+            std::ofstream out(copy, std::ios::binary);
+            out << text;
+        }
+        Config config(_context);
+        const bool loaded = config.LoadConfigFile(copy.string());
+        fs::remove(copy);
+        ASSERT_TRUE(loaded) << name;
+        EXPECT_EQ(_context->config.sound.gsTypeKind, GSTypeKind::NGS) << name;
+        EXPECT_EQ(_context->config.ngs.mp3Support, NGSMP3SupportKind::Software) << name;
+
+        SoundManager sm(_context);
+        EXPECT_EQ(sm.fittedGeneralSoundKind(), GSTypeKind::NGS) << name;
+        std::string gsName;
+        bool mp3 = false;
+        for (const AudioDeviceInfo& d : sm.devices())
+        {
+            if (d.type == AudioSourceType::GeneralSound)
+                gsName = d.name;
+            mp3 |= d.type == AudioSourceType::GeneralSoundMp3;
+        }
+        EXPECT_EQ(gsName, "NeoGS") << name;
+        EXPECT_TRUE(mp3) << name;
+    }
+}
+
+/// endregion </[NGS] (NeoGS card)>
 
 /// region <[EVO] Fpga (ZX-Evo BaseConf FPGA variant)>
 

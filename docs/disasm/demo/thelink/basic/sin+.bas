@@ -1,0 +1,4 @@
+10 FOR n=0 TO 255
+20 LET a=(n+.5)/256*2* PI
+30 POKE 32768+n,127* SIN a
+40 NEXT n

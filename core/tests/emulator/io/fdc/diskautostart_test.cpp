@@ -266,7 +266,7 @@ TEST_F(DiskAutostart_Boot_Test, ExistingBoot_RunsThroughRom)
     ASSERT_TRUE(result.mounted);
     ASSERT_TRUE(result.started) << result.message;
 
-    DiskImage* image = _context->coreState.diskImages[0];
+    DiskImage* image = _context->coreState.diskDrives[0]->getDiskImage();
     TrdosCatalog catalog;
     ASSERT_TRUE(catalog.Parse(*image));
     std::vector<uint8_t> head = FileHead(*image, *catalog.FindBoot(), 8);
@@ -281,7 +281,7 @@ TEST_F(DiskAutostart_Boot_Test, SingleBasic_RunsByName_DiskUntouched)
     ASSERT_TRUE(result.mounted);
     ASSERT_TRUE(result.started) << result.message;
 
-    DiskImage* image = _context->coreState.diskImages[0];
+    DiskImage* image = _context->coreState.diskDrives[0]->getDiskImage();
     TrdosCatalog catalog;
     ASSERT_TRUE(catalog.Parse(*image));
     EXPECT_EQ(catalog.FindBoot(), nullptr) << "Named autostart must not inject anything";
@@ -300,7 +300,7 @@ TEST_F(DiskAutostart_Boot_Test, ManyBasic_InjectedCommanderRuns)
     ASSERT_NE(prepared, nullptr);
     // Work on the mounted image: mount first, then delete boot in place and mark clean
     ASSERT_TRUE(_emulator->LoadDisk(TrdPath("zx-format8.trd")));
-    DiskImage* image = _context->coreState.diskImages[0];
+    DiskImage* image = _context->coreState.diskDrives[0]->getDiskImage();
     TrdosCatalog before;
     ASSERT_TRUE(before.Parse(*image));
     uint8_t dir[256];
@@ -347,7 +347,7 @@ TEST_F(DiskAutostart_Boot_Test, SingleBasic_WithoutHook_DoesNotLoad)
     ASSERT_TRUE(result.started);
     _context->pDiskAutostart->Disarm();
 
-    DiskImage* image = _context->coreState.diskImages[0];
+    DiskImage* image = _context->coreState.diskDrives[0]->getDiskImage();
     TrdosCatalog catalog;
     ASSERT_TRUE(catalog.Parse(*image));
     std::vector<uint8_t> head = FileHead(*image, *catalog.BasicFiles()[0], 8);
@@ -377,7 +377,7 @@ TEST_P(DiskAutostart_Models_Test, ExistingBootRuns)
     auto result = emulator->AutostartDisk(TestPathHelper::GetTestDataPath("loaders/trd/atarin.trd"));
     ASSERT_TRUE(result.started) << result.message;
 
-    DiskImage* image = context->coreState.diskImages[0];
+    DiskImage* image = context->coreState.diskDrives[0]->getDiskImage();
     TrdosCatalog catalog;
     ASSERT_TRUE(catalog.Parse(*image));
     uint8_t* data = image->getTrack(catalog.FindBoot()->firstTrack)->getDataForSector(catalog.FindBoot()->firstSector);

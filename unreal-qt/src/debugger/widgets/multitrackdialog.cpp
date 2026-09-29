@@ -121,6 +121,7 @@ QString MultiTrackDialog::sourceToString(AudioSourceType source)
         case AudioSourceType::AY3_All:         return "AY-3 (All)";
         case AudioSourceType::COVOX:           return "COVOX/DAC";
         case AudioSourceType::GeneralSound:    return "General Sound";
+        case AudioSourceType::GeneralSoundMp3: return "NeoGS MP3";
         case AudioSourceType::Moonsound_FM:    return "MoonSound FM (OPL3)";
         case AudioSourceType::Moonsound_PCM:   return "MoonSound PCM (wave)";
         case AudioSourceType::AY1_ChannelA:    return "AY-1 Ch.A";
@@ -148,6 +149,7 @@ AudioSourceType MultiTrackDialog::stringToSource(const QString& str)
     if (str == "AY-3 (All)") return AudioSourceType::AY3_All;
     if (str == "COVOX/DAC") return AudioSourceType::COVOX;
     if (str == "General Sound") return AudioSourceType::GeneralSound;
+    if (str == "NeoGS MP3") return AudioSourceType::GeneralSoundMp3;
     if (str == "MoonSound FM (OPL3)") return AudioSourceType::Moonsound_FM;
     if (str == "MoonSound PCM (wave)") return AudioSourceType::Moonsound_PCM;
     if (str == "AY-1 Ch.A") return AudioSourceType::AY1_ChannelA;

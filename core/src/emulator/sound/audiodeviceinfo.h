@@ -19,6 +19,7 @@ enum class AudioSourceType
     AY3_ChannelA, AY3_ChannelB, AY3_ChannelC,
     FM1,  // TSFM chip 0 FM-only buffer (design §7.2)
     FM2,  // TSFM chip 1 FM-only buffer
+    GeneralSoundMp3, // NeoGS MP3 decoder output (a separate analogue path on the board)
     Custom
 };
 

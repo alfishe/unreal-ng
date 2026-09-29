@@ -2,7 +2,7 @@
 //
 // Tools orchestrate existing WebAPI endpoints over the loopback IApiCaller:
 //   1. emulator_manage    — lifecycle: create/list/start/stop/pause/resume/reset/destroy
-//   2. load_software      — auto-detect .sna/.z80/.tap/.tzx/.trd/.scl/.fdi and load
+//   2. load_software      — auto-detect .sna/.z80, tapes (.tap/.tzx/...), .trd/.scl/.fdi and load
 //   3. control_execution  — stepping/running + breakpoint management
 //   4. inspect_state      — multi-aspect state inspection (registers/memory/disasm/...)
 //   5. type_input         — keyboard: type/tap/press/release/combo/macro
@@ -18,6 +18,7 @@
 
 #include "mcp-analysis.h"
 #include "mcp-media.h"
+#include "mcp-slots.h"
 #include "mcp-router.h"
 #include "mcp-symbols.h"
 #include "mcp-tool-utils.h"
@@ -98,7 +99,8 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"create", "list", "list_models", "server", "status", "zxpoly_status", "start", "stop", "pause", "resume", "reset", "destroy",
                                "gs_reset", "gs_reset_card", "gs_nmi", "gs_send_command", "gs_send_data", "gs_read_status", "gs_read_data",
-                               "gs_switch_personality", "gs_dump_module"})
+                               "gs_switch_personality", "gs_dump_module", "gs_sd_insert", "gs_sd_eject", "gs_flash_save",
+                               "gs_stereo_mode"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
@@ -114,8 +116,11 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "card over the same /control/audio/gs endpoint the WebAPI serves (gs_reset/gs_reset_card/gs_nmi/"
         "gs_send_command/gs_send_data/gs_read_status/gs_read_data; the byte actions need 'value'; writes, "
         "resets and NMI apply at the next instruction boundary, reads are side-effect-free peeks); "
-        "'gs_switch_personality' swaps the LLE/LW card at the next frame boundary (needs 'personality': "
-        "'z80'|'lle' or 'lw'|'lightweight'); 'gs_dump_module' writes the last completed COM30..D2 module "
+        "'gs_switch_personality' swaps the GS-slot card at the next frame boundary (needs 'personality': "
+        "'z80'|'lle', 'lw'|'lightweight' or 'ngs'|'neogs'); NeoGS only: 'gs_sd_insert' (needs 'path' to a raw "
+        "image), 'gs_sd_eject', 'gs_flash_save' (applied at the next instruction boundary; insert/eject are "
+        "refused while TTD records), 'gs_stereo_mode' (needs 'mode': 'separated' as on the board, 'gs' 50% "
+        "cross-feed like the classic GS, or 'mono'; applied at the next frame); 'gs_dump_module' writes the last completed COM30..D2 module "
         "upload to a file (optional 'path', defaults to 'gs-module-dump.mod').";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
@@ -138,11 +143,19 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["value"]["description"] = "Byte value (0-255) required by gs_send_command and gs_send_data";
     schema["properties"]["personality"]["type"] = "string";
     schema["properties"]["personality"]["description"] =
-        "Required by gs_switch_personality: 'z80'|'lle' for the Z80 coprocessor card, 'lw'|'lightweight' for the "
+        "Required by gs_switch_personality: 'z80'|'lle' for the Z80 coprocessor card, 'ngs'|'neogs' for NeoGS, 'lw'|'lightweight' for the "
         "in-tree mod-player card";
+    schema["properties"]["mode"]["type"] = "string";
+    schema["properties"]["mode"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* mode : {"separated", "gs", "mono"})
+        schema["properties"]["mode"]["enum"].append(mode);
+    schema["properties"]["mode"]["description"] =
+        "Required by gs_stereo_mode (NeoGS): how the DAC channels reach the two sides - 'separated' (as on the board), "
+        "'gs' (50% cross-feed like the classic GS) or 'mono'";
     schema["properties"]["path"]["type"] = "string";
     schema["properties"]["path"]["description"] =
-        "Optional file path for gs_dump_module (defaults to 'gs-module-dump.mod' in the server's working directory)";
+        "File path: optional for gs_dump_module (defaults to 'gs-module-dump.mod' in the server's working directory), "
+        "required for gs_sd_insert (the SD card image)";
     schema["required"].append("action");
 
     registry.Register(
@@ -150,7 +163,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "Manage Unreal-NG emulator instances: create, list, switch models, start/stop/pause/resume/reset/destroy. "
         "Multi-instance: target identifies the machine; 'auto' reuses the single instance or creates a default 128k one. "
         "Also drives the General Sound card (gs_reset/gs_reset_card/gs_nmi/gs_send_command/gs_send_data/"
-        "gs_read_status/gs_read_data/gs_switch_personality/gs_dump_module).",
+        "gs_read_status/gs_read_data/gs_switch_personality/gs_dump_module; NeoGS: gs_sd_insert/gs_sd_eject/gs_flash_save/gs_stereo_mode).",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             std::string action = args["action"].asString();
@@ -259,7 +272,8 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                 else if (action == "gs_reset" || action == "gs_reset_card" || action == "gs_nmi" ||
                          action == "gs_send_command" || action == "gs_send_data" ||
                          action == "gs_read_status" || action == "gs_read_data" ||
-                         action == "gs_switch_personality" || action == "gs_dump_module")
+                         action == "gs_switch_personality" || action == "gs_dump_module" || action == "gs_sd_insert" ||
+                         action == "gs_sd_eject" || action == "gs_flash_save" || action == "gs_stereo_mode")
                 {
                     // GS card control (GS design §11.3): forwards to the same
                     // /control/audio/gs endpoint the WebAPI serves - the "gs_"
@@ -279,14 +293,29 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                     {
                         if (!args.isMember("personality") || !args["personality"].isString())
                         {
-                            done(ToolResult::Error("Action '" + action + "' requires 'personality' (z80, lle, lw or lightweight)"));
+                            done(ToolResult::Error("Action '" + action + "' requires 'personality' (z80, lle, lw, lightweight, ngs or neogs)"));
                             return;
                         }
                         body["personality"] = args["personality"].asString();
                     }
-                    else if (action == "gs_dump_module" && args.isMember("path") && args["path"].isString())
+                    else if ((action == "gs_dump_module" || action == "gs_sd_insert") && args.isMember("path") &&
+                             args["path"].isString())
                     {
                         body["path"] = args["path"].asString();
+                    }
+                    else if (action == "gs_sd_insert")
+                    {
+                        done(ToolResult::Error("Action 'gs_sd_insert' requires 'path' (an SD card image)"));
+                        return;
+                    }
+                    else if (action == "gs_stereo_mode")
+                    {
+                        if (!args.isMember("mode") || !args["mode"].isString())
+                        {
+                            done(ToolResult::Error("Action 'gs_stereo_mode' requires 'mode' (separated, gs or mono)"));
+                            return;
+                        }
+                        body["mode"] = args["mode"].asString();
                     }
                     caller.Call("POST", Endpoint(id, "/control/audio/gs"), &body, [action, done](int status, Json::Value response) {
                         if (status >= 200 && status < 300)
@@ -402,7 +431,7 @@ void RegisterLoadSoftware(ToolRegistry& registry)
 
     registry.Register(
         "load_software",
-        "Load software into the emulator by auto-detecting the file type: snapshots (.sna .z80), tapes (.tap .tzx), "
+        "Load software into the emulator by auto-detecting the file type: snapshots (.sna .z80), tapes (.tap .tzx .spc .sta .ltp .zxt), "
         "disk images (.trd .scl .fdi .udi .dsk .td0 .mgt .img). The machine must be created first (target:'auto' "
         "handles that). If the path exists locally on the MCP host, the file is uploaded to the emulator "
         "automatically; otherwise, the path is passed to the emulator for direct loading.",
@@ -420,7 +449,7 @@ void RegisterLoadSoftware(ToolRegistry& registry)
             if (dot == std::string::npos || dot + 1 >= path.size())
             {
                 done(ToolResult::Error("Cannot determine file type of '" + path +
-                                            "'. Supported: .sna .z80 (snapshot), .tap .tzx (tape), "
+                                            "'. Supported: .sna .z80 (snapshot), .tap .tzx .spc .sta .ltp .zxt (tape), "
                                             ".trd .scl .fdi .udi .dsk .td0 .mgt .img (disk)"));
                 return;
             }
@@ -428,13 +457,14 @@ void RegisterLoadSoftware(ToolRegistry& registry)
             std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
             bool isSnapshot = ext == "sna" || ext == "z80";
-            bool isTape = ext == "tap" || ext == "tzx";
+            const auto& tapeExtensions = TapeExtensions();
+            bool isTape = std::find(tapeExtensions.begin(), tapeExtensions.end(), ext) != tapeExtensions.end();
             bool isDisk = ext == "trd" || ext == "scl" || ext == "fdi" || ext == "udi" || ext == "dsk" ||
                           ext == "td0" || ext == "mgt" || ext == "img";
             if (!isSnapshot && !isTape && !isDisk)
             {
                 done(ToolResult::Error("Unsupported file type '." + ext +
-                                            "'. Supported: .sna .z80 (snapshot), .tap .tzx (tape), "
+                                            "'. Supported: .sna .z80 (snapshot), .tap .tzx .spc .sta .ltp .zxt (tape), "
                                             ".trd .scl .fdi .udi .dsk .td0 .mgt .img (disk)"));
                 return;
             }
@@ -867,7 +897,8 @@ void RegisterInspectState(ToolRegistry& registry)
         "latch bindings and live routing flags, "
         "'audio_ay' = every AY/SSG chip fully decoded, 'audio_fm' = TurboSound FM board + both YM2203 FM halves (mode, timers, "
         "channels, operators, envelopes, key-on), 'audio_gs' = General Sound card (mailbox flags, MPAG page, DAC channels, "
-        "coprocessor core; reports unavailable when the card is not fitted), 'fdc' = Beta Disk WD1793 registers, status, FSM, drives, 'mouse' = "
+        "coprocessor core, and a 'neogs' object with windows, clock, SD card, MP3 decoder and DMA on the NeoGS card; "
+        "reports unavailable when the card is not fitted), 'fdc' = Beta Disk WD1793 registers, status, FSM, drives, 'mouse' = "
         "Kempston mouse state incl. port routing (fitted vs shadowed), 'ttd' = time-travel session: state "
         "(idle/recording/detached), recorded frame range, checkpoint count, current position (use the time_travel tool to act on it).";
     schema["properties"]["target"]["type"] = "string";
@@ -2631,6 +2662,7 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
     RegisterDebugCode(*registry);
     RegisterAnalyzePerformance(*registry);
     RegisterCaptureMedia(*registry);
+    RegisterMediaSlots(*registry);
 
     // Router tools (search_api + invoke_api)
     RegisterRouterTools(*registry, std::move(caller));

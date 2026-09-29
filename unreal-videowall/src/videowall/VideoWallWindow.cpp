@@ -24,6 +24,7 @@
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
+#include <QFileInfo>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -1759,7 +1760,7 @@ void VideoWallWindow::handleGpuAccelerationToggled(bool enabled)
                 success = emulator->LoadSnapshot(filePath.toStdString());
             else if (ext == ".scl" || ext == ".trd")
                 success = emulator->LoadDisk(filePath.toStdString());
-            else if (ext == ".tap" || ext == ".tzx")
+            else if (Emulator::IsTapeExtension(QFileInfo(filePath).suffix().toStdString()))
                 success = emulator->LoadTape(filePath.toStdString());
 
             qDebug() << (success ? "Loaded" : "Failed to load") << filePath << "on tile" << index;

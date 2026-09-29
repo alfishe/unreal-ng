@@ -242,6 +242,17 @@ rv = (r + l/2) / 2;
 
 **Decision:** Use Unreal's gs_vfx curve (rebuilt from gs_vol config) and cross-feed stereo.
 
+**The board does cross-feed (checked 2026-09-28 against
+`materials/gs/gs-firmware/sch/gs_sch_fixed.png`).** Channels 1+2 sum into
+op-amp D37:1 and channels 3+4 into D37:4 (which also settles the stereo
+mapping: 1,2 -> L, 3,4 -> R). The output op-amps D37:2 (LEFT) and D37:3
+(RIGHT) invert their pair with gain 1 (22K / 22K), and each one's
+non-inverting input takes the other side's output through a 22K / 6K8
+divider. That gives L = a + 0.47 R, R = b + 0.47 L (a = channels 1+2,
+b = channels 3+4), i.e. the opposite pair at 47% of the own pair's level.
+Unreal's 50% models this network. NeoGS has no such network: hard stereo
+(neogs-tdd.md §3.6, "Analogue output stage").
+
 ---
 
 ## 4. Implementation Plan

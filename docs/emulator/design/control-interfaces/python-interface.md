@@ -194,8 +194,8 @@ emu = Emulator()
 emu.init()
 
 # Load / eject
-emu.tape_load("/path/to/game.tap")   # .tap/.tzx/.csw
-emu.tape_eject()
+emu.tape_load("/path/to/game.tap")   # .tap/.tzx/.spc/.sta/.ltp/.zxt, or a folder built into a tape
+emu.tape_eject()                      # the tape leaves the tape slot (False while TTD records)
 
 # Transport (same semantics as `tape play|pause|stop|rewind|seek`)
 emu.tape_play()    # start at consumption cursor; resumes in place when paused
@@ -238,6 +238,27 @@ emu.tape_import("recording.wav", "imported.tap", 0.25)
 ```
 
 Playback `state` is one of `"idle"`, `"playing"`, `"paused"`, `"ended"` — identical strings across CLI, WebAPI, Lua and Python.
+
+### Media (every slot)
+
+Floppy drives, the SD card and every other slot through one set of methods — the same verbs,
+slot names, options and errors as the WebAPI, CLI, MCP and Lua. Full reference:
+[docs/features/media.md](../../../features/media.md).
+
+```python
+emu.media_list()                                         # slots + detached media
+emu.media_insert("A", "/games/elite-1.trd")              # slot: fdd.a, A, a:, floppy:0, tag:...; "auto"
+emu.media_insert("sd", "/home/me/zx/sdcard", fs="fat32")
+emu.media_swap("A", "/games/elite-2.trd", save=True)     # a dirty disk needs save / export / discard
+emu.media_eject("B", export="/tmp/b.trd")
+emu.media_eject("B", discard=True, async_=True)          # "async" is a Python keyword
+emu.media_info("sd"); emu.media_formats(kind="floppy"); emu.media_save("A"); emu.media_export("sd", "/tmp/card.img")
+emu.media_discard("A"); emu.media_rescan("sd"); emu.media_create("B"); emu.media_protect("A", True)
+emu.media(verb, slot, path, **options)                   # any verb
+```
+
+Each returns the result dict: `ok`, `error`, `message`, `slot`, `pending`, `revision`, `report`
+and the verb's fields. Errors are results (`ok: False`), not exceptions.
 
 ### Disk Operations
 
@@ -711,7 +732,7 @@ status = emu.profilers_status_all()
 
 TTD methods live on the `Emulator` object (`emu.ttd_*`). Bindings: `core/automation/python/src/emulator/python_emulator.h`. Command semantics and background: [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd).
 
-**Session rules** — read [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules). In short: states are `idle`, `recording`, `detached`; seek/step/find-last/reverse methods are refused by the core while recording (`ttd_seek` returns `reached: False` with `halt_reason: 'out_of_range'`, the boolean methods return `False`, `ttd_find_last` / `ttd_reverse_continue` return `None`), so call `ttd_stop()` first; `ttd_start()` switches the `timetravel` feature on by itself; while recording, `snapshot_load`, `tape_load`, `disk_create`, `feature_set` (switching `timetravel`/`debugmode` off), `ttd_invalidate` and `ttd_set_journal_enabled` raise `RuntimeError` with the reason (`disk_load` returns `success: False` with the reason in `message`); on a stopped session loads, disk create, ROM reload, a host speed change and `ttd_invalidate()` drop the history, while a reset keeps it; while recording, the host speed is locked to 1x and turbo / fast tape / turbo tape / fast disk are off.
+**Session rules** — read [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules). In short: states are `idle`, `recording`, `detached`; seek/step/find-last/reverse methods are refused by the core while recording (`ttd_seek` returns `reached: False` with `halt_reason: 'out_of_range'`, the boolean methods return `False`, `ttd_find_last` / `ttd_reverse_continue` return `None`), so call `ttd_stop()` first; `ttd_start()` switches the `timetravel` feature on by itself; while recording, `snapshot_load`, `tape_load`, `disk_create`, `feature_set` (switching `timetravel`/`debugmode` off), `ttd_invalidate`, `ttd_set_journal_enabled` and `gs_switch_personality` raise `RuntimeError` with the reason (`disk_load` returns `success: False` with the reason in `message`); on a stopped session loads, disk create, ROM reload, a host speed change and `ttd_invalidate()` drop the history, while a reset keeps it; while recording, the host speed is locked to 1x and turbo / fast tape / turbo tape / fast disk are off; `tinframe` counts T-states at the machine's top CPU clock (plain T-states without a hardware turbo, ×2 on Scorpion/ATM Turbo 2+, ×4 on ZX-Evo - see Time in the session rules).
 
 ```python
 try:

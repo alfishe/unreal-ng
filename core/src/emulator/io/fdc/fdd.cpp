@@ -57,6 +57,21 @@ void FDD::process()
     _lastTime = time;
 }
 
+DiskImage::Track* FDD::trackUnderHead(uint8_t side)
+{
+    if (!_diskImage)
+        return nullptr;
+
+    uint8_t cylinder = _track;
+    if (_driveCylinders >= 80 && _diskImage->isFortyTrack())
+    {
+        if (_track & 1)
+            return nullptr;  // between two 48 tpi tracks: nothing readable
+        cylinder = static_cast<uint8_t>(_track / 2);
+    }
+    return _diskImage->getTrackForCylinderAndSide(cylinder, side);
+}
+
 void FDD::insertDisk(DiskImage* diskImage)
 {
     if (diskImage)

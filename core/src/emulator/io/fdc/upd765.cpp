@@ -5,6 +5,7 @@
 
 #include "common/modulelogger.h"
 #include "emulator/io/fdc/flakysectoremulator.h"
+#include "emulator/io/fdc/floppydriveslot.h"
 
 /// region <Constructors / destructors>
 
@@ -375,7 +376,7 @@ DiskImage::Track* UPD765::currentTrack() const
     if (fdd == nullptr || !fdd->isDiskInserted() || fdd->getDiskImage() == nullptr)
         return nullptr;
 
-    return fdd->getDiskImage()->getTrackForCylinderAndSide(static_cast<uint8_t>(fdd->getTrack()), head());
+    return fdd->trackUnderHead(head());
 }
 
 DiskImage::Sector* UPD765::currentSector() const
@@ -1119,6 +1120,7 @@ void UPD765::commitWrittenSector()
     sector->recalculateDataCRC();
     sector->dirty = true;
     track->markDirty();
+    FloppyDriveSlot::NoteSlotWrite(_context, unit() & 0x01, "uPD765 Write Data");
 }
 
 /// The sector is done: next R, the other head (MT) or end of cylinder
@@ -1276,6 +1278,7 @@ void UPD765::formatEnd()
 
         track->formatTrack(track->cylinder(), track->side(), spec);
         track->markRawTrackDirty();
+        FloppyDriveSlot::NoteSlotWrite(_context, unit() & 0x01, "uPD765 Format Track");
     }
 
     // Result C H R N: the last ID written

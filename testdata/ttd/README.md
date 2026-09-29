@@ -79,6 +79,12 @@ machine or on what ran before:
   depends on the output rate and the decimator mode, so a replay is exact
   only with the same rate and mode as the recording. `TTD_Corpus_Test` runs
   with these same settings.
+- **The classic GS card in the GS slot.** The corpus was recorded while the
+  shipped PENTAGON config had `GSType=Z80`; the shipped configs fit NeoGS
+  since 2026-09-28, and a session loads only into the card it was recorded
+  with, so `TTD_Corpus_Test` fits the classic card before loading. Re-record
+  with `[SOUND] GSType=Z80` (a NeoGS checkpoint carries the whole card,
+  several MB, in every checkpoint).
 - **Length in emulated frames, not wall-clock time.** Settling and recording
   both use `run_frames`, because the emulator doesn't run at 50 Hz. Unthrottled
   it once ran ~9x realtime and turned a nominal 6-second recording into 2714

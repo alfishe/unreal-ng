@@ -1,3 +1,4 @@
+#include <_helpers/emulatortesthelper.h>
 #include <_helpers/testpathhelper.h>
 #include <common/filehelper.h>
 #include <emulator/emulator.h>
@@ -12,6 +13,7 @@ class EmulatorPathValidationTest : public ::testing::Test
 {
 protected:
     std::shared_ptr<Emulator> emulator;
+    Emulator* machine = nullptr;  // an initialized Pentagon: tapes go into its tape slot
     std::string testTapeFile;
     std::string testDiskFile;
     std::string invalidFile;
@@ -29,7 +31,15 @@ protected:
 
     void TearDown() override
     {
-        // No cleanup needed - using real test files from testdata
+        if (machine)
+            EmulatorTestHelper::CleanupEmulator(machine);
+    }
+
+    Emulator& Machine()
+    {
+        if (!machine)
+            machine = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+        return *machine;
     }
 };
 
@@ -41,7 +51,7 @@ TEST_F(EmulatorPathValidationTest, LoadTape_ValidFile_ReturnsTrue)
     ASSERT_TRUE(FileHelper::FileExists(testTapeFile));
 
     // When: loading the tape
-    bool result = emulator->LoadTape(testTapeFile);
+    bool result = Machine().LoadTape(testTapeFile);
 
     // Then: operation succeeds
     EXPECT_TRUE(result);
@@ -53,7 +63,7 @@ TEST_F(EmulatorPathValidationTest, LoadTape_NonexistentFile_ReturnsFalse)
     ASSERT_FALSE(FileHelper::FileExists(invalidFile));
 
     // When: attempting to load
-    bool result = emulator->LoadTape(invalidFile);
+    bool result = Machine().LoadTape(invalidFile);
 
     // Then: operation fails
     EXPECT_FALSE(result);
@@ -68,7 +78,7 @@ TEST_F(EmulatorPathValidationTest, LoadTape_InvalidExtension_ReturnsFalse)
     out.close();
 
     // When: attempting to load
-    bool result = emulator->LoadTape(wrongExt);
+    bool result = Machine().LoadTape(wrongExt);
 
     // Then: operation fails
     EXPECT_FALSE(result);
@@ -80,19 +90,35 @@ TEST_F(EmulatorPathValidationTest, LoadTape_InvalidExtension_ReturnsFalse)
 TEST_F(EmulatorPathValidationTest, LoadTape_TZXFormat_ReturnsTrue)
 {
     // Given: a valid .tzx file
+    const std::string tzxFile = TestPathHelper::GetTestDataPath("loaders/tzx/bb-redux.tzx");
+    ASSERT_TRUE(FileHelper::FileExists(tzxFile));
+
+    // When / Then: it loads
+    EXPECT_TRUE(Machine().LoadTape(tzxFile));
+}
+
+TEST_F(EmulatorPathValidationTest, LoadTape_NotATape_ReturnsFalse)
+{
+    // Given: a .tzx name on something no tape loader reads
     std::string tzxFile = TestPathHelper::GetUniqueTestScratchPath("test.tzx");
     std::ofstream out(tzxFile, std::ios::binary);
     out << "TZX DATA";
     out.close();
 
-    // When: loading the tzx tape
-    bool result = emulator->LoadTape(tzxFile);
+    // When / Then: the content decides, and the reason says so
+    std::string reason;
+    EXPECT_FALSE(Machine().LoadTape(tzxFile, &reason));
+    EXPECT_FALSE(reason.empty());
 
-    // Then: operation succeeds
-    EXPECT_TRUE(result);
-
-    // Cleanup
     std::remove(tzxFile.c_str());
+}
+
+TEST_F(EmulatorPathValidationTest, LoadTape_WithoutAMachine_ReturnsFalse)
+{
+    // An emulator that was never initialized has no tape deck
+    std::string reason;
+    EXPECT_FALSE(emulator->LoadTape(testTapeFile, &reason));
+    EXPECT_NE(reason.find("tape deck"), std::string::npos) << reason;
 }
 
 TEST_F(EmulatorPathValidationTest, LoadTape_RelativePath_ResolvesAndLoads)
@@ -104,7 +130,7 @@ TEST_F(EmulatorPathValidationTest, LoadTape_RelativePath_ResolvesAndLoads)
     out.close();
 
     // When: loading with relative path
-    bool result = emulator->LoadTape(relativePath);
+    bool result = Machine().LoadTape(relativePath);
 
     // Then: path is resolved and loaded (may succeed or fail depending on resolution)
     // Just verify it doesn't crash
@@ -225,7 +251,7 @@ TEST_F(EmulatorPathValidationTest, PathResolution_AbsolutePath_Used)
     std::string absPath = testTapeFile;
 
     // When: loading tape
-    bool result = emulator->LoadTape(absPath);
+    bool result = Machine().LoadTape(absPath);
 
     // Then: succeeds
     EXPECT_TRUE(result);

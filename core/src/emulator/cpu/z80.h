@@ -363,11 +363,17 @@ struct Z80State : public Z80Registers, public Z80DecodedOperation
     uint32_t trpc[40];
 
     // Memory interfacing
-    const MemoryInterface* FastMemIf;           // Fast memory interface (max performance)
-    const MemoryInterface* DbgMemIf;            // Debug memory interface (supports memory access breakpoints)
-    const MemoryInterface* FastContendedMemIf;  // Fast + video memory contention (Memory::MemoryReadContended)
-    const MemoryInterface* DbgContendedMemIf;   // Debug + video memory contention
-    const MemoryInterface* MemIf;               // Currently selected one (Core::SelectMemoryInterface)
+    const MemoryInterface* FastMemIf;                  // Fast memory interface (max performance)
+    const MemoryInterface* DbgMemIf;                   // Debug memory interface (supports memory access breakpoints)
+    const MemoryInterface* FastContendedMemIf;         // Fast + video memory contention (Memory::MemoryReadContended)
+    const MemoryInterface* DbgContendedMemIf;          // Debug + video memory contention
+    const MemoryInterface* OverlayFastMemIf;           // Fast + host bus overlay (only while one is installed)
+    const MemoryInterface* OverlayDbgMemIf;            // Debug + host bus overlay
+    const MemoryInterface* OverlayFastContendedMemIf;  // Fast + contention + host bus overlay
+    const MemoryInterface* OverlayDbgContendedMemIf;   // Debug + contention + host bus overlay
+    /// Currently selected memory interface. Written only by
+    /// Core::SelectMemoryInterface (under its lock); read on every access
+    const MemoryInterface* MemIf;
 };
 
 /// endregion </Structures>
@@ -460,6 +466,10 @@ public:
     /// accesses (48K / 128K / +2), null otherwise (no contention, +2A / +3 gate array). Set by
     /// Core::SelectMemoryInterface together with MemIf
     UlaContention* ioContention = nullptr;
+
+    /// Second part of the I/O contention: the waits after IORQ (C:3, or C:1 x3), before the handler's
+    /// remaining 3 T. `ioWait` is the first part, added for the debug access counter
+    void IoWaitAfterIorq(uint16_t port, uint8_t ioWait);
 
     /// Test-only bus trace hook (null in production - a single empty-function
     /// check per bus access when unset). Fired at the access point of each bus
@@ -603,6 +613,11 @@ public:
     void (*callbackM1_Postfetch)();  // Corrected function pointer declaration
 
     void (*callbackCPUCycleFinished)();  // Corrected function pointer declaration
+
+public:
+    /// Stretches the memory cycle in progress by `tStates` (a device's /WAIT).
+    /// Called from a host bus overlay; the plain memory paths never call it.
+    void AddWaitStates(uint32_t tStates) { tt += tStates * rate; }
 
 protected:
     __forceinline void IncrementCPUCyclesCounter(uint8_t cycles);  // Increment cycle counters

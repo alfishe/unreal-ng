@@ -128,23 +128,31 @@ uint8_t PortDecoder_ATM710::DecodePortIn(uint16_t port, uint16_t pc)
         return result;
     }
 
+    // Port trace attribution (if-chain decoder: no mask/match table)
+    disp.decodeRuleIndex = PortTraceRule::kNoTable;
+
     // Port #FE - keyboard, tape, border
     if (IsPort_FE(port))
     {
         result = Default_Port_FE_In(port, pc);
         _lastPortDecoded = true;
+        disp.decodedPort = 0x00FE;
+        disp.wasHandledInline = true;
     }
     // Port #FFFD - AY register read
     else if (IsPort_FFFD(port))
     {
         result = PeripheralPortIn(PORT_FFFD);
         _lastPortDecoded = true;
+        disp.decodedPort = PORT_FFFD;
     }
     // Port #EFF7 - Extended control read
     else if (IsPort_EFF7(port))
     {
         result = _state->pEFF7;
         _lastPortDecoded = true;
+        disp.decodedPort = 0xEFF7;
+        disp.wasHandledInline = true;
     }
     // NOTE: the xxF7 window registers have no readback path - ZXMAK2
     // MemoryAtm710.cs, Xpeccy atm2PortMap and the original io.cpp in1()
@@ -163,15 +171,18 @@ uint8_t PortDecoder_ATM710::DecodePortIn(uint16_t port, uint16_t pc)
     {
         const uint16_t gsPort = (port & 0x00FF) == 0x00BB ? 0x00BB : 0x00B3;
         result = PeripheralPortIn(gsPort);
+        disp.decodedPort = gsPort;
     }
     // Beta128 FDC ports
     else if (IsBeta128Port(decodedPort))
     {
         result = PeripheralPortIn(decodedPort);
         _lastPortDecoded = true;
+        disp.decodedPort = decodedPort;
     }
 
-    OnPortInComplete(port, result, pc);
+    disp.wasDecoded = _lastPortDecoded;
+    OnPortInComplete(port, result, pc, disp);
     return result;
 }
 
@@ -198,10 +209,17 @@ void PortDecoder_ATM710::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc
         return;
     }
 
+    // Port trace attribution (if-chain decoder: no mask/match table). Each arm
+    // names its port and device; a gated arm leaves wasDecoded clear
+    disp.decodeRuleIndex = PortTraceRule::kNoTable;
+    disp.wasDecoded = true;
+
     // Port #FE - border, beeper, tape
     if (IsPort_FE(port))
     {
         Default_Port_FE_Out(port, value, pc);
+        disp.decodedPort = 0x00FE;
+        disp.wasHandledInline = true;
 
         // ATM 4-bit border: A3 of the #FE port address is the bright bit.
         // It is re-latched by EVERY write (xpeccy atm2OutFE / evoOutFE:
@@ -213,10 +231,16 @@ void PortDecoder_ATM710::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc
     else if (IsPort_7FFD(port))
     {
         Port_7FFD_Out(port, value, pc);
+        disp.decodedPort = 0x7FFD;
+        disp.wasHandledInline = true;
     }
     // Port #FF77 - ATM control
     else if (IsPort_FF77(port))
     {
+        disp.decodedPort = 0xFF77;
+        disp.device = PortDeviceId::ATM_FF77;
+        disp.wasHandledInline = true;
+        disp.wasDecoded = IsDosPortsEnabled();
         // Hardware write gate = DOSEN || SYSEN (ZXMAK2 MemoryAtm710.cs
         // BusWritePortXX77_SYS; Xpeccy atm2PortMap gates the f7/77/ff
         // entries on the dos line; the original io.cpp wraps the whole
@@ -252,9 +276,15 @@ void PortDecoder_ATM710::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc
         if (IsPort_EFF7(port))
         {
             Port_EFF7_Out(port, value, pc);
+            disp.decodedPort = 0xEFF7;
+            disp.wasHandledInline = true;
         }
         else if (IsPort_FFF7(port, windowIndex))
         {
+            disp.decodedPort = port;
+            disp.device = PortDeviceId::Memory_Windows;
+            disp.wasHandledInline = true;
+            disp.wasDecoded = IsDosPortsEnabled();
             // Same DOSEN || SYSEN gate as xx77 above
             if (IsDosPortsEnabled())
             {
@@ -269,11 +299,13 @@ void PortDecoder_ATM710::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc
         else if (IsPort_BFFD(port))
         {
             PeripheralPortOut(PORT_BFFD, value);
+            disp.decodedPort = PORT_BFFD;
         }
         // Port #FFFD - AY register select
         else if (IsPort_FFFD(port))
         {
             PeripheralPortOut(PORT_FFFD, value);
+            disp.decodedPort = PORT_FFFD;
         }
         // General Sound host ports (GS design §6): #B3/#BB decode by the low
         // byte with bit3 masked - the (port & 0xF7) == 0xB3 family in Unreal
@@ -290,11 +322,13 @@ void PortDecoder_ATM710::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc
         {
             const uint16_t gsPort = (port & 0x00FF) == 0x00BB ? 0x00BB : 0x00B3;
             PeripheralPortOut(gsPort, value);
+            disp.decodedPort = gsPort;
         }
         else if ((port & 0x00FF) == 0x0033)
         {
             // GS control (bit7 reset, bit6 NMI) - write-only, no IN counterpart
             PeripheralPortOut(0x0033, value);
+            disp.decodedPort = 0x0033;
         }
         else
         {
@@ -317,6 +351,7 @@ void PortDecoder_ATM710::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc
                     fdcValue &= 0b1011'1111;
                 }
                 PeripheralPortOut(decodedPort, fdcValue);
+                disp.decodedPort = decodedPort;  // the FDC side of a shared #FF write is attributed
             }
 
             // ATM palette RAM write. On the real bus the #xxFF access drives
@@ -327,11 +362,19 @@ void PortDecoder_ATM710::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc
             if (IsPort_ATM_Palette(port) && IsPaletteWriteEnabled())
             {
                 Port_ATM_Palette_Out(port, value);
+                if (disp.decodedPort == 0x0000)
+                {
+                    disp.decodedPort = port;
+                    disp.device = PortDeviceId::Palette;
+                    disp.wasHandledInline = true;
+                }
             }
         }
     }
 
-    OnPortOutComplete(port, value, pc);
+    if (disp.decodedPort == 0x0000)
+        disp.wasDecoded = false;  // no arm took it
+    OnPortOutComplete(port, value, pc, disp);
 }
 
 void PortDecoder_ATM710::SetRAMPage(uint8_t page)

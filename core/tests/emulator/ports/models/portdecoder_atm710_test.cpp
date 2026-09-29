@@ -3,6 +3,11 @@
 
 #include "portdecoder_atm710_test.h"
 
+#include "_helpers/emulatortesthelper.h"
+#include "base/featuremanager.h"
+#include "emulator/emulator.h"
+#include "emulator/emulatorcontext.h"
+
 /// region <SetUp / TearDown>
 
 void PortDecoder_ATM710_Test::SetUp()
@@ -734,3 +739,55 @@ TEST_F(PortDecoder_ATM710_Test, GSHostPortsReachableDuringTrdosSession)
 }
 
 /// endregion </General Sound port decode tests>
+
+/// region <Port trace attribution>
+
+/// PLAN #8: the ATM710 decoder names each port's device in the port trace
+/// (it used to hand the trace nothing: every event undecoded, no device)
+TEST(PortDecoder_ATM710_Trace_Test, EveryPortIsAttributed)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("ATM710", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    ASSERT_TRUE(emulator->GetFeatureManager()->setFeature(Features::kPortTrace, true));
+    PortDiagnosticRecorder* recorder = context->pPortDecoder->getPortTraceRecorder();
+    ASSERT_NE(recorder, nullptr);
+    recorder->start();
+
+    struct Case
+    {
+        uint16_t port;
+        PortDeviceId device;
+        uint16_t decodedPort;
+    };
+    const Case cases[] = {
+        {0x00FE, PortDeviceId::ULA_FE, 0x00FE},
+        {0x7FFD, PortDeviceId::Memory_7FFD, 0x7FFD},
+        {0xFFFD, PortDeviceId::AY_FFFD, 0xFFFD},
+        {0xBFFD, PortDeviceId::AY_BFFD, 0xBFFD},
+        {0xEFF7, PortDeviceId::Control_EFF7, 0xEFF7},
+        {0xFF77, PortDeviceId::ATM_FF77, 0xFF77},
+        {0x7FF7, PortDeviceId::Memory_Windows, 0x7FF7},
+        {0x00BB, PortDeviceId::GeneralSound, 0x00BB},
+        {0x0033, PortDeviceId::GeneralSound, 0x0033},
+    };
+    for (const Case& c : cases)
+    {
+        context->pPortDecoder->DecodePortOut(c.port, 0x00, 0x0000);
+        const std::vector<PortTraceEvent> events = recorder->getAll();
+        ASSERT_FALSE(events.empty()) << std::hex << c.port;
+        const PortTraceEvent& e = events.back();
+        EXPECT_EQ(e.decodedPort, c.decodedPort) << "port #" << std::hex << c.port;
+        EXPECT_EQ(e.deviceId, c.device) << "port #" << std::hex << c.port << ": "
+                                        << PortDiagnosticRecorder::DeviceIdToString(e.deviceId);
+        EXPECT_EQ(e.decodeRuleIndex, PortTraceRule::kNoTable);
+    }
+
+    context->pPortDecoder->DecodePortIn(0x00FE, 0x0000);
+    EXPECT_EQ(recorder->getAll().back().deviceId, PortDeviceId::ULA_FE);
+    EXPECT_TRUE(recorder->getAll().back().wasDecoded());
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// endregion </Port trace attribution>

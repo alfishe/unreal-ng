@@ -22,6 +22,7 @@
 #include <set>
 #include <vector>
 
+#include "base/featuremanager.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
 #include "emulator/sound/audio.h"
@@ -1583,9 +1584,10 @@ TEST_F(GSLightweight_Switch_Test, NoOpAndRejections)
     EXPECT_TRUE(sm->switchGeneralSoundCard(GSTypeKind::LW));
     EXPECT_EQ(sm->getGeneralSound(), card);
 
-    // Unswitchable kinds are rejected, card untouched
+    // Unswitchable kinds are rejected, card untouched (BASS is only a config
+    // spelling of LW)
     EXPECT_FALSE(sm->switchGeneralSoundCard(GSTypeKind::NONE));
-    EXPECT_FALSE(sm->switchGeneralSoundCard(GSTypeKind::NGS));
+    EXPECT_FALSE(sm->switchGeneralSoundCard(GSTypeKind::BASS));
     EXPECT_EQ(sm->getGeneralSound(), card);
 
     // No card fitted: rejected
@@ -1595,6 +1597,65 @@ TEST_F(GSLightweight_Switch_Test, NoOpAndRejections)
     createManager();
     EXPECT_EQ(sm->getGeneralSound(), nullptr);
     EXPECT_FALSE(sm->switchGeneralSoundCard(GSTypeKind::Z80));
+}
+
+TEST_F(GSLightweight_Switch_Test, LwToNeoGSReplaysModuleAndResumes)
+{
+    // Runtime justification: the NeoGS side boots its real flash image (loader
+    // + main ROM, ~165 ms of card time) inside the switch before the replay.
+    createManager();
+    auto* card = sm->getGeneralSound();
+    ASSERT_NE(card, nullptr);
+    card->sendData(0x01);
+    card->sendCommand(0x30);
+    ASSERT_EQ(card->readData(), 1);
+    for (uint8_t b : buildTestModule(false))
+        card->sendData(b);
+    card->sendCommand(0xD2);
+    card->sendData(0x00);
+    card->sendCommand(0x31);
+    ASSERT_EQ(card->readData(), 1);
+
+    ASSERT_TRUE(sm->switchGeneralSoundCard(GSTypeKind::NGS));
+    auto* ngs = sm->getGeneralSound();
+    ASSERT_NE(ngs, nullptr);
+    EXPECT_EQ(ngs->implementation(), GSCardImplementation::NGS);
+    EXPECT_EQ(ngs->channelCount(), 8);
+    EXPECT_TRUE(ngs->isReadyForCommands()) << "the replay waited for the main ROM";
+    EXPECT_EQ(sm->generalSoundDeviceName(), "NeoGS");
+
+    const uint64_t dac0 = ngs->getActivityCounters().dacFetches;
+    runCardFrames(*ngs, 30);
+    EXPECT_GT(ngs->getActivityCounters().dacFetches, dac0 + 10000) << "playback resumed on NeoGS";
+
+    ASSERT_TRUE(sm->switchGeneralSoundCard(GSTypeKind::Z80));
+    EXPECT_EQ(sm->getGeneralSound()->implementation(), GSCardImplementation::LLE);
+    EXPECT_EQ(sm->generalSoundDeviceName(), "GS");
+}
+
+TEST_F(GSLightweight_Switch_Test, LightweightFeatureLeavesNeoGSAlone)
+{
+    // gs_lightweight means "the lightweight card instead of the Z80 card"; it
+    // must never replace a fitted NeoGS (neogs-tdd.md §7.1)
+    FeatureManager features(ctx);
+    ctx->pFeatureManager = &features;
+    ctx->config.sound.gsTypeKind = GSTypeKind::NGS;
+    createManager();
+    auto* card = sm->getGeneralSound();
+    ASSERT_NE(card, nullptr);
+    ASSERT_EQ(card->implementation(), GSCardImplementation::NGS);
+
+    features.setFeature(Features::kGSLightweight, true);
+    sm->UpdateFeatureCache();
+    sm->handleFrameStart();
+    EXPECT_EQ(sm->getGeneralSound(), card);
+    EXPECT_EQ(sm->getGeneralSound()->implementation(), GSCardImplementation::NGS);
+
+    features.setFeature(Features::kGSLightweight, false);
+    sm->UpdateFeatureCache();
+    sm->handleFrameStart();
+    EXPECT_EQ(sm->getGeneralSound(), card);
+    ctx->pFeatureManager = nullptr;
 }
 
 TEST_F(GSLightweight_Switch_Test, RequestAppliedAtFrameBoundary)
@@ -1607,7 +1668,7 @@ TEST_F(GSLightweight_Switch_Test, RequestAppliedAtFrameBoundary)
     ASSERT_NE(card, nullptr);
     ASSERT_EQ(card->implementation(), GSCardImplementation::LW);
 
-    EXPECT_FALSE(sm->requestGeneralSoundCardSwitch(GSTypeKind::NGS));
+    EXPECT_FALSE(sm->requestGeneralSoundCardSwitch(GSTypeKind::BASS));
     EXPECT_TRUE(sm->requestGeneralSoundCardSwitch(GSTypeKind::Z80));
 
     // Queued, not applied: the card survives until the frame boundary

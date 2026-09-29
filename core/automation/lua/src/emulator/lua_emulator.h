@@ -8,6 +8,7 @@
 #include <emulator/memory/memory.h>
 #include <emulator/memory/memorymap.h>  // TD-3 sparse map + hexdump
 #include <emulator/io/fdc/fdd.h>
+#include <emulator/media/mediacontrol.h>
 #include <emulator/io/fdc/diskimage.h>
 #include <emulator/io/tape/tape.h>
 #include <tapeaudio/tapeaudioimporter.h>
@@ -15,6 +16,7 @@
 #include <emulator/cpu/z80.h>
 #include <emulator/video/screen.h>
 #include <emulator/sound/soundcharactersettings.h>
+#include <emulator/sound/chips/neogs/neogsmedia.h>
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/chips/soundchip_ay8910.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
@@ -751,6 +753,105 @@ public:
             return ctx->coreState.diskDrives[drive]->isDiskInserted();
         });
 
+        // region <Media: every slot through MediaControl (media-control-design.md)>
+        // media_list(), media_info(slot), media_formats([kind]),
+        // media_insert(slot, path [, opts]), media_swap(slot, path [, opts]),
+        // media_eject(slot [, opts]), media_save(slot [, path] [, opts]),
+        // media_export(slot, path), media_discard(slot [, opts]),
+        // media_rescan(slot [, opts]), media_create(slot [, opts]),
+        // media_protect(slot, on), and media(verb, slot, path, opts).
+        // slot: fdd.b, B, b:, sd, floppy:1, tag:sd+neogs ("auto" for insert).
+        // opts: {access="readonly", save=true, export="x.trd", discard=true, async=true, ...}.
+        // Each returns the reply table every surface returns: ok, error, message,
+        // slot, pending, revision, report, and the verb's fields (slots, info, ...)
+        auto mediaCall = [this](sol::this_state s, const std::string& verb, const std::string& selector,
+                                const std::string& path, sol::optional<sol::table> opts) -> sol::object {
+            MediaRequest request;
+            request.verb = verb;
+            request.selector = selector;
+            request.path = path;
+            if (opts)
+            {
+                for (const auto& [key, value] : *opts)
+                {
+                    if (!key.is<std::string>())
+                        continue;
+                    std::string text;
+                    if (value.is<bool>())
+                        text = value.as<bool>() ? "true" : "false";
+                    else if (value.get_type() == sol::type::number)
+                    {
+                        const double number = value.as<double>();
+                        text = number == static_cast<double>(static_cast<long long>(number))
+                                   ? std::to_string(static_cast<long long>(number))
+                                   : std::to_string(number);
+                    }
+                    else if (value.is<std::string>())
+                        text = value.as<std::string>();
+                    request.options[key.as<std::string>()] = text;
+                }
+            }
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+            {
+                StateNode none = StateNode::Object();
+                none["ok"] = false;
+                none["error"] = "unknown-emulator";
+                none["message"] = "no emulator selected";
+                return StateNodeToLua(s, none);
+            }
+            return StateNodeToLua(s, MediaControl(emulator->GetContext()).Execute(request).ToValue());
+        };
+        lua.set_function("media", [mediaCall](sol::this_state s, const std::string& verb, sol::optional<std::string> slot,
+                                              sol::optional<std::string> path, sol::optional<sol::table> opts) {
+            return mediaCall(s, verb, slot.value_or(""), path.value_or(""), opts);
+        });
+        lua.set_function("media_list", [mediaCall](sol::this_state s) { return mediaCall(s, "list", "", "", sol::nullopt); });
+        lua.set_function("media_info", [mediaCall](sol::this_state s, const std::string& slot) {
+            return mediaCall(s, "info", slot, "", sol::nullopt);
+        });
+        lua.set_function("media_formats", [mediaCall](sol::this_state s, sol::optional<std::string> kind) {
+            sol::state_view view(s);
+            sol::optional<sol::table> opts;
+            if (kind)
+            {
+                sol::table t = view.create_table();
+                t["kind"] = *kind;
+                opts = t;
+            }
+            return mediaCall(s, "formats", "", "", opts);
+        });
+        for (const char* verb : {"insert", "swap"})
+        {
+            lua.set_function(std::string("media_") + verb,
+                             [mediaCall, verb = std::string(verb)](sol::this_state s, const std::string& slot, const std::string& path,
+                                                                   sol::optional<sol::table> opts) {
+                                 return mediaCall(s, verb, slot, path, opts);
+                             });
+        }
+        for (const char* verb : {"eject", "discard", "rescan", "create"})
+        {
+            lua.set_function(std::string("media_") + verb,
+                             [mediaCall, verb = std::string(verb)](sol::this_state s, const std::string& slot,
+                                                                   sol::optional<sol::table> opts) {
+                                 return mediaCall(s, verb, slot, "", opts);
+                             });
+        }
+        lua.set_function("media_save", [mediaCall](sol::this_state s, const std::string& slot, sol::optional<std::string> path,
+                                                   sol::optional<sol::table> opts) {
+            return mediaCall(s, "save", slot, path.value_or(""), opts);
+        });
+        lua.set_function("media_export", [mediaCall](sol::this_state s, const std::string& slot, const std::string& path) {
+            return mediaCall(s, "export", slot, path, sol::nullopt);
+        });
+        lua.set_function("media_protect", [mediaCall](sol::this_state s, const std::string& slot, bool on) {
+            sol::state_view view(s);
+            sol::table t = view.create_table();
+            t["on"] = on;
+            return mediaCall(s, "protect", slot, "", sol::optional<sol::table>(t));
+        });
+        // endregion <Media>
+
         lua.set_function("disk_get_path", [this](int drive) -> std::string {
             if (!effectiveEmulator() || drive < 0 || drive > 3) return "";
             auto* ctx = effectiveEmulator()->GetContext();
@@ -760,11 +861,7 @@ public:
 
         lua.set_function("disk_eject", [this](int drive) -> bool {
             if (!effectiveEmulator() || drive < 0 || drive > 3) return false;
-            auto* ctx = effectiveEmulator()->GetContext();
-            if (!ctx || !ctx->coreState.diskDrives[drive]) return false;
-            ctx->coreState.diskDrives[drive]->ejectDisk();
-            ctx->coreState.diskFilePaths[drive] = "";
-            return true;
+            return effectiveEmulator()->EjectDisk(static_cast<uint8_t>(drive), /*force*/ true);
         });
 
         // disk_load(path [, drive=0] [, autostart=false]) - insert a disk image (.trd/.scl/.fdi/.udi/...)
@@ -918,7 +1015,9 @@ public:
             if (!emulator) return {false, "no emulator"};
             if (std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadTape); !refusal.empty())
                 return {false, refusal};
-            return {emulator->LoadTape(path), ""};
+            std::string reason;
+            const bool loaded = emulator->LoadTape(path, &reason);
+            return {loaded, reason};
         });
 
         lua.set_function("tape_is_inserted", [this]() -> bool {
@@ -984,13 +1083,7 @@ public:
         lua.set_function("tape_eject", [this]() -> bool {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (ctx && ctx->pTape) {
-                ctx->pTape->reset();
-                ctx->coreState.tapeFilePath = "";
-                return true;
-            }
-            return false;
+            return emulator->EjectTape();
         });
 
         lua.set_function("tape_pause", [this]() -> bool {
@@ -1935,9 +2028,8 @@ public:
 
             sol::table t = lua_view.create_table();
             const uint8_t status = gs->getStatusRaw();
-            t["device"] = gs->hasCoprocessor() ? "General Sound (Z80 coprocessor @ 12 MHz, 4 x 8-bit DAC)"
-                                               : "General Sound (lightweight mod player, 4 x 8-bit DAC)";
-            t["implementation"] = gs->implementation() == GSCardImplementation::LLE ? "lle" : "lightweight";
+            t["device"] = gs->deviceDescription();
+            t["implementation"] = gsImplementationLabel(gs->implementation());
             t["rom_loaded"] = gs->isROMLoaded();
             t["ram_kb"] = static_cast<int>(gs->getRamSizeKB());
             t["status"] = status;
@@ -1951,7 +2043,7 @@ public:
             t["page"] = gs->getMPAG();
 
             sol::table channels = lua_view.create_table();
-            for (int i = 0; i < 4; i++) {
+            for (int i = 0; i < gs->channelCount(); i++) {
                 sol::table channel = lua_view.create_table();
                 channel["sample"] = gs->getChannelSample(i);
                 channel["volume"] = gs->getChannelVolume(i);
@@ -1966,7 +2058,78 @@ public:
             cpu["af"] = gs->getCPUReg(GSCpuRegister::AF);
             cpu["halted"] = gs->isCPUHalted();
             t["cpu"] = cpu;
+
+            NeoGSStateInfo ngs;
+            if (gs->neogsState(ngs))
+            {
+                sol::table n = lua_view.create_table();
+                n["flash"] = ngs.flashTitle;
+                n["flash_modified"] = ngs.flashModified;
+                n["gscfg0"] = ngs.gscfg0;
+                n["clock_hz"] = ngs.clockHz;
+                sol::table windows = lua_view.create_table();
+                for (int w = 0; w < 4; w++)
+                {
+                    sol::table window = lua_view.create_table();
+                    window["page"] = ngs.pages[w];
+                    window["flash"] = ngs.windowFlash[w];
+                    windows[w + 1] = window;
+                }
+                n["windows"] = windows;
+                n["led_on"] = ngs.ledOn;
+                n["ready"] = ngs.readyForCommands;
+                n["int_enable"] = ngs.intEnable;
+                n["int_request"] = ngs.intRequest;
+                n["tim_freq"] = ngs.timFreq;
+                n["sd_present"] = ngs.sdPresent;
+                n["sd_path"] = ngs.sdPath;
+                n["sd_sdhc"] = ngs.sdSdhc;
+                n["sd_blocks_read"] = static_cast<double>(ngs.sdBlocksRead);
+                n["mp3_fitted"] = ngs.mp3Fitted;
+                n["mp3_chip"] = std::string(ngs.mp3Chip);
+                n["mp3_rate"] = ngs.mp3Rate;
+                n["mp3_frames"] = static_cast<double>(ngs.mp3Frames);
+                n["mp3_decode_time_s"] = ngs.mp3DecodeSeconds;
+                n["dma_sd_running"] = ngs.dmaRunning[1];
+                n["dma_mp3_running"] = ngs.dmaRunning[2];
+                n["zx_dma_mode"] = std::string(ngs.zxMode);
+                n["zx_dma_address"] = ngs.dmaAddress[0];
+                n["zx_dma_read_latch"] = ngs.zxReadLatch;
+                n["zx_dma_pending"] = std::string(ngs.zxPending);
+                n["zx_dma_bytes_read"] = static_cast<double>(ngs.zxBytesRead);
+                n["zx_dma_bytes_written"] = static_cast<double>(ngs.zxBytesWritten);
+                n["zx_dma_bytes_dropped"] = static_cast<double>(ngs.zxBytesDropped);
+                n["zx_dma_wait_tstates"] = static_cast<double>(ngs.zxWaitTStates);
+                n["zx_dma_late_starts"] = static_cast<double>(ngs.zxLateStarts);
+                n["zx_dma_watch_frames_left"] = ngs.zxWatchFramesLeft;
+                t["neogs"] = n;
+            }
             return t;
+        });
+
+        // NeoGS SD slot and flash (other cards: false / no-op)
+        // NeoGS media: checked here, carried out on the machine's thread
+        // (neogsmedia.h); true when accepted. Insert / eject are refused while
+        // a TTD recording runs
+        lua.set_function("gs_sd_insert", [this](const std::string& path) -> bool {
+            return _emulator && NeoGSMediaAccepted(NeoGSRequestSdInsert(_emulator->GetContext(), path));
+        });
+        lua.set_function("gs_sd_eject", [this]() -> bool {
+            return _emulator && NeoGSMediaAccepted(NeoGSRequestSdEject(_emulator->GetContext()));
+        });
+        lua.set_function("gs_flash_save", [this]() -> bool {
+            return _emulator && NeoGSMediaAccepted(NeoGSRequestFlashSave(_emulator->GetContext()));
+        });
+        // NeoGS stereo mode: "separated" (as on the board), "gs" (50% cross-feed
+        // like the classic GS) or "mono"; applied at the next frame. False on
+        // an unknown name
+        lua.set_function("gs_stereo_mode", [this](const std::string& mode) -> bool {
+            NeoGSConfig::StereoMode parsed = NeoGSConfig::StereoMode::Separated;
+            SoundManager* sm = _emulator && _emulator->GetContext() ? _emulator->GetContext()->pSoundManager : nullptr;
+            if (!sm || !neogsParseStereoMode(mode, parsed))
+                return false;
+            sm->setNeoGSStereoMode(parsed);
+            return true;
         });
 
         // Host-port stimuli step the card's Z80, so they go through the live-input
@@ -2016,21 +2179,19 @@ public:
         // requested here, applied at the next frame boundary on the
         // emulation thread - same semantics as the WebAPI switch_personality
         // action and the MCP gs_switch_personality tool action
-        lua.set_function("gs_switch_personality", [this](const std::string& personality) -> bool {
-            if (!effectiveEmulator()) return false;
+        lua.set_function("gs_switch_personality", [this](const std::string& personality) -> std::tuple<bool, std::string> {
+            if (!effectiveEmulator()) return {false, ""};
             auto* ctx = effectiveEmulator()->GetContext();
             SoundManager* sm = ctx ? ctx->pSoundManager : nullptr;
-            if (!sm) return false;
+            if (!sm) return {false, ""};
 
             GSTypeKind target;
-            if (personality == "z80" || personality == "lle")
-                target = GSTypeKind::Z80;
-            else if (personality == "lw" || personality == "lightweight")
-                target = GSTypeKind::LW;
-            else
-                return false;
+            if (!gsParsePersonality(personality, target))
+                return {false, ""};
 
-            return sm->requestGeneralSoundCardSwitch(target);
+            std::string refusal;  // a TTD recording refuses the switch (FR-4)
+            const bool requested = sm->requestGeneralSoundCardSwitch(target, &refusal);
+            return {requested, refusal};
         });
 
         // Diagnostics: write the last completed COM30..D2 upload (the raw
@@ -2147,12 +2308,14 @@ public:
                     case GSTraceSide::GsInternal: ev["side"] = "gs"; break;
                     case GSTraceSide::DacFetch: ev["side"] = "dac"; break;
                     case GSTraceSide::Interrupt: ev["side"] = "interrupt"; break;
+                    case GSTraceSide::ZxDma: ev["side"] = "zxdma"; break;
                 }
                 ev["direction"] = e.isOut() ? "out" : "in";
                 ev["port"] = e.port;
                 ev["value"] = e.value;
                 ev["pc"] = e.pc;
                 if (e.side == GSTraceSide::DacFetch) ev["channel"] = e.channel;
+                if (e.side == GSTraceSide::ZxDma) ev["card_address"] = (static_cast<uint32_t>(e.channel) << 16) | e.port;
                 if (e.side == GSTraceSide::Interrupt) ev["nmi"] = e.isNmi();
                 result[idx++] = ev;
             }
@@ -2660,12 +2823,11 @@ public:
                     q.physPage = static_cast<ttd::PhysPage>(page);
                 }
 
-                const uint32_t frameT = ctx->config.frame;
                 if (tbl["before_frame"].valid())
                 {
                     uint64_t f = tbl["before_frame"].get<uint64_t>();
                     uint32_t tin = tbl["before_tin"].valid() ? tbl["before_tin"].get<uint32_t>() : 0;
-                    q.beforeGlobalT = f * frameT + tin;
+                    q.beforeGlobalT = ctx->pTimeTravelManager->GlobalT({f, tin});
                 }
                 else if (tbl["before"].valid())
                 {
@@ -2697,9 +2859,9 @@ public:
                     q.hasPhysPageFilter = true;
                     q.physPage = static_cast<ttd::PhysPage>(*physPageOpt);
                 }
-                const uint32_t frameT = ctx->config.frame;
                 if (beforeFrameOpt)
-                    q.beforeGlobalT = static_cast<uint64_t>(*beforeFrameOpt) * frameT + beforeTinOpt.value_or(0);
+                    q.beforeGlobalT = ctx->pTimeTravelManager->GlobalT(
+                        {static_cast<uint64_t>(*beforeFrameOpt), beforeTinOpt.value_or(0)});
             }
 
             ttd::TTDExternalEvent marker{};

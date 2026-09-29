@@ -21,5 +21,5 @@ Fixtures with a known license:
 
 Everything else (commercial games such as Dizzy X and Green Beret, demo-scene productions such as EyeAche,
 Satisfaction, Insult, Echology, Across the Edge, 7th Reality, the TR-DOS / FDI / UDI disk images, the TurboSound FM
-material in `testdata/sound/tsfm/` and the ZXM-MoonSound demo disks in `testdata/sound/moonsound/` — see their
-`SOURCES.md`) is copyrighted by its authors and used here as test material only.
+material in `testdata/sound/tsfm/` and the ZXM-MoonSound demo disks in `testdata/sound/moonsound/`, the EyeAche recordings, SD images and NedoPC NeoGS
+programs in `testdata/sound/neogs/` — see their `SOURCES.md`) is copyrighted by its authors and used here as test material only.

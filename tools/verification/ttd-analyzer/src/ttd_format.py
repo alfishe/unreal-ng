@@ -75,7 +75,9 @@ SCHEMA_VERSION = 1
 MAX_SUPPORTED_SCHEMA_VERSION = SCHEMA_VERSION
 FLAGS_LITTLE_ENDIAN = 0x0001
 FLAGS_HAS_WRITE_JOURNAL = 0x0002  # write journal section present
+FLAGS_HAS_BOOKMARKS = 0x0008  # advisory bookmarks section follows the coverage index
 FLAGS_WRITE_JOURNAL_COMPLETE = 0x0010  # the journal holds every write of the session
+FLAGS_TOP_CLOCK_TIME = 0x0020  # tInFrame / globalT count T-states at the model's top CPU clock (B4)
 
 # Write journal section. Records are stored as zstd-compressed columnar blocks
 # rather than verbatim: the journal is by far the largest thing in a .ttd (89%
@@ -192,6 +194,7 @@ PERIPHERAL_ID_NAMES = {
     12: "NeoGS",
     13: "Plus3Paging",
     14: "Upd765",
+    15: "EvoSdCard",
 }
 
 # Mirrors ttd::PeripheralBlobHeader (ttdperipheralregistry.h): peripheralId(u8)
@@ -460,6 +463,8 @@ class TtdDump:
     checkpoints: List[Checkpoint] = field(default_factory=list)
     journal: Optional[JournalSection] = None
     coverage: Optional[CoverageIndexSection] = None
+    # Agent bookmarks (flag bit 3): (frame, t_in_frame, label), time-sorted as written
+    bookmarks: Optional[List[tuple]] = None
     # Bytes after the last section this parser knows about (should be 0)
     trailing_bytes: int = 0
     # Lazily-decompressed sub-page cache. Keyed by slot index; populated on
@@ -1035,8 +1040,30 @@ def parse_bytes(data: bytes) -> TtdDump:
     if header.flags & FLAGS_HAS_COVERAGE_INDEX:
         coverage = parse_coverage_section(r)
 
+    bookmarks = None
+    if header.flags & FLAGS_HAS_BOOKMARKS:
+        bookmarks = parse_bookmarks_section(r)
+
     return TtdDump(header=header, slots=slots, checkpoints=checkpoints,
-                   journal=journal, coverage=coverage, trailing_bytes=r.remaining)
+                   journal=journal, coverage=coverage, bookmarks=bookmarks,
+                   trailing_bytes=r.remaining)
+
+
+def parse_bookmarks_section(r: _Reader) -> List[tuple]:
+    """Parse the agent bookmarks section (flag bit 3, written last).
+
+    Layout (TimeTravelManager::SerializeSession): u32 count, then per bookmark
+    u64 frame, u32 t_in_frame, u8 label_len, label bytes (UTF-8, 1..63).
+    """
+    count = r.u32()
+    bookmarks = []
+    for _ in range(count):
+        frame = r.u64()
+        t_in_frame = r.u32()
+        label_len = r.u8()
+        label = r.take(label_len).decode("utf-8", errors="replace")
+        bookmarks.append((frame, t_in_frame, label))
+    return bookmarks
 
 
 def parse_coverage_section(r: _Reader) -> Optional[CoverageIndexSection]:

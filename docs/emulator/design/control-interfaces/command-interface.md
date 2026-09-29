@@ -2135,7 +2135,8 @@ Inspect audio hardware state including beeper, AY-3-8912 PSG, General Sound, and
 | `state audio ay` | | | Show brief state for all AY chips available:<br/>• Number of AY chips (1 = standard, 2 = TurboSound, 3 = ZX Next)<br/>• Basic info for each AY: type, active channels, envelope state<br/>• Whether sound was played since reset via each device | 🔮 Planned |
 | `state audio ay <index>` | | `<chip-index>` | Show detailed information about selected AY chip (0-based indexing):<br/>• Chip index (0=first chip, 1=second chip for TurboSound)<br/>• Chip type (AY-3-8912, YM2149, etc.)<br/>• All register values (0-15) with decoding<br/>• Channel A/B/C: frequency, volume, mixer state<br/>• Envelope shape, period, and current phase<br/>• Noise period and LFSR state<br/>• I/O ports A/B values and direction<br/>• Whether sound was played since reset via this device | 🔮 Planned |
 | `state audio ay <chip> register <N>` | | `<chip-index> <register>` | Show specific AY register (0-15) of specified chip with full decoding and frequency calculations:<br/>**Example: `state audio ay 0 register 0`**<br/>• Register 0: Channel A fine period = 0x123<br/>• Frequency: 432 Hz<br/>• Note: A4 (440 Hz approximately)<br/>• Bit-by-bit decoding with meaning for each register type | 🔮 Planned |
-| `state audio gs` | | | Show General Sound device state (if available):<br/>• Device type and model<br/>• Current register values<br/>• Active channels and volume levels<br/>• Sample playback state<br/>• DMA status (if applicable)<br/>• Whether sound was played since reset via this device | 🔮 Planned |
+| `state audio gs` | | `[--verbose]` | Show the GS-slot card's state (classic GS, lightweight player or NeoGS):<br/>• Device, firmware / flash image, RAM size, MPAG<br/>• Mailbox flags and latches<br/>• DAC channels (4, or 8 on NeoGS) with volumes<br/>• NeoGS: GSCFG0 and clock, the four windows (flash/RAM page), readiness, LED, interrupts, SD card, MP3 decoder (chip, DREQ, stream, frames, decode time), DMA modules<br/>• NeoGS ZX-DMA: mode (off / watch / divert), address, read latch, pending byte, bytes read / written / dropped, wait T-states, late starts, watch window; WebAPI `neogs.dma.zx`, Lua / Python `zx_dma_*`; the GS port trace records each byte as side `zxdma` (card address, value, host PC)<br/>• `--verbose`: coprocessor registers | ✅ Implemented |
+| `gs <action>` | | `reset`, `reset_card`, `nmi`, `send_command <b>`, `send_data <b>`, `read_status`, `read_data`, `switch_personality <z80\|lle\|lw\|lightweight\|ngs\|neogs>`, `dump_module [path]`, `sd_insert <image>`, `sd_eject`, `flash_save`, `stereo_mode [separated\|gs\|mono]` | Drive the GS-slot card like ZX software does; switch the card at the next frame boundary; NeoGS only: SD card slot and flash save, stereo mode of the DAC channels (as on the board / classic GS 50% cross-feed / mono) (carried out on the machine thread - "queued" while it runs; insert/eject refused during a TTD recording) | ✅ Implemented |
 | `state audio covox` | | | Show Covox DAC state:<br/>• DAC model (Covox, SounDrive, etc.)<br/>• Current output level (8-bit value)<br/>• Sample rate and buffer status<br/>• Port address being used<br/>• Whether sound was played since reset via this device | 🔮 Planned |
 | `state audio channels` | | | Show audio mixer state for all sound sources:<br/>• Beeper: ON/OFF, level<br/>• AY chips: per-channel ON/OFF, volume<br/>• General Sound: active channels, levels<br/>• Covox: current level<br/>• Master output level, mute state, and the live core sample rate (`sample_rate_hz` in the WebAPI master block — follows the `audio_rate` pin, see section 7) | 🔮 Planned |
 
@@ -2530,6 +2531,16 @@ These rules live in the core, so every surface (CLI, WebAPI/MCP, Lua, Python, GD
 | `recording` | Capturing one checkpoint per frame. |
 | `detached` | The machine sits at a point in history (after a seek or step) and the emulator is paused. `resume` truncates the future and records again from here. |
 
+**Time.** A position is `frame` + `tinframe`. `tinframe` counts T-states at the machine's **top** CPU clock, so it names one instant even when a hardware turbo switches in the middle of a frame:
+
+| Machine | Top clock | `tinframe` per 3.5 MHz T-state |
+| :--- | :--- | :--- |
+| 48K, 128K, +2/+2A/+3, Pentagon, Profi | 3.5 MHz (no hardware turbo) | 1 (plain T-states) |
+| Scorpion ZS-256 Turbo+, ATM Turbo 2+ | 7 MHz | 2 |
+| ZX-Evo (`ATM3`) | 14 MHz | 4 |
+
+Example: on a ZX-Evo a frame is 69888 T-states at 3.5 MHz, so `tinframe` runs 0..279551 whatever clock the program selects; a write 1000 T-states into the frame at 3.5 MHz reports `tinframe` 4000. The same unit applies to every position the TTD API returns or takes (seek, find-last, markers, bookmarks, `before_tin`, reverse-step `tstates`). A `.ttd` recorded before this rule on a turbo machine is refused on load (its positions repeat after a switch down); record it again.
+
 **Recording blocks browsing.** Seek, step, find-last, step-instruction, reverse-step and reverse-continue do not run while the session is recording — stop first. The WebAPI answers these with HTTP 409 `Conflict`; the core refuses them on every other surface too (the CLI prints the failure, Lua/Python get `reached = false` / `false` / no result).
 
 **A recording protects itself.** While a session is `recording`, anything that would drop or corrupt it is refused, and the refusal says why and what to do (stop the recording first):
@@ -2542,6 +2553,7 @@ These rules live in the core, so every surface (CLI, WebAPI/MCP, Lua, Python, GD
 | `ttd invalidate` | Stop the recording first, then discard it. |
 | Switching the `timetravel` or `debugmode` feature off | Capture (or the memory-write path it depends on) would stop mid-session and leave corrupt history. |
 | Changing the write-journal mode (`ttd_set_journal_enabled`, `SetEnableWriteJournal`) | A recording keeps the mode it started with. |
+| Switching the General Sound card type (`gs switch_personality`, the `gs_lightweight` feature) | The history holds the current card's state, which the other card type cannot take back. |
 | Host speed 2x..16x, turbo, fast tape, turbo tape, fast disk | See the acceleration lock below. |
 
 How each surface reports it:
@@ -2550,8 +2562,8 @@ How each surface reports it:
 | :--- | :--- |
 | CLI | `Error: <reason>` |
 | WebAPI / MCP | HTTP **409 Conflict** with the reason in `message` (tape import/insert: `inserted: false` plus `insert_error`) |
-| Lua | The guarded functions (`snapshot_load`, `tape_load`, `disk_create`, `feature_set`, `ttd_invalidate`, `ttd_set_journal_enabled`) return `false, reason`; `disk_load` returns `{success = false, message = reason}` |
-| Python | `RuntimeError(reason)` from `snapshot_load`, `tape_load`, `disk_create`, `feature_set`, `ttd_invalidate`, `ttd_set_journal_enabled`; `disk_load` returns `{'success': False, 'message': reason}` |
+| Lua | The guarded functions (`snapshot_load`, `tape_load`, `disk_create`, `feature_set`, `ttd_invalidate`, `ttd_set_journal_enabled`, `gs_switch_personality`) return `false, reason`; `disk_load` returns `{success = false, message = reason}` |
+| Python | `RuntimeError(reason)` from `snapshot_load`, `tape_load`, `disk_create`, `feature_set`, `ttd_invalidate`, `ttd_set_journal_enabled`, `gs_switch_personality`; `disk_load` returns `{'success': False, 'message': reason}` |
 | GDB `monitor load` | `Error: <reason>` |
 | Qt UI | A "TTD Recording Active" dialog with the reason |
 
@@ -2565,6 +2577,7 @@ Only a recording you started (`ttd start`, the TTD panel, the API) is protected.
 | Tape load | New media. |
 | Disk load, disk create | New media. |
 | ROM reload | The machine's code changed under the history. |
+| General Sound card type switch | The device set changed under the history (`gs-card-switch`); a seek could not put the other card type back. |
 | Host speed multiplier change on a stopped or loaded session | Frame timing is part of the recording. Re-selecting the current speed is not a change, and a refused change (see the acceleration lock below) does not cost the session. |
 | `ttd invalidate` (or WebAPI `POST /ttd/invalidate`, Lua/Python `ttd_invalidate`) | Explicit. |
 | A device TTD cannot follow | Today this is the ZX-Evo / ATM3 Z-Controller SD card. The guest program drives it, so it cannot be refused: any SD card activity while recording ends the recording (history dropped) at the next frame boundary, and `last_drop_reason` in the status says so. |
@@ -2700,8 +2713,8 @@ Full tape transport, inspection and the offline audio bridge. Playback subcomman
 
 | Command | Aliases | Arguments | Description | Implementation Status |
 | :--- | :--- | :--- | :--- | :--- |
-| `tape load <file>` | | `<filename>` | Load tape image (.tap, .tzx, .csw, …) into the virtual tape deck. | ✅ Implemented |
-| `tape eject` | | | Eject the tape: playback stops, image and block catalog are dropped. | ✅ Implemented |
+| `tape load <file>` | | `<filename>` | Load a tape into the tape slot: .tap, .tzx, .spc, .sta, .ltp, .zxt (the content decides the format), or a folder built into a tape ([media.md](../../../features/media.md#tapes)). | ✅ Implemented |
+| `tape eject` | | | Eject the tape: it leaves the tape slot, playback stops. Refused while a TTD recording runs. | ✅ Implemented |
 | `tape play` | | | Start playback at the consumption cursor, or resume in place after `tape pause`. | ✅ Implemented |
 | `tape pause` | | | Freeze playback mid-block; the next `tape play` resumes exactly there. Idempotent when already paused; error when not playing. | ✅ Implemented |
 | `tape stop` | | | Terminal stop: playback stops and the loaded image is invalidated. | ✅ Implemented |
@@ -2970,6 +2983,23 @@ key tap enter
 ### 4. Media & Tape/Disk Operations
 
 Enhanced control over peripheral media devices.
+
+**`media` — every slot (floppy drives, SD card, ...)** — the same verbs, slot names, options and
+errors as the WebAPI, MCP, Lua and Python ([docs/features/media.md](../../../features/media.md)):
+
+| Command | Description |
+| :--- | :--- |
+| `media list` | every slot and the detached media |
+| `media info <slot>` | one slot (`fdd.b`, `B`, `b:`, `sd`, `floppy:1`, `tag:a+b`) |
+| `media formats [--kind floppy]` | accepted formats |
+| `media insert <slot\|auto> <path> [--access readonly\|session\|writethrough] [--fs fat16\|fat32]` | a file or a folder |
+| `media swap <slot> <path> [--save\|--export <path>\|--discard]` | eject + insert |
+| `media eject <slot> [--save\|--export <path>\|--discard]` | a dirty medium needs a disposition |
+| `media save <slot> [path]`, `media export <slot> <path>`, `media discard <slot>` | keep or drop the writes |
+| `media rescan <slot>`, `media create <slot> [--size bytes]`, `media protect <slot> --on true\|false` | |
+| `--async`, `--json` | return at once; print the WebAPI body |
+
+The `disk` commands below keep working for drive-letter scripts.
 
 > [!NOTE]
 > All tape transport, inspection and audio-bridge commands are **implemented** — see [§10. Tape Control Commands](#10-tape-control-commands).

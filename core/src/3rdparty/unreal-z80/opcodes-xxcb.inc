@@ -236,17 +236,17 @@ Z80INLINE int Z80FAST ddfd_prefixes(Z80CPU *cpu, uint8_t opcode, int tact0, Z80R
         ptr = ((op1 == 0xDD) ? rf->ix:rf->iy) + displacement;
         rf->memptr = ptr;
 
-        // DDCBnnXX,FDCBnnXX increment R by 2, not 3!
-        opcode = Z80M1(cpu);
-        Z80_R_DEC(rf);  // DDCB/FDCB: R advances by 2, not 3 (bit 7 kept)
-        cpu->prefix = 0xCB;  // after the M1 (the opword store cleared it)
+        // DDCBnnXX,FDCBnnXX: the operation byte is an ordinary operand read, not an M1 (no refresh, so R
+        // advances by 2 over the instruction), followed by 2 internal T-states on its address (FUSE)
+        opcode = Z80Rd(cpu, rf->pc++, true);
+        cpu->opword = opcode;  // what the M1 store used to leave: the operation byte, then the prefix
+        cpu->prefix = 0xCB;
+        cpuidle(rf->pc - 1, 2);
 
-        cputact(1);
-
-        const uint8_t operand = Z80Rd(cpu, ptr, true);
+        const uint8_t operand = Z80Rd(cpu, ptr);  // a data read at (IX+d), not an instruction byte
         uint8_t byte = (logic_ix_opcode[opcode])(rf, operand);
 
-        cputact(1);
+        cpuidle(ptr, 1);
 
         if ((opcode & 0xC0) == 0x40)
             return Z80FinishFlags(cpu, tact_, rf); // bit n,rm: writes F

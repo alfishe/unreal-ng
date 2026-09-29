@@ -114,6 +114,7 @@ progress when the request carries a `_meta.progressToken` (see
 | `manage_symbols` | `load_labels`, list, resolve, `load_listing`, `source_at`, `step_line`, `run_to_line` (sjasmplus `.lst`) | — |
 | `debug_code` | disassemble, assemble (two-pass, labels), `find_bytes`, `trace` (calltrace sessions), `porttrace` | `trace`: per phase (start/run/stop/read) |
 | `analyze_performance` | coverage_* (+gaps), `frame_cost`, profiler suites, `profile_report`, `porttrace` | `profile_report` + `porttrace`: per phase |
+| `media` | every media slot: list, insert (a file or a folder; `slot:"auto"`), swap, eject, save, export, discard, rescan, create, protect ([media.md](../media.md)) | — |
 | `capture_media` | screenshot (PNG/GIF + metadata), `screen_digest`, video recording (GIF native, `every_nth:"auto"` quantum sampling), `audio_capture` (RMS/peak/dominant-Hz, WAV) | bounded `every_nth` recordings: captured-frame counter (throttled to ~20 updates) |
 | `search_api` | keyword search over the OpenAPI spec (scored), optional `auto_invoke` | — |
 | `invoke_api` | direct WebAPI call with `{id}` target substitution | — |

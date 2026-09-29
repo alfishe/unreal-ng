@@ -25,6 +25,7 @@ namespace HudCategory
     constexpr const char* AudioFM = "audio-fm";
     constexpr const char* AudioGeneralSound = "audio-generalsound";
     constexpr const char* AudioMoonSound = "audio-moonsound";
+    constexpr const char* AudioNeoGSDma = "audio-neogs-dma";
     constexpr const char* RecordingVideo = "recording-video";
     constexpr const char* RecordingAudio = "recording-audio";
     constexpr const char* EmulatorState = "emulator-state";
@@ -50,6 +51,10 @@ namespace HudCategory
             case AudioSource::GeneralSound: return AudioGeneralSound;
             case AudioSource::MoonFM:     return AudioMoonSound;  // Both MoonSound parts share one category
             case AudioSource::MoonPCM:    return AudioMoonSound;
+            case AudioSource::NeoGS:      return AudioGeneralSound;  // The GS slot's cards share one category
+            case AudioSource::NeoGSMp3:   return AudioGeneralSound;
+            case AudioSource::NeoGSDma:   return AudioNeoGSDma;  // Data movement, not sound: its own switch
+            case AudioSource::NeoGSTransfer: return AudioNeoGSDma;
             default: return nullptr;
         }
     }
@@ -1421,6 +1426,18 @@ void HudModel::onAudioActivity(int, Message* message)
         return;
     }
 
+    // NeoGS: one nudge on the GS slot's key covers the card's DAC and its
+    // MP3 decoder - "NeoGS", "NeoGS MP3" or "NeoGS+MP3"
+    if (p->source == AudioSource::NeoGS || p->source == AudioSource::NeoGSMp3)
+    {
+        if (p->source == AudioSource::NeoGS)
+            _neoGSDacActive = p->active;
+        else
+            _neoGSMp3Active = p->active;
+        onNeoGSActivity();
+        return;
+    }
+
     const char* key;
     const char* label;
     const char* icon;
@@ -1447,6 +1464,12 @@ void HudModel::onAudioActivity(int, Message* message)
             break;
         case AudioSource::GeneralSound:
             key = "gs"; label = "GS"; icon = "generalsound";
+            break;
+        case AudioSource::NeoGSDma:
+            key = "ngsdma"; label = "NeoGS DMA"; icon = "generalsound";  // SD card / MP3 decoder DMA
+            break;
+        case AudioSource::NeoGSTransfer:
+            key = "ngszx"; label = "NeoGS <->"; icon = "generalsound";   // ZX-DMA: ZX <-> card
             break;
         default:
             return;
@@ -1487,6 +1510,26 @@ void HudModel::onMoonSoundActivity()
 
     // Same contract as the other audio nudges: TopLeft, 1s TTL
     setIndicatorAt("moon", HudTilePosition::TopLeft, HudState::Active, label, "", "moonsound",
+                   std::chrono::milliseconds(1000), true);
+}
+
+void HudModel::onNeoGSActivity()
+{
+    const char* label;
+    if (_neoGSDacActive && _neoGSMp3Active)
+        label = "NeoGS+MP3";  // DAC channels and MP3 decoder together
+    else if (_neoGSDacActive)
+        label = "NeoGS";      // DAC channels (modules, samples)
+    else if (_neoGSMp3Active)
+        label = "NeoGS MP3";  // MP3 decoder only
+    else
+    {
+        clearIndicator("gs");
+        return;
+    }
+
+    // The classic card's key: only one card sits in the GS slot
+    setIndicatorAt("gs", HudTilePosition::TopLeft, HudState::Active, label, "", "generalsound",
                    std::chrono::milliseconds(1000), true);
 }
 

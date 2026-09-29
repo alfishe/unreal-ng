@@ -43,6 +43,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -128,10 +129,11 @@ struct TTDSessionInfo
     ///
     /// Real counter (not an estimate, not a percentage). Sums every
     /// allocation the session owns:
-    ///   - page store backing (allocated vector capacity × page size)
+    ///   - page store: slot table + every compressed page payload
     ///   - per-checkpoint struct + peripheral blob + page-ref vector
     ///   - input journal + external-event journal backing
     ///   - session-scope dirty-page scratch buffer
+    ///   - write journal (committed ring chunks), coverage index, frame cache
     ///
     /// This is the number to display when a user asks "how much memory is
     /// my recording consuming right now?". Distinct from pageStoreBytes
@@ -215,7 +217,8 @@ enum class TTDGuardedAction : uint8_t
     Invalidate,          ///< discards the session
     DisableTimeTravel,   ///< capture stops mid-session
     DisableDebugMode,    ///< writes stop reaching the history
-    ChangeWriteJournal   ///< a recording keeps the journal mode it started with
+    ChangeWriteJournal,  ///< a recording keeps the journal mode it started with
+    SwitchGsCard         ///< a General Sound personality switch changes the device set (FR-4)
 };
 
 /// @brief String conversion for TTDCoverageKind.
@@ -360,6 +363,7 @@ public:
     inline bool IsInvalidationPending() const { return _pendingInvalidation.load(std::memory_order_acquire) != nullptr; }
 
     inline bool IsRecording() const { return _state == TTDSessionState::Recording; }
+
     inline TTDSessionState GetState() const { return _state; }
     inline TTDRecordMode GetRecordMode() const { return _recordMode; }
     inline bool IsDebuggerLive() const { return _recordMode == TTDRecordMode::DebuggerLive; }
@@ -653,6 +657,15 @@ public:
     /// `ev.time` is ignored: the time is stamped when the event is applied.
     bool SubmitLiveInput(const TTDInputEvent& ev);
 
+    /// @brief Run `task` on the machine's thread - for automation actions that
+    /// touch a device the executing thread may be using (a NeoGS SD card
+    /// insert / eject, a flash save). Same delivery as SubmitLiveInput: queued
+    /// for the next instruction boundary while the emulator loop runs (while
+    /// paused: when execution continues), run at once otherwise. Not
+    /// journaled: a task is not replayable input. Refused while OwnsInput().
+    enum class MachineTaskResult : uint8_t { RanNow, Queued, Refused };
+    MachineTaskResult SubmitMachineTask(std::function<void()> task);
+
     /// @brief Executing thread, before every instruction (Z80::StepInstruction;
     /// cheap gate: EmulatorContext::ttdInputWork): play due journal events,
     /// then apply queued live input.
@@ -694,10 +707,26 @@ public:
     /// @brief Read the current position as a TTDTimePoint.
     ///
     /// Convenience for callers (UI, step helpers, tests). Derived from
-    /// EmulatorState: `frame = frame_counter`,
-    /// `tInFrame = z80->t` (per-frame accumulator — see implementation
-    /// note in the .cpp about why it's not `t_states % config.frame`).
+    /// EmulatorState: `frame = frame_counter`, `tInFrame` = z80->t in TTD
+    /// time units (TInFrameNow).
     TTDTimePoint CurrentPosition() const;
+
+    /// @brief TTD time. A position's tInFrame counts T-states at the model's
+    /// TOP CPU clock (EmulatorState::ttd_clock_units per base T-state: 1 on
+    /// models without a hardware turbo, where it equals z80.t). z80.t alone
+    /// counts at the current clock and is rescaled when a hardware turbo
+    /// switches mid-frame, so after a switch down it repeats values of the
+    /// same frame; in these units every instant has one value and time only
+    /// grows (B4).
+    uint32_t TInFrameNow() const;
+
+    /// @brief TTD time units in one frame (config.frame at the top clock).
+    /// Constant for a session whatever turbo is engaged.
+    uint32_t FrameSpan() const;
+
+    /// @brief A position as one absolute count of TTD time units since frame 0
+    /// (the write journal's globalT; find-last's beforeGlobalT)
+    uint64_t GlobalT(const TTDTimePoint& at) const { return at.frame * FrameSpan() + at.tInFrame; }
 
     /// @brief Upper bound of the recorded timeline.
     ///
@@ -1422,8 +1451,14 @@ private:
     /// keeps replay observationally silent.
     ///
     /// @param targetFrame  Frame index (must match the restored checkpoint).
-    /// @param targetTInFrame T-state offset within the frame to stop at.
+    /// @param targetTInFrame Position within the frame to stop at, in TTD
+    ///        time units (FrameSpan() = the whole frame).
     void ReplayWithinFrame(uint64_t targetFrame, uint32_t targetTInFrame);
+
+    /// @brief Run the CPU until the current frame reaches `targetTInFrame`
+    /// (TTD time units) or ends. A hardware turbo may switch on the way, so
+    /// the T-state budget is re-derived after each run.
+    void RunToTInFrame(uint32_t targetTInFrame);
 
     /// @brief Compose the picture for the current position (display rule,
     /// docs/inprogress/2026-09-28-ttd-positioning-and-display/design.md §3).
@@ -1677,9 +1712,11 @@ private:
     size_t _inputCursor = 0;
     bool _inputPlaybackArmed = false;
 
-    /// Live input waiting for the machine's thread (SubmitLiveInput)
+    /// Live input and machine tasks waiting for the machine's thread
+    /// (SubmitLiveInput, SubmitMachineTask)
     std::mutex _pendingInputMutex;
     std::vector<TTDInputEvent> _pendingInput;
+    std::vector<std::function<void()>> _pendingTasks;
 
     /// Position the playback cursor at the restored machine time (events
     /// journaled at exactly that time are applied by the next instruction)

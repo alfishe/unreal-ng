@@ -36,6 +36,10 @@ Z80::Z80(EmulatorContext* context) : Z80State{}
     DbgMemIf = Memory::GetDebugMemoryInterface();
     FastContendedMemIf = Memory::GetFastContendedMemoryInterface();
     DbgContendedMemIf = Memory::GetDebugContendedMemoryInterface();
+    OverlayFastMemIf = Memory::GetOverlayMemoryInterface(false, false);
+    OverlayDbgMemIf = Memory::GetOverlayMemoryInterface(true, false);
+    OverlayFastContendedMemIf = Memory::GetOverlayMemoryInterface(false, true);
+    OverlayDbgContendedMemIf = Memory::GetOverlayMemoryInterface(true, true);
     MemIf = FastMemIf;  // Use fast memory access interface by default (Core::SelectMemoryInterface decides)
 
     // Ensure register memory and unions do not contain garbage
@@ -113,6 +117,14 @@ Z80::~Z80()
     FastContendedMemIf = nullptr;
     delete DbgContendedMemIf;
     DbgContendedMemIf = nullptr;
+    delete OverlayFastMemIf;
+    OverlayFastMemIf = nullptr;
+    delete OverlayDbgMemIf;
+    OverlayDbgMemIf = nullptr;
+    delete OverlayFastContendedMemIf;
+    OverlayFastContendedMemIf = nullptr;
+    delete OverlayDbgContendedMemIf;
+    OverlayDbgContendedMemIf = nullptr;
 
     if (_opcodeProfiler)
     {
@@ -398,7 +410,9 @@ void Z80::Z80Step(bool skipBreakpoints)
 
         if (++cpu.halt_cycle == 4)
         {
-            cpu.r_low += 1;
+            // The refresh counter's 7 bits, bit 7 kept (as m1_cycle). Only on the vm1 HALT model, which nothing
+            // selects today: HALT re-executes its own M1 (op_76)
+            cpu.r_low = ((cpu.r_low + 1) & 0x7F) | (cpu.r_low & 0x80);
             cpu.halt_cycle = 0;
         }
     }
@@ -783,7 +797,7 @@ void Z80::NotifyInstructionStart()
         if (_context->ttdProbe.Matches(m1_pc, ttd::TTDAccessType::Execute, 0, m1_pc, execPhysPage))
         {
             const auto& st = _context->emulatorState;
-            const ttd::TTDTimePoint tp{st.frame_counter, t};
+            const ttd::TTDTimePoint tp{st.frame_counter, st.TtdTInFrame(t)};
             _context->ttdProbe.RecordHit(tp, m1_pc, /*value=*/0, execPhysPage,
                                           ttd::TTDAccessType::Execute);
         }
@@ -825,17 +839,14 @@ void Z80::wd(uint16_t addr, uint8_t val)
 
 uint8_t Z80::in(uint16_t port)
 {
-    // ULA IO contention: accessing contended ports during screen rendering
-    // on ZX-48K/128K delays the CPU by the contention pattern.
-    // This is critical for accurate timing of raster-sync effects.
-    // ioContention is null on machines without it (Core::SelectMemoryInterface)
+    // ULA I/O contention (48K / 128K / +2), first part: the wait at the cycle's first T, before IORQ. The
+    // handler has already counted that T (IORQ is at T2), so the cycle started 1 T ago. ioContention is
+    // null on machines without it (Core::SelectMemoryInterface)
+    uint8_t ioWait = 0;
     if (ioContention)
     {
-        uint8_t delay = ioContention->GetIOContentionDelay(port);
-        if (delay > 0)
-            IncrementCPUCyclesCounter(delay);
-        if (isDebugMode)
-            ioContention->CountAccess(CONTENTION_IO, delay);
+        ioWait = ioContention->IoWaitBeforeIorq(port, (tt - rate) >> 8);
+        IncrementCPUCyclesCounter(ioWait);
     }
 
     // Pre-decode interceptor (ZX-Poly platform ports): a consumed read never
@@ -847,6 +858,8 @@ uint8_t Z80::in(uint16_t port)
         {
             if (busTraceHook)
                 busTraceHook('I', port, intercepted);
+            if (ioContention)
+                IoWaitAfterIorq(port, ioWait);
             return intercepted;
         }
     }
@@ -905,22 +918,21 @@ uint8_t Z80::in(uint16_t port)
     if (portInterceptor) [[unlikely]]
         portInterceptor->OnInResult(port, result, fromFloatingBus);
 
+    if (ioContention)
+        IoWaitAfterIorq(port, ioWait);
+
     return result;
 }
 
 void Z80::out(uint16_t port, uint8_t val)
 {
-    // ULA IO contention: accessing contended ports during screen rendering
-    // on ZX-48K/128K delays the CPU by the contention pattern.
-    // This must be applied BEFORE the port write so that SetBorderColor()
-    // sees the correct (delayed) t-state. ioContention: see in()
+    // ULA I/O contention, as in in(): the wait before IORQ goes before the port write, so the device (the
+    // border latch) sees the delayed T; the waits after IORQ follow the write
+    uint8_t ioWait = 0;
     if (ioContention)
     {
-        uint8_t delay = ioContention->GetIOContentionDelay(port);
-        if (delay > 0)
-            IncrementCPUCyclesCounter(delay);
-        if (isDebugMode)
-            ioContention->CountAccess(CONTENTION_IO, delay);
+        ioWait = ioContention->IoWaitBeforeIorq(port, (tt - rate) >> 8);
+        IncrementCPUCyclesCounter(ioWait);
     }
 
     // Pre-decode interceptor (ZX-Poly platform ports): a consumed write never
@@ -929,6 +941,8 @@ void Z80::out(uint16_t port, uint8_t val)
     {
         if (busTraceHook)
             busTraceHook('O', port, val);
+        if (ioContention)
+            IoWaitAfterIorq(port, ioWait);
         return;
     }
 
@@ -943,6 +957,17 @@ void Z80::out(uint16_t port, uint8_t val)
 
     if (busTraceHook)
         busTraceHook('O', port, val);
+
+    if (ioContention)
+        IoWaitAfterIorq(port, ioWait);
+}
+
+void Z80::IoWaitAfterIorq(uint16_t port, uint8_t ioWait)
+{
+    const uint8_t after = ioContention->IoWaitAfterIorq(port, t);
+    IncrementCPUCyclesCounter(after);
+    if (isDebugMode)
+        ioContention->CountAccess(CONTENTION_IO, static_cast<uint8_t>(ioWait + after));
 }
 
 /// The slow half of Idle: taken only while the ULA contends internal cycles or a bus trace hook listens.
