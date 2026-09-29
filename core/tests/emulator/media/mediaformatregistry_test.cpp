@@ -73,8 +73,11 @@ TEST(MediaFormatRegistry_Test, FailuresSayWhy)
 
     request.kind = MediaKind::Tape;
     const MediaResult tape = MediaFormatRegistry::Open(request, medium);
-    EXPECT_EQ(tape.error, MediaError::NotSupported) << "tapes join in M3";
-    EXPECT_NE(tape.message.find("tape"), std::string::npos) << tape.message;
+    EXPECT_EQ(tape.error, MediaError::UnreadableSource);
+    EXPECT_NE(tape.message.find("registry-missing"), std::string::npos) << tape.message;
+    request.source.type = MediaSourceType::Blank;
+    EXPECT_EQ(MediaFormatRegistry::Open(request, medium).error, MediaError::NotSupported) << "no blank tape";
+    request.source.type = MediaSourceType::File;
 
     request.kind = MediaKind::Block;
     request.source.type = MediaSourceType::Blank;
@@ -86,5 +89,7 @@ TEST(MediaFormatRegistry_Test, ExtensionsPerKind)
 {
     const auto block = MediaFormatRegistry::Extensions(MediaKind::Block);
     EXPECT_NE(std::find(block.begin(), block.end(), "img"), block.end());
-    EXPECT_TRUE(MediaFormatRegistry::Extensions(MediaKind::Tape).empty()) << "tape formats join in M3";
+    const auto tape = MediaFormatRegistry::Extensions(MediaKind::Tape);
+    EXPECT_NE(std::find(tape.begin(), tape.end(), "tzx"), tape.end());
+    EXPECT_NE(std::find(tape.begin(), tape.end(), "tap"), tape.end());
 }

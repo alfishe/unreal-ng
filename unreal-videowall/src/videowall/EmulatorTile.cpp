@@ -2,6 +2,7 @@
 #include "videowall/TileGrid.h"
 
 #include <QDragLeaveEvent>
+#include <QFileInfo>
 #include <QMimeData>
 #include "videowall/VideowallRecorder.h"
 #include <QPainter>
@@ -212,8 +213,8 @@ void EmulatorTile::dropEvent(QDropEvent* event)
         loadSuccess = _emulator->LoadDisk(filePath.toStdString());
         qDebug() << (loadSuccess ? "Loaded" : "Failed to load") << "disk:" << filePath;
     }
-    // Load tape files
-    else if (ext == ".tap" || ext == ".tzx")
+    // Load tape files: every format the tape loaders read
+    else if (Emulator::IsTapeExtension(QFileInfo(filePath).suffix().toStdString()))
     {
         loadSuccess = _emulator->LoadTape(filePath.toStdString());
         qDebug() << (loadSuccess ? "Loaded" : "Failed to load") << "tape:" << filePath;

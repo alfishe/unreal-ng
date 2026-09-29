@@ -11,12 +11,15 @@
 #include "common/logger.h"
 #include "common/modulelogger.h"
 #include "common/filehelper.h"
+#include "common/stringhelper.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/storage/sessionwritemap.h"
 #include "emulator/media/floppyformats.h"
 #include "emulator/notifications.h"
+#include "loaders/tape/writer_tap.h"
+#include "loaders/tape/writer_tzx.h"
 
 MediaManager::MediaManager(EmulatorContext* context) : _context(context) {}
 
@@ -669,6 +672,16 @@ MediaResult MediaManager::ExportMedium(const std::string& slotId, Medium& medium
         std::string error;
         if (!ExportBlockDevice(*medium.Block(), path, &error))
             return MediaResult::Fail(MediaError::IoError, error);
+    }
+    else if (const TapeImage* tape = medium.Tape())
+    {
+        // A .tap takes ROM-standard byte blocks only; anything else is a .tzx
+        std::string error;
+        const bool tap = StringHelper::ToLower(FileHelper::GetFileExtension(path)) == "tap";
+        const bool written = tap ? TapArchiveWriter::Save(*tape, path, error) : TzxArchiveWriter::Save(*tape, path, error);
+        if (!written)
+            return MediaResult::Fail(tap && TapArchiveWriter::IsExportable(*tape) ? MediaError::IoError : MediaError::BadRequest,
+                                     error);
     }
     else
     {

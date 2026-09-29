@@ -842,14 +842,8 @@ namespace PythonBindings
                 return true;
             }, "Rewind tape to beginning (image kept)")
             .def("tape_eject", [](Emulator& self) -> bool {
-                auto* ctx = self.GetContext();
-                if (ctx && ctx->pTape) {
-                    ctx->pTape->reset();
-                    ctx->coreState.tapeFilePath = "";
-                    return true;
-                }
-                return false;
-            }, "Eject tape")
+                return self.EjectTape();
+            }, "Eject tape (the media manager's tape slot)")
             .def("tape_pause", [](Emulator& self) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pTape) return false;

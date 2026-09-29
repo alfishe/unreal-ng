@@ -2,7 +2,7 @@
 //
 // Tools orchestrate existing WebAPI endpoints over the loopback IApiCaller:
 //   1. emulator_manage    — lifecycle: create/list/start/stop/pause/resume/reset/destroy
-//   2. load_software      — auto-detect .sna/.z80/.tap/.tzx/.trd/.scl/.fdi and load
+//   2. load_software      — auto-detect .sna/.z80, tapes (.tap/.tzx/...), .trd/.scl/.fdi and load
 //   3. control_execution  — stepping/running + breakpoint management
 //   4. inspect_state      — multi-aspect state inspection (registers/memory/disasm/...)
 //   5. type_input         — keyboard: type/tap/press/release/combo/macro
@@ -408,7 +408,7 @@ void RegisterLoadSoftware(ToolRegistry& registry)
 
     registry.Register(
         "load_software",
-        "Load software into the emulator by auto-detecting the file type: snapshots (.sna .z80), tapes (.tap .tzx), "
+        "Load software into the emulator by auto-detecting the file type: snapshots (.sna .z80), tapes (.tap .tzx .spc .sta .ltp .zxt), "
         "disk images (.trd .scl .fdi .udi .dsk .td0 .mgt .img). The machine must be created first (target:'auto' "
         "handles that). If the path exists locally on the MCP host, the file is uploaded to the emulator "
         "automatically; otherwise, the path is passed to the emulator for direct loading.",
@@ -426,7 +426,7 @@ void RegisterLoadSoftware(ToolRegistry& registry)
             if (dot == std::string::npos || dot + 1 >= path.size())
             {
                 done(ToolResult::Error("Cannot determine file type of '" + path +
-                                            "'. Supported: .sna .z80 (snapshot), .tap .tzx (tape), "
+                                            "'. Supported: .sna .z80 (snapshot), .tap .tzx .spc .sta .ltp .zxt (tape), "
                                             ".trd .scl .fdi .udi .dsk .td0 .mgt .img (disk)"));
                 return;
             }
@@ -434,13 +434,14 @@ void RegisterLoadSoftware(ToolRegistry& registry)
             std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
             bool isSnapshot = ext == "sna" || ext == "z80";
-            bool isTape = ext == "tap" || ext == "tzx";
+            const auto& tapeExtensions = TapeExtensions();
+            bool isTape = std::find(tapeExtensions.begin(), tapeExtensions.end(), ext) != tapeExtensions.end();
             bool isDisk = ext == "trd" || ext == "scl" || ext == "fdi" || ext == "udi" || ext == "dsk" ||
                           ext == "td0" || ext == "mgt" || ext == "img";
             if (!isSnapshot && !isTape && !isDisk)
             {
                 done(ToolResult::Error("Unsupported file type '." + ext +
-                                            "'. Supported: .sna .z80 (snapshot), .tap .tzx (tape), "
+                                            "'. Supported: .sna .z80 (snapshot), .tap .tzx .spc .sta .ltp .zxt (tape), "
                                             ".trd .scl .fdi .udi .dsk .td0 .mgt .img (disk)"));
                 return;
             }

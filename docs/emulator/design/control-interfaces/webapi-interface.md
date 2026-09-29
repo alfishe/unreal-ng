@@ -1115,8 +1115,8 @@ Full tape transport, inspection and the offline audio bridge — one-to-one with
 
 | Method | Endpoint | Body | Description |
 |:-------|:---------|:-----|:------------|
-| `POST` | `/tape/load` | `{"path": "..."}` | Load tape image (.tap/.tzx/.csw/…) |
-| `POST` | `/tape/eject` | — | Stop playback, drop image and catalog |
+| `POST` | `/tape/load` | `{"path": "..."}` | Load a tape (.tap/.tzx/.spc/.sta/.ltp/.zxt) or a folder into the tape slot; 400 names the reason |
+| `POST` | `/tape/eject` | — | The tape leaves the tape slot; 409 while a TTD recording runs |
 | `POST` | `/tape/play` | — | Start at consumption cursor; resumes in place when paused |
 | `POST` | `/tape/pause` | — | Freeze mid-block; next play resumes exactly there (idempotent when already paused; 400 when not playing) |
 | `POST` | `/tape/stop` | — | Terminal stop: invalidates the loaded image |

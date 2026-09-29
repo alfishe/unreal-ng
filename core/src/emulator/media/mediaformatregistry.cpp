@@ -4,6 +4,7 @@
 
 #include "common/filehelper.h"
 #include "emulator/io/storage/hostfolder/folderdiskbuilder.h"
+#include "emulator/io/storage/hostfolder/foldertapebuilder.h"
 #include "emulator/media/floppyformats.h"
 #include "emulator/io/storage/hostfolder/foldermanifest.h"
 #include "emulator/io/storage/hostfolder/foldersnapshot.h"
@@ -11,6 +12,7 @@
 #include "emulator/io/storage/rawimage.h"
 #include "emulator/io/storage/readonlyguard.h"
 #include "emulator/io/storage/sessionwritemap.h"
+#include "loaders/tape/loader_tape.h"
 
 std::unique_ptr<Medium> MediaFormatRegistry::WrapBlock(MediaSource source, AccessMode access, std::string format,
                                                        std::unique_ptr<IBlockDevice> base)
@@ -126,12 +128,69 @@ static MediaResult OpenFloppy(const OpenRequest& request, std::unique_ptr<Medium
     return result;
 }
 
+static bool ReadWholeFile(const std::string& path, std::vector<uint8_t>& bytes)
+{
+    const size_t size = FileHelper::GetFileSize(path);
+    if (size == 0)
+        return false;
+    bytes.resize(size);
+    return FileHelper::ReadFileToBuffer(path, bytes.data(), size) == size;
+}
+
+/// A tape: a file any tape loader claims (content probe, extension as the
+/// tie-break), or a folder built into a TZX. A tape is only ever read
+static MediaResult OpenTape(const OpenRequest& request, std::unique_ptr<Medium>& medium)
+{
+    const MediaSource& source = request.source;
+    MediaSource resolved = source;
+    std::unique_ptr<TapeImage> image;
+    std::string format;
+    MediaResult result = MediaResult::Success();
+
+    if (source.type == MediaSourceType::Folder || FileHelper::IsFolder(source.path))
+    {
+        result = FolderTapeBuilder::Build(FileHelper::ToFsPath(source.path), image);
+        if (!result.Ok())
+            return result;
+        resolved.type = MediaSourceType::Folder;
+        format = "folder-tzx";
+    }
+    else if (source.type == MediaSourceType::Blank)
+    {
+        return MediaResult::Fail(MediaError::NotSupported, "there is no blank tape: the emulator does not record to tape");
+    }
+    else
+    {
+        std::vector<uint8_t> bytes;
+        if (!FileHelper::FileExists(source.path) || !ReadWholeFile(source.path, bytes))
+            return MediaResult::Fail(MediaError::UnreadableSource, "cannot read '" + source.path + "'");
+        LoaderTapeBase* loader = TapeLoaderRegistry::Instance().Select(bytes, source.path);
+        if (!loader)
+            return MediaResult::Fail(MediaError::UnknownFormat, "'" + source.path + "' is no tape format this build reads");
+        image = std::make_unique<TapeImage>(loader->Load(bytes, source.path));
+        if (!image->IsUsable())
+            return MediaResult::Fail(MediaError::UnknownFormat,
+                                     "'" + source.path + "': " + (image->errorText.empty() ? "no playable blocks" : image->errorText));
+        result.report = image->parseWarnings;
+        format = loader->Format().id;
+        resolved.type = source.type == MediaSourceType::Upload ? MediaSourceType::Upload : MediaSourceType::File;
+    }
+    if (image->formatId.empty())
+        image->formatId = format;
+
+    medium = std::make_unique<Medium>(resolved, AccessMode::ReadOnly, format, std::move(image));
+    medium->Report() = result.report;
+    return result;
+}
+
 MediaResult MediaFormatRegistry::Open(const OpenRequest& request, std::unique_ptr<Medium>& medium)
 {
     medium.reset();
 
     if (request.kind == MediaKind::Floppy)
         return OpenFloppy(request, medium);
+    if (request.kind == MediaKind::Tape)
+        return OpenTape(request, medium);
     if (request.kind != MediaKind::Block)
         return MediaResult::Fail(MediaError::NotSupported,
                                  std::string(MediaKindName(request.kind)) + " media are not served by the media manager yet");
@@ -171,6 +230,7 @@ std::vector<std::string> MediaFormatRegistry::Extensions(MediaKind kind)
     {
         case MediaKind::Block: return {"img", "ima", "hdd", "hd", "bin", "mmc", "sd"};
         case MediaKind::Floppy: return FloppyFormats::Extensions();
+        case MediaKind::Tape: return TapeLoaderRegistry::Instance().SupportedExtensions();
         default: return {};
     }
 }

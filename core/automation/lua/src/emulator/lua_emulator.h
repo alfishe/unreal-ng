@@ -962,7 +962,9 @@ public:
             if (!emulator) return {false, "no emulator"};
             if (std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadTape); !refusal.empty())
                 return {false, refusal};
-            return {emulator->LoadTape(path), ""};
+            std::string reason;
+            const bool loaded = emulator->LoadTape(path, &reason);
+            return {loaded, reason};
         });
 
         lua.set_function("tape_is_inserted", [this]() -> bool {
@@ -1028,13 +1030,7 @@ public:
         lua.set_function("tape_eject", [this]() -> bool {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (ctx && ctx->pTape) {
-                ctx->pTape->reset();
-                ctx->coreState.tapeFilePath = "";
-                return true;
-            }
-            return false;
+            return emulator->EjectTape();
         });
 
         lua.set_function("tape_pause", [this]() -> bool {

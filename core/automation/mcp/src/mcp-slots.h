@@ -24,4 +24,8 @@ void RegisterMediaSlots(ToolRegistry& registry);
 /// in core-tests (mcp-slots_test.cpp) keeps the two equal
 const std::vector<std::pair<std::string, std::vector<std::string>>>& MediaToolActions();
 
+/// The tape file extensions load_software accepts: a copy of the core's
+/// TapeLoaderRegistry list, kept equal by the same test
+const std::vector<std::string>& TapeExtensions();
+
 } // namespace mcp

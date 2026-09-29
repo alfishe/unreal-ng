@@ -504,10 +504,13 @@ MediaResult MediaControl::ChooseSlot(const std::string& path, const Options& opt
     else
     {
         const std::string ext = Lower(FileHelper::GetFileExtension(path));
+        const auto tape = MediaFormatRegistry::Extensions(MediaKind::Tape);
         const auto block = MediaFormatRegistry::Extensions(MediaKind::Block);
-        if (std::find(block.begin(), block.end(), ext) == block.end())
+        if (std::find(tape.begin(), tape.end(), ext) != tape.end())
+            kind = MediaKind::Tape;
+        else if (std::find(block.begin(), block.end(), ext) == block.end())
             return MediaResult::Fail(MediaError::UnknownFormat,
-                                     "'" + path + "' is no medium this emulator knows: name the slot, or say kind=floppy|block");
+                                     "'" + path + "' is no medium this emulator knows: name the slot, or say kind=floppy|tape|block");
     }
 
     // The first empty slot of that kind; else the default one: the slot

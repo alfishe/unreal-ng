@@ -186,8 +186,8 @@ emu = Emulator()
 emu.init()
 
 # Load / eject
-emu.tape_load("/path/to/game.tap")   # .tap/.tzx/.csw
-emu.tape_eject()
+emu.tape_load("/path/to/game.tap")   # .tap/.tzx/.spc/.sta/.ltp/.zxt, or a folder built into a tape
+emu.tape_eject()                      # the tape leaves the tape slot (False while TTD records)
 
 # Transport (same semantics as `tape play|pause|stop|rewind|seek`)
 emu.tape_play()    # start at consumption cursor; resumes in place when paused

@@ -30,7 +30,7 @@ zxe.io depot (`ZX Spectrum - Tests (2025-07-19).7z`). Every program keeps its ow
 | File | What it is | Use for contention | Used today |
 |:--|:--|:--|:--|
 | `testdata/z80/fuse/tests.in`, `tests.expected` (FUSE, GPL-2.0+) | 1356 opcode cases with full bus traces: 7844 `MC` (memory contention checkpoint) and 79 `PC` (port checkpoint) events | **Where** every instruction is checked for contention, with address and T-state: M1, data and the internal (no-MREQ) cycles (`INC (HL)`: two extra `MC` on `HL`). FUSE runs them with zero delay, so they give the checkpoints, not the waits; one `PC` per port access, so no C:1 / C:3 shape. | `fuse_phase_test.cpp` checks the data events; the `MC`-only cycles are dropped (`contendOnlyCycles`), so the internal-cycle checkpoints are **not asserted** yet. |
-| `testdata/loaders/sna/Timing_Tests-48k_v1.0.sna` (Richard and Tim Butler) | 48K timing suite: 34 instruction groups in contended and uncontended memory, early / late ULA detection, floating bus (tests 35-37) | M1 + data contention on the 48K, with a machine-readable failure text ("Test N R= loop= sp=") | Only a load smoke test (`loader_sna_test.cpp`): **never run to completion** |
+| `testdata/loaders/sna/Timing_Tests-48k_v1.0.sna` (Richard and Tim Butler) | 48K timing suite: 35 instruction groups in contended and uncontended memory, early / late ULA detection, floating bus (tests 36-37, and the port reads of 35) | M1 + data contention on the 48K, with a machine-readable failure text ("Test N R= loop= sp=") | Only a load smoke test (`loader_sna_test.cpp`): **never run to completion** |
 | `core/tests/z80/z80test/*`, `z80full.sna`, `z80flags.sna` (Rak z80test, MIT) | Flag / CRC tests | none (no timing in any variant) | `Z80TestVerification.*` |
 | ZEXALL (`data/testsoft/ZEXALL`, Profi copy), Block Flags Test | Instruction exercisers | none | - |
 | `data/testsoft/AccuracyCoinZX/*`, `IntTest+.sna/.tap`, `test4.30.sna`, `hardware test 2005-01-16.tap`, `zx-diagnostics.rom` | Origin *unverified* | unknown / low | TTD corpus, tape sweep |
@@ -93,23 +93,29 @@ reports "TYPE1 (Early) timings detected". Results with phase 1:
 
 | | Contention on | Contention off |
 |:--|:--|:--|
-| Uncontended tests (1-35) | 34 pass (35, the floating-bus test, fails) | 30 pass (the port tests 22, 32-34 fail: the switch removes I/O contention too) |
+| Uncontended tests (1-35) | 34 pass (35 fails: see below) | 30 pass (the port tests 22, 32-34 fail: the switch removes I/O contention too) |
 | Contended tests (1-35) | all fail, but move towards the hardware: test 1 loop 1036 vs 1014 (1201 uncontended), test 2 583 vs 571 (657) | all fail at the uncontended counts |
 
 Every contended group also has internal cycles the 48K ULA contends (phase 2) or port cycles with the
 multi-point pattern (phase 3). **After phase 2** (internal cycles): 68 of 70 pass with contention on - every
-test but 35 (the floating bus, both halves); test 1 contended reads R=74 loop=1014 SP=23296, the hardware
-values. Default run: test 1 only (`ButlerTest1MovesTowardsTheHardware`, ~130 ms),
-pinning the hardware value 1014 since phase 2; opt-in: all 35 tests in both switch settings (~6 s).
+test but 35; test 1 contended reads R=74 loop=1014 SP=23296, the hardware values. **Now 72 of 72** (the
+suite has 37 tests: 36 and 37 are contended-only floating-bus runs): test 35's port reads become the next
+port's high byte, and they read a Kempston mouse (fitted on the standard 48K; the runner now runs a bare
+48K), the Beta 128 FDC outside TR-DOS (now gated) and a floating bus that was switched off (`FloatBus=0`) and
+2 T late - all fixed (TODO.md, "Floating bus"). Default run: test 1 only (`ButlerTest1MovesTowardsTheHardware`, ~130 ms),
+pinning the hardware value 1014 since phase 2; opt-in: all 37 tests in both switch settings (~14 s).
 
 **Rak, Timing Test v0.3** (vendored, `testdata/contention/rak-timing-test/`). Each test prints 160 durations,
 one per start T-state; the reference grids are transcribed from the published result screens.
 
-| Model | Matches the reference | Differs today |
-|:--|:--|:--|
-| 48K early | 0 contended NOP, 2 `IN #00FE`, 3 `#00FF`, 6 `#FFFE`, 7 `#FFFF` | 4 `#7FFE`, 5 `#7FFF`: multi-point I/O contention (phase 3) |
-| 128K early | 0 contended NOP, 8 page RET | 2 `#00FE`: the 128K I/O rule adds 1 T to every even port, the reference has no such T (phase 3); 4 `#7FFE`: multi-point (phase 3) |
-| +3 | 0 contended NOP (after the window fix below), 4 `#7FFE` (no I/O contention), 8 page RET | - |
+| Model | Matches the reference |
+|:--|:--|
+| 48K early | 0 contended NOP, 2 `IN #00FE`, 3 `#00FF`, 4 `#7FFE`, 5 `#7FFF`, 6 `#FFFE`, 7 `#FFFF` |
+| 128K early | 0 contended NOP, 2 `#00FE`, 4 `#7FFE`, 5 `#7FFF`, 8 page RET |
+| +3 | 0 contended NOP, 4 `#7FFE` (no I/O contention), 8 page RET |
+
+Before phase 3 the 48K `#7FFE` / `#7FFF` and 128K `#00FE` / `#7FFE` differed (single-point I/O contention,
+and an extra T on every 128K even port); the matrix pinned them as known differences until they flipped.
 
 **Found with it: the +2A/+3 gate array window is 129 T, not 128.** The +3 contended NOP differed in its last
 row only: offset 128 after the first contended T still waits 1 T (NOP = 5). The references disagree:

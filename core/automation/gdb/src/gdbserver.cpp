@@ -822,7 +822,7 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
                     refusal = _emulator->RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot);
                     ok = refusal.empty() && _emulator->LoadSnapshot(path);
                 }
-                else if (ext == "tap" || ext == "tzx")
+                else if (Emulator::IsTapeExtension(ext))
                 {
                     refusal = _emulator->RecordingGuard(ttd::TTDGuardedAction::LoadTape);
                     ok = refusal.empty() && _emulator->LoadTape(path);

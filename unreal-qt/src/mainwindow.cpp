@@ -1909,8 +1909,6 @@ void MainWindow::openTapeDialog()
     QString filter = buildFilterGroup(tr("Tape Files"), exts) + ";;" +
                      buildFilterGroup(tr("TAP Tapes"), {"tap"}) + ";;" +
                      buildFilterGroup(tr("TZX Tapes"), {"tzx"}) + ";;" +
-                     buildFilterGroup(tr("CSW Tapes"), {"csw"}) + ";;" +
-                     buildFilterGroup(tr("WAV Audio"), {"wav"}) + ";;" +
                      tr("All Files (*)");
 
     QString filePath = QFileDialog::getOpenFileName(this, tr("Open Tape"), _lastDirectory, filter);

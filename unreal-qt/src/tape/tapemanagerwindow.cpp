@@ -99,7 +99,7 @@ void TapeManagerWindow::buildUi()
 
     _stopButton = new QToolButton(this);
     _stopButton->setIcon(style()->standardIcon(QStyle::SP_MediaStop));
-    _stopButton->setToolTip(tr("Stop & eject: stop playback and drop the image (same as CLI 'tape stop')"));
+    _stopButton->setToolTip(tr("Stop & eject: the tape leaves the deck (same as CLI 'tape eject')"));
     connect(_stopButton, &QToolButton::clicked, this, [this]() {
         if (_binding) _binding->tapeStop();
     });

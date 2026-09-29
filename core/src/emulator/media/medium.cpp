@@ -47,6 +47,16 @@ Medium::Medium(MediaSource source, AccessMode access, std::string format, std::u
     _sourceKey = MakeSourceKey(_source);
 }
 
+Medium::Medium(MediaSource source, AccessMode access, std::string format, std::unique_ptr<TapeImage> tape)
+    : _kind(MediaKind::Tape),
+      _source(std::move(source)),
+      _access(access),
+      _format(std::move(format)),
+      _tape(std::move(tape))
+{
+    _sourceKey = MakeSourceKey(_source);
+}
+
 void Medium::Rebase(MediaSource source)
 {
     _source = std::move(source);
@@ -111,6 +121,8 @@ std::string Medium::Describe() const
     if (_disk)
         return _format + " disk " + std::to_string(static_cast<int>(_disk->getCylinders())) + "x" +
                std::to_string(static_cast<int>(_disk->getSides()));
+    if (_tape)
+        return _format + " tape, " + std::to_string(_tape->blocks.size()) + " blocks";
     return _source.path;
 }
 

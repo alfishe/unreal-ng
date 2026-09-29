@@ -296,16 +296,15 @@ void CLIProcessor::HandleTapeLoad(const ClientSession& session, std::shared_ptr<
         return;
     }
 
-    // Use existing LoadTape method (already handles file loading)
-    bool success = emulator->LoadTape(filepath);
-
-    if (success)
+    // A tape file of any format the tape loaders read, or a folder
+    std::string reason;
+    if (emulator->LoadTape(filepath, &reason))
     {
         session.SendResponse(std::string("Tape loaded: ") + filepath + NEWLINE);
     }
     else
     {
-        session.SendResponse(std::string("Error: Failed to load tape: ") + filepath + NEWLINE);
+        session.SendResponse(std::string("Error: Failed to load tape: ") + filepath + " (" + reason + ")" + NEWLINE);
     }
 }
 
@@ -318,11 +317,13 @@ void CLIProcessor::HandleTapeEject(const ClientSession& session, std::shared_ptr
         return;
     }
 
-    EmulatorPauseBracket bracket(emulator);
-
-    // Stop tape and clear filepath
-    context->pTape->stopTape();
-    context->coreState.tapeFilePath.clear();
+    // The tape slot of the media manager (pauses the emulator itself)
+    std::string reason;
+    if (!emulator->EjectTape(&reason))
+    {
+        session.SendResponse("Error: " + reason + NEWLINE);
+        return;
+    }
 
     session.SendResponse(std::string("Tape ejected") + NEWLINE);
 }
