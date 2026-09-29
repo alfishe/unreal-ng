@@ -124,12 +124,32 @@ plane B in the renderer (P0a,
 and the core clip export: `data/clip_v2` holds RGBA + plane B for all 16 571
 frames (`capture/verify_clip_v2.py` - 0 failures).
 
-## Next (v5, on plane B)
+## v5 - mod-tpgw (2026-09-28 .. 29): from rules to a mixture of detectors
 
-1. Per-segment signature from plane B: exact bitmap byte + the attribute the
-   beam used - split mode (moving bitmap over flickering attributes, C4),
-   sprite vs. GigaScreen.
-2. Sustained periodicity before mixing (a bouncing ball alternates only for a
-   few frames), exit at once on a new value.
-3. Border as a 1-D beam-order sequence (B3).
-4. Mixer comparison (linear vs sRGB) on the same clips.
+The final algorithm is specified completely in
+[algorithm-mod-tpgw.md](../../../docs/inprogress/2026-09-27-zxdlss-gigascreen/algorithm-mod-tpgw.md);
+this is how it got there. Every step was checked on the golden scenes, the
+later ones with the regression gate (`python/regress.py`).
+
+| Version | Idea | What it taught |
+|---|---|---|
+| v5 | plane B signatures (bitmap + attribute), split mode, sustain | static GigaScreen clean; a ball-shaped raw patch trails every ball (10-frame window + 8-frame sustain); RECUR/split mixed 10 frames - a delayed ghost |
+| v6 | per-pixel mask over the last 2..5 frames only; the render rule "at most 5 raw frames" | long-lived memory of any kind goes stale on dynamic scenes; key = bitmap byte + attribute (cell key) separates a red ink ball from a red ink stripe; period 2 only + 6-frame confirmation: 0 ghosts on every clip |
+| v6la | remembered background pair + one frame of look-ahead | the strip a sprite vacates mixes at once when t+1 is visible |
+| v7 | independent detectors P = 2..5, brightness veto, translation veto, consensus | the rabbit (R-G-B, period 3) mixes; the veto must cover the whole decision window and not require a constant velocity; 3 whole periods per detector |
+| v8 | mix only cycles established >= 16 frames, adopt a long-held neighbor cycle | balls and their ghosts stay raw, but a moving floor never establishes; no threshold separates floor from ball |
+| v9 | window around t with 6 frames of look-ahead, no memory | the balls work (user: from look-ahead 6 on) |
+| v10 | + field mode for two-page moving textures (16x16 tiles alternating their color set, unexplained by the pixel stage, >= 12 tiles) | the spiral's lattice mixes; accepted on every scene but the snake |
+| MoD | the same as a mixture of detectors: frame context with a shared feature cache, registry, classifier, decision graph, consensus | reproduces v10 exactly (gate: no regression) |
+| mod-tpgw | field stage: two-page motion compensation (other page at t from t-1 and t+1), growth, whole-paper mode with scene hysteresis, override of the pixel stage | spiral: color within 2 % 78 -> 95 %, edges p95 5.0 -> 2.4 px, shimmer 0.050 -> 0.001; accepted |
+| mod-tpgwr | + per-pixel motion vector refinement | 786 pixels of a frame change, no metric moves: the snake's staircase edges are in the source; rejected |
+
+Oracles grew along the way (see the spec, section 10): oracle 1 (per pixel)
+calls the blend of a moving two-page texture a ghost; oracle 2 (several
+references, median consensus) judges how to mix where mixing is warranted;
+oracle 3 (pixel XOR + rhythm + a flash detector) keeps one-frame flashes out.
+The gate takes their consensus.
+
+Next: the C++ prototype in `tools/verification/zxdlss` (renders TTD files and
+clips through swappable algorithms; `mod-tpgw` first, verified against this
+reference, then optimized).

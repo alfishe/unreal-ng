@@ -23,13 +23,13 @@ DETECTOR_CLASS = {"period2": P2, "period3": P2 + 1, "period4": P2 + 2, "period5"
 
 class DeflickerMoD:
     def __init__(self, shape, mixer, lookahead=6, graph=None, threshold=0.5, field_palette=False,
-                 field_render="avg3", field_override=False, field_grow=False, field_whole=0.0):
+                 field_render="avg3", field_override=False, field_grow=False, field_whole=0.0, field_refine=False):
         self.h, self.w = shape
         self.mixer = mixer
         self.delay = lookahead
         self.graph = graph if graph is not None else default_graph(field_palette=field_palette, field_render=field_render,
                                                                    field_override=field_override, field_grow=field_grow,
-                                                                   field_whole=field_whole)
+                                                                   field_whole=field_whole, field_refine=field_refine)
         self.threshold = threshold
         self.stages = [(st, [REGISTRY[name](**params) for name, params in st.detectors]) for st in self.graph]
         history = max(d.history for _, ds in self.stages for d in ds)

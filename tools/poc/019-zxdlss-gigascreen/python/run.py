@@ -39,6 +39,7 @@ ap.add_argument("--alg", default="v2", choices=sorted(ALGORITHMS))
 ap.add_argument("--mixer", default="linear-mean", choices=sorted(MIXERS))
 ap.add_argument("--out", default="out/v1")
 ap.add_argument("--video", default="mp4", choices=["mp4", "gif", "none"])
+ap.add_argument("--dump", help="write the exact output as an RGB dump (zxdlss-rgb-dump, as zxdlss-render --dump)")
 ap.add_argument("--oracle2", action="store_true", help="also score with oracle2 (multi-reference) and oracle3 (pixel XOR + averaging)")
 args = ap.parse_args()
 
@@ -59,6 +60,21 @@ if args.oracle2:
     quality2 = Oracle2Accumulator(clip, MIXERS["linear-mean"](palette), strict=oracle)
     quality3 = Oracle3Accumulator(clip, MIXERS["linear-mean"](palette))
 
+dump_frames, dump_chunk = [], 0
+
+
+def dump_flush(final=False):
+    global dump_frames, dump_chunk
+    import zstandard
+    if dump_frames:
+        os.makedirs(args.dump, exist_ok=True)
+        data = np.stack(dump_frames).astype(np.uint8).tobytes()
+        open(os.path.join(args.dump, f"rgb_{dump_chunk:04d}.zst"), "wb").write(zstandard.ZstdCompressor(level=3).compress(data))
+        dump_chunk += 1
+        dump_frames = []
+
+
+dump_count = 0
 counts = np.zeros(len(NAMES))
 prev_out, prev_raw, prev_cls = None, None, None
 raw_change, out_change, cls_switches, n = 0.0, 0.0, 0.0, 0
@@ -81,6 +97,11 @@ for i in range(i0, i1 + 1):
     plane = clip.plane(i)
     out, cls = feed(i + delay)
     raw = palette[plane]
+    if args.dump:
+        dump_frames.append(out)
+        dump_count += 1
+        if len(dump_frames) == 500:
+            dump_flush()
     o1 = oracle.at(i)
     err = quality.add(raw, out, prev_out, o1)
     if quality2 is not None:
@@ -105,6 +126,11 @@ for i in range(i0, i1 + 1):
             cmap[np.repeat(alg.last_motion, 8, axis=1)] = (255, 0, 0)
         video.add(raw, out, cmap, err)
 elapsed = time.time() - t0
+if args.dump:
+    dump_flush()
+    json.dump({"format": "zxdlss-rgb-dump", "width": clip.w, "height": clip.h, "from": args.first,
+               "frames": dump_count, "chunk": 500, "files": "rgb_NNNN.zst (RGB8, frame after frame)"},
+              open(os.path.join(args.dump, "dump.json"), "w"), indent=1)
 if video:
     video.close()
 

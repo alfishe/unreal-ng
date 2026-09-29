@@ -44,6 +44,54 @@ bool WriteFile(const std::filesystem::path& path, const std::vector<uint8_t>& da
 }
 }  // namespace
 
+std::string TimeTravelManager::VisitComposedFrames(uint64_t fromFrame, uint64_t toFrame, const TTDFrameVisitor& visit)
+{
+    if (_state == TTDSessionState::Recording)
+        return "session is recording - stop it first";
+    if (_timeline.empty() || !_context || !_context->pScreen)
+        return "no recorded history";
+    const uint64_t first = _timeline.front().time.frame;
+    const uint64_t last = _timeline.back().time.frame;
+    if (fromFrame > toFrame || fromFrame < first || toFrame > last)
+        return "frame range outside the session [" + std::to_string(first) + ", " + std::to_string(last) + "]";
+
+    Screen* screen = _context->pScreen;
+    std::string error;
+    for (uint64_t frame = fromFrame; frame <= toFrame; ++frame)
+    {
+        // Positioning by frame number shows the frame's final picture (design
+        // 2026-09-28-ttd-positioning-and-display §3). Internal positioning, so
+        // no publication per frame; the last one is published below.
+        if (!SeekToInternal(TTDTimePoint{frame, 0}, nullptr))
+        {
+            error = "cannot position at frame " + std::to_string(frame);
+            break;
+        }
+        TTDComposedFrame f;
+        f.frame = frame;
+        f.p7FFD = _context->emulatorState.p7FFD;
+        f.border = _context->emulatorState.pFE & 0b0000'0111;
+        f.activeScreen = screen->GetActiveScreen();
+        ComposeDisplay(/*frameTarget=*/true);
+
+        uint32_t* fb = nullptr;
+        size_t fbSize = 0;
+        screen->GetFramebufferData(&fb, &fbSize);
+        const FramebufferDescriptor& d = screen->GetFramebufferDescriptor();
+        f.rgba = reinterpret_cast<const uint8_t*>(fb);
+        f.rgbaBytes = fbSize;
+        f.planeB = screen->GetPlaneB(&f.planeBCount);
+        f.width = d.width;
+        f.height = d.height;
+        if (!visit(f))
+            break;
+    }
+
+    // Leave the machine where the walk ended, shown as usual
+    PublishSeekedFrame();
+    return error;
+}
+
 TimeTravelManager::TTDClipExportResult TimeTravelManager::ExportClip(const TTDClipExportOptions& options)
 {
     TTDClipExportResult result;
@@ -87,7 +135,6 @@ TimeTravelManager::TTDClipExportResult TimeTravelManager::ExportClip(const TTDCl
         return result;
     }
 
-    Screen* screen = _context->pScreen;
     std::vector<uint8_t> rgbaChunk;
     std::vector<uint8_t> planeBChunk;
     uint32_t inChunk = 0;
@@ -112,58 +159,44 @@ TimeTravelManager::TTDClipExportResult TimeTravelManager::ExportClip(const TTDCl
         return true;
     };
 
-    for (uint64_t frame = options.fromFrame; frame <= options.toFrame; ++frame)
-    {
-        // Positioning by frame number shows the frame's final picture (design
-        // 2026-09-28-ttd-positioning-and-display §3). Internal positioning, so
-        // no publication per frame; the last one is published below.
-        if (!SeekToInternal(TTDTimePoint{frame, 0}, nullptr))
+    const std::string walkError = VisitComposedFrames(options.fromFrame, options.toFrame, [&](const TTDComposedFrame& f) {
+        if (f.frame == options.fromFrame)
         {
-            result.error = "cannot position at frame " + std::to_string(frame);
-            return result;
+            result.width = f.width;
+            result.height = f.height;
+            result.planeB = f.planeB != nullptr;
+            frameBytes = f.rgbaBytes;
+            planeBBytes = f.planeBCount * sizeof(uint16_t);
         }
-        const uint8_t p7FFD = _context->emulatorState.p7FFD;
-        const uint8_t border = _context->emulatorState.pFE & 0b0000'0111;
-        const uint8_t activeScreen = screen->GetActiveScreen();
-        ComposeDisplay(/*frameTarget=*/true);
-
-        uint32_t* fb = nullptr;
-        size_t fbSize = 0;
-        screen->GetFramebufferData(&fb, &fbSize);
-        size_t planeBCount = 0;
-        const uint16_t* planeB = screen->GetPlaneB(&planeBCount);
-        if (frame == options.fromFrame)
+        if (!f.rgba || f.rgbaBytes != frameBytes ||
+            (result.planeB && (!f.planeB || f.planeBCount * sizeof(uint16_t) != planeBBytes)))
         {
-            const FramebufferDescriptor& d = screen->GetFramebufferDescriptor();
-            result.width = d.width;
-            result.height = d.height;
-            result.planeB = planeB != nullptr;
-            frameBytes = fbSize;
-            planeBBytes = planeBCount * sizeof(uint16_t);
+            result.error = "frame geometry changed at frame " + std::to_string(f.frame) + " (video mode switch)";
+            return false;
         }
-        if (!fb || fbSize != frameBytes || (result.planeB && (!planeB || planeBCount * sizeof(uint16_t) != planeBBytes)))
-        {
-            result.error = "frame geometry changed at frame " + std::to_string(frame) + " (video mode switch)";
-            return result;
-        }
-
-        const auto* fbBytes = reinterpret_cast<const uint8_t*>(fb);
-        rgbaChunk.insert(rgbaChunk.end(), fbBytes, fbBytes + fbSize);
+        rgbaChunk.insert(rgbaChunk.end(), f.rgba, f.rgba + f.rgbaBytes);
         if (result.planeB)
         {
-            const auto* pbBytes = reinterpret_cast<const uint8_t*>(planeB);
+            const auto* pbBytes = reinterpret_cast<const uint8_t*>(f.planeB);
             planeBChunk.insert(planeBChunk.end(), pbBytes, pbBytes + planeBBytes);
         }
-        meta << "{\"frame\": " << frame << ", \"p7FFD\": " << static_cast<int>(p7FFD)
-             << ", \"active_screen\": " << static_cast<int>(activeScreen) << ", \"border\": " << static_cast<int>(border)
+        meta << "{\"frame\": " << f.frame << ", \"p7FFD\": " << static_cast<int>(f.p7FFD)
+             << ", \"active_screen\": " << static_cast<int>(f.activeScreen) << ", \"border\": " << static_cast<int>(f.border)
              << "}\n";
-
         result.frames++;
         if (++inChunk == options.chunkFrames && !flush())
         {
             result.error = "cannot write chunk " + std::to_string(chunkIndex);
-            return result;
+            return false;
         }
+        return true;
+    });
+    if (!result.error.empty())
+        return result;
+    if (!walkError.empty())
+    {
+        result.error = walkError;
+        return result;
     }
     if (!flush())
     {
@@ -199,9 +232,6 @@ TimeTravelManager::TTDClipExportResult TimeTravelManager::ExportClip(const TTDCl
         result.error = "cannot write clip.json";
         return result;
     }
-
-    // Leave the machine where the export ended, shown as usual
-    PublishSeekedFrame();
 
     result.ok = true;
     result.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();

@@ -103,7 +103,7 @@ class FieldDetector(Detector):
 
     def __init__(self, field_on=0.15, field_off=0.08, unexplained=0.25, min_tiles=12, present=4,
                  palette=False, palette_share=0.6, render="avg3", override=False, grow=False, whole=0.0,
-                 grow_min=24, whole_off=0.1, whole_hold=12, **params):
+                 grow_min=24, whole_off=0.1, whole_hold=12, refine=False, **params):
         super().__init__(**params)
         self.render, self.override, self.grow = render, override, grow
         self.whole = whole                  # grown field >= this share of the paper tiles -> the whole paper
@@ -113,6 +113,7 @@ class FieldDetector(Detector):
         # after `whole_hold` frames below `whole_off` (the spiral's seeds shrink
         # for single frames; the mode then blinked between v10 and two-page)
         self.whole_off, self.whole_hold = whole_off, whole_hold
+        self.refine = refine                # per-pixel motion vector refinement (twopage.py)
         self.whole_on, self.below = False, 0
         self.field_on, self.field_off, self.unexplained = field_on, field_off, unexplained
         self.min_tiles, self.present = min_tiles, present
@@ -198,7 +199,7 @@ class FieldDetector(Detector):
         shape = (ctx.h, ctx.w)
         if self.render == "twopage":
             # the other page at t from t-1 and t+1 (the same page, moved; twopage.py)
-            fp, fn = other_page(p_plane, n_plane)
+            fp, fn = other_page(p_plane, n_plane, refine=self.refine)
             half = np.where(px, 0.5, 0.0)
             quarter = np.where(px, 0.25, 0.0)
             return [Proposal(self.name, px, px.astype(np.float32), {L: half, "page_prev": quarter, "page_next": quarter},

@@ -97,6 +97,20 @@ Independent framing audit of `.tap` dumps: walks every block (u16 length + body,
 
 ---
 
+### ZX DLSS de-flicker algorithms (`zxdlss/`)
+
+C++ module of GigaScreen de-flicker algorithms behind one interface, and
+`zxdlss-render`: a TTD file (replayed through the core) or an exported clip ->
+algorithm -> H.264 video (`--layout raw-out` for side by side) and/or an exact
+RGB dump. `zxdlss-bench` times an algorithm per stage; `scripts/parity.sh`
+checks the C++ output against the Python reference on the golden scenes.
+
+*   **Build:** `cmake -DBUILD_ZXDLSS_TOOLS=ON` then `ninja zxdlss-render zxdlss-bench`.
+*   **Usage:** `zxdlss-render --ttd session.ttd --layout raw-out --video out.mp4`
+*   **Details:** [zxdlss/README.md](zxdlss/README.md).
+
+---
+
 ## Compatibility
 All scripts are designed to be cross-platform and have been tested on:
 *   **macOS** (using `hdiutil` and `sysctl`)

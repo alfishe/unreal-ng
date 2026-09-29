@@ -43,6 +43,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -801,6 +802,31 @@ public:
     /// seek + capture round trip per frame. Leaves the machine positioned and
     /// displayed at toFrame. The emulator must be paused; refused while recording.
     TTDClipExportResult ExportClip(const TTDClipExportOptions& options);
+
+    /// One composed frame handed to a VisitComposedFrames callback. The
+    /// pointers are valid only during the callback.
+    struct TTDComposedFrame
+    {
+        uint64_t frame = 0;
+        const uint8_t* rgba = nullptr;    ///< width x height RGBA8 (the framebuffer)
+        size_t rgbaBytes = 0;
+        const uint16_t* planeB = nullptr; ///< width x height plane B, nullptr when zxdlss is off
+        size_t planeBCount = 0;
+        uint32_t width = 0;
+        uint32_t height = 0;
+        uint8_t p7FFD = 0;                ///< at the frame's start
+        uint8_t activeScreen = 0;
+        uint8_t border = 0;
+    };
+    using TTDFrameVisitor = std::function<bool(const TTDComposedFrame&)>;  ///< false stops the walk
+
+    /// @brief Walk [fromFrame, toFrame] and hand every frame's final picture
+    /// (and plane B) to `visit` - the walk ExportClip writes to disk, for tools
+    /// that process the frames in memory (tools/verification/zxdlss renders
+    /// TTD files through de-flicker algorithms). Same preconditions as
+    /// ExportClip; leaves the machine displayed at the last frame visited.
+    /// @return empty on success, otherwise the reason
+    std::string VisitComposedFrames(uint64_t fromFrame, uint64_t toFrame, const TTDFrameVisitor& visit);
 
     // -----------------------------------------------------------------------
     // Agent bookmarks (TD-4; ttd-coverage-evaluation.md §TD-4)

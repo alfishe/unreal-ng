@@ -36,5 +36,7 @@ ALGORITHMS = {"v1": DeflickerV1, "v2": DeflickerV2, "v3": DeflickerV3, "v4": Def
               "ref-avg3": RefAvg3, "ref-twopage": RefTwoPage,
               "mod-tp": partial(DeflickerMoD, field_render="twopage", field_override=True),
               "mod-tpg": partial(DeflickerMoD, field_render="twopage", field_override=True, field_grow=True),
-              "mod-tpgw": partial(DeflickerMoD, field_render="twopage", field_override=True, field_grow=True, field_whole=0.3)}
+              "mod-tpgw": partial(DeflickerMoD, field_render="twopage", field_override=True, field_grow=True, field_whole=0.3),
+              "mod-tpgwr": partial(DeflickerMoD, field_render="twopage", field_override=True, field_grow=True, field_whole=0.3,
+                                   field_refine=True)}
 NEEDS_PLANE_B = {"v5", "v5m"} | {k for k in ALGORITHMS if k.startswith(("v6", "v7", "v8", "v9", "v10", "v11", "mod", "ref"))}

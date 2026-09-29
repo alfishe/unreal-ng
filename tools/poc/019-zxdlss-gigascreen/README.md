@@ -5,8 +5,10 @@ while everything that is not part of color mixing stays exactly as sharp as
 the raw emulator output. This POC develops the analysis and mixing algorithm
 on real material before it goes into the emulator core.
 
-**Status (2026-09-28):** reference material recorded and mapped; phase 1
-(Python POC) at v2.
+**Status (2026-09-29):** phase 1 (Python POC) done - the final algorithm
+`mod-tpgw` is specified in
+[algorithm-mod-tpgw.md](../../../docs/inprogress/2026-09-27-zxdlss-gigascreen/algorithm-mod-tpgw.md);
+phase 2 (C++) moves to `tools/verification/zxdlss`.
 
 ## Goals
 

@@ -153,6 +153,56 @@ TEST_F(TTD_ClipExport_Test, ExportedFramesEqualLiveFrames)
     EXPECT_EQ(pos.frame, options.toFrame) << "export leaves the machine at the last exported frame";
 }
 
+// VisitComposedFrames hands the same pictures in memory (zxdlss-render renders
+// TTD files with it): every frame in order, equal to the live frame, and a
+// callback returning false stops the walk at that frame
+TEST_F(TTD_ClipExport_Test, VisitComposedFramesDeliversLiveFramesAndStops)
+{
+    std::map<uint64_t, std::vector<uint8_t>> liveRgba;
+    std::map<uint64_t, std::vector<uint16_t>> livePlaneB;
+    ASSERT_TRUE(_ttd->StartRecording());
+    for (int i = 0; i < 10; ++i)
+    {
+        _emulator->RunNFrames(1, /*skipBreakpoints=*/true);
+        const uint64_t frame = _context->emulatorState.frame_counter - 1;
+        uint32_t* fb = nullptr;
+        size_t fbSize = 0;
+        _screen->GetFramebufferData(&fb, &fbSize);
+        liveRgba[frame].assign(reinterpret_cast<uint8_t*>(fb), reinterpret_cast<uint8_t*>(fb) + fbSize);
+        size_t count = 0;
+        const uint16_t* planeB = _screen->GetPlaneB(&count);
+        ASSERT_NE(planeB, nullptr);
+        livePlaneB[frame].assign(planeB, planeB + count);
+    }
+    _ttd->StopRecording();
+
+    const uint64_t from = liveRgba.begin()->first + 1, to = from + 6;
+    std::vector<uint64_t> visited;
+    const std::string error = _ttd->VisitComposedFrames(from, to, [&](const ttd::TimeTravelManager::TTDComposedFrame& f) {
+        visited.push_back(f.frame);
+        EXPECT_TRUE(std::equal(liveRgba.at(f.frame).begin(), liveRgba.at(f.frame).end(), f.rgba)) << "RGBA of frame " << f.frame;
+        EXPECT_NE(f.planeB, nullptr);
+        if (f.planeB)
+            EXPECT_TRUE(std::equal(livePlaneB.at(f.frame).begin(), livePlaneB.at(f.frame).end(), f.planeB))
+                << "plane B of frame " << f.frame;
+        return true;
+    });
+    EXPECT_TRUE(error.empty()) << error;
+    ASSERT_EQ(visited.size(), 7u);
+    for (size_t k = 0; k < visited.size(); ++k)
+        EXPECT_EQ(visited[k], from + k);
+
+    size_t calls = 0;
+    const std::string stopped = _ttd->VisitComposedFrames(from, to, [&](const ttd::TimeTravelManager::TTDComposedFrame&) {
+        return ++calls < 3;
+    });
+    EXPECT_TRUE(stopped.empty()) << stopped;
+    EXPECT_EQ(calls, 3u);
+    EXPECT_EQ(_ttd->CurrentPosition().frame, from + 2) << "the walk stays at the frame where it stopped";
+
+    EXPECT_FALSE(_ttd->VisitComposedFrames(to, from, [](const auto&) { return true; }).empty()) << "reversed range";
+}
+
 TEST_F(TTD_ClipExport_Test, RefusedWhileRecordingAndOutsideSession)
 {
     ASSERT_TRUE(_ttd->StartRecording());

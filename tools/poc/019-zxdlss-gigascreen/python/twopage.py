@@ -11,15 +11,21 @@ moved half the way forward and frame t+1 moved half the way back:
   B^(t)(p)   from t-1 at p - v/2 and from t+1 at p + v/2 (v odd: floor on one
              side, ceil on the other); where the two samples agree, that
              color; where they disagree, both at half weight
+  refine     (optional) per pixel, the vector of its block or of one of the 8
+             neighbor blocks (or zero) whose samples t-1 / t+1 agree best in the
+             3x3 window around the pixel: object boundaries follow pixels, not
+             the 8x8 grid (a block half snake, half lattice gave the snake's
+             edges an 8-pixel staircase)
 """
 import numpy as np
+from scipy import ndimage
 
 BLOCK, RADIUS = 8, 8
 
 
-def block_motion(prev, nxt, block=BLOCK, radius=RADIUS):
-    """-> (dy, dx) per pixel: displacement of prev's content to nxt (nxt(p + v) = prev(p)),
-    estimated per block of nxt... here per block of the frame midway (p grid)."""
+def block_motion(prev, nxt, block=BLOCK, radius=RADIUS, per_block=False):
+    """-> (dy, dx) per pixel (or per block with per_block=True): displacement of
+    prev's content to nxt, per block of the midway grid (prev at p - v/2, nxt at p + v/2)."""
     h, w = prev.shape
     bh, bw = h // block, w // block
     best = np.full((bh, bw), np.inf)
@@ -38,6 +44,8 @@ def block_motion(prev, nxt, block=BLOCK, radius=RADIUS):
             best[better] = c[better]
             vy[better] = dy
             vx[better] = dx
+    if per_block:
+        return vy, vx
     full_y = np.zeros((h, w), np.int32)
     full_x = np.zeros((h, w), np.int32)
     full_y[:bh * block, :bw * block] = np.repeat(np.repeat(vy, block, 0), block, 1)
@@ -45,16 +53,51 @@ def block_motion(prev, nxt, block=BLOCK, radius=RADIUS):
     return full_y, full_x
 
 
-def other_page(prev, nxt, block=BLOCK, radius=RADIUS):
-    """-> (samples from prev, samples from nxt) at instant t (palette index planes)."""
+def _samples(prev, nxt, vy, vx):
     h, w = prev.shape
-    vy, vx = block_motion(prev, nxt, block, radius)
     ay, ax = vy // 2, vx // 2
     by, bx = vy - ay, vx - ax
     yy, xx = np.indices((h, w))
-    from_prev = prev[(yy - ay) % h, (xx - ax) % w]
-    from_next = nxt[(yy + by) % h, (xx + bx) % w]
-    return from_prev, from_next
+    return prev[(yy - ay) % h, (xx - ax) % w], nxt[(yy + by) % h, (xx + bx) % w]
+
+
+def refine_vectors(prev, nxt, bvy, bvx, block=BLOCK, window=3):
+    """Per-pixel choice among the vectors of the pixel's block, its 8 neighbor
+    blocks and zero: the one with the fewest t-1 / t+1 mismatches in a
+    window x window neighborhood (ties: own block first, zero last)."""
+    h, w = prev.shape
+    bh, bw = bvy.shape
+    by_idx = np.minimum(np.arange(h) // block, bh - 1)
+    bx_idx = np.minimum(np.arange(w) // block, bw - 1)
+    best_cost = np.full((h, w), np.inf)
+    vy = np.zeros((h, w), np.int32)
+    vx = np.zeros((h, w), np.int32)
+    cands = [(0, 0)] + [(dy, dx) for dy in (-1, 0, 1) for dx in (-1, 0, 1) if (dy, dx) != (0, 0)]
+    for k, (oy, ox) in enumerate(cands):
+        ny = np.clip(by_idx + oy, 0, bh - 1)[:, None]
+        nx = np.clip(bx_idx + ox, 0, bw - 1)[None, :]
+        cy, cx = bvy[ny, nx], bvx[ny, nx]
+        a, b = _samples(prev, nxt, cy, cx)
+        cost = ndimage.uniform_filter((a != b).astype(np.float32), size=window, mode="nearest") + 1e-3 * k
+        better = cost < best_cost
+        best_cost[better] = cost[better]
+        vy[better], vx[better] = cy[better], cx[better]
+    zero = np.zeros((h, w), np.int32)
+    a, b = _samples(prev, nxt, zero, zero)
+    cost = ndimage.uniform_filter((a != b).astype(np.float32), size=window, mode="nearest") + 1e-2
+    better = cost < best_cost
+    vy[better], vx[better] = 0, 0
+    return vy, vx
+
+
+def other_page(prev, nxt, block=BLOCK, radius=RADIUS, refine=False):
+    """-> (samples from prev, samples from nxt) at instant t (palette index planes)."""
+    if refine:
+        bvy, bvx = block_motion(prev, nxt, block, radius, per_block=True)
+        vy, vx = refine_vectors(prev, nxt, bvy, bvx, block)
+    else:
+        vy, vx = block_motion(prev, nxt, block, radius)
+    return _samples(prev, nxt, vy, vx)
 
 
 def two_page_mix(mixer, cur, prev, nxt, block=BLOCK, radius=RADIUS):
