@@ -86,9 +86,9 @@ Result run(const Golden& g, bool debug)
     // Real-time clocks read the host's wall clock: freeze them, as the
     // Scorpion and ZX-Evo boot tests do
     if (ctx->config.mem_model == MM_ATM3)
-        static_cast<PortDecoder_ATM3*>(ctx->pPortDecoder)->GetCMOS().SetFixedTime(1767268830);
+        static_cast<PortDecoder_ATM3*>(ctx->pPortDecoder)->GetRtc().SetFixedTime(1767268830);
     if (ctx->config.mem_model == MM_SCORP || ctx->config.mem_model == MM_PROFSCORP)
-        static_cast<PortDecoder_Scorpion256*>(ctx->pPortDecoder)->GetSMUCNvram().SetFixedTime(1767268830);
+        static_cast<PortDecoder_Scorpion256*>(ctx->pPortDecoder)->GetRtc().SetFixedTime(1767268830);
     ctx->pFeatureManager->setFeature(Features::kDebugMode, debug);
     ctx->pMemory->UpdateFeatureCache();
     if (g.snapshot)

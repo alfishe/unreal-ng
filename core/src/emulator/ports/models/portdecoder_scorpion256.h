@@ -77,6 +77,8 @@ public:
 
     /// SMUC EEPROM backing store (verification tests / debug UI)
     SMUCNvram& GetSMUCNvram() { return _smucNvram; }
+    /// The clock chip (tests, debug UI; every RTC machine has GetRtc())
+    Ds12887& GetRtc() { return _smucNvram.GetRtc(); }
 
     /// SMUC board presence (absent by default - see _smucEnabled)
     void SetSmucEnabled(bool enabled) { _smucEnabled = enabled; }

@@ -77,6 +77,20 @@ uint64_t TTDPeripheralRegistry::ComputePeripheralHash() const
     return combined;
 }
 
+void TTDPeripheralRegistry::NotifyRecording(bool started) const
+{
+    for (const auto& [id, device] : _devices)
+    {
+        (void)id;
+        if (!device)
+            continue;
+        if (started)
+            device->TTDRecordingStarted();
+        else
+            device->TTDRecordingStopped();
+    }
+}
+
 void TTDPeripheralRegistry::CaptureAll(
     std::unordered_map<uint8_t, std::vector<uint8_t>>& outBlobs) const
 {

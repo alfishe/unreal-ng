@@ -522,7 +522,7 @@ precedent), registered in the factory + `IsModelSupported`
 | `0x57` / `0x77` | always | SPI data / chip selects (§3.11) |
 | `lo = 1F/3F/5F/7F/FF` | `DOS \|\| FDD_VIRT[7]` | WD1793 (existing registration, `wd1793.cpp:3430-3434`) + vdos arm/exit (hardware-spec §8.2) |
 | `lo = 1F` | `!DOS && !FDD_VIRT[7]` | Kempston joystick (8-bit) |
-| `lo = F7`, A8 = 1 | EFF7/CMOS gating (spec §9) | Gluk CMOS — reuse `memory/atm/cmos.h` `CMOS`; add extension regs F0-FF |
+| `lo = F7`, A8 = 1 | EFF7/CMOS gating (spec §9): `(EFF7[7] \|\| DOS) && (!DOS \|\| vdos)` | Gluk CMOS — reuse `EvoAvr` (`memory/atm/evoavr.h`: the same board AVR, already on the shared `Ds12887` chip with extension regs F0-FF); only the gating rule is TSConf's. Add `PeripheralId::Ds12887` (18) to the decoder's TTD ids like ATM3, and `[EVO] NvramFile` handling like `PortDecoder_ATM3` (PLAN #60(c)) |
 | `xxDF` | always | Kempston mouse (`Default_Port_KempstonMouse_In`, wheel nibble) |
 | `xxEF`, IDE ports | — | 0xFF (D2, D7) |
 | other | — | 0xFF |

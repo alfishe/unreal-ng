@@ -28,7 +28,7 @@ cell `#F0` and reading it back returned the same byte, which is the ERS's own te
 | Extension window | any write to `F0-FF` selects the type and is never stored; type 0 = firmware tag, 1 = bootloader tag, 2 = PS/2 log (reads `0`, empty, until E2b), 3 = modes register at `F0` (48K raster), other types `#FF` | `rtc.c:516-528`, `version.c` |
 | Version tags | exact 16-byte tags of the released images: `zxevo_fw.bin` offset `0xC670` = `5A 58 45 76 6F 20 34 4D 00 00 00 00 27 B4 41 47`; `zxevo_bl.hex` address `0x1FFF0` = `5A 58 45 76 6F 41 56 52 42 6F 6F 74 B9 26 C4 2B` | extracted from the pentevo binaries |
 | NVRAM file | `[EVO] NvramFile=`: the 256 cells + the 4 KiB EEPROM (4352 bytes), read once at power-on (first reset), written when the machine is destroyed; empty = session only; a Z80 reset never touches the AVR | design D4 |
-| `PortDecoder_ATM3` | owns an `EvoAvr` (`GetEvoAvr()`); `GetCMOS()` still returns the `CMOS` base | — |
+| `PortDecoder_ATM3` | owns an `EvoAvr` (`GetEvoAvr()`); `GetRtc()` returns its `Ds12887` base (PLAN #60(c): the former `CMOS` base is gone) | — |
 | TTD | `AtmPagingState` 128 → 132 bytes: extension type, EEPROM page, flags (EEPROM mode, Caps LED, tape-out). NVRAM and EEPROM stay out, like the CMOS contents | — |
 
 ## 3. Tests

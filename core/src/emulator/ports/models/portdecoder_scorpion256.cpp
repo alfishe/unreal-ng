@@ -5,6 +5,7 @@
 #include "portdecoder_scorpion256.h"
 
 #include "debugger/ttd/scorpion/ttdscorpionprofrom.h"
+#include "debugger/ttd/ttdds12887.h"
 
 #include "common/collectionhelper.h"
 #include "emulator/cpu/core.h"
@@ -61,6 +62,7 @@ static bool TryBeta128MirrorPort(uint16_t port, bool wideDecode, uint16_t& canon
 PortDecoder_Scorpion256::PortDecoder_Scorpion256(EmulatorContext* context) : PortDecoder(context)
 {
     _savedP7FFDValid = false;
+    _smucNvram.GetRtc().SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
 }
 
 PortDecoder_Scorpion256::~PortDecoder_Scorpion256()
@@ -700,14 +702,17 @@ std::vector<ttd::PeripheralId> PortDecoder_Scorpion256::GetTTDModelStateIds() co
     // Both variants: #1FFD (RAM at #0000, service monitor, high #C000 bank
     // bits) and the DD50.1 magic-button trigger drive the paging chain and are
     // not in the model-agnostic TTDChipsetState. The ProfROM plane state rides
-    // in the same blob; on the plain Scorpion it is simply zero
-    return {ttd::PeripheralId::ScorpionProfROM};
+    // in the same blob; on the plain Scorpion it is simply zero. The SMUC
+    // clock is captured even with the board absent: 320 bytes, and a test
+    // that fits the board records it like any other
+    return {ttd::PeripheralId::ScorpionProfROM, ttd::PeripheralId::Ds12887};
 }
 
 std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Scorpion256::CreateTTDSerializers() const
 {
     std::vector<std::unique_ptr<ttd::TTDSerializable>> serializers;
     serializers.push_back(std::make_unique<ttd::TTDScorpionProfROM>(_context));
+    serializers.push_back(std::make_unique<ttd::TTDDs12887>(const_cast<SMUCNvram&>(_smucNvram).GetRtc()));
     return serializers;
 }
 
@@ -939,7 +944,7 @@ uint8_t PortDecoder_Scorpion256::ReadSMUCPort(uint16_t port)
             return _smucNvram.ReadSerialLink() ? 0xFF : 0xBF;
 
         case 0x8000:  // #DFBA - DS1685 RTC data register
-            return _smucNvram.ReadCMOS();
+            return _smucNvram.GetRtc().ReadData();
 
         case 0x2000:  // #7FBA - virtual FDD
             return static_cast<uint8_t>(state.p7FBA | 0x3F);
@@ -997,9 +1002,9 @@ void PortDecoder_Scorpion256::WriteSMUCPort(uint16_t port, uint8_t value)
 
         case 0x8000:  // #DFBA - RTC address or data, latched by #FFBA bit 7
             if (state.pFFBA & 0x80)
-                _smucNvram.WriteCMOS(value);
+                _smucNvram.GetRtc().WriteData(value);
             else
-                _smucNvram.SetCMOSAddress(value);
+                _smucNvram.GetRtc().WriteAddress(value);
             break;
 
         case 0x2000:  // #7FBA - virtual FDD latch

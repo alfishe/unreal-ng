@@ -184,6 +184,26 @@ PortDecoder* PortDecoder::GetPortDecoderForModel(MEM_MODEL model, EmulatorContex
 
 /// endregion </Static methods>
 
+uint64_t PortDecoder::EmulatedMicroseconds() const
+{
+    if (!_context)
+        return 0;
+
+    const CONFIG& config = _context->config;
+    const EmulatorState& state = _context->emulatorState;
+    const uint64_t frameMicros = config.frame_duration_us;
+    const uint64_t units = state.ttd_clock_units ? state.ttd_clock_units : 1;
+    const uint64_t frameSpan = static_cast<uint64_t>(config.frame) * units;
+
+    const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    const uint64_t inFrame = z80 ? state.TtdTInFrame(z80->t) : 0;
+
+    uint64_t micros = state.frame_counter * frameMicros;
+    if (frameSpan)
+        micros += inFrame * frameMicros / frameSpan;
+    return micros;
+}
+
 /// region <Interface methods>
 
 uint8_t PortDecoder::DecodePortIn(uint16_t addr, [[maybe_unused]] uint16_t pc)

@@ -11,7 +11,7 @@ ZX Profi 1024 (`MM_PROFI`): design complete; implementation in progress on branc
 - [x] Automation and docs pass: port map / port-trace rules, `/state/paging` pDFFD fields, ROM page names, `PROFI`/`PROFIHR` mode reporting (WebAPI, CLI, Lua, Python), MCP resource `unreal://machine/profi`, permanent docs updated
 - [x] Config, decoder, banks, DOS latch and FDC ports, palette, TTD, standard + hi-res video, tests, real-ROM boot to the BIOS splash
 - [x] Covox/SoundRive DAC wired at `#5F`/`#3F` (NORMAL mode only; `#3F/#5F` are Beta128 FDC registers while `CF_DOSPORTS` is set) - forwards into the shared `Covox` device via its canonical Left/Right ports, isolated to `PortDecoder_Profi::DecodePortOut`
-- [x] RTC/CMOS (DS12885-style) wired at `#BF/#FF` (address), `#9F/#DF` (data), EXT mode only (`cpm && rom14`, UnrealSpeccy's own definition - not Karabas's wider variant). New Profi-owned register file (`core/src/emulator/memory/profi/proficmos.{h,cpp}`), sharing only the DS12885 register map with ATM3's CMOS, not its I2C NVRAM
+- [x] RTC/CMOS (DS12885-style) wired at `#BF/#FF` (address), `#9F/#DF` (data), EXT mode only (`cpm && rom14`, UnrealSpeccy's own definition - not Karabas's wider variant). Since 2026-09-28 (PLAN #60(c)) the shared `Ds12887` chip (`core/src/emulator/io/rtc/ds12887.h`, 256 cells) with `[PROFI] NvramFile=`; the former Profi-owned `ProfiCMOS` is gone
 - [x] Hi-res renderer extracted into its own class `ScreenProfi` (`video/profi/`, commit `f773998d`) - the `ScreenAtm` pattern; never a method on `ScreenZX`
 - [x] Reconciliation against the reference emulator sources: [2026-09-25-profi-reconciliation.md](2026-09-25-profi-reconciliation.md) (parity matrix, TTD bit-to-bit verdict, gap list)
 - [x] Palette gaps from the reconciliation (section 1.4): full 9-bit `GGGRRRBBB` storage (extra blue LSB from `#FE.D7`) and `#FE` read bit 7 ("GX0"/UniCopy, DS80-gated)
@@ -24,7 +24,7 @@ ZX Profi 1024 (`MM_PROFI`): design complete; implementation in progress on branc
 ## Remaining
 - [x] IDE, rollout 1 (reconciliation G1) - done 2026-09-28 as the IDE + ATAPI scope (branch `ide-atapi`): [implementation-plan.md](../2026-09-28-ide-atapi/implementation-plan.md) §5. **Closes G1**: the Profi board (`#xxCB/#xxEB/#06AB`, EXT-mode gate, mirrored latches), `Scheme=PROFI`; the SYS ROM HDD loader boots from a disk at `#28CE` (`profi_hdd_test`). Automation is the `media` verbs and `state ide`; TTD is the `AtaChannel` blob + write barriers (the rollout-2 serializer, earlier than planned). Profi geometry auto-detect (Q4) is a follow-up
 - [ ] IDE, rollout 2 (reconciliation T3) - **requires further investigation first** (design §7.3, §10, Q10): R2-0 investigation, then COW change layer + write journal, `PeripheralId::AtaChannel` TTD serializer, snapshot media references, folder commit-back
-- [ ] RTC CMOS in TTD (reconciliation T1/T2) - deferred until IDE lands
+- [x] RTC CMOS in TTD (reconciliation T1/T2) - `PeripheralId::Ds12887` (id 18) since PLAN #60(c), 2026-09-28
 - [ ] IDE open questions (design §13): Q1 `#06AB` read value, Q2 Karabas EXT-mode variant, Q4 Profi disk geometry / `ProfiHiDD` header, Q5 SYS menu path to `#28CE`, Q6 real Profi CP/M HDD image, Q9 CD-reading guest software
 - [ ] Verify the BIOS menu entries boot (CP/M, TR-DOS 48K/128K, Sinclair 48/128); BIOS main menu itself is reached (fixed FDC BUSY visibility, technical-design.md section 14)
 - [ ] Hi-res real-hardware timing evidence (design section 12 Q3), real recordings for TTD v2 benchmark

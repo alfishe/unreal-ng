@@ -373,7 +373,7 @@ TEST(ScorpionServiceMonitor_Test, ProfRomServiceMonitorHighlightDoesNotBlink)
     // host time shifts the ProfROM boot timeline, so without it the frame at
     // which the monitor finishes drawing drifts run to run.
     if (PortDecoder_Scorpion256* decoder = static_cast<PortDecoder_Scorpion256*>(context->pPortDecoder))
-        decoder->GetSMUCNvram().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC
+        decoder->GetRtc().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC
 
     // Pin power-on RAM. Memory::RandomizeMemoryContent() fills pages 5 and 7
     // from the global rand(), whose sequence position depends on how many
