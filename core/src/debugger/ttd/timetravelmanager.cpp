@@ -2028,8 +2028,6 @@ const char* TimeTravelManager::PortJournalUnsupportedReason() const
     // (ttd-port-read-journal.md §2)
     switch (_context->config.mem_model)
     {
-        case MM_TSL:
-            return "TSConf: its DMA moves data into RAM without IN (not isolated by the first version)";
         case MM_NEXT:
             return "ZX Next: its DMA moves data into RAM without IN (not isolated by the first version)";
         default:

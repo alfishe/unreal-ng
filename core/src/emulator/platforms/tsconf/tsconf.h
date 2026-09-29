@@ -1,6 +1,12 @@
 #pragma once
 #include "stdafx.h"
 
+// Reference only - not included anywhere (PLAN #41 phase 0, INF-7). The
+// ancestor emulator's TS-Conf register and state layout (zx-evo-unreal
+// tsconf.h), kept as a naming reference for phase 1, which builds
+// TsConfState (platforms/tsconf/tsconfstate.h) with plain fixed-width fields
+// instead of these bitfield unions (TSConf technical-design §3.3).
+
 typedef void (* INITIAL_FUNCTION)();
 typedef uint32_t (* TASK_FUNCTION)(uint32_t);
 
