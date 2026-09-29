@@ -218,6 +218,12 @@ confusion (see recommendations P0-4).
 
 ### C-2. Porttrace decode rules exist only for Pentagon128
 
+> **Re-scoped 2026-09-28** (PLAN #8): the session names landed (ATM710,
+> ZXEvoBaseConf, Profi). What remains is attribution, not a rule table: the
+> ATM710 and ZX-Evo decoders call `OnPortIn/OutComplete` without a
+> `PortDecodeDisposition`, so their events carry decoded port #0000 and no
+> device; the if-chain decoders report `kNoTable` like 128K/Scorpion/Profi/+3.
+
 `getPortTraceDecodeRules()` is virtual with an empty default
 ([portdecoder.h:233](../../../core/src/emulator/ports/portdecoder.h)); the
 only override is `PortDecoder_Pentagon128`. Without rules, trace events carry
