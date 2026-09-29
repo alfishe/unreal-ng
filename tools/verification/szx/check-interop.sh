@@ -15,7 +15,8 @@ FLAGS="$(pkg-config --cflags --libs libspectrum 2>/dev/null || echo "-L/opt/home
 $(pkg-config --cflags libgcrypt 2>/dev/null || libgcrypt-config --cflags 2>/dev/null || echo "-I/opt/homebrew/include")"
 # shellcheck disable=SC2086
 cc -std=c11 -Wall -Wextra -O1 -o "$OUT/szxtool" "$ROOT/tools/verification/szx/szxtool.c" $FLAGS
-UNREALNG_SZX_EXPORT_DIR="$OUT" "$BUILD/bin/core-tests" --gtest_filter='*/LoaderSZX_Test.ExportForTheLibspectrumCheck/*' > "$OUT/export.log"
+UNREALNG_SZX_EXPORT_DIR="$OUT" "$BUILD/bin/core-tests" \
+    --gtest_filter='*/LoaderSZX_Test.ExportForTheLibspectrumCheck/*:*/LoaderZ80Models_Test.*' > "$OUT/export.log"
 status=0
 for ours in "$OUT"/synth-*.szx; do
     name=$(basename "$ours" .szx)
@@ -26,6 +27,21 @@ for ours in "$OUT"/synth-*.szx; do
         echo "ok   $name"
     else
         echo "DIFF $name"
+        diff <("$OUT/szxtool" dump "$ours") "$reference" || true
+        status=1
+    fi
+done
+# .z80 saved by unreal-ng from libspectrum's .z80 (testdata/loaders/z80/libspectrum):
+# the same state again, except what .z80 cannot hold (MEMPTR, the frame
+# position, the interrupt shadow and FSET) and the Beta 128 line
+for ours in "$OUT"/synth-*.z80; do
+    name=$(basename "$ours" .z80)
+    reference="$ROOT/testdata/loaders/z80/libspectrum/$name.libspectrum.txt"
+    filter='^beta|^iff1|^halted'
+    if diff <("$OUT/szxtool" dump "$ours" | grep -Ev "$filter") <(grep -Ev "$filter" "$reference") > /dev/null; then
+        echo "ok   $name.z80"
+    else
+        echo "DIFF $name.z80"
         diff <("$OUT/szxtool" dump "$ours") "$reference" || true
         status=1
     fi

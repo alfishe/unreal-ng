@@ -190,8 +190,9 @@ enum class PagingLatch : uint8_t
     P7FFD, P1FFD, PDFFD, PFDFD, P7EFD, PEFF7, PFF77,
     AFE, AFB,                       // ATM 4.50 system ports (atm branch)
     PFFF7Window0, PFFF7Window1,     // ATM 7.10/ATM3 per-window latches
-    PFFF7Window2, PFFF7Window3,     // (reserved until the decoders land)
-    PBD, PTS, PMEM                  // TSConf (reserved)
+    PFFF7Window2, PFFF7Window3      // (reserved until the decoders land)
+    // TSConf's latches live in its own state (TsConfState, PLAN #41 phase 1):
+    // its decoder reports them itself, they are not EmulatorState fields
 };
 
 /// region <Tag / latch serialization - single source for every automation surface>

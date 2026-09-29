@@ -2,11 +2,14 @@
 #include "pch.h"
 
 #include <algorithm>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdserializable.h"
@@ -182,4 +185,61 @@ TEST(TTDModelStateContract_Test, RefusedRecordingRollsBackTheFlagsItSwitchedOn)
     EXPECT_FALSE(fm->isEnabled(Features::kTimeTravel));
 
     EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// The PeripheralId table is part of the .ttd format: every id keeps its
+/// number, and ttd.ksy documents each one as "<number> <Name>" (TSConf
+/// INF-10; the unique-table rule of PLAN #40 V0). A new id appends here and
+/// in ttd.ksy in the same change.
+TEST(TTDPeripheralIdTable_Test, NumbersAreStableAndDocumentedInTheFormat)
+{
+    struct Row
+    {
+        ttd::PeripheralId id;
+        uint8_t number;
+        const char* name;
+    };
+    const Row rows[] = {
+        {ttd::PeripheralId::TurboSound, 0, "TurboSound"},
+        {ttd::PeripheralId::BetaDisk, 1, "BetaDisk"},
+        {ttd::PeripheralId::Tape, 2, "Tape"},
+        {ttd::PeripheralId::Covox, 3, "Covox"},
+        {ttd::PeripheralId::TSFM, 4, "TSFM"},
+        {ttd::PeripheralId::GeneralSound, 5, "GeneralSound"},
+        {ttd::PeripheralId::ScorpionProfROM, 6, "ScorpionProfROM"},
+        {ttd::PeripheralId::KempstonMouse, 7, "KempstonMouse"},
+        {ttd::PeripheralId::AtmPaging, 8, "AtmPaging"},
+        {ttd::PeripheralId::ProfiPaging, 9, "ProfiPaging"},
+        {ttd::PeripheralId::MoonSound, 10, "MoonSound"},
+        {ttd::PeripheralId::GeneralSoundLightweight, 11, "GeneralSoundLightweight"},
+        {ttd::PeripheralId::NeoGS, 12, "NeoGS"},
+        {ttd::PeripheralId::Plus3Paging, 13, "Plus3Paging"},
+        {ttd::PeripheralId::Upd765, 14, "Upd765"},
+        {ttd::PeripheralId::EvoSdCard, 15, "EvoSdCard"},
+        {ttd::PeripheralId::TsConfPaging, 16, "TsConfPaging"},
+        {ttd::PeripheralId::AtaChannel, 17, "AtaChannel"},
+        {ttd::PeripheralId::Ds12887, 18, "Ds12887"},
+    };
+    EXPECT_EQ(static_cast<size_t>(ttd::PeripheralId::Count), std::size(rows)) << "a new id needs a row here and in ttd.ksy";
+
+    const std::string ksyPath = (TestPathHelper::FindProjectRoot() / "core/src/debugger/ttd/ttd.ksy").string();
+    std::ifstream in(ksyPath, std::ios::binary);
+    ASSERT_TRUE(in.good()) << ksyPath;
+    std::string ksy((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    // The id list is prose wrapped over lines: compare with single spaces
+    std::string flat;
+    for (char c : ksy)
+    {
+        const char s = (c == '\n' || c == '\r') ? ' ' : c;
+        if (s == ' ' && !flat.empty() && flat.back() == ' ')
+            continue;
+        flat += s;
+    }
+
+    for (const Row& row : rows)
+    {
+        EXPECT_EQ(static_cast<uint8_t>(row.id), row.number) << row.name;
+        const std::string entry = std::to_string(row.number) + " " + row.name;
+        EXPECT_NE(flat.find(entry), std::string::npos) << "ttd.ksy does not document \"" << entry << "\"";
+    }
 }

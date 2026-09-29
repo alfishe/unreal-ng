@@ -143,7 +143,7 @@ pkill -9 unreal-qt 2>/dev/null || true
 - Linux: `./cmake-build-agent-release/bin/unreal-qt`
 - Windows: `./cmake-build-agent-release/bin/unreal-qt.exe`
 
-**Available models (short names):** `PENTAGON`, `48K`, `128k`, `PLUS2`, `PLUS2A`, `PLUS3`, `TSL`, `ATM3` (ZX-Evo), `ATM710`, `ATM450`, `PROFI`, `SCORPION`, `PROFSCORP`, `GMX`, `KAY`, `QUORUM`, `LSY256`, `PHOENIX`
+**Available models (short names):** `PENTAGON`, `48K`, `128k`, `PLUS2`, `PLUS2A`, `PLUS3`, `TSL` (alias `TSCONF`), `ATM3` (ZX-Evo), `ATM710`, `ATM450`, `PROFI`, `SCORPION`, `PROFSCORP`, `GMX`, `KAY`, `QUORUM`, `LSY256`, `PHOENIX`
 
 **ZX-Poly configurations** (four synchronized instances of one base model, created by name like any model): `ZXPOLY-48K`, `ZXPOLY-128K`, `ZXPOLY-PENTAGON` — see [`.recipe/machines/zxpoly.md`](../.recipe/machines/zxpoly.md).
 

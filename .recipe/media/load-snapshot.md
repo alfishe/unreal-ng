@@ -121,8 +121,14 @@ DIGEST_B=$(curl -s "$BASE/emulator/$EMU_ID/state/screen/digest" | jq -r .digest)
   makes the timeline invalid for further capture — start a fresh
   `POST /ttd/start` after a snapshot load (details in
   [ttd-recording.md](../analysis/ttd-recording.md)).
-- **Media state**: `.sna`/`.z80` (and `.szx` for now) do not carry disks/tapes — re-insert media
-  after loading if the program expects it.
+- **Media state**: `.sna`/`.z80` do not carry disks/tapes — re-insert media
+  after loading if the program expects it. `.szx` does: saving links the
+  file-backed disks (Beta 128 TRD / SCL / FDI / UDI, +3 DSK) and the tape with
+  its current block; loading finds a linked image next to the snapshot first,
+  then at the stored path, and inserts it with Session access (the linked
+  file is never written). Images embedded in an `.szx` from another emulator
+  are loaded too. The classic GS card (GSType=Z80), the Covox level and the
+  Kempston mouse type travel as well.
 - **Model mismatch**: a 128K snapshot loaded into a 48K instance (or vice
   versa) either fails cleanly or drops extension state; create the right
   model first ([setup.md](../_common/setup.md) §3).

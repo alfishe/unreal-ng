@@ -369,14 +369,14 @@ Response JSON format inclusion:
 ### 7.1 Snapshot Formats & Persistence Analysis
 
 > [!WARNING]
-> Neither official `.sna` (standard 31-byte header), official `.z80` (v1–v3 86-byte header), nor official `.szx` format specifications include an `#EFF7` field. Any persistence of `#EFF7` outside of Unreal-NG's native TTD engine relies on non-standard snapshot extensions.
+> Neither official `.sna` (standard 31-byte header) nor official `.z80` (v1–v3 86-byte header) includes an `#EFF7` field. **SZX does** (correction, 2026-09-29): on Pentagon 1024 (machine id 14) SPCR byte 2 holds the last `#EFF7` value (SZX 1.3+), and unreal-ng reads and writes it ([SZX design](../2026-09-29-szx-snapshots/design.md) §4, checked against libspectrum).
 
 1. **Unreal-NG Native Engine Persistence (Verified Ground Truth):**
    - [`TimeTravelManager`](../../../core/src/debugger/ttd/timetravelmanager.cpp#L1189) captures `state.pEFF7` on every frame boundary in the internal delta state structure (`EmulatorState`). Replaying frames or seeking in TTD restores `pEFF7` with 100% fidelity across 16col mode transitions.
 2. **External Snapshot Interchange Limitations:**
    - **Standard `.sna` / `.z80`:** Loading standard `.sna` or `.z80` snapshots resets `#EFF7` to `0x00` (default mode).
    - **Legacy UnrealSpeccy Extensions:** Legacy UnrealSpeccy appended trailing un-spec'd bytes after the RAM dump in `.sna` / `.z80` to persist `pEFF7`.
-   - **SZX Custom Extension Block:** If `.szx` snapshot saving is implemented for Pentagon 1024, a custom chunk `EFF7` (4 bytes: `pEFF7`, `p7FFD`, `pDFFD`, reserved) is required.
+   - **SZX:** no custom chunk is needed - SPCR byte 2 is `#EFF7` on Pentagon 1024; `.szx` load / save carries it since 2026-09-29.
 
 ### 7.2 TTD Frame Recording
 `TimeTravelManager` captures `pEFF7` on every frame boundary in the delta journal ([timetravelmanager.cpp:1189](../../../core/src/debugger/ttd/timetravelmanager.cpp#L1189)). Replaying frames restores `state.pEFF7` seamlessly, ensuring reverse debugging across 16col mode transitions.
