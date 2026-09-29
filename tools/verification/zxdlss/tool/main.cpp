@@ -28,27 +28,34 @@ void usage()
                  "input (one of):\n"
                  "  --ttd FILE          TTD session (replayed through the emulator core)\n"
                  "  --model NAME        machine of the TTD session (default PENTAGON)\n"
+                 "  --overscan          TTD: Pentagon overscan, 352 x 304 with the paper centered\n"
+                 "                      horizontally (the UI's Symmetric Horizontal viewport)\n"
                  "  --clip DIR          clip exported with POST /ttd/export-clip (plane B)\n"
                  "range:\n"
                  "  --from N --to N     emulated frames to output (default: all that have look-ahead)\n"
                  "algorithm:\n"
                  "  --alg NAME          default mod-tpgw; --list prints the registered ones\n"
                  "output (any):\n"
-                 "  --video FILE.mp4    H.264 at 50 fps via ffmpeg\n"
+                 "  --video FILE.mp4    H.264 via ffmpeg (clip: 50 fps; TTD: the machine's rate + sound)\n"
                  "  --layout L          out (default) | raw-out (raw left, processed right)\n"
                  "  --scale N           integer upscale of the video (default 2)\n"
                  "  --dump DIR          exact RGB of every output frame (rgb_NNNN.zst + dump.json)\n"
-                 "  --quiet             no progress line\n";
+                 "  --audio FILE.wav    also keep the machine's sound as a WAV (TTD input only)\n"
+                 "  --no-audio          TTD input: a silent video (default: with the machine's sound)\n"
+                 "TTD input renders the sound in a continuous pass first and writes the video at\n"
+                 "the machine's frame rate (Pentagon 48.83 fps), so picture and sound stay in sync.\n"
+                 "  --quiet             no progress line\n"
+                 "  --stats             print the algorithm's statistics (stage cost, detector usage)\n";
 }
 
 }  // namespace
 
 int main(int argc, char** argv)
 {
-    std::string ttd, clip, model = "PENTAGON", algName = "mod-tpgw", video, layout = "out", dump;
+    std::string ttd, clip, model = "PENTAGON", algName = "mod-tpgw", video, layout = "out", dump, audio;
     long long from = -1, to = -1;
     int scale = 2;
-    bool quiet = false;
+    bool quiet = false, noAudio = false, showStats = false, overscan = false;
     for (int i = 1; i < argc; ++i)
     {
         const std::string a = argv[i];
@@ -70,7 +77,11 @@ int main(int argc, char** argv)
         else if (a == "--layout") layout = next();
         else if (a == "--scale") scale = std::stoi(next());
         else if (a == "--dump") dump = next();
+        else if (a == "--audio") audio = next();
         else if (a == "--quiet") quiet = true;
+        else if (a == "--no-audio") noAudio = true;
+        else if (a == "--stats") showStats = true;
+        else if (a == "--overscan") overscan = true;
         else if (a == "--list")
         {
             for (const auto& n : algorithmNames())
@@ -83,7 +94,8 @@ int main(int argc, char** argv)
             return a == "--help" || a == "-h" ? 0 : 2;
         }
     }
-    if (ttd.empty() == clip.empty() || (video.empty() && dump.empty()) || (layout != "out" && layout != "raw-out"))
+    if (ttd.empty() == clip.empty() || (video.empty() && dump.empty() && audio.empty()) ||
+        (layout != "out" && layout != "raw-out") || (!audio.empty() && ttd.empty()))
     {
         usage();
         return 2;
@@ -115,6 +127,34 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    // TTD input: the sound first, in one continuous run (the per-frame walk below
+    // restarts the sound path at every checkpoint - clicks at frame boundaries)
+    std::vector<int16_t> sound;
+    size_t minSamples = SIZE_MAX, maxSamples = 0;
+    std::string wavPath = audio;
+    double fps = 50.0;
+    const bool withSound = !ttd.empty() && (!audio.empty() || (!video.empty() && !noAudio));
+    if (withSound)
+    {
+        const std::string a = readTtdAudio(ttd, model, outFrom, outTo, sound, minSamples, maxSamples);
+        if (!a.empty())
+        {
+            std::cerr << a << "\n";
+            return 1;
+        }
+        const double frames = static_cast<double>(outTo - outFrom + 1);
+        fps = 44100.0 * frames / (static_cast<double>(sound.size()) / 2.0);     // the machine's frame rate
+        if (wavPath.empty())
+            wavPath = video + ".wav";
+        if (!writeWav(wavPath, sound, 44100, error))
+        {
+            std::cerr << error << "\n";
+            return 1;
+        }
+        std::printf("audio: %.2f s, %zu..%zu samples per frame, %.4f fps\n", sound.size() / 2 / 44100.0, minSamples,
+                    maxSamples, fps);
+    }
+
     VideoWriter vw;
     DumpWriter dw;
     bool opened = false;
@@ -131,13 +171,13 @@ int main(int argc, char** argv)
         if (!opened)
         {
             const int vwidth = layout == "raw-out" ? f.width * 2 : f.width;
-            if (!video.empty() && !vw.open(video, vwidth, f.height, scale, error))
+            if (!video.empty() && !vw.open(video, vwidth, f.height, scale, error, fps, withSound && !noAudio ? wavPath : ""))
                 return false;
             if (!dump.empty() && !dw.open(dump, f.width, f.height, outFrom, error))
                 return false;
             opened = true;
         }
-        FrameInput in{f.width, f.height, plane.data(), attr.data(), ink.data()};
+        FrameInput in{f.width, f.height, plane.data(), attr.data(), ink.data(), f.paperX, f.paperY};
         const auto t0 = std::chrono::steady_clock::now();
         alg->process(in, out);
         algoSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
@@ -181,7 +221,7 @@ int main(int argc, char** argv)
     // Feed from outFrom - 0: the algorithm's first outputs (during its look-ahead
     // fill) are for frames before outFrom and are not written
     const uint64_t inFrom = outFrom, inTo = outTo + delay;
-    const std::string walk = clip.empty() ? readTtd(ttd, model, inFrom, inTo, onFrame) : readClip(clip, inFrom, inTo, onFrame);
+    const std::string walk = clip.empty() ? readTtd(ttd, model, inFrom, inTo, onFrame, overscan) : readClip(clip, inFrom, inTo, onFrame);
     std::string closeError;
     dw.close(closeError);
     if (!quiet)
@@ -191,9 +231,16 @@ int main(int argc, char** argv)
         std::cerr << (error.empty() ? (walk.empty() ? closeError : walk) : error) << "\n";
         return 1;
     }
+    if (withSound && audio.empty())
+    {
+        vw.close();                              // ffmpeg has read the WAV once it exits
+        std::remove(wavPath.c_str());
+    }
     const double total = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
     std::printf("%s: %llu frames (%llu..%llu), algorithm %.2f ms/frame, total %.1f s\n", algName.c_str(),
                 static_cast<unsigned long long>(written), static_cast<unsigned long long>(outFrom),
                 static_cast<unsigned long long>(outTo), 1000.0 * algoSeconds / static_cast<double>(written + delay), total);
+    if (showStats)
+        std::printf("%s", alg->stats().c_str());
     return 0;
 }

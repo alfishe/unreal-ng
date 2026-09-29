@@ -7,7 +7,7 @@ that renders TTD recordings or exported clips through them. Phase 2 of POC 019
 | Part | What it is |
 |---|---|
 | `algo/include/zxdlss/algorithm.h` | the interface every algorithm implements (`delay()`, `process(frame) -> RGB`), the registry (`createAlgorithm(name)`) |
-| `algo/src/mod_tpgw.cpp` | `mod-tpgw`, optimized (NEON / SSE2 kernels in `simd.h`, threads) |
+| `algo/src/mod_tpgw.cpp` | `mod-tpgw`, optimized (NEON / SSE2 kernels in `simd.h`, threads); `mod-tpgwa` = the same + the scene stage (spec section 7.8) |
 | `algo/src/mod_tpgw_ref.cpp` | `mod-tpgw-ref`, the literal scalar implementation of the spec |
 | `algo/src/registry.cpp` | registry, plane B decoding, `raw` (no processing) |
 | `tool/main.cpp` | `zxdlss-render`: TTD file or clip -> algorithm -> video / exact RGB dump |
@@ -34,7 +34,7 @@ also reads TTD files; the machine configs and ROMs are copied next to the binary
 ## Render
 
 ```
-# a TTD session, raw left / processed right, 2x, 50 fps H.264 (ffmpeg on PATH)
+# a TTD session, raw left / processed right, 2x, H.264 + AAC sound (ffmpeg on PATH)
 zxdlss-render --ttd flickering_test.ttd --layout raw-out --video flicker.mp4
 
 # a range of an exported clip (POST /ttd/export-clip with the zxdlss feature on)
@@ -44,11 +44,32 @@ zxdlss-render --clip data/clip_v2 --from 12100 --to 12300 --video spiral.mp4
 zxdlss-render --clip data/clip_v2 --from 12100 --to 12300 --dump out/dump
 
 zxdlss-render --list          # registered algorithms
+
+# the current baseline, with the per-detector usage and the scene-stage runs
+zxdlss-render --ttd across_the_edge_full.ttd --alg mod-tpgwa --layout raw-out --video ate.mp4 --stats
+
+# Pentagon overscan: 352 x 304, the paper centered horizontally (the emulator's
+# Symmetric Horizontal viewport) - demos that draw into the extra border lines
+zxdlss-render --ttd across_the_edge_full.ttd --overscan --alg mod-tpgwa --layout raw-out --video ate-osc.mp4
 ```
 
 `--model` names the machine a TTD session was recorded on (default `PENTAGON`).
 Frames are output for `[--from, --to]`; the input runs `delay()` frames further
 (6 for mod-tpgw), so the last 6 frames of a recording have no output.
+
+### Sound (TTD input)
+
+A TTD render carries the machine's sound by default (`--no-audio` for a silent
+video; `--audio FILE.wav` also keeps the WAV). The sound is rendered first, in
+one continuous run from `--from` (the frame-by-frame picture walk restarts the
+sound path at every checkpoint, which clicks at frame boundaries). The video is
+written at the machine's frame rate, measured from the sound: 44100 x frames /
+samples, i.e. 48.83 fps on a Pentagon (903.2 samples per frame), so picture and
+sound stay in sync over the whole file.
+
+Limitation: the continuous run does not re-apply key presses recorded after
+`--from`; the sound is exact for demos and test programs, not for recorded
+gameplay input. Clip input (`--clip`) has no sound and stays at 50 fps.
 
 ## Add an algorithm
 
@@ -74,6 +95,9 @@ scripts/parity.sh <poc dir> <poc data dir> <build bin> <scratch dir>
 
 Status (2026-09-29): `mod-tpgw` matches the Python reference bit for bit on all
 nine golden scenes (3 513 frames), and the TTD path matches the clip path.
+`mod-tpgwa` matches the Python reference on the DJ scene (201 frames) and equals
+`mod-tpgw` bit for bit on the other nine scenes (its scene stage stays off there).
+`mod-tpgw-ref` has no scene stage.
 
 ## Performance
 

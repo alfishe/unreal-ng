@@ -125,16 +125,48 @@ std::string readClip(const std::string& dir, uint64_t from, uint64_t to, const F
     return {};
 }
 
+bool writeWav(const std::string& path, const std::vector<int16_t>& samples, uint32_t rate, std::string& error)
+{
+    std::ofstream out(path, std::ios::binary);
+    if (!out)
+    {
+        error = "cannot write " + path;
+        return false;
+    }
+    auto u32 = [&](uint32_t v) { out.write(reinterpret_cast<const char*>(&v), 4); };
+    auto u16 = [&](uint16_t v) { out.write(reinterpret_cast<const char*>(&v), 2); };
+    const uint32_t bytes = static_cast<uint32_t>(samples.size() * sizeof(int16_t));
+    out.write("RIFF", 4);
+    u32(36 + bytes);
+    out.write("WAVEfmt ", 8);
+    u32(16);
+    u16(1);                 // PCM
+    u16(2);                 // stereo
+    u32(rate);
+    u32(rate * 4);
+    u16(4);
+    u16(16);
+    out.write("data", 4);
+    u32(bytes);
+    out.write(reinterpret_cast<const char*>(samples.data()), bytes);
+    return static_cast<bool>(out);
+}
+
 // ---- video ------------------------------------------------------------------
 
-bool VideoWriter::open(const std::string& path, int width, int height, int scale, std::string& error)
+bool VideoWriter::open(const std::string& path, int width, int height, int scale, std::string& error, double fps,
+                       const std::string& wav)
 {
     _w = width;
     _h = height;
     _scale = scale < 1 ? 1 : scale;
     std::ostringstream cmd;
+    cmd.precision(10);
     cmd << "ffmpeg -loglevel error -y -f rawvideo -pix_fmt rgb24 -s " << _w * _scale << "x" << _h * _scale
-        << " -r 50 -i - -c:v libx264 -crf 16 -pix_fmt yuv420p \"" << path << "\"";
+        << " -r " << fps << " -i -";
+    if (!wav.empty())
+        cmd << " -i \"" << wav << "\" -map 0:v -map 1:a -c:a aac -b:a 192k -shortest";
+    cmd << " -c:v libx264 -crf 16 -pix_fmt yuv420p \"" << path << "\"";
     _pipe = popen(cmd.str().c_str(), "w");
     if (!_pipe)
     {
@@ -161,10 +193,16 @@ void VideoWriter::write(const uint8_t* rgb)
     fwrite(_scaled.data(), 1, _scaled.size(), _pipe);
 }
 
-VideoWriter::~VideoWriter()
+void VideoWriter::close()
 {
     if (_pipe)
         pclose(_pipe);
+    _pipe = nullptr;
+}
+
+VideoWriter::~VideoWriter()
+{
+    close();
 }
 
 // ---- dump -------------------------------------------------------------------

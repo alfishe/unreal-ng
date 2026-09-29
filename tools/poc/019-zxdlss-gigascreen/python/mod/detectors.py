@@ -14,12 +14,14 @@
                             1/4 t+1 + 1/2 t + 1/4 t-1 on unexplained pixels.
                             palette=True (v11): only the field's own colors
                             mix, and only with neighbor frames that show them.
+  steps               two-page texture moving in steps (the DJ scene's
+                            circles): see StepsDetector.
 """
 import numpy as np
 
 from python.mod.context import TILE_FIELD
 from python.mod.registry import Detector, Proposal, register
-from python.twopage import other_page
+from python.twopage import _block_equal, block_shift_exact, other_page, shifted_equal
 
 
 class PeriodDetector(Detector):
@@ -271,3 +273,253 @@ def _large_components(mask, min_size):
                     for cy, cx in comp:
                         keep[cy, cx] = True
     return keep
+
+
+
+@register
+class StepsDetector(Detector):
+    """Two-page texture that moves in STEPS, both pages at once (the DJ scene's
+    circle lattice: still for 2-4 frames, then a jump). The strict period
+    detectors need 3 periods without a step and leave it patchy; the field
+    detector's seeds need unexplained flicker and a color set alternating on
+    every frame and do not fire.
+
+    Per 8x8 block of frame t, a page flip confirmed over two periods with the
+    whole block identical:
+      backward  t == t-2, and t-1 == t-3 or t-1 == t+1  -> t-1 is the other
+                page as it is at t
+      forward   t == t+2, and t+1 == t+3 or t+1 == t-1  -> t+1 likewise
+    Recipe: backward only -> 1/2 t + 1/2 t-1; forward only -> 1/2 t + 1/2 t+1;
+    both -> 1/2 t + 1/4 t-1 + 1/4 t+1 (the period-2 recipe). A block with a
+    single-page object moving through (a ball) or a one-frame flash is equal
+    to no neighbor and stays raw. Only pixels whose neighbor differs in
+    brightness mix (the period detectors' luma rule); pixels earlier stages
+    explained stay theirs.
+
+    tiles=True: additionally only inside connected groups of >= min_tiles
+    16x16 paper tiles that alternate at >= min_alt of the centers t-2..t+2
+    and step somewhere (experiment; the DJ's color-phase changes break the
+    tile vote)."""
+    name = "steps"
+    tags = ("dynamic", "field")
+    history = 4
+
+    def __init__(self, tiles=False, lockstep=True, alt=0.9, min_alt=4, step=0.05, min_tiles=12, paper_only=True,
+                 grow=False, static_other=False, consistent=False, **params):
+        super().__init__(**params)
+        self.tiles, self.lockstep, self.paper_only, self.grow = tiles, lockstep, paper_only, grow
+        self.static_other, self.consistent = static_other, consistent
+        self.alt, self.min_alt, self.step, self.min_tiles = alt, min_alt, step, min_tiles
+
+    def _center(self, ctx, i):
+        """(alternates, stepped) per tile for the frame at ring index i."""
+        def compute():
+            t = TILE_FIELD
+            th, tw = ctx.h // t, ctx.w // t
+
+            def tsum(m):
+                return m[:th * t, :tw * t].reshape(th, t, tw, t).sum(axis=(1, 3))
+            p0 = ctx.plane(i)
+            pm1, pm2, pp1, pp2 = ctx.plane(i + 1), ctx.plane(i + 2), ctx.plane(i - 1), ctx.plane(i - 2)
+            chg = (p0 != pm1) | (p0 != pp1)
+            n = tsum(chg)
+            back = tsum(chg & (p0 == pm2) & (p0 != pm1)) >= self.alt * n
+            fwd = tsum(chg & (p0 == pp2) & (p0 != pp1)) >= self.alt * n
+            return (n > 0.05 * t * t) & (back | fwd), tsum(p0 != pm2) >= self.step * t * t
+        return ctx.frames[i].feature(("steps", self.alt, self.step), compute)
+
+    def _eq(self, ctx, i, j):
+        """8x8-block equality of ring frames i and j, per pixel (cached per pair)."""
+        key = (ctx.frames[i].serial, ctx.frames[j].serial, "block_eq")
+        if key not in ctx._pair_cache:
+            ctx._pair_cache[key] = _block_equal(ctx.plane(i), ctx.plane(j))
+        return ctx._pair_cache[key]
+
+    def _lockstep(self, ctx, a_new, a_old, b_new, b_old):
+        """Per pixel: page B moved from b_old to b_new exactly as page A moved
+        from a_old to a_new (8x8 blocks, exact match; cached per frame quad)."""
+        f = ctx.frames
+        key = (f[a_new].serial, f[a_old].serial, "lockstep", f[b_new].serial, f[b_old].serial)
+        if key not in ctx._pair_cache:
+            vkey = (f[a_new].serial, f[a_old].serial, "shift")
+            if vkey not in ctx._pair_cache:
+                ctx._pair_cache[vkey] = block_shift_exact(ctx.plane(a_new), ctx.plane(a_old))
+            vy, vx, found = ctx._pair_cache[vkey]
+            ctx._pair_cache[key] = found & shifted_equal(ctx.plane(b_new), ctx.plane(b_old), vy, vx)
+        return ctx._pair_cache[key]
+
+    def run(self, ctx, state):
+        L = ctx.t
+        if L < 3 or ctx.n < L + 4:
+            return []
+        # ring index: L is t, L + k is t - k. Own page A at t, t-2, t+2; the other
+        # page B at t-1, t+1 (t-3, t+3 as a second instance)
+        back = self._eq(ctx, L, L + 2) & (self._eq(ctx, L + 1, L + 3) | self._eq(ctx, L + 1, L - 1))
+        fwd = self._eq(ctx, L, L - 2) & (self._eq(ctx, L - 1, L - 3) | self._eq(ctx, L - 1, L + 1))
+        if self.lockstep and L >= 2:
+            # B seen once at its position (a color phase starts): it moved t-1 -> t+1
+            # exactly as A moved over the step (A t-2 -> t, or t -> t+2)
+            fwd |= self._eq(ctx, L, L - 2) & self._lockstep(ctx, L, L + 2, L - 1, L + 1)
+            back |= self._eq(ctx, L, L + 2) & self._lockstep(ctx, L - 2, L, L - 1, L + 1)
+        if self.static_other:
+            # the other page did not move across t (t-1 == t+1, confirmed by t-3 or t+3):
+            # it is the other page at t whatever frame t's own page did (a red lattice
+            # jumping over a still black page)
+            still = self._eq(ctx, L + 1, L - 1) & (self._eq(ctx, L + 1, L + 3) | self._eq(ctx, L - 1, L - 3))
+            back |= still
+            fwd |= still
+        area = ~state["explained"]
+        info = {}
+        if self.tiles:
+            if L < 4 or ctx.n < L + 5:
+                return []
+            cs = [self._center(ctx, i) for i in range(L - 2, L + 3)]
+            alternating = np.sum([a for a, _ in cs], axis=0) >= self.min_alt
+            tiles = alternating & np.any([s for _, s in cs], axis=0)
+            if self.paper_only:
+                paper = np.zeros_like(tiles)
+                paper[3:15, 3:19] = True
+                tiles &= paper
+                alternating &= paper
+            tiles = _large_components(tiles, self.min_tiles)
+            if self.grow:
+                # the whole alternating area connected to a stepping group, one tile around
+                tiles = _dilate_tiles(_grow(tiles, alternating)) & (alternating | _dilate_tiles(tiles))
+            area &= ctx.expand(tiles, TILE_FIELD).astype(bool)
+            info["tiles"] = tiles
+        lum = ctx.luma(L)
+        shape = (ctx.h, ctx.w)
+        if self.consistent:
+            # one recipe for the whole frame: per-block choices of t-1 / t+1 / both
+            # tiled the DJ's circles into pink, dark red and raw pieces when the
+            # other page itself alternates (red, gray, red, black). The majority of
+            # the flickering blocks decides; every block with a confirmed side takes it.
+            flick = area & ((ctx.plane(L) != ctx.plane(L + 1)) | (ctx.plane(L) != ctx.plane(L - 1)))
+            n_back = int((flick & back & ~fwd).sum())
+            n_fwd = int((flick & fwd & ~back).sum())
+            n_both = int((flick & back & fwd).sum())
+            if max(n_back, n_fwd, n_both) == 0:
+                return []
+            valid = back | fwd
+            if n_both >= max(n_back, n_fwd):
+                use_prev = use_next = valid
+            elif n_back >= n_fwd:
+                use_prev, use_next = valid, np.zeros(shape, bool)
+            else:
+                use_prev, use_next = np.zeros(shape, bool), valid
+            back, fwd = use_prev & (ctx.luma(L + 1) != lum), use_next & (ctx.luma(L - 1) != lum)
+            both = use_prev & use_next
+            mask = area & (back | fwd)
+            w_prev = np.where(both, 0.25, np.where(use_prev, 0.5, 0.0))
+            w_next = np.where(both, 0.25, np.where(use_next, 0.5, 0.0))
+            w_prev, w_next = np.where(mask, w_prev, 0.0), np.where(mask, w_next, 0.0)
+            info["recipe"] = "both" if n_both >= max(n_back, n_fwd) else ("back" if n_back >= n_fwd else "fwd")
+        else:
+            back &= ctx.luma(L + 1) != lum
+            fwd &= ctx.luma(L - 1) != lum
+            mask = area & (back | fwd)
+            w_prev = np.where(back & fwd, 0.25, np.where(back, 0.5, 0.0))
+            w_next = np.where(back & fwd, 0.25, np.where(fwd, 0.5, 0.0))
+        if not mask.any():
+            return []
+        weights = {L + 1: np.where(mask, w_prev, 0.0), L - 1: np.where(mask, w_next, 0.0),
+                   L: np.where(mask, 1.0 - w_prev - w_next, 0.0)}
+        return [Proposal(self.name, mask, mask.astype(np.float32), weights,
+                         rank=np.full(shape, 11, np.int16), info=info)]
+
+
+@register
+class SceneAverageDetector(Detector):
+    """A large static picture in front of a flickering background that moves
+    (Across the Edge's DJ: the hooded figure over a two-page circle lattice
+    jumping in steps): the whole frame is averaged, 1/4 t-1 + 1/2 t + 1/4 t+1.
+    Per-block recipes tiled the lattice into pieces of different colors; the
+    plain average is what the eye sees (the figure is constant or strictly
+    period 2 - the average is its period-2 mix; the lattice lags one frame).
+    The spiral and the balls have no large static picture (their front object
+    moves); the hip-hop scene's moving part is on the border.
+
+    Over the frames t-3..t+3, 16x16 tiles:
+      static  pixels constant or strictly period 2 over the 7 frames
+      dyn     pixels differing from t-1 and t+1 that are not static
+      object  largest 4-connected group of tiles >= 95 % static with >= 3
+              colors: >= min_object of the frame's tiles (DJ >= 0.184, balls <= 0.157)
+      moving  paper tiles with > 5 % dyn pixels: >= min_dynamic of the paper
+    On while both hold; off after `hold` frames in a row without them."""
+    name = "scene_avg"
+    tags = ("scene",)
+    history = 4
+
+    def __init__(self, min_object=0.17, min_dynamic=0.4, hold=12, **params):
+        super().__init__(**params)
+        self.min_object, self.min_dynamic, self.hold = min_object, min_dynamic, hold
+        self.on, self.off_frames = False, 0
+
+    def skip(self):
+        if self.on:
+            self.off_frames += 1
+            if self.off_frames >= self.hold:
+                self.on, self.off_frames = False, 0
+
+    def _features(self, ctx):
+        L = ctx.t
+        seq = np.stack([ctx.plane(j) for j in range(L - 3, L + 4)])
+        const = np.all(seq == seq[0], axis=0)
+        static = const | np.all(seq[:-2] == seq[2:], axis=0)
+        t = seq[3]
+        dyn = (t != ctx.plane(L + 1)) & (t != ctx.plane(L - 1)) & ~static
+        T = TILE_FIELD
+        th, tw = ctx.h // T, ctx.w // T
+
+        def tiles(m):
+            return m[:th * T, :tw * T].reshape(th, T, tw, T).mean(axis=(1, 3))
+        cols = seq[:, :th * T, :tw * T].reshape(7, th, T, tw, T).transpose(1, 3, 0, 2, 4).reshape(th, tw, -1)
+        present = np.zeros((th, tw, 16), bool)
+        for c in range(16):
+            present[..., c] = np.any(cols == c, axis=2)
+        detailed = present.sum(axis=2) >= 3
+        obj = _largest_component(detailed & (tiles(static) >= 0.95)) / float(th * tw)
+        paper = np.zeros((th, tw), bool)
+        paper[3:15, 3:19] = True
+        moving = (tiles(dyn) > 0.05)[paper].mean()
+        return obj, moving
+
+    def run(self, ctx, state):
+        L = ctx.t
+        if L < 3 or ctx.n < L + 4:
+            return []
+        obj, moving = self._features(ctx)
+        if obj >= self.min_object and moving >= self.min_dynamic:
+            self.on, self.off_frames = True, 0
+        else:
+            self.skip()
+        if not self.on:
+            return []
+        shape = (ctx.h, ctx.w)
+        mask = np.ones(shape, bool)
+        # source order t, t-1, t+1: the summation order of the mix (as the two-page mix)
+        weights = {L: np.full(shape, 0.5), L + 1: np.full(shape, 0.25), L - 1: np.full(shape, 0.25)}
+        return [Proposal(self.name, mask, mask.astype(np.float32), weights,
+                         rank=np.full(shape, 12, np.int16), info={"object": obj, "moving": moving})]
+
+
+def _largest_component(mask):
+    return max((len(c) for c in _components(mask)), default=0)
+
+
+def _components(mask):
+    h, w = mask.shape
+    seen = np.zeros((h, w), bool)
+    for y in range(h):
+        for x in range(w):
+            if mask[y, x] and not seen[y, x]:
+                seen[y, x] = True
+                stack, comp = [(y, x)], []
+                while stack:
+                    cy, cx = stack.pop()
+                    comp.append((cy, cx))
+                    for ny, nx in ((cy - 1, cx), (cy + 1, cx), (cy, cx - 1), (cy, cx + 1)):
+                        if 0 <= ny < h and 0 <= nx < w and mask[ny, nx] and not seen[ny, nx]:
+                            seen[ny, nx] = True
+                            stack.append((ny, nx))
+                yield comp

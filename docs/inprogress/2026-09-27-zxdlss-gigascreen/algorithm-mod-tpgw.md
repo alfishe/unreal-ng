@@ -1,7 +1,8 @@
-# ZX DLSS GigaScreen de-flicker - final algorithm `mod-tpgw`
+# ZX DLSS GigaScreen de-flicker - final algorithm `mod-tpgw` / `mod-tpgwa`
 
-Status: accepted on all golden scenes (2026-09-29), end of the Python POC
-(`tools/poc/019-zxdlss-gigascreen`). This document specifies the algorithm
+Status: `mod-tpgw` accepted on all golden scenes (2026-09-29), end of the Python POC
+(`tools/poc/019-zxdlss-gigascreen`); `mod-tpgwa` = `mod-tpgw` + the scene stage of
+section 7.8, accepted the same day on the DJ scene, is the current baseline. This document specifies the algorithm
 completely: an implementation written only from it must reproduce the
 reference implementation's output (Python: `python/mod/`, `python/twopage.py`,
 `python/mixers.py`; C++: `tools/verification/zxdlss/`).
@@ -38,7 +39,8 @@ presented 6 frames (120 ms at 50 Hz) after the frame is emulated.
 | Term | Meaning |
 |---|---|
 | frame | one emulated 50 Hz picture, 352 x 288 pixels (border + 256 x 192 paper) |
-| paper | the 256 x 192 bitmap area: rows 48..239, columns 48..303 |
+| paper | the 256 x 192 bitmap area: rows 48..239, columns 48..303 (Pentagon overscan crop: rows 56..247) |
+| paper tile | a 16 x 16 tile whose center pixel lies on the paper |
 | border | every pixel outside the paper |
 | color index | 0..15 (bright x 8 + color), the ZX palette entry of a pixel |
 | plane B | per-pixel record written by the renderer: attribute byte used, color index, ink bit, role (paper/border); see [p0a-plane-b.md](p0a-plane-b.md) |
@@ -55,7 +57,13 @@ Per frame, from the emulator (or a clip exported with `POST /ttd/export-clip`):
 - `attr`: H x W attribute bytes - bits 0..7 of plane B (0 on the border);
 - `ink`: H x W ink bits - bit 12 of plane B.
 
-H = 288, W = 352. All tile grids below divide these exactly.
+H = 288, W = 352, paper at (48, 48). All tile grids below divide these exactly.
+
+Pentagon overscan (`zxdlss-render --overscan`): the 384 x 304 frame cropped like
+the emulator's Symmetric Horizontal viewport - H = 304, W = 352 (48 px border on
+both sides), paper at (48, 56). Every stage uses the paper origin from the
+input; tiles stay anchored at pixel (0, 0) (the last 16 rows form no 32 x 32
+translation tile). With the standard frame the result is unchanged.
 
 ### 3.1 Palette
 
@@ -176,8 +184,8 @@ override it (a patchwork of pixel-stage mixes and raw pixels was the artifact).
 
 Constants: `field_on = 0.15`, `field_off = 0.08`, `unexplained = 0.25`,
 `min_tiles = 12`, `present = 4`, `grow_min = 24`, `whole = 0.3`,
-`whole_off = 0.1`, `whole_hold = 12`. Paper tiles: tile rows 3..14, columns
-3..18. Requires `n >= L + 3` and `L >= 1`, else no proposal.
+`whole_off = 0.1`, `whole_hold = 12`. Paper tiles (center on the paper): tile
+rows 3..14, columns 3..18 in both frame geometries. Requires `n >= L + 3` and `L >= 1`, else no proposal.
 
 ### 7.1 Tile features around t
 
@@ -257,6 +265,57 @@ with its block's v: `page_prev(y, x) = A(y, x)`, `page_next(y, x) = B(y, x)`.
 it changed 786 pixels of a frame and no metric - the staircase edges are in the
 source; not part of the algorithm.)
 
+### 7.8 Scene stage: a large static picture over a moving background (`mod-tpgwa`)
+
+`mod-tpgwa` is `mod-tpgw` plus this last stage. It exists for scenes like
+Across the Edge's DJ (03:44): a static GigaScreen picture (the hooded figure) in
+front of a two-page texture that jumps in steps every 2-4 frames (a circle
+lattice) while the other page itself alternates (red, gray, red, black). Any
+per-pixel or per-block choice of the other page left the lattice in pieces of
+different colors; the plain average of three frames is what the eye sees (one
+frame of lag on the jumps, no pieces). The spiral and the balls do not qualify:
+their front object moves.
+
+Runs when `L >= 3` and `n >= L + 4`; otherwise nothing changes (no state update).
+Over the 7 frames t-3..t+3 (ring `L - 3 .. L + 3`):
+
+```
+static(p) = all 7 values equal, or value(k) == value(k + 2) for k = 0..4
+dyn(p)    = t != t-1 and t != t+1 and not static
+```
+
+Per 16 x 16 tile (18 x 22 tiles, 19 x 22 in overscan; the whole frame):
+
+```
+object tile = static count / 256 >= 0.95 and the tile shows >= 3 distinct
+              color indices over the 7 frames
+moving tile = dyn count / 256 > 0.05                 (paper tiles only)
+object  = largest 4-connected group of object tiles / all tiles (396; 418 in overscan)
+moving  = moving paper tiles / paper tiles (192)
+```
+
+State `on` (initially off), `off_frames`:
+
+```
+if object >= 0.17 and moving >= 0.4: on = true, off_frames = 0
+elif on: off_frames += 1; if off_frames >= 12: on = false, off_frames = 0
+```
+
+While `on`, every pixel of the frame is 1/2 t + 1/4 t-1 + 1/4 t+1 (sources in
+that order - the summation order of the mix), replacing every earlier recipe.
+
+Measured (Across the Edge): object on the DJ scene 0.184..0.22, on the balls at
+most 0.157; moving on the DJ 0.46..0.55, on the hip-hop scene at most 0.33 (its
+motion is on the border). Over the whole demo the stage is on for 5.6 % of the
+frames: the DJ scene and 28-frame bursts in the next figure scene (a static
+figure over a moving flickering checkerboard; accepted by eye).
+
+**Open (P2, nice to have):** refine the scene detector. The margin between the
+balls (object <= 0.157, stage off) and the figure scenes (>= 0.184) is thin; a
+feature that tells the balls scene (GigaScreen objects moving in front of a
+static background) from a static figure in front of a moving background would
+make the switch robust on other programs.
+
 ## 8. Render
 
 A recipe is a set of (source, weight) with weights summing to 1: sources are
@@ -283,6 +342,7 @@ pixel stage (section 5) -> recipe, explained
 two_page = classifier (section 6)
 if two_page > 0: field stage (section 7) -> override recipe on field pixels
 else: field.skip()
+mod-tpgwa only: scene stage (section 7.8) -> while on, the whole frame is 1/2 t + 1/4 t-1 + 1/4 t+1
 return render(recipe)
 ```
 
@@ -301,6 +361,7 @@ return render(recipe)
 | ate-raster-negative | 3500..3700 | one-frame inverted flashes |
 | ate-raster-negative-2 | 7300..7500 | rotating raster-band vase |
 | flicker-test | 1501..3405 | test program: GigaScreen palette, gamma patterns, R-G-B rabbit (period 3), 1 px and 8 px moving squares |
+| ate-dj-circles | 11300..11500 | static GigaScreen DJ over a two-page circle lattice jumping in steps (added with mod-tpgwa) |
 
 Across the Edge by Demarche (`testdata/loaders/trd/across_the_edge_by_demarche.trd`)
 and `testdata/flicker/flickering_test.tap`, recorded as TTD sessions and exported
@@ -354,6 +415,17 @@ Oracle 1's ghost figures on the tunnel and the spiral are its known weakness
 (it calls the blend of a moving two-page texture a ghost); the scenes were
 accepted visually.
 
+`mod-tpgwa` (the baseline since 2026-09-29) is bit-identical to `mod-tpgw` on
+the nine scenes above; on the DJ scene:
+
+| Scene | Oracle 1: ghost / missed | Oracle 2: color_ok / dE p95 / edge p95 | Oracle 3 |
+|---|---|---|---|
+| dj-circles, mod-tpgw | 0 / 35 % | 0.820 / 0.124 / 6.0 px | 0.688 |
+| dj-circles, mod-tpgwa | 9.7 % / 13 % | 0.997 / 0.001 / 0.95 px | 0.489 |
+
+A disputed scene (oracles 1 and 3 count the one-frame lag on the jumps as
+ghosting); accepted by eye.
+
 ## 11. Design decisions and rejected alternatives
 
 | Decision | Why |
@@ -368,6 +440,8 @@ accepted visually.
 | Two-page motion compensation instead of 1/4-1/2-1/4 | blends the pages at the same instant: crisp lattice and snake (edges 5.0 -> 2.4 px) |
 | Whole-paper mode with scene hysteresis | the spiral's seeds shrink for single frames and the mode blinked between methods |
 | No per-pixel vector refinement | no measurable gain (section 7.7) |
+| Scene stage averages the whole frame (7.8) instead of a per-block page-flip detector | per 8x8 block choices of t-1 / t+1 / both (confirmed page flips, a still other page, lockstep jumps, one recipe per frame) all left the DJ's lattice in pieces of different colors; they also mixed inside the balls and at the snake's edges |
+| Scene trigger = large static picture + moving flicker on the paper | tile-group size, share of one-sided page flips and motion shares did not separate the DJ from the balls, the spiral or the tunnel |
 
 ## 12. Cost (Python reference)
 

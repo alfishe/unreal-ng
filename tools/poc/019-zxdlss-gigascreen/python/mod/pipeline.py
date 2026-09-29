@@ -18,18 +18,18 @@ from python.mod.graph import default_graph
 from python.mod.registry import REGISTRY
 
 FIELD = 7            # class code (v10)
-DETECTOR_CLASS = {"period2": P2, "period3": P2 + 1, "period4": P2 + 2, "period5": P2 + 3, "field": FIELD}
+DETECTOR_CLASS = {"period2": P2, "period3": P2 + 1, "period4": P2 + 2, "period5": P2 + 3, "field": FIELD, "steps": FIELD, "scene_avg": FIELD}
 
 
 class DeflickerMoD:
     def __init__(self, shape, mixer, lookahead=6, graph=None, threshold=0.5, field_palette=False,
-                 field_render="avg3", field_override=False, field_grow=False, field_whole=0.0, field_refine=False):
+                 field_render="avg3", field_override=False, field_grow=False, field_whole=0.0, field_refine=False, steps=False, scene_avg=False):
         self.h, self.w = shape
         self.mixer = mixer
         self.delay = lookahead
         self.graph = graph if graph is not None else default_graph(field_palette=field_palette, field_render=field_render,
                                                                    field_override=field_override, field_grow=field_grow,
-                                                                   field_whole=field_whole, field_refine=field_refine)
+                                                                   field_whole=field_whole, field_refine=field_refine, steps=steps, scene_avg=scene_avg)
         self.threshold = threshold
         self.stages = [(st, [REGISTRY[name](**params) for name, params in st.detectors]) for st in self.graph]
         history = max(d.history for _, ds in self.stages for d in ds)
@@ -77,6 +77,10 @@ class DeflickerMoD:
                     motion_veto |= vm
             if not claimed.any():
                 continue
+            if claimed.all():
+                # the stage renders the whole frame: its recipe alone, in its own source
+                # order (the summation order of the mix - C++ parity)
+                weights = {}
             for i in list(weights):
                 weights[i] = np.where(claimed, 0.0, weights[i])
             for i, w in w_stage.items():

@@ -19,7 +19,11 @@ struct SourceFrame
     uint64_t frame = 0;
     int width = 0;
     int height = 0;
+    int paperX = 48, paperY = 48;     ///< top-left of the 256 x 192 paper in this frame
     std::vector<uint16_t> planeB;
+    /// TTD input only: the machine's sound while this frame was replayed -
+    /// interleaved stereo int16 at 44.1 kHz, ~903 samples per Pentagon frame
+    std::vector<int16_t> audio;
 };
 
 using FrameCallback = std::function<bool(const SourceFrame&)>;   ///< false stops
@@ -34,16 +38,30 @@ bool clipRange(const std::string& dir, uint64_t& first, uint64_t& last, std::str
 
 /// Frames [from, to] of a TTD file, replayed through the emulator core
 /// (only when built with the core; model: the machine the session was recorded on).
-std::string readTtd(const std::string& path, const std::string& model, uint64_t from, uint64_t to, const FrameCallback& cb);
+/// overscan: Pentagon overscan (384 x 304) cropped to 352 x 304 with the paper
+/// horizontally centered (48 px each side) - the UI's Symmetric Horizontal viewport.
+std::string readTtd(const std::string& path, const std::string& model, uint64_t from, uint64_t to, const FrameCallback& cb,
+                    bool overscan = false);
+
+/// The machine's sound of frames [from, to] of a TTD file, played continuously
+/// (interleaved stereo int16, 44.1 kHz); min / max samples per frame reported.
+std::string readTtdAudio(const std::string& path, const std::string& model, uint64_t from, uint64_t to,
+                         std::vector<int16_t>& samples, size_t& minPerFrame, size_t& maxPerFrame);
 
 /// First and last frame of a TTD file's session.
 bool ttdRange(const std::string& path, const std::string& model, uint64_t& first, uint64_t& last, std::string& error);
 
-/// RGB24 frames piped into ffmpeg -> H.264 mp4 at 50 fps.
+/// Interleaved stereo int16 samples -> a 16-bit PCM WAV file.
+bool writeWav(const std::string& path, const std::vector<int16_t>& samples, uint32_t rate, std::string& error);
+
+/// RGB24 frames piped into ffmpeg -> H.264 mp4 at `fps`, optionally with a
+/// WAV muxed in as AAC (the video frames and the sound share one clock).
 class VideoWriter
 {
 public:
-    bool open(const std::string& path, int width, int height, int scale, std::string& error);
+    bool open(const std::string& path, int width, int height, int scale, std::string& error, double fps = 50.0,
+              const std::string& wav = {});
+    void close();
     void write(const uint8_t* rgb);
     ~VideoWriter();
 

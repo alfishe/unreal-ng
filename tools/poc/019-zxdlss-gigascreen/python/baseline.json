@@ -1,5 +1,5 @@
 {
- "alg": "mod-tpgw",
+ "alg": "mod-tpgwa",
  "scenes": {
   "ate-pageflip-static": {
    "ghost_pixels": 0.0,
@@ -54,6 +54,12 @@
    "ghost_moving_flicker": 9e-05,
    "missed_flicker": 0.0005,
    "color_error_share": 0.0
+  },
+  "ate-dj-circles": {
+   "ghost_pixels": 0.09734,
+   "ghost_moving_flicker": 0.00231,
+   "missed_flicker": 0.1333,
+   "color_error_share": 0.3907
   }
  },
  "scenes2": {
@@ -119,6 +125,13 @@
    "edge_p95": 0.0,
    "shimmer": 0.0001,
    "agree": 0.9983
+  },
+  "ate-dj-circles": {
+   "color_ok": 0.9966,
+   "de_p95": 0.0012,
+   "edge_p95": 0.9498,
+   "shimmer": 0.001,
+   "agree": 0.4891
   }
  }
 }

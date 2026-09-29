@@ -28,7 +28,7 @@ namespace
 constexpr int kLookAhead = 6;                               // section 1
 constexpr int kMaxSpan = 15;                                // span(5)
 constexpr int kDepth = kLookAhead + kMaxSpan + 2;           // 23 (section 4.1)
-constexpr int kPaperY0 = 48, kPaperX0 = 48, kPaperH = 192, kPaperW = 256;
+constexpr int kPaperH = 192, kPaperW = 256;                // origin: FrameInput::paperX / paperY
 constexpr int kMotionTile = 32, kMotionRadius = 8;          // section 4.3
 constexpr int kFieldTile = 16;                              // section 4.4
 constexpr int kBlock = 8, kBlockRadius = 8;                 // section 7.7
@@ -38,7 +38,6 @@ constexpr double kFieldOn = 0.15, kFieldOff = 0.08, kUnexplained = 0.25;
 constexpr int kMinTiles = 12, kPresent = 4, kGrowMin = 24;
 constexpr double kWhole = 0.3, kWholeOff = 0.1;
 constexpr int kWholeHold = 12;
-constexpr int kPaperTileY0 = 3, kPaperTileY1 = 15, kPaperTileX0 = 3, kPaperTileX1 = 19;
 
 inline int span(int p) { return std::max({2 * p, 6, 3 * p}); }
 
@@ -79,7 +78,7 @@ public:
     void process(const FrameInput& in, RGBImage& out) override
     {
         ++_frames;
-        setup(in.width, in.height);
+        setup(in.width, in.height, in.paperX, in.paperY);
         Timer tp(_stage[kPush]);
         push(in);
         tp.stop();
@@ -152,7 +151,7 @@ private:
     double _stage[kStages] = {};
     uint64_t _frames = 0;
 
-    int _w = 0, _h = 0, _th = 0, _tw = 0;
+    int _w = 0, _h = 0, _th = 0, _tw = 0, _paperX = 48, _paperY = 48;
     std::deque<std::unique_ptr<Frame>> _ring;                // newest first
     const Palette& _pal = Palette::instance();
 
@@ -167,12 +166,14 @@ private:
     int _below = 0;
     bool _anyFieldPixel = false;
 
-    void setup(int w, int h)
+    void setup(int w, int h, int paperX, int paperY)
     {
-        if (w == _w && h == _h)
+        if (w == _w && h == _h && paperX == _paperX && paperY == _paperY)
             return;
         _w = w;
         _h = h;
+        _paperX = paperX;
+        _paperY = paperY;
         _th = h / kFieldTile;
         _tw = w / kFieldTile;
         _ring.clear();
@@ -191,11 +192,11 @@ private:
         f->key.resize(px);
         for (int y = 0; y < _h; ++y)
         {
-            const bool paperRow = y >= kPaperY0 && y < kPaperY0 + kPaperH;
+            const bool paperRow = y >= _paperY && y < _paperY + kPaperH;
             for (int x = 0; x < _w; ++x)
             {
                 const size_t i = static_cast<size_t>(y) * _w + x;
-                if (paperRow && x >= kPaperX0 && x < kPaperX0 + kPaperW)
+                if (paperRow && x >= _paperX && x < _paperX + kPaperW)
                 {
                     const int x0 = x & ~7;
                     uint32_t byte = 0;
@@ -437,7 +438,9 @@ private:
 
     bool isPaperTile(int ty, int tx) const
     {
-        return ty >= kPaperTileY0 && ty < kPaperTileY1 && tx >= kPaperTileX0 && tx < kPaperTileX1;
+        // the tile's center on the paper (standard frame: rows 3..14, columns 3..18)
+        const int cy = ty * kFieldTile + kFieldTile / 2, cx = tx * kFieldTile + kFieldTile / 2;
+        return cy >= _paperY && cy < _paperY + kPaperH && cx >= _paperX && cx < _paperX + kPaperW;
     }
 
     /// 4-connected components of `mask` with at least minSize tiles.

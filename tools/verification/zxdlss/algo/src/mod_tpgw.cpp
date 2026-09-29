@@ -47,7 +47,7 @@ namespace
 constexpr int kLookAhead = 6;                               // section 1
 constexpr int kMaxSpan = 15;                                // span(5)
 constexpr int kDepth = kLookAhead + kMaxSpan + 2;           // 23 (section 4.1)
-constexpr int kPaperY0 = 48, kPaperX0 = 48, kPaperH = 192, kPaperW = 256;
+constexpr int kPaperH = 192, kPaperW = 256;                // origin: FrameInput::paperX / paperY
 constexpr int kMotionTile = 32, kMotionRadius = 8;          // section 4.3
 constexpr int kFieldTile = 16;                              // section 4.4
 constexpr int kBlock = 8, kBlockRadius = 8;                 // section 7.7
@@ -56,7 +56,6 @@ constexpr double kFieldOn = 0.15, kFieldOff = 0.08, kUnexplained = 0.25;
 constexpr int kMinTiles = 12, kPresent = 4, kGrowMin = 24;
 constexpr double kWhole = 0.3, kWholeOff = 0.1;
 constexpr int kWholeHold = 12;
-constexpr int kPaperTileY0 = 3, kPaperTileY1 = 15, kPaperTileX0 = 3, kPaperTileX1 = 19;
 
 constexpr int span(int p) { return std::max({2 * p, 6, 3 * p}); }
 inline int floorDiv2(int v) { return v >= 0 ? v / 2 : -((-v + 1) / 2); }
@@ -182,8 +181,10 @@ struct Frame
 class ModTpgw final : public Algorithm
 {
 public:
+    /// sceneAverage: the scene stage of mod-tpgwa (section 7.8)
+    explicit ModTpgw(bool sceneAverage = false) : _sceneAverage(sceneAverage) {}
     int delay() const override { return kLookAhead; }
-    std::string name() const override { return "mod-tpgw"; }
+    std::string name() const override { return _sceneAverage ? "mod-tpgwa" : "mod-tpgw"; }
 
     std::string stats() const override
     {
@@ -195,13 +196,45 @@ public:
             std::snprintf(line, sizeof(line), "  %-14s %8.3f ms/frame\n", kStageNames[i], 1000.0 * _stage[i] / f);
             s += line;
         }
+        // which detectors rendered what (share of all output pixels, share of frames using it)
+        const double pixels = f * static_cast<double>(_w) * _h;
+        s += "  detector usage (pixels mixed / frames with any):\n";
+        const char* names[] = {"period2", "period3", "period4", "period5"};
+        for (int P = 0; P < 4; ++P)
+        {
+            std::snprintf(line, sizeof(line), "  %-14s %7.3f %% of pixels  %6.1f %% of frames\n", names[P],
+                          100.0 * static_cast<double>(_usePixels[P]) / pixels, 100.0 * static_cast<double>(_useFrames[P]) / f);
+            s += line;
+        }
+        std::snprintf(line, sizeof(line), "  %-14s %7.3f %% of pixels  %6.1f %% of frames\n", "field (2-page)",
+                      100.0 * static_cast<double>(_usePixels[4]) / pixels, 100.0 * static_cast<double>(_useFrames[4]) / f);
+        s += line;
+        std::snprintf(line, sizeof(line), "  field stage ran %.1f %% of frames, seeds %.1f %%, whole-paper %.1f %%\n",
+                      100.0 * static_cast<double>(_fieldRanFrames) / f, 100.0 * static_cast<double>(_seedFrames) / f,
+                      100.0 * static_cast<double>(_wholeFrames) / f);
+        s += line;
+        if (_sceneAverage)
+        {
+            std::snprintf(line, sizeof(line), "  scene average (whole frame) %.1f %% of frames\n",
+                          100.0 * static_cast<double>(_sceneFrames) / f);
+            s += line;
+            // output frame ordinals (0 = first output frame) of the runs it was on
+            s += "  scene average runs (output frame ordinals):";
+            for (const auto& r : _sceneRuns)
+            {
+                std::snprintf(line, sizeof(line), " %llu-%llu", static_cast<unsigned long long>(r.first - kLookAhead),
+                              static_cast<unsigned long long>(r.second - kLookAhead));
+                s += line;
+            }
+            s += "\n";
+        }
         return s;
     }
 
     void process(const FrameInput& in, RGBImage& out) override
     {
         ++_frames;
-        setup(in.width, in.height);
+        setup(in.width, in.height, in.paperX, in.paperY);
         {
             Timer t(_stage[kPush]);
             push(in);
@@ -244,17 +277,34 @@ public:
         }
         if (!fieldRan)
             fieldSkip();
-        if (fieldRan && _anyFieldPixel)
+        // the scene stage decides before the field render: while it is on the
+        // whole frame is its average, and the field render (the block search)
+        // would only be overwritten. The field stage's state is updated above.
+        bool sceneOn = false;
+        if (_sceneAverage && L >= 3 && n >= L + 4)
+        {
+            Timer t(_stage[kScene]);
+            sceneOn = sceneStage(L);
+            if (sceneOn)
+                renderSceneAverage(L, out);
+        }
+        if (fieldRan && _anyFieldPixel && !sceneOn)
         {
             Timer t(_stage[kRenderField]);
             renderField(L, out);
         }
+        countUsage(fieldRan, sceneOn);
     }
 
 private:
-    enum Stage { kPush, kMotion, kPixel, kRender1, kFeatures, kField, kRenderField, kStages };
+    enum Stage { kPush, kMotion, kPixel, kRender1, kFeatures, kField, kRenderField, kScene, kStages };
     static constexpr const char* kStageNames[kStages] = {"push+keys", "masks+transl.", "pixel stage", "render stage1",
-                                                           "tile features", "field stage", "render field"};
+                                                           "tile features", "field stage", "render field", "scene stage"};
+    const bool _sceneAverage;
+    bool _sceneOn = false;                   // section 7.8 state
+    int _sceneOff = 0;
+    uint64_t _sceneFrames = 0;
+    std::vector<std::pair<uint64_t, uint64_t>> _sceneRuns;   // input frame ordinals
     struct Timer
     {
         double& acc;
@@ -271,8 +321,10 @@ private:
     };
     double _stage[kStages] = {};
     uint64_t _frames = 0;
+    uint64_t _usePixels[5] = {}, _useFrames[5] = {};      // period2..5, field
+    uint64_t _fieldRanFrames = 0, _seedFrames = 0, _wholeFrames = 0;
 
-    int _w = 0, _h = 0, _th = 0, _tw = 0;
+    int _w = 0, _h = 0, _th = 0, _tw = 0, _paperX = 48, _paperY = 48;
     std::deque<std::unique_ptr<Frame>> _ring;
     const Palette& _pal = Palette::instance();
     MixTables _mix;
@@ -292,12 +344,171 @@ private:
     int _below = 0;
     bool _anyFieldPixel = false;
 
-    void setup(int w, int h)
+    // ---- section 7.8: scene stage (mod-tpgwa) ---------------------------------
+    static constexpr double kSceneObject = 0.17, kSceneMoving = 0.4, kSceneDyn = 0.05, kSceneStatic = 0.95;
+    static constexpr int kSceneHold = 12;
+
+    /// Features over t-3..t+3 and the on/off state; true while the whole frame is averaged.
+    bool sceneStage(int L)
     {
-        if (w == _w && h == _h)
+        const int tiles = _th * _tw;
+        std::vector<int> nStatic(tiles, 0), nDyn(tiles, 0);
+        std::vector<uint16_t> colors(tiles, 0);
+        const uint8_t* s[7];
+        for (int k = 0; k < 7; ++k)
+            s[k] = _ring[L - 3 + k]->plane.data();
+        const uint8_t* t = s[3];
+        const uint8_t* next = s[2];                  // ring L - 1 = t+1
+        const uint8_t* prev = s[4];                  // ring L + 1 = t-1
+        // tile rows are independent: each thread owns whole rows of tiles
+        // SIMD-CANDIDATE(O-18): 16-byte compares for const / period 2 / dyn
+        parallelFor(_th, _threads, [&](int ty0, int ty1) {
+            for (int y = ty0 * kFieldTile; y < ty1 * kFieldTile; ++y)
+                for (int x = 0; x < _tw * kFieldTile; ++x)
+                {
+                    const size_t p = static_cast<size_t>(y) * _w + x;
+                    bool cst = true, p2 = true;
+                    uint16_t c = 0;
+                    for (int k = 0; k < 7; ++k)
+                    {
+                        cst &= s[k][p] == s[0][p];
+                        if (k < 5)
+                            p2 &= s[k][p] == s[k + 2][p];
+                        c |= static_cast<uint16_t>(1u << s[k][p]);
+                    }
+                    const bool stat = cst || p2;
+                    const int ti = (y / kFieldTile) * _tw + x / kFieldTile;
+                    nStatic[ti] += stat;
+                    nDyn[ti] += !stat && t[p] != prev[p] && t[p] != next[p];
+                    colors[ti] |= c;
+                }
+        });
+        const double area = static_cast<double>(kFieldTile * kFieldTile);
+        std::vector<uint8_t> object(tiles, 0);
+        int moving = 0, paperTiles = 0;
+        for (int ty = 0; ty < _th; ++ty)
+            for (int tx = 0; tx < _tw; ++tx)
+            {
+                const int ti = ty * _tw + tx;
+                object[ti] = nStatic[ti] / area >= kSceneStatic && std::popcount(colors[ti]) >= 3;
+                if (isPaperTile(ty, tx))
+                {
+                    ++paperTiles;
+                    moving += nDyn[ti] / area > kSceneDyn;
+                }
+            }
+        const double obj = static_cast<double>(largestComponent(object)) / tiles;
+        const double mov = paperTiles ? static_cast<double>(moving) / paperTiles : 0.0;
+        if (obj >= kSceneObject && mov >= kSceneMoving)
+        {
+            _sceneOn = true;
+            _sceneOff = 0;
+        }
+        else if (_sceneOn && ++_sceneOff >= kSceneHold)
+        {
+            _sceneOn = false;
+            _sceneOff = 0;
+        }
+        return _sceneOn;
+    }
+
+    /// 1/2 t + 1/4 t-1 + 1/4 t+1 on every pixel (the two-page mix table: same weights and order).
+    void renderSceneAverage(int L, RGBImage& out)
+    {
+        const size_t px = static_cast<size_t>(_w) * _h;
+        const uint8_t* t = _ring[L]->plane.data();
+        const uint8_t* prev = _ring[L + 1]->plane.data();
+        const uint8_t* next = _ring[L - 1]->plane.data();
+        parallelFor(_h, _threads, [&](int y0, int y1) {
+            for (size_t p = static_cast<size_t>(y0) * _w; p < static_cast<size_t>(y1) * _w && p < px; ++p)
+                unpack(_mix.twoPage(t[p], prev[p], next[p]), &out[p * 3]);
+        });
+    }
+
+    int largestComponent(const std::vector<uint8_t>& mask) const
+    {
+        std::vector<uint8_t> seen(mask.size(), 0);
+        std::vector<int> stack;
+        int best = 0;
+        for (int s0 = 0; s0 < static_cast<int>(mask.size()); ++s0)
+        {
+            if (!mask[s0] || seen[s0])
+                continue;
+            int size = 0;
+            stack.assign(1, s0);
+            seen[s0] = 1;
+            while (!stack.empty())
+            {
+                const int c = stack.back();
+                stack.pop_back();
+                ++size;
+                const int cy = c / _tw, cx = c % _tw;
+                const int nb[4][2] = {{cy - 1, cx}, {cy + 1, cx}, {cy, cx - 1}, {cy, cx + 1}};
+                for (const auto& q : nb)
+                {
+                    if (q[0] < 0 || q[0] >= _th || q[1] < 0 || q[1] >= _tw)
+                        continue;
+                    const int nq = q[0] * _tw + q[1];
+                    if (mask[nq] && !seen[nq])
+                    {
+                        seen[nq] = 1;
+                        stack.push_back(nq);
+                    }
+                }
+            }
+            best = std::max(best, size);
+        }
+        return best;
+    }
+
+    /// Usage statistics: pixels whose output came from each detector (the field
+    /// stage overrides the pixel stage on its tiles, the scene stage everything).
+    void countUsage(bool fieldRan, bool sceneOn)
+    {
+        _sceneFrames += sceneOn;
+        if (sceneOn)
+        {
+            const uint64_t k = _frames - 1;
+            if (!_sceneRuns.empty() && _sceneRuns.back().second + 1 == k)
+                _sceneRuns.back().second = k;
+            else
+                _sceneRuns.emplace_back(k, k);
+        }
+        const bool field = fieldRan && _anyFieldPixel;
+        uint64_t n[5] = {};
+        for (int y = 0; y < _h; ++y)
+            for (int x = 0; x < _w; ++x)
+            {
+                const size_t p = static_cast<size_t>(y) * _w + x;
+                if (field && _field[static_cast<size_t>(y / kFieldTile) * _tw + x / kFieldTile])
+                    ++n[4];
+                else if (_explained.size() == static_cast<size_t>(_w) * _h && _explained[p] && _period[p] >= 2)
+                    ++n[_period[p] - 2];
+            }
+        for (int k = 0; k < 5; ++k)
+        {
+            _usePixels[k] += n[k];
+            _useFrames[k] += n[k] != 0;
+        }
+        _fieldRanFrames += fieldRan;
+        if (fieldRan)
+        {
+            bool seeds = false;
+            for (uint8_t v : _seeds)
+                seeds |= v != 0;
+            _seedFrames += seeds;
+            _wholeFrames += _wholeOn;
+        }
+    }
+
+    void setup(int w, int h, int paperX, int paperY)
+    {
+        if (w == _w && h == _h && paperX == _paperX && paperY == _paperY)
             return;
         _w = w;
         _h = h;
+        _paperX = paperX;
+        _paperY = paperY;
         _th = h / kFieldTile;
         _tw = w / kFieldTile;
         _ring.clear();
@@ -330,9 +541,9 @@ private:
             const size_t row = static_cast<size_t>(y) * _w;
             for (int x = 0; x < _w; ++x)
                 f->key[row + x] = in.plane[row + x];
-            if (y < kPaperY0 || y >= kPaperY0 + kPaperH)
+            if (y < _paperY || y >= _paperY + kPaperH)
                 continue;
-            for (int x0 = kPaperX0; x0 < kPaperX0 + kPaperW; x0 += 8)
+            for (int x0 = _paperX; x0 < _paperX + kPaperW; x0 += 8)
             {
                 uint32_t byte = 0;
                 for (int k = 0; k < 8; ++k)
@@ -620,7 +831,9 @@ private:
 
     bool isPaperTile(int ty, int tx) const
     {
-        return ty >= kPaperTileY0 && ty < kPaperTileY1 && tx >= kPaperTileX0 && tx < kPaperTileX1;
+        // the tile's center on the paper (standard frame: rows 3..14, columns 3..18)
+        const int cy = ty * kFieldTile + kFieldTile / 2, cx = tx * kFieldTile + kFieldTile / 2;
+        return cy >= _paperY && cy < _paperY + kPaperH && cx >= _paperX && cx < _paperX + kPaperW;
     }
 
     std::vector<uint8_t> largeComponents(const std::vector<uint8_t>& mask, int minSize) const
@@ -870,6 +1083,7 @@ private:
 };
 
 const Registration kRegistration("mod-tpgw", [] { return std::make_unique<ModTpgw>(); });
+const Registration kRegistrationA("mod-tpgwa", [] { return std::make_unique<ModTpgw>(true); });
 
 }  // namespace
 }  // namespace zxdlss

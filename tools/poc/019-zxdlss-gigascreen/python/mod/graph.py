@@ -8,6 +8,8 @@ consensus picks one proposal per pixel.
 The default graph reproduces v10 (the accepted baseline):
   pixel   period2..period5  always (every scene may hold static GigaScreen)
   field   field             when some tiles alternate their color set
+  steps   steps             (steps=True) two-page textures moving in steps
+  scene   scene_avg         (scene_avg=True) whole-frame average behind a large static picture
 """
 from dataclasses import dataclass, field
 
@@ -23,10 +25,17 @@ class Stage:
 
 
 def default_graph(field_palette=False, field_render="avg3", field_override=False, field_grow=False, field_whole=0.0,
-                  field_refine=False):
-    return [
+                  field_refine=False, steps=False, scene_avg=False):
+    graph = [
         Stage("pixel", [("period2", {}), ("period3", {}), ("period4", {}), ("period5", {})]),
         Stage("field", [("field", {"palette": field_palette, "render": field_render, "override": field_override,
                                    "grow": field_grow, "whole": field_whole, "refine": field_refine})],
               when=lambda scene: scene.two_page > 0.0, override=field_override),
     ]
+    if steps:
+        # two-page textures moving in steps: only what the pixel and field stages left
+        graph.append(Stage("steps", [("steps", steps if isinstance(steps, dict) else {})]))
+    if scene_avg:
+        # a large static picture over a moving flickering background: the whole frame averaged
+        graph.append(Stage("scene", [("scene_avg", scene_avg if isinstance(scene_avg, dict) else {})], override=True))
+    return graph

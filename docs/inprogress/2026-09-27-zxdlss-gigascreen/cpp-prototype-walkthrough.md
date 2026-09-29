@@ -214,7 +214,7 @@ Per stage, from the scalar reference to the final single-thread build:
 The TTD path: `zxdlss-render --ttd flickering_test.ttd --layout raw-out --video ...`
 rendered 1 912 frames in 32.5 s end to end (TTD replay through the emulator core,
 the algorithm at 2.95 ms/frame, H.264 encoding) -
-`tools/poc/019-zxdlss-gigascreen/out/cpp/flicker-test_raw-out.mp4`.
+`tools/poc/019-zxdlss-gigascreen/out/2026-09-29_1135 - C++ zxdlss-render full renders/flicker-test_raw-out.mp4`.
 
 ## 10. Lessons
 
@@ -232,7 +232,37 @@ the algorithm at 2.95 ms/frame, H.264 encoding) -
 5. **Measure on a quiet machine.** Background NumPy jobs moved single numbers by
    2-3x; stage proportions stayed useful, absolute numbers did not.
 
-## 11. Next
+## 11. mod-tpgwa and Pentagon overscan (2026-09-29)
+
+**The scene stage** (spec section 7.8) is a flag of the same class: `mod-tpgwa`
+registers `ModTpgw(true)`. It runs after the field stage and, while on, writes
+every pixel from the two-page mix table (1/2 t + 1/4 t-1 + 1/4 t+1 is the same
+weights and summation order), so no new table is needed. For the parity the
+Python pipeline now builds a whole-frame recipe in its own source order.
+
+Optimizations (same results):
+- the 7-frame constant / period-2 / dyn tests run on threads by tile rows (each
+  thread owns whole rows of tiles, no merge);
+- the average render runs on threads by rows;
+- the scene decides before the field render: while it is on, the two-page
+  render (the block search) is skipped - its output would be overwritten. The
+  field stage's state is still updated.
+
+Parity: Python vs C++ bit for bit on the DJ scene (201 frames) and the spiral;
+`mod-tpgwa` equals `mod-tpgw` bit for bit on the other nine golden scenes.
+Cost of the scene stage over the whole demo: 0.32 ms/frame before the threads
+(measured on a loaded machine, load average ~46 - to be re-measured).
+
+**Pentagon overscan** (`--overscan`): the TTD is replayed in M_P384 (384 x 304)
+and cropped to 352 x 304 like the emulator's Symmetric Horizontal viewport.
+`FrameInput` carries the paper origin ((48, 48) standard, (48, 56) overscan);
+a paper tile is one whose center lies on the paper, which keeps the standard
+frame's tiles (rows 3..14, columns 3..18) and the output unchanged.
+
+`--stats` prints the stage costs, the share of pixels and frames each detector
+mixed, and the runs of the scene stage.
+
+## 12. Next
 
 - Cache the translation of a frame pair across frames (already done for the
   mask; the two-page search is recomputed per frame and could reuse the
@@ -242,7 +272,7 @@ the algorithm at 2.95 ms/frame, H.264 encoding) -
 - Phase 3: the algorithm inside the emulator as the `dlss` mode of the Temporal
   Effects Manager, with its 6-frame presentation delay.
 
-## 12. Reproduce
+## 13. Reproduce
 
 ```
 # build

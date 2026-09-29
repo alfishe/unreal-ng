@@ -24,6 +24,10 @@ struct FrameInput
     const uint8_t* plane = nullptr;    ///< color index 0..15 (plane B bits 8..11)
     const uint8_t* attr = nullptr;     ///< attribute byte the beam used (bits 0..7), 0 on the border
     const uint8_t* ink = nullptr;      ///< ink bit 0 / 1 (bit 12)
+    /// top-left pixel of the 256 x 192 paper: (48, 48) in the standard 352 x 288
+    /// frame, (48, 56) in Pentagon overscan cropped to 352 x 304
+    int paperX = 48;
+    int paperY = 48;
 };
 
 /// Output picture: width x height x 3 (RGB8).

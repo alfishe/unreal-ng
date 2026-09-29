@@ -18,7 +18,9 @@ Exit code 1 on any REGRESSION.
   python3 python/regress.py --alg v10 --data ... --out ... --write-baseline
 
 Baseline history: v10 (2026-09-28) - the first state accepted on every scene
-except the irregular spiral's snake; mod-tpgw (2026-09-29) - two-page field render accepted on the spiral and tunnel.
+except the irregular spiral's snake; mod-tpgw (2026-09-29) - two-page field render accepted on the spiral and tunnel;
+mod-tpgwa (2026-09-29) - whole-frame average behind a large static picture, accepted on
+the DJ scene (ate-dj-circles, added to the golden set the same day).
 """
 import argparse
 import json
@@ -52,6 +54,7 @@ SCENES = [                       # (scene, clip dir, first, last)
     ("ate-raster-negative", "clip_v2", 3500, 3700),
     ("ate-raster-negative-2", "clip_v2", 7300, 7500),
     ("flicker-test", "clip_flicker_v2", 1501, 3405),   # leaves room for 10 frames of look-ahead
+    ("ate-dj-circles", "clip_v2", 11300, 11500),       # two-page lattice moving in steps (2026-09-29)
 ]
 
 ap = argparse.ArgumentParser()

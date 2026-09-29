@@ -13,7 +13,7 @@ from python.dlss_v9 import DeflickerV9
 from python.dlss_v10 import DeflickerV10
 from python.dlss_v11 import DeflickerV11
 from python.mod.pipeline import DeflickerMoD
-from python.refalgs import RefAvg3, RefTwoPage
+from python.refalgs import RefAvg3, RefTwoPage, RefTwoPageSteps
 
 ALGORITHMS = {"v1": DeflickerV1, "v2": DeflickerV2, "v3": DeflickerV3, "v4": DeflickerV4,
               "v5": DeflickerV5, "v5m": partial(DeflickerV5, tile_motion=True), "v6": DeflickerV6,
@@ -33,10 +33,29 @@ ALGORITHMS = {"v1": DeflickerV1, "v2": DeflickerV2, "v3": DeflickerV3, "v4": Def
               "v9l6": partial(DeflickerV9, lookahead=6), "v9l10": partial(DeflickerV9, lookahead=10),
               "v10": DeflickerV10, "v11": DeflickerV11,
               "mod": DeflickerMoD, "mod-palette": partial(DeflickerMoD, field_palette=True),
-              "ref-avg3": RefAvg3, "ref-twopage": RefTwoPage,
+              "ref-avg3": RefAvg3, "ref-twopage": RefTwoPage, "ref-twopage-steps": RefTwoPageSteps,
               "mod-tp": partial(DeflickerMoD, field_render="twopage", field_override=True),
               "mod-tpg": partial(DeflickerMoD, field_render="twopage", field_override=True, field_grow=True),
               "mod-tpgw": partial(DeflickerMoD, field_render="twopage", field_override=True, field_grow=True, field_whole=0.3),
+              "mod-tpgws": partial(DeflickerMoD, field_render="twopage", field_override=True, field_grow=True, field_whole=0.3,
+                                   steps=True),
+              "mod-tpgwst": partial(DeflickerMoD, field_render="twopage", field_override=True, field_grow=True, field_whole=0.3,
+                                    steps={"tiles": True}),
+              "mod-tpgwstb": partial(DeflickerMoD, field_render="twopage", field_override=True, field_grow=True, field_whole=0.3,
+                                     steps={"tiles": True, "paper_only": False}),
+              "mod-tpgwstg": partial(DeflickerMoD, field_render="twopage", field_override=True, field_grow=True, field_whole=0.3,
+                                     steps={"tiles": True, "paper_only": False, "grow": True}),
+              "mod-tpgwstg7": partial(DeflickerMoD, field_render="twopage", field_override=True, field_grow=True, field_whole=0.3,
+                                      steps={"tiles": True, "paper_only": False, "grow": True, "alt": 0.7}),
+              "mod-tpgwss": partial(DeflickerMoD, field_render="twopage", field_override=True, field_grow=True, field_whole=0.3,
+                                    steps={"static_other": True}),
+              "mod-tpgwssc": partial(DeflickerMoD, field_render="twopage", field_override=True, field_grow=True, field_whole=0.3,
+                                     steps={"static_other": True, "consistent": True}),
+              "mod-tpgwa": partial(DeflickerMoD, field_render="twopage", field_override=True, field_grow=True, field_whole=0.3,
+                                   scene_avg=True),
+              "mod-tpgwstg7s": partial(DeflickerMoD, field_render="twopage", field_override=True, field_grow=True, field_whole=0.3,
+                                       steps={"tiles": True, "paper_only": False, "grow": True, "alt": 0.7,
+                                              "static_other": True}),
               "mod-tpgwr": partial(DeflickerMoD, field_render="twopage", field_override=True, field_grow=True, field_whole=0.3,
                                    field_refine=True)}
 NEEDS_PLANE_B = {"v5", "v5m"} | {k for k in ALGORITHMS if k.startswith(("v6", "v7", "v8", "v9", "v10", "v11", "mod", "ref"))}

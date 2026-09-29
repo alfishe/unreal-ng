@@ -100,6 +100,69 @@ def other_page(prev, nxt, block=BLOCK, radius=RADIUS, refine=False):
     return _samples(prev, nxt, vy, vx)
 
 
+def _block_equal(a, b, block=BLOCK):
+    """Per pixel: the pixel's 8x8 block of a equals the one of b."""
+    h, w = a.shape
+    bh, bw = h // block, w // block
+    eq = ~(a != b)[:bh * block, :bw * block].reshape(bh, block, bw, block).any(axis=(1, 3))
+    full = np.zeros((h, w), bool)
+    full[:bh * block, :bw * block] = np.repeat(np.repeat(eq, block, 0), block, 1)
+    return full
+
+
+def block_shift_exact(new, old, block=BLOCK, radius=RADIUS):
+    """Per 8x8 block of `new`: the displacement v (|v| <= radius, the smallest
+    |v| first) with new(p) == old(p - v) on the whole block. -> (vy, vx, found)
+    per pixel; found is False where no displacement reproduces the block."""
+    h, w = new.shape
+    bh, bw = h // block, w // block
+    vy = np.zeros((bh, bw), np.int32)
+    vx = np.zeros((bh, bw), np.int32)
+    found = np.zeros((bh, bw), bool)
+    shifts = sorted(((dy, dx) for dy in range(-radius, radius + 1) for dx in range(-radius, radius + 1)),
+                    key=lambda v: (abs(v[0]) + abs(v[1]), v))
+    for dy, dx in shifts:
+        eq = ~(new != np.roll(old, (dy, dx), axis=(0, 1)))[:bh * block, :bw * block].reshape(bh, block, bw, block).any(axis=(1, 3))
+        take = eq & ~found
+        vy[take], vx[take] = dy, dx
+        found |= eq
+        if found.all():
+            break
+
+    def expand(m):
+        full = np.zeros((h, w), m.dtype)
+        full[:bh * block, :bw * block] = np.repeat(np.repeat(m, block, 0), block, 1)
+        return full
+    return expand(vy), expand(vx), expand(found)
+
+
+def shifted_equal(new, old, vy, vx, block=BLOCK):
+    """Per pixel: new(p) == old(p - v(p)) on the pixel's whole 8x8 block."""
+    h, w = new.shape
+    yy, xx = np.indices((h, w))
+    moved = old[(yy - vy) % h, (xx - vx) % w]
+    return _block_equal(new, moved, block)
+
+
+def other_page_steps(prev2, prev, cur, nxt, nxt2, block=BLOCK, radius=RADIUS, refine=False):
+    """The other page at t for textures that move in STEPS, both pages at once
+    (the DJ scene's circles: still for 2-4 frames, then a jump). Per 8x8 block:
+      t == t-2 (no step since t-2)  -> t-1 is the other page as it is at t
+      t == t+2 (no step until t+2)  -> t+1 likewise
+      both                          -> t-1 and t+1 (equal to other_page at v = 0)
+      neither                       -> other_page (the midway motion estimate)
+    A block holding both a static and a moving part takes the midway estimate,
+    as before. -> (samples from prev, samples from nxt)."""
+    fp, fn = other_page(prev, nxt, block, radius, refine)
+    back = _block_equal(cur, prev2, block)
+    fwd = _block_equal(cur, nxt2, block)
+    only_back, only_fwd = back & ~fwd, fwd & ~back
+    both = back & fwd
+    fp = np.where(only_back | both, prev, np.where(only_fwd, nxt, fp))
+    fn = np.where(only_fwd | both, nxt, np.where(only_back, prev, fn))
+    return fp, fn
+
+
 def two_page_mix(mixer, cur, prev, nxt, block=BLOCK, radius=RADIUS):
     """1/2 t + 1/2 other page at t (1/4 + 1/4 from each side)."""
     fp, fn = other_page(prev, nxt, block, radius)
