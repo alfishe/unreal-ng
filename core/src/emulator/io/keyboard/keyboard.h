@@ -293,6 +293,10 @@ protected:
     uint8_t _keyboardMatrixState[8];
     std::map<ZXKeysEnum, uint8_t> _keyboardPressedKeys;
 
+    /// Host (MessageCenter) key events ignored: a ZX-Poly group member takes
+    /// its keys from the group, at frame boundaries, in step with the others
+    bool _hostInputGated = false;
+
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -350,6 +354,10 @@ public:
 public:
     void OnKeyPressed(int id, Message* message);
     void OnKeyReleased(int id, Message* message);
+
+    /// Ignore host key events (see _hostInputGated). PressKey/ReleaseKey still work
+    void SetHostInputGated(bool gated) { _hostInputGated = gated; }
+    bool IsHostInputGated() const { return _hostInputGated; }
 
 protected:
     bool IsHostInputSuppressed() const;               // TTD journal owns input

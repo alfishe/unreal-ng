@@ -208,6 +208,7 @@ enum PlatformLoaderSubmodulesEnum : uint16_t
     SUBMODULE_LOADER_NONE       = 0x0000,
     SUBMODULE_LOADER_SNA        = 0x0001,
     SUBMODULE_LOADER_Z80        = 0x0002,
+    SUBMODULE_LOADER_ZXP        = 0x0004,
 
     SUBMODULE_LOADER_ALL        = 0xFFFF
 };
@@ -422,7 +423,7 @@ enum class TurboSoundKind : uint8_t
 /// replacement, design: docs/inprogress/2026-09-19-general-sound),
 /// BASS = legacy UnrealSpeccy HLE mode (deprecated alias of LW at parse
 /// time - no BASS library is linked in this tree), NGS = NeoGS FPGA card
-/// (neogs-tdd.md - P2 placeholder, parsed but no device is created yet),
+/// (SoundChip_NeoGS, neogs-tdd.md),
 /// NONE (default) = no GS card fitted.
 /// Read once at config load; a change needs a new emulator instance.
 enum class GSTypeKind : uint8_t
@@ -434,15 +435,50 @@ enum class GSTypeKind : uint8_t
 	NGS
 };
 
-/// NeoGS MP3 decode path ([NGS] MP3Support, neogs-tdd.md §5.6):
-/// None = feature off, Software = host-side decode feeding the DAC stream,
-/// Stub (default) = API surface present but silent. P2 placeholder: Stub
-/// and Software behave identically until the NeoGS implementation lands.
+/// NeoGS MP3 decoder chip ([NGS] MP3Support, neogs-tdd.md §5.6):
+/// None = no decoder fitted (DREQ reads 0, SCI reads #FFFF - players that
+/// poll DREQ wait forever, as on a board without the chip), Stub = the chip
+/// answers (DREQ 1, version bits) but plays silence, Software = full decoding.
 enum class NGSMP3SupportKind : uint8_t
 {
 	None,
 	Stub,
 	Software
+};
+
+/// NeoGS card settings ([NGS] section, neogs-tdd.md §6)
+struct NeoGSConfig
+{
+	enum class Fpga : uint8_t { Current, D };               // board revision (§3.12)
+	enum class Boot : uint8_t { Loader, Direct };           // §4.2
+	enum class WriteMode : uint8_t { Session, Persist, Off }; // SD card and flash writes
+	enum class SDType : uint8_t { Auto, SDSC, SDHC };        // §5.5
+	enum class Mp3Chip : uint8_t { VS1001, VS1011 };         // §5.6
+	enum class FlashId : uint8_t { ST, AMD };                // §3.8: 20/E2 or 01/A4
+
+	char flashPath[FILENAME_MAX] = "rom/neogs/full_ngs.rom";
+	FlashId flashId = FlashId::ST;
+	Fpga fpga = Fpga::Current;
+	unsigned ramKB = 4096;                                  // 2048 | 4096
+	Boot boot = Boot::Loader;
+	unsigned bootDelayMs = 0;
+	char sdCardPath[FILENAME_MAX] = {};                     // bare contexts only; a machine's card is the media manager's slot sd.ngs
+	SDType sdType = SDType::Auto;
+	bool sdWriteProtect = false;                            // SSTAT switch bit only
+	WriteMode sdWrite = WriteMode::Session;
+	NGSMP3SupportKind mp3Support = NGSMP3SupportKind::Software;
+	Mp3Chip mp3Chip = Mp3Chip::VS1001;
+	double mp3Gain = 1.0;
+	WriteMode flashWrite = WriteMode::Session;
+	enum class ZxDmaWatch : uint8_t { Selected, Always };  // neogs-zxdma-design.md §5.4, §5.5.3
+	ZxDmaWatch zxDmaWatch = ZxDmaWatch::Selected;
+	unsigned zxDmaWatchFrames = 5;
+	unsigned volume = 8000;                                 // same 0-8192 scale as [SOUND] GSVol
+	/// How the DAC channels reach the two sides (a listening choice, not
+	/// hardware): Separated = as on the board (hard left/right), GS = 50%
+	/// cross-feed like the classic GS board, Mono = both sides the same
+	enum class StereoMode : uint8_t { Separated, GS, Mono };
+	StereoMode stereoMode = StereoMode::Separated;
 };
 
 struct zxkeymap;
@@ -714,13 +750,10 @@ struct CONFIG
 	char phoenix_rom_path[FILENAME_MAX];
 
 #ifdef MOD_GSZ80
-	unsigned gs_ramsize;
 	char gs_rom_path[FILENAME_MAX];
 
-	// NeoGS integration placeholders (neogs-tdd.md §6): [NGS] section keys
-	// parsed up front, consumed by no card until the P2 implementation lands
-	char ngs_sd_card_path[FILENAME_MAX];
-	NGSMP3SupportKind ngsMP3SupportKind = NGSMP3SupportKind::Stub;
+	// NeoGS card ([NGS] section, neogs-tdd.md §6)
+	NeoGSConfig ngs;
 #endif
 
 

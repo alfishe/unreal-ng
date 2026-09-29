@@ -9,6 +9,8 @@
 #include "emulator/sound/soundmanager.h"
 #include "cassert"
 
+#include <iterator>
+
 /// region <Constructors / Destructors>
 
 PortDecoder_Pentagon128::PortDecoder_Pentagon128(EmulatorContext* context) : PortDecoder(context)
@@ -528,6 +530,19 @@ DecodeResult PortDecoder_Pentagon128::TryBdiFallback(uint16_t port)
 /// Export the decode table for self-describing port traces (the BDI #1F/#3F/#5F/#7F
 /// fallback is positional logic, not a mask rule, and is reported per event via
 /// PortTraceRule::kBdiFallback instead)
+uint8_t PortDecoder_Pentagon128::TraceRuleIndexOf(uint16_t resolvedPort)
+{
+    for (size_t i = 0; i < std::size(pentagonPortMasksMatches); i++)
+        if (pentagonPortMasksMatches[i].resolvedPort == resolvedPort)
+            return static_cast<uint8_t>(i);
+    return PortTraceRule::kNoMatch;
+}
+
+uint8_t PortDecoder_Pentagon128::TraceRuleCount()
+{
+    return static_cast<uint8_t>(std::size(pentagonPortMasksMatches));
+}
+
 std::vector<PortTraceDecodeRule> PortDecoder_Pentagon128::getPortTraceDecodeRules() const
 {
     std::vector<PortTraceDecodeRule> rules;

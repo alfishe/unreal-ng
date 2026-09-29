@@ -2,6 +2,8 @@
 #include "crashhandler/crashhandler.h"
 
 #include <QApplication>
+#include <QCommandLineParser>
+#include <QTimer>
 #include <QFontDatabase>
 #include <QIcon>
 
@@ -107,9 +109,28 @@ int main(int argc, char *argv[])
     registerFonts(app);
     setApplicationIcon(app);
 
+    // Command line: an optional file to open (as File -> Open or drag and drop
+    // would); --zxpoly-model picks the machine of a ZX-Poly group without asking
+    QCommandLineParser parser;
+    parser.addHelpOption();
+    parser.addPositionalArgument(QStringLiteral("file"), QStringLiteral("Snapshot, tape, disk or ZX-Poly (.zxp) file to open"));
+    QCommandLineOption zxpolyModelOption(QStringLiteral("zxpoly-model"),
+                                         QStringLiteral("Model of the four ZX-Poly modules (e.g. PENTAGON, 128k)"),
+                                         QStringLiteral("model"));
+    parser.addOption(zxpolyModelOption);
+    parser.process(app);
+
     // Instantiate main application window
     MainWindow window;
     window.show();
+
+    const QStringList files = parser.positionalArguments();
+    if (!files.isEmpty())
+    {
+        const QString file = files.first();
+        const QString zxpolyModel = parser.value(zxpolyModelOption);
+        QTimer::singleShot(0, &window, [&window, file, zxpolyModel]() { window.openFromCommandLine(file, zxpolyModel); });
+    }
 
     // Start application main loop
     int result =  app.exec();

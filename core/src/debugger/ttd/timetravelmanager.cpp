@@ -39,6 +39,7 @@
 #include "emulator/io/mouse/mouse.h"      // Mouse (Kempston Mouse peripheral + input journal replay)
 #include "emulator/memory/memory.h"      // Memory
 #include "emulator/platform.h"           // EmulatorState, CONFIG, PAGE_SIZE, MAX_RAM_PAGES
+#include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/sound/chips/iturbosounddevice.h"  // ITurboSoundDevice (TurboSound-slot peripheral, design §3.3 / §8.2)
 #include "emulator/video/screen.h"       // Screen, SpectrumScreenEnum (SetActiveScreen / SetBorderColor on restore)
 #include "emulator/sound/covox.h"                        // Covox (peripheral, P1.5)
@@ -1775,6 +1776,28 @@ bool TimeTravelManager::SubmitLiveInput(const TTDInputEvent& ev)
     return true;
 }
 
+TimeTravelManager::MachineTaskResult TimeTravelManager::SubmitMachineTask(std::function<void()> task)
+{
+    if (!_context || !task || OwnsInput())
+        return MachineTaskResult::Refused;
+
+    // The same hand-off as SubmitLiveInput
+    const bool loopRunning = _context->pEmulator && _context->pEmulator->IsRunning();
+    const bool onLoopThread = _context->pMainLoop && _context->pMainLoop->IsRunThread();
+    if (loopRunning && !onLoopThread)
+    {
+        {
+            std::lock_guard<std::mutex> lock(_pendingInputMutex);
+            _pendingTasks.push_back(std::move(task));
+        }
+        _context->ttdInputWork.store(true, std::memory_order_release);
+        return MachineTaskResult::Queued;
+    }
+
+    task();
+    return MachineTaskResult::RanNow;
+}
+
 void TimeTravelManager::ApplyLiveInput(TTDInputEvent ev)
 {
     // Journal BEFORE applying: the entry's time point is the moment of mutation
@@ -1818,6 +1841,19 @@ void TimeTravelManager::ServiceInput()
             ApplyLiveInput(ev);
     }
 
+    // 3. Machine tasks queued by other threads (SubmitMachineTask), dropped
+    //    like live input when the journal took over while they waited
+    std::vector<std::function<void()>> tasks;
+    {
+        std::lock_guard<std::mutex> lock(_pendingInputMutex);
+        tasks.swap(_pendingTasks);
+    }
+    if (!tasks.empty() && !OwnsInput())
+    {
+        for (auto& task : tasks)
+            task();
+    }
+
     UpdateInputWorkFlag();
 }
 
@@ -1829,7 +1865,7 @@ void TimeTravelManager::UpdateInputWorkFlag()
     bool pending;
     {
         std::lock_guard<std::mutex> lock(_pendingInputMutex);
-        pending = !_pendingInput.empty();
+        pending = !_pendingInput.empty() || !_pendingTasks.empty();
     }
     _context->ttdInputWork.store(_inputPlaybackArmed || pending, std::memory_order_release);
 }
@@ -3605,6 +3641,51 @@ bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
             {
                 err = "TurboSound slot mismatch: session was recorded with a TurboSound-slot device, "
                       "this instance has none - set [SOUND] TurboSound to the recorded kind and restart";
+                return false;
+            }
+        }
+    }
+
+    // General Sound slot guard (neogs-tdd.md §7.4): a session recorded with one
+    // GS-slot personality (classic GS, lightweight player, NeoGS) is refused
+    // on an instance fitted with another - RestoreAll would restore neither,
+    // leaving the live card's state behind silently. The baseline checkpoint
+    // names the personality at the start of the recording; switches inside
+    // the session are replayed by UpdatePeripheral. An instance with no GS
+    // card keeps the missing-blob report (RestoreAll) rather than a refusal.
+    if (!stagedTimeline.empty() && _context && _context->pSoundManager)
+    {
+        if (GeneralSoundCard* liveGs = _context->pSoundManager->getGeneralSound())
+        {
+            static const struct
+            {
+                PeripheralId id;
+                const char* name;
+            } kGsSlot[] = {{PeripheralId::GeneralSound, "GS"},
+                           {PeripheralId::GeneralSoundLightweight, "GS lightweight"},
+                           {PeripheralId::NeoGS, "NeoGS"}};
+            const auto& blobs = stagedTimeline.front().peripheralBlobs;
+            const char* recorded = nullptr;
+            PeripheralId recordedId = PeripheralId::Count;
+            for (const auto& slot : kGsSlot)
+            {
+                if (blobs.find(static_cast<uint8_t>(slot.id)) != blobs.end())
+                {
+                    recorded = slot.name;
+                    recordedId = slot.id;
+                    break;
+                }
+            }
+            if (recorded && recordedId != liveGs->TTDPeripheralId())
+            {
+                const char* fitted = "another card";
+                for (const auto& slot : kGsSlot)
+                {
+                    if (slot.id == liveGs->TTDPeripheralId())
+                        fitted = slot.name;
+                }
+                err = std::string("General Sound slot mismatch: recorded with ") + recorded + ", fitted: " + fitted +
+                      " - set [SOUND] GSType to the recorded card and restart";
                 return false;
             }
         }

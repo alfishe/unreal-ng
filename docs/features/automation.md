@@ -416,7 +416,7 @@ curl -X POST http://localhost:8090/api/v1/emulator/{id}/model \
   -d '{"model": "PENTAGON", "ram_size": 512}'
 ```
 
-**Note**: Model switching destroys the current emulator instance and creates a new one. The response includes both old and new emulator IDs.
+**Note**: Model switching destroys the current emulator instance and creates a new one. The response includes both old and new emulator IDs. The media follow into the same slots, unsaved writes included; see [media.md → Model switch](media.md#model-switch) for media the new model has no slot for (`"stranded": "save" | "discard" | "keep"`). CLI: `model <name> [--stranded ...]`; MCP: `emulator_manage` action `switch_model`.
 
 #### Command Batching
 For VideoWall and bulk operations:

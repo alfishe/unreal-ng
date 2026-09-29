@@ -136,6 +136,26 @@ is a file that would run past one side of a C90 cassette (45 minutes at ROM spee
 lists them. Example: `boot.$B` (a 26-byte program) and `intro.scr` make a tape of about a minute
 without fast loading: `LOAD ""` runs the program, `LOAD "" SCREEN$` shows the picture.
 
+## Model switch
+
+A model switch (Qt **Machine** menu, WebAPI `POST /emulator/{id}/model`, CLI `model <name>`, MCP
+`emulator_manage` action `switch_model`) builds a new machine and destroys the old one. The media go
+with it: each medium goes into the slot with the same id on the new machine, as it is — unsaved
+writes included, nothing read again. What the new machine's config put into that slot gives way.
+
+A medium the new model has no slot for:
+
+| Its state | What happens |
+|---|---|
+| nothing unsaved | closed, and listed in the reply |
+| unsaved writes | the switch is refused (`dirty`, the media listed) and nothing changes, unless the request says `stranded`: `save` (into its own file, floppies), `discard`, or `keep` (a detached medium on the new machine: save or export it later, or it goes back in when a slot with its id returns) |
+
+Example: Pentagon → ZX-Evo keeps drive A, its unsaved writes and the tape. ZX-Evo → Pentagon has no
+`sd.zc`: a card with 48 unsaved sectors refuses the switch until you say `save`, `discard` or
+`keep`; the Qt menu asks Save / Discard / Keep Detached / Cancel.
+
+Lua and Python have no model switch (a script's emulator object would outlive its machine).
+
 ## Results and errors
 
 Every surface returns the same fields:

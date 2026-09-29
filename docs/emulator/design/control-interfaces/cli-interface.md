@@ -160,6 +160,28 @@ Available ZX Spectrum:
 - `status` output starts with a `Build: v<version> (<branch> @ <commit>, <type>)` fingerprint line.
 - `GET /api/v1/emulator/models` (`creatable` flags) remains the runtime-authoritative model source.
 
+**ZX-Poly** (four synchronized instances of one model; recipe
+[.recipe/machines/zxpoly.md](../../../../.recipe/machines/zxpoly.md)):
+```
+> zxpoly start PENTAGON /path/to/zxpolytest.prom
+Started ZX-Poly machine: fa3b65e0-...
+> zxpoly status
+ZX-Poly machine fa3b65e0-...
+  #3D00: #00  locked: no  video mode: 0  slaves: waiting
+  CPU0 fa3b65e0-...  R0-R3: #20 #00 #00 #00
+  ...
+  lockstep: ok
+```
+`zxpoly start <model> [file]` takes a `.zxp`, a `.prom` or a multiloader
+disk. `<model>` is a configuration name (`ZXPOLY-48K`, `ZXPOLY-128K`,
+`ZXPOLY-PENTAGON`) or a base model. `start ZXPOLY-128K` (the ordinary
+command) starts the bare machine, and `models` lists the configurations.
+`zxpoly status [id|index]` works for any member of the group.
+
+The CLI server listens on port 8765. `UNREAL_CLI_PORT` moves it, just as
+`UNREAL_WEBAPI_PORT` moves the WebAPI's 8090, so a second instance can run
+beside one that owns the default ports.
+
 **Error Messages**:
 ```
 > invalid_command
@@ -174,6 +196,8 @@ The CLI implements the same command semantics as other interfaces (WebAPI, Pytho
 | WebAPI Endpoint | CLI Equivalent | Reason Not in CLI |
 | :--- | :--- | :--- |
 | `GET /emulator/models` | `models` | CLI shows the same list with `(not creatable on this build)` markers; the endpoint's `creatable` flags stay authoritative |
+| `POST /emulator/start` with `zxpoly` | `zxpoly start <model> [file]` | Same entry point (`EmulatorManager::CreateZXPolyMachine`) |
+| `GET /emulator/{id}/zxpoly` | `zxpoly status [id]` | Same source (`ZXPolyGroup::Status`) |
 | `DELETE /emulator/{id}` | `stop` | CLI uses `stop` which both stops and removes; separate remove is for advanced orchestration |
 | `POST /emulator/{id}/start` | `resume` | Starting an existing (initialized but not running) emulator uses `resume` in CLI |
 

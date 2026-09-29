@@ -75,7 +75,15 @@ bool AutomationCLI::start(uint16_t port)
         return true;  // Already running
     }
 
+    // The listen port can be moved with the UNREAL_CLI_PORT env var (1-65535),
+    // like UNREAL_WEBAPI_PORT: a second instance beside one that owns the default
     _port = port;
+    if (const char* portEnv = getenv("UNREAL_CLI_PORT"))
+    {
+        const long parsed = strtol(portEnv, nullptr, 10);
+        if (parsed >= 1 && parsed <= 65535)
+            _port = static_cast<uint16_t>(parsed);
+    }
     _stopThread = false;
     _serverSocket = INVALID_SOCKET;  // Ensure socket is reset
 

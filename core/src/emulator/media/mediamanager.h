@@ -72,6 +72,28 @@ struct SaveOutcome
     std::string note;         ///< why it was retargeted, or the writer's first warning
 };
 
+/// The media of one machine on their way to another (a model switch,
+/// technical-design.md §8): live media, session writes included
+struct MediaTransfer
+{
+    struct Entry
+    {
+        std::string slotId;
+        std::unique_ptr<Medium> medium;
+        bool writeProtect = false;  ///< the slot's switch
+    };
+    std::vector<Entry> entries;
+};
+
+/// Where the media of a transfer went
+struct MediaTransferReport
+{
+    std::vector<std::string> attached;  ///< slot ids: in the same slot on the new machine
+    std::vector<std::string> detached;  ///< no such slot, unsaved writes: kept as detached media
+    std::vector<std::string> closed;    ///< no such slot, nothing unsaved: closed
+    std::vector<std::string> lines;     ///< the same for people
+};
+
 struct SlotInfo
 {
     SlotDescriptor descriptor;
@@ -100,7 +122,9 @@ public:
 
     /// region <Slots>
     /// A peripheral registers its slots when it is created (or when its card is
-    /// fitted). A parked medium for the same id is attached again at once
+    /// fitted). A parked medium for the same id is attached again at once; a
+    /// slot that arrives after the configured media went in (a card fitted at
+    /// run time) gets its configured medium instead
     void RegisterSlot(IMediaSlot& slot);
     /// Before the peripheral goes away: its medium is detached and parked,
     /// session writes included, until a slot with that id returns
@@ -143,8 +167,18 @@ public:
     /// Insert the media a config states, at creation, before the first reset:
     /// no swap delay (firmware may boot from them). Entries for slots this
     /// machine does not have are reported, or ignored when they come from a
-    /// legacy section. Returns the problems met
+    /// legacy section. Returns the problems met. The set is kept for slots
+    /// registered later (see RegisterSlot)
     std::vector<std::string> ApplyConfiguredMedia(const std::vector<MediaSetEntry>& mediaSet);
+
+    /// A model switch, old machine: every medium leaves its slot (pending
+    /// changes applied first) and the detached ones leave too, writes and all.
+    /// The emulator must not be running
+    MediaTransfer TakeMediaSet();
+    /// A model switch, new machine: each medium goes into the slot with the
+    /// same id and kind, replacing what the config put there. One with no such
+    /// slot is kept detached when it has unsaved writes, else closed
+    MediaTransferReport AdoptMediaSet(MediaTransfer transfer);
     /// endregion </Operations>
 
     /// Emulation thread, once per frame (and from the operations themselves
@@ -194,6 +228,8 @@ private:
     MediaResult CheckRecording(bool endRecording);
     MediaResult CheckInUse(const std::string& slotId, const Medium& medium) const;
     uint32_t DelayFrames(uint32_t swapDelayMs) const;
+    /// One configured entry for a registered slot: its options, then its medium
+    void ApplyConfiguredEntry(const MediaSetEntry& entry, std::vector<std::string>& problems);
     void ApplySlot(const std::string& slotId, SlotState& state, std::vector<std::unique_ptr<Medium>>& retired);
     void Post(const char* topic, const std::string& slotId, const Medium* medium, const std::string& path = {}) const;
     /// A write-through floppy with new guest writes goes back to its file (emulation thread)
@@ -206,6 +242,7 @@ private:
     mutable std::recursive_mutex _mutex;
     std::map<std::string, SlotState> _slots;
     std::map<std::string, std::unique_ptr<Medium>> _parked;
+    std::optional<std::vector<MediaSetEntry>> _configured;  ///< set once ApplyConfiguredMedia ran
     mutable std::atomic<uint64_t> _revision{0};  // also moved by Post (const)
     std::condition_variable_any _applied;  ///< signalled after every ApplyPending
 };

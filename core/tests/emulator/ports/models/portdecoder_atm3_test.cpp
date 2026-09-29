@@ -1656,3 +1656,75 @@ TEST_F(ZXEvoTrdemu_Test, LegacyFpgaLatchBytes)
 }
 
 /// endregion </Virtual TR-DOS>
+
+/// region <Port trace attribution>
+
+/// PLAN #8: every mainboard arm names its port and device in the port trace;
+/// before, the ZX-Evo decoder handed the trace nothing and every event read
+/// as undecoded with no device
+TEST(PortDecoder_ATM3_Trace_Test, EveryMainboardArmIsAttributed)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("ATM3", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    ASSERT_TRUE(emulator->GetFeatureManager()->setFeature(Features::kPortTrace, true));
+    PortDiagnosticRecorder* recorder = context->pPortDecoder->getPortTraceRecorder();
+    ASSERT_NE(recorder, nullptr);
+    recorder->start();
+
+    struct Case
+    {
+        uint16_t port;
+        uint8_t value;
+        PortDeviceId device;
+        uint16_t decodedPort;
+    };
+    // After reset the board is in shadow (CPM clear): the ATM group and the FDC
+    // decode. #FF77 carries A9, which sets CPM and leaves shadow; then the
+    // outside-shadow group (#EFF7, Z-Controller config), and #BF bit 0 opens it again
+    const Case inShadow[] = {
+        {0x00FE, 0x00, PortDeviceId::ULA_FE, 0x00FE},
+        {0x7FFD, 0x00, PortDeviceId::Memory_7FFD, 0x7FFD},
+        {0xFFFD, 0x07, PortDeviceId::AY_FFFD, 0xFFFD},
+        {0xBFFD, 0x3F, PortDeviceId::AY_BFFD, 0xBFFD},
+        {0x7FF7, 0x7F, PortDeviceId::Memory_Windows, 0x7FF7},
+        {0x001F, 0xD0, PortDeviceId::WD1793_Status, 0x001F},
+        {0x0057, 0xFF, PortDeviceId::SdCard, 0x0057},
+        {0x00B3, 0x00, PortDeviceId::GeneralSound, 0x00B3},
+        {0xFF77, 0xAB, PortDeviceId::ATM_FF77, 0xFF77},
+    };
+    const Case outsideShadow[] = {
+        {0xEFF7, 0x00, PortDeviceId::Control_EFF7, 0xEFF7},
+        {0x0077, 0x03, PortDeviceId::SdCard, 0x0077},
+        {0x00BF, 0x01, PortDeviceId::Evo_Config, 0x00BF},
+    };
+
+    auto check = [&](const Case& c) {
+        context->pPortDecoder->DecodePortOut(c.port, c.value, 0x0000);
+        const std::vector<PortTraceEvent> events = recorder->getAll();
+        ASSERT_FALSE(events.empty()) << std::hex << c.port;
+        const PortTraceEvent* e = &events.back();
+        EXPECT_EQ(e->rawPort, c.port);
+        EXPECT_EQ(e->decodedPort, c.decodedPort) << "port #" << std::hex << c.port;
+        EXPECT_EQ(e->deviceId, c.device) << "port #" << std::hex << c.port << ": "
+                                         << PortDiagnosticRecorder::DeviceIdToString(e->deviceId);
+        EXPECT_TRUE(e->wasDecoded()) << "port #" << std::hex << c.port;
+        EXPECT_EQ(e->decodeRuleIndex, PortTraceRule::kNoTable);
+    };
+    for (const Case& c : inShadow)
+        check(c);
+    context->emulatorState.flags &= ~CF_TRDOS;  // a TR-DOS session would keep shadow open
+    for (const Case& c : outsideShadow)
+        check(c);
+
+    // Reads go through the same attribution
+    context->pPortDecoder->DecodePortIn(0x00BF, 0x0000);
+    const std::vector<PortTraceEvent> events = recorder->getAll();
+    ASSERT_FALSE(events.empty());
+    EXPECT_EQ(events.back().deviceId, PortDeviceId::Evo_Config);
+    EXPECT_FALSE(events.back().isOut());
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// endregion </Port trace attribution>

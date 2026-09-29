@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -19,11 +20,19 @@
 #include "emulator/sound/audiodeviceinfo.h"
 #include "emulator/sound/chips/gs/soundchip_gs.h"
 #include "emulator/sound/chips/gs/soundchip_gslw.h"
+#include "emulator/sound/chips/neogs/soundchip_neogs.h"
 #include "emulator/platform.h"  // GSTypeKind (personality switching)
 #include "stdafx.h"
 
 class EmulatorContext;
 class SoundChip_Moonsound;
+
+/// The GS slot as other threads see it (SoundManager::generalSoundSlot)
+struct GeneralSoundSlot
+{
+    GSTypeKind kind = GSTypeKind::NONE;
+    std::string sdCardImage; // NeoGS: the inserted SD image, empty = none
+};
 
 class SoundManager
 {
@@ -98,6 +107,13 @@ protected:
     // frame boundary on the emulation thread. 0xFF = none pending (a
     // GSTypeKind value otherwise)
     std::atomic<uint8_t> _pendingGSSwitch{0xFF};
+
+    // NeoGS stereo mode, set from any thread, applied at frame start
+    std::atomic<uint8_t> _neoGSStereoMode{0};
+
+    // What the GS slot holds now, for other threads (generalSoundSlot())
+    mutable std::mutex _gsSlotMutex;
+    GeneralSoundSlot _gsSlot;
 
     // Last gs_lightweight feature state seen by UpdateFeatureCache. The
     // feature drives a personality switch only on an actual TRANSITION
@@ -349,6 +365,10 @@ public:
     // personality-agnostic: LLE (Z80+firmware) or LW (in-tree mod player) both
     // arrive as GeneralSoundCard (design: docs/inprogress/2026-09-19-general-sound)
     bool hasGeneralSound() const { return _gs != nullptr; }
+    /// Mixer source name of the fitted GS-slot card ("GS" / "NeoGS")
+    std::string generalSoundDeviceName() const;
+    /// Add or remove the "NeoGS MP3" source to match the fitted card
+    void syncGeneralSoundAuxDevice();
     GeneralSoundCard* getGeneralSound() const { return _gs; }
 
     /// Swap the General Sound card's personality at runtime (design:
@@ -360,7 +380,7 @@ public:
     /// slot and device registry entry are shared - no audio rerouting.
     /// Must run on the emulation thread (same ownership as the frame
     /// lifecycle); no-op (true) when the requested personality is already
-    /// fitted. GSTypeKind::NONE/NGS map to no card - rejected.
+    /// fitted. GSTypeKind::NONE/BASS select no card - rejected.
     bool switchGeneralSoundCard(GSTypeKind target);
 
     /// Thread-safe variant for cross-thread callers (WebAPI actions, the
@@ -370,6 +390,29 @@ public:
     /// deleted/recreated safely
     /// Refused (false, reason in `error`) while a TTD user recording runs.
     bool requestGeneralSoundCardSwitch(GSTypeKind target, std::string* error = nullptr);
+
+    /// What the GS slot holds now, safe to read from any thread (the GUI,
+    /// automation): the card - Z80 (classic), LW, NGS or NONE - and, on
+    /// NeoGS, the SD card image (empty: no card). The card itself may be
+    /// replaced or changed only on the emulation thread, so other threads
+    /// read this copy instead of the card
+    /// Any thread. The SD image comes from the media manager's slot `sd.ngs`
+    /// when there is one (it changes at frame boundaries, not with the card)
+    GeneralSoundSlot generalSoundSlot() const;
+    GSTypeKind fittedGeneralSoundKind() const { return generalSoundSlot().kind; }
+    /// Refresh generalSoundSlot() from the card: emulation thread, after the
+    /// card or its media changed
+    void publishGeneralSoundSlot();
+    /// NeoGS stereo mode (separated / GS cross-feed / mono): any thread; the
+    /// fitted NeoGS takes it at the next frame boundary, and a card fitted
+    /// later starts with it. Initialised from [NGS] StereoMode
+    void setNeoGSStereoMode(NeoGSConfig::StereoMode mode) { _neoGSStereoMode.store(static_cast<uint8_t>(mode), std::memory_order_relaxed); }
+    NeoGSConfig::StereoMode neoGSStereoMode() const
+    {
+        return static_cast<NeoGSConfig::StereoMode>(_neoGSStereoMode.load(std::memory_order_relaxed));
+    }
+    /// A requestGeneralSoundCardSwitch() waits for the next frame boundary
+    bool generalSoundSwitchPending() const { return _pendingGSSwitch.load(std::memory_order_acquire) != 0xFF; }
 #ifdef UNREALNG_HAVE_OPL4
     // MoonSound access
     bool hasMoonSound() const { return _moonsound != nullptr; }

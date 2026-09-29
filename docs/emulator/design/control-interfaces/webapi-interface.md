@@ -232,9 +232,69 @@ Content-Type: application/json
 }
 ```
 
+
+### 5b. ZX-Poly machine
+**Endpoints**: `POST /api/v1/emulator/start` with `zxpoly`, `GET /api/v1/emulator/{id}/zxpoly`
+**Description**: A ZX-Poly machine is four synchronized instances of one
+model (default `PENTAGON`). Module 0, the master, is the machine every
+endpoint addresses and the id returned. Modules 1-3 are hidden members: they
+are not listed, but are reachable by id. Deleting the master removes all four.
+Recipe: [.recipe/machines/zxpoly.md](../../../../.recipe/machines/zxpoly.md).
+
+```bash
+curl -X POST http://localhost:8090/api/v1/emulator/start \
+  -H "Content-Type: application/json" \
+  -d '{"model": "PENTAGON", "zxpoly": {"file": "/path/to/Alien8.zxp"}}'
+```
+
+The same machine also starts by name, like any model. There are three
+configurations; `GET /api/v1/emulator/models` lists them with `"zxpoly":
+true` and `base_model`:
+
+| Configuration | Modules | Runs |
+|:--|:--|:--|
+| `ZXPOLY-48K` | 4 × 48K | replicated 48K software; ZX-Poly editions are refused (they need 128K paging) |
+| `ZXPOLY-128K` | 4 × 128K | `.zxp`, the Test ROM |
+| `ZXPOLY-PENTAGON` | 4 × Pentagon | everything, including multiloader disks (TR-DOS) |
+
+```bash
+curl -X POST http://localhost:8090/api/v1/emulator/start \
+  -H "Content-Type: application/json" -d '{"model": "ZXPOLY-128K"}'
+```
+
+A configuration fixes the RAM size, so `ram_size` with a configuration name
+returns 400.
+
+The `zxpoly` field takes one of two forms:
+
+- `true`: the bare machine;
+- `{"file": path}`: a `.zxp` snapshot, a `.prom` ZX-Poly ROM image (the Test
+  ROM), or a multiloader disk (`.trd`/`.scl`, which needs a model with
+  TR-DOS).
+
+The 201 response carries the group status under `zxpoly`. Every member's
+`GET /api/v1/emulator/{id}` carries `"zxpoly": {"module", "master_id",
+"locked", "video_mode"}`.
+
+`GET /api/v1/emulator/{id}/zxpoly` (any member id):
+```json
+{
+  "master_id": "e5dad078-...", "locked": true, "slaves_running": false, "parallel_slaves": true,
+  "port_3d00": 157, "video_mode": 7,
+  "modules": [ {"module": 0, "id": "e5dad078-...", "registers": [0, 0, 0, 0]},
+               {"module": 1, "id": "f67691a2-...", "registers": [18, 0, 0, 0]}, "..." ],
+  "divergence": {"diverged": false}
+}
+```
+`divergence` compares each slave's control state (PC, SP, I, IM, IFF1, HALT,
+T-state, `#7FFD`) with the master's. A 404 means no such instance, or it is
+not a ZX-Poly machine.
+
 ### 5b. Switch Model (validate-first)
-**Endpoint**: `POST /api/v1/emulator/{id}/model` (body `{"model": "...", "ram_size": N}`)  
+**Endpoint**: `POST /api/v1/emulator/{id}/model` (body `{"model": "...", "ram_size": N, "stranded": "refuse|save|discard|keep"}`)  
 **Description**: The request is validated BEFORE the current instance is stopped/removed: an unknown model, unsupported RAM or non-creatable model returns `400` and the current emulator keeps running untouched. A successful switch stops the old instance, creates and starts a new one (different ID) and returns the machine identity block for the new instance.
+
+The media follow ([media.md → Model switch](../../../features/media.md#model-switch)): each medium goes into the slot with the same id on the new machine, unsaved writes included. `media` in the reply lists the slot ids `attached` (followed), `detached` (no slot, unsaved writes kept) and `closed` (no slot, nothing unsaved). A medium with unsaved writes the new model has no slot for answers `409` (`code: "dirty"`, the media in `stranded`) and changes nothing, unless `stranded` says `save`, `discard` or `keep`.
 
 ### 6. Remove Emulator
 **Endpoint**: `DELETE /api/v1/emulators/{id}`  
@@ -302,12 +362,16 @@ GET  /api/v1/emulator/{id}/state/audio/ay      AY/SSG chips overview (core Devic
 GET  /api/v1/emulator/{id}/state/audio/ay/{n}  One AY/SSG chip, registers and channels decoded
 GET  /api/v1/emulator/{id}/state/audio/fm      TurboSound FM board latches + both YM2203 summaries (404 without TSFM)
 GET  /api/v1/emulator/{id}/state/audio/fm/{n}  One YM2203 FM half: mode, timers, channels, operators, envelopes, key-on
+GET  /api/v1/emulator/{id}/state/audio/gs      General Sound / NeoGS: mailbox, page, DAC channels, card CPU, "neogs" block (404 without a card; ?ram=1 adds the #4000-#7FFF window)
+GET  /api/v1/emulator/{id}/state/audio/covox   Covox / SoundDrive: fitment, ports this model decodes, Beta-128 shared ports, DAC latches (404 without Covox)
+GET  /api/v1/emulator/{id}/state/audio/moonsound        MoonSound OPL4 overview: NEW/NEW2, latches, mix, wave memory, keyed channels (404 without the card)
+GET  /api/v1/emulator/{id}/state/audio/moonsound/{part} part=fm: 18 FM channels, timers, register banks; part=pcm: 24 wavetable slots, envelopes
 GET  /api/v1/emulator/{id}/state/audio/channels  Audio mixer overview: per-device levels + master (muted, sample_rate_hz = live core rate, channels, bit depth)
 GET  /api/v1/emulator/{id}/state/fdc           Beta Disk WD1793: registers, status bits, FSM, signals, drives (404 without Beta Disk)
 GET  /api/v1/emulator/{id}/state/contention    Memory contention: rule, switch, effective, interface, I/O rule, contended slots, per-kind waits (debug mode)
 ```
 
-The three device reports (AY, FM, FDC) are built once in the core
+The device reports (AY, FM, GS, Covox, MoonSound, FDC) are built once in the core
 (`core/src/emulator/state/devicestate.h`) and are byte-for-byte the same
 data the CLI, Lua, Python and MCP return — see
 [command-interface.md §3.3](./command-interface.md#33-device-state-reports-ay--ssg-turbosound-fm-beta-disk-fdc)

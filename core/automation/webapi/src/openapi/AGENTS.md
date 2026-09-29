@@ -31,6 +31,7 @@ openapi/
 ├── openapi_profiler.inc   # Opcode/memory profiling
 ├── openapi_schemas.inc    # Shared JSON schemas
 ├── openapi_settings.inc   # Configuration settings
+├── openapi_moonsound.inc  # MoonSound (OPL4) state reports
 ├── openapi_state.inc      # State inspection (screen, audio)
 ├── openapi_stepping.inc   # Execution control (step, run)
 └── openapi_ttd.inc        # Time-Travel Debug

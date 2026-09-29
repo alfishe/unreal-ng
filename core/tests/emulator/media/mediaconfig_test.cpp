@@ -107,7 +107,10 @@ TEST(MediaConfig_Test, LegacyKeysFillOnlyWhatMediaLeavesUnset)
     EXPECT_EQ(zc->source.path, FileHelper::LexicallyNormalPath("/configs/atm3/wc.img"));
     EXPECT_EQ(zc->access.value_or(AccessMode::Session), AccessMode::WriteThrough) << "SDWrite=persist";
     EXPECT_TRUE(zc->writeProtect.value_or(false));
-    ASSERT_NE(Find(legacyOnly, "sd.ngs"), nullptr);
+    const MediaSetEntry* ngs = Find(legacyOnly, "sd.ngs");
+    ASSERT_NE(ngs, nullptr);
+    EXPECT_FALSE(ngs->access.has_value()) << "no [NGS] SDWrite: the slot's default";
+    EXPECT_FALSE(ngs->writeProtect.value_or(false));
     const MediaSetEntry* master = Find(legacyOnly, "ide0.master");
     ASSERT_NE(master, nullptr);
     EXPECT_EQ(master->access.value_or(AccessMode::Session), AccessMode::ReadOnly) << "HD0RO=1";
@@ -119,6 +122,28 @@ TEST(MediaConfig_Test, LegacyKeysFillOnlyWhatMediaLeavesUnset)
     ASSERT_NE(Find(set, "sd.zc"), nullptr);
     EXPECT_EQ(Find(set, "sd.zc")->source.path, FileHelper::LexicallyNormalPath("/new/card.img")) << "[MEDIA] wins";
     EXPECT_FALSE(Find(set, "sd.zc")->legacy);
+}
+
+/// [NGS] SDWrite (session / persist / off) and SDWriteProtect describe the
+/// NeoGS card's slot sd.ngs, as [ZC] SDWrite / SDWriteProtect describe sd.zc
+TEST(MediaConfig_Test, LegacyNeoGSWriteModeAndSwitch)
+{
+    const struct
+    {
+        const char* write;
+        AccessMode access;
+    } cases[] = {{"session", AccessMode::Session}, {"persist", AccessMode::WriteThrough}, {"off", AccessMode::ReadOnly}};
+    for (const auto& c : cases)
+    {
+        IniFile ini;
+        ini.LoadData(std::string("[NGS]\nSDCardImage=ngs.img\nSDWriteProtect=1\nSDWrite=") + c.write + "\n");
+        const auto set = MediaConfig::FromIni(ini, "/configs/p1024");
+        const MediaSetEntry* ngs = Find(set, "sd.ngs");
+        ASSERT_NE(ngs, nullptr) << c.write;
+        EXPECT_EQ(ngs->source.path, FileHelper::LexicallyNormalPath("/configs/p1024/ngs.img"));
+        EXPECT_EQ(ngs->access.value_or(AccessMode::Session), c.access) << c.write;
+        EXPECT_TRUE(ngs->writeProtect.value_or(false)) << c.write;
+    }
 }
 
 TEST(MediaConfig_Test, ManagerAppliesTheSetBeforeTheFirstReset)

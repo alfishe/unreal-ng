@@ -1,0 +1,9 @@
+10 FOR n=0 TO 127
+15 REM 128 = PI /4
+20 LET a=n/512* PI
+30 LET c=128/ COS a
+40 LET t=256* TAN a
+50 PRINT n;" ";c,t
+60 POKE 32768+n, INT (c+.5)
+70 POKE 32768+128+n, INT (t+.5)
+100 NEXT n

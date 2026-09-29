@@ -4,6 +4,7 @@
 #include "emulator/cpu/cpulogic.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
+#include "emulator/ports/portinterceptor.h"
 #include "stdafx.h"
 
 // Defined in /emulator/cpu/op_ddcb.cpp - pointers to registers in Z80 state
@@ -362,11 +363,17 @@ struct Z80State : public Z80Registers, public Z80DecodedOperation
     uint32_t trpc[40];
 
     // Memory interfacing
-    const MemoryInterface* FastMemIf;           // Fast memory interface (max performance)
-    const MemoryInterface* DbgMemIf;            // Debug memory interface (supports memory access breakpoints)
-    const MemoryInterface* FastContendedMemIf;  // Fast + video memory contention (Memory::MemoryReadContended)
-    const MemoryInterface* DbgContendedMemIf;   // Debug + video memory contention
-    const MemoryInterface* MemIf;               // Currently selected one (Core::SelectMemoryInterface)
+    const MemoryInterface* FastMemIf;                  // Fast memory interface (max performance)
+    const MemoryInterface* DbgMemIf;                   // Debug memory interface (supports memory access breakpoints)
+    const MemoryInterface* FastContendedMemIf;         // Fast + video memory contention (Memory::MemoryReadContended)
+    const MemoryInterface* DbgContendedMemIf;          // Debug + video memory contention
+    const MemoryInterface* OverlayFastMemIf;           // Fast + host bus overlay (only while one is installed)
+    const MemoryInterface* OverlayDbgMemIf;            // Debug + host bus overlay
+    const MemoryInterface* OverlayFastContendedMemIf;  // Fast + contention + host bus overlay
+    const MemoryInterface* OverlayDbgContendedMemIf;   // Debug + contention + host bus overlay
+    /// Currently selected memory interface. Written only by
+    /// Core::SelectMemoryInterface (under its lock); read on every access
+    const MemoryInterface* MemIf;
 };
 
 /// endregion </Structures>
@@ -390,6 +397,11 @@ protected:
 
 protected:
     int _nmi_pending_count = 0;
+
+    // Local INT (RaiseLocalInt): active until this frame / T-state
+    bool _localIntArmed = false;
+    uint64_t _localIntEndFrame = 0;
+    uint32_t _localIntEndT = 0;
     
     // Opcode profiling
     OpcodeProfiler* _opcodeProfiler = nullptr;
@@ -455,6 +467,10 @@ public:
     /// Core::SelectMemoryInterface together with MemIf
     UlaContention* ioContention = nullptr;
 
+    /// Second part of the I/O contention: the waits after IORQ (C:3, or C:1 x3), before the handler's
+    /// remaining 3 T. `ioWait` is the first part, added for the debug access counter
+    void IoWaitAfterIorq(uint16_t port, uint8_t ioWait);
+
     /// Test-only bus trace hook (null in production - a single empty-function
     /// check per bus access when unset). Fired at the access point of each bus
     /// event with cpu.t already advanced to it:
@@ -463,6 +479,10 @@ public:
     ///   'N' one internal (no-MREQ) T-state, fired at its start with the address on the bus (value 0)
     /// Used by bus-phase timing tests (io_phase_test / bus_phase tests).
     std::function<void(char type, uint16_t addr, uint8_t value)> busTraceHook;
+
+    /// Optional pre-decode port hook (see IPortInterceptor); null on stock
+    /// machines - one pointer check per IN/OUT
+    IPortInterceptor* portInterceptor = nullptr;
 
     /// Test-only instruction-fetch trace hook (null in production - a single
     /// empty-function check per instruction when unset). Fired once per
@@ -560,6 +580,22 @@ public:
 public:
     void RequestMaskedInterrupt();
     void RequestNonMaskedInterrupt();
+
+    /// Hold /INT low for lengthT T-states from now, independently of the ULA
+    /// frame pulse (a board-level interrupt line: ZX-Poly local INT)
+    void RaiseLocalInt(unsigned lengthT);
+
+    /// Drop pending NMI / local INT requests (a board-level CPU reset)
+    void ClearInterruptRequests()
+    {
+        _nmi_pending_count = 0;
+        _localIntArmed = false;
+        int_pending = false;
+    }
+
+    /// Mask the ULA frame INT for this CPU (a ZX-Poly slave before the lock
+    /// does not see the common frame INT). Local INT is not affected
+    bool frameIntMasked = false;
     bool IntClearedByAcknowledge() const;  // machine's INT pulse ends at the acknowledge
     bool ProcessInterrupts(bool int_occured,  // Take care about incoming interrupts
                            unsigned int_start, unsigned int_end);  // Returns true if INT was handled (skip Z80Step)
@@ -577,6 +613,11 @@ public:
     void (*callbackM1_Postfetch)();  // Corrected function pointer declaration
 
     void (*callbackCPUCycleFinished)();  // Corrected function pointer declaration
+
+public:
+    /// Stretches the memory cycle in progress by `tStates` (a device's /WAIT).
+    /// Called from a host bus overlay; the plain memory paths never call it.
+    void AddWaitStates(uint32_t tStates) { tt += tStates * rate; }
 
 protected:
     __forceinline void IncrementCPUCyclesCounter(uint8_t cycles);  // Increment cycle counters

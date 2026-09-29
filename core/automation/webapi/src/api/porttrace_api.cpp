@@ -185,7 +185,7 @@ bool ruleFromJson(const Json::Value& spec, PortTraceFilterRule& rule, std::strin
     {
         std::string name = spec["device"].asString();
         bool found = false;
-        for (int devId = 0; devId <= static_cast<int>(PortDeviceId::FullDecodeClaim); devId++)
+        for (int devId = 0; devId <= static_cast<int>(kPortDeviceIdLast); devId++)
         {
             if (name == PortDiagnosticRecorder::DeviceIdToString(static_cast<PortDeviceId>(devId)))
             {

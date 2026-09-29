@@ -1,10 +1,13 @@
 // CLI Instance Management Commands
 // Extracted from cli-processor.cpp - 2026-01-08
 
+#include <iomanip>
+#include "emulator/zxpoly/zxpolygroup.h"
 #include <emulator/buildinfo.h>
 #include <emulator/config.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
+#include <emulator/media/modelswitch.h>
 #include <emulator/notifications.h>
 #include <emulator/platform.h>
 
@@ -1067,6 +1070,168 @@ void CLIProcessor::HandleModels(const ClientSession& session, const std::vector<
         ss << NEWLINE;
     }
     
+    // ZX-Poly configurations: four synchronized instances of a base model
+    ss << NEWLINE << "ZX-Poly configurations:" << NEWLINE;
+    for (const ZXPolyGroup::Configuration& configuration : ZXPolyGroup::Configurations())
+    {
+        ss << "  " << configuration.name << " - " << configuration.title << " (4x " << configuration.baseModel << ")";
+        const TMemModel* base = Config::FindModelByShortName(configuration.baseModel);
+        if (base == nullptr || !Config::IsModelCreatable(*base))
+            ss << " (not creatable on this build)";
+        ss << NEWLINE;
+    }
+
     ss << NEWLINE << "Use 'start <model>' to create emulator with specific model.";
+    session.SendResponse(ss.str());
+}
+/// zxpoly start <model> [file] | zxpoly status [id|index]
+/// ZX-Poly machines through the same EmulatorManager entry points the WebAPI,
+/// MCP, Lua, Python and the Qt UI use (CreateZXPolyMachine, GetZXPolyGroup)
+void CLIProcessor::HandleZXPoly(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto* manager = EmulatorManager::GetInstance();
+    const std::string sub = args.empty() ? std::string("status") : args[0];
+    std::stringstream ss;
+
+    if (sub == "start")
+    {
+        const std::string model = args.size() > 1 ? args[1] : std::string("PENTAGON");
+        const std::string file = args.size() > 2 ? args[2] : std::string();
+        std::string error;
+        auto master = manager->CreateZXPolyMachine("", model, file, &error);
+        if (!master)
+        {
+            ss << "Error: cannot start ZX-Poly on " << model << ": " << error << NEWLINE;
+            session.SendResponse(ss.str());
+            return;
+        }
+        const bool started = manager->StartEmulatorAsync(master->GetId());
+        manager->SetSelectedEmulatorId(master->GetId());
+        ss << (started ? "Started" : "Created") << " ZX-Poly machine: " << master->GetId() << NEWLINE;
+        ss << "Model: 4 x " << model << (file.empty() ? std::string() : ", media: " + file) << NEWLINE;
+        session.SendResponse(ss.str());
+        return;
+    }
+
+    if (sub != "status")
+    {
+        ss << "Usage: zxpoly start <model> [file] | zxpoly status [id|index]" << NEWLINE;
+        session.SendResponse(ss.str());
+        return;
+    }
+
+    const std::vector<std::string> rest(args.begin() + (args.empty() ? 0 : 1), args.end());
+    std::string resolveError;
+    auto emulator = ResolveEmulator(session, rest, resolveError);
+    ZXPolyGroup* group = emulator ? manager->GetZXPolyGroup(emulator->GetId()) : nullptr;
+    if (!group)
+    {
+        ss << "Error: " << (emulator ? std::string("the emulator is not a ZX-Poly machine") : resolveError) << NEWLINE;
+        session.SendResponse(ss.str());
+        return;
+    }
+
+    const ZXPolyGroup::Status status = group->GetStatus();
+    ss << "ZX-Poly machine " << status.memberIds[0] << NEWLINE;
+    ss << "  #3D00: #" << std::hex << std::uppercase << std::setw(2) << std::setfill('0')
+       << static_cast<int>(status.port3D00) << std::dec << "  locked: " << (status.locked ? "yes" : "no")
+       << "  video mode: " << static_cast<int>(status.videoMode)
+       << "  slaves: " << (status.locked ? "running (locked)" : (status.slavesRunning ? "running" : "waiting"))
+       << NEWLINE;
+    for (size_t m = 0; m < ZXPolyGroup::MODULES; m++)
+    {
+        ss << "  CPU" << m << " " << status.memberIds[m] << "  R0-R3:";
+        for (uint8_t value : status.registers[m])
+            ss << " #" << std::hex << std::uppercase << std::setw(2) << std::setfill('0') << static_cast<int>(value)
+               << std::dec;
+        ss << NEWLINE;
+    }
+    ss << "  lockstep: "
+       << (status.divergence.diverged
+               ? "CPU" + std::to_string(status.divergence.module) + " diverged: " + status.divergence.what
+               : std::string("ok"))
+       << NEWLINE;
+    session.SendResponse(ss.str());
+}
+
+// HandleModel - switch the selected emulator to another model; the media follow
+void CLIProcessor::HandleModel(const ClientSession& session, const std::vector<std::string>& args)
+{
+    if (args.empty() || args[0] == "help")
+    {
+        std::stringstream ss;
+        ss << "Usage: model <name> [--ram <kb>] [--stranded save|discard|keep]" << NEWLINE
+           << "Switch the selected emulator to another model (see 'models'). The machine state is lost; disks, tapes" << NEWLINE
+           << "and cards go into the slot with the same id on the new machine, unsaved writes included. Media with" << NEWLINE
+           << "unsaved writes the new model has no slot for need --stranded: save (into their files), discard, or" << NEWLINE
+           << "keep (detached media on the new machine, see 'media list')." << NEWLINE;
+        session.SendResponse(ss.str());
+        return;
+    }
+
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse(std::string("Error: No emulator selected.") + NEWLINE);
+        return;
+    }
+
+    ModelSwitchRequest request;
+    request.emulatorId = emulator->GetId();
+    request.model = args[0];
+    for (size_t i = 1; i < args.size(); i++)
+    {
+        const std::string& option = args[i];
+        const bool hasValue = i + 1 < args.size();
+        if (option == "--ram" && hasValue)
+        {
+            try
+            {
+                request.ramKb = static_cast<uint32_t>(std::stoul(args[++i]));
+            }
+            catch (const std::exception&)
+            {
+                session.SendResponse("Error: --ram '" + args[i] + "': expected KB" + NEWLINE);
+                return;
+            }
+        }
+        else if (option == "--stranded" && hasValue)
+        {
+            if (!ModelSwitch::ParseStranded(args[++i], request.stranded))
+            {
+                session.SendResponse("Error: --stranded '" + args[i] + "': expected save, discard or keep" + NEWLINE);
+                return;
+            }
+        }
+        else
+        {
+            session.SendResponse("Error: unknown option '" + option + "' (see 'model help')" + NEWLINE);
+            return;
+        }
+    }
+
+    // Nothing here may keep the old machine alive
+    const bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
+    emulator.reset();
+    _emulator.reset();
+
+    const ModelSwitchResult switched = ModelSwitch::Run(request);
+    std::stringstream ss;
+    if (!switched.result.Ok())
+    {
+        ss << "Error: " << switched.result.message << NEWLINE;
+        for (const SlotInfo& info : switched.stranded)
+            ss << "  " << info.descriptor.id << ": " << info.source << " (" << info.changes << ")" << NEWLINE;
+        session.SendResponse(ss.str());
+        return;
+    }
+
+    if (wasRunning)
+        EmulatorManager::GetInstance()->StartEmulatorAsync(switched.emulator->GetId());
+    const MachineIdentity identity = EmulatorManager::GetMachineIdentity(*switched.emulator);
+    ss << "Switched to " << identity.Model << " - " << identity.ModelFullName << " (" << identity.RamKb << "KB)" << NEWLINE
+       << "New emulator instance: " << switched.emulator->GetId() << NEWLINE;
+    for (const std::string& line : switched.media.lines)
+        ss << "  " << line << NEWLINE;
     session.SendResponse(ss.str());
 }

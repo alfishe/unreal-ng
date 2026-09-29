@@ -1,5 +1,6 @@
 #pragma once
 
+#include "emulator/zxpoly/zxpolygroup.h"
 #include <sol/sol.hpp>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
@@ -15,6 +16,7 @@
 #include <emulator/cpu/z80.h>
 #include <emulator/video/screen.h>
 #include <emulator/sound/soundcharactersettings.h>
+#include <emulator/sound/chips/neogs/neogsmedia.h>
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/chips/soundchip_ay8910.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
@@ -294,6 +296,58 @@ public:
         lua.set_function("emu_count", []() -> int {
             auto* mgr = EmulatorManager::GetInstance();
             return static_cast<int>(mgr->GetEmulatorIds().size());
+        });
+
+        // ZX-Poly machines (EmulatorManager::CreateZXPolyMachine - the entry point
+        // every surface uses): four synchronized instances of one model.
+        // zxpoly_start([model], [file]) -> master id, or nil + error
+        lua.set_function("zxpoly_start", [](sol::optional<std::string> model, sol::optional<std::string> file,
+                                            sol::this_state state) -> sol::variadic_results {
+            sol::variadic_results results;
+            auto* mgr = EmulatorManager::GetInstance();
+            std::string error;
+            auto master = mgr->CreateZXPolyMachine("", model.value_or("PENTAGON"), file.value_or(""), &error);
+            if (!master)
+            {
+                results.push_back(sol::make_object(state, sol::lua_nil));
+                results.push_back(sol::make_object(state, "cannot start ZX-Poly: " + error));
+                return results;
+            }
+            mgr->StartEmulatorAsync(master->GetId());
+            mgr->SetSelectedEmulatorId(master->GetId());
+            results.push_back(sol::make_object(state, master->GetId()));
+            return results;
+        });
+
+        // zxpoly_status(id) -> table (nil if not a ZX-Poly machine)
+        lua.set_function("zxpoly_status", [](const std::string& id, sol::this_state state) -> sol::object {
+            ZXPolyGroup* group = EmulatorManager::GetInstance()->GetZXPolyGroup(id);
+            if (!group)
+                return sol::make_object(state, sol::lua_nil);
+            const ZXPolyGroup::Status status = group->GetStatus();
+            sol::state_view view(state);
+            sol::table out = view.create_table();
+            out["master_id"] = status.memberIds[0];
+            out["locked"] = status.locked;
+            out["slaves_running"] = status.slavesRunning;
+            out["port_3d00"] = status.port3D00;
+            out["video_mode"] = status.videoMode;
+            sol::table modules = view.create_table();
+            for (size_t m = 0; m < ZXPolyGroup::MODULES; m++)
+            {
+                sol::table module = view.create_table();
+                module["module"] = m;
+                module["id"] = status.memberIds[m];
+                sol::table registers = view.create_table();
+                for (size_t r = 0; r < 4; r++)
+                    registers[r + 1] = status.registers[m][r];
+                module["registers"] = registers;
+                modules[m + 1] = module;
+            }
+            out["modules"] = modules;
+            out["diverged"] = status.divergence.diverged;
+            out["divergence"] = status.divergence.what;
+            return out;
         });
 
         lua.set_function("emu_get", [](const std::string& id) -> Emulator* {
@@ -1965,47 +2019,49 @@ public:
             return ctx && ctx->pSoundManager && ctx->pSoundManager->getGeneralSound() != nullptr;
         });
 
-        lua.set_function("gs_state", [this]() -> sol::object {
-            sol::state_view lua_view(*_lua);
-            if (!effectiveEmulator()) return sol::make_object(lua_view, sol::lua_nil);
-            auto* ctx = effectiveEmulator()->GetContext();
-            GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
-            if (!gs) return sol::make_object(lua_view, sol::lua_nil);
+        // One report for every interface (DeviceState::Gs); `available = false`
+        // with a description when no card is fitted
+        lua.set_function("gs_state", [this](sol::this_state s) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::Gs(ctx));
+        });
+        lua.set_function("audio_covox_state", [this](sol::this_state s) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::Covox(ctx));
+        });
+        // MoonSound: overview, or part "fm" / "pcm"
+        lua.set_function("audio_moonsound_state", [this](sol::this_state s, sol::optional<std::string> part) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            if (part && *part == "fm")
+                return StateNodeToLua(s, DeviceState::MoonSoundFm(ctx));
+            if (part && *part == "pcm")
+                return StateNodeToLua(s, DeviceState::MoonSoundPcm(ctx));
+            return StateNodeToLua(s, DeviceState::MoonSound(ctx));
+        });
 
-            sol::table t = lua_view.create_table();
-            const uint8_t status = gs->getStatusRaw();
-            t["device"] = gs->hasCoprocessor() ? "General Sound (Z80 coprocessor @ 12 MHz, 4 x 8-bit DAC)"
-                                               : "General Sound (lightweight mod player, 4 x 8-bit DAC)";
-            t["implementation"] = gs->implementation() == GSCardImplementation::LLE ? "lle" : "lightweight";
-            t["rom_loaded"] = gs->isROMLoaded();
-            t["ram_kb"] = static_cast<int>(gs->getRamSizeKB());
-            t["status"] = status;
-            t["command_pending"] = (status & 0x01) != 0;
-            t["data_pending"] = (status & 0x80) != 0;
-            t["command_queue_count"] = static_cast<double>(gs->getCommandQueueCount());
-            t["data_queue_count"] = static_cast<double>(gs->getDataQueueCount());
-            t["command_from_host"] = gs->getCommandFromHost();
-            t["data_from_host"] = gs->getDataFromHost();
-            t["data_to_host"] = gs->getDataToHost();
-            t["page"] = gs->getMPAG();
-
-            sol::table channels = lua_view.create_table();
-            for (int i = 0; i < 4; i++) {
-                sol::table channel = lua_view.create_table();
-                channel["sample"] = gs->getChannelSample(i);
-                channel["volume"] = gs->getChannelVolume(i);
-                channels[i + 1] = channel;  // Lua tables start at 1
-            }
-            t["channels"] = channels;
-
-            sol::table cpu = lua_view.create_table();
-            cpu["coprocessor"] = gs->hasCoprocessor();
-            cpu["pc"] = gs->getCPUReg(GSCpuRegister::PC);
-            cpu["sp"] = gs->getCPUReg(GSCpuRegister::SP);
-            cpu["af"] = gs->getCPUReg(GSCpuRegister::AF);
-            cpu["halted"] = gs->isCPUHalted();
-            t["cpu"] = cpu;
-            return t;
+        // NeoGS SD slot and flash (other cards: false / no-op)
+        // NeoGS media: checked here, carried out on the machine's thread
+        // (neogsmedia.h); true when accepted. Insert / eject are refused while
+        // a TTD recording runs
+        lua.set_function("gs_sd_insert", [this](const std::string& path) -> bool {
+            return _emulator && NeoGSMediaAccepted(NeoGSRequestSdInsert(_emulator->GetContext(), path));
+        });
+        lua.set_function("gs_sd_eject", [this]() -> bool {
+            return _emulator && NeoGSMediaAccepted(NeoGSRequestSdEject(_emulator->GetContext()));
+        });
+        lua.set_function("gs_flash_save", [this]() -> bool {
+            return _emulator && NeoGSMediaAccepted(NeoGSRequestFlashSave(_emulator->GetContext()));
+        });
+        // NeoGS stereo mode: "separated" (as on the board), "gs" (50% cross-feed
+        // like the classic GS) or "mono"; applied at the next frame. False on
+        // an unknown name
+        lua.set_function("gs_stereo_mode", [this](const std::string& mode) -> bool {
+            NeoGSConfig::StereoMode parsed = NeoGSConfig::StereoMode::Separated;
+            SoundManager* sm = _emulator && _emulator->GetContext() ? _emulator->GetContext()->pSoundManager : nullptr;
+            if (!sm || !neogsParseStereoMode(mode, parsed))
+                return false;
+            sm->setNeoGSStereoMode(parsed);
+            return true;
         });
 
         // Host-port stimuli step the card's Z80, so they go through the live-input
@@ -2062,11 +2118,7 @@ public:
             if (!sm) return {false, ""};
 
             GSTypeKind target;
-            if (personality == "z80" || personality == "lle")
-                target = GSTypeKind::Z80;
-            else if (personality == "lw" || personality == "lightweight")
-                target = GSTypeKind::LW;
-            else
+            if (!gsParsePersonality(personality, target))
                 return {false, ""};
 
             std::string refusal;  // a TTD recording refuses the switch (FR-4)
@@ -2188,12 +2240,14 @@ public:
                     case GSTraceSide::GsInternal: ev["side"] = "gs"; break;
                     case GSTraceSide::DacFetch: ev["side"] = "dac"; break;
                     case GSTraceSide::Interrupt: ev["side"] = "interrupt"; break;
+                    case GSTraceSide::ZxDma: ev["side"] = "zxdma"; break;
                 }
                 ev["direction"] = e.isOut() ? "out" : "in";
                 ev["port"] = e.port;
                 ev["value"] = e.value;
                 ev["pc"] = e.pc;
                 if (e.side == GSTraceSide::DacFetch) ev["channel"] = e.channel;
+                if (e.side == GSTraceSide::ZxDma) ev["card_address"] = (static_cast<uint32_t>(e.channel) << 16) | e.port;
                 if (e.side == GSTraceSide::Interrupt) ev["nmi"] = e.isNmi();
                 result[idx++] = ev;
             }

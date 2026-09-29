@@ -137,7 +137,7 @@ void Mouse::SetCounters(uint8_t x, uint8_t y)
 /// kind for the topic, or tagged for another emulator instance)
 MouseEvent* Mouse::AcceptEvent(Message* message, MouseEventKind kind) const
 {
-    if (!message || !message->obj)
+    if (!message || !message->obj || _hostInputGated.load(std::memory_order_relaxed))
         return nullptr;
 
     auto* event = dynamic_cast<MouseEvent*>(message->obj);

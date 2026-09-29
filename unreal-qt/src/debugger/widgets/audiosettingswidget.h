@@ -10,6 +10,7 @@
 #include <QProgressBar>
 #include <QFrame>
 #include <QToolButton>
+#include <QPushButton>
 #include <QTimer>
 #include <vector>
 
@@ -65,6 +66,12 @@ private slots:
     // Beeper controls
     void onBeeperPunchChanged(int state);
 
+    // General Sound slot controls
+    void onGSCardChanged(int index);
+    void onNeoGSInsertSd();
+    void onNeoGSEjectSd();
+    void onNeoGSStereoModeChanged(int index);
+
     // Covox controls
     void onCovoxDCRemovalChanged(int state);
     void onCovoxChannelMuteChanged(int state);
@@ -81,6 +88,7 @@ private:
     void updateDeviceInfo();
     void updatePunchVoicingHint();
     QString buildDeviceDetailText() const;  // Full breakdown for the (i) popup
+    void updateGSSection(const GeneralSoundSlot& slot);
 
     EmulatorContext* _context = nullptr;
 
@@ -126,6 +134,21 @@ private:
     // Beeper section
     QGroupBox* _beeperGroup = nullptr;
     QCheckBox* _beeperPunchCheckbox = nullptr;
+
+    // General Sound slot section (shown only when a GS card is fitted). The
+    // card is read through SoundManager::generalSoundSlot() - a copy that is
+    // safe on this thread - and polled with the meters, so a card switch or
+    // an SD change from automation shows up here too
+    QGroupBox* _gsGroup = nullptr;
+    QComboBox* _gsCardCombo = nullptr;          // classic / lightweight player / NeoGS
+    QWidget* _neoGSControls = nullptr;          // SD card row, NeoGS only
+    QLabel* _neoGSSdLabel = nullptr;
+    QPushButton* _neoGSInsertButton = nullptr;
+    QPushButton* _neoGSEjectButton = nullptr;
+    QWidget* _neoGSStereoRow = nullptr;         // NeoGS only
+    QComboBox* _neoGSStereoCombo = nullptr;     // separated / GS cross-feed / mono
+    QLabel* _gsStatusLabel = nullptr;           // switching / refused
+    GeneralSoundSlot _shownGSSlot;              // what the section shows
 
     // SOUNDRIVE/COVOX section (shown only when present)
     QGroupBox* _covoxGroup = nullptr;

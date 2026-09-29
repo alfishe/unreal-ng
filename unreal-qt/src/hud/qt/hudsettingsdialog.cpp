@@ -44,12 +44,17 @@ std::vector<HudCategoryDescriptor> g_categories = {
     {HudNotificationCategory::AudioTSFM, QObject::tr("TurboSound FM Activity"),
      QObject::tr("Show when TurboSound FM (TSFM) is active"),
      QObject::tr("Audio"), true},  // Default on - TSFM is opt-in hardware
-    {HudNotificationCategory::AudioFM, QObject::tr("Moonsound Activity"),
-     QObject::tr("Show when FM synthesis (YM2203 FM part) is active"),
+    {HudNotificationCategory::AudioFM, QObject::tr("FM (YM2203) Activity"),
+     QObject::tr("Show when the FM part of the YM2203 chips (TurboSound FM) produces sound - 'FM'"),
      QObject::tr("Audio"), true},  // Default on
-    {HudNotificationCategory::AudioGeneralSound, QObject::tr("General Sound Activity"),
-     QObject::tr("Show when the General Sound card is actually producing sound"),
+    {HudNotificationCategory::AudioGeneralSound, QObject::tr("General Sound / NeoGS Activity"),
+     QObject::tr("Show when the card in the General Sound slot produces sound - 'GS' for the classic card, "
+                 "'NeoGS' (DAC channels), 'NeoGS MP3' (MP3 decoder) or 'NeoGS+MP3' (both) for NeoGS"),
      QObject::tr("Audio"), true},  // Default on
+    {HudNotificationCategory::AudioNeoGSDma, QObject::tr("NeoGS DMA / ZX Transfers"),
+     QObject::tr("Show when NeoGS moves data, with or without sound - 'NeoGS DMA' (SD card / MP3 decoder DMA), "
+                 "'NeoGS <->' (ZX-DMA between the ZX and the card, e.g. software using the card as an accelerator)"),
+     QObject::tr("Audio"), true},  // Default on - NeoGS is opt-in hardware
     {HudNotificationCategory::AudioMoonSound, QObject::tr("MoonSound Activity"),
      QObject::tr("Show when MoonSound (OPL4) synthesis is active - 'Moon FM' (FM only), 'Moon PCM' (wave only) or 'Moonsound' (both)"),
      QObject::tr("Audio"), true},  // Default on - MoonSound is opt-in hardware

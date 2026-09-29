@@ -30,6 +30,7 @@ enum class GSTraceSide : uint8_t
     GsInternal = 1, // GS-side port access (0x00-0x0B), GS Z80 is the actor
     DacFetch = 2,   // GS Z80 read in 0x6000-0x7FFF: DAC channel sample latch
     Interrupt = 3,  // 37.5 kHz periodic interrupt accepted (or NMI)
+    ZxDma = 4,      // NeoGS ZX-DMA byte: the host read or wrote card RAM through #0000-#3FFF
 };
 
 namespace GSTraceFlags
@@ -43,10 +44,10 @@ struct GSTraceEvent
 {
     int64_t  timestamp = 0;   // GS cycle domain (12 MHz), from totalGsCycles() - monotonic across frames
     uint32_t frameNumber = 0; // Emulator (ZX) frame counter at event time
-    uint16_t port = 0;        // Host: #B3/#BB/#33. GsInternal: 0x00-0x0B. DacFetch: 0x6000-0x7FFF address. Interrupt: unused (0)
-    uint16_t pc = 0;          // GS CPU PC at the time of the event
-    uint8_t  value = 0;       // Data byte (port value, or DAC sample byte)
-    uint8_t  channel = 0;     // DacFetch only: channel index 0-3
+    uint16_t port = 0;        // Host: #B3/#BB/#33. GsInternal: 0x00-0x0B. DacFetch: 0x6000-0x7FFF address. Interrupt: unused (0). ZxDma: card RAM address 15:0
+    uint16_t pc = 0;          // GS CPU PC at the time of the event (ZxDma: the host CPU's PC)
+    uint8_t  value = 0;       // Data byte (port value, DAC sample byte, ZxDma: the byte the host got / wrote)
+    uint8_t  channel = 0;     // DacFetch: channel index 0-3. ZxDma: card RAM address 20:16
     GSTraceSide side = GSTraceSide::Host;
     uint8_t  flags = 0;       // GSTraceFlags bitfield
 

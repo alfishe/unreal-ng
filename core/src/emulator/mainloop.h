@@ -1,6 +1,7 @@
 #pragma once
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <thread>
 
 #include "3rdparty/message-center/eventqueue.h"
@@ -41,6 +42,8 @@ protected:
     // audio ring to its watermark and causes visible rubber-banding when the
     // catch-up frames arrive). Zero-initialized = resync on first frame.
     std::chrono::steady_clock::time_point _nextFrameTime{};
+
+    std::function<void(bool rendered)> _frameEndHook;
 
     /// region <Realtime scheduling>
 public:
@@ -90,6 +93,13 @@ public:
     /// top of its VRR range), supplied by the host UI. 0 = no display bound (2 x target rule).
     void SetTurboRenderMaxFps(double maxFps) { _turboRenderMaxFps = maxFps > 0.0 ? maxFps : 0.0; }
     double GetTurboRenderMaxFps() const { return _turboRenderMaxFps; }
+
+    /// Frame-end hook, called once per completed frame on the emulation thread, after the
+    /// frame was rendered and before it is latched for display and capture (`rendered` is
+    /// false for a turbo-decimated frame). Not called during TTD replay. Used by a ZX-Poly
+    /// group to run its slave instances and compose the picture into this framebuffer.
+    /// Set before the loop starts or while it is stopped
+    void SetFrameEndHook(std::function<void(bool rendered)> hook) { _frameEndHook = std::move(hook); }
 
     /// Adaptive decimation (default on). Tests that assert the fixed cadence turn it off.
     void SetTurboRenderAdaptive(bool adaptive) { _turboRenderAdaptive = adaptive; }

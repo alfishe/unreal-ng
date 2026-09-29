@@ -218,7 +218,15 @@ with constant underlying pages flips the digest.
 
 ### P1-4. Porttrace decode rules for the ATM decoders
 
+> ✅ **DONE (2026-09-28).** See the re-scope note below; ZX-Evo boot trace test
+> `ZXEvoErs_Test.BootTraceAttributesEveryMainboardPort`.
+
 Closes C-2 (atm-branch side).
+
+> **Re-scoped 2026-09-28** (PLAN #8): per-branch attribution (decoded port,
+> decoded flag, device) in the ATM710 / ZX-Evo decoders instead of a
+> mask/match table they do not have; device ids for the ATM ports; Pentagon
+> 1024 checked and named in the session header. Session names already landed.
 
 On the `atm` branch, implement `getPortTraceDecodeRules()` in
 `PortDecoder_ATM710` / `PortDecoder_ATM3` using the Pentagon128 override as
@@ -310,6 +318,11 @@ with TR-DOS open) shows differing `ports_decoded` in one call.
 
 ### P2-2. MoonSound automation section in the design (do now, before implementation)
 
+> ✅ **State and MCP done (2026-09-28)** - `DeviceState::MoonSound/Fm/Pcm`,
+> `/state/audio/moonsound[/fm|/pcm]`, aspects `audio_moonsound`,
+> `audio_opl4_fm`, `audio_opl4_pcm`. Control (P2-3 settings surface) and
+> port-map rows remain (PLAN #11).
+
 Closes D-3 (future-proofing). Write into
 `docs/inprogress/2026-09-13-moonsound/2026-09-13-0217-opl4-unreal-ng-integration.md`:
 
@@ -363,6 +376,8 @@ restart-required flag.
 call without reading `data/configs` from disk.
 
 ### P2-4. GS/Covox DeviceState reports
+
+> ✅ **DONE (2026-09-28)** - `DeviceState::Gs()` / `Covox()`, every surface (PLAN #20).
 
 Closes D-3 (placeholders). When those devices get core attention: replace the
 `not_implemented` stubs with real `DeviceState` reports (state_audio_api.cpp:474-499)

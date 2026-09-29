@@ -72,6 +72,16 @@ python->executePython("print('Hello from embedded Python!')");
 ### Machine Identity and Lifecycle
 The Python bindings do not expose model-selecting instance creation: `ue.Emulator()` always builds the default machine. For multi-instance lifecycle, model switching and strict model validation (`creatable` flags, 400-with-reason failures) use the WebAPI (`POST /api/v1/emulator/create`, `GET /api/v1/emulator/models`) or the CLI (`create`/`start <model>`). Machine identity of an existing instance is observable through state endpoints (e.g. TTD status reports `model_id`/`model_ram_pages`).
 
+**ZX-Poly** (four synchronized instances of one model, through the same
+`EmulatorManager::CreateZXPolyMachine` every surface uses):
+```python
+id = zxpoly_start("ZXPOLY-PENTAGON", "/path/to/Alien8.zxp")   # raises RuntimeError with the reason on failure
+status = zxpoly_status(id)                              # dict; None if not a ZX-Poly machine
+status["locked"], status["video_mode"], status["diverged"], status["modules"][1]["registers"]
+```
+The model is a configuration name (`ZXPOLY-48K`, `ZXPOLY-128K`,
+`ZXPOLY-PENTAGON`) or a base model such as `PENTAGON`.
+
 ## API Reference
 
 ### Module Functions
@@ -108,6 +118,20 @@ class Emulator:
         """TurboSound FM report: board + chip summaries (chip=-1) or one YM2203 FM half
         (mode, timers, channels[3] with operators[4]: registers, pitch, envelope_state,
         attenuation_db, key_on). available=False with a description without TSFM"""
+
+    def gs_state(self) -> dict:
+        """General Sound / NeoGS report (the WebAPI /state/audio/gs tree): device, mailbox,
+        MPAG page, DAC channels, card CPU, and on NeoGS a 'neogs' dict (windows, SD, MP3, DMA,
+        ZX-DMA). available=False with a description when no card is fitted"""
+
+    def audio_covox_state(self) -> dict:
+        """Covox / SoundDrive report: fitment, the ports this model decodes, shared_with_beta128,
+        the four DAC latches. available=False when no Covox is fitted"""
+
+    def audio_moonsound_state(self, part: str = "") -> dict:
+        """MoonSound (OPL4) report: overview (part=''), the FM half (part='fm': 18 channels,
+        timers, register banks) or the wavetable half (part='pcm': 24 slots with envelopes).
+        available=False without the card; ValueError for another part"""
 
     def fdc_state(self) -> dict:
         """Beta Disk WD1793 report: registers, status_bits, last_command, fsm_state,

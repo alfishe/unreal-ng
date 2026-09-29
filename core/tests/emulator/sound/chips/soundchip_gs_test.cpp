@@ -756,17 +756,22 @@ TEST_F(GeneralSound_SoundManager_Test, NotCreatedWhenConfigDisabled)
     EXPECT_EQ(sm->device(AudioSourceType::GeneralSound), nullptr);
 }
 
-TEST_F(GeneralSound_SoundManager_Test, NeoGSTypePlaceholderCreatesNoCard)
+TEST_F(GeneralSound_SoundManager_Test, NeoGSTypeCreatesNeoGSCard)
 {
-    // GSType=NGS parses (neogs-tdd.md P2 placeholder: the NeoGS card will
-    // extend SoundChip_GeneralSound) but must not create any device yet
+    // GSType=NGS fits the NeoGS personality with its [NGS] settings
     ctx->config.sound.gsTypeKind = GSTypeKind::NGS;
+    ctx->config.ngs.ramKB = 2048;
     sm = new SoundManager(ctx);
     sm->reset();
 
-    EXPECT_FALSE(sm->hasGeneralSound());
-    EXPECT_EQ(sm->getGeneralSound(), nullptr);
-    EXPECT_EQ(sm->device(AudioSourceType::GeneralSound), nullptr);
+    ASSERT_TRUE(sm->hasGeneralSound());
+    GeneralSoundCard* card = sm->getGeneralSound();
+    ASSERT_NE(card, nullptr);
+    EXPECT_EQ(card->implementation(), GSCardImplementation::NGS);
+    EXPECT_EQ(card->getRamSizeKB(), 2048u);
+    EXPECT_TRUE(card->isROMLoaded()) << "data/rom/neogs/full_ngs.rom";
+    EXPECT_NE(sm->device(AudioSourceType::GeneralSound), nullptr);
+    EXPECT_EQ(sm->generalSoundDeviceName(), "NeoGS");
 }
 
 TEST_F(GeneralSound_SoundManager_Test, RamSize_NeoGSConfigDoesNotLeakIntoClassicCard)
@@ -776,7 +781,7 @@ TEST_F(GeneralSound_SoundManager_Test, RamSize_NeoGSConfigDoesNotLeakIntoClassic
     // quadruples the firmware POST, and fastdisk-booted trainers probe the
     // card mid-POST, miss the 0x7E idle signature they require and fall
     // back to no-GS sound (scorpion-family ZONE128.SCL boots).
-    ctx->config.gs_ramsize = 2048;
+    ctx->config.ngs.ramKB = 2048;
     sm = new SoundManager(ctx);
     sm->reset();
 

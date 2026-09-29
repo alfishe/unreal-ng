@@ -230,6 +230,22 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
                 HandleStateAudioFM(session, context, args.size() > 2 ? args[2] : "");
                 return;
             }
+            else if (subcommand == "moonsound")
+            {
+                // state audio moonsound [fm|pcm] (DeviceState::MoonSound / MoonSoundFm / MoonSoundPcm)
+                const std::string part = args.size() > 2 ? args[2] : "";
+                if (!part.empty() && part != "fm" && part != "pcm")
+                {
+                    session.SendResponse("Error: state audio moonsound [fm|pcm]" + std::string(NEWLINE));
+                    return;
+                }
+                const StateNode report = part == "fm"    ? DeviceState::MoonSoundFm(context)
+                                         : part == "pcm" ? DeviceState::MoonSoundPcm(context)
+                                                         : DeviceState::MoonSound(context);
+                session.SendResponse(std::string("MoonSound (OPL4)") + (part.empty() ? "" : " " + part) + NEWLINE +
+                                     DeviceState::ToText(report));
+                return;
+            }
             else if (subcommand == "beeper")
             {
                 HandleStateAudioBeeper(session, context);
@@ -254,7 +270,7 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
             else
             {
                 session.SendResponse(std::string("Error: Unknown audio subcommand '") + args[1] + "'" + NEWLINE +
-                                     "Available: ay, beeper, gs, covox, channels" + NEWLINE);
+                                     "Available: ay, fm, moonsound, beeper, gs, covox, channels" + NEWLINE);
                 return;
             }
         }
@@ -581,8 +597,8 @@ void CLIProcessor::HandleStateAudio(const ClientSession& session, EmulatorContex
     bool hasBeeper = true;  // Beeper is always available
     bool hasAY = soundManager->hasTurboSound();
     int ayCount = hasAY ? soundManager->getAYChipCount() : 0;
-    bool hasGS = false;     // General Sound not implemented yet
-    bool hasCovox = false;  // Covox not implemented yet
+    const bool hasGS = soundManager && soundManager->hasGeneralSound();
+    const bool hasCovox = soundManager && soundManager->hasCovox();
 
     ss << "Available Audio Devices:" << NEWLINE;
     ss << "  Beeper:      " << (hasBeeper ? "Available" : "Not available") << NEWLINE;
@@ -1054,18 +1070,11 @@ void CLIProcessor::HandleStateAudioBeeper(const ClientSession& session, Emulator
 void CLIProcessor::HandleStateAudioCovox(const ClientSession& session, EmulatorContext* context)
 {
     std::stringstream ss;
-    ss << "Covox DAC State" << NEWLINE;
-    ss << "===============" << NEWLINE;
+    ss << "Covox / SoundDrive State" << NEWLINE;
+    ss << "========================" << NEWLINE;
     ss << NEWLINE;
-
-    // Covox is not implemented yet
-    ss << "Status: Not implemented" << NEWLINE;
-    ss << NEWLINE;
-    ss << "Covox is an 8-bit DAC (Digital-to-Analog Converter) that connects" << NEWLINE;
-    ss << "to various ports on the ZX Spectrum for sample playback." << NEWLINE;
-    ss << NEWLINE;
-    ss << "This command is reserved for future implementation." << NEWLINE;
-
+    // One report for every interface (DeviceState::Covox)
+    ss << DeviceState::ToText(DeviceState::Covox(context));
     session.SendResponse(ss.str());
 }
 

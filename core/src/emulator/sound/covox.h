@@ -181,6 +181,9 @@ public:
     /// Turbo mode: keep DAC register / level tracking, skip blip deltas (see Beeper)
     void setSynthesisSuppressed(bool suppressed);
     bool isSynthesisSuppressed() const { return _synthesisSuppressed; }
+
+    /// Mono Covox on #FB, or the quad SoundDrive
+    Fitment fitment() const { return _fitment; }
     /// @param expectedSamples Exact per-frame sample count from SoundManager's
     ///        accumulator (0 = compute locally via rounding, legacy behavior).
     ///        Passing it keeps the covox stream in lockstep with the mixer.

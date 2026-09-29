@@ -97,9 +97,10 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["type"] = "object";
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* action : {"create", "list", "list_models", "server", "status", "start", "stop", "pause", "resume", "reset", "destroy",
+    for (const char* action : {"create", "switch_model", "list", "list_models", "server", "status", "zxpoly_status", "start", "stop", "pause", "resume", "reset", "destroy",
                                "gs_reset", "gs_reset_card", "gs_nmi", "gs_send_command", "gs_send_data", "gs_read_status", "gs_read_data",
-                               "gs_switch_personality", "gs_dump_module"})
+                               "gs_switch_personality", "gs_dump_module", "gs_sd_insert", "gs_sd_eject", "gs_flash_save",
+                               "gs_stereo_mode"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
@@ -107,12 +108,22 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "Lifecycle operation. 'create' makes a new running instance (fails with a reason on models this build "
         "cannot create — no silent fallback); 'list' shows all instances with their machine identity; "
         "'list_models' enumerates hardware models with creatable flags; 'server' reports the build fingerprint "
-        "and models_creatable; 'status' reports one instance's details. 'gs_*' actions drive the General Sound "
+        "and models_creatable; 'status' reports one instance's details. 'switch_model' replaces the target with "
+        "a new instance of 'model' (new id; the machine state is lost, the media follow into the same slots with "
+        "their unsaved writes; media with unsaved writes the new model has no slot for need 'stranded'; a ZX-Poly "
+        "configuration name as 'model' switches to that machine). 'create' with 'zxpoly': true starts a "
+        "ZX-Poly machine (four synchronized instances of 'model', default PENTAGON; optional 'zxpoly_file': a "
+        ".zxp snapshot, a .prom ROM image or a multiloader disk); the returned id is its master, the slaves are "
+        "hidden members. 'zxpoly_status' reports a ZX-Poly machine's modules, platform registers, lock, video "
+        "mode and lockstep check. 'gs_*' actions drive the General Sound "
         "card over the same /control/audio/gs endpoint the WebAPI serves (gs_reset/gs_reset_card/gs_nmi/"
         "gs_send_command/gs_send_data/gs_read_status/gs_read_data; the byte actions need 'value'; writes, "
         "resets and NMI apply at the next instruction boundary, reads are side-effect-free peeks); "
-        "'gs_switch_personality' swaps the LLE/LW card at the next frame boundary (needs 'personality': "
-        "'z80'|'lle' or 'lw'|'lightweight'); 'gs_dump_module' writes the last completed COM30..D2 module "
+        "'gs_switch_personality' swaps the GS-slot card at the next frame boundary (needs 'personality': "
+        "'z80'|'lle', 'lw'|'lightweight' or 'ngs'|'neogs'); NeoGS only: 'gs_sd_insert' (needs 'path' to a raw "
+        "image), 'gs_sd_eject', 'gs_flash_save' (applied at the next instruction boundary; insert/eject are "
+        "refused while TTD records), 'gs_stereo_mode' (needs 'mode': 'separated' as on the board, 'gs' 50% "
+        "cross-feed like the classic GS, or 'mono'; applied at the next frame); 'gs_dump_module' writes the last completed COM30..D2 module "
         "upload to a file (optional 'path', defaults to 'gs-module-dump.mod').";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
@@ -121,18 +132,42 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["model"]["description"] =
         "Hardware model short name for 'create' — e.g. 48K, 128k, PLUS3, TSL, ATM3, ATM710, ATM450, PROFI, "
         "SCORPION, PROFSCORP, GMX, KAY, QUORUM, LSY256, PHOENIX (see list_models; creatability is "
-        "build-dependent — check the 'creatable' flags before assuming a machine exists)";
+        "build-dependent — check the 'creatable' flags before assuming a machine exists). ZX-Poly "
+        "configurations ZXPOLY-48K, ZXPOLY-128K, ZXPOLY-PENTAGON create the four-instance machine by name "
+        "(same as 'zxpoly': true with the base model)";
     schema["properties"]["ram_size"]["type"] = "integer";
-    schema["properties"]["ram_size"]["description"] = "Optional RAM size in KB for 'create' (e.g. 128, 256, 512)";
+    schema["properties"]["ram_size"]["description"] = "Optional RAM size in KB for 'create' / 'switch_model' (e.g. 128, 256, 512)";
+    schema["properties"]["stranded"]["type"] = "string";
+    schema["properties"]["stranded"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* value : {"refuse", "save", "discard", "keep"})
+        schema["properties"]["stranded"]["enum"].append(value);
+    schema["properties"]["stranded"]["description"] =
+        "switch_model: unsaved writes on media the new model has no slot for - refuse (default: the switch fails "
+        "and lists them), save (into their own files), discard, keep (detached media on the new machine)";
+    schema["properties"]["zxpoly"]["type"] = "boolean";
+    schema["properties"]["zxpoly"]["description"] =
+        "For 'create': start a ZX-Poly machine (four synchronized instances of 'model'; default PENTAGON)";
+    schema["properties"]["zxpoly_file"]["type"] = "string";
+    schema["properties"]["zxpoly_file"]["description"] =
+        "For 'create' with zxpoly: host path of a .zxp snapshot, a .prom ZX-Poly ROM image (Test ROM) or a "
+        "multiloader disk (.trd/.scl; needs a model with TR-DOS)";
     schema["properties"]["value"]["type"] = "integer";
     schema["properties"]["value"]["description"] = "Byte value (0-255) required by gs_send_command and gs_send_data";
     schema["properties"]["personality"]["type"] = "string";
     schema["properties"]["personality"]["description"] =
-        "Required by gs_switch_personality: 'z80'|'lle' for the Z80 coprocessor card, 'lw'|'lightweight' for the "
+        "Required by gs_switch_personality: 'z80'|'lle' for the Z80 coprocessor card, 'ngs'|'neogs' for NeoGS, 'lw'|'lightweight' for the "
         "in-tree mod-player card";
+    schema["properties"]["mode"]["type"] = "string";
+    schema["properties"]["mode"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* mode : {"separated", "gs", "mono"})
+        schema["properties"]["mode"]["enum"].append(mode);
+    schema["properties"]["mode"]["description"] =
+        "Required by gs_stereo_mode (NeoGS): how the DAC channels reach the two sides - 'separated' (as on the board), "
+        "'gs' (50% cross-feed like the classic GS) or 'mono'";
     schema["properties"]["path"]["type"] = "string";
     schema["properties"]["path"]["description"] =
-        "Optional file path for gs_dump_module (defaults to 'gs-module-dump.mod' in the server's working directory)";
+        "File path: optional for gs_dump_module (defaults to 'gs-module-dump.mod' in the server's working directory), "
+        "required for gs_sd_insert (the SD card image)";
     schema["required"].append("action");
 
     registry.Register(
@@ -140,7 +175,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "Manage Unreal-NG emulator instances: create, list, switch models, start/stop/pause/resume/reset/destroy. "
         "Multi-instance: target identifies the machine; 'auto' reuses the single instance or creates a default 128k one. "
         "Also drives the General Sound card (gs_reset/gs_reset_card/gs_nmi/gs_send_command/gs_send_data/"
-        "gs_read_status/gs_read_data/gs_switch_personality/gs_dump_module).",
+        "gs_read_status/gs_read_data/gs_switch_personality/gs_dump_module; NeoGS: gs_sd_insert/gs_sd_eject/gs_flash_save/gs_stereo_mode).",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             std::string action = args["action"].asString();
@@ -184,9 +219,17 @@ void RegisterEmulatorManage(ToolRegistry& registry)
             if (action == "create")
             {
                 Json::Value body;
-                body["model"] = args.isMember("model") && args["model"].isString() && !args["model"].asString().empty()
-                                    ? args["model"].asString()
-                                    : TargetResolver::kDefaultAutoCreateModel;
+                const bool zxpoly = args.isMember("zxpoly") && args["zxpoly"].asBool();
+                const bool hasModel = args.isMember("model") && args["model"].isString() && !args["model"].asString().empty();
+                body["model"] = hasModel ? args["model"].asString()
+                                         : std::string(zxpoly ? "PENTAGON" : TargetResolver::kDefaultAutoCreateModel);
+                if (zxpoly)
+                {
+                    // Same request the WebAPI documents: {"zxpoly": {"file": ...}}
+                    body["zxpoly"] = Json::Value(Json::objectValue);
+                    if (args.isMember("zxpoly_file") && args["zxpoly_file"].isString())
+                        body["zxpoly"]["file"] = args["zxpoly_file"].asString();
+                }
                 if (args.isMember("ram_size") && args["ram_size"].asUInt() > 0)
                 {
                     body["ram_size"] = args["ram_size"].asUInt();
@@ -209,6 +252,10 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                 if (action == "status")
                 {
                     ForwardCall("GET", Endpoint(id), nullptr, caller, "Status of " + id, done);
+                }
+                else if (action == "zxpoly_status")
+                {
+                    ForwardCall("GET", Endpoint(id, "/zxpoly"), nullptr, caller, "ZX-Poly status of " + id, done);
                 }
                 else if (action == "start")
                 {
@@ -234,10 +281,27 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                 {
                     ForwardCall("DELETE", Endpoint(id), nullptr, caller, "Destroyed " + id, done);
                 }
+                else if (action == "switch_model")
+                {
+                    if (!args.isMember("model") || !args["model"].isString() || args["model"].asString().empty())
+                    {
+                        done(ToolResult::Error("switch_model needs 'model' (see list_models)"));
+                        return;
+                    }
+                    Json::Value body;
+                    body["model"] = args["model"].asString();
+                    if (args.isMember("ram_size") && args["ram_size"].asUInt() > 0)
+                        body["ram_size"] = args["ram_size"].asUInt();
+                    if (args.isMember("stranded") && args["stranded"].isString())
+                        body["stranded"] = args["stranded"].asString();
+                    ForwardCall("POST", Endpoint(id, "/model"), &body, caller, "Switched " + id + " to " + body["model"].asString(),
+                                done);
+                }
                 else if (action == "gs_reset" || action == "gs_reset_card" || action == "gs_nmi" ||
                          action == "gs_send_command" || action == "gs_send_data" ||
                          action == "gs_read_status" || action == "gs_read_data" ||
-                         action == "gs_switch_personality" || action == "gs_dump_module")
+                         action == "gs_switch_personality" || action == "gs_dump_module" || action == "gs_sd_insert" ||
+                         action == "gs_sd_eject" || action == "gs_flash_save" || action == "gs_stereo_mode")
                 {
                     // GS card control (GS design §11.3): forwards to the same
                     // /control/audio/gs endpoint the WebAPI serves - the "gs_"
@@ -257,14 +321,29 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                     {
                         if (!args.isMember("personality") || !args["personality"].isString())
                         {
-                            done(ToolResult::Error("Action '" + action + "' requires 'personality' (z80, lle, lw or lightweight)"));
+                            done(ToolResult::Error("Action '" + action + "' requires 'personality' (z80, lle, lw, lightweight, ngs or neogs)"));
                             return;
                         }
                         body["personality"] = args["personality"].asString();
                     }
-                    else if (action == "gs_dump_module" && args.isMember("path") && args["path"].isString())
+                    else if ((action == "gs_dump_module" || action == "gs_sd_insert") && args.isMember("path") &&
+                             args["path"].isString())
                     {
                         body["path"] = args["path"].asString();
+                    }
+                    else if (action == "gs_sd_insert")
+                    {
+                        done(ToolResult::Error("Action 'gs_sd_insert' requires 'path' (an SD card image)"));
+                        return;
+                    }
+                    else if (action == "gs_stereo_mode")
+                    {
+                        if (!args.isMember("mode") || !args["mode"].isString())
+                        {
+                            done(ToolResult::Error("Action 'gs_stereo_mode' requires 'mode' (separated, gs or mono)"));
+                            return;
+                        }
+                        body["mode"] = args["mode"].asString();
                     }
                     caller.Call("POST", Endpoint(id, "/control/audio/gs"), &body, [action, done](int status, Json::Value response) {
                         if (status >= 200 && status < 300)
@@ -829,7 +908,7 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["aspects"]["items"]["type"] = "string";
     Json::Value allowed(Json::arrayValue);
     for (const char* aspect : {"machine", "registers", "memory", "memory_map", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "video",
-                               "screen", "screen_flash", "screen_ocr", "screen_image", "screen_digest", "timing", "rom", "audio_ay", "audio_fm", "audio_gs", "fdc", "mouse",
+                               "screen", "screen_flash", "screen_ocr", "screen_image", "screen_digest", "timing", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "mouse",
                                "ttd", "contention"})
     {
         allowed.append(aspect);
@@ -846,7 +925,12 @@ void RegisterInspectState(ToolRegistry& registry)
         "latch bindings and live routing flags, "
         "'audio_ay' = every AY/SSG chip fully decoded, 'audio_fm' = TurboSound FM board + both YM2203 FM halves (mode, timers, "
         "channels, operators, envelopes, key-on), 'audio_gs' = General Sound card (mailbox flags, MPAG page, DAC channels, "
-        "coprocessor core; reports unavailable when the card is not fitted), 'fdc' = Beta Disk WD1793 registers, status, FSM, drives, 'mouse' = "
+        "coprocessor core, and a 'neogs' object with windows, clock, SD card, MP3 decoder and DMA on the NeoGS card; "
+        "reports unavailable when the card is not fitted), 'audio_covox' = Covox / SoundDrive (fitment, the ports this model "
+        "decodes, ports shared with Beta-128, the four DAC latches), 'audio_moonsound' = MoonSound OPL4 overview (NEW/NEW2, "
+        "address latches, #F8/#F9 mix, wave memory, keyed FM channels and PCM slots), 'audio_opl4_fm' = its 18 FM channels "
+        "(F-number, block, Hz, key-on, feedback, route, timers, register banks), 'audio_opl4_pcm' = its 24 wavetable slots "
+        "(wave, octave, playback rate, key-on, level, pan, addresses, envelope), 'fdc' = Beta Disk WD1793 registers, status, FSM, drives, 'mouse' = "
         "Kempston mouse state incl. port routing (fitted vs shadowed), 'ttd' = time-travel session: state "
         "(idle/recording/detached), recorded frame range, checkpoint count, current position (use the time_travel tool to act on it).";
     schema["properties"]["target"]["type"] = "string";
@@ -881,7 +965,7 @@ void RegisterInspectState(ToolRegistry& registry)
         "paging state (tagged latches + bank table), static port map with tags (ports), video mode (video: resolution, colour depth, "
         "memory layout, displayed RAM pages, #EFF7/#DFFD/#FF77), screen state (screen: active screen and RAM pages, per-screen "
         "Z80 mapping, #7FFD, contention), FLASH timing (screen_flash), screen OCR text, screen image metadata, screen digest hash, raster timing, "
-        "ROM signatures, AY/SSG chips (audio_ay), TurboSound FM YM2203 halves (audio_fm), General Sound card (audio_gs), Beta Disk WD1793 (fdc), "
+        "ROM signatures, AY/SSG chips (audio_ay), TurboSound FM YM2203 halves (audio_fm), General Sound card (audio_gs), Covox / SoundDrive (audio_covox), MoonSound OPL4 (audio_moonsound, audio_opl4_fm, audio_opl4_pcm), Beta Disk WD1793 (fdc), "
         "Kempston mouse + port routing (mouse), time-travel session state and position (ttd), memory contention: rule, switch, "
         "interface, contended slots, per-kind waits while debugging (contention). Combine aspects to reduce round-trips.",
         std::move(schema),
@@ -905,11 +989,12 @@ void RegisterInspectState(ToolRegistry& registry)
                 if (aspect != "machine" && aspect != "registers" && aspect != "memory" && aspect != "memory_map" && aspect != "disasm" && aspect != "stack" &&
                     aspect != "breakpoints" && aspect != "memory_banks" && aspect != "paging" && aspect != "ports" && aspect != "video" &&
                     aspect != "screen" && aspect != "screen_flash" && aspect != "screen_ocr" && aspect != "screen_image" && aspect != "screen_digest" && aspect != "timing" && aspect != "rom" && aspect != "audio_ay" &&
-                    aspect != "audio_fm" && aspect != "audio_gs" && aspect != "fdc" && aspect != "mouse" && aspect != "ttd" && aspect != "contention")
+                    aspect != "audio_fm" && aspect != "audio_gs" && aspect != "audio_covox" && aspect != "audio_moonsound" && aspect != "audio_opl4_fm" &&
+                    aspect != "audio_opl4_pcm" && aspect != "fdc" && aspect != "mouse" && aspect != "ttd" && aspect != "contention")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, audio_gs, fdc, mouse, ttd, contention"));
+                                            "screen, screen_flash, screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, mouse, ttd, contention"));
                     return;
                 }
             }
@@ -1254,6 +1339,31 @@ void RegisterInspectState(ToolRegistry& registry)
                                 });
                             });
                         }
+                        else if (aspect == "audio_moonsound" || aspect == "audio_opl4_fm" || aspect == "audio_opl4_pcm")
+                        {
+                            // MoonSound via the WebAPI (DeviceState::MoonSound*); 404 = not fitted
+                            const std::string path = aspect == "audio_opl4_fm"    ? "/state/audio/moonsound/fm"
+                                                     : aspect == "audio_opl4_pcm" ? "/state/audio/moonsound/pcm"
+                                                                                  : "/state/audio/moonsound";
+                            steps.push_back([&caller, id, aspect, path](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, path), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "audio_covox")
+                        {
+                            // Covox / SoundDrive via the WebAPI (DeviceState::Covox); 404 = not fitted
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, "/state/audio/covox"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
                     }
 
                     RunSeries(ReportSeriesProgress(std::move(steps), progress, aspects), [aspects, done, id](Json::Value acc) {
@@ -1432,6 +1542,49 @@ void RegisterInspectState(ToolRegistry& registry)
                                     for (Json::ArrayIndex i = 0; i < gsChannels.size(); ++i)
                                         out << "\n  ch" << i << ": sample " << gsChannels[i]["sample"].asUInt()
                                             << " vol " << gsChannels[i]["volume"].asUInt();
+                                }
+                            }
+                            else if (aspect == "audio_moonsound" || aspect == "audio_opl4_fm" || aspect == "audio_opl4_pcm")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[" << aspect << "] " << value["description"].asString();
+                                else if (aspect == "audio_moonsound")
+                                {
+                                    out << "\n[audio_moonsound] NEW " << (value["new_mode"].asBool() ? "on" : "off") << ", NEW2 "
+                                        << (value["new2_mode"].asBool() ? "on" : "off") << ", FM keyed "
+                                        << value["fm_keyed_channels"].size() << ", PCM keyed " << value["pcm_keyed_slots"].size()
+                                        << ", wave RAM " << value["wave_memory"]["ram_bytes"].asUInt64() / 1024 << " KB";
+                                }
+                                else if (aspect == "audio_opl4_fm")
+                                {
+                                    out << "\n[audio_opl4_fm]";
+                                    for (const Json::Value& ch : value["channels"])
+                                        if (ch["key_on"].asBool())
+                                            out << "\n  ch" << ch["channel"].asUInt() << ": " << ch["frequency_hz"].asDouble()
+                                                << " Hz (fnum " << ch["fnum"].asUInt() << ", block " << ch["block"].asUInt() << ")";
+                                }
+                                else
+                                {
+                                    out << "\n[audio_opl4_pcm]";
+                                    for (const Json::Value& slot : value["slots"])
+                                        if (slot["key_on"].asBool())
+                                            out << "\n  slot" << slot["slot"].asUInt() << ": wave " << slot["wave"].asUInt()
+                                                << ", " << slot["playback_rate_hz"].asDouble() << " Hz, "
+                                                << slot["envelope"]["phase"].asString();
+                                }
+                            }
+                            else if (aspect == "audio_covox")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[audio_covox] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[audio_covox] " << value["device"].asString() << ", latches";
+                                    const Json::Value& dac = value["channels"];
+                                    for (Json::ArrayIndex i = 0; i < dac.size(); ++i)
+                                        out << " " << dac[i]["name"].asString() << "=" << dac[i]["latch"].asUInt();
+                                    if (value["shared_with_beta128"].size() > 0)
+                                        out << "\n  shared with Beta-128: " << value["shared_port_rule"].asString();
                                 }
                             }
                             else if (aspect == "mouse")

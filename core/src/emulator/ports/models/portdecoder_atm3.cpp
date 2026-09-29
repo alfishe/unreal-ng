@@ -162,6 +162,86 @@ PortDecoder_ATM3::PortArm PortDecoder_ATM3::ClassifyPort(uint16_t port, bool isW
     return PortArm::ZxBus;
 }
 
+PortDecodeDisposition PortDecoder_ATM3::TraceDisposition(PortArm arm, uint16_t port, bool isWrite)
+{
+    PortDecodeDisposition disp;
+    disp.decodeRuleIndex = PortTraceRule::kNoTable;
+    disp.wasHandledInline = true;
+    const uint16_t low = port & 0x00FF;
+
+    switch (arm)
+    {
+        case PortArm::KeyboardBorder:
+            disp.decodedPort = 0x00FE;
+            break;
+        case PortArm::BorderAnd7FFD:
+            // #FC: a write with A15=0 also pages - the paging is the part that matters
+            disp.decodedPort = (isWrite && (port & 0x8000) == 0) ? 0x7FFD : 0x00FE;
+            break;
+        case PortArm::Paging7FFD:
+            disp.decodedPort = 0x7FFD;
+            break;
+        case PortArm::Ay:
+            disp.decodedPort = (port & 0x4000) ? 0xFFFD : 0xBFFD;
+            disp.wasHandledInline = false;
+            break;
+        case PortArm::Eff7Gluk:
+            // #EFF7 is A12=0; the other #xxF7 addresses are the Gluk clock
+            disp.decodedPort = (port & 0x1000) == 0 ? 0xEFF7 : port;
+            disp.device = (port & 0x1000) == 0 ? PortDeviceId::Control_EFF7 : PortDeviceId::Custom;
+            break;
+        case PortArm::Pager:
+            disp.decodedPort = port;
+            disp.device = PortDeviceId::Memory_Windows;
+            break;
+        case PortArm::Atm77:
+            disp.decodedPort = 0xFF77;
+            disp.device = PortDeviceId::ATM_FF77;
+            break;
+        case PortArm::SdConfig:
+        case PortArm::SdData:
+            disp.decodedPort = port;
+            disp.device = PortDeviceId::SdCard;
+            break;
+        case PortArm::Fdc:
+            // #FF also strobes the palette latch; the FDC side is the one attributed
+            disp.decodedPort = low;
+            disp.wasHandledInline = false;
+            break;
+        case PortArm::EvoConfig:
+        case PortArm::EvoExit:
+        case PortArm::EvoReadback:
+            disp.decodedPort = port;
+            disp.device = PortDeviceId::Evo_Config;
+            break;
+        case PortArm::Covox:
+            disp.decodedPort = 0x00FB;
+            disp.wasHandledInline = false;
+            break;
+        case PortArm::Joystick:
+        case PortArm::Mouse:
+        case PortArm::ComPort:
+        case PortArm::UlaPlus:
+        case PortArm::NemoIde:
+        case PortArm::LegacyFddLatch:
+            // Mainboard ports without their own device id (joystick #1F must not
+            // read as the FDC, which shares the low byte in shadow)
+            disp.decodedPort = port;
+            disp.device = PortDeviceId::Custom;
+            break;
+        case PortArm::ZxBus:
+        default:
+            // ZX-Bus cards: the General Sound host ports by their canonical keys
+            disp.wasHandledInline = false;
+            if ((port & 0x00F7) == 0x00B3)
+                disp.decodedPort = low == 0x00BB ? 0x00BB : 0x00B3;
+            else if (isWrite && low == 0x0033)
+                disp.decodedPort = 0x0033;
+            break;
+    }
+    return disp;
+}
+
 uint8_t PortDecoder_ATM3::DecodePortIn(uint16_t port, uint16_t pc)
 {
     uint8_t result = 0xFF;
@@ -269,7 +349,9 @@ uint8_t PortDecoder_ATM3::DecodePortIn(uint16_t port, uint16_t pc)
             break;
     }
 
-    OnPortInComplete(port, result, pc);
+    PortDecodeDisposition trace = TraceDisposition(arm, port, /*isWrite*/ false);
+    trace.wasDecoded = _lastPortDecoded;
+    OnPortInComplete(port, result, pc, trace);
     return result;
 }
 
@@ -376,7 +458,9 @@ void PortDecoder_ATM3::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
             break;
     }
 
-    OnPortOutComplete(port, value, pc);
+    PortDecodeDisposition trace = TraceDisposition(arm, port, /*isWrite*/ true);
+    trace.wasDecoded = trace.decodedPort != 0x0000;
+    OnPortOutComplete(port, value, pc, trace);
 }
 
 /// endregion </Interface methods>

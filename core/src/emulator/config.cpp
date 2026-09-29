@@ -13,6 +13,7 @@
 #include <cassert>
 #include <array>
 #include <algorithm>
+#include <initializer_list>
 
 Config::Config(EmulatorContext* context)
 {
@@ -453,8 +454,8 @@ bool Config::ParseConfig(IniFile& inimanager)
 	// Z80 = LLE coprocessor card, LW/LIGHT = lightweight in-tree mod player
 	// (docs/inprogress/2026-09-19-general-sound), BASS = legacy
 	// upstream HLE spelling kept as a deprecated alias of LW (no BASS library
-	// is linked), NGS = NeoGS FPGA card (neogs-tdd.md - P2 placeholder, no
-	// device is created yet), NONE = no GS card. A missing key keeps NONE;
+	// is linked), NGS = NeoGS FPGA card (SoundChip_NeoGS, neogs-tdd.md),
+	// NONE = no GS card. A missing key keeps NONE;
 	// unknown values warn and fall back to NONE.
 	{
 		// Explicit default first: a missing key must reset to NONE even when
@@ -527,31 +528,72 @@ bool Config::ParseConfig(IniFile& inimanager)
 	}
 #endif
 #ifdef MOD_GSZ80
-	// NeoGS placeholders (neogs-tdd.md §6): RAM size in KB, SD card image
-	// and the MP3 decode path, all consumed by no card until the P2
-	// implementation lands. SDCARD is the original UnrealSpeccy key, kept as
-	// an alias so existing configs load. The GS Z80 card has its own fixed
-	// geometry, so RamSize only matters for NeoGS.
-	config.gs_ramsize = (unsigned)inimanager.GetLongValue(ngs, "RamSize", 2048);
-	CopyStringValue(inimanager.GetValue(ngs, "SDCardImage", nullptr), config.ngs_sd_card_path, sizeof config.ngs_sd_card_path);
-	if (!config.ngs_sd_card_path[0])
-		CopyStringValue(inimanager.GetValue(ngs, "SDCARD", nullptr), config.ngs_sd_card_path, sizeof config.ngs_sd_card_path);
+	// NeoGS card ([NGS] section, neogs-tdd.md §6). The classic GS card has
+	// its own fixed geometry ([SOUND] GSRamSize), so nothing here reaches it
+	// (verification BUG-6). SDCARD is the original UnrealSpeccy key, kept as
+	// an alias of SDCardImage so existing configs load.
 	{
-		config.ngsMP3SupportKind = NGSMP3SupportKind::Stub;
-		line[0] = '\0';
-		CopyStringValue(inimanager.GetValue(ngs, "MP3Support", "stub"), line, sizeof line);
-		if (StringHelper::CompareCaseInsensitive(line, "none", strlen("none")) == 0)
+		NeoGSConfig& ngsConfig = config.ngs;
+		ngsConfig = NeoGSConfig{};
+
+		auto choice = [&](const char* key, const char* fallback, std::initializer_list<const char*> names) -> int
 		{
-			config.ngsMP3SupportKind = NGSMP3SupportKind::None;
-		}
-		else if (StringHelper::CompareCaseInsensitive(line, "software", strlen("software")) == 0)
-		{
-			config.ngsMP3SupportKind = NGSMP3SupportKind::Software;
-		}
-		else if (StringHelper::CompareCaseInsensitive(line, "stub", strlen("stub")) != 0)
-		{
-			MLOGWARNING("Config: unsupported [NGS] MP3Support='%s', using stub", line);
-		}
+			line[0] = '\0';
+			CopyStringValue(inimanager.GetValue(ngs, key, fallback), line, sizeof line);
+			int index = 0;
+			for (const char* name : names)
+			{
+				if (StringHelper::CompareCaseInsensitive(line, name, strlen(name)) == 0 && strlen(line) == strlen(name))
+					return index;
+				index++;
+			}
+			MLOGWARNING("Config: unsupported [NGS] %s='%s', using %s", key, line, fallback);
+			index = 0;
+			for (const char* name : names)
+			{
+				if (StringHelper::CompareCaseInsensitive(fallback, name, strlen(name)) == 0)
+					return index;
+				index++;
+			}
+			return 0;
+		};
+
+		const char* flash = inimanager.GetValue(ngs, "Flash", nullptr);
+		if (flash && flash[0])
+			CopyStringValue(flash, ngsConfig.flashPath, sizeof ngsConfig.flashPath);
+		ngsConfig.flashId = choice("FlashId", "st", {"st", "amd"}) == 1 ? NeoGSConfig::FlashId::AMD : NeoGSConfig::FlashId::ST;
+		ngsConfig.fpga = choice("Fpga", "current", {"current", "d"}) == 1 ? NeoGSConfig::Fpga::D : NeoGSConfig::Fpga::Current;
+
+		// 2 MB and 4 MB boards only; anything else snaps to the nearer one
+		long ramKB = inimanager.GetLongValue(ngs, "RamSize", 4096);
+		ngsConfig.ramKB = ramKB <= 3072 ? 2048u : 4096u;
+		if (ramKB != 2048 && ramKB != 4096)
+			MLOGWARNING("Config: [NGS] RamSize=%ld is not a NeoGS size (2048 | 4096), using %u", ramKB, ngsConfig.ramKB);
+
+		ngsConfig.boot = choice("Boot", "loader", {"loader", "direct"}) == 1 ? NeoGSConfig::Boot::Direct : NeoGSConfig::Boot::Loader;
+		ngsConfig.bootDelayMs = static_cast<unsigned>(std::clamp<long>(inimanager.GetLongValue(ngs, "BootDelayMs", 0), 0, 10000));
+
+		CopyStringValue(inimanager.GetValue(ngs, "SDCardImage", nullptr), ngsConfig.sdCardPath, sizeof ngsConfig.sdCardPath);
+		if (!ngsConfig.sdCardPath[0])
+			CopyStringValue(inimanager.GetValue(ngs, "SDCARD", nullptr), ngsConfig.sdCardPath, sizeof ngsConfig.sdCardPath);
+		static constexpr NeoGSConfig::SDType sdTypes[] = {NeoGSConfig::SDType::Auto, NeoGSConfig::SDType::SDSC, NeoGSConfig::SDType::SDHC};
+		ngsConfig.sdType = sdTypes[choice("SDType", "auto", {"auto", "sdsc", "sdhc"})];
+		ngsConfig.sdWriteProtect = inimanager.GetLongValue(ngs, "SDWriteProtect", 0) != 0;
+		static constexpr NeoGSConfig::WriteMode writeModes[] = {NeoGSConfig::WriteMode::Session, NeoGSConfig::WriteMode::Persist, NeoGSConfig::WriteMode::Off};
+		ngsConfig.sdWrite = writeModes[choice("SDWrite", "session", {"session", "persist", "off"})];
+		ngsConfig.flashWrite = writeModes[choice("FlashWrite", "session", {"session", "persist", "off"})];
+
+		static constexpr NGSMP3SupportKind mp3Kinds[] = {NGSMP3SupportKind::None, NGSMP3SupportKind::Stub, NGSMP3SupportKind::Software};
+		ngsConfig.mp3Support = mp3Kinds[choice("MP3Support", "software", {"none", "stub", "software"})];
+		ngsConfig.mp3Chip = choice("Mp3Chip", "vs1001", {"vs1001", "vs1011"}) == 1 ? NeoGSConfig::Mp3Chip::VS1011 : NeoGSConfig::Mp3Chip::VS1001;
+		ngsConfig.mp3Gain = std::clamp(inimanager.GetDoubleValue(ngs, "Mp3Gain", 1.0), 0.0, 8.0);
+		ngsConfig.volume = static_cast<unsigned>(std::clamp<long>(inimanager.GetLongValue(ngs, "Volume", 8000), 0, 8192));
+		ngsConfig.zxDmaWatch = choice("ZxDmaWatch", "selected", {"selected", "always"}) == 1 ? NeoGSConfig::ZxDmaWatch::Always
+		                                                                                     : NeoGSConfig::ZxDmaWatch::Selected;
+		ngsConfig.zxDmaWatchFrames = static_cast<unsigned>(std::clamp<long>(inimanager.GetLongValue(ngs, "ZxDmaWatchFrames", 5), 1, 3000));
+		static constexpr NeoGSConfig::StereoMode stereoModes[] = {NeoGSConfig::StereoMode::Separated, NeoGSConfig::StereoMode::GS,
+		                                                          NeoGSConfig::StereoMode::Mono};
+		ngsConfig.stereoMode = stereoModes[choice("StereoMode", "separated", {"separated", "gs", "mono"})];
 	}
 #endif
 	// Anti-alias decimator tier: Reference (default) | HighFidelity. Unknown

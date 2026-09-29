@@ -8,6 +8,10 @@
 #include "3rdparty/unreal-z80/z80cpu.h"
 #include "emulator/sound/audio.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
+#include "emulator/sound/chips/gs/gsaudioout.h"
+#include "emulator/sound/chips/gs/gscardrunner.h"
+#include "emulator/sound/chips/gs/gshostclock.h"
+#include "emulator/sound/chips/gs/gsmodulereplay.h"
 #include "emulator/sound/chips/gs/gsmailbox.h"
 #include "emulator/sound/chips/gs/gsporttrace.h"
 #include "emulator/ports/portdecoder.h"
@@ -15,7 +19,6 @@
 #include "debugger/ttd/ttdserializable.h"  // TTDSerializable (P1.5 peripheral serializer)
 
 class EmulatorContext;
-struct blip_t;
 
 /// General Sound (GS) expansion card - LLE model with a dedicated Z80
 /// coprocessor (unreal-z80 library, core/src/3rdparty/unreal-z80) (design: docs/inprogress/2026-09-19-general-sound/gs-tdd.md).
@@ -53,9 +56,13 @@ protected:
     /// endregion </ModuleLogger definitions for Module/Submodule>
 
 public:
-    // Host-side port addresses, clocks and geometry: inherited from
-    // GeneralSoundCard (kept name-compatible via inheritance - existing
+    // Host-side port addresses: inherited from GeneralSoundCard (existing
     // SoundChip_GeneralSound::PORT_* call sites resolve unchanged)
+
+    // Classic GS board clocks (12 MHz, 37.5 kHz interrupt divider)
+    static constexpr uint32_t GS_CLOCK_HZ = GSClassicTiming::CLOCK_HZ;
+    static constexpr uint32_t GS_INT_FREQUENCY_HZ = GSClassicTiming::INT_FREQUENCY_HZ;
+    static constexpr int GS_CYCLES_PER_INT = GSClassicTiming::CYCLES_PER_INT; // 320
 
     // LLE-only geometry
     static constexpr size_t ROM_SIZE = 0x8000;  // 32 KB (2 x 16 KB pages)
@@ -123,6 +130,12 @@ public:
     size_t getCommandQueueCount() const override { return (_mb.status & 0x01) ? 1 : 0; }
     size_t getDataQueueCount() const override { return (_mb.status & 0x80) ? 1 : 0; }
     uint8_t getMPAG() const override { return _mpag; }
+    bool isReadyForCommands() const override { return _activityCounters.volumeLatchWrites >= 4; }
+    bool peekCardMemory(uint16_t addr, uint8_t& out) const override
+    {
+        out = _bankR[(addr >> 14) & 3][addr & (PAGE_SIZE - 1)];
+        return true;
+    }
     uint8_t getChannelSample(int channel) const override { return _channelData[channel & 3]; }
     uint8_t getChannelVolume(int channel) const override { return _channelVol[channel & 3]; }
     bool isROMLoaded() const override { return _romLoaded; }
@@ -134,6 +147,7 @@ public:
     // Coprocessor capability: this is the LLE personality
     bool hasCoprocessor() const override { return true; }
     GSCardImplementation implementation() const override { return GSCardImplementation::LLE; }
+    std::string deviceDescription() const override { return "General Sound (Z80 coprocessor @ 12 MHz, 4 x 8-bit DAC)"; }
 
     /// region <Diagnostics: activity counters + port/DAC trace>
     /// Cheap always-on counters - the first thing to check when triaging
@@ -221,6 +235,29 @@ public:
     static constexpr size_t TTD_FIXED_STATE_SIZE = 95;
 
 private:
+    // Shared catch-up loop and module replay drive the card through the
+    // private hooks below (gscardrunner.h, gsmodulereplay.h)
+    friend class GSCardRunner<SoundChip_GeneralSound>;
+    template <class Card>
+    friend GSModuleReplayResult gsReplayModuleUpload(Card&, const std::vector<uint8_t>&, bool, size_t*);
+
+    // GSCardRunner hooks. Card time is in 12 MHz cycles (one unit per cycle);
+    // the only event is the 320-cycle interrupt period boundary
+    bool nmiPending() const { return _nmiPending; }
+    void onNmiAccepted();
+    bool intLine() const { return _intPending; }
+    void onIntAccepted();
+    void scheduleNextPeriod() { _runner.setNextEvent(_gsCyclesAbs + GS_CYCLES_PER_INT); }
+    void runEvents(int64_t now);
+    static constexpr int64_t unitsPerCycle() { return 1; }
+    static constexpr bool kCanStall = false; // no DMA on the classic card
+    void onStep() { _activityCounters.cpuSteps++; }
+
+    // GSModuleReplay hooks
+    void replayRunFor(int64_t cycles) { runTo(totalGsCycles() + cycles); }
+    static constexpr int64_t replayByteStepUnits() { return 2 * GS_CYCLES_PER_INT; }
+    static constexpr int64_t replayMaxByteWaitUnits() { return 200 * 239602; } // one HSEND timeout is ~73 frames
+
     // Z80 bus callbacks (userData = this)
     static uint8_t gsMemRead(Z80CPU* cpu, uint16_t addr, int m1State, void* userData);
     static void gsMemWrite(Z80CPU* cpu, uint16_t addr, uint8_t value, void* userData);
@@ -237,7 +274,7 @@ private:
     void applyPort0A();               // status bit 7 <- NOT MPAG bit 0
     uint8_t readMem(uint16_t addr);    // includes DAC fetch trigger
     void writeMem(uint16_t addr, uint8_t value);
-    void dacFetch(uint16_t addr, uint8_t value); // (addr & 0xE000) == 0x6000 window
+    void dacFetch(uint16_t addr, uint8_t value); // caller checks the 0x6000-0x7FFF window
 
     // Audio pipeline
     void makeVolumeTable();            // rebuild _vfx from config gs_vol
@@ -249,13 +286,11 @@ private:
 
     // Lazy sync core
     void flush();                      // run GS to the current ZX tact
-    void runTo(int64_t targetGsCycles);
-    int64_t totalGsCycles() const { return _gsCyclesAbs + _intQuantum; }
+    void runTo(int64_t targetGsCycles) { _runner.runTo(targetGsCycles); }
+    int64_t totalGsCycles() const { return _runner.now(); }
     int64_t frameGsLength() const;     // ZX frame -> GS cycles (12 MHz domain)
-    double gsCyclesPerZxTact() const;  // 12 MHz / effective ZX clock
-    uint64_t currentZxTacts() const;   // AudioTstate domain (hw turbo descaled)
 
-    // replayModuleUpload internals
+    // replayModuleUpload internals (GSModuleReplay hooks)
     void replayDrainReply();    // consume one pending card->host byte
     void replayAdvanceFrame();  // run the firmware one frame of GS card time
 
@@ -289,25 +324,24 @@ private:
     uint8_t _channelVol[4] = {0, 0, 0, 0};
     uint32_t _vfx[65] = {};      // per-256 scaled curve from config gs_vol
 
-    // Audio buffers (one frame of stereo int16, Covox pattern)
+    // Audio buffers (one frame of stereo int16, Covox pattern) and the
+    // shared output stage (blip pair in the 12 MHz card clock)
     AudioFrameDescriptor _audioDescriptor;
     int16_t* const _buffer = reinterpret_cast<int16_t*>(_audioDescriptor.memoryBuffer);
-    blip_t* _blipL = nullptr;
-    blip_t* _blipR = nullptr;
-    bool _synthesisSuppressed = false;
     size_t _sampleRate;
-    int32_t _lastL = 0;
-    int32_t _lastR = 0;
+    GSAudioOut _audio;
+    bool _synthesisSuppressed = false;
 
     // Activity tracking for HUD notification
     bool _frameHadActivity = false;
     bool _wasActive = false;
 
-    // Timing: _gsCyclesAbs counts completed 320-cycle quanta (Unreal
-    // gs_t_states), _intQuantum is the position inside the current quantum
-    // (Unreal gscpu.t). Total executed = sum of both.
+    // Timing: the runner counts card cycles (totalGsCycles); _gsCyclesAbs is
+    // the start of the current 320-cycle interrupt period (Unreal
+    // gs_t_states), so the position inside it (Unreal gscpu.t, the TTD
+    // intQuantum field) is totalGsCycles() - _gsCyclesAbs
+    GSCardRunner<SoundChip_GeneralSound> _runner;
     int64_t _gsCyclesAbs = 0;
-    int16_t _intQuantum = 0;
     int64_t _frameStartGsCycles = 0;
     uint64_t _frameStartZxTacts = 0;
     int64_t _frameGsCycles = 0;
@@ -318,15 +352,8 @@ private:
     // ISR/QTDONE stretches that run with IFF1 off (see runTo)
     bool _intPending = false;
 
-    // v1 module handoff capture (host-port layer, personality-agnostic):
-    // mirrors the COM30 payload stream as the host writes it, independent
-    // of the firmware's own RAM layout. _uploadStore holds the last
-    // COM30..D2 stream that completed with a non-empty payload; _uploadLive
-    // is true while a stream is currently open (mid-upload = not capturable)
-    std::vector<uint8_t> _uploadStore;
-    bool _uploadLive = false;
-    bool _uploadHadModule = false;
-    bool _uploadPlaying = false;
+    // v1 module handoff capture (host-port layer, personality-agnostic)
+    GSUploadCapture _upload;
 
     // Diagnostics: always-on counters + opt-in structured trace (gsporttrace.h)
     GSActivityCounters _activityCounters;
