@@ -732,6 +732,13 @@ public:
     /// `ev.time` is ignored: the time is stamped when the event is applied.
     bool SubmitLiveInput(const TTDInputEvent& ev);
 
+    /// @brief A lockstep group (the ZX-Poly master) takes live input itself, to
+    /// give it to every member at one frame boundary. SubmitLiveInput hands each
+    /// event to `interceptor` first; when it returns true the event is consumed
+    /// there. Events it declines (false) take the normal path. An empty function
+    /// removes it
+    void SetLiveInputInterceptor(std::function<bool(const TTDInputEvent&)> interceptor);
+
     /// @brief Run `task` on the machine's thread - for automation actions that
     /// touch a device the executing thread may be using (a NeoGS SD card
     /// insert / eject, a flash save). Same delivery as SubmitLiveInput: queued
@@ -1801,6 +1808,8 @@ private:
     /// Live input and machine tasks waiting for the machine's thread
     /// (SubmitLiveInput, SubmitMachineTask)
     std::mutex _pendingInputMutex;
+    std::mutex _liveInputInterceptorMutex;
+    std::function<bool(const TTDInputEvent&)> _liveInputInterceptor;    // see SetLiveInputInterceptor
     std::vector<TTDInputEvent> _pendingInput;
     std::vector<std::function<void()>> _pendingTasks;
 

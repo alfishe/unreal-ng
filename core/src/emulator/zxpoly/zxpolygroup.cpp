@@ -195,6 +195,40 @@ bool ZXPolyGroup::Create(const std::string& modelOrConfiguration, std::string* e
             ttd->SetUnavailableReason(TTD_UNAVAILABLE);
     }
 
+    // Automation input of the machine (WebAPI, MCP, CLI, Lua, Python: keys,
+    // the Kempston mouse, a keyboard reset) enters through the master's TTD
+    // live-input gateway. Handed to one member it would split the machine, so
+    // the group queues it and gives it to all four at one frame boundary.
+    // Other events (General Sound stimuli) stay the master's own
+    if (ttd::TimeTravelManager* ttd = GetContext(0)->pTimeTravelManager)
+    {
+        ttd->SetLiveInputInterceptor([this](const ttd::TTDInputEvent& ev) {
+            switch (ev.kind)
+            {
+                case ttd::TTDInputKind::Key:
+                    QueueInput({ev.pressed ? InputOp::KeyDown : InputOp::KeyUp, static_cast<ZXKeysEnum>(ev.key), 0, 0});
+                    return true;
+                case ttd::TTDInputKind::MouseMove:
+                    QueueInput({InputOp::MouseMove, ZXKEY_NONE, ev.dx, ev.dy});
+                    return true;
+                case ttd::TTDInputKind::MouseButtons:
+                    QueueInput({InputOp::MouseButtons, ZXKEY_NONE, ev.buttonMask, 0});
+                    return true;
+                case ttd::TTDInputKind::MouseWheel:
+                    QueueInput({InputOp::MouseWheel, ZXKEY_NONE, ev.wheelSteps, 0});
+                    return true;
+                case ttd::TTDInputKind::MouseCounters:
+                    QueueInput({InputOp::MouseCounters, ZXKEY_NONE, ev.dx, ev.dy});
+                    return true;
+                case ttd::TTDInputKind::KeyboardReset:
+                    QueueInput({InputOp::KeyboardReset, ZXKEY_NONE, 0, 0});
+                    return true;
+                default:
+                    return false;
+            }
+        });
+    }
+
     // Host speed changes of the machine go through the input queue: all four
     // take them at one frame boundary
     _instances[0]->SetSpeedChangeInterceptor([this](uint8_t multiplier) {
@@ -219,6 +253,8 @@ void ZXPolyGroup::Destroy()
         if (_instances[m])
         {
             _instances[m]->SetSpeedChangeInterceptor(nullptr);
+            if (EmulatorContext* context = GetContext(m); context && context->pTimeTravelManager)
+                context->pTimeTravelManager->SetLiveInputInterceptor(nullptr);
             if (EmulatorContext* context = GetContext(m); context && context->pCore)
             {
                 context->pCore->GetZ80()->portInterceptor = nullptr;
@@ -1011,6 +1047,8 @@ void ZXPolyGroup::ApplyInput(size_t module, const std::vector<InputOp>& input)
                 case InputOp::MouseMove: ttd->RecordMouseMove(op.a, op.b); break;
                 case InputOp::MouseButtons: ttd->RecordMouseButtons(static_cast<uint8_t>(op.a)); break;
                 case InputOp::MouseWheel: ttd->RecordMouseWheel(op.a); break;
+                case InputOp::MouseCounters:
+                case InputOp::KeyboardReset:
                 case InputOp::Speed: break;
             }
         }
@@ -1030,6 +1068,13 @@ void ZXPolyGroup::ApplyInput(size_t module, const std::vector<InputOp>& input)
             case InputOp::MouseWheel:
                 if (context->pMouse)
                     context->pMouse->SetWheel(op.a);
+                break;
+            case InputOp::MouseCounters:
+                if (context->pMouse)
+                    context->pMouse->SetCounters(static_cast<uint8_t>(op.a), static_cast<uint8_t>(op.b));
+                break;
+            case InputOp::KeyboardReset:
+                context->pKeyboard->Reset();
                 break;
             case InputOp::Speed: break;
         }

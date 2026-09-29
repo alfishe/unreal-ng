@@ -5,6 +5,10 @@
 #include "common/image/imagehelper.h"
 #include "common/modulelogger.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "debugger/debugmanager.h"
+#include "debugger/keyboard/debugkeyboardmanager.h"
+#include "debugger/mouse/debugmousemanager.h"
+#include "emulator/io/mouse/mouse.h"
 #include "emulator/emulator.h"
 #include "emulator/mainloop.h"
 #include "emulator/emulatorcontext.h"
@@ -1194,6 +1198,65 @@ TEST_F(ZXPolyGroup_Test, TimeTravelIsRefusedOnEveryMember)
         EXPECT_FALSE(ttd->IsRecording()) << "module " << m;
         EXPECT_FALSE(ttd->StartRecording()) << "module " << m;
     }
+}
+
+/// Automation input (WebAPI, MCP, CLI, Lua, Python) reaches the machine through
+/// the master's DebugKeyboardManager / DebugMouseManager and the TTD live-input
+/// gateway. Given to the master alone it would split the machine; the group
+/// takes it and gives it to all four at one frame boundary. The keys give the
+/// same machine as the group's own queue, and the mouse lands on every member
+/// Boot-bound (150 frames on four machines, twice)
+TEST_P(ZXPolyGroupModels_Test, AutomationInputReachesAllFourModules)
+{
+    auto run = [&](bool throughAutomation, std::vector<uint64_t>& hashes) {
+        CreateGroup(GetParam());
+        std::string error;
+        ASSERT_TRUE(_group->LoadZXP(TestPathHelper::GetTestDataPath("machines/zxpoly/zxp/SummerSanta2022.zxp"), &error))
+            << error;
+        DebugKeyboardManager* keys = _group->GetContext(0)->pDebugManager->GetKeyboardManager();
+        for (unsigned f = 0; f < 150; f++)
+        {
+            if (f == 40)
+                throughAutomation ? keys->PressKey(ZXKEY_1) : _group->PressKey(ZXKEY_1);
+            if (f == 46)
+                throughAutomation ? keys->ReleaseKey(ZXKEY_1) : _group->ReleaseKey(ZXKEY_1);
+            _group->RunFrame();
+            const ZXPolyGroup::Divergence divergence = _group->CheckLockstep();
+            ASSERT_FALSE(divergence.diverged) << "frame " << f << ": module " << divergence.module << " "
+                                              << divergence.what;
+            uint64_t hash = 1469598103934665603ull;
+            for (size_t m = 0; m < ZXPolyGroup::MODULES; m++)
+            {
+                const Z80& cpu = *_group->GetContext(m)->pCore->GetZ80();
+                for (uint64_t v : {uint64_t(cpu.pc), uint64_t(cpu.sp), uint64_t(cpu.t)})
+                    hash = (hash ^ v) * 1099511628211ull;
+            }
+            hashes.push_back(hash);
+        }
+
+        // The Kempston mouse through the automation path: every member moves
+        DebugMouseManager* mouse = _group->GetContext(0)->pDebugManager->GetMouseManager();
+        mouse->SetCounters(10, 20);
+        mouse->Move(5, -3);
+        _group->RunFrame();
+        for (size_t m = 0; m < ZXPolyGroup::MODULES; m++)
+        {
+            const Mouse* device = _group->GetContext(m)->pMouse;
+            ASSERT_NE(device, nullptr);
+            EXPECT_EQ(device->GetX(), _group->GetContext(0)->pMouse->GetX()) << "module " << m;
+            EXPECT_EQ(device->GetY(), _group->GetContext(0)->pMouse->GetY()) << "module " << m;
+        }
+        EXPECT_NE(_group->GetContext(1)->pMouse->GetX(), 10u) << "the move did not reach the slaves";
+        _group.reset();
+    };
+
+    std::vector<uint64_t> group;
+    std::vector<uint64_t> automation;
+    run(false, group);
+    run(true, automation);
+    ASSERT_EQ(group.size(), automation.size());
+    for (size_t f = 0; f < group.size(); f++)
+        ASSERT_EQ(group[f], automation[f]) << "frame " << f;
 }
 
 /// The manager is the one source every surface (WebAPI, MCP, CLI, Lua,

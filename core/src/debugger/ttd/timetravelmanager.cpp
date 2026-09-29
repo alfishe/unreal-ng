@@ -1839,10 +1839,22 @@ bool TimeTravelManager::OwnsInput() const
     return _context->emulatorState.frame_counter <= _timeline.back().time.frame;
 }
 
+void TimeTravelManager::SetLiveInputInterceptor(std::function<bool(const TTDInputEvent&)> interceptor)
+{
+    std::lock_guard<std::mutex> lock(_liveInputInterceptorMutex);
+    _liveInputInterceptor = std::move(interceptor);
+}
+
 bool TimeTravelManager::SubmitLiveInput(const TTDInputEvent& ev)
 {
     if (!_context || OwnsInput())
         return false;
+
+    {
+        std::lock_guard<std::mutex> lock(_liveInputInterceptorMutex);
+        if (_liveInputInterceptor && _liveInputInterceptor(ev))
+            return true;
+    }
 
     // The machine lives on the emulator loop's thread: while the loop runs,
     // only that thread mutates input state - queue for its next instruction

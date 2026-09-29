@@ -333,7 +333,7 @@ private:
     // mouse), applied to all four members at once
     struct InputOp
     {
-        enum Kind : uint8_t { KeyDown, KeyUp, MouseMove, MouseButtons, MouseWheel, Speed } kind;
+        enum Kind : uint8_t { KeyDown, KeyUp, MouseMove, MouseButtons, MouseWheel, MouseCounters, KeyboardReset, Speed } kind;
         ZXKeysEnum key = ZXKEY_NONE;
         int a = 0;
         int b = 0;
