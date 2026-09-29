@@ -597,20 +597,19 @@ Z80::StepResult Z80::StepInstruction(bool skipBreakpoints)
     if (_frameLimit == 0)
         RecomputeFrameTiming();
 
-    // Input takes effect before this instruction: recorded journal events due
-    // at or before now (TTD playback) and live input queued by other threads.
-    // An event stamped T is first visible to the instruction starting at T -
-    // the machine state AT T (a seek target, a pause) does not include it yet.
-    // One relaxed load per instruction when there is none
-    if (_context->ttdInputWork.load(std::memory_order_relaxed) && _context->pTimeTravelManager)
-        _context->pTimeTravelManager->ServiceInput();
+    // The per-step work gate (EmulatorContext::stepWork): one relaxed load and
+    // one branch per instruction for every rare job together - TTD input, a
+    // machine's own INT logic, a machine engine. With none the step below is
+    // exactly the classic machine's step
+    if (const uint32_t work = _context->stepWork.load(std::memory_order_relaxed)) [[unlikely]]
+        return StepInstructionWithWork(work, skipBreakpoints);
 
     StepResult result;
 
     // Handle interrupts if arrived. Returns true if an interrupt was accepted -
     // in that case the acceptance IS the "instruction" that consumes this step
     const bool nmiPending = _nmi_pending_count > 0;
-    if (ProcessInterrupts(_intWraps, _intStart, _intEnd))
+    if (ProcessInterruptsImpl<false>(_intWraps, _intStart, _intEnd))
     {
         if (nmiPending)
             result.nmiAccepted = true;
@@ -627,6 +626,59 @@ Z80::StepResult Z80::StepInstruction(bool skipBreakpoints)
     OnCPUStep();
 
     return result;
+}
+
+/// The step with rare work around it (StepInstruction's gate is non-zero).
+/// Out of line so the plain step stays small; the order is the contract:
+/// input first, then the interrupt decision, the instruction, the machine
+/// engine, the peripherals
+Z80::StepResult Z80::StepInstructionWithWork(uint32_t work, bool skipBreakpoints)
+{
+    // Input takes effect before this instruction: recorded journal events due
+    // at or before now (TTD playback) and live input queued by other threads.
+    // An event stamped T is first visible to the instruction starting at T -
+    // the machine state AT T (a seek target, a pause) does not include it yet
+    if ((work & EmulatorContext::kStepWorkTtdInput) && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->ServiceInput();
+
+    StepResult result;
+
+    const bool nmiPending = _nmi_pending_count > 0;
+    const bool accepted = ((work & EmulatorContext::kStepWorkInterruptSource) && _interruptSource)
+                              ? ProcessInterruptsImpl<true>(_intWraps, _intStart, _intEnd)
+                              : ProcessInterruptsImpl<false>(_intWraps, _intStart, _intEnd);
+    if (accepted)
+    {
+        if (nmiPending)
+            result.nmiAccepted = true;
+        else
+            result.intAccepted = true;
+    }
+    else
+    {
+        Z80Step(skipBreakpoints);
+    }
+
+    // The machine engine first (IMachineStepHook): the screen and the sound
+    // then see the state this step produced
+    if ((work & EmulatorContext::kStepWorkMachineStep) && _machineStepHook)
+        _machineStepHook->OnMachineStep(t);
+
+    OnCPUStep();
+
+    return result;
+}
+
+void Z80::SetInterruptSource(IInterruptSource* source)
+{
+    _interruptSource = source;
+    _context->SetStepWork(EmulatorContext::kStepWorkInterruptSource, source != nullptr);
+}
+
+void Z80::SetMachineStepHook(IMachineStepHook* hook)
+{
+    _machineStepHook = hook;
+    _context->SetStepWork(EmulatorContext::kStepWorkMachineStep, hook != nullptr);
 }
 
 void Z80::ApplyHardwareTurboNow()
@@ -1101,6 +1153,16 @@ void Z80::RequestNonMaskedInterrupt()
 /// \param int_end
 bool Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_end)
 {
+    // Direct callers (tests, tools) get the machine's INT logic when it has one
+    return _interruptSource ? ProcessInterruptsImpl<true>(int_occurred, int_start, int_end)
+                            : ProcessInterruptsImpl<false>(int_occurred, int_start, int_end);
+}
+
+/// UseSource: the machine owns INT (IInterruptSource). A template so the
+/// classic machines' step carries no test for it (StepInstruction)
+template <bool UseSource>
+bool Z80::ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned int_end)
+{
     Z80& cpu = *this;
     VideoControl& video = _context->pScreen->_vid;
     bool intHandled = false;
@@ -1193,13 +1255,13 @@ bool Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
     }
 
     // A machine that owns its INT logic decides the pin alone (IInterruptSource)
-    if (interruptSource) [[unlikely]]
+    if constexpr (UseSource)
     {
-        cpu.int_pending = interruptSource->IsIntAsserted(cpu.t);
+        cpu.int_pending = _interruptSource->IsIntAsserted(cpu.t);
         video.memcyc_lcmd = 0;
         if (cpu.int_pending && cpu.iff1 && cpu.boundary != Z80_BOUNDARY_INT_SHADOW && !prefixPending)
         {
-            HandleINT(interruptSource->AcknowledgeInterrupt(cpu.t));
+            HandleINT(_interruptSource->AcknowledgeInterrupt(cpu.t));
             return true;
         }
         return false;
@@ -1398,11 +1460,6 @@ void Z80::HandleINT(uint8_t vector)
 void Z80::OnCPUStep()
 {
     // Q register update is now handled in Z80Step() based on flag changes
-
-    // The machine engine first (IMachineStepHook): the screen and the sound
-    // below then see the state this step produced
-    if (machineStepHook) [[unlikely]]
-        machineStepHook->OnMachineStep(t);
 
     // MainLoop will dispatch the call to all peripherals
     _context->pMainLoop->OnCPUStep();

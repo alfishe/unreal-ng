@@ -156,4 +156,5 @@ pkill -9 unreal-qt 2>/dev/null || true
 - **Testing**: See `core/tests/README.md` for test patterns (CUT pattern, fixtures, helpers).
 - **Documentation Rules**: Documentation files must use lowercase with hyphens (kebab-case). Ongoing design and analysis must go into `docs/inprogress/` following specific date-prefixed directory naming rules. See `docs/inprogress/README.md` for details.
 - **Coding Guidelines**: For detailed coding guidelines, see `docs/guidelines/coding-guidelines.md`.
+- **Performance**: A change to a hot path (per instruction, per memory or port access) must cost nothing for machines that do not use it and needs an A/B benchmark; patterns (combined gate, interface selection, templates) and the measurement procedure: `docs/guidelines/performance-guidelines.md`.
 - **Cross-Platform & Compatibility**: The codebase MUST be cross-platform (Windows, macOS, Linux) and cross-compiler compatible (gcc, clang, mingw, msvc) with **ZERO warnings** allowed. See `docs/guidelines/cross-platform-compatibility.md` for environmental constraints.

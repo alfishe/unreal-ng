@@ -413,8 +413,8 @@ folder case, the decoder factory + `IsModelSupported`, the Core factory case for
 >
 > | Where | Change | Cost for other machines |
 > |:--|:--|:--|
-> | `Z80::interruptSource` | nullable pointer, set by a model's port decoder | — |
-> | `Z80::ProcessInterrupts` | with a source: `int_pending = IsIntAsserted(t)`; accept → `HandleINT(AcknowledgeInterrupt(t))`; the ULA window, `RaiseLocalInt` and `IntClearedByAcknowledge` are skipped | one pointer test per instruction |
+> | `Z80::SetInterruptSource` | set by a model's port decoder; raises / clears the `kStepWorkInterruptSource` bit of the per-step gate `EmulatorContext::stepWork` | — |
+> | `Z80::ProcessInterruptsImpl<bool UseSource>` | with a source: `int_pending = IsIntAsserted(t)`; accept → `HandleINT(AcknowledgeInterrupt(t))`; the ULA window, `RaiseLocalInt` and `IntClearedByAcknowledge` are skipped. The classic step runs the `<false>` instance; `StepInstructionWithWork` picks `<true>` when the bit is set | **none**: behind the per-step gate that TTD input already paid (2026-09-29 fix, see below) |
 > | `ope_4D` (RETI and its mirrors ED 5D/6D/7D) | `OnReti()` when a source is set | one pointer test per RETI |
 >
 > Tests: `InterruptSource_Test` in `core/tests/emulator/cpu/int_test.cpp`
@@ -596,12 +596,17 @@ generic `IMachineStepHook` registered by the decoder (`Z80::machineStepHook`).
 >
 > | Where | Change | Cost for other machines |
 > |:--|:--|:--|
-> | `Z80::machineStepHook` | nullable pointer, set by a model's port decoder | — |
-> | `Z80::OnCPUStep` | `OnMachineStep(t)` before `MainLoop::OnCPUStep` (screen, Beta, tape, sound then see this step's state); runs after every instruction and INT/NMI acknowledge, on rendered and turbo-skipped frames alike | one pointer test per instruction |
+> | `Z80::SetMachineStepHook` | set by a model's port decoder; raises / clears the `kStepWorkMachineStep` bit of `stepWork` | — |
+> | `Z80::StepInstructionWithWork` | `OnMachineStep(t)` before `OnCPUStep` (screen, Beta, tape, sound then see this step's state); runs after every instruction and INT/NMI acknowledge, on rendered and turbo-skipped frames alike | **none**: behind the per-step gate |
 > | `Core::AdjustFrameCounters` | `OnMachineFrameRollover(scaledFrame)` right after `Z80::t` is rebased - the one place the frame counter rolls over, in every run path | one pointer test per frame |
 >
-> `OnMachineStep` may be called twice with the same `t` (`Core::UpdateScreen`
-> replays `OnCPUStep`), so catching up to a reached T-state must be a no-op.
+> **Per-step gate (2026-09-29).** The first version tested both pointers on
+> every instruction, which cost the classic machines 0 to about 1 % of frame
+> time depending on the run; with the gate they are within noise of the code
+> without the feature (A/B in
+> [performance-guidelines.md](../../guidelines/performance-guidelines.md) §5). Both now sit behind `EmulatorContext::stepWork`, the one word
+> `StepInstruction` loads per step (it was TTD's `ttdInputWork`); the rare
+> step runs out of line in `StepInstructionWithWork`.
 > Tests: `MachineStepHook_Test` in `core/tests/emulator/cpu/z80_test.cpp`
 > (every step with the reached `t`; every frame of a turbo run with render
 > decimation; the rollover length).

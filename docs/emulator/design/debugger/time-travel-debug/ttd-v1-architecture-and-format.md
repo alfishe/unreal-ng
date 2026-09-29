@@ -147,7 +147,7 @@ flowchart TB
     subgraph ctx["EmulatorContext"]
         PTM["pTimeTravelManager"]
         PROBE["ttdProbe<br/>TTDAccessProbe, inline"]
-        FLAGS["ttdReplayActive<br/>ttdCoverageActive<br/>ttdInputWork"]
+        FLAGS["ttdReplayActive<br/>ttdCoverageActive<br/>stepWork (TTD input bit)"]
         PMEM["pMemory"]
     end
     subgraph mem["Memory"]
@@ -279,7 +279,7 @@ change (`emulator.cpp:618`).
 | Tool edit while recording | `Emulator::EditMemoryFromTool`, `emulator.cpp:645-660` | `RecordExternalEvent(DebuggerEdit)` then the edit | recording |
 | Data read | `Memory` read path, `memory.cpp:301-323` | coverage "read" key; probe check | `ttdCoverageActive` (coverage), `_feature_ttd_enabled && probe armed` (probe) |
 | Instruction fetch (M1) | `Z80` M1 path, `core/src/emulator/cpu/z80.cpp:782-803` | coverage "executed" key; probe check | `ttdCoverageActive`, probe armed |
-| Before every instruction | `Z80::StepInstruction`, `z80.cpp:596-597` | `ServiceInput()`: plays due journal events, applies queued live input | `ttdInputWork` (one relaxed atomic load) |
+| Before every instruction | `Z80::StepInstruction` → `StepInstructionWithWork` | `ServiceInput()`: plays due journal events, applies queued live input | `EmulatorContext::stepWork` bit `kStepWorkTtdInput` (one relaxed atomic load per step, shared with every other rare per-step job) |
 | Port OUT | `PortDecoder::OnPortOutComplete`, `core/src/emulator/ports/portdecoder.cpp:353-367` | `RecordIoWrite` (journal record, `isIo = 1`); probe check | manager present; journal enabled and Recording inside |
 | Frame boundary | `MainLoop::CompleteFrame`, `core/src/emulator/mainloop.cpp:420-470` | `OnFrameBoundary()`: seal coverage, capture a checkpoint | manager present; work only while Recording |
 | Tape control, disk write, NeoGS media | `tape.cpp` (9 sites), `floppydriveslot.cpp:52`, `mediamanager.cpp`, `soundchip_neogs.cpp:212` | `RecordExternalEvent(...)` | Recording (checked inside, `tm.cpp:1923`) |
@@ -318,7 +318,7 @@ Port latches that matter for paging are captured at the next checkpoint from
 
 ### 3.4 What happens on each instruction
 
-Before the instruction: `ServiceInput` if `ttdInputWork` is set
+Before the instruction: `ServiceInput` if the `kStepWorkTtdInput` bit of `stepWork` is set
 (`z80.cpp:596`). At M1: the "executed" coverage key and the execute probe
 (`z80.cpp:782-803`). The coverage `Record` is inline and uses a 16 KB
 direct-mapped "recent" filter plus a 1 MB membership bitmap per kind, so a
@@ -396,7 +396,7 @@ are not captured; the first such case is logged once per session
 
 Live input from any thread goes through `SubmitLiveInput` (`tm.cpp:1753-1777`).
 If the emulator loop runs on another thread, the event is queued and
-`ttdInputWork` is set. The machine's own thread applies it at the next
+the `kStepWorkTtdInput` bit of `stepWork` is set. The machine's own thread applies it at the next
 instruction boundary in `ServiceInput`. `ApplyLiveInput` journals the event
 **before** applying it, stamped with the current time (`tm.cpp:1801-1810`).
 So the journal time is the first instant the program can see the change.
@@ -423,7 +423,7 @@ sequenceDiagram
     participant REG as PeripheralRegistry
     participant ML as MainLoop
     loop every instruction
-        CPU->>TM: ServiceInput if ttdInputWork
+        CPU->>TM: ServiceInput if stepWork has kStepWorkTtdInput
         CPU->>TM: RecordExecutedCoverage(page, pc)
         TM->>COV: Record(Executed, key)
         CPU->>MEM: read / write
