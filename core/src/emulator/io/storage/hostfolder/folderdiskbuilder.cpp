@@ -197,18 +197,47 @@ char DiskTypeMap::TypeFor(const std::string& extension)
 
 /// endregion </DiskTypeMap>
 
-std::string FolderDiskBuilder::CompatibleName(const std::string& utf8Name)
+std::string FolderDiskBuilder::CompatibleName(const std::string& utf8Name, size_t width)
 {
     std::string name;
     for (char32_t codepoint : UnicodeHelper::DecodeUtf8(utf8Name))
     {
-        if (name.size() == 8)
+        if (name.size() == width)
             break;
         const bool printable = codepoint >= 0x20 && codepoint < 0x7F && codepoint != U'"';
         name.push_back(printable ? static_cast<char>(codepoint) : '_');
     }
-    name.resize(8, ' ');
+    name.resize(width, ' ');
     return name;
+}
+
+std::vector<const FolderEntry*> FolderDiskBuilder::OrderFiles(const FolderEntry& root, const FolderManifest& manifest,
+                                                             std::vector<std::string>& report)
+{
+    std::vector<const FolderEntry*> files;
+    for (const FolderEntry& entry : root.children)
+    {
+        if (!entry.isDirectory)
+            files.push_back(&entry);
+    }
+    std::vector<const FolderEntry*> ordered;
+    for (const std::string& wanted : manifest.order)
+    {
+        auto it = std::find_if(files.begin(), files.end(), [&wanted](const FolderEntry* f) { return f && f->name == wanted; });
+        if (it == files.end())
+        {
+            report.push_back("order: '" + wanted + "' is not in the folder");
+            continue;
+        }
+        ordered.push_back(*it);
+        *it = nullptr;
+    }
+    for (const FolderEntry* file : files)
+    {
+        if (file)
+            ordered.push_back(file);
+    }
+    return ordered;
 }
 
 MediaResult FolderDiskBuilder::BuildTrd(EmulatorContext* context, const std::filesystem::path& folder,
@@ -244,29 +273,7 @@ MediaResult FolderDiskBuilder::BuildTrd(EmulatorContext* context, const std::fil
         return MediaResult::Fail(MediaError::IoError, "cannot format a blank TR-DOS disk");
 
     // Order: the manifest's list first, then everything else as scanned (byte-wise sorted)
-    std::vector<const FolderEntry*> files;
-    for (const FolderEntry& entry : snapshot.Root().children)
-    {
-        if (!entry.isDirectory)
-            files.push_back(&entry);
-    }
-    std::vector<const FolderEntry*> ordered;
-    for (const std::string& wanted : manifest.order)
-    {
-        auto it = std::find_if(files.begin(), files.end(), [&wanted](const FolderEntry* f) { return f && f->name == wanted; });
-        if (it == files.end())
-        {
-            result.report.push_back("order: '" + wanted + "' is not in the folder");
-            continue;
-        }
-        ordered.push_back(*it);
-        *it = nullptr;
-    }
-    for (const FolderEntry* file : files)
-    {
-        if (file)
-            ordered.push_back(file);
-    }
+    const std::vector<const FolderEntry*> ordered = OrderFiles(snapshot.Root(), manifest, result.report);
 
     std::set<std::string> taken;
     for (const FolderEntry* file : ordered)

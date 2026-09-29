@@ -165,7 +165,7 @@ public:
 
     void tapePlay();               // parse-once, then resume-in-place or start at cursor
     void tapePause();              // freeze the head in place (no-op unless Playing)
-    void tapeStop();               // stop playback and drop the image (control-plane semantics)
+    void tapeStop();               // stop & eject: the tape leaves the tape slot (same as `tape eject`)
     void tapeRewind();             // seek to block 0, image and catalog kept
     void tapeSeekToBlock(size_t index);  // double-click / context-menu rewind (FR-10): seek arms, play delivers
 

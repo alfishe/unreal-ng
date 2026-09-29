@@ -207,9 +207,55 @@ static bool ReadTapeFile(const std::string& path, std::vector<uint8_t>& bytes)
     return read == size;
 }
 
+void Tape::AttachImage(const TapeImage* image, const std::string& sourcePath, const std::string& formatId)
+{
+    // A media change: the manager refuses it while a TTD recording runs
+    reset();
+    _attachedImage = image;
+    _attachedPath = sourcePath;
+    _attachedFormatId = formatId;
+    _attachGeneration++;
+    _context->coreState.tapeFilePath = sourcePath;
+}
+
+void Tape::DetachImage()
+{
+    reset();
+    _attachedImage = nullptr;
+    _attachedPath.clear();
+    _attachedFormatId.clear();
+    _context->coreState.tapeFilePath.clear();
+}
+
 bool Tape::EnsureImageLoaded()
 {
     const std::string& path = _context->coreState.tapeFilePath;
+
+    // The media manager's tape: install a copy of the medium's blocks once per
+    // attach (a stop or a reset dropped them; the medium still has them). A
+    // path written into coreState by hand (tests, older code) falls through to
+    // the file below
+    if (_attachedImage && path == _attachedPath)
+    {
+        const std::string key = "\x01medium:" + std::to_string(_attachGeneration);
+        if (_imageLoadedPath == key)
+            return !_tapeBlocks.empty();
+
+        _catalog = TapeCatalogParser::Build(*_attachedImage);
+        _fastLoadPlan = TapeFastLoadEligibility::Analyze(_catalog, _attachedImage->controlFlowLinearized);
+        _tapeBlocks = _attachedImage->blocks;
+        _imageLoadedPath = key;
+        _imageFormatId = _attachedFormatId;
+
+        _playbackFrozen = false;
+        _currentTapeBlock = nullptr;
+        _currentTapeBlockIndex = UINT64_MAX;
+        _currentPulseIdxInBlock = 0;
+        _currentOffsetWithinPulse = 0;
+        MLOGINFO("Tape image attached: '%s', format: %s, blocks: %zu", _attachedPath.c_str(), _imageFormatId.c_str(),
+                 _tapeBlocks.size());
+        return !_tapeBlocks.empty();
+    }
 
     // Idempotent and path-keyed (design §9.4): an unchanged path (including
     // the empty "no tape selected" path) never re-parses over live blocks.

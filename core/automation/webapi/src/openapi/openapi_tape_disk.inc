@@ -10,7 +10,8 @@
     paths["/api/v1/emulator/{id}/tape/load"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["path"]["type"] = "string";
     paths["/api/v1/emulator/{id}/tape/load"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-         ["properties"]["path"]["description"] = "Path to tape image file (.tap, .tzx)";
+         ["properties"]["path"]["description"] =
+        "A tape file (.tap .tzx .spc .sta .ltp .zxt; the content decides the format) or a folder built into a tape";
     // Multipart upload option
     paths["/api/v1/emulator/{id}/tape/load"]["post"]["requestBody"]["content"]["multipart/form-data"]["schema"]
          ["properties"]["file"]["type"] = "string";
@@ -31,12 +32,16 @@
         "A TTD recording is running; the message says why the action would destroy it. Stop the recording first.";
 
     paths["/api/v1/emulator/{id}/tape/eject"]["post"]["summary"] = "Eject tape";
+    paths["/api/v1/emulator/{id}/tape/eject"]["post"]["description"] =
+        "The tape leaves the tape slot of the media manager (same as POST /media/tape/eject).";
     paths["/api/v1/emulator/{id}/tape/eject"]["post"]["tags"].append("Tape Control");
     paths["/api/v1/emulator/{id}/tape/eject"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/tape/eject"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/tape/eject"]["post"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/tape/eject"]["post"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/tape/eject"]["post"]["responses"]["200"]["description"] = "Tape ejected";
+    paths["/api/v1/emulator/{id}/tape/eject"]["post"]["responses"]["409"]["description"] =
+        "A TTD recording is running: the media set is fixed. Stop the recording first.";
 
     paths["/api/v1/emulator/{id}/tape/play"]["post"]["summary"] = "Start tape playback";
     paths["/api/v1/emulator/{id}/tape/play"]["post"]["tags"].append("Tape Control");

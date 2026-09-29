@@ -109,8 +109,8 @@ Global functions mirroring the CLI `tape` commands and the WebAPI `/tape/*` endp
 
 ```lua
 -- Load / eject
-local ok = tape_load("/path/to/game.tap")   -- Load tape image (.tap/.tzx/.csw)
-local ok = tape_eject()                     -- Stop playback, drop image and catalog
+local ok, why = tape_load("/path/to/game.tap")  -- A tape (.tap/.tzx/.spc/.sta/.ltp/.zxt) or a folder
+local ok = tape_eject()                     -- The tape leaves the tape slot (false while TTD records)
 
 -- Transport (same semantics as `tape play|pause|stop|rewind|seek`)
 tape_play()      -- start at consumption cursor; resumes in place when paused

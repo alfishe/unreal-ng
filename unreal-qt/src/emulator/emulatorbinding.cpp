@@ -511,13 +511,9 @@ void EmulatorBinding::tapeStop()
         return;
     }
 
-    EmulatorPauseBracket bracket(m_emulator);
-
-    // Control-plane semantics, same sequence as the CLI/WebAPI eject handlers:
-    // stopTape() drops the parsed image, and clearing the path keeps the next
-    // generation snapshot from re-parsing the same file via EnsureImageLoaded()
-    context->pTape->stopTape();
-    context->coreState.tapeFilePath.clear();
+    // Stop & eject, as the CLI / WebAPI tape eject: the tape slot of the media
+    // manager (the emulator pauses itself around the change)
+    m_emulator->EjectTape();
 }
 
 void EmulatorBinding::tapeRewind()

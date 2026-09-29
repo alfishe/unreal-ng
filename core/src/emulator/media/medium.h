@@ -3,7 +3,7 @@
 /// @file medium.h
 /// @brief What is in a slot: contents built from a source and an access mode.
 /// The MediaManager owns every Medium; slots hold a pointer between Attach and
-/// Detach. Block media (M1) and floppy disks (M2); tape joins in M3.
+/// Detach. Block media (M1), floppy disks (M2) and tapes (M3).
 
 #include <cstdint>
 #include <memory>
@@ -13,6 +13,7 @@
 
 #include "common/unicodehelper.h"
 #include "emulator/io/fdc/diskimage.h"
+#include "emulator/io/tape/tapetypes.h"
 #include "emulator/io/storage/iblockdevice.h"
 #include "emulator/media/mediatypes.h"
 
@@ -35,6 +36,9 @@ public:
     /// A floppy disk. The image itself is the session: guest writes change it
     /// in memory (its tracks turn dirty) until it is saved
     Medium(MediaSource source, AccessMode access, std::string format, std::unique_ptr<DiskImage> disk);
+    /// A tape: the parsed image (blocks and descriptors). The deck plays a
+    /// copy, so a rewind, a reset or a re-insert start from this one
+    Medium(MediaSource source, AccessMode access, std::string format, std::unique_ptr<TapeImage> tape);
 
     Medium(const Medium&) = delete;
     Medium& operator=(const Medium&) = delete;
@@ -51,6 +55,8 @@ public:
     /// The disk image (Floppy kind), nullptr otherwise
     DiskImage* Floppy() { return _disk.get(); }
     const DiskImage* Floppy() const { return _disk.get(); }
+    /// The tape image (Tape kind), nullptr otherwise
+    const TapeImage* Tape() const { return _tape.get(); }
 
     /// A save wrote the medium to `source` (a file): it now stands for that file
     void Rebase(MediaSource source);
@@ -95,6 +101,7 @@ private:
     std::string _format;
     std::unique_ptr<IBlockDevice> _block;
     std::unique_ptr<DiskImage> _disk;
+    std::unique_ptr<TapeImage> _tape;
     SessionWriteMap* _session = nullptr;
     std::string _sourceKey;
     std::vector<std::string> _report;

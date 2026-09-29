@@ -12,6 +12,12 @@
 namespace mcp
 {
 
+const std::vector<std::string>& TapeExtensions()
+{
+    static const std::vector<std::string> extensions = {"tap", "spc", "sta", "ltp", "zxt", "tzx"};
+    return extensions;
+}
+
 const std::vector<std::pair<std::string, std::vector<std::string>>>& MediaToolActions()
 {
     static const std::vector<std::string> insertOptions = {"access", "format", "fs", "codepage", "free", "wp", "kind",

@@ -182,6 +182,14 @@ protected:
     // the content probe actually selected, not the extension (design §7).
     std::string _imageFormatId;
 
+    // The media manager's tape (slot "tape"): the medium owns the parsed
+    // image; the deck plays a copy of its blocks. Each attach gets a new
+    // generation, so re-inserting the same file starts afresh
+    const TapeImage* _attachedImage = nullptr;
+    std::string _attachedPath;     // the medium's source, mirrored into coreState.tapeFilePath
+    std::string _attachedFormatId;
+    uint64_t _attachGeneration = 0;
+
     TapeBlock* _currentTapeBlock;       // Shortcut to current block object
     // Consumption cursor: index of the NEXT block to deliver to the CPU, by signal
     // playback or by the fast-loading trap (single source of truth — design §9.4).
@@ -259,12 +267,20 @@ public:
 
     /// region <Image and consumption cursor interface (fast tape loading)>
 public:
-    /// Lazily parse coreState.tapeFilePath into _tapeBlocks. Idempotent and
-    /// path-keyed: re-parses only when the path differs from the one the live
-    /// blocks came from (never re-parses over live blocks — that would reset the
-    /// consumption cursor and dangle _currentTapeBlock). Returns true when blocks
-    /// are available.
+    /// Install the tape into _tapeBlocks, lazily: the attached medium's image
+    /// (once per attach), else a parse of coreState.tapeFilePath. Idempotent:
+    /// never re-installs over live blocks (that would reset the consumption
+    /// cursor and dangle _currentTapeBlock). Returns true when blocks are
+    /// available.
     bool EnsureImageLoaded();
+
+    /// The tape slot puts a medium in: the deck stops, drops what it played and
+    /// plays `image` from its first block (the medium keeps owning it).
+    /// `sourcePath` is mirrored into coreState.tapeFilePath for display
+    void AttachImage(const TapeImage* image, const std::string& sourcePath, const std::string& formatId);
+    /// The tape slot takes the medium out: the deck stops, the image is gone
+    void DetachImage();
+    bool HasAttachedImage() const { return _attachedImage != nullptr; }
 
     /// Index of the next block to deliver (signal or trap). The UINT64_MAX
     /// sentinel maps to 0 for external observers.
