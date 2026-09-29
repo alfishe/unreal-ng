@@ -236,10 +236,7 @@ protected:
         // W until the NVRAM says 3.5 MHz (none with the ERS defaults; at most two otherwise). The menu
         // reads keys through the ROM's LAST_K, lower case, and writes the NVRAM right after taking one
         EvoAvr& avr = static_cast<PortDecoder_ATM3*>(_context->pPortDecoder)->GetEvoAvr();
-        const auto nvram = [&](uint8_t cell) {
-            avr.SetCMOSAddress(cell);
-            return avr.ReadCMOS();
-        };
+        const auto nvram = [&](uint8_t cell) { return avr.ReadRegister(cell); };
         for (int i = 0; i < 3 && ((nvram(0xEC) & 0x80) == 0 || (nvram(0xED) & 0x80) != 0); i++)
         {
             TapUntilTaken(ZXKEY_W, 'w');
