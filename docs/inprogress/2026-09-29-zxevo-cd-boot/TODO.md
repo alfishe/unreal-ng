@@ -20,8 +20,9 @@ unreal-ng (two tests); the items below are open questions and follow-ups, none b
 
 - [x] **ZX-video CD No. 1** on `ATM3` (2026-09-29): the ERS boots `autorun.zx` and the player's menu runs; a clip never
   starts, because the player uses the ATM IDE ports (`#FEEF` status), which BaseConf does not have (README §3).
-- [ ] **ZX-video CD No. 1** on `ATM710` with a slave CD drive: boot to 48K BASIC (the player opens the IDE ports
-  through the TR-DOS `#3D2F` trap), run `CDRUNATM.$B` from a TRD, then play a clip.
+- [x] **ZX-video CD No. 1** on `ATM710` with a slave CD drive (2026-09-29): ATM BIOS → SPECTRUM 128 → TR-DOS →
+  `RUN "boot"` (`CDRUNATM.$B`), menu, ENTER, the clip streams from the disc; no emulator change needed. The
+  exploratory test needs the 455 MB ISO, so it is not in the suite; a small synthetic `.zxv` disc could make it one.
 
 - [ ] **DNA OS** `dna_nemo.iso` (ZET-9, 2007; `dna_nemo_iso.zip` on Alone Coder's ZX page): boot it with
   "D. CD boot" on `ATM3`. Record which ATAPI commands its `CDR_DRV` driver sends (`state ide`
