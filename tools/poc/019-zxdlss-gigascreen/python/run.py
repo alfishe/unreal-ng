@@ -30,6 +30,8 @@ from python.dlss_v7 import DeflickerV7  # noqa: E402
 from python.dlss_v8 import DeflickerV8  # noqa: E402
 from python.dlss_v9 import DeflickerV9  # noqa: E402
 from python.dlss_v10 import DeflickerV10  # noqa: E402
+from python.dlss_v11 import DeflickerV11  # noqa: E402
+from python.mod.pipeline import DeflickerMoD  # noqa: E402
 from python.mixers import MIXERS  # noqa: E402
 from python.quality import Oracle, QualityAccumulator  # noqa: E402
 from python.video import SideBySide  # noqa: E402
@@ -50,8 +52,9 @@ ALGORITHMS = {"v1": DeflickerV1, "v2": DeflickerV2, "v3": DeflickerV3, "v4": Def
               "v8e12": partial(DeflickerV8, establish=12),
               "v9l2": partial(DeflickerV9, lookahead=2), "v9l4": partial(DeflickerV9, lookahead=4),
               "v9l6": partial(DeflickerV9, lookahead=6), "v9l10": partial(DeflickerV9, lookahead=10),
-              "v10": DeflickerV10}
-NEEDS_PLANE_B = {"v5", "v5m"} | {k for k in ALGORITHMS if k.startswith(("v6", "v7", "v8", "v9", "v10"))}
+              "v10": DeflickerV10, "v11": DeflickerV11,
+              "mod": DeflickerMoD, "mod-palette": partial(DeflickerMoD, field_palette=True)}
+NEEDS_PLANE_B = {"v5", "v5m"} | {k for k in ALGORITHMS if k.startswith(("v6", "v7", "v8", "v9", "v10", "v11", "mod"))}
 # class map colors: v1 classes, then motion (8, red; v7: motion veto) and split (9, white)
 COLORS = np.vstack([CLASS_COLORS, [[255, 0, 0], [240, 240, 240]]]).astype(np.uint8)
 NAMES = CLASS_NAMES + ["motion", "split"]

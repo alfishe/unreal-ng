@@ -1,0 +1,59 @@
+{
+ "alg": "v10",
+ "scenes": {
+  "ate-pageflip-static": {
+   "ghost_pixels": 0.0,
+   "ghost_moving_flicker": 0.0,
+   "missed_flicker": 0.0439,
+   "color_error_share": 0.0
+  },
+  "ate-hiphop-border": {
+   "ghost_pixels": 0.00984,
+   "ghost_moving_flicker": 0.00231,
+   "missed_flicker": 0.1184,
+   "color_error_share": 0.0081
+  },
+  "ate-border-only": {
+   "ghost_pixels": 0.0,
+   "ghost_moving_flicker": 0.0,
+   "missed_flicker": 0.0,
+   "color_error_share": 0.0
+  },
+  "ate-balls-floor": {
+   "ghost_pixels": 0.00014,
+   "ghost_moving_flicker": 0.00413,
+   "missed_flicker": 0.0836,
+   "color_error_share": 0.3536
+  },
+  "ate-tunnel": {
+   "ghost_pixels": 0.00367,
+   "ghost_moving_flicker": 0.00533,
+   "missed_flicker": 0.3161,
+   "color_error_share": 0.5532
+  },
+  "ate-irregular": {
+   "ghost_pixels": 0.01616,
+   "ghost_moving_flicker": 0.00687,
+   "missed_flicker": 0.2534,
+   "color_error_share": 0.4507
+  },
+  "ate-raster-negative": {
+   "ghost_pixels": 0.0,
+   "ghost_moving_flicker": 0.0,
+   "missed_flicker": 0.0,
+   "color_error_share": 0.0
+  },
+  "ate-raster-negative-2": {
+   "ghost_pixels": 0.0,
+   "ghost_moving_flicker": 0.0,
+   "missed_flicker": 0.4821,
+   "color_error_share": 0.0
+  },
+  "flicker-test": {
+   "ghost_pixels": 0.0,
+   "ghost_moving_flicker": 9e-05,
+   "missed_flicker": 0.0005,
+   "color_error_share": 0.0
+  }
+ }
+}

@@ -87,10 +87,17 @@ class DeflickerV10(DeflickerV9):
         self.hist.insert(0, self._tile_hist(plane))
         del self.hist[self.L + 6:]
         out, cls = super().process(plane, attr, ink)        # v9 on frame t = planes[L]
+        field_px, L = self._detect_field(out)
+        if field_px is None:
+            return out, cls
+        return self._render_field(out, cls, field_px, L)
+
+    def _detect_field(self, out):
+        """-> (field pixels outside the v9 mask, index L of frame t), or (None, L)."""
         n = len(self.planes)
         L = min(self.L, n - 1)
         if n < L + 3 or len(self.hist) < L + 3:
-            return out, cls
+            return None, L
 
         # alternation of tile histograms over frames around t (indices L-3 .. L+3)
         area = float(self.FT * self.FT)
@@ -125,6 +132,10 @@ class DeflickerV10(DeflickerV9):
         self.field = self._large_components(cand, self.min_tiles)
         field_px = self._expand_ft(self.field) & ~mixed
         self.last_field = field_px
+        return field_px, L
+
+    def _render_field(self, out, cls, field_px, L):
+        t_plane, p_plane = self.planes[L], self.planes[L + 1]
         if field_px.any() and L >= 1:
             planes = np.stack([self.planes[L - 1], t_plane, p_plane])      # t+1, t, t-1
             weights = np.stack([np.full(t_plane.shape, 0.25), np.full(t_plane.shape, 0.5), np.full(t_plane.shape, 0.25)])
