@@ -1,5 +1,6 @@
 #pragma once
 
+#include "emulator/zxpoly/zxpolygroup.h"
 #include <sol/sol.hpp>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
@@ -295,6 +296,60 @@ public:
         lua.set_function("emu_count", []() -> int {
             auto* mgr = EmulatorManager::GetInstance();
             return static_cast<int>(mgr->GetEmulatorIds().size());
+        });
+
+        // ZX-Poly machines (EmulatorManager::CreateZXPolyMachine - the entry point
+        // every surface uses): four synchronized instances of one model.
+        // zxpoly_start([model], [file]) -> master id, or nil + error
+        lua.set_function("zxpoly_start", [](sol::optional<std::string> model, sol::optional<std::string> file,
+                                            sol::this_state state) -> sol::variadic_results {
+            sol::variadic_results results;
+            auto* mgr = EmulatorManager::GetInstance();
+            std::string error;
+            auto master = mgr->CreateZXPolyMachine("", model.value_or("PENTAGON"), file.value_or(""), &error);
+            if (!master)
+            {
+                results.push_back(sol::make_object(state, sol::lua_nil));
+                results.push_back(sol::make_object(state, "cannot start ZX-Poly: " + error));
+                return results;
+            }
+            mgr->StartEmulatorAsync(master->GetId());
+            mgr->SetSelectedEmulatorId(master->GetId());
+            results.push_back(sol::make_object(state, master->GetId()));
+            return results;
+        });
+
+        // zxpoly_status(id) -> table (nil if not a ZX-Poly machine)
+        lua.set_function("zxpoly_status", [](const std::string& id, sol::this_state state) -> sol::object {
+            ZXPolyGroup* group = EmulatorManager::GetInstance()->GetZXPolyGroup(id);
+            if (!group)
+                return sol::make_object(state, sol::lua_nil);
+            const ZXPolyGroup::Status status = group->GetStatus();
+            sol::state_view view(state);
+            sol::table out = view.create_table();
+            out["master_id"] = status.memberIds[0];
+            out["locked"] = status.locked;
+            out["slaves_running"] = status.slavesRunning;
+            out["parallel_slaves"] = status.parallelSlaves;
+            out["pipelined_slaves"] = status.pipelinedSlaves;
+            out["port_3d00"] = status.port3D00;
+            out["video_mode"] = status.videoMode;
+            sol::table modules = view.create_table();
+            for (size_t m = 0; m < ZXPolyGroup::MODULES; m++)
+            {
+                sol::table module = view.create_table();
+                module["module"] = m;
+                module["id"] = status.memberIds[m];
+                sol::table registers = view.create_table();
+                for (size_t r = 0; r < 4; r++)
+                    registers[r + 1] = status.registers[m][r];
+                module["registers"] = registers;
+                modules[m + 1] = module;
+            }
+            out["modules"] = modules;
+            out["diverged"] = status.divergence.diverged;
+            out["divergence"] = status.divergence.what;
+            return out;
         });
 
         lua.set_function("emu_get", [](const std::string& id) -> Emulator* {
@@ -1981,6 +2036,15 @@ public:
         lua.set_function("audio_covox_state", [this](sol::this_state s) -> sol::object {
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, DeviceState::Covox(ctx));
+        });
+        // MoonSound: overview, or part "fm" / "pcm"
+        lua.set_function("audio_moonsound_state", [this](sol::this_state s, sol::optional<std::string> part) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            if (part && *part == "fm")
+                return StateNodeToLua(s, DeviceState::MoonSoundFm(ctx));
+            if (part && *part == "pcm")
+                return StateNodeToLua(s, DeviceState::MoonSoundPcm(ctx));
+            return StateNodeToLua(s, DeviceState::MoonSound(ctx));
         });
 
         // NeoGS SD slot and flash (other cards: false / no-op)

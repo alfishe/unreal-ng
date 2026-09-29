@@ -193,6 +193,36 @@ TEST_F(McpTools_Test, EmulatorManage_StartStopDestroy_VerbAndPath)
     EXPECT_TRUE(_caller->Saw("DELETE", "/api/v1/emulator/emu-1"));
 }
 
+TEST_F(McpTools_Test, EmulatorManage_CreateZXPoly_PostsTheWebApiZXPolyRequest)
+{
+    Json::Value response;
+    response["id"] = "poly-master";
+    _caller->routes["POST /api/v1/emulator/start"] = {201, response};
+
+    Json::Value args;
+    args["action"] = "create";
+    args["zxpoly"] = true;
+    args["zxpoly_file"] = "/games/Alien8.zxp";
+    mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
+
+    ASSERT_FALSE(result.isError);
+    const auto* call = _caller->Last("POST", "/api/v1/emulator/start");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["model"].asString(), "PENTAGON");    // ZX-Poly default machine
+    EXPECT_EQ(call->body["zxpoly"]["file"].asString(), "/games/Alien8.zxp");
+}
+
+TEST_F(McpTools_Test, EmulatorManage_ZXPolyStatus_GetsGroupEndpoint)
+{
+    _caller->routes["GET /api/v1/emulator/emu-1/zxpoly"] = {200, Json::Value(Json::objectValue)};
+
+    Json::Value args;
+    args["action"] = "zxpoly_status";
+    RunTool(*_registry, "emulator_manage", args, *_caller);
+
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/zxpoly"));
+}
+
 TEST_F(McpTools_Test, EmulatorManage_GsByteActions_PostControlAudioGsWithValue)
 {
     Json::Value response;

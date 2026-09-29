@@ -39,7 +39,8 @@
     paths["/api/v1/emulator/status"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
          ["models_creatable"]["items"]["type"] = "string";
     paths["/api/v1/emulator/status"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
-         ["models_creatable"]["description"] = "Model short names a create request can succeed with";
+         ["models_creatable"]["description"] =
+        "Model short names a create request can succeed with, ZX-Poly configuration names included";
 
     // GET /api/v1/emulator/models
     paths["/api/v1/emulator/models"]["get"]["summary"] = "Get available emulator models";
@@ -73,6 +74,15 @@
     paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
          ["models"]["items"]["properties"]["creatable"]["description"] =
         "Whether a create request for this model is expected to succeed on this build";
+    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["models"]["items"]["properties"]["zxpoly"]["type"] = "boolean";
+    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["models"]["items"]["properties"]["zxpoly"]["description"] =
+        "Present on ZX-Poly configurations (ZXPOLY-48K, ZXPOLY-128K, ZXPOLY-PENTAGON): creating one by name "
+        "starts four synchronized instances of base_model and returns the master. They carry no id and no "
+        "available_ram_sizes_kb (the RAM size is fixed)";
+    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["models"]["items"]["properties"]["base_model"]["type"] = "string";
 
     // GET /api/v1/emulator/{id}
     paths["/api/v1/emulator/{id}"]["get"]["summary"] = "Get emulator details";
@@ -106,7 +116,26 @@
     paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
          ["model"]["type"] = "string";
     paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["model"]["description"] =
+        "Model short name (see /api/v1/emulator/models). A ZX-Poly configuration name (ZXPOLY-48K, ZXPOLY-128K, "
+        "ZXPOLY-PENTAGON) starts the bare ZX-Poly machine; combine it with `zxpoly` to load a file";
+    paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
          ["ram_size"]["type"] = "integer";
+    {
+        Json::Value& zxpoly = paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]
+                                   ["schema"]["properties"]["zxpoly"];
+        zxpoly["description"] =
+            "Start a ZX-Poly machine: four synchronized instances of `model` (a base model or a ZX-Poly "
+            "configuration name; default PENTAGON). true for the bare "
+            "machine, or {\"file\": path} with a .zxp snapshot, a .prom ZX-Poly ROM image (the Test ROM) or a "
+            "multiloader disk (.trd/.scl, needs a model with TR-DOS). The returned id is the master - the machine "
+            "every endpoint addresses; the three slaves are hidden members. The response carries the group status "
+            "under `zxpoly`. Deleting the master removes the group";
+        zxpoly["oneOf"][0]["type"] = "boolean";
+        zxpoly["oneOf"][1]["type"] = "object";
+        zxpoly["oneOf"][1]["properties"]["file"]["type"] = "string";
+        zxpoly["oneOf"][1]["properties"]["file"]["description"] = "Host path of a .zxp, .prom or disk image";
+    }
     paths["/api/v1/emulator/start"]["post"]["responses"]["201"]["description"] = "Emulator created and started";
     paths["/api/v1/emulator/start"]["post"]["responses"]["201"]["content"]["application/json"]["schema"]["$ref"] =
         "#/components/schemas/EmulatorInfo";
@@ -175,6 +204,47 @@
     paths["/api/v1/emulator/{id}/nmi"]["post"]["responses"]["200"]["description"] = "NMI/MNI requested";
 
     // POST /api/v1/emulator/{id}/model - Switch machine model
+    // GET /api/v1/emulator/{id}/zxpoly - ZX-Poly group status
+    {
+        Json::Value& get = paths["/api/v1/emulator/{id}/zxpoly"]["get"];
+        get["tags"].append("Emulator Control");
+        get["summary"] = "ZX-Poly group status";
+        get["description"] =
+            "The ZX-Poly machine the instance belongs to (any member id): the four modules with their platform "
+            "registers R0-R3, #3D00, lock, video mode (0-3 one module, 4 16 colours, 5 512x384, 6/7 masked "
+            "modes) and the lockstep check (control state of every slave against the master)";
+        get["parameters"][0]["name"] = "id";
+        get["parameters"][0]["in"] = "path";
+        get["parameters"][0]["required"] = true;
+        get["parameters"][0]["schema"]["type"] = "string";
+        Json::Value& schema = get["responses"]["200"]["content"]["application/json"]["schema"];
+        get["responses"]["200"]["description"] = "Group status";
+        schema["type"] = "object";
+        schema["properties"]["master_id"]["type"] = "string";
+        schema["properties"]["locked"]["type"] = "boolean";
+        schema["properties"]["slaves_running"]["type"] = "boolean";
+        schema["properties"]["parallel_slaves"]["type"] = "boolean";
+        schema["properties"]["parallel_slaves"]["description"] =
+            "Locked slaves run their frame on worker threads, at the same time";
+        schema["properties"]["pipelined_slaves"]["type"] = "boolean";
+        schema["properties"]["pipelined_slaves"]["description"] =
+            "The slaves' frame overlaps the master's next one (unlimited speed only; the state at every frame "
+            "boundary is the same)";
+        schema["properties"]["port_3d00"]["type"] = "integer";
+        schema["properties"]["video_mode"]["type"] = "integer";
+        schema["properties"]["modules"]["type"] = "array";
+        schema["properties"]["modules"]["items"]["type"] = "object";
+        schema["properties"]["modules"]["items"]["properties"]["module"]["type"] = "integer";
+        schema["properties"]["modules"]["items"]["properties"]["id"]["type"] = "string";
+        schema["properties"]["modules"]["items"]["properties"]["registers"]["type"] = "array";
+        schema["properties"]["modules"]["items"]["properties"]["registers"]["items"]["type"] = "integer";
+        schema["properties"]["divergence"]["type"] = "object";
+        schema["properties"]["divergence"]["properties"]["diverged"]["type"] = "boolean";
+        schema["properties"]["divergence"]["properties"]["module"]["type"] = "integer";
+        schema["properties"]["divergence"]["properties"]["what"]["type"] = "string";
+        get["responses"]["404"]["description"] = "No such emulator, or it is not a ZX-Poly machine";
+    }
+
     paths["/api/v1/emulator/{id}/model"]["post"]["summary"] = "Switch machine model";
     paths["/api/v1/emulator/{id}/model"]["post"]["description"] =
         "Switch the emulator to a different ZX Spectrum machine model. "

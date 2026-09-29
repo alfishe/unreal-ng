@@ -103,6 +103,61 @@ void EmulatorAPI::getStateAudioFMIndex(const HttpRequestPtr& req, std::function<
     ReplyState(DeviceState::FmChip(emulator->GetContext(), index), callback);
 }
 
+/// @brief GET /api/v1/emulator/{id}/state/audio/moonsound
+void EmulatorAPI::getStateAudioMoonSound(const HttpRequestPtr& req,
+                                         std::function<void(const HttpResponsePtr&)>&& callback,
+                                         const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::MoonSound(emulator->GetContext()), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/audio/moonsound/{fm|pcm}
+void EmulatorAPI::getStateAudioMoonSoundPart(const HttpRequestPtr& req,
+                                             std::function<void(const HttpResponsePtr&)>&& callback,
+                                             const std::string& id, const std::string& part) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    if (part == "fm")
+        return ReplyState(DeviceState::MoonSoundFm(emulator->GetContext()), callback);
+    if (part == "pcm")
+        return ReplyState(DeviceState::MoonSoundPcm(emulator->GetContext()), callback);
+    ReplyNotFound("Unknown MoonSound part '" + part + "' (fm or pcm)", callback, HttpStatusCode::k400BadRequest);
+}
+
+void EmulatorAPI::getStateAudioMoonSoundActive(const HttpRequestPtr& req,
+                                               std::function<void(const HttpResponsePtr&)>&& callback) const
+{
+    auto emulator = getEmulatorWithGlobalSelection();
+    if (!emulator)
+    {
+        const size_t count = EmulatorManager::GetInstance()->GetEmulatorIds().size();
+        return ReplyNotFound(MultipleEmulatorsMessage(count, "/api/v1/emulator/{id}/state/audio/moonsound"), callback,
+                             count == 0 ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest);
+    }
+    getStateAudioMoonSound(req, std::move(callback), emulator->GetId());
+}
+
+void EmulatorAPI::getStateAudioMoonSoundPartActive(const HttpRequestPtr& req,
+                                                   std::function<void(const HttpResponsePtr&)>&& callback,
+                                                   const std::string& part) const
+{
+    auto emulator = getEmulatorWithGlobalSelection();
+    if (!emulator)
+    {
+        const size_t count = EmulatorManager::GetInstance()->GetEmulatorIds().size();
+        return ReplyNotFound(MultipleEmulatorsMessage(count, "/api/v1/emulator/{id}/state/audio/moonsound/{part}"),
+                             callback, count == 0 ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest);
+    }
+    getStateAudioMoonSoundPart(req, std::move(callback), emulator->GetId(), part);
+}
+
 /// @brief GET /api/v1/emulator/{id}/state/fdc
 void EmulatorAPI::getStateFdc(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                               const std::string& id) const

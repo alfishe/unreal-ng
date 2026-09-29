@@ -404,7 +404,7 @@ void Keyboard::OnKey(ZXKeysEnum key, bool isPressed, bool shift, bool ctrl, bool
 /// which journals it at the instruction boundary where it takes effect.
 bool Keyboard::IsHostInputSuppressed() const
 {
-    return _context && _context->pTimeTravelManager && _context->pTimeTravelManager->OwnsInput();
+    return _hostInputGated || (_context && _context->pTimeTravelManager && _context->pTimeTravelManager->OwnsInput());
 }
 
 void Keyboard::SubmitHostKey(ZXKeysEnum key, bool pressed)

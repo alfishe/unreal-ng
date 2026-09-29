@@ -106,6 +106,11 @@ public:
     void LoadState(const uint8_t* src) override;
     uint32_t LayoutTag() const override { return 0x354D464F; } // "OFM5"
 
+    // Read-only views for Opl4::PeekFm (debuggers, automation)
+    const std::array<FmOperator, kOperatorCount>& Operators() const { return _ops; }
+    const std::array<FmChannel, kChannelCount>& Channels() const { return _ch; }
+    bool Rhythm() const { return _rhythm; }
+
 private:
     void UpdateChannelParams(uint8_t ch);
     void KeyOn(FmOperator& op, bool on);

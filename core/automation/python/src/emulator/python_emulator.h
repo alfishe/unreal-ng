@@ -1,5 +1,6 @@
 #pragma once
 
+#include "emulator/zxpoly/zxpolygroup.h"
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <emulator/emulator.h>
@@ -272,6 +273,48 @@ namespace PythonBindings
             auto* mgr = EmulatorManager::GetInstance();
             return static_cast<int>(mgr->GetEmulatorIds().size());
         }, "Get count of emulator instances");
+
+        // ZX-Poly machines (EmulatorManager::CreateZXPolyMachine - the entry point
+        // every surface uses): four synchronized instances of one model
+        m.def("zxpoly_start", [](const std::string& model, const std::string& file) -> std::string {
+            auto* mgr = EmulatorManager::GetInstance();
+            std::string error;
+            auto master = mgr->CreateZXPolyMachine("", model, file, &error);
+            if (!master)
+                throw std::runtime_error("cannot start ZX-Poly: " + error);
+            mgr->StartEmulatorAsync(master->GetId());
+            mgr->SetSelectedEmulatorId(master->GetId());
+            return master->GetId();
+        }, py::arg("model") = "PENTAGON", py::arg("file") = "",
+           "Start a ZX-Poly machine (file: .zxp, .prom or multiloader disk); returns the master's id");
+
+        m.def("zxpoly_status", [](const std::string& id) -> py::object {
+            ZXPolyGroup* group = EmulatorManager::GetInstance()->GetZXPolyGroup(id);
+            if (!group)
+                return py::none();
+            const ZXPolyGroup::Status status = group->GetStatus();
+            py::dict out;
+            out["master_id"] = status.memberIds[0];
+            out["locked"] = status.locked;
+            out["slaves_running"] = status.slavesRunning;
+            out["parallel_slaves"] = status.parallelSlaves;
+            out["pipelined_slaves"] = status.pipelinedSlaves;
+            out["port_3d00"] = status.port3D00;
+            out["video_mode"] = status.videoMode;
+            py::list modules;
+            for (size_t m = 0; m < ZXPolyGroup::MODULES; m++)
+            {
+                py::dict module;
+                module["module"] = m;
+                module["id"] = status.memberIds[m];
+                module["registers"] = std::vector<int>(status.registers[m].begin(), status.registers[m].end());
+                modules.append(module);
+            }
+            out["modules"] = modules;
+            out["diverged"] = status.divergence.diverged;
+            out["divergence"] = status.divergence.what;
+            return std::move(out);
+        }, py::arg("id"), "ZX-Poly group status of any member id (None if not a ZX-Poly machine)");
 
         m.def("emu_get", [](const std::string& id) -> Emulator* {
             auto* mgr = EmulatorManager::GetInstance();
@@ -1611,6 +1654,16 @@ namespace PythonBindings
             .def("audio_covox_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Covox(self.GetContext()));
             }, "Covox / SoundDrive state: fitment, the ports this model decodes, Beta-128 shared ports, DAC latches")
+            .def("audio_moonsound_state", [](Emulator& self, const std::string& part) -> py::object {
+                if (part == "fm")
+                    return StateNodeToPy(DeviceState::MoonSoundFm(self.GetContext()));
+                if (part == "pcm")
+                    return StateNodeToPy(DeviceState::MoonSoundPcm(self.GetContext()));
+                if (!part.empty())
+                    throw py::value_error("part must be '', 'fm' or 'pcm'");
+                return StateNodeToPy(DeviceState::MoonSound(self.GetContext()));
+            }, "MoonSound (OPL4) state: overview (part=''), the FM half (part='fm') or the wavetable half (part='pcm')",
+               py::arg("part") = "")
             // NeoGS media: checked here, carried out on the machine's thread
             // (neogsmedia.h); true when accepted. Insert / eject are refused
             // while a TTD recording runs

@@ -106,6 +106,9 @@ protected:
     DebugManager* _debugManager = nullptr;
     BreakpointManager* _breakpointManager = nullptr;
     FeatureManager* _featureManager = nullptr;  // Feature toggle manager
+    std::atomic<bool> _hiddenGroupMember{false};  // see SetHiddenGroupMember
+    std::mutex _speedInterceptorMutex;
+    std::function<bool(uint8_t)> _speedInterceptor;  // see SetSpeedChangeInterceptor
 
     // Control flow
     volatile bool _stopRequested = false;
@@ -167,6 +170,12 @@ public:
     [[nodiscard]] bool Init();
     void Release();
 
+    /// A hidden member of a multi-instance machine (a ZX-Poly slave): left out
+    /// of instance listings, index lookup and "most recent" selection, but
+    /// still addressable by its ID (debugger, WebAPI)
+    void SetHiddenGroupMember(bool hidden) { _hiddenGroupMember = hidden; }
+    bool IsHiddenGroupMember() const { return _hiddenGroupMember; }
+
     // Timestamp helpers
     void UpdateLastActivity();
     std::chrono::system_clock::time_point GetCreationTime() const;
@@ -185,6 +194,14 @@ public:
     BaseFrequency_t GetSpeed();
     void SetSpeed(BaseFrequency_t speed);
     bool SetSpeedMultiplier(uint8_t multiplier);
+
+    /// A group that runs this instance in lockstep with others (the ZX-Poly
+    /// master) takes host speed changes itself: SetSpeedMultiplier hands the
+    /// validated multiplier to `interceptor`, which queues it for the next frame
+    /// boundary, where the group gives it to every member at once. Without it
+    /// a change written from another thread could reach the master one frame
+    /// before the slaves. An empty function removes it
+    void SetSpeedChangeInterceptor(std::function<bool(uint8_t)> interceptor);
 
     /// @brief Why a recording-destructive action is refused right now (empty when
     /// allowed) - TimeTravelManager::RecordingGuard. The loaders below refuse with
@@ -372,7 +389,10 @@ public:
     void ResetLineStepAnchor();                                               // Clear scanline-step anchor (call when switching away from line stepping)
     void RunUntilNextScreenPixel(bool skipBreakpoints = true);                // Skip vblank/borders to first paper pixel
     void RunUntilInterrupt(bool skipBreakpoints = true);                      // Run until Z80 accepts maskable interrupt (iff1 1→0)
-    void RunUntilCondition(std::function<bool(const Z80State&)> predicate, unsigned maxTStates = 0);
+    /// notifyDebugger = false skips the NC_EXECUTION_CPU_STEP post: for machine-internal
+    /// stepping (a ZX-Poly group advancing its slaves after every master instruction)
+    void RunUntilCondition(std::function<bool(const Z80State&)> predicate, unsigned maxTStates = 0,
+                           bool notifyDebugger = true);
 
     /// Start the current frame again after machine state was replaced from
     /// outside the frame flow (reset, snapshot load). See MainLoop::RestartFrame

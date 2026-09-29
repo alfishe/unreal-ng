@@ -208,6 +208,7 @@ enum PlatformLoaderSubmodulesEnum : uint16_t
     SUBMODULE_LOADER_NONE       = 0x0000,
     SUBMODULE_LOADER_SNA        = 0x0001,
     SUBMODULE_LOADER_Z80        = 0x0002,
+    SUBMODULE_LOADER_ZXP        = 0x0004,
 
     SUBMODULE_LOADER_ALL        = 0xFFFF
 };

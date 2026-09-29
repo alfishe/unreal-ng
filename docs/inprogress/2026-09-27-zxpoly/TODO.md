@@ -102,6 +102,10 @@ in [testdata/machines/zxpoly/](../../../testdata/machines/zxpoly/README.md):
   - the composer should plug into the #42 video mapper interface.
 - Out of scope for v1: the Test ROM's per-CPU tests and MIMD software, which
   need the coupled machine of quad-instance §13.
+- Deferred, low priority (possible later): time travel for ZX-Poly machines
+  (the group timeline exists in the core only; the per-instance TTD commands are not blocked and act on the master alone) and
+  ZX-Poly tiles in the video wall; the risks are in
+  [prototype-results.md §9](prototype-results.md#9-not-done-yet).
 
 ## Trigger for next step
 

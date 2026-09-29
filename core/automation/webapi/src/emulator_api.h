@@ -58,6 +58,9 @@ public:
 
     // Switch machine model (stops current emulator, creates new one with different model)
     ADD_METHOD_TO(EmulatorAPI::switchModel, "/api/v1/emulator/{id}/model", drogon::Post);
+
+    // ZX-Poly group status (four synchronized modules; any member id)
+    ADD_METHOD_TO(EmulatorAPI::getZXPolyStatus, "/api/v1/emulator/{id}/zxpoly", drogon::Get);
     // endregion Lifecycle Management
 
     // region Tape/Disk/Snapshot Control (implementation: api/tape_disk_api.cpp and api/snapshot_api.cpp)
@@ -251,6 +254,10 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getStateFdc, "/api/v1/emulator/{id}/state/fdc", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioFMActive, "/api/v1/emulator/state/audio/fm", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioFMIndexActive, "/api/v1/emulator/state/audio/fm/{chip}", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateAudioMoonSound, "/api/v1/emulator/{id}/state/audio/moonsound", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateAudioMoonSoundPart, "/api/v1/emulator/{id}/state/audio/moonsound/{part}", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateAudioMoonSoundActive, "/api/v1/emulator/state/audio/moonsound", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateAudioMoonSoundPartActive, "/api/v1/emulator/state/audio/moonsound/{part}", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateFdcActive, "/api/v1/emulator/state/fdc", drogon::Get);
     // IDE board (implementation: api/state_device_api.cpp, core DeviceState::Ide)
     ADD_METHOD_TO(EmulatorAPI::getStateIde, "/api/v1/emulator/{id}/state/ide", drogon::Get);
@@ -484,6 +491,10 @@ public:
     // Get emulator details
     void getEmulator(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                      const std::string& id) const;
+
+    /// GET /api/v1/emulator/{id}/zxpoly - the ZX-Poly group the instance belongs to
+    void getZXPolyStatus(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
 
     // Remove an emulator
     void removeEmulator(const drogon::HttpRequestPtr& req,
@@ -867,6 +878,16 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
 
     // Audio state inspection (active emulator - no ID required)
     // TurboSound FM / Beta Disk state (api/state_device_api.cpp)
+    void getStateAudioMoonSound(const drogon::HttpRequestPtr& req,
+                                std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getStateAudioMoonSoundPart(const drogon::HttpRequestPtr& req,
+                                    std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
+                                    const std::string& part) const;
+    void getStateAudioMoonSoundActive(const drogon::HttpRequestPtr& req,
+                                      std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+    void getStateAudioMoonSoundPartActive(const drogon::HttpRequestPtr& req,
+                                          std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                          const std::string& part) const;
     void getStateAudioFM(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getStateAudioFMIndex(const drogon::HttpRequestPtr& req,

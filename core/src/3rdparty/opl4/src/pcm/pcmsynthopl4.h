@@ -89,6 +89,7 @@ public:
         256 /*regs*/ + kSlotCount * sizeof(PcmSlot) /*slots*/ + 16 /*memAdr+egCnt+rsvd*/;
 
     std::array<PcmSlot, kSlotCount>& Slots() { return _slots; }
+    const std::array<PcmSlot, kSlotCount>& Slots() const { return _slots; }
     const std::array<uint8_t, 256>& Regs() const { return _regs; }
     uint32_t MemAdr() const { return _memAdr; }
 

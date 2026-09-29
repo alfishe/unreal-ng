@@ -320,8 +320,8 @@ precedent that new peripherals (MoonSound) also won't get aspects.
 
 ### D-3. Audio device state coverage is 2 of N; MoonSound has nothing
 
-> **GS and Covox done 2026-09-28** (PLAN #20 retired): `DeviceState::Gs()` and
-> `DeviceState::Covox()` rendered by every surface. MoonSound remains (PLAN #11).
+> **Done 2026-09-28**: `DeviceState::Gs()`, `Covox()` (PLAN #20 retired) and
+> `MoonSound()` / `MoonSoundFm()` / `MoonSoundPcm()` (PLAN #11) rendered by every surface.
 >
 > **Re-scoped 2026-09-28** (PLAN #20, #11): the GS report now exists (with
 > NeoGS) but is built separately by each surface with diverging fields; Covox
@@ -437,7 +437,7 @@ nothing encodes what the 2026-09-10 session learned procedurally.
 | C-3 | No port-map introspection (incl. mouse Q4) | High | Medium | ✅ Done — P1-5 (`GET /ports`); parity `ports`/`ports_map()` 2026-09-15 |
 | D-1 | Mouse routing not reported | High (mouse scenario) | Small-Medium | ✅ Done — P2-1 (`routing` field); parity 2026-09-15 |
 | D-2 | No `mouse` aspect | Low | Trivial | ✅ Done — P2-1 |
-| D-3 | DeviceState 2 of N; MoonSound unplanned | High (future) | Design now | Open — P2-2/P2-4 |
+| D-3 | DeviceState 2 of N; MoonSound unplanned | High (future) | Design now | ✅ Done 2026-09-28 (P2-2 reports, P2-4) |
 | E-1 | Bank reporting 7FFD-centric | High | Medium | Open — P1-2 |
 | E-2 | No ROM identification | Medium | Medium | Open — P3-2 (paging-surface half designed: §5.2) |
 | F-1 | No per-machine resources | Medium | Small | Open — P3-1 |

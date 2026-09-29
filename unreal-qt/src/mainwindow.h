@@ -22,6 +22,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorbinding.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/zxpoly/zxpolygroup.h"
 #include "emulator/guiemulatorcontext.h"
 #include "emulator/soundmanager.h"
 #include "logviewer/logwindow.h"
@@ -72,6 +73,10 @@ class MainWindow : public QMainWindow, public Observer
 
 public:
     explicit MainWindow(QWidget* parent = nullptr);
+
+    /// A file named on the command line. zxpolyModel: machine of a ZX-Poly group
+    /// (skips the model question); a .trd/.scl with it boots as a ZX-Poly disk
+    void openFromCommandLine(const QString& filePath, const QString& zxpolyModel);
     virtual ~MainWindow() override;
 
     // Disable object copy
@@ -99,6 +104,8 @@ private slots:
     void handleEmulatorSelectionChanged(int id, Message* message);
     void openFileDialog();
     void openSnapshotDialog();
+    void openZXPolyDialog();
+
     void openTapeDialog();
     void openDiskDialog();
     void openSpecificFile(const QString& filepath);
@@ -150,6 +157,7 @@ private slots:
     void handleOverscanModeToggled(bool enabled);
     void handleViewportChanged(int presetIndex);
     void handleMachineModelChangeRequested(const QString& modelShortName);
+    void handleZXPolyConfigurationRequested(const QString& configurationName);
 
     // Toolbar (transport) handlers
     void handleStartOrResumeRequested();
@@ -315,6 +323,11 @@ private:
     GUIEmulatorContext* _guiContext = nullptr;
     std::shared_ptr<Emulator> _emulator = nullptr;  // TODO: Remove after full binding migration
     uint32_t _lastFrameCount = 0;
+    /// model: a ZX-Poly configuration name or a base model; empty asks. An empty
+    /// filePath starts the bare machine
+    void startZXPoly(const QString& filePath, const QString& model = QString());
+    void releaseZXPolyGroup();
+    bool attachScreenToZXPolyDisplay();
     bool _switchingModel = false;  // True while model switch is in progress (prevents notification handler interference)
 
     QPoint _lastCursorPos;

@@ -253,6 +253,7 @@ private:
 
     // Instance management command handlers
     void HandleStart(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleZXPoly(const ClientSession& session, const std::vector<std::string>& args);
     void HandleStop(const ClientSession& session, const std::vector<std::string>& args);
     void HandleModels(const ClientSession& session, const std::vector<std::string>& args);
     /// model <name> [--ram <kb>] [--stranded save|discard|keep]: switch the

@@ -228,7 +228,7 @@ class ModuleLogger : public Observer
         "Generic",
     };
 
-    const char* submoduleLoaderNames[2] = {"SNA", "Z80"};
+    const char* submoduleLoaderNames[3] = {"SNA", "Z80", "ZXP"};
 
     const char* submoduleDebuggerNames[1] = {
         "Generic",

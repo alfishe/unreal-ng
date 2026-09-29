@@ -87,6 +87,7 @@ signals:
     void openSnapshotRequested();
     void openTapeRequested();
     void openDiskRequested();
+    void openZXPolyRequested();  // ZX-Poly: four synchronized instances (.zxp / multiloader disk)
     void importAudioTapeRequested();  // tape-audio-bridge §7.3: WAV/FLAC/MP3 → .tzx/.tap
     void saveSnapshotRequested();
     void saveSnapshotZ80Requested();
@@ -136,6 +137,7 @@ signals:
 
     // Machine signals
     void machineModelChangeRequested(const QString& modelShortName);
+    void zxpolyConfigurationRequested(const QString& configurationName);  // Machine -> ZXPoly-48k / 128k / Pentagon
     void tapeTrapsToggled(bool enabled);
     void turboTapeToggled(bool enabled);
     void mniRequested();  // Machine -> MNI: NMI + service monitor (plain NMI on other models)
@@ -185,6 +187,7 @@ private:
     QAction* _openSnapshotAction;
     QAction* _openTapeAction;
     QAction* _openDiskAction;
+    QAction* _openZXPolyAction;
     QAction* _importAudioTapeAction;
     QMenu* _saveSnapshotMenu;
     QAction* _saveSnapshotSNAAction;
@@ -244,6 +247,7 @@ private:
     // Machine Menu Actions
     QActionGroup* _machineModelGroup;
     std::vector<QAction*> _machineModelActions;
+    std::vector<QAction*> _zxpolyConfigurationActions;  // data: the configuration name (ZXPolyGroup::Configurations)
     QString _currentModelShortName;
     QAction* _tapeTrapsAction;
     QAction* _mniAction;
