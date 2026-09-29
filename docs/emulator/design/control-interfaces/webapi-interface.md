@@ -279,7 +279,8 @@ The 201 response carries the group status under `zxpoly`. Every member's
 `GET /api/v1/emulator/{id}/zxpoly` (any member id):
 ```json
 {
-  "master_id": "e5dad078-...", "locked": true, "slaves_running": false, "parallel_slaves": true,
+  "master_id": "e5dad078-...", "locked": true, "slaves_running": false,
+  "parallel_slaves": true, "pipelined_slaves": false,
   "port_3d00": 157, "video_mode": 7,
   "modules": [ {"module": 0, "id": "e5dad078-...", "registers": [0, 0, 0, 0]},
                {"module": 1, "id": "f67691a2-...", "registers": [18, 0, 0, 0]}, "..." ],
@@ -287,7 +288,11 @@ The 201 response carries the group status under `zxpoly`. Every member's
 }
 ```
 `divergence` compares each slave's control state (PC, SP, I, IM, IFF1, HALT,
-T-state, `#7FFD`) with the master's. A 404 means no such instance, or it is
+T-state, `#7FFD`) with the master's at the last frame boundary, where all
+four stand at the same position. `parallel_slaves`: the locked slaves run
+their frame at the same time. `pipelined_slaves`: the last frame boundary
+left them running into the master's next frame (unlimited speed only). The
+state at every frame boundary is the same in every schedule. A 404 means no such instance, or it is
 not a ZX-Poly machine.
 
 ### 5b. Switch Model (validate-first)

@@ -297,6 +297,8 @@ namespace PythonBindings
             out["master_id"] = status.memberIds[0];
             out["locked"] = status.locked;
             out["slaves_running"] = status.slavesRunning;
+            out["parallel_slaves"] = status.parallelSlaves;
+            out["pipelined_slaves"] = status.pipelinedSlaves;
             out["port_3d00"] = status.port3D00;
             out["video_mode"] = status.videoMode;
             py::list modules;

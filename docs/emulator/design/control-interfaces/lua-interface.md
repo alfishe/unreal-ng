@@ -67,6 +67,7 @@ The Lua bindings operate on the existing emulator instance (`get_emulator()`); t
 local id, err = zxpoly_start("ZXPOLY-PENTAGON", "/path/to/Alien8.zxp")  -- model and file optional; id = the master
 local status = zxpoly_status(id)   -- nil if not a ZX-Poly machine
 print(status.locked, status.video_mode, status.diverged, status.modules[2].registers[1])
+print(status.parallel_slaves, status.pipelined_slaves)   -- how the slaves are scheduled
 ```
 The model is a configuration name (`ZXPOLY-48K`, `ZXPOLY-128K`,
 `ZXPOLY-PENTAGON`) or a base model such as `PENTAGON`.

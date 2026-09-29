@@ -75,6 +75,7 @@ Json::Value ZXPolyStatusJson(const ZXPolyGroup::Status& status)
     out["locked"] = status.locked;
     out["slaves_running"] = status.slavesRunning;
     out["parallel_slaves"] = status.parallelSlaves;
+    out["pipelined_slaves"] = status.pipelinedSlaves;
     out["port_3d00"] = static_cast<Json::UInt>(status.port3D00);
     out["video_mode"] = static_cast<Json::UInt>(status.videoMode);
 

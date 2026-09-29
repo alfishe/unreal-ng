@@ -53,7 +53,7 @@ emulator_manage {"action":"list_models"}                    # configurations car
 
 emulator_manage {"action":"zxpoly_status"}
 #   → modules (ids, platform registers R0-R3), #3D00, locked, video_mode,
-#     slaves_running, divergence {diverged, module, what}
+#     slaves_running, parallel_slaves, pipelined_slaves, divergence {diverged, module, what}
 
 capture_media {"what":"screenshot"}   # the master's framebuffer carries the composed picture
 type_input {"text":"1"}               # keys reach all four modules at the frame boundary
@@ -105,7 +105,9 @@ status = zxpoly_status(id)          # dict, None if not a ZX-Poly machine
   their own code while the program coordinates them through the platform
   ports, as the Test ROM does.
 - **`divergence`:** compares the control state of every slave with the
-  master: PC, SP, I, IM, IFF1, HALT, T-state and `#7FFD`. A split means the
+  master at the last frame boundary: PC, SP, I, IM, IFF1, HALT, T-state and
+  `#7FFD`. A running master is already inside its next frame, so the
+  boundary is the one point where all four stand together. A split means the
   program branched on data that differs per module (its graphics). That is
   the content boundary of the platform, not an emulator fault. Data
   registers are not compared: mid-draw they legitimately hold per-module
@@ -113,6 +115,10 @@ status = zxpoly_status(id)          # dict, None if not a ZX-Poly machine
 - **After a reset:** a reset of the master is a system reset. `#3D00` goes to
   0, and the master alone is shown until a multiloader locks the machine
   again.
+- **Schedule:** `parallel_slaves` means the locked slaves run their frame at
+  the same time. `pipelined_slaves` means, at unlimited speed (turbo), their
+  frame also overlaps the master's next one. The state at every frame
+  boundary is the same either way.
 - **No time travel:** time travel is not supported on ZX-Poly machines
   (deferred). `time_travel` is not blocked, but it acts on the master
   alone: a seek splits the master from the slaves. Do not use it here.

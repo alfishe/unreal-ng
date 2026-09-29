@@ -1138,6 +1138,10 @@ void CLIProcessor::HandleZXPoly(const ClientSession& session, const std::vector<
        << "  video mode: " << static_cast<int>(status.videoMode)
        << "  slaves: " << (status.locked ? "running (locked)" : (status.slavesRunning ? "running" : "waiting"))
        << NEWLINE;
+    if (status.locked)
+        ss << "  schedule: " << (status.pipelinedSlaves ? "pipelined (unlimited speed)"
+                                 : status.parallelSlaves ? "parallel" : "sequential")
+           << NEWLINE;
     for (size_t m = 0; m < ZXPolyGroup::MODULES; m++)
     {
         ss << "  CPU" << m << " " << status.memberIds[m] << "  R0-R3:";

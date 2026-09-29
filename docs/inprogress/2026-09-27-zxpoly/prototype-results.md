@@ -173,7 +173,7 @@ Tests: `ConfigurationsCreateTheGroupByName`,
 
 > **Status:** the mechanism is built and tested in the core, but time travel
 > is not supported for ZX-Poly machines: no surface calls the group timeline.
-> It is deferred with low priority; see [§8](#8-not-done-yet).
+> It is deferred with low priority; see [§9](#9-not-done-yet).
 
 The four TTD sessions run as one timeline (QI §8):
 
@@ -207,12 +207,126 @@ Surfaces: WebAPI (`start` with `zxpoly`, `GET /{id}/zxpoly`), MCP
 [.recipe/machines/zxpoly.md](../../../.recipe/machines/zxpoly.md). The group
 timeline is a core API only (no surface calls it).
 
-## 8. Not done yet
+## 8. Frame scheduling
 
-- **Pipelined frame scheduling:** once locked, the three slaves catch up in
-  parallel at every frame end (on by default, `SetParallelSlaves`). The
-  master still waits for them before its next frame; overlapping the slaves
-  with the master's next frame is not done.
+Locked, the slaves run on three worker threads kept for the life of the
+group (`ZXPolyWorkers`). The schedule depends on the speed:
+
+- **Normal speed: parallel.** After the master's frame the three slaves run
+  theirs at the same time, and the master waits for them before it goes on.
+  The frame fits in the budget with room to spare, and the picture has no
+  delay.
+- **Unlimited speed (the master in turbo): pipelined.** The slaves run their
+  frame while the master already runs the next one. The group waits for them
+  one boundary later, or at once when something needs them:
+  - a shown frame (its picture needs all four);
+  - a master read of a slave's R0;
+  - status, lockstep check and composing;
+  - loading, reset and the debug logs.
+
+**The rule that keeps it exact.** Every module has the same state at every
+frame boundary in every schedule. Three things make that hold:
+
+- **Input** of a boundary: the master takes it at once, each slave when it
+  reaches that boundary.
+- **R0 status:** a master read of a slave's R0 sees the slave at the last
+  boundary. A slave read of the master's R0 sees the master's status as it
+  was at that boundary (a snapshot).
+- **Floating bus:** the master's reads are kept for the current and the
+  previous frame, behind a lock.
+
+Tests, each mutation-checked:
+
+- `PipelinedSlavesMatchSynchronousSlaves`: Summer Santa, with keys queued
+  in the middle of frames. Registers, all eight RAM pages and the picture
+  of all four modules match the synchronous schedule.
+- `StatusReadsMatchWhilePipelined`: the master reads a slave's R0 and the
+  slaves read the master's; the logged values match.
+- `FloatingBusValueComesFromTheMasterWhilePipelined`.
+
+Benchmark `core/benchmarks/emulator/zxpoly_benchmark.cpp`: Summer Santa on
+4×Pentagon, unlimited speed, wall time per frame (Release, Apple Silicon):
+
+| Schedule | Per frame | vs. parallel |
+|:--|--:|--:|
+| sequential | 4.8 ms | 0.5× |
+| parallel | 2.4–2.5 ms | 1× |
+| **pipelined** | **1.4 ms** | **1.75×** |
+| the master alone (the floor) | 1.15 ms | — |
+
+At normal speed with rendering, a group frame takes 3.7 ms of the 20 ms
+budget.
+
+Two notes:
+
+- The worker pool itself gains nothing measurable over a `std::async` per
+  slave per frame (within ±1%). It is what makes the pipelined schedule
+  possible.
+- The per-instruction hook (line capture) costs 3–5% of a master frame.
+
+**The host speed control (×2…×16).** It stretches a frame to N machine
+frames at the same 20 ms pacing. Before this change only the master took
+the multiplier: the slaves' frames stayed short and the machine diverged
+at once. Seen live: `PC master=#AA6A slave=#AA5B` on the first status
+request at ×2. Now the slaves take the master's queued multiplier at every
+boundary, so all four apply it at the same frame start. The slave's
+safety limit is scaled by the multiplier too; at ×4 a fixed two-frame
+limit stopped a slave short of the master. Test:
+`SpeedMultiplierKeepsTheSlavesInStep` changes ×2 → ×4 → ×1 → ×8
+mid-run, in both schedules, and is mutation-checked.
+
+Copying the multiplier alone was not enough live. The UI, WebAPI or CLI
+writes it from their own thread at any moment. The group copies it at the
+start of the master's frame-end hook, but the master applies it only after
+the hook. At ×4 and above the slaves' frame fills most of that hook, so a
+change almost always landed in the window: the master took it one frame
+before the slaves, and the machine diverged for good. Now
+`Emulator::SetSpeedMultiplier` hands a group master's change to the group
+(`SetSpeedChangeInterceptor`). The group queues it like input, and on the
+master's thread gives it to the master and then to the slaves at one
+boundary. Test: `SpeedChangeDuringTheFrameHookReachesAllFourTogether`
+runs the master through its own frame loop and requests speeds from a
+slave's worker thread during the hook. It is mutation-checked: without the
+interceptor it fails at frame 0.
+
+Every stretched frame is shown, so these speeds run synchronously. Measured
+per host frame against the 20.48 ms budget
+(`BM_ZXPolySpeedMultiplierFrame`):
+
+| Speed | Parallel (used) | With overlap (measured, not used) |
+|:--|--:|--:|
+| ×1 | 3.5 ms | 3.4 ms |
+| ×2 | 5.6 ms | 4.0 ms |
+| ×4 | 9.7 ms | 7.1 ms |
+| ×8 | 17.8 ms | 12.8 ms |
+| ×16 | 30.7 ms (runs at about ×10.7) | 21.0 ms |
+
+Overlap would only pay at ×16, and there it would cost a picture one host
+frame late. Screenshots and recording would lag with it. Turbo is the
+faster way to run ahead: pipelined, 1.4–1.65 ms per machine frame, against
+1.9 ms per machine frame at ×16. So the host speed control stays
+synchronous, with an exact picture.
+
+**Lockstep at the boundary.** The check compares each slave with the
+master's control state as it was at the last frame boundary. Each slave is
+compared once it reaches that boundary. Before this change it compared the
+live master. A status request from another thread (WebAPI, MCP) then caught
+a running master inside its next frame: in turbo, 5 of 20 requests reported
+a false divergence, on the pre-pipeline build too. Now 0 of 20, and a slave
+on another branch is still detected (`LockstepIsCheckedAtTheFrameBoundary`,
+mutation-checked).
+
+**Known limit (not new):** locked, a slave reading *another slave's* R0
+reads a module running at the same time. Its value depends on thread
+timing in both the parallel and the pipelined schedule.
+
+## 9. Not done yet
+
+- **Line capture at ×2…×16:** `CaptureLines` compares the CPU's T, which
+  is scaled by the host speed multiplier, with unscaled line positions. A
+  stretched frame therefore captures its paper lines in its first 1/N. The
+  lockstep is not affected, only which moment of the stretched frame the
+  composed picture shows.
 
 **Deferred (possible later, low priority).** Both carry many risks for
 little gain now:
