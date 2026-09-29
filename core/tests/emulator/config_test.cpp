@@ -410,7 +410,9 @@ TEST_F(Config_Test, ShippedConfigsFitTheirIdeBoard)
         Config config(_context);
         ASSERT_TRUE(config.LoadConfigFile(ini.string())) << ini;
         EXPECT_EQ(_context->config.ide_scheme, scheme) << folder;
-        EXPECT_EQ(_context->config.ide[1].cd, 0) << folder << ": no machine ships a CD drive";
+        // Only ZX-Evo ships a CD drive: the slave, where the ERS "D. CD boot" looks for it
+        EXPECT_EQ(_context->config.ide[1].cd, folder == "atm3" ? 1 : 0) << folder;
+        EXPECT_EQ(_context->config.ide[0].cd, 0) << folder << ": the master is a hard disk";
     }
 }
 

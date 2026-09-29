@@ -15,6 +15,7 @@ PLAN.md rows **#58** (M6) and **#13a** (Profi IDE).
 Follow-ups (not in rollout 1):
 - [ ] NedoOS from a Nemo / NemoIDE hard disk image and from a folder (R5): needs a NedoOS HDD image or an HDD-booting build
 - [ ] NedoOS reading a CD (R7): which NedoOS build and driver (IDE design Q9)
+- [x] ZX-Evo ships its CD drive on the slave (`CD1=1`); the ERS sees the disc ejected (NOT READY / medium not present, retries) and inserted again (UNIT ATTENTION, then boots): `ZXEvoErs_Test.CdBootSeesTheDiscEjectedAndInsertedAgain`
 - [x] TTD fixture corpus re-recorded with the IDE board (2026-09-28; the analyzer knows id 17)
 - [x] Profi geometry from the `ProfiHiDD` header (LBA 256: 16 x 16, LBA 1008: 16 x 63), else 16 x 16 (IDE design §8.3); `profi_hdd_test` runs without `CHS0`
 - [x] Adapter fuzzing: seeded random traffic on every scheme (`IdeAdapter_Test.RandomPortTrafficIsSafe`); the cross-emulator differential harness (IDE design §12.6) stays open

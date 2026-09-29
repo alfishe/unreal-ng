@@ -159,9 +159,9 @@ Each unit is a **hard disk** unless the config says it is a **CD-ROM drive**: `C
 or an `.iso` configured as the unit's image. An empty unit changes its drive with the insert
 option `device=cdrom` / `device=disk` (the Qt media panel asks when you drop an ISO on a disk unit);
 the change lasts for this machine's session (a reset keeps it; a new machine or a model switch starts
-from the config file). A CD drive in the slave position is the usual ZX-Evo
-setup (the ERS boots from it); no machine ships with one, because an empty drive changes what some
-firmware does at boot.
+from the config file). ZX-Evo ships with a CD drive in the slave position
+(`CD1=1`), where the ERS "D. CD boot" looks for it; the other machines ship without one, because
+an empty drive changes what some firmware does at boot.
 
 | Unit | Kind | Takes | Default access | Removable |
 |---|---|---|---|---|
@@ -174,8 +174,9 @@ one for the size (16 heads, 63 sectors). On the Profi board a disk's own ProfiHi
 `HD0RO=1` makes the master read-only (WRITE aborts, like a jumper on the drive). The legacy
 `Image0` / `Image1` keys work as `[MEDIA] ide0.master` / `ide0.slave`.
 
-Example: `media insert hd ~/zx/nedoos.img` puts an image on the master; on ZX-Evo with `CD1=1`,
-`media insert cd ~/zx/disc.iso` and the ERS "D. CD boot" runs the disc's `AUTORUN.ZX`.
+Example: `media insert hd ~/zx/nedoos.img` puts an image on the master; on ZX-Evo
+`media insert cd ~/zx/disc.iso` and the ERS "D. CD boot" runs the disc's `AUTORUN.ZX`. Started with the
+drive empty, the ERS keeps retrying; insert a disc and it boots.
 
 `state ide` (WebAPI `/state/ide`, Lua / Python `ide_state()`, MCP aspect `ide`) shows the board,
 its latches and each unit's task file, command in progress and, on a CD drive, the sense data.

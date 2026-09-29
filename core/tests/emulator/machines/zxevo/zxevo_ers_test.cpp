@@ -33,10 +33,12 @@
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/fatimagebuilder.h"
 #include "_helpers/scratchfolder.h"
+#include "emulator/io/ide/ata/atapicdrom.h"
 #include "emulator/io/ide/idecontroller.h"
 #include "emulator/io/storage/fat/fatvolumereader.h"
 #include "emulator/io/storage/rawimage.h"
 #include "emulator/media/mediamanager.h"
+#include "emulator/state/devicestate.h"
 #include "pch.h"
 #include "stdafx.h"
 
@@ -834,9 +836,7 @@ TEST_F(ZXEvoErs_Test, CdBootRunsAutorunFromAnIso)
     const std::string iso = Utf8(folder.File("boot.iso", MakeIso(code)));
 
     Create();
-    // The slave as a CD drive (CD1=1), as a ZX-Evo with a CD-ROM is set up
-    _context->config.ide[1].cd = 1;
-    _context->pCore->RefitIde();
+    ASSERT_EQ(_context->config.ide[1].cd, 1) << "the shipped config fits the slave as a CD drive (CD1=1)";
     MediaSource source;
     source.path = iso;
     InsertOptions options;
@@ -853,4 +853,52 @@ TEST_F(ZXEvoErs_Test, CdBootRunsAutorunFromAnIso)
     EXPECT_EQ(memory->DirectReadFromZ80Memory(0x9000), 0xB0) << "entered with A = #B0 (slave)";
     EXPECT_EQ(memory->DirectReadFromZ80Memory(0x9001), 0xDE);
     EXPECT_EQ(memory->DirectReadFromZ80Memory(0x9002), 0xC0);
+}
+
+/// ERS-CD-2: the shipped ZX-Evo has its CD drive (the slave), and the ERS
+/// sees the disc go and come back. With the disc ejected, "D. CD boot" gets
+/// NOT READY / medium not present (sense 2/#3A) and keeps retrying READ (10);
+/// a disc inserted as a user would (with the swap delay) raises UNIT ATTENTION
+/// / medium changed (6/#28), which the ERS clears, then it boots AUTORUN.ZX.
+/// Real-ROM boot plus a CD load: slower than 50 ms by nature
+TEST_F(ZXEvoErs_Test, CdBootSeesTheDiscEjectedAndInsertedAgain)
+{
+    const std::vector<uint8_t> code = {0xF3, 0x32, 0x00, 0x90, 0x21, 0xDE, 0xC0, 0x22, 0x01, 0x90, 0x18, 0xFE};
+    ScratchFolder folder("zxevo-cdeject");
+    MediaSource source;
+    source.path = Utf8(folder.File("boot.iso", MakeIso(code)));
+
+    Create();
+    ASSERT_EQ(_context->config.ide[1].cd, 1) << "the shipped config fits the slave as a CD drive";
+    InsertOptions now;
+    now.immediate = true;
+    ASSERT_TRUE(_context->pMediaManager->Insert("ide0.slave", source, now).Ok());
+    ASSERT_TRUE(RunToMainMenu());
+    ASSERT_TRUE(_context->pMediaManager->Eject("ide0.slave").Ok());
+    EXPECT_FALSE(_context->pMediaManager->Info("ide0.slave")->present);
+
+    auto atapi = [&] {
+        const StateNode report = DeviceState::Ide(_context);
+        return *report.find("units")->items[1].find("atapi");
+    };
+
+    Tap(ZXKEY_D);  // "D. CD boot" with the drive empty
+    Z80* z80 = _context->pCore->GetZ80();
+    _emulator->RunNFrames(100, true);
+    ASSERT_NE(z80->pc, 0x600A) << "booted without a disc";
+    StateNode drive = atapi();
+    EXPECT_FALSE(drive.find("disc")->b);
+    EXPECT_EQ(drive.find("sense_key")->i, AtapiCdrom::kSenseNotReady);
+    EXPECT_EQ(drive.find("asc")->i, AtapiCdrom::kAscMediumNotPresent);
+    EXPECT_EQ(drive.find("last_packet")->s.substr(0, 2), "28") << "the ERS keeps retrying READ (10)";
+
+    ASSERT_TRUE(_context->pMediaManager->Insert("ide0.slave", source).Ok());  // with the swap delay
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return z80->pc == 0x600A; }, 600);
+    ASSERT_EQ(z80->pc, 0x600A) << "AUTORUN.ZX did not run after the disc came back";
+    EXPECT_EQ(_context->pMemory->DirectReadFromZ80Memory(0x9000), 0xB0) << "entered with A = #B0 (slave)";
+    drive = atapi();
+    EXPECT_TRUE(drive.find("disc")->b);
+    EXPECT_FALSE(drive.find("unit_attention")->b) << "the ERS cleared the unit attention";
+    EXPECT_EQ(drive.find("sense_key")->i, AtapiCdrom::kSenseUnitAttention) << "the swap was reported";
+    EXPECT_EQ(drive.find("asc")->i, AtapiCdrom::kAscMediumChanged);
 }
