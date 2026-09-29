@@ -14,6 +14,9 @@
 #include <QSettings>
 #include <QTimer>
 #include <functional>
+#include <mutex>
+#include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "3rdparty/message-center/messagecenter.h"
@@ -322,6 +325,14 @@ private:
     AppSoundManager* _soundManager = nullptr;
     GUIEmulatorContext* _guiContext = nullptr;
     std::shared_ptr<Emulator> _emulator = nullptr;  // TODO: Remove after full binding migration
+
+    /// Instances the manager announced as destroyed (NC_EMULATOR_INSTANCE_DESTROYED,
+    /// recorded on the MessageCenter worker before the instance is released). An
+    /// adoption queued before the removal may run after it: adoptEmulator()
+    /// refuses these instead of binding the UI to a released instance
+    std::mutex _destroyedEmulatorIdsMutex;
+    std::unordered_set<std::string> _destroyedEmulatorIds;
+    bool isEmulatorGone(const std::shared_ptr<Emulator>& emulator);
     uint32_t _lastFrameCount = 0;
     /// model: a ZX-Poly configuration name or a base model; empty asks. An empty
     /// filePath starts the bare machine

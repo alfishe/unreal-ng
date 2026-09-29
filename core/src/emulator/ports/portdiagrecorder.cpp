@@ -119,9 +119,10 @@ void PortActivitySummary::reset(uint32_t frame)
 
 void PortDiagnosticRecorder::start()
 {
-    // Recreate the ring buffer so produced/evicted counters restart with the session
-    // (RingBuffer::clear() intentionally preserves them)
-    _events = std::make_unique<RingBuffer<PortTraceEvent>>(_capacity);
+    // Restart the ring in place so produced/evicted counters restart with the
+    // session (RingBuffer::clear() intentionally preserves them). Never replace
+    // the object: the emulator thread may be pushing into it right now
+    _events->reset(_capacity.load(std::memory_order_relaxed));
     _totalFiltered.store(0, std::memory_order_relaxed);
     _autoStopped.store(false, std::memory_order_release);
     _sessionState.store(PortTraceSessionState::Capturing, std::memory_order_release);
@@ -149,6 +150,12 @@ void PortDiagnosticRecorder::clear()
     _events->clear();
 }
 
+void PortDiagnosticRecorder::releaseBuffer()
+{
+    stop();
+    _events->reset(0);
+}
+
 /// endregion </Session control>
 
 /// region <Configuration>
@@ -158,8 +165,8 @@ bool PortDiagnosticRecorder::setCapacity(size_t events)
     if (events == 0 || getSessionState() != PortTraceSessionState::Stopped)
         return false;
 
-    _capacity = events;
-    _events = std::make_unique<RingBuffer<PortTraceEvent>>(_capacity);
+    _capacity.store(events, std::memory_order_relaxed);
+    _events->reset(events);
 
     return true;
 }

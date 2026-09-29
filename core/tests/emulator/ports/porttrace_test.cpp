@@ -10,6 +10,8 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <atomic>
+#include <thread>
 #include <vector>
 
 /// Tests for the Port Diagnostic Recorder (runtime feature "porttrace").
@@ -123,10 +125,85 @@ TEST_F(PortTrace_Test, FeatureToggleInstantiatesAndReleasesRecorder)
 
     _portDecoder->DecodePortOut(0xFFFD, 0xFE, 0x1234);
 
-    // Toggle on again: fresh recorder
+    // Toggle on again: the same recorder, its buffer empty
     recorder = enablePortTrace();
     ASSERT_NE(recorder, nullptr);
     EXPECT_EQ(recorder->eventCount(), 0u);
+}
+
+/// The recorder a thread obtained stays valid: switching the feature off and
+/// on, and changing any other feature (every change reaches UpdateFeatureCache),
+/// keeps the same object. Deleting and re-creating it there left the emulator
+/// thread and automation handlers with a dangling pointer (ASan: use-after-free
+/// in PortDiagnosticRecorder::start after the UI toggled the HUD feature)
+TEST_F(PortTrace_Test, RecorderObjectSurvivesFeatureChanges)
+{
+    PortDiagnosticRecorder* first = enablePortTrace();
+    ASSERT_NE(first, nullptr);
+    first->start();
+    _portDecoder->DecodePortOut(0xFFFD, 0x07, 0x8000);
+    EXPECT_EQ(first->eventCount(), 1u);
+
+    ASSERT_TRUE(_featureManager->setFeature(Features::kHud, true));
+    ASSERT_TRUE(_featureManager->setFeature(Features::kHud, false));
+    EXPECT_EQ(_portDecoder->getPortTraceRecorder(), first) << "another feature's change must not replace it";
+
+    ASSERT_TRUE(_featureManager->setFeature(Features::kPortTrace, false));
+    EXPECT_FALSE(first->isCapturing()) << "switch-off stops capture";
+    EXPECT_EQ(first->eventCount(), 0u) << "and frees the buffer";
+    first->start();  // a stale holder may still call in: harmless, nothing is recorded while off
+    _portDecoder->DecodePortOut(0xFFFD, 0x07, 0x8000);
+    EXPECT_EQ(first->eventCount(), 0u);
+
+    PortDiagnosticRecorder* again = enablePortTrace();
+    EXPECT_EQ(again, first) << "the same object comes back";
+}
+
+/// Feature changes from several threads while the emulator thread records:
+/// the lifecycle is serialized and the recorder never goes away under a user.
+/// Under AddressSanitizer this caught the use-after-free; without it the test
+/// still checks that every pointer handed out is the one live recorder.
+/// ~100 ms, over the 50 ms budget: three real threads have to interleave for
+/// the race to be exercised at all
+TEST_F(PortTrace_Test, ConcurrentFeatureChangesKeepOneRecorder)
+{
+    std::atomic<bool> stop{false};
+    std::atomic<int> mismatches{0};
+    PortDiagnosticRecorder* expected = enablePortTrace();
+    ASSERT_NE(expected, nullptr);
+
+    std::thread emulatorThread([&]() {
+        while (!stop.load())
+            _portDecoder->DecodePortOut(0xFFFD, 0x07, 0x8000);
+    });
+    std::thread automationThread([&]() {
+        for (int i = 0; i < 60; i++)
+        {
+            if (PortDiagnosticRecorder* r = _portDecoder->getPortTraceRecorder())
+            {
+                if (r != expected)
+                    mismatches++;
+                r->start();
+                (void)r->getLast(16);
+                r->stop();
+            }
+        }
+    });
+    std::thread uiThread([&]() {
+        for (int i = 0; i < 60; i++)
+        {
+            _featureManager->setFeature(Features::kHud, (i & 1) != 0);
+            _featureManager->setFeature(Features::kPortTrace, (i % 7) != 0);
+        }
+        _featureManager->setFeature(Features::kPortTrace, true);
+    });
+    uiThread.join();
+    automationThread.join();
+    stop.store(true);
+    emulatorThread.join();
+
+    EXPECT_EQ(mismatches.load(), 0);
+    EXPECT_EQ(_portDecoder->getPortTraceRecorder(), expected);
 }
 
 TEST_F(PortTrace_Test, NoCaptureWhileSessionStopped)
