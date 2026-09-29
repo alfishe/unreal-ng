@@ -882,7 +882,7 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["aspects"]["items"]["type"] = "string";
     Json::Value allowed(Json::arrayValue);
     for (const char* aspect : {"machine", "registers", "memory", "memory_map", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "video",
-                               "screen", "screen_flash", "screen_ocr", "screen_image", "screen_digest", "timing", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "fdc", "mouse",
+                               "screen", "screen_flash", "screen_ocr", "screen_image", "screen_digest", "timing", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "mouse",
                                "ttd", "contention"})
     {
         allowed.append(aspect);
@@ -901,7 +901,10 @@ void RegisterInspectState(ToolRegistry& registry)
         "channels, operators, envelopes, key-on), 'audio_gs' = General Sound card (mailbox flags, MPAG page, DAC channels, "
         "coprocessor core, and a 'neogs' object with windows, clock, SD card, MP3 decoder and DMA on the NeoGS card; "
         "reports unavailable when the card is not fitted), 'audio_covox' = Covox / SoundDrive (fitment, the ports this model "
-        "decodes, ports shared with Beta-128, the four DAC latches), 'fdc' = Beta Disk WD1793 registers, status, FSM, drives, 'mouse' = "
+        "decodes, ports shared with Beta-128, the four DAC latches), 'audio_moonsound' = MoonSound OPL4 overview (NEW/NEW2, "
+        "address latches, #F8/#F9 mix, wave memory, keyed FM channels and PCM slots), 'audio_opl4_fm' = its 18 FM channels "
+        "(F-number, block, Hz, key-on, feedback, route, timers, register banks), 'audio_opl4_pcm' = its 24 wavetable slots "
+        "(wave, octave, playback rate, key-on, level, pan, addresses, envelope), 'fdc' = Beta Disk WD1793 registers, status, FSM, drives, 'mouse' = "
         "Kempston mouse state incl. port routing (fitted vs shadowed), 'ttd' = time-travel session: state "
         "(idle/recording/detached), recorded frame range, checkpoint count, current position (use the time_travel tool to act on it).";
     schema["properties"]["target"]["type"] = "string";
@@ -936,7 +939,7 @@ void RegisterInspectState(ToolRegistry& registry)
         "paging state (tagged latches + bank table), static port map with tags (ports), video mode (video: resolution, colour depth, "
         "memory layout, displayed RAM pages, #EFF7/#DFFD/#FF77), screen state (screen: active screen and RAM pages, per-screen "
         "Z80 mapping, #7FFD, contention), FLASH timing (screen_flash), screen OCR text, screen image metadata, screen digest hash, raster timing, "
-        "ROM signatures, AY/SSG chips (audio_ay), TurboSound FM YM2203 halves (audio_fm), General Sound card (audio_gs), Covox / SoundDrive (audio_covox), Beta Disk WD1793 (fdc), "
+        "ROM signatures, AY/SSG chips (audio_ay), TurboSound FM YM2203 halves (audio_fm), General Sound card (audio_gs), Covox / SoundDrive (audio_covox), MoonSound OPL4 (audio_moonsound, audio_opl4_fm, audio_opl4_pcm), Beta Disk WD1793 (fdc), "
         "Kempston mouse + port routing (mouse), time-travel session state and position (ttd), memory contention: rule, switch, "
         "interface, contended slots, per-kind waits while debugging (contention). Combine aspects to reduce round-trips.",
         std::move(schema),
@@ -960,11 +963,12 @@ void RegisterInspectState(ToolRegistry& registry)
                 if (aspect != "machine" && aspect != "registers" && aspect != "memory" && aspect != "memory_map" && aspect != "disasm" && aspect != "stack" &&
                     aspect != "breakpoints" && aspect != "memory_banks" && aspect != "paging" && aspect != "ports" && aspect != "video" &&
                     aspect != "screen" && aspect != "screen_flash" && aspect != "screen_ocr" && aspect != "screen_image" && aspect != "screen_digest" && aspect != "timing" && aspect != "rom" && aspect != "audio_ay" &&
-                    aspect != "audio_fm" && aspect != "audio_gs" && aspect != "audio_covox" && aspect != "fdc" && aspect != "mouse" && aspect != "ttd" && aspect != "contention")
+                    aspect != "audio_fm" && aspect != "audio_gs" && aspect != "audio_covox" && aspect != "audio_moonsound" && aspect != "audio_opl4_fm" &&
+                    aspect != "audio_opl4_pcm" && aspect != "fdc" && aspect != "mouse" && aspect != "ttd" && aspect != "contention")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, audio_gs, audio_covox, fdc, mouse, ttd, contention"));
+                                            "screen, screen_flash, screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, mouse, ttd, contention"));
                     return;
                 }
             }
@@ -1309,6 +1313,20 @@ void RegisterInspectState(ToolRegistry& registry)
                                 });
                             });
                         }
+                        else if (aspect == "audio_moonsound" || aspect == "audio_opl4_fm" || aspect == "audio_opl4_pcm")
+                        {
+                            // MoonSound via the WebAPI (DeviceState::MoonSound*); 404 = not fitted
+                            const std::string path = aspect == "audio_opl4_fm"    ? "/state/audio/moonsound/fm"
+                                                     : aspect == "audio_opl4_pcm" ? "/state/audio/moonsound/pcm"
+                                                                                  : "/state/audio/moonsound";
+                            steps.push_back([&caller, id, aspect, path](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, path), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
                         else if (aspect == "audio_covox")
                         {
                             // Covox / SoundDrive via the WebAPI (DeviceState::Covox); 404 = not fitted
@@ -1498,6 +1516,35 @@ void RegisterInspectState(ToolRegistry& registry)
                                     for (Json::ArrayIndex i = 0; i < gsChannels.size(); ++i)
                                         out << "\n  ch" << i << ": sample " << gsChannels[i]["sample"].asUInt()
                                             << " vol " << gsChannels[i]["volume"].asUInt();
+                                }
+                            }
+                            else if (aspect == "audio_moonsound" || aspect == "audio_opl4_fm" || aspect == "audio_opl4_pcm")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[" << aspect << "] " << value["description"].asString();
+                                else if (aspect == "audio_moonsound")
+                                {
+                                    out << "\n[audio_moonsound] NEW " << (value["new_mode"].asBool() ? "on" : "off") << ", NEW2 "
+                                        << (value["new2_mode"].asBool() ? "on" : "off") << ", FM keyed "
+                                        << value["fm_keyed_channels"].size() << ", PCM keyed " << value["pcm_keyed_slots"].size()
+                                        << ", wave RAM " << value["wave_memory"]["ram_bytes"].asUInt64() / 1024 << " KB";
+                                }
+                                else if (aspect == "audio_opl4_fm")
+                                {
+                                    out << "\n[audio_opl4_fm]";
+                                    for (const Json::Value& ch : value["channels"])
+                                        if (ch["key_on"].asBool())
+                                            out << "\n  ch" << ch["channel"].asUInt() << ": " << ch["frequency_hz"].asDouble()
+                                                << " Hz (fnum " << ch["fnum"].asUInt() << ", block " << ch["block"].asUInt() << ")";
+                                }
+                                else
+                                {
+                                    out << "\n[audio_opl4_pcm]";
+                                    for (const Json::Value& slot : value["slots"])
+                                        if (slot["key_on"].asBool())
+                                            out << "\n  slot" << slot["slot"].asUInt() << ": wave " << slot["wave"].asUInt()
+                                                << ", " << slot["playback_rate_hz"].asDouble() << " Hz, "
+                                                << slot["envelope"]["phase"].asString();
                                 }
                             }
                             else if (aspect == "audio_covox")

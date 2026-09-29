@@ -493,28 +493,105 @@ TEST(DeviceStateCovox_Test, PentagonSoundDriveSharesTwoPortsWithBeta128)
 
 TEST(DeviceStateCovox_Test, PortsFollowTheModelsDecoder)
 {
-    // ZX-Evo decodes only the #FB DAC; the 128K fits the SoundDrive in its
-    // config, but its decoder routes no port to it - the report says so
-    for (const auto& [model, expectShared] : {std::pair<const char*, bool>{"ATM3", false}, {"128k", false}})
+    // ZX-Evo decodes only the #FB DAC
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("ATM3", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    const StateNode covox = DeviceState::Covox(emulator->GetContext());
+    ASSERT_TRUE(covox.find("available")->b);
+    const StateNode* ports = covox.find("ports");
+    ASSERT_FALSE(ports->items.empty());
+    for (const StateNode& p : ports->items)
+        EXPECT_EQ(p.find("port")->i & 0xFF, 0xFB);
+    EXPECT_TRUE(covox.find("shared_with_beta128")->items.empty());
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+TEST(DeviceStateCovox_Test, SinclairModelsFitNoCovox)
+{
+    // The Sinclair decoders route no Covox / SoundDrive port, so their configs
+    // do not fit one (SD=0, CovoxFB=0) and the report says it is absent
+    for (const char* model : {"48K", "128k", "PLUS2", "PLUS2A", "PLUS3"})
     {
         Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
         ASSERT_NE(emulator, nullptr) << model;
         const StateNode covox = DeviceState::Covox(emulator->GetContext());
-        ASSERT_TRUE(covox.find("available")->b) << model;
-        const StateNode* ports = covox.find("ports");
-        if (std::string(model) == "ATM3")
-        {
-            ASSERT_FALSE(ports->items.empty()) << model;
-            for (const StateNode& p : ports->items)
-                EXPECT_EQ(p.find("port")->i & 0xFF, 0xFB) << model;
-        }
-        else
-        {
-            EXPECT_TRUE(ports->items.empty()) << model << ": no decoder route, no ports";
-        }
-        EXPECT_EQ(covox.find("shared_with_beta128")->items.empty(), !expectShared) << model;
+        EXPECT_FALSE(covox.find("available")->b) << model;
         EmulatorTestHelper::CleanupEmulator(emulator);
     }
 }
 
 /// endregion </General Sound and Covox (PLAN #20)>
+
+/// region <MoonSound (PLAN #11, P2-2)>
+
+TEST(DeviceStateMoonSound_Test, UnavailableWithoutTheCard)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    for (const StateNode& report : {DeviceState::MoonSound(emulator->GetContext()),
+                                    DeviceState::MoonSoundFm(emulator->GetContext()),
+                                    DeviceState::MoonSoundPcm(emulator->GetContext())})
+    {
+        EXPECT_FALSE(report.find("available")->b);
+        EXPECT_NE(report.find("description")->s.find("not fitted"), std::string::npos);
+    }
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+TEST(DeviceStateMoonSound_Test, ReportsFollowTheGuestWrites)
+{
+    SoundCardScope cards(TestSound::MoonSound);  // Pentagon ships MoonSound=1
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    ASSERT_NE(context->pSoundManager->getMoonSound(), nullptr);
+    PortDecoder* ports = context->pPortDecoder;
+    // The card listens on the full-decode tap Z80::out() calls before the model decode
+    auto out = [&](uint16_t port, uint8_t value) {
+        ports->NotifyFullDecodeOut(port, value);
+        ports->DecodePortOut(port, value, 0x0000);
+    };
+    auto fm = [&](uint16_t addrPort, uint8_t reg, uint8_t value) {
+        out(addrPort, reg);
+        out(static_cast<uint16_t>(addrPort + 1), value);
+    };
+    auto wave = [&](uint8_t reg, uint8_t value) {
+        out(0x007E, reg);
+        out(0x007F, value);
+    };
+
+    fm(0x00C6, 0x05, 0x03);                 // bank 1 reg 5: NEW + NEW2 (OPL4 mode, wave enabled)
+    fm(0x00C4, 0xA0, 0x44);                 // channel 0 F-number low
+    fm(0x00C4, 0xB0, 0x20 | (4 << 2) | 1);  // key on, block 4, F-number bits 8-9 = 1
+    wave(0x08, 0x10);                        // slot 0 wave number 16
+    wave(0x68, 0x80);                        // slot 0 key on
+
+    const StateNode overview = DeviceState::MoonSound(context);
+    ASSERT_TRUE(overview.find("available")->b);
+    EXPECT_TRUE(overview.find("new_mode")->b);
+    EXPECT_TRUE(overview.find("new2_mode")->b);
+    EXPECT_EQ(IntItems(overview.find("fm_keyed_channels")), (std::vector<int64_t>{0}));
+    EXPECT_EQ(IntItems(overview.find("pcm_keyed_slots")), (std::vector<int64_t>{0}));
+    EXPECT_GT(overview.find("wave_memory")->find("rom_bytes")->i, 0);
+
+    const StateNode fmReport = DeviceState::MoonSoundFm(context);
+    const StateNode& ch0 = fmReport.find("channels")->items[0];
+    EXPECT_TRUE(ch0.find("key_on")->b);
+    EXPECT_EQ(ch0.find("fnum")->i, 0x144);
+    EXPECT_EQ(ch0.find("block")->i, 4);
+    EXPECT_GT(ch0.find("frequency_hz")->d, 0.0);
+    EXPECT_EQ(fmReport.find("channels")->items.size(), 18u);
+    EXPECT_EQ(fmReport.find("registers_bank0_hex")->s.size(), 512u);
+
+    const StateNode pcmReport = DeviceState::MoonSoundPcm(context);
+    EXPECT_TRUE(pcmReport.find("wave_enabled")->b);
+    ASSERT_EQ(pcmReport.find("slots")->items.size(), 24u);
+    const StateNode& slot0 = pcmReport.find("slots")->items[0];
+    EXPECT_TRUE(slot0.find("key_on")->b);
+    EXPECT_EQ(slot0.find("wave")->i, 16);
+    EXPECT_NE(slot0.find("envelope")->find("phase")->s, "off");
+    EXPECT_FALSE(pcmReport.find("slots")->items[1].find("key_on")->b);
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// endregion </MoonSound (PLAN #11, P2-2)>

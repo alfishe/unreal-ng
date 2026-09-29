@@ -230,6 +230,22 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
                 HandleStateAudioFM(session, context, args.size() > 2 ? args[2] : "");
                 return;
             }
+            else if (subcommand == "moonsound")
+            {
+                // state audio moonsound [fm|pcm] (DeviceState::MoonSound / MoonSoundFm / MoonSoundPcm)
+                const std::string part = args.size() > 2 ? args[2] : "";
+                if (!part.empty() && part != "fm" && part != "pcm")
+                {
+                    session.SendResponse("Error: state audio moonsound [fm|pcm]" + std::string(NEWLINE));
+                    return;
+                }
+                const StateNode report = part == "fm"    ? DeviceState::MoonSoundFm(context)
+                                         : part == "pcm" ? DeviceState::MoonSoundPcm(context)
+                                                         : DeviceState::MoonSound(context);
+                session.SendResponse(std::string("MoonSound (OPL4)") + (part.empty() ? "" : " " + part) + NEWLINE +
+                                     DeviceState::ToText(report));
+                return;
+            }
             else if (subcommand == "beeper")
             {
                 HandleStateAudioBeeper(session, context);
@@ -254,7 +270,7 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
             else
             {
                 session.SendResponse(std::string("Error: Unknown audio subcommand '") + args[1] + "'" + NEWLINE +
-                                     "Available: ay, fm, beeper, gs, covox, channels" + NEWLINE);
+                                     "Available: ay, fm, moonsound, beeper, gs, covox, channels" + NEWLINE);
                 return;
             }
         }

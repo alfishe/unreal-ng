@@ -127,6 +127,75 @@ Opl4::~Opl4()
     delete _render;
 }
 
+static_assert(Opl4::kPcmMaxAttenuation == kMaxAttIndex, "public attenuation range follows the engine");
+
+void Opl4::PeekFm(FmView& out) const
+{
+    const FmBus& bus = _impl->fmBus;
+    out.regs = bus.Regs();
+    out.status = bus.Status();
+    out.newMode = bus.NewMode();
+    out.new2 = bus.New2();
+    for (int n = 0; n < 2; n++)
+    {
+        const FmBus::TimerState t = bus.Timer(n);
+        out.timers[n] = FmTimerView{t.count, t.load, t.enabled, t.masked};
+    }
+    for (int ch = 0; ch < FmBus::kChannelCount; ch++)
+        out.route[static_cast<size_t>(ch)] = bus.Route(ch);
+}
+
+void Opl4::PeekPcm(PcmView& out) const
+{
+    const Opl4Pcm& pcm = *_pcm;
+    out.regs = pcm.Regs();
+    out.memAddress = pcm.MemAdr();
+    for (size_t i = 0; i < out.slots.size(); i++)
+    {
+        const PcmSlot& s = pcm.Slots()[i];
+        PcmSlotView& v = out.slots[i];
+        v.wave = s.wave;
+        v.octave = s.oct;
+        v.fnum = s.fn;
+        v.totalLevel = s.tl;
+        v.pan = s.pan;
+        v.keyOn = s.keyon;
+        v.damp = s.damp;
+        v.bits = s.bits;
+        v.start = s.startAddr;
+        v.loop = s.loopAddr;
+        v.endComplement = s.endAddr;
+        v.position = s.pos;
+        v.attenuation = s.envVol;
+        switch (s.state)
+        {
+            case EgPhase::Off: v.phase = PcmEnvelopePhase::Off; break;
+            case EgPhase::Rel: v.phase = PcmEnvelopePhase::Release; break;
+            case EgPhase::Sus: v.phase = PcmEnvelopePhase::Sustain; break;
+            case EgPhase::Dec: v.phase = PcmEnvelopePhase::Decay; break;
+            case EgPhase::Att: v.phase = PcmEnvelopePhase::Attack; break;
+        }
+        v.ar = s.ar;
+        v.d1r = s.d1r;
+        v.d2r = s.d2r;
+        v.rr = s.rr;
+        v.rc = s.rc;
+        v.lfo = s.lfo;
+        v.vib = s.vib;
+        v.am = s.am;
+    }
+}
+
+uint8_t Opl4::MixFmLatch() const
+{
+    return _impl->mixF8;
+}
+
+uint8_t Opl4::MixPcmLatch() const
+{
+    return _impl->mixF9;
+}
+
 uint64_t Opl4::DebugFmTicks() const
 {
     return _impl->fmTicks;

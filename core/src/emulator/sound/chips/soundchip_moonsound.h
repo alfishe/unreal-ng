@@ -156,6 +156,12 @@ public:
     opl4::Opl4& chip() { return _opl4; }
     const opl4::Opl4& chip() const { return _opl4; }
     opl4::WaveMemory& waveMemory() { return _waveMemory; }
+    const opl4::WaveMemory& waveMemory() const { return _waveMemory; }
+
+    // Guest-visible address latches (read-only views for the state report)
+    uint8_t fmAddressLatch(int bank) const { return _fmLatch[bank & 1]; }
+    uint8_t fmSelectedBank() const { return _fmBank; }
+    uint8_t waveAddressLatch() const { return _waveLatch; }
 
     // Bytes of the wave ROM image actually loaded (0 = zero-filled region, D10)
     size_t waveRomLoadedBytes() const { return _waveRomLoadedBytes; }

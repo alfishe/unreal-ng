@@ -318,6 +318,11 @@ with TR-DOS open) shows differing `ports_decoded` in one call.
 
 ### P2-2. MoonSound automation section in the design (do now, before implementation)
 
+> ✅ **State and MCP done (2026-09-28)** - `DeviceState::MoonSound/Fm/Pcm`,
+> `/state/audio/moonsound[/fm|/pcm]`, aspects `audio_moonsound`,
+> `audio_opl4_fm`, `audio_opl4_pcm`. Control (P2-3 settings surface) and
+> port-map rows remain (PLAN #11).
+
 Closes D-3 (future-proofing). Write into
 `docs/inprogress/2026-09-13-moonsound/2026-09-13-0217-opl4-unreal-ng-integration.md`:
 

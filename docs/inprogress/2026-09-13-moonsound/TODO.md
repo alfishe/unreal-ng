@@ -23,9 +23,13 @@ still open (updated 2026-09-18).
   [2026-09-18-2045-opl4-output-stage-harshness.md](2026-09-18-2045-opl4-output-stage-harshness.md).
 
 ## Remaining (value order)
-1. **P2-2: automation** — `DeviceState` MoonSound report and
-   control/inspection endpoints (nothing under `core/src/automation` or
-   `emulator/state` yet).
+1. **P2-2: automation** — ~~state reports~~ done 2026-09-28:
+   `DeviceState::MoonSound()` / `MoonSoundFm()` / `MoonSoundPcm()` on every
+   surface (WebAPI `/state/audio/moonsound[/fm|/pcm]`, CLI `state audio
+   moonsound`, Lua/Python `audio_moonsound_state`, MCP `audio_moonsound`,
+   `audio_opl4_fm`, `audio_opl4_pcm`), read through libopl4's side-effect-free
+   `Opl4::PeekFm/PeekPcm`. Left: control (enable + mixer gain) through the
+   P2-3 settings surface, and MoonSound rows in the static port map.
 2. **D2 hardware check** — record a high FM sine on a real ZXM-MoonSound to
    settle whether the HoldDrop reducer (`Authentic`) is real.
 3. **Port-claim unification (design debt)** — master has two "a device claims

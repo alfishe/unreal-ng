@@ -118,6 +118,11 @@ class Emulator:
         """Covox / SoundDrive report: fitment, the ports this model decodes, shared_with_beta128,
         the four DAC latches. available=False when no Covox is fitted"""
 
+    def audio_moonsound_state(self, part: str = "") -> dict:
+        """MoonSound (OPL4) report: overview (part=''), the FM half (part='fm': 18 channels,
+        timers, register banks) or the wavetable half (part='pcm': 24 slots with envelopes).
+        available=False without the card; ValueError for another part"""
+
     def fdc_state(self) -> dict:
         """Beta Disk WD1793 report: registers, status_bits, last_command, fsm_state,
         signals (intrq/drq), beta128_register, density, selected_drive, drives[4]"""
