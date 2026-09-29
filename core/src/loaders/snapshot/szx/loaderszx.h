@@ -33,6 +33,11 @@ public:
     const szx::Report& GetReport() const { return _report; }
     const std::string& GetError() const { return _error; }
 
+    /// The machine an SZX file was saved on, from its header alone (the GUI
+    /// creates that machine before loading). False: not an SZX file, or a
+    /// machine id we do not emulate (`error` says which)
+    static bool ProbeMachine(const std::string& path, szx::Machine& machine, std::string& error);
+
     /// Apply a parsed stage to the running machine
     static bool Commit(EmulatorContext* context, const szx::Stage& stage, szx::Report& report, std::string& error);
     /// The running machine as a stage

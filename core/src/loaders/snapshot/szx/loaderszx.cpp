@@ -101,6 +101,18 @@ bool LoaderSZX::save()
     return true;
 }
 
+bool LoaderSZX::ProbeMachine(const std::string& path, Machine& machine, std::string& error)
+{
+    uint8_t header[kHeaderSize] = {};
+    if (!FileHelper::FileExists(path) || FileHelper::ReadFileToBuffer(path, header, kHeaderSize) != kHeaderSize ||
+        Get32(header) != kMagic)
+    {
+        error = "not an SZX file: '" + path + "'";
+        return false;
+    }
+    return MachineFor(header[6], machine, error);
+}
+
 uint32_t LoaderSZX::FramePositionFromIntCount(EmulatorContext* context, uint32_t cyclesFromInt)
 {
     const FrameGeometry g = Geometry(context);
@@ -131,9 +143,9 @@ bool LoaderSZX::Commit(EmulatorContext* context, const Stage& stage, Report& rep
         report.warnings.push_back(machine.note);
     if (!MachineFits(context, machine, report))
     {
-        error = "the snapshot is for " + std::string(machine.model == MM_PENTAGON ? "a Pentagon " + std::to_string(machine.ramKb) + "K"
-                                                                                 : "machine id " + std::to_string(stage.machineId)) +
-                ", the running machine is another model: switch the model first";
+        error = "the snapshot was saved on a " + DescribeModel(machine.model, machine.ramKb) +
+                ", the running machine is a " + DescribeModel(context->config.mem_model, context->config.ramsize) +
+                ": create a " + DescribeModel(machine.model, machine.ramKb) + " to load it";
         return false;
     }
     for (const std::string& warning : stage.warnings)

@@ -20,7 +20,7 @@ Scorpion 1024) cannot save SZX; no private blocks.
 - [x] S2: `SzxWriter` for the same blocks (exact sizes, deflate only when smaller); Qt save dialog offers SZX first.
 - [x] S3 part: B128 both ways (WD1793 registers, #FF, SEEKLOWER, PAGED ↔ TR-DOS); `WD1793::RestoreSnapshotRegisters`.
 - [x] Fixtures `testdata/loaders/szx` (libspectrum synth files for all nine machine ids, two converted snapshots, Spectaculator 1.1, ZXMAK2 1.4, ZX-M8XXX 1.4) with libspectrum oracle dumps; `tools/verification/szx` (`szxtool`, `check-interop.sh`: our files read by libspectrum match on all nine models).
-- [x] Another model is refused ("switch the model first"); no model switch (scope decision).
+- [x] Another model is refused by the core with both models named ("saved on a Pentagon 512K, the running machine is a ZX-Spectrum 128k: create a Pentagon 512K to load it"); in the Qt window (drag and drop, File > Open, command line) an SZX for another model replaces the running machine by that model first (`MainWindow::switchMachineModel`, the Machine menu's path), the same model just loads.
 - [ ] Optional, only on demand: the other standard blocks (BDSK with link safety, +3 / DSK, TAPE, COVX, AMXM, KEYB issue 2, GS / GSRP) - until then reported as ignored. A TurboSound FM config (YM2203) has no AY-3-8910: the AY block is reported, not applied.
 - [x] ~~S4 private blocks and the no-id machine policy~~ - dropped: models without an SZX id refuse SZX.
 - [ ] S5: RZX integration with #27.

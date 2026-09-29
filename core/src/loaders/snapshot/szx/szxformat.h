@@ -95,7 +95,9 @@ struct Machine
 
 /// False for ids we do not emulate (Timex, SE, unknown)
 bool MachineFor(uint8_t id, Machine& machine, std::string& error);
-/// The id a model is written as; nullopt: no SZX id ([design §11])
+/// "Pentagon 512K", "ZX-Spectrum 48k", "ZS Scorpion 256K": a model for messages
+std::string DescribeModel(MEM_MODEL model, uint32_t ramKb);
+/// The id a model is written as; nullopt: no SZX id (design §11)
 std::optional<uint8_t> IdFor(MEM_MODEL model, uint32_t ramKb);
 /// The RAM pages a machine id stores, in file order
 std::vector<uint8_t> PagesOf(uint8_t id);
