@@ -380,6 +380,32 @@ Decisions (recorded; change only with the user):
 **Rule:** no TSConf fields in shared structs; no `MM_TSL`/`state.ts` references
 in shared code outside the registration surface.
 
+> **Done 2026-09-29 (INF-6, INF-7; branch `tsconf-isolation`).** What was
+> removed from shared code, and what every other machine gets instead:
+>
+> | Leftover | Now |
+> |:--|:--|
+> | `EmulatorState::ts` (`TSPORTS_t`), `cram[256]`, `sfile[256]`, `TS_CACHE_SIZE`, the `platforms/tsconf/tsconf.h` include in `platform.h` | gone; every machine's state was carrying the whole TS-Conf register block and 1 KB of TS palette / sprite files, always zero. `tsconf.h` stays as a not-included naming reference for phase 1 |
+> | `VideoControl` `ts_pos`, `tsline[2][512]`, `memvidcyc/memcpucyc/memtsscyc/memtstcyc/memdmacyc[320]`, `memcyc_lcmd`; `RASTER::r_ts`; `MEM_CYCLES` | gone. `Z80::ProcessInterrupts` no longer touches `pScreen->_vid` on every step (it only zeroed `memcyc_lcmd`) |
+> | `Screen::InitFrame` read `state.ts.g_yoffs` for every machine | `ygctr = UINT32_MAX` - the value it always had (`0 - 1`) |
+> | `Screen::DrawZX`, `DrawBorder`, `DrawScreenBorder`, `DrawTS16/256/TSText` (read `state.ts.*`, `clut[state.ts.border]`) | deleted; their rows in the obsolete draw table point to `DrawNull`. The table itself is unreachable (`_currentDrawCallback` is never set; every screen is a `ScreenZX`, which overrides `Draw`) |
+> | TSConf block in `Z80::HandleINT`; `GetTSConfInterruptVector`, `ts_frame_int/ts_line_int/ts_dma_int` declarations | deleted; INT is the `IInterruptSource` (§3.4) |
+> | `PagingLatch::PBD/PTS/PMEM` (reserved, read 0) | deleted; TSConf's decoder reports its own latches from `TsConfState` (phase 1) |
+> | `MISC::TSConf` comment (`config.cpp`), TSConf case in `TimeTravelManager::PortJournalUnsupportedReason` | deleted; TSConf is refused by the generic machine-step-hook check once it installs its engine |
+>
+> **Kept** (the registration surface and vocabulary): `MM_TSL` in the model
+> enum, the `mem_model[]` row, the config folder, the screen factory, and the
+> per-model ROM rows in `rom.cpp` (path, ROM set, size check - phase 1's ROM-1
+> replaces the size rule with the TSConf loader); `M_TS16/M_TS256/M_TSTX` and
+> their descriptor rows; the TSConf logger sub-module names; `VideoControl::clut`
+> (the ATM drawers and their tests read its ZX defaults, not TSConf-specific).
+>
+> **Enforcement:** `core/tests/emulator/machines/tsconf/tsconfisolation_test.cpp`
+> scans `core/src` (~40 ms warm) for `state.ts.`, `.cram[`, `.sfile[`,
+> `tsline`, `memdmacyc`, `memvidcyc`, `memcyc_lcmd`, `TS_CACHE_SIZE`,
+> `TSPORTS_t`, `platforms/tsconf/` outside the TSConf directories, and for
+> `MM_TSL` outside the registration files; it reports file and line.
+
 | Leftover in shared code | Target |
 |:--|:--|
 | `EmulatorState.ts` (`platform.h:999`), `cram`/`sfile` (`:1002-1003`) | `TsConfState` (`platforms/tsconf/tsconfstate.h`), owned by `PortDecoder_TSConf`. Plain fixed-width fields (no bitfield unions) so TTD can serialize field by field |

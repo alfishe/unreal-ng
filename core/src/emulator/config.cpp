@@ -225,8 +225,6 @@ bool Config::ParseConfig(IniFile& inimanager)
 
 	// MISC::ULA+ sub-section
 
-	// MISC::TSConf sub-section
-
     // ROM set. GetValue returns NULL when the [ROM] section or the key is
     // absent (a valid minimal config may carry neither) - a NULL const char*
     // assigned to std::string is UB, so map it to the empty name explicitly.
@@ -1085,7 +1083,7 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
             break;
 
         default:
-            // Leave existing values for TSConf etc.
+            // Leave existing values for the other models
             break;
     }
 
