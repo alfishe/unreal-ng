@@ -165,6 +165,11 @@ MediaResult MediaManager::Insert(const std::string& slotId, const MediaSource& s
     request.source = source;
     request.kind = descriptor.kind;
     request.access = options.access.value_or(descriptor.defaultAccess);
+    // A folder is never written: a slot whose images default to write-through
+    // (an IDE hard disk) keeps a folder's writes for the session
+    const bool folder = source.type == MediaSourceType::Folder || FileHelper::IsFolder(source.path);
+    if (!options.access && folder && request.access == AccessMode::WriteThrough)
+        request.access = AccessMode::Session;
     request.fs = options.fs.value_or(descriptor.defaultFs);
     request.codePage = options.codePage;
     request.freeBytes = options.freeBytes;

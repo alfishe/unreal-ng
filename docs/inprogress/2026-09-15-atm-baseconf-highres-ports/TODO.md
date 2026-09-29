@@ -28,7 +28,7 @@ atm merge `59e37f38`); it was previously the only content of this folder, marked
 - [x] E4 (2026-09-28): virtual TR-DOS trap (`#13BD` mask, chip deselect, swap to RAM `#FE`, `#BE` exit), legacy latches `#2F-#8F`; ERS RAM disk SAVE/LIST/LOAD on the real ROM — [e4-virtual-trdos.md](e4-virtual-trdos.md). Mounting TRD images needs E5/E6 storage
 - [x] E5 (2026-09-28): SD card for image files. The reusable `SdCardSpi` over `IBlockDevice` + `SessionWriteMap`, `ZControllerSpi`, `[ZC]` keys, AVR register C. ERS SD boot and TRD mount from SD (read + write) on the real ROM. TTD ends a recording on the first SD command — [e5-sd-card.md](e5-sd-card.md)
 - [x] E5b = phase M1 of the unified media manager, done 2026-09-28 on branch `media-manager` (PLAN #58, [../2026-09-28-storage-manager/](../2026-09-28-storage-manager/technical-design.md), [integration](../2026-09-28-storage-manager/integration-zxevo-sd.md)): host folder as the SD card (`HostFolderFat`, shared with IDE R1-6); NedoOS `sd_boot.$C` from a folder (`osatm3sd.$C` waits for E6 NemoIDE); `IMAGE.MNT` automount
-- [ ] E6 NemoIDE (needs shared IDE R1-1) · E7 ATAPI CD (needs IDE R1-7)
+- [x] E6 NemoIDE · E7 ATAPI CD - done 2026-09-28 with the IDE + ATAPI scope (branch `ide-atapi`, [plan](../2026-09-28-ide-atapi/implementation-plan.md)): the ZX-Evo latch table, ERS "B. HDD boot" and "D. CD boot" on the real ROM
 - [ ] E8 `#xBF7` write protect, flash writes, font RAM, 4:4:4 palette, ULA+
 - [ ] E9 (optional) AVR rasters, RS-232
 - [ ] E10 automation, TTD, recipes, MCP resource

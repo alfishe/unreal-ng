@@ -912,7 +912,7 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["aspects"]["items"]["type"] = "string";
     Json::Value allowed(Json::arrayValue);
     for (const char* aspect : {"machine", "registers", "memory", "memory_map", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "video",
-                               "screen", "screen_flash", "screen_ocr", "screen_image", "screen_digest", "timing", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "mouse",
+                               "screen", "screen_flash", "screen_ocr", "screen_image", "screen_digest", "timing", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "mouse",
                                "ttd", "contention"})
     {
         allowed.append(aspect);
@@ -934,7 +934,8 @@ void RegisterInspectState(ToolRegistry& registry)
         "decodes, ports shared with Beta-128, the four DAC latches), 'audio_moonsound' = MoonSound OPL4 overview (NEW/NEW2, "
         "address latches, #F8/#F9 mix, wave memory, keyed FM channels and PCM slots), 'audio_opl4_fm' = its 18 FM channels "
         "(F-number, block, Hz, key-on, feedback, route, timers, register banks), 'audio_opl4_pcm' = its 24 wavetable slots "
-        "(wave, octave, playback rate, key-on, level, pan, addresses, envelope), 'fdc' = Beta Disk WD1793 registers, status, FSM, drives, 'mouse' = "
+        "(wave, octave, playback rate, key-on, level, pan, addresses, envelope), 'fdc' = Beta Disk WD1793 registers, status, FSM, drives, "
+        "'ide' = IDE board (scheme, latches, both units' task file, command in progress, CD sense; unavailable without a board), 'mouse' = "
         "Kempston mouse state incl. port routing (fitted vs shadowed), 'ttd' = time-travel session: state "
         "(idle/recording/detached), recorded frame range, checkpoint count, current position (use the time_travel tool to act on it).";
     schema["properties"]["target"]["type"] = "string";
@@ -969,7 +970,7 @@ void RegisterInspectState(ToolRegistry& registry)
         "paging state (tagged latches + bank table), static port map with tags (ports), video mode (video: resolution, colour depth, "
         "memory layout, displayed RAM pages, #EFF7/#DFFD/#FF77), screen state (screen: active screen and RAM pages, per-screen "
         "Z80 mapping, #7FFD, contention), FLASH timing (screen_flash), screen OCR text, screen image metadata, screen digest hash, raster timing, "
-        "ROM signatures, AY/SSG chips (audio_ay), TurboSound FM YM2203 halves (audio_fm), General Sound card (audio_gs), Covox / SoundDrive (audio_covox), MoonSound OPL4 (audio_moonsound, audio_opl4_fm, audio_opl4_pcm), Beta Disk WD1793 (fdc), "
+        "ROM signatures, AY/SSG chips (audio_ay), TurboSound FM YM2203 halves (audio_fm), General Sound card (audio_gs), Covox / SoundDrive (audio_covox), MoonSound OPL4 (audio_moonsound, audio_opl4_fm, audio_opl4_pcm), Beta Disk WD1793 (fdc), IDE board (ide), "
         "Kempston mouse + port routing (mouse), time-travel session state and position (ttd), memory contention: rule, switch, "
         "interface, contended slots, per-kind waits while debugging (contention). Combine aspects to reduce round-trips.",
         std::move(schema),
@@ -994,11 +995,11 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "breakpoints" && aspect != "memory_banks" && aspect != "paging" && aspect != "ports" && aspect != "video" &&
                     aspect != "screen" && aspect != "screen_flash" && aspect != "screen_ocr" && aspect != "screen_image" && aspect != "screen_digest" && aspect != "timing" && aspect != "rom" && aspect != "audio_ay" &&
                     aspect != "audio_fm" && aspect != "audio_gs" && aspect != "audio_covox" && aspect != "audio_moonsound" && aspect != "audio_opl4_fm" &&
-                    aspect != "audio_opl4_pcm" && aspect != "fdc" && aspect != "mouse" && aspect != "ttd" && aspect != "contention")
+                    aspect != "audio_opl4_pcm" && aspect != "fdc" && aspect != "ide" && aspect != "mouse" && aspect != "ttd" && aspect != "contention")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, mouse, ttd, contention"));
+                                            "screen, screen_flash, screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, mouse, ttd, contention"));
                     return;
                 }
             }
@@ -1221,6 +1222,17 @@ void RegisterInspectState(ToolRegistry& registry)
                             // Core DeviceState::Fdc via the WebAPI (WD1793, or the uPD765A on a +3); 404 = no disk controller
                             steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", Endpoint(id, "/state/fdc"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "ide")
+                        {
+                            // Core DeviceState::Ide via the WebAPI; 404 = no IDE board
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, "/state/ide"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
                                     else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
                                     next(true);
@@ -1472,6 +1484,25 @@ void RegisterInspectState(ToolRegistry& registry)
                                         const Json::Value& last = value["statistics"]["last_frame"];
                                         out << "; last frame " << last["accesses"].asUInt64() << " contended accesses, "
                                             << last["wait_t"].asUInt64() << " T waited";
+                                    }
+                                }
+                            }
+                            else if (aspect == "ide")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[ide] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[ide] " << value["scheme"].asString() << ", selected " << value["selected"].asString();
+                                    for (const Json::Value& unit : value["units"])
+                                    {
+                                        out << "\n  " << unit["position"].asString() << " (" << unit["kind"].asString() << "): ";
+                                        if (unit["medium"].isObject())
+                                            out << unit["medium"]["description"].asString();
+                                        else
+                                            out << "no medium";
+                                        out << ", status #" << std::hex << unit["task_file"]["status"].asUInt() << std::dec
+                                            << ", last " << unit["command"]["name"].asString();
                                     }
                                 }
                             }

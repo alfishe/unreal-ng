@@ -1,30 +1,19 @@
 #pragma once
 #include "stdafx.h"
 
-#include <ctime>
-#include <chrono>
-#include "emulator/io/rtc/ds12885.h"
+#include "emulator/io/rtc/ds12887.h"
 
-/// RTC / NVRAM devices for clones and addon cards. Each hardware standard
-/// (the SMUC board's DS1685 CMOS + LC16 serial EEPROM below, the Dallas and
-/// Rus512 CMOS variants, future GLUK-type clocks for other machines) gets its
-/// own unit in this folder - they share nothing but the bus they sit behind
+/// The SMUC board's battery-backed parts: the clock (the shared Ds12887 chip,
+/// 256 cells as UnrealSpeccy serves them) and the LC16 serial EEPROM below.
+/// Fixed time on the clock (GetRtc().SetFixedTime) keeps boot tests
+/// deterministic: the ProfROM menu clock drives boot-timeline code paths
+/// (profrom-service-monitor-turbo.md)
 
 class SMUCNvram
 {
-// CMOS fields
+// Clock
 protected:
-	uint8_t _cmos[0x100];
-	CMOSTypeEnum _cmos_type = None;
-	uint8_t _cmos_addr = 0;
-
-	// Deterministic clock: when set, time-register reads serve this frozen
-	// instant instead of live host time (tests / replay - the ProfROM menu
-	// clock drives boot-timeline code paths, profrom-service-monitor-turbo.md)
-	bool _fixedTime = false;
-	time_t _fixedTimeValue = 0;
-	tm _lastTime = {};
-	bool _updateFinished = false;
+	Ds12887 _rtc{256};
 
 // Serial-link EEPROM fields (SMUC #FFBA)
 protected:
@@ -70,22 +59,9 @@ public:
 	/// Re-arm the power-on line/shift state; battery-backed contents survive
 	void ResetSerialLinkState();
 
-// CMOS methods
+// Clock
 public:
-	void SetCMOSType(CMOSTypeEnum type);
-	void SetCMOSAddress(uint8_t addr);
-	void WriteCMOS(uint8_t val);
-	uint8_t ReadCMOS();
-
-	/// Freeze the wall-clock source: time-register reads return the given
-	/// instant (Unix seconds, UTC) instead of live host time
-	void SetFixedTime(time_t t);
-
-	/// Back to live host time
-	void UseLiveTime();
-
-// Helper methods
-protected:
-	uint8_t DecodeFromBCD(uint8_t binary);
+	Ds12887& GetRtc() { return _rtc; }
+	const Ds12887& GetRtc() const { return _rtc; }
 };
 

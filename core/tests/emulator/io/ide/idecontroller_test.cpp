@@ -1,0 +1,391 @@
+// The IDE board of a machine (implementation-plan.md P3): the units from the
+// config, their media slots, media reaching the units, a disc swap, a folder
+// as a hard disk, machines without IDE
+
+#include <gtest/gtest.h>
+
+#include <cstring>
+#include <map>
+#include <string>
+#include <vector>
+
+#include "3rdparty/message-center/messagecenter.h"
+#include "_helpers/emulatortesthelper.h"
+#include "_helpers/scratchfolder.h"
+#include "emulator/config.h"
+#include "emulator/emulator.h"
+#include "emulator/emulatorcontext.h"
+#include "emulator/io/ide/ata/atapicdrom.h"
+#include "emulator/io/ide/idecontroller.h"
+#include "emulator/media/mediacontrol.h"
+#include "emulator/media/mediamanager.h"
+#include "emulator/ports/portdecoder.h"
+
+using namespace ata;
+
+namespace
+{
+    std::string Utf8(const std::filesystem::path& path)
+    {
+        const auto u8 = path.u8string();
+        return std::string(u8.begin(), u8.end());
+    }
+
+    class IdeController_Test : public ::testing::Test
+    {
+    protected:
+        Emulator* _emulator = nullptr;
+        EmulatorContext* _context = nullptr;
+
+        void Create(const char* model)
+        {
+            _emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
+            ASSERT_NE(_emulator, nullptr);
+            _context = _emulator->GetContext();
+        }
+        void TearDown() override
+        {
+            if (_emulator)
+                EmulatorTestHelper::CleanupEmulator(_emulator);
+            MessageCenter::DisposeDefaultMessageCenter();
+        }
+
+        MediaManager& Manager() { return *_context->pMediaManager; }
+        AtaChannel& Channel() { return _context->pIdeController->Channel(); }
+
+        MediaResult Insert(const std::string& slot, const std::string& path)
+        {
+            MediaSource source;
+            source.path = path;
+            InsertOptions options;
+            options.immediate = true;
+            return Manager().Insert(slot, source, options);
+        }
+    };
+}  // namespace
+
+TEST(IdeScheme_Test, NamesRoundTrip)
+{
+    for (IDE_SCHEME scheme : {IDE_NONE, IDE_ATM, IDE_NEMO, IDE_NEMO_A8, IDE_NEMO_DIVIDE, IDE_SMUC, IDE_PROFI, IDE_DIVIDE})
+    {
+        IDE_SCHEME parsed = IDE_NONE;
+        ASSERT_TRUE(Config::ParseIdeScheme(Config::IdeSchemeName(scheme), parsed)) << Config::IdeSchemeName(scheme);
+        EXPECT_EQ(parsed, scheme);
+    }
+    IDE_SCHEME parsed = IDE_NONE;
+    EXPECT_TRUE(Config::ParseIdeScheme(" nemo-divide ", parsed));
+    EXPECT_EQ(parsed, IDE_NEMO_DIVIDE);
+    EXPECT_FALSE(Config::ParseIdeScheme("WILD", parsed));
+}
+
+/// Pentagon: the Nemo board with two hard-disk units (no CD drive unless the config says CDn=1)
+TEST_F(IdeController_Test, PentagonHasTwoDiskUnits)
+{
+    Create("PENTAGON");
+    ASSERT_NE(_context->pIdeController, nullptr);
+    EXPECT_EQ(_context->pIdeController->Scheme(), IDE_NEMO);
+
+    for (const char* id : {"ide0.master", "ide0.slave"})
+    {
+        const auto info = Manager().Info(id);
+        ASSERT_TRUE(info.has_value()) << id;
+        EXPECT_EQ(info->descriptor.kind, MediaKind::Block) << id;
+        EXPECT_FALSE(info->descriptor.removable) << id;
+        EXPECT_EQ(info->descriptor.defaultAccess, AccessMode::WriteThrough) << id;
+    }
+    std::string id;
+    ASSERT_TRUE(MediaControl::ResolveSelector(Manager(), "hd", id).Ok());
+    EXPECT_EQ(id, "ide0.master");
+    ASSERT_TRUE(MediaControl::ResolveSelector(Manager(), "tag:ide+nemo+slave", id).Ok());
+    EXPECT_EQ(id, "ide0.slave");
+    EXPECT_FALSE(MediaControl::ResolveSelector(Manager(), "cd", id).Ok()) << "no CD drive";
+
+    // No disks yet: the channel floats
+    EXPECT_EQ(Channel().ReadRegister(StatusCommand), 0xFF);
+}
+
+TEST_F(IdeController_Test, DiskMediaReachTheUnit)
+{
+    Create("PENTAGON");
+    ScratchFolder folder("ide-media");
+    std::string disk(2048 * 512, '\0');
+    std::memcpy(disk.data() + 7 * 512, "SECTOR7", 7);
+    const std::string image = Utf8(folder.File("hdd.img", disk));
+    std::string cd(40 * 2048, '\0');
+    std::memcpy(cd.data() + 16 * 2048, "\x01" "CD001", 6);
+    const std::string iso = Utf8(folder.File("disc.iso", cd));
+
+    ASSERT_TRUE(Insert("ide0.master", image).Ok());
+    EXPECT_EQ(Manager().Info("ide0.master")->access, AccessMode::WriteThrough);
+    EXPECT_EQ(Insert("ide0.slave", iso).error, MediaError::KindMismatch) << "a CD image is no hard disk";
+
+    // READ SECTORS through the channel, as a board adapter would
+    Channel().WriteRegister(DeviceHead, 0xE0);  // master, LBA
+    Channel().WriteRegister(SectorCount, 1);
+    Channel().WriteRegister(SectorNumber, 7);
+    Channel().WriteRegister(CylinderLow, 0);
+    Channel().WriteRegister(CylinderHigh, 0);
+    Channel().WriteRegister(StatusCommand, Command::ReadSectors);
+    EXPECT_EQ(Channel().ReadData(), ('E' << 8) | 'S');
+}
+
+/// A unit configured as a CD drive (CD1=1): an Optical slot; the drive stays on
+/// the bus, discs come and go and raise unit attention
+TEST(IdeControllerCd_Test, ConfiguredCdDriveTakesDiscs)
+{
+    EmulatorContext context(LoggerLevel::LogError);
+    context.config.mem_model = MM_PENTAGON;
+    context.config.ide_scheme = IDE_NEMO;
+    context.config.ide[1].cd = 1;
+    MediaManager manager(&context);
+    context.pMediaManager = &manager;
+    {
+        IdeController ide(&context);
+        context.pIdeController = &ide;
+        const auto slave = manager.Info("ide0.slave");
+        ASSERT_TRUE(slave.has_value());
+        EXPECT_EQ(slave->descriptor.kind, MediaKind::Optical);
+        EXPECT_TRUE(slave->descriptor.removable);
+        std::string id;
+        ASSERT_TRUE(MediaControl::ResolveSelector(manager, "cd", id).Ok());
+        EXPECT_EQ(id, "ide0.slave");
+
+        ScratchFolder folder("ide-cd");
+        std::string cd(40 * 2048, '\0');
+        std::memcpy(cd.data() + 16 * 2048, "\x01" "CD001", 6);
+        MediaSource source;
+        source.path = Utf8(folder.File("disc.iso", cd));
+        InsertOptions options;
+        options.immediate = true;
+        ASSERT_TRUE(manager.Insert("ide0.slave", source, options).Ok());
+        EXPECT_EQ(manager.Info("ide0.slave")->access, AccessMode::ReadOnly);
+        auto* cdrom = static_cast<AtapiCdrom*>(ide.Channel().Unit(1));
+        EXPECT_TRUE(cdrom->HasDisc());
+        EXPECT_EQ(cdrom->State().unitAttention, 1);
+
+        ASSERT_TRUE(manager.Eject("ide0.slave").Ok());
+        EXPECT_FALSE(cdrom->HasDisc());
+        ide.Channel().WriteRegister(DeviceHead, 0xB0);
+        EXPECT_NE(ide.Channel().ReadRegister(StatusCommand), 0xFF) << "the drive stays on the bus";
+        context.pIdeController = nullptr;
+    }
+    context.pMediaManager = nullptr;
+}
+
+/// The board must fit the machine; one that does not is switched off
+TEST(IdeScheme_Test, SchemesFitTheirMachines)
+{
+    EXPECT_TRUE(IdeController::SchemeFits(IDE_PROFI, MM_PROFI));
+    EXPECT_FALSE(IdeController::SchemeFits(IDE_PROFI, MM_PENTAGON));
+    EXPECT_TRUE(IdeController::SchemeFits(IDE_SMUC, MM_PROFSCORP));
+    EXPECT_FALSE(IdeController::SchemeFits(IDE_SMUC, MM_ATM3));
+    EXPECT_TRUE(IdeController::SchemeFits(IDE_ATM, MM_ATM710));
+    EXPECT_TRUE(IdeController::SchemeFits(IDE_NEMO_DIVIDE, MM_ATM3));
+    EXPECT_FALSE(IdeController::SchemeFits(IDE_NEMO, MM_PROFI));
+
+    EmulatorContext context(LoggerLevel::LogError);
+    context.config.mem_model = MM_PENTAGON;
+    context.config.ide_scheme = IDE_PROFI;
+    IdeController ide(&context);
+    EXPECT_FALSE(ide.Enabled());
+}
+
+/// A folder as the hard disk: a FAT16 volume, guest writes kept for the session
+TEST_F(IdeController_Test, FolderBecomesAHardDisk)
+{
+    Create("PENTAGON");
+    ScratchFolder folder("ide-folder");
+    folder.File("HELLO.TXT", "hello");
+    ASSERT_TRUE(Insert("ide0.master", Utf8(folder.Path())).Ok());
+    const auto info = Manager().Info("ide0.master");
+    EXPECT_EQ(info->access, AccessMode::Session) << "a folder is never written";
+    EXPECT_EQ(info->format, "folder-fat16");
+
+    // WRITE SECTORS lands in the session, the folder is untouched
+    Channel().WriteRegister(DeviceHead, 0xE0);
+    Channel().WriteRegister(SectorCount, 1);
+    Channel().WriteRegister(SectorNumber, 100);
+    Channel().WriteRegister(CylinderLow, 0);
+    Channel().WriteRegister(CylinderHigh, 0);
+    Channel().WriteRegister(StatusCommand, Command::WriteSectors);
+    for (int i = 0; i < 256; i++)
+        Channel().WriteData(0x4242);
+    EXPECT_EQ(Channel().ReadRegister(StatusCommand), Status::DRDY | Status::DSC);
+    Manager().ApplyPending();
+    EXPECT_TRUE(Manager().Info("ide0.master")->dirty);
+}
+
+TEST_F(IdeController_Test, MachinesWithoutIdeHaveNoUnits)
+{
+    Create("48K");
+    ASSERT_NE(_context->pIdeController, nullptr);
+    EXPECT_FALSE(_context->pIdeController->Enabled());
+    EXPECT_FALSE(Manager().HasSlot("ide0.master"));
+    EXPECT_FALSE(Manager().HasSlot("ide0.slave"));
+}
+
+namespace
+{
+    struct MachineBoard
+    {
+        const char* model;
+        IDE_SCHEME scheme;
+        uint16_t statusPort;  ///< the board's status register port
+    };
+
+    /// Put the machine's decoder into the state its board answers in
+    void OpenGate(EmulatorContext& context, IDE_SCHEME scheme)
+    {
+        EmulatorState& state = context.emulatorState;
+        switch (scheme)
+        {
+            case IDE_PROFI:
+                state.pDFFD |= 0x20;  // CP/M
+                state.p7FFD |= 0x10;  // ROM14: EXT mode
+                break;
+            case IDE_ATM:
+                state.flags |= CF_DOSPORTS | CF_TRDOS;
+                break;
+            case IDE_NEMO:
+                state.flags &= static_cast<uint8_t>(~(CF_DOSPORTS | CF_TRDOS));
+                break;
+            default:
+                break;
+        }
+    }
+}  // namespace
+
+/// Every shipped machine with an IDE board: a disk inserted through the media
+/// manager answers through the machine's own port decoder, and the board takes
+/// none of the ports the machine's port map documents
+TEST(IdeMachines_Test, BoardsAnswerThroughTheMachineDecoders)
+{
+    for (const MachineBoard& m : {MachineBoard{"PENTAGON", IDE_NEMO, 0x00F0}, MachineBoard{"ATM3", IDE_NEMO_DIVIDE, 0x00F0},
+                                  MachineBoard{"PROFI", IDE_PROFI, 0x07CB}, MachineBoard{"ATM710", IDE_ATM, 0xFEEF}})
+    {
+        Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(m.model, LoggerLevel::LogError);
+        ASSERT_NE(emulator, nullptr) << m.model;
+        EmulatorContext& context = *emulator->GetContext();
+        ASSERT_EQ(context.pIdeController->Scheme(), m.scheme) << m.model;
+
+        ScratchFolder folder("ide-machine");
+        MediaSource source;
+        source.path = Utf8(folder.File("hdd.img", std::string(1024 * 512, '\0')));
+        InsertOptions options;
+        options.immediate = true;
+        ASSERT_TRUE(context.pMediaManager->Insert("ide0.master", source, options).Ok()) << m.model;
+
+        OpenGate(context, m.scheme);
+        EXPECT_EQ(context.pPortDecoder->DecodePortIn(m.statusPort, 0), Status::DRDY | Status::DSC) << m.model;
+
+        // The machine's own ports stay the machine's, whatever the gate
+        IdeAdapter& adapter = context.pPortDecoder->GetIdeAdapter();
+        for (const PortMapEntry& row : context.pPortDecoder->getPortMapEntries())
+        {
+            for (bool dos : {false, true})
+            {
+                IdeAdapter::Gate gate;
+                gate.dosPorts = dos;
+                gate.profiExt = true;
+                uint8_t value = 0;
+                // ATM Turbo 2+: reading the #7FFD class is the board's IDE / DAC status by design
+                // (the write stays paging); nothing else may be taken
+                const bool atmStatusRead = m.scheme == IDE_ATM && (row.port & 0x8202) == 0x0200;
+                if (!atmStatusRead)
+                    EXPECT_FALSE(adapter.In(row.port, gate, value))
+                        << m.model << ": the IDE board takes the read of #" << std::hex << row.port << " (" << row.device << ")";
+                EXPECT_FALSE(adapter.Out(row.port, gate, 0))
+                    << m.model << ": the IDE board takes the write of #" << std::hex << row.port << " (" << row.device << ")";
+            }
+        }
+        EmulatorTestHelper::CleanupEmulator(emulator);
+    }
+    MessageCenter::DisposeDefaultMessageCenter();
+}
+
+/// device=cdrom / device=disk on insert: the unit's drive changes (only while
+/// it is empty); the other unit keeps its disk; the aliases follow
+TEST(IdeUnitKind_Test, InsertCanSwapTheDrive)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext& context = *emulator->GetContext();
+    MediaManager& manager = *context.pMediaManager;
+    ScratchFolder folder("ide-unit-kind");
+    const std::string image = Utf8(folder.File("hdd.img", std::string(256 * 512, '\0')));
+    const std::string second = Utf8(folder.File("hdd2.img", std::string(256 * 512, '\0')));
+    std::string cd(40 * 2048, '\0');
+    std::memcpy(cd.data() + 16 * 2048, "\x01" "CD001", 6);
+    const std::string iso = Utf8(folder.File("disc.iso", cd));
+
+    MediaControl control(&context);
+    auto run = [&control](const std::string& verb, const std::string& slot, const std::string& path,
+                          std::map<std::string, std::string> options = {}) {
+        MediaRequest request;
+        request.verb = verb;
+        request.selector = slot;
+        request.path = path;
+        request.options = std::move(options);
+        return control.Execute(request);
+    };
+
+    ASSERT_TRUE(run("insert", "ide0.master", image).result.Ok());
+    EXPECT_EQ(run("insert", "ide0.slave", iso).result.error, MediaError::KindMismatch);
+    const MediaReply cdInsert = run("insert", "ide0.slave", iso, {{"device", "cdrom"}});
+    ASSERT_TRUE(cdInsert.result.Ok()) << cdInsert.result.message;
+    EXPECT_EQ(manager.Info("ide0.slave")->descriptor.kind, MediaKind::Optical);
+    EXPECT_EQ(context.config.ide[1].cd, 1) << "the machine's config follows";
+    std::string id;
+    ASSERT_TRUE(MediaControl::ResolveSelector(manager, "cd", id).Ok());
+    EXPECT_EQ(id, "ide0.slave");
+    EXPECT_TRUE(manager.Info("ide0.master")->present) << "the master kept its disk";
+
+    // A drive with a disc in it stays
+    EXPECT_EQ(run("insert", "ide0.slave", second, {{"device", "disk"}}).result.error, MediaError::BadRequest);
+    ASSERT_TRUE(run("eject", "ide0.slave", "").result.Ok());
+    ASSERT_TRUE(run("insert", "ide0.slave", second, {{"device", "disk"}}).result.Ok());
+    EXPECT_EQ(manager.Info("ide0.slave")->descriptor.kind, MediaKind::Block);
+    EXPECT_FALSE(MediaControl::ResolveSelector(manager, "cd", id).Ok());
+
+    EXPECT_EQ(run("insert", "fdd.a", image, {{"device", "cdrom"}}).result.error, MediaError::BadRequest)
+        << "only IDE units change drives";
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// The slot's write-protect switch changes only what WRITE answers: a read in
+/// flight goes on. A swap waits only for a block half way through the data
+/// register, not for a transfer the guest left between blocks
+TEST_F(IdeController_Test, ProtectSwitchAndBusyLeaveTransfersAlone)
+{
+    Create("PENTAGON");
+    ScratchFolder folder("ide-protect");
+    std::string disk(256 * 512, '\0');
+    for (size_t i = 0; i < disk.size(); i++)
+        disk[i] = static_cast<char>(i / 512);
+    ASSERT_TRUE(Insert("ide0.master", Utf8(folder.File("hdd.img", disk))).Ok());
+    IdeUnitSlot* slot = _context->pIdeController->Slot(0);
+
+    Channel().WriteRegister(DeviceHead, 0xE0);
+    Channel().WriteRegister(SectorCount, 3);
+    Channel().WriteRegister(SectorNumber, 4);
+    Channel().WriteRegister(CylinderLow, 0);
+    Channel().WriteRegister(CylinderHigh, 0);
+    Channel().WriteRegister(StatusCommand, Command::ReadSectors);
+    for (int i = 0; i < 10; i++)
+        Channel().ReadData();
+    EXPECT_TRUE(slot->IsBusy()) << "half a sector moved";
+
+    ASSERT_TRUE(Manager().SetWriteProtect("ide0.master", true).Ok());
+    EXPECT_EQ(Channel().Unit(0)->State().bufferPos, 20) << "the transfer went on untouched";
+    for (int i = 10; i < 256; i++)
+        Channel().ReadData();
+    EXPECT_FALSE(slot->IsBusy()) << "between blocks: a swap may go ahead";
+    EXPECT_EQ(Channel().ReadData(), 0x0505) << "sector 5 follows";
+
+    Channel().WriteRegister(SectorCount, 1);
+    Channel().WriteRegister(StatusCommand, Command::WriteSectors);
+    EXPECT_EQ(Channel().ReadRegister(ErrorFeatures), Error::ABRT) << "the switch is on";
+    ASSERT_TRUE(Manager().SetWriteProtect("ide0.master", false).Ok());
+    Channel().WriteRegister(StatusCommand, Command::WriteSectors);
+    EXPECT_TRUE(Channel().ReadRegister(StatusCommand) & Status::DRQ);
+}

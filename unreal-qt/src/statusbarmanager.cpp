@@ -1,5 +1,9 @@
 #include "statusbarmanager.h"
 
+#include "emulator/config.h"
+#include "emulator/io/ide/idecontroller.h"
+#include "emulator/media/mediamanager.h"
+
 #include <QCursor>
 #include <algorithm>
 #include <QDateTime>
@@ -59,7 +63,6 @@ StatusBarManager::StatusBarManager(MainWindow* mainWindow, MenuManager* menuMana
     _hdd = new StatusIndicator(QStringLiteral("hdd"), tr("HDD"), _statusBar);
     _sound = new StatusIndicator(QStringLiteral("sound"), tr("Sound"), _statusBar);
 
-    _hdd->setDetail(tr("not emulated"));
     _sound->setBlinking(false);
     _sound->setCursor(Qt::PointingHandCursor);
     _sound->setToolTip(tr("Sound (click to mute / unmute)"));
@@ -339,7 +342,7 @@ void StatusBarManager::refresh()
     // Disk LED is driven by NC_FDD_STATE_CHANGED (see applyFddState); the tooltip is
     // re-rendered from the cache on every tick (200 ms) so an open tooltip stays current
     updateDiskToolTip();
-    _hdd->setActive(false);  // HDD is a stub in the core
+    updateIde(context);
     _sound->setActive(soundOn);
 
     // CPU frequency display from actual EmulatorState value with color coding
@@ -540,4 +543,39 @@ void StatusBarManager::restoreVisibility()
         _statusBar->raise();
         _statusBar->update();
     }
+}
+
+void StatusBarManager::updateIde(EmulatorContext* context)
+{
+    // The IDE LED blinks when blocks moved since the last tick; the tooltip
+    // names the board and what each unit holds. Everything comes from
+    // thread-safe sources (the activity counter, the media manager's list):
+    // the units themselves belong to the emulation thread
+    IdeController* ide = context ? context->pIdeController : nullptr;
+    if (!ide || !ide->Enabled() || !context->pMediaManager)
+    {
+        _hdd->setActive(false);
+        _hdd->setDetail(tr("no IDE board"));
+        _hdd->setLiveToolTip(tr("IDE: this machine has no IDE board ([HDD] Scheme)"));
+        _ideTransfers = 0;
+        return;
+    }
+
+    QStringList lines;
+    lines << tr("IDE board: %1").arg(QString::fromLatin1(Config::IdeSchemeName(ide->Scheme())));
+    for (int unit = 0; unit < AtaChannel::kUnits; unit++)
+    {
+        const auto info = context->pMediaManager->Info(IdeUnitSlot::IdFor(0, unit));
+        if (!info)
+            continue;
+        const QString position = unit ? tr("slave") : tr("master");
+        const QString kind = info->descriptor.kind == MediaKind::Optical ? tr("CD-ROM") : tr("disk");
+        const QString medium = info->present ? QString::fromStdString(info->source) : tr("empty");
+        lines << QStringLiteral("%1 (%2): %3").arg(position, kind, medium);
+    }
+    const uint64_t transfers = ide->Activity();
+    _hdd->setActive(transfers != _ideTransfers);
+    _ideTransfers = transfers;
+    _hdd->setDetail(QString());
+    _hdd->setLiveToolTip(QStringLiteral("<pre style=\"margin:0\">%1</pre>").arg(lines.join(QLatin1Char('\n'))));
 }

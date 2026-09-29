@@ -5,6 +5,8 @@
 
 #include "mediapanelwindow.h"
 
+#include <algorithm>
+
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFileDialog>
@@ -307,7 +309,25 @@ void MediaPanelWindow::insertInto(const std::string& slot, const QString& path)
 {
     _lastDirectory = QFileInfo(path).absolutePath();
     // async: the UI does not wait for the swap delay; the table shows "pending"
-    report(run("insert", slot, S(path), {{"async", "true"}}), tr("Insert"));
+    std::map<std::string, std::string> options = {{"async", "true"}};
+
+    // An IDE unit takes the other kind of medium once its drive is swapped:
+    // an ISO needs a CD-ROM drive, a disk image a hard disk (the unit is empty)
+    const auto row = std::find_if(_rows.begin(), _rows.end(), [&slot](const MediaPanelRow& r) { return r.slot == slot; });
+    if (row != _rows.end() && slot.rfind("ide", 0) == 0 && !row->present)
+    {
+        const bool iso = QFileInfo(path).suffix().compare(QStringLiteral("iso"), Qt::CaseInsensitive) == 0;
+        const bool cdDrive = row->kind == "optical";
+        if (iso != cdDrive)
+        {
+            const QString question = iso ? tr("%1 is a hard disk unit. Make it a CD-ROM drive for this disc?")
+                                         : tr("%1 is a CD-ROM drive. Make it a hard disk unit for this image?");
+            if (QMessageBox::question(this, tr("Insert"), question.arg(Q(slot))) != QMessageBox::Yes)
+                return;
+            options["device"] = iso ? "cdrom" : "disk";
+        }
+    }
+    report(run("insert", slot, S(path), options), tr("Insert"));
 }
 
 void MediaPanelWindow::onInsertFile()

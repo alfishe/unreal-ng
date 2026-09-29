@@ -46,20 +46,30 @@ Scope confirmed with the user on 2026-09-27, and how the design honors it:
 - [x] Prerequisite: shared SD card - `SdCardSpi` over `IBlockDevice` and
   `ZControllerSpi` on master (#55 E5, `ed703577`); M1 hook (#55 E3) and
   `EvoAvr` (#55 E2a) on master too
+- [x] Prerequisite: shared CMOS (PLAN #60(c), `04383910`): `EvoAvr` now derives
+  from the shared `Ds12887` chip (TTD `PeripheralId::Ds12887` = 18), so the Gluk
+  CMOS is reused as is; TSConf adds only the `#EFF7`/DOS/vdos gating
+- [x] Shared IDE core on master (PLAN #13a / media manager M6, `f5fc5f05`):
+  `IdeAdapter` with the Nemo (A8, Evo) scheme, `[HDD]` config, TTD
+  `AtaChannel` = 17, every surface; ATM3 already uses it. D2 lost its reason
+  (see Remaining)
 
 ## Remaining
 
 - Implementation phases 0-8 per [implementation-plan.md](implementation-plan.md).
 - Prerequisites: PLAN #60 (interrupt source + write intercept, per-family
-  `Screen` subclass, shared CMOS, wait-state hook; the linear turbo ratio is
+  `Screen` subclass, wait-state hook; the linear turbo ratio is
   postponed - only the Sprinter needs it, TSConf uses `hw_turbo_shift`) before
   phase 0 per PLAN rationale 6; the unified media manager (#58, M1/M2/M4 on master)
   for the SD part of phase 6: TSConf only registers its `sd.zc` slot
   ([integration-tsconf-sd.md](../2026-09-28-storage-manager/integration-tsconf-sd.md)); control
   from the GUI and every automation surface comes from the media verbs
   ([media-control-design.md](../2026-09-28-storage-manager/media-control-design.md), #58 M4), not
-  from a TSConf-specific SD API; the shared IDE (#13a) only if D2 changes; #40 V1 and #42
+  from a TSConf-specific SD API; #40 V1 and #42
   (`IVideoMapper`) before phase 7.
 - Shared with the ATM3 completion program (PLAN #55, [implementation-plan.md](../2026-09-15-atm-baseconf-highres-ports/implementation-plan.md) §2): M1 hook, write intercept, `ZControllerSpi`, SD on `IBlockDevice`, `EvoAvr`; the SD card, host folders (`HostFolderFat`) and media control through the media manager (PLAN #58, [storage-manager](../2026-09-28-storage-manager/technical-design.md)). ATM3 moves to the official `zxevo_fe.rom` (pages 0-3 empty), so TSConf needs its own ROM file with TS-BIOS in pages 0-3.
 - Open user decisions: none blocking. D1-D7 in technical-design §3.2 record the
-  defaults taken; revisit D2 (Nemo IDE) together with PLAN #13a.
+  defaults taken. **D2 (Nemo IDE deferred) is reopened**: the shared IDE core
+  it waited for is on master (`f5fc5f05`), so enabling it costs the decoder's
+  `TryIdePortIn/Out` calls, `[HDD] Scheme=NEMO` in the config, the DMA IDE
+  codes 0x3/0xB and the IDE tests - decide before phase 6.

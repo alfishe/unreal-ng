@@ -30,9 +30,11 @@ class Medium
 {
 public:
     /// A block medium. `stack` is the whole block stack (source + access
-    /// layer); `session` points into it when the access mode is Session
+    /// layer); `session` points into it when the access mode is Session.
+    /// `kind` is Block (SD card, hard disk) or Optical (a CD: 2048-byte blocks
+    /// as four sectors of the stack)
     Medium(MediaSource source, AccessMode access, std::string format, std::unique_ptr<IBlockDevice> stack,
-           SessionWriteMap* session);
+           SessionWriteMap* session, MediaKind kind = MediaKind::Block);
     /// A floppy disk. The image itself is the session: guest writes change it
     /// in memory (its tracks turn dirty) until it is saved
     Medium(MediaSource source, AccessMode access, std::string format, std::unique_ptr<DiskImage> disk);

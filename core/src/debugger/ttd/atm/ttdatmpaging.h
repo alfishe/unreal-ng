@@ -15,11 +15,9 @@
 ///     subsequent access.
 ///   - aFF77 / aFE / aFB are the ATM 4.50 and mode latches; pBD / pBE / pBF the
 ///     ATM3 (ZX-Evo) ports, with pBF.0 (shaden) also gating the FDC on the bus.
-///   - cmos_addr is the DS12885 address latch (on ATM3 the live latch inside
-///     the decoder's CMOS, not EmulatorState::cmos_addr) - the CMOS contents
-///     themselves are battery-backed configuration rather than per-frame
-///     machine state, so they are deliberately NOT captured here (2.3 KB per
-///     checkpoint for data the guest changes on the order of once a session).
+///   - the ZX-Evo AVR's volatile state (extension type, EEPROM page, flags).
+///     The clock chip itself - cells, address latch, time base - is its own
+///     blob (PeripheralId::Ds12887, debugger/ttd/ttdds12887.h).
 ///   - atmPalette / atmPaletteRegs / atmBorderBright are the #FF palette RAM
 ///     and the 4th border bit: every ATM video mode renders through them.
 
@@ -47,7 +45,7 @@ struct AtmPagingState
     uint8_t  aFE;               ///< ATM 4.50 system port
     uint8_t  aFB;               ///< ATM 4.50 system port
     uint8_t  atmMemSwapped;     ///< A5-A7 <-> A8-A10 address swap active
-    uint8_t  cmos_addr;         ///< DS12885 address latch
+    uint8_t  reserved0;         ///< was the clock address latch (now in the Ds12887 blob), always 0
     uint8_t  atmPaletteRegs[16];///< raw #FF palette bytes (ATM3 #BE.0D readback)
     uint8_t  atmBorderBright;   ///< 4th border bit (~A3 of the last border write)
     uint8_t  evoFddMask;        ///< ZX-Evo #13BD virtual-drive mask

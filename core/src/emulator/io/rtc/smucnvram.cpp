@@ -1,16 +1,14 @@
 #include "stdafx.h"
 
 #include "smucnvram.h"
-#include "common/timehelper.h"
 
 #include <cstring>
 
 //
-// Constructor for CMOS NVRAM
+// SMUC battery-backed parts: clock + LC16 serial EEPROM
 //
 SMUCNvram::SMUCNvram()
 {
-	memset(_cmos, 0x00, sizeof(_cmos));
 	memset(_nvram, 0x00, sizeof(_nvram));
 	memset(_writeBuffer, 0x00, sizeof(_writeBuffer));
 }
@@ -185,108 +183,3 @@ void SMUCNvram::ResetSerialLinkState()
 }
 
 /// endregion </Serial-link EEPROM (SMUC #FFBA)>
-
-void SMUCNvram::SetCMOSType(CMOSTypeEnum type)
-{
-	_cmos_type = type;
-}
-
-void SMUCNvram::SetCMOSAddress(uint8_t addr)
-{
-	_cmos_addr = addr;
-}
-
-void SMUCNvram::WriteCMOS(uint8_t val)
-{
-	uint8_t cur_addr = _cmos_addr;
-
-	if (_cmos_type == Rus512)
-		cur_addr = cur_addr & 0x3F;
-		
-	_cmos[cur_addr] = val;
-}
-
-uint8_t SMUCNvram::ReadCMOS()
-{
-	tm& time = _lastTime;
-	bool& UF = _updateFinished;
-
-	uint8_t result = 0;
-	uint8_t cur_addr = _cmos_addr;
-
-	if (_cmos_type == Rus512)
-		cur_addr = cur_addr & 0x3F;
-
-	// If Time/Date values requested from CMOS - provide current Host system values
-	if ((1 << cur_addr) & ((1 << 0) | (1 << 2) | (1 << 4) | (1 << 6) | (1 << 7) | (1 << 8) | (1 << 9) | (1 << 12)))
-	{
-		// Deterministic mode serves the frozen instant; the function-local
-		// statics this replaces also leaked time state across instances
-		time = make_utc_tm(_fixedTime
-					   ? std::chrono::system_clock::from_time_t(_fixedTimeValue)
-					   : std::chrono::system_clock::now());
-	}
-
-	switch (cur_addr)
-	{
-		case CMOSMemoryEnum::Second:
-			result = DecodeFromBCD((uint8_t)time.tm_sec);
-			break;
-		case CMOSMemoryEnum::Minute:
-			result = DecodeFromBCD((uint8_t)time.tm_min);
-			break;
-		case CMOSMemoryEnum::Hour:
-			result = DecodeFromBCD((uint8_t)time.tm_hour);
-			break;
-		case CMOSMemoryEnum::DayOfWeek:
-			result = 1 + (time.tm_wday + 8 % 7);
-			break;
-		case CMOSMemoryEnum::Day:
-			result = DecodeFromBCD((uint8_t)time.tm_mday);
-			break;
-		case CMOSMemoryEnum::Month:
-			result = DecodeFromBCD((uint8_t)time.tm_mon);
-			break;
-		case CMOSMemoryEnum::Year:
-			result = DecodeFromBCD(time.tm_year % 100);
-			break;
-		case CMOSMemoryEnum::Unknown_10:
-			result = 0x20 | (_cmos[10] & 0xF); // molodcov_alex
-			break;
-		case CMOSMemoryEnum::BitFlags:
-			result = (_cmos[11] & 4) | 2;
-			break;
-		case CMOSMemoryEnum::UF:  // [vv] UF
-			result = UF ? 0x10 : 0;
-			UF = false;
-			break;
-		case CMOSMemoryEnum::Unknown_13:
-			result = 0x80;
-			break;
-		default:
-			result = _cmos[_cmos_addr];
-			break;
-	}
-
-	return result;
-}
-
-void SMUCNvram::SetFixedTime(time_t t)
-{
-	_fixedTime = true;
-	_fixedTimeValue = t;
-}
-
-void SMUCNvram::UseLiveTime()
-{
-	_fixedTime = false;
-}
-
-// Helper methods
-uint8_t SMUCNvram::DecodeFromBCD(uint8_t binary)
-{
-	if (!(_cmos[11] & 0x04))
-		binary = (binary % 10) + 0x10 * ((binary / 10) % 10);
-
-	return binary;
-}

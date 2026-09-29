@@ -24,6 +24,8 @@
 #include "ttdcompression.h"    // codec::Compress / Decompress / Crc32C
 
 #include "machinestatehash.h"  // CaptureSnapshot / HashSnapshot (self-test)
+#include "ide/ttdatachannel.h"  // IDE board (implementation-plan.md D4)
+#include "emulator/io/ide/idecontroller.h"
 
 // Pull in the actual struct definitions for the capture call sites.
 #include "3rdparty/message-center/messagecenter.h"
@@ -511,6 +513,10 @@ void TimeTravelManager::EngageRecordingLock()
     // Turbo mode off, turbo mode / fast tape / turbo tape / fast disk refused
     if (_context->pFeatureManager)
         _context->pFeatureManager->onTtdRecordingStarted();
+
+    // Devices with a host-time dependence (the RTC) switch to emulated time
+    // here, before StartRecording captures its baseline
+    _peripherals.NotifyRecording(true);
 }
 
 void TimeTravelManager::ReleaseRecordingLock()
@@ -518,6 +524,8 @@ void TimeTravelManager::ReleaseRecordingLock()
     if (!_recordingLockEngaged || !_context)
         return;
     _recordingLockEngaged = false;
+
+    _peripherals.NotifyRecording(false);
 
     // Lifts the FeatureManager gate first: the speed restore below is checked by it
     if (_context->pFeatureManager)
@@ -1339,6 +1347,14 @@ bool TimeTravelManager::RegisterModelPeripherals(std::string* err)
     // Kempston Mouse: core device on every model (design §6.1 - not a model-specific latch)
     _peripherals.Register(PeripheralId::KempstonMouse, _context->pMouse);
     _peripherals.Register(PeripheralId::BetaDisk, _context->pBetaDisk);
+
+    // IDE board (any machine with [HDD] Scheme): controller state, not the media
+    if (_context->pIdeController && _context->pIdeController->Enabled())
+    {
+        auto ide = std::make_unique<TTDAtaChannel>(_context);
+        _peripherals.Register(PeripheralId::AtaChannel, ide.get());
+        _ownedPeripherals.push_back(std::move(ide));
+    }
 
     // --- Model-specific state (TDD 6.4) ---
     // The framework names no machine. The port decoder owns the model's

@@ -1628,6 +1628,9 @@ namespace PythonBindings
             .def("audio_fm_state", [](Emulator& self, int chip) -> py::object {
                 return StateNodeToPy(chip < 0 ? DeviceState::Fm(self.GetContext()) : DeviceState::FmChip(self.GetContext(), chip));
             }, "TurboSound FM state report: board + chip summary (chip=-1) or one YM2203 FM half in full", py::arg("chip") = -1)
+            .def("ide_state", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::Ide(self.GetContext()));
+            }, "IDE board: scheme, latches, both units (task file, command, CD sense); available=False without one")
             .def("fdc_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Fdc(self.GetContext()));
             }, "Beta Disk WD1793 state report: registers, status bits, FSM, signals, drives")

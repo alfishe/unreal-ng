@@ -26,8 +26,8 @@ namespace
 }  // namespace
 
 Medium::Medium(MediaSource source, AccessMode access, std::string format, std::unique_ptr<IBlockDevice> stack,
-               SessionWriteMap* session)
-    : _kind(MediaKind::Block),
+               SessionWriteMap* session, MediaKind kind)
+    : _kind(kind),
       _source(std::move(source)),
       _access(access),
       _format(std::move(format)),

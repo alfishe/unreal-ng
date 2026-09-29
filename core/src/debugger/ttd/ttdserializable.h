@@ -59,6 +59,9 @@ enum class PeripheralId : uint8_t
     Plus3Paging = 13,     // +2A/+3 #1FFD latch (ROM high bit, all-RAM modes, motor)
     Upd765 = 14,          // +3 uPD765A floppy controller (drives ride the BetaDisk blob)
     EvoSdCard = 15,       // ZX-Evo Z-Controller + SD card protocol state (not the card's sectors: storage-manager TTD rule)
+    // 16: reserved for TSConf (PLAN #41: TsConfPaging)
+    AtaChannel = 17,      // IDE board: channel, both units (task file, transfer, ATAPI sense), adapter latches; not the media
+    Ds12887 = 18,         // MC146818 / DS12887 clock: cells, address latch, time base (ATM3, Profi, Scorpion SMUC; Sprinter, TSConf)
     // Future: SAA1099, GS512, etc.
     Count
 };
@@ -109,6 +112,13 @@ public:
     /// Default returns 0 (no contribution). Override for devices with state
     /// that affects determinism (e.g., Scorpion ProfROM quadrant).
     virtual uint64_t TTDHashState() const { return 0; }
+
+    /// Recording starts / returns to idle (TimeTravelManager's recording lock).
+    /// Called before the baseline checkpoint is captured, so a device that
+    /// switches to a deterministic time base here has the switch in its first
+    /// blob. Default: nothing (most devices have no host-time dependence)
+    virtual void TTDRecordingStarted() {}
+    virtual void TTDRecordingStopped() {}
 };
 
 } // namespace ttd

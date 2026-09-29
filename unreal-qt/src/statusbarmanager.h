@@ -74,6 +74,8 @@ private slots:
     void applyFddState(FDDStateInfo state);  // GUI thread: update cache, LED and tooltip
     void applyDiskMediaChange(uint8_t driveId, bool inserted);
     void updateDiskToolTip();
+    /// The IDE LED and tooltip (board, units, media) on every tick
+    void updateIde(EmulatorContext* context);
     void updateFpsToolTip(std::shared_ptr<Emulator> emulator);
     void updateCpuFreqToolTip(EmulatorContext* context);
 
@@ -86,6 +88,7 @@ private:
     StatusIndicator* _tape = nullptr;
     StatusIndicator* _disk = nullptr;
     StatusIndicator* _hdd = nullptr;
+    uint64_t _ideTransfers = 0;  ///< sectors moved at the last tick (the IDE LED blinks on a change)
     StatusIndicator* _sound = nullptr;
     QLabel* _cpuFreq = nullptr;
     QLabel* _fps = nullptr;

@@ -1,7 +1,7 @@
 # Media: drives, cards and what is in them
 
 Every place a medium goes on the running machine — floppy drives, the tape deck, the SD card
-socket, later hard disks and CD — is a **slot**. One set of verbs puts media in and takes them out,
+socket, IDE hard disks and the CD-ROM drive — is a **slot**. One set of verbs puts media in and takes them out,
 the same on the Qt media panel, the WebAPI, the CLI, MCP, Lua and Python. This page is the
 reference; each surface's own documentation links here.
 
@@ -12,7 +12,7 @@ layers of a storage peripheral: [technical-design.md §1.1](../inprogress/2026-0
 
 | Word | Meaning |
 |---|---|
-| **Slot** | A place a medium goes: `fdd.a` (floppy drive A), `tape` (the tape deck), `sd.zc` (the Z-Controller SD socket) |
+| **Slot** | A place a medium goes: `fdd.a` (floppy drive A), `tape` (the tape deck), `sd.zc` (the Z-Controller SD socket), `ide0.master` (the IDE master unit) |
 | **Medium** | What is in a slot: a disk image, a tape, a card image, or a host folder presented as a disk, a tape or a card |
 | **Kind** | `floppy`, `tape`, `block` (SD card / hard disk), `optical` (CD) |
 | **Tag** | A word describing a slot: `sd`, `boot`, `trdos`, `neogs` |
@@ -28,9 +28,12 @@ layers of a storage peripheral: [technical-design.md §1.1](../inprogress/2026-0
 
 | Machine | Slots |
 |---|---|
-| Pentagon, Scorpion, 128K with Beta 128 | `fdd.a` … `fdd.d` (aliases `A` … `D`), `tape` |
+| Pentagon | `fdd.a` … `fdd.d` (aliases `A` … `D`), `tape`, `ide0.master` (`hd`), `ide0.slave` (Nemo IDE) |
+| Scorpion, 128K with Beta 128 | `fdd.a` … `fdd.d`, `tape` |
 | +3 | `fdd.a`, `fdd.b` (`A`, `B`) — there is no drive C —, `tape` |
-| ZX-Evo | `fdd.a` … `fdd.d`, `tape`, `sd.zc` (`sd`) |
+| Profi | `fdd.a` … `fdd.d`, `tape`, `ide0.master`, `ide0.slave` (Profi IDE) |
+| ATM Turbo 2+ | `fdd.a` … `fdd.d`, `tape`, `ide0.master`, `ide0.slave` (ATM IDE) |
+| ZX-Evo | `fdd.a` … `fdd.d`, `tape`, `sd.zc` (`sd`), `ide0.master`, `ide0.slave` (NemoIDE) |
 
 Every slot reports: id, kind, label, index, aliases, tags, whether it is removable and takes
 folders, the write-protect switch, its state (`empty`, `present`, `pending`, `detached`) and the
@@ -90,6 +93,7 @@ on a +3) is `unknown-slot`, never drive A.
 | `end_recording` | bool | false | insert, swap, eject, create: stop a TTD recording instead of refusing |
 | `async` | bool | false | insert, swap, eject, discard, rescan, create |
 | `immediate` | bool | false | insert, swap: no swap delay |
+| `device` | `disk`, `cdrom` | the unit's | insert, swap on an IDE unit: swap its drive first (the unit must be empty) |
 
 **Access.** `session` (the default) keeps guest writes in memory: the file or folder never
 changes until you save or export. `readonly` refuses writes (the guest sees a write-protected
@@ -135,6 +139,48 @@ The manifest's `files:` sets a file's name, type, start and autorun `line`, and 
 is a file that would run past one side of a C90 cassette (45 minutes at ROM speed); the report
 lists them. Example: `boot.$B` (a 26-byte program) and `intro.scr` make a tape of about a minute
 without fast loading: `LOAD ""` runs the program, `LOAD "" SCREEN$` shows the picture.
+
+## Hard disks and the CD-ROM drive (IDE)
+
+A machine with an IDE board has two units, `ide0.master` and `ide0.slave`. The board comes from
+the machine's config, `[HDD] Scheme`:
+
+| Scheme | Board | Shipped on |
+|---|---|---|
+| `PROFI` | Profi IDE (answers in the Profi's EXT mode) | Profi |
+| `NEMO-DIVIDE` | ZX-Evo NemoIDE | ZX-Evo |
+| `ATM` | ATM Turbo 2+ IDE (with the TR-DOS ports) | ATM Turbo 2+ |
+| `NEMO`, `NEMO-A8` | Nemo IDE card (with the TR-DOS ports off) | Pentagon |
+| `SMUC` | Scorpion SMUC card (with the TR-DOS ports) | none: set it on Scorpion / ProfScorp |
+| `DIVIDE` | DivIDE ports (no DivIDE paging) | none |
+| `NONE` | no IDE | the other machines |
+
+Each unit is a **hard disk** unless the config says it is a **CD-ROM drive**: `CD0=1` / `CD1=1`,
+or an `.iso` configured as the unit's image. An empty unit changes its drive with the insert
+option `device=cdrom` / `device=disk` (the Qt media panel asks when you drop an ISO on a disk unit);
+the change lasts for this machine's session (a reset keeps it; a new machine or a model switch starts
+from the config file). A CD drive in the slave position is the usual ZX-Evo
+setup (the ERS boots from it); no machine ships with one, because an empty drive changes what some
+firmware does at boot.
+
+| Unit | Kind | Takes | Default access | Removable |
+|---|---|---|---|---|
+| hard disk | `block` | `.img` `.ima` `.hdd` `.hd` (raw), `.hdf` (RS-IDE, 8-bit halved too), `.hdi`, fixed `.vhd`, or a folder (a FAT16 volume) | `writethrough`: the guest writes into the image file, as on UnrealSpeccy (a folder: `session`) | no: insert and eject while paused |
+| CD-ROM drive | `optical` | `.iso` (ISO 9660, read-only) | `readonly` | yes: a swap keeps the drive empty for 3 s and the guest sees "medium changed" |
+
+The geometry is `[HDD] CHS0` / `CHS1` (`C/H/S`), else the image header's, else the largest standard
+one for the size (16 heads, 63 sectors). On the Profi board a disk's own ProfiHiDD header decides
+(16 x 16 from the SYS ROM, 16 x 63 from Karabas); a disk without one gets the SYS ROM's 16 x 16.
+`HD0RO=1` makes the master read-only (WRITE aborts, like a jumper on the drive). The legacy
+`Image0` / `Image1` keys work as `[MEDIA] ide0.master` / `ide0.slave`.
+
+Example: `media insert hd ~/zx/nedoos.img` puts an image on the master; on ZX-Evo with `CD1=1`,
+`media insert cd ~/zx/disc.iso` and the ERS "D. CD boot" runs the disc's `AUTORUN.ZX`.
+
+`state ide` (WebAPI `/state/ide`, Lua / Python `ide_state()`, MCP aspect `ide`) shows the board,
+its latches and each unit's task file, command in progress and, on a CD drive, the sense data.
+Time travel records through disk activity: a write is a replay barrier, and the board's state is in
+every checkpoint.
 
 ## Model switch
 

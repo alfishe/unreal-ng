@@ -23,6 +23,7 @@ class MainLoop;
 class Memory;
 class WD1793;
 class UPD765;
+class IdeController;
 class PortDecoder;
 class Screen;
 class UlaContention;
@@ -108,6 +109,10 @@ public:
 
     // ZX Spectrum +3 floppy controller (NEC uPD765A); nullptr on every other model
     UPD765* pUPD765 = nullptr;
+
+    // IDE board (channel, units, their media slots); owned by Core, always present
+    // (scheme NONE: no units, no slots)
+    IdeController* pIdeController = nullptr;
 
     // Fast disk loading trap instance
     DiskFastLoad* pDiskFastLoad = nullptr;

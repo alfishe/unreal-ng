@@ -24,13 +24,16 @@ protected:
 TEST_F(TTDProfiPaging_Test, DecoderDeclaresProfiPaging)
 {
     const std::vector<ttd::PeripheralId> ids = _context->pPortDecoder->GetTTDModelStateIds();
-    ASSERT_EQ(ids.size(), 1u);
+    ASSERT_EQ(ids.size(), 2u);
     EXPECT_EQ(ids[0], ttd::PeripheralId::ProfiPaging);
+    EXPECT_EQ(ids[1], ttd::PeripheralId::Ds12887) << "the RTC (PLAN #13a RTC in TTD, built by #60(c))";
 
     auto serializers = _context->pPortDecoder->CreateTTDSerializers();
-    ASSERT_EQ(serializers.size(), 1u);
+    ASSERT_EQ(serializers.size(), 2u);
     EXPECT_EQ(serializers[0]->TTDPeripheralId(), ttd::PeripheralId::ProfiPaging);
     EXPECT_EQ(serializers[0]->TTDDeviceName(), "ProfiPaging");
+    EXPECT_EQ(serializers[1]->TTDPeripheralId(), ttd::PeripheralId::Ds12887);
+    EXPECT_EQ(serializers[1]->TTDDeviceName(), "Ds12887");
 }
 
 /// @brief Save -> mutate -> load restores #DFFD and every palette entry

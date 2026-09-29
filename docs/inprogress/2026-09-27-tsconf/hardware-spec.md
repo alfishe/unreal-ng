@@ -529,6 +529,8 @@ branch and is reused (technical-design §3.11).
 Built in the standard `quartus` build (ports per [V] `zports.v:256-274,766-861`,
 DMA codes 0x3/0xB); TS-BIOS lists IDE Nemo/SMUC boot devices. **v1 decision
 (D2):** defer with the shared IDE core (PLAN #13a); decoder answers 0xFF.
+That core is on master since 2026-09-28 (`f5fc5f05`, `IdeAdapter` Nemo Evo
+scheme), so D2 is reopened (technical-design §3.2).
 
 ## 9. Other peripherals
 

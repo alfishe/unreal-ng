@@ -2,6 +2,9 @@
 
 #include "mediacontrol.h"
 
+#include "emulator/io/ide/idecontroller.h"
+#include "emulator/io/storage/hddimageformats.h"
+
 #include <algorithm>
 #include <cctype>
 #include <limits>
@@ -89,7 +92,7 @@ namespace
         return MediaResult::Success();
     }
 
-    const std::vector<std::string> kInsertOptions = {"access", "format", "fs", "codepage", "free", "wp", "kind",
+    const std::vector<std::string> kInsertOptions = {"access", "format", "fs", "codepage", "free", "wp", "kind", "device",
                                                      "save", "export", "discard", "end_recording", "async", "immediate"};
 
     /// The parked emulator: a save or export reads the medium while the guest
@@ -505,16 +508,38 @@ MediaResult MediaControl::ChooseSlot(const std::string& path, const Options& opt
     {
         const std::string ext = Lower(FileHelper::GetFileExtension(path));
         const auto tape = MediaFormatRegistry::Extensions(MediaKind::Tape);
+        const auto optical = MediaFormatRegistry::Extensions(MediaKind::Optical);
         const auto block = MediaFormatRegistry::Extensions(MediaKind::Block);
         if (std::find(tape.begin(), tape.end(), ext) != tape.end())
             kind = MediaKind::Tape;
+        else if (std::find(optical.begin(), optical.end(), ext) != optical.end())
+            kind = MediaKind::Optical;
         else if (std::find(block.begin(), block.end(), ext) == block.end())
             return MediaResult::Fail(MediaError::UnknownFormat,
-                                     "'" + path + "' is no medium this emulator knows: name the slot, or say kind=floppy|tape|block");
+                                     "'" + path + "' is no medium this emulator knows: name the slot, or say kind=floppy|tape|block|optical");
     }
 
-    // The first empty slot of that kind; else the default one: the slot
-    // tagged "primary", else the first of the kind
+    // Block media: hard-disk formats prefer an IDE unit, card images an SD
+    // slot (a machine may have both: ZX-Evo)
+    std::string preferTag;
+    if (kind == MediaKind::Block)
+    {
+        preferTag = HddImageFormats::IsHardDiskExtension(FileHelper::GetFileExtension(path)) ? "ide" : "sd";
+    }
+    auto tagged = [](const SlotInfo& info, const std::string& tag) {
+        return !tag.empty() && std::find(info.tags.begin(), info.tags.end(), tag) != info.tags.end();
+    };
+
+    // The first empty slot of that kind (a preferred one first); else the
+    // default one: the slot tagged "primary", else the first of the kind
+    for (const SlotInfo& info : slots)
+    {
+        if (info.descriptor.kind == kind && !info.present && !info.pending && tagged(info, preferTag))
+        {
+            slotId = info.descriptor.id;
+            return MediaResult::Success();
+        }
+    }
     const SlotInfo* fallback = nullptr;
     for (const SlotInfo& info : slots)
     {
@@ -606,10 +631,26 @@ MediaReply MediaControl::Insert(const MediaRequest& request, bool swap)
         reply.result = ResolveSelector(*_manager, request.selector, reply.slot);
     if (!reply.result.Ok())
         return reply;
+    const Options& o = request.options;
+
+    // An IDE unit can change its drive first: device=cdrom puts a CD-ROM drive
+    // there, device=disk a hard disk (the unit must be empty)
+    if (auto it = o.find("device"); it != o.end())
+    {
+        const std::string device = Lower(Trim(it->second));
+        if (device != "disk" && device != "cdrom")
+            return Fail(MediaError::BadRequest, "device '" + it->second + "': expected disk or cdrom");
+        const int unit = IdeController::UnitForSlot(reply.slot);
+        if (unit < 0 || !_context || !_context->pIdeController)
+            return Fail(MediaError::BadRequest, "device: only an IDE unit (ide0.master, ide0.slave) changes its drive");
+        std::string error;
+        ParkedEmulator parked(_context);
+        if (!_context->pIdeController->SetUnitKind(unit, device == "cdrom", &error))
+            return Fail(MediaError::BadRequest, error);
+    }
 
     // Options
     InsertOptions options;
-    const Options& o = request.options;
     if (auto it = o.find("access"); it != o.end())
     {
         AccessMode access;

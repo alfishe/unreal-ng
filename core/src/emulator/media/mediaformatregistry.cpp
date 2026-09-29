@@ -3,11 +3,13 @@
 #include "mediaformatregistry.h"
 
 #include "common/filehelper.h"
+#include "common/stringhelper.h"
 #include "emulator/io/storage/hostfolder/folderdiskbuilder.h"
 #include "emulator/io/storage/hostfolder/foldertapebuilder.h"
 #include "emulator/media/floppyformats.h"
 #include "emulator/io/storage/hostfolder/foldermanifest.h"
 #include "emulator/io/storage/hostfolder/foldersnapshot.h"
+#include "emulator/io/storage/hddimageformats.h"
 #include "emulator/io/storage/hostfolder/hostfolderfat.h"
 #include "emulator/io/storage/rawimage.h"
 #include "emulator/io/storage/readonlyguard.h"
@@ -15,7 +17,7 @@
 #include "loaders/tape/loader_tape.h"
 
 std::unique_ptr<Medium> MediaFormatRegistry::WrapBlock(MediaSource source, AccessMode access, std::string format,
-                                                       std::unique_ptr<IBlockDevice> base)
+                                                       std::unique_ptr<IBlockDevice> base, MediaKind kind)
 {
     SessionWriteMap* session = nullptr;
     std::unique_ptr<IBlockDevice> stack;
@@ -35,7 +37,7 @@ std::unique_ptr<Medium> MediaFormatRegistry::WrapBlock(MediaSource source, Acces
             stack = std::move(base);
             break;
     }
-    return std::make_unique<Medium>(std::move(source), access, std::move(format), std::move(stack), session);
+    return std::make_unique<Medium>(std::move(source), access, std::move(format), std::move(stack), session, kind);
 }
 
 /// A host folder as a FAT volume: manifest, snapshot, volume, access layer
@@ -183,6 +185,34 @@ static MediaResult OpenTape(const OpenRequest& request, std::unique_ptr<Medium>&
     return result;
 }
 
+/// A CD: an ISO 9660 image, always read-only
+static MediaResult OpenOptical(const OpenRequest& request, std::unique_ptr<Medium>& medium)
+{
+    const MediaSource& source = request.source;
+    if (source.type == MediaSourceType::Folder || FileHelper::IsFolder(source.path))
+        return MediaResult::Fail(MediaError::NotSupported, "a folder cannot be a CD yet: make an ISO of it");
+    if (source.type == MediaSourceType::Blank)
+        return MediaResult::Fail(MediaError::NotSupported, "there is no blank CD: the drive only reads");
+    if (!FileHelper::FileExists(source.path))
+        return MediaResult::Fail(MediaError::UnreadableSource, "no such file: " + source.path);
+
+    std::string error;
+    const std::string format = HddImageFormats::Probe(source.path, &error);
+    if (format.empty())
+        return MediaResult::Fail(MediaError::UnreadableSource, error);
+    const bool isoName = StringHelper::ToLower(FileHelper::GetFileExtension(source.path)) == "iso";
+    if (format != "iso" && !(format == "raw" && isoName))
+        return MediaResult::Fail(MediaError::UnknownFormat, "'" + source.path + "' is no CD image (no ISO 9660 volume)");
+    auto image = HddImageFormats::Open(source.path, "iso", RawImage::Access::ReadOnly, &error);
+    if (!image)
+        return MediaResult::Fail(MediaError::UnreadableSource, error);
+
+    MediaSource resolved = source;
+    resolved.type = source.type == MediaSourceType::Upload ? MediaSourceType::Upload : MediaSourceType::File;
+    medium = MediaFormatRegistry::WrapBlock(resolved, AccessMode::ReadOnly, "iso", std::move(image), MediaKind::Optical);
+    return MediaResult::Success();
+}
+
 MediaResult MediaFormatRegistry::Open(const OpenRequest& request, std::unique_ptr<Medium>& medium)
 {
     medium.reset();
@@ -191,9 +221,8 @@ MediaResult MediaFormatRegistry::Open(const OpenRequest& request, std::unique_pt
         return OpenFloppy(request, medium);
     if (request.kind == MediaKind::Tape)
         return OpenTape(request, medium);
-    if (request.kind != MediaKind::Block)
-        return MediaResult::Fail(MediaError::NotSupported,
-                                 std::string(MediaKindName(request.kind)) + " media are not served by the media manager yet");
+    if (request.kind == MediaKind::Optical)
+        return OpenOptical(request, medium);
 
     const MediaSource& source = request.source;
     const bool isFolder = FileHelper::IsFolder(source.path);
@@ -211,16 +240,22 @@ MediaResult MediaFormatRegistry::Open(const OpenRequest& request, std::unique_pt
     if (!FileHelper::FileExists(source.path))
         return MediaResult::Fail(MediaError::UnreadableSource, "no such file: " + source.path);
 
+    // A raw image, or a headered hard-disk format (HDF, HDI, fixed VHD)
     std::string error;
-    auto image = RawImage::Open(source.path,
-                                request.access == AccessMode::WriteThrough ? RawImage::Access::ReadWrite : RawImage::Access::ReadOnly,
-                                &error);
-    if (!image)
+    const std::string format = HddImageFormats::Probe(source.path, &error);
+    if (format.empty())
         return MediaResult::Fail(MediaError::UnreadableSource, error);
+    if (format == "iso")
+        return MediaResult::Fail(MediaError::KindMismatch, "'" + source.path + "' is a CD image: it goes into a CD drive (an IDE unit becomes one with device=cdrom)");
+    auto image = HddImageFormats::Open(
+        source.path, format, request.access == AccessMode::WriteThrough ? RawImage::Access::ReadWrite : RawImage::Access::ReadOnly,
+        &error);
+    if (!image)
+        return MediaResult::Fail(format == "raw" ? MediaError::UnreadableSource : MediaError::UnknownFormat, error);
 
     MediaSource resolved = source;
     resolved.type = source.type == MediaSourceType::Upload ? MediaSourceType::Upload : MediaSourceType::File;
-    medium = WrapBlock(resolved, request.access, "raw", std::move(image));
+    medium = WrapBlock(resolved, request.access, format, std::move(image));
     return MediaResult::Success();
 }
 
@@ -228,7 +263,8 @@ std::vector<std::string> MediaFormatRegistry::Extensions(MediaKind kind)
 {
     switch (kind)
     {
-        case MediaKind::Block: return {"img", "ima", "hdd", "hd", "bin", "mmc", "sd"};
+        case MediaKind::Block: return {"img", "ima", "hdd", "hd", "hdf", "hdi", "vhd", "bin", "mmc", "sd"};
+        case MediaKind::Optical: return {"iso"};
         case MediaKind::Floppy: return FloppyFormats::Extensions();
         case MediaKind::Tape: return TapeLoaderRegistry::Instance().SupportedExtensions();
         default: return {};

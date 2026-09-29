@@ -2,12 +2,17 @@
 #include "pch.h"
 
 #include <algorithm>
+#include <cstdio>
+#include <fstream>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/soundcardscope.h"
+#include "_helpers/testpathhelper.h"
+#include "common/filehelper.h"
+#include "emulator/media/mediamanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -521,6 +526,58 @@ TEST(DeviceStateCovox_Test, SinclairModelsFitNoCovox)
 }
 
 /// endregion </General Sound and Covox (PLAN #20)>
+
+/// IDE board report: the scheme, the units, a command in flight; a machine
+/// without a board answers "unavailable"
+TEST(DeviceStateIde_Test, ReportFollowsTheBoardAndTheCommand)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    const std::string image = TestPathHelper::GetUniqueTestScratchPath("devicestate-ide.img");
+    {
+        std::ofstream out(FileHelper::ToFsPath(image), std::ios::binary);
+        out << std::string(256 * 512, '\0');
+    }
+    MediaSource source;
+    source.path = image;
+    InsertOptions options;
+    options.immediate = true;
+    ASSERT_TRUE(context->pMediaManager->Insert("ide0.master", source, options).Ok());
+
+    // READ SECTORS of 2 at LBA 5 through the Nemo ports, one word read
+    PortDecoder& ports = *context->pPortDecoder;
+    context->emulatorState.flags &= static_cast<uint8_t>(~(CF_DOSPORTS | CF_TRDOS));
+    for (const auto& [port, value] : std::vector<std::pair<uint16_t, uint8_t>>{
+             {0xD0, 0xE0}, {0x50, 2}, {0x70, 5}, {0x90, 0}, {0xB0, 0}, {0xF0, 0x20}})
+        ports.DecodePortOut(port, value, 0);
+    ports.DecodePortIn(0x10, 0);
+
+    const StateNode report = DeviceState::Ide(context);
+    ASSERT_TRUE(report.find("available")->b);
+    EXPECT_EQ(report.find("scheme")->s, "NEMO");
+    const StateNode& units = *report.find("units");
+    ASSERT_EQ(units.items.size(), 2u);
+    const StateNode& master = units.items[0];
+    EXPECT_EQ(master.find("kind")->s, "disk");
+    EXPECT_EQ(master.find("slot")->s, "ide0.master");
+    EXPECT_TRUE(master.find("present")->b);
+    const StateNode& command = *master.find("command");
+    EXPECT_EQ(command.find("name")->s, "READ SECTORS");
+    EXPECT_EQ(command.find("phase")->s, "data in");
+    EXPECT_EQ(command.find("buffer_position")->i, 2);
+    const StateNode& bits = *master.find("task_file")->find("status_bits");
+    EXPECT_NE(std::find_if(bits.items.begin(), bits.items.end(), [](const StateNode& b) { return b.s == "DRQ"; }), bits.items.end());
+    EXPECT_FALSE(units.items[1].find("present")->b) << "no slave disk";
+    EXPECT_NE(DeviceState::ToText(report).find("READ SECTORS"), std::string::npos);
+    EmulatorTestHelper::CleanupEmulator(emulator);
+    std::remove(image.c_str());
+
+    Emulator* spectrum = EmulatorTestHelper::CreateStandardEmulator("48K", LoggerLevel::LogError);
+    ASSERT_NE(spectrum, nullptr);
+    EXPECT_FALSE(DeviceState::Ide(spectrum->GetContext()).find("available")->b);
+    EmulatorTestHelper::CleanupEmulator(spectrum);
+}
 
 /// region <MoonSound (PLAN #11, P2-2)>
 

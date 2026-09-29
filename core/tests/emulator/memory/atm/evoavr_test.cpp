@@ -21,14 +21,14 @@ namespace
 
     uint8_t Read(EvoAvr& avr, uint8_t index)
     {
-        avr.SetCMOSAddress(index);
-        return avr.ReadCMOS();
+        avr.WriteAddress(index);
+        return avr.ReadData();
     }
 
     void Write(EvoAvr& avr, uint8_t index, uint8_t value)
     {
-        avr.SetCMOSAddress(index);
-        avr.WriteCMOS(value);
+        avr.WriteAddress(index);
+        avr.WriteData(value);
     }
 
     std::string ReadWindow(EvoAvr& avr)
