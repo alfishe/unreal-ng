@@ -113,3 +113,6 @@ status = zxpoly_status(id)          # dict, None if not a ZX-Poly machine
 - **After a reset:** a reset of the master is a system reset. `#3D00` goes to
   0, and the master alone is shown until a multiloader locks the machine
   again.
+- **No time travel:** time travel is not supported on ZX-Poly machines
+  (deferred). `time_travel` is not blocked, but it acts on the master
+  alone: a seek splits the master from the slaves. Do not use it here.

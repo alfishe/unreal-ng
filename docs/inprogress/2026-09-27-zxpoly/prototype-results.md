@@ -169,7 +169,11 @@ base model.
 Tests: `ConfigurationsCreateTheGroupByName`,
 `FortyEightKGroupRunsReplicatedSoftwareButRefusesEditions`.
 
-## 7. Group time travel
+## 7. Group time travel (core only, not enabled)
+
+> **Status:** the mechanism is built and tested in the core, but time travel
+> is not supported for ZX-Poly machines: no surface calls the group timeline.
+> It is deferred with low priority; see [§8](#8-not-done-yet).
 
 The four TTD sessions run as one timeline (QI §8):
 
@@ -201,8 +205,7 @@ longer than the recorded ones. The group now runs the master with
 Surfaces: WebAPI (`start` with `zxpoly`, `GET /{id}/zxpoly`), MCP
 (`zxpoly` on create, `zxpoly_status`), CLI, Python and Lua; see
 [.recipe/machines/zxpoly.md](../../../.recipe/machines/zxpoly.md). The group
-timeline is a core API for now. The per-instance TTD tools see each module
-alone.
+timeline is a core API only (no surface calls it).
 
 ## 8. Not done yet
 
@@ -210,6 +213,25 @@ alone.
   parallel at every frame end (on by default, `SetParallelSlaves`). The
   master still waits for them before its next frame; overlapping the slaves
   with the master's next frame is not done.
-- **Group TTD on the automation surfaces:** seek and resume of the whole group
-  through WebAPI/MCP `time_travel`.
-- **Video wall:** ZX-Poly machines as tiles.
+
+**Deferred (possible later, low priority).** Both carry many risks for
+little gain now:
+
+- **Time travel for ZX-Poly machines.** Not supported. The ordinary
+  per-instance TTD commands are not blocked either: WebAPI, MCP
+  `time_travel`, CLI, Lua, Python, gdb, DeZog and the Qt TTD widget all
+  act on the master alone. A master seek then splits it from the slaves;
+  a new ZX-Poly start recovers. The risks:
+  - the group has to own the one timeline, so these commands would have
+    to route to the group or refuse;
+  - a seek has to restore the platform state (`#3D00`, R0–R3, the lock)
+    together with all four sessions;
+  - the coupled machine, the stop address and the halt notification
+    have not been replayed through a seek;
+  - four sessions cost four times the TTD memory.
+
+  The core mechanism (§7) stays, as the starting point.
+- **Video wall.** ZX-Poly machines as tiles. The risks:
+  - one tile is four machines, so a wall of them costs four times the CPU;
+  - the tile renderer would need the composer and the 2× display frame;
+  - hidden slave members have to stay out of the wall's instance listing.
