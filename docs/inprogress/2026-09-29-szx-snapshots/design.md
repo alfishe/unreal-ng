@@ -12,6 +12,15 @@
   `szx.c`; the SZX code of ZXMAK2, Zero, zxsp, ZX-M8XXX, SkoolKit, BizHawk
   (paths in the format reference).
 
+> **Scope decision (user, 2026-09-29): standard SZX only.** unreal-ng reads
+> and writes SZX for the machines that have an SZX machine id and refuses
+> everything else: a snapshot for another model is refused (no model
+> switch), a model without an SZX id cannot be saved as SZX (use `.z80` /
+> `.sna`), and there are no private `UN**` blocks. The sections on the model
+> switch (§6 "Who runs a load", §8 step 1), private blocks (§10), machines
+> without an id (§11, option A taken) and the phases S4 below are kept for
+> the record and marked **dropped**.
+
 > **In one line.** A fourth snapshot loader, `LoaderSZX`, built on the same
 > stage-then-commit pattern as the SNA and Z80 loaders: standard SZX v1.5
 > blocks for interoperability, exact CPU state (MEMPTR, Q, interrupt shadow,
@@ -81,7 +90,7 @@
 | G1 | Read every SZX v1.0-1.5 file for the machines we emulate, tolerant of other writers' quirks; never crash on bad input |
 | G2 | Write SZX v1.5 that Fuse (libspectrum) and Spectaculator read, for every model with an SZX machine id |
 | G3 | Exact CPU state at an instruction boundary (MEMPTR, Q / FSET, interrupt shadow, `HALTED`, in-frame T-state, interrupt-request remainder), so SZX can be the start state of RZX exports and TTD clips |
-| G4 | Lossless unreal-ng → unreal-ng round trips through private blocks carrying our full device state |
+| ~~G4~~ | ~~Lossless unreal-ng → unreal-ng round trips through private blocks~~ - **dropped** (standard SZX only) |
 | G5 | One load / save path for every surface (WebAPI, CLI, MCP, Lua, Python, GDB, DeZog, Qt) |
 | G6 | Report, per load: which blocks were applied, approximated, ignored or unknown |
 
@@ -163,7 +172,7 @@ flowchart LR
 | `SzxWriter` | serializes a stage; standard blocks at their exact sizes (Fuse requires Z80R = 37, SPCR = 8, AY = 18 bytes) |
 | `SzxReport` | per-block outcome (applied, approximated, ignored, unknown), returned to every surface |
 
-**Who runs a load.** A load that needs another model cannot run inside
+**Who runs a load** (**dropped**: a snapshot for another model is refused). A load that needs another model cannot run inside
 `Emulator`: `ModelSwitch::Run` creates a **new** machine next to the old
 one, moves the media and destroys the old machine, and the new machine has
 a **new id** (`modelswitch.cpp:76-144`). So the load is orchestrated one
@@ -215,7 +224,8 @@ needs them; v1 does not refactor the existing loaders (naive first).
 
 ## 8. Committing the state
 
-1. **Model.** If the machine id maps to a different model than the running
+1. **Model.** **As built: a machine id for another model is refused** ("switch the model first"); the
+   rest of this step is the dropped design. If the machine id maps to a different model than the running
    one: the default is to **switch the model** through `ModelSwitchRequest`
    (as the Machine menu does), then commit into the **new** machine; an
    option refuses instead. This step runs in the orchestrator of
@@ -282,6 +292,9 @@ needs them; v1 does not refactor the existing loaders (naive first).
 
 ## 10. Private blocks
 
+**Dropped** (scope decision above): SZX stays a standard format; the
+full-state unreal-ng snapshot is a separate question.
+
 Standard blocks stay exactly as specified, so other readers are never
 confused. Our extra state lives in blocks with ids that no specification or
 known extension uses; the spec requires readers to skip unknown blocks.
@@ -320,7 +333,7 @@ machine id (and some have no standard state at all).
 | B. Write a compatible id (for example Pentagon 128) + `UNMC` / `UNDV` | they load a **wrong machine** silently | risky |
 | C. Write a **private machine id** (a value above 16, e.g. 0x80) + `UNMC` / `UNDV` | they refuse cleanly ("unknown machine type" in libspectrum) | safe; round trips inside unreal-ng work |
 
-**Recommendation: C**, with the writer's report stating that the file is
+**Decided: A (refuse)**, 2026-09-29. The text below is the dropped recommendation. **Recommendation: C**, with the writer's report stating that the file is
 unreal-ng-only; Scorpion 1024 and ProfScorpion write id 10 only when the state
 fits ZS-256 (pages 0-15, no ProfROM state), otherwise C.
 
@@ -383,10 +396,10 @@ The dependency also serves RZX (zlib-compressed input blocks and snapshots,
 | Phase | Content | Size |
 |---|---|---|
 | S0 | miniz vendored; `SzxBlocks`; `SzxReader` with bounds checks; fuzz tests | S-M |
-| S1 | read and commit: header, CRTR, Z80R (all fields incl. the INT-based frame position), SPCR, RAMP, AY; the load orchestrator with model switch and new-id return; surfaces accept `.szx`; report | M |
-| S2 | write: the same blocks; save dialogs and surfaces | S-M |
-| S3 | devices and media: B128 + BDSK, +3 + DSK, TAPE, COVX, AMXM, KEYB / JOY, GS + GSRP; `MediaSourceType::Memory`; link safety rules | M |
-| S4 | private blocks `UNMC` / `UNDV`; `TTDStateVersion()` on the TTD interface; the policy for machines without an id | M |
+| S1 | read and commit: header, CRTR, Z80R (all fields incl. the INT-based frame position), SPCR, RAMP, AY; another model refused; surfaces accept `.szx`; report — **done** | M |
+| S2 | write: the same blocks; save dialogs and surfaces — **done** | S-M |
+| S3 | devices and media: B128 (**done**); BDSK, +3 + DSK, TAPE, COVX, AMXM, KEYB / JOY, GS + GSRP optional, only on demand (until then reported as ignored); `MediaSourceType::Memory`; link safety rules | M |
+| ~~S4~~ | ~~private blocks `UNMC` / `UNDV`; `TTDStateVersion()`; the policy for machines without an id~~ — **dropped** (refuse) | — |
 | S5 | RZX integration (start state of exports and imports, #27) | with #27 |
 
 ## 17. Risks
@@ -403,15 +416,13 @@ The dependency also serves RZX (zlib-compressed input blocks and snapshots,
 
 ## 18. Open decisions
 
-1. Machines without an SZX id: option C (private machine id) as recommended,
-   or A (refuse)?
-2. Model mismatch on load: switch the model by default (recommended), or
-   refuse unless asked?
-3. Custom ROMs (`ROM`, `B128` custom TR-DOS, `GS` custom ROM): report and keep
-   the configured ROMs (recommended for v1), or load them into a temporary
-   ROM override?
+1. Machines without an SZX id: **decided A, refuse** (2026-09-29).
+2. Model mismatch on load: **decided, refuse** (2026-09-29): overriding the
+   running machine's model gains nothing.
+3. Custom ROMs (`ROM`, `B128` custom TR-DOS, `GS` custom ROM): **as built,
+   reported, the configured ROMs stay**.
 4. Media on save: link (recommended) or embed by default?
-5. Compression library: miniz (recommended) or zlib?
+5. Compression library: **miniz 3.1.2, as built**.
 
 ## 19. Side findings
 

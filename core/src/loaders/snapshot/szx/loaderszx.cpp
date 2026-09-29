@@ -323,7 +323,7 @@ bool LoaderSZX::Capture(EmulatorContext* context, Stage& stage, std::string& err
     const std::optional<uint8_t> id = IdFor(context->config.mem_model, context->config.ramsize);
     if (!id)
     {
-        error = "this model has no SZX machine id (design §11: private ids come later); save as .z80 or .sna";
+        error = "this model has no SZX machine id; save it as .z80 or .sna";
         return false;
     }
     stage = Stage{};

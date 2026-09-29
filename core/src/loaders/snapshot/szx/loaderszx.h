@@ -5,11 +5,11 @@
 /// shape as LoaderSNA / LoaderZ80: load() and save() on a path, plus
 /// Commit() / Capture() on a parsed stage for callers that hold one.
 ///
-/// Phase S1-S2 scope: header, CRTR, Z80R (with the exact frame position,
-/// MEMPTR, Q, HALT, the interrupt shadow), SPCR, RAMP, AY, and the B128
-/// "TR-DOS paged" flag. Other blocks are listed in the report as ignored or
-/// unknown. The snapshot's machine must be the running one (the model switch
-/// comes with the load orchestrator, design §6).
+/// Scope: header, CRTR, Z80R (with the exact frame position,
+/// MEMPTR, Q, HALT, the interrupt shadow), SPCR, RAMP, AY, and B128 (the
+/// WD1793 registers, #FF and TR-DOS paging). Other blocks are listed in the report as ignored or
+/// unknown. Standard SZX only: the snapshot's machine must be the running one
+/// (no model switch), and a model without an SZX machine id cannot be saved.
 ///
 /// Frame position: SZX counts dwCyclesStart from the INT; our Z80::t counts
 /// from the frame start and the INT is first seen at intstart + 1. Worked
