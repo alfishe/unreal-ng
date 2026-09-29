@@ -1567,6 +1567,9 @@ namespace PythonBindings
             .def("screen_flash", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::ScreenFlash(self.GetContext()));
             }, "FLASH phase and timing")
+            .def("screen_attributes", [](Emulator& self, int screen) -> py::object {
+                return StateNodeToPy(DeviceState::ScreenAttributes(self.GetContext(), screen));
+            }, "Per-cell ink/paper/bright/flash decoded from screen attribute memory", py::arg("screen") = -1)
             .def("screen_video_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::ScreenMode(self.GetContext()));
             }, "Former name of screen_mode, kept for existing scripts")

@@ -67,6 +67,25 @@
     paths["/api/v1/emulator/{id}/state/screen/flash"]["get"]["responses"]["200"]["description"] =
         "Flash state information";
 
+    paths["/api/v1/emulator/{id}/state/screen/attributes"]["get"]["summary"] = "Get decoded screen attributes";
+    paths["/api/v1/emulator/{id}/state/screen/attributes"]["get"]["tags"].append("Screen State");
+    paths["/api/v1/emulator/{id}/state/screen/attributes"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/state/screen/attributes"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/state/screen/attributes"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/state/screen/attributes"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/state/screen/attributes"]["get"]["parameters"][1]["name"] = "screen";
+    paths["/api/v1/emulator/{id}/state/screen/attributes"]["get"]["parameters"][1]["in"] = "query";
+    paths["/api/v1/emulator/{id}/state/screen/attributes"]["get"]["parameters"][1]["required"] = false;
+    paths["/api/v1/emulator/{id}/state/screen/attributes"]["get"]["parameters"][1]["description"] =
+        "Which screen to read: 0 forces page 5, 1 forces page 7 (shadow-capable models only). Omitted reads both "
+        "screens on shadow-capable models, else just the one.";
+    paths["/api/v1/emulator/{id}/state/screen/attributes"]["get"]["parameters"][1]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/state/screen/attributes"]["get"]["responses"]["200"]["description"] =
+        "Per-cell ink/paper/bright/flash decoded from the classic ZX attribute memory layout (offset 0x1800 "
+        "within a RAM page, read directly off the RAM page, not the Z80 bank mapping). Returns available, model, "
+        "cols (32), rows (24), and screens: an array of {screen, ram_page, cells}, where cells is a row-major "
+        "array of 768 {ink, paper, bright, flash} objects (bits 0-2 ink, 3-5 paper, 6 bright, 7 flash).";
+
     // Audio state endpoints
     paths["/api/v1/emulator/{id}/state/audio/ay"]["get"]["summary"] = "Get AY chips overview";
     paths["/api/v1/emulator/{id}/state/audio/ay"]["get"]["tags"].append("Audio State");

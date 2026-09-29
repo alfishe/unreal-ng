@@ -912,7 +912,7 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["aspects"]["items"]["type"] = "string";
     Json::Value allowed(Json::arrayValue);
     for (const char* aspect : {"machine", "registers", "memory", "memory_map", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "video",
-                               "screen", "screen_flash", "screen_ocr", "screen_image", "screen_digest", "timing", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "rtc", "mouse",
+                               "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "rtc", "mouse",
                                "ttd", "contention"})
     {
         allowed.append(aspect);
@@ -937,7 +937,10 @@ void RegisterInspectState(ToolRegistry& registry)
         "(wave, octave, playback rate, key-on, level, pan, addresses, envelope), 'fdc' = Beta Disk WD1793 registers, status, FSM, drives, "
         "'ide' = IDE board (scheme, latches, both units' task file, command in progress, CD sense; unavailable without a board), "
         "'rtc' = CMOS clock (part, ports, NVRAM file, time base, time, registers A-D, alarms, every cell; unavailable without one - "
-        "write cells with invoke_api POST /api/v1/emulator/{id}/rtc/cells {start, bytes}), 'mouse' = "
+        "write cells with invoke_api POST /api/v1/emulator/{id}/rtc/cells {start, bytes}), "
+        "'screen_attributes' = per-cell ink/paper/bright/flash decoded from the classic ZX attribute memory layout "
+        "(32x24 cells, read straight off the RAM page, not the Z80 bank mapping) - prefer this over a screenshot when "
+        "you only need the color/attribute layout, 'mouse' = "
         "Kempston mouse state incl. port routing (fitted vs shadowed), 'ttd' = time-travel session: state "
         "(idle/recording/detached), recorded frame range, checkpoint count, current position (use the time_travel tool to act on it).";
     schema["properties"]["target"]["type"] = "string";
@@ -965,13 +968,17 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["include_image"]["type"] = "boolean";
     schema["properties"]["include_image"]["default"] = false;
     schema["properties"]["include_image"]["description"] = "Include base64 image data for 'screen_image' (large payload)";
+    schema["properties"]["screen"]["type"] = "integer";
+    schema["properties"]["screen"]["description"] =
+        "'screen_attributes': which screen to read (0 = page 5, 1 = page 7 on shadow-capable models). Omitted reads both when shadow-capable, else just the one.";
 
     registry.Register(
         "inspect_state",
         "Inspect emulator state in one call: registers, memory ranges, disassembly, stack words, breakpoints, memory banks, "
         "paging state (tagged latches + bank table), static port map with tags (ports), video mode (video: resolution, colour depth, "
         "memory layout, displayed RAM pages, #EFF7/#DFFD/#FF77), screen state (screen: active screen and RAM pages, per-screen "
-        "Z80 mapping, #7FFD, contention), FLASH timing (screen_flash), screen OCR text, screen image metadata, screen digest hash, raster timing, "
+        "Z80 mapping, #7FFD, contention), FLASH timing (screen_flash), per-cell ink/paper/bright/flash (screen_attributes), "
+        "screen OCR text, screen image metadata, screen digest hash, raster timing, "
         "ROM signatures, AY/SSG chips (audio_ay), TurboSound FM YM2203 halves (audio_fm), General Sound card (audio_gs), Covox / SoundDrive (audio_covox), MoonSound OPL4 (audio_moonsound, audio_opl4_fm, audio_opl4_pcm), Beta Disk WD1793 (fdc), IDE board (ide), CMOS clock (rtc), "
         "Kempston mouse + port routing (mouse), time-travel session state and position (ttd), memory contention: rule, switch, "
         "interface, contended slots, per-kind waits while debugging (contention). Combine aspects to reduce round-trips.",
@@ -995,13 +1002,13 @@ void RegisterInspectState(ToolRegistry& registry)
             {
                 if (aspect != "machine" && aspect != "registers" && aspect != "memory" && aspect != "memory_map" && aspect != "disasm" && aspect != "stack" &&
                     aspect != "breakpoints" && aspect != "memory_banks" && aspect != "paging" && aspect != "ports" && aspect != "video" &&
-                    aspect != "screen" && aspect != "screen_flash" && aspect != "screen_ocr" && aspect != "screen_image" && aspect != "screen_digest" && aspect != "timing" && aspect != "rom" && aspect != "audio_ay" &&
+                    aspect != "screen" && aspect != "screen_flash" && aspect != "screen_attributes" && aspect != "screen_ocr" && aspect != "screen_image" && aspect != "screen_digest" && aspect != "timing" && aspect != "rom" && aspect != "audio_ay" &&
                     aspect != "audio_fm" && aspect != "audio_gs" && aspect != "audio_covox" && aspect != "audio_moonsound" && aspect != "audio_opl4_fm" &&
                     aspect != "audio_opl4_pcm" && aspect != "fdc" && aspect != "ide" && aspect != "rtc" && aspect != "mouse" && aspect != "ttd" && aspect != "contention")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, rtc, mouse, ttd, contention"));
+                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, rtc, mouse, ttd, contention"));
                     return;
                 }
             }
@@ -1023,10 +1030,12 @@ void RegisterInspectState(ToolRegistry& registry)
             if (minRun < 1) minRun = 1;
             unsigned maxBlocks = args.isMember("max_blocks") ? args["max_blocks"].asUInt() : 48u;
             if (maxBlocks < 1) maxBlocks = 1;
+            const bool hasScreenArg = args.isMember("screen");
+            const int screenArg = hasScreenArg ? args["screen"].asInt() : -1;
 
             TargetResolver::ResolveFromArgs(
                 args, caller,
-                [aspects, address, hasAddress, size, count, includeImage, format, view, minRun, maxBlocks, &caller, done, progress](
+                [aspects, address, hasAddress, size, count, includeImage, format, view, minRun, maxBlocks, hasScreenArg, screenArg, &caller, done, progress](
                     bool ok, const std::string& idOrError) {
                     if (!ok)
                     {
@@ -1175,6 +1184,19 @@ void RegisterInspectState(ToolRegistry& registry)
                         {
                             // Screen state (verbose: per-screen RAM page + Z80 mapping, #7FFD) and FLASH timing
                             const std::string path = aspect == "screen" ? "/state/screen?verbose=true" : "/state/screen/flash";
+                            steps.push_back([&caller, id, aspect, path](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, path), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "screen_attributes")
+                        {
+                            // Per-cell ink/paper/bright/flash decoded from screen attribute memory
+                            std::string path = "/state/screen/attributes";
+                            if (hasScreenArg)
+                                path += "?screen=" + std::to_string(screenArg);
                             steps.push_back([&caller, id, aspect, path](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", Endpoint(id, path), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);

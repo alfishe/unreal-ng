@@ -1948,6 +1948,11 @@ public:
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, DeviceState::ScreenFlash(ctx));
         });
+        // Per-cell ink/paper/bright/flash decoded from screen attribute memory
+        lua.set_function("screen_attributes", [this](sol::this_state s, sol::optional<int> screen) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::ScreenAttributes(ctx, screen.value_or(-1)));
+        });
         // Former name of screen_mode, kept for existing scripts
         lua.set_function("screen_video_state", [this](sol::this_state s) -> sol::object {
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;

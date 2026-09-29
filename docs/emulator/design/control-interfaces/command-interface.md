@@ -1353,7 +1353,7 @@ Commands to inspect the runtime hardware configuration and peripheral state of t
 | `sysvars` | `state sysvars` | ZX Spectrum system variables (0x5C00-0x5CB5) |
 | `tape` | `state tape` | Tape device status and position |
 | `disk` | `state disk [drive]` | Disk drive status and FDC state |
-| `screen` | `state screen [verbose\|mode\|flash]` | Screen state, video mode and FLASH ([6.6](#66-screen-configuration)) |
+| `screen` | `state screen [verbose\|mode\|flash\|attributes]` | Screen state, video mode, FLASH and decoded attributes ([6.6](#66-screen-configuration)) |
 | `ula` | `state ula` | ULA chip state and timing |
 | `audio` | `state audio` | Audio devices (beeper, AY chip) |
 
@@ -1789,7 +1789,32 @@ same fields with the same names.
 | :--- | :--- | :--- | :--- | :--- |
 | `state screen` | | `[verbose]` | Screen state: `model`, `video_mode`, `resolution`, `border_color`, `shadow_screen_capable`, `active_screen` (0/1), `active_ram_page` (video page 5/7 selected by #7FFD bit 3), `active_ram_pages` (every RAM page the current mode reads, e.g. `[1, 5]` in ATM hires, `[8]` in ATM text-linear), `contention` (Sinclair ULA contention active), `flash_inverted`.<br/>**verbose** adds `screen_0` / `screen_1` (or `screen` on the 48K): RAM page, pixel/attribute offsets, current Z80 mapping (`z80_access`, e.g. `0xC000-0xFFFF` or `not mapped`), `ula_display`, `contention`; and `port_0x7FFD` decoded (bank, shadow screen, ROM select, paging lock) | ✅ Implemented |
 | `state screen mode` | | | Video mode report: `video_mode`, `resolution`, `color_depth`, `colors`, `bpp`, `attribute_size`, `text_columns`/`text_rows` (text modes), `memory_layout` (`pixel_data_bytes`, `attribute_bytes`, `planes`, `total_bytes`), `active_screen`, `active_ram_page`, `active_ram_pages`, and the machine's video latches: `eff7` (Pentagon / ATM3), `dffd` (Profi), `ff77` (ATM) | ✅ Implemented |
+| `state screen attributes` | | `[screen]` | Per-cell ink/paper/bright/flash decoded from the classic ZX attribute memory layout (offset 0x1800 within a RAM page), read directly off the RAM page (not the Z80 bank mapping): `model`, `cols` (32), `rows` (24), `screens` (array of `{screen, ram_page, cells}`, see JSON shape below). `screen` selects which page: omitted reads both screens when the model is shadow-capable else just the one; `0` forces page 5; `1` forces page 7 (shadow-capable models only) | ✅ Implemented |
 | `state screen flash` | | | FLASH: `flash_phase` (normal/inverted), `frames_until_toggle`, `flash_cycle_position` (0..31), `flash_cycle_total`, `toggle_interval_frames` (16), `toggle_interval_seconds` (from the machine's frame length) | ✅ Implemented |
+
+**`state screen attributes` JSON shape** (canonical — every automation module returns exactly this):
+
+```json
+{
+  "available": true,
+  "model": "Pentagon 128K",
+  "cols": 32,
+  "rows": 24,
+  "screens": [
+    {
+      "screen": 0,
+      "ram_page": 5,
+      "cells": [
+        { "ink": 0, "paper": 7, "bright": false, "flash": false }
+      ]
+    }
+  ]
+}
+```
+
+`cells` has 768 entries, row-major (`index = row * 32 + col`). `ink`/`paper` are 0-7 (bits 0-2 /
+3-5 of the attribute byte), `bright`/`flash` are booleans (bits 6/7). `screens` holds one entry
+per screen read (both screens by default on shadow-capable models, else just the one).
 
 **Access from every automation module**:
 
@@ -1799,6 +1824,7 @@ same fields with the same names.
 | Screen state, verbose | `state screen verbose` | `GET /state/screen?verbose=true` | `screen_state(True)` | `screen_state(true)` | aspect `screen` |
 | Video mode | `state screen mode` | `GET /state/screen/mode` | `screen_mode()` | `screen_mode()` | aspect `video` |
 | FLASH | `state screen flash` | `GET /state/screen/flash` | `screen_flash()` | `screen_flash()` | aspect `screen_flash` |
+| Decoded attributes | `state screen attributes` | `GET /state/screen/attributes` | `screen_attributes()` | `screen_attributes()` | aspect `screen_attributes` |
 
 WebAPI paths are relative to `/api/v1/emulator/{id}`. Python and Lua also keep the single-value
 getters `screen_get_mode()`, `screen_get_border()`, `screen_get_flash()`, `screen_get_active()`,
