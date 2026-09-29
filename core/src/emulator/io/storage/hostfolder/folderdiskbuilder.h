@@ -35,6 +35,8 @@
 #include "emulator/media/mediatypes.h"
 
 class EmulatorContext;
+struct FolderEntry;
+struct FolderManifest;
 
 /// File extension -> TR-DOS file type. Data in the class, like the service
 /// file rules: the builders never test extensions ad hoc
@@ -59,8 +61,14 @@ class FolderDiskBuilder
 public:
     /// The TR-DOS name for a host name: printable ASCII kept (case too), '"',
     /// control and non-ASCII characters (one per code point) become '_',
-    /// then cut or space-padded to 8 bytes
-    static std::string CompatibleName(const std::string& utf8Name);
+    /// then cut or space-padded to `width` bytes (8 on TR-DOS, 10 on tape)
+    static std::string CompatibleName(const std::string& utf8Name, size_t width = 8);
+
+    /// The top-level files of `root` in medium order: the manifest's `order`
+    /// first, then the rest as scanned (byte-wise sorted). Names in `order`
+    /// that are not in the folder are reported
+    static std::vector<const FolderEntry*> OrderFiles(const FolderEntry& root, const FolderManifest& manifest,
+                                                      std::vector<std::string>& report);
 
     /// Build a TR-DOS disk from `folder`. `context` provides the machine's
     /// TR-DOS format settings (sector interleave). The result's report lists

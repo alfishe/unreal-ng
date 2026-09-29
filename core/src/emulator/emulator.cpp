@@ -1,6 +1,7 @@
 #include "emulator.h"
 
 #include "emulator/io/fdc/floppydriveslot.h"
+#include "emulator/io/tape/tapeslot.h"
 #include "emulator/media/floppyformats.h"
 #include "emulator/media/mediamanager.h"
 #include <loaders/snapshot/loader_z80.h>
@@ -183,6 +184,7 @@ bool Emulator::Init()
 
             // The drives exist and the disk controllers are known: floppy slots register now
             _floppySlots = new FloppyDriveSlots(_context);
+            _tapeSlot = new TapeSlot(_context);
 
             result = true;
         }
@@ -487,6 +489,8 @@ void Emulator::ReleaseNoGuard()
     // (deleted after Core) owns and frees the disk images
     delete _floppySlots;
     _floppySlots = nullptr;
+    delete _tapeSlot;  // the deck drops its copy of the tape; the manager frees the medium
+    _tapeSlot = nullptr;
 
     for (size_t i = 0; i < 4; i++)
     {
@@ -1611,65 +1615,98 @@ bool Emulator::SaveSnapshot(const std::string& path)
     return result;
 }
 
-bool Emulator::LoadTape(const std::string& path)
+bool Emulator::LoadTape(const std::string& path, std::string* error)
 {
-    bool result = false;
+    auto fail = [&](const std::string& message) -> bool
+    {
+        if (error)
+            *error = message;
+        MLOGERROR("LoadTape: %s", message.c_str());
+        return false;
+    };
+
+    if (_state == StateDestroying || _isReleased)
+        return fail("emulator is being destroyed");
+    if (!_context || !_context->pMediaManager || !_context->pMediaManager->HasSlot(TapeSlot::kId))
+        return fail("this machine has no tape deck");
 
     MLOGEMPTY();
-    MLOGINFO("Loading tape from file: '%s'", path.c_str());
+    MLOGINFO("Loading tape from '%s'", path.c_str());
 
-    // Validate and resolve path
-    std::string resolvedPath = FileHelper::AbsolutePath(path);
-
-    // Check file exists
-    if (!FileHelper::FileExists(resolvedPath))
+    const std::string resolvedPath = FileHelper::AbsolutePath(path);
+    const bool folder = FileHelper::IsFolder(resolvedPath);
+    if (!folder && !FileHelper::FileExists(resolvedPath))
     {
-        MLOGERROR("LoadTape() - File not found: '%s'", path.c_str());
-        if (_context)
-        {
-            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            messageCenter.Post(NC_FILE_LOADED,
-                new FileLoadedPayload(_context->emulatorId, "tape", resolvedPath, false));
-        }
-        return false;
-    }
-
-    // Validate extension
-    std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(resolvedPath));
-    if (ext != "tap" && ext != "tzx")
-    {
-        MLOGERROR("LoadTape() - Invalid tape format: .%s (expected .tap or .tzx)", ext.c_str());
-        if (_context)
-        {
-            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            messageCenter.Post(NC_FILE_LOADED,
-                new FileLoadedPayload(_context->emulatorId, "tape", resolvedPath, false));
-        }
-        return false;
+        MessageCenter::DefaultMessageCenter().Post(NC_FILE_LOADED,
+                                                   new FileLoadedPayload(_context->emulatorId, "tape", resolvedPath, false));
+        return fail("file not found: '" + path + "'");
     }
 
     // TTD v1 (P1.6): tape insertion is a session-invalidating event in v1
     // (parent TDD §4.2 + §5 row 3 — tape *insertion/start/stop* commands
     // invalidate; only playback position is checkpointed). Refused while recording.
-    if (!RecordingAllows(*this, ttd::TTDGuardedAction::LoadTape))
+    if (!RecordingAllows(*this, ttd::TTDGuardedAction::LoadTape, error))
         return false;
-    if (_context && _context->pTimeTravelManager)
+    if (_context->pTimeTravelManager)
         _context->pTimeTravelManager->InvalidateSession("tape-load");
 
-    // Store validated path
-    _context->coreState.tapeFilePath = resolvedPath;
+    // The format registry probes and loads (every TapeLoaderRegistry format,
+    // a folder built into a TZX); the swap happens with the emulator thread
+    // parked, at once
+    MediaSource source;
+    source.type = folder ? MediaSourceType::Folder : MediaSourceType::File;
+    source.path = resolvedPath;
+    InsertOptions options;
+    options.immediate = true;
+    options.disposition = Disposition::Discard;  // a tape is never written: nothing to lose
 
-    MLOGINFO("Tape file validated and ready: '%s'", resolvedPath.c_str());
-    result = true;
+    const bool wasRunning = !IsPaused();
+    if (wasRunning)
+        Pause();
+    const MediaResult inserted = _context->pMediaManager->Insert(TapeSlot::kId, source, options);
+    if (wasRunning)
+        Resume();
 
-    if (_context)
+    for (const std::string& line : inserted.report)
+        MLOGWARNING("LoadTape: %s", line.c_str());
+
+    MessageCenter::DefaultMessageCenter().Post(NC_FILE_LOADED,
+                                               new FileLoadedPayload(_context->emulatorId, "tape", resolvedPath, inserted.Ok()));
+    if (!inserted.Ok())
+        return fail(inserted.message);
+    return true;
+}
+
+bool Emulator::EjectTape(std::string* error)
+{
+    auto fail = [&](const std::string& message) -> bool
     {
-        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-        messageCenter.Post(NC_FILE_LOADED,
-            new FileLoadedPayload(_context->emulatorId, "tape", resolvedPath, result));
-    }
+        if (error)
+            *error = message;
+        MLOGERROR("EjectTape: %s", message.c_str());
+        return false;
+    };
 
-    return result;
+    if (_state == StateDestroying || _isReleased)
+        return fail("emulator is being destroyed");
+    if (!_context || !_context->pMediaManager || !_context->pMediaManager->HasSlot(TapeSlot::kId))
+        return fail("this machine has no tape deck");
+
+    const bool wasRunning = !IsPaused();
+    if (wasRunning)
+        Pause();
+    EjectOptions options;
+    options.disposition = Disposition::Discard;
+    const MediaResult ejected = _context->pMediaManager->Eject(TapeSlot::kId, options);
+    // A tape named by path alone (set before the tape slot existed) goes too
+    if (ejected.Ok() && _context->pTape && !_context->coreState.tapeFilePath.empty())
+        _context->pTape->DetachImage();
+    if (wasRunning)
+        Resume();
+
+    if (!ejected.Ok())
+        return fail(ejected.message);
+    return true;
 }
 
 bool Emulator::ParseBlankDiskFormat(const std::string& text, BlankDiskFormat& format)
@@ -1878,6 +1915,12 @@ std::vector<std::string> Emulator::SupportedSnapshotExtensions()
 std::vector<std::string> Emulator::SupportedTapeExtensions()
 {
     return TapeLoaderRegistry::Instance().SupportedExtensions();
+}
+
+bool Emulator::IsTapeExtension(const std::string& ext)
+{
+    const std::vector<std::string> known = SupportedTapeExtensions();
+    return std::find(known.begin(), known.end(), StringHelper::ToLower(ext)) != known.end();
 }
 
 std::vector<std::string> Emulator::SupportedDiskExtensions()

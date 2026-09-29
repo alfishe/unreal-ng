@@ -57,6 +57,7 @@ inline const char* getEmulatorStateName(EmulatorStateEnum value)
 /// endregion </Types>
 
 class FloppyDriveSlots;
+class TapeSlot;
 
 class Emulator
 {
@@ -98,6 +99,7 @@ protected:
     Config* _config = nullptr;
     Core* _core = nullptr;
     FloppyDriveSlots* _floppySlots = nullptr;  // fdd.a-d registered with the media manager while the drives exist
+    TapeSlot* _tapeSlot = nullptr;             // "tape", registered while the deck exists
     Z80* _z80 = nullptr;
     Memory* _memory = nullptr;
     MainLoop* _mainloop = nullptr;
@@ -261,7 +263,13 @@ public:
     // File format operations
     bool LoadSnapshot(const std::string& path);
     bool SaveSnapshot(const std::string& path);
-    bool LoadTape(const std::string& path);
+    /// A tape file (any TapeLoaderRegistry format) or a folder into the tape
+    /// slot, at once; the deck stops and plays the new tape from its start
+    bool LoadTape(const std::string& path, std::string* error = nullptr);
+    /// The tape out of the deck. Refused while a TTD recording runs
+    bool EjectTape(std::string* error = nullptr);
+    /// `ext` (no dot, any case) is a format a tape loader reads
+    static bool IsTapeExtension(const std::string& ext);
     /// @param drive Target floppy drive, 0-3 (A-D). Must name a drive this machine actually has;
     ///               anything else is a hard failure (see `error`), never a silent fallback to A.
     /// @param error When non-null and the call fails, receives a human-readable reason

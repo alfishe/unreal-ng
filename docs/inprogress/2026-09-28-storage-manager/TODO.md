@@ -3,8 +3,8 @@
 **Status:** requirements, technical design, media history design and integration designs reviewed
 (two rounds, 2026-09-28). Implemented (branch `media-manager`, merged to master 2026-09-28): **M1** (block slots, folders as
 FAT volumes; ACC-1…ACC-4 with the ERS, TR-DOS and NedoOS), **M2** (floppies in the manager; ACC-7 on the real
-TR-DOS ROM) and **M4** (the media verbs on every surface and the Qt media panel). M3, M5, M6 and H1-H5 not
-started. PLAN.md row **#58**.
+TR-DOS ROM), **M3** (the tape deck in the manager, folders as tapes; ACC-8 on the real ROM) and **M4** (the
+media verbs on every surface and the Qt media panel). M5, M6 and H1-H5 not started. PLAN.md row **#58**.
 
 ## Documents
 
@@ -33,7 +33,7 @@ started. PLAN.md row **#58**.
 - [x] M1 block: core, folder pipeline, `HostFolderFat`, ZX-Evo `sd.zc` (= ZX-Evo E5b): ACC-1…ACC-4 (see "M1 as built" below)
 - [x] M2 floppy: slots, migration (fixes the eject / save bugs in research §3), folder as a disk image: ACC-7 (see "M2 as built" below)
 - [x] M4 surfaces (media-control-design.md S1-S7): `MediaControl`, WebAPI `/media` + OpenAPI, CLI `media`, MCP `media`, Lua / Python `media_*`, Qt media panel, docs (`docs/features/media.md`) and recipe (`.recipe/media/use-media-slots.md`); as built: media-control-design.md §7
-- [ ] M3 tape: slot, migration, folder as a tape: ACC-8 (joins the media verbs on every surface without surface work)
+- [x] M3 tape: slot, migration, folder as a tape: ACC-8 (see "M3 as built" below); the media verbs reach it without surface work
 - [ ] M5 media across model switch: ACC-5
 - [ ] M6 IDE / CD slots (with PLAN #13a)
 - [ ] H1-H5 media history: versioned change layer, spill, file views, tracking API, UNS / TTD v2
@@ -89,3 +89,22 @@ Not in M2 (moved or noted):
 - Fixed (2026-09-28): 40-track disks in the Beta 128's 80-track drive. TR-DOS steps twice per track for them (it reads the disk type in sector 9), as on real hardware. The emulation now matches: `DiskImage::isFortyTrack` (48 tpi media, set for images of at most 42 cylinders), `FDD::trackUnderHead` (head position p reads cylinder p / 2 in an 80-track drive), the +3's drives are 40-track mechanics, the WD1793 moves the head by step pulses only (it re-synced the head to the track register), and a `.trd` file takes its geometry from the TR-DOS disk type (a single-sided 40-track file used to load as 20 x 2). Tests: `fdd_test.cpp` (real ROM, 40 x 1 and 40 x 2, folder and `.trd`), `WD1793_Ports_Test.SeekMovesTheHeadByStepsOnly`, `LoaderTRD_Test.GeometryFromTheDiskType`.
 
 Tests: `floppydriveslot_test.cpp`, `floppyformats_test.cpp`, `folderdiskbuilder_test.cpp` (ACC-7 on the real TR-DOS ROM: manifest order in `LIST`, the file that does not fit is absent, `RUN "boot"`), `mediamanager_test.cpp` (floppy export / save / write-through / folder), `upd765_test.cpp` (`UPD765Media_Test`: +3 writes are barriers once per frame).
+
+## M3 as built (2026-09-28)
+
+| Topic | As built |
+|---|---|
+| Ownership | `Medium` owns the parsed `TapeImage` (format name = the loader's id: `tap`, `tzx`; `folder-tzx` for a folder). The deck plays a copy of its blocks: `Tape::AttachImage` / `DetachImage`, and `EnsureImageLoaded` installs the attached image once per attach (a generation counter, so re-inserting the same file starts a fresh tape). A transport stop or a reset drops the deck's copy; the next play installs it again. `CoreState::tapeFilePath` stays as a display mirror; a path written there by hand (older tests) still parses the file as before |
+| Slot | `TapeSlot` (`core/src/emulator/io/tape/tapeslot.{h,cpp}`): id and alias `tape`, tag `cassette`, no swap delay, folders accepted, `ReadOnly` (a tape medium is always read-only). Registered by `Emulator::Init` after `Core`, unregistered before `Core` is deleted |
+| Formats | the registry's tape path is `TapeLoaderRegistry`: content probe, the extension only breaks ties (a TZX named `.bin` loads). Every loader format reaches every surface: `tap spc sta ltp zxt tzx`. There is no CSW or WAV loader: the Qt dialog no longer offers them (WAV goes through the audio import) |
+| Emulator API | `LoadTape(path, error)` inserts through the manager (pause, insert at once, resume; TTD guard and session drop as before, `NC_FILE_LOADED` kept), accepts folders, and says why it failed. New `EjectTape(error)`, `IsTapeExtension(ext)` |
+| Eject | the four copies (WebAPI, CLI, Lua, Python) and the Qt "Stop & eject" call `EjectTape`: `NC_MEDIA_EJECTED` once, refused while a TTD recording runs (WebAPI 409). `tape stop` stays the transport stop |
+| Export | `media export tape <path>`: `.tap` when every block is a ROM-standard byte block (`TapArchiveWriter` gate), `.tzx` otherwise (`TzxArchiveWriter`) |
+| Extension gates | GDB `load`, video wall drops (two places), Qt `FileManager` and MCP `load_software` take the loaders' list (MCP keeps a copy, checked by `McpSlots_Test.TapeExtensionsMatchTheTapeLoaders`); `media insert auto` sends tape files to `tape` |
+| Folder as a tape | `FolderTapeBuilder` (`core/src/emulator/io/storage/hostfolder/foldertapebuilder.{h,cpp}`): an in-memory TZX of #10 blocks, decoded by `LoaderTZX`. Hobeta headers keep name, type, start and length (and the TR-DOS autorun line); plain files get 10-character names, Program for `B` types, else Bytes at 32768 (a 6912-byte `.scr` at 16384); `.tap` / `.tzx` files go on unchanged; the manifest's `files:` and `tape.pause` (default 1000 ms) apply. A file over 65 533 bytes is skipped; so is a file that would pass one side of a C90 (45 minutes at ROM timings), and placing goes on. The file order and 10-character names are `FolderDiskBuilder::OrderFiles` / `CompatibleName(name, 10)`, shared with the disk builder |
+
+Not in M3 (moved or noted):
+- A tape uploaded to `/tape/load` is a `File` source: the staged file stays after eject, as before (a `media insert` upload is an `Upload` source and is deleted).
+- Tape recording (`SAVE` to tape): not emulated; a blank tape would be a `Blank` source exported to TZX / TAP.
+
+Tests: `tapeslot_test.cpp` (slot, stop and re-install, re-insert and swap, eject, TTD refusal, every loader format, export to TZX and TAP, `auto`), `foldertapebuilder_test.cpp` (layout, manifest overrides, limits; ACC-8 on the real ROM: `LOAD ""` autoruns a program from a folder, `LOAD "" CODE` loads the next file), `emulator_path_validation_test.cpp` and `tzxload_integration_test.cpp` (content decides, reasons), `mediaformatregistry_test.cpp` (tape extensions, no blank tape).

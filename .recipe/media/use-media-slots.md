@@ -1,11 +1,12 @@
 # Recipe: Media Slots — Floppies, SD Card, Folders, Swaps
 
 Goal: see every media slot of the machine, put a file or a **host folder** into
-the right one (floppy drive, SD card), swap multi-disk software without losing
+the right one (floppy drive, tape deck, SD card), swap multi-disk software without losing
 its saves, and keep or drop what the guest wrote.
 
 Reference (verbs, options, errors, all surfaces): [docs/features/media.md](../../docs/features/media.md).
-Related: [insert-disk.md](insert-disk.md) (the older drive-letter calls, disk inspection).
+Related: [insert-disk.md](insert-disk.md) (the older drive-letter calls, disk inspection),
+[insert-tape.md](insert-tape.md) (tape transport and the block catalog).
 
 > **How to use the sections:** [MCP](#mcp-preferred) is preferred — the `media`
 > tool. Use [WebAPI](#webapi) inside host-side pipelines or when MCP is
@@ -17,6 +18,7 @@ Related: [insert-disk.md](insert-disk.md) (the older drive-letter calls, disk in
 media {"action":"list"}                                             # slots, media, dirty state, revision
 media {"action":"insert","slot":"auto","path":"/games/elite-1.trd"} # the slot comes from the content
 media {"action":"insert","slot":"sd","path":"/home/me/zx/sdcard"}   # ZX-Evo: a folder as the SD card (FAT16)
+media {"action":"insert","slot":"tape","path":"/home/me/zx/tapefiles"}  # a folder as a tape (then LOAD "")
 media {"action":"swap","slot":"A","path":"/games/elite-2.trd","save":true}
 media {"action":"export","slot":"sd","path":"scratch/card-after.img"}
 media {"action":"eject","slot":"B","discard":true}

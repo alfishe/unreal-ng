@@ -1,7 +1,10 @@
 # Recipe: Insert / Play / Inspect a Tape
 
-Goal: mount a `.tap`/`.tzx` image, understand its block layout, drive
-playback, and know when loading is done.
+Goal: mount a tape image (`.tap`/`.tzx`/`.spc`/`.sta`/`.ltp`/`.zxt`) or a
+host folder built into a tape, understand its block layout, drive playback,
+and know when loading is done. The tape is the media manager's slot `tape`:
+`media insert tape <path>` / `media eject tape` do the same as `tape load` /
+`tape eject` ([use-media-slots.md](use-media-slots.md)).
 
 Related: [tape-fastload.md](../run/tape-fastload.md) (actually loading a
 program from tape).

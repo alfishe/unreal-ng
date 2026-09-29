@@ -1,7 +1,7 @@
 # Media: drives, cards and what is in them
 
-Every place a medium goes on the running machine — floppy drives, the SD card socket, later the
-tape deck, hard disks and CD — is a **slot**. One set of verbs puts media in and takes them out,
+Every place a medium goes on the running machine — floppy drives, the tape deck, the SD card
+socket, later hard disks and CD — is a **slot**. One set of verbs puts media in and takes them out,
 the same on the Qt media panel, the WebAPI, the CLI, MCP, Lua and Python. This page is the
 reference; each surface's own documentation links here.
 
@@ -12,8 +12,8 @@ layers of a storage peripheral: [technical-design.md §1.1](../inprogress/2026-0
 
 | Word | Meaning |
 |---|---|
-| **Slot** | A place a medium goes: `fdd.a` (floppy drive A), `sd.zc` (the Z-Controller SD socket) |
-| **Medium** | What is in a slot: a disk image, a card image, or a host folder presented as a disk or a card |
+| **Slot** | A place a medium goes: `fdd.a` (floppy drive A), `tape` (the tape deck), `sd.zc` (the Z-Controller SD socket) |
+| **Medium** | What is in a slot: a disk image, a tape, a card image, or a host folder presented as a disk, a tape or a card |
 | **Kind** | `floppy`, `tape`, `block` (SD card / hard disk), `optical` (CD) |
 | **Tag** | A word describing a slot: `sd`, `boot`, `trdos`, `neogs` |
 | **Alias** | A short name: `A` for `fdd.a`, `sd` for the machine's main SD slot |
@@ -28,15 +28,15 @@ layers of a storage peripheral: [technical-design.md §1.1](../inprogress/2026-0
 
 | Machine | Slots |
 |---|---|
-| Pentagon, Scorpion, 128K with Beta 128 | `fdd.a` … `fdd.d` (aliases `A` … `D`) |
-| +3 | `fdd.a`, `fdd.b` (`A`, `B`) — there is no drive C |
-| ZX-Evo | `fdd.a` … `fdd.d`, `sd.zc` (`sd`) |
+| Pentagon, Scorpion, 128K with Beta 128 | `fdd.a` … `fdd.d` (aliases `A` … `D`), `tape` |
+| +3 | `fdd.a`, `fdd.b` (`A`, `B`) — there is no drive C —, `tape` |
+| ZX-Evo | `fdd.a` … `fdd.d`, `tape`, `sd.zc` (`sd`) |
 
 Every slot reports: id, kind, label, index, aliases, tags, whether it is removable and takes
 folders, the write-protect switch, its state (`empty`, `present`, `pending`, `detached`) and the
 medium (source, format, access, dirty, dirty units, and `changes`: the unsaved changes in words —
 `1 track: 3 sectors`, `1 track: whole` for a track rewritten by FORMAT / WRITE TRACK,
-`5 tracks: 20 sectors total`, or `48 sectors` on a card).
+`5 tracks: 20 sectors total`, or `48 sectors` on a card; a tape is never written).
 
 ## Naming a slot: selectors
 
@@ -79,7 +79,7 @@ on a +3) is `unknown-slot`, never drive A.
 | `fs` | `fat16`, `fat32` | `fat16` | insert, swap (folder into a card slot) |
 | `codepage` | `cp866`, `cp1251` | the folder's manifest, else `cp866` | insert, swap (folders) |
 | `free` | bytes | 256 MiB | insert, swap (folder volumes: room for guest writes) |
-| `kind` | `floppy`, `block` | floppy when the machine has drives | insert `auto` of a folder; `formats` filter |
+| `kind` | `floppy`, `tape`, `block` | floppy when the machine has drives | insert `auto` of a folder; `formats` filter |
 | `format` | `auto`, `unformatted`, `plus3` | `auto` | create (floppies) |
 | `cylinders`, `sides` | 40 / 80, 1 / 2 | the format's | create |
 | `size` | bytes, a multiple of 512 | — | create (cards) |
@@ -103,10 +103,38 @@ returns at once with `pending: true`. While the emulator is paused or stopped bo
 `save` (into its own file), `export <path>` (into a new file, the source untouched) or
 `discard`. Without one the request answers `dirty` and nothing changes.
 
-**Folders.** A folder into a floppy slot becomes a TR-DOS disk built once from its files; into a
-card slot it becomes a FAT16 (or FAT32) volume. The folder is never written: guest writes stay in
+**Folders.** A folder into a floppy slot becomes a TR-DOS disk built once from its files; into the
+tape slot it becomes a tape ([Tapes](#tapes)); into a card slot it becomes a FAT16 (or FAT32) volume. The folder is never written: guest writes stay in
 the session; export them to keep them. Host service files (`.DS_Store`, `Thumbs.db`, ...) are left
 out and reported.
+
+## Tapes
+
+The tape deck is the slot `tape`. A tape file of any format the tape loaders read goes in —
+`.tap`, `.tzx`, `.spc`, `.sta`, `.ltp`, `.zxt`; the content decides the format, the extension only
+breaks a tie — or a folder. A tape is read-only: `access` does not apply, and there is nothing to
+save or discard. `export` writes a copy: `.tap` when every block is a standard ROM block, else use
+`.tzx`. There is no blank tape (`create`), and no swap delay: the deck stops, and the new tape
+plays from its first block.
+
+`tape load` / `tape eject` (CLI, WebAPI `/tape/load` and `/tape/eject`, Lua and Python
+`tape_load` / `tape_eject`, the Qt tape window's Stop & eject) are the same insert and eject.
+Transport — play, pause, stop, rewind, seek — stays with the `tape` commands.
+
+**A folder as a tape.** The files, in the order of the folder's manifest (`order:`) and then by
+name, become standard-speed blocks:
+
+| File | On the tape |
+|---|---|
+| Hobeta (`boot.$B`, `game.$C`) | a header with the Hobeta name, type, start and length, then the data. `$B` is a program (with its autorun line), `$D` a number array, the rest bytes |
+| `.tap`, `.tzx` | its blocks, unchanged |
+| anything else | a header named after the file (10 characters), then the data: a program for `.bas` / `.b`, else bytes at 32768 (a 6 912-byte `.scr` at 16384) |
+
+The manifest's `files:` sets a file's name, type, start and autorun `line`, and `tape: {pause:
+500}` the pause after each block (1000 ms by default). A file over 65 533 bytes is left out, and so
+is a file that would run past one side of a C90 cassette (45 minutes at ROM speed); the report
+lists them. Example: `boot.$B` (a 26-byte program) and `intro.scr` make a tape of about a minute
+without fast loading: `LOAD ""` runs the program, `LOAD "" SCREEN$` shows the picture.
 
 ## Results and errors
 
@@ -215,4 +243,5 @@ medium. When a dirty medium would leave, the panel asks Save / Export / Discard.
 `disk insert` / `disk eject` (CLI), `/disk/{drive}/insert|eject|create` (WebAPI),
 `disk_load` / `disk_eject` / `disk_create` (Lua, Python) and `load_software` (MCP) keep working
 and keep their answers. They replace or eject a disk even when it has unsaved writes, as they
-always did; the `media` verbs ask for a disposition instead.
+always did; the `media` verbs ask for a disposition instead. `tape load` / `tape eject` on every
+surface go through the `tape` slot (see [Tapes](#tapes)).

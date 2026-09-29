@@ -2,6 +2,8 @@
 
 #include <QFileInfo>
 
+#include "emulator/emulator.h"
+
 PatternCategoryMap FileManager::_extensions =
 {
     { "rom", SupportedFileCategoriesEnum::FileROM },
@@ -10,9 +12,6 @@ PatternCategoryMap FileManager::_extensions =
 
     { "sna", SupportedFileCategoriesEnum::FileSnapshot },
     { "z80", SupportedFileCategoriesEnum::FileSnapshot },
-
-    { "tap", SupportedFileCategoriesEnum::FileTape },
-    { "tzx", SupportedFileCategoriesEnum::FileTape },
 
     { "trd", SupportedFileCategoriesEnum::FileDisk },
     { "scl", SupportedFileCategoriesEnum::FileDisk },
@@ -44,8 +43,13 @@ SupportedFileCategoriesEnum FileManager::determineFileCategoryByExtension(QStrin
     {
         QString extension = fileInfo.suffix().toLower();
 
+        // Tapes: every format the tape loaders read (the registry is the list)
         auto match = _extensions.find(extension.toStdString());
-        if (match != _extensions.end())
+        if (Emulator::IsTapeExtension(extension.toStdString()))
+        {
+            result = SupportedFileCategoriesEnum::FileTape;
+        }
+        else if (match != _extensions.end())
         {
             result = match->second;
         }

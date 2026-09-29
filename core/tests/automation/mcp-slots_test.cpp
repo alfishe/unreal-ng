@@ -4,10 +4,12 @@
 #include <gtest/gtest.h>
 
 #include "emulator/media/mediacontrol.h"
+#include "loaders/tape/loader_tape.h"
 #include "mcp-slots.h"
 
 #include <json/json.h>
 
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <string>
@@ -23,6 +25,15 @@ TEST(McpSlots_Test, ActionsAndOptionsMatchMediaControl)
         EXPECT_EQ(options, MediaControl::OptionsFor(verb)) << "options of " << verb;
     }
     EXPECT_EQ(verbs, MediaControl::Verbs()) << "the same verbs, in the same order";
+}
+
+TEST(McpSlots_Test, TapeExtensionsMatchTheTapeLoaders)
+{
+    std::vector<std::string> mcp = mcp::TapeExtensions();
+    std::vector<std::string> core = TapeLoaderRegistry::Instance().SupportedExtensions();
+    std::sort(mcp.begin(), mcp.end());
+    std::sort(core.begin(), core.end());
+    EXPECT_EQ(mcp, core) << "load_software offers what the tape loaders read";
 }
 
 namespace

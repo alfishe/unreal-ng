@@ -5,7 +5,8 @@
 /// source for a slot kind and builds the medium, access layer included.
 /// Block media: raw images, and host folders as FAT16 / FAT32 volumes (M1).
 /// Floppies: every disk image format (FloppyFormats), and host folders built
-/// into a TR-DOS disk (M2). Tape formats join in M3.
+/// into a TR-DOS disk (M2). Tapes: every TapeLoaderRegistry format, and host
+/// folders built into a TZX (M3).
 
 #include <memory>
 #include <optional>
