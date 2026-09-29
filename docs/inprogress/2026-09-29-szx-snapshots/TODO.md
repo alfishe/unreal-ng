@@ -21,10 +21,12 @@ Scorpion 1024) cannot save SZX; no private blocks.
 - [x] S3 part: B128 both ways (WD1793 registers, #FF, SEEKLOWER, PAGED ↔ TR-DOS); `WD1793::RestoreSnapshotRegisters`.
 - [x] Fixtures `testdata/loaders/szx` (libspectrum synth files for all nine machine ids, two converted snapshots, Spectaculator 1.1, ZXMAK2 1.4, ZX-M8XXX 1.4) with libspectrum oracle dumps; `tools/verification/szx` (`szxtool`, `check-interop.sh`: our files read by libspectrum match on all nine models).
 - [x] Another model is refused by the core with both models named ("saved on a Pentagon 512K, the running machine is a ZX-Spectrum 128k: create a Pentagon 512K to load it"); in the Qt window (drag and drop, File > Open, command line) an SZX for another model replaces the running machine by that model first (`MainWindow::switchMachineModel`, the Machine menu's path), the same model just loads.
-- [ ] Optional, only on demand: the other standard blocks (BDSK with link safety, +3 / DSK, TAPE, COVX, AMXM, KEYB issue 2, GS / GSRP) - until then reported as ignored. A TurboSound FM config (YM2203) has no AY-3-8910: the AY block is reported, not applied.
+- [x] Every standard block for hardware we emulate, both ways (2026-09-29): BDSK (linked or embedded TRD / SCL / FDI / UDI, head cylinder, write protect), +3 (motor) and DSK (links), TAPE (linked or embedded, head block), GS + GSRP (classic GS: CPU, page, volumes, DAC levels, RAM; the card's timing and mailbox are not in the format), COVX (#FB), AMXM (Kempston), KEYB. Linked media: next to the snapshot first, then the stored path, always Session access (never written); embedded images staged in temporary files that go with the medium (`MediaSourceType::Upload`). Saving links file-backed media, relative to the snapshot's folder when inside it; unsaved writes and non-file media are reported.
+- [x] Read and reported, not applied (hardware we do not emulate): Issue 2 keyboard, keyboard joysticks, JOY, SpecDrum (DRUM), the AMX mouse, NeoGS for a GS block, and IF1, Multiface, printers, Timex, +D, Opus, LEC and the other interfaces. A TurboSound FM config (YM2203) has no AY-3-8910: the AY block is reported, not applied.
+- [x] HALT: PC stays on the HALT while halted (as in Fuse); a file with PC past the HALT is moved back onto it (design §20 R11); `LoaderSZXHalt_Test`.
 - [x] ~~S4 private blocks and the no-id machine policy~~ - dropped: models without an SZX id refuse SZX.
 - [ ] S5: RZX integration with #27.
-- [ ] Correct the docs that claim SZX support today (snapshot-loading DONE.md, automation action plan) and the #EFF7 claim (Pentagon 1024 16-color design, PLAN #53).
+- [x] Corrected the early SZX claims (snapshot-loading DONE.md, automation action plan) and the #EFF7 claim (Pentagon 1024 16-color design and DONE, PLAN #53: closed).
 
 ## Pointers
 - Cumulative plan: [`../PLAN.md`](../PLAN.md) — #64, #27, #53.

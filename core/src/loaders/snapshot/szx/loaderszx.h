@@ -5,10 +5,18 @@
 /// shape as LoaderSNA / LoaderZ80: load() and save() on a path, plus
 /// Commit() / Capture() on a parsed stage for callers that hold one.
 ///
-/// Scope: header, CRTR, Z80R (with the exact frame position,
-/// MEMPTR, Q, HALT, the interrupt shadow), SPCR, RAMP, AY, and B128 (the
-/// WD1793 registers, #FF and TR-DOS paging). Other blocks are listed in the report as ignored or
-/// unknown. Standard SZX only: the snapshot's machine must be the running one
+/// Scope: every standard block for hardware we emulate - CRTR, Z80R (with
+/// the exact frame position, MEMPTR, Q, HALT, the interrupt shadow), SPCR,
+/// RAMP, AY, B128 (the WD1793 registers, #FF and TR-DOS paging), BDSK, +3,
+/// DSK, TAPE, GS + GSRP (classic GS), COVX, AMXM (Kempston), KEYB. Blocks for
+/// hardware we do not emulate (Issue 2 keyboard, joysticks, SpecDrum, IF1,
+/// Multiface, Timex, ...) are listed in the report as ignored.
+///
+/// Media: a linked image is looked up next to the snapshot first, then at
+/// the stored path, and always inserted with Session access (the guest's
+/// writes never reach the linked file); an embedded image is staged in a
+/// temporary file that goes with the medium. Saving links file-backed media
+/// (relative to the snapshot's folder when inside it). Standard SZX only: the snapshot's machine must be the running one
 /// (no model switch), and a model without an SZX machine id cannot be saved.
 ///
 /// Frame position: SZX counts dwCyclesStart from the INT; our Z80::t counts
@@ -50,6 +58,12 @@ public:
 private:
     static void ApplyPaging(EmulatorContext* context, const szx::Stage& stage, szx::Report& report);
     static void ApplyCpu(EmulatorContext* context, const szx::Stage& stage, szx::Report& report);
+    /// BDSK, +3 / DSK, TAPE: linked or embedded media into the media manager
+    static void ApplyMedia(EmulatorContext* context, const szx::Stage& stage, szx::Report& report);
+    /// GS, COVX, AMXM, KEYB, JOY, DRUM
+    static void ApplyDevices(EmulatorContext* context, const szx::Stage& stage, szx::Report& report);
+    static void CaptureMedia(EmulatorContext* context, szx::Stage& stage);
+    static void CaptureDevices(EmulatorContext* context, szx::Stage& stage);
 
     EmulatorContext* _context;
     std::string _path;

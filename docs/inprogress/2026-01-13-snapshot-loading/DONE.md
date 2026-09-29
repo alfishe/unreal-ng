@@ -7,7 +7,8 @@
   implemented per `snapshot-loading-optimizations.md`; task list (`task-list.md`) closed.
 
 ## Evidence
-- Snapshot load path in `core/src/loaders/snapshot/` (SNA/Z80/SZX); snapshot API
+- Snapshot load path in `core/src/loaders/snapshot/` (SNA/Z80; SZX since 2026-09-29 in
+  `szx/`, PLAN #64 - it was listed here before it existed); snapshot API
   (`core/automation/webapi/src/api/snapshot_api.cpp`) used routinely by automation
   and the TTD litmus workflow (2026-09-15).
 

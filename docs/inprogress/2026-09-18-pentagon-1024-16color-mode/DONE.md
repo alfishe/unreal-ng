@@ -1,6 +1,6 @@
 # DONE (reclassified 2026-09-27 re-audit; see [PLAN.md](../PLAN.md) audit log)
 
-Landed in `0194a50f` (PLAN #21 retired). Remaining SZX `EFF7` chunk → PLAN #53.
+Landed in `0194a50f` (PLAN #21 retired). The SZX `EFF7` item is closed: SZX stores `#EFF7` in SPCR byte 2 on Pentagon 1024, carried since the SZX loader (2026-09-29).
 
 ---
 Original TODO notes below (historical).
@@ -35,7 +35,7 @@ Technical design to extend the **Pentagon 1024K** machine configuration in Unrea
 - [x] **Python `screen_video_state()`** — returns dict with same info
 
 ### Remaining Work
-- [ ] **SZX snapshot extension** (§7.1) — custom `EFF7` chunk for external snapshot interchange
+- [x] ~~**SZX snapshot extension** (§7.1) — custom `EFF7` chunk~~ — not needed: SPCR byte 2 is `#EFF7` on Pentagon 1024, done with the SZX loader (2026-09-29)
 
 ### Deferred / Out of Scope
 - [ ] GigaScreen mode (`EFF7_GIGASCR`) — separate feature
