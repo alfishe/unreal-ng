@@ -182,7 +182,11 @@
         "(unknown model / unsupported RAM / not creatable on this build) returns 400 and "
         "leaves the current emulator running untouched. A successful switch stops and "
         "destroys the current emulator, creates a new one with the requested model, and "
-        "starts it. The new emulator will have a different ID.";
+        "starts it. The new emulator will have a different ID. The media follow: each medium goes into the "
+        "slot with the same id on the new machine, unsaved writes included (media.attached). A medium the new "
+        "model has no slot for is closed when it has nothing unsaved (media.closed); with unsaved writes the "
+        "switch answers 409 and lists them in 'stranded', unless 'stranded' says save, discard or keep "
+        "(keep: detached media on the new machine, media.detached).";
     paths["/api/v1/emulator/{id}/model"]["post"]["tags"].append("Emulator Control");
     paths["/api/v1/emulator/{id}/model"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/model"]["post"]["parameters"][0]["in"] = "path";
@@ -200,6 +204,15 @@
          ["ram_size"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/model"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
          ["ram_size"]["description"] = "Optional RAM size in KB";
+    paths["/api/v1/emulator/{id}/model"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["stranded"]["type"] = "string";
+    for (const char* value : {"refuse", "save", "discard", "keep"})
+        paths["/api/v1/emulator/{id}/model"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+             ["stranded"]["enum"].append(value);
+    paths["/api/v1/emulator/{id}/model"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["stranded"]["description"] =
+        "Unsaved writes on media the new model has no slot for: refuse (default, 409), save (into their own "
+        "files), discard, keep (detached media on the new machine)";
     paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["200"]["description"] = "Model switched successfully";
     paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["type"] = "object";
     paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
@@ -210,6 +223,12 @@
          ["new_emulator_id"]["type"] = "string";
     paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
          ["model"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["media"]["type"] = "object";
+    paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["media"]["description"] = "Slot ids: attached (followed), detached (kept with unsaved writes), closed";
+    paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["409"]["description"] =
+        "Unsaved writes on media the new model has no slot for (code 'dirty', list in 'stranded'); nothing changed";
     paths["/api/v1/emulator/{id}/model"]["post"]["responses"]["400"]["description"] =
         "Unknown model / unsupported RAM / not creatable on this build; the current instance is left untouched. "
         "Body carries message, requested_model and available_models_endpoint";

@@ -233,8 +233,10 @@ Content-Type: application/json
 ```
 
 ### 5b. Switch Model (validate-first)
-**Endpoint**: `POST /api/v1/emulator/{id}/model` (body `{"model": "...", "ram_size": N}`)  
+**Endpoint**: `POST /api/v1/emulator/{id}/model` (body `{"model": "...", "ram_size": N, "stranded": "refuse|save|discard|keep"}`)  
 **Description**: The request is validated BEFORE the current instance is stopped/removed: an unknown model, unsupported RAM or non-creatable model returns `400` and the current emulator keeps running untouched. A successful switch stops the old instance, creates and starts a new one (different ID) and returns the machine identity block for the new instance.
+
+The media follow ([media.md → Model switch](../../../features/media.md#model-switch)): each medium goes into the slot with the same id on the new machine, unsaved writes included. `media` in the reply lists the slot ids `attached` (followed), `detached` (no slot, unsaved writes kept) and `closed` (no slot, nothing unsaved). A medium with unsaved writes the new model has no slot for answers `409` (`code: "dirty"`, the media in `stranded`) and changes nothing, unless `stranded` says `save`, `discard` or `keep`.
 
 ### 6. Remove Emulator
 **Endpoint**: `DELETE /api/v1/emulators/{id}`  

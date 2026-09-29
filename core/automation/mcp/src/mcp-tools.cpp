@@ -97,7 +97,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["type"] = "object";
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* action : {"create", "list", "list_models", "server", "status", "start", "stop", "pause", "resume", "reset", "destroy",
+    for (const char* action : {"create", "switch_model", "list", "list_models", "server", "status", "start", "stop", "pause", "resume", "reset", "destroy",
                                "gs_reset", "gs_reset_card", "gs_nmi", "gs_send_command", "gs_send_data", "gs_read_status", "gs_read_data",
                                "gs_switch_personality", "gs_dump_module"})
     {
@@ -107,7 +107,9 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "Lifecycle operation. 'create' makes a new running instance (fails with a reason on models this build "
         "cannot create — no silent fallback); 'list' shows all instances with their machine identity; "
         "'list_models' enumerates hardware models with creatable flags; 'server' reports the build fingerprint "
-        "and models_creatable; 'status' reports one instance's details. 'gs_*' actions drive the General Sound "
+        "and models_creatable; 'status' reports one instance's details. 'switch_model' replaces the target with "
+        "a new instance of 'model' (new id; the machine state is lost, the media follow into the same slots with "
+        "their unsaved writes; media with unsaved writes the new model has no slot for need 'stranded'). 'gs_*' actions drive the General Sound "
         "card over the same /control/audio/gs endpoint the WebAPI serves (gs_reset/gs_reset_card/gs_nmi/"
         "gs_send_command/gs_send_data/gs_read_status/gs_read_data; the byte actions need 'value'; writes, "
         "resets and NMI apply at the next instruction boundary, reads are side-effect-free peeks); "
@@ -123,7 +125,14 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "SCORPION, PROFSCORP, GMX, KAY, QUORUM, LSY256, PHOENIX (see list_models; creatability is "
         "build-dependent — check the 'creatable' flags before assuming a machine exists)";
     schema["properties"]["ram_size"]["type"] = "integer";
-    schema["properties"]["ram_size"]["description"] = "Optional RAM size in KB for 'create' (e.g. 128, 256, 512)";
+    schema["properties"]["ram_size"]["description"] = "Optional RAM size in KB for 'create' / 'switch_model' (e.g. 128, 256, 512)";
+    schema["properties"]["stranded"]["type"] = "string";
+    schema["properties"]["stranded"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* value : {"refuse", "save", "discard", "keep"})
+        schema["properties"]["stranded"]["enum"].append(value);
+    schema["properties"]["stranded"]["description"] =
+        "switch_model: unsaved writes on media the new model has no slot for - refuse (default: the switch fails "
+        "and lists them), save (into their own files), discard, keep (detached media on the new machine)";
     schema["properties"]["value"]["type"] = "integer";
     schema["properties"]["value"]["description"] = "Byte value (0-255) required by gs_send_command and gs_send_data";
     schema["properties"]["personality"]["type"] = "string";
@@ -233,6 +242,22 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                 else if (action == "destroy")
                 {
                     ForwardCall("DELETE", Endpoint(id), nullptr, caller, "Destroyed " + id, done);
+                }
+                else if (action == "switch_model")
+                {
+                    if (!args.isMember("model") || !args["model"].isString() || args["model"].asString().empty())
+                    {
+                        done(ToolResult::Error("switch_model needs 'model' (see list_models)"));
+                        return;
+                    }
+                    Json::Value body;
+                    body["model"] = args["model"].asString();
+                    if (args.isMember("ram_size") && args["ram_size"].asUInt() > 0)
+                        body["ram_size"] = args["ram_size"].asUInt();
+                    if (args.isMember("stranded") && args["stranded"].isString())
+                        body["stranded"] = args["stranded"].asString();
+                    ForwardCall("POST", Endpoint(id, "/model"), &body, caller, "Switched " + id + " to " + body["model"].asString(),
+                                done);
                 }
                 else if (action == "gs_reset" || action == "gs_reset_card" || action == "gs_nmi" ||
                          action == "gs_send_command" || action == "gs_send_data" ||

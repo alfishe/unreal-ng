@@ -5,6 +5,7 @@
 #include <emulator/config.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
+#include <emulator/media/modelswitch.h>
 #include <emulator/notifications.h>
 #include <emulator/platform.h>
 
@@ -1068,5 +1069,86 @@ void CLIProcessor::HandleModels(const ClientSession& session, const std::vector<
     }
     
     ss << NEWLINE << "Use 'start <model>' to create emulator with specific model.";
+    session.SendResponse(ss.str());
+}
+// HandleModel - switch the selected emulator to another model; the media follow
+void CLIProcessor::HandleModel(const ClientSession& session, const std::vector<std::string>& args)
+{
+    if (args.empty() || args[0] == "help")
+    {
+        std::stringstream ss;
+        ss << "Usage: model <name> [--ram <kb>] [--stranded save|discard|keep]" << NEWLINE
+           << "Switch the selected emulator to another model (see 'models'). The machine state is lost; disks, tapes" << NEWLINE
+           << "and cards go into the slot with the same id on the new machine, unsaved writes included. Media with" << NEWLINE
+           << "unsaved writes the new model has no slot for need --stranded: save (into their files), discard, or" << NEWLINE
+           << "keep (detached media on the new machine, see 'media list')." << NEWLINE;
+        session.SendResponse(ss.str());
+        return;
+    }
+
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse(std::string("Error: No emulator selected.") + NEWLINE);
+        return;
+    }
+
+    ModelSwitchRequest request;
+    request.emulatorId = emulator->GetId();
+    request.model = args[0];
+    for (size_t i = 1; i < args.size(); i++)
+    {
+        const std::string& option = args[i];
+        const bool hasValue = i + 1 < args.size();
+        if (option == "--ram" && hasValue)
+        {
+            try
+            {
+                request.ramKb = static_cast<uint32_t>(std::stoul(args[++i]));
+            }
+            catch (const std::exception&)
+            {
+                session.SendResponse("Error: --ram '" + args[i] + "': expected KB" + NEWLINE);
+                return;
+            }
+        }
+        else if (option == "--stranded" && hasValue)
+        {
+            if (!ModelSwitch::ParseStranded(args[++i], request.stranded))
+            {
+                session.SendResponse("Error: --stranded '" + args[i] + "': expected save, discard or keep" + NEWLINE);
+                return;
+            }
+        }
+        else
+        {
+            session.SendResponse("Error: unknown option '" + option + "' (see 'model help')" + NEWLINE);
+            return;
+        }
+    }
+
+    // Nothing here may keep the old machine alive
+    const bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
+    emulator.reset();
+    _emulator.reset();
+
+    const ModelSwitchResult switched = ModelSwitch::Run(request);
+    std::stringstream ss;
+    if (!switched.result.Ok())
+    {
+        ss << "Error: " << switched.result.message << NEWLINE;
+        for (const SlotInfo& info : switched.stranded)
+            ss << "  " << info.descriptor.id << ": " << info.source << " (" << info.changes << ")" << NEWLINE;
+        session.SendResponse(ss.str());
+        return;
+    }
+
+    if (wasRunning)
+        EmulatorManager::GetInstance()->StartEmulatorAsync(switched.emulator->GetId());
+    const MachineIdentity identity = EmulatorManager::GetMachineIdentity(*switched.emulator);
+    ss << "Switched to " << identity.Model << " - " << identity.ModelFullName << " (" << identity.RamKb << "KB)" << NEWLINE
+       << "New emulator instance: " << switched.emulator->GetId() << NEWLINE;
+    for (const std::string& line : switched.media.lines)
+        ss << "  " << line << NEWLINE;
     session.SendResponse(ss.str());
 }

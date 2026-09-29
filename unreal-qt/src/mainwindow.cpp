@@ -1,5 +1,7 @@
 #include "mainwindow.h"
 
+#include "emulator/media/modelswitch.h"
+
 #include <QWindow>
 #include <QClipboard>
 #include <QGuiApplication>
@@ -2863,18 +2865,19 @@ void MainWindow::handleMachineModelChangeRequested(const QString& modelSpec)
     QMessageBox::StandardButton reply = QMessageBox::question(
         this,
         tr("Switch Machine Model"),
-        tr("Switch to %1?\n\nThis will stop and destroy the current emulator instance.\nAny unsaved state will be lost.").arg(displayName),
+        tr("Switch to %1?\n\nThis will stop and destroy the current emulator instance; its machine state is lost.\n"
+           "Disks, tapes and cards go with it, unsaved writes included.").arg(displayName),
         QMessageBox::Yes | QMessageBox::No,
         QMessageBox::No
     );
 
-    if (reply != QMessageBox::Yes)
-    {
-        // User cancelled - restore menu selection to current model
+    auto restoreMenu = [this]() {
         if (_menuManager)
-        {
             _menuManager->updateMachineModelSelection(_emulator);
-        }
+    };
+    if (reply != QMessageBox::Yes || !_emulator)
+    {
+        restoreMenu();  // User cancelled - restore menu selection to current model
         return;
     }
 
@@ -2886,27 +2889,61 @@ void MainWindow::handleMachineModelChangeRequested(const QString& modelSpec)
 
     qInfo() << "MainWindow::handleMachineModelChangeRequested() - Switching to model:" << displayName;
 
-    // Pause, stop and release current emulator
-    if (_emulator)
+    // The media follow the switch (ModelSwitch, docs/features/media.md). A
+    // medium with unsaved writes the new model has no slot for needs a decision
+    ModelSwitchRequest request;
+    request.emulatorId = _emulator->GetId();
+    request.model = modelName;
+    request.ramKb = ramSize;
+    request.beforeRelease = [this](Emulator&) { unbindFromEmulator(); };
+    ModelSwitchResult switched = ModelSwitch::Run(request);
+
+    if (switched.result.error == MediaError::Dirty)
     {
-        if (_emulator->IsRunning())
-        {
-            _emulator->Pause(false);  // Pause first to stop frame generation
-            _emulator->Stop();        // Then stop before destroying
-        }
-        releaseEmulator();
+        QStringList media;
+        for (const SlotInfo& info : switched.stranded)
+            media << QString("%1: %2 (%3)")
+                         .arg(QString::fromStdString(info.descriptor.id), QString::fromStdString(info.source),
+                              QString::fromStdString(info.changes));
+
+        QMessageBox box(QMessageBox::Warning, tr("Switch Machine Model"),
+                        tr("%1 has no slot for these media, and they have unsaved writes:\n\n%2")
+                            .arg(displayName, media.join("\n")),
+                        QMessageBox::NoButton, this);
+        QPushButton* save = box.addButton(tr("Save"), QMessageBox::AcceptRole);
+        QPushButton* discard = box.addButton(tr("Discard"), QMessageBox::DestructiveRole);
+        QPushButton* keep = box.addButton(tr("Keep Detached"), QMessageBox::ActionRole);
+        box.addButton(QMessageBox::Cancel);
+        box.exec();
+
+        if (box.clickedButton() == save)
+            request.stranded = StrandedMedia::Save;
+        else if (box.clickedButton() == discard)
+            request.stranded = StrandedMedia::Discard;
+        else if (box.clickedButton() == keep)
+            request.stranded = StrandedMedia::Keep;
+        if (request.stranded != StrandedMedia::Refuse)
+            switched = ModelSwitch::Run(request);
     }
 
-    // Create new emulator with requested model and RAM size
-    std::shared_ptr<Emulator> newEmulator = _emulatorManager->CreateEmulatorWithModelAndRAM("", modelName, ramSize);
-    if (!newEmulator)
+    if (!switched.result.Ok() || !switched.emulator)
     {
-        qWarning() << "handleMachineModelChangeRequested: Failed to create emulator with model" << displayName;
-        QMessageBox::critical(this, tr("Error"), tr("Failed to create emulator with model %1").arg(displayName));
+        _switchingModel = false;
+        restoreMenu();
+        if (switched.result.error != MediaError::Dirty)  // Cancel: nothing to report
+        {
+            qWarning() << "handleMachineModelChangeRequested: switch to" << displayName << "failed:"
+                       << QString::fromStdString(switched.result.message);
+            QMessageBox::critical(this, tr("Error"),
+                                  tr("Failed to switch to %1:\n%2")
+                                      .arg(displayName, QString::fromStdString(switched.result.message)));
+        }
         return;
     }
 
-    // Adopt the new emulator (already initialized by CreateEmulatorWithModelAndRAM)
+    std::shared_ptr<Emulator> newEmulator = switched.emulator;
+
+    // Adopt the new emulator (already initialized by ModelSwitch)
     adoptEmulator(newEmulator, EmulatorOrigin::CreatedByGui);
     qDebug() << "handleMachineModelChangeRequested: adoptEmulator completed";
 
@@ -2917,6 +2954,16 @@ void MainWindow::handleMachineModelChangeRequested(const QString& modelSpec)
     // Note: Menu update happens via adoptEmulator -> setActiveEmulator -> updateMenuStates
 
     _switchingModel = false;
+
+    // Media that could not follow are worth a word
+    if (!switched.media.detached.empty() || !switched.media.closed.empty())
+    {
+        QStringList lines;
+        for (const std::string& line : switched.media.lines)
+            lines << QString::fromStdString(line);
+        QMessageBox::information(this, tr("Switch Machine Model"),
+                                 tr("Media on %1:\n\n%2").arg(displayName, lines.join("\n")));
+    }
 
     qInfo() << "MainWindow::handleMachineModelChangeRequested() - Successfully switched to model:" << displayName;
 }

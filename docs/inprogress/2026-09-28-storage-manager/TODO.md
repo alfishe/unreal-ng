@@ -3,8 +3,9 @@
 **Status:** requirements, technical design, media history design and integration designs reviewed
 (two rounds, 2026-09-28). Implemented (branch `media-manager`, merged to master 2026-09-28): **M1** (block slots, folders as
 FAT volumes; ACC-1…ACC-4 with the ERS, TR-DOS and NedoOS), **M2** (floppies in the manager; ACC-7 on the real
-TR-DOS ROM), **M3** (the tape deck in the manager, folders as tapes; ACC-8 on the real ROM) and **M4** (the
-media verbs on every surface and the Qt media panel). M5, M6 and H1-H5 not started. PLAN.md row **#58**.
+TR-DOS ROM), **M3** (the tape deck in the manager, folders as tapes; ACC-8 on the real ROM), **M4** (the
+media verbs on every surface and the Qt media panel) and **M5** (media follow a model switch; ACC-5). M6 and
+H1-H5 not started. PLAN.md row **#58**.
 
 ## Documents
 
@@ -34,7 +35,7 @@ media verbs on every surface and the Qt media panel). M5, M6 and H1-H5 not start
 - [x] M2 floppy: slots, migration (fixes the eject / save bugs in research §3), folder as a disk image: ACC-7 (see "M2 as built" below)
 - [x] M4 surfaces (media-control-design.md S1-S7): `MediaControl`, WebAPI `/media` + OpenAPI, CLI `media`, MCP `media`, Lua / Python `media_*`, Qt media panel, docs (`docs/features/media.md`) and recipe (`.recipe/media/use-media-slots.md`); as built: media-control-design.md §7
 - [x] M3 tape: slot, migration, folder as a tape: ACC-8 (see "M3 as built" below); the media verbs reach it without surface work
-- [ ] M5 media across model switch: ACC-5
+- [x] M5 media across model switch: ACC-5 (see "M5 as built" below)
 - [ ] M6 IDE / CD slots (with PLAN #13a)
 - [ ] H1-H5 media history: versioned change layer, spill, file views, tracking API, UNS / TTD v2
 
@@ -108,3 +109,17 @@ Not in M3 (moved or noted):
 - Tape recording (`SAVE` to tape): not emulated; a blank tape would be a `Blank` source exported to TZX / TAP.
 
 Tests: `tapeslot_test.cpp` (slot, stop and re-install, re-insert and swap, eject, TTD refusal, every loader format, export to TZX and TAP, `auto`), `foldertapebuilder_test.cpp` (layout, manifest overrides, limits; ACC-8 on the real ROM: `LOAD ""` autoruns a program from a folder, `LOAD "" CODE` loads the next file), `emulator_path_validation_test.cpp` and `tzxload_integration_test.cpp` (content decides, reasons), `mediaformatregistry_test.cpp` (tape extensions, no blank tape).
+
+## M5 as built (2026-09-28)
+
+| Topic | As built |
+|---|---|
+| Transfer | `MediaManager::TakeMediaSet` (old machine, stopped: pending changes applied, every medium detached from its slot, the detached ones too) and `AdoptMediaSet` (new machine: each medium into the slot with the same id and kind, replacing the configured one; a configured medium in another slot with the same source gives way; no slot: detached when dirty, else closed). Live `Medium` objects move, the write-protect switch with them. Report: `attached` / `detached` / `closed` slot ids and lines for people |
+| Switch | `ModelSwitch::Run` (`core/src/emulator/media/modelswitch.{h,cpp}`): the new machine is created first, next to the old one; dirty media without a slot on it are "stranded". `StrandedMedia`: `Refuse` (default: `dirty`, the list, the new machine destroyed, the old one untouched), `Save`, `Discard`, `Keep` (detached on the new machine). A failed save also leaves the old machine running. Then the old machine stops, the GUI unbinds (`beforeRelease`), the old instance is removed, the media are adopted; a selected old instance hands its selection over. The caller starts the new one |
+| Surfaces | WebAPI `POST /emulator/{id}/model` (`stranded`, reply `media`, 409 `dirty` with `stranded`) + OpenAPI; CLI `model <name> [--ram] [--stranded]` (new); MCP `emulator_manage` action `switch_model` (new); Qt Machine menu (prompt Save / Discard / Keep Detached / Cancel; a note when media were closed or detached). Lua and Python have no model switch: a script's emulator object would outlive its machine |
+| Design change | §8's "kept in the transfer until the user decides" became the detached state of the new machine (media-control-design.md §3.6): no second holding place. Clean media without a slot are closed, not carried |
+
+Not in M5:
+- Export as a stranded decision (one path per medium): export through the media verbs before the switch.
+
+Tests: `modelswitch_test.cpp` (ACC-5: Pentagon -> ZX-Evo keeps floppy A with its unsaved writes, the same live medium, and the tape; ZX-Evo -> Pentagon strands a dirty `sd.zc`: refused with nothing changed, then keep / discard; a card save fails and leaves the old machine; a clean card is closed), `mediamanager_test.cpp` (`AMediaSetMovesToAnotherManager`).

@@ -255,6 +255,9 @@ private:
     void HandleStart(const ClientSession& session, const std::vector<std::string>& args);
     void HandleStop(const ClientSession& session, const std::vector<std::string>& args);
     void HandleModels(const ClientSession& session, const std::vector<std::string>& args);
+    /// model <name> [--ram <kb>] [--stranded save|discard|keep]: switch the
+    /// selected emulator's model; the media follow (ModelSwitch)
+    void HandleModel(const ClientSession& session, const std::vector<std::string>& args);
 
     // Helper method to get the currently selected emulator
     std::shared_ptr<Emulator> GetSelectedEmulator(const ClientSession& session);
