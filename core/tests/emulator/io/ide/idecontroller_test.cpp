@@ -180,6 +180,7 @@ TEST(IdeScheme_Test, SchemesFitTheirMachines)
     EXPECT_TRUE(IdeController::SchemeFits(IDE_SMUC, MM_PROFSCORP));
     EXPECT_FALSE(IdeController::SchemeFits(IDE_SMUC, MM_ATM3));
     EXPECT_TRUE(IdeController::SchemeFits(IDE_ATM, MM_ATM710));
+    EXPECT_TRUE(IdeController::SchemeFits(IDE_NEMO_DIVIDE, MM_TSL)) << "TSConf keeps the ZX-Evo NemoIDE (zports.v:766-783)";
     EXPECT_TRUE(IdeController::SchemeFits(IDE_NEMO_DIVIDE, MM_ATM3));
     EXPECT_FALSE(IdeController::SchemeFits(IDE_NEMO, MM_PROFI));
 

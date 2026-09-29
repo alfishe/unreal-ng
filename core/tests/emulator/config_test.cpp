@@ -401,7 +401,7 @@ TEST_F(Config_Test, ShippedConfigsFitTheirIdeBoard)
         {"profi", IDE_PROFI},         {"atm3", IDE_NEMO_DIVIDE},  {"atm710", IDE_ATM},
         {"pentagon128k", IDE_NEMO},   {"pentagon512k", IDE_NEMO}, {"scorpion", IDE_NONE},
         {"profscorp", IDE_NONE},      {"spectrum48", IDE_NONE},   {"spectrum128", IDE_NONE},
-        {"spectrum3", IDE_NONE},      {"ts-conf", IDE_NONE},
+        {"spectrum3", IDE_NONE},      {"ts-conf", IDE_NEMO_DIVIDE},
     };
     for (const auto& [folder, scheme] : expected)
     {

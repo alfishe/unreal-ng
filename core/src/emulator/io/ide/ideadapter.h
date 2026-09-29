@@ -67,6 +67,14 @@ public:
     /// raises INTRQ or no unit answers (UnrealSpeccy `read_intrq`)
     uint8_t AtmIntrqBit();
 
+    /// TSConf DMA, devices #3 (IDE to RAM) and #B (RAM to IDE): one whole
+    /// 16-bit word straight from / to the data register (CS0, register 0),
+    /// past the Z80 half-word latches, which keep their state (`dma.v:441-445`,
+    /// `ide.v`: the DMA request overrides the Z80 address and chip selects).
+    /// Without a board a read is #FFFF (a floating bus) and a write goes nowhere
+    uint16_t DmaReadWord();
+    void DmaWriteWord(uint16_t word);
+
     /// The scheme's IDE units reset (SMUC #FFBA bit 0; the machine's reset goes through IdeController)
     void ResetUnits();
     /// Latches cleared (machine reset)
