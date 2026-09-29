@@ -151,7 +151,9 @@ uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
         disp.decodedPort = port;
         disp.wasHandledInline = true;
     }
-    else
+    // The VG93's registered keys (#1F..#FF) must not answer outside the DOS / CP/M port set: the gated FDC
+    // arm above already declined them, so they stay undecoded (floating bus) instead of reaching the controller
+    else if (!IsBeta128Port(port))
     {
         result = PeripheralPortIn(port);
         // Identity decode: mark decoded only when a device actually responded

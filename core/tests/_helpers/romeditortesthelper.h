@@ -12,11 +12,15 @@
 #include "debugger/analyzers/rom-print/screenocr.h"
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/io/keyboard/keyboard.h"
 #include "emulator/mainloop.h"
 #include "emulator/memory/memory.h"
+#include "emulator/ports/models/portdecoder_atm3.h"
 
 /// Fixture base for tests against the real ROM editors of several machines.
 /// Frames are driven synchronously through MainLoop::RunFrame (no emulator
@@ -200,6 +204,59 @@ protected:
         ASSERT_TRUE(RunUntil([&] { return ScreenHas(banner); }, 100)) << Screen();
     }
 
+    /// ZX-Evo (BaseConf ROM zxevo-fe.rom) into TR-DOS at 3.5 MHz, as an owner does it. A reset always
+    /// enters the EVO Reset Service (ERS) menu, which itself runs at 7 MHz. The CPU speed for what the
+    /// ERS starts lives in the AVR's battery-backed NVRAM (pentevo rom/global_vars.a80): cell #EC bit 7
+    /// = 3.5 MHz, #ED bit 7 = 14 MHz, both clear = 7 MHz, guarded by a CRC16 in #EE/#EF. On a blank or
+    /// corrupt NVRAM the ERS writes its defaults (#ED = #04, #EC = #82: 3.5 MHz; page5/source/addons.a80
+    /// CMOS_DEFAULT). The hidden main-menu key W steps the speed 3.5 -> 7 -> 14 -> 3.5 MHz and stores it
+    /// with a fresh CRC (mainmenu/src/main.a80 CHNGTURBO). A reset with SPACE held then skips the menu
+    /// and jumps straight to TR-DOS (CS: 128 BASIC, SS: 48 BASIC) at the stored speed
+    /// (page0/source/services.a80, RAM_CODE). That path never runs the menu's virtual-drive set-up
+    /// (#13BD resets to "all drives real"), so drive A is the real drive the .trd goes into
+    void BootEvoTrDos()
+    {
+        _emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel("rom-editor", "ATM3", LoggerLevel::LogError);
+        ASSERT_TRUE(_emulator) << "ATM3";
+        _context = _emulator->GetContext();
+        _context->pFeatureManager->setFeature(Features::kScreenHQ, false);
+        _context->pFeatureManager->setFeature(Features::kSoundHQ, false);
+        _emulator->EnableTurboMode();
+        _loop = reinterpret_cast<MainLoop_CUT*>(_context->pMainLoop);
+        _keys = _context->pDebugManager->GetKeyboardManager();
+        ASSERT_NE(_keys, nullptr);
+
+        // The ERS main menu idles at #6117 with the BASIC48 ROM page 28 in window 0 (zxevo_ers_test.cpp)
+        Memory* memory = _context->pMemory;
+        const auto inMenu = [&] {
+            return _context->pCore->GetZ80()->pc == 0x6117 && memory->IsBank0ROM() && memory->GetROMPage() == 28u;
+        };
+        ASSERT_TRUE(RunUntil(inMenu, 500)) << "the ERS main menu never came up";
+
+        // W until the NVRAM says 3.5 MHz (none with the ERS defaults; at most two otherwise). The menu
+        // reads keys through the ROM's LAST_K, lower case, and writes the NVRAM right after taking one
+        EvoAvr& avr = static_cast<PortDecoder_ATM3*>(_context->pPortDecoder)->GetEvoAvr();
+        const auto nvram = [&](uint8_t cell) {
+            avr.SetCMOSAddress(cell);
+            return avr.ReadCMOS();
+        };
+        for (int i = 0; i < 3 && ((nvram(0xEC) & 0x80) == 0 || (nvram(0xED) & 0x80) != 0); i++)
+        {
+            TapUntilTaken(ZXKEY_W, 'w');
+            ASSERT_FALSE(HasFatalFailure());
+            RunFrames(10);
+        }
+        ASSERT_TRUE((nvram(0xEC) & 0x80) != 0 && (nvram(0xED) & 0x80) == 0) << "the ERS never stored 3.5 MHz";
+
+        // Reset with SPACE held from the start: the service ROM checks the keys before any menu
+        _emulator->Reset();
+        _context->pKeyboard->PressKey(ZXKEY_SPACE);
+        RunFrames(25);
+        _context->pKeyboard->ReleaseKey(ZXKEY_SPACE);
+        ASSERT_TRUE(RunUntil([&] { return ScreenHas("A>"); }, 500)) << "no TR-DOS prompt:\n" << Screen();
+        ASSERT_EQ(_context->emulatorState.hw_turbo_shift, 0) << "the CPU must run at 3.5 MHz";
+    }
+
     /// Boots one editor of the matrix, ready to type
     void BootEditor(const std::string& editor)
     {
@@ -246,6 +303,14 @@ protected:
             if (!HasFatalFailure())
                 Enter128Editor("+3 BASIC");
         }
+        else if (editor == "ATM710-TRDOS")  // not in RomEditors(): used by the contention probe's loads only
+            Boot("ATM710", RM_DOS, "A>");
+        else if (editor == "ATM3-TRDOS")  // not in RomEditors(): used by the contention probe's loads only
+            BootEvoTrDos();
+        else if (editor == "Profi-TRDOS")
+            Boot("PROFI", RM_DOS, "A>");
+        else if (editor == "ProfScorp-TRDOS")
+            Boot("PROFSCORP", RM_DOS, "A>");
         else if (editor == "Pentagon-TRDOS")
             Boot("PENTAGON", RM_DOS, "A>");
         else if (editor == "Scorpion-TRDOS")

@@ -41,6 +41,10 @@ def main():
         return 2
     if peek(sym['DONE']) != 1:
         print('DONE is not 1: the probe had not finished when the dump was taken')
+        return 2
+    if 'TOOFAST' in sym and peek(sym['TOOFAST']):
+        print('The CPU ran faster than 3.5 MHz, so nothing was measured: switch the machine to 3.5 MHz')
+        return 2
 
     names = ['ULA 48K', 'ULA 128K', 'gate array', 'no contention', 'no contention, attr bus']
     cls = peek(sym['CLASS'])
@@ -61,7 +65,7 @@ def main():
         results = word(at + 12)
         name = bytes(dump[at + 14 - BASE:at + 19 - BASE]).decode().strip()
         at += RECORD
-        if flags & 3 & ~caps:
+        if flags & 3 & ~caps or (flags & 32 and cls == 3):
             continue  # skipped as N/A on this machine
         got = list(dump[results - BASE:results - BASE + count])
         exp_at = sym['EXPECTED'] + cls * size + (results - sym['RESULTS']) - BASE
@@ -74,12 +78,16 @@ def main():
         print(f'\n{name}: from T{first}, one value per tick')
         print(f'  got {" ".join(f"{v:3}" for v in got)}')
         print(f'  exp {" ".join(f"{v:3}" for v in exp)}')
-        shifts = [k for k in (-3, -2, -1, 1, 2, 3)
-                  if all(got[i] == exp[i + k] for i in range(count) if 0 <= i + k < count)]
-        for k in shifts:
+        shifts = []
+        for k in [k for k in range(-8, 9) if k != 0]:  # up to one 8-tick group either way
+            pairs = [(got[i], exp[i + k]) for i in range(count) if 0 <= i + k < count]
+            if len(pairs) * 2 >= count and all(g == e for g, e in pairs):
+                shifts.append(k)
+        if shifts:
+            k = min(shifts, key=lambda k: (abs(k), k > 0))  # the smallest; "later" on a tie (a repeating row)
             when = 'later' if k < 0 else 'earlier'
             print(f'  = the expected row shifted: this machine behaves {abs(k)} tick(s) {when} than a real one')
-        if not shifts:
+        else:
             print('  (no simple shift explains it)')
 
     print(f'\n{wrong} values wrong in {bad_checks} checks' if wrong else '\nALL VALUES AS EXPECTED')

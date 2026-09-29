@@ -791,3 +791,37 @@ TEST(PortDecoder_ATM710_Trace_Test, EveryPortIsAttributed)
 }
 
 /// endregion </Port trace attribution>
+
+/// The Beta 128 ports (#1F/#3F/#5F/#7F/#FF) are shadow ports: on the bus only while DOSEN || ~CPM
+/// (IsDosPortsEnabled), for reads as for writes - ATM2 docs, UnrealSpeccy CF_DOSPORTS, ZXMAK2 DOSEN||SYSEN,
+/// Xpeccy, MAME and the ZX-Evo RTL agree. Outside, an IN #FF from 48 BASIC reads the bus, never the VG93
+TEST(PortDecoder_ATM710_Machine_Test, BetaPortsOnlyWithTheShadowPorts)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("ATM710", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    PortDecoder* decoder = context->pPortDecoder;
+    EmulatorState& state = context->emulatorState;
+
+    // Spectrum mode: CPM set (no continuous access), outside a TR-DOS session
+    state.aFF77 |= PortDecoder_ATM710::ATM_AFF77_CPM;
+    state.flags &= ~(CF_DOSPORTS | CF_TRDOS);
+    for (uint16_t port : { 0x001F, 0x003F, 0x005F, 0x007F, 0x00FF })
+    {
+        decoder->DecodePortIn(port, 0x8000);
+        EXPECT_FALSE(decoder->WasLastPortDecoded()) << std::hex << port << " answered outside the shadow ports";
+    }
+
+    // A TR-DOS session opens them
+    state.flags |= CF_DOSPORTS;
+    decoder->DecodePortIn(0x00FF, 0x3D2F);
+    EXPECT_TRUE(decoder->WasLastPortDecoded()) << "TR-DOS session: the VG93 system register";
+
+    // So does CP/M mode (~CPM) without a session
+    state.flags &= ~CF_DOSPORTS;
+    state.aFF77 &= static_cast<uint16_t>(~PortDecoder_ATM710::ATM_AFF77_CPM);
+    decoder->DecodePortIn(0x001F, 0x8000);
+    EXPECT_TRUE(decoder->WasLastPortDecoded()) << "~CPM: continuous access";
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}

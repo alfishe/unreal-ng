@@ -173,8 +173,10 @@ uint8_t PortDecoder_ATM710::DecodePortIn(uint16_t port, uint16_t pc)
         result = PeripheralPortIn(gsPort);
         disp.decodedPort = gsPort;
     }
-    // Beta128 FDC ports
-    else if (IsBeta128Port(decodedPort))
+    // Beta128 FDC ports: on the bus only while the shadow ports are (DOSEN || ~CPM, IsDosPortsEnabled), for
+    // reads as for writes - ATM2 docs, UnrealSpeccy CF_DOSPORTS, ZXMAK2 DOSEN||SYSEN, Xpeccy/MAME/ZX-Evo RTL
+    // agree. Outside it the port stays undecoded: the floating bus (or #FF), never the VG93's registers
+    else if (IsBeta128Port(decodedPort) && IsDosPortsEnabled())
     {
         result = PeripheralPortIn(decodedPort);
         _lastPortDecoded = true;
@@ -332,8 +334,8 @@ void PortDecoder_ATM710::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc
         }
         else
         {
-            // Beta128 FDC ports
-            if (IsBeta128Port(decodedPort))
+            // Beta128 FDC ports, gated as on reads (IsDosPortsEnabled; see DecodePortIn)
+            if (IsBeta128Port(decodedPort) && IsDosPortsEnabled())
             {
                 // The ATM-Turbo 2+ board does not wire #FF bit 6 to the VG93
                 // DDEN input: double density (MFM) is permanent on this

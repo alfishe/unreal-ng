@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <Compile Include="$(ZxSrc)/ZXMAK2.Hardware.Circuits/**/*.cs" />
+    <ProjectReference Include="ZXMAK2.Crc.csproj" />
+    <ProjectReference Include="ZXMAK2.Dependency.csproj" />
+    <ProjectReference Include="ZXMAK2.Logging.csproj" />
+    <ProjectReference Include="ZXMAK2.Model.Disk.csproj" />
+  </ItemGroup>
+</Project>

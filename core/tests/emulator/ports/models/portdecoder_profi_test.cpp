@@ -232,6 +232,19 @@ TEST_F(ProfiPortDecoder_Test, FdcPortsCpmMode)
     EXPECT_EQ(decoder->DecodeFDCPort(0x001F), 0x1F);
 }
 
+/// @brief Outside the DOS / CP/M port set the VG93's registered keys stay undecoded: an IN #FF (or #1F..#7F) from
+///        48 BASIC reads the bus, not the controller (the generic fallback once reached the WD1793 at #00FF)
+TEST_F(ProfiPortDecoder_Test, FdcRegistersSilentOutsideDosAndCpm)
+{
+    DosLatchOff();
+    ASSERT_EQ(State().flags & CF_DOSPORTS, 0);
+    for (uint16_t port : { 0x001F, 0x003F, 0x005F, 0x007F, 0x00FF })
+    {
+        ReadPort(port);
+        EXPECT_FALSE(_context->pPortDecoder->WasLastPortDecoded()) << std::hex << port;
+    }
+}
+
 /// @brief "Modified" ports (ROM14=1 and CPM): #83/#A3/#C3/#E3 registers, #3F system port
 TEST_F(ProfiPortDecoder_Test, FdcPortsModifiedMode)
 {

@@ -1,0 +1,24 @@
+<Project>
+  <!--
+    ZXMAK2's engine assemblies, compiled unmodified from a ZXMAK2 checkout (ZXMAK2_DIR) for .NET, one
+    project per original assembly (same names: BusManager loads device types from "ZXMAK2.Hardware").
+    Only ZXMAK2.Logging (log4net), ZXMAK2.Dependency's locator (Unity), ZXMAK2.Resources (GDI+ bitmaps) and
+    ZXMAK2.Host's IconDescriptor are replaced by the headless stand-ins in stubs/.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableDefaultNoneItems>false</EnableDefaultNoneItems>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <WarningLevel>0</WarningLevel>
+    <NoWarn>$(NoWarn);CS0618;CS0612;CS0169;CS0414;CS0649;CS0162;CS0219;CS0168;CS0108;CS0114;CS0672;CS1717;CA1416;CA2022;SYSLIB0011;SYSLIB0014;SYSLIB0050;SYSLIB0051;CS8981;CS0659;CS0661;CS0660;CS0067;CS0628;NU1603;NU1701</NoWarn>
+    <ZxSrc>$(ZXMAK2_DIR)/src</ZxSrc>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="$(ZxSrc)/**/Properties/AssemblyInfo.cs" />
+  </ItemGroup>
+</Project>
