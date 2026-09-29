@@ -15,6 +15,19 @@ token-expensive and corruption-prone — never do it if a file save exists.
 > base64-decode fallback for older servers) or when MCP is unavailable
 > (policy: [_common/transports.md](../_common/transports.md)).
 
+> **Prefer the cheapest report that answers your question, in this order:**
+> 1. `screen_digest` (`inspect_state` aspect `screen_digest`) — a hash of
+>    screen RAM, for change detection ("did anything change since last
+>    frame?") with no pixel data at all.
+> 2. `screen_ocr` (`inspect_state` aspect `screen_ocr`) — extracted text,
+>    when you need what a text-mode screen says.
+> 3. `screen_attributes` (`inspect_state` aspect `screen_attributes`, or
+>    `GET /state/screen/attributes`) — per-cell ink/paper/bright/flash
+>    decoded from the classic ZX attribute layout (32x24 cells), when you
+>    need the color/attribute layout but not actual pixels.
+> 4. A screenshot (this recipe) — last resort, when you actually need pixel
+>    data (graphics, font rendering, precise layout).
+
 ## MCP (preferred)
 
 ```text

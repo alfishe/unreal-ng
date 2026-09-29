@@ -414,6 +414,79 @@ TEST(DeviceStateScreen_Test, FlashFollowsTheFrameCounter)
     EXPECT_TRUE(At(DeviceState::Screen(m.context, false), "flash_inverted").b);
 }
 
+TEST(DeviceStateScreen_Test, AttributesDecodeThePage5CellsOnA48K)
+{
+    ScreenMachine m("48K");
+    ASSERT_NE(m.context, nullptr);
+    uint8_t* page5 = m.context->pMemory->RAMPageAddress(5);
+    ASSERT_NE(page5, nullptr);
+    page5[0x1800 + 0] = 0x38;  // ink=0, paper=7, not bright, not flash
+    page5[0x1800 + 1] = 0x78;  // ink=0, paper=7, bright, not flash
+    page5[0x1800 + 2] = 0xF8;  // ink=0, paper=7, bright, flash
+
+    const StateNode r = DeviceState::ScreenAttributes(m.context);
+    EXPECT_TRUE(At(r, "available").b);
+    EXPECT_EQ(At(r, "cols").i, 32);
+    EXPECT_EQ(At(r, "rows").i, 24);
+    ASSERT_EQ(At(r, "screens").items.size(), 1u) << "48K has one screen only";
+
+    const StateNode& screen0 = At(r, "screens").items[0];
+    EXPECT_EQ(At(screen0, "screen").i, 0);
+    EXPECT_EQ(At(screen0, "ram_page").i, 5);
+    ASSERT_EQ(At(screen0, "cells").items.size(), 768u);
+
+    const StateNode& c0 = At(screen0, "cells").items[0];
+    EXPECT_EQ(At(c0, "ink").i, 0);
+    EXPECT_EQ(At(c0, "paper").i, 7);
+    EXPECT_FALSE(At(c0, "bright").b);
+    EXPECT_FALSE(At(c0, "flash").b);
+
+    const StateNode& c1 = At(screen0, "cells").items[1];
+    EXPECT_TRUE(At(c1, "bright").b);
+    EXPECT_FALSE(At(c1, "flash").b);
+
+    const StateNode& c2 = At(screen0, "cells").items[2];
+    EXPECT_TRUE(At(c2, "bright").b);
+    EXPECT_TRUE(At(c2, "flash").b);
+}
+
+TEST(DeviceStateScreen_Test, AttributesReadBothIndependentPagesOnAShadowCapableMachine)
+{
+    ScreenMachine m("128K");
+    ASSERT_NE(m.context, nullptr);
+    uint8_t* page5 = m.context->pMemory->RAMPageAddress(5);
+    uint8_t* page7 = m.context->pMemory->RAMPageAddress(7);
+    ASSERT_NE(page5, nullptr);
+    ASSERT_NE(page7, nullptr);
+    page5[0x1800] = 0x07;  // ink=7, paper=0
+    page7[0x1800] = 0x38;  // ink=0, paper=7
+
+    // Default (screen == -1): both screens, independently addressable
+    const StateNode both = DeviceState::ScreenAttributes(m.context);
+    ASSERT_EQ(At(both, "screens").items.size(), 2u);
+    EXPECT_EQ(At(At(both, "screens").items[0], "ram_page").i, 5);
+    EXPECT_EQ(At(At(both, "screens").items[1], "ram_page").i, 7);
+    EXPECT_EQ(At(At(At(both, "screens").items[0], "cells").items[0], "ink").i, 7);
+    EXPECT_EQ(At(At(At(both, "screens").items[1], "cells").items[0], "paper").i, 7);
+
+    // Explicit screen selection
+    const StateNode screen0 = DeviceState::ScreenAttributes(m.context, 0);
+    ASSERT_EQ(At(screen0, "screens").items.size(), 1u);
+    EXPECT_EQ(At(At(screen0, "screens").items[0], "ram_page").i, 5);
+
+    const StateNode screen1 = DeviceState::ScreenAttributes(m.context, 1);
+    ASSERT_EQ(At(screen1, "screens").items.size(), 1u);
+    EXPECT_EQ(At(At(screen1, "screens").items[0], "ram_page").i, 7);
+}
+
+TEST(DeviceStateScreen_Test, AttributesRejectShadowScreenOnA48K)
+{
+    ScreenMachine m("48K");
+    ASSERT_NE(m.context, nullptr);
+    const StateNode r = DeviceState::ScreenAttributes(m.context, 1);
+    EXPECT_FALSE(At(r, "available").b);
+}
+
 /// endregion </Screen reports>
 
 /// region <General Sound and Covox (PLAN #20)>

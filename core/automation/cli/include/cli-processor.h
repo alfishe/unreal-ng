@@ -212,6 +212,7 @@ private:
     void HandleStateScreenVerbose(const ClientSession& session, EmulatorContext* context);
     void HandleStateScreenMode(const ClientSession& session, EmulatorContext* context);
     void HandleStateScreenFlash(const ClientSession& session, EmulatorContext* context);
+    void HandleStateScreenAttributes(const ClientSession& session, EmulatorContext* context);
 
     // Audio state handlers
     void HandleStateAudio(const ClientSession& session, EmulatorContext* context);

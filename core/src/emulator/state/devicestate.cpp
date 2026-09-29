@@ -1498,6 +1498,77 @@ StateNode ScreenFlash(EmulatorContext* context)
 
 namespace
 {
+/// One decoded attribute cell: ink/paper/bright/flash from a classic ZX
+/// attribute byte (bits 0-2 ink, 3-5 paper, 6 bright, 7 flash).
+StateNode AttributeCellNode(uint8_t attr)
+{
+    StateNode cell = StateNode::Object();
+    cell["ink"] = int(attr & 0x07);
+    cell["paper"] = int((attr >> 3) & 0x07);
+    cell["bright"] = (attr & 0x40) != 0;
+    cell["flash"] = (attr & 0x80) != 0;
+    return cell;
+}
+
+/// One screen's 32x24 decoded attribute cells, read straight off the RAM
+/// page (not the Z80 bank mapping) at offset 0x1800.
+StateNode ScreenAttributesNode(Memory* memory, int screenIndex, uint16_t page)
+{
+    StateNode n = StateNode::Object();
+    n["screen"] = screenIndex;
+    n["ram_page"] = int(page);
+
+    const uint8_t* base = memory ? memory->RAMPageAddress(page) : nullptr;
+    StateNode cells = StateNode::Array();
+    for (int row = 0; row < 24; row++)
+    {
+        for (int col = 0; col < 32; col++)
+        {
+            const uint8_t attr = base ? base[0x1800 + row * 32 + col] : 0;
+            cells.push(AttributeCellNode(attr));
+        }
+    }
+    n["cells"] = cells;
+    return n;
+}
+}  // namespace
+
+StateNode ScreenAttributes(EmulatorContext* context, int screen)
+{
+    if (!context || !context->pScreen)
+        return Unavailable("Screen not available");
+
+    const ScreenState s = context->pScreen->DescribeScreenState();
+    Memory* memory = context->pMemory;
+
+    if (screen == 1 && !s.shadowScreenCapable)
+        return Unavailable("Shadow screen not available on this model");
+
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["model"] = Config::GetModelFullName(s.model);
+    ret["cols"] = 32;
+    ret["rows"] = 24;
+
+    StateNode screens = StateNode::Array();
+    if (screen == 0)
+        screens.push(ScreenAttributesNode(memory, 0, 5));
+    else if (screen == 1)
+        screens.push(ScreenAttributesNode(memory, 1, 7));
+    else if (s.shadowScreenCapable)
+    {
+        screens.push(ScreenAttributesNode(memory, 0, 5));
+        screens.push(ScreenAttributesNode(memory, 1, 7));
+    }
+    else
+        screens.push(ScreenAttributesNode(memory, 0, 5));
+    ret["screens"] = screens;
+
+    return ret;
+}
+
+namespace
+{
 StateNode CountersNode(const ContentionCounters& c)
 {
     static const char* const kinds[CONTENTION_KINDS] = { "fetch", "read", "write", "io", "idle" };

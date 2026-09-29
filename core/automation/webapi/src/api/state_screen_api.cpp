@@ -184,6 +184,53 @@ void EmulatorAPI::getStateScreenFlash(const HttpRequestPtr& req, std::function<v
     callback(resp);
 }
 
+/// @brief GET /api/v1/emulator/{id}/state/screen/attributes
+/// @brief Per-cell ink/paper/bright/flash decoded from screen attribute memory
+void EmulatorAPI::getStateScreenAttributes(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                           const std::string& id) const
+{
+    auto manager = EmulatorManager::GetInstance();
+    auto emulator = manager->GetEmulator(id);
+
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator with specified ID not found";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    EmulatorContext* context = emulator->GetContext();
+    if (!context)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Unable to access emulator context";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    int screen = -1;
+    const std::string screenText = req->getParameter("screen");
+    if (!screenText.empty())
+        screen = std::atoi(screenText.c_str());
+
+    Json::Value ret = StateNodeToJson(DeviceState::ScreenAttributes(context, screen));
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
 /// @brief GET /api/v1/emulator/{id}/video/beam
 /// @brief Current raster beam position — t-state, line, dot, zone — plus
 ///        frame timing derived from the machine model. Zone boundaries follow
