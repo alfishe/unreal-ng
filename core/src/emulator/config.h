@@ -68,6 +68,19 @@ private:
 		{ "ZX Spectrum Next", "NEXT",            MM_NEXT, 2048, RAM_2048 },
 	};
 
+	/// Other names accepted for a model wherever a short name is (config HIMEM,
+	/// WebAPI / MCP / CLI model names): the model table keeps one canonical
+	/// short name each
+	struct ModelAlias
+	{
+		const char* Name;
+		MEM_MODEL Model;
+	};
+	static constexpr ModelAlias model_aliases[] =
+	{
+		{ "TSCONF", MM_TSL },  // TSConf technical-design D3: the scope named it TSCONF, the key stays TSL
+	};
+
 protected:
 	EmulatorContext* _context;
     std::string _configFilePath;

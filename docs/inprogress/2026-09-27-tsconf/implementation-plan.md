@@ -70,7 +70,7 @@ What changed from the v1.0 plan:
   `IMachineStepHook::OnMachineFrameRollover`. It has `OnReti()` (Sprinter).
 - INF-4: `IMachineM1Hook::BeforeMachineM1/OnMachineM1(address)` - the opcode
   comes from a debug read, not a hook argument.
-The rest of phase 0 (INF-6 to INF-10) stays here.
+INF-6 to INF-10 done 2026-09-29 (branch `tsconf-isolation`): phase 0 is complete; phase 1 starts with the decoder.
 
 | ID | Test first (file) | Asserts | Drives |
 |:--|:--|:--|:--|
@@ -81,9 +81,9 @@ The rest of phase 0 (INF-6 to INF-10) stays here.
 | INF-5 ✅ | `cpu/z80_test.cpp` (`MachineStepHook_Test`) | a registered `IMachineStepHook` runs after every CPU step with the reached `t`, **also when `_renderThisFrame` is false** (turbo decimation), and gets `OnMachineFrameRollover(frame)` once per frame | §3.8, `Z80::OnCPUStep`, `Core::AdjustFrameCounters` |
 | INF-6 ✅ | `tsconfisolation_test.cpp` | scan of `core/src` finds no forbidden token outside the allowlist (§3.3) — green since INF-7 (2026-09-29), file `core/tests/emulator/machines/tsconf/tsconfisolation_test.cpp` | enforcement |
 | INF-7 ✅ | existing suites + `tsconfisolation_test` green | move `ts`/`cram`/`sfile`/`tsline`/budget/`clut`/`r_ts` out of shared structs; delete the `z80.cpp:1197-1210` block and the undefined `ts_*_int` declarations; remove `state.ts` reads from `DrawZX`/`DrawBorder`/`DrawScreenBorder`; ROM loader dispatch; all existing video goldens unchanged | §3.3 — done; deviations: `clut` stays shared (the ATM drawers and tests read it), the ROM loader dispatch moves to phase 1 ROM-1 |
-| INF-8 | `config_test` (model lookup) | `"TSCONF"` and `"tsl"` resolve to `MM_TSL`; unknown names still fail | D3 alias |
-| INF-9 | `config_test` (timing) | `MM_TSL`: 224 T/line, 320 lines, 71680 T/frame, `frame_duration_us == 20480` | §3.17 |
-| INF-10 | TTD contract test | `PeripheralId::TsConfPaging == 16`, `TtdClockUnits() == 4`, `ttd.ksy` enum matches | §3.13 step 1 (appends to the unique PeripheralId table) |
+| INF-8 ✅ | `config_test` (model lookup) | `"TSCONF"` and `"tsl"` resolve to `MM_TSL`; unknown names still fail | D3 alias — done 2026-09-29: `Config::model_aliases` (`FindModelByShortName`, also config `HIMEM`); tests `ConfigModelLookup_Test`, `Config_Test.TsconfConfigHimemSelectsTsl` |
+| INF-9 ✅ | `config_test` (timing) | `MM_TSL`: 224 T/line, 320 lines, 71680 T/frame, `frame_duration_us == 20480` | §3.17 — done 2026-09-29: `MM_TSL` in the canonical-geometry switch; test `Config_Test.TsconfCanonicalTiming` |
+| INF-10 ✅ | TTD contract test | `PeripheralId::TsConfPaging == 16`, `TtdClockUnits() == 4`, `ttd.ksy` enum matches | §3.13 step 1 (appends to the unique PeripheralId table) — done 2026-09-29 for the table: `PeripheralId::TsConfPaging = 16`, `ttd.ksy`, test `TTDPeripheralIdTable_Test` (checks every id's number and its ttd.ksy entry); `TtdClockUnits() == 4` moves to phase 1 with the decoder |
 
 Exit: all INF tests green; the full suite and the benchmark gate unchanged;
 `TSL` still not creatable.

@@ -792,7 +792,7 @@ opt-in in the ts-conf ini (currently `NONE`, line 361), ROM line present
 
 ## 3.13 TTD
 
-1. **`PeripheralId::TsConfPaging = 16`** (10 MoonSound, 11 GS-LW, 12 NeoGS
+1. **`PeripheralId::TsConfPaging = 16`** (defined 2026-09-29, INF-10) (10 MoonSound, 11 GS-LW, 12 NeoGS
    reserved, 13 `Plus3Paging`, 14 `Upd765`, 15 `EvoSdCard` — `ttdserializable.h`;
    re-check the next free id when phase 1 starts); update `ttd.ksy` and
    `ttdmodelstatecontract_test.cpp` in the same change (PLAN #40 V0 rule). The

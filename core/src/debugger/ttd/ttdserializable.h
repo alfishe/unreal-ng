@@ -59,7 +59,7 @@ enum class PeripheralId : uint8_t
     Plus3Paging = 13,     // +2A/+3 #1FFD latch (ROM high bit, all-RAM modes, motor)
     Upd765 = 14,          // +3 uPD765A floppy controller (drives ride the BetaDisk blob)
     EvoSdCard = 15,       // ZX-Evo Z-Controller + SD card protocol state (not the card's sectors: storage-manager TTD rule)
-    // 16: reserved for TSConf (PLAN #41: TsConfPaging)
+    TsConfPaging = 16,    // TSConf (PLAN #41): its whole machine state - registers, paging, CRAM, SFILE, INT, DMA, TSU (technical-design §3.13)
     AtaChannel = 17,      // IDE board: channel, both units (task file, transfer, ATAPI sense), adapter latches; not the media
     Ds12887 = 18,         // MC146818 / DS12887 clock: cells, address latch, time base (ATM3, Profi, Scorpion SMUC; Sprinter, TSConf)
     // Future: SAA1099, GS512, etc.
