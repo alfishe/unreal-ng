@@ -13,48 +13,18 @@ import json
 import os
 import sys
 import time
-from functools import partial
 
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from common.clip import Clip, ClipV2  # noqa: E402
 from common.zxscreen import ZX_RGB  # noqa: E402
-from python.dlss_v1 import CLASS_COLORS, CLASS_NAMES, DeflickerV1  # noqa: E402
-from python.dlss_v2 import DeflickerV2  # noqa: E402
-from python.dlss_v3 import DeflickerV3  # noqa: E402
-from python.dlss_v4 import DeflickerV4  # noqa: E402
-from python.dlss_v5 import DeflickerV5  # noqa: E402
-from python.dlss_v6 import DeflickerV6  # noqa: E402
-from python.dlss_v7 import DeflickerV7  # noqa: E402
-from python.dlss_v8 import DeflickerV8  # noqa: E402
-from python.dlss_v9 import DeflickerV9  # noqa: E402
-from python.dlss_v10 import DeflickerV10  # noqa: E402
-from python.dlss_v11 import DeflickerV11  # noqa: E402
-from python.mod.pipeline import DeflickerMoD  # noqa: E402
+from python.dlss_v1 import CLASS_COLORS, CLASS_NAMES  # noqa: E402
 from python.mixers import MIXERS  # noqa: E402
 from python.quality import Oracle, QualityAccumulator  # noqa: E402
+from python.run_algorithms import ALGORITHMS, NEEDS_PLANE_B  # noqa: E402
 from python.video import SideBySide  # noqa: E402
 
-ALGORITHMS = {"v1": DeflickerV1, "v2": DeflickerV2, "v3": DeflickerV3, "v4": DeflickerV4,
-              "v5": DeflickerV5, "v5m": partial(DeflickerV5, tile_motion=True), "v6": DeflickerV6,
-              "v6c": partial(DeflickerV6, confirm=8), "v6c12": partial(DeflickerV6, confirm=12),
-              "v6b": partial(DeflickerV6, confirm=8, bias=0.8),
-              "v6p2": partial(DeflickerV6, max_period=2, key="pixel"), "v6p2c8": partial(DeflickerV6, max_period=2, confirm=8, key="pixel"),
-              "v6p2c6": partial(DeflickerV6, max_period=2, confirm=6, key="pixel"),
-              "v6cell": partial(DeflickerV6, max_period=2, confirm=4), "v6cellc6": partial(DeflickerV6, max_period=2, confirm=6),
-              "v6mem": partial(DeflickerV6, max_period=2, confirm=6, remember=True),
-              "v6la": partial(DeflickerV6, max_period=2, confirm=6, remember=True, lookahead=True),
-              "v6lanomem": partial(DeflickerV6, max_period=2, confirm=6, lookahead=True),
-              "v6las": partial(DeflickerV6, max_period=2, confirm=6, remember=True, lookahead=True, spatial=4),
-              "v7": DeflickerV7, "v8": DeflickerV8,
-              "v8e8": partial(DeflickerV8, establish=8), "v8e10": partial(DeflickerV8, establish=10),
-              "v8e12": partial(DeflickerV8, establish=12),
-              "v9l2": partial(DeflickerV9, lookahead=2), "v9l4": partial(DeflickerV9, lookahead=4),
-              "v9l6": partial(DeflickerV9, lookahead=6), "v9l10": partial(DeflickerV9, lookahead=10),
-              "v10": DeflickerV10, "v11": DeflickerV11,
-              "mod": DeflickerMoD, "mod-palette": partial(DeflickerMoD, field_palette=True)}
-NEEDS_PLANE_B = {"v5", "v5m"} | {k for k in ALGORITHMS if k.startswith(("v6", "v7", "v8", "v9", "v10", "v11", "mod"))}
 # class map colors: v1 classes, then motion (8, red; v7: motion veto) and split (9, white)
 COLORS = np.vstack([CLASS_COLORS, [[255, 0, 0], [240, 240, 240]]]).astype(np.uint8)
 NAMES = CLASS_NAMES + ["motion", "split"]
@@ -69,6 +39,7 @@ ap.add_argument("--alg", default="v2", choices=sorted(ALGORITHMS))
 ap.add_argument("--mixer", default="linear-mean", choices=sorted(MIXERS))
 ap.add_argument("--out", default="out/v1")
 ap.add_argument("--video", default="mp4", choices=["mp4", "gif", "none"])
+ap.add_argument("--oracle2", action="store_true", help="also score with oracle2 (multi-reference) and oracle3 (pixel XOR + averaging)")
 args = ap.parse_args()
 
 clip = ClipV2(args.clip) if args.clip_v2 else Clip(args.clip)
@@ -81,6 +52,12 @@ os.makedirs(args.out, exist_ok=True)
 video = None if args.video == "none" else SideBySide(os.path.join(args.out, f"{args.name}.{args.video}"), clip.h, clip.w, panels=4)
 oracle = Oracle(clip, palette)
 quality = QualityAccumulator()
+quality2 = None
+if args.oracle2:
+    from python.oracle2 import Oracle2Accumulator
+    from python.oracle3 import Oracle3Accumulator
+    quality2 = Oracle2Accumulator(clip, MIXERS["linear-mean"](palette), strict=oracle)
+    quality3 = Oracle3Accumulator(clip, MIXERS["linear-mean"](palette))
 
 counts = np.zeros(len(NAMES))
 prev_out, prev_raw, prev_cls = None, None, None
@@ -104,7 +81,16 @@ for i in range(i0, i1 + 1):
     plane = clip.plane(i)
     out, cls = feed(i + delay)
     raw = palette[plane]
-    err = quality.add(raw, out, prev_out, oracle.at(i))
+    o1 = oracle.at(i)
+    err = quality.add(raw, out, prev_out, o1)
+    if quality2 is not None:
+        quality3.add(i, out)
+        warrant = None
+        if quality3.last is not None:
+            warrant = quality3.last[1] > 0
+            if o1 is not None:
+                warrant = warrant | o1[0] | o1[1]      # flicker and moving flicker
+        quality2.add(i, out, warrant)
     counts += np.bincount(cls.ravel(), minlength=len(NAMES))[:len(NAMES)]
     differs_from_raw += np.any(out != raw, axis=2).mean()
     if prev_out is not None:
@@ -132,6 +118,8 @@ metrics = {
     "pixels_differing_from_raw": round(differs_from_raw / frames, 4),
     "ms_per_frame": round(1000 * elapsed / frames, 1),
     "quality": quality.report(),
+    "quality2": quality2.report() if quality2 is not None else None,
+    "quality3": quality3.report() if quality2 is not None else None,
 }
 json.dump(metrics, open(os.path.join(args.out, f"{args.name}.json"), "w"), indent=1)
 print(json.dumps(metrics, indent=1))

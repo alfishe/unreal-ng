@@ -11,7 +11,7 @@ from python.mod.registry import Proposal, Veto
 
 
 def consensus(items, free, prior=1.0, threshold=0.5):
-    """-> (claimed mask, weights {frame index: H x W}, winner index per pixel, detector names)."""
+    """-> (claimed mask, weights {source: H x W}, winner index per pixel, detector names, sources)."""
     shape = free.shape
     vetoed = np.zeros(shape, bool)
     for it in items:
@@ -30,7 +30,7 @@ def consensus(items, free, prior=1.0, threshold=0.5):
         best_score[better] = score[better]
         winner[better] = k
     claimed = winner >= 0
-    weights = {}
+    weights, sources = {}, {}
     for k, pr in enumerate(proposals):
         mk = winner == k
         if not mk.any():
@@ -38,4 +38,5 @@ def consensus(items, free, prior=1.0, threshold=0.5):
         for i, w in pr.weights.items():
             weights.setdefault(i, np.zeros(shape))
             weights[i][mk] = w[mk]
-    return claimed, weights, winner, [p.detector for p in proposals]
+        sources.update(pr.sources)
+    return claimed, weights, winner, [p.detector for p in proposals], sources

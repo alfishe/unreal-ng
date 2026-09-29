@@ -23,7 +23,9 @@ class Proposal:
     detector: str
     mask: np.ndarray                    # H x W bool: pixels this detector speaks for
     confidence: np.ndarray              # H x W float in [0, 1]
-    weights: dict                       # frame index -> H x W weight (sums to 1 on mask)
+    weights: dict                       # source -> H x W weight (sums to 1 on mask); a source is a
+                                        # frame index (raw frame) or a name in `sources`
+    sources: dict = field(default_factory=dict)   # name -> H x W palette plane (a raw frame moved)
     rank: np.ndarray = None             # tie-break, lower wins (e.g. the period)
     info: dict = field(default_factory=dict)
 
