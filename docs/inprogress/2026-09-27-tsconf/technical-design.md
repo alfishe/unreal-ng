@@ -407,34 +407,49 @@ folder case, the decoder factory + `IsModelSupported`, the Core factory case for
 
 ## 3.4 New infrastructure: machine interrupt source
 
-Today `Z80::ProcessInterrupts` (`z80.cpp:968-1085`) raises INT from a static
-`[_intStart, _intEnd)` window and calls `HandleINT()` with vector 0xFF; the
-only model-specific hook is `IntClearedByAcknowledge()` (a model check inside
-Z80, `z80.cpp:1093-1096`). `HandleINT(uint8_t vector)` already accepts the IM2
-byte (`z80.h:515`).
+> **Built (PLAN #60(a), branch `tsconf-infra`, 2026-09-29)** — shared code,
+> declared in `core/src/emulator/cpu/z80.h` next to `IMachineM1Hook`. What
+> changed in shared code and why:
+>
+> | Where | Change | Cost for other machines |
+> |:--|:--|:--|
+> | `Z80::interruptSource` | nullable pointer, set by a model's port decoder | — |
+> | `Z80::ProcessInterrupts` | with a source: `int_pending = IsIntAsserted(t)`; accept → `HandleINT(AcknowledgeInterrupt(t))`; the ULA window, `RaiseLocalInt` and `IntClearedByAcknowledge` are skipped | one pointer test per instruction |
+> | `ope_4D` (RETI and its mirrors ED 5D/6D/7D) | `OnReti()` when a source is set | one pointer test per RETI |
+>
+> Tests: `InterruptSource_Test` in `core/tests/emulator/cpu/int_test.cpp`
+> (the pin, the IM2 vector, IFF1 / EI shadow / prefix still apply, RETI vs
+> RETN); every existing INT test is the unchanged no-source path.
 
-New interface (`emulator/cpu/interruptsource.h`), implemented by the TSConf
-engine and registered in `EmulatorContext` by the decoder on init:
+Before this, `Z80::ProcessInterrupts` raised INT only from the static
+`[_intStart, _intEnd)` window and called `HandleINT()` with vector 0xFF; the
+only model-specific hook was `IntClearedByAcknowledge()` (a model check inside
+Z80). `HandleINT(uint8_t vector)` already accepted the IM2 byte.
+
+The interface as built:
 
 ```cpp
 class IInterruptSource
 {
 public:
     virtual ~IInterruptSource() = default;
-    // Is /INT asserted at frame tact t (after catching up events up to t)?
+    // Is /INT asserted at this instruction boundary (frame T-state t)?
+    // Called once per step before the instruction; no CPU-visible side effects.
     virtual bool IsIntAsserted(uint32_t t) = 0;
-    // INTACK: returns the data-bus byte and clears only the served source.
+    // INTACK: returns the data-bus byte (IM2 vector low byte), clears only
+    // the served source.
     virtual uint8_t AcknowledgeInterrupt(uint32_t t) = 0;
-    // Frame rollover (reset frame-relative event cursors).
-    virtual void OnFrameStart() = 0;
+    // RETI seen on the bus (Z84C15 daisy chain, Sprinter accelerator re-arm).
+    virtual void OnReti() {}
 };
 ```
 
-`ProcessInterrupts`: when a source is registered, `int_pending =
-source->IsIntAsserted(t)` replaces the window test (the EI-shadow and `iff1`
-rules are unchanged) and the ack path calls `HandleINT(source->AcknowledgeInterrupt(t))`.
-Without a source, behavior is bit-identical to today (regression: all existing
-INT tests). ATM3's `IntClearedByAcknowledge` can migrate later; not in scope.
+Frame rollover is not part of this interface: an engine that keeps
+frame-relative positions gets it from `IMachineStepHook::OnMachineFrameRollover`
+(§3.8) — TSConf's `TsConfInterrupts` lives in the engine that implements both.
+The EI-shadow, `iff1` and pending-prefix rules stay the CPU's; NMI keeps its
+priority. ATM3's `IntClearedByAcknowledge` can migrate to a source later; not
+in scope.
 
 TSConf semantics (hardware-spec §5): frame event at `VS_INT*224 + HS_INT`
 (disabled when out of range), pulse length `32 << hw_turbo_shift` T-cycles of
@@ -456,13 +471,39 @@ store through `_bank_write[bank]`. TSConf needs:
    [U] `set_banks` MM_TSL: window-0 formula, `W0_WE` → trash page
    `MAX_MISC_PAGES` for read-only ROM, vdos → RAM 0xFF) and the virtual read
    pair (cache model).
-2. **Write intercept** — a per-bank flag byte `_bank_write_intercept[4]` checked
-   in `MemoryWriteFast/Debug` *after* the normal store (hardware: FM writes also
-   land in RAM); when set, a virtual `OnInterceptedWrite(addr, value)` is called.
-   Cost for every other machine: one predictable branch on a byte that is
-   always 0 — benchmark gate in phase 0 (`core-benchmarks` memory write, ≤ 1 %).
-   `TsConfMemory` sets the flag on the bank containing the FM window (bank =
-   `FMAPS[3:2]`) and filters `A[15:12]` in the callback.
+2. **Write intercept = a write-only host bus overlay** (PLAN #60(a), built
+   2026-09-29 on branch `tsconf-infra`; replaces the per-bank
+   `_bank_write_intercept[4]` flag of v1.0). The FM window is a
+   `HostBusOverlay` (`core/src/emulator/memory/hostbusoverlay.h`, from NeoGS
+   ZX-DMA) owned by the TSConf engine: `observesReads = false` (FM is
+   write-only, hardware-spec §2.4), window `[FM_ADDR << 12, + 0x500)` (the part
+   of the 4 KB window with an FM effect), installed with
+   `Core::AddBusOverlay` while `FMAPS.MEN = 1` and removed when it clears; an
+   `FMAPS` write that moves the window only updates `windowStart/windowEnd`.
+   The overlay runs **after** the normal store, as the hardware does (FM writes
+   also land in RAM/ROM). Why this instead of the flag:
+   - **Zero cost for every other machine** — not even a branch: the Z80 uses
+     the overlay memory interfaces only while an overlay is installed.
+   - **TSConf pays only while FM is on** — software opens the window, loads
+     the palette / sprite table, closes it.
+   - **No new write path** — debug mode, contention, breakpoints, TTD dirty
+     tracking and the write journal all run as for any write.
+
+   Shared-code changes this needed (all in `core/src/emulator/`):
+
+   | Where | Change | Why |
+   |:--|:--|:--|
+   | `memory/hostbusoverlay.{h,cpp}` | `observesReads` flag; `HostBusOverlayChain` | write-only intercepts skip `onRead`; several overlays at once |
+   | `cpu/core.{h,cpp}` | `SetBusOverlay` → `AddBusOverlay` / `RemoveBusOverlay` / `ClearBusOverlays` (up to 4, install order) | a TSConf with a NeoGS card has two overlays (FM window + ZX-DMA); one overlay is still called directly, two or more through the chain |
+   | `memory/memory.cpp` `MemoryReadOverlay` | returns the normal byte when `!observesReads` | — |
+   | `sound/chips/neogs/soundchip_neogs.cpp` | installs through `AddBusOverlay` / `RemoveBusOverlay` | the API change |
+
+   Tests: `core/tests/emulator/cpu/core_test.cpp` (`TwoOverlaysAreChainedInInstallOrder`,
+   `WriteOnlyOverlaySeesWritesNeverReads`, `OverlayCountIsBounded`, and the
+   existing selection / contention / thread tests on the new API). The same
+   mechanism serves the Sprinter (video shadow, graphics pages; its bank
+   `_bank_write` points to the trash page where the plain store must not land)
+   and ZX-Evo flash writes (PLAN #55 E8).
 3. **Cache** (functional, phase 1): 256 entries `{tag13, valid, word}`;
    filled on every CPU RAM read; hit returns the cached byte when
    `CACHE_CONFIG[bank]`; invalidated by a CPU write that hits; not touched by
@@ -546,10 +587,24 @@ Also: `GetTTDModelStateIds()` / `CreateTTDSerializers()` (§3.13),
 the five per-line budget counters, line-latched shadows, and the three
 sub-engines in their own files — `TsConfTsu` (`tsconftsu.{h,cpp}`: state
 machine + two line buffers + prefetch ring), `TsConfDma` (`tsconfdma.{h,cpp}`)
-and `TsConfInterrupts` (`tsconfinterrupts.{h,cpp}`, the `IInterruptSource`). It is driven from
-`MainLoop::OnCPUStep` (`mainloop.cpp:540-562`, **outside** the
-`_renderThisFrame` gate) through a generic `IMachineStepHook` registered by
-the decoder:
+and `TsConfInterrupts` (`tsconfinterrupts.{h,cpp}`, the `IInterruptSource`). It is driven
+after every CPU step, **outside** the `_renderThisFrame` gate, through the
+generic `IMachineStepHook` registered by the decoder (`Z80::machineStepHook`).
+
+> **Built (INF-5, branch `tsconf-infra`, 2026-09-29)** — shared code, declared
+> in `core/src/emulator/cpu/z80.h`:
+>
+> | Where | Change | Cost for other machines |
+> |:--|:--|:--|
+> | `Z80::machineStepHook` | nullable pointer, set by a model's port decoder | — |
+> | `Z80::OnCPUStep` | `OnMachineStep(t)` before `MainLoop::OnCPUStep` (screen, Beta, tape, sound then see this step's state); runs after every instruction and INT/NMI acknowledge, on rendered and turbo-skipped frames alike | one pointer test per instruction |
+> | `Core::AdjustFrameCounters` | `OnMachineFrameRollover(scaledFrame)` right after `Z80::t` is rebased - the one place the frame counter rolls over, in every run path | one pointer test per frame |
+>
+> `OnMachineStep` may be called twice with the same `t` (`Core::UpdateScreen`
+> replays `OnCPUStep`), so catching up to a reached T-state must be a no-op.
+> Tests: `MachineStepHook_Test` in `core/tests/emulator/cpu/z80_test.cpp`
+> (every step with the reached `t`; every frame of a turbo run with render
+> decimation; the rollover length).
 
 ```
 per CPU step (after the instruction, t = current frame tact):
@@ -747,7 +802,7 @@ opt-in in the ts-conf ini (currently `NONE`, line 361), ROM line present
 | DRAM budget view | `show_memcycles` | per-line counters of the last frame, overlay + automation field |
 | DMA view | — | state, device code, addresses, words/blocks left |
 | Memory windows | — | `Memory16KBWidget`×4 works as is: `GetCurrentBankName` already prints generic "RAM n"/"ROM n", which is exactly TSConf's plain page numbering; add a "vdos" marker |
-| Port trace | partial | `getPortTraceDecodeRules` + `getPortMapEntries` TSConf entries (PLAN #8); `PortTag::Video/Dma/StorageSd` exist |
+| Port trace | partial | `getPortTraceDecodeRules` + `getPortMapEntries` TSConf entries (PLAN #8); `PortTag::Video/Dma/StorageSd` exist; internal codes built (PLAN #60(g)): set `PortDecodeDisposition::internalCode` per TSConf port-table entry and name them in `GetPortTraceCodeTable()` (the ZX-Evo decoder is the worked example) |
 | TUI PoC | — | `tools/poc/018-tui-debuggers/tsconf/` layout reference |
 
 Breakpoints/watchpoints need nothing new.

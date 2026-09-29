@@ -484,6 +484,7 @@ void PortDecoder::RecordPortTrace(bool isOut, uint16_t rawPort, uint8_t value, u
     event.pc = pc;
     event.value = value;
     event.decodeRuleIndex = disp.decodeRuleIndex;
+    event.internalCode = disp.internalCode;
     event.deviceId = disp.device != PortDeviceId::None ? disp.device
                                                         : PortDiagnosticRecorder::ResolveDeviceId(disp.decodedPort);
 
@@ -561,6 +562,7 @@ PortTraceSessionInfo PortDecoder::getPortTraceSessionInfo() const
     }
 
     info.decodeRules = getPortTraceDecodeRules();
+    info.codes = GetPortTraceCodeTable();
 
     return info;
 }

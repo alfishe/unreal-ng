@@ -8,6 +8,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/keyboard/keyboard.h"
 #include "emulator/io/mouse/mouse.h"
+#include "emulator/memory/hostbusoverlay.h"
 #include "emulator/memory/memory.h"
 #include "emulator/memory/rom.h"
 #include "emulator/ports/ports.h"
@@ -83,9 +84,13 @@ protected:
 
     // Memory interface selection (neogs-zxdma-design.md §5.3): Z80::MemIf is
     // only ever written by SelectMemoryInterface, under this lock, from the
-    // debug flag, the contention in effect and the installed bus overlay
+    // debug flag, the contention in effect and the installed bus overlays
     std::mutex _memIfMutex;
-    HostBusOverlay* _busOverlay = nullptr;
+    HostBusOverlay* _busOverlays[HostBusOverlayChain::kMaxOverlays] = {};
+    size_t _busOverlayCount = 0;
+    HostBusOverlay* _busOverlay = nullptr;  // what Memory calls: none, the only overlay, or _busOverlayChain
+    HostBusOverlayChain _busOverlayChain;
+    void UpdateEffectiveBusOverlay();  // under _memIfMutex
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -132,16 +137,27 @@ public:
     /// The one place that decides which memory interface the CPU runs on, from three independent inputs:
     /// Fast or Debug by the debugger (Z80::isDebugMode), plain or contended by whether the machine's video
     /// contention is in effect (UlaContention::IsContentionEnabled; with it the I/O contention rule,
-    /// Z80::ioContention), and with or without the installed host bus overlay (SetBusOverlay). The plain
+    /// Z80::ioContention), and with or without an installed host bus overlay (AddBusOverlay). The plain
     /// Fast / Debug interfaces are selected whenever there is neither contention nor an overlay. Called
     /// whenever an input changes (debug mode, video mode / model via Screen::InitRaster, an overlay) and at
     /// every frame start; cheap (a lock and a few loads and stores). Any thread
     void SelectMemoryInterface();
 
-    /// Install (or with nullptr remove) the host bus overlay. Only one at a
-    /// time: returns false, and changes nothing, if another is installed.
-    /// Call on the emulation thread or with the emulation paused.
-    bool SetBusOverlay(HostBusOverlay* overlay);
+    /// Install a host bus overlay (hostbusoverlay.h). Several devices may
+    /// install one each (a machine's bus logic and a card's); they are called
+    /// in install order. Installing one already installed is a no-op. Returns
+    /// false, and changes nothing, when HostBusOverlayChain::kMaxOverlays are
+    /// already installed. Call on the emulation thread or with the emulation
+    /// paused.
+    bool AddBusOverlay(HostBusOverlay* overlay);
+    /// Remove an installed overlay (a no-op for one not installed)
+    void RemoveBusOverlay(HostBusOverlay* overlay);
+    /// Remove every overlay (machine teardown, test fixtures)
+    void ClearBusOverlays();
+    bool IsBusOverlayInstalled(const HostBusOverlay* overlay) const;
+    size_t GetBusOverlayCount() const { return _busOverlayCount; }
+    /// What the memory interface calls: nullptr, the only overlay, or the
+    /// chain that forwards to all of them
     HostBusOverlay* GetBusOverlay() const { return _busOverlay; }
 
     /// The 'contention' feature (FeatureManager::onFeatureChanged): off runs a contended machine uncontended.

@@ -217,7 +217,7 @@ uint8_t Memory::MemoryReadOverlay(uint16_t addr, bool isExecution)
 {
     const uint8_t normal = (this->*Inner)(addr, isExecution);
     HostBusOverlay* overlay = _busOverlay;
-    if (addr < overlay->windowStart || addr >= overlay->windowEnd)
+    if (!overlay->observesReads || addr < overlay->windowStart || addr >= overlay->windowEnd)
         return normal;
     return overlay->onRead(addr, normal, isExecution, _bank_mode[0] == BANK_ROM);
 }

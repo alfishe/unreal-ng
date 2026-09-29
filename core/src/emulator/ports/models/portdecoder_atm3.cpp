@@ -159,11 +159,41 @@ PortDecoder_ATM3::PortArm PortDecoder_ATM3::ClassifyPort(uint16_t port, bool isW
     return PortArm::ZxBus;
 }
 
+/// @brief Internal port codes: the BaseConf decode arms ClassifyPort resolves
+///        every I/O cycle to (zports.v porthit list), by PortArm value
+std::vector<PortTraceCodeName> PortDecoder_ATM3::GetPortTraceCodeTable() const
+{
+    return {
+        {static_cast<uint16_t>(PortArm::ZxBus), "ZxBus"},
+        {static_cast<uint16_t>(PortArm::KeyboardBorder), "KeyboardBorder"},
+        {static_cast<uint16_t>(PortArm::BorderAnd7FFD), "BorderAnd7FFD"},
+        {static_cast<uint16_t>(PortArm::Paging7FFD), "Paging7FFD"},
+        {static_cast<uint16_t>(PortArm::Ay), "Ay"},
+        {static_cast<uint16_t>(PortArm::Eff7Gluk), "Eff7Gluk"},
+        {static_cast<uint16_t>(PortArm::Pager), "Pager"},
+        {static_cast<uint16_t>(PortArm::Atm77), "Atm77"},
+        {static_cast<uint16_t>(PortArm::SdConfig), "SdConfig"},
+        {static_cast<uint16_t>(PortArm::SdData), "SdData"},
+        {static_cast<uint16_t>(PortArm::Fdc), "Fdc"},
+        {static_cast<uint16_t>(PortArm::Joystick), "Joystick"},
+        {static_cast<uint16_t>(PortArm::Mouse), "Mouse"},
+        {static_cast<uint16_t>(PortArm::EvoConfig), "EvoConfig"},
+        {static_cast<uint16_t>(PortArm::EvoExit), "EvoExit"},
+        {static_cast<uint16_t>(PortArm::EvoReadback), "EvoReadback"},
+        {static_cast<uint16_t>(PortArm::ComPort), "ComPort"},
+        {static_cast<uint16_t>(PortArm::UlaPlus), "UlaPlus"},
+        {static_cast<uint16_t>(PortArm::NemoIde), "NemoIde"},
+        {static_cast<uint16_t>(PortArm::Covox), "Covox"},
+        {static_cast<uint16_t>(PortArm::LegacyFddLatch), "LegacyFddLatch"},
+    };
+}
+
 PortDecodeDisposition PortDecoder_ATM3::TraceDisposition(PortArm arm, uint16_t port, bool isWrite)
 {
     PortDecodeDisposition disp;
     disp.decodeRuleIndex = PortTraceRule::kNoTable;
     disp.wasHandledInline = true;
+    disp.internalCode = static_cast<uint16_t>(arm);  // the BaseConf decode arm (GetPortTraceCodeTable)
     const uint16_t low = port & 0x00FF;
 
     switch (arm)

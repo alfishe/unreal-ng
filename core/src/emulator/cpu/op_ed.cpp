@@ -250,6 +250,10 @@ Z80OPCODE ope_4B(Z80 *cpu) { // ld bc,(nnnn)
 Z80OPCODE ope_4D(Z80 *cpu) { // reti
     retxRestoreIff1(cpu);
 
+    // Z80-family peripherals decode RETI on the bus (IInterruptSource::OnReti)
+    if (cpu->interruptSource) [[unlikely]]
+        cpu->interruptSource->OnReti();
+
     uint16_t sp = cpu->sp;
 
     uint16_t addr = cpu->rd(sp++);

@@ -3,8 +3,8 @@
 **Status marker:** not started (implementation). Design complete — review
 round 1 applied 2026-09-27; ready for phase 0.
 Starts after the shared infrastructure and the move of the existing machines onto
-it (PLAN rationale 6); the interrupt source and write intercept of phase 0 are
-built by PLAN #60 ([implementation-plan.md](implementation-plan.md) phase 0).
+it (PLAN rationale 6); the interrupt source, write intercept and step hook of
+phase 0 are built (PLAN #60(a) + INF-5, [implementation-plan.md](implementation-plan.md) phase 0).
 
 ## Goal
 
@@ -60,11 +60,15 @@ Scope confirmed with the user on 2026-09-27, and how the design honors it:
   (`762d813e`): `[HDD] Scheme=NEMO-DIVIDE` in the ts-conf config and
   `IdeAdapter::DmaReadWord` / `DmaWriteWord` with their tests
 
+- [x] Prerequisite: PLAN #60(a) interrupt source (`IInterruptSource` + `OnReti`)
+  and write intercept (a write-only `HostBusOverlay`, several overlays chained),
+  plus INF-5 (`IMachineStepHook`, ungated per-step engine hook) - branch
+  `tsconf-infra` (2026-09-29); technical-design §3.4, §3.5 item 2, §3.8
+
 ## Remaining
 
 - Implementation phases 0-8 per [implementation-plan.md](implementation-plan.md).
-- Prerequisites: PLAN #60 (interrupt source + write intercept, per-family
-  `Screen` subclass, wait-state hook; the linear turbo ratio is
+- Prerequisites: PLAN #60 (per-family `Screen` subclass, wait-state hook; the linear turbo ratio is
   postponed - only the Sprinter needs it, TSConf uses `hw_turbo_shift`) before
   phase 0 per PLAN rationale 6; the unified media manager (#58, M1/M2/M4 on master)
   for the SD part of phase 6: TSConf only registers its `sd.zc` slot

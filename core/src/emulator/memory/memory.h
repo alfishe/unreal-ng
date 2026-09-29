@@ -142,7 +142,7 @@ protected:
     // the cached _feature_ttd_enabled flag is false.
     ttd::TTDDirtyTracker* _ttdDirtyTracker = nullptr;
 
-    // Host bus overlay (hostbusoverlay.h): set only through Core::SetBusOverlay,
+    // Host bus overlay (hostbusoverlay.h): set only through Core (AddBusOverlay / RemoveBusOverlay),
     // read only by the overlay memory interfaces
     HostBusOverlay* _busOverlay = nullptr;
 
