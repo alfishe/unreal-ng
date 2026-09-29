@@ -4,6 +4,8 @@ Analysis of border effect synchronization techniques used in the Edge demo for Z
 
 ## Overview
 
+Storyboard of the whole demo (parts, frame ranges, flicker and motion per part): [storyboard.md](storyboard.md).
+
 The Edge demo uses a multi-stage synchronization approach to achieve stable border effects:
 
 1. **Coarse sync**: HALT instruction waits for INT (frame boundary)
