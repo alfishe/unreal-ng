@@ -85,7 +85,7 @@ namespace rzx
         // The INT comes from the ULA frame pulse on every machine RZX was
         // recorded on; machine-owned INT logic (TSConf, Sprinter) cannot be
         // replaced by the recorded schedule
-        if (context->pCore->GetZ80()->interruptSource != nullptr)
+        if (context->HasStepWork(EmulatorContext::kStepWorkInterruptSource))
         {
             reason = "this machine's interrupt is not the ULA frame interrupt";
             return false;
@@ -414,7 +414,7 @@ namespace rzx
             _context->pDiskAutostart->Disarm();
 
         _context->rzxPlayer = _player.get();
-        _context->SetStepWork(StepWork::Rzx, true);
+        _context->SetStepWork(EmulatorContext::kStepWorkRzx, true);
         _installed = true;
     }
 
@@ -424,7 +424,7 @@ namespace rzx
         if (!_installed)
             return;
 
-        _context->SetStepWork(StepWork::Rzx, false);
+        _context->SetStepWork(EmulatorContext::kStepWorkRzx, false);
         _context->rzxPlayer = nullptr;
         if (_context->pCore && _context->pCore->GetZ80())
             _context->pCore->GetZ80()->frameIntMasked = _savedFrameIntMasked;

@@ -444,13 +444,13 @@ protected:
     void SetUp() override
     {
         IntAcceptance_Test::SetUp();
-        _z80->interruptSource = &_source;
+        _z80->SetInterruptSource(&_source);
     }
 
     void TearDown() override
     {
         if (_z80)
-            _z80->interruptSource = nullptr;
+            _z80->SetInterruptSource(nullptr);
         IntAcceptance_Test::TearDown();
     }
 
@@ -541,7 +541,7 @@ TEST_F(InterruptSource_Test, RetiAndItsMirrorsReachTheSourceRetnDoesNot)
 
 TEST_F(InterruptSource_Test, WithoutASourceRetiIsAPlainReturn)
 {
-    _z80->interruptSource = nullptr;
+    _z80->SetInterruptSource(nullptr);
     _z80->sp = 0xA000;
     _memory->DirectWriteToZ80Memory(0xA000, 0x00);
     _memory->DirectWriteToZ80Memory(0xA001, 0x90);

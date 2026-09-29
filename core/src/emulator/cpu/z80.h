@@ -18,6 +18,8 @@ class OpcodeProfiler;
 // Disable compiler alignment for packed structures
 #pragma pack(push, 1)
 
+namespace rzx { class RzxPlayer; }
+
 struct Z80Registers
 {
     union
@@ -301,7 +303,7 @@ public:
     virtual void OnMachineM1(uint16_t address) = 0;
 };
 
-/// Model-side owner of the /INT pin (see Z80::interruptSource). Shared
+/// Model-side owner of the /INT pin (see Z80::SetInterruptSource). Shared
 /// infrastructure (PLAN #60(a)) for machines whose INT is not the fixed ULA
 /// frame pulse: TSConf (frame INT at a programmable position, line, DMA and
 /// wait-port INTs, each with its own IM2 vector, deferred inside vdos) and the
@@ -329,7 +331,7 @@ public:
 };
 
 /// Model-side engine that must advance with the CPU (see
-/// Z80::machineStepHook): TSConf's TSU, DMA, line events and DRAM budget,
+/// Z80::SetMachineStepHook): TSConf's TSU, DMA, line events and DRAM budget,
 /// whose results the program can observe (RAM written by DMA, a finished
 /// DMA's INT) without touching a port. Runs after every instruction and INT
 /// acknowledge, on every frame - including frames the turbo mode does not
@@ -550,13 +552,23 @@ public:
     /// logic such as the ZX-Evo NMI exit counter and breakpoint compare act on).
     /// Null unless a model decoder needs it: one pointer test per M1
     IMachineM1Hook* machineM1Hook = nullptr;
+
+private:
+    IInterruptSource* _interruptSource = nullptr;
+    IMachineStepHook* _machineStepHook = nullptr;
+
+public:
     /// The machine's INT logic when it is not the ULA frame pulse (see
-    /// IInterruptSource). Set by the model's port decoder at init, cleared
-    /// when it goes away. Null for the classic machines
-    IInterruptSource* interruptSource = nullptr;
-    /// The machine engine advanced after every step (see IMachineStepHook).
-    /// Set by the model's port decoder at init, cleared when it goes away
-    IMachineStepHook* machineStepHook = nullptr;
+    /// IInterruptSource). Set by the model's port decoder at init, nullptr
+    /// when it goes away. Also raises / clears the per-step work bit
+    /// (EmulatorContext::kStepWorkInterruptSource), so a machine without a
+    /// source pays nothing per instruction
+    void SetInterruptSource(IInterruptSource* source);
+    IInterruptSource* GetInterruptSource() const { return _interruptSource; }
+    /// The machine engine advanced after every step (see IMachineStepHook);
+    /// the same contract as SetInterruptSource (kStepWorkMachineStep)
+    void SetMachineStepHook(IMachineStepHook* hook);
+    IMachineStepHook* GetMachineStepHook() const { return _machineStepHook; }
     /// endregion </Z80 lifecycle>
 
     // Direct memory access methods
@@ -588,6 +600,8 @@ public:
     /// then the per-step peripheral dispatch. An accepted interrupt IS the
     /// step - no opcode runs in the same iteration
     StepResult StepInstruction(bool skipBreakpoints = false);
+    /// StepInstruction with rare work around the step (the per-step gate was non-zero)
+    StepResult StepInstructionWithWork(uint32_t work, bool skipBreakpoints);
 
     /// LD R,A: the R it replaced minus the new one (7 bits, accumulated), so
     /// that an R delta across a step still counts the step's fetches (the
@@ -662,16 +676,15 @@ public:
     /// does not see the common frame INT). Local INT is not affected
     bool frameIntMasked = false;
 private:
-    /// StepInstruction after the per-step work: the interrupt acceptance or
-    /// one opcode, then the peripheral dispatch
-    StepResult StepCore(bool skipBreakpoints);
-    /// StepInstruction while an RZX recording plays: the frame end (forced
-    /// interrupt) at the recorded fetch count, and the step's fetches counted
-    StepResult StepInstructionRzx(bool skipBreakpoints);
+    /// StepInstructionWithWork while an RZX recording plays: the frame end at
+    /// the recorded fetch count; true when its interrupt was taken as this step
+    bool RzxFrameEnd(rzx::RzxPlayer& player);
 public:
     bool IntClearedByAcknowledge() const;  // machine's INT pulse ends at the acknowledge
     bool ProcessInterrupts(bool int_occured,  // Take care about incoming interrupts
                            unsigned int_start, unsigned int_end);  // Returns true if INT was handled (skip Z80Step)
+    template <bool UseSource>
+    bool ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned int_end);
 
     // Event handlers
 public:

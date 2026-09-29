@@ -251,8 +251,8 @@ Z80OPCODE ope_4D(Z80 *cpu) { // reti
     retxRestoreIff1(cpu);
 
     // Z80-family peripherals decode RETI on the bus (IInterruptSource::OnReti)
-    if (cpu->interruptSource) [[unlikely]]
-        cpu->interruptSource->OnReti();
+    if (IInterruptSource* source = cpu->GetInterruptSource()) [[unlikely]]
+        source->OnReti();
 
     uint16_t sp = cpu->sp;
 

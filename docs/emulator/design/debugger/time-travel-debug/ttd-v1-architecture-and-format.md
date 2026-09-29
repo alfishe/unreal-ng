@@ -2,13 +2,18 @@
 
 | | |
 |---|---|
-| **Status** | Reference. Describes the code as it is on master, 2026-09-29. |
+| **Status** | Reference. Describes the code on master, 2026-09-29, including the saved replay inputs, the port journals and NeoGS layout 4 (commits `0a8236fa`, `280e4ae2`). |
 | **Scope** | Time-travel debugging (TTD) v1 in `core/src/debugger/ttd/`: recording, in-memory storage, compression, restore/seek/replay, and the `.ttd` file (serialization and deserialization). |
 | **Source of truth** | The code. Where an older document disagrees, this document follows the code and lists the difference in [Appendix A](#appendix-a-discrepancies-with-older-documents). |
 | **Schema** | [`ttd.ksy`](../../../../../core/src/debugger/ttd/ttd.ksy) (Kaitai), [`ttddumpformat.h`](../../../../../core/src/debugger/ttd/ttddumpformat.h) (C++ constants) |
 | **Related** | [time-travel-debugging-tdd.md](./time-travel-debugging-tdd.md) (design intent), [ttd-container-format.md](./ttd-container-format.md) (proposed chunked container), [overhead-and-gating.md](./overhead-and-gating.md) (measured costs), [TTD v2 migration](../../../../inprogress/2026-09-25-ttd-v2-migration/README.md) |
 
-Citations have the form `file:line` and point at master as of the date above.
+Citations have the form `file:line`. They were taken on master before the
+saved replay inputs and the port journals landed (`435eb0cc`); those commits
+grew `timetravelmanager.cpp`, so its later line numbers are off by up to a few
+hundred lines - the function names given with them are the reliable
+reference. Sections added for those commits (3.10, 4.13, 5.10, 7.9-7.11, 8.5)
+cite functions, not lines.
 Unless a path is given, `tm.cpp` means
 `core/src/debugger/ttd/timetravelmanager.cpp` and `tm.h` means
 `core/src/debugger/ttd/timetravelmanager.h`. Other TTD files are named without
@@ -33,13 +38,19 @@ emulator. It works like this:
 3. Side streams record extra facts: every memory and port write (the **write
    journal**), which addresses each frame executed, read and wrote (the
    **coverage index**), user input (the **input journal**), events TTD cannot
-   replay (**external-event markers**) and named positions (**bookmarks**).
+   replay (**external-event markers**), named positions (**bookmarks**), and
+   every IN result and OUT of the CPU with its time and PC (the **port
+   journals**, section 3.10).
 4. To go to any instant, TTD restores the checkpoint at or before it and
    re-executes the machine silently up to the target (**replay**).
 5. A session can be saved to a `.ttd` file and loaded back. The file holds the
-   checkpoints, the page store, the write journal, the coverage index and the
-   bookmarks. It does **not** hold the input journal or the external-event
-   markers (section 9).
+   checkpoints, the page store, the write journal, the coverage index, the
+   bookmarks, the input journal, the external-event markers and the port
+   journals (section 7). What it still does not hold is in section 9.
+6. On the classic machines a replay feeds the CPU the recorded IN values, so it
+   needs no media file or host device, and the port journals answer "when did
+   the program ..." questions without replaying anything
+   ([ttd-port-read-journal.md](./ttd-port-read-journal.md)).
 
 ```mermaid
 flowchart LR
@@ -59,6 +70,7 @@ flowchart LR
         IJ["Input journal"]
         XE["External-event markers"]
         BM["Bookmarks"]
+        PJ["Port journals<br/>IN and OUT, time + PC"]
         FC["Frame cache<br/>one decoded frame"]
     end
     DT["Dirty tracker<br/>owned by Memory"]
@@ -77,8 +89,11 @@ flowchart LR
     WJ --> FILE
     COV --> FILE
     BM --> FILE
-    IJ -.->|"not saved"| FILE
-    XE -.->|"not saved"| FILE
+    IJ --> FILE
+    XE --> FILE
+    CPU -->|"Z80::in / Z80::out"| PJ
+    PJ -->|"replay: recorded IN values"| CPU
+    PJ --> FILE
 ```
 
 ---
@@ -132,7 +147,7 @@ flowchart TB
     subgraph ctx["EmulatorContext"]
         PTM["pTimeTravelManager"]
         PROBE["ttdProbe<br/>TTDAccessProbe, inline"]
-        FLAGS["ttdReplayActive<br/>ttdCoverageActive<br/>ttdInputWork"]
+        FLAGS["ttdReplayActive<br/>ttdCoverageActive<br/>stepWork (TTD input bit)"]
         PMEM["pMemory"]
     end
     subgraph mem["Memory"]
@@ -264,7 +279,7 @@ change (`emulator.cpp:618`).
 | Tool edit while recording | `Emulator::EditMemoryFromTool`, `emulator.cpp:645-660` | `RecordExternalEvent(DebuggerEdit)` then the edit | recording |
 | Data read | `Memory` read path, `memory.cpp:301-323` | coverage "read" key; probe check | `ttdCoverageActive` (coverage), `_feature_ttd_enabled && probe armed` (probe) |
 | Instruction fetch (M1) | `Z80` M1 path, `core/src/emulator/cpu/z80.cpp:782-803` | coverage "executed" key; probe check | `ttdCoverageActive`, probe armed |
-| Before every instruction | `Z80::StepInstruction`, `z80.cpp:596-597` | `ServiceInput()`: plays due journal events, applies queued live input | `ttdInputWork` (one relaxed atomic load) |
+| Before every instruction | `Z80::StepInstruction` → `StepInstructionWithWork` | `ServiceInput()`: plays due journal events, applies queued live input | `EmulatorContext::stepWork` bit `kStepWorkTtdInput` (one relaxed atomic load per step, shared with every other rare per-step job) |
 | Port OUT | `PortDecoder::OnPortOutComplete`, `core/src/emulator/ports/portdecoder.cpp:353-367` | `RecordIoWrite` (journal record, `isIo = 1`); probe check | manager present; journal enabled and Recording inside |
 | Frame boundary | `MainLoop::CompleteFrame`, `core/src/emulator/mainloop.cpp:420-470` | `OnFrameBoundary()`: seal coverage, capture a checkpoint | manager present; work only while Recording |
 | Tape control, disk write, NeoGS media | `tape.cpp` (9 sites), `floppydriveslot.cpp:52`, `mediamanager.cpp`, `soundchip_neogs.cpp:212` | `RecordExternalEvent(...)` | Recording (checked inside, `tm.cpp:1923`) |
@@ -303,7 +318,7 @@ Port latches that matter for paging are captured at the next checkpoint from
 
 ### 3.4 What happens on each instruction
 
-Before the instruction: `ServiceInput` if `ttdInputWork` is set
+Before the instruction: `ServiceInput` if the `kStepWorkTtdInput` bit of `stepWork` is set
 (`z80.cpp:596`). At M1: the "executed" coverage key and the execute probe
 (`z80.cpp:782-803`). The coverage `Record` is inline and uses a 16 KB
 direct-mapped "recent" filter plus a 1 MB membership bitmap per kind, so a
@@ -381,7 +396,7 @@ are not captured; the first such case is logged once per session
 
 Live input from any thread goes through `SubmitLiveInput` (`tm.cpp:1753-1777`).
 If the emulator loop runs on another thread, the event is queued and
-`ttdInputWork` is set. The machine's own thread applies it at the next
+the `kStepWorkTtdInput` bit of `stepWork` is set. The machine's own thread applies it at the next
 instruction boundary in `ServiceInput`. `ApplyLiveInput` journals the event
 **before** applying it, stamped with the current time (`tm.cpp:1801-1810`).
 So the journal time is the first instant the program can see the change.
@@ -391,6 +406,8 @@ External events: `RecordExternalEvent(kind, reason)` stores
 (`tm.cpp:1914-1956`). Emitted today for tape control (`TapeControl`), disk
 writes (`DiskWrite`), tool memory edits (`DebuggerEdit`) and NeoGS media
 actions. `HardwareReset` exists in the enum but no code emits it.
+
+Both lists are saved in the `.ttd` file (sections 7.9 and 7.10).
 
 ### 3.8 Sequence of one recorded frame
 
@@ -406,7 +423,7 @@ sequenceDiagram
     participant REG as PeripheralRegistry
     participant ML as MainLoop
     loop every instruction
-        CPU->>TM: ServiceInput if ttdInputWork
+        CPU->>TM: ServiceInput if stepWork has kStepWorkTtdInput
         CPU->>TM: RecordExecutedCoverage(page, pc)
         TM->>COV: Record(Executed, key)
         CPU->>MEM: read / write
@@ -443,6 +460,42 @@ index adds about 241 µs per frame ([overhead-and-gating.md §1a](./overhead-and
 A full-RAM capture runs at about 750 MB/s, so a 4 MB machine's key frame costs
 about 5.4 ms (same source).
 
+Port journals (section 3.10): with no session, one pointer test per `IN` and
+per `OUT`; while recording or replaying, about 10 ns per access recorded and
+15 ns replayed (`BM_TTD_PortJournal_Record` / `_Play`).
+
+### 3.10 Port journals
+
+`Z80::in` and `Z80::out` (`core/src/emulator/cpu/z80.cpp`) hand every access
+to `EmulatorContext::ttdPortReads` / `ttdPortWrites` when they are set - only
+while the journals record or play:
+
+- **Recording:** each IN result and each OUT is appended as a
+  `TTDPortRecord` (section 4.13): the frame and T-state at the start of the
+  I/O cycle, the PC of the instruction (`m1_pc`), the port and the value. The
+  block instructions (INI/INIR/IND/INDR, OUTI/OTIR/OUTD/OTDR) add one record
+  per iteration.
+- **Replay:** a restore for replay (`RestoreCheckpointForReplay`) positions
+  both journals at the checkpoint's cursors. The device still sees the read
+  (and its side effects); the CPU gets the recorded value. A read whose live
+  value differs is a *mismatch* (a missing or changed medium); an IN or OUT
+  at another time, from another instruction, to another port, or an OUT of
+  another value is a *divergence*. Both are counted in the session status.
+  At the end of the journal the accesses go to the live devices again.
+- **Lifecycle:** cleared by `StartRecording` and `InvalidateSession`; cut at
+  the resume point by `ResumeRecordingFrom`; given up (with the reason) by
+  `ResumeRecordingLive` after the machine ran unrecorded; saved and restored
+  with the live-state snapshot around throwaway replays; loaded from the file.
+- **Off**, with the reason in `TTDSessionInfo::portJournalOffReason`, on
+  configurations where the outside world reaches memory or the CPU without an
+  IN (`PortJournalUnsupportedReason`): TSConf, ZX Next, NeoGS in the GS slot
+  (ZX-DMA), and any machine that installs an `IInterruptSource` (device IM2
+  vector) or an `IMachineStepHook` (a DMA engine stepped with the CPU).
+
+The journals are also searched without replay (`SearchPortEvents`,
+`ttdportsearch.h`): "when did the program see key A", "when did it write AY
+register 7" - see [ttd-port-read-journal.md](./ttd-port-read-journal.md) §10.
+
 ---
 
 ## 4. In-memory data model
@@ -472,6 +525,7 @@ Ordering is lexicographic `(frame, tInFrame)` (`ttdcheckpoint.h:55`).
 | `chipset` | `TTDChipsetState` | 120 bytes |
 | `peripheralBlobs` | `unordered_map<uint8_t, vector<uint8_t>>` | device id → wrapped blob |
 | `ramPages` | `vector<TTDPageRef>` | one entry per page in `[0, model_ram_pages)` |
+| `portReadCursor`, `portWriteCursor` | `uint64_t` each | the port journals' sizes at the capture: a replay from this checkpoint starts there (0 without journals) |
 
 ### 4.3 `TTDCpuState` (`ttdcheckpoint.h:67`, 48 bytes, byte layout pinned by `static_assert` at `ttdcheckpoint.h:131-142`)
 
@@ -635,6 +689,20 @@ an event into a device call, for live input and playback alike.
 | `TTDFrameCacheAccess` | `timetravelframecache.h:40` | 4 B | addr, value, kind |
 | `LiveStateSnapshot` | `tm.h:1567` | — | CPU, chipset, all model RAM, device blobs, input cursor, keyboard, framebuffer: used to put the machine back after a sandbox replay |
 | `_prevPageCache` | `tm.h:1699` | `model_ram_pages × 16 KB` | RAM at the last capture, the XOR base for the next frame |
+
+### 4.13 `TTDPortRecord` (`ttdportjournal.h`, 24 bytes host)
+
+| Field | Type | Meaning |
+|---|---|---|
+| `frame` | `uint64_t` | frame counter at the access |
+| `tInFrame` | `uint32_t` | TTD time in the frame at the start of the I/O cycle |
+| `port` | `uint16_t` | full 16-bit port address |
+| `pc` | `uint16_t` | `m1_pc` of the IN / OUT instruction |
+| `value` | `uint8_t` | the value the CPU got (IN) or wrote (OUT) |
+
+`TTDPortJournal` keeps them in blocks of 32 768: sealed blocks compressed
+(section 5.10), the newest block raw. Two journals per session:
+`_portReads`, `_portWrites`.
 
 ---
 
@@ -818,10 +886,10 @@ recording is refused (`tm.cpp:1349-1366`).
 
 | Model (`mem_model`) | Model serializers (ids) | Source |
 |---|---|---|
-| Scorpion, ProfROM Scorpion | ScorpionProfROM (6) | `core/src/emulator/ports/portdecoder_scorpion256.cpp:690-704` |
-| Profi | ProfiPaging (9) | `portdecoder_profi.cpp:376-386` |
+| Scorpion, ProfROM Scorpion | ScorpionProfROM (6), Ds12887 (18, the SMUC clock) | `core/src/emulator/ports/portdecoder_scorpion256.cpp` `CreateTTDSerializers` |
+| Profi | ProfiPaging (9), Ds12887 (18) | `portdecoder_profi.cpp` `CreateTTDSerializers` |
 | ATM 7.10 | AtmPaging (8) | `portdecoder_atm710.cpp:859-868` |
-| ATM3 / ZX-Evo | AtmPaging (8), EvoSdCard (15) | `portdecoder_atm3.cpp:1136-1149` |
+| ATM3 / ZX-Evo | AtmPaging (8), EvoSdCard (15), Ds12887 (18) | `portdecoder_atm3.cpp` `CreateTTDSerializers` |
 | +2A, +3 | Plus3Paging (13); Upd765 (14) only when the uPD765 exists (+3) | `portdecoder_spectrum3.cpp:445-460` |
 | 48K, 128K, +2, Pentagon 128/512/1024 | none | — |
 
@@ -843,10 +911,12 @@ contributes to the peripheral hash. Paths are under `core/src/`.
 | 9 | Profi paging | `TTDProfiPaging`, `debugger/ttd/profi/ttdprofipaging.h:42` | 34 | none | no | yes |
 | 10 | MoonSound (OPL4) | `SoundChip_Moonsound`, `emulator/sound/chips/soundchip_moonsound.cpp:480` | 40 + OPL4 state; about 4 366 on arm64 (not `static_assert`ed) | `"MSND"` magic + layout 2, inner `"OPL4"` v5 (checked) | wave SRAM **not** captured | yes |
 | 11 | General Sound, lightweight player | `SoundChip_GSLightweight`, `emulator/sound/chips/gs/soundchip_gslw.cpp:1311` | 334 + uploaded module bytes, up to 524 622 (**varies at run time**) | ends with a `"GSMP"` guard | uploaded module | yes, without the module |
-| 12 | NeoGS | `SoundChip_NeoGS`, `emulator/sound/chips/neogs/soundchip_neogs.cpp:1387` | 21 536 + RAM + 512 KiB flash: 2 642 976 (2 MB RAM), 4 740 128 (4 MB, default) | u8 layout 3 (checked) | **whole RAM and flash in every checkpoint** | yes, without RAM and flash |
+| 12 | NeoGS | `SoundChip_NeoGS`, `emulator/sound/chips/neogs/soundchip_neogs.cpp` `TTDStateSize` | 21 536: registers and device state only | u8 layout 4 (checked) | no: RAM and flash are left out (layout 3 carried them, up to 4.7 MB a checkpoint); large memories wait for TTD v2 regions | yes |
 | 13 | +2A/+3 paging | `TTDPlus3Paging`, `debugger/ttd/plus3/ttdplus3paging.h:33` | 4 | none | no | yes |
 | 14 | +3 uPD765 | `TTDPlus3Fdc` → `UPD765`, `emulator/io/fdc/upd765.cpp:1376` | 384 (drives travel in blob 1) | none | no | yes |
 | 15 | ZX-Evo SD card interface | `TTDEvoSdCard`, `debugger/ttd/atm/ttdevosdcard.cpp:20` | 2692 (Z-Controller latch + SPI protocol state) | u8 version 1 (checked) | no: card sectors excluded by design | yes |
+| 17 | IDE board (ATA channel) | `TTDAtaChannel`, `debugger/ttd/ide/ttdatachannel.cpp` | 4 + adapter latches + 2 units (task file, transfer, ATAPI sense); registered on any machine with an `[HDD] Scheme` | none | no: the media are not captured | yes |
+| 18 | MC146818 / DS12887 clock | `TTDDs12887` → `Ds12887`, `debugger/ttd/ttdds12887.cpp` | 336 (80 + 256 cells: cells, address latch, time base) | none | no | yes |
 
 The AY chip (73 bytes), the floppy drive (27 bytes) and the uPD765 implement
 `TTDSerializable` too, but they travel inside the blobs above instead of being
@@ -858,11 +928,11 @@ classic GS and MoonSound): Beta Disk 64 B, tape 34 B, Covox 21 B, TurboSound FM
 
 Findings about the blobs:
 
-- **Blob size limit on read only.** `ReadBlob` refuses a stored blob larger than
-  1 MiB (`tm.cpp:2914`); `WriteBlob` has no limit (`tm.cpp:2889-2904`). Only
-  NeoGS can exceed it (2.6–4.7 MB raw): a card whose RAM holds more than about
-  1 MiB of poorly compressible data saves fine and then fails to load. The size
-  after compression cannot be known in advance.
+- **Blob size limit, the same both ways** (fixed in `0a8236fa`). `WriteBlob`
+  and `ReadBlob` share `kMaxPeripheralBlobBytes` (16 MiB, `ttddumpformat.h`):
+  a file that saves also loads. Before, only the reader had a limit (1 MiB),
+  and a NeoGS card with incompressible RAM saved and then failed to load; NeoGS
+  blobs no longer carry the RAM anyway.
 - **Variable size breaks restore for the lightweight GS player.** Its
   `TTDStateSize()` depends on the uploaded module. `RestoreAll` skips a blob
   whose size differs from the live device's size and counts a size mismatch
@@ -918,6 +988,26 @@ Across the corpus the ratios vary:
 (Section sizes in bytes include their headers; the journal ratio is against
 12-byte records. Coverage totals include the 8-byte section header and 20-byte
 block headers.)
+
+### 5.10 Port-journal block encoding
+
+A block of up to 32 768 records is five columns, each one field of every
+record, then zstd level 1 and a CRC32C of the raw block
+(`TTDPortJournal::RawLayout`, `MakeBlock`):
+
+| Column | Width | Content |
+|---|---|---|
+| ports | u16 | the port of each record |
+| values | u8 | the value |
+| PCs | u16 | the instruction address |
+| frame deltas | u32 | frames since the previous record (0 for the first; the block header holds its base frame) |
+| T-states | u32 | absolute for the first record and when the frame changed, else the step from the previous record |
+
+A polling loop repeats its port, PC and T-state step, so those columns shrink
+to almost nothing. Measured on real recordings
+(`testdata/ttd/port-journals/`): the ROM loading a game from tape (36 000 IN
+a second) costs about 7.7 KB of journal a second; a game played from the
+keyboard about 1.7 KB.
 
 ---
 
@@ -1121,7 +1211,9 @@ emulator paused.
    `max(T, current position)` (the restore leaves the CPU at the overshoot).
 5. Re-engage capture features and set `Recording`.
 
-The coverage index is not cut (see section 9.3).
+The coverage index is cut at the resume point too (since `0a8236fa`; a resume in
+the middle of a frame marks that frame a hole the index proves nothing
+about), and so are the port journals.
 
 ---
 
@@ -1171,7 +1263,7 @@ Written at `tm.cpp:2987-3057`. `L` is the emulator id length.
 | 9 | 2 | u16 | `model_ram_pages` | page bound (1..256) | not checked against the live model |
 | 11 | 2 | u16 | `cpu_state_size` | `sizeof(TTDCpuState)` = 48 | must equal (`tm.cpp:3378`) |
 | 13 | 2 | u16 | `chipset_state_size` | `sizeof(TTDChipsetState)` = 120 | must equal (`tm.cpp:3384`) |
-| 15 | 8 | u64 | `rom_signature` | FNV-1a 64 of the ROM region (7.10) | must match unless either side is 0 (`tm.cpp:3335-3347`) |
+| 15 | 8 | u64 | `rom_signature` | FNV-1a 64 of the ROM region (7.13) | must match unless either side is 0 (`tm.cpp:3335-3347`) |
 | 23 | 8 | u64 | `captured_at_unix_ms` | wall clock at save time | stored as provenance |
 | 31 | 1 | u8 | `emulator_id_len` | 0..255 | — |
 | 32 | L | UTF-8 | `emulator_id` | `Emulator::GetSymbolicId()`, cut to 255 bytes | ignored |
@@ -1195,10 +1287,14 @@ The five corpus files have `L = 0`, so a 65-byte header.
 | 3 | `0x0008` | `kFlagsHasBookmarks` (`:75`) | bookmarks section follows | at least one bookmark (`tm.cpp:3011-3013`) | parses; failure drops bookmarks only |
 | 4 | `0x0010` | `kFlagsWriteJournalComplete` (`:83`) | the journal holds every write of the session | bit 1 set, `_journalGapless`, no evicted records (`tm.cpp:2998-2999`) | decides whether find-last may trust the journal |
 | 5 | `0x0020` | `kFlagsTopClockTime` (`:92`) | all in-frame positions are in top-clock units | always (`tm.cpp:2995`) | required when `ttd_clock_units > 1` (`tm.cpp:3366-3371`) |
-| 6..15 | | | reserved | 0 | not checked |
+| 6 | `0x0040` | `kFlagsHasInputJournal` | input-journal section follows the bookmarks (section 7.9) | always, empty or not | parses; failure is fatal. Absent: the session loads and reports its input history incomplete |
+| 7 | `0x0080` | `kFlagsHasExternalEvents` | external-event section follows (section 7.10) | always | parses; failure is fatal |
+| 8 | `0x0100` | `kFlagsHasPortJournals` | the port journals follow (section 7.11) | the session holds all of its history's I/O (a configuration they isolate, recorded without a gap) | parses and checks every block; failure is fatal. Absent: replay reads the live devices |
+| 9..15 | | | reserved | 0 | not checked |
 
-The corpus files carry `flags = 0x0037`: bits 0, 1, 2, 4 and 5 (they have no
-bookmarks, so bit 3 is clear).
+The corpus files carry `flags = 0x0037`: bits 0, 1, 2, 4 and 5 (recorded before
+bits 6-8; no bookmarks). The port-journal fixtures
+(`testdata/ttd/port-journals/`) carry `0x01F7`.
 
 ### 7.4 Page-store section
 
@@ -1315,7 +1411,57 @@ Written at `tm.cpp:3234-3255`, field by field (no padding).
 
 Bookmarks are written in time order (their journal keeps them sorted).
 
-### 7.9 Determinism of the output
+### 7.9 Input-journal section (flag bit 6)
+
+Written by `WriteInputJournalSection` after the bookmarks, field by field.
+
+| Part | Size | Type |
+|---|---|---|
+| `count` | 4 | u32 (at most `kMaxInputEvents` = 2^24) |
+| per event: `frame` | 8 | u64 |
+| `t_in_frame` | 4 | u32 |
+| `kind` | 1 | u8, `TTDInputKind` 0..10 (Key, MouseMove, MouseButtons, MouseWheel, MouseCounters, KeyboardReset, GSCommand, GSData, GSNmi, GSResetCard, GSReset); unknown refused |
+| `key` | 1 | u8 |
+| `pressed` | 1 | u8, 0 or 1 (anything else refused) |
+| `dx`, `dy` | 2 + 2 | s16 |
+| `button_mask` | 1 | u8 |
+| `wheel_steps` | 1 | s8 |
+| `value` | 1 | u8 |
+
+21 bytes an event; events in time order (an earlier one after a later one is
+refused).
+
+### 7.10 External-event section (flag bit 7)
+
+Written by `WriteExternalEventSection` after the input journal.
+
+| Part | Size | Type |
+|---|---|---|
+| `count` | 4 | u32 (at most `kMaxExternalEvents` = 2^20) |
+| per marker: `frame` | 8 | u64 |
+| `t_in_frame` | 4 | u32 |
+| `kind` | 1 | u8, `TTDExternalEventKind`; unknown values are kept (every marker is a barrier) |
+| `reason_len` | 1 | u8, 0..63 |
+| `reason` | reason_len | bytes, no terminator |
+
+### 7.11 Port-journal section (flag bit 8)
+
+The IN journal, then the OUT journal (`TTDPortJournal::Serialize`), each:
+
+| Part | Size | Type |
+|---|---|---|
+| `record_count` | 8 | u64 |
+| `block_records` | 4 | u32, 32 768 (other values refused) |
+| `block_count` | 4 | u32, ceil(record_count / block_records) |
+| per block: `records` | 4 | u32, 1..32 768; all but the last full |
+| `base_frame` | 8 | u64, the first record's frame |
+| `crc32c` | 4 | u32, of the raw block (section 5.10) |
+| `compressed_size` | 4 | u32, at most 32 768 × 13 + 4096 |
+| payload | compressed_size | zstd frame of `records × 13` bytes |
+| `cursor_count` | 4 | u32, equals the checkpoint count |
+| per checkpoint: `cursor` | 8 | u64, non-decreasing, at most `record_count` |
+
+### 7.12 Determinism of the output
 
 The same session saved twice gives the same bytes except `captured_at_unix_ms`:
 
@@ -1331,7 +1477,7 @@ The corpus README confirms that 4 of 5 fixtures re-record byte-identical except
 the timestamp; `idle_session` differs because power-on RAM is randomized
 (`testdata/ttd/README.md`).
 
-### 7.10 Checksums and hashes
+### 7.13 Checksums and hashes
 
 | Name | Algorithm | Covers | Computed | Stored | Verified |
 |---|---|---|---|---|---|
@@ -1342,9 +1488,10 @@ the timestamp; `idle_session` differs because power-on RAM is randomized
 | zstd content size | zstd frame header | declared decompressed size | by zstd | inside each frame | coverage blocks: must equal `raw_size` at load (`ttdcoverageindex.cpp:570`); all frames: `Decompress` requires the exact size |
 | Machine state hash | FNV-1a 64 over `MachineStateSnapshot` (CPU, standard ports, registry hash, counters, RAM digest) | architectural state | divergence tests, `CaptureRestoreSelfTest` (`tm.cpp:3879-3937`) | not stored in the file | tests only |
 | Peripheral hash | XOR of each device's `TTDHashState()` rotated left by its id (`ttdperipheralregistry.cpp:52-78`) | model-specific state | inside the machine state hash | not stored | tests only |
+| Port-journal block CRC | CRC32C | the raw five-column block | when a block is sealed and when the open block is written | per block header | at load, every block (with the decompressed size and the time order of the records) |
 
 There is no checksum over the header, the checkpoint records, the device blobs,
-the write journal or the file as a whole. A flipped bit in a journal block that
+the write journal, the input journal, the markers or the file as a whole. A flipped bit in a journal block that
 still decodes is not detected (`testdata/ttd/README.md`, "Inspecting a fixture").
 
 ---
@@ -1405,14 +1552,17 @@ flowchart TD
 | 7 | `cpu_state_size == 48`, `chipset_state_size == 120` | yes | `tm.cpp:3378-3389` |
 | 8 | model serializers can be built for every declared state id | yes | `tm.cpp:3429-3436` |
 | 9 | per slot: `payload_size <= 8192`, known encoding, XorPrev `prev_slot < i`, compact index preserved | yes | `tm.cpp:3450-3512` |
-| 10 | per checkpoint: each ref `< page_store_count` or `0xFFFFFFFF`; blob count `<= 64`; each blob `<= 1 MiB` | yes | `tm.cpp:3521-3591`, `tm.cpp:2907-2930` |
+| 10 | per checkpoint: each ref `< page_store_count` or `0xFFFFFFFF`; blob count `<= 64`; each blob `<= 16 MiB` (`kMaxPeripheralBlobBytes`) | yes | `tm.cpp:3521-3591`, `tm.cpp:2907-2930` |
 | 11 | TurboSound slot: the baseline's blob (id 0 legacy or id 4 TSFM) matches the live device; a blob with no live device is refused | yes | `tm.cpp:3601-3647` |
 | 12 | General Sound slot: the baseline's GS blob (id 5, 11 or 12) matches the live card | yes | `tm.cpp:3649-3692` |
 | 13 | write journal: count fits the ring, magic, block count, per-block bounds, decode, total count | yes | `tm.cpp:3695-3708`, `ttdwritejournal.cpp:389-449` |
 | 14 | coverage: magic, version 1 or 2, kind count 3, per-block bounds, zstd declared size | no: index dropped | `tm.cpp:3715-3723`, `ttdcoverageindex.cpp:531-608` |
-| 15 | bookmarks: count `<= 4096`, label length 1..63, unique labels | no: bookmarks dropped | `tm.cpp:3731-3799` |
+| 15 | bookmarks: count `<= 4096`, label length 1..63, unique labels | no: bookmarks dropped - unless bit 6, 7 or 8 is set, then fatal (the sections behind them could not be found) | `tm.cpp:3731-3799` |
+| 16 | input journal: count cap, known kinds, `pressed` 0/1, time order | yes | `ReadInputJournalSection` |
+| 17 | external events: count cap, `reason_len <= 63`, time order | yes | `ReadExternalEventSection` |
+| 18 | port journals: block size, block count, per-block record count, compressed size cap, decompression to the exact size, CRC32C, records in time order, one cursor per checkpoint, cursors in order and within the journal | yes | `TTDPortJournal::Deserialize` |
 
-Not checked on load: reserved header bytes and flag bits 6..15; `session_state`;
+Not checked on load: reserved header bytes and flag bits 9..15; `session_state`;
 `frame_kind` values; checkpoint order; `keyframe_anchor`; `model_ram_pages`
 against the live model or `MAX_RAM_PAGES`; the slot CRCs; bookmark positions
 against the session end; trailing bytes after the last section.
@@ -1430,7 +1580,7 @@ The commit (`tm.cpp:3801-3862`) cannot fail:
 
 | Replaced by the file | Cleared | Reset |
 |---|---|---|
-| timeline, page store, `model_ram_pages`, coverage index, bookmarks, write journal (if the file has one) | input journal and playback cursor, external-event markers, dirty scratch, the frame cache; the old write journal if the file has none | prev-page cache invalid, next capture forced to a key frame, dirty tracker reset, `ttdCoverageActive = false`, provenance (`loadedFromFile`, timestamp, model id), journal gap state, session state `Idle` |
+| timeline, page store, `model_ram_pages`, coverage index, bookmarks, write journal (if the file has one), input journal, external-event markers, port journals and their checkpoint cursors (when the file has them) | input playback cursor, dirty scratch, the frame cache; the old write journal if the file has none | prev-page cache invalid, next capture forced to a key frame, dirty tracker reset, `ttdCoverageActive = false`, provenance (`loadedFromFile`, timestamp, model id), journal gap state, session state `Idle` |
 
 The source path is set separately by the caller (`SetSessionSourcePath`,
 `tm.h:494`).
@@ -1456,44 +1606,41 @@ ignored.
 - Unknown device ids are kept in the checkpoint as is. `RestoreAll` counts them
   as unclaimed; a re-save writes them back unchanged.
 
+### 8.5 Reading only the port journals
+
+`SearchPortEventsInFile` reads a file through the same parser
+(`DeserializeSessionImpl` with `journalsOnly`) and every check above except
+the ones that tie a session to this machine (ROM signature, model, the
+TurboSound and General Sound slots). Nothing is committed: the port journals
+are handed to the search and the instance keeps its own session, even a
+recording in progress. A file without bit 8 is refused with the reason.
+
 ---
 
 ## 9. What is NOT in the file today
 
-### 9.1 Input journal and external-event markers
+### 9.1 Input journal and external-event markers - saved since `0a8236fa`
 
-The input journal (keyboard, Kempston mouse, General Sound host stimuli) and the
-external-event markers are kept only in memory. `SerializeSession` has no
-section for them, and `DeserializeSession` clears both on commit
-(`tm.cpp:3807-3809`). Consequences for a loaded session:
-
-- **Replay inside a frame runs without the recorded input.** Seeking to a
-  checkpoint (tInFrame 0) is exact, because the checkpoint holds the whole
-  state. Any replay past it (a mid-frame seek, a find-last replay, reverse
-  step, reverse continue, the display composition, the frame cache) runs with
-  no input events. If the user pressed a key during that frame in the original
-  run, the replay diverges from it.
-- **Seeks cross former barriers silently.** A tape start or a disk write inside
-  a frame used to stop the seek there. After a load there are no markers, so the
-  seek replays through the event as if it could reproduce it.
-- **Running forward in `Detached` also uses no input:** `OwnsInput` still refuses
-  live input inside the recorded range (`tm.cpp:1746-1750`), and the empty
-  journal has nothing to play.
-
-Planned fix: `docs/inprogress/2026-09-28-debugger-family/ttd-offline-analysis.md`
-row **O-1** (save input events and external events, P0) and TTD v2 step **V3**
-"determinism inputs" in
-[migration-trajectory.md](../../../../inprogress/2026-09-25-ttd-v2-migration/migration-trajectory.md).
+Until `0a8236fa` both lived only in memory, and a loaded session replayed
+inside frames without the recorded input and crossed former barriers
+silently (ttd-offline-analysis O-1, `docs/inprogress/2026-09-28-debugger-family/ttd-offline-analysis.md`).
+They are now sections 7.9 and 7.10, always written. A file without them
+(bits 6 and 7 clear) still loads, and `TTDSessionInfo::inputHistoryComplete`
+is false for it. On the classic machines the port journals (section 7.11)
+make the keyboard, mouse and tape reads exact on replay even without the input
+journal: the CPU gets the recorded IN values.
 
 ### 9.2 Other known gaps (facts from the code)
 
 | Gap | Effect | Where |
 |---|---|---|
-| No host-time capture for RTC / CMOS chips | The clock chips read the host clock at the moment of the read: ATM3 / ZX-Evo CMOS (`core/src/emulator/memory/atm/cmos.cpp:78-133`), Profi CMOS (`core/src/emulator/memory/profi/proficmos.cpp:37-81`), Scorpion SMUC DS1685 (`core/src/emulator/io/rtc/smucnvram.cpp:226`). Reads are not journaled. A replay sees the host time of the replay, not of the recording. The 256-byte CMOS / NVRAM and the ZX-Evo EEPROM contents are not captured either (only the ATM `cmos_addr` latch is); the Profi CMOS address latch is not captured at all. | TTD v2 V3 plan; `docs/inprogress/2026-09-28-debugger-family/ttd-offline-analysis.md §2` |
+| ~~No host-time capture for RTC / CMOS chips~~ **Resolved on master** | ATM3 / ZX-Evo, Profi and the Scorpion SMUC now share one MC146818 / DS12887 chip (`core/src/emulator/io/rtc/ds12887.h`): while a session records it runs on emulated time from the recording's start, and its cells, latch and time base are device 18 in every checkpoint. On the classic machines its reads are in the port journals as well. | `ds12887.h`, `ttdds12887.cpp` |
 | No configuration fingerprint | Frame length, audio rate, decimator, `soundhq` / `screenhq`, card RAM sizes (GS, NeoGS, MoonSound), the GS / NeoGS / MoonSound ROMs are not in the header. Only model id, struct sizes, the main ROM signature and the TurboSound / GS slot kinds are checked. A load into a differently configured instance may replay differently; a different card RAM size shows up only as a per-device size mismatch. | header, `tm.cpp:2987-3057`; V3 plan |
-| Device RAM copied whole | GS RAM (up to 512 KB) and NeoGS RAM + flash (up to 4.7 MB) are in every checkpoint's blob; no delta between checkpoints. | section 5.8; TTD v2 V1 "memory regions" |
+| Device RAM copied whole | The classic GS card's RAM (up to 512 KB) and the lightweight player's module are in every checkpoint's blob; no delta between checkpoints. NeoGS leaves its RAM and flash out since layout 4 (so the card itself is not replayed exactly after a seek until TTD v2). | section 5.8; TTD v2 V1 "memory regions" |
 | MoonSound wave SRAM not captured | A seek does not restore sample memory the program uploaded. | `core/src/emulator/sound/chips/soundchip_moonsound.h:169-172` |
-| No media identity | Disk and tape images are not identified; a checkpoint's FDC or tape blob refers to whatever medium is inserted at load time. | V3/V5 plans |
+| No media identity | Disk and tape images are not identified; a checkpoint's FDC or tape blob refers to whatever medium is inserted at load time. On the classic machines the port journals make the CPU's view independent of the medium (the recorded IN values); the devices themselves still read the medium present. | V3/V5 plans |
+| Replay can write to media | Nothing stops a replayed disk controller from writing to its image. | TTD v2 FR-20 |
+| Port journals off on DMA machines | TSConf, ZX Next, NeoGS, and machines with an `IInterruptSource` or `IMachineStepHook`: their outside world reaches memory or the CPU without an IN, so those sessions replay against the live devices. | section 3.10; TTD v2 FR-21 |
 | `HardwareReset` marker never emitted | The enum value exists (`ttdexternalevents.h:70`); no call site. A reset stops the recording instead. | grep of `core/src` |
 | `RequestInvalidation` has no caller in `core/src` | The mechanism exists (`tm.cpp:776`), nothing uses it today. | grep of `core/src` |
 | Journal flag depends on the switch at save time | Bit 1 is set only if the write journal is enabled when saving (`tm.cpp:2994`). A session recorded with the journal, then saved after switching it off, loses the journal section. | `tm.cpp:2994-2997` |
@@ -1502,30 +1649,28 @@ row **O-1** (save input events and external events, P0) and TTD v2 step **V3**
 | No session identity (UUID) | Nothing outside the file can refer to one recording. | [ttd-container-format.md §2](./ttd-container-format.md) |
 | Frame cache and prev-page cache are not saved | By design; rebuilt on demand. | — |
 
-### 9.3 Suspected defects found while reading the code (not verified by a test)
+### 9.3 Suspected defects found while reading the code
 
-These follow from the code but no test exercises them. They are listed so they
-can be checked, not as confirmed bugs.
+Listed when this document was first written; the first three were confirmed
+by tests and fixed in `0a8236fa`.
 
-1. **`prev_slot < index` may not hold after a resume from the past.** The
-   reader requires every XorPrev slot to point at a lower compact index
-   (`tm.cpp:3489`). The writer numbers slots in in-memory index order
-   (`tm.cpp:3071`). After `TruncateTimelineAfter` frees slots, `AllocateSlot`
-   reuses them LIFO (`ttdcodecpagestore.cpp:23-28`), so a later delta slot can get
-   a lower index than the slot it XORs against. Such a file would be refused on
-   load ("invalid prev_slot"). The same applies to slots freed by
-   `CaptureRestoreSelfTest` during a recording.
-2. **The coverage index is not cut on resume and not cleared by `StartRecording`.**
-   `ResumeRecordingFrom` truncates the timeline and journals but not the coverage
-   index; `StartRecording` over an existing timeline does not clear it either
-   (only `InvalidateSession` and `SetEnableCoverageIndex(false)` do,
-   `tm.cpp:419`, `tm.cpp:3948`). `FindBlockForFrame` returns the first block that
-   contains a frame (`ttdcoverageindex.cpp:265-286`), which would be the stale one.
-   A stale "absent" answer would make a reverse search skip a frame that now
-   contains the hit.
-3. **Coverage is not collected after resuming a loaded session.** A load sets
-   `ttdCoverageActive = false` (`tm.cpp:3819`); `ResumeRecordingFrom` does not set
-   it back (only `StartRecording` and `ResumeRecordingLive` do).
+1. **Fixed: `prev_slot < index` did not hold after a resume from the past.**
+   After `TruncateTimelineAfter` freed slots, `AllocateSlot` reused them and a
+   later delta slot could get a lower index than the slot it XORs against; the
+   file was refused on load ("invalid prev_slot"). The writer now numbers the
+   slots in dependency order (each XorPrev slot after its chain). Test:
+   `TimeTravelManager_ResumeSave_Test.SessionSavedAfterAResumeFromThePastLoads`.
+2. **Fixed: the coverage index was not cut on resume and not cleared by
+   `StartRecording`.** `ResumeRecordingFrom` now drops the index from the
+   resume frame on (`TTDCoverageIndex::DropFramesFrom`; a mid-frame resume
+   makes that frame a hole) and `StartRecording` clears it. A stale
+   open-block cache found on the way was fixed too. Tests:
+   `ReverseSearchAfterAResumeFindsTheNewHistory`,
+   `MidFrameResumeKeepsTheRetainedPartOfTheFrameSearchable`, the
+   `DropFramesFrom*` coverage tests.
+3. **Fixed: coverage was not collected after resuming a loaded session.**
+   `ResumeRecordingFrom` sets `ttdCoverageActive` again. Test:
+   `ResumingALoadedSessionCollectsCoverageAgain`.
 4. **Key-frame counter after truncation.** `_lastKeyFrameIdx` is not reset by
    `TruncateTimelineAfter`. If the last key frame was in the dropped future,
    `frame - _lastKeyFrameIdx` wraps around (unsigned) and the next capture
@@ -1554,7 +1699,7 @@ re-recorded.
 
 New optional data is added as a new flag bit plus a trailing section, written
 after all existing sections (coverage after the journal, bookmarks after the
-coverage; `tm.cpp:3214-3217`). This lets an older reader that stops after the
+coverage, then the input journal, the markers and the port journals). This lets an older reader that stops after the
 sections it knows still read a complete session, **provided it stops reading**
 instead of treating the rest as an error. The C++ reader ignores unknown flag
 bits and does not check for trailing bytes. The Python reader reports trailing
@@ -1585,13 +1730,18 @@ missing configuration fingerprint, section 9.2).
 ### 10.4 The Python reader and the Kaitai schema
 
 - [`ttd.ksy`](../../../../../core/src/debugger/ttd/ttd.ksy) describes the header,
-  the page store and the checkpoints. It does **not** model the three trailing
-  sections (`ttd.ksy:140-146`); the C++ writer is authoritative for them.
+  the page store and the checkpoints. It does **not** model the trailing
+  sections; it documents their layouts in the `flags` field's text, and the C++
+  writer is authoritative for them.
 - [`ttd_format.py`](../../../../../tools/verification/ttd-analyzer/src/ttd_format.py)
   is a hand-written reader. It parses all sections, including the journal
   directory, the coverage blocks and the bookmarks, decodes device blob
   headers, and verifies slot CRCs. It caps a slot payload at 16 MiB
-  (`ttd_format.py:909`), much looser than the C++ reader's 8 KiB.
+  (`ttd_format.py:909`), much looser than the C++ reader's 8 KiB. It reads the
+  input journal, the markers and the port journals (checking every block's
+  CRC), and its `search` command answers the same "when did the program ..."
+  questions as the emulator; `tests/test_port_search.py` checks it against
+  the emulator's answers recorded with the port-journal fixtures.
 
 ---
 
@@ -1651,6 +1801,8 @@ the coverage index and the frame cache (`tm.cpp:683-727`).
 | `ttdinputapply.h/.cpp` | event → device call | `InputDevicesOf` cpp:15, `ApplyInputEvent` cpp:26 |
 | `ttdexternalevents.h/.cpp` | marker list, barrier query | `TTDExternalEventKind` h:65, `FirstMarkerInInterval` cpp:14 |
 | `ttdbookmarks.h/.cpp` | named positions | `Add` cpp:7, `DropAfter` cpp:78 |
+| `ttdportjournal.h/.cpp` | IN / OUT journals: record, replay with verification, blocks, section format | `OnRead`, `OnWrite`, `StartPlayback`, `TruncateTo`, `Serialize`, `Deserialize` |
+| `ttdportsearch.h/.cpp` | "when did the program ..." queries, named events, text options | `BuildPortEventQuery`, `ApplyPortQueryOption`, `SearchPortEvents` |
 | `ttdserializable.h` | device interface and `PeripheralId` | `PeripheralId` 44, `TTDSerializable` 66 |
 | `ttdperipheralregistry.h/.cpp` | device registration, blob wrap / unwrap, restore report, peripheral hash | `PeripheralBlobHeader` h:31, `TTDRestoreReport` h:47, `ComputePeripheralHash` cpp:52, `CaptureAll` cpp:80, `RestoreAll` cpp:102, `EncodeBlob` cpp:145, `DecodeBlob` cpp:171 |
 | `ttdprobe.h/.cpp` | search query, probe, results | `TTDSearchQuery` h:60, `TTDAccessProbe` h:144, `Matches` h:172 |
@@ -1675,6 +1827,7 @@ the coverage index and the frame cache (`tm.cpp:683-727`).
 - [gdb-reverse-debugging-tdd.md](./gdb-reverse-debugging-tdd.md) — reverse execution over GDB RSP.
 - [TTD v2 migration](../../../../inprogress/2026-09-25-ttd-v2-migration/README.md): [current-state.md](../../../../inprogress/2026-09-25-ttd-v2-migration/current-state.md) (B-items), [migration-trajectory.md](../../../../inprogress/2026-09-25-ttd-v2-migration/migration-trajectory.md) (V0..V5), [integrity-and-versioning.md](../../../../inprogress/2026-09-25-ttd-v2-migration/integrity-and-versioning.md).
 - `docs/inprogress/2026-09-28-debugger-family/ttd-offline-analysis.md` — O-1 and the offline-analysis program.
+- [ttd-port-read-journal.md](./ttd-port-read-journal.md) — the port journals and the port-events search.
 - [testdata/ttd/README.md](../../../../../testdata/ttd/README.md) — fixture corpus and re-recording.
 - Code: [`core/src/debugger/ttd/`](../../../../../core/src/debugger/ttd/), [`ttd.ksy`](../../../../../core/src/debugger/ttd/ttd.ksy), [`ttd_format.py`](../../../../../tools/verification/ttd-analyzer/src/ttd_format.py).
 - CRC32C (Castagnoli): RFC 3720 appendix B.4. FNV-1a: draft-eastlake-fnv. zstd: RFC 8878.

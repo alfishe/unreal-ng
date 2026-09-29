@@ -591,14 +591,26 @@ void Z80::BeginFrame()
         int_pending = true;
 }
 
-__forceinline Z80::StepResult Z80::StepCore(bool skipBreakpoints)
+Z80::StepResult Z80::StepInstruction(bool skipBreakpoints)
 {
+    // A CPU never put through a frame start (bare Core fixtures driving the
+    // CPU directly) has no frame geometry yet
+    if (_frameLimit == 0)
+        RecomputeFrameTiming();
+
+    // The per-step work gate (EmulatorContext::stepWork): one relaxed load and
+    // one branch per instruction for every rare job together - TTD input, a
+    // machine's own INT logic, a machine engine. With none the step below is
+    // exactly the classic machine's step
+    if (const uint32_t work = _context->stepWork.load(std::memory_order_relaxed)) [[unlikely]]
+        return StepInstructionWithWork(work, skipBreakpoints);
+
     StepResult result;
 
     // Handle interrupts if arrived. Returns true if an interrupt was accepted -
     // in that case the acceptance IS the "instruction" that consumes this step
     const bool nmiPending = _nmi_pending_count > 0;
-    if (ProcessInterrupts(_intWraps, _intStart, _intEnd))
+    if (ProcessInterruptsImpl<false>(_intWraps, _intStart, _intEnd))
     {
         if (nmiPending)
             result.nmiAccepted = true;
@@ -617,92 +629,128 @@ __forceinline Z80::StepResult Z80::StepCore(bool skipBreakpoints)
     return result;
 }
 
-/// One step while an RZX recording plays (design §5). The frame's fetch
-/// count reached at an instruction boundary ends the RZX frame: the player
-/// checks it and the interrupt that closes it is raised here (the machine's
-/// own frame INT is masked for the playback). Otherwise the normal step runs
-/// and its R increments are counted: the acknowledge of an accepted INT / NMI
-/// is not a fetch, LD R,A reports the R it replaced (rLoadAdjust).
-/// Worked example: R = #7E before `DD 21 nn nn` (LD IX,nn): R = #00 after,
-/// (#00 - #7E) & #7F = 2 fetches
-Z80::StepResult Z80::StepInstructionRzx(bool skipBreakpoints)
+/// The step with rare work around it (StepInstruction's gate is non-zero).
+/// Out of line so the plain step stays small; the order is the contract:
+/// input first, then the interrupt decision, the instruction, the machine
+/// engine, the peripherals
+Z80::StepResult Z80::StepInstructionWithWork(uint32_t work, bool skipBreakpoints)
 {
-    rzx::RzxPlayer& player = *_context->rzxPlayer;
-
-    // A redundant-prefix boundary is inside an instruction: the frame ends at
-    // the next real boundary (within the player's overrun tolerance)
-    const bool prefixPending = boundary == Z80_BOUNDARY_PREFIX_DD || boundary == Z80_BOUNDARY_PREFIX_FD;
-    if (!prefixPending && player.FrameDue())
-    {
-        // Distance from the machine's own INT position, for the drift statistic
-        int32_t drift = static_cast<int32_t>(t) - static_cast<int32_t>(_intStart + 1);
-        const int32_t frame = static_cast<int32_t>(_frameLimit);
-        if (frame > 0)
-        {
-            if (drift > frame / 2)
-                drift -= frame;
-            else if (drift <= -frame / 2)
-                drift += frame;
-        }
-
-        const rzx::FrameEnd end = player.EndFrame(pc, iff1 != 0, boundary == Z80_BOUNDARY_INT_SHADOW, drift);
-        if (end == rzx::FrameEnd::Interrupt)
-        {
-            // The NMOS LD A,I / LD A,R parity quirk only by option (SkoolKit flag 1)
-            if (!player.Options().ldAirParityQuirk && boundary == Z80_BOUNDARY_LD_A_IR)
-                boundary = Z80_BOUNDARY_NONE;
-            _context->pScreen->_vid.memcyc_lcmd = 0;  // new command (as ProcessInterrupts)
-            HandleINT(0xFF);
-            OnCPUStep();
-
-            StepResult result;
-            result.intAccepted = true;
-            if (player.EndPending()) [[unlikely]]
-                player.NotifyEnded();
-            return result;
-        }
-        if (player.EndPending()) [[unlikely]]
-        {
-            player.NotifyEnded();
-            return StepCore(skipBreakpoints);
-        }
-    }
-
-    const uint8_t r0 = r_low;
-    rLoadAdjust = 0;
-    const StepResult result = StepCore(skipBreakpoints);
-    uint8_t fetches = static_cast<uint8_t>((r_low - r0 + rLoadAdjust) & 0x7F);
-    if (result.intAccepted || result.nmiAccepted)
-        fetches = static_cast<uint8_t>(fetches - 1);
-    player.AddFetches(fetches);
-
-    if (player.EndPending()) [[unlikely]]
-        player.NotifyEnded();
-    return result;
-}
-
-Z80::StepResult Z80::StepInstruction(bool skipBreakpoints)
-{
-    // A CPU never put through a frame start (bare Core fixtures driving the
-    // CPU directly) has no frame geometry yet
-    if (_frameLimit == 0)
-        RecomputeFrameTiming();
-
-    // Per-step work, one relaxed load per instruction when there is none.
     // Input takes effect before this instruction: recorded journal events due
     // at or before now (TTD playback) and live input queued by other threads.
     // An event stamped T is first visible to the instruction starting at T -
-    // the machine state AT T (a seek target, a pause) does not include it yet.
-    // An RZX playback wraps the step (StepInstructionRzx)
-    if (const uint8_t work = _context->stepWork.load(std::memory_order_relaxed)) [[unlikely]]
+    // the machine state AT T (a seek target, a pause) does not include it yet
+    if ((work & EmulatorContext::kStepWorkTtdInput) && _context->pTimeTravelManager)
+        _context->pTimeTravelManager->ServiceInput();
+
+    StepResult result;
+
+    // RZX playback (design §5): the frame's fetch count reached at an
+    // instruction boundary ends the RZX frame, and the interrupt that closes
+    // it is this step (the machine's own frame INT is masked meanwhile).
+    // Otherwise the step's R increments are counted (see RzxCountFetches)
+    rzx::RzxPlayer* rzxPlayer = (work & EmulatorContext::kStepWorkRzx) ? _context->rzxPlayer : nullptr;
+    bool rzxForcedInt = false;
+    uint8_t rzxR0 = 0;
+    if (rzxPlayer) [[unlikely]]
     {
-        if ((work & StepWork::TtdInput) && _context->pTimeTravelManager)
-            _context->pTimeTravelManager->ServiceInput();
-        if ((work & StepWork::Rzx) && _context->rzxPlayer)
-            return StepInstructionRzx(skipBreakpoints);
+        rzxForcedInt = RzxFrameEnd(*rzxPlayer);
+        rzxR0 = r_low;
+        rLoadAdjust = 0;
     }
 
-    return StepCore(skipBreakpoints);
+    if (rzxForcedInt)
+    {
+        result.intAccepted = true;
+    }
+    else
+    {
+        const bool nmiPending = _nmi_pending_count > 0;
+        const bool accepted = ((work & EmulatorContext::kStepWorkInterruptSource) && _interruptSource)
+                                  ? ProcessInterruptsImpl<true>(_intWraps, _intStart, _intEnd)
+                                  : ProcessInterruptsImpl<false>(_intWraps, _intStart, _intEnd);
+        if (accepted)
+        {
+            if (nmiPending)
+                result.nmiAccepted = true;
+            else
+                result.intAccepted = true;
+        }
+        else
+        {
+            Z80Step(skipBreakpoints);
+        }
+    }
+
+    // The machine engine first (IMachineStepHook): the screen and the sound
+    // then see the state this step produced
+    if ((work & EmulatorContext::kStepWorkMachineStep) && _machineStepHook)
+        _machineStepHook->OnMachineStep(t);
+
+    OnCPUStep();
+
+    if (rzxPlayer) [[unlikely]]
+    {
+        // The step's fetches: the R delta (7 bits); the acknowledge of an
+        // accepted INT / NMI is not a fetch; LD R,A reports the R it replaced
+        // (rLoadAdjust). Worked example: R = #7E before `DD 21 nn nn` (LD
+        // IX,nn), #00 after: (#00 - #7E) & #7F = 2 fetches
+        if (!rzxForcedInt && rzxPlayer->IsPlaying())
+        {
+            uint8_t fetches = static_cast<uint8_t>((r_low - rzxR0 + rLoadAdjust) & 0x7F);
+            if (result.intAccepted || result.nmiAccepted)
+                fetches = static_cast<uint8_t>(fetches - 1);
+            rzxPlayer->AddFetches(fetches);
+        }
+        if (rzxPlayer->EndPending())
+            rzxPlayer->NotifyEnded();
+    }
+
+    return result;
+}
+
+/// The RZX frame end at this boundary, when the frame's fetch count is
+/// reached: the player checks the frame and moves on; true when the
+/// interrupt that ends it was taken (HandleINT) as this step. A redundant-
+/// prefix boundary is inside an instruction: the frame then ends at the next
+/// real boundary (within the player's overrun tolerance)
+bool Z80::RzxFrameEnd(rzx::RzxPlayer& player)
+{
+    const bool prefixPending = boundary == Z80_BOUNDARY_PREFIX_DD || boundary == Z80_BOUNDARY_PREFIX_FD;
+    if (prefixPending || !player.FrameDue())
+        return false;
+
+    // Distance from the machine's own INT position, for the drift statistic
+    int32_t drift = static_cast<int32_t>(t) - static_cast<int32_t>(_intStart + 1);
+    const int32_t frame = static_cast<int32_t>(_frameLimit);
+    if (frame > 0)
+    {
+        if (drift > frame / 2)
+            drift -= frame;
+        else if (drift <= -frame / 2)
+            drift += frame;
+    }
+
+    if (player.EndFrame(pc, iff1 != 0, boundary == Z80_BOUNDARY_INT_SHADOW, drift) != rzx::FrameEnd::Interrupt)
+        return false;
+
+    // The NMOS LD A,I / LD A,R parity quirk only by option (SkoolKit flag 1)
+    if (!player.Options().ldAirParityQuirk && boundary == Z80_BOUNDARY_LD_A_IR)
+        boundary = Z80_BOUNDARY_NONE;
+    _context->pScreen->_vid.memcyc_lcmd = 0;  // new command (as ProcessInterrupts)
+    HandleINT(0xFF);
+    return true;
+}
+
+void Z80::SetInterruptSource(IInterruptSource* source)
+{
+    _interruptSource = source;
+    _context->SetStepWork(EmulatorContext::kStepWorkInterruptSource, source != nullptr);
+}
+
+void Z80::SetMachineStepHook(IMachineStepHook* hook)
+{
+    _machineStepHook = hook;
+    _context->SetStepWork(EmulatorContext::kStepWorkMachineStep, hook != nullptr);
 }
 
 void Z80::ApplyHardwareTurboNow()
@@ -930,9 +978,6 @@ uint8_t Z80::in(uint16_t port)
     // outside the session - media files, host devices
     // (ttd-port-read-journal.md). The devices still see the read and its side
     // effects. Time and PC are taken at the start of the I/O cycle
-    // RZX playback: the CPU gets the recorded value (emulator/rzx/, design
-    // §4); the devices still see the read. Below the TTD journal, so a TTD
-    // recording during playback stores the RZX-fed values
     if (ttd::TTDPortJournal* journal = _context->ttdPortReads) [[unlikely]]
     {
         const EmulatorState& st = _context->emulatorState;
@@ -944,6 +989,9 @@ uint8_t Z80::in(uint16_t port)
             value = player->OnIn(port, value, pc);
         return journal->OnRead(port, value, frame, tInFrame, pc);
     }
+    // RZX playback: the CPU gets the recorded value (emulator/rzx/, design
+    // §4); the devices still see the read. Below the TTD journal, so a TTD
+    // recording during playback stores the RZX-fed values
     if (rzx::RzxPlayer* player = _context->rzxPlayer) [[unlikely]]
         return player->OnIn(port, inFromBus(port), m1_pc);
     return inFromBus(port);
@@ -1185,6 +1233,16 @@ void Z80::RequestNonMaskedInterrupt()
 /// \param int_end
 bool Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_end)
 {
+    // Direct callers (tests, tools) get the machine's INT logic when it has one
+    return _interruptSource ? ProcessInterruptsImpl<true>(int_occurred, int_start, int_end)
+                            : ProcessInterruptsImpl<false>(int_occurred, int_start, int_end);
+}
+
+/// UseSource: the machine owns INT (IInterruptSource). A template so the
+/// classic machines' step carries no test for it (StepInstruction)
+template <bool UseSource>
+bool Z80::ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned int_end)
+{
     Z80& cpu = *this;
     VideoControl& video = _context->pScreen->_vid;
     bool intHandled = false;
@@ -1277,13 +1335,13 @@ bool Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
     }
 
     // A machine that owns its INT logic decides the pin alone (IInterruptSource)
-    if (interruptSource) [[unlikely]]
+    if constexpr (UseSource)
     {
-        cpu.int_pending = interruptSource->IsIntAsserted(cpu.t);
+        cpu.int_pending = _interruptSource->IsIntAsserted(cpu.t);
         video.memcyc_lcmd = 0;
         if (cpu.int_pending && cpu.iff1 && cpu.boundary != Z80_BOUNDARY_INT_SHADOW && !prefixPending)
         {
-            HandleINT(interruptSource->AcknowledgeInterrupt(cpu.t));
+            HandleINT(_interruptSource->AcknowledgeInterrupt(cpu.t));
             return true;
         }
         return false;
@@ -1482,11 +1540,6 @@ void Z80::HandleINT(uint8_t vector)
 void Z80::OnCPUStep()
 {
     // Q register update is now handled in Z80Step() based on flag changes
-
-    // The machine engine first (IMachineStepHook): the screen and the sound
-    // below then see the state this step produced
-    if (machineStepHook) [[unlikely]]
-        machineStepHook->OnMachineStep(t);
 
     // MainLoop will dispatch the call to all peripherals
     _context->pMainLoop->OnCPUStep();

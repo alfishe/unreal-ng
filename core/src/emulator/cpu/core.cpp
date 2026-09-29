@@ -985,8 +985,8 @@ void Core::AdjustFrameCounters()
     _z80->t -= scaledFrame;
 
     // The machine engine rebases its frame-relative positions (IMachineStepHook)
-    if (_z80->machineStepHook) [[unlikely]]
-        _z80->machineStepHook->OnMachineFrameRollover(scaledFrame);
+    if (IMachineStepHook* hook = _z80->GetMachineStepHook()) [[unlikely]]
+        hook->OnMachineFrameRollover(scaledFrame);
 
     // Drop any stale INT request latched near the frame edge. The ULA INT line
     // is only asserted inside [intstart, intstart+intlen); ProcessInterrupts

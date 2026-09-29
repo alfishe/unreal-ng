@@ -519,7 +519,7 @@ TEST_F(RzxSession_Test, FinishesAndRestoresTheMachine)
     const SessionStatus status = _emulator->GetRzxStatus();
     EXPECT_EQ(status.player.state, PlayerState::Finished);
     EXPECT_EQ(status.player.frame, 2u);
-    EXPECT_EQ(_context->stepWork.load() & StepWork::Rzx, 0);
+    EXPECT_EQ(_context->stepWork.load() & EmulatorContext::kStepWorkRzx, 0);
     EXPECT_FALSE(_cpu->frameIntMasked);
 }
 

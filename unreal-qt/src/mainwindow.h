@@ -160,6 +160,9 @@ private slots:
     void handleOverscanModeToggled(bool enabled);
     void handleViewportChanged(int presetIndex);
     void handleMachineModelChangeRequested(const QString& modelShortName);
+    /// Replace the running machine by `modelName` / `ramSize` (the media follow);
+    /// no question asked. False when it did not happen (the user was told why)
+    bool switchMachineModel(const std::string& modelName, uint32_t ramSize);
     void handleZXPolyConfigurationRequested(const QString& configurationName);
 
     // Toolbar (transport) handlers

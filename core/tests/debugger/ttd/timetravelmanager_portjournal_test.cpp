@@ -824,22 +824,22 @@ TEST_F(TimeTravelManager_PortReadJournal_Test, MachinesWithTheirOwnInterruptOrDm
 {
     Z80* z80 = _rec.context->pCore->GetZ80();
     DeviceVector source;
-    z80->interruptSource = &source;
+    z80->SetInterruptSource(&source);
     ASSERT_TRUE(_rec.ttd->StartRecording());
     _rec.ttd->StopRecording();
     auto info = _rec.ttd->GetSessionInfo();
     EXPECT_FALSE(info.portJournalActive);
     EXPECT_NE(info.portJournalOffReason.find("IM2 vector"), std::string::npos) << info.portJournalOffReason;
-    z80->interruptSource = nullptr;
+    z80->SetInterruptSource(nullptr);
 
     StepEngine engine;
-    z80->machineStepHook = &engine;
+    z80->SetMachineStepHook(&engine);
     ASSERT_TRUE(_rec.ttd->StartRecording());
     _rec.ttd->StopRecording();
     info = _rec.ttd->GetSessionInfo();
     EXPECT_FALSE(info.portJournalActive);
     EXPECT_NE(info.portJournalOffReason.find("DMA"), std::string::npos) << info.portJournalOffReason;
-    z80->machineStepHook = nullptr;
+    z80->SetMachineStepHook(nullptr);
 
     ASSERT_TRUE(_rec.ttd->StartRecording());
     _rec.ttd->StopRecording();

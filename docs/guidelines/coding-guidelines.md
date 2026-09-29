@@ -21,6 +21,7 @@
 - **File System/Paths**: Use `TestPathHelper::GetTestDataPath()` for fixtures and `TestPathHelper::GetTestScratchPath()` for outputs. Ensure all test artifacts go to `scratch/`.
 
 ## Performance & Memory Management
+- **Hot paths**: a feature must cost nothing for machines that do not use it; several rare checks on one hot path become one combined gate; every hot-path change gets an A/B benchmark. Patterns, procedure and a worked example: [performance-guidelines.md](performance-guidelines.md).
 - **Large POD Buffer Allocation**: Avoid `std::vector<T>::resize(n, 0)` for multi-megabyte buffers of trivial/POD types. Under unoptimized or Debug builds (`-O0`), standard library implementations (`libc++`, `libstdc++`) execute scalar per-element copy-construct loops (costing ~50–60 ms per 24 MiB array). Prefer value-initialized array allocation (`new T[n]()` / `std::make_unique<T[]>` or specialized zero-init buffers like `ZeroInitBuffer`) which standard C++ guarantees lowers to kernel zero-fill/`calloc`/`memset` across all optimization levels.
 - **Bulk Memory Zeroing**: Use vectorized `std::memset` for large POD arrays instead of `std::fill`, which can remain a scalar loop under unoptimized compilation.
 - **Deallocation**: Avoid `std::vector<T>().swap(v)` idioms that create and discard temporary vector objects; prefer explicit ownership primitives (`std::unique_ptr<T[]>::reset()`).

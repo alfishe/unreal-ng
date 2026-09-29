@@ -2,6 +2,8 @@
 
 #include <sstream>
 
+#include "emulator/config.h"
+
 #include "3rdparty/miniz/miniz.h"
 
 namespace szx
@@ -42,6 +44,19 @@ bool MachineFor(uint8_t id, Machine& machine, std::string& error)
             error = "unknown machine id " + std::to_string(id);
             return false;
     }
+}
+
+std::string DescribeModel(MEM_MODEL model, uint32_t ramKb)
+{
+    const TMemModel* entry = Config::FindModelByEnum(model);
+    if (!entry)
+        return "model " + std::to_string(static_cast<int>(model));
+    std::string name = entry->FullName;
+    // The RAM size only where the model comes in several (AvailRAMs ORs the
+    // RAM_* values, which are sizes, not bit flags)
+    if (entry->AvailRAMs != entry->defaultRAM)
+        name += " " + std::to_string(ramKb) + "K";
+    return name;
 }
 
 std::optional<uint8_t> IdFor(MEM_MODEL model, uint32_t ramKb)

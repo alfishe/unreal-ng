@@ -8,6 +8,8 @@
 #include "common/stringhelper.h"
 #include "_helpers/testpathhelper.h"
 #include "loader_z80_fuzzing_test.h"  // Includes LoaderZ80CUT
+#include "emulator/sound/chips/soundchip_ay8910.h"
+#include "emulator/sound/soundmanager.h"
 
 namespace
 {
@@ -685,5 +687,154 @@ TEST_F(LoaderZ80_Test, savedFileIsValidZ80)
 }
 
 /// endregion </Save Tests>
+
+/// region <AY state>
+
+namespace
+{
+    /// Header bytes of a v2 / v3 .z80: 37 = flags 2 (bit 2 "AY sound in use, even on 48K machines"),
+    /// 38 = selected AY register, 39-54 = the 16 AY registers
+    constexpr size_t Z80_FLAGS2_OFFSET = 37;
+    constexpr size_t Z80_AY_SELECT_OFFSET = 38;
+    constexpr size_t Z80_AY_REGISTERS_OFFSET = 39;
+    constexpr uint8_t Z80_FLAGS2_AY_IN_USE = 0x04;
+
+    std::vector<uint8_t> ReadWholeFile(const std::string& path)
+    {
+        std::ifstream file(path, std::ios::binary);
+        return std::vector<uint8_t>((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    }
+
+    void WriteWholeFile(const std::string& path, const std::vector<uint8_t>& data)
+    {
+        std::ofstream file(path, std::ios::binary | std::ios::trunc);
+        file.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
+    }
+}
+
+/// A 128K-class snapshot carries the AY registers and the selected register; loading must put them into the
+/// chip (before the fix the loader restored only the selection and left the reset chip silent)
+TEST_F(LoaderZ80_Test, loadRestoresAYRegistersFrom128KSnapshot)
+{
+    // dizzyx.z80: v3, Pentagon, AY in use, non-zero AY registers
+    const std::string path = TestPathHelper::GetTestDataPath("loaders/z80/dizzyx.z80");
+    const std::vector<uint8_t> file = ReadWholeFile(path);
+    ASSERT_GE(file.size(), Z80_AY_REGISTERS_OFFSET + 16u);
+
+    LoaderZ80CUT loader(_context, path);
+    ASSERT_TRUE(loader.load());
+
+    SoundChip_AY8910* psg = _context->pSoundManager->getAYChip(0);
+    ASSERT_NE(psg, nullptr);
+    for (uint8_t reg = 0; reg < 16; reg++)
+    {
+        EXPECT_EQ(psg->readRegister(reg), file[Z80_AY_REGISTERS_OFFSET + reg]) << "AY register " << int(reg);
+    }
+    EXPECT_EQ(psg->getCurrentRegister(), file[Z80_AY_SELECT_OFFSET] & 0x0F) << "selected AY register";
+}
+
+/// Save then load keeps every AY register and the selection
+TEST_F(LoaderZ80_Test, saveAndLoadRoundtripKeepsAYRegisters)
+{
+    const std::string path = TestPathHelper::GetTestDataPath("loaders/z80/dizzyx.z80");
+    ScopedTestFile savePath(TestPathHelper::GetUniqueTestScratchPath("test_ay_roundtrip.z80"));
+
+    LoaderZ80CUT loader(_context, path);
+    ASSERT_TRUE(loader.load());
+
+    SoundChip_AY8910* psg = _context->pSoundManager->getAYChip(0);
+    ASSERT_NE(psg, nullptr);
+    uint8_t expected[16];
+    for (uint8_t reg = 0; reg < 16; reg++)
+    {
+        expected[reg] = static_cast<uint8_t>(0x11 * reg + 3);
+        psg->writeRegister(reg, expected[reg]);
+    }
+    _context->emulatorState.pFFFD = 0x07;
+    psg->setRegister(0x07);
+
+    LoaderZ80CUT saver(_context, savePath);
+    ASSERT_TRUE(saver.save());
+
+    _cpu->Reset();
+    LoaderZ80CUT reloader(_context, savePath);
+    ASSERT_TRUE(reloader.load());
+
+    psg = _context->pSoundManager->getAYChip(0);
+    for (uint8_t reg = 0; reg < 16; reg++)
+    {
+        EXPECT_EQ(psg->readRegister(reg), expected[reg]) << "AY register " << int(reg);
+    }
+    EXPECT_EQ(psg->getCurrentRegister(), 0x07);
+}
+
+/// In a 48K snapshot the AY bytes are state only when flags 2 bit 2 says the AY was in use
+TEST_F(LoaderZ80_Test, load48KSnapshotAppliesAYOnlyWhenMarkedInUse)
+{
+    const std::string source = TestPathHelper::GetTestDataPath("loaders/z80/newbench.z80");
+    ScopedTestFile savePath(TestPathHelper::GetUniqueTestScratchPath("test_ay_48k.z80"));
+
+    // A 48K-mode v3 file written by the saver
+    _context->config.mem_model = MM_SPECTRUM48;
+    LoaderZ80CUT loader(_context, source);
+    ASSERT_TRUE(loader.load());
+    LoaderZ80CUT saver(_context, savePath);
+    ASSERT_TRUE(saver.save());
+
+    std::vector<uint8_t> file = ReadWholeFile(savePath);
+    ASSERT_GE(file.size(), Z80_AY_REGISTERS_OFFSET + 16u);
+    for (uint8_t reg = 0; reg < 16; reg++)
+    {
+        file[Z80_AY_REGISTERS_OFFSET + reg] = static_cast<uint8_t>(0x20 + reg);
+    }
+
+    for (bool inUse : { false, true })
+    {
+        file[Z80_FLAGS2_OFFSET] = inUse ? Z80_FLAGS2_AY_IN_USE : 0x00;
+        WriteWholeFile(savePath, file);
+
+        _cpu->Reset();
+        SoundChip_AY8910* psg = _context->pSoundManager->getAYChip(0);
+        ASSERT_NE(psg, nullptr);
+        uint8_t afterReset[16];
+        for (uint8_t reg = 0; reg < 16; reg++)
+            afterReset[reg] = psg->readRegister(reg);
+
+        LoaderZ80CUT reloader(_context, savePath);
+        ASSERT_TRUE(reloader.load());
+
+        psg = _context->pSoundManager->getAYChip(0);
+        for (uint8_t reg = 0; reg < 16; reg++)
+        {
+            const uint8_t expected = inUse ? static_cast<uint8_t>(0x20 + reg) : afterReset[reg];
+            EXPECT_EQ(psg->readRegister(reg), expected) << "AY register " << int(reg) << (inUse ? " (in use)" : " (not in use)");
+        }
+    }
+}
+
+/// The saver marks the AY as in use in a 48K-mode snapshot only when the machine has an AY
+TEST_F(LoaderZ80_Test, saveMarksAYInUseFor48KModeOnMachinesWithAY)
+{
+    const std::string source = TestPathHelper::GetTestDataPath("loaders/z80/newbench.z80");
+    ScopedTestFile savePath(TestPathHelper::GetUniqueTestScratchPath("test_ay_flag.z80"));
+
+    LoaderZ80CUT loader(_context, source);
+    ASSERT_TRUE(loader.load());
+
+    for (MEM_MODEL model : { MM_SPECTRUM48, MM_PENTAGON })
+    {
+        _context->config.mem_model = model;
+        LoaderZ80CUT saver(_context, savePath);
+        ASSERT_TRUE(saver.save());
+
+        const std::vector<uint8_t> file = ReadWholeFile(savePath);
+        ASSERT_GT(file.size(), Z80_FLAGS2_OFFSET);
+        const bool marked = (file[Z80_FLAGS2_OFFSET] & Z80_FLAGS2_AY_IN_USE) != 0;
+        EXPECT_EQ(marked, model != MM_SPECTRUM48) << "model " << int(model);
+    }
+}
+
+/// endregion </AY state>
+
 
 

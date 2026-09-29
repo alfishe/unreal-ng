@@ -224,7 +224,17 @@ TEST(LoaderSZXModel_Test, AnotherModelIsRefused)
     ASSERT_TRUE(emulator);
     LoaderSZX loader(emulator->GetContext(), Fixture("libspectrum/synth-128.szx"));
     EXPECT_FALSE(loader.load());
-    EXPECT_NE(loader.GetError().find("switch the model"), std::string::npos) << loader.GetError();
+    EXPECT_EQ(loader.GetError(),
+              "the snapshot was saved on a ZX-Spectrum 128k, the running machine is a ZX-Spectrum 48k: "
+              "create a ZX-Spectrum 128k to load it");
+
+    Machine machine;
+    std::string error;
+    ASSERT_TRUE(LoaderSZX::ProbeMachine(Fixture("libspectrum/synth-pentagon512.szx"), machine, error)) << error;
+    EXPECT_EQ(machine.model, MM_PENTAGON);
+    EXPECT_EQ(machine.ramKb, 512u);
+    EXPECT_EQ(DescribeModel(machine.model, machine.ramKb), "Pentagon 512K");
+    EXPECT_FALSE(LoaderSZX::ProbeMachine(Fixture("libspectrum/synth-48.libspectrum.txt"), machine, error));
     manager->RemoveEmulator(emulator->GetId());
 }
 

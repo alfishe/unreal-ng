@@ -2,7 +2,7 @@
 
 **Created:** 2026-09-28  
 **Source:** full-demo TTD recording on Pentagon 512K (frames 25–16595, ≈ 5 min 40 s at 48.83 Hz), every frame taken as its final beam-rendered picture (border and multicolor included)  
-**Analysis context:** [ZX DLSS GigaScreen reference material](../../../inprogress/2026-09-27-zxdlss-gigascreen/reference-across-the-edge.md)
+**Analysis context:** `docs/inprogress/2026-09-27-zxdlss-gigascreen/reference-across-the-edge.md`
 
 ## Columns
 
@@ -10,7 +10,7 @@
 - **Page flips** — how often the displayed screen page toggles per frame (1.0 = every frame: GigaScreen by page flipping).
 - **Paper / Border flicker** — share of pixels showing period-2 flicker (A,B,A) / share changing otherwise (motion, new content), in the 256×192 picture area and in the border.
 
-![Storyboard](../../../inprogress/2026-09-27-zxdlss-gigascreen/across-the-edge-effect-map.png)
+`docs/inprogress/2026-09-27-zxdlss-gigascreen/across-the-edge-effect-map.png`
 
 ## Parts
 

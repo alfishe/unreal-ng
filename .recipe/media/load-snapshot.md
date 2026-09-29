@@ -70,9 +70,14 @@ Snapshot format notes:
   recognizes and starts the machine paused or running per snapshot flags.
 - `.szx` (ZX-State, the format Fuse and Spectaculator write) — the machine id,
   the exact CPU state (MEMPTR, Q, the EI shadow, HALT) and the position in the
-  frame, AY registers, the Beta 128 registers and TR-DOS paging. The snapshot's
-  model must be the running one (48K, 128K, +2, +2A, +3, Pentagon 128 / 512 /
-  1024, Scorpion); other models refuse with "switch the model first". The log
+  frame, AY registers, the Beta 128 registers and TR-DOS paging. Through the API the
+  snapshot's model must be the running one (48K, 128K, +2, +2A, +3, Pentagon
+  128 / 512 / 1024, Scorpion); another model is refused with both names, e.g.
+  "the snapshot was saved on a Pentagon 512K, the running machine is a
+  ZX-Spectrum 128k: create a Pentagon 512K to load it". In the Qt window
+  (drag and drop, File > Open, a file on the command line) an SZX for another
+  model replaces the running machine by that model first, as the Machine menu
+  does (media follow), then loads. The log
   lists what each block did (applied, approximated, ignored). Saving picks the
   format by the extension; ATM, ZX-Evo, Profi and TSConf have no SZX machine id
   and cannot be saved as `.szx` yet.

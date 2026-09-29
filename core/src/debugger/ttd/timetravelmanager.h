@@ -742,7 +742,7 @@ public:
     MachineTaskResult SubmitMachineTask(std::function<void()> task);
 
     /// @brief Executing thread, before every instruction (Z80::StepInstruction;
-    /// cheap gate: EmulatorContext::stepWork): play due journal events,
+    /// cheap gate: EmulatorContext::kStepWorkTtdInput in stepWork): play due journal events,
     /// then apply queued live input.
     void ServiceInput();
 
@@ -1813,7 +1813,7 @@ private:
     /// (stamped with the current time) while recording
     void ApplyLiveInput(TTDInputEvent ev);
 
-    /// Refresh EmulatorContext::stepWork (per-step gate)
+    /// Refresh EmulatorContext::kStepWorkTtdInput (the per-step gate)
     void UpdateInputWorkFlag();
 
     /// RestoreCheckpoint + ArmInputPlayback + port-journal playback from the

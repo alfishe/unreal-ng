@@ -67,6 +67,7 @@
 
 #define signals Q_SIGNALS
 #include "loaders/disk/loader_fdi.h"
+#include "loaders/snapshot/szx/loaderszx.h"
 #include "tape/tapeimportaudiodialog.h"  // tape-audio-bridge §7.3
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
@@ -2133,6 +2134,28 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly)
         case FileSnapshot:
             if (_emulator && RefusedWhileRecording(this, *_emulator, ttd::TTDGuardedAction::LoadSnapshot))
                 break;
+            // An SZX file names its machine: another model is replaced by that one
+            // first (as the Machine menu does, media follow), the same one just loads
+            if (_emulator && filePath.toLower().endsWith(".szx"))
+            {
+                szx::Machine machine;
+                std::string error;
+                if (!LoaderSZX::ProbeMachine(file, machine, error))
+                {
+                    QMessageBox::warning(this, tr("Load Snapshot"), QString::fromStdString(error));
+                    break;
+                }
+                const CONFIG& running = _emulator->GetContext()->config;
+                if (running.mem_model != machine.model || running.ramsize != machine.ramKb)
+                {
+                    const TMemModel* target = Config::FindModelByEnum(machine.model);
+                    qInfo() << "SZX saved on" << QString::fromStdString(szx::DescribeModel(machine.model, machine.ramKb))
+                            << "- replacing the running"
+                            << QString::fromStdString(szx::DescribeModel(running.mem_model, running.ramsize));
+                    if (!target || !switchMachineModel(target->ShortName, machine.ramKb))
+                        break;
+                }
+            }
             if (_emulator)
             {
                 bool result = _emulator->LoadSnapshot(file);
@@ -3052,10 +3075,20 @@ void MainWindow::handleMachineModelChangeRequested(const QString& modelSpec)
     // Process events to ensure dialog is fully closed before heavy operations
     QApplication::processEvents();
 
+    if (!switchMachineModel(modelName, ramSize))
+        restoreMenu();
+}
+
+bool MainWindow::switchMachineModel(const std::string& modelName, uint32_t ramSize)
+{
+    if (!_emulator || !_emulatorManager)
+        return false;
+    const QString displayName = QString("%1 %2K").arg(QString::fromStdString(modelName)).arg(ramSize);
+
     // Set flag to prevent notification handler from interfering
     _switchingModel = true;
 
-    qInfo() << "MainWindow::handleMachineModelChangeRequested() - Switching to model:" << displayName;
+    qInfo() << "MainWindow::switchMachineModel() - Switching to model:" << displayName;
 
     // The media follow the switch (ModelSwitch, docs/features/media.md). A
     // medium with unsaved writes the new model has no slot for needs a decision
@@ -3097,16 +3130,15 @@ void MainWindow::handleMachineModelChangeRequested(const QString& modelSpec)
     if (!switched.result.Ok() || !switched.emulator)
     {
         _switchingModel = false;
-        restoreMenu();
         if (switched.result.error != MediaError::Dirty)  // Cancel: nothing to report
         {
-            qWarning() << "handleMachineModelChangeRequested: switch to" << displayName << "failed:"
+            qWarning() << "switchMachineModel: switch to" << displayName << "failed:"
                        << QString::fromStdString(switched.result.message);
             QMessageBox::critical(this, tr("Error"),
                                   tr("Failed to switch to %1:\n%2")
                                       .arg(displayName, QString::fromStdString(switched.result.message)));
         }
-        return;
+        return false;
     }
 
     std::shared_ptr<Emulator> newEmulator = switched.emulator;
@@ -3133,7 +3165,8 @@ void MainWindow::handleMachineModelChangeRequested(const QString& modelSpec)
                                  tr("Media on %1:\n\n%2").arg(displayName, lines.join("\n")));
     }
 
-    qInfo() << "MainWindow::handleMachineModelChangeRequested() - Successfully switched to model:" << displayName;
+    qInfo() << "MainWindow::switchMachineModel() - Successfully switched to model:" << displayName;
+    return true;
 }
 
 #ifdef ENABLE_RECORDING
