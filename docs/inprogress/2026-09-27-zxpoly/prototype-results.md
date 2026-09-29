@@ -172,8 +172,28 @@ Tests: `ConfigurationsCreateTheGroupByName`,
 ## 7. Group time travel (core only, not enabled)
 
 > **Status:** the mechanism is built and tested in the core, but time travel
-> is not supported for ZX-Poly machines: no surface calls the group timeline.
+> is not supported for ZX-Poly machines: no surface calls the group timeline,
+> and every member refuses the ordinary per-instance time travel (see below).
 > It is deferred with low priority; see [§9](#9-not-done-yet).
+
+**Refused on every member.** Time travel of one module would split it from the
+others, so the group marks all four TTD sessions unavailable at creation
+(`TimeTravelManager::SetUnavailableReason`). While that is set:
+
+- `StartRecording` refuses. The DeZog live history starts through it, so
+  it is refused too.
+- `DeserializeSession` (loading a `.ttd` file) refuses.
+- Every surface shows the reason:
+  - WebAPI `/ttd/start` answers 409, and MCP `time_travel` turns that
+    into an error;
+  - the status carries `unavailable_reason` (WebAPI, MCP, Lua, Python);
+  - the CLI prints `Not available:` in the status and appends the reason
+    to a failed start; gdb appends it to a failed start as well;
+  - the Qt TTD panel disables its buttons and shows the reason as a
+    tooltip.
+
+The group timeline lifts the refusal while it records and sets it again when
+it stops. Test: `TimeTravelIsRefusedOnEveryMember` (mutation-checked).
 
 The four TTD sessions run as one timeline (QI §8):
 
@@ -289,6 +309,11 @@ runs the master through its own frame loop and requests speeds from a
 slave's worker thread during the hook. It is mutation-checked: without the
 interceptor it fails at frame 0.
 
+The picture follows the beam over the whole stretched frame: the line
+capture divides the CPU's T by the multiplier, as `Screen::GetCurrentTstate`
+does. Before that, a stretched frame took all its paper lines from its first
+1/N (`PictureFollowsTheBeamAtHostSpeed`, mutation-checked).
+
 Every stretched frame is shown, so these speeds run synchronously. Measured
 per host frame against the 20.48 ms budget
 (`BM_ZXPolySpeedMultiplierFrame`):
@@ -322,22 +347,14 @@ timing in both the parallel and the pipelined schedule.
 
 ## 9. Not done yet
 
-- **Line capture at ×2…×16:** `CaptureLines` compares the CPU's T, which
-  is scaled by the host speed multiplier, with unscaled line positions. A
-  stretched frame therefore captures its paper lines in its first 1/N. The
-  lockstep is not affected, only which moment of the stretched frame the
-  composed picture shows.
-
 **Deferred (possible later, low priority).** Both carry many risks for
 little gain now:
 
-- **Time travel for ZX-Poly machines.** Not supported. The ordinary
-  per-instance TTD commands are not blocked either: WebAPI, MCP
-  `time_travel`, CLI, Lua, Python, gdb, DeZog and the Qt TTD widget all
-  act on the master alone. A master seek then splits it from the slaves;
-  a new ZX-Poly start recovers. The risks:
+- **Time travel for ZX-Poly machines.** Not supported. Every member
+  refuses the per-instance TTD commands with the reason (§7). The risks
+  of adding it:
   - the group has to own the one timeline, so these commands would have
-    to route to the group or refuse;
+    to route to the group;
   - a seek has to restore the platform state (`#3D00`, R0–R3, the lock)
     together with all four sessions;
   - the coupled machine, the stop address and the halt notification

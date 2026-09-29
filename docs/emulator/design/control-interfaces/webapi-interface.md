@@ -1358,11 +1358,12 @@ There are no `/ttd/clear`, `/ttd/timeline`, `/ttd/step` or `/ttd/resume_from_her
   "coverage_index_frames": 300,
   "coverage_index_bytes": 13926,
   "bookmark_count": 0,
-  "last_drop_reason": null
+  "last_drop_reason": null,
+  "unavailable_reason": null
 }
 ```
 
-`state` is `idle`, `recording` or `detached`. `last_drop_reason` is `null` until something drops a history, then names it (e.g. `"snapshot-load"`). When the build has no TTD engine the response still comes back with `ttd_available: false`, `state: "idle"` and zero counters. Field meanings: [command-interface.md → Status fields](./command-interface.md#status-fields).
+`state` is `idle`, `recording` or `detached`. `last_drop_reason` is `null` until something drops a history, then names it (e.g. `"snapshot-load"`). `unavailable_reason` is `null` unless time travel is not available for this machine at all (a ZX-Poly member); then `/ttd/start` answers **409 Conflict** with it as `message`. When the build has no TTD engine the response still comes back with `ttd_available: false`, `state: "idle"` and zero counters. Field meanings: [command-interface.md → Status fields](./command-interface.md#status-fields).
 
 **`POST /ttd/seek` response shape:**
 

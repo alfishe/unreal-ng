@@ -746,6 +746,7 @@ local status = ttd_status()
 -- status.session_heap_bytes       = 1043968
 --
 -- status.last_drop_reason         = "snapshot-load"  -- "" until a history is dropped
+-- status.unavailable_reason       = nil  -- set when this machine has no time travel (a ZX-Poly member)
 ```
 
 `source_path` is filled by `ttd_load` (the path it was given).

@@ -34,6 +34,9 @@
 
 namespace
 {
+    constexpr const char* TTD_UNAVAILABLE =
+        "ZX-Poly machines do not support time travel yet: the four modules need one shared timeline";
+
     constexpr uint16_t PORT_ZXPOLY_MAIN = 0x3D00;
     constexpr uint8_t MAIN_NWAIT = 0x01;
     constexpr uint8_t MAIN_RESET = 0x02;
@@ -181,6 +184,15 @@ bool ZXPolyGroup::Create(const std::string& modelOrConfiguration, std::string* e
         // The ZX-Poly platform ports sit in front of the model's port decoder
         _interceptors[m] = std::make_unique<ZXPolyPortInterceptor>(*this, m);
         context->pCore->GetZ80()->portInterceptor = _interceptors[m].get();
+    }
+
+    // Time travel of one member would split it from the others: ZX-Poly
+    // machines have none yet (prototype-results.md §9). The group's own
+    // timeline (StartRecording) lifts it while it records
+    for (size_t m = 0; m < MODULES; m++)
+    {
+        if (ttd::TimeTravelManager* ttd = GetContext(m)->pTimeTravelManager)
+            ttd->SetUnavailableReason(TTD_UNAVAILABLE);
     }
 
     // Host speed changes of the machine go through the input queue: all four
@@ -1184,8 +1196,13 @@ void ZXPolyGroup::CaptureLines(size_t module)
         capture.nextLine[slot] = 0;
     }
 
+    // The beam runs in base-clock T-states: the host speed control stretches
+    // the frame x2..x16 (and a hardware turbo doubles the CPU's T), so the
+    // CPU's T is descaled first, as Screen::GetCurrentTstate does
     const size_t slot = frame & 1u;
-    const uint32_t t = context->pCore->GetZ80()->t;
+    const uint32_t multiplier = context->emulatorState.current_z80_frequency_multiplier;
+    const uint32_t cpuT = context->pCore->GetZ80()->t;
+    const uint32_t t = multiplier > 1 ? cpuT / multiplier : cpuT;
     const uint32_t paperStart = screen->GetPaperStartTstate();
     const uint32_t perLine = screen->GetTstatesPerLine();
     constexpr uint32_t PAPER_FETCH_T = 128;    // 256 pixels at 2 per T
@@ -1418,12 +1435,20 @@ bool ZXPolyGroup::StartRecording(std::string* error)
     for (size_t m = 0; m < MODULES; m++)
     {
         ttd::TimeTravelManager* ttd = GetContext(m)->pTimeTravelManager;
+        if (ttd)
+            ttd->SetUnavailableReason("");
         if (ttd == nullptr || !ttd->StartRecording())
         {
             if (error)
                 *error = StringHelper::Format("module %zu: TTD recording could not start", m);
-            for (size_t started = 0; started < m; started++)
-                GetContext(started)->pTimeTravelManager->StopRecording();
+            for (size_t started = 0; started < MODULES; started++)
+            {
+                if (ttd::TimeTravelManager* session = GetContext(started)->pTimeTravelManager)
+                {
+                    session->StopRecording();
+                    session->SetUnavailableReason(TTD_UNAVAILABLE);
+                }
+            }
             return false;
         }
     }
@@ -1439,7 +1464,10 @@ void ZXPolyGroup::StopRecording()
     for (size_t m = 0; m < MODULES; m++)
     {
         if (ttd::TimeTravelManager* ttd = GetContext(m)->pTimeTravelManager)
+        {
             ttd->StopRecording();
+            ttd->SetUnavailableReason(TTD_UNAVAILABLE);    // the group timeline ends here
+        }
     }
     _recording = false;
 }

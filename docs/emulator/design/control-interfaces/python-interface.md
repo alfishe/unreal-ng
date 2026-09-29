@@ -816,6 +816,7 @@ status = emu.ttd_status()
 #   'session_heap_bytes': 1043968,
 #
 #   'last_drop_reason': 'snapshot-load',   # None until a history is dropped
+#   'unavailable_reason': None,            # set when this machine has no time travel (a ZX-Poly member)
 # }
 ```
 

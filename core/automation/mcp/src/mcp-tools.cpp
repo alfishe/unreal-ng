@@ -842,6 +842,10 @@ std::string FormatTtdStatus(const Json::Value& status)
     {
         return "TTD engine not available in this build";
     }
+    if (status["unavailable_reason"].isString())
+    {
+        return "not available for this machine: " + status["unavailable_reason"].asString();
+    }
     const std::string state = status["state"].asString();
     const uint64_t checkpoints = status["checkpoint_count"].asUInt64();
     std::ostringstream out;

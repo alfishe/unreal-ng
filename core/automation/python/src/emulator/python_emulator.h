@@ -2558,6 +2558,8 @@ namespace PythonBindings
                 info["bookmark_count"]           = py::cast(static_cast<uint64_t>(si.bookmarkCount));
                 info["last_drop_reason"]         = si.lastDropReason.empty() ? py::object(py::none())
                                                                              : py::object(py::cast(si.lastDropReason));
+                info["unavailable_reason"]       = si.unavailableReason.empty() ? py::object(py::none())
+                                                                                : py::object(py::cast(si.unavailableReason));
                 info["ttd_available"]            = true;
                 return info;
             }, "Get TTD session status")

@@ -2367,6 +2367,8 @@ public:
             info["bookmark_count"]           = static_cast<uint64_t>(si.bookmarkCount);
             if (!si.lastDropReason.empty())
                 info["last_drop_reason"]     = si.lastDropReason;  // "" until a history is dropped
+            if (!si.unavailableReason.empty())
+                info["unavailable_reason"]   = si.unavailableReason;  // e.g. a ZX-Poly member
             info["ttd_available"]            = true;
             return info;
         });

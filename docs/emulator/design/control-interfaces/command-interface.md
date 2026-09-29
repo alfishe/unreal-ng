@@ -2660,6 +2660,7 @@ usually the first thing to check when a session is handed to you.
 | `session_heap_bytes` | Real total heap footprint of the session |
 | `bookmark_count` | Number of agent bookmarks |
 | `ttd_available` | False when the build has no TTD engine (WebAPI, Lua, Python) |
+| `unavailable_reason` | Why time travel is not available for this machine at all, e.g. a member of a ZX-Poly machine; empty / `null` when it is available. Recording and loading a `.ttd` file are refused with it (WebAPI: `/ttd/start` answers 409). The CLI prints it as `Not available:` |
 | `last_drop_reason` | What dropped the last history (`snapshot-load`, `tape-load`, `disk-load`, `disk-create`, `rom-reload`, `speed-multiplier-change`, an `invalidate` reason, an SD-card note); empty / `null` when nothing has. The CLI prints it as `Last session dropped:` |
 
 #### Worked Examples

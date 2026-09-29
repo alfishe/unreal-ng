@@ -354,6 +354,21 @@ void TtdWidget::updateTelemetry()
     ttd::TTDSessionInfo info = ttd->GetSessionInfo();
     ttd::TTDTimePoint currentPos = ttd->CurrentPosition();
 
+    // Not available for this machine at all (a ZX-Poly member): say why
+    if (!info.unavailableReason.empty())
+    {
+        _recordBtn->setEnabled(false);
+        _recordBtn->setText(tr("Start Rec"));
+        _loadBtn->setEnabled(false);
+        _exportBtn->setEnabled(false);
+        _clearBtn->setEnabled(false);
+        _statusLabel->setText(tr("TTD: not available"));
+        _statusLabel->setToolTip(QString::fromStdString(info.unavailableReason));
+        _scrubberContainer->setVisible(false);
+        return;
+    }
+    _statusLabel->setToolTip(QString());
+
     _loadBtn->setEnabled(true);
 
     const bool isRecording = (info.state == ttd::TTDSessionState::Recording);
