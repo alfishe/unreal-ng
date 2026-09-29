@@ -30,7 +30,6 @@ protected:
         _monitor->Arm();
     }
 
-    bool IsTrDos() const { return GetParam().find("TRDOS") != std::string::npos; }
     /// The 128K and +3 editors: keywords spelled, tokenised at ENTER
     bool Is128Editor() const
     {
@@ -102,7 +101,21 @@ protected:
     }
 };
 
+/// Each test runs on the editors it applies to, none is skipped: keys on every editor, BASIC lines on the
+/// editors that run BASIC, the TR-DOS hand-over at the A> prompt
+class EditorMonitorBasic_Test : public EditorMonitor_Test
+{
+};
+
+class EditorMonitorTrDos_Test : public EditorMonitor_Test
+{
+};
+
 INSTANTIATE_TEST_SUITE_P(Editors, EditorMonitor_Test, ::testing::ValuesIn(RomEditorFixture::RomEditors()),
+                         RomEditorFixture::ParamName);
+INSTANTIATE_TEST_SUITE_P(Editors, EditorMonitorBasic_Test, ::testing::ValuesIn(RomEditorFixture::BasicEditors()),
+                         RomEditorFixture::ParamName);
+INSTANTIATE_TEST_SUITE_P(Editors, EditorMonitorTrDos_Test, ::testing::ValuesIn(RomEditorFixture::TrDosEditors()),
                          RomEditorFixture::ParamName);
 
 // A character key: taken, accepted with its code, inserted
@@ -137,11 +150,8 @@ TEST_P(EditorMonitor_Test, CharacterKeyIsTakenAndInserted)
 }
 
 // A direct command: ENTER, syntax OK, runs, reports 0 OK
-TEST_P(EditorMonitor_Test, DirectCommandRunsAndReports)
+TEST_P(EditorMonitorBasic_Test, DirectCommandRunsAndReports)
 {
-    if (IsTrDos())
-        GTEST_SKIP() << "TR-DOS takes its own commands; see TrDosLineGoesToTheDispatcher";
-
     BootAndArm();
     ASSERT_FALSE(HasFatalFailure());
 
@@ -163,11 +173,8 @@ TEST_P(EditorMonitor_Test, DirectCommandRunsAndReports)
 }
 
 // A numbered line is stored, not run
-TEST_P(EditorMonitor_Test, NumberedLineIsStored)
+TEST_P(EditorMonitorBasic_Test, NumberedLineIsStored)
 {
-    if (IsTrDos())
-        GTEST_SKIP() << "TR-DOS has no program lines";
-
     BootAndArm();
     ASSERT_FALSE(HasFatalFailure());
 
@@ -189,11 +196,8 @@ TEST_P(EditorMonitor_Test, NumberedLineIsStored)
 }
 
 // A syntax error: checked, not accepted, not run
-TEST_P(EditorMonitor_Test, SyntaxErrorIsDetectedAndNothingRuns)
+TEST_P(EditorMonitorBasic_Test, SyntaxErrorIsDetectedAndNothingRuns)
 {
-    if (IsTrDos())
-        GTEST_SKIP() << "TR-DOS syntax errors: see TrDosLineGoesToTheDispatcher";
-
     BootAndArm();
     ASSERT_FALSE(HasFatalFailure());
 
@@ -210,11 +214,8 @@ TEST_P(EditorMonitor_Test, SyntaxErrorIsDetectedAndNothingRuns)
 }
 
 // TR-DOS: the 48K editor hands the line back to TR-DOS, which looks it up
-TEST_P(EditorMonitor_Test, TrDosLineGoesToTheDispatcher)
+TEST_P(EditorMonitorTrDos_Test, TrDosLineGoesToTheDispatcher)
 {
-    if (!IsTrDos())
-        GTEST_SKIP() << "TR-DOS only";
-
     BootAndArm();
     ASSERT_FALSE(HasFatalFailure());
 

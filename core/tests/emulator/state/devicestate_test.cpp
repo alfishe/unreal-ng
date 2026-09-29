@@ -10,6 +10,8 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/fdc/upd765.h"
+#include "emulator/ports/portdecoder.h"
 #include "emulator/sound/chips/soundchip_turbosoundfm.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/memory/memory.h"
@@ -219,6 +221,61 @@ TEST_F(DeviceState_Test, FdcReportListsControllerAndDrives)
     const std::string text = DeviceState::ToText(fdc);
     EXPECT_NE(text.find("fsm_state: S_IDLE"), std::string::npos);
     EXPECT_NE(text.find("drives:"), std::string::npos);
+}
+
+/// The +3 reports its own controller, the uPD765A, not the WD1793 every model carries: the command in
+/// hand with its parameters, the phase, the status bytes, SPECIFY times, and its two drives
+TEST(DeviceStateFdc_Test, Plus3ReportsTheUpd765)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PLUS3", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    ASSERT_NE(context->pUPD765, nullptr);
+    ASSERT_TRUE(emulator->CreateBlankDisk(0));
+    PortDecoder* ports = context->pPortDecoder;
+
+    ports->DecodePortOut(0x1FFD, 0x08, 0x8000);  // motor on
+    for (uint8_t byte : { uint8_t(UPD765::CMD_SPECIFY), uint8_t(0xAF), uint8_t(0x03) })
+        ports->DecodePortOut(0x3FFD, byte, 0x8000);
+    for (uint8_t byte : { uint8_t(UPD765::CMD_READ_DATA | UPD765::CMD_FLAG_MF), uint8_t(0x00), uint8_t(0),
+                          uint8_t(0), uint8_t(3), uint8_t(2), uint8_t(3), uint8_t(0x2A), uint8_t(0xFF) })
+        ports->DecodePortOut(0x3FFD, byte, 0x8000);
+
+    const StateNode fdc = DeviceState::Fdc(context);
+    ASSERT_TRUE(At(fdc, "available").b);
+    EXPECT_EQ(At(fdc, "controller").s, "uPD765A (+3)");
+    EXPECT_EQ(At(fdc, "phase").s, "execution");
+    EXPECT_TRUE(At(At(fdc, "main_status"), "execution").b);
+    EXPECT_TRUE(At(At(fdc, "main_status"), "busy").b);
+
+    const StateNode& cmd = At(fdc, "command");
+    EXPECT_EQ(At(cmd, "name").s, "read_data");
+    EXPECT_TRUE(At(cmd, "complete").b);
+    EXPECT_TRUE(At(cmd, "mfm").b);
+    EXPECT_EQ(At(cmd, "r").i, 3);
+    EXPECT_EQ(At(cmd, "n").i, 2);
+    EXPECT_EQ(At(cmd, "eot").i, 3);
+    EXPECT_EQ(At(cmd, "bytes").size(), 9u);
+
+    EXPECT_EQ(At(At(fdc, "specify"), "step_rate_ms").i, 12);  // SRT #A: (16 - 10) x 2 ms
+    EXPECT_EQ(At(At(fdc, "specify"), "head_load_ms").i, 4);   // HLT 1 x 4 ms
+    EXPECT_TRUE(At(fdc, "motor_on").b);
+    ASSERT_EQ(At(fdc, "units").size(), 4u);
+    EXPECT_EQ(At(At(fdc, "units").items[2], "drive").s, "A") << "US1 is not connected: unit 2 is drive A";
+
+    // Drives A and B only; A holds the blank +3 disk
+    ASSERT_EQ(At(fdc, "drives").size(), 2u);
+    const StateNode& driveA = At(fdc, "drives").items[0];
+    EXPECT_TRUE(At(driveA, "inserted").b);
+    EXPECT_TRUE(At(driveA, "motor_on").b);
+    EXPECT_EQ(At(driveA, "path").s, "<blank>");
+    EXPECT_EQ(At(At(driveA, "image"), "cylinders").i, 40);
+    EXPECT_EQ(At(At(driveA, "image"), "sides").i, 1);
+
+    const std::string text = DeviceState::ToText(fdc);
+    EXPECT_NE(text.find("phase: execution"), std::string::npos) << text;
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
 /// region <Screen reports>

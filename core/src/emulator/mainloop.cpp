@@ -19,6 +19,7 @@
 #include "emulator/notifications.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/tape/tapeturbocontroller.h"
+#include "emulator/media/mediamanager.h"
 #include "stdafx.h"
 
 #include <cmath>
@@ -450,6 +451,11 @@ void MainLoop::CompleteFrame()
     // is off (the cached bool in Memory gates the dirty hook). Cost when
     // idle: one predictable branch. Cost when recording: dirty pages get
     // a 16 KB Intern each, clean pages get a cheap AddRef.
+    // Media inserts / ejects requested during the frame reach their slots here,
+    // before the frame's checkpoint (technical design §3)
+    if (_context->pMediaManager)
+        _context->pMediaManager->ApplyPending();
+
     if (_context->pTimeTravelManager)
     {
         try
@@ -606,7 +612,7 @@ void MainLoop::OnFrameEnd()
         // TTD silent-replay suppression (parent TDD §8.2 + Appendix C, same
         // contract as the NC_VIDEO_FRAME_REFRESH gate below): a throwaway
         // replay pass (ReplayWithinFrame / TimeTravelManager::
-        // RenderFrameAccurate) can cross a real frame boundary while
+        // ComposeDisplay) can cross a real frame boundary while
         // ttdReplayActive is set. Latching there advances the present-slot
         // ring (Screen::_presentLatchCounter) for a frame nobody asked to
         // see, desyncing GetDelayedFrame's slot math from the ring's actual

@@ -221,6 +221,10 @@ bool Config::ParseConfig(IniFile& inimanager)
 
 	// EVO section (ZX-Evo BaseConf): FPGA variant the ROM image expects
 	config.atm.evo_legacy_fpga = ParseEvoFpgaVariant(inimanager.GetValue("EVO", "Fpga", nullptr)) ? 1 : 0;
+	config.atm.evo_nvram_path[0] = '\0';  // a config without the key must not inherit a previous path
+	CopyStringValue(inimanager.GetValue("EVO", "NvramFile", nullptr), config.atm.evo_nvram_path, sizeof config.atm.evo_nvram_path);
+
+	// [ZC] (the Z-Controller SD card) is read by MediaConfig with the rest of the media set
     CopyStringValue(inimanager.GetValue(rom, "SCORP", nullptr), config.scorp_rom_path, sizeof config.scorp_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "PROFROM", nullptr), config.prof_rom_path, sizeof config.prof_rom_path);
     // The shipped spectrum3 unreal.ini carries "rom\\scorp_prof401.ROM:0" - without
@@ -611,6 +615,18 @@ bool Config::ParseConfig(IniFile& inimanager)
 		config.videoPresentDelayFrames = (delay >= -1 && delay <= 3) ? (int)delay : -1;
 	}
 
+	// Media set: [MEDIA] + legacy keys; relative paths are relative to the config file
+	{
+		std::string configFolder;
+		if (!_configFilePath.empty())
+		{
+			const auto parent = FileHelper::ToFsPath(_configFilePath).parent_path().u8string();
+			configFolder.assign(parent.begin(), parent.end());
+		}
+		_mediaReport.clear();
+		_mediaSet = MediaConfig::FromIni(inimanager, configFolder, &_mediaReport);
+	}
+
 	// Emulated model
 	CopyStringValue(inimanager.GetValue(misc, "HIMEM", "PENTAGON"), line, sizeof line);
 	config.ramsize = inimanager.GetLongValue(misc, "RamSize", 128);
@@ -950,10 +966,16 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
 
         case MM_SPECTRUM128:
         case MM_PLUS2:
-        case MM_PLUS2A:
-        case MM_PLUS3:
             config.intstart = 1845;
             config.intlen   = 36;   // ZX-128K ULA has 72-HC INT = 36 T-states
+            break;
+
+        case MM_PLUS2A:
+        case MM_PLUS3:
+            // The gate array keeps the 128K frame and INT position; its INT is 32 T (ZXMAK2 UlaPlus3,
+            // BizHawk ZX128Plus2a; ZX-M8XXX says 36)
+            config.intstart = 1845;
+            config.intlen   = 32;
             break;
 
         case MM_SCORP:
@@ -1025,7 +1047,7 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
                 config.frame = 70908;   // 228 * 311
                 config.t_line = 228;
                 config.intstart = 1845;
-                config.intlen = 36;
+                config.intlen = (config.mem_model == MM_PLUS3 || config.mem_model == MM_PLUS2A) ? 32 : 36;
                 break;
             case MM_PENTAGON:
                 config.frame = 71680;   // 224 * 320

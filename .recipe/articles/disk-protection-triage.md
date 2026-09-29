@@ -44,8 +44,8 @@ invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/profiler/portt
 invoke_api         {"method":"GET", "path":"/api/v1/emulator/{id}/profiler/porttrace/events","query_params":{"limit":40}}
 
 # step 5 — prove the hypothesis with TTD (record first: ../analysis/ttd-recording.md):
-invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/ttd/find-last","body":{"addr":63,"access":"io"}}
-invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/ttd/reverse-continue","body":{"pcs":[33156]}}
+time_travel        {"action":"find_last","addr":63,"access":"io"}
+time_travel        {"action":"reverse_continue","pcs":["0x8184"]}
 ```
 
 Mitigation patching is `debug_code` action `assemble` (two-pass Z80

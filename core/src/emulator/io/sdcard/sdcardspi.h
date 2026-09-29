@@ -1,11 +1,15 @@
 #pragma once
 
 /// @file sdcardspi.h
-/// @brief SD card in SPI mode over a raw image file (neogs-tdd.md §5.5).
+/// @brief SD card in SPI mode (neogs-tdd.md §5.5).
 ///
-/// A device for any SD/SPI host: the NeoGS card's SD master today, and meant
-/// for Z-Controller and TS-Conf too. SD physical layer, SPI mode, versions 1
-/// and 2, SDSC and SDHC.
+/// A device for any SD/SPI host: the ZX-Evo Z-Controller (ZControllerSpi),
+/// the NeoGS card's SD master, TS-Conf. SD physical layer, SPI mode, versions
+/// 1 and 2, SDSC and SDHC.
+///
+/// The card's contents are any IBlockDevice (tdd-storage-sd-ide-cd.md §1 S1):
+/// an image file (`open`), or a medium the owner builds (`insert`: memory
+/// disk, host folder volume, ...).
 ///
 /// Commands: CMD0 CMD8 CMD55+ACMD41 CMD59 CMD16 CMD58 CMD9 CMD10 CMD13 CMD17
 /// CMD18 CMD12 CMD24 CMD25 (#FC/#FD tokens); everything else answers
@@ -16,19 +20,23 @@
 /// after 8 poll bytes, a write stays busy for 64. Deterministic, and short
 /// enough for every driver's polling loop.
 ///
-/// Writes (`WriteMode`): Session keeps written sectors in memory (discarded
-/// with the object), Persist writes through to the file, Off answers with a
-/// write-protect data response (#0D) and sets WP_VIOLATION in CMD13's status.
+/// Writes (`WriteMode`): Session keeps written sectors in a SessionWriteMap
+/// over the medium (discarded with the card, exportable; S3), Persist writes
+/// through to the medium, Off answers with a write-protect data response
+/// (#0D) and sets WP_VIOLATION in CMD13's status.
 
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <deque>
 #include <functional>
-#include <map>
+#include <memory>
 #include <string>
 
 #include "emulator/io/spi/spidevice.h"
+#include "emulator/io/storage/iblockdevice.h"
+
+class SessionWriteMap;
 
 class SdCardSpi : public SpiDevice
 {
@@ -47,12 +55,25 @@ public:
     SdCardSpi(const SdCardSpi&) = delete;
     SdCardSpi& operator=(const SdCardSpi&) = delete;
 
-    /// Insert an image. Up to 2 GB is SDSC, bigger SDHC, unless `type` says
+    /// Insert an image file (RawImage; opened read-only unless `mode` is
+    /// Persist). Up to 2 GB is SDSC, bigger SDHC, unless `type` says
     /// otherwise. A size that is not a multiple of 512 is padded (reads as 0).
     bool open(const std::string& path, WriteMode mode = WriteMode::Session, Type type = Type::Auto);
+    /// Insert any medium. Session wraps it in a SessionWriteMap; Persist
+    /// writes to it (a read-only medium then answers every write with a
+    /// write error)
+    bool insert(std::unique_ptr<IBlockDevice> media, WriteMode mode = WriteMode::Session, Type type = Type::Auto);
+    /// Insert a medium someone else owns (the MediaManager). Writes go to it
+    /// as they are; its access layer (session map, read-only guard) decides
+    /// what happens to them. The owner keeps it alive until detach / close
+    bool attach(IBlockDevice& medium, Type type = Type::Auto);
+    /// Remove an attached medium (same as close)
+    void detach() { close(); }
     /// Remove the card (detect switch open)
     void close();
-    bool present() const { return _file != nullptr; }
+    bool present() const { return _device != nullptr; }
+    /// A block write is being received: a swap now would lose it
+    bool busy() const { return _mode == Mode::ReceiveData; }
     const std::string& path() const { return _path; }
     bool isSdhc() const { return _sdhc; }
     uint64_t sizeBytes() const { return _blocks * BLOCK; }
@@ -83,10 +104,18 @@ public:
 
     /// Called after every block the card writes (not the refused ones)
     void setWriteListener(std::function<void(uint64_t block)> listener) { _onWrite = std::move(listener); }
+    /// Called for every command the card accepts for decoding (after SPI mode
+    /// is entered, i.e. from the first valid CMD0 on), with the command index
+    void setCommandListener(std::function<void(uint8_t index)> listener) { _onCommand = std::move(listener); }
 
     /// Direct sector access (tests, automation); returns false beyond the card
-    bool readBlock(uint64_t block, uint8_t* out) const;
+    bool readBlock(uint64_t block, uint8_t* out);
     bool writeBlock(uint64_t block, const uint8_t* data);
+
+    /// The medium the card reads (the SessionWriteMap in Session mode), or nullptr
+    IBlockDevice* media() { return _device; }
+    /// The session changes (Session mode only): count, discard, export
+    SessionWriteMap* sessionWrites() { return _session; }
 
 private:
     enum class State : uint8_t { PowerOn, Idle, Ready };
@@ -99,6 +128,7 @@ private:
     };
 
     void onCommand();
+    void ApplyType(Type type);
     void respondR1(uint8_t r1);
     void queueBlock(uint64_t block);
     void finishWrite();
@@ -109,13 +139,15 @@ private:
     static uint8_t crc7(const uint8_t* data, size_t length);
     static uint16_t crc16(const uint8_t* data, size_t length);
 
-    // Image
-    FILE* _file = nullptr;
+    // Medium: _device is what the card reads and writes; _media owns it when
+    // the card was given the medium (open / insert), empty when attached
+    std::unique_ptr<IBlockDevice> _media;
+    IBlockDevice* _device = nullptr;
+    SessionWriteMap* _session = nullptr; // _media itself in Session mode
     std::string _path;
     uint64_t _blocks = 0;
     bool _sdhc = false;
     WriteMode _writeMode = WriteMode::Session;
-    std::map<uint64_t, std::array<uint8_t, BLOCK>> _overlay; // session writes
 
     // Protocol
     State _state = State::PowerOn;
@@ -143,4 +175,5 @@ private:
     uint64_t _blocksWritten = 0;
 
     std::function<void(uint64_t)> _onWrite;
+    std::function<void(uint8_t)> _onCommand;
 };

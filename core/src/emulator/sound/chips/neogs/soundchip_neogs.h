@@ -28,6 +28,7 @@
 #include "common/modulelogger.h"
 #include "emulator/io/flash/flash29f040b.h"
 #include "emulator/io/sdcard/sdcardspi.h"
+#include "emulator/media/mediaslot.h"
 #include "emulator/platform.h"
 #include "emulator/sound/audio.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
@@ -209,10 +210,20 @@ public:
     /// set before loadROM)
     void setFlashPersistFolder(const std::string& folder) { _flashPersistFolder = folder; }
 
-    /// SD card slot: insert an image (settings from [NGS]), eject, inspect
+    /// SD card slot `sd.ngs`: insert an image or a folder, eject, inspect.
+    /// With a media manager these go through it (the slot's settings from
+    /// [MEDIA] / [NGS], refused while TTD records); without one (bare
+    /// contexts) the card opens the image itself
+    static constexpr const char* SD_SLOT_ID = "sd.ngs";
+    /// [NGS] SDWrite as the slot's access mode (session / persist / off)
+    static AccessMode configuredSdAccess(const NeoGSConfig& config);
     bool insertSdCard(const std::string& path) override;
     bool ejectSdCard() override;
-    std::string sdCardImage() const override { return sdCardPresent() ? _sd->path() : std::string(); }
+    /// The inserted image or folder (the medium's source), empty = none
+    std::string sdCardImage() const override
+    {
+        return !sdCardPresent() ? std::string() : _sdSlotRegistered ? _sdSource : _sd->path();
+    }
     bool neogsState(NeoGSStateInfo& out) const override;
     bool peekCardMemory(uint16_t addr, uint8_t& out) const override
     {
@@ -348,8 +359,9 @@ private:
     uint32_t currentFrameNumber() const;
     void markReplayBarrier(ttd::TTDExternalEventKind kind, const char* reason);
     bool ttdRecording() const;
-    bool openSdImage(const std::string& path); // no TTD guard: the configured card at construction
-    void markSdWrite();
+    bool openSdImage(const std::string& path); // no media manager: the card opens the image itself
+    SdCardSpi::Type sdType() const;
+    void reselectSd();
     void serializeFixedState(uint8_t* dst) const;
     void serializeDeviceState(uint8_t* dst, bool machineVisibleOnly) const;
 
@@ -364,6 +376,27 @@ private:
     NeoGSSound _snd;
     NeoGSSpi _spi;
     std::unique_ptr<SdCardSpi> _sd;
+
+    // The SD slot the media manager attaches media to (registered while the card is fitted)
+    class SdSlot : public IMediaSlot
+    {
+    public:
+        explicit SdSlot(SoundChip_NeoGS& owner);
+        const SlotDescriptor& Descriptor() const override { return _descriptor; }
+        void Attach(Medium& medium) override;
+        void Detach() override;
+        bool IsBusy() const override;
+        void SetWriteProtectSwitch(bool on) override;
+        void SourceChanged(Medium& medium) override;
+
+    private:
+        SoundChip_NeoGS& _owner;
+        SlotDescriptor _descriptor;
+    };
+    SdSlot _sdSlot{*this};
+    bool _sdSlotRegistered = false;
+    bool _sdWriteProtect = false; // the slot's write-protect switch (SSTAT bit 2)
+    std::string _sdSource;        // the attached medium's source path
     std::unique_ptr<Vs10xxDecoder> _mp3; // absent with MP3Support=none
     NeoGSDma _dma;
     NeoGSZxDma _zx{*this, _dma, _mem};
@@ -420,7 +453,6 @@ private:
     int32_t _outR = 0;
     NeoGSConfig::StereoMode _stereoMode = NeoGSConfig::StereoMode::Separated; // listening choice, not state
     bool _frameHadActivity = false;
-    uint32_t _sdWriteMarkerFrame = UINT32_MAX; // last frame with an SD-write TTD marker
     bool _wasActive = false;
     AudioFrameDescriptor _mp3Descriptor;
     int16_t* const _mp3Buffer = reinterpret_cast<int16_t*>(_mp3Descriptor.memoryBuffer);

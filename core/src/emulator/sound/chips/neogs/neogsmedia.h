@@ -4,15 +4,18 @@
 /// @brief Automation requests for the NeoGS card's media: SD card insert /
 /// eject and flash save (CLI, WebAPI / MCP, Lua and Python share these).
 ///
-/// The card runs on the machine's thread, and an SD eject closes the image
-/// file the card may be reading, so a request is checked on the caller's
-/// thread and then carried out on the machine's thread at an instruction
+/// The SD card is the media manager's slot `sd.ngs` (the same slot as the
+/// `media` commands and the GUI's media panel): a request is checked on the
+/// caller's thread and applied at the next frame boundary, or at once while
+/// the machine is not running. An image file or a host folder can go in.
+/// Without a media manager (bare contexts) the card opens the image itself.
+/// A flash save is carried out on the machine's thread at an instruction
 /// boundary (TimeTravelManager::SubmitMachineTask; while paused: when
-/// execution continues). It is not TTD input: nothing is journaled.
+/// execution continues). Neither is TTD input: nothing is journaled.
 ///
 /// While a TTD recording runs the machine's configuration is fixed: SD insert
-/// and eject are refused. A flash save changes nothing in the machine and is
-/// allowed; it snapshots the flash on the machine's thread.
+/// and eject are refused (the media manager's rule for every slot). A flash
+/// save changes nothing in the machine and is allowed.
 
 #include <cstdint>
 #include <string>
@@ -27,7 +30,7 @@ enum class NeoGSMediaResult : uint8_t
     TtdRecording,     ///< refused: the configuration is fixed while recording
     ReplayOwnsInput,  ///< refused: a TTD replay owns the machine
     NoPath,           ///< sd_insert without an image path
-    NoFile,           ///< the image does not exist
+    NoFile,           ///< neither an image nor a folder at that path
     Failed,           ///< carried out at once and failed (see the log)
 };
 

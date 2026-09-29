@@ -427,10 +427,11 @@ void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std:
                 return;
             }
 
-            if (soundManager->requestGeneralSoundCardSwitch(kind))
+            std::string refusal;
+            if (soundManager->requestGeneralSoundCardSwitch(kind, &refusal))
                 ss << "GS: personality switch to '" << target << "' requested (applied at the next frame boundary)." << NEWLINE;
             else
-                ss << "Error: personality switch request failed." << NEWLINE;
+                ss << "Error: " << (refusal.empty() ? std::string("personality switch request failed.") : refusal) << NEWLINE;
         }
     }
     else if (sub == "dump_module")

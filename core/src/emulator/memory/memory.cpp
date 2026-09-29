@@ -207,43 +207,43 @@ MemoryInterface* Memory::GetDebugMemoryInterface()
     return result;
 }
 
-/// Overlay read: the normal access first, so model overrides (ScorpionMemory's
-/// ProfROM strobes, virtual), the access tracker, TTD coverage and probes and
-/// read breakpoints behave exactly as without an overlay; then the overlay
-/// decides what the CPU gets for an address in its window
-template <bool Debug>
+/// Overlay read: the inner access first (Fast / Debug, contended or not), so
+/// the video logic's wait, model overrides (ScorpionMemory's ProfROM strobes,
+/// virtual), the access tracker, TTD coverage and probes and read breakpoints
+/// behave exactly as without an overlay; then the overlay decides what the CPU
+/// gets for an address in its window
+template <MemoryReadCallback Inner>
 uint8_t Memory::MemoryReadOverlay(uint16_t addr, bool isExecution)
 {
-    uint8_t normal;
-    if constexpr (Debug)
-        normal = MemoryReadDebug(addr, isExecution);
-    else
-        normal = MemoryReadFast(addr, isExecution);
+    const uint8_t normal = (this->*Inner)(addr, isExecution);
     HostBusOverlay* overlay = _busOverlay;
     if (addr < overlay->windowStart || addr >= overlay->windowEnd)
         return normal;
     return overlay->onRead(addr, normal, isExecution, _bank_mode[0] == BANK_ROM);
 }
 
-/// Overlay write: the normal write first (RAM, the ROM trash page, TTD dirty
-/// tracking, write breakpoints), then the overlay
-template <bool Debug>
+/// Overlay write: the inner write first (contention, RAM, the ROM trash page,
+/// TTD dirty tracking, write breakpoints), then the overlay
+template <MemoryWriteCallback Inner>
 void Memory::MemoryWriteOverlay(uint16_t addr, uint8_t value)
 {
-    if constexpr (Debug)
-        MemoryWriteDebug(addr, value);
-    else
-        MemoryWriteFast(addr, value);
+    (this->*Inner)(addr, value);
     HostBusOverlay* overlay = _busOverlay;
     if (addr >= overlay->windowStart && addr < overlay->windowEnd)
         overlay->onWrite(addr, value, _bank_mode[0] == BANK_ROM);
 }
 
-MemoryInterface* Memory::GetOverlayMemoryInterface(bool debug)
+MemoryInterface* Memory::GetOverlayMemoryInterface(bool debug, bool contended)
 {
+    if (debug && contended)
+        return new MemoryInterface(&Memory::MemoryReadOverlay<&Memory::MemoryReadContended<&Memory::MemoryReadDebug, true>>,
+                                   &Memory::MemoryWriteOverlay<&Memory::MemoryWriteContended<&Memory::MemoryWriteDebug, true>>);
+    if (contended)
+        return new MemoryInterface(&Memory::MemoryReadOverlay<&Memory::MemoryReadContended<&Memory::MemoryReadFast, false>>,
+                                   &Memory::MemoryWriteOverlay<&Memory::MemoryWriteContended<&Memory::MemoryWriteFast, false>>);
     if (debug)
-        return new MemoryInterface(&Memory::MemoryReadOverlay<true>, &Memory::MemoryWriteOverlay<true>);
-    return new MemoryInterface(&Memory::MemoryReadOverlay<false>, &Memory::MemoryWriteOverlay<false>);
+        return new MemoryInterface(&Memory::MemoryReadOverlay<&Memory::MemoryReadDebug>, &Memory::MemoryWriteOverlay<&Memory::MemoryWriteDebug>);
+    return new MemoryInterface(&Memory::MemoryReadOverlay<&Memory::MemoryReadFast>, &Memory::MemoryWriteOverlay<&Memory::MemoryWriteFast>);
 }
 
 /// Implementation memory read method
@@ -316,7 +316,8 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr, bool isExecution)
         if (_context->ttdProbe.Matches(addr, ttd::TTDAccessType::Read, result, pc, readPhysPage))
         {
             const auto& st = _context->emulatorState;
-            const uint16_t tin = _context->pCore ? _context->pCore->GetZ80()->t : 0;
+            // TTD time units (B4); 32-bit - a frame is longer than 65535 T-states
+            const uint32_t tin = _context->pCore ? st.TtdTInFrame(_context->pCore->GetZ80()->t) : 0;
             const ttd::TTDTimePoint tp{st.frame_counter, tin};
             _context->ttdProbe.RecordHit(tp, pc, result, readPhysPage,
                                           ttd::TTDAccessType::Read);
@@ -429,7 +430,8 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
             if (_context->ttdProbe.Matches(addr, ttd::TTDAccessType::Write, value, pc, physPage))
             {
                 const auto& st = _context->emulatorState;
-                const uint16_t tin = core->GetZ80()->t;
+                // TTD time units (B4); 32-bit - a frame is longer than 65535 T-states
+                const uint32_t tin = st.TtdTInFrame(core->GetZ80()->t);
                 const ttd::TTDTimePoint t{st.frame_counter, tin};
                 _context->ttdProbe.RecordHit(t, pc, value, physPage, ttd::TTDAccessType::Write);
             }
@@ -899,8 +901,9 @@ void Memory::UpdateZ80Banks()
     // flags are re-derived below from the current CF_TRDOS / p7FFD state
     state.flags &= ~(CF_DOSPORTS | CF_Z80FBUS | CF_LEAVEDOSRAM | CF_LEAVEDOSADR | CF_SETDOSROM);
 
-    if (config.mem_model == MM_ATM710 || config.mem_model == MM_ATM3 || config.mem_model == MM_PLUS3 ||
-        config.mem_model == MM_PLUS2A)
+    const bool decoderOwnsMemoryManager = config.mem_model == MM_ATM710 || config.mem_model == MM_ATM3 ||
+                                          config.mem_model == MM_PLUS3 || config.mem_model == MM_PLUS2A;
+    if (decoderOwnsMemoryManager)
     {
         // ATM models own their memory manager: the bank computation runs in the
         // port decoder (port of the original set_banks() MM_ATM710 / MM_ATM3
@@ -933,11 +936,14 @@ void Memory::UpdateZ80Banks()
         }
     }
 
-    if (config.mem_model == MM_PROFI && _context->pPortDecoder)
+    if (!decoderOwnsMemoryManager && _context->pPortDecoder)
     {
-        // Profi: ROM slot chosen above (same as the generic model); the RAM windows,
-        // WOROM and CPM (CF_DOSPORTS) are derived from #7FFD/#DFFD by the decoder
-        // (port of the UnrealSpeccy set_banks() MM_PROFI case)
+        // ROM slot chosen above; the RAM windows come from the model's latches,
+        // derived by its decoder: #7FFD on 128K/Pentagon (+#EFF7 on Pentagon
+        // 1024), #7FFD/#DFFD plus WOROM and CPM (CF_DOSPORTS) on Profi (port of
+        // the UnrealSpeccy set_banks() cases). Without it a rebuild after a
+        // restore that bypassed the port write (TTD, snapshots) left #C000 on
+        // whatever page the previous state had mapped.
         _context->pPortDecoder->UpdateModelMemoryBanks();
     }
 
@@ -1005,6 +1011,7 @@ void Memory::SetROMPage(uint16_t page, bool updatePorts)
     _bank_read[0] = romBankHostAddress;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;  // Redirect all ROM writes to special memory region
     _bank_ram_page_cache[0] = ttd::kPhysPageNone;  // Invalidate RAM cache for bank 0
+    UpdateSlotContention(0);
 
     // Set property flags (_isPage0ROM48k, _isPage0ROM128k, _isPage0ROMDOS, _isPage0ROMService)
     SetROMPageFlags();
@@ -1052,6 +1059,7 @@ void Memory::SetROMPageToBank(uint8_t bank, uint16_t page)
     // writes as writes to the RAM page that was here before and file ROM
     // accesses under it.
     _bank_ram_page_cache[bank] = ttd::kPhysPageNone;
+    UpdateSlotContention(bank);
 
     // Bank 0 ROM identity flags are consumed by the TR-DOS session logic
     if (bank == 0)
@@ -1080,6 +1088,7 @@ void Memory::SetRAMPageToBank0(uint16_t page, [[maybe_unused]] bool updatePorts)
     _bank_mode[0] = BANK_RAM;
     _bank_write[0] = _bank_read[0] = RAMPageAddress(page);
     _bank_ram_page_cache[0] = page;  // validated < MAX_RAM_PAGES above
+    UpdateSlotContention(0);
 }
 
 /// Switch to specified RAM Bank in RAM Page 1
@@ -1104,6 +1113,7 @@ void Memory::SetRAMPageToBank1(uint16_t page)
     _bank_mode[1] = BANK_RAM;
     _bank_write[1] = _bank_read[1] = RAMPageAddress(page);
     _bank_ram_page_cache[1] = page;  // validated < MAX_RAM_PAGES above
+    UpdateSlotContention(1);
 }
 
 /// Switch to specified RAM Bank in RAM Page 2
@@ -1128,6 +1138,7 @@ void Memory::SetRAMPageToBank2(uint16_t page)
     _bank_mode[2] = BANK_RAM;
     _bank_write[2] = _bank_read[2] = RAMPageAddress(page);
     _bank_ram_page_cache[2] = page;  // validated < MAX_RAM_PAGES above
+    UpdateSlotContention(2);
 }
 
 /// Switch to specified RAM Bank in RAM Page 3
@@ -1156,15 +1167,7 @@ void Memory::SetRAMPageToBank3(uint16_t page, bool updatePorts)
     _bank_write[3] = _bank_read[3] = RAMPageAddress(page);
     _bank_ram_page_cache[3] = page;  // validated < MAX_RAM_PAGES above
 
-    // Update the ULA contention cache: odd RAM pages (1/3/5/7) at 0xC000 are
-    // contended on 128K, pages 4-7 on the +2A/+3. Cached here (cold path -
-    // port 7FFD writes) so the per-memory-access IsAddressContended() check
-    // stays branch-only.
-    if (_context && _context->pUlaContention)
-    {
-        const bool plus3 = _context->config.mem_model == MM_PLUS3 || _context->config.mem_model == MM_PLUS2A;
-        _context->pUlaContention->SetBank3ContendedPage(plus3 ? page >= 4 : (page & 1) != 0);
-    }
+    UpdateSlotContention(3);
 
     if (updatePorts)
         _context->pPortDecoder->SetRAMPage(page);
@@ -1460,6 +1463,7 @@ void Memory::SetROM48k(bool updatePorts)
     _bank_read[0] = base_sos_rom;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;
     _bank_ram_page_cache[0] = ttd::kPhysPageNone;  // Invalidate RAM cache
+    UpdateSlotContention(0);
 
     // Update ROM page identification flags
     SetROMPageFlags();
@@ -1478,6 +1482,7 @@ void Memory::SetROM128k(bool updatePorts)
     _bank_read[0] = base_128_rom;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;
     _bank_ram_page_cache[0] = ttd::kPhysPageNone;  // Invalidate RAM cache
+    UpdateSlotContention(0);
 
     // Update ROM page identification flags
     SetROMPageFlags();
@@ -1507,6 +1512,7 @@ void Memory::SetROMDOS(bool updatePorts)
     _bank_read[0] = base_dos_rom;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;
     _bank_ram_page_cache[0] = ttd::kPhysPageNone;  // Invalidate RAM cache
+    UpdateSlotContention(0);
 
     // Update ROM page identification flags
     SetROMPageFlags();
@@ -1533,6 +1539,7 @@ void Memory::SetROMSystem(bool updatePorts)
     _bank_read[0] = base_sys_rom;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;
     _bank_ram_page_cache[0] = ttd::kPhysPageNone;  // Invalidate RAM cache
+    UpdateSlotContention(0);
 
     // Update ROM page identification flags
     SetROMPageFlags();
@@ -1600,6 +1607,25 @@ void Memory::LoadRAMPageData(uint8_t page, uint8_t* fromBuffer, size_t bufferSiz
 
 /// Set _isPage0ROM48k, _isPage0ROM128k, _isPage0ROMDOS, _isPage0ROMService flags accordingly
 /// for current bank mapped to Page0
+/// Contention cache of one slot (UlaContention::IsAddressContended reads it on every access): ROM is never
+/// contended, a RAM page per the machine's rule (odd pages behind the 128K ULA, pages 4-7 behind the +2A/+3
+/// gate array). Cold path: runs when a slot is mapped
+void Memory::UpdateSlotContention(uint8_t slot)
+{
+    UlaContention* ula = _context ? _context->pUlaContention : nullptr;
+    if (ula == nullptr || slot > 3)
+        return;
+
+    const bool ram = _bank_mode[slot] == BANK_RAM && _bank_ram_page_cache[slot] != ttd::kPhysPageNone;
+    ula->SetSlotContended(slot, ram && ula->IsRamPageContended(static_cast<uint16_t>(_bank_ram_page_cache[slot])));
+}
+
+void Memory::RefreshSlotContention()
+{
+    for (uint8_t slot = 0; slot < 4; slot++)
+        UpdateSlotContention(slot);
+}
+
 void Memory::SetROMPageFlags()
 {
     // User lookup array
@@ -1707,6 +1733,20 @@ uint8_t Memory::DirectReadFromZ80Memory(uint16_t address)
 /// Note: Direct access method. Not shown in any traces, memory counters are not incremented
 /// \param address - Z80 space address
 /// \param value - Single byte value to be written by address
+void Memory::ToolWriteToZ80Memory(uint16_t address, uint8_t value)
+{
+    if (_bank_mode[(address >> 14) & 0b11] == BANK_RAM)
+        DirectWriteToZ80Memory(address, value);
+    else
+        MemoryWriteFast(address, value);  // ROM: the write lands where a CPU write would
+}
+
+void Memory::MarkRamPageEdited(uint16_t page)
+{
+    if (_feature_ttd_enabled && _ttdDirtyTracker != nullptr)
+        _ttdDirtyTracker->MarkDirty(page);
+}
+
 void Memory::DirectWriteToZ80Memory(uint16_t address, uint8_t value)
 {
     // Address bits 14 and 15 contain bank number
@@ -1775,6 +1815,7 @@ void Memory::DefaultBanksFor48k()
     _bank_ram_page_cache[1] = 5;
     _bank_ram_page_cache[2] = 2;
     _bank_ram_page_cache[3] = 0;
+    RefreshSlotContention();
 }
 
 /// endregion </Helper methods>
@@ -1885,7 +1926,9 @@ void Memory::UpdateFeatureCache()
         bool debugMode = fm->isEnabled(Features::kDebugMode);
         _feature_memorytracking_enabled = debugMode && fm->isEnabled(Features::kMemoryTracking);
         _feature_breakpoints_enabled = debugMode && fm->isEnabled(Features::kBreakpoints);
-        _feature_ttd_enabled = debugMode && fm->isEnabled(Features::kTimeTravel);
+        // A TTD replay observes accesses whatever the user's debug mode: it
+        // engages the debug path for its own duration (EnterReplayMode)
+        _feature_ttd_enabled = (debugMode && fm->isEnabled(Features::kTimeTravel)) || _context->ttdReplayActive;
         _feature_hud_enabled = fm->isEnabled(Features::kHud);
 
         // Handle sharedmemory feature - can be toggled at runtime

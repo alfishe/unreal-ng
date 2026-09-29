@@ -123,6 +123,9 @@ public:
         std::vector<uint8_t> sectorCylinders;        // Optional per-sector C override (copy protection)
         std::vector<uint8_t> sectorHeads;            // Optional per-sector H override
         std::vector<uint8_t> idOnly;                 // Optional per-sector flag: 1 => ID field without data field
+        std::vector<uint16_t> sectorDataLengths;     // Optional per-sector data field length in the stream (0 = the
+                                                     // size code's 128 << (N & 3)). Holds a uPD765 N >= 4 sector as
+                                                     // dumped (EDSK stored length); the sector keeps its N
         bool indexMark = false;                      // Write C2 C2 C2 FC (MFM) / FC (FM) at the index
         uint8_t gapIndex = 80;                       // Gap 4a before the index mark (only when indexMark)
         uint8_t gapPostIndex = 50;                   // Gap 1 after the index mark (only when indexMark)
@@ -196,6 +199,13 @@ public:
 
         bool isIdOnly(size_t i) const { return i < idOnly.size() && idOnly[i] != 0; }
 
+        /// Bytes of sector i's data field in the stream
+        size_t dataLengthFor(size_t i) const
+        {
+            if (i < sectorDataLengths.size() && sectorDataLengths[i] != 0) return sectorDataLengths[i];
+            return 128u << (sizeCodeFor(i) & 0x03);
+        }
+
         /// Number of stream bytes one sector occupies with this spec
         size_t bytesPerSector(size_t i) const
         {
@@ -203,7 +213,7 @@ public:
             size_t bytes = gapPreID + syncLength + marks + 7;           // ID field
             if (!isIdOnly(i))
             {
-                bytes += gapPostID + syncLength + marks + 1 + (128u << (sizeCodeFor(i) & 0x03)) + 2;
+                bytes += gapPostID + syncLength + marks + 1 + dataLengthFor(i) + 2;
             }
             bytes += gapPostData;
             return bytes;
@@ -845,7 +855,7 @@ public:
                     fill(spec.gapPostID, spec.gapFill);
                     putSyncAndMarks(spec.dataMark);
                     const size_t damStart = pos - 1;
-                    fill(128u << (sizeCode & 0x03), spec.dataFill);
+                    fill(spec.dataLengthFor(i), spec.dataFill);
                     putCRC(damStart);
                 }
 
@@ -985,6 +995,7 @@ protected:
     bool _dirty = false;  // Change tracking - set when any track is modified
     std::vector<Track> _tracks;
     std::string _filePath;  // Source file path (set during load, used for tracking)
+    bool _fortyTrack = false;  // 48 tpi medium (see isFortyTrack)
 
     uint8_t _cylinders;
     uint8_t _sides;
@@ -1011,6 +1022,85 @@ public:
         return false;
     }
 
+    /// How many tracks hold unsaved changes
+    size_t dirtyTrackCount() const
+    {
+        size_t count = 0;
+        for (const Track& track : _tracks)
+        {
+            if (track.isDirty()) count++;
+        }
+        return count;
+    }
+
+    /// Every dirty flag of the image, to put back after a write that is not a
+    /// save (an export copies the disk; the format writers mark it clean)
+    struct DirtyState
+    {
+        bool image = false;
+        std::string filePath;
+        std::vector<std::pair<bool, bool>> tracks;  ///< (sector level, raw track level)
+        std::vector<std::vector<bool>> sectors;     ///< per track, per sector
+    };
+
+    DirtyState captureDirtyState() const
+    {
+        DirtyState state;
+        state.image = _dirty;
+        state.filePath = _filePath;
+        for (const Track& track : _tracks)
+        {
+            state.tracks.emplace_back(track._dirty, track._rawTrackDirty);
+            std::vector<bool> sectors;
+            for (const Sector& sector : track._sectors)
+                sectors.push_back(sector.dirty);
+            state.sectors.push_back(std::move(sectors));
+        }
+        return state;
+    }
+
+    void restoreDirtyState(const DirtyState& state)
+    {
+        _dirty = state.image;
+        _filePath = state.filePath;
+        for (size_t i = 0; i < _tracks.size() && i < state.tracks.size(); i++)
+        {
+            _tracks[i]._dirty = state.tracks[i].first;
+            _tracks[i]._rawTrackDirty = state.tracks[i].second;
+            for (size_t s = 0; s < _tracks[i]._sectors.size() && s < state.sectors[i].size(); s++)
+                _tracks[i]._sectors[s].dirty = state.sectors[i][s];
+        }
+    }
+
+    /// What is unsaved, in the units people think in: tracks with changes,
+    /// the sectors written on them, and the tracks rewritten whole (WRITE
+    /// TRACK / FORMAT, where sector counts mean nothing)
+    struct DirtySummary
+    {
+        size_t tracks = 0;
+        size_t sectors = 0;
+        size_t wholeTracks = 0;
+    };
+
+    DirtySummary dirtySummary() const
+    {
+        DirtySummary summary;
+        for (const Track& track : _tracks)
+        {
+            if (!track._dirty && !track._rawTrackDirty)
+                continue;
+            summary.tracks++;
+            if (track._rawTrackDirty)
+            {
+                summary.wholeTracks++;
+                continue;
+            }
+            for (const Sector& sector : track._sectors)
+                summary.sectors += sector.dirty ? 1 : 0;
+        }
+        return summary;
+    }
+
     /// Clear dirty flags for disk and all tracks (called after save)
     void markClean()
     {
@@ -1025,6 +1115,14 @@ public:
     /// region <Properties>
 public:
     const std::string& getFilePath() const { return _filePath; }
+
+    /// A 40-track (48 tpi) medium: its tracks are twice as far apart as an
+    /// 80-track drive's head positions. Image formats do not record the
+    /// density, so the code that makes a disk from a real image sets it
+    /// (FloppyFormats: at most 42 cylinders; blank and folder-built 40-track
+    /// disks). An image made in memory without it counts as 96 tpi
+    bool isFortyTrack() const { return _fortyTrack; }
+    void setFortyTrack(bool fortyTrack) { _fortyTrack = fortyTrack; }
     void setFilePath(const std::string& path) { _filePath = path; }
     uint8_t getCylinders() { return _cylinders; }
     uint8_t getSides() { return _sides; }

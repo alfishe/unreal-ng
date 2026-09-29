@@ -1,5 +1,7 @@
 #include "loader_z80_test.h"
 
+#include <fstream>
+
 
 #include "common/filehelper.h"
 #include "common/modulelogger.h"
@@ -631,6 +633,36 @@ TEST_F(LoaderZ80_Test, saveAndLoadRoundtrip)
     EXPECT_EQ(z80->bc, orig_bc) << "BC mismatch after roundtrip";
     EXPECT_EQ(z80->de, orig_de) << "DE mismatch after roundtrip";
     EXPECT_EQ(z80->hl, orig_hl) << "HL mismatch after roundtrip";
+}
+
+/// R in a .z80: byte 11 holds bits 0-6, bit 7 of R is flags bit 0. The core keeps bit 7 in r_hi; r_low's own
+/// bit 7 is not part of R and must not reach the file
+TEST_F(LoaderZ80_Test, saveWritesRBit7OnlyThroughTheFlags)
+{
+    static std::string testSnapshotPath = TestPathHelper::GetTestDataPath("loaders/z80/newbench.z80");
+    ScopedTestFile savePath(TestPathHelper::GetUniqueTestScratchPath("test_r_bit7.z80"));
+
+    LoaderZ80CUT loader(_context, testSnapshotPath);
+    ASSERT_TRUE(loader.load());
+    Z80* z80 = _context->pCore->GetZ80();
+
+    for (uint8_t rHi : { uint8_t(0x00), uint8_t(0x80) })
+    {
+        z80->r_low = 0x85;  // counter 05h, a stale bit 7 in r_low
+        z80->r_hi = rHi;
+
+        LoaderZ80CUT saver(_context, savePath);
+        ASSERT_TRUE(saver.save());
+        std::ifstream file(savePath.path(), std::ios::binary);
+        uint8_t header[13] = {};
+        file.read(reinterpret_cast<char*>(header), sizeof header);
+        EXPECT_EQ(header[11], 0x05) << "byte 11: bits 0-6 only (r_hi " << int(rHi) << ")";
+        EXPECT_EQ(header[12] & 0x01, rHi >> 7) << "flags bit 0 = R bit 7";
+
+        LoaderZ80CUT reloader(_context, savePath);
+        ASSERT_TRUE(reloader.load());
+        EXPECT_EQ((z80->r_low & 0x7F) | (z80->r_hi & 0x80), 0x05 | rHi) << "R after the round trip";
+    }
 }
 
 TEST_F(LoaderZ80_Test, savedFileIsValidZ80)

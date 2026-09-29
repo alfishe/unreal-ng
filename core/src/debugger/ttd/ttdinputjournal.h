@@ -12,17 +12,19 @@
 ///    the TTD engine injects matrix changes at the recorded points instead
 ///    of live input (live input is suppressed during replay)."
 ///
-/// This file owns the journal data structure. It does NOT own:
-///   - The capture call sites (those live in DebugKeyboardManager and call
-///     Record() via the TimeTravelManager facade).
-///   - The replay-time injection coordination (that lives in the seek engine,
-///     Item 4 — see InjectDueEvents / PeekNextEventTimeOnOrAfter).
+/// This file owns the journal data structure only. It does NOT own:
+///   - The capture call sites (live input reaches the journal through
+///     TimeTravelManager::SubmitLiveInput / ApplyLiveInput).
+///   - Applying an event to a device (ttdinputapply.h: ApplyInputEvent, shared
+///     by live input and playback).
+///   - Playback timing (TimeTravelManager::ServiceInput walks a cursor through
+///     Events(), positioned with FirstIndexAtOrAfter).
 ///
 /// Record format: TTDInputEvent is 17 bytes on 64-bit (8 + 4 + 1 + padding).
 /// At ~10 keys/sec sustained typing, a 5-minute session is ~3 000 events =
 /// ~50 KB. Negligible vs. the page store budget.
 ///
-/// Thread model: Record() and Apply() run on the thread executing the machine
+/// Thread model: Record() and ApplyInputEvent() run on the thread executing the machine
 /// (the emulator loop, or the caller of a synchronous Emulator::Run*). Live
 /// input from other threads (MessageCenter host keys/mouse, automation) is
 /// queued by TimeTravelManager::SubmitLiveInput and applied + journaled there
@@ -36,11 +38,6 @@
 #include <vector>
 
 #include "ttdcheckpoint.h"  // TTDTimePoint
-
-// Forward declarations — full device types pulled in by the .cpp only.
-class Keyboard;
-class Mouse;
-class GeneralSoundCard;
 
 namespace ttd {
 
@@ -66,7 +63,8 @@ namespace ttd {
 /// trivially correct with a single stream.
 ///
 /// Adding an input device (e.g. a Kempston joystick fed from host controllers):
-/// add a kind here and its case in TTDInputJournal::Apply, and route every live
+/// add a kind here and its case in ApplyInputEvent (ttdinputapply.h; a new device
+/// is a field in TTDInputDevices), and route every live
 /// source through TimeTravelManager::SubmitLiveInput - never mutate the device
 /// directly. That one path gives it replay ownership (live input refused while
 /// the journal drives the machine), marshalling onto the machine's thread and an
@@ -136,8 +134,8 @@ public:
     // Replay path (control thread; emulator paused between RunTStates batches)
     // -----------------------------------------------------------------------
 
-    /// @brief Read-only access to the full event list. Used by tests and by
-    /// the future seek engine when it needs to iterate manually.
+    /// @brief Read-only access to the full event list (the playback cursor in
+    /// TimeTravelManager::ServiceInput walks it; tests read it too).
     inline const std::vector<TTDInputEvent>& Events() const { return _events; }
 
     /// @brief Number of events currently in the journal.
@@ -156,31 +154,6 @@ public:
     /// defensive return type would be std::optional<TTDTimePoint>; we keep
     /// the plain struct for now to match the rest of the TTD API.)
     TTDTimePoint PeekNextEventTimeOnOrAfter(const TTDTimePoint& from) const;
-
-    /// @brief Inject every event with time == `now` into the live keyboard.
-    ///
-    /// "Equal to now" (not "<=") is the precise replay semantics: each
-    /// event is injected exactly once, at the moment the emulated clock
-    /// reaches its recorded TTDTimePoint. The seek engine calls this after
-    /// every RunTStates step that crosses an event boundary, passing the
-    /// exact TTDTimePoint of the step's end.
-    ///
-    /// Returns the number of events injected (for diagnostics).
-    ///
-    /// Defined out-of-line in the .cpp so the Keyboard type stays forward-
-    /// declared in this header.
-    size_t InjectDueEvents(Keyboard& keyboard, const TTDTimePoint& now);
-
-    /// @brief Inject every event with time == `now` into the live input devices.
-    /// A null device skips the events of its kind (they are not counted).
-    size_t InjectDueEvents(Keyboard* keyboard, Mouse* mouse, const TTDTimePoint& now,
-                           GeneralSoundCard* generalSound = nullptr);
-
-    /// @brief Apply one event to the input devices (the single mutation path
-    /// shared by replay and live input). Returns false when the event's device
-    /// is absent.
-    static bool Apply(const TTDInputEvent& ev, Keyboard* keyboard, Mouse* mouse,
-                      GeneralSoundCard* generalSound = nullptr);
 
     /// @brief Index of the first event with time >= `t` (Size() when none) -
     /// the replay cursor for a machine positioned at `t`.

@@ -20,7 +20,10 @@ namespace
 /// Short agent-facing briefing returned by initialize
 const char* const kServerInstructions =
     "Unreal-NG ZX Spectrum emulator control surface. Core tools: emulator_manage, load_software, "
-    "control_execution, inspect_state, type_input, mouse_input. Router tools: search_api / invoke_api expose the "
+    "control_execution, inspect_state, type_input, mouse_input. Time-travel debugging: time_travel (start recording, "
+    "run, stop, then find_last / reverse_continue / seek / step backward; inspect_state aspect 'ttd' shows the "
+    "session). While recording, speed is held at 1x and turbo / fast loaders are off; loading media wipes the "
+    "history. Router tools: search_api / invoke_api expose the "
     "full WebAPI (see openapi.json). Resolve the machine with target:\"auto\" unless several "
     "instances run. Resources: unreal://keyboard-layout, unreal://basic-reference, unreal://z80-isa, "
     "unreal://trdos-commands, unreal://memory-map, unreal://emulator-state.";

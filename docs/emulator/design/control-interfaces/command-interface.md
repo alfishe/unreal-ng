@@ -726,6 +726,7 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | TurboSound FM overview | `state audio fm` | `GET /state/audio/fm` | `audio_fm_state()` | `audio_fm_state()` | `audio_fm` (overview + both chips) |
 | TurboSound FM chip N (0/1) | `state audio fm N` | `GET /state/audio/fm/N` | `audio_fm_state(N)` | `audio_fm_state(N)` | `audio_fm` |
 | Beta Disk WD1793 | `state fdc` | `GET /state/fdc` | `fdc_state()` | `fdc_state()` | `fdc` |
+| Memory contention | `state contention` | `GET /state/contention` | `contention_state()` | `contention_state()` | `contention` |
 | Static port map & routing | `ports` | `GET /ports` | `ports_map()` | `ports_map()` | `ports` |
 | Paging latches + bank table | `paging` | `GET /state/paging` | `paging_state()` | `paging_state()` | `paging` |
 
@@ -769,12 +770,25 @@ index / drq, track0 / lost_data, crc_error, record_not_found, head_loaded
 `drives[4]` (present, inserted, path, track, side, motor_on,
 write_protected, `image` cylinders/sides).
 
+**Memory contention report** (where the CPU waits for the video logic):
+`rule` (`none`, `ula48`, `ula128`, `gatearray`), `applicable` (the machine
+has a rule), `switch` (the `contention` feature, `on` / `off`), `effective`
+(both), `memory_interface` (`fast`, `debug`, `fast_contended`,
+`debug_contended`), `io_rule` (`none` on the +2A / +3 and on machines
+without contention), `slots[4]` (`range`, `mapping`, `contended` - the same
+flag every memory map reports), `floating_bus_latch` on the +2A / +3, and
+`statistics` while debug mode is on: `current_frame`, `last_frame` and
+`total`, each with `fetch` / `read` / `write` / `io` (`accesses`,
+`wait_t`) and their sums. Without debug mode `statistics` is a string
+saying so - the fast interfaces count nothing.
+
 Examples:
 
 ```
 # CLI
 state audio fm 1
 state fdc
+state contention
 
 # WebAPI
 GET /api/v1/emulator/{id}/state/audio/fm/1
@@ -971,8 +985,8 @@ Commands to view and control emulator runtime features for the selected emulator
 
 | Command | Aliases | Arguments | Description | Implementation Status |
 | :--- | :--- | :--- | :--- | :--- |
-| `feature` | `feature list` | | Display all available features with their current state (on/off). Shows feature name, state, mode, and description in table format. | ✅ Implemented |
-| `feature <name> on` | | `<feature-name> on` | Enable a specific feature by name. Available features:<br/>• `calltrace` - collect call trace information for debugging<br/>• `breakpoints` - enable breakpoint handling<br/>• `memorytracking` - collect memory access counters and statistics<br/>• `debugmode` - master debug mode (enables/disables all debug features)<br/>Changes take effect immediately. | ✅ Implemented |
+| `feature` | `feature list` | | Display all available features with the state in effect (on/off). Shows feature name, state, mode, and description in table format. A feature that time-travel debugging holds off shows as `off`. | ✅ Implemented |
+| `feature <name> on` | | `<feature-name> on` | Enable a specific feature by name or alias (every feature is listed under **Available Features** below). Changes take effect immediately. A feature that time-travel debugging holds off (see below) is refused with `cannot enable ... while TTD recording is active or history is being replayed`. | ✅ Implemented |
 | `feature <name> off` | | `<feature-name> off` | Disable a specific feature. Useful for improving performance when feature is not needed. | ✅ Implemented |
 | `feature reset` | | | Reset all features to their default state (typically all off). Useful for returning to standard configuration after debugging. | 🔮 Planned |
 
@@ -990,18 +1004,39 @@ Commands to view and control emulator runtime features for the selected emulator
 
 **Available Features**:
 
-| Feature Name | Default State | Purpose | Performance Impact |
-| :--- | :--- | :--- | :--- |
-| `calltrace` | OFF | Collect call trace information (CALL/RET/RST tracking). Records function calls, return addresses, and call depth for debugging. Maintains circular buffer of recent calls. | Medium (~10-15% CPU overhead) |
-| `breakpoints` | OFF | Enable breakpoint handling. When enabled, the emulator checks for breakpoint hits on every instruction. Required for execution breakpoints, watchpoints, and port breakpoints to work. | Low (~2-5% CPU overhead with <100 breakpoints) |
-| `memorytracking` | OFF | Collect memory access counters and statistics. Records read/write/execute counts per address, identifies hotspots, and tracks access patterns. Required for `memcounters` command. | High (~40-50% CPU overhead, significant memory usage) |
-| `debugmode` | OFF | Master debug mode switch. When enabled, activates all debug features (calltrace, breakpoints, memorytracking). When disabled, deactivates all debug features for maximum performance. Convenient toggle for entering/exiting debug sessions. | High (sum of all enabled debug features) |
-| `sound` | ON | Enable/disable all sound generation. When disabled, skips all audio processing including AY chip emulation and beeper. Essential for headless mode, videowall, and turbo mode where audio is not needed. | Medium (~18% CPU savings when OFF) |
-| `soundhq` | ON | High-quality DSP mode. When enabled, uses 192-tap FIR filters and 8x oversampling for audiophile-grade sound. When disabled, uses direct chip output for faster but lower quality audio. Only affects AY chip output. | Low-Medium (~15% CPU savings when OFF) |
-| `screenhq` | ON | High-quality video mode. When enabled, uses per-t-state rendering for cycle-accurate "racing the beam" multicolor effects in demos. When disabled, uses batch 8-pixel rendering (25x faster) but breaks demo multicolor effects. | Very High (~25x faster screen rendering when OFF) |
-| `recording` | OFF | Enable recording subsystem (video, audio, GIF capture). When enabled, the RecordingManager is active and ready for recording commands. When disabled, all recording API calls early-exit with zero overhead. Heavy functionality - enable explicitly when needed. | Varies (zero when OFF, depends on codec when recording) |
-| `sharedmemory` | OFF | Export emulator memory via POSIX/Windows shared memory for external tool access. Enables real-time memory inspection by debuggers, analyzers, or visualization tools. Memory content preserved during enable/disable transitions. Alias: `shm`. | Low (startup overhead when enabled, minimal runtime impact) |
-| `opcodeprofiler` | OFF | Track Z80 opcode execution statistics and sequential trace. Records execution counts for all 1792 opcode variants (non-prefixed + CB/DD/ED/FD/DDCB/FDCB prefixes) and maintains a 10,000-entry ring buffer of recent executed instructions with PC, flags, and A register for crash forensics. Required for `profiler opcode` commands. | Medium (~12-18% CPU overhead, ~174KB memory) |
+| Feature Name | Alias | Default State | Purpose | Performance Impact |
+| :--- | :--- | :--- | :--- | :--- |
+| `calltrace` | `ct` | OFF | Collect call trace information (CALL/RET/RST tracking). Records function calls, return addresses, and call depth for debugging. Maintains circular buffer of recent calls. | Medium (~10-15% CPU overhead) |
+| `breakpoints` | `bp` | OFF | Enable breakpoint handling. When enabled, the emulator checks for breakpoint hits on every instruction. Required for execution breakpoints, watchpoints, and port breakpoints to work. | Low (~2-5% CPU overhead with <100 breakpoints) |
+| `memorytracking` | `memtrack` | OFF | Collect memory access counters and statistics. Records read/write/execute counts per address, identifies hotspots, and tracks access patterns. Required for `memcounters` command. | High (~40-50% CPU overhead, significant memory usage) |
+| `debugmode` | `dbg` | OFF | Master debug mode switch. When enabled, activates all debug features (calltrace, breakpoints, memorytracking). When disabled, deactivates all debug features for maximum performance. Convenient toggle for entering/exiting debug sessions. | High (sum of all enabled debug features) |
+| `sound` | `snd` | ON | Enable/disable all sound generation. When disabled, skips all audio processing including AY chip emulation and beeper. Essential for headless mode, videowall, and turbo mode where audio is not needed. | Medium (~18% CPU savings when OFF) |
+| `soundhq` | `hq` | ON | High-quality DSP mode. When enabled, uses 192-tap FIR filters and 8x oversampling for audiophile-grade sound. When disabled, uses direct chip output for faster but lower quality audio. Only affects AY chip output. | Low-Medium (~15% CPU savings when OFF) |
+| `screenhq` | `vhq` | ON | High-quality video mode. When enabled, uses per-t-state rendering for cycle-accurate "racing the beam" multicolor effects in demos. When disabled, uses batch 8-pixel rendering (25x faster) but breaks demo multicolor effects. | Very High (~25x faster screen rendering when OFF) |
+| `recording` | `rec` | OFF | Enable recording subsystem (video, audio, GIF capture). When enabled, the RecordingManager is active and ready for recording commands. When disabled, all recording API calls early-exit with zero overhead. Heavy functionality - enable explicitly when needed. | Varies (zero when OFF, depends on codec when recording) |
+| `sharedmemory` | `shm` | OFF | Export emulator memory via POSIX/Windows shared memory for external tool access. Enables real-time memory inspection by debuggers, analyzers, or visualization tools. Memory content preserved during enable/disable transitions. | Low (startup overhead when enabled, minimal runtime impact) |
+| `opcodeprofiler` | `op` | OFF | Track Z80 opcode execution statistics and sequential trace. Records execution counts for all 1792 opcode variants (non-prefixed + CB/DD/ED/FD/DDCB/FDCB prefixes) and maintains a 10,000-entry ring buffer of recent executed instructions with PC, flags, and A register for crash forensics. Required for `profiler opcode` commands. | Medium (~12-18% CPU overhead, ~174KB memory) |
+| `timetravel` | `ttd` | OFF | Record execution history for rewind and reverse debugging (time-travel debug, see the `ttd` commands). | Varies (depends on the recording mode, write journal on or off) |
+| `overscan` | `osc` | OFF | Pentagon overscan mode (384x304): shows the border areas a normal picture hides. Pentagon only; for demo development. | Low (a larger picture to render) |
+| `porttrace` | `pt` | OFF | Port I/O trace: a ring buffer of IN/OUT events for diagnosing peripherals. | Low while on (one ring-buffer entry per IN/OUT) |
+| `fasttape` | `ftape` | ON | Fast tape loading: standard ROM tape loads finish at once through the ROM LD-BYTES trap. Custom loaders fall back to playing the tape signal. Same switch as `setting fast_tape`. | None (saves loading time) |
+| `turbotape` | `ttape` | ON | Turbo tape loading: runs the emulator at warp speed while the tape signal plays, so blocks the trap cannot serve (headerless, custom timing, pulse streams) still load fast. Ends with the read-gap watchdog, the end of the tape, or any stop. Same switch as `setting turbo_tape`. | None (saves loading time) |
+| `fastdisk` | `fdisk` | ON | Fast disk loading: shortens floppy controller timing and traps the TR-DOS ROM read loops, so disk operations finish almost at once. Same switch as `setting fast_disk`. | None (saves loading time) |
+| `turbomode` | `turbo` | OFF | Turbo mode: run the whole emulation as fast as the host allows. Audio is muted unless `setting turbo_audio on`. Same switch as `setting speed unlimited`. | Runs the host as fast as it can while on |
+| `hud` | `hud` | OFF | On-screen HUD: indicators and messages drawn over the emulator picture. | None when off |
+| `kempstonmouse` | `kmouse` | ON | Kempston Mouse on the bus, when the machine config fits one (`[INPUT] Mouse=KEMPSTON`). Off: the mouse ports are not decoded. | None |
+| `gs_lightweight` | `gslw` | OFF | General Sound lightweight personality: fit the built-in ProTracker player card, which needs no coprocessor firmware. Off keeps the personality from `[SOUND] GSType`. | None (a choice of card, not a cost) |
+| `contention` | `cont` | ON | Video memory contention on the machines that have it (48K / 128K / +2 ULA, +2A / +3 gate array): the CPU waits for the screen fetches, opcode fetches included. OFF runs those machines uncontended for comparison; no effect on machines without contention. `state contention` shows the rule, the switch and where the CPU waits. | None on machines without contention |
+
+**Features held off by time-travel debugging (TTD).** A recording must show the code running at real speed and replay must run the same code paths, so TTD holds some features off:
+
+| Feature | Held off while |
+| :--- | :--- |
+| `turbomode` | a recording is active |
+| `contention` | cannot change either way while the machine is bound to a TTD timeline (recording, replay, positioned in history): the timeline replays only with the timing it was recorded with |
+| `fasttape`, `turbotape`, `fastdisk` | a recording is active, a stopped or loaded session is being replayed (seek, step), or the machine sits in history (`detached`) |
+
+While a feature is held off, `feature` (and the WebAPI features endpoint, and Lua/Python `feature_list`) shows it as `off`: the list always shows the state in effect, not the stored choice. Switching a held feature on is refused: the CLI prints `Error: cannot enable 'turbomode' while TTD recording is active or history is being replayed.` and the WebAPI answers HTTP 409. The stored choice comes back when the session returns to `idle`. See "Acceleration lock" in the TTD section below.
 
 **Feature Dependencies**:
 
@@ -2312,9 +2347,10 @@ Commands to configure emulator instance behavior and performance characteristics
 | `setting fast_tape <on\|off>` | | `on` or `off` | Enable/disable fast tape loading. When enabled, tape operations execute at maximum speed without audio emulation, significantly reducing loading times. | ✅ Implemented |
 | `setting turbo_tape <on\|off>` | | `on` or `off` | Enable/disable turbo tape loading (feature `turbotape`). While a tape signal plays out, the emulator runs at warp speed — custom loaders included. Composes with `fast_tape`: trapped blocks load instantly, the remaining signal path runs at warp. | ✅ Implemented |
 | `setting audio_rate <value>` | | `<rate>` or `auto` | Pin the core audio sample rate for this run — one of `44100`, `48000`, `88200`, `96000`, `176400`, `192000`, or `auto` to follow the resolution chain (connected device rate > `[SOUND] CoreRate` > 44100). Runtime only, never persisted to the ini. Applied at the next frame boundary; deferred while a recording is in progress. | ✅ Implemented |
-| `setting fast_disk <on\|off>` | | `on` or `off` | Enable/disable fast disk loading. When enabled, FDD operations bypass timing delays for near-instant disk access. | 🔮 Planned |
+| `setting fast_disk <on\|off>` | | `on` or `off` | Enable/disable fast disk loading (feature `fastdisk`, on by default). When enabled, floppy controller timing is shortened and the TR-DOS ROM read loops are trapped, so disk access is almost instant. Refused while TTD holds it off (recording, replaying history, or sitting in history). | ✅ Implemented |
 | `setting turbo_fdc <on\|off>` | | `on` or `off` | Enable/disable turbo FDC mode. Accelerates WD1793 FDC operations for faster disk I/O. | 🔮 Planned |
-| `setting max_cpu_speed <value>` | | `<multiplier>` or `unlimited` | Set maximum CPU speed multiplier. Values: `1` (3.5MHz), `2` (7MHz), `4` (14MHz), `8` (28MHz), `16` (56MHz), or `unlimited`. Affects execution speed for loading and intensive operations. | 🔮 Planned |
+| `setting speed <value>` | `setting max_cpu_speed` | `1`, `2`, `4`, `8`, `16` or `unlimited` (also `max`) | Host speed multiplier: the emulated machine runs N times faster than real time (`1` = normal speed; on a 3.5 MHz machine `2` behaves like 7 MHz, `16` like 56 MHz). Applied at the next frame. A number also switches turbo mode off; `unlimited` switches turbo mode on (feature `turbomode`: run as fast as the host allows). While TTD records only `1` is accepted: other numbers print `Error: Cannot set speed Nx while TTD recording is active (only 1x)`, and `unlimited` is refused too. Changing the speed on a stopped or loaded TTD session drops that session's history (frame timing is part of the recording); re-selecting the current speed changes nothing. | ✅ Implemented |
+| `setting turbo_audio <on\|off>` | | `on` or `off` | Keep generating audio (at a raised pitch) while turbo mode runs. Off (the default) mutes audio in turbo mode. Applied at once if turbo is running. | ✅ Implemented |
 | `setting cpu_frequency <value>` | | `<MHz>` | Set exact CPU frequency in MHz. Alternative to multiplier setting. Valid range: 3.5 - 112.0 MHz. | 🔮 Planned |
 | `setting reset` | | | Reset all settings to default values | 🔮 Planned |
 
@@ -2325,11 +2361,13 @@ Commands to configure emulator instance behavior and performance characteristics
 1. **I/O Acceleration Settings**:
    - `fast_tape`: Bypasses audio emulation and timing for tape operations (feature `fasttape`)
    - `turbo_tape`: Warps emulation speed while a tape signal path plays out, custom loaders included (feature `turbotape`)
-   - `fast_disk`: Accelerates FDD seek times and data transfer
+   - `fast_disk`: Shortens floppy controller timing and traps the TR-DOS ROM read loops (feature `fastdisk`)
    - `turbo_fdc`: Removes WD1793 command delays
 
 2. **CPU Performance Settings**:
-   - `max_cpu_speed`: Controls CPU clock multiplier (relative to 3.5MHz base)
+   - `speed` (alias `max_cpu_speed`): host speed multiplier 1, 2, 4, 8, 16, or `unlimited` (turbo mode)
+   - `turbo_audio`: keep audio on in turbo mode
+   - Only 1x while TTD records; see "Acceleration lock" in the TTD section
    - `cpu_frequency`: Direct frequency control in MHz
    - Affects: instruction timing, video frame timing, audio sample rate
 
@@ -2349,9 +2387,10 @@ Commands to configure emulator instance behavior and performance characteristics
 | :--- | :--- | :--- | :--- | :--- |
 | `fast_tape` | Boolean | `on` | `on`, `off` | Fast tape loading mode (backed by the `fasttape` runtime feature) |
 | `turbo_tape` | Boolean | `on` | `on`, `off` | Turbo tape loading mode (backed by the `turbotape` runtime feature) |
-| `fast_disk` | Boolean | `off` | `on`, `off` | Fast disk access mode |
+| `fast_disk` | Boolean | `on` | `on`, `off` | Fast disk loading (backed by the `fastdisk` runtime feature) |
 | `turbo_fdc` | Boolean | `off` | `on`, `off` | Turbo FDC operations |
-| `max_cpu_speed` | Integer/String | `1` | `1`, `2`, `4`, `8`, `16`, `unlimited` | CPU speed multiplier |
+| `speed` (alias `max_cpu_speed`) | Integer/String | `1` | `1`, `2`, `4`, `8`, `16`, `unlimited` | Host speed multiplier; `unlimited` = turbo mode (feature `turbomode`) |
+| `turbo_audio` | Boolean | `off` | `on`, `off` | Audio stays on in turbo mode |
 | `cpu_frequency` | Float | `3.5` | `3.5` - `112.0` | CPU frequency in MHz |
 | `audio_rate` | Integer/String | `auto` | `44100`, `48000`, `88200`, `96000`, `176400`, `192000`, `auto` | Core audio rate pin (runtime only; `auto` follows device > `[SOUND] CoreRate` > 44100) |
 | `timing_model` | String | `accurate` | `accurate`, `fast`, `compatible` | Timing emulation model |
@@ -2369,13 +2408,13 @@ Commands to configure emulator instance behavior and performance characteristics
 
 2. **Turbo Mode**: Maximum speed for automated testing
    ```
-   setting max_cpu_speed unlimited
-   setting turbo_fdc on
+   setting speed unlimited
+   setting turbo_audio off
    ```
 
 3. **Accurate Emulation**: Precise timing for demos/games
    ```
-   setting max_cpu_speed 1
+   setting speed 1
    setting fast_tape off
    setting fast_disk off
    ```
@@ -2417,38 +2456,39 @@ Commands to configure emulator instance behavior and performance characteristics
 
 ### 8. Time-Travel Debugging (TTD)
 
-Record a per-frame checkpoint timeline of the running emulator, then seek backwards to any captured point and replay forward with full determinism. The same surface is also exposed to GDB/LLDB clients via reverse-execution packets (`bc`/`bs`) once the GDB transport lands (see [gdb-protocol.md](./gdb-protocol.md)).
+Record a per-frame checkpoint timeline of the running emulator, then seek backwards to any captured point and replay forward with full determinism. GDB/LLDB clients reach the same engine through the reverse-execution packets (`bs` / `bc`, advertised as `ReverseStep+` / `ReverseContinue+`; see [gdb-protocol.md](./gdb-protocol.md)).
 
-**Reference design:** [time-travel-debugging-tdd.md](../debugger/time-travel-debug/time-travel-debugging-tdd.md) §10.4 — that TDD is the canonical source for command names, argument shapes, and result envelopes. This section mirrors it; if the two disagree, the TDD wins.
+**Background design:** [time-travel-debugging-tdd.md](../debugger/time-travel-debug/time-travel-debugging-tdd.md). This section describes what the CLI handlers (`core/automation/cli/src/commands/cli-processor-ttd.cpp`) actually accept and print today. The same rules apply to the WebAPI, Lua and Python surfaces, which all call the same `TimeTravelManager` methods.
 
-**Feature flag:** `timetravel` (alias `ttd`) registered in `FeatureManager`. Recording, seek, and replay require this flag ON, which auto-enables the master `debugmode` flag (TTD uses the debug memory write path for the dirty-page hook). Status queries are always available, regardless of the flag — they return `{recording: false}` when TTD is off.
+**Feature flag:** `timetravel` (alias `ttd`). You do not have to switch it on yourself: `ttd start` turns on `timetravel` (and the `debugmode` flag it needs, because TTD sees memory writes through the debug write path) when they are off. `ttd stop` turns `debugmode` back off only if `ttd start` was the one that switched it on; `timetravel` stays on. `ttd status` works at any time.
 
-**Implementation status:**
-- Sprint 0 (✅ merged): runtime feature flag, run-control claim token, machine-state hash, capture/seek primitives
-- Phase 1 (in progress): checkpoint subsystem + per-frame capture + peripheral serializers
-- Phase 2: seek engine + silent replay
-- Phase 4: full automation surface (most verbs below ship here, except `status`)
+All `ttd` subcommands act on the currently selected emulator instance. Frame numbers are absolute (the emulator's frame counter), and `tinframe` is the t-state offset inside that frame (default 0).
 
 #### Command Reference
 
 | Command | Aliases | Arguments | Description | Implementation Status |
 | :--- | :--- | :--- | :--- | :--- |
-| `ttd start` | `ttd rec` | — | Begin recording from the next frame boundary. Sets a pending flag if invoked mid-frame; the first checkpoint anchors the session at the next `OnFrameEnd`. | 🔮 Phase 1 |
-| `ttd stop` | — | — | Stop capturing new frames. Recorded history is retained until `ttd clear` or session invalidation. | 🔮 Phase 1 |
-| `ttd clear` | — | — | Drop all captured checkpoints, journals, and page-store data. The live emulator state is untouched. | 🔮 Phase 1 |
-| `ttd status` | `ttd info` | — | Report the session. Always available regardless of the `timetravel` feature flag. See "Status fields" below. | ✅ Implemented |
-| `ttd timeline` | — | `[--from N] [--to N] [--limit N]` | Return per-frame summary entries (dirty-page counts, event ticks, bookmark presence) for UI rendering. Pagination via `--from`/`--to` frame indices. | 🔮 Phase 3 (UI) |
-| `ttd seek` | — | `--frame N` *or* `--tstate T` | Seek to an absolute target point. Emulator must be paused (run-control claim enforced). Result envelope: `{ok, reached_frame, reached_tstate, halt_reason}`. | 🔮 Phase 2 |
-| `ttd step-back` | `ttd sb` | `[--unit instruction\|frame] [--count N]` | Relative backward navigation. Default unit is one instruction. | 🔮 Phase 2 |
-| `ttd step-forward` | `ttd sf` | `[--unit instruction\|frame] [--count N]` | Relative forward navigation within recorded history (does not extend the timeline). | 🔮 Phase 2 |
-| `ttd find-last` | `ttd fl` | `[--addr <A>] [--addr-from <F>] [--addr-to <T>] [--access write\|read\|execute\|io] [--value V] [--pc-from <A>] [--pc-to <A>] [--phys-page <P>] [--before-frame <F>] [--before-tin <T>]` | Reverse search: most recent access matching the query, scanning backward from current position. Supports single address (`--addr`) or address range (`--addr-from`..`--addr-to`), PC range (`--pc-from`..`--pc-to`), value, and physical page filters. `--phys-page` pins the query to one physical RAM page. Returns `{frame, tstate, pc, value, physpage}` or null if no match. | ✅ Implemented |
-| `ttd bookmark` | `ttd bm` | `<add\|remove\|list> [--at <T>] [--label <text>]` | Manage named bookmarks in the timeline. Bookmarks act as replay barriers (no silent coalescing across them). | 🔮 Phase 3 (UI) |
-| `ttd resume-from-here` | — | — | Truncate future history at the current (detached) position and resume live recording from there. Confirmation required if truncation would drop > N frames. | 🔮 Phase 2 |
-| `ttd position` | — | — | Current `TTDTimePoint` (`frame` + `tInFrame`) and the session end. | ✅ Implemented |
-| `ttd markers` | `ttd barriers` | — | List external-event markers (tape control, disk writes) that act as replay barriers. | ✅ Implemented |
-| `ttd dump` | `ttd save` | `<path>` | Serialize the session to a `.ttd` file for offline analysis with `tools/verification/ttd-analyzer`. | ✅ Implemented |
-| `ttd load` | `ttd open` | `<path>` | Load a `.ttd` session for playback. Replaces whatever session is held; afterwards the session is Idle, so use `ttd seek` to position the emulator. | ✅ Implemented |
-| `ttd coverage` | `ttd cov` | `<probe\|scan\|summary> [options]` | Query TTD coverage index. `probe` checks frame containment; `scan` lists matching frames in interval; `summary` returns activity heatmap. | ✅ Implemented |
+| `ttd status` | `ttd info` | — | Print the session: origin, model, state, frame range, checkpoint count, page store, heap, write journal, coverage index, bookmark count. See "Status fields" below. | ✅ Implemented |
+| `ttd start` | `ttd record` | `[--no-journal \| -n] [--journal \| -j]` | Start recording. Captures a baseline checkpoint, then one checkpoint per frame. `--no-journal` is "gaming mode": no write journal, smaller memory footprint, but reverse search has less to work with. Prints `Already recording (no-op)` if a recording is running. | ✅ Implemented |
+| `ttd stop` | — | — | Stop recording. History is kept and can be browsed (seek, step, find-last). Prints `Not recording (no-op)` when nothing records. | ✅ Implemented |
+| `ttd invalidate` | `ttd clear`, `ttd reset` | `[reason]` | Drop all history (checkpoints, journals, markers, bookmarks) and return to `idle`. The live machine is not touched. | ✅ Implemented |
+| `ttd seek` | `ttd goto` | `<frame> [tinframe]` *or* `--bookmark <label>` (`-b`) | Seek to a point in the timeline. Prints `Seek reached target (frame=…, tInFrame=…)`, or `Seek halted at (…)` plus the reason (external-event marker with its kind and reason, or target out of range). | ✅ Implemented |
+| `ttd step-back` | `ttd back`, `ttd sb` | — | Step back one frame, keeping the position inside the frame. | ✅ Implemented |
+| `ttd step-forward` | `ttd forward`, `ttd sf` | — | Step forward one frame inside recorded history (never extends the timeline). | ✅ Implemented |
+| `ttd step-instruction` | `ttd si-back`, `ttd si-forward` | `[back \| forward \| fwd]` | Step one instruction. `step-instruction` alone and `si-back` step back; `step-instruction forward`/`fwd` and `si-forward` step forward. | ✅ Implemented |
+| `ttd reverse-step` | `ttd rs` | `[--count N]` *or* `[--tstates T]` | Step back N instructions (default 1), or back T t-states (lands on the nearest instruction start at or before the target). If both are given, `--tstates` wins. | ✅ Implemented |
+| `ttd reverse-continue` | `ttd rc` | `--pc <A> [--pc <B> ...]` | Run backward until the PC equals any of the given addresses. Reports the hit, a blocking marker, or "no match (reached session start)", and the part of history it searched (`Searched: frame … .. frame …`). | ✅ Implemented |
+| `ttd resume` | — | `[frame] [tinframe]` | Resume recording from the current position, or from the given point. Everything recorded after that point is discarded. Needs a session that is `detached` or `recording`; from `idle` (for example straight after `ttd stop`) it fails, so seek first. | ✅ Implemented |
+| `ttd position` | `ttd pos` | — | Current position and session end, each as `(frame, tInFrame)`. | ✅ Implemented |
+| `ttd markers` | `ttd barriers` | — | List external-event markers (replay barriers): index, frame, tInFrame, kind, reason. | ✅ Implemented |
+| `ttd bookmark` | `ttd bookmarks`, `ttd bm` | `[list \| ls]`, `add <label> [frame] [tinframe]` (alias `mark`), `del <label>` (aliases `delete`, `remove`, `rm`) | Agent bookmarks: named positions, advisory only, never replay barriers. `add` without a frame marks the current position. Labels are non-empty, at most 63 characters, unique per session. | ✅ Implemented |
+| `ttd find-last` | `ttd fl` | `[--addr <A>] [--addr-from <F>] [--addr-to <T>] [--access write\|read\|execute\|io] [--value V] [--pc-from <A>] [--pc-to <A>] [--phys-page <P>] [--before-frame <F>] [--before-tin <T>]` | Reverse search: the most recent access that matches, looking back from the current position (or from `--before-frame`/`--before-tin`). Needs at least one of `--addr`, `--addr-from`, `--addr-to`, `--pc-from`, `--pc-to`, `--value`. `--access` defaults to `write`. `--phys-page` (0..255) pins the search to one physical RAM page. Numbers accept `0x` hex. Prints frame, tInFrame, PC, value, physical page (`none` for ROM / no RAM page) and access; or the blocking marker; or `No match found`; then the part of history it searched (`Searched: frame … .. frame …`). | ✅ Implemented |
+| `ttd dump` | `ttd save` | `<path>` | Write the session to a `.ttd` file (readable by `tools/verification/ttd-analyzer`). Prints the byte count. | ✅ Implemented |
+| `ttd load` | `ttd open` | `<path>` | Load a `.ttd` session for playback. Replaces whatever session is held; afterwards the session is `idle`, so use `ttd seek` to position the emulator. | ✅ Implemented |
+| `ttd coverage` | `ttd cov` | `probe --frame N` / `scan` / `summary`, plus `[--kind executed\|written\|read] [--from-frame F] [--to-frame T] [--addr-from A] [--addr-to B] [--phys-page P] [--limit L] [--bucket-size S]` | Query the coverage index. `probe`: did frame N touch the range? `scan`: which frames in the window touched it (default limit 200). `summary`: activity heatmap per bucket (default limit 100, `--bucket-size 0` = automatic). Address range defaults to the whole 64K; `--to-frame` defaults to the session end. Short forms: `-f`, `-k`, `--from`/`-a`, `--to`/`-b`, `--page`/`-p`, `-l`, `--bucket`. | ✅ Implemented |
+| `ttd help` | `ttd ?`, `ttd` alone | — | Print the subcommand list. | ✅ Implemented |
+
+There is no `ttd timeline` command and no relative-unit `step-back --unit/--count` form; use `ttd step-back` (one frame), `ttd step-instruction` (one instruction) or `ttd reverse-step --count N`.
 
 **Sessions on disk (`ttd dump` / `ttd load`).**
 
@@ -2468,35 +2508,115 @@ refuses instead, naming both model ids. Provision a matching instance first
 model-dependent subsystem starts).
 
 Loading is available on every control surface: CLI (`ttd load <path>`), WebAPI
-(`POST /api/v1/emulator/{id}/ttd/load`), Lua (`ttd_load(path)`), Python
-(`ttd_load(path)`), and the TTD Scrubber's **Load session…** button.
+(`POST /api/v1/emulator/{id}/ttd/load` with body `{"path": "..."}`), Lua (`ttd_load(path)`), Python
+(`emu.ttd_load(path)`), and the TTD Scrubber's **Load session…** button.
 
-**Halt reasons** (returned in `seek` / `step` / `find-last` result envelopes):
+**Halt reasons** (seek results; the WebAPI, Lua and Python return them as `halt_reason`):
 
 | Value | Meaning |
 | :--- | :--- |
-| `target` | Reached the requested target point exactly. |
-| `external_event` | Stopped at an external-event marker (e.g. user input journal entry) that blocks the interval — surfaced rather than silently skipped. |
-| `out_of_range` | Target is outside the recorded session bounds. |
+| `target` | Reached the requested target point. |
+| `external_event` | Stopped at an external-event marker between the restore checkpoint and the target. The marker is reported (`blocking_marker` in WebAPI/Lua/Python) rather than crossed silently. |
+| `out_of_range` | Target is outside the recorded session. Also returned when a seek is refused because the session is recording. |
 
-#### Session Lifecycle
+#### TTD Session Rules
 
-A TTD session is **invalidated** (all captured data dropped) by:
+These rules live in the core, so every surface (CLI, WebAPI/MCP, Lua, Python, GDB, Qt UI) sees the same behavior.
 
-| Trigger | Reason |
+**States.** `ttd status` reports one of three states:
+
+| State | Meaning |
 | :--- | :--- |
-| `reset` | CPU + peripherals reinitialized; historical state no longer matches live state. |
-| `load snapshot` | RAM and register contents replaced wholesale. |
-| `load tape` / `load disk` | External media mount changes observable behavior going forward. (Disk *reads* are fine; only mounts invalidate.) |
-| CPU speed multiplier change | Changes the meaning of `tInFrame`; v1 invalidates rather than re-normalizing. |
-| Debugger memory write | Live state edit breaks historical determinism. |
-| Disk sector write (TR-DOS) | Phase 1 behavior: invalidate rather than journal. Phase 2 will journal and roll back. |
-| NVRAM write | Same as disk sector write — Phase 1 invalidates; later phases journal. |
+| `idle` | Not recording. There may be retained history (after `stop`, `load`, or a reset); seek/step/find-last work on it. |
+| `recording` | Capturing one checkpoint per frame. |
+| `detached` | The machine sits at a point in history (after a seek or step) and the emulator is paused. `resume` truncates the future and records again from here. |
+
+**Time.** A position is `frame` + `tinframe`. `tinframe` counts T-states at the machine's **top** CPU clock, so it names one instant even when a hardware turbo switches in the middle of a frame:
+
+| Machine | Top clock | `tinframe` per 3.5 MHz T-state |
+| :--- | :--- | :--- |
+| 48K, 128K, +2/+2A/+3, Pentagon, Profi | 3.5 MHz (no hardware turbo) | 1 (plain T-states) |
+| Scorpion ZS-256 Turbo+, ATM Turbo 2+ | 7 MHz | 2 |
+| ZX-Evo (`ATM3`) | 14 MHz | 4 |
+
+Example: on a ZX-Evo a frame is 69888 T-states at 3.5 MHz, so `tinframe` runs 0..279551 whatever clock the program selects; a write 1000 T-states into the frame at 3.5 MHz reports `tinframe` 4000. The same unit applies to every position the TTD API returns or takes (seek, find-last, markers, bookmarks, `before_tin`, reverse-step `tstates`). A `.ttd` recorded before this rule on a turbo machine is refused on load (its positions repeat after a switch down); record it again.
+
+**Recording blocks browsing.** Seek, step, find-last, step-instruction, reverse-step and reverse-continue do not run while the session is recording — stop first. The WebAPI answers these with HTTP 409 `Conflict`; the core refuses them on every other surface too (the CLI prints the failure, Lua/Python get `reached = false` / `false` / no result).
+
+**A recording protects itself.** While a session is `recording`, anything that would drop or corrupt it is refused, and the refusal says why and what to do (stop the recording first):
+
+| Refused while recording | Why |
+| :--- | :--- |
+| Snapshot load | Replaces the whole machine state. |
+| Tape load, disk load (including disk autostart), disk create | A new medium. Insert it before starting the recording. |
+| ROM load | The recorded history relies on the current ROM. |
+| `ttd invalidate` | Stop the recording first, then discard it. |
+| Switching the `timetravel` or `debugmode` feature off | Capture (or the memory-write path it depends on) would stop mid-session and leave corrupt history. |
+| Changing the write-journal mode (`ttd_set_journal_enabled`, `SetEnableWriteJournal`) | A recording keeps the mode it started with. |
+| Switching the General Sound card type (`gs switch_personality`, the `gs_lightweight` feature) | The history holds the current card's state, which the other card type cannot take back. |
+| Host speed 2x..16x, turbo, fast tape, turbo tape, fast disk | See the acceleration lock below. |
+
+How each surface reports it:
+
+| Surface | Refusal |
+| :--- | :--- |
+| CLI | `Error: <reason>` |
+| WebAPI / MCP | HTTP **409 Conflict** with the reason in `message` (tape import/insert: `inserted: false` plus `insert_error`) |
+| Lua | The guarded functions (`snapshot_load`, `tape_load`, `disk_create`, `feature_set`, `ttd_invalidate`, `ttd_set_journal_enabled`, `gs_switch_personality`) return `false, reason`; `disk_load` returns `{success = false, message = reason}` |
+| Python | `RuntimeError(reason)` from `snapshot_load`, `tape_load`, `disk_create`, `feature_set`, `ttd_invalidate`, `ttd_set_journal_enabled`, `gs_switch_personality`; `disk_load` returns `{'success': False, 'message': reason}` |
+| GDB `monitor load` | `Error: <reason>` |
+| Qt UI | A "TTD Recording Active" dialog with the reason |
+
+Only a recording you started (`ttd start`, the TTD panel, the API) is protected. A DeZog session keeps its own rolling live history for reverse debugging; that history is not protected: loading media or a snapshot during a debug session works as before, drops that history (`last_drop_reason` says why), and DeZog starts a fresh one on the next resume or step. If DeZog connects while your recording runs, it takes that recording over as its live history.
+
+**What wipes a stopped session** (history dropped, state back to `idle`):
+
+| Trigger | Notes |
+| :--- | :--- |
+| Snapshot load | RAM and registers replaced wholesale. |
+| Tape load | New media. |
+| Disk load, disk create | New media. |
+| ROM reload | The machine's code changed under the history. |
+| General Sound card type switch | The device set changed under the history (`gs-card-switch`); a seek could not put the other card type back. |
+| Host speed multiplier change on a stopped or loaded session | Frame timing is part of the recording. Re-selecting the current speed is not a change, and a refused change (see the acceleration lock below) does not cost the session. |
+| `ttd invalidate` (or WebAPI `POST /ttd/invalidate`, Lua/Python `ttd_invalidate`) | Explicit. |
+| A device TTD cannot follow | Today this is the ZX-Evo / ATM3 Z-Controller SD card. The guest program drives it, so it cannot be refused: any SD card activity while recording ends the recording (history dropped) at the next frame boundary, and `last_drop_reason` in the status says so. |
+
+The status field `last_drop_reason` names what dropped the last history (for example `snapshot-load`, `disk-load`); it is empty (WebAPI/Python: `null`/`None`) until something drops one.
+
+**Reset keeps history.** A machine reset (and the quick reset a disk autostart does) stops a running recording and **keeps** the history, so you can still browse what led up to the reset. A machine sitting in history (`detached`) goes back to `idle` with its history.
+
+**Markers (replay barriers).** Some events cannot be reproduced by replay, so they are written as markers; a seek or reverse search will not cross one silently. List them with `ttd markers` (`GET /ttd/markers`). Kinds:
+
+| Kind | Written when |
+| :--- | :--- |
+| `tape_control` | Tape play/stop/rewind and similar transport commands. |
+| `disk_write` | The WD1793 writes a sector or a track. |
+| `debugger_edit` | A tool changed the machine behind the CPU's back **while a recording is active**: memory written through the CLI (`memory write`) or the WebAPI (memory writes and physical page writes), memory, page and assembler writes from Lua or Python, or memory, registers or paging changed through DeZog. Nothing is written when no recording runs. |
+| `hardware_reset` | Reserved kind, never written: a reset stops the recording instead (see "Reset keeps history" above). |
+| `other` | Anything else. |
+
+A seek (and a seek to a bookmark) that meets a marker stops with halt reason `external_event` and reports it (`blocking_marker`); `find-last` reports it as blocked (WebAPI, Lua and Python: `blocked: true` plus `marker_frame`, `marker_tinframe`, `marker_kind`, `marker_reason`); `reverse-continue` reports it (WebAPI, Lua and Python: `blocked_by_marker`). **Bookmarks are advisory and never barriers.**
+
+**Search window.** `find-last` and `reverse-continue` walk back from their start point and end at the match, at a marker they cannot replay across, or at the session start. Every answer names that span, so a search a marker cut short no longer looks like one that covered the whole session: WebAPI, Lua and Python return `covered_from` / `covered_from_tinframe` (where the search ended) and `covered_to` / `covered_to_tinframe` (where it started); the CLI prints `Searched: frame … .. frame …`; the MCP summary says `Searched frame … .. frame ….` Every instant in the span was searched and nothing before it. Python returns these fields only in its result dicts (a hit, or a search a marker stopped); a plain "no match" is still `None` and covered the whole session. A write/port `find-last` answered from a complete journal is not limited by markers (the journal records the writes themselves). `reverse-continue` with the coverage index also stops at a marker that sits in a frame where a breakpoint PC ran - that frame cannot be replayed, and a run there would be later than any older frame's.
+
+**Acceleration lock.** A recording must show the code running at real speed. While recording (and on through `detached`):
+
+- the host speed multiplier is forced to 1x, and 2x..16x is refused;
+- turbo mode is switched off and cannot be switched on;
+- fast tape, turbo tape and fast disk read as off and cannot be switched on.
+
+The previous settings come back when the session returns to `idle` (stop, invalidate, a reset out of `detached`, a file load). Fast tape, turbo tape and fast disk also read as off while a stopped or loaded session is replayed (seek, step) and while the machine sits in `detached`, because they change what the guest code does. The machine's own hardware turbo (ATM, Scorpion) is guest behavior and is not touched. Details: [TDD §4.2](../debugger/time-travel-debug/time-travel-debugging-tdd.md#42-recording-session).
+
+**When the write journal answers.** `find-last` for writes and port writes answers from the write journal only when the journal holds every write of the session: journaling was on from the start of the recording and never paused (not switched off, TTD and debug mode not switched off mid-recording) and the ring never overwrote a record. Otherwise it replays the history, which is slower but always right. A saved `.ttd` records this in its header, so a loaded session keeps the fast answer only when its journal was complete; files written before this rule replay. The session status says whether the journal is complete (`write_journal_complete`) and, when it is not, why and where it stopped (`write_journal_gap`); the emulator log warns when a session loses it, and the Qt TTD panel shows `Journal incomplete` (cause in the tooltip). A running recording refuses the switches that would cost it (see "A recording protects itself" above), so a gap comes from recording without the journal, a journal change on a stopped session, the machine running between a stop and a live resume, a loaded file with an incomplete journal, or a debugger's live history. Switching journaling off while no session exists frees the journal's 64 MB.
+
+**Pausing.** The WebAPI pauses the emulator (and waits for the CPU thread to park) before seek, step, find-last and reverse operations, and leaves it paused; `resume` restarts it. From the CLI, pause the emulator yourself before browsing history.
 
 #### Status fields
 
 `ttd status` answers three separate questions, and it is worth knowing which
-field answers which.
+field answers which. The field names below are the WebAPI / Lua / Python keys;
+the CLI prints the same values as labeled lines.
 
 **Where did this session come from?** A loaded recording and one captured in
 this process are otherwise indistinguishable from the counters, so this is
@@ -2522,41 +2642,37 @@ usually the first thing to check when a session is handed to you.
 | `state` | `idle` / `recording` / `detached` |
 | `session_start_frame`, `current_end_frame` | Timeline extent |
 | `checkpoint_count` | Frames captured |
-| `write_journal_enabled` | Whether writes are being journalled |
+| `write_journal_enabled` | Whether writes are being journaled |
+| `write_journal_complete` | The journal holds every write/port write of the session, so write/io `find-last` answers from it; false when journaling was off at the start or was switched (journal, debug mode, time travel) during the session |
+| `write_journal_wrapped` | The journal ring dropped its oldest records: a "no match" from it is not final and replays (a match is still exact) |
+| `write_journal_gap` | Present when the journal does not cover the session: `reason`, and `frame` / `tinframe` where it stopped (absent for a loaded file). The CLI prints `Journal coverage: complete` or `incomplete - write/port find-last replays (reason, at frame …)` |
 | `write_journal_records`, `write_journal_bytes` | Journal contents and in-memory cost. Normally the largest part of a session; the on-disk section is block-compressed and much smaller |
 | `coverage_index_frames`, `coverage_index_bytes` | Reverse-search index. **Zero frames means reverse search and reverse breakpoints fall back to replaying frames** — correct, but orders of magnitude slower |
 | `page_store_bytes`, `page_store_used_bytes`, `baseline_frames_captured` | COW page store capacity, live bytes and distinct page snapshots |
 | `session_heap_bytes` | Real total heap footprint of the session |
-
-The `ttd status` response includes an `invalidation_reason` field if the most recent invalidation was not user-initiated.
-
-#### Threading & Run-Control
-
-All run-affecting TTD commands (`seek`, `step-back`, `step-forward`, `resume-from-here`, `find-last` during replay) require the calling surface to hold the **run-control claim** on the target emulator instance (Sprint 0 mechanism; see [time-travel decisions](../../../inprogress/2026-07-19-time-travel/decisions.md)). `status`, `timeline`, and `bookmark list` are read-only and never require the claim.
-
-If another surface (e.g. GDB paused at a breakpoint) holds the claim, TTD commands return `E_RUN_CONTROL_BUSY` with the holder's surface label.
+| `bookmark_count` | Number of agent bookmarks |
+| `ttd_available` | False when the build has no TTD engine (WebAPI, Lua, Python) |
+| `last_drop_reason` | What dropped the last history (`snapshot-load`, `tape-load`, `disk-load`, `disk-create`, `rom-reload`, `speed-multiplier-change`, an `invalidate` reason, an SD-card note); empty / `null` when nothing has. The CLI prints it as `Last session dropped:` |
 
 #### Worked Examples
 
 **Diagnose a sprite corruption bug:**
 ```
-# Pause and arm the recorder
-pause
+# Start recording and reproduce the bug
 ttd start
-resume
-
-# ... reproduce the bug for ~10 seconds, then pause ...
+# ... let the program run for ~10 seconds ...
 pause
+ttd stop
 
-# Find the most recent write to the sprite attribute table
+# Find the most recent write to the attribute byte (search looks back from here)
 ttd find-last --addr 0x5B00 --access write
-# => frame=4823, tstate=14982, pc=0x4A21, value=0x07, physpage=5
+# => Frame: 4823, tInFrame: 14982, PC: 0x4A21, Value: 0x07, PhysPage: 5
 
 # Jump to that exact moment
-ttd seek --frame 4823 --tstate 14982
+ttd seek 4823 14982
 
 # Step back one instruction and inspect registers
-ttd step-back --unit instruction
+ttd step-instruction back
 disasm
 registers
 ```
@@ -2564,7 +2680,7 @@ registers
 **Frame-compare (raster-effect debugging):**
 ```
 # At a glitched frame, jump to the same beam position one frame earlier
-ttd step-back --unit frame
+ttd step-back
 # Now memory and registers show last frame's state at the same instant
 # Use memory viewer to diff against this frame's state
 ```
@@ -2575,10 +2691,10 @@ emu.ttd_start()
 emu.resume()
 time.sleep(30)  # let demo run
 emu.pause()
+emu.ttd_stop()                     # browsing needs a stopped session
 result = emu.ttd_find_last(addr=0x5800, access="write")
 assert result is not None, "No write to attribute table detected"
-emu.ttd_seek(frame=result.frame, tstate=result.tstate)
-assert emu.z80.pc == result.pc
+emu.ttd_seek(result["frame"], result["tinframe"])
 ```
 
 ---
@@ -2867,6 +2983,23 @@ key tap enter
 ### 4. Media & Tape/Disk Operations
 
 Enhanced control over peripheral media devices.
+
+**`media` — every slot (floppy drives, SD card, ...)** — the same verbs, slot names, options and
+errors as the WebAPI, MCP, Lua and Python ([docs/features/media.md](../../../features/media.md)):
+
+| Command | Description |
+| :--- | :--- |
+| `media list` | every slot and the detached media |
+| `media info <slot>` | one slot (`fdd.b`, `B`, `b:`, `sd`, `floppy:1`, `tag:a+b`) |
+| `media formats [--kind floppy]` | accepted formats |
+| `media insert <slot\|auto> <path> [--access readonly\|session\|writethrough] [--fs fat16\|fat32]` | a file or a folder |
+| `media swap <slot> <path> [--save\|--export <path>\|--discard]` | eject + insert |
+| `media eject <slot> [--save\|--export <path>\|--discard]` | a dirty medium needs a disposition |
+| `media save <slot> [path]`, `media export <slot> <path>`, `media discard <slot>` | keep or drop the writes |
+| `media rescan <slot>`, `media create <slot> [--size bytes]`, `media protect <slot> --on true\|false` | |
+| `--async`, `--json` | return at once; print the WebAPI body |
+
+The `disk` commands below keep working for drive-letter scripts.
 
 > [!NOTE]
 > All tape transport, inspection and audio-bridge commands are **implemented** — see [§10. Tape Control Commands](#10-tape-control-commands).

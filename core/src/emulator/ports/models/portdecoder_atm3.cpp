@@ -2,6 +2,10 @@
 #include "portdecoder_atm3.h"
 
 #include "common/modulelogger.h"
+#include "debugger/ttd/atm/ttdevosdcard.h"
+#include "debugger/ttd/timetravelmanager.h"
+#include "emulator/media/mediaformatregistry.h"
+#include "emulator/media/mediamanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/mouse/mouse.h"
@@ -13,10 +17,32 @@
 
 PortDecoder_ATM3::PortDecoder_ATM3(EmulatorContext* context) : PortDecoder_ATM710(context)
 {
+    _zc.SetDevice(&_sdCard);
+
+    // TTD: the card's protocol state is in the EvoSdCard blob; a guest write
+    // changes the medium, so it is a replay barrier (the media manager's rule)
+    _sdCard.setWriteListener([this](uint64_t) {
+        if (_context->pMediaManager)
+            _context->pMediaManager->NoteWrite(_sdSlot.Descriptor().id);
+    });
+
+    if (_context->pMediaManager)
+        _context->pMediaManager->RegisterSlot(_sdSlot);
 }
 
 PortDecoder_ATM3::~PortDecoder_ATM3()
 {
+    if (_context->pMediaManager)
+        _context->pMediaManager->UnregisterSlot(_sdSlot.Descriptor().id);
+
+    if (_context->pCore && _context->pCore->GetZ80() && _context->pCore->GetZ80()->machineM1Hook == this)
+        _context->pCore->GetZ80()->machineM1Hook = nullptr;
+
+    // Battery-backed state outlives the machine ([EVO] NvramFile)
+    const char* nvramPath = _context->config.atm.evo_nvram_path;
+    if (_nvramLoaded && nvramPath[0] != '\0' && !_cmos.SaveNvram(nvramPath))
+        MLOGWARNING("PortDecoder_ATM3: cannot save the ZX-Evo NVRAM to '%s'", nvramPath);
+
     MLOGDEBUG("PortDecoder_ATM3::~PortDecoder_ATM3()");
 }
 
@@ -35,9 +61,33 @@ void PortDecoder_ATM3::reset()
     _state->pBF = 0x00;
     _state->evoFddMask = 0x00;  // fdd_mask resets to "all drives real" (zports.v:521-525)
 
+    // znmi.v: reset clears pending_nmi, in_nmi, in_nmi_2 (pBE doubles as the
+    // NMI exit M1 countdown, 0 = idle)
+    _state->evoInNmi = false;
+    _state->evoNmiEntry = false;
+    _state->nmiAtIntStartPending = false;
+    _state->evoTrdemu = 0;     // zdos.v: in_trdemu resets to 0
+    _state->evoVgDrive = 0;
+    RefreshM1Hook();
+
     // ATM3 (ZX-Evo BaseConf) always has the DS12885-style RTC/CMOS
     // (original Unreal Speccy gates it on conf.cmos, but a real ZX-Evo has it)
     _cmos.SetCMOSType(Dallas);
+
+    // The battery-backed NVRAM and EEPROM come from [EVO] NvramFile once, at
+    // power-on; a Z80 reset does not touch the AVR
+    if (!_nvramLoaded)
+    {
+        _nvramLoaded = true;
+        const char* nvramPath = _context->config.atm.evo_nvram_path;
+        if (nvramPath[0] != '\0' && !_cmos.LoadNvram(nvramPath))
+            MLOGINFO("PortDecoder_ATM3: no ZX-Evo NVRAM at '%s' yet, starting blank", nvramPath);
+    }
+
+    // The card and its session writes survive a Z80 reset (the media manager
+    // inserted the configured card before the first one). The controller
+    // itself resets (spihub.v: /CS high)
+    _zc.Reset();
 }
 
 /// @brief One BaseConf decode arm per I/O cycle
@@ -66,7 +116,9 @@ PortDecoder_ATM3::PortArm PortDecoder_ATM3::ClassifyPort(uint16_t port, bool isW
         case 0x77:
             return shadow ? PortArm::Atm77 : PortArm::SdConfig;
         case 0x57:
-            return PortArm::SdData;
+            // In shadow a write with A15 = 1 is the chip select (#8057, what
+            // NedoOS uses); reads are always data (zports.v:812-818)
+            return (isWrite && shadow && (port & 0x8000)) ? PortArm::SdConfig : PortArm::SdData;
         case 0x1F:
             return shadow ? PortArm::Fdc : PortArm::Joystick;
         case 0x3F:
@@ -91,6 +143,13 @@ PortDecoder_ATM3::PortArm PortDecoder_ATM3::ClassifyPort(uint16_t port, bool isW
         case 0xFB:
             // The Covox DAC latch is write-only and not a porthit: reads stay on the ZX-Bus
             return isWrite ? PortArm::Covox : PortArm::ZxBus;
+        case 0x2F:
+        case 0x4F:
+        case 0x6F:
+        case 0x8F:
+            // Legacy FPGA: four shadow R/W bytes for the patched-DOS RAM disk
+            // (baseconf zports.v:186-189); the current tree removed them
+            return (shadow && IsLegacyFpga()) ? PortArm::LegacyFddLatch : PortArm::ZxBus;
         default:
             break;
     }
@@ -144,12 +203,17 @@ uint8_t PortDecoder_ATM3::DecodePortIn(uint16_t port, uint16_t pc)
             result = 0x00;
             break;
         case PortArm::SdData:
-            // No SD card model yet: an idle SPI line reads #FF, so the ERS and
-            // NedoOS card probes fail cleanly
-            result = 0xFF;
+            result = _zc.ReadData();
             break;
         case PortArm::Fdc:
-            result = PeripheralPortIn(static_cast<uint16_t>(port & 0x00FF));
+        {
+            const uint8_t fdcPort = static_cast<uint8_t>(port & 0x00FF);
+            // A drive emulated in software leaves the chip deselected: nothing drives the bus
+            result = TrdemuFdcAccess(fdcPort, /*isWrite*/ false, 0) ? 0xFF : PeripheralPortIn(fdcPort);
+            break;
+        }
+        case PortArm::LegacyFddLatch:
+            result = _state->wd_shadow[((port & 0x00FF) >> 5) - 1];
             break;
         case PortArm::Joystick:
             // Kempston joystick outside shadow; no joystick model is attached, so
@@ -262,7 +326,8 @@ void PortDecoder_ATM3::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
             const uint16_t fdcPort = static_cast<uint16_t>(port & 0x00FF);
             if (fdcPort == 0x00FF)
                 fdcValue &= 0b1011'1111;
-            PeripheralPortOut(fdcPort, fdcValue);
+            if (!TrdemuFdcAccess(static_cast<uint8_t>(fdcPort), /*isWrite*/ true, value))
+                PeripheralPortOut(fdcPort, fdcValue);
 
             // The #FF write also strobes the palette latch while #xx77 A14 was 0
             // (atm_palwr = vg_wrFF & atm_pen2, zports.v:911-917)
@@ -272,6 +337,9 @@ void PortDecoder_ATM3::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
         }
         case PortArm::EvoConfig:
             Port_BF_Out(port, value, pc);
+            break;
+        case PortArm::LegacyFddLatch:
+            _state->wd_shadow[((port & 0x00FF) >> 5) - 1] = value;
             break;
         case PortArm::EvoExit:
             Port_BE_Out(port, value, pc);
@@ -285,7 +353,11 @@ void PortDecoder_ATM3::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
             Port_BD_Out(port, value);
             break;
         case PortArm::SdConfig:
+            _zc.WriteConfig(value);
+            break;
         case PortArm::SdData:
+            _zc.WriteData(value);
+            break;
         case PortArm::Joystick:
         case PortArm::Mouse:
         case PortArm::ComPort:
@@ -502,10 +574,15 @@ void PortDecoder_ATM3::Port_37F7_Out(uint16_t port, uint8_t value, [[maybe_unuse
 
 void PortDecoder_ATM3::Port_BF_Out([[maybe_unused]] uint16_t port, uint8_t value, [[maybe_unused]] uint16_t pc)
 {
-    // Bit 3: 1->0 edge requests NMI (original io.cpp). NMI serving is not
-    // wired in this core yet (see Z80::ProcessInterrupts), so only pBF is
-    // latched here.
+    // Bit 3: a 1->0 edge requests a board NMI, released at the next frame INT
+    // (znmi.v set_nmi_now -> pending_nmi -> nmi_start at int_start)
+    const bool nmiEdge = (_state->pBF & 0x08) && !(value & 0x08);
     _state->pBF = value;
+    if (nmiEdge)
+        RequestBoardNmi();
+
+    // Bit 4 enables the M1 breakpoint (zbreak.v)
+    RefreshM1Hook();
 
     // Bit 0: shaden (shadow DOS ports mode) - gates the memory manager and
     // CMOS address decode in DecodePortOut/DecodePortIn.
@@ -519,10 +596,26 @@ void PortDecoder_ATM3::Port_BF_Out([[maybe_unused]] uint16_t port, uint8_t value
 void PortDecoder_ATM3::Port_BE_Out([[maybe_unused]] uint16_t port, [[maybe_unused]] uint8_t value,
                                    [[maybe_unused]] uint16_t pc)
 {
-    // NMI exit counter - every write resets it to 2 (original io.cpp)
-    _state->pBE = 2;
+    // NMI exit (znmi.v clr_nmi): the NMI page leaves #0000-#3FFF right after
+    // the refresh of the second M1 that follows this write - with the usual
+    // OUT (#BE),A : RETN that is the RETN's second opcode byte, so RETN runs
+    // from the NMI page and returns through the restored map. pBE counts those
+    // M1s down (0 = idle)
+    if (_state->evoInNmi)
+    {
+        _state->pBE = 2;
+        RefreshM1Hook();
+    }
+    else if (_state->evoTrdemu & kTrdemuIn)
+    {
+        // Virtual TR-DOS exit: immediate (zdos.v `clr_nmi && !in_nmi`), so the
+        // fetch right after this OUT already comes from the TR-DOS ROM
+        _state->evoTrdemu &= static_cast<uint8_t>(~kTrdemuIn);
+        if (_memory)
+            _memory->UpdateZ80Banks();
+    }
 
-    MLOGDEBUG("Port_BE_Out: pBE=2");
+    MLOGDEBUG("Port_BE_Out: NMI exit armed=%d", _state->pBE != 0);
 }
 
 bool PortDecoder_ATM3::IsLegacyFpga() const
@@ -622,7 +715,7 @@ void PortDecoder_ATM3::Port_7FFD_Out([[maybe_unused]] uint16_t port, uint8_t val
     // 7FFD stays writable - bits 5..7 then extend the RAM page number, so a
     // sticky latch would brick the machine after the first P1024 lock write
     // (xpeccy pentevo.c evoOut7FFD: `if ((pEFF7 & 4) && (p7FFD & 0x20)) return;`)
-    if ((_state->pEFF7 & ATM_EFF7_LOCKMEM) && (_state->p7FFD & PORT_7FFD_LOCK))
+    if (IsPagingLocked())
     {
         MLOGWARNING("Port_7FFD_Out(ATM3): Paging locked (EFF7 lockmem + 7FFD.5), ignoring write of 0x%02X", value);
         return;
@@ -714,6 +807,266 @@ void PortDecoder_ATM3::BorderOnlyOut(uint16_t port, uint8_t value, uint16_t pc)
     Default_Port_FE_Out(port, static_cast<uint8_t>((value & 0x07) | keep), pc);
 }
 
+/// region <Board NMI>
+
+bool PortDecoder_ATM3::RequestBoardNmi()
+{
+    // pending_nmi: released at the next frame INT (Z80::ProcessInterrupts),
+    // where OnFrameIntStartNmi() still vetoes it while the NMI page is in
+    _state->nmiAtIntStartPending = true;
+    return true;
+}
+
+bool PortDecoder_ATM3::OnFrameIntStartNmi()
+{
+    // nmi_count only starts on `nmi_start && !in_nmi`: no nested board NMI
+    if (_state->evoInNmi)
+        return false;
+
+    _state->evoNmiEntry = true;
+    return true;
+}
+
+bool PortDecoder_ATM3::OnNmiAccepted()
+{
+    // Only the board's own NMIs page RAM #FF in (in_nmi_2); an /NMI from
+    // elsewhere is a plain Z80 NMI at #0066 of whatever is mapped
+    if (!_state->evoNmiEntry)
+        return false;
+
+    _state->evoNmiEntry = false;
+    _state->evoInNmi = true;
+    if (_memory)
+        _memory->UpdateZ80Banks();
+    return true;
+}
+
+bool PortDecoder_ATM3::IsDosLeavingBank(uint8_t bank) const
+{
+    // Pager off: every window is ROM 31
+    if (!(_state->aFF77 & ATM_AFF77_PEN))
+        return false;
+
+    const unsigned regSet = (_state->p7FFD & 0x10) ? 4 : 0;
+    return (_state->pFFF7[regSet + (bank & 3)] & 0x100) == 0;  // bit 8 = programmed ROM
+}
+
+void PortDecoder_ATM3::OnMachineM1(uint16_t address)
+{
+    // NMI exit countdown (znmi.v clr_count / pending_clr)
+    if (_state->pBE > 0 && --_state->pBE == 0)
+    {
+        _state->evoInNmi = false;
+        if (_memory)
+            _memory->UpdateZ80Banks();
+    }
+
+    // M1 breakpoint (zbreak.v): an immediate NMI, not synchronized to INT,
+    // and like every board NMI only while the NMI page is out
+    if ((_state->pBF & 0x10) && address == _state->pBD && !_state->evoInNmi)
+    {
+        _state->evoNmiEntry = true;
+        if (_context->pCore && _context->pCore->GetZ80())
+            _context->pCore->GetZ80()->RequestNonMaskedInterrupt();
+    }
+
+    RefreshM1Hook();
+}
+
+void PortDecoder_ATM3::RefreshM1Hook()
+{
+    if (!_context->pCore || !_context->pCore->GetZ80())
+        return;
+
+    const bool needed = _state->pBE > 0 || (_state->pBF & 0x10) || (_state->evoTrdemu & kTrdemuPending);
+    Z80* z80 = _context->pCore->GetZ80();
+    if (needed)
+        z80->machineM1Hook = this;
+    else if (z80->machineM1Hook == this)
+        z80->machineM1Hook = nullptr;
+}
+
+void PortDecoder_ATM3::BeforeMachineM1([[maybe_unused]] uint16_t address)
+{
+    // zdos.v: in_trdemu is set by the trapped access and seen by the very next
+    // opcode fetch. The trapping instruction itself still ran with the ROM in
+    // window 0, so its own memory writes (INI...) could not reach page #FE -
+    // the RTL's trdemu_wr_disable window
+    if (_state->evoTrdemu & kTrdemuPending)
+    {
+        _state->evoTrdemu = static_cast<uint8_t>((_state->evoTrdemu & ~kTrdemuPending) | kTrdemuIn);
+        if (_memory)
+            _memory->UpdateZ80Banks();
+        RefreshM1Hook();
+    }
+}
+
+bool PortDecoder_ATM3::TrdemuFdcAccess(uint8_t fdcPort, bool isWrite, uint8_t value)
+{
+    if (IsLegacyFpga())
+        return false;  // the legacy tree has no drive mask
+
+    // The drive number the FPGA compares: for OUT (#FF) the value being written
+    // (vg_rdwr_fclk is registered after the write), otherwise the latched one
+    const bool systemWrite = isWrite && fdcPort == 0xFF;
+    const uint8_t drive = systemWrite ? static_cast<uint8_t>(value & 0x03) : _state->evoVgDrive;
+    if (systemWrite)
+        _state->evoVgDrive = drive;
+
+    const bool masked = (_state->evoFddMask >> drive) & 0x01;
+    if (!masked)
+        return false;
+
+    // Trap (zdos.v:61): TR-DOS executing from ROM in window 0, palette-write
+    // mode off (#xx77 A14 = 1 -> atm_pen2 = 0); the FDC arm already implies shadow
+    const bool dos = (_state->flags & CF_TRDOS) != 0;
+    const bool romInWindow0 = _memory && _memory->GetMemoryBankMode(0) == MemoryBankModeEnum::BANK_ROM;
+    const bool paletteWriteOff = (_state->aFF77 & ATM_AFF77_PEN2) != 0;
+    if (dos && romInWindow0 && paletteWriteOff)
+    {
+        _state->evoTrdemu |= kTrdemuPending;
+        RefreshM1Hook();
+    }
+
+    // #FF is the FPGA's own latch and always answers; #1F-#7F would select the chip
+    return fdcPort != 0xFF;
+}
+
+/// endregion </Board NMI>
+
+/// region <SD card>
+
+namespace
+{
+    AccessMode AccessOf(SdCardSpi::WriteMode mode)
+    {
+        switch (mode)
+        {
+            case SdCardSpi::WriteMode::Persist: return AccessMode::WriteThrough;
+            case SdCardSpi::WriteMode::Off: return AccessMode::ReadOnly;
+            default: return AccessMode::Session;
+        }
+    }
+}  // namespace
+
+bool PortDecoder_ATM3::InsertSdCard(const std::string& path, SdCardSpi::WriteMode mode, bool writeProtect)
+{
+    if (MediaManager* manager = _context->pMediaManager)
+    {
+        MediaSource source;
+        source.path = path;
+        InsertOptions options;
+        options.access = AccessOf(mode);
+        options.writeProtect = writeProtect;
+        options.disposition = Disposition::Discard;  // the legacy call always replaced the card
+        const MediaResult result = manager->Insert(_sdSlot.Descriptor().id, source, options);
+        if (!result.Ok())
+            MLOGWARNING("PortDecoder_ATM3: SD card '%s' not inserted: %s", path.c_str(), result.message.c_str());
+        return result.Ok();
+    }
+    const bool inserted = _sdCard.open(path, mode);
+    _sdWriteProtect = writeProtect;
+    UpdateSdStatus();
+    return inserted;
+}
+
+bool PortDecoder_ATM3::InsertSdCard(std::unique_ptr<IBlockDevice> media, SdCardSpi::WriteMode mode, bool writeProtect)
+{
+    if (MediaManager* manager = _context->pMediaManager)
+    {
+        MediaSource source;
+        source.type = MediaSourceType::Blank;
+        InsertOptions options;
+        options.writeProtect = writeProtect;
+        options.disposition = Disposition::Discard;
+        auto medium = MediaFormatRegistry::WrapBlock(source, AccessOf(mode), "memory", std::move(media));
+        return manager->Insert(_sdSlot.Descriptor().id, std::move(medium), options).Ok();
+    }
+    const bool inserted = _sdCard.insert(std::move(media), mode);
+    _sdWriteProtect = writeProtect;
+    UpdateSdStatus();
+    return inserted;
+}
+
+void PortDecoder_ATM3::EjectSdCard()
+{
+    if (MediaManager* manager = _context->pMediaManager)
+    {
+        EjectOptions options;
+        options.disposition = Disposition::Discard;  // the programmatic eject of tests and automation wrappers
+        manager->Eject(_sdSlot.Descriptor().id, options);
+        return;
+    }
+    _sdCard.close();
+    UpdateSdStatus();
+}
+
+void PortDecoder_ATM3::UpdateSdStatus()
+{
+    // AVR register C: b3 card present, b2 write-protected (rtc.c reads the
+    // slot's detect and WP switches)
+    _cmos.SetSdStatus(_sdCard.present(), _sdCard.present() && _sdWriteProtect);
+}
+
+PortDecoder_ATM3::EvoSdSlot::EvoSdSlot(PortDecoder_ATM3& owner) : _owner(owner)
+{
+    _descriptor.id = "sd.zc";
+    _descriptor.kind = MediaKind::Block;
+    _descriptor.label = "SD card (Z-Controller)";
+    _descriptor.removable = true;
+    _descriptor.swapDelayMs = 500;  // the ERS and NedoOS poll the card and re-initialize it
+    _descriptor.acceptsFolder = true;
+    _descriptor.defaultAccess = AccessMode::Session;
+    _descriptor.defaultFs = FatType::Fat16;
+    _descriptor.hasCardDetect = true;          // AVR register C bit 3
+    _descriptor.hasWriteProtectSwitch = true;  // AVR register C bit 2
+    _descriptor.tags = {"sd", "zcontroller", "primary", "boot"};
+    _descriptor.aliases = {"sd"};
+    _descriptor.guestName = "E: in the ERS and NedoOS (the card's first FAT partition)";
+}
+
+void PortDecoder_ATM3::EvoSdSlot::Attach(Medium& medium)
+{
+    _owner._sdCard.attach(*medium.Block());
+    _owner._sdCard.select(_owner._zc.IsSelected());
+    _owner.UpdateSdStatus();
+}
+
+void PortDecoder_ATM3::EvoSdSlot::Detach()
+{
+    _owner._sdCard.detach();
+    _owner.UpdateSdStatus();
+}
+
+bool PortDecoder_ATM3::EvoSdSlot::IsBusy() const
+{
+    return _owner._sdCard.busy();
+}
+
+void PortDecoder_ATM3::EvoSdSlot::SetWriteProtectSwitch(bool on)
+{
+    _owner._sdWriteProtect = on;
+    _owner.UpdateSdStatus();
+}
+
+std::vector<ttd::PeripheralId> PortDecoder_ATM3::GetTTDModelStateIds() const
+{
+    std::vector<ttd::PeripheralId> ids = PortDecoder_ATM710::GetTTDModelStateIds();
+    ids.push_back(ttd::PeripheralId::EvoSdCard);
+    return ids;
+}
+
+std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_ATM3::CreateTTDSerializers() const
+{
+    auto serializers = PortDecoder_ATM710::CreateTTDSerializers();
+    // The serializer reads and restores the live card; the decoder outlives
+    // every TTD session (the manager goes before the core)
+    serializers.push_back(std::make_unique<ttd::TTDEvoSdCard>(const_cast<PortDecoder_ATM3&>(*this)));
+    return serializers;
+}
+
+/// endregion </SD card>
+
 /// @brief BaseConf window mapping (fpga/base_trdemu/trunk/mem/atm_pager.v:114-168)
 /// @details Priority for window 0: pager off (all windows ROM 31) > NMI (RAM
 ///          #FF) > #EFF7 bit 3 (RAM page 0) > the page register. A register
@@ -788,11 +1141,16 @@ void PortDecoder_ATM3::updateMemoryBanks()
         }
     }
 
-    // Window 0 overrides
-    if (_state->nmi_in_progress)
-        _memory->SetRAMPageToBank0(0xFF & ramMask);
+    // Window 0 overrides: NMI RAM #FF, virtual-TR-DOS RAM #FE (#FF when both,
+    // atm_pager.v `page <= {7'h7F, in_nmi}`)
+    if (_state->evoInNmi || (_state->evoTrdemu & kTrdemuIn))
+        _memory->SetRAMPageToBank0((_state->evoInNmi ? 0xFF : 0xFE) & ramMask);
     else if (_state->pEFF7 & ATM_EFF7_ROCACHE)
         _memory->SetRAMPageToBank0(0);
+
+    // Every state restore (TTD seek, snapshot) re-runs the decode: re-attach
+    // the M1 hook the restored NMI / breakpoint state needs
+    RefreshM1Hook();
 }
 
 /// endregion </Port handlers>

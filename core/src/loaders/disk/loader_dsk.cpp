@@ -23,6 +23,18 @@ namespace
 
     /// Sector size the WD1793 model uses for a size code (N masked to two bits)
     inline size_t modelSize(uint8_t n) { return static_cast<size_t>(128u) << (n & 0x03); }
+
+    /// Size a uPD765 transfers for a size code (N up to 7: 16 KB)
+    inline size_t realSize(uint8_t n) { return static_cast<size_t>(128u) << (n > 7 ? 7 : n); }
+
+    /// Data field length for a sector with N >= 4 as stored: the whole stored data of one copy (the CPCEMU
+    /// 0x1800 of an N = 6 sector, or 128 << N when several copies are stored). 0 for N <= 3
+    inline size_t longFieldLength(uint8_t n, size_t stored)
+    {
+        if (n <= 3 || stored == 0) return 0;
+        const size_t real = realSize(n);
+        return stored >= real ? real : stored;
+    }
 }
 
 /// region <Static helpers>
@@ -156,6 +168,7 @@ bool LoaderDSK::parseTrack(DiskImage* image, uint8_t cylinder, uint8_t side, con
     spec.sectorCylinders.resize(sectorCount);
     spec.sectorHeads.resize(sectorCount);
     spec.idOnly.assign(sectorCount, 0);
+    spec.sectorDataLengths.assign(sectorCount, 0);
 
     const uint8_t* src = info + TRACK_INFO_SIZE;
     for (size_t i = 0; i < sectorCount; i++)
@@ -186,10 +199,13 @@ bool LoaderDSK::parseTrack(DiskImage* image, uint8_t cylinder, uint8_t side, con
                             (extended && se.stored == 0);
         spec.idOnly[i] = idOnly ? 1 : 0;
 
-        if (n > 3)
+        // N >= 4 (Speedlock +3 and the like, 8 KB sectors bigger than the track): the data field holds what was
+        // dumped, so a uPD765 reading 128 << N bytes gets those bytes and then the raw track after them (MAME)
+        if (!idOnly)
         {
-            warnings.push_back(StringHelper::Format("DSK track cylinder %d side %d: sector %d has size code %d, the WD1793 model keeps %zu bytes",
-                                                    cylinder, side, entry[2], n, modelSize(n)));
+            const size_t field = longFieldLength(n, se.stored);
+            if (field > modelSize(n))
+                spec.sectorDataLengths[i] = static_cast<uint16_t>(field);
         }
     }
 
@@ -247,7 +263,9 @@ bool LoaderDSK::parseTrack(DiskImage* image, uint8_t cylinder, uint8_t side, con
 
         if (sector.hasData)
         {
-            const size_t size = sector.dataSize;
+            // The field in the stream: the model size, or the stored length of an N >= 4 sector
+            const bool longField = spec.sectorDataLengths[i] != 0;
+            const size_t size = longField ? spec.sectorDataLengths[i] : sector.dataSize;
             const size_t copies = (se.stored > size && se.stored % size == 0) ? se.stored / size : 1;
 
             std::memcpy(sector.data, se.src, std::min(se.stored, size));
@@ -268,12 +286,18 @@ bool LoaderDSK::parseTrack(DiskImage* image, uint8_t cylinder, uint8_t side, con
             }
 
             if (se.st2 & ST2_CONTROL_MARK) sector.setDataAddressMark(0xF8);
-            sector.recalculateDataCRC();
 
-            if (se.st2 & ST2_DATA_ERROR_IN_DATA)
+            // A long field has no CRC where the model looks for one (data + 128 << (N & 3) is inside the stored
+            // bytes): leave the bytes alone, the CRC reads bad as it did for the dumper
+            if (!longField)
             {
-                sector.data[sector.dataSize] ^= 0xFF;  // Corrupt the data CRC
-                sector.isDataCRCValid();
+                sector.recalculateDataCRC();
+
+                if (se.st2 & ST2_DATA_ERROR_IN_DATA)
+                {
+                    sector.data[sector.dataSize] ^= 0xFF;  // Corrupt the data CRC
+                    sector.isDataCRCValid();
+                }
             }
         }
 
@@ -475,9 +499,12 @@ bool LoaderDSK::serialize(DiskImage* diskImage, std::vector<uint8_t>& out, std::
                 size_t stored = 0;
                 bool weak = false;
 
+                // N >= 4: what a dump of the sector stores (0x1800 for N >= 6), read from the stream
+                const size_t longLength = (sector.hasData && sector.sizeCode() > 3) ? storedSizeStandard(sector.sizeCode()) : 0;
+
                 if (sector.hasData)
                 {
-                    stored = sector.dataSize;
+                    stored = longLength != 0 ? longLength : sector.dataSize;
                     if (!sector.dataCrcValid)
                     {
                         st1 |= ST1_DATA_ERROR;
@@ -485,7 +512,7 @@ bool LoaderDSK::serialize(DiskImage* diskImage, std::vector<uint8_t>& out, std::
                     }
                     if (sector.deleted) st2 |= ST2_CONTROL_MARK;
 
-                    for (size_t b = 0; b < sector.dataSize && !weak; b++)
+                    for (size_t b = 0; b < sector.dataSize && !weak && longLength == 0; b++)
                     {
                         weak = track->weakByte(sector.dataOffset + b);
                     }
@@ -508,7 +535,13 @@ bool LoaderDSK::serialize(DiskImage* diskImage, std::vector<uint8_t>& out, std::
                 entry[6] = static_cast<uint8_t>(stored & 0xFF);
                 entry[7] = static_cast<uint8_t>(stored >> 8);
 
-                if (sector.hasData)
+                if (sector.hasData && longLength != 0)
+                {
+                    const size_t raw = track->rawSize();
+                    for (size_t b = 0; b < longLength; b++)
+                        out.push_back(track->rawData()[(sector.dataOffset + b) % raw]);
+                }
+                else if (sector.hasData)
                 {
                     out.insert(out.end(), sector.data, sector.data + sector.dataSize);
                     if (weak)
@@ -626,13 +659,6 @@ bool LoaderDSK::writeImage(const std::string& path)
     // Mark disk as clean after successful save
     _diskImage->markClean();
 
-    // Emit notification that disk was saved
-    if (_context && _context->pEmulator)
-    {
-        std::string emulatorId = _context->pEmulator->GetId();
-        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-        messageCenter.Post(NC_FDD_DISK_WRITTEN, new FDDDiskPayload(emulatorId, 0, path), true);
-    }
 
     _diskImage->setFilePath(path);
     return true;

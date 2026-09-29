@@ -32,7 +32,10 @@ AtmPagingState TTDAtmPaging::Snapshot() const
     blob.atmMemSwapped = state.atmMemSwapped ? 1 : 0;
     blob.cmos_addr = state.cmos_addr;
     if (auto* atm3 = dynamic_cast<PortDecoder_ATM3*>(_context->pPortDecoder))
+    {
         blob.cmos_addr = atm3->GetCMOS().GetCMOSAddress();
+        atm3->GetEvoAvr().GetVolatileState(blob.evoAvrExtType, blob.evoAvrEepromPage, blob.evoAvrFlags);
+    }
 
     for (size_t i = 0; i < 16; ++i)
     {
@@ -41,6 +44,11 @@ AtmPagingState TTDAtmPaging::Snapshot() const
     }
     blob.atmBorderBright = state.atmBorderBright;
     blob.evoFddMask = state.evoFddMask;
+    blob.evoInNmi = state.evoInNmi ? 1 : 0;
+    blob.evoNmiEntry = state.evoNmiEntry ? 1 : 0;
+    blob.nmiAtIntPending = state.nmiAtIntStartPending ? 1 : 0;
+    blob.evoTrdemu = state.evoTrdemu;
+    blob.evoVgDrive = state.evoVgDrive;
 
     return blob;
 }
@@ -76,7 +84,10 @@ void TTDAtmPaging::TTDLoadState(const uint8_t* src)
     state.atmMemSwapped = blob.atmMemSwapped != 0;
     state.cmos_addr = blob.cmos_addr;
     if (auto* atm3 = dynamic_cast<PortDecoder_ATM3*>(_context->pPortDecoder))
+    {
         atm3->GetCMOS().SetCMOSAddress(blob.cmos_addr);
+        atm3->GetEvoAvr().SetVolatileState(blob.evoAvrExtType, blob.evoAvrEepromPage, blob.evoAvrFlags);
+    }
 
     for (size_t i = 0; i < 16; ++i)
     {
@@ -85,6 +96,11 @@ void TTDAtmPaging::TTDLoadState(const uint8_t* src)
     }
     state.atmBorderBright = blob.atmBorderBright;
     state.evoFddMask = blob.evoFddMask;
+    state.evoInNmi = blob.evoInNmi != 0;
+    state.evoNmiEntry = blob.evoNmiEntry != 0;
+    state.nmiAtIntStartPending = blob.nmiAtIntPending != 0;
+    state.evoTrdemu = blob.evoTrdemu;
+    state.evoVgDrive = blob.evoVgDrive;
 
     // The caller re-runs the paging decode (Memory::UpdateZ80Banks) after every
     // serializer has loaded, so the restored map takes effect there rather than

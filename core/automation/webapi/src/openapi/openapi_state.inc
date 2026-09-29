@@ -125,6 +125,16 @@
     paths["/api/v1/emulator/{id}/state/fdc"]["get"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/state/fdc"]["get"]["responses"]["200"]["description"] = "Get Beta Disk WD1793 state";
 
+    paths["/api/v1/emulator/{id}/state/contention"]["get"]["summary"] = "Get memory contention state";
+    paths["/api/v1/emulator/{id}/state/contention"]["get"]["tags"].append("Memory State");
+    paths["/api/v1/emulator/{id}/state/contention"]["get"]["description"] =
+        "Where the CPU waits for the video logic: the machine's rule (none, ula48, ula128, gatearray), whether it applies, the 'contention' feature switch and whether contention is in effect, the selected memory interface (fast, debug, fast_contended, debug_contended), the I/O contention rule, per 16K slot its mapping and whether accesses there wait, the +2A/+3 floating-bus latch, and - while debug mode is on - contended accesses and wait T-states per kind (fetch, read, write, io) for the current frame, the last frame and in total.";
+    paths["/api/v1/emulator/{id}/state/contention"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/state/contention"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/state/contention"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/state/contention"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/state/contention"]["get"]["responses"]["200"]["description"] = "Memory contention state";
+
 
     paths["/api/v1/emulator/{id}/state/audio/ay/{chip}/register/{reg}"]["get"]["summary"] =
         "Get AY chip register details";
@@ -256,6 +266,7 @@
         "Emulator or GS card not found, or (dump_module) no completed module upload captured yet";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["409"]["description"] =
         "sd_insert / sd_eject / flash_save on a card that is not NeoGS, sd_insert / sd_eject while TTD records, "
+        "switch_personality while a TTD recording runs (the message says why: stop the recording first), "
         "or any of them while a TTD replay owns the machine";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["422"]["description"] =
         "sd_insert: the image cannot be opened; flash_save: the flash could not be saved";
@@ -293,6 +304,10 @@
     paths["/api/v1/emulator/state/fdc"]["get"]["summary"] = "Get Beta Disk WD1793 state (active emulator)";
     paths["/api/v1/emulator/state/fdc"]["get"]["tags"].append("Disk State (Active)");
     paths["/api/v1/emulator/state/fdc"]["get"]["responses"]["200"]["description"] = "WD1793 state";
+
+    paths["/api/v1/emulator/state/contention"]["get"]["summary"] = "Get memory contention state (active emulator)";
+    paths["/api/v1/emulator/state/contention"]["get"]["tags"].append("Memory State");
+    paths["/api/v1/emulator/state/contention"]["get"]["responses"]["200"]["description"] = "Memory contention state";
 
     paths["/api/v1/emulator/state/audio/ay"]["get"]["summary"] = "Get AY chips overview (active emulator)";
     paths["/api/v1/emulator/state/audio/ay"]["get"]["tags"].append("Audio State (Active)");

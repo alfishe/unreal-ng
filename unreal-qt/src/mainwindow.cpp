@@ -63,17 +63,25 @@
 #include "emulator/io/fdc/wd1793.h"
 
 #define signals Q_SIGNALS
-#include "loaders/disk/loader_scl.h"
-#include "loaders/disk/loader_trd.h"
 #include "loaders/disk/loader_fdi.h"
-#include "loaders/disk/loader_udi.h"
 #include "tape/tapeimportaudiodialog.h"  // tape-audio-bridge §7.3
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
 #include "ui_mainwindow.h"
+#include "debugger/ttd/timetravelmanager.h"
 
 namespace
 {
+// B9: the core refuses actions that would destroy a TTD recording; tell the user why instead of failing silently
+bool RefusedWhileRecording(QWidget* parent, const Emulator& emulator, ttd::TTDGuardedAction action)
+{
+    const std::string refusal = emulator.RecordingGuard(action);
+    if (refusal.empty())
+        return false;
+    QMessageBox::warning(parent, QObject::tr("TTD Recording Active"), QString::fromStdString(refusal));
+    return true;
+}
+
 // Convert std::vector<std::string> to QStringList
 QStringList toQStringList(const std::vector<std::string>& v)
 {
@@ -225,6 +233,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     tapeManagerWindow->setBinding(m_binding);
     _dockingManager->addDockableWindow(tapeManagerWindow, Qt::BottomEdge);
 
+    // Media panel (media-control-design.md §3.9): hidden by default, Tools → Media (Ctrl+4)
+    mediaPanelWindow = new MediaPanelWindow();
+    mediaPanelWindow->setBinding(m_binding);
+    _dockingManager->addDockableWindow(mediaPanelWindow, Qt::BottomEdge);
+
     // Create and configure menu system
     _menuManager = new MenuManager(this, ui->menubar, this);
 
@@ -252,6 +265,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::turboTapeToggled, this, &MainWindow::handleTurboTapeToggled);
     connect(_menuManager, &MenuManager::fastDiskToggled, this, &MainWindow::handleFastDiskToggled);
     connect(_menuManager, &MenuManager::autostartDisksToggled, this, &MainWindow::handleAutostartDisksToggled);
+    connect(_menuManager, &MenuManager::contentionToggled, this, &MainWindow::handleContentionToggled);
     _menuManager->setAutostartDisksChecked(_autostartDisks);
     connect(_menuManager, &MenuManager::stepInRequested, this, &MainWindow::handleStepIn);
     connect(_menuManager, &MenuManager::stepOverRequested, this, &MainWindow::handleStepOver);
@@ -260,6 +274,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::tapeManagerToggled, this, &MainWindow::handleTapeManagerToggled);
     // Keep the menu check state in sync when the window closes via its own close box
     connect(tapeManagerWindow, &TapeManagerWindow::visibilityChanged, _menuManager, &MenuManager::setTapeManagerChecked);
+    connect(_menuManager, &MenuManager::mediaPanelToggled, this, &MainWindow::handleMediaPanelToggled);
+    connect(mediaPanelWindow, &MediaPanelWindow::visibilityChanged, _menuManager, &MenuManager::setMediaPanelChecked);
     connect(_menuManager, &MenuManager::fullScreenToggled, this, &MainWindow::handleFullScreenShortcut);
     connect(_menuManager, &MenuManager::scaleRequested, this, &MainWindow::handleScaleRequested);
     connect(_menuManager, &MenuManager::screenshotRequested, this, &MainWindow::handleScreenshotRequested);
@@ -499,6 +515,13 @@ MainWindow::~MainWindow()
         delete tapeManagerWindow;
     }
 
+    if (mediaPanelWindow != nullptr)
+    {
+        _dockingManager->removeDockableWindow(mediaPanelWindow);
+        mediaPanelWindow->hide();
+        delete mediaPanelWindow;
+    }
+
     if (_screenWrapper != nullptr)
         delete _screenWrapper;
 
@@ -675,6 +698,13 @@ void MainWindow::closeEvent(QCloseEvent* event)
         tapeManagerWindow->hide();
         delete tapeManagerWindow;
         tapeManagerWindow = nullptr;
+    }
+    if (mediaPanelWindow)
+    {
+        _dockingManager->removeDockableWindow(mediaPanelWindow);
+        mediaPanelWindow->hide();
+        delete mediaPanelWindow;
+        mediaPanelWindow = nullptr;
     }
 
     // Shutdown device screen
@@ -1943,6 +1973,8 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly)
             qWarning() << "ROM loading not implemented:" << filePath;
             break;
         case FileSnapshot:
+            if (_emulator && RefusedWhileRecording(this, *_emulator, ttd::TTDGuardedAction::LoadSnapshot))
+                break;
             if (_emulator)
             {
                 bool result = _emulator->LoadSnapshot(file);
@@ -1958,6 +1990,8 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly)
             }
             break;
         case FileTape:
+            if (_emulator && RefusedWhileRecording(this, *_emulator, ttd::TTDGuardedAction::LoadTape))
+                break;
             if (_emulator)
             {
                 bool result = _emulator->LoadTape(file);
@@ -1970,6 +2004,8 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly)
             }
             break;
         case FileDisk:
+            if (_emulator && RefusedWhileRecording(this, *_emulator, ttd::TTDGuardedAction::LoadDisk))
+                break;
             if (_emulator)
             {
                 // Quick reset into TR-DOS only while the machine is running; paused or stopped machines just mount
@@ -2196,16 +2232,15 @@ void MainWindow::saveDiskAsUDIDialog()
     QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
     settings.setValue("LastSaveDirectory", _lastSaveDirectory);
 
-    std::string file = filePath.toStdString();
-    LoaderUDI loader(context, file);
-    loader.setImage(diskImage);
-    if (loader.writeImage())
+    // Through the media manager: the drive's disk now stands for this file
+    Emulator::DiskSaveResult result = _emulator->SaveDisk(drive->getDriveId(), filePath.toStdString(), false);
+    if (result.saved)
     {
         qDebug() << "Disk saved as UDI successfully:" << filePath;
     }
     else
     {
-        QString detail = loader.lastWarnings().empty() ? QString() : "\n" + QString::fromStdString(loader.lastWarnings()[0]);
+        QString detail = result.reason.empty() ? QString() : "\n" + QString::fromStdString(result.reason);
         QMessageBox::warning(this, tr("Save Failed"), tr("Failed to save disk to:\n%1%2").arg(filePath, detail));
     }
 }
@@ -2263,20 +2298,19 @@ void MainWindow::saveDiskAsTRDDialog()
         QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
         settings.setValue("LastSaveDirectory", _lastSaveDirectory);
 
-        // Save using TRD format
-        std::string file = filePath.toStdString();
-        LoaderTRD loader(context, file);
-        loader.setImage(diskImage);
-        bool result = loader.writeImage();
+        // Through the media manager: the drive's disk now stands for this file.
+        // No UDI retarget: the user asked for TRD; a refusal says why
+        Emulator::DiskSaveResult result = _emulator->SaveDisk(drive->getDriveId(), filePath.toStdString(), false);
 
-        if (result)
+        if (result.saved)
         {
             qDebug() << "Disk saved as TRD successfully:" << filePath;
         }
         else
         {
             qDebug() << "Failed to save disk as TRD:" << filePath;
-            QMessageBox::warning(this, tr("Save Failed"), tr("Failed to save disk to:\n%1").arg(filePath));
+            QString detail = result.reason.empty() ? QString() : "\n" + QString::fromStdString(result.reason);
+            QMessageBox::warning(this, tr("Save Failed"), tr("Failed to save disk to:\n%1%2").arg(filePath, detail));
         }
     }
 }
@@ -2335,20 +2369,19 @@ void MainWindow::saveDiskAsSCLDialog()
         QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
         settings.setValue("LastSaveDirectory", _lastSaveDirectory);
 
-        // Save using SCL format
-        std::string file = filePath.toStdString();
-        LoaderSCL loader(context, file);
-        loader.setImage(diskImage);
-        bool result = loader.writeImage();
+        // Through the media manager: the drive's disk now stands for this file.
+        // No UDI retarget: the user asked for SCL; a refusal says why
+        Emulator::DiskSaveResult result = _emulator->SaveDisk(drive->getDriveId(), filePath.toStdString(), false);
 
-        if (result)
+        if (result.saved)
         {
             qDebug() << "Disk saved as SCL successfully:" << filePath;
         }
         else
         {
             qDebug() << "Failed to save disk as SCL:" << filePath;
-            QMessageBox::warning(this, tr("Save Failed"), tr("Failed to save disk to:\n%1").arg(filePath));
+            QString detail = result.reason.empty() ? QString() : "\n" + QString::fromStdString(result.reason);
+            QMessageBox::warning(this, tr("Save Failed"), tr("Failed to save disk to:\n%1%2").arg(filePath, detail));
         }
     }
 }
@@ -2443,12 +2476,12 @@ void MainWindow::handleSpeedMultiplierChanged(int multiplier)
 {
     if (_emulator)
     {
-        Core* core = _emulator->GetContext()->pCore;
-        if (core)
-        {
-            core->SetSpeedMultiplier(static_cast<uint8_t>(multiplier));
-            qDebug() << "Speed multiplier set to" << multiplier << "x";
-        }
+        // Through Emulator, not Core: it keeps the TTD contract (refused while
+        // recording, invalidates a retained session on a real change)
+        const bool applied = _emulator->SetSpeedMultiplier(static_cast<uint8_t>(multiplier));
+        qDebug() << "Speed multiplier" << multiplier << "x" << (applied ? "set" : "refused (TTD recording)");
+        // A refused click already moved the exclusive check mark
+        updateMenuStates();
     }
 }
 
@@ -2456,20 +2489,18 @@ void MainWindow::handleTurboModeToggled(bool enabled)
 {
     if (_emulator)
     {
-        Core* core = _emulator->GetContext()->pCore;
-        if (core)
+        EmulatorContext* context = _emulator->GetContext();
+        FeatureManager* featureManager = context ? context->pFeatureManager : nullptr;
+        if (featureManager)
         {
-            if (enabled)
-            {
-                core->EnableTurboMode(false);  // No audio in turbo mode
-                qDebug() << "Turbo mode enabled";
-            }
-            else
-            {
-                core->DisableTurboMode();
-                qDebug() << "Turbo mode disabled";
-            }
+            // Routed through FeatureManager (not Core::EnableTurboMode directly) so the
+            // TTD-recording lock applies here the same way it does to fasttape/turbotape/
+            // fastdisk: setFeature() refuses to enable turbo mode while recording is active.
+            const bool applied = featureManager->setFeature(Features::kTurboMode, enabled);
+            qDebug() << "Turbo mode" << (enabled ? "enable" : "disable") << (applied ? "applied" : "refused (TTD recording)");
         }
+        // A refused toggle already flipped the checkable action
+        updateMenuStates();
     }
 }
 
@@ -2519,6 +2550,18 @@ void MainWindow::handleFastDiskToggled(bool enabled)
             qDebug() << "Fast disk loading" << (enabled ? "enabled" : "disabled");
         }
     }
+}
+
+void MainWindow::handleContentionToggled(bool enabled)
+{
+    if (_emulator)
+    {
+        EmulatorContext* context = _emulator->GetContext();
+        FeatureManager* featureManager = context ? context->pFeatureManager : nullptr;
+        if (featureManager && !featureManager->setFeature(Features::kContention, enabled))
+            qDebug() << "Memory contention switch refused (TTD timeline bound)";
+    }
+    _menuManager->updateMenuStates(_emulator);  // the menu shows what the core kept
 }
 
 void MainWindow::handleAutostartDisksToggled(bool enabled)
@@ -2590,6 +2633,12 @@ void MainWindow::handleLogWindowToggled(bool visible)
     }
 }
 
+void MainWindow::handleMediaPanelToggled(bool visible)
+{
+    if (mediaPanelWindow)
+        mediaPanelWindow->setVisible(visible);
+}
+
 void MainWindow::handleTapeManagerToggled(bool visible)
 {
     if (tapeManagerWindow)
@@ -2604,6 +2653,8 @@ void MainWindow::handleImportAudioTapeRequested()
     // rides the same LoadTape path as File → Open Tape
     TapeImportAudioDialog dialog(this);
     connect(&dialog, &TapeImportAudioDialog::insertRequested, this, [this](const QString& path) {
+        if (_emulator && RefusedWhileRecording(this, *_emulator, ttd::TTDGuardedAction::LoadTape))
+            return;
         if (_emulator)
         {
             if (!_emulator->LoadTape(path.toStdString()))

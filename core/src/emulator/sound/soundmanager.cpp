@@ -12,6 +12,7 @@
 #include "debugger/debugmanager.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/media/mediamanager.h"
 #include "emulator/sound/chips/soundchip_turbosoundfm.h"
 #include "stdafx.h"
 
@@ -1471,6 +1472,22 @@ bool SoundManager::switchGeneralSoundCard(GSTypeKind target)
     if (_gs->implementation() == targetImplementation)
         return true; // already the requested personality
 
+    // FR-4: the switch changes the device set under any TTD history. A user
+    // recording refuses it (the reason is also reported at request time);
+    // a stopped session or a debugger's live history is dropped, since no
+    // checkpoint could restore the outgoing card into the new one
+    if (ttd::TimeTravelManager* ttd = _context->pTimeTravelManager)
+    {
+        const std::string refusal = ttd->RecordingGuard(ttd::TTDGuardedAction::SwitchGsCard);
+        if (!refusal.empty())
+        {
+            LOGWARNING("SoundManager: %s", refusal.c_str());
+            return false;
+        }
+        if (ttd->GetCheckpointCount() > 0)
+            ttd->InvalidateSession("gs-card-switch");
+    }
+
     const char* from = gsImplementationLabel(_gs->implementation());
     const char* to = gsImplementationLabel(targetImplementation);
 
@@ -1567,6 +1584,21 @@ bool SoundManager::switchGeneralSoundCard(GSTypeKind target)
     return portsRegistered;
 }
 
+GeneralSoundSlot SoundManager::generalSoundSlot() const
+{
+    GeneralSoundSlot slot;
+    {
+        std::lock_guard<std::mutex> lock(_gsSlotMutex);
+        slot = _gsSlot;
+    }
+    if (slot.kind == GSTypeKind::NGS && _context->pMediaManager)
+    {
+        if (const std::optional<SlotInfo> info = _context->pMediaManager->Info(SoundChip_NeoGS::SD_SLOT_ID))
+            slot.sdCardImage = info->present ? info->source : std::string();
+    }
+    return slot;
+}
+
 void SoundManager::publishGeneralSoundSlot()
 {
     GeneralSoundSlot slot;
@@ -1584,11 +1616,24 @@ void SoundManager::publishGeneralSoundSlot()
     _gsSlot = std::move(slot);
 }
 
-bool SoundManager::requestGeneralSoundCardSwitch(GSTypeKind target)
+bool SoundManager::requestGeneralSoundCardSwitch(GSTypeKind target, std::string* error)
 {
     GSCardImplementation targetImplementation;
     if (!gsImplementationOf(target, targetImplementation))
         return false;
+
+    // A real change while a user recording runs is refused (FR-4, see switchGeneralSoundCard)
+    if (_gs && _gs->implementation() != targetImplementation && _context->pTimeTravelManager)
+    {
+        const std::string refusal =
+            _context->pTimeTravelManager->RecordingGuard(ttd::TTDGuardedAction::SwitchGsCard);
+        if (!refusal.empty())
+        {
+            if (error)
+                *error = refusal;
+            return false;
+        }
+    }
 
     _pendingGSSwitch.store(static_cast<uint8_t>(target), std::memory_order_release);
     return true;

@@ -173,7 +173,7 @@ updateMenuStates();  // Called when emulator state changes
 2. Press F1 - Should run at normal speed
 3. Press F2 - Should run at 2x speed (audio pitch increases)
 4. Press F3 - Should run at 4x speed (audio pitch increases more)
-5. Hold Tab - Should run at maximum speed (turbo mode)
+5. Press Tab - Should toggle maximum speed (turbo mode); press again to return to normal
 6. Release Tab - Should return to previous speed
 
 ### Debug Test

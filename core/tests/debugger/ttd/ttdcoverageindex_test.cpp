@@ -401,3 +401,41 @@ TEST(TTD_CoverageIndex_Test, Version1SectionIsConsumedButNotLoaded)
     ASSERT_TRUE(static_cast<bool>(in));
     EXPECT_EQ(next, trailer) << "v1 section was not fully consumed; the next section would be misread";
 }
+
+/// Sizes read from a file are checked before anything is allocated: a flipped
+/// frame count, raw size or payload size fails the load instead of requesting
+/// gigabytes here or at the block's first decompression.
+TEST(TTD_CoverageIndex_Test, CorruptBlockSizesAreRefusedBeforeAllocating)
+{
+    TTDCoverageIndex source;
+    for (uint64_t frame = 0; frame < 3; ++frame)
+        SealFrameWith(source, frame, TTDCoverageKind::Executed,
+                      {MakeCoverageKey(1, static_cast<uint16_t>(0x4000 + frame))});
+    std::ostringstream out(std::ios::binary);
+    ASSERT_TRUE(source.Serialize(out));
+    const std::string good = out.str();
+
+    // Layout: magic u32, version u16, kind count u16, then kind 0 (Executed):
+    // block count u32, and its first block: base frame u64, frame count u32,
+    // raw size u32, compressed size u32
+    constexpr size_t kFrameCountAt = 4 + 2 + 2 + 4 + 8;
+    constexpr size_t kRawSizeAt = kFrameCountAt + 4;
+    constexpr size_t kCompressedSizeAt = kRawSizeAt + 4;
+
+    auto load = [](const std::string& bytes) {
+        std::istringstream in(bytes, std::ios::binary);
+        TTDCoverageIndex loaded;
+        return loaded.Deserialize(in);
+    };
+    auto patched = [&](size_t at, uint32_t value) {
+        std::string bytes = good;
+        std::memcpy(&bytes[at], &value, sizeof(value));
+        return bytes;
+    };
+
+    ASSERT_TRUE(load(good));
+    EXPECT_FALSE(load(patched(kFrameCountAt, 0)));
+    EXPECT_FALSE(load(patched(kFrameCountAt, TTDCoverageIndex::kFramesPerBlock + 1)));
+    EXPECT_FALSE(load(patched(kRawSizeAt, 0x7FFFFFFFu)));
+    EXPECT_FALSE(load(patched(kCompressedSizeAt, 0xFFFFFFFFu)));
+}

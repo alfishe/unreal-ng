@@ -1,13 +1,15 @@
 // NeoGS media requests from automation (neogsmedia.h): SD card insert /
-// eject and flash save are checked on the caller's thread and carried out on
-// the machine's thread; insert and eject are refused while a TTD recording
-// runs, because the machine's configuration is fixed for the recording.
+// eject go to the media manager's slot `sd.ngs` (applied at a frame
+// boundary), a flash save is carried out on the machine's thread; insert and
+// eject are refused while a TTD recording runs, because the machine's
+// configuration is fixed for the recording.
 //
 // Runtime justification: the hand-off tests run the emulator loop on its own
 // thread for a few frames; the stress test for about a second.
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <memory>
@@ -24,6 +26,7 @@
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/media/mediamanager.h"
 #include "emulator/memory/memory.h"
 #include "emulator/sound/chips/neogs/neogsmedia.h"
 #include "emulator/sound/chips/neogs/soundchip_neogs.h"
@@ -68,9 +71,7 @@ protected:
 
     void fitNeoGS()
     {
-        strncpy(_ctx->config.ngs.sdCardPath, _image->path().c_str(), sizeof _ctx->config.ngs.sdCardPath - 1);
-        ASSERT_TRUE(FitGeneralSoundCard(_ctx->pSoundManager, GSTypeKind::NGS));
-        ASSERT_TRUE(card()->sdCardPresent());
+        ASSERT_TRUE(FitNeoGSWithSd(_ctx, _image->path()));
     }
 
     SoundChip_NeoGS* card() const { return dynamic_cast<SoundChip_NeoGS*>(_ctx->pSoundManager->getGeneralSound()); }
@@ -92,11 +93,11 @@ TEST_F(NeoGSMedia_Test, CarriedOutAtOnceWhileTheLoopIsNotRunning)
     EXPECT_FALSE(card()->sdCardPresent());
     EXPECT_EQ(NeoGSRequestSdInsert(_ctx, _other->path()), NeoGSMediaResult::Done);
     EXPECT_TRUE(card()->sdCardPresent());
-    EXPECT_EQ(card()->sdCard()->path(), _other->path());
+    EXPECT_EQ(card()->sdCardImage(), _other->path());
 
     EXPECT_EQ(NeoGSRequestSdInsert(_ctx, ""), NeoGSMediaResult::NoPath);
     EXPECT_EQ(NeoGSRequestSdInsert(_ctx, _other->path() + ".missing"), NeoGSMediaResult::NoFile);
-    EXPECT_EQ(card()->sdCard()->path(), _other->path()) << "a refused insert leaves the card alone";
+    EXPECT_EQ(card()->sdCardImage(), _other->path()) << "a refused insert leaves the card alone";
 }
 
 /// The machine's configuration is fixed while a TTD recording runs: the SD
@@ -105,7 +106,7 @@ TEST_F(NeoGSMedia_Test, InsertAndEjectRefusedWhileTtdRecords)
 {
     fitNeoGS();
     ASSERT_TRUE(_ctx->pTimeTravelManager->StartRecording());
-    const std::string path = card()->sdCard()->path();
+    const std::string path = card()->sdCardImage();
 
     EXPECT_EQ(NeoGSRequestSdEject(_ctx), NeoGSMediaResult::TtdRecording);
     EXPECT_EQ(NeoGSRequestSdInsert(_ctx, _other->path()), NeoGSMediaResult::TtdRecording);
@@ -113,7 +114,7 @@ TEST_F(NeoGSMedia_Test, InsertAndEjectRefusedWhileTtdRecords)
     EXPECT_FALSE(card()->ejectSdCard());
     EXPECT_FALSE(card()->insertSdCard(_other->path()));
     EXPECT_TRUE(card()->sdCardPresent());
-    EXPECT_EQ(card()->sdCard()->path(), path);
+    EXPECT_EQ(card()->sdCardImage(), path);
 
     // A flash save changes nothing in the machine: it reaches the card (which
     // saves only in persist mode - off here - so it reports Failed)
@@ -123,6 +124,54 @@ TEST_F(NeoGSMedia_Test, InsertAndEjectRefusedWhileTtdRecords)
     _ctx->pTimeTravelManager->StopRecording();
     EXPECT_EQ(NeoGSRequestSdEject(_ctx), NeoGSMediaResult::Done);
     EXPECT_FALSE(card()->sdCardPresent());
+}
+
+/// The SD slot is the media manager's `sd.ngs`, there only while NeoGS is
+/// fitted. Switching the card away parks the medium with its session writes;
+/// a NeoGS fitted again finds it
+TEST_F(NeoGSMedia_Test, SdSlotListedOnlyWhileNeoGSIsFitted)
+{
+    MediaManager* media = _ctx->pMediaManager;
+    ASSERT_NE(media, nullptr);
+    auto listed = [media]
+    {
+        for (const SlotInfo& slot : media->List())
+        {
+            if (slot.descriptor.id == SoundChip_NeoGS::SD_SLOT_ID)
+                return true;
+        }
+        return false;
+    };
+    EXPECT_FALSE(listed()) << "the classic card has no SD slot";
+
+    fitNeoGS();
+    ASSERT_TRUE(listed());
+    const std::optional<SlotInfo> info = media->Info(SoundChip_NeoGS::SD_SLOT_ID);
+    ASSERT_TRUE(info.has_value());
+    EXPECT_TRUE(info->present);
+    EXPECT_EQ(info->source, _image->path());
+    EXPECT_TRUE(info->descriptor.acceptsFolder);
+    EXPECT_NE(std::find(info->tags.begin(), info->tags.end(), "neogs"), info->tags.end());
+    EXPECT_EQ(_ctx->pSoundManager->generalSoundSlot().sdCardImage, _image->path());
+
+    // A guest-side write (the card's own SD protocol is not needed for this)
+    uint8_t block[SdCardSpi::BLOCK];
+    memset(block, 0xA5, sizeof block);
+    ASSERT_TRUE(card()->sdCard()->writeBlock(100, block));
+
+    ASSERT_TRUE(FitGeneralSoundCard(_ctx->pSoundManager, GSTypeKind::Z80));
+    EXPECT_FALSE(listed()) << "the card went, its slot with it";
+    bool parked = false;
+    for (const SlotInfo& slot : media->Detached())
+        parked |= slot.descriptor.id == SoundChip_NeoGS::SD_SLOT_ID && slot.source == _image->path();
+    EXPECT_TRUE(parked) << "the medium waits for the card";
+
+    ASSERT_TRUE(FitGeneralSoundCard(_ctx->pSoundManager, GSTypeKind::NGS));
+    ASSERT_TRUE(card()->sdCardPresent()) << "a NeoGS fitted again finds its card";
+    EXPECT_EQ(card()->sdCardImage(), _image->path());
+    uint8_t back[SdCardSpi::BLOCK] = {};
+    ASSERT_TRUE(card()->sdCard()->readBlock(100, back));
+    EXPECT_EQ(back[0], 0xA5) << "session writes survive the parking";
 }
 
 TEST_F(NeoGSMedia_Test, RefusedWhileTtdReplayOwnsTheMachine)
@@ -135,31 +184,29 @@ TEST_F(NeoGSMedia_Test, RefusedWhileTtdReplayOwnsTheMachine)
     EXPECT_TRUE(card()->sdCardPresent());
 }
 
-/// While the loop runs on its own thread a request is only queued; the loop
-/// carries it out at an instruction boundary. Paused, it waits
+/// The SD slot belongs to the media manager: while the loop runs a request
+/// is queued and applied at the next frame boundary; paused, at once
 TEST_F(NeoGSMedia_Test, FromAnotherThreadCarriedOutByTheLoop)
 {
     fitNeoGS();
     _emulator->StartAsync();
     ASSERT_TRUE(TestWait::For([this] { return _emulator->GetState() == StateRun; }));
-    _emulator->Pause();
-    ASSERT_TRUE(_emulator->WaitForPauseConfirmation(2000));
 
     EXPECT_EQ(NeoGSRequestSdEject(_ctx), NeoGSMediaResult::Queued);
-    EXPECT_TRUE(card()->sdCardPresent()) << "nothing touches the card while the machine is parked";
-
-    _emulator->Resume();
-    ASSERT_TRUE(TestWait::For([this] { return !_ctx->ttdInputWork.load(); }));
+    ASSERT_TRUE(_ctx->pMediaManager->WaitApplied(SoundChip_NeoGS::SD_SLOT_ID, 2000));
     _emulator->Pause();
     ASSERT_TRUE(_emulator->WaitForPauseConfirmation(2000));
     EXPECT_FALSE(card()->sdCardPresent());
+
+    EXPECT_EQ(NeoGSRequestSdInsert(_ctx, _image->path()), NeoGSMediaResult::Done) << "paused: applied at once";
+    EXPECT_TRUE(card()->sdCardPresent());
     _emulator->Stop();
 }
 
 /// The race this path exists for: the card boots from its SD card (the
 /// loader reads the FAT and 32 KB of NEOGS.ROM) while another thread ejects
-/// and inserts the card as fast as it can. Every change lands between
-/// instructions: no crash, no torn state (run under ASan in CI)
+/// and inserts the card as fast as it can. Every change lands at a frame
+/// boundary (the media manager): no crash, no torn state (run under ASan in CI)
 TEST_F(NeoGSMedia_Test, EjectAndInsertStormWhileTheCardReadsTheSdCard)
 {
     fitNeoGS();
@@ -178,6 +225,7 @@ TEST_F(NeoGSMedia_Test, EjectAndInsertStormWhileTheCardReadsTheSdCard)
         std::this_thread::sleep_for(std::chrono::milliseconds(3));
     }
     ASSERT_TRUE(TestWait::For([this] { return !_ctx->ttdInputWork.load(); }));
+    ASSERT_TRUE(_ctx->pMediaManager->WaitApplied(SoundChip_NeoGS::SD_SLOT_ID, 2000));
     _emulator->Pause();
     ASSERT_TRUE(_emulator->WaitForPauseConfirmation(2000));
     EXPECT_EQ(accepted, 200);
@@ -197,12 +245,12 @@ TEST_F(NeoGSMedia_Test, SlotCopyFollowsTheCardAndItsSdCard)
     fitNeoGS();
     GeneralSoundSlot slot = _ctx->pSoundManager->generalSoundSlot();
     EXPECT_EQ(slot.kind, GSTypeKind::NGS);
-    EXPECT_EQ(slot.sdCardImage, card()->sdCard()->path());
+    EXPECT_EQ(slot.sdCardImage, card()->sdCardImage());
 
     ASSERT_EQ(NeoGSRequestSdEject(_ctx), NeoGSMediaResult::Done);
     EXPECT_TRUE(_ctx->pSoundManager->generalSoundSlot().sdCardImage.empty());
     ASSERT_EQ(NeoGSRequestSdInsert(_ctx, _other->path()), NeoGSMediaResult::Done);
-    EXPECT_EQ(_ctx->pSoundManager->generalSoundSlot().sdCardImage, card()->sdCard()->path());
+    EXPECT_EQ(_ctx->pSoundManager->generalSoundSlot().sdCardImage, card()->sdCardImage());
 
     ASSERT_TRUE(_ctx->pSoundManager->switchGeneralSoundCard(GSTypeKind::LW));
     slot = _ctx->pSoundManager->generalSoundSlot();
@@ -215,7 +263,6 @@ TEST_F(NeoGSMedia_Test, SlotCopyFollowsTheCardAndItsSdCard)
 /// slot copy follows
 TEST_F(NeoGSMedia_Test, SwitchRequestedWhileRunningRenamesTheMixerSource)
 {
-    strncpy(_ctx->config.ngs.sdCardPath, _image->path().c_str(), sizeof _ctx->config.ngs.sdCardPath - 1);
     SoundManager* sm = _ctx->pSoundManager;
     auto gsName = [sm]
     {

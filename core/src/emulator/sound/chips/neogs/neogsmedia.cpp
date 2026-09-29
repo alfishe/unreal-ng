@@ -5,7 +5,11 @@
 
 #include "common/filehelper.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "common/logger.h"
+#include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/media/mediamanager.h"
+#include "emulator/sound/chips/neogs/soundchip_neogs.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/sound/soundmanager.h"
 
@@ -56,6 +60,24 @@ NeoGSMediaResult onMachineThread(EmulatorContext* context, std::function<bool(Ge
             return NeoGSMediaResult::ReplayOwnsInput;
     }
 }
+
+/// With a media manager the slot `sd.ngs` takes the request on any thread: at
+/// once while the machine is not running, else at the next frame boundary
+bool machineRunning(EmulatorContext* context)
+{
+    Emulator* emulator = context->pEmulator;
+    return emulator && emulator->IsRunning() && !emulator->IsPaused();
+}
+
+NeoGSMediaResult viaMediaManager(bool running, const MediaResult& result)
+{
+    if (!result.Ok())
+    {
+        LOGWARNING("NeoGS: SD card request refused: %s", result.message.c_str());
+        return NeoGSMediaResult::Failed;
+    }
+    return running ? NeoGSMediaResult::Queued : NeoGSMediaResult::Done;
+}
 } // namespace
 
 NeoGSMediaResult NeoGSRequestSdInsert(EmulatorContext* context, const std::string& path)
@@ -64,13 +86,26 @@ NeoGSMediaResult NeoGSRequestSdInsert(EmulatorContext* context, const std::strin
         return NeoGSMediaResult::NoNeoGS;
     if (recording(context))
         return NeoGSMediaResult::TtdRecording;
+    if (context->ttdReplayActive)
+        return NeoGSMediaResult::ReplayOwnsInput;
     if (path.empty())
         return NeoGSMediaResult::NoPath;
-    // The card resolves a relative path against the executable's folder too
-    if (!FileHelper::FileExists(FileHelper::NormalizePath(path)) &&
-        !FileHelper::FileExists(FileHelper::PathCombine(FileHelper::GetExecutablePath(), path)))
+    const std::string resolved = FileHelper::NormalizePath(path);
+    const bool folder = FileHelper::IsFolder(resolved);
+    if (!folder && !FileHelper::FileExists(resolved))
         return NeoGSMediaResult::NoFile;
-    return onMachineThread(context, [path](GeneralSoundCard* gs) { return gs->insertSdCard(path); });
+    if (MediaManager* manager = context->pMediaManager; manager && manager->HasSlot(SoundChip_NeoGS::SD_SLOT_ID))
+    {
+        MediaSource source;
+        source.path = resolved;
+        source.type = folder ? MediaSourceType::Folder : MediaSourceType::File;
+        InsertOptions options;
+        options.access = SoundChip_NeoGS::configuredSdAccess(context->config.ngs);
+        options.disposition = Disposition::Discard; // automation's sd_insert always replaced the card
+        const bool running = machineRunning(context);
+        return viaMediaManager(running, manager->Insert(SoundChip_NeoGS::SD_SLOT_ID, source, options));
+    }
+    return onMachineThread(context, [resolved](GeneralSoundCard* gs) { return gs->insertSdCard(resolved); });
 }
 
 NeoGSMediaResult NeoGSRequestSdEject(EmulatorContext* context)
@@ -79,6 +114,15 @@ NeoGSMediaResult NeoGSRequestSdEject(EmulatorContext* context)
         return NeoGSMediaResult::NoNeoGS;
     if (recording(context))
         return NeoGSMediaResult::TtdRecording;
+    if (context->ttdReplayActive)
+        return NeoGSMediaResult::ReplayOwnsInput;
+    if (MediaManager* manager = context->pMediaManager; manager && manager->HasSlot(SoundChip_NeoGS::SD_SLOT_ID))
+    {
+        EjectOptions options;
+        options.disposition = Disposition::Discard;
+        const bool running = machineRunning(context);
+        return viaMediaManager(running, manager->Eject(SoundChip_NeoGS::SD_SLOT_ID, options));
+    }
     return onMachineThread(context, [](GeneralSoundCard* gs) { return gs->ejectSdCard(); });
 }
 
@@ -99,8 +143,8 @@ const char* NeoGSMediaResultText(NeoGSMediaResult r)
         case NeoGSMediaResult::TtdRecording: return "refused: a TTD recording is running - the machine's configuration is fixed while recording";
         case NeoGSMediaResult::ReplayOwnsInput: return "refused: a TTD replay owns the machine";
         case NeoGSMediaResult::NoPath: return "needs an SD image path";
-        case NeoGSMediaResult::NoFile: return "the SD image does not exist";
-        case NeoGSMediaResult::Failed: return "failed (see the log)";
+        case NeoGSMediaResult::NoFile: return "no SD image or folder at that path";
+        case NeoGSMediaResult::Failed: return "failed or refused by the media manager (see the log)";
     }
     return "?";
 }

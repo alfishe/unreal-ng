@@ -388,18 +388,17 @@ public:
     /// the switch itself runs at the next frame boundary on the emulation
     /// thread (handleFrameStart), the only point where the card may be
     /// deleted/recreated safely
-    bool requestGeneralSoundCardSwitch(GSTypeKind target);
+    /// Refused (false, reason in `error`) while a TTD user recording runs.
+    bool requestGeneralSoundCardSwitch(GSTypeKind target, std::string* error = nullptr);
 
     /// What the GS slot holds now, safe to read from any thread (the GUI,
     /// automation): the card - Z80 (classic), LW, NGS or NONE - and, on
     /// NeoGS, the SD card image (empty: no card). The card itself may be
     /// replaced or changed only on the emulation thread, so other threads
     /// read this copy instead of the card
-    GeneralSoundSlot generalSoundSlot() const
-    {
-        std::lock_guard<std::mutex> lock(_gsSlotMutex);
-        return _gsSlot;
-    }
+    /// Any thread. The SD image comes from the media manager's slot `sd.ngs`
+    /// when there is one (it changes at frame boundaries, not with the card)
+    GeneralSoundSlot generalSoundSlot() const;
     GSTypeKind fittedGeneralSoundKind() const { return generalSoundSlot().kind; }
     /// Refresh generalSoundSlot() from the card: emulation thread, after the
     /// card or its media changed

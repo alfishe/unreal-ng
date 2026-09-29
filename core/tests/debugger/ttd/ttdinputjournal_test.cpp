@@ -8,11 +8,12 @@
 ///     TimeTravelManager::RecordInputEvent → journal)
 ///   - Capture suppression rules (no capture outside Recording, no
 ///     capture during replay)
-///   - Inject path (InjectDueEvents / InjectDueInputEvents)
 ///   - Lifecycle integration (StartRecording clears journal, StopRecording
 ///     preserves it, InvalidateSession clears it)
-///   - General Sound host stimuli from automation (Apply per kind, the live
-///     path onto the machine's thread, journaled replay)
+///   - General Sound host stimuli from automation (the live path onto the
+///     machine's thread, journaled replay)
+///
+/// Applying one event to its device is covered in ttdinputapply_test.cpp.
 
 #include <gtest/gtest.h>
 
@@ -215,120 +216,6 @@ TEST_F(TTD_InputJournal_Test, DropAfter_WithPastThreshold_ClearsAll)
 }
 
 // ===========================================================================
-// Inject path — InjectDueEvents via the real Keyboard
-// ===========================================================================
-
-class TTD_InputJournal_Inject_Test : public ::testing::Test
-{
-protected:
-    Emulator* _emulator = nullptr;
-    EmulatorContext* _context = nullptr;
-    Keyboard* _keyboard = nullptr;
-    ttd::TTDInputJournal _journal;
-
-    void SetUp() override
-    {
-        _emulator = new Emulator(LoggerLevel::LogError);
-        ASSERT_TRUE(_emulator->Init());
-        _context = _emulator->GetContext();
-        ASSERT_NE(_context, nullptr);
-        _keyboard = _context->pKeyboard;
-        ASSERT_NE(_keyboard, nullptr);
-
-        // Make sure the matrix starts in a known state.
-        _keyboard->Reset();
-    }
-
-    void TearDown() override
-    {
-        if (_emulator)
-        {
-            _emulator->Stop();
-            _emulator->Release();
-            delete _emulator;
-        }
-    }
-
-    /// Read a keyboard matrix row by its ULA port address. The port's low
-    /// byte determines which row is read; bit 0 = row 0 (CAPS-V), bit 4 =
-    /// row 4 (EDIT-6). A bit is LOW (0) when the corresponding key is
-    /// pressed; HIGH (1) when released. We invert to make assertions read
-    /// naturally (true = key is currently pressed).
-    ///
-    /// Port address for row N: 0xFEFE | (~(1 << N) & 0xFF) << 8 — i.e.
-    /// 0xFEFE, 0xFDFE, 0xFBFE, 0xF7FE, 0xEFFE for rows 0..4.
-    bool IsKeyPressedAtRow(uint8_t row, ZXKeysEnum key)
-    {
-        const uint16_t port = 0xFE00 | static_cast<uint16_t>(~(1u << row) & 0xFF);
-        const uint8_t rowBits = _keyboard->HandlePortIn(port);
-        // Bit for the key column. Column is determined by the key enum's
-        // bit-encoding. ZXKEY_SPACE = 0x20 — its bit-3 in the row data.
-        // We don't need to decode this in general; the caller is expected
-        // to know the bit position for the specific key being tested.
-        (void)key;
-        return rowBits != 0xFF;  // any key pressed in this row
-    }
-
-    ttd::TTDInputEvent MakeEv(uint64_t frame, uint32_t tInFrame, ZXKeysEnum key, bool pressed)
-    {
-        ttd::TTDInputEvent ev;
-        ev.time.frame    = frame;
-        ev.time.tInFrame = tInFrame;
-        ev.key           = static_cast<uint8_t>(key);
-        ev.pressed       = pressed;
-        return ev;
-    }
-};
-
-TEST_F(TTD_InputJournal_Inject_Test, InjectDueEvents_ReturnsZeroWhenNoEventsMatch)
-{
-    _journal.Record(MakeEv(5, 100, ZXKEY_SPACE, true));
-    _journal.Record(MakeEv(5, 500, ZXKEY_A,     true));
-
-    const size_t injected = _journal.InjectDueEvents(*_keyboard, {5, 200});
-    EXPECT_EQ(injected, 0u);
-}
-
-TEST_F(TTD_InputJournal_Inject_Test, InjectDueEvents_ReturnsCountWhenMatches)
-{
-    _journal.Record(MakeEv(5, 100, ZXKEY_SPACE, true));
-    _journal.Record(MakeEv(5, 100, ZXKEY_A,     true));
-    _journal.Record(MakeEv(5, 500, ZXKEY_B,     true));
-
-    const size_t injected = _journal.InjectDueEvents(*_keyboard, {5, 100});
-    EXPECT_EQ(injected, 2u);
-}
-
-TEST_F(TTD_InputJournal_Inject_Test, InjectDueEvents_PressesAndReleasesKeyOnKeyboard)
-{
-    // SPACE sits in keyboard matrix row 7, bit 0 (see _zxKeyMap). We don't
-    // need to verify the matrix state through HandlePortIn (the column-bit
-    // encoding is annoying to derive); we just verify the journal correctly
-    // dispatches the call by counting. PressKey/ReleaseKey on the real
-    // Keyboard already have their own coverage in keyboard_test.
-    //
-    // We DO exercise a press+release round trip here so any crash in the
-    // inject path surfaces immediately (e.g. bad cast, missing method).
-    _journal.Record(MakeEv(5, 100, ZXKEY_SPACE, true));
-    _journal.Record(MakeEv(5, 200, ZXKEY_SPACE, false));
-
-    EXPECT_EQ(_journal.InjectDueEvents(*_keyboard, {5, 100}), 1u);
-    EXPECT_EQ(_journal.InjectDueEvents(*_keyboard, {5, 150}), 0u);
-    EXPECT_EQ(_journal.InjectDueEvents(*_keyboard, {5, 200}), 1u);
-}
-
-TEST_F(TTD_InputJournal_Inject_Test, InjectDueEvents_AtSameTime_FiresAllMatchingEvents)
-{
-    // Two simultaneous presses at the same TTDTimePoint (e.g. user held
-    // two keys on the same frame boundary). Both should inject.
-    _journal.Record(MakeEv(5, 0, ZXKEY_A, true));
-    _journal.Record(MakeEv(5, 0, ZXKEY_S, true));
-
-    EXPECT_EQ(_journal.InjectDueEvents(*_keyboard, {5, 0}), 2u);
-    EXPECT_EQ(_journal.InjectDueEvents(*_keyboard, {5, 0}), 2u);  // Idempotent re-inject
-}
-
-// ===========================================================================
 // Capture integration — DebugKeyboardManager → TimeTravelManager → journal
 // ===========================================================================
 
@@ -436,48 +323,6 @@ TEST_F(TTD_InputJournal_Capture_Test, PressKey_DuringReplay_DoesNotJournalize)
     EXPECT_EQ(_ttd->GetInputJournal().Size(), 0u)
         << "Replay must suppress journal capture — injected events are "
         << "drawn from history, not re-recorded";
-}
-
-TEST_F(TTD_InputJournal_Capture_Test, InjectDueInputEvents_ManagerHelper_ReturnsCount)
-{
-    ASSERT_TRUE(_ttd->StartRecording());
-
-    // Record two events at the same TTDTimePoint
-    DebugKeyboardManager* km = _context->pDebugManager->GetKeyboardManager();
-    ASSERT_NE(km, nullptr);
-    km->PressKey(ZXKEY_A);
-    km->PressKey(ZXKEY_S);
-
-    ASSERT_EQ(_ttd->GetInputJournal().Size(), 2u);
-
-    // Move into replay mode and inject — both events fire at the captured
-    // TTDTimePoint. RecordInputEvent reads the intra-frame position from
-    // z80.t (the per-frame t-state counter), so we must compute `now` the
-    // same way for the injection to match.
-    _ttd->EnterReplayMode();
-    ttd::TTDTimePoint now;
-    now.frame    = _context->emulatorState.frame_counter;
-    Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
-    ASSERT_NE(z80, nullptr);
-    now.tInFrame = z80->t;
-    const size_t injected = _ttd->InjectDueInputEvents(now);
-    EXPECT_EQ(injected, 2u);
-    _ttd->ExitReplayMode();
-}
-
-TEST_F(TTD_InputJournal_Capture_Test, InjectDueInputEvents_ManagerHelper_NoOpWhenNotInReplay)
-{
-    ASSERT_TRUE(_ttd->StartRecording());
-
-    DebugKeyboardManager* km = _context->pDebugManager->GetKeyboardManager();
-    ASSERT_NE(km, nullptr);
-    km->PressKey(ZXKEY_SPACE);
-
-    // Replay not engaged — defensive no-op
-    ttd::TTDTimePoint now;
-    now.frame = _context->emulatorState.frame_counter;
-    const size_t injected = _ttd->InjectDueInputEvents(now);
-    EXPECT_EQ(injected, 0u);
 }
 
 // ---------------------------------------------------------------------------
@@ -615,40 +460,6 @@ protected:
     }
 };
 
-/// Each kind reaches the card through the host-port contract; without a card
-/// the event is reported as not applied
-TEST_F(TTD_InputJournalGS_Test, Apply_EachKindDrivesTheCard)
-{
-    GeneralSoundCard* gs = Card();
-    const uint64_t nmisBefore = gs->getActivityCounters().nmisAccepted;
-
-    ASSERT_TRUE(ttd::TTDInputJournal::Apply(GS(ttd::TTDInputKind::GSCommand, 0x5A), nullptr, nullptr, gs));
-    EXPECT_EQ(gs->getCommandFromHost(), 0x5A);
-    EXPECT_NE(gs->getStatusRaw() & 0x01, 0) << "OUT #BB sets the command flag";
-
-    ASSERT_TRUE(ttd::TTDInputJournal::Apply(GS(ttd::TTDInputKind::GSData, 0xA5), nullptr, nullptr, gs));
-    EXPECT_EQ(gs->getDataFromHost(), 0xA5);
-    EXPECT_NE(gs->getStatusRaw() & 0x80, 0) << "OUT #B3 sets the data flag";
-
-    // #33 bit 7: the card restarts, the host mailbox (external flip-flops) survives
-    ASSERT_TRUE(ttd::TTDInputJournal::Apply(GS(ttd::TTDInputKind::GSResetCard), nullptr, nullptr, gs));
-    EXPECT_EQ(gs->getCPUReg(GSCpuRegister::PC), 0);
-    EXPECT_NE(gs->getStatusRaw() & 0x01, 0) << "reset_card must keep the pending command";
-
-    ASSERT_TRUE(ttd::TTDInputJournal::Apply(GS(ttd::TTDInputKind::GSNmi), nullptr, nullptr, gs));
-    _emulator->RunNFrames(1);  // the NMI is taken by the card's next instruction
-    EXPECT_GT(gs->getActivityCounters().nmisAccepted, nmisBefore);
-
-    // Power-on reset clears the mailbox too
-    ASSERT_TRUE(ttd::TTDInputJournal::Apply(GS(ttd::TTDInputKind::GSCommand, 0x11), nullptr, nullptr, gs));
-    ASSERT_TRUE(ttd::TTDInputJournal::Apply(GS(ttd::TTDInputKind::GSReset), nullptr, nullptr, gs));
-    EXPECT_EQ(gs->getStatusRaw() & 0x81, 0) << "full reset must clear the command and data flags";
-
-    for (auto kind : {ttd::TTDInputKind::GSCommand, ttd::TTDInputKind::GSData, ttd::TTDInputKind::GSNmi,
-                      ttd::TTDInputKind::GSResetCard, ttd::TTDInputKind::GSReset})
-        EXPECT_FALSE(ttd::TTDInputJournal::Apply(GS(kind, 1), nullptr, nullptr, nullptr));
-}
-
 /// Loop not running: the caller is the only thread, the stimulus applies at
 /// once and is journaled at that exact time while recording
 TEST_F(TTD_InputJournalGS_Test, SubmitLiveInput_AppliesAndJournalsWhileRecording)
@@ -664,7 +475,8 @@ TEST_F(TTD_InputJournalGS_Test, SubmitLiveInput_AppliesAndJournalsWhileRecording
     EXPECT_EQ(events[0].kind, ttd::TTDInputKind::GSData);
     EXPECT_EQ(events[0].value, 0x42);
     EXPECT_EQ(events[0].time.frame, _context->emulatorState.frame_counter);
-    EXPECT_EQ(events[0].time.tInFrame, _context->pCore->GetZ80()->t);
+    // TTD time: T-states at the model's top clock (B4), not the raw z80.t
+    EXPECT_EQ(events[0].time.tInFrame, _context->emulatorState.TtdTInFrame(_context->pCore->GetZ80()->t));
     _ttd->StopRecording();
 }
 

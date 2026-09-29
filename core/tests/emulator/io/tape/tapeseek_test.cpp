@@ -279,7 +279,7 @@ TEST_F(TapePosition_Test, StateEnumTransitions)
     _tape->ResumePlaybackFromPause();
     EXPECT_EQ(_tape->GetPlaybackState(), TapePlaybackState::Playing);
 
-    _tape->stopPlayback();  // in-flight block counts as consumed
+    _tape->EndOfTape();  // the last pulse played
     EXPECT_EQ(_tape->GetConsumptionCursor(), 1u);
     EXPECT_EQ(_tape->GetPlaybackState(), TapePlaybackState::Ended);
 }

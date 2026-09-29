@@ -1,7 +1,14 @@
 #pragma once
 #include "stdafx.h"
 
-#include "emulator/memory/atm/cmos.h"
+#include <memory>
+#include <string>
+
+#include "emulator/cpu/z80.h"
+#include "emulator/io/sdcard/sdcardspi.h"
+#include "emulator/io/spi/zcontrollerspi.h"
+#include "emulator/media/mediaslot.h"
+#include "emulator/memory/atm/evoavr.h"
 
 #include "portdecoder_atm710.h"
 
@@ -17,6 +24,8 @@
 /// - CMOS (DS12885-style RTC + NVRAM) shared with the memory manager ports:
 ///   data #BFF7 / address #DFF7 outside shadow (after #EFF7 bit 7),
 ///   data #BEF7 / address #DEF7 in shadow
+/// - Z-Controller SD card (#77 chip select, #57 data; in shadow #57 with
+///   A15 = 1 is the chip select): ZControllerSpi + SdCardSpi, [ZC] section
 /// - Shadow = TR-DOS active or #BF bit 0: the FDC, #xx77 and the pager
 ///   (#xFF7 / #x7F7) answer only then; #1F is the joystick and #xx77 the
 ///   Z-Controller outside it
@@ -29,7 +38,7 @@
 ///
 /// See: Unreal Speccy io.cpp, memory.cpp, atm.cpp
 
-class PortDecoder_ATM3 : public PortDecoder_ATM710
+class PortDecoder_ATM3 : public PortDecoder_ATM710, public IMachineM1Hook
 {
 public:
     static constexpr uint8_t ATM_EFF7_GLUK = 0x80;  // Bit 7: Gluk clock ports on outside shadow
@@ -63,7 +72,12 @@ public:
         UlaPlus,            ///< #3B
         NemoIde,            ///< #10/#11/#30..#F0/#C8 and the #x8 aliases
         Covox,              ///< #FB write (not a porthit on the board: the DAC also lets ZX-Bus see it)
+        LegacyFddLatch,     ///< legacy FPGA only: #2F/#4F/#6F/#8F in shadow, plain R/W bytes of the RAM-disk DOS
     };
+
+    /// EmulatorState::evoTrdemu bits
+    static constexpr uint8_t kTrdemuIn = 0x01;       ///< RAM page #FE is in window 0
+    static constexpr uint8_t kTrdemuPending = 0x02;  ///< swap in before the next opcode fetch
 
     /// Classify one I/O cycle by the BaseConf decode rules
     PortArm ClassifyPort(uint16_t port, bool isWrite);
@@ -75,13 +89,69 @@ public:
     /// Evo readback register selected by A12..A8 of #xxBD (trdemu) / #xxBE (legacy):
     /// fpga/base_trdemu/trunk/z80/zports.v portbdmux, fpga/baseconf/trunk portbemux
     uint8_t ReadEvoRegister(uint8_t index);
+
+    /// region <Board NMI (fpga/base_trdemu/trunk/z80/znmi.v, zbreak.v)>
+    /// Magic button (the AVR's PrintScreen NMI): released at the next frame INT
+    bool RequestBoardNmi() override;
+    bool OnFrameIntStartNmi() override;
+    /// Z80 accepted an NMI: a board NMI forces NOP at #0066 and pages RAM #FF in
+    bool OnNmiAccepted() override;
+    /// DOS closes on execution from a window PROGRAMMED as RAM (atm_pager.v
+    /// ram_exec_stb), not from the NMI / RAM-0 overrides mapped over a ROM window
+    bool IsDosLeavingBank(uint8_t bank) const override;
+    /// M1 refresh: NMI exit countdown after #xxBE, breakpoint compare
+    void OnMachineM1(uint16_t address) override;
+    /// Before an opcode fetch: a pending virtual-TR-DOS swap takes effect
+    void BeforeMachineM1(uint16_t address) override;
+    /// endregion </Board NMI>
+
+    /// region <SD card (Z-Controller, tdd-storage-sd-ide-cd.md §2)>
+    /// The card is the media manager's slot "sd.zc" (storage-manager
+    /// integration-zxevo-sd.md): the manager owns the medium and applies the
+    /// config ([MEDIA] sd.zc, legacy [ZC]) before the first reset. A Z80
+    /// reset keeps the card and its session writes, like the board's reset
+    SdCardSpi& GetSdCard() { return _sdCard; }
+    ZControllerSpi& GetZController() { return _zc; }
+    /// Insert an image file / any medium through the media manager (directly
+    /// when the context has none: bare decoder unit tests)
+    bool InsertSdCard(const std::string& path, SdCardSpi::WriteMode mode, bool writeProtect = false);
+    bool InsertSdCard(std::unique_ptr<IBlockDevice> media, SdCardSpi::WriteMode mode, bool writeProtect = false);
+    void EjectSdCard();
+
+    /// ATM paging + the SD card's protocol state
+    std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
+    std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
+    /// endregion </SD card>
     /// endregion </Types>
 
     /// region <Fields>
 protected:
-    // DS12885-style RTC/CMOS (BaseConf config storage). Lives with the decoder
-    // so the contents survive Core::Reset() (like a battery-backed CMOS).
-    CMOS _cmos;
+    // The board's AVR behind the Gluk clock ports: MC146818 clock, battery-backed
+    // NVRAM, EEPROM window, version / PS/2 / modes extension window. Lives with
+    // the decoder so the contents survive Core::Reset() (like the real battery)
+    EvoAvr _cmos;
+    bool _nvramLoaded = false;  // [EVO] NvramFile read once, on the first reset
+
+    // Z-Controller SD slot: the card outlives Core::Reset() like the NVRAM
+    class EvoSdSlot : public IMediaSlot
+    {
+    public:
+        explicit EvoSdSlot(PortDecoder_ATM3& owner);
+        const SlotDescriptor& Descriptor() const override { return _descriptor; }
+        void Attach(Medium& medium) override;
+        void Detach() override;
+        bool IsBusy() const override;
+        void SetWriteProtectSwitch(bool on) override;
+
+    private:
+        PortDecoder_ATM3& _owner;
+        SlotDescriptor _descriptor;
+    };
+
+    SdCardSpi _sdCard;
+    ZControllerSpi _zc;
+    EvoSdSlot _sdSlot{*this};
+    bool _sdWriteProtect = false;   // the slot's write-protect switch
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -100,10 +170,20 @@ public:
     /// CMOS/RTC backing store (verification tests / debug UI - mirrors
     /// PortDecoder_Scorpion256::GetSMUCNvram())
     CMOS& GetCMOS() { return _cmos; }
+    EvoAvr& GetEvoAvr() { return _cmos; }
     /// endregion </Interface methods>
 
     /// region <Port detection>
 public:
+    /// BaseConf: the 7FFD lock bit only counts while EFF7 bit 2 (lockmem) holds
+    /// the memory manager in 128K mode; in P1024 mode bits 5..7 extend the page
+    bool IsPagingLocked() const override
+    {
+        return (_state->pEFF7 & ATM_EFF7_LOCKMEM) && (_state->p7FFD & PORT_7FFD_LOCK);
+    }
+
+    /// BaseConf clock select: 3.5, 7 or 14 MHz (updateTurboMode)
+    uint8_t TtdClockUnits() const override { return 4; }
     bool IsPort_FF77(uint16_t port);  // Partial decode for ATM3
     bool IsPort_37F7(uint16_t port);  // 4MB memory manager
     bool IsPort_BF(uint16_t port);    // ATM3 control
@@ -138,6 +218,7 @@ protected:
     // 128K mode (xpeccy evoOut7FFD)
     void Port_7FFD_Out(uint16_t port, uint8_t value, uint16_t pc) override;
 
+
     // EFF7 z-bits (bit 0 / bit 5) fold into the video mode decode on ATM3
     // (xpeccy evoOutEFF7 -> evoSetVideoMode): re-run raster detection on change
     void Port_EFF7_Out(uint16_t port, uint8_t value, uint16_t pc) override;
@@ -147,7 +228,16 @@ protected:
     void updateMemoryBanks() override;
 
     void DecodeF7Out(uint16_t port, uint8_t value, uint16_t pc);
+    /// Attach this decoder as the Z80 M1 hook only while it has work there
+    /// (NMI exit countdown running or #BF breakpoint enabled)
+    void RefreshM1Hook();
+    /// Virtual TR-DOS (zdos.v / zports.v:797-799): for an FDC access in shadow,
+    /// latch the drive number, arm the trap, and report whether the WD1793 is
+    /// deselected (a masked drive's #1F-#7F accesses never reach the chip)
+    bool TrdemuFdcAccess(uint8_t fdcPort, bool isWrite, uint8_t value);
     void BorderOnlyOut(uint16_t port, uint8_t value, uint16_t pc);
+    /// Card presence and the slot's write-protect switch into AVR register C
+    void UpdateSdStatus();
     uint8_t DecodeF7In(uint16_t port);
     /// endregion </Port handlers>
 };

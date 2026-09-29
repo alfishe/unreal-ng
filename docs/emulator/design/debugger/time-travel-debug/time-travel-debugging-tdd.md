@@ -244,7 +244,9 @@ A point in time is identified by:
 struct TTDTimePoint
 {
     uint64_t frame;      // EmulatorState::frame_counter value
-    uint32_t tInFrame;   // Z80 t counter within frame [0, config.frame * multiplier)
+    uint32_t tInFrame;   // T-states within the frame at the model's TOP CPU clock,
+                         // [0, config.frame * ttd_clock_units); plain T-states on
+                         // models without a hardware turbo
                          // Granularity: instruction boundary (identical to RunTStates)
 
     bool operator<(const TTDTimePoint& o) const
@@ -256,9 +258,9 @@ struct TTDTimePoint
 
 Notes:
 
-- `config.frame` is t-states per frame (71680 for Pentagon). With the speed multiplier the intra-frame limit is `config.frame * current_z80_frequency_multiplier` — matching the logic already present in `Emulator::RunTStates`.
+- `config.frame` is t-states per frame (71680 for Pentagon). The CPU's own counter `z80.t` counts at the clock running now and is rescaled when a hardware turbo switches mid-frame (the instant is kept, the number changes), so after a switch down it repeats values of the same frame. TTD time therefore counts at the model's top clock: `tInFrame = z80.t * ttd_clock_units / hardware ratio`, where `ttd_clock_units` is the LCM of the model's hardware CPU clock ratios (1 without turbo; Scorpion and ATM 7.10 2; ZX-Evo 4; ZX Next 8). One instant has one value, time only grows, and a frame is always `config.frame * ttd_clock_units` units (B4). Co-processors with their own clock (GS, NeoGS) are outside this unit: their stimuli are journaled at main-CPU time and the card converts.
 - **Granularity is one Z80 instruction**, not one t-state. This is the same resolution as every existing stepping facility and is sufficient: no observable state changes mid-instruction from the debugger's point of view. (ULA beam position within an instruction is derivable from `t`.)
-- The global monotonic key used for indexes is `globalT = frame * tStatesPerFrame + tInFrame` stored as `uint64_t`. At 3.5 MHz this wraps after ~167,000 years.
+- The global monotonic key used for indexes is `globalT = frame * config.frame * ttd_clock_units + tInFrame` (`TimeTravelManager::GlobalT`), stored as `uint64_t`; the write journal packs it in 40 bits, which lasts ~90 h of recording at 1 unit per T-state and ~10 h at 8.
 
 ### 4.2 Recording Session
 
@@ -268,9 +270,19 @@ A recording session is the unit of history validity:
 - **Invalidated** (history cleared, new session started) by any event that breaks determinism or teleports state:
   - Snapshot/tape/disk load, `Emulator::Reset()`, ROM reload
   - Manual memory/register edits from the debugger UI *while running* (edits while paused at time T truncate history *after* T instead — the past is still valid)
-  - Speed multiplier change (`next_z80_frequency_multiplier`) — simpler to invalidate than to model; revisit if it proves annoying
+  - Speed multiplier change (`next_z80_frequency_multiplier`) on a retained (stopped) session — simpler to invalidate than to model. While recording the change is refused instead (see the acceleration lock below)
   - Media write-back to mounted disk images (see 12.2 for the staged handling)
+- **A running recording refuses the host-side invalidators (B9).** While `Recording`, snapshot/tape/disk load, disk create, ROM load, `InvalidateSession` from a surface, switching `timetravel`/`debugmode` off and changing the write-journal mode are refused; the invalidation list above applies to a stopped (retained) session. `TimeTravelManager::RecordingGuard(TTDGuardedAction)` returns the user-facing reason (empty when allowed); the core entry points (`Emulator::LoadSnapshot/LoadTape/LoadDisk/CreateBlankDisk/LoadROM`, `FeatureManager::setFeature`, `SetEnableWriteJournal`) enforce it, and every surface pre-checks it to report the reason (CLI `Error:`, WebAPI 409, Lua `false, reason`, Python `RuntimeError`, Qt dialog). A reset stays allowed: it stops the recording and keeps the history. Guest-driven invalidators (ZX-Evo SD card) cannot be refused; `TTDSessionInfo::lastDropReason` (`last_drop_reason`) records what dropped the last history. Only a `Session` recording is protected: a `DebuggerLive` history (DeZog) is a rolling debugger history that any outside change drops and the debugger restarts on the next resume/step, as before B9.
 - The session records `sessionStartTime` (TTDTimePoint) and monotonically grows `sessionEndTime` = "now".
+- **Acceleration lock.** A recording must show the code running at real speed. Every way into `Recording` (`StartRecording`, `ResumeRecordingFrom`, `ResumeRecordingLive`) engages the lock, and it is released only when the session returns to `Idle` (stop, invalidation, reset out of `Detached`, file load). While it is held:
+  - the host speed control is forced to 1x before the baseline is captured, and 2x..16x is refused (`Core::SetSpeedMultiplier` returns false). The emulated machine's own hardware turbo (ATM, Scorpion) is guest behavior and is left alone;
+  - turbo mode (`turbomode` feature) is switched off and cannot be switched on;
+  - fast tape, turbo tape and fast disk shortcuts read as off and cannot be switched on.
+
+  The previous speed and turbo settings come back on release. The lock is held through `Detached` as well, since replaying history under a dilated clock or a loader trap would diverge. Only a recording engages it: switching the `timetravel` feature on merely arms the capture machinery and locks nothing.
+- **Shortcuts stay off for the whole time the machine is bound to history.** Fast tape, turbo tape and fast disk change what the guest code does (a trap skips the ROM loader), so they also read as off while a stopped or loaded session is replayed (seek, step, frame-cache build) or the machine sits in `Detached` - even when no recording lock is held (`FeatureManager::isTtdTimelineBound`). Turbo mode and the speed control only change pacing, not the guest's behavior, so history browsing leaves them alone.
+
+  Every automation surface (Qt UI, CLI, WebAPI/MCP, Lua, Python) goes through these same core checks, and the Qt menu greys the locked items out.
 
 The **current position** may be in the past (after a rewind). The state machine:
 
@@ -281,7 +293,7 @@ stateDiagram-v2
     Recording --> Detached : SeekTo(T < end)<br/>(emulator paused in the past)
     Detached --> Recording : Resume() at T —<br/>history truncated to T,<br/>recording continues from T
     Detached --> Recording : SeekTo(end)<br/>(back to the present)
-    Recording --> Idle : InvalidateSession()<br/>reset / load / config change
+    Recording --> Idle : StopRecording() / reset (history kept)<br/>guest invalidation (SD card)
     Detached --> Idle : InvalidateSession()
 ```
 

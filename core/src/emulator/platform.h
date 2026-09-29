@@ -56,6 +56,11 @@ constexpr char const* NC_FEATURE_CHANGED = "FEATURE_CHANGED";                   
 constexpr char const* NC_SPEED_CHANGED = "SPEED_CHANGED";                       // Speed multiplier or turbo mode changed (payload: SpeedChangedPayload). Posted from Core after state is committed.
 constexpr char const* NC_DISK_AUTOSTART = "DISK_AUTOSTART";                       // TR-DOS disk autostart outcome or refusal (payload: DiskAutostartPayload). Posted from Emulator::AutostartDisk.
 constexpr char const* NC_FILE_LOADED = "FILE_LOADED";                           // Snapshot / tape / disk file loaded or load failed (payload: FileLoadedPayload). Posted from Emulator after the loader returns.
+constexpr char const* NC_MEDIA_INSERTED = "MEDIA_INSERTED";                     // A medium was attached to a slot (payload: MediaSlotPayload). Posted from MediaManager on the thread that applied it
+constexpr char const* NC_MEDIA_EJECTED = "MEDIA_EJECTED";                       // A medium was detached from a slot (payload: MediaSlotPayload)
+constexpr char const* NC_MEDIA_DIRTY = "MEDIA_DIRTY";                           // A medium got its first unsaved change (payload: MediaSlotPayload); not repeated per write
+constexpr char const* NC_MEDIA_EXPORTED = "MEDIA_EXPORTED";                     // A medium was exported to a file (payload: MediaSlotPayload, _path = target)
+constexpr char const* NC_MEDIA_SAVED = "MEDIA_SAVED";                           // A medium was saved; it now stands for that file (payload: MediaSlotPayload, path = the file)
 constexpr char const* NC_RECORDING_STATE = "RECORDING_STATE";                   // Recording started or stopped (payload: RecordingStatePayload). Posted from RecordingManager.
 constexpr char const* NC_MEMORY_PAGE_CHANGED = "MEMORY_PAGE_CHANGED";           // RAM bank mapping changed (payload: MemoryPagePayload). Posted by Memory on bank switch.
 constexpr char const* NC_ROM_PAGE_CHANGED = "ROM_PAGE_CHANGED";                 // ROM selection changed (payload: ROMPagePayload). Posted by Memory on ROM switch.
@@ -456,7 +461,7 @@ struct NeoGSConfig
 	unsigned ramKB = 4096;                                  // 2048 | 4096
 	Boot boot = Boot::Loader;
 	unsigned bootDelayMs = 0;
-	char sdCardPath[FILENAME_MAX] = {};
+	char sdCardPath[FILENAME_MAX] = {};                     // bare contexts only; a machine's card is the media manager's slot sd.ngs
 	SDType sdType = SDType::Auto;
 	bool sdWriteProtect = false;                            // SSTAT switch bit only
 	WriteMode sdWrite = WriteMode::Session;
@@ -699,6 +704,9 @@ struct CONFIG
 		// (readback on #xxBD, #13BD virtual-drive mask), 1 = frozen legacy tree
 		// (readback on #xxBE, breakpoint writes on #xxBD)
 		uint8_t evo_legacy_fpga;
+		// ZX-Evo AVR battery-backed NVRAM + EEPROM image ([EVO] NvramFile=);
+		// empty = kept for the session only
+		char evo_nvram_path[FILENAME_MAX];
 	} atm;
 
 	uint8_t use_comp_pal;
@@ -751,9 +759,6 @@ struct CONFIG
 #ifdef MOD_MONITOR
 	char sos_labels_path[FILENAME_MAX];
 #endif
-
-	uint8_t zc;
-	char zc_sd_card_path[FILENAME_MAX];
 
 	char atariset[64]; // preset for atari
 	char keymap_name[64]; // name of ZX keys map
@@ -1019,6 +1024,30 @@ struct EmulatorState
         return t >> hw_turbo_shift_applied;
     }
 
+    /// TTD time units per base (1x) T-state: the least common multiple of the
+    /// model's hardware CPU clock ratios (1 = no turbo; Scorpion and ATM 7.10
+    /// 2; ZX-Evo 4; ZX Next 8). One unit is a T-state at the model's top
+    /// clock. Set once from the model's port decoder (TtdClockUnits)
+    uint8_t ttd_clock_units;
+
+    /// TTD time units per CPU T-state at the applied clock. The in-frame
+    /// counter z80.t counts CPU T-states at the current clock and is rescaled
+    /// when a hardware turbo switches mid-frame, so the same value can name two
+    /// instants of one frame; t x this factor names the instant uniquely and
+    /// grows monotonically through every switch (B4)
+    uint32_t TtdUnitsPerTState() const
+    {
+        // Hot path (every journaled write): units is a multiple of every ratio
+        // the model selects, and ratios are powers of two, so the division is
+        // an exact shift
+        const uint32_t units = ttd_clock_units ? ttd_clock_units : 1;
+        const uint32_t perT = units >> hw_turbo_shift_applied;
+        return perT ? perT : 1;
+    }
+
+    /// In-frame CPU position `t` (z80.t) in TTD time units
+    uint32_t TtdTInFrame(uint32_t t) const { return t * TtdUnitsPerTState(); }
+
     /// endregion </Runtime CPU parameters
 
 
@@ -1034,7 +1063,15 @@ struct EmulatorState
 	bool video_memory_changed;  // [Debug mode only] Indicates if video memory was changed
 	/// endregion </Access flags>
 
-	bool nmi_in_progress = false;
+	// ZX-Evo board NMI (znmi.v): evoInNmi = RAM page #FF forced into #0000-#3FFF;
+	// evoNmiEntry = the next NMI the Z80 accepts is the board's own (NOP at #0066,
+	// page switch); nmiAtIntStartPending = a board NMI waits for the frame INT
+	// (read by Z80::ProcessInterrupts, false on every other model). Packed into
+	// the one byte of the former nmi_in_progress flag, so EmulatorState keeps
+	// its layout
+	bool evoInNmi : 1 = false;
+	bool evoNmiEntry : 1 = false;
+	bool nmiAtIntStartPending : 1 = false;
 	
 	TSPORTS_t ts;
 	
@@ -1098,6 +1135,10 @@ struct EmulatorState
 	};
 	uint8_t pBE, pBF;
 	uint8_t evoFddMask;  // ZX-Evo #13BD: bit n = drive n emulated in software (trdemu FPGA only)
+	// ZX-Evo virtual TR-DOS (zdos.v): bit 0 = RAM page #FE swapped into #0000-#3FFF,
+	// bit 1 = swap due before the next opcode fetch; evoVgDrive = drive from the last OUT (#FF)
+	uint8_t evoTrdemu;
+	uint8_t evoVgDrive;
 
 	uint8_t flags = 0x00; // Stores execution flags
 	uint8_t border_attr;

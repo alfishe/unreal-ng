@@ -203,7 +203,9 @@ Spec256 too ≈ 12–14. Roughly 3.5–5 K new LOC plus ~0.5–1 K modified.
 
 1. **Exclusive content, day one.** Eight adapted games
    (Atw2, FlyShark, ZxWord, OFC, Summer Santa, Comando Quatro, Alien 8,
-   Buratino) plus the Test ROM exist as `.zxp`/`.trd` today. No other modern
+   Buratino) plus the Test ROM exist as `.zxp`/`.trd` today, and an
+   unexported After The War 1 project (`.sze`) would make a ninth. All of it
+   is collected in [testdata/machines/zxpoly/](../../../testdata/machines/zxpoly/README.md). No other modern
    C++ emulator runs them. That is immediate, demonstrable differentiation for
    unreal-ng — and a ready-made regression corpus (golden frames from the Java
    reference).

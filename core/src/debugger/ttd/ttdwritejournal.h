@@ -53,7 +53,9 @@ namespace ttd {
 /// the rest of the .ttd format.
 struct TTDWriteRecord
 {
-    uint64_t globalT  : 40;   ///< Absolute t-state since session start (~9 years max)
+    uint64_t globalT  : 40;   ///< TimeTravelManager::GlobalT of the write (T-states at the
+                              ///< model's top clock since frame 0; ~90 h at 1 unit per
+                              ///< T-state, ~10 h at 8)
     uint64_t addr     : 16;   ///< Z80 address (or port number when isIo == 1)
     uint64_t isIo     : 1;    ///< 1 = port OUT, 0 = memory write
     uint64_t pad      : 7;    ///< Reserved (alignment / future flags)
@@ -178,8 +180,17 @@ public:
     /// @brief Ring capacity in records (NOT bytes).
     inline size_t Capacity() const { return _ring.size(); }
 
+    /// @brief Heap the journal holds: the committed part of the ring (it
+    /// commits chunks on first write, so a short session holds far less than
+    /// Capacity() records).
+    inline size_t HeapBytes() const { return _ring.HeapBytes(); }
+
     /// @brief True iff Size() == 0.
     inline bool IsEmpty() const { return _seqHead == _seqTail; }
+
+    /// @brief True once the ring has overwritten its oldest records: writes
+    /// older than OldestGlobalT() are then no longer in the journal.
+    inline bool HasEvictedRecords() const { return _seqTail != 0; }
 
     /// @brief Read-only access to the sequence cursors and to a live record by
     /// its sequence number, SeqTail() <= seq < SeqHead() (for tests and for
@@ -216,6 +227,16 @@ private:
         }
 
         size_t size() const { return _capacity; }
+
+        /// Heap actually committed: the chunk table plus every chunk written so far
+        size_t HeapBytes() const
+        {
+            size_t total = _chunks.capacity() * sizeof(_chunks[0]);
+            for (const auto& chunk : _chunks)
+                if (chunk)
+                    total += (_chunkMask + 1) * sizeof(TTDWriteRecord);
+            return total;
+        }
 
         /// Writable slot: commits (zero-initialized) its chunk on first use
         TTDWriteRecord& operator[](size_t idx)

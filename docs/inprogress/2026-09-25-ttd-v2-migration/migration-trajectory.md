@@ -63,7 +63,9 @@ Fix what is wrong today, so the later steps build on a correct base and have
 tests that would catch regressions.
 
 - **Step 0 of the merge strategy**: the `PeripheralId` table and the
-  notification enum ([branch-merge-strategy.md](branch-merge-strategy.md) §2).
+  notification enum ([branch-merge-strategy.md](branch-merge-strategy.md) §2). **Done** (checked 2026-09-28):
+  the id table and the audio-activity enum are on master; the three branches
+  are merged.
 - **Capture gap**: RAM page 255 on 4 MB machines (widen the page cache
   sentinel). **Done 2026-09-27**: `ttd::PhysPage` (16 bit, `kPhysPageNone =
   0xFFFF`, `ttdphyspage.h`) in Memory's bank cache, probe, queries and
@@ -77,20 +79,57 @@ tests that would catch regressions.
 - **Suspected bugs, each first reproduced by a test**: stale `_prevPageCache`
   after resume (B1), stale write journal after load (B2), empty-journal find-last
   (B3), non-atomic failed load (B5), unbounded sizes in the journal/coverage
-  loaders.
+  loaders. **Done** in `a2d265df` + `86813dcb` (current-state §10). B4 (turbo
+  timestamps) was confirmed on the way and stays planned in V3.
+- **Recommended later** (write-journal follow-ups; none blocks V1):
+  - *Journal coverage window* (V5) instead of the all-or-nothing "gapless"
+    flag.
+  - ~~Report journal completeness in the session status~~ - **done
+    2026-09-28**: `write_journal_complete`, `write_journal_wrapped` and
+    `write_journal_gap {reason, frame, tinframe}` on WebAPI `/ttd/status`,
+    CLI, Lua, Python and the MCP status summary; `TTDSessionInfo` carries them.
+  - ~~Warn in the UI/API when journaling, TTD or debug mode is switched off
+    during a recording~~ - **done 2026-09-28**: B9 (`e175ff42`) now refuses
+    those switches during a user recording; the gaps still possible (recorded
+    without the journal, a change on a stopped session, a run between stop and
+    live resume, a loaded incomplete file, a debugger's live history) get a log
+    warning where they happen and `Journal incomplete` in the Qt TTD panel
+    (cause in the tooltip), besides the status fields.
+  - ~~Free the pre-allocated 64 MB journal when journaling is switched off
+    while no session exists~~ - **done 2026-09-28**.
+  - ~~Fix B4 before relying on find-last on turbo machines~~ - **done
+    2026-09-28**, with a finer unit than the 3.5 MHz tact proposed here (which
+    puts several 8x instructions on one position): positions count T-states
+    at the model's top clock (L = LCM of its clock ratios: Scorpion/ATM 7.10 2,
+    ZX-Evo 4, ZX Next 8), exact and monotonic through a switch; plain T-states
+    on models without turbo. Co-processors (GS, NeoGS) keep their own clocks
+    and are not part of L. 40-bit globalT at L=8 lasts ~10 h of recording.
 - **Feature-flag side effect** (perf review F3): enabling the `timetravel`
   feature without recording disables fast tape / fast disk; move the override to
-  recording start ([requirements.md](requirements.md) FR-18).
-- **Analyzer fixes**: Python knows flag bit 3 (bookmarks). (Done 2026-09-25:
+  recording start ([requirements.md](requirements.md) FR-18). **Done** in `005771c8`: only a
+  recording engages the lock, and it holds through replay and Detached.
+- **Analyzer fixes**: Python knows flag bit 3 (bookmarks) (done 2026-09-28). (Done 2026-09-25:
   the analyzer compares the stored piece CRC, and the false "the C++ writer
   stores 0" comments in `ttd_format.py`, `ttd.ksy` and `timetravelmanager.cpp`
   are corrected.) C++ integrity behaviour (eager check at load,
   error vs zero-fill on mismatch) waits for the investigation
   ([integrity-and-versioning.md](integrity-and-versioning.md)).
-- **Tests**: `TTD_Corpus_Test` compares RAM too, and gets a resume-then-compare
-  case; a test for page 255 (done 2026-09-27); the generic state-completeness test
-  ([requirements.md](requirements.md) FR-3).
-- **Comments**: remove the stale ones listed in current-state §10.
+- **Tests**: `TTD_Corpus_Test` compares RAM too (**done 2026-09-28**: every
+  4 KB sub-page a checkpoint holds, after each restore and for the 25
+  replayed checkpoints; a flipped byte fails it), and gets a resume-then-compare
+  case (present since `8db7841f`); a test for page 255 (done 2026-09-27); the generic state-completeness test
+  ([requirements.md](requirements.md) FR-3): first version **done 2026-09-28**
+  (`ttdstatecompleteness_test.cpp`, every creatable model, every port in the model's port
+  map). It found B10 (the #7FFD paging lock survived a seek), fixed the same day. Also
+  done 2026-09-28: a second pass with TR-DOS paged in (the Beta-128 rows decode and
+  must be restored) and FR-4: the one runtime device change, the General Sound card
+  type switch, is refused during a user recording and drops a stopped session or a
+  debugger's live history (`gs-card-switch`); a seek whose device set differs from
+  the checkpoint logs it instead of restoring silently.
+- **Comments**: remove the stale ones listed in current-state §10 (**done**: re-checked
+  2026-09-28, the listed comments in `timetravelmanager.*`, `ttdserializable.h` and the
+  page store header were already corrected; only the PoC reader `tools/poc/010-ttd-gui`
+  still says the writer stores CRC 0).
 
 Exit: the bit-flip experiment catches every page-payload flip; the new tests
 fail on the old code and pass on the new.
@@ -172,8 +211,8 @@ test; a deliberately corrupted blob produces a degraded result on every surface.
 - `HardwareReset` / `DebuggerEdit` markers actually emitted.
 - RTC/CMOS reads served from an emulated clock recorded in the session (Profi
   RTC, ATM CMOS).
-- Turbo timebase: journal timestamps and the replay clamp correct when
-  `z80.t` exceeds the nominal frame (B4).
+- ~~Turbo timebase: journal timestamps and the replay clamp correct when
+  `z80.t` exceeds the nominal frame (B4)~~ - done in V0 (2026-09-28).
 
 Exit: a loaded session replays inside a frame with the recorded input; a
 session loaded into a different audio rate reports it.
@@ -204,6 +243,20 @@ frames fail with a clear message.
 - `ttd.ksy` and the Python analyzer rewritten for chunks (unknown streams
   skipped per the decided rules), `validate` checks exactly what the C++ reader
   checks and decodes every stream.
+- **Write-journal coverage window** (recommended with the format cut). The
+  journal records the `globalT` intervals it was actually writing - from
+  recording start or journal switch-on to switch-off, plus the lower edge left
+  by ring wrap-around - and the file stores them instead of the single
+  "complete" flag (dump flag bit 4). find-last then:
+  - answers from the journal inside a covered interval (hit, or a trusted "no
+    match" for that part of the query);
+  - replays only the uncovered parts (before switch-on, after switch-off, older
+    than the wrapped ring edge);
+  - so switching journaling back on mid-session is useful again, and a wrapped
+    ring no longer forces a full replay of the whole history.
+  Keep the V0 journal tests (`ttdmanager_test.cpp` TimeTravelManagerJournal,
+  `ttdwritejournale2e_test.cpp`, `ttddumpformat_test.cpp`) and add on/off/on
+  and ring-wrap cases.
 - Fixtures re-recorded; `testdata/ttd/README.md` updated.
 - **From here on the format is versioned** under the decided compatibility
   rules; no more "amend in place".
@@ -266,10 +319,21 @@ and where this plan handles them:
 
 ## 6. Open decisions for the user
 
-1. **Option B vs A** (§1). B is recommended; A is acceptable if GS ships with
-   `GSRamSize=128` or GS disabled on Pentagon configs until V1.
-2. **MoonSound port-claim model** (§3.3 of the merge strategy): one mechanism
-   (extend self-decoding devices) vs two with a precedence rule.
+1. ~~**Option B vs A** (§1)~~ — **settled by events (2026-09-28)**: `profi`,
+   `generalsound` and `moonsound` all merged before V1, so the sequence that
+   happened is A. Its known cost is live on master: the GS checkpoint blob
+   carries the whole card RAM (`SoundChip_GeneralSound::TTDStateSize()` = fixed
+   state + `_ram.size()`, up to 512 KB), and MoonSound captures Tier A only
+   (wave SRAM is not in TTD). V1 is now the fix for both, no longer a merge
+   prerequisite.
+2. **MoonSound port-claim model** (§3.3 of the merge strategy) — no longer a
+   merge blocker and **not needed for V1**, but still open as design debt.
+   MoonSound merged with its own mechanism, so master has two: self-decoding
+   devices (`RegisterSelfDecodingDevice`, `PortDevice::tryClaimOut/In`; Covox;
+   tried from the model decoders) and the full-decode observer
+   (`RegisterFullDecodeLowBytePort`, `NotifyFullDecodeIn/Out` called from
+   `Z80::in/out`; MoonSound). Decide: one mechanism, or two with a written
+   precedence rule. Tracked in [MoonSound TODO](../2026-09-13-moonsound/TODO.md).
 3. **Default memory budget and whether disk mode is on by default** (V4/V5):
    needs measurements on ZX-Evo + GS + MoonSound sessions after V1.
 4. **Integrity and versioning mechanism** (before V4 starts): open

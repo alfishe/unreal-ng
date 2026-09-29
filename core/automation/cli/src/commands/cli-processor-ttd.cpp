@@ -34,6 +34,18 @@
 
 /// region <TTD Commands>
 
+
+/// TD-8: the part of history a backward search examined, one line
+static std::string FormatSearchWindow(const ttd::TTDSearchWindow& window)
+{
+    if (!window.searched)
+        return {};
+    std::stringstream ss;
+    ss << "  Searched: frame " << window.from.frame << " t=" << window.from.tInFrame << " .. frame "
+       << window.to.frame << " t=" << window.to.tInFrame << CLIProcessor::NEWLINE;
+    return ss.str();
+}
+
 void CLIProcessor::HandleTTD(const ClientSession& session, const std::vector<std::string>& args)
 {
     auto emulator = GetSelectedEmulator(session);
@@ -226,6 +238,21 @@ void CLIProcessor::HandleTTDStatus(const ClientSession& session, EmulatorContext
        << (info.writeJournalEnabled ? "enabled" : "disabled") << ", "
        << info.writeJournalRecords << " records ("
        << info.writeJournalBytes << " bytes in memory)" << NEWLINE;
+    ss << "  Journal coverage:       ";
+    if (info.writeJournalComplete)
+        ss << "complete" << (info.writeJournalWrapped ? " (ring wrapped: a 'no match' replays)" : "") << NEWLINE;
+    else
+    {
+        ss << "incomplete - write/port find-last replays";
+        if (!info.journalGapReason.empty())
+        {
+            ss << " (" << info.journalGapReason;
+            if (info.journalGapHasPosition)
+                ss << ", at frame " << info.journalGapAt.frame << " t=" << info.journalGapAt.tInFrame;
+            ss << ")";
+        }
+        ss << NEWLINE;
+    }
     if (info.coverageIndexFrames != 0)
     {
         ss << "  Coverage index:         " << info.coverageIndexFrames << " frames ("
@@ -237,6 +264,8 @@ void CLIProcessor::HandleTTDStatus(const ClientSession& session, EmulatorContext
            << NEWLINE;
     }
     ss << "  Bookmarks:              " << info.bookmarkCount << " (advisory, never barriers)" << NEWLINE;
+    if (!info.lastDropReason.empty())
+        ss << "  Last session dropped:   " << info.lastDropReason << NEWLINE;
 
     session.SendResponse(ss.str());
 }
@@ -300,6 +329,12 @@ void CLIProcessor::HandleTTDInvalidate(const ClientSession& session, EmulatorCon
     if (args.size() > 1)
     {
         reason = args[1];
+    }
+
+    if (const std::string refusal = mgr->RecordingGuard(ttd::TTDGuardedAction::Invalidate); !refusal.empty())
+    {
+        session.SendResponse("Error: " + refusal + NEWLINE);
+        return;
     }
 
     mgr->InvalidateSession(reason.c_str());
@@ -783,20 +818,19 @@ void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorConte
         else if (tok == "--before-frame" && i + 1 < args.size())
         {
             uint64_t f = std::stoull(args[++i]);
-            // Will be combined with before-tin below; store frame in upper bits
-            const uint32_t frameT = context->config.frame;
+            // Combined with --before-tin in either order (TTD time: GlobalT)
+            const uint32_t frameSpan = mgr->FrameSpan();
             uint32_t tin = 0;
-            // If before-tin was already set, preserve it
             if (q.beforeGlobalT != UINT64_MAX)
-                tin = static_cast<uint32_t>(q.beforeGlobalT % frameT);
-            q.beforeGlobalT = f * frameT + tin;
+                tin = static_cast<uint32_t>(q.beforeGlobalT % frameSpan);
+            q.beforeGlobalT = mgr->GlobalT({f, tin});
         }
         else if (tok == "--before-tin" && i + 1 < args.size())
         {
             uint32_t tin = static_cast<uint32_t>(std::stoul(args[++i]));
-            const uint32_t frameT = context->config.frame;
-            uint64_t frame = (q.beforeGlobalT != UINT64_MAX) ? (q.beforeGlobalT / frameT) : 0;
-            q.beforeGlobalT = frame * frameT + tin;
+            const uint32_t frameSpan = mgr->FrameSpan();
+            uint64_t frame = (q.beforeGlobalT != UINT64_MAX) ? (q.beforeGlobalT / frameSpan) : 0;
+            q.beforeGlobalT = mgr->GlobalT({frame, tin});
         }
     }
 
@@ -810,7 +844,8 @@ void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorConte
     }
 
     ttd::TTDExternalEvent blockingMarker;
-    auto result = mgr->FindLastAccess(q, &blockingMarker);
+    ttd::TTDSearchWindow window;
+    auto result = mgr->FindLastAccess(q, &blockingMarker, &window);
 
     if (result)
     {
@@ -827,6 +862,7 @@ void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorConte
         else
             ss << result->physPage << NEWLINE;
         ss << "  Access:   " << ttd::TTDAccessTypeToString(result->access) << NEWLINE;
+        ss << FormatSearchWindow(window);
         session.SendResponse(ss.str());
     }
     else if (blockingMarker.reason[0] != '\0')
@@ -837,11 +873,12 @@ void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorConte
            << " tInFrame=" << blockingMarker.time.tInFrame << NEWLINE;
         ss << "  Kind: " << ttd::TTDExternalEventKindToString(blockingMarker.kind) << NEWLINE;
         ss << "  Reason: " << blockingMarker.reason << NEWLINE;
+        ss << FormatSearchWindow(window);
         session.SendResponse(ss.str());
     }
     else
     {
-        session.SendResponse(std::string("TTD: No match found") + NEWLINE);
+        session.SendResponse(std::string("TTD: No match found") + NEWLINE + FormatSearchWindow(window));
     }
 }
 
@@ -985,6 +1022,7 @@ void CLIProcessor::HandleTTDReverseContinue(const ClientSession& session, Emulat
     {
         ss << "TTD: Reverse-continue found no match (reached session start)" << NEWLINE;
     }
+    ss << FormatSearchWindow(result.window);
     session.SendResponse(ss.str());
 }
 

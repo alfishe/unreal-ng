@@ -220,6 +220,7 @@ private:
     void HandleStateAudioBeeper(const ClientSession& session, EmulatorContext* context);
     void HandleStateAudioFM(const ClientSession& session, EmulatorContext* context, const std::string& chipArg);
     void HandleStateFdc(const ClientSession& session, EmulatorContext* context);
+    void HandleStateContention(const ClientSession& session, EmulatorContext* context);
     void HandleStateAudioGS(const ClientSession& session, EmulatorContext* context, const std::string& optionArg);
 
     // GS coprocessor triage: activity counters + opt-in port/DAC event trace
@@ -297,6 +298,10 @@ private:
     // no emulator state — no emulator needs to be selected for these two
     void HandleTapeRender(const ClientSession& session, const std::vector<std::string>& args);
     void HandleTapeImport(const ClientSession& session, const std::vector<std::string>& args);
+
+    // Media command handlers (every slot through MediaControl)
+    void HandleMedia(const ClientSession& session, const std::vector<std::string>& args);
+    void ShowMediaHelp(const ClientSession& session);
 
     // Disk control command handlers
     void HandleDisk(const ClientSession& session, const std::vector<std::string>& args);

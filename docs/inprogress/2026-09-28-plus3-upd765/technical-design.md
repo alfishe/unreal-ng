@@ -1,6 +1,6 @@
 # ZX Spectrum +3 floppy controller (NEC uPD765A): technical design
 
-**Date:** 2026-09-28 · **Status:** phases 1-2 implemented, phases 3-4 open · **Tracks:** the +3 paging fix
+**Date:** 2026-09-28 · **Status:** phases 1-4 implemented; the protected-title sweep waits for images · **Tracks:** the +3 paging fix
 (`eabce7d0`) left the +3 without its disk controller: the menu reads "128 +2A" and no disk works.
 
 ## 1. Goal
@@ -58,7 +58,9 @@ history, agents' reports of 2026-09-28):
 | Timing | real: byte cell from the track length (6250 bytes per 200 ms ⇒ 112 T), seek step from SPECIFY SRT, head load from HLT | MAME, zxsp, xpeccy |
 | Overrun | a byte not taken within one byte cell ⇒ OR + IC=01, end of command (zxsp deadline) | real silicon; titles in Spectral's list break without it |
 | Weak sectors | the weak bitmap the DSK loader already builds from EDSK copies, mutated per revolution by `FlakySectorEmulator` (same as WD1793) | deterministic for TTD; reuses our model |
-| Sector sizes | N 0-3 from the model (`128 << (N & 3)`); N ≥ 4 (Speedlock N=6) is phase 2 | model limit (§6) |
+| Sector sizes | a read transfers `128 << N` bytes from the raw track stream, so a field shorter than the transfer (N ≥ 4, READ TRACK with a larger N) reads on through the CRC, the gap and the next fields round the index, and the CRC reads bad | MAME (raw stream); Spectral, ZX-M8XXX transfer 128 << N too |
+| READ TRACK | from the index hole, sector after sector in physical order; an ID other than the command's C H R N sets ND and the read goes on; EOT is the count; a data CRC error sets DE/DD and goes on; ends IC=01 + EN; R not incremented | MAME, BizHawk, zxsp, Spectral (index wait and R: MAME, zxsp, Xpeccy) |
+| SCAN | by the datasheet: the CPU writes, the FDC compares (equal / disk <= CPU / disk >= CPU), CPU #FF matches anything, R += STP (1 or 2, the DTL byte); a sector that meets the condition ends normally, SH when all equal; none up to EOT: SN, IC=01 + EN | no emulator is complete; zxsp closest, #FF rule from Spectral |
 | No per-title patches | protections must work from the image, not from signatures | BizHawk's approach rejected |
 
 ## 5. Architecture
@@ -123,8 +125,8 @@ mode), DIO (1 = FDC to CPU), RQM (data register ready).
 | 06 / 0C | READ (DELETED) DATA | MT MF SK, HD/US, C H R N EOT GPL DTL | sectors R..EOT | ST0-2, C H R N |
 | 05 / 09 | WRITE (DELETED) DATA | same | sectors R..EOT | same |
 | 0D | FORMAT TRACK | MF, HD/US, N SC GPL D, then C H R N per sector | whole track | same |
-| 02 | READ TRACK | as READ DATA | sectors from the index | same (phase 4; until then IC=01 + MA) |
-| 11/19/1D | SCAN | as READ DATA | compare | same (phase 4; until then IC=01 + MA) |
+| 02 | READ TRACK | as READ DATA | sectors from the index, EOT of them (§4) | same |
+| 11/19/1D | SCAN | as READ DATA, STP in the DTL byte | compare CPU bytes with sectors R, R + STP, ... (§4) | same, SH / SN in ST2 |
 | other | invalid | - | - | ST0 = `#80` |
 
 ### 6.3 Status rules
@@ -157,7 +159,10 @@ mode), DIO (1 = FDC to CPU), RQM (data register ready).
 - Writes go through `Track::writeSectorData()` (CRC recomputed, image marked dirty); FORMAT
   builds a `TrackFormatSpec` from the FORMAT parameters and calls `Track::formatTrack()`.
 - `Track`'s dirty-marking helpers are `friend class WD1793`; the uPD765 gets the same friendship.
-- Limit: data length is `128 << (N & 3)`; N ≥ 4 sectors (Speedlock +3) need model work (phase 2).
+- N ≥ 4: `TrackFormatSpec::sectorDataLengths` gives such a sector a data field of its dumped length in the
+  stream (the EDSK stored length, 0x1800 for N = 6); the sector keeps its N and the model's `dataSize`
+  (`128 << (N & 3)`, what the WD1793 sees). The controller reads `128 << N` bytes from the stream. The DSK
+  save writes the dumped length back from the stream, so load, save and load keep the bytes.
 
 ## 8. TTD
 
@@ -210,6 +215,7 @@ main idle loop and gave up ("the editor is not waiting for a key"). The loops ar
 1. **Core controller** (done): ports, phases, MSR, SPECIFY, SDS, RECALIBRATE, SEEK, SIS, READ ID,
    READ / WRITE (DELETED) DATA, FORMAT, invalid; timing and overrun; drives A/B; TTD; unit tests.
 2. **ROM integration** (done): the +3 menu, CAT, SAVE/LOAD through the command typer.
-3. **Automation:** `state/fdc` and MCP `inspect_state` report the uPD765 on the +3; WebAPI
-   `disk/{drive}/create` with a `plus3` format.
-4. **Protections:** READ TRACK, SCAN, N ≥ 4 sectors, the Spectral title lists as a sweep.
+3. **Automation** (done): `state/fdc` and MCP `inspect_state` report the uPD765 on the +3; blank
+   disks (`plus3` format) from `Emulator::CreateBlankDisk` on every interface; `.dsk` loads end to end.
+4. **Protections** (done except the sweep): READ TRACK, SCAN, N ≥ 4 sectors. The sweep over the
+   protected-title lists needs the disk images; none are in the repository or the reference trees.

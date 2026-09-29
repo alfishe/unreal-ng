@@ -49,7 +49,10 @@
     schemas["SettingsResponse"]["properties"]["settings"]["type"] = "object";
     schemas["SettingsResponse"]["properties"]["settings"]["additionalProperties"]["type"] = "object";
     schemas["SettingsResponse"]["properties"]["settings"]["description"] =
-        "Grouped settings: io_acceleration (fast_tape, turbo_tape, fast_disk), "
+        "Grouped settings: io_acceleration (fast_tape, turbo_tape, fast_disk - the state in effect, so off "
+        "while time-travel debugging holds them), turbo_mode (bool, the turbomode feature), speed (host speed "
+        "multiplier 1, 2, 4, 8 or 16), turbo_active (read-only: the engine runs unthrottled now - turbo_mode, or "
+        "turbo tape warping a load), turbo_audio (bool, audio kept on in turbo mode), "
         "disk_interface (trdos_present, trdos_traps), audio (audio_rate - pinned rate "
         "or \"auto\" - core_rate_hz, the live core rate, and the sound character: ay_voicing "
         "(headphones | classic | flat | warm | tv | small_speaker), ay_punch (bool), ay_room (off | 15db ... 1db), beeper_punch (bool))";
@@ -462,14 +465,22 @@
             "Advisory annotations — unlike external-event markers they never "
             "halt a seek.";
 
+    schemas["TTDStatusResponse"]["properties"]["last_drop_reason"]["type"] = "string";
+    schemas["TTDStatusResponse"]["properties"]["last_drop_reason"]["nullable"] = true;
+    schemas["TTDStatusResponse"]["properties"]["last_drop_reason"]["description"] =
+            "What dropped the last history (e.g. snapshot-load, disk-load, rom-reload, an invalidate reason, "
+            "ZX-Evo SD card activity); null until a history is dropped";
+
     schemas["TTDStatusResponse"]["properties"]["session_heap_bytes"]["type"] = "integer";
     schemas["TTDStatusResponse"]["properties"]["session_heap_bytes"]["format"] = "uint64";
     schemas["TTDStatusResponse"]["properties"]["session_heap_bytes"]["description"] =
             "Real heap footprint of the recorded session in bytes. Sums every "
-            "allocation the session owns: page store backing vector, "
-            "per-checkpoint metadata (CPU/chipset snapshot + page-ref vector + "
-            "peripheral blobs), input journal, external-event journal, and "
-            "session-scope dirty-page scratch. This is the number to display "
+            "allocation the session owns: page store (slot table and every "
+            "compressed page payload), per-checkpoint metadata (CPU/chipset "
+            "snapshot + page-ref vector + peripheral blobs), input journal, "
+            "external-event journal, dirty-page scratch, the write journal's "
+            "committed ring chunks, the coverage index and the decoded-frame "
+            "cache. This is the number to display "
             "for 'session size' — distinct from page_store_bytes (just the "
             "page-store vector) and page_store_used_bytes (live slots only, "
             "always ~100% of capacity because the COW store auto-grows).";
@@ -480,6 +491,21 @@
     schemas["TTDStatusResponse"]["properties"]["write_journal_enabled"]["description"] =
         "True when the write journal is active (for FindLast / reverse debugging). "
         "Set via enable_write_journal on /ttd/start; false in 'gaming' mode.";
+    schemas["TTDStatusResponse"]["properties"]["write_journal_complete"]["type"] = "boolean";
+    schemas["TTDStatusResponse"]["properties"]["write_journal_complete"]["description"] =
+        "True while the journal holds every write/port write of the session, so write/io find-last answers from it; "
+        "false when it was off at the start or switched (journal, debug mode, time travel) during the session - "
+        "those searches then replay history";
+    schemas["TTDStatusResponse"]["properties"]["write_journal_wrapped"]["type"] = "boolean";
+    schemas["TTDStatusResponse"]["properties"]["write_journal_wrapped"]["description"] =
+        "True when the journal ring dropped its oldest records: a 'no match' from it falls back to replay";
+    schemas["TTDStatusResponse"]["properties"]["write_journal_gap"]["type"] = "object";
+    schemas["TTDStatusResponse"]["properties"]["write_journal_gap"]["description"] =
+        "Present when the journal does not cover the session: reason, and frame/tinframe where it stopped "
+        "(absent for a loaded file)";
+    schemas["TTDStatusResponse"]["properties"]["write_journal_gap"]["properties"]["reason"]["type"] = "string";
+    schemas["TTDStatusResponse"]["properties"]["write_journal_gap"]["properties"]["frame"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["write_journal_gap"]["properties"]["tinframe"]["type"] = "integer";
 
     // ---------------------------------------------------------------------
     // POST /ttd/start response
@@ -587,7 +613,10 @@
     schemas["TTDMarker"]["description"] =
         "External-event marker (replay barrier). Per ttd::TTDExternalEventKind "
         "the kind is one of: tape_control, disk_write, debugger_edit, "
-        "hardware_reset, other.";
+        "hardware_reset, other. debugger_edit is written only while recording, when a tool edits the "
+        "machine (CLI/WebAPI memory writes, WebAPI page writes, Lua/Python memory, page and assembler "
+        "writes, DeZog edits). hardware_reset is reserved and never written: a reset stops the recording "
+        "instead.";
     schemas["TTDMarker"]["properties"]["frame"]["type"] = "integer";
     schemas["TTDMarker"]["properties"]["frame"]["format"] = "uint64";
     schemas["TTDMarker"]["properties"]["tinframe"]["type"] = "integer";
@@ -778,7 +807,10 @@
     // POST /ttd/find-last
     schemas["TTDFindLastRequest"]["type"] = "object";
     schemas["TTDFindLastRequest"]["description"] =
-        "Request body for POST /ttd/find-last.";
+        "Request body for POST /ttd/find-last. At least one of addr, addr_from, addr_to, pc_from, pc_to, "
+        "value is required. addr, addr_from, addr_to, value, pc_from and pc_to may also be strings: decimal, "
+        "\"0x..\", \"#..\" or \"$..\". For writes the write journal answers only when it holds every write "
+        "of the session; otherwise the search replays history (slower, same answer).";
     schemas["TTDFindLastRequest"]["properties"]["addr"]["type"] = "integer";
     schemas["TTDFindLastRequest"]["properties"]["addr"]["format"] = "uint16";
     schemas["TTDFindLastRequest"]["properties"]["addr"]["description"] =
@@ -807,10 +839,18 @@
     schemas["TTDFindLastRequest"]["properties"]["before_frame"]["format"] = "uint64";
     schemas["TTDFindLastRequest"]["properties"]["before_tin"]["type"] = "integer";
     schemas["TTDFindLastRequest"]["properties"]["before_tin"]["format"] = "uint32";
+    schemas["TTDFindLastRequest"]["properties"]["phys_page"]["type"] = "integer";
+    schemas["TTDFindLastRequest"]["properties"]["phys_page"]["minimum"] = 0;
+    schemas["TTDFindLastRequest"]["properties"]["phys_page"]["maximum"] = 255;
+    schemas["TTDFindLastRequest"]["properties"]["phys_page"]["description"] =
+        "Physical RAM page 0..255 (JSON number only; 400 otherwise). Pins the search to one page, so a banked "
+        "address does not answer with another page's access.";
 
     schemas["TTDFindLastResponse"]["type"] = "object";
     schemas["TTDFindLastResponse"]["description"] =
-        "Response from POST /ttd/find-last.";
+        "Response from POST /ttd/find-last. On a hit: found true plus frame, tinframe, pc, value, phys_page, "
+        "access. No match: found false. A replay barrier (marker) stopped the search before any match: found "
+        "false, blocked true, marker_frame, marker_tinframe, marker_kind, marker_reason.";
     schemas["TTDFindLastResponse"]["properties"]["found"]["type"] = "boolean";
     schemas["TTDFindLastResponse"]["properties"]["frame"]["type"] = "integer";
     schemas["TTDFindLastResponse"]["properties"]["frame"]["format"] = "uint64";
@@ -833,6 +873,17 @@
     schemas["TTDFindLastResponse"]["properties"]["marker_tinframe"]["format"] = "uint32";
     schemas["TTDFindLastResponse"]["properties"]["marker_kind"]["type"] = "string";
     schemas["TTDFindLastResponse"]["properties"]["marker_reason"]["type"] = "string";
+    schemas["TTDFindLastResponse"]["properties"]["covered_from"]["type"] = "integer";
+    schemas["TTDFindLastResponse"]["properties"]["covered_from"]["format"] = "uint64";
+    schemas["TTDFindLastResponse"]["properties"]["covered_from"]["description"] =
+        "Frame where the backward search ended: the match, a replay barrier, or the session start. Every instant in [covered_from, covered_to] was searched; nothing before covered_from was. Absent when the search was refused";
+    schemas["TTDFindLastResponse"]["properties"]["covered_from_tinframe"]["type"] = "integer";
+    schemas["TTDFindLastResponse"]["properties"]["covered_from_tinframe"]["format"] = "uint32";
+    schemas["TTDFindLastResponse"]["properties"]["covered_to"]["type"] = "integer";
+    schemas["TTDFindLastResponse"]["properties"]["covered_to"]["format"] = "uint64";
+    schemas["TTDFindLastResponse"]["properties"]["covered_to"]["description"] = "Frame the search started from (its upper bound)";
+    schemas["TTDFindLastResponse"]["properties"]["covered_to_tinframe"]["type"] = "integer";
+    schemas["TTDFindLastResponse"]["properties"]["covered_to_tinframe"]["format"] = "uint32";
 
     // POST /ttd/step-instruction
     schemas["TTDStepInstructionRequest"]["type"] = "object";
@@ -885,15 +936,19 @@
     schemas["TTDReverseContinueRequest"]["description"] =
         "Request body for POST /ttd/reverse-continue.";
     schemas["TTDReverseContinueRequest"]["properties"]["pcs"]["type"] = "array";
-    schemas["TTDReverseContinueRequest"]["properties"]["pcs"]["items"]["type"] = "integer";
-    schemas["TTDReverseContinueRequest"]["properties"]["pcs"]["items"]["format"] = "uint16";
+    schemas["TTDReverseContinueRequest"]["properties"]["pcs"]["items"]["oneOf"][0]["type"] = "integer";
+    schemas["TTDReverseContinueRequest"]["properties"]["pcs"]["items"]["oneOf"][0]["minimum"] = 0;
+    schemas["TTDReverseContinueRequest"]["properties"]["pcs"]["items"]["oneOf"][0]["maximum"] = 65535;
+    schemas["TTDReverseContinueRequest"]["properties"]["pcs"]["items"]["oneOf"][1]["type"] = "string";
     schemas["TTDReverseContinueRequest"]["properties"]["pcs"]["description"] =
-        "Non-empty list of reverse breakpoint PCs (required).";
+        "Non-empty list of reverse breakpoint PCs (required), 0..65535 each: a number, or a string "
+        "(decimal, \"0x..\", \"#..\" or \"$..\"). A bad entry is a 400.";
     schemas["TTDReverseContinueRequest"]["required"].append("pcs");
 
     schemas["TTDReverseContinueResponse"]["type"] = "object";
     schemas["TTDReverseContinueResponse"]["description"] =
-        "Response from POST /ttd/reverse-continue.";
+        "Response from POST /ttd/reverse-continue. blocked_by_marker is present only when a replay barrier "
+        "(marker) was met; matched is then false if it stopped the search before a match.";
     schemas["TTDReverseContinueResponse"]["properties"]["matched"]["type"] = "boolean";
     schemas["TTDReverseContinueResponse"]["properties"]["pc"]["type"] = "integer";
     schemas["TTDReverseContinueResponse"]["properties"]["pc"]["format"] = "uint16";
@@ -901,3 +956,16 @@
     schemas["TTDReverseContinueResponse"]["properties"]["frame"]["format"] = "uint64";
     schemas["TTDReverseContinueResponse"]["properties"]["tinframe"]["type"] = "integer";
     schemas["TTDReverseContinueResponse"]["properties"]["tinframe"]["format"] = "uint32";
+    schemas["TTDReverseContinueResponse"]["properties"]["blocked_by_marker"]["$ref"] =
+        "#/components/schemas/TTDMarker";
+    schemas["TTDReverseContinueResponse"]["properties"]["covered_from"]["type"] = "integer";
+    schemas["TTDReverseContinueResponse"]["properties"]["covered_from"]["format"] = "uint64";
+    schemas["TTDReverseContinueResponse"]["properties"]["covered_from"]["description"] =
+        "Frame where the backward search ended: the match, a replay barrier, or the session start. Every instant in [covered_from, covered_to] was searched; nothing before covered_from was. Absent when the search was refused";
+    schemas["TTDReverseContinueResponse"]["properties"]["covered_from_tinframe"]["type"] = "integer";
+    schemas["TTDReverseContinueResponse"]["properties"]["covered_from_tinframe"]["format"] = "uint32";
+    schemas["TTDReverseContinueResponse"]["properties"]["covered_to"]["type"] = "integer";
+    schemas["TTDReverseContinueResponse"]["properties"]["covered_to"]["format"] = "uint64";
+    schemas["TTDReverseContinueResponse"]["properties"]["covered_to"]["description"] = "Frame the search started from (its upper bound)";
+    schemas["TTDReverseContinueResponse"]["properties"]["covered_to_tinframe"]["type"] = "integer";
+    schemas["TTDReverseContinueResponse"]["properties"]["covered_to_tinframe"]["format"] = "uint32";

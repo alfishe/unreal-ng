@@ -8,6 +8,7 @@ class MemoryAccessTracker;
 class HostBusOverlay;
 class Z80;
 class FeatureManager;
+class UlaContention;
 class ScorpionRomWindow;  // ProfROM quadrant policy - owned by ScorpionMemory only
 namespace ttd { class TTDDirtyTracker; }
 
@@ -96,6 +97,10 @@ protected:
     // Context passed during initialization
     EmulatorContext* _context = nullptr;
     EmulatorState* _state = nullptr;
+
+    // Used by the contended interfaces only (SetContentionDependencies)
+    Z80* _contentionCpu = nullptr;
+    UlaContention* _contentionUla = nullptr;
 
 #ifdef _WIN32
     HANDLE _mappedMemoryHandle = INVALID_HANDLE_VALUE;
@@ -288,9 +293,28 @@ public:
 public:
     static MemoryInterface* GetFastMemoryInterface();
     static MemoryInterface* GetDebugMemoryInterface();
-    /// The fast / debug interface plus the installed bus overlay
-    /// (neogs-zxdma-design.md §5.2); selected only while one is installed
-    static MemoryInterface* GetOverlayMemoryInterface(bool debug);
+    static MemoryInterface* GetFastContendedMemoryInterface();   // Fast + video memory contention
+    static MemoryInterface* GetDebugContendedMemoryInterface();  // Debug + video memory contention
+    /// The fast / debug interface, contended or not, plus the installed bus
+    /// overlay (neogs-zxdma-design.md §5.2); selected only while one is installed
+    static MemoryInterface* GetOverlayMemoryInterface(bool debug, bool contended);
+
+    /// Contended interfaces: the plain access (Plain = Fast / Debug) with the video logic's wait in front of
+    /// accesses to a contended slot, every MREQ cycle alike (opcode fetch, operand, data). Selected only
+    /// while the machine's contention is in effect (Core::SelectMemoryInterface), so machines without
+    /// contention never run this code. Defined in memorycontended.cpp
+    /// Stats: count the accesses and waits (UlaContention::CountAccess) - the Debug instantiation only
+    template <MemoryReadCallback Plain, bool Stats>
+    uint8_t MemoryReadContended(uint16_t addr, bool isExecution);
+    template <MemoryWriteCallback Plain, bool Stats>
+    void MemoryWriteContended(uint16_t addr, uint8_t value);
+
+    /// The CPU and contention component the contended interfaces use (Core::Init)
+    void SetContentionDependencies(Z80* cpu, UlaContention* ula)
+    {
+        _contentionCpu = cpu;
+        _contentionUla = ula;
+    }
 
     /// Read pair is virtual: model derivatives whose silicon reacts to bus
     /// cycles themselves (ScorpionMemory - ProfROM plane strobes / magic-
@@ -303,11 +327,13 @@ public:
     void MemoryWriteFast(uint16_t addr, uint8_t value);
     void MemoryWriteDebug(uint16_t addr, uint8_t value);
 
-    /// The normal (fast or debug) access, then the bus overlay for addresses
-    /// in its window. Only reachable while an overlay is installed.
-    template <bool Debug>
+    /// The inner access (Fast / Debug, contended or not), then the bus overlay
+    /// for addresses in its window: the video logic's wait comes first, as on
+    /// the bus, then the overlay decides what the CPU gets. Only reachable
+    /// while an overlay is installed
+    template <MemoryReadCallback Inner>
     uint8_t MemoryReadOverlay(uint16_t addr, bool isExecution);
-    template <bool Debug>
+    template <MemoryWriteCallback Inner>
     void MemoryWriteOverlay(uint16_t addr, uint8_t value);
 
     /// Core::SelectMemoryInterface keeps this in step with the Z80's interface
@@ -370,6 +396,10 @@ public:
     void LoadContentToMemory(uint8_t* contentBuffer, size_t size, uint16_t z80address);
     void LoadRAMPageData(uint8_t page, uint8_t* fromBuffer, size_t bufferSize);
     void SetROMPageFlags();
+
+    /// Contention cache of a slot / of all four (after the machine's contention rule changed)
+    void UpdateSlotContention(uint8_t slot);
+    void RefreshSlotContention();
     void RecordROMPageSwitch();
     /// endregion </Service methods>
 
@@ -453,6 +483,15 @@ public:
     // (ttd clear / invalidation hooks, lands in P1 Item 6) can call
     // ResetSession. Tests also reach in to verify the hook is firing.
     inline ttd::TTDDirtyTracker* GetTTDDirtyTracker() { return _ttdDirtyTracker; }
+
+    /// @brief A tool (script) write with the CPU's view of the address: RAM is
+    /// written and reaches TTD like DirectWriteToZ80Memory, ROM stays
+    /// write-protected as it is for a CPU write.
+    void ToolWriteToZ80Memory(uint16_t address, uint8_t value);
+
+    /// @brief Tell TTD a physical RAM page was written behind the CPU's back
+    /// (a tool editing the page directly), so the next checkpoint captures it.
+    void MarkRamPageEdited(uint16_t page);
     /// endregion </TTD dirty tracker access>
     /// endregion </Memory access tracking>
 };

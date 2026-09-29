@@ -19,9 +19,11 @@
 /// local to avoid the (small) per-call allocation cost of creating fresh
 /// contexts.
 
+#include <algorithm>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
+#include <istream>
 #include <vector>
 
 #include <zstd.h>
@@ -85,6 +87,39 @@ inline bool Decompress(const std::vector<uint8_t>& compressed, size_t rawSize, u
         return false;
     }
     return n == rawSize;
+}
+
+/// @brief The decompressed size a zstd frame declares in its header.
+/// Compress() always records it, so a loader can check a stored raw size against
+/// it before allocating that many bytes.
+/// @return The declared size, or 0 when the frame is malformed or carries none.
+inline uint64_t DeclaredContentSize(const std::vector<uint8_t>& compressed)
+{
+    if (compressed.empty())
+        return 0;
+    const unsigned long long n = ZSTD_getFrameContentSize(compressed.data(), compressed.size());
+    if (n == ZSTD_CONTENTSIZE_UNKNOWN || n == ZSTD_CONTENTSIZE_ERROR)
+        return 0;
+    return static_cast<uint64_t>(n);
+}
+
+/// @brief Read exactly `size` bytes into `out`, growing it only as data arrives.
+/// A size taken from a corrupt file then fails at the end of the stream instead
+/// of allocating up to 4 GB up front.
+inline bool ReadExact(std::istream& in, size_t size, std::vector<uint8_t>& out)
+{
+    constexpr size_t kChunk = 64 * 1024;
+    out.clear();
+    while (out.size() < size)
+    {
+        const size_t n = std::min(kChunk, size - out.size());
+        const size_t at = out.size();
+        out.resize(at + n);
+        in.read(reinterpret_cast<char*>(out.data() + at), static_cast<std::streamsize>(n));
+        if (!in)
+            return false;
+    }
+    return true;
 }
 
 /// Convenience: round-trip a byte buffer (used by tests).

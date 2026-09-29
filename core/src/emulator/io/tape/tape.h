@@ -186,8 +186,8 @@ protected:
     // Consumption cursor: index of the NEXT block to deliver to the CPU, by signal
     // playback or by the fast-loading trap (single source of truth — design §9.4).
     // UINT64_MAX is the "nothing consumed yet / not started" sentinel. During signal
-    // playback of block k the field holds k (the in-flight block); a watchdog stop
-    // mid-block advances it past k (partially played counts as consumed).
+    // playback of block k the field holds k (the in-flight block); a stop or a
+    // freeze keeps it there, so a partly played block is never lost.
     size_t _currentTapeBlockIndex;
     size_t _currentPulseIdxInBlock;     // Index in TapeBlock::edgePulseTimings vector
     size_t _currentOffsetWithinPulse;   // How many pulses already processed within single TapeBlock::edgePulseTimings vector element
@@ -244,8 +244,8 @@ public:
     /// level all survive, so a later ResumePlaybackAfterPoll() continues the
     /// bitstream mid-block (like un-pausing a real deck). Used by the read-gap
     /// watchdog when a multi-stage loader stops polling while it processes
-    /// (decompression, bank switching) — the terminal stopPlayback() would
-    /// consume the partially heard block and lose it.
+    /// (decompression, bank switching). stopPlayback() is for the end of the
+    /// tape only.
     void pausePlayback();
 
     /// Resume (or first-start) signal playback triggered by sustained EAR
@@ -420,6 +420,17 @@ public:
     using Tape::getPilotSample;
 
     using Tape::stopPlayback;
+
+    /// The natural end of the tape, as its last pulse brings it about: the head past the last block,
+    /// playback stopped (state Ended). A stop mid-block no longer gets there: it keeps the block
+    void EndOfTape()
+    {
+        _currentTapeBlockIndex = _tapeBlocks.size();
+        _currentTapeBlock = nullptr;
+        _currentOffsetWithinPulse = 0;
+        _currentPulseIdxInBlock = 0;
+        stopPlayback();
+    }
 
     // Cursor fields — exposed so integration tests can set the playback
     // position to known values without depending on the ROM LOAD routine

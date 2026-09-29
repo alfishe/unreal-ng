@@ -8,9 +8,9 @@
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
 #include "emulator/io/fdc/fdc.h"
+#include "emulator/io/fdc/diskimage.h"
 
 class EmulatorContext;
-class DiskImage;
 
 class FDD : public ttd::TTDSerializable
 {
@@ -58,7 +58,8 @@ protected:
     // the controller drops every pointer it holds into that image
     std::function<void(FDD*)> _diskChanged;
     bool _diskInserted = false;
-    uint8_t _track = 0;
+    uint8_t _track = 0;                 // Physical head position (step pulses only; not the FDC's track register)
+    uint8_t _driveCylinders = 80;       // Mechanics: 80-track (96 tpi, Beta 128 drives) or 40-track (48 tpi, the +3's 3" drive)
     uint8_t _readDataByte = 0;
     uint8_t _writeDataByte = 0;
 
@@ -103,21 +104,37 @@ public:
 
     int8_t getTrack() { return _track; };
     void setTrack(int8_t track)
-    { 
-        // Clamp track value to valid range [0, MAX_CYLINDERS]
+    {
+        // The head stops at the drive's mechanical end: an 80-track drive
+        // travels to MAX_CYLINDERS, a 40-track one to 42 (TR-DOS tells the
+        // two apart by seeking to 50 and back to 2, then testing TRK00)
+        const int limit = maxPhysicalTrack();
         if (track < 0)
         {
             _track = 0;
         }
-        else if (track > MAX_CYLINDERS)
+        else if (track > limit)
         {
-            _track = MAX_CYLINDERS;
+            _track = static_cast<uint8_t>(limit);
         }
         else
         {
             _track = static_cast<uint8_t>(track);
         }
     };
+
+    /// Drive mechanics: 80 (96 tpi) or 40 (48 tpi) tracks
+    uint8_t getDriveCylinders() const { return _driveCylinders; }
+    void setDriveCylinders(uint8_t cylinders) { _driveCylinders = cylinders; }
+    int maxPhysicalTrack() const { return _driveCylinders >= 80 ? MAX_CYLINDERS : 42; }
+
+    /// The disk track under the head, or nullptr when there is none. A
+    /// 40-track disk (48 tpi: DiskImage::isFortyTrack) in an 80-track drive
+    /// (96 tpi) has its tracks at every second head position: position p
+    /// reads cylinder p / 2, and an odd position sits between two tracks.
+    /// TR-DOS steps twice per track for such a disk (it reads the disk type
+    /// in sector 9 and the drive type it measured), as on real hardware
+    DiskImage::Track* trackUnderHead(uint8_t side);
 
     bool isTrack00() { return _track == 0; }
     bool isIndex() { return _index; }
@@ -157,7 +174,7 @@ public:
     /// Serialized: driveID, side, motor, direction, headLoad, diskInserted,
     ///             track, motorStopTimeoutMs, motorRotationCounter,
     ///             index/ready/writeProtect cached signals.
-    /// Excluded: _diskImage pointer (re-derived via coreState.diskImages[i]
+    /// Excluded: _diskImage pointer (the media manager's slot re-inserts it
     ///           on session restore — disk image identity is session-scoped
     ///           per TDD §12.2), _context, transient strobes (_step, _read/
     ///           _writeDataBit/Byte), sync counters (_lastFrame, _lastTime).

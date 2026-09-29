@@ -357,9 +357,10 @@ RAM. Fast loading is off unless stated.
 | T14 | Fast loading on: standard block, then a custom block after 0.5 s of setup | Custom block loads from its pilot |
 
 Implemented in `ac200bb8`: T1 (`tapereadclassifier_test.cpp`); T2, T3/T5, T6, T8, T9, T10/T11 and
-the §4.2 pattern (`TapeLoaderFollow_Test` in `tape_test.cpp`). Still open: T4 (IM2 AY player
-over a whole load), T7 as a separate negative, T12 (ROM restart after a freeze mid-data), T13
-(final edge), T14 (fast loading hand-over).
+the §4.2 pattern (`TapeLoaderFollow_Test` in `tape_test.cpp`). Added 2026-09-28: T7, T12 (it found
+the restart bug B4: `StartPlaybackAtCursor()` kept the frozen pulse), T13 (`tape_test.cpp`), T14
+(`tapefastload_test.cpp`). T4 (an IM2 AY player over a whole load) is covered by the fixture sweep
+on real tapes (`tapeloadingsweep_integration_test.cpp`).
 
 Then the fixture sweep of investigation §9 step 5, extended with the key delays of §7.
 

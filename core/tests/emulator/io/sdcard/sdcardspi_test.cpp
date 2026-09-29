@@ -9,6 +9,8 @@
 
 #include "_helpers/testpathhelper.h"
 #include "emulator/io/sdcard/sdcardspi.h"
+#include "emulator/io/storage/memorydisk.h"
+#include "emulator/io/storage/sessionwritemap.h"
 
 namespace
 {
@@ -128,7 +130,7 @@ struct Host
 };
 } // namespace
 
-TEST(SdCardSpi, NoCardOrDeselectedReadsFF)
+TEST(SdCardSpi_Test, NoCardOrDeselectedReadsFF)
 {
     const ImageFile image = makeImage(16);
     SdCardSpi card;
@@ -138,7 +140,7 @@ TEST(SdCardSpi, NoCardOrDeselectedReadsFF)
     EXPECT_EQ(host.command(0, 0, 0x95), 0xFF) << "not selected";
 }
 
-TEST(SdCardSpi, InitSequenceSdscAndSdhc)
+TEST(SdCardSpi_Test, InitSequenceSdscAndSdhc)
 {
     for (auto type : {SdCardSpi::Type::Auto, SdCardSpi::Type::SDHC})
     {
@@ -157,7 +159,7 @@ TEST(SdCardSpi, InitSequenceSdscAndSdhc)
     }
 }
 
-TEST(SdCardSpi, CrcCheckedOnlyForCmd0AndCmd8UntilCmd59)
+TEST(SdCardSpi_Test, CrcCheckedOnlyForCmd0AndCmd8UntilCmd59)
 {
     const ImageFile image = makeImage(16);
     SdCardSpi card;
@@ -173,7 +175,7 @@ TEST(SdCardSpi, CrcCheckedOnlyForCmd0AndCmd8UntilCmd59)
     EXPECT_EQ(host.command(16, 512, 0x00) & 0x08, 0x08) << "now every command is checked";
 }
 
-TEST(SdCardSpi, UnknownCommandsAreIllegal)
+TEST(SdCardSpi_Test, UnknownCommandsAreIllegal)
 {
     const ImageFile image = makeImage(16);
     SdCardSpi card;
@@ -184,7 +186,7 @@ TEST(SdCardSpi, UnknownCommandsAreIllegal)
     EXPECT_EQ(host.command(1, 0) & 0x04, 0x04) << "CMD1 (MMC) is not supported";
 }
 
-TEST(SdCardSpi, SingleAndMultiBlockReadWithStop)
+TEST(SdCardSpi_Test, SingleAndMultiBlockReadWithStop)
 {
     for (auto type : {SdCardSpi::Type::SDSC, SdCardSpi::Type::SDHC})
     {
@@ -217,7 +219,7 @@ TEST(SdCardSpi, SingleAndMultiBlockReadWithStop)
     }
 }
 
-TEST(SdCardSpi, WritesSessionPersistAndOff)
+TEST(SdCardSpi_Test, WritesSessionPersistAndOff)
 {
     const ImageFile image = makeImage(32);
     {
@@ -277,7 +279,7 @@ TEST(SdCardSpi, WritesSessionPersistAndOff)
     }
 }
 
-TEST(SdCardSpi, WriteListenerHearsEveryAcceptedBlock)
+TEST(SdCardSpi_Test, WriteListenerHearsEveryAcceptedBlock)
 {
     const ImageFile image = makeImage(32);
     SdCardSpi card;
@@ -296,7 +298,7 @@ TEST(SdCardSpi, WriteListenerHearsEveryAcceptedBlock)
     EXPECT_EQ(heard, (std::vector<uint64_t>{3, 7, 8}));
 }
 
-TEST(SdCardSpi, StateRoundTripMidStreamContinuesIdentically)
+TEST(SdCardSpi_Test, StateRoundTripMidStreamContinuesIdentically)
 {
     const ImageFile image = makeImage(32);
     SdCardSpi a;
@@ -325,7 +327,7 @@ TEST(SdCardSpi, StateRoundTripMidStreamContinuesIdentically)
     EXPECT_EQ(b.blocksRead(), a.blocksRead());
 }
 
-TEST(SdCardSpi, OddSizedImageIsPadded)
+TEST(SdCardSpi_Test, OddSizedImageIsPadded)
 {
     const ImageFile image = makeImage(2, 100);
     SdCardSpi card;
@@ -336,4 +338,85 @@ TEST(SdCardSpi, OddSizedImageIsPadded)
     EXPECT_EQ(block[99], 0x77);
     EXPECT_EQ(block[100], 0x00);
     EXPECT_FALSE(card.readBlock(3, block));
+}
+
+/// Any medium, not only a file (tdd-storage-sd-ide-cd.md §1 S1)
+TEST(SdCardSpi_Test, InsertedMemoryMediumServesReads)
+{
+    auto disk = std::make_unique<MemoryDisk>(64);
+    disk->Data()[9 * 512 + 3] = 0x5C;
+    SdCardSpi card;
+    ASSERT_TRUE(card.insert(std::move(disk), SdCardSpi::WriteMode::Persist));
+    EXPECT_TRUE(card.present());
+    EXPECT_EQ(card.path(), "memory disk");
+    EXPECT_EQ(card.sizeBytes(), 64u * 512u);
+    EXPECT_EQ(card.sessionWrites(), nullptr) << "Persist writes to the medium itself";
+
+    card.select(true);
+    Host host{card};
+    ASSERT_TRUE(host.init());
+    std::vector<uint8_t> data;
+    ASSERT_EQ(host.command(17, 9 * 512), 0x00);
+    ASSERT_TRUE(host.readData(data));
+    EXPECT_EQ(data[3], 0x5C);
+
+    card.close();
+    EXPECT_FALSE(card.present());
+    EXPECT_EQ(card.exchange(0xFF), 0xFF) << "an empty slot reads #FF";
+}
+
+/// Persist onto a read-only medium: the card reports a write error, it does
+/// not pretend the data was stored
+TEST(SdCardSpi_Test, PersistOnReadOnlyMediumAnswersWriteError)
+{
+    SdCardSpi card;
+    ASSERT_TRUE(card.insert(std::make_unique<MemoryDisk>(16, /*writable*/ false), SdCardSpi::WriteMode::Persist));
+    card.select(true);
+    Host host{card};
+    ASSERT_TRUE(host.init());
+    ASSERT_EQ(host.command(24, 2 * 512), 0x00);
+    EXPECT_EQ(host.writeData(0xFE, 0x42), 0x0D);
+    EXPECT_EQ(card.blocksWritten(), 0u);
+}
+
+/// Session writes live in a SessionWriteMap the owner can count and export (S3)
+TEST(SdCardSpi_Test, SessionWritesAreExportable)
+{
+    const ImageFile image = makeImage(8);
+    SdCardSpi card;
+    ASSERT_TRUE(card.open(image, SdCardSpi::WriteMode::Session));
+    ASSERT_NE(card.sessionWrites(), nullptr);
+    card.select(true);
+    Host host{card};
+    ASSERT_TRUE(host.init());
+    ASSERT_EQ(host.command(24, 6 * 512), 0x00);
+    ASSERT_EQ(host.writeData(0xFE, 0x3C), 0x05);
+    EXPECT_EQ(card.sessionWrites()->ChangedSectors(), 1u);
+
+    const ImageFile exported(TestPathHelper::GetUniqueTestScratchPath("sdcard-export.img"));
+    ASSERT_TRUE(card.sessionWrites()->ExportTo(exported));
+    SdCardSpi check;
+    ASSERT_TRUE(check.open(exported));
+    uint8_t block[512];
+    ASSERT_TRUE(check.readBlock(6, block));
+    EXPECT_EQ(block[0], 0x3C);
+    ASSERT_TRUE(check.readBlock(5, block));
+    EXPECT_EQ(block[0], 5);
+}
+
+/// The owner hears every command once SPI mode is on (the TTD storage rule)
+TEST(SdCardSpi_Test, CommandListenerHearsCommandsAfterSpiMode)
+{
+    const ImageFile image = makeImage(16);
+    SdCardSpi card;
+    ASSERT_TRUE(card.open(image));
+    std::vector<uint8_t> heard;
+    card.setCommandListener([&heard](uint8_t index) { heard.push_back(index); });
+    card.select(true);
+    Host host{card};
+    host.command(16, 512);  // before CMD0: ignored by the card
+    EXPECT_TRUE(heard.empty());
+    ASSERT_EQ(host.command(0, 0, 0x95), 0x01);
+    host.command(8, 0x1AA, 0x87);
+    EXPECT_EQ(heard, (std::vector<uint8_t>{0, 8}));
 }

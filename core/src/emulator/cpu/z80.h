@@ -287,6 +287,19 @@ struct Z80DecodedOperation
 
 /// Instruction-boundary state: what the CPU carries from one instruction
 /// boundary to the next beyond the registers, i.e. what decides the next
+/// Model-side observer of Z80 M1 cycles (see Z80::machineM1Hook)
+class IMachineM1Hook
+{
+public:
+    virtual ~IMachineM1Hook() = default;
+    /// Before the opcode read: board logic that changes what the fetch sees
+    /// (ZX-Evo trdemu swaps its RAM page in for the next fetch)
+    virtual void BeforeMachineM1(uint16_t address) { (void)address; }
+    /// After the opcode read (the refresh edge)
+    /// @param address the address the opcode byte was fetched from
+    virtual void OnMachineM1(uint16_t address) = 0;
+};
+
 /// INT/NMI acceptance. One value at a time - each is a property of the last
 /// instruction or the last acknowledge. Set by that instruction/acknowledge,
 /// cleared when the next Z80Step starts. Same values and meaning as
@@ -349,10 +362,14 @@ struct Z80State : public Z80Registers, public Z80DecodedOperation
     uint32_t trpc[40];
 
     // Memory interfacing
-    const MemoryInterface* FastMemIf;         // Fast memory interface (max performance)
-    const MemoryInterface* DbgMemIf;          // Debug memory interface (supports memory access breakpoints)
-    const MemoryInterface* OverlayFastMemIf;  // Fast + host bus overlay (only while one is installed)
-    const MemoryInterface* OverlayDbgMemIf;   // Debug + host bus overlay (only while one is installed)
+    const MemoryInterface* FastMemIf;                  // Fast memory interface (max performance)
+    const MemoryInterface* DbgMemIf;                   // Debug memory interface (supports memory access breakpoints)
+    const MemoryInterface* FastContendedMemIf;         // Fast + video memory contention (Memory::MemoryReadContended)
+    const MemoryInterface* DbgContendedMemIf;          // Debug + video memory contention
+    const MemoryInterface* OverlayFastMemIf;           // Fast + host bus overlay (only while one is installed)
+    const MemoryInterface* OverlayDbgMemIf;            // Debug + host bus overlay
+    const MemoryInterface* OverlayFastContendedMemIf;  // Fast + contention + host bus overlay
+    const MemoryInterface* OverlayDbgContendedMemIf;   // Debug + contention + host bus overlay
     /// Currently selected memory interface. Written only by
     /// Core::SelectMemoryInterface (under its lock); read on every access
     const MemoryInterface* MemIf;
@@ -403,6 +420,8 @@ public:
     void RecordInstructionStart(uint16_t addr);  // m1_pc + instruction-start observers (once per instruction)
     bool InstructionStartObserved() const;       // any observer armed (trace hook, TTD coverage/probe)
     void NotifyInstructionStart();               // run the observers for the instruction at m1_pc
+    void NotifyMachineM1Before(uint16_t address);  // run machineM1Hook before the opcode read
+    void NotifyMachineM1(uint16_t address);      // run machineM1Hook (out of line, see m1_cycle)
     uint8_t in(uint16_t port);
     void out(uint16_t port, uint8_t val);
     void retn();
@@ -411,11 +430,43 @@ public:
     uint8_t rd(uint16_t addr, bool isExecution = false);
     void wd(uint16_t addr, uint8_t val);
 
+    /// Contention wait states inserted by the contended memory interfaces (Memory::MemoryReadContended):
+    /// the same counter step as the CPU's own cycles
+    inline void InsertWaitStates(uint8_t cycles) { tt += cycles * rate; }
+
+    /// T-state at which the memory access in progress started: rd / wd have already charged its 3 T
+    inline uint32_t AccessStartT() const { return (tt - 3u * rate) >> 8; }
+
+    /// Internal (no-MREQ) cycles: `cycles` T-states with `addr` on the address bus (HL, PC, SP, IR... per
+    /// instruction). The Ferranti ULA (48K / 128K / +2) contends each of them like the start of a memory
+    /// cycle when `addr` is in a contended slot; the +2A/+3 gate array contends MREQ cycles only. Without
+    /// that rule (and without a bus trace hook) this is the plain cycle count
+    inline void Idle(uint16_t addr, uint8_t cycles)
+    {
+        if (idleContention || busTraceHook) [[unlikely]]
+            IdleSlow(addr, cycles);
+        else
+            tt += cycles * rate;
+    }
+    void IdleSlow(uint16_t addr, uint8_t cycles);  // contention per T-state and the 'N' trace events
+
+    /// The refresh address the CPU puts on the bus in internal cycles after M1 (I in the high byte, R low)
+    inline uint16_t IR() const { return static_cast<uint16_t>((i << 8) | (r_low & 0x7F) | (r_hi & 0x80)); }
+
+    /// The ULA's rule for internal cycles: set with ioContention (the same machines), null otherwise
+    UlaContention* idleContention = nullptr;
+
+    /// I/O contention rule for in / out: the machine's contention component while its ULA contends port
+    /// accesses (48K / 128K / +2), null otherwise (no contention, +2A / +3 gate array). Set by
+    /// Core::SelectMemoryInterface together with MemIf
+    UlaContention* ioContention = nullptr;
+
     /// Test-only bus trace hook (null in production - a single empty-function
     /// check per bus access when unset). Fired at the access point of each bus
     /// event with cpu.t already advanced to it:
     ///   'R' memory read (data latched at T3 of the cycle - rd() charges first)
-    ///   'W' memory write, 'I' port read, 'O' port write (IORQ T-state)
+    ///   'W' memory write, 'I' port read, 'O' port write (IORQ T-state),
+    ///   'N' one internal (no-MREQ) T-state, fired at its start with the address on the bus (value 0)
     /// Used by bus-phase timing tests (io_phase_test / bus_phase tests).
     std::function<void(char type, uint16_t addr, uint8_t value)> busTraceHook;
 
@@ -426,6 +477,12 @@ public:
     /// Kept separate from busTraceHook so that adding it does not perturb the
     /// event counts the bus-phase timing tests assert on.
     std::function<void(uint16_t pc)> m1TraceHook;
+
+    /// Machine hook on every M1 cycle, prefix fetches included, called right
+    /// after the opcode read (where the refresh cycle starts - the edge board
+    /// logic such as the ZX-Evo NMI exit counter and breakpoint compare act on).
+    /// Null unless a model decoder needs it: one pointer test per M1
+    IMachineM1Hook* machineM1Hook = nullptr;
     /// endregion </Z80 lifecycle>
 
     // Direct memory access methods

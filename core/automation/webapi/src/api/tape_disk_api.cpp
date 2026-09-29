@@ -4,6 +4,7 @@
 #include "../emulator_api.h"
 #include "../common/upload_helper.h"
 
+#include <debugger/ttd/timetravelmanager.h>
 #include <base/featuremanager.h>
 #include <drogon/HttpResponse.h>
 #include <drogon/utils/Utilities.h>
@@ -265,6 +266,19 @@ void EmulatorAPI::loadTape(const HttpRequestPtr& req,
     else
     {
         path = content.path;
+    }
+
+    // TTD refuses this while recording: answer why instead of a bare failure
+    if (const std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadTape); !refusal.empty())
+    {
+        Json::Value error;
+        error["error"] = "Conflict";
+        error["message"] = refusal;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
     }
 
     bool success = emulator->LoadTape(path);
@@ -1211,8 +1225,15 @@ void EmulatorAPI::importTapeAudio(const HttpRequestPtr& req,
 
     // insert: swap the instance's tape through the same path /tape/load uses
     bool inserted = false;
+    std::string insertRefusal;
     if (insertRequested)
-        inserted = emulator->LoadTape(outputPath);
+    {
+        insertRefusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadTape);
+        if (insertRefusal.empty())
+            inserted = emulator->LoadTape(outputPath);
+        else
+            ret["insert_error"] = insertRefusal;  // saved, but not inserted: TTD is recording
+    }
 
     ret["status"] = "success";
     ret["message"] = "Imported " + std::to_string(imported.blocksRecognized) + " block(s), saved " +
@@ -1317,6 +1338,19 @@ void EmulatorAPI::insertDisk(const HttpRequestPtr& req,
         else if (content.isEmbedded)
             autostart = (req->getHeader("X-Autostart") == "true");
     }
+    // TTD refuses this while recording: answer why instead of a bare failure
+    if (const std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadDisk); !refusal.empty())
+    {
+        Json::Value error;
+        error["error"] = "Conflict";
+        error["message"] = refusal;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
     Emulator::DiskAutostartResult autostartResult;
     std::string loadError;
     bool success;
@@ -1400,59 +1434,66 @@ void EmulatorAPI::createDisk(const HttpRequestPtr& req,
         return;
     }
     
-    // Parse optional parameters from JSON body
-    uint8_t cylinders = 80;
-    uint8_t sides = 2;
-    
+    // Optional body: format ("auto" / "unformatted" / "plus3"), cylinders (40 / 80), sides (1 / 2).
+    // Left out, they take the format's defaults; auto is plus3 on a +3, unformatted elsewhere
+    Emulator::BlankDiskFormat format = Emulator::BlankDiskFormat::Auto;
+    int cylinders = 0;
+    int sides = 0;
     auto json = req->getJsonObject();
-    if (json) {
-        if (json->isMember("cylinders")) {
-            int c = (*json)["cylinders"].asInt();
-            if (c == 40 || c == 80) {
-                cylinders = static_cast<uint8_t>(c);
-            } else {
-                Json::Value error;
-                error["error"] = "Bad Request";
-                error["message"] = "cylinders must be 40 or 80";
-                auto resp = HttpResponse::newHttpJsonResponse(error);
-                resp->setStatusCode(HttpStatusCode::k400BadRequest);
-                addCorsHeaders(resp);
-                callback(resp);
-                return;
-            }
+    if (json)
+    {
+        if (json->isMember("format") && !Emulator::ParseBlankDiskFormat((*json)["format"].asString(), format))
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "format must be auto, unformatted or plus3";
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
         }
-        if (json->isMember("sides")) {
-            int s = (*json)["sides"].asInt();
-            if (s == 1 || s == 2) {
-                sides = static_cast<uint8_t>(s);
-            } else {
-                Json::Value error;
-                error["error"] = "Bad Request";
-                error["message"] = "sides must be 1 or 2";
-                auto resp = HttpResponse::newHttpJsonResponse(error);
-                resp->setStatusCode(HttpStatusCode::k400BadRequest);
-                addCorsHeaders(resp);
-                callback(resp);
-                return;
-            }
-        }
+        if (json->isMember("cylinders"))
+            cylinders = (*json)["cylinders"].asInt();
+        if (json->isMember("sides"))
+            sides = (*json)["sides"].asInt();
     }
-    
-    // Create blank disk image
-    DiskImage* diskImage = new DiskImage(cylinders, sides);
-    
-    // Insert into drive
-    FDD* fdd = context->coreState.diskDrives[driveNum];
-    fdd->insertDisk(diskImage);
-    
-    // Update path tracking for API queries
-    context->coreState.diskFilePaths[driveNum] = "<blank>";
-    
+
+    // TTD refuses this while recording: answer why instead of a bare failure
+    if (const std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::CreateDisk); !refusal.empty())
+    {
+        Json::Value error;
+        error["error"] = "Conflict";
+        error["message"] = refusal;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    std::string createError;
+    Emulator::BlankDiskResult created;
+    const bool geometryInRange = cylinders >= 0 && cylinders <= 255 && sides >= 0 && sides <= 255;
+    if (!geometryInRange || !emulator->CreateBlankDisk(driveNum, format, static_cast<uint8_t>(cylinders),
+                                                       static_cast<uint8_t>(sides), &createError, &created))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = geometryInRange ? createError : "cylinders must be 40 or 80, sides 1 or 2";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
     Json::Value ret;
     ret["success"] = true;
     ret["drive"] = drive;
-    ret["cylinders"] = cylinders;
-    ret["sides"] = sides;
+    ret["format"] = Emulator::BlankDiskFormatName(created.format);
+    ret["cylinders"] = created.cylinders;
+    ret["sides"] = created.sides;
     ret["message"] = "Blank disk created and inserted";
     
     auto resp = HttpResponse::newHttpJsonResponse(ret);
@@ -1509,23 +1550,19 @@ void EmulatorAPI::ejectDisk(const HttpRequestPtr& req,
         return;
     }
     
-    // Thread-safe eject
-    bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
-    if (wasRunning) {
-        emulator->Pause();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    
-    if (context->pBetaDisk) {
-        context->pBetaDisk->ejectDisk();
-    }
-    if (context->coreState.diskDrives[driveNum]) {
-        context->coreState.diskDrives[driveNum]->ejectDisk();
-    }
-    context->coreState.diskFilePaths[driveNum].clear();
-    
-    if (wasRunning) {
-        emulator->Resume();
+    // Only the drive asked for; the disk is freed. Unsaved writes are dropped,
+    // as this endpoint always did (the media verbs of M4 add the dirty check)
+    std::string ejectError;
+    if (!emulator->EjectDisk(driveNum, /*force*/ true, &ejectError)) {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = ejectError;
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
     }
     
     Json::Value ret;

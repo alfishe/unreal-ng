@@ -22,7 +22,6 @@ class PortDecoder_Spectrum128 : public PortDecoder
 {
     /// region <Fields>
 protected:
-    // _7FFD_Locked is now inherited from PortDecoder base class
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -55,6 +54,13 @@ public:
 
 protected:
     void Port_7FFD_Out(uint16_t port, uint8_t value, uint16_t pc);
+
+public:
+    /// Re-derive the #C000 RAM page from the #7FFD latch (bank rebuild after a
+    /// restore that bypassed the port write). Locked paging keeps its mapping.
+    void UpdateModelMemoryBanks() override;
+
+protected:
 
     uint8_t Port_BFFD_In(uint16_t port, uint16_t pc);
     void Port_BFFD_Out(uint16_t port, uint8_t value, uint16_t pc);

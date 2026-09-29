@@ -42,6 +42,7 @@ public:
     // Sync the Tape Manager check state from the window's own close box
     // (setChecked does not re-emit triggered)
     void setTapeManagerChecked(bool checked);
+    void setMediaPanelChecked(bool checked);
 
     // Sync the Debug -> Debugger Window check state from the window's own show / hide
     // (setChecked does not re-emit triggered)
@@ -74,6 +75,8 @@ public:
     void handleEmulatorStateChanged(int id, Message* message);
     void handleEmulatorInstanceCreated(int id, Message* message);
     void handleFDDDiskChanged(int id, Message* message);
+    /// NC_FEATURE_CHANGED / NC_SPEED_CHANGED: TTD recording start/stop and speed changes
+    void handleSpeedOrFeatureChanged(int id, Message* message);
 #ifdef ENABLE_RECORDING
     void handleRecordingStateChanged(int id, Message* message);
 #endif
@@ -104,6 +107,7 @@ signals:
     // Machine control signals
     void fastDiskToggled(bool enabled);
     void autostartDisksToggled(bool enabled);
+    void contentionToggled(bool enabled);
 
     // Speed control signals
     void speedMultiplierChanged(int multiplier);
@@ -124,6 +128,7 @@ signals:
     void debuggerToggled(bool visible);
     void logWindowToggled(bool visible);
     void tapeManagerToggled(bool visible);
+    void mediaPanelToggled(bool visible);
     void fullScreenToggled();
     void scaleRequested(int scale);  // View -> Scale -> Nx
     void overscanModeToggled(bool enabled);
@@ -207,6 +212,7 @@ private:
     QAction* _debuggerAction;
     QAction* _logWindowAction;
     QAction* _tapeManagerAction;
+    QAction* _mediaPanelAction = nullptr;
     QAction* _fullScreenAction;
     QMenu* _scaleMenu = nullptr;
     std::vector<QAction*> _scaleActions;
@@ -244,6 +250,7 @@ private:
     QAction* _turboTapeAction;
     QAction* _fastDiskAction = nullptr;
     QAction* _autostartDisksAction = nullptr;
+    QAction* _contentionAction = nullptr;
 
     // Debug Menu Actions
     QAction* _stepInAction;

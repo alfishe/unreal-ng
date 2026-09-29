@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <utility>
 #include <vector>
 
 /// region <IniFile>
@@ -84,6 +85,10 @@ public:
     /// All section names in first-seen order (the unnamed root section, when
     /// populated, appears as "").
     [[nodiscard]] std::vector<std::string> GetAllSections() const;
+
+    /// The key / value pairs of one section in first-seen order (sections
+    /// whose keys are data, e.g. [MEDIA] keyed by slot id); empty when absent.
+    [[nodiscard]] std::vector<std::pair<std::string, std::string>> GetSectionEntries(const char* section) const;
 
     /// Create or update a key (last write wins); creates the section on first use.
     void SetValue(const char* section, const char* key, const char* value);

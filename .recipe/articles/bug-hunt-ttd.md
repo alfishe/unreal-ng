@@ -10,9 +10,10 @@ wrong values, a jump into nowhere. You suspect a memory corruption but the
 classic breakpoint hunt is a slog. TTD turns it into three API calls.
 
 > **How to use the sections:** [MCP](#mcp-preferred) is preferred — `time_travel`
-> bookmarks/coverage, `debug_code` disassembly, `invoke_api` the TTD
-> endpoints. Use [WebAPI](#webapi) for scripted repeatable hunts (bash) or
-> when MCP is unavailable (policy:
+> for the whole TTD side (record, find-last, reverse-continue, seek,
+> bookmarks, dump, coverage), `debug_code` disassembly, `invoke_api` only
+> for snapshot save and breakpoints. Use [WebAPI](#webapi) for scripted
+> repeatable hunts (bash) or when MCP is unavailable (policy:
 > [_common/transports.md](../_common/transports.md)).
 
 ## MCP (preferred)
@@ -25,27 +26,25 @@ invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/snapshot/save"
                    "body":{"path":"scratch/prebug.sna"}}
 
 # phase 1 — record through the failure (development mode):
-invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/ttd/start","body":{}}
+time_travel        {"action":"start"}
 control_execution  {"action":"resume"}      # ...poll, then {"action":"pause"} at the symptom
 inspect_state      {"aspects":["screen_ocr"]}                        # symptom on screen?
-invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/ttd/stop"}
+time_travel        {"action":"stop"}
 time_travel        {"action":"bookmark_add","label":"symptom"}
-invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/ttd/dump","body":{"path":"scratch/bughunt.ttd"}}
+time_travel        {"action":"dump","path":"scratch/bughunt.ttd"}
 
 # phase 2 — the three questions:
-invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/ttd/find-last",
-                   "body":{"addr":16384,"access":"write","value":0}}
+time_travel        {"action":"find_last","addr":16384,"access":"write","value":0}
 debug_code         {"action":"disassemble","address":"0x8174","count":12}   # code at the writer PC
 time_travel        {"action":"coverage_scan","from_frame":11000,"to_frame":11800,"kind":"executed",
                    "addr_from":"0x816C","addr_to":"0x81B0"}
-invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/ttd/reverse-continue","body":{"pcs":[33156]}}
+time_travel        {"action":"reverse_continue","pcs":[33156]}
 
 # phase 3 — replay and confirm:
-invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/ttd/seek","body":{"frame":11781}}
+time_travel        {"action":"seek","frame":11781}
 invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/breakpoints",
                    "body":{"type":"memory","address":16384,"write":true}}
-invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/ttd/resume"}
-control_execution  {"action":"resume"}
+time_travel        {"action":"resume"}      # truncates the future, records again, resumes the emulator
 ```
 
 The full narrative with sample responses and the bash reverse-continue loop
@@ -111,7 +110,9 @@ variable from the program's map, or scan for the wrong value):
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/find-last" \
      -H 'Content-Type: application/json' \
      -d '{"addr": 16384, "access": "write", "value": 0}' | jq .
-#   → {"found":true, "frame":11782, "tstate":2941, "pc":33156, "physpage":5, ...}
+#   → {"found":true, "frame":11782, "tinframe":2941, "pc":33156, "value":0,
+#      "phys_page":5, "access":"write"}
+#   (a replay barrier in the way → "found":false, "blocked":true, "marker_kind", ...)
 ```
 
 ```bash
@@ -147,6 +148,8 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/seek" \
 curl -s -X POST "$BASE/emulator/$EMU_ID/breakpoints" \
      -H 'Content-Type: application/json' \
      -d '{"type":"memory","address":16384,"write":true,"note":"corruption watch"}' | jq .
+# ttd/resume truncates the recorded future at this point, records again
+# and resumes the emulator itself (the extra /resume is a harmless no-op)
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/resume" | jq '.state'
 curl -s -X POST "$BASE/emulator/$EMU_ID/resume" >/dev/null
 # breakpoint fires with the exact writer PC and registers — case closed
@@ -160,7 +163,10 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/snapshot/save" \
      -H 'Content-Type: application/json' \
      -d '{"path":"scratch/symptom.sna"}' >/dev/null
 # findings: writer PC, call chain, frames — a colleague (or agent) can
-# ttd/load the same file on their instance and land on "symptom" verbatim.
+# ttd/load the same file on an instance of the SAME model (a model mismatch
+# is refused with both model ids named), then POST ttd/seek
+# {"bookmark":"symptom"} to land on it verbatim (after load the session is
+# idle; bookmarks travel inside the .ttd).
 ```
 
 ## Why this beats breakpoint ping-pong
@@ -176,6 +182,8 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/snapshot/save" \
 
 - [ ] recording started in **development mode** (journal on)
 - [ ] `ttd/stop` before any scrub (else 409)
+- [ ] no snapshot/tape/disk load between `ttd/start` and the analysis — a
+      load wipes the history (a reset does not)
 - [ ] bookmark + dump **before** heavy experimentation
 - [ ] `find-last` with `value`/`pc_from` filters to narrow repeat offenders
 - [ ] verify the fix by re-running Phase 1 and proving `find-last` now names

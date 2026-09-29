@@ -546,8 +546,10 @@ TEST_F(TapeFastLoad_Test, FallbackPositioning)
     EXPECT_FALSE(_tape->_currentTapeBlock->edgePulseTimings.empty());
 }
 
-// §12.1-8: a partially played block counts as consumed on stop
-TEST_F(TapeFastLoad_Test, PartialBlockConsumedOnStop)
+// §12.1-8
+/// A stop never consumes the block that was playing (nonstandard-loader investigation P2): the next
+/// load reads that block again, whole
+TEST_F(TapeFastLoad_Test, StopKeepsThePartlyPlayedBlock)
 {
     std::vector<uint8_t> headerPayload;
     std::vector<uint8_t> dataPayload;
@@ -563,9 +565,14 @@ TEST_F(TapeFastLoad_Test, PartialBlockConsumedOnStop)
     _tape->stopPlayback();
 
     EXPECT_FALSE(_tape->IsPlaying());
-    EXPECT_EQ(_tape->GetConsumptionCursor(), 1u);  // Partial block 0 counts as consumed
+    EXPECT_EQ(_tape->GetConsumptionCursor(), 0u);  // Block 0 is still under the head
 
-    // The next trap invocation consumes the FOLLOWING block, never a re-run of 0
+    // The next trap invocation reads block 0 whole, then block 1
+    SetupLDBytesInvocation(0x00, 17, 0x8000, 0x1234);
+    EXPECT_TRUE(_fastLoad->HandleLDBytesTrap(*_z80));
+    EXPECT_EQ(_tape->GetConsumptionCursor(), 1u);
+    EXPECT_EQ(ReadZ80Memory(0x8000, headerPayload.size()), headerPayload);
+
     SetupLDBytesInvocation(0xFF, 8, 0xC000, 0x1234);
     EXPECT_TRUE(_fastLoad->HandleLDBytesTrap(*_z80));
     EXPECT_EQ(_tape->GetConsumptionCursor(), 2u);
@@ -574,6 +581,46 @@ TEST_F(TapeFastLoad_Test, PartialBlockConsumedOnStop)
     // End of tape: starting playback is a no-op (nothing left to play)
     _tape->StartPlaybackAtCursor();
     EXPECT_FALSE(_tape->IsPlaying());
+}
+
+/// Loader-follow test T14: fast loading reads the standard block, the program spends 0.5 s setting up
+/// its own loader (no tape reads), then that loader listens from RAM: it gets the next block from its
+/// first pilot pulse, not from wherever a tape rolling since the trap would be
+TEST_F(TapeFastLoad_Test, CustomLoaderAfterFastLoadGetsTheNextPilot)
+{
+    std::vector<uint8_t> headerPayload;
+    std::vector<uint8_t> dataPayload;
+    _context->coreState.tapeFilePath = WriteTAPFile("handover.tap", MakeHeaderDataPair(headerPayload, dataPayload));
+
+    SetupLDBytesInvocation(0x00, 17, 0x8000, 0x1234);
+    ASSERT_TRUE(_fastLoad->HandleLDBytesTrap(*_z80));
+    ASSERT_EQ(_tape->GetConsumptionCursor(), 1u);
+    ASSERT_FALSE(_tape->IsPlaying()) << "The trap reads the block without playing it";
+
+    // The custom loader: IN A,(#FE); AND #40; JR (an edge loop) at #9000
+    const uint8_t earLoop[] = { 0xDB, 0xFE, 0xE6, 0x40, 0x18, 0xFA };
+    for (size_t i = 0; i < sizeof(earLoop); i++)
+        _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x9000 + i), earLoop[i]);
+
+    for (int frame = 0; frame < 25; frame++)
+    {
+        _tape->handleFrameStart();
+        _tape->handleFrameEnd();
+    }
+    EXPECT_FALSE(_tape->IsPlaying()) << "Nobody listens during the set-up";
+
+    _tape->handleFrameStart();
+    for (uint16_t i = 0; i < TAPE_START_LISTEN_READS; i++)
+    {
+        _z80->pc = 0x9002;
+        _tape->handlePortIn(0xFEFE);
+    }
+    ASSERT_TRUE(_tape->IsPlaying()) << "The custom loader's EAR reads start the tape";
+
+    _tape->handleFrameStart();
+    ASSERT_NE(_tape->_currentTapeBlock, nullptr);
+    EXPECT_EQ(_tape->_currentTapeBlock->blockIndex, 1u);
+    EXPECT_EQ(_tape->_currentOffsetWithinPulse, 0u) << "From the first pilot pulse";
 }
 
 /// endregion </§12.1-6..8 Arm / fallback / partial block>

@@ -101,6 +101,7 @@ state audio ay          AY/SSG overview           state audio ay 0    one chip d
 state audio fm          TurboSound FM overview    state audio fm 1    one YM2203 FM half in full
 state audio channels    Mixer overview: per-device levels + master (mute, live core sample rate)
 state fdc               Beta Disk WD1793 (aliases: state disk, state wd1793)
+state contention        Memory contention: rule, switch, interface, contended slots, waits while debugging
 state screen            Screen state: video mode, active screen + RAM pages, contention, flash
 state screen verbose    + per-screen RAM page and Z80 mapping, decoded #7FFD
 state screen mode       Video mode: picture format, memory layout, #EFF7/#DFFD/#FF77

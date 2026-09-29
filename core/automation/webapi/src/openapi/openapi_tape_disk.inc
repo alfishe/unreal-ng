@@ -27,6 +27,8 @@
     paths["/api/v1/emulator/{id}/tape/load"]["post"]["responses"]["400"]["description"] = "Invalid path or file format";
     paths["/api/v1/emulator/{id}/tape/load"]["post"]["responses"]["404"]["description"] = "Emulator not found";
     paths["/api/v1/emulator/{id}/tape/load"]["post"]["responses"]["413"]["description"] = "File too large (max 1 MB)";
+    paths["/api/v1/emulator/{id}/tape/load"]["post"]["responses"]["409"]["description"] =
+        "A TTD recording is running; the message says why the action would destroy it. Stop the recording first.";
 
     paths["/api/v1/emulator/{id}/tape/eject"]["post"]["summary"] = "Eject tape";
     paths["/api/v1/emulator/{id}/tape/eject"]["post"]["tags"].append("Tape Control");
@@ -212,6 +214,8 @@
          ["format"] = "binary";
     paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["responses"]["200"]["description"] =
         "Disk inserted successfully";
+    paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["responses"]["409"]["description"] =
+        "A TTD recording is running; the message says why the action would destroy it. Stop the recording first.";
     paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["responses"]["400"]["description"] =
         "Invalid path, file format, or drive parameter";
     paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["responses"]["413"]["description"] =
@@ -221,8 +225,9 @@
     paths["/api/v1/emulator/{id}/disk/{drive}/create"]["post"]["summary"] = "Create blank disk";
     paths["/api/v1/emulator/{id}/disk/{drive}/create"]["post"]["tags"].append("Disk Control");
     paths["/api/v1/emulator/{id}/disk/{drive}/create"]["post"]["description"] =
-        "Create a blank, unformatted disk and insert it into the specified drive. "
-        "The disk is ready for TR-DOS FORMAT command.";
+        "Create a blank disk and insert it into the specified drive. format 'unformatted' has no sectors "
+        "(for the machine's own FORMAT: TR-DOS, +3DOS); 'plus3' is a formatted +3DOS disk (9 x 512-byte "
+        "sectors per track). 'auto' (the default) picks plus3 on a +3 and unformatted elsewhere.";
     paths["/api/v1/emulator/{id}/disk/{drive}/create"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/disk/{drive}/create"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/disk/{drive}/create"]["post"]["parameters"][0]["required"] = true;
@@ -238,15 +243,22 @@
     paths["/api/v1/emulator/{id}/disk/{drive}/create"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["cylinders"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/disk/{drive}/create"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-         ["properties"]["cylinders"]["description"] = "Number of cylinders/tracks (40 or 80, default: 80)";
+         ["properties"]["format"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/disk/{drive}/create"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["format"]["description"] = "auto (default), unformatted or plus3";
+    paths["/api/v1/emulator/{id}/disk/{drive}/create"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["cylinders"]["description"] =
+        "Number of cylinders/tracks (40 or 80; default: 80 unformatted, 40 plus3)";
     paths["/api/v1/emulator/{id}/disk/{drive}/create"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["sides"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/disk/{drive}/create"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-         ["properties"]["sides"]["description"] = "Number of sides (1 or 2, default: 2)";
+         ["properties"]["sides"]["description"] = "Number of sides (1 or 2; default: 2 unformatted, 1 plus3)";
     paths["/api/v1/emulator/{id}/disk/{drive}/create"]["post"]["responses"]["200"]["description"] =
         "Blank disk created and inserted";
+    paths["/api/v1/emulator/{id}/disk/{drive}/create"]["post"]["responses"]["409"]["description"] =
+        "A TTD recording is running; the message says why the action would destroy it. Stop the recording first.";
     paths["/api/v1/emulator/{id}/disk/{drive}/create"]["post"]["responses"]["400"]["description"] =
-        "Invalid drive or geometry parameters";
+        "Invalid drive, format or geometry parameters";
 
     paths["/api/v1/emulator/{id}/disk/{drive}/eject"]["post"]["summary"] = "Eject disk";
     paths["/api/v1/emulator/{id}/disk/{drive}/eject"]["post"]["tags"].append("Disk Control");

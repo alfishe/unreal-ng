@@ -4,6 +4,7 @@
 
 #include "cli-processor.h"
 
+#include <debugger/ttd/timetravelmanager.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <common/filehelper.h>
@@ -67,6 +68,13 @@ void CLIProcessor::HandleSnapshotLoad(const ClientSession& session,
     }
 
     std::string filepath = args[1];
+
+    // TTD refuses a snapshot load while recording (it would drop the history)
+    if (const std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot); !refusal.empty())
+    {
+        session.SendResponse("Error: " + refusal + NEWLINE);
+        return;
+    }
 
     // Use existing LoadSnapshot method (includes path validation)
     bool success = emulator->LoadSnapshot(filepath);

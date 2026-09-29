@@ -15,6 +15,8 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <sstream>
+#include <string>
 
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
@@ -199,4 +201,144 @@ TEST_F(TTD_WriteJournal_E2E_Test, GlobalT_AdvancesAcrossFrames)
 
     EXPECT_GT(second->globalT, afterFirstFrames)
         << "globalT did not advance between frames - reverse queries cannot order records";
+}
+
+// ---------------------------------------------------------------------------
+// Journal completeness (B3/B2, PLAN #40 V0)
+//
+// find-last answers from the journal only when it holds every write of the
+// session (the switch-off and empty-journal cases live in ttdmanager_test.cpp).
+// These cover a load over a live session, the debug-mode switches that must
+// not cost a complete journal its standing, and one that must.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+
+constexpr uint16_t kCounter = 0x9000;
+
+/// Park the CPU in `LD A,(9000) / INC A / LD (9000),A / JR` at @p code (RAM,
+/// window 2), interrupts off. The store instruction is at code + 4.
+void InstallCounterLoop(EmulatorContext* context, uint16_t code)
+{
+    Memory* memory = context->pMemory;
+    const uint8_t loop[] = {0x3A, 0x00, 0x90, 0x3C, 0x32, 0x00, 0x90, 0x18, 0xF7};
+    for (uint16_t i = 0; i < sizeof(loop); ++i)
+        memory->DirectWriteToZ80Memory(static_cast<uint16_t>(code + i), loop[i]);
+
+    Z80* z80 = context->pCore->GetZ80();
+    z80->pc = code;
+    z80->iff1 = z80->iff2 = 0;
+}
+
+ttd::TTDSearchQuery CounterWriteQuery()
+{
+    ttd::TTDSearchQuery q;
+    q.addrFrom = q.addrTo = kCounter;
+    q.access = ttd::TTDAccessType::Write;
+    return q;
+}
+
+}  // namespace
+
+/// Loading a session saved without a journal must not answer from the journal
+/// of whatever was recorded live before the load (B2).
+TEST_F(TTD_WriteJournal_E2E_Test, LoadWithoutJournal_DoesNotAnswerFromThePreviousJournal)
+{
+    // Session B: journal off, loop at 0x8000 -> file without a journal section.
+    _ttd->SetEnableWriteJournal(false);
+    InstallCounterLoop(_context, 0x8000);
+    const uint64_t startFrame = _context->emulatorState.frame_counter;
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(3);
+    _ttd->StopRecording();
+    std::stringstream fileB;
+    std::string err;
+    ASSERT_TRUE(_ttd->SerializeSession(fileB, err)) << err;
+
+    // Session C, live: journal on, the same counter written from 0x8100, over
+    // the same frame numbers as B (as when the file comes from another
+    // instance) - so C's records fall inside B's time range.
+    _ttd->SetEnableWriteJournal(true);
+    InstallCounterLoop(_context, 0x8100);
+    _context->emulatorState.frame_counter = startFrame;
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(3);
+    _ttd->StopRecording();
+    ASSERT_NE(_ttd->GetWriteJournal(), nullptr);
+    ASSERT_FALSE(_ttd->GetWriteJournal()->IsEmpty());
+
+    // Load B and search it.
+    fileB.seekg(0);
+    ASSERT_TRUE(_ttd->DeserializeSession(fileB, err)) << err;
+    ASSERT_TRUE(_ttd->SeekTo(_ttd->SessionEndPosition()));
+
+    auto hit = _ttd->FindLastAccess(CounterWriteQuery());
+    ASSERT_TRUE(hit.has_value());
+    EXPECT_EQ(hit->pc, 0x8004) << "answered from session C's journal instead of replaying session B";
+}
+
+/// StartRecording auto-enables debug mode when it is off, and StopRecording
+/// switches it back off. That feature change must not cost the finished
+/// session its journal - the journal still covers the whole recording.
+TEST_F(TTD_WriteJournal_E2E_Test, StopRestoringDebugModeOff_KeepsTheJournal)
+{
+    _ttd->SetEnableWriteJournal(true);
+    _fm->setFeature(Features::kDebugMode, false);  // StartRecording turns it on and back off
+    InstallCounterLoop(_context, 0x8000);
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(2);
+    _ttd->StopRecording();
+    ASSERT_FALSE(_fm->isEnabled(Features::kDebugMode)) << "precondition: stop restored debug mode off";
+
+    std::stringstream file;
+    std::string err;
+    ASSERT_TRUE(_ttd->SerializeSession(file, err)) << err;
+    file.seekg(0);
+    ASSERT_TRUE(_ttd->DeserializeSession(file, err)) << err;
+    ASSERT_NE(_ttd->GetWriteJournal(), nullptr);
+    EXPECT_FALSE(_ttd->GetWriteJournal()->IsEmpty()) << "a complete journal was dropped from the file";
+}
+
+/// Nothing is recorded while detached (after a seek), so toggling debug mode
+/// then - as step-over does when it restores the user's setting - leaves the
+/// journal complete.
+TEST_F(TTD_WriteJournal_E2E_Test, DebugModeToggleWhileDetached_KeepsTheJournal)
+{
+    _ttd->SetEnableWriteJournal(true);
+    InstallCounterLoop(_context, 0x8000);
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(3);
+    _ttd->StopRecording();
+    ASSERT_TRUE(_ttd->SeekTo(_ttd->SessionEndPosition()));  // Detached
+
+    _fm->setFeature(Features::kDebugMode, false);
+    _fm->setFeature(Features::kDebugMode, true);
+
+    std::stringstream file;
+    std::string err;
+    ASSERT_TRUE(_ttd->SerializeSession(file, err)) << err;
+    file.seekg(0);
+    ASSERT_TRUE(_ttd->DeserializeSession(file, err)) << err;
+    ASSERT_NE(_ttd->GetWriteJournal(), nullptr);
+    EXPECT_FALSE(_ttd->GetWriteJournal()->IsEmpty()) << "a debug-mode toggle while detached dropped the journal";
+}
+
+/// Debug mode switched off during a recording stops the writes reaching the
+/// journal, so from then on it cannot answer.
+TEST_F(TTD_WriteJournal_E2E_Test, DebugModeOffMidRecording_SearchFindsTheLatestWrite)
+{
+    _ttd->SetEnableWriteJournal(true);
+    InstallCounterLoop(_context, 0x8000);
+    ASSERT_TRUE(_ttd->StartRecording());
+    RunFrames(2);
+    const uint64_t frameAtSwitch = _context->emulatorState.frame_counter;
+    _fm->setFeature(Features::kDebugMode, false);
+    RunFrames(3);  // the latest writes: not journaled
+    _ttd->StopRecording();
+    ASSERT_TRUE(_ttd->SeekTo(_ttd->SessionEndPosition()));
+
+    auto hit = _ttd->FindLastAccess(CounterWriteQuery());
+    ASSERT_TRUE(hit.has_value());
+    EXPECT_GT(hit->time.frame, frameAtSwitch) << "answered from a journal that missed writes";
 }

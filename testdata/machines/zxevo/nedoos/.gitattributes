@@ -1,0 +1,3 @@
+# NedoOS binaries: never touch the bytes (autoexec.bat keeps the global CRLF rule)
+sdcard/**/*.com binary
+sdcard/*.$C binary

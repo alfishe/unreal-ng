@@ -17,6 +17,9 @@
 > = MB, `ZxPolyModule.java` = ZM, `VideoController.java` = VC). unreal-ng
 > paths are relative to the repository root.
 >
+> Generalized to any machine model (48K, 128K, +3, Pentagon, …) in
+> [model-agnostic-sync-layer.md](model-agnostic-sync-layer.md).
+>
 > Companions: [zxpoly-platform.md](zxpoly-platform.md) ·
 > [zxpoly-emulator-internals.md](zxpoly-emulator-internals.md) ·
 > [cpu-synchronization-models.md](cpu-synchronization-models.md).
@@ -222,6 +225,61 @@ Local INT/NMI pulses from IO-window traffic hit parked CPUs on real hardware,
 and `COPY2CPU` masks the NMI flood through R1 b4. With parked slaves they have
 no effect, so they are ignored.
 
+### 4.4 Storage: one base plus plane differences, never four copies
+
+The four modules run the same code on the same data. They differ only in
+plane graphics, typically a few KB to a few tens of KB per module. A stored
+ZX-Poly state is therefore:
+
+- **one base**: an ordinary snapshot or image of the master, in any existing
+  format (SNA, Z80, SZX, TRD, TAP);
+- **one sparse overlay per slave**: only the byte ranges (or 16K pages) where
+  that module differs from the base;
+- **the platform state**: video mode and the `#3D00` value.
+
+This is the "metadata mod" of the adaptation docs. Atlas and patch lists are
+just a compact way of generating the overlay.
+
+**What differs is only graphics: sprite/tile atlases and the screen bitmap.**
+Measured on the whole `.zxp` corpus
+([testdata/machines/zxpoly/README.md](../../../testdata/machines/zxpoly/README.md)):
+
+- registers are identical in all four modules;
+- attributes never differ;
+- each file has 2–22% differing bytes, in a handful of contiguous regions
+  per page: the screen bitmap plus 1–4 atlas areas.
+
+The four CPUs run the same instructions on the same addresses. They simply
+find different bytes at those addresses.
+
+So the natural package is:
+
+- **Base.** One snapshot holding code, state and the *graphics slots*
+  (the atlas regions). Keep module 0's original graphics in the slots rather
+  than zeroing them: the base then stays a runnable ordinary Spectrum
+  snapshot, which is also plane 0.
+- **Atlases.** One per plane, for exactly those slot regions. The group's
+  loader writes them into each instance at replication.
+- **Screen.** Either replicate at a point where the game redraws the whole
+  screen (no screen data needed), or store the per-plane bitmap as one more
+  "atlas" region. Attributes are never needed.
+
+A `.zxp` import yields this package automatically: the diff against module 0
+*is* the slot map.
+
+- **`.zxp` is import/export only.** zxpoly's format dumps its flat 512K heap,
+  four full 128K modules. On import, modules 1–3 are diffed against module 0
+  and stored as base + overlay. Export writes a `.zxp` again, only for
+  compatibility with the Java emulator.
+- **Runtime.** Each instance holds its own RAM because it is a stock machine,
+  but that is 4 × 128K, which is negligible.
+- **TTD.** Here the duplication would actually cost something: four sessions
+  store identical pages four times, because the page store shares pages
+  only within one session (refcounted, `ttdcodecpagestore.h`). The fix is a
+  page store shared by the group that interns pages by content, so an
+  unchanged page is stored once for all four. That is a later optimization
+  (PLAN #40 V1 memory regions are the natural place); v1 accepts 4×.
+
 ## 5. Runtime IO: full devices everywhere, input from the master only
 
 ### 5.1 Input gating and replication
@@ -245,7 +303,7 @@ is what gets gated:
   `TTDTimePoint` (`RecordInputEvent`, `SubmitLiveInput`). The group copies
   every applied event of frame k into the slaves' input journals, and the
   slaves apply them through the existing playback path (`ServiceInput`,
-  `InjectDueInputEvents`) at exactly the same T. That is exactly how TTD
+  which applies each due event with `ApplyInputEvent`) at exactly the same T. That is exactly how TTD
   replay already feeds input deterministically.
 - **Tape control** (play, stop, rewind; a TTD external event) is replicated
   the same way: the same command at the same T on every instance.
@@ -448,7 +506,9 @@ replays any machine.
      it touched.
    - A **hardware reset** of the master is a ZX-Poly system reset: the group
      ends, and replication starts again at the next entry point.
-6. **Cost.** TTD memory is about 4× one instance. v1 accepts that.
+6. **Cost.** TTD memory is about 4× one instance, because identical pages
+   are stored once per session. v1 accepts that; a content-interned page store
+   shared by the group removes it (§4.4).
 7. **Later (PLAN #40).** A single group file that bundles the four sessions
    and the platform state. That is only a container; nothing inside
    changes.
@@ -499,12 +559,13 @@ attribution is needed.
 | T9 | TTD: record 200 frames with input; group seek to frame 73 at `tInFrame` ≠ 0 (between key frames); slave CPU and device state equal what was seen live; branch with different input, slave journals truncated, lockstep continues | §8 | 4 instances + TTD |
 | T10 | isolation: the whole existing `core-tests` suite unchanged; group members hidden from default listings; line-capture hook disabled on stock models, with `core-benchmarks` screen numbers before and after | "nothing else breaks" | suite + benchmarks |
 | T11 | `.zxp` loader: all 6 `.zxp` titles in the corpus load, run 1000 frames without divergence, and match T3 golden frames at checkpoints | corpus | fixtures |
-| T12 | loader path: Atw2 TRD boots through its multiloader; the overlay collects the `COPY2CPU` writes; the lock write triggers replication; the game runs without divergence | §4.3 | fixture |
+| T12 | loader path: `atw2.trd` (mode 4) and `zxword.trd` (mode 5) boot through their multiloaders; the overlay collects the `COPY2CPU` writes and equals the files in `loaders/*/planes/`; the lock write triggers replication; the program runs without divergence | §4.3 | fixture |
+| T13 | package derivation: every `.zxp` imported as base + per-module overlays (§4.4) reproduces the matching `.sze` planes byte for byte; attributes never land in an overlay | §4.4 | fixtures |
 
 **Order of work.** T4–T6 come first. They need no new model and no changes
 to shared code, only four instances in a test with input replicated by the
 test itself, so they are the prototype and the go/no-go gate. After that:
-T1–T2 before input replication and the composer, then T7–T9, then T11–T12 as
+T1–T2 before input replication and the composer, then T7–T9, then T11–T13 as
 the acceptance suite. T10 runs at every step. The
 project's zero-warnings rule and the full `core-tests` run apply before any
 commit.
@@ -521,7 +582,7 @@ commit.
 | Line capture + `ScreenComposer` | 4–5 d |
 | `.zxp` loader | 2 d |
 | TTD group: aligned sessions, slave journals, group seek, branching, edit policy | 3–4 d |
-| Acceptance T11–T12, golden-frame fixtures | 5–7 d |
+| Acceptance T11–T13, golden-frame fixtures | 5–7 d |
 
 That makes about **6–7 weeks**, prototype included.
 

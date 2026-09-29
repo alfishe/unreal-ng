@@ -14,19 +14,24 @@ program; it supersedes `../2026-08-26-automation-gaps/`. Last status sync in
   (`372c3840`), TD-4 bookmarks (`f4fdcf74`).
 
 ## Remaining (priority order from recommendations.md)
-1. **P1-1** — mode-aware screen state (`/state/screen` still reports
-   `display_mode: "standard"`; `state_screen_api.cpp:79,215`, re-verified
-   2026-09-16). Unblocks ATM triage. → PLAN #3.
-2. **TD-1** — finish first-class TTD in MCP/CLI/Lua/Python (record/replay/
-   seek + summaries). → PLAN #2.
-3. **TD-6** — TTD docs truth pass. → PLAN #1.
+1. ~~**P1-1** — mode-aware screen state~~ — done in `f0ff08e5`: one
+   `DeviceState::Screen` report on every surface, `/state/screen` no longer
+   returns the literal `"standard"` (PLAN #3 / #42a retired).
+2. ~~**TD-1** — finish first-class TTD in MCP~~ — done in `2d7f6030` /
+   `e6c9f21b` (every TTD route in `time_travel`, `inspect_state` `ttd` aspect,
+   `docs/features/mcp` section); PLAN #2 retired.
+3. ~~**TD-6** — TTD docs truth pass~~ — done in `57947394` / `730487d4`
+   (interface references rebuilt from the code, shared TTD Session Rules);
+   PLAN #1 retired.
 4. **P1-4** — porttrace rules (noise filtering per decode semantics).
 5. **P2-2** — MoonSound automation section (before implementation).
 6. **P2-3** — capabilities discovery endpoint; **P2-4** — GS/Covox device
    state (GS DeviceState placeholder → PLAN #19).
 7. **P3-1..P3-3** — per-machine resources, triage recipes, ROM catalog.
 8. TTD coverage gaps G-1..G-10 remainder: TD-3 phase 2 (`POST /memory/dump` +
-   `TempFileTracker` → PLAN #4), TD-5 timeline, TD-7, TD-8.
+   `TempFileTracker` → PLAN #4), TD-5 timeline, TD-7, TD-8 (code half -
+   search-window reporting - done 2026-09-28, PLAN #25 retired; the recipe
+   half remains).
 
 ## Pointers
-- Cumulative plan: [`../PLAN.md`](../PLAN.md) — items #1–#4 (T1) live here.
+- Cumulative plan: [`../PLAN.md`](../PLAN.md) — item #4 (T1) lives here; #1 and #2 are retired.

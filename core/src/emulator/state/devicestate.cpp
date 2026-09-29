@@ -10,12 +10,16 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/diskimage.h"
 #include "emulator/io/fdc/fdd.h"
+#include "emulator/io/fdc/upd765.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/chips/soundchip_turbosoundfm.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/memory/memory.h"
 #include "emulator/config.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
+#include "emulator/video/ulacontention.h"
 #include "emulator/video/screen.h"
 
 namespace
@@ -320,6 +324,175 @@ const char* WdCommandName(WD1793::WD_COMMANDS cmd)
     }
 }
 
+/// The drives a controller reaches: inserted image, head position, motor, write protect, geometry
+StateNode DrivesNode(EmulatorContext* context, int count)
+{
+    StateNode drives = StateNode::Array();
+    for (int d = 0; d < count; d++)
+    {
+        StateNode drive = StateNode::Object();
+        drive["index"] = d;
+        drive["letter"] = std::string(1, char('A' + d));
+        FDD* fdd = context->coreState.diskDrives[d];
+        if (!fdd)
+        {
+            drive["present"] = false;
+            drives.push(drive);
+            continue;
+        }
+        drive["present"] = true;
+        drive["inserted"] = fdd->isDiskInserted();
+        drive["path"] = context->coreState.diskFilePaths[d];
+        drive["track"] = int(fdd->getTrack());
+        drive["side"] = fdd->getSide() ? 1 : 0;
+        drive["motor_on"] = fdd->getMotor();
+        drive["write_protected"] = fdd->isWriteProtect();
+        DiskImage* image = fdd->getDiskImage();
+        if (image && fdd->isDiskInserted())
+        {
+            StateNode geo = StateNode::Object();
+            geo["cylinders"] = int(image->getCylinders());
+            geo["sides"] = int(image->getSides());
+            drive["image"] = geo;
+        }
+        drives.push(drive);
+    }
+    return drives;
+}
+
+const char* Upd765PhaseName(UPD765::UPDPHASE phase)
+{
+    switch (phase)
+    {
+        case UPD765::PHASE_COMMAND: return "command";
+        case UPD765::PHASE_EXECUTION: return "execution";
+        case UPD765::PHASE_RESULT: return "result";
+    }
+    return "?";
+}
+
+const char* Upd765StateName(UPD765::UPDSTATE state)
+{
+    switch (state)
+    {
+        case UPD765::S_IDLE: return "idle";
+        case UPD765::S_SEARCH: return "search_sector";
+        case UPD765::S_READ_BYTE: return "read_byte";
+        case UPD765::S_WRITE_BYTE: return "write_byte";
+        case UPD765::S_READ_ID: return "read_id";
+        case UPD765::S_FORMAT_REQUEST: return "format_request";
+        case UPD765::S_FORMAT_DUE: return "format_due";
+        case UPD765::S_FORMAT_END: return "format_end";
+        case UPD765::S_RESULT: return "result_pending";
+        case UPD765::S_TRACK_SECTOR: return "read_track_sector";
+        case UPD765::S_SCAN_BYTE: return "scan_byte";
+    }
+    return "?";
+}
+
+StateNode BytesArray(const uint8_t* bytes, size_t count)
+{
+    StateNode arr = StateNode::Array();
+    for (size_t i = 0; i < count; i++)
+        arr.push(int(bytes[i]));
+    return arr;
+}
+
+/// NEC uPD765A (+3): phase, main status, the command in hand, status bytes, SPECIFY times, units, drives
+StateNode Upd765Node(EmulatorContext* context, const UPD765& fdc)
+{
+    const UPD765::Snapshot s = fdc.getSnapshot();
+
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["controller"] = "uPD765A (+3)";
+    ret["phase"] = Upd765PhaseName(s.phase);
+    ret["execution_state"] = Upd765StateName(s.state);
+
+    StateNode msr = StateNode::Object();
+    msr["value"] = int(s.mainStatus);
+    msr["rqm"] = (s.mainStatus & UPD765::MSR_RQM) != 0;
+    msr["dio_to_cpu"] = (s.mainStatus & UPD765::MSR_DIO) != 0;
+    msr["execution"] = (s.mainStatus & UPD765::MSR_EXM) != 0;
+    msr["busy"] = (s.mainStatus & UPD765::MSR_CB) != 0;
+    StateNode seeking = StateNode::Array();
+    for (int u = 0; u < UPD765::UNITS; u++)
+    {
+        if (s.mainStatus & (UPD765::MSR_D0B << u))
+            seeking.push(u);
+    }
+    msr["units_seeking"] = seeking;
+    ret["main_status"] = msr;
+
+    StateNode cmd = StateNode::Object();
+    cmd["name"] = UPD765::commandName(s.command[0]);
+    cmd["bytes"] = BytesArray(s.command, s.commandBytes);
+    cmd["complete"] = s.commandBytes >= s.commandLength;
+    if (s.commandLength >= 2)
+    {
+        cmd["unit"] = int(s.command[1] & 0x03);
+        cmd["head"] = int((s.command[1] >> 2) & 0x01);
+    }
+    if (s.commandLength == 9)
+    {
+        // Data commands: MT MF SK and the sector address C H R N, last sector EOT
+        cmd["multi_track"] = (s.command[0] & UPD765::CMD_FLAG_MT) != 0;
+        cmd["mfm"] = (s.command[0] & UPD765::CMD_FLAG_MF) != 0;
+        cmd["skip"] = (s.command[0] & UPD765::CMD_FLAG_SK) != 0;
+        cmd["c"] = int(s.command[2]);
+        cmd["h"] = int(s.command[3]);
+        cmd["r"] = int(s.command[4]);
+        cmd["n"] = int(s.command[5]);
+        cmd["eot"] = int(s.command[6]);
+    }
+    ret["command"] = cmd;
+
+    StateNode result = StateNode::Object();
+    result["bytes"] = BytesArray(s.result, s.resultLength);
+    result["read"] = int(s.resultPos);
+    ret["result"] = result;
+
+    StateNode st = StateNode::Object();
+    st["st0"] = int(s.st0);
+    st["st1"] = int(s.st1);
+    st["st2"] = int(s.st2);
+    static const char* const IC[] = { "normal", "abnormal", "invalid_command", "ready_changed" };
+    st["interrupt_code"] = IC[(s.st0 >> 6) & 0x03];
+    st["end_of_cylinder"] = (s.st1 & UPD765::ST1_EN) != 0;
+    st["data_error"] = (s.st1 & UPD765::ST1_DE) != 0;
+    st["overrun"] = (s.st1 & UPD765::ST1_OR) != 0;
+    st["no_data"] = (s.st1 & UPD765::ST1_ND) != 0;
+    st["not_writable"] = (s.st1 & UPD765::ST1_NW) != 0;
+    st["missing_address_mark"] = (s.st1 & UPD765::ST1_MA) != 0;
+    st["control_mark"] = (s.st2 & UPD765::ST2_CM) != 0;
+    st["data_crc_error"] = (s.st2 & UPD765::ST2_DD) != 0;
+    st["wrong_cylinder"] = (s.st2 & UPD765::ST2_WC) != 0;
+    st["scan_hit"] = (s.st2 & UPD765::ST2_SH) != 0;
+    st["scan_not_satisfied"] = (s.st2 & UPD765::ST2_SN) != 0;
+    ret["status"] = st;
+
+    StateNode specify = StateNode::Object();
+    specify["step_rate_ms"] = int((16 - (s.stepRateTime & 0x0F)) * 2);
+    specify["head_load_ms"] = int((s.headLoadTime == 0 ? 128 : s.headLoadTime) * 4);
+    ret["specify"] = specify;
+    ret["motor_on"] = s.motorOn;
+
+    StateNode units = StateNode::Array();
+    for (int u = 0; u < UPD765::UNITS; u++)
+    {
+        StateNode unit = StateNode::Object();
+        unit["index"] = u;
+        unit["drive"] = std::string(1, char('A' + (u & 1)));  // US1 is not connected on the +3
+        unit["present_cylinder"] = int(s.units[u].pcn);
+        unit["seeking"] = s.units[u].seeking;
+        unit["interrupt_pending"] = s.units[u].interruptPending;
+        units.push(unit);
+    }
+    ret["units"] = units;
+    ret["drives"] = DrivesNode(context, UPD765::DRIVES);
+    return ret;
+}
+
 /// endregion </FDC>
 
 void TextLine(std::ostringstream& out, int indent, const std::string& key, const StateNode& v);
@@ -494,6 +667,10 @@ StateNode FmChip(EmulatorContext* context, int chip)
 
 StateNode Fdc(EmulatorContext* context)
 {
+    // The +3 has its own controller; the WD1793 object exists on every model but is not wired there
+    if (context && context->pUPD765)
+        return Upd765Node(context, *context->pUPD765);
+
     const WD1793* fdc = context ? context->pBetaDisk : nullptr;  // const: picks the register getters, not the computing overloads
     if (!fdc)
         return Unavailable("Beta Disk interface (WD1793) not present on this machine");
@@ -544,37 +721,7 @@ StateNode Fdc(EmulatorContext* context)
     ret["selected_drive"] = int(fdc->getSelectedDriveIndex());
     ret["side"] = fdc->getSideUp() ? 1 : 0;
 
-    StateNode drives = StateNode::Array();
-    for (int d = 0; d < 4; d++)
-    {
-        StateNode drive = StateNode::Object();
-        drive["index"] = d;
-        drive["letter"] = std::string(1, char('A' + d));
-        FDD* fdd = context->coreState.diskDrives[d];
-        if (!fdd)
-        {
-            drive["present"] = false;
-            drives.push(drive);
-            continue;
-        }
-        drive["present"] = true;
-        drive["inserted"] = fdd->isDiskInserted();
-        drive["path"] = context->coreState.diskFilePaths[d];
-        drive["track"] = int(fdd->getTrack());
-        drive["side"] = fdd->getSide() ? 1 : 0;
-        drive["motor_on"] = fdd->getMotor();
-        drive["write_protected"] = fdd->isWriteProtect();
-        DiskImage* image = fdd->getDiskImage();
-        if (image && fdd->isDiskInserted())
-        {
-            StateNode geo = StateNode::Object();
-            geo["cylinders"] = int(image->getCylinders());
-            geo["sides"] = int(image->getSides());
-            drive["image"] = geo;
-        }
-        drives.push(drive);
-    }
-    ret["drives"] = drives;
+    ret["drives"] = DrivesNode(context, 4);
     return ret;
 }
 
@@ -620,6 +767,8 @@ StateNode Screen(EmulatorContext* context, bool verbose)
         return Unavailable("Screen not available");
 
     const ScreenState s = context->pScreen->DescribeScreenState();
+    // In effect: the model's rule and the 'contention' switch (DeviceState::Contention has the details)
+    const bool contention = s.contention && (!context->pCore || context->pCore->IsContentionSwitchOn());
     StateNode ret = StateNode::Object();
     ret["available"] = true;
     ret["model"] = Config::GetModelFullName(s.model);
@@ -630,7 +779,7 @@ StateNode Screen(EmulatorContext* context, bool verbose)
     ret["active_screen"] = int(s.activeScreen);
     ret["active_ram_page"] = int(s.activeRamPage);
     ret["active_ram_pages"] = PagesArray(s.activeRamPages);
-    ret["contention"] = s.contention;
+    ret["contention"] = contention;
     ret["flash_inverted"] = s.flashInverted;
     if (!verbose)
         return ret;
@@ -644,7 +793,7 @@ StateNode Screen(EmulatorContext* context, bool verbose)
         n["attributes"] = "0x1800-0x1AFF (768 bytes)";
         n["z80_access"] = Z80Access(memory, page);
         n["ula_display"] = displayed;
-        n["contention"] = s.contention ? "active" : "none";
+        n["contention"] = contention ? "active" : "none";
         return n;
     };
 
@@ -755,6 +904,85 @@ StateNode ScreenFlash(EmulatorContext* context)
     ret["flash_cycle_total"] = 32;
     ret["toggle_interval_frames"] = 16;
     ret["toggle_interval_seconds"] = 16.0 * context->config.frame_duration_us / 1e6;
+    return ret;
+}
+
+namespace
+{
+StateNode CountersNode(const ContentionCounters& c)
+{
+    static const char* const kinds[CONTENTION_KINDS] = { "fetch", "read", "write", "io", "idle" };
+    StateNode n = StateNode::Object();
+    uint64_t accesses = 0;
+    uint64_t waitT = 0;
+    for (int k = 0; k < CONTENTION_KINDS; k++)
+    {
+        StateNode kind = StateNode::Object();
+        kind["accesses"] = c.accesses[k];
+        kind["wait_t"] = c.waitT[k];
+        n[kinds[k]] = kind;
+        accesses += c.accesses[k];
+        waitT += c.waitT[k];
+    }
+    n["accesses"] = accesses;
+    n["wait_t"] = waitT;
+    return n;
+}
+}  // namespace
+
+StateNode Contention(EmulatorContext* context)
+{
+    UlaContention* ula = context ? context->pUlaContention : nullptr;
+    Core* core = context ? context->pCore : nullptr;
+    if (!ula || !core || !core->GetZ80())
+        return Unavailable("Contention component not available");
+
+    const ContentionRule rule = ula->GetRule();
+    const bool effective = core->IsContentionEffective();
+    Z80* z80 = core->GetZ80();
+
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["rule"] = ContentionRuleName(rule);
+    ret["applicable"] = rule != ContentionRule::None;
+    ret["switch"] = core->IsContentionSwitchOn() ? "on" : "off";
+    ret["effective"] = effective;
+    ret["memory_interface"] = core->GetMemoryInterfaceName();
+    ret["io_rule"] = z80->ioContention ? ContentionRuleName(rule) : "none";
+
+    // The slots the CPU would wait on (none while contention is not in effect)
+    Memory* memory = context->pMemory;
+    StateNode slots = StateNode::Array();
+    for (uint8_t slot = 0; slot < 4; slot++)
+    {
+        StateNode n = StateNode::Object();
+        char range[24];
+        snprintf(range, sizeof range, "0x%04X-0x%04X", slot * 0x4000, slot * 0x4000 + 0x3FFF);
+        n["slot"] = int(slot);
+        n["range"] = range;
+        n["mapping"] = memory ? memory->GetCurrentBankName(slot) : std::string("unknown");
+        n["contended"] = core->IsSlotContended(slot);
+        slots.push(n);
+    }
+    ret["slots"] = slots;
+
+    if (rule == ContentionRule::GateArray)
+        ret["floating_bus_latch"] = Hex8(ula->GetLatchedByte());
+
+    // Counted only by the debug interfaces
+    if (z80->isDebugMode)
+    {
+        StateNode stats = StateNode::Object();
+        stats["current_frame"] = CountersNode(ula->GetStatisticsCurrentFrame());
+        stats["last_frame"] = CountersNode(ula->GetStatisticsLastFrame());
+        stats["total"] = CountersNode(ula->GetStatisticsTotal());
+        ret["statistics"] = stats;
+    }
+    else
+    {
+        ret["statistics"] = "debug mode off (counted only while the debugger is on)";
+    }
+
     return ret;
 }
 

@@ -32,6 +32,13 @@ exact TTD restore (`6ed6d4c0`). Profi lacks only the last five sound/TTD commits
 
 ## 2. Things to fix on master first (step 0)
 
+> **Done** (checked 2026-09-28): items 1 and 2 are on master
+> (`ttdserializable.h`, `ttd.ksy`, the analyzer's `PERIPHERAL_ID_NAMES`, the
+> contract test's `NeoGS` fake decoder; `notifications.h` `AudioSource`
+> GeneralSound = 6, MoonFM = 7, MoonPCM = 8). Item 3 is moot: `profi`,
+> `generalsound` and `moonsound` are merged. Ids 13 Plus3Paging, 14 Upd765 and
+> 15 EvoSdCard were appended since.
+
 These are cheap now and expensive after any merge.
 
 1. **One `PeripheralId` table.** All three branches claim id **9** (Profi:
@@ -119,6 +126,11 @@ Known and accepted after the merge: the lightweight → full card switch freezes
 emulation ~17 s on a 381 KB module (needs chunking); NeoGS not started.
 
 ### 3.3 `moonsound` — finish on the branch, merge last
+
+> **Status 2026-09-28:** merged in `e18f3a29` without the port-claim unification,
+> the TTD Tier B region or automation. Open items below moved to the
+> [MoonSound TODO](../2026-09-13-moonsound/TODO.md) and PLAN #11; the port-claim
+> choice is decision 2 in [migration-trajectory.md](migration-trajectory.md) §6.
 
 MoonSound is the least finished of the three and carries the only
 architectural conflict. Finishing it *on the branch* keeps master shippable and

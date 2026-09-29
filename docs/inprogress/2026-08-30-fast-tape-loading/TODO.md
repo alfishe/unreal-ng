@@ -54,27 +54,52 @@ The single-cause hypothesis below was only partly right:
   HACKER_SHURIK) were games waiting for a key at a prompt. The sweep never pressed one.
 - **Open, not explained by B1–B4:** O1 KID__DR crashes on Pentagon (all modes); O2 TIMOFEY falls
   back to BASIC on 48K (all modes); O3 HACKER_SHURIK hangs on Pentagon with fast loading off.
+- ~~**O4** ALEX_S hangs on 48K with fast loading on~~ — closed 2026-09-28, not an emulator fault: the
+  release carries 128K data only. After its "1-cheat 2-normal" menu the program checks for 128K memory
+  and calls LD-BYTES with different parameters per machine (registers at the call):
+
+  | Machine | flag (A') | length (DE) | address (IX) | outcome |
+  |:--|:--|:--|:--|:--|
+  | Pentagon | #FF | #8400 = 33792 | #61A8 | block 3 loads whole, then the screen (#1B00 at #4000); the game runs |
+  | 48K | #13 | #5CB9 = 23737 | #7D3C | waits for a flag #13 block |
+
+  The tape's five blocks carry flags #00 #FF #FF #FF #FF: there is no #13 block, so LD-BYTES rejects
+  every block by its flag, the tape ends and the program waits, as a real 48K would. Same on
+  `a3e23d6f` and after P2/P3; the investigation's 48K runs (back to BASIC) agree. The sweep reports the
+  48K cases of this tape as `128K-only` instead of `hang`.
 
 ## Plan (from the investigation, §9)
 
 1. ~~P1: remove the ERR_NR stop~~ — done in `ac200bb8` (TTD tape-state byte 44 reserved; test
    `Tape_Test.ErrNrWriteDuringPlaybackKeepsTapeRolling`).
-2. P2: `stopPlayback()` still has the "skip the partly played block" branch, but after P1/P4 no
-   caller reaches it with a block in flight (end of tape, park after the last block and the
-   empty-cursor case all pass a null block). Remove the branch, invert
-   `TapeFastLoad_Test.PartialBlockConsumedOnStop`, update design §9.4/§12.1-8.
-3. P3: mostly delivered by P4 — a park moves the cursor to the next block, a freeze mid-data
-   keeps the cursor on the block so the ROM anchor restarts it from its pilot, a freeze in a
-   pilot rewinds it. Still to do: test T12 (ROM restart after a freeze mid-data) and the
-   "nothing moved since" rule for user actions (design §5.1).
+2. ~~P2: a stop never consumes a partly played block~~ — done 2026-09-28: the branch is gone,
+   `TapeFastLoad_Test.StopKeepsThePartlyPlayedBlock` (inverted), design §9.4/§12.1-8 updated.
+   Tests that used a mid-block stop to reach "end of tape" use `TapeCUT::EndOfTape()` now.
+3. ~~P3: ROM restart after a freeze~~ — done 2026-09-28. T12 found B4 still open: a block frozen
+   mid-data and restarted by the ROM anchor went on from the frozen pulse, because
+   `StartPlaybackAtCursor()` kept the pulse position (`handleFrameStart()` rebuilds a block with
+   its saved position, which a TTD restore needs). `StartPlaybackAtCursor()` now starts the
+   cursor block from its first pulse. Tests in `TapeLoaderFollow_Test`: T12, park then ROM load
+   (next block), freeze in a pilot then ROM load (pilot start), the "nothing moved it since"
+   rule (block pick and rewind drop a frozen pulse).
 4. ~~P4: the tape moves only while a loader listens~~ — done in `ac200bb8`
    ([loader-follow-design.md](loader-follow-design.md)). Requirement R (2026-09-27): a load that
    stops for a key prompt or for beeper/AY music resumes by itself when EAR polling returns.
    Verified live: EMELYANOV 48K through the trainer menu, SAN-SAN 48K and 128K, fast loading off.
-   Open tests: T4, T12, T13, T14.
-5. Re-run the fixture matrix (probe in `scratch/tape-errnr/`) as a `tools/verification/` script;
-   EMELYANOV and SAN-SAN must pass with fast loading off on both models; tapes with prompts must
-   load with the key pressed after 1 s, 10 s and 60 s. Confirm the P4 thresholds from it.
+   Tests T7, T12, T13 and T14 added 2026-09-28; T4 (an IM2 AY player over a whole load) is
+   covered by the sweep's real tapes rather than a unit test.
+5. Fixture sweep: `tools/verification/tape/tape-sweep.sh` runs
+   `TapeLoadingSweep_Test` (`tapeloadingsweep_integration_test.cpp`, registered only with
+   `UNREAL_TAPE_SWEEP` set): every tape in `testdata/loaders` on 48K and Pentagon, fast loading
+   on and off, prompt keys Y / 1 / 0 every 10 s (never SPACE: it is BREAK for LD-BYTES) (and 1 s / 60 s for the Dizzy tapes), then
+   a liveness check. It asserts that the ROM loader is not left waiting for EMELYANOV and SAN-SAN
+   with fast loading off and for the control tape, and saves every final screen for a contact sheet.
+   **Result 2026-09-28 (120 cases, all pass):** EMELYANOV and SAN-SAN reach the game in all 16
+   combinations (48K / Pentagon, fast on / off, key after 1 s / 10 s / 60 s), checked on the sheet:
+   the "dead" hints there are Dizzy standing in the first room, which does not react to 0 / 1 /
+   ENTER / N. The only hang left is O4 (ALEX_S, 48K, fast loading on). The P4 thresholds held:
+   no case parked or froze a loader that was listening. Lesson: SPACE is BREAK for LD-BYTES, never
+   a "press any key" key in a sweep.
 6. Close out; split O1–O3 into their own item if they survive.
 
 <details><summary>Original 2026-09-16 hypothesis (kept for history)</summary>

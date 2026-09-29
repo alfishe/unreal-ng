@@ -142,6 +142,28 @@ TEST_F(PortDecoder_PortTag_Test, Plus3_7FFDAnd1FFDLatches)
     EXPECT_EQ(special->tags, Tags(PortTag::Memory) | PortTag::Rom);
 }
 
+/// The +3's uPD765A ports are storage (the port trace names them); the +2A has the same decoder but no
+/// disk controller, so it has no such rows
+TEST_F(PortDecoder_PortTag_Test, Plus3FloppyControllerPortsButNotOnThePlus2A)
+{
+    _context->config.mem_model = MM_PLUS3;
+    PortDecoder_Spectrum3 plus3(_context);
+    const std::vector<PortMapEntry> storage = plus3.GetEntriesByTags(Tags(PortTag::Storage));
+    for (uint16_t port : { uint16_t(0x2FFD), uint16_t(0x3FFD) })
+    {
+        const PortMapEntry* entry = FindEntry(storage, port);
+        ASSERT_NE(entry, nullptr) << std::hex << port;
+        EXPECT_EQ(entry->tags, Tags(PortTag::StorageFdc));
+        EXPECT_EQ(entry->latch, PagingLatch::None);
+    }
+
+    _context->config.mem_model = MM_PLUS2A;
+    PortDecoder_Spectrum3 plus2a(_context);
+    const std::vector<PortMapEntry> plus2aStorage = plus2a.GetEntriesByTags(Tags(PortTag::Storage));
+    EXPECT_EQ(FindEntry(plus2aStorage, 0x2FFD), nullptr);
+    EXPECT_EQ(FindEntry(plus2aStorage, 0x3FFD), nullptr);
+}
+
 TEST_F(PortDecoder_PortTag_Test, Profi_DFFDIsMemoryAndScreen)
 {
     _context->config.mem_model = MM_PROFI;

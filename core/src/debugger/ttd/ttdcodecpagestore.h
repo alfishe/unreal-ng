@@ -55,6 +55,9 @@ public:
 
     TTDCodecPageStore(const TTDCodecPageStore&) = delete;
     TTDCodecPageStore& operator=(const TTDCodecPageStore&) = delete;
+    // A session load reads into a staging store and moves it in once complete
+    TTDCodecPageStore(TTDCodecPageStore&&) = default;
+    TTDCodecPageStore& operator=(TTDCodecPageStore&&) = default;
 
     // -------------------------------------------------------------------
     // Intern family (capture path)
@@ -172,8 +175,8 @@ public:
     inline uint32_t GetUsedSlots() const { return _usedSlots; }
     inline uint32_t GetFreeSlotCount() const { return static_cast<uint32_t>(_freeList.size()); }
 
-    /// Total bytes currently held in slot payloads + headers. Used by the
-    /// capture orchestrator for budget enforcement (default 64 MB).
+    /// Total bytes currently held in slot payloads + headers. Reported by the
+    /// session status; no memory budget is enforced yet (TTD v2 step V4).
     size_t GetUsedBytes() const;
 
     /// Bytes allocated for slot capacity (capacity × sizeof(Slot) rounded).
@@ -183,6 +186,10 @@ public:
     /// Total payload bytes across all live slots (excludes Slot header).
     /// Used by telemetry to compute compression ratio.
     size_t GetLivePayloadBytes() const;
+
+    /// Heap the store holds: slot table, every slot's payload allocation
+    /// (live or on the free list), free list and decode scratch
+    size_t HeapBytes() const;
 
     /// Compression ratio: averageRawBytes / averageCompressedBytes.
     /// Returns 1.0 if no live slots; otherwise kPageSize / mean(payload).

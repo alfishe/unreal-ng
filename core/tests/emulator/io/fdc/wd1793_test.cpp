@@ -326,6 +326,33 @@ TEST_F(WD1793_Ports_Test, Beta128_Status_INTRQ)
     EXPECT_EQ(_fdc->getTrackRegister(), 0);
 }
 
+/// The head moves by step pulses only; the track register is the controller's
+/// belief. A SEEK to where the track register already says the head is issues
+/// no step, whatever the real position (TR-DOS keeps TR = n with the head at
+/// 2n for a 40-track disk in an 80-track drive)
+TEST_F(WD1793_Ports_Test, SeekMovesTheHeadByStepsOnly)
+{
+    FDD* drive = _fdc->getDrive();
+    _fdc->portDeviceOutMethod(WD1793::PORT_3F, 0);
+    _fdc->portDeviceOutMethod(WD1793::PORT_7F, 4);
+    _fdc->portDeviceOutMethod(WD1793::PORT_1F, 0x10);  // SEEK 4
+    RunUntilNotBusy();
+    ASSERT_EQ(drive->getTrack(), 4);
+
+    _fdc->portDeviceOutMethod(WD1793::PORT_3F, 2);     // TR = 2, head still at 4
+    _fdc->portDeviceOutMethod(WD1793::PORT_7F, 2);
+    _fdc->portDeviceOutMethod(WD1793::PORT_1F, 0x10);  // SEEK 2: no step
+    RunUntilNotBusy();
+    EXPECT_EQ(drive->getTrack(), 4) << "a zero-distance seek does not move the head";
+    EXPECT_EQ(_fdc->getTrackRegister(), 2);
+
+    _fdc->portDeviceOutMethod(WD1793::PORT_7F, 3);
+    _fdc->portDeviceOutMethod(WD1793::PORT_1F, 0x10);  // SEEK 3: one step in
+    RunUntilNotBusy();
+    EXPECT_EQ(drive->getTrack(), 5) << "one step from where the head was";
+    EXPECT_EQ(_fdc->getTrackRegister(), 3);
+}
+
 /// DRQ (Beta128 port #FF bit 6) is raised when the data register holds a byte for the CPU and is
 /// released by the CPU reading it; a full sector read delivers exactly 256 bytes
 TEST_F(WD1793_Ports_Test, Beta128_Status_DRQ)

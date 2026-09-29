@@ -43,21 +43,21 @@ struct Golden
     uint64_t tStates;
 };
 
-// Recorded 2026-09-27 on neogs d34f2c56 (master 95fce44d merged), before phase 5a
+// Re-recorded 2026-09-28 at the merge of master 9454993c into neogs. The rows
+// are exactly what clean master produces; they moved with master's changes
+// to the machines themselves (contention, Profi/ATM ports, ZX-Evo BaseConf),
+// not with anything NeoGS does
 const Golden kGolden[] = {
-    {"48K", nullptr, 0xBA0556D09395EC44ull, 0x40BC7C9AAC0FAA36ull, 10483200ull},
-    {"128k", nullptr, 0x78042E47C3DBDD4Bull, 0xE3A4F38236C6092Aull, 10636200ull},
-    {"PLUS3", nullptr, 0xFD6BDBD869C26760ull, 0xCBAB763DF221C3A5ull, 10636200ull},
+    {"48K", nullptr, 0xF6F7645FFB8D32EEull, 0x30CF0C783D0E991Full, 10483200ull},
+    {"128k", nullptr, 0x06DE8AB61A04BA77ull, 0x99282911875249E1ull, 10636200ull},
+    {"PLUS3", nullptr, 0x42083412FAC68EB5ull, 0x2A4FE2DFB3C7F009ull, 10636200ull},
     {"PENTAGON", nullptr, 0xCE7802019C39F3DCull, 0x0AF8E05A04352BC0ull, 10752000ull},
     {"PENTAGON", "testdata/loaders/sna/eyeache1.sna", 0xBE8FEFDC569D139Aull, 0xE0C7CB5F6C6AB285ull, 10752000ull},
     {"SCORPION", nullptr, 0xB62AC29F6C8595C8ull, 0xA0ACA621D375DA98ull, 10483200ull},
     {"PROFSCORP", nullptr, 0xB62AC29F6C8595C8ull, 0xA0ACA621D375DA98ull, 10483200ull},
-    {"PROFI", nullptr, 0xE0FAE946751F0EDFull, 0x1E71318A116D0D18ull, 10483200ull},
-    {"ATM710", nullptr, 0x8AB82EB6A4994527ull, 0x27AEF4CA26888579ull, 10483200ull},
-    // ATM3 re-recorded after master's ZX-Evo BaseConf E0 (RTL-derived port
-    // decode, c8a5392e) and E1 (FPGA variant, #xxBD block, the official ROM,
-    // a3e23d6f) - intended changes of the machine's behaviour
-    {"ATM3", nullptr, 0xCB592C030FDAF337ull, 0x987B431C35543587ull, 9434880ull},
+    {"PROFI", nullptr, 0xE0FAE946751F0EDFull, 0xA0ACA621D375DA98ull, 10483200ull},
+    {"ATM710", nullptr, 0x8AB82EB6A4994527ull, 0xC0395302AE037CF9ull, 10483200ull},
+    {"ATM3", nullptr, 0x6F2CE72E5BE7AC25ull, 0x5D592C8522429BF3ull, 9434880ull},
     // TSL (TS-Conf) is not creatable with the shipped ROMs.
 };
 

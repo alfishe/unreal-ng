@@ -256,15 +256,14 @@ Z80INLINE void Z80FAST ddfd_prefixes(Z80 *cpu, uint8_t opcode)
         ptr = ((op1 == 0xDD) ? cpu->ix:cpu->iy) + displacement;
         cpu->memptr = ptr;
 
-        // DDCBnnXX,FDCBnnXX increment R by 2, not 3!
-        opcode = cpu->m1_cycle();
-        cpu->r_low--;
+        // DDCBnnXX,FDCBnnXX increment R by 2, not 3: the operation byte is an ordinary read, not an M1,
+        // followed by 2 internal cycles on its address (FUSE)
+        opcode = cpu->rd(cpu->pc++, true);
+        cpuidle(cpu->pc - 1, 2);
 
-        cputact(1);
+        uint8_t byte = (logic_ix_opcode[opcode])(cpu, cpu->rd(ptr));  // a data read at (IX+d), not an instruction byte
 
-        uint8_t byte = (logic_ix_opcode[opcode])(cpu, cpu->rd(ptr, true));
-
-        cputact(1);
+        cpuidle(ptr, 1);
 
         if ((opcode & 0xC0) == 0x40)
             return; // bit n,rm

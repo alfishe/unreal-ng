@@ -61,6 +61,9 @@ public:
         CMD_READ_DELETED_DATA = 0x0C,
         CMD_FORMAT_TRACK = 0x0D,
         CMD_SEEK = 0x0F,
+        CMD_SCAN_EQUAL = 0x11,
+        CMD_SCAN_LOW_OR_EQUAL = 0x19,
+        CMD_SCAN_HIGH_OR_EQUAL = 0x1D,
         CMD_INVALID = 0xFF
     };
 
@@ -112,6 +115,8 @@ public:
     {
         ST2_MD = 0x01,  // Missing address mark in data field
         ST2_BC = 0x02,  // Bad cylinder (ID C = FF)
+        ST2_SN = 0x04,  // Scan not satisfied (no sector up to EOT met the condition)
+        ST2_SH = 0x08,  // Scan hit: the sector met the condition with every byte equal
         ST2_WC = 0x10,  // Wrong cylinder
         ST2_DD = 0x20,  // Data error in data field
         ST2_CM = 0x40   // Control mark (the other data address mark)
@@ -146,7 +151,9 @@ public:
         S_FORMAT_REQUEST,  // FORMAT asks for the next ID byte
         S_FORMAT_DUE,      // The requested ID byte must have been given by now
         S_FORMAT_END,      // Index pulse after the formatted revolution
-        S_RESULT           // Enter the result phase (errors found ahead of time, e.g. after two index pulses)
+        S_RESULT,          // Enter the result phase (errors found ahead of time, e.g. after two index pulses)
+        S_TRACK_SECTOR,    // READ TRACK: the next ID field in physical order, whatever it says
+        S_SCAN_BYTE        // SCAN: byte _byteIndex of the sector is due from the CPU for the comparison
     };
 
     /// Per unit (US0-US1) controller state. Units 2 / 3 drive the heads of drives 0 / 1 on the +3, but the
@@ -199,6 +206,9 @@ protected:
     uint16_t _transferSize = 0;
     int16_t _sectorIndex = -1;     // Sector being transferred: index into Track::sectors()
     bool _endAfterSector = false;  // READ met the other data address mark with SK = 0
+    uint8_t _sectorsRead = 0;      // READ TRACK: sectors read so far (EOT is the count)
+    bool _scanAllEqual = true;     // SCAN: every compared byte of this sector was equal
+    bool _scanSatisfied = true;    // SCAN: every compared byte of this sector met the condition
     uint64_t _formatStart = 0;     // Index pulse FORMAT started at
     uint8_t _formatIds[MAX_FORMAT_SECTORS * 4] = {};
 
@@ -244,6 +254,36 @@ public:
     uint8_t getPresentCylinder(uint8_t unit) const { return _units[unit & 0x03].pcn; }
     /// endregion </Methods>
 
+    /// region <State report>
+public:
+    /// What the controller looks like right now, for the state reports (DeviceState::Fdc). Read-only: no
+    /// deadline is run, so the view is as of the last port access (the CPU sees nothing newer either)
+    struct Snapshot
+    {
+        UPDPHASE phase = PHASE_COMMAND;
+        UPDSTATE state = S_IDLE;
+        uint8_t mainStatus = 0;
+        uint8_t command[MAX_COMMAND_BYTES] = {};
+        uint8_t commandBytes = 0;        // Bytes of the command held (being received or run)
+        uint8_t commandLength = 0;       // Bytes the command takes
+        uint8_t result[MAX_RESULT_BYTES] = {};
+        uint8_t resultLength = 0;
+        uint8_t resultPos = 0;           // Result bytes the CPU has read
+        uint8_t st0 = 0;
+        uint8_t st1 = 0;
+        uint8_t st2 = 0;
+        uint8_t stepRateTime = 0;
+        uint8_t headLoadTime = 0;
+        bool motorOn = false;
+        UnitState units[UNITS];
+    };
+
+    Snapshot getSnapshot() const;
+
+    /// Command name for a command byte (low 5 bits), "invalid" for the codes the chip rejects
+    static const char* commandName(uint8_t commandByte);
+    /// endregion </State report>
+
     /// region <TTDSerializable>
 public:
     size_t TTDStateSize() const override;
@@ -285,6 +325,8 @@ protected:
     size_t byteCellTStates(const DiskImage::Track* track) const;
     uint64_t nextIndexPulse(uint64_t time) const;
     uint64_t headLoadTStates() const;
+    /// Bytes a read transfers for the command's size code: 128 << N, DTL (at most 128) for N = 0
+    uint16_t transferLengthFor(uint8_t n, uint16_t fieldSize) const;
     uint64_t stepTStates() const;
 
     // Command dispatch
@@ -301,6 +343,13 @@ protected:
     // Execution phase states
     void runState();
     void searchSector();
+    void trackSector();
+    void scanByte();
+    void finishScanSector(uint64_t time);
+    static bool isScan(uint8_t code)
+    {
+        return code == CMD_SCAN_EQUAL || code == CMD_SCAN_LOW_OR_EQUAL || code == CMD_SCAN_HIGH_OR_EQUAL;
+    }
     void readByte();
     void writeByte();
     void readIdDone();

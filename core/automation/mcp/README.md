@@ -65,16 +65,17 @@ WebAPI's thread calls `run()`), and `stopMCP()` runs **after** `stopWebAPI()`.
 
 ## Tools
 
-### Phase 1 (core 6 + router 2)
+### Phase 1 (core 6 + time_travel + router 2)
 
 | Tool | Purpose |
 |:--|:--|
 | `emulator_manage` | create/list/status/start/stop/pause/resume/reset/destroy, list_models, server (build fingerprint + models_creatable); GS card actions gs_reset/gs_reset_card/gs_nmi/gs_send_command/gs_send_data/gs_read_status/gs_read_data (`value` = byte 0-255; writes/resets/NMI apply at the next instruction boundary and are journaled for TTD, reads are side-effect-free peeks), gs_switch_personality (`personality`: z80/lle/lw/lightweight/ngs/neogs), gs_dump_module (optional `path`); NeoGS: gs_sd_insert (`path`), gs_sd_eject, gs_flash_save, gs_stereo_mode (`mode`: separated/gs/mono) (applied on the machine thread at the next instruction boundary; insert/eject refused while TTD records) |
 | `load_software` | load `.sna/.z80` snapshots, `.tap/.tzx` tapes (auto-play flag), `.trd/.scl/.fdi/.udi/.dsk/.td0/.mgt/.img` disks (`autostart` flag: drive A only, quick-reset into TR-DOS and run the disk) |
 | `control_execution` | run/pause/resume/step/step_n/step_over/step_out, run_frames/run_tstates/run_to_interrupt, breakpoints (add/remove/enable/disable/clear/list); the raw `skip_until` endpoint is reachable via `invoke_api` |
-| `inspect_state` | aspects fan-out: machine, registers, memory, disasm, stack, breakpoints, memory_banks, screen_ocr, screen_image, screen_digest, timing, rom, audio_ay (every AY/SSG chip decoded), audio_fm (TurboSound FM board + both YM2203 halves: mode, timers, channels, operators, envelopes, key-on), audio_gs (General Sound card: mailbox flags, MPAG page, DAC channels, coprocessor core; unavailable when not fitted), fdc (Beta Disk WD1793 registers, status, FSM, drives) |
+| `inspect_state` | aspects fan-out: machine, registers, memory, disasm, stack, breakpoints, memory_banks, screen_ocr, screen_image, screen_digest, timing, rom, audio_ay (every AY/SSG chip decoded), audio_fm (TurboSound FM board + both YM2203 halves: mode, timers, channels, operators, envelopes, key-on), audio_gs (General Sound card: mailbox flags, MPAG page, DAC channels, coprocessor core; unavailable when not fitted), fdc (Beta Disk WD1793 registers, status, FSM, drives), ttd (time-travel session state, recorded range, checkpoints, current position) |
 | `type_input` | type (tokenized BASIC entry), tap/press/release, combo, macro, release_all, status, list_keys |
 | `mouse_input` | Kempston mouse: move (relative dx/dy, +dy = up), press/release, click (hold N frames, optional dx/dy pre-move), buttons (exact pressed set), wheel, release_all, status; counters override stays on `invoke_api` |
+| `time_travel` | time-travel debugging: status/start/stop/invalidate/position/markers, seek, step_back_frame/step_forward_frame, step_back_instruction/step_forward_instruction, reverse_step, reverse_continue, find_last, resume, dump/load (`.ttd`), bookmarks, coverage_probe/scan/summary. Walkthrough: [docs/features/mcp/README.md](../../../docs/features/mcp/README.md#time-travel-debugging) |
 | `search_api` | keyword search over the OpenAPI spec (scored), optional `auto_invoke` |
 | `invoke_api` | direct WebAPI call with `{id}` target substitution |
 
@@ -86,6 +87,7 @@ WebAPI's thread calls `run()`), and `stopMCP()` runs **after** `stopWebAPI()`.
 | `debug_code` | disassemble / assemble (`Z80TextAssembler`) / find_bytes / trace (calltrace sessions) / porttrace |
 | `analyze_performance` | coverage_* (executed-address map + gaps), frame_cost, profiler suites (calltrace/porttrace/memory) |
 | `capture_media` | screenshot, screen_digest, record_video (GIF; `every_nth:"auto"` samples the digest quantum), audio_capture (RMS/peak/dominant-Hz, WAV) |
+| `media` | every media slot (floppy drives, SD card, ...): list / info / formats / insert / swap / eject / save / export / discard / rescan / create / protect over the WebAPI `/media` routes; `slot` takes `A`, `fdd.b`, `sd`, `tag:…` or `auto`; a dirty medium leaves only with `save` / `export` / `discard` ([docs/features/media.md](../../../docs/features/media.md)) |
 
 Every tool accepts `target` (emulator id or `auto`; `auto` creates a 128K
 machine when none exists, refuses when several exist) and answers with dual

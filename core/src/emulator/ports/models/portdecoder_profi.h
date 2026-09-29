@@ -63,10 +63,16 @@ public:
     /// EXT mode qualifier (UnrealSpeccy default: cpm && rom14; Karabas additionally allows
     /// dosAct && !rom14, not implemented here - unproven by UnrealSpeccy sources)
     bool IsExtMode() const;
+    /// #DFFD bit 4 (WOROM) lifts the #7FFD lock (UnrealSpeccy io.cpp)
+    bool IsPagingLocked() const override
+    {
+        return (_state->p7FFD & PORT_7FFD_LOCK) && !(_state->pDFFD & 0x10);
+    }
     /// endregion <Helper methods>
 
 protected:
     void Port_7FFD(uint8_t value, uint16_t pc);
+
     void Port_DFFD(uint8_t value, uint16_t pc);
     void ResetPalette();
 

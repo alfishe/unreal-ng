@@ -51,10 +51,18 @@ struct AtmPagingState
     uint8_t  atmPaletteRegs[16];///< raw #FF palette bytes (ATM3 #BE.0D readback)
     uint8_t  atmBorderBright;   ///< 4th border bit (~A3 of the last border write)
     uint8_t  evoFddMask;        ///< ZX-Evo #13BD virtual-drive mask
+    uint8_t  evoAvrExtType;     ///< ZX-Evo AVR extension type (cells 0xF0-0xFF)
+    uint8_t  evoAvrEepromPage;  ///< ZX-Evo AVR register A (EEPROM page)
+    uint8_t  evoAvrFlags;       ///< ZX-Evo AVR: bit 0 EEPROM mode, bit 1 Caps LED, bit 2 tape-out
+    uint8_t  evoInNmi;          ///< ZX-Evo NMI page (RAM #FF) mapped into #0000-#3FFF
+    uint8_t  evoNmiEntry;       ///< ZX-Evo: the next accepted NMI is the board's own
+    uint8_t  nmiAtIntPending;   ///< board NMI waiting for the frame INT
+    uint8_t  evoTrdemu;         ///< ZX-Evo virtual TR-DOS: bit 0 page #FE in, bit 1 swap pending
+    uint8_t  evoVgDrive;        ///< ZX-Evo drive number from the last OUT (#FF)
     uint8_t  reserved[2];       ///< explicit tail padding, always 0
 };
 
-static_assert(sizeof(AtmPagingState) == 128, "AtmPagingState layout changed");
+static_assert(sizeof(AtmPagingState) == 136, "AtmPagingState layout changed");
 static_assert(offsetof(AtmPagingState, reserved) + 2 == sizeof(AtmPagingState),
               "AtmPagingState has implicit trailing padding");
 

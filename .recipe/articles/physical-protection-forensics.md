@@ -36,8 +36,8 @@ inspect_state      {"aspects":["screen_digest","screen_ocr"]}  # protection pass
 analyze_performance {"action":"porttrace","frames":600,"limit":40}   # repeated reads of one sector ID
 
 # stage 4 — reverse the check (TTD-record the failing boot first):
-invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/ttd/find-last","body":{"addr":63,"access":"io"}}
-invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/ttd/reverse-continue","body":{"pcs":[33156]}}
+time_travel        {"action":"find_last","addr":63,"access":"io"}
+time_travel        {"action":"reverse_continue","pcs":["0x8184"]}
 time_travel        {"action":"bookmark_add","label":"before-check"}
 ```
 

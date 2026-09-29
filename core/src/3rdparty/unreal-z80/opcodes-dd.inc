@@ -28,7 +28,7 @@ Z80OPCODE opx_09(Z80CPU *cpu, int tact0, Z80Regs *rf) { // add ix,bc
    rf->ix = ix & 0xFFFF;
    rf->f |= (rf->xh & (F5 | F3));
 
-   cputact(7);
+   cpuidle(Z80_IR(rf), 7);
    Z80_RETURN_Q(0x28, tact_);
 }
 
@@ -58,7 +58,7 @@ Z80OPCODE opx_19(Z80CPU *cpu, int tact0, Z80Regs *rf) { // add ix,de
     rf->ix = ix & 0xFFFF;
     rf->f |= (rf->xh & (F5 | F3));
 
-    cputact(7);
+    cpuidle(Z80_IR(rf), 7);
     Z80_RETURN_Q(0x28, tact_);
 }
 
@@ -93,7 +93,7 @@ Z80OPCODE opx_23(Z80CPU *cpu, int tact0, Z80Regs *rf) { // inc ix
    Z80_T_BEGIN(cpu);
    rf->ix = (rf->ix + 1) & 0xFFFF;
 
-   cputact(2);
+   cpuidle(Z80_IR(rf), 2);
    Z80_RETURN_Q(0, tact_);
 }
 
@@ -139,7 +139,7 @@ Z80OPCODE opx_29(Z80CPU *cpu, int tact0, Z80Regs *rf) { // add ix,ix
     rf->ix = ix & 0xFFFF;
     rf->f |= (rf->xh & (F5 | F3));
 
-    cputact(7);
+    cpuidle(Z80_IR(rf), 7);
     Z80_RETURN_Q(0x28, tact_);
 }
 
@@ -163,7 +163,7 @@ Z80OPCODE opx_2B(Z80CPU *cpu, int tact0, Z80Regs *rf) { // dec ix
    Z80_T_BEGIN(cpu);
    rf->ix = (rf->ix - 1) & 0xFFFF;
 
-   cputact(2);
+   cpuidle(Z80_IR(rf), 2);
    Z80_RETURN_Q(0, tact_);
 }
 
@@ -196,12 +196,12 @@ Z80OPCODE opx_34(Z80CPU *cpu, int tact0, Z80Regs *rf) { // inc (ix+nn)
     // MEMPTR = IX+d for all (ix+d) addressing (FUSE-verified)
     rf->memptr = (rf->ix + displacement) & 0xFFFF;
 
-    cputact(5);
+    cpuidle(pc - 1, 5);  // on the displacement's address
 
     uint8_t t = Z80Rd(cpu, rf->ix + displacement);
     inc8(rf, t);
 
-    cputact(1);
+    cpuidle(rf->ix + displacement, 1);
 
     Z80Wd(cpu, rf->ix + displacement, t);
 
@@ -217,12 +217,12 @@ Z80OPCODE opx_35(Z80CPU *cpu, int tact0, Z80Regs *rf) { // dec (ix+nn)
     // MEMPTR = IX+d for all (ix+d) addressing (FUSE-verified)
     rf->memptr = (rf->ix + displacement) & 0xFFFF;
 
-    cputact(5);
+    cpuidle(pc - 1, 5);  // on the displacement's address
 
     uint8_t t = Z80Rd(cpu, rf->ix + displacement);
     dec8(rf, t);
 
-    cputact(1);
+    cpuidle(rf->ix + displacement, 1);
 
     Z80Wd(cpu, rf->ix + displacement, t);
 
@@ -240,7 +240,7 @@ Z80OPCODE opx_36(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld (ix+nn),nn
     rf->memptr = (rf->ix + displacement) & 0xFFFF;
     uint8_t value = Z80Rd(cpu, pc++, true);
 
-    cputact(2);
+    cpuidle(pc - 1, 2);  // on the address of n
 
     Z80Wd(cpu, rf->ix + displacement, value);
 
@@ -274,7 +274,7 @@ Z80OPCODE opx_39(Z80CPU *cpu, int tact0, Z80Regs *rf) { // add ix,sp
    rf->ix = ix & 0xFFFF;
    rf->f |= (rf->xh & (F5 | F3));
 
-   cputact(7);
+   cpuidle(Z80_IR(rf), 7);
    Z80_RETURN_Q(0x28, tact_);
 }
 
@@ -297,7 +297,7 @@ Z80OPCODE opx_46(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld b,(ix+nn)
     // MEMPTR = IX+d for all (ix+d) addressing (FUSE-verified)
     rf->memptr = (rf->ix + displacement) & 0xFFFF;
 
-    cputact(5);
+    cpuidle(pc - 1, 5);  // on the displacement's address
 
     rf->b = Z80Rd(cpu, rf->ix + displacement);
 
@@ -324,7 +324,7 @@ Z80OPCODE opx_4E(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld c,(ix+nn)
     // MEMPTR = IX+d for all (ix+d) addressing (FUSE-verified)
     rf->memptr = (rf->ix + displacement) & 0xFFFF;
 
-    cputact(5);
+    cpuidle(pc - 1, 5);  // on the displacement's address
 
     rf->c = Z80Rd(cpu, rf->ix + displacement);
 
@@ -351,7 +351,7 @@ Z80OPCODE opx_56(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld d,(ix+nn)
     // MEMPTR = IX+d for all (ix+d) addressing (FUSE-verified)
     rf->memptr = (rf->ix + displacement) & 0xFFFF;
 
-    cputact(5);
+    cpuidle(pc - 1, 5);  // on the displacement's address
 
     rf->d = Z80Rd(cpu, rf->ix + displacement);
 
@@ -378,7 +378,7 @@ Z80OPCODE opx_5E(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld e,(ix+nn)
     // MEMPTR = IX+d for all (ix+d) addressing (FUSE-verified)
     rf->memptr = (rf->ix + displacement) & 0xFFFF;
 
-    cputact(5);
+    cpuidle(pc - 1, 5);  // on the displacement's address
 
     rf->e = Z80Rd(cpu, rf->ix + displacement);
 
@@ -420,7 +420,7 @@ Z80OPCODE opx_66(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld h,(ix+nn)
     // MEMPTR = IX+d for all (ix+d) addressing (FUSE-verified)
     rf->memptr = (rf->ix + displacement) & 0xFFFF;
 
-    cputact(5);
+    cpuidle(pc - 1, 5);  // on the displacement's address
 
     rf->h = Z80Rd(cpu, rf->ix + displacement);
 
@@ -467,7 +467,7 @@ Z80OPCODE opx_6E(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld l,(ix+nn)
     // MEMPTR = IX+d for all (ix+d) addressing (FUSE-verified)
     rf->memptr = (rf->ix + displacement) & 0xFFFF;
 
-    cputact(5);
+    cpuidle(pc - 1, 5);  // on the displacement's address
 
     rf->l = Z80Rd(cpu, rf->ix + displacement);
 
@@ -489,7 +489,7 @@ Z80OPCODE opx_70(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld (ix+nn),b
     // MEMPTR = IX+d for all (ix+d) addressing (FUSE-verified)
     rf->memptr = (rf->ix + displacement) & 0xFFFF;
 
-    cputact(5);
+    cpuidle(pc - 1, 5);  // on the displacement's address
 
     Z80Wd(cpu, rf->ix + displacement, rf->b);
 
@@ -506,7 +506,7 @@ Z80OPCODE opx_71(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld (ix+nn),c
     // MEMPTR = IX+d for all (ix+d) addressing (FUSE-verified)
     rf->memptr = (rf->ix + displacement) & 0xFFFF;
 
-    cputact(5);
+    cpuidle(pc - 1, 5);  // on the displacement's address
 
     Z80Wd(cpu, rf->ix + displacement, rf->c);
 
@@ -523,7 +523,7 @@ Z80OPCODE opx_72(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld (ix+nn),d
     // MEMPTR = IX+d for all (ix+d) addressing (FUSE-verified)
     rf->memptr = (rf->ix + displacement) & 0xFFFF;
 
-    cputact(5);
+    cpuidle(pc - 1, 5);  // on the displacement's address
 
     Z80Wd(cpu, rf->ix + displacement, rf->d);
 
@@ -540,7 +540,7 @@ Z80OPCODE opx_73(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld (ix+nn),e
     // MEMPTR = IX+d for all (ix+d) addressing (FUSE-verified)
     rf->memptr = (rf->ix + displacement) & 0xFFFF;
 
-    cputact(5);
+    cpuidle(pc - 1, 5);  // on the displacement's address
 
     Z80Wd(cpu, rf->ix + displacement, rf->e);
 
@@ -557,7 +557,7 @@ Z80OPCODE opx_74(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld (ix+nn),h
     // MEMPTR = IX+d for all (ix+d) addressing (FUSE-verified)
     rf->memptr = (rf->ix + displacement) & 0xFFFF;
 
-    cputact(5);
+    cpuidle(pc - 1, 5);  // on the displacement's address
 
     Z80Wd(cpu, rf->ix + displacement, rf->h);
 
@@ -574,7 +574,7 @@ Z80OPCODE opx_75(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld (ix+nn),l
     // MEMPTR = IX+d for all (ix+d) addressing (FUSE-verified)
     rf->memptr = (rf->ix + displacement) & 0xFFFF;
 
-    cputact(5);
+    cpuidle(pc - 1, 5);  // on the displacement's address
 
     Z80Wd(cpu, rf->ix + displacement, rf->l);
 
@@ -591,7 +591,7 @@ Z80OPCODE opx_77(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld (ix+nn),a
     // MEMPTR = IX+d for all (ix+d) addressing (FUSE-verified)
     rf->memptr = (rf->ix + displacement) & 0xFFFF;
 
-    cputact(5);
+    cpuidle(pc - 1, 5);  // on the displacement's address
 
     Z80Wd(cpu, rf->ix + displacement, rf->a);
 
@@ -618,7 +618,7 @@ Z80OPCODE opx_7E(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld a,(ix+nn)
     // MEMPTR = IX+d for all (ix+d) addressing (FUSE-verified)
     rf->memptr = (rf->ix + displacement) & 0xFFFF;
 
-    cputact(5);
+    cpuidle(pc - 1, 5);  // on the displacement's address
 
     rf->a = Z80Rd(cpu, rf->ix + displacement);
 
@@ -645,7 +645,7 @@ Z80OPCODE opx_86(Z80CPU *cpu, int tact0, Z80Regs *rf) { // add a,(ix+nn)
     // MEMPTR = IX+d for all (ix+d) addressing (FUSE-verified)
     rf->memptr = (rf->ix + displacement) & 0xFFFF;
 
-    cputact(5);
+    cpuidle(pc - 1, 5);  // on the displacement's address
 
     add8(rf, Z80Rd(cpu, rf->ix + displacement));
 
@@ -672,7 +672,7 @@ Z80OPCODE opx_8E(Z80CPU *cpu, int tact0, Z80Regs *rf) { // adc a,(ix+nn)
     // MEMPTR = IX+d for all (ix+d) addressing (FUSE-verified)
     rf->memptr = (rf->ix + displacement) & 0xFFFF;
 
-    cputact(5);
+    cpuidle(pc - 1, 5);  // on the displacement's address
 
     adc8(rf, Z80Rd(cpu, rf->ix + displacement));
 
@@ -699,7 +699,7 @@ Z80OPCODE opx_96(Z80CPU *cpu, int tact0, Z80Regs *rf) { // sub (ix+nn)
     // MEMPTR = IX+d for all (ix+d) addressing (FUSE-verified)
     rf->memptr = (rf->ix + displacement) & 0xFFFF;
 
-    cputact(5);
+    cpuidle(pc - 1, 5);  // on the displacement's address
 
     sub8(rf, Z80Rd(cpu, rf->ix + displacement));
 
@@ -726,7 +726,7 @@ Z80OPCODE opx_9E(Z80CPU *cpu, int tact0, Z80Regs *rf) { // sbc a,(ix+nn)
     // MEMPTR = IX+d for all (ix+d) addressing (FUSE-verified)
     rf->memptr = (rf->ix + displacement) & 0xFFFF;
 
-    cputact(5);
+    cpuidle(pc - 1, 5);  // on the displacement's address
 
     sbc8(rf, Z80Rd(cpu, rf->ix + displacement));
 
@@ -752,7 +752,7 @@ Z80OPCODE opx_A6(Z80CPU *cpu, int tact0, Z80Regs *rf) { // and (ix+nn)
     // MEMPTR = IX+d for all (ix+d) addressing (FUSE-verified)
     rf->memptr = (rf->ix + displacement) & 0xFFFF;
 
-    cputact(5);
+    cpuidle(pc - 1, 5);  // on the displacement's address
 
     and8(rf, Z80Rd(cpu, rf->ix + displacement));
 
@@ -778,7 +778,7 @@ Z80OPCODE opx_AE(Z80CPU *cpu, int tact0, Z80Regs *rf) { // xor (ix+nn)
     // MEMPTR = IX+d for all (ix+d) addressing (FUSE-verified)
     rf->memptr = (rf->ix + displacement) & 0xFFFF;
 
-    cputact(5);
+    cpuidle(pc - 1, 5);  // on the displacement's address
 
     xor8(rf, Z80Rd(cpu, rf->ix + displacement));
 
@@ -804,7 +804,7 @@ Z80OPCODE opx_B6(Z80CPU *cpu, int tact0, Z80Regs *rf) { // or (ix+nn)
     // MEMPTR = IX+d for all (ix+d) addressing (FUSE-verified)
     rf->memptr = (rf->ix + displacement) & 0xFFFF;
 
-    cputact(5);
+    cpuidle(pc - 1, 5);  // on the displacement's address
 
     or8(rf, Z80Rd(cpu, rf->ix + displacement));
 
@@ -830,7 +830,7 @@ Z80OPCODE opx_BE(Z80CPU *cpu, int tact0, Z80Regs *rf) { // cp (ix+nn)
     // MEMPTR = IX+d for all (ix+d) addressing (FUSE-verified)
     rf->memptr = (rf->ix + displacement) & 0xFFFF;
 
-    cputact(5);
+    cpuidle(pc - 1, 5);  // on the displacement's address
 
     cp8(rf, Z80Rd(cpu, rf->ix + displacement));
 
@@ -853,7 +853,7 @@ Z80OPCODE opx_E3(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ex (sp),ix
    Z80_T_BEGIN(cpu);
    uint16_t value = Z80Rd(cpu, rf->sp) + 0x100 * Z80Rd(cpu, rf->sp + 1);
 
-   cputact(1);
+   cpuidle(rf->sp + 1, 1);
 
    // Real Z80 write order: high byte (SP+1) first, then low (SP) - FUSE-verified
    Z80Wd(cpu, rf->sp + 1, rf->xh);
@@ -862,13 +862,13 @@ Z80OPCODE opx_E3(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ex (sp),ix
    rf->memptr = value;
    rf->ix = value;
 
-   cputact(2);
+   cpuidle(rf->sp, 2);
    Z80_RETURN_Q(0, tact_);
 }
 
 Z80OPCODE opx_E5(Z80CPU *cpu, int tact0, Z80Regs *rf) { // push ix
    Z80_T_BEGIN(cpu);
-   cputact(1);
+   cpuidle(Z80_IR(rf), 1);
 
    Z80Wd(cpu, --rf->sp, rf->xh);
    Z80Wd(cpu, --rf->sp, rf->xl);
@@ -884,7 +884,7 @@ Z80OPCODE opx_F9(Z80CPU *cpu, int tact0, Z80Regs *rf) { // ld sp,ix
    Z80_T_BEGIN(cpu);
    rf->sp = rf->ix & 0xFFFF;
 
-   cputact(2);
+   cpuidle(Z80_IR(rf), 2);
    Z80_RETURN_Q(0, tact_);
 }
 

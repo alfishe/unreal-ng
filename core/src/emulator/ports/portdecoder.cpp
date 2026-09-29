@@ -359,7 +359,8 @@ void PortDecoder::OnPortOutComplete(uint16_t port, uint8_t value, [[maybe_unused
         if (_context->ttdProbe.Matches(port, ttd::TTDAccessType::Io, value, pc))
         {
             const auto& st = _context->emulatorState;
-            const uint16_t tin = _context->pCore ? _context->pCore->GetZ80()->t : 0;
+            // TTD time units (B4); 32-bit - a frame is longer than 65535 T-states
+            const uint32_t tin = _context->pCore ? st.TtdTInFrame(_context->pCore->GetZ80()->t) : 0;
             const ttd::TTDTimePoint tp{st.frame_counter, tin};
             // A port has no RAM page; the journal path reports the same.
             _context->ttdProbe.RecordHit(tp, pc, value, ttd::kPhysPageNone,
@@ -464,6 +465,11 @@ void PortDecoder::RecordPortTrace(bool isOut, uint16_t rawPort, uint8_t value, u
     _portTrace->record(event);
 }
 
+bool PortDecoder::IsDosLeavingBank(uint8_t bank) const
+{
+    return _memory != nullptr && _memory->GetMemoryBankMode(bank) == MemoryBankModeEnum::BANK_RAM;
+}
+
 PortTraceSessionInfo PortDecoder::getPortTraceSessionInfo() const
 {
     PortTraceSessionInfo info;
@@ -561,6 +567,14 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
                                Tags(PortTag::Memory) | PortTag::Rom | PortTag::Screen, PagingLatch::P7FFD});
             entries.push_back({0x1FFD, 0xF002, 0x1000, "Disk motor/strobe + special paging", nullptr,
                                Tags(PortTag::Memory) | PortTag::Rom, PagingLatch::P1FFD});
+            // uPD765A (IsPort_2FFD / IsPort_3FFD): the +3 only, the +2A has no disk controller
+            if (model == MM_PLUS3)
+            {
+                entries.push_back({0x2FFD, 0xF002, 0x2000, "uPD765A main status register", nullptr,
+                                   Tags(PortTag::StorageFdc)});
+                entries.push_back({0x3FFD, 0xF002, 0x3000, "uPD765A data register", nullptr,
+                                   Tags(PortTag::StorageFdc)});
+            }
             break;
         case MM_PROFI:
             // IsPort_7FFD / IsPort_DFFD (PortDecoder_Profi): #7FFD = A15=0 & A1=0,
@@ -1729,14 +1743,10 @@ void PortDecoder::PeripheralPortOut(uint16_t port, uint8_t value)
 
 /// region <Privileged operations for snapshot loading / debug>
 
-/// Unlock port 7FFD paging for snapshot loading or debug sessions
-/// Clears both the emulatorState.p7FFD lock bit AND the hardware latch (_7FFD_Locked)
-/// This ensures subsequent port writes via DecodePortOut() will be accepted
+/// Unlock port 7FFD paging for snapshot loading or debug sessions: the lock is
+/// the latch's bit 5 (IsPagingLocked), so clearing it lets Port_7FFD_Out() accept writes
 void PortDecoder::UnlockPaging()
 {
-    // Clear the hardware latch so Port_7FFD_Out() will accept writes
-    _7FFD_Locked = false;
-
     if (_state)
     {
         _state->p7FFD &= ~PORT_7FFD_LOCK;
@@ -1744,13 +1754,10 @@ void PortDecoder::UnlockPaging()
     }
 }
 
-/// Lock port 7FFD paging (for emulation accuracy or testing)
-/// Sets both the emulatorState.p7FFD lock bit AND the hardware latch (_7FFD_Locked)
+/// Lock port 7FFD paging (for emulation accuracy or testing) by setting the
+/// latch's lock bit
 void PortDecoder::LockPaging()
 {
-    // Set the hardware latch to match the lock bit
-    _7FFD_Locked = true;
-
     if (_state)
     {
         _state->p7FFD |= PORT_7FFD_LOCK;

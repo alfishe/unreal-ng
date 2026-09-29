@@ -58,6 +58,9 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
     // plane of the fast-load mechanism) — same switch as 'feature fasttape on|off'
     FeatureManager* featureManager = context->pFeatureManager;
 
+    // The live host speed setting; config.speed_multiplier is only the ini startup value
+    const int hostSpeed = context->pCore ? context->pCore->GetHostSpeedMultiplier() : config.speed_multiplier;
+
     // If no arguments, show all settings (list)
     if (args.empty())
     {
@@ -84,7 +87,7 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
         if (config.turbo_mode)
             ss << "unlimited";
         else
-            ss << (int)config.speed_multiplier << "x";
+            ss << hostSpeed << "x";
         ss << "  (CPU speed multiplier: 1, 2, 4, 8, 16, unlimited)" << NEWLINE;
         ss << "  turbo_audio   = " << (config.turbo_mode_audio ? "on" : "off") << "  (Enable audio in turbo mode)"
            << NEWLINE;
@@ -147,7 +150,7 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
         if (config.turbo_mode)
             ss << "unlimited";
         else
-            ss << (int)config.speed_multiplier << "x";
+            ss << hostSpeed << "x";
         ss << "  (CPU speed multiplier: 1, 2, 4, 8, 16, unlimited)" << NEWLINE;
         ss << "  turbo_audio   = " << (config.turbo_mode_audio ? "on" : "off") << "  (Enable audio in turbo mode)"
            << NEWLINE;
@@ -215,7 +218,7 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
             if (config.turbo_mode)
                 ss << "unlimited" << NEWLINE;
             else
-                ss << (int)config.speed_multiplier << "x" << NEWLINE;
+                ss << hostSpeed << "x" << NEWLINE;
             ss << "Description: Maximum CPU speed multiplier (1, 2, 4, 8, 16, unlimited)" << NEWLINE;
         }
         else if (settingName == "turbo_audio")
@@ -279,8 +282,18 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
     {
         if (valueLower == "unlimited" || valueLower == "max")
         {
-            emulator->EnableTurboMode(config.turbo_mode_audio);
-            ss << "Setting changed: speed = unlimited (Turbo Mode)" << NEWLINE;
+            // Routed through FeatureManager (not Emulator::EnableTurboMode directly) so
+            // the TTD-recording lock applies: setFeature() refuses to enable turbo mode
+            // while a recording is in progress.
+            if (featureManager && featureManager->setFeature(Features::kTurboMode, true))
+            {
+                ss << "Setting changed: speed = unlimited (Turbo Mode)" << NEWLINE;
+            }
+            else
+            {
+                ss << "Error: " << (featureManager ? featureManager->refusalReason(Features::kTurboMode, true)
+                                                   : std::string("FeatureManager not available")) << NEWLINE;
+            }
         }
         else
         {
@@ -289,9 +302,14 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
                 int m = std::stoi(valueLower);
                 if (m == 1 || m == 2 || m == 4 || m == 8 || m == 16)
                 {
-                    emulator->DisableTurboMode();
-                    emulator->SetSpeedMultiplier(m);
-                    ss << "Setting changed: speed = " << m << "x" << NEWLINE;
+                    if (featureManager)
+                        featureManager->setFeature(Features::kTurboMode, false);
+                    else
+                        emulator->DisableTurboMode();
+                    if (emulator->SetSpeedMultiplier(static_cast<uint8_t>(m)))
+                        ss << "Setting changed: speed = " << m << "x" << NEWLINE;
+                    else
+                        ss << "Error: Cannot set speed " << m << "x while TTD recording is active (only 1x)" << NEWLINE;
                 }
                 else
                 {
@@ -397,7 +415,8 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
         }
         else
         {
-            ss << "Error: FeatureManager not available for this emulator" << NEWLINE;
+            ss << "Error: " << (featureManager ? featureManager->refusalReason(Features::kFastTape, boolValue)
+                                               : std::string("FeatureManager not available")) << NEWLINE;
         }
     }
     else if (settingName == "turbo_tape")
@@ -409,7 +428,8 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
         }
         else
         {
-            ss << "Error: FeatureManager not available for this emulator" << NEWLINE;
+            ss << "Error: " << (featureManager ? featureManager->refusalReason(Features::kTurboTape, boolValue)
+                                               : std::string("FeatureManager not available")) << NEWLINE;
         }
     }
     else if (settingName == "fast_disk")
@@ -422,7 +442,8 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
         }
         else
         {
-            ss << "Error: Cannot change fast_disk (FeatureManager not available or TTD recording active)" << NEWLINE;
+            ss << "Error: " << (featureManager ? featureManager->refusalReason(Features::kFastDisk, boolValue)
+                                               : std::string("FeatureManager not available")) << NEWLINE;
         }
     }
     else if (settingName == "trdos_present")
@@ -525,6 +546,12 @@ void CLIProcessor::HandleFeature(const ClientSession& session, const std::vector
                 session.SendResponse(out.str());
                 return;
             }
+            else if (featureManager->hasFeature(featureName))
+            {
+                out << "Error: " << featureManager->refusalReason(featureName, true) << NEWLINE;
+                session.SendResponse(out.str());
+                return;
+            }
             else
             {
                 out << "Error: Unknown feature '" << featureName << "'." << NEWLINE;
@@ -545,6 +572,12 @@ void CLIProcessor::HandleFeature(const ClientSession& session, const std::vector
             if (featureManager->setFeature(featureName, false))
             {
                 out << "Feature '" << featureName << "' disabled." << NEWLINE;
+                session.SendResponse(out.str());
+                return;
+            }
+            else if (featureManager->hasFeature(featureName))
+            {
+                out << "Error: " << featureManager->refusalReason(featureName, false) << NEWLINE;
                 session.SendResponse(out.str());
                 return;
             }

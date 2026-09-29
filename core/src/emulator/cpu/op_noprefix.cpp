@@ -28,7 +28,7 @@ Z80OPCODE op_02(Z80 *cpu) { // ld (bc),a [7]
 Z80OPCODE op_03(Z80 *cpu) { // inc bc
    cpu->bc = (cpu->bc + 1) & 0xFFFF;
 
-   cputact(2);
+   cpuidle(cpu->IR(), 2);
 }
 
 Z80OPCODE op_04(Z80 *cpu) { // inc b
@@ -82,7 +82,7 @@ Z80OPCODE op_09(Z80 *cpu) { // add hl,bc
     cpu->hl = hl & 0xFFFF;
     cpu->f = flags;
 
-    cputact(7);
+    cpuidle(cpu->IR(), 7);
 }
 
 Z80OPCODE op_0A(Z80 *cpu) { // ld a,(bc)
@@ -93,7 +93,7 @@ Z80OPCODE op_0A(Z80 *cpu) { // ld a,(bc)
 Z80OPCODE op_0B(Z80 *cpu) { // dec bc
    cpu->bc = (cpu->bc - 1) & 0xFFFF;
 
-   cputact(2);
+   cpuidle(cpu->IR(), 2);
 }
 
 Z80OPCODE op_0C(Z80 *cpu) { // inc c
@@ -114,7 +114,7 @@ Z80OPCODE op_0F(Z80 *cpu) { // rrca
 }
 
 Z80OPCODE op_10(Z80 *cpu) { // djnz rr
-	cputact(1);
+	cpuidle(cpu->IR(), 1);
 
 	int8_t offset = cpu->rd(cpu->pc++);
 
@@ -126,7 +126,7 @@ Z80OPCODE op_10(Z80 *cpu) { // djnz rr
         cpu->pc += offset;
 		cpu->memptr = cpu->pc;
 
-		cputact(5);
+		cpuidle(cpu->pc - offset - 1, 5);  // on the displacement's address
 	}
 }
 
@@ -144,7 +144,7 @@ Z80OPCODE op_12(Z80 *cpu) { // ld (de),a
 Z80OPCODE op_13(Z80 *cpu) { // inc de
    cpu->de = (cpu->de + 1) & 0xFFFF;
 
-   cputact(2);
+   cpuidle(cpu->IR(), 2);
 }
 
 Z80OPCODE op_14(Z80 *cpu) { // inc d
@@ -174,7 +174,7 @@ Z80OPCODE op_18(Z80 *cpu) { // jr rr
     cpu->pc += offset;
     cpu->memptr = cpu->pc;
 
-    cputact(5);
+    cpuidle(cpu->pc - offset - 1, 5);  // on the displacement's address
 }
 
 Z80OPCODE op_19(Z80 *cpu) { // add hl,de
@@ -204,7 +204,7 @@ Z80OPCODE op_19(Z80 *cpu) { // add hl,de
     cpu->hl = hl & 0xFFFF;
     cpu->f = flags;
 
-    cputact(7);
+    cpuidle(cpu->IR(), 7);
 }
 
 Z80OPCODE op_1A(Z80 *cpu) { // ld a,(de)
@@ -216,7 +216,7 @@ Z80OPCODE op_1A(Z80 *cpu) { // ld a,(de)
 Z80OPCODE op_1B(Z80 *cpu) { // dec de
    cpu->de = (cpu->de - 1) & 0xFFFF;
 
-   cputact(2);
+   cpuidle(cpu->IR(), 2);
 }
 
 Z80OPCODE op_1C(Z80 *cpu) { // inc e
@@ -248,7 +248,7 @@ Z80OPCODE op_20(Z80 *cpu) { // jr nz, rr
 
         cpu->memptr = cpu->pc;
 
-        cputact(5);
+        cpuidle(cpu->pc - offset - 1, 5);  // on the displacement's address
     }
 }
 
@@ -270,7 +270,7 @@ Z80OPCODE op_22(Z80 *cpu) { // ld (nnnn),hl
 Z80OPCODE op_23(Z80 *cpu) { // inc hl
    cpu->hl = (cpu->hl + 1) & 0xFFFF;
 
-   cputact(2);
+   cpuidle(cpu->IR(), 2);
 }
 
 Z80OPCODE op_24(Z80 *cpu) { // inc h
@@ -299,7 +299,7 @@ Z80OPCODE op_28(Z80 *cpu) { // jr z,rr
         cpu->pc += offset;
         cpu->memptr = cpu->pc;
 
-        cputact(5);
+        cpuidle(cpu->pc - offset - 1, 5);  // on the displacement's address
     }
 }
 
@@ -329,7 +329,7 @@ Z80OPCODE op_29(Z80 *cpu) { // add hl,hl
     cpu->hl = hl & 0xFFFF;
     cpu->f = flags;
 
-    cputact(7);
+    cpuidle(cpu->IR(), 7);
 }
 
 Z80OPCODE op_2A(Z80 *cpu) { // ld hl,(nnnn)
@@ -345,7 +345,7 @@ Z80OPCODE op_2A(Z80 *cpu) { // ld hl,(nnnn)
 Z80OPCODE op_2B(Z80 *cpu) { // dec hl
    cpu->hl = (cpu->hl - 1) & 0xFFFF;
 
-   cputact(2);
+   cpuidle(cpu->IR(), 2);
 }
 
 Z80OPCODE op_2C(Z80 *cpu) { // inc l
@@ -374,7 +374,7 @@ Z80OPCODE op_30(Z80 *cpu) { // jr nc, rr
         cpu->pc += offset;
         cpu->memptr = cpu->pc;
 
-        cputact(5);
+        cpuidle(cpu->pc - offset - 1, 5);  // on the displacement's address
     }
 }
 
@@ -396,14 +396,14 @@ Z80OPCODE op_32(Z80 *cpu) { // ld (nnnn),a
 Z80OPCODE op_33(Z80 *cpu) { // inc sp
 	cpu->sp = (cpu->sp + 1) & 0xFFFF;
 
-	cputact(2);
+	cpuidle(cpu->IR(), 2);
 }
 
 Z80OPCODE op_34(Z80 *cpu) { // inc (hl)
 	uint8_t value = cpu->rd(cpu->hl);
 	inc8(cpu, value);
 
-	cputact(1);
+	cpuidle(cpu->hl, 1);
 
 	cpu->wd(cpu->hl, value);
 }
@@ -413,7 +413,7 @@ Z80OPCODE op_35(Z80 *cpu) { // dec (hl)
 
 	dec8(cpu, hl);
 
-	cputact(1);
+	cpuidle(cpu->hl, 1);
 
 	cpu->wd(cpu->hl, hl);
 }
@@ -444,7 +444,7 @@ Z80OPCODE op_38(Z80 *cpu) { // jr c,rr
         cpu->pc += offset + 1;
         cpu->memptr = cpu->pc;
 
-        cputact(5);
+        cpuidle(cpu->pc - offset - 1, 5);  // on the displacement's address
     }
     else
         cpu->pc++;
@@ -476,7 +476,7 @@ Z80OPCODE op_39(Z80 *cpu) { // add hl,sp
    cpu->f |= ((hl >> 8) & (F5 | F3));  // X/Y from result high byte
    cpu->hl = hl & 0xFFFF;
 
-   cputact(7);
+   cpuidle(cpu->IR(), 7);
 }
 
 Z80OPCODE op_3A(Z80 *cpu) { // ld a,(nnnn)
@@ -491,7 +491,7 @@ Z80OPCODE op_3A(Z80 *cpu) { // ld a,(nnnn)
 Z80OPCODE op_3B(Z80 *cpu) { // dec sp
    cpu->sp = (cpu->sp - 1) & 0xFFFF;
 
-   cputact(2);
+   cpuidle(cpu->IR(), 2);
 }
 
 Z80OPCODE op_3C(Z80 *cpu) { // inc a
@@ -1004,7 +1004,7 @@ Z80OPCODE op_BF(Z80 *cpu) { // cp a
 }
 
 Z80OPCODE op_C0(Z80 *cpu) { // ret nz
-    cputact(1);
+    cpuidle(cpu->IR(), 1);
 
     if (!(cpu->f & ZF))
     {
@@ -1056,7 +1056,7 @@ Z80OPCODE op_C4(Z80 *cpu) { // call nz,nnnn
     // Branch taken
     if (!(cpu->f & ZF))
     {
-        cputact(1);
+        cpuidle(cpu->pc - 1, 1);  // on the address's high byte
 
         cpu->wd(--cpu->sp, (cpu->pc >> 8) & 0xFF);
         cpu->wd(--cpu->sp, cpu->pc & 0xFF);
@@ -1067,7 +1067,7 @@ Z80OPCODE op_C4(Z80 *cpu) { // call nz,nnnn
 }
 
 Z80OPCODE op_C5(Z80 *cpu) { // push bc
-    cputact(1);
+    cpuidle(cpu->IR(), 1);
 
     cpu->wd(--cpu->sp, cpu->b);
     cpu->wd(--cpu->sp, cpu->c);
@@ -1078,7 +1078,7 @@ Z80OPCODE op_C6(Z80 *cpu) { // add a,nn
 }
 
 Z80OPCODE op_C7(Z80 *cpu) { // rst 00
-    cputact(1);
+    cpuidle(cpu->IR(), 1);
 
     cpu->wd(--cpu->sp, cpu->pch);
     cpu->wd(--cpu->sp, cpu->pcl);
@@ -1090,7 +1090,7 @@ Z80OPCODE op_C7(Z80 *cpu) { // rst 00
 }
 
 Z80OPCODE op_C8(Z80 *cpu) { // ret z
-    cputact(1);
+    cpuidle(cpu->IR(), 1);
 
     if (cpu->f & ZF)
     {
@@ -1137,7 +1137,7 @@ Z80OPCODE op_CC(Z80 *cpu) { // call z,nnnn
 
     if (cpu->f & ZF)
     {
-        cputact(1);
+        cpuidle(cpu->pc - 1, 1);  // on the address's high byte
         cpu->wd(--cpu->sp, (cpu->pc >> 8) & 0xFF);
         cpu->wd(--cpu->sp, cpu->pc & 0xFF);
 
@@ -1152,7 +1152,7 @@ Z80OPCODE op_CD(Z80 *cpu) { // call nnnn
     uint16_t addr = cpu->rd(cpu->pc++, true);
     addr += 0x100 * cpu->rd(cpu->pc++, true);
 
-    cputact(1);
+    cpuidle(cpu->pc - 1, 1);  // on the address's high byte
 
     // Put return address to stack
     cpu->wd(--cpu->sp, (cpu->pc >> 8) & 0xFF);
@@ -1167,7 +1167,7 @@ Z80OPCODE op_CE(Z80 *cpu) { // adc a,nn
 }
 
 Z80OPCODE op_CF(Z80 *cpu) { // rst 08
-    cputact(1);
+    cpuidle(cpu->IR(), 1);
 
     cpu->wd(--cpu->sp, cpu->pch);
     cpu->wd(--cpu->sp, cpu->pcl);
@@ -1180,7 +1180,7 @@ Z80OPCODE op_CF(Z80 *cpu) { // rst 08
 }
 
 Z80OPCODE op_D0(Z80 *cpu) { // ret nc
-    cputact(1);
+    cpuidle(cpu->IR(), 1);
 
     if (!(cpu->f & CF))
     {
@@ -1247,7 +1247,7 @@ Z80OPCODE op_D4(Z80 *cpu) { // call nc,nnnn
     // Branch taken
     if (!(cpu->f & CF))
     {
-        cputact(1);
+        cpuidle(cpu->pc - 1, 1);  // on the address's high byte
 
         cpu->wd(--cpu->sp, (cpu->pc >> 8) & 0xFF);
         cpu->wd(--cpu->sp, cpu->pc & 0xFF);
@@ -1259,7 +1259,7 @@ Z80OPCODE op_D4(Z80 *cpu) { // call nc,nnnn
 }
 
 Z80OPCODE op_D5(Z80 *cpu) { // push de
-    cputact(1);
+    cpuidle(cpu->IR(), 1);
 
     cpu->wd(--cpu->sp, cpu->d);
     cpu->wd(--cpu->sp, cpu->e);
@@ -1270,7 +1270,7 @@ Z80OPCODE op_D6(Z80 *cpu) { // sub nn
 }
 
 Z80OPCODE op_D7(Z80 *cpu) { // rst 10
-    cputact(1);
+    cpuidle(cpu->IR(), 1);
 
     cpu->wd(--cpu->sp, cpu->pch);
     cpu->wd(--cpu->sp, cpu->pcl);
@@ -1282,7 +1282,7 @@ Z80OPCODE op_D7(Z80 *cpu) { // rst 10
 }
 
 Z80OPCODE op_D8(Z80 *cpu) { // ret c
-    cputact(1);
+    cpuidle(cpu->IR(), 1);
 
     // Branch taken
     if (cpu->f & CF)
@@ -1343,7 +1343,7 @@ Z80OPCODE op_DC(Z80 *cpu) { // call c,nnnn
     // Branch taken
     if (cpu->f & CF)
     {
-        cputact(1);
+        cpuidle(cpu->pc - 1, 1);  // on the address's high byte
 
         cpu->wd(--cpu->sp, (cpu->pc >> 8) & 0xFF);
         cpu->wd(--cpu->sp, cpu->pc & 0xFF);
@@ -1358,7 +1358,7 @@ Z80OPCODE op_DE(Z80 *cpu) { // sbc a,nn
 }
 
 Z80OPCODE op_DF(Z80 *cpu) { // rst 18
-    cputact(1);
+    cpuidle(cpu->IR(), 1);
 
     cpu->wd(--cpu->sp, cpu->pch);
     cpu->wd(--cpu->sp, cpu->pcl);
@@ -1370,7 +1370,7 @@ Z80OPCODE op_DF(Z80 *cpu) { // rst 18
 }
 
 Z80OPCODE op_E0(Z80 *cpu) { // ret po
-    cputact(1);
+    cpuidle(cpu->IR(), 1);
 
     // Branch taken
     if (!(cpu->f & PV))
@@ -1405,7 +1405,7 @@ Z80OPCODE op_E2(Z80 *cpu) { // jp po,nnnn
 Z80OPCODE op_E3(Z80 *cpu) { // ex (sp),hl
     uint16_t value = cpu->rd(cpu->sp) + 0x100 * cpu->rd(cpu->sp + 1);
 
-    cputact(1);
+    cpuidle(cpu->sp + 1, 1);
 
     // Real Z80 write order: high byte (SP+1) first, then low (SP) - FUSE-verified
     cpu->wd(cpu->sp + 1, cpu->h);
@@ -1415,7 +1415,7 @@ Z80OPCODE op_E3(Z80 *cpu) { // ex (sp),hl
 
     cpu->hl = value;
 
-    cputact(2);
+    cpuidle(cpu->sp, 2);
 }
 
 Z80OPCODE op_E4(Z80 *cpu) { // call po,nnnn
@@ -1427,7 +1427,7 @@ Z80OPCODE op_E4(Z80 *cpu) { // call po,nnnn
     // Branch taken
     if (!(cpu->f & PV))
     {
-        cputact(1);
+        cpuidle(cpu->pc - 1, 1);  // on the address's high byte
 
           cpu->wd(--cpu->sp, (cpu->pc >> 8) & 0xFF);
         cpu->wd(--cpu->sp, cpu->pc & 0xFF);
@@ -1439,7 +1439,7 @@ Z80OPCODE op_E4(Z80 *cpu) { // call po,nnnn
 }
 
 Z80OPCODE op_E5(Z80 *cpu) { // push hl
-    cputact(1);
+    cpuidle(cpu->IR(), 1);
 
     cpu->wd(--cpu->sp, cpu->h);
     cpu->wd(--cpu->sp, cpu->l);
@@ -1450,7 +1450,7 @@ Z80OPCODE op_E6(Z80 *cpu) { // and nn
 }
 
 Z80OPCODE op_E7(Z80 *cpu) { // rst 20
-    cputact(1);
+    cpuidle(cpu->IR(), 1);
 
     cpu->wd(--cpu->sp, cpu->pch);
     cpu->wd(--cpu->sp, cpu->pcl);
@@ -1462,7 +1462,7 @@ Z80OPCODE op_E7(Z80 *cpu) { // rst 20
 }
 
 Z80OPCODE op_E8(Z80 *cpu) { // ret pe
-    cputact(1);
+    cpuidle(cpu->IR(), 1);
 
     if (cpu->f & PV)
     {
@@ -1509,7 +1509,7 @@ Z80OPCODE op_EC(Z80 *cpu) { // call pe,nnnn
 
     if (cpu->f & PV)
     {
-        cputact(1);
+        cpuidle(cpu->pc - 1, 1);  // on the address's high byte
 
         cpu->wd(--cpu->sp, (cpu->pc >> 8) & 0xFF);
         cpu->wd(--cpu->sp, cpu->pc & 0xFF);
@@ -1525,7 +1525,7 @@ Z80OPCODE op_EE(Z80 *cpu) { // xor nn
 }
 
 Z80OPCODE op_EF(Z80 *cpu) { // rst 28
-    cputact(1);
+    cpuidle(cpu->IR(), 1);
 
     cpu->wd(--cpu->sp, cpu->pch);
     cpu->wd(--cpu->sp, cpu->pcl);
@@ -1537,7 +1537,7 @@ Z80OPCODE op_EF(Z80 *cpu) { // rst 28
 }
 
 Z80OPCODE op_F0(Z80 *cpu) { // ret p
-    cputact(1);
+    cpuidle(cpu->IR(), 1);
 
     if (!(cpu->f & SF))
     {
@@ -1586,7 +1586,7 @@ Z80OPCODE op_F4(Z80 *cpu) { // call p,nnnn
     // Branch taken
     if (!(cpu->f & SF))
     {
-        cputact(1);
+        cpuidle(cpu->pc - 1, 1);  // on the address's high byte
 
         cpu->wd(--cpu->sp, (cpu->pc >> 8) & 0xFF);
         cpu->wd(--cpu->sp, cpu->pc & 0xFF);
@@ -1598,7 +1598,7 @@ Z80OPCODE op_F4(Z80 *cpu) { // call p,nnnn
 }
 
 Z80OPCODE op_F5(Z80 *cpu) { // push af
-    cputact(1);
+    cpuidle(cpu->IR(), 1);
 
     cpu->wd(--cpu->sp, cpu->a);
     cpu->wd(--cpu->sp, cpu->f);
@@ -1609,7 +1609,7 @@ Z80OPCODE op_F6(Z80 *cpu) { // or nn
 }
 
 Z80OPCODE op_F7(Z80 *cpu) { // rst 30
-    cputact(1);
+    cpuidle(cpu->IR(), 1);
 
     cpu->wd(--cpu->sp, cpu->pch);
     cpu->wd(--cpu->sp, cpu->pcl);
@@ -1621,7 +1621,7 @@ Z80OPCODE op_F7(Z80 *cpu) { // rst 30
 }
 
 Z80OPCODE op_F8(Z80 *cpu) { // ret m
-    cputact(1);
+    cpuidle(cpu->IR(), 1);
 
     if (cpu->f & SF)
     {
@@ -1638,7 +1638,7 @@ Z80OPCODE op_F8(Z80 *cpu) { // ret m
 Z80OPCODE op_F9(Z80 *cpu) { // ld sp,hl
    cpu->sp = cpu->hl & 0xFFFF;
 
-   cputact(2);
+   cpuidle(cpu->IR(), 2);
 }
 
 Z80OPCODE op_FA(Z80 *cpu) { // jp m,nnnn
@@ -1674,7 +1674,7 @@ Z80OPCODE op_FC(Z80 *cpu) { // call m,nnnn
 
     if (cpu->f & SF)
     {
-        cputact(1);
+        cpuidle(cpu->pc - 1, 1);  // on the address's high byte
 
         cpu->wd(--cpu->sp, (cpu->pc >> 8) & 0xFF);
         cpu->wd(--cpu->sp, cpu->pc & 0xFF);
@@ -1690,7 +1690,7 @@ Z80OPCODE op_FE(Z80 *cpu) { // cp nn
 }
 
 Z80OPCODE op_FF(Z80 *cpu) { // rst 38
-    cputact(1);
+    cpuidle(cpu->IR(), 1);
 
     cpu->wd(--cpu->sp, cpu->pch);
     cpu->wd(--cpu->sp, cpu->pcl);

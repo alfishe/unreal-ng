@@ -75,8 +75,7 @@ protected:
 
         _sdImage = MakeNeoGSTestSd(NeoGSTestSd::Fat16Mbr);
         ASSERT_TRUE(_sdImage->ok()) << _sdImage->error();
-        strncpy(_context->config.ngs.sdCardPath, _sdImage->path().c_str(), sizeof _context->config.ngs.sdCardPath - 1);
-        ASSERT_TRUE(FitGeneralSoundCard(_sm, GSTypeKind::NGS));
+        ASSERT_TRUE(FitNeoGSWithSd(_context, _sdImage->path()));
     }
 
     void TearDown() override

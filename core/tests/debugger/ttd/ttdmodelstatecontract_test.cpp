@@ -155,3 +155,31 @@ TEST(TTDModelStateContract_Test, DeclaredButUnimplementedStateRefusesRecording)
 
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
+
+/// A refused recording leaves nothing behind: debugmode / timetravel, switched
+/// on by StartRecording for the capture, go back off.
+TEST(TTDModelStateContract_Test, RefusedRecordingRollsBackTheFlagsItSwitchedOn)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+
+    EmulatorContext* context = emulator->GetContext();
+    FeatureManager* fm = emulator->GetFeatureManager();
+    fm->setFeature(Features::kDebugMode, false);
+    fm->setFeature(Features::kTimeTravel, false);
+
+    bool started = false;
+    {
+        PortDecoder* original = context->pPortDecoder;
+        LyingDecoder lying(context);
+        context->pPortDecoder = &lying;
+        started = context->pTimeTravelManager->StartRecording();
+        context->pPortDecoder = original;
+    }
+
+    ASSERT_FALSE(started);
+    EXPECT_FALSE(fm->isEnabled(Features::kDebugMode));
+    EXPECT_FALSE(fm->isEnabled(Features::kTimeTravel));
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}

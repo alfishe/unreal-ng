@@ -23,6 +23,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/hostbusoverlay.h"
 #include "emulator/memory/memory.h"
+#include "emulator/video/ulacontention.h"
 
 namespace
 {
@@ -97,7 +98,15 @@ protected:
         ASSERT_EQ(_z80->pc, end);
     }
 
-    bool isPlain(bool debug) const { return _z80->MemIf == (debug ? _z80->DbgMemIf : _z80->FastMemIf); }
+    /// The interface without an overlay: Fast / Debug, contended on machines
+    /// whose video contention is in effect (48K, 128K, +3) - never an overlay one
+    bool isPlain(bool debug) const
+    {
+        const bool contended = _core->IsContentionEffective();
+        if (debug)
+            return _z80->MemIf == (contended ? _z80->DbgContendedMemIf : _z80->DbgMemIf);
+        return _z80->MemIf == (contended ? _z80->FastContendedMemIf : _z80->FastMemIf);
+    }
 };
 } // namespace
 
@@ -206,7 +215,10 @@ TEST_F(Core_Test, SwitchingFromTwoThreadsNeverLeavesAWrongInterface)
             while (!go.load())
                 std::this_thread::yield();
             for (int i = 0; i < 10000; i++)
-                _core->SetDebugMemoryInterface((i & 1) != 0);
+            {
+                _z80->isDebugMode = (i & 1) != 0;
+                _core->SelectMemoryInterface();
+            }
         });
     go.store(true);
     for (int i = 0; i < 10000; i++)
@@ -214,10 +226,62 @@ TEST_F(Core_Test, SwitchingFromTwoThreadsNeverLeavesAWrongInterface)
     ui.join();
 
     // Last operations: debug = true (i = 9999), overlay removed (i = 9999)
-    EXPECT_TRUE(_core->IsDebugMemoryInterface());
+    _core->SelectMemoryInterface(); // both threads done: the final inputs decide
+    EXPECT_TRUE(_z80->isDebugMode);
     EXPECT_EQ(_core->GetBusOverlay(), nullptr);
     EXPECT_EQ(_z80->MemIf, _z80->DbgMemIf);
     EXPECT_EQ(_ctx->pMemory->GetBusOverlay(), nullptr);
+}
+
+/// The overlay on a machine with video contention: the four overlay
+/// interfaces wrap the contended ones, so the ULA's wait still comes first and
+/// the overlay then decides the byte
+TEST_F(Core_Test, OverlayOnAContendedMachineKeepsTheContention)
+{
+    create("48K");
+    ASSERT_TRUE(_core->IsContentionEffective());
+    FakeOverlay overlay;
+    overlay.windowStart = 0x4000; // contended slot 1
+    overlay.windowEnd = 0x8000;
+    overlay.replace = false;
+
+    ASSERT_TRUE(_core->SetBusOverlay(&overlay));
+    EXPECT_EQ(_z80->MemIf, _z80->OverlayFastContendedMemIf);
+    EXPECT_STREQ(_core->GetMemoryInterfaceName(), "fast_contended_overlay");
+    setDebug(true);
+    _core->SelectMemoryInterface();
+    EXPECT_EQ(_z80->MemIf, _z80->OverlayDbgContendedMemIf);
+    setDebug(false);
+    _core->SelectMemoryInterface();
+
+    // The same contended reads with and without the overlay take the same time
+    // (LD A,(#4000) x 64 while the screen is fetched), and the overlay sees them
+    std::vector<uint8_t> code;
+    for (int i = 0; i < 64; i++)
+        code.insert(code.end(), {0x3A, 0x00, 0x40});
+    // A T-state where the ULA holds the CPU back: inside the screen fetch
+    UlaContention* ula = _ctx->pUlaContention;
+    uint32_t contendedT = 0;
+    while (contendedT < 70000 && ula->DelayAt(contendedT) == 0)
+        contendedT++;
+    ASSERT_LT(contendedT, 70000u);
+    const auto timed = [&]
+    {
+        for (size_t i = 0; i < code.size(); i++)
+            _z80->DirectWrite(static_cast<uint16_t>(0x8000 + i), code[i]);
+        _z80->pc = 0x8000;
+        _z80->t = contendedT;
+        for (int i = 0; i < 64; i++)
+            _z80->Z80Step();
+        return _z80->t - contendedT;
+    };
+    const uint32_t withOverlay = timed();
+    EXPECT_GE(overlay.reads.size(), 64u);
+    _core->SetBusOverlay(nullptr);
+    EXPECT_EQ(_z80->MemIf, _z80->FastContendedMemIf);
+    const uint32_t without = timed();
+    EXPECT_EQ(withOverlay, without) << "the contention wait is kept under the overlay";
+    EXPECT_GT(without, 64u * 13u) << "and there is a wait: 64 x 13 T uncontended";
 }
 
 /// endregion

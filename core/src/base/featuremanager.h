@@ -36,9 +36,11 @@ constexpr const char* const kPortTrace = "porttrace";
 constexpr const char* const kFastTape = "fasttape";
 constexpr const char* const kTurboTape = "turbotape";
 constexpr const char* const kFastDisk = "fastdisk";
+constexpr const char* const kTurboMode = "turbomode";
 constexpr const char* const kHud = "hud";
 constexpr const char* const kKempstonMouse = "kempstonmouse";
 constexpr const char* const kGSLightweight = "gs_lightweight";
+constexpr const char* const kContention = "contention";
 
 // Feature Aliases
 constexpr const char* const kDebugModeAlias = "dbg";
@@ -57,9 +59,11 @@ constexpr const char* const kPortTraceAlias = "pt";
 constexpr const char* const kFastTapeAlias = "ftape";
 constexpr const char* const kTurboTapeAlias = "ttape";
 constexpr const char* const kFastDiskAlias = "fdisk";
+constexpr const char* const kTurboModeAlias = "turbo";
 constexpr const char* const kHudAlias = "hud";
 constexpr const char* const kKempstonMouseAlias = "kmouse";
 constexpr const char* const kGSLightweightAlias = "gslw";
+constexpr const char* const kContentionAlias = "cont";
 
 // Feature Descriptions
 constexpr const char* const kDebugModeDesc = "Master debug mode, enables/disables all debug features for performance";
@@ -89,6 +93,10 @@ constexpr const char* const kTurboTapeDesc =
     "(headerless, custom-timed, pulse streams) still load at warp speed. Warp ends with the read-gap watchdog, end-of-tape or any stop.";
 constexpr const char* const kFastDiskDesc =
     "Fast disk loading: FDC timing compression and TR-DOS ROM read-loop traps for instant floppy disk operations.";
+constexpr const char* const kTurboModeDesc =
+    "Turbo mode: run the whole emulation as fast as possible (max speed, audio muted unless turbo_audio is on). "
+    "Forced off and blocked from re-enabling while TTD recording is active, so the recorded run reflects real "
+    "timing and no code path is skipped by the accelerated loop.";
 constexpr const char* const kHudDesc =
     "On-screen HUD: indicators and messages over the emulator picture. Zero cost when disabled.";
 
@@ -98,6 +106,11 @@ constexpr const char* const kKempstonMouseDesc =
 constexpr const char* const kGSLightweightDesc =
     "General Sound lightweight personality: fit the in-tree ProTracker player card (no coprocessor firmware needed). Off keeps the "
     "personality from [SOUND] GSType; runtime switching carries the host mailbox across.";
+
+constexpr const char* const kContentionDesc =
+    "Video memory contention on the machines that have it (48K / 128K / +2 ULA, +2A / +3 gate array): the CPU waits "
+    "for the screen fetches. Off runs those machines uncontended, for comparison. No effect on machines without "
+    "contention. Cannot change while the machine is bound to a TTD timeline (it changes timing).";
 
 // Categories
 constexpr const char* const kCategoryDebug = "debug";
@@ -146,6 +159,13 @@ public:
     bool setMode(const std::string& idOrAlias, const std::string& mode);
     std::string getMode(const std::string& idOrAlias) const;
     bool isEnabled(const std::string& idOrAlias) const;
+    /// @brief Whether a feature by this id or alias exists (tells "refused" from "unknown")
+    bool hasFeature(const std::string& idOrAlias) const;
+    /// @brief Why setFeature(idOrAlias, enabled) would be refused right now, as one
+    /// sentence a user can act on; empty when it would not be (or the feature is unknown).
+    /// TTD holds features while it records or replays: see isTtdRecordingActive /
+    /// isTtdTimelineBound, and TimeTravelManager::RecordingGuard for the capture flags.
+    std::string refusalReason(const std::string& idOrAlias, bool enabled) const;
     std::vector<FeatureInfo> listFeatures() const;
     void setDefaults();
     void loadFromFile(const std::string& path);
@@ -154,6 +174,12 @@ public:
     void onTtdRecordingStarted();
     void onTtdRecordingStopped();
     bool isTtdRecordingActive() const;
+    /// @brief True while the machine is bound to a TTD timeline: recording, replaying
+    /// history (seek/step) or positioned in it (Detached). Features that change what
+    /// the guest code does (fasttape, turbotape, fastdisk) are off for all of it, or a
+    /// replay would diverge from what was recorded. Pacing-only acceleration (turbo
+    /// mode, speed) is locked by isTtdRecordingActive() alone.
+    bool isTtdTimelineBound() const;
 
     EmulatorContext* context() const
     {
@@ -161,20 +187,30 @@ public:
     }
 
 private:
+    /// True when TTD currently forces this feature off (see isTtdTimelineBound / isTtdRecordingActive)
+    bool isMaskedByTtd(const std::string& id) const;
+
     /// Find a feature by id or alias. Caller must hold _mutex.
     FeatureInfo* findFeature(const std::string& idOrAlias);
     const FeatureInfo* findFeature(const std::string& idOrAlias) const;
+
+    /// @brief Engage/disengage Core turbo mode to match the 'turbomode' feature and
+    /// the current TTD-recording gate. Unlike fasttape/turbotape/fastdisk (which are
+    /// polled lazily and only need isEnabled() masked), nothing polls turbo mode every
+    /// frame, so the engine state has to be pushed here explicitly. Idempotent: only
+    /// calls Core if the actual state disagrees with the desired one.
+    void syncTurboModeWithTtdState();
 
     EmulatorContext* _context;
     std::unordered_map<std::string, FeatureInfo> _features;  // id -> FeatureInfo
     std::unordered_map<std::string, std::string> _aliases;   // alias -> id
     mutable bool _dirty = false;                             // Track if the state changed and save is required
 
-    // Saved shortcut states during TTD recording
+    // TTD recording lock, driven only by TimeTravelManager (onTtdRecordingStarted /
+    // onTtdRecordingStopped) - not by the 'timetravel' feature toggle, which merely
+    // arms the capture machinery. Masking needs no saved states: the stored feature
+    // values are untouched and show through again once the lock is released.
     mutable bool _ttdShortcutOverrideActive = false;
-    mutable bool _savedFastDiskState = true;
-    mutable bool _savedFastTapeState = true;
-    mutable bool _savedTurboTapeState = true;
 
     /// Guards _features/_aliases/_dirty: the WebAPI/HTTP thread mutates them
     /// while the MessageCenter worker reads them (e.g. HudModel feature

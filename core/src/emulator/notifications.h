@@ -383,6 +383,28 @@ public:
     virtual ~SpeedChangedPayload() = default;
 };
 
+/// Payload for NC_MEDIA_* (media manager slot events)
+class MediaSlotPayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    std::string slotId;   // "sd.zc", "fdd.a", ...
+    std::string kind;     // "block", "floppy", "tape", "optical"
+    std::string source;   // source path or description; empty after an eject
+    std::string access;   // "readonly", "session", "writethrough"
+    std::string path;     // NC_MEDIA_EXPORTED / NC_MEDIA_SAVED: the file written
+
+    MediaSlotPayload(const std::string& id, std::string slot, std::string mediaKind, std::string mediaSource,
+                     std::string accessMode)
+        : MessagePayload()
+        , emulatorId(id.empty() ? unreal::UUID() : unreal::UUID(id))
+        , slotId(std::move(slot))
+        , kind(std::move(mediaKind))
+        , source(std::move(mediaSource))
+        , access(std::move(accessMode))
+    {}
+};
+
 /// Payload for NC_FILE_LOADED.
 /// Posted by Emulator::LoadSnapshot / LoadTape / LoadDisk after the loader
 /// returns. Carries the result so consumers can show success or failure toasts.

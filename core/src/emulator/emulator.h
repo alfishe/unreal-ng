@@ -28,6 +28,11 @@
 
 class BreakpointManager;
 
+namespace ttd
+{
+enum class TTDGuardedAction : uint8_t;  // debugger/ttd/timetravelmanager.h
+}
+
 /// region <Types>
 
 enum EmulatorStateEnum : uint8_t
@@ -50,6 +55,8 @@ inline const char* getEmulatorStateName(EmulatorStateEnum value)
 };
 
 /// endregion </Types>
+
+class FloppyDriveSlots;
 
 class Emulator
 {
@@ -90,6 +97,7 @@ protected:
 
     Config* _config = nullptr;
     Core* _core = nullptr;
+    FloppyDriveSlots* _floppySlots = nullptr;  // fdd.a-d registered with the media manager while the drives exist
     Z80* _z80 = nullptr;
     Memory* _memory = nullptr;
     MainLoop* _mainloop = nullptr;
@@ -174,7 +182,21 @@ public:
     // Performance management
     BaseFrequency_t GetSpeed();
     void SetSpeed(BaseFrequency_t speed);
-    void SetSpeedMultiplier(uint8_t multiplier);
+    bool SetSpeedMultiplier(uint8_t multiplier);
+
+    /// @brief Why a recording-destructive action is refused right now (empty when
+    /// allowed) - TimeTravelManager::RecordingGuard. The loaders below refuse with
+    /// it themselves; surfaces ask first to report the reason.
+    std::string RecordingGuard(ttd::TTDGuardedAction action) const;
+
+    /// @brief Run a guest-memory edit made by a tool (a script, a debugger
+    /// surface) so a TTD recording stays consistent: the edit is recorded as a
+    /// debugger-edit marker (replay cannot reproduce it) and, from any thread but
+    /// the emulation one, the emulator is parked for it (the dirty-page tracker
+    /// belongs to the emulation thread). Nothing extra happens when not recording.
+    /// The edit must reach TTD itself: Memory::DirectWriteToZ80Memory for the CPU
+    /// view, Memory::MarkRamPageEdited after writing a physical RAM page.
+    void EditMemoryFromTool(const char* source, const std::function<void()>& edit);
     uint8_t GetSpeedMultiplier() const;
     void EnableTurboMode(bool withAudio = false);
     void DisableTurboMode();
@@ -250,6 +272,40 @@ public:
     ///               must pass the drive the caller actually asked for.
     bool LoadDisk(const std::string& path, uint8_t drive = 0, std::string* error = nullptr);
 
+    /// Take the disk out of `drive` (0-3, A-D) and free it; the other drives are untouched.
+    /// @param force Eject even when the disk has unsaved writes (they are lost); without it a
+    ///              dirty disk stays in and `error` says so
+    /// @param error When non-null and the call fails, receives a human-readable reason
+    /// An empty drive is not an error. Like LoadDisk, it is refused while a TTD recording runs
+    bool EjectDisk(uint8_t drive, bool force = false, std::string* error = nullptr);
+
+    /// Layout of a blank disk from CreateBlankDisk()
+    enum class BlankDiskFormat
+    {
+        Auto,         ///< Plus3 on a +3 (its own controller), Unformatted elsewhere
+        Unformatted,  ///< No sectors: for the machine's own FORMAT command (TR-DOS, +3DOS)
+        Plus3,        ///< +3DOS: 9 x 512-byte sectors per track, formatted (filler #E5)
+    };
+
+    /// Parse "auto" / "unformatted" / "plus3" (case-insensitive); false for anything else
+    static bool ParseBlankDiskFormat(const std::string& text, BlankDiskFormat& format);
+    static const char* BlankDiskFormatName(BlankDiskFormat format);
+
+    /// Create a blank disk and insert it into `drive`, owned like a loaded image (the previous image of
+    /// the drive is released). The drive's path reads "<blank>" until the disk is saved.
+    /// @param cylinders 40 or 80; 0 = the format's default (Unformatted 80, Plus3 40)
+    /// @param sides 1 or 2; 0 = the format's default (Unformatted 2, Plus3 1)
+    /// @param error When non-null and the call fails, receives a human-readable reason
+    /// @param resolved When non-null, receives the format and geometry actually used
+    struct BlankDiskResult
+    {
+        BlankDiskFormat format = BlankDiskFormat::Unformatted;
+        uint8_t cylinders = 0;
+        uint8_t sides = 0;
+    };
+    bool CreateBlankDisk(uint8_t drive, BlankDiskFormat format = BlankDiskFormat::Auto, uint8_t cylinders = 0,
+                         uint8_t sides = 0, std::string* error = nullptr, BlankDiskResult* resolved = nullptr);
+
     /// Outcome of AutostartDisk()
     struct DiskAutostartResult
     {
@@ -276,8 +332,9 @@ public:
     };
 
     /// Save the disk image in drive `drive` (0..3).
-    /// @param path   Target file; empty = the image's own file path. The extension selects the format
-    ///               (trd, scl, fdi, udi; anything else = trd).
+    /// @param path   Target file; empty = the image's own file path (a disk from a folder, a Hobeta file or a
+    ///               blank disk has none). The extension selects the format (trd, scl, fdi, udi, dsk, td0,
+    ///               mgt / img, hfe, scp; anything else = trd); the disk then stands for that file.
     /// @param allowRetarget  When the selected format refuses the image (TRD / SCL hold only 16 x 256-byte
     ///               TR-DOS tracks, FDI drops FM / non-nominal tracks with a warning but does not refuse),
     ///               save losslessly to `<path without extension>.udi` instead, keep the original file untouched

@@ -369,12 +369,6 @@ protected:
     SoundManager* _soundManager = nullptr;
     ModuleLogger* _logger = nullptr;
 
-    // Paging lock latch (hardware emulation of port 7FFD bit 5)
-    // When true, subsequent writes to port 7FFD are ignored by the hardware
-    // This is the actual hardware latch, separate from the emulatorState.p7FFD bit 5
-    // which is just a cached copy of the last written value
-    bool _7FFD_Locked = false;
-
     // Set by DecodePortIn/PeripheralPortIn to indicate whether a real hardware device
     // actually responded to the port read. When false, the port is unmapped and the
     // Z80 floating bus logic may apply (prevents floating bus from clobbering
@@ -471,10 +465,27 @@ public:
     /// memory-manager defaults when the requested mode is RM_DOS). Base: none.
     virtual void ApplyBootROMDefaults(ROMModeEnum mode) { (void)mode; }
 
-    /// Re-run the model-specific set_banks() memory-manager branch. Only decoders
-    /// with their own memory manager (ATM710/ATM3) override this; all other models
-    /// use the generic Memory::UpdateZ80Banks() mapping instead.
+    /// Re-run the model-specific set_banks() RAM mapping from the model's latches.
+    /// Called by Memory::UpdateZ80Banks() for every model: ATM710/ATM3/+2A/+3 own
+    /// the whole memory manager; Profi, Spectrum 128 and the Pentagons derive the
+    /// RAM windows (the ROM slot is chosen by Memory). 48K has nothing to derive.
     virtual void UpdateModelMemoryBanks() {}
+
+    /// region <Board NMI hooks>
+    /// Machine NMI ("magic") button. Returns true when the board generates the
+    /// NMI itself (ZX-Evo: synchronized to the next frame INT); false means a
+    /// plain /NMI pulse, which the caller requests right away
+    virtual bool RequestBoardNmi() { return false; }
+    /// A board NMI queued for the frame INT is due (Z80::ProcessInterrupts).
+    /// Return false to drop it (ZX-Evo: its NMI page is still mapped in)
+    virtual bool OnFrameIntStartNmi() { return true; }
+    /// The Z80 accepted an NMI (PC = #0066). Return true when the board forces
+    /// a NOP onto the bus for the #0066 fetch; the Z80 then continues at #0067
+    virtual bool OnNmiAccepted() { return false; }
+    /// Whether executing from Z80 bank `bank` closes a TR-DOS session
+    /// (CF_LEAVEDOSRAM). Default: the bank currently maps RAM
+    virtual bool IsDosLeavingBank(uint8_t bank) const;
+    /// endregion </Board NMI hooks>
 
     virtual bool IsFEPort(uint16_t port);
 
@@ -599,6 +610,11 @@ public:
 
     /// Model-specific state this machine carries beyond TTDChipsetState.
     virtual std::vector<ttd::PeripheralId> GetTTDModelStateIds() const { return {}; }
+
+    /// TTD time units per base T-state: the least common multiple of every
+    /// hardware CPU clock ratio the model can select (EmulatorState::
+    /// ttd_clock_units). 1 for models without a hardware turbo
+    virtual uint8_t TtdClockUnits() const { return 1; }
 
     /// Serializers for the ids above. Ownership transfers to the caller.
     /// Every id from GetTTDModelStateIds() must be covered.
@@ -763,13 +779,20 @@ public:
     bool DispatchSelfDecodingOut(uint16_t rawPort, uint8_t value);
     bool DispatchSelfDecodingIn(uint16_t rawPort, uint8_t& outValue);
     
-    /// Unlock port 7FFD paging for snapshot loading or debug sessions
-    /// Clears both the emulatorState.p7FFD lock bit AND the hardware latch (_7FFD_Locked)
-    /// This ensures subsequent port writes via DecodePortOut() will be accepted
+    /// Unlock port 7FFD paging for snapshot loading or debug sessions: clears the
+    /// p7FFD lock bit, so subsequent port writes via DecodePortOut() are accepted
     void UnlockPaging();
     
     /// Lock port 7FFD paging (for debug sessions only, not used in normal operation)
     void LockPaging();
+
+    /// Whether #7FFD paging is latched off until reset. A locked #7FFD ignores
+    /// every later write, screen bit included, and keeps the value that locked
+    /// it (UnrealSpeccy, Fuse, Xpeccy, ZXMAK2 and the MiSTer RTL agree), so the
+    /// lock is a function of the latches alone: whatever restores them (TTD, a
+    /// snapshot, a reset) restores the lock too. Models whose extension frees
+    /// bit 5 override this.
+    virtual bool IsPagingLocked() const { return _state && (_state->p7FFD & PORT_7FFD_LOCK) != 0; }
 
     /// endregion </Interaction with peripherals>
 

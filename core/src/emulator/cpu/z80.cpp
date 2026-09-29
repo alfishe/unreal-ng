@@ -34,9 +34,13 @@ Z80::Z80(EmulatorContext* context) : Z80State{}
     // Initialize memory access interfaces
     FastMemIf = Memory::GetFastMemoryInterface();
     DbgMemIf = Memory::GetDebugMemoryInterface();
-    OverlayFastMemIf = Memory::GetOverlayMemoryInterface(false);
-    OverlayDbgMemIf = Memory::GetOverlayMemoryInterface(true);
-    MemIf = FastMemIf;  // Use fast memory access interface by default
+    FastContendedMemIf = Memory::GetFastContendedMemoryInterface();
+    DbgContendedMemIf = Memory::GetDebugContendedMemoryInterface();
+    OverlayFastMemIf = Memory::GetOverlayMemoryInterface(false, false);
+    OverlayDbgMemIf = Memory::GetOverlayMemoryInterface(true, false);
+    OverlayFastContendedMemIf = Memory::GetOverlayMemoryInterface(false, true);
+    OverlayDbgContendedMemIf = Memory::GetOverlayMemoryInterface(true, true);
+    MemIf = FastMemIf;  // Use fast memory access interface by default (Core::SelectMemoryInterface decides)
 
     // Ensure register memory and unions do not contain garbage
     Z80State::tt = 0;
@@ -109,10 +113,18 @@ Z80::~Z80()
         DbgMemIf = nullptr;
     }
 
+    delete FastContendedMemIf;
+    FastContendedMemIf = nullptr;
+    delete DbgContendedMemIf;
+    DbgContendedMemIf = nullptr;
     delete OverlayFastMemIf;
     OverlayFastMemIf = nullptr;
     delete OverlayDbgMemIf;
     OverlayDbgMemIf = nullptr;
+    delete OverlayFastContendedMemIf;
+    OverlayFastContendedMemIf = nullptr;
+    delete OverlayDbgContendedMemIf;
+    OverlayDbgContendedMemIf = nullptr;
 
     if (_opcodeProfiler)
     {
@@ -230,9 +242,12 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
     }
     else if (state.flags & CF_LEAVEDOSRAM)
     {
-        // Execution code from RAM address - disables TR-DOS ROM
+        // Execution code from RAM address - disables TR-DOS ROM. The model
+        // decides what "RAM" means: by default the bank's current mapping; the
+        // ZX-Evo looks at the programmed window type, so its NMI page (RAM over
+        // a ROM window) keeps the DOS signal on
         uint8_t bank = (cpu.pc >> 14) & 3;
-        if (memory.GetMemoryBankMode(bank) == MemoryBankModeEnum::BANK_RAM)
+        if (_context->pPortDecoder->IsDosLeavingBank(bank))
         {
             state.flags &= ~CF_TRDOS;
 
@@ -395,7 +410,9 @@ void Z80::Z80Step(bool skipBreakpoints)
 
         if (++cpu.halt_cycle == 4)
         {
-            cpu.r_low += 1;
+            // The refresh counter's 7 bits, bit 7 kept (as m1_cycle). Only on the vm1 HALT model, which nothing
+            // selects today: HALT re-executes its own M1 (op_76)
+            cpu.r_low = ((cpu.r_low + 1) & 0x7F) | (cpu.r_low & 0x80);
             cpu.halt_cycle = 0;
         }
     }
@@ -674,6 +691,16 @@ __forceinline bool Z80::InstructionStartObserved() const
     return m1TraceHook || _context->ttdCoverageActive || _context->ttdProbe.IsArmed();
 }
 
+void Z80::NotifyMachineM1Before(uint16_t address)
+{
+    machineM1Hook->BeforeMachineM1(address);
+}
+
+void Z80::NotifyMachineM1(uint16_t address)
+{
+    machineM1Hook->OnMachineM1(address);
+}
+
 uint8_t Z80::m1_cycle()
 {
     /// region <Overriding submodule for module logger>
@@ -702,7 +729,17 @@ uint8_t Z80::m1_cycle()
 
     // Z80 CPU M1 cycle logic
     r_low = ((r_low + 1) & 0x7f) | (r_low & 0x80);  // Keep memory refresh register ticking
+
+    // Board logic that decides what this fetch sees (ZX-Evo trdemu page swap)
+    if (machineM1Hook) [[unlikely]]
+        NotifyMachineM1Before(cpu.pc);
+
     opcode = rd(cpu.pc, true);  // Initiate memory read cycle and Keep opcode copy for trace / debug purposes
+
+    // Board logic clocked by the M1 refresh (ZX-Evo NMI exit / breakpoint).
+    // Out of line like NotifyInstructionStart: the hot path is one pointer test
+    if (machineM1Hook) [[unlikely]]
+        NotifyMachineM1(cpu.pc);
 
     // Point PC to next byte
     cpu.pc++;
@@ -760,7 +797,7 @@ void Z80::NotifyInstructionStart()
         if (_context->ttdProbe.Matches(m1_pc, ttd::TTDAccessType::Execute, 0, m1_pc, execPhysPage))
         {
             const auto& st = _context->emulatorState;
-            const ttd::TTDTimePoint tp{st.frame_counter, t};
+            const ttd::TTDTimePoint tp{st.frame_counter, st.TtdTInFrame(t)};
             _context->ttdProbe.RecordHit(tp, m1_pc, /*value=*/0, execPhysPage,
                                           ttd::TTDAccessType::Execute);
         }
@@ -773,20 +810,8 @@ void Z80::NotifyInstructionStart()
 /// \return
 uint8_t Z80::rd(uint16_t addr, bool isExecution)
 {
-    // ULA memory contention: accessing contended memory (0x4000-0x7FFF; on
-    // 128K also 0xC000+ with an odd page mapped) during screen rendering on
-    // ZX-48K/128K stalls the CPU.
-    if (!isExecution)
-    {
-        UlaContention* ula = _context->pUlaContention;
-        if (ula && ula->IsAddressContended(addr))
-        {
-            uint8_t delay = ula->GetContentionDelay();
-            if (delay > 0)
-                IncrementCPUCyclesCounter(delay);
-        }
-    }
-
+    // Video memory contention, where the machine has it, is part of the selected interface
+    // (Memory::MemoryReadContended): it waits before the access, with these 3 T already counted
     IncrementCPUCyclesCounter(3);
 
     uint8_t value = (_memory->*MemIf->MemoryRead)(addr, isExecution);
@@ -803,19 +828,7 @@ uint8_t Z80::rd(uint16_t addr, bool isExecution)
 /// \param val
 void Z80::wd(uint16_t addr, uint8_t val)
 {
-    // ULA memory contention: accessing contended memory (0x4000-0x7FFF; on
-    // 128K also 0xC000+ with an odd page mapped) during screen rendering on
-    // ZX-48K/128K stalls the CPU.
-    {
-        UlaContention* ula = _context->pUlaContention;
-        if (ula && ula->IsAddressContended(addr))
-        {
-            uint8_t delay = ula->GetContentionDelay();
-            if (delay > 0)
-                IncrementCPUCyclesCounter(delay);
-        }
-    }
-
+    // Video memory contention: see rd (Memory::MemoryWriteContended)
     IncrementCPUCyclesCounter(3);
 
     (_memory->*MemIf->MemoryWrite)(addr, val);
@@ -829,14 +842,14 @@ uint8_t Z80::in(uint16_t port)
     // ULA IO contention: accessing contended ports during screen rendering
     // on ZX-48K/128K delays the CPU by the contention pattern.
     // This is critical for accurate timing of raster-sync effects.
+    // ioContention is null on machines without it (Core::SelectMemoryInterface)
+    if (ioContention)
     {
-        UlaContention* ula = _context->pUlaContention;
-        if (ula)
-        {
-            uint8_t delay = ula->GetIOContentionDelay(port);
-            if (delay > 0)
-                IncrementCPUCyclesCounter(delay);
-        }
+        uint8_t delay = ioContention->GetIOContentionDelay(port);
+        if (delay > 0)
+            IncrementCPUCyclesCounter(delay);
+        if (isDebugMode)
+            ioContention->CountAccess(CONTENTION_IO, delay);
     }
 
     PortDecoder& portDecoder = *_context->pPortDecoder;
@@ -879,7 +892,8 @@ uint8_t Z80::in(uint16_t port)
         UlaContention* ula = _context->pUlaContention;
         if (ula)
         {
-            uint8_t floatVal = ula->GetFloatingBus();
+            // The +2A/+3 gate array drives only #0FFD-type ports (GetGateArrayFloatingBus)
+            uint8_t floatVal = ula->IsGateArray() ? ula->GetGateArrayFloatingBus(port) : ula->GetFloatingBus();
             if (floatVal != 0xFF)
                 result = floatVal;
         }
@@ -893,15 +907,14 @@ void Z80::out(uint16_t port, uint8_t val)
     // ULA IO contention: accessing contended ports during screen rendering
     // on ZX-48K/128K delays the CPU by the contention pattern.
     // This must be applied BEFORE the port write so that SetBorderColor()
-    // sees the correct (delayed) t-state.
+    // sees the correct (delayed) t-state. ioContention: see in()
+    if (ioContention)
     {
-        UlaContention* ula = _context->pUlaContention;
-        if (ula)
-        {
-            uint8_t delay = ula->GetIOContentionDelay(port);
-            if (delay > 0)
-                IncrementCPUCyclesCounter(delay);
-        }
+        uint8_t delay = ioContention->GetIOContentionDelay(port);
+        if (delay > 0)
+            IncrementCPUCyclesCounter(delay);
+        if (isDebugMode)
+            ioContention->CountAccess(CONTENTION_IO, delay);
     }
 
     PortDecoder& portDecoder = *_context->pPortDecoder;
@@ -915,6 +928,26 @@ void Z80::out(uint16_t port, uint8_t val)
 
     if (busTraceHook)
         busTraceHook('O', port, val);
+}
+
+/// The slow half of Idle: taken only while the ULA contends internal cycles or a bus trace hook listens.
+/// Each T-state is its own check, like FUSE's contend_read_no_mreq(addr, 1)
+void Z80::IdleSlow(uint16_t addr, uint8_t cycles)
+{
+    const bool contended = idleContention && idleContention->IsSlotContended(static_cast<uint8_t>(addr >> 14));
+    for (uint8_t i = 0; i < cycles; i++)
+    {
+        if (busTraceHook)
+            busTraceHook('N', addr, 0);
+        if (contended)
+        {
+            const uint8_t wait = idleContention->DelayAt(t);
+            IncrementCPUCyclesCounter(wait);
+            if (isDebugMode)
+                idleContention->CountAccess(CONTENTION_IDLE, wait);
+        }
+        IncrementCPUCyclesCounter(1);
+    }
 }
 
 void Z80::retn()
@@ -994,6 +1027,23 @@ bool Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
     // (pending prefix), and right after an NMI acknowledge - the chip takes
     // no second NMI response without an instruction between (Sainz de
     // Baranda 2022, Visual Z80). The EI shadow does not block NMI.
+    // A board NMI that waits for the frame INT (ZX-Evo znmi.v: pending_nmi is
+    // released at int_start) reaches the /NMI pin at the first boundary inside
+    // the INT pulse - also while halted, since this runs at every boundary.
+    // The board may still veto it (ZX-Evo: no new NMI while its NMI page is in)
+    EmulatorState& machineState = _context->emulatorState;
+    if (machineState.nmiAtIntStartPending)
+    {
+        const bool inPulse = _intWraps ? (cpu.t > int_start || cpu.t < int_end)
+                                       : (cpu.t > int_start && cpu.t < int_end);
+        if (inPulse)
+        {
+            machineState.nmiAtIntStartPending = false;
+            if (_context->pPortDecoder == nullptr || _context->pPortDecoder->OnFrameIntStartNmi())
+                _nmi_pending_count = 1;
+        }
+    }
+
     if (_nmi_pending_count > 0 && !prefixPending && cpu.boundary != Z80_BOUNDARY_NMI_ACK)
     {
         _nmi_pending_count = 0;
@@ -1031,6 +1081,17 @@ bool Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
         cpu.iff1 = 0;
         cpu.int_pending = false;
         cpu.boundary = Z80_BOUNDARY_NMI_ACK;
+
+        // A board that owns this NMI may drive #00 (NOP) onto the bus for the
+        // #0066 fetch and page its handler RAM in at that fetch's refresh
+        // (ZX-Evo znmi.v drive_00 / in_nmi): the CPU spends one M1 on the forced
+        // NOP and continues at #0067 from the board's page
+        if (_context->pPortDecoder != nullptr && _context->pPortDecoder->OnNmiAccepted())
+        {
+            cpu.r_low = ((cpu.r_low + 1) & 0x7f) | (cpu.r_low & 0x80);
+            IncrementCPUCyclesCounter(4);
+            cpu.pc = 0x0067;
+        }
 
         video.memcyc_lcmd = 0;  // new command, start accumulate number of busy memcycles
 

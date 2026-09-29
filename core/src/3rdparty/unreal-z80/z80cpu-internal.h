@@ -59,6 +59,9 @@ typedef uint8_t (Z80FAST* LOGICFUNC)(struct Z80Regs*, uint8_t byte);
 // timing is advanced by the core.
 #define cputact(a) (tact_ += (a))
 
+// The refresh address the CPU puts on the bus in internal cycles after M1: I high, R low (bit 7 from r_hi)
+#define Z80_IR(rf) static_cast<uint16_t>(((rf)->i << 8) | ((rf)->r_low & 0x7F) | ((rf)->r_hi & 0x80))
+
 struct Z80AltRegs
 {
     union

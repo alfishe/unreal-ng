@@ -61,6 +61,13 @@ MenuManager::MenuManager(MainWindow* mainWindow, QMenuBar* menuBar, QObject* par
     messageCenter.AddObserver(NC_FDD_DISK_PENDING_WRITE, observerInstance, diskCallback);
     messageCenter.AddObserver(NC_FDD_DISK_WRITTEN, observerInstance, diskCallback);
 
+    // TTD recording start/stop arrives as a 'timetravel' feature change; the
+    // speed/turbo lock and the speed selection must follow it
+    ObserverCallbackMethod speedFeatureCallback =
+        static_cast<ObserverCallbackMethod>(&MenuManager::handleSpeedOrFeatureChanged);
+    messageCenter.AddObserver(NC_FEATURE_CHANGED, observerInstance, speedFeatureCallback);
+    messageCenter.AddObserver(NC_SPEED_CHANGED, observerInstance, speedFeatureCallback);
+
 #ifdef ENABLE_RECORDING
     // Subscribe to recording state changes
     ObserverCallbackMethod recordingCallback =
@@ -89,6 +96,11 @@ MenuManager::~MenuManager()
     messageCenter.RemoveObserver(NC_FDD_DISK_EJECTED, observerInstance, diskCallback);
     messageCenter.RemoveObserver(NC_FDD_DISK_PENDING_WRITE, observerInstance, diskCallback);
     messageCenter.RemoveObserver(NC_FDD_DISK_WRITTEN, observerInstance, diskCallback);
+
+    ObserverCallbackMethod speedFeatureCallback =
+        static_cast<ObserverCallbackMethod>(&MenuManager::handleSpeedOrFeatureChanged);
+    messageCenter.RemoveObserver(NC_FEATURE_CHANGED, observerInstance, speedFeatureCallback);
+    messageCenter.RemoveObserver(NC_SPEED_CHANGED, observerInstance, speedFeatureCallback);
 
 #ifdef ENABLE_RECORDING
     // Unsubscribe from recording state changes
@@ -500,6 +512,13 @@ void MenuManager::populateCrtProfileMenu()
     }
 }
 
+void MenuManager::setMediaPanelChecked(bool checked)
+{
+    // Sync from the panel's own close box; setChecked never re-emits triggered
+    if (_mediaPanelAction)
+        _mediaPanelAction->setChecked(checked);
+}
+
 void MenuManager::setTapeManagerChecked(bool checked)
 {
     // Sync from the TapeManagerWindow's own close box; setChecked never
@@ -591,7 +610,7 @@ void MenuManager::createRunMenu()
     // Turbo Mode (max speed)
     _turboModeAction = _speedMenu->addAction(tr("Turbo Mode (Max Speed)"));
     _turboModeAction->setShortcut(QKeySequence(Qt::Key_Tab));
-    _turboModeAction->setStatusTip(tr("Hold Tab for maximum speed (no sync)"));
+    _turboModeAction->setStatusTip(tr("Tab toggles maximum speed (no sync); unavailable while TTD is recording"));
     _turboModeAction->setCheckable(true);
     connect(_turboModeAction, &QAction::triggered, this, &MenuManager::turboModeToggled);
 }
@@ -764,6 +783,17 @@ void MenuManager::createMachineMenu()
     _autostartDisksAction->setCheckable(true);
     _autostartDisksAction->setChecked(true);
     connect(_autostartDisksAction, &QAction::triggered, this, &MenuManager::autostartDisksToggled);
+
+    // Video memory contention (design: docs/inprogress/2026-09-28-m1-contention). Mirrors the
+    // 'contention' feature (synced in updateMenuStates); only the 48K / 128K / +2 / +2A / +3 have it
+    _machineMenu->addSeparator();
+    _contentionAction = _machineMenu->addAction(tr("Memory &Contention"));
+    _contentionAction->setStatusTip(
+        tr("The CPU waits for the screen fetches on the 48K / 128K / +2 / +2A / +3 (no effect on other machines); "
+           "fixed while TTD records or replays"));
+    _contentionAction->setCheckable(true);
+    _contentionAction->setChecked(true);
+    connect(_contentionAction, &QAction::triggered, this, &MenuManager::contentionToggled);
 }
 
 void MenuManager::setAutostartDisksChecked(bool checked)
@@ -931,6 +961,14 @@ void MenuManager::createToolsMenu()
     _tapeManagerAction->setChecked(false);
     connect(_tapeManagerAction, &QAction::triggered, this, &MenuManager::tapeManagerToggled);
 
+    // Media panel: every slot (floppy drives, SD card, ...) through MediaControl
+    _mediaPanelAction = _toolsMenu->addAction(tr("M&edia"));
+    _mediaPanelAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_4));
+    _mediaPanelAction->setStatusTip(tr("Show/hide the media panel: insert, eject, save and export per drive or card slot"));
+    _mediaPanelAction->setCheckable(true);
+    _mediaPanelAction->setChecked(false);
+    connect(_mediaPanelAction, &QAction::triggered, this, &MenuManager::mediaPanelToggled);
+
     _toolsMenu->addSeparator();
 
     // Screenshot of the emulator framebuffer to clipboard
@@ -1002,7 +1040,7 @@ void MenuManager::createHelpMenu()
                                  "F2 - 2x (Fast)\n"
                                  "F3 - 4x (Very Fast)\n"
                                  "F4 - 8x (Extreme)\n"
-                                 "Tab - Hold for Turbo Mode\n\n"
+                                 "Tab - Toggle Turbo Mode\n\n"
 
                                  "Debug:\n"
                                  "F8 - Step In\n"
@@ -1162,23 +1200,57 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
         EmulatorContext* context = activeEmulator->GetContext();
         FeatureManager* featureManager = context ? context->pFeatureManager : nullptr;
 
-        bool ttdActive = (featureManager && featureManager->isEnabled(Features::kTimeTravel)) ||
+        // The same predicate the core refuses on (FeatureManager::setFeature,
+        // Core::SetSpeedMultiplier), so the menu never offers what the core rejects
+        bool ttdActive = (featureManager && featureManager->isTtdRecordingActive()) ||
                          (context && context->pTimeTravelManager && context->pTimeTravelManager->IsRecording());
+        // Shortcuts change what the guest code does: off while recording AND while
+        // replaying or positioned in history
+        const bool timelineBound = ttdActive || (featureManager && featureManager->isTtdTimelineBound());
 
-        _tapeTrapsAction->setEnabled(!ttdActive);
-        _turboTapeAction->setEnabled(!ttdActive);
+        _tapeTrapsAction->setEnabled(!timelineBound);
+        _turboTapeAction->setEnabled(!timelineBound);
         if (_fastDiskAction)
         {
-            _fastDiskAction->setEnabled(!ttdActive);
-            _fastDiskAction->setChecked(!ttdActive && featureManager && featureManager->isEnabled(Features::kFastDisk));
+            _fastDiskAction->setEnabled(!timelineBound);
+            _fastDiskAction->setChecked(!timelineBound && featureManager && featureManager->isEnabled(Features::kFastDisk));
         }
 
-        _tapeTrapsAction->setChecked(!ttdActive && featureManager && featureManager->isEnabled(Features::kFastTape));
-        _turboTapeAction->setChecked(!ttdActive && featureManager && featureManager->isEnabled(Features::kTurboTape));
+        _tapeTrapsAction->setChecked(!timelineBound && featureManager && featureManager->isEnabled(Features::kFastTape));
+        _turboTapeAction->setChecked(!timelineBound && featureManager && featureManager->isEnabled(Features::kTurboTape));
+
+        // Run > Speed: same TTD lock as the tape/disk shortcuts above. Only 1x is
+        // offered while recording (the core forced it on record start); the check
+        // mark follows the host speed setting, not the emulated hardware turbo.
+        if (_turboModeAction)
+        {
+            _turboModeAction->setEnabled(!ttdActive);
+            _turboModeAction->setChecked(!ttdActive && featureManager && featureManager->isEnabled(Features::kTurboMode));
+        }
+        for (QAction* fast : {_speed2xAction, _speed4xAction, _speed8xAction, _speed16xAction})
+            fast->setEnabled(!ttdActive);
+        if (Core* core = context ? context->pCore : nullptr)
+        {
+            switch (core->GetHostSpeedMultiplier())
+            {
+                case 2: _speed2xAction->setChecked(true); break;
+                case 4: _speed4xAction->setChecked(true); break;
+                case 8: _speed8xAction->setChecked(true); break;
+                case 16: _speed16xAction->setChecked(true); break;
+                default: _speed1xAction->setChecked(true); break;
+            }
+        }
 
         if (_hudOverlayAction)
         {
             _hudOverlayAction->setChecked(featureManager && featureManager->isEnabled(Features::kHud));
+        }
+
+        // Contention changes timing: fixed for a TTD timeline, like the core refuses (FeatureManager::setFeature)
+        if (_contentionAction)
+        {
+            _contentionAction->setEnabled(!timelineBound);
+            _contentionAction->setChecked(featureManager && featureManager->isEnabled(Features::kContention));
         }
     }
     else
@@ -1190,9 +1262,18 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
             _fastDiskAction->setEnabled(false);
             _fastDiskAction->setChecked(false);
         }
+        if (_turboModeAction)
+        {
+            _turboModeAction->setEnabled(false);
+            _turboModeAction->setChecked(false);
+        }
         if (_hudOverlayAction)
         {
             _hudOverlayAction->setChecked(false);
+        }
+        if (_contentionAction)
+        {
+            _contentionAction->setEnabled(false);
         }
     }
 
@@ -1281,6 +1362,29 @@ void MenuManager::handleFDDDiskChanged(int id, Message* message)
                 }, Qt::QueuedConnection);
         }
     }
+}
+
+void MenuManager::handleSpeedOrFeatureChanged(int id, Message* message)
+{
+    Q_UNUSED(id);
+
+    auto activeEmulator = _activeEmulator.lock();
+    if (!activeEmulator || !message || !message->obj)
+        return;
+
+    std::string eventEmulatorId;
+    if (auto* feature = dynamic_cast<FeatureChangedPayload*>(message->obj))
+        eventEmulatorId = feature->emulatorId.toString();
+    else if (auto* speed = dynamic_cast<SpeedChangedPayload*>(message->obj))
+        eventEmulatorId = speed->emulatorId.toString();
+    else
+        return;
+
+    if (eventEmulatorId != activeEmulator->GetId())
+        return;
+
+    QMetaObject::invokeMethod(
+        this, [this, activeEmulator]() { updateMenuStates(activeEmulator); }, Qt::QueuedConnection);
 }
 
 #ifdef ENABLE_RECORDING

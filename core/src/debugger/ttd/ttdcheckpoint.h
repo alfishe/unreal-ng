@@ -46,7 +46,8 @@ namespace ttd {
 struct TTDTimePoint
 {
     uint64_t frame = 0;       ///< Frame index since session start
-    uint32_t tInFrame = 0;    ///< T-states within the frame (0 = frame start)
+    uint32_t tInFrame = 0;    ///< T-states within the frame at the model's top CPU clock
+                              ///< (0 = frame start; TimeTravelManager::TInFrameNow, B4)
 
     bool operator==(const TTDTimePoint& o) const
     { return frame == o.frame && tInFrame == o.tInFrame; }
@@ -313,10 +314,6 @@ struct TTDCheckpoint
     /// One entry per physical RAM page (16 KB) of the active model. Each
     /// entry references 4 codec-store sub-page slots (4 KB each).
     std::vector<TTDPageRef> ramPages;
-
-    // --- Journal offsets (populated by P2 and P4) ---
-    uint64_t inputJournalOffset = 0;
-    uint64_t writeJournalOffset = 0;
 };
 
 // ---------------------------------------------------------------------------

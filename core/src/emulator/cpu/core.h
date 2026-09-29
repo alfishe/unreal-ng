@@ -77,14 +77,14 @@ protected:
     VideoControl* _video = nullptr;
     Screen* _screen = nullptr;
     UlaContention* _ulaContention = nullptr;
+    bool _contentionSwitch = true;  // 'contention' feature (SetContentionSwitch)
 
     ROMModeEnum _mode = ROMModeEnum::RM_NOCHANGE;
 
     // Memory interface selection (neogs-zxdma-design.md §5.3): Z80::MemIf is
     // only ever written by SelectMemoryInterface, under this lock, from the
-    // debug flag and the installed bus overlay
+    // debug flag, the contention in effect and the installed bus overlay
     std::mutex _memIfMutex;
-    std::atomic<bool> _memIfDebug{false};
     HostBusOverlay* _busOverlay = nullptr;
     /// endregion </Fields>
 
@@ -122,12 +122,14 @@ public:
 
     // Configuration methods
 public:
-    void UseFastMemoryInterface();   // SetDebugMemoryInterface(false)
-    void UseDebugMemoryInterface();  // SetDebugMemoryInterface(true)
-
-    /// Fast or debug memory path. Any thread; keeps an installed bus overlay.
-    void SetDebugMemoryInterface(bool debug);
-    bool IsDebugMemoryInterface() const { return _memIfDebug.load(std::memory_order_relaxed); }
+    /// The one place that decides which memory interface the CPU runs on, from three independent inputs:
+    /// Fast or Debug by the debugger (Z80::isDebugMode), plain or contended by whether the machine's video
+    /// contention is in effect (UlaContention::IsContentionEnabled; with it the I/O contention rule,
+    /// Z80::ioContention), and with or without the installed host bus overlay (SetBusOverlay). The plain
+    /// Fast / Debug interfaces are selected whenever there is neither contention nor an overlay. Called
+    /// whenever an input changes (debug mode, video mode / model via Screen::InitRaster, an overlay) and at
+    /// every frame start; cheap (a lock and a few loads and stores). Any thread
+    void SelectMemoryInterface();
 
     /// Install (or with nullptr remove) the host bus overlay. Only one at a
     /// time: returns false, and changes nothing, if another is installed.
@@ -135,9 +137,25 @@ public:
     bool SetBusOverlay(HostBusOverlay* overlay);
     HostBusOverlay* GetBusOverlay() const { return _busOverlay; }
 
-private:
-    void SelectMemoryInterfaceLocked();  // Z80::MemIf and Memory's overlay from the two inputs
-public:
+    /// The 'contention' feature (FeatureManager::onFeatureChanged): off runs a contended machine uncontended.
+    /// Re-selects the interface
+    void SetContentionSwitch(bool on)
+    {
+        _contentionSwitch = on;
+        SelectMemoryInterface();
+    }
+    bool IsContentionSwitchOn() const { return _contentionSwitch; }
+
+    /// Contention in effect: the machine has a rule and the switch is on
+    bool IsContentionEffective() const;
+
+    /// Whether the CPU waits for the video logic on accesses to a 16K slot (0-3) right now: contention in
+    /// effect and a contended page mapped there. The one answer every memory map reports
+    bool IsSlotContended(uint8_t slot) const;
+
+    /// Name of the selected memory interface: "fast", "debug", "fast_contended", "debug_contended", and
+    /// "..._overlay" for each with the host bus overlay installed
+    const char* GetMemoryInterfaceName() const;
 
     // Z80 Core-related methods
 public:
@@ -151,8 +169,12 @@ public:
     uint16_t GetCPUFrequencyMultiplier();
 
     // Speed multiplier control: 1x (default), 2x, 4x, 8x, 16x
-    void SetSpeedMultiplier(uint8_t multiplier);
+    /// @return false when refused: while TTD is recording only 1x is accepted
+    bool SetSpeedMultiplier(uint8_t multiplier);
+    bool CanSetSpeedMultiplier(uint8_t multiplier) const;
     uint8_t GetSpeedMultiplier() const;
+    /// Host speed control setting (1x..16x) without the emulated hardware turbo
+    uint8_t GetHostSpeedMultiplier() const;
 
     // Turbo/Max speed mode control
     void EnableTurboMode(bool withAudio = false);

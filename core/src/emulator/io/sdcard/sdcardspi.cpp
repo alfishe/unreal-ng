@@ -1,9 +1,13 @@
+#include "stdafx.h"
+
 #include "sdcardspi.h"
 
 #include <algorithm>
 #include <cstring>
 
 #include "common/statebytes.h"
+#include "emulator/io/storage/rawimage.h"
+#include "emulator/io/storage/sessionwritemap.h"
 
 namespace
 {
@@ -32,37 +36,68 @@ SdCardSpi::~SdCardSpi()
 bool SdCardSpi::open(const std::string& path, WriteMode mode, Type type)
 {
     close();
-    _writeMode = mode;
-    _file = fopen(path.c_str(), mode == WriteMode::Persist ? "r+b" : "rb");
-    if (!_file)
+    auto image = RawImage::Open(path, mode == WriteMode::Persist ? RawImage::Access::ReadWrite : RawImage::Access::ReadOnly);
+    if (!image)
         return false;
+    const bool inserted = insert(std::move(image), mode, type);
     _path = path;
+    return inserted;
+}
 
-    fseek(_file, 0, SEEK_END);
-    const long long size = ftell(_file);
-    fseek(_file, 0, SEEK_SET);
-    _blocks = static_cast<uint64_t>(std::max<long long>(size, 0) + static_cast<long long>(BLOCK) - 1) / BLOCK;
+bool SdCardSpi::insert(std::unique_ptr<IBlockDevice> media, WriteMode mode, Type type)
+{
+    close();
+    if (!media)
+        return false;
 
+    _writeMode = mode;
+    _blocks = media->SectorCount();
+    _path = media->Describe();
+    if (mode == WriteMode::Session)
+    {
+        auto session = std::make_unique<SessionWriteMap>(std::move(media));
+        _session = session.get();
+        _media = std::move(session);
+    }
+    else
+    {
+        _media = std::move(media);
+    }
+    _device = _media.get();
+    ApplyType(type);
+    powerOn();
+    return true;
+}
+
+bool SdCardSpi::attach(IBlockDevice& medium, Type type)
+{
+    close();
+    _device = &medium;
+    _blocks = medium.SectorCount();
+    _path = medium.Describe();
+    _writeMode = medium.IsWritable() ? WriteMode::Persist : WriteMode::Off;
+    ApplyType(type);
+    powerOn();
+    return true;
+}
+
+void SdCardSpi::ApplyType(Type type)
+{
     switch (type)
     {
         case Type::SDSC: _sdhc = false; break;
         case Type::SDHC: _sdhc = true; break;
         default: _sdhc = _blocks * BLOCK > SDSC_LIMIT; break;
     }
-    powerOn();
-    return true;
 }
 
 void SdCardSpi::close()
 {
-    if (_file)
-    {
-        fclose(_file);
-        _file = nullptr;
-    }
+    _session = nullptr;
+    _device = nullptr;
+    _media.reset();
     _path.clear();
     _blocks = 0;
-    _overlay.clear();
     powerOn();
 }
 
@@ -98,38 +133,24 @@ void SdCardSpi::truncatedByte()
     _cmdLength = 0;
 }
 
-bool SdCardSpi::readBlock(uint64_t block, uint8_t* out) const
+bool SdCardSpi::readBlock(uint64_t block, uint8_t* out)
 {
-    if (!_file || block >= _blocks)
+    if (!_device || block >= _blocks)
         return false;
-    const auto overlay = _overlay.find(block);
-    if (overlay != _overlay.end())
+    if (!_device->ReadSector(block, out))
     {
-        memcpy(out, overlay->second.data(), BLOCK);
-        return true;
+        // A host read error: the card still delivers a block (a real card
+        // would answer with a data error token; no driver here handles one)
+        memset(out, 0, BLOCK);
     }
-    memset(out, 0, BLOCK);
-    fseek(_file, static_cast<long>(block * BLOCK), SEEK_SET);
-    (void)fread(out, 1, BLOCK, _file);
     return true;
 }
 
 bool SdCardSpi::writeBlock(uint64_t block, const uint8_t* data)
 {
-    if (!_file || block >= _blocks || _writeMode == WriteMode::Off)
+    if (!_device || block >= _blocks || _writeMode == WriteMode::Off)
         return false;
-    if (_writeMode == WriteMode::Persist)
-    {
-        fseek(_file, static_cast<long>(block * BLOCK), SEEK_SET);
-        fwrite(data, 1, BLOCK, _file);
-        fflush(_file);
-    }
-    else
-    {
-        std::array<uint8_t, BLOCK>& copy = _overlay[block];
-        memcpy(copy.data(), data, BLOCK);
-    }
-    return true;
+    return _device->WriteSector(block, data);
 }
 
 uint8_t SdCardSpi::r1Flags() const
@@ -160,7 +181,7 @@ void SdCardSpi::queueBlock(uint64_t block)
 
 uint8_t SdCardSpi::exchange(uint8_t mosi)
 {
-    if (!_file || !_selected)
+    if (!_device || !_selected)
         return 0xFF;
 
     // The card shifts its next byte out while this one comes in
@@ -274,6 +295,9 @@ void SdCardSpi::onCommand()
     // mode every command carries a CRC); anything else is ignored silently
     if (_state == State::PowerOn && (index != 0 || !crcValid))
         return;
+
+    if (_onCommand)
+        _onCommand(index);
 
     // CRC: always for CMD0 and CMD8, for everything once CMD59 enabled it
     if ((_crcOn || index == 0 || index == 8) && !crcValid)

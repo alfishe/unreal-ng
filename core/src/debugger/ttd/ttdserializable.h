@@ -11,8 +11,10 @@
 /// is fixed and known at compile time.
 ///
 /// Design constraints (TDD §6.4):
-///   - No heap allocation in TTDSaveState (runs every frame on the emulator
-///     thread). Callers reserve a buffer of TTDStateSize() bytes up front.
+///   - TTDSaveState writes into a caller-provided buffer of TTDStateSize()
+///     bytes and must not allocate itself (it runs every frame on the emulator
+///     thread). The registry around it does allocate per checkpoint: the blob
+///     vectors and the compression of each payload.
 ///   - Per-payload versioning is not used. Session-level schema versioning
 ///     is handled by SerializeSession/DeserializeSession (ttddumpformat.h).
 ///   - The blob format is the implementer's choice (typically a memcpy of
@@ -56,6 +58,7 @@ enum class PeripheralId : uint8_t
     NeoGS = 12,           // NeoGS card (neogs-tdd.md §7.4): RAM and flash in every blob until TTD v2 regions
     Plus3Paging = 13,     // +2A/+3 #1FFD latch (ROM high bit, all-RAM modes, motor)
     Upd765 = 14,          // +3 uPD765A floppy controller (drives ride the BetaDisk blob)
+    EvoSdCard = 15,       // ZX-Evo Z-Controller + SD card protocol state (not the card's sectors: storage-manager TTD rule)
     // Future: SAA1099, GS512, etc.
     Count
 };

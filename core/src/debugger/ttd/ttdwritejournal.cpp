@@ -166,6 +166,12 @@ namespace
 
 constexpr uint32_t kRecordsPerBlock = 2048;
 
+/// Largest block EncodeBlock can produce: per record a 10-byte varint time delta
+/// plus 7 bytes of columns, and two leading varints. The reader rejects anything
+/// larger before allocating, so a corrupt size cannot request gigabytes.
+constexpr uint32_t kMaxRawBlockBytes = kRecordsPerBlock * 17 + 32;
+constexpr uint32_t kMaxCompressedBlockBytes = kMaxRawBlockBytes * 2;
+
 /// Layout marker for the section. Bumping it invalidates old files, which is
 /// acceptable while the format is pre-release.
 constexpr uint32_t kJournalSectionMagic = 0x4A574C42;  // 'BLWJ'
@@ -399,11 +405,18 @@ bool TTDWriteJournal::Deserialize(std::istream& in, uint64_t count)
     if (count == 0)
         return true;
 
+    // The writer emits exactly ceil(count / kRecordsPerBlock) blocks
+    if (blockCount != (count + kRecordsPerBlock - 1) / kRecordsPerBlock)
+        return false;
+
     std::vector<BlockDirEntry> dir(blockCount);
     for (uint32_t i = 0; i < blockCount; ++i)
     {
         in.read(reinterpret_cast<char*>(&dir[i]), sizeof(BlockDirEntry));
         if (!in)
+            return false;
+        if (dir[i].recordCount == 0 || dir[i].recordCount > kRecordsPerBlock ||
+            dir[i].rawSize > kMaxRawBlockBytes || dir[i].compressedSize > kMaxCompressedBlockBytes)
             return false;
     }
 

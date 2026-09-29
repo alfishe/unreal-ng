@@ -602,6 +602,17 @@ void Screen::SetVideoMode(VideoModeEnum mode)
         _context->pUlaContention->UpdateRaster(cr);
         _context->pUlaContention->SetContentionEnabled(_rasterState.contentionEnabled);
         _context->pUlaContention->SetFetchType((UlaFetchType)_rasterState.fetchType);
+
+        // +2A/+3: the Amstrad gate array, not the Ferranti ULA (its own pattern, contended pages 4-7 in any
+        // slot, no I/O contention, #0FFD floating bus). The slots were mapped before this rule was known
+        const MEM_MODEL model = _context->config.mem_model;
+        _context->pUlaContention->SetGateArray(model == MM_PLUS3 || model == MM_PLUS2A);
+        if (_context->pMemory)
+            _context->pMemory->RefreshSlotContention();
+
+        // The CPU's memory interface follows the contention rule (plain or contended, same Fast/Debug)
+        if (_context->pCore)
+            _context->pCore->SelectMemoryInterface();
     }
 
     // Allocate framebuffer

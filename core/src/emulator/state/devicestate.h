@@ -23,9 +23,13 @@ class EmulatorContext;
 ///   channel/operator with its registers decoded, the live envelope state
 ///   and attenuation from ymfm, key-on mask, pitch in Hz, and the last DAC
 ///   word.
-/// - FDC (Beta Disk WD1793): `Fdc()` registers, decoded status bits, last
-///   command, FSM state, Beta128 system register, DRQ/INTRQ, and all four
-///   drives (inserted image, track, side, motor, write protect, geometry).
+/// - FDC: `Fdc()` reports the machine's disk controller. Beta Disk WD1793:
+///   registers, decoded status bits, last command, FSM state, Beta128 system
+///   register, DRQ/INTRQ, and all four drives (inserted image, track, side,
+///   motor, write protect, geometry). +3 uPD765A (`controller` says which):
+///   phase, main status register, the command in hand with its C H R N,
+///   result bytes, ST0-ST2 decoded, SPECIFY times, the four units' cylinder
+///   and seek state, and drives A and B.
 namespace DeviceState
 {
 StateNode Ay(EmulatorContext* context);
@@ -45,6 +49,13 @@ StateNode Fdc(EmulatorContext* context);
 StateNode Screen(EmulatorContext* context, bool verbose);
 StateNode ScreenMode(EmulatorContext* context);
 StateNode ScreenFlash(EmulatorContext* context);
+
+/// Video memory contention (`Contention()`): the machine's rule (none / ula48 / ula128 / gatearray), whether
+/// it applies, the 'contention' switch and whether contention is in effect, the selected memory interface,
+/// the I/O rule, per slot its mapping and whether the CPU waits there, the +2A/+3 floating-bus latch, and -
+/// while the debugger is on - contended accesses and wait T-states per kind (fetch / read / write / io) for
+/// the current frame, the last frame and in total.
+StateNode Contention(EmulatorContext* context);
 
 /// Human-readable rendering (CLI): "key: value" lines, nested by indentation,
 /// arrays as "[index]" blocks

@@ -118,6 +118,47 @@ protected:
         return out;
     }
 
+    /// One sector of a synthetic EDSK track
+    struct EdskSector
+    {
+        uint8_t c, h, r, n, st1, st2;
+        std::vector<uint8_t> data;  // Stored bytes (the EDSK "actual length")
+    };
+
+    /// A one-track, one-side Extended DSK image written to scratch; returns its path
+    static std::string writeEdsk(const char* name, const std::vector<EdskSector>& sectors)
+    {
+        std::vector<uint8_t> track(256, 0);
+        std::memcpy(track.data(), "Track-Info\r\n", 12);
+        track[0x14] = 2;
+        track[0x15] = static_cast<uint8_t>(sectors.size());
+        track[0x16] = 0x2A;
+        track[0x17] = 0xE5;
+        for (size_t i = 0; i < sectors.size(); i++)
+        {
+            uint8_t* e = track.data() + 0x18 + i * 8;
+            const EdskSector& s = sectors[i];
+            e[0] = s.c; e[1] = s.h; e[2] = s.r; e[3] = s.n; e[4] = s.st1; e[5] = s.st2;
+            e[6] = static_cast<uint8_t>(s.data.size() & 0xFF);
+            e[7] = static_cast<uint8_t>(s.data.size() >> 8);
+        }
+        for (const EdskSector& s : sectors) track.insert(track.end(), s.data.begin(), s.data.end());
+        track.resize((track.size() + 255) & ~size_t(255), 0);
+
+        std::vector<uint8_t> disk(256, 0);
+        std::memcpy(disk.data(), "EXTENDED CPC DSK File\r\nDisk-Info\r\n", 34);
+        disk[0x30] = 1;  // tracks
+        disk[0x31] = 1;  // sides
+        disk[0x34] = static_cast<uint8_t>(track.size() / 256);
+        disk.insert(disk.end(), track.begin(), track.end());
+
+        const std::string path = TestPathHelper::GetUniqueTestScratchPath(name);
+        FILE* f = fopen(path.c_str(), "wb");
+        fwrite(disk.data(), 1, disk.size(), f);
+        fclose(f);
+        return path;
+    }
+
     /// Load a fixture through the loader; returns the image (caller owns it)
     DiskImage* load(const char* name, std::vector<std::string>* warnings = nullptr)
     {
@@ -414,6 +455,48 @@ TEST_F(LoaderDSK_Test, Load_WeakSector_MultiCopy)
     EXPECT_FALSE(image->getTrackForCylinderAndSide(6, 0)->hasWeakBits());
 
     delete image;
+}
+
+/// A sector of size code 6 (8 KB, Speedlock +3 style) stored as 0x1800 bytes: the data field in the stream holds
+/// all the dumped bytes, the sector keeps N = 6, the next sector is intact, and a save stores the same 0x1800 bytes
+TEST_F(LoaderDSK_Test, Load_LongSector_KeepsTheDumpedBytes)
+{
+    const std::vector<uint8_t> small = patternBlock(0, 0, 512);
+    const std::vector<uint8_t> big = patternBlock(0, 1, 0x1800);
+    const std::string path = writeEdsk("dsk-n6.dsk", { { 0, 0, 1, 2, 0x00, 0x00, small },
+                                                       { 0, 0, 2, 6, 0x20, 0x20, big },
+                                                       { 0, 0, 3, 2, 0x00, 0x00, small } });
+
+    LoaderDSK loader(_context, path);
+    ASSERT_TRUE(loader.loadImage());
+    DiskImage* image = loader.getImage();
+    DiskImage::Track* track = image->getTrackForCylinderAndSide(0, 0);
+    ASSERT_EQ(track->sectorCount(), 3u);
+
+    const DiskImage::Sector* longSector = track->findSector(2);
+    ASSERT_NE(longSector, nullptr);
+    EXPECT_EQ(longSector->sizeCode(), 6);
+    ASSERT_GE(track->rawSize(), longSector->dataOffset + big.size());
+    EXPECT_EQ(0, std::memcmp(track->rawData() + longSector->dataOffset, big.data(), big.size()))
+        << "all 0x1800 dumped bytes are in the stream";
+    EXPECT_FALSE(longSector->dataCrcValid) << "the dump's CRC error stays";
+    EXPECT_EQ(sectorData(track->findSector(1)), small);
+    EXPECT_EQ(sectorData(track->findSector(3)), small) << "the sector after the long one is intact";
+
+    // Save and load again: the same bytes
+    const std::string saved = TestPathHelper::GetUniqueTestScratchPath("dsk-n6-saved.dsk");
+    ASSERT_TRUE(loader.writeImage(saved)) << (loader.lastWarnings().empty() ? "" : loader.lastWarnings()[0]);
+    LoaderDSK reloader(_context, saved);
+    ASSERT_TRUE(reloader.loadImage());
+    DiskImage::Track* again = reloader.getImage()->getTrackForCylinderAndSide(0, 0);
+    const DiskImage::Sector* reloaded = again->findSector(2);
+    ASSERT_NE(reloaded, nullptr);
+    EXPECT_EQ(0, std::memcmp(again->rawData() + reloaded->dataOffset, big.data(), big.size()));
+
+    delete reloader.getImage();
+    delete image;
+    removeFile(path);
+    removeFile(saved);
 }
 
 TEST_F(LoaderDSK_Test, Load_Unformatted_Track)

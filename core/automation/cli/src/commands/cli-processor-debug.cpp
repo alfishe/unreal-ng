@@ -393,14 +393,14 @@ void CLIProcessor::HandleDebugMode(const ClientSession& session, const std::vect
 
     if (mode == "on")
     {
-        core->UseDebugMemoryInterface();
         core->GetZ80()->isDebugMode = true;
+        core->SelectMemoryInterface();
         response = "Debug mode enabled (slower, with breakpoint support)" + std::string(NEWLINE);
     }
     else if (mode == "off")
     {
-        core->UseFastMemoryInterface();
         core->GetZ80()->isDebugMode = false;
+        core->SelectMemoryInterface();
         response = "Debug mode disabled (faster, no breakpoints)" + std::string(NEWLINE);
     }
     else

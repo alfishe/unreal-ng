@@ -1092,6 +1092,8 @@ link to each other.
 > `FILE*` (raw image, host folder, memory disk), and `WriteMode::Session` uses the
 > shared `SessionWriteMap` decorator instead of a private overlay. The ATM3 and
 > TS-Conf Z-Controller ports share one `ZControllerSpi` glue.
+>
+> **2026-09-28: done on master** by ZX-Evo E5 ([e5-sd-card.md](../2026-09-15-atm-baseconf-highres-ports/e5-sd-card.md) §2). When `neogs` merges, take master's `sdcardspi.{h,cpp}` (a superset of the branch API, same state blob); `spidevice.h`, `statebytes.h` and `fatimagebuilder.h` are identical.
 
 ### 5.5 SD card (`SdCardSpi`)
 
@@ -1507,30 +1509,36 @@ earlier):
     size, up to 4.5 MB a checkpoint.
   - The recording veto built for the first decision
     (`TTDSerializable::TTDCanRecord`, asked by `StartRecording`) is removed:
-    nothing else used it. A switch to NGS during a recording is allowed;
-    `UpdatePeripheral` moves the registration.
+    nothing else used it. Since the merge with master (2026-09-28) a GS card
+    switch follows master's rule FR-4: refused while a user recording runs
+    (`RecordingGuard(SwitchGsCard)`); a stopped session or a debugger's live
+    history is dropped (`InvalidateSession("gs-card-switch")`), and
+    `UpdatePeripheral` re-points a live history's registration.
 - **The SD card's sectors are not in the blob**: an image can be gigabytes,
   and the session overlay grows without bound. Only the protocol state is.
   So a card write is a replay barrier: every accepted block calls
-  `SdCardSpi::setWriteListener`'s listener, and the card records a
-  `DiskWrite` external-event marker, at most one a frame.
+  `SdCardSpi::setWriteListener`'s listener, which reports it to the media
+  manager (`MediaManager::NoteWrite("sd.ngs")`); the manager records a
+  `DiskWrite` external-event marker, at most one a frame - the rule for
+  every block slot.
 - **The configuration is fixed while a recording runs** (decided 2026-09-28).
   The SD card is external media: its contents are fixed data for the whole
   recording, and TTD records only how the card answers on its ports. So
-  inserting or ejecting the card is refused while TTD records - the card
-  itself refuses (`insertSdCard` / `ejectSdCard` return false with a
-  warning), and the automation surfaces report it before they ask. A flash
-  save changes nothing in the machine and is allowed.
-- **Media requests run on the machine's thread.** Automation (CLI, WebAPI,
-  MCP, Lua, Python) calls `neogsmedia.h`: `NeoGSRequestSdInsert`,
-  `NeoGSRequestSdEject`, `NeoGSRequestFlashSave`. They check on the
-  caller's thread (NeoGS fitted, not recording, the image exists) and hand
-  the action to `TimeTravelManager::SubmitMachineTask`. While the emulator
-  loop runs on another thread the task is queued and the loop runs it at the
-  next instruction boundary (the live-input path: `ttdInputWork`,
-  `ServiceInput`); otherwise it runs at once. So the card is never changed
-  while its CPU reads the SD card. Tasks are not journaled (they are not
-  replayable input) and are refused while a replay owns the machine.
+  inserting or ejecting the card is refused while TTD records - the media
+  manager refuses it for every slot (`MediaManager::CheckRecording`), and
+  the automation surfaces report it before they ask. A flash save changes
+  nothing in the machine and is allowed.
+- **SD media go through the media manager.** The card's SD slot is the
+  manager's `sd.ngs` (§7.6). Automation (CLI, WebAPI, MCP, Lua, Python) and
+  the GUI call `neogsmedia.h`: `NeoGSRequestSdInsert` / `NeoGSRequestSdEject`
+  check on the caller's thread (NeoGS fitted, not recording, no replay, an
+  image or a folder at the path) and pass the request to the manager, which
+  opens the medium on the caller's thread and attaches it at the next frame
+  boundary (at once while the machine is not running). So the card is never
+  changed while its CPU reads the SD card. `NeoGSRequestFlashSave` hands the
+  save to `TimeTravelManager::SubmitMachineTask` (run at the next
+  instruction boundary). Neither is journaled (not replayable input), and
+  both are refused while a replay owns the machine.
 - **GS-slot guard.** A recording made with one GS personality refuses to load
   into a machine configured with another, with the message "recorded with
   NeoGS, fitted: GS". This mirrors the TurboSound guard
@@ -1557,7 +1565,8 @@ The SD media fields follow the shared `SdCardState` descriptor (§5.4).
 
 | Where | How | When |
 |---|---|---|
-| Config | `[NGS] SDCardImage=<raw image>` (alias `SDCARD`) | The card is in the slot when the machine starts |
+| Config | `[MEDIA] sd.ngs = <image or folder>`, or the legacy `[NGS] SDCardImage=` (alias `SDCARD`) | The card is in the slot when the machine starts, or when NeoGS is fitted later |
+| Media manager | `media insert sd.ngs <image or folder>` / `media eject sd.ngs` (CLI, WebAPI, MCP), the GUI's media panel | Any time |
 | GUI | Audio Settings, section "General Sound slot: NeoGS": Insert... / Eject | Any time |
 | CLI | `gs sd insert <image>` / `gs sd eject` | Any time |
 | WebAPI | `POST /api/v1/emulator/{id}/control/audio/gs` with `{"action": "sd_insert", "path": "<image>"}` or `{"action": "sd_eject"}` | Any time |
@@ -1566,12 +1575,28 @@ The SD media fields follow the shared `SdCardState` descriptor (§5.4).
 
 "Any time" has two exceptions: while TTD records (the machine's
 configuration is fixed for the recording) and while a TTD replay owns the
-machine; both refuse with a message. A relative path is looked up from the
-current folder, then from the emulator's folder. The image is a raw card
-image (FAT16 or FAT32, with or without an MBR); writes follow
-`[NGS] SDWrite`. There is no main-menu item (as for disks and tapes) yet.
+machine; both refuse with a message. A relative path in a config is
+relative to the config file; elsewhere to the current folder. The card is a
+raw image (FAT16 or FAT32, with or without an MBR) or a host folder, which
+the media manager turns into a FAT volume (FAT16 by default). Writes follow
+`[NGS] SDWrite` (or `[MEDIA] sd.ngs.access`).
 
-### 7.6 Debugger
+### 7.6 The SD slot `sd.ngs` (media manager)
+
+Since the merge with master (2026-09-28) the card's SD slot belongs to
+master's media manager (`docs/inprogress/2026-09-28-storage-manager/`,
+`integration-neogs-sd.md`):
+
+| | |
+|---|---|
+| Slot | `SoundChip_NeoGS::SdSlot`, id `sd.ngs`, Block, removable, swap delay 500 ms, accepts folders (FAT16 by default), card detect and write-protect switch (SSTAT bits 1 and 2), tags `sd neogs addon` |
+| Lifetime | registered at the end of the card's constructor, unregistered in its destructor: the slot exists only while NeoGS is fitted. Switching the card away parks the medium with its session writes; a NeoGS fitted again gets it back |
+| Configured media | at machine creation `MediaManager::ApplyConfiguredMedia` inserts `[MEDIA] sd.ngs` / `[NGS] SDCardImage`. A NeoGS fitted later (a card switch) gets the configured medium when its slot registers, unless a parked one comes back |
+| Attach | `SdCardSpi::attach(medium, [NGS] SDType)`; the card reads the medium's block stack (session map or read-only guard as the access mode says) |
+| Writes | `NoteWrite("sd.ngs")` per block: the TTD barrier |
+| Without a manager | bare contexts in unit tests: `NeoGSConfig::sdCardPath` opens the image directly (`SdCardSpi::open`), as before |
+
+### 7.7 Debugger
 
 The NeoGS card supplies the `neogs` debug target from the GS debugger design
 (`2026-09-27-gs-debugger/design.md`, requirements N1-N5):

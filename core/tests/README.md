@@ -430,12 +430,13 @@ via one of:
 - `TestPathHelper::GetScratchDir()` - the `<project_root>/scratch` directory itself (created on demand).
 - `TestPathHelper::GetTestScratchPath("name.ext")` - an absolute path under `scratch/` with a fixed leaf name.
   Fine for a test that never runs concurrently with another copy of itself writing the same name.
-- `TestPathHelper::GetUniqueTestScratchPath("name.ext")` - the same, with the current process id inserted into
-  the filename stem (`name.ext` -> `name_29987.ext`). Parallel GTest shards (see
+- `TestPathHelper::GetUniqueTestScratchPath("name.ext")` - the same, placed inside the per-process scratch
+  directory (`scratch/<pid>/name.ext`). Parallel GTest shards (see
   [Parallel Test Execution](#parallel-test-execution)) run several copies of the test binary concurrently, so any
   scratch artifact with a name shared across processes lets one shard's cleanup delete another shard's
   in-progress file - prefer this over `GetTestScratchPath` whenever a test could plausibly run under sharding
-  (which, in practice, is essentially always).
+  (which, in practice, is essentially always). The per-process directory is removed automatically when the
+  process exits, so per-test cleanup is optional; set `UNREAL_TEST_KEEP_SCRATCH=1` to keep it for debugging.
 
 Never write to the OS temp directory or a hardcoded path (`/tmp/...`, `C:\Temp\...`) - those aren't cleaned up
 by CI and aren't scoped to the repository. See
@@ -1067,7 +1068,7 @@ done
 wait
 ```
 
-**Note:** Tests must be isolated for parallel execution - and that includes isolation across the parallel shard *processes*, not just between tests in one process. Every file a test writes must live under `<project>/scratch/` with a per-process unique name - use `TestPathHelper::GetUniqueTestScratchPath("name.ext")`, which inserts the PID into the filename stem while preserving the extension - never in the OS temp directory or a hardcoded path like `C:\Temp`, because a fixture `TearDown` doing `remove_all` on a fixed shared directory deletes another shard's files mid-test. If a test fails only in parallel, check for:
+**Note:** Tests must be isolated for parallel execution - and that includes isolation across the parallel shard *processes*, not just between tests in one process. Every file a test writes must live under `<project>/scratch/` with a per-process unique name - use `TestPathHelper::GetUniqueTestScratchPath("name.ext")`, which places the file in the per-process directory `scratch/<pid>/` (removed automatically at process exit) while preserving the extension - never in the OS temp directory or a hardcoded path like `C:\Temp`, because a fixture `TearDown` doing `remove_all` on a fixed shared directory deletes another shard's files mid-test. If a test fails only in parallel, check for:
 - Static/global variables modified between tests
 - Singleton state not reset in TearDown
 - File system conflicts (scratch files/directories with fixed names shared across processes)
@@ -1111,6 +1112,11 @@ the trailing cleanup call entirely - the destructor fires on every exit path a n
 (`ASSERT_*` early return included), the same way it would for any other stack-local RAII object. A directory
 tree needs the same treatment with `std::filesystem::remove_all` instead of `remove` (see `ScopedTestDir` in
 `core/tests/common/filehelper_test.cpp`).
+
+Since artifacts now live in the per-process directory `scratch/<pid>/`, which is removed at process exit,
+`ScopedTestFile` is no longer required to prevent accumulation - but it is still the right tool when a test
+should not leave its files behind for the remainder of a long suite run, or when a test intentionally creates
+many files and wants them gone as soon as it ends.
 
 One caveat: `EXPECT_EQ`/`ASSERT_EQ` and other GoogleTest comparisons resolve `operator==` through template
 argument deduction, which does **not** invoke the class's implicit `operator const std::string&()` conversion

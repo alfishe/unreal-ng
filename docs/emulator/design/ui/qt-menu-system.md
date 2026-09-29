@@ -96,7 +96,7 @@ A comprehensive cross-platform menu system has been implemented for the Unreal S
 | F2 | 2x speed (Fast) |
 | F3 | 4x speed (Very Fast) |
 | F4 | 8x speed (Extreme) |
-| Tab | Hold for Turbo Mode |
+| Tab | Toggle Turbo Mode (unavailable while TTD is recording) |
 
 ### Debug Control
 | Shortcut | Action |

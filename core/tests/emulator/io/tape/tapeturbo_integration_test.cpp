@@ -387,9 +387,8 @@ TEST_F(TapeTurbo_Integration_Test, ManualTurboOwnershipUnderLiveMainLoop)
     EXPECT_FALSE(core->IsTurboMode()) << "Suppression must hold warp off while playback continues (E6)";
     EXPECT_FALSE(controller->IsAutoTurboActive());
 
-    // Playback over (API stop — the CLI/WebAPI/Qt stop path): the veto dies
-    // with the session
-    context->pTape->stopPlayback();
+    // Playback over (the tape ran out): the veto dies with the session
+    static_cast<TapeCUT*>(context->pTape)->EndOfTape();
     for (int i = 0; i < 3; i++)
         mainLoop->RunFrame();
     ASSERT_FALSE(context->pTape->IsPlaying());
@@ -406,7 +405,7 @@ TEST_F(TapeTurbo_Integration_Test, ManualTurboOwnershipUnderLiveMainLoop)
     EXPECT_TRUE(core->IsTurboMode()) << "Manual warp must survive playback start untouched (E5)";
     EXPECT_FALSE(controller->IsAutoTurboActive()) << "Controller must not claim a warp it does not own";
 
-    context->pTape->stopPlayback();
+    static_cast<TapeCUT*>(context->pTape)->EndOfTape();
     for (int i = 0; i < 3; i++)
         mainLoop->RunFrame();
     EXPECT_FALSE(context->pTape->IsPlaying());

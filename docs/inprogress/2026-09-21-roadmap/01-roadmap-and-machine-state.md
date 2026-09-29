@@ -140,6 +140,7 @@ After Profi, BaseConf and GS land, capture real sessions: a demo, a game, an OS/
 - **ST-3** Register HDD/IDE in the TTD registry. SD (Z-controller) is designed with the overlay from day one.
 - **ST-4** Verify whether WD1793/FDD writes through the universal track model are already captured in TTD. If only controller state is captured, extend to track data via the overlay.
 - **ST-5** A host-directory-backed virtual FAT (see toolchain doc §13.2) plugs in as an alternative base; the overlay semantics stay identical.
+- **ST-6** (2026-09-28) Media come from the unified media manager ([2026-09-28-storage-manager](../2026-09-28-storage-manager/technical-design.md), PLAN #58): slots, media identity (`Medium::ContentId`, source, format, access), the `SessionWriteMap` session layer (becomes the journaled overlay of ST-1 in its phase M7) and `HostFolderFat` (the ST-5 base). TTD v2 takes media identity and the overlay from there instead of building its own. **TTD v1 does not handle media**: it works with the peripherals and media present, loads and stores none of them; its sessions record at port level, so a recorded response never changes on replay.
 
 ---
 
@@ -172,6 +173,7 @@ snapshot.uns/                    (folder or single archive)
 - **UNS-3** Media: embed small images; reference large ones by content hash with an optional embedded COW overlay.
 - **UNS-4** Import/export for `.sna`, `.z80` (existing loaders) and optionally `.szx`, mapping to/from registry state.
 - **UNS-5** UNS is the fixture format for tests, LLM recipes and bug reports.
+- **UNS-6** (2026-09-28) The manifest's media section is the media set of the unified media manager ([2026-09-28-storage-manager](../2026-09-28-storage-manager/technical-design.md)): per slot the slot id, source (path, relative when possible), format, access mode, `ContentId` (including a hash of session changes) and the dirty flag. On load the manager compares it with what is inserted and **reports** mismatches ("expects EYEACHE.TRD in fdd.b, the drive is empty"); it never swaps media by itself. The GUI offers "insert the expected media" as an explicit action. Embedding (UNS-3) stays optional for small media.
 
 ---
 

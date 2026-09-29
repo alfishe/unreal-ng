@@ -60,7 +60,6 @@ static bool TryBeta128MirrorPort(uint16_t port, bool wideDecode, uint16_t& canon
 
 PortDecoder_Scorpion256::PortDecoder_Scorpion256(EmulatorContext* context) : PortDecoder(context)
 {
-    _7FFD_Locked = false;
     _savedP7FFDValid = false;
 }
 
@@ -107,7 +106,6 @@ void PortDecoder_Scorpion256::reset()
     _screen->SetBorderColor(COLOR_BLACK);
 
     // Reset memory paging lock latch
-    _7FFD_Locked = false;
     _savedP7FFDValid = false;
 
     // SMUC stub: re-arm the serial-link lines (the EEPROM image itself is
@@ -828,7 +826,7 @@ void PortDecoder_Scorpion256::Port_7FFD(uint8_t value, uint16_t pc)
         _savedP7FFDValid = false;
     }
 
-    if (!_7FFD_Locked)
+    if (!IsPagingLocked())
     {
         _state->p7FFD = value;
         memory.UpdateZ80Banks();
@@ -836,8 +834,6 @@ void PortDecoder_Scorpion256::Port_7FFD(uint8_t value, uint16_t pc)
         uint8_t screenNumber = (value & 0b00001000) >> 3;  // 0 = Normal (Bank 5), 1 = Shadow (Bank 7)
         SpectrumScreenEnum screen = screenNumber ? SCREEN_SHADOW : SCREEN_NORMAL;
         _screen->SetActiveScreen(screen);
-
-        _7FFD_Locked = value & 0b00100000;
     }
 
     MLOGDEBUG(memory.DumpMemoryBankInfo());
@@ -895,7 +891,7 @@ void PortDecoder_Scorpion256::Port_1FFD(uint8_t value, uint16_t pc)
 
     if (monitorWasOn && !monitorNowOn && pc == 0x000B && _savedP7FFDValid)
     {
-        if (!_7FFD_Locked)
+        if (!IsPagingLocked())
             _state->p7FFD = _savedP7FFD;
     }
 

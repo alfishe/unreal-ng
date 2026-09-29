@@ -13,6 +13,8 @@
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/media/mediamanager.h"
+#include "emulator/media/medium.h"
 #include "emulator/sound/chips/gs/gshostclock.h"
 #include "emulator/sound/chips/neogs/neogsflashimages.h"
 
@@ -78,7 +80,13 @@ SoundChip_NeoGS::SoundChip_NeoGS(EmulatorContext* context, const NeoGSConfig& co
     _runner.bind(_cpu, this);
 
     _sd = std::make_unique<SdCardSpi>();
-    _sd->setWriteListener([this](uint64_t) { markSdWrite(); });
+    // TTD: the card's protocol state is in the blob, its sectors are not; a
+    // guest write changes the medium, so it is a replay barrier (the media
+    // manager's rule: at most one a frame)
+    _sd->setWriteListener([this](uint64_t) {
+        if (_context && _context->pMediaManager)
+            _context->pMediaManager->NoteWrite(SD_SLOT_ID);
+    });
     _spi.attach(NeoGSSpi::SD, _sd.get());
     if (_config.mp3Support != NGSMP3SupportKind::None)
     {
@@ -94,10 +102,22 @@ SoundChip_NeoGS::SoundChip_NeoGS(EmulatorContext* context, const NeoGSConfig& co
     _zx.setAvailable(_config.fpga == NeoGSConfig::Fpga::Current); // fpgaD has no DMA
     _zx.setWatchFrames(_config.zxDmaWatchFrames);
     _zx.setWatchAlways(_config.zxDmaWatch == NeoGSConfig::ZxDmaWatch::Always);
-    if (_config.sdCardPath[0])
-        openSdImage(_config.sdCardPath);
+    _sdWriteProtect = _config.sdWriteProtect;
 
     coldBoot();
+
+    // The slot goes to the media manager last: registering may attach a
+    // medium at once (one parked when the card was last removed, or the
+    // configured one when the card is fitted at run time), and the card must
+    // be complete by then. At machine creation the configured media follow
+    // (MediaManager::ApplyConfiguredMedia)
+    if (_context && _context->pMediaManager)
+    {
+        _context->pMediaManager->RegisterSlot(_sdSlot);
+        _sdSlotRegistered = true;
+    }
+    else if (_config.sdCardPath[0])
+        openSdImage(_config.sdCardPath);
 }
 
 bool SoundChip_NeoGS::ttdRecording() const
@@ -107,8 +127,21 @@ bool SoundChip_NeoGS::ttdRecording() const
 
 bool SoundChip_NeoGS::insertSdCard(const std::string& path)
 {
-    // The machine's configuration is fixed while a TTD recording runs: the
-    // card's media are fixed data for the recording's whole length
+    if (MediaManager* manager = _sdSlotRegistered ? _context->pMediaManager : nullptr)
+    {
+        MediaSource source;
+        source.path = path;
+        source.type = FileHelper::IsFolder(path) ? MediaSourceType::Folder : MediaSourceType::File;
+        InsertOptions options;
+        options.access = configuredSdAccess(_config);
+        options.writeProtect = _sdWriteProtect;
+        options.disposition = Disposition::Discard; // the card's own call always replaced the card
+        const MediaResult result = manager->Insert(SD_SLOT_ID, source, options);
+        if (!result.Ok())
+            MLOGWARNING("NeoGS: SD card '%s' not inserted: %s", FileHelper::PrintablePath(path).c_str(), result.message.c_str());
+        return result.Ok();
+    }
+    // The machine's configuration is fixed while a TTD recording runs
     if (ttdRecording())
     {
         MLOGWARNING("NeoGS: SD card insert refused - a TTD recording is running");
@@ -117,28 +150,53 @@ bool SoundChip_NeoGS::insertSdCard(const std::string& path)
     return openSdImage(path);
 }
 
+AccessMode SoundChip_NeoGS::configuredSdAccess(const NeoGSConfig& config)
+{
+    switch (config.sdWrite)
+    {
+        case NeoGSConfig::WriteMode::Persist: return AccessMode::WriteThrough;
+        case NeoGSConfig::WriteMode::Off: return AccessMode::ReadOnly;
+        default: return AccessMode::Session;
+    }
+}
+
+SdCardSpi::Type SoundChip_NeoGS::sdType() const
+{
+    return _config.sdType == NeoGSConfig::SDType::SDHC   ? SdCardSpi::Type::SDHC
+         : _config.sdType == NeoGSConfig::SDType::SDSC ? SdCardSpi::Type::SDSC
+                                                       : SdCardSpi::Type::Auto;
+}
+
+void SoundChip_NeoGS::reselectSd()
+{
+    _sd->select((_spi.sctrlRaw() & NeoGSSpi::SCTRL_SD_NCS) == 0);
+}
+
 bool SoundChip_NeoGS::openSdImage(const std::string& path)
 {
     const SdCardSpi::WriteMode mode = _config.sdWrite == NeoGSConfig::WriteMode::Persist ? SdCardSpi::WriteMode::Persist
                                     : _config.sdWrite == NeoGSConfig::WriteMode::Off     ? SdCardSpi::WriteMode::Off
                                                                                          : SdCardSpi::WriteMode::Session;
-    const SdCardSpi::Type type = _config.sdType == NeoGSConfig::SDType::SDHC   ? SdCardSpi::Type::SDHC
-                               : _config.sdType == NeoGSConfig::SDType::SDSC ? SdCardSpi::Type::SDSC
-                                                                             : SdCardSpi::Type::Auto;
-    std::string resolved = FileHelper::NormalizePath(path);
-    if (!FileHelper::FileExists(resolved))
-        resolved = FileHelper::PathCombine(FileHelper::GetExecutablePath(), path);
-    if (!_sd->open(resolved, mode, type))
+    if (!_sd->open(path, mode, sdType()))
     {
         MLOGWARNING("NeoGS: SD card image '%s' cannot be opened - slot left empty", FileHelper::PrintablePath(path).c_str());
         return false;
     }
-    _sd->select((_spi.sctrlRaw() & NeoGSSpi::SCTRL_SD_NCS) == 0);
+    reselectSd();
     return true;
 }
 
 bool SoundChip_NeoGS::ejectSdCard()
 {
+    if (MediaManager* manager = _sdSlotRegistered ? _context->pMediaManager : nullptr)
+    {
+        EjectOptions options;
+        options.disposition = Disposition::Discard; // the programmatic eject of tests and automation wrappers
+        const MediaResult result = manager->Eject(SD_SLOT_ID, options);
+        if (!result.Ok())
+            MLOGWARNING("NeoGS: SD card not ejected: %s", result.message.c_str());
+        return result.Ok();
+    }
     if (ttdRecording())
     {
         MLOGWARNING("NeoGS: SD card eject refused - a TTD recording is running");
@@ -155,22 +213,62 @@ void SoundChip_NeoGS::markReplayBarrier(ttd::TTDExternalEventKind kind, const ch
         _context->pTimeTravelManager->RecordExternalEvent(kind, reason);
 }
 
-void SoundChip_NeoGS::markSdWrite()
+/// region <SD slot>
+
+SoundChip_NeoGS::SdSlot::SdSlot(SoundChip_NeoGS& owner) : _owner(owner)
 {
-    // The card's sectors are not in the TTD blob (neogs-tdd.md §7.4): a seek
-    // back across a write would read the new data. One marker a frame is
-    // enough for the barrier; a multi-block write would flood the journal.
-    const uint32_t frame = currentFrameNumber();
-    if (_sdWriteMarkerFrame == frame)
-        return;
-    _sdWriteMarkerFrame = frame;
-    markReplayBarrier(ttd::TTDExternalEventKind::DiskWrite, "NeoGS SD card write");
+    _descriptor.id = SD_SLOT_ID;
+    _descriptor.kind = MediaKind::Block;
+    _descriptor.label = "SD card (NeoGS)";
+    _descriptor.removable = true;
+    _descriptor.swapDelayMs = 500; // the players poll SD_DET and re-initialize the card
+    _descriptor.acceptsFolder = true;
+    _descriptor.defaultAccess = AccessMode::Session;
+    _descriptor.defaultFs = FatType::Fat16; // the loader's bare-boot-sector path
+    _descriptor.hasCardDetect = true;          // SSTAT bit 1
+    _descriptor.hasWriteProtectSwitch = true;  // SSTAT bit 2
+    _descriptor.tags = {"sd", "neogs", "addon"};
+    _descriptor.guestName = "the NeoGS card's SD slot (NEOGS.ROM, MP3 and module players)";
 }
+
+void SoundChip_NeoGS::SdSlot::Attach(Medium& medium)
+{
+    _owner._sd->attach(*medium.Block(), _owner.sdType());
+    _owner._sdSource = medium.Source().path;
+    _owner.reselectSd();
+}
+
+void SoundChip_NeoGS::SdSlot::Detach()
+{
+    _owner._sd->detach();
+    _owner._sdSource.clear();
+}
+
+bool SoundChip_NeoGS::SdSlot::IsBusy() const
+{
+    return _owner._sd->busy();
+}
+
+void SoundChip_NeoGS::SdSlot::SetWriteProtectSwitch(bool on)
+{
+    _owner._sdWriteProtect = on;
+}
+
+void SoundChip_NeoGS::SdSlot::SourceChanged(Medium& medium)
+{
+    _owner._sdSource = medium.Source().path;
+}
+
+/// endregion </SD slot>
 
 SoundChip_NeoGS::~SoundChip_NeoGS()
 {
     // The host must not call into a card that is going away
     _zx.shutdown();
+
+    // The medium is parked with its session writes until a NeoGS card returns
+    if (_sdSlotRegistered && _context->pMediaManager)
+        _context->pMediaManager->UnregisterSlot(SD_SLOT_ID);
 
     if (_config.flashWrite == NeoGSConfig::WriteMode::Persist && _flash.modified())
         saveFlash();
@@ -468,7 +566,7 @@ bool SoundChip_NeoGS::neogsState(NeoGSStateInfo& out) const
     out.sdPresent = sdCardPresent();
     if (out.sdPresent)
     {
-        out.sdPath = _sd->path();
+        out.sdPath = sdCardImage();
         out.sdSdhc = _sd->isSdhc();
         out.sdSizeBytes = _sd->sizeBytes();
         out.sdBlocksRead = _sd->blocksRead();
@@ -956,7 +1054,7 @@ uint8_t SoundChip_NeoGS::cardIn(uint16_t port)
             const bool sdPresent = sdCardPresent();
             const bool dreq = _mp3 && _mp3->dreq(now);
             // {0000, MCRDY, SD_WP, SD_DET, DREQ}; WP and DET are low-active switches
-            value = static_cast<uint8_t>((mcReady ? 0x08 : 0) | (_config.sdWriteProtect ? 0 : 0x04) |
+            value = static_cast<uint8_t>((mcReady ? 0x08 : 0) | (_sdWriteProtect ? 0 : 0x04) |
                                          (sdPresent ? 0 : 0x02) | (dreq ? 0x01 : 0));
             break;
         }
