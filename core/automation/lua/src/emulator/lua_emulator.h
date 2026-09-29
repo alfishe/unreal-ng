@@ -39,6 +39,7 @@
 #include <emulator/platform.h>
 #include <emulator/ports/portdecoder.h>
 #include <emulator/config.h>
+#include <emulator/io/rtc/rtcaccess.h>
 #include <emulator/state/devicestate.h>
 #include <emulator/video/screendigest.h>
 #include <base/featuremanager.h>
@@ -330,6 +331,8 @@ public:
             out["master_id"] = status.memberIds[0];
             out["locked"] = status.locked;
             out["slaves_running"] = status.slavesRunning;
+            out["parallel_slaves"] = status.parallelSlaves;
+            out["pipelined_slaves"] = status.pipelinedSlaves;
             out["port_3d00"] = status.port3D00;
             out["video_mode"] = status.videoMode;
             sol::table modules = view.create_table();
@@ -1962,6 +1965,56 @@ public:
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, chip ? DeviceState::FmChip(ctx, *chip) : DeviceState::Fm(ctx));
         });
+        lua.set_function("ide_state", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::Ide(emulator->GetContext()));
+        });
+
+        // CMOS clock: the same report and cell access every interface uses
+        // (DeviceState::Rtc, RtcAccess). Cells are numbered as the guest numbers them
+        lua.set_function("rtc_state", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::Rtc(emulator->GetContext()));
+        });
+        lua.set_function("rtc_read", [this](sol::this_state s, int start, sol::optional<int> count) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            std::vector<uint8_t> bytes;
+            std::string error;
+            if (start < 0 || count.value_or(1) < 0 ||
+                !RtcAccess::Read(emulator->GetContext(), static_cast<unsigned>(start),
+                                 static_cast<unsigned>(count.value_or(1)), bytes, error))
+                return mouseError(s, error.empty() ? "start and count must not be negative" : error);
+            sol::state_view view(s);
+            sol::table out = view.create_table();
+            for (size_t i = 0; i < bytes.size(); ++i)
+                out[i + 1] = bytes[i];
+            sol::variadic_results results;
+            results.push_back(out);
+            return results;
+        });
+        lua.set_function("rtc_write", [this](sol::this_state s, int start, sol::table values) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            std::vector<uint8_t> bytes;
+            for (size_t i = 1; i <= values.size(); ++i)
+            {
+                const int v = values.get_or(i, -1);
+                if (v < 0 || v > 255)
+                    return mouseError(s, "Every value must be 0-255");
+                bytes.push_back(static_cast<uint8_t>(v));
+            }
+            std::string error;
+            if (start < 0 || !RtcAccess::Write(emulator->GetContext(), static_cast<unsigned>(start), bytes,
+                                               "Lua rtc_write", error))
+                return mouseError(s, error.empty() ? "start must not be negative" : error);
+            sol::variadic_results results;
+            results.push_back(sol::make_object(s, true));
+            return results;
+        });
+
         lua.set_function("fdc_state", [this](sol::this_state s) -> sol::object {
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, DeviceState::Fdc(ctx));
@@ -2376,6 +2429,8 @@ public:
             info["port_replay_divergences"]  = si.portReplayDivergences;
             if (!si.lastDropReason.empty())
                 info["last_drop_reason"]     = si.lastDropReason;  // "" until a history is dropped
+            if (!si.unavailableReason.empty())
+                info["unavailable_reason"]   = si.unavailableReason;  // e.g. a ZX-Poly member
             info["ttd_available"]            = true;
             return info;
         });

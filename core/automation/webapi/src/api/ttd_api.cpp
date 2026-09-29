@@ -258,6 +258,9 @@ void EmulatorAPI::getTTDStatus(const HttpRequestPtr& req,
     // tells an agent why its recording is gone, e.g. a device TTD cannot follow
     ret["last_drop_reason"]     = info.lastDropReason.empty() ? Json::Value(Json::nullValue)
                                                               : Json::Value(info.lastDropReason);
+    // Why time travel is not available for this machine at all (null when it is)
+    ret["unavailable_reason"]   = info.unavailableReason.empty() ? Json::Value(Json::nullValue)
+                                                                 : Json::Value(info.unavailableReason);
     ret["write_journal_enabled"]    = info.writeJournalEnabled;
     ret["write_journal_complete"]   = info.writeJournalComplete;
     ret["write_journal_wrapped"]    = info.writeJournalWrapped;
@@ -392,6 +395,20 @@ void EmulatorAPI::startTTD(const HttpRequestPtr& req,
 {
     auto* mgr = resolveTTD(id, callback);
     if (!mgr) return;
+
+    // Time travel not available for this machine at all (a ZX-Poly member)
+    if (!mgr->GetUnavailableReason().empty())
+    {
+        Json::Value error;
+        error["error"]   = "Conflict";
+        error["message"] = mgr->GetUnavailableReason();
+        error["state"]   = ttd::TTDSessionStateToString(mgr->GetState());
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
 
     // Parse optional config from JSON body
     bool enableWriteJournal = true;  // default: development mode

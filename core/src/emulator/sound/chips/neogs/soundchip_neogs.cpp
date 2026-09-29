@@ -780,7 +780,12 @@ bool SoundChip_NeoGS::zxInstall(bool installed)
 {
     if (!_context || !_context->pCore)
         return false;
-    return _context->pCore->SetBusOverlay(installed ? &_zx : nullptr);
+    if (!installed)
+    {
+        _context->pCore->RemoveBusOverlay(&_zx);
+        return true;
+    }
+    return _context->pCore->AddBusOverlay(&_zx);
 }
 
 void SoundChip_NeoGS::zxLateStart(int64_t units)

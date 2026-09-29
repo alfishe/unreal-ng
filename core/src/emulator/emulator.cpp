@@ -605,6 +605,14 @@ void Emulator::SetSpeed(BaseFrequency_t speed)
 
 bool Emulator::SetSpeedMultiplier(uint8_t multiplier)
 {
+    // A lockstep group applies the change to all its members at a frame boundary
+    // (it keeps the latest request, so no "same speed" shortcut here)
+    {
+        std::lock_guard<std::mutex> lock(_speedInterceptorMutex);
+        if (_speedInterceptor)
+            return _core->CanSetSpeedMultiplier(multiplier) && _speedInterceptor(multiplier);
+    }
+
     // Re-selecting the current speed is not a change, and a refused one (TTD
     // recording allows only 1x) must not cost the session either
     if (_core->GetHostSpeedMultiplier() == multiplier)
@@ -619,6 +627,12 @@ bool Emulator::SetSpeedMultiplier(uint8_t multiplier)
         _context->pTimeTravelManager->InvalidateSession("speed-multiplier-change");
 
     return _core->SetSpeedMultiplier(multiplier);
+}
+
+void Emulator::SetSpeedChangeInterceptor(std::function<bool(uint8_t)> interceptor)
+{
+    std::lock_guard<std::mutex> lock(_speedInterceptorMutex);
+    _speedInterceptor = std::move(interceptor);
 }
 
 std::string Emulator::RecordingGuard(ttd::TTDGuardedAction action) const

@@ -232,6 +232,19 @@ TEST_F(ProfiPortDecoder_Test, FdcPortsCpmMode)
     EXPECT_EQ(decoder->DecodeFDCPort(0x001F), 0x1F);
 }
 
+/// @brief Outside the DOS / CP/M port set the VG93's registered keys stay undecoded: an IN #FF (or #1F..#7F) from
+///        48 BASIC reads the bus, not the controller (the generic fallback once reached the WD1793 at #00FF)
+TEST_F(ProfiPortDecoder_Test, FdcRegistersSilentOutsideDosAndCpm)
+{
+    DosLatchOff();
+    ASSERT_EQ(State().flags & CF_DOSPORTS, 0);
+    for (uint16_t port : { 0x001F, 0x003F, 0x005F, 0x007F, 0x00FF })
+    {
+        ReadPort(port);
+        EXPECT_FALSE(_context->pPortDecoder->WasLastPortDecoded()) << std::hex << port;
+    }
+}
+
 /// @brief "Modified" ports (ROM14=1 and CPM): #83/#A3/#C3/#E3 registers, #3F system port
 TEST_F(ProfiPortDecoder_Test, FdcPortsModifiedMode)
 {
@@ -381,4 +394,32 @@ TEST_F(ProfiPortDecoder_Test, FramebufferStaysValidAcrossHiResSwitches)
             EXPECT_FALSE(screen->CopyPresentedFramebuffer(standardSized.data(), standardSized.size())) << "switch " << i;
         EXPECT_TRUE(screen->CopyPresentedFramebuffer(right.data(), right.size())) << "switch " << i;
     }
+}
+
+/// @brief The RTC answers only in EXT mode (CP/M + ROM14): #BF / #FF latch the
+///        address, #9F / #DF carry data; outside EXT mode #BF / #FF are the
+///        Beta 128 system port and the clock is untouched
+TEST_F(ProfiPortDecoder_Test, RtcOnlyInExtMode)
+{
+    PortDecoder_Profi* decoder = Decoder();
+    ASSERT_NE(decoder, nullptr);
+    Ds12887& rtc = decoder->GetRtc();
+    rtc.WriteAddress(0x00);
+
+    DosLatchOff();
+    Out7FFD(0x10);  // ROM14
+    ASSERT_FALSE(decoder->IsExtMode());
+    WritePort(0x00BF, 0x40);
+    EXPECT_EQ(rtc.GetAddress(), 0x00) << "not EXT mode: #BF is not the clock";
+
+    OutDFFD(0x20);  // CP/M
+    ASSERT_TRUE(decoder->IsExtMode());
+    WritePort(0x00BF, 0x40);
+    WritePort(0x009F, 0x5A);
+    EXPECT_EQ(rtc.GetAddress(), 0x40);
+    EXPECT_EQ(rtc.PeekRegister(0x40), 0x5A);
+    EXPECT_EQ(ReadPort(0x009F), 0x5A);
+    EXPECT_EQ(ReadPort(0x00DF), 0x5A) << "#DF is the second data port";
+    WritePort(0x00FF, 0x0D);
+    EXPECT_EQ(ReadPort(0x009F), 0x80) << "register D through #FF: battery good";
 }

@@ -4,7 +4,9 @@
 #include "_helpers/testpathhelper.h"
 #include "common/image/imagehelper.h"
 #include "common/modulelogger.h"
+#include "debugger/ttd/timetravelmanager.h"
 #include "emulator/emulator.h"
+#include "emulator/mainloop.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/notifications.h"
 #include "emulator/zxpoly/zxpolygroup.h"
@@ -21,6 +23,7 @@
 #include "3rdparty/message-center/messagecenter.h"
 
 #include <cstdlib>
+#include <sstream>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -628,12 +631,14 @@ TEST_F(ZXPolyPlatform_Test, SlaveDeviceWritesReachTheMachineUnlessDisabled)
 /// the bus - on ZX-Poly the one CPU0's plane supplies. A game that waits for
 /// a bus value must see the same value on every module, or the slaves leave
 /// the loop at a different moment and split off
-TEST_P(ZXPolyGroupModels_Test, FloatingBusValueComesFromTheMaster)
+/// Floating-bus probe: every module loops on IN A,(#FF) until it reads #AA,
+/// then marks #9003. The master's plane never holds #AA, the slaves' planes
+/// are all #AA: a slave that fetched from its own plane would escape the loop
+static void SetUpFloatingBusProbe(ZXPolyGroup& group)
 {
-    CreateGroup(GetParam());
     for (size_t m = 0; m < ZXPolyGroup::MODULES; m++)
-        _group->GetContext(m)->config.floatbus = 1;    // the ini default is off
-    EmulatorContext* master = _group->GetContext(0);
+        group.GetContext(m)->config.floatbus = 1;    // the ini default is off
+    EmulatorContext* master = group.GetContext(0);
     Memory& memory = *master->pMemory;
 
     // loop: IN A,(#FF) ; CP #AA ; JR NZ,loop ; LD A,1 ; LD (#9003),A ; DI ; HALT
@@ -647,9 +652,15 @@ TEST_P(ZXPolyGroupModels_Test, FloatingBusValueComesFromTheMaster)
     cpu.sp = 0x7F00;
     cpu.iff1 = cpu.iff2 = 0;
 
-    _group->ReplicateFromMaster();
+    group.ReplicateFromMaster();
     for (size_t m = 1; m < ZXPolyGroup::MODULES; m++)
-        std::memset(_group->GetContext(m)->pMemory->RAMPageAddress(5), 0xAA, 6912);    // slave planes: #AA
+        std::memset(group.GetContext(m)->pMemory->RAMPageAddress(5), 0xAA, 6912);    // slave planes: #AA
+}
+
+TEST_P(ZXPolyGroupModels_Test, FloatingBusValueComesFromTheMaster)
+{
+    CreateGroup(GetParam());
+    SetUpFloatingBusProbe(*_group);
 
     ZXPolyGroup::Divergence divergence;
     const unsigned done = RunInLockstep(50, divergence);
@@ -658,6 +669,33 @@ TEST_P(ZXPolyGroupModels_Test, FloatingBusValueComesFromTheMaster)
         EXPECT_EQ(_group->GetContext(m)->pMemory->DirectReadFromZ80Memory(0x9003), 0x00) << "module " << m;
 }
 
+/// The same while the slaves' frame overlaps the master's next one (unlimited
+/// speed): the master's floating-bus reads of the frame the slaves are still
+/// running stay available to them
+TEST_P(ZXPolyGroupModels_Test, FloatingBusValueComesFromTheMasterWhilePipelined)
+{
+    CreateGroup(GetParam());    // turbo on every member: unlimited speed
+    SetUpFloatingBusProbe(*_group);
+
+    unsigned overlapped = 0;
+    EmulatorContext* master = _group->GetContext(0);
+    uint64_t lastFrame = ~0ull;
+    master->pCore->GetZ80()->busTraceHook = [&](char, uint16_t, uint8_t) {
+        if (master->emulatorState.frame_counter != lastFrame)
+        {
+            lastFrame = master->emulatorState.frame_counter;
+            overlapped += _group->IsPipelining() ? 1u : 0u;
+        }
+    };
+    _group->RunFrames(50);
+    master->pCore->GetZ80()->busTraceHook = nullptr;
+
+    EXPECT_GT(overlapped, 40u) << "the slaves did not overlap the master";
+    const ZXPolyGroup::Divergence divergence = _group->CheckLockstep();
+    EXPECT_FALSE(divergence.diverged) << "module " << divergence.module << ": " << divergence.what;
+    for (size_t m = 1; m < ZXPolyGroup::MODULES; m++)
+        EXPECT_EQ(_group->GetContext(m)->pMemory->DirectReadFromZ80Memory(0x9003), 0x00) << "module " << m;
+}
 
 /// The group only synchronizes; the model decides what the machine has. A
 /// stock 128K has no TR-DOS ROM (no Beta Disk), so a multiloader disk is
@@ -738,6 +776,55 @@ TEST_P(ZXPolyGroupModels_Test, PictureFollowsTheBeamLineByLine)
     EXPECT_EQ(at(185), palette[7]) << "line 185 was fetched from page 5 (white)";
 }
 
+/// The same at x2 host speed: the frame holds twice the CPU T-states and the
+/// beam runs in base-clock T-states over all of it. The page switch comes
+/// after ~53000 CPU T-states: ~26600 base T - near line 40-55 (at x1 it would
+/// be near line 157-170), so line 100 is already from page 5
+TEST_P(ZXPolyGroupModels_Test, PictureFollowsTheBeamAtHostSpeed)
+{
+    CreateGroup(GetParam());
+    EmulatorContext* master = _group->GetContext(0);
+    Memory& memory = *master->pMemory;
+
+    const std::vector<uint8_t> code = {
+        0x3E, 0x91, 0xED, 0x47, 0xED, 0x5E, 0xFB,          // LD A,#91 ; LD I,A ; IM 2 ; EI
+        0x76,                                              // loop: HALT
+        0x01, 0xFD, 0x7F, 0x3E, 0x08, 0xED, 0x79,          // OUT (#7FFD),#08 - screen page 7
+        0x16, 0x10, 0x06, 0x00, 0x10, 0xFE, 0x15, 0x20, 0xF9, // LD D,16 ; LD B,0 ; DJNZ $ ; DEC D ; JR NZ
+        0x01, 0xFD, 0x7F, 0xAF, 0xED, 0x79,                // OUT (#7FFD),#00 - screen page 5
+        0x18, 0xE7};                                       // JR loop
+    for (size_t i = 0; i < code.size(); i++)
+        memory.DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), code[i]);
+    memory.DirectWriteToZ80Memory(0x91FF, 0x00);
+    memory.DirectWriteToZ80Memory(0x9200, 0x82);
+    const uint8_t handler[] = {0xFB, 0xED, 0x4D};           // EI ; RETI
+    for (size_t i = 0; i < sizeof(handler); i++)
+        memory.DirectWriteToZ80Memory(static_cast<uint16_t>(0x8200 + i), handler[i]);
+
+    std::memset(memory.RAMPageAddress(5), 0xFF, 6144);     // page 5: all ink
+    std::memset(memory.RAMPageAddress(5) + 6144, 0x07, 768);
+    std::memset(memory.RAMPageAddress(7), 0x00, 6144);     // page 7: all paper
+    std::memset(memory.RAMPageAddress(7) + 6144, 0x07, 768);
+
+    Z80& cpu = *master->pCore->GetZ80();
+    cpu.pc = 0x8000;
+    cpu.sp = 0x7F00;
+    cpu.iff1 = cpu.iff2 = 0;
+    _group->ReplicateFromMaster();
+    ASSERT_TRUE(_group->GetInstance(0)->SetSpeedMultiplier(2));
+    _group->RunFrames(5);
+    ASSERT_EQ(master->emulatorState.current_z80_frequency_multiplier, 2u);
+
+    std::vector<uint32_t> picture;
+    _group->Compose(picture);
+    uint32_t palette[16];
+    master->pScreen->GetRGBAPalette16(palette);
+    auto at = [&](unsigned line) { return picture[(line * 2) * ZXPolyScreenComposer::OUT_WIDTH + 256]; };
+    EXPECT_EQ(at(8), palette[0]) << "line 8 was fetched from page 7 (black)";
+    EXPECT_EQ(at(100), palette[7]) << "line 100 was fetched from page 5 (white): the beam spans the stretched frame";
+    EXPECT_EQ(at(185), palette[7]) << "line 185 was fetched from page 5 (white)";
+}
+
 /// Running the slaves on worker threads gives the same machine as running them
 /// one after another: identical per-frame composed pictures and CPU state
 TEST_P(ZXPolyGroupModels_Test, ParallelSlavesMatchSequentialSlaves)
@@ -775,6 +862,338 @@ TEST_P(ZXPolyGroupModels_Test, ParallelSlavesMatchSequentialSlaves)
     ASSERT_EQ(sequential.size(), parallel.size());
     for (size_t f = 0; f < sequential.size(); f++)
         ASSERT_EQ(sequential[f], parallel[f]) << "frame " << f;
+}
+
+/// Unlimited speed: the slaves' frame overlaps the master's next one. Every
+/// module has the same state at every frame boundary as with the slaves
+/// finished before the master goes on - including keys queued in the middle
+/// of a frame from the master's own thread, as host keys arrive in live mode
+/// Boot-bound (1500 frames on four machines, twice)
+TEST_P(ZXPolyGroupModels_Test, PipelinedSlavesMatchSynchronousSlaves)
+{
+    auto run = [&](bool pipelined, std::vector<uint64_t>& hashes, unsigned& overlapped) {
+        CreateGroup(GetParam());    // turbo on every member: unlimited speed
+        _group->SetPipelinedSlaves(pipelined);
+        std::string error;
+        ASSERT_TRUE(_group->LoadZXP(TestPathHelper::GetTestDataPath("machines/zxpoly/zxp/SummerSanta2022.zxp"), &error))
+            << error;
+
+        EmulatorContext* master = _group->GetContext(0);
+        const uint64_t start = master->emulatorState.frame_counter;
+        uint64_t lastFrame = ~0ull;
+        overlapped = 0;
+        master->pCore->GetZ80()->busTraceHook = [&](char, uint16_t, uint8_t) {
+            const uint64_t frame = master->emulatorState.frame_counter - start;
+            if (frame == lastFrame)
+                return;
+            lastFrame = frame;
+            overlapped += _group->IsPipelining() ? 1u : 0u;
+            if (frame == 40)
+                _group->PressKey(ZXKEY_1);
+            if (frame == 46)
+                _group->ReleaseKey(ZXKEY_1);
+            if (frame == 70)
+                _group->PressKey(ZXKEY_P);
+            if (frame == 83)
+                _group->ReleaseKey(ZXKEY_P);
+        };
+
+        std::vector<uint32_t> picture;
+        for (unsigned chunk = 0; chunk < 10; chunk++)
+        {
+            _group->RunFrames(15);
+            ASSERT_FALSE(_group->CheckLockstep().diverged) << "chunk " << chunk;
+            _group->Compose(picture);
+
+            uint64_t hash = 1469598103934665603ull;
+            auto mix = [&hash](uint64_t v) { hash = (hash ^ v) * 1099511628211ull; };
+            for (uint32_t pixel : picture)
+                mix(pixel);
+            for (size_t m = 0; m < ZXPolyGroup::MODULES; m++)
+            {
+                EmulatorContext* context = _group->GetContext(m);
+                const Z80& cpu = *context->pCore->GetZ80();
+                for (uint64_t v : {uint64_t(cpu.pc), uint64_t(cpu.sp), uint64_t(cpu.af), uint64_t(cpu.bc),
+                                   uint64_t(cpu.de), uint64_t(cpu.hl), uint64_t(cpu.ix), uint64_t(cpu.iy),
+                                   uint64_t(cpu.t), uint64_t(cpu.r_low), uint64_t(cpu.iff1), uint64_t(cpu.halted),
+                                   context->emulatorState.frame_counter})
+                    mix(v);
+                for (uint16_t page = 0; page < 8; page++)
+                {
+                    const uint8_t* ram = context->pMemory->RAMPageAddress(page);
+                    for (size_t i = 0; i < 16384; i++)
+                        mix(ram[i]);
+                }
+            }
+            hashes.push_back(hash);
+        }
+        master->pCore->GetZ80()->busTraceHook = nullptr;
+        _group.reset();
+    };
+
+    std::vector<uint64_t> synchronous;
+    std::vector<uint64_t> pipelined;
+    unsigned overlappedSynchronous = 0;
+    unsigned overlappedPipelined = 0;
+    run(false, synchronous, overlappedSynchronous);
+    run(true, pipelined, overlappedPipelined);
+
+    EXPECT_EQ(overlappedSynchronous, 0u);
+    EXPECT_GT(overlappedPipelined, 100u) << "the slaves did not overlap the master";
+    ASSERT_EQ(synchronous.size(), pipelined.size());
+    for (size_t chunk = 0; chunk < synchronous.size(); chunk++)
+        ASSERT_EQ(synchronous[chunk], pipelined[chunk]) << "state after chunk " << chunk;
+}
+
+/// Locked, the modules step from frame boundary to frame boundary: the master
+/// reading a slave's R0 sees the slave at the last boundary, a slave reading
+/// the master's R0 sees the master there - also while the slaves' frame
+/// overlaps the master's next one. The program logs every R0 read to memory;
+/// all four modules' memory must match between the two schedules
+TEST_P(ZXPolyGroupModels_Test, StatusReadsMatchWhilePipelined)
+{
+    auto run = [&](bool pipelined, std::vector<uint64_t>& hashes, unsigned& overlapped) {
+        CreateGroup(GetParam());    // turbo on every member: unlimited speed
+        _group->SetPipelinedSlaves(pipelined);
+        EmulatorContext* master = _group->GetContext(0);
+        Memory& memory = *master->pMemory;
+        for (uint16_t page = 0; page < 8; page++)
+            std::memset(memory.RAMPageAddress(page), 0x00, 16384);    // power-on RAM is not zero
+
+        // LD HL,#C000
+        // loop: LD BC,#3D00 ; IN A,(C) ; AND 3 ; LD B,#00 ; JR NZ,slave ; LD B,#10
+        // slave: LD C,#FF ; IN A,(C) ; LD (HL),A ; INC HL ; LD A,H ; OR #C0 ; LD H,A ; JR loop
+        // (the master reads module 1's R0 at #10FF, a slave the master's at #00FF)
+        const uint8_t code[] = {0x21, 0x00, 0xC0, 0x01, 0x00, 0x3D, 0xED, 0x78, 0xE6, 0x03, 0x06, 0x00, 0x20, 0x02,
+                                0x06, 0x10, 0x0E, 0xFF, 0xED, 0x78, 0x77, 0x23, 0x7C, 0xF6, 0xC0, 0x67, 0x18, 0xE7};
+        for (size_t i = 0; i < sizeof(code); i++)
+            memory.DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), code[i]);
+        Z80& cpu = *master->pCore->GetZ80();
+        cpu.pc = 0x8000;
+        cpu.sp = 0x7F00;
+        cpu.iff1 = cpu.iff2 = 0;
+        _group->ReplicateFromMaster();
+
+        uint64_t lastFrame = ~0ull;
+        overlapped = 0;
+        cpu.busTraceHook = [&](char, uint16_t, uint8_t) {
+            if (master->emulatorState.frame_counter != lastFrame)
+            {
+                lastFrame = master->emulatorState.frame_counter;
+                overlapped += _group->IsPipelining() ? 1u : 0u;
+            }
+        };
+        for (unsigned chunk = 0; chunk < 5; chunk++)
+        {
+            _group->RunFrames(10);
+            uint64_t hash = 1469598103934665603ull;
+            for (size_t m = 0; m < ZXPolyGroup::MODULES; m++)
+            {
+                for (uint16_t page = 0; page < 8; page++)
+                {
+                    const uint8_t* ram = _group->GetContext(m)->pMemory->RAMPageAddress(page);
+                    for (size_t i = 0; i < 16384; i++)
+                        hash = (hash ^ ram[i]) * 1099511628211ull;
+                }
+                hash = (hash ^ _group->GetContext(m)->pCore->GetZ80()->pc) * 1099511628211ull;
+            }
+            hashes.push_back(hash);
+        }
+        cpu.busTraceHook = nullptr;
+        _group.reset();
+    };
+
+    std::vector<uint64_t> synchronous;
+    std::vector<uint64_t> pipelined;
+    unsigned overlappedSynchronous = 0;
+    unsigned overlappedPipelined = 0;
+    run(false, synchronous, overlappedSynchronous);
+    run(true, pipelined, overlappedPipelined);
+
+    EXPECT_EQ(overlappedSynchronous, 0u);
+    EXPECT_GT(overlappedPipelined, 30u) << "the slaves did not overlap the master";
+    ASSERT_EQ(synchronous.size(), pipelined.size());
+    for (size_t chunk = 0; chunk < synchronous.size(); chunk++)
+        ASSERT_EQ(synchronous[chunk], pipelined[chunk]) << "state after chunk " << chunk;
+}
+
+/// Lockstep is judged at the frame boundary, where all four stand at the same
+/// position: a master already inside its next frame (live mode, where a status
+/// request arrives from another thread at any moment) is not a divergence,
+/// and a slave that took another branch is one
+TEST_P(ZXPolyGroupModels_Test, LockstepIsCheckedAtTheFrameBoundary)
+{
+    CreateGroup(GetParam());
+    EmulatorContext* master = _group->GetContext(0);
+    Memory& memory = *master->pMemory;
+
+    // loop: LD A,(#9000) ; OR A ; JR NZ,other ; JR loop
+    // other: INC HL ; JR other
+    const uint8_t code[] = {0x3A, 0x00, 0x90, 0xB7, 0x20, 0x02, 0x18, 0xF8, 0x23, 0x18, 0xFD};
+    for (size_t i = 0; i < sizeof(code); i++)
+        memory.DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), code[i]);
+    memory.DirectWriteToZ80Memory(0x9000, 0x00);
+    Z80& cpu = *master->pCore->GetZ80();
+    cpu.pc = 0x8000;
+    cpu.sp = 0x7F00;
+    cpu.iff1 = cpu.iff2 = 0;
+    _group->ReplicateFromMaster();
+
+    _group->RunFrames(3);
+    ZXPolyGroup::Divergence divergence = _group->CheckLockstep();
+    EXPECT_FALSE(divergence.diverged) << divergence.what;
+
+    // The master alone goes 2000 T into its next frame
+    _group->GetInstance(0)->RunUntilCondition([](const Z80State& state) { return state.t >= 2000; }, 0, false);
+    divergence = _group->CheckLockstep();
+    EXPECT_FALSE(divergence.diverged) << "a master inside its next frame was taken for a divergence: "
+                                      << divergence.what;
+
+    // Module 2 finds another value and branches away
+    _group->GetContext(2)->pMemory->DirectWriteToZ80Memory(0x9000, 0x01);
+    _group->RunFrames(1);
+    divergence = _group->CheckLockstep();
+    EXPECT_TRUE(divergence.diverged) << "a slave on another branch was not detected";
+    EXPECT_EQ(divergence.module, 2u);
+}
+
+/// The host speed control (x2..x16) stretches the master's frame to N x the
+/// T-states. The slaves take the same multiplier at the same frame start, so
+/// the machine stays in lockstep through speed changes - in both schedules,
+/// with identical states
+/// Boot-bound (40 frames stretched up to x8 on four machines, twice)
+TEST_P(ZXPolyGroupModels_Test, SpeedMultiplierKeepsTheSlavesInStep)
+{
+    auto run = [&](bool pipelined, std::vector<uint64_t>& hashes) {
+        CreateGroup(GetParam());    // turbo on every member: unlimited speed
+        _group->SetPipelinedSlaves(pipelined);
+        std::string error;
+        ASSERT_TRUE(_group->LoadZXP(TestPathHelper::GetTestDataPath("machines/zxpoly/zxp/SummerSanta2022.zxp"), &error))
+            << error;
+        Emulator* master = _group->GetInstance(0);
+        for (uint8_t speed : {uint8_t(2), uint8_t(4), uint8_t(1), uint8_t(8)})
+        {
+            ASSERT_TRUE(master->SetSpeedMultiplier(speed));
+            for (unsigned chunk = 0; chunk < 2; chunk++)
+            {
+                _group->RunFrames(5);
+                const ZXPolyGroup::Divergence divergence = _group->CheckLockstep();
+                ASSERT_FALSE(divergence.diverged) << "x" << int(speed) << " chunk " << chunk << ": module "
+                                                  << divergence.module << " " << divergence.what;
+                for (size_t m = 1; m < ZXPolyGroup::MODULES; m++)
+                    ASSERT_EQ(_group->GetContext(m)->emulatorState.current_z80_frequency_multiplier, speed)
+                        << "module " << m;
+
+                uint64_t hash = 1469598103934665603ull;
+                for (size_t m = 0; m < ZXPolyGroup::MODULES; m++)
+                {
+                    const Z80& cpu = *_group->GetContext(m)->pCore->GetZ80();
+                    for (uint64_t v : {uint64_t(cpu.pc), uint64_t(cpu.sp), uint64_t(cpu.af), uint64_t(cpu.t)})
+                        hash = (hash ^ v) * 1099511628211ull;
+                    for (uint16_t page = 0; page < 8; page++)
+                    {
+                        const uint8_t* ram = _group->GetContext(m)->pMemory->RAMPageAddress(page);
+                        for (size_t i = 0; i < 16384; i += 3)
+                            hash = (hash ^ ram[i]) * 1099511628211ull;
+                    }
+                }
+                hashes.push_back(hash);
+            }
+        }
+        _group.reset();
+    };
+
+    std::vector<uint64_t> synchronous;
+    std::vector<uint64_t> pipelined;
+    run(false, synchronous);
+    run(true, pipelined);
+    ASSERT_EQ(synchronous.size(), pipelined.size());
+    for (size_t chunk = 0; chunk < synchronous.size(); chunk++)
+        ASSERT_EQ(synchronous[chunk], pipelined[chunk]) << "state after chunk " << chunk;
+}
+
+/// Live mode: the master runs its own frame loop and the group works in its
+/// frame-end hook, before the master's next frame starts. A speed change
+/// requested from another thread while that hook runs (here: from a slave's
+/// worker thread, the widest window) must reach all four at the same frame
+/// start - the master may not take it one frame before the slaves
+/// Boot-bound (60 stretched frames on four machines)
+TEST_P(ZXPolyGroupModels_Test, SpeedChangeDuringTheFrameHookReachesAllFourTogether)
+{
+    CreateGroup(GetParam());
+    std::string error;
+    ASSERT_TRUE(_group->LoadZXP(TestPathHelper::GetTestDataPath("machines/zxpoly/zxp/SummerSanta2022.zxp"), &error))
+        << error;
+    _group->AttachToMaster();
+    MainLoopCUT* loop = reinterpret_cast<MainLoopCUT*>(_group->GetContext(0)->pMainLoop);
+    Emulator* master = _group->GetInstance(0);
+
+    // On slave 1's first bus access of every 5th frame, request the next speed
+    const uint8_t speeds[] = {2, 4, 1, 8, 2, 1};
+    size_t next = 0;
+    EmulatorContext* slave = _group->GetContext(1);
+    uint64_t lastFrame = ~0ull;
+    slave->pCore->GetZ80()->busTraceHook = [&](char, uint16_t, uint8_t) {
+        const uint64_t frame = slave->emulatorState.frame_counter;
+        if (frame == lastFrame)
+            return;
+        lastFrame = frame;
+        if (frame % 5 == 0)
+            master->SetSpeedMultiplier(speeds[next++ % sizeof(speeds)]);
+    };
+
+    for (unsigned f = 0; f < 60; f++)
+    {
+        loop->RunFramePublic();
+        const ZXPolyGroup::Divergence divergence = _group->CheckLockstep();
+        ASSERT_FALSE(divergence.diverged) << "frame " << f << ": module " << divergence.module << " "
+                                          << divergence.what;
+        for (size_t m = 1; m < ZXPolyGroup::MODULES; m++)
+            ASSERT_EQ(_group->GetContext(m)->emulatorState.current_z80_frequency_multiplier,
+                      _group->GetContext(0)->emulatorState.current_z80_frequency_multiplier)
+                << "frame " << f << " module " << m;
+    }
+    EXPECT_GE(next, 8u) << "the speed changes were not requested";
+    slave->pCore->GetZ80()->busTraceHook = nullptr;
+    _group->DetachFromMaster();
+}
+
+/// Time travel of one member would split it from the others, so a ZX-Poly
+/// machine refuses it on every member, with the reason every surface shows:
+/// recording (the debugger's live history starts through it) and loading a
+/// session. The group's own timeline (core only) lifts it while it records
+TEST_F(ZXPolyGroup_Test, TimeTravelIsRefusedOnEveryMember)
+{
+    CreateGroup("PENTAGON");
+    for (size_t m = 0; m < ZXPolyGroup::MODULES; m++)
+    {
+        ttd::TimeTravelManager* ttd = _group->GetContext(m)->pTimeTravelManager;
+        ASSERT_NE(ttd, nullptr);
+        EXPECT_FALSE(ttd->StartRecording()) << "module " << m;
+        EXPECT_FALSE(ttd->IsRecording()) << "module " << m;
+        const std::string reason = ttd->GetSessionInfo().unavailableReason;
+        EXPECT_NE(reason.find("ZX-Poly"), std::string::npos) << "module " << m << ": '" << reason << "'";
+
+        std::istringstream file("UTTD");
+        std::string error;
+        EXPECT_FALSE(ttd->DeserializeSession(file, error)) << "module " << m;
+        EXPECT_EQ(error, reason) << "module " << m;
+    }
+
+    // The group timeline records all four; afterwards the refusal is back
+    std::string error;
+    ASSERT_TRUE(_group->LoadZXP(TestPathHelper::GetTestDataPath("machines/zxpoly/zxp/Alien8.zxp"), &error)) << error;
+    ASSERT_TRUE(_group->StartRecording(&error)) << error;
+    for (size_t m = 0; m < ZXPolyGroup::MODULES; m++)
+        EXPECT_TRUE(_group->GetContext(m)->pTimeTravelManager->IsRecording()) << "module " << m;
+    _group->RunFrames(2);
+    _group->StopRecording();
+    for (size_t m = 0; m < ZXPolyGroup::MODULES; m++)
+    {
+        ttd::TimeTravelManager* ttd = _group->GetContext(m)->pTimeTravelManager;
+        EXPECT_FALSE(ttd->IsRecording()) << "module " << m;
+        EXPECT_FALSE(ttd->StartRecording()) << "module " << m;
+    }
 }
 
 /// The manager is the one source every surface (WebAPI, MCP, CLI, Lua,

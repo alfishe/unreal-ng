@@ -533,6 +533,12 @@
             "What dropped the last history (e.g. snapshot-load, disk-load, rom-reload, an invalidate reason, "
             "ZX-Evo SD card activity); null until a history is dropped";
 
+    schemas["TTDStatusResponse"]["properties"]["unavailable_reason"]["type"] = "string";
+    schemas["TTDStatusResponse"]["properties"]["unavailable_reason"]["nullable"] = true;
+    schemas["TTDStatusResponse"]["properties"]["unavailable_reason"]["description"] =
+            "Why time travel is not available for this machine at all (e.g. a ZX-Poly member: its four "
+            "modules need one shared timeline); /ttd/start answers 409 with it. null when available";
+
     schemas["TTDStatusResponse"]["properties"]["session_heap_bytes"]["type"] = "integer";
     schemas["TTDStatusResponse"]["properties"]["session_heap_bytes"]["format"] = "uint64";
     schemas["TTDStatusResponse"]["properties"]["session_heap_bytes"]["description"] =

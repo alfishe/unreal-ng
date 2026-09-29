@@ -49,7 +49,7 @@ public:
         virtual int64_t zxUnitsPerCycle() const = 0;         // current card clock
         virtual void zxStall(int64_t units) = 0;             // card CPU off the bus
         virtual int64_t zxStallUntil() const = 0;            // end of a running stall (a burst)
-        virtual bool zxInstall(bool installed) = 0;          // Core::SetBusOverlay(this / nullptr)
+        virtual bool zxInstall(bool installed) = 0;          // Core::AddBusOverlay(this) / RemoveBusOverlay(this)
         virtual uint32_t zxFrame() const = 0;                // host frame counter
         virtual void zxReschedule() = 0;                     // our next event changed
         virtual void zxLateStart(int64_t units) = 0;         // a start was seen late (log once)

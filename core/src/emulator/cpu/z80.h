@@ -301,6 +301,53 @@ public:
     virtual void OnMachineM1(uint16_t address) = 0;
 };
 
+/// Model-side owner of the /INT pin (see Z80::interruptSource). Shared
+/// infrastructure (PLAN #60(a)) for machines whose INT is not the fixed ULA
+/// frame pulse: TSConf (frame INT at a programmable position, line, DMA and
+/// wait-port INTs, each with its own IM2 vector, deferred inside vdos) and the
+/// Sprinter (mode-table INT position, a Z84C15 daisy chain that needs RETI).
+/// With a source registered the machine owns INT completely: the ULA window
+/// (config intstart/intlen), RaiseLocalInt and IntClearedByAcknowledge are not
+/// consulted. The EI shadow, IFF1, a pending prefix and NMI priority stay the
+/// CPU's. Null for every other machine: one pointer test per instruction
+class IInterruptSource
+{
+public:
+    virtual ~IInterruptSource() = default;
+    /// Is /INT asserted at this instruction boundary? `t` is the frame
+    /// T-state (Z80::t, rebased at every frame end). Called once per step,
+    /// before the instruction; must have no side effects the CPU could see
+    virtual bool IsIntAsserted(uint32_t t) = 0;
+    /// INT acknowledge (the IORQ + M1 cycle): the byte the device drives on
+    /// the data bus - the IM2 vector low byte, ignored in IM1 (and IM0 is
+    /// not modeled beyond RST #38). Clears only the source that was served
+    virtual uint8_t AcknowledgeInterrupt(uint32_t t) = 0;
+    /// RETI (ED 4D and its mirrors ED 5D/6D/7D) was executed: Z80-family
+    /// peripherals watch the bus for it to end their interrupt service (the
+    /// Z84C15 daisy chain; the Sprinter re-arms its accelerator)
+    virtual void OnReti() {}
+};
+
+/// Model-side engine that must advance with the CPU (see
+/// Z80::machineStepHook): TSConf's TSU, DMA, line events and DRAM budget,
+/// whose results the program can observe (RAM written by DMA, a finished
+/// DMA's INT) without touching a port. Runs after every instruction and INT
+/// acknowledge, on every frame - including frames the turbo mode does not
+/// render (MainLoop's _renderThisFrame gates only the screen). Null for every
+/// other machine: one pointer test per instruction
+class IMachineStepHook
+{
+public:
+    virtual ~IMachineStepHook() = default;
+    /// After the step, `t` = the frame T-state reached. May be called again
+    /// with the same `t` (Core::UpdateScreen replays OnCPUStep): catching up
+    /// to a T-state already reached must change nothing
+    virtual void OnMachineStep(uint32_t t) = 0;
+    /// The frame ended: Z80::t was just rebased by `frameLength` (the scaled
+    /// frame). Frame-relative positions held by the engine are rebased too
+    virtual void OnMachineFrameRollover(uint32_t frameLength) { (void)frameLength; }
+};
+
 /// INT/NMI acceptance. One value at a time - each is a property of the last
 /// instruction or the last acknowledge. Set by that instruction/acknowledge,
 /// cleared when the next Z80Step starts. Same values and meaning as
@@ -444,6 +491,11 @@ public:
     /// T-state at which the memory access in progress started: rd / wd have already charged its 3 T
     inline uint32_t AccessStartT() const { return (tt - 3u * rate) >> 8; }
 
+    /// The same moment in CPU clocks at the current clock rate (turbo counts
+    /// each of its faster clocks): what a phase-dependent wait rule needs
+    /// (MemoryWaitOverlay::ExtraClocks)
+    inline uint32_t AccessStartClock() const { return rate ? tt / rate - 3u : 0; }
+
     /// Internal (no-MREQ) cycles: `cycles` T-states with `addr` on the address bus (HL, PC, SP, IR... per
     /// instruction). The Ferranti ULA (48K / 128K / +2) contends each of them like the start of a memory
     /// cycle when `addr` is in a contended slot; the +2A/+3 gate array contends MREQ cycles only. Without
@@ -498,6 +550,13 @@ public:
     /// logic such as the ZX-Evo NMI exit counter and breakpoint compare act on).
     /// Null unless a model decoder needs it: one pointer test per M1
     IMachineM1Hook* machineM1Hook = nullptr;
+    /// The machine's INT logic when it is not the ULA frame pulse (see
+    /// IInterruptSource). Set by the model's port decoder at init, cleared
+    /// when it goes away. Null for the classic machines
+    IInterruptSource* interruptSource = nullptr;
+    /// The machine engine advanced after every step (see IMachineStepHook).
+    /// Set by the model's port decoder at init, cleared when it goes away
+    IMachineStepHook* machineStepHook = nullptr;
     /// endregion </Z80 lifecycle>
 
     // Direct memory access methods

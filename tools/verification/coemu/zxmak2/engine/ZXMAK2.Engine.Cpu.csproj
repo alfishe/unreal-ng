@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <Compile Include="$(ZxSrc)/ZXMAK2.Engine.Cpu/**/*.cs" />
+    <ProjectReference Include="ZXMAK2.Logging.csproj" />
+  </ItemGroup>
+</Project>

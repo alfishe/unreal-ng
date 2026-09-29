@@ -103,21 +103,21 @@ Independent framing audit of `.tap` dumps: walks every block (u16 length + body,
 machine slows the CPU down when it touches screen memory, and prints `OK` / `BAD` per check against the real
 hardware's behavior. It runs on unreal-ng, other emulators and real machines.
 
-*   **Use-case:** checking contention timing of unreal-ng or another emulator on the 48K, 128K, +2A/+3,
+*   **Use-case:** checking contention timing of unreal-ng or another emulator on the 48K, 128K, +2, +2A/+3,
     Pentagon and Scorpion.
-*   **Usage:** load `ctprobe.tap` / `ctprobe.trd` on the machine, or `make test` / `make xpeccy-plus` (runs
-    [xpeccy-plus/](xpeccy-plus/README.md)); see
+*   **Usage:** load `ctprobe.tap` / `ctprobe.trd` on the machine, or `make test` / `make coemu`; see
     [contention/ctprobe/README.md](contention/ctprobe/README.md).
 
 ---
 
-### xpeccy-plus, headless
+### Co-emulation harness
 
-`xpeccy-plus/` compiles the xpeccy-plus emulator's core (unmodified, from a checkout you point it at) into a
-small command-line runner, loads the contention probe's tape on its stock 48K, 128K, +2A and +3 and dumps the
-results, so unreal-ng and xpeccy-plus can be compared check by check.
+`coemu/` runs one test program on every emulator it finds (unreal-ng, xpeccy-plus, and whatever else has a
+runner), on each of their machines, loading it as a user would, and prints one table of the results. Each
+emulator has a folder with a `run.sh` that follows a small contract, so adding one is a single folder.
 
-*   **Usage:** `XPECCY_DIR=<xpeccy-plus checkout> xpeccy-plus/run.sh`; see [xpeccy-plus/README.md](xpeccy-plus/README.md).
+*   **Use-case:** comparing emulators check by check on the same program.
+*   **Usage:** `coemu/run-all.sh [machine...]`; see [coemu/README.md](coemu/README.md).
 
 ---
 

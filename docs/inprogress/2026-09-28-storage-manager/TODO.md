@@ -4,8 +4,8 @@
 (two rounds, 2026-09-28). Implemented (branch `media-manager`, merged to master 2026-09-28): **M1** (block slots, folders as
 FAT volumes; ACC-1…ACC-4 with the ERS, TR-DOS and NedoOS), **M2** (floppies in the manager; ACC-7 on the real
 TR-DOS ROM), **M3** (the tape deck in the manager, folders as tapes; ACC-8 on the real ROM), **M4** (the
-media verbs on every surface and the Qt media panel) and **M5** (media follow a model switch; ACC-5). M6 and
-H1-H5 not started. PLAN.md row **#58**.
+media verbs on every surface and the Qt media panel), **M5** (media follow a model switch; ACC-5) and **M6** (IDE and
+CD slots, on master (`f5fc5f05`): [../2026-09-28-ide-atapi/](../2026-09-28-ide-atapi/TODO.md)). H1-H5 not started. PLAN.md row **#58**.
 
 ## Documents
 
@@ -36,7 +36,7 @@ H1-H5 not started. PLAN.md row **#58**.
 - [x] M4 surfaces (media-control-design.md S1-S7): `MediaControl`, WebAPI `/media` + OpenAPI, CLI `media`, MCP `media`, Lua / Python `media_*`, Qt media panel, docs (`docs/features/media.md`) and recipe (`.recipe/media/use-media-slots.md`); as built: media-control-design.md §7
 - [x] M3 tape: slot, migration, folder as a tape: ACC-8 (see "M3 as built" below); the media verbs reach it without surface work
 - [x] M5 media across model switch: ACC-5 (see "M5 as built" below)
-- [ ] M6 IDE / CD slots (with PLAN #13a)
+- [x] M6 IDE / CD slots (with PLAN #13a): `ide0.master` / `ide0.slave`, disk (`block`) or CD drive (`optical`), done with the IDE + ATAPI scope, on master (`f5fc5f05`) ([implementation-plan.md](../2026-09-28-ide-atapi/implementation-plan.md) §5)
 - [ ] H1-H5 media history: versioned change layer, spill, file views, tracking API, UNS / TTD v2
 
 ## M1 as built (2026-09-28)

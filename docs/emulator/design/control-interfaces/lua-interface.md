@@ -67,6 +67,7 @@ The Lua bindings operate on the existing emulator instance (`get_emulator()`); t
 local id, err = zxpoly_start("ZXPOLY-PENTAGON", "/path/to/Alien8.zxp")  -- model and file optional; id = the master
 local status = zxpoly_status(id)   -- nil if not a ZX-Poly machine
 print(status.locked, status.video_mode, status.diverged, status.modules[2].registers[1])
+print(status.parallel_slaves, status.pipelined_slaves)   -- how the slaves are scheduled
 ```
 The model is a configuration name (`ZXPOLY-48K`, `ZXPOLY-128K`,
 `ZXPOLY-PENTAGON`) or a base model such as `PENTAGON`.
@@ -338,6 +339,10 @@ ms  = audio_moonsound_state()       -- MoonSound OPL4: NEW/NEW2, latches, mix, w
 msf = audio_moonsound_state("fm")   -- its 18 FM channels, timers, register banks
 msp = audio_moonsound_state("pcm")  -- its 24 wavetable slots, envelopes, register file
 fdc = fdc_state()           -- Beta Disk WD1793: registers, status_bits, fsm_state, signals, drives[4]
+ide = ide_state()           -- IDE board: scheme, adapter latches, units[2] (task_file, command, atapi)
+rtc = rtc_state()           -- CMOS clock: chip, ports, time_mode, time, register_a..d, alarm, dump
+cells, err = rtc_read(0x0E, 4)      -- CMOS cells {b1, b2, ...} as the guest reads them (nil, err without a clock)
+ok, err = rtc_write(0x40, {0x12, 0x34})  -- write cells like the guest (time registers set the clock)
 con = contention_state()    -- rule, switch, effective, memory_interface, io_rule, slots[4], statistics (debug mode)
 scr = screen_state()        -- video_mode, resolution, active_screen, active_ram_page(s), contention, flash_inverted
 scv = screen_state(true)    -- + screen_0/screen_1 (z80_access, ula_display) and port_0x7FFD
@@ -755,6 +760,7 @@ local status = ttd_status()
 -- status.session_heap_bytes       = 1043968
 --
 -- status.last_drop_reason         = "snapshot-load"  -- "" until a history is dropped
+-- status.unavailable_reason       = nil  -- set when this machine has no time travel (a ZX-Poly member)
 ```
 
 `source_path` is filled by `ttd_load` (the path it was given).

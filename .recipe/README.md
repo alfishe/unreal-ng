@@ -114,8 +114,8 @@ call.
 |:--|:--|
 | [machines/pentagon.md](machines/pentagon.md) | Pentagon 128/512/1024 via `ram_size`, Pentagon-1024 `#EFF7` register (GigaScreen, 512x192, a4b), sound-stack defaults |
 | [machines/scorpion.md](machines/scorpion.md) | SCORPION/PROFSCORP, Shadow Monitor `#1FFD`, ProfROM `#7EFD`, built-in Beta128, SOS/128K ROM bit |
-| [machines/profi.md](machines/profi.md) | Profi 1024: `#7FFD`+`#DFFD` paging, RTC/CMOS, Covox port arbitration, hi-res video, TTD paging |
-| [machines/atm.md](machines/atm.md) | ATM710 + ATM3/ZX-Evo: `#FF77` control, `#FFF7` memory manager, CP/M bit, CMOS shaden ports, turbo, video modes |
+| [machines/profi.md](machines/profi.md) | Profi 1024: `#7FFD`+`#DFFD` paging, RTC/CMOS, Covox port arbitration, hi-res video, TTD paging, IDE hard disk |
+| [machines/atm.md](machines/atm.md) | ATM710 + ATM3/ZX-Evo: `#FF77` control, `#FFF7` memory manager, CP/M bit, CMOS shaden ports, turbo, video modes, hard disk and CD slots |
 | [machines/spectrum.md](machines/spectrum.md) | 48K/128k/PLUS3: the real-Sinclair boundary, AY/FDC per model, clone-vs-Sinclair differential debugging |
 | [machines/zxpoly.md](machines/zxpoly.md) | ZX-Poly: four synchronized instances of one model, `.zxp` / `.prom` / multiloader disk, 16-colour and 512x384 modes, group status and lockstep check |
 
@@ -127,6 +127,7 @@ call.
 | [peripherals/moonsound.md](peripherals/moonsound.md) | OPL4 card (branch-only): `#C4`-`#C7` FM banks, `#7E/#7F` wave regs, YRW801 ROM, clone-only policy, hiss/HiFi known issues |
 | [peripherals/turbosound.md](peripherals/turbosound.md) | TurboSound slot: `AY` pair vs TSFM (YM2203), `/state/audio/ay`+`/fm` endpoints, register decode math, loudness calibration |
 | [peripherals/covox-sounddrive.md](peripherals/covox-sounddrive.md) | CovoxFB/CovoxDD/SoundDrive toggles, quad-DAC ports `#F1-#FB`, mono compat mode, capture+trace verification |
+| [peripherals/cmos-rtc.md](peripherals/cmos-rtc.md) | CMOS clock on ATM3 / Profi / Scorpion+SMUC: report, cell read / write on every interface, setting the time, battery files |
 
 ### `articles/` — full workflows that combine recipes
 

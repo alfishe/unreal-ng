@@ -34,7 +34,9 @@
         paths[statusPath]["get"]["summary"] = "Port trace status";
         paths[statusPath]["get"]["tags"].append("Port Trace");
         paths[statusPath]["get"]["description"] =
-            "Session state, buffer counters, active filter, and per-frame activity summary.";
+            "Session state, buffer counters, active filter, per-frame activity summary, and 'codes': the "
+            "decoder's internal port codes [{code, name}] (ZX-Evo: the BaseConf decode arms; empty on decoders "
+            "without codes) - the values the filter's 'code' condition takes.";
         addIdParam(statusPath, "get");
         paths[statusPath]["get"]["responses"]["200"]["description"] = "Session status";
 
@@ -43,7 +45,9 @@
         paths[eventsPath]["get"]["tags"].append("Port Trace");
         paths[eventsPath]["get"]["description"] =
             "Buffered events, each with raw/decoded port, decode rule, value, PC, device attribution and "
-            "disposition flags. 'limit' defaults to 0 = unlimited; 'since' filters by absolute T-state.";
+            "disposition flags, plus 'code' (hex) and 'code_name' on decoders with internal port codes (what "
+            "the address meant under the port map at that moment; ZX-Evo: the BaseConf decode arm). 'limit' "
+            "defaults to 0 = unlimited; 'since' filters by absolute T-state.";
         addIdParam(eventsPath, "get");
         paths[eventsPath]["get"]["parameters"][1]["name"] = "limit";
         paths[eventsPath]["get"]["parameters"][1]["in"] = "query";
@@ -64,7 +68,8 @@
         paths[filterPath]["post"]["tags"].append("Port Trace");
         paths[filterPath]["post"]["description"] =
             "Replace the filter wholesale. Body: {\"include\": [rule...], \"exclude\": [rule...]} where each "
-            "rule is a compound AND of conditions ({\"port\": \"0xFFFD\", \"direction\": \"out\", ...}); "
+            "rule is a compound AND of conditions ({\"port\": \"0xFFFD\", \"direction\": \"out\", ...}; "
+            "\"code\": \"Eff7Gluk\" or \"0x0005\" selects by internal port code, see status 'codes'); "
             "or {\"preset\": \"ay-only\"}. Include rules OR together; exclude always wins.";
         addIdParam(filterPath, "post");
         paths[filterPath]["post"]["responses"]["200"]["description"] = "Effective filter description";
@@ -84,9 +89,10 @@
         paths[savePath]["post"]["tags"].append("Port Trace");
         paths[savePath]["post"]["description"] =
             "Save the buffered events server-side. Body: {\"path\": \"/tmp/trace.json\", \"format\": "
-            "\"json\"|\"csv\"|\"bin\"|\"binz\"}. 'binz' is the compressed PTR2 v2 container (columnar "
-            "delta/xor transform + zstd, typically 50-100x smaller than 'bin'). Exports embed the "
-            "model's decode-rule table so traces are self-describing "
+            "\"json\"|\"csv\"|\"bin\"|\"binz\"}. 'bin' is PTRC v2 (raw 24-byte events incl. the internal "
+            "code), 'binz' the compressed PTR2 v3 container (columnar delta/xor transform + zstd, typically "
+            "50-100x smaller than 'bin'). Exports embed the model's decode-rule table and internal code "
+            "names so traces are self-describing "
             "(tools/porttrace/porttrace_convert.py reads every format).";
         addIdParam(savePath, "post");
         paths[savePath]["post"]["responses"]["200"]["description"] = "Saved event count and path";
@@ -95,8 +101,9 @@
         paths[readfilePath]["post"]["summary"] = "Read a saved trace file (with decompression)";
         paths[readfilePath]["post"]["tags"].append("Port Trace");
         paths[readfilePath]["post"]["description"] =
-            "Read a saved binary trace (PTRC v1 or compressed PTR2 v2) server-side and return it as "
-            "JSON (session, decode_rules, compact numeric events). Decompression happens in the core, "
+            "Read a saved binary trace (PTRC v1/v2 or compressed PTR2 v2/v3) server-side and return it as "
+            "JSON (session, decode_rules, code_map, compact numeric events with 'code' where recorded). "
+            "Decompression happens in the core, "
             "so clients without zstd can consume compressed traces. Body: {\"path\": \"/tmp/trace.binz\", "
             "\"limit\": N (optional, 0 = all)}. Does not require the porttrace feature to be enabled.";
         addIdParam(readfilePath, "post");

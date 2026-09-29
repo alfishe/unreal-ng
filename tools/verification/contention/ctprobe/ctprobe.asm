@@ -28,7 +28,7 @@ HostSpin:
 
 ONSET:   dw 0           ; first contended T-state, INT-relative (69888 T frame: 14335, else 14361)
 CLASS:   db #FF         ; 0 Ferranti ULA 48K, 1 Ferranti ULA 128K, 2 gate array, 3 no contention,
-                        ; 4 no contention on a 69888 T frame (Scorpion: its ports answer the fetched attribute)
+                        ; 4 no contention, and unused ports read the attribute being fetched (the Scorpion)
 CAPS:    db #FF         ; bit 0: #7FFD paging works, bit 1: +2A/+3 #1FFD layouts
 DEF7FFD: db #FF         ; #7FFD outside the paging cases; a case ORs its page in
 DEF1FFD: db #FF         ; #1FFD outside the layout cases
@@ -39,13 +39,16 @@ SHOW:    db 1           ; print the report
 
 DONE:    db 0           ; 1 when finished
 FAILS:   dw 0           ; values that differ from the expected table
+TOOFAST: db 0           ; 1: the CPU runs faster than 3.5 MHz, nothing was measured
 
 ; ---- current case (a copy of its record) ----
 
 CUR:
 CURID:     db 0
 CURFLAGS:  db 0         ; bit 0 page at #C000, bit 1 +3 layout, bit 2 store A (CTVALUE) not the duration,
-                        ; bit 3 time the RET found in ROM, bit 4 fill the first screen cells first
+                        ; bit 3 time the RET found in ROM, bit 4 fill the first screen cells first,
+                        ; bit 5 not on the plain clones (CLASS 3): what an unused port reads there depends on the
+                        ; machine and its mode (an ATM's disk ports stay open outside TR-DOS in one mode)
 CUR7FFD:   db 0         ; page at #C000 (#FF = leave)
 CURMIRROR: db 0         ; also copy the placed fragment into this page at the same #8000-slot offset (#FF = no)
 CURTARGET: dw 0         ; where the fragment runs (0 = FRAGBUF)
@@ -63,6 +66,8 @@ CURT:      dw 0
 SPSAVE:    dw 0
 IXDATA:    db 0, 0
 CTVALUE:   db 0
+MAXWAIT:   db 0
+PROBEI:    db 0
 ROMRET:    dw 0
 CASEBAD:   db 0
 FIRSTBAD:  dw 0         ; record of the first case with a wrong value (0 = none)
@@ -73,8 +78,8 @@ BADEXP:    db 0
 ; ---- main ----
 
 MAIN:
-        ld bc,#1FFD             ; a Scorpion's ROM leaves 7 MHz on: a read of #1FFD selects 3.5 MHz (harmless
-        in a,(c)                ; elsewhere); the engine needs the INT pulse over before its handler returns
+        call TurboOff
+        jp z,TooFast
         call INSTINT
         call FRAMETIME
 
@@ -246,6 +251,28 @@ SkipCase:
         call PrintSkip
         jr NextCase
 
+; The CPU runs faster than 3.5 MHz and could not be switched: nothing is measured
+TooFast:
+        ld a,1
+        ld (TOOFAST),a
+        ld a,(SHOW)
+        or a
+        jr z,TooFastDone
+        call #0D6B              ; CLS
+        ld a,2
+        call #1601              ; CHAN-OPEN: the upper screen
+        ld hl,TxTitle
+        call PrintStr
+        ld hl,TxTooFast
+        call PrintStr
+        ld a,2                  ; red border
+        out (#FE),a
+TooFastDone:
+        ld a,1
+        ld (DONE),a
+        ld bc,#FFFF
+        ret
+
 Finish:
         call PrintSummary
         ld a,1
@@ -256,6 +283,33 @@ Finish:
 RESPTR: dw 0
 
 ; ---- helpers ----
+
+; A Scorpion's ROM leaves the CPU at 7 MHz, and the engine needs the INT pulse over before its handler returns,
+; as it is at 3.5 MHz. A read of #1FFD selects 3.5 MHz on the Scorpion - but a 128K / +2 decodes that read as
+; #7FFD and latches the bus value (#FF: paging locked, screen 7), so the read is done only when the CPU is
+; found fast: 80000 T after an interrupt the ROM's frame counter (FRAMES) has moved at 3.5 MHz on every
+; machine (frames of 69888-71680 T) and has not at 7 MHz (twice as many T per frame)
+; Returns NZ at 3.5 MHz, Z when still fast (ATM Turbo and ZX-Evo switch through ports whose value the probe does
+; not know, so it does not try: the report asks for 3.5 MHz instead)
+TurboOff:
+        call IsFast
+        ret nz                  ; 3.5 MHz
+        ld bc,#1FFD
+        in a,(c)
+IsFast:                         ; Z if FRAMES did not move in 80000 T
+        ei
+        halt
+        ld a,(#5C78)            ; FRAMES
+        ld (TurboFrames),a
+        ld bc,40000
+        call DELAY
+        ld bc,40000
+        call DELAY
+        ld a,(#5C78)
+        ld hl,TurboFrames
+        cp (hl)
+        ret
+TurboFrames: db 0
 
 ; Z if the frame is 69888 T
 IsFrame48:
@@ -282,40 +336,78 @@ FontSigLoop:
 Font48Sig:
         db 0, 0, 0, 0, 0, 0, 0, 0, 0, #10, #10, #10, #10, 0, #10, 0
 
-; CLASS from the frame length and a NOP at #4000 timed on the onset (+ the RET after it): 4 no contention,
-; 14 Ferranti ULA (6 + 4), 9 the gate array (1 + 4)
+; CLASS from the frame length and the largest wait of a NOP at #7FFF (its RET at #8000 never waits) over the 16
+; T-states from the onset: 0 no contention, 6 the Ferranti ULA (6,5,4,3,2,1,0,0), 7 the gate array (1,0,7,6,...).
+; The largest wait tells the two apart even when a machine's timing is a few T-states off, which one exact
+; value would not. 48K or 128K from the frame length
 DetectClass:
-        ld hl,#4000
+        ld hl,#7FFF
         ld (hl),0
         inc hl
         ld (hl),#C9
+        xor a
+        ld (MAXWAIT),a
+        ld (PROBEI),a
+ClassLoop:
         ld hl,(ONSET)
-        inc hl
-        ld de,#4000
+        ld a,(PROBEI)
+        ld e,a
+        ld d,0
+        add hl,de
+        inc hl                  ; CODETIME counts one more
+        ld de,#7FFF
         call CODETIME
-        ld c,l                  ; the duration (IsFrame48 uses HL)
-        push bc
+        ld a,l
+        sub 4                   ; the NOP's own 4 T
+        ld hl,MAXWAIT
+        cp (hl)
+        jr c,ClassNext
+        ld (hl),a
+ClassNext:
+        ld hl,PROBEI
+        inc (hl)
+        ld a,(hl)
+        cp 16
+        jr c,ClassLoop
+        ld a,(MAXWAIT)
+        or a
+        jr z,ClassNone
         call IsFrame48          ; Z: 69888 T
-        pop bc
-        ld a,c
-        jr nz,Class70
-        cp 4
-        ld a,4                  ; Scorpion-type
+        ld a,0                  ; 48K
         jr z,SetClass
-        xor a                   ; 48K
-        jr SetClass
-Class70:
-        cp 4
-        ld a,3
-        jr z,SetClass
-        ld a,c
-        cp 14
-        ld a,1
-        jr z,SetClass
-        ld a,2
+        ld a,(MAXWAIT)
+        cp 7
+        ld a,2                  ; gate array
+        jr nc,SetClass
+        ld a,1                  ; 128K
 SetClass:
         ld (CLASS),a
         ret
+
+; No contention: what does an unused port read in the picture area? The first screen cells get a pattern and
+; IN A,(#FF) runs with its I/O cycle 5 T after the onset. One of the pattern's attributes: the Scorpion's attribute
+; bus (class 4). Anything else (#FF, or a byte from a device that answers the port): an ordinary clone (class 3). Measured, not guessed from the frame length, which the
+; Scorpion shares with the 48K, the ATM and the Profi
+ClassNone:
+        call FillCells
+        ld hl,FrFloat           ; XOR A / IN A,(#FF) / LD (CTVALUE),A, at FRAGBUF
+        ld de,FRAGBUF
+        ld bc,FrFloatEnd-FrFloat
+        ldir
+        ld a,#C9
+        ld (de),a
+        ld hl,(ONSET)
+        ld de,5-11+1            ; the I/O cycle is 11 T in; CODETIME counts one more
+        add hl,de
+        ld de,FRAGBUF
+        call CODETIME
+        ld a,(CTVALUE)          ; one of the pattern's attributes (#40-#5F): the attribute bus
+        and #E0
+        cp #40
+        ld a,4                  ; no contention, attribute bus
+        jr z,SetClass
+        ld a,3                  ; no contention (#FF, or a device that answers the port)
+        jr SetClass
 
 ; CAPS: #7FFD paging if a byte written at #C000 with page 1 mapped does not show with page 0 (never on the
 ; 48K); the layouts on the gate array with paging open
@@ -380,6 +472,15 @@ CaseRuns:
         cp b
         ret nz
 CheckCaps:
+        ld a,(CURFLAGS)
+        and 32
+        jr z,CheckPaging
+        ld a,(CLASS)
+        cp 3
+        jr nz,CheckPaging
+        or a                    ; NZ: not here
+        ret
+CheckPaging:
         ld a,(CAPS)
         cpl
         ld b,a
@@ -740,6 +841,7 @@ TxLayouts: db ", +3 layouts ", 0
 TxYes:     db "yes", 0
 TxNo:      db "no", 0
 TxTime:    db "Takes about 3 min at 3.5 MHz", 0
+TxTooFast: db "The CPU runs faster than 3.5 MHz.", 13, "Switch the machine to 3.5 MHz", 13, "(turbo off) and run it again.", 13, 0
 TxOk:      db " OK", 0
 TxBadT:    db " BAD T", 0
 TxGot:     db " got ", 0
@@ -1026,7 +1128,114 @@ CASES:
         db 16
         dw R54
         db "P-01E"
-        db 55, 20, #FF, #FF     ; the byte IN A,(#FF) reads, its I/O cycle from 2 T before the onset
+
+; ---- P-03: more port instructions (the four FUSE patterns through other instructions) ----
+; Each record below is independent: to drop a check, delete its record, its fragment (FrXxx..FrXxxEnd) and its
+; results buffer (Rnn); to drop the group, delete all three parts of P-03. The oracle (ctprobe_test.cpp,
+; Fragment(), case ids 61-65) describes each fragment's bus cycles and must follow any change here.
+        db 61, 0, #FF, #FF      ; OUT (C),A, BC = #00FE: ULA port, high byte uncontended (N:1 C:3)
+        dw 0, FrOut00FE
+        db FrOut00FEEnd-FrOut00FE
+        dw -18
+        db 16
+        dw R61
+        db "P-03A"
+        db 62, 0, #FF, #FF      ; OUT (C),A, BC = #00FF: other port, high byte uncontended (N:4)
+        dw 0, FrOut00FF
+        db FrOut00FFEnd-FrOut00FF
+        dw -18
+        db 16
+        dw R62
+        db "P-03B"
+        db 63, 0, #FF, #FF      ; OUT (C),A, BC = #40FF: other port, high byte contended (C:1 x4)
+        dw 0, FrOut40FF
+        db FrOut40FFEnd-FrOut40FF
+        dw -18
+        db 16
+        dw R63
+        db "P-03C"
+        db 64, 0, #FF, #FF      ; IN A,(#FE) with A = #40: the port is A:n = #40FE (C:1 C:3)
+        dw 0, FrInAn
+        db FrInAnEnd-FrInAn
+        dw -18
+        db 16
+        dw R64
+        db "P-03D"
+        db 65, 0, #FF, #FF      ; OUT (#FE),A with A = #40: port #40FE (C:1 C:3); writes border 0, MIC/EAR 0
+        dw 0, FrOutAn
+        db FrOutAnEnd-FrOutAn
+        dw -18
+        db 16
+        dw R65
+        db "P-03E"
+
+; ---- P-04: block I/O (INI / OUTI / INIR / OTIR) ----
+; FUSE's order: INI and INIR read the port at BC, then write (HL); OUTI and OTIR read (HL), decrement B, then
+; write the port at the new BC. A repeat adds 5 internal ticks: on HL (INIR) or on the new BC (OTIR). Oracle:
+; case ids 66-69. The repeats use B = 2 / 3, so the ports stay uncontended; the ULA port's C:3 still applies.
+        db 66, 0, #FF, #FF      ; INI, BC = #40FE: IR tick, port #40FE (C:1 C:3), write to INBUF
+        dw 0, FrIni
+        db FrIniEnd-FrIni
+        dw -24
+        db 16
+        dw R66
+        db "P-04A"
+        db 67, 0, #FF, #FF      ; OUTI, BC = #41FE: B becomes #40 before the write, so the port is #40FE
+        dw 0, FrOuti
+        db FrOutiEnd-FrOuti
+        dw -24
+        db 16
+        dw R67
+        db "P-04B"
+        db 68, 0, #FF, #FF      ; INIR, BC = #02FE: ports #02FE, #01FE; the repeat's 5 ticks on HL
+        dw 0, FrInir
+        db FrInirEnd-FrInir
+        dw -24
+        db 16
+        dw R68
+        db "P-04C"
+        db 69, 0, #FF, #FF      ; OTIR, BC = #03FE: ports #02FE, #01FE, #00FE; the repeats' 5 ticks on BC
+        dw 0, FrOtir
+        db FrOtirEnd-FrOtir
+        dw -24
+        db 16
+        dw R69
+        db "P-04D"
+
+; ---- P-05: a port's high byte in the page at #C000 (128K / +2) ----
+; On the 128K the ULA contends a port whose high byte points into contended memory, and at #C000 that depends on
+; the page mapped there: odd pages are contended. This rule is the consensus of the emulators (FUSE); neither
+; Rak's nor Butler's test covers it, so it is not yet confirmed on real hardware. On the +2A/+3 and the clones
+; ports never wait. Needs #7FFD paging (flag 1). Oracle: case ids 70-73.
+        db 70, 1, 0, #FF        ; IN A,(C), BC = #C0FE, page 0 at #C000: high byte uncontended (N:1 C:3)
+        dw 0, FrInC0FE
+        db FrInC0FEEnd-FrInC0FE
+        dw -18
+        db 16
+        dw R70
+        db "P-05A"
+        db 71, 1, 1, #FF        ; IN A,(C), BC = #C0FE, page 1: high byte contended on the 128K (C:1 C:3)
+        dw 0, FrInC0FE
+        db FrInC0FEEnd-FrInC0FE
+        dw -18
+        db 16
+        dw R71
+        db "P-05B"
+        db 72, 1, 0, #FF        ; IN A,(C), BC = #C0FF, page 0 (N:4)
+        dw 0, FrInC0FF
+        db FrInC0FFEnd-FrInC0FF
+        dw -18
+        db 16
+        dw R72
+        db "P-05C"
+        db 73, 1, 1, #FF        ; IN A,(C), BC = #C0FF, page 1: contended on the 128K (C:1 x4)
+        dw 0, FrInC0FF
+        db FrInC0FFEnd-FrInC0FF
+        dw -18
+        db 16
+        dw R73
+        db "P-05D"
+        db 55, 52, #FF, #FF     ; the byte IN A,(#FF) reads, its I/O cycle from 2 T before the onset
         dw 0, FrFloat
         db FrFloatEnd-FrFloat
         dw -13
@@ -1205,9 +1414,68 @@ FrFloat:
         ld (CTVALUE),a
 FrFloatEnd:
 
+; P-03 fragments (records above; oracle ids 61-65)
+FrOut00FE:
+        xor a
+        ld bc,#00FE
+        out (c),a
+FrOut00FEEnd:
+FrOut00FF:
+        xor a
+        ld bc,#00FF
+        out (c),a
+FrOut00FFEnd:
+FrOut40FF:
+        xor a
+        ld bc,#40FF
+        out (c),a
+FrOut40FFEnd:
+FrInAn:
+        ld a,#40
+        in a,(#FE)
+FrInAnEnd:
+FrOutAn:
+        ld a,#40
+        out (#FE),a
+FrOutAnEnd:
+
+; P-04 fragments (oracle ids 66-69); INBUF takes what the ports read, OUTBUF holds zeros (border black, silent)
+FrIni:
+        ld hl,INBUF
+        ld bc,#40FE
+        ini
+FrIniEnd:
+FrOuti:
+        ld hl,OUTBUF
+        ld bc,#41FE
+        outi
+FrOutiEnd:
+FrInir:
+        ld hl,INBUF
+        ld bc,#02FE
+        inir
+FrInirEnd:
+FrOtir:
+        ld hl,OUTBUF
+        ld bc,#03FE
+        otir
+FrOtirEnd:
+
+; P-05 fragments (oracle ids 70-73)
+FrInC0FE:
+        ld bc,#C0FE
+        in a,(c)
+FrInC0FEEnd:
+FrInC0FF:
+        ld bc,#C0FF
+        in a,(c)
+FrInC0FFEnd:
+
 ; ---- buffers ----
 
 FRAGBUF:   ds 40
+INBUF:     ds 2                 ; P-04: bytes INI / INIR read
+OUTBUF:    db 0, 0, 0           ; P-04: bytes OUTI / OTIR write (zeros)
 
 RESULTS:
 R01:       ds 20
@@ -1249,6 +1517,19 @@ R52:       ds 16
 R53:       ds 16
 R54:       ds 16
 R55:       ds 20
+R61:       ds 16                ; P-03
+R62:       ds 16
+R63:       ds 16
+R64:       ds 16
+R65:       ds 16
+R66:       ds 16                ; P-04
+R67:       ds 16
+R68:       ds 16
+R69:       ds 16
+R70:       ds 16                ; P-05
+R71:       ds 16
+R72:       ds 16
+R73:       ds 16
 R60:       ds 8
 RESULTSEND:
 

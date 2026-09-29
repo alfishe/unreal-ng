@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include "emulator/platform.h"
+#include "emulator/io/ide/ideadapter.h"
 #include "emulator/ports/portdiagrecorder.h"
 #include "debugger/ttd/ttdserializable.h"  // ttd::PeripheralId / TTDSerializable (leaf header)
 
@@ -25,6 +26,7 @@ class SoundManager;
 class Keyboard;
 class Mouse;
 class PortDevice;
+class Ds12887;
 
 /// region <Constants>
 
@@ -378,6 +380,9 @@ protected:
     // Registered port handlers from external peripheral devices
     std::map<uint16_t, PortDevice*> _portDevices;
 
+    // The machine's IDE board ([HDD] Scheme): its latches; the channel is IdeController's
+    IdeAdapter _ide;
+
     // Full-decode observer devices (raw Z80 port address). Real bus cards
     // (e.g. ZXM-MoonSound) decode the whole 16-bit address and observe every
     // cycle on their ports, but the model decode rules map those raw addresses
@@ -459,6 +464,9 @@ public:
 
     virtual void SetRAMPage(uint8_t page) { (void)page; /* Intentionally unused */ };
     virtual void SetROMPage(uint8_t page) { (void)page; /* Intentionally unused */ };
+
+    /// The IDE board's latches (TTD, the state report, tests)
+    IdeAdapter& GetIdeAdapter() { return _ide; }
 
     /// Apply model-specific register defaults for the RESET= boot mode (port of the
     /// original reset(mode) model blocks: e.g. ATM installs the FF77/pFFF7
@@ -542,6 +550,13 @@ public:
     /// have no mask/match table and return an empty vector (the default).
     virtual std::vector<PortTraceDecodeRule> getPortTraceDecodeRules() const { return {}; }
 
+    /// Internal port codes this decoder resolves addresses to, with their names
+    /// (PLAN #60(g)): a table-driven decoder maps the address to a code first
+    /// (ZX-Evo: the BaseConf decode arm; Sprinter / TSConf: the port-table code),
+    /// and the trace records the code so an access stays readable when the map
+    /// changes. Empty for decoders without codes
+    virtual std::vector<PortTraceCodeName> GetPortTraceCodeTable() const { return {}; }
+
     /// Static port map for introspection ("which devices respond to which ports
     /// on this machine"). Single per-model switch over config.mem_model, mirroring
     /// the decode conditions of the IsPort_* helpers / decode tables in the model
@@ -616,6 +631,25 @@ public:
     /// ttd_clock_units). 1 for models without a hardware turbo
     virtual uint8_t TtdClockUnits() const { return 1; }
 
+    /// The machine's clock chip as the automation interfaces reach it
+    /// (RtcAccess, DeviceState::Rtc). `chip` is null when the machine has no
+    /// clock the guest can reach; `absentReason` then says why
+    struct RtcBinding
+    {
+        Ds12887* chip = nullptr;
+        std::string ports;          ///< how the Z80 reaches it
+        std::string nvramFile;      ///< battery-backed image, empty = session only
+        std::string absentReason;
+    };
+    virtual RtcBinding GetRtcBinding() { return {nullptr, "", "", "This machine has no CMOS clock"}; }
+
+    /// Emulated machine time in microseconds: whole frames at the model's
+    /// frame duration plus the position in the current frame (TTD time units,
+    /// so a hardware turbo switch mid-frame does not move it). Restored with
+    /// the frame counter by a TTD seek, which makes it the time base of
+    /// clocks that must replay deterministically (Ds12887 in emulated mode)
+    uint64_t EmulatedMicroseconds() const;
+
     /// Serializers for the ids above. Ownership transfers to the caller.
     /// Every id from GetTTDModelStateIds() must be covered.
     virtual std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const
@@ -631,6 +665,15 @@ public:
     /// endregion </Port trace>
 
 protected:
+    /// The IDE board decodes before the model's own ports (UnrealSpeccy io.cpp
+    /// order). A model calls these first in DecodePortIn / DecodePortOut: when
+    /// they return true the I/O is done, trace and breakpoints included
+    bool TryIdePortIn(uint16_t port, uint16_t pc, uint8_t& result);
+    bool TryIdePortOut(uint16_t port, uint8_t value, uint16_t pc);
+    /// The bus state the board's gate looks at: TR-DOS ports on (CF_TRDOS) by
+    /// default; Profi adds its EXT mode, ATM its DOS-ports rule
+    virtual IdeAdapter::Gate IdeGate();
+
     /// Called by subclasses AFTER hardware I/O completes.
     /// Handles: breakpoints, port access tracking, port trace capture, analyzer notifications.
     /// @param port The RAW port address as seen by the Z80 (breakpoints match on raw)

@@ -7,6 +7,8 @@
 #include <emulator/ports/portdecoder.h>
 #include <emulator/ports/portdiagrecorder.h>
 
+#include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <vector>
 
@@ -625,7 +627,7 @@ TEST_F(PortTrace_Test, ExportAllFormats)
     memcpy(&version, header + 4, 2);
     memcpy(&count, header + 6, 4);
     memcpy(&ruleCount, header + 18, 2);
-    EXPECT_EQ(version, 1);
+    EXPECT_EQ(version, 2) << "PTRC v2: events carry the internal port code (PLAN #60(g))";
     EXPECT_EQ(count, 3u);
     EXPECT_EQ(ruleCount, 8);
 }
@@ -708,6 +710,46 @@ TEST_F(PortTrace_Test, CompressedExportRoundTrip)
     std::vector<PortTraceEvent> dummy;
     EXPECT_FALSE(PortDiagnosticRecorder::loadFromFile(garbageV2Path, dummyInfo, dummy));
     EXPECT_FALSE(PortDiagnosticRecorder::loadFromFile(nonexistentV2Path, dummyInfo, dummy));
+}
+
+/// PLAN #60(g): a decoder without internal codes records none and exports no
+/// code table; a PTRC version 1 file (bytes 22-23 were struct padding) loads
+/// without codes whatever those bytes held
+TEST_F(PortTrace_Test, InternalCodeAbsentAndLegacyPaddingIgnored)
+{
+    PortDiagnosticRecorder* recorder = enablePortTrace();
+    recorder->start();
+    _portDecoder->DecodePortOut(0xFFFD, 0x07, 0x8000);
+    recorder->stop();
+    const std::vector<PortTraceEvent> events = recorder->getAll();
+    ASSERT_EQ(events.size(), 1u);
+    EXPECT_FALSE(events[0].hasInternalCode()) << "the Pentagon decoder has no internal codes";
+    EXPECT_TRUE(_portDecoder->getPortTraceSessionInfo().codes.empty());
+
+    // A version 1 file: same header, no code table, garbage in the padding
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("porttrace-v1-padding.bin");
+    {
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        uint8_t header[32] = {};
+        memcpy(header, "PTRC", 4);
+        const uint16_t version = 1;
+        const uint32_t count = 1;
+        memcpy(header + 4, &version, 2);
+        memcpy(header + 6, &count, 4);
+        header[20] = 0x33;  // version 1 has no code count here: must not be read as one
+        out.write(reinterpret_cast<const char*>(header), sizeof(header));
+        PortTraceEvent e = events[0];
+        e.internalCode = 0xABCD;  // "padding" garbage
+        out.write(reinterpret_cast<const char*>(&e), sizeof(e));
+    }
+    PortTraceSessionInfo info;
+    std::vector<PortTraceEvent> loaded;
+    ASSERT_TRUE(PortDiagnosticRecorder::loadFromFile(path, info, loaded));
+    ASSERT_EQ(loaded.size(), 1u);
+    EXPECT_FALSE(loaded[0].hasInternalCode());
+    EXPECT_TRUE(info.codes.empty());
+    EXPECT_EQ(loaded[0].rawPort, 0xFFFD);
+    std::remove(path.c_str());
 }
 
 TEST_F(PortTrace_Test, StopThenSaveLosesNothing)

@@ -61,13 +61,18 @@ Enabled the same way as Pentagon/Scorpion Covox, via `[SOUND] CovoxFB=1` in the 
 | `#9F`, `#DF` | R/W | RTC/CMOS register data | EXT mode (`cpm && rom14`) |
 
 All four ports decode as one chip select (`(port & 0x9F) == 0x9F`); bit 5 of the port splits address (set) from
-data (clear). A DS12885-style (MC146818-compatible) register file, ported from the same chip-level logic ATM3
-wires (`core/src/emulator/memory/atm/cmos.h`) but kept Profi-owned (`core/src/emulator/memory/profi/proficmos.h`)
-since Profi's real hardware RTC (a karabas-pro clone: a 256-byte RAM fed by the AVR, no counting clock, no I2C) is
-a different, unproven implementation - only the DS12885 register map (`core/src/emulator/io/rtc/ds12885.h`) is
-shared. Time/date registers are synthesized from host time, sampled at most twice a second; the CMOS type is
-hardcoded to `Dallas` (matching the ATM3 wiring - the `[MISC] CMOS=` ini key is not parsed into `config.cmos`
-anywhere in this codebase yet).
+data (clear). Behind them sits the shared MC146818 / DS12887 chip (`core/src/emulator/io/rtc/ds12887.h`, 256 cells),
+the same class the ATM3 / ZX-Evo and the Scorpion SMUC use. UnrealSpeccy and ZXMAK2 (`CmosProfi.cs`, a DS12885)
+model it the same way. The karabas-pro clone differs: its "RTC" is a 256-byte RAM the board's AVR refreshes from
+its own clock, so flag and UIP timing there follow the AVR firmware, not the datasheet.
+
+- Time: the host's local time plus whatever offset the guest set by writing the time registers (the SET bit holds
+  the clock while the guest writes). While a TTD session records, the clock runs on emulated time instead, so a
+  replay reads the same time the recording read.
+- Registers A-D: A bits 6-0 stored, UIP in the last 244 us before each second; B fully stored (binary / BCD,
+  12 / 24 hour, SET); C flags UF and AF cleared by the read; D always `#80`.
+- Battery-backed cells: `[PROFI] NvramFile=` (A, B, the alarms and cells `#0E-#FF`), read at power-on and written
+  when the machine is destroyed; empty keeps them for the session only.
 
 EXT mode here is UnrealSpeccy's own definition (`cpm && rom14`) - not Karabas's wider `dosAct && !rom14` variant,
 which would additionally expose RTC/IDE to the SYS ROM. That's a clone extension, unproven by UnrealSpeccy
@@ -89,7 +94,8 @@ and resolution.
 
 ## Time-travel debugging
 
-The `#DFFD` latch and the 16-entry palette are persisted as `PeripheralId::ProfiPaging` (id 9); see
+The `#DFFD` latch and the 16-entry palette are persisted as `PeripheralId::ProfiPaging` (id 9), the RTC (cells,
+address latch, time base) as `PeripheralId::Ds12887` (id 18); see
 [time-travel-debugging-tdd.md](../emulator/design/debugger/time-travel-debug/time-travel-debugging-tdd.md).
 
 ## Known limitations

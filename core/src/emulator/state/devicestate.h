@@ -55,6 +55,22 @@ StateNode Gs(EmulatorContext* context, bool ramWindow = false);
 /// whether the DAC was written last frame.
 StateNode Covox(EmulatorContext* context);
 
+/// IDE board: `Ide()` the scheme and its gate, the adapter latches, the
+/// selected unit and INTRQ, and per unit: kind (hard disk / CD-ROM), slot,
+/// medium (source, sectors, geometry, write protect), the task file with the
+/// status / error / device control bits decoded, the command in progress
+/// with its transfer position, the CHS translation, and on a CD drive the
+/// disc, the byte count limit, unit attention and the sense (key / ASC / ASCQ)
+StateNode Ide(EmulatorContext* context);
+
+/// CMOS clock (MC146818 / DS12887; the ZX-Evo AVR's emulation of one):
+/// `Rtc()` the part, the ports the machine wires it to, the NVRAM file, the
+/// address latch, the time base (host / emulated / fixed), the time as the
+/// guest reads it, registers A-D and the alarms decoded, and every cell as a
+/// hex dump. Peeked: reading never clears register C. Unavailable, with the
+/// reason, when the machine has no clock the guest can reach
+StateNode Rtc(EmulatorContext* context);
+
 /// MoonSound (ZXM-MoonSound, YMF278B OPL4). A snapshot as of the chip's last
 /// guest access or frame run - reading it never advances the chip.
 /// - `MoonSound()`: NEW / NEW2, status, the guest address latches, the block

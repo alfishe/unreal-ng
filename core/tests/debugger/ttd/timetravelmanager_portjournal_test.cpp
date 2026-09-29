@@ -803,6 +803,49 @@ TEST_F(TimeTravelManager_PortReadJournal_Test, ASessionWithoutJournalsRefusesToS
 // Configurations the first version does not isolate
 // ---------------------------------------------------------------------------
 
+namespace
+{
+struct DeviceVector : IInterruptSource
+{
+    bool IsIntAsserted(uint32_t) override { return false; }
+    uint8_t AcknowledgeInterrupt(uint32_t) override { return 0xFF; }
+};
+struct StepEngine : IMachineStepHook
+{
+    void OnMachineStep(uint32_t) override {}
+};
+}  // namespace
+
+/// A machine that owns its INT logic can drive the IM2 vector from a device,
+/// and a model engine stepped with the CPU can write memory - neither goes
+/// through IN, so the journals would not isolate the replay: they stay off and
+/// say why (TTD v2 FR-21). TSConf and the Sprinter install these
+TEST_F(TimeTravelManager_PortReadJournal_Test, MachinesWithTheirOwnInterruptOrDmaEngineRecordNoJournal)
+{
+    Z80* z80 = _rec.context->pCore->GetZ80();
+    DeviceVector source;
+    z80->interruptSource = &source;
+    ASSERT_TRUE(_rec.ttd->StartRecording());
+    _rec.ttd->StopRecording();
+    auto info = _rec.ttd->GetSessionInfo();
+    EXPECT_FALSE(info.portJournalActive);
+    EXPECT_NE(info.portJournalOffReason.find("IM2 vector"), std::string::npos) << info.portJournalOffReason;
+    z80->interruptSource = nullptr;
+
+    StepEngine engine;
+    z80->machineStepHook = &engine;
+    ASSERT_TRUE(_rec.ttd->StartRecording());
+    _rec.ttd->StopRecording();
+    info = _rec.ttd->GetSessionInfo();
+    EXPECT_FALSE(info.portJournalActive);
+    EXPECT_NE(info.portJournalOffReason.find("DMA"), std::string::npos) << info.portJournalOffReason;
+    z80->machineStepHook = nullptr;
+
+    ASSERT_TRUE(_rec.ttd->StartRecording());
+    _rec.ttd->StopRecording();
+    EXPECT_TRUE(_rec.ttd->GetSessionInfo().portJournalActive) << "a classic machine records them again";
+}
+
 class TimeTravelManager_PortReadJournalNeoGS_Test : public ::testing::Test
 {
 protected:

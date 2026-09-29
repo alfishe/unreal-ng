@@ -77,10 +77,15 @@ public:
 
     /// SMUC EEPROM backing store (verification tests / debug UI)
     SMUCNvram& GetSMUCNvram() { return _smucNvram; }
+    /// The clock chip (tests, debug UI; every RTC machine has GetRtc())
+    Ds12887& GetRtc() { return _smucNvram.GetRtc(); }
+    RtcBinding GetRtcBinding() override;
 
     /// SMUC board presence (absent by default - see _smucEnabled)
     void SetSmucEnabled(bool enabled) { _smucEnabled = enabled; }
     bool IsSmucEnabled() const { return _smucEnabled; }
+    /// The board is on the bus: enabled by hand (tests), or the machine's IDE scheme is SMUC
+    bool IsSmucFitted() const { return _smucEnabled || _ide.Scheme() == IDE_SMUC; }
     /// endregion </Helper methods>
 
 protected:

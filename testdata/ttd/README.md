@@ -166,6 +166,10 @@ but a flipped byte that still decodes is not.
 
 ## Status
 
+Re-recorded 2026-09-28 (all five) with the IDE board the shipped PENTAGON
+config now fits (`[HDD] Scheme=NEMO`, no disks): every checkpoint carries the
+`AtaChannel` blob (id 17: both IDE units, the adapter latches).
+
 Re-recorded 2026-09-27 (all five) after the General Sound fixed window
 `0x4000-0x7FFF` moved to the upper half of MPAG 1 (RAM page 1, was page 3):
 the firmware's variables and DAC buffers now sit in a different part of the GS

@@ -16,7 +16,7 @@
 | Creatable | `PortDecoder::IsModelSupported` + `GetPortDecoderForModel` (`core/src/emulator/ports/portdecoder.cpp:56-135`) | add `MM_SPRINTER` to both (they must stay in sync) |
 | Config folder | `Config::GetConfigFolderForModel` (`core/src/emulator/config.cpp:749`) | default rule (lowercased short name) → `data/configs/sprinter/unreal.ini` |
 | Memory subclass | `Core` factory (`core/src/emulator/cpu/core.cpp:105-108`, the `ScorpionMemory` precedent) | `new SprinterMemory(context)` for `MM_SPRINTER` |
-| Screen | `VideoController::GetScreenForMode` (`core/src/emulator/video/videocontroller.cpp:9-31`) | `ScreenSprinter` for `MM_SPRINTER` |
+| Screen | `VideoController::CreateScreen(model)` (PLAN #60(e), built) | `case MM_SPRINTER: return new ScreenSprinter(context);` |
 | ROM | `ROM::GetROMFilename` / `LoadROM` (`core/src/emulator/memory/rom.cpp:66`, `:137`); `[ROM]` keys (`config.cpp:236`, `:257` pattern) | `[ROM] SPRINTER=rom/sprinter/sp2k-3.04.rom`, loaded raw as 16 pages (the ATM3 "whole image, no ROMSET" pattern) |
 | Frame timing | `ApplyModelTimingDefaults` (`config.cpp:905-1057`) | `frame = 71680`, `t_line = 224`; `intstart/intlen` unused (the interrupt source owns INT) |
 | Cache pages | `MAX_CACHE_PAGES` (`platform.h:251`) | 2 → 4 (64 KB fast RAM) |
@@ -57,8 +57,10 @@ Files follow the repo's CRLF/LF convention of the neighboring configs (new file:
 
 ### 2.1 New peripheral ids
 
-`PeripheralId` is append-only (`core/src/debugger/ttd/ttdserializable.h:41-60`, current maximum
-`Upd765 = 14`). New ids, in this order:
+`PeripheralId` is append-only (`core/src/debugger/ttd/ttdserializable.h`). Taken since this table was
+written: 15 `EvoSdCard`, 16 reserved for `TsConfPaging`, 17 `AtaChannel` (the IDE boards), 18 `Ds12887` (the shared clock, already built -
+the Sprinter reuses it and needs no id of its own). The Sprinter ids below therefore shift up by four
+when they are appended (15 -> 19 and so on); the order stays:
 
 | Id | Name | Blob contents |
 |---|---|---|
@@ -66,7 +68,7 @@ Files follow the repo's CRLF/LF convention of the neighboring configs (new file:
 | 16 | `SprinterVideo` | video RAM (256 KB) as a TTD memory region (PLAN #40 V1 "device RAM in the page store"); until V1 lands, a whole-array blob with a CRC short-cut |
 | 17 | `Z84C15` | SIO (both channels, FIFOs, registers), CTC, PIO, system registers |
 | 18 | `SprinterCbl` | Covox-Blaster ring, indices, control, tick phase |
-| 19 | `Ds12887` | 128 bytes + address latch + time base (host-time offset or fixed time) |
+| ~~19~~ | `Ds12887` | shared id 18, already built (PLAN #60(c)): cells + address latch + time base |
 
 `TimeTravelManager::RegisterModelPeripherals` (`core/src/debugger/ttd/timetravelmanager.cpp:1141`,
 `:1192-1213`) picks them up through `PortDecoder_Sprinter::CreateTTDSerializers()` /
@@ -105,7 +107,7 @@ recording; replay uses it (NFR-3).
 | Paging | `GET /state/paging` shows the 4 windows as "physical page + kind" (RAM / vROM cell / ROM / fast RAM / graphics / ISA), the cells `#C0-#FF`, CNF map, DOS, turbo — through the decoder's `GetPagingLatches` |
 | New state block | `GET /api/v1/emulator/{id}/state/sprinter`: config state, map number, PORT_Y, RGMOD, HOLD, ALL_MODE, clock ratio, frame lines, accelerator mode, CBL state, IDE channel. CLI `sprinter`, Lua `emu:sprinter()`, Python `emulator.sprinter()`, MCP `inspect_state` aspect `sprinter` |
 | Port table | `GET /state/sprinter/ports?map=0&dos=1&rw=r` → the decoded table (address pattern → code + name); `GET /state/sprinter/ports/lookup?port=21BC&rw=w` → one lookup with the index |
-| Port trace | every traced access carries `code` and the code's name (D10) |
+| Port trace | every traced access carries `code` and the code's name (D10): the field, the code table in every export and the `code` filter are built (PLAN #60(g)); `PortDecoder_Sprinter` sets `PortDecodeDisposition::internalCode` from its port table and returns the code names from `GetPortTraceCodeTable()` |
 | Media | the `media` verbs of PLAN #58 (`fdd.*`, `ide*.*`); until M4, the existing `disk` verbs for `fdd.*` |
 | Per-model switches | extend: `state_memory_api.cpp:175`, `:355-372` (ROM page counts: 16), `cli-processor-state.cpp:338`, `:365`, `:471-474`, `:512`, `state_screen_api.cpp:132` (mode name `sprinter`), `ports_api.cpp:106`, `lua_emulator.h:3037`, `:3197`, `python_emulator.h:3097`, `:3242` |
 | Recipe | `.recipe/machines/sprinter.md`: create, boot DSS from a floppy image, from a folder; switch to Spectrum mode; read the port table |

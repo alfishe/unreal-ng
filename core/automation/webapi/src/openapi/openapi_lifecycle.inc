@@ -224,6 +224,12 @@
         schema["properties"]["locked"]["type"] = "boolean";
         schema["properties"]["slaves_running"]["type"] = "boolean";
         schema["properties"]["parallel_slaves"]["type"] = "boolean";
+        schema["properties"]["parallel_slaves"]["description"] =
+            "Locked slaves run their frame on worker threads, at the same time";
+        schema["properties"]["pipelined_slaves"]["type"] = "boolean";
+        schema["properties"]["pipelined_slaves"]["description"] =
+            "The slaves' frame overlaps the master's next one (unlimited speed only; the state at every frame "
+            "boundary is the same)";
         schema["properties"]["port_3d00"]["type"] = "integer";
         schema["properties"]["video_mode"]["type"] = "integer";
         schema["properties"]["modules"]["type"] = "array";

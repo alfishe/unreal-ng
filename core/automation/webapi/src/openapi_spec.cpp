@@ -165,6 +165,7 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
 #include "openapi/openapi_features.inc"
 #include "openapi/openapi_state.inc"
 #include "openapi/openapi_moonsound.inc"
+#include "openapi/openapi_rtc.inc"
 #include "openapi/openapi_gsporttrace.inc"
 #include "openapi/openapi_ports.inc"
 #include "openapi/openapi_analyzers.inc"

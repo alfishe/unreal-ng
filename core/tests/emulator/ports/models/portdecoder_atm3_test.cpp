@@ -14,10 +14,14 @@
 #include "emulator/io/storage/memorydisk.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
-#include "emulator/memory/atm/cmos.h"
+#include "emulator/io/rtc/ds12887.h"
 #include "emulator/io/mouse/mouse.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/emulator.h"
+
+#include <cstdio>
+#include <fstream>
+#include <iterator>
 
 /// region <SetUp / TearDown>
 
@@ -732,26 +736,25 @@ TEST_F(PortDecoder_ATM3_Test, Eff7_WrittenOnlyOutsideShadow_WriteOnly)
 TEST_F(PortDecoder_ATM3_Test, Gluk_GatedByEff7Bit7OutsideShadow)
 {
     EmulatorState& state = _context->emulatorState;
-    CMOS& cmos = _portDecoder->GetCMOS();
-    cmos.SetCMOSType(Dallas);
+    Ds12887& cmos = _portDecoder->GetRtc();
 
     SetShadow(state, false);
     state.pEFF7 = 0x00;
-    cmos.SetCMOSAddress(0x20);
+    cmos.WriteAddress(0x20);
     _portDecoder->DecodePortOut(0xDFF7, 0x30, 0x0000);
-    EXPECT_EQ(cmos.GetCMOSAddress(), 0x20) << "clock ports closed until #EFF7 bit 7";
+    EXPECT_EQ(cmos.GetAddress(), 0x20) << "clock ports closed until #EFF7 bit 7";
     EXPECT_EQ(_portDecoder->DecodePortIn(0xBFF7, 0x0000), 0xFF);
 
     _portDecoder->DecodePortOut(0xEFF7, 0x80, 0x0000);
     _portDecoder->DecodePortOut(0xDFF7, 0x30, 0x0000);
-    EXPECT_EQ(cmos.GetCMOSAddress(), 0x30);
+    EXPECT_EQ(cmos.GetAddress(), 0x30);
     _portDecoder->DecodePortOut(0xBFF7, 0x5A, 0x0000);
     EXPECT_EQ(_portDecoder->DecodePortIn(0xBFF7, 0x0000), 0x5A);
 
     SetShadow(state, true);
     state.pEFF7 = 0x00;
     _portDecoder->DecodePortOut(0xDEF7, 0x31, 0x0000);
-    EXPECT_EQ(cmos.GetCMOSAddress(), 0x31) << "#DEF7 in shadow, no #EFF7 bit 7 needed";
+    EXPECT_EQ(cmos.GetAddress(), 0x31) << "#DEF7 in shadow, no #EFF7 bit 7 needed";
     _portDecoder->DecodePortOut(0xBEF7, 0xA5, 0x0000);
     EXPECT_EQ(_portDecoder->DecodePortIn(0xBEF7, 0x0000), 0xA5);
     EXPECT_EQ(_portDecoder->DecodePortIn(0xBFF7, 0x0000), 0xFF) << "#BFF7 has A8=1: in shadow it is not the clock";
@@ -870,8 +873,8 @@ TEST_F(PortDecoder_ATM3_Test, ZController_CardStatusInAvrRegisterC)
     EvoAvr& avr = _portDecoder->GetEvoAvr();
     avr.SetFixedTime(1767268830);  // no update-ended flag in the read
     auto registerC = [&avr]() {
-        avr.SetCMOSAddress(0x0C);
-        return static_cast<uint8_t>(avr.ReadCMOS() & 0x0C);
+        avr.WriteAddress(0x0C);
+        return static_cast<uint8_t>(avr.ReadData() & 0x0C);
     };
 
     EXPECT_EQ(registerC(), 0x00) << "empty slot";
@@ -1017,8 +1020,8 @@ TEST(ZXEvoSdSlot_Test, SwapDelaySeenInCardDetect)
     EvoAvr& avr = decoder->GetEvoAvr();
     avr.SetFixedTime(1767268830);
     auto cardPresent = [&avr]() {
-        avr.SetCMOSAddress(0x0C);
-        return (avr.ReadCMOS() & 0x08) != 0;
+        avr.WriteAddress(0x0C);
+        return (avr.ReadData() & 0x08) != 0;
     };
     MediaSource blank;
     blank.type = MediaSourceType::Blank;
@@ -1723,6 +1726,93 @@ TEST(PortDecoder_ATM3_Trace_Test, EveryMainboardArmIsAttributed)
     ASSERT_FALSE(events.empty());
     EXPECT_EQ(events.back().deviceId, PortDeviceId::Evo_Config);
     EXPECT_FALSE(events.back().isOut());
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// PLAN #60(g): every event carries the decoder's internal port code - on the
+/// ZX-Evo the BaseConf decode arm - named by the session's code table, the
+/// filter selects by it, and every export format keeps it
+TEST(PortDecoder_ATM3_Trace_Test, EventsCarryTheDecodeArmAsInternalCode)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("ATM3", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    ASSERT_TRUE(emulator->GetFeatureManager()->setFeature(Features::kPortTrace, true));
+    PortDecoder& decoder = *context->pPortDecoder;
+    PortDiagnosticRecorder* recorder = decoder.getPortTraceRecorder();
+    ASSERT_NE(recorder, nullptr);
+
+    const PortTraceSessionInfo info = decoder.getPortTraceSessionInfo();
+    ASSERT_EQ(info.codes.size(), 21u) << "one code per BaseConf decode arm";
+    auto codeOf = [&](const char* name) {
+        for (const auto& entry : info.codes)
+            if (entry.name == name)
+                return entry.code;
+        ADD_FAILURE() << "no code named " << name;
+        return PortTraceCode::kNone;
+    };
+
+    recorder->start();
+    decoder.DecodePortOut(0x00FE, 0x00, 0x0000);  // in shadow after reset
+    decoder.DecodePortOut(0xFFFD, 0x07, 0x0000);
+    decoder.DecodePortOut(0x7FF7, 0x7F, 0x0000);
+    decoder.DecodePortOut(0x001F, 0xD0, 0x0000);
+    const std::vector<PortTraceEvent> events = recorder->getAll();
+    ASSERT_EQ(events.size(), 4u);
+    EXPECT_EQ(events[0].internalCode, codeOf("KeyboardBorder"));
+    EXPECT_EQ(events[1].internalCode, codeOf("Ay"));
+    EXPECT_EQ(events[2].internalCode, codeOf("Pager"));
+    EXPECT_EQ(events[3].internalCode, codeOf("Fdc"));
+    EXPECT_EQ(info.CodeName(events[1].internalCode), "Ay");
+
+    // The filter selects by code: only the AY accesses stay
+    recorder->stop();
+    recorder->clear();
+    PortTraceFilterRule rule;
+    rule.internalCode = codeOf("Ay");
+    recorder->addIncludeRule(rule);
+    EXPECT_NE(recorder->describeFilter().find("code=0x"), std::string::npos) << recorder->describeFilter();
+    recorder->start();
+    decoder.DecodePortOut(0x00FE, 0x00, 0x0000);
+    decoder.DecodePortOut(0xFFFD, 0x07, 0x0000);
+    decoder.DecodePortOut(0xBFFD, 0x3F, 0x0000);
+    decoder.DecodePortOut(0x001F, 0xD0, 0x0000);
+    recorder->stop();
+    const std::vector<PortTraceEvent> ay = recorder->getAll();
+    ASSERT_EQ(ay.size(), 2u);
+    EXPECT_EQ(ay[0].rawPort, 0xFFFD);
+    EXPECT_EQ(ay[1].rawPort, 0xBFFD);
+
+    // Every export keeps the code; the binary ones also the code table
+    const std::string base = TestPathHelper::GetUniqueTestScratchPath("porttrace-codes");
+    for (const auto& [format, suffix] : {std::pair{PortTraceExportFormat::Binary, ".bin"},
+                                          std::pair{PortTraceExportFormat::BinaryCompressed, ".binz"}})
+    {
+        const std::string path = base + suffix;
+        ASSERT_TRUE(recorder->saveToFile(path, format, info)) << path;
+        PortTraceSessionInfo loadedInfo;
+        std::vector<PortTraceEvent> loaded;
+        ASSERT_TRUE(PortDiagnosticRecorder::loadFromFile(path, loadedInfo, loaded)) << path;
+        ASSERT_EQ(loaded.size(), ay.size()) << path;
+        EXPECT_TRUE(loaded[0] == ay[0] && loaded[1] == ay[1]) << path;
+        ASSERT_EQ(loadedInfo.codes.size(), info.codes.size()) << path;
+        EXPECT_EQ(loadedInfo.CodeName(loaded[0].internalCode), "Ay") << path;
+        std::remove(path.c_str());
+    }
+    for (const auto& [format, suffix] : {std::pair{PortTraceExportFormat::JSON, ".json"},
+                                          std::pair{PortTraceExportFormat::CSV, ".csv"}})
+    {
+        const std::string path = base + suffix;
+        ASSERT_TRUE(recorder->saveToFile(path, format, info)) << path;
+        std::ifstream in(FileHelper::ToFsPath(path));
+        const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        EXPECT_NE(text.find("Ay"), std::string::npos) << path << ": the code name";
+        EXPECT_NE(text.find(format == PortTraceExportFormat::JSON ? "\"code\": " : ",Ay"), std::string::npos)
+            << path << ": the per-event code";
+        in.close();
+        std::remove(path.c_str());
+    }
 
     EmulatorTestHelper::CleanupEmulator(emulator);
 }

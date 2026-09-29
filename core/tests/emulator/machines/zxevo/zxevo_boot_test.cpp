@@ -102,7 +102,7 @@ protected:
         // --gtest_shuffle, unreproducible by a fixed seed alone (real time
         // keeps moving) - exactly the signature that gave this away.
         if (auto* decoder = static_cast<PortDecoder_ATM3*>(emulator->GetContext()->pPortDecoder))
-            decoder->GetCMOS().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC
+            decoder->GetRtc().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC
 
         if (turbo)
             emulator->EnableTurboMode();

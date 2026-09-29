@@ -16,6 +16,7 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/mainloop.h"
 #include "emulator/memory/memory.h"
 
 #include <set>
@@ -108,3 +109,113 @@ TEST_F(InstructionStart_Test, OncePerInstructionAtItsFirstByte)
     for (const auto& [pc, t] : starts)
         EXPECT_TRUE(boundaries.count(t)) << "start at " << std::hex << pc << " recorded mid-step (t=" << std::dec << t << ")";
 }
+
+/// region <Machine step hook (IMachineStepHook, TSConf INF-5)>
+
+/// A machine engine that must advance with the CPU (TSConf TSU / DMA / line
+/// events) is called after every step, on every frame - also the frames the
+/// turbo mode does not render - and is told when the frame counter rebases.
+namespace
+{
+struct FakeStepHook : IMachineStepHook
+{
+    uint64_t steps = 0;
+    uint64_t stepsThisFrame = 0;
+    uint32_t lastT = 0;
+    bool monotonic = true;
+    std::vector<uint64_t> stepsPerFrame;
+    std::vector<uint32_t> rollovers;
+
+    void OnMachineStep(uint32_t t) override
+    {
+        if (t < lastT)
+            monotonic = false;
+        lastT = t;
+        steps++;
+        stepsThisFrame++;
+    }
+    void OnMachineFrameRollover(uint32_t frameLength) override
+    {
+        rollovers.push_back(frameLength);
+        stepsPerFrame.push_back(stepsThisFrame);
+        stepsThisFrame = 0;
+        lastT = 0;
+    }
+};
+} // namespace
+
+class MachineStepHook_Test : public ::testing::Test
+{
+protected:
+    Emulator* _emulator = nullptr;
+    Z80* _z80 = nullptr;
+    FakeStepHook _hook;
+
+    void SetUp() override
+    {
+        _emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+        ASSERT_NE(_emulator, nullptr);
+        _z80 = _emulator->GetContext()->pCore->GetZ80();
+        _z80->machineStepHook = &_hook;
+    }
+
+    void TearDown() override
+    {
+        if (_z80)
+            _z80->machineStepHook = nullptr;
+        if (_emulator)
+        {
+            EmulatorTestHelper::CleanupEmulator(_emulator);
+            _emulator = nullptr;
+        }
+    }
+};
+
+TEST_F(MachineStepHook_Test, CalledAfterEveryStepWithTheReachedT)
+{
+    for (int i = 0; i < 200; i++)
+    {
+        _z80->StepInstruction(true);
+        ASSERT_EQ(_hook.lastT, _z80->t) << "step " << i;
+    }
+    EXPECT_EQ(_hook.steps, 200u);
+}
+
+TEST_F(MachineStepHook_Test, RunsOnFramesTheTurboModeDoesNotRender)
+{
+    // Turbo decimation skips the screen on most frames; the engine must not
+    // notice. Driven through the main loop's own frame, as the GUI runs it:
+    // with the fixed decimation (TURBO_RENDER_DECIMATION = 50) at most one of
+    // these 4 frames is rendered
+    MainLoop_CUT* mainLoop = reinterpret_cast<MainLoop_CUT*>(_emulator->GetContext()->pMainLoop);
+    _emulator->GetMainLoop()->SetTurboRenderAdaptive(false);
+    _emulator->EnableTurboMode();
+    const size_t frames = 4;
+    static_assert(MainLoop::TURBO_RENDER_DECIMATION > 4);
+    for (size_t i = 0; i < frames; i++)
+        mainLoop->RunFramePublic();
+
+    ASSERT_EQ(_hook.rollovers.size(), frames);
+    for (size_t i = 0; i < frames; i++)
+    {
+        EXPECT_EQ(_hook.rollovers[i], 71680u) << "frame " << i;
+        EXPECT_GT(_hook.stepsPerFrame[i], 5000u) << "frame " << i << ": every step of every frame";
+    }
+    EXPECT_TRUE(_hook.monotonic) << "t only grows between rollovers";
+}
+
+TEST_F(MachineStepHook_Test, RolloverFollowsTheFrameCounterRebase)
+{
+    Core* core = _emulator->GetContext()->pCore;
+    _z80->t = 71680 + 7;
+    core->AdjustFrameCounters();
+    ASSERT_EQ(_hook.rollovers.size(), 1u);
+    EXPECT_EQ(_hook.rollovers[0], 71680u);
+    EXPECT_EQ(_z80->t, 7u);
+
+    _z80->t = 100;
+    core->AdjustFrameCounters();
+    EXPECT_EQ(_hook.rollovers.size(), 1u) << "no rollover mid-frame";
+}
+
+/// endregion </Machine step hook>

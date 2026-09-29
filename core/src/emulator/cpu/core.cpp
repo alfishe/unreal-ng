@@ -9,6 +9,7 @@
 #include "emulator/io/fdc/diskautostart.h"
 #include "emulator/io/fdc/diskfastload.h"
 #include "emulator/io/fdc/upd765.h"
+#include "emulator/io/ide/idecontroller.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/tape/tapefastload.h"
 #include "emulator/io/tape/tapeturbocontroller.h"
@@ -324,21 +325,16 @@ bool Core::Init()
 
     /// endregion </Recording manager>
 
-    /// region <HDD>
+    /// region <IDE>
 
+    // The board from [HDD] Scheme; its unit slots register with the media manager
     if (result)
     {
-        result = false;
-
-        // Create HDD controller
-        _hdd = new HDD(_context);
-        if (_hdd)
-        {
-            result = true;
-        }
+        _ide = new IdeController(_context);
+        _context->pIdeController = _ide;
     }
 
-    /// endregion </HDD>
+    /// endregion </IDE>
 
     /// region <Z80>
 
@@ -387,9 +383,8 @@ bool Core::Init()
     {
         result = false;
 
-        // Create Video controller
-        VideoModeEnum mode = M_ZX48;  // Make ZX the default video mode on start
-        _screen = VideoController::GetScreenForMode(mode, _context);
+        // The renderer of the model's family (VideoController::CreateScreen), in M_ZX48 at start
+        _screen = VideoController::CreateScreen(_config->mem_model, _context);
         if (_screen)
         {
             _context->pScreen = _screen;
@@ -489,11 +484,10 @@ void Core::Release()
         _screen = nullptr;
     }
 
-    if (_hdd != nullptr)
-    {
-        delete _hdd;
-        _hdd = nullptr;
-    }
+    // Before the media manager goes (Emulator deletes it after Core): the unit slots unregister
+    _context->pIdeController = nullptr;
+    delete _ide;
+    _ide = nullptr;
 
     _context->pUPD765 = nullptr;
     delete _upd765;
@@ -638,19 +632,83 @@ void Core::SelectMemoryInterface()
     _z80->idleContention = _z80->ioContention;  // the ULA contends internal cycles too, the gate array does not
 }
 
-bool Core::SetBusOverlay(HostBusOverlay* overlay)
+bool Core::AddBusOverlay(HostBusOverlay* overlay)
 {
+    if (!overlay)
+        return false;
     {
         std::lock_guard<std::mutex> lock(_memIfMutex);
-        if (overlay && _busOverlay && overlay != _busOverlay)
+        for (size_t i = 0; i < _busOverlayCount; i++)
         {
-            MLOGERROR("Core::SetBusOverlay - another host bus overlay is installed; refused");
+            if (_busOverlays[i] == overlay)
+                return true;
+        }
+        if (_busOverlayCount == HostBusOverlayChain::kMaxOverlays)
+        {
+            MLOGERROR("Core::AddBusOverlay - %zu host bus overlays are installed already; refused", _busOverlayCount);
             return false;
         }
-        _busOverlay = overlay;
+        _busOverlays[_busOverlayCount++] = overlay;
+        UpdateEffectiveBusOverlay();
     }
     SelectMemoryInterface();
     return true;
+}
+
+void Core::RemoveBusOverlay(HostBusOverlay* overlay)
+{
+    {
+        std::lock_guard<std::mutex> lock(_memIfMutex);
+        size_t kept = 0;
+        for (size_t i = 0; i < _busOverlayCount; i++)
+        {
+            if (_busOverlays[i] != overlay)
+                _busOverlays[kept++] = _busOverlays[i];
+        }
+        if (kept == _busOverlayCount)
+            return;
+        for (size_t i = kept; i < _busOverlayCount; i++)
+            _busOverlays[i] = nullptr;
+        _busOverlayCount = kept;
+        UpdateEffectiveBusOverlay();
+    }
+    SelectMemoryInterface();
+}
+
+void Core::ClearBusOverlays()
+{
+    {
+        std::lock_guard<std::mutex> lock(_memIfMutex);
+        for (auto& overlay : _busOverlays)
+            overlay = nullptr;
+        _busOverlayCount = 0;
+        UpdateEffectiveBusOverlay();
+    }
+    SelectMemoryInterface();
+}
+
+bool Core::IsBusOverlayInstalled(const HostBusOverlay* overlay) const
+{
+    for (size_t i = 0; i < _busOverlayCount; i++)
+    {
+        if (_busOverlays[i] == overlay)
+            return true;
+    }
+    return false;
+}
+
+/// Under _memIfMutex. One overlay is called directly (no chain cost); two or
+/// more go through the chain. SelectMemoryInterface then hands the result to
+/// Memory
+void Core::UpdateEffectiveBusOverlay()
+{
+    _busOverlayChain.Assign(_busOverlays, _busOverlayCount);
+    if (_busOverlayCount == 0)
+        _busOverlay = nullptr;
+    else if (_busOverlayCount == 1)
+        _busOverlay = _busOverlays[0];
+    else
+        _busOverlay = &_busOverlayChain;
 }
 
 bool Core::IsContentionEffective() const
@@ -719,7 +777,7 @@ void Core::Reset(ROMModeEnum mode)
     _betaDisk->reset();          // BetaDisk floppy controller
     if (_upd765)
         _upd765->reset();        // +3 floppy controller
-    _hdd->Reset();               // Reset IDE controller
+    _ide->Reset();               // IDE units: the machine's reset line (IDE design §3.3)
     _portDecoder->reset();       // Reset peripheral port decoder (sets model-specific port defaults)
 
     // Apply the model-specific boot register defaults for the RESET= mode (port
@@ -926,6 +984,10 @@ void Core::AdjustFrameCounters()
     // Re-adjust Core frame t-state counter and interrupt position
     _z80->t -= scaledFrame;
 
+    // The machine engine rebases its frame-relative positions (IMachineStepHook)
+    if (_z80->machineStepHook) [[unlikely]]
+        _z80->machineStepHook->OnMachineFrameRollover(scaledFrame);
+
     // Drop any stale INT request latched near the frame edge. The ULA INT line
     // is only asserted inside [intstart, intstart+intlen); ProcessInterrupts
     // clears int_pending via "t >= int_end", but when an instruction (typically
@@ -941,4 +1003,14 @@ void Core::AdjustFrameCounters()
 void Core::UpdateScreen()
 {
     GetZ80()->OnCPUStep();
+}
+
+void Core::RefitIde()
+{
+    _context->pIdeController = nullptr;
+    delete _ide;
+    _ide = new IdeController(_context);
+    _context->pIdeController = _ide;
+    if (_portDecoder)
+        _portDecoder->GetIdeAdapter().Reset();
 }

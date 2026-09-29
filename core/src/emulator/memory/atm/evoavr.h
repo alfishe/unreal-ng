@@ -5,15 +5,15 @@
 #include <cstdint>
 #include <string>
 
-#include "cmos.h"
+#include "emulator/io/rtc/ds12887.h"
 
 /// ZX-Evo BaseConf AVR as the Z80 sees it through the Gluk clock ports
 /// (#DFF7 address / #BFF7 data, #DEF7 / #BEF7 in shadow).
 ///
 /// On the board the ATmega128 emulates an MC146818 on top of a PCF8583 RTC and
 /// answers every data-port access itself (pentevo avr/baseconf/trunk/src/rtc.c,
-/// version.c). The clock registers 0x00-0x09 behave like the plain CMOS base
-/// class; the rest follows the AVR firmware:
+/// version.c). The clock registers 0x00-0x09 are the shared Ds12887 chip; the
+/// rest follows the AVR firmware:
 ///
 ///   0x0A (A)     EEPROM page pointer, read/write
 ///   0x0B (B)     only the binary-mode bit (2) is kept, bit 1 reads 1
@@ -32,7 +32,7 @@
 ///
 /// Version records are the 16-byte tags of the released images (see
 /// kFirmwareVersion / kBootloaderVersion).
-class EvoAvr : public CMOS
+class EvoAvr : public Ds12887
 {
 public:
     /// Extension types selected through cells 0xF0-0xFF (AVR main.h)
@@ -61,8 +61,16 @@ public:
 public:
     EvoAvr();
 
-    void WriteCMOS(uint8_t val) override;
-    uint8_t ReadCMOS() override;
+    uint8_t ReadRegister(uint8_t index) override;
+    void WriteRegister(uint8_t index, uint8_t value) override;
+    uint8_t PeekRegister(uint8_t index) const override;
+    const char* ChipName() const override { return "ZX-Evo AVR (MC146818 emulation)"; }
+    const char* RegistersNote() const override
+    {
+        return "AVR firmware registers: A = EEPROM page, B keeps only the binary bit (always 24 h, SET ignored), "
+               "C = EEPROM mode / update ended / SD present / SD write protect / Caps LED / tape out, "
+               "D = #80 | PS/2 modifiers, #F0-#FF = EEPROM window or extension window";
+    }
 
     /// region <Host side>
     void SetSdStatus(bool present, bool writeProtected);
@@ -79,14 +87,15 @@ public:
     /// endregion </Host side>
 
     /// region <TTD>
-    /// Volatile AVR state (the NVRAM and EEPROM are battery-backed
-    /// configuration, captured like the rest of the CMOS contents: not at all)
+    /// Volatile AVR state (AtmPagingState). The clock and its cells are the
+    /// Ds12887 blob; the 4 KiB EEPROM is not captured (the guest writes it
+    /// only when it saves a PS/2 keymap)
     void GetVolatileState(uint8_t& extType, uint8_t& eepromPage, uint8_t& flags) const;
     void SetVolatileState(uint8_t extType, uint8_t eepromPage, uint8_t flags);
     /// endregion </TTD>
 
 protected:
-    uint8_t ReadExtension(uint8_t index);
+    uint8_t ReadExtension(uint8_t index) const;
 
     std::array<uint8_t, kEepromSize> _eeprom{};
     uint8_t _extType = kExtFirmwareVersion;

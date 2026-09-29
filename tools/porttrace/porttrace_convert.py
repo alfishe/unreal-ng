@@ -28,7 +28,7 @@ import sys
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 # ── Constants (mirror core/src/emulator/ports/portdiagrecorder.h) ──────────
 
@@ -57,6 +57,7 @@ DEVICE_NAMES = {
     0x15: "Palette",
     0x16: "GeneralSound",
     0x17: "SdCard",
+    0x18: "Ide",
 }
 DEVICE_IDS = {name: dev_id for dev_id, name in DEVICE_NAMES.items()}
 
@@ -73,21 +74,31 @@ RULE_NO_MATCH = 0xFF
 RULE_BDI_FALLBACK = 0xFE
 RULE_NO_TABLE = 0xFD
 
-# Binary format v1: 32-byte header, decode-rule table, packed 24-byte events.
-# Event field order matches the C++ PortTraceEvent layout (static_assert-pinned):
-#   u64 timestamp, u32 frame, u16 raw, u16 dec, u16 pc, u8 val, u8 rule, u8 dev, u8 flags, 2 pad
+# Internal port code (PLAN #60(g)): what the address meant under the decoder's
+# port map (ZX-Evo: the BaseConf decode arm); CODE_NONE = the decoder has none
+CODE_NONE = 0xFFFF
+
+# Binary format "PTRC": 32-byte header, decode-rule table, (version 2) code
+# table, packed 24-byte events. Event field order matches the C++ PortTraceEvent
+# layout (static_assert-pinned):
+#   u64 timestamp, u32 frame, u16 raw, u16 dec, u16 pc, u8 val, u8 rule, u8 dev, u8 flags,
+#   u16 code (version 2; version 1 left these two bytes as padding)
+# Code table (PTRC v2 codeCount u16 at header offset 20, PTR2 v3 at 28):
+#   per entry u16 code, u8 name length, name bytes
 BINARY_MAGIC = b"PTRC"
-BINARY_EVENT = struct.Struct("<QIHHHBBBBxx")
+BINARY_EVENT = struct.Struct("<QIHHHBBBBH")
 BINARY_RULE = struct.Struct("<HHH")
 
-# Binary format v2 ("PTR2", .binz): same 32-byte header prefix (compressedSize
-# u64 at offset 20), decode-rule table, then ONE zstd frame containing the
-# columnar delta/xor payload (22 bytes/event):
+# Compressed format "PTR2" (.binz): same 32-byte header prefix (compressedSize
+# u64 at offset 20), decode-rule table, (version 3) code table, then ONE zstd
+# frame containing the columnar delta/xor payload (22 bytes/event in version 2,
+# 24 in version 3):
 #   u64 tsDelta[n], u32 frameDelta[n], u16 rawXor[n], u16 decXor[n],
-#   u16 pcXor[n], u8 value[n], u8 rule[n], u8 dev[n], u8 flags[n]
+#   u16 pcXor[n], u8 value[n], u8 rule[n], u8 dev[n], u8 flags[n], u16 codeXor[n] (v3)
 # (deltas/xors are against the previous event; first event vs zero)
 BINARY2_MAGIC = b"PTR2"
 V2_BYTES_PER_EVENT = 22
+V3_BYTES_PER_EVENT = 24
 
 
 def _zstd_decompress(buf: bytes, expected_size: int) -> bytes:
@@ -158,12 +169,17 @@ def encode_v2_payload(events: List["PortTraceEvent"]) -> bytes:
             prev = v
     for field in ("value", "decode_rule", "device_id", "flags"):
         out += bytes(getattr(e, field) for e in events)
+    prev = 0
+    for e in events:
+        out += struct.pack("<H", e.code ^ prev)
+        prev = e.code
     return bytes(out)
 
 
-def decode_v2_payload(payload: bytes, n: int) -> List["PortTraceEvent"]:
-    if len(payload) != n * V2_BYTES_PER_EVENT:
-        raise ValueError(f"PTR2 payload size mismatch: {len(payload)} != {n * V2_BYTES_PER_EVENT}")
+def decode_v2_payload(payload: bytes, n: int, with_code: bool = True) -> List["PortTraceEvent"]:
+    per_event = V3_BYTES_PER_EVENT if with_code else V2_BYTES_PER_EVENT
+    if len(payload) != n * per_event:
+        raise ValueError(f"PTR2 payload size mismatch: {len(payload)} != {n * per_event}")
 
     off = 0
     ts, acc = [], 0
@@ -191,8 +207,16 @@ def decode_v2_payload(payload: bytes, n: int) -> List["PortTraceEvent"]:
         cols8.append(payload[off:off + n])
         off += n
 
+    codes, acc = [], 0
+    if with_code:
+        for x in struct.unpack_from(f"<{n}H", payload, off):
+            acc ^= x
+            codes.append(acc)
+    else:
+        codes = [CODE_NONE] * n
+
     return [PortTraceEvent(ts[i], frames[i], cols16[0][i], cols16[1][i], cols16[2][i],
-                           cols8[0][i], cols8[1][i], cols8[2][i], cols8[3][i])
+                           cols8[0][i], cols8[1][i], cols8[2][i], cols8[3][i], codes[i])
             for i in range(n)]
 
 
@@ -207,6 +231,7 @@ class PortTraceEvent:
     decode_rule: int
     device_id: int
     flags: int
+    code: int = CODE_NONE  # internal port code (PLAN #60(g))
 
     @property
     def direction(self) -> str:
@@ -267,6 +292,12 @@ class SessionInfo:
     total_evicted: int = 0
     total_filtered: int = 0
     decode_rules: List[Tuple[int, int, int]] = field(default_factory=list)  # (mask, match, port)
+    codes: Dict[int, str] = field(default_factory=dict)  # internal port code -> name
+
+    def code_name(self, code: int) -> str:
+        if code == CODE_NONE:
+            return ""
+        return self.codes.get(code, f"#{code:04X}")
 
 
 # ── Readers ────────────────────────────────────────────────────────────────
@@ -286,11 +317,13 @@ def read_json(path: Path) -> Tuple[SessionInfo, List[PortTraceEvent]]:
         total_evicted=s.get("total_evicted", 0),
         total_filtered=s.get("total_filtered", 0),
         decode_rules=[(r["mask"], r["match"], r["port"]) for r in data.get("decode_rules", [])],
+        codes={int(k): v for k, v in data.get("code_map", {}).items()},
     )
     events = [
         PortTraceEvent(
             timestamp=e["ts"], frame=e["frame"], raw_port=e["raw"], decoded_port=e["dec"],
             pc=e["pc"], value=e["val"], decode_rule=e["rule"], device_id=e["dev"], flags=e["flags"],
+            code=e.get("code", CODE_NONE),
         )
         for e in data.get("events", [])
     ]
@@ -312,6 +345,9 @@ def read_csv(path: Path) -> Tuple[SessionInfo, List[PortTraceEvent]]:
                     session.tstates_per_frame = int(line.split(":", 1)[1].strip())
                 elif line.startswith("# Filter:"):
                     session.filter_desc = line.split(":", 1)[1].strip()
+                elif line.startswith("# Code "):
+                    code_text, name = line[len("# Code "):].split(":", 1)
+                    session.codes[int(code_text, 16)] = name.strip()
                 elif line.startswith("# DecodeRule"):
                     fields = dict(part.split("=") for part in line.split(":", 1)[1].split())
                     session.decode_rules.append(
@@ -342,6 +378,7 @@ def read_csv(path: Path) -> Tuple[SessionInfo, List[PortTraceEvent]]:
             decode_rule=int(row["decode_rule"]),
             device_id=DEVICE_IDS.get(row["device"], 0x0E),
             flags=flags,
+            code=int(row["code"], 16) if row.get("code") else CODE_NONE,
         ))
     return session, events
 
@@ -354,8 +391,10 @@ def read_binary(path: Path) -> Tuple[SessionInfo, List[PortTraceEvent]]:
             raise ValueError(f"Not a PTRC/PTR2 trace: {path}")
         is_v2 = header[:4] == BINARY2_MAGIC
         version = struct.unpack_from("<H", header, 4)[0]
-        if version != (2 if is_v2 else 1):
+        if version not in ((2, 3) if is_v2 else (1, 2)):
             raise ValueError(f"Unsupported trace version {version}")
+        with_code = version >= (3 if is_v2 else 2)
+        code_count = struct.unpack_from("<H", header, 28 if is_v2 else 20)[0] if with_code else 0
         count = struct.unpack_from("<I", header, 6)[0]
         session.capacity = struct.unpack_from("<I", header, 10)[0]
         session.tstates_per_frame = struct.unpack_from("<I", header, 14)[0]
@@ -364,21 +403,27 @@ def read_binary(path: Path) -> Tuple[SessionInfo, List[PortTraceEvent]]:
 
         for _ in range(rule_count):
             session.decode_rules.append(BINARY_RULE.unpack(f.read(BINARY_RULE.size)))
+        for _ in range(code_count):
+            code, length = struct.unpack("<HB", f.read(3))
+            session.codes[code] = f.read(length).decode("utf-8", errors="replace")
 
         if is_v2:
             frame_data = f.read(compressed_size)
             if len(frame_data) < compressed_size:
                 raise ValueError("Truncated PTR2 trace")
-            payload = _zstd_decompress(frame_data, count * V2_BYTES_PER_EVENT)
-            events = decode_v2_payload(payload, count)
+            per_event = V3_BYTES_PER_EVENT if with_code else V2_BYTES_PER_EVENT
+            payload = _zstd_decompress(frame_data, count * per_event)
+            events = decode_v2_payload(payload, count, with_code)
         else:
             events = []
             for _ in range(count):
                 data = f.read(BINARY_EVENT.size)
                 if len(data) < BINARY_EVENT.size:
                     raise ValueError("Truncated PTRC trace")
-                ts, frame, raw, dec, pc, val, rule, dev, flags = BINARY_EVENT.unpack(data)
-                events.append(PortTraceEvent(ts, frame, raw, dec, pc, val, rule, dev, flags))
+                ts, frame, raw, dec, pc, val, rule, dev, flags, code = BINARY_EVENT.unpack(data)
+                # Version 1 wrote the last two bytes as padding: not a code
+                events.append(PortTraceEvent(ts, frame, raw, dec, pc, val, rule, dev, flags,
+                                             code if with_code else CODE_NONE))
 
     session.total_captured = len(events)
     return session, events
@@ -412,9 +457,11 @@ def read_via_webapi(url: str, path: Path, emulator: str = "") -> Tuple[SessionIn
     session = SessionInfo(
         tstates_per_frame=data.get("session", {}).get("tstates_per_frame", 0),
         decode_rules=[(r["mask"], r["match"], r["port"]) for r in data.get("decode_rules", [])],
+        codes={int(k): v for k, v in data.get("code_map", {}).items()},
     )
     events = [PortTraceEvent(e["ts"], e["frame"], e["raw"], e["dec"], e["pc"], e["val"],
-                             e["rule"], e["dev"], e["flags"]) for e in data.get("events", [])]
+                             e["rule"], e["dev"], e["flags"], e.get("code", CODE_NONE))
+              for e in data.get("events", [])]
     session.total_captured = len(events)
     return session, events
 
@@ -450,10 +497,12 @@ def write_json(session: SessionInfo, events: List[PortTraceEvent], out) -> None:
             {"index": i, "mask": m, "match": v, "port": p}
             for i, (m, v, p) in enumerate(session.decode_rules)
         ],
+        "code_map": {str(k): v for k, v in session.codes.items()},
         "device_map": {str(k): v for k, v in DEVICE_NAMES.items()},
         "events": [
-            {"ts": e.timestamp, "frame": e.frame, "raw": e.raw_port, "dec": e.decoded_port,
-             "rule": e.decode_rule, "val": e.value, "pc": e.pc, "dev": e.device_id, "flags": e.flags}
+            dict({"ts": e.timestamp, "frame": e.frame, "raw": e.raw_port, "dec": e.decoded_port,
+                  "rule": e.decode_rule, "val": e.value, "pc": e.pc, "dev": e.device_id, "flags": e.flags},
+                 **({"code": e.code} if e.code != CODE_NONE else {}))
             for e in events
         ],
     }
@@ -470,61 +519,78 @@ def write_csv(session: SessionInfo, events: List[PortTraceEvent], out) -> None:
               f"{session.total_filtered} filtered out)\n")
     for i, (mask, match, port) in enumerate(session.decode_rules):
         out.write(f"# DecodeRule {i}: mask=0x{mask:04X} match=0x{match:04X} port=0x{port:04X}\n")
+    for code, name in session.codes.items():
+        out.write(f"# Code 0x{code:04X}: {name}\n")
     writer = csv.writer(out)
     writer.writerow(["index", "timestamp", "frame", "direction", "raw_port", "decoded_port",
                      "decode_rule", "value", "pc", "device", "decoded", "had_handler",
-                     "beta128_gated", "handled_inline", "cf_trdos", "via_legacy", "full_decode_claim"])
+                     "beta128_gated", "handled_inline", "cf_trdos", "via_legacy", "full_decode_claim",
+                     "code", "code_name"])
     for i, e in enumerate(events):
         writer.writerow([i, e.timestamp, e.frame, e.direction,
                          f"0x{e.raw_port:04X}", f"0x{e.decoded_port:04X}", e.decode_rule,
                          f"0x{e.value:02X}", f"0x{e.pc:04X}", e.device_name,
                          int(e.decoded), int(e.had_handler), int(e.beta128_gated),
                          int(e.handled_inline), int(e.cf_trdos), int(e.via_legacy),
-                         int(e.full_decode_claim)])
+                         int(e.full_decode_claim),
+                         f"0x{e.code:04X}" if e.code != CODE_NONE else "",
+                         session.code_name(e.code)])
 
 
 def write_markdown(session: SessionInfo, events: List[PortTraceEvent], out) -> None:
     out.write("## Port Access Trace\n\n")
     out.write(f"**Model**: {session.model} | **Filter**: {session.filter_desc} "
               f"| **Events**: {len(events)}\n\n")
-    out.write("| # | Frame | T-State | Dir | Raw | Decoded | Value | PC | Device | Flags |\n")
-    out.write("|---|-------|---------|-----|-----|---------|-------|----|--------|-------|\n")
+    with_codes = any(e.code != CODE_NONE for e in events)
+    out.write("| # | Frame | T-State | Dir | Raw | Decoded | Value | PC | Device | Flags |"
+              + (" Code |" if with_codes else "") + "\n")
+    out.write("|---|-------|---------|-----|-----|---------|-------|----|--------|-------|"
+              + ("------|" if with_codes else "") + "\n")
     for i, e in enumerate(events):
         out.write(f"| {i} | {e.frame} | {e.timestamp} | {e.direction} "
                   f"| {e.raw_port:04X} | {e.decoded_port:04X} | {e.value:02X} "
-                  f"| {e.pc:04X} | {e.device_name} | {e.flags_string()} |\n")
+                  f"| {e.pc:04X} | {e.device_name} | {e.flags_string()} |"
+                  + (f" {session.code_name(e.code)} |" if with_codes else "") + "\n")
 
 
 def write_text(session: SessionInfo, events: List[PortTraceEvent], out) -> None:
     out.write(f"Port Access Trace: {session.model} ({session.emulator_id})\n")
     out.write(f"Filter: {session.filter_desc} | Events: {len(events)}\n")
     out.write("=" * 88 + "\n")
+    with_codes = any(e.code != CODE_NONE for e in events)
     out.write(f" {'#':>4}  {'Frame':>6}  {'T-State':>13}  Dir  {'Raw':>5}  "
-              f"{'Decoded':>7}  {'Value':>5}  {'PC':>5}  {'Device':<14} Flags\n")
-    out.write(f" {'-'*4}  {'-'*6}  {'-'*13}  ---  {'-'*5}  {'-'*7}  {'-'*5}  {'-'*5}  {'-'*14} {'-'*6}\n")
+              f"{'Decoded':>7}  {'Value':>5}  {'PC':>5}  {'Device':<14} Flags"
+              + ("   Code" if with_codes else "") + "\n")
+    out.write(f" {'-'*4}  {'-'*6}  {'-'*13}  ---  {'-'*5}  {'-'*7}  {'-'*5}  {'-'*5}  {'-'*14} {'-'*6}"
+              + ("  " + "-" * 16 if with_codes else "") + "\n")
     for i, e in enumerate(events):
         out.write(f" {i:>4}  {e.frame:>6}  {e.timestamp:>13}  {e.direction:<3}  "
                   f"{e.raw_port:04X}   {e.decoded_port:04X}     {e.value:02X}     "
-                  f"{e.pc:04X}   {e.device_name:<14} {e.flags_string()}\n")
+                  f"{e.pc:04X}   {e.device_name:<14} {e.flags_string():<6}"
+                  + (f"  {session.code_name(e.code)}" if with_codes else "") + "\n")
     out.write("Flags: D=decoded H=hadHandler G=beta128Gated I=handledInline T=cfTrdos L=legacyPath\n")
 
 
 def write_binz(session: SessionInfo, events: List[PortTraceEvent], path: Path) -> None:
-    """Write the compressed PTR2 v2 container (mirrors the C++ writer)."""
+    """Write the compressed PTR2 v3 container (mirrors the C++ writer)."""
     payload = encode_v2_payload(events)
     frame = _zstd_compress(payload)
     with open(path, "wb") as f:
         header = bytearray(32)
         header[:4] = BINARY2_MAGIC
-        struct.pack_into("<H", header, 4, 2)
+        struct.pack_into("<H", header, 4, 3)
         struct.pack_into("<I", header, 6, len(events))
         struct.pack_into("<I", header, 10, session.capacity)
         struct.pack_into("<I", header, 14, session.tstates_per_frame)
         struct.pack_into("<H", header, 18, len(session.decode_rules))
         struct.pack_into("<Q", header, 20, len(frame))
+        struct.pack_into("<H", header, 28, len(session.codes))
         f.write(header)
         for rule in session.decode_rules:
             f.write(BINARY_RULE.pack(*rule))
+        for code, name in session.codes.items():
+            raw_name = name.encode("utf-8")[:255]
+            f.write(struct.pack("<HB", code, len(raw_name)) + raw_name)
         f.write(frame)
 
 
@@ -550,6 +616,13 @@ def write_summary(session: SessionInfo, events: List[PortTraceEvent], out) -> No
         filled = int(bar_max * c / len(events))
         out.write(f"  {d:<18} {c:>6}  ({100*c/len(events):5.1f}%)   "
                   f"{'#' * filled}{'.' * (bar_max - filled)}\n")
+
+    coded = [e for e in events if e.code != CODE_NONE]
+    if coded:
+        codes = Counter(session.code_name(e.code) for e in coded)
+        out.write("\nBy Internal Code:\n")
+        for name, c in codes.most_common(24):
+            out.write(f"  {name:<18} {c:>6}  ({100*c/len(events):5.1f}%)\n")
 
     ports = Counter(f"0x{e.decoded_port:04X}" if e.decoded_port else "unmapped" for e in events)
     out.write("\nBy Decoded Port:\n")
@@ -635,7 +708,7 @@ def write_strictness(session: SessionInfo, events: List[PortTraceEvent], out) ->
 
 # ── Filters ────────────────────────────────────────────────────────────────
 
-def apply_filters(events: List[PortTraceEvent], args) -> List[PortTraceEvent]:
+def apply_filters(events: List[PortTraceEvent], args, session: SessionInfo) -> List[PortTraceEvent]:
     if args.filter_port:
         port = int(args.filter_port, 16)
         events = [e for e in events if e.decoded_port == port or e.raw_port == port]
@@ -650,6 +723,12 @@ def apply_filters(events: List[PortTraceEvent], args) -> List[PortTraceEvent]:
         events = [e for e in events if lo <= e.pc <= hi]
     if args.filter_unmapped:
         events = [e for e in events if e.decoded_port == 0 and not e.beta128_gated]
+    if args.filter_code:
+        # A code name from the trace's code table, or a hex number
+        wanted = args.filter_code.lower()
+        events = [e for e in events if e.code != CODE_NONE
+                  and (wanted == session.codes.get(e.code, "").lower()
+                       or wanted.lstrip("#").removeprefix("0x").lstrip("0") == f"{e.code:x}".lstrip("0"))]
     return events
 
 
@@ -660,34 +739,48 @@ def selftest() -> int:
     import tempfile
 
     session = SessionInfo(model="Pentagon", tstates_per_frame=71680,
-                          decode_rules=[(0xC002, 0xC000, 0xFFFD), (0x8006, 0x0004, 0x7FFD)])
+                          decode_rules=[(0xC002, 0xC000, 0xFFFD), (0x8006, 0x0004, 0x7FFD)],
+                          codes={4: "Ay", 5: "Eff7Gluk"})
     events = [
-        PortTraceEvent(1000, 1, 0xFEFD, 0xFFFD, 0x8000, 0xFE, 0, 0x04, FLAG_DIRECTION_OUT | FLAG_WAS_DECODED),
+        PortTraceEvent(1000, 1, 0xFEFD, 0xFFFD, 0x8000, 0xFE, 0, 0x04, FLAG_DIRECTION_OUT | FLAG_WAS_DECODED, 4),
         PortTraceEvent(1011, 1, 0x7FF9, 0x0000, 0x8005, 0x10, RULE_NO_MATCH, 0x00, FLAG_DIRECTION_OUT),
         PortTraceEvent(1022, 1, 0x001F, 0x001F, 0x3D00, 0x88, RULE_BDI_FALLBACK, 0x06,
-                       FLAG_DIRECTION_OUT | FLAG_WAS_DECODED | FLAG_HAD_HANDLER | FLAG_CF_TRDOS),
+                       FLAG_DIRECTION_OUT | FLAG_WAS_DECODED | FLAG_HAD_HANDLER | FLAG_CF_TRDOS, 5),
     ]
 
     with tempfile.TemporaryDirectory() as tmp:
-        # Binary round-trip (write mirrors the C++ layout)
+        # Binary round-trip (write mirrors the C++ layout): PTRC v2 with codes,
+        # and v1, whose padding bytes must not come back as codes
+        def write_ptrc(path: Path, version: int) -> None:
+            with open(path, "wb") as f:
+                header = bytearray(32)
+                header[:4] = BINARY_MAGIC
+                struct.pack_into("<H", header, 4, version)
+                struct.pack_into("<I", header, 6, len(events))
+                struct.pack_into("<I", header, 10, 65536)
+                struct.pack_into("<I", header, 14, session.tstates_per_frame)
+                struct.pack_into("<H", header, 18, len(session.decode_rules))
+                if version >= 2:
+                    struct.pack_into("<H", header, 20, len(session.codes))
+                f.write(header)
+                for rule in session.decode_rules:
+                    f.write(BINARY_RULE.pack(*rule))
+                if version >= 2:
+                    for code, name in session.codes.items():
+                        f.write(struct.pack("<HB", code, len(name)) + name.encode())
+                for e in events:
+                    f.write(BINARY_EVENT.pack(e.timestamp, e.frame, e.raw_port, e.decoded_port,
+                                              e.pc, e.value, e.decode_rule, e.device_id, e.flags,
+                                              e.code if version >= 2 else 0xABCD))
         bin_path = Path(tmp) / "t.bin"
-        with open(bin_path, "wb") as f:
-            header = bytearray(32)
-            header[:4] = BINARY_MAGIC
-            struct.pack_into("<H", header, 4, 1)
-            struct.pack_into("<I", header, 6, len(events))
-            struct.pack_into("<I", header, 10, 65536)
-            struct.pack_into("<I", header, 14, session.tstates_per_frame)
-            struct.pack_into("<H", header, 18, len(session.decode_rules))
-            f.write(header)
-            for rule in session.decode_rules:
-                f.write(BINARY_RULE.pack(*rule))
-            for e in events:
-                f.write(BINARY_EVENT.pack(e.timestamp, e.frame, e.raw_port, e.decoded_port,
-                                          e.pc, e.value, e.decode_rule, e.device_id, e.flags))
+        write_ptrc(bin_path, 2)
         s2, ev2 = read_binary(bin_path)
         assert ev2 == events, "binary round-trip mismatch"
         assert s2.decode_rules == session.decode_rules
+        assert s2.codes == session.codes, "code table round-trip mismatch"
+        write_ptrc(bin_path, 1)
+        _, ev1 = read_binary(bin_path)
+        assert all(e.code == CODE_NONE for e in ev1), "PTRC v1 padding read as a code"
 
         # JSON round-trip
         json_path = Path(tmp) / "t.json"
@@ -696,6 +789,7 @@ def selftest() -> int:
         s3, ev3 = read_json(json_path)
         assert ev3 == events, "json round-trip mismatch"
         assert s3.decode_rules == session.decode_rules
+        assert s3.codes == session.codes
 
         # CSV round-trip
         csv_path = Path(tmp) / "t.csv"
@@ -704,6 +798,16 @@ def selftest() -> int:
         s4, ev4 = read_csv(csv_path)
         assert ev4 == events, "csv round-trip mismatch"
         assert s4.decode_rules == session.decode_rules
+        assert s4.codes == session.codes
+
+        # Code filter: by name and by hex
+        class _Args:
+            filter_port = filter_device = filter_direction = filter_pc = None
+            filter_unmapped = False
+            filter_code = "eff7gluk"
+        assert [e.code for e in apply_filters(events, _Args, session)] == [5], "code filter by name"
+        _Args.filter_code = "0x4"
+        assert [e.code for e in apply_filters(events, _Args, session)] == [4], "code filter by hex"
 
         # Strictness: 0x7FF9 must be reported as a near-miss for 0x7FFD (A2)
         buf = io.StringIO()
@@ -714,16 +818,17 @@ def selftest() -> int:
         # PTR2 v2 round-trip: transform is always testable; the zstd frame
         # needs a zstd source (stdlib 3.14+/zstandard/CLI)
         assert decode_v2_payload(encode_v2_payload(events), len(events)) == events, \
-            "v2 delta/xor transform round-trip mismatch"
+            "v3 delta/xor transform round-trip mismatch"
         try:
             binz_path = Path(tmp) / "t.binz"
             write_binz(session, events, binz_path)
             s5, ev5 = read_binary(binz_path)
-            assert ev5 == events, "PTR2 v2 round-trip mismatch"
+            assert ev5 == events, "PTR2 v3 round-trip mismatch"
             assert s5.decode_rules == session.decode_rules
-            v2_note = f"v2 OK ({binz_path.stat().st_size} bytes)"
+            assert s5.codes == session.codes
+            v2_note = f"PTR2 v3 OK ({binz_path.stat().st_size} bytes)"
         except RuntimeError as exc:
-            v2_note = f"v2 zstd round-trip SKIPPED ({exc})"
+            v2_note = f"PTR2 zstd round-trip SKIPPED ({exc})"
 
     print(f"porttrace_convert selftest: OK ({v2_note})")
     return 0
@@ -735,7 +840,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Unreal-NG Port Access Trace converter/analyzer")
     parser.add_argument("input", nargs="?", help="Input trace file (.json, .csv, or .bin)")
     parser.add_argument("--to", choices=["json", "csv", "markdown", "text", "binz"], default="text",
-                        help="Output format; binz = compressed PTR2 v2 (needs -o and a zstd source)")
+                        help="Output format; binz = compressed PTR2 v3 (needs -o and a zstd source)")
     parser.add_argument("--via-webapi", metavar="URL",
                         help="Read binary/compressed input through a running emulator's WebAPI "
                              "readfile endpoint (core-side decompression; no local zstd needed)")
@@ -748,6 +853,8 @@ def main() -> int:
     parser.add_argument("--filter-direction", choices=["in", "out", "IN", "OUT"])
     parser.add_argument("--filter-pc", help="Filter by PC range (hex: 3D00-3FFF)")
     parser.add_argument("--filter-unmapped", action="store_true", help="Only unmapped events")
+    parser.add_argument("--filter-code", help="Filter by internal port code: a name from the trace's code "
+                                              "table (e.g. Eff7Gluk) or hex")
     parser.add_argument("--selftest", action="store_true", help="Run the built-in round-trip self-test")
     args = parser.parse_args()
 
@@ -768,7 +875,7 @@ def main() -> int:
         print(f"Failed to parse {path}: {exc}", file=sys.stderr)
         return 1
 
-    events = apply_filters(events, args)
+    events = apply_filters(events, args, session)
 
     if args.to == "binz" and not (args.summary or args.analyze_strictness):
         if not args.output:

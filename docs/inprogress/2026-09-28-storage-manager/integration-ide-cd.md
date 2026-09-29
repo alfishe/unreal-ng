@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-09-28 |
-| **Status** | Reviewed; applies with IDE rollout 1 (PLAN #13a), manager phase M6 |
+| **Status** | **Implemented** 2026-09-28, on master (`f5fc5f05`): [implementation-plan.md](../2026-09-28-ide-atapi/implementation-plan.md) §5 as built |
 | **Layers** | port decoder → port adapter → device → medium, with the slot and the manager beside them: [technical-design.md §1.1](technical-design.md#11-layers-from-the-guests-port-to-the-medium) |
 | **IDE design** | [2026-09-25-ide-hdd-design.md](../2026-09-21-profi/2026-09-25-ide-hdd-design.md) (disk core §6, media §7, config §8, TTD §10) |
 | **Boards** | Profi, Nemo (Pentagon), Nemo-A8, ZX-Evo NemoIDE (E6), SMUC (Scorpion), ATM; all through the shared `AtaChannel` |

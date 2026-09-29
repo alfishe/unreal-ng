@@ -29,7 +29,7 @@
 #include "stdafx.h"
 
 /// region <Constructors / Destructors>
-PortDecoder::PortDecoder(EmulatorContext* context)
+PortDecoder::PortDecoder(EmulatorContext* context) : _ide(context)
 {
     _context = context;
 
@@ -42,6 +42,44 @@ PortDecoder::PortDecoder(EmulatorContext* context)
     _soundManager = context->pSoundManager;
     _logger = context->pModuleLogger;
 }
+
+/// region <IDE board>
+
+IdeAdapter::Gate PortDecoder::IdeGate()
+{
+    IdeAdapter::Gate gate;
+    gate.dosPorts = _state && (_state->flags & CF_TRDOS);
+    return gate;
+}
+
+bool PortDecoder::TryIdePortIn(uint16_t port, uint16_t pc, uint8_t& result)
+{
+    if (!_ide.Active() || !_ide.In(port, IdeGate(), result))
+        return false;
+    _lastPortDecoded = true;
+    PortDecodeDisposition disp;
+    disp.decodedPort = port;
+    disp.wasDecoded = true;
+    disp.wasHandledInline = true;
+    disp.device = PortDeviceId::Ide;
+    OnPortInComplete(port, result, pc, disp);
+    return true;
+}
+
+bool PortDecoder::TryIdePortOut(uint16_t port, uint8_t value, uint16_t pc)
+{
+    if (!_ide.Active() || !_ide.Out(port, IdeGate(), value))
+        return false;
+    PortDecodeDisposition disp;
+    disp.decodedPort = port;
+    disp.wasDecoded = true;
+    disp.wasHandledInline = true;
+    disp.device = PortDeviceId::Ide;
+    OnPortOutComplete(port, value, pc, disp);
+    return true;
+}
+
+/// endregion </IDE board>
 
 PortDecoder::~PortDecoder()
 {
@@ -145,6 +183,26 @@ PortDecoder* PortDecoder::GetPortDecoderForModel(MEM_MODEL model, EmulatorContex
 }
 
 /// endregion </Static methods>
+
+uint64_t PortDecoder::EmulatedMicroseconds() const
+{
+    if (!_context)
+        return 0;
+
+    const CONFIG& config = _context->config;
+    const EmulatorState& state = _context->emulatorState;
+    const uint64_t frameMicros = config.frame_duration_us;
+    const uint64_t units = state.ttd_clock_units ? state.ttd_clock_units : 1;
+    const uint64_t frameSpan = static_cast<uint64_t>(config.frame) * units;
+
+    const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    const uint64_t inFrame = z80 ? state.TtdTInFrame(z80->t) : 0;
+
+    uint64_t micros = state.frame_counter * frameMicros;
+    if (frameSpan)
+        micros += inFrame * frameMicros / frameSpan;
+    return micros;
+}
 
 /// region <Interface methods>
 
@@ -426,6 +484,7 @@ void PortDecoder::RecordPortTrace(bool isOut, uint16_t rawPort, uint8_t value, u
     event.pc = pc;
     event.value = value;
     event.decodeRuleIndex = disp.decodeRuleIndex;
+    event.internalCode = disp.internalCode;
     event.deviceId = disp.device != PortDeviceId::None ? disp.device
                                                         : PortDiagnosticRecorder::ResolveDeviceId(disp.decodedPort);
 
@@ -503,6 +562,7 @@ PortTraceSessionInfo PortDecoder::getPortTraceSessionInfo() const
     }
 
     info.decodeRules = getPortTraceDecodeRules();
+    info.codes = GetPortTraceCodeTable();
 
     return info;
 }

@@ -125,4 +125,4 @@ M1 work order:
 | ZX Next details (both SD sockets in NextZXOS, the FPGA flash) | [integration-next.md](integration-next.md), Next project |
 | Sprinter details (IDE channel-select ports, the accelerator) | [2026-09-28-sprinter](../2026-09-28-sprinter/) |
 | A hardware Z-Controller variant for Scorpion (emulators offer it as a generic add-on) | M6 |
-| `data/configs/atm710/unreal.ini` uses `NEMO-DIVIDE` and `[ZC]`, which are not ATM2 hardware (a copied config) | fix with the ATM IDE scheme in M6 |
+| `data/configs/atm710/unreal.ini` uses `NEMO-DIVIDE` and `[ZC]`, which are not ATM2 hardware (a copied config) | fix with the ATM IDE scheme in M6 - IDE part done: `Scheme=ATM` (`f5fc5f05`); the `[ZC]` section is still in the config |

@@ -895,7 +895,9 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
                     }
                     else
                     {
-                        response = "Error: TTD recording failed to start\n";
+                        const std::string& reason = ttd->GetUnavailableReason();
+                        response = "Error: TTD recording failed to start" + (reason.empty() ? "" : ": " + reason) +
+                                   "\n";
                     }
                 }
             }

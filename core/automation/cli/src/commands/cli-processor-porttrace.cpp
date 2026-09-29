@@ -78,7 +78,8 @@ std::optional<PortDeviceId> parseDeviceId(const std::string& name)
 
 /// Parse "<dimension> <value...>" condition pairs into one compound rule.
 /// Returns error text on failure, empty string on success.
-std::string parseFilterRule(const std::vector<std::string>& args, size_t start, PortTraceFilterRule& rule)
+std::string parseFilterRule(const std::vector<std::string>& args, size_t start, PortTraceFilterRule& rule,
+                            const std::vector<PortTraceCodeName>& codes)
 {
     size_t i = start;
     while (i < args.size())
@@ -120,6 +121,22 @@ std::string parseFilterRule(const std::vector<std::string>& args, size_t start, 
             rule.device = *device;
             i += 2;
         }
+        else if (dim == "code")
+        {
+            // Internal port code: a name from 'port-trace codes' (case-insensitive) or hex
+            std::optional<uint16_t> code;
+            for (const auto& entry : codes)
+                if (entry.name.size() == args[i + 1].size() &&
+                    std::equal(entry.name.begin(), entry.name.end(), args[i + 1].begin(),
+                               [](char a, char b) { return ::tolower(a) == ::tolower(b); }))
+                    code = entry.code;
+            if (!code)
+                code = parseHex16(args[i + 1]);
+            if (!code)
+                return "Unknown code (a name from 'port-trace codes' or hex): " + args[i + 1];
+            rule.internalCode = *code;
+            i += 2;
+        }
         else if (dim == "direction")
         {
             std::string dir = args[i + 1];
@@ -156,7 +173,7 @@ std::string parseFilterRule(const std::vector<std::string>& args, size_t start, 
         }
         else
         {
-            return "Unknown condition '" + dim + "' (port/raw/device/direction/pc/value/unmapped)";
+            return "Unknown condition '" + dim + "' (port/raw/device/code/direction/pc/value/unmapped)";
         }
     }
 
@@ -173,11 +190,15 @@ const char* sessionStateName(PortTraceSessionState state)
     }
 }
 
-std::string formatEventTable(const std::vector<PortTraceEvent>& events)
+std::string formatEventTable(const std::vector<PortTraceEvent>& events, const std::vector<PortTraceCodeName>& codes)
 {
     std::ostringstream out;
-    out << "  #    Frame  T-State        Dir  Raw    Decoded  Value  PC     Device          Flags" << NEWLINE;
-    out << "----  ------  -------------  ---  -----  -------  -----  -----  --------------  ------" << NEWLINE;
+    // The internal-code column only for decoders that have codes (PLAN #60(g))
+    const bool withCodes = !codes.empty();
+    out << "  #    Frame  T-State        Dir  Raw    Decoded  Value  PC     Device          Flags"
+        << (withCodes ? "   Code" : "") << NEWLINE;
+    out << "----  ------  -------------  ---  -----  -------  -----  -----  --------------  ------"
+        << (withCodes ? "  ----------------" : "") << NEWLINE;
 
     char line[160];
     for (size_t i = 0; i < events.size(); i++)
@@ -192,11 +213,24 @@ std::string formatEventTable(const std::vector<PortTraceEvent>& events)
         if (e.flags & PortTraceFlags::kViaLegacyBasePath) flags += 'L';
         if (e.wasFullDecodeClaimed()) flags += 'C';
 
-        snprintf(line, sizeof(line), "%4zu  %6u  %13llu  %-3s  %04X   %04X     %02X     %04X   %-14s  %s",
+        snprintf(line, sizeof(line), "%4zu  %6u  %13llu  %-3s  %04X   %04X     %02X     %04X   %-14s  %-6s",
                  i, e.frameNumber, (unsigned long long)e.timestamp, e.isOut() ? "OUT" : "IN", e.rawPort,
                  e.decodedPort, e.value, e.pc, PortDiagnosticRecorder::DeviceIdToString(e.deviceId),
                  flags.c_str());
-        out << line << NEWLINE;
+        out << line;
+        if (withCodes && e.hasInternalCode())
+        {
+            std::string name;
+            for (const auto& entry : codes)
+                if (entry.code == e.internalCode)
+                    name = entry.name;
+            if (name.empty())
+                snprintf(line, sizeof(line), "  #%04X", e.internalCode);
+            else
+                snprintf(line, sizeof(line), "  %s", name.c_str());
+            out << line;
+        }
+        out << NEWLINE;
     }
     out << "Flags: D=decoded  H=hadHandler  G=beta128Gated  I=handledInline  T=cfTrdos  L=legacyPath  C=fullDecodeClaim" << NEWLINE;
 
@@ -219,9 +253,10 @@ void CLIProcessor::ShowPortTraceHelp(const ClientSession& session)
     help << "                                        binz = zstd-compressed, ~50-100x smaller)" << NEWLINE;
     help << "  port-trace include <cond...>        - Add compound include rule (AND within rule)" << NEWLINE;
     help << "  port-trace exclude <cond...>        - Add compound exclude rule (exclude wins)" << NEWLINE;
-    help << "    conditions: port <hex> | raw <hex> | device <name> | direction in|out" << NEWLINE;
+    help << "    conditions: port <hex> | raw <hex> | device <name> | code <name|hex> | direction in|out" << NEWLINE;
     help << "                pc <lo> <hi> | value <lo> <hi> | unmapped" << NEWLINE;
     help << "    example: port-trace include port FFFD direction out" << NEWLINE;
+    help << "  port-trace codes                    - Internal port codes of this machine's decoder (ZX-Evo: decode arms)" << NEWLINE;
     help << "  port-trace filter show              - Show filter configuration" << NEWLINE;
     help << "  port-trace filter clear [includes|excludes] - Reset filter rules" << NEWLINE;
     help << "  port-trace preset <name>            - all|ay-only|fdc-only|no-fdc|no-fe|sound|paging|outs-only|ins-only|unmapped" << NEWLINE;
@@ -338,7 +373,21 @@ void CLIProcessor::HandlePortTrace(const ClientSession& session, const std::vect
         std::ostringstream out;
         out << "Port trace: " << recorder->eventCount() << " events buffered, showing last " << events.size()
             << NEWLINE;
-        out << formatEventTable(events);
+        out << formatEventTable(events, decoder->GetPortTraceCodeTable());
+        session.SendResponse(out.str());
+    }
+    else if (action == "codes")
+    {
+        const std::vector<PortTraceCodeName> codes = decoder->GetPortTraceCodeTable();
+        std::ostringstream out;
+        if (codes.empty())
+            out << "This machine's decoder has no internal port codes (the trace shows addresses only)" << NEWLINE;
+        for (const auto& entry : codes)
+        {
+            char line[96];
+            snprintf(line, sizeof(line), "  #%04X  %s", entry.code, entry.name.c_str());
+            out << line << NEWLINE;
+        }
         session.SendResponse(out.str());
     }
     else if (action == "save")
@@ -388,7 +437,7 @@ void CLIProcessor::HandlePortTrace(const ClientSession& session, const std::vect
         }
 
         PortTraceFilterRule rule;
-        std::string error = parseFilterRule(args, 1, rule);
+        std::string error = parseFilterRule(args, 1, rule, decoder->GetPortTraceCodeTable());
         if (!error.empty())
         {
             session.SendResponse(error + NEWLINE);

@@ -67,7 +67,6 @@ TEST(TtdAtmPagingLayout_Test, BlobIsPaddingFree)
     src.aFE = 0x9A;
     src.aFB = 0xBC;
     src.atmMemSwapped = 1;
-    src.cmos_addr = 0xDE;
     for (int i = 0; i < 16; ++i)
     {
         src.atmPalette[i] = 0x01010101u * static_cast<uint32_t>(i + 1);
@@ -107,7 +106,6 @@ TEST(TtdAtmPaging_Test, RoundTripCarriesMemoryMapAndLatches)
     state.aFE = 0x20;
     state.aFB = 0x40;
     state.atmMemSwapped = true;
-    state.cmos_addr = 0x0D;
 
     ttd::TTDAtmPaging serializer(context);
     uint8_t blob[sizeof(ttd::AtmPagingState)] = {};
@@ -123,7 +121,6 @@ TEST(TtdAtmPaging_Test, RoundTripCarriesMemoryMapAndLatches)
     state.aFE = 0;
     state.aFB = 0;
     state.atmMemSwapped = false;
-    state.cmos_addr = 0;
 
     serializer.TTDLoadState(blob);
 
@@ -137,17 +134,15 @@ TEST(TtdAtmPaging_Test, RoundTripCarriesMemoryMapAndLatches)
     EXPECT_EQ(state.aFE, 0x20);
     EXPECT_EQ(state.aFB, 0x40);
     EXPECT_TRUE(state.atmMemSwapped);
-    EXPECT_EQ(state.cmos_addr, 0x0D);
 
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
 /// ZX-Evo BaseConf (ATM3): the #FF palette RAM, the 4th border bit and the
-/// CMOS address latch that lives inside the ATM3 decoder (not the unused
-/// EmulatorState::cmos_addr) must round-trip. Before 2026-09-27 none of them
-/// was captured, so a seek kept the palette of the moment the user sought
-/// from and the next CMOS access went to the wrong register.
-TEST(TtdAtmPaging_Test, Atm3RoundTripCarriesPaletteBorderAndLiveCmosLatch)
+/// AVR's volatile state must round-trip. Before 2026-09-27 none of them was
+/// captured, so a seek kept the palette of the moment the user sought from.
+/// The clock's address latch rides in the Ds12887 blob (ds12887_test.cpp)
+TEST(TtdAtmPaging_Test, Atm3RoundTripCarriesPaletteBorderAndAvrState)
 {
     Emulator* emulator = MakeAtm("ATM3");
     ASSERT_NE(emulator, nullptr) << "ATM3 could not be created";
@@ -169,7 +164,6 @@ TEST(TtdAtmPaging_Test, Atm3RoundTripCarriesPaletteBorderAndLiveCmosLatch)
     state.nmiAtIntStartPending = true;
     state.evoTrdemu = PortDecoder_ATM3::kTrdemuIn;
     state.evoVgDrive = 3;
-    atm3->GetCMOS().SetCMOSAddress(0x2E);
     atm3->GetEvoAvr().SetVolatileState(EvoAvr::kExtBootloaderVersion, 0x42, 0x03);
 
     ttd::TTDAtmPaging serializer(context);
@@ -188,7 +182,6 @@ TEST(TtdAtmPaging_Test, Atm3RoundTripCarriesPaletteBorderAndLiveCmosLatch)
     state.nmiAtIntStartPending = false;
     state.evoTrdemu = 0;
     state.evoVgDrive = 0;
-    atm3->GetCMOS().SetCMOSAddress(0x00);
     atm3->GetEvoAvr().SetVolatileState(0, 0, 0);
 
     serializer.TTDLoadState(blob);
@@ -209,7 +202,6 @@ TEST(TtdAtmPaging_Test, Atm3RoundTripCarriesPaletteBorderAndLiveCmosLatch)
     EXPECT_EQ(atm3->GetEvoAvr().GetEepromPage(), 0x42);
     EXPECT_TRUE(atm3->GetEvoAvr().IsEepromMode());
     EXPECT_TRUE(atm3->GetEvoAvr().IsCapsLed());
-    EXPECT_EQ(atm3->GetCMOS().GetCMOSAddress(), 0x2E) << "the live CMOS latch is the decoder's, not EmulatorState::cmos_addr";
 
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
@@ -278,10 +270,6 @@ TEST(TtdAtmPaging_Test, HashRespondsToEveryCarriedField)
     state.atmMemSwapped = !state.atmMemSwapped;
     EXPECT_NE(serializer.TTDHashState(), base) << "atmMemSwapped not hashed";
     state.atmMemSwapped = !state.atmMemSwapped;
-
-    state.cmos_addr ^= 0x01;
-    EXPECT_NE(serializer.TTDHashState(), base) << "cmos_addr not hashed";
-    state.cmos_addr ^= 0x01;
 
     EXPECT_EQ(serializer.TTDHashState(), base) << "hash is not a pure function of state";
 

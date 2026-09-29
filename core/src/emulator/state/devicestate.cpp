@@ -12,6 +12,10 @@
 #include "emulator/io/fdc/fdd.h"
 #include "emulator/io/fdc/upd765.h"
 #include "emulator/io/fdc/wd1793.h"
+#include "emulator/io/ide/ata/atapicdrom.h"
+#include "emulator/io/ide/idecontroller.h"
+#include "emulator/io/rtc/ds12887.h"
+#include "emulator/io/rtc/rtcaccess.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/sound/chips/soundchip_moonsound.h"
@@ -1579,6 +1583,332 @@ std::string ToText(const StateNode& node, int indent)
     else
         TextLine(out, indent, "", node);
     return out.str();
+}
+
+/// region <IDE>
+
+namespace
+{
+    const char* AtaCommandName(uint8_t command)
+    {
+        using namespace ata;
+        if (command >= Command::RecalibrateFirst && command <= Command::RecalibrateLast)
+            return "RECALIBRATE";
+        if (command >= Command::SeekFirst && command <= Command::SeekLast)
+            return "SEEK";
+        switch (command)
+        {
+            case 0x00: return "none";
+            case Command::DeviceReset: return "DEVICE RESET";
+            case Command::ReadSectors:
+            case Command::ReadSectorsNoRetry: return "READ SECTORS";
+            case Command::ReadSectorsExt: return "READ SECTORS EXT";
+            case Command::ReadMultipleExt: return "READ MULTIPLE EXT";
+            case Command::WriteSectors:
+            case Command::WriteSectorsNoRetry: return "WRITE SECTORS";
+            case Command::WriteSectorsExt: return "WRITE SECTORS EXT";
+            case Command::WriteMultipleExt: return "WRITE MULTIPLE EXT";
+            case Command::ReadVerify:
+            case Command::ReadVerifyNoRetry: return "READ VERIFY";
+            case Command::ReadVerifyExt: return "READ VERIFY EXT";
+            case Command::FormatTrack: return "FORMAT TRACK";
+            case Command::ExecuteDiagnostic: return "EXECUTE DEVICE DIAGNOSTIC";
+            case Command::InitializeDeviceParameters: return "INITIALIZE DEVICE PARAMETERS";
+            case Command::Packet: return "PACKET";
+            case Command::IdentifyPacket: return "IDENTIFY PACKET DEVICE";
+            case Command::ReadMultiple: return "READ MULTIPLE";
+            case Command::WriteMultiple: return "WRITE MULTIPLE";
+            case Command::SetMultipleMode: return "SET MULTIPLE MODE";
+            case Command::CheckPowerMode: return "CHECK POWER MODE";
+            case Command::FlushCache:
+            case Command::FlushCacheExt: return "FLUSH CACHE";
+            case Command::Identify: return "IDENTIFY DEVICE";
+            case Command::SetFeatures: return "SET FEATURES";
+            default: return "other";
+        }
+    }
+
+    const char* AtaPhaseName(uint8_t phase)
+    {
+        switch (static_cast<AtaPhase>(phase))
+        {
+            case AtaPhase::Idle: return "idle";
+            case AtaPhase::DataIn: return "data in";
+            case AtaPhase::DataOut: return "data out";
+            case AtaPhase::PacketCommand: return "packet";
+        }
+        return "?";
+    }
+
+    StateNode Bits(uint8_t value, const std::vector<std::pair<uint8_t, const char*>>& names)
+    {
+        StateNode bits = StateNode::Array();
+        for (const auto& [mask, name] : names)
+            if (value & mask)
+                bits.push(name);
+        return bits;
+    }
+
+    const char* IdeGateText(IDE_SCHEME scheme)
+    {
+        switch (scheme)
+        {
+            case IDE_NEMO:
+            case IDE_NEMO_A8:
+            case IDE_DIVIDE: return "TR-DOS ports off";
+            case IDE_NEMO_DIVIDE: return "always";
+            case IDE_ATM:
+            case IDE_SMUC: return "TR-DOS ports on";
+            case IDE_PROFI: return "Profi EXT mode (#DFFD.5 and #7FFD.4)";
+            default: return "";
+        }
+    }
+}  // namespace
+
+StateNode Ide(EmulatorContext* context)
+{
+    IdeController* ide = context ? context->pIdeController : nullptr;
+    if (!ide || !ide->Enabled())
+        return Unavailable("No IDE board on this machine (configure [HDD] Scheme)");
+
+    using namespace ata;
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["scheme"] = Config::IdeSchemeName(ide->Scheme());
+    ret["gate"] = IdeGateText(ide->Scheme());
+    AtaChannel& channel = ide->Channel();
+    ret["selected"] = channel.Selected() ? "slave" : "master";
+    ret["intrq"] = channel.Intrq();
+
+    if (context->pPortDecoder)
+    {
+        const IdeAdapterState& latches = context->pPortDecoder->GetIdeAdapter().State();
+        StateNode adapter = StateNode::Object();
+        adapter["read_latch"] = int(latches.readLatch);
+        adapter["write_latch"] = int(latches.writeLatch);
+        adapter["read_pair"] = latches.readPair != 0;
+        adapter["write_pair"] = latches.writePair != 0;
+        adapter["write_high_armed"] = latches.writeHigh != 0;
+        ret["adapter"] = adapter;
+    }
+
+    StateNode units = StateNode::Array();
+    for (int unit = 0; unit < AtaChannel::kUnits; unit++)
+    {
+        AtaDevice* device = channel.Unit(unit);
+        if (!device)
+            continue;
+        const AtaDeviceState& s = device->State();
+        const bool cd = device->Kind() == AtaDeviceKind::Cdrom;
+        StateNode u = StateNode::Object();
+        u["position"] = unit ? "slave" : "master";
+        u["slot"] = IdeUnitSlot::IdFor(0, unit);
+        u["kind"] = cd ? "cdrom" : "disk";
+        u["present"] = device->IsPresent();
+
+        if (IBlockDevice* medium = device->Medium())
+        {
+            StateNode m = StateNode::Object();
+            m["description"] = medium->Describe();
+            m["sectors"] = static_cast<uint64_t>(medium->SectorCount());
+            if (cd)
+                m["blocks"] = static_cast<uint64_t>(medium->SectorCount() / AtapiCdrom::kSectorsPerBlock);
+            m["writable"] = medium->IsWritable();
+            u["medium"] = m;
+        }
+        else
+            u["medium"] = StateNode();
+        if (!cd)
+        {
+            StateNode chs = StateNode::Object();
+            chs["cylinders"] = static_cast<unsigned>(s.cylinders);
+            chs["heads"] = int(s.heads);
+            chs["sectors"] = int(s.sectors);
+            u["translation"] = chs;
+            u["write_protect"] = device->Config().writeProtect;
+            u["multiple"] = int(s.multiple);
+        }
+
+        StateNode task = StateNode::Object();
+        task["features"] = int(s.features);
+        task["sector_count"] = int(s.sectorCount);
+        task["lba_low"] = int(s.lbaLow);
+        task["lba_mid"] = int(s.lbaMid);
+        task["lba_high"] = int(s.lbaHigh);
+        task["device"] = int(s.device);
+        task["status"] = int(s.status);
+        task["status_bits"] = Bits(s.status, {{Status::BSY, "BSY"}, {Status::DRDY, "DRDY"}, {Status::DF, "DF"},
+                                              {Status::DSC, "DSC"}, {Status::DRQ, "DRQ"}, {Status::CORR, "CORR"},
+                                              {Status::IDX, "IDX"}, {Status::ERR, "ERR"}});
+        task["error"] = int(s.error);
+        task["error_bits"] = Bits(s.error, {{Error::ICRC, "ICRC"}, {Error::UNC, "UNC"}, {Error::MC, "MC"},
+                                            {Error::IDNF, "IDNF"}, {Error::MCR, "MCR"}, {Error::ABRT, "ABRT"},
+                                            {Error::TK0NF, "TK0NF"}, {Error::AMNF, "AMNF"}});
+        task["control"] = int(s.control);
+        task["control_bits"] = Bits(s.control, {{DeviceControl::HOB, "HOB"}, {DeviceControl::SRST, "SRST"},
+                                                {DeviceControl::nIEN, "nIEN"}});
+        u["task_file"] = task;
+
+        StateNode command = StateNode::Object();
+        command["code"] = int(s.command);
+        command["name"] = AtaCommandName(s.command);
+        command["phase"] = AtaPhaseName(s.phase);
+        command["lba"] = static_cast<uint64_t>(s.lba);
+        command["left"] = static_cast<unsigned>(s.sectorsLeft);
+        command["buffer_position"] = int(s.bufferPos);
+        command["buffer_length"] = int(s.bufferLen);
+        command["intrq_pending"] = s.intrq != 0;
+        u["command"] = command;
+
+        if (cd)
+        {
+            StateNode atapi = StateNode::Object();
+            atapi["disc"] = device->Medium() != nullptr;
+            atapi["unit_attention"] = s.unitAttention != 0;
+            atapi["byte_count_limit"] = int(s.byteLimit);
+            atapi["transfer_left"] = static_cast<unsigned>(s.transferLeft);
+            atapi["sense_key"] = int(s.senseKey);
+            atapi["asc"] = int(s.asc);
+            atapi["ascq"] = int(s.ascq);
+            char cdb[40];
+            std::snprintf(cdb, sizeof(cdb), "%02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X", s.cdb[0], s.cdb[1],
+                          s.cdb[2], s.cdb[3], s.cdb[4], s.cdb[5], s.cdb[6], s.cdb[7], s.cdb[8], s.cdb[9], s.cdb[10], s.cdb[11]);
+            atapi["last_packet"] = cdb;
+            u["atapi"] = atapi;
+        }
+        units.push(u);
+    }
+    ret["units"] = units;
+    return ret;
+}
+
+/// endregion </IDE>
+
+
+namespace
+{
+    const char* TimeModeName(Ds12887::TimeMode mode)
+    {
+        switch (mode)
+        {
+            case Ds12887::TimeMode::Emulated:
+                return "emulated";
+            case Ds12887::TimeMode::Fixed:
+                return "fixed";
+            case Ds12887::TimeMode::Host:
+            default:
+                return "host";
+        }
+    }
+
+    std::string Hex2(unsigned value)
+    {
+        char buf[8];
+        std::snprintf(buf, sizeof(buf), "%02X", value & 0xFF);
+        return buf;
+    }
+}  // namespace
+
+StateNode Rtc(EmulatorContext* context)
+{
+    std::string reason;
+    Ds12887* chip = RtcAccess::Find(context, &reason);
+    if (!chip)
+        return Unavailable(reason.c_str());
+
+    const PortDecoder::RtcBinding binding = context->pPortDecoder->GetRtcBinding();
+    auto peek = [chip](uint8_t index) { return chip->PeekRegister(index); };
+    const uint8_t a = peek(Ds12887::kRegA);
+    const uint8_t b = peek(Ds12887::kRegB);
+    const uint8_t c = peek(Ds12887::kRegC);
+    const uint8_t d = peek(Ds12887::kRegD);
+    const bool binary = (b & Ds12887::kBBinary) != 0;
+    const bool hour24 = (b & Ds12887::kB24Hour) != 0;
+    auto decode = [binary](uint8_t v) { return binary ? int(v) : int((v >> 4) * 10 + (v & 0x0F)); };
+
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["chip"] = chip->ChipName();
+    ret["ports"] = binding.ports;
+    ret["cells"] = int(chip->GetCellCount());
+    ret["nvram_file"] = binding.nvramFile.empty() ? std::string("(none: kept for the session only)") : binding.nvramFile;
+    ret["address_latch"] = int(chip->GetAddress());
+    ret["time_mode"] = TimeModeName(chip->GetTimeMode());
+    if (chip->RegistersNote()[0] != '\0')
+        ret["note"] = chip->RegistersNote();
+
+    // The time as the guest reads it now, decoded per register B
+    const uint8_t hoursRaw = peek(Ds12887::kHours);
+    int hours = decode(static_cast<uint8_t>(hoursRaw & (hour24 ? 0xFF : 0x7F)));
+    if (!hour24)
+        hours = (hours % 12) + ((hoursRaw & 0x80) ? 12 : 0);
+    const int year = decode(peek(Ds12887::kYear));
+    const int month = decode(peek(Ds12887::kMonth));
+    const int day = decode(peek(Ds12887::kDay));
+    const int minutes = decode(peek(Ds12887::kMinutes));
+    const int seconds = decode(peek(Ds12887::kSeconds));
+    StateNode time = StateNode::Object();
+    time["year"] = year;
+    time["month"] = month;
+    time["day"] = day;
+    time["hours"] = hours;
+    time["minutes"] = minutes;
+    time["seconds"] = seconds;
+    time["day_of_week"] = int(peek(Ds12887::kDayOfWeek));
+    char text[32];
+    std::snprintf(text, sizeof(text), "%02d-%02d-%02d %02d:%02d:%02d", year, month, day, hours, minutes, seconds);
+    time["text"] = text;
+    ret["time"] = time;
+
+    StateNode regA = StateNode::Object();
+    regA["value"] = int(a);
+    regA["uip"] = (a & 0x80) != 0;
+    regA["divider"] = int((a >> 4) & 0x07);
+    regA["rate"] = int(a & 0x0F);
+    ret["register_a"] = regA;
+
+    StateNode regB = StateNode::Object();
+    regB["value"] = int(b);
+    regB["set"] = (b & 0x80) != 0;
+    regB["periodic_irq"] = (b & 0x40) != 0;
+    regB["alarm_irq"] = (b & 0x20) != 0;
+    regB["update_irq"] = (b & 0x10) != 0;
+    regB["square_wave"] = (b & 0x08) != 0;
+    regB["binary"] = binary;
+    regB["hour_24"] = hour24;
+    regB["daylight_saving"] = (b & 0x01) != 0;
+    ret["register_b"] = regB;
+
+    StateNode regC = StateNode::Object();
+    regC["value"] = int(c);
+    regC["irq"] = (c & 0x80) != 0;
+    regC["periodic"] = (c & 0x40) != 0;
+    regC["alarm"] = (c & 0x20) != 0;
+    regC["update_ended"] = (c & 0x10) != 0;
+    ret["register_c"] = regC;
+
+    StateNode regD = StateNode::Object();
+    regD["value"] = int(d);
+    regD["battery_ok"] = (d & 0x80) != 0;
+    ret["register_d"] = regD;
+
+    StateNode alarm = StateNode::Object();
+    alarm["seconds"] = int(peek(Ds12887::kSecondsAlarm));
+    alarm["minutes"] = int(peek(Ds12887::kMinutesAlarm));
+    alarm["hours"] = int(peek(Ds12887::kHoursAlarm));
+    ret["alarm"] = alarm;
+
+    // Every cell as the guest reads it (peeked, no side effects), 16 per line
+    StateNode dump = StateNode::Array();
+    for (size_t row = 0; row < chip->GetCellCount(); row += 16)
+    {
+        std::string line = Hex2(unsigned(row)) + ":";
+        for (size_t col = 0; col < 16 && row + col < chip->GetCellCount(); ++col)
+            line += " " + Hex2(peek(static_cast<uint8_t>(row + col)));
+        dump.push(line);
+    }
+    ret["dump"] = dump;
+    return ret;
 }
 
 }  // namespace DeviceState

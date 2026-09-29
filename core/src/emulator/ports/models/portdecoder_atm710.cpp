@@ -98,6 +98,10 @@ void PortDecoder_ATM710::UpdateModelMemoryBanks()
 
 uint8_t PortDecoder_ATM710::DecodePortIn(uint16_t port, uint16_t pc)
 {
+    // The IDE board decodes first (UnrealSpeccy io.cpp order)
+    if (uint8_t ideValue = 0xFF; TryIdePortIn(port, pc, ideValue))
+        return ideValue;
+
     uint8_t result = 0xFF;
     _lastPortDecoded = false;
 
@@ -173,8 +177,10 @@ uint8_t PortDecoder_ATM710::DecodePortIn(uint16_t port, uint16_t pc)
         result = PeripheralPortIn(gsPort);
         disp.decodedPort = gsPort;
     }
-    // Beta128 FDC ports
-    else if (IsBeta128Port(decodedPort))
+    // Beta128 FDC ports: on the bus only while the shadow ports are (DOSEN || ~CPM, IsDosPortsEnabled), for
+    // reads as for writes - ATM2 docs, UnrealSpeccy CF_DOSPORTS, ZXMAK2 DOSEN||SYSEN, Xpeccy/MAME/ZX-Evo RTL
+    // agree. Outside it the port stays undecoded: the floating bus (or #FF), never the VG93's registers
+    else if (IsBeta128Port(decodedPort) && IsDosPortsEnabled())
     {
         result = PeripheralPortIn(decodedPort);
         _lastPortDecoded = true;
@@ -188,6 +194,10 @@ uint8_t PortDecoder_ATM710::DecodePortIn(uint16_t port, uint16_t pc)
 
 void PortDecoder_ATM710::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
+    // The IDE board decodes first (UnrealSpeccy io.cpp order)
+    if (TryIdePortOut(port, value, pc))
+        return;
+
     PortDecodeDisposition disp;
 
     // decodePort() MUST run before the claim override below - see the comment
@@ -332,8 +342,8 @@ void PortDecoder_ATM710::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc
         }
         else
         {
-            // Beta128 FDC ports
-            if (IsBeta128Port(decodedPort))
+            // Beta128 FDC ports, gated as on reads (IsDosPortsEnabled; see DecodePortIn)
+            if (IsBeta128Port(decodedPort) && IsDosPortsEnabled())
             {
                 // The ATM-Turbo 2+ board does not wire #FF bit 6 to the VG93
                 // DDEN input: double density (MFM) is permanent on this
@@ -431,6 +441,13 @@ bool PortDecoder_ATM710::IsPort_FFF7(uint16_t port, uint8_t& windowIndex)
 
     windowIndex = (port >> 14) & 0x03;
     return true;
+}
+
+IdeAdapter::Gate PortDecoder_ATM710::IdeGate()
+{
+    IdeAdapter::Gate gate = PortDecoder::IdeGate();
+    gate.dosPorts = IsDosPortsEnabled();
+    return gate;
 }
 
 bool PortDecoder_ATM710::IsDosPortsEnabled()

@@ -102,6 +102,8 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"run_frames", &CLIProcessor::HandleRunFrames},             // Run N frames
                         {"run_ncycles", &CLIProcessor::HandleRunNCycles},           // Run N CPU cycles
                         {"memory", &CLIProcessor::HandleMemory},
+                        {"rtc", &CLIProcessor::HandleRtc},   // CMOS clock: report, read / write cells
+                        {"cmos", &CLIProcessor::HandleRtc},
                         {"find", &CLIProcessor::HandleFind},  // Search Z80 memory for a byte pattern
                         {"registers", &CLIProcessor::HandleRegisters},
                         {"debugmode", &CLIProcessor::HandleDebugMode},
@@ -605,6 +607,11 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  state screen mode            - Show video mode details" << NEWLINE;
     oss << "  state screen flash           - Show flash state and counter" << NEWLINE;
     oss << "  state audio gs [--verbose]   - General Sound card state" << NEWLINE;
+    oss << NEWLINE;
+    oss << "CMOS clock (ATM3 / ZX-Evo, Profi, Scorpion with SMUC):" << NEWLINE;
+    oss << "  rtc | cmos | state rtc       - Time, registers A-D, alarms, every cell" << NEWLINE;
+    oss << "  rtc read <start> [count]     - Read cells as the guest reads them (no side effects)" << NEWLINE;
+    oss << "  rtc write <start> <b> [b..]  - Write cells like the guest (time registers set the clock)" << NEWLINE;
     oss << NEWLINE;
     oss << "General Sound card:" << NEWLINE;
     oss << "  gsporttrace <start|stop|pause|resume|clear|status|counters|events [n]>" << NEWLINE;
