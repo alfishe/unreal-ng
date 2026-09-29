@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <Compile Include="$(ZxSrc)/ZXMAK2.Host/**/*.cs" Exclude="$(ZxSrc)/ZXMAK2.Host/Entities/IconDescriptor.cs" />
+    <Compile Include="stubs/IconDescriptor.cs" />
+    <PackageReference Include="System.Drawing.Common" Version="8.0.*" />
+    <ProjectReference Include="ZXMAK2.Dependency.csproj" />
+    <ProjectReference Include="ZXMAK2.Logging.csproj" />
+  </ItemGroup>
+</Project>

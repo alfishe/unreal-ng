@@ -201,6 +201,10 @@ struct TTDSessionInfo
     /// reason, e.g. a device TTD cannot follow ending a recording); empty
     /// when none was dropped in this run.
     std::string lastDropReason;
+
+    /// Why time travel is not available for this instance at all (for example
+    /// a member of a ZX-Poly machine); empty when it is available.
+    std::string unavailableReason;
 };
 
 /// @brief Actions that would end, wipe or corrupt a recording in progress.
@@ -335,6 +339,13 @@ public:
     /// Idempotent: calling while already Recording is a no-op.
     /// @return true if recording was started (or was already active).
     bool StartRecording();
+
+    /// @brief Make time travel unavailable for this instance, with the reason a
+    /// user sees: StartRecording (and the debugger live history built on it)
+    /// and DeserializeSession refuse while it is set. Any session held is
+    /// dropped. An empty reason makes it available again.
+    void SetUnavailableReason(const std::string& reason);
+    const std::string& GetUnavailableReason() const { return _unavailableReason; }
 
     /// @brief Stop capturing new frames. History is retained and browsable.
     /// Idempotent: calling while Idle is a no-op.
@@ -1763,6 +1774,7 @@ private:
     bool _journalGapless = false;
     /// See TTDSessionInfo::lastDropReason
     std::string _lastDropReason;
+    std::string _unavailableReason;    // see SetUnavailableReason
     /// Why and where _journalGapless dropped, for the session status (MarkJournalGap)
     std::string  _journalGapReason;
     bool         _journalGapHasPosition = false;

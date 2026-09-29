@@ -4,6 +4,7 @@
 #include "_helpers/testpathhelper.h"
 #include "common/image/imagehelper.h"
 #include "common/modulelogger.h"
+#include "debugger/ttd/timetravelmanager.h"
 #include "emulator/emulator.h"
 #include "emulator/mainloop.h"
 #include "emulator/emulatorcontext.h"
@@ -22,6 +23,7 @@
 #include "3rdparty/message-center/messagecenter.h"
 
 #include <cstdlib>
+#include <sstream>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -774,6 +776,55 @@ TEST_P(ZXPolyGroupModels_Test, PictureFollowsTheBeamLineByLine)
     EXPECT_EQ(at(185), palette[7]) << "line 185 was fetched from page 5 (white)";
 }
 
+/// The same at x2 host speed: the frame holds twice the CPU T-states and the
+/// beam runs in base-clock T-states over all of it. The page switch comes
+/// after ~53000 CPU T-states: ~26600 base T - near line 40-55 (at x1 it would
+/// be near line 157-170), so line 100 is already from page 5
+TEST_P(ZXPolyGroupModels_Test, PictureFollowsTheBeamAtHostSpeed)
+{
+    CreateGroup(GetParam());
+    EmulatorContext* master = _group->GetContext(0);
+    Memory& memory = *master->pMemory;
+
+    const std::vector<uint8_t> code = {
+        0x3E, 0x91, 0xED, 0x47, 0xED, 0x5E, 0xFB,          // LD A,#91 ; LD I,A ; IM 2 ; EI
+        0x76,                                              // loop: HALT
+        0x01, 0xFD, 0x7F, 0x3E, 0x08, 0xED, 0x79,          // OUT (#7FFD),#08 - screen page 7
+        0x16, 0x10, 0x06, 0x00, 0x10, 0xFE, 0x15, 0x20, 0xF9, // LD D,16 ; LD B,0 ; DJNZ $ ; DEC D ; JR NZ
+        0x01, 0xFD, 0x7F, 0xAF, 0xED, 0x79,                // OUT (#7FFD),#00 - screen page 5
+        0x18, 0xE7};                                       // JR loop
+    for (size_t i = 0; i < code.size(); i++)
+        memory.DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), code[i]);
+    memory.DirectWriteToZ80Memory(0x91FF, 0x00);
+    memory.DirectWriteToZ80Memory(0x9200, 0x82);
+    const uint8_t handler[] = {0xFB, 0xED, 0x4D};           // EI ; RETI
+    for (size_t i = 0; i < sizeof(handler); i++)
+        memory.DirectWriteToZ80Memory(static_cast<uint16_t>(0x8200 + i), handler[i]);
+
+    std::memset(memory.RAMPageAddress(5), 0xFF, 6144);     // page 5: all ink
+    std::memset(memory.RAMPageAddress(5) + 6144, 0x07, 768);
+    std::memset(memory.RAMPageAddress(7), 0x00, 6144);     // page 7: all paper
+    std::memset(memory.RAMPageAddress(7) + 6144, 0x07, 768);
+
+    Z80& cpu = *master->pCore->GetZ80();
+    cpu.pc = 0x8000;
+    cpu.sp = 0x7F00;
+    cpu.iff1 = cpu.iff2 = 0;
+    _group->ReplicateFromMaster();
+    ASSERT_TRUE(_group->GetInstance(0)->SetSpeedMultiplier(2));
+    _group->RunFrames(5);
+    ASSERT_EQ(master->emulatorState.current_z80_frequency_multiplier, 2u);
+
+    std::vector<uint32_t> picture;
+    _group->Compose(picture);
+    uint32_t palette[16];
+    master->pScreen->GetRGBAPalette16(palette);
+    auto at = [&](unsigned line) { return picture[(line * 2) * ZXPolyScreenComposer::OUT_WIDTH + 256]; };
+    EXPECT_EQ(at(8), palette[0]) << "line 8 was fetched from page 7 (black)";
+    EXPECT_EQ(at(100), palette[7]) << "line 100 was fetched from page 5 (white): the beam spans the stretched frame";
+    EXPECT_EQ(at(185), palette[7]) << "line 185 was fetched from page 5 (white)";
+}
+
 /// Running the slaves on worker threads gives the same machine as running them
 /// one after another: identical per-frame composed pictures and CPU state
 TEST_P(ZXPolyGroupModels_Test, ParallelSlavesMatchSequentialSlaves)
@@ -1105,6 +1156,44 @@ TEST_P(ZXPolyGroupModels_Test, SpeedChangeDuringTheFrameHookReachesAllFourTogeth
     EXPECT_GE(next, 8u) << "the speed changes were not requested";
     slave->pCore->GetZ80()->busTraceHook = nullptr;
     _group->DetachFromMaster();
+}
+
+/// Time travel of one member would split it from the others, so a ZX-Poly
+/// machine refuses it on every member, with the reason every surface shows:
+/// recording (the debugger's live history starts through it) and loading a
+/// session. The group's own timeline (core only) lifts it while it records
+TEST_F(ZXPolyGroup_Test, TimeTravelIsRefusedOnEveryMember)
+{
+    CreateGroup("PENTAGON");
+    for (size_t m = 0; m < ZXPolyGroup::MODULES; m++)
+    {
+        ttd::TimeTravelManager* ttd = _group->GetContext(m)->pTimeTravelManager;
+        ASSERT_NE(ttd, nullptr);
+        EXPECT_FALSE(ttd->StartRecording()) << "module " << m;
+        EXPECT_FALSE(ttd->IsRecording()) << "module " << m;
+        const std::string reason = ttd->GetSessionInfo().unavailableReason;
+        EXPECT_NE(reason.find("ZX-Poly"), std::string::npos) << "module " << m << ": '" << reason << "'";
+
+        std::istringstream file("UTTD");
+        std::string error;
+        EXPECT_FALSE(ttd->DeserializeSession(file, error)) << "module " << m;
+        EXPECT_EQ(error, reason) << "module " << m;
+    }
+
+    // The group timeline records all four; afterwards the refusal is back
+    std::string error;
+    ASSERT_TRUE(_group->LoadZXP(TestPathHelper::GetTestDataPath("machines/zxpoly/zxp/Alien8.zxp"), &error)) << error;
+    ASSERT_TRUE(_group->StartRecording(&error)) << error;
+    for (size_t m = 0; m < ZXPolyGroup::MODULES; m++)
+        EXPECT_TRUE(_group->GetContext(m)->pTimeTravelManager->IsRecording()) << "module " << m;
+    _group->RunFrames(2);
+    _group->StopRecording();
+    for (size_t m = 0; m < ZXPolyGroup::MODULES; m++)
+    {
+        ttd::TimeTravelManager* ttd = _group->GetContext(m)->pTimeTravelManager;
+        EXPECT_FALSE(ttd->IsRecording()) << "module " << m;
+        EXPECT_FALSE(ttd->StartRecording()) << "module " << m;
+    }
 }
 
 /// The manager is the one source every surface (WebAPI, MCP, CLI, Lua,

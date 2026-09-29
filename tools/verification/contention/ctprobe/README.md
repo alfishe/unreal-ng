@@ -27,7 +27,12 @@ hardware?** Demos, multicolor effects, some loaders and many games depend on tha
 | 48K | `ctprobe.tap` | `LOAD ""` |
 | 128K / +2 | `ctprobe.tap` | `LOAD ""` from **128 BASIC** (in 48 BASIC the page checks are skipped) |
 | +2A / +3 | `ctprobe.tap` | from **+3 BASIC**: `LOAD "t:"`, then `LOAD ""` (in 48 BASIC the page and layout checks are skipped) |
-| Pentagon, Scorpion | `ctprobe.trd` | `RUN` in TR-DOS (the tape works too) |
+| Pentagon, Scorpion, ATM Turbo 2+, Profi | `ctprobe.trd` | `RUN` in TR-DOS (the tape works too) |
+| ZX-Evo (BaseConf) | `ctprobe.trd` | reset with SPACE held (straight to TR-DOS), then `RUN`. The CPU must be at 3.5 MHz: in the Evo Reset Service menu, W steps 3.5 / 7 / 14 MHz |
+
+The program needs the CPU at 3.5 MHz. A Scorpion's turbo is switched off by the program itself. On other
+machines (ATM Turbo, ZX-Evo) it stops and says so: "The CPU runs faster than 3.5 MHz. Switch the machine to
+3.5 MHz (turbo off) and run it again."
 
 A full run takes **about 3 minutes** at the normal 3.5 MHz speed. An emulator's fast or turbo mode is fine: the
 program measures CPU clock ticks, not seconds.
@@ -71,7 +76,7 @@ Takes about 3 min at 3.5 MHz
 
 | Line | Meaning |
 |:--|:--|
-| `Machine:` | The contention type it found: `ULA 48K`, `ULA 128K`, `gate array` (+2A/+3), `no contention` (Pentagon and similar), `no contention, attr bus` (Scorpion) |
+| `Machine:` | The contention type it found: `ULA 48K`, `ULA 128K`, `gate array` (+2A/+3), `no contention` (Pentagon, ATM, Profi and similar), `no contention, attr bus` (Scorpion) |
 | `Frame` | Clock ticks from one screen interrupt to the next: 69888 on a 48K and a Scorpion, 70908 on a 128K / +2 / +2A / +3, 71680 on a Pentagon |
 | `onset` | The first contended tick after the interrupt: 14335 (48K), 14361 (128K and later) |
 | `Paging` | Whether it could switch 16K memory pages at `#C000`. `no` on a 48K, and also on a 128K or +3 started from 48 BASIC, which locks the paging |
@@ -154,7 +159,17 @@ counted the way FUSE and most emulators count them: the 48K's first contended ti
 | P-01C | `IN A,(C)` from port `#00FF` | Other port, high byte outside |
 | P-01D | `IN A,(C)` from port `#40FF` | Other port, high byte inside: the CPU waits four times |
 | P-01E | `OUT (C),A` to port `#40FE` | Same rules for a write |
-| P-02 | `IN A,(#FF)` at 20 ticks around the start of the picture | The byte the screen hardware is reading at that tick (the "floating bus"). The program first writes a known pattern into the first screen cells |
+| P-03A | `OUT (C),A` to port `#00FE` | Write to the ULA port, high byte outside contended memory: 1 free tick, then a contended one |
+| P-03B | `OUT (C),A` to port `#00FF` | Write to another port, high byte outside: never waits |
+| P-03C | `OUT (C),A` to port `#40FF` | Write to another port, high byte inside: waits four times |
+| P-03D | `IN A,(#FE)` with `A` = `#40` | The same rules when the port's high byte comes from `A` (port `#40FE`) |
+| P-03E | `OUT (#FE),A` with `A` = `#40` | Same, for a write |
+| P-04A | `INI` from port `#40FE` | Block input: the port read, then the write to memory |
+| P-04B | `OUTI` to port `#40FE` (`B` = `#41`) | Block output: `B` goes down **before** the port is written, so the port is `#40FE` |
+| P-04C | `INIR` over 2 ports | The repeat and its 5 extra ticks |
+| P-04D | `OTIR` over 3 ports | The repeat and its 5 extra ticks |
+| P-05A..D | `IN A,(C)` from ports `#C0FE` and `#C0FF`, with page 0 and then page 1 at `#C000` | 128K / +2: a port whose high byte points at an odd page at `#C000` waits like a contended one. **Not yet confirmed on real hardware**: this rule is what FUSE and the other emulators do; no photographed test covers it |
+| P-02 | `IN A,(#FF)` at 20 ticks around the start of the picture | The byte the screen hardware is reading at that tick (the "floating bus"). The program first writes a known pattern into the first screen cells. Skipped on the plain clones (Pentagon, ATM, Profi): there an unused port's answer depends on the machine |
 | X-02 | A `RET` inside the ROM | Code in ROM never waits |
 
 The 48K and the clones skip the page and layout checks. The 128K skips the layout checks.
@@ -197,13 +212,15 @@ test they appear on screen only as that first one; see the next section for gett
 
    | What you see | What it usually means |
    |:--|:--|
-   | Almost every check BAD, only `M1-02`, `P-01C` and `X-02` OK (on the +2A/+3 also `P-01A` and the page checks of pages 0-3) | Everything is shifted by a few ticks: those checks never wait, so a shift cannot show there. The interrupt, or the start of contention, is off by that many ticks |
+   | Almost every check BAD, only `M1-02`, `P-01C`, `P-03B` and `X-02` OK (on the +2A/+3 also the other port checks and the page checks of pages 0-3) | Everything is shifted by a few ticks: those checks never wait, so a shift cannot show there. The interrupt, or the start of contention, is off by that many ticks |
    | Only `M1-03` BAD | The end of each line is wrong: the wait window is one tick too short or too long (the +2A/+3 gate array holds one tick longer than the ULA) |
    | Only `M1-P*` BAD | Wrong pages are contended at `#C000` (128K: odd pages; +2A/+3: pages 4-7) |
    | Only `M1-L*` BAD | The +3 "all RAM" layouts: pages 4-7 must be contended in every slot |
    | Only `D-*` BAD | Data reads / writes do not wait, but opcode fetches do |
    | Only `N-*` BAD | The internal ticks (no memory access, only an address on the bus) are not contended. Right on the +2A/+3, wrong on the 48K / 128K |
-   | Only `P-01*` BAD | Port access timing (the four port patterns) |
+   | Only `P-01*`, `P-03*` BAD | Port access timing (the four port patterns) |
+   | Only `P-04*` BAD | Block I/O: the order of the port and memory cycles, or when `B` goes down in `OUTI` / `OTIR` |
+   | Only `P-05*` BAD | Whether a port's high byte counts as contended when it points at the page at `#C000` (128K / +2); also check the note on P-05 above |
    | Only `P-02` BAD | The floating bus: wrong byte, or right byte one tick off |
    | `Machine: no contention` on a 48K / 128K / +3 | Contention is switched off or not emulated; every contended check will fail |
 
@@ -227,12 +244,25 @@ test they appear on screen only as that first one; see the next section for gett
 
 ## Results so far
 
-| Emulator | 48K | 128K | +2A / +3 | Pentagon | Scorpion |
-|:--|:--|:--|:--|:--|:--|
-| unreal-ng | all as expected | all as expected | all as expected | all as expected | all as expected |
-| xpeccy-plus (commit 7a96d8da, stock settings) | all as expected | all as expected | 367 wrong: the gate array's waits come 2 ticks late, and it lacks the extra tick at the end of each line | - | - |
+Run by the [co-emulation harness](../../coemu/README.md), with each emulator's stock settings, 2026-09-29:
 
-Real hardware: not run yet. Please send results.
+| Emulator | 48K | 128K | +2 | +2A / +3 | Pentagon | Scorpion |
+|:--|:--|:--|:--|:--|:--|:--|
+| unreal-ng | all as expected | all as expected | all as expected | all as expected | all as expected | all as expected |
+| xpeccy-plus 7a96d8da | all as expected | P-05 only: a port whose high byte points at an odd page at `#C000` does not wait | as the 128K | the gate array's waits come 2 ticks late; the extra tick at the end of each line is missing | all as expected | does not finish: its stock `scrp.wait` adds a tick to odd-length instructions, which the measuring engine does not survive |
+| FUSE 1.6.0 | all as expected | all as expected | all as expected | the extra tick at the end of each line is missing (1 value) | all as expected | - |
+| MAME 0.289 | all as expected | everything 2 ticks late | as the 128K | the waits 4 ticks late; port accesses wait, which the gate array does not do | all as expected | the machine resets during the frame measurement (not yet explained) |
+| ZEsarUX 13.0 | floating bus (P-02) only | floating bus (P-02) only | floating bus (P-02) only | the waits 4 ticks late; internal ticks wait, which the gate array does not do | all as expected | - |
+
+unreal-ng also runs it on the Scorpion with ProfROM, the ATM Turbo 2+, the ZX-Evo and the Profi: all as
+expected; xpeccy-plus on its ATM Turbo 2+, ZX-Evo and Profi, and MAME on its Scorpion with ProfROM: all as
+expected. MAME's ATM Turbo boots at 7 MHz (the probe stops and asks for 3.5 MHz).
+
+On P-05 the emulators disagree: FUSE and unreal-ng contend such a port, xpeccy-plus does not. A real 128K
+decides it; until someone runs the probe on one, treat P-05 as open.
+
+`-`: the emulator lacks the machine, or its runner or ROMs do not cover it yet. Real hardware: not run yet. Please
+send results.
 
 ## Where the expected values come from
 
@@ -245,10 +275,14 @@ The expected values do not come from any emulator. They are computed from:
 - for each instruction, the list of memory, internal and port cycles it makes, from FUSE's instruction
   tables.
 
-The program detects which kind of machine it runs on and uses that machine's table. The Scorpion's floating
-bus (its ports return the attribute byte the screen hardware is reading) is described in its programmer's
-manual; the exact tick grid used here (one cell per 4 ticks) is unreal-ng's model and is not yet checked on a
-real Scorpion.
+The program detects which kind of machine it runs on and uses that machine's table. It times a `NOP` over 16
+ticks from the first contended tick: the largest wait is 6 on the Ferranti ULA, 7 on the gate array, 0 without
+contention. That holds even when an emulator's timing is a few ticks off. The frame length then tells the 48K
+from the 128K. Without contention it reads port `#FF` while the picture is drawn. The Scorpion answers with
+the attribute byte the screen hardware is reading (described in its programmer's manual); the exact tick grid
+used here, one cell per 4 ticks, is unreal-ng's model and is not yet checked on a real Scorpion. Other clones
+answer `#FF`, or a device's byte. On those plain clones the floating-bus check P-02 is skipped as N/A: what an
+unused port reads depends on the machine and its mode.
 
 The measuring engine is Jan Bobrowski's, as adjusted by Patrik Rak for his Timing Test (GPL). It is the same
 code, byte for byte, as in Rak's test, whose results were photographed on real 48K, 128K, +2A and +3 machines.
@@ -263,15 +297,15 @@ code, byte for byte, as in Rak's test, whose results were photographed on real 4
 | `ctprobe-compare.py` | Reads a memory dump of a finished run and prints every check that differs, with the whole row of values |
 | `ctprobe.asm` | The program: machine detection, the checks, the output |
 | `engine.asm` | The measuring engine (Bobrowski / Rak, GPL) |
-| `Makefile` | Rebuild the files, run the checks, compare a dump, run the probe on xpeccy-plus |
-| `../../xpeccy-plus/` | Runs the probe on xpeccy-plus's emulation core without its GUI and dumps the result ([README](../../xpeccy-plus/README.md)) |
+| `Makefile` | Rebuild the files, run the checks, compare a dump, run the probe on other emulators |
+| `../../coemu/` | Runs the probe on every emulator it finds (unreal-ng, xpeccy-plus, ...) and puts the results in one table ([README](../../coemu/README.md)) |
 
 ```
 make files                                  # rebuild ctprobe.tap / .trd / .sym
 make check                                  # the files match the sources; one quick 48K run
 make test                                   # every check on every machine in unreal-ng, and the files loaded as a user does
 make compare DUMP=out.bin                   # compare a memory dump with the expected values
-make xpeccy-plus XPECCY_DIR=<checkout>      # the same run on xpeccy-plus
+make coemu                                  # the same run on every emulator found (see ../../coemu)
 ```
 
 The `.tap`, `.trd` and `.sym` are built from the two `.asm` files by unreal-ng's test suite

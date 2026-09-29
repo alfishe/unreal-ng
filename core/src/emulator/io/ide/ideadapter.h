@@ -68,10 +68,13 @@ public:
     uint8_t AtmIntrqBit();
 
     /// TSConf DMA, devices #3 (IDE to RAM) and #B (RAM to IDE): one whole
-    /// 16-bit word straight from / to the data register (CS0, register 0),
-    /// past the Z80 half-word latches, which keep their state (`dma.v:441-445`,
-    /// `ide.v`: the DMA request overrides the Z80 address and chip selects).
-    /// Without a board a read is #FFFF (a floating bus) and a write goes nowhere
+    /// 16-bit word straight from / to the data register (CS0, register 0)
+    /// (`dma.v:441-445`, `ide.v`: the DMA request overrides the Z80 address and
+    /// chip selects). The Z80 read / write pairs stay as they are: their
+    /// triggers move only on Z80 port accesses (`zports.v:784-808`). A DMA
+    /// read loads the read latch with the word's high byte, as every IDE bus
+    /// cycle loads `iderdreg` (`zports.v:849-854`), so a later IN #11 returns
+    /// it. Without a board a read is #FFFF (a floating bus) and a write goes nowhere
     uint16_t DmaReadWord();
     void DmaWriteWord(uint16_t word);
 

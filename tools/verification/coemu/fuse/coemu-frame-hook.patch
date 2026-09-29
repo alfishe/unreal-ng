@@ -1,0 +1,106 @@
+--- a/spectrum.c
++++ b/spectrum.c
+@@ -50,6 +50,8 @@
+ #include "ui/uijoystick.h"
+ #include "z80/z80.h"
+ 
++static void coemu_frame( void );
++
+ /* 1040 KB of RAM */
+ libspectrum_byte RAM[ SPECTRUM_RAM_PAGES ][0x4000];
+ 
+@@ -168,10 +170,94 @@
+   phantom_typist_frame();
+ 
+   frames_since_reset++;
++  coemu_frame();
+ 
+   return 0;
+ }
+ 
++/* coemu (co-emulation harness): when COEMU_DONE_ADDR is set, check once per
++   frame whether the byte there is 1 (after it has been seen not 1, so
++   power-on garbage does not count), then write COEMU_DUMP_FROM..COEMU_DUMP_TO-1
++   to COEMU_DUMP_FILE, run COEMU_SCREEN_FRAMES more frames, write the shown
++   screen (6912 bytes) to COEMU_SCREEN_FILE and exit. Give up after
++   COEMU_MAX_FRAMES frames (the screen still written, exit status 1). Reads
++   memory without side effects. */
++#include <stdio.h>
++#include <stdlib.h>
++
++static long
++coemu_env( const char *name, long fallback )
++{
++  const char *v = getenv( name );
++  return v && *v ? strtol( v, NULL, 0 ) : fallback;
++}
++
++/* The shown screen (6912 bytes) to COEMU_SCREEN_FILE */
++static void
++coemu_screen( void )
++{
++  const char *path = getenv( "COEMU_SCREEN_FILE" );
++  FILE *f;
++
++  if( path && ( f = fopen( path, "wb" ) ) ) {
++    fwrite( RAM[ memory_current_screen ], 1, 6912, f );
++    fclose( f );
++  }
++}
++
++static void
++coemu_frame( void )
++{
++  static int state = -1;   /* -1 unknown, 0 off, 1 waiting, 2 done */
++  static long done_addr, from, to, max_frames, screen_frames;
++  static long frames, seen = -1, done_at = -1;
++  const char *path;
++  FILE *f;
++  long a;
++
++  if( state == -1 ) {
++    done_addr = coemu_env( "COEMU_DONE_ADDR", -1 );
++    if( done_addr < 0 ) { state = 0; return; }
++    from = coemu_env( "COEMU_DUMP_FROM", 0 );
++    to = coemu_env( "COEMU_DUMP_TO", 0x10000 );
++    max_frames = coemu_env( "COEMU_MAX_FRAMES", 60000 );
++    screen_frames = coemu_env( "COEMU_SCREEN_FRAMES", 100 );
++    state = 1;
++  }
++  if( state == 0 ) return;
++  frames++;
++
++  if( state == 1 ) {
++    if( seen < 0 && readbyte_internal( done_addr ) != 1 ) seen = frames;
++    if( seen >= 0 && readbyte_internal( done_addr ) == 1 ) {
++      state = 2; done_at = frames;
++      printf( "coemu: DONE at frame %ld (%ld after DONE was first seen clear)\n",
++              frames, frames - seen );
++      path = getenv( "COEMU_DUMP_FILE" );
++      if( path && ( f = fopen( path, "wb" ) ) ) {
++        for( a = from; a < to; a++ ) fputc( readbyte_internal( a ), f );
++        fclose( f );
++        printf( "coemu: wrote %s (#%04lX..#%04lX)\n", path, from, to - 1 );
++      }
++    } else if( frames >= max_frames ) {
++      printf( "coemu: DONE not set after %ld frames (PC=#%04X), giving up\n",
++              frames, z80.pc.w );
++      coemu_screen();
++      fflush( stdout );
++      exit( 1 );
++    }
++    if( frames % 5000 == 0 )
++      printf( "coemu: frame %ld PC=#%04X\n", frames, z80.pc.w );
++    fflush( stdout );
++  }
++
++  if( state == 2 && frames - done_at >= screen_frames ) {
++    coemu_screen();
++    fflush( stdout );
++    exit( 0 );
++  }
++}
++
+ libspectrum_byte
+ spectrum_contend_delay_none( libspectrum_dword time )
+ {

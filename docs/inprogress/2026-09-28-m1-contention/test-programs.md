@@ -141,7 +141,7 @@ Not done: fusetest (source only, needs pasmo or a prebuilt tape), the Butler 128
 ## 3. The probe suite (`ctprobe`)
 
 **Status (2026-09-28): v2.** [`tools/verification/contention/ctprobe/`](../../../tools/verification/contention/ctprobe/README.md), host suite `ctprobe_test.cpp`.
-- 40 cases match the oracle to the T-state on the 48K, 128K, +3, Pentagon and Scorpion.
+- 53 cases match the oracle to the T-state on the 48K, 128K, +3, Pentagon and Scorpion.
 - The reference files `ctprobe.tap` and `ctprobe.trd` run standalone and print a report. Loaded the way a user
   does, they report every value as expected on all five machines.
 - 3.7 covers the design and what is still open.
@@ -344,7 +344,7 @@ Pentagon, and the fetched attribute on the Scorpion. The Scorpion's 4 T grid is 
 | +3 layouts | M1-L0..L3 (code in the `#8000` slot, reads of `#0000` and `#C000`) |
 | Data | D-01A/B, D-02, D-03, D-04 (LDI) |
 | Internal cycles | N-01, N-02, N-03 (EX (SP),HL), N-04 (IR), N-05A/B (LDIR / CPIR repeats), N-06 ((IX+d) with contended PC) |
-| Ports | P-01A..E |
+| Ports | P-01A..E, P-03A..E (more port instructions), P-04A..D (block I/O), P-05A..D (a port's high byte in the page at `#C000`; emulator consensus, not yet confirmed on hardware) |
 | Floating bus | P-02 (the values) |
 | ROM | X-02 (RET in ROM) |
 

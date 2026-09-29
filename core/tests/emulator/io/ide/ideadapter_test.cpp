@@ -433,7 +433,8 @@ TEST(IdeAdapter_Test, DividePagingPortsAreNotIde)
 
 /// TSConf DMA (devices #3 / #B) moves whole words through the data register on
 /// the ZX-Evo board: a sector read and written in 256 words, the same bytes as
-/// the Z80 path, and the Z80 half-word latches untouched in between
+/// the Z80 path; the Z80 read / write pairs stay, the read latch holds the high
+/// byte of the last word the DMA read (zports.v:849-854)
 TEST(IdeAdapter_Test, DmaMovesWholeWordsPastTheLatches)
 {
     Board b(IDE_NEMO_DIVIDE, MM_ATM3);
@@ -442,7 +443,7 @@ TEST(IdeAdapter_Test, DmaMovesWholeWordsPastTheLatches)
         b.disk.Data()[9 * 512 + i] = static_cast<uint8_t>(i * 7);
 
     // The Z80 reads the low byte of word 0 (its high byte waits in the latch),
-    // then the DMA takes words 1..255: the Z80 latches must stay as they were
+    // then the DMA takes words 1..255: the pairs stay as they were
     StartRead([&](uint8_t reg, uint8_t v) { b.Out(A7A5(reg, 0x10), v, b.on); });
     EXPECT_EQ(b.In(0x10, b.on), 0x00);
     const IdeAdapterState latches = b.adapter->State();
@@ -454,7 +455,10 @@ TEST(IdeAdapter_Test, DmaMovesWholeWordsPastTheLatches)
     }
     EXPECT_FALSE(b.Master().State().status & Status::DRQ) << "the sector is done after 256 words";
     EXPECT_TRUE(b.Master().State().intrq);
-    EXPECT_EQ(std::memcmp(&b.adapter->State(), &latches, sizeof(latches)), 0) << "DMA leaves the Z80 latches alone";
+    IdeAdapterState expected = latches;
+    expected.readLatch = static_cast<uint8_t>(511 * 7);
+    EXPECT_EQ(std::memcmp(&b.adapter->State(), &expected, sizeof(expected)), 0)
+        << "DMA keeps the Z80 pairs; the read latch holds the last DMA word's high byte";
 
     StartWrite([&](uint8_t reg, uint8_t v) { b.Out(A7A5(reg, 0x10), v, b.on); });
     for (uint16_t i = 0; i < 256; i++)

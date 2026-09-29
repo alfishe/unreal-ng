@@ -69,6 +69,12 @@ architecture:
     journals) + group seek/branch.
   - Includes the test plan T1–T12 (tests first), the decisions table, effort
     (~6–7 wk) and the deferred coupled machine (Test ROM/MIMD only).
+- [prototype-results.md](prototype-results.md) — the implementation as built:
+  what runs, every platform mechanism with its test, frame scheduling,
+  measurements, what is deferred.
+- [platform-bringup.md](platform-bringup.md) — the bring-up retrospective:
+  every step from the brief to the polish, the bug catalogue, lessons, the
+  commit log and the time accounting.
 
 ## Test corpus
 
@@ -103,7 +109,7 @@ in [testdata/machines/zxpoly/](../../../testdata/machines/zxpoly/README.md):
 - Out of scope for v1: the Test ROM's per-CPU tests and MIMD software, which
   need the coupled machine of quad-instance §13.
 - Deferred, low priority (possible later): time travel for ZX-Poly machines
-  (the group timeline exists in the core only; the per-instance TTD commands are not blocked and act on the master alone) and
+  (the group timeline exists in the core only; every member refuses the per-instance TTD commands with the reason) and
   ZX-Poly tiles in the video wall; the risks are in
   [prototype-results.md §9](prototype-results.md#9-not-done-yet).
 

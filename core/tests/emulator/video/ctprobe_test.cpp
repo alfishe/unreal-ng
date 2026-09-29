@@ -421,6 +421,79 @@ std::vector<Cycle> Fragment(uint8_t id, uint16_t pc, const SymbolFn& sym)
             ldRrNn(pc + 1);
             c.insert(c.end(), { M1(pc + 4), M1(pc + 5), Io(0x40FE) });
             break;
+        // ---- P-03 (ids 61-65): more port instructions; fragments FrOut00FE .. FrOutAn in ctprobe.asm ----
+        case 61:
+        case 62:
+        case 63:  // XOR A ; LD BC,port ; OUT (C),A
+        {
+            static const uint16_t ports[3] = { 0x00FE, 0x00FF, 0x40FF };
+            c.push_back(M1(pc));
+            ldRrNn(pc + 1);
+            c.insert(c.end(), { M1(pc + 4), M1(pc + 5), Io(ports[id - 61]) });
+            break;
+        }
+        case 64:  // LD A,#40 ; IN A,(#FE): the port is A:n = #40FE
+        case 65:  // LD A,#40 ; OUT (#FE),A
+            c = { M1(pc), Rd(pc + 1), M1(pc + 2), Rd(pc + 3), Io(0x40FE) };
+            break;
+
+        // ---- P-04 (ids 66-69): block I/O, FUSE's cycle order; fragments FrIni .. FrOtir ----
+        case 66:  // LD HL,INBUF ; LD BC,#40FE ; INI: IR tick, port, then the write
+            ldRrNn(pc);
+            ldRrNn(pc + 3);
+            c.insert(c.end(), { M1(pc + 6), M1(pc + 7) });
+            Internal(c, kIr, 1);
+            c.insert(c.end(), { Io(0x40FE), Wr(sym("INBUF")) });
+            break;
+        case 67:  // LD HL,OUTBUF ; LD BC,#41FE ; OUTI: the read, B-- (#40), then the port #40FE
+            ldRrNn(pc);
+            ldRrNn(pc + 3);
+            c.insert(c.end(), { M1(pc + 6), M1(pc + 7) });
+            Internal(c, kIr, 1);
+            c.insert(c.end(), { Rd(sym("OUTBUF")), Io(0x40FE) });
+            break;
+        case 68:  // LD HL,INBUF ; LD BC,#02FE ; INIR: two rounds, the repeat's 5 ticks on HL
+        {
+            const uint16_t buf = sym("INBUF");
+            ldRrNn(pc);
+            ldRrNn(pc + 3);
+            for (int round = 0; round < 2; round++)
+            {
+                c.insert(c.end(), { M1(pc + 6), M1(pc + 7) });
+                Internal(c, kIr, 1);
+                c.insert(c.end(), { Io(static_cast<uint16_t>(0x02FE - round * 0x100)), Wr(static_cast<uint16_t>(buf + round)) });
+                if (round == 0)
+                    Internal(c, buf, 5);
+            }
+            break;
+        }
+        case 69:  // LD HL,OUTBUF ; LD BC,#03FE ; OTIR: three rounds, the repeats' 5 ticks on the new BC
+        {
+            const uint16_t buf = sym("OUTBUF");
+            ldRrNn(pc);
+            ldRrNn(pc + 3);
+            for (int round = 0; round < 3; round++)
+            {
+                const uint16_t port = static_cast<uint16_t>(0x02FE - round * 0x100);
+                c.insert(c.end(), { M1(pc + 6), M1(pc + 7) });
+                Internal(c, kIr, 1);
+                c.insert(c.end(), { Rd(static_cast<uint16_t>(buf + round)), Io(port) });
+                if (round < 2)
+                    Internal(c, port, 5);
+            }
+            break;
+        }
+
+        // ---- P-05 (ids 70-73): the port's high byte in the page at #C000; fragments FrInC0FE, FrInC0FF ----
+        // The page comes from the case record (Oracle::Contended); only the 128K / +2 contend it
+        case 70:
+        case 71:
+        case 72:
+        case 73:  // LD BC,#C0FE / #C0FF ; IN A,(C)
+            ldRrNn(pc);
+            c.insert(c.end(), { M1(pc + 3), M1(pc + 4), Io(id < 72 ? 0xC0FE : 0xC0FF) });
+            break;
+
         default:  // 10-17: the RET alone; 55: a value case; 60: RET in ROM
             break;
     }
@@ -766,6 +839,8 @@ protected:
         {
             if ((only != 0 && r.id != only) || (r.flags & 3 & ~caps) != 0)
                 continue;
+            if ((r.flags & 32) && m.rule == Rule::None)  // not on the plain clones (see CURFLAGS in ctprobe.asm)
+                continue;
             CaseResult result{ r, {}, Expected(m.rule, r, sym) };
             for (uint8_t i = 0; i < r.count; i++)
                 result.measured.push_back(Peek(static_cast<uint16_t>(r.results + i)));
@@ -805,7 +880,7 @@ TEST(CtProbeFiles_Test, CommittedFilesMatchTheSource)
         << "rebuild with UNREAL_CTPROBE_EXPORT=1";
 }
 
-/// UNREAL_CTPROBE_EXPORT=1 writes the reference files from the source
+/// UNREAL_CTPROBE_EXPORT=1 writes the reference files from the source (into UNREAL_CTPROBE_EXPORT_DIR if set)
 TEST(CtProbeFiles_Test, Export)
 {
     if (!std::getenv("UNREAL_CTPROBE_EXPORT"))
@@ -817,7 +892,8 @@ TEST(CtProbeFiles_Test, Export)
                                                                               { "ctprobe.sym", BuildSym(p) } };
     for (const auto& [file, data] : files)
     {
-        std::ofstream out(ProbePath(file), std::ios::binary);
+        const char* dir = std::getenv("UNREAL_CTPROBE_EXPORT_DIR");  // elsewhere, e.g. to try a change out
+        std::ofstream out(dir ? std::string(dir) + "/" + file : ProbePath(file), std::ios::binary);
         out.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
         ASSERT_TRUE(out.good()) << file;
     }
@@ -901,6 +977,10 @@ std::vector<Loading> Loadings()
         { "Plus3-3BASIC", "ctprobe.tap", { "LOAD \"t:\"", "LOAD \"\"" }, "Paging yes, +3 layouts yes" },
         { "Pentagon-TRDOS", "ctprobe.trd", { "RUN" }, "Paging yes" },
         { "Scorpion-TRDOS", "ctprobe.trd", { "RUN" }, "Paging yes" },
+        { "ATM710-TRDOS", "ctprobe.trd", { "RUN" }, "Paging yes" },
+        { "ATM3-TRDOS", "ctprobe.trd", { "RUN" }, "Paging yes" },
+        { "Profi-TRDOS", "ctprobe.trd", { "RUN" }, "Paging yes" },
+        { "ProfScorp-TRDOS", "ctprobe.trd", { "RUN" }, "Paging yes" },
     };
 }
 
@@ -917,5 +997,6 @@ INSTANTIATE_TEST_SUITE_P(Opt, CtProbeLoad_Test,
                          ::testing::ValuesIn(std::getenv("UNREAL_TIMING_SUITES") ? Loadings() : std::vector<Loading>{}),
                          LoadingName);
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(CtProbeLoad_Test);
+
 
 

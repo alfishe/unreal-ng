@@ -119,8 +119,14 @@ public:
     virtual void WriteRegister(uint8_t index, uint8_t value);
 
     /// Side-effect-free view for debuggers and state reports: register C keeps
-    /// its flags, nothing is sampled into UF
-    uint8_t PeekRegister(uint8_t index) const;
+    /// its flags, nothing is sampled into UF. Virtual: EvoAvr shows the cells
+    /// its firmware serves
+    virtual uint8_t PeekRegister(uint8_t index) const;
+
+    /// Part name for reports
+    virtual const char* ChipName() const { return "MC146818 / DS12887"; }
+    /// Where a front end serves registers its own way (reports); empty = datasheet
+    virtual const char* RegistersNote() const { return ""; }
     /// endregion </Registers>
 
     /// region <Time base>
@@ -152,7 +158,7 @@ public:
 
     /// region <TTD>
     /// Complete chip state: cells, address latch, flags, time base
-    static constexpr size_t kStateSize = 64 + kMaxCells;
+    static constexpr size_t kStateSize = 80 + kMaxCells;
     void SaveState(uint8_t* dst) const;
     void LoadState(const uint8_t* src);
     /// endregion </TTD>
@@ -185,6 +191,8 @@ protected:
     bool IsTimeRegister(uint8_t index) const;
     /// Move the chip to a new time without raising UF for the jump
     void SetChipMicros(int64_t micros);
+    /// Move the chip to fields exactly as written (see _rawTime)
+    void SetChipTime(const CivilTime& time, int64_t fraction);
     /// The time registers as the guest sees them (held fields while SET)
     CivilTime CurrentTime() const;
     bool IsDividerReset() const;
@@ -207,6 +215,13 @@ protected:
     bool _held = false;           ///< SET bit or divider reset: the clock does not advance
     CivilTime _heldTime;          ///< time registers while held, as written (no normalization)
     int64_t _heldFraction = 0;    ///< sub-second part while held
+    /// Fields as the guest last wrote them without SET (the ZX-Evo AVR ignores
+    /// SET, so its guests write the date one field at a time): shown as
+    /// written until the next update, so "day 31" then "month 12" is the 31st
+    /// of December even while the month is still September
+    bool _rawValid = false;
+    CivilTime _rawTime;
+    int64_t _rawSecond = 0;       ///< the chip second the raw fields belong to
     bool _secondValid = false;
     int64_t _lastSecond = 0;      ///< last second UpdateFlags() saw
 

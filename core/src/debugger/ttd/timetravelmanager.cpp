@@ -126,10 +126,23 @@ TimeTravelManager::~TimeTravelManager()
 // Session lifecycle
 // ---------------------------------------------------------------------------
 
+void TimeTravelManager::SetUnavailableReason(const std::string& reason)
+{
+    if (!reason.empty() && _state != TTDSessionState::Idle)
+        InvalidateSession(reason.c_str());
+    _unavailableReason = reason;
+}
+
 bool TimeTravelManager::StartRecording()
 {
     if (_state == TTDSessionState::Recording)
         return true;  // Idempotent
+
+    if (!_unavailableReason.empty())
+    {
+        MLOGWARNING("TimeTravelManager::StartRecording — refused: %s", _unavailableReason.c_str());
+        return false;
+    }
 
     // Leaving the replay/browse scope for live recording: free the decode cache.
     ClearFrameCache();
@@ -608,6 +621,7 @@ TTDSessionInfo TimeTravelManager::GetSessionInfo() const
 
     info.bookmarkCount = _bookmarks.Size();
     info.lastDropReason = _lastDropReason;
+    info.unavailableReason = _unavailableReason;
 
     // Phase 5 codec telemetry — useful for the UI / WebAPI status surface
     // to show compression effectiveness at a glance.
@@ -3300,6 +3314,12 @@ bool TimeTravelManager::TurboSoundSessionKindMatches(
 
 bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
 {
+    if (!_unavailableReason.empty())
+    {
+        err = _unavailableReason;
+        return false;
+    }
+
     // --- Read + validate header ---
     char magic[4];
     in.read(magic, 4);

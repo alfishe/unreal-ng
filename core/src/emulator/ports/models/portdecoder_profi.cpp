@@ -178,7 +178,9 @@ uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
         disp.decodedPort = port;
         disp.wasHandledInline = true;
     }
-    else
+    // The VG93's registered keys (#1F..#FF) must not answer outside the DOS / CP/M port set: the gated FDC
+    // arm above already declined them, so they stay undecoded (floating bus) instead of reaching the controller
+    else if (!IsBeta128Port(port))
     {
         result = PeripheralPortIn(port);
         // Identity decode: mark decoded only when a device actually responded
@@ -402,6 +404,15 @@ void PortDecoder_Profi::UpdateModelMemoryBanks()
 
     if (pDFFD & 0x20)   // CPM: disk interface on the bus regardless of the DOS latch
         _state->flags |= CF_DOSPORTS;
+}
+
+PortDecoder::RtcBinding PortDecoder_Profi::GetRtcBinding()
+{
+    RtcBinding binding;
+    binding.chip = &_rtc;
+    binding.ports = "#BF / #FF address, #9F / #DF data, extended mode only (CP/M + ROM14)";
+    binding.nvramFile = _context->config.profi_nvram_path;
+    return binding;
 }
 
 std::vector<ttd::PeripheralId> PortDecoder_Profi::GetTTDModelStateIds() const

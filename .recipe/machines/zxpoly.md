@@ -119,6 +119,7 @@ status = zxpoly_status(id)          # dict, None if not a ZX-Poly machine
   the same time. `pipelined_slaves` means, at unlimited speed (turbo), their
   frame also overlaps the master's next one. The state at every frame
   boundary is the same either way.
-- **No time travel:** time travel is not supported on ZX-Poly machines
-  (deferred). `time_travel` is not blocked, but it acts on the master
-  alone: a seek splits the master from the slaves. Do not use it here.
+- **No time travel:** ZX-Poly machines refuse time travel (deferred): one
+  module's history would split it from the others. `time_travel` `start`
+  fails with the reason, and the TTD status shows it as
+  `unavailable_reason`.

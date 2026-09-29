@@ -697,13 +697,26 @@ bool PortDecoder_Scorpion256::IsPort_7EFD(uint16_t port)
     return result;
 }
 
+PortDecoder::RtcBinding PortDecoder_Scorpion256::GetRtcBinding()
+{
+    RtcBinding binding;
+    if (!IsSmucFitted())
+    {
+        binding.absentReason = "No SMUC board on this Scorpion (configure [HDD] Scheme=SMUC): the clock lives on the SMUC";
+        return binding;
+    }
+    binding.chip = &_smucNvram.GetRtc();
+    binding.ports = "SMUC: #DFBA address or data, latched by #FFBA bit 7";
+    return binding;
+}
+
 std::vector<ttd::PeripheralId> PortDecoder_Scorpion256::GetTTDModelStateIds() const
 {
     // Both variants: #1FFD (RAM at #0000, service monitor, high #C000 bank
     // bits) and the DD50.1 magic-button trigger drive the paging chain and are
     // not in the model-agnostic TTDChipsetState. The ProfROM plane state rides
     // in the same blob; on the plain Scorpion it is simply zero. The SMUC
-    // clock is captured even with the board absent: 320 bytes, and a test
+    // clock is captured even with the board absent: 336 bytes, and a test
     // that fits the board records it like any other
     return {ttd::PeripheralId::ScorpionProfROM, ttd::PeripheralId::Ds12887};
 }

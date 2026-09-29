@@ -300,7 +300,7 @@ external card on `#B3/#BB`. No Soundrive, no TurboSound.
 | Beta-128 | VG93 1F/3F/5F/7F + system FF, only in DOS or with `FDD_VIRT[7]`; a port access on a drive flagged in `FDD_VIRT[3:0]` swaps RAM page 0xFF into window 0 at the next M1 (vdos) — Z80 code there emulates the drive; a VG93 access inside vdos exits it |
 | Gluk CMOS | `#DFF7/#BFF7`, enabled by `#EFF7` bit 7; blocked from the TR-DOS ROM, allowed in vdos; registers F0-FF = AVR extension (PS/2 keyboard log, versions) |
 | Mouse / joystick | Kempston mouse `xxDF` (wheel nibble); 8-bit Kempston joystick `#1F` outside DOS |
-| Nemo IDE | in the standard build — shared `IdeAdapter` scheme `NEMO-DIVIDE` (D2, resolved 2026-09-29) |
+| Nemo IDE | in the standard build (VDAC builds reuse its pins): CS0 ports `rrr10000` + aliases `rrr01000`, CS1 #C8, high-byte latch #11; Nemo and DivIDE byte orders; answers always; a fixed 6-fclk PIO cycle that stalls the CPU; DMA codes 0x3/0xB move 16-bit words (hardware-spec §8.3) |
 | COM / ZiFi (`xxEF`) | AVR wait-port — deferred, reads 0xFF |
 
 ## 2.10 Reset and boot
@@ -368,7 +368,7 @@ Decisions (recorded; change only with the user):
 | # | Decision | Rationale |
 |:--|:--|:--|
 | D1 | Superset of all firmware builds (XTR_FEAT always on); `TS_VDAC` selects DAC curve + STATUS `VDAC_VER` (OFF → 0, 5BIT → 3, VDAC2 → 7); FT812/ESP32 not modeled | software checks VDAC_VER; ancestor precedent |
-| D2 | Nemo IDE deferred to the shared IDE core (PLAN #13a); ports answer 0xFF | no IDE core existed at design time. **Resolved 2026-09-29**: TSConf uses the ZX-Evo scheme `NEMO-DIVIDE` as is (same FPGA NemoIDE, `zports.v:256-273, 336-341, 766-783`); `[HDD] Scheme=NEMO-DIVIDE` in `data/configs/ts-conf/unreal.ini` (no CD); `IdeAdapter::DmaReadWord` / `DmaWriteWord` serve DMA 0x3 / 0xB (whole word past the Z80 latches, `dma.v:98, 441-445`). Left for phase 6: decoder `TryIdePortIn/Out` first, DMA engine hook-up, a test |
+| D2 | **Nemo IDE emulated** (decided 2026-09-29) through the shared IDE core: `IdeAdapter` scheme `NEMO-DIVIDE` (the same decode as ZX-Evo BaseConf), `[HDD] Scheme=NEMO-DIVIDE` in the ts-conf ini; the TSConf-only CPU stall emulated but **off by default** (`[HDD] IdeStall=0`); IDE fitted regardless of `TS_VDAC` (superset, D1) | the shared core is on master (`f5fc5f05`; ATM3 uses the scheme), so IDE costs decoder calls, two DMA word methods and the stall; the design was deferred (v1.0) only because no IDE core existed |
 | D3 | Model key stays **`TSL`** (existing `mem_model` short name, ini, API, AGENTS.md); **`TSCONF` accepted as an alias** at model lookup (the scope confirmed with the user on 2026-09-27 named `TSCONF`) | no config/API churn; both names work |
 | D4 | **Soundrive not emulated** — absent from the hardware; the 2026-09-27 scope "Covox/Soundrive (full set)" is satisfied by Covox + beeper + AY + GS | a Soundrive would make software behave differently from the real machine |
 | D5 | No `ayclk` decode — AY fixed 1.75 MHz | `ay_mod` hardwired in [V] |
@@ -524,7 +524,7 @@ precedent), registered in the factory + `IsModelSupported`
 | `lo = 1F` | `!DOS && !FDD_VIRT[7]` | Kempston joystick (8-bit) |
 | `lo = F7`, A8 = 1 | EFF7/CMOS gating (spec §9): `(EFF7[7] \|\| DOS) && (!DOS \|\| vdos)` | Gluk CMOS — reuse `EvoAvr` (`memory/atm/evoavr.h`: the same board AVR, already on the shared `Ds12887` chip with extension regs F0-FF); only the gating rule is TSConf's. Add `PeripheralId::Ds12887` (18) to the decoder's TTD ids like ATM3, and `[EVO] NvramFile` handling like `PortDecoder_ATM3` (PLAN #60(c)) |
 | `xxDF` | always | Kempston mouse (`Default_Port_KempstonMouse_In`, wheel nibble) |
-| IDE ports | `[HDD] Scheme=NEMO-DIVIDE` | `TryIdePortIn/Out` first, as in every model decoder (D2) |
+| IDE: `rrr10000`, `rrr01000`, #C8, #11 | always (checked **first**, like `portdecoder_atm3.cpp:245`) | `TryIdePortIn/Out` → `IdeAdapter` `NEMO-DIVIDE`; a real bus cycle adds the stall when `IdeStall=1` (§3.11) |
 | `xxEF` | — | 0xFF (D7) |
 | other | — | 0xFF |
 
@@ -650,9 +650,37 @@ cache-miss waits.
     schema generation first).
 - **Beta-128**: existing WD1793/track model; decoder adds DOS/`FDD_VIRT[7]`
   gating and vdos arm/exit. TR-DOS ROM lives in ROM page 1.
-- **IDE**: the shared `IdeAdapter`, scheme `NEMO-DIVIDE` (D2, resolved
-  2026-09-29); the decoder calls `TryIdePortIn/Out` first and DMA 0x3 / 0xB call
-  `GetIdeAdapter().DmaReadWord/DmaWriteWord`.
+- **IDE** (D2; hardware-spec §8.3). Built on the shared IDE core
+  (`io/ide/`: `IdeController`, `IdeAdapter`, `AtaChannel`, media slots
+  `ide0.master` / `ide0.slave`); TSConf adds no IDE class:
+  - **Z80 ports**: the decoder calls `TryIdePortIn/Out` before its own table;
+    `[HDD] Scheme=NEMO-DIVIDE` in `data/configs/ts-conf/unreal.ini` (set in
+    `762d813e`). `IdeController::SchemeFits` already allows it on `MM_TSL`. The
+    decode is bit-identical to BaseConf, so the ATM3 adapter tests cover it.
+  - **DMA word access** (landed in `762d813e`): two public methods on the shared `IdeAdapter`,
+    `uint16_t DmaReadWord()` and `void DmaWriteWord(uint16_t)`, over
+    `AtaChannel::ReadData()/WriteData()` (data register). `DmaReadWord` also
+    loads `readLatch` with the word's high byte (the hardware's shared
+    `iderdreg`); the pending Z80 read / write pairs stay as they are, since their
+    triggers move only on Z80 port accesses ([V] `zports.v:784-808`). The TSConf DMA
+    engine calls them for codes 0x3/0xB; with `Scheme=NONE` those codes stay
+    "not built" (hang).
+  - **CPU stall**: `[HDD] IdeStall=0|1` (default 0 = bypass), read by the
+    TSConf decoder only (other IDE boards use the Z80's own strobes and have
+    no stall). With 1, every real IDE bus cycle from the CPU (CS0/CS1 ports;
+    not #11, not a #10 served from the latch) adds 1 / 2 / 3 T at 3.5 / 7 /
+    14 MHz through `Z80::AddWaitStates` (or the #60(d) wait-state hook once
+    it exists). `IdeAdapter::In/Out` report whether the access reached the
+    drive (a flag in the adapter, read by the decoder), so the rule lives in
+    one place. The stall is a pure function of the access, so it needs no
+    TTD state.
+  - **DMA pacing**: an IDE word costs one DRAM access plus one 6-fclk IDE bus
+    cycle in the DMA budget (§3.8).
+  - **TTD, media, automation, Qt**: nothing TSConf-specific. The decoder adds
+    the shared `PeripheralId::AtaChannel` (17) to its TTD ids like the other
+    IDE boards; image / folder / CD control is the media manager's
+    `ide0.*` slots; `state ide`, `/state/ide`, `ide_state()`, MCP aspect `ide`
+    and the Qt status LED already work for every IDE board.
 - **ROM loading**: TSConf loader accepts the 512 KB `zxevo.rom` (default) and
   64 KB `ts-bios*.rom` (padded to 32 pages with 0xFF) — replaces the
   exactly-32-banks check (`rom.cpp:350`). No ROM-set remapping: the hardware
@@ -696,13 +724,17 @@ opt-in in the ts-conf ini (currently `NONE`, line 361), ROM line present
    (Profi precedent `portdecoder_profi.cpp:378-388`;
    `TimeTravelManager::RegisterModelPeripherals` refuses to record if a
    declared id has no serializer).
-4. SD card: the card's protocol state follows the NeoGS TTD design for
+4. IDE: the shared `AtaChannel` blob (17) holds the channel, both units and
+   the adapter latches; the TSConf decoder only declares the id. An IDE DMA
+   caught mid-transfer restores through the DMA counters in the TSConf blob
+   plus the channel's transfer position.
+5. SD card: the card's protocol state follows the NeoGS TTD design for
    `SdCardSpi` (neogs-tdd §7.4); Session-mode written sectors are part of that
    state; vFAT is read-only, so no sector journal.
-5. **Dependencies**: PLAN #40 V1 (memory regions) per the PLAN #41 row. (The
+6. **Dependencies**: PLAN #40 V1 (memory regions) per the PLAN #41 row. (The
    V0 items TSConf needed - the page-255 sentinel fix, `3a6eabc6`, and the
    unique `PeripheralId` table - are done.)
-6. **Divergence corpus**: one fixture with TSU + DMA + line INT activity (a
+7. **Divergence corpus**: one fixture with TSU + DMA + line INT activity (a
    MAME `tsconf.xml` SPG, or a purpose-built test program), recorded with the
    existing corpus tooling.
 
@@ -801,9 +833,8 @@ Tests are named after the file under test (`<sourcefile>_test.cpp`):
 5. **PLAN dependencies** — #40 V1 (memory regions) before the full TTD phase;
    #42 mapper before video debugging; neither blocks phases 0-2. (#40 V0's
    page-255 fix is done, `3a6eabc6`.)
-6. **IDE** in the standard firmware — resolved 2026-09-29 (D2): scheme
-   `NEMO-DIVIDE` and the DMA word API are ready; the decoder and DMA hook-ups
-   land in phase 6.
+6. **IDE** — resolved 2026-09-29: emulated in phase 6 (D2, §3.11). The CPU
+   stall is off by default; a CPU IDE access during an IDE DMA is not modeled.
 7. **SPG coverage** — MAME's list has 27 SPG files; v1.1 files need the version fix.
 
 ## 4. Review round 1 (2026-09-27) — what changed from v0.2

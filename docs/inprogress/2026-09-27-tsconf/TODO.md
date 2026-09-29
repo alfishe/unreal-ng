@@ -52,16 +52,13 @@ Scope confirmed with the user on 2026-09-27, and how the design honors it:
 - [x] Shared IDE core on master (PLAN #13a / media manager M6, `f5fc5f05`):
   `IdeAdapter` with the Nemo (A8, Evo) scheme, `[HDD]` config, TTD
   `AtaChannel` = 17, every surface; ATM3 already uses it
-- [x] D2 resolved (2026-09-29): TSConf uses the ZX-Evo scheme `NEMO-DIVIDE` as
-  is (same NemoIDE and nemo-divide latch triggers as BaseConf,
-  `zports.v:256-273, 336-341, 766-783`); `data/configs/ts-conf/unreal.ini` has
-  `[HDD] Scheme=NEMO-DIVIDE` (no CD drive); `IdeController::SchemeFits` accepts
-  it for `MM_TSL`. For DMA devices #3 (IDE to RAM) and #B (RAM to IDE) the shared
-  `IdeAdapter` has `DmaReadWord()` / `DmaWriteWord(uint16_t)`: one whole word
-  from / to the data register, past the Z80 half-word latches (`dma.v:98,
-  441-445`); no board reads #FFFF. Tests
-  `IdeAdapter_Test.DmaMovesWholeWordsPastTheLatches`,
-  `IdeAdapter_Test.DmaWithoutABoardReadsAFloatingBus`
+- [x] D2 decided 2026-09-29: Nemo IDE **emulated** in phase 6 on that core -
+  decode = scheme `NEMO-DIVIDE` (bit-identical to BaseConf), DMA 0x3/0xB in
+  16-bit words, the TSConf-only CPU stall emulated but off by default
+  (`[HDD] IdeStall=0`); full description in hardware-spec §8.3, design in
+  technical-design §3.11, tests IDE-1..5 / DMA-15 / BOOT-4. Already landed
+  (`762d813e`): `[HDD] Scheme=NEMO-DIVIDE` in the ts-conf config and
+  `IdeAdapter::DmaReadWord` / `DmaWriteWord` with their tests
 
 ## Remaining
 
@@ -77,8 +74,5 @@ Scope confirmed with the user on 2026-09-27, and how the design honors it:
   from a TSConf-specific SD API; #40 V1 and #42
   (`IVideoMapper`) before phase 7.
 - Shared with the ATM3 completion program (PLAN #55, [implementation-plan.md](../2026-09-15-atm-baseconf-highres-ports/implementation-plan.md) §2): M1 hook, write intercept, `ZControllerSpi`, SD on `IBlockDevice`, `EvoAvr`; the SD card, host folders (`HostFolderFat`) and media control through the media manager (PLAN #58, [storage-manager](../2026-09-28-storage-manager/technical-design.md)). ATM3 moves to the official `zxevo_fe.rom` (pages 0-3 empty), so TSConf needs its own ROM file with TS-BIOS in pages 0-3.
-- Open user decisions: none blocking. D1-D7 in technical-design §3.2 record the
-  defaults taken. **D2 is resolved** (see Progress); left for phase 6, once the
-  TSConf decoder exists: call `TryIdePortIn/Out` first in the decoder (as every
-  other model decoder does) and have the DMA engine call
-  `GetIdeAdapter().DmaReadWord/DmaWriteWord` for devices 0x3 / 0xB, plus a test.
+- Open user decisions: none. D1-D7 in technical-design §3.2 record the
+  decisions taken (D2 changed on 2026-09-29: Nemo IDE emulated).

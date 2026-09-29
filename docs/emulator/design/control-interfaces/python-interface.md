@@ -134,6 +134,20 @@ class Emulator:
         units[2] (kind, slot, medium, translation, task_file with decoded bits,
         command, atapi sense on a CD drive). available=False without a board"""
 
+    def rtc_state(self) -> dict:
+        """CMOS clock report: chip, ports, cells, nvram_file, address_latch, time_mode
+        (host / emulated / fixed), time (as the guest reads it now), register_a..d decoded,
+        alarm, dump (hex lines). Peeked: never clears register C. available=False without a clock"""
+
+    def rtc_read(self, start: int, count: int = 1) -> bytes:
+        """CMOS cells as the guest reads them, without side effects. ValueError without a
+        clock or for a range outside the chip"""
+
+    def rtc_write(self, start: int, values: list[int]) -> None:
+        """Write CMOS cells like a guest write: the time registers set the clock (set B bit 7
+        SET around a multi-register set, as a guest does), C and D are read-only, RAM cells
+        are stored. The address latch is not touched. ValueError without a clock / bad range"""
+
     def audio_moonsound_state(self, part: str = "") -> dict:
         """MoonSound (OPL4) report: overview (part=''), the FM half (part='fm': 18 channels,
         timers, register banks) or the wavetable half (part='pcm': 24 slots with envelopes).
@@ -821,6 +835,7 @@ status = emu.ttd_status()
 #   'session_heap_bytes': 1043968,
 #
 #   'last_drop_reason': 'snapshot-load',   # None until a history is dropped
+#   'unavailable_reason': None,            # set when this machine has no time travel (a ZX-Poly member)
 # }
 ```
 

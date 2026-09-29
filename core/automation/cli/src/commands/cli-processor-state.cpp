@@ -80,6 +80,7 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         ss << "  state audio fm 1     - Show the full FM report of TSFM chip 1" << NEWLINE;
         ss << "  state fdc            - Show the Beta Disk controller and drives" << NEWLINE;
         ss << "  state ide            - Show the IDE board and its units" << NEWLINE;
+        ss << "  state rtc            - Show the CMOS clock (also: rtc, cmos)" << NEWLINE;
         ss << "  state contention     - Show where the CPU waits for the video logic" << NEWLINE;
         ss << "  state audio channels - Show all audio sources mixer state" << NEWLINE;
 
@@ -184,6 +185,11 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         std::stringstream ide;
         ide << "IDE board" << NEWLINE << "=========" << NEWLINE << DeviceState::ToText(DeviceState::Ide(context));
         session.SendResponse(ide.str());
+        return;
+    }
+    else if (subsystem == "rtc" || subsystem == "cmos")
+    {
+        session.SendResponse(RtcReportText(context));
         return;
     }
     else if (subsystem == "contention")
