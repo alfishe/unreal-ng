@@ -65,5 +65,5 @@ Bring the WD1793 FDC emulation to a fully featured, fully tested state with comp
 
 ## Related
 
-- [Gap Analysis](../../reviews/wd1793-test-gap-analysis.md)
-- [TR-DOS Track Structure](../../design/io/fdc/trdos-format-track-structure.md)
+- Gap Analysis
+- [TR-DOS Track Structure](../../emulator/design/io/fdc/trdos-format-track-structure.md)

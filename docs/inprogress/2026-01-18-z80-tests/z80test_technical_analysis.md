@@ -28,7 +28,7 @@ The total iterations for a test are determined by nested loops:
 
 ## 2. Technical Execution Flow
 
-The assembly engine ([idea.asm](testdata/z80/z80test-1.2a/src/idea.asm)) follows this sequence for EVERY iteration:
+The assembly engine (idea.asm) follows this sequence for EVERY iteration:
 
 ```mermaid
 sequenceDiagram
@@ -82,7 +82,7 @@ Z80Test computes 4 distinct CRCs per vector:
 When a CRC mismatch occurs, we use the following methodology to find the bug:
 
 ### Step 1: Recover the Expected Sequence
-Since we don't have the "source" flags from a real Z80, we use [analyze_crc.py](core/tests/z80/z80test/analyze_crc.py) to:
+Since we don't have the "source" flags from a real Z80, we use analyze_crc.py to:
 1. Dump our emulator's flag sequence ($S_{emu}$) to a file.
 2. Compare the cumulative CRC of $S_{emu}$ with the Reference CRC from `z80test`.
 3. Perform a **Dictionary/Bruteforce Search** on failing iterations.

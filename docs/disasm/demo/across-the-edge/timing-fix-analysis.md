@@ -232,6 +232,6 @@ This analysis demonstrates that even a 2 T-state timing difference — invisible
 
 ## See Also
 
-- [INT Signal Timings](../../inprogress/2026-08-09-video-timing-analysis-mister-vs-emulator/07-int-signal-timings.md)
-- [Border Timing](../../inprogress/2026-08-09-video-timing-analysis-mister-vs-emulator/02-border-timing.md)
-- [MiSTer vs Emulator Analysis](../../inprogress/2026-08-09-video-timing-analysis-mister-vs-emulator/README.md)
+- [INT Signal Timings](../../../inprogress/2026-08-09-video-timing-analysis-mister-vs-emulator/07-int-signal-timings.md)
+- [Border Timing](../../../inprogress/2026-08-09-video-timing-analysis-mister-vs-emulator/02-border-timing.md)
+- [MiSTer vs Emulator Analysis](../../../../README.md)

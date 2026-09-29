@@ -422,7 +422,7 @@ sequenceDiagram
 ### Internal `unreal-ng` Specifications & Architectural Specs
 - **Developer Toolchain Architecture Proposal**: [unreal-ng-developer-toolchain-design.md](unreal-ng-developer-toolchain-design.md)
 - **Conditional Breakpoints & Trigger Engine Design**: [../2026-08-17-conditional-breakpoints/design.md](../2026-08-17-conditional-breakpoints/design.md)
-- **Shared Expression Evaluator Specification**: [../2026-08-26-expression-evaluator/README.md](../2026-08-26-expression-evaluator/README.md)
+- **Shared Expression Evaluator Specification**: [../2026-08-26-expression-evaluator/README.md](../../../README.md)
 - **Time-Travel Debugging (TTD v2) Architecture**: [../2026-07-19-time-travel/README.md](../2026-07-19-time-travel/README.md)
 - **Automation Gaps & Schema Generation (T4 #22, T4 #23)**: [../2026-08-26-automation-gaps/action-plan.md](../2026-08-26-automation-gaps/action-plan.md)
 - **NedoOS Struct DSL & Syscall Triage Design**: [../2026-09-17-nedoos-future-support/nedoos-struct-dsl-and-triage-design.md](../2026-09-17-nedoos-future-support/nedoos-struct-dsl-and-triage-design.md)

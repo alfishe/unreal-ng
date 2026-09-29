@@ -9,7 +9,7 @@ Implemented thread-safe lifecycle guards to prevent crash when emulators are des
 
 ## Changes Made
 
-### 1. Core Emulator Enum ([core/src/emulator/emulator.h](../../core/src/emulator/emulator.h))
+### 1. Core Emulator Enum ([core/src/emulator/emulator.h](../../../core/src/emulator/emulator.h))
 
 Added `StateDestroying` to `EmulatorStateEnum`:
 
@@ -26,7 +26,7 @@ enum EmulatorStateEnum : uint8_t
 };
 ```
 
-### 2. IsDestroying Method ([core/src/emulator/emulator.h](../../core/src/emulator/emulator.h), [core/src/emulator/emulator.cpp](../../core/src/emulator/emulator.cpp))
+### 2. IsDestroying Method ([core/src/emulator/emulator.h](../../../core/src/emulator/emulator.h), [core/src/emulator/emulator.cpp](../../../core/src/emulator/emulator.cpp))
 
 Added thread-safe destruction state check:
 
@@ -41,7 +41,7 @@ bool Emulator::IsDestroying()
 }
 ```
 
-### 3. Release Guard ([core/src/emulator/emulator.cpp](../../core/src/emulator/emulator.cpp))
+### 3. Release Guard ([core/src/emulator/emulator.cpp](../../../core/src/emulator/emulator.cpp))
 
 Set destroying state BEFORE cleanup:
 
@@ -60,7 +60,7 @@ void Emulator::Release()
 }
 ```
 
-### 4. LoadSnapshot Guard ([core/src/emulator/emulator.cpp](../../core/src/emulator/emulator.cpp))
+### 4. LoadSnapshot Guard ([core/src/emulator/emulator.cpp](../../../core/src/emulator/emulator.cpp))
 
 Added early rejection for destroying emulators:
 
@@ -77,7 +77,7 @@ bool Emulator::LoadSnapshot(const std::string& path)
 }
 ```
 
-### 5. WebAPI Check ([core/automation/webapi/src/api/snapshot_api.cpp](../../core/automation/webapi/src/api/snapshot_api.cpp))
+### 5. WebAPI Check ([core/automation/webapi/src/api/snapshot_api.cpp](../../../core/automation/webapi/src/api/snapshot_api.cpp))
 
 Added HTTP 503 response for destroying emulators:
 

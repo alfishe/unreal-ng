@@ -1,8 +1,8 @@
 # AnalyzerManager Implementation
 
 ## Phase 1: Core Infrastructure ✅
-- [x] Create IAnalyzer interface ([ianalyzer.h](core/src/debugger/ianalyzer.h))
-- [x] Create AnalyzerManager class ([analyzermanager.h](core/src/debugger/analyzermanager.h))
+- [x] Create IAnalyzer interface ([ianalyzer.h](../../../core/src/debugger/analyzers/ianalyzer.h))
+- [x] Create AnalyzerManager class ([analyzermanager.h](../../../core/src/debugger/analyzers/analyzermanager.h))
 - [x] Implement AnalyzerManager class ([analyzermanager.cpp](../../../core/src/debugger/analyzers/analyzermanager.cpp))
 - [x] Update DebugManager to include AnalyzerManager
 - [x] Fix two-phase initialization (init() method)

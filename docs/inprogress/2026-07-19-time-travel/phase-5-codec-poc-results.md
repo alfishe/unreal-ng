@@ -388,7 +388,7 @@ The `.ttd` schema already has `schema_version` in the header (per Phase S1 / com
 
 ### What is NOT recoverable
 
-- **Loss of the I-frame itself**: if I-frame `A` is corrupt, frames `[A.frame, A.frame + K)` are unrecoverable. Mitigation: I-frames are small (~6 KB compressed for a full 48 KB RAM), can be redundantly stored on disk if needed. For in-memory recording this is not a concern.
+- **Loss of the I-frame itself**: if I-frame `A` is corrupt, frames `A.frame, A.frame + K)` are unrecoverable. Mitigation: I-frames are small (~6 KB compressed for a full 48 KB RAM), can be redundantly stored on disk if needed. For in-memory recording this is not a concern.
 - **Loss of the input journal**: keyboard/joystick writes feed the deterministic replay path. If the input journal is lost, sub-frame precision replay is impossible. Mitigation: input journal entries are tiny (8 bytes each) and append-only — extremely durable.
 
 ## Acceptance criteria check
@@ -650,7 +650,7 @@ re-ran the comparison with two additions:
      hands to `ZSTD_compressCCtx()` in production.
 
 The extended PoC lives in
-[`tools/poc/poc_codec_extended.py`](../../../../tools/poc/poc_codec_extended.py).
+[`tools/poc/poc_codec_extended.py`.
 
 ### TTD-score (composite metric)
 
@@ -774,10 +774,10 @@ zstd-1 remains the production pick. The codec is depended upon at the
 `.ttd` wire-format level (the format literally embeds zstd-compressed
 payloads addressed by magic), so it cannot be left to the host's
 installed version. zstd v1.5.7 is now vendored under
-[`core/src/3rdparty/zstd/`](../../../../core/src/3rdparty/zstd/) via
+[`core/src/3rdparty/zstd/`](../../../core/src/3rdparty/zstd/) via
 `FetchContent` from the canonical GitHub release tarball, with the
 SHA256 hash pinned in `CMakeLists.txt`. See
-[`core/src/3rdparty/zstd/README.md`](../../../../core/src/3rdparty/zstd/README.md)
+[`core/src/3rdparty/zstd/README.md`](../../../core/src/3rdparty/zstd/README.md)
 for configuration details and the upgrade procedure.
 
 ### Reproducing

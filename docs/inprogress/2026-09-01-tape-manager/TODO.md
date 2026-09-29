@@ -18,7 +18,7 @@ P7 polish remain (verified against code 2026-09-16).
   (732 lines) + block table model; done 2026-09-03 (r6), zero warnings,
   suite green.
 - Related shipped tracks: fast tape loading
-  ([`../2026-08-30-fast-tape-loading/DONE.md`](../2026-08-30-fast-tape-loading/DONE.md)),
+  ([`../2026-08-30-fast-tape-loading/DONE.md`](../2026-08-30-fast-tape-loading/TODO.md)),
   turbo tape
   ([`../2026-09-04-turbo-tape-loading/DONE.md`](../2026-09-04-turbo-tape-loading/DONE.md)),
   tape audio bridge

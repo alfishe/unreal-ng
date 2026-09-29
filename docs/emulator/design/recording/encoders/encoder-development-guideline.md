@@ -209,4 +209,4 @@ Run: `./bin/core-benchmarks --benchmark_filter=MyEncoder`
 ## See Also
 
 - [Encoder Architecture](./encoder-architecture.md)
-- [GIF Encoder](./encoders/gif-encoder.md) - Reference implementation
+- [GIF Encoder](gif-encoder.md) - Reference implementation

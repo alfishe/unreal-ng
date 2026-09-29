@@ -1,8 +1,8 @@
 # Page-Granular Capture Analysis Report
 
 **Date:** 2026-09-10  
-**Tool:** [`page_granularity_analysis.py`](../page_granularity_analysis.py)  
-**Related:** [`measure_paged_peripheral.cpp`](../measure_paged_peripheral.cpp), [`compression-analysis.md`](compression-analysis.md)
+**Tool:** [`page_granularity_analysis.py`](../scripts/page_granularity_analysis.py)  
+**Related:** [`measure_paged_peripheral.cpp`](../reference/measure_paged_peripheral.cpp), [`compression-analysis.md`](compression-analysis.md)
 
 ---
 
@@ -156,8 +156,8 @@ A crucial architectural insight governs how GeneralSound 512KB SRAM is stored in
 
 ## References
 
-- Analysis script: [`page_granularity_analysis.py`](../page_granularity_analysis.py)
-- C++ benchmark: [`measure_paged_peripheral.cpp`](../measure_paged_peripheral.cpp)
+- Analysis script: [`page_granularity_analysis.py`](../scripts/page_granularity_analysis.py)
+- C++ benchmark: [`measure_paged_peripheral.cpp`](../reference/measure_paged_peripheral.cpp)
 - Compression deep dive: [`compression-analysis.md`](compression-analysis.md)
 - Scalability analysis: [`model-scalability-analysis.md`](model-scalability-analysis.md)
 - Storage measurements: [`measurements.md`](measurements.md)

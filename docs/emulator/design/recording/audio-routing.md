@@ -431,7 +431,7 @@ recordingManager->StartRecordingEx("ay_channels.flac");
 ## References
 
 - [Recording System Architecture](recording-system.md)
-- [Speed Control](speed-control.md) - For turbo mode audio handling
+- [Speed Control](../core/speed-control.md) - For turbo mode audio handling
 - SoundManager implementation (`core/src/emulator/sound/soundmanager.cpp`)
 - TurboSound implementation (`core/src/emulator/sound/ay/turbosound.cpp`)
 - AY-3-8910 implementation (`core/src/emulator/sound/chips/soundchip_ay8910.cpp`)

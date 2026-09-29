@@ -10,7 +10,7 @@
 - [portdecoder_profi.cpp](../../../core/src/emulator/ports/models/portdecoder_profi.cpp) — current implementation
 - [screenprofi.cpp](../../../core/src/emulator/video/profi/screenprofi.cpp) — hi-res renderer
 - [ttdprofipaging.cpp](../../../core/src/debugger/ttd/profi/ttdprofipaging.cpp) — TTD serializer
-- [proficmos.h](../../../core/src/emulator/memory/profi/proficmos.h) — RTC/CMOS device
+- proficmos.h — RTC/CMOS device
 - Reference emulators: external corpus (`{unreal-speccy,ZXMAK2,Xpeccy,karabas-pro}`, not in this repo)
 
 ---
@@ -118,7 +118,7 @@ zero warnings).
 | WD1793 extended (#83/#A3/#C3/#E3, #3F) | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | Covox/SoundRive #5F (L), #3F (R) | ✅ | .bak (disabled) | stubs | DAC | ✅ | NORMAL mode only; bus-silencing fix `0a98d677` (below) |
 | Covox extended (#87/#A7/#C7/#E7) | ✅ | ❌ | ❌ | ❌ | ✅ | Closed: #C7 Left, #A7 Right; #87/#E7 correctly left unimplemented (8255 control addresses, no reference maps them either) |
-| RTC/CMOS DS12885 (#BF/#FF addr, #DF/#9F data) | ✅ | ✅ | ✅ | ✅ | ✅ | [proficmos.h](../../../core/src/emulator/memory/profi/proficmos.h) |
+| RTC/CMOS DS12885 (#BF/#FF addr, #DF/#9F data) | ✅ | ✅ | ✅ | ✅ | ✅ | proficmos.h |
 | IDE Profi (#8B/#AB/#CB/#EB, high-byte latch) | ✅ | ✅ | ✅ | ✅ | ❌ | **Gap** — design: [2026-09-25-ide-hdd-design.md](2026-09-25-ide-hdd-design.md), plan §9 |
 | Kempston joystick (#1F, NORMAL) | ✅ | ✅ | ✅ | ✅ | ❌ | **Gap**, but not really Profi-specific — see the Kempston resolution note below |
 | Kempston mouse (#FBDF/#FFDF/#FADF) | ✅ | ✅ | ✅ | ✅ | ⚠️ | Gating present but untested |
@@ -213,7 +213,7 @@ phantom-clicked its menu highlight every 5 frames. Two separable asks hide under
 
 | State | Risk Level | Notes |
 |---|---|---|
-| **RTC/CMOS register file** (256 bytes + address latch) | ⚠️ **Medium** | [`proficmos.h`](../../../core/src/emulator/memory/profi/proficmos.h) has `_cmos[256]` and `_cmos_addr`. Currently uses live host time. A TTD replay will see the **host clock at replay time**, not at capture time. The tech design (§6.2) explicitly notes this as low priority (Q10). For bit-perfect restore, needs: (a) deterministic clock mode, (b) 257 bytes added to `ProfiPagingState` |
+| **RTC/CMOS register file** (256 bytes + address latch) | ⚠️ **Medium** | `proficmos.h` has `_cmos[256]` and `_cmos_addr`. Currently uses live host time. A TTD replay will see the **host clock at replay time**, not at capture time. The tech design (§6.2) explicitly notes this as low priority (Q10). For bit-perfect restore, needs: (a) deterministic clock mode, (b) 257 bytes added to `ProfiPagingState` |
 | **IDE state** (high-byte latch + ATA registers) | ⚠️ **Medium** | IDE not implemented yet. When it is, the `m_ide_write`/`m_ide_read` 8-bit latches and the full ATA drive state must be serialized. ZXMAK2 has a 1-byte `m_ide_write` + `m_ide_read` pair. **Direction in design (rollout 2, requires further investigation)**: a shared `PeripheralId::AtaChannel` blob (both drives' registers + transfer buffer + adapter latches), not nested under `ProfiPaging`; disk contents via a copy-on-write layer + write journal ([ide-hdd-design §10](2026-09-25-ide-hdd-design.md)) |
 | ~~**Covox extended-mode port aliases**~~ | **Closed** | `#C7`/`#A7` now wired (§2.5); no new TTD state - the existing Covox serializer already covers the DAC latches regardless of which port address wrote them |
 | **Kempston joystick latch** | 🟢 **Low** | Joystick state is read-only from the host; no emulated state to save |
@@ -277,7 +277,7 @@ This means **bank mapping**, **video mode** (via `InitRaster`→`DetectModeProfi
 | 512×240 renderer | ✅ | [screenprofi.cpp](../../../core/src/emulator/video/profi/screenprofi.cpp) (128 lines) |
 | Palette write via OUT #xx7E | ✅ | [portdecoder_profi.cpp:377-394](../../../core/src/emulator/ports/models/portdecoder_profi.cpp#L377-L394) |
 | Three FDC port sets (normal/CPM/extended) | ✅ | [portdecoder_profi.cpp:352-375](../../../core/src/emulator/ports/models/portdecoder_profi.cpp#L352-L375) |
-| RTC/CMOS (DS12885 at #BF/#FF, #DF/#9F) | ✅ | [proficmos.h](../../../core/src/emulator/memory/profi/proficmos.h) |
+| RTC/CMOS (DS12885 at #BF/#FF, #DF/#9F) | ✅ | proficmos.h |
 | Covox DAC stereo (#5F L, #3F R) | ✅ | [portdecoder_profi.cpp:211-228](../../../core/src/emulator/ports/models/portdecoder_profi.cpp#L211-L228) |
 | AY (#FFFD/#BFFD) | ✅ | [portdecoder_profi.cpp:78-88](../../../core/src/emulator/ports/models/portdecoder_profi.cpp#L78-L88) |
 | Boot to BIOS splash / main menu | ✅ | Tests pass; FDC BUSY fix in tech-design §14 |

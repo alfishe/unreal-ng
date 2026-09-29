@@ -2565,7 +2565,7 @@ Tool: read
 01187| - [calltrace.cpp](../../../core/src/emulator/memory/calltrace.cpp)
 01188| 
 01189| ### Related Documentation
-01190| - [Analysis Core Architecture](./analysis-core-architecture.md)
+01190| - [Analysis Core Architecture](../../analysis/capture/analysis-core-architecture.md)
 01191| 
 
 (End of file - total 1191 lines)

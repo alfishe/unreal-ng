@@ -716,9 +716,9 @@ System Tray Icon (when recording):
 
 ## References
 
-- [Recording System Architecture](../recording-system.md)
-- [Audio Routing](../audio-routing.md)
-- [Video & Audio Encoding](../video-audio-encoding.md)
+- [Recording System Architecture](../recording/recording-system.md)
+- [Audio Routing](../recording/audio-routing.md)
+- [Video & Audio Encoding](../recording/video-audio-encoding.md)
 - Qt QDialog documentation
 - Qt QTableWidget documentation
 

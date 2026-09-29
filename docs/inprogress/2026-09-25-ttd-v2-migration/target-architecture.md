@@ -272,7 +272,7 @@ the stored piece CRC instead of overwriting it).
 - Registry plan (presence set, paged peripherals):
   [2026-09-10-ttd-registry-integration/PLAN.md](../2026-09-10-ttd-registry-integration/PLAN.md).
 - MoonSound TTD design (paged region F2, content-aware I-frames F2a, blob I/P
-  F3): [opl4-ttd-integration-tdd.md](../2026-09-13-moonsound/opl4-ttd-integration-tdd.md).
+  F3): [opl4-ttd-integration-tdd.md](../2026-09-13-moonsound/2026-09-13-0217-opl4-ttd-integration-tdd.md).
 - v2 research PoC: `tools/poc/011-ttd-v2-capture-analysis/` — useful for codec
   and index-overhead numbers; its "v1 vs v2" comparison is against a
   hypothetical full-state-per-frame format, not the shipped engine (see

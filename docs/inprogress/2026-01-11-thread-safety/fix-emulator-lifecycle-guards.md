@@ -17,18 +17,18 @@ Add lifecycle state tracking and guards to prevent operations on emulators that 
 
 ### Core Library
 
-#### [core/src/emulator/emulator.h](../../core/src/emulator/emulator.h)
+#### [core/src/emulator/emulator.h](../../../core/src/emulator/emulator.h)
 - Added `StateDestroying` to `EmulatorStateEnum`
 - Added `IsDestroying()` method declaration
 
-#### [core/src/emulator/emulator.cpp](../../core/src/emulator/emulator.cpp)
+#### [core/src/emulator/emulator.cpp](../../../core/src/emulator/emulator.cpp)
 - Set `StateDestroying` state in `Release()` before cleanup
 - Added guard in `LoadSnapshot()` to reject operations during destruction
 - Implemented `IsDestroying()` method
 
 ### WebAPI Module
 
-#### [core/automation/webapi/src/api/snapshot_api.cpp](../../core/automation/webapi/src/api/snapshot_api.cpp)
+#### [core/automation/webapi/src/api/snapshot_api.cpp](../../../core/automation/webapi/src/api/snapshot_api.cpp)
 - Added `IsDestroying()` check with HTTP 503 response
 
 ## Protection Architecture
