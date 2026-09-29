@@ -1483,30 +1483,40 @@ earlier):
     position, `mp3dec_t` (§5.6);
   - DMA modules and their FIFOs, active stall, flash state machine;
   - the event queue.
-- **As built, layout 3:** the 256-byte header (the list above minus the
+- **As built, layout 4:** the 256-byte header (the list above minus the
   devices below), then fixed-size device blocks - `SdCardSpi::saveState`
   (protocol, command and data buffers, the queued output, up to 2 KB),
   `Vs10xxDecoder::saveState` (registers, times, the 2 KB input FIFO, the
   unplayed PCM, `mp3dec_t`), `NeoGSDma::saveState` (registers, phases and
   times, both 512-byte FIFOs), `NeoGSZxDma::saveState` (latch, pending byte,
-  watch window, counters; layout 3, phase 5c) - then RAM and flash. `TTDHashState` covers the
+  watch window, counters; layout 3, phase 5c). Nothing after them: layout 4
+  (2026-09-29) dropped the RAM and flash that layout 3 appended. `TTDHashState` covers the
   header and the device blocks, without the decoded PCM and minimp3's floats,
   which may differ between x64 and arm64 (§5.6).
 - **Bulk memory** — RAM (2-4 MB), the flash image and the SD overlay — is
   registered as **TTD v2 memory regions** (`2026-09-25-ttd-v2-migration/
   target-architecture.md` §2.1, which already lists "later NeoGS RAM"). They
   are stored in changed 4 KB pieces.
-- **Until TTD v2 regions exist: full blobs (TTD v1).** Regions are planned
-  but not implemented: the v2 migration puts them (its step V1) after steps
-  0, V0 and V0b and the profi merge. The v1 format holds a 4.5 MB blob
-  (`peripheral_blob.size` is 32-bit, `ttd.ksy:483`), and the classic card
-  already stores its whole RAM in every checkpoint. **Decided (2026-09-27):**
-  NeoGS records in v1 now, with RAM and flash in every checkpoint's blob, and
-  moves to regions together with every other device in the v2 migration.
-  - The blob is compressed like every peripheral blob. Measured: about 55 KB
-    a checkpoint with the firmware booted and idle (the RAM is mostly
-    zeros). A module or MP3 data in the card RAM raises it towards the raw
-    size, up to 4.5 MB a checkpoint.
+- **Until TTD v2 regions exist: no card memory in TTD v1 (decided
+  2026-09-29).** Regions are planned but not implemented: the v2 migration
+  puts them (its step V1) after steps 0, V0 and V0b and the profi merge. TTD
+  v1 checkpoints store the changed pages of the machine's own memory and do
+  not snapshot large device memories: a full copy in every checkpoint (one a
+  frame) is the inefficiency v2 regions exist to remove. The NeoGS blob is
+  the header and the device blocks, about 21 KB raw.
+  - *Superseded:* the 2026-09-27 decision put RAM and flash in every blob
+    (about 55 KB a checkpoint compressed with the card idle, up to 4.5 MB with
+    MP3 or module data in RAM). A 300-frame session of the shipped config
+    measured 83% of its file in NeoGS blobs.
+  - Consequence: a restore keeps the live card memory, so after a seek the
+    card firmware re-executes over the later RAM and the card is not replayed
+    exactly. `TTD_NeoGS_Test.SdBootReplaysExactlyFromEveryKindOfRestorePoint`
+    is skipped until v2; the machine-side replay tests use the classic card
+    in the GS slot. The unit test `SoundChip_NeoGS_Ttd` copies RAM and flash
+    itself (standing in for the regions) and checks the blob for everything
+    else.
+  - The classic card (LLE) and the lightweight player (LW) still carry their
+    memory in the blob; they are unchanged by this decision.
   - The recording veto built for the first decision
     (`TTDSerializable::TTDCanRecord`, asked by `StartRecording`) is removed:
     nothing else used it. Since the merge with master (2026-09-28) a GS card
@@ -1960,8 +1970,9 @@ the NeoGS suites are listed below.
 
 - Phase 5: ZX-DMA is done (5a-5c, [`neogs-zxdma-design.md`](neogs-zxdma-design.md));
   5d waits for the GS debugger; `Fpga=D` (5e) is skipped by decision.
-- TTD: RAM and flash move from the v1 blob to v2 memory regions with the
-  v2 migration (§7.4). The SD card's sectors stay outside TTD; writes are
+- TTD: RAM and flash are not in v1 checkpoints (layout 4, 2026-09-29); they
+  become v2 memory regions with the v2 migration (§7.4), and exact card
+  replay after a seek waits for them. The SD card's sectors stay outside TTD; writes are
   replay barriers; insert/eject are refused while recording.
 - The `neogs` debugger target, with the GS debugger.
 - `npl044`: explained (§14.2) - nothing left in the emulation.

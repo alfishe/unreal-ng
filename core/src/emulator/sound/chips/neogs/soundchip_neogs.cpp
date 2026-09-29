@@ -1386,15 +1386,16 @@ void SoundChip_NeoGS::serializeDeviceState(uint8_t* dst, bool machineVisibleOnly
 
 size_t SoundChip_NeoGS::TTDStateSize() const
 {
-    return TTD_DEVICE_STATE_END + _mem.ramSize() + Flash29F040B::SIZE;
+    // Registers and device state only. The card RAM (2-4 MB) and the flash
+    // (512 KB) are not in TTD v1 checkpoints: large memories wait for TTD v2
+    // memory regions. A restore therefore keeps the live card memory
+    return TTD_DEVICE_STATE_END;
 }
 
 void SoundChip_NeoGS::TTDSaveState(uint8_t* dst) const
 {
     serializeFixedState(dst);
     serializeDeviceState(dst + TTD_SD_OFFSET, false);
-    memcpy(dst + TTD_DEVICE_STATE_END, _mem.ram(), _mem.ramSize());
-    memcpy(dst + TTD_DEVICE_STATE_END + _mem.ramSize(), _flash.data(), Flash29F040B::SIZE);
 }
 
 void SoundChip_NeoGS::TTDLoadState(const uint8_t* src)
@@ -1478,8 +1479,6 @@ void SoundChip_NeoGS::TTDLoadState(const uint8_t* src)
     if (_mp3)
         _mp3->loadState(src + TTD_MP3_OFFSET);
     _dma.loadState(src + TTD_DMA_OFFSET);
-    memcpy(_mem.ram(), src + TTD_DEVICE_STATE_END, _mem.ramSize());
-    memcpy(_flash.data(), src + TTD_DEVICE_STATE_END + _mem.ramSize(), Flash29F040B::SIZE);
 
     const uint8_t pages[4] = {src[6], src[7], src[8], src[9]};
     _mem.setPagesRaw(pages, src[10], _gscfg0);

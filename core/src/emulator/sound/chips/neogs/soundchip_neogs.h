@@ -251,7 +251,10 @@ public:
     static constexpr size_t TTD_DMA_OFFSET = TTD_MP3_OFFSET + Vs10xxDecoder::STATE_SIZE;
     static constexpr size_t TTD_ZX_OFFSET = TTD_DMA_OFFSET + NeoGSDma::STATE_SIZE;
     static constexpr size_t TTD_DEVICE_STATE_END = TTD_ZX_OFFSET + NeoGSZxDma::STATE_SIZE;
-    static constexpr uint8_t TTD_LAYOUT = 3; // 3: + ZX-DMA (neogs-zxdma-design.md §5.9)
+    /// 3: + ZX-DMA (neogs-zxdma-design.md §5.9). 4: card RAM and flash left
+    /// out - large memories are not snapshotted in TTD v1 checkpoints (every
+    /// checkpoint carried up to 4.5 MB); they become TTD v2 memory regions
+    static constexpr uint8_t TTD_LAYOUT = 4;
 
 private:
     friend class GSCardRunner<SoundChip_NeoGS>;
