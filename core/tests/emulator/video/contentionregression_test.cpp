@@ -138,14 +138,14 @@ const std::vector<Golden> kGolden = {
     { "ATM3", "dataContended", 18472, 0xda498385dc3d51b5ull, 0x626b20c80e522358ull },
     { "ATM3", "codeContended", 18472, 0xda498385dc3d51b5ull, 0x297c8af6be67ca86ull },
     { "ATM3", "codePage7", 18472, 0xda498385dc3d51b5ull, 0xb23aa361896c573eull },
-    { "SCORPION", "free", 18472, 0xda498385dc3d51b5ull, 0x9656ea3c0af12b0ull },
-    { "SCORPION", "dataContended", 18472, 0xda498385dc3d51b5ull, 0x96d5e7201636f1f5ull },
-    { "SCORPION", "codeContended", 18472, 0xda498385dc3d51b5ull, 0xa082cdbbf9f71b90ull },
-    { "SCORPION", "codePage7", 18472, 0xda498385dc3d51b5ull, 0xd3fb2cce03135670ull },
-    { "PROFSCORP", "free", 18472, 0xda498385dc3d51b5ull, 0x9656ea3c0af12b0ull },
-    { "PROFSCORP", "dataContended", 18472, 0xda498385dc3d51b5ull, 0x96d5e7201636f1f5ull },
-    { "PROFSCORP", "codeContended", 18472, 0xda498385dc3d51b5ull, 0xa082cdbbf9f71b90ull },
-    { "PROFSCORP", "codePage7", 18472, 0xda498385dc3d51b5ull, 0xd3fb2cce03135670ull },
+    { "SCORPION", "free", 19130, 0x8a36e1fde0d39ab5ull, 0x9656ea3c0af12b0ull },  // Even M1: was 18472, 0xda498385dc3d51b5ull
+    { "SCORPION", "dataContended", 19130, 0x8a36e1fde0d39ab5ull, 0x96d5e7201636f1f5ull },  // Even M1: was 18472, 0xda498385dc3d51b5ull
+    { "SCORPION", "codeContended", 19130, 0x8a36e1fde0d39ab5ull, 0xa082cdbbf9f71b90ull },  // Even M1: was 18472, 0xda498385dc3d51b5ull
+    { "SCORPION", "codePage7", 19130, 0x8a36e1fde0d39ab5ull, 0xd3fb2cce03135670ull },  // Even M1: was 18472, 0xda498385dc3d51b5ull
+    { "PROFSCORP", "free", 19130, 0x8a36e1fde0d39ab5ull, 0x9656ea3c0af12b0ull },  // Even M1: was 18472, 0xda498385dc3d51b5ull
+    { "PROFSCORP", "dataContended", 19130, 0x8a36e1fde0d39ab5ull, 0x96d5e7201636f1f5ull },  // Even M1: was 18472, 0xda498385dc3d51b5ull
+    { "PROFSCORP", "codeContended", 19130, 0x8a36e1fde0d39ab5ull, 0xa082cdbbf9f71b90ull },  // Even M1: was 18472, 0xda498385dc3d51b5ull
+    { "PROFSCORP", "codePage7", 19130, 0x8a36e1fde0d39ab5ull, 0xd3fb2cce03135670ull },  // Even M1: was 18472, 0xda498385dc3d51b5ull
     { "PROFI", "free", 18472, 0xda498385dc3d51b5ull, 0x9656ea3c0af12b0ull },
     { "PROFI", "dataContended", 18472, 0xda498385dc3d51b5ull, 0x96d5e7201636f1f5ull },
     { "PROFI", "codeContended", 18472, 0xda498385dc3d51b5ull, 0xa082cdbbf9f71b90ull },

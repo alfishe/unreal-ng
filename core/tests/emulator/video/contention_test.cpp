@@ -630,7 +630,9 @@ TEST(ContentionPentagon_Test, NoContentionAnywhere)
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
-/// Machines without contention never wait: code and data in #4000-#7FFF across a paper line
+/// Machines without contention never wait: code and data in #4000-#7FFF across a paper line take the same time
+/// wherever the beam is. The Scorpion's only delay is Even M1 (z80.cpp): a fetch from RAM that would start on an
+/// odd T-state waits one T-state, whatever the beam does
 TEST(ContentionNegative_Test, ClonesNeverWait)
 {
     for (const char* model : { "PENTAGON", "SCORPION", "PROFSCORP", "PROFI", "ATM710", "ATM3" })
@@ -651,10 +653,11 @@ TEST(ContentionNegative_Test, ClonesNeverWait)
             z80->pc = 0x6000;
             z80->hl = 0x4000;
             z80->t = start + k;
+            const uint32_t evenM1 = (context->config.even_M1 && ((start + k) & 1)) ? 1 : 0;
             z80->Z80Step();
-            EXPECT_EQ(z80->t, start + k + 4) << model << " NOP, offset " << k;
-            z80->Z80Step();
-            EXPECT_EQ(z80->t, start + k + 11) << model << " LD A,(HL), offset " << k;
+            EXPECT_EQ(z80->t, start + k + evenM1 + 4) << model << " NOP, offset " << k;
+            z80->Z80Step();  // the NOP kept the parity: no second wait
+            EXPECT_EQ(z80->t, start + k + evenM1 + 11) << model << " LD A,(HL), offset " << k;
         }
         EmulatorTestHelper::CleanupEmulator(emulator);
     }
