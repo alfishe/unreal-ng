@@ -1211,6 +1211,7 @@ bool Z80TextAssembler::EncodeLine(const LineParts& line, uint16_t address, int p
                     if (m == "add") { emit({static_cast<uint8_t>(0x09 | (rr << 4))}); return true; }
                     if (m == "adc") { emit({0xED, static_cast<uint8_t>(0x4A | (rr << 4))}); return true; }
                     emit({0xED, static_cast<uint8_t>(0x42 | (rr << 4))});
+                    return true;
                 }
                 // Invalid rr falls through to the 8-bit error below
             }

@@ -37,6 +37,12 @@ TEST(Z80TextAssembler_Test, EncodesSimpleInstructions)
     EXPECT_EQ(bytes, (std::vector<uint8_t>{0x00, 0x3E, 0x5A, 0x76}));
 }
 
+TEST(Z80TextAssembler_Test, Encodes16BitArithmetic)
+{
+    std::vector<uint8_t> bytes = AssembleOk("add hl,bc\nadc hl,de\nsbc hl,de\nsbc hl,sp\nadd ix,ix\nadd iy,sp");
+    EXPECT_EQ(bytes, (std::vector<uint8_t>{0x09, 0xED, 0x5A, 0xED, 0x52, 0xED, 0x72, 0xDD, 0x29, 0xFD, 0x39}));
+}
+
 TEST(Z80TextAssembler_Test, EncodesLdRegisterIndirectHLForms)
 {
     // Regression: both forms used to be captured by the (nn),A / A,(nn)
