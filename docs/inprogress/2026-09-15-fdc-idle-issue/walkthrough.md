@@ -4,7 +4,7 @@
 
 We identified and fixed the root cause of the defect on `master` where the WD1793 Floppy Disk Controller (FDC) refused to execute read/write commands and became stuck in an idle state after a disk motor timeout until emulator reset. We also covered the fix with comprehensive unit and integration regression tests.
 
-### 1. Root Cause Resolution in [`wd1793.cpp`](file:///Users/dev/Projects/Local%20GitLab/unreal/core/src/emulator/io/fdc/wd1793.cpp)
+### 1. Root Cause Resolution in [`wd1793.cpp`](../../../core/src/emulator/io/fdc/wd1793.cpp)
 
 1. **Circular Ready/Motor Deadlock in Type 2 and Type 3 Commands**:
    - `isReady()` requires `_selectedDrive->isDiskInserted() && _selectedDrive->getMotor()`.
@@ -21,7 +21,7 @@ We identified and fixed the root cause of the defect on `master` where the WD179
 
 ---
 
-### 2. Regression Tests Added to [`wd1793_sleep_timeout_test.cpp`](file:///Users/dev/Projects/Local%20GitLab/unreal/core/tests/emulator/io/fdc/wd1793_sleep_timeout_test.cpp)
+### 2. Regression Tests Added to [`wd1793_sleep_timeout_test.cpp`](../../../core/tests/emulator/io/fdc/wd1793_sleep_timeout_test.cpp)
 
 We added targeted unit regression tests in the real-timing fixture:
 
@@ -37,7 +37,7 @@ We added targeted unit regression tests in the real-timing fixture:
 
 ---
 
-### 3. Model Regression Alignment in [`modelsregression_test.cpp`](file:///Users/dev/Projects/Local%20GitLab/unreal/core/tests/emulator/memory/modelsregression_test.cpp)
+### 3. Model Regression Alignment in [`modelsregression_test.cpp`](../../../core/tests/emulator/memory/modelsregression_test.cpp)
 
 - In `ModelsRegression_Test.GoldenBankMaps`, updated the `specs` table row for `"Pentagon128"` to use `RAM_128` instead of `RAM_1024`.
   - Previously, `portdecoder.cpp` only had `if (ramSize == 512)` and defaulted everything else to `PortDecoder_Pentagon128`.

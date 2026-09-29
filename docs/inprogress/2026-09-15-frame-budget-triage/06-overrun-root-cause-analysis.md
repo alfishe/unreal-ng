@@ -14,7 +14,7 @@
 ### The Reality
 **Adaptive delay is already active in the engine.** 
 
-The emulator does **not** sleep a fixed 15 ms. In [`core/src/emulator/mainloop.cpp`](file:///c:/Projects/LocalGit/unreal-ng/core/src/emulator/mainloop.cpp#L280-L334), pacing is driven by an **absolute-deadline clock**:
+The emulator does **not** sleep a fixed 15 ms. In [`core/src/emulator/mainloop.cpp`](../../../core/src/emulator/mainloop.cpp#L280-L334), pacing is driven by an **absolute-deadline clock**:
 
 ```cpp
 // Advance absolute clock by exactly one frame budget (20,480 µs for Pentagon 128)
@@ -24,7 +24,7 @@ _nextFrameTime += frameDuration;
 TimeHelper::WaitUntilPrecise(_nextFrameTime, ...);
 ```
 
-Inside [`TimeHelper::WaitUntilPrecise`](file:///c:/Projects/LocalGit/unreal-ng/core/src/common/timehelper.cpp#L65-L71):
+Inside [`TimeHelper::WaitUntilPrecise`](../../../core/src/common/timehelper.cpp#L65-L71):
 $$\text{sleep duration} = \max(0, \, \text{deadline} - \text{now})$$
 
 | Execution Time of `RunFrame()` | Sleep Duration | Total Start-to-Start Period | Over Budget? |
@@ -56,7 +56,7 @@ $$\frac{71,680\text{ T-states}}{6.0\text{ T-states/step}} \approx 12,000\text{ s
 ### HALT-Heavy Frame (~17,900 Steps)
 When the program finishes its frame work early, it executes the `HALT` opcode ($76) to synchronize with the 50 Hz ULA interrupt.
 
-In [`core/src/emulator/cpu/z80.cpp`](file:///c:/Projects/LocalGit/unreal-ng/core/src/emulator/cpu/z80.cpp#L320-L334):
+In [`core/src/emulator/cpu/z80.cpp`](../../../core/src/emulator/cpu/z80.cpp#L320-L334):
 ```cpp
 if (cpu.vm1 && cpu.halted)
 {
@@ -96,18 +96,18 @@ The ZX Spectrum is not an isolated Z80 microprocessor; it is an interconnected e
 ```
 
 #### 1. WD1793 Floppy Disk Controller (BetaDisk / TR-DOS)
-- Stepped on every instruction via [`_context->pBetaDisk->handleStep()`](file:///c:/Projects/LocalGit/unreal-ng/core/src/emulator/io/fdc/wd1793.cpp#L3091).
+- Stepped on every instruction via [`_context->pBetaDisk->handleStep()`](../../../core/src/emulator/io/fdc/wd1793.cpp#L3091).
 - In MFM mode, disk data arrives at **112 T-states per byte** (32 µs). The WD1793 state machine tracks disk spindle rotation, index pulses (IP), sector headers, CRC verification, and asserts `DRQ` (Data Request) and `INTRQ` (Interrupt Request).
 - Software frequently issues a disk read/write command and immediately enters `HALT` or tight status-polling loops.
 - **Consequence of advancing HALT:** Skipping thousands of T-states bypasses the 112 T-state byte window, causing missed index holes, missed sector headers, buffer overruns, and corrupted floppy I/O.
 
 #### 2. AY-3-8910 / YM2149F Audio
-- Stepped via [`_context->pSoundManager->handleStep()`](file:///c:/Projects/LocalGit/unreal-ng/core/src/emulator/sound/soundmanager.cpp#L447).
+- Stepped via [`_context->pSoundManager->handleStep()`](../../../core/src/emulator/sound/soundmanager.cpp#L447).
 - Synthesizes 3 square-wave channels, 5-bit pseudo-random noise, and 16-step hardware volume envelopes.
 - Audio accumulators require continuous, fine-grained T-state time increments. Jumping large blocks of T-states at once causes audio sample quantization errors, volume envelope glitches, and audible clicks/pops.
 
 #### 3. TurboSound FM (Dual Yamaha YM2203)
-- Stepped via [`SoundChip_TurboSoundFM::handleStep()`](file:///c:/Projects/LocalGit/unreal-ng/core/src/emulator/sound/chips/soundchip_turbosoundfm.cpp#L228).
+- Stepped via [`SoundChip_TurboSoundFM::handleStep()`](../../../core/src/emulator/sound/chips/soundchip_turbosoundfm.cpp#L228).
 - Each YM2203 contains two internal programmable timers (Timer A and Timer B) with status register flags (`syncTo(nowT())`).
 - Music trackers and demo engines poll these timer flags or wait on interrupts. If the main CPU jumps T-states without advancing the YM2203 cores, FM timers desynchronize from CPU code and music playback falls out of tempo.
 
@@ -125,18 +125,18 @@ The ZX Spectrum is not an isolated Z80 microprocessor; it is an interconnected e
 - If the host Z80 halts and jumps 50,000 T-states, the GS coprocessor misses ~170,000 internal T-states. Its player firmware stalls, output sample buffers drain into silence, and the command handshake protocol deadlocks.
 
 #### 6. Screen ULA Raster Beam & Contention
-- Stepped via [`_context->pScreen->UpdateScreen()`](file:///c:/Projects/LocalGit/unreal-ng/core/src/emulator/video/screen.cpp).
+- Stepped via [`_context->pScreen->UpdateScreen()`](../../../core/src/emulator/video/screen.cpp).
 - The electron beam traverses borders and scanlines at exact pixel clock intervals. Multicolor effects, floating bus reads (`IN A, ($FF)`), and memory contention depend on beam position during `HALT`.
 
 #### 7. Tape (Pulse Edge Detection)
-- Stepped via [`_context->pTape->handleStep()`](file:///c:/Projects/LocalGit/unreal-ng/core/src/emulator/io/tape/tape.cpp#L681).
+- Stepped via [`_context->pTape->handleStep()`](../../../core/src/emulator/io/tape/tape.cpp#L681).
 - Tape loading routines monitor edge transitions down to microsecond intervals. If a tape loader idles in HALT, jumping T-states breaks edge pulse timing and aborts loading with `Tape loading error`.
 
 ---
 
 ## 4. Why Stepping 17.9k Times Is NOT the Real Problem
 
-The benchmark evidence from [`04-benchmark-evidence.md`](file:///c:/Projects/LocalGit/unreal-ng/docs/inprogress/2026-09-15-frame-budget-triage/04-benchmark-evidence.md) establishes an essential empirical truth:
+The benchmark evidence from [`04-benchmark-evidence.md`](04-benchmark-evidence.md) establishes an essential empirical truth:
 
 > In headless benchmark execution (`BM_CovoxDemoFrame`), executing **all 17,900 steps** per frame—with full screen rendering, FDC stepping, and Covox sound synthesis—takes only **2,971 µs (2.97 ms)**.
 >
@@ -205,7 +205,7 @@ During the **10–15% of frames** where the 50 Hz emulation execution phase dire
 Because HALT fast-forwarding is ruled out by the peripheral synchronization contract, the solution must eliminate the external contention and diagnostic tax:
 
 ### 1. Compile-Gate Per-Step Diagnostic Timers (Immediate 2.5 ms Win)
-- In [`core/src/emulator/mainloop.cpp`](file:///c:/Projects/LocalGit/unreal-ng/core/src/emulator/mainloop.cpp#L575-L633): Gate the 4 `steady_clock::now()` calls in `OnCPUStep()` behind `#ifdef ENABLE_STEP_DIAGNOSTICS`.
+- In [`core/src/emulator/mainloop.cpp`](../../../core/src/emulator/mainloop.cpp#L575-L633): Gate the 4 `steady_clock::now()` calls in `OnCPUStep()` behind `#ifdef ENABLE_STEP_DIAGNOSTICS`.
 - **Impact:** Instantly removes **2.5 ms** of CPU overhead from every 17.9k frame without touching any peripheral or CPU logic.
 
 ### 2. SMT Core Pinning & Processor Affinity (Eliminate 50/60 Hz SMT Thrashing)
@@ -213,7 +213,7 @@ Because HALT fast-forwarding is ruled out by the peripheral synchronization cont
 - **Impact:** Completely eliminates SMT execution port contention and L1/L2 cache evictions when the 50 Hz and 60 Hz waves phase-align.
 
 ### 3. Hybrid Pacing (Spin-Wait Pre-Wake to Heat the Core)
-- In [`TimeHelper::WaitUntilPrecise`](file:///c:/Projects/LocalGit/unreal-ng/core/src/common/timehelper.cpp#L65): Sleep via OS waitable timer until `deadline - 1.5 ms`, then spin-wait for the final 1.5 ms.
+- In [`TimeHelper::WaitUntilPrecise`](../../../core/src/common/timehelper.cpp#L65): Sleep via OS waitable timer until `deadline - 1.5 ms`, then spin-wait for the final 1.5 ms.
 - **Impact:** Forces the Windows power governor to scale the core to maximum P-state *before* `RunFrame()` starts, avoiding the 1.0 GHz wake-up penalty.
 
 ### 4. Lock-Free Double-Buffered Presentation

@@ -24,12 +24,12 @@ Based on empirical benchmark data (`04-benchmark-evidence.md`), log deduction (`
 ### Tier 1: Immediate Wins (Zero Architectural Risk)
 
 #### 1. Compile-Gate Per-Step Diagnostic Timer Reads
-- **Location:** [`core/src/emulator/mainloop.cpp`](file:///c:/Projects/LocalGit/unreal-ng/core/src/emulator/mainloop.cpp#L575-L596) (`MainLoop::OnCPUStep`)
+- **Location:** [`core/src/emulator/mainloop.cpp`](../../../core/src/emulator/mainloop.cpp#L575-L596) (`MainLoop::OnCPUStep`)
 - **Action:** Gate `_stepScreenNs`, `_stepIoNs`, `_stepSoundNs` behind `#ifdef ENABLE_STEP_DIAGNOSTICS`.
 - **Gain:** Saves **1.7–2.5 ms per frame** immediately (eliminates ~50,000–70,000 clock reads per frame in interactive runs).
 
 #### 2. Hybrid Pacing (Spin-Wait Pre-Wake to Heat the Core)
-- **Location:** [`core/src/common/timehelper.cpp`](file:///c:/Projects/LocalGit/unreal-ng/core/src/common/timehelper.cpp) (`TimeHelper::WaitUntilPrecise`) / [`MainLoop::Run`](file:///c:/Projects/LocalGit/unreal-ng/core/src/emulator/mainloop.cpp#L200)
+- **Location:** [`core/src/common/timehelper.cpp`](../../../core/src/common/timehelper.cpp) (`TimeHelper::WaitUntilPrecise`) / [`MainLoop::Run`](../../../core/src/emulator/mainloop.cpp#L200)
 - **Action:** Sleep via waitable timer for `target - 1.5 ms`, then execute a short pause/spin-wait for the final 1.5 ms before the frame deadline.
 - **Why it works:** The 1.5 ms spin warms the core, forces the Windows frequency governor to scale the core to maximum P-state *before* `RunFrame()` starts, and prevents the thread from waking in a low-frequency state.
 
@@ -38,7 +38,7 @@ Based on empirical benchmark data (`04-benchmark-evidence.md`), log deduction (`
 ### Tier 2: Threading & OS Scheduling Architecture
 
 #### 3. Emulation Thread Affinity & SMT Sibling Isolation
-- **Location:** [`core/src/common/threadhelper.cpp`](file:///c:/Projects/LocalGit/unreal-ng/core/src/common/threadhelper.cpp) / [`MainLoop::UpdateRealtimeScheduling`](file:///c:/Projects/LocalGit/unreal-ng/core/src/emulator/mainloop.cpp#L75)
+- **Location:** [`core/src/common/threadhelper.cpp`](../../../core/src/common/threadhelper.cpp) / [`MainLoop::UpdateRealtimeScheduling`](../../../core/src/emulator/mainloop.cpp#L75)
 - **Action:**
   - Query CPU topology via `GetLogicalProcessorInformationEx(RelationProcessorCore)`.
   - Pin the active emulation thread to an exclusive physical core (primary LP).
@@ -46,7 +46,7 @@ Based on empirical benchmark data (`04-benchmark-evidence.md`), log deduction (`
 - **Why it works:** Completely prevents SMT execution stall collisions with the GUI thread, audio buffer pulls, and DWM.
 
 #### 4. Windows Power Request & Quality-of-Service (EcoQoS Prevention)
-- **Location:** [`unreal-qt/src/main.cpp`](file:///c:/Projects/LocalGit/unreal-ng/unreal-qt/src/main.cpp) / [`ThreadHelper`](file:///c:/Projects/LocalGit/unreal-ng/core/src/common/threadhelper.cpp)
+- **Location:** [`unreal-qt/src/main.cpp`](../../../unreal-qt/src/main.cpp) / [`ThreadHelper`](../../../core/src/common/threadhelper.cpp)
 - **Action:**
   - Register `PowerCreateRequest(POWER_REQUEST_EXECUTION_REQUIRED)` during active emulation.
   - Set `THREAD_POWER_THROTTLING_CURRENT_VERSION` with `THREAD_POWER_THROTTLING_EXECUTION_SPEED` to prevent Windows 11 / EcoQoS from throttling the thread during background or partial occlusion states.
@@ -56,7 +56,7 @@ Based on empirical benchmark data (`04-benchmark-evidence.md`), log deduction (`
 ### Tier 3: Memory & Presentation Decoupling
 
 #### 5. Lock-Free Double-Buffered Frame Presentation
-- **Location:** [`unreal-qt/src/mainwindow.cpp`](file:///c:/Projects/LocalGit/unreal-ng/unreal-qt/src/mainwindow.cpp#L3607) (`setFrameSource`) & [`Screen::LatchFramebuffer`](file:///c:/Projects/LocalGit/unreal-ng/core/src/emulator/video/screen.cpp)
+- **Location:** [`unreal-qt/src/mainwindow.cpp`](../../../unreal-qt/src/mainwindow.cpp#L3607) (`setFrameSource`) & [`Screen::LatchFramebuffer`](../../../core/src/emulator/video/screen.cpp)
 - **Action:** Ensure the presentation buffer used by OpenGL texture upload is completely isolated from the emulator's active render page using ping-pong buffering.
 - **Why it works:** Prevents GUI texture uploads from evicting L2/L3 cache lines while the next emulation frame is initializing.
 
