@@ -737,6 +737,16 @@ local status = ttd_status()
 -- status.write_journal_bytes   = 8748300
 -- status.coverage_index_frames = 300  -- 0 => reverse queries replay instead
 -- status.coverage_index_bytes  = 13926
+-- status.input_event_count     = 10
+-- status.external_event_count  = 0
+-- status.input_history_complete = true
+-- status.port_journal_active   = true   -- replay needs no media or host device
+-- status.port_journal_off_reason = nil  -- set when off (e.g. NeoGS in the GS slot)
+-- status.port_read_count       = 8225
+-- status.port_write_count      = 15520
+-- status.port_journal_bytes    = 9234
+-- status.port_replay_value_mismatches = 0  -- > 0: a device answered otherwise on replay
+-- status.port_replay_divergences = 0     -- > 0: execution left the recording
 --
 -- Memory
 -- status.page_store_bytes         = 40960
@@ -815,6 +825,26 @@ local r2 = ttd_find_last{
 --     covered_to / covered_to_tinframe: the part of history searched.
 --     For writes the write journal answers when it holds every write of the session;
 --     otherwise the search replays history (see command-interface.md "When the write journal answers").
+```
+
+**When did the program ... (port events):** `ttd_port_events(event, [arg], [options])` searches the port journals - every IN and OUT with its time and PC - without replay. Events, arguments and options: [command-interface.md → Port events](./command-interface.md).
+
+Output below is from the recorded fixture `testdata/ttd/port-journals/dizzyx.ttd` (Dizzy X):
+
+```lua
+local r = ttd_port_events("key", "space")          -- when the game saw SPACE pressed
+-- r.ok = true, r.count = 1, r.truncated = false, r.scanned = 7905, r.direction = "in"
+-- r.hits[1] = { index = 6082, frame = 430, tinframe = 7824, port = 0x7FFE, value = 0xFE, pc = 0x72B2 }
+
+local w = ttd_port_events("ay-write", 7, { limit = 3 })
+-- w.count = 3, w.truncated = true; w.hits[1]: frame 50, tinframe 9202, pc 0xD86E, value 0x18, ay_register 7
+
+local f = ttd_port_events("key", "q", { file = "testdata/ttd/port-journals/dizzyx.ttd" })
+-- a saved session, searched without loading it: f.hits[1].frame = 365
+
+local j = ttd_port_events("in", nil, { port = 0x1F, port_mask = 0xFF, match = "any-set", value_mask = 0x1F })
+-- Kempston joystick reads with a direction or fire down
+if not j.ok then print(j.error) end                 -- no journals, recording running, bad option
 ```
 
 **Markers and bookmarks:**

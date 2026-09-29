@@ -223,6 +223,7 @@ The CLI exposes the TTD surface with the `ttd` top-level verb and a subcommand. 
 | `ttd dump <path>` | `ttd save` | Serialize the session to a `.ttd` file. | ✅ Implemented |
 | `ttd load <path>` | `ttd open` | Restore a dumped session (model must match the recording). | ✅ Implemented |
 | `ttd find-last --addr A` | `ttd fl` | Reverse watchpoint: find the last access at an address (full filter set in the command reference). | ✅ Implemented |
+| `ttd port-events <event> [arg]` | `ttd pe` | "When did the program ..." - saw a key (`key space`), the tape signal change (`ear`), wrote an AY register (`ay-write 7`), changed the border... From the port journals, no replay ([command reference](./command-interface.md), "Port events"). | ✅ Implemented |
 | `ttd step-instruction` | `si-back` / `si-forward` | Step one Z80 instruction back or forward within recorded history. | ✅ Implemented |
 | `ttd reverse-step` | `ttd rs` | Reverse-step execution. | ✅ Implemented |
 | `ttd reverse-continue` | `ttd rc` | Reverse-continue execution. | ✅ Implemented |
