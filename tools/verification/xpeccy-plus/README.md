@@ -1,7 +1,8 @@
 # ctprobe on xpeccy-plus, headless
 
-Runs `ctprobe.tap` on the stock xpeccy-plus machines without its GUI, and dumps the probe's memory for
-`../../ctprobe-compare.py`.
+Runs the contention probe ([`../contention/ctprobe`](../contention/ctprobe/README.md)) on the stock xpeccy-plus
+machines without its GUI, and dumps the probe's memory for `ctprobe-compare.py`, which `run.sh` then runs on
+each dump. From the probe's folder, `make xpeccy-plus XPECCY_DIR=<checkout>` does the same.
 
 ```
 XPECCY_DIR=<your xpeccy-plus checkout> ./run.sh            # all four machines

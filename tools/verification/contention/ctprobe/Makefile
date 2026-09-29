@@ -35,7 +35,7 @@ compare:
 
 xpeccy-plus:
 	@test -n "$(XPECCY_DIR)" || (echo "usage: make xpeccy-plus XPECCY_DIR=<xpeccy-plus checkout>" && exit 2)
-	XPECCY_DIR=$(XPECCY_DIR) emulators/xpeccy-plus/run.sh
+	XPECCY_DIR=$(XPECCY_DIR) ../../xpeccy-plus/run.sh
 
 clean:
-	rm -rf emulators/xpeccy-plus/build emulators/xpeccy-plus/out
+	rm -rf ../../xpeccy-plus/build ../../xpeccy-plus/out

@@ -2,14 +2,14 @@
 # Build the headless harness and run ctprobe on each stock xpeccy-plus machine.
 #   XPECCY_DIR=<xpeccy-plus checkout> ./run.sh [machine...]
 #   machines: zx48 zx128 zxplus2a zxplus3 (default: all four)
-# Output in ./out: <machine>.bin (memory dump for ../../ctprobe-compare.py), .log, .screen.txt
+# Output in ./out: <machine>.bin (memory dump for ../contention/ctprobe/ctprobe-compare.py), .log, .screen.txt
 set -e
 cd "$(dirname "$0")"
 if [ -z "$XPECCY_DIR" ]; then
 	echo "set XPECCY_DIR to an xpeccy-plus checkout" >&2
 	exit 2
 fi
-PROBE=${PROBE:-../..}
+PROBE=${PROBE:-../contention/ctprobe}
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DXPECCY_DIR="$XPECCY_DIR" >/dev/null
 ninja -C build >/dev/null
 mkdir -p out

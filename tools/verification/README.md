@@ -105,8 +105,19 @@ hardware's behavior. It runs on unreal-ng, other emulators and real machines.
 
 *   **Use-case:** checking contention timing of unreal-ng or another emulator on the 48K, 128K, +2A/+3,
     Pentagon and Scorpion.
-*   **Usage:** load `ctprobe.tap` / `ctprobe.trd` on the machine, or `make test` / `make xpeccy-plus`; see
+*   **Usage:** load `ctprobe.tap` / `ctprobe.trd` on the machine, or `make test` / `make xpeccy-plus` (runs
+    [xpeccy-plus/](xpeccy-plus/README.md)); see
     [contention/ctprobe/README.md](contention/ctprobe/README.md).
+
+---
+
+### xpeccy-plus, headless
+
+`xpeccy-plus/` compiles the xpeccy-plus emulator's core (unmodified, from a checkout you point it at) into a
+small command-line runner, loads the contention probe's tape on its stock 48K, 128K, +2A and +3 and dumps the
+results, so unreal-ng and xpeccy-plus can be compared check by check.
+
+*   **Usage:** `XPECCY_DIR=<xpeccy-plus checkout> xpeccy-plus/run.sh`; see [xpeccy-plus/README.md](xpeccy-plus/README.md).
 
 ---
 

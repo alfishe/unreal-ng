@@ -264,7 +264,7 @@ code, byte for byte, as in Rak's test, whose results were photographed on real 4
 | `ctprobe.asm` | The program: machine detection, the checks, the output |
 | `engine.asm` | The measuring engine (Bobrowski / Rak, GPL) |
 | `Makefile` | Rebuild the files, run the checks, compare a dump, run the probe on xpeccy-plus |
-| `emulators/xpeccy-plus/` | Runs the probe on xpeccy-plus's emulation core without its GUI and dumps the result ([README](emulators/xpeccy-plus/README.md)) |
+| `../../xpeccy-plus/` | Runs the probe on xpeccy-plus's emulation core without its GUI and dumps the result ([README](../../xpeccy-plus/README.md)) |
 
 ```
 make files                                  # rebuild ctprobe.tap / .trd / .sym
