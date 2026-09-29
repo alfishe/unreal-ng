@@ -1,0 +1,17 @@
+machine=Pentagon 128K
+a=0 f=147 bc=33021 de=0 hl=226
+a_=0 f_=68 bc_=32765 de_=6144 hl_=10072
+ix=45085 iy=23610 sp=25972 pc=62135 i=0 r=63
+iff1=0 iff2=0 im=1 memptr=62111 tstates=49859
+halted=0 ei=0 setf=0
+ula=13 p7ffd=24 p1ffd=8
+ay_port=14 ay=0,0,0,0,0,0,0,255,0,0,0,0,0,0,255,0
+beta_active=1 beta_paged=0 beta_system=63
+page0=9c20b4b7
+page1=ab54d286
+page2=bfa39dc3
+page3=ab54d286
+page4=ab54d286
+page5=55917665
+page6=ab54d286
+page7=def175a4

@@ -134,7 +134,7 @@ symbols info            # Show symbol count
 #### Media Operations
 ```
 open <file>             # Auto-detect and load file
-snapshot save <file>    # Save snapshot (.sna/.z80)
+snapshot save <file>    # Save snapshot (.sna/.z80/.szx, by extension)
 snapshot info           # Current snapshot status
 # Tape transport (see command-interface.md §10 for the full tables)
 tape load <file>        # Load a tape (.tap/.tzx/.spc/.sta/.ltp/.zxt) or a folder built into a tape

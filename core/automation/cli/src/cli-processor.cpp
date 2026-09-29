@@ -685,8 +685,8 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  disk catalog <drv>     - Show TR-DOS file catalog" << NEWLINE;
     oss << NEWLINE;
     oss << "Snapshot Commands:" << NEWLINE;
-    oss << "  snapshot load <file>           - Load snapshot (.sna, .z80)" << NEWLINE;
-    oss << "  snapshot save <file> [--force] - Save snapshot (.sna)" << NEWLINE;
+    oss << "  snapshot load <file>           - Load snapshot (.sna, .z80, .szx)" << NEWLINE;
+    oss << "  snapshot save <file> [--force] - Save snapshot (.sna, .z80, .szx: by extension)" << NEWLINE;
     oss << "  snapshot info                  - Show current snapshot status" << NEWLINE;
     oss << NEWLINE;
     oss << "Capture Commands:" << NEWLINE;

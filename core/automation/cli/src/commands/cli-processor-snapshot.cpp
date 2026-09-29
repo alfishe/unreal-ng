@@ -114,8 +114,8 @@ void CLIProcessor::ShowSnapshotHelp(const ClientSession& session)
     ss << "Snapshot Commands" << NEWLINE;
     ss << "=================" << NEWLINE;
     ss << NEWLINE;
-    ss << "  snapshot load <file>           Load snapshot from file (.z80, .sna)" << NEWLINE;
-    ss << "  snapshot save <file> [--force] Save snapshot to file (.sna)" << NEWLINE;
+    ss << "  snapshot load <file>           Load snapshot from file (.z80, .sna, .szx)" << NEWLINE;
+    ss << "  snapshot save <file> [--force] Save snapshot to file (.sna, .z80, .szx: by extension)" << NEWLINE;
     ss << "  snapshot info                  Get current snapshot status" << NEWLINE;
     ss << NEWLINE;
 

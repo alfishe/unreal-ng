@@ -807,6 +807,17 @@ public:
     {
         return _beta128Register;
     }
+    /// Head step direction of the last step: true = in (toward the center)
+    bool isStepDirectionIn() const
+    {
+        return _stepDirectionIn != 0;
+    }
+    /// Snapshot restore (SZX B128): the system register through its normal
+    /// path (drive, side, reset), then the task registers as saved. No command
+    /// is started, so BUSY and DRQ are dropped from the status (the format
+    /// holds no command in flight)
+    void RestoreSnapshotRegisters(uint8_t system, uint8_t track, uint8_t sector, uint8_t data, uint8_t status,
+                                  bool stepIn);
     /// Current state-machine state (DeviceState::Fdc report)
     WDSTATE getFSMState() const
     {

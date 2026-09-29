@@ -74,6 +74,12 @@ if (NOT TARGET gif)
     add_subdirectory(3rdparty/gif)
 endif()
 
+# miniz — zlib streams for SZX snapshots (see its CMakeLists.txt); a C
+# target of its own, so the C++ source glob below does not see it
+if (NOT TARGET miniz)
+    add_subdirectory(3rdparty/miniz)
+endif()
+
 # libopl4 — MoonSound (YMF278B / OPL4) synthesis library, vendored in-house at
 # 3rdparty/opl4 (std-lib only, own CMakeLists.txt). Declared here — not in the
 # root file — so every entry point that builds core (root, unreal-qt,
@@ -213,6 +219,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE lzma)
 # automation/lua, automation/webapi, tests). All consumers need zstd's
 # include path available.
 target_link_libraries(${PROJECT_NAME} PUBLIC $<TARGET_NAME:zstd::libzstd>)
+target_link_libraries(${PROJECT_NAME} PUBLIC miniz)
 
 # Link gif (ScreenCapture). PRIVATE: no public core header includes gif.h
 target_link_libraries(${PROJECT_NAME} PRIVATE gif)

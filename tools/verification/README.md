@@ -110,6 +110,19 @@ hardware's behavior. It runs on unreal-ng, other emulators and real machines.
 
 ---
 
+### SZX reference files and interop check
+
+Located in `szx/`. `szxtool.c` uses libspectrum (the library Fuse reads and
+writes SZX with) to make the reference files in `testdata/loaders/szx/` and to
+dump what libspectrum reads from any snapshot. `check-interop.sh` has
+unreal-ng load each reference file and save it again, then compares what
+libspectrum reads from our file with the reference. See `szx/README.md`.
+
+*   **Usage:** `tools/verification/szx/check-interop.sh [build-dir]`
+*   **Needs:** libspectrum (`brew install libspectrum`, `apt install libspectrum-dev`) and a built `core-tests`.
+
+---
+
 ### Co-emulation harness
 
 `coemu/` runs one test program on every emulator it finds (unreal-ng, xpeccy-plus, and whatever else has a

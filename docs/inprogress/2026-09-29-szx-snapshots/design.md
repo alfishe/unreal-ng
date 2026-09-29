@@ -1,7 +1,8 @@
 # SZX (ZX-State) snapshots: reader and writer design
 
 - **Date:** 2026-09-29
-- **Status:** design, review round 1 applied (2026-09-29, [§20](#20-review-round-1)). No code yet. PLAN row **#64** (T2);
+- **Status:** design, review round 1 applied (2026-09-29, [§20](#20-review-round-1)). S0-S2 and B128
+  implemented on branch `szx` ([TODO.md](TODO.md)). PLAN row **#64** (T2);
   prerequisite of **#27** (RZX ↔ TTD) beyond 48K / 128K.
 - **References:** byte-level format in
   [szx-format-reference.md](szx-format-reference.md) (every spec page,

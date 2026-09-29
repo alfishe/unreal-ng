@@ -25,6 +25,7 @@ Portions Copyright (C) SMT, Alone Coder, deathsoft. The license of the original 
 | ymfm @ 81aec25c (with local TTD patch and the CSM key-on fix ported from Furnace, see `PATCHES.md` there) | `core/src/3rdparty/ymfm/` | BSD-3-Clause | static |
 | unreal-z80 0.5.0 @ a0433ec (General Sound coprocessor core; see `README.md` there) | `core/src/3rdparty/unreal-z80/` | MIT | static |
 | lodepng 20200306 | `core/src/3rdparty/lodepng/` | zlib | static |
+| miniz 3.1.2 (zlib streams of SZX snapshots; see `CMakeLists.txt` there) | `core/src/3rdparty/miniz/` | MIT | static |
 | digestpp | `core/src/3rdparty/digestpp/` | Public domain | header |
 | minimp3 (lieff) | `core/src/3rdparty/minimp3/` | CC0-1.0 | header (NeoGS MP3 decoder) |
 | tinywav | `core/src/3rdparty/tinywav/` | ISC | static |
@@ -64,6 +65,7 @@ Portions Copyright (C) SMT, Alone Coder, deathsoft. The license of the original 
 | NeoGS flash parts (loader, main ROM v1.11, FPGA boot + configuration) from the NedoPC `ngs` sources | `tools/neogs/parts/`, packed into `data/rom/neogs/full_ngs.rom` | treated as MIT (no licence file upstream) |
 | Z80 test suites: ZEXALL (GPL-2.0-or-later), z80test by Patrik Rak (MIT), z80bltst (MIT), Z80 XCF Flavor (GPL-3.0-or-later), FUSE test vectors (GPL-2.0-or-later) | `data/testsoft/`, `core/tests/z80/`, `testdata/z80/` | as listed |
 | Timing Test v0.3 by Patrik Rak (contention / I/O timing, GPL) | `testdata/contention/rak-timing-test/` | GPL |
+| libspectrum 1.5.0 (Fuse's library; linked by the SZX reference tool only, not by unreal-ng; installed from the system) | `tools/verification/szx/szxtool.c` | GPL-2.0-or-later |
 
 ## Not covered by the GPL
 

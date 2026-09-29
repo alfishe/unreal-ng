@@ -2205,15 +2205,25 @@ void MainWindow::saveFileDialog()
     }
 
     // Show a file save dialog using the last save directory
-    QString filePath = QFileDialog::getSaveFileName(this, tr("Save Snapshot"), _lastSaveDirectory + "/snapshot.sna",
-                                                    tr("SNA Snapshots (*.sna);;All Files (*)"));
+    // The format follows the extension; SZX keeps the most state (MEMPTR, the
+    // frame position, AY, Beta 128)
+    QString selectedFilter;
+    QString filePath = QFileDialog::getSaveFileName(this, tr("Save Snapshot"), _lastSaveDirectory + "/snapshot.szx",
+                                                    tr("SZX Snapshots (*.szx);;Z80 Snapshots (*.z80);;SNA Snapshots (*.sna)"),
+                                                    &selectedFilter);
 
     if (!filePath.isEmpty())
     {
-        // Ensure .sna extension
-        if (!filePath.toLower().endsWith(".sna"))
+        // No known extension: take the one of the chosen filter
+        const QString lower = filePath.toLower();
+        if (!lower.endsWith(".szx") && !lower.endsWith(".z80") && !lower.endsWith(".sna"))
         {
-            filePath += ".sna";
+            if (selectedFilter.contains("*.z80"))
+                filePath += ".z80";
+            else if (selectedFilter.contains("*.sna"))
+                filePath += ".sna";
+            else
+                filePath += ".szx";
         }
 
         // Save directory to settings (separate from open directory)

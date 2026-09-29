@@ -27,6 +27,7 @@
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/memory/scorpion/scorpionromwindow.h"
 #include "loaders/snapshot/loader_sna.h"
+#include "loaders/snapshot/szx/loaderszx.h"
 #include "loaders/tape/loader_tape.h"
 
 /// region <Constructors / Destructors>
@@ -1432,9 +1433,9 @@ bool Emulator::LoadSnapshot(const std::string& path)
 
     // Validate file extension
     std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(absolutePath));
-    if (ext != "z80" && ext != "sna")
+    if (ext != "z80" && ext != "sna" && ext != "szx")
     {
-        MLOGERROR("Invalid snapshot format: {}. Expected .z80 or .sna", ext.c_str());
+        MLOGERROR("Invalid snapshot format: {}. Expected .z80, .sna or .szx", ext.c_str());
         if (_context)
         {
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
@@ -1510,6 +1511,17 @@ bool Emulator::LoadSnapshot(const std::string& path)
 
         /// endregion </Load Z80 snapshot>
     }
+    else if (ext == "szx")
+    {
+        /// region <Load SZX snapshot>
+        LoaderSZX loaderSzx(_context, absolutePath);
+        result = loaderSzx.load();
+        if (result)
+            MLOGINFO("SZX file loaded:\n%s", loaderSzx.GetReport().ToText().c_str());
+        else
+            MLOGERROR("SZX load failed: %s", loaderSzx.GetError().c_str());
+        /// endregion </Load SZX snapshot>
+    }
 
     // Store snapshot path on success
     if (result)
@@ -1561,9 +1573,9 @@ bool Emulator::SaveSnapshot(const std::string& path)
 
     // Validate file extension
     std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(absolutePath));
-    if (ext != "sna" && ext != "z80")
+    if (ext != "sna" && ext != "z80" && ext != "szx")
     {
-        MLOGERROR("Invalid snapshot format for save: {}. Supported: .sna, .z80", ext.c_str());
+        MLOGERROR("Invalid snapshot format for save: {}. Supported: .sna, .z80, .szx", ext.c_str());
         return false;
     }
 
@@ -1616,6 +1628,17 @@ bool Emulator::SaveSnapshot(const std::string& path)
         /// endregion </Info logging>
 
         /// endregion </Save Z80 snapshot>
+    }
+    else if (ext == "szx")
+    {
+        /// region <Save SZX snapshot>
+        LoaderSZX loaderSzx(_context, absolutePath);
+        result = loaderSzx.save();
+        if (result)
+            MLOGINFO("SZX file saved successfully: '%s'", absolutePath.c_str());
+        else
+            MLOGERROR("Failed to save SZX file '%s': %s", absolutePath.c_str(), loaderSzx.GetError().c_str());
+        /// endregion </Save SZX snapshot>
     }
 
     // Store snapshot path on success

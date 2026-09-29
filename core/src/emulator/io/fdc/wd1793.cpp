@@ -362,6 +362,17 @@ void WD1793::processBeta128(uint8_t value)
     notifyFDDStateChanged();
 }
 
+void WD1793::RestoreSnapshotRegisters(uint8_t system, uint8_t track, uint8_t sector, uint8_t data, uint8_t status,
+                                      bool stepIn)
+{
+    processBeta128(system);
+    _trackRegister = track;
+    _sectorRegister = sector;
+    _dataRegister = data;
+    _statusRegister = static_cast<uint8_t>(status & ~(WDS_BUSY | WDS_DRQ));
+    _stepDirectionIn = stepIn ? 1 : 0;
+}
+
 /// Current floppy state (selected drive, head position, registers, motor, media)
 FDDStateInfo WD1793::getFDDState()
 {

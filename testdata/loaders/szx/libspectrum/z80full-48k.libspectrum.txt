@@ -1,0 +1,12 @@
+machine=Spectrum 48K
+a=0 f=84 bc=32768 de=23803 hl=11563
+a_=94 f_=77 bc_=5665 de_=13979 hl_=10072
+ix=47066 iy=23610 sp=32744 pc=32768 i=63 r=125
+iff1=1 iff2=1 im=1 memptr=0 tstates=69664
+halted=0 ei=0 setf=0
+ula=7 p7ffd=0 p1ffd=8
+ay_port=14 ay=0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+beta_active=0 beta_paged=0 beta_system=0
+page0=fef3c5f8
+page2=6b94d9e7
+page5=6ea0ee2d

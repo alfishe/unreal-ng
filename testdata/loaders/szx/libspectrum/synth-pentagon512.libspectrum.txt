@@ -1,0 +1,41 @@
+machine=Pentagon 512K
+a=17 f=34 bc=13124 de=21862 hl=30600
+a_=153 f_=170 bc_=48076 de_=56814 hl_=61441
+ix=4660 iy=23610 sp=48879 pc=32768 i=63 r=133
+iff1=1 iff2=1 im=2 memptr=17185 tstates=12345
+halted=0 ei=1 setf=1
+ula=5 p7ffd=19 p1ffd=8
+ay_port=7 ay=1,4,7,10,13,16,19,56,25,28,31,34,37,40,43,46
+beta_active=1 beta_paged=0 beta_system=60
+page0=33f7a893
+page1=e09d6818
+page2=4e532fc4
+page3=9d39ef4f
+page4=c8bea63d
+page5=1bd466b6
+page6=b51a216a
+page7=6670e1e1
+page8=1e14b38e
+page9=cd7e7305
+page10=63b034d9
+page11=b0daf452
+page12=e55dbd20
+page13=36377dab
+page14=98f93a77
+page15=4b93fafc
+page16=33f7a893
+page17=e09d6818
+page18=4e532fc4
+page19=9d39ef4f
+page20=c8bea63d
+page21=1bd466b6
+page22=b51a216a
+page23=6670e1e1
+page24=1e14b38e
+page25=cd7e7305
+page26=63b034d9
+page27=b0daf452
+page28=e55dbd20
+page29=36377dab
+page30=98f93a77
+page31=4b93fafc

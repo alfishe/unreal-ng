@@ -12,6 +12,7 @@ PatternCategoryMap FileManager::_extensions =
 
     { "sna", SupportedFileCategoriesEnum::FileSnapshot },
     { "z80", SupportedFileCategoriesEnum::FileSnapshot },
+    { "szx", SupportedFileCategoriesEnum::FileSnapshot },
 
     { "trd", SupportedFileCategoriesEnum::FileDisk },
     { "scl", SupportedFileCategoriesEnum::FileDisk },
