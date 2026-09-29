@@ -732,6 +732,11 @@ void Config::SetConfigLoadedHook(ConfigLoadedHook hook)
 	ConfigLoadedHookStorage() = std::move(hook);
 }
 
+Config::ConfigLoadedHook Config::GetConfigLoadedHook()
+{
+	return ConfigLoadedHookStorage();
+}
+
 bool Config::DetermineModel(const char* model, uint32_t ramsize)
 {
 	bool result = false;

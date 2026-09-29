@@ -900,6 +900,7 @@ void TimeTravelManager::OnFrameBoundary()
         // Sealing under frame_counter shifted every coverage set one frame into
         // the future, which made reverse search look in the wrong frame and
         // report no match for a PC that had plainly executed.
+        const auto captureStart = std::chrono::steady_clock::now();
         const uint64_t endedFrame = _context->emulatorState.frame_counter;
         if (_enableCoverageIndex && endedFrame > 0)
             _coverageIndex.SealFrame(endedFrame - 1);
@@ -907,6 +908,8 @@ void TimeTravelManager::OnFrameBoundary()
         TTDCheckpoint cp;
         CaptureNow(cp);
         _timeline.push_back(std::move(cp));
+        _perf.lastCaptureNs = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - captureStart).count());
         return;
     }
 
@@ -1487,6 +1490,12 @@ void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
     // Host-side fields (MemIf pointers, trace cursors, isDebugMode,
     // prev_pc/m1_pc/last_branch/nextpc) are preserved by RestoreCpuState —
     // they remain valid because we're not tearing down the emulator.
+    using PerfClock = std::chrono::steady_clock;
+    auto elapsedNs = [](PerfClock::time_point from, PerfClock::time_point to) {
+        return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(to - from).count());
+    };
+    const PerfClock::time_point restoreStart = PerfClock::now();
+
     Z80* cpu = _context->pCore ? _context->pCore->GetZ80() : nullptr;
     if (cpu)
     {
@@ -1517,7 +1526,9 @@ void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
     // values and then never re-derive.
     // A device set that differs from the checkpoint's (FR-4) leaves devices
     // in the live machine's state; say so instead of restoring silently
+    const PerfClock::time_point devicesStart = PerfClock::now();
     const TTDRestoreReport devices = _peripherals.RestoreAll(cp.peripheralBlobs);
+    const PerfClock::time_point devicesEnd = PerfClock::now();
     if (!devices.Complete())
         MLOGWARNING("TimeTravelManager::RestoreCheckpoint — frame %llu: device set differs from the checkpoint "
                     "(%zu restored, %zu without state, %zu size mismatches, %zu unclaimed)",
@@ -1536,6 +1547,7 @@ void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
     // already matches is deferred (TDD §8.1 "often a handful of pages";
     // restore is rare, not a per-frame hot path).
     RestoreRamPages(cp.ramPages);
+    const PerfClock::time_point memoryEnd = PerfClock::now();
 
     // --- Step 5: Screen (TDD §8.1 step 2e) ---
     // The screen renderer caches derived state (active screen bank from
@@ -1545,6 +1557,11 @@ void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
     // uses the same pattern for the same reason). Pixels are not touched:
     // what a position shows is decided by ComposeDisplay alone.
     ResyncScreenState();
+
+    _perf.lastRestoreCpuChipsetNs = elapsedNs(restoreStart, devicesStart);
+    _perf.lastRestoreDevicesNs = elapsedNs(devicesStart, devicesEnd);
+    _perf.lastRestoreMemoryNs = elapsedNs(devicesEnd, memoryEnd);
+    _perf.lastRestoreScreenNs = elapsedNs(memoryEnd, PerfClock::now());
 
     // t_states and frame_counter were already restored by RestoreChipsetState.
 }
@@ -2381,6 +2398,9 @@ void TimeTravelManager::PublishSeekedFrame()
 
 bool TimeTravelManager::SeekToInternal(const TTDTimePoint& target, TTDSeekResult* outResult)
 {
+    _perf.lastReplayNs = 0;
+    _perf.lastPresentNs = 0;
+
     // ------------------------------------------------------------------
     // Default the out-result to a failure state. Every return path below
     // either leaves this default (false / OutOfRange) or overwrites it
@@ -2554,6 +2574,18 @@ bool TimeTravelManager::SeekToInternal(const TTDTimePoint& target, TTDSeekResult
 
 void TimeTravelManager::ReplayWithinFrame(uint64_t targetFrame, uint32_t targetTInFrame)
 {
+    const auto replayStart = std::chrono::steady_clock::now();
+    struct ReplayTimer
+    {
+        std::chrono::steady_clock::time_point start;
+        uint64_t& sink;
+        ~ReplayTimer()
+        {
+            sink = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
+        }
+    } replayTimer{replayStart, _perf.lastReplayNs};
+
     // Emulator must be available. The PageStore/Capture path doesn't need
     // it, but RunTStates does.
     if (!_context || !_context->pEmulator)
@@ -2714,8 +2746,11 @@ void TimeTravelManager::ComposeDisplay(bool frameTarget)
 
 void TimeTravelManager::PresentPosition(bool frameTarget)
 {
+    const auto start = std::chrono::steady_clock::now();
     ComposeDisplay(frameTarget);
     PublishSeekedFrame();
+    _perf.lastPresentNs = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
 }
 
 bool TimeTravelManager::StepBackFrame()
