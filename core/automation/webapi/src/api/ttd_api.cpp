@@ -209,6 +209,16 @@ void EmulatorAPI::getTTDStatus(const HttpRequestPtr& req,
     ret["baseline_frames_captured"] = Json::UInt64(0);
     ret["session_heap_bytes"]       = Json::UInt64(0);
     ret["bookmark_count"]           = Json::UInt64(0);
+    ret["input_event_count"]        = Json::UInt64(0);
+    ret["external_event_count"]     = Json::UInt64(0);
+    ret["input_history_complete"]   = true;
+    ret["port_journal_active"]      = false;
+    ret["port_journal_off_reason"]  = Json::Value(Json::nullValue);
+    ret["port_read_count"]          = Json::UInt64(0);
+    ret["port_write_count"]         = Json::UInt64(0);
+    ret["port_journal_bytes"]       = Json::UInt64(0);
+    ret["port_replay_value_mismatches"] = Json::UInt64(0);
+    ret["port_replay_divergences"]  = Json::UInt64(0);
     ret["ttd_available"]            = false;
 
     if (ttd::TimeTravelManager* mgr = context->pTimeTravelManager)
@@ -232,6 +242,18 @@ void EmulatorAPI::getTTDStatus(const HttpRequestPtr& req,
     ret["coverage_index_frames"] = Json::UInt64(info.coverageIndexFrames);
     ret["coverage_index_bytes"]  = Json::UInt64(info.coverageIndexBytes);
     ret["bookmark_count"]       = Json::UInt64(info.bookmarkCount);
+    ret["input_event_count"]    = Json::UInt64(info.inputEventCount);
+    ret["external_event_count"] = Json::UInt64(info.externalEventCount);
+    ret["input_history_complete"] = info.inputHistoryComplete;
+    // Port-read journal: whether replay is isolated from media and host devices
+    ret["port_journal_active"]    = info.portJournalActive;
+    ret["port_journal_off_reason"] = info.portJournalOffReason.empty() ? Json::Value(Json::nullValue)
+                                                                       : Json::Value(info.portJournalOffReason);
+    ret["port_read_count"]        = Json::UInt64(info.portReadCount);
+    ret["port_write_count"]       = Json::UInt64(info.portWriteCount);
+    ret["port_journal_bytes"]     = Json::UInt64(info.portJournalBytes);
+    ret["port_replay_value_mismatches"] = Json::UInt64(info.portReplayValueMismatches);
+    ret["port_replay_divergences"]  = Json::UInt64(info.portReplayDivergences);
     // Why the last session with history was dropped (null when none was):
     // tells an agent why its recording is gone, e.g. a device TTD cannot follow
     ret["last_drop_reason"]     = info.lastDropReason.empty() ? Json::Value(Json::nullValue)
@@ -1046,6 +1068,113 @@ static void AddSearchWindow(Json::Value& ret, const ttd::TTDSearchWindow& window
 }
 
 /// @brief POST /api/v1/emulator/{id}/ttd/find-last
+/// @brief POST /api/v1/emulator/{id}/ttd/port-events
+///
+/// "When did the program ..." over the session's port journals
+/// (ttdportsearch.h): no replay, works on a loaded file.
+///
+/// Body: { "event": "key" | "ear" | "ay-read" | "ay-write" | "ay-select" |
+///         "border" | "beeper" | "in" | "out", "arg": "a" (a key name or an AY
+///         register), and any option of ttd::ApplyPortQueryOption: "limit",
+///         "newest", "from", "to" ("F" or "F:T"), "port", "port_mask",
+///         "value", "value_mask", "match", "trigger", "ay_register";
+///         "file": a .ttd path on the emulator's machine - searched without
+///         loading it, the current session is not touched }
+/// Response: { "event", "direction": "in"|"out", "count", "truncated",
+///             "scanned", "hits": [ { "index", "frame", "tinframe", "port",
+///             "value", "pc", "ay_register"? } ] }
+void EmulatorAPI::portEventsTTD(const HttpRequestPtr& req,
+                                std::function<void(const HttpResponsePtr&)>&& callback,
+                                const std::string& id) const
+{
+    auto* mgr = resolveTTD(id, callback);
+    if (!mgr) return;
+
+    auto fail = [&](HttpStatusCode code, const std::string& message) {
+        Json::Value error;
+        error["error"] = code == k400BadRequest ? "Bad Request" : "Conflict";
+        error["message"] = message;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(code);
+        addCorsHeaders(resp);
+        callback(resp);
+    };
+
+    auto json = req->getJsonObject();
+    if (!json || !(*json)["event"].isString())
+    {
+        std::string names;
+        for (const std::string& n : ttd::PortEventNames())
+            names += (names.empty() ? "" : ", ") + n;
+        fail(k400BadRequest, "'event' is required: one of " + names);
+        return;
+    }
+
+    auto text = [](const Json::Value& v) -> std::string {
+        if (v.isString())
+            return v.asString();
+        if (v.isBool())
+            return v.asBool() ? "true" : "false";
+        if (v.isIntegral())
+            return std::to_string(v.asLargestUInt());
+        return v.toStyledString();
+    };
+
+    ttd::TTDPortQuery q;
+    std::string err;
+    const std::string event = (*json)["event"].asString();
+    if (!ttd::BuildPortEventQuery(event, json->isMember("arg") ? text((*json)["arg"]) : std::string(), q, err))
+    {
+        fail(k400BadRequest, err);
+        return;
+    }
+    for (const std::string& name : json->getMemberNames())
+    {
+        if (name == "event" || name == "arg" || name == "file")
+            continue;
+        if (!ttd::ApplyPortQueryOption(q, name, text((*json)[name]), err))
+        {
+            fail(k400BadRequest, err);
+            return;
+        }
+    }
+
+    // "file": search a .ttd on disk without loading it (the session is untouched)
+    const bool inFile = (*json)["file"].isString();
+    const ttd::TTDPortSearchResult result =
+        inFile ? mgr->SearchPortEventsInFile((*json)["file"].asString(), q) : mgr->SearchPortEvents(q);
+    if (!result.ok)
+    {
+        fail(inFile ? k400BadRequest : k409Conflict, result.error);
+        return;
+    }
+
+    Json::Value ret;
+    ret["event"] = event;
+    ret["direction"] = ttd::PortDirectionName(q.direction);
+    ret["count"] = Json::UInt64(result.hits.size());
+    ret["truncated"] = result.truncated;
+    ret["scanned"] = Json::UInt64(result.scanned);
+    Json::Value hits(Json::arrayValue);
+    for (const ttd::TTDPortHit& h : result.hits)
+    {
+        Json::Value hit;
+        hit["index"] = Json::UInt64(h.index);
+        hit["frame"] = Json::UInt64(h.record.frame);
+        hit["tinframe"] = Json::UInt(h.record.tInFrame);
+        hit["port"] = Json::UInt(h.record.port);
+        hit["value"] = Json::UInt(h.record.value);
+        hit["pc"] = Json::UInt(h.record.pc);
+        if (h.ayRegister >= 0)
+            hit["ay_register"] = h.ayRegister;
+        hits.append(hit);
+    }
+    ret["hits"] = hits;
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
 void EmulatorAPI::findLastTTD(const HttpRequestPtr& req,
                                 std::function<void(const HttpResponsePtr&)>&& callback,
                                 const std::string& id) const

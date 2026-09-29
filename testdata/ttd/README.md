@@ -31,6 +31,36 @@ Each fixture records 300 frames (301 checkpoints). The table lives in code as
 `CORPUS` in `tools/verification/ttd-analyzer/scripts/record_fixtures.py`. To
 add or change a fixture, edit that list and this table together.
 
+## Port-journal fixtures (`port-journals/`)
+
+Two real sessions with their port journals (every IN and OUT with its time
+and PC, ttd-port-read-journal.md) and the emulator's answers to a set of
+"when did the program ..." questions:
+
+| Fixture | Model | Session | Journals |
+|---|---|---|---|
+| `dizzyx.ttd` | Pentagon 128K, classic GS | `testdata/loaders/z80/dizzyx.z80` (Dizzy X, AY music); keys 8, 0, 5, Q, SPACE pressed; 495 frames | 7,905 IN, 14,920 OUT, 16.8 KB of a 2.1 MB file |
+| `greenberet-load.ttd` | 128K, classic GS | `testdata/loaders/tap/greenberet.tap` loaded by the 128K menu's Tape Loader; 1,010 frames (20 s) of loading | 722,025 IN, 28,859 OUT, 156 KB of a 1.2 MB file |
+| `expected.json` | | the WebAPI's answers (`POST /ttd/port-events`) to 27 questions, asked of the live session and of the saved file (checked equal) | |
+
+They are read by the C++ test `TimeTravelManager_PortJournalFixture_Test`
+(`core/tests/debugger/ttd/timetravelmanager_portjournal_test.cpp`: the
+emulator's file search must answer every question the same) and by the
+analyzer's `tests/test_port_search.py` (its `search` must too). They are not
+in the checkpoint corpus above (`TTD_Corpus_Test` reads `testdata/ttd/*.ttd`
+only).
+
+Re-record them (the app with the WebAPI on port 8090, as below) with
+
+```bash
+python3 tools/verification/ttd-analyzer/scripts/record_port_journal_fixtures.py
+```
+
+Every step runs an exact number of frames on a stopped machine, so the
+recording depends only on the build. The General Sound slot is switched to the
+classic card: NeoGS's ZX-DMA is not isolated by the port journals, which are off
+with it.
+
 ## Re-recording (after a format change)
 
 1. Build, then start the desktop app with the WebAPI on port 8090. You don't

@@ -1,0 +1,3055 @@
+{
+ "fixtures": [
+  {
+   "file": "dizzyx.ttd",
+   "answers": [
+    {
+     "query": {
+      "event": "key",
+      "arg": "8"
+     },
+     "answer": {
+      "count": 1,
+      "direction": "in",
+      "event": "key",
+      "hits": [
+       {
+        "frame": 75,
+        "index": 401,
+        "pc": 29362,
+        "port": 61438,
+        "tinframe": 7558,
+        "value": 251
+       }
+      ],
+      "scanned": 7905,
+      "truncated": false
+     }
+    },
+    {
+     "query": {
+      "event": "key",
+      "arg": "0"
+     },
+     "answer": {
+      "count": 1,
+      "direction": "in",
+      "event": "key",
+      "hits": [
+       {
+        "frame": 175,
+        "index": 2001,
+        "pc": 29362,
+        "port": 61438,
+        "tinframe": 7449,
+        "value": 254
+       }
+      ],
+      "scanned": 7905,
+      "truncated": false
+     }
+    },
+    {
+     "query": {
+      "event": "key",
+      "arg": "5"
+     },
+     "answer": {
+      "count": 1,
+      "direction": "in",
+      "event": "key",
+      "hits": [
+       {
+        "frame": 265,
+        "index": 3453,
+        "pc": 29362,
+        "port": 63486,
+        "tinframe": 9280,
+        "value": 239
+       }
+      ],
+      "scanned": 7905,
+      "truncated": false
+     }
+    },
+    {
+     "query": {
+      "event": "key",
+      "arg": "q"
+     },
+     "answer": {
+      "count": 1,
+      "direction": "in",
+      "event": "key",
+      "hits": [
+       {
+        "frame": 365,
+        "index": 5054,
+        "pc": 29362,
+        "port": 64510,
+        "tinframe": 11430,
+        "value": 254
+       }
+      ],
+      "scanned": 7905,
+      "truncated": false
+     }
+    },
+    {
+     "query": {
+      "event": "key",
+      "arg": "space"
+     },
+     "answer": {
+      "count": 1,
+      "direction": "in",
+      "event": "key",
+      "hits": [
+       {
+        "frame": 430,
+        "index": 6082,
+        "pc": 29362,
+        "port": 32766,
+        "tinframe": 7824,
+        "value": 254
+       }
+      ],
+      "scanned": 7905,
+      "truncated": false
+     }
+    },
+    {
+     "query": {
+      "event": "key",
+      "arg": "p"
+     },
+     "answer": {
+      "count": 0,
+      "direction": "in",
+      "event": "key",
+      "hits": [],
+      "scanned": 7905,
+      "truncated": false
+     }
+    },
+    {
+     "query": {
+      "event": "key"
+     },
+     "answer": {
+      "count": 5,
+      "direction": "in",
+      "event": "key",
+      "hits": [
+       {
+        "frame": 75,
+        "index": 401,
+        "pc": 29362,
+        "port": 61438,
+        "tinframe": 7558,
+        "value": 251
+       },
+       {
+        "frame": 175,
+        "index": 2001,
+        "pc": 29362,
+        "port": 61438,
+        "tinframe": 7449,
+        "value": 254
+       },
+       {
+        "frame": 265,
+        "index": 3453,
+        "pc": 29362,
+        "port": 63486,
+        "tinframe": 9280,
+        "value": 239
+       },
+       {
+        "frame": 365,
+        "index": 5054,
+        "pc": 29362,
+        "port": 64510,
+        "tinframe": 11430,
+        "value": 254
+       },
+       {
+        "frame": 430,
+        "index": 6082,
+        "pc": 29362,
+        "port": 32766,
+        "tinframe": 7824,
+        "value": 254
+       }
+      ],
+      "scanned": 7905,
+      "truncated": false
+     }
+    },
+    {
+     "query": {
+      "event": "border"
+     },
+     "answer": {
+      "count": 0,
+      "direction": "out",
+      "event": "border",
+      "hits": [],
+      "scanned": 14920,
+      "truncated": false
+     }
+    },
+    {
+     "query": {
+      "event": "beeper",
+      "limit": 20
+     },
+     "answer": {
+      "count": 20,
+      "direction": "out",
+      "event": "beeper",
+      "hits": [
+       {
+        "frame": 201,
+        "index": 4557,
+        "pc": 35337,
+        "port": 254,
+        "tinframe": 10837,
+        "value": 0
+       },
+       {
+        "frame": 201,
+        "index": 4558,
+        "pc": 35337,
+        "port": 4350,
+        "tinframe": 14839,
+        "value": 16
+       },
+       {
+        "frame": 201,
+        "index": 4559,
+        "pc": 35337,
+        "port": 254,
+        "tinframe": 18841,
+        "value": 0
+       },
+       {
+        "frame": 201,
+        "index": 4560,
+        "pc": 35337,
+        "port": 4350,
+        "tinframe": 22843,
+        "value": 16
+       },
+       {
+        "frame": 201,
+        "index": 4561,
+        "pc": 35337,
+        "port": 254,
+        "tinframe": 26845,
+        "value": 0
+       },
+       {
+        "frame": 201,
+        "index": 4562,
+        "pc": 35337,
+        "port": 4350,
+        "tinframe": 30847,
+        "value": 16
+       },
+       {
+        "frame": 201,
+        "index": 4563,
+        "pc": 35337,
+        "port": 254,
+        "tinframe": 34849,
+        "value": 0
+       },
+       {
+        "frame": 201,
+        "index": 4564,
+        "pc": 35337,
+        "port": 4350,
+        "tinframe": 38851,
+        "value": 16
+       },
+       {
+        "frame": 201,
+        "index": 4565,
+        "pc": 35337,
+        "port": 254,
+        "tinframe": 42853,
+        "value": 0
+       },
+       {
+        "frame": 201,
+        "index": 4566,
+        "pc": 35337,
+        "port": 4350,
+        "tinframe": 58764,
+        "value": 16
+       },
+       {
+        "frame": 201,
+        "index": 4567,
+        "pc": 35337,
+        "port": 254,
+        "tinframe": 62638,
+        "value": 0
+       },
+       {
+        "frame": 201,
+        "index": 4568,
+        "pc": 35337,
+        "port": 4350,
+        "tinframe": 66512,
+        "value": 16
+       },
+       {
+        "frame": 201,
+        "index": 4569,
+        "pc": 35337,
+        "port": 254,
+        "tinframe": 70386,
+        "value": 0
+       },
+       {
+        "frame": 202,
+        "index": 4598,
+        "pc": 35337,
+        "port": 4350,
+        "tinframe": 12624,
+        "value": 16
+       },
+       {
+        "frame": 202,
+        "index": 4599,
+        "pc": 35337,
+        "port": 254,
+        "tinframe": 16498,
+        "value": 0
+       },
+       {
+        "frame": 202,
+        "index": 4600,
+        "pc": 35337,
+        "port": 4350,
+        "tinframe": 20372,
+        "value": 16
+       },
+       {
+        "frame": 202,
+        "index": 4601,
+        "pc": 35337,
+        "port": 254,
+        "tinframe": 24246,
+        "value": 0
+       },
+       {
+        "frame": 202,
+        "index": 4602,
+        "pc": 35337,
+        "port": 4350,
+        "tinframe": 28120,
+        "value": 16
+       },
+       {
+        "frame": 202,
+        "index": 4603,
+        "pc": 35337,
+        "port": 254,
+        "tinframe": 31994,
+        "value": 0
+       },
+       {
+        "frame": 204,
+        "index": 4660,
+        "pc": 35337,
+        "port": 4350,
+        "tinframe": 26544,
+        "value": 16
+       }
+      ],
+      "scanned": 4662,
+      "truncated": true
+     }
+    },
+    {
+     "query": {
+      "event": "beeper",
+      "limit": 3,
+      "newest": true
+     },
+     "answer": {
+      "count": 3,
+      "direction": "out",
+      "event": "beeper",
+      "hits": [
+       {
+        "frame": 543,
+        "index": 14891,
+        "pc": 35337,
+        "port": 254,
+        "tinframe": 44278,
+        "value": 0
+       },
+       {
+        "frame": 543,
+        "index": 14890,
+        "pc": 35337,
+        "port": 4350,
+        "tinframe": 44116,
+        "value": 16
+       },
+       {
+        "frame": 543,
+        "index": 14889,
+        "pc": 35337,
+        "port": 254,
+        "tinframe": 43954,
+        "value": 0
+       }
+      ],
+      "scanned": 14920,
+      "truncated": true
+     }
+    },
+    {
+     "query": {
+      "event": "ay-write",
+      "arg": "7",
+      "limit": 10
+     },
+     "answer": {
+      "count": 10,
+      "direction": "out",
+      "event": "ay-write",
+      "hits": [
+       {
+        "ay_register": 7,
+        "frame": 50,
+        "index": 12,
+        "pc": 55406,
+        "port": 48893,
+        "tinframe": 9202,
+        "value": 24
+       },
+       {
+        "ay_register": 7,
+        "frame": 51,
+        "index": 42,
+        "pc": 55406,
+        "port": 48893,
+        "tinframe": 6203,
+        "value": 24
+       },
+       {
+        "ay_register": 7,
+        "frame": 52,
+        "index": 72,
+        "pc": 55406,
+        "port": 48893,
+        "tinframe": 6114,
+        "value": 24
+       },
+       {
+        "ay_register": 7,
+        "frame": 53,
+        "index": 102,
+        "pc": 55406,
+        "port": 48893,
+        "tinframe": 6156,
+        "value": 56
+       },
+       {
+        "ay_register": 7,
+        "frame": 54,
+        "index": 130,
+        "pc": 55406,
+        "port": 48893,
+        "tinframe": 6168,
+        "value": 56
+       },
+       {
+        "ay_register": 7,
+        "frame": 55,
+        "index": 158,
+        "pc": 55406,
+        "port": 48893,
+        "tinframe": 6153,
+        "value": 56
+       },
+       {
+        "ay_register": 7,
+        "frame": 56,
+        "index": 186,
+        "pc": 55406,
+        "port": 48893,
+        "tinframe": 10275,
+        "value": 21
+       },
+       {
+        "ay_register": 7,
+        "frame": 57,
+        "index": 218,
+        "pc": 55406,
+        "port": 48893,
+        "tinframe": 6692,
+        "value": 21
+       },
+       {
+        "ay_register": 7,
+        "frame": 58,
+        "index": 250,
+        "pc": 55406,
+        "port": 48893,
+        "tinframe": 6586,
+        "value": 21
+       },
+       {
+        "ay_register": 7,
+        "frame": 59,
+        "index": 280,
+        "pc": 55406,
+        "port": 48893,
+        "tinframe": 6579,
+        "value": 21
+       }
+      ],
+      "scanned": 311,
+      "truncated": true
+     }
+    },
+    {
+     "query": {
+      "event": "ay-write",
+      "arg": "8",
+      "limit": 10
+     },
+     "answer": {
+      "count": 10,
+      "direction": "out",
+      "event": "ay-write",
+      "hits": [
+       {
+        "ay_register": 8,
+        "frame": 50,
+        "index": 10,
+        "pc": 55406,
+        "port": 48893,
+        "tinframe": 9114,
+        "value": 29
+       },
+       {
+        "ay_register": 8,
+        "frame": 51,
+        "index": 40,
+        "pc": 55406,
+        "port": 48893,
+        "tinframe": 6115,
+        "value": 30
+       },
+       {
+        "ay_register": 8,
+        "frame": 52,
+        "index": 70,
+        "pc": 55406,
+        "port": 48893,
+        "tinframe": 6026,
+        "value": 31
+       },
+       {
+        "ay_register": 8,
+        "frame": 53,
+        "index": 100,
+        "pc": 55406,
+        "port": 48893,
+        "tinframe": 6068,
+        "value": 31
+       },
+       {
+        "ay_register": 8,
+        "frame": 54,
+        "index": 128,
+        "pc": 55406,
+        "port": 48893,
+        "tinframe": 6080,
+        "value": 30
+       },
+       {
+        "ay_register": 8,
+        "frame": 55,
+        "index": 156,
+        "pc": 55406,
+        "port": 48893,
+        "tinframe": 6065,
+        "value": 29
+       },
+       {
+        "ay_register": 8,
+        "frame": 56,
+        "index": 184,
+        "pc": 55406,
+        "port": 48893,
+        "tinframe": 10187,
+        "value": 13
+       },
+       {
+        "ay_register": 8,
+        "frame": 57,
+        "index": 216,
+        "pc": 55406,
+        "port": 48893,
+        "tinframe": 6604,
+        "value": 12
+       },
+       {
+        "ay_register": 8,
+        "frame": 58,
+        "index": 248,
+        "pc": 55406,
+        "port": 48893,
+        "tinframe": 6498,
+        "value": 7
+       },
+       {
+        "ay_register": 8,
+        "frame": 59,
+        "index": 278,
+        "pc": 55406,
+        "port": 48893,
+        "tinframe": 6491,
+        "value": 6
+       }
+      ],
+      "scanned": 309,
+      "truncated": true
+     }
+    },
+    {
+     "query": {
+      "event": "ay-select",
+      "limit": 16
+     },
+     "answer": {
+      "count": 16,
+      "direction": "out",
+      "event": "ay-select",
+      "hits": [
+       {
+        "frame": 50,
+        "index": 1,
+        "pc": 55403,
+        "port": 65533,
+        "tinframe": 8742,
+        "value": 12
+       },
+       {
+        "frame": 50,
+        "index": 3,
+        "pc": 55403,
+        "port": 65533,
+        "tinframe": 8830,
+        "value": 11
+       },
+       {
+        "frame": 50,
+        "index": 5,
+        "pc": 55403,
+        "port": 65533,
+        "tinframe": 8918,
+        "value": 10
+       },
+       {
+        "frame": 50,
+        "index": 7,
+        "pc": 55403,
+        "port": 65533,
+        "tinframe": 9006,
+        "value": 9
+       },
+       {
+        "frame": 50,
+        "index": 9,
+        "pc": 55403,
+        "port": 65533,
+        "tinframe": 9094,
+        "value": 8
+       },
+       {
+        "frame": 50,
+        "index": 11,
+        "pc": 55403,
+        "port": 65533,
+        "tinframe": 9182,
+        "value": 7
+       },
+       {
+        "frame": 50,
+        "index": 13,
+        "pc": 55403,
+        "port": 65533,
+        "tinframe": 9270,
+        "value": 6
+       },
+       {
+        "frame": 50,
+        "index": 15,
+        "pc": 55403,
+        "port": 65533,
+        "tinframe": 9358,
+        "value": 5
+       },
+       {
+        "frame": 50,
+        "index": 17,
+        "pc": 55403,
+        "port": 65533,
+        "tinframe": 9446,
+        "value": 4
+       },
+       {
+        "frame": 50,
+        "index": 19,
+        "pc": 55396,
+        "port": 65533,
+        "tinframe": 9539,
+        "value": 2
+       },
+       {
+        "frame": 50,
+        "index": 21,
+        "pc": 55403,
+        "port": 65533,
+        "tinframe": 9579,
+        "value": 3
+       },
+       {
+        "frame": 50,
+        "index": 23,
+        "pc": 55403,
+        "port": 65533,
+        "tinframe": 9667,
+        "value": 2
+       },
+       {
+        "frame": 50,
+        "index": 25,
+        "pc": 55403,
+        "port": 65533,
+        "tinframe": 9755,
+        "value": 1
+       },
+       {
+        "frame": 50,
+        "index": 27,
+        "pc": 55403,
+        "port": 65533,
+        "tinframe": 9843,
+        "value": 0
+       },
+       {
+        "frame": 51,
+        "index": 31,
+        "pc": 55403,
+        "port": 65533,
+        "tinframe": 5743,
+        "value": 12
+       },
+       {
+        "frame": 51,
+        "index": 33,
+        "pc": 55403,
+        "port": 65533,
+        "tinframe": 5831,
+        "value": 11
+       }
+      ],
+      "scanned": 36,
+      "truncated": true
+     }
+    },
+    {
+     "query": {
+      "event": "ay-read",
+      "limit": 5
+     },
+     "answer": {
+      "count": 0,
+      "direction": "in",
+      "event": "ay-read",
+      "hits": [],
+      "scanned": 7905,
+      "truncated": false
+     }
+    },
+    {
+     "query": {
+      "event": "ear"
+     },
+     "answer": {
+      "count": 0,
+      "direction": "in",
+      "event": "ear",
+      "hits": [],
+      "scanned": 7905,
+      "truncated": false
+     }
+    },
+    {
+     "query": {
+      "event": "in",
+      "limit": 10
+     },
+     "answer": {
+      "count": 10,
+      "direction": "in",
+      "event": "in",
+      "hits": [
+       {
+        "frame": 50,
+        "index": 0,
+        "pc": 29362,
+        "port": 49150,
+        "tinframe": 10268,
+        "value": 255
+       },
+       {
+        "frame": 50,
+        "index": 1,
+        "pc": 29362,
+        "port": 61438,
+        "tinframe": 10494,
+        "value": 255
+       },
+       {
+        "frame": 50,
+        "index": 2,
+        "pc": 29362,
+        "port": 32766,
+        "tinframe": 10808,
+        "value": 255
+       },
+       {
+        "frame": 50,
+        "index": 3,
+        "pc": 29362,
+        "port": 61438,
+        "tinframe": 11034,
+        "value": 255
+       },
+       {
+        "frame": 50,
+        "index": 4,
+        "pc": 29362,
+        "port": 49150,
+        "tinframe": 11348,
+        "value": 255
+       },
+       {
+        "frame": 50,
+        "index": 5,
+        "pc": 29362,
+        "port": 61438,
+        "tinframe": 11574,
+        "value": 255
+       },
+       {
+        "frame": 50,
+        "index": 6,
+        "pc": 29362,
+        "port": 65278,
+        "tinframe": 11888,
+        "value": 255
+       },
+       {
+        "frame": 50,
+        "index": 7,
+        "pc": 29362,
+        "port": 61438,
+        "tinframe": 12114,
+        "value": 255
+       },
+       {
+        "frame": 50,
+        "index": 8,
+        "pc": 29362,
+        "port": 65278,
+        "tinframe": 12428,
+        "value": 255
+       },
+       {
+        "frame": 50,
+        "index": 9,
+        "pc": 29362,
+        "port": 61438,
+        "tinframe": 12654,
+        "value": 255
+       }
+      ],
+      "scanned": 11,
+      "truncated": true
+     }
+    },
+    {
+     "query": {
+      "event": "in",
+      "port": "0xEFFE",
+      "match": "any-clear",
+      "value_mask": "0x1F",
+      "trigger": "rising"
+     },
+     "answer": {
+      "count": 2,
+      "direction": "in",
+      "event": "in",
+      "hits": [
+       {
+        "frame": 75,
+        "index": 401,
+        "pc": 29362,
+        "port": 61438,
+        "tinframe": 7558,
+        "value": 251
+       },
+       {
+        "frame": 175,
+        "index": 2001,
+        "pc": 29362,
+        "port": 61438,
+        "tinframe": 7449,
+        "value": 254
+       }
+      ],
+      "scanned": 7905,
+      "truncated": false
+     }
+    },
+    {
+     "query": {
+      "event": "out",
+      "port": "0x7FFD",
+      "limit": 5
+     },
+     "answer": {
+      "count": 5,
+      "direction": "out",
+      "event": "out",
+      "hits": [
+       {
+        "frame": 50,
+        "index": 0,
+        "pc": 24588,
+        "port": 32765,
+        "tinframe": 163,
+        "value": 17
+       },
+       {
+        "frame": 50,
+        "index": 29,
+        "pc": 24588,
+        "port": 32765,
+        "tinframe": 9946,
+        "value": 16
+       },
+       {
+        "frame": 51,
+        "index": 30,
+        "pc": 24588,
+        "port": 32765,
+        "tinframe": 158,
+        "value": 17
+       },
+       {
+        "frame": 51,
+        "index": 59,
+        "pc": 24588,
+        "port": 32765,
+        "tinframe": 6947,
+        "value": 16
+       },
+       {
+        "frame": 52,
+        "index": 60,
+        "pc": 24588,
+        "port": 32765,
+        "tinframe": 159,
+        "value": 17
+       }
+      ],
+      "scanned": 90,
+      "truncated": true
+     }
+    },
+    {
+     "query": {
+      "event": "ay-write",
+      "arg": "7",
+      "from": "200",
+      "to": "260:0",
+      "limit": 100
+     },
+     "answer": {
+      "count": 60,
+      "direction": "out",
+      "event": "ay-write",
+      "hits": [
+       {
+        "ay_register": 7,
+        "frame": 200,
+        "index": 4512,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 5692,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 201,
+        "index": 4541,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4878,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 202,
+        "index": 4582,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4877,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 203,
+        "index": 4616,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4878,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 204,
+        "index": 4644,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 5695,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 205,
+        "index": 4682,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4876,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 206,
+        "index": 4710,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 5047,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 207,
+        "index": 4738,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4975,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 208,
+        "index": 4774,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 5847,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 209,
+        "index": 4804,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4900,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 210,
+        "index": 4832,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4898,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 211,
+        "index": 4870,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4894,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 212,
+        "index": 4898,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 5717,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 213,
+        "index": 4926,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4896,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 214,
+        "index": 4964,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 5063,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 215,
+        "index": 4992,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 5005,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 216,
+        "index": 5020,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 5709,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 217,
+        "index": 5058,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4892,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 218,
+        "index": 5086,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4894,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 219,
+        "index": 5114,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4892,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 220,
+        "index": 5151,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 5860,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 221,
+        "index": 5180,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4919,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 222,
+        "index": 5208,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 5085,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 223,
+        "index": 5246,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 5014,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 224,
+        "index": 5274,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 6294,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 225,
+        "index": 5302,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4919,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 226,
+        "index": 5340,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4917,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 227,
+        "index": 5368,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4909,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 228,
+        "index": 5396,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 5729,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 229,
+        "index": 5434,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4910,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 230,
+        "index": 5462,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4925,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 231,
+        "index": 5490,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 5020,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 232,
+        "index": 5528,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 6120,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 233,
+        "index": 5556,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4930,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 234,
+        "index": 5584,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4927,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 235,
+        "index": 5622,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4939,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 236,
+        "index": 5650,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 5753,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 237,
+        "index": 5678,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4939,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 238,
+        "index": 5716,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 5116,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 239,
+        "index": 5744,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 3163,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 240,
+        "index": 5772,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 6165,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 241,
+        "index": 5810,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4936,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 242,
+        "index": 5838,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4941,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 243,
+        "index": 5866,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4926,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 244,
+        "index": 5904,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 5744,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 245,
+        "index": 5932,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4926,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 246,
+        "index": 5960,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4926,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 247,
+        "index": 5998,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 5032,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 248,
+        "index": 6026,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 6177,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 249,
+        "index": 6054,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4940,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 250,
+        "index": 6092,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4935,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 251,
+        "index": 6120,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4928,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 252,
+        "index": 6148,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 5900,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 253,
+        "index": 6186,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4961,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 254,
+        "index": 6214,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4943,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 255,
+        "index": 6242,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 5045,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 256,
+        "index": 6280,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 6003,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 257,
+        "index": 6308,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4956,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 258,
+        "index": 6336,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4958,
+        "value": 48
+       },
+       {
+        "ay_register": 7,
+        "frame": 259,
+        "index": 6374,
+        "pc": 49526,
+        "port": 48893,
+        "tinframe": 4954,
+        "value": 48
+       }
+      ],
+      "scanned": 6390,
+      "truncated": false
+     }
+    }
+   ]
+  },
+  {
+   "file": "greenberet-load.ttd",
+   "answers": [
+    {
+     "query": {
+      "event": "ear",
+      "limit": 50
+     },
+     "answer": {
+      "count": 50,
+      "direction": "in",
+      "event": "ear",
+      "hits": [
+       {
+        "frame": 155,
+        "index": 50,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 40902,
+        "value": 191
+       },
+       {
+        "frame": 204,
+        "index": 51,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 63309,
+        "value": 255
+       },
+       {
+        "frame": 204,
+        "index": 75,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 65134,
+        "value": 191
+       },
+       {
+        "frame": 204,
+        "index": 105,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 67356,
+        "value": 255
+       },
+       {
+        "frame": 204,
+        "index": 134,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 69476,
+        "value": 191
+       },
+       {
+        "frame": 205,
+        "index": 163,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 765,
+        "value": 255
+       },
+       {
+        "frame": 205,
+        "index": 193,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 2944,
+        "value": 191
+       },
+       {
+        "frame": 205,
+        "index": 221,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 5082,
+        "value": 255
+       },
+       {
+        "frame": 205,
+        "index": 251,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 7261,
+        "value": 191
+       },
+       {
+        "frame": 205,
+        "index": 280,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 9458,
+        "value": 255
+       },
+       {
+        "frame": 205,
+        "index": 309,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 11578,
+        "value": 191
+       },
+       {
+        "frame": 205,
+        "index": 338,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 13775,
+        "value": 255
+       },
+       {
+        "frame": 205,
+        "index": 368,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 15954,
+        "value": 191
+       },
+       {
+        "frame": 205,
+        "index": 395,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 18097,
+        "value": 255
+       },
+       {
+        "frame": 205,
+        "index": 424,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 20288,
+        "value": 191
+       },
+       {
+        "frame": 205,
+        "index": 451,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 22429,
+        "value": 255
+       },
+       {
+        "frame": 205,
+        "index": 480,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 24620,
+        "value": 191
+       },
+       {
+        "frame": 205,
+        "index": 507,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 26761,
+        "value": 255
+       },
+       {
+        "frame": 205,
+        "index": 536,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 28952,
+        "value": 191
+       },
+       {
+        "frame": 205,
+        "index": 563,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 31093,
+        "value": 255
+       },
+       {
+        "frame": 205,
+        "index": 592,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 33284,
+        "value": 191
+       },
+       {
+        "frame": 205,
+        "index": 619,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 35425,
+        "value": 255
+       },
+       {
+        "frame": 205,
+        "index": 648,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 37616,
+        "value": 191
+       },
+       {
+        "frame": 205,
+        "index": 675,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 39757,
+        "value": 255
+       },
+       {
+        "frame": 205,
+        "index": 704,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 41948,
+        "value": 191
+       },
+       {
+        "frame": 205,
+        "index": 731,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 44089,
+        "value": 255
+       },
+       {
+        "frame": 205,
+        "index": 760,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 46280,
+        "value": 191
+       },
+       {
+        "frame": 205,
+        "index": 787,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 48421,
+        "value": 255
+       },
+       {
+        "frame": 205,
+        "index": 816,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 50612,
+        "value": 191
+       },
+       {
+        "frame": 205,
+        "index": 844,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 52817,
+        "value": 255
+       },
+       {
+        "frame": 205,
+        "index": 872,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 54944,
+        "value": 191
+       },
+       {
+        "frame": 205,
+        "index": 900,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 57149,
+        "value": 255
+       },
+       {
+        "frame": 205,
+        "index": 928,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 59276,
+        "value": 191
+       },
+       {
+        "frame": 205,
+        "index": 957,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 61478,
+        "value": 255
+       },
+       {
+        "frame": 205,
+        "index": 987,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 63657,
+        "value": 191
+       },
+       {
+        "frame": 205,
+        "index": 1015,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 65795,
+        "value": 255
+       },
+       {
+        "frame": 205,
+        "index": 1045,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 67974,
+        "value": 191
+       },
+       {
+        "frame": 205,
+        "index": 1073,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 70112,
+        "value": 255
+       },
+       {
+        "frame": 206,
+        "index": 1103,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 1383,
+        "value": 191
+       },
+       {
+        "frame": 206,
+        "index": 1132,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 3580,
+        "value": 255
+       },
+       {
+        "frame": 206,
+        "index": 1161,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 5700,
+        "value": 191
+       },
+       {
+        "frame": 206,
+        "index": 1190,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 7897,
+        "value": 255
+       },
+       {
+        "frame": 206,
+        "index": 1220,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 10076,
+        "value": 191
+       },
+       {
+        "frame": 206,
+        "index": 1248,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 12214,
+        "value": 255
+       },
+       {
+        "frame": 206,
+        "index": 1278,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 14393,
+        "value": 191
+       },
+       {
+        "frame": 206,
+        "index": 1306,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 16541,
+        "value": 255
+       },
+       {
+        "frame": 206,
+        "index": 1335,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 18735,
+        "value": 191
+       },
+       {
+        "frame": 206,
+        "index": 1362,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 20881,
+        "value": 255
+       },
+       {
+        "frame": 206,
+        "index": 1391,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 23067,
+        "value": 191
+       },
+       {
+        "frame": 206,
+        "index": 1418,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 25213,
+        "value": 255
+       }
+      ],
+      "scanned": 1448,
+      "truncated": true
+     }
+    },
+    {
+     "query": {
+      "event": "ear",
+      "limit": 20,
+      "newest": true
+     },
+     "answer": {
+      "count": 20,
+      "direction": "in",
+      "event": "ear",
+      "hits": [
+       {
+        "frame": 1160,
+        "index": 722006,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 69453,
+        "value": 255
+       },
+       {
+        "frame": 1160,
+        "index": 721987,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 67738,
+        "value": 191
+       },
+       {
+        "frame": 1160,
+        "index": 721965,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 66031,
+        "value": 255
+       },
+       {
+        "frame": 1160,
+        "index": 721944,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 64313,
+        "value": 191
+       },
+       {
+        "frame": 1160,
+        "index": 721922,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 62606,
+        "value": 255
+       },
+       {
+        "frame": 1160,
+        "index": 721901,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 60888,
+        "value": 191
+       },
+       {
+        "frame": 1160,
+        "index": 721879,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 59161,
+        "value": 255
+       },
+       {
+        "frame": 1160,
+        "index": 721860,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 57503,
+        "value": 191
+       },
+       {
+        "frame": 1160,
+        "index": 721838,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 55741,
+        "value": 255
+       },
+       {
+        "frame": 1160,
+        "index": 721819,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 54083,
+        "value": 191
+       },
+       {
+        "frame": 1160,
+        "index": 721797,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 52321,
+        "value": 255
+       },
+       {
+        "frame": 1160,
+        "index": 721778,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 50663,
+        "value": 191
+       },
+       {
+        "frame": 1160,
+        "index": 721756,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 48901,
+        "value": 255
+       },
+       {
+        "frame": 1160,
+        "index": 721737,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 47243,
+        "value": 191
+       },
+       {
+        "frame": 1160,
+        "index": 721715,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 45481,
+        "value": 255
+       },
+       {
+        "frame": 1160,
+        "index": 721696,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 43831,
+        "value": 191
+       },
+       {
+        "frame": 1160,
+        "index": 721688,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 42935,
+        "value": 255
+       },
+       {
+        "frame": 1160,
+        "index": 721684,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 42101,
+        "value": 191
+       },
+       {
+        "frame": 1160,
+        "index": 721677,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 41248,
+        "value": 255
+       },
+       {
+        "frame": 1160,
+        "index": 721671,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 40384,
+        "value": 191
+       }
+      ],
+      "scanned": 722025,
+      "truncated": true
+     }
+    },
+    {
+     "query": {
+      "event": "ear",
+      "from": "900",
+      "limit": 30
+     },
+     "answer": {
+      "count": 30,
+      "direction": "in",
+      "event": "ear",
+      "hits": [
+       {
+        "frame": 927,
+        "index": 541129,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 2239,
+        "value": 255
+       },
+       {
+        "frame": 927,
+        "index": 541130,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 2707,
+        "value": 191
+       },
+       {
+        "frame": 927,
+        "index": 541153,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 4516,
+        "value": 255
+       },
+       {
+        "frame": 927,
+        "index": 541183,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 6695,
+        "value": 191
+       },
+       {
+        "frame": 927,
+        "index": 541212,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 8892,
+        "value": 255
+       },
+       {
+        "frame": 927,
+        "index": 541241,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 11012,
+        "value": 191
+       },
+       {
+        "frame": 927,
+        "index": 541270,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 13209,
+        "value": 255
+       },
+       {
+        "frame": 927,
+        "index": 541300,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 15388,
+        "value": 191
+       },
+       {
+        "frame": 927,
+        "index": 541327,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 17517,
+        "value": 255
+       },
+       {
+        "frame": 927,
+        "index": 541356,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 19709,
+        "value": 191
+       },
+       {
+        "frame": 927,
+        "index": 541383,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 21868,
+        "value": 255
+       },
+       {
+        "frame": 927,
+        "index": 541412,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 24065,
+        "value": 191
+       },
+       {
+        "frame": 927,
+        "index": 541439,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 26224,
+        "value": 255
+       },
+       {
+        "frame": 927,
+        "index": 541467,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 28365,
+        "value": 191
+       },
+       {
+        "frame": 927,
+        "index": 541495,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 30580,
+        "value": 255
+       },
+       {
+        "frame": 927,
+        "index": 541523,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 32721,
+        "value": 191
+       },
+       {
+        "frame": 927,
+        "index": 541550,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 34880,
+        "value": 255
+       },
+       {
+        "frame": 927,
+        "index": 541578,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 37021,
+        "value": 191
+       },
+       {
+        "frame": 927,
+        "index": 541606,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 39236,
+        "value": 255
+       },
+       {
+        "frame": 927,
+        "index": 541634,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 41377,
+        "value": 191
+       },
+       {
+        "frame": 927,
+        "index": 541661,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 43536,
+        "value": 255
+       },
+       {
+        "frame": 927,
+        "index": 541690,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 45733,
+        "value": 191
+       },
+       {
+        "frame": 927,
+        "index": 541717,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 47892,
+        "value": 255
+       },
+       {
+        "frame": 927,
+        "index": 541745,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 50033,
+        "value": 191
+       },
+       {
+        "frame": 927,
+        "index": 541773,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 52251,
+        "value": 255
+       },
+       {
+        "frame": 927,
+        "index": 541801,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 54389,
+        "value": 191
+       },
+       {
+        "frame": 927,
+        "index": 541828,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 56548,
+        "value": 255
+       },
+       {
+        "frame": 927,
+        "index": 541857,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 58753,
+        "value": 191
+       },
+       {
+        "frame": 927,
+        "index": 541885,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 60928,
+        "value": 255
+       },
+       {
+        "frame": 927,
+        "index": 541914,
+        "pc": 1521,
+        "port": 32766,
+        "tinframe": 63048,
+        "value": 191
+       }
+      ],
+      "scanned": 541944,
+      "truncated": true
+     }
+    },
+    {
+     "query": {
+      "event": "key",
+      "arg": "enter"
+     },
+     "answer": {
+      "count": 1,
+      "direction": "in",
+      "event": "key",
+      "hits": [
+       {
+        "frame": 151,
+        "index": 9,
+        "pc": 662,
+        "port": 49150,
+        "tinframe": 3103,
+        "value": 254
+       }
+      ],
+      "scanned": 722025,
+      "truncated": false
+     }
+    },
+    {
+     "query": {
+      "event": "key"
+     },
+     "answer": {
+      "count": 2,
+      "direction": "in",
+      "event": "key",
+      "hits": [
+       {
+        "frame": 151,
+        "index": 9,
+        "pc": 662,
+        "port": 49150,
+        "tinframe": 3103,
+        "value": 254
+       },
+       {
+        "frame": 155,
+        "index": 49,
+        "pc": 1378,
+        "port": 4094,
+        "tinframe": 40469,
+        "value": 254
+       }
+      ],
+      "scanned": 722025,
+      "truncated": false
+     }
+    },
+    {
+     "query": {
+      "event": "border",
+      "limit": 50
+     },
+     "answer": {
+      "count": 50,
+      "direction": "out",
+      "event": "border",
+      "hits": [
+       {
+        "frame": 155,
+        "index": 309,
+        "pc": 1537,
+        "port": 3582,
+        "tinframe": 40966,
+        "value": 13
+       },
+       {
+        "frame": 204,
+        "index": 310,
+        "pc": 1537,
+        "port": 2814,
+        "tinframe": 63373,
+        "value": 10
+       },
+       {
+        "frame": 204,
+        "index": 311,
+        "pc": 1537,
+        "port": 3582,
+        "tinframe": 65198,
+        "value": 13
+       },
+       {
+        "frame": 204,
+        "index": 312,
+        "pc": 1537,
+        "port": 2814,
+        "tinframe": 67420,
+        "value": 10
+       },
+       {
+        "frame": 204,
+        "index": 313,
+        "pc": 1537,
+        "port": 3582,
+        "tinframe": 69540,
+        "value": 13
+       },
+       {
+        "frame": 205,
+        "index": 314,
+        "pc": 1537,
+        "port": 2814,
+        "tinframe": 829,
+        "value": 10
+       },
+       {
+        "frame": 205,
+        "index": 315,
+        "pc": 1537,
+        "port": 3582,
+        "tinframe": 3008,
+        "value": 13
+       },
+       {
+        "frame": 205,
+        "index": 316,
+        "pc": 1537,
+        "port": 2814,
+        "tinframe": 5146,
+        "value": 10
+       },
+       {
+        "frame": 205,
+        "index": 317,
+        "pc": 1537,
+        "port": 3582,
+        "tinframe": 7325,
+        "value": 13
+       },
+       {
+        "frame": 205,
+        "index": 318,
+        "pc": 1537,
+        "port": 2814,
+        "tinframe": 9522,
+        "value": 10
+       },
+       {
+        "frame": 205,
+        "index": 319,
+        "pc": 1537,
+        "port": 3582,
+        "tinframe": 11642,
+        "value": 13
+       },
+       {
+        "frame": 205,
+        "index": 320,
+        "pc": 1537,
+        "port": 2814,
+        "tinframe": 13839,
+        "value": 10
+       },
+       {
+        "frame": 205,
+        "index": 321,
+        "pc": 1537,
+        "port": 3582,
+        "tinframe": 16018,
+        "value": 13
+       },
+       {
+        "frame": 205,
+        "index": 322,
+        "pc": 1537,
+        "port": 2814,
+        "tinframe": 18166,
+        "value": 10
+       },
+       {
+        "frame": 205,
+        "index": 323,
+        "pc": 1537,
+        "port": 3582,
+        "tinframe": 20352,
+        "value": 13
+       },
+       {
+        "frame": 205,
+        "index": 324,
+        "pc": 1537,
+        "port": 2814,
+        "tinframe": 22498,
+        "value": 10
+       },
+       {
+        "frame": 205,
+        "index": 325,
+        "pc": 1537,
+        "port": 3582,
+        "tinframe": 24684,
+        "value": 13
+       },
+       {
+        "frame": 205,
+        "index": 326,
+        "pc": 1537,
+        "port": 2814,
+        "tinframe": 26830,
+        "value": 10
+       },
+       {
+        "frame": 205,
+        "index": 327,
+        "pc": 1537,
+        "port": 3582,
+        "tinframe": 29016,
+        "value": 13
+       },
+       {
+        "frame": 205,
+        "index": 328,
+        "pc": 1537,
+        "port": 2814,
+        "tinframe": 31162,
+        "value": 10
+       },
+       {
+        "frame": 205,
+        "index": 329,
+        "pc": 1537,
+        "port": 3582,
+        "tinframe": 33348,
+        "value": 13
+       },
+       {
+        "frame": 205,
+        "index": 330,
+        "pc": 1537,
+        "port": 2814,
+        "tinframe": 35494,
+        "value": 10
+       },
+       {
+        "frame": 205,
+        "index": 331,
+        "pc": 1537,
+        "port": 3582,
+        "tinframe": 37680,
+        "value": 13
+       },
+       {
+        "frame": 205,
+        "index": 332,
+        "pc": 1537,
+        "port": 2814,
+        "tinframe": 39826,
+        "value": 10
+       },
+       {
+        "frame": 205,
+        "index": 333,
+        "pc": 1537,
+        "port": 3582,
+        "tinframe": 42012,
+        "value": 13
+       },
+       {
+        "frame": 205,
+        "index": 334,
+        "pc": 1537,
+        "port": 2814,
+        "tinframe": 44158,
+        "value": 10
+       },
+       {
+        "frame": 205,
+        "index": 335,
+        "pc": 1537,
+        "port": 3582,
+        "tinframe": 46344,
+        "value": 13
+       },
+       {
+        "frame": 205,
+        "index": 336,
+        "pc": 1537,
+        "port": 2814,
+        "tinframe": 48490,
+        "value": 10
+       },
+       {
+        "frame": 205,
+        "index": 337,
+        "pc": 1537,
+        "port": 3582,
+        "tinframe": 50676,
+        "value": 13
+       },
+       {
+        "frame": 205,
+        "index": 338,
+        "pc": 1537,
+        "port": 2814,
+        "tinframe": 52881,
+        "value": 10
+       },
+       {
+        "frame": 205,
+        "index": 339,
+        "pc": 1537,
+        "port": 3582,
+        "tinframe": 55008,
+        "value": 13
+       },
+       {
+        "frame": 205,
+        "index": 340,
+        "pc": 1537,
+        "port": 2814,
+        "tinframe": 57213,
+        "value": 10
+       },
+       {
+        "frame": 205,
+        "index": 341,
+        "pc": 1537,
+        "port": 3582,
+        "tinframe": 59340,
+        "value": 13
+       },
+       {
+        "frame": 205,
+        "index": 342,
+        "pc": 1537,
+        "port": 2814,
+        "tinframe": 61542,
+        "value": 10
+       },
+       {
+        "frame": 205,
+        "index": 343,
+        "pc": 1537,
+        "port": 3582,
+        "tinframe": 63721,
+        "value": 13
+       },
+       {
+        "frame": 205,
+        "index": 344,
+        "pc": 1537,
+        "port": 2814,
+        "tinframe": 65859,
+        "value": 10
+       },
+       {
+        "frame": 205,
+        "index": 345,
+        "pc": 1537,
+        "port": 3582,
+        "tinframe": 68038,
+        "value": 13
+       },
+       {
+        "frame": 205,
+        "index": 346,
+        "pc": 1537,
+        "port": 2814,
+        "tinframe": 70176,
+        "value": 10
+       },
+       {
+        "frame": 206,
+        "index": 347,
+        "pc": 1537,
+        "port": 3582,
+        "tinframe": 1447,
+        "value": 13
+       },
+       {
+        "frame": 206,
+        "index": 348,
+        "pc": 1537,
+        "port": 2814,
+        "tinframe": 3644,
+        "value": 10
+       },
+       {
+        "frame": 206,
+        "index": 349,
+        "pc": 1537,
+        "port": 3582,
+        "tinframe": 5764,
+        "value": 13
+       },
+       {
+        "frame": 206,
+        "index": 350,
+        "pc": 1537,
+        "port": 2814,
+        "tinframe": 7961,
+        "value": 10
+       },
+       {
+        "frame": 206,
+        "index": 351,
+        "pc": 1537,
+        "port": 3582,
+        "tinframe": 10140,
+        "value": 13
+       },
+       {
+        "frame": 206,
+        "index": 352,
+        "pc": 1537,
+        "port": 2814,
+        "tinframe": 12278,
+        "value": 10
+       },
+       {
+        "frame": 206,
+        "index": 353,
+        "pc": 1537,
+        "port": 3582,
+        "tinframe": 14457,
+        "value": 13
+       },
+       {
+        "frame": 206,
+        "index": 354,
+        "pc": 1537,
+        "port": 2814,
+        "tinframe": 16610,
+        "value": 10
+       },
+       {
+        "frame": 206,
+        "index": 355,
+        "pc": 1537,
+        "port": 3582,
+        "tinframe": 18802,
+        "value": 13
+       },
+       {
+        "frame": 206,
+        "index": 356,
+        "pc": 1537,
+        "port": 2814,
+        "tinframe": 20950,
+        "value": 10
+       },
+       {
+        "frame": 206,
+        "index": 357,
+        "pc": 1537,
+        "port": 3582,
+        "tinframe": 23134,
+        "value": 13
+       },
+       {
+        "frame": 206,
+        "index": 358,
+        "pc": 1537,
+        "port": 2814,
+        "tinframe": 25282,
+        "value": 10
+       }
+      ],
+      "scanned": 360,
+      "truncated": true
+     }
+    },
+    {
+     "query": {
+      "event": "in",
+      "limit": 10
+     },
+     "answer": {
+      "count": 10,
+      "direction": "in",
+      "event": "in",
+      "hits": [
+       {
+        "frame": 151,
+        "index": 0,
+        "pc": 14474,
+        "port": 65533,
+        "tinframe": 2382,
+        "value": 255
+       },
+       {
+        "frame": 151,
+        "index": 1,
+        "pc": 14480,
+        "port": 65533,
+        "tinframe": 2413,
+        "value": 255
+       },
+       {
+        "frame": 151,
+        "index": 2,
+        "pc": 14500,
+        "port": 65533,
+        "tinframe": 2513,
+        "value": 255
+       },
+       {
+        "frame": 151,
+        "index": 3,
+        "pc": 662,
+        "port": 65278,
+        "tinframe": 2749,
+        "value": 255
+       },
+       {
+        "frame": 151,
+        "index": 4,
+        "pc": 662,
+        "port": 65022,
+        "tinframe": 2808,
+        "value": 255
+       },
+       {
+        "frame": 151,
+        "index": 5,
+        "pc": 662,
+        "port": 64510,
+        "tinframe": 2867,
+        "value": 255
+       },
+       {
+        "frame": 151,
+        "index": 6,
+        "pc": 662,
+        "port": 63486,
+        "tinframe": 2926,
+        "value": 255
+       },
+       {
+        "frame": 151,
+        "index": 7,
+        "pc": 662,
+        "port": 61438,
+        "tinframe": 2985,
+        "value": 255
+       },
+       {
+        "frame": 151,
+        "index": 8,
+        "pc": 662,
+        "port": 57342,
+        "tinframe": 3044,
+        "value": 255
+       },
+       {
+        "frame": 151,
+        "index": 9,
+        "pc": 662,
+        "port": 49150,
+        "tinframe": 3103,
+        "value": 254
+       }
+      ],
+      "scanned": 11,
+      "truncated": true
+     }
+    },
+    {
+     "query": {
+      "event": "out",
+      "limit": 10
+     },
+     "answer": {
+      "count": 10,
+      "direction": "out",
+      "event": "out",
+      "hits": [
+       {
+        "frame": 151,
+        "index": 0,
+        "pc": 23310,
+        "port": 32765,
+        "tinframe": 2029,
+        "value": 23
+       },
+       {
+        "frame": 151,
+        "index": 1,
+        "pc": 14472,
+        "port": 65533,
+        "tinframe": 2370,
+        "value": 7
+       },
+       {
+        "frame": 151,
+        "index": 2,
+        "pc": 14478,
+        "port": 65533,
+        "tinframe": 2401,
+        "value": 14
+       },
+       {
+        "frame": 151,
+        "index": 3,
+        "pc": 14498,
+        "port": 65533,
+        "tinframe": 2501,
+        "value": 14
+       },
+       {
+        "frame": 151,
+        "index": 4,
+        "pc": 23310,
+        "port": 32765,
+        "tinframe": 3964,
+        "value": 7
+       },
+       {
+        "frame": 151,
+        "index": 5,
+        "pc": 23310,
+        "port": 32765,
+        "tinframe": 4456,
+        "value": 23
+       },
+       {
+        "frame": 151,
+        "index": 6,
+        "pc": 23310,
+        "port": 32765,
+        "tinframe": 4618,
+        "value": 7
+       },
+       {
+        "frame": 151,
+        "index": 7,
+        "pc": 23310,
+        "port": 32765,
+        "tinframe": 5117,
+        "value": 23
+       },
+       {
+        "frame": 151,
+        "index": 8,
+        "pc": 993,
+        "port": 8190,
+        "tinframe": 5383,
+        "value": 31
+       },
+       {
+        "frame": 151,
+        "index": 9,
+        "pc": 993,
+        "port": 4094,
+        "tinframe": 18301,
+        "value": 15
+       }
+      ],
+      "scanned": 11,
+      "truncated": true
+     }
+    }
+   ]
+  }
+ ]
+}

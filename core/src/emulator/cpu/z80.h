@@ -428,7 +428,8 @@ public:
     void NotifyInstructionStart();               // run the observers for the instruction at m1_pc
     void NotifyMachineM1Before(uint16_t address);  // run machineM1Hook before the opcode read
     void NotifyMachineM1(uint16_t address);      // run machineM1Hook (out of line, see m1_cycle)
-    uint8_t in(uint16_t port);
+    uint8_t in(uint16_t port);       // the value the CPU gets (TTD port-read journal applied)
+    uint8_t inFromBus(uint16_t port);  // the value the bus drives (devices, floating bus)
     void out(uint16_t port, uint8_t val);
     void retn();
 

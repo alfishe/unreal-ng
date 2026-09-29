@@ -877,6 +877,31 @@ std::string FormatTtdStatus(const Json::Value& status)
     {
         out << ", " << status["bookmark_count"].asUInt64() << " bookmark(s)";
     }
+    if (status["input_event_count"].asUInt64() > 0 || status["external_event_count"].asUInt64() > 0)
+    {
+        out << ", " << status["input_event_count"].asUInt64() << " input event(s), "
+            << status["external_event_count"].asUInt64() << " replay barrier(s)";
+    }
+    if (status.isMember("input_history_complete") && !status["input_history_complete"].asBool())
+    {
+        out << " (loaded file predates saved input: in-frame replay may differ from the recording)";
+    }
+    if (status["port_journal_active"].asBool())
+    {
+        out << ", port journals: " << status["port_read_count"].asUInt64() << " IN, "
+            << status["port_write_count"].asUInt64() << " OUT (replay isolated from media and host devices; "
+            << "'port_events' searches them)";
+    }
+    else if (status["port_journal_off_reason"].isString())
+    {
+        out << ", port journals off (" << status["port_journal_off_reason"].asString() << ")";
+    }
+    if (status["port_replay_value_mismatches"].asUInt64() > 0 || status["port_replay_divergences"].asUInt64() > 0)
+    {
+        out << ", replay: " << status["port_replay_value_mismatches"].asUInt64()
+            << " device answer(s) differed (the CPU got the recorded values), "
+            << status["port_replay_divergences"].asUInt64() << " divergence(s)";
+    }
     if (status["last_drop_reason"].isString())
     {
         out << ", last session dropped: " << status["last_drop_reason"].asString();
@@ -2179,7 +2204,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"status", "start", "stop", "invalidate", "position", "markers", "seek", "step_back_frame",
                                "step_forward_frame", "step_back_instruction", "step_forward_instruction", "reverse_step",
-                               "reverse_continue", "find_last", "resume", "dump", "load", "bookmark_add", "bookmark_list",
+                               "reverse_continue", "find_last", "port_events", "resume", "dump", "load", "bookmark_add", "bookmark_list",
                                "bookmark_delete", "seek_bookmark", "coverage_probe", "coverage_scan", "coverage_summary"})
     {
         schema["properties"]["action"]["enum"].append(action);
@@ -2193,6 +2218,10 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "'step_back_frame'/'step_forward_frame', 'step_back_instruction'/'step_forward_instruction', "
         "'reverse_step' (count instructions OR tstates back), 'reverse_continue' (run backward until PC hits one of pcs), "
         "'find_last' (latest write/read/execute/io at an address before the current point, or before before_frame). "
+        "'port_events' answers 'when did the program ...' from the port journals without replay (needs a stopped or "
+        "paused recording, works on a loaded file): event 'key' (saw a key down; event_arg a key name such as 'a', "
+        "'enter', 'space'), 'ear' (saw the tape signal change), 'ay-read' / 'ay-write' / 'ay-select' (event_arg an AY "
+        "register), 'border', 'beeper', 'in' / 'out' (narrow with port / port_mask / value / value_mask). "
         "'resume' continues recording from the current (or given) point and DISCARDS the history after it; it needs the "
         "machine positioned in history (seek or step first - it fails right after 'stop'). "
         "Files: 'dump' / 'load' a .ttd session (path on the emulator's machine; load needs the same machine model). "
@@ -2245,7 +2274,37 @@ void RegisterTimeTravel(ToolRegistry& registry)
     }
     schema["properties"]["access"]["description"] = "find_last: access kind to search for (default 'write')";
     schema["properties"]["value"]["type"] = "string";
-    schema["properties"]["value"]["description"] = "find_last: only accesses that moved this byte value (0..255)";
+    schema["properties"]["value"]["description"] =
+        "find_last: only accesses that moved this byte value (0..255); port_events: (value & value_mask) == value";
+    schema["properties"]["event"]["type"] = "string";
+    schema["properties"]["event"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* e : {"key", "ear", "ay-read", "ay-write", "ay-select", "border", "beeper", "in", "out"})
+        schema["properties"]["event"]["enum"].append(e);
+    schema["properties"]["event"]["description"] = "port_events: what to find (see 'action')";
+    schema["properties"]["event_arg"]["type"] = "string";
+    schema["properties"]["event_arg"]["description"] =
+        "port_events: key name for 'key' (a named key counts only in reads of its half-row alone; none = any key), "
+        "AY register 0..15 for the ay events";
+    schema["properties"]["newest"]["type"] = "boolean";
+    schema["properties"]["newest"]["description"] = "port_events: the last hits, newest first, instead of the first";
+    schema["properties"]["port"]["type"] = "string";
+    schema["properties"]["port"]["description"] = "port_events: (port & port_mask) == port; alone: an exact port";
+    schema["properties"]["port_mask"]["type"] = "string";
+    schema["properties"]["value_mask"]["type"] = "string";
+    schema["properties"]["match"]["type"] = "string";
+    schema["properties"]["match"]["description"] = "port_events value test: any | equals | any-clear | any-set";
+    schema["properties"]["trigger"]["type"] = "string";
+    schema["properties"]["trigger"]["description"] =
+        "port_events: every | rising (the test starts passing) | change (the masked value changes), per port";
+    schema["properties"]["ay_register"]["type"] = "integer";
+    schema["properties"]["ay_register"]["description"] = "port_events: only while this AY register is selected";
+    schema["properties"]["stream_mask"]["type"] = "string";
+    schema["properties"]["stream_mask"]["description"] =
+        "port_events: address bits that separate streams for rising/change (0xFFFF every port, 0x0001 the ULA)";
+    schema["properties"]["file"]["type"] = "string";
+    schema["properties"]["file"]["description"] =
+        "port_events: a .ttd file on the emulator's machine to search instead of the current session - it is not "
+        "loaded, the session is untouched (works while recording)";
     schema["properties"]["pc_from"]["type"] = "string";
     schema["properties"]["pc_from"]["description"] = "find_last: only accesses made by code with PC >= pc_from";
     schema["properties"]["pc_to"]["type"] = "string";
@@ -2256,9 +2315,10 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["before_tin"]["type"] = "integer";
     schema["properties"]["before_tin"]["description"] = "find_last: T-states within before_frame (default 0)";
     schema["properties"]["from_frame"]["type"] = "integer";
-    schema["properties"]["from_frame"]["description"] = "Starting frame for coverage_scan / coverage_summary";
+    schema["properties"]["from_frame"]["description"] =
+        "Starting frame for coverage_scan / coverage_summary / port_events";
     schema["properties"]["to_frame"]["type"] = "integer";
-    schema["properties"]["to_frame"]["description"] = "Ending frame for coverage_scan / coverage_summary";
+    schema["properties"]["to_frame"]["description"] = "Ending frame for coverage_scan / coverage_summary / port_events";
     schema["properties"]["kind"]["type"] = "string";
     schema["properties"]["kind"]["description"] = "Coverage kind: 'executed', 'written', or 'read'";
     schema["properties"]["addr_from"]["type"] = "string";
@@ -2271,7 +2331,9 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["phys_page"]["description"] =
         "Optional physical RAM page (0..255) for find_last or a coverage query - picks the bank on paged machines";
     schema["properties"]["limit"]["type"] = "integer";
-    schema["properties"]["limit"]["description"] = "Max results for coverage_scan (default 200) or max buckets for coverage_summary (default 100)";
+    schema["properties"]["limit"]["description"] =
+        "Max results for coverage_scan (default 200) or port_events (default 100), or max buckets for coverage_summary "
+        "(default 100)";
     schema["properties"]["bucket_size"]["type"] = "integer";
     schema["properties"]["bucket_size"]["description"] = "Frames per bucket for coverage_summary (default: auto)";
     schema["required"].append("action");
@@ -2404,6 +2466,29 @@ void RegisterTimeTravel(ToolRegistry& registry)
                 {
                     done(ToolResult::Error(error));
                     return;
+                }
+            }
+            else if (action == "port_events")
+            {
+                if (!args["event"].isString())
+                {
+                    done(ToolResult::Error("Action 'port_events' requires 'event': key, ear, ay-read, ay-write, "
+                                           "ay-select, border, beeper, in or out"));
+                    return;
+                }
+                (*body)["event"] = args["event"];
+                if (args.isMember("event_arg"))
+                    (*body)["arg"] = args["event_arg"];
+                if (args.isMember("from_frame"))
+                    (*body)["from"] = args["from_frame"];
+                if (args.isMember("to_frame"))
+                    (*body)["to"] = args["to_frame"];
+                // The rest go through verbatim: the WebAPI checks them
+                for (const char* field : {"limit", "newest", "port", "port_mask", "value", "value_mask", "match",
+                                          "trigger", "stream_mask", "ay_register", "file"})
+                {
+                    if (args.isMember(field))
+                        (*body)[field] = args[field];
                 }
             }
             else if (action == "dump" || action == "load")
@@ -2548,6 +2633,29 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                    "; the search cannot look past it." + FormatSearchWindow(b);
                         }
                         return "Not found in the recorded history." + FormatSearchWindow(b);
+                    }, done);
+                }
+                else if (action == "port_events")
+                {
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/port-events"), body.get(), caller, [](const Json::Value& b) {
+                        std::ostringstream out;
+                        out << b["count"].asUInt64() << " hit(s)" << (b["truncated"].asBool() ? " (more than the limit)" : "")
+                            << " among " << b["scanned"].asUInt64() << " " << b["direction"].asString() << " record(s)";
+                        const Json::Value& hits = b["hits"];
+                        const Json::ArrayIndex shown = std::min<Json::ArrayIndex>(hits.size(), 40);
+                        for (Json::ArrayIndex i = 0; i < shown; i++)
+                        {
+                            const Json::Value& h = hits[i];
+                            out << "\n  " << FormatTimePoint(h["frame"], h["tinframe"]) << " PC " << Hex16(h["pc"].asUInt())
+                                << " port " << Hex16(h["port"].asUInt()) << " value " << h["value"].asUInt();
+                            if (h.isMember("ay_register"))
+                                out << " (R" << h["ay_register"].asInt() << ")";
+                        }
+                        if (hits.size() > shown)
+                            out << "\n  ... " << (hits.size() - shown) << " more in the structured result";
+                        if (hits.size() > 0)
+                            out << "\nSeek to a hit's frame/tinframe to inspect the machine there.";
+                        return out.str();
                     }, done);
                 }
                 else if (action == "resume")

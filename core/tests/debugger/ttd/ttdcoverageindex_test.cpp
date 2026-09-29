@@ -439,3 +439,110 @@ TEST(TTD_CoverageIndex_Test, CorruptBlockSizesAreRefusedBeforeAllocating)
     EXPECT_FALSE(load(patched(kRawSizeAt, 0x7FFFFFFFu)));
     EXPECT_FALSE(load(patched(kCompressedSizeAt, 0xFFFFFFFFu)));
 }
+
+// ---------------------------------------------------------------------------
+// DropFramesFrom: a resume from the past discards the future. The index must
+// forget it - including inside a sealed or open block that straddles the cut -
+// and must never prove an absence for the partial frame of a mid-frame resume.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+/// Frames 0..count-1, frame f touching key (f % 7) of page 1
+void SealFrames(TTDCoverageIndex& index, uint64_t count)
+{
+    for (uint64_t f = 0; f < count; ++f)
+        SealFrameWith(index, f, TTDCoverageKind::Written, {MakeCoverageKey(1, static_cast<uint16_t>(0x4000 + f % 7))});
+}
+
+bool TouchesKey(const TTDCoverageIndex& index, uint64_t frame, uint16_t offset)
+{
+    std::vector<TTDCoverageKey> keys;
+    if (!index.GetFrameKeys(TTDCoverageKind::Written, frame, keys))
+        return false;
+    for (TTDCoverageKey k : keys)
+        if (k == MakeCoverageKey(1, offset))
+            return true;
+    return false;
+}
+}  // namespace
+
+TEST(TTD_CoverageIndex_Test, DropFramesFromCutsASealedBlockThatStraddlesTheCut)
+{
+    TTDCoverageIndex index;
+    // Two sealed blocks (64 frames each) and a partly filled open one
+    SealFrames(index, 150);
+    index.DropFramesFrom(100, /*partialFirstFrame=*/false);
+
+    uint64_t first = 0, last = 0;
+    ASSERT_TRUE(index.CoveredRange(TTDCoverageKind::Written, first, last));
+    EXPECT_EQ(first, 0u);
+    EXPECT_EQ(last, 99u);
+    EXPECT_EQ(index.SealedFrameCount(TTDCoverageKind::Written), 100u);
+    for (uint64_t f = 0; f < 100; ++f)
+        EXPECT_TRUE(TouchesKey(index, f, static_cast<uint16_t>(0x4000 + f % 7))) << "frame " << f << " lost";
+    EXPECT_FALSE(index.CoversFrame(TTDCoverageKind::Written, 100));
+
+    // New history continues from the cut, in order
+    SealFrameWith(index, 100, TTDCoverageKind::Written, {MakeCoverageKey(1, 0x7777)});
+    EXPECT_TRUE(TouchesKey(index, 100, 0x7777));
+    EXPECT_FALSE(TouchesKey(index, 100, 0x4000 + 100 % 7)) << "the discarded frame 100 is still answered";
+}
+
+TEST(TTD_CoverageIndex_Test, DropFramesFromCutsTheOpenBlock)
+{
+    TTDCoverageIndex index;
+    SealFrames(index, 70);  // one sealed block of 64, frames 64..69 open
+    index.DropFramesFrom(66, false);
+    EXPECT_EQ(index.SealedFrameCount(TTDCoverageKind::Written), 66u);
+    EXPECT_TRUE(TouchesKey(index, 65, 0x4000 + 65 % 7));
+    EXPECT_FALSE(index.CoversFrame(TTDCoverageKind::Written, 66));
+    SealFrameWith(index, 66, TTDCoverageKind::Written, {MakeCoverageKey(1, 0x1234)});
+    EXPECT_TRUE(TouchesKey(index, 66, 0x1234));
+}
+
+TEST(TTD_CoverageIndex_Test, DropFramesFromBeforeTheFirstCoveredFrameEmptiesTheIndex)
+{
+    TTDCoverageIndex index;
+    for (uint64_t f = 10; f < 20; ++f)
+        SealFrameWith(index, f, TTDCoverageKind::Written, {MakeCoverageKey(1, 0x4000)});
+    index.DropFramesFrom(5, false);
+    uint64_t first = 0, last = 0;
+    EXPECT_FALSE(index.CoveredRange(TTDCoverageKind::Written, first, last));
+    EXPECT_EQ(index.SealedFrameCount(TTDCoverageKind::Written), 0u);
+}
+
+/// A mid-frame resume: the resume frame's set would miss the accesses before
+/// the resume point, so it is sealed as a hole. The hole is "not covered" -
+/// reverse search replays it - and FindLastFrameTouching refuses to skip it
+TEST(TTD_CoverageIndex_Test, PartialFirstFrameBecomesAHoleThatProvesNothing)
+{
+    TTDCoverageIndex index;
+    SealFrames(index, 20);
+    index.DropFramesFrom(12, /*partialFirstFrame=*/true);
+
+    // The pending accesses of the partial frame 12 (after the resume point)
+    index.Record(TTDCoverageKind::Written, MakeCoverageKey(1, 0x5555));
+    index.SealFrame(12);
+    SealFrameWith(index, 13, TTDCoverageKind::Written, {MakeCoverageKey(1, 0x6666)});
+
+    EXPECT_FALSE(index.CoversFrame(TTDCoverageKind::Written, 12)) << "the partial frame claims coverage";
+    EXPECT_TRUE(index.CoversFrame(TTDCoverageKind::Written, 11));
+    EXPECT_TRUE(index.CoversFrame(TTDCoverageKind::Written, 13));
+    EXPECT_TRUE(index.FrameMayContain(TTDCoverageKind::Written, 12, 0, 0x3FFF, false, 0))
+        << "a hole must never prune the frame";
+
+    uint64_t found = 0;
+    EXPECT_FALSE(index.FindLastFrameTouching(TTDCoverageKind::Written, MakeCoverageKey(1, 0x4000), 13, found))
+        << "the search walked past the hole and answered from before it";
+
+    // The hole survives a save and a load (rebuilt from the gap between blocks)
+    index.FlushOpenBlocks();
+    std::stringstream stream;
+    ASSERT_TRUE(index.Serialize(stream));
+    TTDCoverageIndex loaded;
+    ASSERT_TRUE(loaded.Deserialize(stream));
+    EXPECT_FALSE(loaded.CoversFrame(TTDCoverageKind::Written, 12));
+    EXPECT_TRUE(loaded.CoversFrame(TTDCoverageKind::Written, 11));
+    EXPECT_TRUE(loaded.CoversFrame(TTDCoverageKind::Written, 13));
+}

@@ -62,6 +62,8 @@
 #include "ttdcodecpagestore.h"
 #include "ttdcoverageindex.h"
 #include "ttdperipheralregistry.h"
+#include "ttdportjournal.h"
+#include "ttdportsearch.h"
 #include "timetravelframecache.h"
 
 // Forward declarations — we don't pull emulator headers into this header.
@@ -196,6 +198,36 @@ struct TTDSessionInfo
     /// Advisory bookmarks currently held (TD-4). Zero is a session without
     /// annotations — complete and correct.
     size_t bookmarkCount = 0;
+
+    /// Replay inputs of the session: input events (keyboard, mouse, GS host
+    /// stimuli) and external-event markers (replay barriers) currently held.
+    size_t inputEventCount = 0;
+    size_t externalEventCount = 0;
+
+    /// False only for a session loaded from a file written before inputs and
+    /// markers were saved (.ttd header bits 6-7 absent): replay inside a frame
+    /// runs without the recorded input and may differ from the recording, and
+    /// seeks may cross points replay cannot reproduce. Restoring a checkpoint
+    /// itself stays exact.
+    bool inputHistoryComplete = true;
+
+    /// Port-read journal (ttd-port-read-journal.md): true when the session
+    /// holds every IN result of its history, so replay feeds the CPU recorded
+    /// values and needs no media or host device. False on configurations the
+    /// first version does not isolate (portJournalOffReason says which) and
+    /// for files without the section.
+    bool portJournalActive = false;
+    std::string portJournalOffReason;
+    uint64_t portReadCount = 0;        ///< IN results recorded
+    uint64_t portWriteCount = 0;       ///< OUTs recorded
+    size_t portJournalBytes = 0;       ///< both journals' size in a .ttd file
+    /// Replayed reads whose live device answer differed from the recording
+    /// (the CPU got the recorded value): a changed or missing medium, a host
+    /// device. portReplayDivergences counts replayed INs and OUTs at another
+    /// time, from another instruction or to another port, and OUTs of another
+    /// value: execution itself left the recording (expected 0)
+    uint64_t portReplayValueMismatches = 0;
+    uint64_t portReplayDivergences = 0;
 
     /// Why the last session with history was dropped (the InvalidateSession
     /// reason, e.g. a device TTD cannot follow ending a recording); empty
@@ -465,6 +497,20 @@ public:
     /// (see ttddumpformat.h::kMaxSupportedSchemaVersion).
     bool DeserializeSession(std::istream& in, std::string& err);
 
+private:
+    /// The port journals of a file read by SearchPortEventsInFile
+    struct FilePortJournals
+    {
+        TTDPortJournal reads{TTDPortJournal::Direction::Read};
+        TTDPortJournal writes{TTDPortJournal::Direction::Write};
+    };
+    /// DeserializeSession's body. With `journalsOnly` the file is parsed and
+    /// checked the same way but nothing is committed: its port journals are
+    /// handed out, and the machine-compatibility checks are skipped
+    bool DeserializeSessionImpl(std::istream& in, std::string& err, FilePortJournals* journalsOnly);
+
+public:
+
     /// @brief Session-kind guard decision core (TSFM design §8.2).
     ///
     /// Pure decision: does a recorded session's TurboSound-slot blob set
@@ -631,6 +677,24 @@ public:
 
     /// @brief Read-only access to the input journal (playback cursor, tests).
     inline const TTDInputJournal& GetInputJournal() const { return _inputJournal; }
+
+    /// @brief Read-only access to the port-read journal (tests, status).
+    inline const TTDPortJournal& GetPortReadJournal() const { return _portReads; }
+    inline const TTDPortJournal& GetPortWriteJournal() const { return _portWrites; }
+
+    /// @brief "When did the program ..." over the port journals
+    /// (ttdportsearch.h): no replay, works on loaded files. Fails with a reason
+    /// when the session has no port journals, or while a recording is running
+    /// (pause it: the journals are only written by the running emulation)
+    TTDPortSearchResult SearchPortEvents(const TTDPortQuery& q) const;
+
+    /// @brief The same search over a .ttd file on disk, without loading it:
+    /// the current session and machine are not touched. The whole file is
+    /// read and checked like a load (CRCs, section layout); the checks that
+    /// tie a session to this machine (model, ROM set, sound slots) are skipped
+    /// - the journals do not need them. Fails with a reason for an unreadable
+    /// file or one without port journals
+    TTDPortSearchResult SearchPortEventsInFile(const std::string& path, const TTDPortQuery& q);
 
     // -----------------------------------------------------------------------
     // Input ownership: live input vs the recorded journal
@@ -1575,6 +1639,11 @@ private:
         std::unordered_map<uint8_t, std::vector<uint8_t>> peripheralBlobs;
         size_t inputCursor = 0;            ///< journal playback cursor (ServiceInput)
         bool   inputPlaybackArmed = false;
+        /// Port-read journal mode and position (a throwaway replay moves them)
+        TTDPortJournal::Mode portReadMode = TTDPortJournal::Mode::Off;
+        uint64_t portReadCursor = 0;
+        TTDPortJournal::Mode portWriteMode = TTDPortJournal::Mode::Off;
+        uint64_t portWriteCursor = 0;
         /// Keyboard matrix + counters: journal playback inside a sandbox
         /// replay presses/releases keys on the live device.
         Keyboard::InputState keyboard{};
@@ -1673,6 +1742,12 @@ private:
     /// StartRecording and InvalidateSession, so GetSessionInfo can tell a
     /// loaded recording from a live one.
     bool        _loadedFromFile = false;
+    /// See TTDSessionInfo::inputHistoryComplete: false while the session came
+    /// from a file without the input-journal / external-event sections.
+    bool        _inputHistoryComplete = true;
+    /// The last SeekToInternal ended on a checkpoint without replaying past
+    /// it (ResumeRecordingFrom: the resume frame is then collected whole)
+    bool        _seekLandedOnCheckpoint = false;
     std::string _sourcePath;
     uint64_t    _capturedAtUnixMs = 0;
     uint8_t     _sessionModelId = 0;
@@ -1730,9 +1805,27 @@ private:
     /// Refresh EmulatorContext::ttdInputWork (per-step gate)
     void UpdateInputWorkFlag();
 
-    /// RestoreCheckpoint + ArmInputPlayback: every restore that navigates
-    /// history (seek, reverse queries) - not the capture/restore self-test
+    /// RestoreCheckpoint + ArmInputPlayback + port-journal playback from the
+    /// checkpoint's cursor: every restore that navigates history (seek,
+    /// reverse queries) - not the capture/restore self-test
     void RestoreCheckpointForReplay(const TTDCheckpoint& cp);
+
+    /// Port-read journal of the session (ttd-port-read-journal.md) and whether
+    /// it holds every IN of the history (_portJournalOffReason says why not)
+    TTDPortJournal _portReads{TTDPortJournal::Direction::Read};
+    TTDPortJournal _portWrites{TTDPortJournal::Direction::Write};
+    bool _portJournalValid = false;
+    std::string _portJournalOffReason;
+
+    /// Why the current configuration cannot record an isolating port-read
+    /// journal; nullptr when it can
+    const char* PortJournalUnsupportedReason() const;
+    /// Give up the journal for this session (a gap in it): replay falls back
+    /// to the live devices
+    void DropPortJournal(const char* reason);
+    /// Point EmulatorContext::ttdPortReads / ttdPortWrites at the journals while they record
+    /// or plays, null otherwise
+    void SyncPortJournalHook();
 
     /// External-event journal — replay barriers for nondeterminism sources
     /// that aren't input-journaled in v1 (Item 6). Same lifecycle as the

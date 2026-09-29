@@ -314,6 +314,12 @@ struct TTDCheckpoint
     /// One entry per physical RAM page (16 KB) of the active model. Each
     /// entry references 4 codec-store sub-page slots (4 KB each).
     std::vector<TTDPageRef> ramPages;
+
+    /// Port journal positions at the capture: the records before them were
+    /// made before this checkpoint, so a replay from it starts there
+    /// (TTDPortJournal: IN results, OUTs). 0 when the session has no journals.
+    uint64_t portReadCursor = 0;
+    uint64_t portWriteCursor = 0;
 };
 
 // ---------------------------------------------------------------------------

@@ -364,6 +364,8 @@ private:
                        const std::vector<std::string>& args);
     void HandleTTDFindLast(const ClientSession& session, EmulatorContext* context,
                            const std::vector<std::string>& args);
+    void HandleTTDPortEvents(const ClientSession& session, EmulatorContext* context,
+                             const std::vector<std::string>& args);
     void HandleTTDStepInstruction(const ClientSession& session, EmulatorContext* context,
                                    const std::vector<std::string>& args);
     void HandleTTDReverseStep(const ClientSession& session, EmulatorContext* context,
