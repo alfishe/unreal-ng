@@ -2,8 +2,8 @@
  * szxtool: SZX reference files and an outside reader, through libspectrum
  * (the library Fuse uses to read and write SZX).
  *
- *   szxtool convert <in.sna|z80|szx> <out.szx>   read any snapshot, write SZX
- *   szxtool synth <machine> <out.szx>             a synthetic snapshot with known values
+ *   szxtool convert <in.sna|z80|szx> <out>        read any snapshot, write SZX (or .z80 / .sna by extension)
+ *   szxtool synth <machine> <out>                 a synthetic snapshot with known values (same output rule)
  *   szxtool dump <file>                           the state as libspectrum reads it
  *
  * Machines for synth: 48 128 plus2 plus2a plus3 pentagon pentagon512
@@ -30,8 +30,15 @@ static unsigned char* ReadFile(const char* path, size_t* length)
     return data;
 }
 
+/* SZX, or .z80 / .sna by the output file's extension */
 static int WriteSzx(libspectrum_snap* snap, const char* path)
 {
+    const char* dot = strrchr(path, '.');
+    libspectrum_id_t type = LIBSPECTRUM_ID_SNAPSHOT_SZX;
+    if (dot && !strcmp(dot, ".z80"))
+        type = LIBSPECTRUM_ID_SNAPSHOT_Z80;
+    else if (dot && !strcmp(dot, ".sna"))
+        type = LIBSPECTRUM_ID_SNAPSHOT_SNA;
     libspectrum_creator* creator = libspectrum_creator_alloc();
     libspectrum_creator_set_program(creator, "szxtool");
     libspectrum_creator_set_major(creator, 1);
@@ -39,7 +46,7 @@ static int WriteSzx(libspectrum_snap* snap, const char* path)
     libspectrum_byte* buffer = NULL;
     size_t length = 0;
     int flags = 0;
-    libspectrum_error error = libspectrum_snap_write(&buffer, &length, &flags, snap, LIBSPECTRUM_ID_SNAPSHOT_SZX, creator, 0);
+    libspectrum_error error = libspectrum_snap_write(&buffer, &length, &flags, snap, type, creator, 0);
     libspectrum_creator_free(creator);
     if (error)
         return 1;
