@@ -10,11 +10,9 @@ Analysis of xpeccy-plus debugger features and proposed enhancements for unreal-q
 
 | Document | Priority | Description |
 |----------|----------|-------------|
-| [Basic Features Parity](parity-basic-features.md) | **HIGH** | Stack, navigation, flags, signals |
-| [Feature Comparison](feature-comparison.md) | Reference | Full xpeccy vs unreal-qt analysis |
-| [Expression Evaluator](expression-evaluator.md) | Low | Future: conditional breakpoint support |
-| [Breakpoint Enhancements](breakpoint-enhancements.md) | Low | Future: ranges, conditions, hit counts |
-| [UI Mockups](mockups.md) | Reference | All widget mockups |
+| [Expression Evaluator](../2026-08-26-expression-evaluator/design.md) | Low | Future: conditional breakpoint support (own folder) |
+| [Breakpoint Enhancements](../2026-08-26-breakpoint-enhancements/design.md) | Low | Future: ranges, conditions, hit counts (own folder) |
+| [UI Mockups](ui-mockups.md) | Reference | All widget mockups |
 
 ## High Priority (Parity)
 

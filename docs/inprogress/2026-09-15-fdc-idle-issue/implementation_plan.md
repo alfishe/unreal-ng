@@ -68,7 +68,7 @@ Investigation and execution traces on `master` confirmed that Kempston mouse dec
 
 ### Core FDC Engine
 
-#### [MODIFY] [`core/src/emulator/io/fdc/wd1793.cpp`](file:///Users/dev/Projects/Local%20GitLab/unreal/core/src/emulator/io/fdc/wd1793.cpp)
+#### [MODIFY] [`core/src/emulator/io/fdc/wd1793.cpp`](../../../core/src/emulator/io/fdc/wd1793.cpp)
 1. **`startType2Command()` and `startType3Command()`**:
    - Call `prolongFDDMotorRotation();` unconditionally at command entry, matching `startType1Command()` and `cmdForceInterrupt()`.
    - Then check `if (!isReady()) transitionFSM(WD1793::S_END_COMMAND); else loadHead();`.
@@ -81,7 +81,7 @@ Investigation and execution traces on `master` confirmed that Kempston mouse dec
 
 ### Automated Tests
 
-#### [MODIFY] [`core/tests/emulator/io/fdc/wd1793_sleep_timeout_test.cpp`](file:///Users/dev/Projects/Local%20GitLab/unreal/core/tests/emulator/io/fdc/wd1793_sleep_timeout_test.cpp)
+#### [MODIFY] [`core/tests/emulator/io/fdc/wd1793_sleep_timeout_test.cpp`](../../../core/tests/emulator/io/fdc/wd1793_sleep_timeout_test.cpp)
 1. **`ReadSectorStartsMotorAfterTimeoutSleepAndAwakeIdle`**:
    - Drive the controller until motor times out and controller enters sleep.
    - Issue Read Sector (`0x80`) via `portDeviceOutMethod(PORT_1F, 0x80)`.

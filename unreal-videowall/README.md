@@ -2,8 +2,6 @@
 
 A multi-instance ZX Spectrum emulator display application that arranges multiple running emulator instances in a grid layout—perfect for demonstrations, testing, retro computing exhibitions, or creating impressive visual displays of classic software running simultaneously.
 
-![ZX Spectrum Video Wall](../docs/images/videowall-preview.png)
-
 ## Overview
 
 **Unreal Video Wall** is a Qt6-based application that spawns and manages multiple independent ZX Spectrum emulator instances, each displayed as a tile in an auto-arranged grid. Built on top of the Unreal-NG emulator core, it provides a visually striking way to run many emulators simultaneously with full WebAPI and CLI automation support.
@@ -243,8 +241,6 @@ Part of the [Unreal-NG](https://github.com/alfishe/unreal-ng) ZX Spectrum emulat
 # Unreal Video Wall
 
 A multi-instance ZX Spectrum emulator display application that arranges multiple running emulator instances in a grid layout—perfect for demonstrations, testing, retro computing exhibitions, or creating impressive visual displays of classic software running simultaneously.
-
-![ZX Spectrum Video Wall](../docs/images/videowall-preview.png)
 
 ## Overview
 

@@ -25,20 +25,20 @@ Implement the complete set of HUD enhancements:
 
 ### 1. Core Breakpoint Modeling (`core/`)
 
-#### [MODIFY] [`breakpointmanager.h`](file:///Users/dev/Projects/Local%20GitLab/unreal/core/src/debugger/breakpoints/breakpointmanager.h)
+#### [MODIFY] [`breakpointmanager.h`](../../../core/src/debugger/breakpoints/breakpointmanager.h)
 - Add `bool hidden = false;` to `BreakpointDescriptor`.
 
-#### [MODIFY] [`notifications.h`](file:///Users/dev/Projects/Local%20GitLab/unreal/core/src/emulator/notifications.h)
+#### [MODIFY] [`notifications.h`](../../../core/src/emulator/notifications.h)
 - Extend `BreakpointTriggeredPayload`:
   - Add field `bool hidden{false};`.
   - Add optional constructor parameter `bool isHidden = false` with default value for backwards compatibility across all callers and tests.
 
-#### [MODIFY] [`z80.cpp`](file:///Users/dev/Projects/Local%20GitLab/unreal/core/src/emulator/cpu/z80.cpp), [`memory.cpp`](file:///Users/dev/Projects/Local%20GitLab/unreal/core/src/emulator/memory/memory.cpp), [`portdecoder.cpp`](file:///Users/dev/Projects/Local%20GitLab/unreal/core/src/emulator/ports/portdecoder.cpp)
+#### [MODIFY] [`z80.cpp`](../../../core/src/emulator/cpu/z80.cpp), [`memory.cpp`](../../../core/src/emulator/memory/memory.cpp), [`portdecoder.cpp`](../../../core/src/emulator/ports/portdecoder.cpp)
 - When triggering a breakpoint and creating `BreakpointTriggeredPayload`:
   - Query `BreakpointManager` to check if `bp->hidden || bp->note == "StepOver" || bp->note == "StepOut" || bp->group == "TemporaryBreakpoints"`.
   - Set `isHidden = true` on `BreakpointTriggeredPayload`.
 
-#### [MODIFY] [`emulator.cpp`](file:///Users/dev/Projects/Local%20GitLab/unreal/core/src/emulator/emulator.cpp)
+#### [MODIFY] [`emulator.cpp`](../../../core/src/emulator/emulator.cpp)
 - In `Emulator::StepOver()`:
   - Mark `bpDesc->hidden = true;` in addition to `bpDesc->note = "StepOver";`.
   - In `breakpoint_handler` when the stepover breakpoint is hit:
@@ -48,7 +48,7 @@ Implement the complete set of HUD enhancements:
 
 ### 2. Qt UI & Debugger Layer (`unreal-qt/`)
 
-#### [MODIFY] [`debuggerwindow.cpp`](file:///Users/dev/Projects/Local%20GitLab/unreal/unreal-qt/src/debugger/debuggerwindow.cpp)
+#### [MODIFY] [`debuggerwindow.cpp`](../../../unreal-qt/src/debugger/debuggerwindow.cpp)
 - In `stepOut()`:
   - Mark `bpDesc->hidden = true;` when setting the temporary step-out breakpoint.
 
@@ -56,7 +56,7 @@ Implement the complete set of HUD enhancements:
 
 ### 3. HUD Layer (`unreal-qt/src/hud/`)
 
-#### [MODIFY] [`hudtiming.h`](file:///Users/dev/Projects/Local%20GitLab/unreal/unreal-qt/src/hud/core/hudtiming.h)
+#### [MODIFY] [`hudtiming.h`](../../../unreal-qt/src/hud/core/hudtiming.h)
 - Add standardized duration constant:
   ```cpp
   // --- Indicator Durations & Timeouts ---
@@ -71,7 +71,7 @@ Implement the complete set of HUD enhancements:
   }
   ```
 
-#### [MODIFY] [`hudmodel.h`](file:///Users/dev/Projects/Local%20GitLab/unreal/unreal-qt/src/hud/core/hudmodel.h) & [`hudmodel.cpp`](file:///Users/dev/Projects/Local%20GitLab/unreal/unreal-qt/src/hud/core/hudmodel.cpp)
+#### [MODIFY] [`hudmodel.h`](../../../unreal-qt/src/hud/core/hudmodel.h) & [`hudmodel.cpp`](../../../unreal-qt/src/hud/core/hudmodel.cpp)
 1. **Global Stack Limit of 3 & Hard Eviction**:
    - In `HudModel::notify`:
      - While `_toasts.size() >= _queuedToasts`: hard-evict the lowest priority / oldest toast.
@@ -95,7 +95,7 @@ Implement the complete set of HUD enhancements:
      - `StateRun` / `StateResumed` $\to$ `"EXECUTE"`, ttl `IndicatorExecuteTimeout`.
      - `StateStopped` $\to$ clear indicator `"pause"`.
 
-#### [MODIFY] [`hudoverlay.cpp`](file:///Users/dev/Projects/Local%20GitLab/unreal/unreal-qt/src/hud/qt/hudoverlay.cpp)
+#### [MODIFY] [`hudoverlay.cpp`](../../../unreal-qt/src/hud/qt/hudoverlay.cpp)
 - In `drawIndicator()` for `el.id == "ind/pause"`:
   - LED dot color:
     - `"EXECUTE"` $\to$ Green (`rgb(50, 220, 110)`).
@@ -106,10 +106,10 @@ Implement the complete set of HUD enhancements:
 
 ### 4. Automated Tests (`core/tests/` & `unreal-qt/tests/hud/`)
 
-#### [MODIFY] [`instance_tagged_payloads_test.cpp`](file:///Users/dev/Projects/Local%20GitLab/unreal/core/tests/common/instance_tagged_payloads_test.cpp)
+#### [MODIFY] [`instance_tagged_payloads_test.cpp`](../../../core/tests/common/instance_tagged_payloads_test.cpp)
 - Add unit test verifying `BreakpointTriggeredPayload` correctly stores and exposes the `hidden` boolean flag.
 
-#### [MODIFY] [`hudmodel_test.cpp`](file:///Users/dev/Projects/Local%20GitLab/unreal/unreal-qt/tests/hud/hudmodel_test.cpp)
+#### [MODIFY] [`hudmodel_test.cpp`](../../../unreal-qt/tests/hud/hudmodel_test.cpp)
 - Update `EventMapping_EmulatorStateChange`:
   - `StatePaused` sets `ind/pause` to `"PAUSE"`.
   - `StateRun` sets `ind/pause` to `"EXECUTE"`.
