@@ -1857,7 +1857,7 @@ bool TimeTravelManager::SubmitLiveInput(const TTDInputEvent& ev)
             std::lock_guard<std::mutex> lock(_pendingInputMutex);
             _pendingInput.push_back(ev);
         }
-        _context->ttdInputWork.store(true, std::memory_order_release);
+        _context->SetStepWork(StepWork::TtdInput, true);
         return true;
     }
 
@@ -1879,7 +1879,7 @@ TimeTravelManager::MachineTaskResult TimeTravelManager::SubmitMachineTask(std::f
             std::lock_guard<std::mutex> lock(_pendingInputMutex);
             _pendingTasks.push_back(std::move(task));
         }
-        _context->ttdInputWork.store(true, std::memory_order_release);
+        _context->SetStepWork(StepWork::TtdInput, true);
         return MachineTaskResult::Queued;
     }
 
@@ -1956,7 +1956,7 @@ void TimeTravelManager::UpdateInputWorkFlag()
         std::lock_guard<std::mutex> lock(_pendingInputMutex);
         pending = !_pendingInput.empty() || !_pendingTasks.empty();
     }
-    _context->ttdInputWork.store(_inputPlaybackArmed || pending, std::memory_order_release);
+    _context->SetStepWork(StepWork::TtdInput, _inputPlaybackArmed || pending);
 }
 
 void TimeTravelManager::ArmInputPlayback()

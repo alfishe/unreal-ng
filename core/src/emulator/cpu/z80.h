@@ -589,6 +589,11 @@ public:
     /// step - no opcode runs in the same iteration
     StepResult StepInstruction(bool skipBreakpoints = false);
 
+    /// LD R,A: the R it replaced minus the new one (7 bits, accumulated), so
+    /// that an R delta across a step still counts the step's fetches (the
+    /// RZX fetch counter, emulator/rzx/). One subtraction per LD R,A
+    uint8_t rLoadAdjust = 0;
+
     /// The CPU is at or past the end of the current frame
     bool IsFrameComplete() const { return t >= _frameLimit; }
 
@@ -656,6 +661,14 @@ public:
     /// Mask the ULA frame INT for this CPU (a ZX-Poly slave before the lock
     /// does not see the common frame INT). Local INT is not affected
     bool frameIntMasked = false;
+private:
+    /// StepInstruction after the per-step work: the interrupt acceptance or
+    /// one opcode, then the peripheral dispatch
+    StepResult StepCore(bool skipBreakpoints);
+    /// StepInstruction while an RZX recording plays: the frame end (forced
+    /// interrupt) at the recorded fetch count, and the step's fetches counted
+    StepResult StepInstructionRzx(bool skipBreakpoints);
+public:
     bool IntClearedByAcknowledge() const;  // machine's INT pulse ends at the acknowledge
     bool ProcessInterrupts(bool int_occured,  // Take care about incoming interrupts
                            unsigned int_start, unsigned int_end);  // Returns true if INT was handled (skip Z80Step)

@@ -224,7 +224,7 @@ TEST_F(NeoGSMedia_Test, EjectAndInsertStormWhileTheCardReadsTheSdCard)
         _ctx->pTimeTravelManager->SubmitMachineTask([this] { card()->resetCard(); });
         std::this_thread::sleep_for(std::chrono::milliseconds(3));
     }
-    ASSERT_TRUE(TestWait::For([this] { return !_ctx->ttdInputWork.load(); }));
+    ASSERT_TRUE(TestWait::For([this] { return !(_ctx->stepWork.load() & StepWork::TtdInput); }));
     ASSERT_TRUE(_ctx->pMediaManager->WaitApplied(SoundChip_NeoGS::SD_SLOT_ID, 2000));
     _emulator->Pause();
     ASSERT_TRUE(_emulator->WaitForPauseConfirmation(2000));

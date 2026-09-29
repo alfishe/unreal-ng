@@ -19,6 +19,7 @@
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/rzx/rzxplayer.h"
 #include "emulator/spectrumconstants.h"
 #include "emulator/video/screen.h"
 #include "emulator/video/ulacontention.h"
@@ -590,21 +591,8 @@ void Z80::BeginFrame()
         int_pending = true;
 }
 
-Z80::StepResult Z80::StepInstruction(bool skipBreakpoints)
+__forceinline Z80::StepResult Z80::StepCore(bool skipBreakpoints)
 {
-    // A CPU never put through a frame start (bare Core fixtures driving the
-    // CPU directly) has no frame geometry yet
-    if (_frameLimit == 0)
-        RecomputeFrameTiming();
-
-    // Input takes effect before this instruction: recorded journal events due
-    // at or before now (TTD playback) and live input queued by other threads.
-    // An event stamped T is first visible to the instruction starting at T -
-    // the machine state AT T (a seek target, a pause) does not include it yet.
-    // One relaxed load per instruction when there is none
-    if (_context->ttdInputWork.load(std::memory_order_relaxed) && _context->pTimeTravelManager)
-        _context->pTimeTravelManager->ServiceInput();
-
     StepResult result;
 
     // Handle interrupts if arrived. Returns true if an interrupt was accepted -
@@ -627,6 +615,94 @@ Z80::StepResult Z80::StepInstruction(bool skipBreakpoints)
     OnCPUStep();
 
     return result;
+}
+
+/// One step while an RZX recording plays (design §5). The frame's fetch
+/// count reached at an instruction boundary ends the RZX frame: the player
+/// checks it and the interrupt that closes it is raised here (the machine's
+/// own frame INT is masked for the playback). Otherwise the normal step runs
+/// and its R increments are counted: the acknowledge of an accepted INT / NMI
+/// is not a fetch, LD R,A reports the R it replaced (rLoadAdjust).
+/// Worked example: R = #7E before `DD 21 nn nn` (LD IX,nn): R = #00 after,
+/// (#00 - #7E) & #7F = 2 fetches
+Z80::StepResult Z80::StepInstructionRzx(bool skipBreakpoints)
+{
+    rzx::RzxPlayer& player = *_context->rzxPlayer;
+
+    // A redundant-prefix boundary is inside an instruction: the frame ends at
+    // the next real boundary (within the player's overrun tolerance)
+    const bool prefixPending = boundary == Z80_BOUNDARY_PREFIX_DD || boundary == Z80_BOUNDARY_PREFIX_FD;
+    if (!prefixPending && player.FrameDue())
+    {
+        // Distance from the machine's own INT position, for the drift statistic
+        int32_t drift = static_cast<int32_t>(t) - static_cast<int32_t>(_intStart + 1);
+        const int32_t frame = static_cast<int32_t>(_frameLimit);
+        if (frame > 0)
+        {
+            if (drift > frame / 2)
+                drift -= frame;
+            else if (drift <= -frame / 2)
+                drift += frame;
+        }
+
+        const rzx::FrameEnd end = player.EndFrame(pc, iff1 != 0, boundary == Z80_BOUNDARY_INT_SHADOW, drift);
+        if (end == rzx::FrameEnd::Interrupt)
+        {
+            // The NMOS LD A,I / LD A,R parity quirk only by option (SkoolKit flag 1)
+            if (!player.Options().ldAirParityQuirk && boundary == Z80_BOUNDARY_LD_A_IR)
+                boundary = Z80_BOUNDARY_NONE;
+            _context->pScreen->_vid.memcyc_lcmd = 0;  // new command (as ProcessInterrupts)
+            HandleINT(0xFF);
+            OnCPUStep();
+
+            StepResult result;
+            result.intAccepted = true;
+            if (player.EndPending()) [[unlikely]]
+                player.NotifyEnded();
+            return result;
+        }
+        if (player.EndPending()) [[unlikely]]
+        {
+            player.NotifyEnded();
+            return StepCore(skipBreakpoints);
+        }
+    }
+
+    const uint8_t r0 = r_low;
+    rLoadAdjust = 0;
+    const StepResult result = StepCore(skipBreakpoints);
+    uint8_t fetches = static_cast<uint8_t>((r_low - r0 + rLoadAdjust) & 0x7F);
+    if (result.intAccepted || result.nmiAccepted)
+        fetches = static_cast<uint8_t>(fetches - 1);
+    player.AddFetches(fetches);
+
+    if (player.EndPending()) [[unlikely]]
+        player.NotifyEnded();
+    return result;
+}
+
+Z80::StepResult Z80::StepInstruction(bool skipBreakpoints)
+{
+    // A CPU never put through a frame start (bare Core fixtures driving the
+    // CPU directly) has no frame geometry yet
+    if (_frameLimit == 0)
+        RecomputeFrameTiming();
+
+    // Per-step work, one relaxed load per instruction when there is none.
+    // Input takes effect before this instruction: recorded journal events due
+    // at or before now (TTD playback) and live input queued by other threads.
+    // An event stamped T is first visible to the instruction starting at T -
+    // the machine state AT T (a seek target, a pause) does not include it yet.
+    // An RZX playback wraps the step (StepInstructionRzx)
+    if (const uint8_t work = _context->stepWork.load(std::memory_order_relaxed)) [[unlikely]]
+    {
+        if ((work & StepWork::TtdInput) && _context->pTimeTravelManager)
+            _context->pTimeTravelManager->ServiceInput();
+        if ((work & StepWork::Rzx) && _context->rzxPlayer)
+            return StepInstructionRzx(skipBreakpoints);
+    }
+
+    return StepCore(skipBreakpoints);
 }
 
 void Z80::ApplyHardwareTurboNow()
@@ -854,14 +930,22 @@ uint8_t Z80::in(uint16_t port)
     // outside the session - media files, host devices
     // (ttd-port-read-journal.md). The devices still see the read and its side
     // effects. Time and PC are taken at the start of the I/O cycle
+    // RZX playback: the CPU gets the recorded value (emulator/rzx/, design
+    // §4); the devices still see the read. Below the TTD journal, so a TTD
+    // recording during playback stores the RZX-fed values
     if (ttd::TTDPortJournal* journal = _context->ttdPortReads) [[unlikely]]
     {
         const EmulatorState& st = _context->emulatorState;
         const uint64_t frame = st.frame_counter;
         const uint32_t tInFrame = st.TtdTInFrame(t);
         const uint16_t pc = m1_pc;
-        return journal->OnRead(port, inFromBus(port), frame, tInFrame, pc);
+        uint8_t value = inFromBus(port);
+        if (rzx::RzxPlayer* player = _context->rzxPlayer) [[unlikely]]
+            value = player->OnIn(port, value, pc);
+        return journal->OnRead(port, value, frame, tInFrame, pc);
     }
+    if (rzx::RzxPlayer* player = _context->rzxPlayer) [[unlikely]]
+        return player->OnIn(port, inFromBus(port), m1_pc);
     return inFromBus(port);
 }
 

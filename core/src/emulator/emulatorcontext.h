@@ -43,6 +43,15 @@ class MediaManager;
 // TTD manager lives in the ttd namespace - forward-declare so the context
 // can hold a pointer without pulling the full TTD headers into every consumer.
 namespace ttd { class TimeTravelManager; class TTDAccessProbe; class TTDPortJournal; }
+namespace rzx { class RzxPlayer; }
+
+/// Bits of EmulatorContext::stepWork: work Z80::StepInstruction does before
+/// an instruction, off the hot path
+namespace StepWork
+{
+    constexpr uint8_t TtdInput = 0x01;  ///< TTD journal playback armed or live input queued
+    constexpr uint8_t Rzx = 0x02;       ///< an RZX recording plays (fetch counting, frame ends)
+}
 
 #include "debugger/ttd/ttdprobe.h"  // inline member - needs full definition
 
@@ -194,10 +203,19 @@ public:
     // checks are read from the same thread.
     bool ttdReplayActive = false;
 
-    /// TTD input work pending for the executing thread: journal playback is
-    /// armed or live input is queued (TimeTravelManager::ServiceInput). One
-    /// relaxed load per instruction when idle
-    std::atomic<bool> ttdInputWork{false};
+    /// Per-step work for the executing thread (StepWork bits): TTD journal
+    /// playback armed or live input queued (TimeTravelManager::ServiceInput),
+    /// an RZX playback. One relaxed load per instruction when idle; bits are
+    /// set and cleared with fetch_or / fetch_and, as TTD and RZX own one each
+    std::atomic<uint8_t> stepWork{0};
+
+    void SetStepWork(uint8_t bit, bool on)
+    {
+        if (on)
+            stepWork.fetch_or(bit, std::memory_order_release);
+        else
+            stepWork.fetch_and(static_cast<uint8_t>(~bit), std::memory_order_release);
+    }
 
     /// TTD port journals while a session records or replays them, else null:
     /// Z80::in hands every IN result to ttdPortReads (recorded, or replaced by
@@ -205,6 +223,11 @@ public:
     /// (recorded, or checked). One predictable branch per IN / OUT when null
     ttd::TTDPortJournal* ttdPortReads = nullptr;
     ttd::TTDPortJournal* ttdPortWrites = nullptr;
+
+    /// The RZX player while a recording plays, else null (emulator/rzx/):
+    /// Z80::in hands every IN result to it for the recorded value. Set and
+    /// cleared on the emulation thread or with the machine paused
+    rzx::RzxPlayer* rzxPlayer = nullptr;
 
     // Phase 4 - reverse-search access probe (parent TDD 9.2). Inline
     // instance: every hot-path call site (MemoryWriteDebug, MemoryReadDebug,

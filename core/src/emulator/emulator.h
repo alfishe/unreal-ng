@@ -9,6 +9,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <random>
 #include <string>
@@ -24,6 +25,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/mainloop.h"
 #include "emulatorcontext.h"
+#include "emulator/rzx/rzxsession.h"
 
 
 class BreakpointManager;
@@ -109,6 +111,11 @@ protected:
     std::atomic<bool> _hiddenGroupMember{false};  // see SetHiddenGroupMember
     std::mutex _speedInterceptorMutex;
     std::function<bool(uint8_t)> _speedInterceptor;  // see SetSpeedChangeInterceptor
+
+    // RZX playback, created on first use; _rzxMutex serializes its commands
+    mutable std::mutex _rzxMutex;
+    std::unique_ptr<rzx::RzxSession> _rzxSession;
+    rzx::RzxSession& RzxSessionLocked();
 
     // Control flow
     volatile bool _stopRequested = false;
@@ -278,7 +285,23 @@ public:
     void Stop();
 
     // File format operations
-    bool LoadSnapshot(const std::string& path);
+    /// `reportedPath`: the file named in the load notification and the core
+    /// state instead of `path` (an RZX start snapshot written to a temporary file)
+    bool LoadSnapshot(const std::string& path, const std::string& reportedPath = {});
+
+    /// RZX playback (emulator/rzx/rzxsession.h): the recording's start snapshot
+    /// is loaded, then every IN returns the recorded value and the interrupts
+    /// follow the recorded fetch counts until the end, a desync or StopRzx().
+    /// The machine continues live afterwards. ModelMismatch names the model to
+    /// switch to (rzx::PlayResult::requiredModel)
+    rzx::PlayResult PlayRzx(const std::string& path, const rzx::PlayerOptions& options = {});
+    rzx::PlayResult PlayRzx(std::shared_ptr<const rzx::File> file, const std::string& sourcePath,
+                            const rzx::PlayerOptions& options = {});
+    bool StopRzx();
+    bool IsRzxPlaying() const;
+    rzx::SessionStatus GetRzxStatus() const;
+    /// `ext` (no dot, any case) is an RZX recording
+    static bool IsRzxExtension(const std::string& ext);
     bool SaveSnapshot(const std::string& path);
     /// A tape file (any TapeLoaderRegistry format) or a folder into the tape
     /// slot, at once; the deck stops and plays the new tape from its start

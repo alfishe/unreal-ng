@@ -512,11 +512,11 @@ TEST_F(TTD_InputJournalGS_Test, SubmitLiveInput_FromAnotherThreadIsAppliedByTheL
     const uint64_t writesBefore = Card()->getActivityCounters().hostDataWritten;
 
     ASSERT_TRUE(_ttd->SubmitLiveInput(GS(ttd::TTDInputKind::GSData, 0x6B)));
-    EXPECT_TRUE(_context->ttdInputWork.load()) << "queued for the loop thread";
+    EXPECT_TRUE((_context->stepWork.load() & StepWork::TtdInput) != 0) << "queued for the loop thread";
     EXPECT_EQ(Card()->getActivityCounters().hostDataWritten, writesBefore) << "applied while the machine was parked";
 
     _emulator->Resume();
-    ASSERT_TRUE(TestWait::For([this] { return !_context->ttdInputWork.load(); }));
+    ASSERT_TRUE(TestWait::For([this] { return !(_context->stepWork.load() & StepWork::TtdInput); }));
     _emulator->Pause();
     ASSERT_TRUE(_emulator->WaitForPauseConfirmation(2000));
 
