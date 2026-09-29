@@ -8,8 +8,16 @@
 #include "emulator/io/keyboard/keyboard.h"
 #include "emulator/memory/memory.h"
 #include "emulator/ports/models/portdecoder_scorpion256.h"
+#include "emulator/io/ide/idecontroller.h"
+#include "emulator/ports/portdiagrecorder.h"
+#include "base/featuremanager.h"
+#include "emulator/media/mediamanager.h"
+#include "common/filehelper.h"
+#include "_helpers/testpathhelper.h"
 
+#include <algorithm>
 #include <cstdio>
+#include <fstream>
 #include <string>
 
 /// SMUC stub verification (profrom-smuc-not-found-and-driver-disassembly.md,
@@ -330,4 +338,93 @@ TEST(ScorpionSMUC_Test, KeyboardRowsAreNotShadowedBySmuc)
     // Both arms coexist: with the board present the SMUC register stubs keep
     // answering their own ports while the rows read the key matrix
     EXPECT_EQ(decoder->DecodePortIn(0x5FBA, 0x0000), 0x3F);
+}
+
+/// IDE design R4: with the SMUC scheme the IDE window is the real disk core.
+/// The ProfROM boot finds the drive: it sends IDENTIFY DEVICE (#EC) through
+/// the command register #FFBE, gets the data, and goes on to READ SECTORS
+/// (#20) - the "IDE controller found" path instead of "not found"
+/// Real-ROM boot: slower than 50 ms by nature
+TEST(ScorpionSMUC_Test, ProfRomIdentifiesTheDiskThroughTheDiskCore)
+{
+    ManagedEmulator emulator;
+    EmulatorContext* context = CreateProfScorpContext(emulator);
+    ASSERT_TRUE(context);
+    PortDecoder_Scorpion256* decoder = GetScorpionDecoder(context);
+    decoder->GetSMUCNvram().SetFixedTime(1767268830);
+
+    context->config.ide_scheme = IDE_SMUC;
+    context->pCore->RefitIde();
+    ASSERT_TRUE(context->pIdeController->Enabled());
+    const std::string image = TestPathHelper::GetUniqueTestScratchPath("smuc-hdd.img");
+    {
+        std::ofstream out(FileHelper::ToFsPath(image), std::ios::binary);
+        out << std::string(4096 * 512, '\0');
+    }
+    MediaSource source;
+    source.path = image;
+    InsertOptions options;
+    options.immediate = true;
+    ASSERT_TRUE(context->pMediaManager->Insert("ide0.master", source, options).Ok());
+
+    // Every write to the ATA command register
+    ASSERT_TRUE(emulator->GetFeatureManager()->setFeature(Features::kPortTrace, true));
+    PortDiagnosticRecorder* recorder = decoder->getPortTraceRecorder();
+    ASSERT_NE(recorder, nullptr);
+    PortTraceFilterRule rule;
+    rule.rawPort = 0xFFBE;
+    recorder->addIncludeRule(rule);
+    recorder->start();
+
+    emulator->EnableTurboMode();
+    std::vector<uint8_t> commands;
+    for (int frame = 0; frame < 1500; frame += 50)
+    {
+        emulator->RunNFrames(50);
+        commands.clear();
+        for (const PortTraceEvent& event : recorder->getAll())
+        {
+            if (event.isOut())
+                commands.push_back(event.value);
+        }
+        if (std::find(commands.begin(), commands.end(), 0x20) != commands.end())
+            break;
+    }
+    const auto identify = std::find(commands.begin(), commands.end(), 0xEC);
+    ASSERT_NE(identify, commands.end()) << "the ProfROM never asked for IDENTIFY";
+    EXPECT_NE(std::find(identify, commands.end(), 0x20), commands.end()) << "no READ SECTORS after IDENTIFY";
+    EXPECT_EQ(context->pIdeController->Channel().Unit(0)->State().error & ata::Error::ABRT, 0);
+    std::remove(image.c_str());
+}
+
+/// IDE design Q3: #FFBA bit 0 = 0 resets the IDE drive; ProfROM keeps it at 1
+/// in normal use and pulses it low to reset (MAME; ProfROM 4.01 page 7 #15C7)
+TEST(ScorpionSMUC_Test, IdeResetIsBitZeroLow)
+{
+    ManagedEmulator emulator;
+    EmulatorContext* context = CreateProfScorpContext(emulator);
+    ASSERT_TRUE(context);
+    context->config.ide_scheme = IDE_SMUC;
+    context->pCore->RefitIde();
+    PortDecoder_Scorpion256* decoder = GetScorpionDecoder(context);
+    const std::string image = TestPathHelper::GetUniqueTestScratchPath("smuc-reset.img");
+    {
+        std::ofstream out(FileHelper::ToFsPath(image), std::ios::binary);
+        out << std::string(256 * 512, '\0');
+    }
+    MediaSource source;
+    source.path = image;
+    InsertOptions options;
+    options.immediate = true;
+    ASSERT_TRUE(context->pMediaManager->Insert("ide0.master", source, options).Ok());
+
+    // D7 = 0 keeps #FEBE on the task file (D7 = 1 turns it into the control block)
+    OutFFBA(decoder, 0x77);                       // normal use: D0 = 1
+    decoder->DecodePortOut(0xFABE, 0x42, 0x0000);  // sector count
+    OutFFBA(decoder, 0x77);                       // an NVRAM / clock access
+    EXPECT_EQ(decoder->DecodePortIn(0xFABE, 0x0000), 0x42) << "D0 = 1 leaves the drive alone";
+    OutFFBA(decoder, 0x76);                       // D0 = 0: reset
+    OutFFBA(decoder, 0x77);
+    EXPECT_EQ(decoder->DecodePortIn(0xFABE, 0x0000), 0x01) << "the reset signature";
+    std::remove(image.c_str());
 }

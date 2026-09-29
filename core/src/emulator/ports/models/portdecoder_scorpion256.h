@@ -81,6 +81,8 @@ public:
     /// SMUC board presence (absent by default - see _smucEnabled)
     void SetSmucEnabled(bool enabled) { _smucEnabled = enabled; }
     bool IsSmucEnabled() const { return _smucEnabled; }
+    /// The board is on the bus: enabled by hand (tests), or the machine's IDE scheme is SMUC
+    bool IsSmucFitted() const { return _smucEnabled || _ide.Scheme() == IDE_SMUC; }
     /// endregion </Helper methods>
 
 protected:

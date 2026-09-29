@@ -729,13 +729,14 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | General Sound / NeoGS | `state audio gs` | `GET /state/audio/gs` (`?ram=1`: #4000-#7FFF window) | `gs_state()` | `gs_state()` | `audio_gs` |
 | Covox / SoundDrive | `state audio covox` | `GET /state/audio/covox` | `audio_covox_state()` | `audio_covox_state()` | `audio_covox` |
 | Beta Disk WD1793 | `state fdc` | `GET /state/fdc` | `fdc_state()` | `fdc_state()` | `fdc` |
+| IDE board (disks, CD-ROM) | `state ide` | `GET /state/ide` | `ide_state()` | `ide_state()` | `ide` |
 | Memory contention | `state contention` | `GET /state/contention` | `contention_state()` | `contention_state()` | `contention` |
 | Static port map & routing | `ports` | `GET /ports` | `ports_map()` | `ports_map()` | `ports` |
 | Paging latches + bank table | `paging` | `GET /state/paging` | `paging_state()` | `paging_state()` | `paging` |
 
 Every report carries `available` (false with a `description` when the
 device is not on this machine — e.g. `audio/fm` on a plain TurboSound
-configuration, `fdc` on a machine without Beta Disk, `gs` without a GS card).
+configuration, `fdc` on a machine without Beta Disk, `ide` without an IDE board, `gs` without a GS card).
 WebAPI answers 404 in that case; Lua/Python return the same object (`gs_state()`
 used to return nil - it now returns this object too); the MCP aspect reports it
 in the summary instead of failing the call. Field lists for GS and Covox: the

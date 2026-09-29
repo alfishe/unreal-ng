@@ -53,10 +53,11 @@ enum class PortDeviceId : uint8_t
     Palette        = 0x15,  // ATM / ZX-Evo palette write (#xxFF with palette writes enabled)
     GeneralSound   = 0x16,  // Ports #B3 / #BB / #33 - General Sound host mailbox
     SdCard         = 0x17,  // Ports #77 / #57 outside shadow - ZX-Evo Z-Controller SD card (config / SPI data)
+    Ide            = 0x18,  // IDE board ports (Nemo, ZX-Evo NemoIDE, ATM, SMUC, Profi, DivIDE)
 };
 
 /// Highest PortDeviceId value (listings and name lookups iterate 0..this)
-constexpr PortDeviceId kPortDeviceIdLast = PortDeviceId::SdCard;
+constexpr PortDeviceId kPortDeviceIdLast = PortDeviceId::Ide;
 
 /// Flag bits packed into PortTraceEvent::flags
 namespace PortTraceFlags

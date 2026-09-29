@@ -13,6 +13,8 @@
 #include <cassert>
 #include <array>
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <initializer_list>
 
 Config::Config(EmulatorContext* context)
@@ -123,6 +125,39 @@ bool Config::LoadConfigFile(const std::string& filename)
 	result = ParseConfig(inimanager);
 
 	return result;
+}
+
+bool Config::ParseIdeScheme(const char* value, IDE_SCHEME& scheme)
+{
+	static const std::pair<const char*, IDE_SCHEME> schemes[] = {
+		{"NONE", IDE_NONE}, {"ATM", IDE_ATM}, {"NEMO", IDE_NEMO}, {"NEMO-A8", IDE_NEMO_A8},
+		{"NEMO-DIVIDE", IDE_NEMO_DIVIDE}, {"SMUC", IDE_SMUC}, {"PROFI", IDE_PROFI}, {"DIVIDE", IDE_DIVIDE}};
+	const std::string name = StringHelper::ToUpper(std::string(StringHelper::Trim(value ? value : "")));
+	for (const auto& [text, id] : schemes)
+	{
+		if (name == text)
+		{
+			scheme = id;
+			return true;
+		}
+	}
+	return false;
+}
+
+const char* Config::IdeSchemeName(IDE_SCHEME scheme)
+{
+	switch (scheme)
+	{
+		case IDE_NONE: return "NONE";
+		case IDE_ATM: return "ATM";
+		case IDE_NEMO: return "NEMO";
+		case IDE_NEMO_A8: return "NEMO-A8";
+		case IDE_NEMO_DIVIDE: return "NEMO-DIVIDE";
+		case IDE_SMUC: return "SMUC";
+		case IDE_PROFI: return "PROFI";
+		case IDE_DIVIDE: return "DIVIDE";
+	}
+	return "?";
 }
 
 bool Config::ParseEvoFpgaVariant(const char* value)
@@ -321,7 +356,38 @@ bool Config::ParseConfig(IniFile& inimanager)
 		config.input.mousescale = static_cast<char>(scale);
 	}
 
-	// HDD section
+	// HDD section: the machine's IDE board and how its units are set up. The
+	// images (Image0/1, HD0RO/1RO) are media: MediaConfig reads them
+	{
+		config.ide_scheme = IDE_NONE;
+		if (const char* scheme = inimanager.GetValue(hdd, "Scheme", nullptr); scheme && !ParseIdeScheme(scheme, config.ide_scheme))
+			MLOGWARNING("Config: [HDD] Scheme=%s is unknown: no IDE", scheme);
+		for (int unit = 0; unit < 2; unit++)
+		{
+			IDE_CONFIG& ide = config.ide[unit];
+			ide = IDE_CONFIG{};
+			const std::string n = std::to_string(unit);
+			if (const char* chs = inimanager.GetValue(hdd, ("CHS" + n).c_str(), nullptr))
+			{
+				unsigned c = 0, h = 0, s = 0;
+				if (std::sscanf(chs, "%u/%u/%u", &c, &h, &s) == 3 && h <= 16 && s <= 255)
+				{
+					ide.c = c;
+					ide.h = h;
+					ide.s = s;
+				}
+				else
+					MLOGWARNING("Config: [HDD] CHS%d=%s: expected C/H/S (heads up to 16)", unit, chs);
+			}
+			// A CD drive: CDn=1, or the unit's configured image is an ISO
+			const char* cd = inimanager.GetValue(hdd, ("CD" + n).c_str(), nullptr);
+			const char* image = inimanager.GetValue("MEDIA", unit ? "ide0.slave" : "ide0.master", nullptr);
+			if (!image || !*image)
+				image = inimanager.GetValue(hdd, ("Image" + n).c_str(), nullptr);
+			const bool iso = image && StringHelper::ToLower(FileHelper::GetFileExtension(image)) == "iso";
+			ide.cd = ((cd && std::atoi(cd) != 0) || iso) ? 1 : 0;
+		}
+	}
 
 	// SOUND section
 	config.sound.covoxFB = (int)inimanager.GetLongValue(sound, "CovoxFB", 0);

@@ -20,7 +20,7 @@ const std::vector<std::string>& TapeExtensions()
 
 const std::vector<std::pair<std::string, std::vector<std::string>>>& MediaToolActions()
 {
-    static const std::vector<std::string> insertOptions = {"access", "format", "fs", "codepage", "free", "wp", "kind",
+    static const std::vector<std::string> insertOptions = {"access", "format", "fs", "codepage", "free", "wp", "kind", "device",
                                                            "save", "export", "discard", "end_recording", "async", "immediate"};
     static const std::vector<std::pair<std::string, std::vector<std::string>>> actions = {
         {"list", {}},
@@ -144,6 +144,9 @@ void RegisterMediaSlots(ToolRegistry& registry)
     schema["properties"]["access"]["enum"].append("writethrough");
     schema["properties"]["export"]["description"] = "Disposition: write a dirty medium to this new file before it leaves";
     schema["properties"]["kind"]["description"] = "formats: filter; insert auto: the kind a folder becomes (floppy, block)";
+    schema["properties"]["device"]["type"] = "string";
+    schema["properties"]["device"]["description"] =
+        "insert / swap on an IDE unit: disk or cdrom - swap the unit's drive first (the unit must be empty)";
     schema["required"].append("action");
 
     registry.Register(

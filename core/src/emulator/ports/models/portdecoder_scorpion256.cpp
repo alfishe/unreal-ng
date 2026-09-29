@@ -123,6 +123,10 @@ void PortDecoder_Scorpion256::reset()
 
 uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
 {
+    // The IDE board decodes first (UnrealSpeccy io.cpp order)
+    if (uint8_t ideValue = 0xFF; TryIdePortIn(port, pc, ideValue))
+        return ideValue;
+
     /// region <Override submodule>
     static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_IN;
     /// endregion </Override submodule>
@@ -213,7 +217,7 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
     // service plane (profrom-smuc-not-found-and-driver-disassembly.md). Must
     // precede the #FE arm: every SMUC address also carries the weak FE pattern
     // (A5=1, A1=1, A0=0) and would otherwise read the keyboard instead
-    else if (_context->config.mem_model == MM_PROFSCORP && IsPort_SMUC(port))
+    else if ((_context->config.mem_model == MM_PROFSCORP || _ide.Scheme() == IDE_SMUC) && IsPort_SMUC(port))
     {
         result = ReadSMUCPort(port);
         _lastPortDecoded = true;
@@ -356,6 +360,10 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
 
 void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
+    // The IDE board decodes first (UnrealSpeccy io.cpp order)
+    if (TryIdePortOut(port, value, pc))
+        return;
+
     /// region <Override submodule>
     static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT;
     /// endregion </Override submodule>
@@ -426,7 +434,7 @@ void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16
     // SMUC board - same family and ordering constraint as the IN path (the
     // #FE arm would otherwise swallow every #xxBA/#xxBE write as border,
     // keys and mic levels)
-    else if (_context->config.mem_model == MM_PROFSCORP && IsPort_SMUC(port))
+    else if ((_context->config.mem_model == MM_PROFSCORP || _ide.Scheme() == IDE_SMUC) && IsPort_SMUC(port))
     {
         WriteSMUCPort(port, value);
         disp.decodedPort = port;
@@ -922,7 +930,7 @@ uint8_t PortDecoder_Scorpion256::ReadSMUCPort(uint16_t port)
     // Board absent: nothing decodes the family, the bus floats. Constant #FF
     // (not the attribute-latch floating stream: its bit 6 varies with the
     // raster and would ACK the presence polls at random screen positions)
-    if (!_smucEnabled)
+    if (!IsSmucFitted())
         return 0xFF;
 
     switch (port & 0xA044)
@@ -944,10 +952,14 @@ uint8_t PortDecoder_Scorpion256::ReadSMUCPort(uint16_t port)
             return 0x57;
 
         case 0x8004:  // #D8BE - IDE data high byte (16-bit path)
+            if (_ide.Scheme() == IDE_SMUC)
+                return _ide.SmucIn(port, state.pFFBA);
             return 0x00;
 
         case 0xA004:  // #F8BE-#FFBE - IDE window, A10-A8 select the ATA register
         {
+            if (_ide.Scheme() == IDE_SMUC)
+                return _ide.SmucIn(port, state.pFFBA);  // the real disk core (IDE design §4, SMUC row)
             const uint8_t ideReg = static_cast<uint8_t>((port >> 8) & 0x07);
             switch (ideReg)
             {
@@ -970,14 +982,17 @@ void PortDecoder_Scorpion256::WriteSMUCPort(uint16_t port, uint8_t value)
     EmulatorState& state = *_state;
 
     // Board absent: no latch behind the window, the write is lost
-    if (!_smucEnabled)
+    if (!IsSmucFitted())
         return;
 
     switch (port & 0xA044)
     {
-        case 0xA000:  // #FFBA - bit 7 CMOS data phase, bits 4/6/5 = SDA/SCL/WP
+        case 0xA000:  // #FFBA - bit 7 CMOS data phase / IDE control block, bit 0 IDE reset, bits 4/6/5 = SDA/SCL/WP
             state.pFFBA = value;
             _smucNvram.WriteSerialLink(value);
+            if (!(value & 0x01) && _ide.Scheme() == IDE_SMUC)
+                _ide.ResetUnits();  // 0 resets (IDE design Q3): MAME smuc.cpp, and ProfROM 4.01 keeps
+                                    // D0 = 1 and pulses it low to reset (page 7 #15C7); UnrealSpeccy has it inverted
             break;
 
         case 0x8000:  // #DFBA - RTC address or data, latched by #FFBA bit 7
@@ -991,8 +1006,16 @@ void PortDecoder_Scorpion256::WriteSMUCPort(uint16_t port, uint8_t value)
             state.p7FBA = value;
             break;
 
+        case 0x8004:  // #D8BE - IDE data high byte latch
+            if (_ide.Scheme() == IDE_SMUC)
+                _ide.SmucOut(port, state.pFFBA, value);
+            break;
+
         case 0xA004:  // #F8BE-#FFBE - IDE window task file
-            _smucIdeRegs[static_cast<uint8_t>((port >> 8) & 0x07)] = value;
+            if (_ide.Scheme() == IDE_SMUC)
+                _ide.SmucOut(port, state.pFFBA, value);
+            else
+                _smucIdeRegs[static_cast<uint8_t>((port >> 8) & 0x07)] = value;
             break;
 
         default:      // PIC / version / revision / IDE high byte: nothing to latch

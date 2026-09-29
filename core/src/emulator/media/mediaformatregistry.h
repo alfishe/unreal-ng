@@ -3,7 +3,8 @@
 /// @file mediaformatregistry.h
 /// @brief The one place that knows formats (technical design §4): probes a
 /// source for a slot kind and builds the medium, access layer included.
-/// Block media: raw images, and host folders as FAT16 / FAT32 volumes (M1).
+/// Block media: raw images, HDF / HDI / fixed VHD (IDE), and host folders as
+/// FAT16 / FAT32 volumes (M1). Optical media: ISO 9660 images (CD drives).
 /// Floppies: every disk image format (FloppyFormats), and host folders built
 /// into a TR-DOS disk (M2). Tapes: every TapeLoaderRegistry format, and host
 /// folders built into a TZX (M3).
@@ -39,7 +40,7 @@ public:
 
     /// Wrap a ready block device (tests, builders) in the access layer
     static std::unique_ptr<Medium> WrapBlock(MediaSource source, AccessMode access, std::string format,
-                                             std::unique_ptr<IBlockDevice> base);
+                                             std::unique_ptr<IBlockDevice> base, MediaKind kind = MediaKind::Block);
 
     /// File extensions offered for a kind (GUI filters, MCP descriptions, errors)
     static std::vector<std::string> Extensions(MediaKind kind);

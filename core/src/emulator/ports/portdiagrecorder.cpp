@@ -413,6 +413,7 @@ const char* PortDiagnosticRecorder::DeviceIdToString(PortDeviceId id)
         case PortDeviceId::Palette:        return "Palette";
         case PortDeviceId::GeneralSound:   return "GeneralSound";
         case PortDeviceId::SdCard:         return "SdCard";
+        case PortDeviceId::Ide:            return "Ide";
         default:                           return "Unknown";
     }
 }

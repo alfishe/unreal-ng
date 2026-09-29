@@ -118,6 +118,11 @@ class Emulator:
         """Covox / SoundDrive report: fitment, the ports this model decodes, shared_with_beta128,
         the four DAC latches. available=False when no Covox is fitted"""
 
+    def ide_state(self) -> dict:
+        """IDE board report: scheme, gate, adapter latches, selected unit, intrq,
+        units[2] (kind, slot, medium, translation, task_file with decoded bits,
+        command, atapi sense on a CD drive). available=False without a board"""
+
     def fdc_state(self) -> dict:
         """Beta Disk WD1793 report: registers, status_bits, last_command, fsm_state,
         signals (intrq/drq), beta128_register, density, selected_drive, drives[4]"""

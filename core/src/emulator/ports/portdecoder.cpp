@@ -29,7 +29,7 @@
 #include "stdafx.h"
 
 /// region <Constructors / Destructors>
-PortDecoder::PortDecoder(EmulatorContext* context)
+PortDecoder::PortDecoder(EmulatorContext* context) : _ide(context)
 {
     _context = context;
 
@@ -42,6 +42,44 @@ PortDecoder::PortDecoder(EmulatorContext* context)
     _soundManager = context->pSoundManager;
     _logger = context->pModuleLogger;
 }
+
+/// region <IDE board>
+
+IdeAdapter::Gate PortDecoder::IdeGate()
+{
+    IdeAdapter::Gate gate;
+    gate.dosPorts = _state && (_state->flags & CF_TRDOS);
+    return gate;
+}
+
+bool PortDecoder::TryIdePortIn(uint16_t port, uint16_t pc, uint8_t& result)
+{
+    if (!_ide.Active() || !_ide.In(port, IdeGate(), result))
+        return false;
+    _lastPortDecoded = true;
+    PortDecodeDisposition disp;
+    disp.decodedPort = port;
+    disp.wasDecoded = true;
+    disp.wasHandledInline = true;
+    disp.device = PortDeviceId::Ide;
+    OnPortInComplete(port, result, pc, disp);
+    return true;
+}
+
+bool PortDecoder::TryIdePortOut(uint16_t port, uint8_t value, uint16_t pc)
+{
+    if (!_ide.Active() || !_ide.Out(port, IdeGate(), value))
+        return false;
+    PortDecodeDisposition disp;
+    disp.decodedPort = port;
+    disp.wasDecoded = true;
+    disp.wasHandledInline = true;
+    disp.device = PortDeviceId::Ide;
+    OnPortOutComplete(port, value, pc, disp);
+    return true;
+}
+
+/// endregion </IDE board>
 
 PortDecoder::~PortDecoder()
 {

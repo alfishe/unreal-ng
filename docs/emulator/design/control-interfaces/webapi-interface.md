@@ -308,6 +308,7 @@ GET  /api/v1/emulator/{id}/state/audio/gs      General Sound / NeoGS: mailbox, p
 GET  /api/v1/emulator/{id}/state/audio/covox   Covox / SoundDrive: fitment, ports this model decodes, Beta-128 shared ports, DAC latches (404 without Covox)
 GET  /api/v1/emulator/{id}/state/audio/channels  Audio mixer overview: per-device levels + master (muted, sample_rate_hz = live core rate, channels, bit depth)
 GET  /api/v1/emulator/{id}/state/fdc           Beta Disk WD1793: registers, status bits, FSM, signals, drives (404 without Beta Disk)
+GET  /api/v1/emulator/{id}/state/ide           IDE board: scheme, latches, both units' task file and command, CD sense (404 without a board)
 GET  /api/v1/emulator/{id}/state/contention    Memory contention: rule, switch, effective, interface, I/O rule, contended slots, per-kind waits (debug mode)
 ```
 

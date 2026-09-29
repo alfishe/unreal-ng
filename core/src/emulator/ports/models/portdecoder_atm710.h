@@ -105,6 +105,8 @@ public:
     // `pen=0` branch of the original set_banks() forces all windows to the
     // last ROM page)
     bool IsDosPortsEnabled();        // DOSEN || SYSEN: CF_DOSPORTS session OR ~CPM (aFF77.9=0)
+    /// The ATM IDE answers with the DOS ports (UnrealSpeccy io.cpp: CF_DOSPORTS)
+    IdeAdapter::Gate IdeGate() override;
 
     // Palette write gate: same dos/shadow line that gates the xx77 group on
     // the machine (xpeccy marks the palette entry dos=1). ATM710 uses the

@@ -378,12 +378,12 @@ struct DRAWER
 	DRAWER_FUNC func;
 };
 
+/// One IDE unit as the machine's config sets it up ([HDD] CHSn, CDn). The
+/// medium (ImageN, HDnRO) is in the media set: MediaConfig
 struct IDE_CONFIG
 {
-	char image[512];
-	unsigned c, h, s, lba;
-	uint8_t readonly;
-	uint8_t cd;
+	unsigned c = 0, h = 0, s = 0;	// geometry; 0/0/0: from the image header, else from its size
+	uint8_t cd = 0;					// 1: the unit is an ATAPI CD-ROM drive (auto for an .iso image)
 };
 
 enum RSM_MODE
@@ -568,10 +568,8 @@ struct CONFIG
 	uint32_t ramsize;
 	uint32_t romsize;
 
-	IDE_SCHEME ide_scheme;
-	IDE_CONFIG ide[2];
-	uint8_t ide_skip_real;
-	uint8_t cd_aspi;
+	IDE_SCHEME ide_scheme;			// [HDD] Scheme: the machine's IDE board (implementation-plan.md D8)
+	IDE_CONFIG ide[2];				// master, slave
 
 	uint32_t sd_delay;
 
@@ -878,8 +876,6 @@ enum AY_SCHEME
 
 /*
 #include "io/wd93/wd93.h"
-#include "io/hdd/hddio.h"
-#include "io/hdd/hdd.h"
 #include "input.h"
 #include "io/zf232/zf232.h"
 
@@ -1174,7 +1170,6 @@ struct EmulatorState
 	uint8_t ulaplus_cram[64];
 	uint8_t ulaplus_mode;
 	uint8_t ulaplus_reg;
-	uint8_t ide_hi_byte_r, ide_hi_byte_w, ide_hi_byte_w1, ide_read, ide_write; // high byte in IDE i/o
 	uint8_t profrom_bank;
 
 // Scorpion magic-button DOS trigger (DD50.1 "1-DOS/0-SOS", hardware-reference §9):

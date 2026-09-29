@@ -244,6 +244,10 @@ PortDecodeDisposition PortDecoder_ATM3::TraceDisposition(PortArm arm, uint16_t p
 
 uint8_t PortDecoder_ATM3::DecodePortIn(uint16_t port, uint16_t pc)
 {
+    // The IDE board decodes first (UnrealSpeccy io.cpp order)
+    if (uint8_t ideValue = 0xFF; TryIdePortIn(port, pc, ideValue))
+        return ideValue;
+
     uint8_t result = 0xFF;
     _lastPortDecoded = false;
 
@@ -357,6 +361,10 @@ uint8_t PortDecoder_ATM3::DecodePortIn(uint16_t port, uint16_t pc)
 
 void PortDecoder_ATM3::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
+    // The IDE board decodes first (UnrealSpeccy io.cpp order)
+    if (TryIdePortOut(port, value, pc))
+        return;
+
     const PortArm arm = ClassifyPort(port, /*isWrite*/ true);
 
     PortDecodeDisposition disp;

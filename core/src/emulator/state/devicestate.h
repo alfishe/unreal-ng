@@ -55,6 +55,14 @@ StateNode Gs(EmulatorContext* context, bool ramWindow = false);
 /// whether the DAC was written last frame.
 StateNode Covox(EmulatorContext* context);
 
+/// IDE board: `Ide()` the scheme and its gate, the adapter latches, the
+/// selected unit and INTRQ, and per unit: kind (hard disk / CD-ROM), slot,
+/// medium (source, sectors, geometry, write protect), the task file with the
+/// status / error / device control bits decoded, the command in progress
+/// with its transfer position, the CHS translation, and on a CD drive the
+/// disc, the byte count limit, unit attention and the sense (key / ASC / ASCQ)
+StateNode Ide(EmulatorContext* context);
+
 /// Screen reports (Screen::DescribeScreenState):
 /// - `Screen(verbose)`: model, video mode, resolution, border, shadow screen,
 ///   active screen and RAM pages, contention, flash phase; verbose adds each

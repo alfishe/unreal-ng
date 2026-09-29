@@ -63,6 +63,8 @@ public:
     /// EXT mode qualifier (UnrealSpeccy default: cpm && rom14; Karabas additionally allows
     /// dosAct && !rom14, not implemented here - unproven by UnrealSpeccy sources)
     bool IsExtMode() const;
+    /// The Profi IDE answers in EXT mode only (IDE design §3.2)
+    IdeAdapter::Gate IdeGate() override;
     /// #DFFD bit 4 (WOROM) lifts the #7FFD lock (UnrealSpeccy io.cpp)
     bool IsPagingLocked() const override
     {

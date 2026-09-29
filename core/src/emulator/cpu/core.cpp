@@ -9,6 +9,7 @@
 #include "emulator/io/fdc/diskautostart.h"
 #include "emulator/io/fdc/diskfastload.h"
 #include "emulator/io/fdc/upd765.h"
+#include "emulator/io/ide/idecontroller.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/tape/tapefastload.h"
 #include "emulator/io/tape/tapeturbocontroller.h"
@@ -324,21 +325,16 @@ bool Core::Init()
 
     /// endregion </Recording manager>
 
-    /// region <HDD>
+    /// region <IDE>
 
+    // The board from [HDD] Scheme; its unit slots register with the media manager
     if (result)
     {
-        result = false;
-
-        // Create HDD controller
-        _hdd = new HDD(_context);
-        if (_hdd)
-        {
-            result = true;
-        }
+        _ide = new IdeController(_context);
+        _context->pIdeController = _ide;
     }
 
-    /// endregion </HDD>
+    /// endregion </IDE>
 
     /// region <Z80>
 
@@ -489,11 +485,10 @@ void Core::Release()
         _screen = nullptr;
     }
 
-    if (_hdd != nullptr)
-    {
-        delete _hdd;
-        _hdd = nullptr;
-    }
+    // Before the media manager goes (Emulator deletes it after Core): the unit slots unregister
+    _context->pIdeController = nullptr;
+    delete _ide;
+    _ide = nullptr;
 
     _context->pUPD765 = nullptr;
     delete _upd765;
@@ -719,7 +714,7 @@ void Core::Reset(ROMModeEnum mode)
     _betaDisk->reset();          // BetaDisk floppy controller
     if (_upd765)
         _upd765->reset();        // +3 floppy controller
-    _hdd->Reset();               // Reset IDE controller
+    _ide->Reset();               // IDE units: the machine's reset line (IDE design §3.3)
     _portDecoder->reset();       // Reset peripheral port decoder (sets model-specific port defaults)
 
     // Apply the model-specific boot register defaults for the RESET= mode (port
@@ -941,4 +936,14 @@ void Core::AdjustFrameCounters()
 void Core::UpdateScreen()
 {
     GetZ80()->OnCPUStep();
+}
+
+void Core::RefitIde()
+{
+    _context->pIdeController = nullptr;
+    delete _ide;
+    _ide = new IdeController(_context);
+    _context->pIdeController = _ide;
+    if (_portDecoder)
+        _portDecoder->GetIdeAdapter().Reset();
 }

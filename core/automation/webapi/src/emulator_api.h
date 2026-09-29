@@ -252,6 +252,9 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getStateAudioFMActive, "/api/v1/emulator/state/audio/fm", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioFMIndexActive, "/api/v1/emulator/state/audio/fm/{chip}", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateFdcActive, "/api/v1/emulator/state/fdc", drogon::Get);
+    // IDE board (implementation: api/state_device_api.cpp, core DeviceState::Ide)
+    ADD_METHOD_TO(EmulatorAPI::getStateIde, "/api/v1/emulator/{id}/state/ide", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateIdeActive, "/api/v1/emulator/state/ide", drogon::Get);
     // Memory contention (implementation: api/state_device_api.cpp, core DeviceState::Contention)
     ADD_METHOD_TO(EmulatorAPI::getStateContention, "/api/v1/emulator/{id}/state/contention", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateContentionActive, "/api/v1/emulator/state/contention", drogon::Get);
@@ -877,6 +880,10 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                                     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                                     const std::string& chip) const;
     void getStateFdcActive(const drogon::HttpRequestPtr& req,
+                           std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+    void getStateIde(const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getStateIdeActive(const drogon::HttpRequestPtr& req,
                            std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
     void getStateContention(const drogon::HttpRequestPtr& req,
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;

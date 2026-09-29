@@ -178,5 +178,28 @@ void EmulatorAPI::getStateContentionActive(const HttpRequestPtr& req,
     getStateContention(req, std::move(callback), emulator->GetId());
 }
 
+/// @brief GET /api/v1/emulator/{id}/state/ide - the IDE board (DeviceState::Ide); 404 without one
+void EmulatorAPI::getStateIde(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                              const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::Ide(emulator->GetContext()), callback);
+}
+
+void EmulatorAPI::getStateIdeActive(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) const
+{
+    auto emulator = getEmulatorWithGlobalSelection();
+    if (!emulator)
+    {
+        const size_t count = EmulatorManager::GetInstance()->GetEmulatorIds().size();
+        return ReplyNotFound(MultipleEmulatorsMessage(count, "/api/v1/emulator/{id}/state/ide"), callback,
+                             count == 0 ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest);
+    }
+    getStateIde(req, std::move(callback), emulator->GetId());
+}
+
 }  // namespace v1
 }  // namespace api

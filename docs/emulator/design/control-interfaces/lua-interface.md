@@ -325,6 +325,7 @@ fm1 = audio_fm_state(1)     -- one YM2203 FM half: mode, timers, channels[3].ope
 gs  = gs_state()            -- General Sound / NeoGS: the WebAPI /state/audio/gs report ("neogs" block on NeoGS)
 cv  = audio_covox_state()   -- Covox / SoundDrive: fitment, ports, shared_with_beta128, channels[4]
 fdc = fdc_state()           -- Beta Disk WD1793: registers, status_bits, fsm_state, signals, drives[4]
+ide = ide_state()           -- IDE board: scheme, adapter latches, units[2] (task_file, command, atapi)
 con = contention_state()    -- rule, switch, effective, memory_interface, io_rule, slots[4], statistics (debug mode)
 scr = screen_state()        -- video_mode, resolution, active_screen, active_ram_page(s), contention, flash_inverted
 scv = screen_state(true)    -- + screen_0/screen_1 (z80_access, ula_display) and port_0x7FFD

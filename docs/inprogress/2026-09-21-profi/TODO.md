@@ -22,15 +22,7 @@ ZX Profi 1024 (`MM_PROFI`): design complete; implementation in progress on branc
 - [x] IDE/HDD design: [2026-09-25-ide-hdd-design.md](2026-09-25-ide-hdd-design.md) - Profi controller, comparison with SMUC/ATM/Nemo/ZX-Evo/DivIDE, shared core vs per-board adapters, image files + host folders + ATAPI CD-ROM, test methodology, two-rollout plan
 
 ## Remaining
-- [ ] IDE, rollout 1 (reconciliation G1) - parity with other emulators; design: [2026-09-25-ide-hdd-design.md](2026-09-25-ide-hdd-design.md) §14.1, reconciliation §9
-  - [ ] R1-1 Shared ATA disk core (`AtaDevice`/`AtaDisk`/`AtaChannel`), `IBlockDevice`, `RawImage` (write-through) + `MemoryDisk`; delete the `io/hdd` skeleton
-  - [ ] R1-2 `IdeAdapterProfi` (`#xxCB/#xxEB/#06AB`, EXT-mode gate), `[HDD]` ini parsing, `Scheme=PROFI` in `data/configs/profi/unreal.ini` (CRLF), TTD interim rule (first IDE command invalidates a recording); SYS ROM HDD loader test at `#28CE` - **closes G1**
-  - [ ] R1-3 `hdd`/`cd` automation verbs (CLI, WebAPI, Lua, Python, MCP), `NC_HDD_STATE_CHANGED`
-  - [ ] R1-4 Other boards: Nemo (+A8, DivIDE/Evo toggle), SMUC (replaces the Scorpion stub), ATM
-  - [ ] R1-5 Image formats: HDF, HDI, fixed VHD; Profi geometry auto-detect
-  - [ ] R1-6 Host folder as FAT16/32 volume (session write map, export to `.img`, read-only option)
-  - [ ] R1-7 ATAPI CD-ROM (`.iso`, pico-spec command set)
-  - [ ] R1-8 Differential harness, fuzz, perf check, Qt HDD/CD menu + activity LED
+- [x] IDE, rollout 1 (reconciliation G1) - done 2026-09-28 as the IDE + ATAPI scope (branch `ide-atapi`): [implementation-plan.md](../2026-09-28-ide-atapi/implementation-plan.md) §5. **Closes G1**: the Profi board (`#xxCB/#xxEB/#06AB`, EXT-mode gate, mirrored latches), `Scheme=PROFI`; the SYS ROM HDD loader boots from a disk at `#28CE` (`profi_hdd_test`). Automation is the `media` verbs and `state ide`; TTD is the `AtaChannel` blob + write barriers (the rollout-2 serializer, earlier than planned). Profi geometry auto-detect (Q4) is a follow-up
 - [ ] IDE, rollout 2 (reconciliation T3) - **requires further investigation first** (design §7.3, §10, Q10): R2-0 investigation, then COW change layer + write journal, `PeripheralId::AtaChannel` TTD serializer, snapshot media references, folder commit-back
 - [ ] RTC CMOS in TTD (reconciliation T1/T2) - deferred until IDE lands
 - [ ] IDE open questions (design §13): Q1 `#06AB` read value, Q2 Karabas EXT-mode variant, Q4 Profi disk geometry / `ProfiHiDD` header, Q5 SYS menu path to `#28CE`, Q6 real Profi CP/M HDD image, Q9 CD-reading guest software

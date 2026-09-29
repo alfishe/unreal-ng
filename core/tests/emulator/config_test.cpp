@@ -363,3 +363,55 @@ TEST_F(Config_Test, EvoFpgaKeyReachesConfig)
 }
 
 /// endregion </[EVO] Fpga>
+
+/// region <[HDD] (IDE board)>
+
+/// [HDD] Scheme, CHSn, CDn; an ISO image makes its unit a CD drive even when
+/// the config says CDn=0 (the shipped files carry CD0=0 / CD1=0)
+TEST_F(Config_Test, HddSectionSetsTheBoardAndItsUnits)
+{
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("hdd_config_test.ini");
+    {
+        std::ofstream file(path, std::ios::binary);
+        file << "[HDD]\nScheme=nemo-divide ; comment\nCHS0=100/4/32\nCD0=0\nImage1=disc.iso\nCD1=0\n";
+    }
+    Config config(_context);
+    ASSERT_TRUE(config.LoadConfigFile(path));
+    EXPECT_EQ(_context->config.ide_scheme, IDE_NEMO_DIVIDE);
+    EXPECT_EQ(_context->config.ide[0].c, 100u);
+    EXPECT_EQ(_context->config.ide[0].h, 4u);
+    EXPECT_EQ(_context->config.ide[0].s, 32u);
+    EXPECT_EQ(_context->config.ide[0].cd, 0);
+    EXPECT_EQ(_context->config.ide[1].cd, 1) << "an .iso image is a CD";
+
+    {
+        std::ofstream file(path, std::ios::binary | std::ios::trunc);
+        file << "[HDD]\nScheme=WILD\nCD1=1\n";
+    }
+    ASSERT_TRUE(config.LoadConfigFile(path));
+    EXPECT_EQ(_context->config.ide_scheme, IDE_NONE) << "an unknown board: no IDE";
+    EXPECT_EQ(_context->config.ide[1].cd, 1);
+    std::remove(path.c_str());
+}
+
+/// The board each shipped machine comes with (docs/inprogress/2026-09-28-ide-atapi/implementation-plan.md §2.1)
+TEST_F(Config_Test, ShippedConfigsFitTheirIdeBoard)
+{
+    const std::unordered_map<std::string, IDE_SCHEME> expected = {
+        {"profi", IDE_PROFI},         {"atm3", IDE_NEMO_DIVIDE},  {"atm710", IDE_ATM},
+        {"pentagon128k", IDE_NEMO},   {"pentagon512k", IDE_NEMO}, {"scorpion", IDE_NONE},
+        {"profscorp", IDE_NONE},      {"spectrum48", IDE_NONE},   {"spectrum128", IDE_NONE},
+        {"spectrum3", IDE_NONE},      {"ts-conf", IDE_NONE},
+    };
+    for (const auto& [folder, scheme] : expected)
+    {
+        const fs::path ini = TestPathHelper::FindProjectRoot() / "data" / "configs" / folder / "unreal.ini";
+        ASSERT_TRUE(fs::exists(ini)) << ini;
+        Config config(_context);
+        ASSERT_TRUE(config.LoadConfigFile(ini.string())) << ini;
+        EXPECT_EQ(_context->config.ide_scheme, scheme) << folder;
+        EXPECT_EQ(_context->config.ide[1].cd, 0) << folder << ": no machine ships a CD drive";
+    }
+}
+
+/// endregion </[HDD] (IDE board)>

@@ -70,8 +70,19 @@ void PortDecoder_Profi::reset()
     memory.SetROMMode(RM_SYS);
 }
 
+IdeAdapter::Gate PortDecoder_Profi::IdeGate()
+{
+    IdeAdapter::Gate gate = PortDecoder::IdeGate();
+    gate.profiExt = IsExtMode();
+    return gate;
+}
+
 uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
 {
+    // The IDE board decodes first (UnrealSpeccy io.cpp order)
+    if (uint8_t ideValue = 0xFF; TryIdePortIn(port, pc, ideValue))
+        return ideValue;
+
     uint8_t result = 0xFF;
     _lastPortDecoded = false;
 
@@ -167,6 +178,10 @@ uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
 
 void PortDecoder_Profi::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
+    // The IDE board decodes first (UnrealSpeccy io.cpp order)
+    if (TryIdePortOut(port, value, pc))
+        return;
+
     // Port trace decode attribution (if-chain decoder: no mask/match table)
     PortDecodeDisposition disp;
     disp.decodeRuleIndex = PortTraceRule::kNoTable;

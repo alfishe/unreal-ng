@@ -56,7 +56,10 @@ const Golden kGolden[] = {
     {"SCORPION", nullptr, 0xB62AC29F6C8595C8ull, 0xA0ACA621D375DA98ull, 10483200ull},
     {"PROFSCORP", nullptr, 0xB62AC29F6C8595C8ull, 0xA0ACA621D375DA98ull, 10483200ull},
     {"PROFI", nullptr, 0xE0FAE946751F0EDFull, 0xA0ACA621D375DA98ull, 10483200ull},
-    {"ATM710", nullptr, 0x8AB82EB6A4994527ull, 0xC0395302AE037CF9ull, 10483200ull},
+    // ATM710 re-recorded 2026-09-28 (branch ide-atapi): its ROM reads the
+    // #7FFD class, which is now the ATM IDE board's status (#3F + INTRQ),
+    // as in UnrealSpeccy, instead of the floating bus
+    {"ATM710", nullptr, 0x9DCBD8315B37FC1Eull, 0xE360A9F00E0771B9ull, 10483200ull},
     {"ATM3", nullptr, 0x6F2CE72E5BE7AC25ull, 0x5D592C8522429BF3ull, 9434880ull},
     // TSL (TS-Conf) is not creatable with the shipped ROMs.
 };

@@ -98,6 +98,10 @@ void PortDecoder_ATM710::UpdateModelMemoryBanks()
 
 uint8_t PortDecoder_ATM710::DecodePortIn(uint16_t port, uint16_t pc)
 {
+    // The IDE board decodes first (UnrealSpeccy io.cpp order)
+    if (uint8_t ideValue = 0xFF; TryIdePortIn(port, pc, ideValue))
+        return ideValue;
+
     uint8_t result = 0xFF;
     _lastPortDecoded = false;
 
@@ -188,6 +192,10 @@ uint8_t PortDecoder_ATM710::DecodePortIn(uint16_t port, uint16_t pc)
 
 void PortDecoder_ATM710::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
+    // The IDE board decodes first (UnrealSpeccy io.cpp order)
+    if (TryIdePortOut(port, value, pc))
+        return;
+
     PortDecodeDisposition disp;
 
     // decodePort() MUST run before the claim override below - see the comment
@@ -431,6 +439,13 @@ bool PortDecoder_ATM710::IsPort_FFF7(uint16_t port, uint8_t& windowIndex)
 
     windowIndex = (port >> 14) & 0x03;
     return true;
+}
+
+IdeAdapter::Gate PortDecoder_ATM710::IdeGate()
+{
+    IdeAdapter::Gate gate = PortDecoder::IdeGate();
+    gate.dosPorts = IsDosPortsEnabled();
+    return gate;
 }
 
 bool PortDecoder_ATM710::IsDosPortsEnabled()
