@@ -1,6 +1,7 @@
-# TODO — TurboSound FM (2×YM2203) (2026-09-10, reopened 2026-09-23, fixed in three passes same day)
+# DONE — TurboSound FM (2×YM2203) (2026-09-10, reopened 2026-09-23, closed 2026-09-28)
 
-**Status:** P0–P8 landed. P5 (TTD) was the one gap — the device shipped a
+**Status:** complete. P0–P8 landed; the TTD listening pass was signed off by the user on
+2026-09-28 (see Evidence below). P5 (TTD) was the one gap — the device shipped a
 P3-era stub (`TTDStateSize()` always 0) despite an earlier `DONE.md` claiming
 it was complete. Reopened 2026-09-23 after a user report ("scrubbing back
 gives broken sound, internal FM synthesizer state is lost"), confirmed
@@ -65,20 +66,18 @@ Full writeup, root causes, evidence: [ttd-fm-state-gap.md](ttd-fm-state-gap.md).
   itself needed no changes — verified by re-validating all three real
   recordings gathered during this investigation.
 
-## What's still open
+## Evidence of completion
 
-1. **Manual listening verification** — no one has recorded a fresh TSFM
-   session against the v3 fix and actually listened across a scrub. Every
-   check so far is byte-level/programmatic (proven exact, proven
-   deterministic across seeks, proven the output stage goes silent on
-   restore); the perceptual result with v3 isn't yet confirmed. None of the
-   three gathered recordings (`tsfm-issues.ttd`/`-2`/`-3`) postdate v3, so
-   none can be used to confirm the click is actually gone by ear — a fresh
-   recording is needed.
-2. Once (1) confirms the fix audibly, restore this folder's `DONE.md` marker
-   with corrected, verified evidence — see the doc's Gate section.
+- **Listening sign-off (2026-09-28, user):** scrubbing a TSFM recording back and
+  forth, the FM data is not corrupted and the FM part stays in sync with the
+  TurboSound (SSG) part. This was the one open item (a perceptual check the
+  byte-level tests could not give).
+- Since the v3 fix the blob grew to the timed-write v5 layout (2008 B) with an
+  exact-restore fixture corpus (`6ed6d4c0`): `TTD_Corpus_Test` restores every
+  device of every fixture byte for byte (TSFM included) and replays it
+  deterministically, now comparing RAM too.
 
-## Other still-open items (unrelated to the TTD gap, kept for continuity)
+## Follow-ups (outside the TTD gap, tracked separately, kept for continuity)
 
 - ISSUES.md #5 sub-audio coupling (by design), #6 int16 mix headroom →
   wide-mix/limiter design (tracked separately, root `PLAN.md` T4), #7 LQ→HQ

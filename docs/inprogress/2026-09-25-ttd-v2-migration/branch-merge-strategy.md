@@ -32,6 +32,13 @@ exact TTD restore (`6ed6d4c0`). Profi lacks only the last five sound/TTD commits
 
 ## 2. Things to fix on master first (step 0)
 
+> **Done** (checked 2026-09-28): items 1 and 2 are on master
+> (`ttdserializable.h`, `ttd.ksy`, the analyzer's `PERIPHERAL_ID_NAMES`, the
+> contract test's `NeoGS` fake decoder; `notifications.h` `AudioSource`
+> GeneralSound = 6, MoonFM = 7, MoonPCM = 8). Item 3 is moot: `profi`,
+> `generalsound` and `moonsound` are merged. Ids 13 Plus3Paging, 14 Upd765 and
+> 15 EvoSdCard were appended since.
+
 These are cheap now and expensive after any merge.
 
 1. **One `PeripheralId` table.** All three branches claim id **9** (Profi:

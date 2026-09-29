@@ -63,7 +63,9 @@ Fix what is wrong today, so the later steps build on a correct base and have
 tests that would catch regressions.
 
 - **Step 0 of the merge strategy**: the `PeripheralId` table and the
-  notification enum ([branch-merge-strategy.md](branch-merge-strategy.md) §2).
+  notification enum ([branch-merge-strategy.md](branch-merge-strategy.md) §2). **Done** (checked 2026-09-28):
+  the id table and the audio-activity enum are on master; the three branches
+  are merged.
 - **Capture gap**: RAM page 255 on 4 MB machines (widen the page cache
   sentinel). **Done 2026-09-27**: `ttd::PhysPage` (16 bit, `kPhysPageNone =
   0xFFFF`, `ttdphyspage.h`) in Memory's bank cache, probe, queries and

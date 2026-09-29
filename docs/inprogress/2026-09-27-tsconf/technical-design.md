@@ -100,7 +100,7 @@ Reserved but not built in any firmware (keep encodings reserved, no v1 work):
 | Programmable INT controller | a new machine interrupt-source interface in the Z80 core (§3.4) |
 | FMAPS writes | a new memory-write intercept (§3.5) |
 | vdos "flip at next M1" | a new instruction-start hook (§3.6) |
-| Machine latches + CRAM/SFILE + mid-transfer DMA | TTD serializer id 15 + corpus fixture (§3.13) |
+| Machine latches + CRAM/SFILE + mid-transfer DMA | TTD serializer id 16 + corpus fixture (§3.13) |
 | SD card primary storage | shared `SdCardSpi` (with NeoGS) + vFAT backing + media API on all automation frontends (§3.11) |
 | 48.828 Hz raster | already supported by per-model frame timing; verify recording FPS tag (§3.17) |
 
@@ -667,10 +667,18 @@ opt-in in the ts-conf ini (currently `NONE`, line 361), ROM line present
 
 ## 3.13 TTD
 
-1. **`PeripheralId::TsConfPaging = 15`** (10 MoonSound, 11 GS-LW, 12 NeoGS
-   reserved, 13 `Plus3Paging`, 14 `Upd765` — `ttdserializable.h`; re-check the
-   next free id when phase 1 starts); update `ttd.ksy` and
-   `ttdmodelstatecontract_test.cpp` in the same change (PLAN #40 V0 rule).
+1. **`PeripheralId::TsConfPaging = 16`** (10 MoonSound, 11 GS-LW, 12 NeoGS
+   reserved, 13 `Plus3Paging`, 14 `Upd765`, 15 `EvoSdCard` — `ttdserializable.h`;
+   re-check the next free id when phase 1 starts); update `ttd.ksy` and
+   `ttdmodelstatecontract_test.cpp` in the same change (PLAN #40 V0 rule). The
+   SD side needs no new id: TSConf drives the same `ZControllerSpi` +
+   `SdCardSpi` as ZX-Evo, so it registers the existing `EvoSdCard` (15)
+   serializer (protocol state only; the card's sectors follow the media
+   manager's TTD rule).
+1a. **TTD time base** (B4, fixed on master 2026-09-28): TTD positions count
+   T-states at the model's top clock. The TSConf decoder returns
+   `PortDecoder::TtdClockUnits() = 4` (3.5/7/14 MHz), like ZX-Evo, so journal,
+   markers and replay stay monotonic across `SYS_CONFIG` clock switches.
 2. **`TTDTsConfState`** (`debugger/ttd/tsconf/`): blob = `TsConfState`
    serialized **field by field** (little-endian, versioned): registers and
    shadows, 7FFD/lock/DOS/vdos/pre_vdos state, FMAPS stash byte, cache
