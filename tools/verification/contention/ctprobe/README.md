@@ -262,13 +262,17 @@ Run by the [co-emulation harness](../../coemu/README.md), with each emulator's s
 | FUSE 1.6.0 | all as expected | all as expected | all as expected | the extra tick at the end of each line is missing (1 value) | all as expected | - |
 | MAME 0.289 | all as expected | everything 2 ticks late | as the 128K | the waits 4 ticks late; port accesses wait, which the gate array does not do | all as expected | the machine resets during the frame measurement (not yet explained) |
 | ZEsarUX 13.0 | floating bus (P-02) only | floating bus (P-02) only | floating bus (P-02) only | the waits 4 ticks late; internal ticks wait, which the gate array does not do | all as expected | - |
+| SkoolKit 10.1 | floating bus (P-02) only: unused ports always read `#FF` | floating bus (P-02) only | - | - | - | - |
 
 unreal-ng also runs it on the ATM Turbo 2+, the ZX-Evo and the Profi: all as expected (the Scorpion with
 ProfROM: not measured, Even M1); xpeccy-plus on its ATM Turbo 2+, ZX-Evo and Profi, and MAME on its Scorpion with ProfROM: all as
 expected. MAME's ATM Turbo boots at 7 MHz (the probe stops and asks for 3.5 MHz).
 
-On P-05 the emulators disagree: FUSE and unreal-ng contend such a port, xpeccy-plus does not. A real 128K
-decides it; until someone runs the probe on one, treat P-05 as open.
+On P-05 the emulators disagree: FUSE, SkoolKit and unreal-ng contend such a port, xpeccy-plus does not. A
+real 128K decides it; until someone runs the probe on one, treat P-05 as open.
+
+SkoolKit is a disassembly toolkit with a Z80 contention simulator, not a full emulator: it has only the 48K and
+the 128K, and no floating bus. Everything it does model agrees with the expected values, including P-05.
 
 `-`: the emulator lacks the machine, or its runner or ROMs do not cover it yet. Real hardware: not run yet. Please
 send results.
