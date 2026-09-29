@@ -120,7 +120,7 @@ Sprinter, Leningrad-1, Karabas-Pro).
 | Even M1 flag | `config.even_M1`, set from the memory model in `core/src/emulator/config.cpp` (Scorpion and ProfScorp) | a property of the board, not an ini choice |
 | Even M1 wait | `Z80Step` in `core/src/emulator/cpu/z80.cpp`, before an instruction's first M1 | if the fetch is from RAM (`PC >= #4000`, or RAM paged at `#0000`), the machine is not in turbo, and the current T-state is odd at the current clock rate: add one T |
 | Tests | `EvenM1_Test` in `core/tests/emulator/cpu/z80_test.cpp`; `ContentionNegative_Test.ClonesNeverWait` in `core/tests/emulator/video/contention_test.cpp` | RAM fetch on an odd T waits, ROM never, RAM at `#0000` waits, turbo does not, other machines never |
-| Hardware probe | `tools/verification/contention/ctprobe` | times code at every T-state and compares with the expected tables; on a Scorpion it detects Even M1 and reports "not measured" (below) |
+| Hardware probe | `tools/verification/contention/ctprobe` | times code at every T-state and compares with the expected tables; on a Scorpion it detects Even M1 and measures in 2 T-state steps (below) |
 
 Not modeled: the Scorpion's turbo slot waits, the ZX-Evo's 14 MHz waits and its optional Sinclair rasters.
 
@@ -130,7 +130,10 @@ A measuring engine that places code at an exact T-state (Jan Bobrowski's and Pat
 ctprobe and by Rak's Timing Test) needs delays of every length, odd ones included. On a Scorpion every
 fetch from RAM starts on an even T-state, so an odd delay made of code in RAM cannot exist. Such engines hang or
 report nonsense there. ctprobe checks for Even M1 before its engine runs (a loop of odd-length instructions
-that fits in one frame without Even M1 and overruns it with Even M1) and stops with a message instead.
+that fits in one frame without Even M1 and overruns it with Even M1). If it finds it, it switches to a delay
+routine built only from instructions whose Even M1 length is known, in steps of 2 T-states, and corrects two
+worked-out side effects on the rest of the engine; its README explains both. A Scorpion is then measured with
+2 T-state resolution, which is all such a machine can resolve.
 
 The same holds for demo code that synchronizes on `HALT` and counts T-states: on a Scorpion the T-state after
 `HALT` is always even, and odd-length sequences in RAM are rounded up.

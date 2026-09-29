@@ -315,8 +315,10 @@ from page 6, which the driver fills with a copy first; the engine itself cannot 
 - **3.5 MHz:** `IN #1FFD`, because a Scorpion's ROM leaves 7 MHz on and then the INT pulse outlasts the
   engine's handler.
 - **Onset:** 14335 on a 69888 T frame, else 14361.
-- **Class:** from the frame and a NOP at `#4000` timed on the onset. There are five classes: ULA 48K,
-  ULA 128K, gate array, no contention, and no contention with the Scorpion's attribute bus.
+- **Class:** from the frame and a NOP at `#4000` timed on the onset. There are seven classes: ULA 48K,
+  ULA 128K, gate array, no contention, no contention with the Scorpion's attribute bus, and those two with
+  Even M1 (5: attribute bus and Even M1, the Scorpion; 6: Even M1 without the attribute bus, MAME's and
+  ZXMAK2's Scorpion). Even M1 is detected before the engine runs; with it the engine delays in 2 T steps.
 - **Paging:** a byte written with page 1 mapped must not show with page 0.
 - **Default mapping:** from `BANK_M` / `BANK678`, with the 48 BASIC ROM bits set when that ROM's font is at
   `#3D00`. The 128K and +3 editor ROMs start with the same bytes as the 48 BASIC ROM, so the start alone

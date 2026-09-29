@@ -43,8 +43,17 @@ enum class Rule : uint8_t
     Ula128 = 1,     // Ferranti ULA, 128K / +2
     GateArray = 2,  // +2A / +3
     None = 3,       // the clones
-    Scorpion = 4    // no contention, 69888 T frame, and any unused port reads the fetched attribute
+    Scorpion = 4,   // no contention, 69888 T frame, and any unused port reads the fetched attribute
+    ScorpionEvenM1 = 5, // as Scorpion, and opcode fetches from RAM start on even T-states (Even M1)
+    NoneEvenM1 = 6      // no contention, Even M1, unused ports without the attribute bus (MAME's Scorpion)
 };
+
+/// Even M1 (the Scorpion's WAIT logic, docs/emulator/design/core/memory-contention.md): an opcode fetch from RAM
+/// that would start on an odd T-state waits one; ROM, data, I/O and the interrupt acknowledge never wait
+uint32_t EvenM1Align(uint32_t t)
+{
+    return t + (t & 1);
+}
 
 struct ClassTiming
 {
@@ -62,6 +71,8 @@ ClassTiming Timing(Rule rule)
         case Rule::GateArray:
             return { 14361, 228 };
         case Rule::Scorpion:
+        case Rule::ScorpionEvenM1:
+        case Rule::NoneEvenM1:
             return { 14335, 224 };
         case Rule::None:
             break;
@@ -75,6 +86,7 @@ struct Machine
     Rule rule;
     uint32_t onset;      // what the probe detects
     uint8_t caps;        // what the probe detects (the host opens the +3's paging first)
+    bool evenM1Off = false;  // a Scorpion board without Even M1 (the 2007 GAL re-creation; most emulators)
 };
 
 const std::vector<Machine>& Machines()
@@ -84,19 +96,20 @@ const std::vector<Machine>& Machines()
         { "128K-48BASIC", Rule::Ula128, 14361, 1 },
         { "Plus3-48BASIC", Rule::GateArray, 14361, 3 },
         { "Pentagon-48BASIC", Rule::None, 14361, 1 },
-        { "Scorpion-48BASIC", Rule::Scorpion, 14335, 1 },
+        { "Scorpion-48BASIC", Rule::ScorpionEvenM1, 14335, 1 },
+        { "Scorpion-48BASIC", Rule::Scorpion, 14335, 1, true },
     };
     return machines;
 }
 
 void PrintTo(const Machine& m, std::ostream* os)
 {
-    *os << m.editor;
+    *os << m.editor << (m.evenM1Off ? " without Even M1" : "");
 }
 
 std::string MachineName(const ::testing::TestParamInfo<Machine>& info)
 {
-    std::string name = info.param.editor;
+    std::string name = std::string(info.param.editor) + (info.param.evenM1Off ? "-NoEvenM1" : "");
     for (char& c : name)
         if (!std::isalnum(static_cast<unsigned char>(c)))
             c = '_';
@@ -148,6 +161,8 @@ public:
                 return _page >= 4;
             case Rule::None:
             case Rule::Scorpion:
+            case Rule::ScorpionEvenM1:
+            case Rule::NoneEvenM1:
                 return false;
         }
         return false;
@@ -157,7 +172,8 @@ public:
     {
         static const uint8_t ula[8] = { 6, 5, 4, 3, 2, 1, 0, 0 };
         static const uint8_t gateArray[8] = { 1, 0, 7, 6, 5, 4, 3, 2 };
-        if (_rule == Rule::None || _rule == Rule::Scorpion || t < _t.onset)
+        if (_rule == Rule::None || _rule == Rule::Scorpion || _rule == Rule::ScorpionEvenM1 ||
+            _rule == Rule::NoneEvenM1 || t < _t.onset)
             return 0;
         const uint32_t d = t - _t.onset;
         if (d / _t.lineT >= 192)
@@ -169,10 +185,14 @@ public:
     }
 
     /// The fragment's duration from `t0`, plus the wait of the RET the probe places after it (its 10 T are
-    /// not part of the result; the return address is popped from the uncontended probe stack)
+    /// not part of the result; the return address is popped from the uncontended probe stack). With Even M1
+    /// each opcode fetch from RAM that would start on an odd T-state waits one, the fragment's first one
+    /// included (the WAIT is inside that fetch's cycle), and a RET in ROM returns to the engine, whose next
+    /// fetch aligns
     uint32_t Duration(const std::vector<Cycle>& cycles, uint16_t retAddress, uint32_t t0) const
     {
         const bool ula = _rule == Rule::Ula48 || _rule == Rule::Ula128;
+        const bool evenM1 = _rule == Rule::ScorpionEvenM1 || _rule == Rule::NoneEvenM1;
         uint32_t t = t0;
         auto contend = [&](const Cycle& c) {
             if (c.force >= 0 ? c.force == 1 : Contended(c.address))
@@ -182,6 +202,8 @@ public:
         {
             if (c.kind == Cycle::Mem)
             {
+                if (evenM1 && c.length == 4 && c.address >= 0x4000)
+                    t = EvenM1Align(t);
                 contend(c);
             }
             else if (c.kind == Cycle::Internal)
@@ -213,6 +235,10 @@ public:
             t += c.length;
         }
         contend(M1(retAddress));  // the RET's opcode fetch
+        if (evenM1 && retAddress >= 0x4000)
+            t = EvenM1Align(t);
+        if (evenM1 && retAddress < 0x4000 && ((t + 10) & 1))
+            t++;  // back in the engine, in RAM
         return t - t0;
     }
 
@@ -225,7 +251,7 @@ public:
     /// measurement. #FF elsewhere
     uint8_t FloatingBus(uint32_t s) const
     {
-        if (_rule == Rule::Scorpion)
+        if (_rule == Rule::Scorpion || _rule == Rule::ScorpionEvenM1)
         {
             const uint32_t t = s + 1;  // the port is read at IORQ
             const uint32_t fetchStart = 14336 - 4;
@@ -551,8 +577,8 @@ std::vector<uint8_t> Expected(Rule rule, const CaseRecord& r, const SymbolFn& sy
     for (uint8_t i = 0; i < r.count; i++)
     {
         const uint32_t t = first + i;
-        if (r.flags & 4)
-            values.push_back(oracle.FloatingBus(t + 11));  // XOR A, then IN A,(#FF): its I/O cycle 11 T in
+        if (r.flags & 4)  // XOR A, then IN A,(#FF): its I/O cycle 11 T in (with Even M1 from the aligned start)
+            values.push_back(oracle.FloatingBus((rule == Rule::ScorpionEvenM1 ? EvenM1Align(t) : t) + 11));
         else
             values.push_back(static_cast<uint8_t>(
                 oracle.Duration(cycles, romRet ? 0x0000 : static_cast<uint16_t>(target + r.length), t)));
@@ -582,13 +608,14 @@ std::vector<uint8_t> ReadBinary(const std::string& path)
     return std::vector<uint8_t>(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
 }
 
-constexpr uint8_t kClasses = 5;
+constexpr uint8_t kClasses = 7;
+constexpr uint16_t kOrg = 36000;  // where the probe loads and runs (org in ctprobe.asm)
 
-/// The probe: assembled at 40000 and its expected tables filled for every class
+/// The probe: assembled at kOrg and its expected tables filled for every class
 struct Probe
 {
     AsmResult asmResult;
-    std::vector<uint8_t> bytes;  // 40000 .. PROBEEND
+    std::vector<uint8_t> bytes;  // kOrg .. PROBEEND
     std::vector<CaseRecord> cases;
 
     uint16_t Sym(const char* name) const
@@ -605,7 +632,7 @@ Probe BuildProbe()
     Z80TextAssembler assembler;
     p.asmResult = assembler.Assemble(ReadText(ProbePath("ctprobe.asm")) + "\n" +
                                          ReadText(ProbePath("engine.asm")),
-                                     40000);
+                                     kOrg);
     if (!p.asmResult.ok)
     {
         ADD_FAILURE() << p.asmResult.error.line << ": " << p.asmResult.error.message << " | "
@@ -613,7 +640,7 @@ Probe BuildProbe()
         return p;
     }
     p.bytes = p.asmResult.bytes;
-    auto peek = [&](uint16_t a) { return p.bytes[a - 40000]; };
+    auto peek = [&](uint16_t a) { return p.bytes[a - kOrg]; };
     p.cases = ReadCases(p.Sym("CASES"), peek);
 
     const SymbolFn sym = [&](const char* s) { return p.Sym(s); };
@@ -625,7 +652,7 @@ Probe BuildProbe()
         {
             const std::vector<uint8_t> values = Expected(static_cast<Rule>(cls), r, sym);
             for (size_t i = 0; i < values.size(); i++)
-                p.bytes[expected + cls * size + (r.results - results) + i - 40000] = values[i];
+                p.bytes[expected + cls * size + (r.results - results) + i - kOrg] = values[i];
         }
     return p;
 }
@@ -664,11 +691,11 @@ std::vector<uint8_t> Concat(std::initializer_list<std::vector<uint8_t>> parts)
 
 constexpr uint8_t kClear = 0xFD, kLoad = 0xEF, kCode = 0xAF, kRandomize = 0xF9, kUsr = 0xC0, kRem = 0xEA;
 
-/// 10 CLEAR 39999 / 20 <load> / 30 RANDOMIZE USR 40000
+/// 10 CLEAR kOrg - 1 / 20 <load> / 30 RANDOMIZE USR kOrg
 std::vector<uint8_t> Loader(const std::vector<uint8_t>& loadStatement)
 {
-    return Concat({ BasicLine(10, Concat({ { kClear }, BasicNumber(39999) })), BasicLine(20, loadStatement),
-                    BasicLine(30, Concat({ { kRandomize, kUsr }, BasicNumber(40000) })) });
+    return Concat({ BasicLine(10, Concat({ { kClear }, BasicNumber(static_cast<uint16_t>(kOrg - 1)) })), BasicLine(20, loadStatement),
+                    BasicLine(30, Concat({ { kRandomize, kUsr }, BasicNumber(kOrg) })) });
 }
 
 std::vector<uint8_t> TapBlock(uint8_t flag, const std::vector<uint8_t>& data)
@@ -702,7 +729,7 @@ std::vector<uint8_t> TapHeader(uint8_t type, const std::string& name, uint16_t l
     return h;
 }
 
-/// ctprobe.tap: a BASIC loader (auto-runs line 10) and the code at 40000
+/// ctprobe.tap: a BASIC loader (auto-runs line 10) and the code at kOrg
 std::vector<uint8_t> BuildTap(const Probe& p)
 {
     const std::vector<uint8_t> basic = Loader({ kLoad, '"', '"', kCode });  // LOAD "" CODE
@@ -711,7 +738,7 @@ std::vector<uint8_t> BuildTap(const Probe& p)
     const uint16_t basicLength = static_cast<uint16_t>(basic.size());
     append(TapBlock(0x00, TapHeader(0, "ctprobe", basicLength, 10, basicLength)));
     append(TapBlock(0xFF, basic));
-    append(TapBlock(0x00, TapHeader(3, "ctprobe", static_cast<uint16_t>(p.bytes.size()), 40000, 32768)));
+    append(TapBlock(0x00, TapHeader(3, "ctprobe", static_cast<uint16_t>(p.bytes.size()), kOrg, 32768)));
     append(TapBlock(0xFF, p.bytes));
     return tap;
 }
@@ -729,7 +756,7 @@ std::vector<uint8_t> BuildSym(const Probe& p)
     return std::vector<uint8_t>(text.begin(), text.end());
 }
 
-/// ctprobe.trd: TR-DOS 80 tracks, two sides; "boot" (BASIC, auto-runs line 10) loads "ctprobe" (CODE, 40000)
+/// ctprobe.trd: TR-DOS 80 tracks, two sides; "boot" (BASIC, auto-runs line 10) loads "ctprobe" (CODE, kOrg)
 std::vector<uint8_t> BuildTrd(const Probe& p)
 {
     constexpr size_t sector = 256;
@@ -764,7 +791,7 @@ std::vector<uint8_t> BuildTrd(const Probe& p)
         files++;
     };
     addFile("boot", 'B', basicLength, basicLength, basic);
-    addFile("ctprobe", 'C', 40000, static_cast<uint16_t>(p.bytes.size()), p.bytes);
+    addFile("ctprobe", 'C', kOrg, static_cast<uint16_t>(p.bytes.size()), p.bytes);
 
     uint8_t* info = &trd[8 * sector];
     const uint16_t freeSectors = static_cast<uint16_t>(160 * 16 - next);
@@ -808,12 +835,14 @@ protected:
     {
         BootEditor(m.editor);
         ASSERT_FALSE(HasFatalFailure());
+        if (m.evenM1Off)
+            _context->config.even_M1 = 0;  // a Scorpion board without Even M1
         _probe = BuildProbe();
         ASSERT_FALSE(HasFailure());
-        ASSERT_LT(40000 + _probe.bytes.size(), 0xBE00u) << "the probe runs into the engine's IM2 table";
+        ASSERT_LT(kOrg + _probe.bytes.size(), 0xBE00u) << "the probe runs into the engine's IM2 table";
 
         for (size_t i = 0; i < _probe.bytes.size(); i++)
-            Poke(static_cast<uint16_t>(40000 + i), _probe.bytes[i]);
+            Poke(static_cast<uint16_t>(kOrg + i), _probe.bytes[i]);
         Poke(_probe.Sym("ONLY"), only);
         OpenPaging();
 
@@ -828,12 +857,12 @@ protected:
             << std::dec << int(Peek(0x5C8C)) << " DF_SZ " << int(Peek(0x5C6B)) << " iff1 " << int(z80->iff1)
             << "\n" << Screen();
 
-        std::printf("[ctprobe %s] frames to DONE: %d\n", m.editor, frames);
-        // The Scorpion aligns opcode fetches from RAM to even T-states (Even M1): the probe says so and stops
+        std::printf("[ctprobe %s] frames to DONE: %d, measured frame %u T, class %d\n", m.editor, frames,
+                    PeekW(_probe.Sym("FRAMET")) + PeekW(_probe.Sym("FRAMEADJ")) + 32768u, Peek(_probe.Sym("CLASS")));
+        // The Scorpion aligns opcode fetches from RAM to even T-states (Even M1): the probe finds it and
+        // switches to its 2 T-state delays
         const bool evenM1 = _context->config.even_M1 != 0;
-        ASSERT_EQ(Peek(_probe.Sym("EVENM1")), evenM1 ? 1 : 0) << "the probe's Even M1 check\n" << Screen();
-        if (evenM1)
-            return;
+        EXPECT_EQ(Peek(_probe.Sym("EVENM1")), evenM1 ? 1 : 0) << "the probe's Even M1 check\n" << Screen();
         EXPECT_EQ(Peek(_probe.Sym("CLASS")), static_cast<uint8_t>(m.rule)) << "the probe's class detection";
         EXPECT_EQ(PeekW(_probe.Sym("ONSET")), m.onset) << "the probe's frame-length detection";
         EXPECT_EQ(Peek(_probe.Sym("CAPS")), m.caps) << "the probe's paging detection";
@@ -844,7 +873,7 @@ protected:
         {
             if ((only != 0 && r.id != only) || (r.flags & 3 & ~caps) != 0)
                 continue;
-            if ((r.flags & 32) && m.rule == Rule::None)  // not on the plain clones (see CURFLAGS in ctprobe.asm)
+            if ((r.flags & 32) && (m.rule == Rule::None || m.rule == Rule::NoneEvenM1))  // not on the plain clones
                 continue;
             CaseResult result{ r, {}, Expected(m.rule, r, sym) };
             for (uint8_t i = 0; i < r.count; i++)
@@ -914,8 +943,6 @@ TEST_P(CtProbeSweep_Test, EveryCaseMatchesTheOracle)
     const Machine& m = GetParam();
     RunProbe(m, 0);
     ASSERT_FALSE(HasFatalFailure());
-    if (_context->config.even_M1)
-        GTEST_SKIP() << "Even M1: the probe reports it cannot time code on this machine (checked in RunProbe)";
     for (const CaseResult& r : _results)
     {
         const bool match = r.measured == r.expected;
@@ -971,14 +998,7 @@ TEST_P(CtProbeLoad_Test, ReportsAllValuesAsExpected)
         ASSERT_TRUE(typer->Request(command, CommandTyper::Options{})) << command;
         ASSERT_TRUE(RunUntil([&] { return typer->GetStatus() == CommandTyper::Status::Done; }, 4000)) << command;
     }
-    ASSERT_TRUE(RunUntil([&] { return ScreenHas("AS EXPECTED") || ScreenHas("VALUES WRONG") || ScreenHas("measured."); },
-                         30000))
-        << Screen();
-    if (_context->config.even_M1)  // the Scorpion's Even M1: the probe cannot time code there and says so
-    {
-        EXPECT_TRUE(ScreenHas("Even M1")) << Screen();
-        return;
-    }
+    ASSERT_TRUE(RunUntil([&] { return ScreenHas("AS EXPECTED") || ScreenHas("VALUES WRONG"); }, 30000)) << Screen();
     EXPECT_TRUE(ScreenHas("ALL VALUES AS EXPECTED")) << Screen();
     EXPECT_TRUE(ScreenHas(l.paging)) << Screen();
 }
