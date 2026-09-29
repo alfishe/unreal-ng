@@ -107,7 +107,7 @@ recording; replay uses it (NFR-3).
 | Paging | `GET /state/paging` shows the 4 windows as "physical page + kind" (RAM / vROM cell / ROM / fast RAM / graphics / ISA), the cells `#C0-#FF`, CNF map, DOS, turbo — through the decoder's `GetPagingLatches` |
 | New state block | `GET /api/v1/emulator/{id}/state/sprinter`: config state, map number, PORT_Y, RGMOD, HOLD, ALL_MODE, clock ratio, frame lines, accelerator mode, CBL state, IDE channel. CLI `sprinter`, Lua `emu:sprinter()`, Python `emulator.sprinter()`, MCP `inspect_state` aspect `sprinter` |
 | Port table | `GET /state/sprinter/ports?map=0&dos=1&rw=r` → the decoded table (address pattern → code + name); `GET /state/sprinter/ports/lookup?port=21BC&rw=w` → one lookup with the index |
-| Port trace | every traced access carries `code` and the code's name (D10) |
+| Port trace | every traced access carries `code` and the code's name (D10): the field, the code table in every export and the `code` filter are built (PLAN #60(g)); `PortDecoder_Sprinter` sets `PortDecodeDisposition::internalCode` from its port table and returns the code names from `GetPortTraceCodeTable()` |
 | Media | the `media` verbs of PLAN #58 (`fdd.*`, `ide*.*`); until M4, the existing `disk` verbs for `fdd.*` |
 | Per-model switches | extend: `state_memory_api.cpp:175`, `:355-372` (ROM page counts: 16), `cli-processor-state.cpp:338`, `:365`, `:471-474`, `:512`, `state_screen_api.cpp:132` (mode name `sprinter`), `ports_api.cpp:106`, `lua_emulator.h:3037`, `:3197`, `python_emulator.h:3097`, `:3242` |
 | Recipe | `.recipe/machines/sprinter.md`: create, boot DSS from a floppy image, from a folder; switch to Spectrum mode; read the port table |

@@ -801,7 +801,7 @@ opt-in in the ts-conf ini (currently `NONE`, line 361), ROM line present
 | DRAM budget view | `show_memcycles` | per-line counters of the last frame, overlay + automation field |
 | DMA view | — | state, device code, addresses, words/blocks left |
 | Memory windows | — | `Memory16KBWidget`×4 works as is: `GetCurrentBankName` already prints generic "RAM n"/"ROM n", which is exactly TSConf's plain page numbering; add a "vdos" marker |
-| Port trace | partial | `getPortTraceDecodeRules` + `getPortMapEntries` TSConf entries (PLAN #8); `PortTag::Video/Dma/StorageSd` exist |
+| Port trace | partial | `getPortTraceDecodeRules` + `getPortMapEntries` TSConf entries (PLAN #8); `PortTag::Video/Dma/StorageSd` exist; internal codes built (PLAN #60(g)): set `PortDecodeDisposition::internalCode` per TSConf port-table entry and name them in `GetPortTraceCodeTable()` (the ZX-Evo decoder is the worked example) |
 | TUI PoC | — | `tools/poc/018-tui-debuggers/tsconf/` layout reference |
 
 Breakpoints/watchpoints need nothing new.

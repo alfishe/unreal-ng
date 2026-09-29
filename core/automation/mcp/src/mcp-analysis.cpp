@@ -317,7 +317,9 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
     }
     schema["properties"]["action"]["description"] =
         "Analysis operation: executed-address coverage, per-frame CPU cost, profiler sessions, a one-shot main-Z80 port I/O "
-        "trace, or gs_porttrace (General Sound coprocessor triage - CPU steps/interrupts/DAC fetches + event trace).";
+        "trace (on decoders with internal port codes - ZX-Evo decode arms - each event also carries code / code_name, "
+        "and session.codes lists them), or gs_porttrace (General Sound coprocessor triage - CPU steps/interrupts/DAC "
+        "fetches + event trace).";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["clear"]["type"] = "boolean";

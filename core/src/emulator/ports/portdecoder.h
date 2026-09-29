@@ -550,6 +550,13 @@ public:
     /// have no mask/match table and return an empty vector (the default).
     virtual std::vector<PortTraceDecodeRule> getPortTraceDecodeRules() const { return {}; }
 
+    /// Internal port codes this decoder resolves addresses to, with their names
+    /// (PLAN #60(g)): a table-driven decoder maps the address to a code first
+    /// (ZX-Evo: the BaseConf decode arm; Sprinter / TSConf: the port-table code),
+    /// and the trace records the code so an access stays readable when the map
+    /// changes. Empty for decoders without codes
+    virtual std::vector<PortTraceCodeName> GetPortTraceCodeTable() const { return {}; }
+
     /// Static port map for introspection ("which devices respond to which ports
     /// on this machine"). Single per-model switch over config.mem_model, mirroring
     /// the decode conditions of the IsPort_* helpers / decode tables in the model

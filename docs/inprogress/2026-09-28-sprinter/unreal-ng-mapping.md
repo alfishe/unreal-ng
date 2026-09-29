@@ -43,7 +43,7 @@ unchanged, what it extends, and what is new.
 | RTC | **built (PLAN #60(c), 2026-09-28)**: `Ds12887` (`io/rtc/ds12887.*`) is the shared MC146818 core (clock, NVRAM, file, fixed time, TTD id 18); `EvoAvr`, Profi and the SMUC run on it | the Sprinter wires its ports, a 128-cell chip with century `#32`, and `[SPRINTER] CmosFile=` | ATM3, Profi, SMUC, ZX-Evo already on it | [tdd-storage.md](tdd-storage.md) §4 |
 | Keyboard | no PS/2/AT path (E2b deferred) | the E2b event (ZX + PC key) + `Ps2Set2Encoder` | ZX-Evo E2b (PLAN #55) | [tdd-accel-sound-input.md](tdd-accel-sound-input.md) §3 |
 | Automation per-model switches | `state_memory_api.cpp:175`, `cli-processor-state.cpp:338`… | Sprinter rows | — | [tdd-integration.md](tdd-integration.md) §3 |
-| Port trace records | address + value | + internal code and its name (PLAN #60) | any table-driven decoder | D10 |
+| Port trace records | **built (PLAN #60(g), 2026-09-29)**: address + value + internal code and its name | the Sprinter fills `internalCode` from its port table | ZX-Evo decode arms already use it | D10 |
 
 ## 3. New from scratch
 
