@@ -435,13 +435,13 @@ Code = `{ctrl[7], ctrl[2:0]}` ([V] `dma.v:223-227`):
 | 0x1 | RAM → RAM copy | 2 | yes |
 | 0x9 | BLT1: copy, keep dst where **source** byte (ASZ=1) / nibble (ASZ=0) is 0 | 3 | yes |
 | 0x2 / 0xA | SPI → RAM / RAM → SPI (little-endian, 2 SPI bytes per word) | ~8 (SPI 16 fclk/byte) | yes |
-| 0x3 / 0xB | IDE → RAM / RAM → IDE | device-paced | `IDE_HDD` build only |
+| 0x3 / 0xB | IDE → RAM / RAM → IDE (16-bit words, data register; §8.3) | 1 DRAM + 1 IDE bus cycle (6 fclk) | `IDE_HDD` build only (emulator: when an IDE board is fitted) |
 | 0x4 | FILL: read the first word once per transaction, then write it | 1 after first read | yes |
 | 0x6 | BLT2: dst += src per byte (ASZ=1) / nibble (ASZ=0); wraps, saturates if `OPT` | 3 | `XTR_FEAT` |
 | 0x7 | wait-port (AVR) transfer via `DMAWPD/DMAWPA` | AVR-paced | yes (out of v1 scope) |
 | 0xC | RAM → CRAM, entry = dst byte-address `[8:1]` | ~2 | yes |
 | 0xD | RAM → SFILE, entry = dst `[8:1]` | ~2 | yes |
-| 0x0, 0x5, 0x8, 0xE, 0xF (+0x3/0xB w/o IDE) | undefined / not built | — | **hangs**: busy stays 1, no INT, until the next `DMA_CTRL` write or reset |
+| 0x0, 0x5, 0x8, 0xE, 0xF (+0x3/0xB without an IDE board) | undefined / not built | — | **hangs**: busy stays 1, no INT, until the next `DMA_CTRL` write or reset |
 
 `tsconf_en.md`'s BLT1 "if destination ≠ 0" is wrong; [V], [U], [M] test the source.
 
@@ -526,11 +526,89 @@ branch and is reused (technical-design §3.11).
 
 ### 8.3 Nemo IDE
 
-Built in the standard `quartus` build (ports per [V] `zports.v:256-274,766-861`,
-DMA codes 0x3/0xB); TS-BIOS lists IDE Nemo/SMUC boot devices. **v1 decision
-(D2):** defer with the shared IDE core (PLAN #13a); decoder answers 0xFF.
-That core is on master since 2026-09-28 (`f5fc5f05`, `IdeAdapter` Nemo Evo
-scheme), so D2 is reopened (technical-design §3.2).
+Built in the standard `quartus` build (`IDE_HDD`). The `quartus_vdac` and
+`quartus_vdac2` builds use the same FPGA pins for the video DAC, so a real
+board has **either** IDE **or** a VDAC ([V] `top.v:71-90, 430-506`). The
+emulator has no pin conflict: under D1 (superset) IDE works whatever `TS_VDAC`
+says, and `[HDD] Scheme` alone decides whether an IDE board is fitted. TS-BIOS
+lists IDE Nemo/SMUC boot devices. **v1 decision (D2, 2026-09-29): emulated**,
+through the shared IDE core (`IdeAdapter` scheme `NEMO-DIVIDE`, on master since
+`f5fc5f05`).
+
+**Port decode** ([V] `zports.v:256-274, 336-341, 408-412`), low address byte
+only; the ATA register is `A7..A5`:
+
+| Port | Condition | Meaning |
+|:--|:--|:--|
+| `rrr10000` (#10 #30 … #F0) | `loa[2:0] = 000`, `loa[4:3] = 10` | CS0, register `rrr` (#10 = data) |
+| `rrr01000` (#08 #28 … #E8) | `loa[2:0] = 000`, `loa[4:3] = 01`, except #C8 | CS0 aliases of the same registers; #08 is a data access whose high byte is lost |
+| #C8 | | CS1 register 6 (alternate status / device control) |
+| #11 | | the high-byte latch (not a bus cycle) |
+
+The ports answer **always**: in and out of DOS, inside vdos, in every clock
+mode (`porthit` has no DOS term for them). They do not overlap the Beta-128
+ports (1F/3F/5F/7F/FF have `loa[2:0] ≠ 000`).
+
+**16-bit data** ([V] `zports.v:783-861`). The data register is 16 bits, the Z80
+bus 8. Two orders work, and the hardware tells them apart with triggers:
+
+| Order | Read | Write |
+|:--|:--|:--|
+| Nemo | `IN #10` = low byte (the bus cycle), `IN #11` = high byte from the latch | `OUT #11,hi` (latched), `OUT #10,lo` (the bus cycle writes `hi:lo`) |
+| DivIDE | first `IN #10` = low byte (the bus cycle), second `IN #10` = high byte from the latch | first `OUT #10,lo` (latched), second `OUT #10,hi` (the bus cycle writes `hi:lo`) |
+
+Any access to another IDE port or to #11 clears the pending read/write pair.
+Worked example: `OUT (#11),#AB : OUT (#10),#CD` writes the word #ABCD; a disk
+image stores `CD AB`. This is bit for bit the ZX-Evo BaseConf logic
+(`zx-evo/pentevo/fpga/base/z80/zports.v:520-615`); unreal-ng's
+`IdeAdapter::EvoIn/EvoOut` implement it.
+
+**The read latch is shared with DMA.** `iderdreg` loads on *every* completed
+IDE bus cycle (`ide_stb`), the CPU's and the DMA's ([V] `zports.v:849-854`).
+After an IDE → RAM DMA, `IN #11` (or a second `IN #10`) returns the high byte
+of the last word the DMA read.
+
+**Bus cycle and CPU stall — TSConf only** ([V] `common/ide.v`,
+`zports.v:766-781`, `z80/zclock.v:96-121`). Unlike BaseConf, whose IDE strobes
+are the Z80's own `IORQ`/`RD`/`WR`, TSConf runs every IDE access through a
+fixed PIO-4 state machine clocked at 28 MHz: `go` + 5 states = **6 fclk
+(≈ 214 ns)** per word. The drive's IORDY is not used; the cycle never waits
+for the device. While it runs, `ide_stall` freezes the Z80 clock. Only real
+bus cycles stall (`ide_req`: CS0/CS1 ports, not #11, not a #10 that is served
+from the latch). In Z80 T-states of the current clock:
+
+| CPU clock | Z80 edge spacing | Stall |
+|:--|:--|:--|
+| 3.5 MHz | zpos every 8 fclk | 1 T |
+| 7 MHz | zpos every 4 fclk | 2 T (1 T in some phases) |
+| 14 MHz | clock toggles every fclk except while stalled | 3 T |
+
+The 7 MHz value depends on where the access falls against the clock phase;
+the emulator takes the upper value. The stall is emulated, **off by default**
+(`[HDD] IdeStall=0`): software does not depend on it, and default timing then
+matches the ancestor emulator. `IdeStall=1` adds it, for timing studies.
+
+**IDE DMA** (codes 0x3 IDE → RAM, 0xB RAM → IDE; [V] `dma.v:98, 136, 250-251,
+441-445`, `ide.v`). The DMA moves **16-bit words** to and from the data
+register (CS0, register 0: `ide_a = 0`), one IDE bus cycle per word. It skips
+the Z80 latches, so the byte order is the image's: the low byte goes to the
+even address. `DMA_LEN`/`DMA_NUM` count words like every other DMA device
+(512-byte sector = `LEN 0xFF`, `NUM 0`). When the CPU and the DMA ask at the
+same time, the DMA drives the bus (`ide.v`: `dma_req` selects every signal).
+A CPU IDE access during an IDE DMA is not modeled (the CPU would read the
+DMA's word); software does not do it. Without an IDE board (`Scheme=NONE`,
+the equivalent of a VDAC build) codes 0x3/0xB are "not built" and hang (§6).
+With a board but no drive, the words read are what the shared channel returns
+for an empty unit (#FFFF), and the transfer completes.
+
+**Reference check:**
+
+| Point | [V] | [U] `tsconf.cpp:378-420` | [X] `tslab.c:407-422` | Decision |
+|:--|:--|:--|:--|:--|
+| Z80 port decode, both orders | as above | `IDE_NEMO_DIVIDE` scheme, config-selected (`io.cpp:128`) | Nemo | [V] = `NEMO-DIVIDE` |
+| DMA unit | 16-bit word | 16-bit word (`hdd.read_data()`) | 8-bit, low byte only | [V] + [U]: words |
+| CPU stall | 6 fclk per bus cycle | none | none | emulated, off by default |
+| DMA updates the read latch | yes | no | no | [V] |
 
 ## 9. Other peripherals
 
@@ -634,3 +712,7 @@ semantics, no ZC SD in unreal-ng · Beta ports (no 0x9F, no mirror claim) and
 vdos entry/exit rules · CMOS decode/gating, Gluk ext at 0xF0 · AY fixed clock
 (no `ayclk`) · Covox/beeper shared register · SPG compression codes · duplicate
 sentences removed.
+
+2026-09-29: §8.3 Nemo IDE written in full (decode, both byte orders, the
+latch shared with DMA, the TSConf-only 6-fclk CPU stall, IDE DMA in 16-bit
+words, VDAC builds have no IDE); D2 decided: emulated.

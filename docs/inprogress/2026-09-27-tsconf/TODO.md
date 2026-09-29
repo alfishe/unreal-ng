@@ -51,8 +51,12 @@ Scope confirmed with the user on 2026-09-27, and how the design honors it:
   CMOS is reused as is; TSConf adds only the `#EFF7`/DOS/vdos gating
 - [x] Shared IDE core on master (PLAN #13a / media manager M6, `f5fc5f05`):
   `IdeAdapter` with the Nemo (A8, Evo) scheme, `[HDD]` config, TTD
-  `AtaChannel` = 17, every surface; ATM3 already uses it. D2 lost its reason
-  (see Remaining)
+  `AtaChannel` = 17, every surface; ATM3 already uses it
+- [x] D2 decided 2026-09-29: Nemo IDE **emulated** in phase 6 on that core -
+  decode = scheme `NEMO-DIVIDE` (bit-identical to BaseConf), DMA 0x3/0xB in
+  16-bit words, the TSConf-only CPU stall emulated but off by default
+  (`[HDD] IdeStall=0`); full description in hardware-spec §8.3, design in
+  technical-design §3.11, tests IDE-1..5 / DMA-15 / BOOT-4
 
 ## Remaining
 
@@ -68,8 +72,5 @@ Scope confirmed with the user on 2026-09-27, and how the design honors it:
   from a TSConf-specific SD API; #40 V1 and #42
   (`IVideoMapper`) before phase 7.
 - Shared with the ATM3 completion program (PLAN #55, [implementation-plan.md](../2026-09-15-atm-baseconf-highres-ports/implementation-plan.md) §2): M1 hook, write intercept, `ZControllerSpi`, SD on `IBlockDevice`, `EvoAvr`; the SD card, host folders (`HostFolderFat`) and media control through the media manager (PLAN #58, [storage-manager](../2026-09-28-storage-manager/technical-design.md)). ATM3 moves to the official `zxevo_fe.rom` (pages 0-3 empty), so TSConf needs its own ROM file with TS-BIOS in pages 0-3.
-- Open user decisions: none blocking. D1-D7 in technical-design §3.2 record the
-  defaults taken. **D2 (Nemo IDE deferred) is reopened**: the shared IDE core
-  it waited for is on master (`f5fc5f05`), so enabling it costs the decoder's
-  `TryIdePortIn/Out` calls, `[HDD] Scheme=NEMO` in the config, the DMA IDE
-  codes 0x3/0xB and the IDE tests - decide before phase 6.
+- Open user decisions: none. D1-D7 in technical-design §3.2 record the
+  decisions taken (D2 changed on 2026-09-29: Nemo IDE emulated).

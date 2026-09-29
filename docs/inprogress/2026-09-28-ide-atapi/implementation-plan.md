@@ -46,7 +46,7 @@ disagree, this table wins; the designs get a pointer.
 | `scorpion`, `profscorp` | `NONE` | SMUC is an add-on card: with it fitted the ProfROM boot takes its NVRAM / RTC / IDE path, and the shipped boot is pinned without it (the SMUC stub was "absent by default" for that reason). `Scheme=SMUC` fits it |
 | `pentagon128k`, `pentagon512k` | `NEMO` | the usual Pentagon card (UnrealSpeccy default family) |
 | `spectrum48`, `spectrum128`, `spectrum2`, `spectrum2a`, `spectrum3`, `zx-diagnostics` | `NONE` | no IDE board on these machines out of the box |
-| `ts-conf` | `NONE` | TSConf's own IDE comes with PLAN #41 |
+| `ts-conf` | `NONE` | set to `NEMO-DIVIDE` by PLAN #41 phase 6 (TSConf technical-design §3.11) |
 
 A machine with a scheme has the slots even when no disk is attached: the ports then read `#FF`
 (empty channel), as on real hardware. Both units are hard disks unless the config says `CD0=1` /

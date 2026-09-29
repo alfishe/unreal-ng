@@ -19,4 +19,5 @@ Follow-ups (not in rollout 1):
 - [x] Profi geometry from the `ProfiHiDD` header (LBA 256: 16 x 16, LBA 1008: 16 x 63), else 16 x 16 (IDE design §8.3); `profi_hdd_test` runs without `CHS0`
 - [x] Adapter fuzzing: seeded random traffic on every scheme (`IdeAdapter_Test.RandomPortTrafficIsSafe`); the cross-emulator differential harness (IDE design §12.6) stays open
 - [x] A unit's drive from the media verbs and the Qt panel: `device=cdrom|disk` on insert / swap (`IdeController::SetUnitKind`)
-- [ ] DivIDE paging and automap (the adapter decodes its IDE ports only); TSConf IDE (PLAN #41)
+- [ ] DivIDE paging and automap (the adapter decodes its IDE ports only)
+- [ ] TSConf IDE (PLAN #41 phase 6, [technical-design §3.11](../2026-09-27-tsconf/technical-design.md#311-storage)): scheme `NEMO-DIVIDE` as is, plus `IdeAdapter::DmaReadWord` / `DmaWriteWord` for its IDE DMA and a "reached the drive" flag for its optional CPU stall (`[HDD] IdeStall`)
