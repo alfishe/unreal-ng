@@ -5,28 +5,22 @@
 #include <cstring>
 #include <fstream>
 
+#include "common/filehelper.h"
+
 namespace
 {
-    // Register indexes (MC146818 layout; B is served by the CMOS base class)
-    constexpr uint8_t kRegA = 0x0A;
-    constexpr uint8_t kRegC = 0x0C;
-    constexpr uint8_t kRegD = 0x0D;
     constexpr uint8_t kExtensionFirst = 0xF0;
 }  // namespace
 
-EvoAvr::EvoAvr()
+EvoAvr::EvoAvr() : Ds12887(256)
 {
-    SetCMOSType(Dallas);
-
     // An erased AVR EEPROM reads #FF: no user PS/2 keymap ('K','B' signature
     // absent), so the firmware uses its built-in one
     _eeprom.fill(0xFF);
 }
 
-void EvoAvr::WriteCMOS(uint8_t val)
+void EvoAvr::WriteRegister(uint8_t index, uint8_t val)
 {
-    const uint8_t index = _cmos_addr;
-
     if (index >= kExtensionFirst)
     {
         if (_eepromMode)
@@ -47,18 +41,20 @@ void EvoAvr::WriteCMOS(uint8_t val)
             _capsLed = (val & 0x02) != 0;
             _eepromMode = (val & 0x80) != 0;
             return;
+        case kRegB:
+            // rtc.c keeps only the binary-mode bit: always 24-hour, no SET hold
+            SetCell(kRegB, static_cast<uint8_t>((val & kBBinary) | kB24Hour));
+            return;
         case kRegD:
             return;  // read-only
         default:
-            CMOS::WriteCMOS(val);  // clock registers, B, NVRAM 0x0E-0xEF
+            Ds12887::WriteRegister(index, val);  // clock registers, B, NVRAM 0x0E-0xEF
             return;
     }
 }
 
-uint8_t EvoAvr::ReadCMOS()
+uint8_t EvoAvr::ReadRegister(uint8_t index)
 {
-    const uint8_t index = _cmos_addr;
-
     if (index >= kExtensionFirst)
     {
         if (_eepromMode)
@@ -72,15 +68,18 @@ uint8_t EvoAvr::ReadCMOS()
             return _eepromPage;
         case kRegC:
         {
-            // The base class keeps the update-ended flag and clears it on read
-            const uint8_t updateEnded = CMOS::ReadCMOS() & 0x10;
+            // The chip keeps the update-ended flag and clears it on read
+            const uint8_t updateEnded = Ds12887::ReadRegister(kRegC) & kCUpdateEnded;
             return static_cast<uint8_t>((_eepromMode ? 0x80 : 0) | updateEnded | (_sdPresent ? 0x08 : 0) |
                                         (_sdWriteProtected ? 0x04 : 0) | (_capsLed ? 0x02 : 0) | (_tapeOutMode ? 0x01 : 0));
         }
+        case kRegB:
+            // rtc.c keeps only the binary-mode bit; bit 1 (24-hour) always reads 1
+            return GetCell(kRegB);
         case kRegD:
             return static_cast<uint8_t>(0x80 | (_modifiers & 0x7F));
         default:
-            return CMOS::ReadCMOS();  // clock registers, B, NVRAM 0x0E-0xEF
+            return Ds12887::ReadRegister(index);  // clock registers, NVRAM 0x0E-0xEF
     }
 }
 
@@ -124,7 +123,7 @@ bool EvoAvr::LoadNvram(const std::string& path)
     if (path.empty())
         return false;
 
-    std::ifstream file(path, std::ios::binary);
+    std::ifstream file(FileHelper::ToFsPath(path), std::ios::binary);
     if (!file)
         return false;
 
@@ -134,7 +133,7 @@ bool EvoAvr::LoadNvram(const std::string& path)
         return false;
 
     // Only the battery-backed cells: the clock registers 0x00-0x0D are live
-    std::memcpy(&_cmos[0x0E], &image[0x0E], 0xF0 - 0x0E);
+    std::memcpy(&_cells[kFirstRamCell], &image[kFirstRamCell], kExtensionFirst - kFirstRamCell);
     std::memcpy(_eeprom.data(), &image[0x100], kEepromSize);
     return true;
 }
@@ -145,10 +144,10 @@ bool EvoAvr::SaveNvram(const std::string& path) const
         return false;
 
     std::array<uint8_t, kNvramFileSize> image{};
-    std::memcpy(image.data(), _cmos, 0x100);
+    std::memcpy(image.data(), _cells.data(), 0x100);
     std::memcpy(&image[0x100], _eeprom.data(), kEepromSize);
 
-    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    std::ofstream file(FileHelper::ToFsPath(path), std::ios::binary | std::ios::trunc);
     if (!file)
         return false;
     file.write(reinterpret_cast<const char*>(image.data()), static_cast<std::streamsize>(image.size()));

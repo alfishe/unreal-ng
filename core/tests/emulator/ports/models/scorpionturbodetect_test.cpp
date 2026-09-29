@@ -42,7 +42,7 @@ static void RunDetectionProbe(const char* model, uint16_t flagAddr, int& success
     // (PortDecoder_Scorpion256::SetSmucEnabled) and for the base model:
     // nothing ever reads the RTC
     if (PortDecoder_Scorpion256* decoder = static_cast<PortDecoder_Scorpion256*>(context->pPortDecoder))
-        decoder->GetSMUCNvram().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC
+        decoder->GetRtc().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC
 
     // Host-side turbo (audio muted + low-quality DSP). Independent of the
     // emulated 7 MHz multiplier under test - config.turbo_mode never reaches
@@ -109,7 +109,7 @@ TEST(ScorpionTurboDetect_Test, ProfRomBootDetectsSevenMhz)
 
     // Same frozen RTC instant as RunDetectionProbe: deterministic boot timeline
     if (PortDecoder_Scorpion256* decoder = static_cast<PortDecoder_Scorpion256*>(context->pPortDecoder))
-        decoder->GetSMUCNvram().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC
+        decoder->GetRtc().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC
 
     // Step one frame at a time: RunNFrames(n) derives its t-state budget from
     // the multiplier at entry, and the boot itself flips turbo ON at ~frame 11,

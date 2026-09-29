@@ -500,6 +500,10 @@ void TimeTravelManager::EngageRecordingLock()
     // Turbo mode off, turbo mode / fast tape / turbo tape / fast disk refused
     if (_context->pFeatureManager)
         _context->pFeatureManager->onTtdRecordingStarted();
+
+    // Devices with a host-time dependence (the RTC) switch to emulated time
+    // here, before StartRecording captures its baseline
+    _peripherals.NotifyRecording(true);
 }
 
 void TimeTravelManager::ReleaseRecordingLock()
@@ -507,6 +511,8 @@ void TimeTravelManager::ReleaseRecordingLock()
     if (!_recordingLockEngaged || !_context)
         return;
     _recordingLockEngaged = false;
+
+    _peripherals.NotifyRecording(false);
 
     // Lifts the FeatureManager gate first: the speed restore below is checked by it
     if (_context->pFeatureManager)

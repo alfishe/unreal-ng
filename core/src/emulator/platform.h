@@ -708,6 +708,10 @@ struct CONFIG
 		char evo_nvram_path[FILENAME_MAX];
 	} atm;
 
+	// Profi RTC battery-backed cells image ([PROFI] NvramFile=); empty = kept
+	// for the session only
+	char profi_nvram_path[FILENAME_MAX];
+
 	uint8_t use_comp_pal;
 	unsigned pal, num_pals;      // selected palette and total number of pals
 	unsigned minres;             // min. screen x-resolution
@@ -1139,7 +1143,6 @@ struct EmulatorState
 
 	uint8_t flags = 0x00; // Stores execution flags
 	uint8_t border_attr;
-	uint8_t cmos_addr;
 	uint8_t pVD;
 
 #ifdef MOD_VID_VD

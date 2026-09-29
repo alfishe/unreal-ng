@@ -76,7 +76,7 @@ protected:
 
         // Deterministic RTC (the ERS reads the clock while booting)
         if (auto* decoder = static_cast<PortDecoder_ATM3*>(_context->pPortDecoder))
-            decoder->GetCMOS().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC
+            decoder->GetRtc().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC
 
         _emulator->EnableTurboMode();
     }
@@ -668,8 +668,8 @@ TEST_F(ZXEvoErs_Test, ImageMntAutomountFromAHostFolder)
     Tap(ZXKEY_N);  // main menu: automount on (CMOS #EC bit 5)
     _emulator->RunNFrames(20, true);
     auto* decoder = static_cast<PortDecoder_ATM3*>(_context->pPortDecoder);
-    decoder->GetEvoAvr().SetCMOSAddress(0xEC);
-    ASSERT_EQ(decoder->GetEvoAvr().ReadCMOS() & 0x20, 0x20) << "the ERS stored the automount bit";
+    decoder->GetEvoAvr().WriteAddress(0xEC);
+    ASSERT_EQ(decoder->GetEvoAvr().ReadData() & 0x20, 0x20) << "the ERS stored the automount bit";
 
     _emulator->Reset();
     ASSERT_TRUE(RunToMainMenu());

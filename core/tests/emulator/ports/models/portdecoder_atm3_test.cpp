@@ -14,7 +14,7 @@
 #include "emulator/io/storage/memorydisk.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
-#include "emulator/memory/atm/cmos.h"
+#include "emulator/io/rtc/ds12887.h"
 #include "emulator/io/mouse/mouse.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/emulator.h"
@@ -732,26 +732,25 @@ TEST_F(PortDecoder_ATM3_Test, Eff7_WrittenOnlyOutsideShadow_WriteOnly)
 TEST_F(PortDecoder_ATM3_Test, Gluk_GatedByEff7Bit7OutsideShadow)
 {
     EmulatorState& state = _context->emulatorState;
-    CMOS& cmos = _portDecoder->GetCMOS();
-    cmos.SetCMOSType(Dallas);
+    Ds12887& cmos = _portDecoder->GetRtc();
 
     SetShadow(state, false);
     state.pEFF7 = 0x00;
-    cmos.SetCMOSAddress(0x20);
+    cmos.WriteAddress(0x20);
     _portDecoder->DecodePortOut(0xDFF7, 0x30, 0x0000);
-    EXPECT_EQ(cmos.GetCMOSAddress(), 0x20) << "clock ports closed until #EFF7 bit 7";
+    EXPECT_EQ(cmos.GetAddress(), 0x20) << "clock ports closed until #EFF7 bit 7";
     EXPECT_EQ(_portDecoder->DecodePortIn(0xBFF7, 0x0000), 0xFF);
 
     _portDecoder->DecodePortOut(0xEFF7, 0x80, 0x0000);
     _portDecoder->DecodePortOut(0xDFF7, 0x30, 0x0000);
-    EXPECT_EQ(cmos.GetCMOSAddress(), 0x30);
+    EXPECT_EQ(cmos.GetAddress(), 0x30);
     _portDecoder->DecodePortOut(0xBFF7, 0x5A, 0x0000);
     EXPECT_EQ(_portDecoder->DecodePortIn(0xBFF7, 0x0000), 0x5A);
 
     SetShadow(state, true);
     state.pEFF7 = 0x00;
     _portDecoder->DecodePortOut(0xDEF7, 0x31, 0x0000);
-    EXPECT_EQ(cmos.GetCMOSAddress(), 0x31) << "#DEF7 in shadow, no #EFF7 bit 7 needed";
+    EXPECT_EQ(cmos.GetAddress(), 0x31) << "#DEF7 in shadow, no #EFF7 bit 7 needed";
     _portDecoder->DecodePortOut(0xBEF7, 0xA5, 0x0000);
     EXPECT_EQ(_portDecoder->DecodePortIn(0xBEF7, 0x0000), 0xA5);
     EXPECT_EQ(_portDecoder->DecodePortIn(0xBFF7, 0x0000), 0xFF) << "#BFF7 has A8=1: in shadow it is not the clock";
@@ -870,8 +869,8 @@ TEST_F(PortDecoder_ATM3_Test, ZController_CardStatusInAvrRegisterC)
     EvoAvr& avr = _portDecoder->GetEvoAvr();
     avr.SetFixedTime(1767268830);  // no update-ended flag in the read
     auto registerC = [&avr]() {
-        avr.SetCMOSAddress(0x0C);
-        return static_cast<uint8_t>(avr.ReadCMOS() & 0x0C);
+        avr.WriteAddress(0x0C);
+        return static_cast<uint8_t>(avr.ReadData() & 0x0C);
     };
 
     EXPECT_EQ(registerC(), 0x00) << "empty slot";
@@ -1017,8 +1016,8 @@ TEST(ZXEvoSdSlot_Test, SwapDelaySeenInCardDetect)
     EvoAvr& avr = decoder->GetEvoAvr();
     avr.SetFixedTime(1767268830);
     auto cardPresent = [&avr]() {
-        avr.SetCMOSAddress(0x0C);
-        return (avr.ReadCMOS() & 0x08) != 0;
+        avr.WriteAddress(0x0C);
+        return (avr.ReadData() & 0x08) != 0;
     };
     MediaSource blank;
     blank.type = MediaSourceType::Blank;

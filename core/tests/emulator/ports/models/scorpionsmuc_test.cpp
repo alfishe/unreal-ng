@@ -224,7 +224,7 @@ TEST(ScorpionSMUC_Test, ProfRomBootDrivesSmucProbes)
     // before any frame runs: live host time shifts the boot timeline - the
     // NVRAM format used to land right around the first 100-frame checkpoint
     // and varied with the wall clock
-    decoder->GetSMUCNvram().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC
+    decoder->GetRtc().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC
 
     // Host-side turbo: mutes audio and drops the sound DSP to the low-quality
     // path. RunNFrames is synchronous and unpaced, so this buys nothing in
@@ -351,7 +351,7 @@ TEST(ScorpionSMUC_Test, ProfRomIdentifiesTheDiskThroughTheDiskCore)
     EmulatorContext* context = CreateProfScorpContext(emulator);
     ASSERT_TRUE(context);
     PortDecoder_Scorpion256* decoder = GetScorpionDecoder(context);
-    decoder->GetSMUCNvram().SetFixedTime(1767268830);
+    decoder->GetRtc().SetFixedTime(1767268830);
 
     context->config.ide_scheme = IDE_SMUC;
     context->pCore->RefitIde();

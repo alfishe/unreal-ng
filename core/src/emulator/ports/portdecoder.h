@@ -623,6 +623,13 @@ public:
     /// ttd_clock_units). 1 for models without a hardware turbo
     virtual uint8_t TtdClockUnits() const { return 1; }
 
+    /// Emulated machine time in microseconds: whole frames at the model's
+    /// frame duration plus the position in the current frame (TTD time units,
+    /// so a hardware turbo switch mid-frame does not move it). Restored with
+    /// the frame counter by a TTD seek, which makes it the time base of
+    /// clocks that must replay deterministically (Ds12887 in emulated mode)
+    uint64_t EmulatedMicroseconds() const;
+
     /// Serializers for the ids above. Ownership transfers to the caller.
     /// Every id from GetTTDModelStateIds() must be covered.
     virtual std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const

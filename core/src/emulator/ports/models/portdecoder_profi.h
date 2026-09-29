@@ -3,7 +3,7 @@
 
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
-#include "emulator/memory/profi/proficmos.h"
+#include "emulator/io/rtc/ds12887.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/screen.h"
 
@@ -39,6 +39,9 @@ public:
 
     std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
     std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
+
+    /// The clock chip (tests, debug UI; every RTC machine has GetRtc())
+    Ds12887& GetRtc() { return _rtc; }
     /// endregion </Interface methods>
 
     /// region <Helper methods>
@@ -78,9 +81,17 @@ protected:
     void Port_DFFD(uint8_t value, uint16_t pc);
     void ResetPalette();
 
-    /// RTC/CMOS (DS12885-style), EXT mode only. Address: #BF/#FF, data: #9F/#DF
-    /// (UnrealSpeccy io.cpp: `(port & 0x9F) == 0x9F`, bit 5 selects address vs data).
-    ProfiCMOS _cmos;
+    /// RTC, EXT mode only. Address: #BF/#FF, data: #9F/#DF (UnrealSpeccy io.cpp:
+    /// `(port & 0x9F) == 0x9F`, bit 5 selects address vs data).
+    ///
+    /// Modelled as the shared MC146818 chip with 256 cells, as UnrealSpeccy and
+    /// ZXMAK2 (CmosProfi.cs, a DS12885) do. The karabas-pro clone differs: its
+    /// "RTC" is a 256-byte RAM the board's AVR refreshes from its own clock, so
+    /// the flags and UIP timing there follow the AVR firmware, not the datasheet.
+    /// Battery-backed through [PROFI] NvramFile; lives with the decoder so the
+    /// contents survive Core::Reset(), like the real battery
+    Ds12887 _rtc{256};
+    bool _nvramLoaded = false;  // [PROFI] NvramFile read once, on the first reset
 
     /// Tracks whether Covox currently has a live port set - either #3F/#5F (NORMAL,
     /// !dosPorts) or #C7/#A7 (CP/M-extended mode, IsExtMode()) - so the transition into a

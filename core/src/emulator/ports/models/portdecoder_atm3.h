@@ -21,7 +21,7 @@
 /// - No INT gate (always passes interrupts)
 /// - NMI handling maps RAM page 0xFF to window 0
 /// - Additional registers: pBD, pBE, pBF
-/// - CMOS (DS12885-style RTC + NVRAM) shared with the memory manager ports:
+/// - Gluk clock (the AVR's MC146818 emulation, EvoAvr on Ds12887) shared with the memory manager ports:
 ///   data #BFF7 / address #DFF7 outside shadow (after #EFF7 bit 7),
 ///   data #BEF7 / address #DEF7 in shadow
 /// - Z-Controller SD card (#77 chip select, #57 data; in shadow #57 with
@@ -134,7 +134,7 @@ protected:
     // The board's AVR behind the Gluk clock ports: MC146818 clock, battery-backed
     // NVRAM, EEPROM window, version / PS/2 / modes extension window. Lives with
     // the decoder so the contents survive Core::Reset() (like the real battery)
-    EvoAvr _cmos;
+    EvoAvr _evoAvr;
     bool _nvramLoaded = false;  // [EVO] NvramFile read once, on the first reset
 
     // Z-Controller SD slot: the card outlives Core::Reset() like the NVRAM
@@ -172,10 +172,9 @@ public:
     uint8_t DecodePortIn(uint16_t port, uint16_t pc) override;
     void DecodePortOut(uint16_t port, uint8_t value, uint16_t pc) override;
 
-    /// CMOS/RTC backing store (verification tests / debug UI - mirrors
-    /// PortDecoder_Scorpion256::GetSMUCNvram())
-    CMOS& GetCMOS() { return _cmos; }
-    EvoAvr& GetEvoAvr() { return _cmos; }
+    /// The clock chip (tests, debug UI; every RTC machine has GetRtc())
+    Ds12887& GetRtc() { return _evoAvr; }
+    EvoAvr& GetEvoAvr() { return _evoAvr; }
     /// endregion </Interface methods>
 
     /// region <Port detection>

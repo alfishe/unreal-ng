@@ -3,6 +3,7 @@
 
 #include "common/modulelogger.h"
 #include "debugger/ttd/atm/ttdevosdcard.h"
+#include "debugger/ttd/ttdds12887.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/media/mediaformatregistry.h"
 #include "emulator/media/mediamanager.h"
@@ -10,7 +11,6 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/mouse/mouse.h"
 #include "emulator/memory/memory.h"
-#include "emulator/memory/atm/cmos.h"
 #include "emulator/video/screen.h"
 
 /// region <Constructors / Destructors>
@@ -18,6 +18,7 @@
 PortDecoder_ATM3::PortDecoder_ATM3(EmulatorContext* context) : PortDecoder_ATM710(context)
 {
     _zc.SetDevice(&_sdCard);
+    _evoAvr.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
 
     // TTD: the card's protocol state is in the EvoSdCard blob; a guest write
     // changes the medium, so it is a replay barrier (the media manager's rule)
@@ -40,7 +41,7 @@ PortDecoder_ATM3::~PortDecoder_ATM3()
 
     // Battery-backed state outlives the machine ([EVO] NvramFile)
     const char* nvramPath = _context->config.atm.evo_nvram_path;
-    if (_nvramLoaded && nvramPath[0] != '\0' && !_cmos.SaveNvram(nvramPath))
+    if (_nvramLoaded && nvramPath[0] != '\0' && !_evoAvr.SaveNvram(nvramPath))
         MLOGWARNING("PortDecoder_ATM3: cannot save the ZX-Evo NVRAM to '%s'", nvramPath);
 
     MLOGDEBUG("PortDecoder_ATM3::~PortDecoder_ATM3()");
@@ -70,17 +71,13 @@ void PortDecoder_ATM3::reset()
     _state->evoVgDrive = 0;
     RefreshM1Hook();
 
-    // ATM3 (ZX-Evo BaseConf) always has the DS12885-style RTC/CMOS
-    // (original Unreal Speccy gates it on conf.cmos, but a real ZX-Evo has it)
-    _cmos.SetCMOSType(Dallas);
-
     // The battery-backed NVRAM and EEPROM come from [EVO] NvramFile once, at
     // power-on; a Z80 reset does not touch the AVR
     if (!_nvramLoaded)
     {
         _nvramLoaded = true;
         const char* nvramPath = _context->config.atm.evo_nvram_path;
-        if (nvramPath[0] != '\0' && !_cmos.LoadNvram(nvramPath))
+        if (nvramPath[0] != '\0' && !_evoAvr.LoadNvram(nvramPath))
             MLOGINFO("PortDecoder_ATM3: no ZX-Evo NVRAM at '%s' yet, starting blank", nvramPath);
     }
 
@@ -876,9 +873,9 @@ void PortDecoder_ATM3::DecodeF7Out(uint16_t port, uint8_t value, uint16_t pc)
         Port_EFF7_Out(port, value, pc);
 
     if (gluk && (port & 0x2000) == 0)
-        _cmos.SetCMOSAddress(value);
+        _evoAvr.WriteAddress(value);
     if (gluk && (port & 0x4000) == 0)
-        _cmos.WriteCMOS(value);
+        _evoAvr.WriteData(value);
 }
 
 /// @brief #F7 reads: only the clock data port drives the bus (zports.v:455-460);
@@ -886,7 +883,7 @@ void PortDecoder_ATM3::DecodeF7Out(uint16_t port, uint8_t value, uint16_t pc)
 uint8_t PortDecoder_ATM3::DecodeF7In(uint16_t port)
 {
     if (IsPort_CMOS_Data(port))
-        return _cmos.ReadCMOS();
+        return _evoAvr.ReadData();
     return 0xFF;
 }
 
@@ -1097,7 +1094,7 @@ void PortDecoder_ATM3::UpdateSdStatus()
 {
     // AVR register C: b3 card present, b2 write-protected (rtc.c reads the
     // slot's detect and WP switches)
-    _cmos.SetSdStatus(_sdCard.present(), _sdCard.present() && _sdWriteProtect);
+    _evoAvr.SetSdStatus(_sdCard.present(), _sdCard.present() && _sdWriteProtect);
 }
 
 PortDecoder_ATM3::EvoSdSlot::EvoSdSlot(PortDecoder_ATM3& owner) : _owner(owner)
@@ -1145,6 +1142,7 @@ std::vector<ttd::PeripheralId> PortDecoder_ATM3::GetTTDModelStateIds() const
 {
     std::vector<ttd::PeripheralId> ids = PortDecoder_ATM710::GetTTDModelStateIds();
     ids.push_back(ttd::PeripheralId::EvoSdCard);
+    ids.push_back(ttd::PeripheralId::Ds12887);
     return ids;
 }
 
@@ -1154,6 +1152,7 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_ATM3::CreateTTDSe
     // The serializer reads and restores the live card; the decoder outlives
     // every TTD session (the manager goes before the core)
     serializers.push_back(std::make_unique<ttd::TTDEvoSdCard>(const_cast<PortDecoder_ATM3&>(*this)));
+    serializers.push_back(std::make_unique<ttd::TTDDs12887>(const_cast<EvoAvr&>(_evoAvr)));
     return serializers;
 }
 

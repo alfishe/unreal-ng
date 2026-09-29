@@ -57,8 +57,10 @@ Files follow the repo's CRLF/LF convention of the neighboring configs (new file:
 
 ### 2.1 New peripheral ids
 
-`PeripheralId` is append-only (`core/src/debugger/ttd/ttdserializable.h:41-60`, current maximum
-`Upd765 = 14`). New ids, in this order:
+`PeripheralId` is append-only (`core/src/debugger/ttd/ttdserializable.h`). Taken since this table was
+written: 15 `EvoSdCard`, 16 reserved for `TsConfPaging`, 17 `AtaChannel` (the IDE boards), 18 `Ds12887` (the shared clock, already built -
+the Sprinter reuses it and needs no id of its own). The Sprinter ids below therefore shift up by four
+when they are appended (15 -> 19 and so on); the order stays:
 
 | Id | Name | Blob contents |
 |---|---|---|
@@ -66,7 +68,7 @@ Files follow the repo's CRLF/LF convention of the neighboring configs (new file:
 | 16 | `SprinterVideo` | video RAM (256 KB) as a TTD memory region (PLAN #40 V1 "device RAM in the page store"); until V1 lands, a whole-array blob with a CRC short-cut |
 | 17 | `Z84C15` | SIO (both channels, FIFOs, registers), CTC, PIO, system registers |
 | 18 | `SprinterCbl` | Covox-Blaster ring, indices, control, tick phase |
-| 19 | `Ds12887` | 128 bytes + address latch + time base (host-time offset or fixed time) |
+| ~~19~~ | `Ds12887` | shared id 18, already built (PLAN #60(c)): cells + address latch + time base |
 
 `TimeTravelManager::RegisterModelPeripherals` (`core/src/debugger/ttd/timetravelmanager.cpp:1141`,
 `:1192-1213`) picks them up through `PortDecoder_Sprinter::CreateTTDSerializers()` /
