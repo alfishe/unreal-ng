@@ -27,10 +27,10 @@ namespace
 {
 /// A decoder that declares model state it does not implement - the mistake the
 /// guard exists to catch. Derives from a real decoder so the machine keeps
-/// working normally in every other respect. Declares NeoGS, a reserved id no
-/// build ever registers: GeneralSound became a real, default-enabled peripheral
-/// (GSType=Z80) whose registered serializer covers the id, so it would no
-/// longer stand in for "declared but unimplemented" state.
+/// working normally in every other respect. Declares NeoGS, an id only a
+/// fitted NeoGS card registers (GSType=NGS - never on this Pentagon): the
+/// model declares it, nothing covers it, which is exactly the mistake the
+/// guard exists to catch.
 class LyingDecoder : public PortDecoder_Pentagon128
 {
 public:

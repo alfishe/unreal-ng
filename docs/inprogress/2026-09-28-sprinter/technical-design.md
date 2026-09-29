@@ -32,7 +32,7 @@ loader, WD1793 rate check, port-trace internal codes) form PLAN row #60, done be
 | **Write intercept** `_bank_write_intercept[4]` + virtual `OnInterceptedWrite` | specified, not built | video shadow writes, graphics pages, the reset page, ISA pages, accelerator write side | TSConf [technical-design.md](../2026-09-27-tsconf/technical-design.md) §3.5 |
 | **Interrupt source** `IInterruptSource` | specified, not built | INT position from the mode table; keyboard and Covox-Blaster interrupts (all vector `#FF`) | TSConf technical design §3.4 |
 | **Memory subclass** selected in the `Core` factory | pattern exists (`ScorpionMemory`, `core/src/emulator/memory/memory.h:313`) | `SprinterMemory`: bank computation, graphics-page reads | TSConf `TsConfMemory` §3.5 |
-| **Clock ratio** (new) | decided (review round 1); PLAN #60 | 21 MHz = 6 × 3.5 MHz | §3 below |
+| **Clock ratio** (new) | decided (review round 1); PLAN #60(b), **postponed to the Sprinter program** (2026-09-28): no other machine needs it | 21 MHz = 6 × 3.5 MHz | §3 below |
 | **Wait-state hook** (new) | decided (review round 1); PLAN #60 | turbo memory and port waits | §4 below |
 | **CMOS core** `Ds12887` (new) | decided (review round 1); PLAN #60, with the migrations of the existing clocks | Sprinter CMOS | [tdd-storage.md](tdd-storage.md) §4 |
 
@@ -41,6 +41,11 @@ loader, WD1793 rate check, port-trace internal codes) form PLAN row #60, done be
 Today the guest CPU clock is `base × (speed_multiplier << hw_turbo_shift)`, where
 `hw_turbo_shift` is a log2 (`core/src/emulator/platform.h:960-980`, `Z80::ApplyHardwareTurboNow`
 `core/src/emulator/cpu/z80.cpp:602`). A ×6 turbo cannot be expressed.
+
+> **Postponed (2026-09-28):** only the Sprinter needs a ×6. ATM, Scorpion,
+> Profi, ZX-Evo and TSConf run at ×1/×2/×4, which `hw_turbo_shift` covers, so
+> this change is built as the first step of the Sprinter program rather than
+> in the shared infrastructure ahead of TSConf.
 
 Decision (review round 1): replace `hw_turbo_shift` / `hw_turbo_shift_applied` **everywhere** by
 `hw_turbo_ratio` / `hw_turbo_ratio_applied` (`uint8_t`, 1…8, default 1).

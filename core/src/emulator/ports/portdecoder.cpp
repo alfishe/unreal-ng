@@ -426,7 +426,8 @@ void PortDecoder::RecordPortTrace(bool isOut, uint16_t rawPort, uint8_t value, u
     event.pc = pc;
     event.value = value;
     event.decodeRuleIndex = disp.decodeRuleIndex;
-    event.deviceId = PortDiagnosticRecorder::ResolveDeviceId(disp.decodedPort);
+    event.deviceId = disp.device != PortDeviceId::None ? disp.device
+                                                        : PortDiagnosticRecorder::ResolveDeviceId(disp.decodedPort);
 
     // Scorpion border latch: an OUT the gating arm steered away from the
     // (off-bus) FDC system port drives the border color — reattribute so
@@ -481,7 +482,12 @@ PortTraceSessionInfo PortDecoder::getPortTraceSessionInfo() const
 
         switch (_context->config.mem_model)
         {
-            case MM_PENTAGON:    info.modelName = "Pentagon"; break;
+            case MM_PENTAGON:
+                // One model id for every Pentagon RAM size; the extended ones decode more ports (#EFF7)
+                info.modelName = _context->config.ramsize >= 1024 ? "Pentagon1024"
+                                 : _context->config.ramsize >= 512 ? "Pentagon512"
+                                                                   : "Pentagon";
+                break;
             case MM_SPECTRUM48:  info.modelName = "Spectrum48"; break;
             case MM_SPECTRUM128: info.modelName = "Spectrum128"; break;
             case MM_PLUS3:       info.modelName = "SpectrumPlus3"; break;

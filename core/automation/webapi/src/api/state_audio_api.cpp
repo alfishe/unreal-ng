@@ -15,6 +15,7 @@
 #include <emulator/state/devicestate.h>
 #include <debugger/ttd/timetravelmanager.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
+#include <emulator/sound/chips/neogs/neogsmedia.h>
 
 
 using namespace drogon;
@@ -27,6 +28,8 @@ namespace v1
 
 // Helper functions declared in emulator_api.h / emulator_api.cpp.
 extern void addCorsHeaders(HttpResponsePtr& resp);
+// state_device_api.cpp: a DeviceState report, or 404 with its description
+extern void ReplyDeviceState(const StateNode& node, std::function<void(const HttpResponsePtr&)>& callback);
 // getEmulatorByIdOrIndex is a free function in api::v1 (emulator_api.h) —
 // visible here without an EmulatorAPI instance.
 
@@ -496,104 +499,17 @@ void EmulatorAPI::getStateAudioGS(const HttpRequestPtr& req, std::function<void(
         return;
     }
 
-    EmulatorContext* context = emulator->GetContext();
-    SoundManager* soundManager = context ? context->pSoundManager : nullptr;
-    GeneralSoundCard* gs = soundManager ? soundManager->getGeneralSound() : nullptr;
-
-    if (!gs)
-    {
-        Json::Value error;
-        error["error"] = "Not Found";
-        error["message"] = "General Sound card not fitted (configure [SOUND] GSType=Z80 or LW)";
-
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k404NotFound);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-
-    const uint8_t status = gs->getStatusRaw();
-
-    Json::Value ret;
-    ret["device"] = gs->hasCoprocessor() ? "General Sound (Z80 coprocessor @ 12 MHz, 4 x 8-bit DAC)"
-                                         : "General Sound (lightweight mod player, 4 x 8-bit DAC)";
-    ret["implementation"] = gs->implementation() == GSCardImplementation::LLE ? "lle" : "lightweight";
-    ret["enabled"] = true;
-    ret["rom_loaded"] = gs->isROMLoaded();
-    ret["ram_kb"] = static_cast<Json::UInt64>(gs->getRamSizeKB());
-    ret["status"] = status;
-    ret["command_pending"] = (status & 0x01) != 0;  // bit0: ZX command waiting
-    ret["data_pending"] = (status & 0x80) != 0;     // bit7: GS data waiting
-    // Both cards use a single-latch mailbox (2026-09-21 firmware-parity rewrite,
-    // not a FIFO): command_queue_count is always 0 or 1 (mirrors command_pending)
-    // on both personalities. data_queue_count is 0/1 on the LLE (mirrors
-    // data_pending) but on the LW card counts its internal param-ordering
-    // buffer (0..16, soundchip_gslw's PARAM_QUEUE_CAPACITY) - a real backlog
-    // depth, not a bit mirror, because the instant-dispatch LW model buffers
-    // params ahead of the command that consumes them.
-    ret["command_queue_count"] = static_cast<Json::UInt64>(gs->getCommandQueueCount());
-    ret["data_queue_count"] = static_cast<Json::UInt64>(gs->getDataQueueCount());
-    ret["command_from_host"] = gs->getCommandFromHost();
-    ret["data_from_host"] = gs->getDataFromHost();
-    ret["data_to_host"] = gs->getDataToHost();
-    ret["page"] = gs->getMPAG();  // MPAG banking latch (GS design §2.3)
-
-    Json::Value channels(Json::arrayValue);
-    for (int i = 0; i < 4; i++)
-    {
-        Json::Value channel;
-        channel["sample"] = gs->getChannelSample(i);
-        channel["volume"] = gs->getChannelVolume(i);
-        channels.append(channel);
-    }
-    ret["channels"] = channels;
-
-    Json::Value cpu;
-    if (gs->hasCoprocessor())
-    {
-        cpu["pc"] = gs->getCPUReg(GSCpuRegister::PC);
-        cpu["sp"] = gs->getCPUReg(GSCpuRegister::SP);
-        cpu["af"] = gs->getCPUReg(GSCpuRegister::AF);
-        cpu["halted"] = gs->isCPUHalted();
-    }
-    else
-    {
-        cpu["coprocessor"] = false;  // lightweight personality: no registers to show
-    }
-    ret["cpu"] = cpu;
-
-    // ?ram=1 - read-only dump of the fixed RAM window (0x4000-0x7FFF, the upper half of MPAG 1),
-    // where the firmware keeps its runtime variables (NUMPG #4080 .. MTSTAT #4151).
-    // Dumped through the public TTD serializer; purely diagnostic, no state
-    // changes. LLE-only: the lightweight card has no firmware RAM window.
-    if (req->getParameter("ram") == "1" && gs->hasCoprocessor())
-    {
-        std::vector<uint8_t> blob(gs->TTDStateSize());
-        gs->TTDSaveState(blob.data());
-        const size_t windowOffset = blob.size() - gs->getRamSizeKB() * 1024 +
-                                    SoundChip_GeneralSound::FIXED_WINDOW_RAM_PAGE * SoundChip_GeneralSound::PAGE_SIZE;
-
-        static const char kHexDigits[] = "0123456789abcdef";
-        std::string windowHex(SoundChip_GeneralSound::PAGE_SIZE * 2, '0');
-        for (size_t i = 0; i < SoundChip_GeneralSound::PAGE_SIZE; i++)
-        {
-            const uint8_t byte = blob[windowOffset + i];
-            windowHex[i * 2] = kHexDigits[byte >> 4];
-            windowHex[i * 2 + 1] = kHexDigits[byte & 0x0F];
-        }
-        ret["fixed_window_base"] = 0x4000;
-        ret["fixed_window_hex"] = windowHex;
-    }
-
-    auto resp = HttpResponse::newHttpJsonResponse(ret);
-    addCorsHeaders(resp);
-    callback(resp);
+    // One report for every surface (DeviceState::Gs); ?ram=1 adds the card
+    // CPU's #4000-#7FFF window
+    ReplyDeviceState(DeviceState::Gs(emulator->GetContext(), req->getParameter("ram") == "1"), callback);
 }
 
 /// @brief POST /api/v1/emulator/{id}/control/audio/gs
-/// @param body {"action": "reset|reset_card|nmi|send_command|send_data|read_status|read_data|switch_personality",
-///              "value": 0..255 (byte actions), "personality": "z80|lle|lw|lightweight" (switch_personality)}
+/// @param body {"action": "reset|reset_card|nmi|send_command|send_data|read_status|read_data|switch_personality|
+///                         dump_module|sd_insert|sd_eject|flash_save|stereo_mode",
+///              "value": 0..255 (byte actions), "personality": "z80|lle|lw|lightweight|ngs|neogs" (switch_personality),
+///              "mode": "separated|gs|mono" (stereo_mode, NeoGS),
+///              "path": image or file path (sd_insert, dump_module)}
 /// Actions mirror the host-port semantics (GS design §10.1). The writes,
 /// resets and NMI are live input: applied on the machine's thread at the next
 /// instruction boundary, where the card is first flushed to the current ZX
@@ -695,6 +611,25 @@ void EmulatorAPI::postControlAudioGS(const HttpRequestPtr& req, std::function<vo
         return;
     }
 
+    // stereo_mode (NeoGS) takes a mode name
+    NeoGSConfig::StereoMode stereoMode = NeoGSConfig::StereoMode::Separated;
+    if (action == "stereo_mode")
+    {
+        const std::string mode = json->get("mode", "").asString();
+        if (!neogsParseStereoMode(mode, stereoMode))
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "Action 'stereo_mode' requires 'mode': separated, gs or mono (got '" + mode + "')";
+
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+    }
+
     // switch_personality selects the target with a string instead of a byte
     GSTypeKind personalityKind = GSTypeKind::NONE;
     if (action == "switch_personality")
@@ -703,7 +638,7 @@ void EmulatorAPI::postControlAudioGS(const HttpRequestPtr& req, std::function<vo
         {
             Json::Value error;
             error["error"] = "Bad Request";
-            error["message"] = "Action 'switch_personality' requires a 'personality' field ('z80'|'lle' or 'lw'|'lightweight')";
+            error["message"] = std::string("Action 'switch_personality' requires a 'personality' field (") + GS_PERSONALITY_NAMES + ")";
 
             auto resp = HttpResponse::newHttpJsonResponse(error);
             resp->setStatusCode(HttpStatusCode::k400BadRequest);
@@ -713,19 +648,11 @@ void EmulatorAPI::postControlAudioGS(const HttpRequestPtr& req, std::function<vo
         }
 
         const std::string personality = json->get("personality", "").asString();
-        if (personality == "z80" || personality == "lle")
-        {
-            personalityKind = GSTypeKind::Z80;
-        }
-        else if (personality == "lw" || personality == "lightweight")
-        {
-            personalityKind = GSTypeKind::LW;
-        }
-        else
+        if (!gsParsePersonality(personality, personalityKind))
         {
             Json::Value error;
             error["error"] = "Bad Request";
-            error["message"] = "Unknown personality '" + personality + "' (expected z80, lle, lw or lightweight)";
+            error["message"] = "Unknown personality '" + personality + "' (expected " + GS_PERSONALITY_NAMES + ")";
 
             auto resp = HttpResponse::newHttpJsonResponse(error);
             resp->setStatusCode(HttpStatusCode::k400BadRequest);
@@ -783,6 +710,15 @@ void EmulatorAPI::postControlAudioGS(const HttpRequestPtr& req, std::function<vo
         // Peek: status bit 7 is left set, the card is not stepped
         ret["value"] = gs->getDataToHost();
     }
+    else if (action == "stereo_mode")
+    {
+        // A listening choice kept by the SoundManager: NeoGS takes it at the
+        // next frame boundary, and a NeoGS fitted later starts with it
+        soundManager->setNeoGSStereoMode(stereoMode);
+        ret["mode"] = neogsStereoModeName(stereoMode);
+        ret["applies_to"] = "NeoGS DAC channels (separated = as on the board, gs = 50% cross-feed like the classic GS, mono)";
+        ret["neogs_fitted"] = gs->implementation() == GSCardImplementation::NGS;
+    }
     else if (action == "switch_personality")
     {
         // HTTP thread: request the frame-boundary switch (the synchronous
@@ -802,8 +738,10 @@ void EmulatorAPI::postControlAudioGS(const HttpRequestPtr& req, std::function<vo
             callback(resp);
             return;
         }
-        ret["personality"] = personalityKind == GSTypeKind::LW ? "lw" : "z80";
-        ret["current"] = gs->implementation() == GSCardImplementation::LLE ? "z80" : "lw";
+        GSCardImplementation requestedImpl = GSCardImplementation::LLE;
+        (void)gsImplementationOf(personalityKind, requestedImpl);
+        ret["personality"] = gsImplementationShortName(requestedImpl);
+        ret["current"] = gsImplementationShortName(gs->implementation());
         ret["requested"] = requested;
         ret["note"] = "applied at the next frame boundary";
     }
@@ -879,13 +817,45 @@ void EmulatorAPI::postControlAudioGS(const HttpRequestPtr& req, std::function<vo
         ret["bytes"] = static_cast<Json::UInt64>(bytes.size());
         ret["playing"] = playing;
     }
+    else if (action == "sd_insert" || action == "sd_eject" || action == "flash_save")
+    {
+        // Checked here, carried out on the machine's thread (neogsmedia.h);
+        // insert / eject are refused while a TTD recording runs
+        NeoGSMediaResult result;
+        if (action == "sd_insert")
+        {
+            const std::string path = json->get("path", "").asString();
+            result = NeoGSRequestSdInsert(context, path);
+            ret["path"] = path;
+        }
+        else if (action == "sd_eject")
+            result = NeoGSRequestSdEject(context);
+        else
+            result = NeoGSRequestFlashSave(context);
+
+        if (!NeoGSMediaAccepted(result))
+        {
+            const bool conflict = result == NeoGSMediaResult::NoNeoGS || result == NeoGSMediaResult::TtdRecording ||
+                                  result == NeoGSMediaResult::ReplayOwnsInput;
+            Json::Value error;
+            error["error"] = conflict ? "Conflict" : "Unprocessable";
+            error["message"] = "Action '" + action + "': " + NeoGSMediaResultText(result);
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(conflict ? HttpStatusCode::k409Conflict : HttpStatusCode::k422UnprocessableEntity);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        ret["status"] = result == NeoGSMediaResult::Queued ? "queued" : "done";
+    }
     else
     {
         Json::Value error;
         error["error"] = "Bad Request";
         error["message"] =
             "Unknown action '" + action +
-            "' (expected reset, reset_card, nmi, send_command, send_data, read_status, read_data, switch_personality or dump_module)";
+            "' (expected reset, reset_card, nmi, send_command, send_data, read_status, read_data, switch_personality, "
+            "dump_module, sd_insert, sd_eject, flash_save or stereo_mode)";
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k400BadRequest);
@@ -909,6 +879,7 @@ const char* gsTraceSideToString(GSTraceSide side)
         case GSTraceSide::GsInternal: return "gs";
         case GSTraceSide::DacFetch: return "dac";
         case GSTraceSide::Interrupt: return "interrupt";
+        case GSTraceSide::ZxDma: return "zxdma";
     }
     return "unknown";
 }
@@ -1008,6 +979,8 @@ void EmulatorAPI::getStateAudioGSPortTrace(const HttpRequestPtr& req, std::funct
             ev["pc"] = e.pc;
             if (e.side == GSTraceSide::DacFetch)
                 ev["channel"] = e.channel;
+            if (e.side == GSTraceSide::ZxDma)
+                ev["card_address"] = (static_cast<uint32_t>(e.channel) << 16) | e.port;
             if (e.side == GSTraceSide::Interrupt)
                 ev["nmi"] = e.isNmi();
             eventsJson.append(ev);
@@ -1106,16 +1079,20 @@ void EmulatorAPI::postControlAudioGSPortTrace(const HttpRequestPtr& req, std::fu
 void EmulatorAPI::getStateAudioCovox(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                      const std::string& id) const
 {
-    Json::Value ret;
-    ret["status"] = "not_implemented";
-    ret["description"] =
-        "Covox is an 8-bit DAC (Digital-to-Analog Converter) that connects to various ports on the ZX Spectrum for "
-        "sample playback.";
-    ret["note"] = "This endpoint is reserved for future implementation.";
-
-    auto resp = HttpResponse::newHttpJsonResponse(ret);
-    addCorsHeaders(resp);
-    callback(resp);
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator not found with ID: " + id;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    ReplyDeviceState(DeviceState::Covox(emulator->GetContext()), callback);
 }
 
 /// @brief GET /api/v1/emulator/{id}/state/audio/channels
@@ -1202,35 +1179,41 @@ void EmulatorAPI::getStateAudioChannels(const HttpRequestPtr& req,
     }
     ret["ay_channels"] = ayChannels;
 
-    // General Sound (dedicated detail endpoint: /state/audio/gs)
+    // General Sound and Covox: subsets of the same reports /state/audio/gs and
+    // /state/audio/covox serve (DeviceState), so the overview never disagrees
     Json::Value gs;
-    bool hasGS = (soundManager && soundManager->hasGeneralSound());
-    gs["available"] = hasGS;
-    if (hasGS)
     {
-        GeneralSoundCard* gsChip = soundManager->getGeneralSound();
-        const uint8_t gsStatus = gsChip->getStatusRaw();
-        gs["rom_loaded"] = gsChip->isROMLoaded();
-        gs["ram_kb"] = (int)gsChip->getRamSizeKB();
-        gs["cpu_halted"] = gsChip->isCPUHalted();
-        gs["command_pending"] = (gsStatus & 0x01) != 0;
-        gs["data_pending"] = (gsStatus & 0x80) != 0;
-        Json::Value gsChannels(Json::arrayValue);
-        for (int i = 0; i < 4; i++)
+        const Json::Value full = StateNodeToJson(DeviceState::Gs(context));
+        gs["available"] = full["available"];
+        if (full["available"].asBool())
         {
-            Json::Value channel;
-            channel["name"] = std::string("GS") + std::to_string(i + 1);
-            channel["sample"] = (int)gsChip->getChannelSample(i);
-            channel["volume"] = (int)gsChip->getChannelVolume(i);
-            gsChannels.append(channel);
+            gs["rom_loaded"] = full["rom_loaded"];
+            gs["ram_kb"] = full["ram_kb"];
+            gs["cpu_halted"] = full["cpu"].get("halted", false);
+            gs["command_pending"] = full["command_pending"];
+            gs["data_pending"] = full["data_pending"];
+            Json::Value gsChannels(Json::arrayValue);
+            for (Json::ArrayIndex i = 0; i < full["channels"].size(); i++)
+            {
+                Json::Value channel = full["channels"][i];
+                channel["name"] = std::string("GS") + std::to_string(i + 1);
+                gsChannels.append(channel);
+            }
+            gs["channels"] = gsChannels;
         }
-        gs["channels"] = gsChannels;
     }
     ret["general_sound"] = gs;
 
-    // Covox (detail endpoint reserved; presence follows the config)
     Json::Value covox;
-    covox["available"] = (soundManager && soundManager->hasCovox());
+    {
+        const Json::Value full = StateNodeToJson(DeviceState::Covox(context));
+        covox["available"] = full["available"];
+        if (full["available"].asBool())
+        {
+            covox["fitment"] = full["fitment"];
+            covox["channels"] = full["channels"];
+        }
+    }
     ret["covox"] = covox;
 
     // Master audio state

@@ -38,6 +38,9 @@ public:
 public:
     void reset() override;
     void DecodePortOut(uint16_t port, uint8_t value, uint16_t pc) override;
+
+    /// The Pentagon 128 table plus the #EFF7 row this model decodes ahead of it
+    std::vector<PortTraceDecodeRule> getPortTraceDecodeRules() const override;
     uint8_t DecodePortIn(uint16_t port, uint16_t pc) override;
     /// With the extension enabled (#EFF7 bit 2 = 0) bit 5 is the 6th page bit,
     /// not the lock (Born Dead #10): the lock only latches while it is disabled

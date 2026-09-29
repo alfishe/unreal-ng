@@ -33,6 +33,7 @@ uint8_t PortDecoder_Pentagon1024::DecodePortIn(uint16_t port, uint16_t pc)
         result = _context->emulatorState.pEFF7;
         PortDecodeDisposition disp;
         disp.decodedPort = 0xEFF7;
+        disp.decodeRuleIndex = TraceRuleCount();  // the row getPortTraceDecodeRules appends
         disp.wasDecoded = true;
         disp.wasHandledInline = true;
         OnPortInComplete(port, result, pc, disp);
@@ -74,6 +75,7 @@ void PortDecoder_Pentagon1024::DecodePortOut(uint16_t port, uint8_t value, uint1
 
         PortDecodeDisposition disp;
         disp.decodedPort = 0xEFF7;
+        disp.decodeRuleIndex = TraceRuleCount();  // the row getPortTraceDecodeRules appends
         disp.wasDecoded = true;
         disp.wasHandledInline = true;
         OnPortOutComplete(port, value, pc, disp);
@@ -87,6 +89,7 @@ void PortDecoder_Pentagon1024::DecodePortOut(uint16_t port, uint8_t value, uint1
 
         PortDecodeDisposition disp;
         disp.decodedPort = 0x7FFD;
+        disp.decodeRuleIndex = TraceRuleIndexOf(0x7FFD);
         disp.wasDecoded = true;
         disp.wasHandledInline = true;
         OnPortOutComplete(port, value, pc, disp);
@@ -94,6 +97,13 @@ void PortDecoder_Pentagon1024::DecodePortOut(uint16_t port, uint8_t value, uint1
     }
 
     PortDecoder_Pentagon512::DecodePortOut(port, value, pc);
+}
+
+std::vector<PortTraceDecodeRule> PortDecoder_Pentagon1024::getPortTraceDecodeRules() const
+{
+    std::vector<PortTraceDecodeRule> rules = PortDecoder_Pentagon128::getPortTraceDecodeRules();
+    rules.push_back({0x00FF, 0x00F7, 0xEFF7});  // IsPort_EFF7, index TraceRuleCount()
+    return rules;
 }
 
 /// endregion </Interface methods>

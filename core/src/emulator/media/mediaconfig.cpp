@@ -168,7 +168,22 @@ std::vector<MediaSetEntry> MediaConfig::FromIni(const IniFile& ini, const std::s
         if (!zc->writeProtect)
             zc->writeProtect = ini.GetLongValue("ZC", "SDWriteProtect", 0) != 0;
     }
-    legacy("sd.ngs", "NGS", "SDCardImage", "SDCARD");
+    if (MediaSetEntry* ngs = legacy("sd.ngs", "NGS", "SDCardImage", "SDCARD"))
+    {
+        // [NGS] SDWrite = session | persist | off
+        if (const char* write = ini.GetValue("NGS", "SDWrite", nullptr); write)
+        {
+            const std::string mode = Lower(Trim(write));
+            if (mode == "persist")
+                ngs->access = AccessMode::WriteThrough;
+            else if (mode == "off")
+                ngs->access = AccessMode::ReadOnly;
+            else if (mode == "session")
+                ngs->access = AccessMode::Session;
+        }
+        if (!ngs->writeProtect)
+            ngs->writeProtect = ini.GetLongValue("NGS", "SDWriteProtect", 0) != 0;
+    }
     if (MediaSetEntry* master = legacy("ide0.master", "HDD", "Image0", nullptr))
     {
         if (ini.GetLongValue("HDD", "HD0RO", 0) != 0)

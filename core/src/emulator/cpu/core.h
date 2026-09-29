@@ -1,4 +1,7 @@
 #pragma once
+#include <atomic>
+#include <mutex>
+
 #include "3rdparty/message-center/messagecenter.h"
 #include "emulator/cpu/cputables.h"
 #include "emulator/cpu/z80.h"
@@ -28,6 +31,7 @@ class TapeFastLoad;
 class TapeTurboController;
 class DiskFastLoad;
 class DiskAutostart;
+class HostBusOverlay;
 
 class Core
 {
@@ -76,6 +80,12 @@ protected:
     bool _contentionSwitch = true;  // 'contention' feature (SetContentionSwitch)
 
     ROMModeEnum _mode = ROMModeEnum::RM_NOCHANGE;
+
+    // Memory interface selection (neogs-zxdma-design.md §5.3): Z80::MemIf is
+    // only ever written by SelectMemoryInterface, under this lock, from the
+    // debug flag, the contention in effect and the installed bus overlay
+    std::mutex _memIfMutex;
+    HostBusOverlay* _busOverlay = nullptr;
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -112,12 +122,20 @@ public:
 
     // Configuration methods
 public:
-    /// The one place that decides which memory interface the CPU runs on: Fast or Debug by the debugger
-    /// (Z80::isDebugMode), plain or contended by whether the machine's video contention is in effect
-    /// (UlaContention::IsContentionEnabled), and with it the I/O contention rule (Z80::ioContention).
-    /// Called whenever an input changes (debug mode, video mode / model via Screen::InitRaster) and at
-    /// every frame start; cheap (a few loads and stores)
+    /// The one place that decides which memory interface the CPU runs on, from three independent inputs:
+    /// Fast or Debug by the debugger (Z80::isDebugMode), plain or contended by whether the machine's video
+    /// contention is in effect (UlaContention::IsContentionEnabled; with it the I/O contention rule,
+    /// Z80::ioContention), and with or without the installed host bus overlay (SetBusOverlay). The plain
+    /// Fast / Debug interfaces are selected whenever there is neither contention nor an overlay. Called
+    /// whenever an input changes (debug mode, video mode / model via Screen::InitRaster, an overlay) and at
+    /// every frame start; cheap (a lock and a few loads and stores). Any thread
     void SelectMemoryInterface();
+
+    /// Install (or with nullptr remove) the host bus overlay. Only one at a
+    /// time: returns false, and changes nothing, if another is installed.
+    /// Call on the emulation thread or with the emulation paused.
+    bool SetBusOverlay(HostBusOverlay* overlay);
+    HostBusOverlay* GetBusOverlay() const { return _busOverlay; }
 
     /// The 'contention' feature (FeatureManager::onFeatureChanged): off runs a contended machine uncontended.
     /// Re-selects the interface
@@ -135,7 +153,8 @@ public:
     /// effect and a contended page mapped there. The one answer every memory map reports
     bool IsSlotContended(uint8_t slot) const;
 
-    /// Name of the selected memory interface: "fast", "debug", "fast_contended", "debug_contended"
+    /// Name of the selected memory interface: "fast", "debug", "fast_contended", "debug_contended", and
+    /// "..._overlay" for each with the host bus overlay installed
     const char* GetMemoryInterfaceName() const;
 
     // Z80 Core-related methods

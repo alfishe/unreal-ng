@@ -48,6 +48,12 @@ protected:
     /// endregion </ModuleLogger definitions for Module/Submodule>
 
 public:
+    // Classic GS board clocks: the player emulates the classic card's
+    // timing (12 MHz, 37.5 kHz interrupt periods), shared via gshostclock.h
+    static constexpr uint32_t GS_CLOCK_HZ = GSClassicTiming::CLOCK_HZ;
+    static constexpr uint32_t GS_INT_FREQUENCY_HZ = GSClassicTiming::INT_FREQUENCY_HZ;
+    static constexpr int GS_CYCLES_PER_INT = GSClassicTiming::CYCLES_PER_INT; // 320
+
     explicit SoundChip_GSLightweight(EmulatorContext* context, size_t ramKB, size_t sampleRate = 44100);
     ~SoundChip_GSLightweight() override;
 
@@ -98,6 +104,7 @@ public:
     // Coprocessor capability: this is the lightweight personality
     bool hasCoprocessor() const override { return false; }
     GSCardImplementation implementation() const override { return GSCardImplementation::LW; }
+    std::string deviceDescription() const override { return "General Sound (lightweight mod player, 4 x 8-bit DAC)"; }
 
     /// region <Diagnostics: activity counters + port trace>
     const GSActivityCounters& getActivityCounters() const override { return _activityCounters; }

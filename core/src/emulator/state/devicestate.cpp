@@ -13,8 +13,11 @@
 #include "emulator/io/fdc/upd765.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
+#include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/sound/chips/soundchip_turbosoundfm.h"
+#include "emulator/sound/covox.h"
 #include "emulator/sound/soundmanager.h"
+#include "emulator/ports/portdecoder.h"
 #include "emulator/memory/memory.h"
 #include "emulator/config.h"
 #include "emulator/cpu/core.h"
@@ -649,6 +652,248 @@ StateNode Fm(EmulatorContext* context)
         chips.push(info);
     }
     ret["chips"] = chips;
+    return ret;
+}
+
+StateNode Gs(EmulatorContext* context, bool ramWindow)
+{
+    SoundManager* sm = context ? context->pSoundManager : nullptr;
+    if (!sm)
+        return Unavailable("Sound manager not available");
+    GeneralSoundCard* gs = sm->getGeneralSound();
+    if (!gs)
+        return Unavailable("General Sound card not fitted (configure [SOUND] GSType=Z80, LW or NGS)");
+
+    const uint8_t status = gs->getStatusRaw();
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["device"] = gs->deviceDescription();
+    ret["implementation"] = gsImplementationLabel(gs->implementation());
+    ret["enabled"] = true;
+    ret["rom_loaded"] = gs->isROMLoaded();
+    ret["firmware"] = gs->firmwareDescription();
+    ret["ram_kb"] = uint64_t(gs->getRamSizeKB());
+    ret["status"] = int(status);
+    ret["command_pending"] = (status & 0x01) != 0;  // bit0: ZX command waiting
+    ret["data_pending"] = (status & 0x80) != 0;     // bit7: GS data waiting
+    // Single-latch mailbox on every personality (not a FIFO): the command
+    // count mirrors command_pending; the data count mirrors data_pending on
+    // the LLE card but is the lightweight card's param buffer depth (0..16)
+    ret["command_queue_count"] = uint64_t(gs->getCommandQueueCount());
+    ret["data_queue_count"] = uint64_t(gs->getDataQueueCount());
+    ret["command_from_host"] = int(gs->getCommandFromHost());
+    ret["data_from_host"] = int(gs->getDataFromHost());
+    ret["data_to_host"] = int(gs->getDataToHost());
+    ret["page"] = int(gs->getMPAG());  // MPAG banking latch (GS design §2.3)
+
+    StateNode channels = StateNode::Array();
+    for (int i = 0; i < gs->channelCount(); i++)
+    {
+        StateNode channel = StateNode::Object();
+        channel["sample"] = int(gs->getChannelSample(i));
+        channel["volume"] = int(gs->getChannelVolume(i));
+        channels.push(channel);
+    }
+    ret["channels"] = channels;
+
+    StateNode cpu = StateNode::Object();
+    cpu["coprocessor"] = gs->hasCoprocessor();
+    if (gs->hasCoprocessor())
+    {
+        cpu["pc"] = int(gs->getCPUReg(GSCpuRegister::PC));
+        cpu["sp"] = int(gs->getCPUReg(GSCpuRegister::SP));
+        cpu["af"] = int(gs->getCPUReg(GSCpuRegister::AF));
+        cpu["halted"] = gs->isCPUHalted();
+    }
+    ret["cpu"] = cpu;
+
+    NeoGSStateInfo ngs;
+    if (gs->neogsState(ngs))
+    {
+        StateNode n = StateNode::Object();
+        n["stereo_mode"] = neogsStereoModeName(sm->neoGSStereoMode());
+        n["flash"] = ngs.flashTitle;
+        n["flash_modified"] = ngs.flashModified;
+        n["gscfg0"] = int(ngs.gscfg0);
+        StateNode flags = StateNode::Array();
+        flags.push((ngs.gscfg0 & 0x01) ? "ram_mode" : "rom_mode");
+        if (ngs.gscfg0 & 0x02) flags.push("ramro");
+        if (ngs.gscfg0 & 0x04) flags.push("8_channels");
+        if (ngs.gscfg0 & 0x08) flags.push("expag");
+        if (ngs.gscfg0 & 0x40) flags.push("pan4ch");
+        if (ngs.gscfg0 & 0x80) flags.push("inv7b");
+        n["gscfg0_flags"] = flags;
+        n["clock_hz"] = ngs.clockHz;
+        StateNode windows = StateNode::Array();
+        for (int w = 0; w < 4; w++)
+        {
+            StateNode window = StateNode::Object();
+            window["page"] = int(ngs.pages[w]);
+            window["flash"] = ngs.windowFlash[w];
+            windows.push(window);
+        }
+        n["windows"] = windows;
+        n["led_on"] = ngs.ledOn;
+        n["ready"] = ngs.readyForCommands;
+        n["int_enable"] = int(ngs.intEnable);
+        n["int_request"] = int(ngs.intRequest);
+        n["tim_freq"] = int(ngs.timFreq);
+        n["sctrl"] = int(ngs.sctrl);
+        StateNode sd = StateNode::Object();
+        sd["present"] = ngs.sdPresent;
+        if (ngs.sdPresent)
+        {
+            sd["path"] = ngs.sdPath;
+            sd["sdhc"] = ngs.sdSdhc;
+            sd["size_bytes"] = ngs.sdSizeBytes;
+            sd["blocks_read"] = ngs.sdBlocksRead;
+            sd["blocks_written"] = ngs.sdBlocksWritten;
+        }
+        n["sd"] = sd;
+        StateNode mp3 = StateNode::Object();
+        mp3["fitted"] = ngs.mp3Fitted;
+        if (ngs.mp3Fitted)
+        {
+            mp3["chip"] = ngs.mp3Chip;
+            mp3["dreq"] = ngs.mp3Dreq;
+            mp3["rate"] = ngs.mp3Rate;
+            mp3["channels"] = ngs.mp3Channels;
+            mp3["frames"] = ngs.mp3Frames;
+            mp3["decode_time_s"] = ngs.mp3DecodeSeconds;
+            mp3["input_fill"] = uint64_t(ngs.mp3InputFill);
+        }
+        n["mp3"] = mp3;
+        StateNode dma = StateNode::Object();
+        dma["select"] = int(ngs.dmaSelect);
+        static const char* kModules[3] = {"zx", "sd", "mp3"};
+        for (int m = 0; m < 3; m++)
+        {
+            StateNode module = StateNode::Object();
+            module["running"] = ngs.dmaRunning[m];
+            module["address"] = ngs.dmaAddress[m];
+            dma[kModules[m]] = module;
+        }
+        // ZX-DMA: the host's view (neogs-zxdma-design.md §7)
+        StateNode& zx = dma["zx"];
+        zx["mode"] = ngs.zxMode;
+        zx["overlay_installed"] = ngs.zxOverlayInstalled;
+        zx["read_latch"] = int(ngs.zxReadLatch);
+        zx["pending"] = ngs.zxPending;
+        zx["pending_address"] = ngs.zxPendingAddress;
+        zx["bytes_read"] = ngs.zxBytesRead;
+        zx["bytes_written"] = ngs.zxBytesWritten;
+        zx["bytes_dropped"] = ngs.zxBytesDropped;
+        zx["wait_tstates"] = ngs.zxWaitTStates;
+        zx["late_starts"] = ngs.zxLateStarts;
+        zx["late_start_ticks"] = ngs.zxLateStartUnits;
+        zx["watch_setting"] = ngs.zxWatchSetting;
+        zx["watch_frames"] = ngs.zxWatchFrames;
+        zx["watch_frames_left"] = int(ngs.zxWatchFramesLeft);
+        n["dma"] = dma;
+        ret["neogs"] = n;
+    }
+
+    // The card CPU's window #4000-#7FFF, where GS-compatible firmwares keep
+    // their runtime variables (NUMPG #4080 .. MTSTAT #4151). Side-effect-free
+    // peek: right on every card with a CPU
+    uint8_t probe = 0;
+    if (ramWindow && gs->peekCardMemory(0x4000, probe))
+    {
+        static const char kHexDigits[] = "0123456789abcdef";
+        constexpr size_t kWindow = 0x4000;
+        std::string windowHex(kWindow * 2, '0');
+        for (size_t i = 0; i < kWindow; i++)
+        {
+            uint8_t byte = 0;
+            gs->peekCardMemory(static_cast<uint16_t>(0x4000 + i), byte);
+            windowHex[i * 2] = kHexDigits[byte >> 4];
+            windowHex[i * 2 + 1] = kHexDigits[byte & 0x0F];
+        }
+        ret["fixed_window_base"] = 0x4000;
+        ret["fixed_window_hex"] = windowHex;
+    }
+    return ret;
+}
+
+StateNode Covox(EmulatorContext* context)
+{
+    SoundManager* sm = context ? context->pSoundManager : nullptr;
+    if (!sm)
+        return Unavailable("Sound manager not available");
+    ::Covox* covox = sm->getCovox();
+    if (!covox)
+        return Unavailable("Covox not fitted (configure [SOUND] CovoxFB=1 for #FB or SD=1 for the SoundDrive)");
+
+    const bool quad = covox->fitment() == ::Covox::Fitment::Quad;
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["device"] = quad ? "SoundDrive (4 x 8-bit DAC)" : "Covox (8-bit DAC on #FB)";
+    ret["fitment"] = quad ? "quad" : "mono";
+
+    // Ports: this model's decode, straight from its port map (the same rows
+    // /ports and `ports` list), and the ones it shares with Beta-128
+    StateNode ports = StateNode::Array();
+    StateNode shared = StateNode::Array();
+    if (PortDecoder* decoder = context->pPortDecoder)
+    {
+        const std::vector<PortMapEntry> map = decoder->getPortMapEntries();
+        std::vector<uint8_t> betaLowBytes;
+        for (const PortMapEntry& row : map)
+            if (row.device && std::string(row.device).rfind("Beta128", 0) == 0)
+                betaLowBytes.push_back(static_cast<uint8_t>(row.port & 0x00FF));
+        for (const PortMapEntry& row : map)
+        {
+            const bool dac = (row.tags & Tags(PortTag::SoundCovox)) == Tags(PortTag::SoundCovox) ||
+                             (row.tags & Tags(PortTag::SoundSoundDrive)) == Tags(PortTag::SoundSoundDrive);
+            if (!dac)
+                continue;
+            StateNode p = StateNode::Object();
+            p["port"] = int(row.port);
+            p["mask"] = int(row.mask);
+            p["match"] = int(row.match);
+            p["decode"] = row.device ? row.device : "";
+            if (row.gate)
+                p["gate"] = row.gate;
+            ports.push(p);
+        }
+        // A Beta-128 register whose low byte a DAC row also decodes (e.g.
+        // SoundDrive mode 1 on #1F/#5F) is shared: which device answers
+        // depends on whether TR-DOS is paged in
+        for (uint8_t low : betaLowBytes)
+            for (const PortMapEntry& row : map)
+            {
+                const bool dac = (row.tags & Tags(PortTag::SoundCovox)) == Tags(PortTag::SoundCovox) ||
+                                 (row.tags & Tags(PortTag::SoundSoundDrive)) == Tags(PortTag::SoundSoundDrive);
+                if (dac && (low & (row.mask & 0x00FF)) == (row.match & 0x00FF))
+                {
+                    shared.push(int(low));
+                    break;
+                }
+            }
+    }
+    ret["ports"] = ports;
+    ret["shared_with_beta128"] = shared;
+    if (!shared.items.empty())
+        ret["shared_port_rule"] = "Beta-128 owns them while TR-DOS is paged in; the DAC otherwise";
+
+    uint8_t latches[4] = {};
+    covox->getDacLatches(latches);
+    static const char* kNames[4] = {"left_a", "left_b", "right_a", "right_b"};
+    StateNode channels = StateNode::Array();
+    for (int i = 0; i < 4; i++)
+    {
+        StateNode channel = StateNode::Object();
+        channel["name"] = kNames[i];
+        channel["latch"] = int(latches[i]);
+        channel["muted"] = covox->isChannelMuted(static_cast<::Covox::Channel>(i));
+        channels.push(channel);
+    }
+    ret["channels"] = channels;
+    ret["last_left_amplitude"] = int(covox->lastLeftAmplitude());
+    ret["last_right_amplitude"] = int(covox->lastRightAmplitude());
+    ret["sound_last_frame"] = covox->hadSoundLastFrame();
+    ret["dc_removal"] = covox->isDCRemovalEnabled();
+    ret["synthesis_suppressed"] = covox->isSynthesisSuppressed();
     return ret;
 }
 

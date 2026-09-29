@@ -8,6 +8,9 @@
 #include "emulator/ports/models/portdecoder_pentagon512.h"
 #include "emulator/ports/models/portdecoder_pentagon1024.h"
 #include "emulator/ports/portdecoder.h"
+#include "base/featuremanager.h"
+#include "emulator/emulator.h"
+#include "emulator/emulatormanager.h"
 
 /// @file portdecoder_pentagon1024_test.cpp
 /// @brief Pentagon 1024K port decoder tests.
@@ -387,3 +390,45 @@ TEST_F(PortDecoder_Pentagon1024_Test, Pixel16c_CombinedExtraction)
 }
 
 /// endregion </16-Color Mode Tests>
+
+/// region <Port trace attribution>
+
+/// PLAN #8: Pentagon 1024 is named in the trace header, exports its #EFF7 row
+/// after the Pentagon 128 table, and its own #EFF7 / #7FFD arms carry real
+/// rule indices (they used to read as "no rule matched")
+TEST(PortDecoder_Pentagon1024_Trace_Test, SessionNameRulesAndRuleIndices)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    std::shared_ptr<Emulator> emulator =
+        manager->CreateEmulatorWithModelAndRAM("p1024-trace", "PENTAGON", 1024, LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    ASSERT_TRUE(emulator->GetFeatureManager()->setFeature(Features::kPortTrace, true));
+    PortDiagnosticRecorder* recorder = context->pPortDecoder->getPortTraceRecorder();
+    ASSERT_NE(recorder, nullptr);
+
+    const PortTraceSessionInfo info = context->pPortDecoder->getPortTraceSessionInfo();
+    EXPECT_EQ(info.modelName, "Pentagon1024");
+    ASSERT_FALSE(info.decodeRules.empty());
+    EXPECT_EQ(info.decodeRules.back().port, 0xEFF7);
+
+    recorder->start();
+    context->pPortDecoder->DecodePortOut(0xEFF7, 0x00, 0x0000);
+    context->pPortDecoder->DecodePortOut(0x7FFD, 0x00, 0x0000);
+    const std::vector<PortTraceEvent> events = recorder->getAll();
+    ASSERT_EQ(events.size(), 2u);
+
+    ASSERT_LT(events[0].decodeRuleIndex, info.decodeRules.size());
+    EXPECT_EQ(info.decodeRules[events[0].decodeRuleIndex].port, 0xEFF7);
+    EXPECT_EQ(events[0].deviceId, PortDeviceId::Control_EFF7);
+
+    ASSERT_LT(events[1].decodeRuleIndex, info.decodeRules.size());
+    EXPECT_EQ(info.decodeRules[events[1].decodeRuleIndex].port, 0x7FFD);
+    EXPECT_EQ(events[1].deviceId, PortDeviceId::Memory_7FFD);
+
+    const std::string id = emulator->GetId();
+    emulator.reset();
+    manager->RemoveEmulator(id);
+}
+
+/// endregion </Port trace attribution>

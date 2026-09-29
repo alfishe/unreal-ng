@@ -16,6 +16,7 @@
 #include <tapeaudio/tapeaudiorenderer.h>
 #include <emulator/video/screen.h>
 #include <emulator/sound/soundcharactersettings.h>
+#include <emulator/sound/chips/neogs/neogsmedia.h>
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/chips/soundchip_ay8910.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
@@ -1598,46 +1599,35 @@ namespace PythonBindings
                 auto* ctx = self.GetContext();
                 return ctx && ctx->pSoundManager && ctx->pSoundManager->getGeneralSound() != nullptr;
             }, "Check if the General Sound card is fitted")
+            // One report for every interface (DeviceState::Gs); available=False
+            // with a description when no card is fitted
             .def("gs_state", [](Emulator& self) -> py::object {
-                auto* ctx = self.GetContext();
-                GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
-                if (!gs) return py::none();
-
-                py::dict d;
-                const uint8_t status = gs->getStatusRaw();
-                d["device"] = gs->hasCoprocessor() ? "General Sound (Z80 coprocessor @ 12 MHz, 4 x 8-bit DAC)"
-                                                   : "General Sound (lightweight mod player, 4 x 8-bit DAC)";
-                d["implementation"] = gs->implementation() == GSCardImplementation::LLE ? "lle" : "lightweight";
-                d["rom_loaded"] = gs->isROMLoaded();
-                d["ram_kb"] = static_cast<int>(gs->getRamSizeKB());
-                d["status"] = status;
-                d["command_pending"] = (status & 0x01) != 0;
-                d["data_pending"] = (status & 0x80) != 0;
-                d["command_queue_count"] = gs->getCommandQueueCount();
-                d["data_queue_count"] = gs->getDataQueueCount();
-                d["command_from_host"] = gs->getCommandFromHost();
-                d["data_from_host"] = gs->getDataFromHost();
-                d["data_to_host"] = gs->getDataToHost();
-                d["page"] = gs->getMPAG();
-
-                py::list channels;
-                for (int i = 0; i < 4; i++) {
-                    py::dict channel;
-                    channel["sample"] = gs->getChannelSample(i);
-                    channel["volume"] = gs->getChannelVolume(i);
-                    channels.append(channel);
-                }
-                d["channels"] = channels;
-
-                py::dict cpu;
-                cpu["coprocessor"] = gs->hasCoprocessor();
-                cpu["pc"] = gs->getCPUReg(GSCpuRegister::PC);
-                cpu["sp"] = gs->getCPUReg(GSCpuRegister::SP);
-                cpu["af"] = gs->getCPUReg(GSCpuRegister::AF);
-                cpu["halted"] = gs->isCPUHalted();
-                d["cpu"] = cpu;
-                return d;
-            }, "General Sound state: mailbox flags, FIFO queue depths, MPAG page, DAC channels, coprocessor core")
+                return StateNodeToPy(DeviceState::Gs(self.GetContext()));
+            }, "General Sound state (the report WebAPI /state/audio/gs serves): device, mailbox, MPAG page, DAC "
+               "channels, card CPU; 'neogs' on the NeoGS card")
+            .def("audio_covox_state", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::Covox(self.GetContext()));
+            }, "Covox / SoundDrive state: fitment, the ports this model decodes, Beta-128 shared ports, DAC latches")
+            // NeoGS media: checked here, carried out on the machine's thread
+            // (neogsmedia.h); true when accepted. Insert / eject are refused
+            // while a TTD recording runs
+            .def("gs_sd_insert", [](Emulator& self, const std::string& path) -> bool {
+                return NeoGSMediaAccepted(NeoGSRequestSdInsert(self.GetContext(), path));
+            }, "NeoGS: insert an SD card image (refused while a TTD recording runs)", py::arg("path"))
+            .def("gs_sd_eject", [](Emulator& self) -> bool {
+                return NeoGSMediaAccepted(NeoGSRequestSdEject(self.GetContext()));
+            }, "NeoGS: remove the SD card (refused while a TTD recording runs)")
+            .def("gs_flash_save", [](Emulator& self) -> bool {
+                return NeoGSMediaAccepted(NeoGSRequestFlashSave(self.GetContext()));
+            }, "NeoGS: save the reprogrammed flash (loaded in place of the shipped image with [NGS] FlashWrite=persist)")
+            .def("gs_stereo_mode", [](Emulator& self, const std::string& mode) -> bool {
+                NeoGSConfig::StereoMode parsed = NeoGSConfig::StereoMode::Separated;
+                SoundManager* sm = self.GetContext() ? self.GetContext()->pSoundManager : nullptr;
+                if (!sm || !neogsParseStereoMode(mode, parsed))
+                    return false;
+                sm->setNeoGSStereoMode(parsed);
+                return true;
+            }, "NeoGS: 'separated' (as on the board), 'gs' (50% cross-feed like the classic GS) or 'mono'; applied at the next frame", py::arg("mode"))
             .def("gs_reset", [](Emulator& self) {
                 return SubmitGSInput(self, ttd::TTDInputKind::GSReset);
             }, "Full power-on reset of the General Sound card (live input; True when submitted)")
@@ -1675,11 +1665,7 @@ namespace PythonBindings
                 if (!sm) return false;
 
                 GSTypeKind target;
-                if (personality == "z80" || personality == "lle")
-                    target = GSTypeKind::Z80;
-                else if (personality == "lw" || personality == "lightweight")
-                    target = GSTypeKind::LW;
-                else
+                if (!gsParsePersonality(personality, target))
                     return false;
 
                 std::string refusal;
@@ -1687,8 +1673,8 @@ namespace PythonBindings
                 if (!requested && !refusal.empty())
                     throw std::runtime_error(refusal);  // a TTD recording refuses the switch (FR-4)
                 return requested;
-            }, "Request a GS card personality swap ('z80'/'lle' or 'lw'/'lightweight'), applied at the next frame "
-               "boundary (RuntimeError while TTD records)",
+            }, "Request a GS card personality swap ('z80'/'lle', 'lw'/'lightweight' or 'ngs'/'neogs'), applied at the next "
+               "frame boundary (RuntimeError while TTD records)",
                py::arg("personality"))
             .def("gs_dump_module", [](Emulator& self, const std::string& path) -> py::object {
                 // Diagnostics: write the last completed COM30..D2 upload
@@ -1789,12 +1775,14 @@ namespace PythonBindings
                         case GSTraceSide::GsInternal: ev["side"] = "gs"; break;
                         case GSTraceSide::DacFetch: ev["side"] = "dac"; break;
                         case GSTraceSide::Interrupt: ev["side"] = "interrupt"; break;
+                        case GSTraceSide::ZxDma: ev["side"] = "zxdma"; break;
                     }
                     ev["direction"] = e.isOut() ? "out" : "in";
                     ev["port"] = e.port;
                     ev["value"] = e.value;
                     ev["pc"] = e.pc;
                     if (e.side == GSTraceSide::DacFetch) ev["channel"] = e.channel;
+                    if (e.side == GSTraceSide::ZxDma) ev["card_address"] = (static_cast<uint32_t>(e.channel) << 16) | e.port;
                     if (e.side == GSTraceSide::Interrupt) ev["nmi"] = e.isNmi();
                     result.append(ev);
                 }

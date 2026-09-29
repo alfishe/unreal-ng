@@ -602,9 +602,11 @@ converts the finished line buffers + graphics into framebuffer pixels.
 
 ## 3.10 CPU clock
 
-> **2026-09-28, PLAN #60(b):** `hw_turbo_shift` is being replaced by a linear
-> `hw_turbo_ratio` (1-8) everywhere, the TTD checkpoint included; TSConf then
-> sets ratio {1, 2, 4, 4} for `zclk` 0-3. Read `hw_turbo_shift` below as that.
+> **2026-09-28, PLAN #60(b) - postponed:** a linear `hw_turbo_ratio` (1-8)
+> replacing `hw_turbo_shift` is needed only by the Sprinter (×6). TSConf's
+> ×1/×2/×4 fit `hw_turbo_shift` as designed below. If the ratio lands first
+> (with the Sprinter), TSConf sets ratio {1, 2, 4, 4} for `zclk` 0-3 instead -
+> one line in the decoder.
 
 `hw_turbo_shift` from `SYS_CONFIG` via `ApplyHardwareTurboNow()` (immediate,
 rescales `t`); audio/video descale via `hw_turbo_shift_applied`

@@ -293,6 +293,49 @@ TEST(MediaManager_Test, UnregisterParksAndRegisterRestoresSessionWrites)
     manager.UnregisterSlot("sd.ngs");
 }
 
+/// A card fitted after the machine was created (a sound card switch) gets
+/// what the config states for its slot; a medium parked for the slot wins,
+/// and before the configured media went in nothing is inserted twice
+TEST(MediaManager_Test, SlotRegisteredLaterGetsItsConfiguredMedium)
+{
+    MediaManager manager(nullptr);
+    const std::string path = MakeImageFile("media-configured.img", 8);
+    MediaSetEntry entry;
+    entry.slotId = "sd.ngs";
+    entry.source.path = path;
+    entry.access = AccessMode::ReadOnly;
+    entry.writeProtect = true;
+    entry.legacy = true;
+
+    {
+        FakeBlockSlot early("sd.ngs");
+        manager.RegisterSlot(early);  // at creation, before the configured media
+        EXPECT_EQ(early.attached, nullptr) << "nothing configured yet";
+        manager.UnregisterSlot("sd.ngs");
+    }
+
+    EXPECT_TRUE(manager.ApplyConfiguredMedia({entry}).empty()) << "a legacy entry for a missing slot is quiet";
+
+    {
+        FakeBlockSlot fitted("sd.ngs");
+        manager.RegisterSlot(fitted);
+        ASSERT_NE(fitted.attached, nullptr) << "fitted later: the configured medium goes in";
+        EXPECT_EQ(fitted.attached->Source().path, path);
+        EXPECT_EQ(fitted.attached->Access(), AccessMode::ReadOnly);
+        EXPECT_TRUE(manager.Info("sd.ngs")->writeProtect);
+
+        ASSERT_TRUE(manager.Insert("sd.ngs", MemoryMedium(8), {}).Ok());
+        manager.UnregisterSlot("sd.ngs");  // the memory disk is parked
+    }
+
+    FakeBlockSlot again("sd.ngs");
+    manager.RegisterSlot(again);
+    ASSERT_NE(again.attached, nullptr);
+    EXPECT_EQ(again.attached->Format(), "memory") << "the parked medium comes back, not the configured one";
+    manager.UnregisterSlot("sd.ngs");
+    std::remove(path.c_str());
+}
+
 TEST(MediaManager_Test, KindAndFolderChecks)
 {
     MediaManager manager(nullptr);

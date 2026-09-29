@@ -170,6 +170,10 @@ private:
     /// "Moonsound" (both parts).
     void onMoonSoundActivity();
 
+    /// Combine the NeoGS DAC / MP3 decoder activity streams into the GS
+    /// slot's "gs" nudge: "NeoGS", "NeoGS MP3" or "NeoGS+MP3"
+    void onNeoGSActivity();
+
     bool matchesInstance(const unreal::UUID& id) const;
 
     void publishLocked();
@@ -219,6 +223,10 @@ private:
     // MoonSound part activity for the combined "moon" nudge
     bool _moonFmActive = false;
     bool _moonPcmActive = false;
+
+    // NeoGS part activity for the combined "gs" nudge
+    bool _neoGSDacActive = false;
+    bool _neoGSMp3Active = false;
 
     void setExecState(ExecState state, std::chrono::milliseconds ttl = std::chrono::milliseconds(0));
     bool canTransitionTo(ExecState newState) const;

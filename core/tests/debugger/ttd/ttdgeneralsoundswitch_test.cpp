@@ -3,8 +3,11 @@
 
 #include <gtest/gtest.h>
 
+#include <sstream>
+
 #include "_helpers/soundcardscope.h"
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/gsslot.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
@@ -60,7 +63,9 @@ protected:
         ASSERT_NE(context, nullptr);
         sm = context->pSoundManager;
         ASSERT_NE(sm, nullptr);
-        ASSERT_NE(sm->getGeneralSound(), nullptr) << "ATM710 must fit a GS card by default";
+        ASSERT_NE(sm->getGeneralSound(), nullptr) << "ATM710 must fit a GS-slot card by default";
+        // The tests start from the classic card (the shipped config fits NeoGS)
+        ASSERT_TRUE(FitGeneralSoundCard(sm, GSTypeKind::Z80));
 
         FeatureManager* fm = emulator->GetFeatureManager();
         ASSERT_NE(fm, nullptr);
@@ -128,7 +133,7 @@ TEST_F(TTDGeneralSoundSwitch_Test, SwitchUnderLiveHistoryRepointsRegistry)
 
     GeneralSoundCard* before = sm->getGeneralSound();
     const ttd::PeripheralId beforeId = before->TTDPeripheralId();
-    ASSERT_EQ(beforeId, ttd::PeripheralId::GeneralSound) << "ATM710 boots LLE";
+    ASSERT_EQ(beforeId, ttd::PeripheralId::GeneralSound) << "the fixture fits the classic card";
     ASSERT_EQ(context->pTimeTravelManager->GetPeripheralRegistry().GetDevice(beforeId),
               static_cast<ttd::TTDSerializable*>(before))
         << "registry must have picked up the boot-time card at StartRecording";
@@ -190,4 +195,70 @@ TEST_F(TTDGeneralSoundSwitch_Test, SwitchWithoutRecordingIsUnaffected)
     ASSERT_TRUE(sm->switchGeneralSoundCard(GSTypeKind::LW));
     EXPECT_EQ(sm->getGeneralSound()->implementation(), GSCardImplementation::LW);
     EXPECT_EQ(context->pTimeTravelManager->GetState(), ttd::TTDSessionState::Idle);
+}
+
+/// NeoGS records on TTD v1: every checkpoint carries the whole card - RAM
+/// and flash included (neogs-tdd.md §7.4)
+TEST_F(TTDGeneralSoundSwitch_Test, NeoGSRecordsWithTheWholeCardInEveryCheckpoint)
+{
+    ASSERT_TRUE(sm->switchGeneralSoundCard(GSTypeKind::NGS));
+    ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
+
+    GeneralSoundCard* card = sm->getGeneralSound();
+    std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
+    context->pTimeTravelManager->GetPeripheralRegistry().CaptureAll(blobs);
+    const auto id = static_cast<uint8_t>(ttd::PeripheralId::NeoGS);
+    ASSERT_NE(blobs.find(id), blobs.end());
+    const auto restored = ttd::TTDPeripheralRegistry::DecodeBlob(id, blobs[id]);
+    EXPECT_EQ(restored.size(), card->TTDStateSize());
+    EXPECT_GT(restored.size(), card->getRamSizeKB() * 1024 + 512u * 1024) << "RAM and flash";
+    context->pTimeTravelManager->StopRecording();
+}
+
+/// NeoGS follows the same rule as the other cards (FR-4): a user recording
+/// refuses the switch; under a debugger's live history the switch is allowed,
+/// the history is dropped and the registry points at the new card under its
+/// own id
+TEST_F(TTDGeneralSoundSwitch_Test, SwitchToNeoGSIsRefusedWhileRecordingAndRepointsUnderLiveHistory)
+{
+    ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
+    GeneralSoundCard* classic = sm->getGeneralSound();
+    EXPECT_FALSE(sm->switchGeneralSoundCard(GSTypeKind::NGS));
+    EXPECT_EQ(sm->getGeneralSound(), classic) << "refused: the card stays";
+    std::string refusal;
+    EXPECT_FALSE(sm->requestGeneralSoundCardSwitch(GSTypeKind::NGS, &refusal));
+    EXPECT_FALSE(refusal.empty());
+    context->pTimeTravelManager->StopRecording();
+
+    ASSERT_TRUE(context->pTimeTravelManager->BeginDebuggerLiveHistory());
+    ASSERT_TRUE(sm->switchGeneralSoundCard(GSTypeKind::NGS));
+    GeneralSoundCard* after = sm->getGeneralSound();
+    EXPECT_EQ(context->pTimeTravelManager->GetPeripheralRegistry().GetDevice(ttd::PeripheralId::NeoGS),
+              static_cast<ttd::TTDSerializable*>(after));
+    EXPECT_EQ(context->pTimeTravelManager->GetPeripheralRegistry().GetDevice(ttd::PeripheralId::GeneralSound), nullptr);
+    EXPECT_EQ(context->pTimeTravelManager->GetSessionInfo().lastDropReason, "gs-card-switch");
+    EmulatorTestHelper::RunFramesFast(emulator, 2); // checkpoints save through the new card
+    context->pTimeTravelManager->EndDebuggerLiveHistory();
+}
+
+/// A session recorded with the classic card must not load on an instance
+/// fitted with another GS-slot card: RestoreAll would restore neither
+TEST_F(TTDGeneralSoundSwitch_Test, SessionFromAnotherGsPersonalityIsRefused)
+{
+    ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
+    EmulatorTestHelper::RunFramesFast(emulator, 3);
+    std::stringstream session;
+    std::string err;
+    ASSERT_TRUE(context->pTimeTravelManager->SerializeSession(session, err)) << err;
+    context->pTimeTravelManager->StopRecording();
+
+    ASSERT_TRUE(sm->switchGeneralSoundCard(GSTypeKind::LW));
+    session.seekg(0);
+    EXPECT_FALSE(context->pTimeTravelManager->DeserializeSession(session, err));
+    EXPECT_NE(err.find("General Sound slot mismatch: recorded with GS, fitted: GS lightweight"), std::string::npos) << err;
+
+    ASSERT_TRUE(sm->switchGeneralSoundCard(GSTypeKind::Z80));
+    session.clear();
+    session.seekg(0);
+    EXPECT_TRUE(context->pTimeTravelManager->DeserializeSession(session, err)) << err;
 }

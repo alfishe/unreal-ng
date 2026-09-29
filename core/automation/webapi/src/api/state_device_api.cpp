@@ -71,6 +71,13 @@ std::string MultipleEmulatorsMessage(size_t count, const char* path)
 }
 }  // namespace
 
+/// Shared with the audio endpoints (state_audio_api.cpp): a DeviceState
+/// report as JSON, or 404 with its description when `available` is false
+void ReplyDeviceState(const StateNode& node, std::function<void(const HttpResponsePtr&)>& callback)
+{
+    ReplyState(node, callback);
+}
+
 /// @brief GET /api/v1/emulator/{id}/state/audio/fm
 void EmulatorAPI::getStateAudioFM(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                   const std::string& id) const

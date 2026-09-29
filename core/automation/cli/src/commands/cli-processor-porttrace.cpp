@@ -60,7 +60,7 @@ std::optional<uint16_t> parseHex16(const std::string& text)
 
 std::optional<PortDeviceId> parseDeviceId(const std::string& name)
 {
-    for (int id = 0; id <= static_cast<int>(PortDeviceId::FullDecodeClaim); id++)
+    for (int id = 0; id <= static_cast<int>(kPortDeviceIdLast); id++)
     {
         PortDeviceId device = static_cast<PortDeviceId>(id);
         std::string deviceName = PortDiagnosticRecorder::DeviceIdToString(device);

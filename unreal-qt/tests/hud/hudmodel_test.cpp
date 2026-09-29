@@ -9,6 +9,7 @@
 #include <emulator/notifications.h>
 #include <emulator/platform.h>
 
+#include <algorithm>
 #include <chrono>
 #include <thread>
 #include "_helpers/testtiminghelper.h"
@@ -223,15 +224,20 @@ TEST_F(HudModel_Test, FeatureGatingZeroCostWhenDisabled)
     auto snap = model.snapshot();
     EXPECT_TRUE(snap->elements.empty());
 
-    // New notifications are still tracked as shadow state while off, just not shown
-    std::string id = model.notify(req);
-    EXPECT_FALSE(id.empty());
-    EXPECT_TRUE(model.snapshot()->elements.empty());
+    // Shadow state (since the HUD Settings dialog, 4925c00e): events are still
+    // tracked while off, only the snapshot hides them
+    HudToastRequest later;
+    later.title = "While off";
+    std::string id = model.notify(later);
+    EXPECT_FALSE(id.empty()) << "tracked while off";
+    EXPECT_TRUE(model.snapshot()->elements.empty()) << "but not shown";
 
-    // Turn feature back on - shadow state becomes visible again
+    // Turn feature back on: the tracked state shows at once
     model.onFeatureChanged(true);
     EXPECT_TRUE(model.isEnabled());
-    EXPECT_GE(model.snapshot()->elements.size(), 1u);
+    auto shown = model.snapshot();
+    EXPECT_TRUE(std::any_of(shown->elements.begin(), shown->elements.end(),
+                            [](const HudElement& e) { return e.title == "While off"; }));
 }
 
 // --- MessageCenter Event Mapping Tests ---
@@ -1306,3 +1312,61 @@ TEST_F(HudModel_Test, ExecState_ResetBlocksExecuteTransition)
 
 
 
+
+TEST_F(HudModel_Test, EventMapping_AudioActivity_GsSlotNamesTheCard)
+{
+    // One "gs" nudge for the GS slot: "GS" for the classic card; for NeoGS
+    // the DAC and MP3 decoder streams combine like MoonSound's two parts
+    HudModel model(nullptr);
+    model.onFeatureChanged(true);
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+
+    auto gsValue = [&]() -> std::string {
+        for (const auto& e : model.snapshot()->elements)
+        {
+            if (e.id == "ind/gs")
+                return e.value;
+        }
+        return "";
+    };
+    auto post = [&](AudioSource source, bool active) {
+        mc.Post(NC_AUDIO_ACTIVITY, new AudioActivityPayload(_id, source, active));
+    };
+
+    post(AudioSource::GeneralSound, true);
+    EXPECT_TRUE(WaitForCondition([&] { return gsValue() == "GS"; }));
+    post(AudioSource::GeneralSound, false);
+    EXPECT_TRUE(WaitForCondition([&] { return gsValue().empty(); }));
+
+    post(AudioSource::NeoGS, true);
+    EXPECT_TRUE(WaitForCondition([&] { return gsValue() == "NeoGS"; }));
+    post(AudioSource::NeoGSMp3, true);
+    EXPECT_TRUE(WaitForCondition([&] { return gsValue() == "NeoGS+MP3"; }));
+    post(AudioSource::NeoGS, false);
+    EXPECT_TRUE(WaitForCondition([&] { return gsValue() == "NeoGS MP3"; }));
+    post(AudioSource::NeoGSMp3, false);
+    EXPECT_TRUE(WaitForCondition([&] { return gsValue().empty(); }));
+}
+
+TEST_F(HudModel_Test, EventMapping_AudioActivity_NeoGSDmaAndTransfers)
+{
+    // NeoGS moving data (no sound needed): two nudges of their own
+    HudModel model(nullptr);
+    model.onFeatureChanged(true);
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+    auto value = [&](const char* id) -> std::string {
+        for (const auto& e : model.snapshot()->elements)
+        {
+            if (e.id == id)
+                return e.value;
+        }
+        return "";
+    };
+
+    mc.Post(NC_AUDIO_ACTIVITY, new AudioActivityPayload(_id, AudioSource::NeoGSDma, true));
+    mc.Post(NC_AUDIO_ACTIVITY, new AudioActivityPayload(_id, AudioSource::NeoGSTransfer, true));
+    EXPECT_TRUE(WaitForCondition([&] { return value("ind/ngsdma") == "NeoGS DMA" && value("ind/ngszx") == "NeoGS <->"; }));
+    mc.Post(NC_AUDIO_ACTIVITY, new AudioActivityPayload(_id, AudioSource::NeoGSTransfer, false));
+    EXPECT_TRUE(WaitForCondition([&] { return value("ind/ngszx").empty(); }));
+    EXPECT_EQ(value("ind/ngsdma"), "NeoGS DMA");
+}

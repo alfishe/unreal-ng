@@ -1,11 +1,12 @@
 #include "soundchip_gs.h"
 
+#include "emulator/sound/chips/gs/gscpuregisters.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 
-#include "3rdparty/blip_buf/blip_buf.h"
 #include "3rdparty/message-center/messagecenter.h"
 #include "common/filehelper.h"
 #include "emulator/emulatorcontext.h"
@@ -19,6 +20,7 @@
 SoundChip_GeneralSound::SoundChip_GeneralSound(EmulatorContext* context, size_t ramKB, size_t sampleRate)
     : _context(context)
     , _sampleRate(sampleRate)
+    , _audio(static_cast<double>(GS_CLOCK_HZ), sampleRate)
 {
     _logger = _context ? _context->pModuleLogger : nullptr;
 
@@ -35,17 +37,13 @@ SoundChip_GeneralSound::SoundChip_GeneralSound(EmulatorContext* context, size_t 
 
     _rom.assign(ROM_SIZE, 0x00);
 
-    _blipL = blip_new(MAX_SAMPLES_PER_FRAME + 64);
-    _blipR = blip_new(MAX_SAMPLES_PER_FRAME + 64);
-    blip_set_rates(_blipL, static_cast<double>(GS_CLOCK_HZ), static_cast<double>(_sampleRate));
-    blip_set_rates(_blipR, static_cast<double>(GS_CLOCK_HZ), static_cast<double>(_sampleRate));
-
     // Dedicated coprocessor wired to the static trampolines below - never the
     // main emulator Z80 (design §4.3: context hardwiring, debug traps)
     _cpu = Z80CpuCreate();
     Z80CpuSetMemoryBus(_cpu, &SoundChip_GeneralSound::gsMemRead, this, &SoundChip_GeneralSound::gsMemWrite, this);
     Z80CpuSetPortBus(_cpu, &SoundChip_GeneralSound::gsPortRead, this, &SoundChip_GeneralSound::gsPortWrite, this);
     Z80CpuSetIntVectorFn(_cpu, &SoundChip_GeneralSound::gsIntRead, this);
+    _runner.bind(_cpu, this);
 
     reset();
 }
@@ -57,19 +55,12 @@ SoundChip_GeneralSound::~SoundChip_GeneralSound()
         Z80CpuDestroy(_cpu);
         _cpu = nullptr;
     }
-    blip_delete(_blipL);
-    blip_delete(_blipR);
-    _blipL = nullptr;
-    _blipR = nullptr;
 }
 
 void SoundChip_GeneralSound::setSampleRate(size_t sampleRate)
 {
     _sampleRate = sampleRate;
-    blip_set_rates(_blipL, static_cast<double>(GS_CLOCK_HZ), static_cast<double>(_sampleRate));
-    blip_set_rates(_blipR, static_cast<double>(GS_CLOCK_HZ), static_cast<double>(_sampleRate));
-    if (_blipL) blip_clear(_blipL);
-    if (_blipR) blip_clear(_blipR);
+    _audio.setRates(static_cast<double>(GS_CLOCK_HZ), _sampleRate);
 }
 
 void SoundChip_GeneralSound::setSynthesisSuppressed(bool suppressed)
@@ -78,10 +69,7 @@ void SoundChip_GeneralSound::setSynthesisSuppressed(bool suppressed)
         return;
     _synthesisSuppressed = suppressed;
     if (!suppressed)
-    {
-        if (_blipL) blip_clear(_blipL);
-        if (_blipR) blip_clear(_blipR);
-    }
+        _audio.clear();
 }
 
 /// endregion </Constructors / destructors>
@@ -103,10 +91,7 @@ void SoundChip_GeneralSound::reset()
     }
     makeVolumeTable();
 
-    _lastL = 0;
-    _lastR = 0;
-    if (_blipL) blip_clear(_blipL);
-    if (_blipR) blip_clear(_blipR);
+    _audio.reset();
     memset(_buffer, 0, _audioDescriptor.memoryBufferSizeInBytes);
     _frameHadActivity = false;
     _wasActive = false;
@@ -123,8 +108,9 @@ void SoundChip_GeneralSound::resetCard()
     // Timing restarts from zero but keeps the ZX frame base: the following
     // flush re-executes the elapsed frame time from the reset state, exactly
     // like Unreal's "reset(); flush_gs_z80();" pair (out_gs #33 handler)
+    _runner.reset();
     _gsCyclesAbs = 0;
-    _intQuantum = 0;
+    scheduleNextPeriod();
     _frameStartGsCycles = 0;
     _nmiPending = false;
     _intPending = false;
@@ -132,10 +118,7 @@ void SoundChip_GeneralSound::resetCard()
     // #33 reboots the firmware (POST), which resets CNTMOD to 0 - any
     // previously uploaded module is functionally gone even though its old
     // bytes still sit in GS RAM, so the handoff capture must forget it too
-    _uploadStore.clear();
-    _uploadLive = false;
-    _uploadHadModule = false;
-    _uploadPlaying = false;
+    _upload.clear();
 }
 
 void SoundChip_GeneralSound::hostReset()
@@ -235,122 +218,62 @@ void SoundChip_GeneralSound::makeVolumeTable()
 
 /// region <Lazy sync core>
 
-double SoundChip_GeneralSound::gsCyclesPerZxTact() const
-{
-    if (!_context)
-        return static_cast<double>(GS_CLOCK_HZ) / static_cast<double>(CPU_CLOCK_RATE);
-
-    const CONFIG& config = _context->config;
-    if (config.frame == 0 || config.frame_duration_us == 0)
-        return static_cast<double>(GS_CLOCK_HZ) / static_cast<double>(CPU_CLOCK_RATE);
-
-    // ZX base clock from the configured frame geometry (design §2.4); the GS
-    // card keeps its own 12 MHz clock, so only the HOST speed multiplier
-    // stretches the ZX tact domain (hardware turbo is already descaled by
-    // AudioTstate - both multipliers cancel, see frameGsLength)
-    double zxBaseHz = static_cast<double>(config.frame) / (static_cast<double>(config.frame_duration_us) * 1e-6);
-    double hostMultiplier = static_cast<double>(_context->emulatorState.HostSpeedMultiplier());
-
-    return static_cast<double>(GS_CLOCK_HZ) / (zxBaseHz * hostMultiplier);
-}
-
-uint64_t SoundChip_GeneralSound::currentZxTacts() const
-{
-    if (_context && _context->pCore && _context->pCore->GetZ80())
-        return static_cast<uint64_t>(_context->emulatorState.AudioTstate(_context->pCore->GetZ80()->t));
-
-    return _frameStartZxTacts;
-}
-
 int64_t SoundChip_GeneralSound::frameGsLength() const
 {
-    if (!_context)
-        return 0;
-
     // One ZX frame is config.frame * hostMultiplier multiplied tacts; the GS
     // card clocks 12 MHz against the ZX base clock, so the multiplier cancels
     // and the GS frame length is turbo-invariant (design §2.4)
-    double tacts = static_cast<double>(_context->config.frame) * static_cast<double>(_context->emulatorState.HostSpeedMultiplier());
-    return static_cast<int64_t>(std::llround(tacts * gsCyclesPerZxTact()));
+    return GSHostClock::frameUnits(_context, static_cast<double>(GS_CLOCK_HZ));
 }
 
 void SoundChip_GeneralSound::flush()
 {
-    uint64_t zxTacts = currentZxTacts();
-    if (zxTacts < _frameStartZxTacts)
+    int64_t target = 0;
+    if (!GSHostClock::targetUnits(_context, static_cast<double>(GS_CLOCK_HZ), _frameStartZxTacts, _frameStartGsCycles, target))
         return; // ZX reset rewound the clock; wait for the next frame base
-
-    uint64_t relative = zxTacts - _frameStartZxTacts;
-    int64_t target = _frameStartGsCycles + static_cast<int64_t>(std::llround(static_cast<double>(relative) * gsCyclesPerZxTact()));
     runTo(target);
 }
 
-void SoundChip_GeneralSound::runTo(int64_t target)
+// Catch-up loop: GSCardRunner (gscardrunner.h), Unreal z80loop order. The
+// hooks below are the classic card's part of it.
+
+// NMI from #33 bit6: latched, delivered at the first instruction boundary
+// that takes it (the core refuses one while a prefix chain is pending and
+// right after another NMI acknowledge - the latch then stays)
+void SoundChip_GeneralSound::onNmiAccepted()
 {
-    // Unreal z80loop model (gsz80.inl:39-82): step instructions while inside
-    // the 320-cycle quantum; at each boundary assert the periodic interrupt
-    // and carry the overshoot into the next quantum
-    while (totalGsCycles() < target)
-    {
-        // NMI from #33 bit6: latched, delivered at the first instruction
-        // boundary that takes it (the core refuses one while a prefix chain
-        // is pending and right after another NMI acknowledge - fall through
-        // and step, the latch stays)
-        if (_nmiPending)
-        {
-            int t = Z80CpuNmi(_cpu);
-            if (t > 0)
-            {
-                _nmiPending = false;
-                _intQuantum = static_cast<int16_t>(_intQuantum + t);
-                _activityCounters.nmisAccepted++;
-                traceEvent(GSTraceSide::Interrupt, 0, 0, false, 0, GSTraceFlags::kNmi);
-                continue;
-            }
-        }
+    _nmiPending = false;
+    _activityCounters.nmisAccepted++;
+    traceEvent(GSTraceSide::Interrupt, 0, 0, false, 0, GSTraceFlags::kNmi);
+}
 
-        // Level-held periodic INT (design §2.4, Xpeccy intrq |= Z80_INT): a
-        // boundary request stays asserted until the CPU accepts it, i.e.
-        // until IFF1 comes back on after the firmware ISR / masked stretches.
-        // Dropping unaccepted requests modulated the 37.5 kHz sample clock
-        // (740-767 accepted per 768 boundaries) and made steady tones float
-        // in pitch - root cause of the 2026-09-20 drift investigation
-        if (_intPending)
-        {
-            int t = Z80CpuInt(_cpu);
-            if (t > 0)
-            {
-                _intPending = false;
-                _intQuantum = static_cast<int16_t>(_intQuantum + t);
-                _activityCounters.interruptsAccepted++;
-                traceEvent(GSTraceSide::Interrupt, 0, 0, false);
-            }
-        }
+// Level-held periodic INT (design §2.4, Xpeccy intrq |= Z80_INT): a boundary
+// request stays asserted until the CPU accepts it, i.e. until IFF1 comes back
+// on after the firmware ISR / masked stretches. Dropping unaccepted requests
+// modulated the 37.5 kHz sample clock (740-767 accepted per 768 boundaries)
+// and made steady tones float in pitch - root cause of the 2026-09-20 drift
+// investigation
+void SoundChip_GeneralSound::onIntAccepted()
+{
+    _intPending = false;
+    _activityCounters.interruptsAccepted++;
+    traceEvent(GSTraceSide::Interrupt, 0, 0, false);
+}
 
-        if (_intQuantum >= GS_CYCLES_PER_INT)
-        {
-            // 37.5 kHz quantum boundary: assert the request, carry the
-            // overshoot into the next quantum. One flip-flop: a second
-            // boundary while the previous request is still pending merges
-            // into it - real hardware loses that sample too (the handler is
-            // genuinely slower than the period), so the coalesced counter
-            // is the honest place for it
-            _activityCounters.interruptPeriods++;
-            if (_intPending)
-                _activityCounters.interruptsCoalesced++;
-            else
-                _intPending = true;
-            _intQuantum = static_cast<int16_t>(_intQuantum - GS_CYCLES_PER_INT);
-            _gsCyclesAbs += GS_CYCLES_PER_INT;
-            continue;
-        }
-
-        int t = Z80CpuStep(_cpu);
-        if (t <= 0)
-            break; // Defensive: a stuck core must not hang the emulator
-        _intQuantum = static_cast<int16_t>(_intQuantum + t);
-        _activityCounters.cpuSteps++;
-    }
+// 37.5 kHz period boundary: assert the request, the overshoot stays in the
+// next period. One flip-flop: a second boundary while the previous request is
+// still pending merges into it - real hardware loses that sample too (the
+// handler is genuinely slower than the period), so the coalesced counter is
+// the honest place for it
+void SoundChip_GeneralSound::runEvents(int64_t /*now*/)
+{
+    _activityCounters.interruptPeriods++;
+    if (_intPending)
+        _activityCounters.interruptsCoalesced++;
+    else
+        _intPending = true;
+    _gsCyclesAbs += GS_CYCLES_PER_INT;
+    scheduleNextPeriod();
 }
 
 /// endregion </Lazy sync core>
@@ -390,7 +313,7 @@ void SoundChip_GeneralSound::handleFrameStart()
     // Frame-relative bases (Unreal init_gs_frame): the ZX tact counter and
     // the GS cycle accumulator are snapshotted so host-multiplier changes
     // take effect cleanly from the next frame
-    _frameStartZxTacts = currentZxTacts();
+    _frameStartZxTacts = GSHostClock::currentZxTacts(_context, _frameStartZxTacts);
     _frameStartGsCycles = totalGsCycles();
     _frameGsCycles = frameGsLength();
 }
@@ -402,9 +325,6 @@ void SoundChip_GeneralSound::handleFrameEnd(size_t expectedSamples)
 
     // Catch-up: run the GS CPU to the end of the ZX frame
     runTo(_frameStartGsCycles + _frameGsCycles);
-
-    blip_end_frame(_blipL, static_cast<unsigned>(_frameGsCycles));
-    blip_end_frame(_blipR, static_cast<unsigned>(_frameGsCycles));
 
     // Actual samples for this frame - must match what SoundManager mixes
     // (accumulator count preferred, local rounding as fallback)
@@ -418,15 +338,7 @@ void SoundChip_GeneralSound::handleFrameEnd(size_t expectedSamples)
         samplesThisFrame = static_cast<int>(std::llround(
             static_cast<double>(_frameGsCycles) * static_cast<double>(_sampleRate) / static_cast<double>(GS_CLOCK_HZ)));
     }
-    samplesThisFrame = std::clamp(samplesThisFrame, 0, static_cast<int>(MAX_SAMPLES_PER_FRAME));
-
-    int samplesL = blip_read_samples(_blipL, &_buffer[0], samplesThisFrame, 1 /* stereo stride */);
-    int samplesR = blip_read_samples(_blipR, &_buffer[1], samplesThisFrame, 1 /* stereo stride */);
-
-    for (int i = samplesL; i < samplesThisFrame; i++)
-        _buffer[i * 2] = 0;
-    for (int i = samplesR; i < samplesThisFrame; i++)
-        _buffer[i * 2 + 1] = 0;
+    _audio.endFrame(_frameGsCycles, samplesThisFrame, _buffer);
 
     // Activity of this frame: the audio-settings LED and, held for a second,
     // the HUD nudge (SoundManager / AudioActivityIndicators)
@@ -469,28 +381,9 @@ void SoundChip_GeneralSound::emitSample()
     int32_t newL, newR;
     computeStereo(newL, newR);
 
-    if (!_synthesisSuppressed && _frameGsCycles > 0)
-    {
-        int32_t deltaL = newL - _lastL;
-        int32_t deltaR = newR - _lastR;
-
-        if (deltaL != 0 || deltaR != 0)
-        {
-            // Position inside the current frame, 12 MHz blip clock domain;
-            // clamped to the frame length (turbo switches mid-frame)
-            int64_t position = totalGsCycles() - _frameStartGsCycles;
-            int64_t clamped = std::clamp<int64_t>(position, 0, _frameGsCycles - 1);
-
-            if (deltaL != 0)
-                blip_add_delta(_blipL, static_cast<unsigned>(clamped), deltaL);
-            if (deltaR != 0)
-                blip_add_delta(_blipR, static_cast<unsigned>(clamped), deltaR);
-            _frameHadActivity = true;
-        }
-    }
-
-    _lastL = newL;
-    _lastR = newR;
+    // Position inside the current frame, 12 MHz blip clock domain
+    if (_audio.set(totalGsCycles() - _frameStartGsCycles, _frameGsCycles, newL, newR, !_synthesisSuppressed))
+        _frameHadActivity = true;
 }
 
 /// endregion </Audio pipeline>
@@ -564,13 +457,7 @@ void SoundChip_GeneralSound::onHostDataWrite(uint8_t value)
     _activityCounters.hostDataWritten++;
     _mb.dataFromHost = value;
     _mb.status |= 0x80;
-    // The dummy slot byte precedes the OUT #BB,0x30 that opens capture, so
-    // it never enters the store. Capped at the card's actual RAM size: the
-    // firmware has nowhere else to put more bytes than that either, and
-    // without the cap a host stream that never sends the terminating D2
-    // would grow this vector without bound.
-    if (_uploadLive && _uploadStore.size() < _ram.size())
-        _uploadStore.push_back(value);
+    _upload.onData(value, _ram.size());
 }
 
 void SoundChip_GeneralSound::onHostCommandWrite(uint8_t value)
@@ -578,33 +465,7 @@ void SoundChip_GeneralSound::onHostCommandWrite(uint8_t value)
     _activityCounters.hostCommandsReceived++;
     _mb.commandFromHost = value;
     _mb.status |= 0x01;
-
-    if (value == 0x30)
-    {
-        _uploadStore.clear();
-        _uploadLive = true;
-    }
-    else if (value == 0xD2 && _uploadLive)
-    {
-        _uploadLive = false;
-        _uploadHadModule = !_uploadStore.empty();
-    }
-    else if (value == 0x31 || value == 0x33)
-    {
-        _uploadPlaying = true;
-    }
-    else if (value == 0x32)
-    {
-        _uploadPlaying = false;
-    }
-    else if (value == 0xF3 || value == 0xF4 || value == 0x00)
-    {
-        // Reset wipes the firmware's module RAM: nothing left to hand off
-        _uploadStore.clear();
-        _uploadLive = false;
-        _uploadHadModule = false;
-        _uploadPlaying = false;
-    }
+    _upload.onCommand(value);
 }
 
 // Automation actions - same side effects as the ZX-side hardware ports
@@ -664,19 +525,7 @@ void SoundChip_GeneralSound::accumulateActivityCounters(const GSActivityCounters
 
 bool SoundChip_GeneralSound::captureModuleUpload(std::vector<uint8_t>& bytes, bool& playing) const
 {
-    // Only a load that reached its D2 terminator is replayable (a switch
-    // mid-upload keeps the mailbox but loses the partial stream, same
-    // documented limit as the LW side)
-    if (_uploadLive || !_uploadHadModule || _uploadStore.empty())
-    {
-        bytes.clear();
-        playing = false;
-        return false;
-    }
-
-    bytes = _uploadStore;
-    playing = _uploadPlaying;
-    return true;
+    return _upload.capture(bytes, playing);
 }
 
 void SoundChip_GeneralSound::replayDrainReply()
@@ -702,121 +551,18 @@ void SoundChip_GeneralSound::replayAdvanceFrame()
 
 void SoundChip_GeneralSound::replayModuleUpload(const std::vector<uint8_t>& bytes, bool startPlayback)
 {
-    if (bytes.empty())
-        return;
-
-    if (!isROMLoaded())
+    size_t stalledAt = 0;
+    switch (gsReplayModuleUpload(*this, bytes, startPlayback, &stalledAt))
     {
-        MLOGWARNING("GS: personality switch cannot replay the module upload - no firmware ROM");
-        return;
-    }
-
-    // A healthy firmware drains a paced upload at ~700+ bytes/frame, but
-    // POST eats 15-55 frames before the COMINT loop consumes anything.
-    // The stall bound turns a wedged firmware into a warning instead of a
-    // hang (the queues simply stop draining).
-    constexpr size_t kMaxStallFrames = 1000;
-    size_t stall = 0;
-
-    // The factory hands over a constructed-but-unbooted card: the COM30
-    // stream must not interleave with POST. Advance frames until the volume
-    // latches report the past-INITVAR signature (the INITVAR tail's own
-    // DATRG read has already consumed the boot-reply flag by then - the
-    // NUMPG value merely sits in the #B3 latch), then settle a few frames.
-    // An already booted card skips straight to the drain
-    if (_activityCounters.volumeLatchWrites < 4)
-    {
-        size_t boot = 0;
-        while (_activityCounters.volumeLatchWrites < 4 && boot < kMaxStallFrames)
-        {
-            replayAdvanceFrame();
-            boot++;
-        }
-        for (int i = 0; i < 4; i++)
-            replayAdvanceFrame();
-    }
-    replayDrainReply();
-
-    // COM30 open, the way a real loader sequences it: param first, then the
-    // command; bit0 falls when the firmware dispatches. The slot reply lands
-    // in the #B3 latch (its bit7 flag is consumed by the handler's own
-    // DATRG param read - shared flip-flop), so drain the latch, not the flag
-    sendData(0x01);
-    sendCommand(0x30);
-    stall = 0;
-    while ((_mb.status & 0x01) != 0 && stall < kMaxStallFrames)
-    {
-        replayAdvanceFrame();
-        stall++;
-    }
-    replayAdvanceFrame();
-    (void)readData(); // consume the slot reply latch (clears bit7 if held)
-
-    // Paced stream, one byte per firmware drain: a #B3 write raises the
-    // pending flag and the loader clears it by reading DATRG - exactly
-    // how real loaders pace #B3 writes between FLAGS polls. Batching into
-    // the 16-deep FIFO instead wedges the gs105a load machine (verified
-    // empirically: the tail stalls with the firmware polling FLAGS
-    // forever and the module never parses)
-    // Per-byte pacing at loader granularity, NOT frame granularity: the
-    // firmware's LOADWT consumes a byte within a few hundred GS cycles, so
-    // waiting a whole 239602-cycle frame per byte turned a 381 KB module
-    // into ~6 minutes of frozen emulation (live-verified 2026-09-22: the
-    // "demo stopped" report on every LW->LLE switch). Step 2 interrupt
-    // periods at a time and bound the wait in cycles (200 frames' worth).
-    constexpr int64_t kByteStepCycles = 2 * GS_CYCLES_PER_INT;
-    constexpr int64_t kMaxByteWaitCycles = 200 * 239602; // one HSEND timeout is ~73 frames
-    for (size_t pushed = 0; pushed < bytes.size(); pushed++)
-    {
-        sendData(bytes[pushed]);
-        int64_t waited = 0;
-        // bit7 falls when the loader's DATRG read consumes the byte; no
-        // host #B3 read here (it would clear bit7 under the firmware)
-        while ((_mb.status & 0x80) != 0 && waited < kMaxByteWaitCycles)
-        {
-            runTo(totalGsCycles() + kByteStepCycles);
-            waited += kByteStepCycles;
-        }
-        if (waited >= kMaxByteWaitCycles)
-        {
+        case GSModuleReplayResult::NoFirmware:
+            MLOGWARNING("GS: personality switch cannot replay the module upload - no firmware ROM");
+            break;
+        case GSModuleReplayResult::ByteStalled:
             MLOGWARNING("GS: personality switch module replay stalled at byte %zu of %zu - firmware not draining",
-                        pushed + 1, bytes.size());
-            return;
-        }
-    }
-
-    // D2 terminator, then a settle margin for the parse (LOAD3 posts no
-    // completion reply - the command popping plus the margin is the done
-    // signal)
-    sendCommand(0xD2);
-    stall = 0;
-    while ((_mb.status & 0x01) != 0 && stall < kMaxStallFrames)
-    {
-        replayAdvanceFrame();
-        stall++;
-    }
-    for (int i = 0; i < 8; i++)
-    {
-        replayDrainReply();
-        replayAdvanceFrame();
-    }
-
-    // Resume playback the way the host would (DATRG 1 + COM31 starts module 1;
-    // the param must be queued first - an empty DATRG read latches the last
-    // uploaded module byte into the selector)
-    if (startPlayback)
-    {
-        sendData(0x01);
-        sendCommand(0x31);
-        stall = 0;
-        while ((_mb.status & 0x01) != 0 && stall < kMaxStallFrames)
-        {
-            replayAdvanceFrame();
-            stall++;
-        }
-        for (int i = 0; i < 3; i++)
-            replayAdvanceFrame();
-        (void)readData(); // COM31 status reply: latch drain (flag may be gone)
+                        stalledAt + 1, bytes.size());
+            break;
+        default:
+            break;
     }
 }
 
@@ -918,7 +664,10 @@ uint8_t SoundChip_GeneralSound::readMem(uint16_t addr)
 {
     const uint8_t* bank = _bankR[(addr >> 14) & 3];
     uint8_t value = bank[addr & (PAGE_SIZE - 1)];
-    dacFetch(addr, value);
+    // The window test stays here, inline on every read; the latch itself is
+    // out of line (rare: a few thousand reads per frame)
+    if ((addr & 0xE000) == 0x6000)
+        dacFetch(addr, value);
     return value;
 }
 
@@ -933,17 +682,14 @@ void SoundChip_GeneralSound::dacFetch(uint16_t addr, uint8_t value)
 {
     // Any read in 0x6000-0x7FFF latches the byte into the DAC selected by
     // address bits 9-8 (design §2.1) - including opcode fetches, matching
-    // Unreal's rm() hook
-    if ((addr & 0xE000) == 0x6000)
-    {
-        int channel = (addr >> 8) & 3;
-        _channelData[channel] = value;
-        _activityCounters.dacFetches++;
-        _activityCounters.lastDacFetchGsCycle = totalGsCycles();
-        _activityCounters.lastDacFetchFrame = currentFrameNumber();
-        traceEvent(GSTraceSide::DacFetch, addr, value, false, static_cast<uint8_t>(channel));
-        emitSample();
-    }
+    // Unreal's rm() hook. readMem has already tested the window.
+    int channel = (addr >> 8) & 3;
+    _channelData[channel] = value;
+    _activityCounters.dacFetches++;
+    _activityCounters.lastDacFetchGsCycle = totalGsCycles();
+    _activityCounters.lastDacFetchFrame = currentFrameNumber();
+    traceEvent(GSTraceSide::DacFetch, addr, value, false, static_cast<uint8_t>(channel));
+    emitSample();
 }
 
 /// endregion </Memory subsystem>
@@ -977,30 +723,7 @@ uint8_t SoundChip_GeneralSound::gsIntRead(Z80CPU* /*cpu*/, void* /*userData*/)
 
 uint16_t SoundChip_GeneralSound::getCPUReg(GSCpuRegister reg) const
 {
-    if (!_cpu)
-        return 0;
-    switch (reg)
-    {
-        case GSCpuRegister::AF: return Z80CpuGetReg(_cpu, Z80CpuRegAf);
-        case GSCpuRegister::BC: return Z80CpuGetReg(_cpu, Z80CpuRegBc);
-        case GSCpuRegister::DE: return Z80CpuGetReg(_cpu, Z80CpuRegDe);
-        case GSCpuRegister::HL: return Z80CpuGetReg(_cpu, Z80CpuRegHl);
-        case GSCpuRegister::AFAlt: return Z80CpuGetReg(_cpu, Z80CpuRegAfAlt);
-        case GSCpuRegister::BCAlt: return Z80CpuGetReg(_cpu, Z80CpuRegBcAlt);
-        case GSCpuRegister::DEAlt: return Z80CpuGetReg(_cpu, Z80CpuRegDeAlt);
-        case GSCpuRegister::HLAlt: return Z80CpuGetReg(_cpu, Z80CpuRegHlAlt);
-        case GSCpuRegister::IX: return Z80CpuGetReg(_cpu, Z80CpuRegIx);
-        case GSCpuRegister::IY: return Z80CpuGetReg(_cpu, Z80CpuRegIy);
-        case GSCpuRegister::SP: return Z80CpuGetReg(_cpu, Z80CpuRegSp);
-        case GSCpuRegister::PC: return Z80CpuGetReg(_cpu, Z80CpuRegPc);
-        case GSCpuRegister::I: return Z80CpuGetReg(_cpu, Z80CpuRegI);
-        case GSCpuRegister::R: return Z80CpuGetReg(_cpu, Z80CpuRegR);
-        case GSCpuRegister::IM: return Z80CpuGetReg(_cpu, Z80CpuRegIm);
-        case GSCpuRegister::IFF1: return Z80CpuGetReg(_cpu, Z80CpuRegIff1);
-        case GSCpuRegister::IFF2: return Z80CpuGetReg(_cpu, Z80CpuRegIff2);
-        case GSCpuRegister::MEMPTR: return Z80CpuGetReg(_cpu, Z80CpuRegMemptr);
-    }
-    return 0;
+    return gsReadCpuRegister(_cpu, reg);
 }
 
 /// endregion </Z80 bus callbacks>
@@ -1062,7 +785,7 @@ void SoundChip_GeneralSound::serializeFixedState(uint8_t* dst) const
     memcpy(&dst[5], _channelVol, 4);
     memcpy(&dst[9], _channelData, 4);
     gsTtdWrite64(&dst[13], _gsCyclesAbs);
-    gsTtdWrite16(&dst[21], static_cast<uint16_t>(_intQuantum));
+    gsTtdWrite16(&dst[21], static_cast<uint16_t>(static_cast<int16_t>(totalGsCycles() - _gsCyclesAbs)));
     // bits 2/3 were the queue-era pending flags; _mb.status (dst[0]) is
     // authoritative now, the slots stay reserved for layout compatibility
     dst[23] = static_cast<uint8_t>((_nmiPending ? 1 : 0) | (_intPending ? 2 : 0));
@@ -1130,7 +853,8 @@ void SoundChip_GeneralSound::TTDLoadState(const uint8_t* src)
     memcpy(_channelVol, &src[5], 4);
     memcpy(_channelData, &src[9], 4);
     _gsCyclesAbs = gsTtdRead64(&src[13]);
-    _intQuantum = static_cast<int16_t>(gsTtdRead16(&src[21]));
+    _runner.setNow(_gsCyclesAbs + static_cast<int16_t>(gsTtdRead16(&src[21])));
+    scheduleNextPeriod();
     _nmiPending = (src[23] & 1) != 0; // bit1 = intPending (pre-level-hold captures: 0/1 only)
     _intPending = (src[23] & 2) != 0;
     // bits 2/3: queue-era pending flags, ignored - _mb.status is authoritative
@@ -1168,9 +892,10 @@ void SoundChip_GeneralSound::TTDLoadState(const uint8_t* src)
 
     // Host-side pipeline follows the restored levels without emitting a
     // step (the seek position already produced its own audio)
-    computeStereo(_lastL, _lastR);
-    if (_blipL) blip_clear(_blipL);
-    if (_blipR) blip_clear(_blipR);
+    int32_t levelL, levelR;
+    computeStereo(levelL, levelR);
+    _audio.setLevels(levelL, levelR);
+    _audio.clear();
     _frameHadActivity = false;
 
     // The frame timeline the checkpoint was taken in (see serializeFixedState)

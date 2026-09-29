@@ -113,51 +113,43 @@ TEST_F(IOContention_Test, Pentagon_NoIOContention)
 
     // Pentagon should never have IO contention
     uint32_t paperStart = PaperStartOnLine(64);
-    _z80->t = paperStart;
-    EXPECT_EQ(_ula->GetIOContentionDelay(0xFE), 0);
+    EXPECT_EQ(_ula->IoWaitBeforeIorq(0x40FE, paperStart), 0);
+    EXPECT_EQ(_ula->IoWaitAfterIorq(0x40FE, paperStart), 0);
 }
 
 TEST_F(IOContention_Test, ZX48k_IOContentionForPortFE)
 {
     SetupZX48k();
 
-    // Port #FE is contended (A0=0). During paper area, should have contention delay.
+    // Port #00FE: ULA port, high byte uncontended - N:1, C:3: nothing before IORQ, the pattern at IORQ
     uint32_t contentionStart = ContentionStartOnLine(64);
-    _z80->t = contentionStart;
-
-    // At cell offset 0, contention delay should be 6 (from {6,5,4,3,2,1,0,0} pattern)
-    uint8_t delay = _ula->GetIOContentionDelay(0xFE);
-    EXPECT_EQ(delay, 6);
+    EXPECT_EQ(_ula->IoWaitBeforeIorq(0x00FE, contentionStart), 0);
+    EXPECT_EQ(_ula->IoWaitAfterIorq(0x00FE, contentionStart), 6);
 }
 
 TEST_F(IOContention_Test, ZX48k_IOContentionForOddPort)
 {
     SetupZX48k();
 
-    // Odd ports (A0=1) are NOT contended on 48K
+    // Odd ports with an uncontended high byte: N:4
     uint32_t paperStart = PaperStartOnLine(64);
-    _z80->t = paperStart;
-
-    EXPECT_EQ(_ula->GetIOContentionDelay(0xFF), 0);
-    EXPECT_EQ(_ula->GetIOContentionDelay(0x01), 0);
-    EXPECT_EQ(_ula->GetIOContentionDelay(0x1F), 0);
+    for (uint16_t port : { uint16_t(0x00FF), uint16_t(0x0001), uint16_t(0x001F), uint16_t(0x80FF) })
+    {
+        EXPECT_EQ(_ula->IoWaitBeforeIorq(port, paperStart), 0) << std::hex << port;
+        EXPECT_EQ(_ula->IoWaitAfterIorq(port, paperStart), 0) << std::hex << port;
+    }
 }
 
 TEST_F(IOContention_Test, ZX48k_IOContentionZeroOutsidePaper)
 {
     SetupZX48k();
 
-    // Before paper area (blank region)
-    _z80->t = 0;
-    EXPECT_EQ(_ula->GetIOContentionDelay(0xFE), 0);
-
-    // In top border
-    _z80->t = 1000;
-    EXPECT_EQ(_ula->GetIOContentionDelay(0xFE), 0);
-
-    // After paper area
-    _z80->t = 69700;
-    EXPECT_EQ(_ula->GetIOContentionDelay(0xFE), 0);
+    for (uint32_t t : { 0u, 1000u, 69700u })  // blank, top border, after the paper
+    {
+        EXPECT_EQ(_ula->IoWaitBeforeIorq(0x40FE, t), 0) << t;
+        EXPECT_EQ(_ula->IoWaitAfterIorq(0x40FE, t), 0) << t;
+        EXPECT_EQ(_ula->IoWaitAfterIorq(0x40FF, t), 0) << t;
+    }
 }
 
 /// ===================== IO Contention: Pattern ====================
@@ -166,16 +158,16 @@ TEST_F(IOContention_Test, ZX48k_IOContentionFollowsULAPattern)
 {
     SetupZX48k();
 
-    // The IO contention follows the same {6,5,4,3,2,1,0,0} pattern as memory contention
+    // The C:3 checkpoint follows the same {6,5,4,3,2,1,0,0} pattern as memory contention
     uint32_t contentionStart = ContentionStartOnLine(64);
     const uint8_t expectedPattern[8] = {6, 5, 4, 3, 2, 1, 0, 0};
 
     for (int i = 0; i < 8; i++)
     {
-        _z80->t = contentionStart + i;
-        uint8_t delay = _ula->GetIOContentionDelay(0xFE);
-        EXPECT_EQ(delay, expectedPattern[i])
+        EXPECT_EQ(_ula->IoWaitAfterIorq(0x00FE, contentionStart + i), expectedPattern[i])
             << "IO contention pattern mismatch at cell offset " << i;
+        EXPECT_EQ(_ula->IoWaitBeforeIorq(0x40FE, contentionStart + i), expectedPattern[i])
+            << "C:1 before IORQ at cell offset " << i;
     }
 }
 
@@ -184,62 +176,45 @@ TEST_F(IOContention_Test, ZX48k_IOContentionNoDelayAtCellOffset6and7)
     SetupZX48k();
 
     uint32_t contentionStart = ContentionStartOnLine(64);
-
-    _z80->t = contentionStart + 6;
-    EXPECT_EQ(_ula->GetIOContentionDelay(0xFE), 0);
-
-    _z80->t = contentionStart + 7;
-    EXPECT_EQ(_ula->GetIOContentionDelay(0xFE), 0);
+    EXPECT_EQ(_ula->IoWaitAfterIorq(0x00FE, contentionStart + 6), 0);
+    EXPECT_EQ(_ula->IoWaitAfterIorq(0x00FE, contentionStart + 7), 0);
 }
 
-/// ===================== IO Contention: 128K extra delay ====================
+/// ===================== IO Contention: the four patterns ====================
 
-TEST_F(IOContention_Test, ZX128k_IOContentionForPortFE)
-{
-    SetupZX128k();
-
-    // Port #FE on 128K: A0=0 → contention pattern + 1T extra delay
-    uint32_t contentionStart = ContentionStartOnLine(64);
-    _z80->t = contentionStart;
-
-    // At cell offset 0, base contention = 6, +1 for 128K = 7
-    uint8_t delay = _ula->GetIOContentionDelay(0xFE);
-    EXPECT_EQ(delay, 7);
-}
-
-TEST_F(IOContention_Test, ZX128k_IOContentionOddPortA1Zero)
-{
-    SetupZX128k();
-
-    // On 128K, odd ports with A1=0 (like 0xFD, 0xF9) get 1T delay during paper
-    uint32_t paperStart = PaperStartOnLine(64);
-    _z80->t = paperStart;
-
-    EXPECT_EQ(_ula->GetIOContentionDelay(0xFD), 1);
-    EXPECT_EQ(_ula->GetIOContentionDelay(0xF9), 1);
-}
-
-TEST_F(IOContention_Test, ZX128k_IOContentionOddPortA1One)
-{
-    SetupZX128k();
-
-    // On 128K, odd ports with A1=1 (like 0xFF) are NOT contended
-    uint32_t paperStart = PaperStartOnLine(64);
-    _z80->t = paperStart;
-
-    EXPECT_EQ(_ula->GetIOContentionDelay(0xFF), 0);
-}
-
-TEST_F(IOContention_Test, ZX48k_OddPortNoContentionEvenA1Zero)
+TEST_F(IOContention_Test, ZX48k_HighByteContendedOddPortWaitsThreeTimesAfterIorq)
 {
     SetupZX48k();
 
-    // On 48K, odd ports are never contended (even with A1=0)
-    uint32_t paperStart = PaperStartOnLine(64);
-    _z80->t = paperStart;
+    // C:1, C:1, C:1 after IORQ: from cell offset 7 (wait 0), then offset 0 (6), then offset 7 again (0)
+    uint32_t contentionStart = ContentionStartOnLine(64);
+    EXPECT_EQ(_ula->IoWaitAfterIorq(0x40FF, contentionStart + 7), 6);
+    // From offset 0: wait 6, next T at offset 7 (0), next at offset 0 of the next cell (6)
+    EXPECT_EQ(_ula->IoWaitAfterIorq(0x40FF, contentionStart), 12);
+}
 
-    EXPECT_EQ(_ula->GetIOContentionDelay(0xFD), 0);
-    EXPECT_EQ(_ula->GetIOContentionDelay(0xFF), 0);
+TEST_F(IOContention_Test, ZX128k_NoExtraTOnEvenPorts)
+{
+    SetupZX128k();
+
+    // The 128K follows the same four patterns as the 48K: no extra T on even ports (Rak's Timing Test,
+    // 128K "IN #00FE": 4 T outside the paper)
+    uint32_t contentionStart = ContentionStartOnLine(64);
+    EXPECT_EQ(_ula->IoWaitAfterIorq(0x00FE, contentionStart), 6);
+    EXPECT_EQ(_ula->IoWaitAfterIorq(0x00FE, 1000), 0) << "top border";
+    EXPECT_EQ(_ula->IoWaitBeforeIorq(0x00FE, contentionStart), 0);
+}
+
+TEST_F(IOContention_Test, ZX128k_OddPortsWithUncontendedHighByteNeverWait)
+{
+    SetupZX128k();
+
+    uint32_t paperStart = PaperStartOnLine(64);
+    for (uint16_t port : { uint16_t(0x00FD), uint16_t(0x00F9), uint16_t(0x00FF) })
+    {
+        EXPECT_EQ(_ula->IoWaitBeforeIorq(port, paperStart), 0) << std::hex << port;
+        EXPECT_EQ(_ula->IoWaitAfterIorq(port, paperStart), 0) << std::hex << port;
+    }
 }
 
 /// ===================== IO Contention: Integration with in()/out() ====================
@@ -303,13 +278,13 @@ TEST_F(IOContention_Test, Scorpion_NoIOContention)
     SetupScorpion();
 
     // Scorpion discrete-logic ULA has no contention: #FE and every other port
-    // read 0T delay even in the middle of the paper area (hardware-reference 6)
+    // wait 0T even in the middle of the paper area (hardware-reference 6)
     uint32_t paperStart = PaperStartOnLine(64);
-    _z80->t = paperStart;
-
-    EXPECT_EQ(_ula->GetIOContentionDelay(0xFE), 0);
-    EXPECT_EQ(_ula->GetIOContentionDelay(0xFD), 0);
-    EXPECT_EQ(_ula->GetIOContentionDelay(0xFF), 0);
+    for (uint16_t port : { uint16_t(0x40FE), uint16_t(0x40FD), uint16_t(0x40FF) })
+    {
+        EXPECT_EQ(_ula->IoWaitBeforeIorq(port, paperStart), 0) << std::hex << port;
+        EXPECT_EQ(_ula->IoWaitAfterIorq(port, paperStart), 0) << std::hex << port;
+    }
 
     EXPECT_FALSE(_ula->IsContentionEnabled());
     EXPECT_EQ(_ula->GetFetchType(), ULA_DISCRETE_LOGIC);
@@ -340,16 +315,16 @@ TEST_F(IOContention_Test, Scorpion_OutNoContentionDelay)
 /// Verified against ZXMAK2 SpectrumRenderer.cs CalcTableItem / ReadFreeBus.
 ///
 ///   phase8 = tInPaper % 8
-///   phase8   Bus content          cellIndex     t relative to paperStart
+///   phase8   Bus content          cellIndex     t relative to paperStart (the lookup T, at IORQ)
 ///   ──────   ──────────────────   ───────────   ─────────────────────────
-///     0      0xFF (shift)            —          paperStart - 4
-///     1      0xFF (shift)            —          paperStart - 3
-///     2      Pixel byte (bitmap)   tInPaper/4   paperStart - 2
-///     3      Attribute byte        tInPaper/4   paperStart - 1
-///     4      Pixel byte (bitmap)   tInPaper/4   paperStart + 0  ← beam enters cell 0
-///     5      Attribute byte        tInPaper/4   paperStart + 1
-///     6      0xFF (shift)            —          paperStart + 2
-///     7      0xFF (shift)            —          paperStart + 3
+///     0      0xFF (shift)            —          paperStart - 6
+///     1      0xFF (shift)            —          paperStart - 5
+///     2      Pixel byte (bitmap)   tInPaper/4   paperStart - 4  ← I/O cycle started on the contention onset
+///     3      Attribute byte        tInPaper/4   paperStart - 3
+///     4      Pixel byte (bitmap)   tInPaper/4   paperStart - 2
+///     5      Attribute byte        tInPaper/4   paperStart - 1
+///     6      0xFF (shift)            —          paperStart + 0  ← beam enters cell 0
+///     7      0xFF (shift)            —          paperStart + 1
 ///
 /// ── ULA_DISCRETE_LOGIC (Pentagon, Scorpion) ──
 /// 4-T-state continuous fetch: NO shift gaps, ALL T-states have VRAM data.
@@ -374,9 +349,11 @@ TEST_F(IOContention_Test, Scorpion_OutNoContentionDelay)
 
 TEST_F(IOContention_Test, ZX48k_FloatingBusClassicSequenceFromInt)
 {
-    // Classic 48K floating bus, counted from the INT: 14338 bitmap $4000,
-    // 14339 attribute $5800, 14340 bitmap $4001, 14341 attribute $5801,
-    // 14342..14345 idle ($FF), 14346 bitmap $4002. The INT fires at intstart+1.
+    // Classic 48K floating bus, counted from the INT at the lookup T (IORQ, one T into the I/O cycle):
+    // 14336 bitmap $4000, 14337 attribute $5800, 14338 bitmap $4001, 14339 attribute $5801,
+    // 14340..14343 idle ($FF), 14344 bitmap $4002 - an I/O cycle starting on the contention onset 14335
+    // reads the bitmap. The "14338" of the floating-bus articles is FUSE's count at the end of the same
+    // I/O cycle (IORQ + 2). The INT fires at intstart+1.
     SetupZX48k();
     CONFIG& config = _context->config;
     config.intstart = 0;
@@ -393,8 +370,8 @@ TEST_F(IOContention_Test, ZX48k_FloatingBusClassicSequenceFromInt)
     memory.DirectWriteToZ80Memory(0x4002, 0x12);
 
     const struct { uint32_t afterInt; uint8_t value; } expected[] = {
-        {14337, 0xFF}, {14338, 0x10}, {14339, 0x20}, {14340, 0x11}, {14341, 0x21},
-        {14342, 0xFF}, {14345, 0xFF}, {14346, 0x12},
+        {14335, 0xFF}, {14336, 0x10}, {14337, 0x20}, {14338, 0x11}, {14339, 0x21},
+        {14340, 0xFF}, {14343, 0xFF}, {14344, 0x12},
     };
     for (const auto& e : expected)
     {
@@ -516,42 +493,42 @@ TEST_F(IOContention_Test, ZX48k_FloatingBus8TPipelineAllPhases)
     uint32_t paperStart = PaperStartOnLine(0);
 
     // ── Phase 0 (shift, no fetch): tInPaper=0 → 0xFF ──
-    _z80->t = paperStart - 4;
+    _z80->t = paperStart - 6;
     EXPECT_EQ(_ula->GetFloatingBus(), 0xFF)
         << "phase8=0 should return 0xFF (shift, no fetch)";
 
     // ── Phase 1 (shift, no fetch): tInPaper=1 → 0xFF ──
-    _z80->t = paperStart - 3;
+    _z80->t = paperStart - 5;
     EXPECT_EQ(_ula->GetFloatingBus(), 0xFF)
         << "phase8=1 should return 0xFF (shift, no fetch)";
 
     // ── Phase 2 (pixel byte): tInPaper=2, cellIndex=0 → pixel of cell 0 ──
-    _z80->t = paperStart - 2;
+    _z80->t = paperStart - 4;
     EXPECT_EQ(_ula->GetFloatingBus(), 0xA0)
         << "phase8=2 should return pixel byte 0xA0 of cell 0";
 
     // ── Phase 3 (attribute byte): tInPaper=3, cellIndex=0 → attr of cell 0 ──
-    _z80->t = paperStart - 1;
+    _z80->t = paperStart - 3;
     EXPECT_EQ(_ula->GetFloatingBus(), 0xA1)
         << "phase8=3 should return attribute byte 0xA1 of cell 0";
 
     // ── Phase 4 (pixel byte): tInPaper=4, cellIndex=1 → pixel of cell 1 ──
-    _z80->t = paperStart;
+    _z80->t = paperStart - 2;
     EXPECT_EQ(_ula->GetFloatingBus(), 0xB0)
         << "phase8=4 should return pixel byte 0xB0 of cell 1";
 
     // ── Phase 5 (attribute byte): tInPaper=5, cellIndex=1 → attr of cell 1 ──
-    _z80->t = paperStart + 1;
+    _z80->t = paperStart - 1;
     EXPECT_EQ(_ula->GetFloatingBus(), 0xB1)
         << "phase8=5 should return attribute byte 0xB1 of cell 1";
 
     // ── Phase 6 (shift, no fetch): tInPaper=6 → 0xFF ──
-    _z80->t = paperStart + 2;
+    _z80->t = paperStart;
     EXPECT_EQ(_ula->GetFloatingBus(), 0xFF)
         << "phase8=6 should return 0xFF (shift, no fetch)";
 
     // ── Phase 7 (shift, no fetch): tInPaper=7 → 0xFF ──
-    _z80->t = paperStart + 3;
+    _z80->t = paperStart + 1;
     EXPECT_EQ(_ula->GetFloatingBus(), 0xFF)
         << "phase8=7 should return 0xFF (shift, no fetch)";
 }
@@ -564,11 +541,11 @@ TEST_F(IOContention_Test, ZX48k_FloatingBusPixelByteInPaper)
     memory.DefaultBanksFor48k();
 
     // Pixel byte appears on the floating bus during even phases (2, 4).
-    // At paperStart+0: phase8=4, cellIndex=1 → pixel addr 0x4001
+    // At paperStart-2: phase8=4, cellIndex=1 → pixel addr 0x4001
     memory.DirectWriteToZ80Memory(0x4001, 0x7E);  // pixel byte
 
     uint32_t paperStart = PaperStartOnLine(0);
-    _z80->t = paperStart;  // phase8=4 (pixel fetch)
+    _z80->t = paperStart - 2;  // phase8=4 (pixel fetch)
 
     EXPECT_EQ(_ula->GetFloatingBus(), 0x7E)
         << "Floating bus should return pixel byte during pixel-fetch phase";
@@ -582,11 +559,11 @@ TEST_F(IOContention_Test, ZX48k_FloatingBusAttributeByteInPaper)
     memory.DefaultBanksFor48k();
 
     // Attribute byte appears on the floating bus during odd phases (3, 5).
-    // At paperStart+1: phase8=5, cellIndex=1 → attr addr 0x5801
+    // At paperStart-1: phase8=5, cellIndex=1 → attr addr 0x5801
     memory.DirectWriteToZ80Memory(0x5801, 0x3E);
 
     uint32_t paperStart = PaperStartOnLine(0);
-    _z80->t = paperStart + 1;  // phase8=5 (attribute fetch)
+    _z80->t = paperStart - 1;  // phase8=5 (attribute fetch)
 
     EXPECT_EQ(_ula->GetFloatingBus(), 0x3E)
         << "Floating bus should return attribute byte during attribute-fetch phase";
@@ -601,25 +578,25 @@ TEST_F(IOContention_Test, ZX48k_FloatingBusReturnsDifferentAttributePerColumn)
 
     // Pipeline offset: ULA fetches 1 cell ahead of beam.
     // At attribute phases, test different cells across the line.
-    // Cell 1 attr at phase8=5 (tInPaper=5): t = paperStart + 1
-    // Cell 3 attr at phase8=5 (tInPaper=13): t = paperStart + 9
-    // Cell 5 attr at phase8=5 (tInPaper=21): t = paperStart + 17
+    // Cell 1 attr at phase8=5 (tInPaper=5): t = paperStart - 1
+    // Cell 3 attr at phase8=5 (tInPaper=13): t = paperStart + 7
+    // Cell 5 attr at phase8=5 (tInPaper=21): t = paperStart + 15
     memory.DirectWriteToZ80Memory(0x5801, 0x55);  // cell 1 attribute
     memory.DirectWriteToZ80Memory(0x5803, 0x66);  // cell 3 attribute
     memory.DirectWriteToZ80Memory(0x5805, 0x77);  // cell 5 attribute
 
     uint32_t paperStart = PaperStartOnLine(0);
 
-    // Cell 1: tInPaper=5 (phase8=5, attribute), t = paperStart + 1
-    _z80->t = paperStart + 1;
+    // Cell 1: tInPaper=5 (phase8=5, attribute), t = paperStart - 1
+    _z80->t = paperStart - 1;
     EXPECT_EQ(_ula->GetFloatingBus(), 0x55);
 
-    // Cell 3: tInPaper=13 (phase8=5, attribute), t = paperStart + 9
-    _z80->t = paperStart + 9;
+    // Cell 3: tInPaper=13 (phase8=5, attribute), t = paperStart + 7
+    _z80->t = paperStart + 7;
     EXPECT_EQ(_ula->GetFloatingBus(), 0x66);
 
-    // Cell 5: tInPaper=21 (phase8=5, attribute), t = paperStart + 17
-    _z80->t = paperStart + 17;
+    // Cell 5: tInPaper=21 (phase8=5, attribute), t = paperStart + 15
+    _z80->t = paperStart + 15;
     EXPECT_EQ(_ula->GetFloatingBus(), 0x77);
 }
 
@@ -633,11 +610,11 @@ TEST_F(IOContention_Test, ZX48k_FloatingBusCorrectForLine64)
     // Line 64: block=(64>>6)&3=1, char_row=(64>>3)&7=0
     // Pixel addr: 0x4000 | (1<<11) | 0 | 0 | cellIndex = 0x4800 + cellIndex
     // Attr addr:  0x5800 | (1<<8) | 0 | cellIndex = 0x5900 + cellIndex
-    // At paperStart+0 (phase8=4, pixel): cellIndex=1 → pixel addr 0x4801
+    // At paperStart-2 (phase8=4, pixel): cellIndex=1 → pixel addr 0x4801
     memory.DirectWriteToZ80Memory(0x4801, 0xC3);  // pixel byte cell 1
 
     uint32_t paperStart = PaperStartOnLine(64);
-    _z80->t = paperStart;  // phase8=4 (pixel fetch), cellIndex=1
+    _z80->t = paperStart - 2;  // phase8=4 (pixel fetch), cellIndex=1
 
     EXPECT_EQ(_ula->GetFloatingBus(), 0xC3)
         << "Floating bus for line 64 should use correct interleaved pixel address";
@@ -651,11 +628,11 @@ TEST_F(IOContention_Test, ZX48k_FloatingBusCorrectForLine64Attribute)
     memory.DefaultBanksFor48k();
 
     // Same line 64, but attribute phase.
-    // At paperStart+1 (phase8=5, attr): cellIndex=1 → attr addr 0x5901
+    // At paperStart-1 (phase8=5, attr): cellIndex=1 → attr addr 0x5901
     memory.DirectWriteToZ80Memory(0x5901, 0x2A);
 
     uint32_t paperStart = PaperStartOnLine(64);
-    _z80->t = paperStart + 1;  // phase8=5 (attribute), cellIndex=1
+    _z80->t = paperStart - 1;  // phase8=5 (attribute), cellIndex=1
 
     EXPECT_EQ(_ula->GetFloatingBus(), 0x2A)
         << "Floating bus for line 64 attribute should use correct interleaved address";
@@ -842,11 +819,11 @@ TEST_F(IOContention_Test, ZX128k_FloatingBusWorks)
     Memory& memory = *_context->pMemory;
     memory.DefaultBanksFor48k();  // 128K test uses same VRAM layout
 
-    // At paperStart+0 (phase8=4, pixel): cellIndex=1 → pixel addr 0x4001
+    // At paperStart-2 (phase8=4, pixel): cellIndex=1 → pixel addr 0x4001
     memory.DirectWriteToZ80Memory(0x4001, 0x7E);
 
     uint32_t paperStart = PaperStartOnLine(0);
-    _z80->t = paperStart;
+    _z80->t = paperStart - 2;
 
     EXPECT_EQ(_ula->GetFloatingBus(), 0x7E)
         << "ZX-128K floating bus should work with same 8T pipeline";

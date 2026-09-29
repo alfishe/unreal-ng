@@ -585,7 +585,11 @@ enum class AudioSource : uint8_t
     FM = 5,         // FM part of YM2203 (separate from AY/TS)
     GeneralSound = 6, // General Sound card (dedicated Z80 + 4xDAC)
     MoonFM = 7,       // MoonSound (OPL4/YMF278B) FM synthesis part
-    MoonPCM = 8       // MoonSound (OPL4/YMF278B) wave sample/PCM part
+    MoonPCM = 8,      // MoonSound (OPL4/YMF278B) wave sample/PCM part
+    NeoGS = 9,        // NeoGS card in the GS slot: its DAC channels (GeneralSound is then silent)
+    NeoGSMp3 = 10,    // NeoGS MP3 decoder output
+    NeoGSDma = 11,    // NeoGS: the card's own DMA (SD card, MP3 decoder) moving data - not sound
+    NeoGSTransfer = 12 // NeoGS: ZX-DMA moving data between the ZX and the card - not sound
 };
 
 /// Payload for NC_AUDIO_ACTIVITY.

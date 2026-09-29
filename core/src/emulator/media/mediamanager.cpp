@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <system_error>
 
+#include "common/logger.h"
 #include "common/modulelogger.h"
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
@@ -55,6 +56,21 @@ void MediaManager::RegisterSlot(IMediaSlot& slot)
         slot.Attach(*state.attached);
         slot.SetWriteProtectSwitch(state.writeProtect);
         Post(NC_MEDIA_INSERTED, id, state.attached.get());
+        return;
+    }
+
+    // A card fitted after creation (a sound card switch) gets what the config states for it
+    if (_configured)
+    {
+        auto entry = std::find_if(_configured->begin(), _configured->end(),
+                                  [&id](const MediaSetEntry& e) { return e.slotId == id; });
+        if (entry != _configured->end())
+        {
+            std::vector<std::string> problems;
+            ApplyConfiguredEntry(*entry, problems);
+            for (const std::string& line : problems)
+                LOGWARNING("MediaManager: configured media: %s", line.c_str());
+        }
     }
 }
 
@@ -495,6 +511,10 @@ bool MediaManager::WaitApplied(const std::string& slotId, uint32_t timeoutMs)
 
 std::vector<std::string> MediaManager::ApplyConfiguredMedia(const std::vector<MediaSetEntry>& mediaSet)
 {
+    {
+        std::lock_guard<std::recursive_mutex> lock(_mutex);
+        _configured = mediaSet;
+    }
     std::vector<std::string> problems;
     for (const MediaSetEntry& entry : mediaSet)
     {
@@ -504,35 +524,40 @@ std::vector<std::string> MediaManager::ApplyConfiguredMedia(const std::vector<Me
                 problems.push_back("[MEDIA] " + entry.slotId + ": this machine has no such slot");
             continue;
         }
-        {
-            std::lock_guard<std::recursive_mutex> lock(_mutex);
-            SlotState& state = _slots[entry.slotId];
-            if (entry.swapDelayMs)
-                state.swapDelayMs = entry.swapDelayMs;
-            if (entry.writeProtect)
-            {
-                state.writeProtect = *entry.writeProtect;
-                if (state.attached)
-                    state.slot->SetWriteProtectSwitch(state.writeProtect);
-            }
-        }
-        if (entry.source.path.empty())
-            continue;
-
-        InsertOptions options;
-        options.access = entry.access;
-        options.fs = entry.fs;
-        options.codePage = entry.codePage;
-        options.freeBytes = entry.freeBytes;
-        options.writeProtect = entry.writeProtect.value_or(false);
-        options.immediate = true;
-        const MediaResult result = Insert(entry.slotId, entry.source, options);
-        if (!result.Ok())
-            problems.push_back(entry.slotId + ": " + result.message);
-        for (const std::string& line : result.report)
-            problems.push_back(entry.slotId + ": " + line);
+        ApplyConfiguredEntry(entry, problems);
     }
     return problems;
+}
+
+void MediaManager::ApplyConfiguredEntry(const MediaSetEntry& entry, std::vector<std::string>& problems)
+{
+    {
+        std::lock_guard<std::recursive_mutex> lock(_mutex);
+        SlotState& state = _slots[entry.slotId];
+        if (entry.swapDelayMs)
+            state.swapDelayMs = entry.swapDelayMs;
+        if (entry.writeProtect)
+        {
+            state.writeProtect = *entry.writeProtect;
+            if (state.attached)
+                state.slot->SetWriteProtectSwitch(state.writeProtect);
+        }
+    }
+    if (entry.source.path.empty())
+        return;
+
+    InsertOptions options;
+    options.access = entry.access;
+    options.fs = entry.fs;
+    options.codePage = entry.codePage;
+    options.freeBytes = entry.freeBytes;
+    options.writeProtect = entry.writeProtect.value_or(false);
+    options.immediate = true;
+    const MediaResult result = Insert(entry.slotId, entry.source, options);
+    if (!result.Ok())
+        problems.push_back(entry.slotId + ": " + result.message);
+    for (const std::string& line : result.report)
+        problems.push_back(entry.slotId + ": " + line);
 }
 
 /// endregion </Operations>
