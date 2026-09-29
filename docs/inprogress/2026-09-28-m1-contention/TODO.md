@@ -31,7 +31,7 @@ Design: [design.md](design.md). Test programs and the probe suite: [test-program
   each T-state, the gate array none. FUSE's no-MREQ checkpoints are now asserted (address and T-state, all
   1356 vectors) and a ULA replay of every vector passes; MAME and xpeccy-plus use the same per-cycle table
   (MAME differs only on the stepped DE/HL of three repeat cycles; we follow FUSE and xpeccy-plus). Butler
-  48K: 68 of 70 pass with contention (was 34), test 35 is the floating bus. The DDCB operation byte is now an
+  48K: 68 of 70 pass with contention (was 34); the rest was fixed with the floating bus below. The DDCB operation byte is now an
   ordinary read, not an M1 (R +2 as on the hardware). Pentagon cost within noise (~0.5 %).
 
 - **Phase 3 — multi-point I/O contention** (2026-09-28): the four "Contended I/O" patterns (N:4, N:1 C:3,
@@ -39,6 +39,22 @@ Design: [design.md](design.md). Test programs and the probe suite: [test-program
   #C000 on the 128K counts); the 128K rule's extra T on every even port is gone. `UlaContention::
   IoWaitBeforeIorq` / `IoWaitAfterIorq` from `Z80::in` / `out`. Rak's Timing Test: all 15 reference screens
   match (48K / 128K / +3); the FUSE ULA replay now covers every vector, port cycles included.
+
+- **Floating bus — Butler 48K 72 of 72** (2026-09-28): the suite has 37 tests (1-35 from both RAM kinds,
+  36-37 contended with a screen full of text: 72 results, the harness stopped at 70). Test 35 ("IN A,(n);
+  OUT (n),A; IN r,(C); OUT (C),r") feeds each port read into the next port's high byte, so the byte read
+  decides the contention. A frame-exact I/O trace against SkoolKit's contention simulator (which passes all
+  72) matched to the T for 158 iterations and then diverged on #xx1F: three causes, fixed:
+  - the standard 48K fits a **Kempston mouse** (#xx1F with A9 set answers the Y counter): the Butler runner
+    now runs a bare 48K (`kempstonmouse` off), as the suite was measured;
+  - the **Beta 128 ports** (#1F/#3F/#5F/#7F/#FF) answered outside TR-DOS on the 48K, 128K and +3 decoders
+    (Pentagon already gated them on `CF_TRDOS`): #FF read the FDC instead of the floating bus;
+  - `FloatBus=0` in the 48K / 128K / +2 / +2A / +3 configs (an Unreal Speccy knob): now 1 - the ULA and the
+    gate array always drive the bus.
+  The floating-bus **phase** was 2 T late on the Ferranti ULA: an I/O cycle starting on the contention onset
+  (delay 6) reads the bitmap byte (FUSE, Zero, ZXMAK2, MAME, pico-spec; the "14338" in the articles is FUSE's
+  end-of-cycle count of the same T). `UlaContention::FetchLead` (6 on the Ferranti ULA, 4 on the discrete
+  clones, unchanged). Tests 36 and 37 (real hardware values) pass only with it.
 
 ## Remaining (value order)
 1. **Phase 1e — emulated-side suite H** (in progress): done - the Butler 48K suite runs to completion (after

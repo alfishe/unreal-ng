@@ -259,9 +259,12 @@ private:
     uint8_t ComputeContentionDelay(uint32_t t) const;
 
     /// Shared floating-bus position math: resolves the VRAM cell being
-    /// fetched at the current T-state (with the 4T fetch pipeline offset).
+    /// fetched at the current T-state (with the fetch pipeline offset, FetchLead).
     /// Returns false outside the fetch area (border/blanking).
     bool LocateFloatingBusCell(uint32_t& y, uint32_t& cellIndex) const;
+
+    /// T-states the video fetch runs ahead of the first paper pixel, as seen from the IORQ lookup (FetchedByte)
+    uint32_t FetchLead() const { return _fetchType == ULA_FERRANTI ? 6u : 4u; }
 
     /// The VRAM byte the video logic is fetching right now; false between fetches and outside the paper
     bool FetchedByte(uint8_t& value) const;

@@ -205,9 +205,15 @@ bool UlaContention::FetchedByte(uint8_t& value) const
     //
     // Both architectures fetch VRAM data ahead of the electron beam because the
     // shift register / attribute latch must be loaded before pixels are drawn.
-    // We model this by shifting the effective paper area backward by 4 T-states:
-    //   fetchAreaStart = screenLineAreaStart - 4
-    //   fetchAreaEnd   = screenLineAreaEnd   - 4
+    // We model this by shifting the effective paper area backward (FetchLead):
+    //   fetchAreaStart = screenLineAreaStart - lead
+    //   fetchAreaEnd   = screenLineAreaEnd   - lead
+    // The lookup runs at IORQ, one T into the I/O cycle. On the Ferranti ULA
+    // (lead 6) an I/O cycle that starts on the contention onset (the T with
+    // delay 6, 5 T before the first pixel) reads the bitmap byte: FUSE, Zero,
+    // ZXMAK2, MAME and pico-spec agree (the "14338" of the floating-bus
+    // articles is FUSE's end-of-cycle count of the same T). The discrete-logic
+    // clones keep lead 4.
     //
     // ──────────────────────────────────────────────────────────────────────────
 
@@ -221,7 +227,7 @@ bool UlaContention::FetchedByte(uint8_t& value) const
     // phase from it; recomputed here to keep LocateFloatingBusCell minimal)
     uint32_t t = _cpu->t % _raster.configFrameDuration;
     uint32_t tInLine = (t - _raster.screenAreaStart) % _raster.tstatesPerLine;
-    uint32_t tInPaper = tInLine - (_raster.screenLineAreaStart - 4);
+    uint32_t tInPaper = tInLine - (_raster.screenLineAreaStart - FetchLead());
 
     // ── Determine which byte is on the bus based on architecture ──
     bool isAttribute;
@@ -278,9 +284,9 @@ bool UlaContention::LocateFloatingBusCell(uint32_t& y, uint32_t& cellIndex) cons
     uint32_t t = _cpu->t % _raster.configFrameDuration;
     uint32_t tInLine = (t - _raster.screenAreaStart) % _raster.tstatesPerLine;
 
-    // Apply 4T pipeline offset (video controller fetches ahead of beam)
-    uint32_t fetchAreaStart = _raster.screenLineAreaStart - 4;
-    uint32_t fetchAreaEnd = _raster.screenLineAreaEnd - 4;
+    // Pipeline offset: the video controller fetches ahead of the beam (FetchedByte)
+    uint32_t fetchAreaStart = _raster.screenLineAreaStart - FetchLead();
+    uint32_t fetchAreaEnd = _raster.screenLineAreaEnd - FetchLead();
 
     // Fast area checks: outside the overall screen or outside the fetch area
     if (t < _raster.screenAreaStart || t > _raster.screenAreaEnd)

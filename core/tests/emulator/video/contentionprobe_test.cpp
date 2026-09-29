@@ -25,9 +25,10 @@
 /// measure contention from inside the machine and print their verdict.
 ///
 /// ZX Spectrum Timing Tests 48K v1.0 (Richard and Tim Butler, testdata/loaders/sna/Timing_Tests-48k_v1.0.sna):
-/// 35 tests, each an instruction group run in a loop until the frame interrupt, from uncontended and from
-/// contended RAM; the program prints R, the loop count and SP and compares them with the values measured
-/// on a real 48K ("Pass" / "Fail" + "Expecting"). The screen is read with ScreenOCR (the program uses the
+/// 37 tests, each an instruction group run in a loop until the frame interrupt: 1-35 from uncontended and
+/// from contended RAM, 36-37 from contended RAM with the screen full of text, so that test 35's port reads
+/// (whose results become the next port's high byte) see the floating bus. The program prints R, the loop
+/// count and SP and compares them with the values measured on a real 48K ("Pass" / "Fail" + "Expecting"). The screen is read with ScreenOCR (the program uses the
 /// ROM font).
 ///
 /// Phase 1 (M1 and data contention) moves the contended results towards the hardware but cannot pass them:
@@ -36,6 +37,10 @@
 /// hardware ones, so every later phase shows up as a deliberate change here.
 namespace
 {
+/// Tests 1-35 from uncontended and from contended RAM, then 36 and 37 (contended only, a screen full of text:
+/// the port reads see the floating bus)
+constexpr size_t kButlerResults = 72;
+
 struct ButlerResult
 {
     int r = -1;
@@ -78,6 +83,10 @@ public:
         if (!_emulator)
             return;
         _emulator->GetFeatureManager()->setFeature(Features::kContention, contention);
+        // A bare 48K, as the suite was measured on: the standard machine fits a Kempston mouse, whose ports
+        // (#xx1F with A9 set) answer test 35's IN r,(C) with the mouse counters - a byte that sends the next
+        // port into the contended high-byte range
+        _emulator->GetFeatureManager()->setFeature(Features::kKempstonMouse, false);
         _loaded = _emulator->LoadSnapshot(TestPathHelper::GetTestDataPath("loaders/sna/Timing_Tests-48k_v1.0.sna"));
     }
 
@@ -160,8 +169,8 @@ TEST(ContentionProbe_Test, ButlerTest1MatchesTheHardware)
 }
 
 /// The whole suite, both switch settings: ~7000 frames per run (about 3 s each) - opt-in with
-/// UNREAL_TIMING_SUITES=1, like the tape sweep. Prints the table and pins what phase 1 guarantees:
-/// every uncontended test but the floating-bus test 35 passes with contention on
+/// UNREAL_TIMING_SUITES=1, like the tape sweep. Prints the table; with contention on every result matches
+/// the real 48K
 class ContentionProbeSweep_Test : public ::testing::TestWithParam<bool>
 {
 };
@@ -180,9 +189,9 @@ TEST_P(ContentionProbeSweep_Test, ButlerFullSuite)
     std::map<std::pair<int, std::string>, ButlerResult> all;
     std::string previous;
     int lastPress = 0;
-    for (int frame = 0; frame < 60000 && all.size() < 70; frame += 10)
+    for (int frame = 0; frame < 60000 && all.size() < kButlerResults; frame += 2)
     {
-        runner.RunFrames(10);
+        runner.RunFrames(2);  // a passing test's lines scroll away within a few frames
         const std::string screen = runner.Screen();
         if (screen.find("scroll?") != std::string::npos)
         {
@@ -203,7 +212,7 @@ TEST_P(ContentionProbeSweep_Test, ButlerFullSuite)
             lastPress = frame;
         }
     }
-    EXPECT_EQ(all.size(), 70u) << "35 tests x (uncontended, contended); last screen:\n" << runner.Screen();
+    EXPECT_EQ(all.size(), kButlerResults) << "last screen:\n" << runner.Screen();
 
     int passed = 0;
     for (const auto& [key, result] : all)
@@ -218,12 +227,8 @@ TEST_P(ContentionProbeSweep_Test, ButlerFullSuite)
 
     if (contention)
     {
-        for (int test = 1; test <= 34; test++)
-        {
-            auto it = all.find({ test, "Uncontended" });
-            ASSERT_NE(it, all.end()) << "test " << test;
-            EXPECT_TRUE(it->second.pass) << "uncontended test " << test;
-        }
+        for (const auto& [key, result] : all)
+            EXPECT_TRUE(result.pass) << "test " << key.first << " " << key.second;
     }
 }
 

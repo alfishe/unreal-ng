@@ -107,6 +107,31 @@ protected:
         return _z80->t - t0;
     }
 
+    /// IN A,(#FF) from uncontended code with its I/O cycle starting at `ioCycleStart` (after the 4 T fetch and
+    /// the 3 T operand read); the first paper cells hold distinct bytes: bitmap #10+n, attributes #80+n
+    uint8_t runInFF(uint32_t ioCycleStart)
+    {
+        _context->config.floatbus = 1;
+        for (uint16_t n = 0; n < 32; n++)
+        {
+            _memory->DirectWriteToZ80Memory(0x4000 + n, static_cast<uint8_t>(0x10 + n));
+            _memory->DirectWriteToZ80Memory(0x5800 + n, static_cast<uint8_t>(0x80 + n));
+        }
+        _z80->a = 0;
+        runAt(0x8000, { 0xDB, 0xFF }, ioCycleStart - 7);
+        return _z80->a;
+    }
+
+    /// Floating bus around the first paper cells (consensus of FUSE, Zero, ZXMAK2, MAME, pico-spec; confirmed
+    /// by the Butler 48K floating-bus tests 36/37): an I/O cycle starting on the contention onset reads the
+    /// bitmap byte, then the attribute, the next pair, and #FF for the 4 T the ULA does not fetch
+    void expectFloatingBusFromTheOnset()
+    {
+        const uint8_t expected[10] = { 0xFF, 0x10, 0x80, 0x11, 0x81, 0xFF, 0xFF, 0xFF, 0xFF, 0x12 };
+        for (uint32_t k = 0; k < 10; k++)
+            EXPECT_EQ(runInFF(_firstContendedT - 1 + k), expected[k]) << "I/O cycle at onset " << int(k) - 1;
+    }
+
     /// Execute one instruction placed at `addr` with its opcode fetch (M1) starting at exactly `fetchT`;
     /// returns its T-states. Code runs where the instruction is placed, so a contended `addr` puts the
     /// fetch and the operand bytes in contended memory
@@ -886,3 +911,26 @@ TEST(MemoryInterfaceSelection_Test, TtdReplayModeKeepsContention)
 
 /// endregion </Memory interface selection>
 
+
+
+TEST_F(Contention48K_Test, FloatingBus_BitmapFromAnIoCycleOnTheOnset)
+{
+    expectFloatingBusFromTheOnset();
+}
+
+TEST_F(Contention128K_Test, FloatingBus_BitmapFromAnIoCycleOnTheOnset)
+{
+    expectFloatingBusFromTheOnset();
+}
+
+/// The Beta 128 answers #1F/#3F/#5F/#7F/#FF only while TR-DOS is paged in; outside it #FF is the floating bus
+TEST_F(Contention48K_Test, FloatingBus_BetaDiskPortsOnlyInTrDos)
+{
+    EXPECT_EQ(runInFF(_firstContendedT), 0x10) << "TR-DOS off: the ULA's byte";
+    EXPECT_FALSE(_context->pPortDecoder->WasLastPortDecoded());
+
+    _context->emulatorState.flags |= CF_TRDOS;
+    _context->pPortDecoder->DecodePortIn(0x00FF, 0x3D00);
+    EXPECT_TRUE(_context->pPortDecoder->WasLastPortDecoded()) << "TR-DOS on: the disk interface drives #FF";
+    _context->emulatorState.flags &= ~CF_TRDOS;
+}
