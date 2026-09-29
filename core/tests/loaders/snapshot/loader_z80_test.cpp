@@ -838,3 +838,141 @@ TEST_F(LoaderZ80_Test, saveMarksAYInUseFor48KModeOnMachinesWithAY)
 
 
 
+
+/// region <Models: libspectrum files and saving by model>
+
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
+#include "emulator/emulator.h"
+#include "emulator/emulatormanager.h"
+#include "emulator/memory/memory.h"
+#include "emulator/ports/portdecoder.h"
+#include "loaders/snapshot/szx/loaderszx.h"
+#include "_helpers/soundcardscope.h"
+
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+
+namespace
+{
+    struct Z80ModelCase
+    {
+        const char* file;   ///< testdata/loaders/z80/libspectrum/, written by libspectrum (tools/verification/szx)
+        const char* model;
+        uint32_t ramKb;
+        uint8_t modelCode;  ///< the v3 model byte our save writes
+        int pages;          ///< RAM pages in the file
+    };
+
+    class LoaderZ80Models_Test : public ::testing::TestWithParam<Z80ModelCase>
+    {
+    };
+}  // namespace
+
+/// libspectrum's .z80 files (known values: #7FFD = #13, page n filled with
+/// n * 16 + offset / 1024, #1FFD = #04 on +2A / +3) load on their model with
+/// every page and #1FFD, and our save writes the model's own code, #1FFD in a
+/// 55-byte header where the model has it, and every page
+TEST_P(LoaderZ80Models_Test, LoadsLibspectrumFileAndSavesTheModel)
+{
+    const Z80ModelCase& param = GetParam();
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    SoundCardScope sound(TestSound::TurboSound);  // the AY registers travel too
+    auto emulator = manager->CreateEmulatorWithModelAndRAM("z80-model", param.model, param.ramKb, LoggerLevel::LogError);
+    ASSERT_TRUE(emulator);
+    EmulatorContext* context = emulator->GetContext();
+    const std::string path =
+        (TestPathHelper::FindProjectRoot() / "testdata/loaders/z80/libspectrum" / param.file).string();
+    ASSERT_TRUE(emulator->LoadSnapshot(path));
+
+    Memory& memory = *context->pMemory;
+    Z80& cpu = *context->pCore->GetZ80();
+    EXPECT_EQ(cpu.a, 0x11);
+    EXPECT_EQ(cpu.pc, 0x8000);
+    EXPECT_EQ(cpu.t, LoaderSZX::FramePositionFromIntCount(context, 12345)) << "v3 bytes 55-57: the frame position";
+    EXPECT_EQ(context->emulatorState.p7FFD, 0x13);
+    EXPECT_EQ(memory.GetRAMPageForBank3(), 3);
+    EXPECT_EQ(memory.DirectReadFromZ80Memory(0xC000), 3 * 16);
+    for (int page = 0; page < param.pages; page++)
+        EXPECT_EQ(memory.RAMPageAddress(static_cast<uint16_t>(page))[0], page * 16) << "RAM page " << page;
+    const bool has1FFD = param.modelCode == 7 || param.modelCode == 13 || param.modelCode == 10;
+    if (param.modelCode == 7 || param.modelCode == 13)
+        EXPECT_EQ(context->emulatorState.p1FFD, 0x04);
+
+    const std::string saved = TestPathHelper::GetUniqueTestScratchPath("z80-model.z80");
+    ASSERT_TRUE(emulator->SaveSnapshot(saved));
+    // tools/verification/szx/check-interop.sh: libspectrum reads our file too
+    if (const char* folder = std::getenv("UNREALNG_SZX_EXPORT_DIR"); folder && *folder)
+        std::filesystem::copy_file(saved, std::filesystem::path(folder) / param.file,
+                                   std::filesystem::copy_options::overwrite_existing);
+    std::ifstream file(saved, std::ios::binary);
+    const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    ASSERT_GT(bytes.size(), 87u);
+    const uint16_t extended = static_cast<uint16_t>(bytes[30] | (bytes[31] << 8));
+    EXPECT_EQ(bytes[34], param.modelCode) << "model byte";
+    EXPECT_EQ(extended, has1FFD ? 55 : 54);
+    if (has1FFD)
+        EXPECT_EQ(bytes[86], context->emulatorState.p1FFD);
+    // Page blocks after the header: count them
+    int pages = 0;
+    for (size_t at = 32 + extended; at + 3 <= bytes.size(); pages++)
+    {
+        const uint16_t length = static_cast<uint16_t>(bytes[at] | (bytes[at + 1] << 8));
+        at += 3 + (length == 0xFFFF ? 16384 : length);
+    }
+    EXPECT_EQ(pages, param.pages);
+
+    // And it loads back with the same pages
+    auto again = manager->CreateEmulatorWithModelAndRAM("z80-model-2", param.model, param.ramKb, LoggerLevel::LogError);
+    ASSERT_TRUE(again);
+    ASSERT_TRUE(again->LoadSnapshot(saved));
+    for (int page = 0; page < param.pages; page++)
+        EXPECT_EQ(again->GetContext()->pMemory->RAMPageAddress(static_cast<uint16_t>(page))[1023], page * 16) << page;
+    EXPECT_EQ(again->GetContext()->emulatorState.p1FFD, context->emulatorState.p1FFD);
+    EXPECT_EQ(again->GetContext()->pCore->GetZ80()->t, cpu.t) << "the frame position round-trips";
+    std::remove(saved.c_str());
+    manager->RemoveEmulator(again->GetId());
+    manager->RemoveEmulator(emulator->GetId());
+}
+
+INSTANTIATE_TEST_SUITE_P(Models, LoaderZ80Models_Test,
+                         ::testing::Values(Z80ModelCase{"synth-128.z80", "128k", 128, 4, 8},
+                                           Z80ModelCase{"synth-plus2a.z80", "PLUS2A", 128, 13, 8},
+                                           Z80ModelCase{"synth-plus3.z80", "PLUS3", 128, 7, 8},
+                                           Z80ModelCase{"synth-pentagon.z80", "PENTAGON", 128, 9, 8},
+                                           Z80ModelCase{"synth-scorpion.z80", "SCORPION", 256, 10, 16}),
+                         [](const ::testing::TestParamInfo<Z80ModelCase>& info) {
+                             std::string name = info.param.file;
+                             name = name.substr(6, name.size() - 10);  // "synth-" ... ".z80"
+                             return name;
+                         });
+
+/// +3 all-RAM mode (#1FFD bit 0) survives a save and a load
+TEST(LoaderZ80Plus3_Test, SpecialPagingRoundTrips)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    auto emulator = manager->CreateEmulatorWithModelAndRAM("z80-p3", "PLUS3", 128, LoggerLevel::LogError);
+    ASSERT_TRUE(emulator);
+    EmulatorContext* context = emulator->GetContext();
+    for (uint16_t page = 0; page < 8; page++)
+        std::memset(context->pMemory->RAMPageAddress(page), page * 16, 16384);
+    context->pPortDecoder->DecodePortOut(0x1FFD, 0x03, 0);  // special: pages 4, 5, 6, 7
+    ASSERT_EQ(context->pMemory->DirectReadFromZ80Memory(0x0000), 4 * 16);
+    const std::string saved = TestPathHelper::GetUniqueTestScratchPath("z80-p3.z80");
+    ASSERT_TRUE(emulator->SaveSnapshot(saved));
+
+    auto again = manager->CreateEmulatorWithModelAndRAM("z80-p3-2", "PLUS3", 128, LoggerLevel::LogError);
+    ASSERT_TRUE(again);
+    ASSERT_TRUE(again->LoadSnapshot(saved));
+    Memory& memory = *again->GetContext()->pMemory;
+    EXPECT_EQ(again->GetContext()->emulatorState.p1FFD, 0x03);
+    EXPECT_EQ(memory.DirectReadFromZ80Memory(0x0000), 4 * 16) << "all-RAM: page 4 at #0000";
+    EXPECT_EQ(memory.DirectReadFromZ80Memory(0x4000), 5 * 16);
+    EXPECT_EQ(memory.DirectReadFromZ80Memory(0xC000), 7 * 16);
+    std::remove(saved.c_str());
+    manager->RemoveEmulator(again->GetId());
+    manager->RemoveEmulator(emulator->GetId());
+}
+
+/// endregion </Models: libspectrum files and saving by model>

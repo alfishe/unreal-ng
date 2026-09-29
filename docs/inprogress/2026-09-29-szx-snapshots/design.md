@@ -431,14 +431,19 @@ The dependency also serves RZX (zlib-compressed input blocks and snapshots,
 
 ## 19. Side findings
 
-Found while researching; not part of this design:
+Found while researching; not part of this design. **All fixed on master
+(2026-09-29):**
 
-- The Z80 loader ignores the stored AY registers (`loader_z80.cpp:1119-1122`
-  is an empty stub).
-- The Z80 loader's 256K (Scorpion) commit path does no paging
-  (`loader_z80.cpp:482-483`).
-- The Z80 writer's model byte is always 48K or 128K, whatever the model
-  (`loader_z80.cpp:281-293`).
+- ~~The Z80 loader ignores the stored AY registers~~ - fixed in `e2dbcde1`.
+- ~~The Z80 loader's 256K (Scorpion) commit path does no paging~~ - Scorpion
+  `.z80` files load (pages 3-18 = RAM 0-15, #1FFD), and +2A / +3 files apply
+  #1FFD too (v3 byte 86).
+- ~~The Z80 writer's model byte is always 48K or 128K~~ - the running model's
+  code (+2 12, +2A 13, +3 7, Pentagon 9, Scorpion 10 with 16 pages), #1FFD in a
+  55-byte header, the AY selected register from the chip, and the v3 T-state
+  counter (bytes 55-57, read and written as libspectrum does). Checked by
+  `LoaderZ80Models_Test` against libspectrum-written files in
+  `testdata/loaders/z80/libspectrum/` and by `check-interop.sh`.
 
 ## 20. Review round 1
 
