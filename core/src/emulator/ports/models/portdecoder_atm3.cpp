@@ -1138,6 +1138,15 @@ void PortDecoder_ATM3::EvoSdSlot::SetWriteProtectSwitch(bool on)
     _owner.UpdateSdStatus();
 }
 
+PortDecoder::RtcBinding PortDecoder_ATM3::GetRtcBinding()
+{
+    RtcBinding binding;
+    binding.chip = &_evoAvr;
+    binding.ports = "Gluk: #DFF7 address / #BFF7 data after #EFF7 bit 7; #DEF7 / #BEF7 in shadow";
+    binding.nvramFile = _context->config.atm.evo_nvram_path;
+    return binding;
+}
+
 std::vector<ttd::PeripheralId> PortDecoder_ATM3::GetTTDModelStateIds() const
 {
     std::vector<ttd::PeripheralId> ids = PortDecoder_ATM710::GetTTDModelStateIds();

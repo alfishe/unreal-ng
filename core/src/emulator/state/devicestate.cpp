@@ -14,6 +14,8 @@
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/ide/ata/atapicdrom.h"
 #include "emulator/io/ide/idecontroller.h"
+#include "emulator/io/rtc/ds12887.h"
+#include "emulator/io/rtc/rtcaccess.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/sound/chips/soundchip_moonsound.h"
@@ -1781,5 +1783,132 @@ StateNode Ide(EmulatorContext* context)
 }
 
 /// endregion </IDE>
+
+
+namespace
+{
+    const char* TimeModeName(Ds12887::TimeMode mode)
+    {
+        switch (mode)
+        {
+            case Ds12887::TimeMode::Emulated:
+                return "emulated";
+            case Ds12887::TimeMode::Fixed:
+                return "fixed";
+            case Ds12887::TimeMode::Host:
+            default:
+                return "host";
+        }
+    }
+
+    std::string Hex2(unsigned value)
+    {
+        char buf[8];
+        std::snprintf(buf, sizeof(buf), "%02X", value & 0xFF);
+        return buf;
+    }
+}  // namespace
+
+StateNode Rtc(EmulatorContext* context)
+{
+    std::string reason;
+    Ds12887* chip = RtcAccess::Find(context, &reason);
+    if (!chip)
+        return Unavailable(reason.c_str());
+
+    const PortDecoder::RtcBinding binding = context->pPortDecoder->GetRtcBinding();
+    auto peek = [chip](uint8_t index) { return chip->PeekRegister(index); };
+    const uint8_t a = peek(Ds12887::kRegA);
+    const uint8_t b = peek(Ds12887::kRegB);
+    const uint8_t c = peek(Ds12887::kRegC);
+    const uint8_t d = peek(Ds12887::kRegD);
+    const bool binary = (b & Ds12887::kBBinary) != 0;
+    const bool hour24 = (b & Ds12887::kB24Hour) != 0;
+    auto decode = [binary](uint8_t v) { return binary ? int(v) : int((v >> 4) * 10 + (v & 0x0F)); };
+
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["chip"] = chip->ChipName();
+    ret["ports"] = binding.ports;
+    ret["cells"] = int(chip->GetCellCount());
+    ret["nvram_file"] = binding.nvramFile.empty() ? std::string("(none: kept for the session only)") : binding.nvramFile;
+    ret["address_latch"] = int(chip->GetAddress());
+    ret["time_mode"] = TimeModeName(chip->GetTimeMode());
+    if (chip->RegistersNote()[0] != '\0')
+        ret["note"] = chip->RegistersNote();
+
+    // The time as the guest reads it now, decoded per register B
+    const uint8_t hoursRaw = peek(Ds12887::kHours);
+    int hours = decode(static_cast<uint8_t>(hoursRaw & (hour24 ? 0xFF : 0x7F)));
+    if (!hour24)
+        hours = (hours % 12) + ((hoursRaw & 0x80) ? 12 : 0);
+    const int year = decode(peek(Ds12887::kYear));
+    const int month = decode(peek(Ds12887::kMonth));
+    const int day = decode(peek(Ds12887::kDay));
+    const int minutes = decode(peek(Ds12887::kMinutes));
+    const int seconds = decode(peek(Ds12887::kSeconds));
+    StateNode time = StateNode::Object();
+    time["year"] = year;
+    time["month"] = month;
+    time["day"] = day;
+    time["hours"] = hours;
+    time["minutes"] = minutes;
+    time["seconds"] = seconds;
+    time["day_of_week"] = int(peek(Ds12887::kDayOfWeek));
+    char text[32];
+    std::snprintf(text, sizeof(text), "%02d-%02d-%02d %02d:%02d:%02d", year, month, day, hours, minutes, seconds);
+    time["text"] = text;
+    ret["time"] = time;
+
+    StateNode regA = StateNode::Object();
+    regA["value"] = int(a);
+    regA["uip"] = (a & 0x80) != 0;
+    regA["divider"] = int((a >> 4) & 0x07);
+    regA["rate"] = int(a & 0x0F);
+    ret["register_a"] = regA;
+
+    StateNode regB = StateNode::Object();
+    regB["value"] = int(b);
+    regB["set"] = (b & 0x80) != 0;
+    regB["periodic_irq"] = (b & 0x40) != 0;
+    regB["alarm_irq"] = (b & 0x20) != 0;
+    regB["update_irq"] = (b & 0x10) != 0;
+    regB["square_wave"] = (b & 0x08) != 0;
+    regB["binary"] = binary;
+    regB["hour_24"] = hour24;
+    regB["daylight_saving"] = (b & 0x01) != 0;
+    ret["register_b"] = regB;
+
+    StateNode regC = StateNode::Object();
+    regC["value"] = int(c);
+    regC["irq"] = (c & 0x80) != 0;
+    regC["periodic"] = (c & 0x40) != 0;
+    regC["alarm"] = (c & 0x20) != 0;
+    regC["update_ended"] = (c & 0x10) != 0;
+    ret["register_c"] = regC;
+
+    StateNode regD = StateNode::Object();
+    regD["value"] = int(d);
+    regD["battery_ok"] = (d & 0x80) != 0;
+    ret["register_d"] = regD;
+
+    StateNode alarm = StateNode::Object();
+    alarm["seconds"] = int(peek(Ds12887::kSecondsAlarm));
+    alarm["minutes"] = int(peek(Ds12887::kMinutesAlarm));
+    alarm["hours"] = int(peek(Ds12887::kHoursAlarm));
+    ret["alarm"] = alarm;
+
+    // Every cell as the guest reads it (peeked, no side effects), 16 per line
+    StateNode dump = StateNode::Array();
+    for (size_t row = 0; row < chip->GetCellCount(); row += 16)
+    {
+        std::string line = Hex2(unsigned(row)) + ":";
+        for (size_t col = 0; col < 16 && row + col < chip->GetCellCount(); ++col)
+            line += " " + Hex2(peek(static_cast<uint8_t>(row + col)));
+        dump.push(line);
+    }
+    ret["dump"] = dump;
+    return ret;
+}
 
 }  // namespace DeviceState

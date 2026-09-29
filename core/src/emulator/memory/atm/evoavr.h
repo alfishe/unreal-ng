@@ -63,6 +63,14 @@ public:
 
     uint8_t ReadRegister(uint8_t index) override;
     void WriteRegister(uint8_t index, uint8_t value) override;
+    uint8_t PeekRegister(uint8_t index) const override;
+    const char* ChipName() const override { return "ZX-Evo AVR (MC146818 emulation)"; }
+    const char* RegistersNote() const override
+    {
+        return "AVR firmware registers: A = EEPROM page, B keeps only the binary bit (always 24 h, SET ignored), "
+               "C = EEPROM mode / update ended / SD present / SD write protect / Caps LED / tape out, "
+               "D = #80 | PS/2 modifiers, #F0-#FF = EEPROM window or extension window";
+    }
 
     /// region <Host side>
     void SetSdStatus(bool present, bool writeProtected);
@@ -87,7 +95,7 @@ public:
     /// endregion </TTD>
 
 protected:
-    uint8_t ReadExtension(uint8_t index);
+    uint8_t ReadExtension(uint8_t index) const;
 
     std::array<uint8_t, kEepromSize> _eeprom{};
     uint8_t _extType = kExtFirmwareVersion;

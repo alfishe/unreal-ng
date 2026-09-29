@@ -26,6 +26,7 @@ class SoundManager;
 class Keyboard;
 class Mouse;
 class PortDevice;
+class Ds12887;
 
 /// region <Constants>
 
@@ -622,6 +623,18 @@ public:
     /// hardware CPU clock ratio the model can select (EmulatorState::
     /// ttd_clock_units). 1 for models without a hardware turbo
     virtual uint8_t TtdClockUnits() const { return 1; }
+
+    /// The machine's clock chip as the automation interfaces reach it
+    /// (RtcAccess, DeviceState::Rtc). `chip` is null when the machine has no
+    /// clock the guest can reach; `absentReason` then says why
+    struct RtcBinding
+    {
+        Ds12887* chip = nullptr;
+        std::string ports;          ///< how the Z80 reaches it
+        std::string nvramFile;      ///< battery-backed image, empty = session only
+        std::string absentReason;
+    };
+    virtual RtcBinding GetRtcBinding() { return {nullptr, "", "", "This machine has no CMOS clock"}; }
 
     /// Emulated machine time in microseconds: whole frames at the model's
     /// frame duration plus the position in the current frame (TTD time units,

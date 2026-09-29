@@ -395,3 +395,31 @@ TEST_F(ProfiPortDecoder_Test, FramebufferStaysValidAcrossHiResSwitches)
         EXPECT_TRUE(screen->CopyPresentedFramebuffer(right.data(), right.size())) << "switch " << i;
     }
 }
+
+/// @brief The RTC answers only in EXT mode (CP/M + ROM14): #BF / #FF latch the
+///        address, #9F / #DF carry data; outside EXT mode #BF / #FF are the
+///        Beta 128 system port and the clock is untouched
+TEST_F(ProfiPortDecoder_Test, RtcOnlyInExtMode)
+{
+    PortDecoder_Profi* decoder = Decoder();
+    ASSERT_NE(decoder, nullptr);
+    Ds12887& rtc = decoder->GetRtc();
+    rtc.WriteAddress(0x00);
+
+    DosLatchOff();
+    Out7FFD(0x10);  // ROM14
+    ASSERT_FALSE(decoder->IsExtMode());
+    WritePort(0x00BF, 0x40);
+    EXPECT_EQ(rtc.GetAddress(), 0x00) << "not EXT mode: #BF is not the clock";
+
+    OutDFFD(0x20);  // CP/M
+    ASSERT_TRUE(decoder->IsExtMode());
+    WritePort(0x00BF, 0x40);
+    WritePort(0x009F, 0x5A);
+    EXPECT_EQ(rtc.GetAddress(), 0x40);
+    EXPECT_EQ(rtc.PeekRegister(0x40), 0x5A);
+    EXPECT_EQ(ReadPort(0x009F), 0x5A);
+    EXPECT_EQ(ReadPort(0x00DF), 0x5A) << "#DF is the second data port";
+    WritePort(0x00FF, 0x0D);
+    EXPECT_EQ(ReadPort(0x009F), 0x80) << "register D through #FF: battery good";
+}

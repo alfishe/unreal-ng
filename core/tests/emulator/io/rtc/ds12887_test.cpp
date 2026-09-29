@@ -407,3 +407,34 @@ TEST(Ds12887_Test, NvramFileRoundTrip)
 
     std::remove(path.c_str());
 }
+
+/// Without SET (the ZX-Evo AVR ignores it) a guest writes the date one field
+/// at a time: every field reads back as written until the next update, in
+/// any order - "day 31" while the month is still a 30-day one is not folded
+/// into the 1st of the next month
+TEST(Ds12887_Test, LiveFieldWritesHoldUntilTheNextUpdate)
+{
+    Rtc rtc;
+    rtc.Set(0x26, 0x09, 0x29, 0x10, 0x00, 0x00);  // 29 September, the update comes 0.5 s later
+
+    rtc.Write(Ds12887::kDay, 0x31);
+    EXPECT_EQ(rtc.Read(Ds12887::kDay), 0x31) << "as written, even for September";
+    rtc.Write(Ds12887::kMonth, 0x12);
+    rtc.Write(Ds12887::kYear, 0x99);
+    EXPECT_EQ(rtc.Read(Ds12887::kDay), 0x31);
+    EXPECT_EQ(rtc.Read(Ds12887::kMonth), 0x12);
+    EXPECT_EQ(rtc.Read(Ds12887::kYear), 0x99);
+
+    rtc.now += kSecond;
+    EXPECT_EQ(rtc.Read(Ds12887::kDay), 0x31) << "a valid date keeps counting";
+    EXPECT_EQ(rtc.Read(Ds12887::kMonth), 0x12);
+    EXPECT_EQ(rtc.Read(Ds12887::kSeconds), 0x01);
+
+    // An impossible date shows as written, then counts on from the next day
+    rtc.Write(Ds12887::kMonth, 0x09);
+    EXPECT_EQ(rtc.Read(Ds12887::kDay), 0x31);
+    EXPECT_EQ(rtc.Read(Ds12887::kMonth), 0x09);
+    rtc.now += kSecond;
+    EXPECT_EQ(rtc.Read(Ds12887::kDay), 0x01);
+    EXPECT_EQ(rtc.Read(Ds12887::kMonth), 0x10);
+}

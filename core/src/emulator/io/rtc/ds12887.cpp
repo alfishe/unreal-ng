@@ -13,7 +13,7 @@ namespace
 {
     constexpr int64_t kMicrosPerSecond = 1000000;
     constexpr int64_t kSecondsPerDay = 86400;
-    constexpr uint8_t kStateVersion = 1;
+    constexpr uint8_t kStateVersion = 2;
 
     /// Days since 1970-01-01 of a proleptic Gregorian date (H. Hinnant's
     /// days_from_civil, public domain)
@@ -158,7 +158,21 @@ int64_t Ds12887::ChipMicros() const
 
 Ds12887::CivilTime Ds12887::CurrentTime() const
 {
-    return _held ? _heldTime : FromMicros(ChipMicros());
+    if (_held)
+        return _heldTime;
+    const int64_t micros = ChipMicros();
+    if (_rawValid && FloorDiv(micros, kMicrosPerSecond) == _rawSecond)
+        return _rawTime;  // as written, until the next update
+    return FromMicros(micros);
+}
+
+void Ds12887::SetChipTime(const CivilTime& time, int64_t fraction)
+{
+    const int64_t micros = ToMicros(time) + fraction;
+    SetChipMicros(micros);
+    _rawTime = time;
+    _rawSecond = FloorDiv(micros, kMicrosPerSecond);
+    _rawValid = true;
 }
 
 void Ds12887::SetChipMicros(int64_t micros)
@@ -180,6 +194,7 @@ void Ds12887::SetChipMicros(int64_t micros)
 
 void Ds12887::SetFixedTime(time_t unixSeconds)
 {
+    _rawValid = false;
     _mode = TimeMode::Fixed;
     _fixedMicros = LocalCivilMicros(unixSeconds, 0);
     _secondValid = false;
@@ -187,6 +202,7 @@ void Ds12887::SetFixedTime(time_t unixSeconds)
 
 void Ds12887::UseLiveTime()
 {
+    _rawValid = false;
     _mode = TimeMode::Host;
     _secondValid = false;
 }
@@ -208,6 +224,7 @@ void Ds12887::LeaveEmulatedTime()
 
     // Back to the wall clock; the offset the guest set survives
     _mode = TimeMode::Host;
+    _rawValid = false;
     _secondValid = false;
 }
 
@@ -363,7 +380,7 @@ void Ds12887::WriteTimeRegister(uint8_t index, uint8_t value)
         _heldTime = time;
         return;
     }
-    SetChipMicros(ToMicros(time) + fraction);
+    SetChipTime(time, fraction);
 }
 
 void Ds12887::UpdateFlags()
@@ -443,7 +460,7 @@ void Ds12887::ApplyHold()
         // SET or a divider reset stops the update: the time registers hold
         // for the guest to write
         const int64_t micros = ChipMicros();
-        _heldTime = FromMicros(micros);
+        _heldTime = CurrentTime();
         _heldFraction = micros - FloorDiv(micros, kMicrosPerSecond) * kMicrosPerSecond;
         _held = true;
     }
@@ -452,9 +469,10 @@ void Ds12887::ApplyHold()
     if (!hold && _held)
     {
         // Counting resumes from the held (possibly rewritten) time
-        const int64_t micros = ChipMicros();
+        const CivilTime time = _heldTime;
+        const int64_t fraction = _heldFraction;
         _held = false;
-        SetChipMicros(micros);
+        SetChipTime(time, fraction);
     }
 }
 
@@ -587,7 +605,16 @@ void Ds12887::SaveState(uint8_t* dst) const
     dst[60] = static_cast<uint8_t>(_heldTime.hour);
     dst[61] = static_cast<uint8_t>(_heldTime.minute);
     dst[62] = static_cast<uint8_t>(_heldTime.second);
-    std::memcpy(dst + 64, _cells.data(), kMaxCells);
+    dst[64] = _rawValid ? 1 : 0;
+    dst[65] = static_cast<uint8_t>(_rawTime.year);
+    dst[66] = static_cast<uint8_t>(_rawTime.year >> 8);
+    dst[67] = static_cast<uint8_t>(_rawTime.month);
+    dst[68] = static_cast<uint8_t>(_rawTime.day);
+    dst[69] = static_cast<uint8_t>(_rawTime.hour);
+    dst[70] = static_cast<uint8_t>(_rawTime.minute);
+    dst[71] = static_cast<uint8_t>(_rawTime.second);
+    PutU64(dst + 72, static_cast<uint64_t>(_rawSecond));
+    std::memcpy(dst + 80, _cells.data(), kMaxCells);
 }
 
 void Ds12887::LoadState(const uint8_t* src)
@@ -615,7 +642,15 @@ void Ds12887::LoadState(const uint8_t* src)
     _heldTime.hour = src[60];
     _heldTime.minute = src[61];
     _heldTime.second = src[62];
-    std::memcpy(_cells.data(), src + 64, kMaxCells);
+    _rawValid = src[64] != 0;
+    _rawTime.year = static_cast<int16_t>(src[65] | (src[66] << 8));
+    _rawTime.month = src[67];
+    _rawTime.day = src[68];
+    _rawTime.hour = src[69];
+    _rawTime.minute = src[70];
+    _rawTime.second = src[71];
+    _rawSecond = static_cast<int64_t>(GetU64(src + 72));
+    std::memcpy(_cells.data(), src + 80, kMaxCells);
 }
 
 /// endregion </TTD>

@@ -25,6 +25,12 @@ address history, marked addresses, port watch or heatmap code in
 4. **Phase 5 port watch** — PortRegistry list with value-change highlighting
    (note: `/ports` automation surface with tags already exists — build on it).
 5. Signal indicators (DOS/ROM/INT), PreferenceManager abstraction.
+6. **CMOS / RTC panel** (from PLAN #60(c), 2026-09-29) — the Qt view of the
+   machine's clock chip: time, registers A-D and alarms decoded, a hex grid of
+   every cell with in-place edit. Render the core report `DeviceState::Rtc` and
+   write through `RtcAccess::Write`, the same calls CLI `rtc`, WebAPI
+   `/state/rtc` + `/rtc/cells`, MCP `rtc`, Lua / Python `rtc_*` use - no Qt-only
+   logic. Machines: ATM3 (the AVR's registers noted), Profi, Scorpion with SMUC.
 
 ## Pointers
 - Cumulative plan: [`../PLAN.md`](../PLAN.md) — debugger parity (T4).
