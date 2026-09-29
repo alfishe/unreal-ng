@@ -140,9 +140,11 @@ Not done: fusetest (source only, needs pasmo or a prebuilt tape), the Butler 128
 
 ## 3. The probe suite (`ctprobe`)
 
-**Status (2026-09-28): v1 runs** - `testdata/contention/ctprobe/`, host suite `ctprobe_test.cpp`. 29 cases
-(21 on the 48K, which has no paging) match the oracle to the T-state on the 48K, 128K, +3, Pentagon and
-Scorpion. See 3.7 for what v1 does differently from the plan below and what is still open.
+**Status (2026-09-28): v2.** `testdata/contention/ctprobe/`, host suite `ctprobe_test.cpp`.
+- 40 cases match the oracle to the T-state on the 48K, 128K, +3, Pentagon and Scorpion.
+- The reference files `ctprobe.tap` and `ctprobe.trd` run standalone and print a report. Loaded the way a user
+  does, they report every value as expected on all five machines.
+- 3.7 covers the design and what is still open.
 
 ### 3.1 How a probe measures one fragment
 
@@ -289,7 +291,7 @@ measured T-states. Following the project's rule for hardware facts, the expected
 are the consensus of those runs and the published tables, and any case where the references disagree is
 listed with each reference's value rather than silently picking one.
 
-### 3.7 v1 as built
+### 3.7 As built
 
 **Engine.** Instead of the HALT-plus-pad sync, the probe uses the measuring engine of Rak's Timing Test
 (Bobrowski's zxtests): `CODETIME` calls a fragment at an exact frame T-state and returns its duration with
@@ -298,46 +300,79 @@ tape's code, so its real-hardware calibration carries over. Its T is one more th
 used here and in FUSE (Rak's 48K grid shows the first wait at 14336, the 48K's first contended T being
 14335); the driver adds that 1.
 
-**Driver.** A table of 14-byte records gives, for each case:
-- id and the capabilities it needs (`#7FFD` paging, `#1FFD` layouts);
-- the page at `#C000`, where the fragment goes, and the fragment;
-- the first T as an offset from the contention onset, and how many consecutive T-states to time.
+**Driver.** A table of 19-byte records gives, for each case:
+- id and flags (needs paging / the +3 layouts; store a value instead of a duration; time the RET found in
+  ROM; fill the first screen cells with a pattern);
+- the page at `#C000`, a mirror page, where the fragment goes, and the fragment;
+- the first T as an offset from the contention onset, how many consecutive T-states to time, the results,
+  and a 5-character name.
 
-The driver places the fragment and a `RET` after it, maps the page and times each T-state. The engine
-subtracts the RET's 10 T but not its wait, so the oracle models that RET's fetch as well. The onset comes
-from the frame length (69888: 14335, else 14361), or the host sets it.
+The engine subtracts the RET placed after the fragment's 10 T, but not its wait, so the oracle models that
+RET's fetch as well. The +3 layout cases switch `#1FFD` inside the fragment. The code after the switch runs
+from page 6, which the driver fills with a copy first; the engine itself cannot run in a contended slot.
+
+**Standalone.** The probe detects everything a host can also preset:
+- **3.5 MHz:** `IN #1FFD`, because a Scorpion's ROM leaves 7 MHz on and then the INT pulse outlasts the
+  engine's handler.
+- **Onset:** 14335 on a 69888 T frame, else 14361.
+- **Class:** from the frame and a NOP at `#4000` timed on the onset. There are five classes: ULA 48K,
+  ULA 128K, gate array, no contention, and no contention with the Scorpion's attribute bus.
+- **Paging:** a byte written with page 1 mapped must not show with page 0.
+- **Default mapping:** from `BANK_M` / `BANK678`, with the 48 BASIC ROM bits set when that ROM's font is at
+  `#3D00`. The 128K and +3 editor ROMs start with the same bytes as the 48 BASIC ROM, so the start alone
+  cannot tell them apart.
+
+It then compares each value with the class's table and prints the report with the ROM font. A red or green
+border gives the verdict, and `USR` returns the number of wrong values. Every `#7FFD` write also goes into
+`BANK_M`: the +3 ROM's interrupt handler (the disk motor timer) pages from it, which undid the page cases
+when the probe ran from +3 BASIC.
 
 **Oracle** (`ctprobe_test.cpp`). The oracle is independent of the emulator: the pattern tables (ULA
 6,5,4,3,2,1,0,0 over 128 T; gate array 1,0,7,6,5,4,3,2 plus the 129th T), the raster, and each fragment's
-bus cycles from FUSE's per-instruction tables. Those cycles are: M1, reads and writes, internal T-states
-on the address they show (contended on the Ferranti ULA only), and FUSE's four I/O patterns.
+bus cycles from FUSE's per-instruction tables. Those cycles are: M1, reads and writes, internal T-states on
+the address they show (contended on the Ferranti ULA only), and FUSE's four I/O patterns.
 
-**Cases (v1):**
+The floating-bus values follow the consensus of 1.5 on the Ferranti ULA, `#FF` on the gate array and the
+Pentagon, and the fetched attribute on the Scorpion. The Scorpion's 4 T grid is this project's model.
+
+**Cases:**
 
 | Group | Cases |
 |:--|:--|
-| M1 | M1-01..08 |
-| Data | D-01..03 |
-| Internal cycles | N-01, N-02, N-04 (IR on the bus with I = #40) |
-| Ports | P-01 (`IN` on #00FE / #40FE / #00FF / #40FF, `OUT` on #40FE) |
+| M1 | M1-01..07 |
+| Pages | M1-P0..P7 (the page at `#C000`) |
+| +3 layouts | M1-L0..L3 (code in the `#8000` slot, reads of `#0000` and `#C000`) |
+| Data | D-01A/B, D-02, D-03, D-04 (LDI) |
+| Internal cycles | N-01, N-02, N-03 (EX (SP),HL), N-04 (IR), N-05A/B (LDIR / CPIR repeats), N-06 ((IX+d) with contended PC) |
+| Ports | P-01A..E |
+| Floating bus | P-02 (the values) |
+| ROM | X-02 (RET in ROM) |
 
-**Host notes:**
-- The 48 BASIC boot locks `#7FFD` on the +3, so the host unlocks it.
-- The Scorpion's ROM leaves the CPU at 7 MHz. That doubles the INT pulse in CPU T-states past the
-  engine's handler, so the host selects 3.5 MHz with `IN #1FFD`, as a real Scorpion would need.
+**Files.** The host test is the generator: it assembles the probe, fills the expected tables and writes
+`ctprobe.tap` (BASIC loader + CODE) and `ctprobe.trd` (TR-DOS `boot` + CODE) when asked. A default-run test
+fails when the committed files drift from the source.
 
-The default run has the 48K contended NOP only (~150 ms with the ROM boot). The full matrix is opt-in with
-`UNREAL_TIMING_SUITES=1` (~1.3 s per machine).
+**Runs:**
+- **Default:** the 48K contended NOP (~150 ms with the ROM boot) and the drift check.
+- **Opt-in** (`UNREAL_TIMING_SUITES=1`), about 2 s per machine:
+  - the host-driven matrix, every value against the oracle and the probe's own verdict;
+  - the files loaded as a user loads them: `LOAD ""` from 48 / 128 / +3 BASIC, `RUN` from TR-DOS on the
+    Pentagon and the Scorpion.
 
-Found on the way: `Z80TextAssembler` rejected `SBC HL,rr` (it emitted the bytes, then fell into the 8-bit
-check); fixed, with a test for the 16-bit arithmetic forms.
+**Found on the way:**
+- `Z80TextAssembler` rejected `SBC HL,rr`; fixed.
+- `BasicEncoder::tokenize` writes neither the hidden 5-byte numbers nor keywords after a statement's first
+  one. The loaders are spelled out in tokens instead.
+
+**Not measurable with this engine:**
+- M1-10 (`HALT`) and D-05 (the IM1 / IM2 acknowledge): an interrupt inside the fragment breaks the engine's
+  chain of stages. The host unit tests cover them.
+- P-03 (`#0FFD` on the gate array): between fetches it reads the last contended byte, which the probe
+  cannot pin.
 
 **Open:**
-- M1-09: the +3 all-RAM layouts. The engine's own slot `#8000` is contended there, and `#0038` is RAM.
-- M1-10 (`HALT`), D-04 / D-05, N-03 / N-05 / N-06.
-- P-02 / P-03: the floating-bus values, not durations; the driver stores durations only.
-- X-02 .. X-04.
-- On-screen results, detecting the capabilities on the machine itself, and the `.tap` / `.trd` export.
+- X-04 (register results equal with contention on and off).
+- The cross-emulator runs of 3.6.
 
 ## 4. How the pieces fit
 
