@@ -79,7 +79,7 @@ inline PortTraceFilterRule buildRule(std::optional<uint16_t> port, std::optional
     if (device)
     {
         bool found = false;
-        for (int id = 0; id <= static_cast<int>(PortDeviceId::FullDecodeClaim); id++)
+        for (int id = 0; id <= static_cast<int>(kPortDeviceIdLast); id++)
         {
             if (*device == PortDiagnosticRecorder::DeviceIdToString(static_cast<PortDeviceId>(id)))
             {

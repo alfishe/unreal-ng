@@ -59,6 +59,15 @@ public:
     std::vector<PortTraceDecodeRule> getPortTraceDecodeRules() const override;
 
 protected:
+    /// Index of the decode-table row resolving to `resolvedPort` (the rule index
+    /// port-trace events carry), PortTraceRule::kNoMatch when no row does; and
+    /// the table's row count (subclasses append their own rows after it)
+    static uint8_t TraceRuleIndexOf(uint16_t resolvedPort);
+    static uint8_t TraceRuleCount();
+
+public:
+
+protected:
     /// BDI (#1F/#3F/#5F/#7F) partial-decode fallback, extracted out of
     /// decodePortEx so live dispatch can re-derive it independently of the
     /// full table scan - see decodePortEx's definition for why.

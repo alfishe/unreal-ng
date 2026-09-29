@@ -82,6 +82,11 @@ public:
     /// Classify one I/O cycle by the BaseConf decode rules
     PortArm ClassifyPort(uint16_t port, bool isWrite);
 
+    /// Port-trace attribution of one classified cycle: the canonical port and
+    /// the device the arm reaches (if-chain decoder: no rule table). The
+    /// caller sets wasDecoded
+    static PortDecodeDisposition TraceDisposition(PortArm arm, uint16_t port, bool isWrite);
+
     /// FPGA variant the ROM image expects ([EVO] Fpga=): the frozen legacy
     /// tree reads the Evo registers on #xxBE, the current "trdemu" tree on #xxBD
     bool IsLegacyFpga() const;

@@ -50,6 +50,13 @@ DEVICE_NAMES = {
     0x0E: "Custom",
     0x0F: "Border_FF",
     0x10: "FullDecodeClaim",
+    0x11: "ATM_FF77",
+    0x12: "Memory_Windows",
+    0x13: "Control_EFF7",
+    0x14: "Evo_Config",
+    0x15: "Palette",
+    0x16: "GeneralSound",
+    0x17: "SdCard",
 }
 DEVICE_IDS = {name: dev_id for dev_id, name in DEVICE_NAMES.items()}
 

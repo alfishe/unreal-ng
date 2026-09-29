@@ -46,7 +46,17 @@ enum class PortDeviceId : uint8_t
     Border_FF      = 0x0F,  // Port #xxFF — Scorpion border latch (OUT while the FDC system port is gated off)
     FullDecodeClaim = 0x10, // Raw low byte claimed by a full-decode bus card (e.g. ZXM-MoonSound) -
                              // the model decode stood down for this cycle (claim override)
+    ATM_FF77       = 0x11,  // Port #xx77 - ATM system port (video mode, CPM, turbo, palette enable)
+    Memory_Windows = 0x12,  // Ports #xFF7 / #x7F7 / #xBF7 / #37F7 - ATM / ZX-Evo memory manager windows
+    Control_EFF7   = 0x13,  // Port #EFF7 - Pentagon 1024 / ZX-Evo extended control
+    Evo_Config     = 0x14,  // Ports #BF / #BE / #BD - ZX-Evo configuration, NMI exit, register readback
+    Palette        = 0x15,  // ATM / ZX-Evo palette write (#xxFF with palette writes enabled)
+    GeneralSound   = 0x16,  // Ports #B3 / #BB / #33 - General Sound host mailbox
+    SdCard         = 0x17,  // Ports #77 / #57 outside shadow - ZX-Evo Z-Controller SD card (config / SPI data)
 };
+
+/// Highest PortDeviceId value (listings and name lookups iterate 0..this)
+constexpr PortDeviceId kPortDeviceIdLast = PortDeviceId::SdCard;
 
 /// Flag bits packed into PortTraceEvent::flags
 namespace PortTraceFlags
@@ -119,6 +129,9 @@ struct PortDecodeDisposition
     bool wasHandledInline = false;  // Handled by decoder switch, not PeripheralPortIn/Out
     bool viaLegacyBasePath = false; // Came through base-class DecodePortIn/Out
     bool wasFullDecodeClaimed = false; // Low byte owned by a full-decode card; model decode stood down
+    PortDeviceId device = PortDeviceId::None;  // Explicit attribution when the decoded port alone is
+                                               // ambiguous (ATM ports, palette on #xxFF); None = derive
+                                               // from decodedPort (ResolveDeviceId)
 };
 
 /// Ring buffer behavior when full

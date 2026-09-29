@@ -218,6 +218,9 @@ confusion (see recommendations P0-4).
 
 ### C-2. Porttrace decode rules exist only for Pentagon128
 
+> **Done 2026-09-28** (PLAN #8, retired): per-arm attribution in the ATM710 and
+> ZX-Evo decoders, ATM device ids, Pentagon 1024 rule row and session name.
+>
 > **Re-scoped 2026-09-28** (PLAN #8): the session names landed (ATM710,
 > ZXEvoBaseConf, Profi). What remains is attribution, not a rule table: the
 > ATM710 and ZX-Evo decoders call `OnPortIn/OutComplete` without a
@@ -422,7 +425,7 @@ nothing encodes what the 2026-09-10 session learned procedurally.
 | B-3 | Renderer stubs (master) define state-only triage | Context | atm branch | Open — atm branch |
 | B-4 | Digest pages 5/7 hardcoded | Medium | Small | ✅ Done — P1-3 (`mode=active`); parity on CLI/Lua/Python 2026-09-15 |
 | C-1 | No build fingerprint; machines non-creatable on master | Medium | Small | ✅ Fingerprint done — P0-4, `cab13b99`; creatability open (atm branch) |
-| C-2 | Porttrace rules only Pentagon128 | High (atm branch) | Medium | Open — P1-4 |
+| C-2 | Porttrace rules only Pentagon128 | High (atm branch) | Medium | ✅ Done 2026-09-28 (P1-4, PLAN #8) |
 | C-3 | No port-map introspection (incl. mouse Q4) | High | Medium | ✅ Done — P1-5 (`GET /ports`); parity `ports`/`ports_map()` 2026-09-15 |
 | D-1 | Mouse routing not reported | High (mouse scenario) | Small-Medium | ✅ Done — P2-1 (`routing` field); parity 2026-09-15 |
 | D-2 | No `mouse` aspect | Low | Trivial | ✅ Done — P2-1 |

@@ -406,6 +406,13 @@ const char* PortDiagnosticRecorder::DeviceIdToString(PortDeviceId id)
         case PortDeviceId::Covox:          return "Covox";
         case PortDeviceId::Custom:         return "Custom";
         case PortDeviceId::FullDecodeClaim: return "FullDecodeClaim";
+        case PortDeviceId::ATM_FF77:       return "ATM_FF77";
+        case PortDeviceId::Memory_Windows: return "Memory_Windows";
+        case PortDeviceId::Control_EFF7:   return "Control_EFF7";
+        case PortDeviceId::Evo_Config:     return "Evo_Config";
+        case PortDeviceId::Palette:        return "Palette";
+        case PortDeviceId::GeneralSound:   return "GeneralSound";
+        case PortDeviceId::SdCard:         return "SdCard";
         default:                           return "Unknown";
     }
 }
@@ -759,7 +766,7 @@ bool PortDiagnosticRecorder::saveToFile(const std::string& path, PortTraceExport
     out << (info.decodeRules.empty() ? "]" : "\n  ]") << ",\n";
 
     out << "  \"device_map\": {";
-    for (int id = 0; id <= (int)PortDeviceId::FullDecodeClaim; id++)
+    for (int id = 0; id <= (int)kPortDeviceIdLast; id++)
     {
         const char* name = DeviceIdToString((PortDeviceId)id);
         if (std::string(name) == "Unknown")
@@ -870,6 +877,11 @@ PortDeviceId PortDiagnosticRecorder::ResolveDeviceId(uint16_t decodedPort)
         case 0x007F: return PortDeviceId::WD1793_Data;
         case 0x00FF: return PortDeviceId::Beta128_System;
         case 0x00FB: return PortDeviceId::Covox;
+        case 0xFF77: return PortDeviceId::ATM_FF77;
+        case 0xEFF7: return PortDeviceId::Control_EFF7;
+        case 0x00B3:
+        case 0x00BB:
+        case 0x0033: return PortDeviceId::GeneralSound;
         default:     break;
     }
 

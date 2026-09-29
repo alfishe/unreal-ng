@@ -38,6 +38,8 @@
 #include "pch.h"
 #include "stdafx.h"
 
+#include <set>
+
 class ZXEvoErs_Test : public ::testing::Test
 {
 protected:
@@ -165,6 +167,39 @@ TEST_F(ZXEvoErs_Test, BootsToMainMenu)
 
 /// ERS "Incorrect FPGA zxevo_fw.bin" check: on the current FPGA the %1010 written
 /// to #13BD reads back, so the ERS accepts the machine
+/// PLAN #8: a port trace of the real boot attributes every mainboard access -
+/// the ZX-Evo decoder used to hand the trace nothing, so all of them read as
+/// undecoded with no device
+TEST_F(ZXEvoErs_Test, BootTraceAttributesEveryMainboardPort)
+{
+    Create();
+    FeatureManager* features = _emulator->GetFeatureManager();
+    ASSERT_TRUE(features->setFeature(Features::kPortTrace, true));
+    PortDiagnosticRecorder* recorder = _context->pPortDecoder->getPortTraceRecorder();
+    ASSERT_NE(recorder, nullptr);
+    recorder->start();
+    ASSERT_TRUE(RunToMainMenu());
+
+    // Low bytes every BaseConf decode owns outright (ClassifyPort)
+    const std::set<uint8_t> mainboard = {0xFE, 0xF6, 0xFC, 0xFD, 0xF7, 0x77, 0x57, 0xBF, 0xBE, 0xBD};
+    std::set<PortDeviceId> seen;
+    size_t mainboardEvents = 0;
+    for (const PortTraceEvent& event : recorder->getAll())
+    {
+        seen.insert(event.deviceId);
+        if (!mainboard.count(static_cast<uint8_t>(event.rawPort & 0x00FF)))
+            continue;
+        mainboardEvents++;
+        ASSERT_NE(event.deviceId, PortDeviceId::None)
+            << "#" << std::hex << event.rawPort << (event.isOut() ? " OUT" : " IN") << " has no device";
+        ASSERT_NE(event.decodedPort, 0x0000) << "#" << std::hex << event.rawPort;
+    }
+    EXPECT_GT(mainboardEvents, 0u);
+    EXPECT_TRUE(seen.count(PortDeviceId::ATM_FF77)) << "the boot programs the ATM system port";
+    EXPECT_TRUE(seen.count(PortDeviceId::Memory_Windows)) << "the boot maps the memory windows";
+    EXPECT_TRUE(seen.count(PortDeviceId::Evo_Config)) << "the boot reads and writes #BF";
+}
+
 TEST_F(ZXEvoErs_Test, FpgaSuitabilityProbePassesOnTrdemu)
 {
     Create();

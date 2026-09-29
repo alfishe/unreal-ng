@@ -90,7 +90,7 @@ inline bool ruleFromTable(const sol::table& spec, PortTraceFilterRule& rule, std
     if (sol::optional<std::string> device = spec["device"])
     {
         bool found = false;
-        for (int id = 0; id <= static_cast<int>(PortDeviceId::FullDecodeClaim); id++)
+        for (int id = 0; id <= static_cast<int>(kPortDeviceIdLast); id++)
         {
             if (*device == PortDiagnosticRecorder::DeviceIdToString(static_cast<PortDeviceId>(id)))
             {
