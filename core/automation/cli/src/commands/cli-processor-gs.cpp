@@ -15,6 +15,7 @@
 #include <sstream>
 
 #include "cli-processor.h"
+#include <emulator/state/devicestate.h>
 
 namespace
 {
@@ -49,120 +50,13 @@ const char* const kGSInputRefused = "Error: GS input refused - TTD replay owns i
 
 void CLIProcessor::HandleStateAudioGS(const ClientSession& session, EmulatorContext* context, const std::string& optionArg)
 {
+    (void)optionArg;  // "verbose" used to add the CPU; the shared report always carries it
     std::stringstream ss;
     ss << "General Sound Device State" << NEWLINE;
     ss << "==========================" << NEWLINE;
     ss << NEWLINE;
-
-    SoundManager* soundManager = context->pSoundManager;
-    GeneralSoundCard* gs = soundManager ? soundManager->getGeneralSound() : nullptr;
-
-    if (!gs)
-    {
-        ss << "Status: Not fitted" << NEWLINE;
-        ss << NEWLINE;
-        ss << "The General Sound card is disabled on this machine." << NEWLINE;
-        ss << "Enable it with [SOUND] GSType=Z80 (plus [ROM] GSROM pointing at" << NEWLINE;
-        ss << "the 32 KB firmware), LW or NGS (NeoGS, [NGS] Flash) and restart the emulator." << NEWLINE;
-
-        session.SendResponse(ss.str());
-        return;
-    }
-
-    const uint8_t status = gs->getStatusRaw();
-    const bool verbose = optionArg == "--verbose" || optionArg == "verbose" || optionArg == "-v";
-
-    ss << "Device: " << gs->deviceDescription() << NEWLINE;
-    ss << "ROM:    " << gs->firmwareDescription() << NEWLINE;
-    ss << "RAM:    " << gs->getRamSizeKB() << " KB" << NEWLINE;
-    ss << "Page:   " << (int)gs->getMPAG() << " (MPAG banking latch)" << NEWLINE;
-    ss << NEWLINE;
-
-    ss << "Mailbox (host ports #B3/#BB):" << NEWLINE;
-    ss << "  Status:          0x" << std::hex << std::setw(2) << std::setfill('0') << (int)status << NEWLINE;
-    ss << "  Command Pending: " << ((status & 0x01) ? "Yes" : "No") << " (bit0)" << NEWLINE;
-    ss << "  Data Pending:    " << ((status & 0x80) ? "Yes" : "No") << " (bit7)" << NEWLINE;
-    ss << "  Command queue:   " << gs->getCommandQueueCount() << "/16 pending (FIFO depth)" << NEWLINE;
-    ss << "  Data queue:      " << gs->getDataQueueCount() << "/16 pending (FIFO depth)" << NEWLINE;
-    ss << "  Command from ZX: 0x" << std::hex << std::setw(2) << (int)gs->getCommandFromHost() << NEWLINE;
-    ss << "  Data from ZX:    0x" << std::hex << std::setw(2) << (int)gs->getDataFromHost() << NEWLINE;
-    ss << "  Data to ZX:      0x" << std::hex << std::setw(2) << (int)gs->getDataToHost() << NEWLINE;
-    ss << std::dec;
-    ss << NEWLINE;
-
-    ss << "DAC Channels:" << NEWLINE;
-    for (int i = 0; i < gs->channelCount(); i++)
-    {
-        ss << "  Channel " << (i + 1) << ": Sample 0x" << std::hex << std::setw(2) << (int)gs->getChannelSample(i)
-           << std::dec << "  Volume " << (int)gs->getChannelVolume(i) << "/63" << NEWLINE;
-    }
-    ss << NEWLINE;
-
-    NeoGSStateInfo ngs;
-    if (gs->neogsState(ngs))
-    {
-        ss << "NeoGS:" << NEWLINE;
-        ss << "  GSCFG0:  0x" << std::hex << std::setw(2) << std::setfill('0') << (int)ngs.gscfg0 << std::dec
-           << " (" << ((ngs.gscfg0 & 0x01) ? "RAM" : "ROM") << " mode" << ((ngs.gscfg0 & 0x02) ? ", RAMRO" : "")
-           << ((ngs.gscfg0 & 0x04) ? ", 8 channels" : "") << ((ngs.gscfg0 & 0x08) ? ", EXPAG" : "")
-           << ((ngs.gscfg0 & 0x40) ? ", PAN4CH" : "") << ((ngs.gscfg0 & 0x80) ? ", INV7B" : "") << "), "
-           << ngs.clockHz / 1000000 << " MHz" << NEWLINE;
-        ss << "  Pages:   ";
-        for (int w = 0; w < 4; w++)
-            ss << (w ? " " : "") << (ngs.windowFlash[w] ? "F" : "R") << std::hex << std::setw(2) << std::setfill('0')
-               << (int)ngs.pages[w] << std::dec;
-        ss << "  (windows #0000/#4000/#8000/#C000, F = flash, R = RAM)" << NEWLINE;
-        ss << "  Ready:   " << (ngs.readyForCommands ? "main ROM command loop" : "booting / not in the main ROM")
-           << "   LED: " << (ngs.ledOn ? "on" : "off") << NEWLINE;
-        ss << "  INT:     enable 0x" << std::hex << (int)ngs.intEnable << ", request 0x" << (int)ngs.intRequest
-           << std::dec << ", TIM_FREQ " << (int)ngs.timFreq << NEWLINE;
-        ss << "  SD:      ";
-        if (ngs.sdPresent)
-            ss << (ngs.sdSdhc ? "SDHC " : "SDSC ") << ngs.sdSizeBytes / (1024 * 1024) << " MB, " << ngs.sdBlocksRead
-               << " blocks read, " << ngs.sdBlocksWritten << " written  (" << ngs.sdPath << ")" << NEWLINE;
-        else
-            ss << "empty" << NEWLINE;
-        ss << "  MP3:     ";
-        if (ngs.mp3Fitted)
-            ss << ngs.mp3Chip << ", DREQ " << (ngs.mp3Dreq ? 1 : 0) << ", " << ngs.mp3Rate << " Hz x"
-               << ngs.mp3Channels << ", " << ngs.mp3Frames << " frames, " << ngs.mp3DecodeSeconds << " s, FIFO "
-               << ngs.mp3InputFill << " bytes" << NEWLINE;
-        else
-            ss << "no decoder ([NGS] MP3Support=none)" << NEWLINE;
-        ss << "  DMA:     SD " << (ngs.dmaRunning[1] ? "running" : "idle") << " @0x" << std::hex << ngs.dmaAddress[1]
-           << ", MP3 " << (ngs.dmaRunning[2] ? "running" : "idle") << " @0x" << ngs.dmaAddress[2] << std::dec << NEWLINE;
-        ss << "  ZX-DMA:  " << ngs.zxMode << " @0x" << std::hex << ngs.dmaAddress[0] << ", latch 0x"
-           << static_cast<int>(ngs.zxReadLatch) << std::dec << ", pending " << ngs.zxPending << ", " << ngs.zxBytesRead
-           << " rd / " << ngs.zxBytesWritten << " wr / " << ngs.zxBytesDropped << " dropped, waits " << ngs.zxWaitTStates
-           << " T, late starts " << ngs.zxLateStarts << ", watch " << ngs.zxWatchSetting << " (" << ngs.zxWatchFrames
-           << " frames, ";
-        if (ngs.zxWatchFramesLeft < 0)
-            ss << "closed)" << NEWLINE;
-        else
-            ss << ngs.zxWatchFramesLeft << " left)" << NEWLINE;
-        ss << NEWLINE;
-    }
-
-    if (!gs->hasCoprocessor())
-    {
-        ss << "Coprocessor: none (lightweight personality - no registers)" << NEWLINE;
-        ss << NEWLINE;
-    }
-    else if (verbose)
-    {
-        ss << "Coprocessor (Z80):" << NEWLINE;
-        ss << "  PC: 0x" << std::hex << std::setw(4) << gs->getCPUReg(GSCpuRegister::PC) << NEWLINE;
-        ss << "  SP: 0x" << std::hex << std::setw(4) << gs->getCPUReg(GSCpuRegister::SP) << NEWLINE;
-        ss << "  AF: 0x" << std::hex << std::setw(4) << gs->getCPUReg(GSCpuRegister::AF) << NEWLINE;
-        ss << std::dec;
-        ss << "  Halted: " << (gs->isCPUHalted() ? "Yes" : "No") << NEWLINE;
-        ss << NEWLINE;
-    }
-    else
-    {
-        ss << "Use 'state audio gs --verbose' for coprocessor registers" << NEWLINE;
-    }
-
+    // One report for every interface (DeviceState::Gs)
+    ss << DeviceState::ToText(DeviceState::Gs(context));
     session.SendResponse(ss.str());
 }
 

@@ -857,7 +857,7 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["aspects"]["items"]["type"] = "string";
     Json::Value allowed(Json::arrayValue);
     for (const char* aspect : {"machine", "registers", "memory", "memory_map", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "video",
-                               "screen", "screen_flash", "screen_ocr", "screen_image", "screen_digest", "timing", "rom", "audio_ay", "audio_fm", "audio_gs", "fdc", "mouse",
+                               "screen", "screen_flash", "screen_ocr", "screen_image", "screen_digest", "timing", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "fdc", "mouse",
                                "ttd", "contention"})
     {
         allowed.append(aspect);
@@ -875,7 +875,8 @@ void RegisterInspectState(ToolRegistry& registry)
         "'audio_ay' = every AY/SSG chip fully decoded, 'audio_fm' = TurboSound FM board + both YM2203 FM halves (mode, timers, "
         "channels, operators, envelopes, key-on), 'audio_gs' = General Sound card (mailbox flags, MPAG page, DAC channels, "
         "coprocessor core, and a 'neogs' object with windows, clock, SD card, MP3 decoder and DMA on the NeoGS card; "
-        "reports unavailable when the card is not fitted), 'fdc' = Beta Disk WD1793 registers, status, FSM, drives, 'mouse' = "
+        "reports unavailable when the card is not fitted), 'audio_covox' = Covox / SoundDrive (fitment, the ports this model "
+        "decodes, ports shared with Beta-128, the four DAC latches), 'fdc' = Beta Disk WD1793 registers, status, FSM, drives, 'mouse' = "
         "Kempston mouse state incl. port routing (fitted vs shadowed), 'ttd' = time-travel session: state "
         "(idle/recording/detached), recorded frame range, checkpoint count, current position (use the time_travel tool to act on it).";
     schema["properties"]["target"]["type"] = "string";
@@ -910,7 +911,7 @@ void RegisterInspectState(ToolRegistry& registry)
         "paging state (tagged latches + bank table), static port map with tags (ports), video mode (video: resolution, colour depth, "
         "memory layout, displayed RAM pages, #EFF7/#DFFD/#FF77), screen state (screen: active screen and RAM pages, per-screen "
         "Z80 mapping, #7FFD, contention), FLASH timing (screen_flash), screen OCR text, screen image metadata, screen digest hash, raster timing, "
-        "ROM signatures, AY/SSG chips (audio_ay), TurboSound FM YM2203 halves (audio_fm), General Sound card (audio_gs), Beta Disk WD1793 (fdc), "
+        "ROM signatures, AY/SSG chips (audio_ay), TurboSound FM YM2203 halves (audio_fm), General Sound card (audio_gs), Covox / SoundDrive (audio_covox), Beta Disk WD1793 (fdc), "
         "Kempston mouse + port routing (mouse), time-travel session state and position (ttd), memory contention: rule, switch, "
         "interface, contended slots, per-kind waits while debugging (contention). Combine aspects to reduce round-trips.",
         std::move(schema),
@@ -934,11 +935,11 @@ void RegisterInspectState(ToolRegistry& registry)
                 if (aspect != "machine" && aspect != "registers" && aspect != "memory" && aspect != "memory_map" && aspect != "disasm" && aspect != "stack" &&
                     aspect != "breakpoints" && aspect != "memory_banks" && aspect != "paging" && aspect != "ports" && aspect != "video" &&
                     aspect != "screen" && aspect != "screen_flash" && aspect != "screen_ocr" && aspect != "screen_image" && aspect != "screen_digest" && aspect != "timing" && aspect != "rom" && aspect != "audio_ay" &&
-                    aspect != "audio_fm" && aspect != "audio_gs" && aspect != "fdc" && aspect != "mouse" && aspect != "ttd" && aspect != "contention")
+                    aspect != "audio_fm" && aspect != "audio_gs" && aspect != "audio_covox" && aspect != "fdc" && aspect != "mouse" && aspect != "ttd" && aspect != "contention")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, audio_gs, fdc, mouse, ttd, contention"));
+                                            "screen, screen_flash, screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, audio_gs, audio_covox, fdc, mouse, ttd, contention"));
                     return;
                 }
             }
@@ -1283,6 +1284,17 @@ void RegisterInspectState(ToolRegistry& registry)
                                 });
                             });
                         }
+                        else if (aspect == "audio_covox")
+                        {
+                            // Covox / SoundDrive via the WebAPI (DeviceState::Covox); 404 = not fitted
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, "/state/audio/covox"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
                     }
 
                     RunSeries(ReportSeriesProgress(std::move(steps), progress, aspects), [aspects, done, id](Json::Value acc) {
@@ -1461,6 +1473,20 @@ void RegisterInspectState(ToolRegistry& registry)
                                     for (Json::ArrayIndex i = 0; i < gsChannels.size(); ++i)
                                         out << "\n  ch" << i << ": sample " << gsChannels[i]["sample"].asUInt()
                                             << " vol " << gsChannels[i]["volume"].asUInt();
+                                }
+                            }
+                            else if (aspect == "audio_covox")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[audio_covox] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[audio_covox] " << value["device"].asString() << ", latches";
+                                    const Json::Value& dac = value["channels"];
+                                    for (Json::ArrayIndex i = 0; i < dac.size(); ++i)
+                                        out << " " << dac[i]["name"].asString() << "=" << dac[i]["latch"].asUInt();
+                                    if (value["shared_with_beta128"].size() > 0)
+                                        out << "\n  shared with Beta-128: " << value["shared_port_rule"].asString();
                                 }
                             }
                             else if (aspect == "mouse")

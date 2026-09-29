@@ -320,6 +320,9 @@ precedent that new peripherals (MoonSound) also won't get aspects.
 
 ### D-3. Audio device state coverage is 2 of N; MoonSound has nothing
 
+> **GS and Covox done 2026-09-28** (PLAN #20 retired): `DeviceState::Gs()` and
+> `DeviceState::Covox()` rendered by every surface. MoonSound remains (PLAN #11).
+>
 > **Re-scoped 2026-09-28** (PLAN #20, #11): the GS report now exists (with
 > NeoGS) but is built separately by each surface with diverging fields; Covox
 > is still a stub; MoonSound still has nothing. Target: `DeviceState::Gs()`,

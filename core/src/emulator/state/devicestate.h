@@ -38,6 +38,23 @@ StateNode Fm(EmulatorContext* context);
 StateNode FmChip(EmulatorContext* context, int chip);
 StateNode Fdc(EmulatorContext* context);
 
+/// General Sound (classic GS, lightweight, NeoGS): `Gs()` device and firmware,
+/// mailbox (status, pending flags, queue counts, the three latches), MPAG page,
+/// every DAC channel's sample and volume, the card CPU (PC/SP/AF/halted, or
+/// `coprocessor: false` on the lightweight card) and, on NeoGS, a `neogs`
+/// block: stereo mode, flash, GSCFG0 (raw and decoded), clock, windows,
+/// interrupts, SD card, MP3 decoder and the DMA engines incl. ZX-DMA.
+/// `ramWindow` adds a hex dump of the card CPU's #4000-#7FFF window (peeked,
+/// no side effects) where GS-compatible firmwares keep their variables.
+StateNode Gs(EmulatorContext* context, bool ramWindow = false);
+
+/// Covox / SoundDrive: `Covox()` fitment (mono #FB or the quad SoundDrive),
+/// the ports this model's decoder routes to it (from its port map), the ports
+/// it shares with the Beta-128 interface and who wins them, the four DAC
+/// latches with their mute state, the last output amplitude per side and
+/// whether the DAC was written last frame.
+StateNode Covox(EmulatorContext* context);
+
 /// Screen reports (Screen::DescribeScreenState):
 /// - `Screen(verbose)`: model, video mode, resolution, border, shadow screen,
 ///   active screen and RAM pages, contention, flash phase; verbose adds each

@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/soundcardscope.h"
@@ -408,3 +410,111 @@ TEST(DeviceStateScreen_Test, FlashFollowsTheFrameCounter)
 }
 
 /// endregion </Screen reports>
+
+/// region <General Sound and Covox (PLAN #20)>
+
+namespace
+{
+std::vector<int64_t> IntItems(const StateNode* array)
+{
+    std::vector<int64_t> values;
+    if (array)
+        for (const StateNode& item : array->items)
+            values.push_back(item.i);
+    return values;
+}
+}  // namespace
+
+TEST(DeviceStateGs_Test, UnavailableWithoutACard)
+{
+    // The test runner leaves the GS slot empty unless a SoundCardScope asks for it
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    const StateNode gs = DeviceState::Gs(emulator->GetContext());
+    ASSERT_NE(gs.find("available"), nullptr);
+    EXPECT_FALSE(gs.find("available")->b);
+    EXPECT_NE(gs.find("description")->s.find("not fitted"), std::string::npos);
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+TEST(DeviceStateGs_Test, NeoGsReportFollowsTheMailbox)
+{
+    SoundCardScope cards(TestSound::GeneralSound);  // Pentagon ships GSType=NGS
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    ASSERT_NE(context->pSoundManager->getGeneralSound(), nullptr);
+
+    context->pPortDecoder->DecodePortOut(0x00B3, 0x5A, 0x0000);  // OUT #B3: data to the card
+    const StateNode gs = DeviceState::Gs(context);
+    EXPECT_TRUE(gs.find("available")->b);
+    EXPECT_EQ(gs.find("implementation")->s, "ngs");
+    EXPECT_EQ(gs.find("data_from_host")->i, 0x5A);
+    EXPECT_EQ(gs.find("channels")->items.size(), 8u) << "NeoGS has 8 DAC channels";
+    ASSERT_NE(gs.find("cpu"), nullptr);
+    EXPECT_TRUE(gs.find("cpu")->find("coprocessor")->b);
+
+    const StateNode* neogs = gs.find("neogs");
+    ASSERT_NE(neogs, nullptr);
+    ASSERT_NE(neogs->find("gscfg0_flags"), nullptr);
+    EXPECT_FALSE(neogs->find("gscfg0_flags")->items.empty()) << "ROM/RAM mode is always named";
+    ASSERT_NE(neogs->find("dma"), nullptr);
+    EXPECT_NE(neogs->find("dma")->find("zx")->find("mode"), nullptr);
+    EXPECT_EQ(gs.find("fixed_window_hex"), nullptr) << "the RAM window is opt-in";
+
+    const StateNode withRam = DeviceState::Gs(context, /*ramWindow*/ true);
+    ASSERT_NE(withRam.find("fixed_window_hex"), nullptr);
+    EXPECT_EQ(withRam.find("fixed_window_hex")->s.size(), 0x4000u * 2);
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+TEST(DeviceStateCovox_Test, PentagonSoundDriveSharesTwoPortsWithBeta128)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+
+    context->emulatorState.flags &= ~CF_TRDOS;
+    context->pPortDecoder->DecodePortOut(0x00FB, 0x80, 0x0000);  // SoundDrive right B (= mono Covox)
+    const StateNode covox = DeviceState::Covox(context);
+    ASSERT_TRUE(covox.find("available")->b);
+    EXPECT_EQ(covox.find("fitment")->s, "quad");
+    EXPECT_FALSE(covox.find("ports")->items.empty()) << "the Pentagon decoder routes the SoundDrive";
+    const std::vector<int64_t> shared = IntItems(covox.find("shared_with_beta128"));
+    EXPECT_EQ(shared, (std::vector<int64_t>{0x1F, 0x5F})) << "SoundDrive mode 1 left B / right B";
+    ASSERT_NE(covox.find("shared_port_rule"), nullptr);
+
+    const StateNode* channels = covox.find("channels");
+    ASSERT_EQ(channels->items.size(), 4u);
+    EXPECT_EQ(channels->items[3].find("name")->s, "right_b");
+    EXPECT_EQ(channels->items[3].find("latch")->i, 0x80);
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+TEST(DeviceStateCovox_Test, PortsFollowTheModelsDecoder)
+{
+    // ZX-Evo decodes only the #FB DAC; the 128K fits the SoundDrive in its
+    // config, but its decoder routes no port to it - the report says so
+    for (const auto& [model, expectShared] : {std::pair<const char*, bool>{"ATM3", false}, {"128k", false}})
+    {
+        Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
+        ASSERT_NE(emulator, nullptr) << model;
+        const StateNode covox = DeviceState::Covox(emulator->GetContext());
+        ASSERT_TRUE(covox.find("available")->b) << model;
+        const StateNode* ports = covox.find("ports");
+        if (std::string(model) == "ATM3")
+        {
+            ASSERT_FALSE(ports->items.empty()) << model;
+            for (const StateNode& p : ports->items)
+                EXPECT_EQ(p.find("port")->i & 0xFF, 0xFB) << model;
+        }
+        else
+        {
+            EXPECT_TRUE(ports->items.empty()) << model << ": no decoder route, no ports";
+        }
+        EXPECT_EQ(covox.find("shared_with_beta128")->items.empty(), !expectShared) << model;
+        EmulatorTestHelper::CleanupEmulator(emulator);
+    }
+}
+
+/// endregion </General Sound and Covox (PLAN #20)>

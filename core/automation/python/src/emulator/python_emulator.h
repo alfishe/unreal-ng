@@ -1599,91 +1599,15 @@ namespace PythonBindings
                 auto* ctx = self.GetContext();
                 return ctx && ctx->pSoundManager && ctx->pSoundManager->getGeneralSound() != nullptr;
             }, "Check if the General Sound card is fitted")
+            // One report for every interface (DeviceState::Gs); available=False
+            // with a description when no card is fitted
             .def("gs_state", [](Emulator& self) -> py::object {
-                auto* ctx = self.GetContext();
-                GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
-                if (!gs) return py::none();
-
-                py::dict d;
-                const uint8_t status = gs->getStatusRaw();
-                d["device"] = gs->deviceDescription();
-                d["implementation"] = gsImplementationLabel(gs->implementation());
-                d["rom_loaded"] = gs->isROMLoaded();
-                d["ram_kb"] = static_cast<int>(gs->getRamSizeKB());
-                d["status"] = status;
-                d["command_pending"] = (status & 0x01) != 0;
-                d["data_pending"] = (status & 0x80) != 0;
-                d["command_queue_count"] = gs->getCommandQueueCount();
-                d["data_queue_count"] = gs->getDataQueueCount();
-                d["command_from_host"] = gs->getCommandFromHost();
-                d["data_from_host"] = gs->getDataFromHost();
-                d["data_to_host"] = gs->getDataToHost();
-                d["page"] = gs->getMPAG();
-
-                py::list channels;
-                for (int i = 0; i < gs->channelCount(); i++) {
-                    py::dict channel;
-                    channel["sample"] = gs->getChannelSample(i);
-                    channel["volume"] = gs->getChannelVolume(i);
-                    channels.append(channel);
-                }
-                d["channels"] = channels;
-
-                py::dict cpu;
-                cpu["coprocessor"] = gs->hasCoprocessor();
-                cpu["pc"] = gs->getCPUReg(GSCpuRegister::PC);
-                cpu["sp"] = gs->getCPUReg(GSCpuRegister::SP);
-                cpu["af"] = gs->getCPUReg(GSCpuRegister::AF);
-                cpu["halted"] = gs->isCPUHalted();
-                d["cpu"] = cpu;
-
-                NeoGSStateInfo ngs;
-                if (gs->neogsState(ngs))
-                {
-                    py::dict n;
-                    n["flash"] = ngs.flashTitle;
-                    n["flash_modified"] = ngs.flashModified;
-                    n["gscfg0"] = ngs.gscfg0;
-                    n["clock_hz"] = ngs.clockHz;
-                    py::list windows;
-                    for (int w = 0; w < 4; w++)
-                    {
-                        py::dict window;
-                        window["page"] = ngs.pages[w];
-                        window["flash"] = ngs.windowFlash[w];
-                        windows.append(window);
-                    }
-                    n["windows"] = windows;
-                    n["led_on"] = ngs.ledOn;
-                    n["ready"] = ngs.readyForCommands;
-                    n["int_enable"] = ngs.intEnable;
-                    n["int_request"] = ngs.intRequest;
-                    n["tim_freq"] = ngs.timFreq;
-                    n["sd_present"] = ngs.sdPresent;
-                    n["sd_path"] = ngs.sdPath;
-                    n["sd_sdhc"] = ngs.sdSdhc;
-                    n["sd_blocks_read"] = ngs.sdBlocksRead;
-                    n["mp3_fitted"] = ngs.mp3Fitted;
-                    n["mp3_chip"] = std::string(ngs.mp3Chip);
-                    n["mp3_rate"] = ngs.mp3Rate;
-                    n["mp3_frames"] = ngs.mp3Frames;
-                    n["mp3_decode_time_s"] = ngs.mp3DecodeSeconds;
-                    n["dma_sd_running"] = ngs.dmaRunning[1];
-                    n["dma_mp3_running"] = ngs.dmaRunning[2];
-                    n["zx_dma_mode"] = std::string(ngs.zxMode);
-                    n["zx_dma_address"] = ngs.dmaAddress[0];
-                    n["zx_dma_read_latch"] = ngs.zxReadLatch;
-                    n["zx_dma_pending"] = std::string(ngs.zxPending);
-                    n["zx_dma_bytes_read"] = (ngs.zxBytesRead);
-                    n["zx_dma_bytes_written"] = (ngs.zxBytesWritten);
-                    n["zx_dma_bytes_dropped"] = (ngs.zxBytesDropped);
-                    n["zx_dma_wait_tstates"] = (ngs.zxWaitTStates);
-                    n["zx_dma_late_starts"] = (ngs.zxLateStarts);
-                    n["zx_dma_watch_frames_left"] = ngs.zxWatchFramesLeft;
-                    d["neogs"] = n;
-                }
-                return d;
-            }, "General Sound state: mailbox flags, FIFO queue depths, MPAG page, DAC channels, coprocessor core; 'neogs' on the NeoGS card")
+                return StateNodeToPy(DeviceState::Gs(self.GetContext()));
+            }, "General Sound state (the report WebAPI /state/audio/gs serves): device, mailbox, MPAG page, DAC "
+               "channels, card CPU; 'neogs' on the NeoGS card")
+            .def("audio_covox_state", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::Covox(self.GetContext()));
+            }, "Covox / SoundDrive state: fitment, the ports this model decodes, Beta-128 shared ports, DAC latches")
             // NeoGS media: checked here, carried out on the machine's thread
             // (neogsmedia.h); true when accepted. Insert / eject are refused
             // while a TTD recording runs
