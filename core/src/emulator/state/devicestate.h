@@ -55,6 +55,23 @@ StateNode Gs(EmulatorContext* context, bool ramWindow = false);
 /// whether the DAC was written last frame.
 StateNode Covox(EmulatorContext* context);
 
+/// MoonSound (ZXM-MoonSound, YMF278B OPL4). A snapshot as of the chip's last
+/// guest access or frame run - reading it never advances the chip.
+/// - `MoonSound()`: NEW / NEW2, status, the guest address latches, the block
+///   mix latches (FM #F8, PCM #F9) decoded, wave memory (ROM size and loaded
+///   bytes, SRAM size, dirty pages), keyed FM channels and PCM slots.
+/// - `MoonSoundFm()`: status, both timers, the 4-op connection register, and
+///   all 18 channels (bank, F-number, block, frequency, key-on, feedback,
+///   connection, output route, render peak), plus both register banks as hex.
+/// - `MoonSoundPcm()`: the wave memory address register and all 24 slots
+///   (wave number, octave, F-number, playback rate, key-on, total level,
+///   pan, damp, sample width, start / loop / end, position, envelope phase,
+///   attenuation and rates, LFO / vibrato / AM, render peak), plus the
+///   register file as hex.
+StateNode MoonSound(EmulatorContext* context);
+StateNode MoonSoundFm(EmulatorContext* context);
+StateNode MoonSoundPcm(EmulatorContext* context);
+
 /// Screen reports (Screen::DescribeScreenState):
 /// - `Screen(verbose)`: model, video mode, resolution, border, shadow screen,
 ///   active screen and RAM pages, contention, flash phase; verbose adds each

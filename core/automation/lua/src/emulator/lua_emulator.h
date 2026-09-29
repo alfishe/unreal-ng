@@ -2029,6 +2029,15 @@ public:
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, DeviceState::Covox(ctx));
         });
+        // MoonSound: overview, or part "fm" / "pcm"
+        lua.set_function("audio_moonsound_state", [this](sol::this_state s, sol::optional<std::string> part) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            if (part && *part == "fm")
+                return StateNodeToLua(s, DeviceState::MoonSoundFm(ctx));
+            if (part && *part == "pcm")
+                return StateNodeToLua(s, DeviceState::MoonSoundPcm(ctx));
+            return StateNodeToLua(s, DeviceState::MoonSound(ctx));
+        });
 
         // NeoGS SD slot and flash (other cards: false / no-op)
         // NeoGS media: checked here, carried out on the machine's thread

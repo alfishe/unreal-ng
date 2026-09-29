@@ -63,6 +63,20 @@ public:
     uint8_t Route(int ch) const { return _newMode ? _route[ch] : 0x30; }
     const std::array<uint8_t, 512>& Regs() const { return _regs; }
 
+    struct TimerState
+    {
+        uint16_t count = 0;
+        uint16_t load = 0;
+        bool enabled = false;
+        bool masked = false;
+    };
+    /// Timer 1 (n=0, 80 us) or timer 2 (n=1, 320 us): read-only view
+    TimerState Timer(int n) const
+    {
+        return n == 0 ? TimerState{_timer1, _timer1Load, _timer1Enable, _timer1Mask}
+                      : TimerState{_timer2, _timer2Load, _timer2Enable, _timer2Mask};
+    }
+
     void SetChannelMute(int ch, bool mute);
 
     // POD pair (TTD §9); mute is deliberately not saved (R7).

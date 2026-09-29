@@ -1649,6 +1649,16 @@ namespace PythonBindings
             .def("audio_covox_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Covox(self.GetContext()));
             }, "Covox / SoundDrive state: fitment, the ports this model decodes, Beta-128 shared ports, DAC latches")
+            .def("audio_moonsound_state", [](Emulator& self, const std::string& part) -> py::object {
+                if (part == "fm")
+                    return StateNodeToPy(DeviceState::MoonSoundFm(self.GetContext()));
+                if (part == "pcm")
+                    return StateNodeToPy(DeviceState::MoonSoundPcm(self.GetContext()));
+                if (!part.empty())
+                    throw py::value_error("part must be '', 'fm' or 'pcm'");
+                return StateNodeToPy(DeviceState::MoonSound(self.GetContext()));
+            }, "MoonSound (OPL4) state: overview (part=''), the FM half (part='fm') or the wavetable half (part='pcm')",
+               py::arg("part") = "")
             // NeoGS media: checked here, carried out on the machine's thread
             // (neogsmedia.h); true when accepted. Insert / eject are refused
             // while a TTD recording runs
