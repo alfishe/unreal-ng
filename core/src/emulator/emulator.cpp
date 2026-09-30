@@ -152,6 +152,11 @@ bool Emulator::Init()
                 MLOGINFO("Emulator::Init - Applied preferred model %d (INI HIMEM overridden)",
                          (int)_preferredModel);
             }
+
+            // The caller's per-instance adjustments get the last word before
+            // any device is created from the config
+            if (_configOverride)
+                _configOverride(_context->config);
         }
         else
         {
@@ -478,6 +483,14 @@ void Emulator::ReleaseNoGuard()
 
         delete _mainloop;
         _mainloop = nullptr;
+    }
+
+    // RZX playback: its hooks leave the CPU and context before they go (the
+    // loop no longer steps)
+    {
+        std::lock_guard<std::mutex> lock(_rzxMutex);
+        std::lock_guard<std::mutex> sessionLock(_rzxSessionMutex);
+        _rzxSession.reset();
     }
 
     /// region <Release additional peripheral devices>
@@ -879,6 +892,10 @@ Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, u
 
 void Emulator::Reset()
 {
+    // A reset leaves the recorded path: an RZX playback ends first
+    if (IsRzxPlaying())
+        StopRzx();
+
     // To avoid race conditions, we must pause the emulator during reset
     // (Z80 thread executing ROM code during reset can cause inconsistent state)
     bool wasRunning = _isRunning && !_isPaused;
@@ -1399,7 +1416,7 @@ void Emulator::Stop()
 
 /// region <File operations>
 
-bool Emulator::LoadSnapshot(const std::string& path)
+bool Emulator::LoadSnapshot(const std::string& path, const std::string& reportedPath)
 {
     // Guard against operations during destruction (thread safety)
     if (_state == StateDestroying || _isReleased)
@@ -1433,6 +1450,21 @@ bool Emulator::LoadSnapshot(const std::string& path)
 
     // Validate file extension
     std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(absolutePath));
+
+    // An RZX recording opens like a snapshot: its start snapshot loads and the
+    // recording plays on this machine (a model switch is RzxLauncher's job)
+    if (ext == "rzx")
+    {
+        const rzx::PlayResult played = PlayRzx(absolutePath);
+        if (!played.Ok() && _context)
+        {
+            MLOGERROR("RZX playback failed: %s", played.message.c_str());
+            MessageCenter::DefaultMessageCenter().Post(
+                NC_FILE_LOADED, new FileLoadedPayload(_context->emulatorId, "snapshot", absolutePath, false));
+        }
+        return played.Ok();
+    }
+
     if (ext != "z80" && ext != "sna" && ext != "szx")
     {
         MLOGERROR("Invalid snapshot format: {}. Expected .z80, .sna or .szx", ext.c_str());
@@ -1444,6 +1476,11 @@ bool Emulator::LoadSnapshot(const std::string& path)
         }
         return false;
     }
+
+    // Another snapshot replaces the machine an RZX playback runs on: it ends
+    // first (the playback's own start snapshot loads with the player out)
+    if (IsRzxPlaying())
+        StopRzx();
 
     // TTD v1 (P1.6): snapshot load teleports full machine state (parent TDD §4.2).
     // Refused while recording; otherwise drop the session before the loader runs.
@@ -1523,10 +1560,14 @@ bool Emulator::LoadSnapshot(const std::string& path)
         /// endregion </Load SZX snapshot>
     }
 
+    // The file the user opened: a temporary image (RZX start snapshot) is
+    // reported as the file it came from
+    const std::string openedPath = reportedPath.empty() ? absolutePath : reportedPath;
+
     // Store snapshot path on success
     if (result)
     {
-        _context->coreState.snapshotFilePath = absolutePath;
+        _context->coreState.snapshotFilePath = openedPath;
 
         // The loader reset the machine and replaced its state (ports, memory,
         // registers): start the frame again from the loaded state, so devices
@@ -1544,10 +1585,83 @@ bool Emulator::LoadSnapshot(const std::string& path)
     {
         MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
         messageCenter.Post(NC_FILE_LOADED,
-            new FileLoadedPayload(_context->emulatorId, "snapshot", absolutePath, result));
+            new FileLoadedPayload(_context->emulatorId, "snapshot", openedPath, result));
     }
 
     return result;
+}
+
+rzx::RzxSession& Emulator::RzxSessionLocked()
+{
+    std::lock_guard<std::mutex> sessionLock(_rzxSessionMutex);
+    if (!_rzxSession)
+        _rzxSession = std::make_unique<rzx::RzxSession>(*this);
+    return *_rzxSession;
+}
+
+rzx::PlayResult Emulator::PlayRzx(const std::string& path, const rzx::PlayerOptions& options)
+{
+    if (_state == StateDestroying || _isReleased || !_context)
+    {
+        rzx::PlayResult result;
+        result.error = rzx::PlayError::Refused;
+        result.message = "the emulator is being destroyed";
+        return result;
+    }
+    std::lock_guard<std::mutex> lock(_rzxMutex);
+    MLOGINFO("RZX playback: '%s'", path.c_str());
+    rzx::PlayResult result = RzxSessionLocked().PlayFile(path, options);
+    if (!result.Ok())
+        MLOGWARNING("RZX playback refused: %s", result.message.c_str());
+    return result;
+}
+
+rzx::PlayResult Emulator::PlayRzx(std::shared_ptr<const rzx::File> file, const std::string& sourcePath,
+                                  const rzx::PlayerOptions& options)
+{
+    if (_state == StateDestroying || _isReleased || !_context)
+    {
+        rzx::PlayResult result;
+        result.error = rzx::PlayError::Refused;
+        result.message = "the emulator is being destroyed";
+        return result;
+    }
+    std::lock_guard<std::mutex> lock(_rzxMutex);
+    return RzxSessionLocked().Play(std::move(file), sourcePath, options);
+}
+
+bool Emulator::StopRzx()
+{
+    std::lock_guard<std::mutex> lock(_rzxMutex);
+    return _rzxSession && _rzxSession->Stop();
+}
+
+bool Emulator::SeekRzx(uint64_t frame, std::string* error)
+{
+    std::lock_guard<std::mutex> lock(_rzxMutex);
+    std::string reason;
+    const bool ok = _rzxSession ? _rzxSession->Seek(frame, reason) : (reason = "no RZX recording played", false);
+    if (!ok && error)
+        *error = reason;
+    return ok;
+}
+
+bool Emulator::IsRzxPlaying() const
+{
+    // The player pointer is the playback's own switch: set while the hooks are in
+    return _context && _context->rzxPlayer != nullptr;
+}
+
+rzx::SessionStatus Emulator::GetRzxStatus() const
+{
+    // Not _rzxMutex: the status is read while a seek plays on (the GUI polls it)
+    std::lock_guard<std::mutex> lock(_rzxSessionMutex);
+    return _rzxSession ? _rzxSession->Status() : rzx::SessionStatus{};
+}
+
+bool Emulator::IsRzxExtension(const std::string& ext)
+{
+    return StringHelper::ToLower(ext) == "rzx";
 }
 
 bool Emulator::SaveSnapshot(const std::string& path)
@@ -1950,7 +2064,8 @@ bool Emulator::EjectDisk(uint8_t drive, bool force, std::string* error)
 
 std::vector<std::string> Emulator::SupportedSnapshotExtensions()
 {
-    return {"sna", "z80", "szx"};
+    // rzx: an input recording, opened as its start snapshot plus the playback
+    return {"sna", "z80", "szx", "rzx"};
 }
 
 std::vector<std::string> Emulator::SupportedTapeExtensions()

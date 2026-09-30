@@ -1,8 +1,37 @@
 #include "screenocr.h"
 
+#include "emulator/emulatorcontext.h"
+#include "emulator/video/map/videomapservice.h"
+
 // Static member definitions
 std::unordered_map<uint64_t, char> ScreenOCR::_fontHashTable;
 bool ScreenOCR::_fontHashTableInitialized = false;
+
+/// Text modes hold character codes, not bitmaps: read them exactly through the
+/// video mapper (PLAN #42 design §6). One line per text row, printable ASCII,
+/// other codes as spaces
+bool ScreenOCR::textLayerScreen(Emulator* emulator, std::string& out)
+{
+    EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
+    if (!context || !context->pScreen)
+        return false;
+    uint16_t columns = 0, rows = 0;
+    std::vector<videomap::TextCell> cells;
+    if (!videomap::VideoMapService(context).Text(0, columns, rows, cells))
+        return false;
+    out.clear();
+    out.reserve(static_cast<size_t>(rows) * (columns + 1));
+    for (uint16_t r = 0; r < rows; ++r)
+    {
+        for (uint16_t c = 0; c < columns; ++c)
+        {
+            const uint8_t code = cells[static_cast<size_t>(r) * columns + c].code;
+            out += (code >= 0x20 && code < 0x7F) ? static_cast<char>(code) : ' ';
+        }
+        out += '\n';
+    }
+    return true;
+}
 
 std::string ScreenOCR::ocrScreen(const std::string& emulatorId)
 {
@@ -11,6 +40,10 @@ std::string ScreenOCR::ocrScreen(const std::string& emulatorId)
 
     if (!emulator)
         return "";
+
+    std::string text;
+    if (textLayerScreen(emulator.get(), text))
+        return text;
 
     Memory* memory = emulator->GetMemory();
     if (!memory)
@@ -43,6 +76,10 @@ bool ScreenOCR::containsText(const std::string& emulatorId, const std::string& s
     auto emulator = manager->GetEmulator(emulatorId);
     if (!emulator)
         return false;
+
+    std::string text;
+    if (textLayerScreen(emulator.get(), text))
+        return text.find(searchText) != std::string::npos;
 
     Memory* memory = emulator->GetMemory();
     if (!memory)

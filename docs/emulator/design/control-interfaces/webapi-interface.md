@@ -361,7 +361,11 @@ GET  /api/v1/emulator/{id}/state/screen/flash  FLASH phase and timing
 GET  /api/v1/emulator/{id}/state/screen/digest  Stable screen-content digest (range or banks, border folding; ?mode=active follows the displayed surface)
 GET  /api/v1/emulator/{id}/ports             Static port map + live routing flags (which devices answer which ports, under which gates); rows carry semantic `tags` (memory/rom/screen/sound_ay/…) and the `latch` live-value binding (p7FFD, p1FFD, … or null)
 GET  /api/v1/emulator/{id}/state/paging      Unified paging state (P1-2): tagged latch rows with live values + §5.1 decoded bits, 4-bank table with ROM `name`/`role`/`signature` (§5.2 — role≠name is the wrong-ROM signal), `paging_locked`, `trdos_active`; on `PROFI` the `pDFFD` latch decodes to `extended_ram_bank`, `sco`, `worom`, `cpm`, `scr`, `video_512x240` (see [profi-1024.md](../../../hardware/profi-1024.md))
-GET  /api/v1/emulator/{id}/video/beam         Current raster position and beam zone
+GET  /api/v1/emulator/{id}/video/beam         Current raster position and beam zone; layers[] = the layer pixel under the beam (id, x, x_end, y)
+GET  /api/v1/emulator/{id}/video/layout       Current mode's layers (surface, beam window, dots per T) and framebuffer placement (mapped, family)
+GET  /api/v1/emulator/{id}/video/pixel        ?x=&y=[&layer=] or ?t= - memory, registers and palette cell behind a pixel (sources[] with space/page/offset/bit_mask/role/z80[], colour_index, rgb, rendered_rgb); at t the border too
+GET  /api/v1/emulator/{id}/video/address      ?page=&offset= or ?z80= - areas[] of every layer the byte feeds (feeds_picture)
+GET  /api/v1/emulator/{id}/video/text         [?layer=] - exact text grid of a text mode (ATMTX, ATMTL): lines[] text/codes/attrs; unavailable in bitmap modes
 GET  /api/v1/emulator/{id}/frame_cost         Per-frame halt/run cost accounting
 GET  /api/v1/emulator/{id}/state/audio/ay      AY/SSG chips overview (core DeviceState report)
 GET  /api/v1/emulator/{id}/state/audio/ay/{n}  One AY/SSG chip, registers and channels decoded
@@ -1290,7 +1294,65 @@ POST /api/v1/emulator/{id}/disk/{drive}/eject   ✅ Implemented
 ```
 POST /api/v1/emulator/{id}/snapshot/save  ✅ Implemented
 POST /api/v1/emulator/{id}/snapshot/load  ✅ Implemented
+POST /api/v1/emulator/{id}/snapshot/transfer  ✅ Implemented — in-memory state transfer, see [automation.md](../../../features/automation.md#machine-state-transfer)
 ```
+
+### RZX Playback
+
+Play RZX input recordings: the start snapshot loads, then every `IN` returns the recorded value and the interrupts follow the recorded fetch counts until the end, a desync (strict mode) or `rzx/stop`. The machine then runs live. Terms and conventions: [command-interface.md §12](./command-interface.md#12-rzx-playback).
+
+```
+POST /api/v1/emulator/{id}/rzx/play    ✅ Implemented
+POST /api/v1/emulator/{id}/rzx/stop    ✅ Implemented
+POST /api/v1/emulator/{id}/rzx/seek    ✅ Implemented   {"frame": 5000}
+GET  /api/v1/emulator/{id}/rzx/status  ✅ Implemented
+```
+
+**`rzx/seek`** moves to the boundary after `frame` frames: back through the nearest keyframe, forward by playing on (see [command-interface.md §12](./command-interface.md#12-rzx-playback)); the answer carries `rzx` and `summary`, a refusal is 409 with the reason. The status reports `keyframes`, `keyframe_bytes` and `keyframe_interval`.
+
+**`rzx/play`** takes a JSON body, a multipart upload (`file`) or the raw file with `X-Filename` (then the options go as query parameters, e.g. `?desync_mode=tolerant`):
+
+```json
+{
+  "path": "/games/greenberet.rzx",
+  "desync_mode": "strict",
+  "ei_short_frame_blocks_int": false,
+  "ld_air_parity_quirk": false,
+  "ignore_later_snapshots": false,
+  "switch_model": true
+}
+```
+
+A recording made on another model switches the model first (a new emulator, media kept). The answer names the machine that plays:
+
+```json
+{
+  "status": "success",
+  "emulator_id": "5fe49448-...",
+  "model_switched": true,
+  "model": "128k",
+  "previous_emulator_id": "39bc75c8-...",
+  "rzx": {"state": "playing", "frame": 0, "total_frames": 39041, "creator": "Spectaculator 62.552", "...": "..."}
+}
+```
+
+With `"switch_model": false` a mismatch answers 409 with `"error": "model_mismatch"`, `required_model` and `required_ram_kb`. Other refusals (400): `bad_file`, `no_snapshot`, `unsupported_machine`, `snapshot_load_failed`.
+
+**`rzx/status`**:
+
+```json
+{
+  "loaded": true, "active": true, "state": "playing",
+  "path": "/games/greenberet.rzx", "creator": "Spectaculator 62.552", "version": "0.12",
+  "snapshot": "Z80 v2, hardware 3",
+  "frame": 896, "total_frames": 39041, "progress": 0.023, "block": 1, "blocks": 1,
+  "interrupts": 896, "desyncs": 0, "drift": -48, "max_drift": -2045,
+  "options": {"desync_mode": "strict", "ei_short_frame_blocks_int": false, "ld_air_parity_quirk": false, "ignore_later_snapshots": false},
+  "summary": "playing frame 896 / 39041 (2.3%), block 1 / 1, 0 desyncs"
+}
+```
+
+After a desync: `"state": "desynced"`, `reason`, and `first_desync` `{kind: too_many_ins | too_few_ins | fetch_overrun, frame, block, expected, actual, pc, port}`. `snapshot/load` with an `.rzx` path plays it on the machine as it is (no model switch).
 
 ### Time-Travel Debugging
 

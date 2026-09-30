@@ -3,6 +3,9 @@
 Goal: restore a machine state from a `.sna`/`.z80`/`.szx` file, save states back out,
 and verify a snapshot actually took effect.
 
+An `.rzx` input recording loads the same way and then plays: see
+[play-rzx.md](play-rzx.md).
+
 Snapshots are the cheapest way to reach a known state — much faster than
 booting through TR-DOS or tape. Use them as the entry point for
 [TTD](../analysis/ttd-recording.md) capture and for regression testing.
@@ -114,6 +117,34 @@ DIGEST_A=$(curl -s "$BASE/emulator/$EMU_ID/state/screen/digest" | jq -r .digest)
 DIGEST_B=$(curl -s "$BASE/emulator/$EMU_ID/state/screen/digest" | jq -r .digest)
 [ "$DIGEST_A" = "$DIGEST_B" ] && echo "deterministic" || echo "DIVERGED"
 ```
+
+## Move a running state to another instance (no file)
+
+Same state on another machine, e.g. to compare a demo on a 128K and a Pentagon
+side by side. The source keeps running; the report says per item what moved.
+
+```text
+emulator_manage {"action":"transfer_state","target":"<source-id>","to":"<target-id>","check":true}   # can it?
+emulator_manage {"action":"transfer_state","target":"<source-id>","to":"<target-id>"}                # do it
+emulator_manage {"action":"transfer_state","target":"<source-id>","model":"PENTAGON"}               # new instance
+```
+
+```bash
+curl -s -X POST "$BASE/emulator/$EMU_ID/snapshot/transfer" \
+     -H 'Content-Type: application/json' \
+     -d '{"model":"PENTAGON"}' | jq -r .summary
+# transfer: ok (cross-model)
+#   [copied] RAM: pages 0-7
+#   [copied] paging: 128K state replayed through the Pentagon port decoder
+#   [copied] TSFM: 2008 bytes of state
+#   [copied] NeoGS RAM and flash: 2048 KB RAM + 512 KB flash
+#   [copied] fdd.a: game.trd -> game.pentagon-1a2b3c4d.trd (in-memory copy, clean; written only by an explicit save)
+#   [note] SD / HDD / CD: not moved (by design, for now): the target keeps its own ...
+```
+
+HTTP 422 = the target cannot hold the state (e.g. a 128K program into a 48K);
+`reason` says why and nothing changed. Details:
+[automation.md → Machine State Transfer](../../docs/features/automation.md#machine-state-transfer).
 
 ## Interactions to know
 

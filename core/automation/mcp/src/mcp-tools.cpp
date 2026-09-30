@@ -2,7 +2,7 @@
 //
 // Tools orchestrate existing WebAPI endpoints over the loopback IApiCaller:
 //   1. emulator_manage    — lifecycle: create/list/start/stop/pause/resume/reset/destroy
-//   2. load_software      — auto-detect .sna/.z80/.szx, tapes (.tap/.tzx/...), .trd/.scl/.fdi and load
+//   2. load_software      — auto-detect .sna/.z80/.szx/.rzx, tapes (.tap/.tzx/...), .trd/.scl/.fdi and load
 //   3. control_execution  — stepping/running + breakpoint management
 //   4. inspect_state      — multi-aspect state inspection (registers/memory/disasm/...)
 //   5. type_input         — keyboard: type/tap/press/release/combo/macro
@@ -98,6 +98,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"create", "switch_model", "list", "list_models", "server", "status", "zxpoly_status", "start", "stop", "pause", "resume", "reset", "destroy",
+                               "transfer_state",
                                "gs_reset", "gs_reset_card", "gs_nmi", "gs_send_command", "gs_send_data", "gs_read_status", "gs_read_data",
                                "gs_switch_personality", "gs_dump_module", "gs_sd_insert", "gs_sd_eject", "gs_flash_save",
                                "gs_stereo_mode"})
@@ -111,7 +112,11 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "and models_creatable; 'status' reports one instance's details. 'switch_model' replaces the target with "
         "a new instance of 'model' (new id; the machine state is lost, the media follow into the same slots with "
         "their unsaved writes; media with unsaved writes the new model has no slot for need 'stranded'; a ZX-Poly "
-        "configuration name as 'model' switches to that machine). 'create' with 'zxpoly': true starts a "
+        "configuration name as 'model' switches to that machine). 'transfer_state' copies the target's running "
+        "state in memory into another instance: 'to' names an existing one, or 'model' (+ optional 'ram_size') "
+        "creates a new one with the source's sound cards; same model = full clone, another model = what it can "
+        "express (pages, CPU, paging, TSFM / GS / NeoGS RAM+flash / MoonSound SRAM ...); refused with a per-item "
+        "reason when the target cannot hold the state; 'check': true (with 'to') only decides; floppies and the tape follow as clean in-memory copies with a postfixed path, SD / HDD / CD are NOT moved. 'create' with 'zxpoly': true starts a "
         "ZX-Poly machine (four synchronized instances of 'model', default PENTAGON; optional 'zxpoly_file': a "
         ".zxp snapshot, a .prom ROM image or a multiloader disk); the returned id is its master, the slaves are "
         "hidden members. 'zxpoly_status' reports a ZX-Poly machine's modules, platform registers, lock, video "
@@ -130,13 +135,13 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["target"]["description"] = "Emulator id, or 'auto' to reuse the single instance (auto-created when none exists)";
     schema["properties"]["model"]["type"] = "string";
     schema["properties"]["model"]["description"] =
-        "Hardware model short name for 'create' — e.g. 48K, 128k, PLUS3, TSL, ATM3, ATM710, ATM450, PROFI, "
+        "Hardware model short name for 'create' / 'switch_model' / 'transfer_state' (new destination) — e.g. 48K, 128k, PLUS3, TSL, ATM3, ATM710, ATM450, PROFI, "
         "SCORPION, PROFSCORP, GMX, KAY, QUORUM, LSY256, PHOENIX (see list_models; creatability is "
         "build-dependent — check the 'creatable' flags before assuming a machine exists). ZX-Poly "
         "configurations ZXPOLY-48K, ZXPOLY-128K, ZXPOLY-PENTAGON create the four-instance machine by name "
         "(same as 'zxpoly': true with the base model)";
     schema["properties"]["ram_size"]["type"] = "integer";
-    schema["properties"]["ram_size"]["description"] = "Optional RAM size in KB for 'create' / 'switch_model' (e.g. 128, 256, 512)";
+    schema["properties"]["ram_size"]["description"] = "Optional RAM size in KB for 'create' / 'switch_model' / 'transfer_state' with 'model' (e.g. 128, 256, 512)";
     schema["properties"]["stranded"]["type"] = "string";
     schema["properties"]["stranded"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* value : {"refuse", "save", "discard", "keep"})
@@ -144,6 +149,12 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["stranded"]["description"] =
         "switch_model: unsaved writes on media the new model has no slot for - refuse (default: the switch fails "
         "and lists them), save (into their own files), discard, keep (detached media on the new machine)";
+    schema["properties"]["to"]["type"] = "string";
+    schema["properties"]["to"]["description"] =
+        "transfer_state: existing destination emulator id (otherwise 'model' creates a new destination)";
+    schema["properties"]["check"]["type"] = "boolean";
+    schema["properties"]["check"]["description"] =
+        "transfer_state with 'to': only report whether the transfer is possible and what would move; nothing changes";
     schema["properties"]["zxpoly"]["type"] = "boolean";
     schema["properties"]["zxpoly"]["description"] =
         "For 'create': start a ZX-Poly machine (four synchronized instances of 'model'; default PENTAGON)";
@@ -280,6 +291,45 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                 else if (action == "destroy")
                 {
                     ForwardCall("DELETE", Endpoint(id), nullptr, caller, "Destroyed " + id, done);
+                }
+                else if (action == "transfer_state")
+                {
+                    const bool hasTo = args.isMember("to") && args["to"].isString() && !args["to"].asString().empty();
+                    const bool hasModel =
+                        args.isMember("model") && args["model"].isString() && !args["model"].asString().empty();
+                    if (hasTo == hasModel)
+                    {
+                        done(ToolResult::Error("transfer_state needs exactly one of 'to' (an existing emulator id) or "
+                                               "'model' (a new instance, see list_models)"));
+                        return;
+                    }
+                    Json::Value body;
+                    if (hasTo)
+                        body["to"] = args["to"].asString();
+                    else
+                        body["model"] = args["model"].asString();
+                    if (hasModel && args.isMember("ram_size") && args["ram_size"].asUInt() > 0)
+                        body["ram_size"] = args["ram_size"].asUInt();
+                    if (args.isMember("check") && args["check"].asBool())
+                        body["check"] = true;
+                    caller.Call("POST", Endpoint(id, "/snapshot/transfer"), &body, [id, done](int status, Json::Value response) {
+                        // The report carries the per-item reasons on success and on refusal alike
+                        const std::string summary = response.get("summary", "").asString();
+                        if (status >= 200 && status < 300)
+                        {
+                            std::string message = response.get("check", false).asBool()
+                                                      ? "Transfer check " + id + " -> " + response.get("target_id", "").asString()
+                                                      : "Transferred " + id + " -> " + response.get("target_id", "").asString() +
+                                                            (response.get("created", false).asBool() ? " (new instance)" : "");
+                            if (!summary.empty())
+                                message += "\n" + summary;
+                            done(ToolResult::Ok(std::move(message), std::move(response)));
+                            return;
+                        }
+                        std::string message = "Transfer refused (HTTP " + std::to_string(status) + "): " +
+                                              (summary.empty() ? DescribeErrorBody(response) : summary);
+                        done(ToolResult::Error(std::move(message)));
+                    });
                 }
                 else if (action == "switch_model")
                 {
@@ -459,7 +509,7 @@ void RegisterLoadSoftware(ToolRegistry& registry)
 
     registry.Register(
         "load_software",
-        "Load software into the emulator by auto-detecting the file type: snapshots (.sna .z80 .szx), tapes (.tap .tzx .spc .sta .ltp .zxt), "
+        "Load software into the emulator by auto-detecting the file type: snapshots (.sna .z80 .szx), RZX input recordings (.rzx, played on the machine the recording needs), tapes (.tap .tzx .spc .sta .ltp .zxt), "
         "disk images (.trd .scl .fdi .udi .dsk .td0 .mgt .img). The machine must be created first (target:'auto' "
         "handles that). If the path exists locally on the MCP host, the file is uploaded to the emulator "
         "automatically; otherwise, the path is passed to the emulator for direct loading.",
@@ -477,14 +527,14 @@ void RegisterLoadSoftware(ToolRegistry& registry)
             if (dot == std::string::npos || dot + 1 >= path.size())
             {
                 done(ToolResult::Error("Cannot determine file type of '" + path +
-                                            "'. Supported: .sna .z80 .szx (snapshot), .tap .tzx .spc .sta .ltp .zxt (tape), "
+                                            "'. Supported: .sna .z80 .szx (snapshot), .rzx (input recording), .tap .tzx .spc .sta .ltp .zxt (tape), "
                                             ".trd .scl .fdi .udi .dsk .td0 .mgt .img (disk)"));
                 return;
             }
             std::string ext = path.substr(dot + 1);
             std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
-            bool isSnapshot = ext == "sna" || ext == "z80" || ext == "szx";
+            bool isSnapshot = ext == "sna" || ext == "z80" || ext == "szx" || ext == "rzx";
             const auto& tapeExtensions = TapeExtensions();
             bool isTape = std::find(tapeExtensions.begin(), tapeExtensions.end(), ext) != tapeExtensions.end();
             bool isDisk = ext == "trd" || ext == "scl" || ext == "fdi" || ext == "udi" || ext == "dsk" ||
@@ -492,7 +542,7 @@ void RegisterLoadSoftware(ToolRegistry& registry)
             if (!isSnapshot && !isTape && !isDisk)
             {
                 done(ToolResult::Error("Unsupported file type '." + ext +
-                                            "'. Supported: .sna .z80 .szx (snapshot), .tap .tzx .spc .sta .ltp .zxt (tape), "
+                                            "'. Supported: .sna .z80 .szx (snapshot), .rzx (input recording), .tap .tzx .spc .sta .ltp .zxt (tape), "
                                             ".trd .scl .fdi .udi .dsk .td0 .mgt .img (disk)"));
                 return;
             }
@@ -523,6 +573,25 @@ void RegisterLoadSoftware(ToolRegistry& registry)
                 if (autostart && isDisk)
                 {
                     headers["X-Autostart"] = "true";
+                }
+
+                // An RZX recording plays on the model it needs (the model
+                // switches when this machine is another one: a new target id)
+                if (ext == "rzx")
+                {
+                    if (isLocalFile)
+                    {
+                        ForwardCallRaw("POST", Endpoint(id, "/rzx/play"), *fileContent, headers, caller,
+                                       "Playing RZX " + filename + " (uploaded) from " + id, done);
+                    }
+                    else
+                    {
+                        Json::Value body;
+                        body["path"] = path;
+                        ForwardCall("POST", Endpoint(id, "/rzx/play"), &body, caller, "Playing RZX " + path + " from " + id,
+                                    done);
+                    }
+                    return;
                 }
 
                 if (isSnapshot)
@@ -937,7 +1006,7 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["aspects"]["items"]["type"] = "string";
     Json::Value allowed(Json::arrayValue);
     for (const char* aspect : {"machine", "registers", "memory", "memory_map", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "video",
-                               "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "rtc", "mouse",
+                               "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "video_layout", "video_text", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "rtc", "mouse",
                                "ttd", "contention"})
     {
         allowed.append(aspect);
@@ -965,7 +1034,9 @@ void RegisterInspectState(ToolRegistry& registry)
         "write cells with invoke_api POST /api/v1/emulator/{id}/rtc/cells {start, bytes}), "
         "'screen_attributes' = per-cell ink/paper/bright/flash decoded from the classic ZX attribute memory layout "
         "(32x24 cells, read straight off the RAM page, not the Z80 bank mapping) - prefer this over a screenshot when "
-        "you only need the color/attribute layout, 'mouse' = "
+        "you only need the color/attribute layout, 'video_layout' = the video mode's layers (surface size, beam window, "
+        "dots per T) and framebuffer placement (works for ATM, Profi, AlCo modes too), 'video_text' = exact text of an ATM / "
+        "ZX-Evo text mode (80x25 codes and attributes; unavailable in bitmap modes - use screen_ocr), 'mouse' = "
         "Kempston mouse state incl. port routing (fitted vs shadowed), 'ttd' = time-travel session: state "
         "(idle/recording/detached), recorded frame range, checkpoint count, current position (use the time_travel tool to act on it).";
     schema["properties"]["target"]["type"] = "string";
@@ -1003,7 +1074,9 @@ void RegisterInspectState(ToolRegistry& registry)
         "paging state (tagged latches + bank table), static port map with tags (ports), video mode (video: resolution, colour depth, "
         "memory layout, displayed RAM pages, #EFF7/#DFFD/#FF77), screen state (screen: active screen and RAM pages, per-screen "
         "Z80 mapping, #7FFD, contention), FLASH timing (screen_flash), per-cell ink/paper/bright/flash (screen_attributes), "
-        "screen OCR text, screen image metadata, screen digest hash, raster timing, "
+        "screen OCR text, screen image metadata, screen digest hash, raster timing (timing: the beam and the layer pixel under it), "
+        "the mode's layers and beam windows (video_layout), the exact text of ATM / ZX-Evo text modes (video_text; the pixel "
+        "behind a point and the pixels a byte feeds: GET /video/pixel and /video/address through invoke_api), "
         "ROM signatures, AY/SSG chips (audio_ay), TurboSound FM YM2203 halves (audio_fm), General Sound card (audio_gs), Covox / SoundDrive (audio_covox), MoonSound OPL4 (audio_moonsound, audio_opl4_fm, audio_opl4_pcm), Beta Disk WD1793 (fdc), IDE board (ide), CMOS clock (rtc), "
         "Kempston mouse + port routing (mouse), time-travel session state and position (ttd), memory contention: rule, switch, "
         "interface, contended slots, per-kind waits while debugging (contention). Combine aspects to reduce round-trips.",
@@ -1027,13 +1100,13 @@ void RegisterInspectState(ToolRegistry& registry)
             {
                 if (aspect != "machine" && aspect != "registers" && aspect != "memory" && aspect != "memory_map" && aspect != "disasm" && aspect != "stack" &&
                     aspect != "breakpoints" && aspect != "memory_banks" && aspect != "paging" && aspect != "ports" && aspect != "video" &&
-                    aspect != "screen" && aspect != "screen_flash" && aspect != "screen_attributes" && aspect != "screen_ocr" && aspect != "screen_image" && aspect != "screen_digest" && aspect != "timing" && aspect != "rom" && aspect != "audio_ay" &&
+                    aspect != "screen" && aspect != "screen_flash" && aspect != "screen_attributes" && aspect != "screen_ocr" && aspect != "screen_image" && aspect != "screen_digest" && aspect != "timing" && aspect != "video_layout" && aspect != "video_text" && aspect != "rom" && aspect != "audio_ay" &&
                     aspect != "audio_fm" && aspect != "audio_gs" && aspect != "audio_covox" && aspect != "audio_moonsound" && aspect != "audio_opl4_fm" &&
                     aspect != "audio_opl4_pcm" && aspect != "fdc" && aspect != "ide" && aspect != "rtc" && aspect != "mouse" && aspect != "ttd" && aspect != "contention")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, rtc, mouse, ttd, contention"));
+                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, rtc, mouse, ttd, contention"));
                     return;
                 }
             }
@@ -1209,6 +1282,18 @@ void RegisterInspectState(ToolRegistry& registry)
                         {
                             // Screen state (verbose: per-screen RAM page + Z80 mapping, #7FFD) and FLASH timing
                             const std::string path = aspect == "screen" ? "/state/screen?verbose=true" : "/state/screen/flash";
+                            steps.push_back([&caller, id, aspect, path](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, path), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "video_layout" || aspect == "video_text")
+                        {
+                            // Video debug translation (PLAN #42): the mode's layers / the exact text of a text mode.
+                            // Pixel sources and byte -> pixels take arguments: GET /video/pixel, /video/address via invoke_api
+                            const std::string path = aspect == "video_layout" ? "/video/layout" : "/video/text";
                             steps.push_back([&caller, id, aspect, path](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", Endpoint(id, path), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
@@ -1702,6 +1787,40 @@ void RegisterInspectState(ToolRegistry& registry)
                                     if (value.isMember("routing"))
                                         out << ", ports " << (value["routing"]["ports_decoded"].asBool() ? "decoded" : "shadowed")
                                             << " (" << value["routing"]["note"].asString() << ")";
+                                }
+                            }
+                            else if (aspect == "video_layout")
+                            {
+                                out << "\n[video_layout] " << value["video_mode"].asString() << ", family "
+                                    << value["family"].asString();
+                                if (!value["mapped"].asBool())
+                                    out << " (not mapped)";
+                                const Json::Value& layers = value["layers"];
+                                for (Json::ArrayIndex i = 0; i < layers.size(); ++i)
+                                {
+                                    const Json::Value& w = layers[i]["window"];
+                                    out << "\n  " << layers[i]["id"].asString() << " " << layers[i]["surface"]["width"].asInt()
+                                        << "x" << layers[i]["surface"]["height"].asInt() << ", lines " << w["first_line"].asInt()
+                                        << "+" << w["line_count"].asInt() << ", T " << w["first_t"].asInt() << "+"
+                                        << w["t_count"].asInt() << " at " << w["dots_per_t"].asInt() << " dots/T";
+                                }
+                            }
+                            else if (aspect == "video_text")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[video_text] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[video_text] " << value["layer"].asString() << " " << value["columns"].asInt()
+                                        << "x" << value["rows"].asInt();
+                                    const Json::Value& lines = value["lines"];
+                                    for (Json::ArrayIndex i = 0; i < lines.size(); ++i)
+                                    {
+                                        std::string text = lines[i]["text"].asString();
+                                        const size_t end = text.find_last_not_of(" .");
+                                        if (end != std::string::npos)
+                                            out << "\n  " << text.substr(0, end + 1);
+                                    }
                                 }
                             }
                             else if (aspect == "paging")
@@ -2926,6 +3045,158 @@ void RegisterTimeTravel(ToolRegistry& registry)
 
 /// endregion </time_travel>
 
+/// region <rzx_playback>
+
+namespace
+{
+
+void RegisterRzxPlayback(ToolRegistry& registry)
+{
+    Json::Value schema;
+    schema["type"] = "object";
+    schema["properties"]["action"]["type"] = "string";
+    schema["properties"]["action"]["enum"].append("play");
+    schema["properties"]["action"]["enum"].append("stop");
+    schema["properties"]["action"]["enum"].append("status");
+    schema["properties"]["action"]["enum"].append("seek");
+    schema["properties"]["action"]["description"] =
+        "play a recording, stop playing, report the playback, or seek to a frame";
+    schema["properties"]["frame"]["type"] = "integer";
+    schema["properties"]["frame"]["description"] =
+        "seek: the frame boundary to move to (0 = start); back is fast (keyframes), forward plays on";
+    schema["properties"]["path"]["type"] = "string";
+    schema["properties"]["path"]["description"] = "play: the .rzx file (uploaded when it exists on the MCP host)";
+    schema["properties"]["target"]["type"] = "string";
+    schema["properties"]["target"]["default"] = "auto";
+    schema["properties"]["desync_mode"]["type"] = "string";
+    schema["properties"]["desync_mode"]["enum"].append("strict");
+    schema["properties"]["desync_mode"]["enum"].append("tolerant");
+    schema["properties"]["desync_mode"]["description"] =
+        "play: strict (default) stops at the first desync; tolerant counts desyncs and goes on";
+    schema["properties"]["ei_short_frame_blocks_int"]["type"] = "boolean";
+    schema["properties"]["ei_short_frame_blocks_int"]["description"] =
+        "play: a 1-2 fetch frame after EI means the interrupt was blocked (for files that need it)";
+    schema["properties"]["ld_air_parity_quirk"]["type"] = "boolean";
+    schema["properties"]["ld_air_parity_quirk"]["description"] = "play: NMOS LD A,I / LD A,R parity quirk on the frame interrupt";
+    schema["properties"]["ignore_later_snapshots"]["type"] = "boolean";
+    schema["properties"]["ignore_later_snapshots"]["description"] = "play: skip snapshot blocks after the first";
+    schema["properties"]["switch_model"]["type"] = "boolean";
+    schema["properties"]["switch_model"]["default"] = true;
+    schema["properties"]["switch_model"]["description"] =
+        "play: switch to the recording's model (a new emulator id, reported as emulator_id) when this one differs";
+    schema["required"].append("action");
+
+    registry.Register(
+        "rzx_playback",
+        "Play RZX input recordings (RZX Archive game completions and the like): the start snapshot loads, then every "
+        "IN and interrupt follows the recording to its end, and the machine runs live from there. Check progress and "
+        "desyncs with 'status'. A recording made on another model switches the model first: the answer's emulator_id "
+        "is the new target. load_software with an .rzx path does the same as 'play'.",
+        std::move(schema),
+        [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
+            const std::string action = args["action"].asString();
+            if (action == "stop")
+            {
+                ResolveAndForward(args, "POST", "/rzx/stop", nullptr, caller, "RZX playback stopped", done);
+                return;
+            }
+            if (action == "status")
+            {
+                TargetResolver::ResolveFromArgs(args, caller, [&caller, done](bool ok, const std::string& idOrError) {
+                    if (!ok)
+                    {
+                        done(ToolResult::Error(idOrError));
+                        return;
+                    }
+                    caller.Call("GET", Endpoint(idOrError, "/rzx/status"), nullptr,
+                                [done, idOrError](int status, Json::Value body) {
+                                    if (status < 200 || status >= 300)
+                                    {
+                                        done(ToolResult::Error("RZX status failed (HTTP " + std::to_string(status) +
+                                                               "): " + DescribeErrorBody(body)));
+                                        return;
+                                    }
+                                    const std::string summary = body["summary"].asString();
+                                    done(ToolResult::Ok("RZX on " + idOrError + ": " + summary, std::move(body)));
+                                });
+                });
+                return;
+            }
+            if (action == "seek")
+            {
+                if (!args.isMember("frame") || !args["frame"].isIntegral() || args["frame"].asInt64() < 0)
+                {
+                    done(ToolResult::Error("Action 'seek' requires 'frame' (a frame number, 0 = start)"));
+                    return;
+                }
+                Json::Value body;
+                body["frame"] = args["frame"];
+                ResolveAndForward(args, "POST", "/rzx/seek", &body, caller, "RZX playback moved", done);
+                return;
+            }
+            if (action != "play")
+            {
+                done(ToolResult::Error("Unknown action '" + action + "': expected play, stop, status or seek"));
+                return;
+            }
+
+            const std::string path = args["path"].asString();
+            if (path.empty())
+            {
+                done(ToolResult::Error("Action 'play' requires 'path'"));
+                return;
+            }
+            if (args.isMember("desync_mode") && args["desync_mode"].asString() != "strict" &&
+                args["desync_mode"].asString() != "tolerant")
+            {
+                done(ToolResult::Error("'desync_mode' must be 'strict' or 'tolerant'"));
+                return;
+            }
+
+            auto body = std::make_shared<Json::Value>(Json::objectValue);
+            for (const char* key : {"desync_mode", "ei_short_frame_blocks_int", "ld_air_parity_quirk",
+                                    "ignore_later_snapshots", "switch_model"})
+            {
+                if (args.isMember(key))
+                    (*body)[key] = args[key];
+            }
+
+            // A file on the MCP host is uploaded with the options as query parameters
+            auto content = std::make_shared<std::vector<uint8_t>>();
+            const bool isLocalFile = TryReadLocalFile(path, *content);
+            const std::string filename = ExtractFilename(path);
+            TargetResolver::ResolveFromArgs(args, caller, [&caller, done, body, content, isLocalFile, path,
+                                                           filename](bool ok, const std::string& idOrError) {
+                if (!ok)
+                {
+                    done(ToolResult::Error(idOrError));
+                    return;
+                }
+                if (isLocalFile)
+                {
+                    std::string query;
+                    for (const std::string& key : body->getMemberNames())
+                    {
+                        const Json::Value& value = (*body)[key];
+                        query += (query.empty() ? "?" : "&") + key + "=" +
+                                 (value.isBool() ? (value.asBool() ? "true" : "false") : value.asString());
+                    }
+                    std::map<std::string, std::string> headers;
+                    headers["X-Filename"] = filename;
+                    ForwardCallRaw("POST", Endpoint(idOrError, "/rzx/play" + query), *content, headers, caller,
+                                   "Playing RZX " + filename + " (uploaded)", done);
+                    return;
+                }
+                (*body)["path"] = path;
+                ForwardCall("POST", Endpoint(idOrError, "/rzx/play"), body.get(), caller, "Playing RZX " + path, done);
+            });
+        });
+}
+
+} // namespace
+
+/// endregion </rzx_playback>
+
 /// region <Registry composition>
 
 std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
@@ -2943,6 +3214,9 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
     // TD-1 — time_travel: the full TTD surface (session, navigation, reverse
     // search, .ttd files, TD-4 bookmarks, TD-7 coverage index)
     RegisterTimeTravel(*registry);
+
+    // rzx_playback: RZX input recordings (play / stop / status)
+    RegisterRzxPlayback(*registry);
 
     // Phase 2 — smart tools
     RegisterManageSymbols(*registry);

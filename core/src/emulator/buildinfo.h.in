@@ -17,5 +17,11 @@ namespace buildinfo
 constexpr const char* kVersion = "@UNREAL_BUILD_VERSION@";
 constexpr const char* kGitBranch = "@UNREAL_GIT_BRANCH@";
 constexpr const char* kGitCommit = "@UNREAL_GIT_COMMIT@";
+#ifdef UNREAL_BUILD_CONFIG
+// Multi-config generators (Visual Studio, Xcode, Ninja Multi-Config): the
+// configuration being built, passed by CMake at build time
+constexpr const char* kBuildType = UNREAL_BUILD_CONFIG;
+#else
 constexpr const char* kBuildType = "@UNREAL_BUILD_TYPE@";
+#endif
 }

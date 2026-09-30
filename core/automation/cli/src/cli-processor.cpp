@@ -147,6 +147,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"ports", &CLIProcessor::HandlePorts},                // Static port map + live routing flags
                         {"paging", &CLIProcessor::HandlePaging},              // Tagged paging latches + bank table (P1-2)
                         {"beam", &CLIProcessor::HandleBeam},                  // Raster beam position/zone
+                        {"video", &CLIProcessor::HandleVideo},                // Video debug translation (layout/pixel/address/text)
                         {"frame_cost", &CLIProcessor::HandleFrameCost},      // Halt/active frame cost stats
                         {"coverage", &CLIProcessor::HandleCoverage},          // Code coverage control/queries
                         {"aylog", &CLIProcessor::HandleAyLog},                // AY register-write logging
@@ -208,6 +209,9 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
 
                         // Snapshot control commands
                         {"snapshot", &CLIProcessor::HandleSnapshot},
+
+                        // RZX input recording playback
+                        {"rzx", &CLIProcessor::HandleRzx},
 
                         // Interpreter control commands
                         {"python", &CLIProcessor::HandlePython},
@@ -655,6 +659,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  ports                   - Port map: which devices answer which I/O ports" << NEWLINE;
     oss << "  paging                 - Paging state: latches + bank table" << NEWLINE;
     oss << "  beam                   - Raster beam position and zone" << NEWLINE;
+    oss << "  video layout|pixel|address|text [args] - What makes a pixel, which pixels a byte feeds" << NEWLINE;
     oss << "  frame_cost             - Halt/active cost of the last frame + averages" << NEWLINE;
     oss << "  coverage start|stop|clear|status|gaps [args] - Code coverage" << NEWLINE;
     oss << "  aylog start [cap]|stop|clear|status|dump [N]  - AY register-write log" << NEWLINE;
@@ -686,9 +691,15 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  disk catalog <drv>     - Show TR-DOS file catalog" << NEWLINE;
     oss << NEWLINE;
     oss << "Snapshot Commands:" << NEWLINE;
-    oss << "  snapshot load <file>           - Load snapshot (.sna, .z80, .szx)" << NEWLINE;
+    oss << "  snapshot load <file>           - Load snapshot (.sna, .z80, .szx; .rzx plays)" << NEWLINE;
     oss << "  snapshot save <file> [--force] - Save snapshot (.sna, .z80, .szx: by extension)" << NEWLINE;
     oss << "  snapshot info                  - Show current snapshot status" << NEWLINE;
+    oss << NEWLINE;
+    oss << "RZX Playback:" << NEWLINE;
+    oss << "  rzx play <file> [--tolerant]   - Play an RZX recording (switches model if needed)" << NEWLINE;
+    oss << "  rzx seek <frame>               - Move to a frame (back via keyframes)" << NEWLINE;
+    oss << "  rzx stop                       - Stop playing; the machine runs live" << NEWLINE;
+    oss << "  rzx status                     - Frame, progress, desyncs" << NEWLINE;
     oss << NEWLINE;
     oss << "Capture Commands:" << NEWLINE;
     oss << "  capture ocr                    - OCR text from screen (ROM font)" << NEWLINE;

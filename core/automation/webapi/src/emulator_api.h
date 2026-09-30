@@ -114,6 +114,13 @@ public:
     ADD_METHOD_TO(EmulatorAPI::loadSnapshot, "/api/v1/emulator/{id}/snapshot/load", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::saveSnapshot, "/api/v1/emulator/{id}/snapshot/save", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getSnapshotInfo, "/api/v1/emulator/{id}/snapshot/info", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::transferState, "/api/v1/emulator/{id}/snapshot/transfer", drogon::Post);
+
+    // RZX input recordings (implementation: api/rzx_api.cpp)
+    ADD_METHOD_TO(EmulatorAPI::playRzx, "/api/v1/emulator/{id}/rzx/play", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::stopRzx, "/api/v1/emulator/{id}/rzx/stop", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::seekRzx, "/api/v1/emulator/{id}/rzx/seek", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getRzxStatus, "/api/v1/emulator/{id}/rzx/status", drogon::Get);
     // endregion Tape/Disk/Snapshot Control
 
     // region Capture Commands (implementation: api/capture_api.cpp)
@@ -221,6 +228,11 @@ public:
 
     // Beam (raster) position + frame timing from the machine model
     ADD_METHOD_TO(EmulatorAPI::getBeamPosition, "/api/v1/emulator/{id}/video/beam", drogon::Get);
+    // Video debug translation (PLAN #42, api/video_map_api.cpp): layout, pixel sources, byte -> pixels, text
+    ADD_METHOD_TO(EmulatorAPI::getVideoLayout, "/api/v1/emulator/{id}/video/layout", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getVideoPixel, "/api/v1/emulator/{id}/video/pixel", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getVideoAddress, "/api/v1/emulator/{id}/video/address", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getVideoText, "/api/v1/emulator/{id}/video/text", drogon::Get);
     // endregion Screen State
 
     // region Audio State (implementation: api/state_audio_api.cpp)
@@ -339,6 +351,9 @@ public:
     ADD_METHOD_TO(EmulatorAPI::memoryProfilerResume, "/api/v1/emulator/{id}/profiler/memory/resume", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::memoryProfilerClear, "/api/v1/emulator/{id}/profiler/memory/clear", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getMemoryProfilerStatus, "/api/v1/emulator/{id}/profiler/memory/status", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getMemoryProfilerPages, "/api/v1/emulator/{id}/profiler/memory/pages", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getMemoryProfilerCounters, "/api/v1/emulator/{id}/profiler/memory/counters", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::memoryProfilerSave, "/api/v1/emulator/{id}/profiler/memory/save", drogon::Post);
 
     // Call trace profiler control
     ADD_METHOD_TO(EmulatorAPI::calltraceProfilerStart, "/api/v1/emulator/{id}/profiler/calltrace/start", drogon::Post);
@@ -626,6 +641,18 @@ public:
                       const std::string& id) const;
     void getSnapshotInfo(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void transferState(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+
+    // RZX input recordings (api/rzx_api.cpp)
+    void playRzx(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                 const std::string& id) const;
+    void stopRzx(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                 const std::string& id) const;
+    void seekRzx(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                 const std::string& id) const;
+    void getRzxStatus(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id) const;
     // endregion Tape/Disk/Snapshot Control Methods
 
     // region Capture Commands Methods (implementation: api/capture_api.cpp)
@@ -821,6 +848,19 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void getBeamPosition(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                          const std::string& id) const;
+
+    /// @brief GET /api/v1/emulator/{id}/video/layout — the current mode's layers, beam windows and framebuffer placement
+    void getVideoLayout(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                        const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/video/pixel?x=&y=[&layer=] or ?t= — the memory, registers and palette cell behind a pixel
+    void getVideoPixel(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                       const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/video/address?page=&offset= or ?z80= — the pixels a byte feeds
+    void getVideoAddress(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                         const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/video/text[?layer=] — the text grid of a text mode
+    void getVideoText(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id) const;
 
     /// @brief GET /api/v1/emulator/{id}/state/screen/digest?banks=5,7&include_border=true&start=&end=
     /// FNV-1a 64 digest over screen RAM pages (or an explicit Z80 range) with
@@ -1123,6 +1163,19 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void getMemoryProfilerStatus(const drogon::HttpRequestPtr& req,
                                  std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                                  const std::string& id) const;
+    /// @brief GET .../profiler/memory/pages?limit=N - per physical page read/write/execute totals
+    void getMemoryProfilerPages(const drogon::HttpRequestPtr& req,
+                                std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                const std::string& id) const;
+    /// @brief GET .../profiler/memory/counters?mode=z80|physical&page=N&start=&end=&format=dense|sparse
+    ///        - per-address read/write/execute counters
+    void getMemoryProfilerCounters(const drogon::HttpRequestPtr& req,
+                                   std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                   const std::string& id) const;
+    /// @brief POST .../profiler/memory/save {"path", "format":"yaml", "single_file"} - write the data to disk
+    void memoryProfilerSave(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                            const std::string& id) const;
 
     // Call trace profiler control
     void calltraceProfilerStart(const drogon::HttpRequestPtr& req,

@@ -14,6 +14,7 @@ Status: see [TODO.md](TODO.md).
 | [target-architecture.md](target-architecture.md) | What TTD should become, what is dropped from earlier designs, and the checksum decision |
 | [branch-merge-strategy.md](branch-merge-strategy.md) | Where the three branches stand, what to fix on master first, per-branch checklists, merge order |
 | [migration-trajectory.md](migration-trajectory.md) | The ordered steps (V0–V6 interleaved with the merges), exit criteria, open decisions |
+| [v0b-benchmark-results.md](v0b-benchmark-results.md) | V0b: the benchmark matrix with v1 as the first engine, v1's numbers, the V1b decision |
 
 Reading order: this page → current-state → requirements → migration-trajectory →
 the others as reference.

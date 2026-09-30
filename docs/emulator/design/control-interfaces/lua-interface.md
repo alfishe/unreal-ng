@@ -686,6 +686,26 @@ local status = profilers_status_all()
 -- status.calltrace.entry_count = 450
 ```
 
+### RZX Playback
+
+Play RZX input recordings: the start snapshot loads, then every `IN` returns the recorded value and the interrupts follow the recording until its end, a desync (strict mode) or `rzx_stop()`; the machine then runs live. Terms and conventions: [command-interface.md §12](./command-interface.md#12-rzx-playback).
+
+| Function | Returns | Description |
+| :--- | :--- | :--- |
+| `rzx_play(path [, options])` | table `{ok, error, message, emulator_id, model_switched, model, required_model, summary}` | Play a recording. `options`: `desync_mode` (`"strict"` / `"tolerant"`), `ei_short_frame_blocks_int`, `ld_air_parity_quirk`, `ignore_later_snapshots`, `switch_model` (default `true`). The model switches only when the interpreter follows the selected machine; an interpreter bound to one machine gets `error = "model_mismatch"` and `required_model` instead (its machine is never replaced under it). |
+| `rzx_seek(frame)` | `ok, reason` | Move to the boundary after `frame` frames (back through keyframes, forward by playing on). |
+| `rzx_stop()` | boolean | Stop playing; `false` when nothing played. |
+| `rzx_status()` | table | `loaded`, `active`, `summary`, `path`, `creator`, `state` (`playing` / `finished` / `desynced` / `stopped`), `frame`, `total_frames`, `block`, `blocks`, `interrupts`, `desyncs`, `drift`, `max_drift`, `keyframes`, `keyframe_bytes`, `reason`, `first_desync` `{kind, frame, expected, actual, pc}`. |
+
+`snapshot_load("game.rzx")` plays a recording on the machine as it is.
+
+```lua
+local r = rzx_play("games/ericfloaters.rzx", {desync_mode = "tolerant"})
+if not r.ok then print(r.message) end
+run_frames(500)
+print(rzx_status().summary)   -- playing frame 500 / 32315 (1.5%), block 1 / 1, 0 desyncs
+```
+
 ### Time-Travel Debugging
 
 The TTD functions are **global functions** (like the mouse functions), not methods on the emulator object. They act on the bound emulator, or on the selected one when the script is not bound to an instance. Bindings: `core/automation/lua/src/emulator/lua_emulator.h`. Command semantics and background: [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd).
@@ -951,7 +971,12 @@ emu.paging_state()                   -- tagged paging latches + bank table (P1-2
                                      -- ROM bank rows carry the §5.2 identification: name = recognized
                                      -- content (SHA-256 catalog), role = the model's layout slot; a
                                      -- role/name mismatch is the one-glance wrong-ROM signal.
-emu.beam_position()                  -- { frame, scanline, tstate, zone, ... }
+emu.beam_position()                  -- { frame, line, tstate, zone, ..., layers = {{id, x, x_end, y}} }
+emu.video_layout()                   -- layers (surface, beam window, dots_per_t), framebuffer placement, family
+emu.video_pixel(x, y [, layer])      -- sources (space, page, offset, bit_mask, role, z80), colour_index, rgb, rendered_rgb
+emu.video_pixel_at(t)                -- the same for the point under the beam at frame T (layer pixel or border)
+emu.video_address(page, offset)      -- areas a RAM byte feeds; emu.video_address_z80(addr) through current paging
+emu.video_text([layer])              -- exact text grid of ATM / ZX-Evo text modes (lines: text, codes, attrs)
 emu.frame_cost()                     -- per-frame halt/run cost accounting
 
 -- Coverage analyzer

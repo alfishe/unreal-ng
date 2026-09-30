@@ -4,6 +4,7 @@
 #include <sol/sol.hpp>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
+#include <emulator/rzx/rzxlauncher.h>
 #include "../bindings/lua_porttrace.h"
 #include <emulator/memory/memory.h>
 #include <emulator/memory/memorymap.h>  // TD-3 sparse map + hexdump
@@ -1475,6 +1476,112 @@ public:
             if (std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot); !refusal.empty())
                 return {false, refusal};
             return {emulator->LoadSnapshot(path), ""};
+        });
+
+        // RZX input recordings. rzx_play(path [, options]) -> table {ok, message,
+        // emulator_id, model_switched, required_model, summary}; options:
+        // desync_mode ("strict" / "tolerant"), ei_short_frame_blocks_int,
+        // ld_air_parity_quirk, ignore_later_snapshots, switch_model. The model
+        // switches only when this interpreter follows the selected machine (a
+        // bound one reports the mismatch: its machine must not be replaced)
+        lua.set_function("rzx_play", [this](const std::string& path, sol::optional<sol::table> options) -> sol::table {
+            sol::state_view view(*_lua);
+            sol::table out = view.create_table();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+            {
+                out["ok"] = false;
+                out["message"] = "no emulator";
+                return out;
+            }
+            rzx::LaunchRequest request;
+            request.emulatorId = emulator->GetId();
+            request.path = path;
+            request.switchModel = _emulator == nullptr;
+            if (options)
+            {
+                const sol::table& o = *options;
+                sol::optional<std::string> mode = o["desync_mode"];
+                if (mode && !rzx::RzxLauncher::ParseDesyncMode(*mode, request.options.desyncMode))
+                {
+                    out["ok"] = false;
+                    out["message"] = "desync_mode '" + *mode + "': expected strict or tolerant";
+                    return out;
+                }
+                request.options.eiShortFrameBlocksInt = o.get_or("ei_short_frame_blocks_int", false);
+                request.options.ldAirParityQuirk = o.get_or("ld_air_parity_quirk", false);
+                request.options.ignoreLaterSnapshots = o.get_or("ignore_later_snapshots", false);
+                request.switchModel = request.switchModel && o.get_or("switch_model", true);
+            }
+            const rzx::LaunchResult result = rzx::RzxLauncher::Play(request);
+            out["ok"] = result.play.Ok();
+            out["error"] = std::string(rzx::PlayErrorName(result.play.error));
+            out["message"] = result.play.message;
+            out["emulator_id"] = result.emulator ? result.emulator->GetId() : std::string();
+            out["model_switched"] = result.modelSwitched;
+            out["required_model"] = result.play.requiredModel;
+            out["model"] = result.switchedToModel;
+            if (result.emulator)
+                out["summary"] = rzx::RzxLauncher::StatusLine(result.emulator->GetRzxStatus());
+            return out;
+        });
+
+        // rzx_seek(frame) -> ok, reason: to the boundary after `frame` frames
+        lua.set_function("rzx_seek", [this](uint64_t frame) -> std::tuple<bool, std::string> {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return {false, "no emulator"};
+            std::string error;
+            const bool ok = emulator->SeekRzx(frame, &error);
+            return {ok, error};
+        });
+
+        lua.set_function("rzx_stop", [this]() -> bool {
+            Emulator* emulator = effectiveEmulator();
+            return emulator && emulator->StopRzx();
+        });
+
+        lua.set_function("rzx_status", [this]() -> sol::table {
+            sol::state_view view(*_lua);
+            sol::table t = view.create_table();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+            {
+                t["loaded"] = false;
+                return t;
+            }
+            const rzx::SessionStatus status = emulator->GetRzxStatus();
+            t["loaded"] = status.loaded;
+            t["active"] = status.active;
+            t["summary"] = rzx::RzxLauncher::StatusLine(status);
+            if (!status.loaded)
+                return t;
+            const rzx::PlayerStatus& player = status.player;
+            t["path"] = status.path;
+            t["creator"] = status.creator;
+            t["state"] = std::string(rzx::StateName(player.state));
+            t["frame"] = player.frame;
+            t["total_frames"] = player.totalFrames;
+            t["block"] = player.block + 1;
+            t["blocks"] = player.blocks;
+            t["interrupts"] = player.interrupts;
+            t["desyncs"] = player.desyncs;
+            t["drift"] = player.drift;
+            t["max_drift"] = player.maxDrift;
+            t["keyframes"] = player.keyframes;
+            t["keyframe_bytes"] = player.keyframeBytes;
+            t["reason"] = player.stopReason;
+            if (player.desyncs > 0)
+            {
+                sol::table first = view.create_table();
+                first["kind"] = std::string(rzx::DesyncName(player.firstDesync.kind));
+                first["frame"] = player.firstDesync.frame;
+                first["expected"] = player.firstDesync.expected;
+                first["actual"] = player.firstDesync.actual;
+                first["pc"] = player.firstDesync.pc;
+                t["first_desync"] = first;
+            }
+            return t;
         });
 
         lua.set_function("snapshot_save", [this](const std::string& path) -> bool {
@@ -3728,52 +3835,34 @@ public:
             return results;
         });
 
-        // Raster beam position and zone at the current t-state
-        lua.set_function("beam_position", [this]() -> sol::table {
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) { result["error"] = "no emulator"; return result; }
-
-            EmulatorContext* context = emulator->GetContext();
-            if (!context || !context->pScreen) { result["error"] = "context not initialized"; return result; }
-
-            const CONFIG& config = context->config;
-            Screen* screen = context->pScreen;
-            if (config.t_line == 0 || config.frame == 0)
-            {
-                result["error"] = "machine timing not initialized";
-                return result;
-            }
-
-            Z80* cpu = context->pCore ? context->pCore->GetZ80() : nullptr;
-            const uint32_t tstate = cpu ? static_cast<uint32_t>(cpu->t) : screen->GetCurrentTstate();
-            const uint32_t tInFrame = tstate % config.frame;
-
-            const BeamPosition beam = screen->DescribeBeam(tInFrame);
-            const uint32_t tstatesPerLine = beam.valid ? screen->GetRasterState().tstatesPerLine : config.t_line;
-            const uint32_t line = tInFrame / tstatesPerLine;
-
-            result["tstate"] = tstate;
-            result["tstate_in_frame"] = tInFrame;
-            result["frame"] = static_cast<uint64_t>(context->emulatorState.frame_counter);
-            result["line"] = line;
-            result["dot_in_line"] = tInFrame % tstatesPerLine;
-            result["beam_x"] = beam.beamX;
-            result["beam_y"] = line;
-            result["zone"] = std::string(beam.zone);
-            result["vertical_zone"] = std::string(beam.verticalZone);
-            result["horizontal_zone"] = std::string(beam.horizontalZone);
-            result["in_paper"] = beam.inPaper;
-            if (beam.inPaper)
-            {
-                sol::table paper = lua_view.create_table();
-                paper["x"] = beam.paperX;
-                paper["x_end"] = beam.paperXEnd;
-                paper["y"] = beam.paperY;
-                result["paper"] = paper;
-            }
-            return result;
+        // Beam and video debug translation (PLAN #42): the same DeviceState reports every interface returns
+        lua.set_function("beam_position", [this](sol::this_state s) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::VideoBeam(ctx));
+        });
+        lua.set_function("video_layout", [this](sol::this_state s) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::VideoLayout(ctx));
+        });
+        lua.set_function("video_pixel", [this](sol::this_state s, unsigned x, unsigned y, sol::optional<unsigned> layer) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::VideoPixel(ctx, layer.value_or(0), x, y));
+        });
+        lua.set_function("video_pixel_at", [this](sol::this_state s, unsigned t) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::VideoPixelAtBeam(ctx, t));
+        });
+        lua.set_function("video_address", [this](sol::this_state s, unsigned page, unsigned offset) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::VideoAddress(ctx, page, offset));
+        });
+        lua.set_function("video_address_z80", [this](sol::this_state s, unsigned address) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::VideoAddressZ80(ctx, address));
+        });
+        lua.set_function("video_text", [this](sol::this_state s, sol::optional<unsigned> layer) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::VideoText(ctx, layer.value_or(0)));
         });
 
         // Halt/active cost of the last frame plus session averages

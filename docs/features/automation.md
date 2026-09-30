@@ -103,7 +103,8 @@ state sysvars           # ZX-Spectrum system variables
 find <hex-pattern>      # Search Z80 memory for a byte pattern
                         #   (--from N, --to N, --align 1|2, --max N)
 digest                  # Screen-area digest (change detection)
-beam                    # Raster beam position/zone
+beam                    # Raster beam position/zone (+ layer pixel under it)
+video layout|pixel|address|text  # What makes a pixel, which pixels a byte feeds, text modes
 frame_cost              # Frame cost stats (halt vs active)
 ```
 
@@ -136,6 +137,10 @@ symbols info            # Show symbol count
 open <file>             # Auto-detect and load file
 snapshot save <file>    # Save snapshot (.sna/.z80/.szx, by extension)
 snapshot info           # Current snapshot status
+rzx play <file>         # Play an RZX input recording (switches to its model; command-interface.md §12)
+rzx status              # Frame, progress, desyncs
+rzx seek <frame>        # Back (keyframes) or forward to a frame
+rzx stop                # Stop playing; the machine runs live
 # Tape transport (see command-interface.md §10 for the full tables)
 tape load <file>        # Load a tape (.tap/.tzx/.spc/.sta/.ltp/.zxt) or a folder built into a tape
 tape eject              # Eject: the tape leaves the tape slot (refused while TTD records)
@@ -281,6 +286,10 @@ Interactive documentation available at `/api/swagger`
 | POST | `/api/v1/emulator/{id}/memory/find` | Search memory for a byte pattern |
 | GET | `/api/v1/emulator/{id}/state/screen/digest` | Screen-area digest (change detection) |
 | GET | `/api/v1/emulator/{id}/video/beam` | Raster beam position and frame timing |
+| GET | `/api/v1/emulator/{id}/video/layout` | Video mode layers, beam windows, framebuffer placement |
+| GET | `/api/v1/emulator/{id}/video/pixel` | Sources of a pixel (`x`,`y`[,`layer`] or `t`) |
+| GET | `/api/v1/emulator/{id}/video/address` | Pixels a byte feeds (`page`,`offset` or `z80`) |
+| GET | `/api/v1/emulator/{id}/video/text` | Text grid of a text mode |
 | GET | `/api/v1/emulator/{id}/frame_cost` | Frame cost stats (halt vs active) |
 
 #### Labels & Symbols
@@ -327,6 +336,11 @@ Interactive documentation available at `/api/swagger`
 | POST | `/emulators/{id}/open` | Load file |
 | POST | `/emulators/{id}/snapshot/save` | Save snapshot |
 | GET | `/emulators/{id}/snapshot/info` | Snapshot status |
+| POST | `/api/v1/emulator/{id}/snapshot/transfer` | Move the running state into another instance, in memory ([below](#machine-state-transfer)) |
+| POST | `/api/v1/emulator/{id}/rzx/play` | Play an RZX recording (path or upload; switches to its model) |
+| POST | `/api/v1/emulator/{id}/rzx/seek` | Seek the RZX playback (`{"frame": N}`) |
+| POST | `/api/v1/emulator/{id}/rzx/stop` | Stop RZX playback |
+| GET | `/api/v1/emulator/{id}/rzx/status` | RZX playback status |
 
 #### Tape Control
 Full parity with the CLI `tape` commands, the Lua `tape_*` functions and the Python `tape_*` methods (identical states and catalog indices). Scopes under `/api/v1/emulator/{id}/tape` — see [webapi-interface.md § Tape Control](../emulator/design/control-interfaces/webapi-interface.md#tape-control).
@@ -418,6 +432,32 @@ curl -X POST http://localhost:8090/api/v1/emulator/{id}/model \
 
 **Note**: Model switching destroys the current emulator instance and creates a new one. The response includes both old and new emulator IDs. The media follow into the same slots, unsaved writes included; see [media.md → Model switch](media.md#model-switch) for media the new model has no slot for (`"stranded": "save" | "discard" | "keep"`). CLI: `model <name> [--stranded ...]`; MCP: `emulator_manage` action `switch_model`.
 
+#### Machine State Transfer
+Copy one instance's running state into another instance in memory, without writing a snapshot file. Unlike a model switch, the source keeps running and nothing is destroyed:
+```bash
+# Into an existing instance: only decide whether it can hold the state (nothing changes)
+curl -X POST http://localhost:8090/api/v1/emulator/{id}/snapshot/transfer \
+  -H "Content-Type: application/json" -d '{"to": "<target-id>", "check": true}'
+
+# Into an existing instance
+curl -X POST http://localhost:8090/api/v1/emulator/{id}/snapshot/transfer \
+  -H "Content-Type: application/json" -d '{"to": "<target-id>"}'
+
+# Into a new Pentagon 512K (it gets the source's sound cards)
+curl -X POST http://localhost:8090/api/v1/emulator/{id}/snapshot/transfer \
+  -H "Content-Type: application/json" -d '{"model": "PENTAGON", "ram_size": 512}'
+```
+
+- **Same model and RAM size**: a full clone - the in-frame position and every device, so both machines continue identically.
+- **Another model**: what the target can express - RAM pages, CPU, the `#7FFD` / `#1FFD` / `#EFF7` paging replayed through the target's port decoder, border, TR-DOS paging, and the devices that do not depend on the machine: TurboSound / TSFM, Covox, General Sound / NeoGS (with its RAM and flash; the flash file is not written), MoonSound (with its wave SRAM), Kempston mouse. Example: a 128K game moved to a Pentagon keeps its pages, paging and sound, and starts at the Pentagon's own frame start.
+- **Refused** (HTTP 422, nothing changes) when the target cannot hold the state: pages the target lacks, +2A/+3 all-RAM modes on a 128K, extended Pentagon / Scorpion paging on another family, ATM / Profi / TSConf on another model, ZX-Poly modules. A 48K target takes a 128K machine only when it is locked in 48K mode.
+- The response is a per-item report: `items[]` with `status` `copied` / `dropped` / `refused` / `note`, plus `summary` as text. A device the target lacks is `dropped`; the rest proceeds.
+- **Floppies and the tape follow** into the same slots as the target's own in-memory copies: same contents (the source's unsaved writes included), clean, and standing for a postfixed file - `game.trd` becomes `game.pentagon-1a2b3c4d.trd` - so a save on the target never overwrites the source's image. Their controllers follow with them (Beta 128 / WD1793 mid-command, the tape deck mid-block): the target takes the source's time axis, so the disk's rotation phase and the pulse in flight hold. An empty source drive empties the target's. A target floppy or tape with unsaved writes refuses the transfer.
+- **NOT moved (by design, for now): SD cards, hard disks and CDs.** The target keeps its own, and their controllers (IDE channel, Z-Controller) keep the target's state. Every report carries an explicit `SD / HDD / CD` item saying so.
+- The target's TTD session is dropped (409 while it records).
+
+MCP: `emulator_manage` action `transfer_state` (`to` or `model` + optional `ram_size`, `check`). Core API: `MachineStateTransfer` (`core/src/loaders/snapshot/machinestatetransfer.h`).
+
 #### Command Batching
 For VideoWall and bulk operations:
 ```json
@@ -467,6 +507,7 @@ end
 - `videowall` - VideoWall control
 - `tape_*` / `feature_*` globals - Full tape transport, audio bridge and feature toggles (same surface as the CLI `tape` / `feature` commands)
 - `step_out`, `skip_until`, `mem_find`, `screen_digest`, `beam_position`, `frame_cost` - Advanced stepping and screen/frame analysis
+- `video_layout`, `video_pixel`, `video_pixel_at`, `video_address`, `video_address_z80`, `video_text` - Video debug translation (what makes a pixel, which pixels a byte feeds)
 - `coverage_*`, `ay_log_*`, `audio_capture_*`, `video_record*` globals - Analyzers and capture (same surface as the CLI commands)
 - `assemble`, `listing_*` globals - In-place assembly and source-level stepping
 - `ttd_*` globals - Time-Travel Debugging (record, seek, reverse search, dump/load)

@@ -136,6 +136,28 @@ The following table describes the meaning of the Status Register bits after the 
 *   Monitor the emulated /WPRT input state at the start. Monitor the emulated /WF input during the `WG`-active phase.
 *   Accurately update all status bits upon command completion or termination due to error.
 
+### How unreal-ng handles Lost Data and density
+
+unreal-ng follows the datasheet text (p.14): "If the DR has not been loaded by the time the index pulse
+is encountered the operation is terminated [...] If a byte is not present in the DR when needed, a byte
+of zeros is substituted."
+
+*   **First byte:** DRQ goes up when the command is accepted. When the index pulse arrives and the host
+    still has not loaded the Data Register, the command ends at once with LOST DATA, BUSY cleared and INTRQ.
+    Nothing is written.
+*   **Later bytes:** when a byte is due and the Data Register was not reloaded, `0x00` is written to the
+    track (as plain data: a missed byte is never read as a format control byte such as `F5`/`F7`), LOST
+    DATA is set, DRQ stays up and writing continues until the next index pulse.
+*   **Worked example:** a formatter feeds 6250 bytes but stalls for 300 T-states (about 2.7 byte times at
+    112 T per byte) in the middle of the track. The two byte cells that pass without data are written as
+    `00 00`, status bit 2 is set at the end, and the track is still complete from index to index.
+*   **E = 1** adds the head settle delay (30 ms at 1 MHz, 15 ms at 2 MHz) before the controller starts
+    waiting for the index pulse.
+*   **Density of the written track:** the controller writes at the rate of its own clock (250 kbit/s at
+    1 MHz, 500 kbit/s at 2 MHz). When the track under the head was recorded in the other encoding or at the
+    other rate, it is replaced by a blank track of the nominal length for the new format (6250 bytes MFM DD,
+    3125 FM DD, 12 500 MFM HD, 6250 FM HD) before writing starts.
+
 
 ## Track Structure and Formatting Details
 

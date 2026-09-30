@@ -1,5 +1,12 @@
 # RZX on the per-step work gate: how to apply it
 
+> **Applied (2026-09-29).** `kStepWorkRzx = 1u << 3`; the RZX block sits in
+> `Z80::StepInstructionWithWork` after the TTD input, with one exit through the
+> machine engine and `OnCPUStep` (`Z80::RzxFrameEnd` takes the forced
+> interrupt); `RzxSession` sets and clears the bit and refuses a machine with
+> `kStepWorkInterruptSource`. The `IN` hook stays next to the TTD port journal.
+> See [design.md](design.md) "As built".
+
 Handoff note for the RZX playback work ([design.md](design.md) §5, "Hook 2:
 fetch counting and the interrupt schedule"). The gate that section plans
 ("the gate becomes a small bit set") exists on master since 2026-09-29, built

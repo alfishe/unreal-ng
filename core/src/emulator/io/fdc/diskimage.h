@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <memory>
+#include <string>
 #include <vector>
 
 // @see http://www.bitsavers.org/components/westernDigital/FD179X-01_Data_Sheet_Oct1979.pdf
@@ -417,6 +419,23 @@ public:
         }
 
         bool hasWeakBits() const { return !_weak.empty(); }
+
+        /// Nominal bytes per 300 rpm revolution for an encoding at a data rate:
+        /// MFM 6250 (DD) / 12 500 (HD), FM 3125 (DD) / 6250 (HD)
+        static size_t NominalTrackSize(Encoding enc, FdcDataRate rate)
+        {
+            const size_t dd = (enc == Encoding::MFM) ? DEFAULT_TRACK_SIZE_MFM : DEFAULT_TRACK_SIZE_FM;
+            return rate == FdcDataRate::Rate500Kbps ? dd * 2 : dd;
+        }
+
+        /// Bit rate the track was recorded at, derived from its length and encoding (the images carry no
+        /// density field). Rule: HD when the stream is at least 1.5x the DD nominal length for its encoding
+        /// (MFM >= 9375 bytes, FM >= 4688 bytes). Real DD dumps (6208..6464 MFM bytes) stay DD.
+        FdcDataRate RecordedDataRate() const
+        {
+            const size_t dd = (_encoding == Encoding::MFM) ? DEFAULT_TRACK_SIZE_MFM : DEFAULT_TRACK_SIZE_FM;
+            return (_raw.size() * 2 >= dd * 3) ? FdcDataRate::Rate500Kbps : FdcDataRate::Rate250Kbps;
+        }
 
         bool weakByte(size_t offset) const
         {
@@ -1189,6 +1208,11 @@ public:
     }
 
     DiskImage() = delete;
+
+    /// A deep copy: every track's stream (data, clock and weak-bit maps) with its sector index rebuilt, the
+    /// geometry and the 40-track flag. The copy is clean (no dirty flags) and stands for `filePath`. Used when a
+    /// machine's state moves to another instance (MachineStateTransfer): the other machine gets its own disk
+    std::unique_ptr<DiskImage> Clone(const std::string& filePath) const;
 
     virtual ~DiskImage()
     {

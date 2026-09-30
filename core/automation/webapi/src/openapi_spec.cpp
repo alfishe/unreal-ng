@@ -140,6 +140,10 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     tagInterpreter["name"] = "Interpreter Control";
     tagInterpreter["description"] = "Python and Lua interpreter management";
     tags.append(tagInterpreter);
+    Json::Value tagRzx;
+    tagRzx["name"] = "RZX Playback";
+    tagRzx["description"] = "Play RZX input recordings: every IN and interrupt follows the recording";
+    tags.append(tagRzx);
     Json::Value tagTTD;
     tagTTD["name"] = "Time-Travel Debug";
     tagTTD["description"] =
@@ -157,6 +161,7 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
 #include "openapi/openapi_tape_disk.inc"
 #include "openapi/openapi_media.inc"
 #include "openapi/openapi_snapshot.inc"
+#include "openapi/openapi_rzx.inc"
 #include "openapi/openapi_capture.inc"
 #include "openapi/openapi_basic.inc"
 #include "openapi/openapi_keyboard.inc"
@@ -170,6 +175,7 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
 #include "openapi/openapi_ports.inc"
 #include "openapi/openapi_analyzers.inc"
 #include "openapi/openapi_analysis.inc"
+#include "openapi/openapi_video.inc"
 #include "openapi/openapi_stepping.inc"
 #include "openapi/openapi_breakpoints.inc"
 #include "openapi/openapi_debug.inc"

@@ -313,6 +313,11 @@ bool Config::ParseConfig(IniFile& inimanager)
 	config.trdos_present = inimanager.GetLongValue(beta128, "beta128", 1) ? true : false;
 	config.trdos_traps = inimanager.GetLongValue(beta128, "Traps", 1) ? true : false;
 	config.wd93_nodelay = inimanager.GetLongValue(beta128, "Fast", 0) ? true : false;  // Default: off (realistic WD1793 timing)
+	{
+		// Turbo VG (WD1793 clocked at 2 MHz while positioning): absent = the machine's own policy
+		const long turboVg = inimanager.GetLongValue(beta128, "TurboVG", -1);
+		config.fdcTurboVg = static_cast<int8_t>(turboVg < 0 ? -1 : (turboVg ? 1 : 0));
+	}
 	config.trdos_interleave = (uint8_t)inimanager.GetLongValue(beta128, "IL", 1) - 1;
 	if (config.trdos_interleave > 2)
 		config.trdos_interleave = 0;
@@ -730,6 +735,11 @@ Config::ConfigLoadedHook& Config::ConfigLoadedHookStorage()
 void Config::SetConfigLoadedHook(ConfigLoadedHook hook)
 {
 	ConfigLoadedHookStorage() = std::move(hook);
+}
+
+Config::ConfigLoadedHook Config::GetConfigLoadedHook()
+{
+	return ConfigLoadedHookStorage();
 }
 
 bool Config::DetermineModel(const char* model, uint32_t ramsize)

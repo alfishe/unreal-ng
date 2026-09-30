@@ -9,6 +9,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <random>
 #include <string>
@@ -24,6 +25,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/mainloop.h"
 #include "emulatorcontext.h"
+#include "emulator/rzx/rzxsession.h"
 
 
 class BreakpointManager;
@@ -94,6 +96,7 @@ protected:
     bool _hasPreferredModel = false;
     MEM_MODEL _preferredModel = MM_PENTAGON;
     uint32_t _preferredRamSize = 0;
+    std::function<void(CONFIG&)> _configOverride;
     std::string _customConfigPath;  // Optional custom config file path
 
     Config* _config = nullptr;
@@ -109,6 +112,14 @@ protected:
     std::atomic<bool> _hiddenGroupMember{false};  // see SetHiddenGroupMember
     std::mutex _speedInterceptorMutex;
     std::function<bool(uint8_t)> _speedInterceptor;  // see SetSpeedChangeInterceptor
+
+    // RZX playback, created on first use. _rzxMutex serializes the commands
+    // (play, stop, seek: a seek may play for seconds); _rzxSessionMutex only
+    // guards the pointer, so a status read never waits for a command
+    mutable std::mutex _rzxMutex;
+    mutable std::mutex _rzxSessionMutex;
+    std::unique_ptr<rzx::RzxSession> _rzxSession;
+    rzx::RzxSession& RzxSessionLocked();
 
     // Control flow
     volatile bool _stopRequested = false;
@@ -158,6 +169,16 @@ public:
         _preferredModel = model;
         _preferredRamSize = ramSize;
         _hasPreferredModel = true;
+    }
+
+    /// Adjust this instance's configuration after it is loaded and the
+    /// preferred model is applied, before any device is created from it.
+    /// Must be called before Init(). Per instance - unlike the process-wide
+    /// Config::SetConfigLoadedHook - so one caller cannot change another
+    /// instance's hardware (MachineStateTransfer fits the source's cards).
+    void SetConfigOverride(std::function<void(CONFIG&)> configOverride)
+    {
+        _configOverride = std::move(configOverride);
     }
 
     /// Set a custom config file path. Must be called before Init().
@@ -278,7 +299,26 @@ public:
     void Stop();
 
     // File format operations
-    bool LoadSnapshot(const std::string& path);
+    /// `reportedPath`: the file named in the load notification and the core
+    /// state instead of `path` (an RZX start snapshot written to a temporary file)
+    bool LoadSnapshot(const std::string& path, const std::string& reportedPath = {});
+
+    /// RZX playback (emulator/rzx/rzxsession.h): the recording's start snapshot
+    /// is loaded, then every IN returns the recorded value and the interrupts
+    /// follow the recorded fetch counts until the end, a desync or StopRzx().
+    /// The machine continues live afterwards. ModelMismatch names the model to
+    /// switch to (rzx::PlayResult::requiredModel)
+    rzx::PlayResult PlayRzx(const std::string& path, const rzx::PlayerOptions& options = {});
+    rzx::PlayResult PlayRzx(std::shared_ptr<const rzx::File> file, const std::string& sourcePath,
+                            const rzx::PlayerOptions& options = {});
+    bool StopRzx();
+    /// Move the RZX playback to the boundary after `frame` frames (keyframes
+    /// make a seek back cost at most one keyframe interval of play)
+    bool SeekRzx(uint64_t frame, std::string* error = nullptr);
+    bool IsRzxPlaying() const;
+    rzx::SessionStatus GetRzxStatus() const;
+    /// `ext` (no dot, any case) is an RZX recording
+    static bool IsRzxExtension(const std::string& ext);
     bool SaveSnapshot(const std::string& path);
     /// A tape file (any TapeLoaderRegistry format) or a folder into the tape
     /// slot, at once; the deck stops and plays the new tape from its start

@@ -192,6 +192,11 @@ public:
 
     /// BaseConf clock select: 3.5, 7 or 14 MHz (updateTurboMode)
     uint8_t TtdClockUnits() const override { return 4; }
+
+    /// ZX-Evo BaseConf turbo VG: the FPGA feeds the VG93 CLK and switches it to 2 MHz on the STEP rising
+    /// edge and back to 1 MHz on the first DRQ; RCLK stays at 250 kHz (fpga/baseconf/trunk/vg93/vg93.v,
+    /// fapch_zek.v). No port bit: the switching is automatic
+    FdcClockPolicy DefaultFdcClockPolicy() const override { return FdcClockPolicy::AutoStepTurbo; }
     bool IsPort_FF77(uint16_t port);  // Partial decode for ATM3
     bool IsPort_37F7(uint16_t port);  // 4MB memory manager
     bool IsPort_BF(uint16_t port);    // ATM3 control

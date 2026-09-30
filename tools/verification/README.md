@@ -48,6 +48,13 @@ Performs the full workflow: creating the RAM disk, copying the project, building
 
 ---
 
+### TTD Benchmark Matrix
+
+#### `ttd-bench/ttd_bench_compare.py`
+Compares and summarizes TTD benchmark matrix runs (`TTDMatrix/*` in core-benchmarks) and exports the stored baselines, including the byte baseline for the core-tests CI gate. A byte difference fails the comparison; a timing change is reported as a percent. See [`ttd-bench/README.md`](ttd-bench/README.md).
+
+---
+
 ### Tape Fixture Vetting
 
 Tools live in per-format subfolders — `tape/tzx/` and `tape/tap/` (CSW joins when P3 lands).
@@ -120,6 +127,19 @@ libspectrum reads from our file with the reference. See `szx/README.md`.
 
 *   **Usage:** `tools/verification/szx/check-interop.sh [build-dir]`
 *   **Needs:** libspectrum (`brew install libspectrum`, `apt install libspectrum-dev`) and a built `core-tests`.
+
+---
+
+### RZX expected states and checks
+
+Located in `rzx/`. `rzxplay-memptr.py` runs SkoolKit's `rzxplay.py` with its
+MEMPTR-exact simulator to make the expected states in `testdata/loaders/rzx/`
+and to check any recording; `rzxtrim.py` cuts recordings down to fixtures.
+`core-tests` plays folders of recordings against them (`UNREAL_RZX_CORPUS`,
+`UNREAL_RZX_FULL`). See `rzx/README.md`.
+
+*   **Usage:** `rzxplay-memptr.py --quiet --no-screen [--stop N] game.rzx game.z80`
+*   **Needs:** SkoolKit with its C extensions (`pip install skoolkit` in a venv).
 
 ---
 

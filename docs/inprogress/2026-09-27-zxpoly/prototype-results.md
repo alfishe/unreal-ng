@@ -140,6 +140,16 @@ Infrastructure:
 - **Mouse:** the Kempston mouse is gated like the keyboard; moves, buttons
   and wheel reach all four at the frame boundary. There is no host joystick
   device in unreal-ng, so nothing to gate there.
+- **Automation input:** WebAPI, MCP, CLI, Lua and Python inject keys and the
+  Kempston mouse through the master's `DebugKeyboardManager` /
+  `DebugMouseManager`, which hand every event to the TTD live-input gateway
+  (`TimeTravelManager::SubmitLiveInput`). The group sets a live-input
+  interceptor there, so keys, mouse moves, buttons, wheel, counter writes
+  and a keyboard reset go into the group's queue and reach all four modules
+  at one frame boundary. General Sound stimuli stay the master's own. Before
+  this, a WebAPI `keyboard/tap` pressed the master's key alone and the
+  machine diverged at once (`AutomationInputReachesAllFourModules`,
+  mutation-checked).
 - **Disk writes:** they stay in each machine's in-memory image; only an
   explicit `SaveDisk`, on the visible master, writes a file.
 - **Machines without TR-DOS:** a stock 128K has no TR-DOS ROM, so a

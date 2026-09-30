@@ -6,6 +6,7 @@
 #include <emulator/emulator.h>
 #include <emulator/media/mediacontrol.h>
 #include <emulator/emulatormanager.h>
+#include <emulator/rzx/rzxlauncher.h>
 #include <emulator/memory/memory.h>
 #include <emulator/memory/memoryaccesstracker.h>
 #include <emulator/memory/memorymap.h>  // TD-3 sparse map + hexdump
@@ -126,6 +127,55 @@ inline pybind11::object MediaCallPy(Emulator& self, const std::string& verb, con
     }
     return StateNodeToPy(MediaControl(self.GetContext()).Execute(request).ToValue());
 }
+
+/// RZX playback helpers for the bindings below
+namespace python_rzx
+{
+    /// The RZX playback status as a dict (the WebAPI rzx/status fields)
+    inline pybind11::dict StatusDict(const rzx::SessionStatus& status)
+    {
+        pybind11::dict d;
+        d["loaded"] = status.loaded;
+        d["active"] = status.active;
+        d["summary"] = rzx::RzxLauncher::StatusLine(status);
+        if (!status.loaded)
+            return d;
+        const rzx::PlayerStatus& player = status.player;
+        d["path"] = status.path;
+        d["creator"] = status.creator;
+        d["version"] = status.version;
+        d["snapshot"] = status.snapshot;
+        d["state"] = std::string(rzx::StateName(player.state));
+        d["frame"] = player.frame;
+        d["total_frames"] = player.totalFrames;
+        d["block"] = player.block + 1;
+        d["blocks"] = player.blocks;
+        d["interrupts"] = player.interrupts;
+        d["desyncs"] = player.desyncs;
+        d["drift"] = player.drift;
+        d["max_drift"] = player.maxDrift;
+        d["keyframes"] = player.keyframes;
+        d["keyframe_bytes"] = player.keyframeBytes;
+        d["keyframe_interval"] = player.keyframeInterval;
+        d["reason"] = player.stopReason;
+        if (player.desyncs > 0)
+        {
+            pybind11::dict first;
+            first["kind"] = std::string(rzx::DesyncName(player.firstDesync.kind));
+            first["frame"] = player.firstDesync.frame;
+            first["expected"] = player.firstDesync.expected;
+            first["actual"] = player.firstDesync.actual;
+            first["pc"] = player.firstDesync.pc;
+            d["first_desync"] = first;
+        }
+        return d;
+    }
+
+    inline std::string ResolveId(const std::string& id)
+    {
+        return id.empty() ? EmulatorManager::GetInstance()->GetSelectedEmulatorId() : id;
+    }
+}  // namespace python_rzx
 
 namespace PythonBindings
 {
@@ -330,6 +380,60 @@ namespace PythonBindings
             auto emu = mgr->GetEmulator(selectedId);
             return emu.get();
         }, py::return_value_policy::reference, "Get currently selected emulator");
+
+        // RZX input recordings, by emulator id (default: the selected one). A
+        // model switch replaces the machine: the answer's emulator_id is the new one
+        m.def("rzx_play", [](const std::string& path, const std::string& emulatorId, const std::string& desyncMode,
+                             bool eiShortFrame, bool ldAirQuirk, bool ignoreLaterSnapshots, bool switchModel) -> py::dict {
+            rzx::LaunchRequest request;
+            request.emulatorId = python_rzx::ResolveId(emulatorId);
+            request.path = path;
+            if (!rzx::RzxLauncher::ParseDesyncMode(desyncMode, request.options.desyncMode))
+                throw std::invalid_argument("desync_mode '" + desyncMode + "': expected strict or tolerant");
+            request.options.eiShortFrameBlocksInt = eiShortFrame;
+            request.options.ldAirParityQuirk = ldAirQuirk;
+            request.options.ignoreLaterSnapshots = ignoreLaterSnapshots;
+            request.switchModel = switchModel;
+            const rzx::LaunchResult result = rzx::RzxLauncher::Play(request);
+            py::dict d;
+            d["ok"] = result.play.Ok();
+            d["error"] = std::string(rzx::PlayErrorName(result.play.error));
+            d["message"] = result.play.message;
+            d["emulator_id"] = result.emulator ? result.emulator->GetId() : std::string();
+            d["model_switched"] = result.modelSwitched;
+            d["previous_emulator_id"] = result.previousEmulatorId;
+            d["required_model"] = result.play.requiredModel;
+            d["model"] = result.switchedToModel;
+            if (result.emulator)
+                d["status"] = python_rzx::StatusDict(result.emulator->GetRzxStatus());
+            return d;
+        }, "Play an RZX recording; switches to the recording's model unless switch_model is False",
+           py::arg("path"), py::arg("emulator_id") = "", py::arg("desync_mode") = "strict",
+           py::arg("ei_short_frame_blocks_int") = false, py::arg("ld_air_parity_quirk") = false,
+           py::arg("ignore_later_snapshots") = false, py::arg("switch_model") = true);
+
+        m.def("rzx_stop", [](const std::string& emulatorId) -> bool {
+            auto emulator = EmulatorManager::GetInstance()->GetEmulator(python_rzx::ResolveId(emulatorId));
+            return emulator && emulator->StopRzx();
+        }, "Stop RZX playback; the machine runs live", py::arg("emulator_id") = "");
+
+        m.def("rzx_seek", [](uint64_t frame, const std::string& emulatorId) -> bool {
+            auto emulator = EmulatorManager::GetInstance()->GetEmulator(python_rzx::ResolveId(emulatorId));
+            if (!emulator)
+                throw std::invalid_argument("no emulator '" + emulatorId + "'");
+            std::string error;
+            if (!emulator->SeekRzx(frame, &error))
+                throw std::runtime_error(error);
+            return true;
+        }, "Move the RZX playback to the boundary after `frame` frames (RuntimeError with the reason)",
+           py::arg("frame"), py::arg("emulator_id") = "");
+
+        m.def("rzx_status", [](const std::string& emulatorId) -> py::dict {
+            auto emulator = EmulatorManager::GetInstance()->GetEmulator(python_rzx::ResolveId(emulatorId));
+            if (!emulator)
+                throw std::invalid_argument("no emulator '" + emulatorId + "'");
+            return python_rzx::StatusDict(emulator->GetRzxStatus());
+        }, "RZX playback status (frame, progress, desyncs, drift)", py::arg("emulator_id") = "");
 
         m.def("emu_select", [](const std::string& id) -> bool {
             auto* mgr = EmulatorManager::GetInstance();
@@ -1094,6 +1198,10 @@ namespace PythonBindings
                 return self.LoadSnapshot(path);
             }, "Load snapshot file (RuntimeError while TTD records)", py::arg("path"))
             .def("snapshot_save", &Emulator::SaveSnapshot, "Save snapshot file", py::arg("path"))
+            // RZX playback on this machine (unreal.rzx_play plays, switching the model when needed)
+            .def("rzx_stop", [](Emulator& self) { return self.StopRzx(); }, "Stop RZX playback")
+            .def("rzx_status", [](Emulator& self) { return python_rzx::StatusDict(self.GetRzxStatus()); },
+                 "RZX playback status")
             
             // Breakpoint management
             .def("bp", [](Emulator& self, uint16_t addr) -> int {
@@ -3719,52 +3827,28 @@ namespace PythonBindings
             return d;
         }, "Tagged paging latches + bank table (P1-2 design)")
 
-        .def("beam_position", [](Emulator& self) -> py::dict {
-            py::dict d;
-            EmulatorContext* context = self.GetContext();
-            if (!context || !context->pScreen)
-            {
-                d["error"] = "context not initialized";
-                return d;
-            }
-
-            const CONFIG& config = context->config;
-            Screen* screen = context->pScreen;
-            if (config.t_line == 0 || config.frame == 0)
-            {
-                d["error"] = "machine timing not initialized";
-                return d;
-            }
-
-            Z80* cpu = context->pCore ? context->pCore->GetZ80() : nullptr;
-            const uint32_t tstate = cpu ? static_cast<uint32_t>(cpu->t) : screen->GetCurrentTstate();
-            const uint32_t tInFrame = tstate % config.frame;
-
-            const BeamPosition beam = screen->DescribeBeam(tInFrame);
-            const uint32_t tstatesPerLine = beam.valid ? screen->GetRasterState().tstatesPerLine : config.t_line;
-            const uint32_t line = tInFrame / tstatesPerLine;
-
-            d["tstate"] = tstate;
-            d["tstate_in_frame"] = tInFrame;
-            d["frame"] = static_cast<uint64_t>(context->emulatorState.frame_counter);
-            d["line"] = line;
-            d["dot_in_line"] = tInFrame % tstatesPerLine;
-            d["beam_x"] = beam.beamX;
-            d["beam_y"] = line;
-            d["zone"] = std::string(beam.zone);
-            d["vertical_zone"] = std::string(beam.verticalZone);
-            d["horizontal_zone"] = std::string(beam.horizontalZone);
-            d["in_paper"] = beam.inPaper;
-            if (beam.inPaper)
-            {
-                py::dict paper;
-                paper["x"] = beam.paperX;
-                paper["x_end"] = beam.paperXEnd;
-                paper["y"] = beam.paperY;
-                d["paper"] = paper;
-            }
-            return d;
-        }, "Raster beam position and zone at the current t-state")
+        // Beam and video debug translation (PLAN #42): the same DeviceState reports every interface returns
+        .def("beam_position", [](Emulator& self) -> py::object {
+            return StateNodeToPy(DeviceState::VideoBeam(self.GetContext()));
+        }, "Raster beam position and zone at the current t-state, plus the layer pixel under it (layers)")
+        .def("video_layout", [](Emulator& self) -> py::object {
+            return StateNodeToPy(DeviceState::VideoLayout(self.GetContext()));
+        }, "Current video mode: layers, beam windows, framebuffer placement")
+        .def("video_pixel", [](Emulator& self, unsigned x, unsigned y, unsigned layer) -> py::object {
+            return StateNodeToPy(DeviceState::VideoPixel(self.GetContext(), layer, x, y));
+        }, "Memory, registers and palette cell behind a surface pixel", py::arg("x"), py::arg("y"), py::arg("layer") = 0)
+        .def("video_pixel_at", [](Emulator& self, unsigned t) -> py::object {
+            return StateNodeToPy(DeviceState::VideoPixelAtBeam(self.GetContext(), t));
+        }, "The same for the point under the beam at a frame T-state (layer pixel or border)", py::arg("t"))
+        .def("video_address", [](Emulator& self, unsigned page, unsigned offset) -> py::object {
+            return StateNodeToPy(DeviceState::VideoAddress(self.GetContext(), page, offset));
+        }, "Pixels a RAM byte (page, offset 0..0x3FFF) feeds", py::arg("page"), py::arg("offset"))
+        .def("video_address_z80", [](Emulator& self, unsigned address) -> py::object {
+            return StateNodeToPy(DeviceState::VideoAddressZ80(self.GetContext(), address));
+        }, "Pixels the byte at a Z80 address feeds (current paging)", py::arg("address"))
+        .def("video_text", [](Emulator& self, unsigned layer) -> py::object {
+            return StateNodeToPy(DeviceState::VideoText(self.GetContext(), layer));
+        }, "Text grid of a text mode (ATM / ZX-Evo)", py::arg("layer") = 0)
 
         .def("frame_cost", [](Emulator& self) -> py::dict {
             py::dict d;

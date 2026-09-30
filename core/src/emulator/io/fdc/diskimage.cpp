@@ -43,6 +43,23 @@ bool DiskImage::allocateMemory(uint8_t cylinders, uint8_t sides)
     return result;
 }
 
+std::unique_ptr<DiskImage> DiskImage::Clone(const std::string& filePath) const
+{
+    auto copy = std::make_unique<DiskImage>(_cylinders, _sides);
+    for (size_t i = 0; i < _tracks.size() && i < copy->_tracks.size(); i++)
+    {
+        Track& to = copy->_tracks[i];
+        static_cast<RawTrack&>(to) = static_cast<const RawTrack&>(_tracks[i]);
+        to.reindex();
+        to.markClean();
+    }
+    copy->_loaded = _loaded;
+    copy->_fortyTrack = _fortyTrack;
+    copy->_filePath = filePath;
+    copy->_dirty = false;
+    return copy;
+}
+
 void DiskImage::releaseMemory()
 {
     _tracks.clear();

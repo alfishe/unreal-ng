@@ -3,7 +3,8 @@
     paths["/api/v1/emulator/{id}/video/beam"]["get"]["tags"].append("Screen State");
     paths["/api/v1/emulator/{id}/video/beam"]["get"]["description"] =
         "Current raster beam position (dot/line/zone, t-states into the frame) plus "
-        "frame timing constants from the machine model.";
+        "frame timing constants from the machine model. layers[] names the layer pixel under the beam "
+        "(id, x, x_end, y) in the mode's own coordinates (see /video/layout, /video/pixel).";
     paths["/api/v1/emulator/{id}/video/beam"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/video/beam"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/video/beam"]["get"]["parameters"][0]["required"] = true;

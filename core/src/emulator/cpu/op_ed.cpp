@@ -271,6 +271,8 @@ Z80OPCODE ope_4D(Z80 *cpu) { // reti
 Z80OPCODE ope_4F(Z80 *cpu) { // ld r,a
    cpuidle(cpu->IR(), 1);  // the old IR is on the bus in the extra T (FUSE)
 
+   // An R delta across this step must still count its 2 fetches (RZX)
+   cpu->rLoadAdjust = static_cast<uint8_t>(cpu->rLoadAdjust + cpu->r_low - cpu->a);
    cpu->r_low = cpu->a;
    cpu->r_hi = cpu->a & 0x80;
 }

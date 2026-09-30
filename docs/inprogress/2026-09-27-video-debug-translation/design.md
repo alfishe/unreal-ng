@@ -1,7 +1,8 @@
 # Video debug translation: mode-aware beam, pixel and memory mapping
 
-Status: design, revision 2 (after independent review, see §14). Not
-implemented. Scope: every machine and video mode unreal-ng emulates today,
+Status: design, revision 2 (after independent review, see §14). Phase 0
+done 2026-09-27 (§10); **phases 1 and 2 done 2026-09-29** (see "Phase 1 as
+built" and "Phase 2 as built" below); phases 3-5 open. Scope: every machine and video mode unreal-ng emulates today,
 plus the ones on the roadmap (TSConf, ZX Next, Sprinter, ZX-Poly, Timex, GMX).
 
 ## 1. Problem
@@ -30,6 +31,46 @@ The same facts (pixel position, memory address, zone) exist in at least six
 places with different assumptions. Nothing ties any of them to the renderer.
 The ATM horizontal window was wrong in the renderer itself (T 32..192 instead
 of T 8..168, fixed 2026-09-27), and no debug view could have shown it.
+
+### Phase 1 as built (2026-09-29)
+
+| Piece | Where | Note |
+|-------|-------|------|
+| Types | `core/src/emulator/video/map/videomap.h` | `std::vector` instead of `FixedVector` (debug path); one layer per family so far, so `PixelSources` holds one `LayerContribution` (composition Select); text layers are addressed in pixels, with `textColumns/textRows` for the grid |
+| Interface | `video/map/videomapper.h` | `IVideoMapper::Layout / SourcesAt / BorderSources / PixelsFor / TextAt`; `MemView` reads RAM pages and the ATM font (`InternalTable`) |
+| Service | `video/map/videomapservice.{h,cpp}` | stateless, one per query; reads the machine directly (paused use) - the running-machine snapshot is phase 3 |
+| Family switch | `video/videofamily.h` (`FamilyOf`) | used by `ScreenZX::SelectRangeRenderer` and the service: a mode is described by the family that draws it (TS / Timex / GMX / PHR are drawn, and so described, as ZX until their renderers exist) |
+| Shared tables | `video/zx/zxgeometry.h`, `video/atm/atmgeometry.h`, `video/profi/profigeometry.h` | the renderers now take their constants, address formulas, attribute decodes and palettes from these (G1); AlCo uses the ZX layout and the ATM pixel-pair packing |
+| Mappers | `video/zx/zxvideomapper`, `video/alco/alcovideomapper`, `video/atm/atmvideomapper`, `video/profi/profivideomapper` | beside their renderers |
+| Tests | `core/tests/emulator/video/videomapservice_test.cpp` | per mode (48K, Pentagon, P384, P16, PMC, ATM16, ATMHR, ATMTX, ATMTL, Profi HR): mapper colour == framebuffer over random memory and palettes; every memory source lists its pixel (round trip); flipping a source's bits changes that pixel as predicted and not a pixel it does not feed; window corners +-1 T / line |
+
+Found by the tests: P384 stores its framebuffer 16 lines higher (it starts
+right after vsync), now `ZxGeometry::kP384ExtraTopLines` for the renderer
+and the mapper.
+
+### Phase 2 as built (2026-09-29)
+
+The field-writer of §6 is the existing `StateNode` report tree: the core
+builds each answer once (`core/src/emulator/state/devicestatevideo.cpp`) and
+every interface converts the tree, so names and values are the same
+everywhere by construction.
+
+| Question | DeviceState | WebAPI | CLI | Lua / Python | MCP |
+|----------|-------------|--------|-----|--------------|-----|
+| beam | `VideoBeam` | `GET /video/beam` (+ `layers[]`) | `beam` | `beam_position()` | aspect `timing` |
+| layout | `VideoLayout` | `GET /video/layout` | `video layout` | `video_layout()` | aspect `video_layout` |
+| pixel | `VideoPixel`, `VideoPixelAtBeam` | `GET /video/pixel?x&y[&layer]` / `?t` | `video pixel x y [layer]` / `video pixel t T` | `video_pixel(x, y[, layer])`, `video_pixel_at(t)` | `invoke_api` |
+| byte -> pixels | `VideoAddress`, `VideoAddressZ80` | `GET /video/address?page&offset` / `?z80` | `video address page offset` / `video address z80 A` | `video_address(page, offset)`, `video_address_z80(a)` | `invoke_api` |
+| text | `VideoText` | `GET /video/text[?layer]` | `video text [layer]` | `video_text([layer])` | aspect `video_text` |
+
+- Pixel answers carry `state_at: "current"` and `values_at: "current"`
+  until the write log (phase 3) can answer for an earlier T.
+- At the beam, a border point reports `border: true` with its register and
+  palette sources (the border rows count, which `in_visible_area` does not).
+- Screen OCR: a text layer is read exactly from its codes
+  (`ScreenOCR::textLayerScreen`); font matching stays for bitmap modes.
+- Tests: `devicestatevideo_test.cpp` (field names and values per report),
+  `mcp-tools-test.cpp` (the two aspects), `screenocr_test.cpp` (ATMTX text).
 
 ## 2. Goals
 
