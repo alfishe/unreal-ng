@@ -739,7 +739,6 @@ bool Z80::RzxFrameEnd(rzx::RzxPlayer& player)
     // The NMOS LD A,I / LD A,R parity quirk only by option (SkoolKit flag 1)
     if (!player.Options().ldAirParityQuirk && boundary == Z80_BOUNDARY_LD_A_IR)
         boundary = Z80_BOUNDARY_NONE;
-    _context->pScreen->_vid.memcyc_lcmd = 0;  // new command (as ProcessInterrupts)
     HandleINT(0xFF);
     return true;
 }
