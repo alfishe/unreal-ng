@@ -1126,7 +1126,11 @@ void EmulatorAPI::switchModel(const HttpRequestPtr& req, std::function<void(cons
         }
 
         std::shared_ptr<Emulator> newEmulator = switched.emulator;
-        newEmulator->Start();
+        // Start() blocks in MainLoop::Run() until Stop() is requested - calling
+        // it directly on the HTTP thread never returns a response. Every other
+        // lifecycle endpoint starts an emulator via StartEmulatorAsync (see
+        // create()/start() above); do the same here.
+        manager->StartEmulatorAsync(newEmulator->GetId());
 
         Json::Value ret;
         ret["status"] = "success";
