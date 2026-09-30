@@ -4,6 +4,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/rtc/smucnvram.h"
 #include "emulator/memory/memory.h"
+#include "emulator/memory/scorpion/scorpionturbooverlay.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/screen.h"
 
@@ -33,6 +34,11 @@ protected:
     // Saved #7FFD state prior to entering Shadow Monitor via #1FFD bit 1
     uint8_t _savedP7FFD = 0x00;
     bool _savedP7FFDValid = false;
+
+    // Turbo+ wait states at 7 MHz (ScorpionTurboOverlay): created on the first switch to turbo, installed on the
+    // host bus while turbo is on (SyncTurboWaits)
+    std::unique_ptr<ScorpionTurboOverlay> _turboOverlay;
+    bool _turboWaitsInstalled = false;
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -50,6 +56,11 @@ public:
 
     void SetRAMPage(uint8_t oage) override;
     void SetROMPage(uint8_t page) override;
+
+    /// Install the turbo wait-state overlay while turbo is on, remove it otherwise (the turbo switch, reset, a
+    /// TTD restore, whose chipset copy sets the clock without the decoder)
+    void SyncTurboWaits();
+    bool AreTurboWaitsInstalled() const { return _turboWaitsInstalled; }
     /// endregion </Interface methods>
 
     /// region <Helper methods>

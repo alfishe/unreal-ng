@@ -9,6 +9,7 @@
 #include "emulator/io/spi/zcontrollerspi.h"
 #include "emulator/media/mediaslot.h"
 #include "emulator/memory/atm/evoavr.h"
+#include "emulator/memory/atm/evoturbooverlay.h"
 
 #include "portdecoder_atm710.h"
 
@@ -160,6 +161,11 @@ protected:
     ZControllerSpi _zc;
     EvoSdSlot _sdSlot{*this};
     bool _sdWriteProtect = false;   // the slot's write-protect switch
+
+    // The DRAM's wait states at 14 MHz (EvoTurboOverlay): created on the first switch to 14 MHz, installed on
+    // the host bus while the CPU runs at 14 MHz (SyncTurboWaits)
+    std::unique_ptr<EvoTurboOverlay> _turboOverlay;
+    bool _turboWaitsInstalled = false;
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -179,6 +185,14 @@ public:
     Ds12887& GetRtc() { return _evoAvr; }
     EvoAvr& GetEvoAvr() { return _evoAvr; }
     RtcBinding GetRtcBinding() override;
+
+    /// Install the 14 MHz wait-state overlay while the clock select says 14 MHz, remove it otherwise
+    /// (updateTurboMode; a TTD restore, whose chipset copy sets the clock without the decoder)
+    void SyncTurboWaits();
+    bool AreTurboWaitsInstalled() const { return _turboWaitsInstalled; }
+    /// The DRAM cache words (TTDEvoTurboCache): empty while the overlay is not installed
+    EvoTurboOverlay::CacheState GetTurboCacheState() const;
+    void SetTurboCacheState(const EvoTurboOverlay::CacheState& state);
     /// endregion </Interface methods>
 
     /// region <Port detection>
@@ -221,6 +235,9 @@ public:
     /// region <Port handlers>
 protected:
     void updateTurboMode() override;
+    /// An I/O cycle at 14 MHz: the DRAM cache words become invalid; an external port (AY, the VG93 in shadow)
+    /// takes 3 clocks more (research-zxevo.md A.4)
+    void NoteTurboIo(uint16_t port);
     void Port_FF77_Out_ATM3(uint16_t port, uint8_t value, uint16_t pc);
     void Port_37F7_Out(uint16_t port, uint8_t value, uint16_t pc);
     void Port_BF_Out(uint16_t port, uint8_t value, uint16_t pc);

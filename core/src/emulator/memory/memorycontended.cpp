@@ -86,7 +86,7 @@ template void Memory::MemoryWriteContended<&Memory::MemoryWriteFast, false>(uint
 template void Memory::MemoryWriteContended<&Memory::MemoryWriteDebug, true>(uint16_t, uint8_t);
 template uint8_t Memory::MemoryReadM1Snow<&Memory::MemoryReadContended<&Memory::MemoryReadFast, false>>(uint16_t, bool);
 template uint8_t Memory::MemoryReadM1Snow<&Memory::MemoryReadContended<&Memory::MemoryReadDebug, true>>(uint16_t, bool);
-template uint8_t Memory::MemoryReadM1Snow<&Memory::MemoryReadOverlay<&Memory::MemoryReadContended<&Memory::MemoryReadDebug, true>>>(
+template uint8_t Memory::MemoryReadM1Snow<&Memory::MemoryReadOverlayM1<&Memory::MemoryReadContended<&Memory::MemoryReadDebug, true>>>(
     uint16_t, bool);
-template uint8_t Memory::MemoryReadM1Snow<&Memory::MemoryReadOverlay<&Memory::MemoryReadContended<&Memory::MemoryReadFast, false>>>(
+template uint8_t Memory::MemoryReadM1Snow<&Memory::MemoryReadOverlayM1<&Memory::MemoryReadContended<&Memory::MemoryReadFast, false>>>(
     uint16_t, bool);

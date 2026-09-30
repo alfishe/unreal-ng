@@ -60,7 +60,9 @@ const Golden kGolden[] = {
     // #7FFD class, which is now the ATM IDE board's status (#3F + INTRQ),
     // as in UnrealSpeccy, instead of the floating bus
     {"ATM710", nullptr, 0x9DCBD8315B37FC1Eull, 0xE360A9F00E0771B9ull, 10483200ull},
-    {"ATM3", nullptr, 0x2DABB9D0E2DC188Dull, 0xA177AACC9FD662A1ull, 9434880ull},
+    // ATM3 re-recorded 2026-09-29 (branch not-modeled-waits): its BIOS runs at 14 MHz, where the DRAM's cache
+    // misses now wait (EvoTurboOverlay, docs/inprogress/2026-09-29-machine-waits)
+    {"ATM3", nullptr, 0xF416FE88041AFE2Full, 0x6A8F4FE6FCE9BDBCull, 9434880ull},
     // TSL (TS-Conf) is not creatable with the shipped ROMs.
 };
 

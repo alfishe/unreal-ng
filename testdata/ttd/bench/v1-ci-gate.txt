@@ -5,6 +5,7 @@
 # Byte metrics only: timings do not belong in a stored baseline.
 # Columns: <configuration>/<workload> <metric> <value> <tolerance percent>
 # Tolerance 0 = exact; heap metrics follow the allocator's growth policy.
+# ATM3/idle exact rows updated 2026-09-29 (not-modeled-waits): the EvoTurboCache blob and the 14 MHz waits.
 48K/idle bm3_checkpoint_core_bpf 170.800000 0
 48K/idle bm3_coverage_bpf 52976.933333 25
 48K/idle bm3_device_blobs_bpf 460.016667 0
@@ -21,16 +22,16 @@
 48K/idle frames 60.000000 0
 ATM3/idle bm3_checkpoint_core_bpf 170.800000 0
 ATM3/idle bm3_coverage_bpf 55482.616667 25
-ATM3/idle bm3_device_blobs_bpf 1121.683333 0
+ATM3/idle bm3_device_blobs_bpf 1139.100000 0
 ATM3/idle bm3_input_journal_bpf 0.000000 0
 ATM3/idle bm3_page_refs_bpf 4164.266667 0
-ATM3/idle bm3_ram_payload_bpf 898.933333 0
+ATM3/idle bm3_ram_payload_bpf 897.150000 0
 ATM3/idle bm3_total_bpf 67239.300000 25
 ATM3/idle bm3_write_journal_bpf 5401.000000 0
 ATM3/idle bm4_resident_bpf 94890.633333 25
 ATM3/idle bm4_resident_bytes 5693438.000000 25
-ATM3/idle bm7_file_bpf 7302.683333 0
-ATM3/idle bm7_file_bytes 438161.000000 0
+ATM3/idle bm7_file_bpf 7321.700000 0
+ATM3/idle bm7_file_bytes 439302.000000 0
 ATM3/idle checkpoints 61.000000 0
 ATM3/idle frames 60.000000 0
 PENTAGON/game bm3_checkpoint_core_bpf 170.800000 0

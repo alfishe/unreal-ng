@@ -43,8 +43,20 @@ public:
     /// is mapped at #0000 (the ZX-bus /CSROM condition).
     virtual uint8_t onRead(uint16_t addr, uint8_t normal, bool isExecution, bool romPaged) = 0;
 
+    /// An opcode fetch (M1) in the window, after the normal read. Overlays that do not care what kind of read
+    /// it is see it as an execution read; wait-state rules tell it from an operand byte (a ZX-Evo's code cache,
+    /// the Scorpion turbo's M1 wait: docs/inprogress/2026-09-29-machine-waits/tdd.md)
+    virtual uint8_t onReadM1(uint16_t addr, uint8_t normal, bool romPaged)
+    {
+        return onRead(addr, normal, true, romPaged);
+    }
+
     /// A host write in the window, after the normal write
     virtual void onWrite(uint16_t addr, uint8_t value, bool romPaged) = 0;
+
+    /// The Z80 accepted an interrupt (its acknowledge is an I/O cycle). Called while the overlay is installed,
+    /// whatever its window; default: nothing
+    virtual void onInterruptAcknowledge() {}
 };
 
 /// Two or more installed overlays seen as one (owned by Core, never installed
@@ -64,7 +76,9 @@ public:
     size_t Count() const { return _count; }
 
     uint8_t onRead(uint16_t addr, uint8_t normal, bool isExecution, bool romPaged) override;
+    uint8_t onReadM1(uint16_t addr, uint8_t normal, bool romPaged) override;
     void onWrite(uint16_t addr, uint8_t value, bool romPaged) override;
+    void onInterruptAcknowledge() override;
 
 private:
     HostBusOverlay* _members[kMaxOverlays] = {};

@@ -24,6 +24,24 @@ uint8_t HostBusOverlayChain::onRead(uint16_t addr, uint8_t normal, bool isExecut
     return value;
 }
 
+uint8_t HostBusOverlayChain::onReadM1(uint16_t addr, uint8_t normal, bool romPaged)
+{
+    uint8_t value = normal;
+    for (size_t i = 0; i < _count; i++)
+    {
+        HostBusOverlay* overlay = _members[i];
+        if (overlay->observesReads && addr >= overlay->windowStart && addr < overlay->windowEnd)
+            value = overlay->onReadM1(addr, value, romPaged);
+    }
+    return value;
+}
+
+void HostBusOverlayChain::onInterruptAcknowledge()
+{
+    for (size_t i = 0; i < _count; i++)
+        _members[i]->onInterruptAcknowledge();
+}
+
 void HostBusOverlayChain::onWrite(uint16_t addr, uint8_t value, bool romPaged)
 {
     for (size_t i = 0; i < _count; i++)

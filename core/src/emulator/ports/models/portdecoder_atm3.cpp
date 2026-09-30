@@ -3,6 +3,7 @@
 
 #include "common/modulelogger.h"
 #include "debugger/ttd/atm/ttdevosdcard.h"
+#include "debugger/ttd/atm/ttdevoturbocache.h"
 #include "debugger/ttd/ttdds12887.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/media/mediaformatregistry.h"
@@ -38,6 +39,9 @@ PortDecoder_ATM3::~PortDecoder_ATM3()
 
     if (_context->pCore && _context->pCore->GetZ80() && _context->pCore->GetZ80()->machineM1Hook == this)
         _context->pCore->GetZ80()->machineM1Hook = nullptr;
+
+    if (_turboWaitsInstalled && _context->pCore)
+        _context->pCore->RemoveBusOverlay(_turboOverlay.get());
 
     // Battery-backed state outlives the machine ([EVO] NvramFile)
     const char* nvramPath = _context->config.atm.evo_nvram_path;
@@ -271,6 +275,9 @@ PortDecodeDisposition PortDecoder_ATM3::TraceDisposition(PortArm arm, uint16_t p
 
 uint8_t PortDecoder_ATM3::DecodePortIn(uint16_t port, uint16_t pc)
 {
+    if (_turboWaitsInstalled) [[unlikely]]
+        NoteTurboIo(port);
+
     // The IDE board decodes first (UnrealSpeccy io.cpp order)
     if (uint8_t ideValue = 0xFF; TryIdePortIn(port, pc, ideValue))
         return ideValue;
@@ -388,6 +395,9 @@ uint8_t PortDecoder_ATM3::DecodePortIn(uint16_t port, uint16_t pc)
 
 void PortDecoder_ATM3::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
+    if (_turboWaitsInstalled) [[unlikely]]
+        NoteTurboIo(port);
+
     // The IDE board decodes first (UnrealSpeccy io.cpp order)
     if (TryIdePortOut(port, value, pc))
         return;
@@ -623,7 +633,63 @@ void PortDecoder_ATM3::updateTurboMode()
 
     MLOGDEBUG("ATM3 updateTurboMode: hw_turbo_shift=%d (pFF77=0x%02X pEFF7=0x%02X)",
               turboShift, _state->pFF77, _state->pEFF7);
+
+    SyncTurboWaits();
 }
+
+/// region <Wait states at 14 MHz>
+
+void PortDecoder_ATM3::SyncTurboWaits()
+{
+    Core* core = _context->pCore;
+    if (!core || !core->GetZ80() || !_memory)
+        return;
+
+    const bool wanted = _state->hw_turbo_shift == 2;
+    if (wanted == _turboWaitsInstalled)
+        return;
+
+    if (wanted)
+    {
+        if (!_turboOverlay)
+            _turboOverlay = std::make_unique<EvoTurboOverlay>(core, core->GetZ80(), _memory, _state);
+        // The words cached before the switch are not tracked (no waits below 14 MHz): start empty
+        _turboOverlay->Invalidate();
+        _turboWaitsInstalled = core->AddBusOverlay(_turboOverlay.get());
+        if (!_turboWaitsInstalled)
+            MLOGWARNING("PortDecoder_ATM3: no room for the 14 MHz wait-state overlay; 14 MHz runs without waits");
+    }
+    else
+    {
+        core->RemoveBusOverlay(_turboOverlay.get());
+        _turboWaitsInstalled = false;
+    }
+}
+
+void PortDecoder_ATM3::NoteTurboIo(uint16_t port)
+{
+    _turboOverlay->Invalidate();
+
+    // External ports (zports.v:361-367): AY (#FD with A15 = 1) and the VG93 ports in shadow
+    const uint8_t low = static_cast<uint8_t>(port & 0x00FF);
+    const bool external = (low == 0xFD && (port & 0x8000)) ||
+                          ((low == 0x1F || low == 0x3F || low == 0x5F || low == 0x7F) && IsManagerEnabled());
+    if (external && _turboOverlay->WaitsApply())
+        _context->pCore->GetZ80()->AddWaitStates(3);
+}
+
+EvoTurboOverlay::CacheState PortDecoder_ATM3::GetTurboCacheState() const
+{
+    return _turboWaitsInstalled ? _turboOverlay->GetCacheState() : EvoTurboOverlay::CacheState{};
+}
+
+void PortDecoder_ATM3::SetTurboCacheState(const EvoTurboOverlay::CacheState& state)
+{
+    if (_turboWaitsInstalled)
+        _turboOverlay->SetCacheState(state);
+}
+
+/// endregion </Wait states at 14 MHz>
 
 void PortDecoder_ATM3::Port_FF77_Out_ATM3(uint16_t port, uint8_t value, [[maybe_unused]] uint16_t pc)
 {
@@ -1182,6 +1248,7 @@ std::vector<ttd::PeripheralId> PortDecoder_ATM3::GetTTDModelStateIds() const
     std::vector<ttd::PeripheralId> ids = PortDecoder_ATM710::GetTTDModelStateIds();
     ids.push_back(ttd::PeripheralId::EvoSdCard);
     ids.push_back(ttd::PeripheralId::Ds12887);
+    ids.push_back(ttd::PeripheralId::EvoTurboCache);
     return ids;
 }
 
@@ -1192,6 +1259,7 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_ATM3::CreateTTDSe
     // every TTD session (the manager goes before the core)
     serializers.push_back(std::make_unique<ttd::TTDEvoSdCard>(const_cast<PortDecoder_ATM3&>(*this)));
     serializers.push_back(std::make_unique<ttd::TTDDs12887>(const_cast<EvoAvr&>(_evoAvr)));
+    serializers.push_back(std::make_unique<ttd::TTDEvoTurboCache>(const_cast<PortDecoder_ATM3&>(*this)));
     return serializers;
 }
 

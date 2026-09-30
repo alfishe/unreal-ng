@@ -222,6 +222,17 @@ uint8_t Memory::MemoryReadOverlay(uint16_t addr, bool isExecution)
     return overlay->onRead(addr, normal, isExecution, _bank_mode[0] == BANK_ROM);
 }
 
+/// Overlay opcode fetch: as MemoryReadOverlay, through the overlay's onReadM1
+template <MemoryReadCallback Inner>
+uint8_t Memory::MemoryReadOverlayM1(uint16_t addr, bool isExecution)
+{
+    const uint8_t normal = (this->*Inner)(addr, isExecution);
+    HostBusOverlay* overlay = _busOverlay;
+    if (!overlay->observesReads || addr < overlay->windowStart || addr >= overlay->windowEnd)
+        return normal;
+    return overlay->onReadM1(addr, normal, _bank_mode[0] == BANK_ROM);
+}
+
 /// Overlay write: the inner write first (contention, RAM, the ROM trash page,
 /// TTD dirty tracking, write breakpoints), then the overlay
 template <MemoryWriteCallback Inner>
@@ -233,23 +244,25 @@ void Memory::MemoryWriteOverlay(uint16_t addr, uint8_t value)
         overlay->onWrite(addr, value, _bank_mode[0] == BANK_ROM);
 }
 
-// The contended overlay reads are also the inner read of the opcode fetch with ULA snow (memorycontended.cpp)
-template uint8_t Memory::MemoryReadOverlay<&Memory::MemoryReadContended<&Memory::MemoryReadDebug, true>>(uint16_t, bool);
-template uint8_t Memory::MemoryReadOverlay<&Memory::MemoryReadContended<&Memory::MemoryReadFast, false>>(uint16_t, bool);
+// The contended overlay opcode fetches are the inner read of the opcode fetch with ULA snow (memorycontended.cpp)
+template uint8_t Memory::MemoryReadOverlayM1<&Memory::MemoryReadContended<&Memory::MemoryReadDebug, true>>(uint16_t, bool);
+template uint8_t Memory::MemoryReadOverlayM1<&Memory::MemoryReadContended<&Memory::MemoryReadFast, false>>(uint16_t, bool);
 
 MemoryInterface* Memory::GetOverlayMemoryInterface(bool debug, bool contended)
 {
     if (debug && contended)
         return new MemoryInterface(&Memory::MemoryReadOverlay<&Memory::MemoryReadContended<&Memory::MemoryReadDebug, true>>,
                                    &Memory::MemoryWriteOverlay<&Memory::MemoryWriteContended<&Memory::MemoryWriteDebug, true>>,
-                                   &Memory::MemoryReadM1Snow<&Memory::MemoryReadOverlay<&Memory::MemoryReadContended<&Memory::MemoryReadDebug, true>>>);
+                                   &Memory::MemoryReadM1Snow<&Memory::MemoryReadOverlayM1<&Memory::MemoryReadContended<&Memory::MemoryReadDebug, true>>>);
     if (contended)
         return new MemoryInterface(&Memory::MemoryReadOverlay<&Memory::MemoryReadContended<&Memory::MemoryReadFast, false>>,
                                    &Memory::MemoryWriteOverlay<&Memory::MemoryWriteContended<&Memory::MemoryWriteFast, false>>,
-                                   &Memory::MemoryReadM1Snow<&Memory::MemoryReadOverlay<&Memory::MemoryReadContended<&Memory::MemoryReadFast, false>>>);
+                                   &Memory::MemoryReadM1Snow<&Memory::MemoryReadOverlayM1<&Memory::MemoryReadContended<&Memory::MemoryReadFast, false>>>);
     if (debug)
-        return new MemoryInterface(&Memory::MemoryReadOverlay<&Memory::MemoryReadDebug>, &Memory::MemoryWriteOverlay<&Memory::MemoryWriteDebug>);
-    return new MemoryInterface(&Memory::MemoryReadOverlay<&Memory::MemoryReadFast>, &Memory::MemoryWriteOverlay<&Memory::MemoryWriteFast>);
+        return new MemoryInterface(&Memory::MemoryReadOverlay<&Memory::MemoryReadDebug>, &Memory::MemoryWriteOverlay<&Memory::MemoryWriteDebug>,
+                                   &Memory::MemoryReadOverlayM1<&Memory::MemoryReadDebug>);
+    return new MemoryInterface(&Memory::MemoryReadOverlay<&Memory::MemoryReadFast>, &Memory::MemoryWriteOverlay<&Memory::MemoryWriteFast>,
+                               &Memory::MemoryReadOverlayM1<&Memory::MemoryReadFast>);
 }
 
 /// Implementation memory read method

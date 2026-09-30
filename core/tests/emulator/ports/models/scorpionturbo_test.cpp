@@ -140,8 +140,10 @@ TEST_F(ScorpionTurbo_Test, TurboStrobeAppliesMidFrame)
 
     _context->pPortDecoder->DecodePortIn(0x1FFD, 0x8000);  // the turbo-off strobe
 
+    // The turbo-off IN itself still runs in turbo, where every I/O cycle takes 2 clocks more (Turbo+ waits,
+    // ScorpionTurboOverlay): 2000 + 2 at 7 MHz is 1001 at 3.5 MHz
     EXPECT_EQ(state.current_z80_frequency_multiplier, 1);
-    EXPECT_EQ(z80->t, 1000u);
+    EXPECT_EQ(z80->t, 1001u);
 }
 
 /// @brief The mid-frame hardware-turbo strobe must post NC_CPU_FREQ_CHANGED:

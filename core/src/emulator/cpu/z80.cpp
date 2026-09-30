@@ -22,6 +22,7 @@
 #include "emulator/rzx/rzxplayer.h"
 #include "emulator/spectrumconstants.h"
 #include "emulator/video/screen.h"
+#include "emulator/memory/hostbusoverlay.h"
 #include "emulator/video/ulacontention.h"
 #include "stdafx.h"
 
@@ -1466,6 +1467,9 @@ void Z80::HandleINT(uint8_t vector)
     // The acknowledge M1 is a refresh cycle like any M1: R advances
     cpu.r_low = ((cpu.r_low + 1) & 0x7f) | (cpu.r_low & 0x80);
     NoteAcknowledgeRefresh(cpu.t + 4);  // T1 T2 Tw Tw T3 T4: the refresh's T3 is the fifth tick
+    // The acknowledge is an I/O cycle: bus overlays that track bus cycles see it (a ZX-Evo's cache)
+    if (HostBusOverlay* overlay = _memory->GetBusOverlay()) [[unlikely]]
+        overlay->onInterruptAcknowledge();
 
     /// region <Calculate INT duration>
 

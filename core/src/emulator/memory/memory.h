@@ -342,6 +342,9 @@ public:
     /// while an overlay is installed
     template <MemoryReadCallback Inner>
     uint8_t MemoryReadOverlay(uint16_t addr, bool isExecution);
+    /// The overlay interfaces' opcode fetch (MemoryInterface::MemoryReadM1): the overlay's onReadM1
+    template <MemoryReadCallback Inner>
+    uint8_t MemoryReadOverlayM1(uint16_t addr, bool isExecution);
     template <MemoryWriteCallback Inner>
     void MemoryWriteOverlay(uint16_t addr, uint8_t value);
 
@@ -454,6 +457,8 @@ public:
         uint16_t address);  // Determines current bank for Z80 address specified
 
     MemoryBankModeEnum GetMemoryBankMode(uint8_t bank);
+    /// Window 0-3 maps ROM: the hot-path form for bus logic that tells ROM from RAM (EvoTurboOverlay)
+    bool IsWindowRom(uint8_t window) const { return _bank_mode[window & 0x03] == BANK_ROM; }
 
     uint8_t DirectReadFromZ80Memory(
         uint16_t address);  // Read from Z80 memory (actual pages config) without triggering any debug logic

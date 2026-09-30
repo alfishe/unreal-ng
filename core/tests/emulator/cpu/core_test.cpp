@@ -116,7 +116,8 @@ protected:
 
 TEST_F(Core_Test, EveryModelUsesThePlainInterfacesInEveryDebugState)
 {
-    for (const char* model : {"48K", "128k", "PLUS3", "PENTAGON", "SCORPION", "PROFSCORP", "PROFI", "ATM710", "ATM3"})
+    // Not ATM3: its BIOS runs at 14 MHz, where the ZX-Evo's DRAM wait states are an overlay (EvoTurboOverlay_Test)
+    for (const char* model : {"48K", "128k", "PLUS3", "PENTAGON", "SCORPION", "PROFSCORP", "PROFI", "ATM710"})
     {
         SCOPED_TRACE(model);
         create(model);

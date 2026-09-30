@@ -3,6 +3,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
 #include "emulator/platform.h"
+#include "emulator/ports/models/portdecoder_scorpion256.h"
 
 #include <cstring>
 
@@ -74,6 +75,10 @@ void TTDScorpionProfROM::TTDLoadState(const uint8_t* src)
     state.p7EFD = blob.p7EFD;
     state.p1FFD = blob.p1FFD;
     state.scorpionDosTrigger = blob.scorpionDosTrigger;
+
+    // The turbo clock came back with the chipset state (a field copy): the turbo wait overlay follows it
+    if (auto* scorpion = dynamic_cast<PortDecoder_Scorpion256*>(_context->pPortDecoder))
+        scorpion->SyncTurboWaits();
 
     // rom_page is deliberately NOT written back: it is a derived observation of
     // the paging chain, which the caller rebuilds (UpdateZ80Banks) from the

@@ -513,7 +513,8 @@ types:
           15 EvoSdCard (ZX-Evo Z-Controller + SD card protocol state),
           16 TsConfPaging (TSConf machine state), 17 AtaChannel (IDE board: channel, both units, adapter latches),
           18 Ds12887 (MC146818 / DS12887 clock: cells, address latch, time base;
-          ATM3, Profi, Scorpion SMUC).
+          ATM3, Profi, Scorpion SMUC),
+          19 EvoTurboCache (ZX-Evo at 14 MHz: the DRAM's code and data cache words, 6 bytes).
           BetaDisk (1) blob: 254 bytes = WD1793 controller 146 + 4 x FDD 27
           (layout in wd1793.cpp, TTDSerializable region). Bytes 143..145 are
           the controller clock policy (0 Fixed1MHz, 1 AutoStepTurbo, 2 Latched),

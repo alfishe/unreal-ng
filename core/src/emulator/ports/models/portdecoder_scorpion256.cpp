@@ -67,6 +67,8 @@ PortDecoder_Scorpion256::PortDecoder_Scorpion256(EmulatorContext* context) : Por
 
 PortDecoder_Scorpion256::~PortDecoder_Scorpion256()
 {
+    if (_turboWaitsInstalled && _context->pCore)
+        _context->pCore->RemoveBusOverlay(_turboOverlay.get());
     MLOGDEBUG("PortDecoder_Scorpion256::~PortDecoder_Scorpion256()");
 }
 /// endregion </Constructors / Destructors>
@@ -121,10 +123,50 @@ void PortDecoder_Scorpion256::reset()
 
     // Set default memory paging state
     Port_7FFD(0x00, 0x0000);
+
+    SyncTurboWaits();
 }
+
+/// region <Turbo+ wait states>
+
+void PortDecoder_Scorpion256::SyncTurboWaits()
+{
+    Core* core = _context->pCore;
+    if (!core || !core->GetZ80() || !_context->pMemory)
+        return;
+
+    const bool wanted = _state->hw_turbo_shift == 1;
+    if (wanted == _turboWaitsInstalled)
+        return;
+
+    if (wanted)
+    {
+        if (!_turboOverlay)
+        {
+            // The fetch window starts 14336 T after INT, which fires at intstart + 1 (research-scorpion-turbo.md 5)
+            const uint32_t paperStartT = _context->config.intstart + 1 + 14336;
+            _turboOverlay = std::make_unique<ScorpionTurboOverlay>(core, core->GetZ80(), _context->pMemory, _state,
+                                                                   paperStartT);
+        }
+        _turboWaitsInstalled = core->AddBusOverlay(_turboOverlay.get());
+        if (!_turboWaitsInstalled)
+            MLOGWARNING("PortDecoder_Scorpion256: no room for the turbo wait-state overlay; turbo runs without waits");
+    }
+    else
+    {
+        core->RemoveBusOverlay(_turboOverlay.get());
+        _turboWaitsInstalled = false;
+    }
+}
+
+/// endregion </Turbo+ wait states>
 
 uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
 {
+    // Turbo+ (SC15.1): every I/O cycle in turbo takes 2 clocks more (research-scorpion-turbo.md 4.1)
+    if (_turboWaitsInstalled && _turboOverlay->WaitsApply()) [[unlikely]]
+        _context->pCore->GetZ80()->AddWaitStates(2);
+
     // The IDE board decodes first (UnrealSpeccy io.cpp order)
     if (uint8_t ideValue = 0xFF; TryIdePortIn(port, pc, ideValue))
         return ideValue;
@@ -168,7 +210,10 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
     // left the "Computer speed" menu item disabled and the flip-flop stuck on
     // (profrom-service-monitor-turbo.md, profrom-nmi-gaps-and-findings.md 8.4)
     if ((port & 0xC023) == 0x4021 || (port & 0xC023) == 0x0021)
+    {
         _context->pCore->GetZ80()->ApplyHardwareTurboNow();
+        SyncTurboWaits();
+    }
 
     // AY #FFFD: A15=1, A14=1, A1=0. The AY-3-8910 does not decode the other
     // address bits, so mirrored ports (#FF05, #FF00, #C000...) select it on IN
@@ -362,6 +407,9 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
 
 void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
+    if (_turboWaitsInstalled && _turboOverlay->WaitsApply()) [[unlikely]]
+        _context->pCore->GetZ80()->AddWaitStates(2);
+
     // The IDE board decodes first (UnrealSpeccy io.cpp order)
     if (TryIdePortOut(port, value, pc))
         return;
