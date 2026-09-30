@@ -153,3 +153,85 @@ The gate takes their consensus.
 Next: the C++ prototype in `tools/verification/zxdlss` (renders TTD files and
 clips through swappable algorithms; `mod-tpgw` first, verified against this
 reference, then optimized).
+
+## Limited look-ahead (2026-09-30): can mod-tpgwafsd work with 0-2 frames?
+
+**Why it was asked.** `mod-tpgwafsd` decides how to show frame t from up to 6
+*future* frames. In the emulator (Tools -> Temporal Effects -> ZX DLSS) that
+delays the picture by 7 frames (6 + 1 for the worker, ~143 ms on a Pentagon),
+and the sound is delayed to match. The emulator already delays video by 2
+frames for A/V sync, so a look-ahead (LA) of 1-2 frames would cost no extra
+latency at all.
+
+**Answer: no.** With LA 0, 1 or 2 the algorithm gets worse on 5 or 6 of the 12
+golden scenes, even with the repairs below. The smallest look-ahead without a
+regression is still 6 (3-5 were not measured). Full report, tables, the
+synthetic onset test, side-by-side videos and the variants' code (a patch; the
+code was not committed): `out/2026-09-30_0115 - causal lookahead 0-2 research/`.
+
+**Method.** Variants `mod-tpgwafsd-la0/1/2`: every detector may read only
+t+1..t+LA and the past (with LA 6 the code path is the baseline, byte for
+byte). The period detectors need no change - their 3-period window must contain
+t and now ends at t+LA; the field stage's 7-frame tile window moves to the
+newest frames and, at LA 0, extrapolates the other page (t-3 -> t-1, one more
+frame) instead of interpolating it (t-1, t+1); the scene stage keeps only its
+backward step rule. Three repairs were needed on the way, all active only for
+LA < 6:
+
+| Repair | What it does | Why |
+|---|---|---|
+| resume | a pixel remembers its last confirmed cycle for 25 frames and mixes at once when it shows again | the floor a ball uncovers stayed raw for 5 - LA frames |
+| pending | a pixel already repeating in place is not "unexplained" for the field seeds; new seeds must alternate at t | without the future the field stage (tiles) recognized static GigaScreen before the pixel stage (pixels) and grabbed it: pageflip ghost 0 -> 3.7 %, balls 0.01 -> 4.4 % |
+| short pending + rhythm continuation (`rsc`) | one repeat is enough where the other page does not move; a period-2 pixel confirmed within 4 frames keeps mixing | the balls' stripes change their color pair every ~8 frames: each change was a new 5-frame confirmation |
+
+**Onset lag** (synthetic: a patch starts flickering, stops, a sprite leaves
+it): a new flicker stays raw for "three periods minus the look-ahead" frames.
+
+| Event | LA 6 (baseline) | LA 2 | LA 1 | LA 0 |
+|---|---|---|---|---|
+| period-2 flicker starts | 0 | 3 | 4 | 5 |
+| period-3 flicker starts | 2 | 6 | 7 | 8 |
+| flicker stops (frames still mixed) | 1 | 1 | 1 | 1 |
+| sprite leaves a flicker (with resume) | 0 | 0 | 0 | 1 |
+
+**Gate** (ok / REGRESSION / disputed of 12). Cold = the official gate, each
+scene from an empty history; warm = 30 frames of history first (new
+`--warmup`, as in a running emulator), compared with the baseline run warm.
+
+| Variant | cold, vs baseline.json | warm, vs the warm baseline |
+|---|---|---|
+| la2 / la1 / la0 (naive) | 2/9/1, 2/7/3, 2/8/2 | - |
+| la2rsc | - | 6 / 5 / 1 |
+| la1rsc | - | 4 / 5 / 3 |
+| la0rsc | - | 4 / 6 / 2 |
+
+Warm, the static cases are as good as the baseline at every LA (pageflip,
+border-only, raster-negative, flicker test; DJ and final rings at LA 2). What
+regresses (warm baseline -> la2rsc / la0rsc):
+
+| Scene | Worse |
+|---|---|
+| hiphop-border | missed flicker 12.4 -> 13.0 / 13.6 % |
+| balls-floor | ghosts 0.01 -> 1.1 / 0.4 %, missed 8.1 -> 9.3 / 14.6 % |
+| irregular (spiral) | missed 9.9 -> 13.7 / 16.2 %; LA 0: edges 2.4 -> 4.4 px, colors within 2 %: 95 -> 85 % |
+| raster-negative-2 | colors within 2 %: 2.6 -> 1.1 / 0 % |
+| flash-strobe | missed 7.9 -> 12.3 / 14.9 %, colors within 2 %: 80 -> 72 / 61 % |
+| final-rings (LA 0) | ghosts 13.0 -> 14.7 %, edges 4.1 -> 5.2 px |
+
+**What needs the future.**
+
+1. Flicker that starts or changes colors often (balls, hip-hop, flash-strobe):
+   three whole periods must be seen before a pixel is mixed. With the future
+   they can lie after t, so a flicker mixes from its first frame; without it
+   every start costs 5 - LA raw frames (period 2). The repairs only trade missed
+   flicker for ghosts.
+2. Moving two-page textures (spiral, tunnel): the other page at t is
+   interpolated from t-1 and t+1; extrapolated from the past it blurs.
+3. The scene stage (DJ): its step-aware render needs t+2; at LA 0-1 the
+   lattice smears on the jumps.
+
+**Conclusion.** Keep look-ahead 6; the live effect pays 5 extra frames of
+picture and sound delay for it. If latency ever matters more than the gate, the
+next experiment is LA 3-4 with the `rsc` repairs (at LA 4 a period-2 start
+costs 1 frame).
+

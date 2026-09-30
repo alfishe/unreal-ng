@@ -1,24 +1,17 @@
 #include "screentsconf.h"
 
+#include <algorithm>
+#include <cstring>
+
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
+#include "emulator/platforms/tsconf/tsconfengine.h"
+#include "emulator/platforms/tsconf/tsconfgeometry.h"
 #include "emulator/platforms/tsconf/tsconfstate.h"
 #include "emulator/ports/models/portdecoder_tsconf.h"
 
 namespace
 {
-    /// Graphics window per V_CONFIG[7:6] geometry, in raster dots / lines (hs §4.2)
-    struct Window
-    {
-        uint16_t x0, y0, w, h;
-    };
-    constexpr Window kWindows[4] = {
-        {140, 80, 256, 192},
-        {108, 76, 320, 200},
-        {108, 56, 320, 240},
-        {88, 32, 360, 288},
-    };
-
     /// No-VDAC build: the top 2 bits of a 5-bit channel drive a 2-bit DAC, the
     /// low 3 bits a PWM that adds one level on average (not above level 3),
     /// shown as the time average (hs §4.3)
@@ -61,7 +54,10 @@ const TsConfState* ScreenTSConf::State()
     if (!_ts && _context)
     {
         if (auto* decoder = dynamic_cast<PortDecoder_TSConf*>(_context->pPortDecoder))
+        {
             _ts = &decoder->GetState();
+            _engine = &decoder->GetEngine();
+        }
     }
     return _ts;
 }
@@ -75,6 +71,67 @@ void ScreenTSConf::InitRaster()
     _vid.raster = raster[R_360_288];
     if (mode != _mode)
         SetVideoMode(mode);
+}
+
+ScreenState ScreenTSConf::DescribeScreenState() const
+{
+    ScreenState s = Screen::DescribeScreenState();
+    auto* decoder = _context ? dynamic_cast<PortDecoder_TSConf*>(_context->pPortDecoder) : nullptr;
+    if (!decoder)
+        return s;
+
+    const TsConfState& ts = decoder->GetState();
+    const uint8_t vConfig = ts.regs[TsConfReg::VConfig];
+    const uint8_t vPage = ts.regs[TsConfReg::VPage];
+    const TsConfGeometry::Window& win = TsConfGeometry::WindowOf(vConfig);
+    const uint8_t mode = vConfig & 0x03;
+
+    s.width = win.w;
+    s.height = win.h;
+    s.videoMode = GetVideoModeName(ModeOf(vConfig)) + " " + std::to_string(win.w) + "x" + std::to_string(win.h);
+    s.activeRamPage = vPage;
+    s.activeScreen = vPage == 7 ? 1 : 0;
+    s.activeRamPages.clear();
+
+    VideoModeInfo f;
+    switch (mode)
+    {
+        case 0:  // ZX layout at V_PAGE
+            f = GetVideoModeInfo(M_ZX48);
+            s.activeRamPages = {vPage};
+            break;
+        case 1:  // 16C: 512 x 512 at 4 bpp = 128 KB from V_PAGE & #F8
+            f.colorDepth = "4 bpp (16 colors per pixel, PAL_SEL bank)";
+            f.colors = 16;
+            f.bpp = 4;
+            f.attributeSize = "per pixel";
+            f.pixelDataBytes = 512u * 512u / 2u;
+            f.totalBytes = f.pixelDataBytes;
+            for (uint16_t p = 0; p < 8; p++)
+                s.activeRamPages.push_back(static_cast<uint16_t>((vPage & 0xF8) + p));
+            break;
+        case 2:  // 256C: 512 x 512 at 8 bpp = 256 KB from V_PAGE & #F0
+            f.colorDepth = "8 bpp (256 colors per pixel)";
+            f.colors = 256;
+            f.bpp = 8;
+            f.attributeSize = "per pixel";
+            f.pixelDataBytes = 512u * 512u;
+            f.totalBytes = f.pixelDataBytes;
+            for (uint16_t p = 0; p < 16; p++)
+                s.activeRamPages.push_back(static_cast<uint16_t>((vPage & 0xF0) + p));
+            break;
+        default:  // TXT: character / attribute rows at V_PAGE, font at V_PAGE ^ 1, 14 MHz pixels
+            f.colorDepth = "text, 16-color ink/paper per character (PAL_SEL bank)";
+            f.colors = 16;
+            f.attributeSize = "8x8 pixels (1 character cell)";
+            f.textColumns = static_cast<uint8_t>(win.w * 2 / 8);
+            f.textRows = static_cast<uint8_t>(win.h / 8);
+            s.width = static_cast<uint16_t>(win.w * 2);
+            s.activeRamPages = {vPage, static_cast<uint16_t>(vPage ^ 1)};
+            break;
+    }
+    s.format = f;
+    return s;
 }
 
 void ScreenTSConf::SetVideoMode(VideoModeEnum mode)
@@ -112,66 +169,211 @@ void ScreenTSConf::FillBorderWithColor([[maybe_unused]] uint8_t color)
     // The border is part of every frame the range renderer draws
 }
 
-uint8_t ScreenTSConf::DotIndex(const TsConfState& ts, uint32_t dot, uint32_t line, uint32_t sub) const
+void ScreenTSConf::RefreshPalette(const TsConfState& ts)
 {
-    const uint8_t vConfig = ts.regs[TsConfReg::VConfig];
-    const uint8_t mode = vConfig & 0x03;
-    const uint8_t palBank = static_cast<uint8_t>((ts.regs[TsConfReg::PalSel] & 0x0F) << 4);
-    const Window& win = kWindows[vConfig >> 6];
-
-    const bool inWindow = dot >= win.x0 && dot < static_cast<uint32_t>(win.x0 + win.w) && line >= win.y0 &&
-                          line < static_cast<uint32_t>(win.y0 + win.h) && !(vConfig & 0x20);  // NOGFX
-    if (!inWindow)
+    // The beam renderer calls this for every few dots: the unchanged case is
+    // one 512-byte compare
+    if (_paletteValid && std::memcmp(ts.cram, _paletteCram, sizeof(_paletteCram)) == 0)
+        return;
+    for (uint32_t i = 0; i < 256; i++)
     {
-        const uint8_t border = ts.regs[TsConfReg::Border];
-        // TXT flattens everything to 4 bits in the PAL_SEL bank (hs §4.2)
-        return mode == 3 ? static_cast<uint8_t>(palBank | (border & 0x0F)) : border;
+        if (!_paletteValid || ts.cram[i] != _paletteCram[i])
+        {
+            _paletteCram[i] = ts.cram[i];
+            _palette[i] = CramToRgba(ts.cram[i]);
+        }
     }
+    _paletteValid = true;
+}
 
-    const uint32_t gx = (dot - win.x0 + (ts.regs[TsConfReg::GXOffsL] | ((ts.regs[TsConfReg::GXOffsH] & 1u) << 8))) & 0x1FF;
-    const uint32_t gy = (line - win.y0 + (ts.regs[TsConfReg::GYOffsL] | ((ts.regs[TsConfReg::GYOffsH] & 1u) << 8))) & 0x1FF;
+void ScreenTSConf::GraphicsSpan(const TsConfLine& set, uint32_t wx, uint32_t count, uint8_t* index0, uint8_t* index1,
+                                uint8_t* visible0, uint8_t* visible1) const
+{
+    const uint8_t palBank = static_cast<uint8_t>((set.palSel & 0x0F) << 4);
+    const uint32_t gy = set.cntRow & 0x1FF;
     const uint8_t* ram = _context->pMemory->RAMBase();
-    const uint32_t vPage = ts.regs[TsConfReg::VPage];
+    const uint32_t vPage = set.vPage;
+    uint32_t gx = (wx + set.gxOffs) & 0x1FF;
 
-    switch (mode)
+    // SIMD-CANDIDATE(TS-O2): the 16C / 256C loops are a gather with a 512-dot
+    // wrap; 8-dot runs between wraps would vectorize
+    switch (set.vConfig & 0x03)
     {
         case 0:  // ZX: Spectrum layout at V_PAGE, rows wrap at 256, columns at 32 bytes
         {
             const uint32_t y = gy & 0xFF;
-            const uint32_t x = gx & 0xFF;
             const uint8_t* page = ram + (vPage << 14);
-            const uint8_t pixels = page[((y & 0xC0) << 5) | ((y & 0x07) << 8) | ((y & 0x38) << 2) | (x >> 3)];
-            const uint8_t attr = page[0x1800 + (y >> 3) * 32 + (x >> 3)];
-            bool ink = (pixels >> (7 - (x & 7))) & 1;
-            if ((attr & 0x80) && ((_context->emulatorState.frame_counter >> 4) & 1))
-                ink = !ink;  // flash: every 16 frames (hs §4.1)
-            const uint8_t bright = (attr & 0x40) ? 0x08 : 0x00;
-            return static_cast<uint8_t>(palBank | bright | (ink ? (attr & 0x07) : ((attr >> 3) & 0x07)));
+            const uint8_t* pixelRow = page + (((y & 0xC0) << 5) | ((y & 0x07) << 8) | ((y & 0x38) << 2));
+            const uint8_t* attrRow = page + 0x1800 + (y >> 3) * 32;
+            const bool flashPhase = (_context->emulatorState.frame_counter >> 4) & 1;  // every 16 frames (hs §4.1)
+            for (uint32_t i = 0; i < count; i++, gx = (gx + 1) & 0x1FF)
+            {
+                const uint32_t x = gx & 0xFF;
+                const uint8_t attr = attrRow[x >> 3];
+                bool ink = (pixelRow[x >> 3] >> (7 - (x & 7))) & 1;
+                if ((attr & 0x80) && flashPhase)
+                    ink = !ink;
+                visible0[i] = ink;
+                const uint8_t bright = (attr & 0x40) ? 0x08 : 0x00;
+                index0[i] = static_cast<uint8_t>(palBank | bright | (ink ? (attr & 0x07) : ((attr >> 3) & 0x07)));
+            }
+            break;
         }
         case 1:  // 16C: 4 bpp, high nibble = left pixel
         {
-            const uint8_t byte = ram[((vPage & 0xF8) << 14) | (gy << 8) | (gx >> 1)];
-            return static_cast<uint8_t>(palBank | ((gx & 1) ? (byte & 0x0F) : (byte >> 4)));
+            const uint8_t* row = ram + ((vPage & 0xF8) << 14) + (gy << 8);
+            for (uint32_t i = 0; i < count; i++, gx = (gx + 1) & 0x1FF)
+            {
+                const uint8_t byte = row[gx >> 1];
+                const uint8_t nibble = (gx & 1) ? (byte & 0x0F) : (byte >> 4);
+                visible0[i] = nibble != 0;
+                index0[i] = static_cast<uint8_t>(palBank | nibble);
+            }
+            break;
         }
         case 2:  // 256C: 8 bpp
-            return ram[((vPage & 0xF0) << 14) | (gy << 9) | gx];
+        {
+            const uint8_t* row = ram + ((vPage & 0xF0) << 14) + (gy << 9);
+            for (uint32_t i = 0; i < count; i++, gx = (gx + 1) & 0x1FF)
+            {
+                const uint8_t pixel = row[gx];
+                visible0[i] = pixel != 0;
+                index0[i] = pixel;
+            }
+            break;
+        }
         default:  // TXT: 256-byte rows (128 characters, 128 attributes) at V_PAGE, font at V_PAGE ^ 1
         {
-            const uint32_t px = (gx * 2 + sub) & 0x3FF;
             const uint8_t* row = ram + (vPage << 14) + ((gy >> 3) & 0x3F) * 256;
-            const uint8_t code = row[(px >> 3) & 0x7F];
-            const uint8_t attr = row[128 + ((px >> 3) & 0x7F)];
-            const uint8_t font = ram[((vPage ^ 1) << 14) + code * 8 + (gy & 7)];
-            const bool on = (font >> (7 - (px & 7))) & 1;
-            return static_cast<uint8_t>(palBank | (on ? (attr & 0x0F) : (attr >> 4)));
+            const uint8_t* font = ram + ((vPage ^ 1) << 14) + (gy & 7);
+            // The character cell changes every 8 pixels: its font byte and
+            // colors are looked up once per cell
+            uint32_t cell = ~0u;
+            uint8_t glyph = 0;
+            uint8_t ink = 0;
+            uint8_t paper = 0;
+            auto pixel = [&](uint32_t px, uint8_t& index, uint8_t& visible) {
+                const uint32_t column = (px >> 3) & 0x7F;
+                if (column != cell)
+                {
+                    cell = column;
+                    const uint8_t attr = row[128 + column];
+                    glyph = font[row[column] * 8];
+                    ink = static_cast<uint8_t>(palBank | (attr & 0x0F));
+                    paper = static_cast<uint8_t>(palBank | (attr >> 4));
+                }
+                const bool on = (glyph >> (7 - (px & 7))) & 1;
+                visible = on;
+                index = on ? ink : paper;
+            };
+            for (uint32_t i = 0; i < count; i++, gx = (gx + 1) & 0x1FF)
+            {
+                pixel((gx * 2) & 0x3FF, index0[i], visible0[i]);
+                pixel((gx * 2 + 1) & 0x3FF, index1[i], visible1[i]);
+            }
+            break;
         }
+    }
+}
+
+void ScreenTSConf::DrawLineSpan(const TsConfState& ts, uint32_t line, uint32_t dotFrom, uint32_t dotTo, uint32_t* out) const
+{
+    const TsConfLine& set = _engine->Line(line);
+    const uint8_t vConfig = set.vConfig;
+    const bool text = (vConfig & 0x03) == 3;
+    const uint8_t border = ts.regs[TsConfReg::Border];
+    const TsConfGeometry::Window& win = TsConfGeometry::WindowOf(vConfig);
+
+    // Color indices of the span, per half dot (the second one only in TXT)
+    uint8_t index0[448];
+    uint8_t index1[448];
+    uint8_t visible0[448];
+    uint8_t visible1[448];
+    std::memset(index0 + dotFrom, border, dotTo - dotFrom);
+    if (text)
+        std::memset(index1 + dotFrom, border, dotTo - dotFrom);
+
+    // Graphics inside the window (NOGFX: the window shows what is outside it)
+    uint32_t gfxFrom = dotTo;
+    uint32_t gfxTo = dotTo;
+    if (!(vConfig & 0x20) && line >= win.y0 && line < static_cast<uint32_t>(win.y0 + win.h))
+    {
+        gfxFrom = std::max<uint32_t>(dotFrom, win.x0);
+        gfxTo = std::min<uint32_t>(dotTo, static_cast<uint32_t>(win.x0 + win.w));
+        if (gfxFrom < gfxTo)
+        {
+            GraphicsSpan(set, gfxFrom - win.x0, gfxTo - gfxFrom, index0 + gfxFrom, index1 + gfxFrom, visible0 + gfxFrom,
+                         visible1 + gfxFrom);
+            // GFXOVR: only "visible" graphics dots stay; the others show what
+            // is behind them - the TSU below, else BORDER
+            if (vConfig & 0x08)
+            {
+                for (uint32_t dot = gfxFrom; dot < gfxTo; dot++)
+                {
+                    if (!visible0[dot])
+                        index0[dot] = border;
+                    if (text && !visible1[dot])
+                        index1[dot] = border;
+                }
+            }
+        }
+        else
+        {
+            gfxFrom = gfxTo = dotTo;
+        }
+    }
+
+    // TSU (TS-O3: only over the TS window of lines it drew on). Video plex
+    // ([V] video_render.v:75-82): inside the graphics window the TSU wins over
+    // graphics unless GFXOVR and the graphics dot is "visible"; outside it
+    // the TSU shows over the border
+    if (set.tsu && !(vConfig & 0x10))  // NOTSU
+    {
+        const uint32_t from = std::max<uint32_t>(dotFrom, set.tsX0);
+        const uint32_t to = std::min<uint32_t>(dotTo, static_cast<uint32_t>(set.tsX0 + set.tsW));
+        const uint8_t* tsu = _engine->TsuRow(line) - set.tsX0;
+        const bool gfxOver = vConfig & 0x08;
+        for (uint32_t dot = from; dot < to; dot++)
+        {
+            const uint8_t pixel = tsu[dot];
+            if (!(pixel & 0x0F))
+                continue;
+            if (gfxOver && dot >= gfxFrom && dot < gfxTo)
+            {
+                if (!visible0[dot])
+                    index0[dot] = pixel;
+                if (text && !visible1[dot])
+                    index1[dot] = pixel;
+            }
+            else
+            {
+                index0[dot] = pixel;
+                index1[dot] = pixel;
+            }
+        }
+    }
+
+    if (text)
+    {
+        // TXT is hires: every source flattens to 4 bits in the PAL_SEL bank (hs §4.2)
+        const uint8_t palBank = static_cast<uint8_t>((set.palSel & 0x0F) << 4);
+        for (uint32_t dot = dotFrom; dot < dotTo; dot++, out += 2)
+        {
+            out[0] = _palette[palBank | (index0[dot] & 0x0F)];
+            out[1] = _palette[palBank | (index1[dot] & 0x0F)];
+        }
+    }
+    else
+    {
+        for (uint32_t dot = dotFrom; dot < dotTo; dot++, out += 2)
+            out[0] = out[1] = _palette[index0[dot]];
     }
 }
 
 void ScreenTSConf::DrawRange(uint32_t fromTstate, uint32_t toTstate)
 {
     const TsConfState* ts = State();
-    if (!ts || !_framebuffer.memoryBuffer || _framebuffer.width != kVisibleDots * 2 ||
+    if (!ts || !_engine || !_framebuffer.memoryBuffer || _framebuffer.width != kVisibleDots * 2 ||
         _framebuffer.height != kVisibleLines)
         return;
 
@@ -181,30 +383,23 @@ void ScreenTSConf::DrawRange(uint32_t fromTstate, uint32_t toTstate)
     if (toTstate >= frameEnd)
         toTstate = frameEnd - 1;
 
+    // CRAM as it is now: the colors of the whole range, as the per-dot
+    // renderer read them at draw time
+    RefreshPalette(*ts);
     uint32_t* fb = reinterpret_cast<uint32_t*>(_framebuffer.memoryBuffer);
-    const bool text = (ts->regs[TsConfReg::VConfig] & 0x03) == 3;
 
-    for (uint32_t t = fromTstate; t <= toTstate; t++)
+    // One span per raster line of the range
+    for (uint32_t t = fromTstate; t <= toTstate;)
     {
         const uint32_t line = t / kLineTacts;
-        const uint32_t tact = t % kLineTacts;
-        if (line < kFirstVisibleLine || tact < kFirstVisibleTact)
+        const uint32_t lineStart = line * kLineTacts;
+        const uint32_t lastTact = std::min(toTstate - lineStart, kLineTacts - 1);
+        const uint32_t firstTact = std::max(t - lineStart, kFirstVisibleTact);
+        t = lineStart + kLineTacts;
+        if (line < kFirstVisibleLine || firstTact > lastTact)
             continue;
 
-        uint32_t* out = fb + (line - kFirstVisibleLine) * (kVisibleDots * 2) + (tact - kFirstVisibleTact) * 4;
-        for (uint32_t half = 0; half < 2; half++)
-        {
-            const uint32_t dot = tact * 2 + half;
-            if (text)
-            {
-                out[0] = CramToRgba(ts->cram[DotIndex(*ts, dot, line, 0)]);
-                out[1] = CramToRgba(ts->cram[DotIndex(*ts, dot, line, 1)]);
-            }
-            else
-            {
-                out[0] = out[1] = CramToRgba(ts->cram[DotIndex(*ts, dot, line, 0)]);
-            }
-            out += 2;
-        }
+        uint32_t* out = fb + (line - kFirstVisibleLine) * (kVisibleDots * 2) + (firstTact - kFirstVisibleTact) * 4;
+        DrawLineSpan(*ts, line, firstTact * 2, (lastTact + 1) * 2, out);
     }
 }

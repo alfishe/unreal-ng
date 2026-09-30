@@ -3,7 +3,8 @@
 /// @file ttdevosdcard.h
 /// @brief TTD serializer for the ZX-Evo SD card: the Z-Controller's chip
 /// select and receive latch, and the card's SPI protocol state (command
-/// bytes, queued response, multi-block position).
+/// bytes, queued response, multi-block position). The same board slot on
+/// both ZX-Evo configurations: BaseConf (ATM3) and TS-Conf.
 ///
 /// The card's sectors are not here. Under the storage rule of the media
 /// manager (docs/inprogress/2026-09-28-storage-manager/integration-ttd-
@@ -13,7 +14,8 @@
 
 #include "debugger/ttd/ttdserializable.h"
 
-class PortDecoder_ATM3;
+class SdCardSpi;
+class ZControllerSpi;
 
 namespace ttd
 {
@@ -21,7 +23,7 @@ namespace ttd
 class TTDEvoSdCard : public TTDSerializable
 {
 public:
-    explicit TTDEvoSdCard(PortDecoder_ATM3& decoder) : _decoder(decoder) {}
+    TTDEvoSdCard(SdCardSpi& card, ZControllerSpi& controller) : _card(card), _controller(controller) {}
 
     size_t TTDStateSize() const override;
     void TTDSaveState(uint8_t* dst) const override;
@@ -31,7 +33,8 @@ public:
     uint64_t TTDHashState() const override;
 
 private:
-    PortDecoder_ATM3& _decoder;
+    SdCardSpi& _card;
+    ZControllerSpi& _controller;
 };
 
 }  // namespace ttd

@@ -85,15 +85,20 @@ enum class TTDInputKind : uint8_t
     GSData,             ///< OUT #B3 (value)
     GSNmi,              ///< #33 bit 6: NMI to the card CPU
     GSResetCard,        ///< #33 bit 7: card reset, host mailbox kept
-    GSReset             ///< full card power-on reset, mailbox included
+    GSReset,            ///< full card power-on reset, mailbox included
+
+    PcKey               ///< physical PC key press / release (key = PcKey, pressed) for the
+                        ///< machine's PS/2 controller (ZX-Evo AVR); journaled only when one
+                        ///< is attached. Its own event, not derived from Key: host Up is
+                        ///< Caps Shift + 7 on the matrix but E0 75 on PS/2
 };
 
 struct TTDInputEvent
 {
     TTDTimePoint time;        ///< When the mutation was applied (frame + tInFrame)
     TTDInputKind kind = TTDInputKind::Key;
-    uint8_t      key = 0;     ///< Key: ZXKeysEnum value (cast at the boundary)
-    bool         pressed = false;  ///< Key: true = press, false = release
+    uint8_t      key = 0;     ///< Key: ZXKeysEnum value; PcKey: PcKey value (cast at the boundary)
+    bool         pressed = false;  ///< Key / PcKey: true = press, false = release
     int16_t      dx = 0;      ///< MouseMove: delta X; MouseCounters: X value
     int16_t      dy = 0;      ///< MouseMove: delta Y; MouseCounters: Y value
     uint8_t      buttonMask = 0xFF;  ///< MouseButtons: active-low mask

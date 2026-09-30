@@ -61,7 +61,8 @@ regenerated into `data/` (git-ignored) - see [walkthrough.md](walkthrough.md).
 ├── capture/
 │   ├── record_ttd.py     # record a whole program run into a .ttd
 │   ├── extract_clip.py   # TTD -> clip (every frame's final beam-rendered picture)
-│   └── verify_stepping.py# frame step == direct seek, no drift, border stripes present
+│   ├── verify_stepping.py# frame step == direct seek, no drift, border stripes present
+│   └── add_palette16.py  # v2 clips exported before the core wrote "palette16": recover it into clip.json
 ├── analysis/
 │   ├── effect_map.py     # per-pixel period indicators, segments, thumbnails, table
 │   └── contact_sheet.py  # thumbnails of every Nth frame
@@ -95,6 +96,16 @@ python3 capture/extract_clip.py --ttd data/across_the_edge_full.ttd --out data/c
 # 4. effect map
 python3 analysis/effect_map.py data/clip_full --out out/effect_map
 ```
+
+### The palette
+
+There is no ZX palette table in the POC. A core-exported (v2) clip carries the 16
+colors its plane B color indices were drawn in - the emulator's live palette -
+as `palette16` in `clip.json`, and `ClipV2.zx_palette` serves it to the mixers,
+the detectors' luma and the oracles; the C++ algorithms get the same from the
+emulator with every frame. A v2 clip exported before the core wrote it gets it
+once with `python3 capture/add_palette16.py data/clip_v2`, which recovers it from
+the clip's own RGBA frames.
 
 ## Golden clip candidates
 

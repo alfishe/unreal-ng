@@ -47,7 +47,7 @@ TEST(ZXEvoSdCardTtd_Test, BlobRoundTripMidMultiBlockRead)
     for (int i = 0; i < 100; i++)
         decoder->DecodePortIn(0x0057, 0);
 
-    ttd::TTDEvoSdCard serializer(*decoder);
+    ttd::TTDEvoSdCard serializer(decoder->GetSdCard(), decoder->GetZController());
     std::vector<uint8_t> blob(serializer.TTDStateSize());
     serializer.TTDSaveState(blob.data());
     const uint64_t hash = serializer.TTDHashState();
@@ -74,7 +74,7 @@ TEST(ZXEvoSdCardTtd_Test, HashFollowsTheControllerState)
     LeaveShadow(context->emulatorState);
     decoder->DecodePortOut(0x0077, 0x02, 0);  // deselected
 
-    ttd::TTDEvoSdCard serializer(*decoder);
+    ttd::TTDEvoSdCard serializer(decoder->GetSdCard(), decoder->GetZController());
     const uint64_t deselected = serializer.TTDHashState();
     decoder->DecodePortOut(0x0077, 0x00, 0);  // selected
     EXPECT_NE(serializer.TTDHashState(), deselected);

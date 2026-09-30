@@ -10,6 +10,7 @@
 #include <common/filehelper.h>
 #include <json/json.h>
 #include <loaders/snapshot/machinestatetransfer.h>
+#include <loaders/snapshot/snapshotlauncher.h>
 
 #include "../emulator_api.h"
 #include "../common/upload_helper.h"
@@ -114,17 +115,45 @@ void EmulatorAPI::loadSnapshot(const HttpRequestPtr& req, std::function<void(con
         return;
     }
 
-    bool success = emulator->LoadSnapshot(path);
+    // A file that needs another model (an SPG: TS-Conf) switches the model
+    // first unless switch_model is false (body field, query parameter)
+    SnapshotLoadRequest request;
+    request.emulatorId = emulator->GetId();
+    request.path = path;
+    if (auto json = req->getJsonObject(); json && json->isMember("switch_model"))
+        request.switchModel = (*json)["switch_model"].asBool();
+    else if (const std::string flag = req->getParameter("switch_model"); !flag.empty())
+        request.switchModel = flag == "true" || flag == "1";
+    emulator.reset();
+    const SnapshotLoadResult result = SnapshotLauncher::Load(request);
+    const bool success = result.ok;
 
     Json::Value ret;
     ret["status"] = success ? "success" : "error";
-    ret["message"] = success ? "Snapshot loaded successfully" : "Failed to load snapshot (check logs for details)";
+    ret["message"] = success ? (result.modelSwitched ? "Model switched to " + result.requiredModel + "; snapshot loaded"
+                                                     : std::string("Snapshot loaded successfully"))
+                             : result.message;
     ret["path"] = path;
     if (content.isEmbedded)
         ret["uploaded"] = true;
+    if (result.emulator)
+        ret["emulator_id"] = result.emulator->GetId();
+    ret["model_switched"] = result.modelSwitched;
+    if (result.modelSwitched)
+    {
+        ret["previous_emulator_id"] = result.previousEmulatorId;
+        ret["model"] = result.requiredModel;
+    }
+    if (result.modelMismatch)
+    {
+        ret["required_model"] = result.requiredModel;
+        ret["required_ram_kb"] = result.requiredRamKb;
+    }
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
-    resp->setStatusCode(success ? HttpStatusCode::k200OK : HttpStatusCode::k400BadRequest);
+    resp->setStatusCode(success               ? HttpStatusCode::k200OK
+                        : result.modelMismatch ? HttpStatusCode::k409Conflict
+                                               : HttpStatusCode::k400BadRequest);
     addCorsHeaders(resp);
     callback(resp);
 }

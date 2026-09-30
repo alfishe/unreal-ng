@@ -1,9 +1,18 @@
 #pragma once
 #include "stdafx.h"
 
+#include <memory>
+#include <string>
+
 #include "emulator/cpu/z80.h"
+#include "emulator/io/sdcard/sdcardspi.h"
+#include "emulator/io/spi/zcontrollerspi.h"
+#include "emulator/media/mediaslot.h"
 #include "emulator/memory/atm/evoavr.h"
 #include "emulator/memory/hostbusoverlay.h"
+#include "emulator/platforms/tsconf/tsconfdma.h"
+#include "emulator/platforms/tsconf/tsconfarbiter.h"
+#include "emulator/platforms/tsconf/tsconfengine.h"
 #include "emulator/platforms/tsconf/tsconfinterrupts.h"
 #include "emulator/platforms/tsconf/tsconfstate.h"
 #include "emulator/ports/portdecoder.h"
@@ -26,7 +35,7 @@ class TsConfMemory;
 ///   #1F..#FF  Beta-128 while DOS or FDD_VIRT[7]; #1F is the joystick otherwise (§8.2)
 ///   #xxF7     A8 = 1: #EFF7 and the Gluk CMOS (EvoAvr, the board's AVR) (§9)
 ///   #xxDF     Kempston mouse
-///   #57/#77   SD card SPI (phase 6: no card yet)
+///   #57/#77   SD card SPI: the Z-Controller registers (media slot "sd.zc")
 ///   #xxEF     COM port / ZiFi (not emulated: reads #FF)
 ///   Nemo IDE  checked first (TryIdePortIn / TryIdePortOut)
 ///
@@ -80,6 +89,18 @@ public:
     std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
     std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
 
+    /// region <SD card (hardware-spec §8.1)>
+    /// The card is the media manager's slot "sd.zc", as on the ZX-Evo
+    /// BaseConf; it outlives Core::Reset() like the board's
+    SdCardSpi& GetSdCard() { return _sdCard; }
+    ZControllerSpi& GetZController() { return _zc; }
+    /// Insert an image file / a medium through the media manager (directly
+    /// when the context has none: bare decoder tests)
+    bool InsertSdCard(const std::string& path, SdCardSpi::WriteMode mode, bool writeProtect = false);
+    bool InsertSdCard(std::unique_ptr<IBlockDevice> media, SdCardSpi::WriteMode mode, bool writeProtect = false);
+    void EjectSdCard();
+    /// endregion
+
     Ds12887& GetRtc() { return _evoAvr; }
     EvoAvr& GetEvoAvr() { return _evoAvr; }
     RtcBinding GetRtcBinding() override;
@@ -93,9 +114,26 @@ public:
     TsConfState& GetState() { return _ts; }
     const TsConfState& GetState() const { return _ts; }
     TsConfInterrupts& GetInterrupts() { return _interrupts; }
+    TsConfEngine& GetEngine() { return _engine; }
+    TsConfDma& GetDma() { return _dma; }
+    /// Bring the engine (line starts, DRAM budget, DMA) up to the current CPU T-state
+    void CatchUpEngine();
+
+    /// Registers the picture depends on (hardware-spec §3.2): a write first
+    /// brings the engine and the screen up to the write
+    static bool IsVideoRegister(uint8_t reg);
+    /// Engine line starts, then the screen, up to the current CPU T-state
+    void FlushVideo();
 
     /// Classify one I/O cycle
     PortArm ClassifyPort(uint16_t port) const;
+
+    /// Port trace internal codes: each PortArm, and #100 + n for TS register n
+    /// (#xxAF) with the register's name
+    static constexpr uint16_t kTraceRegisterBase = 0x100;
+    std::vector<PortTraceCodeName> GetPortTraceCodeTable() const override;
+    /// The register's name (V_CONFIG, PAGE3, DMA_CTRL ...), empty when not built
+    static const char* RegisterName(uint8_t reg);
 
     /// `OUT (reg << 8 | #AF), value` - also reached through the FM window (§2.4)
     void WriteRegister(uint8_t reg, uint8_t value);
@@ -139,7 +177,24 @@ private:
         PortDecoder_TSConf& _owner;
     };
 
+    /// 14 MHz write waits (TsConfArbiter): a write-only overlay installed
+    /// while the CPU runs at 14 MHz
+    class DramWriteWait : public HostBusOverlay
+    {
+    public:
+        explicit DramWriteWait(PortDecoder_TSConf& owner) : _owner(owner) { observesReads = false; }
+        uint8_t onRead(uint16_t, uint8_t normal, bool, bool) override { return normal; }
+        void onWrite(uint16_t addr, uint8_t value, bool romPaged) override;
+
+    private:
+        PortDecoder_TSConf& _owner;
+    };
+
     void RefreshM1Hook();
+    void UpdateSdStatus();
+    /// [HDD] IdeStall: the CPU waits for an IDE bus cycle (hardware-spec §8.3)
+    void ApplyIdeStall();
+    void ApplyExternalIoStall(uint16_t port, PortArm arm);
     void InstallInterrupts();
     void RefreshFmWindow();
     void RefreshCache();
@@ -147,6 +202,11 @@ private:
     void ApplyVideoPage();
     void UpdateBanks();
 
+    uint8_t FdcAccess(uint8_t port, bool isWrite, uint8_t value);
+    /// #FE write: border, tape out, and the beeper bit into the sound DAC
+    void PortFeOut(uint16_t port, uint8_t value, uint16_t pc);
+    /// The board's one 8-bit sound DAC (hardware-spec §7, [V] sound.v)
+    void DacWrite(uint8_t value);
     uint8_t DecodeF7In(uint16_t port);
     void DecodeF7Out(uint16_t port, uint8_t value);
     bool CmosReachable() const;
@@ -155,15 +215,40 @@ private:
 
     TsConfState _ts{};
     TsConfInterrupts _interrupts{_context, _ts};
+    TsConfDma _dma{_ts, _interrupts};
+    TsConfEngine _engine{_context, _ts, _interrupts, _dma};
+    TsConfArbiter _arbiter{_engine};
     TsConfMemory* _tsMemory = nullptr;
     bool _poweredOn = false;
 
     FmWindow _fmWindow{*this};
     CacheWriteSnoop _cacheSnoop{*this};
+    DramWriteWait _dramWriteWait{*this};
 
     // The board's AVR behind the Gluk CMOS ports (clock, NVRAM, extension
     // registers F0-FF), shared with ATM3: lives with the decoder so the
     // contents survive Core::Reset() like the battery
     EvoAvr _evoAvr;
     bool _nvramLoaded = false;
+
+    /// The "sd.zc" media slot
+    class SdSlot : public IMediaSlot
+    {
+    public:
+        explicit SdSlot(PortDecoder_TSConf& owner);
+        const SlotDescriptor& Descriptor() const override { return _descriptor; }
+        void Attach(Medium& medium) override;
+        void Detach() override;
+        bool IsBusy() const override;
+        void SetWriteProtectSwitch(bool on) override;
+
+    private:
+        PortDecoder_TSConf& _owner;
+        SlotDescriptor _descriptor;
+    };
+
+    SdCardSpi _sdCard;
+    ZControllerSpi _zc;
+    SdSlot _sdSlot{*this};
+    bool _sdWriteProtect = false;
 };

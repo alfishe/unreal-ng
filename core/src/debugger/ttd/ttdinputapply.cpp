@@ -6,6 +6,7 @@
 
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/keyboard/keyboard.h"  // Keyboard, ZXKeysEnum
+#include "emulator/io/keyboard/pckey.h"
 #include "emulator/io/mouse/mouse.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/sound/soundmanager.h"
@@ -50,6 +51,13 @@ bool ApplyInputEvent(const TTDInputEvent& ev, const TTDInputDevices& devices)
             if (!keyboard)
                 return false;
             keyboard->Reset();
+            keyboard->ReleaseAllPcKeys();  // the PS/2 controller sees the keys go up too
+            break;
+
+        case TTDInputKind::PcKey:
+            if (!keyboard || !keyboard->HasPs2Sink())
+                return false;
+            keyboard->ApplyPcKey(static_cast<PcKey>(ev.key), ev.pressed);
             break;
 
         case TTDInputKind::MouseMove:

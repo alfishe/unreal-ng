@@ -14,7 +14,7 @@ are in section 8.
 
 | Part | Purpose |
 |---|---|
-| `zxdlss_algo` | algorithm module: interface `Algorithm` (`delay()`, `process(frame) -> RGB`), self-registering algorithms, no emulator dependency |
+| `zxdlss_algo` | algorithm module: interface `Algorithm` (`delay()`, `process(frame) -> RGB`), self-registering algorithms, no emulator dependency. Since moved into the core (`core/src/emulator/video/zxdlss`, explicit registration) to run live as a temporal effect |
 | `mod-tpgw-ref` | the specification implemented literally, scalar, no tricks: the C++ reference |
 | `mod-tpgw` | the optimized implementation; must equal `mod-tpgw-ref` bit for bit |
 | `raw` | no processing (checks the tools and the video path) |

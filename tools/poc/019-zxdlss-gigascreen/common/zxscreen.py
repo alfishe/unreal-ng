@@ -1,14 +1,11 @@
-"""ZX Spectrum screen memory: layout, decode, emulator palette."""
+"""ZX Spectrum screen memory: layout, decode.
+
+The ZX palette is not here: a clip carries the colors the emulator drew it in
+(ClipV2.zx_palette, clip.json "palette16")."""
 import os
 
 import numpy as np
 import zstandard
-
-# unreal-ng palette (core/src/emulator/video/zx/screenzx.cpp, ABGR little-endian) -> RGB,
-# index = bright * 8 + color
-_ABGR = [0xFF000000, 0xFFC72200, 0xFF1628D6, 0xFFC733D4, 0xFF25C500, 0xFFC9C700, 0xFF2AC8CC, 0xFFCACACA,
-         0xFF000000, 0xFFFB2B00, 0xFF1C33FF, 0xFFFC40FF, 0xFF2FF900, 0xFFFEFB00, 0xFF36FCFF, 0xFFFFFFFF]
-ZX_RGB = np.array([[v & 0xFF, (v >> 8) & 0xFF, (v >> 16) & 0xFF] for v in _ABGR], np.uint8)
 
 # bitmap byte offset of (line y, column byte x)
 _Y = np.arange(192)

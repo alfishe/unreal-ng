@@ -2,6 +2,7 @@
 
 #include "stdafx.h"
 #include "emulator/io/keyboard/keyboard.h"
+#include "emulator/io/keyboard/pckey.h"
 
 #include <vector>
 #include <queue>
@@ -35,6 +36,11 @@ struct KeyboardSequenceEvent
     Action action = Action::TAP;
     std::vector<ZXKeysEnum> keys;   ///< One or more keys
     uint16_t frames = 2;            ///< Duration/wait meaning depends on action
+    /// Physical PC keys for a PS/2 keyboard controller (ZX-Evo), pressed with
+    /// `keys` and released with them. Empty: derived from each ZX key
+    /// (pckey::FromZxKey). Set when the ZX keys do not say which PC keys were
+    /// meant: typed text ('&' is Symbol Shift + 6 on the ZX, Shift + 7 on a PC)
+    std::vector<PcKey> pcKeys;
     
     // Convenience constructors
     KeyboardSequenceEvent() = default;
@@ -104,9 +110,12 @@ private:
     
     /// Keys currently held by pending tap operations (sequence based)
     std::vector<ZXKeysEnum> _tapHeldKeys;
+    std::vector<PcKey> _tapHeldPcKeys;  ///< explicit PC keys of the tap in progress
+    bool _tapDerivesPcKeys = true;      ///< the tap's ZX keys stand for their PC keys
     
     /// Keys directly pressed via PressKey (not via sequences)
     std::set<ZXKeysEnum> _directPressedKeys;
+    std::set<PcKey> _directPressedPcKeys;  ///< PC keys pressed by name ("f1", "pc.home")
     
     /// Whether we're in the "hold" phase of a tap (waiting to release)
     bool _inTapHoldPhase = false;
@@ -277,6 +286,10 @@ public:
     /// @param name Key name (case-insensitive)
     /// @return ZXKeysEnum value, or ZXKEY_NONE if not found
     static ZXKeysEnum ResolveKeyName(const std::string& name);
+
+    /// A ZX key name, or a physical PC key name ("f1", "home", "pc.up"; pckey.h)
+    /// that reaches a machine's PS/2 keyboard controller (ZX-Evo)
+    static bool IsKnownKeyName(const std::string& name);
     
     /// Convert enum to display name
     /// @param key Key enum
@@ -315,9 +328,14 @@ private:
     /// Execute a single event immediately
     void ExecuteEvent(const KeyboardSequenceEvent& event);
 
-    /// Journalled matrix mutation shared by every path (replay guard + TTD journal + apply)
+    /// Journalled matrix mutation shared by every path (replay guard + TTD journal + apply).
+    /// On a machine with a PS/2 controller the ZX key's PC keys go too, unless
+    /// `derivePcKeys` is false (the caller sends explicit PC keys)
     /// @return false when refused (replay active, no keyboard, ZXKEY_NONE)
-    bool ApplyKey(ZXKeysEnum key, bool pressed);
+    bool ApplyKey(ZXKeysEnum key, bool pressed, bool derivePcKeys = true);
+
+    /// Journalled physical key for the PS/2 controller; false without one
+    bool ApplyPcKey(PcKey key, bool pressed);
 
     /// Live input refused while the TTD journal owns input (TimeTravelManager::OwnsInput)
     /// or an RZX recording plays

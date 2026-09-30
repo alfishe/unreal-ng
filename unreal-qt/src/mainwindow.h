@@ -317,6 +317,7 @@ private:
     std::shared_ptr<HudModel> _hudModel;
     bool _autostartDisks = true;      // TR-DOS disk autostart on open (persisted in settings)
     std::string _nextEmulatorModel;   // Model for the next auto-started emulator (empty = default); consumed once
+    uint32_t _nextEmulatorRamKb = 128;  // Its RAM size in KB; reset with the model
     bool _hudOverlayVisible = false;  // Session-only HUD visibility state (default off)
     QMutex lockMutex;
     QMutex _audioMutex;              // Protects audio operations from race conditions

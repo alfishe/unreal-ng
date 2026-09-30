@@ -36,6 +36,7 @@
 
 #ifdef ENABLE_RECORDING
 #include "recordingmanager.h"
+#include "../../../temporalstatus.h"
 #endif
 
 namespace
@@ -431,6 +432,10 @@ void CLIProcessor::HandleVideo(const ClientSession& session, const std::vector<s
         "  video address <page> <offset>  - pixels a RAM byte feeds\n"
         "  video address z80 <addr>       - pixels the byte at a Z80 address feeds\n"
         "  video text [layer]             - text grid of a text mode (ATM / ZX-Evo)\n"
+        "  video temporal [status]        - ZX DLSS de-flicker: algorithm, delays, timing\n"
+        "  video temporal list            - algorithms that can be switched on\n"
+        "  video temporal off             - switch the de-flicker off\n"
+        "  video temporal <algorithm>     - switch it on (e.g. mod-tpgwafsd)\n"
         "Numbers are decimal or 0x-hex.";
 
     auto emulator = GetSelectedEmulator(session);
@@ -460,6 +465,11 @@ void CLIProcessor::HandleVideo(const ClientSession& session, const std::vector<s
     };
 
     const std::string sub = args.empty() ? "" : args[0];
+    if (sub == "temporal")
+    {
+        HandleVideoTemporal(session, context, args);
+        return;
+    }
     unsigned a = 0, b = 0, c = 0;
     StateNode report;
     if (sub == "layout" && args.size() == 1)
@@ -481,6 +491,40 @@ void CLIProcessor::HandleVideo(const ClientSession& session, const std::vector<s
         return;
     }
     session.SendResponse(DeviceState::ToText(report));
+}
+
+// HandleVideoTemporal — `video temporal [status|list|off|<algorithm>]`: the ZX
+// DLSS de-flicker run on every frame before presentation. Mirrors GET / PUT
+// /api/v1/emulator/{id}/video/temporal (the same TemporalStatus report).
+void CLIProcessor::HandleVideoTemporal(const ClientSession& session, EmulatorContext* context,
+                                       const std::vector<std::string>& args)
+{
+    const std::string op = args.size() >= 2 ? args[1] : "status";
+    if (args.size() > 2)
+    {
+        session.SendResponse("Usage: video temporal [status|list|off|<algorithm>]");
+        return;
+    }
+    if (op == "list")
+    {
+        std::ostringstream out;
+        out << "Temporal algorithms (default " << TemporalStatus::kDefaultAlgorithm << "):" << NEWLINE;
+        const std::string current = context->pScreen->GetTemporalAlgorithm();
+        for (const std::string& name : TemporalStatus::OfferedAlgorithms())
+            out << "  " << name << (name == current ? "  (selected)" : "") << NEWLINE;
+        session.SendResponse(out.str());
+        return;
+    }
+    if (op != "status")
+    {
+        if (!TemporalStatus::Set(context, op))
+        {
+            session.SendResponse("Unknown temporal algorithm '" + op + "'. Valid: " + TemporalStatus::OfferedList() +
+                                 ", off");
+            return;
+        }
+    }
+    session.SendResponse(TemporalStatus::Summary(context) + NEWLINE + DeviceState::ToText(TemporalStatus::Report(context)));
 }
 
 // HandleFrameCost — halt/active cost of the last frame plus session averages.

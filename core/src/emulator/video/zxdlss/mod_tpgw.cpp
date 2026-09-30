@@ -37,7 +37,8 @@
 #include "palette.h"
 #include "registry.h"
 #include "simd.h"
-#include "zxdlss/algorithm.h"
+#include "common/threadpool.h"
+#include "algorithm.h"
 
 namespace zxdlss
 {
@@ -69,28 +70,6 @@ inline void copyShifted(uint8_t* dst, const uint8_t* src, int w, int shift)
     std::memcpy(dst, src + (w - shift), static_cast<size_t>(shift));
 }
 
-/// f(begin, end) over [0, n) split into `threads` contiguous chunks, in parallel.
-template <class F>
-void parallelFor(int n, int threads, F&& f)
-{
-    if (threads <= 1 || n < 2)
-    {
-        f(0, n);
-        return;
-    }
-    const int chunk = (n + threads - 1) / threads;
-    std::vector<std::thread> pool;
-    for (int t = 1; t < threads; ++t)
-    {
-        const int b = t * chunk, e = std::min(n, b + chunk);
-        if (b < e)
-            pool.emplace_back([&f, b, e] { f(b, e); });
-    }
-    f(0, std::min(n, chunk));
-    for (auto& th : pool)
-        th.join();
-}
-
 int defaultThreads()
 {
     if (const char* env = std::getenv("ZXDLSS_THREADS"))
@@ -104,9 +83,9 @@ int defaultThreads()
 class MixTables
 {
 public:
-    MixTables()
+    explicit MixTables(const Palette& palette) : _pal(palette)
     {
-        const Palette& pal = Palette::instance();
+        const Palette& pal = _pal;
         for (int a = 0; a < 16; ++a)
         {
             _raw[a] = pack(sum(pal, {a}, 1.0));
@@ -141,7 +120,7 @@ public:
     {
         const uint32_t i = static_cast<uint32_t>((((a * 16 + b) * 16 + c) * 16 + d) * 16 + e);
         if (!_p5[i])
-            _p5[i] = pack(sum(Palette::instance(), {a, b, c, d, e}, 0.2));
+            _p5[i] = pack(sum(_pal, {a, b, c, d, e}, 0.2));
         return _p5[i];
     }
 
@@ -150,6 +129,7 @@ private:
     {
         double v[3];
     };
+    Palette _pal;   // the colors the tables were built from (p5 fills in on demand)
     std::array<uint32_t, 16> _raw{};
     std::array<uint32_t, 256> _p2{};
     std::array<uint32_t, 4096> _p3{}, _tp{};
@@ -205,6 +185,8 @@ public:
     int delay() const override { return kLookAhead; }
     std::string name() const override { return _name; }
 
+    FrameReport lastFrame() const override { return _last; }
+
     std::string stats() const override
     {
         std::string s = std::string("  kernels: ") + simd::path() + ", threads: " + std::to_string(_threads) + "\n";
@@ -253,6 +235,11 @@ public:
     void process(const FrameInput& in, RGBImage& out) override
     {
         ++_frames;
+        if (!_mix || !_pal.sameAs(in.palette))
+        {
+            _pal = Palette::fromRGBA(in.palette);
+            _mix = std::make_unique<MixTables>(_pal);
+        }
         setup(in.width, in.height, in.paperX, in.paperY);
         {
             Timer t(_stage[kPush]);
@@ -351,16 +338,32 @@ private:
     uint64_t _frames = 0;
     uint64_t _usePixels[5] = {}, _useFrames[5] = {};      // period2..5, field
     uint64_t _fieldRanFrames = 0, _seedFrames = 0, _wholeFrames = 0;
+    FrameReport _last;                                     // the last output frame (countUsage)
 
     int _w = 0, _h = 0, _th = 0, _tw = 0, _paperX = 48, _paperY = 48;
     std::deque<std::unique_ptr<Frame>> _ring;
-    const Palette& _pal = Palette::instance();
-    MixTables _mix;
+    // The emulator's active palette (FrameInput::palette) and the mixes built
+    // from it; both rebuilt when the palette changes
+    Palette _pal;
+    std::unique_ptr<MixTables> _mix;
 
     std::vector<uint32_t> _eq[4];            // rolling: bit j = key(j) == key(j + P), P = 2..5
     std::vector<uint32_t> _mot;              // rolling: bit i = translation(i)
     std::vector<uint32_t> _c1;               // rolling: bit j = key(j) == key(j + 1)
     int _threads = defaultThreads();
+    // Worker threads that live as long as the algorithm (the caller is the
+    // extra one): starting threads for every stage, several times a frame, cost
+    // a large share of the frame on a loaded machine. The UI's priority, not more
+    std::unique_ptr<ThreadPool> _pool =
+        std::make_unique<ThreadPool>(static_cast<size_t>(_threads > 1 ? _threads - 1 : 0), "zxdlss",
+                                     ThreadPool::Priority::Interactive);
+
+    /// f(begin, end) over [0, n) split into `chunks` contiguous ranges, in parallel
+    template <class F>
+    void parallelFor(int n, int chunks, F&& f)
+    {
+        _pool->ParallelFor(n, chunks, f);
+    }
     std::vector<uint8_t> _shifted, _motion;
     std::vector<int> _cost;
 
@@ -451,7 +454,7 @@ private:
         const uint8_t* next = _ring[L - 1]->plane.data();
         parallelFor(_h, _threads, [&](int y0, int y1) {
             for (size_t p = static_cast<size_t>(y0) * _w; p < static_cast<size_t>(y1) * _w && p < px; ++p)
-                unpack(_mix.twoPage(t[p], prev[p], next[p]), &out[p * 3]);
+                unpack(_mix->twoPage(t[p], prev[p], next[p]), &out[p * 3]);
         });
     }
 
@@ -520,6 +523,16 @@ private:
             _usePixels[k] += n[k];
             _useFrames[k] += n[k] != 0;
         }
+        _last = FrameReport{};
+        _last.valid = true;
+        _last.frame = _frames - 1;
+        _last.pixels = static_cast<uint32_t>(_w) * _h;
+        for (int k = 0; k < 4; ++k)
+            _last.periodPixels[k] = static_cast<uint32_t>(n[k]);
+        _last.fieldPixels = static_cast<uint32_t>(n[4]);
+        _last.fieldStage = fieldRan;
+        _last.wholePaper = fieldRan && _wholeOn;
+        _last.sceneAverage = sceneOn;
         _fieldRanFrames += fieldRan;
         if (fieldRan)
         {
@@ -715,13 +728,9 @@ private:
         const size_t px = static_cast<size_t>(_w) * _h;
         _period.assign(px, 0);
         _start.assign(px, 0);
-        const uint32_t* key[kDepth];
         const uint8_t* pl[kDepth];
         for (int i = 0; i < n; ++i)
-        {
-            key[i] = _ring[i]->key.data();
             pl[i] = _ring[i]->plane.data();
-        }
         struct Run
         {
             int a, b;
@@ -800,7 +809,7 @@ private:
         const uint8_t* t = _ring[L]->plane.data();
         const size_t px = static_cast<size_t>(_w) * _h;
         for (size_t p = 0; p < px; ++p)
-            unpack(_mix.raw(t[p]), &out[p * 3]);
+            unpack(_mix->raw(t[p]), &out[p * 3]);
     }
 
     /// Stage 1 into `out`; explained = the recipe renders different from raw t.
@@ -813,7 +822,7 @@ private:
         for (size_t p = 0; p < px; ++p)
         {
             const int P = _period[p];
-            const uint32_t raw = _mix.raw(t[p]);
+            const uint32_t raw = _mix->raw(t[p]);
             uint32_t v = raw;
             if (P)
             {
@@ -825,10 +834,10 @@ private:
                         o[k++] = _ring[b + j]->plane[p];
                 switch (P)
                 {
-                case 2: v = _mix.p2(t[p], o[0]); break;
-                case 3: v = _mix.p3(t[p], o[0], o[1]); break;
-                case 4: v = _mix.p4(t[p], o[0], o[1], o[2]); break;
-                default: v = _mix.p5(t[p], o[0], o[1], o[2], o[3]); break;
+                case 2: v = _mix->p2(t[p], o[0]); break;
+                case 3: v = _mix->p3(t[p], o[0], o[1]); break;
+                case 4: v = _mix->p4(t[p], o[0], o[1], o[2]); break;
+                default: v = _mix->p5(t[p], o[0], o[1], o[2], o[3]); break;
                 }
                 _explained[p] = (v & 0xFFFFFF) != (raw & 0xFFFFFF);
             }
@@ -1173,7 +1182,7 @@ private:
                         fn = next[p];
                     }
                 }
-                unpack(_mix.twoPage(t[p], fp, fn), &out[p * 3]);
+                unpack(_mix->twoPage(t[p], fp, fn), &out[p * 3]);
             }
     }
 
@@ -1193,64 +1202,69 @@ private:
     }
 };
 
-const Registration kRegistration("mod-tpgw", [] { return std::make_unique<ModTpgw>(Variant{}); });
-const Registration kRegistrationA("mod-tpgwa", [] {
-    Variant v;
-    v.name = "mod-tpgwa";
-    v.sceneAverage = true;
-    return std::make_unique<ModTpgw>(v);
-});
-// + no series with a whole-screen flash, periods 2..4, detailed object tiles >= 4 %
-const Registration kRegistrationAF("mod-tpgwaf", [] {
-    Variant v;
-    v.name = "mod-tpgwaf";
-    v.sceneAverage = true;
-    v.flatVeto = true;
-    v.maxPeriod = 4;
-    v.sceneObject = 0.04;
-    v.sceneDetail = 0.1;
-    return std::make_unique<ModTpgw>(v);
-});
-// + the scene stage renders the step-aware two-page mix (the accepted baseline, 2026-09-29)
-const Registration kRegistrationAFS("mod-tpgwafs", [] {
-    Variant v;
-    v.name = "mod-tpgwafs";
-    v.sceneAverage = true;
-    v.flatVeto = true;
-    v.maxPeriod = 4;
-    v.sceneObject = 0.04;
-    v.sceneDetail = 0.1;
-    v.sceneSteps = true;
-    return std::make_unique<ModTpgw>(v);
-});
-// + field seeds on the paper only: the hip-hop border's scrolling raster bars seeded a
-// field and the two-page render doubled them
-const Registration kRegistrationAFSP("mod-tpgwafsp", [] {
-    Variant v;
-    v.name = "mod-tpgwafsp";
-    v.sceneAverage = true;
-    v.flatVeto = true;
-    v.maxPeriod = 4;
-    v.sceneObject = 0.04;
-    v.sceneDetail = 0.1;
-    v.sceneSteps = true;
-    v.seedsPaper = true;
-    return std::make_unique<ModTpgw>(v);
-});
-// + instead: no field seeds off the paper on horizontal-stripe tiles (hip-hop's raster
-// bars lose theirs, the tunnel's border texture keeps its seeds)
-const Registration kRegistrationAFSD("mod-tpgwafsd", [] {
-    Variant v;
-    v.name = "mod-tpgwafsd";
-    v.sceneAverage = true;
-    v.flatVeto = true;
-    v.maxPeriod = 4;
-    v.sceneObject = 0.04;
-    v.sceneDetail = 0.1;
-    v.sceneSteps = true;
-    v.seedsBorderDetail = true;
-    return std::make_unique<ModTpgw>(v);
-});
-
 }  // namespace
+
+/// The mod-tpgw family (called by registry(): see registry.h).
+void registerModTpgw(std::map<std::string, Factory>& registry)
+{
+    registry["mod-tpgw"] = [] { return std::make_unique<ModTpgw>(Variant{}); };
+    registry["mod-tpgwa"] = [] {
+        Variant v;
+        v.name = "mod-tpgwa";
+        v.sceneAverage = true;
+        return std::make_unique<ModTpgw>(v);
+    };
+    // + no series with a whole-screen flash, periods 2..4, detailed object tiles >= 4 %
+    registry["mod-tpgwaf"] = [] {
+        Variant v;
+        v.name = "mod-tpgwaf";
+        v.sceneAverage = true;
+        v.flatVeto = true;
+        v.maxPeriod = 4;
+        v.sceneObject = 0.04;
+        v.sceneDetail = 0.1;
+        return std::make_unique<ModTpgw>(v);
+    };
+    // + the scene stage renders the step-aware two-page mix (the accepted baseline, 2026-09-29)
+    registry["mod-tpgwafs"] = [] {
+        Variant v;
+        v.name = "mod-tpgwafs";
+        v.sceneAverage = true;
+        v.flatVeto = true;
+        v.maxPeriod = 4;
+        v.sceneObject = 0.04;
+        v.sceneDetail = 0.1;
+        v.sceneSteps = true;
+        return std::make_unique<ModTpgw>(v);
+    };
+    // + field seeds on the paper only: the hip-hop border's scrolling raster bars seeded a
+    // field and the two-page render doubled them
+    registry["mod-tpgwafsp"] = [] {
+        Variant v;
+        v.name = "mod-tpgwafsp";
+        v.sceneAverage = true;
+        v.flatVeto = true;
+        v.maxPeriod = 4;
+        v.sceneObject = 0.04;
+        v.sceneDetail = 0.1;
+        v.sceneSteps = true;
+        v.seedsPaper = true;
+        return std::make_unique<ModTpgw>(v);
+    };
+    // + instead: no field seeds off the paper on horizontal-stripe tiles (hip-hop's raster
+    // bars lose theirs, the tunnel's border texture keeps its seeds)
+    registry["mod-tpgwafsd"] = [] {
+        Variant v;
+        v.name = "mod-tpgwafsd";
+        v.sceneAverage = true;
+        v.flatVeto = true;
+        v.maxPeriod = 4;
+        v.sceneObject = 0.04;
+        v.sceneDetail = 0.1;
+        v.sceneSteps = true;
+        v.seedsBorderDetail = true;
+        return std::make_unique<ModTpgw>(v);
+    };
+}
+
 }  // namespace zxdlss

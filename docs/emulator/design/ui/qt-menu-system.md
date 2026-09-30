@@ -24,7 +24,7 @@ A comprehensive cross-platform menu system has been implemented for the Unreal S
 
 ### File Menu
 - **Open...** (Ctrl+O) - Open any supported file
-- **Open Snapshot...** (Ctrl+Shift+O) - Load snapshot (.z80, .sna, .szx) or play an RZX recording (.rzx: another model is replaced by the recording's first; the status bar shows `RZX nn%`, red after a desync, with the details in its tooltip; a click on it opens a popover: file and creator, a slider over the whole recording with frame and time, `|<` / `>|`, the state, the keyframes and Stop Playback - a seek runs on a worker thread, back through the nearest keyframe)
+- **Open Snapshot...** (Ctrl+Shift+O) - Load snapshot (.z80, .sna, .szx) or play an RZX recording (.rzx: another model is replaced by the recording's first; the status bar shows `RZX nn%`, red after a desync, with the details in its tooltip; a click on it toggles a popover - the label is highlighted while it is open: file and creator, a slider over the whole recording with frame and time, `|<` / `>|`, the state, the keyframes and Stop Playback; a seek runs on a worker thread, back through the nearest keyframe. The popover is a small window glued to the main window (macOS: a child window that moves with it; other platforms follow the window's moves) and closes when the window loses focus, on a click outside it, on Esc or on minimize)
 - **Stop RZX Playback** - End an RZX playback early; the machine continues live (enabled while one plays). While a recording plays, fast tape / turbo tape / fast disk are greyed out
 - **Open Tape...** (Ctrl+T) - Load tape (.tap, .tzx)
 - **Open Disk...** (Ctrl+D) - Load disk image (.trd, .scl, .fdi)

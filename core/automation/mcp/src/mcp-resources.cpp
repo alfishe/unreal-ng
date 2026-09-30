@@ -260,6 +260,51 @@ IDE (#xx8B/AB/CB/EB), Kempston joystick and extended keyboard are not implemente
 (with or without a disk); launching the menu entries (CP/M, TR-DOS, Sinclair) has not been verified yet.
 )md";
 
+const char* const kMachineTsConf = R"md(# TS-Conf (model TSL, alias TSCONF)
+
+ZX-Evo board with the TS-Labs FPGA configuration. Create with `emulator_manage action=create model=TSL`
+(4096K only; config `data/configs/ts-conf/unreal.ini`, ROM `rom/zxevo.rom`, TS-BIOS in page 0).
+With a blank CMOS the BIOS opens its Setup Utility (text mode); ENTER changes an option.
+
+## Loading software
+- `.spg` (TS-Conf SDK program, v1.0 / v1.1, MegaLZ / Hrust blocks): `load_software path=...`. On another model
+  the machine is switched to TSL first; the answer's `emulator_id` is then the new instance (use it from now on).
+- SD card: media slot `sd.zc` (image or host folder) - Wild Commander / NedoOS live there.
+- IDE: Nemo (`[HDD] Scheme=NEMO-DIVIDE`); floppies via Beta-128 as usual.
+
+## Registers: port #nnAF, nn = register number
+| nn | Register | nn | Register |
+|:--|:--|:--|:--|
+| 00 | V_CONFIG (mode [1:0] ZX/16C/256C/TXT, geometry [7:6], NOTSU [5], NOGFX [4]) | 20 | SYS_CONFIG ([1:0] 3.5/7/14 MHz) |
+| 01 | V_PAGE | 21 | MEM_CONFIG (W0 RAM / write enable / map, LCK128) |
+| 02-05 | G_X_OFFS / G_Y_OFFS | 22-24 | HS_INT, VS_INT (frame INT position) |
+| 06 | T_CONFIG (TSU: sprites, tile layers) | 1A-1F, 25-28, 2D | DMA source / dest / len / ctrl / num |
+| 07 | PAL_SEL | 29 | FDD_VIRT (virtual drives) |
+| 0F | BORDER (CRAM index) | 2A | INT_MASK (frame / line / DMA) |
+| 10-13 | PAGE0..PAGE3 (4 MB windows) | 2B | CACHE_CONFIG |
+| 15 | FMAPS (CRAM / SFILE / register window) | 40-47 | T0 / T1 X/Y offsets |
+| 16-19 | T_MAP_PAGE, T0/T1_G_PAGE, SG_PAGE | | |
+
+`#7FFD` pages as on 128K (LCK128 picks 512K / 128K / auto / 1024K); `#EFF7`, `#xxF7` Gluk CMOS as on ZX-Evo.
+
+## Video
+ZX, 16C (4 bpp), 256C (8 bpp) and TXT modes in 256x192 / 320x200 / 320x240 / 360x288; the framebuffer is 720x288
+for every mode. TSU: two tile layers + 85 sprites. `inspect_state aspects:["video"]` reports e.g. `TS16C 320x200`
+with the active pages; `inspect_state aspects:["tsconf"]` decodes memory, video, TSU, interrupts, DMA and the clock.
+
+## Sound
+AY / TurboSound as usual. The board has ONE 8-bit DAC: Covox `#FB` and the `#FE` beeper bit share it (the beeper
+writes 0 / 255). Tape-in to the speaker is off (AVR default).
+
+## Interrupts / DMA
+Frame INT at VS_INT/HS_INT (32 clocks), line INTs, DMA INT; vectors #FF/#FD/#FB. DMA tasks: RAM copy, BLT1, fill,
+CRAM, SFILE, SPI (SD), IDE; the DMA gets what video, TSU and CPU reads leave of each line's DRAM budget.
+
+## Known limitations
+Wait states at 14 MHz (cache miss, external I/O) and the VDAC color curves are not emulated yet; TS-specific
+debugger views are pending (the model-first debugger).
+)md";
+
 struct StaticResource
 {
     const char* uri;
@@ -276,6 +321,7 @@ const StaticResource kStaticResources[] = {
     {"unreal://trdos-commands", "trdos-commands", "TR-DOS 5.03 commands, TRD file system layout, disk inspection via WebAPI", "text/markdown", kTrdosCommands},
     {"unreal://memory-map", "memory-map", "48K/128K/Pentagon memory maps, screen layout math, 0x7FFD paging bits", "text/markdown", kMemoryMap},
     {"unreal://machine/profi", "machine-profi", "Profi 1024 machine: ROM pages, #7FFD/#DFFD/palette ports, 512x240 hi-res mode, timing, limitations", "text/markdown", kMachineProfi},
+    {"unreal://machine/tsconf", "machine-tsconf", "TS-Conf (ZX-Evo TS-Labs) machine: #nnAF registers, video modes, TSU, DMA, sound DAC, SPG loading, limitations", "text/markdown", kMachineTsConf},
 };
 
 constexpr size_t kStaticResourceCount = sizeof(kStaticResources) / sizeof(kStaticResources[0]);

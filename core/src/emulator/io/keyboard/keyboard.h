@@ -123,12 +123,20 @@ struct KeyMapper
 typedef std::map<ZXKeysEnum, KeyDescriptor> ZXKeyMap;
 typedef std::map<ZXKeysEnum, KeyMapper> ZXExtendedKeyMap;
 
+// Physical PC keys (pckey.h): only the declarations the keyboard needs
+enum class PcKey : uint8_t;
+class IPs2KeySink;
+
 class KeyboardEvent : public MessagePayload
 {
 public:
     std::string targetEmulatorId;  // Specific emulator target (empty = broadcast to all)
     uint8_t zxKeyCode = 0x00;
     KeyEventEnum eventType;
+    /// The physical PC key behind the event (PcKey, 0 = none), for machines with
+    /// a PS/2 keyboard controller. A key with no ZX equivalent (F1, Home, ...)
+    /// arrives with zxKeyCode = ZXKEY_NONE and only this code
+    uint8_t pcKeyCode = 0x00;
 
 public:
     // Existing constructor (backward compatible - broadcasts to all instances)
@@ -143,6 +151,15 @@ public:
     { 
         this->zxKeyCode = zxKey; 
         this->eventType = type; 
+        this->targetEmulatorId = targetId;
+    }
+
+    /// Both codes of one host key (the front end fills them from the same key event)
+    KeyboardEvent(uint8_t zxKey, uint8_t pcKey, KeyEventEnum type, const std::string& targetId) : MessagePayload()
+    {
+        this->zxKeyCode = zxKey;
+        this->pcKeyCode = pcKey;
+        this->eventType = type;
         this->targetEmulatorId = targetId;
     }
     
@@ -297,6 +314,10 @@ protected:
     /// its keys from the group, at frame boundaries, in step with the others
     bool _hostInputGated = false;
 
+    /// The machine's PS/2 keyboard controller (ZX-Evo AVR), null on machines
+    /// without one: physical key events are neither journaled nor applied there
+    IPs2KeySink* _ps2Sink = nullptr;
+
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -325,6 +346,21 @@ public:
     void TypeSymbol(char symbol);
     void SendKeyCombination();
     /// endregion </Keyboard control>
+
+    /// region <PS/2 (physical keys)>
+public:
+    /// Attach the machine's PS/2 keyboard controller (the port decoder of a
+    /// ZX-Evo does it after construction); nullptr detaches
+    void SetPs2Sink(IPs2KeySink* sink) { _ps2Sink = sink; }
+    IPs2KeySink* GetPs2Sink() const { return _ps2Sink; }
+    bool HasPs2Sink() const { return _ps2Sink != nullptr; }
+
+    /// Apply one physical key event (the TTD input apply point, live and
+    /// replay); no-op without a sink
+    void ApplyPcKey(PcKey key, bool pressed);
+    /// Release every physical key the controller holds (automation "release all")
+    void ReleaseAllPcKeys();
+    /// endregion </PS/2 (physical keys)>
 
     /// region <Helper methods>
 public:
@@ -362,6 +398,7 @@ public:
 protected:
     bool IsHostInputSuppressed() const;               // TTD journal owns input
     void SubmitHostKey(ZXKeysEnum key, bool pressed);   // via the TTD live-input gateway
+    void SubmitHostPcKey(PcKey key, bool pressed);      // same gateway; only with a PS/2 sink
     /// endregion </Handle MessageCenter keyboard events>
 
     /// region <Debug>

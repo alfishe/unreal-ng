@@ -7,6 +7,7 @@
 #include <emulator/media/mediacontrol.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/rzx/rzxlauncher.h>
+#include <loaders/snapshot/snapshotlauncher.h>
 #include <emulator/memory/memory.h>
 #include <emulator/memory/memoryaccesstracker.h>
 #include <emulator/memory/memorymap.h>  // TD-3 sparse map + hexdump
@@ -66,6 +67,7 @@
 #include <thread>
 #include <debugger/ttd/ttdexternalevents.h>
 #include "../../../automation.h"
+#include "../../../temporalstatus.h"
 #include <emulator/io/rtc/rtcaccess.h>
 #include <emulator/state/devicestate.h>
 #include "../bindings/python_porttrace.h"
@@ -415,6 +417,30 @@ namespace PythonBindings
             auto emu = mgr->GetEmulator(selectedId);
             return emu.get();
         }, py::return_value_policy::reference, "Get currently selected emulator");
+
+        // Snapshots by emulator id (default: the selected one). A file that
+        // needs another model (an SPG: TS-Conf) switches it: emulator_id is the new one
+        m.def("snapshot_load", [](const std::string& path, const std::string& emulatorId, bool switchModel) -> py::dict {
+            SnapshotLoadRequest request;
+            request.emulatorId = python_rzx::ResolveId(emulatorId);
+            request.path = path;
+            request.switchModel = switchModel;
+            if (auto emulator = EmulatorManager::GetInstance()->GetEmulator(request.emulatorId))
+            {
+                if (std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot); !refusal.empty())
+                    throw std::runtime_error(refusal);
+            }
+            const SnapshotLoadResult result = SnapshotLauncher::Load(request);
+            py::dict d;
+            d["ok"] = result.ok;
+            d["message"] = result.message;
+            d["emulator_id"] = result.emulator ? result.emulator->GetId() : std::string();
+            d["model_switched"] = result.modelSwitched;
+            d["previous_emulator_id"] = result.previousEmulatorId;
+            d["required_model"] = result.requiredModel;
+            return d;
+        }, "Load a snapshot; a file for another model (.spg: TSL) switches the model unless switch_model is False",
+           py::arg("path"), py::arg("emulator_id") = "", py::arg("switch_model") = true);
 
         // RZX input recordings, by emulator id (default: the selected one). A
         // model switch replaces the machine: the answer's emulator_id is the new one
@@ -1234,8 +1260,17 @@ namespace PythonBindings
             .def("snapshot_load", [](Emulator& self, const std::string& path) -> bool {
                 if (std::string refusal = self.RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot); !refusal.empty())
                     throw std::runtime_error(refusal);  // TTD is recording: RuntimeError with the reason
-                return self.LoadSnapshot(path);
-            }, "Load snapshot file (RuntimeError while TTD records)", py::arg("path"))
+                // This object is one machine: a file for another model (an SPG:
+                // TS-Conf) is refused; unreal.snapshot_load switches the model
+                SnapshotLoadRequest request;
+                request.emulatorId = self.GetId();
+                request.path = path;
+                request.switchModel = false;
+                const SnapshotLoadResult result = SnapshotLauncher::Load(request);
+                if (result.modelMismatch)
+                    throw std::runtime_error(result.message + " (unreal.snapshot_load switches it)");
+                return result.ok;
+            }, "Load snapshot file (RuntimeError while TTD records or when the file needs another model)", py::arg("path"))
             .def("snapshot_save", &Emulator::SaveSnapshot, "Save snapshot file", py::arg("path"))
             // RZX playback on this machine (unreal.rzx_play plays, switching the model when needed)
             .def("rzx_stop", [](Emulator& self) { return self.StopRzx(); }, "Stop RZX playback")
@@ -1782,6 +1817,9 @@ namespace PythonBindings
             .def("ide_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Ide(self.GetContext()));
             }, "IDE board: scheme, latches, both units (task file, command, CD sense); available=False without one")
+            .def("tsconf_state", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::TsConf(self.GetContext()));
+            }, "TS-Conf machine: memory map, video (mode, geometry, TSU, the engine's line), interrupts, DMA, clock, SD; available=False on other machines")
             .def("rtc_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Rtc(self.GetContext()));
             }, "CMOS clock: part, ports, NVRAM file, time base, time, registers A-D, alarms, cell dump; available=False without one")
@@ -3933,6 +3971,20 @@ namespace PythonBindings
         .def("video_text", [](Emulator& self, unsigned layer) -> py::object {
             return StateNodeToPy(DeviceState::VideoText(self.GetContext(), layer));
         }, "Text grid of a text mode (ATM / ZX-Evo)", py::arg("layer") = 0)
+        // Temporal effects (ZX DLSS de-flicker): status and switch, the TemporalStatus report every interface returns
+        .def("video_temporal", [](Emulator& self) -> py::object {
+            return StateNodeToPy(TemporalStatus::Report(self.GetContext()));
+        }, "ZX DLSS de-flicker status: algorithm, active, video / audio delay, frame counters, timing, algorithms")
+        .def("video_temporal_set", [](Emulator& self, const std::string& name) -> py::object {
+            if (!TemporalStatus::Set(self.GetContext(), name))
+            {
+                StateNode error = StateNode::Object();
+                error["ok"] = false;
+                error["error"] = "Unknown temporal algorithm '" + name + "'. Valid: " + TemporalStatus::OfferedList() + ", off";
+                return StateNodeToPy(error);
+            }
+            return StateNodeToPy(TemporalStatus::Report(self.GetContext()));
+        }, "Switch the ZX DLSS de-flicker: an algorithm name, or \"\" / \"off\"; returns the new status", py::arg("name"))
 
         .def("frame_cost", [](Emulator& self) -> py::dict {
             py::dict d;

@@ -116,7 +116,7 @@ progress when the request carries a `_meta.progressToken` (see
 | `debug_code` | disassemble, assemble (two-pass, labels), `find_bytes`, `trace` (calltrace sessions), `porttrace` | `trace`: per phase (start/run/stop/read) |
 | `analyze_performance` | coverage_* (+gaps), `frame_cost`, profiler suites, `profile_report`, `porttrace` | `profile_report` + `porttrace`: per phase |
 | `media` | every media slot: list, insert (a file or a folder; `slot:"auto"`), swap, eject, save, export, discard, rescan, create, protect ([media.md](../media.md)) | — |
-| `capture_media` | screenshot (PNG/GIF + metadata), `screen_digest`, video recording (GIF native, `every_nth:"auto"` quantum sampling), `audio_capture` (RMS/peak/dominant-Hz, WAV) | bounded `every_nth` recordings: captured-frame counter (throttled to ~20 updates) |
+| `capture_media` | screenshot (PNG/GIF + metadata), `screen_digest`, video recording (GIF native, `every_nth:"auto"` quantum sampling), `audio_capture` (RMS/peak/dominant-Hz, WAV), `temporal_status` / `temporal_set` (ZX DLSS de-flicker: `algorithm` name or `"off"`; one-line summary of the algorithm and the video / audio delay it causes, e.g. "ZX DLSS mod-tpgwafsd active, video +7 frames (143 ms), audio +5, 4.8 ms/frame, late 0, restarts 0") | bounded `every_nth` recordings: captured-frame counter (throttled to ~20 updates) |
 | `search_api` | keyword search over the OpenAPI spec (scored), optional `auto_invoke` | — |
 | `invoke_api` | direct WebAPI call with `{id}` target substitution | — |
 

@@ -8,7 +8,7 @@ sections 5 and 7.8) and `mod-tpgwafsd` (+ no border field seeds on stripe tiles,
 section 7.3), the current baseline. This document specifies the algorithm
 completely: an implementation written only from it must reproduce the
 reference implementation's output (Python: `python/mod/`, `python/twopage.py`,
-`python/mixers.py`; C++: `tools/verification/zxdlss/`).
+`python/mixers.py`; C++: `core/src/emulator/video/zxdlss/`, tools in `tools/verification/zxdlss/`).
 
 Related: [requirements](requirements.md), [plane B](p0a-plane-b.md),
 [mixers](design-mixers.md), [optimization ideas](optimization-ideas.md),
@@ -405,7 +405,7 @@ return render(recipe)
 | ate-dj-circles | 11300..11500 | static GigaScreen DJ over a two-page circle lattice jumping in steps (added with mod-tpgwa) |
 
 Across the Edge by Demarche (`testdata/loaders/trd/across_the_edge_by_demarche.trd`)
-and `testdata/flicker/flickering_test.tap`, recorded as TTD sessions and exported
+and `testdata/video/zxdlss/flickering_test.tap`, recorded as TTD sessions and exported
 as clips with plane B (POC `walkthrough.md`).
 
 ### 10.2 Three oracles
@@ -473,7 +473,7 @@ ghosting); accepted by eye.
 |---|---|
 | Key = bitmap byte + attribute, not the color | a red ball drawn in ink over a red/yellow ink stripe matched the stripe's red phase and mixed pieces of the ball |
 | Render only 2..5 raw frames | a long history (10-frame windows, remembered backgrounds) left ball-shaped patches half a second behind the ball |
-| 6 frames of look-ahead | the background a sprite uncovers mixes at once; a past-only decision waited for a new confirmation (a raw cap trailing every ball) |
+| 6 frames of look-ahead | the background a sprite uncovers mixes at once; a past-only decision waited for a new confirmation (a raw cap trailing every ball). Measured again on 2026-09-30 for the live effect's latency: with 0, 1 or 2 frames 5-6 of the 12 golden scenes regress even with repairs - a new flicker stays raw for "three periods minus the look-ahead" frames, and the two-page render needs t+1 (POC results.md, "Limited look-ahead") |
 | Three whole periods per detector | two periods of P3 matched short chance patterns (a border blinking 1,0,0,1,0,0 once) |
 | Translation veto over the whole run, P >= 3 only | the pageflip checker grid moves unevenly and repeats per pixel (period 5); a veto on frame t alone missed a bouncing square lighting a pixel once every 5 frames |
 | Field seeds need unexplained flicker | the balls' sky alternates too, but the pixel stage explains it; only the spiral (and tunnel) leave flicker unexplained |

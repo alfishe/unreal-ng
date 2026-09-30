@@ -343,6 +343,7 @@ reference: [command-interface.md](./command-interface.md).
 | `video pixel <x> <y> [layer]` / `video pixel t <tstate>` | Memory, registers and palette cell behind a pixel (or the point under the beam, border included). |
 | `video address <page> <offset>` / `video address z80 <addr>` | Every area of the picture a byte feeds. |
 | `video text [layer]` | Exact text grid of an ATM / ZX-Evo text mode. |
+| `video temporal [status\|list\|off\|<algorithm>]` | ZX DLSS de-flicker: show its status (algorithm, video / audio delay it causes, timing), list the algorithms, switch it off or on (default `mod-tpgwafsd`, which shows the picture 7 frames later and delays the sound 5 more frames to match; see [command-interface.md §5.9](./command-interface.md)). |
 | `frame_cost` | Per-frame halt/run cost accounting. |
 | `coverage <start\|stop\|clear\|gaps\|status>` | Executed-address coverage analysis. |
 | `aylog <start\|stop\|clear\|dump\|status>` | AY-3-8910 register access log. |

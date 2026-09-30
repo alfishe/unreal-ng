@@ -13,6 +13,7 @@ PatternCategoryMap FileManager::_extensions =
     { "sna", SupportedFileCategoriesEnum::FileSnapshot },
     { "z80", SupportedFileCategoriesEnum::FileSnapshot },
     { "szx", SupportedFileCategoriesEnum::FileSnapshot },
+    { "spg", SupportedFileCategoriesEnum::FileSnapshot },  // TS-Conf program (the TS-Conf machine only)
     { "rzx", SupportedFileCategoriesEnum::FileSnapshot },  // input recording, played from its start snapshot
 
     { "trd", SupportedFileCategoriesEnum::FileDisk },

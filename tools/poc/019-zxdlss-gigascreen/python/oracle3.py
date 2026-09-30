@@ -21,7 +21,6 @@ Dimension:
 """
 import numpy as np
 
-from common.zxscreen import ZX_RGB
 from python.oracle2 import DE_OK, lab
 
 W = 6
@@ -33,7 +32,7 @@ FLASH_JUMP = 12.0          # luma units (0..255) against both neighbors
 class Oracle3Accumulator:
     def __init__(self, clip, mixer):
         self.clip, self.mixer = clip, mixer
-        self.luma = (ZX_RGB.astype(np.float64) @ np.array([0.299, 0.587, 0.114])).astype(np.float32)
+        self.luma = (clip.zx_palette.astype(np.float64) @ np.array([0.299, 0.587, 0.114])).astype(np.float32)
         self.agree = []
         self.last = None
 
@@ -129,7 +128,7 @@ class Oracle3Accumulator:
         if i - W < 0 or i + W >= len(self.clip):
             return
         ref, period, flash = self.reference(i)
-        raw = ZX_RGB[self.clip.plane(i)]
+        raw = self.clip.zx_palette[self.clip.plane(i)]
         self.last = (ref, period, flash)
         roi = np.any(out != raw, axis=2) | np.any(ref != raw, axis=2)
         if roi.any():

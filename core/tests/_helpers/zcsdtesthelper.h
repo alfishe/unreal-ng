@@ -9,13 +9,13 @@
 #include <memory>
 
 #include "emulator/io/storage/memorydisk.h"
-#include "emulator/ports/models/portdecoder_atm3.h"
+#include "emulator/ports/portdecoder.h"
 
 namespace zcsdtest
 {
     /// Send one SD command through a port pair and return R1 (IN twice per
     /// byte: the first clocks it in, the second returns it)
-    inline uint8_t SdCommand(PortDecoder_ATM3* decoder, uint16_t dataPort, uint8_t index, uint32_t arg, uint8_t crc = 0xFF)
+    inline uint8_t SdCommand(PortDecoder* decoder, uint16_t dataPort, uint8_t index, uint32_t arg, uint8_t crc = 0xFF)
     {
         decoder->DecodePortOut(dataPort, static_cast<uint8_t>(0x40 | index), 0);
         for (int shift = 24; shift >= 0; shift -= 8)
@@ -32,7 +32,7 @@ namespace zcsdtest
     }
 
     /// CMD0, then ACMD41 with HCS until the card leaves idle
-    inline bool SdInit(PortDecoder_ATM3* decoder, uint16_t dataPort)
+    inline bool SdInit(PortDecoder* decoder, uint16_t dataPort)
     {
         if (SdCommand(decoder, dataPort, 0, 0, 0x95) != 0x01)
             return false;
@@ -47,7 +47,7 @@ namespace zcsdtest
 
     /// Write one block through #57 (CMD24, data token, 512 bytes, CRC, data
     /// response, busy); returns the data response
-    inline uint8_t SdWriteBlock(PortDecoder_ATM3* decoder, uint32_t address, uint8_t fill)
+    inline uint8_t SdWriteBlock(PortDecoder* decoder, uint32_t address, uint8_t fill)
     {
         if (SdCommand(decoder, 0x0057, 24, address) != 0x00)
             return 0xFF;

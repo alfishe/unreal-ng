@@ -18,7 +18,8 @@ public:
     explicit DockingManager(MainWindow* mainWindow, QObject* parent = nullptr);
     virtual ~DockingManager() = default;
 
-    void addDockableWindow(QWidget* window, std::optional<Qt::Edge> initialEdge = std::nullopt);
+    void addDockableWindow(QWidget* window, std::optional<Qt::Edge> initialEdge = std::nullopt,
+                            bool useNativeChildWindow = false);
     void removeDockableWindow(QWidget* window);
     void updateDockedWindows();
     void moveDockedWindows(const QPoint& delta);
@@ -35,6 +36,11 @@ private:
         std::optional<Qt::Edge> snappedEdge = std::nullopt;
         QPoint offset;
         bool isBeingSetByManager = false;
+        /// Glue snapped windows to the main window at the OS level where possible
+        /// (platform/childwindow.h) instead of chasing the main window's move
+        /// events, which lags behind on macOS while dragging.
+        bool useNativeChildWindow = false;
+        bool nativeAttached = false;
     };
 
     struct PreFullscreenState
@@ -49,6 +55,8 @@ private:
     void unsnapWindow(QWidget* window);
     void updateWindowPosition(QWidget* window, DockingInfo& info);
     bool isCloseToEdge(QWidget* window, Qt::Edge& edge) const;
+    void attachNative(QWidget* window, DockingInfo& info);
+    void detachNative(QWidget* window, DockingInfo& info);
 
     MainWindow* _mainWindow;
     QMap<QWidget*, DockingInfo> _dockableWindows;
