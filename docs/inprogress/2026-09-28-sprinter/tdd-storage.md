@@ -85,6 +85,13 @@ real time when the CPU runs at 21 MHz (research open question 7,
 
 ### 2.4 Raw PC floppy images
 
+> **Built (PLAN #60(f), 2026-09-29, branch `infra-60`):** format id `rawpc`, probed by size before the
+> TR-DOS rule; `.img` saves go to MGT for a +D disk and to this writer otherwise; `.ima` added. Layout and
+> worked totals: [rawpc.md](../../file-formats/disk-images/rawpc.md). Tests: `loader_rawpc_test.cpp` (both
+> sizes through the WD1793, HD only at 500 kbit/s, a FAT12 boot sector), `floppyformats_test.cpp`,
+> `mediaformatregistry_test.cpp`. The DSS 1.62 image is not in `testdata` yet (test plan:
+> `testdata/machines/sprinter/`), so the real-image check waits for it.
+
 New loader + writer `LoaderRawPcFloppy` (`core/src/loaders/disk/loader_rawpc.{h,cpp}`), registered in
 the media format registry by size (storage technical design §4 already reserves it):
 

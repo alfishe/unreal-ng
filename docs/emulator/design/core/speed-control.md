@@ -98,24 +98,31 @@ Covox and the FDC keep their own clocks.
 |---|---|---|
 | who controls it | user (menu / API / INI) | guest software via ports |
 | wall-clock frame | unchanged 20 ms (`MainLoop` deadline pacing) | unchanged 20 ms |
-| CPU T-states per frame | × host | × 2^`hw_turbo_shift` |
+| CPU T-states per frame | × host | × `hw_turbo_ratio` |
 | audio samples per frame | × host (excess is dropped by the ring's hard resync — "no realtime constraint") | **unchanged** (882 @44.1 kHz/50 Hz) |
 | audio pitch | rises with the multiplier | unchanged |
 | INT position / window | scaled | scaled |
 
 **State** (`EmulatorState`, `platform.h`):
 
-- `hw_turbo_shift` — model-neutral log2 of the hardware multiplier (0 = base, 1 = 2×,
-  2 = 4×). **Maintained by the model's port decoder** from its own latch; the Scorpion
+- `hw_turbo_ratio` — model-neutral hardware clock ratio, 1…8 (1 = base 3.5 MHz, 2 = 7 MHz,
+  4 = 14 MHz, 6 = 21 MHz on the Sprinter; any integer, not only powers of two).
+  **Maintained by the model's port decoder** from its own latch; the Scorpion
   decoder keeps `scorpion_turbo` (the documented flip-flop) and mirrors it into
-  `hw_turbo_shift` on the strobe and on reset. A new clone only has to set this field.
-- `current_z80_frequency_multiplier` = `next_z80_frequency_multiplier << hw_turbo_shift`,
-  composed in `Z80::ApplyQueuedFrequencyMultiplier` at the frame boundary. The CPU loop,
-  INT window and `Screen::GetCurrentTstate` descale use this **effective** value.
-- `EmulatorState::HostSpeedMultiplier()` = effective `>> hw_turbo_shift` — the host
+  `hw_turbo_ratio` on the strobe and on reset. A new clone only has to set this field.
+- `hw_turbo_ratio_applied` — the ratio the running frame executes with. The decoder may
+  change `hw_turbo_ratio` mid-frame; the frame keeps the applied one until the boundary
+  (or until `Z80::ApplyHardwareTurboNow`).
+- `current_z80_frequency_multiplier` = `next_z80_frequency_multiplier × hw_turbo_ratio`,
+  composed once per frame in `Z80::ApplyQueuedFrequencyMultiplier` at the frame boundary.
+  The CPU loop, INT window and `Screen::GetCurrentTstate` descale use this **effective**
+  value. Example: ratio 6 on Pentagon timing gives 71 680 × 6 = 430 080 T per frame,
+  and the frame still lasts 20.48 ms.
+- `EmulatorState::HostSpeedMultiplier()` = effective ÷ `hw_turbo_ratio_applied` — the host
   factor alone.
-- `EmulatorState::AudioTstate(t)` = `t >> hw_turbo_shift` — CPU T-state position
-  converted to the audio time base.
+- `EmulatorState::AudioTstate(t)` = `t` ÷ `hw_turbo_ratio_applied` — CPU T-state position
+  converted to the audio time base. At ratio 1 (every machine without a turbo) both
+  helpers return without dividing.
 
 **Audio rule** (the fix for the "hard resync – dropped … overfilled audio" storm under
 Scorpion turbo, 2026-09-10): the sound path never sees the hardware factor.
@@ -135,12 +142,12 @@ Before this rule the audio path scaled by the effective multiplier, so a Scorpio
 frame and hard-resynced every few frames (121–140 ms dropped each time).
 
 **Timing of the switch.** A hardware strobe is applied **immediately, mid-frame**
-(`Z80::ApplyHardwareTurboNow`, called by the model decoder right after it flips
-`hw_turbo_shift`): the in-frame position `t` (and `haltpos`) is rescaled to the
+(`Z80::ApplyHardwareTurboNow`, called by the model decoder right after it changes
+`hw_turbo_ratio`): the in-frame position `t` (and `haltpos`) is rescaled to the
 new T-domain so the raster instant is preserved (the post-EI interrupt shadow is
 `Z80State::boundary`, a property of the last instruction, so it needs no
 rescaling), the multiplier/frequency/
-`hw_turbo_shift_applied` are updated, and `Z80::RecomputeFrameTiming()` refreshes the
+`hw_turbo_ratio_applied` are updated, and `Z80::RecomputeFrameTiming()` refreshes the
 frame length and INT window that `Z80FrameCycle` now reads from members on every
 iteration. Host speed changes still apply at the frame boundary. Firmware depends on
 the immediate switch: the Scorpion service monitors strobe `IN (#7FFD)` and at once time

@@ -12,6 +12,7 @@
 #include "loaders/disk/loader_hfe.h"
 #include "loaders/disk/loader_hobeta.h"
 #include "loaders/disk/loader_mgt.h"
+#include "loaders/disk/loader_rawpc.h"
 #include "loaders/disk/loader_scl.h"
 #include "loaders/disk/loader_scp.h"
 #include "loaders/disk/loader_td0.h"
@@ -101,9 +102,16 @@ namespace
             LoaderTD0 loader(context, path);
             return WriteWith(loader, disk, warnings);
         }
-        if (ext == "mgt" || ext == "img")
+        // .img is shared: an MGT (+D, 10 x 512) disk stays MGT, anything else is a raw PC floppy, whose writer
+        // either takes it (9 / 18 x 512 on 80 x 2) or says why not
+        if (ext == "mgt" || (ext == "img" && LoaderMGT::isPlusDGeometry(&disk)))
         {
             LoaderMGT loader(context, path);
+            return WriteWith(loader, disk, warnings);
+        }
+        if (ext == "img" || ext == "ima")
+        {
+            LoaderRawPcFloppy loader(context, path);
             return WriteWith(loader, disk, warnings);
         }
         if (ext == "scl")
@@ -128,7 +136,7 @@ namespace
 
 std::vector<std::string> FloppyFormats::Extensions()
 {
-    return {"trd", "scl", "fdi", "udi", "dsk", "td0", "mgt", "img", "hfe", "scp", "$b", "$c", "$d", "$#"};
+    return {"trd", "scl", "fdi", "udi", "dsk", "td0", "mgt", "img", "ima", "hfe", "scp", "$b", "$c", "$d", "$#"};
 }
 
 std::string FloppyFormats::Probe(const std::string& path)
@@ -160,7 +168,13 @@ std::string FloppyFormats::Probe(const std::string& path)
     if (LoaderTD0::detect(data, length) && (ext == "td0" || ext.empty()))
         return "td0";
 
-    // No signature: a TR-DOS volume sector, then the size rules
+    // No signature. A raw PC floppy is recognized by its size alone (720 KB, 1.44 MB): neither is a TR-DOS
+    // image size (a TRD is at most 655 360 bytes) nor an MGT one, and a PC boot sector or FAT may well carry
+    // #10 where the TR-DOS id would be, so the size rule goes first
+    if (LoaderRawPcFloppy::detect(static_cast<size_t>(size)))
+        return "rawpc";
+
+    // A TR-DOS volume sector, then the size rules
     if (size % 256 == 0 && length > kTrdosIdOffset && data[kTrdosIdOffset] == 0x10)
         return "trd";
     if (LoaderMGT::detect(static_cast<size_t>(size), ext))
@@ -240,6 +254,11 @@ MediaResult FloppyFormats::LoadAny(EmulatorContext* context, const std::string& 
     {
         LoaderMGT loader(context, path);
         return LoadWith(loader, "MGT", disk);
+    }
+    if (format == "rawpc")
+    {
+        LoaderRawPcFloppy loader(context, path);
+        return LoadWith(loader, "raw PC floppy", disk);
     }
     if (format == "hobeta")
     {

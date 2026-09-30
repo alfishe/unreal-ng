@@ -3,7 +3,8 @@
 Goal: mount a disk image into drive A or B, know it mounted, and read its
 catalog without touching TR-DOS.
 
-Supported container formats: `.trd .scl .fdi .udi .dsk .td0 .mgt .img`.
+Supported container formats: `.trd .scl .fdi .udi .dsk .td0 .mgt .img .ima`. A `.img` / `.ima` of
+737 280 or 1 474 560 bytes is a raw PC floppy (720 KB / 1.44 MB); an 819 200-byte `.img` is MGT.
 
 Related: [use-media-slots.md](use-media-slots.md) (every slot, folders, swaps with
 save/export/discard — the `media` tool), [autostart-disk.md](../run/autostart-disk.md) (boot it too),

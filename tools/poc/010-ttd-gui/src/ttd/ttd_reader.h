@@ -64,9 +64,9 @@ struct ChipsetState {
     uint8_t  ulaplus_reg;
     uint8_t  ulaplus_cram[64];
     // Model-neutral CPU clock (hardware turbo keeps the frame, multiplies CPU
-    // T-states inside it; audio descales by hw_turbo_shift_applied)
-    uint8_t  hw_turbo_shift;
-    uint8_t  hw_turbo_shift_applied;
+    // T-states inside it; audio descales by hw_turbo_ratio_applied)
+    uint8_t  hw_turbo_ratio;
+    uint8_t  hw_turbo_ratio_applied;
     uint8_t  current_z80_frequency_multiplier;
     uint8_t  next_z80_frequency_multiplier;
     uint8_t  reserved[6];

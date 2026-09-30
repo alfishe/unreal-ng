@@ -79,9 +79,8 @@ Scope confirmed with the user on 2026-09-27, and how the design honors it:
 ## Remaining
 
 - Implementation phases 0-8 per [implementation-plan.md](implementation-plan.md).
-- Prerequisites: PLAN #60 (built except (f), the raw PC floppy loader, which
-  TSConf does not need; the linear turbo ratio (b) is postponed - only the
-  Sprinter needs it, TSConf uses `hw_turbo_shift`); the unified media manager (#58, M1/M2/M4 on master)
+- Prerequisites: PLAN #60 (all built, on branch `infra-60` for (b) and (f); the
+  linear turbo ratio (b): TSConf sets `hw_turbo_ratio` {1, 2, 4, 4}); the unified media manager (#58, M1/M2/M4 on master)
   for the SD part of phase 6: TSConf only registers its `sd.zc` slot
   ([integration-tsconf-sd.md](../2026-09-28-storage-manager/integration-tsconf-sd.md)); control
   from the GUI and every automation surface comes from the media verbs

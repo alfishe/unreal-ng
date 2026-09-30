@@ -71,7 +71,7 @@ protected:
         // leaves the multiplier uninitialized and the GS frame length would
         // collapse to zero)
         ctx->emulatorState.current_z80_frequency_multiplier = 1;
-        ctx->emulatorState.hw_turbo_shift_applied = 0;
+        ctx->emulatorState.hw_turbo_ratio_applied = 1;
         chip = std::make_unique<SoundChip_GeneralSound>(ctx, 512);
     }
 

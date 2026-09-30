@@ -629,14 +629,14 @@ public:
     ///
     /// The effective multiplier composes the host speed control
     /// (next_z80_frequency_multiplier) with the Scorpion hardware turbo
-    /// state (hw_turbo_shift, driven by the model decoder - Scorpion: scorpion_turbo,
+    /// state (hw_turbo_ratio, driven by the model decoder - Scorpion: scorpion_turbo,
     /// hardware-reference 13). Called once per frame start by BeginFrame, so
     /// the scaled INT window / frame limit are always derived from the
     /// applied value.
     void ApplyQueuedFrequencyMultiplier();
 
     /// Apply a HARDWARE turbo change immediately, mid-frame (model port decoders
-    /// call this right after flipping EmulatorState::hw_turbo_shift). Hardware
+    /// call this right after changing EmulatorState::hw_turbo_ratio). Hardware
     /// switches the clock on the next cycle, and firmware relies on it: the
     /// Scorpion ProfROM monitor strobes IN (#7FFD) and immediately runs an
     /// INT-bounded count loop to detect the 7 MHz clock - deferring the switch

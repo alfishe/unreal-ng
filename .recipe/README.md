@@ -83,7 +83,7 @@ call.
 | Recipe | What it covers |
 |:--|:--|
 | [media/use-media-slots.md](media/use-media-slots.md) | Every media slot (floppy drives, SD card): list, insert a file or a **host folder**, `auto` slot choice, swap multi-disk software with save/export/discard, export the guest's writes |
-| [media/insert-disk.md](media/insert-disk.md) | Insert/eject disk images (`.trd .scl .fdi .udi .dsk .td0 .mgt .img`), drive A/B, blank disks, catalog/sysinfo inspection |
+| [media/insert-disk.md](media/insert-disk.md) | Insert/eject disk images (`.trd .scl .fdi .udi .dsk .td0 .mgt .img .ima`), drive A/B, blank disks, catalog/sysinfo inspection |
 | [media/insert-tape.md](media/insert-tape.md) | Load/eject tapes (`.tap/.tzx`), play/pause/seek/rewind, block catalog, fast-load plan, WAV import |
 | [media/load-snapshot.md](media/load-snapshot.md) | Load/save snapshots (`.sna/.z80/.szx`), verify a state took effect, snapshot round-trips |
 | [media/play-rzx.md](media/play-rzx.md) | Play RZX input recordings (`.rzx`): model switch, progress, desync diagnosis, conventions |

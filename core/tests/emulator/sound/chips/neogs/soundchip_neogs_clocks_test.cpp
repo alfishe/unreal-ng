@@ -100,7 +100,7 @@ struct Card
         ctx.config.frame = 69888;
         ctx.config.frame_duration_us = 19968;
         ctx.emulatorState.current_z80_frequency_multiplier = 1;
-        ctx.emulatorState.hw_turbo_shift_applied = 0;
+        ctx.emulatorState.hw_turbo_ratio_applied = 1;
         chip = std::make_unique<SoundChip_NeoGS>(&ctx, config, 44100);
     }
 

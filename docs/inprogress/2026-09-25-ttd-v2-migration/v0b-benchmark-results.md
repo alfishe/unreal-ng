@@ -103,6 +103,6 @@ About the stored `v1-full.json`: its byte metrics are the reference, and they ma
 ## 5. Limits of this round
 
 - Only one engine exists, so the matrix measures v1 against itself. The v1-vs-v2 comparison (acceptance criterion 4) comes with V1.
-- The Scorpion firmware switches on the Turbo+ mode during boot (`turbo_shift` = 1 on plain `SCORPION` as well). As a result `SCORPION` and `SCORPION-turbo` currently record the same machine.
+- The Scorpion firmware switches on the Turbo+ mode during boot (`turbo_shift` = 1, now metric `turbo_ratio` = 2, on plain `SCORPION` as well). As a result `SCORPION` and `SCORPION-turbo` currently record the same machine.
 - The `none` peripheral set appears as `noay` in case names. The name lists only the TurboSound slot; the other devices are off too.
 - Timings on a shared host vary by 10–30% between runs. The CI gate therefore checks bytes exactly and timing only as the share of capture in the frame (budget 50%; measured 3–14% on the `ci` cases, up to 26% on the full matrix with GS512).

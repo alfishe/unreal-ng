@@ -164,8 +164,8 @@ static ChipsetState parseChipset(ByteReader& r) {
     cs.ulaplus_reg = r.u8();
     const uint8_t* cram = r.take(64);
     std::memcpy(cs.ulaplus_cram, cram, 64);
-    cs.hw_turbo_shift = r.u8();
-    cs.hw_turbo_shift_applied = r.u8();
+    cs.hw_turbo_ratio = r.u8();
+    cs.hw_turbo_ratio_applied = r.u8();
     cs.current_z80_frequency_multiplier = r.u8();
     cs.next_z80_frequency_multiplier = r.u8();
     const uint8_t* rsv = r.take(6);

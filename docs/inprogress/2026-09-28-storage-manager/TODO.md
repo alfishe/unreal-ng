@@ -85,7 +85,7 @@ macOS `fsck_msdos` accepts the generated FAT16 and FAT32 volumes, and Finder mou
 Not in M2 (moved or noted):
 - Model switch with a dirty disk: M5 (the transfer and the prompt).
 - Qt picks the drive to save from the WD1793's selected drive, also on the +3; the drive picker comes with the M4 media panel.
-- Raw PC floppy images (720 KB / 1.44 MB, G9): no loader yet; with Profi CP/M / Sprinter.
+- ~~Raw PC floppy images (720 KB / 1.44 MB, G9)~~ **done (2026-09-29, PLAN #60(f), branch `infra-60`)**: `LoaderRawPcFloppy` (`loader_rawpc.{h,cpp}`), format id `rawpc`, probed by size ([rawpc.md](../../file-formats/disk-images/rawpc.md)).
 - SCL and +3 DSK folder builders: later strategies of the same builder.
 - Fixed (2026-09-28): 40-track disks in the Beta 128's 80-track drive. TR-DOS steps twice per track for them (it reads the disk type in sector 9), as on real hardware. The emulation now matches: `DiskImage::isFortyTrack` (48 tpi media, set for images of at most 42 cylinders), `FDD::trackUnderHead` (head position p reads cylinder p / 2 in an 80-track drive), the +3's drives are 40-track mechanics, the WD1793 moves the head by step pulses only (it re-synced the head to the track register), and a `.trd` file takes its geometry from the TR-DOS disk type (a single-sided 40-track file used to load as 20 x 2). Tests: `fdd_test.cpp` (real ROM, 40 x 1 and 40 x 2, folder and `.trd`), `WD1793_Ports_Test.SeekMovesTheHeadByStepsOnly`, `LoaderTRD_Test.GeometryFromTheDiskType`.
 

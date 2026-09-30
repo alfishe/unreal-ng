@@ -478,7 +478,7 @@ priority. ATM3's `IntClearedByAcknowledge` can migrate to a source later; not
 in scope.
 
 TSConf semantics (hardware-spec §5): frame event at `VS_INT*224 + HS_INT`
-(disabled when out of range), pulse length `32 << hw_turbo_shift` T-cycles of
+(disabled when out of range), pulse length `32 × hw_turbo_ratio` T-cycles of
 the CPU clock expressed in frame tacts (frozen during vdos); line event at dot
 447 of every line = the second half of its last tact, **modeled as frame tact
 `224·n − 1` for n = 1..320** (the 320th event, tact 71679, is the one that
@@ -595,7 +595,7 @@ precedent), registered in the factory + `IsModelSupported`
 | `xxEF` | — | 0xFF (D7) |
 | other | — | 0xFF |
 
-Register effects: `SYS_CONFIG` → `hw_turbo_shift = {0,1,2,2}[zclk]` then
+Register effects: `SYS_CONFIG` → `hw_turbo_ratio = {1,2,4,4}[zclk]` then
 `Z80::ApplyHardwareTurboNow()` (immediate; `z80.h:485` — do **not** use the
 host `next_z80_frequency_multiplier`, ATM3 note in `portdecoder_atm3.cpp:303-328`)
 and `CACHE_CONFIG = bit2 ? 0xF : 0`; `MEM_CONFIG`/`PAGEn`/`FMAPS` →
@@ -695,17 +695,15 @@ converts the finished line buffers + graphics into framebuffer pixels.
 
 ## 3.10 CPU clock
 
-> **2026-09-28, PLAN #60(b) - postponed:** a linear `hw_turbo_ratio` (1-8)
-> replacing `hw_turbo_shift` is needed only by the Sprinter (×6). TSConf's
-> ×1/×2/×4 fit `hw_turbo_shift` as designed below. If the ratio lands first
-> (with the Sprinter), TSConf sets ratio {1, 2, 4, 4} for `zclk` 0-3 instead -
-> one line in the decoder.
+> **2026-09-29, PLAN #60(b) - built:** the power-of-two `hw_turbo_shift` is
+> replaced by the linear `hw_turbo_ratio` (1-8) everywhere (the Sprinter needs
+> ×6). TSConf sets ratio {1, 2, 4, 4} for `zclk` 0-3.
 
-`hw_turbo_shift` from `SYS_CONFIG` via `ApplyHardwareTurboNow()` (immediate,
-rescales `t`); audio/video descale via `hw_turbo_shift_applied`
+`hw_turbo_ratio` from `SYS_CONFIG` via `ApplyHardwareTurboNow()` (immediate,
+rescales `t`); audio/video descale via `hw_turbo_ratio_applied`
 (`platform.h:949-980`). No new infrastructure. The raster (and so the engine's
 tact clock) stays at 3.5 MHz tacts — the engine converts CPU cycles to raster
-tacts with the applied shift. Phase 8 adds the 14 MHz external-I/O stall and
+tacts with the applied ratio. Phase 8 adds the 14 MHz external-I/O stall and
 cache-miss waits.
 
 ## 3.11 Storage
@@ -942,7 +940,7 @@ corrections:
   `ScreenTSConf : ScreenZX` subclass picked by `VideoController::CreateScreen`
   (§3.9); one 720×288 descriptor (not 720×576);
   placeholder descriptor rows/stub callbacks already exist.
-- Turbo via `hw_turbo_shift` + `ApplyHardwareTurboNow` (immediate), not the
+- Turbo via `hw_turbo_ratio` + `ApplyHardwareTurboNow` (immediate), not the
   host speed queue.
 - TTD id **13** (not 10); TTD never captured `ts` (v0.2 premise wrong);
   field-by-field blob (bitfields/pointers); page-255 sentinel dependency

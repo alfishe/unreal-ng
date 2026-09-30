@@ -27,13 +27,13 @@ TEST(TimeTravelManager_TurboClock_Test, UnitsFollowTheModelsTopClock)
     EmulatorState state{};
     state.ttd_clock_units = 2;  // 3.5 / 7 MHz model
 
-    state.hw_turbo_shift_applied = 0;
+    state.hw_turbo_ratio_applied = 1;
     EXPECT_EQ(state.TtdTInFrame(1000), 2000u);  // 1000 T at 3.5 MHz = 2000 T at 7 MHz
-    state.hw_turbo_shift_applied = 1;
+    state.hw_turbo_ratio_applied = 2;
     EXPECT_EQ(state.TtdTInFrame(2000), 2000u);  // the same instant after the 2x rescale
 
     state.ttd_clock_units = 0;  // not set yet: a model without turbo
-    state.hw_turbo_shift_applied = 0;
+    state.hw_turbo_ratio_applied = 1;
     EXPECT_EQ(state.TtdTInFrame(1234), 1234u);
 }
 
