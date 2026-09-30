@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <memory>
+#include <string>
 #include <vector>
 
 // @see http://www.bitsavers.org/components/westernDigital/FD179X-01_Data_Sheet_Oct1979.pdf
@@ -1206,6 +1208,11 @@ public:
     }
 
     DiskImage() = delete;
+
+    /// A deep copy: every track's stream (data, clock and weak-bit maps) with its sector index rebuilt, the
+    /// geometry and the 40-track flag. The copy is clean (no dirty flags) and stands for `filePath`. Used when a
+    /// machine's state moves to another instance (MachineStateTransfer): the other machine gets its own disk
+    std::unique_ptr<DiskImage> Clone(const std::string& filePath) const;
 
     virtual ~DiskImage()
     {
