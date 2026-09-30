@@ -20,8 +20,8 @@
         "#/components/schemas/CreateEmulatorRequest";
     paths["/api/v1/emulator/create"]["post"]["responses"]["201"]["description"] = "Emulator created (with identity fields)";
     paths["/api/v1/emulator/create"]["post"]["responses"]["400"]["description"] =
-        "Unknown model / unsupported RAM / model not creatable on this build; body carries "
-        "message, requested_model and available_models_endpoint";
+        "Unknown model / unsupported RAM / model not creatable on this build / ram_power_on not random or zero; "
+        "body carries message, requested_model and available_models_endpoint";
 
     // GET /api/v1/emulator/status
     paths["/api/v1/emulator/status"]["get"]["summary"] = "Get overall emulator status";
@@ -121,6 +121,22 @@
         "ZXPOLY-PENTAGON) starts the bare ZX-Poly machine; combine it with `zxpoly` to load a file";
     paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
          ["ram_size"]["type"] = "integer";
+    {
+        Json::Value& ramPowerOn = paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]
+                                       ["schema"]["properties"]["ram_power_on"];
+        ramPowerOn["type"] = "string";
+        ramPowerOn["enum"].append("random");
+        ramPowerOn["enum"].append("zero");
+        ramPowerOn["description"] =
+            "RAM contents at creation: random (noise in RAM pages 5 and 7, the screen and the shadow screen, the way real DRAM powers up; every other page zero) or zero (every RAM page of the configuration reads 0 - reproducible runs for tests, benchmarks and scripted analysis). Default: [MISC] RAMPowerOn of the model's unreal.ini (RANDOM when unset)"
+            ". A ZX-Poly machine applies it to all four modules";
+    }
+    paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["select"]["type"] = "boolean";
+    paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["select"]["description"] =
+        "Make the new machine the selected one (default true; the desktop front end then shows it). false keeps "
+        "the current selection - for scripted runs that create and remove machines next to the one on screen";
     {
         Json::Value& zxpoly = paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]
                                    ["schema"]["properties"]["zxpoly"];
@@ -274,6 +290,16 @@
          ["ram_size"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/model"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
          ["ram_size"]["description"] = "Optional RAM size in KB";
+    {
+        Json::Value& ramPowerOn = paths["/api/v1/emulator/{id}/model"]["post"]["requestBody"]["content"]
+                                       ["application/json"]["schema"]["properties"]["ram_power_on"];
+        ramPowerOn["type"] = "string";
+        ramPowerOn["enum"].append("random");
+        ramPowerOn["enum"].append("zero");
+        ramPowerOn["description"] =
+            "RAM contents of the new machine: random or zero (see POST /api/v1/emulator/create). Default: the "
+            "mode the current machine was created with";
+    }
     paths["/api/v1/emulator/{id}/model"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
          ["stranded"]["type"] = "string";
     for (const char* value : {"refuse", "save", "discard", "keep"})

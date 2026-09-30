@@ -298,6 +298,8 @@ Hold Backspace ~1.5 s watching the HUD, release just before the jump, replay the
 | Session invalidated | Toast with reason + bookmark export offer (§3.5) |
 | Status bar (main window) | Compact `⏺ 04:12` chip; click opens the timeline panel; turns `⏪` when detached — the user can never *not know* they're viewing the past |
 
+> **Implemented so far (2026-09-29):** while detached, the main window's status bar shows `TTD 42.0%` — the position between the session's first and last recorded frame, with the frame numbers in its tooltip (`StatusBarManager::updateTtd`, polled with the other indicators every 200 ms). The recording chip and the click-through are not done yet.
+
 ---
 
 ## 10. Keyboard Map (defaults, configurable)

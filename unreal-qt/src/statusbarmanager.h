@@ -16,6 +16,7 @@ class Emulator;
 class MainWindow;
 class MenuManager;
 class StatusIndicator;
+class RzxPopover;
 
 /// @brief StatusBarManager - device LEDs and FPS readout at the bottom of the window.
 ///
@@ -31,6 +32,10 @@ class StatusIndicator;
 class StatusBarManager : public QObject, public Observer
 {
     Q_OBJECT
+
+protected:
+    /// A click on the RZX label opens its popover
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 public:
     StatusBarManager(MainWindow* mainWindow, MenuManager* menuManager, QObject* parent = nullptr);
@@ -78,6 +83,8 @@ private slots:
     void updateIde(EmulatorContext* context);
     void updateFpsToolTip(std::shared_ptr<Emulator> emulator);
     void updateCpuFreqToolTip(EmulatorContext* context);
+    void updateRzx(std::shared_ptr<Emulator> emulator);
+    void updateTtd(EmulatorContext* context);
 
 private:
     MainWindow* _mainWindow;
@@ -92,6 +99,10 @@ private:
     StatusIndicator* _sound = nullptr;
     QLabel* _cpuFreq = nullptr;
     QLabel* _fps = nullptr;
+    QLabel* _rzx = nullptr;               ///< RZX playback progress, shown while a recording was played
+    QLabel* _ttd = nullptr;               ///< TTD history replay progress, shown while positioned in the past
+    RzxPopover* _rzxPopover = nullptr;    ///< opened by a click on _rzx: position, seek slider, stop
+    uint8_t _rzxLastState = 0xFF;         ///< rzx::PlayerState of the last tick (end / desync message once)
 
     QTimer _pollTimer;
 

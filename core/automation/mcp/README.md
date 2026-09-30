@@ -65,17 +65,18 @@ WebAPI's thread calls `run()`), and `stopMCP()` runs **after** `stopWebAPI()`.
 
 ## Tools
 
-### Phase 1 (core 6 + time_travel + router 2)
+### Phase 1 (core 6 + time_travel + rzx_playback + router 2)
 
 | Tool | Purpose |
 |:--|:--|
 | `emulator_manage` | create/list/status/start/stop/pause/resume/reset/destroy, list_models, server (build fingerprint + models_creatable); GS card actions gs_reset/gs_reset_card/gs_nmi/gs_send_command/gs_send_data/gs_read_status/gs_read_data (`value` = byte 0-255; writes/resets/NMI apply at the next instruction boundary and are journaled for TTD, reads are side-effect-free peeks), gs_switch_personality (`personality`: z80/lle/lw/lightweight/ngs/neogs), gs_dump_module (optional `path`); NeoGS: gs_sd_insert (`path`), gs_sd_eject, gs_flash_save, gs_stereo_mode (`mode`: separated/gs/mono) (applied on the machine thread at the next instruction boundary; insert/eject refused while TTD records) |
-| `load_software` | load `.sna/.z80/.szx` snapshots, `.tap/.tzx` tapes (auto-play flag), `.trd/.scl/.fdi/.udi/.dsk/.td0/.mgt/.img` disks (`autostart` flag: drive A only, quick-reset into TR-DOS and run the disk) |
+| `load_software` | load `.sna/.z80/.szx` snapshots, `.rzx` input recordings (via `rzx/play`: switches to the recording's model), `.tap/.tzx` tapes (auto-play flag), `.trd/.scl/.fdi/.udi/.dsk/.td0/.mgt/.img` disks (`autostart` flag: drive A only, quick-reset into TR-DOS and run the disk) |
 | `control_execution` | run/pause/resume/step/step_n/step_over/step_out, run_frames/run_tstates/run_to_interrupt, breakpoints (add/remove/enable/disable/clear/list); the raw `skip_until` endpoint is reachable via `invoke_api` |
 | `inspect_state` | aspects fan-out: machine, registers, memory, disasm, stack, breakpoints, memory_banks, screen_ocr, screen_image, screen_digest, timing (beam + the layer pixel under it), video_layout (mode layers and beam windows), video_text (exact text of ATM / ZX-Evo text modes), rom, audio_ay (every AY/SSG chip decoded), audio_fm (TurboSound FM board + both YM2203 halves: mode, timers, channels, operators, envelopes, key-on), audio_gs (General Sound card: mailbox flags, MPAG page, DAC channels, coprocessor core; unavailable when not fitted), fdc (Beta Disk WD1793 registers, status, FSM, drives), ttd (time-travel session state, recorded range, checkpoints, current position) |
 | `type_input` | type (tokenized BASIC entry), tap/press/release, combo, macro, release_all, status, list_keys |
 | `mouse_input` | Kempston mouse: move (relative dx/dy, +dy = up), press/release, click (hold N frames, optional dx/dy pre-move), buttons (exact pressed set), wheel, release_all, status; counters override stays on `invoke_api` |
-| `time_travel` | time-travel debugging: status/start/stop/invalidate/position/markers, seek, step_back_frame/step_forward_frame, step_back_instruction/step_forward_instruction, reverse_step, reverse_continue, find_last, resume, dump/load (`.ttd`), bookmarks, coverage_probe/scan/summary. Walkthrough: [docs/features/mcp/README.md](../../../docs/features/mcp/README.md#time-travel-debugging) |
+| `time_travel` | time-travel debugging: status/start/stop/invalidate/position/markers, seek, step_back_frame/step_forward_frame, step_back_instruction/step_forward_instruction, reverse_step, reverse_continue, find_last, resume, dump/load/file_info (`.ttd`), bookmarks, coverage_probe/scan/summary. Walkthrough: [docs/features/mcp/README.md](../../../docs/features/mcp/README.md#time-travel-debugging) |
+| `rzx_playback` | RZX input recordings: play (path, desync_mode, conventions, switch_model), stop, status, seek (frame) |
 | `search_api` | keyword search over the OpenAPI spec (scored), optional `auto_invoke` |
 | `invoke_api` | direct WebAPI call with `{id}` target substitution |
 

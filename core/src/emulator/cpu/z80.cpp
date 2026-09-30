@@ -19,6 +19,7 @@
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/rzx/rzxplayer.h"
 #include "emulator/spectrumconstants.h"
 #include "emulator/video/screen.h"
 #include "emulator/video/ulacontention.h"
@@ -643,20 +644,43 @@ Z80::StepResult Z80::StepInstructionWithWork(uint32_t work, bool skipBreakpoints
 
     StepResult result;
 
-    const bool nmiPending = _nmi_pending_count > 0;
-    const bool accepted = ((work & EmulatorContext::kStepWorkInterruptSource) && _interruptSource)
-                              ? ProcessInterruptsImpl<true>(_intWraps, _intStart, _intEnd)
-                              : ProcessInterruptsImpl<false>(_intWraps, _intStart, _intEnd);
-    if (accepted)
+    // RZX playback (design §5): the frame's fetch count reached at an
+    // instruction boundary ends the RZX frame, and the interrupt that closes
+    // it is this step (the machine's own frame INT is masked meanwhile).
+    // Otherwise the step's R increments are counted (see RzxCountFetches)
+    rzx::RzxPlayer* rzxPlayer = (work & EmulatorContext::kStepWorkRzx) ? _context->rzxPlayer : nullptr;
+    RzxBoundary rzxBoundary = RzxBoundary::None;
+    uint8_t rzxR0 = 0;
+    if (rzxPlayer) [[unlikely]]
     {
-        if (nmiPending)
-            result.nmiAccepted = true;
-        else
-            result.intAccepted = true;
+        rzxBoundary = RzxFrameEnd(*rzxPlayer);
+        rzxR0 = r_low;
+        rLoadAdjust = 0;
+    }
+
+    if (rzxBoundary != RzxBoundary::None)
+    {
+        // The frame end is this step: the forced interrupt, or the machine
+        // replaced by a snapshot block
+        result.intAccepted = rzxBoundary == RzxBoundary::Interrupt;
     }
     else
     {
-        Z80Step(skipBreakpoints);
+        const bool nmiPending = _nmi_pending_count > 0;
+        const bool accepted = ((work & EmulatorContext::kStepWorkInterruptSource) && _interruptSource)
+                                  ? ProcessInterruptsImpl<true>(_intWraps, _intStart, _intEnd)
+                                  : ProcessInterruptsImpl<false>(_intWraps, _intStart, _intEnd);
+        if (accepted)
+        {
+            if (nmiPending)
+                result.nmiAccepted = true;
+            else
+                result.intAccepted = true;
+        }
+        else
+        {
+            Z80Step(skipBreakpoints);
+        }
     }
 
     // The machine engine first (IMachineStepHook): the screen and the sound
@@ -666,7 +690,66 @@ Z80::StepResult Z80::StepInstructionWithWork(uint32_t work, bool skipBreakpoints
 
     OnCPUStep();
 
+    if (rzxPlayer) [[unlikely]]
+    {
+        // The step's fetches: the R delta (7 bits); the acknowledge of an
+        // accepted INT / NMI is not a fetch; LD R,A reports the R it replaced
+        // (rLoadAdjust). Worked example: R = #7E before `DD 21 nn nn` (LD
+        // IX,nn), #00 after: (#00 - #7E) & #7F = 2 fetches
+        if (rzxBoundary == RzxBoundary::None && rzxPlayer->IsPlaying())
+        {
+            uint8_t fetches = static_cast<uint8_t>((r_low - rzxR0 + rLoadAdjust) & 0x7F);
+            if (result.intAccepted || result.nmiAccepted)
+                fetches = static_cast<uint8_t>(fetches - 1);
+            rzxPlayer->AddFetches(fetches);
+        }
+        if (rzxPlayer->EndPending())
+            rzxPlayer->NotifyEnded();
+    }
+
     return result;
+}
+
+/// The RZX frame end at this boundary, when the frame's fetch count is
+/// reached: the player checks the frame and moves on; true when the
+/// interrupt that ends it was taken (HandleINT) as this step. A redundant-
+/// prefix boundary is inside an instruction: the frame then ends at the next
+/// real boundary (within the player's overrun tolerance)
+Z80::RzxBoundary Z80::RzxFrameEnd(rzx::RzxPlayer& player)
+{
+    const bool prefixPending = boundary == Z80_BOUNDARY_PREFIX_DD || boundary == Z80_BOUNDARY_PREFIX_FD;
+    if (prefixPending || !player.FrameDue())
+        return RzxBoundary::None;
+
+    // Distance from the machine's own INT position, for the drift statistic
+    int32_t drift = static_cast<int32_t>(t) - static_cast<int32_t>(_intStart + 1);
+    const int32_t frame = static_cast<int32_t>(_frameLimit);
+    if (frame > 0)
+    {
+        if (drift > frame / 2)
+            drift -= frame;
+        else if (drift <= -frame / 2)
+            drift += frame;
+    }
+
+    // A keyframe for seeking back, taken at the boundary before the frame ends
+    player.MaybeKeyframe();
+
+    const rzx::FrameEnd end = player.EndFrame(pc, iff1 != 0, boundary == Z80_BOUNDARY_INT_SHADOW, drift);
+    if (end == rzx::FrameEnd::Snapshot)
+    {
+        // Multiload / rollback: the recording's snapshot block replaces the machine
+        player.ApplyPendingSnapshot();
+        return RzxBoundary::Replaced;
+    }
+    if (end != rzx::FrameEnd::Interrupt)
+        return RzxBoundary::None;
+
+    // The NMOS LD A,I / LD A,R parity quirk only by option (SkoolKit flag 1)
+    if (!player.Options().ldAirParityQuirk && boundary == Z80_BOUNDARY_LD_A_IR)
+        boundary = Z80_BOUNDARY_NONE;
+    HandleINT(0xFF);
+    return RzxBoundary::Interrupt;
 }
 
 void Z80::SetInterruptSource(IInterruptSource* source)
@@ -757,6 +840,13 @@ void Z80::NotifyMachineM1Before(uint16_t address)
     machineM1Hook->BeforeMachineM1(address);
 }
 
+void Z80::NoteAcknowledgeRefresh(uint32_t t3)
+{
+    // As Memory::MemoryReadM1Snow: R before the increment; the Ferranti ULA machines only (ioContention)
+    if (ioContention && ioContention->IsSlotContended(static_cast<uint8_t>(i >> 6)))
+        ioContention->NoteRefresh(t3, static_cast<uint8_t>(r_low - 1));
+}
+
 void Z80::NotifyMachineM1(uint16_t address)
 {
     machineM1Hook->OnMachineM1(address);
@@ -795,7 +885,8 @@ uint8_t Z80::m1_cycle()
     if (machineM1Hook) [[unlikely]]
         NotifyMachineM1Before(cpu.pc);
 
-    opcode = rd(cpu.pc, true);  // Initiate memory read cycle and Keep opcode copy for trace / debug purposes
+    // The opcode read; the contended interfaces also handle the refresh that follows it (ULA snow)
+    opcode = rdM1(cpu.pc);  // Keep opcode copy for trace / debug purposes
 
     // Board logic clocked by the M1 refresh (ZX-Evo NMI exit / breakpoint).
     // Out of line like NotifyInstructionStart: the hot path is one pointer test
@@ -883,6 +974,20 @@ uint8_t Z80::rd(uint16_t addr, bool isExecution)
     return value;
 }
 
+/// The opcode fetch: rd through MemoryReadM1, which on the contended interfaces also notes the refresh that
+/// follows (ULA snow); on every other interface it is the plain read, so nothing is added there
+uint8_t Z80::rdM1(uint16_t addr)
+{
+    IncrementCPUCyclesCounter(3);
+
+    uint8_t value = (_memory->*MemIf->MemoryReadM1)(addr, true);
+
+    if (busTraceHook)
+        busTraceHook('R', addr, value);
+
+    return value;
+}
+
 /// Dispatching memory write method. Used directly from Z80 microcode (CPULogic and opcode)
 /// Write access to memory takes 3 clock cycles
 /// \param addr
@@ -912,8 +1017,16 @@ uint8_t Z80::in(uint16_t port)
         const uint64_t frame = st.frame_counter;
         const uint32_t tInFrame = st.TtdTInFrame(t);
         const uint16_t pc = m1_pc;
-        return journal->OnRead(port, inFromBus(port), frame, tInFrame, pc);
+        uint8_t value = inFromBus(port);
+        if (rzx::RzxPlayer* player = _context->rzxPlayer) [[unlikely]]
+            value = player->OnIn(port, value, pc);
+        return journal->OnRead(port, value, frame, tInFrame, pc);
     }
+    // RZX playback: the CPU gets the recorded value (emulator/rzx/, design
+    // §4); the devices still see the read. Below the TTD journal, so a TTD
+    // recording during playback stores the RZX-fed values
+    if (rzx::RzxPlayer* player = _context->rzxPlayer) [[unlikely]]
+        return player->OnIn(port, inFromBus(port), m1_pc);
     return inFromBus(port);
 }
 
@@ -1212,6 +1325,7 @@ bool Z80::ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned 
 
         // The acknowledge M1 is a refresh cycle like any M1: R advances
         cpu.r_low = ((cpu.r_low + 1) & 0x7f) | (cpu.r_low & 0x80);
+        NoteAcknowledgeRefresh(cpu.t + 2);  // the opcode-fetch M1 of the restart: T3 is the third tick
 
         // NMI timing per Z80 manual: 11T (M1=5T restart fetch, M2=3T push PCH, M3=3T push PCL).
         // The accept IS the cycle for this iteration: ProcessInterrupts returns true and
@@ -1360,6 +1474,7 @@ void Z80::HandleINT(uint8_t vector)
 
     // The acknowledge M1 is a refresh cycle like any M1: R advances
     cpu.r_low = ((cpu.r_low + 1) & 0x7f) | (cpu.r_low & 0x80);
+    NoteAcknowledgeRefresh(cpu.t + 4);  // T1 T2 Tw Tw T3 T4: the refresh's T3 is the fifth tick
 
     /// region <Calculate INT duration>
 

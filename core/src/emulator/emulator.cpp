@@ -27,6 +27,7 @@
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/memory/scorpion/scorpionromwindow.h"
 #include "loaders/snapshot/loader_sna.h"
+#include "loaders/snapshot/szx/szxreader.h"
 #include "loaders/snapshot/szx/loaderszx.h"
 #include "loaders/tape/loader_tape.h"
 
@@ -485,6 +486,14 @@ void Emulator::ReleaseNoGuard()
         _mainloop = nullptr;
     }
 
+    // RZX playback: its hooks leave the CPU and context before they go (the
+    // loop no longer steps)
+    {
+        std::lock_guard<std::mutex> lock(_rzxMutex);
+        std::lock_guard<std::mutex> sessionLock(_rzxSessionMutex);
+        _rzxSession.reset();
+    }
+
     /// region <Release additional peripheral devices>
     // GS / NGS
     // ZiFi
@@ -884,6 +893,10 @@ Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, u
 
 void Emulator::Reset()
 {
+    // A reset leaves the recorded path: an RZX playback ends first
+    if (IsRzxPlaying())
+        StopRzx();
+
     // To avoid race conditions, we must pause the emulator during reset
     // (Z80 thread executing ROM code during reset can cause inconsistent state)
     bool wasRunning = _isRunning && !_isPaused;
@@ -1404,7 +1417,7 @@ void Emulator::Stop()
 
 /// region <File operations>
 
-bool Emulator::LoadSnapshot(const std::string& path)
+bool Emulator::LoadSnapshot(const std::string& path, const std::string& reportedPath)
 {
     // Guard against operations during destruction (thread safety)
     if (_state == StateDestroying || _isReleased)
@@ -1412,8 +1425,6 @@ bool Emulator::LoadSnapshot(const std::string& path)
         MLOGWARNING("LoadSnapshot rejected - emulator is being destroyed");
         return false;
     }
-
-    bool result = false;
 
     /// region <Info logging>
 
@@ -1438,6 +1449,21 @@ bool Emulator::LoadSnapshot(const std::string& path)
 
     // Validate file extension
     std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(absolutePath));
+
+    // An RZX recording opens like a snapshot: its start snapshot loads and the
+    // recording plays on this machine (a model switch is RzxLauncher's job)
+    if (ext == "rzx")
+    {
+        const rzx::PlayResult played = PlayRzx(absolutePath);
+        if (!played.Ok() && _context)
+        {
+            MLOGERROR("RZX playback failed: %s", played.message.c_str());
+            MessageCenter::DefaultMessageCenter().Post(
+                NC_FILE_LOADED, new FileLoadedPayload(_context->emulatorId, "snapshot", absolutePath, false));
+        }
+        return played.Ok();
+    }
+
     if (ext != "z80" && ext != "sna" && ext != "szx")
     {
         MLOGERROR("Invalid snapshot format: {}. Expected .z80, .sna or .szx", ext.c_str());
@@ -1449,6 +1475,125 @@ bool Emulator::LoadSnapshot(const std::string& path)
         }
         return false;
     }
+
+    // The file the user opened: a temporary image is reported as the file it came from
+    const std::string openedPath = reportedPath.empty() ? absolutePath : reportedPath;
+    return LoadSnapshotStaged(
+        [&](std::string& error) {
+            bool result = false;
+            if (ext == "sna")
+            {
+                /// region <Load SNA snapshot>
+                LoaderSNA loaderSna(_context, absolutePath);
+                result = loaderSna.load();
+
+                /// region <Info logging>
+                if (result)
+                {
+                    MLOGINFO("SNA file loaded successfully, executing it...");
+                }
+
+                MLOGEMPTY();
+                /// endregion </Info logging>
+
+                /// endregion </Load SNA snapshot>
+            }
+            else if (ext == "z80")
+            {
+                /// region <Load Z80 snapshot>
+                LoaderZ80 loaderZ80(_context, absolutePath);
+                result = loaderZ80.load();
+
+                /// region <Info logging>
+                if (result)
+                {
+                    MLOGINFO("Z80 file loaded successfully, executing it...");
+                }
+
+                MLOGEMPTY();
+                /// endregion </Info logging>
+
+                /// endregion </Load Z80 snapshot>
+            }
+            else if (ext == "szx")
+            {
+                /// region <Load SZX snapshot>
+                LoaderSZX loaderSzx(_context, absolutePath);
+                result = loaderSzx.load();
+                if (result)
+                    MLOGINFO("SZX file loaded:\n%s", loaderSzx.GetReport().ToText().c_str());
+                else
+                    MLOGERROR("SZX load failed: %s", loaderSzx.GetError().c_str());
+                /// endregion </Load SZX snapshot>
+            }
+            if (!result && error.empty())
+                error = "the " + ext + " loader refused '" + absolutePath + "'";
+            return result;
+        },
+        openedPath);
+}
+
+bool Emulator::LoadSnapshotData(const std::vector<uint8_t>& data, const std::string& extension,
+                                const std::string& reportedPath)
+{
+    if (_state == StateDestroying || _isReleased)
+    {
+        MLOGWARNING("LoadSnapshotData rejected - emulator is being destroyed");
+        return false;
+    }
+    const std::string ext = StringHelper::ToLower(extension);
+    if (ext != "z80" && ext != "sna" && ext != "szx")
+    {
+        MLOGERROR("Invalid snapshot format: %s. Expected z80, sna or szx", ext.c_str());
+        if (_context)
+            MessageCenter::DefaultMessageCenter().Post(
+                NC_FILE_LOADED, new FileLoadedPayload(_context->emulatorId, "snapshot", reportedPath, false));
+        return false;
+    }
+    MLOGINFO("Loading %s snapshot from memory (%zu bytes) for '%s'", ext.c_str(), data.size(), reportedPath.c_str());
+    return LoadSnapshotStaged([&](std::string& error) { return ApplySnapshotData(data, ext, error); }, reportedPath);
+}
+
+bool Emulator::ApplySnapshotData(const std::vector<uint8_t>& data, const std::string& extension, std::string& error)
+{
+    const std::string ext = StringHelper::ToLower(extension);
+    if (ext == "sna")
+    {
+        LoaderSNA loader(_context, data, "memory");
+        if (loader.load())
+            return true;
+        error = "the SNA image did not load";
+        return false;
+    }
+    if (ext == "z80")
+    {
+        LoaderZ80 loader(_context, data, "memory");
+        if (loader.load())
+            return true;
+        error = "the Z80 image did not load";
+        return false;
+    }
+    if (ext == "szx" || ext == "zxs")
+    {
+        szx::Stage stage;
+        if (!SzxReader::Parse(data.data(), data.size(), stage, error))
+            return false;
+        szx::Report report;
+        if (!LoaderSZX::Commit(_context, stage, report, error))
+            return false;
+        MLOGINFO("SZX image loaded:\n%s", report.ToText().c_str());
+        return true;
+    }
+    error = "snapshot type '" + ext + "' is not supported (sna, z80, szx)";
+    return false;
+}
+
+bool Emulator::LoadSnapshotStaged(const std::function<bool(std::string& error)>& load, const std::string& openedPath)
+{
+    // Another snapshot replaces the machine an RZX playback runs on: it ends
+    // first (the playback's own start snapshot loads with the player out)
+    if (IsRzxPlaying())
+        StopRzx();
 
     // TTD v1 (P1.6): snapshot load teleports full machine state (parent TDD §4.2).
     // Refused while recording; otherwise drop the session before the loader runs.
@@ -1482,56 +1627,15 @@ bool Emulator::LoadSnapshot(const std::string& path)
         }
     }
 
-    if (ext == "sna")
-    {
-        /// region <Load SNA snapshot>
-        LoaderSNA loaderSna(_context, absolutePath);
-        result = loaderSna.load();
-
-        /// region <Info logging>
-        if (result)
-        {
-            MLOGINFO("SNA file loaded successfully, executing it...");
-        }
-
-        MLOGEMPTY();
-        /// endregion </Info logging>
-
-        /// endregion </Load SNA snapshot>
-    }
-    else if (ext == "z80")
-    {
-        /// region <Load Z80 snapshot>
-        LoaderZ80 loaderZ80(_context, absolutePath);
-        result = loaderZ80.load();
-
-        /// region <Info logging>
-        if (result)
-        {
-            MLOGINFO("Z80 file loaded successfully, executing it...");
-        }
-
-        MLOGEMPTY();
-        /// endregion </Info logging>
-
-        /// endregion </Load Z80 snapshot>
-    }
-    else if (ext == "szx")
-    {
-        /// region <Load SZX snapshot>
-        LoaderSZX loaderSzx(_context, absolutePath);
-        result = loaderSzx.load();
-        if (result)
-            MLOGINFO("SZX file loaded:\n%s", loaderSzx.GetReport().ToText().c_str());
-        else
-            MLOGERROR("SZX load failed: %s", loaderSzx.GetError().c_str());
-        /// endregion </Load SZX snapshot>
-    }
+    std::string error;
+    const bool result = load(error);
+    if (!result && !error.empty())
+        MLOGERROR("Snapshot load failed: %s", error.c_str());
 
     // Store snapshot path on success
     if (result)
     {
-        _context->coreState.snapshotFilePath = absolutePath;
+        _context->coreState.snapshotFilePath = openedPath;
 
         // The loader reset the machine and replaced its state (ports, memory,
         // registers): start the frame again from the loaded state, so devices
@@ -1549,10 +1653,83 @@ bool Emulator::LoadSnapshot(const std::string& path)
     {
         MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
         messageCenter.Post(NC_FILE_LOADED,
-            new FileLoadedPayload(_context->emulatorId, "snapshot", absolutePath, result));
+            new FileLoadedPayload(_context->emulatorId, "snapshot", openedPath, result));
     }
 
     return result;
+}
+
+rzx::RzxSession& Emulator::RzxSessionLocked()
+{
+    std::lock_guard<std::mutex> sessionLock(_rzxSessionMutex);
+    if (!_rzxSession)
+        _rzxSession = std::make_unique<rzx::RzxSession>(*this);
+    return *_rzxSession;
+}
+
+rzx::PlayResult Emulator::PlayRzx(const std::string& path, const rzx::PlayerOptions& options)
+{
+    if (_state == StateDestroying || _isReleased || !_context)
+    {
+        rzx::PlayResult result;
+        result.error = rzx::PlayError::Refused;
+        result.message = "the emulator is being destroyed";
+        return result;
+    }
+    std::lock_guard<std::mutex> lock(_rzxMutex);
+    MLOGINFO("RZX playback: '%s'", path.c_str());
+    rzx::PlayResult result = RzxSessionLocked().PlayFile(path, options);
+    if (!result.Ok())
+        MLOGWARNING("RZX playback refused: %s", result.message.c_str());
+    return result;
+}
+
+rzx::PlayResult Emulator::PlayRzx(std::shared_ptr<const rzx::File> file, const std::string& sourcePath,
+                                  const rzx::PlayerOptions& options)
+{
+    if (_state == StateDestroying || _isReleased || !_context)
+    {
+        rzx::PlayResult result;
+        result.error = rzx::PlayError::Refused;
+        result.message = "the emulator is being destroyed";
+        return result;
+    }
+    std::lock_guard<std::mutex> lock(_rzxMutex);
+    return RzxSessionLocked().Play(std::move(file), sourcePath, options);
+}
+
+bool Emulator::StopRzx()
+{
+    std::lock_guard<std::mutex> lock(_rzxMutex);
+    return _rzxSession && _rzxSession->Stop();
+}
+
+bool Emulator::SeekRzx(uint64_t frame, std::string* error)
+{
+    std::lock_guard<std::mutex> lock(_rzxMutex);
+    std::string reason;
+    const bool ok = _rzxSession ? _rzxSession->Seek(frame, reason) : (reason = "no RZX recording played", false);
+    if (!ok && error)
+        *error = reason;
+    return ok;
+}
+
+bool Emulator::IsRzxPlaying() const
+{
+    // The player pointer is the playback's own switch: set while the hooks are in
+    return _context && _context->rzxPlayer != nullptr;
+}
+
+rzx::SessionStatus Emulator::GetRzxStatus() const
+{
+    // Not _rzxMutex: the status is read while a seek plays on (the GUI polls it)
+    std::lock_guard<std::mutex> lock(_rzxSessionMutex);
+    return _rzxSession ? _rzxSession->Status() : rzx::SessionStatus{};
+}
+
+bool Emulator::IsRzxExtension(const std::string& ext)
+{
+    return StringHelper::ToLower(ext) == "rzx";
 }
 
 bool Emulator::SaveSnapshot(const std::string& path)
@@ -1955,7 +2132,8 @@ bool Emulator::EjectDisk(uint8_t drive, bool force, std::string* error)
 
 std::vector<std::string> Emulator::SupportedSnapshotExtensions()
 {
-    return {"sna", "z80", "szx"};
+    // rzx: an input recording, opened as its start snapshot plus the playback
+    return {"sna", "z80", "szx", "rzx"};
 }
 
 std::vector<std::string> Emulator::SupportedTapeExtensions()

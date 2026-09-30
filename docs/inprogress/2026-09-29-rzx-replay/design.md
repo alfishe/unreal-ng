@@ -1,7 +1,7 @@
 # RZX replay integration: design
 
 - **Date:** 2026-09-29
-- **Status:** design for review. Requirements: [requirements.md](requirements.md).
+- **Status:** R0-R3 (playback) implemented 2026-09-29; what differs from the plan below is in [As built](#18-as-built-r0-r2). R4 (recording) is being done separately; R5 (TTD interop) is a possible later, low-priority phase. Requirements: [requirements.md](requirements.md).
 - **Code base:** master at `15e711a6` (with the TTD port journals). Line
   numbers below were checked on that commit.
 - **Related:** [ttd-port-read-journal.md](../../emulator/design/debugger/time-travel-debug/ttd-port-read-journal.md)
@@ -33,7 +33,8 @@
 - [14. Cost analysis](#14-cost-analysis)
 - [15. Tests](#15-tests)
 - [16. Phases](#16-phases)
-- [17. Open decisions](#17-open-decisions)
+- [17. Decisions](#17-decisions)
+- [18. As built (R0-R2)](#18-as-built-r0-r2)
 
 ---
 
@@ -350,17 +351,39 @@ within noise. On: measured and documented; target ≤ 5% on `BM_Frame_PureCPU`.
 | R0 | vendored compression library (shared with SZX); `RzxReader` / `RzxFile`; parser tests and fuzzing | SZX decision on miniz |
 | R1 | `RzxPlayer` hooks (`IN`, step gate, interrupt mask), fetch counter, desync detection, locks; SNA / Z80 start snapshots via a temporary file; `Emulator::PlayRzx` / `StopRzx` / `RzxStatus`; benchmark gate | R0 |
 | R2 | surfaces (WebAPI + OpenAPI, CLI, MCP, Lua, Python, Qt), notifications, docs, recipe | R1 |
-| R3 | span-based snapshot loaders; SZX start snapshots; mid-stream snapshot blocks through the internal apply path | #64 |
-| R4 | recording (phase 2) | R1, R3 |
-| R5 | TTD interop (phase 3): player state as a TTD blob, TTD while playing, import, export | R1, TTD v2 as needed |
+| R3 | span-based snapshot loaders (SNA, Z80 from memory); SZX start snapshots; mid-stream snapshot blocks through the internal apply path - **done 2026-09-29** | #64 |
+| R4 | recording (phase 2) - in progress separately | R1, R3 |
+| R5 | TTD interop (phase 3): player state as a TTD blob, TTD while playing, import, export - possibly later, low priority (RZX and TTD stay independent for now) | R1, TTD v2 as needed |
 
-## 17. Open decisions
+## 17. Decisions
 
-1. **`IN` hook:** a separate `rzxPlayer` pointer beside the TTD journal pointer
-   (recommended; measured), or one shared "port hooks" pointer from the start?
-2. **Default desync mode:** strict (recommended) or tolerant?
-3. **Default `EI` convention:** accept at every frame start (recommended,
-   SkoolKit default) or honor short frames after `EI`?
-4. **Model mismatch:** switch the model automatically (recommended) or ask?
-5. **Where the module lives:** `core/src/loaders/rzx/` for the format and
-   `core/src/emulator/rzx/` for the runtime (recommended), or one folder?
+Taken 2026-09-29 (the recommended options):
+
+1. **`IN` hook:** a separate `rzxPlayer` pointer beside the TTD journal pointer.
+2. **Default desync mode:** strict.
+3. **Default `EI` convention:** the interrupt at every frame end (SkoolKit default); the short-frame rule is an option.
+4. **Model mismatch:** switch the model automatically (`RzxLauncher`, below); refuse by option.
+5. **Module location:** `core/src/loaders/rzx/` for the format, `core/src/emulator/rzx/` for the runtime.
+6. **Compression:** miniz, shared with SZX (vendored by #64); an own inflate may replace it later.
+
+## 18. As built (R0-R2)
+
+| Topic | As built | Differs from the plan |
+|---|---|---|
+| Files | `loaders/rzx/`: `rzxformat` (model, bounded inflate / deflate on miniz), `rzxreader`, `rzxsnapshot` (the start snapshot's machine from its header). `emulator/rzx/`: `rzxplayer`, `rzxsession` (owned by `Emulator`), `rzxlauncher` (the surfaces' entry point, model switch, text forms) | `RzxLauncher` is new |
+| Per-step gate | master's `stepWork` (one gate for TTD input, interrupt source, machine step): bit `kStepWorkRzx = 1u << 3`; the RZX block runs inside `Z80::StepInstructionWithWork` after the TTD input, one exit through the machine engine and `OnCPUStep`; `Z80::RzxFrameEnd` takes the forced interrupt ([step-work-gate.md](step-work-gate.md)) | the gate became master's general one |
+| Fetch count | R delta per step (7 bits); minus 1 for an accepted INT / NMI; `LD R,A` adds the R it replaced to `Z80::rLoadAdjust` (one subtraction in `ope_4F`), so the delta still counts its 2 fetches | the adjust accumulator instead of a special case in the step |
+| Frame end | at the start of the first step whose boundary has the count reached; deferred past a redundant `DD` / `FD` prefix; up to 2 fetches of overrun tolerated (zxsp) | - |
+| Frames | 0-fetch frames are skipped with their `IN` values and no interrupt (SkoolKit `next_frame`); a repeat frame copies the previous *stored* frame (a skipped one too); the last frame ends with its interrupt too | the skip rule is new |
+| `LD A,I` / `LD A,R` quirk | **off by default** (SkoolKit flag 1 is off: "some RZX files fail when this flag is set") | §9 said on |
+| Start snapshot | the last snapshot before the first input block (the first with `ignoreLaterSnapshots`), embedded or external (next to the RZX, then as stored), loaded from memory through `Emulator::LoadSnapshotData` (the SNA and Z80 loaders take a buffer since R3; SZX was span-based already) and reported as the RZX file; SZX start snapshots work (#64 landed) | R1 used a temporary file |
+| Model | the core refuses a mismatch (`PlayError::ModelMismatch`, required model and RAM); `RzxLauncher` switches with `ModelSwitch` (stranded media kept), starts the new machine if the old one ran, plays there | - |
+| Mid-recording snapshots (R3) | `NextBlock` notes the last snapshot block before the next input block; the frame that ends the previous block ends with `FrameEnd::Snapshot` instead of an interrupt (the snapshot replaces that state anyway, as in SkoolKit); on the emulation thread `RzxSession::ApplyRecordedSnapshot` checks the machine, refuses while TTD records (a stopped TTD history is dropped), loads the image with `Emulator::ApplySnapshotData` (no pause, no notification), keeps the frame INT masked, sets the frame position from the block's T-states and restarts the frame; `snapshotsApplied` counts them, `NC_RZX_PLAYBACK` "snapshot". Another machine or a failed load stops the playback with the reason; `ignoreLaterSnapshots` plays past them. A seek back restores a keyframe before the block and applies the snapshot again on the way | as planned |
+| T-state field | the input block's T-states since the recording's INT set the frame position (`LoaderSZX::FramePositionFromIntCount`) before the first frame | - |
+| Surfaces | WebAPI `/rzx/play|stop|status` + OpenAPI; MCP `rzx_playback` and `load_software` (`.rzx` → `rzx/play`); CLI `rzx`; Lua `rzx_play/stop/status` (no model switch in a bound interpreter); Python module `rzx_play/stop/status` by id + `Emulator.rzx_stop/status`; `.rzx` in `LoadSnapshot` (plays on the machine as it is) and so in `snapshot load`, `open`, GDB `monitor load`; Qt: open / drag and drop with the model switch, File > Stop RZX Playback, status bar `RZX nn%` with a tooltip and the end / desync message | notifications: `NC_RZX_PLAYBACK` (started, finished, desync, stopped, failed) |
+| Seek (added 2026-09-29) | `RzxKeyframeStore`, owned by the player: the machine as an SZX image (`LoaderSZX::Capture` + `SzxWriter`) and the cursor (frame, fetches, `IN` position) at a frame boundary, before the frame ends; frame 0 at the start, then every 250 frames; over the 32 MB budget every second keyframe goes (frame 0 stays) and the interval doubles; freed on stop, a new recording, the machine's end. `Emulator::SeekRzx(frame)`: back restores the latest keyframe before the target (`LoaderSZX::Commit`) and plays on, forward plays on (`RunUntilCondition`, machine paused); after the end or a desync the playback resumes. Surfaces: `rzx/seek`, `rzx seek`, MCP `seek`, `rzx_seek`; Qt: the status bar label's popover (slider, jumps, stop; seeks on a worker thread). A 48K keyframe is about 9 KB | not planned (user request) |
+| Threading | `Play` / `Stop` pause the machine around the change (as a snapshot load); the end runs on the emulation thread (`RzxPlayer::onEnded` → the session unhooks); status is published under a mutex once per RZX frame | no command queue |
+
+**Verification.** 16 RZX Archive recordings (48K, 128K, +2, Pentagon 128; Spectaculator and SPIN; up to 346003 frames) play to the end without a desync in strict mode; the 15 on machines SkoolKit emulates end byte-exact (registers, all RAM, `#7FFD`) with SkoolKit `rzxplay.py`. Finding on the way: SkoolKit's fast simulator leaves MEMPTR stale after jumps, so `BIT n,(HL)` flags 3 / 5 differ (Dargon's Crypt frame 3963); the expected states use its contention simulator, which tracks MEMPTR ([tools/verification/rzx](../../../tools/verification/rzx/README.md)). Fixtures and their sources: [testdata/loaders/rzx](../../../testdata/loaders/rzx/README.md).
+
+**Drift** (the recorded interrupt against the machine's own): 20-33 T-states for Spectaculator recordings, tens of thousands for SPIN ones (another interrupt reference).

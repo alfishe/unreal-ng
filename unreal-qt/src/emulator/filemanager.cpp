@@ -13,6 +13,7 @@ PatternCategoryMap FileManager::_extensions =
     { "sna", SupportedFileCategoriesEnum::FileSnapshot },
     { "z80", SupportedFileCategoriesEnum::FileSnapshot },
     { "szx", SupportedFileCategoriesEnum::FileSnapshot },
+    { "rzx", SupportedFileCategoriesEnum::FileSnapshot },  // input recording, played from its start snapshot
 
     { "trd", SupportedFileCategoriesEnum::FileDisk },
     { "scl", SupportedFileCategoriesEnum::FileDisk },

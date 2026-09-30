@@ -170,6 +170,33 @@ Also persisted (they exist in memory today but are lost on save):
   disk mode keeps full history losslessly, and thinned regions made the
   "≤ 6 ms seek anywhere" target false anyway.
 
+### 6.1 Memory as linked blocks (direction, 2026-09-29)
+
+Direction from the user, recorded here for V4 / V5; the numbers and the spill
+mechanism are still **open** ([migration-trajectory.md](migration-trajectory.md)
+§6, item 3):
+
+- **History memory is a chain of linked blocks.** A session starts with **one
+  64 MB block** and adds blocks as it grows, **up to the configured limit**.
+  Pieces, blobs, checkpoints, journals and coverage are allocated inside the
+  blocks.
+- **Everything is tied to memory, not to time.** The budget, eviction and the
+  status report count blocks and bytes; no setting is expressed in seconds of
+  history (bytes per second differ by an order of magnitude between an idle
+  48K and a ZX-Evo with GS and MoonSound).
+- **At the limit, whole blocks move.** With spill, the oldest block leaves
+  memory for disk (disk mode, §6) or is backed by a **memory-mapped file** so the
+  OS pages it; without spill, it is released and the session start moves
+  forward (the memory-only ring). Evicting by block makes the cost of eviction
+  independent of the number of pieces in it.
+- **Branches** ([model what-if design](../2026-09-29-model-what-if/design.md)
+  §4.6) share the same blocks; pinned branches and the newest block of the
+  active history are never released.
+- Open: the default limit, when spill starts (at the limit, or earlier in the
+  background), explicit disk writes vs memory-mapped blocks (or both: mapped
+  blocks as the disk mode's storage), and how a block's contents are arranged
+  so a spilled block can be read back in one read.
+
 ## 7. File container (`.ttd` v2)
 
 ```

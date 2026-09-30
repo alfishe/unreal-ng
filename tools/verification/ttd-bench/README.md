@@ -20,7 +20,7 @@ The same emulation runs under every TTD engine (today only `v1`, the current `Ti
   - it runs a number of settle frames before recording starts;
   - it records a fixed number of frames, with scripted key presses at fixed frames;
   - the RTC clock is frozen, so the firmware never reads the host time;
-  - power-on RAM (pages 5 and 7) is zeroed instead of filled from the process-wide `rand()`, so a case does not depend on the cases that ran before it.
+  - every machine is created with zeroed RAM (`RAMPowerOn=ZERO`) instead of the default power-on noise from the process-wide `rand()`, so a case does not depend on the cases that ran before it.
 - **Byte metric**: a size, which is identical on every run. Names end in `_bytes` or `_bpf` (bytes per frame), plus `frames` and `checkpoints`.
 - **Timing metric**: a duration. Timings vary with host load and are reported as percentiles.
 

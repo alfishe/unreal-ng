@@ -1,4 +1,6 @@
 #pragma once
+
+#include <vector>
 #include "stdafx.h"
 
 #include "emulator/platform.h"
@@ -109,7 +111,11 @@ protected:
     ModuleLogger* _logger;
 
     std::string _path;
-    FILE* _file = nullptr;
+    /// The whole snapshot: read from _path by validate(), or given in memory;
+    /// the staging reads walk it from _readPos
+    std::vector<uint8_t> _data;
+    size_t _readPos = 0;
+    bool _fromMemory = false;
     bool _fileValidated = false;
     size_t _fileSize = 0;
     SNA_MODE _snapshotMode = SNA_UNKNOWN;
@@ -128,6 +134,9 @@ protected:
     /// region <Constructors / destructors>
 public:
     LoaderSNA(EmulatorContext* context, const std::string& path);
+    /// A snapshot already in memory (an RZX start snapshot, an upload);
+    /// `name` only labels the log messages
+    LoaderSNA(EmulatorContext* context, std::vector<uint8_t> data, const std::string& name);
     virtual ~LoaderSNA();
     /// region </Constructors / destructors>
 
@@ -141,8 +150,10 @@ public:
 protected:
     bool validate();
 
-    bool is48kSnapshot(FILE* file);
-    bool is128kSnapshot(FILE* file);
+    bool is48kSnapshot() const;
+    bool is128kSnapshot() const;
+    /// The next `size` bytes of _data into `target`; false past the end
+    bool Read(void* target, size_t size);
 
     bool loadToStaging();
     bool load48kToStaging();
@@ -172,12 +183,14 @@ class LoaderSNACUT : public LoaderSNA
 {
 public:
     LoaderSNACUT(EmulatorContext* context, std::string path) : LoaderSNA(context, path) {};
+    LoaderSNACUT(EmulatorContext* context, std::vector<uint8_t> data, const std::string& name)
+        : LoaderSNA(context, std::move(data), name) {};
 
 public:
     using LoaderSNA::_context;
     using LoaderSNA::_logger;
     using LoaderSNA::_path;
-    using LoaderSNA::_file;
+    using LoaderSNA::_data;
     using LoaderSNA::_fileValidated;
     using LoaderSNA::_fileSize;
     using LoaderSNA::_snapshotMode;

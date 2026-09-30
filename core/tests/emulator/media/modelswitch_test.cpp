@@ -12,6 +12,7 @@
 #include "3rdparty/message-center/messagecenter.h"
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
+#include "emulator/config.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
@@ -177,6 +178,32 @@ TEST_F(ModelSwitch_Test, CleanStrandedMediaCloseAndFailedSavesChangeNothing)
     EXPECT_EQ(switched.media.closed, std::vector<std::string>{"sd.zc"});
     ASSERT_FALSE(switched.media.lines.empty());
     EXPECT_NE(switched.result.report.back().find("not on this model, closed"), std::string::npos);
+}
+
+/// The new machine keeps the old one's power-on RAM mode unless the request
+/// names one: a machine created with zeroed RAM stays reproducible
+TEST_F(ModelSwitch_Test, NewMachineKeepsThePowerOnRamModeUnlessTold)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    auto old = manager->CreateEmulatorWithModel("", "PENTAGON", LoggerLevel::LogError, nullptr,
+                                                Config::RamPowerOnOverride(RamPowerOn::Zero));
+    ASSERT_NE(old, nullptr);
+
+    ModelSwitchResult kept = Switch(old.get(), "48K");
+    ASSERT_TRUE(kept.result.Ok()) << kept.result.message;
+    ASSERT_NE(kept.emulator, nullptr);
+    EXPECT_EQ(kept.emulator->GetContext()->config.ramPowerOn, RamPowerOn::Zero);
+
+    ModelSwitchRequest request;
+    request.emulatorId = kept.emulator->GetId();
+    request.model = "PENTAGON";
+    request.ramPowerOn = RamPowerOn::Random;
+    kept.emulator.reset();
+    ModelSwitchResult told = ModelSwitch::Run(request);
+    ASSERT_TRUE(told.result.Ok()) << told.result.message;
+    ASSERT_NE(told.emulator, nullptr);
+    _newId = told.emulator->GetId();
+    EXPECT_EQ(told.emulator->GetContext()->config.ramPowerOn, RamPowerOn::Random);
 }
 
 TEST(ModelSwitch_Names_Test, StrandedPolicyNames)

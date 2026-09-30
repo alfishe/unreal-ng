@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cassert>
+#include <cstring>
 #include <new>
 #include <mutex>
 #include <thread>
@@ -126,11 +127,19 @@ Memory::Memory(EmulatorContext* context)
     // bool, so cost is zero when TTD is off.
     _ttdDirtyTracker = new ttd::TTDDirtyTracker();
 
-    // Memory filling with random values will give a false positive on memory changes analyzer,
-    // so disable it if shared memory mapping is enabled
-    if (!_feature_sharedmemory_enabled)
+    // Power-on RAM ([MISC] RAMPowerOn, config.ramPowerOn). Private memory
+    // comes from the OS zero-filled (AllocateZeroedRegion); a shared segment
+    // may be one that already existed, so Zero clears it explicitly.
+    // Random fills the screen pages the way real DRAM powers up - except in
+    // shared memory, where the noise would show as changes to an external
+    // memory viewer or change analyzer
+    if (_context->config.ramPowerOn == RamPowerOn::Zero)
     {
-        // Make power turn-on behavior realistic: all memory cells contain random values
+        if (_feature_sharedmemory_enabled)
+            std::memset(_ramBase, 0, MAX_RAM_SIZE);
+    }
+    else if (!_feature_sharedmemory_enabled)
+    {
         RandomizeMemoryContent();
     }
 
@@ -233,14 +242,20 @@ void Memory::MemoryWriteOverlay(uint16_t addr, uint8_t value)
         overlay->onWrite(addr, value, _bank_mode[0] == BANK_ROM);
 }
 
+// The contended overlay reads are also the inner read of the opcode fetch with ULA snow (memorycontended.cpp)
+template uint8_t Memory::MemoryReadOverlay<&Memory::MemoryReadContended<&Memory::MemoryReadDebug, true>>(uint16_t, bool);
+template uint8_t Memory::MemoryReadOverlay<&Memory::MemoryReadContended<&Memory::MemoryReadFast, false>>(uint16_t, bool);
+
 MemoryInterface* Memory::GetOverlayMemoryInterface(bool debug, bool contended)
 {
     if (debug && contended)
         return new MemoryInterface(&Memory::MemoryReadOverlay<&Memory::MemoryReadContended<&Memory::MemoryReadDebug, true>>,
-                                   &Memory::MemoryWriteOverlay<&Memory::MemoryWriteContended<&Memory::MemoryWriteDebug, true>>);
+                                   &Memory::MemoryWriteOverlay<&Memory::MemoryWriteContended<&Memory::MemoryWriteDebug, true>>,
+                                   &Memory::MemoryReadM1Snow<&Memory::MemoryReadOverlay<&Memory::MemoryReadContended<&Memory::MemoryReadDebug, true>>>);
     if (contended)
         return new MemoryInterface(&Memory::MemoryReadOverlay<&Memory::MemoryReadContended<&Memory::MemoryReadFast, false>>,
-                                   &Memory::MemoryWriteOverlay<&Memory::MemoryWriteContended<&Memory::MemoryWriteFast, false>>);
+                                   &Memory::MemoryWriteOverlay<&Memory::MemoryWriteContended<&Memory::MemoryWriteFast, false>>,
+                                   &Memory::MemoryReadM1Snow<&Memory::MemoryReadOverlay<&Memory::MemoryReadContended<&Memory::MemoryReadFast, false>>>);
     if (debug)
         return new MemoryInterface(&Memory::MemoryReadOverlay<&Memory::MemoryReadDebug>, &Memory::MemoryWriteOverlay<&Memory::MemoryWriteDebug>);
     return new MemoryInterface(&Memory::MemoryReadOverlay<&Memory::MemoryReadFast>, &Memory::MemoryWriteOverlay<&Memory::MemoryWriteFast>);

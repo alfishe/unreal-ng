@@ -86,6 +86,7 @@ call.
 | [media/insert-disk.md](media/insert-disk.md) | Insert/eject disk images (`.trd .scl .fdi .udi .dsk .td0 .mgt .img`), drive A/B, blank disks, catalog/sysinfo inspection |
 | [media/insert-tape.md](media/insert-tape.md) | Load/eject tapes (`.tap/.tzx`), play/pause/seek/rewind, block catalog, fast-load plan, WAV import |
 | [media/load-snapshot.md](media/load-snapshot.md) | Load/save snapshots (`.sna/.z80/.szx`), verify a state took effect, snapshot round-trips |
+| [media/play-rzx.md](media/play-rzx.md) | Play RZX input recordings (`.rzx`): model switch, progress, desync diagnosis, conventions |
 | [media/author-udi-images.md](media/author-udi-images.md) | Creating proper UDI images: format capability matrix, host-side conversion/authoring, in-emulator formatting, weak-bit limits |
 | [media/agent-screenshot-view.md](media/agent-screenshot-view.md) | Viewing emulator screen as agent: native MCP/WebAPI server-side binary saving without base64 transcript corruption |
 

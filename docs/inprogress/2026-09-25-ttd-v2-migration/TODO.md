@@ -21,9 +21,10 @@ Requirements: [requirements.md](requirements.md).
 - [x] Merge `generalsound` (merged before V1; GS RAM as a region moves into V1)
 - [x] Merge `moonsound` (`e18f3a29`, before V1). Left over: automation (PLAN #11), port-claim unification (design debt, MoonSound TODO), wave SRAM as a region (V1)
 - [ ] V2: device state v2
-- [ ] V3: determinism inputs
+- [ ] V3: determinism inputs — first slice pulled forward by the offline-analysis program: input events and external events saved in the file (not saved today, verified 2026-09-29); see [ttd-offline-analysis.md](../2026-09-28-debugger-family/ttd-offline-analysis.md) O-1
 - [ ] Integrity and versioning decision written (before V4)
 - [ ] V4: memory budget
 - [ ] V5: container v2 + disk mode (format becomes versioned)
 - [ ] Media (2026-09-28): storage in TTD v2 through the unified media manager (PLAN #58, [technical design](../2026-09-28-storage-manager/technical-design.md)): media identity per session, the journaled session layer (manager phase M7). Requirements: roadmap [§6 ST-1…ST-6](../2026-09-21-roadmap/01-roadmap-and-machine-state.md). TTD v1 stays media-agnostic (port-level recording)
+- [ ] Branch readiness (FR-22 … FR-24, proposed 2026-09-29): no linear-timeline assumption in V1-V4; stream ids for branches reserved in V5. Branches themselves: PLAN #76 ([design](../2026-09-29-model-what-if/design.md))
 - [ ] V6: cleanup, TDD truth pass, move folder to DONE

@@ -104,6 +104,20 @@ Independent framing audit of `.tap` dumps: walks every block (u16 length + body,
 
 ---
 
+### ZX DLSS de-flicker algorithms (`zxdlss/`)
+
+C++ module of GigaScreen de-flicker algorithms behind one interface, and
+`zxdlss-render`: a TTD file (replayed through the core) or an exported clip ->
+algorithm -> H.264 video (`--layout raw-out` for side by side) and/or an exact
+RGB dump. `zxdlss-bench` times an algorithm per stage; `scripts/parity.sh`
+checks the C++ output against the Python reference on the golden scenes.
+
+*   **Build:** `cmake -DBUILD_ZXDLSS_TOOLS=ON` then `ninja zxdlss-render zxdlss-bench`.
+*   **Usage:** `zxdlss-render --ttd session.ttd --layout raw-out --video out.mp4`
+*   **Details:** [zxdlss/README.md](zxdlss/README.md).
+
+---
+
 ### Memory Contention Probe
 
 `contention/ctprobe/` is a ZX Spectrum program (`.tap` / `.trd`) that measures, to a single clock tick, how the
@@ -127,6 +141,20 @@ libspectrum reads from our file with the reference. See `szx/README.md`.
 
 *   **Usage:** `tools/verification/szx/check-interop.sh [build-dir]`
 *   **Needs:** libspectrum (`brew install libspectrum`, `apt install libspectrum-dev`) and a built `core-tests`.
+
+---
+
+### RZX expected states and checks
+
+Located in `rzx/`. `rzxplay-memptr.py` runs SkoolKit's `rzxplay.py` with its
+MEMPTR-exact simulator to make the expected states in `testdata/loaders/rzx/`
+and to check any recording; `rzxtrim.py` cuts recordings down to fixtures,
+`rzxjoin.py` joins them into multi-block recordings.
+`core-tests` plays folders of recordings against them (`UNREAL_RZX_CORPUS`,
+`UNREAL_RZX_FULL`). See `rzx/README.md`.
+
+*   **Usage:** `rzxplay-memptr.py --quiet --no-screen [--stop N] game.rzx game.z80`
+*   **Needs:** SkoolKit with its C extensions (`pip install skoolkit` in a venv).
 
 ---
 

@@ -137,6 +137,10 @@ void Screen::InitFrame()
     if (_state)
         _videoWriteLog.BeginFrame(_state->frame_counter, CaptureVideoLatches());
 
+    // A zxdlss toggle from another thread takes effect here, on the thread
+    // that renders, never under a running renderer
+    ApplyPlaneBRequest();
+
     _vid.buf ^= 0x00000001;  // Swap current video buffer
     _vid.t_next = 0;
     _vid.vptr = 0;
@@ -765,7 +769,54 @@ void Screen::UpdateFeatureCache()
     {
         _feature_screenhq_enabled = _context->pFeatureManager->isEnabled(Features::kScreenHQ);
         _feature_hud_enabled = _context->pFeatureManager->isEnabled(Features::kHud);
+        // Called on the thread that changed the feature: record the wish only.
+        // Resizing the buffer or swapping the renderer here raced the emulation
+        // thread drawing into plane B (freed or reallocated under the writer).
+        _planeBWanted.store(_context->pFeatureManager->isEnabled(Features::kZXDLSS), std::memory_order_release);
     }
+}
+
+void Screen::ApplyPlaneBRequest()
+{
+    const bool wanted = _planeBWanted.load(std::memory_order_acquire);
+    if (wanted != _planeBEnabled)
+        SetPlaneBEnabled(wanted);
+}
+
+void Screen::SetPlaneBEnabled(bool enabled)
+{
+    _planeBEnabled = enabled;
+    ResizePlaneB();
+}
+
+void Screen::ResizePlaneB()
+{
+    if (_planeBEnabled)
+    {
+        _planeB.assign(static_cast<size_t>(_framebuffer.width) * _framebuffer.height, 0);
+    }
+    else
+    {
+        _planeB.clear();
+        _planeB.shrink_to_fit();
+    }
+}
+
+uint16_t* Screen::GetPlaneB(size_t* count)
+{
+    if (count)
+        *count = _planeBEnabled ? _planeB.size() : 0;
+    return _planeBEnabled && !_planeB.empty() ? _planeB.data() : nullptr;
+}
+
+bool Screen::CopyPresentedPlaneB(std::vector<uint16_t>& dst)
+{
+    std::lock_guard<std::mutex> lock(_presentMutex);
+    size_t index = 0;
+    if (!PresentedSlotLocked(&index) || _presentPlaneB[index].empty())
+        return false;
+    dst = _presentPlaneB[index];
+    return true;
 }
 
 void Screen::RefreshMemoryPointers()
@@ -903,6 +954,9 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
         // Clear the whole framebuffer (opaque black - see ClearFramebufferOpaque)
         ClearFramebufferOpaque(_framebuffer.memoryBuffer, _framebuffer.memoryBufferSize);
 
+        // Plane B follows the framebuffer geometry
+        ResizePlaneB();
+
         // Allocate the matching presentation (latched) buffer.
         // _presentBufferSize is the authoritative size for cross-thread readers
         // and changes only together with the buffer, under the mutex - readers
@@ -950,6 +1004,7 @@ void Screen::DeallocateFramebuffer()
         {
             delete[] _presentSlots[i];
             _presentSlots[i] = nullptr;
+            _presentPlaneB[i].clear();
         }
         _presentBufferSize = 0;
         _presentLatchCounter = 0;
@@ -966,8 +1021,13 @@ void Screen::LatchFramebuffer()
     std::lock_guard<std::mutex> lock(_presentMutex);
     if (_presentSlots[0] && _presentBufferSize == _framebuffer.memoryBufferSize)
     {
-        uint8_t* slot = _presentSlots[_presentLatchCounter % PRESENT_SLOTS];
-        VideoUtils::CopyFrameBuffer(slot, _framebuffer.memoryBuffer, _presentBufferSize);
+        const size_t index = _presentLatchCounter % PRESENT_SLOTS;
+        VideoUtils::CopyFrameBuffer(_presentSlots[index], _framebuffer.memoryBuffer, _presentBufferSize);
+        // SIMD-CANDIDATE(O-13): 200 KB copy per frame, only while zxdlss is on
+        if (_planeBEnabled)
+            _presentPlaneB[index].assign(_planeB.begin(), _planeB.end());
+        else if (!_presentPlaneB[index].empty())
+            _presentPlaneB[index].clear();
         _presentLatchCounter++;
 
         _lastLatchTimestampUs.store(
@@ -992,6 +1052,10 @@ void Screen::FlushAndPresentFramebuffer()
     // playback resumes the queue refills on its own.
     _presentLatchCounter = 0;
     VideoUtils::CopyFrameBuffer(_presentSlots[0], _framebuffer.memoryBuffer, _presentBufferSize);
+    if (_planeBEnabled)
+        _presentPlaneB[0].assign(_planeB.begin(), _planeB.end());
+    else
+        _presentPlaneB[0].clear();
     _presentLatchCounter = 1;
 
     _lastLatchTimestampUs.store(
@@ -1010,14 +1074,28 @@ bool Screen::CopyPresentedFramebuffer(uint8_t* dst, size_t dstSize)
     // during mode-switch reallocation, and trusting it here could overread
     // a present buffer from the previous video mode
     std::lock_guard<std::mutex> lock(_presentMutex);
-    if (_presentSlots[0] == nullptr || _presentBufferSize == 0 || dstSize < _presentBufferSize)
+    if (dstSize < _presentBufferSize)
         return false;
+    const uint8_t* slot = PresentedSlotLocked(nullptr);
+    if (!slot)
+        return false;
+    VideoUtils::CopyFrameBuffer(dst, slot, _presentBufferSize);
+    return true;
+}
+
+/// The present slot readers are served; caller holds _presentMutex.
+/// @param index receives the slot index (for the matching plane B)
+const uint8_t* Screen::PresentedSlotLocked(size_t* index) const
+{
+    if (_presentSlots[0] == nullptr || _presentBufferSize == 0)
+        return nullptr;
     if (_presentLatchCounter == 0)
     {
         // Nothing latched yet: serve the zeroed slot (black frame) - callers
         // treat a false return as "no present buffer", not "not yet"
-        VideoUtils::CopyFrameBuffer(dst, _presentSlots[0], _presentBufferSize);
-        return true;
+        if (index)
+            *index = 0;
+        return _presentSlots[0];
     }
 
     // A/V sync: present the frame latched _presentDelayFrames ago so video
@@ -1029,9 +1107,10 @@ bool Screen::CopyPresentedFramebuffer(uint8_t* dst, size_t dstSize)
     if (delay > newest)
         delay = newest;
 
-    const uint8_t* slot = _presentSlots[(newest - delay) % PRESENT_SLOTS];
-    VideoUtils::CopyFrameBuffer(dst, slot, _presentBufferSize);
-    return true;
+    const size_t slot = (newest - delay) % PRESENT_SLOTS;
+    if (index)
+        *index = slot;
+    return _presentSlots[slot];
 }
 
 FramebufferDescriptor& Screen::GetFramebufferDescriptor()
@@ -1050,32 +1129,13 @@ void Screen::GetFramebufferData(uint32_t** buffer, size_t* size)
 
 void Screen::GetRGBAPalette16(uint32_t* colors)
 {
-    // Default ZX Spectrum 16-color palette (same as DrawZX uses)
-    // Format is ABGR on little-endian systems
-    static const uint32_t zxPalette[16] = {
-        // Normal intensity (brightness OFF)
-        0xFF000000,  // 0: Black
-        0xFF0022C7,  // 1: Blue      (R=0x00, G=0x22, B=0xC7)
-        0xFFD62816,  // 2: Red       (R=0xD6, G=0x28, B=0x16)
-        0xFFD433C7,  // 3: Magenta   (R=0xD4, G=0x33, B=0xC7)
-        0xFF00C525,  // 4: Green     (R=0x00, G=0xC5, B=0x25)
-        0xFF00C7C9,  // 5: Cyan      (R=0x00, G=0xC7, B=0xC9)
-        0xFFCCC82A,  // 6: Yellow    (R=0xCC, G=0xC8, B=0x2A)
-        0xFFCACACA,  // 7: White     (R=0xCA, G=0xCA, B=0xCA)
-        // Bright intensity (brightness ON)
-        0xFF000000,  // 8: Bright Black  (same as black)
-        0xFF002BFB,  // 9: Bright Blue   (R=0x00, G=0x2B, B=0xFB)
-        0xFFFF331C,  // 10: Bright Red   (R=0xFF, G=0x33, B=0x1C)
-        0xFFFF40FC,  // 11: Bright Magenta (R=0xFF, G=0x40, B=0xFC)
-        0xFF00F92F,  // 12: Bright Green  (R=0x00, G=0xF9, B=0x2F)
-        0xFF00FBFE,  // 13: Bright Cyan   (R=0x00, G=0xFB, B=0xFE)
-        0xFFFFFC36,  // 14: Bright Yellow (R=0xFF, G=0xFC, B=0x36)
-        0xFFFFFFFF,  // 15: Bright White  (R=0xFF, G=0xFF, B=0xFF)
-    };
-
+    // The 16 ZX colors exactly as the renderer draws them: the first 16 entries of
+    // the live palette, in the framebuffer format (RGBA8888, LE uint32 0xAABBGGRR).
+    // A separate table here once had R and B swapped, so every ZX-Poly composed
+    // picture showed red as blue and blue as red
     if (colors)
     {
-        memcpy(colors, zxPalette, sizeof(zxPalette));
+        memcpy(colors, _vid.clut, 16 * sizeof(uint32_t));
     }
 }
 

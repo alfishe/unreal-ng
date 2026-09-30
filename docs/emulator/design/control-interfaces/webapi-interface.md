@@ -187,9 +187,17 @@ Content-Type: application/json
 {
   "symbolic_id": "test_instance",
   "model": "128k",
-  "ram_size": 128
+  "ram_size": 128,
+  "ram_power_on": "zero"
 }
 ```
+
+`ram_power_on` (optional) sets the RAM contents at creation:
+
+- `random`: noise in RAM pages 5 and 7 (the screen and the shadow screen), the way real DRAM powers up; every other page is zero;
+- `zero`: every RAM page of the configuration reads 0, so the machine depends on nothing outside it (tests, benchmarks, scripted analysis that must give the same result on every run).
+
+Omitted, it follows `[MISC] RAMPowerOn` of the model's `unreal.ini` (`RANDOM` when unset). Any other value is a `400`. A ZX-Poly machine applies it to all four modules. Every identity block reports the mode as `ram_power_on`.
 
 **Response 201**:
 ```json
@@ -202,11 +210,12 @@ Content-Type: application/json
   "ram_kb": 128,
   "video_mode": null,
   "speed_multiplier": 1,
-  "config_folder": "spectrum128"
+  "config_folder": "spectrum128",
+  "ram_power_on": "zero"
 }
 ```
 
-**Response 400** (model not creatable / unknown / bad RAM):
+**Response 400** (model not creatable / unknown / bad RAM / `ram_power_on` not `random` or `zero`):
 ```json
 {
   "error": "Bad Request",
@@ -296,7 +305,7 @@ state at every frame boundary is the same in every schedule. A 404 means no such
 not a ZX-Poly machine.
 
 ### 5b. Switch Model (validate-first)
-**Endpoint**: `POST /api/v1/emulator/{id}/model` (body `{"model": "...", "ram_size": N, "stranded": "refuse|save|discard|keep"}`)  
+**Endpoint**: `POST /api/v1/emulator/{id}/model` (body `{"model": "...", "ram_size": N, "stranded": "refuse|save|discard|keep", "ram_power_on": "random|zero"}`; `ram_power_on` omitted = the mode the current machine was created with)  
 **Description**: The request is validated BEFORE the current instance is stopped/removed: an unknown model, unsupported RAM or non-creatable model returns `400` and the current emulator keeps running untouched. A successful switch stops the old instance, creates and starts a new one (different ID) and returns the machine identity block for the new instance.
 
 The media follow ([media.md → Model switch](../../../features/media.md#model-switch)): each medium goes into the slot with the same id on the new machine, unsaved writes included. `media` in the reply lists the slot ids `attached` (followed), `detached` (no slot, unsaved writes kept) and `closed` (no slot, nothing unsaved). A medium with unsaved writes the new model has no slot for answers `409` (`code: "dirty"`, the media in `stranded`) and changes nothing, unless `stranded` says `save`, `discard` or `keep`.
@@ -1297,6 +1306,63 @@ POST /api/v1/emulator/{id}/snapshot/load  ✅ Implemented
 POST /api/v1/emulator/{id}/snapshot/transfer  ✅ Implemented — in-memory state transfer, see [automation.md](../../../features/automation.md#machine-state-transfer)
 ```
 
+### RZX Playback
+
+Play RZX input recordings: the start snapshot loads, then every `IN` returns the recorded value and the interrupts follow the recorded fetch counts until the end, a desync (strict mode) or `rzx/stop`. The machine then runs live. Terms and conventions: [command-interface.md §12](./command-interface.md#12-rzx-playback).
+
+```
+POST /api/v1/emulator/{id}/rzx/play    ✅ Implemented
+POST /api/v1/emulator/{id}/rzx/stop    ✅ Implemented
+POST /api/v1/emulator/{id}/rzx/seek    ✅ Implemented   {"frame": 5000}
+GET  /api/v1/emulator/{id}/rzx/status  ✅ Implemented
+```
+
+**`rzx/seek`** moves to the boundary after `frame` frames: back through the nearest keyframe, forward by playing on (see [command-interface.md §12](./command-interface.md#12-rzx-playback)); the answer carries `rzx` and `summary`, a refusal is 409 with the reason. The status reports `keyframes`, `keyframe_bytes` and `keyframe_interval`.
+
+**`rzx/play`** takes a JSON body, a multipart upload (`file`) or the raw file with `X-Filename` (then the options go as query parameters, e.g. `?desync_mode=tolerant`):
+
+```json
+{
+  "path": "/games/greenberet.rzx",
+  "desync_mode": "strict",
+  "ei_short_frame_blocks_int": false,
+  "ld_air_parity_quirk": false,
+  "ignore_later_snapshots": false,
+  "switch_model": true
+}
+```
+
+A recording made on another model switches the model first (a new emulator, media kept). The answer names the machine that plays:
+
+```json
+{
+  "status": "success",
+  "emulator_id": "5fe49448-...",
+  "model_switched": true,
+  "model": "128k",
+  "previous_emulator_id": "39bc75c8-...",
+  "rzx": {"state": "playing", "frame": 0, "total_frames": 39041, "creator": "Spectaculator 62.552", "...": "..."}
+}
+```
+
+With `"switch_model": false` a mismatch answers 409 with `"error": "model_mismatch"`, `required_model` and `required_ram_kb`. Other refusals (400): `bad_file`, `no_snapshot`, `unsupported_machine`, `snapshot_load_failed`.
+
+**`rzx/status`**:
+
+```json
+{
+  "loaded": true, "active": true, "state": "playing",
+  "path": "/games/greenberet.rzx", "creator": "Spectaculator 62.552", "version": "0.12",
+  "snapshot": "Z80 v2, hardware 3",
+  "frame": 896, "total_frames": 39041, "progress": 0.023, "block": 1, "blocks": 1,
+  "interrupts": 896, "desyncs": 0, "drift": -48, "max_drift": -2045, "snapshots_applied": 0,
+  "options": {"desync_mode": "strict", "ei_short_frame_blocks_int": false, "ld_air_parity_quirk": false, "ignore_later_snapshots": false},
+  "summary": "playing frame 896 / 39041 (2.3%), block 1 / 1, 0 desyncs"
+}
+```
+
+After a desync: `"state": "desynced"`, `reason`, and `first_desync` `{kind: too_many_ins | too_few_ins | fetch_overrun, frame, block, expected, actual, pc, port}`. `snapshot/load` with an `.rzx` path plays it on the machine as it is (no model switch).
+
 ### Time-Travel Debugging
 
 All TTD endpoints are scoped under `/api/v1/emulator/{id}/ttd/...` (`{id}` is the emulator UUID or index). Handlers: `core/automation/webapi/src/api/ttd_api.cpp`; OpenAPI schemas: `core/automation/webapi/src/openapi/openapi_ttd.inc` (`TTDStatusResponse`, `TTDSeekRequest`, …). The CLI equivalents and the background are in [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd).
@@ -1333,6 +1399,7 @@ Positions are always a pair `frame` (absolute frame number) + `tinframe` (offset
 | `DELETE` | `/ttd/bookmarks/{label}` | — | `removed`, `label`; 404 for an unknown label | ✅ Implemented |
 | `POST` | `/ttd/dump` | `{"path": "..."}` | `ok`; on success `path`, `bytes`; on failure `error`. 400 without `path`, 500 if the file cannot be opened. | ✅ Implemented |
 | `POST` | `/ttd/load` | `{"path": "..."}` | `ok`, `path`, `checkpoint_count`, `session_start_frame`, `current_end_frame`, `state` (`idle`). 400 without `path` or when the file is refused (`ok: false`, `error` — e.g. a model mismatch naming both model ids); 404 if the file cannot be opened. | ✅ Implemented |
+| `GET` | `/api/v1/ttd/file-info` (no `{id}`) | `?path=<file.ttd>` | A `.ttd` file read without loading it: `ok`, `path`, `file_bytes`, `schema_version`, `flags`, `captured_at_unix_ms`, `recorded_by`, `session_state`, `session_start_frame`, `session_end_frame`, `checkpoint_count`, `page_slot_count`, `sections{...}`, `machine{model_id, model, ram_page_bound, rom_signature, peripheral_mask, peripherals, general_sound, turbo_sound}`, `peripherals_from_header`. 400 without `path` or for a file that is no readable `.ttd` (`ok: false`, `error`); 404 if it cannot be opened. Keys: [command-interface.md → Reading a file before loading it](./command-interface.md). | ✅ Implemented |
 | `GET`  | `/ttd/coverage/probe` | `?frame=N&kind=executed\|written\|read&addr_from=A1&addr_to=A2&phys_page=P` | `frame`, `kind`, `addr_from`, `addr_to` (as `"0x%04X"` strings), `phys_page` (if given), `touched`, `index_available`. Frames outside the covered window return `index_available: false, touched: false`. 400 for missing `frame`, invalid `kind`, `addr_from > addr_to`, `phys_page > 255` or non-numeric values. | ✅ Implemented |
 | `GET`  | `/ttd/coverage/scan` | `?from_frame=F1&to_frame=F2&kind=…&addr_from=A1&addr_to=A2&phys_page=P&limit=L` (default limit 200) | `kind`, `addr_from`, `addr_to`, `phys_page`, `frames[]`, `first_match`, `last_match`, `matching_frames`, `scanned_frames`, `truncated`, `index_available`, and `covered_from`/`covered_to` when the index is available. Same 400 validation as probe (plus `limit >= 1`). | ✅ Implemented |
 | `GET`  | `/ttd/coverage/summary` | `?from_frame=F1&to_frame=F2&kind=K&bucket_size=B&limit=L` (default limit 100; `bucket_size=0` = automatic) | `from_frame`, `to_frame`, `bucket_size`, `bucket_count`, `buckets[] {frame_start, frame_end, executed_distinct, written_distinct, read_distinct, has_keyframe}`, `index_available`, and `covered_from`/`covered_to` when available | ✅ Implemented |
@@ -1359,6 +1426,10 @@ There are no `/ttd/clear`, `/ttd/timeline`, `/ttd/step` or `/ttd/resume_from_her
   "captured_at_unix_ms": 0,
   "model_id": 0,
   "model_ram_pages": 8,
+  "machine": {"model_id": 1, "model": "PENTAGON", "ram_page_bound": 8, "rom_signature": "0x...",
+              "peripheral_mask": 142, "peripherals": ["tape", "betadisk", "turbosound", "kempston-mouse"],
+              "general_sound": "none", "turbo_sound": "turbosound"},
+  "recorded_by": null,
   "write_journal_enabled": true,
   "write_journal_complete": false,
   "write_journal_wrapped": false,

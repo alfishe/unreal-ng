@@ -1,0 +1,163 @@
+{
+ "alg": "mod-tpgwafsd",
+ "scenes": {
+  "ate-pageflip-static": {
+   "ghost_pixels": 0.0,
+   "ghost_moving_flicker": 0.0,
+   "missed_flicker": 0.0439,
+   "color_error_share": 0.0
+  },
+  "ate-hiphop-border": {
+   "ghost_pixels": 0.00075,
+   "ghost_moving_flicker": 0.00027,
+   "missed_flicker": 0.1237,
+   "color_error_share": 0.0062
+  },
+  "ate-border-only": {
+   "ghost_pixels": 0.0,
+   "ghost_moving_flicker": 0.0,
+   "missed_flicker": 0.0,
+   "color_error_share": 0.0
+  },
+  "ate-balls-floor": {
+   "ghost_pixels": 0.00011,
+   "ghost_moving_flicker": 0.00413,
+   "missed_flicker": 0.084,
+   "color_error_share": 0.3534
+  },
+  "ate-tunnel": {
+   "ghost_pixels": 0.01226,
+   "ghost_moving_flicker": 0.00698,
+   "missed_flicker": 0.2666,
+   "color_error_share": 0.5337
+  },
+  "ate-irregular": {
+   "ghost_pixels": 0.04965,
+   "ghost_moving_flicker": 0.01133,
+   "missed_flicker": 0.107,
+   "color_error_share": 0.4557
+  },
+  "ate-raster-negative": {
+   "ghost_pixels": 0.0,
+   "ghost_moving_flicker": 0.0,
+   "missed_flicker": 0.0,
+   "color_error_share": 0.0
+  },
+  "ate-raster-negative-2": {
+   "ghost_pixels": 0.0,
+   "ghost_moving_flicker": 0.0,
+   "missed_flicker": 0.4821,
+   "color_error_share": 0.0
+  },
+  "flicker-test": {
+   "ghost_pixels": 0.0,
+   "ghost_moving_flicker": 9e-05,
+   "missed_flicker": 0.0005,
+   "color_error_share": 0.0
+  },
+  "ate-dj-circles": {
+   "ghost_pixels": 0.04991,
+   "ghost_moving_flicker": 0.00197,
+   "missed_flicker": 0.1482,
+   "color_error_share": 0.3424
+  },
+  "ate-flash-strobe": {
+   "ghost_pixels": 0.0,
+   "ghost_moving_flicker": 6e-05,
+   "missed_flicker": 0.0789,
+   "color_error_share": 0.368
+  },
+  "ate-final-rings": {
+   "ghost_pixels": 0.12419,
+   "ghost_moving_flicker": 0.0,
+   "missed_flicker": 0.1201,
+   "color_error_share": 0.2734
+  }
+ },
+ "scenes2": {
+  "ate-pageflip-static": {
+   "color_ok": 0.9282,
+   "de_p95": 0.0855,
+   "edge_p95": 3.886,
+   "shimmer": 0.0,
+   "agree": 0.917
+  },
+  "ate-hiphop-border": {
+   "color_ok": 0.8501,
+   "de_p95": 0.2014,
+   "edge_p95": 2.1386,
+   "shimmer": 0.02,
+   "agree": 0.9146
+  },
+  "ate-border-only": {
+   "color_ok": 1.0,
+   "de_p95": 0.0,
+   "edge_p95": 0.0,
+   "shimmer": 0.0,
+   "agree": 1.0
+  },
+  "ate-balls-floor": {
+   "color_ok": 0.9639,
+   "de_p95": 0.003,
+   "edge_p95": 1.86,
+   "shimmer": 0.0088,
+   "agree": 0.756
+  },
+  "ate-tunnel": {
+   "color_ok": 0.7972,
+   "de_p95": 0.1213,
+   "edge_p95": 3.9665,
+   "shimmer": 0.0287,
+   "agree": 0.5225
+  },
+  "ate-irregular": {
+   "color_ok": 0.9523,
+   "de_p95": 0.0132,
+   "edge_p95": 2.3927,
+   "shimmer": 0.0014,
+   "agree": 0.4936
+  },
+  "ate-raster-negative": {
+   "color_ok": 0.0,
+   "de_p95": 0.0916,
+   "edge_p95": 0.2797,
+   "shimmer": 0.0,
+   "agree": 1.0
+  },
+  "ate-raster-negative-2": {
+   "color_ok": 0.0255,
+   "de_p95": 0.2171,
+   "edge_p95": 12.392,
+   "shimmer": 0.0115,
+   "agree": 0.2805
+  },
+  "flicker-test": {
+   "color_ok": 0.9974,
+   "de_p95": 0.0,
+   "edge_p95": 0.0,
+   "shimmer": 0.0001,
+   "agree": 0.9983
+  },
+  "ate-dj-circles": {
+   "color_ok": 0.9831,
+   "de_p95": 0.0105,
+   "edge_p95": 1.9131,
+   "shimmer": 0.0002,
+   "agree": 0.5702
+  },
+  "ate-flash-strobe": {
+   "color_ok": 0.8016,
+   "de_p95": 0.0974,
+   "edge_p95": 1.3387,
+   "shimmer": 0.0,
+   "agree": 0.8681
+  },
+  "ate-final-rings": {
+   "color_ok": 0.9859,
+   "de_p95": 0.0028,
+   "edge_p95": 4.1196,
+   "shimmer": 0.0,
+   "agree": 0.531
+  }
+ }
+}

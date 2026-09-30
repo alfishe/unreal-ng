@@ -46,4 +46,6 @@ address history, marked addresses, port watch or heatmap code in
    Design: [ttd-port-read-journal.md](../../emulator/design/debugger/time-travel-debug/ttd-port-read-journal.md) §10.
 
 ## Pointers
-- Cumulative plan: [`../PLAN.md`](../PLAN.md) — debugger parity (T4).
+- Cumulative plan: [`../PLAN.md`](../PLAN.md) — row #46, debugger parity (T3).
+- Reference: [emulator debugger survey](../2026-09-28-emulator-debugger-survey/README.md)
+  (2026-09-28): the full Xpeccy+ debugger and 15 other emulators' debuggers.

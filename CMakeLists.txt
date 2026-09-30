@@ -20,6 +20,7 @@ option(BENCHMARKS "Enable benchmarks" OFF)
 option(BUILD_TESTCLIENT "Build testclient console app" OFF)
 option(BUILD_QT_APPS "Build Qt-based applications (unreal-qt, unreal-screen-viewer)" ON)
 option(BUILD_POC "Build PoC research tools (codec comparison etc.)" OFF)
+option(BUILD_ZXDLSS_TOOLS "Build the ZX DLSS algorithm module and tools (tools/verification/zxdlss)" OFF)
 
 
 
@@ -416,6 +417,16 @@ if (BUILD_POC)
 	message(STATUS ">>> Building PoC research tools")
 	add_subdirectory(tools/poc)
 endif (BUILD_POC)
+
+# ========================================
+# ZX DLSS algorithm module and tools (opt-in)
+# ========================================
+# zxdlss-render (TTD file / clip -> de-flicker algorithm -> video) and
+# zxdlss-bench. Enable with -DBUILD_ZXDLSS_TOOLS=ON, then: ninja zxdlss-render
+if (BUILD_ZXDLSS_TOOLS)
+	message(STATUS ">>> Building ZX DLSS tools")
+	add_subdirectory(tools/verification/zxdlss)
+endif (BUILD_ZXDLSS_TOOLS)
 
 # ========================================
 # Summary

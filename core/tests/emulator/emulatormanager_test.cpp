@@ -6,6 +6,7 @@
 #include <emulator/emulatormanager.h>
 #include <emulator/platform.h>
 #include <emulator/ports/portdecoder.h>
+#include <emulator/zxpoly/zxpolygroup.h>
 #include <gtest/gtest.h>
 
 #include <atomic>
@@ -14,6 +15,7 @@
 #include <cstring>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 #include "pch.h"
 #include "stdafx.h"
@@ -463,6 +465,73 @@ TEST_F(EmulatorManager_Test, GetMachineIdentityReportsResolvedMachine)
     // Init wires the screen subsystem, so the live video mode is reportable
     EXPECT_TRUE(identity.HasVideoMode);
     EXPECT_FALSE(identity.VideoMode.empty());
+}
+
+namespace
+{
+/// Index of the first non-zero byte in the machine's configured RAM, or -1
+long FirstNonZeroRamByte(Emulator& emulator)
+{
+    EmulatorContext* context = emulator.GetContext();
+    const uint8_t* ram = context->pMemory->RAMPageAddress(0);
+    const size_t bytes = static_cast<size_t>(context->config.ramsize) * 1024;
+    for (size_t i = 0; i < bytes; i++)
+    {
+        if (ram[i] != 0)
+            return static_cast<long>(i);
+    }
+    return -1;
+}
+}  // namespace
+
+// RAMPowerOn=ZERO through every create path: every RAM page of the
+// configuration reads 0 (the default fills the screen pages with noise)
+TEST_F(EmulatorManager_Test, ZeroRamPowerOnClearsEveryRamPageOnEveryCreatePath)
+{
+    const auto zero = Config::RamPowerOnOverride(RamPowerOn::Zero);
+    std::vector<std::shared_ptr<Emulator>> created = {
+        _manager->CreateEmulator("", LoggerLevel::LogError, zero),
+        _manager->CreateEmulatorWithModel("", "PENTAGON", LoggerLevel::LogError, nullptr, zero),
+        _manager->CreateEmulatorWithModelAndRAM("", "PENTAGON", 512, LoggerLevel::LogError, nullptr, zero),
+    };
+    for (const auto& emulator : created)
+    {
+        ASSERT_NE(emulator, nullptr);
+        EXPECT_EQ(emulator->GetContext()->config.ramPowerOn, RamPowerOn::Zero);
+        EXPECT_EQ(FirstNonZeroRamByte(*emulator), -1) << emulator->GetContext()->config.ramsize << "KB machine";
+        EXPECT_EQ(EmulatorManager::GetMachineIdentity(*emulator).RamPowerOn, "zero");
+    }
+}
+
+TEST_F(EmulatorManager_Test, RandomRamPowerOnFillsTheScreenPages)
+{
+    auto emulator = _manager->CreateEmulatorWithModel("", "PENTAGON", LoggerLevel::LogError, nullptr,
+                                                      Config::RamPowerOnOverride(RamPowerOn::Random));
+    ASSERT_NE(emulator, nullptr);
+    const uint8_t* page5 = emulator->GetContext()->pMemory->RAMPageAddress(5);
+    size_t nonZero = 0;
+    for (size_t i = 0; i < PAGE_SIZE; i++)
+        nonZero += page5[i] != 0;
+    EXPECT_GT(nonZero, PAGE_SIZE / 2) << "the power-on noise is gone";
+    EXPECT_EQ(EmulatorManager::GetMachineIdentity(*emulator).RamPowerOn, "random");
+}
+
+// A ZX-Poly configuration name goes through CreateEmulatorWithModel: the
+// override reaches all four modules
+TEST_F(EmulatorManager_Test, ZeroRamPowerOnReachesEveryZXPolyModule)
+{
+    auto master = _manager->CreateEmulatorWithModel("", "ZXPOLY-48K", LoggerLevel::LogError, nullptr,
+                                                    Config::RamPowerOnOverride(RamPowerOn::Zero));
+    ASSERT_NE(master, nullptr);
+    ZXPolyGroup* group = _manager->GetZXPolyGroup(master->GetId());
+    ASSERT_NE(group, nullptr);
+    for (const std::string& id : group->GetStatus().memberIds)
+    {
+        auto member = _manager->GetEmulator(id);
+        ASSERT_NE(member, nullptr) << id;
+        EXPECT_EQ(member->GetContext()->config.ramPowerOn, RamPowerOn::Zero) << id;
+        EXPECT_EQ(FirstNonZeroRamByte(*member), -1) << id;
+    }
 }
 
 // P0-4: creatability helpers back the /emulator/status models_creatable list

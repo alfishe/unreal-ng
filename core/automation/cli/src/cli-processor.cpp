@@ -210,6 +210,9 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         // Snapshot control commands
                         {"snapshot", &CLIProcessor::HandleSnapshot},
 
+                        // RZX input recording playback
+                        {"rzx", &CLIProcessor::HandleRzx},
+
                         // Interpreter control commands
                         {"python", &CLIProcessor::HandlePython},
                         {"py", &CLIProcessor::HandlePython},  // Alias
@@ -565,11 +568,14 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  status        - Show emulator status" << NEWLINE;
     oss << "  list          - List managed emulator instances" << NEWLINE;
     oss << "  select <id>   - Select an emulator" << NEWLINE;
-    oss << "  start [model] - Start new emulator instance (default 48K or specified model)" << NEWLINE;
+    oss << "  start [model] [--ram-power-on random|zero] - Start new emulator instance (default 48K or specified model)" << NEWLINE;
+    oss << "  create [model] [--ram-power-on random|zero] - Create an emulator instance without starting it" << NEWLINE;
+    oss << "                (--ram-power-on zero: every RAM page reads 0; random: noise in the screen pages like real DRAM;" << NEWLINE;
+    oss << "                default: [MISC] RAMPowerOn of the model's unreal.ini)" << NEWLINE;
     oss << "  stop [id|index|all] - Stop emulator (single if only one running, or by ID/index/all)" << NEWLINE;
     oss << "  remove        - Alias for stop (stops and removes instance)" << NEWLINE;
     oss << "  models        - List available ZX Spectrum models" << NEWLINE;
-    oss << "  zxpoly start <model> [file] - Start a ZX-Poly machine (4 synchronized <model>s; file: .zxp/.prom/disk)" << NEWLINE;
+    oss << "  zxpoly start <model> [file] [--ram-power-on random|zero] - Start a ZX-Poly machine (4 synchronized <model>s; file: .zxp/.prom/disk)" << NEWLINE;
     oss << "  zxpoly status [id|index]    - ZX-Poly group status (modules, registers, lock, video mode, lockstep)" << NEWLINE;
     oss << "  reset [id|index]    - Reset the emulator (auto-select if only one, or by ID/index)" << NEWLINE;
     oss << "  pause [id|index]    - Pause emulation (auto-select if only one, or by ID/index)" << NEWLINE;
@@ -688,9 +694,15 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  disk catalog <drv>     - Show TR-DOS file catalog" << NEWLINE;
     oss << NEWLINE;
     oss << "Snapshot Commands:" << NEWLINE;
-    oss << "  snapshot load <file>           - Load snapshot (.sna, .z80, .szx)" << NEWLINE;
+    oss << "  snapshot load <file>           - Load snapshot (.sna, .z80, .szx; .rzx plays)" << NEWLINE;
     oss << "  snapshot save <file> [--force] - Save snapshot (.sna, .z80, .szx: by extension)" << NEWLINE;
     oss << "  snapshot info                  - Show current snapshot status" << NEWLINE;
+    oss << NEWLINE;
+    oss << "RZX Playback:" << NEWLINE;
+    oss << "  rzx play <file> [--tolerant]   - Play an RZX recording (switches model if needed)" << NEWLINE;
+    oss << "  rzx seek <frame>               - Move to a frame (back via keyframes)" << NEWLINE;
+    oss << "  rzx stop                       - Stop playing; the machine runs live" << NEWLINE;
+    oss << "  rzx status                     - Frame, progress, desyncs" << NEWLINE;
     oss << NEWLINE;
     oss << "Capture Commands:" << NEWLINE;
     oss << "  capture ocr                    - OCR text from screen (ROM font)" << NEWLINE;

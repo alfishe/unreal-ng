@@ -333,6 +333,10 @@ private:
     // Snapshot control command handlers
     void HandleSnapshot(const ClientSession& session, const std::vector<std::string>& args);
     void ShowSnapshotHelp(const ClientSession& session);
+
+    // RZX playback commands (cli-processor-rzx.cpp)
+    void HandleRzx(const ClientSession& session, const std::vector<std::string>& args);
+    void ShowRzxHelp(const ClientSession& session);
     void HandleSnapshotLoad(const ClientSession& session, std::shared_ptr<Emulator> emulator, EmulatorContext* context,
                             const std::vector<std::string>& args);
     void HandleSnapshotSave(const ClientSession& session, std::shared_ptr<Emulator> emulator, 
@@ -350,6 +354,7 @@ private:
     void HandleTTD(const ClientSession& session, const std::vector<std::string>& args);
     void ShowTTDHelp(const ClientSession& session);
     void HandleTTDStatus(const ClientSession& session, EmulatorContext* context);
+    void HandleTTDFileInfo(const ClientSession& session, const std::string& path);
     void HandleTTDStart(const ClientSession& session, EmulatorContext* context,
                          const std::vector<std::string>& args);
     void HandleTTDStop(const ClientSession& session, EmulatorContext* context);

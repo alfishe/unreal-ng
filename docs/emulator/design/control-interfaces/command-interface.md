@@ -258,17 +258,17 @@ Commands to manage the connection and emulator instances. These commands are ess
 | :--- | :--- | :--- | :--- |
 | `help` | `?` | `[command]` | Display available commands and their usage. If `command` is specified, show detailed help for that command. |
 | `start` | | `[model]` | Create and start a new emulator instance. Optional `model` parameter specifies model (default: 48K). Returns the new instance ID. Triggers `NC_EMULATOR_INSTANCE_CREATED` notification. | 🔮 Planned |
-| `start <model>` | | `<model-name>` | Start a new emulator instance with specific Spectrum model short name (e.g. `48K`, `128k`, `PLUS3`, `PENTAGON`, `SCORPION`, `PROFI`; see `models`). **Strict**: a model this build cannot create fails with a reason — there is no silent fallback to a default machine. | 🔮 Planned |
+| `start <model>` | | `<model-name> [--ram-power-on random\|zero]` | Start a new emulator instance with specific Spectrum model short name (`--ram-power-on`: as for `create`) (e.g. `48K`, `128k`, `PLUS3`, `PENTAGON`, `SCORPION`, `PROFI`; see `models`). **Strict**: a model this build cannot create fails with a reason — there is no silent fallback to a default machine. | 🔮 Planned |
 | `start <config-file>` | | `<config-path>` | Start a new emulator instance using configuration from file. Returns the new instance ID. | 🔮 Planned |
-| `create [model]` | | `[model-name]` | Create a new emulator instance without starting it. If `model` is specified, creates an emulator of that model type (short name as in `models`). If no model is specified, creates a default 48K emulator. **Strict**: an unknown or non-creatable model fails with a reason (no fallback). The success output echoes the RESOLVED model and RAM, not the requested string. Instance remains in initialized state until explicitly started with `resume`. Returns the UUID of the created instance. Automatically selects if first instance. Triggers `NC_EMULATOR_INSTANCE_CREATED` notification. |
-| `model <name>` | | `<model-name> [--ram <kb>] [--stranded save\|discard\|keep]` | Switch the selected emulator to another model (a new instance, new id; the machine state is lost). Disks, tapes and cards go into the slot with the same id on the new machine, unsaved writes included; media with unsaved writes the new model has no slot for need `--stranded` ([media.md → Model switch](../../../features/media.md#model-switch)). Same as `POST /api/v1/emulator/{id}/model`. |
+| `create [model]` | | `[model-name] [--ram-power-on random\|zero]` | Create a new emulator instance without starting it. `--ram-power-on zero` creates it with every RAM page reading 0 (reproducible runs); `random` fills the screen pages with noise like real DRAM; omitted = `[MISC] RAMPowerOn` of the model's `unreal.ini`. The output reports the mode as `Power-on RAM:`. If `model` is specified, creates an emulator of that model type (short name as in `models`). If no model is specified, creates a default 48K emulator. **Strict**: an unknown or non-creatable model fails with a reason (no fallback). The success output echoes the RESOLVED model and RAM, not the requested string. Instance remains in initialized state until explicitly started with `resume`. Returns the UUID of the created instance. Automatically selects if first instance. Triggers `NC_EMULATOR_INSTANCE_CREATED` notification. |
+| `model <name>` | | `<model-name> [--ram <kb>] [--stranded save\|discard\|keep] [--ram-power-on random\|zero]` | Switch the selected emulator to another model (a new instance, new id; the machine state is lost). The new machine keeps the current machine's power-on RAM mode unless `--ram-power-on` names one. Disks, tapes and cards go into the slot with the same id on the new machine, unsaved writes included; media with unsaved writes the new model has no slot for need `--stranded` ([media.md → Model switch](../../../features/media.md#model-switch)). Same as `POST /api/v1/emulator/{id}/model`. |
 | `models` | | | List all known machine models with full names and a `(not creatable on this build)` marker for machines whose port decoder or config folder is missing in this build. The WebAPI equivalent (`GET /api/v1/emulator/models`, `creatable` flags) is the runtime-authoritative source. |
 | `stop [id]` | | `[emulator-id|index|all]` | Stop and destroy emulator instance(s). If only one emulator is running, can be called without parameters. Can specify UUID, index from `list` command (1-based), or `all` to stop all instances. Triggers `NC_EMULATOR_INSTANCE_DESTROYED` and `NC_EMULATOR_STATE_CHANGE` notifications. | 🔮 Planned |
 | `stop all` | | | Stop and destroy all emulator instances. | 🔮 Planned |
 | `status` | | | Show the runtime status (Running/Paused/Stopped/Debug) of all emulator instances, including ID, symbolic name, uptime, and current state. |
 | `list` | | | List all managed emulator instances with their UUIDs, status (Running/Paused/Stopped), and debug state. Stopped instances are removed from this list. |
 | `select <id>` | | `<emulator-id>` | Select the active emulator instance for subsequent commands. The `<id>` can be either the UUID or symbolic ID. All following commands (reset, pause, registers, etc.) will operate on this selected instance. |
-| `open <file>` | | `<file-path>` | Open and load a file into the selected emulator. Supports multiple formats: tape images (.tap, .tzx), snapshots (.z80, .sna, .szx), disk images (.trd, .scl, .fdi). File type is auto-detected by extension. |
+| `open <file>` | | `<file-path>` | Open and load a file into the selected emulator. Supports multiple formats: tape images (.tap, .tzx), snapshots (.z80, .sna, .szx), RZX input recordings (.rzx: played on this machine, see §12), disk images (.trd, .scl, .fdi). File type is auto-detected by extension. |
 | `exit` | `quit` | | Terminate the control session. For CLI, closes the TCP connection. Does not stop the emulator instances themselves. |
 | `dummy` | | | No-operation command used for connection initialization and testing. Returns a simple acknowledgment. Useful for verifying the connection is alive. |
 
@@ -2509,7 +2509,8 @@ All `ttd` subcommands act on the currently selected emulator instance. Frame num
 
 | Command | Aliases | Arguments | Description | Implementation Status |
 | :--- | :--- | :--- | :--- | :--- |
-| `ttd status` | `ttd info` | — | Print the session: origin, model, state, frame range, checkpoint count, page store, heap, write journal, coverage index, bookmark count. See "Status fields" below. | ✅ Implemented |
+| `ttd status` | `ttd info` | — | Print the session: origin, recorded machine, state, frame range, checkpoint count, page store, heap, write journal, coverage index, bookmark count. See "Status fields" below. | ✅ Implemented |
+| `ttd info <path>` | `ttd file-info <path>` | `<path>` | Describe a `.ttd` file **without loading it** and without an emulator: size, frame range, checkpoints, sections and the recorded machine (model, ROM signature, General Sound card, TurboSound slot device, fitted devices). See "Reading a file before loading it" below. | ✅ Implemented |
 | `ttd start` | `ttd record` | `[--no-journal \| -n] [--journal \| -j]` | Start recording. Captures a baseline checkpoint, then one checkpoint per frame. `--no-journal` is "gaming mode": no write journal, smaller memory footprint, but reverse search has less to work with. Prints `Already recording (no-op)` if a recording is running. | ✅ Implemented |
 | `ttd stop` | — | — | Stop recording. History is kept and can be browsed (seek, step, find-last). Prints `Not recording (no-op)` when nothing records. | ✅ Implemented |
 | `ttd invalidate` | `ttd clear`, `ttd reset` | `[reason]` | Drop all history (checkpoints, journals, markers, bookmarks) and return to `idle`. The live machine is not touched. | ✅ Implemented |
@@ -2552,6 +2553,45 @@ model-dependent subsystem starts).
 Loading is available on every control surface: CLI (`ttd load <path>`), WebAPI
 (`POST /api/v1/emulator/{id}/ttd/load` with body `{"path": "..."}`), Lua (`ttd_load(path)`), Python
 (`emu.ttd_load(path)`), and the TTD Scrubber's **Load session…** button.
+
+**Reading a file before loading it (`ttd info <path>`).** Besides the model, the
+loader refuses a session recorded against another ROM set or with another device
+in the General Sound or TurboSound slot (a Pentagon now fits NeoGS; a session
+recorded with the classic GS card is refused there). The file says which machine
+it needs, and every surface reads that from the file's headers alone - nothing is
+decompressed and no emulator instance is involved:
+
+| Surface | Call |
+|---|---|
+| CLI | `ttd info <path>` (alias `ttd file-info`; `ttd info` without a path is `ttd status`) |
+| WebAPI | `GET /api/v1/ttd/file-info?path=<file>` (no `{id}`) - 200 with the info, 400 when it is no readable `.ttd`, 404 when it cannot be opened |
+| Lua | `ttd_file_info(path)` |
+| Python | `emu.ttd_file_info(path)` |
+| MCP | `time_travel` action `file_info` with `path` |
+| Qt | **Load session…** reads it first: a different model is refused with the recorded machine named, a failed load shows it too |
+
+The answer (WebAPI / Lua / Python keys): `ok` (`error` when false), `path`,
+`file_bytes`, `schema_version`, `flags`, `captured_at_unix_ms`, `recorded_by`
+(the recording instance's id), `session_state`, `session_start_frame`,
+`session_end_frame`, `checkpoint_count`, `page_slot_count`, `sections`
+(`write_journal`, `write_journal_complete`, `coverage_index`, `bookmarks`,
+`input_journal`, `external_events`, `port_journals`, `top_clock_time`), `machine`
+(below) and `peripherals_from_header` (false for a file written before the header
+carried its device set: the reader then walks to the first checkpoint for it).
+
+`machine` - the same object in `ttd status`:
+
+| Key | Meaning |
+|---|---|
+| `model_id`, `model` | Recorded model (`MEM_MODEL` value and short name, e.g. `PENTAGON`) |
+| `ram_page_bound` | Exclusive RAM page-index bound |
+| `rom_signature` | ROM set fingerprint as a hex string `0x...` (a 64-bit value does not survive a JSON number); null = unknown, not checked |
+| `peripheral_mask`, `peripherals` | Fitted devices: bit per TTD peripheral id, and their names (`betadisk`, `gs`, `neogs`, `tsfm`, `kempston-mouse`, ...) |
+| `general_sound` | `none` / `z80` / `lw` / `ngs` - fit this card before loading (`POST /control/audio/gs` action `switch_personality`, same names) |
+| `turbo_sound` | `none` / `turbosound` / `tsfm` |
+
+Provisioning a matching machine: read the info, create an instance of `machine.model`,
+fit `machine.general_sound`, then `ttd load`.
 
 **Halt reasons** (seek results; the WebAPI, Lua and Python return them as `halt_reason`):
 
@@ -2735,6 +2775,8 @@ usually the first thing to check when a session is handed to you.
 |---|---|
 | `model_id` | `eModel` value. A session refuses to load into a different model |
 | `model_ram_pages` | Exclusive RAM page-index **bound**, not a page count — a 48K machine reports 6 because its three pages are numbered 0, 2 and 5 |
+| `machine` | The recorded machine - model, ROM signature, fitted devices, General Sound card, TurboSound slot device; the same object `ttd info <path>` returns for a file (see "Reading a file before loading it"). The file's ROM signature for a loaded session, the live ROM's for a recording; null / absent while there is no session |
+| `recorded_by` | Symbolic id of the instance that recorded a loaded file; null / absent for a live recording |
 
 **What is inside it?**
 
@@ -2944,6 +2986,41 @@ variable), `mouse move` by the difference, `run_frames 1`, check again.
 **Interface mapping:** WebAPI `/api/v1/emulator/{id}/mouse/*` ([webapi-interface.md](./webapi-interface.md#10-mouse-input-injection)),
 Python `emu.mouse_*()`, Lua `mouse_*()`, MCP tool `mouse_input`. Design and decisions:
 [Kempston Mouse automation interfaces](../../../inprogress/2026-09-12-kempston-mouse/automation-interfaces.md).
+
+### 12. RZX Playback
+
+Play RZX input recordings (game completions from the RZX Archive and the like): the recording's start snapshot loads, then every `IN` returns the recorded value and the interrupts come at the recorded instruction counts, so the program follows exactly the path it took when it was recorded. At the end (or at a desync in strict mode, or on `rzx stop`) the machine continues live from the reached state. The same surface exists in the WebAPI (`/rzx/*`), MCP (`rzx_playback`, and `load_software` with an `.rzx` path), Lua (`rzx_play`, `rzx_stop`, `rzx_status`) and Python (`unreal.rzx_play`, `rzx_stop`, `rzx_status`). Design: [docs/inprogress/2026-09-29-rzx-replay](../../../inprogress/2026-09-29-rzx-replay/design.md).
+
+| Command | Aliases | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `rzx play <file> [options]` | | `--tolerant`, `--ei-short-frame`, `--ld-air-quirk`, `--ignore-later-snapshots`, `--no-switch` | Play a recording. A recording made on another model switches the selected machine to that model first (a new emulator instance, media kept) unless `--no-switch` is given. `--tolerant` counts desyncs instead of stopping at the first one; the other flags are playback conventions some files need (see below). | ✅ Implemented |
+| `rzx seek <frame>` | | `<frame>` | Move to the boundary after `<frame>` frames (0 = the start). Back: the nearest keyframe is restored and played on from (keyframes are taken every 250 frames, about 5 s, and thinned to a 32 MB budget: every second one goes and the spacing doubles); forward: plays on at full speed. Works after the end or a desync (the playback resumes). Refused while TTD records; a stopped TTD history is dropped. | ✅ Implemented |
+| `rzx stop` | | | Stop playing; the machine continues live. Frees the keyframes (no seeking afterwards). | ✅ Implemented |
+| `rzx status` | | | File, state (`playing` / `finished` / `desynced` / `stopped`), frame and progress, desyncs with the first one's frame, expected and actual counts and PC, interrupt drift against the machine's own raster, options. | ✅ Implemented |
+
+`snapshot load <file.rzx>` and `open <file.rzx>` also play a recording, on the selected machine without switching the model.
+
+**Terms**:
+- *Frame* (RZX): the stretch between two interrupts, measured in opcode fetches (R-register increments); not the 50 Hz video frame.
+- *Desync*: the program left the recorded path - more `IN`s than recorded in a frame, fewer, or more fetches than recorded.
+- *Drift*: T-states between the interrupt the recording forces and the one the emulated machine would raise itself; it only shifts the picture, never the program.
+
+**Conventions** (defaults as SkoolKit `rzxplay.py`):
+- `--ei-short-frame`: a frame of 1-2 fetches right after `EI` means "the interrupt was blocked by EI". Default: the interrupt is taken at every frame end while interrupts are enabled.
+- `--ld-air-quirk`: the NMOS `LD A,I` / `LD A,R` parity-flag quirk on the frame interrupt. Default off: the recording emulators did not apply it.
+- `--ignore-later-snapshots`: skip snapshot blocks after the first. Default: a snapshot block between input blocks (multiload, rollback point) replaces the machine where the block before it ends, and the playback goes on (`rzx status` counts them); a snapshot for another machine stops the playback with the reason.
+
+While a recording plays: fast tape, turbo tape and fast disk read as off, the disk autostart is disarmed, live keyboard / mouse input and the command typer are refused. Turbo mode, pausing, breakpoints, stepping and analyzers work. Machines whose interrupt is not the ULA frame interrupt (TSConf, Sprinter) are refused.
+
+**Examples**:
+
+```
+rzx play games/ericfloaters.rzx
+rzx status
+rzx play games/greenberet.rzx --tolerant      # a 128K recording: the 48K becomes a 128K first
+rzx seek 5000                                 # back or forward to frame 5000 (1:40 of play)
+rzx stop
+```
 
 ## Future Capabilities
 

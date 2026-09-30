@@ -1,4 +1,6 @@
 #include <algorithm>
+#include <set>
+#include <vector>
 #include "screenzx_test.h"
 
 #include "pch.h"
@@ -952,3 +954,107 @@ TEST_F(ScreenZX_Test, TransformTstateToFramebufferCoords_ModeWindows)
     ASSERT_TRUE(_screenzx->TransformTstateToFramebufferCoords(T(48, 152), &x, &y));
     EXPECT_EQ(x, 560) << "right border starts after 48 + 512";
 }
+
+/// region <ZX DLSS plane B>
+
+namespace
+{
+/// Fill the 48K screen (bitmap + attributes) with deterministic noise
+void FillScreenNoise(Memory* memory, uint32_t seed)
+{
+    for (uint16_t addr = 0x4000; addr < 0x5B00; addr++)
+    {
+        seed = seed * 1103515245u + 12345u;
+        memory->DirectWriteToZ80Memory(addr, static_cast<uint8_t>(seed >> 16));
+    }
+}
+
+std::vector<uint32_t> FramebufferCopy(ScreenZXCUT* screen)
+{
+    const auto* fb = reinterpret_cast<const uint32_t*>(screen->_framebuffer.memoryBuffer);
+    return std::vector<uint32_t>(fb, fb + screen->_framebuffer.memoryBufferSize / sizeof(uint32_t));
+}
+}  // namespace
+
+TEST_F(ScreenZX_Test, PlaneB_OffByDefault_NoBuffer)
+{
+    size_t count = 123;
+    EXPECT_FALSE(_screenzx->IsPlaneBEnabled());
+    EXPECT_EQ(_screenzx->GetPlaneB(&count), nullptr);
+    EXPECT_EQ(count, 0u);
+}
+
+TEST_F(ScreenZX_Test, PlaneB_PixelsIdenticalOnAndOff)
+{
+    _cpu->GetMemory()->DefaultBanksFor48k();
+    _screenzx->InitFrame();
+    FillScreenNoise(_cpu->GetMemory(), 7);
+    const uint32_t frameT = _screenzx->_rasterState.maxFrameTiming;
+
+    _screenzx->DrawRange(0, frameT - 1);
+    const auto off = FramebufferCopy(_screenzx);
+
+    _screenzx->SetPlaneBEnabled(true);
+    _screenzx->DrawRange(0, frameT - 1);
+    EXPECT_EQ(FramebufferCopy(_screenzx), off) << "plane B changed the picture";
+}
+
+TEST_F(ScreenZX_Test, PlaneB_DescribesEveryDrawnPixel)
+{
+    _cpu->GetMemory()->DefaultBanksFor48k();
+    _screenzx->InitFrame();
+    _screenzx->SetPlaneBEnabled(true);
+    Memory* memory = _cpu->GetMemory();
+    FillScreenNoise(memory, 11);
+    const uint32_t frameT = _screenzx->_rasterState.maxFrameTiming;
+
+    // Draw in 16-T catch-ups; change the border every chunk and the attributes
+    // once mid-frame (multicolor): plane B must follow what the beam used
+    const uint32_t attrSwitchT = (frameT / 2) & ~15u;
+    uint8_t border = 0;
+    for (uint32_t t = 0; t < frameT; t += 16)
+    {
+        _screenzx->_borderColor = border;
+        border = (border + 1) & 7;
+        if (t == attrSwitchT)
+            FillScreenNoise(memory, 99);
+        _screenzx->DrawRange(t, std::min(t + 15, frameT - 1));
+    }
+
+    size_t count = 0;
+    const uint16_t* planeB = _screenzx->GetPlaneB(&count);
+    ASSERT_NE(planeB, nullptr);
+    const auto fb = FramebufferCopy(_screenzx);
+    ASSERT_EQ(count, fb.size());
+
+    size_t screenPixels = 0;
+    size_t borderPixels = 0;
+    std::set<uint8_t> borderColors;
+    for (size_t i = 0; i < count; i++)
+    {
+        const uint16_t v = planeB[i];
+        const uint16_t role = v & Screen::kPlaneBRoleMask;
+        const uint8_t attr = v & 0xFF;
+        const uint8_t color = (v >> 8) & 0xF;
+        if (role == Screen::kPlaneBRoleScreen)
+        {
+            screenPixels++;
+            const bool ink = v & Screen::kPlaneBInk;
+            const uint8_t bright = (attr & 0x40) ? 8 : 0;
+            ASSERT_EQ(color, ink ? (attr & 7) + bright : ((attr >> 3) & 7) + bright) << "pixel " << i;
+            ASSERT_EQ(fb[i], _screenzx->TransformZXSpectrumColorsToRGBA(attr, ink)) << "pixel " << i;
+        }
+        else if (role == Screen::kPlaneBRoleBorder)
+        {
+            borderPixels++;
+            borderColors.insert(color);
+            ASSERT_EQ(attr, 0);
+            ASSERT_EQ(fb[i], _screenzx->TransformZXSpectrumColorsToRGBA(color, true)) << "pixel " << i;
+        }
+    }
+    EXPECT_EQ(screenPixels, 256u * 192u) << "every paper pixel is described";
+    EXPECT_GT(borderPixels, 0u);
+    EXPECT_EQ(borderColors.size(), 8u) << "border changes within the frame are recorded";
+}
+
+/// endregion </ZX DLSS plane B>

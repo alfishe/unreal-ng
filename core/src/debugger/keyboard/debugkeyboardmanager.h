@@ -320,6 +320,7 @@ private:
     bool ApplyKey(ZXKeysEnum key, bool pressed);
 
     /// Live input refused while the TTD journal owns input (TimeTravelManager::OwnsInput)
+    /// or an RZX recording plays
     bool IsInputOwnedByJournal() const;
     
     /// Get TR-DOS E-mode key for a keyword

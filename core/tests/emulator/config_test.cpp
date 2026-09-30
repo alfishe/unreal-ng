@@ -62,7 +62,58 @@ protected:
         Config config(_context);
         return config.LoadConfigFile(path);
     }
+
+    /// Same, for [MISC] keys (HIMEM / RamSize keep their parser defaults)
+    bool LoadMiscKeys(const std::string& keys)
+    {
+        const std::string path = TestPathHelper::GetUniqueTestScratchPath("misc_config_test.ini");
+        {
+            std::ofstream file(path, std::ios::binary);
+            file << "[MISC]\n" << keys;
+        }
+        Config config(_context);
+        return config.LoadConfigFile(path);
+    }
 };
+
+TEST_F(Config_Test, RamPowerOnParsesZeroAnyCase)
+{
+    ASSERT_TRUE(LoadMiscKeys("RAMPowerOn=zero\n"));
+    EXPECT_EQ(_context->config.ramPowerOn, RamPowerOn::Zero);
+}
+
+TEST_F(Config_Test, RamPowerOnUnknownFallsBackToRandom)
+{
+    ASSERT_TRUE(LoadMiscKeys("RAMPowerOn=banana\n"));
+    EXPECT_EQ(_context->config.ramPowerOn, RamPowerOn::Random);
+}
+
+TEST_F(Config_Test, RamPowerOnMissingResetsStaleZero)
+{
+    // Config repopulates the same CONFIG in place: a file without the key
+    // must not keep ZERO from the previous parse
+    ASSERT_TRUE(LoadMiscKeys("RAMPowerOn=ZERO\n"));
+    EXPECT_EQ(_context->config.ramPowerOn, RamPowerOn::Zero);
+    ASSERT_TRUE(LoadMiscKeys("RAMSize=128\n"));
+    EXPECT_EQ(_context->config.ramPowerOn, RamPowerOn::Random);
+}
+
+/// The spelling every automation surface accepts and reports
+TEST(Config_RamPowerOn_Test, NamesRoundTrip)
+{
+    for (RamPowerOn mode : {RamPowerOn::Random, RamPowerOn::Zero})
+    {
+        RamPowerOn parsed = mode == RamPowerOn::Zero ? RamPowerOn::Random : RamPowerOn::Zero;
+        ASSERT_TRUE(Config::ParseRamPowerOn(Config::RamPowerOnName(mode), parsed));
+        EXPECT_EQ(parsed, mode);
+    }
+    EXPECT_STREQ(Config::RamPowerOnName(RamPowerOn::Zero), "zero");
+    EXPECT_STREQ(Config::RamPowerOnName(RamPowerOn::Random), "random");
+    RamPowerOn untouched = RamPowerOn::Zero;
+    EXPECT_FALSE(Config::ParseRamPowerOn("", untouched));
+    EXPECT_FALSE(Config::ParseRamPowerOn("0", untouched));
+    EXPECT_EQ(untouched, RamPowerOn::Zero);
+}
 
 TEST_F(Config_Test, TurboSoundKindParsesAy)
 {

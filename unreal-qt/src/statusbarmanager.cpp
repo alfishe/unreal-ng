@@ -1,10 +1,15 @@
 #include "statusbarmanager.h"
+#include "emulator/rzx/rzxlauncher.h"
+#include "debugger/ttd/timetravelmanager.h"
+#include "widgets/rzxpopover.h"
 
 #include "emulator/config.h"
 #include "emulator/io/ide/idecontroller.h"
 #include "emulator/media/mediamanager.h"
 
 #include <QCursor>
+#include <QEvent>
+#include <QMouseEvent>
 #include <algorithm>
 #include <QDateTime>
 #include <QFont>
@@ -87,12 +92,26 @@ StatusBarManager::StatusBarManager(MainWindow* mainWindow, MenuManager* menuMana
     // Font ascenders render higher than icon visual center - adjust with stylesheet padding
     _fps->setStyleSheet("padding-top: 1px;");
 
+    _rzx = new QLabel(_statusBar);
+    _rzx->setFont(fpsFont);
+    _rzx->setStyleSheet("padding-top: 1px;");
+    _rzx->hide();
+    _rzx->setCursor(Qt::PointingHandCursor);
+    _rzx->installEventFilter(this);
+
+    _ttd = new QLabel(_statusBar);
+    _ttd->setFont(fpsFont);
+    _ttd->setStyleSheet("padding-top: 1px;");
+    _ttd->hide();
+
     auto* separator2 = new QFrame(_statusBar);
     separator2->setFrameShape(QFrame::VLine);
     separator2->setFrameShadow(QFrame::Plain);
     separator2->setFixedHeight(13);
 
     // Order as in the new-gui mockup: tape, square (HDD), round (floppy), sound
+    _statusBar->addPermanentWidget(_rzx);
+    _statusBar->addPermanentWidget(_ttd);
     _statusBar->addPermanentWidget(_tape);
     _statusBar->addPermanentWidget(_hdd);
     _statusBar->addPermanentWidget(_disk);
@@ -339,6 +358,8 @@ void StatusBarManager::refresh()
     }
 
     _tape->setActive(tapePlaying);
+    updateRzx(emulator);
+    updateTtd(context);
     // Disk LED is driven by NC_FDD_STATE_CHANGED (see applyFddState); the tooltip is
     // re-rendered from the cache on every tick (200 ms) so an open tooltip stays current
     updateDiskToolTip();
@@ -579,3 +600,67 @@ void StatusBarManager::updateIde(EmulatorContext* context)
     _hdd->setDetail(QString());
     _hdd->setLiveToolTip(QStringLiteral("<pre style=\"margin:0\">%1</pre>").arg(lines.join(QLatin1Char('\n'))));
 }
+
+/// RZX playback: "RZX 37.2%" while playing (red after a desync in tolerant mode);
+/// the end or a desync is announced once in the status bar message area
+void StatusBarManager::updateRzx(std::shared_ptr<Emulator> emulator)
+{
+    const rzx::SessionStatus status = emulator ? emulator->GetRzxStatus() : rzx::SessionStatus{};
+    if (!status.loaded)
+    {
+        _rzx->hide();
+        _rzxLastState = 0xFF;
+        return;
+    }
+
+    const rzx::PlayerStatus& player = status.player;
+    const double percent = player.totalFrames ? 100.0 * static_cast<double>(player.frame) / player.totalFrames : 0.0;
+    const auto state = static_cast<uint8_t>(player.state);
+    if (player.state == rzx::PlayerState::Playing)
+        _rzx->setText(QString("RZX %1%").arg(percent, 0, 'f', 1));
+    else
+        _rzx->setText(QString("RZX %1").arg(QString::fromLatin1(rzx::StateName(player.state))));
+    _rzx->setStyleSheet(player.desyncs > 0 ? "QLabel { color: #B22222; padding-top: 1px; }" : "padding-top: 1px;");
+    _rzx->setToolTip(QString::fromStdString(rzx::RzxLauncher::StatusText(status)).trimmed());
+    _rzx->show();
+
+    // Announce the end once: finished, desync (with its frame), stopped
+    if (state != _rzxLastState && _rzxLastState != 0xFF && player.state != rzx::PlayerState::Playing)
+        _statusBar->showMessage(QString("RZX: ") + QString::fromStdString(rzx::RzxLauncher::StatusLine(status)), 15000);
+    _rzxLastState = state;
+}
+
+/// TTD: "TTD 42.0%" while the machine is positioned in or re-executing recorded
+/// history (Detached): where it is between the session's first and last frame
+void StatusBarManager::updateTtd(EmulatorContext* context)
+{
+    ttd::TimeTravelManager* ttd = context ? context->pTimeTravelManager : nullptr;
+    if (!ttd || ttd->GetState() != ttd::TTDSessionState::Detached)
+    {
+        _ttd->hide();
+        return;
+    }
+
+    const ttd::TTDSessionInfo info = ttd->GetSessionInfo();
+    const uint64_t frame = ttd->CurrentPosition().frame;
+    const uint64_t span = info.currentEndFrame > info.sessionStartFrame ? info.currentEndFrame - info.sessionStartFrame : 0;
+    const uint64_t done = frame > info.sessionStartFrame ? std::min(frame - info.sessionStartFrame, span) : 0;
+    const double percent = span ? 100.0 * static_cast<double>(done) / static_cast<double>(span) : 100.0;
+    _ttd->setText(QString("TTD %1%").arg(percent, 0, 'f', 1));
+    _ttd->setToolTip(tr("Time travel: frame %1 of the recorded %2..%3").arg(frame).arg(info.sessionStartFrame).arg(info.currentEndFrame));
+    _ttd->show();
+}
+
+bool StatusBarManager::eventFilter(QObject* watched, QEvent* event)
+{
+    if (watched == _rzx && event->type() == QEvent::MouseButtonRelease &&
+        static_cast<QMouseEvent*>(event)->button() == Qt::LeftButton)
+    {
+        if (!_rzxPopover)
+            _rzxPopover = new RzxPopover(_statusBar);
+        _rzxPopover->popup(_rzx, _emulator);
+        return true;
+    }
+    return QObject::eventFilter(watched, event);
+}
+

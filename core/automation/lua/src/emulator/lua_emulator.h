@@ -4,6 +4,7 @@
 #include <sol/sol.hpp>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
+#include <emulator/rzx/rzxlauncher.h>
 #include "../bindings/lua_porttrace.h"
 #include <emulator/memory/memory.h>
 #include <emulator/memory/memorymap.h>  // TD-3 sparse map + hexdump
@@ -27,6 +28,8 @@
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/labels/labelmanager.h>
 #include <debugger/ttd/timetravelmanager.h>
+#include <debugger/ttd/machinestatehash.h>
+#include <debugger/ttd/ttdfileinfo.h>
 #include <tuple>
 #include <debugger/ttd/ttdexternalevents.h>
 #include <debugger/ttd/ttdprobe.h>
@@ -87,6 +90,29 @@ inline sol::object StateNodeToLua(sol::this_state s, const StateNode& node)
         }
         default: return sol::make_object(lua, sol::lua_nil);
     }
+}
+
+
+/// The recorded machine of a TTD session / file as a Lua table (the same keys
+/// as the WebAPI: model_id, model, ram_page_bound, rom_signature, peripheral_mask,
+/// peripherals, general_sound, turbo_sound)
+inline sol::table TtdRecordedMachineTable(sol::state_view& lua, const ttd::TTDRecordedMachine& m)
+{
+    sol::table t = lua.create_table();
+    t["model_id"] = static_cast<unsigned>(m.modelId);
+    if (!m.model.empty())
+        t["model"] = m.model;
+    t["ram_page_bound"] = static_cast<unsigned>(m.ramPageBound);
+    if (m.romSignature != 0)
+        t["rom_signature"] = "0x" + ttd::HashToString(m.romSignature);
+    t["peripheral_mask"] = m.peripheralMask;
+    sol::table list = lua.create_table();
+    for (size_t i = 0; i < m.peripherals.size(); ++i)
+        list[i + 1] = m.peripherals[i];
+    t["peripherals"] = list;
+    t["general_sound"] = ttd::GeneralSoundName(m.generalSound);
+    t["turbo_sound"] = m.turboSound;
+    return t;
 }
 
 class LuaEmulator
@@ -285,6 +311,11 @@ public:
                     case StateResumed: return "resumed";
                     default: return "unknown";
                 }
+            },
+            // RAM contents the machine was created with: "random" | "zero"
+            "ram_power_on", [](Emulator& emu) -> std::string {
+                EmulatorContext* context = emu.GetContext();
+                return context ? Config::RamPowerOnName(context->config.ramPowerOn) : "";
             }
         );
 
@@ -301,13 +332,29 @@ public:
 
         // ZX-Poly machines (EmulatorManager::CreateZXPolyMachine - the entry point
         // every surface uses): four synchronized instances of one model.
-        // zxpoly_start([model], [file]) -> master id, or nil + error
+        // zxpoly_start([model], [file], [ram_power_on]) -> master id, or nil + error.
+        // ram_power_on: "random" | "zero" (RAM contents of all four modules;
+        // default: the model's unreal.ini)
         lua.set_function("zxpoly_start", [](sol::optional<std::string> model, sol::optional<std::string> file,
+                                            sol::optional<std::string> ramPowerOn,
                                             sol::this_state state) -> sol::variadic_results {
             sol::variadic_results results;
             auto* mgr = EmulatorManager::GetInstance();
+            std::function<void(CONFIG&)> configOverride;
+            if (ramPowerOn)
+            {
+                RamPowerOn mode = RamPowerOn::Random;
+                if (!Config::ParseRamPowerOn(*ramPowerOn, mode))
+                {
+                    results.push_back(sol::make_object(state, sol::lua_nil));
+                    results.push_back(sol::make_object(state, "ram_power_on must be random or zero"));
+                    return results;
+                }
+                configOverride = Config::RamPowerOnOverride(mode);
+            }
             std::string error;
-            auto master = mgr->CreateZXPolyMachine("", model.value_or("PENTAGON"), file.value_or(""), &error);
+            auto master = mgr->CreateZXPolyMachine("", model.value_or("PENTAGON"), file.value_or(""), &error,
+                                                   configOverride);
             if (!master)
             {
                 results.push_back(sol::make_object(state, sol::lua_nil));
@@ -1477,6 +1524,113 @@ public:
             return {emulator->LoadSnapshot(path), ""};
         });
 
+        // RZX input recordings. rzx_play(path [, options]) -> table {ok, message,
+        // emulator_id, model_switched, required_model, summary}; options:
+        // desync_mode ("strict" / "tolerant"), ei_short_frame_blocks_int,
+        // ld_air_parity_quirk, ignore_later_snapshots, switch_model. The model
+        // switches only when this interpreter follows the selected machine (a
+        // bound one reports the mismatch: its machine must not be replaced)
+        lua.set_function("rzx_play", [this](const std::string& path, sol::optional<sol::table> options) -> sol::table {
+            sol::state_view view(*_lua);
+            sol::table out = view.create_table();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+            {
+                out["ok"] = false;
+                out["message"] = "no emulator";
+                return out;
+            }
+            rzx::LaunchRequest request;
+            request.emulatorId = emulator->GetId();
+            request.path = path;
+            request.switchModel = _emulator == nullptr;
+            if (options)
+            {
+                const sol::table& o = *options;
+                sol::optional<std::string> mode = o["desync_mode"];
+                if (mode && !rzx::RzxLauncher::ParseDesyncMode(*mode, request.options.desyncMode))
+                {
+                    out["ok"] = false;
+                    out["message"] = "desync_mode '" + *mode + "': expected strict or tolerant";
+                    return out;
+                }
+                request.options.eiShortFrameBlocksInt = o.get_or("ei_short_frame_blocks_int", false);
+                request.options.ldAirParityQuirk = o.get_or("ld_air_parity_quirk", false);
+                request.options.ignoreLaterSnapshots = o.get_or("ignore_later_snapshots", false);
+                request.switchModel = request.switchModel && o.get_or("switch_model", true);
+            }
+            const rzx::LaunchResult result = rzx::RzxLauncher::Play(request);
+            out["ok"] = result.play.Ok();
+            out["error"] = std::string(rzx::PlayErrorName(result.play.error));
+            out["message"] = result.play.message;
+            out["emulator_id"] = result.emulator ? result.emulator->GetId() : std::string();
+            out["model_switched"] = result.modelSwitched;
+            out["required_model"] = result.play.requiredModel;
+            out["model"] = result.switchedToModel;
+            if (result.emulator)
+                out["summary"] = rzx::RzxLauncher::StatusLine(result.emulator->GetRzxStatus());
+            return out;
+        });
+
+        // rzx_seek(frame) -> ok, reason: to the boundary after `frame` frames
+        lua.set_function("rzx_seek", [this](uint64_t frame) -> std::tuple<bool, std::string> {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return {false, "no emulator"};
+            std::string error;
+            const bool ok = emulator->SeekRzx(frame, &error);
+            return {ok, error};
+        });
+
+        lua.set_function("rzx_stop", [this]() -> bool {
+            Emulator* emulator = effectiveEmulator();
+            return emulator && emulator->StopRzx();
+        });
+
+        lua.set_function("rzx_status", [this]() -> sol::table {
+            sol::state_view view(*_lua);
+            sol::table t = view.create_table();
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+            {
+                t["loaded"] = false;
+                return t;
+            }
+            const rzx::SessionStatus status = emulator->GetRzxStatus();
+            t["loaded"] = status.loaded;
+            t["active"] = status.active;
+            t["summary"] = rzx::RzxLauncher::StatusLine(status);
+            if (!status.loaded)
+                return t;
+            const rzx::PlayerStatus& player = status.player;
+            t["path"] = status.path;
+            t["creator"] = status.creator;
+            t["state"] = std::string(rzx::StateName(player.state));
+            t["frame"] = player.frame;
+            t["total_frames"] = player.totalFrames;
+            t["block"] = player.block + 1;
+            t["blocks"] = player.blocks;
+            t["interrupts"] = player.interrupts;
+            t["desyncs"] = player.desyncs;
+            t["drift"] = player.drift;
+            t["max_drift"] = player.maxDrift;
+            t["snapshots_applied"] = player.snapshotsApplied;
+            t["keyframes"] = player.keyframes;
+            t["keyframe_bytes"] = player.keyframeBytes;
+            t["reason"] = player.stopReason;
+            if (player.desyncs > 0)
+            {
+                sol::table first = view.create_table();
+                first["kind"] = std::string(rzx::DesyncName(player.firstDesync.kind));
+                first["frame"] = player.firstDesync.frame;
+                first["expected"] = player.firstDesync.expected;
+                first["actual"] = player.firstDesync.actual;
+                first["pc"] = player.firstDesync.pc;
+                t["first_desync"] = first;
+            }
+            return t;
+        });
+
         lua.set_function("snapshot_save", [this](const std::string& path) -> bool {
             if (!effectiveEmulator()) return false;
             return effectiveEmulator()->SaveSnapshot(path);
@@ -2436,8 +2590,54 @@ public:
                 info["last_drop_reason"]     = si.lastDropReason;  // "" until a history is dropped
             if (!si.unavailableReason.empty())
                 info["unavailable_reason"]   = si.unavailableReason;  // e.g. a ZX-Poly member
+            if (si.checkpointCount != 0)
+                info["machine"] = TtdRecordedMachineTable(lua_view, si.machine);  // the recorded machine
+            if (!si.recordedBy.empty())
+                info["recorded_by"] = si.recordedBy;  // the instance that recorded a loaded file
             info["ttd_available"]            = true;
             return info;
+        });
+
+        // ttd_file_info(path) - a .ttd file's header, sections and recorded machine,
+        // read without loading it: {ok, error | path, file_bytes, ..., machine, sections}
+        lua.set_function("ttd_file_info", [this](const std::string& path) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table r = lua_view.create_table();
+            ttd::TTDFileInfo fi;
+            std::string err;
+            if (!ttd::ReadTTDFileInfo(path, fi, err))
+            {
+                r["ok"] = false;
+                r["path"] = path;
+                r["error"] = err;
+                return r;
+            }
+            r["ok"] = true;
+            r["path"] = fi.path;
+            r["file_bytes"] = fi.fileBytes;
+            r["schema_version"] = static_cast<unsigned>(fi.schemaVersion);
+            r["flags"] = static_cast<unsigned>(fi.flags);
+            r["captured_at_unix_ms"] = fi.capturedAtUnixMs;
+            if (!fi.emulatorId.empty())
+                r["recorded_by"] = fi.emulatorId;
+            r["session_state"] = ttd::TTDSessionStateToString(static_cast<ttd::TTDSessionState>(fi.sessionState));
+            r["session_start_frame"] = fi.startFrame;
+            r["session_end_frame"] = fi.endFrame;
+            r["checkpoint_count"] = static_cast<uint64_t>(fi.checkpointCount);
+            r["page_slot_count"] = static_cast<uint64_t>(fi.pageStoreCount);
+            sol::table sections = lua_view.create_table();
+            sections["write_journal"] = fi.hasWriteJournal;
+            sections["write_journal_complete"] = fi.writeJournalComplete;
+            sections["coverage_index"] = fi.hasCoverageIndex;
+            sections["bookmarks"] = fi.hasBookmarks;
+            sections["input_journal"] = fi.hasInputJournal;
+            sections["external_events"] = fi.hasExternalEvents;
+            sections["port_journals"] = fi.hasPortJournals;
+            sections["top_clock_time"] = fi.topClockTime;
+            r["sections"] = sections;
+            r["machine"] = TtdRecordedMachineTable(lua_view, fi.machine);
+            r["peripherals_from_header"] = fi.peripheralsFromHeader;
+            return r;
         });
 
         // ttd_start([mode]) - start recording

@@ -18,6 +18,41 @@
 #include "cli-processor.h"
 #include "automation.h"
 
+#include <functional>
+#include <optional>
+
+namespace
+{
+/// Takes "--ram-power-on random|zero" out of the arguments of a command that
+/// creates a machine (create, start, zxpoly start). False with a message when
+/// the value is missing or not one of the two
+bool TakeRamPowerOnOption(std::vector<std::string>& args, std::optional<RamPowerOn>& mode, std::string& error)
+{
+    for (size_t i = 0; i < args.size(); i++)
+    {
+        if (args[i] != "--ram-power-on")
+            continue;
+        RamPowerOn parsed = RamPowerOn::Random;
+        if (i + 1 >= args.size() || !Config::ParseRamPowerOn(args[i + 1], parsed))
+        {
+            error = "--ram-power-on expects random or zero";
+            return false;
+        }
+        mode = parsed;
+        args.erase(args.begin() + static_cast<std::ptrdiff_t>(i), args.begin() + static_cast<std::ptrdiff_t>(i) + 2);
+        i--;
+    }
+    return true;
+}
+
+/// The create-time override for a parsed --ram-power-on (none when absent:
+/// the model's unreal.ini decides)
+std::function<void(CONFIG&)> RamPowerOnOverride(const std::optional<RamPowerOn>& mode)
+{
+    return mode ? Config::RamPowerOnOverride(*mode) : std::function<void(CONFIG&)>();
+}
+}  // namespace
+
 // HandleStatus - lines 495-543
 void CLIProcessor::HandleStatus(const ClientSession& session, const std::vector<std::string>& args)
 {
@@ -521,16 +556,26 @@ void CLIProcessor::HandleResume(const ClientSession& session, const std::vector<
 }
 
 // HandleCreate - Create emulator without starting
-void CLIProcessor::HandleCreate(const ClientSession& session, const std::vector<std::string>& args)
+void CLIProcessor::HandleCreate(const ClientSession& session, const std::vector<std::string>& rawArgs)
 {
     auto* emulatorManager = EmulatorManager::GetInstance();
+
+    std::vector<std::string> args = rawArgs;
+    std::optional<RamPowerOn> ramPowerOn;
+    std::string optionError;
+    if (!TakeRamPowerOnOption(args, ramPowerOn, optionError))
+    {
+        session.SendResponse("Error: " + optionError + NEWLINE);
+        return;
+    }
 
     if (!args.empty())
     {
         // create <model> - create emulator with specific model
         std::string modelName = args[0];
         std::string createError;
-        auto emulator = emulatorManager->CreateEmulatorWithModel("", modelName, LoggerLevel::LogWarning, &createError);
+        auto emulator = emulatorManager->CreateEmulatorWithModel("", modelName, LoggerLevel::LogWarning, &createError,
+                                                                 RamPowerOnOverride(ramPowerOn));
 
         if (emulator)
         {
@@ -546,6 +591,7 @@ void CLIProcessor::HandleCreate(const ClientSession& session, const std::vector<
                 ss << "Model: " << identity.Model << " - " << identity.ModelFullName
                    << " (" << identity.RamKb << "KB)" << NEWLINE;
                 ss << "Config folder: " << identity.ConfigFolder << NEWLINE;
+                ss << "Power-on RAM: " << identity.RamPowerOn << NEWLINE;
                 if (identity.HasVideoMode)
                 {
                     ss << "Video mode: " << identity.VideoMode << NEWLINE;
@@ -587,7 +633,7 @@ void CLIProcessor::HandleCreate(const ClientSession& session, const std::vector<
     else
     {
         // create - create default emulator
-        auto emulator = emulatorManager->CreateEmulator("", LoggerLevel::LogInfo);
+        auto emulator = emulatorManager->CreateEmulator("", LoggerLevel::LogInfo, RamPowerOnOverride(ramPowerOn));
 
         if (emulator)
         {
@@ -614,8 +660,17 @@ void CLIProcessor::HandleCreate(const ClientSession& session, const std::vector<
 }
 
 // HandleStart - lines 3390-3511
-void CLIProcessor::HandleStart(const ClientSession& session, const std::vector<std::string>& args)
+void CLIProcessor::HandleStart(const ClientSession& session, const std::vector<std::string>& rawArgs)
 {
+    std::vector<std::string> args = rawArgs;
+    std::optional<RamPowerOn> ramPowerOn;
+    std::string optionError;
+    if (!TakeRamPowerOnOption(args, ramPowerOn, optionError))
+    {
+        session.SendResponse("Error: " + optionError + NEWLINE);
+        return;
+    }
+
     if (!args.empty())
     {
         auto* emulatorManager = EmulatorManager::GetInstance();
@@ -652,6 +707,13 @@ void CLIProcessor::HandleStart(const ClientSession& session, const std::vector<s
             isExistingEmulator = true;
         }
 
+        if (isExistingEmulator && ramPowerOn)
+        {
+            session.SendResponse("Error: --ram-power-on applies to a new machine, not to an existing one" +
+                                 std::string(NEWLINE));
+            return;
+        }
+
         if (isExistingEmulator)
         {
             // Start existing emulator
@@ -685,7 +747,8 @@ void CLIProcessor::HandleStart(const ClientSession& session, const std::vector<s
         // Not an existing emulator - treat as model name and create new emulator
         std::string modelName = arg;
         std::string createError;
-        auto emulator = emulatorManager->CreateEmulatorWithModel("", modelName, LoggerLevel::LogWarning, &createError);
+        auto emulator = emulatorManager->CreateEmulatorWithModel("", modelName, LoggerLevel::LogWarning, &createError,
+                                                                 RamPowerOnOverride(ramPowerOn));
 
         if (emulator)
         {
@@ -704,7 +767,8 @@ void CLIProcessor::HandleStart(const ClientSession& session, const std::vector<s
             if (identity.Valid)
             {
                 resolvedModel = identity.Model + " - " + identity.ModelFullName + " (" +
-                                std::to_string(identity.RamKb) + "KB, config: " + identity.ConfigFolder + ")";
+                                std::to_string(identity.RamKb) + "KB, config: " + identity.ConfigFolder +
+                                ", power-on RAM: " + identity.RamPowerOn + ")";
             }
 
             std::stringstream ss;
@@ -753,7 +817,8 @@ void CLIProcessor::HandleStart(const ClientSession& session, const std::vector<s
     else
     {
         // start - create default emulator
-        auto emulator = EmulatorManager::GetInstance()->CreateEmulator("", LoggerLevel::LogInfo);
+        auto emulator = EmulatorManager::GetInstance()->CreateEmulator("", LoggerLevel::LogInfo,
+                                                                       RamPowerOnOverride(ramPowerOn));
 
         if (emulator)
         {
@@ -1084,11 +1149,20 @@ void CLIProcessor::HandleModels(const ClientSession& session, const std::vector<
     ss << NEWLINE << "Use 'start <model>' to create emulator with specific model.";
     session.SendResponse(ss.str());
 }
-/// zxpoly start <model> [file] | zxpoly status [id|index]
+/// zxpoly start <model> [file] [--ram-power-on random|zero] | zxpoly status [id|index]
 /// ZX-Poly machines through the same EmulatorManager entry points the WebAPI,
 /// MCP, Lua, Python and the Qt UI use (CreateZXPolyMachine, GetZXPolyGroup)
-void CLIProcessor::HandleZXPoly(const ClientSession& session, const std::vector<std::string>& args)
+void CLIProcessor::HandleZXPoly(const ClientSession& session, const std::vector<std::string>& rawArgs)
 {
+    std::vector<std::string> args = rawArgs;
+    std::optional<RamPowerOn> ramPowerOn;
+    std::string optionError;
+    if (!TakeRamPowerOnOption(args, ramPowerOn, optionError))
+    {
+        session.SendResponse("Error: " + optionError + NEWLINE);
+        return;
+    }
+
     auto* manager = EmulatorManager::GetInstance();
     const std::string sub = args.empty() ? std::string("status") : args[0];
     std::stringstream ss;
@@ -1098,7 +1172,7 @@ void CLIProcessor::HandleZXPoly(const ClientSession& session, const std::vector<
         const std::string model = args.size() > 1 ? args[1] : std::string("PENTAGON");
         const std::string file = args.size() > 2 ? args[2] : std::string();
         std::string error;
-        auto master = manager->CreateZXPolyMachine("", model, file, &error);
+        auto master = manager->CreateZXPolyMachine("", model, file, &error, RamPowerOnOverride(ramPowerOn));
         if (!master)
         {
             ss << "Error: cannot start ZX-Poly on " << model << ": " << error << NEWLINE;
@@ -1115,7 +1189,7 @@ void CLIProcessor::HandleZXPoly(const ClientSession& session, const std::vector<
 
     if (sub != "status")
     {
-        ss << "Usage: zxpoly start <model> [file] | zxpoly status [id|index]" << NEWLINE;
+        ss << "Usage: zxpoly start <model> [file] [--ram-power-on random|zero] | zxpoly status [id|index]" << NEWLINE;
         session.SendResponse(ss.str());
         return;
     }
@@ -1164,11 +1238,12 @@ void CLIProcessor::HandleModel(const ClientSession& session, const std::vector<s
     if (args.empty() || args[0] == "help")
     {
         std::stringstream ss;
-        ss << "Usage: model <name> [--ram <kb>] [--stranded save|discard|keep]" << NEWLINE
+        ss << "Usage: model <name> [--ram <kb>] [--stranded save|discard|keep] [--ram-power-on random|zero]" << NEWLINE
            << "Switch the selected emulator to another model (see 'models'). The machine state is lost; disks, tapes" << NEWLINE
            << "and cards go into the slot with the same id on the new machine, unsaved writes included. Media with" << NEWLINE
            << "unsaved writes the new model has no slot for need --stranded: save (into their files), discard, or" << NEWLINE
-           << "keep (detached media on the new machine, see 'media list')." << NEWLINE;
+           << "keep (detached media on the new machine, see 'media list')." << NEWLINE
+           << "--ram-power-on: RAM contents of the new machine (default: the current machine's mode)." << NEWLINE;
         session.SendResponse(ss.str());
         return;
     }
@@ -1198,6 +1273,16 @@ void CLIProcessor::HandleModel(const ClientSession& session, const std::vector<s
                 session.SendResponse("Error: --ram '" + args[i] + "': expected KB" + NEWLINE);
                 return;
             }
+        }
+        else if (option == "--ram-power-on" && hasValue)
+        {
+            RamPowerOn mode = RamPowerOn::Random;
+            if (!Config::ParseRamPowerOn(args[++i], mode))
+            {
+                session.SendResponse("Error: --ram-power-on '" + args[i] + "': expected random or zero" + NEWLINE);
+                return;
+            }
+            request.ramPowerOn = mode;
         }
         else if (option == "--stranded" && hasValue)
         {
@@ -1233,7 +1318,8 @@ void CLIProcessor::HandleModel(const ClientSession& session, const std::vector<s
     if (wasRunning)
         EmulatorManager::GetInstance()->StartEmulatorAsync(switched.emulator->GetId());
     const MachineIdentity identity = EmulatorManager::GetMachineIdentity(*switched.emulator);
-    ss << "Switched to " << identity.Model << " - " << identity.ModelFullName << " (" << identity.RamKb << "KB)" << NEWLINE
+    ss << "Switched to " << identity.Model << " - " << identity.ModelFullName << " (" << identity.RamKb
+       << "KB, power-on RAM: " << identity.RamPowerOn << ")" << NEWLINE
        << "New emulator instance: " << switched.emulator->GetId() << NEWLINE;
     for (const std::string& line : switched.media.lines)
         ss << "  " << line << NEWLINE;

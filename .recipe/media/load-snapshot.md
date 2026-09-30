@@ -3,6 +3,9 @@
 Goal: restore a machine state from a `.sna`/`.z80`/`.szx` file, save states back out,
 and verify a snapshot actually took effect.
 
+An `.rzx` input recording loads the same way and then plays: see
+[play-rzx.md](play-rzx.md).
+
 Snapshots are the cheapest way to reach a known state — much faster than
 booting through TR-DOS or tape. Use them as the entry point for
 [TTD](../analysis/ttd-recording.md) capture and for regression testing.
@@ -135,7 +138,8 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/snapshot/transfer" \
 #   [copied] paging: 128K state replayed through the Pentagon port decoder
 #   [copied] TSFM: 2008 bytes of state
 #   [copied] NeoGS RAM and flash: 2048 KB RAM + 512 KB flash
-#   [note] media: disk and tape images are not moved
+#   [copied] fdd.a: game.trd -> game.pentagon-1a2b3c4d.trd (in-memory copy, clean; written only by an explicit save)
+#   [note] SD / HDD / CD: not moved (by design, for now): the target keeps its own ...
 ```
 
 HTTP 422 = the target cannot hold the state (e.g. a 128K program into a 48K);

@@ -18,6 +18,8 @@ class OpcodeProfiler;
 // Disable compiler alignment for packed structures
 #pragma pack(push, 1)
 
+namespace rzx { class RzxPlayer; }
+
 struct Z80Registers
 {
     union
@@ -482,6 +484,7 @@ public:
 
     // Memory access dispatching methods
     uint8_t rd(uint16_t addr, bool isExecution = false);
+    uint8_t rdM1(uint16_t addr);  // the opcode fetch: rd through the interface's MemoryReadM1
     void wd(uint16_t addr, uint8_t val);
 
     /// Contention wait states inserted by the contended memory interfaces (Memory::MemoryReadContended):
@@ -511,6 +514,12 @@ public:
 
     /// The refresh address the CPU puts on the bus in internal cycles after M1 (I in the high byte, R low)
     inline uint16_t IR() const { return static_cast<uint16_t>((i << 8) | (r_low & 0x7F) | (r_hi & 0x80)); }
+
+    /// ULA snow: a refresh whose T3 starts at `t3` while I points into slow memory (the Ferranti ULA machines,
+    /// ioContention). One pointer test on every other machine (docs/inprogress/2026-09-29-ula-snow/tdd.md)
+    /// ULA snow for the refresh of an interrupt acknowledge (T3 at `t3`); the opcode fetches' refreshes are the
+    /// contended interfaces' (Memory::MemoryReadM1Snow). docs/inprogress/2026-09-29-ula-snow/tdd.md
+    void NoteAcknowledgeRefresh(uint32_t t3);
 
     /// The ULA's rule for internal cycles: set with ioContention (the same machines), null otherwise
     UlaContention* idleContention = nullptr;
@@ -601,6 +610,11 @@ public:
     /// StepInstruction with rare work around the step (the per-step gate was non-zero)
     StepResult StepInstructionWithWork(uint32_t work, bool skipBreakpoints);
 
+    /// LD R,A: the R it replaced minus the new one (7 bits, accumulated), so
+    /// that an R delta across a step still counts the step's fetches (the
+    /// RZX fetch counter, emulator/rzx/). One subtraction per LD R,A
+    uint8_t rLoadAdjust = 0;
+
     /// The CPU is at or past the end of the current frame
     bool IsFrameComplete() const { return t >= _frameLimit; }
 
@@ -668,6 +682,17 @@ public:
     /// Mask the ULA frame INT for this CPU (a ZX-Poly slave before the lock
     /// does not see the common frame INT). Local INT is not affected
     bool frameIntMasked = false;
+private:
+    /// StepInstructionWithWork while an RZX recording plays: the frame end at
+    /// the recorded fetch count; true when its interrupt was taken as this step
+    enum class RzxBoundary : uint8_t
+    {
+        None,       ///< no RZX frame end at this boundary: the step runs normally
+        Interrupt,  ///< the forced interrupt was taken as this step
+        Replaced    ///< a snapshot block replaced the machine as this step
+    };
+    RzxBoundary RzxFrameEnd(rzx::RzxPlayer& player);
+public:
     bool IntClearedByAcknowledge() const;  // machine's INT pulse ends at the acknowledge
     bool ProcessInterrupts(bool int_occured,  // Take care about incoming interrupts
                            unsigned int_start, unsigned int_end);  // Returns true if INT was handled (skip Z80Step)

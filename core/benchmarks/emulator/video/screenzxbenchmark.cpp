@@ -361,6 +361,54 @@ static void BM_DrawFrame_LUT_Ternary(benchmark::State& state)
 }
 BENCHMARK(BM_DrawFrame_LUT_Ternary)->Iterations(100);
 
+/// @brief Full frame through DrawRange in 16-T catch-ups (what UpdateScreen does
+/// per instruction), over random screen memory. Baseline for the ZX DLSS plane B
+/// cost (docs/inprogress/2026-09-27-zxdlss-gigascreen/p0a-plane-b.md).
+static void DrawFrameRange16(benchmark::State& state, bool planeB)
+{
+    EmulatorContext* context = new EmulatorContext(LoggerLevel::LogError);
+    Core* cpu = new Core(context);
+    if (!cpu->Init())
+    {
+        state.SkipWithError("Core::Init failed");
+        return;
+    }
+    cpu->GetMemory()->DefaultBanksFor48k();
+
+    ScreenZXCUT* screenzx = new ScreenZXCUT(context);
+    screenzx->InitFrame();
+    screenzx->SetPlaneBEnabled(planeB);
+    uint32_t seed = 12345;
+    for (uint16_t addr = 0x4000; addr < 0x5B00; addr++)
+    {
+        seed = seed * 1103515245u + 12345u;
+        cpu->GetMemory()->DirectWriteToZ80Memory(addr, static_cast<uint8_t>(seed >> 16));
+    }
+    const uint32_t maxTstates = screenzx->_rasterState.maxFrameTiming;
+
+    for (auto _ : state)
+    {
+        for (uint32_t t = 0; t < maxTstates; t += 16)
+            screenzx->DrawRange(t, std::min(t + 15, maxTstates - 1));
+    }
+
+    delete screenzx;
+    delete cpu;
+    delete context;
+}
+static void BM_DrawFrame_Range16(benchmark::State& state)
+{
+    DrawFrameRange16(state, false);
+}
+BENCHMARK(BM_DrawFrame_Range16)->Iterations(2000);
+
+/// @brief Same frame with ZX DLSS plane B recorded in the same pass
+static void BM_DrawFrame_Range16_PlaneB(benchmark::State& state)
+{
+    DrawFrameRange16(state, true);
+}
+BENCHMARK(BM_DrawFrame_Range16_PlaneB)->Iterations(2000);
+
 /// region <Phase 4-5: Batch 8-Pixel Benchmarks - ScreenHQ=OFF only>
 
 /// @brief Benchmark for batch 8-pixel scalar rendering (Phase 4)

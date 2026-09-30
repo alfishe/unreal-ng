@@ -38,6 +38,11 @@
         "Live Z80 frequency multiplier (reflects turbo)";
     schemas["EmulatorInfo"]["properties"]["config_folder"]["type"] = "string";
     schemas["EmulatorInfo"]["properties"]["config_folder"]["description"] = "Machine config folder under configs/";
+    schemas["EmulatorInfo"]["properties"]["ram_power_on"]["type"] = "string";
+    schemas["EmulatorInfo"]["properties"]["ram_power_on"]["enum"].append("random");
+    schemas["EmulatorInfo"]["properties"]["ram_power_on"]["enum"].append("zero");
+    schemas["EmulatorInfo"]["properties"]["ram_power_on"]["description"] =
+        "RAM contents the machine was created with (random or zero; see CreateEmulatorRequest.ram_power_on)";
 
     schemas["BuildInfo"]["type"] = "object";
     schemas["BuildInfo"]["description"] = "Build fingerprint captured at CMake configure time";
@@ -52,6 +57,11 @@
         "Model short name; a model that cannot be created on this build fails with 400 (no fallback). A ZX-Poly "
         "configuration name (ZXPOLY-48K, ZXPOLY-128K, ZXPOLY-PENTAGON) creates the four-instance machine and "
         "returns its master";
+    schemas["CreateEmulatorRequest"]["properties"]["ram_power_on"]["type"] = "string";
+    schemas["CreateEmulatorRequest"]["properties"]["ram_power_on"]["enum"].append("random");
+    schemas["CreateEmulatorRequest"]["properties"]["ram_power_on"]["enum"].append("zero");
+    schemas["CreateEmulatorRequest"]["properties"]["ram_power_on"]["description"] =
+        "RAM contents at creation: random (noise in RAM pages 5 and 7, the screen and the shadow screen, the way real DRAM powers up; every other page zero) or zero (every RAM page of the configuration reads 0 - reproducible runs for tests, benchmarks and scripted analysis). Default: [MISC] RAMPowerOn of the model's unreal.ini (RANDOM when unset)";
 
     // Settings Management schemas
     schemas["SettingsResponse"]["type"] = "object";
@@ -441,6 +451,14 @@
     schemas["TTDStatusResponse"]["properties"]["model_id"]["description"] =
             "eModel value the session belongs to. A session refuses to load into "
             "a different model.";
+    schemas["TTDStatusResponse"]["properties"]["machine"]["$ref"] = "#/components/schemas/TTDRecordedMachine";
+    schemas["TTDStatusResponse"]["properties"]["machine"]["nullable"] = true;
+    schemas["TTDStatusResponse"]["properties"]["machine"]["description"] =
+            "The machine the session was recorded on (null while there is no session)";
+    schemas["TTDStatusResponse"]["properties"]["recorded_by"]["type"] = "string";
+    schemas["TTDStatusResponse"]["properties"]["recorded_by"]["nullable"] = true;
+    schemas["TTDStatusResponse"]["properties"]["recorded_by"]["description"] =
+            "Symbolic id of the instance that recorded a loaded file (null for a live recording)";
     schemas["TTDStatusResponse"]["properties"]["model_ram_pages"]["type"] = "integer";
     schemas["TTDStatusResponse"]["properties"]["model_ram_pages"]["description"] =
             "Exclusive RAM page-index bound for the model. A BOUND, not a page "

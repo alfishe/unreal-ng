@@ -1,5 +1,7 @@
 #pragma once
 
+#include <vector>
+
 #include <emulator/cpu/z80.h>
 #include <emulator/memory/memory.h>
 
@@ -159,7 +161,9 @@ protected:
     ModuleLogger* _logger = nullptr;
 
     std::string _path;
-    FILE* _file = nullptr;
+    /// The whole snapshot: read from _path by validate(), or given in memory
+    std::vector<uint8_t> _data;
+    bool _fromMemory = false;
     bool _fileValidated = false;
     size_t _fileSize = 0;
     bool _stagingLoaded = false;
@@ -186,6 +190,9 @@ protected:
     /// region <Constructors / destructors>
 public:
     LoaderZ80(EmulatorContext* context, const std::string& path);
+    /// A snapshot already in memory (an RZX start snapshot, an upload);
+    /// `name` only labels the log messages
+    LoaderZ80(EmulatorContext* context, std::vector<uint8_t> data, const std::string& name);
     virtual ~LoaderZ80();
     /// endregion </Constructors / destructors>
 
@@ -275,10 +282,12 @@ class LoaderZ80CUT : public LoaderZ80
 {
 public:
     LoaderZ80CUT(EmulatorContext* context, std::string path) : LoaderZ80(context, path) {};
+    LoaderZ80CUT(EmulatorContext* context, std::vector<uint8_t> data, const std::string& name)
+        : LoaderZ80(context, std::move(data), name) {};
 
 public:
     using LoaderZ80::_context;
-    using LoaderZ80::_file;
+    using LoaderZ80::_data;
     using LoaderZ80::_fileSize;
     using LoaderZ80::_fileValidated;
     using LoaderZ80::_logger;
