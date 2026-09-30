@@ -113,6 +113,8 @@ namespace rzx
                 (status.options.ignoreLaterSnapshots ? ", later snapshots ignored" : "") + "\n";
         text += "Interrupts:" + std::string(" ") + std::to_string(player.interrupts) + ", drift " +
                 std::to_string(player.drift) + " T (max " + std::to_string(player.maxDrift) + " T)\n";
+        if (player.snapshotsApplied > 0)
+            text += "Snapshots: " + std::to_string(player.snapshotsApplied) + " applied between input blocks\n";
         text += "Keyframes: " + std::to_string(player.keyframes) + " (" + std::to_string(player.keyframeBytes / 1024) +
                 " KB, every " + std::to_string(player.keyframeInterval) + " frames)\n";
         if (player.desyncs > 0)

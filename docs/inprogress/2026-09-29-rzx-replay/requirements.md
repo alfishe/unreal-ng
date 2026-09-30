@@ -1,7 +1,7 @@
 # RZX replay integration: requirements
 
 - **Date:** 2026-09-29
-- **Status:** v1 (playback, RZ-F1 … RZ-F15 except F9, RZ-U1 … RZ-U4, RZ-T1 … RZ-T3) implemented 2026-09-29; RZ-F9 (mid-recording snapshots) is R3. Design and as-built notes: [design.md](design.md).
+- **Status:** v1 (playback, RZ-F1 … RZ-F15, RZ-U1 … RZ-U4, RZ-T1 … RZ-T3) implemented 2026-09-29, RZ-F9 (mid-recording snapshots) included; recording (RZ-F16 … F18) in progress separately; TTD interop (RZ-F19 … F21) possibly later, low priority. Design and as-built notes: [design.md](design.md).
 - **PLAN:** row #27 (RZX record / playback and TTD interop, T2); depends on
   #64 (SZX, [2026-09-29-szx-snapshots](../2026-09-29-szx-snapshots/)) for
   machines beyond 48K / 128K.
@@ -48,7 +48,8 @@ disabling loader shortcuts that change the CPU path, refusing live input.
 **Later phases**
 
 - Recording RZX (phase 2), on the same hooks.
-- TTD interop (phase 3): record TTD while playing; RZX import as a TTD
+- TTD interop (phase 3, possibly later, low priority - RZX and TTD stay
+  independent for now): record TTD while playing; RZX import as a TTD
   recording; TTD → RZX export.
 
 **Out of scope**
@@ -94,7 +95,7 @@ disabling loader shortcuts that change the CPU path, refusing live input.
 | RZ-F17 | Write RZX 0.12 (unsigned) with a creator block, the start snapshot (SZX when available, else Z80) and compressed input blocks with repeat frames |
 | RZ-F18 | Insert snapshot / roll back to a snapshot during recording (the Fuse / Spectaculator practice) |
 
-**TTD interop (phase 3)**
+**TTD interop (phase 3; possibly later, low priority)**
 
 | ID | Requirement |
 |---|---|

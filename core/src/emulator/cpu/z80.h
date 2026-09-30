@@ -685,7 +685,13 @@ public:
 private:
     /// StepInstructionWithWork while an RZX recording plays: the frame end at
     /// the recorded fetch count; true when its interrupt was taken as this step
-    bool RzxFrameEnd(rzx::RzxPlayer& player);
+    enum class RzxBoundary : uint8_t
+    {
+        None,       ///< no RZX frame end at this boundary: the step runs normally
+        Interrupt,  ///< the forced interrupt was taken as this step
+        Replaced    ///< a snapshot block replaced the machine as this step
+    };
+    RzxBoundary RzxFrameEnd(rzx::RzxPlayer& player);
 public:
     bool IntClearedByAcknowledge() const;  // machine's INT pulse ends at the acknowledge
     bool ProcessInterrupts(bool int_occured,  // Take care about incoming interrupts

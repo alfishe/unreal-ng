@@ -67,6 +67,7 @@ namespace
         json["desyncs"] = Json::UInt64(player.desyncs);
         json["drift"] = player.drift;
         json["max_drift"] = player.maxDrift;
+        json["snapshots_applied"] = Json::UInt64(player.snapshotsApplied);
         json["keyframes"] = Json::UInt64(player.keyframes);
         json["keyframe_bytes"] = Json::UInt64(player.keyframeBytes);
         json["keyframe_interval"] = player.keyframeInterval;

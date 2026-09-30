@@ -1593,6 +1593,7 @@ public:
             t["desyncs"] = player.desyncs;
             t["drift"] = player.drift;
             t["max_drift"] = player.maxDrift;
+            t["snapshots_applied"] = player.snapshotsApplied;
             t["keyframes"] = player.keyframes;
             t["keyframe_bytes"] = player.keyframeBytes;
             t["reason"] = player.stopReason;

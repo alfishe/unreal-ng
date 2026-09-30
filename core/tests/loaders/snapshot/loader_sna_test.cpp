@@ -1,3 +1,9 @@
+#include "emulator/memory/memory.h"
+#include "emulator/cpu/z80.h"
+#include "emulator/cpu/core.h"
+#include "emulator/emulatormanager.h"
+#include <memory>
+#include <cstring>
 #include "loader_sna_test.h"
 
 #include "common/filehelper.h"
@@ -97,6 +103,18 @@ TEST_F(LoaderSNA_Test, validate)
     }
 }
 
+namespace
+{
+    std::vector<uint8_t> ReadAll(const std::string& path)
+    {
+        const size_t size = FileHelper::GetFileSize(path);
+        std::vector<uint8_t> bytes(size);
+        if (size > 0 && FileHelper::ReadFileToBuffer(path, bytes.data(), size) != size)
+            bytes.clear();
+        return bytes;
+    }
+}  // namespace
+
 TEST_F(LoaderSNA_Test, is48kSnapshot)
 {
     static std::string test48kSnapshotPath = TestPathHelper::GetTestDataPath("loaders/sna/48k.sna");
@@ -110,14 +128,11 @@ TEST_F(LoaderSNA_Test, is48kSnapshot)
 
     /// region <Negative cases>
 
-    LoaderSNACUT loader(_context, absolute128kSnapshotPath);
-
-    FILE* file = FileHelper::OpenExistingFile(absolute128kSnapshotPath);
-    if (file != nullptr)
+    // The detection reads the loaded bytes (validate() or the memory constructor)
+    LoaderSNACUT loader(_context, ReadAll(absolute128kSnapshotPath), absolute128kSnapshotPath);
+    if (!loader._data.empty())
     {
-        bool result = loader.is48kSnapshot(file);
-
-        FileHelper::CloseFile(file);
+        bool result = loader.is48kSnapshot();
 
         if (result == true)
         {
@@ -144,14 +159,11 @@ TEST_F(LoaderSNA_Test, is128kSnapshot)
 
     /// region <Positive cases>
 
-    LoaderSNACUT loader(_context, absolute128kSnapshotPath);
-
-    FILE* file = FileHelper::OpenExistingFile(absolute128kSnapshotPath);
-    if (file != nullptr)
+    // The detection reads the loaded bytes (validate() or the memory constructor)
+    LoaderSNACUT loader(_context, ReadAll(absolute128kSnapshotPath), absolute128kSnapshotPath);
+    if (!loader._data.empty())
     {
-        bool result = loader.is128kSnapshot(file);
-
-        FileHelper::CloseFile(file);
+        bool result = loader.is128kSnapshot();
 
         if (result != true)
         {
@@ -933,3 +945,68 @@ TEST(LoaderSNA48KRom_Test, MapsTheModels48KBasicRom)
 }
 
 /// endregion </48K snapshot on any model>
+
+/// A snapshot handed over in memory (an RZX start snapshot, an upload) loads
+/// exactly as the same bytes from a file: registers, #7FFD and every RAM page
+TEST(LoaderSNA_Memory_Test, LoadFromMemoryEqualsLoadFromFile)
+{
+    struct Case
+    {
+        const char* file;
+        const char* model;
+    };
+    const Case cases[] = {{"loaders/sna/z80flags.sna", "48K"}, {"loaders/sna/multifix.sna", "128K"}};
+    for (const Case& c : cases)
+    {
+        SCOPED_TRACE(c.file);
+        const std::string path = TestPathHelper::GetTestDataPath(c.file);
+        const size_t size = FileHelper::GetFileSize(path);
+        std::vector<uint8_t> bytes(size);
+        ASSERT_EQ(FileHelper::ReadFileToBuffer(path, bytes.data(), size), size);
+
+        auto* manager = EmulatorManager::GetInstance();
+        std::shared_ptr<Emulator> fromFile = manager->CreateEmulatorWithModel("mem-a", c.model, LoggerLevel::LogError);
+        std::shared_ptr<Emulator> fromMemory = manager->CreateEmulatorWithModel("mem-b", c.model, LoggerLevel::LogError);
+        ASSERT_NE(fromFile, nullptr);
+        ASSERT_NE(fromMemory, nullptr);
+        LoaderSNA fileLoader(fromFile->GetContext(), path);
+        LoaderSNA memoryLoader(fromMemory->GetContext(), bytes, "memory");
+        ASSERT_TRUE(fileLoader.load());
+        ASSERT_TRUE(memoryLoader.load());
+
+        const Z80& a = *fromFile->GetContext()->pCore->GetZ80();
+        const Z80& b = *fromMemory->GetContext()->pCore->GetZ80();
+        EXPECT_EQ(a.pc, b.pc);
+        EXPECT_EQ(a.sp, b.sp);
+        EXPECT_EQ(a.af, b.af);
+        EXPECT_EQ(a.bc, b.bc);
+        EXPECT_EQ(a.hl, b.hl);
+        EXPECT_EQ(a.ix, b.ix);
+        EXPECT_EQ(a.IR(), b.IR());
+        EXPECT_EQ(fromFile->GetContext()->emulatorState.p7FFD, fromMemory->GetContext()->emulatorState.p7FFD);
+        // A 48K has pages 5, 2 and 0 only (the others are not loaded)
+        const bool is48K = std::string(c.model) == "48K";
+        for (uint16_t page : is48K ? std::vector<uint16_t>{5, 2, 0} : std::vector<uint16_t>{0, 1, 2, 3, 4, 5, 6, 7})
+        {
+            EXPECT_EQ(std::memcmp(fromFile->GetContext()->pMemory->RAMPageAddress(page),
+                                  fromMemory->GetContext()->pMemory->RAMPageAddress(page), 0x4000),
+                      0)
+                << "RAM page " << page;
+        }
+        manager->RemoveEmulator(fromFile->GetId());
+        manager->RemoveEmulator(fromMemory->GetId());
+    }
+}
+
+/// Truncated bytes in memory are refused as a truncated file is
+TEST(LoaderSNA_Memory_Test, TruncatedMemoryIsRefused)
+{
+    auto* manager = EmulatorManager::GetInstance();
+    std::shared_ptr<Emulator> emulator = manager->CreateEmulatorWithModel("mem-c", "48K", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    LoaderSNA empty(emulator->GetContext(), std::vector<uint8_t>{}, "empty");
+    EXPECT_FALSE(empty.load());
+    LoaderSNA tiny(emulator->GetContext(), std::vector<uint8_t>(10, 0x11), "tiny");
+    EXPECT_FALSE(tiny.load());
+    manager->RemoveEmulator(emulator->GetId());
+}

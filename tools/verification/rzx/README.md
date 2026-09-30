@@ -37,6 +37,19 @@ To isolate one frame deep in a recording: `rzxplay-memptr.py --stop N game.rzx
 tail.rzx` writes the rest of the recording from frame N with SkoolKit's state
 there as its snapshot; `rzxtrim.py tail.rzx case.rzx --frames 2` keeps two frames.
 
+## rzxjoin.py
+
+Joins recordings into one with several input blocks and a snapshot block
+between them (what Fuse and Spectaculator write for a multiload or a rollback
+point):
+
+```bash
+python3 tools/verification/rzx/rzxtrim.py game.rzx part1.rzx --frames 300
+scratch/skvenv/bin/python tools/verification/rzx/rzxplay-memptr.py --stop 300 game.rzx tail.rzx
+python3 tools/verification/rzx/rzxtrim.py tail.rzx part2.rzx --frames 300
+python3 tools/verification/rzx/rzxjoin.py joined.rzx part1.rzx part2.rzx
+```
+
 ## Checking unreal-ng against SkoolKit
 
 `core-tests` reads these variables (`core/tests/emulator/rzx/rzxsession_test.cpp`):

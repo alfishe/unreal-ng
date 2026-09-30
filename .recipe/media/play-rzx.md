@@ -55,7 +55,7 @@ Turbo mode runs the playback faster; it never changes the path the program takes
 | `playing` | frames still to go |
 | `finished` | every frame played; the machine now runs live |
 | `desynced` | the program left the recorded path (strict mode stopped there); see `first_desync` |
-| `stopped` | `rzx/stop`, a reset, another snapshot, or a snapshot block in the middle of the file (not supported yet) |
+| `stopped` | `rzx/stop`, a reset, another snapshot load, or a snapshot block for another machine in the middle of the file (`reason` says which) |
 
 A desync names its kind: `too_many_ins` (the program read a port more often
 than recorded), `too_few_ins` (less often), `fetch_overrun` (it ran past the
@@ -64,7 +64,7 @@ recorded instruction count). Things to try, one at a time:
 - `"desync_mode": "tolerant"` - counts desyncs and keeps going (to see how far it gets).
 - `"ei_short_frame_blocks_int": true` - for files that mark an interrupt blocked by `EI` with a 1-2 fetch frame.
 - `"ld_air_parity_quirk": true` - for files recorded with the NMOS `LD A,I` / `LD A,R` flag quirk.
-- `"ignore_later_snapshots": true` - plays past snapshot blocks after the first (some Fuse files need it).
+- `"ignore_later_snapshots": true` - plays past snapshot blocks after the first (some Fuse files need it; by default each one replaces the machine between input blocks, `snapshots_applied` counts them).
 
 `drift` (T-states) is how far the recorded interrupt falls from the machine's
 own: a few dozen T-states for Spectaculator files on our timing; tens of
