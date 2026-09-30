@@ -148,7 +148,8 @@ class Emulator:
 
     def network_configure(self, **settings) -> None:
         """Change [NETWORK] settings: card='zxnetusb'|'none', host_access=True|False, dns_mode='host'|'pass',
-        hosts='name=ip,...', forwards='tcp:host:guest,...', connect_timeout_ms=n. Applied at the next frame
+        hosts='name=ip,...', forwards='tcp:host:guest,...', connect_timeout_ms=n,
+        com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]', com_flavor='auto'|'evo'|'zxwifi', com_modem_lines=True|False. Applied at the next frame
         boundary; the card is fitted again, so every connection closes. ValueError with the reason"""
 
     def rtc_state(self) -> dict:

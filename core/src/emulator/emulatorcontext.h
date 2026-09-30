@@ -21,6 +21,7 @@ class Keyboard;
 class Mouse;
 class VirtualNetwork;
 class ZxNetUsb;
+class ComPort;
 class MainLoop;
 class Memory;
 class WD1793;
@@ -98,6 +99,9 @@ public:
 
 	// ZXNETUSB network card on the ZX-Bus (W5300), when fitted
 	ZxNetUsb* pZxNetUsb = nullptr;
+
+	// COM port (16550 UART on #xxEF and its peer), when [NETWORK] ComPort= fits one
+	ComPort* pComPort = nullptr;
 
 	// Memory controller instance
 	Memory* pMemory = nullptr;

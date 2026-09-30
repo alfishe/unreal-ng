@@ -97,7 +97,7 @@ INPUT_KIND_NAMES = ["Key", "MouseMove", "MouseButtons", "MouseWheel", "MouseCoun
                     "KeyboardReset", "GSCommand", "GSData", "GSNmi", "GSResetCard", "GSReset", "PcKey",
                     "NetEvent", "NetLinkReset"]
 NET_EVENT_NAMES = {1: "Connected", 2: "ConnectFailed", 3: "Data", 4: "PeerClosed", 5: "Reset", 6: "Accepted",
-                   7: "Datagram", 8: "EchoReply", 9: "ListenFailed"}
+                   7: "Datagram", 8: "EchoReply", 9: "ListenFailed", 10: "ModemLines"}
 EXTERNAL_EVENT_KIND_NAMES = {0: "TapeControl", 1: "DiskWrite", 2: "DebuggerEdit",
                              3: "HardwareReset", 255: "Other"}
 

@@ -19,8 +19,11 @@
             "connected, remote, listen_port, bytes_in, bytes_out), guest_servers (guest_port, host_port on "
             "127.0.0.1, waiting_sockets, pending_clients), counters (dhcp_replies, dns_local_answers, "
             "dns_host_queries, echo_replies, host_events, link_resets) and recent_activity (the last 64 socket "
-            "actions: frame, socket, proto, action, remote, status, bytes). 404 with the reason when no adapter is "
-            "fitted.";
+            "actions: frame, socket, proto, action, remote, status, bytes). com_port: fitted, flavor (evo = the "
+            "ZX-Evo AVR's UART, zxwifi = a 16550 card), peer (loopback | tcp | serial), target, phase (idle | resolving | connecting | connected), error, modem_lines, connected, baud, "
+            "frame_bits, divisor, the registers lcr / mcr / lsr / msr / ier / iir / scr, rts, cts, rx_fifo, tx_fifo, "
+            "peer_pending (bytes the peer holds for the ZX), bytes_in, bytes_out, overruns. card.kind is none when "
+            "only the COM port is fitted. 404 with the reason when no adapter is fitted.";
         paths[kReport]["get"]["parameters"][0]["name"] = "id";
         paths[kReport]["get"]["parameters"][0]["in"] = "path";
         paths[kReport]["get"]["parameters"][0]["required"] = true;
@@ -42,7 +45,9 @@
         paths[kConfig]["post"]["description"] =
             "Change the machine's [NETWORK] settings at runtime. Body: any of card (\"zxnetusb\" | \"none\"), "
             "host_access (true / false), dns_mode (\"host\" | \"pass\"), hosts (\"name=a.b.c.d,...\"), forwards "
-            "(\"tcp:<hostport>:<guestport>,...\"), connect_timeout_ms (500..120000). Unset keys keep their value. Applied "
+            "(\"tcp:<hostport>:<guestport>,...\"), connect_timeout_ms (500..120000), com_port (\"none\" | \"loopback\" | "
+            "\"tcp:<a.b.c.d|localhost>:<port>\" | \"serial:<device>[,<baud>]\"), com_flavor (\"auto\" | \"evo\" | "
+            "\"zxwifi\"), com_modem_lines (true / false). Unset keys keep their value. Applied "
             "at the next frame boundary (at once while paused): the card is fitted again, so every connection closes. "
             "The same keys as CLI `network set` and Lua / Python network_configure(). Refused (409) while a TTD "
             "recording runs.";

@@ -56,6 +56,41 @@ Guest servers (a NedoOS program in `LISTEN`) are reachable on `127.0.0.1`:
 guest ports 1024 and up on the same host port, lower ones only through a
 `Forward=` rule.
 
+## COM port (16550 UART)
+
+A 16550 on `#F8EF..#FFEF` (register = A10..A8) with a peer on its other end:
+
+| `ComPort=` | Peer |
+|:--|:--|
+| `NONE` | no COM port (default) |
+| `LOOPBACK` | every byte the ZX sends comes back |
+| `TCP:<host>:<port>` | a host TCP endpoint (telnet BBS, a test harness); the host is an address or a name (resolved through the virtual network's DNS: `Hosts=`, then the host resolver); reconnects every ~5 s after a drop |
+| `SERIAL:<device>[,<baud>]` | a host serial device (`/dev/tty.usbserial-0001`, `/dev/ttyUSB0`, `COM3`); it follows the rate and format the ZX programs (`<baud>` until then, 115200 by default); `ComModemLines=1` passes RTS / DTR and reports CTS / DSR / RI / DCD (off by default: USB ESP boards wire RTS / DTR to reset / boot) |
+
+`ComFlavor=AUTO` picks the ZX-Evo AVR's UART on ATM3 (no interrupts, RTS by
+software, every access waits ~15 us) and a ZX-WiFi 16550 elsewhere (auto
+flow control with MCR bit 5). TS-Conf gets none (#xxEF is ZiFi there). The
+bytes that arrive are TTD input like the card's. Details:
+[reference-evo-com-port.md](../../docs/inprogress/2026-09-30-nedoos-integration/reference-evo-com-port.md).
+
+```json
+{"tool": "invoke_api", "arguments": {"method": "POST", "path": "/api/v1/emulator/{id}/network/config",
+  "body": {"com_port": "tcp:127.0.0.1:2323"}}}
+```
+
+CLI `network set com_port=loopback`, Lua `network_configure{com_port="serial:COM3"}`,
+Python `emu.network_configure(com_port="tcp:127.0.0.1:2323")`. The state is
+`com_port` in `inspect_state network` (registers, FIFO levels, peer, link
+`phase` and `error`, bytes). A machine reset keeps the link.
+
+NedoOS: `cuart` (`bin/cuart.com`) is a terminal for the port; `ini/espcom.ini`
+`comType = 0` on the ZX-Evo (RTS pulses), `2` for a ZX-WiFi. The first key
+after start closes its hello box; F1..F10 pick the divisor.
+
+A quick check without software: `com_port=loopback`, then from Z80 code
+`LCR=3` (`#FBEF`), `MCR=2` (RTS, `#FCEF`), a byte to `#F8EF`, wait for LSR
+bit 0 (`#FDEF`), read `#F8EF`: the same byte.
+
 ## NedoOS setup
 
 | Kernel | Adapter | Notes |

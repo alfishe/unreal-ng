@@ -392,7 +392,7 @@ GET  /api/v1/emulator/{id}/state/ide           IDE board: scheme, latches, both 
 GET  /api/v1/emulator/{id}/state/tsconf        TS-Conf machine: memory map, video (mode, geometry, TSU, the engine's line), interrupts, DMA, clock, SD (404 on other machines)
 GET  /api/v1/emulator/{id}/state/rtc           CMOS clock: chip, ports, time base, time, registers A-D, alarms, cell dump (404 with the reason without one)
 GET  /api/v1/emulator/{id}/state/network       Network adapters: card ports, W5300 registers and sockets, virtual network (leases, sockets, guest servers, counters, recent activity); 404 without an adapter
-POST /api/v1/emulator/{id}/network/config      {"card": "zxnetusb", "host_access": true, "dns_mode": "host", "hosts": "name=ip,..", "forwards": "tcp:host:guest,..", "connect_timeout_ms": n} - change [NETWORK] settings; 409 while TTD records
+POST /api/v1/emulator/{id}/network/config      {"card": "zxnetusb", "host_access": true, "dns_mode": "host", "hosts": "name=ip,..", "forwards": "tcp:host:guest,..", "connect_timeout_ms": n, "com_port": "loopback|tcp:host:port|serial:dev[,baud]|none", "com_flavor": "auto|evo|zxwifi", "com_modem_lines": false} - change [NETWORK] settings; 409 while TTD records
 GET  /api/v1/emulator/{id}/rtc/cells?start=&count=   CMOS cells as the guest reads them (peeked): {start, count, bytes[], hex}
 POST /api/v1/emulator/{id}/rtc/cells           {"start": n, "bytes": [..]} - write like the guest; answers the cells read back
 GET  /api/v1/emulator/{id}/state/contention    Memory contention: rule, switch, effective, interface, I/O rule, contended slots, per-kind waits (debug mode)

@@ -10,6 +10,7 @@
 #include "emulator/sound/audio.h"
 #include "emulator/memory/memory.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/io/serial/comportspec.h"
 #include <cassert>
 #include <array>
 #include <algorithm>
@@ -757,6 +758,27 @@ bool Config::ParseConfig(IniFile& inimanager)
 		long timeout = inimanager.GetLongValue(network, "ConnectTimeoutMs", 10000);
 		config.network.connectTimeoutMs = static_cast<unsigned>(std::clamp(timeout, 500L, 120000L));
 	}
+	config.network.comPort[0] = '\0';
+	CopyStringValue(inimanager.GetValue(network, "ComPort", nullptr), config.network.comPort, sizeof config.network.comPort);
+	{
+		ComPortSpec spec;
+		std::string error;
+		if (!ComPortSpec::Parse(config.network.comPort, spec, error))
+		{
+			MLOGWARNING("Config: [NETWORK] ComPort=%s: %s - no COM port", config.network.comPort, error.c_str());
+			config.network.comPort[0] = '\0';
+		}
+	}
+	config.network.comModemLines = (inimanager.GetLongValue(network, "ComModemLines", 0) != 0) ? 1 : 0;
+	netValue[0] = '\0';
+	CopyStringValue(inimanager.GetValue(network, "ComFlavor", nullptr), netValue, sizeof netValue);
+	config.network.comFlavor = 0;
+	if (StringHelper::CompareCaseInsensitive(netValue, "EVO", strlen("EVO")) == 0)
+		config.network.comFlavor = 1;
+	else if (StringHelper::CompareCaseInsensitive(netValue, "ZXWIFI", strlen("ZXWIFI")) == 0)
+		config.network.comFlavor = 2;
+	else if (netValue[0] != '\0' && StringHelper::CompareCaseInsensitive(netValue, "AUTO", strlen("AUTO")) != 0)
+		MLOGWARNING("Config: unknown [NETWORK] ComFlavor=%s, AUTO used (AUTO | EVO | ZXWIFI)", netValue);
 
 	// Make sure we're emulating valid model & configuration
 	if (DetermineModel(line, config.ramsize))

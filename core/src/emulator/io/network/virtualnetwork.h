@@ -81,6 +81,16 @@ public:
     void Rebind(uint16_t id, INetGuest* guest, uint32_t cookie);
 
     void Connect(uint16_t id, const NetEndpoint& to);
+
+    /// A NetProto::Serial socket opens a host serial device (the COM port's
+    /// SERIAL: peer): Connected or ConnectFailed follows, then Data events;
+    /// Send writes to the device. Unreachable without host access
+    void ConnectSerial(uint16_t id, const std::string& device, uint32_t baud);
+
+    /// A serial socket's device follows the ZX's line format / modem control
+    /// (commands to the host: not issued while TTD replays)
+    void ConfigureSerial(uint16_t id, const SerialLine& line);
+    void SerialModemLines(uint16_t id, bool rts, bool dtr);
     void Send(uint16_t id, const uint8_t* data, uint32_t length);
     void SendTo(uint16_t id, uint16_t localPort, const NetEndpoint& to, const uint8_t* data, uint32_t length);
     void ShutdownWrite(uint16_t id);
@@ -91,8 +101,10 @@ public:
 
     void Close(uint16_t id);
 
-    /// Close every socket, forget leases and listeners (machine reset, adapter removed)
-    void Reset();
+    /// Close every socket, forget leases and listeners (machine reset, adapter
+    /// removed). The sockets of `keep` stay: a ZX-Bus reset resets the card,
+    /// not the COM port's cable (its TCP link or host device)
+    void Reset(const INetGuest* keep = nullptr);
 
     // --- Time ------------------------------------------------------------
 
@@ -174,11 +186,13 @@ public:
 
     /// Guest-side tables (sockets, guest servers, leases, counters). Returns
     /// false when something did not fit the fixed limits (saved as far as it goes)
-    bool SaveState(netstate::VirtualNetwork& out) const;
+    /// `comGuest`: the COM port's peer, saved as guest 2 (every other guest is 1)
+    bool SaveState(netstate::VirtualNetwork& out, const INetGuest* comGuest = nullptr) const;
 
-    /// Restore the tables; every socket with a guest is handed to `guest`.
-    /// Queued answers are dropped: after the checkpoint they come from the journal
-    void LoadState(const netstate::VirtualNetwork& in, INetGuest* guest);
+    /// Restore the tables; a socket of guest 1 is handed to `guest` (the
+    /// card's chip), of guest 2 to `comGuest` (the COM port's peer). Queued
+    /// answers are dropped: after the checkpoint they come from the journal
+    void LoadState(const netstate::VirtualNetwork& in, INetGuest* guest, INetGuest* comGuest = nullptr);
 
 private:
     struct Socket

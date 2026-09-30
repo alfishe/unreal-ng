@@ -185,7 +185,7 @@ types:
           journals (the last section; only when the session has NetEvents):
           u32 count, then per NetEvent input in journal order u32 event_index, u16 socket,
           u8 event (1 Connected, 2 ConnectFailed, 3 Data, 4 PeerClosed,
-          5 Reset, 6 Accepted, 7 Datagram, 8 EchoReply, 9 ListenFailed),
+          5 Reset, 6 Accepted, 7 Datagram, 8 EchoReply, 9 ListenFailed, 10 ModemLines),
           u8 status, u32 addr, u16 port, u32 payload_offset,
           u32 payload_length; then u32 payload_size and the payload bytes
           (what the machine received from the host network).

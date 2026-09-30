@@ -4,7 +4,16 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <string>
 #include <thread>
+
+#ifndef _WIN32
+#include <fcntl.h>
+#include <poll.h>
+#include <termios.h>
+#include <stdlib.h>
+#include <unistd.h>
+#endif
 
 #include "_helpers/testwaithelper.h"
 #include "common/network/dnsmessage.h"
@@ -211,3 +220,106 @@ TEST(HostNetBridge_Test, PingOfTheLoopbackThroughTheHost)
     EXPECT_EQ(ev.socket, 4);
     EXPECT_EQ(ev.data, reply);
 }
+
+// Host serial devices (the COM port's SERIAL: peer). A device that cannot be
+// opened fails on every OS; the byte exchange runs on a pseudo-terminal where
+// the OS has one (POSIX: posix_openpt), standing in for a USB serial adapter
+TEST(HostNetBridge_Test, SerialOpenOfAMissingDeviceFails)
+{
+    HostNetBridge bridge;
+#ifdef _WIN32
+    bridge.SerialOpen(4, "COM250", 115200);
+#else
+    bridge.SerialOpen(4, "/dev/unreal-ng-no-such-serial-device", 115200);
+#endif
+    HostNetEvent ev;
+    ASSERT_TRUE(NextEvent(bridge, ev));
+    EXPECT_EQ(ev.type, NetEventType::ConnectFailed);
+    EXPECT_EQ(ev.socket, 4);
+    EXPECT_FALSE(ev.data.empty()) << "the reason travels with the event";
+}
+
+#ifndef _WIN32
+TEST(HostNetBridge_Test, SerialDeviceExchangesBytesBothWays)
+{
+    const int master = ::posix_openpt(O_RDWR | O_NOCTTY);
+    ASSERT_GE(master, 0);
+    ASSERT_EQ(::grantpt(master), 0);
+    ASSERT_EQ(::unlockpt(master), 0);
+    const std::string device = ::ptsname(master);
+
+    HostNetBridge bridge;
+    bridge.SerialOpen(5, device, 115200);
+    HostNetEvent ev;
+    ASSERT_TRUE(NextEvent(bridge, ev));
+    ASSERT_EQ(ev.type, NetEventType::Connected) << std::string(ev.data.begin(), ev.data.end());
+
+    // The "ESP" answers
+    const char reply[] = "OK\r\n";
+    ASSERT_EQ(::write(master, reply, 4), 4);
+    std::vector<uint8_t> got;
+    while (got.size() < 4)
+    {
+        ASSERT_TRUE(NextEvent(bridge, ev));
+        ASSERT_EQ(ev.type, NetEventType::Data);
+        got.insert(got.end(), ev.data.begin(), ev.data.end());
+    }
+    EXPECT_EQ(std::string(got.begin(), got.end()), "OK\r\n");
+
+    // The ZX sends
+    const std::vector<uint8_t> at = {'A', 'T', '\r', '\n'};
+    bridge.TcpSend(5, at.data(), static_cast<uint32_t>(at.size()));
+    std::string sent;
+    ASSERT_TRUE(TestWait::For([&] {
+        char buf[16];
+        pollfd p{master, POLLIN, 0};
+        if (::poll(&p, 1, 0) > 0)
+        {
+            const ssize_t n = ::read(master, buf, sizeof(buf));
+            if (n > 0)
+                sent.append(buf, static_cast<size_t>(n));
+        }
+        return sent.size() >= at.size();
+    }));
+    EXPECT_EQ(sent, "AT\r\n");
+
+    bridge.Close(5);
+    ::close(master);
+}
+
+TEST(HostNetBridge_Test, SerialDeviceFollowsTheLineFormat)
+{
+    const int master = ::posix_openpt(O_RDWR | O_NOCTTY);
+    ASSERT_GE(master, 0);
+    ASSERT_EQ(::grantpt(master), 0);
+    ASSERT_EQ(::unlockpt(master), 0);
+    const std::string device = ::ptsname(master);
+
+    HostNetBridge bridge;
+    bridge.SerialOpen(6, device, 115200);
+    HostNetEvent ev;
+    ASSERT_TRUE(NextEvent(bridge, ev));
+    ASSERT_EQ(ev.type, NetEventType::Connected);
+
+    SerialLine line;
+    line.baud = 9600;
+    line.dataBits = 7;
+    line.parity = 'E';
+    line.stopBits = 2;
+    bridge.SerialConfigure(6, line);
+
+    // The terminal's settings as another opener of the device sees them
+    const int probe = ::open(device.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
+    ASSERT_GE(probe, 0);
+    termios tio {};
+    ASSERT_TRUE(TestWait::For([&] {
+        return ::tcgetattr(probe, &tio) == 0 && ::cfgetospeed(&tio) == B9600 && (tio.c_cflag & CSIZE) == CS7;
+    }));
+    EXPECT_NE(tio.c_cflag & PARENB, 0u);
+    EXPECT_EQ(tio.c_cflag & PARODD, 0u);
+    EXPECT_NE(tio.c_cflag & CSTOPB, 0u);
+    ::close(probe);
+    bridge.Close(6);
+    ::close(master);
+}
+#endif

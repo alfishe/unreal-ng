@@ -18,6 +18,7 @@
 #include <deque>
 #include <functional>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -50,6 +51,9 @@ public:
     void UdpSend(uint16_t socket, const NetEndpoint& to, const uint8_t* data, uint32_t length) override;
     void DnsQuery(uint16_t socket, const NetEndpoint& server, const uint8_t* query, uint32_t length) override;
     void IcmpEcho(uint16_t socket, const NetEndpoint& to, const uint8_t* data, uint32_t length) override;
+    void SerialOpen(uint16_t socket, const std::string& device, uint32_t baud) override;
+    void SerialConfigure(uint16_t socket, const SerialLine& line) override;
+    void SerialModemLines(uint16_t socket, bool rts, bool dtr) override;
     void Close(uint16_t socket) override;
     void CloseAll() override;
     bool PollEvent(HostNetEvent& out) override;
@@ -123,6 +127,28 @@ private:
     std::deque<DnsJob> _pingJobs;   ///< same shape: socket, destination, the request
     static constexpr uint32_t kPingTimeoutMs = 2000;
     static constexpr size_t kMaxQueuedPings = 16;
+
+    // Serial devices: one thread each (a COM handle is not pollable with the
+    // sockets on Windows). The thread opens the device, reads with a short
+    // timeout and writes what TcpSend queued
+    struct SerialLink
+    {
+        std::thread thread;
+        std::atomic<bool> stop{false};
+        std::mutex sendMutex;                 ///< guards everything below
+        std::deque<uint8_t> sendQueue;
+        bool lineChanged = false;
+        SerialLine line;
+        bool linesChanged = false;
+        bool rts = false, dtr = false;
+        bool reportLines = false;             ///< poll CTS / DSR / RI / DCD (after the first SerialModemLines)
+    };
+    void RunSerial(uint16_t socket, std::string device, uint32_t baud, SerialLink* link);
+    bool SerialSend(uint16_t socket, const uint8_t* data, uint32_t length);
+    void CloseSerial(uint16_t socket);
+    void CloseAllSerial();
+    std::mutex _serialMutex;
+    std::map<uint16_t, std::unique_ptr<SerialLink>> _serial;
 
     // Worker-thread state
     std::map<uint16_t, HostSocket> _sockets;

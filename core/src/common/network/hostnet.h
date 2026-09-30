@@ -10,6 +10,8 @@
 /// connections the host accepted for a guest server are allocated by the host
 /// side from 0x8000 up and announced in an Accepted event.
 
+#include <string>
+
 #include "common/network/nettypes.h"
 
 class IHostNet
@@ -43,6 +45,21 @@ public:
     /// `to`, payload = the whole reply) follows if the host got an answer.
     /// Nothing follows on timeout or when the host does not allow ICMP
     virtual void IcmpEcho(uint16_t socket, const NetEndpoint& to, const uint8_t* data, uint32_t length) = 0;
+
+    /// Open a host serial device (a real ESP on USB, a modem) raw, 8N1 at
+    /// `baud`: Connected or ConnectFailed follows, then Data events with what
+    /// the device sent, Reset when it fails (unplugged). Bytes go out with
+    /// TcpSend (the stream send of this socket). RTS / DTR stay as the OS set
+    /// them: many USB ESP boards wire them to the module's reset and boot pins
+    virtual void SerialOpen(uint16_t socket, const std::string& device, uint32_t baud) = 0;
+
+    /// Change an open serial device's line format (the ZX reprogrammed its UART)
+    virtual void SerialConfigure(uint16_t socket, const SerialLine& line) = 0;
+
+    /// Drive the device's RTS / DTR, and from now on report its CTS / DSR /
+    /// RI / DCD as ModemLines events (only when the machine config asks for
+    /// modem lines: see [NETWORK] ComModemLines)
+    virtual void SerialModemLines(uint16_t socket, bool rts, bool dtr) = 0;
 
     /// Forget a socket (closes the host socket, drops queued data)
     virtual void Close(uint16_t socket) = 0;

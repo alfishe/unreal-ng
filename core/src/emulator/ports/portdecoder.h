@@ -750,6 +750,14 @@ public:
     /// registration of the same low byte is rejected, like the exact variant.
     bool RegisterFullDecodeLowBytePort(uint8_t port, PortDevice* device);
 
+    /// A mainboard device of this model owns every port with this low byte,
+    /// so no card or COM port may be fitted there (TS-Conf: #EF is ZiFi)
+    virtual bool ReservesLowByte(uint8_t lowByte) const
+    {
+        (void)lowByte;
+        return false;
+    }
+
     /// Remove a low-byte full-decode observer. The device pointer must match
     /// the registration - a stale observer would keep firing into a dead object.
     void UnregisterFullDecodeLowBytePort(uint8_t port, PortDevice* device);

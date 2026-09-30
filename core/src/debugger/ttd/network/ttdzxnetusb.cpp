@@ -5,7 +5,9 @@
 #include "common/modulelogger.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/network/virtualnetwork.h"
 #include "emulator/io/network/zxnetusb.h"
+#include "emulator/io/serial/comport.h"
 
 namespace ttd
 {
@@ -18,20 +20,35 @@ TTDZxNetUsb::TTDZxNetUsb(EmulatorContext* context)
 void TTDZxNetUsb::TTDSaveState(uint8_t* dst) const
 {
     netstate::Adapters& state = *_scratch;
+    ComPort* com = _context ? _context->pComPort : nullptr;
+    INetGuest* comGuest = com ? com->NetGuest() : nullptr;
+    bool complete = true;
     if (_context && _context->pZxNetUsb)
-        _context->pZxNetUsb->SaveState(state);
+        complete = _context->pZxNetUsb->SaveState(state, comGuest);
     else
+    {
         std::memset(&state, 0, sizeof(state));   // no card fitted at this frame
+        state.version = netstate::kVersion;
+        if (_context && _context->pVirtualNetwork)
+        {
+            state.networkPresent = 1;
+            complete = _context->pVirtualNetwork->SaveState(state.network, comGuest);
+        }
+    }
+    if (com)
+        complete = com->SaveState(state.com) && complete;
+    if (!complete)
+        state.incomplete = 1;
     std::memcpy(dst, &state, sizeof(state));
 }
 
 void TTDZxNetUsb::TTDLoadState(const uint8_t* src)
 {
-    if (!_context || !_context->pZxNetUsb)
+    if (!_context || (!_context->pZxNetUsb && !_context->pComPort))
         return;
     netstate::Adapters& state = *_scratch;
     std::memcpy(&state, src, sizeof(state));
-    if (!state.present)
+    if (state.version != netstate::kVersion)
         return;
 
     // Received bytes come from the TTD journal (option A)
@@ -49,7 +66,17 @@ void TTDZxNetUsb::TTDLoadState(const uint8_t* src)
         out.assign(payload + offset, payload + offset + length);
         return true;
     };
-    const bool complete = _context->pZxNetUsb->LoadState(state, bytes);
+
+    ComPort* com = _context->pComPort;
+    INetGuest* comGuest = com ? com->NetGuest() : nullptr;
+    bool complete = true;
+    if (_context->pZxNetUsb && state.present)
+        complete = _context->pZxNetUsb->LoadState(state, bytes, comGuest);
+    else if (_context->pVirtualNetwork && state.networkPresent)
+        _context->pVirtualNetwork->LoadState(state.network, nullptr, comGuest);
+    if (com && state.com.present)
+        complete = com->LoadState(state.com, bytes) && complete;
+
     if ((!complete || state.incomplete) && _context->pModuleLogger)
     {
         ModuleLogger* _logger = _context->pModuleLogger;
@@ -62,7 +89,7 @@ void TTDZxNetUsb::TTDLoadState(const uint8_t* src)
 
 uint64_t TTDZxNetUsb::TTDHashState() const
 {
-    if (!_context || !_context->pZxNetUsb)
+    if (!_context || (!_context->pZxNetUsb && !_context->pComPort))
         return 0;
     // Socket states and buffer levels: enough to see a replay leave the recorded path
     uint64_t h = 1469598103934665603ull;
@@ -70,6 +97,19 @@ uint64_t TTDZxNetUsb::TTDHashState() const
         h ^= v;
         h *= 1099511628211ull;
     };
+    if (const ComPort* com = _context->pComPort)
+    {
+        const Uart16550::View u = com->Uart().GetView();
+        mix(u.lcr);
+        mix(u.mcr);
+        mix(u.lsr);
+        mix(u.rxCount);
+        mix(u.txCount);
+        mix(u.bytesIn);
+        mix(u.bytesOut);
+    }
+    if (!_context->pZxNetUsb)
+        return h;
     const ZxNetUsb& card = *_context->pZxNetUsb;
     mix(card.Control());
     mix(card.Mode());

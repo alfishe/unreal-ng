@@ -86,6 +86,9 @@ public:
     /// SYS_CONFIG selects 3.5, 7 or 14 MHz
     uint8_t TtdClockUnits() const override { return 4; }
 
+    /// #xxEF belongs to ZiFi (network TDD step N5): no COM port there
+    bool ReservesLowByte(uint8_t lowByte) const override { return lowByte == 0xEF; }
+
     std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
     std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
 

@@ -97,4 +97,92 @@ std::vector<uint8_t> BuildAnswer(const uint8_t* query, size_t length, const Ques
     return out;
 }
 
+
+std::vector<uint8_t> BuildQuery(uint16_t id, const std::string& name)
+{
+    std::vector<uint8_t> out;
+    if (name.empty() || name.size() > 253)
+        return out;
+    Put16(out, id);
+    Put16(out, 0x0100);   // standard query, recursion desired
+    Put16(out, 1);        // one question
+    Put16(out, 0);
+    Put16(out, 0);
+    Put16(out, 0);
+    size_t start = 0;
+    while (start <= name.size())
+    {
+        size_t dot = name.find('.', start);
+        if (dot == std::string::npos)
+            dot = name.size();
+        const size_t label = dot - start;
+        if (label == 0 || label > 63)
+            return {};
+        out.push_back(static_cast<uint8_t>(label));
+        out.insert(out.end(), name.begin() + static_cast<std::ptrdiff_t>(start),
+                   name.begin() + static_cast<std::ptrdiff_t>(dot));
+        start = dot + 1;
+        if (dot == name.size())
+            break;
+    }
+    out.push_back(0);
+    Put16(out, kTypeA);
+    Put16(out, kClassIn);
+    return out;
+}
+
+/// Skip a (possibly compressed) name; returns the offset after it, 0 on error
+static size_t SkipName(const uint8_t* data, size_t length, size_t pos)
+{
+    while (pos < length)
+    {
+        const uint8_t len = data[pos];
+        if ((len & 0xC0) == 0xC0)
+            return pos + 2 <= length ? pos + 2 : 0;   // a pointer ends the name
+        if (len == 0)
+            return pos + 1;
+        pos += 1u + len;
+    }
+    return 0;
+}
+
+bool ParseAnswer(const uint8_t* data, size_t length, uint16_t id, std::vector<uint32_t>& addresses, uint8_t& rcode)
+{
+    addresses.clear();
+    rcode = kRcodeServFail;
+    if (!data || length < 12 || Read16(data) != id)
+        return false;
+    const uint16_t flags = Read16(data + 2);
+    if (!(flags & 0x8000))
+        return false;   // not an answer
+    rcode = static_cast<uint8_t>(flags & 0x0F);
+    const uint16_t qdcount = Read16(data + 4);
+    const uint16_t ancount = Read16(data + 6);
+    size_t pos = 12;
+    for (uint16_t q = 0; q < qdcount; ++q)
+    {
+        pos = SkipName(data, length, pos);
+        if (pos == 0 || pos + 4 > length)
+            return false;
+        pos += 4;
+    }
+    for (uint16_t a = 0; a < ancount; ++a)
+    {
+        pos = SkipName(data, length, pos);
+        if (pos == 0 || pos + 10 > length)
+            return false;
+        const uint16_t type = Read16(data + pos);
+        const uint16_t cls = Read16(data + pos + 2);
+        const uint16_t rdlength = Read16(data + pos + 8);
+        pos += 10;
+        if (pos + rdlength > length)
+            return false;
+        if (type == kTypeA && cls == kClassIn && rdlength == 4)
+            addresses.push_back((static_cast<uint32_t>(data[pos]) << 24) | (static_cast<uint32_t>(data[pos + 1]) << 16) |
+                                (static_cast<uint32_t>(data[pos + 2]) << 8) | data[pos + 3]);
+        pos += rdlength;
+    }
+    return true;
+}
+
 } // namespace dns

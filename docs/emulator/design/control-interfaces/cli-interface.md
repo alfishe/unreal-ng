@@ -104,7 +104,7 @@ state fdc               Beta Disk WD1793 (aliases: state disk, state wd1793)
 state ide               IDE board: scheme, latches, both units, CD sense (aliases: state hdd, state cdrom)
 state rtc               CMOS clock: time, registers A-D, alarms, every cell (aliases: state cmos, rtc, cmos)
 network                 Network adapters: ZXNETUSB card, W5300 sockets, virtual network (DHCP, sockets, activity) (alias: net)
-network set k=v ..      Change [NETWORK] settings: card=zxnetusb|none host_access=on|off dns_mode=host|pass hosts=name=ip,.. forwards=tcp:host:guest,.. connect_timeout_ms=n
+network set k=v ..      Change [NETWORK] settings: card=zxnetusb|none host_access=on|off dns_mode=host|pass hosts=name=ip,.. forwards=tcp:host:guest,.. connect_timeout_ms=n com_port=none|loopback|tcp:host:port|serial:dev[,baud] com_flavor=auto|evo|zxwifi com_modem_lines=on|off
 rtc read <start> [n]    Read CMOS cells as the guest reads them (no side effects; numbers: decimal, 0x.., #.., ..h)
 rtc write <start> <b>.. Write CMOS cells like the guest: time registers set the clock, C and D are read-only
 state contention        Memory contention: rule, switch, interface, contended slots, waits while debugging
