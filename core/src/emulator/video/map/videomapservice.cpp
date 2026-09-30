@@ -179,7 +179,15 @@ PixelSources VideoMapService::SourcesAtBeam(uint32_t tInFrame) const
         return SourcesAt(0, beam.x, beam.y);
 
     PixelSources result;
-    if (!beam.beam.valid || !beam.beam.inVisibleArea)
+    if (!beam.beam.valid)
+        return result;
+    // Border: the border rows and the sides of the paper rows, up to the end of the right border
+    // (BeamPosition::inVisibleArea covers the paper rows only)
+    const std::string vertical = beam.beam.verticalZone;
+    const bool borderRows = vertical == "top_border" || vertical == "bottom_border";
+    const bool paperRowSides = vertical == "screen" && beam.beam.inVisibleArea;
+    const bool withinLine = beam.beam.tInLine <= _context->pScreen->GetRasterState().rightBorderAreaEnd;
+    if (!(paperRowSides || (borderRows && withinLine)))
         return result;
     const VideoState s = State();
     MapperFor(FamilyOf(s.mode)).BorderSources(s, result.contribution);

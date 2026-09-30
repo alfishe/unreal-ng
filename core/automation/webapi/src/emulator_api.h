@@ -221,6 +221,11 @@ public:
 
     // Beam (raster) position + frame timing from the machine model
     ADD_METHOD_TO(EmulatorAPI::getBeamPosition, "/api/v1/emulator/{id}/video/beam", drogon::Get);
+    // Video debug translation (PLAN #42, api/video_map_api.cpp): layout, pixel sources, byte -> pixels, text
+    ADD_METHOD_TO(EmulatorAPI::getVideoLayout, "/api/v1/emulator/{id}/video/layout", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getVideoPixel, "/api/v1/emulator/{id}/video/pixel", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getVideoAddress, "/api/v1/emulator/{id}/video/address", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getVideoText, "/api/v1/emulator/{id}/video/text", drogon::Get);
     // endregion Screen State
 
     // region Audio State (implementation: api/state_audio_api.cpp)
@@ -821,6 +826,19 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void getBeamPosition(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                          const std::string& id) const;
+
+    /// @brief GET /api/v1/emulator/{id}/video/layout — the current mode's layers, beam windows and framebuffer placement
+    void getVideoLayout(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                        const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/video/pixel?x=&y=[&layer=] or ?t= — the memory, registers and palette cell behind a pixel
+    void getVideoPixel(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                       const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/video/address?page=&offset= or ?z80= — the pixels a byte feeds
+    void getVideoAddress(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                         const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/video/text[?layer=] — the text grid of a text mode
+    void getVideoText(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id) const;
 
     /// @brief GET /api/v1/emulator/{id}/state/screen/digest?banks=5,7&include_border=true&start=&end=
     /// FNV-1a 64 digest over screen RAM pages (or an explicit Z80 range) with

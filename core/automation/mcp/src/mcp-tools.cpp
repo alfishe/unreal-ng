@@ -937,7 +937,7 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["aspects"]["items"]["type"] = "string";
     Json::Value allowed(Json::arrayValue);
     for (const char* aspect : {"machine", "registers", "memory", "memory_map", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "video",
-                               "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "rtc", "mouse",
+                               "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "video_layout", "video_text", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "rtc", "mouse",
                                "ttd", "contention"})
     {
         allowed.append(aspect);
@@ -965,7 +965,9 @@ void RegisterInspectState(ToolRegistry& registry)
         "write cells with invoke_api POST /api/v1/emulator/{id}/rtc/cells {start, bytes}), "
         "'screen_attributes' = per-cell ink/paper/bright/flash decoded from the classic ZX attribute memory layout "
         "(32x24 cells, read straight off the RAM page, not the Z80 bank mapping) - prefer this over a screenshot when "
-        "you only need the color/attribute layout, 'mouse' = "
+        "you only need the color/attribute layout, 'video_layout' = the video mode's layers (surface size, beam window, "
+        "dots per T) and framebuffer placement (works for ATM, Profi, AlCo modes too), 'video_text' = exact text of an ATM / "
+        "ZX-Evo text mode (80x25 codes and attributes; unavailable in bitmap modes - use screen_ocr), 'mouse' = "
         "Kempston mouse state incl. port routing (fitted vs shadowed), 'ttd' = time-travel session: state "
         "(idle/recording/detached), recorded frame range, checkpoint count, current position (use the time_travel tool to act on it).";
     schema["properties"]["target"]["type"] = "string";
@@ -1003,7 +1005,9 @@ void RegisterInspectState(ToolRegistry& registry)
         "paging state (tagged latches + bank table), static port map with tags (ports), video mode (video: resolution, colour depth, "
         "memory layout, displayed RAM pages, #EFF7/#DFFD/#FF77), screen state (screen: active screen and RAM pages, per-screen "
         "Z80 mapping, #7FFD, contention), FLASH timing (screen_flash), per-cell ink/paper/bright/flash (screen_attributes), "
-        "screen OCR text, screen image metadata, screen digest hash, raster timing, "
+        "screen OCR text, screen image metadata, screen digest hash, raster timing (timing: the beam and the layer pixel under it), "
+        "the mode's layers and beam windows (video_layout), the exact text of ATM / ZX-Evo text modes (video_text; the pixel "
+        "behind a point and the pixels a byte feeds: GET /video/pixel and /video/address through invoke_api), "
         "ROM signatures, AY/SSG chips (audio_ay), TurboSound FM YM2203 halves (audio_fm), General Sound card (audio_gs), Covox / SoundDrive (audio_covox), MoonSound OPL4 (audio_moonsound, audio_opl4_fm, audio_opl4_pcm), Beta Disk WD1793 (fdc), IDE board (ide), CMOS clock (rtc), "
         "Kempston mouse + port routing (mouse), time-travel session state and position (ttd), memory contention: rule, switch, "
         "interface, contended slots, per-kind waits while debugging (contention). Combine aspects to reduce round-trips.",
@@ -1027,13 +1031,13 @@ void RegisterInspectState(ToolRegistry& registry)
             {
                 if (aspect != "machine" && aspect != "registers" && aspect != "memory" && aspect != "memory_map" && aspect != "disasm" && aspect != "stack" &&
                     aspect != "breakpoints" && aspect != "memory_banks" && aspect != "paging" && aspect != "ports" && aspect != "video" &&
-                    aspect != "screen" && aspect != "screen_flash" && aspect != "screen_attributes" && aspect != "screen_ocr" && aspect != "screen_image" && aspect != "screen_digest" && aspect != "timing" && aspect != "rom" && aspect != "audio_ay" &&
+                    aspect != "screen" && aspect != "screen_flash" && aspect != "screen_attributes" && aspect != "screen_ocr" && aspect != "screen_image" && aspect != "screen_digest" && aspect != "timing" && aspect != "video_layout" && aspect != "video_text" && aspect != "rom" && aspect != "audio_ay" &&
                     aspect != "audio_fm" && aspect != "audio_gs" && aspect != "audio_covox" && aspect != "audio_moonsound" && aspect != "audio_opl4_fm" &&
                     aspect != "audio_opl4_pcm" && aspect != "fdc" && aspect != "ide" && aspect != "rtc" && aspect != "mouse" && aspect != "ttd" && aspect != "contention")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, rtc, mouse, ttd, contention"));
+                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, rtc, mouse, ttd, contention"));
                     return;
                 }
             }
@@ -1209,6 +1213,18 @@ void RegisterInspectState(ToolRegistry& registry)
                         {
                             // Screen state (verbose: per-screen RAM page + Z80 mapping, #7FFD) and FLASH timing
                             const std::string path = aspect == "screen" ? "/state/screen?verbose=true" : "/state/screen/flash";
+                            steps.push_back([&caller, id, aspect, path](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, path), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "video_layout" || aspect == "video_text")
+                        {
+                            // Video debug translation (PLAN #42): the mode's layers / the exact text of a text mode.
+                            // Pixel sources and byte -> pixels take arguments: GET /video/pixel, /video/address via invoke_api
+                            const std::string path = aspect == "video_layout" ? "/video/layout" : "/video/text";
                             steps.push_back([&caller, id, aspect, path](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", Endpoint(id, path), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
@@ -1702,6 +1718,40 @@ void RegisterInspectState(ToolRegistry& registry)
                                     if (value.isMember("routing"))
                                         out << ", ports " << (value["routing"]["ports_decoded"].asBool() ? "decoded" : "shadowed")
                                             << " (" << value["routing"]["note"].asString() << ")";
+                                }
+                            }
+                            else if (aspect == "video_layout")
+                            {
+                                out << "\n[video_layout] " << value["video_mode"].asString() << ", family "
+                                    << value["family"].asString();
+                                if (!value["mapped"].asBool())
+                                    out << " (not mapped)";
+                                const Json::Value& layers = value["layers"];
+                                for (Json::ArrayIndex i = 0; i < layers.size(); ++i)
+                                {
+                                    const Json::Value& w = layers[i]["window"];
+                                    out << "\n  " << layers[i]["id"].asString() << " " << layers[i]["surface"]["width"].asInt()
+                                        << "x" << layers[i]["surface"]["height"].asInt() << ", lines " << w["first_line"].asInt()
+                                        << "+" << w["line_count"].asInt() << ", T " << w["first_t"].asInt() << "+"
+                                        << w["t_count"].asInt() << " at " << w["dots_per_t"].asInt() << " dots/T";
+                                }
+                            }
+                            else if (aspect == "video_text")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[video_text] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[video_text] " << value["layer"].asString() << " " << value["columns"].asInt()
+                                        << "x" << value["rows"].asInt();
+                                    const Json::Value& lines = value["lines"];
+                                    for (Json::ArrayIndex i = 0; i < lines.size(); ++i)
+                                    {
+                                        std::string text = lines[i]["text"].asString();
+                                        const size_t end = text.find_last_not_of(" .");
+                                        if (end != std::string::npos)
+                                            out << "\n  " << text.substr(0, end + 1);
+                                    }
                                 }
                             }
                             else if (aspect == "paging")
