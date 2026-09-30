@@ -29,6 +29,8 @@
 #include "emulator/media/mediamanager.h"
 #include "emulator/memory/memory.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
+#include "emulator/sound/chips/iturbosounddevice.h"
+#include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/covox.h"
 #include "emulator/sound/soundmanager.h"
 #include "loaders/snapshot/szx/loaderszx.h"
@@ -571,5 +573,71 @@ TEST(LoaderSZXDevices_Test, UnemulatedHardwareIsReported)
     for (const char* line : {"IF1: ignored", "MFCE: ignored", "ZXPR: ignored", "JOY: ignored (joysticks are not emulated)"})
         EXPECT_NE(text.find(line), std::string::npos) << line << "\n" << text;
     EXPECT_NE(text.find("BDSK A: ignored (linked image not found"), std::string::npos) << text;
+    manager->RemoveEmulator(emulator->GetId());
+}
+
+/// TurboSound FM replaces TurboSound: the AY block goes into the SSG half of
+/// YM2203 chip 1, fully applied (never an error), with the YM2203's own
+/// address latch on the selected register
+TEST(LoaderSZXSound_Test, TurboSoundFmTakesTheAyBlock)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    std::shared_ptr<Emulator> emulator;
+    {
+        SoundCardScope sound(TestSound::TurboSound);
+        emulator = manager->CreateEmulatorWithModelAndRAM("szx-tsfm", "PENTAGON", 128, LoggerLevel::LogError);
+    }
+    ASSERT_TRUE(emulator);
+    EmulatorContext* context = emulator->GetContext();
+    ITurboSoundDevice* device = context->pSoundManager->getTurboSound();
+    ASSERT_TRUE(device && device->hasFm()) << "the shipped Pentagon config fits TurboSound FM";
+
+    LoaderSZX loader(context, Fixture("libspectrum/synth-pentagon.szx"));
+    ASSERT_TRUE(loader.load()) << loader.GetError();
+    EXPECT_NE(loader.GetReport().ToText().find("AY: applied (into the SSG half"), std::string::npos) << loader.GetReport().ToText();
+    SoundChip_AY8910* ssg = context->pSoundManager->getAYChip(0);
+    for (uint8_t reg = 0; reg < 16; reg++)
+        EXPECT_EQ(ssg->readRegister(reg), reg == 7 ? 0x38 : reg * 3 + 1) << "SSG register " << int(reg);
+    // The selected register (7) reaches the chip's own latch: a data write
+    // with no address write before it lands there
+    device->portDeviceOutMethod(0xBFFD, 0x3F);
+    EXPECT_EQ(ssg->readRegister(7), 0x3F);
+
+    Stage saved;
+    std::string error;
+    ASSERT_TRUE(LoaderSZX::Capture(context, saved, error)) << error;
+    ASSERT_TRUE(saved.ay) << "a TSFM machine saves the AY block";
+    EXPECT_EQ(saved.ay->currentRegister, 7);
+    manager->RemoveEmulator(emulator->GetId());
+}
+
+/// NeoGS replaces the General Sound: a GS block loads without an error (the
+/// card keeps its own firmware), and saving leaves the classic-card block out
+TEST(LoaderSZXSound_Test, NeoGsAcceptsTheGsBlock)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    std::shared_ptr<Emulator> emulator;
+    {
+        SoundCardScope sound(TestSound::GeneralSound);
+        emulator = manager->CreateEmulatorWithModelAndRAM("szx-ngs", "PENTAGON", 128, LoggerLevel::LogError);
+    }
+    ASSERT_TRUE(emulator);
+    EmulatorContext* context = emulator->GetContext();
+    ASSERT_TRUE(FitGeneralSoundCard(context->pSoundManager, GSTypeKind::NGS));
+
+    Stage stage = Parse(Fixture("libspectrum/synth-pentagon.szx"));
+    stage.gs = GeneralSound{};
+    stage.gsPages[0] = std::vector<uint8_t>(kGsPageSize, 0x55);
+    Report report;
+    std::string error;
+    ASSERT_TRUE(LoaderSZX::Commit(context, stage, report, error)) << error;
+    const std::string text = report.ToText();
+    EXPECT_NE(text.find("GS: approximated (NeoGS replaces the GS"), std::string::npos) << text;
+    EXPECT_EQ(text.find("GS: ignored"), std::string::npos) << text;
+
+    Stage saved;
+    ASSERT_TRUE(LoaderSZX::Capture(context, saved, error)) << error;
+    EXPECT_FALSE(saved.gs) << "the GS block describes the classic card";
+    EXPECT_FALSE(saved.warnings.empty());
     manager->RemoveEmulator(emulator->GetId());
 }
