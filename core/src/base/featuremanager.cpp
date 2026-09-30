@@ -83,6 +83,11 @@ bool FeatureManager::isTtdRecordingActive() const
     return false;
 }
 
+bool FeatureManager::isRzxPlaying() const
+{
+    return _context && _context->rzxPlayer != nullptr;
+}
+
 bool FeatureManager::isTtdTimelineBound() const
 {
     if (isTtdRecordingActive())
@@ -307,6 +312,11 @@ std::string FeatureManager::refusalReason(const std::string& idOrAlias, bool ena
         return {};
     }
 
+    if ((id == Features::kFastDisk || id == Features::kFastTape || id == Features::kTurboTape) && isRzxPlaying())
+    {
+        return "Cannot enable " + id + " while an RZX recording plays: it changes what the guest code does, so the "
+               "playback would leave the recorded path. Stop the playback first.";
+    }
     if ((id == Features::kFastDisk || id == Features::kFastTape || id == Features::kTurboTape) && isTtdTimelineBound())
     {
         return "Cannot enable " + id + " while TTD is recording or replaying history: it changes what the guest "
@@ -332,7 +342,7 @@ bool FeatureManager::isMaskedByTtd(const std::string& id) const
     // Shortcuts read as OFF for the whole timeline binding (recording, replay, Detached);
     // turbo mode only while recording
     if (id == Features::kFastDisk || id == Features::kFastTape || id == Features::kTurboTape)
-        return isTtdTimelineBound();
+        return isTtdTimelineBound() || isRzxPlaying();
     if (id == Features::kTurboMode)
         return isTtdRecordingActive();
     return false;

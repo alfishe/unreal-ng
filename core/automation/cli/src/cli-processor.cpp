@@ -210,6 +210,9 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         // Snapshot control commands
                         {"snapshot", &CLIProcessor::HandleSnapshot},
 
+                        // RZX input recording playback
+                        {"rzx", &CLIProcessor::HandleRzx},
+
                         // Interpreter control commands
                         {"python", &CLIProcessor::HandlePython},
                         {"py", &CLIProcessor::HandlePython},  // Alias
@@ -688,9 +691,15 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  disk catalog <drv>     - Show TR-DOS file catalog" << NEWLINE;
     oss << NEWLINE;
     oss << "Snapshot Commands:" << NEWLINE;
-    oss << "  snapshot load <file>           - Load snapshot (.sna, .z80, .szx)" << NEWLINE;
+    oss << "  snapshot load <file>           - Load snapshot (.sna, .z80, .szx; .rzx plays)" << NEWLINE;
     oss << "  snapshot save <file> [--force] - Save snapshot (.sna, .z80, .szx: by extension)" << NEWLINE;
     oss << "  snapshot info                  - Show current snapshot status" << NEWLINE;
+    oss << NEWLINE;
+    oss << "RZX Playback:" << NEWLINE;
+    oss << "  rzx play <file> [--tolerant]   - Play an RZX recording (switches model if needed)" << NEWLINE;
+    oss << "  rzx seek <frame>               - Move to a frame (back via keyframes)" << NEWLINE;
+    oss << "  rzx stop                       - Stop playing; the machine runs live" << NEWLINE;
+    oss << "  rzx status                     - Frame, progress, desyncs" << NEWLINE;
     oss << NEWLINE;
     oss << "Capture Commands:" << NEWLINE;
     oss << "  capture ocr                    - OCR text from screen (ROM font)" << NEWLINE;

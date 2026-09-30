@@ -41,6 +41,7 @@
 #include "3rdparty/message-center/messagecenter.h"
 #include "../common/jsonnumber.h"
 #include "../emulator_api.h"
+#include "debugger/ttd/machinestatehash.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdexternalevents.h"
 #include "debugger/ttd/ttdprobe.h"
@@ -119,6 +120,98 @@ static void NotifyFrameRefresh(Emulator& emulator)
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     messageCenter.Post(NC_VIDEO_FRAME_REFRESH,
                        new EmulatorFramePayload(emulatorId, frameCounter));
+}
+
+// ---------------------------------------------------------------------------
+// The recorded machine and a .ttd file's info as JSON (ttdfileinfo.h). The same
+// keys on every surface: Lua / Python tables, CLI labels, MCP summaries.
+// ---------------------------------------------------------------------------
+namespace
+{
+
+Json::Value RecordedMachineJson(const ttd::TTDRecordedMachine& m)
+{
+    Json::Value v;
+    v["model_id"] = Json::UInt(m.modelId);
+    v["model"] = m.model.empty() ? Json::Value(Json::nullValue) : Json::Value(m.model);
+    v["ram_page_bound"] = Json::UInt(m.ramPageBound);
+    // A string: a 64-bit hash does not survive a JSON number (doubles)
+    v["rom_signature"] = m.romSignature == 0 ? Json::Value(Json::nullValue)
+                                             : Json::Value("0x" + ttd::HashToString(m.romSignature));
+    v["peripheral_mask"] = Json::UInt64(m.peripheralMask);
+    Json::Value list(Json::arrayValue);
+    for (const std::string& name : m.peripherals)
+        list.append(name);
+    v["peripherals"] = list;
+    v["general_sound"] = ttd::GeneralSoundName(m.generalSound);
+    v["turbo_sound"] = m.turboSound;
+    return v;
+}
+
+Json::Value FileInfoJson(const ttd::TTDFileInfo& info)
+{
+    Json::Value v;
+    v["ok"] = true;
+    v["path"] = info.path;
+    v["file_bytes"] = Json::UInt64(info.fileBytes);
+    v["schema_version"] = Json::UInt(info.schemaVersion);
+    v["flags"] = Json::UInt(info.flags);
+    v["captured_at_unix_ms"] = Json::UInt64(info.capturedAtUnixMs);
+    v["recorded_by"] = info.emulatorId.empty() ? Json::Value(Json::nullValue) : Json::Value(info.emulatorId);
+    v["session_state"] = ttd::TTDSessionStateToString(static_cast<ttd::TTDSessionState>(info.sessionState));
+    v["session_start_frame"] = Json::UInt64(info.startFrame);
+    v["session_end_frame"] = Json::UInt64(info.endFrame);
+    v["checkpoint_count"] = Json::UInt(info.checkpointCount);
+    v["page_slot_count"] = Json::UInt(info.pageStoreCount);
+    Json::Value sections;
+    sections["write_journal"] = info.hasWriteJournal;
+    sections["write_journal_complete"] = info.writeJournalComplete;
+    sections["coverage_index"] = info.hasCoverageIndex;
+    sections["bookmarks"] = info.hasBookmarks;
+    sections["input_journal"] = info.hasInputJournal;
+    sections["external_events"] = info.hasExternalEvents;
+    sections["port_journals"] = info.hasPortJournals;
+    sections["top_clock_time"] = info.topClockTime;
+    v["sections"] = sections;
+    v["machine"] = RecordedMachineJson(info.machine);
+    v["peripherals_from_header"] = info.peripheralsFromHeader;
+    return v;
+}
+
+}  // namespace
+
+/// @brief GET /api/v1/ttd/file-info?path=<file.ttd>
+/// A .ttd file's header, sections and recorded machine, read without loading
+/// it (no emulator instance involved): provision a matching machine first.
+void EmulatorAPI::getTTDFileInfo(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) const
+{
+    const std::string path = req->getParameter("path");
+    Json::Value ret;
+    HttpStatusCode code = HttpStatusCode::k200OK;
+    if (path.empty())
+    {
+        ret["ok"] = false;
+        ret["error"] = "query parameter 'path' is required";
+        code = HttpStatusCode::k400BadRequest;
+    }
+    else
+    {
+        ttd::TTDFileInfo info;
+        std::string err;
+        if (ttd::ReadTTDFileInfo(path, info, err))
+            ret = FileInfoJson(info);
+        else
+        {
+            ret["ok"] = false;
+            ret["path"] = path;
+            ret["error"] = err;
+            code = err.rfind("cannot open", 0) == 0 ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest;
+        }
+    }
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    resp->setStatusCode(code);
+    addCorsHeaders(resp);
+    callback(resp);
 }
 
 /// @brief GET /api/v1/emulator/{id}/ttd/status
@@ -237,6 +330,10 @@ void EmulatorAPI::getTTDStatus(const HttpRequestPtr& req,
     ret["captured_at_unix_ms"]   = Json::UInt64(info.capturedAtUnixMs);
     ret["model_id"]              = Json::UInt(info.modelId);
     ret["model_ram_pages"]       = Json::UInt(info.modelRamPages);
+    // The recorded machine (null while there is no session) and, for a loaded
+    // file, the instance that recorded it
+    ret["machine"] = info.checkpointCount != 0 ? RecordedMachineJson(info.machine) : Json::Value(Json::nullValue);
+    ret["recorded_by"] = info.recordedBy.empty() ? Json::Value(Json::nullValue) : Json::Value(info.recordedBy);
     ret["write_journal_records"] = Json::UInt64(info.writeJournalRecords);
     ret["write_journal_bytes"]   = Json::UInt64(info.writeJournalBytes);
     ret["coverage_index_frames"] = Json::UInt64(info.coverageIndexFrames);

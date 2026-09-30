@@ -1,6 +1,7 @@
 #include "machinestatetransfer.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 
 #include "common/stringhelper.h"
@@ -13,6 +14,9 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/io/fdc/wd1793.h"
+#include "emulator/media/mediamanager.h"
+#include "emulator/media/medium.h"
 #include "emulator/memory/memory.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
@@ -22,6 +26,7 @@
 #endif
 #include "emulator/sound/soundmanager.h"
 #include "emulator/video/screen.h"
+#include "emulator/zxpoly/zxpolygroup.h"
 #include "stdafx.h"
 
 using ttd::PeripheralId;
@@ -109,6 +114,13 @@ namespace
     uint16_t RamPages(const CONFIG& config)
     {
         return static_cast<uint16_t>(std::min<uint32_t>(config.ramsize / 16, MAX_RAM_PAGES));
+    }
+
+    /// The pages a clone copies: every page the model can map. A 48K maps banks 5, 2 and 0 (as a 128K does)
+    /// although its ramsize says three pages, so never fewer than the eight 128K banks
+    uint16_t ClonePages(const CONFIG& config)
+    {
+        return std::max<uint16_t>(RamPages(config), 8);
     }
 
     bool PageIsZero(EmulatorContext& context, uint16_t page)
@@ -367,9 +379,224 @@ namespace
         return true;
     }
 
+
+    // --- Media ---------------------------------------------------------------------------------------------------
+
+    /// What the media step left behind: the controllers whose media followed may take the source's state
+    struct MediaOutcome
+    {
+        bool refused = false;
+        std::string reason;
+        bool floppiesFollowed = true;  ///< every source floppy is in the same drive on the target (or both empty)
+        bool tapeFollowed = true;      ///< the tape too
+    };
+
+    /// Kinds that move: floppies and tapes live entirely in memory, detached from their files until saved.
+    /// SD cards, hard disks and CDs are NOT moved (by design, for now): the target keeps its own
+    bool MovesWithState(MediaKind kind)
+    {
+        return kind == MediaKind::Floppy || kind == MediaKind::Tape;
+    }
+
+    /// The target's copy stands for its own file next to the source's: game.trd -> game.pentagon-1a2b3c4d.trd.
+    /// A save on the target never overwrites the source's image, even by accident
+    std::string TransferredPath(const std::string& path, const std::string& tag)
+    {
+        const size_t slash = path.find_last_of("/\\");
+        const size_t nameStart = slash == std::string::npos ? 0 : slash + 1;
+        const size_t dot = path.find_last_of('.');
+        if (dot == std::string::npos || dot <= nameStart)
+            return path + "." + tag;
+        return path.substr(0, dot) + "." + tag + path.substr(dot);
+    }
+
+    std::string TargetTag(EmulatorContext& target)
+    {
+        std::string model = "transfer";
+        std::string id;
+        if (target.pEmulator)
+        {
+            const MachineIdentity identity = EmulatorManager::GetMachineIdentity(*target.pEmulator);
+            if (identity.Valid && !identity.Model.empty())
+                model = identity.Model;
+            id = target.pEmulator->GetId().substr(0, 8);
+        }
+        std::transform(model.begin(), model.end(), model.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return id.empty() ? model : model + "-" + id;
+    }
+
+    /// The target's own copy of a source medium: same contents (unsaved writes included), clean, session access,
+    /// standing for the postfixed file. nullptr for kinds that do not move
+    std::unique_ptr<Medium> CopyMedium(const Medium& medium, const std::string& tag)
+    {
+        MediaSource source = medium.Source();
+        if (source.type == MediaSourceType::File || source.type == MediaSourceType::Upload)
+        {
+            source.type = MediaSourceType::File;
+            source.path = TransferredPath(source.path, tag);
+        }
+        else
+        {
+            // A disk built from a host folder, or a blank one: the copy is a blank-sourced disk (a save needs a path)
+            source.type = MediaSourceType::Blank;
+            source.path.clear();
+        }
+
+        if (const DiskImage* disk = medium.Floppy())
+            return std::make_unique<Medium>(source, AccessMode::Session, medium.Format(), disk->Clone(source.path));
+        if (const TapeImage* tape = medium.Tape())
+            return std::make_unique<Medium>(source, medium.Access(), medium.Format(), std::make_unique<TapeImage>(*tape));
+        return nullptr;
+    }
+
+    /// Check (apply = false) or copy (apply = true) the floppies and the tape into the same slots of the target.
+    /// A target slot that would lose unsaved writes refuses the transfer; nothing of the target's is lost silently
+    MediaOutcome TransferMedia(EmulatorContext& source, EmulatorContext& target, bool apply,
+                               std::vector<MachineStateTransfer::Item>& items)
+    {
+        using Status = MachineStateTransfer::ItemStatus;
+        MediaOutcome outcome;
+
+        items.push_back({"SD / HDD / CD", Status::Note,
+                         "not moved (by design, for now): the target keeps its own cards, hard disks and CDs, and their "
+                         "controllers keep the target's state"});
+
+        MediaManager* from = source.pMediaManager;
+        MediaManager* to = target.pMediaManager;
+        if (!from || !to)
+            return outcome;
+
+        const std::string tag = TargetTag(target);
+        auto follow = [&outcome](MediaKind kind, bool followed) {
+            if (followed)
+                return;
+            if (kind == MediaKind::Floppy)
+                outcome.floppiesFollowed = false;
+            else
+                outcome.tapeFollowed = false;
+        };
+
+        // Source slots: their medium goes into the target's slot with the same id
+        for (const SlotInfo& slot : from->List())
+        {
+            const MediaKind kind = slot.descriptor.kind;
+            if (!MovesWithState(kind))
+                continue;
+            const std::string& id = slot.descriptor.id;
+            const std::optional<SlotInfo> there = to->Info(id);
+
+            if (!slot.present)
+            {
+                // An empty drive stays empty on the target: its controller state says so
+                if (there && there->present)
+                {
+                    if (there->dirty)
+                    {
+                        outcome.refused = true;
+                        outcome.reason = "the target's " + id + " has unsaved writes (" + there->changes +
+                                         "); save or discard them first";
+                        items.push_back({id, Status::Refused, outcome.reason});
+                        return outcome;
+                    }
+                    if (apply)
+                    {
+                        const MediaResult ejected = to->Eject(id);
+                        to->WaitApplied(id, 1000);
+                        if (!ejected.Ok())
+                        {
+                            items.push_back({id, Status::Dropped, "could not empty the target's slot: " + ejected.message});
+                            follow(kind, false);
+                            continue;
+                        }
+                    }
+                    items.push_back({id, Status::Copied, "empty, as on the source (the target's medium ejected)"});
+                }
+                continue;
+            }
+
+            if (!there)
+            {
+                items.push_back({id, Status::Dropped, "the target has no such slot; its controller keeps the target's state"});
+                follow(kind, false);
+                continue;
+            }
+            if (there->present && there->dirty)
+            {
+                outcome.refused = true;
+                outcome.reason =
+                    "the target's " + id + " has unsaved writes (" + there->changes + "); save or discard them first";
+                items.push_back({id, Status::Refused, outcome.reason});
+                return outcome;
+            }
+
+            const Medium* medium = from->GetMedium(id);
+            if (!medium)
+            {
+                items.push_back({id, Status::Dropped, "the source's medium is still being inserted"});
+                follow(kind, false);
+                continue;
+            }
+
+            std::string detail = medium->Describe();
+            if (medium->Source().type == MediaSourceType::File || medium->Source().type == MediaSourceType::Upload)
+                detail += " -> " + TransferredPath(medium->Source().path, tag);
+            detail += " (in-memory copy, clean; written only by an explicit save";
+            if (medium->IsDirty())
+                detail += "; carries the source's unsaved writes";
+            detail += ")";
+
+            if (apply)
+            {
+                std::unique_ptr<Medium> copy = CopyMedium(*medium, tag);
+                InsertOptions options;
+                options.immediate = true;  // no swap delay: the controller state expects the disk in place
+                options.writeProtect = slot.writeProtect;
+                const MediaResult inserted = copy ? to->Insert(id, std::move(copy), options)
+                                                  : MediaResult::Fail(MediaError::KindMismatch, "no copy for this kind");
+                to->WaitApplied(id, 1000);
+                if (!inserted.Ok())
+                {
+                    items.push_back({id, Status::Dropped, "the target refused the copy: " + inserted.message});
+                    follow(kind, false);
+                    continue;
+                }
+            }
+            items.push_back({id, Status::Copied, detail});
+        }
+        return outcome;
+    }
+
+    /// Controllers whose state belongs to their media: portable only when the media followed
+    enum class Binding : uint8_t
+    {
+        Machine,   ///< model paging and the like: clone only
+        Portable,  ///< independent of the machine
+        Floppy,    ///< floppy controllers: when the disks followed
+        Tape,      ///< the tape deck: when the tape followed
+        Storage,   ///< SD / HDD / CD controllers: never (their media are not moved)
+    };
+
+    Binding BindingOf(PeripheralId id)
+    {
+        switch (id)
+        {
+            case PeripheralId::BetaDisk:
+            case PeripheralId::Upd765:
+                return Binding::Floppy;
+            case PeripheralId::Tape:
+                return Binding::Tape;
+            case PeripheralId::AtaChannel:
+            case PeripheralId::EvoSdCard:
+                return Binding::Storage;
+            default:
+                return IsPortable(id) ? Binding::Portable : Binding::Machine;
+        }
+    }
+
     /// Check (apply = false) or transfer (apply = true) every device state
     void TransferDevices(EmulatorContext& source, EmulatorContext& target, bool clone, bool apply,
-                         std::vector<MachineStateTransfer::Item>& items)
+                         const MediaOutcome& media, std::vector<MachineStateTransfer::Item>& items)
     {
         using Status = MachineStateTransfer::ItemStatus;
 
@@ -390,10 +617,21 @@ namespace
                 continue;
 
             const std::string name = DeviceLabel(id, from);
-            if (!clone && !IsPortable(id))
+            const Binding binding = BindingOf(id);
+            if (binding == Binding::Machine && !clone)
+            {
+                items.push_back({name, Status::Dropped, "machine-bound state; not moved between models (the target keeps its own)"});
+                continue;
+            }
+            if (binding == Binding::Storage)
             {
                 items.push_back({name, Status::Dropped,
-                                 "machine- or media-bound state; not moved between models (the target keeps its own)"});
+                                 "SD / HDD / CD controller: its media are not moved, so it keeps the target's state"});
+                continue;
+            }
+            if ((binding == Binding::Floppy && !media.floppiesFollowed) || (binding == Binding::Tape && !media.tapeFollowed))
+            {
+                items.push_back({name, Status::Dropped, "its media did not follow; it keeps the target's state"});
                 continue;
             }
 
@@ -421,9 +659,17 @@ namespace
 
             if (apply)
             {
+                // The FDC clock policy is the machine's (Pentagon fixed 1 MHz, ZX-Evo latched, ...): the target keeps it
+                const bool betaDisk = id == PeripheralId::BetaDisk && target.pBetaDisk;
+                const FdcClockPolicy policy = betaDisk ? target.pBetaDisk->GetClockPolicy() : FdcClockPolicy::Fixed1MHz;
                 buffer.resize(size);
                 from->TTDSaveState(buffer.data());
                 to->TTDLoadState(buffer.data());
+                if (betaDisk && target.pBetaDisk->GetClockPolicy() != policy)
+                    target.pBetaDisk->SetClockPolicy(policy);
+                if (id == PeripheralId::BetaDisk)
+                    std::memcpy(target.emulatorState.wd_shadow, source.emulatorState.wd_shadow,
+                                sizeof(target.emulatorState.wd_shadow));
             }
             items.push_back({name, Status::Copied, StringHelper::Format("%zu bytes of state", size)});
         }
@@ -433,7 +679,7 @@ namespace
         {
             const auto id = static_cast<PeripheralId>(raw);
             ttd::TTDSerializable* to = dst.registry.GetDevice(id);
-            if (to && !src.registry.GetDevice(id) && (clone || IsPortable(id)))
+            if (to && !src.registry.GetDevice(id) && (clone || BindingOf(id) != Binding::Machine))
                 items.push_back({DeviceLabel(id, to), Status::Note, "only the target has it; it starts from reset"});
         }
     }
@@ -626,7 +872,7 @@ namespace
 
         if (report.clone)
         {
-            report.items.push_back({"RAM", Status::Copied, std::to_string(RamPages(source.config)) + " pages"});
+            report.items.push_back({"RAM", Status::Copied, std::to_string(ClonePages(source.config)) + " pages"});
             report.items.push_back({"chipset latches and frame position", Status::Copied, ""});
         }
         else
@@ -660,8 +906,13 @@ MachineStateTransfer::Report MachineStateTransfer::Check(EmulatorContext& source
     if (!PlanMachine(source, target, report, a))
         return report;
 
-    TransferDevices(source, target, report.clone, false, report.items);
-    report.items.push_back({"media", ItemStatus::Note, "disk and tape images are not moved"});
+    const MediaOutcome media = TransferMedia(source, target, false, report.items);
+    if (media.refused)
+    {
+        report.reason = media.reason;
+        return report;
+    }
+    TransferDevices(source, target, report.clone, false, media, report.items);
     report.ok = true;
     return report;
 }
@@ -677,8 +928,23 @@ MachineStateTransfer::Report MachineStateTransfer::Apply(EmulatorContext& source
     const bool keepPosition = options.keepFramePositionWhenTimingMatches &&
                               SameFrameGeometry(source.config, target.config);
 
+    // Media first, checked before anything changes: a target disk with unsaved writes refuses the transfer
+    {
+        std::vector<Item> probe;
+        const MediaOutcome check = TransferMedia(source, target, false, probe);
+        if (check.refused)
+        {
+            report.reason = check.reason;
+            report.items = std::move(probe);
+            return report;
+        }
+    }
+
     // A clean machine first: devices the source lacks start from reset (as a snapshot load does)
     target.pCore->Reset();
+
+    // The floppies and the tape go in before the controllers take the source's state
+    const MediaOutcome media = TransferMedia(source, target, true, report.items);
 
     if (report.clone)
     {
@@ -686,10 +952,12 @@ MachineStateTransfer::Report MachineStateTransfer::Apply(EmulatorContext& source
         // before the banks are rebuilt from it), banks, RAM
         const Z80* from = source.pCore->GetZ80();
         ttd::RestoreChipsetState(ttd::CaptureChipsetState(source.emulatorState, from->t), &target.emulatorState);
+        if (!keepPosition)
+            target.emulatorState.t_states += from->t;  // same instant on both machines (see the cross-model path)
         ApplyCpu(source, target, keepPosition);
-        TransferDevices(source, target, true, true, report.items);
+        TransferDevices(source, target, true, true, media, report.items);
         target.pMemory->UpdateZ80Banks();
-        for (uint16_t page = 0; page < RamPages(source.config); page++)
+        for (uint16_t page = 0; page < ClonePages(source.config); page++)
             CopyPage(source, target, page);
     }
     else
@@ -713,8 +981,14 @@ MachineStateTransfer::Report MachineStateTransfer::Apply(EmulatorContext& source
         state.pFE = source.emulatorState.pFE;
         state.border_attr = source.emulatorState.border_attr;
 
+        // The target takes the source's time axis: the floppy controller and the tape deck keep absolute t-state
+        // stamps (the disk's rotation phase, the pulse in flight), so "now" must be the same instant on both.
+        // When the target restarts its frame, the source's in-frame position moves into the counter
+        state.t_states = source.emulatorState.t_states + (keepPosition ? 0 : source.pCore->GetZ80()->t);
+        state.frame_counter = source.emulatorState.frame_counter;
+
         ApplyCpu(source, target, keepPosition);
-        TransferDevices(source, target, false, true, report.items);
+        TransferDevices(source, target, false, true, media, report.items);
 
         // The banks from the latches, then the DOS ROM over them when the source is in TR-DOS
         target.pMemory->UpdateZ80Banks();
@@ -722,7 +996,6 @@ MachineStateTransfer::Report MachineStateTransfer::Apply(EmulatorContext& source
     }
 
     ResyncScreen(target);
-    report.items.push_back({"media", ItemStatus::Note, "disk and tape images are not moved"});
     report.ok = true;
     return report;
 }
@@ -735,6 +1008,15 @@ MachineStateTransfer::Report MachineStateTransfer::Transfer(Emulator& source, Em
     if (&source == &target)
     {
         report.reason = "source and target are the same instance";
+        return report;
+    }
+
+    // A ZX-Poly module runs in lockstep with three others: moving one module's state in or out
+    // would desynchronize the group
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    if (manager->GetZXPolyGroup(source.GetId()) || manager->GetZXPolyGroup(target.GetId()))
+    {
+        report.reason = "ZX-Poly modules are not transferable: the group runs four machines in lockstep";
         return report;
     }
 
@@ -807,6 +1089,12 @@ std::shared_ptr<Emulator> MachineStateTransfer::TransferToNewInstance(Emulator& 
 {
     report = Report{};
     EmulatorContext* sourceContext = source.GetContext();
+    if (ZXPolyGroup::FindConfiguration(modelName))
+    {
+        report.reason = "ZX-Poly configuration '" + modelName + "' is not a transfer target: its four modules run in lockstep";
+        return nullptr;
+    }
+
     const TMemModel* model = Config::FindModelByShortName(modelName);
     if (!sourceContext || !model)
     {

@@ -1089,32 +1089,13 @@ void Screen::GetFramebufferData(uint32_t** buffer, size_t* size)
 
 void Screen::GetRGBAPalette16(uint32_t* colors)
 {
-    // Default ZX Spectrum 16-color palette (same as DrawZX uses)
-    // Format is ABGR on little-endian systems
-    static const uint32_t zxPalette[16] = {
-        // Normal intensity (brightness OFF)
-        0xFF000000,  // 0: Black
-        0xFF0022C7,  // 1: Blue      (R=0x00, G=0x22, B=0xC7)
-        0xFFD62816,  // 2: Red       (R=0xD6, G=0x28, B=0x16)
-        0xFFD433C7,  // 3: Magenta   (R=0xD4, G=0x33, B=0xC7)
-        0xFF00C525,  // 4: Green     (R=0x00, G=0xC5, B=0x25)
-        0xFF00C7C9,  // 5: Cyan      (R=0x00, G=0xC7, B=0xC9)
-        0xFFCCC82A,  // 6: Yellow    (R=0xCC, G=0xC8, B=0x2A)
-        0xFFCACACA,  // 7: White     (R=0xCA, G=0xCA, B=0xCA)
-        // Bright intensity (brightness ON)
-        0xFF000000,  // 8: Bright Black  (same as black)
-        0xFF002BFB,  // 9: Bright Blue   (R=0x00, G=0x2B, B=0xFB)
-        0xFFFF331C,  // 10: Bright Red   (R=0xFF, G=0x33, B=0x1C)
-        0xFFFF40FC,  // 11: Bright Magenta (R=0xFF, G=0x40, B=0xFC)
-        0xFF00F92F,  // 12: Bright Green  (R=0x00, G=0xF9, B=0x2F)
-        0xFF00FBFE,  // 13: Bright Cyan   (R=0x00, G=0xFB, B=0xFE)
-        0xFFFFFC36,  // 14: Bright Yellow (R=0xFF, G=0xFC, B=0x36)
-        0xFFFFFFFF,  // 15: Bright White  (R=0xFF, G=0xFF, B=0xFF)
-    };
-
+    // The 16 ZX colors exactly as the renderer draws them: the first 16 entries of
+    // the live palette, in the framebuffer format (RGBA8888, LE uint32 0xAABBGGRR).
+    // A separate table here once had R and B swapped, so every ZX-Poly composed
+    // picture showed red as blue and blue as red
     if (colors)
     {
-        memcpy(colors, zxPalette, sizeof(zxPalette));
+        memcpy(colors, _vid.clut, 16 * sizeof(uint32_t));
     }
 }
 

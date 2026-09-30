@@ -1272,7 +1272,7 @@ Written at `tm.cpp:2987-3057`. `L` is the emulator id length.
 | 41+L | 8 | u64 | `session_end_frame` | last checkpoint's frame, or 0 | logged only |
 | 49+L | 4 | u32 | `page_store_count` | number of live slots | drives the slot loop |
 | 53+L | 4 | u32 | `checkpoint_count` | timeline length | drives the checkpoint loop (no pre-allocation) |
-| 57+L | 8 | u8[8] | `reserved` | zeros | skipped, not checked |
+| 57+L | 8 | u64 | `peripheral_mask` (formerly `reserved`) | with flag bit 9: bit N = TTD peripheral id N has a blob in the first checkpoint; zeros in older files | not checked by the loader; `ttd::ReadTTDFileInfo` reports it as the recorded machine's devices (walks to the first checkpoint without bit 9) |
 | 65+L | | | end of header | | |
 
 The five corpus files have `L = 0`, so a 65-byte header.
@@ -1290,7 +1290,8 @@ The five corpus files have `L = 0`, so a 65-byte header.
 | 6 | `0x0040` | `kFlagsHasInputJournal` | input-journal section follows the bookmarks (section 7.9) | always, empty or not | parses; failure is fatal. Absent: the session loads and reports its input history incomplete |
 | 7 | `0x0080` | `kFlagsHasExternalEvents` | external-event section follows (section 7.10) | always | parses; failure is fatal |
 | 8 | `0x0100` | `kFlagsHasPortJournals` | the port journals follow (section 7.11) | the session holds all of its history's I/O (a configuration they isolate, recorded without a gap) | parses and checks every block; failure is fatal. Absent: replay reads the live devices |
-| 9..15 | | | reserved | 0 | not checked |
+| 9 | `0x0200` | `kFlagsHasPeripheralMask` | the header's last 8 bytes are the peripheral mask | always | read by `ReadTTDFileInfo`; the loader checks the blobs themselves |
+| 10..15 | | | reserved | 0 | not checked |
 
 The corpus files carry `flags = 0x0037`: bits 0, 1, 2, 4 and 5 (recorded before
 bits 6-8; no bookmarks). The port-journal fixtures
@@ -1562,7 +1563,7 @@ flowchart TD
 | 17 | external events: count cap, `reason_len <= 63`, time order | yes | `ReadExternalEventSection` |
 | 18 | port journals: block size, block count, per-block record count, compressed size cap, decompression to the exact size, CRC32C, records in time order, one cursor per checkpoint, cursors in order and within the journal | yes | `TTDPortJournal::Deserialize` |
 
-Not checked on load: reserved header bytes and flag bits 9..15; `session_state`;
+Not checked on load: the peripheral mask and flag bits 9..15; `session_state`;
 `frame_kind` values; checkpoint order; `keyframe_anchor`; `model_ram_pages`
 against the live model or `MAX_RAM_PAGES`; the slot CRCs; bookmark positions
 against the session end; trailing bytes after the last section.

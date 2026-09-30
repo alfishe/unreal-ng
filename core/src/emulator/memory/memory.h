@@ -64,14 +64,17 @@ struct MemoryInterface
     MemoryInterface() = delete;                        // Disable default constructor. C++ 11 feature
     MemoryInterface(const MemoryInterface&) = delete;  // Disable copy constructor. C++ 11 feature
 
-    MemoryInterface(MemoryReadCallback read, MemoryWriteCallback write)
+    /// readM1: the opcode fetch (Z80::rdM1); the plain read unless the interface does more on an M1 (ULA snow)
+    MemoryInterface(MemoryReadCallback read, MemoryWriteCallback write, MemoryReadCallback readM1 = nullptr)
     {
         MemoryRead = read;
         MemoryWrite = write;
+        MemoryReadM1 = readM1 ? readM1 : read;
     };
 
     MemoryReadCallback MemoryRead;
     MemoryWriteCallback MemoryWrite;
+    MemoryReadCallback MemoryReadM1;
 };
 
 /// endregion </Structures>
@@ -308,6 +311,12 @@ public:
     uint8_t MemoryReadContended(uint16_t addr, bool isExecution);
     template <MemoryWriteCallback Plain, bool Stats>
     void MemoryWriteContended(uint16_t addr, uint8_t value);
+
+    /// The opcode fetch of the contended interfaces: the read, then the refresh that follows it, which snows
+    /// on the Ferranti ULA while I points into slow memory (docs/inprogress/2026-09-29-ula-snow/tdd.md). Only
+    /// the contended interfaces carry it, so the machines without contention pay nothing
+    template <MemoryReadCallback Read>
+    uint8_t MemoryReadM1Snow(uint16_t addr, bool isExecution);
 
     /// The CPU and contention component the contended interfaces use (Core::Init)
     void SetContentionDependencies(Z80* cpu, UlaContention* ula)

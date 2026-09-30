@@ -121,6 +121,12 @@
         "ZXPOLY-PENTAGON) starts the bare ZX-Poly machine; combine it with `zxpoly` to load a file";
     paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
          ["ram_size"]["type"] = "integer";
+    paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["select"]["type"] = "boolean";
+    paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["select"]["description"] =
+        "Make the new machine the selected one (default true; the desktop front end then shows it). false keeps "
+        "the current selection - for scripted runs that create and remove machines next to the one on screen";
     {
         Json::Value& zxpoly = paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]
                                    ["schema"]["properties"]["zxpoly"];

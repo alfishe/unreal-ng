@@ -144,6 +144,19 @@ libspectrum reads from our file with the reference. See `szx/README.md`.
 
 ---
 
+### RZX expected states and checks
+
+Located in `rzx/`. `rzxplay-memptr.py` runs SkoolKit's `rzxplay.py` with its
+MEMPTR-exact simulator to make the expected states in `testdata/loaders/rzx/`
+and to check any recording; `rzxtrim.py` cuts recordings down to fixtures.
+`core-tests` plays folders of recordings against them (`UNREAL_RZX_CORPUS`,
+`UNREAL_RZX_FULL`). See `rzx/README.md`.
+
+*   **Usage:** `rzxplay-memptr.py --quiet --no-screen [--stop N] game.rzx game.z80`
+*   **Needs:** SkoolKit with its C extensions (`pip install skoolkit` in a venv).
+
+---
+
 ### Co-emulation harness
 
 `coemu/` runs one test program on every emulator it finds (unreal-ng, xpeccy-plus, and whatever else has a

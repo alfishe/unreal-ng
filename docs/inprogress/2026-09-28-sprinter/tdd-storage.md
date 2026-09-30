@@ -51,16 +51,37 @@ The generic `CF_SETDOSROM` / `CF_LEAVEDOS*` flags stay off for this model
 
 ### 2.3 Density and media
 
+The WD1793 side is **built** (commits `64756638`, `f304dde1`; model and worked examples in
+[WD1793_Clock_And_Data_Rate.md](../../WD1793/WD1793_Clock_And_Data_Rate.md)). The Sprinter only
+wires its latch to it in S3a.
+
 | Item | Design | Source |
 |---|---|---|
-| Density latch | codes `#16` (DD, 250 kbit/s) / `#17` (HD, 500 kbit/s) set `FdcDataRate`; reset = DD (ZXMAK2 resets to "720", `SprinterFdd.cs:318`) | HW §10 |
-| WD1793 clock | at HD the WD1793 runs at 2 MHz: step rates and settle times halve (MAME `beta_m.cpp:196-202`) | MAME |
-| Medium density | from the image: 18 sectors × 512 on a track = HD, ≤ 10 = DD, TR-DOS 16 × 256 = DD | geometry |
-| **Mismatch** | new WD1793 option `rateCheck` (off for every other model): when the drive's data rate differs from the medium's, the controller never sees an ID address mark, so READ ADDRESS / READ SECTOR end in Record Not Found after the WD1793's normal index count. This is what the BIOS density probe relies on (`FDD_DRIVER.asm:626-650`) | FR-21 |
+| Clock policy | the Sprinter decoder returns `FdcClockPolicy::Latched` from `PortDecoder::DefaultFdcClockPolicy()`: STEP and DRQ never change the clock, only the latch does; `[Beta128] TurboVG=` cannot override it | landed API |
+| Density latch | codes `#16` (DD) / `#17` (HD), i.e. `OUT (#BD),A` with A = `#01` / `#21` (A13 selects), call `WD1793::SetLatchedClock(FdcClock, FdcDataRate)`: DD = `Clock1MHz` + `Rate250Kbps`, HD = `Clock2MHz` + `Rate500Kbps`. Machine reset = DD (ZXMAK2 resets to "720", `SprinterFdd.cs:318`) | HW §10; PLD `SP2_MAX.TDF:272, 285, 396-402` |
+| WD1793 clock | at HD the chip runs at 2 MHz: step rates 3/6/10/15 ms, head settle 15 ms; the chip also writes (WRITE TRACK / WRITE SECTOR) at 500 kbit/s | datasheet p.6, p.19 |
+| Medium density | from each track's raw length (images have no density field): HD when the track is at least 1.5x the DD nominal, i.e. 9 375 MFM bytes or more; `LoaderRawPcFloppy` builds 1.44 MB images with 12 500-byte tracks (§2.4), 720 KB and TRD with 6 250 | `DiskImage::RawTrack::RecordedDataRate()` |
+| **Mismatch** | the data-rate check is **always on** in the WD1793, for every model (no option): a track at the other rate shows no address mark, so READ ADDRESS / READ SECTOR end in Record Not Found after the normal index count, verify in Seek Error. This is what the BIOS density probe relies on (`FDD_DRIVER.asm:626-650`). Other models are unaffected because their separator is 250 kbit/s and their disks are DD | FR-21 |
 | FDC off | value bit 1 = 1 on a density write disables the FDC ports (MAME `:730-733`); keep it, **unverified** in the PLD | MAME |
+| DD-mode turbo VG | in DD the PLD also runs the chip at 2 MHz while positioning (`TURBING` set by STEP, held until the read/write strobe). **Not modeled** in v1: `Latched` keeps 1 MHz in DD, so seeks take the standard time; the data is unaffected. A follow-up in [TODO.md](TODO.md) | PLD `SP2_MAX.TDF:272-306` |
 
-The unreal-ng WD1793 today derives byte timing from the raw track size and has no explicit rate
-(`wd1793.h:944-957`); `rateCheck` adds one comparison in the ID search, nothing else.
+Why the КР1818ВГ93 can do HD at all: the chip has no "HD mode", but its datasheet has two clocks,
+1 MHz for 5.25"/3.5" drives and 2 MHz for 8" drives. The 8" MFM rate is 500 kbit/s, the same bit
+rate as a 3.5" HD 1.44 MB disk. At 300 rpm that is 500 000 bit/s x 0.2 s = 12 500 raw bytes per
+track, room for 18 x 512-byte sectors; the chip does not know the rpm. The Sprinter doubles the
+clock **and** switches its separator from 7 MHz to 14 MHz, so reading and writing both run at
+500 kbit/s. Doubling only the clock (as "turbo VG" on other clones does) would not read HD disks
+and would ruin DD disks on write.
+
+Why the BIOS probe works: READ ADDRESS at the current rate; on Record Not Found the BIOS flips the
+latch and retries. A DD disk answers at DD, an HD disk at HD, and the emulated controller gives the
+same answers.
+
+CPU budget: an HD byte arrives every 16 µs. That is 56 T-states at 3.5 MHz, less than the 58 T of
+the fastest TR-DOS transfer loop (Lost Data on every sector), but **336 T at 21 MHz**, six times the
+need (and 112 T at 7 MHz, still enough). Check in S3a that the FDC timebase stays in
+real time when the CPU runs at 21 MHz (research open question 7,
+[DONE.md](../2026-09-29-fdc-clock-and-data-rate/DONE.md)).
 
 ### 2.4 Raw PC floppy images
 
@@ -73,7 +94,8 @@ the media format registry by size (storage technical design §4 already reserves
 | 1 474 560 | 80 × 2 × 18 × 512, IDs 1-18 | HD |
 
 MFM tracks are generated with standard PC gaps (GAP4a 80, GAP1 50, GAP2 22, GAP3 84 for DD / 108 for
-HD); a HD track fits the 12 500-byte raw track (`core/src/emulator/io/fdc/diskimage.h:362`). Save
+HD); a HD track fits the 12 500-byte raw track (`core/src/emulator/io/fdc/diskimage.h:362`) and
+is at the same time what marks it HD for the WD1793 (§2.3). Save
 writes the sectors back when the layout is still regular; otherwise Export offers UDI. The +3 and
 Profi raw formats (review round 2, G9 of the storage manager) share this loader.
 

@@ -67,6 +67,7 @@
 
 #define signals Q_SIGNALS
 #include "loaders/disk/loader_fdi.h"
+#include "loaders/rzx/rzxreader.h"
 #include "loaders/snapshot/szx/loaderszx.h"
 #include "tape/tapeimportaudiodialog.h"  // tape-audio-bridge §7.3
 #include "common/filehelper.h"
@@ -252,6 +253,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::openTapeRequested, this, &MainWindow::openTapeDialog);
     connect(_menuManager, &MenuManager::openDiskRequested, this, &MainWindow::openDiskDialog);
     connect(_menuManager, &MenuManager::importAudioTapeRequested, this, &MainWindow::handleImportAudioTapeRequested);
+    connect(_menuManager, &MenuManager::stopRzxRequested, this, &MainWindow::handleStopRzxRequested);
     connect(_menuManager, &MenuManager::saveSnapshotRequested, this, &MainWindow::saveFileDialog);
     connect(_menuManager, &MenuManager::saveSnapshotZ80Requested, this, &MainWindow::saveFileDialogZ80);
     connect(_menuManager, &MenuManager::saveDiskRequested, this, &MainWindow::saveDiskDialog);
@@ -1907,6 +1909,7 @@ void MainWindow::openSnapshotDialog()
                      buildFilterGroup(tr("SNA Snapshots"), {"sna"}) + ";;" +
                      buildFilterGroup(tr("Z80 Snapshots"), {"z80"}) + ";;" +
                      buildFilterGroup(tr("SZX Snapshots"), {"szx"}) + ";;" +
+                     buildFilterGroup(tr("RZX Recordings"), {"rzx"}) + ";;" +
                      tr("All Files (*)");
 
     QString filePath = QFileDialog::getOpenFileName(this, tr("Open Snapshot"), _lastDirectory, filter);
@@ -2134,6 +2137,14 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly)
         case FileSnapshot:
             if (_emulator && RefusedWhileRecording(this, *_emulator, ttd::TTDGuardedAction::LoadSnapshot))
                 break;
+            // An RZX recording plays on the machine its start snapshot names
+            if (_emulator && filePath.toLower().endsWith(".rzx"))
+            {
+                if (playRzxFile(file) && _statusBarManager)
+                    _statusBarManager->resetFpsMeasurement();
+                _lastFrameCount = 0;
+                break;
+            }
             // An SZX file names its machine: another model is replaced by that one
             // first (as the Machine menu does, media follow), the same one just loads
             if (_emulator && filePath.toLower().endsWith(".szx"))
@@ -3077,6 +3088,49 @@ void MainWindow::handleMachineModelChangeRequested(const QString& modelSpec)
 
     if (!switchMachineModel(modelName, ramSize))
         restoreMenu();
+}
+
+bool MainWindow::playRzxFile(const std::string& file)
+{
+    auto recording = std::make_shared<rzx::File>();
+    std::string error;
+    if (!RzxReader::ParseFile(file, *recording, error))
+    {
+        QMessageBox::warning(this, tr("Play RZX"), QString::fromStdString(error));
+        return false;
+    }
+
+    // The recording replays only on its own machine: switch first (media follow)
+    rzx::RzxSession::StartSnapshot start;
+    rzx::PlayResult resolve;
+    if (!rzx::RzxSession::ResolveStartSnapshot(*recording, file, {}, start, resolve))
+    {
+        QMessageBox::warning(this, tr("Play RZX"), QString::fromStdString(resolve.message));
+        return false;
+    }
+    const CONFIG& running = _emulator->GetContext()->config;
+    if (!rzx::MachineMatches(start.machine, running.mem_model, running.ramsize))
+    {
+        const TMemModel* target = Config::FindModelByEnum(start.machine.model);
+        qInfo() << "RZX recorded on" << QString::fromStdString(szx::DescribeModel(start.machine.model, start.machine.ramKb))
+                << "- replacing the running" << QString::fromStdString(szx::DescribeModel(running.mem_model, running.ramsize));
+        if (!target || !switchMachineModel(target->ShortName, start.machine.ramKb))
+            return false;
+    }
+
+    const rzx::PlayResult result = _emulator->PlayRzx(recording, file);
+    if (!result.Ok())
+    {
+        QMessageBox::warning(this, tr("Play RZX"), QString::fromStdString(result.message));
+        return false;
+    }
+    return true;
+}
+
+void MainWindow::handleStopRzxRequested()
+{
+    if (_emulator)
+        _emulator->StopRzx();
 }
 
 bool MainWindow::switchMachineModel(const std::string& modelName, uint32_t ramSize)

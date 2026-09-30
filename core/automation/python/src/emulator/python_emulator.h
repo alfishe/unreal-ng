@@ -6,6 +6,7 @@
 #include <emulator/emulator.h>
 #include <emulator/media/mediacontrol.h>
 #include <emulator/emulatormanager.h>
+#include <emulator/rzx/rzxlauncher.h>
 #include <emulator/memory/memory.h>
 #include <emulator/memory/memoryaccesstracker.h>
 #include <emulator/memory/memorymap.h>  // TD-3 sparse map + hexdump
@@ -34,6 +35,8 @@
 #include <debugger/keyboard/debugkeyboardmanager.h>
 #include <debugger/mouse/debugmousemanager.h>
 #include <debugger/ttd/timetravelmanager.h>
+#include <debugger/ttd/machinestatehash.h>
+#include <debugger/ttd/ttdfileinfo.h>
 #include <debugger/ttd/ttdprobe.h>
 #include <debugger/analyzers/audiocapture/audiocaptureanalyzer.h>
 #include <debugger/analyzers/aylog/ayloganalyzer.h>
@@ -68,6 +71,28 @@
 #include "../bindings/python_porttrace.h"
 
 namespace py = pybind11;
+
+
+/// The recorded machine of a TTD session / file as a dict (the same keys as the
+/// WebAPI: model_id, model, ram_page_bound, rom_signature, peripheral_mask,
+/// peripherals, general_sound, turbo_sound)
+inline py::dict TtdRecordedMachineDict(const ttd::TTDRecordedMachine& m)
+{
+    py::dict d;
+    d["model_id"] = py::cast(static_cast<unsigned>(m.modelId));
+    d["model"] = m.model.empty() ? py::object(py::none()) : py::object(py::cast(m.model));
+    d["ram_page_bound"] = py::cast(static_cast<unsigned>(m.ramPageBound));
+    d["rom_signature"] = m.romSignature == 0 ? py::object(py::none())
+                                             : py::object(py::cast("0x" + ttd::HashToString(m.romSignature)));
+    d["peripheral_mask"] = py::cast(m.peripheralMask);
+    py::list list;
+    for (const std::string& name : m.peripherals)
+        list.append(name);
+    d["peripherals"] = list;
+    d["general_sound"] = py::cast(std::string(ttd::GeneralSoundName(m.generalSound)));
+    d["turbo_sound"] = py::cast(m.turboSound);
+    return d;
+}
 
 /// @brief Python bindings for Emulator class and related functionality
 /// Provides comprehensive emulator control matching CLI and WebAPI interfaces
@@ -126,6 +151,55 @@ inline pybind11::object MediaCallPy(Emulator& self, const std::string& verb, con
     }
     return StateNodeToPy(MediaControl(self.GetContext()).Execute(request).ToValue());
 }
+
+/// RZX playback helpers for the bindings below
+namespace python_rzx
+{
+    /// The RZX playback status as a dict (the WebAPI rzx/status fields)
+    inline pybind11::dict StatusDict(const rzx::SessionStatus& status)
+    {
+        pybind11::dict d;
+        d["loaded"] = status.loaded;
+        d["active"] = status.active;
+        d["summary"] = rzx::RzxLauncher::StatusLine(status);
+        if (!status.loaded)
+            return d;
+        const rzx::PlayerStatus& player = status.player;
+        d["path"] = status.path;
+        d["creator"] = status.creator;
+        d["version"] = status.version;
+        d["snapshot"] = status.snapshot;
+        d["state"] = std::string(rzx::StateName(player.state));
+        d["frame"] = player.frame;
+        d["total_frames"] = player.totalFrames;
+        d["block"] = player.block + 1;
+        d["blocks"] = player.blocks;
+        d["interrupts"] = player.interrupts;
+        d["desyncs"] = player.desyncs;
+        d["drift"] = player.drift;
+        d["max_drift"] = player.maxDrift;
+        d["keyframes"] = player.keyframes;
+        d["keyframe_bytes"] = player.keyframeBytes;
+        d["keyframe_interval"] = player.keyframeInterval;
+        d["reason"] = player.stopReason;
+        if (player.desyncs > 0)
+        {
+            pybind11::dict first;
+            first["kind"] = std::string(rzx::DesyncName(player.firstDesync.kind));
+            first["frame"] = player.firstDesync.frame;
+            first["expected"] = player.firstDesync.expected;
+            first["actual"] = player.firstDesync.actual;
+            first["pc"] = player.firstDesync.pc;
+            d["first_desync"] = first;
+        }
+        return d;
+    }
+
+    inline std::string ResolveId(const std::string& id)
+    {
+        return id.empty() ? EmulatorManager::GetInstance()->GetSelectedEmulatorId() : id;
+    }
+}  // namespace python_rzx
 
 namespace PythonBindings
 {
@@ -330,6 +404,60 @@ namespace PythonBindings
             auto emu = mgr->GetEmulator(selectedId);
             return emu.get();
         }, py::return_value_policy::reference, "Get currently selected emulator");
+
+        // RZX input recordings, by emulator id (default: the selected one). A
+        // model switch replaces the machine: the answer's emulator_id is the new one
+        m.def("rzx_play", [](const std::string& path, const std::string& emulatorId, const std::string& desyncMode,
+                             bool eiShortFrame, bool ldAirQuirk, bool ignoreLaterSnapshots, bool switchModel) -> py::dict {
+            rzx::LaunchRequest request;
+            request.emulatorId = python_rzx::ResolveId(emulatorId);
+            request.path = path;
+            if (!rzx::RzxLauncher::ParseDesyncMode(desyncMode, request.options.desyncMode))
+                throw std::invalid_argument("desync_mode '" + desyncMode + "': expected strict or tolerant");
+            request.options.eiShortFrameBlocksInt = eiShortFrame;
+            request.options.ldAirParityQuirk = ldAirQuirk;
+            request.options.ignoreLaterSnapshots = ignoreLaterSnapshots;
+            request.switchModel = switchModel;
+            const rzx::LaunchResult result = rzx::RzxLauncher::Play(request);
+            py::dict d;
+            d["ok"] = result.play.Ok();
+            d["error"] = std::string(rzx::PlayErrorName(result.play.error));
+            d["message"] = result.play.message;
+            d["emulator_id"] = result.emulator ? result.emulator->GetId() : std::string();
+            d["model_switched"] = result.modelSwitched;
+            d["previous_emulator_id"] = result.previousEmulatorId;
+            d["required_model"] = result.play.requiredModel;
+            d["model"] = result.switchedToModel;
+            if (result.emulator)
+                d["status"] = python_rzx::StatusDict(result.emulator->GetRzxStatus());
+            return d;
+        }, "Play an RZX recording; switches to the recording's model unless switch_model is False",
+           py::arg("path"), py::arg("emulator_id") = "", py::arg("desync_mode") = "strict",
+           py::arg("ei_short_frame_blocks_int") = false, py::arg("ld_air_parity_quirk") = false,
+           py::arg("ignore_later_snapshots") = false, py::arg("switch_model") = true);
+
+        m.def("rzx_stop", [](const std::string& emulatorId) -> bool {
+            auto emulator = EmulatorManager::GetInstance()->GetEmulator(python_rzx::ResolveId(emulatorId));
+            return emulator && emulator->StopRzx();
+        }, "Stop RZX playback; the machine runs live", py::arg("emulator_id") = "");
+
+        m.def("rzx_seek", [](uint64_t frame, const std::string& emulatorId) -> bool {
+            auto emulator = EmulatorManager::GetInstance()->GetEmulator(python_rzx::ResolveId(emulatorId));
+            if (!emulator)
+                throw std::invalid_argument("no emulator '" + emulatorId + "'");
+            std::string error;
+            if (!emulator->SeekRzx(frame, &error))
+                throw std::runtime_error(error);
+            return true;
+        }, "Move the RZX playback to the boundary after `frame` frames (RuntimeError with the reason)",
+           py::arg("frame"), py::arg("emulator_id") = "");
+
+        m.def("rzx_status", [](const std::string& emulatorId) -> py::dict {
+            auto emulator = EmulatorManager::GetInstance()->GetEmulator(python_rzx::ResolveId(emulatorId));
+            if (!emulator)
+                throw std::invalid_argument("no emulator '" + emulatorId + "'");
+            return python_rzx::StatusDict(emulator->GetRzxStatus());
+        }, "RZX playback status (frame, progress, desyncs, drift)", py::arg("emulator_id") = "");
 
         m.def("emu_select", [](const std::string& id) -> bool {
             auto* mgr = EmulatorManager::GetInstance();
@@ -1094,6 +1222,10 @@ namespace PythonBindings
                 return self.LoadSnapshot(path);
             }, "Load snapshot file (RuntimeError while TTD records)", py::arg("path"))
             .def("snapshot_save", &Emulator::SaveSnapshot, "Save snapshot file", py::arg("path"))
+            // RZX playback on this machine (unreal.rzx_play plays, switching the model when needed)
+            .def("rzx_stop", [](Emulator& self) { return self.StopRzx(); }, "Stop RZX playback")
+            .def("rzx_status", [](Emulator& self) { return python_rzx::StatusDict(self.GetRzxStatus()); },
+                 "RZX playback status")
             
             // Breakpoint management
             .def("bp", [](Emulator& self, uint16_t addr) -> int {
@@ -2603,9 +2735,54 @@ namespace PythonBindings
                                                                              : py::object(py::cast(si.lastDropReason));
                 info["unavailable_reason"]       = si.unavailableReason.empty() ? py::object(py::none())
                                                                                 : py::object(py::cast(si.unavailableReason));
+                // The recorded machine (None while there is no session) and, for a
+                // loaded file, the instance that recorded it
+                info["machine"] = si.checkpointCount != 0 ? py::object(TtdRecordedMachineDict(si.machine))
+                                                          : py::object(py::none());
+                info["recorded_by"] = si.recordedBy.empty() ? py::object(py::none())
+                                                            : py::object(py::cast(si.recordedBy));
                 info["ttd_available"]            = true;
                 return info;
             }, "Get TTD session status")
+            .def("ttd_file_info", [](Emulator& /*self*/, const std::string& path) -> py::dict {
+                py::dict r;
+                ttd::TTDFileInfo fi;
+                std::string err;
+                if (!ttd::ReadTTDFileInfo(path, fi, err))
+                {
+                    r["ok"] = false;
+                    r["path"] = path;
+                    r["error"] = err;
+                    return r;
+                }
+                r["ok"] = true;
+                r["path"] = fi.path;
+                r["file_bytes"] = py::cast(fi.fileBytes);
+                r["schema_version"] = py::cast(static_cast<unsigned>(fi.schemaVersion));
+                r["flags"] = py::cast(static_cast<unsigned>(fi.flags));
+                r["captured_at_unix_ms"] = py::cast(fi.capturedAtUnixMs);
+                r["recorded_by"] = fi.emulatorId.empty() ? py::object(py::none()) : py::object(py::cast(fi.emulatorId));
+                r["session_state"] = py::cast(std::string(
+                    ttd::TTDSessionStateToString(static_cast<ttd::TTDSessionState>(fi.sessionState))));
+                r["session_start_frame"] = py::cast(fi.startFrame);
+                r["session_end_frame"] = py::cast(fi.endFrame);
+                r["checkpoint_count"] = py::cast(static_cast<uint64_t>(fi.checkpointCount));
+                r["page_slot_count"] = py::cast(static_cast<uint64_t>(fi.pageStoreCount));
+                py::dict sections;
+                sections["write_journal"] = py::cast(fi.hasWriteJournal);
+                sections["write_journal_complete"] = py::cast(fi.writeJournalComplete);
+                sections["coverage_index"] = py::cast(fi.hasCoverageIndex);
+                sections["bookmarks"] = py::cast(fi.hasBookmarks);
+                sections["input_journal"] = py::cast(fi.hasInputJournal);
+                sections["external_events"] = py::cast(fi.hasExternalEvents);
+                sections["port_journals"] = py::cast(fi.hasPortJournals);
+                sections["top_clock_time"] = py::cast(fi.topClockTime);
+                r["sections"] = sections;
+                r["machine"] = TtdRecordedMachineDict(fi.machine);
+                r["peripherals_from_header"] = py::cast(fi.peripheralsFromHeader);
+                return r;
+            }, "Describe a .ttd file without loading it: header, sections and the recorded machine "
+               "(model, ROM signature, General Sound card, devices)", py::arg("path"))
 
             // mode: "development" (write journal on) or "gaming" (off); an explicit
             // enable_write_journal wins over mode; with neither, the choice made

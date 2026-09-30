@@ -441,6 +441,14 @@
     schemas["TTDStatusResponse"]["properties"]["model_id"]["description"] =
             "eModel value the session belongs to. A session refuses to load into "
             "a different model.";
+    schemas["TTDStatusResponse"]["properties"]["machine"]["$ref"] = "#/components/schemas/TTDRecordedMachine";
+    schemas["TTDStatusResponse"]["properties"]["machine"]["nullable"] = true;
+    schemas["TTDStatusResponse"]["properties"]["machine"]["description"] =
+            "The machine the session was recorded on (null while there is no session)";
+    schemas["TTDStatusResponse"]["properties"]["recorded_by"]["type"] = "string";
+    schemas["TTDStatusResponse"]["properties"]["recorded_by"]["nullable"] = true;
+    schemas["TTDStatusResponse"]["properties"]["recorded_by"]["description"] =
+            "Symbolic id of the instance that recorded a loaded file (null for a live recording)";
     schemas["TTDStatusResponse"]["properties"]["model_ram_pages"]["type"] = "integer";
     schemas["TTDStatusResponse"]["properties"]["model_ram_pages"]["description"] =
             "Exclusive RAM page-index bound for the model. A BOUND, not a page "

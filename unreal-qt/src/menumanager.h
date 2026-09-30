@@ -89,6 +89,7 @@ signals:
     void openDiskRequested();
     void openZXPolyRequested();  // ZX-Poly: four synchronized instances (.zxp / multiloader disk)
     void importAudioTapeRequested();  // tape-audio-bridge §7.3: WAV/FLAC/MP3 → .tzx/.tap
+    void stopRzxRequested();          // stop RZX playback, the machine runs live
     void saveSnapshotRequested();
     void saveSnapshotZ80Requested();
     
@@ -189,6 +190,7 @@ private:
     QAction* _openDiskAction;
     QAction* _openZXPolyAction;
     QAction* _importAudioTapeAction;
+    QAction* _stopRzxAction = nullptr;  ///< enabled while an RZX recording plays
     QMenu* _saveSnapshotMenu;
     QAction* _saveSnapshotSNAAction;
     QAction* _saveSnapshotZ80Action;

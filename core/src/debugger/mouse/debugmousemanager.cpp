@@ -34,7 +34,9 @@ Mouse* DebugMouseManager::Device() const
 bool DebugMouseManager::IsReplaying() const
 {
     // The TTD journal owns input: a replay, or the machine re-executing
-    // recorded history (TimeTravelManager::OwnsInput)
+    // recorded history (TimeTravelManager::OwnsInput), or an RZX playback
+    if (_context && _context->rzxPlayer)
+        return true;
     return _context && _context->pTimeTravelManager && _context->pTimeTravelManager->OwnsInput();
 }
 

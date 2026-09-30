@@ -686,6 +686,26 @@ local status = profilers_status_all()
 -- status.calltrace.entry_count = 450
 ```
 
+### RZX Playback
+
+Play RZX input recordings: the start snapshot loads, then every `IN` returns the recorded value and the interrupts follow the recording until its end, a desync (strict mode) or `rzx_stop()`; the machine then runs live. Terms and conventions: [command-interface.md §12](./command-interface.md#12-rzx-playback).
+
+| Function | Returns | Description |
+| :--- | :--- | :--- |
+| `rzx_play(path [, options])` | table `{ok, error, message, emulator_id, model_switched, model, required_model, summary}` | Play a recording. `options`: `desync_mode` (`"strict"` / `"tolerant"`), `ei_short_frame_blocks_int`, `ld_air_parity_quirk`, `ignore_later_snapshots`, `switch_model` (default `true`). The model switches only when the interpreter follows the selected machine; an interpreter bound to one machine gets `error = "model_mismatch"` and `required_model` instead (its machine is never replaced under it). |
+| `rzx_seek(frame)` | `ok, reason` | Move to the boundary after `frame` frames (back through keyframes, forward by playing on). |
+| `rzx_stop()` | boolean | Stop playing; `false` when nothing played. |
+| `rzx_status()` | table | `loaded`, `active`, `summary`, `path`, `creator`, `state` (`playing` / `finished` / `desynced` / `stopped`), `frame`, `total_frames`, `block`, `blocks`, `interrupts`, `desyncs`, `drift`, `max_drift`, `keyframes`, `keyframe_bytes`, `reason`, `first_desync` `{kind, frame, expected, actual, pc}`. |
+
+`snapshot_load("game.rzx")` plays a recording on the machine as it is.
+
+```lua
+local r = rzx_play("games/ericfloaters.rzx", {desync_mode = "tolerant"})
+if not r.ok then print(r.message) end
+run_frames(500)
+print(rzx_status().summary)   -- playing frame 500 / 32315 (1.5%), block 1 / 1, 0 desyncs
+```
+
 ### Time-Travel Debugging
 
 The TTD functions are **global functions** (like the mouse functions), not methods on the emulator object. They act on the bound emulator, or on the selected one when the script is not bound to an instance. Bindings: `core/automation/lua/src/emulator/lua_emulator.h`. Command semantics and background: [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd).
@@ -726,6 +746,11 @@ local status = ttd_status()
 -- Machine
 -- status.model_id              = 0
 -- status.model_ram_pages       = 8    -- BOUND, not a count (48K reports 6)
+-- status.machine               = { model = "PENTAGON", model_id, ram_page_bound, rom_signature = "0x...",
+--                                  peripheral_mask, peripherals = { "betadisk", ... },
+--                                  general_sound = "none"|"z80"|"lw"|"ngs", turbo_sound = "none"|"turbosound"|"tsfm" }
+--                                  -- the recorded machine; nil while there is no session
+-- status.recorded_by           = "emu-..."  -- the instance that recorded a loaded file; nil for a live one
 --
 -- Timeline
 -- status.session_start_frame   = 98
@@ -883,6 +908,16 @@ ttd_load("/tmp/session.ttd")
 -- --> { ok = true, checkpoint_count, session_start_frame, current_end_frame }
 --     or { ok = false, error = "..." }  (e.g. recorded on a different model: both model ids named)
 -- After a load the session is idle: use ttd_seek to position the emulator.
+
+ttd_file_info("/tmp/session.ttd")
+-- A .ttd file read without loading it (headers only, no emulator needed):
+-- --> { ok = true, path, file_bytes, schema_version, flags, captured_at_unix_ms, recorded_by,
+--       session_state, session_start_frame, session_end_frame, checkpoint_count, page_slot_count,
+--       sections = { write_journal, coverage_index, input_journal, port_journals, ... },
+--       machine = { model, general_sound, turbo_sound, peripherals, rom_signature, ... },
+--       peripherals_from_header }
+--     or { ok = false, path, error = "..." }
+-- Provision the machine it needs first: its model, its General Sound card (machine.general_sound).
 ```
 
 **Coverage index queries:**

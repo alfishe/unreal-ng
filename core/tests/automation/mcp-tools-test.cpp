@@ -443,6 +443,19 @@ TEST_F(McpTools_Test, LoadSoftware_Snapshot_PostsSnapshotLoadWithPath)
               "/games/harrier.sna");
 }
 
+TEST_F(McpTools_Test, LoadSoftware_Rzx_PostsRzxPlay)
+{
+    Json::Value args;
+    args["path"] = "/nonexistent/game.rzx";
+    mcp::ToolResult result = RunTool(*_registry, "load_software", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/rzx/play");
+    ASSERT_NE(call, nullptr) << "an .rzx plays through rzx/play, which switches the model when needed";
+    EXPECT_EQ(call->body["path"].asString(), "/nonexistent/game.rzx");
+    EXPECT_FALSE(_caller->Saw("POST", "/api/v1/emulator/emu-1/snapshot/load"));
+}
+
 TEST_F(McpTools_Test, LoadSoftware_TapeWithPlay_LoadsThenPlays)
 {
     _caller->routes["POST /api/v1/emulator/emu-1/tape/load"] = {200, Json::Value(Json::objectValue)};
@@ -1660,6 +1673,79 @@ TEST_F(McpTools_Test, TimeTravel_DumpAndLoad_PostPath)
     EXPECT_EQ(call->body["path"].asString(), "/tmp/s.ttd");
 }
 
+TEST_F(McpTools_Test, TimeTravel_FileInfo_GetsWithoutATargetAndSummarizesTheMachine)
+{
+    Json::Value info;
+    info["ok"] = true;
+    info["path"] = "/tmp/s.ttd";
+    info["file_bytes"] = 8192;
+    info["session_start_frame"] = 25;
+    info["session_end_frame"] = 16595;
+    info["checkpoint_count"] = 16571;
+    info["recorded_by"] = "emu-7";
+    info["machine"]["model"] = "PENTAGON";
+    info["machine"]["model_id"] = 1;
+    info["machine"]["general_sound"] = "z80";
+    info["machine"]["turbo_sound"] = "turbosound";
+    info["machine"]["peripherals"].append("betadisk");
+    info["machine"]["peripherals"].append("gs");
+    _caller->routes["GET /api/v1/ttd/file-info?path=%2Ftmp%2Fs.ttd"] = {200, info};
+
+    Json::Value args;
+    args["action"] = "file_info";
+    args["path"] = "/tmp/s.ttd";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    // A file, not a session: the only call is the file-info GET (no target resolution)
+    ASSERT_EQ(_caller->calls.size(), 1u);
+    EXPECT_EQ(_caller->calls[0].path, "/api/v1/ttd/file-info?path=%2Ftmp%2Fs.ttd");
+    EXPECT_NE(result.text.find("on PENTAGON, General Sound z80, TurboSound turbosound"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("frames 25..16595"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("devices: betadisk gs"), std::string::npos) << result.text;
+    EXPECT_EQ(result.structured["machine"]["general_sound"].asString(), "z80");
+}
+
+TEST_F(McpTools_Test, TimeTravel_FileInfo_WithoutPathOrUnreadable)
+{
+    Json::Value args;
+    args["action"] = "file_info";
+    mcp::ToolResult missing = RunTool(*_registry, "time_travel", args, *_caller);
+    EXPECT_TRUE(missing.isError);
+    EXPECT_TRUE(_caller->calls.empty());
+
+    Json::Value refused;
+    refused["ok"] = false;
+    refused["path"] = "/tmp/x.bin";
+    refused["error"] = "not a .ttd file (bad magic)";
+    _caller->routes["GET /api/v1/ttd/file-info?path=%2Ftmp%2Fx.bin"] = {400, refused};
+    args["path"] = "/tmp/x.bin";
+    mcp::ToolResult bad = RunTool(*_registry, "time_travel", args, *_caller);
+    EXPECT_TRUE(bad.isError);
+    EXPECT_NE(bad.text.find("bad magic"), std::string::npos) << bad.text;
+}
+
+TEST_F(McpTools_Test, TimeTravel_Status_NamesTheRecordedMachine)
+{
+    Json::Value status;
+    status["ttd_available"] = true;
+    status["state"] = "detached";
+    status["session_start_frame"] = 25;
+    status["current_end_frame"] = 99;
+    status["checkpoint_count"] = 75;
+    status["machine"]["model"] = "ATM710";
+    status["machine"]["model_id"] = 9;
+    status["machine"]["general_sound"] = "ngs";
+    status["machine"]["turbo_sound"] = "none";
+    _caller->routes["GET /api/v1/emulator/emu-1/ttd/status"] = {200, status};
+
+    Json::Value args;
+    args["action"] = "status";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("recorded on ATM710, General Sound ngs"), std::string::npos) << result.text;
+}
+
 TEST_F(McpTools_Test, TimeTravel_DumpFailure_IsError)
 {
     // The dump route answers 200 with ok:false when serialization fails
@@ -1860,4 +1946,140 @@ TEST_F(McpTools_Test, InspectState_VideoAspects_FetchLayoutAndText)
     EXPECT_NE(result.text.find("atm16 320x200, lines 68+200, T 8+160 at 2 dots/T"), std::string::npos) << result.text;
     EXPECT_NE(result.text.find("[video_text] atmtx 80x25"), std::string::npos) << result.text;
     EXPECT_NE(result.text.find("\n  HELLO"), std::string::npos) << result.text;
+}
+
+// transfer_state: the resolved target is the source; 'to' or 'model' picks the destination
+TEST_F(McpTools_Test, EmulatorManage_TransferState_PostsToOrModel)
+{
+    Json::Value report;
+    report["ok"] = true;
+    report["target_id"] = "emu-2";
+    report["summary"] = "clone: 12 copied";
+    _caller->routes["POST /api/v1/emulator/emu-1/snapshot/transfer"] = {200, report};
+
+    Json::Value args;
+    args["action"] = "transfer_state";
+    args["to"] = "emu-2";
+    args["check"] = true;
+    mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    const auto* call = _caller->Last("POST", "/api/v1/emulator/emu-1/snapshot/transfer");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["to"].asString(), "emu-2");
+    EXPECT_TRUE(call->body["check"].asBool());
+    EXPECT_FALSE(call->body.isMember("model"));
+    EXPECT_NE(result.text.find("12 copied"), std::string::npos) << result.text;
+
+    Json::Value create;
+    create["action"] = "transfer_state";
+    create["model"] = "PENTAGON";
+    create["ram_size"] = 512;
+    RunTool(*_registry, "emulator_manage", create, *_caller);
+    const auto* call2 = _caller->Last("POST", "/api/v1/emulator/emu-1/snapshot/transfer");
+    ASSERT_NE(call2, nullptr);
+    EXPECT_EQ(call2->body["model"].asString(), "PENTAGON");
+    EXPECT_EQ(call2->body["ram_size"].asUInt(), 512u);
+    EXPECT_FALSE(call2->body.isMember("to"));
+}
+
+TEST_F(McpTools_Test, EmulatorManage_TransferState_NeedsExactlyOneDestination)
+{
+    Json::Value args;
+    args["action"] = "transfer_state";
+    EXPECT_TRUE(RunTool(*_registry, "emulator_manage", args, *_caller).isError);
+
+    args["to"] = "emu-2";
+    args["model"] = "48K";
+    EXPECT_TRUE(RunTool(*_registry, "emulator_manage", args, *_caller).isError);
+    EXPECT_FALSE(_caller->Saw("POST", "/api/v1/emulator/emu-1/snapshot/transfer"));
+}
+
+// A refusal (422) surfaces the report's per-item reasons, not just the status
+TEST_F(McpTools_Test, EmulatorManage_TransferState_RefusalSurfacesReport)
+{
+    Json::Value report;
+    report["ok"] = false;
+    report["reason"] = "the target lacks RAM page 9";
+    report["summary"] = "refused: the target lacks RAM page 9";
+    _caller->routes["POST /api/v1/emulator/emu-1/snapshot/transfer"] = {422, report};
+
+    Json::Value args;
+    args["action"] = "transfer_state";
+    args["to"] = "emu-2";
+    mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
+    EXPECT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("page 9"), std::string::npos) << result.text;
+}
+
+// ===========================================================================
+// rzx_playback
+// ===========================================================================
+
+TEST_F(McpTools_Test, RzxPlayback_Play_PostsPathAndOptions)
+{
+    Json::Value args;
+    args["action"] = "play";
+    args["path"] = "/nonexistent/eric.rzx";
+    args["desync_mode"] = "tolerant";
+    args["switch_model"] = false;
+    mcp::ToolResult result = RunTool(*_registry, "rzx_playback", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/rzx/play");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["path"].asString(), "/nonexistent/eric.rzx");
+    EXPECT_EQ(call->body["desync_mode"].asString(), "tolerant");
+    EXPECT_FALSE(call->body["switch_model"].asBool());
+    EXPECT_FALSE(call->body.isMember("ld_air_parity_quirk"));
+}
+
+TEST_F(McpTools_Test, RzxPlayback_Status_ReportsTheSummary)
+{
+    Json::Value status;
+    status["loaded"] = true;
+    status["summary"] = "playing frame 1200 / 32315 (3.7%), block 1 / 1, 0 desyncs";
+    _caller->routes["GET /api/v1/emulator/emu-1/rzx/status"] = {200, status};
+
+    Json::Value args;
+    args["action"] = "status";
+    mcp::ToolResult result = RunTool(*_registry, "rzx_playback", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("frame 1200 / 32315"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, RzxPlayback_StopAndBadInput)
+{
+    Json::Value stop;
+    stop["action"] = "stop";
+    EXPECT_FALSE(RunTool(*_registry, "rzx_playback", stop, *_caller).isError);
+    EXPECT_TRUE(_caller->Saw("POST", "/api/v1/emulator/emu-1/rzx/stop"));
+
+    _caller->calls.clear();
+    Json::Value noPath;
+    noPath["action"] = "play";
+    EXPECT_TRUE(RunTool(*_registry, "rzx_playback", noPath, *_caller).isError);
+    Json::Value badMode;
+    badMode["action"] = "play";
+    badMode["path"] = "x.rzx";
+    badMode["desync_mode"] = "loose";
+    EXPECT_TRUE(RunTool(*_registry, "rzx_playback", badMode, *_caller).isError);
+    EXPECT_TRUE(_caller->calls.empty()) << "rejected before any HTTP traffic";
+}
+
+TEST_F(McpTools_Test, RzxPlayback_Seek_PostsFrame)
+{
+    Json::Value args;
+    args["action"] = "seek";
+    args["frame"] = 1200;
+    ASSERT_FALSE(RunTool(*_registry, "rzx_playback", args, *_caller).isError);
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/rzx/seek");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["frame"].asInt(), 1200);
+
+    _caller->calls.clear();
+    Json::Value noFrame;
+    noFrame["action"] = "seek";
+    EXPECT_TRUE(RunTool(*_registry, "rzx_playback", noFrame, *_caller).isError);
+    EXPECT_TRUE(_caller->calls.empty());
 }

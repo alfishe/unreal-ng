@@ -1294,7 +1294,65 @@ POST /api/v1/emulator/{id}/disk/{drive}/eject   ✅ Implemented
 ```
 POST /api/v1/emulator/{id}/snapshot/save  ✅ Implemented
 POST /api/v1/emulator/{id}/snapshot/load  ✅ Implemented
+POST /api/v1/emulator/{id}/snapshot/transfer  ✅ Implemented — in-memory state transfer, see [automation.md](../../../features/automation.md#machine-state-transfer)
 ```
+
+### RZX Playback
+
+Play RZX input recordings: the start snapshot loads, then every `IN` returns the recorded value and the interrupts follow the recorded fetch counts until the end, a desync (strict mode) or `rzx/stop`. The machine then runs live. Terms and conventions: [command-interface.md §12](./command-interface.md#12-rzx-playback).
+
+```
+POST /api/v1/emulator/{id}/rzx/play    ✅ Implemented
+POST /api/v1/emulator/{id}/rzx/stop    ✅ Implemented
+POST /api/v1/emulator/{id}/rzx/seek    ✅ Implemented   {"frame": 5000}
+GET  /api/v1/emulator/{id}/rzx/status  ✅ Implemented
+```
+
+**`rzx/seek`** moves to the boundary after `frame` frames: back through the nearest keyframe, forward by playing on (see [command-interface.md §12](./command-interface.md#12-rzx-playback)); the answer carries `rzx` and `summary`, a refusal is 409 with the reason. The status reports `keyframes`, `keyframe_bytes` and `keyframe_interval`.
+
+**`rzx/play`** takes a JSON body, a multipart upload (`file`) or the raw file with `X-Filename` (then the options go as query parameters, e.g. `?desync_mode=tolerant`):
+
+```json
+{
+  "path": "/games/greenberet.rzx",
+  "desync_mode": "strict",
+  "ei_short_frame_blocks_int": false,
+  "ld_air_parity_quirk": false,
+  "ignore_later_snapshots": false,
+  "switch_model": true
+}
+```
+
+A recording made on another model switches the model first (a new emulator, media kept). The answer names the machine that plays:
+
+```json
+{
+  "status": "success",
+  "emulator_id": "5fe49448-...",
+  "model_switched": true,
+  "model": "128k",
+  "previous_emulator_id": "39bc75c8-...",
+  "rzx": {"state": "playing", "frame": 0, "total_frames": 39041, "creator": "Spectaculator 62.552", "...": "..."}
+}
+```
+
+With `"switch_model": false` a mismatch answers 409 with `"error": "model_mismatch"`, `required_model` and `required_ram_kb`. Other refusals (400): `bad_file`, `no_snapshot`, `unsupported_machine`, `snapshot_load_failed`.
+
+**`rzx/status`**:
+
+```json
+{
+  "loaded": true, "active": true, "state": "playing",
+  "path": "/games/greenberet.rzx", "creator": "Spectaculator 62.552", "version": "0.12",
+  "snapshot": "Z80 v2, hardware 3",
+  "frame": 896, "total_frames": 39041, "progress": 0.023, "block": 1, "blocks": 1,
+  "interrupts": 896, "desyncs": 0, "drift": -48, "max_drift": -2045,
+  "options": {"desync_mode": "strict", "ei_short_frame_blocks_int": false, "ld_air_parity_quirk": false, "ignore_later_snapshots": false},
+  "summary": "playing frame 896 / 39041 (2.3%), block 1 / 1, 0 desyncs"
+}
+```
+
+After a desync: `"state": "desynced"`, `reason`, and `first_desync` `{kind: too_many_ins | too_few_ins | fetch_overrun, frame, block, expected, actual, pc, port}`. `snapshot/load` with an `.rzx` path plays it on the machine as it is (no model switch).
 
 ### Time-Travel Debugging
 
@@ -1332,6 +1390,7 @@ Positions are always a pair `frame` (absolute frame number) + `tinframe` (offset
 | `DELETE` | `/ttd/bookmarks/{label}` | — | `removed`, `label`; 404 for an unknown label | ✅ Implemented |
 | `POST` | `/ttd/dump` | `{"path": "..."}` | `ok`; on success `path`, `bytes`; on failure `error`. 400 without `path`, 500 if the file cannot be opened. | ✅ Implemented |
 | `POST` | `/ttd/load` | `{"path": "..."}` | `ok`, `path`, `checkpoint_count`, `session_start_frame`, `current_end_frame`, `state` (`idle`). 400 without `path` or when the file is refused (`ok: false`, `error` — e.g. a model mismatch naming both model ids); 404 if the file cannot be opened. | ✅ Implemented |
+| `GET` | `/api/v1/ttd/file-info` (no `{id}`) | `?path=<file.ttd>` | A `.ttd` file read without loading it: `ok`, `path`, `file_bytes`, `schema_version`, `flags`, `captured_at_unix_ms`, `recorded_by`, `session_state`, `session_start_frame`, `session_end_frame`, `checkpoint_count`, `page_slot_count`, `sections{...}`, `machine{model_id, model, ram_page_bound, rom_signature, peripheral_mask, peripherals, general_sound, turbo_sound}`, `peripherals_from_header`. 400 without `path` or for a file that is no readable `.ttd` (`ok: false`, `error`); 404 if it cannot be opened. Keys: [command-interface.md → Reading a file before loading it](./command-interface.md). | ✅ Implemented |
 | `GET`  | `/ttd/coverage/probe` | `?frame=N&kind=executed\|written\|read&addr_from=A1&addr_to=A2&phys_page=P` | `frame`, `kind`, `addr_from`, `addr_to` (as `"0x%04X"` strings), `phys_page` (if given), `touched`, `index_available`. Frames outside the covered window return `index_available: false, touched: false`. 400 for missing `frame`, invalid `kind`, `addr_from > addr_to`, `phys_page > 255` or non-numeric values. | ✅ Implemented |
 | `GET`  | `/ttd/coverage/scan` | `?from_frame=F1&to_frame=F2&kind=…&addr_from=A1&addr_to=A2&phys_page=P&limit=L` (default limit 200) | `kind`, `addr_from`, `addr_to`, `phys_page`, `frames[]`, `first_match`, `last_match`, `matching_frames`, `scanned_frames`, `truncated`, `index_available`, and `covered_from`/`covered_to` when the index is available. Same 400 validation as probe (plus `limit >= 1`). | ✅ Implemented |
 | `GET`  | `/ttd/coverage/summary` | `?from_frame=F1&to_frame=F2&kind=K&bucket_size=B&limit=L` (default limit 100; `bucket_size=0` = automatic) | `from_frame`, `to_frame`, `bucket_size`, `bucket_count`, `buckets[] {frame_start, frame_end, executed_distinct, written_distinct, read_distinct, has_keyframe}`, `index_available`, and `covered_from`/`covered_to` when available | ✅ Implemented |
@@ -1358,6 +1417,10 @@ There are no `/ttd/clear`, `/ttd/timeline`, `/ttd/step` or `/ttd/resume_from_her
   "captured_at_unix_ms": 0,
   "model_id": 0,
   "model_ram_pages": 8,
+  "machine": {"model_id": 1, "model": "PENTAGON", "ram_page_bound": 8, "rom_signature": "0x...",
+              "peripheral_mask": 142, "peripherals": ["tape", "betadisk", "turbosound", "kempston-mouse"],
+              "general_sound": "none", "turbo_sound": "turbosound"},
+  "recorded_by": null,
   "write_journal_enabled": true,
   "write_journal_complete": false,
   "write_journal_wrapped": false,

@@ -114,6 +114,13 @@ public:
     ADD_METHOD_TO(EmulatorAPI::loadSnapshot, "/api/v1/emulator/{id}/snapshot/load", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::saveSnapshot, "/api/v1/emulator/{id}/snapshot/save", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getSnapshotInfo, "/api/v1/emulator/{id}/snapshot/info", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::transferState, "/api/v1/emulator/{id}/snapshot/transfer", drogon::Post);
+
+    // RZX input recordings (implementation: api/rzx_api.cpp)
+    ADD_METHOD_TO(EmulatorAPI::playRzx, "/api/v1/emulator/{id}/rzx/play", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::stopRzx, "/api/v1/emulator/{id}/rzx/stop", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::seekRzx, "/api/v1/emulator/{id}/rzx/seek", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getRzxStatus, "/api/v1/emulator/{id}/rzx/status", drogon::Get);
     // endregion Tape/Disk/Snapshot Control
 
     // region Capture Commands (implementation: api/capture_api.cpp)
@@ -345,6 +352,9 @@ public:
     ADD_METHOD_TO(EmulatorAPI::memoryProfilerResume, "/api/v1/emulator/{id}/profiler/memory/resume", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::memoryProfilerClear, "/api/v1/emulator/{id}/profiler/memory/clear", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getMemoryProfilerStatus, "/api/v1/emulator/{id}/profiler/memory/status", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getMemoryProfilerPages, "/api/v1/emulator/{id}/profiler/memory/pages", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getMemoryProfilerCounters, "/api/v1/emulator/{id}/profiler/memory/counters", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::memoryProfilerSave, "/api/v1/emulator/{id}/profiler/memory/save", drogon::Post);
 
     // Call trace profiler control
     ADD_METHOD_TO(EmulatorAPI::calltraceProfilerStart, "/api/v1/emulator/{id}/profiler/calltrace/start", drogon::Post);
@@ -419,6 +429,8 @@ public:
     // region TTD (Time-Travel Debug) (implementation: api/ttd_api.cpp)
     // Full TTD automation surface (Phase 2 complete). Per parent TDD §10.4.
     ADD_METHOD_TO(EmulatorAPI::getTTDStatus, "/api/v1/emulator/{id}/ttd/status", drogon::Get);
+    // A .ttd file's header and recorded machine without loading it (no instance)
+    ADD_METHOD_TO(EmulatorAPI::getTTDFileInfo, "/api/v1/ttd/file-info", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::startTTD, "/api/v1/emulator/{id}/ttd/start", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::stopTTD, "/api/v1/emulator/{id}/ttd/stop", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::invalidateTTD, "/api/v1/emulator/{id}/ttd/invalidate", drogon::Post);
@@ -633,6 +645,18 @@ public:
                       const std::string& id) const;
     void getSnapshotInfo(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void transferState(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+
+    // RZX input recordings (api/rzx_api.cpp)
+    void playRzx(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                 const std::string& id) const;
+    void stopRzx(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                 const std::string& id) const;
+    void seekRzx(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                 const std::string& id) const;
+    void getRzxStatus(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id) const;
     // endregion Tape/Disk/Snapshot Control Methods
 
     // region Capture Commands Methods (implementation: api/capture_api.cpp)
@@ -1145,6 +1169,19 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void getMemoryProfilerStatus(const drogon::HttpRequestPtr& req,
                                  std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                                  const std::string& id) const;
+    /// @brief GET .../profiler/memory/pages?limit=N - per physical page read/write/execute totals
+    void getMemoryProfilerPages(const drogon::HttpRequestPtr& req,
+                                std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                const std::string& id) const;
+    /// @brief GET .../profiler/memory/counters?mode=z80|physical&page=N&start=&end=&format=dense|sparse
+    ///        - per-address read/write/execute counters
+    void getMemoryProfilerCounters(const drogon::HttpRequestPtr& req,
+                                   std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                   const std::string& id) const;
+    /// @brief POST .../profiler/memory/save {"path", "format":"yaml", "single_file"} - write the data to disk
+    void memoryProfilerSave(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                            const std::string& id) const;
 
     // Call trace profiler control
     void calltraceProfilerStart(const drogon::HttpRequestPtr& req,
@@ -1276,6 +1313,8 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     // Per parent TDD §10.4. Full surface available after Phase 2 completion.
     void getTTDStatus(const drogon::HttpRequestPtr& req,
                       std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getTTDFileInfo(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
     void startTTD(const drogon::HttpRequestPtr& req,
                   std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void stopTTD(const drogon::HttpRequestPtr& req,

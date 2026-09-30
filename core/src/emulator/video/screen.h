@@ -864,9 +864,10 @@ public:
     uint16_t GetDisplayWidth() const;
     uint16_t GetDisplayHeight() const;
 
-    /// Get the 16-color RGBA palette used for rendering (ABGR format on little-endian)
-    /// This is useful for GIF encoding where the same palette must be used
-    /// @param colors Output array of 16 ABGR color values
+    /// The 16 ZX colors exactly as the renderer draws them (the first 16 entries of
+    /// the live palette), in the framebuffer format RGBA8888 (LE uint32 0xAABBGGRR).
+    /// The ZX-Poly composer draws with them
+    /// @param colors Output array of 16 color values
     virtual void GetRGBAPalette16(uint32_t* colors);
 
     /// endregion </Framebuffer related>

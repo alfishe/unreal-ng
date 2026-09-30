@@ -24,6 +24,8 @@
 #include <debugger/ttd/timetravelmanager.h>
 #include <debugger/ttd/ttdbookmarks.h>
 #include <debugger/ttd/ttdexternalevents.h>
+#include <debugger/ttd/ttdfileinfo.h>
+#include <debugger/ttd/machinestatehash.h>
 #include <debugger/ttd/ttdprobe.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatorcontext.h>
@@ -46,8 +48,92 @@ static std::string FormatSearchWindow(const ttd::TTDSearchWindow& window)
     return ss.str();
 }
 
+namespace
+{
+
+/// The recorded machine as indented lines (ttd info <path>, ttd status).
+std::string FormatRecordedMachine(const ttd::TTDRecordedMachine& m)
+{
+    std::stringstream ss;
+    ss << "  Model:                  " << (m.model.empty() ? "unknown" : m.model) << " (id "
+       << static_cast<unsigned>(m.modelId) << "), RAM page bound " << m.ramPageBound << CLIProcessor::NEWLINE;
+    ss << "  ROM signature:          ";
+    if (m.romSignature == 0)
+        ss << "unknown (not checked)";
+    else
+        ss << "0x" << ttd::HashToString(m.romSignature);
+    ss << CLIProcessor::NEWLINE;
+    ss << "  General Sound:          " << ttd::GeneralSoundName(m.generalSound) << CLIProcessor::NEWLINE;
+    ss << "  TurboSound slot:        " << m.turboSound << CLIProcessor::NEWLINE;
+    ss << "  Devices:                ";
+    if (m.peripherals.empty())
+        ss << "none";
+    for (size_t i = 0; i < m.peripherals.size(); ++i)
+        ss << (i ? ", " : "") << m.peripherals[i];
+    ss << CLIProcessor::NEWLINE;
+    return ss.str();
+}
+
+}  // namespace
+
+/// ttd info <path>: a .ttd file's header, sections and recorded machine, read
+/// without loading it (no emulator needed).
+void CLIProcessor::HandleTTDFileInfo(const ClientSession& session, const std::string& path)
+{
+    ttd::TTDFileInfo info;
+    std::string err;
+    if (!ttd::ReadTTDFileInfo(path, info, err))
+    {
+        session.SendResponse("Error: " + err + NEWLINE);
+        return;
+    }
+    std::stringstream ss;
+    ss << "TTD File" << NEWLINE;
+    ss << "========" << NEWLINE;
+    ss << NEWLINE;
+    ss << "  Path:                   " << info.path << NEWLINE;
+    ss << "  Size:                   " << info.fileBytes << " bytes" << NEWLINE;
+    ss << "  Schema:                 v" << info.schemaVersion << ", flags 0x" << std::hex << std::setw(4)
+       << std::setfill('0') << info.flags << std::dec << std::setfill(' ') << NEWLINE;
+    if (info.capturedAtUnixMs != 0)
+        ss << "  Captured at:            " << info.capturedAtUnixMs << " (unix ms)" << NEWLINE;
+    if (!info.emulatorId.empty())
+        ss << "  Recorded by:            " << info.emulatorId << NEWLINE;
+    ss << "  Frames:                 " << info.startFrame << " .. " << info.endFrame << NEWLINE;
+    ss << "  Checkpoints:            " << info.checkpointCount << " (" << info.pageStoreCount << " page slots)"
+       << NEWLINE;
+    ss << NEWLINE;
+    ss << FormatRecordedMachine(info.machine);
+    ss << "  Device set from:        "
+       << (info.peripheralsFromHeader ? "header" : "first checkpoint (file written before the header mask)")
+       << NEWLINE;
+    ss << NEWLINE;
+    ss << "  Sections:               ";
+    const std::pair<bool, const char*> sections[] = {
+        {info.hasWriteJournal, "write-journal"}, {info.writeJournalComplete, "journal-complete"},
+        {info.hasCoverageIndex, "coverage-index"}, {info.hasBookmarks, "bookmarks"},
+        {info.hasInputJournal, "input-journal"},   {info.hasExternalEvents, "external-events"},
+        {info.hasPortJournals, "port-journals"},   {info.topClockTime, "top-clock-time"}};
+    bool any = false;
+    for (const auto& [present, name] : sections)
+        if (present)
+        {
+            ss << (any ? ", " : "") << name;
+            any = true;
+        }
+    ss << (any ? "" : "none") << NEWLINE;
+    session.SendResponse(ss.str());
+}
+
 void CLIProcessor::HandleTTD(const ClientSession& session, const std::vector<std::string>& args)
 {
+    // ttd info <path> reads a file: no emulator needed
+    if (args.size() >= 2 && (args[0] == "info" || args[0] == "file-info"))
+    {
+        HandleTTDFileInfo(session, args[1]);
+        return;
+    }
+
     auto emulator = GetSelectedEmulator(session);
     if (!emulator)
     {
@@ -172,7 +258,9 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "Time-Travel Debug (TTD) Commands" << NEWLINE;
     ss << "=================================" << NEWLINE;
     ss << NEWLINE;
-    ss << "  ttd status                       Show session info (state, frames, checkpoints)" << NEWLINE;
+    ss << "  ttd status                       Show session info (state, frames, checkpoints; alias: info)" << NEWLINE;
+    ss << "  ttd info <path>                  Describe a .ttd file without loading it: frames, sections and" << NEWLINE;
+    ss << "                                     the recorded machine (model, ROM, General Sound card, devices)" << NEWLINE;
     ss << "  ttd start [--no-journal]         Begin recording (captures baseline checkpoint)" << NEWLINE;
     ss << "                                     --no-journal: gaming mode, smaller memory footprint" << NEWLINE;
     ss << "  ttd stop                         Stop recording (history retained, browsable)" << NEWLINE;
@@ -237,8 +325,13 @@ void CLIProcessor::HandleTTDStatus(const ClientSession& session, EmulatorContext
         ss << "  Source:                 " << info.sourcePath << NEWLINE;
     if (info.capturedAtUnixMs != 0)
         ss << "  Captured at:            " << info.capturedAtUnixMs << " (unix ms)" << NEWLINE;
-    ss << "  Model:                  id=" << static_cast<unsigned>(info.modelId)
-       << ", RAM page bound " << info.modelRamPages << NEWLINE;
+    if (info.checkpointCount != 0)
+        ss << FormatRecordedMachine(info.machine);
+    else
+        ss << "  Model:                  id=" << static_cast<unsigned>(info.modelId)
+           << ", RAM page bound " << info.modelRamPages << NEWLINE;
+    if (!info.recordedBy.empty())
+        ss << "  Recorded by:            " << info.recordedBy << NEWLINE;
     ss << "  State:                  " << ttd::TTDSessionStateToString(info.state) << NEWLINE;
     ss << "  Session start frame:    " << info.sessionStartFrame << NEWLINE;
     ss << "  Current end frame:      " << info.currentEndFrame << NEWLINE;

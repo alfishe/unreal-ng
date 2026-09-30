@@ -114,7 +114,8 @@ constexpr const char* const kGSLightweightDesc =
 
 constexpr const char* const kContentionDesc =
     "Video memory contention on the machines that have it (48K / 128K / +2 ULA, +2A / +3 gate array): the CPU waits "
-    "for the screen fetches. Off runs those machines uncontended, for comparison. No effect on machines without "
+    "for the screen fetches, and on the ULA machines a refresh with I in the screen's memory corrupts the picture "
+    "(ULA snow). Off runs those machines uncontended and without snow, for comparison. No effect on machines without "
     "contention. Cannot change while the machine is bound to a TTD timeline (it changes timing).";
 
 // Categories
@@ -185,6 +186,9 @@ public:
     /// replay would diverge from what was recorded. Pacing-only acceleration (turbo
     /// mode, speed) is locked by isTtdRecordingActive() alone.
     bool isTtdTimelineBound() const;
+    /// @brief True while an RZX recording plays: fasttape, turbotape and fastdisk
+    /// read as off (they change the CPU path the recording follows)
+    bool isRzxPlaying() const;
 
     EmulatorContext* context() const
     {
@@ -192,7 +196,8 @@ public:
     }
 
 private:
-    /// True when TTD currently forces this feature off (see isTtdTimelineBound / isTtdRecordingActive)
+    /// True when TTD or an RZX playback forces this feature off (see isTtdTimelineBound /
+    /// isTtdRecordingActive / isRzxPlaying)
     bool isMaskedByTtd(const std::string& id) const;
 
     /// Find a feature by id or alias. Caller must hold _mutex.

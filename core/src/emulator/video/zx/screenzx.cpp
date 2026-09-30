@@ -820,6 +820,10 @@ void ScreenZX::DrawRangeZXImpl(uint32_t fromTstate, uint32_t toTstate)
     // Plane B values of the latched cell, looked up once per cell with the latch
     [[maybe_unused]] uint16_t inkB = PlaneB ? _planeBInk[attributes] : 0;
     [[maybe_unused]] uint16_t paperB = PlaneB ? _planeBPaper[attributes] : 0;
+    // ULA snow (docs/inprogress/2026-09-29-ula-snow/tdd.md): the marks the CPU's refresh cycles left this frame.
+    // A cell is fetched before it is drawn, so its mark is in place before the range reaches it
+    const UlaContention* const snow =
+        (_context->pUlaContention && _context->pUlaContention->HasSnow()) ? _context->pUlaContention : nullptr;
 
     for (uint32_t t = fromTstate; t <= toTstate; ++t)
     {
@@ -835,6 +839,16 @@ void ScreenZX::DrawRangeZXImpl(uint32_t fromTstate, uint32_t toTstate)
             {
                 pixels = zxScreen[e.screenOffset + e.symbolX];
                 attributes = zxScreen[e.attrOffset + e.symbolX];
+                if (snow) [[unlikely]]
+                {
+                    uint16_t pixelOffset = static_cast<uint16_t>(e.screenOffset + e.symbolX);
+                    uint16_t attrOffset = static_cast<uint16_t>(e.attrOffset + e.symbolX);
+                    if (snow->SnowOffsets(e.zxY, e.symbolX, pixelOffset, attrOffset))
+                    {
+                        pixels = zxScreen[pixelOffset];
+                        attributes = zxScreen[attrOffset];
+                    }
+                }
                 lastSymbolX = e.symbolX;
                 lastZxY = e.zxY;
                 if constexpr (PlaneB)
@@ -1092,6 +1106,29 @@ void ScreenZX::RenderScreen_Batch8()
 #else
             DrawBatch8_Scalar(y, symbolX, linePtr + symbolX * 8);
 #endif
+        }
+    }
+
+    // ULA snow: redraw the cells the CPU's refresh cycles marked this frame with the bytes the ULA fetched
+    const UlaContention* const snow = _context->pUlaContention;
+    if (snow && snow->HasSnow()) [[unlikely]]
+    {
+        const uint8_t* const zxScreen = _activeScreenMemoryOffset;
+        for (uint8_t y = 0; y < 192; y++)
+        {
+            uint32_t* linePtr = framebufferARGB + (screenStartY + y) * rd.fullFrameWidth + screenStartX;
+            for (uint8_t symbolX = 0; symbolX < 32; symbolX++)
+            {
+                uint16_t pixelOffset = static_cast<uint16_t>(_screenLineOffsets[y] + symbolX);
+                uint16_t attrOffset = static_cast<uint16_t>(_attrLineOffsets[y] + symbolX);
+                if (!snow->SnowOffsets(y, symbolX, pixelOffset, attrOffset))
+                    continue;
+                const uint8_t pixels = zxScreen[pixelOffset];
+                const uint8_t attributes = zxScreen[attrOffset];
+                uint32_t* const dest = linePtr + symbolX * 8;
+                for (int i = 0; i < 8; i++)
+                    dest[i] = ((pixels >> (7 - i)) & 1) ? _rgbaColors[attributes] : _rgbaFlashColors[attributes];
+            }
         }
     }
 }

@@ -152,6 +152,12 @@ void MenuManager::createFileMenu()
     _importAudioTapeAction->setStatusTip(tr("Recognize a WAV/FLAC/MP3 recording into a .tzx/.tap tape image"));
     connect(_importAudioTapeAction, &QAction::triggered, this, &MenuManager::importAudioTapeRequested);
 
+    // RZX recordings open with Open / Open Snapshot; this ends a playback early
+    _stopRzxAction = _fileMenu->addAction(tr("Stop &RZX Playback"));
+    _stopRzxAction->setStatusTip(tr("Stop playing the RZX recording; the machine continues live"));
+    _stopRzxAction->setEnabled(false);
+    connect(_stopRzxAction, &QAction::triggered, this, &MenuManager::stopRzxRequested);
+
     _fileMenu->addSeparator();
 
     // Save Snapshot submenu
@@ -819,8 +825,8 @@ void MenuManager::createMachineMenu()
     _machineMenu->addSeparator();
     _contentionAction = _machineMenu->addAction(tr("Memory &Contention"));
     _contentionAction->setStatusTip(
-        tr("The CPU waits for the screen fetches on the 48K / 128K / +2 / +2A / +3 (no effect on other machines); "
-           "fixed while TTD records or replays"));
+        tr("The CPU waits for the screen fetches on the 48K / 128K / +2 / +2A / +3, and ULA snow on the 48K / 128K / +2 "
+           "(no effect on other machines); fixed while TTD records or replays"));
     _contentionAction->setCheckable(true);
     _contentionAction->setChecked(true);
     connect(_contentionAction, &QAction::triggered, this, &MenuManager::contentionToggled);
@@ -1253,7 +1259,12 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
                          (context && context->pTimeTravelManager && context->pTimeTravelManager->IsRecording());
         // Shortcuts change what the guest code does: off while recording AND while
         // replaying or positioned in history
-        const bool timelineBound = ttdActive || (featureManager && featureManager->isTtdTimelineBound());
+        // An RZX playback holds them off the same way (the recording's CPU path)
+        const bool rzxPlaying = activeEmulator->IsRzxPlaying();
+        const bool timelineBound =
+            ttdActive || rzxPlaying || (featureManager && featureManager->isTtdTimelineBound());
+        if (_stopRzxAction)
+            _stopRzxAction->setEnabled(rzxPlaying);
 
         _tapeTrapsAction->setEnabled(!timelineBound);
         _turboTapeAction->setEnabled(!timelineBound);
