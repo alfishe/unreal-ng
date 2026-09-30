@@ -78,6 +78,8 @@ public:
         bool hostAccess = false;
         uint8_t control = 0, mode = 0, addressHigh = 0;   ///< card ports #83AB / #82AB / #81AB
         bool chipRunning = false;
+        bool chipInt = false;             ///< W5300 INTn asserted ((IR & IMR) != 0)
+        bool intToZ80 = false;            ///< the card holds the Z80's /INT low (#83AB b2 and b6 set)
         std::array<uint8_t, 256> common{};                ///< W5300 common registers
         std::vector<W5300::SocketView> chipSockets;
         std::vector<VirtualNetwork::SocketInfo> sockets;

@@ -3,15 +3,20 @@
 #include <cstring>
 
 #include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/io/network/virtualnetwork.h"
 
 ZxNetUsb::ZxNetUsb(VirtualNetwork* network, Core* core) : _chip(network), _network(network), _core(core)
 {
+    _chip.onNetEvent = [this]() { UpdateIntLine(); };
     Reset();
 }
 
 ZxNetUsb::~ZxNetUsb()
 {
+    // An unplugged card releases /INT
+    if (_core && _core->GetZ80())
+        _core->GetZ80()->SetDeviceIntLine(Z80::kDeviceIntZxNetUsb, false);
     DetachFromPorts();
     if (_core && _windowInstalled)
         _core->RemoveBusOverlay(&_window);
@@ -52,14 +57,19 @@ uint8_t ZxNetUsb::RomWindow::onRead(uint16_t addr, uint8_t normal, bool isExecut
     // #0000 window with ROM paged in
     if (!_card.ChipRunning() || windowStart != 0 || !romPaged)
         return normal;
-    return _card._chip.Read(_card.WindowChipAddress(addr));
+    const uint8_t value = _card._chip.Read(_card.WindowChipAddress(addr));
+    _card.UpdateIntLine();
+    return value;
 }
 
 void ZxNetUsb::RomWindow::onWrite(uint16_t addr, uint8_t value, bool romPaged)
 {
     (void)romPaged;
     if (_card.ChipRunning())
+    {
         _card._chip.Write(_card.WindowChipAddress(addr), value);
+        _card.UpdateIntLine();
+    }
 }
 
 bool ZxNetUsb::AttachToPorts(PortDecoder* decoder)
@@ -89,12 +99,19 @@ void ZxNetUsb::Reset()
     _p81 = 0;
     _chip.Reset();   // held in reset: every socket closed
     UpdateWindow();
+    UpdateIntLine();
 }
 
 bool ZxNetUsb::InterruptActive() const
 {
     const bool w5300Int = ChipRunning() && _chip.InterruptActive() && (_p83 & kCtlW5300IntEna);
     return w5300Int && (_p83 & kCtlZxIntEna);
+}
+
+void ZxNetUsb::UpdateIntLine()
+{
+    if (_core && _core->GetZ80())
+        _core->GetZ80()->SetDeviceIntLine(Z80::kDeviceIntZxNetUsb, InterruptActive());
 }
 
 uint16_t ZxNetUsb::ChipAddress(uint16_t port) const
@@ -132,7 +149,9 @@ uint8_t ZxNetUsb::portDeviceInMethod(uint16_t port)
         return 0xFF;           // SL811 data: absent
     if (!ChipRunning())
         return 0xFF;           // W5300 held in reset
-    return _chip.Read(ChipAddress(port));
+    const uint8_t value = _chip.Read(ChipAddress(port));
+    UpdateIntLine();
+    return value;
 }
 
 void ZxNetUsb::portDeviceOutMethod(uint16_t port, uint8_t value)
@@ -147,6 +166,7 @@ void ZxNetUsb::portDeviceOutMethod(uint16_t port, uint8_t value)
                 _p83 = static_cast<uint8_t>(value & 0x7E);
                 if (wasRunning != ChipRunning())
                     _chip.Reset();   // /RESET edge: the chip starts (or stops) from its reset state
+                UpdateIntLine();     // the enable bits gate the line
                 return;
             }
             case 2:
@@ -162,7 +182,10 @@ void ZxNetUsb::portDeviceOutMethod(uint16_t port, uint8_t value)
     }
 
     if (ChipInPorts() && ChipRunning())
+    {
         _chip.Write(ChipAddress(port), value);
+        UpdateIntLine();
+    }
 }
 
 bool ZxNetUsb::SaveState(netstate::Adapters& out) const
@@ -190,5 +213,7 @@ bool ZxNetUsb::LoadState(const netstate::Adapters& in, const W5300::ByteSource& 
     UpdateWindow();
     if (_network)
         _network->LoadState(in.network, &_chip);
-    return _chip.LoadState(in, bytes);
+    const bool complete = _chip.LoadState(in, bytes);
+    UpdateIntLine();
+    return complete;
 }

@@ -1714,7 +1714,7 @@ void RegisterInspectState(ToolRegistry& registry)
                                     const Json::Value& card = value["card"];
                                     const Json::Value& net = value["virtual_network"];
                                     out << "\n[network] " << card["kind"].asString() << (card["w5300_running"].asBool() ? " running" : " in reset")
-                                        << ", ip " << card["ip"].asString() << ", " << net["sockets"].size() << " socket(s), "
+                                        << (card["int_to_z80"].asBool() ? ", /INT low" : "") << ", ip " << card["ip"].asString() << ", " << net["sockets"].size() << " socket(s), "
                                         << net["dhcp_leases"].size() << " lease(s), host access " << (net["host_access"].asBool() ? "on" : "off");
                                 }
                             }
