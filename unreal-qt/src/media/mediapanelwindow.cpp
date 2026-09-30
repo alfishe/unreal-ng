@@ -294,13 +294,6 @@ void MediaPanelWindow::report(const StateNode& reply, const QString& what)
 {
     if (!Ok(reply))
         QMessageBox::warning(this, what, Q(ReplyMessage(reply)));
-    else if (const StateNode* notes = reply.find("report"); notes && !notes->items.empty())
-    {
-        QStringList lines;
-        for (const StateNode& line : notes->items)
-            lines << Q(line.s);
-        QMessageBox::information(this, what, lines.join("\n"));
-    }
     _revision = UINT64_MAX;
     refresh();
 }
