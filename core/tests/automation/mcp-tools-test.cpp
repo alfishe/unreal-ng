@@ -1158,7 +1158,16 @@ Json::Value TemporalStatusBody(const std::string& algorithm, bool active)
     status["audio_extra_delay_frames"] = algorithm.empty() ? 0 : 5;
     status["processed"] = 100;
     status["written"] = 100;
+    status["shown_raw"] = 3;
+    status["correcting"] = active;
+    status["showing_processed"] = active;
+    status["corrected_frames"] = 40;
     status["late"] = 0;
+    if (active)
+    {
+        status["shown_frame"]["pattern"] = "period 2";
+        status["shown_frame"]["period2"] = 1.1;
+    }
     status["restarts"] = 0;
     status["last_ms"] = 4.9;
     status["average_ms"] = 4.8;
@@ -1178,8 +1187,8 @@ TEST_F(McpTools_Test, CaptureMedia_TemporalStatus_GetsTemporalRouteWithSummary)
 
     ASSERT_FALSE(result.isError) << result.text;
     EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/video/temporal"));
-    EXPECT_NE(result.text.find("ZX DLSS mod-tpgwafsd active, video +7 frames (143 ms), audio +5, 4.8 ms/frame, late 0, "
-                               "restarts 0"),
+    EXPECT_NE(result.text.find("ZX DLSS mod-tpgwafsd active, video +7 frames (143 ms), audio +5, 4.8 ms/frame, "
+                               "correcting (period 2), corrected 40 of 100, shown raw 3, late 0, restarts 0"),
               std::string::npos)
         << result.text;
     EXPECT_EQ(result.structured["default_algorithm"].asString(), "mod-tpgwafsd");

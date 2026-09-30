@@ -1363,10 +1363,22 @@ The same status and switch are available as WebAPI
 `GET` / `PUT /api/v1/emulator/{id}/video/temporal`, Lua and Python
 `video_temporal()` / `video_temporal_set(name)`, and the MCP `capture_media`
 actions `temporal_status` / `temporal_set`. Status fields: `algorithm` (empty
-when off), `active`, `inactive_reason`, `video_delay_frames`,
-`video_delay_ms`, `audio_extra_delay_frames`, `processed`, `written`, `late`
-(outputs finished after their frame was already shown), `restarts`,
-`last_ms`, `average_ms`, `algorithms`, `default_algorithm`.
+when off), `active`, `inactive_reason`, `correcting` (a detector fired in the
+frame on screen and an averaging mask formed - the Qt dialog's LED; every frame
+is analyzed, but a frame with nothing detected passes unchanged),
+`showing_processed` (the frame on screen went through the algorithm, changed
+or not), `video_delay_frames`, `video_delay_ms`, `audio_extra_delay_frames`,
+`processed`, `corrected_frames` (outputs with a detection), `written` (outputs
+in their frame's slot before it was shown), `shown_raw` (frames shown raw:
+their output came after they were on screen - the worker was too slow), `late`
+(outputs whose slot was already reused), `restarts`, `last_ms`, `average_ms`,
+`shown_frame` (the averaging mask of the frame on screen: `pattern` -
+"period 2".."period 5", "two-page field", "scene average" or "none" - the
+percent of pixels each detector put in the mask `period2`..`period5`, `field`,
+and `field_stage`, `whole_paper`, `scene_average`; null when unknown),
+`last_frame` (the same for the newest output, 7 frames ahead of the screen),
+`algorithms`,
+`default_algorithm`.
 
 ### 6. System State Inspection
 

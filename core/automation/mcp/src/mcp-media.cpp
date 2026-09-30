@@ -63,7 +63,7 @@ unsigned ComputeQuantum(const std::vector<std::string>& digests, unsigned maxQua
 }
 
 /// One-line summary of a /video/temporal status, e.g. "ZX DLSS mod-tpgwafsd active, video +7 frames
-/// (143 ms), audio +5, 4.8 ms/frame, late 0, restarts 0"
+/// (143 ms), audio +5, 4.8 ms/frame, correcting (period 2), corrected 40 of 100, shown raw 0, late 0, restarts 0"
 std::string TemporalSummary(const Json::Value& status)
 {
     std::ostringstream out;
@@ -88,8 +88,14 @@ std::string TemporalSummary(const Json::Value& status)
         << status.get("audio_extra_delay_frames", 0).asInt();
     out.setf(std::ios::fixed);
     out.precision(1);
-    out << ", " << status.get("average_ms", 0.0).asDouble() << " ms/frame, late " << status.get("late", 0).asUInt64()
-        << ", restarts " << status.get("restarts", 0).asUInt64();
+    out << ", " << status.get("average_ms", 0.0).asDouble() << " ms/frame, ";
+    if (status.get("correcting", false).asBool())
+        out << "correcting (" << status["shown_frame"].get("pattern", "").asString() << ")";
+    else
+        out << (status.get("showing_processed", false).asBool() ? "idle (nothing detected)" : "raw on screen");
+    out << ", corrected " << status.get("corrected_frames", 0).asUInt64() << " of "
+        << status.get("processed", 0).asUInt64() << ", shown raw " << status.get("shown_raw", 0).asUInt64()
+        << ", late " << status.get("late", 0).asUInt64() << ", restarts " << status.get("restarts", 0).asUInt64();
     return out.str();
 }
 

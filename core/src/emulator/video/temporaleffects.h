@@ -32,18 +32,25 @@
 #include <thread>
 #include <vector>
 
-namespace zxdlss
-{
-class Algorithm;
-}
+#include "emulator/video/zxdlss/algorithm.h"
 
 class TemporalEffects
 {
 public:
+    /// What became of an output written back into the present queue
+    enum class WriteResult
+    {
+        Written,          ///< in its slot before the frame was shown
+        WrittenAfterShown,///< in its slot, but the frame had already been shown raw
+        Gone,             ///< the slot holds another frame now (far too late)
+    };
+
     /// Write the output of the frame latched with `serial` into its present slot:
-    /// RGB8, width x height. Called on the worker thread; returns false when the
-    /// slot no longer holds that frame (the result arrived too late).
-    using WriteBack = std::function<bool(uint64_t serial, const uint8_t* rgb, int width, int height)>;
+    /// RGB8, width x height. Called on the worker thread.
+    /// `report`: what the algorithm did to this frame (kept with the slot: the
+    /// details shown describe the frame on screen)
+    using WriteBack = std::function<WriteResult(uint64_t serial, const uint8_t* rgb, int width, int height,
+                                                const zxdlss::FrameReport& report)>;
 
     struct Stats
     {
@@ -52,8 +59,14 @@ public:
         std::string inactiveReason;  ///< why a selected algorithm is not active
         int videoDelayFrames = 0;    ///< frames the output trails emulation (0 while inactive)
         uint64_t processed = 0;      ///< frames the algorithm processed
-        uint64_t written = 0;        ///< outputs written into their present slot
-        uint64_t late = 0;           ///< outputs whose slot had already been reused
+        uint64_t written = 0;        ///< outputs written into their present slot in time
+        uint64_t shownRaw = 0;       ///< frames shown raw: their output came after they were on screen
+        uint64_t late = 0;           ///< outputs whose slot had already been reused (far too late)
+        uint64_t correctedFrames = 0;   ///< outputs in which the algorithm changed something
+        bool showingProcessed = false;  ///< the frame on screen now is the algorithm's (filled by Screen)
+        bool correcting = false;        ///< ... and it changed something in it (the dialog's LED; filled by Screen)
+        zxdlss::FrameReport shownFrame; ///< what the algorithm did to the frame on screen now (filled by Screen)
+        zxdlss::FrameReport lastFrame;  ///< what the algorithm did to its last output frame (delay frames ahead)
         uint64_t restarts = 0;       ///< algorithm restarts (seek, size change, overflow)
         double lastMs = 0.0;         ///< last frame's processing time
         double averageMs = 0.0;      ///< running average (EMA) of the processing time

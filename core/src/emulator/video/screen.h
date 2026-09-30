@@ -804,6 +804,13 @@ protected:
     // Serial of the frame each slot holds (never reset, unlike the latch counter):
     // temporal effects write their output back into the slot of its frame
     uint64_t _presentSlotSerial[PRESENT_SLOTS] = {};
+    // Per slot: the temporal effect's output is in it / a reader was served it
+    // (under _presentMutex; "shown" is set by the const reader path)
+    bool _presentSlotProcessed[PRESENT_SLOTS] = {};
+    mutable bool _presentSlotShown[PRESENT_SLOTS] = {};
+    mutable std::atomic<bool> _showingProcessed{false};  // the slot readers get now holds processed output
+    zxdlss::FrameReport _presentSlotReport[PRESENT_SLOTS];   // what the effect did to each slot's frame
+    mutable zxdlss::FrameReport _shownReport;               // ... to the one served last (under _presentMutex)
     uint64_t _presentSerial = 0;
     uint64_t _presentLatchCounter = 0;  // Total frames latched (next write index)
     size_t _presentBufferSize = 0;  // Authoritative size for readers; set under _presentMutex
@@ -821,7 +828,8 @@ protected:
     int _audioExtraDelayFrames = 0;                // emulation thread: what SoundManager was told
     bool _temporalRestoreScreenHQ = false;         // switched on for the effect: off again with it
     bool _temporalRestoreZXDLSS = false;
-    bool WriteTemporalOutput(uint64_t serial, const uint8_t* rgb, int width, int height);  // worker thread
+    TemporalEffects::WriteResult WriteTemporalOutput(uint64_t serial, const uint8_t* rgb, int width, int height,
+                                                     const zxdlss::FrameReport& report);  // worker thread
     void UpdateAudioDelay();                                                              // emulation thread
 
     // User-forced Pentagon overscan (see SetOverscanForced)

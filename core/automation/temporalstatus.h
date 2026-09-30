@@ -45,9 +45,32 @@ inline std::string OfferedList()
     return list;
 }
 
-/// Status report: algorithm ("" = off), active, inactive_reason, video_delay_frames,
-/// video_delay_ms, audio_extra_delay_frames, processed, written, late, restarts,
-/// last_ms, average_ms, algorithms[], default_algorithm
+/// Status report: algorithm ("" = off), active, inactive_reason, correcting (a
+/// detector fired in the frame on screen: an averaging mask formed),
+/// showing_processed (the frame on screen went through the algorithm, changed or
+/// not), video_delay_frames, video_delay_ms, audio_extra_delay_frames, processed,
+/// corrected_frames, written, shown_raw (output arrived after its frame was on
+/// screen), late, restarts, last_ms, average_ms, shown_frame and last_frame
+/// {pattern, period2..period5 and field (percent of pixels in the mask),
+/// field_stage, whole_paper, scene_average} (null when unknown), algorithms[],
+/// default_algorithm
+
+/// A frame report as a node (null when the algorithm reported nothing)
+inline StateNode FrameNode(const zxdlss::FrameReport& r)
+{
+    if (!r.valid || !r.pixels)
+        return StateNode();
+    auto percent = [&r](uint32_t n) { return 100.0 * n / r.pixels; };
+    StateNode node = StateNode::Object();
+    node["pattern"] = std::string(zxdlss::patternName(r));
+    for (int k = 0; k < 4; ++k)
+        node["period" + std::to_string(k + 2)] = percent(r.periodPixels[k]);
+    node["field"] = percent(r.fieldPixels);
+    node["field_stage"] = r.fieldStage;
+    node["whole_paper"] = r.wholePaper;
+    node["scene_average"] = r.sceneAverage;
+    return node;
+}
 inline StateNode Report(EmulatorContext* context)
 {
     StateNode node = StateNode::Object();
@@ -65,15 +88,21 @@ inline StateNode Report(EmulatorContext* context)
     node["algorithm"] = stats.algorithm;
     node["active"] = stats.active;
     node["inactive_reason"] = stats.inactiveReason;
+    node["correcting"] = stats.correcting;
+    node["showing_processed"] = stats.showingProcessed;
     node["video_delay_frames"] = screen ? int(screen->GetEffectivePresentDelayFrames()) : 0;
     node["video_delay_ms"] = double(delayUs) / 1000.0;
     node["audio_extra_delay_frames"] = audioExtra;
     node["processed"] = stats.processed;
+    node["corrected_frames"] = stats.correctedFrames;
     node["written"] = stats.written;
+    node["shown_raw"] = stats.shownRaw;
     node["late"] = stats.late;
     node["restarts"] = stats.restarts;
     node["last_ms"] = stats.lastMs;
     node["average_ms"] = stats.averageMs;
+    node["shown_frame"] = FrameNode(stats.shownFrame);
+    node["last_frame"] = FrameNode(stats.lastFrame);
     StateNode algorithms = StateNode::Array();
     for (const std::string& name : OfferedAlgorithms())
         algorithms.items.emplace_back(name);
@@ -116,7 +145,13 @@ inline std::string Summary(EmulatorContext* context)
         << (screen->GetPresentDelayUs() + 500) / 1000 << " ms), audio +" << audioExtra;
     out.setf(std::ios::fixed);
     out.precision(1);
-    out << ", " << stats.averageMs << " ms/frame, late " << stats.late << ", restarts " << stats.restarts;
+    out << ", " << stats.averageMs << " ms/frame, ";
+    if (stats.correcting)
+        out << "correcting (" << zxdlss::patternName(stats.shownFrame) << ")";
+    else
+        out << (stats.showingProcessed ? "idle (nothing detected)" : "raw on screen");
+    out << ", corrected " << stats.correctedFrames << " of " << stats.processed << ", shown raw " << stats.shownRaw
+        << ", late " << stats.late << ", restarts " << stats.restarts;
     return out.str();
 }
 } // namespace TemporalStatus

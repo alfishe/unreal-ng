@@ -156,6 +156,25 @@ picture and sound stay in sync. The delay line passes one frame of samples per
 frame whatever its length - silence while it fills, the oldest frames dropped
 when it shrinks - so the DRC ring occupancy and its controller see no change.
 
+**Deadline and what the viewer sees.** The worker has one frame period
+(~20 ms) to finish a frame: the output is due in the present queue when that
+frame becomes the one served. When it is late the viewer gets the raw frame -
+counted as `shown_raw` (a present slot remembers it was served; an output that
+arrives afterwards is written but counted), and the Qt dialog's LED goes dark
+(`correcting` = the slot served now holds the algorithm's output). The worker
+and the algorithm's threads run at the UI's priority
+(`ThreadHelper::setInteractivePriority`: macOS QoS user-interactive, never
+real-time; stock scheduling on Linux and Windows), and the algorithm keeps its
+threads in a `ThreadPool` (`core/src/common/threadpool.h`) instead of starting
+them for every stage. On a machine loaded far beyond its cores (load average
+~100 on 20 cores during development) the deadline is still missed; one more
+frame of margin (+20 ms of picture and sound) would be the next step.
+
+**What the last frame got.** `Algorithm::lastFrame()` reports the pixels each
+detector mixed (period 2..5, two-page field) and the whole-frame patterns
+(field on the whole paper, scene average); the dialog and every automation
+surface show it with the pattern the frame was mostly rendered with.
+
 **Restarts.** The algorithm needs every frame in order. It restarts (and the
 queue shows raw frames until its look-ahead refills) after a TTD seek
 (`FlushAndPresentFramebuffer`), a frame size change, a new algorithm, or a

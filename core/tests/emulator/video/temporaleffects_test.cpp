@@ -65,7 +65,7 @@ struct Collected
 
 TEST(TemporalEffects_Test, UnknownAlgorithmIsRefused)
 {
-    TemporalEffects effects([](uint64_t, const uint8_t*, int, int) { return true; });
+    TemporalEffects effects([](uint64_t, const uint8_t*, int, int, const zxdlss::FrameReport&) { return TemporalEffects::WriteResult::Written; });
     EXPECT_FALSE(effects.SetAlgorithm("no-such-algorithm"));
     EXPECT_EQ(effects.GetAlgorithm(), "");
     EXPECT_TRUE(effects.SetAlgorithm("mod-tpgwafsd"));
@@ -99,11 +99,11 @@ TEST(TemporalEffects_Test, OutputIsTheAlgorithmsOutputForTheFrameDelayAgo)
     }
 
     Collected got;
-    TemporalEffects effects([&got](uint64_t serial, const uint8_t* rgb, int width, int height) {
+    TemporalEffects effects([&got](uint64_t serial, const uint8_t* rgb, int width, int height, const zxdlss::FrameReport&) {
         std::lock_guard<std::mutex> lock(got.mutex);
         got.rgb[serial].assign(rgb, rgb + static_cast<size_t>(width) * height * 3);
         got.count++;
-        return true;
+        return TemporalEffects::WriteResult::Written;
     });
     ASSERT_TRUE(effects.SetAlgorithm("mod-tpgwafsd"));
     for (uint64_t n = 0; n < kFrames; ++n)
@@ -127,11 +127,36 @@ TEST(TemporalEffects_Test, OutputIsTheAlgorithmsOutputForTheFrameDelayAgo)
     EXPECT_EQ(stats.videoDelayFrames, delay + 1);
     EXPECT_EQ(stats.written, kFrames - delay);
     EXPECT_EQ(stats.restarts, 0u);
+    // The box flickers every frame: detections, a mask, a pattern
+    EXPECT_GT(stats.correctedFrames, 0u);
+    EXPECT_TRUE(zxdlss::corrected(stats.lastFrame));
+    EXPECT_STRNE(zxdlss::patternName(stats.lastFrame), "none");
+}
+
+/// A frame the algorithm changed nothing in is no correction (the LED stays dark)
+TEST(TemporalEffects_Test, StaticPictureIsNoCorrection)
+{
+    TemporalEffects effects([](uint64_t, const uint8_t*, int, int, const zxdlss::FrameReport&) {
+        return TemporalEffects::WriteResult::Written;
+    });
+    ASSERT_TRUE(effects.SetAlgorithm("mod-tpgwafsd"));
+    const std::vector<uint16_t> still = FlickerFrame(0);
+    for (uint64_t n = 0; n < 12; ++n)
+    {
+        effects.Submit(n + 1, still.data(), W, H, kPalette);
+        ASSERT_TRUE(TestWait::For([&] { return effects.GetStats().processed == n + 1; }));
+    }
+    const TemporalEffects::Stats stats = effects.GetStats();
+    EXPECT_GT(stats.written, 0u);
+    EXPECT_EQ(stats.correctedFrames, 0u) << "nothing flickers: every frame passes unchanged";
+    EXPECT_TRUE(stats.lastFrame.valid);
+    EXPECT_FALSE(zxdlss::corrected(stats.lastFrame));
+    EXPECT_STREQ(zxdlss::patternName(stats.lastFrame), "none");
 }
 
 TEST(TemporalEffects_Test, InactiveWithoutPlaneBOrOnANonZxFrame)
 {
-    TemporalEffects effects([](uint64_t, const uint8_t*, int, int) { return true; });
+    TemporalEffects effects([](uint64_t, const uint8_t*, int, int, const zxdlss::FrameReport&) { return TemporalEffects::WriteResult::Written; });
     ASSERT_TRUE(effects.SetAlgorithm("mod-tpgwafsd"));
     EXPECT_EQ(effects.Submit(1, nullptr, W, H, kPalette), 0);
     EXPECT_FALSE(effects.GetStats().active);
@@ -146,11 +171,11 @@ TEST(TemporalEffects_Test, InactiveWithoutPlaneBOrOnANonZxFrame)
 TEST(TemporalEffects_Test, ResetRestartsTheAlgorithm)
 {
     Collected got;
-    TemporalEffects effects([&got](uint64_t serial, const uint8_t*, int, int) {
+    TemporalEffects effects([&got](uint64_t serial, const uint8_t*, int, int, const zxdlss::FrameReport&) {
         std::lock_guard<std::mutex> lock(got.mutex);
         got.rgb[serial];
         got.count++;
-        return true;
+        return TemporalEffects::WriteResult::Written;
     });
     ASSERT_TRUE(effects.SetAlgorithm("mod-tpgwafsd"));
     const int delay = effects.Submit(1, FlickerFrame(0).data(), W, H, kPalette) - 1;
@@ -270,6 +295,18 @@ TEST(TemporalEffects_Test, LiveMachineDelaysVideoAndAudioByTheAlgorithmsLookAhea
                                  << stats.restarts;
     EXPECT_EQ(stats.restarts, 0u);
     EXPECT_EQ(stats.late, 0u);
+    EXPECT_EQ(stats.shownRaw, 0u) << "nothing read the queue while the worker ran: no frame was shown raw";
+    EXPECT_TRUE(stats.lastFrame.valid) << "the algorithm reports what it did to its frames";
+    EXPECT_EQ(stats.lastFrame.pixels, 352u * 288u);
+
+    // A reader is served the frame 7 back - processed by now (the LED's state)
+    std::vector<uint8_t> shown(352 * 288 * 4);
+    ASSERT_TRUE(screen->CopyPresentedFramebuffer(shown.data(), shown.size()));
+    const TemporalEffects::Stats onScreen = screen->GetTemporalStats();
+    EXPECT_TRUE(onScreen.showingProcessed);
+    EXPECT_TRUE(onScreen.shownFrame.valid) << "the report travels with the frame's present slot";
+    EXPECT_EQ(onScreen.correcting, zxdlss::corrected(onScreen.shownFrame))
+        << "the LED means a detection in the frame on screen";
     EXPECT_EQ(screen->GetEffectivePresentDelayFrames(), 7);
     EXPECT_EQ(context->pSoundManager->getOutputDelayFrames(), 7 - base);
 

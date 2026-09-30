@@ -37,6 +37,53 @@ struct FrameInput
 /// Output picture: width x height x 3 (RGB8).
 using RGBImage = std::vector<uint8_t>;
 
+/// What the algorithm did to its last output frame: pixels each detector mixed
+/// (a pixel counts once, for the stage that rendered it) and which whole-frame
+/// patterns were on.
+struct FrameReport
+{
+    uint64_t frame = 0;                ///< output frame ordinal since the algorithm started
+    uint32_t pixels = 0;               ///< pixels in the frame
+    uint32_t periodPixels[4] = {};     ///< mixed as period-2..5 flicker (GigaScreen colors, fast animation)
+    uint32_t fieldPixels = 0;          ///< rendered as a two-page field (page-flipped textures)
+    bool fieldStage = false;           ///< the field stage ran (some tiles alternate their color sets)
+    bool wholePaper = false;           ///< the field covered the whole paper
+    bool sceneAverage = false;         ///< the whole frame averaged (large static picture over moving flicker)
+    bool valid = false;                ///< the algorithm reports frames (false: nothing known)
+};
+
+/// The algorithm changed something in the frame (a detector mixed pixels, or a
+/// whole-frame pattern was on): a correction, not just a pass-through
+inline bool corrected(const FrameReport& r)
+{
+    if (!r.valid)
+        return false;
+    uint32_t mixed = r.fieldPixels;
+    for (uint32_t n : r.periodPixels)
+        mixed += n;
+    return mixed > 0 || r.sceneAverage;
+}
+
+/// The pattern the frame was mostly rendered with, in plain words:
+/// "scene average", "two-page field", "period 2" .. "period 5", or "none"
+inline const char* patternName(const FrameReport& r)
+{
+    if (!r.valid)
+        return "unknown";
+    if (r.sceneAverage)
+        return "scene average";
+    uint32_t best = r.fieldPixels;
+    const char* name = r.fieldPixels ? "two-page field" : "none";
+    static const char* const periods[4] = {"period 2", "period 3", "period 4", "period 5"};
+    for (int k = 0; k < 4; ++k)
+        if (r.periodPixels[k] > best)
+        {
+            best = r.periodPixels[k];
+            name = periods[k];
+        }
+    return name;
+}
+
 class Algorithm
 {
 public:
@@ -55,6 +102,8 @@ public:
 
     /// Optional per-stage timing since creation (for zxdlss-bench), one line per stage.
     virtual std::string stats() const { return {}; }
+    /// What the last output frame got (valid = false when the algorithm does not report)
+    virtual FrameReport lastFrame() const { return {}; }
 };
 
 /// Create a registered algorithm by name ("raw", "mod-tpgw"); nullptr if unknown.

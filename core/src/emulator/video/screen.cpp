@@ -1036,6 +1036,9 @@ void Screen::LatchFramebuffer()
         else if (!_presentPlaneB[index].empty())
             _presentPlaneB[index].clear();
         _presentSlotSerial[index] = ++_presentSerial;
+        _presentSlotProcessed[index] = false;
+        _presentSlotShown[index] = false;
+        _presentSlotReport[index] = zxdlss::FrameReport{};
         _presentLatchCounter++;
 
         // Temporal effect: the worker processes this frame and writes an older
@@ -1081,6 +1084,9 @@ void Screen::FlushAndPresentFramebuffer()
     else
         _presentPlaneB[0].clear();
     _presentSlotSerial[0] = ++_presentSerial;
+    _presentSlotProcessed[0] = false;
+    _presentSlotShown[0] = false;
+    _presentSlotReport[0] = zxdlss::FrameReport{};
     _presentLatchCounter = 1;
 
     // The frame sequence broke: the temporal effect restarts, this frame shows raw
@@ -1139,6 +1145,9 @@ const uint8_t* Screen::PresentedSlotLocked(size_t* index) const
     const size_t slot = (newest - delay) % PRESENT_SLOTS;
     if (index)
         *index = slot;
+    _presentSlotShown[slot] = true;
+    _showingProcessed.store(_presentSlotProcessed[slot], std::memory_order_relaxed);
+    _shownReport = _presentSlotReport[slot];
     return _presentSlots[slot];
 }
 
@@ -1151,8 +1160,9 @@ bool Screen::SetTemporalAlgorithm(const std::string& name)
             if (name.empty())
                 return true;
             _temporal = std::make_unique<TemporalEffects>(
-                [this](uint64_t serial, const uint8_t* rgb, int width, int height) {
-                    return WriteTemporalOutput(serial, rgb, width, height);
+                [this](uint64_t serial, const uint8_t* rgb, int width, int height,
+                       const zxdlss::FrameReport& report) {
+                    return WriteTemporalOutput(serial, rgb, width, height, report);
                 });
         }
     }
@@ -1194,18 +1204,28 @@ std::string Screen::GetTemporalAlgorithm()
 TemporalEffects::Stats Screen::GetTemporalStats()
 {
     std::lock_guard<std::mutex> lock(_temporalCreateMutex);
-    return _temporal ? _temporal->GetStats() : TemporalEffects::Stats{};
+    TemporalEffects::Stats stats = _temporal ? _temporal->GetStats() : TemporalEffects::Stats{};
+    stats.showingProcessed = stats.active && _showingProcessed.load(std::memory_order_relaxed);
+    if (stats.showingProcessed)
+    {
+        std::lock_guard<std::mutex> lock(_presentMutex);
+        stats.shownFrame = _shownReport;
+    }
+    stats.correcting = stats.showingProcessed && zxdlss::corrected(stats.shownFrame);
+    return stats;
 }
 
 /// Worker thread: the algorithm's output (RGB8) for the frame latched with
 /// `serial`, written over that frame's present slot (RGBA8888, alpha opaque)
-bool Screen::WriteTemporalOutput(uint64_t serial, const uint8_t* rgb, int width, int height)
+TemporalEffects::WriteResult Screen::WriteTemporalOutput(uint64_t serial, const uint8_t* rgb, int width, int height,
+                                                        const zxdlss::FrameReport& report)
 {
+    using Result = TemporalEffects::WriteResult;
     std::lock_guard<std::mutex> lock(_presentMutex);
     if (_presentSlots[0] == nullptr || _framebuffer.width != static_cast<uint32_t>(width) ||
         _framebuffer.height != static_cast<uint32_t>(height) ||
         _presentBufferSize != static_cast<size_t>(width) * height * RGBA_SIZE)
-        return false;
+        return Result::Gone;
     for (size_t i = 0; i < PRESENT_SLOTS; i++)
     {
         if (_presentSlotSerial[i] != serial)
@@ -1220,9 +1240,12 @@ bool Screen::WriteTemporalOutput(uint64_t serial, const uint8_t* rgb, int width,
             dst[p * 4 + 2] = rgb[p * 3 + 2];
             dst[p * 4 + 3] = 0xFF;
         }
-        return true;
+        _presentSlotProcessed[i] = true;
+        _presentSlotReport[i] = report;
+        // Already shown raw: a reader got the frame before its output arrived
+        return _presentSlotShown[i] ? Result::WrittenAfterShown : Result::Written;
     }
-    return false;
+    return Result::Gone;
 }
 
 /// Emulation thread: the audio waits as long as the video beyond the configured

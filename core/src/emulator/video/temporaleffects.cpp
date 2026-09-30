@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 
+#include "common/threadhelper.h"
 #include "zxdlss/algorithm.h"
 
 namespace
@@ -151,6 +152,10 @@ TemporalEffects::Stats TemporalEffects::GetStats() const
 
 void TemporalEffects::WorkerLoop()
 {
+    // The picture waits for this thread: the UI's priority (never real-time,
+    // the emulation and audio threads stay above it)
+    ThreadHelper::setThreadName("temporal-effects");
+    ThreadHelper::setInteractivePriority();
     for (;;)
     {
         Job job;
@@ -213,22 +218,29 @@ void TemporalEffects::Process(Job& job)
     // The output is frame (pushed - delay): the serial pushed delay frames ago
     const size_t delay = static_cast<size_t>(_algorithm->delay());
     _serials.push_back(job.serial);
-    bool written = false;
-    bool late = false;
+    bool output = false;
+    WriteResult result = WriteResult::Gone;
+    const zxdlss::FrameReport report = _algorithm->lastFrame();
     if (_serials.size() > delay)
     {
         const uint64_t outSerial = _serials.front();
         _serials.erase(_serials.begin());
-        written = _writeBack(outSerial, _rgb.data(), job.width, job.height);
-        late = !written;
+        result = _writeBack(outSerial, _rgb.data(), job.width, job.height, report);
+        output = true;
     }
 
     const double ms =
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
     std::lock_guard<std::mutex> lock(_mutex);
     _stats.processed++;
-    _stats.written += written ? 1 : 0;
-    _stats.late += late ? 1 : 0;
+    if (output)
+    {
+        _stats.written += result == WriteResult::Written ? 1 : 0;
+        _stats.shownRaw += result == WriteResult::WrittenAfterShown ? 1 : 0;
+        _stats.late += result == WriteResult::Gone ? 1 : 0;
+        _stats.correctedFrames += zxdlss::corrected(report) ? 1 : 0;
+        _stats.lastFrame = report;
+    }
     _stats.lastMs = ms;
     _stats.averageMs = _stats.processed == 1 ? ms : _stats.averageMs + 0.05 * (ms - _stats.averageMs);
 }
