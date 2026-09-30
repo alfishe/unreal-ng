@@ -105,9 +105,9 @@ Configuration modules — `sprinterpldconfiguration_test.cpp` (T-PLDM):
 |---|---|---|
 | T-FDD-1 | raw 1.44 MB image load/save round trip | byte-identical |
 | T-FDD-2 | raw 720 KB | 9 sectors, DD |
-| T-FDD-3 | `rateCheck` on: HD image at DD rate, READ ADDRESS | Record Not Found after the normal index count; at HD rate: ID returned |
-| T-FDD-4 | `rateCheck` off (other models) | unchanged behavior (existing WD1793 suite green) |
-| T-FDD-5 | codes `#16`/`#17` from `OUT (#BD),A` with A = `#01`/`#21` | DD / HD |
+| T-FDD-3 | raw 1.44 MB image in a drive, the Sprinter latch at DD (`#16`), READ ADDRESS; then at HD (`#17`) | Record Not Found after the normal index count; at HD: the ID is returned with 56 T per byte at 3.5 MHz (336 T at 21 MHz). The generic mismatch rule is already covered by `WD1793Clock_Test.RateMismatch_*` (`core/tests/emulator/io/fdc/wd1793_clock_test.cpp`); this test checks the Sprinter wiring |
+| T-FDD-4 | Sprinter clock policy | `GetClockPolicy() == Latched` after machine init, also with `[Beta128] TurboVG=1`; clock 1 MHz and rate 250 kbit/s after reset; STEP and DRQ do not change the clock |
+| T-FDD-5 | codes `#16`/`#17` from `OUT (#BD),A` with A = `#01`/`#21` | `GetClock()` / `GetDataRate()` = 1 MHz + 250 kbit/s / 2 MHz + 500 kbit/s (`WD1793::SetLatchedClock`) |
 | T-FDD-6 | `#1F` rewrite: `OUT (#1F),A` from RAM | reaches code `#10`; from system ROM: reaches the PIO; `OUT (C),A` with C = `#1F`: PIO |
 | T-FDD-7 | DOS in/out by M1 at `#3D00` with BASIC 48 vROM, out at `#4000` | index bit 10 flips; FDC ports appear/disappear |
 

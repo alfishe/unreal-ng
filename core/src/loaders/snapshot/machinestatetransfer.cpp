@@ -22,6 +22,7 @@
 #endif
 #include "emulator/sound/soundmanager.h"
 #include "emulator/video/screen.h"
+#include "emulator/zxpoly/zxpolygroup.h"
 #include "stdafx.h"
 
 using ttd::PeripheralId;
@@ -738,6 +739,15 @@ MachineStateTransfer::Report MachineStateTransfer::Transfer(Emulator& source, Em
         return report;
     }
 
+    // A ZX-Poly module runs in lockstep with three others: moving one module's state in or out
+    // would desynchronize the group
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    if (manager->GetZXPolyGroup(source.GetId()) || manager->GetZXPolyGroup(target.GetId()))
+    {
+        report.reason = "ZX-Poly modules are not transferable: the group runs four machines in lockstep";
+        return report;
+    }
+
     const std::string guard = target.RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot);
     if (!guard.empty())
     {
@@ -807,6 +817,12 @@ std::shared_ptr<Emulator> MachineStateTransfer::TransferToNewInstance(Emulator& 
 {
     report = Report{};
     EmulatorContext* sourceContext = source.GetContext();
+    if (ZXPolyGroup::FindConfiguration(modelName))
+    {
+        report.reason = "ZX-Poly configuration '" + modelName + "' is not a transfer target: its four modules run in lockstep";
+        return nullptr;
+    }
+
     const TMemModel* model = Config::FindModelByShortName(modelName);
     if (!sourceContext || !model)
     {

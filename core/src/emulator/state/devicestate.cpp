@@ -1307,6 +1307,9 @@ StateNode Fdc(EmulatorContext* context)
     ret["signals"] = sig;
     ret["beta128_register"] = int(fdc->getBeta128Register());
     ret["density"] = fdc->isDoubleDensityMode() ? "MFM" : "FM";
+    ret["clock_policy"] = WD1793::ClockPolicyName(fdc->GetClockPolicy());
+    ret["clock_mhz"] = static_cast<int>(fdc->GetClock());
+    ret["data_rate_kbps"] = fdc->GetDataRate() == FdcDataRate::Rate500Kbps ? 500 : 250;
     ret["selected_drive"] = int(fdc->getSelectedDriveIndex());
     ret["side"] = fdc->getSideUp() ? 1 : 0;
 

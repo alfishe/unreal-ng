@@ -429,4 +429,20 @@ This detailed process shows how the FDC handles the complexities of locating the
 *   Simulate writing the preamble, DAM, data bytes, calculated CRC, and postamble to the image.
 *   Handle multi-sector logic (`m=1`) by incrementing the Sector Register and looping.
 *   Accurately update all status bits, paying close attention to how LOST DATA affects the outcome.
+
+### How unreal-ng handles Lost Data
+
+unreal-ng implements the datasheet text (p.12) literally:
+
+*   **First byte of the data field not loaded in time:** the command ends with LOST DATA, BUSY cleared and
+    INTRQ. The sector on the disk is left unchanged. In a multiple-sector write this applies to the first
+    byte of every sector.
+*   **A later byte not loaded in time:** `0x00` is written in its place, LOST DATA is set, DRQ stays up and
+    the command continues to the end of the sector (CRC written, INTRQ at the end).
+*   **Worked example:** a 256-byte sector, the host loads bytes 0..99 on time, then stalls for one byte time
+    (112 T-states at 250 kbit/s on a 3.5 MHz Z80) and loads the rest. Byte 100 on the disk becomes `00`,
+    every later byte is shifted by one position relative to what the host sent, and the status at the end
+    has bit 2 (LOST DATA) set with BUSY clear. Software that checks bit 2 retries the write.
+*   **E = 1** adds the head settle delay before the ID search: 30 ms at a 1 MHz controller clock (every
+    standard Spectrum clone), 15 ms at 2 MHz.
 *   Monitor the /WPRT input state at the start. Monitor /WF input during the `WG`-active phase.

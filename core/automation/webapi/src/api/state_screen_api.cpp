@@ -284,83 +284,9 @@ void EmulatorAPI::getBeamPosition(const HttpRequestPtr& req, std::function<void(
         return;
     }
 
-    Z80* cpu = context->pCore ? context->pCore->GetZ80() : nullptr;
-    const uint32_t tstate = cpu ? static_cast<uint32_t>(cpu->t) : screen->GetCurrentTstate();
-    const uint32_t tInFrame = tstate % config.frame;
-
-    const VideoModeEnum mode = screen->GetVideoMode();
-    const RasterDescriptor& rd = screen->rasterDescriptors[mode];
-    const RasterDescriptor& timingRd = screen->GetTimingDescriptor(mode);
-    const RasterState& rs = screen->GetRasterState();
-
-    // Canonical raster boundaries when the raster state has been calculated;
-    // plain config division otherwise (mode not yet set up)
-    const bool rasterValid = rs.tstatesPerLine != 0;
-    const uint32_t tstatesPerLine = rasterValid ? rs.tstatesPerLine : config.t_line;
-    const uint32_t totalLines = timingRd.vSyncLines + timingRd.vBlankLines + timingRd.fullFrameHeight;
-
-    // Zones and paper position in the active mode's geometry (renderer line origin)
-    const BeamPosition beam = screen->DescribeBeam(tInFrame);
-
-    std::string model = Config::GetModelFullName(config.mem_model);
-
-    Json::Value ret;
-    ret["model"] = model;
-    ret["video_mode"] = Screen::GetVideoModeName(mode);
-    ret["tstate"] = tstate;
-    ret["tstate_in_frame"] = tInFrame;
-    ret["frame"] = static_cast<Json::UInt64>(context->emulatorState.frame_counter);
-    ret["line"] = tInFrame / tstatesPerLine;
-    ret["dot_in_line"] = tInFrame % tstatesPerLine;
-    ret["beam_x"] = beam.beamX;
-    ret["beam_y"] = tInFrame / tstatesPerLine;
-    ret["zone"] = beam.zone;
-    ret["vertical_zone"] = beam.verticalZone;
-    ret["horizontal_zone"] = beam.horizontalZone;
-    ret["in_visible_area"] = beam.inVisibleArea;
-    ret["in_paper"] = beam.inPaper;
-
-    if (beam.inPaper)
-    {
-        // Mode pixels under the beam (320x200, 640x200, 512x240, 256x192...);
-        // one T covers x..x_end
-        Json::Value paper;
-        paper["x"] = beam.paperX;
-        paper["x_end"] = beam.paperXEnd;
-        paper["y"] = beam.paperY;
-        ret["paper"] = paper;
-    }
-
-    // Frame timing derived from the machine model
-    Json::Value timing;
-    timing["tstates_per_line"] = config.t_line;
-    timing["lines_per_frame"] = totalLines;
-    timing["frame_tstates"] = config.frame;
-    timing["raster_frame_tstates"] = tstatesPerLine * totalLines;  // Raster-defined duration; config.frame may pad it
-    timing["frame_duration_us"] = config.frame_duration_us;
-    timing["frames_per_second"] = config.intfq;
-    timing["cpu_hz"] = static_cast<double>(config.frame) * config.intfq;
-    timing["frequency_multiplier"] = context->emulatorState.current_z80_frequency_multiplier;
-    ret["frame_timing"] = timing;
-
-    // Raw raster geometry for the current video mode
-    Json::Value raster;
-    raster["full_frame_width"] = rd.fullFrameWidth;
-    raster["full_frame_height"] = rd.fullFrameHeight;
-    raster["screen_width"] = rd.screenWidth;
-    raster["screen_height"] = rd.screenHeight;
-    raster["screen_offset_left"] = rd.screenOffsetLeft;
-    raster["screen_offset_top"] = rd.screenOffsetTop;
-    raster["pixels_per_line"] = timingRd.pixelsPerLine;
-    raster["h_sync_pixels"] = timingRd.hSyncPixels;
-    raster["h_blank_pixels"] = timingRd.hBlankPixels;
-    raster["v_sync_lines"] = timingRd.vSyncLines;
-    raster["v_blank_lines"] = timingRd.vBlankLines;
-    raster["paper_start_t"] = rs.screenLineAreaStart;
-    raster["paper_end_t"] = rs.screenLineAreaEnd;
-    raster["paper_dots_per_t"] = rs.paperDotsPerT;
-    raster["total_lines"] = totalLines;
-    ret["raster"] = raster;
+    // One report for every automation module (DeviceState::VideoBeam, on VideoMapService)
+    Json::Value ret = StateNodeToJson(DeviceState::VideoBeam(context));
+    ret.removeMember("available");
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);

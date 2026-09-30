@@ -68,6 +68,12 @@ Here's why:
 
 **In summary: The disk spins at the same speed, and the MFM/FM encoding defines the bit rate on the media. The WD1793's clock frequency affects how it internally handles that data stream, not the stream's inherent speed from the drive.**
 
+**Correction (writing):** the paragraph above holds for *reading* only. The bit rate the chip *writes* is
+derived from its own clock: "WRITE DATA TIMING: (ALL TIMES DOUBLE WHEN CLK = 1 MHz)" [datasheet p.19].
+A controller clocked at 2 MHz writes a 500 kbit/s track. The read rate comes from the external data
+separator and does not follow the clock. See
+[Controller clock and data rate in unreal-ng](#controller-clock-and-data-rate-in-unreal-ng) below.
+
 **2. What Commands / Timeouts ARE Affected by Changing WD1793 Clock Speed?**
 
 Any timeout or delay that is defined in terms of a specific number of **FDC clock cycles** will have its **absolute time duration changed** if the FDC's master clock frequency is changed. If the FDC clock doubles, the absolute time for these specific delays/timeouts will halve.
@@ -118,3 +124,74 @@ Here's a breakdown based on your table:
 **In essence:**
 *   If a delay/timeout is counted in FDC clocks: **Affected** (absolute time changes).
 *   If a delay/timeout is based on disk revolutions (index pulses) or the inherent data rate from the disk: **Not Affected** (absolute time constraint remains).
+
+---
+
+## Controller clock and data rate in unreal-ng
+
+Two independent settings decide the FDC timing. Plain-language summary first, details after.
+
+The whole model with every machine case (standard DD, turbo VG, Sprinter HD, rate mismatch, CPU too
+slow for HD), the per-machine policy table and how to add a machine: [WD1793_Clock_And_Data_Rate.md](WD1793_Clock_And_Data_Rate.md).
+
+| Setting | What sets it | What it changes | What it does NOT change |
+|---|---|---|---|
+| **Controller clock** (`FdcClock`: 1 MHz or 2 MHz) | the machine (see policies below) | step rate, head settle (Type I `V=1`, Type II/III `E=1`), the bit rate the chip *writes* (WRITE TRACK) | index pulses, revolution time-outs (RNF after 4-5 revolutions), the byte period while reading |
+| **Data rate of the separator** (`FdcDataRate`: 250 or 500 kbit/s) | the machine (`WD1793::SetDataRate`, or a latch) | which tracks can be read at all | the controller timers |
+
+### Timers that follow the clock
+
+| Timer | 1 MHz | 2 MHz |
+|---|---|---|
+| Step period, `r1 r0` = 00 / 01 / 10 / 11 | 6 / 12 / 20 / 30 ms | 3 / 6 / 10 / 15 ms |
+| Head settle (Type I `V=1`, Type II/III `E=1`) | 30 ms (105 000 T) | 15 ms (52 500 T) |
+
+The datasheet says both: "When CLK equals 1 MHz these times are doubled" (p.6) and "an additional 15
+milliseconds of head settling time [...] this time doubles to 30 ms for a 1 MHz clock" (p.6). Every
+standard Spectrum disk interface (Beta 128, Pentagon, Scorpion, ATM, Profi) runs the chip at 1 MHz, so
+the settle time there is 30 ms. unreal-ng used 15 ms before 2026-09-29.
+
+### Clock policies (`FdcClockPolicy`, chosen per machine)
+
+| Policy | Behavior | Used by |
+|---|---|---|
+| `Fixed1MHz` | clock is always 1 MHz | default: Pentagon, Scorpion, ATM 7.10, Profi, 128K/+2 with Beta 128 |
+| `AutoStepTurbo` | "turbo VG": every STEP pulse switches the clock to 2 MHz, the next DRQ switches it back to 1 MHz. Positioning gets twice as fast, data transfer is unchanged | ATM3 / ZX-Evo BaseConf (FPGA `vg93.v`: STEP sets `turbo_state`, the first DRQ clears it) |
+| `Latched` | the machine sets clock and data rate together through a latch (`WD1793::SetLatchedClock`), e.g. Sprinter port `#BD`: `#21` = 2 MHz + 500 kbit/s | mechanism only; no machine in unreal-ng uses it yet |
+
+`[Beta128] TurboVG=` in `unreal.ini` overrides the machine default: `1` selects `AutoStepTurbo` (the
+Pentagon "turbo VG" magazine mods), `0` selects `Fixed1MHz`. Leave it out to keep the machine default.
+
+### Data rate and the medium
+
+A track remembers how dense it is through its length and encoding (`DiskImage::RawTrack::RecordedDataRate()`):
+at 300 rpm a 250 kbit/s track holds 6250 bytes (MFM) or 3125 bytes (FM), a 500 kbit/s track holds
+12 500 or 6250. The rule is: a track is high density (HD) when it is at least 1.5 times the DD nominal
+length for its encoding (MFM >= 9375 bytes, FM >= 4688 bytes). Real DD dumps (6208..6464 bytes) stay DD.
+
+When the separator rate differs from the track's rate, the chip sees no address marks at all:
+
+* READ SECTOR / WRITE SECTOR: Record Not Found after 4 revolutions (800 ms).
+* READ ADDRESS: Record Not Found after 5 revolutions (1 s).
+* Type I with `V=1`: Seek Error after 5 revolutions.
+* READ TRACK returns one revolution of noise: bytes assembled at the separator's own rate (for example
+  12 500 bytes at 500 kbit/s MFM) from a deterministic pseudo-random sequence, with no address mark in it.
+  The same track always returns the same noise, so replays stay exact.
+
+When the rates match, the byte period is one revolution divided by the track length: 112 T-states per
+byte on a 6250-byte DD track, 56 T-states on a 12 500-byte HD track (3.5 MHz T-states).
+
+### Worked examples
+
+1. **ZX-Evo seek.** SEEK from track 0 to track 40, `r1 r0 = 00`, `V = 1`. The first STEP pulse moves the
+   clock to 2 MHz: 40 x 3 ms + 15 ms settle = 135 ms (472 500 T). The same command on a Pentagon takes
+   40 x 6 ms + 30 ms = 270 ms. The READ SECTOR that follows raises DRQ for its first byte, which puts the
+   ZX-Evo clock back to 1 MHz; the sector itself reads at the same speed on both machines.
+2. **HD disk on a DD machine.** A 1.44 MB image (18 x 512-byte sectors, 12 500-byte tracks) in a Pentagon
+   drive: every READ SECTOR ends after 800 ms with status `0x10` (Record Not Found). With a latched
+   2 MHz / 500 kbit/s setting the same sector reads with 56 T-states per byte - too little for the 58 T
+   TR-DOS transfer loop at 3.5 MHz, so a 3.5 MHz CPU gets LOST DATA, exactly as on real hardware.
+
+Fast disk loading (the fast-disk feature) still compresses step, verify and byte
+timings as before; the `E=1` settle and the start-of-command timings stay authentic, so they now follow
+the clock (30 ms at 1 MHz).

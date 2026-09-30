@@ -545,6 +545,7 @@ struct CONFIG
 	uint8_t trdos_interleave;
 	bool trdos_traps;			// Use TR-DOS traps
 	bool wd93_nodelay;			// Don't emulate WD1793 / VG93 controller delays
+	int8_t fdcTurboVg = -1;		// [Beta128] TurboVG=: -1 machine default, 0 fixed 1 MHz, 1 turbo VG (STEP -> 2 MHz, DRQ -> 1 MHz)
 	uint8_t trdos_wp[4];
 
 	uint8_t cache;

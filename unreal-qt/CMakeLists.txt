@@ -85,10 +85,18 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         endif()
     endif()
 
-    if (CMAKE_BUILD_TYPE)
-        set(UNREAL_BUILD_TYPE "${CMAKE_BUILD_TYPE}")
-    else()
+    # Same rule as the root CMakeLists.txt: the Release default below has to
+    # be in place before the build type is recorded, and multi-config
+    # generators get the configuration at build time
+    get_property(UNREAL_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+    if (NOT UNREAL_MULTI_CONFIG AND NOT CMAKE_BUILD_TYPE)
+        set(CMAKE_BUILD_TYPE Release)
+    endif ()
+    if (UNREAL_MULTI_CONFIG)
         set(UNREAL_BUILD_TYPE "MultiConfig")
+        add_compile_definitions([[UNREAL_BUILD_CONFIG="$<CONFIG>"]])
+    else()
+        set(UNREAL_BUILD_TYPE "${CMAKE_BUILD_TYPE}")
     endif()
 
     configure_file(

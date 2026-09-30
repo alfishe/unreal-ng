@@ -24,7 +24,8 @@ Sprinter adds no second mechanism. Review round 1 accepted every hook in this ta
 and fixed the order: the Sprinter is the last machine program, so all of them land before it.
 The write intercept and the interrupt source come with TSConf (PLAN #41); the pieces this design
 introduced (clock ratio, wait-state hook, CMOS core, per-model `Screen` selection, raw PC floppy
-loader, WD1793 rate check, port-trace internal codes) form PLAN row #60, done before TSConf.
+loader, WD1793 rate check, port-trace internal codes) form PLAN row #60, done before TSConf. The
+WD1793 rate check is **built** (2026-09-29) as the general WD1793 clock / data-rate model (row below).
 
 | Hook | Status | Sprinter use | Spec |
 |---|---|---|---|
@@ -34,6 +35,7 @@ loader, WD1793 rate check, port-trace internal codes) form PLAN row #60, done be
 | **Memory subclass** selected in the `Core` factory | pattern exists (`ScorpionMemory`, `core/src/emulator/memory/memory.h:313`) | `SprinterMemory`: bank computation, graphics-page reads | TSConf `TsConfMemory` §3.5 |
 | **Clock ratio** (new) | decided (review round 1); PLAN #60(b), **postponed to the Sprinter program** (2026-09-28): no other machine needs it | 21 MHz = 6 × 3.5 MHz | §3 below |
 | **Wait-state hook** | **built** (PLAN #60(d), 2026-09-29): `MemoryWaitOverlay` (`core/src/emulator/memory/memorywaitoverlay.h`) - per-slot flags + `ExtraClocks(kind, addr, startClock)`, a host bus overlay so machines without waits pay nothing; port waits: the decoder calls `Z80::AddWaitStates` | turbo memory and port waits | §4 below |
+| **WD1793 clock and data rate** | **built** (2026-09-29, commits `64756638`, `f304dde1`): `FdcClockPolicy::Latched` + `WD1793::SetLatchedClock(FdcClock, FdcDataRate)`; the data-rate check is always on, default DD | the `#BD` density latch (codes `#16`/`#17`) sets 1 MHz + 250 kbit/s or 2 MHz + 500 kbit/s; wired in S3a | [tdd-storage.md](tdd-storage.md) §2.3; [WD1793_Clock_And_Data_Rate.md](../../WD1793/WD1793_Clock_And_Data_Rate.md) |
 | **CMOS core** `Ds12887` (new) | decided (review round 1); PLAN #60, with the migrations of the existing clocks | Sprinter CMOS | [tdd-storage.md](tdd-storage.md) §4 |
 
 ## 3. Clock ratio (new, shared)

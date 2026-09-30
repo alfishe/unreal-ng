@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 #include "emulator/platform.h"
+#include "emulator/io/fdc/fdc.h"
 #include "emulator/io/ide/ideadapter.h"
 #include "emulator/ports/portdiagrecorder.h"
 #include "debugger/ttd/ttdserializable.h"  // ttd::PeripheralId / TTDSerializable (leaf header)
@@ -644,6 +645,11 @@ public:
     /// hardware CPU clock ratio the model can select (EmulatorState::
     /// ttd_clock_units). 1 for models without a hardware turbo
     virtual uint8_t TtdClockUnits() const { return 1; }
+
+    /// How the board clocks its WD1793 (docs/WD1793/WD1793_Timeouts.md, "Controller clock and data rate").
+    /// Every standard Beta 128 style interface runs the chip at a fixed 1 MHz; boards with automatic
+    /// "turbo VG" hardware override this. The [Beta128] TurboVG= option can override it again (Core::Init)
+    virtual FdcClockPolicy DefaultFdcClockPolicy() const { return FdcClockPolicy::Fixed1MHz; }
 
     /// The machine's clock chip as the automation interfaces reach it
     /// (RtcAccess, DeviceState::Rtc). `chip` is null when the machine has no

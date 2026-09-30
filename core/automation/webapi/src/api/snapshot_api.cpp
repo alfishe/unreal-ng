@@ -5,9 +5,11 @@
 #include <debugger/ttd/timetravelmanager.h>
 #include <drogon/HttpResponse.h>
 #include <emulator/emulator.h>
+#include <emulator/config.h>
 #include <emulator/emulatormanager.h>
 #include <common/filehelper.h>
 #include <json/json.h>
+#include <loaders/snapshot/machinestatetransfer.h>
 
 #include "../emulator_api.h"
 #include "../common/upload_helper.h"
@@ -22,6 +24,7 @@ namespace v1
 
 // Helper to add CORS headers (declared extern in tape_disk_api.cpp)
 extern void addCorsHeaders(HttpResponsePtr& resp);
+extern std::string stateToString(EmulatorStateEnum state);
 
 /// @brief POST /api/v1/emulator/:id/snapshot/load
 /// @brief Load snapshot file
@@ -246,6 +249,203 @@ void EmulatorAPI::saveSnapshot(const HttpRequestPtr& req, std::function<void(con
     resp->setStatusCode(success ? HttpStatusCode::k200OK : HttpStatusCode::k400BadRequest);
     addCorsHeaders(resp);
     callback(resp);
+}
+
+namespace
+{
+
+const char* TransferItemStatusName(MachineStateTransfer::ItemStatus status)
+{
+    switch (status)
+    {
+        case MachineStateTransfer::ItemStatus::Copied:
+            return "copied";
+        case MachineStateTransfer::ItemStatus::Dropped:
+            return "dropped";
+        case MachineStateTransfer::ItemStatus::Refused:
+            return "refused";
+        case MachineStateTransfer::ItemStatus::Note:
+            return "note";
+    }
+    return "note";
+}
+
+/// The transfer report as the WebAPI (and through it MCP) returns it
+Json::Value TransferReportJson(const MachineStateTransfer::Report& report)
+{
+    Json::Value json;
+    json["ok"] = report.ok;
+    json["mode"] = report.clone ? "clone" : "cross-model";
+    if (!report.reason.empty())
+        json["reason"] = report.reason;
+    json["items"] = Json::arrayValue;
+    for (const MachineStateTransfer::Item& item : report.items)
+    {
+        Json::Value entry;
+        entry["name"] = item.name;
+        entry["status"] = TransferItemStatusName(item.status);
+        if (!item.detail.empty())
+            entry["detail"] = item.detail;
+        json["items"].append(entry);
+    }
+    json["copied"] = static_cast<Json::UInt64>(report.Count(MachineStateTransfer::ItemStatus::Copied));
+    json["dropped"] = static_cast<Json::UInt64>(report.Count(MachineStateTransfer::ItemStatus::Dropped));
+    json["refused"] = static_cast<Json::UInt64>(report.Count(MachineStateTransfer::ItemStatus::Refused));
+    json["summary"] = report.ToString();
+    return json;
+}
+
+void SendJson(std::function<void(const HttpResponsePtr&)>& callback, const Json::Value& body, HttpStatusCode code)
+{
+    auto resp = HttpResponse::newHttpJsonResponse(body);
+    resp->setStatusCode(code);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+void SendError(std::function<void(const HttpResponsePtr&)>& callback, HttpStatusCode code, const std::string& error,
+               const std::string& message)
+{
+    Json::Value body;
+    body["error"] = error;
+    body["message"] = message;
+    SendJson(callback, body, code);
+}
+
+}  // namespace
+
+/// @brief POST /api/v1/emulator/:id/snapshot/transfer
+/// @brief Move this instance's running state into another instance, in memory (MachineStateTransfer)
+/// @details Body: {"to": "<id>"} for an existing instance, or {"model": "<short name>", "ram_size": KB,
+///          "symbolic_id": "..."} for a new one (it gets the source's sound cards). Optional: "check": true
+///          (existing target only; decide, change nothing), "keep_frame_position" (default true), "start"
+///          (new instance; default: start when the source is running)
+void EmulatorAPI::transferState(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                const std::string& id) const
+{
+    auto manager = EmulatorManager::GetInstance();
+    auto source = manager->GetEmulator(id);
+    if (!source)
+    {
+        SendError(callback, HttpStatusCode::k404NotFound, "Not Found", "Emulator not found");
+        return;
+    }
+    if (source->IsDestroying())
+    {
+        SendError(callback, HttpStatusCode::k503ServiceUnavailable, "Service Unavailable", "Emulator is shutting down");
+        return;
+    }
+
+    auto body = req->getJsonObject();
+    const bool hasTo = body && body->isMember("to") && (*body)["to"].isString() && !(*body)["to"].asString().empty();
+    const bool hasModel =
+        body && body->isMember("model") && (*body)["model"].isString() && !(*body)["model"].asString().empty();
+    if (hasTo == hasModel)
+    {
+        SendError(callback, HttpStatusCode::k400BadRequest, "Bad Request",
+                  "Request body needs exactly one of 'to' (an existing emulator id) or 'model' (a new instance)");
+        return;
+    }
+
+    MachineStateTransfer::Options options;
+    if (body->isMember("keep_frame_position"))
+        options.keepFramePositionWhenTimingMatches = (*body)["keep_frame_position"].asBool();
+    const bool checkOnly = body->isMember("check") && (*body)["check"].asBool();
+
+    if (hasTo)
+    {
+        const std::string targetId = (*body)["to"].asString();
+        auto target = manager->GetEmulator(targetId);
+        if (!target)
+        {
+            SendError(callback, HttpStatusCode::k404NotFound, "Not Found", "Target emulator '" + targetId + "' not found");
+            return;
+        }
+        if (target->IsDestroying())
+        {
+            SendError(callback, HttpStatusCode::k503ServiceUnavailable, "Service Unavailable",
+                      "Target emulator is shutting down");
+            return;
+        }
+
+        if (checkOnly)
+        {
+            if (!source->GetContext() || !target->GetContext())
+            {
+                SendError(callback, HttpStatusCode::k500InternalServerError, "Internal Error", "an instance has no context");
+                return;
+            }
+            Json::Value ret = TransferReportJson(MachineStateTransfer::Check(*source->GetContext(), *target->GetContext()));
+            ret["check"] = true;
+            ret["source_id"] = id;
+            ret["target_id"] = targetId;
+            SendJson(callback, ret, HttpStatusCode::k200OK);
+            return;
+        }
+
+        // TTD refuses this while recording: answer why instead of a bare failure
+        if (const std::string refusal = target->RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot); !refusal.empty())
+        {
+            SendError(callback, HttpStatusCode::k409Conflict, "Conflict", refusal);
+            return;
+        }
+
+        const MachineStateTransfer::Report report = MachineStateTransfer::Transfer(*source, *target, options);
+        Json::Value ret = TransferReportJson(report);
+        ret["source_id"] = id;
+        ret["target_id"] = targetId;
+        ret["created"] = false;
+        ret["state"] = stateToString(target->GetState());
+        SendJson(callback, ret, report.ok ? HttpStatusCode::k200OK : HttpStatusCode::k422UnprocessableEntity);
+        return;
+    }
+
+    if (checkOnly)
+    {
+        SendError(callback, HttpStatusCode::k400BadRequest, "Bad Request",
+                  "'check' needs an existing target ('to'); a new instance is checked by creating it");
+        return;
+    }
+
+    const std::string modelName = (*body)["model"].asString();
+    const TMemModel* model = Config::FindModelByShortName(modelName);
+    if (model && !Config::IsModelCreatable(*model))
+    {
+        SendError(callback, HttpStatusCode::k400BadRequest, "Bad Request",
+                  "model '" + modelName + "' is not creatable on this build (port decoder or config folder missing)");
+        return;
+    }
+    const uint32_t ramSize = body->isMember("ram_size") ? (*body)["ram_size"].asUInt() : 0;
+    const std::string symbolicId = body->isMember("symbolic_id") ? (*body)["symbolic_id"].asString() : std::string();
+    const bool start = body->isMember("start") ? (*body)["start"].asBool() : (source->IsRunning() && !source->IsPaused());
+
+    MachineStateTransfer::Report report;
+    std::shared_ptr<Emulator> target =
+        MachineStateTransfer::TransferToNewInstance(*source, modelName, ramSize, report, options, symbolicId);
+    Json::Value ret = TransferReportJson(report);
+    ret["source_id"] = id;
+    ret["created"] = static_cast<bool>(target);
+    if (!target)
+    {
+        // Nothing was created. Refused before any item was examined (unknown model, RAM size the model
+        // lacks, instance not creatable): the request is wrong. Otherwise the target cannot hold the state
+        const bool badRequest = !model || report.items.empty();
+        SendJson(callback, ret, badRequest ? HttpStatusCode::k400BadRequest : HttpStatusCode::k422UnprocessableEntity);
+        return;
+    }
+
+    // Emulator::Start() runs the main loop on the calling thread; the server thread must return
+    if (start)
+        manager->StartEmulatorAsync(target->GetId());
+    ret["target_id"] = target->GetId();
+    ret["state"] = stateToString(target->GetState());
+    const MachineIdentity identity = EmulatorManager::GetMachineIdentity(*target);
+    if (identity.Valid)
+    {
+        ret["model"] = identity.Model;
+        ret["ram_kb"] = static_cast<Json::UInt>(identity.RamKb);
+    }
+    SendJson(callback, ret, HttpStatusCode::k201Created);
 }
 
 }  // namespace v1
